@@ -473,6 +473,8 @@ func TestDarwinSeatbeltRuntimeTempDirRefusesNonstandardCarveout(t *testing.T) {
 }
 
 func TestDarwinClaudeRuntimeScratchRootIsAutomaticAndHarnessScoped(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 	base := t.TempDir()
 	oldBase := darwinClaudeRuntimeTempBase
 	darwinClaudeRuntimeTempBase = base
@@ -480,7 +482,7 @@ func TestDarwinClaudeRuntimeScratchRootIsAutomaticAndHarnessScoped(t *testing.T)
 
 	dirs, err := tclaudeLayerHarnessRuntimeWriteDirs(harness.DefaultName)
 	require.NoError(t, err)
-	require.Len(t, dirs, 2)
+	require.Len(t, dirs, 3)
 	canonicalBase, err := filepath.EvalSymlinks(base)
 	require.NoError(t, err)
 	assert.Equal(t, canonicalBase, dirs[0],
@@ -493,10 +495,9 @@ func TestDarwinClaudeRuntimeScratchRootIsAutomaticAndHarnessScoped(t *testing.T)
 
 	dirs, err = tclaudeLayerHarnessRuntimeWriteDirs(harness.CodexName)
 	require.NoError(t, err)
-	assert.Empty(t, dirs, "non-Claude harnesses must not inherit Claude scratch authority")
+	assert.Equal(t, []string{filepath.Join(home, "Library", "Keychains")}, dirs,
+		"non-Claude harnesses get Keychain access without Claude scratch authority")
 
-	home := t.TempDir()
-	t.Setenv("HOME", home)
 	cwd := filepath.Join(home, "work")
 	require.NoError(t, os.Mkdir(cwd, 0o700))
 	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
@@ -504,6 +505,7 @@ func TestDarwinClaudeRuntimeScratchRootIsAutomaticAndHarnessScoped(t *testing.T)
 		Cwd:         cwd,
 	})
 	require.NoError(t, err)
+	assert.Contains(t, spec.Contract.WriteDirs, filepath.Join(home, "Library", "Keychains"))
 	assert.Contains(t, spec.Contract.WriteDirs, canonicalBase,
 		"the canonical temp root must survive into the persisted launch contract")
 	assert.Contains(t, spec.Contract.WriteDirs, filepath.Join(canonicalBase, fmt.Sprintf("claude-%d", os.Geteuid())),
