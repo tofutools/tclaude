@@ -3140,7 +3140,9 @@ test('raw access JSON can repair a structured access validation error', async (t
     /network packs and deny_packs must be arrays/);
   rawNetwork.value = '{"mode":"list","allow":[]}';
   rawNetwork.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  await waitForCondition(harness,
+    () => predictions.length > 0 && host.querySelector('.sbx-composition-warning'),
+    'the repaired raw access policy should finish prediction and render its composition warning');
   assert.deepEqual(predictions.at(-1).network, { mode: 'list', allow: [] },
     'prediction consumes the authoritative raw access value');
   assert.match(host.querySelector('.sbx-composition-warning').textContent,
