@@ -4,6 +4,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"time"
@@ -41,11 +42,13 @@ func startNetworkSyncLoop(id string, relay *preparedFilteredNetworkRelay, namesp
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if err := db.BeginNetworkSyncLaunch(id); err != nil {
-			relay.DNSBroker.fail(err)
+		defer func() { _ = db.FinishNetworkSyncLaunch(id) }()
+		if err := db.WaitForNetworkSyncLaunch(ctx, id); err != nil {
+			if !errors.Is(err, context.Canceled) {
+				relay.DNSBroker.fail(err)
+			}
 			return
 		}
-		defer func() { _ = db.FinishNetworkSyncLaunch(id) }()
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 		for {

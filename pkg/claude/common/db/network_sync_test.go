@@ -1,11 +1,13 @@
 package db
 
 import (
+	"context"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestNetworkSyncComposedOneOffAndRevision(t *testing.T) {
@@ -16,9 +18,11 @@ func TestNetworkSyncComposedOneOffAndRevision(t *testing.T) {
 	require.NoError(t, err)
 	snapshot, err := ResolveEffectiveSandboxSnapshot(0, "outer")
 	require.NoError(t, err)
+	require.NoError(t, SaveSession(&SessionRow{ID: "session"}))
 	require.NoError(t, RegisterNetworkSyncLaunch("manual", "session", snapshot))
 	require.NoError(t, BeginNetworkSyncLaunch("manual"))
 	snapshot.NetworkAutoSync = true
+	require.NoError(t, SaveSession(&SessionRow{ID: "session2"}))
 	require.NoError(t, RegisterNetworkSyncLaunch("automatic", "session2", snapshot))
 	require.NoError(t, BeginNetworkSyncLaunch("automatic"))
 	queued, err := QueueProfileNetworkSync(baseID, false)
@@ -86,6 +90,7 @@ func TestNetworkSyncBrokenUnrelatedProfileDoesNotBlockQueue(t *testing.T) {
 	for _, name := range []string{"deleted", "target"} {
 		snapshot, err := ResolveEffectiveSandboxSnapshot(0, name)
 		require.NoError(t, err)
+		require.NoError(t, SaveSession(&SessionRow{ID: name}))
 		require.NoError(t, RegisterNetworkSyncLaunch(name, name, snapshot))
 		require.NoError(t, BeginNetworkSyncLaunch(name))
 	}
@@ -101,6 +106,7 @@ func TestNetworkSyncPinsHostDatabaseAcrossChangedHome(t *testing.T) {
 	setupTestDB(t)
 	snapshot, err := ResolveEffectiveSandboxSnapshot(0, "")
 	require.NoError(t, err)
+	require.NoError(t, SaveSession(&SessionRow{ID: "session"}))
 	require.NoError(t, RegisterNetworkSyncLaunch("pinned", "session", snapshot))
 	hostDB := DBPath()
 	Close()
@@ -172,4 +178,30 @@ func TestNetworkSyncResolvesChangedGlobalAndGroupAssignments(t *testing.T) {
 	require.Contains(t, names, "explicit")
 	require.NotContains(t, names, "global-old")
 	require.NotContains(t, names, "group-old")
+}
+
+func TestNetworkSyncWaitsForSessionBeforePublishing(t *testing.T) {
+	setupTestDB(t)
+	snapshot, err := ResolveEffectiveSandboxSnapshot(0, "")
+	require.NoError(t, err)
+	require.NoError(t, RegisterNetworkSyncLaunch("delayed", "agent-delayed", snapshot))
+	require.ErrorIs(t, BeginNetworkSyncLaunch("delayed"), ErrNetworkSyncSessionPending)
+	rows, err := NetworkSyncLaunches()
+	require.NoError(t, err)
+	require.Empty(t, rows, "unbound launch must not become eligible for updates")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- WaitForNetworkSyncLaunch(ctx, "delayed") }()
+	require.NoError(t, SaveSession(&SessionRow{ID: "late-session", AgentID: "agent-delayed", EffectiveSandbox: &snapshot}))
+	require.NoError(t, <-done)
+	changed := snapshot
+	changed.Effective.Network = &sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeList}
+	require.NoError(t, AcknowledgeNetworkSync("delayed", 0, "applied", "", &changed))
+	session, err := LoadSession("late-session")
+	require.NoError(t, err)
+	require.Equal(t, changed.Effective.Network, session.EffectiveSandbox.Effective.Network)
+	require.NoError(t, RegisterNetworkSyncLaunch("cancelled", "missing-session", snapshot))
+	cancel()
+	require.ErrorIs(t, WaitForNetworkSyncLaunch(ctx, "cancelled"), context.Canceled)
 }
