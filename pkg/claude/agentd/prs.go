@@ -144,10 +144,12 @@ func isTerminalPresentedPRState(state string) bool {
 }
 
 type presentedPRInfo struct {
-	Number    int       `json:"number"`
-	URL       string    `json:"url"`
-	State     string    `json:"state"`
-	FetchedAt time.Time `json:"fetched_at"`
+	Title          string    `json:"title,omitempty"`
+	TitleCheckedAt time.Time `json:"title_checked_at,omitempty"`
+	Number         int       `json:"number"`
+	URL            string    `json:"url"`
+	State          string    `json:"state"`
+	FetchedAt      time.Time `json:"fetched_at"`
 	// Checks rides this resolver's `gh pr view` call but is cached under
 	// the shared per-PR check key instead of here — same arrangement as
 	// repoBranchInfo.Checks. Resolver out-channel only, never persisted.
@@ -164,6 +166,18 @@ func presentedPRCacheFresh(rawURL string, now time.Time) bool {
 		return false
 	}
 	return now.Sub(info.FetchedAt) < branchLinkTTL
+}
+
+// Title refreshes have their own clock: branch-state observations do not
+// fetch titles and must not keep a missing or stale title fresh indefinitely.
+func presentedPRTitleCacheFresh(rawURL string, now time.Time) bool {
+	row, err := db.LoadGitCache(presentedPRCacheKey(rawURL))
+	if err != nil || row == nil {
+		return false
+	}
+	var info presentedPRInfo
+	return json.Unmarshal(row.Data, &info) == nil && !info.TitleCheckedAt.IsZero() &&
+		now.Sub(info.TitleCheckedAt) < branchLinkTTL
 }
 
 func schedulePresentedPRRefresh(agentID, rawURL string) {
@@ -190,6 +204,7 @@ func refreshPresentedPR(agentID, rawURL, key string) {
 	}
 	info.State = strings.ToLower(strings.TrimSpace(info.State))
 	info.FetchedAt = now
+	info.TitleCheckedAt = now
 	if info.Checks != nil {
 		checks := *info.Checks
 		checks.PRState = info.State
@@ -198,7 +213,7 @@ func refreshPresentedPR(agentID, rawURL, key string) {
 		savePRChecks(rawURL, checks)
 	}
 	savePresentedPRCache(key, rawURL, info, now)
-	if !ok || info.State == "" {
+	if !ok || info.State == "" || agentID == "" {
 		return
 	}
 	if _, err := db.UpdateAgentPRState(agentID, rawURL, info.State); err != nil {
@@ -208,7 +223,7 @@ func refreshPresentedPR(agentID, rawURL, key string) {
 }
 
 func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
-	args, ok := presentedPRViewArgs(rawURL, "number,url,state,isDraft,statusCheckRollup", gitProxyHardeningActive())
+	args, ok := presentedPRViewArgs(rawURL, "number,title,url,state,isDraft,statusCheckRollup", gitProxyHardeningActive())
 	if !ok {
 		return presentedPRInfo{}, false
 	}
@@ -221,6 +236,7 @@ func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
 	}
 	var pr struct {
 		Number            int             `json:"number"`
+		Title             string          `json:"title"`
 		URL               string          `json:"url"`
 		State             string          `json:"state"`
 		IsDraft           bool            `json:"isDraft"`
@@ -234,7 +250,7 @@ func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
 	}
 	checks := parseStatusCheckRollup(pr.StatusCheckRollup, time.Now())
 	return presentedPRInfo{
-		Number: pr.Number, URL: pr.URL, State: prStateFromGH(pr.State, pr.IsDraft), Checks: &checks,
+		Title: truncateAuthoredPRTitle(pr.Title), Number: pr.Number, URL: pr.URL, State: prStateFromGH(pr.State, pr.IsDraft), Checks: &checks,
 	}, true
 }
 
@@ -243,7 +259,7 @@ func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
 // set only — no isDraft, for the reason documented there. A draft that has
 // to come through this retry renders as a plain open badge.
 func livePresentedPRInfoWithoutChecks(rawURL string) (presentedPRInfo, bool) {
-	args, ok := presentedPRViewArgs(rawURL, "number,url,state", gitProxyHardeningActive())
+	args, ok := presentedPRViewArgs(rawURL, "number,title,url,state", gitProxyHardeningActive())
 	if !ok {
 		return presentedPRInfo{}, false
 	}
@@ -253,6 +269,7 @@ func livePresentedPRInfoWithoutChecks(rawURL string) (presentedPRInfo, bool) {
 	}
 	var pr struct {
 		Number int    `json:"number"`
+		Title  string `json:"title"`
 		URL    string `json:"url"`
 		State  string `json:"state"`
 	}
@@ -262,7 +279,7 @@ func livePresentedPRInfoWithoutChecks(rawURL string) (presentedPRInfo, bool) {
 	if pr.URL == "" {
 		pr.URL = strings.TrimSpace(rawURL)
 	}
-	return presentedPRInfo{Number: pr.Number, URL: pr.URL, State: prStateFromGH(pr.State, false)}, true
+	return presentedPRInfo{Title: truncateAuthoredPRTitle(pr.Title), Number: pr.Number, URL: pr.URL, State: prStateFromGH(pr.State, false)}, true
 }
 
 func savePresentedPRCache(key, rawURL string, info presentedPRInfo, now time.Time) {
@@ -272,12 +289,24 @@ func savePresentedPRCache(key, rawURL string, info presentedPRInfo, now time.Tim
 	presentedPRCacheMu.Lock()
 	defer presentedPRCacheMu.Unlock()
 
+	if info.Title != "" && info.TitleCheckedAt.IsZero() {
+		info.TitleCheckedAt = info.FetchedAt
+	}
+
 	if row, err := db.LoadGitCache(key); err == nil && row != nil {
 		var current presentedPRInfo
 		if json.Unmarshal(row.Data, &current) == nil {
 			currentAt := current.FetchedAt
 			if currentAt.IsZero() {
 				currentAt = row.FetchedAt
+			}
+			// State-only observations and failed refreshes must not erase a
+			// title obtained from GitHub.
+			if info.Title == "" || info.TitleCheckedAt.Before(current.TitleCheckedAt) {
+				info.Title = current.Title
+			}
+			if info.TitleCheckedAt.Before(current.TitleCheckedAt) {
+				info.TitleCheckedAt = current.TitleCheckedAt
 			}
 			state, fetchedAt := newestPRState(current.State, currentAt, info.State, info.FetchedAt)
 			info.State = state
@@ -300,6 +329,11 @@ func savePresentedPRCache(key, rawURL string, info presentedPRInfo, now time.Tim
 // presented badge's 90-second grace period, so a merged observation remains a
 // reconciliation tombstone after the agent_prs row is marked handled.
 func cachedPresentedPRStates(rawURLs []string) prStateIndex {
+	states, _ := cachedPresentedPRMetadata(rawURLs)
+	return states
+}
+
+func cachedPresentedPRMetadata(rawURLs []string) (prStateIndex, map[string]string) {
 	urlByKey := make(map[string]string, len(rawURLs))
 	keys := make([]string, 0, len(rawURLs))
 	for _, rawURL := range rawURLs {
@@ -316,9 +350,10 @@ func cachedPresentedPRStates(rawURLs []string) prStateIndex {
 	}
 	rows, err := db.LoadGitCacheBatch(keys)
 	if err != nil {
-		return make(prStateIndex)
+		return make(prStateIndex), nil
 	}
 	idx := make(prStateIndex, len(rows))
+	titles := make(map[string]string, len(rows))
 	for key, row := range rows {
 		var info presentedPRInfo
 		if row == nil || json.Unmarshal(row.Data, &info) != nil {
@@ -329,8 +364,9 @@ func cachedPresentedPRStates(rawURLs []string) prStateIndex {
 			fetchedAt = row.FetchedAt
 		}
 		idx.add(urlByKey[key], info.State, fetchedAt)
+		titles[prStateKey(urlByKey[key])] = info.Title
 	}
-	return idx
+	return idx, titles
 }
 
 type recentlyMergedPRPollBackoff struct {

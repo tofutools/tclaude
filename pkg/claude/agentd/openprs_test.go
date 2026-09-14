@@ -11,7 +11,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
-func TestDecodeAuthoredOpenPRGraphQLSortsAttentionAndCachesChecks(t *testing.T) {
+func TestDecodeAuthoredOpenPRGraphQLSortsByRepositoryAndNumberAndCachesChecks(t *testing.T) {
 	data := []byte(`{"data":{"search":{"issueCount":4,"nodes":[
         {"number":3,"title":"Passing","url":"https://github.com/acme/app/pull/3","updatedAt":"2026-08-13T08:00:00Z","commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[{"__typename":"CheckRun","name":"test","status":"COMPLETED","conclusion":"SUCCESS"}]}}}}]}},
         {"number":1,"title":"Failing","url":"https://github.com/acme/app/pull/1","updatedAt":"2026-08-13T07:00:00Z","commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[{"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"FAILURE"}]}}}}]}},
@@ -22,12 +22,12 @@ func TestDecodeAuthoredOpenPRGraphQLSortsAttentionAndCachesChecks(t *testing.T) 
 	view, checks, err := decodeAuthoredOpenPRGraphQL(data, "octocat")
 	require.NoError(t, err)
 	require.Len(t, view.Items, 4)
-	assert.Equal(t, []int{1, 2, 3, 4}, []int{view.Items[0].Number, view.Items[1].Number, view.Items[2].Number, view.Items[3].Number},
-		"clean CI still running sorts behind PRs that need attention")
+	assert.Equal(t, []int{1, 3, 4, 2}, []int{view.Items[0].Number, view.Items[1].Number, view.Items[2].Number, view.Items[3].Number},
+		"repository and numeric PR identity determine order, regardless of CI or activity")
 	assert.Equal(t, "failing", view.Items[0].Checks.State)
-	assert.Equal(t, "passing", view.Items[2].Checks.State)
-	assert.Equal(t, "pending", view.Items[3].Checks.State)
-	assert.Equal(t, "acme/other", view.Items[1].Repository)
+	assert.Equal(t, "passing", view.Items[1].Checks.State)
+	assert.Equal(t, "pending", view.Items[2].Checks.State)
+	assert.Equal(t, "acme/other", view.Items[3].Repository)
 	assert.Contains(t, view.SearchURL, "author%3Aoctocat")
 	assert.Len(t, checks, 3)
 }
@@ -205,7 +205,7 @@ func TestUnionLocallyKnownOpenPRsAddsOpenCandidates(t *testing.T) {
 		Available: true,
 		Total:     1,
 		Items: []dashboardAuthoredOpenPR{{
-			Number: 7, URL: "https://github.com/acme/widgets/pull/7",
+			Number: 7, Repository: "acme/widgets", URL: "https://github.com/acme/widgets/pull/7",
 			Title: "Already indexed", UpdatedAt: now.Add(time.Hour).Format(time.RFC3339),
 			Checks: &prChecksSummary{Total: 1, Passed: 1, State: "passing"},
 		}},
@@ -222,11 +222,11 @@ func TestUnionLocallyKnownOpenPRsAddsOpenCandidates(t *testing.T) {
 
 	assert.Equal(t, 2, got.Total)
 	require.Len(t, got.Items, 2)
-	local := got.Items[0]
-	assert.Equal(t, 42, local.Number, "failing local PR sorts ahead of a passing indexed PR")
+	local := got.Items[1]
+	assert.Equal(t, 42, local.Number, "CI status does not move the local PR ahead of lower numbers")
 	assert.Equal(t, "https://github.com/acme/widgets/pull/42", local.URL)
 	assert.Equal(t, "acme/widgets", local.Repository)
-	assert.Equal(t, "Fix the widget", local.Title, "a later presented title enriches a branch-only candidate")
+	assert.Equal(t, "Fix the widget", local.Title, "a cached GitHub title enriches a branch-only candidate")
 	assert.Equal(t, now.Format(time.RFC3339), local.UpdatedAt)
 	assert.True(t, local.Local)
 	require.NotNil(t, local.Checks)
@@ -360,4 +360,21 @@ func TestAuthoredOpenPRRetryDelayCaps(t *testing.T) {
 	assert.Equal(t, 20*time.Second, authoredOpenPRRetryDelay(1))
 	assert.Equal(t, 5*time.Minute, authoredOpenPRRetryDelay(5))
 	assert.Equal(t, 5*time.Minute, authoredOpenPRRetryDelay(20))
+}
+
+func TestOpenPRSnapshotOrderIgnoresSourceOrderAndActivity(t *testing.T) {
+	for _, reversed := range []bool{false, true} {
+		items := []dashboardAuthoredOpenPR{
+			{Repository: "acme/app", Number: 10, URL: "https://github.com/acme/app/pull/10"},
+			{Repository: "acme/app", Number: 2, URL: "https://github.com/acme/app/pull/2"},
+			{Repository: "acme/zoo", Number: 1, URL: "https://github.com/acme/zoo/pull/1"},
+		}
+		if reversed {
+			items[0], items[2] = items[2], items[0]
+			items[0].Checks = &prChecksSummary{State: "failing"}
+			items[1].UpdatedAt = time.Now().Format(time.RFC3339)
+		}
+		view := unionLocallyKnownOpenPRs(dashboardAuthoredOpenPRs{Available: true, Items: items}, nil, nil, nil)
+		assert.Equal(t, []int{2, 10, 1}, []int{view.Items[0].Number, view.Items[1].Number, view.Items[2].Number})
+	}
 }

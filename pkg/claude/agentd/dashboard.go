@@ -3099,6 +3099,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		taskRefs          map[string]db.AgentTaskRef
 		presentedPRs      map[string][]db.AgentPR
 		cachedPRStates    prStateIndex
+		cachedPRTitles    map[string]string
 		allTags           map[string][]string
 		authoredOpenPRs   dashboardAuthoredOpenPRs
 		branchPRCacheURLs []string
@@ -3146,7 +3147,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, rows := range presentedPRs {
 		for _, row := range rows {
-			localPRs = append(localPRs, locallyKnownPR{URL: row.PRURL, Title: row.Summary})
+			localPRs = append(localPRs, locallyKnownPR{URL: row.PRURL})
 		}
 	}
 	for _, list := range [][]dashboardAuthoredOpenPR{authoredOpenPRs.Items, authoredOpenPRs.Recent} {
@@ -3155,8 +3156,27 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	span.addChildren("preload", runSnapshotNamedLoads(
-		snapshotNamedLoad{"pr_state_cache", func() { cachedPRStates = cachedPresentedPRStates(allPRCacheURLs) }},
+		snapshotNamedLoad{"pr_state_cache", func() { cachedPRStates, cachedPRTitles = cachedPresentedPRMetadata(allPRCacheURLs) }},
 	)...)
+
+	indexedPRs := make(map[string]bool, len(authoredOpenPRs.Items)+len(authoredOpenPRs.Recent))
+	for _, list := range [][]dashboardAuthoredOpenPR{authoredOpenPRs.Items, authoredOpenPRs.Recent} {
+		for _, pr := range list {
+			indexedPRs[prStateKey(pr.URL)] = true
+		}
+	}
+	for i := range localPRs {
+		key := prStateKey(localPRs[i].URL)
+		localPRs[i].Title = cachedPRTitles[key]
+		// Local discoveries may not be indexed by the authored search yet,
+		// or may belong to another author. Reuse the background metadata
+		// refresh; snapshot rendering itself never waits for GitHub.
+		if authoredOpenPRs.Available && strings.HasPrefix(key, "github:") &&
+			!indexedPRs[key] && !presentedPRTitleCacheFresh(localPRs[i].URL, time.Now()) {
+			schedulePresentedPRRefresh("", localPRs[i].URL)
+		}
+		indexedPRs[key] = true
+	}
 
 	taskRefFor := func(agentID string) taskRefView {
 		return taskRefViewFor(taskRefs[agentID])

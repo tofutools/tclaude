@@ -187,7 +187,10 @@ page. The data comes from `git` and `gh` off the snapshot path, cached with a
 90-second TTL. The footer's **Open PRs** popover reuses the same badges with
 Open / Needs attention / Unattached / Closed filters and an "Open all on
 GitHub" action. Drafts are muted grey and stay out of **Needs attention** by
-default; select that filter to reveal its **Include drafts** checkbox.
+default; select that filter to reveal its **Include drafts** checkbox. Open PRs
+are ordered by repository name, then numeric PR number, so CI and activity
+updates do not move rows. Titles come from GitHub; newly discovered PRs show
+`repo#number` until their title is fetched. The Closed filter stays newest first.
 
 ### Zooming into a terminal
 
