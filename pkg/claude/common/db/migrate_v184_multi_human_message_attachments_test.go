@@ -119,6 +119,7 @@ func TestMigrateV183toV184_MatchesFreshSchema(t *testing.T) {
 	require.NoError(t, migrateV225toV226(d))
 	require.NoError(t, migrateV226toV227(d))
 	require.NoError(t, migrateV227toV228(d))
+	require.NoError(t, migrateV228toV229(d))
 	upgraded, err := SchemaSQL(d)
 	require.NoError(t, err)
 	fresh, err := SchemaSQL(freshMigratedDB(t))
