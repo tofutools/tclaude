@@ -182,7 +182,7 @@ func AcknowledgeNetworkSync(id string, revision int64, status, detail string, sn
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	res, err := tx.Exec(`UPDATE network_sync_launches SET acknowledged=?,status=?,detail=?,snapshot=?,dependencies=? WHERE id=? AND revision=?`, revision, status, detail, string(raw), string(depJSON), id, revision)
+	res, err := tx.Exec(`UPDATE network_sync_launches SET acknowledged=?,status=CASE WHEN revision=? THEN ? ELSE 'pending' END,detail=?,snapshot=?,dependencies=? WHERE id=?`, revision, revision, status, detail, string(raw), string(depJSON), id)
 	if err != nil {
 		return err
 	}
@@ -240,7 +240,16 @@ func QueueProfileNetworkSync(profileID int64, includeManual bool) ([]NetworkSync
 		}
 		current, err := ResolveNetworkSyncSnapshot(row.Snapshot)
 		if err != nil {
-			return queued, err
+			if !slices.Contains(row.Dependencies, profileID) {
+				continue
+			}
+			row.Status = "failed"
+			row.Detail = err.Error()
+			if ackErr := AcknowledgeNetworkSync(row.ID, row.Revision, row.Status, row.Detail, nil); ackErr != nil {
+				return queued, ackErr
+			}
+			queued = append(queued, row)
+			continue
 		}
 		deps, err := networkSyncDependencies(current)
 		if err != nil {

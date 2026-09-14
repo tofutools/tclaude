@@ -1037,7 +1037,7 @@ func filteredNetworkRelayPrefix(plan sandboxpolicy.MountPlan) (string, error) {
 	}
 	prefix := " --filtered-network-policy " + clcommon.ShellQuoteArg(encoded)
 	if plan.NetworkSyncID != "" {
-		prefix += " --network-sync-id " + clcommon.ShellQuoteArg(plan.NetworkSyncID)
+		prefix += " --network-sync-id " + clcommon.ShellQuoteArg(plan.NetworkSyncID) + " --network-sync-database " + clcommon.ShellQuoteArg(plan.NetworkSyncDatabase)
 	}
 	prefix += " --filtered-network-preserve-caller-identity"
 	return prefix, nil

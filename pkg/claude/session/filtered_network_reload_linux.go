@@ -47,7 +47,11 @@ func (b *filteredNetworkDNSBroker) observeDNS(record dnsmessage.Resource, seen m
 		return fmt.Errorf("DNS observation capacity reached; retry after cached answers expire")
 	}
 	ttl := min(time.Duration(record.Header.TTL)*time.Second, filteredNetworkDNSMaxLease)
-	b.observations[key] = filteredDNSObservation{Names: names, Record: record, Expires: now.Add(ttl)}
+	expires := now.Add(ttl)
+	if previous, ok := b.observations[key]; ok && previous.Expires.After(expires) {
+		expires = previous.Expires
+	}
+	b.observations[key] = filteredDNSObservation{Names: names, Record: record, Expires: expires}
 	return nil
 }
 
