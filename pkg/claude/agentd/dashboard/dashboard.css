@@ -9810,14 +9810,16 @@ body:has(#tab-terminals.active) > nav {
   flex: none;
 }
 
-/* The 💲 per-agent-cost toggle in the Groups filter bar. Dims when off so the
-   pressed/unpressed state reads at a glance. */
+/* Use a currentColor SVG so the cost toggle stays readable regardless of
+   the platform's emoji artwork. Both states retain full opacity. */
 .cost-toggle {
   background: none; border: none; cursor: pointer; font-size: 14px;
-  padding: 2px 4px; line-height: 1; opacity: 0.9;
+  padding: 2px 4px; line-height: 1; color: #3fb950;
 }
-.cost-toggle:hover { opacity: 1; }
-.cost-toggle.off { opacity: 0.35; filter: grayscale(1); }
+.cost-toggle svg { display: block; }
+.cost-toggle:hover { color: #56d364; }
+.cost-toggle.off { color: #8b949e; }
+.cost-toggle.off:hover { color: #c9d1d9; }
 
 /* WHAT-IF banner at the top of the Costs tab — shown by the costs island only
    in WHAT-IF mode (a subscription account that opted in). Amber so it reads as
