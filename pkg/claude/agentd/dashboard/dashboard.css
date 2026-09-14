@@ -9818,7 +9818,7 @@ body:has(#tab-terminals.active) > nav {
 }
 .cost-toggle svg { display: block; }
 .cost-toggle:hover { color: #56d364; }
-.cost-toggle.off { color: #8b949e; }
+.cost-toggle.off { color: #737c86; }
 .cost-toggle.off:hover { color: #c9d1d9; }
 
 /* WHAT-IF banner at the top of the Costs tab — shown by the costs island only
