@@ -480,7 +480,7 @@ func TestDarwinClaudeRuntimeScratchRootIsAutomaticAndHarnessScoped(t *testing.T)
 	darwinClaudeRuntimeTempBase = base
 	t.Cleanup(func() { darwinClaudeRuntimeTempBase = oldBase })
 
-	dirs, err := tclaudeLayerHarnessRuntimeWriteDirs(harness.DefaultName)
+	dirs, err := tclaudeLayerHarnessRuntimeWriteDirs(harness.DefaultName, false)
 	require.NoError(t, err)
 	require.Len(t, dirs, 3)
 	canonicalBase, err := filepath.EvalSymlinks(base)
@@ -493,7 +493,7 @@ func TestDarwinClaudeRuntimeScratchRootIsAutomaticAndHarnessScoped(t *testing.T)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
 
-	dirs, err = tclaudeLayerHarnessRuntimeWriteDirs(harness.CodexName)
+	dirs, err = tclaudeLayerHarnessRuntimeWriteDirs(harness.CodexName, false)
 	require.NoError(t, err)
 	assert.Equal(t, []string{filepath.Join(home, "Library", "Keychains")}, dirs,
 		"non-Claude harnesses get Keychain access without Claude scratch authority")
@@ -513,6 +513,36 @@ func TestDarwinClaudeRuntimeScratchRootIsAutomaticAndHarnessScoped(t *testing.T)
 
 	require.NoError(t, os.Remove(claudeRuntimeDir))
 	require.NoError(t, os.Symlink(t.TempDir(), claudeRuntimeDir))
-	_, err = tclaudeLayerHarnessRuntimeWriteDirs(harness.DefaultName)
+	_, err = tclaudeLayerHarnessRuntimeWriteDirs(harness.DefaultName, false)
 	require.ErrorContains(t, err, "must be a real directory owned by uid")
+}
+
+func TestDarwinKeychainRuntimeGrantCanBeDisabled(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for _, name := range []string{harness.CodexName, harness.CopilotName, harness.OpenCodeName} {
+		t.Run(name, func(t *testing.T) {
+			dirs, err := tclaudeLayerHarnessRuntimeWriteDirs(name, false)
+			require.NoError(t, err)
+			require.Equal(t, []string{filepath.Join(home, "Library", "Keychains")}, dirs)
+			dirs, err = tclaudeLayerHarnessRuntimeWriteDirs(name, true)
+			require.NoError(t, err)
+			assert.Empty(t, dirs)
+		})
+	}
+	base := t.TempDir()
+	oldBase := darwinClaudeRuntimeTempBase
+	darwinClaudeRuntimeTempBase = base
+	t.Cleanup(func() { darwinClaudeRuntimeTempBase = oldBase })
+	cwd := filepath.Join(home, "work")
+	require.NoError(t, os.Mkdir(cwd, 0o700))
+	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName: harness.DefaultName, Cwd: cwd,
+		Snapshot: &sandboxpolicy.Snapshot{Version: sandboxpolicy.SnapshotVersion, Effective: sandboxpolicy.EffectiveProfile{DarwinDisableKeychainWrite: true}},
+	})
+	require.NoError(t, err)
+	assert.NotContains(t, spec.Contract.WriteDirs, filepath.Join(home, "Library", "Keychains"))
+	canonicalBase, err := filepath.EvalSymlinks(base)
+	require.NoError(t, err)
+	assert.Contains(t, spec.Contract.WriteDirs, canonicalBase)
 }

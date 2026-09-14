@@ -23,14 +23,17 @@ var darwinClaudeRuntimeTempBase = "/private/tmp"
 // $TMPDIR. Since /tmp resolves to /private/tmp on macOS, the outer Seatbelt
 // layer must carry the canonical temp root as launch-contract authority even
 // when Claude's own inner sandbox is disabled.
-func tclaudeLayerHarnessRuntimeWriteDirs(harnessName string) ([]string, error) {
+func tclaudeLayerHarnessRuntimeWriteDirs(harnessName string, disableKeychainWrite bool) ([]string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("resolve home for macOS Keychain runtime access: %w", err)
 	}
-	keychains := filepath.Join(home, "Library", "Keychains")
+	var keychains []string
+	if !disableKeychainWrite {
+		keychains = []string{filepath.Join(home, "Library", "Keychains")}
+	}
 	if harnessName != harness.DefaultName {
-		return []string{keychains}, nil
+		return keychains, nil
 	}
 	base, err := filepath.EvalSymlinks(filepath.Clean(darwinClaudeRuntimeTempBase))
 	if err != nil {
@@ -68,5 +71,5 @@ func tclaudeLayerHarnessRuntimeWriteDirs(harnessName string) ([]string, error) {
 		}
 		return nil, fmt.Errorf("canonicalize Claude runtime scratch root %q: %w", path, err)
 	}
-	return []string{base, path, keychains}, nil
+	return append([]string{base, path}, keychains...), nil
 }

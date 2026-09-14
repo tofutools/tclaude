@@ -989,6 +989,7 @@ test('sandbox actions preserve dry-run, canonical commit, delete, and import bou
     includes: ['base'], agent_directories: ['GOCACHE'], network_access: 'internet',
     resource_limits: { memory: '8GB' },
     darwin_allow_mach_register: true,
+    darwin_disable_keychain_write: true,
   };
   // The save body always carries the full-replace shape. The retired
   // read_baseline and break_glass_filesystem fields are gone from the wire
@@ -1653,7 +1654,7 @@ function mountSandboxEditor(harness, mountManagementIsland, state, overrides = {
   return { host, unmount: () => cleanups.reverse().forEach((fn) => fn()) };
 }
 
-test('sandbox editor offers Mach registration only on a macOS agentd', async (t) => {
+test('sandbox editor offers macOS compatibility controls with Keychain writes enabled by default', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
@@ -1668,12 +1669,18 @@ test('sandbox editor offers Mach registration only on a macOS agentd', async (t)
     async saveSandbox(value) { saves.push(value); },
   });
   await harness.act(() => Promise.resolve());
+  const keychain = host.querySelector('#sandbox-profile-editor-allow-keychain-write');
+  assert.equal(keychain.matches(':checked'), true);
+  assert.match(keychain.parentElement.title, /vendor\/provider login credentials/);
+  keychain.checked = false;
+  await harness.act(() => harness.fireEvent(keychain, 'change'));
   const checkbox = host.querySelector('#sandbox-profile-editor-allow-mach-register');
   assert.ok(checkbox, 'macOS exposes the compatibility capability');
   checkbox.checked = true;
   await harness.act(() => harness.fireEvent(checkbox, 'change'));
   await harness.act(() => harness.fireEvent(host.querySelector('#sandbox-profile-editor-submit'), 'click'));
   assert.equal(saves[0].draft.darwin_allow_mach_register, true);
+  assert.equal(saves[0].draft.darwin_disable_keychain_write, true);
 
   state.closeDialog();
   await harness.act(() => Promise.resolve());

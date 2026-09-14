@@ -279,7 +279,12 @@ than under Claude Code.
 On macOS, tclaude’s sandbox automatically grants read/write access to
 `~/Library/Keychains` for every harness, alongside the harness state directory.
 This supports credential persistence through macOS Keychain APIs without a
-per-profile filesystem grant. The grant covers the shared user Keychain
+per-profile filesystem grant. In the profile editor’s macOS compatibility
+section, uncheck **Allow macOS Keychain writes** to opt out
+(`darwin_disable_keychain_write: true`). An opt-out in any included or applied
+profile wins. This removes the automatic grant; explicit filesystem grants
+still apply. Disabling it may prevent harnesses from saving or refreshing
+vendor/provider login credentials. The grant covers the shared user Keychain
 directory, not just the selected harness’s credential item; macOS Keychain
 access controls still apply. Harness-native sandbox policies are unchanged.
 

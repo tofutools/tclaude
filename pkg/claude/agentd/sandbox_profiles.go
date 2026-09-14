@@ -92,7 +92,7 @@ const sandboxProfileMaxBodyBytes = 8 << 20
 
 const (
 	sandboxProfileExportFormat        = "tclaude-sandbox-profiles"
-	sandboxProfileExportVersion       = 17
+	sandboxProfileExportVersion       = 18
 	sandboxProfileExportVersionLegacy = 9
 )
 
@@ -102,24 +102,25 @@ const (
 var sandboxProfileBeforeMkdir = func(string) {}
 
 type sandboxProfileJSON struct {
-	ID                      int64                              `json:"id,omitempty"`
-	Name                    string                             `json:"name"`
-	Filesystem              []sandboxpolicy.FilesystemGrant    `json:"filesystem"`
-	FilesystemSpellings     *sandboxpolicy.FilesystemSpellings `json:"filesystem_spellings"`
-	Tmpfs                   []sandboxpolicy.TmpfsMount         `json:"tmpfs,omitempty"`
-	Environment             []sandboxpolicy.EnvironmentEntry   `json:"environment"`
-	AgentDirectories        []string                           `json:"agent_directories,omitempty"`
-	FilesystemRoot          sandboxpolicy.FilesystemRootMode   `json:"filesystem_root,omitempty"`
-	HarnessConfig           sandboxpolicy.HarnessConfigAccess  `json:"harness_config,omitempty"`
-	NetworkAccess           sandboxpolicy.NetworkAccess        `json:"network_access,omitempty"`
-	Network                 *sandboxpolicy.NetworkRules        `json:"network,omitempty"`
-	UnixSockets             *sandboxpolicy.UnixSocketRules     `json:"unix_sockets,omitempty"`
-	ResourceLimits          sandboxpolicy.ResourceLimits       `json:"resource_limits,omitempty"`
-	DarwinAllowMachRegister bool                               `json:"darwin_allow_mach_register,omitempty"`
-	PreLaunch               []sandboxpolicy.PreLaunchBlock     `json:"pre_launch,omitempty"`
-	Includes                []string                           `json:"includes,omitempty"`
-	CreatedAt               string                             `json:"created_at,omitempty"`
-	UpdatedAt               string                             `json:"updated_at,omitempty"`
+	ID                         int64                              `json:"id,omitempty"`
+	Name                       string                             `json:"name"`
+	Filesystem                 []sandboxpolicy.FilesystemGrant    `json:"filesystem"`
+	FilesystemSpellings        *sandboxpolicy.FilesystemSpellings `json:"filesystem_spellings"`
+	Tmpfs                      []sandboxpolicy.TmpfsMount         `json:"tmpfs,omitempty"`
+	Environment                []sandboxpolicy.EnvironmentEntry   `json:"environment"`
+	AgentDirectories           []string                           `json:"agent_directories,omitempty"`
+	FilesystemRoot             sandboxpolicy.FilesystemRootMode   `json:"filesystem_root,omitempty"`
+	HarnessConfig              sandboxpolicy.HarnessConfigAccess  `json:"harness_config,omitempty"`
+	NetworkAccess              sandboxpolicy.NetworkAccess        `json:"network_access,omitempty"`
+	Network                    *sandboxpolicy.NetworkRules        `json:"network,omitempty"`
+	UnixSockets                *sandboxpolicy.UnixSocketRules     `json:"unix_sockets,omitempty"`
+	ResourceLimits             sandboxpolicy.ResourceLimits       `json:"resource_limits,omitempty"`
+	DarwinAllowMachRegister    bool                               `json:"darwin_allow_mach_register,omitempty"`
+	DarwinDisableKeychainWrite bool                               `json:"darwin_disable_keychain_write,omitempty"`
+	PreLaunch                  []sandboxpolicy.PreLaunchBlock     `json:"pre_launch,omitempty"`
+	Includes                   []string                           `json:"includes,omitempty"`
+	CreatedAt                  string                             `json:"created_at,omitempty"`
+	UpdatedAt                  string                             `json:"updated_at,omitempty"`
 	// Tombstones. TCL-791 removed break-glass; these fields exist ONLY so a
 	// payload still carrying them is refused loudly rather than silently
 	// dropped as an unknown JSON key. Detection is on the RAW JSON, so it works
@@ -166,7 +167,8 @@ func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfile
 		NetworkAccess:  sandboxpolicy.LegacyNetworkAccessForExport(p.Network, p.NetworkAccess),
 		Network:        p.Network, UnixSockets: p.UnixSockets, ResourceLimits: p.ResourceLimits,
 		DarwinAllowMachRegister: p.DarwinAllowMachRegister, PreLaunch: p.PreLaunch,
-		Includes: p.Includes,
+		DarwinDisableKeychainWrite: p.DarwinDisableKeychainWrite,
+		Includes:                   p.Includes,
 	}
 	if localFields {
 		out.ID = p.ID
@@ -189,7 +191,8 @@ func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string,
 		HarnessConfig: body.HarnessConfig, NetworkAccess: body.NetworkAccess,
 		Network: body.Network, UnixSockets: body.UnixSockets, ResourceLimits: body.ResourceLimits,
 		DarwinAllowMachRegister: body.DarwinAllowMachRegister, PreLaunch: body.PreLaunch,
-		Includes: body.Includes,
+		DarwinDisableKeychainWrite: body.DarwinDisableKeychainWrite,
+		Includes:                   body.Includes,
 	}
 	var normalized sandboxpolicy.Profile
 	var missing []string
@@ -212,7 +215,8 @@ func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string,
 		NetworkAccess:  normalized.NetworkAccess, Network: normalized.Network,
 		UnixSockets: normalized.UnixSockets, ResourceLimits: normalized.ResourceLimits,
 		DarwinAllowMachRegister: normalized.DarwinAllowMachRegister, PreLaunch: normalized.PreLaunch,
-		Includes: normalized.Includes,
+		DarwinDisableKeychainWrite: normalized.DarwinDisableKeychainWrite,
+		Includes:                   normalized.Includes,
 	}, missing, nil
 }
 
@@ -225,7 +229,8 @@ func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, 
 		HarnessConfig: body.HarnessConfig, NetworkAccess: body.NetworkAccess,
 		Network: body.Network, UnixSockets: body.UnixSockets, ResourceLimits: body.ResourceLimits,
 		DarwinAllowMachRegister: body.DarwinAllowMachRegister, PreLaunch: body.PreLaunch,
-		Includes: body.Includes,
+		DarwinDisableKeychainWrite: body.DarwinDisableKeychainWrite,
+		Includes:                   body.Includes,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -240,7 +245,8 @@ func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, 
 		NetworkAccess:  normalized.NetworkAccess, Network: normalized.Network,
 		UnixSockets: normalized.UnixSockets, ResourceLimits: normalized.ResourceLimits,
 		DarwinAllowMachRegister: normalized.DarwinAllowMachRegister, PreLaunch: normalized.PreLaunch,
-		Includes: normalized.Includes,
+		DarwinDisableKeychainWrite: normalized.DarwinDisableKeychainWrite,
+		Includes:                   normalized.Includes,
 	}, missing, nil
 }
 
@@ -748,6 +754,10 @@ func handleSandboxProfilesExport(w http.ResponseWriter, r *http.Request) {
 	}
 	formatVersion := sandboxProfileExportVersionLegacy
 	for _, profile := range out {
+		if profile.DarwinDisableKeychainWrite {
+			formatVersion = 18
+			break
+		}
 		if len(profile.Tmpfs) > 0 {
 			formatVersion = 17
 			continue
@@ -1031,6 +1041,9 @@ func supportedSandboxProfileExport(format string, version int) bool {
 
 func validateSandboxProfileExportVersionContent(env sandboxProfileExportEnvelope) *spawnFailure {
 	for _, profile := range env.Profiles {
+		if env.FormatVersion < 18 && profile.DarwinDisableKeychainWrite {
+			return &spawnFailure{Status: http.StatusBadRequest, Kind: "invalid_format", Msg: "darwin_disable_keychain_write requires sandbox-profile export version 18"}
+		}
 		if env.FormatVersion < 17 && len(profile.Tmpfs) > 0 {
 			return &spawnFailure{
 				Status: http.StatusBadRequest,

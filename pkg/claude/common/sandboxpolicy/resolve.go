@@ -69,16 +69,17 @@ type EffectiveProfile struct {
 	// Tmpfs is the composed set of temporary filesystems. Omitempty keeps a
 	// snapshot that authored none byte-compatible with every snapshot written
 	// before the axis existed.
-	Tmpfs                   []TmpfsMount        `json:"tmpfs,omitempty"`
-	Environment             []EnvironmentEntry  `json:"environment"`
-	AgentDirectories        []string            `json:"agent_directories"`
-	FilesystemRoot          FilesystemRootMode  `json:"filesystem_root,omitempty"`
-	HarnessConfig           HarnessConfigAccess `json:"harness_config,omitempty"`
-	NetworkAccess           NetworkAccess       `json:"network_access,omitempty"`
-	Network                 *NetworkRules       `json:"network,omitempty"`
-	UnixSockets             *UnixSocketRules    `json:"unix_sockets,omitempty"`
-	ResourceLimits          ResourceLimits      `json:"resource_limits,omitempty"`
-	DarwinAllowMachRegister bool                `json:"darwin_allow_mach_register,omitempty"`
+	Tmpfs                      []TmpfsMount        `json:"tmpfs,omitempty"`
+	Environment                []EnvironmentEntry  `json:"environment"`
+	AgentDirectories           []string            `json:"agent_directories"`
+	FilesystemRoot             FilesystemRootMode  `json:"filesystem_root,omitempty"`
+	HarnessConfig              HarnessConfigAccess `json:"harness_config,omitempty"`
+	NetworkAccess              NetworkAccess       `json:"network_access,omitempty"`
+	Network                    *NetworkRules       `json:"network,omitempty"`
+	UnixSockets                *UnixSocketRules    `json:"unix_sockets,omitempty"`
+	ResourceLimits             ResourceLimits      `json:"resource_limits,omitempty"`
+	DarwinAllowMachRegister    bool                `json:"darwin_allow_mach_register,omitempty"`
+	DarwinDisableKeychainWrite bool                `json:"darwin_disable_keychain_write,omitempty"`
 	// PreLaunch is composed across scopes in tier order (global, group,
 	// explicit): a later tier replaces a same-named block in place and appends
 	// new ones. Order is execution order, so it is never sorted.
@@ -287,6 +288,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 			result.Provenance.ResourceCPU = &resourceSource
 		}
 		result.DarwinAllowMachRegister = result.DarwinAllowMachRegister || normalized.DarwinAllowMachRegister
+		result.DarwinDisableKeychainWrite = result.DarwinDisableKeychainWrite || normalized.DarwinDisableKeychainWrite
 		axes, err := DeriveAccessAxes(normalized)
 		if err != nil {
 			return EffectiveProfile{}, fmt.Errorf(
