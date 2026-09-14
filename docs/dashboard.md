@@ -58,6 +58,11 @@ In order across the top:
 
 `[` and `]` cycle tabs; Ctrl/Cmd-K opens a command palette covering tab
 navigation, window focus, spawn, retire, power, and every manager dialog.
+Type `spawn luna` to find saved profiles by partial name or alias. Add `fast`
+to select a fast-mode shortcut for a supporting harness (for example,
+`spawn luna fast`). Selecting a result opens the spawn dialog with the profile
+and speed prefilled; the group remains editable and defaults to the last used
+group. Fast mode uses a higher-cost service tier.
 Debug appears only with `dashboard.show_debug_tab`; Processes only with
 `features.processes`. A theme-gated **Vegas** button appears in the slop and
 wizard themes (or via `slop.vegas_in_regular_mode`).
