@@ -44,11 +44,14 @@ type filteredDNSExchange func(
 ) (dnsmessage.Message, error)
 
 type filteredNetworkDNSBroker struct {
-	rules    sandboxpolicy.FilteredNetworkRuleSet
-	udp      *net.UDPConn
-	tcp      *net.TCPListener
-	upstream filteredDNSExchange
-	leases   filteredNetworkDNSLeaseStore
+	policyMu      sync.RWMutex
+	observationMu sync.Mutex
+	observations  map[string]filteredDNSObservation
+	rules         sandboxpolicy.FilteredNetworkRuleSet
+	udp           *net.UDPConn
+	tcp           *net.TCPListener
+	upstream      filteredDNSExchange
+	leases        filteredNetworkDNSLeaseStore
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -227,6 +230,8 @@ func (b *filteredNetworkDNSBroker) release() {
 }
 
 func (b *filteredNetworkDNSBroker) handlePacket(packet []byte) ([]byte, error) {
+	b.policyMu.RLock()
+	defer b.policyMu.RUnlock()
 	var request dnsmessage.Message
 	if err := request.Unpack(packet); err != nil {
 		return nil, nil
@@ -340,6 +345,9 @@ func (b *filteredNetworkDNSBroker) resolveAddresses(
 			leasedAnswers := 0
 			for _, record := range records {
 				record.Header.TTL = minUint32(record.Header.TTL, chainTTL)
+				if err := b.observeDNS(record, seen); err != nil {
+					return nil, dnsmessage.RCodeServerFailure, err
+				}
 				leased, allowed, leaseErr := b.leaseAddressRecord(record, matches)
 				if leaseErr != nil {
 					return nil, dnsmessage.RCodeServerFailure, leaseErr

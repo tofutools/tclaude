@@ -19,6 +19,36 @@ Egress filtering has its own page ([Network filtering](network-filtering.md)),
 and credential-less workflows that make strict profiles livable have theirs
 ([Credential proxies](proxies.md)).
 
+## Live network updates on Linux
+
+Spawn profiles and the spawn dialog offer **Automatically sync network rules**,
+off by default. The CLI equivalent is `tclaude agent spawn ...
+--network-auto-sync on` (or `off` to override a spawn profile). The preference
+is retained on resume. Opted-in agents follow the composed network policy,
+including transitive includes and global/group sandbox assignments.
+
+The sandbox profile editor also offers **Also apply this save to running agents
+with automatic sync off**. This applies that save once to eligible consumers of
+the profile, including indirect consumers. It does not enable automatic sync
+for them. The editor shows the eligible count and reports queued update results.
+API callers use `PATCH /v1/sandbox-profiles/{name}?sync_running=1`; current
+supervisor acknowledgements are available from
+`GET /v1/sandbox-profiles?network_sync_status=1` under the existing sandbox
+profile management permission.
+
+Only launches made with this version that already run tclaude's Linux packet
+gateway can receive updates. Bubblewrap and pasta remain running; nftables and
+the DNS broker switch policy together. Cached DNS observations are re-evaluated
+with their remaining lifetime, and removed permissions also affect established
+traffic. Domain rules retain the packet engine's DNS/IP and shared-address
+limitations; this does not add hostname inspection to arbitrary connections.
+
+Filesystem mounts, disk permissions, environment, and other launch settings
+are not hot-reloaded. Engine/topology changes, macOS, harness-native sandboxes,
+and launches without a packet gateway require a restart. An invalid update
+leaves the previous network policy installed and reports a failure; an uncertain
+kernel update outcome terminates the sandbox rather than claiming enforcement.
+
 ## Who enforces: `--sandbox-impl`
 
 The sandbox implementation is selected at spawn and recorded with the

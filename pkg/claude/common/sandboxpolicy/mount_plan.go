@@ -147,6 +147,8 @@ const (
 // Aliases are auxiliary namespace setup rather than authority-bearing mounts;
 // their targets remain governed by Entries.
 type MountPlan struct {
+	// NetworkSyncID identifies a private host-side supervisor mailbox.
+	NetworkSyncID           string
 	Entries                 []MountEntry
 	Aliases                 []MountAlias
 	NetworkPosture          NetworkPosture

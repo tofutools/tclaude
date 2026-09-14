@@ -37,8 +37,8 @@ export async function previewSandboxProfile(name, body) {
   const target = name ? `${API}/${encodeURIComponent(name)}` : API;
   return request(`${target}?dry_run=1`, { method: name ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 }
-export async function saveSandboxProfile(name, body, revision = '') {
-  const target = name ? `${API}/${encodeURIComponent(name)}?revision=${encodeURIComponent(revision)}` : API;
+export async function saveSandboxProfile(name, body, revision = '', syncRunning = false) {
+  const target = name ? `${API}/${encodeURIComponent(name)}?revision=${encodeURIComponent(revision)}${syncRunning ? '&sync_running=1' : ''}` : API;
   return request(target, { method: name ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 }
 export function deleteSandboxProfile(name) { return request(`${API}/${encodeURIComponent(name)}`, { method: 'DELETE' }); }

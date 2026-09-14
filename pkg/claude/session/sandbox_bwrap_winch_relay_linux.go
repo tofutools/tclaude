@@ -33,6 +33,7 @@ type stackedRelayBindingOptions struct {
 	ManifestSHA256         string
 	Consume                bool
 	ReadyPath              string
+	NetworkSyncID          string
 	FilteredPolicy         string
 	PreserveCallerIdentity bool
 	// ProxyPolicy carries the proxy engine's compiled policy. It is a separate
@@ -150,6 +151,7 @@ func tclaudeLayerWinchRelayCmd() *cobra.Command {
 	)
 	cmd.Flags().StringVar(&binding.RouteSocketPath, "route-helper-socket", "", "route authority Unix socket (internal)")
 	cmd.Flags().StringVar(&binding.RouteAgentID, "route-helper-agent-id", "", "route authority agent identity (internal)")
+	cmd.Flags().StringVar(&binding.NetworkSyncID, "network-sync-id", "", "private network sync mailbox (internal)")
 	cmd.Flags().StringVar(&binding.RouteConvID, "route-helper-conv-id", "", "route authority conversation identity (internal)")
 	cmd.Flags().StringVar(&binding.RouteLaunchGeneration, "route-helper-launch-generation", "", "route authority launch generation (internal)")
 	cmd.Flags().Int64SliceVar(&binding.RouteGroupIDs, "route-helper-group-id", nil, "route authority target group (internal)")
@@ -429,6 +431,8 @@ func runTclaudeLayerWinchRelay(
 		}
 	}
 
+	stopSync := startNetworkSyncLoop(binding.NetworkSyncID, &filtered, status.ChildPID)
+	defer stopSync()
 	for {
 		select {
 		case _, ok := <-winch:

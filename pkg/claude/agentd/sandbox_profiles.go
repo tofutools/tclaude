@@ -259,6 +259,15 @@ func handleSandboxProfiles(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
+		if r.URL.Query().Get("network_sync_status") != "" {
+			rows, err := db.NetworkSyncLaunches()
+			if err != nil {
+				writeError(w, 500, "io", err.Error())
+				return
+			}
+			writeJSON(w, 200, rows)
+			return
+		}
 		profiles, err := db.ListSandboxProfiles()
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -451,8 +460,14 @@ func handleSandboxProfileByName(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "io", updateErr.Error())
 			return
 		}
+		queued, syncErr := db.QueueProfileNetworkSync(p.ID, r.URL.Query().Get("sync_running") == "1")
+		syncError := ""
+		if syncErr != nil {
+			syncError = syncErr.Error()
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id": p.ID, "name": p.Name, "missing": missing, "notices": accessNotices,
+			"network_sync": queued, "network_sync_error": syncError,
 		})
 	case http.MethodDelete:
 		n, err := db.DeleteSandboxProfile(name)
