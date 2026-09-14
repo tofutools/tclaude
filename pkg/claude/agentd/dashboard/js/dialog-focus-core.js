@@ -39,6 +39,26 @@ export function bindDialogFocus({
       onEscape?.();
       return;
     }
+    if (event.key === 'Enter' && !event.defaultPrevented &&
+        !event.isComposing && event.keyCode !== 229) {
+      // Result pages can remove the focused form control. Handle their sole
+      // button at document level so Enter also works after focus falls to body.
+      // Count disabled buttons too: a busy form is not a one-button dialog.
+      const buttons = Array.from(dialog?.querySelectorAll('button') || []).filter((button) => {
+        for (let element = button; element; element = element.parentElement) {
+          const style = window.getComputedStyle(element);
+          if (element.hidden || style.display === 'none' || style.visibility === 'hidden') return false;
+        }
+        return true;
+      });
+      const editing = event.target?.closest?.('input, textarea, select, [contenteditable]');
+      if (buttons.length === 1 && !buttons[0].disabled &&
+          (!editing || event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        buttons[0].click();
+      }
+      return;
+    }
     if (event.key !== 'Tab') return;
     const focusable = focusableElements(dialog);
     if (!focusable.length) {

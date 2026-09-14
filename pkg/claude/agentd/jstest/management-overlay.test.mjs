@@ -100,3 +100,37 @@ test('guarded overlay Cancel shares busy, dirty-confirmation, stack, and focus c
   await mounted.unmount();
   invoker.remove();
 });
+
+test('one-button dialogs accept Enter shortcuts without duplicating handled events or submitting drafts', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { ManagementOverlay } = await harness.importDashboardModule('js/management-overlay.js');
+  let clicks = 0;
+  const mounted = await harness.mount(harness.html`<${ManagementOverlay}
+    id="single-button-test" onClose=${() => {}} onSubmitHotkey=${() => { clicks += 1; }}
+  >
+    <textarea></textarea>
+    <button onClick=${() => { clicks += 1; }}>Done</button>
+  </${ManagementOverlay}>`);
+  const button = harness.document.querySelector('#single-button-test button');
+  const field = harness.document.querySelector('#single-button-test textarea');
+  harness.fireEvent(field, 'keydown', { key: 'Enter' });
+  harness.fireEvent(button, 'keydown', { key: 'Enter', isComposing: true });
+  harness.fireEvent(button, 'keydown', { key: 'Enter', keyCode: 229 });
+  assert.equal(clicks, 0);
+  harness.fireEvent(button, 'keydown', { key: 'Enter', ctrlKey: true });
+  assert.equal(clicks, 1, 'the overlay hotkey must not also click the button');
+  harness.fireEvent(harness.document.body, 'keydown', { key: 'Enter' });
+  assert.equal(clicks, 2);
+  button.disabled = true;
+  harness.fireEvent(harness.document.body, 'keydown', { key: 'Enter' });
+  assert.equal(clicks, 2, 'disabled sole buttons stay inactive');
+  button.disabled = false;
+  const second = button.parentElement.appendChild(harness.document.createElement('button'));
+  second.disabled = true;
+  harness.fireEvent(harness.document.body, 'keydown', { key: 'Enter' });
+  assert.equal(clicks, 2, 'a disabled second button still counts as a choice');
+  second.hidden = true;
+  harness.fireEvent(harness.document.body, 'keydown', { key: 'Enter', metaKey: true });
+  assert.equal(clicks, 3, 'hidden buttons do not count');
+  await mounted.unmount();
+});
