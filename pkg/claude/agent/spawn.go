@@ -486,7 +486,8 @@ type SpawnRequest struct {
 	// FastMode is omitted when profile tiers may fill it, or one of inherit/on/off
 	// when this request authoritatively chooses the Codex service tier. Keeping
 	// explicit inherit on the wire lets a launch override a profile that pins on.
-	FastMode string `json:"fast_mode,omitempty"`
+	FastMode        string `json:"fast_mode,omitempty"`
+	NetworkAutoSync *bool  `json:"network_auto_sync,omitempty"`
 
 	// WorktreePath / WorktreeBranch describe a git worktree the agent
 	// should do its code work in, when Cwd is a parent "monorepo"
@@ -883,7 +884,8 @@ type SpawnParams struct {
 	// tracks that distinction even though the decoded Go bool cannot.
 	codexAppServerSpecified bool
 
-	FastMode string `long:"fast-mode" optional:"true" help:"Codex request speed: inherit (use config.toml) | on (fast, higher credit cost) | off (standard tier). Unset = filled by the profile chain, then inherit. Codex only"`
+	NetworkSync string `long:"network-auto-sync" optional:"true" help:"Automatically follow composed network rules: on | off; unset inherits spawn profiles. Linux tclaude packet sandbox only"`
+	FastMode    string `long:"fast-mode" optional:"true" help:"Codex request speed: inherit (use config.toml) | on (fast, higher credit cost) | off (standard tier). Unset = filled by the profile chain, then inherit. Codex only"`
 
 	// SandboxImpl picks WHO OWNS OS-level containment for the new agent — an axis
 	// independent of --sandbox, which picks a mode WITHIN whatever sandbox is in
@@ -1662,6 +1664,14 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	if p.codexAppServerSpecified || codexAppServer {
 		selected := codexAppServer
 		req.CodexAppServer = &selected
+	}
+	if p.NetworkSync != "" {
+		if p.NetworkSync != "on" && p.NetworkSync != "off" {
+			fmt.Fprintln(stderr, "Error: network-auto-sync must be on or off")
+			return nil, 1
+		}
+		selected := p.NetworkSync == "on"
+		req.NetworkAutoSync = &selected
 	}
 	if strings.TrimSpace(p.FastMode) != "" {
 		req.FastMode = fastMode

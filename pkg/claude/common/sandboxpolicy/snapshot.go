@@ -461,7 +461,9 @@ func HasCapabilities(snapshot Snapshot) bool {
 // (for example, an agent created before snapshot support) and must not be
 // interpreted as an empty-but-authorized policy.
 type Snapshot struct {
-	Version int `json:"version"`
+	// NetworkAutoSync follows composed network edits for this agent, never filesystem changes.
+	NetworkAutoSync bool `json:"network_auto_sync,omitempty"`
+	Version         int  `json:"version"`
 	// ProfilesOmitted records an explicit launch contract that suppresses every
 	// tclaude sandbox-profile tier. It keeps resume/reincarnate from later
 	// reapplying newly assigned global or group values to an opted-out agent.
@@ -565,6 +567,7 @@ func UnconfinedLaunchSnapshot(in Snapshot) Snapshot {
 	effective.Provenance.ResourceCPU = nil
 	effective.Provenance.ResourcePIDs = nil
 	out := NewSnapshot(effective, in.Applied)
+	out.NetworkAutoSync = in.NetworkAutoSync
 	out.ResolutionGroupID = in.ResolutionGroupID
 	out.ProfilesOmitted = in.ProfilesOmitted
 	out.LaunchEnvironment = append([]EnvironmentEntry(nil), in.LaunchEnvironment...)
@@ -735,6 +738,7 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("effective sandbox agent directories changed since resolution")
 	}
 	out := NewSnapshot(in.Effective, in.Applied)
+	out.NetworkAutoSync = in.NetworkAutoSync
 	out.ResolutionGroupID = in.ResolutionGroupID
 	out.ProfilesOmitted = in.ProfilesOmitted
 	out.LaunchEnvironment = append([]EnvironmentEntry(nil), in.LaunchEnvironment...)

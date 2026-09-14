@@ -741,6 +741,8 @@ function harnessDefaults(harness, rememberedEffort = () => '') {
     // otherwise cross-pollute one Claude Code project memory store.
     autoMemory: false,
     peerMessaging: false,
+    networkAutoSync: false,
+    networkAutoSyncSpecified: false,
     sshWorkaround: !!harness?.can_ssh_workaround,
     autoCompactWindow: '',
     contextWindowMax: '',
@@ -798,6 +800,8 @@ export function createSpawnDraft({
     remoteControl: groupRemoteControlDefault(group),
     autoMemory: false,
     peerMessaging: false,
+    networkAutoSync: false,
+    networkAutoSyncSpecified: false,
     sshWorkaround: !!harness?.can_ssh_workaround,
   };
 }
@@ -834,6 +838,8 @@ export function selectSpawnHarness(draft, harnessName, context, rememberedEffort
       ? groupRemoteControlDefault(group) : false,
     autoMemory: harness?.can_auto_memory ? draft.autoMemory : false,
     peerMessaging: harness?.can_peer_messaging ? draft.peerMessaging : false,
+    networkAutoSync: false,
+    networkAutoSyncSpecified: false,
     sshWorkaround: !!harness?.can_ssh_workaround,
     // A harness with no steerable startup context cannot carry trims, and keeping
     // them would send a map the daemon rejects with a 400.
@@ -923,6 +929,8 @@ export function applySpawnProfile(
   // closed rather than inheriting a stale opt-in from a previous selection.
   next.peerMessaging = view.showPeerMessaging && profile.peer_messaging != null
     ? !!profile.peer_messaging : false;
+  next.networkAutoSync = !!profile.network_auto_sync;
+  next.networkAutoSyncSpecified = profile.network_auto_sync != null;
   next.sshWorkaround = view.showSSHWorkaround
     ? profile.ssh_workaround !== false : false;
   // Same "a sparse profile means inherit" rule: an unset window clears any value
@@ -1017,6 +1025,8 @@ export function clearSpawnProfileFields(draft, context, {
     remoteControl: defaults.remoteControl,
     autoMemory: false,
     peerMessaging: false,
+    networkAutoSync: false,
+    networkAutoSyncSpecified: false,
     sshWorkaround: !!findSpawnHarness(context.harnesses, defaults.harness)?.can_ssh_workaround,
     autoCompactWindow: defaults.autoCompactWindow,
     sandboxImpl: defaults.sandboxImpl,
@@ -1186,6 +1196,7 @@ export function spawnProfileSeed(draft, context) {
   if (view.showCopilotAPI && draft.copilotAPI) seed.copilot_api = true;
   if (view.showCodexAppServer && draft.codexAppServer) seed.codex_app_server = true;
   if (view.showFastMode && draft.fastMode !== '') seed.fast_mode = draft.fastMode === '1';
+  if (draft.networkAutoSyncSpecified) seed.network_auto_sync = !!draft.networkAutoSync;
   if (view.showSSHWorkaround) seed.ssh_workaround = !!draft.sshWorkaround;
   if (view.showAutoCompactWindow && text(draft.autoCompactWindow)) {
     seed.auto_compact_window = text(draft.autoCompactWindow);
@@ -1206,7 +1217,7 @@ export function spawnProfileSeed(draft, context) {
 const DIRTY_FIELDS = [
   'group', 'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'sandboxProfile', 'approval',
-  'approvalReviewer', 'tools', 'askTimeout', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'fastMode', 'sandboxImpl', 'allowUnenforcedSandbox', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'peerMessaging', 'sshWorkaround', 'owner',
+  'approvalReviewer', 'tools', 'askTimeout', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'fastMode', 'sandboxImpl', 'allowUnenforcedSandbox', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'peerMessaging', 'sshWorkaround', 'networkAutoSync', 'networkAutoSyncSpecified', 'owner',
   'cwd', 'wtRepo', 'worktree', 'worktreeBranch', 'worktreeBase',
   'syncWorktree', 'fetchLatestWorktree', 'autoFocus', 'includeGroupContext',
 ];
@@ -1310,6 +1321,7 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   if (view.showFastMode) {
     body.fast_mode = draft.fastMode === '1' ? 'on' : draft.fastMode === '0' ? 'off' : 'inherit';
   }
+  if (draft.networkAutoSyncSpecified) body.network_auto_sync = !!draft.networkAutoSync;
   if (view.showSSHWorkaround) {
     body.ssh_workaround = !!draft.sshWorkaround;
   }
