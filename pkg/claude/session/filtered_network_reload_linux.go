@@ -26,12 +26,15 @@ type filteredDNSObservation struct {
 // Cache the whole CNAME path, including observations made under default-allow.
 // A new deny can then revoke a cached answer without another DNS query.
 func (b *filteredNetworkDNSBroker) observeDNS(record dnsmessage.Resource, seen map[string]struct{}) error {
+	return b.observeDNSAt(record, seen, time.Now())
+}
+
+func (b *filteredNetworkDNSBroker) observeDNSAt(record dnsmessage.Resource, seen map[string]struct{}, now time.Time) error {
 	b.observationMu.Lock()
 	defer b.observationMu.Unlock()
 	if b.observations == nil {
 		b.observations = map[string]filteredDNSObservation{}
 	}
-	now := time.Now()
 	for key, observation := range b.observations {
 		if !observation.Expires.After(now) {
 			delete(b.observations, key)
