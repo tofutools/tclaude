@@ -18,12 +18,12 @@ func TestNetworkReloadReevaluatesCachedCNAMEAndRevokesEstablished(t *testing.T) 
 	require.NoError(t, b.observeDNS(record, map[string]struct{}{"allowed.example.": {}, "target.example.": {}}))
 	rules, err := sandboxpolicy.CompileFilteredNetworkRules(sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen, Deny: []sandboxpolicy.NetworkAllowEntry{{Host: "target.example"}}})
 	require.NoError(t, err)
-	policy, err := renderReloadNetworkPolicy(b, rules, time.Now())
+	policy, err := renderReloadNetworkPolicy(b, rules, networkObservationExpiry(b).Add(-59*time.Second))
 	require.NoError(t, err)
 	require.NotContains(t, policy, "ct state established accept")
 	require.Contains(t, policy, "203.0.113.9 timeout 59s")
 	require.Contains(t, policy, "add element inet")
-	policy, err = renderReloadNetworkPolicy(b, rules, time.Now().Add(time.Minute))
+	policy, err = renderReloadNetworkPolicy(b, rules, networkObservationExpiry(b).Add(time.Second))
 	require.NoError(t, err)
 	require.NotContains(t, policy, "203.0.113.9")
 }
@@ -37,7 +37,15 @@ func TestNetworkReloadRetainsEarlierLongDNSAnswer(t *testing.T) {
 	require.NoError(t, b.observeDNS(record, names))
 	rules, err := sandboxpolicy.CompileFilteredNetworkRules(sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen, Deny: []sandboxpolicy.NetworkAllowEntry{{Host: "target.example"}}})
 	require.NoError(t, err)
-	policy, err := renderReloadNetworkPolicy(b, rules, time.Now().Add(2*time.Second))
+	policy, err := renderReloadNetworkPolicy(b, rules, networkObservationExpiry(b).Add(-57*time.Second))
 	require.NoError(t, err)
 	require.Contains(t, policy, "203.0.113.9 timeout 57s")
+}
+
+// Derive render time from the recorded expiry so scheduler delays cannot change TTL assertions.
+func networkObservationExpiry(b *filteredNetworkDNSBroker) time.Time {
+	for _, observation := range b.observations {
+		return observation.Expires
+	}
+	panic("test requires a DNS observation")
 }

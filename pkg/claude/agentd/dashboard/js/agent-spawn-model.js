@@ -838,8 +838,8 @@ export function selectSpawnHarness(draft, harnessName, context, rememberedEffort
       ? groupRemoteControlDefault(group) : false,
     autoMemory: harness?.can_auto_memory ? draft.autoMemory : false,
     peerMessaging: harness?.can_peer_messaging ? draft.peerMessaging : false,
-    networkAutoSync: false,
-    networkAutoSyncSpecified: false,
+    networkAutoSync: draft.networkAutoSync,
+    networkAutoSyncSpecified: draft.networkAutoSyncSpecified,
     sshWorkaround: !!harness?.can_ssh_workaround,
     // A harness with no steerable startup context cannot carry trims, and keeping
     // them would send a map the daemon rejects with a 400.
