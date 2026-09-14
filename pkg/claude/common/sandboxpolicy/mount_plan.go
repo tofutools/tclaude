@@ -148,6 +148,7 @@ const (
 // their targets remain governed by Entries.
 type MountPlan struct {
 	// NetworkSyncID identifies a private host-side supervisor mailbox.
+	NetworkSyncDatabase     string
 	NetworkSyncID           string
 	Entries                 []MountEntry
 	Aliases                 []MountAlias

@@ -22,11 +22,12 @@ import (
 // TclaudeLayerLaunchContract carries writable paths required by the launched
 // harness itself rather than granted by the operator's sandbox profile.
 type TclaudeLayerLaunchContract struct {
-	NetworkSyncID     string   `json:"network_sync_id,omitempty"`
-	HarnessName       string   `json:"harness_name"`
-	StateRoot         string   `json:"state_root"`
-	StateDirs         []string `json:"state_dirs,omitempty"`
-	ReadOnlyStateDirs []string `json:"read_only_state_dirs,omitempty"`
+	NetworkSyncDatabase string   `json:"network_sync_database,omitempty"`
+	NetworkSyncID       string   `json:"network_sync_id,omitempty"`
+	HarnessName         string   `json:"harness_name"`
+	StateRoot           string   `json:"state_root"`
+	StateDirs           []string `json:"state_dirs,omitempty"`
+	ReadOnlyStateDirs   []string `json:"read_only_state_dirs,omitempty"`
 	// HarnessConfigFloor freezes the harness's own policy/code-execution
 	// surface as read-only. See sandbox_harness_config_floor.go for what is in
 	// it and why.
@@ -1550,6 +1551,7 @@ func tclaudeLayerSpecRenderInput(
 			fmt.Errorf("render mount plan: %w", err)
 	}
 	plan.NetworkSyncID = spec.Contract.NetworkSyncID
+	plan.NetworkSyncDatabase = spec.Contract.NetworkSyncDatabase
 	phase0WriteDirs, err := tclaudeLayerPhase0WriteDirs(spec.Contract, spec.Effective)
 	if err != nil {
 		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
