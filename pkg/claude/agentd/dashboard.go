@@ -3172,7 +3172,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		// or may belong to another author. Reuse the background metadata
 		// refresh; snapshot rendering itself never waits for GitHub.
 		if authoredOpenPRs.Available && strings.HasPrefix(key, "github:") &&
-			!indexedPRs[key] && !presentedPRCacheFresh(localPRs[i].URL, time.Now()) {
+			!indexedPRs[key] && !presentedPRTitleCacheFresh(localPRs[i].URL, time.Now()) {
 			schedulePresentedPRRefresh("", localPRs[i].URL)
 		}
 		indexedPRs[key] = true

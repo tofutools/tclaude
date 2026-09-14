@@ -144,11 +144,12 @@ func isTerminalPresentedPRState(state string) bool {
 }
 
 type presentedPRInfo struct {
-	Title     string    `json:"title,omitempty"`
-	Number    int       `json:"number"`
-	URL       string    `json:"url"`
-	State     string    `json:"state"`
-	FetchedAt time.Time `json:"fetched_at"`
+	Title          string    `json:"title,omitempty"`
+	TitleCheckedAt time.Time `json:"title_checked_at,omitempty"`
+	Number         int       `json:"number"`
+	URL            string    `json:"url"`
+	State          string    `json:"state"`
+	FetchedAt      time.Time `json:"fetched_at"`
 	// Checks rides this resolver's `gh pr view` call but is cached under
 	// the shared per-PR check key instead of here — same arrangement as
 	// repoBranchInfo.Checks. Resolver out-channel only, never persisted.
@@ -165,6 +166,18 @@ func presentedPRCacheFresh(rawURL string, now time.Time) bool {
 		return false
 	}
 	return now.Sub(info.FetchedAt) < branchLinkTTL
+}
+
+// Title refreshes have their own clock: branch-state observations do not
+// fetch titles and must not keep a missing or stale title fresh indefinitely.
+func presentedPRTitleCacheFresh(rawURL string, now time.Time) bool {
+	row, err := db.LoadGitCache(presentedPRCacheKey(rawURL))
+	if err != nil || row == nil {
+		return false
+	}
+	var info presentedPRInfo
+	return json.Unmarshal(row.Data, &info) == nil && !info.TitleCheckedAt.IsZero() &&
+		now.Sub(info.TitleCheckedAt) < branchLinkTTL
 }
 
 func schedulePresentedPRRefresh(agentID, rawURL string) {
@@ -191,6 +204,7 @@ func refreshPresentedPR(agentID, rawURL, key string) {
 	}
 	info.State = strings.ToLower(strings.TrimSpace(info.State))
 	info.FetchedAt = now
+	info.TitleCheckedAt = now
 	if info.Checks != nil {
 		checks := *info.Checks
 		checks.PRState = info.State
@@ -275,6 +289,10 @@ func savePresentedPRCache(key, rawURL string, info presentedPRInfo, now time.Tim
 	presentedPRCacheMu.Lock()
 	defer presentedPRCacheMu.Unlock()
 
+	if info.Title != "" && info.TitleCheckedAt.IsZero() {
+		info.TitleCheckedAt = info.FetchedAt
+	}
+
 	if row, err := db.LoadGitCache(key); err == nil && row != nil {
 		var current presentedPRInfo
 		if json.Unmarshal(row.Data, &current) == nil {
@@ -284,8 +302,11 @@ func savePresentedPRCache(key, rawURL string, info presentedPRInfo, now time.Tim
 			}
 			// State-only observations and failed refreshes must not erase a
 			// title obtained from GitHub.
-			if info.Title == "" || info.FetchedAt.Before(currentAt) {
+			if info.Title == "" || info.TitleCheckedAt.Before(current.TitleCheckedAt) {
 				info.Title = current.Title
+			}
+			if info.TitleCheckedAt.Before(current.TitleCheckedAt) {
+				info.TitleCheckedAt = current.TitleCheckedAt
 			}
 			state, fetchedAt := newestPRState(current.State, currentAt, info.State, info.FetchedAt)
 			info.State = state
