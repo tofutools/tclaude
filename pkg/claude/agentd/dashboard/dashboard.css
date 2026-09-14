@@ -3571,15 +3571,16 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .costs-summary-row { min-height: 20px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px; }
 .costs-summary-row #costs-summary { flex: 1 1 760px; min-width: 0; }
 .costs-dimension-filters { position: relative; flex: 0 1 auto; max-width: 100%; justify-content: flex-start; gap: 8px; overflow: visible; }
-/* Toolbar menus must not inherit disclosure-block margins: the header's
-   row gaps own spacing, and the trigger stays smaller than the span buttons. */
-.cost-filter-menu { position: relative; flex: 0 0 auto; margin: 0; }
+/* Spend existing row whitespace on taller triggers without growing the header. */
+.cost-filter-menu { position: relative; flex: 0 0 auto; margin: -3px 0; }
 .cost-filter-menu > summary {
-  display: flex; align-items: center; gap: 8px; padding: 1px 9px;
+  display: flex; align-items: center; gap: 8px; padding: 4px 9px;
   font-size: 12px; line-height: 16px;
   border: 1px solid #31517a; border-radius: 5px; background: #142033;
   color: #c9d1d9; cursor: pointer; list-style: none;
+  -webkit-user-select: none; user-select: none;
 }
+.cost-filter-menu > summary:hover { border-color: #58a6ff; background: #182b43; }
 .cost-filter-menu > summary::marker { content: ""; }
 .cost-filter-menu > summary::-webkit-details-marker { display: none; }
 details.cost-filter-menu > summary::before,
