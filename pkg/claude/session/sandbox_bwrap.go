@@ -3237,7 +3237,7 @@ func tclaudeLayerPhase0WriteDirs(
 		}
 	}
 	candidates := append([]string{stateRoot}, contract.WriteDirs...)
-	runtimeWriteDirs, err := tclaudeLayerHarnessRuntimeWriteDirs(contract.HarnessName)
+	runtimeWriteDirs, err := tclaudeLayerHarnessRuntimeWriteDirs(contract.HarnessName, effective.DarwinDisableKeychainWrite)
 	if err != nil {
 		return nil, err
 	}

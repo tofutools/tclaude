@@ -14,15 +14,26 @@ import (
 var darwinClaudeRuntimeTempBase = "/private/tmp"
 
 // tclaudeLayerHarnessRuntimeWriteDirs prepares writable host paths required by
-// the harness before any tool subprocess starts. Claude Code stages Bash tool
-// invocations below /private/tmp/claude-<uid> and writes per-command cwd state
+// the harness before any tool subprocess starts. Unless the profile opts out,
+// every harness gets the user Keychain directory for credential persistence
+// through macOS Keychain APIs.
+// This is shared Keychain authority, not a grant scoped to one credential item.
+// Claude Code stages Bash tool invocations below /private/tmp/claude-<uid> and writes per-command cwd state
 // to unpredictable /tmp/claude-*-cwd files, independently of Darwin's standard
 // $TMPDIR. Since /tmp resolves to /private/tmp on macOS, the outer Seatbelt
 // layer must carry the canonical temp root as launch-contract authority even
 // when Claude's own inner sandbox is disabled.
-func tclaudeLayerHarnessRuntimeWriteDirs(harnessName string) ([]string, error) {
+func tclaudeLayerHarnessRuntimeWriteDirs(harnessName string, disableKeychainWrite bool) ([]string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve home for macOS Keychain runtime access: %w", err)
+	}
+	var keychains []string
+	if !disableKeychainWrite {
+		keychains = []string{filepath.Join(home, "Library", "Keychains")}
+	}
 	if harnessName != harness.DefaultName {
-		return nil, nil
+		return keychains, nil
 	}
 	base, err := filepath.EvalSymlinks(filepath.Clean(darwinClaudeRuntimeTempBase))
 	if err != nil {
@@ -60,5 +71,5 @@ func tclaudeLayerHarnessRuntimeWriteDirs(harnessName string) ([]string, error) {
 		}
 		return nil, fmt.Errorf("canonicalize Claude runtime scratch root %q: %w", path, err)
 	}
-	return []string{base, path}, nil
+	return append([]string{base, path}, keychains...), nil
 }

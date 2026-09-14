@@ -35,10 +35,11 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 			{Name: "ZED", Value: "last"},
 			{Name: "ALPHA", Value: "first"},
 		},
-		AgentDirectories:        []string{"GOLANGCI_LINT_CACHE", "GOCACHE"},
-		NetworkAccess:           sandboxpolicy.NetworkAccessInternet,
-		ResourceLimits:          sandboxpolicy.ResourceLimits{Memory: "4GiB", CPU: &cpu},
-		DarwinAllowMachRegister: true,
+		AgentDirectories:           []string{"GOLANGCI_LINT_CACHE", "GOCACHE"},
+		NetworkAccess:              sandboxpolicy.NetworkAccessInternet,
+		ResourceLimits:             sandboxpolicy.ResourceLimits{Memory: "4GiB", CPU: &cpu},
+		DarwinAllowMachRegister:    true,
+		DarwinDisableKeychainWrite: true,
 	})
 	require.NoError(t, err)
 
@@ -70,6 +71,7 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 	require.NotNil(t, got.ResourceLimits.CPU)
 	assert.Equal(t, 1.5, *got.ResourceLimits.CPU)
 	assert.True(t, got.DarwinAllowMachRegister)
+	assert.True(t, got.DarwinDisableKeychainWrite)
 	assert.False(t, got.CreatedAt.IsZero())
 	assert.False(t, got.UpdatedAt.IsZero())
 
@@ -79,6 +81,7 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 	got.AgentDirectories = []string{"GOMODCACHE"}
 	got.NetworkAccess = sandboxpolicy.NetworkAccessNone
 	got.DarwinAllowMachRegister = false
+	got.DarwinDisableKeychainWrite = false
 	require.NoError(t, UpdateSandboxProfile(got))
 	updated, err := GetSandboxProfileByID(populatedID)
 	require.NoError(t, err)
@@ -88,6 +91,7 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 	assert.Equal(t, []string{"GOMODCACHE"}, updated.AgentDirectories)
 	assert.Equal(t, sandboxpolicy.NetworkAccessNone, updated.NetworkAccess)
 	assert.False(t, updated.DarwinAllowMachRegister)
+	assert.False(t, updated.DarwinDisableKeychainWrite)
 
 	list, err := ListSandboxProfiles()
 	require.NoError(t, err)

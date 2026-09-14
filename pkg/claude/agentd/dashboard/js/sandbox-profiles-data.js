@@ -62,6 +62,7 @@ export function sandboxProfileSummary(profile) {
   const limits = profile.resource_limits || {};
   if (limits.memory) parts.push(`memory ${limits.memory}`);
   if (limits.cpu != null) parts.push(`CPU ${limits.cpu}`);
+  if (profile.darwin_disable_keychain_write) parts.push('Keychain writes disabled');
   if (profile.darwin_allow_mach_register) parts.push('Mach registration');
   const authoredNetwork = sandboxNetworkAuthoring(profile);
   if (authoredNetwork.baseline === 'allow') parts.push('network allow all');

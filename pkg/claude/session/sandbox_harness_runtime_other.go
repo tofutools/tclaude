@@ -2,6 +2,6 @@
 
 package session
 
-func tclaudeLayerHarnessRuntimeWriteDirs(string) ([]string, error) {
+func tclaudeLayerHarnessRuntimeWriteDirs(string, bool) ([]string, error) {
 	return nil, nil
 }

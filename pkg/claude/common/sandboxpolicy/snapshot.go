@@ -11,6 +11,9 @@ import (
 	"time"
 )
 
+// SnapshotVersion 15 adds the macOS automatic Keychain write opt-out. Older
+// binaries must not silently drop that restriction.
+//
 // SnapshotVersion 14 splits the common launch environment into its mutable
 // group tier and the higher-precedence birth-time overlay. That lets a relaunch
 // observe current group settings without re-reading mutable spawn profiles or
@@ -39,7 +42,7 @@ import (
 // bump preserved the fail-closed downgrade property, where an older binary
 // rejects a newer snapshot rather than ignoring a marker it does not
 // understand. Version 5 removed the retired read-baseline mechanism (TCL-623).
-const SnapshotVersion = 14
+const SnapshotVersion = 15
 
 // AppliedProfile preserves stable registry provenance without making the
 // registry row authoritative after resolution. The effective values in the
@@ -137,6 +140,9 @@ func RequireContained(parent, child Snapshot) error {
 	}
 	if err := requireResourceLimitsContained(parent.Effective.ResourceLimits, child.Effective.ResourceLimits); err != nil {
 		return err
+	}
+	if parent.Effective.DarwinDisableKeychainWrite && !child.Effective.DarwinDisableKeychainWrite {
+		return fmt.Errorf("darwin Keychain write opt-out from the parent snapshot is not preserved")
 	}
 	if child.Effective.DarwinAllowMachRegister && !parent.Effective.DarwinAllowMachRegister {
 		return fmt.Errorf("darwin mach-register access is not present in the parent snapshot")
@@ -542,6 +548,7 @@ func UnconfinedLaunchSnapshot(in Snapshot) Snapshot {
 	effective.UnixSockets = nil
 	effective.ResourceLimits = ResourceLimits{}
 	effective.DarwinAllowMachRegister = false
+	effective.DarwinDisableKeychainWrite = false
 	effective.AccessNotices = nil
 	effective.Provenance.Filesystem = nil
 	effective.Provenance.Tmpfs = nil
@@ -586,6 +593,7 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		in.Effective.UnixSockets != nil ||
 		in.Effective.ResourceLimits.Enabled() ||
 		in.Effective.DarwinAllowMachRegister ||
+		in.Effective.DarwinDisableKeychainWrite ||
 		len(in.Effective.AccessNotices) > 0 ||
 		len(in.Effective.PreLaunch) > 0 ||
 		in.UnixSocketMaterialization != nil) {
@@ -609,17 +617,18 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("launch environment overrides changed since resolution")
 	}
 	normalized, _, err := NormalizeForPersistence(Profile{
-		Name:                    "effective-sandbox-snapshot",
-		Filesystem:              in.Effective.Filesystem,
-		Tmpfs:                   in.Effective.Tmpfs,
-		Environment:             in.Effective.Environment,
-		FilesystemRoot:          in.Effective.FilesystemRoot,
-		HarnessConfig:           in.Effective.HarnessConfig,
-		NetworkAccess:           in.Effective.NetworkAccess,
-		UnixSockets:             in.Effective.UnixSockets,
-		ResourceLimits:          in.Effective.ResourceLimits,
-		DarwinAllowMachRegister: in.Effective.DarwinAllowMachRegister,
-		PreLaunch:               in.Effective.PreLaunch,
+		Name:                       "effective-sandbox-snapshot",
+		Filesystem:                 in.Effective.Filesystem,
+		Tmpfs:                      in.Effective.Tmpfs,
+		Environment:                in.Effective.Environment,
+		FilesystemRoot:             in.Effective.FilesystemRoot,
+		HarnessConfig:              in.Effective.HarnessConfig,
+		NetworkAccess:              in.Effective.NetworkAccess,
+		UnixSockets:                in.Effective.UnixSockets,
+		ResourceLimits:             in.Effective.ResourceLimits,
+		DarwinAllowMachRegister:    in.Effective.DarwinAllowMachRegister,
+		DarwinDisableKeychainWrite: in.Effective.DarwinDisableKeychainWrite,
+		PreLaunch:                  in.Effective.PreLaunch,
 	})
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("revalidate effective sandbox snapshot: %w", err)
@@ -767,7 +776,7 @@ func NormalizeSnapshotVersion(in Snapshot) (Snapshot, error) {
 	// strictly narrows what the agent may write, so it cannot widen anything a
 	// human already sanctioned, and no live agent is stranded.
 	// TestEverySnapshotVersionUpToCurrentIsAccepted pins that.
-	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, SnapshotVersion:
+	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, SnapshotVersion:
 		in.Version = SnapshotVersion
 		return in, nil
 	default:
@@ -873,20 +882,21 @@ func FilesystemForLaunch(in EffectiveProfile) ([]FilesystemGrant, error) {
 
 func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 	out := EffectiveProfile{
-		Filesystem:              append([]FilesystemGrant{}, in.Filesystem...),
-		MountAliases:            append([]MountAlias(nil), in.MountAliases...),
-		Tmpfs:                   cloneTmpfsMounts(in.Tmpfs),
-		Environment:             append([]EnvironmentEntry{}, in.Environment...),
-		AgentDirectories:        append([]string{}, in.AgentDirectories...),
-		FilesystemRoot:          in.FilesystemRoot,
-		HarnessConfig:           in.HarnessConfig,
-		NetworkAccess:           in.NetworkAccess,
-		Network:                 cloneNetworkRulesPtr(in.Network),
-		UnixSockets:             cloneUnixSocketRulesPtr(in.UnixSockets),
-		ResourceLimits:          cloneResourceLimits(in.ResourceLimits),
-		DarwinAllowMachRegister: in.DarwinAllowMachRegister,
-		PreLaunch:               clonePreLaunch(in.PreLaunch),
-		AccessNotices:           cloneAccessNotices(in.AccessNotices),
+		Filesystem:                 append([]FilesystemGrant{}, in.Filesystem...),
+		MountAliases:               append([]MountAlias(nil), in.MountAliases...),
+		Tmpfs:                      cloneTmpfsMounts(in.Tmpfs),
+		Environment:                append([]EnvironmentEntry{}, in.Environment...),
+		AgentDirectories:           append([]string{}, in.AgentDirectories...),
+		FilesystemRoot:             in.FilesystemRoot,
+		HarnessConfig:              in.HarnessConfig,
+		NetworkAccess:              in.NetworkAccess,
+		Network:                    cloneNetworkRulesPtr(in.Network),
+		UnixSockets:                cloneUnixSocketRulesPtr(in.UnixSockets),
+		ResourceLimits:             cloneResourceLimits(in.ResourceLimits),
+		DarwinAllowMachRegister:    in.DarwinAllowMachRegister,
+		DarwinDisableKeychainWrite: in.DarwinDisableKeychainWrite,
+		PreLaunch:                  clonePreLaunch(in.PreLaunch),
+		AccessNotices:              cloneAccessNotices(in.AccessNotices),
 		Provenance: ResolutionProvenance{
 			Applied:          cloneProfileSources(in.Provenance.Applied),
 			Filesystem:       make(map[string][]ProfileSource, len(in.Provenance.Filesystem)),

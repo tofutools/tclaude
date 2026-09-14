@@ -89,17 +89,18 @@ func FlattenWithNotices(in Profile, lookup LookupProfile) (Profile, []AccessNoti
 			MaxNetworkAllowEntries)
 	}
 	out := Profile{
-		Name:                    root.Name,
-		PreLaunch:               clonePreLaunch(parts.preLaunch),
-		Tmpfs:                   sortedTmpfsMounts(parts.tmpfs),
-		Filesystem:              make([]FilesystemGrant, 0, len(parts.filesystem)),
-		Environment:             make([]EnvironmentEntry, 0, len(parts.environment)),
-		AgentDirectories:        make([]string, 0, len(parts.agentDirectories)),
-		FilesystemRoot:          parts.filesystemRoot,
-		HarnessConfig:           parts.harnessConfig,
-		NetworkAccess:           parts.networkAccess,
-		ResourceLimits:          parts.resourceLimits,
-		DarwinAllowMachRegister: parts.darwinAllowMachRegister,
+		Name:                       root.Name,
+		PreLaunch:                  clonePreLaunch(parts.preLaunch),
+		Tmpfs:                      sortedTmpfsMounts(parts.tmpfs),
+		Filesystem:                 make([]FilesystemGrant, 0, len(parts.filesystem)),
+		Environment:                make([]EnvironmentEntry, 0, len(parts.environment)),
+		AgentDirectories:           make([]string, 0, len(parts.agentDirectories)),
+		FilesystemRoot:             parts.filesystemRoot,
+		HarnessConfig:              parts.harnessConfig,
+		NetworkAccess:              parts.networkAccess,
+		ResourceLimits:             parts.resourceLimits,
+		DarwinAllowMachRegister:    parts.darwinAllowMachRegister,
+		DarwinDisableKeychainWrite: parts.darwinDisableKeychainWrite,
 	}
 	if parts.hasFilesystemSpellings {
 		out.FilesystemSpellings = &FilesystemSpellings{
@@ -193,19 +194,20 @@ type flattenedParts struct {
 	// because the overridden rule simply vanishes — and if it was a deny, the
 	// composed profile ends up neither denying nor granting that host path, with
 	// nothing downstream able to notice. Refuse instead.
-	filesystemConflicts     []string
-	hasFilesystemSpellings  bool
-	environment             map[string]EnvironmentEntry
-	agentDirectories        map[string]struct{}
-	filesystemRoot          FilesystemRootMode
-	harnessConfig           HarnessConfigAccess
-	networkAccess           NetworkAccess
-	network                 NetworkRules
-	unixSockets             UnixSocketRules
-	hasNewNetwork           bool
-	hasNewUnixSockets       bool
-	resourceLimits          ResourceLimits
-	darwinAllowMachRegister bool
+	filesystemConflicts        []string
+	hasFilesystemSpellings     bool
+	environment                map[string]EnvironmentEntry
+	agentDirectories           map[string]struct{}
+	filesystemRoot             FilesystemRootMode
+	harnessConfig              HarnessConfigAccess
+	networkAccess              NetworkAccess
+	network                    NetworkRules
+	unixSockets                UnixSocketRules
+	hasNewNetwork              bool
+	hasNewUnixSockets          bool
+	resourceLimits             ResourceLimits
+	darwinAllowMachRegister    bool
+	darwinDisableKeychainWrite bool
 	// preLaunch keeps composed blocks in execution order. Unlike every other
 	// merged field it is a SLICE, not a map: an override replaces a same-named
 	// block in place rather than re-keying it, because these are sequential
@@ -340,6 +342,7 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 			value := *parts.resourceLimits.CPU
 			out.resourceLimits.CPU = &value
 		}
+		out.darwinDisableKeychainWrite = out.darwinDisableKeychainWrite || parts.darwinDisableKeychainWrite
 		out.network = intersectNetworkRules(out.network, parts.network)
 		out.unixSockets = intersectUnixSocketRules(out.unixSockets, parts.unixSockets)
 		out.hasNewNetwork = out.hasNewNetwork || parts.hasNewNetwork
@@ -403,6 +406,7 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 		out.resourceLimits.CPU = &value
 	}
 	out.darwinAllowMachRegister = out.darwinAllowMachRegister || p.DarwinAllowMachRegister
+	out.darwinDisableKeychainWrite = out.darwinDisableKeychainWrite || p.DarwinDisableKeychainWrite
 	own := composeProfileAccessAxes(p)
 	out.network = intersectNetworkRules(out.network, own.network)
 	out.unixSockets = intersectUnixSocketRules(out.unixSockets, own.unixSockets)

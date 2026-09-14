@@ -244,7 +244,7 @@ func TestNoProfileFieldCanCarryProtectedAccess(t *testing.T) {
 			// the agentd control socket.
 			// TestTmpfsCannotShadowProtectedRoots below checks this rather than
 			// leaving it as a claim.
-			want: []string{"Name", "Filesystem", "FilesystemSpellings", "Tmpfs", "Environment", "AgentDirectories", "FilesystemRoot", "HarnessConfig", "NetworkAccess", "Network", "UnixSockets", "ResourceLimits", "DarwinAllowMachRegister", "PreLaunch", "Includes"},
+			want: []string{"Name", "Filesystem", "FilesystemSpellings", "Tmpfs", "Environment", "AgentDirectories", "FilesystemRoot", "HarnessConfig", "NetworkAccess", "Network", "UnixSockets", "ResourceLimits", "DarwinAllowMachRegister", "DarwinDisableKeychainWrite", "PreLaunch", "Includes"},
 		},
 		{
 			name: "EffectiveProfile",
@@ -257,7 +257,7 @@ func TestNoProfileFieldCanCarryProtectedAccess(t *testing.T) {
 			// the strictest ceiling and re-runs the same wall over the composed
 			// set, so a pair of profiles cannot compose into a row neither one
 			// could author.
-			want: []string{"Filesystem", "MountAliases", "Tmpfs", "Environment", "AgentDirectories", "FilesystemRoot", "HarnessConfig", "NetworkAccess", "Network", "UnixSockets", "ResourceLimits", "DarwinAllowMachRegister", "PreLaunch", "AccessNotices", "Provenance"},
+			want: []string{"Filesystem", "MountAliases", "Tmpfs", "Environment", "AgentDirectories", "FilesystemRoot", "HarnessConfig", "NetworkAccess", "Network", "UnixSockets", "ResourceLimits", "DarwinAllowMachRegister", "DarwinDisableKeychainWrite", "PreLaunch", "AccessNotices", "Provenance"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
