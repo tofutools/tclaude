@@ -50,7 +50,9 @@ export function createCostsActions({ state, fetchImpl = globalThis.fetch } = {})
         const value = data.harness_factors?.[key];
         if (value != null) overrides[key] = String(value);
       }
-      return state.commitFactor(token, { raw, overrides, loaded: true, status: '' });
+      if (!state.commitFactor(token, { raw, overrides, loaded: true, status: '' })) return false;
+      state.recordFactorSave('', null, true);
+      return true;
     } catch (error) {
       // Loading the factor is best-effort and must not block cost history.
       state.failFactor(token, 'Could not load multipliers. Retry.');
@@ -65,7 +67,9 @@ export function createCostsActions({ state, fetchImpl = globalThis.fetch } = {})
       value = Number(raw);
       if (!Number.isFinite(value) || value <= 0 || value > 10) {
         const token = state.beginFactor('');
-        state.failFactor(token, 'Multiplier must be greater than 0 and at most 10.');
+        const error = 'Multiplier must be greater than 0 and at most 10.';
+        state.recordFactorSave(harness || 'Default', error);
+        state.failFactor(token, error);
         return Promise.resolve(false);
       }
     }
@@ -78,6 +82,7 @@ export function createCostsActions({ state, fetchImpl = globalThis.fetch } = {})
   }
 
   function persistFactor(body) {
+    const field = body.reset_all ? 'Reset all' : (body.harness || 'Default');
     const token = state.beginFactor('saving…');
     // The endpoint merges one setting at a time without a revision precondition.
     // Serialize POSTs in input order so an older, slower request can never
@@ -91,10 +96,14 @@ export function createCostsActions({ state, fetchImpl = globalThis.fetch } = {})
           body: JSON.stringify(body),
         });
         if (!response.ok) throw new Error(await responseError(response));
-        if (!state.commitFactor(token, { status: 'saved' })) return false;
+        state.recordFactorSave(field, null, body.reset_all);
+        const committed = state.commitFactor(token, { status: 'saved' });
+        // Even a superseded status may represent a successful independent
+        // setting change. Refresh totals if the next field's save later fails.
         await load();
-        return true;
+        return committed;
       } catch (error) {
+        state.recordFactorSave(field, error);
         state.failFactor(token, error);
         return false;
       }

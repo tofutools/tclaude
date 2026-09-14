@@ -46,7 +46,14 @@ export function createCostsState({
   const sort = signal({ key: 'activity', dir: 'desc' });
   const payload = signal(null);
   const request = signal({ phase: 'idle', requestId: 0, hasLoaded: false, error: null });
-  const factor = signal({ raw: '', overrides: {}, loaded: false, status: '', error: false, editVersion: 0, requestId: 0 });
+  const factorState = signal({ raw: '', overrides: {}, loaded: false, status: '', error: false, editVersion: 0, requestId: 0 });
+  // A newer save for another field cannot supersede this field's failure.
+  const factorSaveErrors = signal({});
+  const factor = computed(() => {
+    const failures = Object.entries(factorSaveErrors.value);
+    return failures.length ? { ...factorState.value, error: true,
+      status: failures.map(([field, error]) => `${field}: ${error}`).join('; ') } : factorState.value;
+  });
   let initialized = false;
 
   // Keep cost-only derivations outside the snapshot-dependent view. The
@@ -281,26 +288,33 @@ export function createCostsState({
   }
 
   function editFactor(raw, harness = '') {
-    const patch = harness ? { overrides: { ...factor.value.overrides, [harness]: String(raw ?? '') } } : { raw: String(raw ?? '') };
-    factor.value = { ...factor.value, ...patch, status: '', error: false, editVersion: factor.value.editVersion + 1 };
+    const patch = harness ? { overrides: { ...factorState.value.overrides, [harness]: String(raw ?? '') } } : { raw: String(raw ?? '') };
+    factorState.value = { ...factorState.value, ...patch, status: '', error: false, editVersion: factorState.value.editVersion + 1 };
   }
   function resetFactors() {
-    factor.value = { ...factor.value, raw: '', overrides: {}, status: '', error: false, editVersion: factor.value.editVersion + 1 };
+    factorState.value = { ...factorState.value, raw: '', overrides: {}, status: '', error: false, editVersion: factorState.value.editVersion + 1 };
   }
   function beginFactor(status = 'saving…') {
-    const requestId = factor.value.requestId + 1;
-    factor.value = { ...factor.value, requestId, status, error: false };
-    return { requestId, editVersion: factor.value.editVersion };
+    const requestId = factorState.value.requestId + 1;
+    factorState.value = { ...factorState.value, requestId, status, error: false };
+    return { requestId, editVersion: factorState.value.editVersion };
   }
   function commitFactor(token, patch) {
-    if (factor.value.requestId !== token.requestId || factor.value.editVersion !== token.editVersion) return false;
-    factor.value = { ...factor.value, ...patch, error: false };
+    if (factorState.value.requestId !== token.requestId || factorState.value.editVersion !== token.editVersion) return false;
+    factorState.value = { ...factorState.value, ...patch, error: false };
     return true;
   }
   function failFactor(token, error) {
-    if (factor.value.requestId !== token.requestId || factor.value.editVersion !== token.editVersion) return false;
-    factor.value = { ...factor.value, status: errorMessage(error), error: true };
+    if (factorState.value.requestId !== token.requestId || factorState.value.editVersion !== token.editVersion) return false;
+    factorState.value = { ...factorState.value, status: errorMessage(error), error: true };
     return true;
+  }
+
+  function recordFactorSave(field, error, resetAll = false) {
+    const errors = resetAll && !error ? {} : { ...factorSaveErrors.value };
+    if (error) errors[field] = errorMessage(error);
+    else delete errors[field];
+    factorSaveErrors.value = errors;
   }
 
   return Object.freeze({
@@ -310,7 +324,7 @@ export function createCostsState({
     setFillEmpty, setIncludeWeekends, toggleProvider, toggleModel,
     setStackByProvider, setStackByModel, cycleSort, setQuery,
     beginRequest, commitRequest, failRequest, editFactor, beginFactor,
-    commitFactor, failFactor, resetFactors,
+    commitFactor, failFactor, resetFactors, recordFactorSave,
   });
 }
 
