@@ -1908,21 +1908,21 @@ test('network auto-sync survives harness switches and accepts later profile sele
   try {
     state.open({ groupName: 'alpha' });
     await flush(harness);
-    assert.equal(host.querySelector('#agent-spawn-network-auto-sync').checked, true);
+    assert.equal(host.querySelector('#agent-spawn-network-auto-sync').hasAttribute('checked'), true);
     const select = host.querySelector('#agent-spawn-harness');
     setValue(select, 'codex');
     await harness.act(() => harness.fireEvent(select, 'change'));
     await flush(harness);
-    assert.equal(host.querySelector('#agent-spawn-network-auto-sync').checked, true);
+    assert.equal(host.querySelector('#agent-spawn-network-auto-sync').hasAttribute('checked'), true);
     const picker = host.querySelector('#agent-spawn-load-profile');
     setValue(picker, 'manual');
     await harness.act(() => harness.fireEvent(picker, 'change'));
     await flush(harness);
-    assert.equal(host.querySelector('#agent-spawn-network-auto-sync').checked, false);
+    assert.equal(host.querySelector('#agent-spawn-network-auto-sync').hasAttribute('checked'), false);
     setValue(picker, 'group-default');
     await harness.act(() => harness.fireEvent(picker, 'change'));
     await flush(harness);
-    assert.equal(host.querySelector('#agent-spawn-network-auto-sync').checked, true);
+    assert.equal(host.querySelector('#agent-spawn-network-auto-sync').hasAttribute('checked'), true);
   } finally {
     await mounted.cleanup();
   }
