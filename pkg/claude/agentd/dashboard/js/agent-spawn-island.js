@@ -359,6 +359,10 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
           rememberedEffort, worktreesRef.current.isRepo,
         )
         : initial;
+      // Apply the palette's explicit speed choice after the saved profile.
+      if (profile && current.options.fastMode && spawnCapabilityView(nextBaseline, context).showFastMode) {
+        nextBaseline = { ...nextBaseline, fastMode: '1' };
+      }
       if (current.options.role) {
         nextBaseline = { ...nextBaseline, role: current.options.role };
       }

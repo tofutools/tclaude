@@ -54,6 +54,7 @@ import {
 import {
   openRetireAgentDialog, openShutdownAgentDialog,
 } from './transaction-dialog-controller.js';
+import { buildProfileSpawnCommands } from './palette-spawn.js';
 import { openAgentSpawnModal } from './agent-spawn-controller.js';
 import { openProfilesManageModal } from './modal-profiles.js';
 import { openRolesManageModal } from './modal-roles.js';
@@ -398,6 +399,11 @@ export function buildCommands(snapshot) {
       + (lastGroupLive ? ' ' + lastGroup : ''),
     run: () => openAgentSpawnModal(lastGroupLive ? { defaultGroup: lastGroup } : {}),
   });
+  cmds.push(...buildProfileSpawnCommands(snap, {
+    defaultGroup: lastGroupLive ? lastGroup : '',
+    wiz,
+    openSpawn: openAgentSpawnModal,
+  }));
   // 2b) Manage spawn profiles — open the profiles overlay where the saved
   //     spawn profiles (reusable bundles of the spawn dialog's fields) are
   //     listed to view / edit / delete / add. Reuses the very overlay the

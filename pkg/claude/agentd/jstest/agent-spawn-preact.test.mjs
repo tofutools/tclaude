@@ -1874,3 +1874,25 @@ test('the resolved-default row names nothing when the daemon has not answered', 
     mounted.cleanup();
   }
 });
+
+test('palette profile and fast selection prefill the dialog after profiles load', async (t) => {
+  const { harness, host, state } = await mountSpawn(t, {
+    loadProfiles: async () => [
+      { name: 'luna', harness: 'codex', fast_mode: false },
+      { name: 'ordinary', harness: 'claude' },
+    ],
+  });
+  state.open({ defaultGroup: 'alpha', profileName: 'luna', fastMode: true });
+  await flush(harness);
+  assert.equal(selectedValue(host.querySelector('#agent-spawn-load-profile')), 'luna');
+  assert.equal(selectedValue(host.querySelector('#agent-spawn-fast-mode')), '1');
+  state.close();
+  state.open({ profileName: 'luna' });
+  await flush(harness);
+  assert.equal(selectedValue(host.querySelector('#agent-spawn-fast-mode')), '0', 'ordinary shortcut preserves profile speed');
+  state.close();
+  state.open({ profileName: 'ordinary', fastMode: true });
+  await flush(harness);
+  assert.equal(host.querySelector('#agent-spawn-fast-mode-row').hidden, true);
+  assert.equal(selectedValue(host.querySelector('#agent-spawn-fast-mode')), '');
+});

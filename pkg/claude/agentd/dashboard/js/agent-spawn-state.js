@@ -14,6 +14,7 @@ export function createAgentSpawnState({ getSnapshot = () => null } = {}) {
         groupName: String(options?.groupName || ''),
         defaultGroup: String(options?.defaultGroup || ''),
         profileName: String(options?.profileName || ''),
+        fastMode: options?.fastMode === true,
         role: String(options?.role || ''),
       }),
       groups: Object.freeze([...(snapshot.groups || [])]),
