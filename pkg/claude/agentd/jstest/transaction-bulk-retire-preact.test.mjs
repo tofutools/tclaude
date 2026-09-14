@@ -387,3 +387,29 @@ test('global retire preview identifies every-group scope including Ungrouped and
     /Banishment complete — 2 banished/);
   await mounted.mounted.unmount();
 });
+
+for (const shortcut of [
+  { key: 'Enter' },
+  { key: 'Enter', ctrlKey: true },
+  { key: 'Enter', metaKey: true },
+  { key: 'Escape' },
+]) {
+  test(`bulk retire result accepts ${JSON.stringify(shortcut)} after focus leaves the form`, async (t) => {
+    const response = { retired: 2, outcomes: [] };
+    const mounted = await openBulk(t, {
+      kind: 'retire-all-preview', status: 'idle', candidates,
+    }, { actions: { retireAgentsPreview: async () => response } });
+    const { harness, host, opener } = mounted;
+    host.querySelector('#retire-preview-submit').click();
+    await harness.act(() => Promise.resolve());
+    assert.equal(host.querySelector('#retire-preview-hint .theme-copy-wizard').textContent,
+      'Banishment complete — 2 banished.');
+    assert.equal(host.querySelectorAll('button').length, 1);
+    harness.document.body.focus();
+    await harness.act(() => harness.fireEvent(harness.document.body, 'keydown', shortcut));
+    assertAbsent(host.querySelector('#retire-preview-modal'));
+    assertSameNode(harness.document.activeElement, opener);
+    assert.deepEqual(await mounted.pending, { kind: 'retire-all-preview', response });
+    await mounted.mounted.unmount();
+  });
+}
