@@ -40,14 +40,13 @@ function subscriptionWindows(source, prefix, hideMissing = false) {
   ];
 }
 
-function costToken(key, today, mtd, estimate = false) {
+function costToken(key, today, mtd) {
   return {
     key,
     kind: 'cost',
     label: '',
     today: today > 0 ? fmtUSD(today) : '',
     mtd: fmtUSD(mtd),
-    estimate,
   };
 }
 
@@ -118,7 +117,7 @@ export function usageView(usage, modes = {}) {
     return {
       key, label, mode, modes: canCost ? ['usage', 'cost'] : [],
       tokens: mode === 'cost'
-        ? [costToken(`${key}-whatif`, estimate.today_cost_usd, estimate.total_cost_usd, true)]
+        ? [costToken(`${key}-whatif`, estimate.today_cost_usd, estimate.total_cost_usd)]
         : tokens,
     };
   };
@@ -153,7 +152,7 @@ export function usageView(usage, modes = {}) {
     lines.push({
       key: 'copilot', label: 'Copilot:', mode, modes: availableModes.length > 1 ? availableModes : [],
       tokens: mode === 'units' ? [unitsToken('copilot-monthly-units', copilotUsage.monthly)]
-        : mode === 'cost' ? [costToken('copilot-whatif', estimate.today_cost_usd, estimate.total_cost_usd, true)]
+        : mode === 'cost' ? [costToken('copilot-whatif', estimate.today_cost_usd, estimate.total_cost_usd)]
         : copilot,
     });
   }

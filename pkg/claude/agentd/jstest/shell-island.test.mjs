@@ -76,7 +76,9 @@ test('Copilot header selector switches percentage, what-if cost, and AIC', async
   const buttons = () => [...mounted.container.querySelectorAll('.usage-unit-switch button')];
   assert.match(mounted.container.textContent, /38%/);
   await harness.act(() => buttons()[1].click());
-  assert.match(mounted.container.textContent, /≈\$1\.75/);
+  assert.equal(buttons()[1].textContent, '≈$', 'the selector identifies WHAT-IF dollar mode');
+  assert.equal(mounted.container.querySelector('.ucost-amt').textContent, '$1.75',
+    'the value does not repeat the selector approximation mark');
   assert.equal(dashPrefs.getItem(pref), 'cost');
   await harness.act(() => buttons()[2].click());
   assert.match(mounted.container.textContent, /114\/ 300 AIC/);
