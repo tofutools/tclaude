@@ -1884,7 +1884,7 @@ test('palette profile and fast selection prefill the dialog after profiles load'
   });
   state.open({ defaultGroup: 'alpha', profileName: 'luna', fastMode: true });
   await flush(harness);
-  assert.equal(selectedValue(host.querySelector('#agent-spawn-profile')), 'luna');
+  assert.equal(selectedValue(host.querySelector('#agent-spawn-load-profile')), 'luna');
   assert.equal(selectedValue(host.querySelector('#agent-spawn-fast-mode')), '1');
   state.close();
   state.open({ profileName: 'luna' });
