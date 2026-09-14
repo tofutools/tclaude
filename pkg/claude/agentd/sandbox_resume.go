@@ -79,6 +79,7 @@ func resolveCurrentSandboxChainForConv(
 	if err != nil {
 		return nil, nil, err
 	}
+	resolved.NetworkAutoSync = previous.NetworkAutoSync
 	return &resolved, previous, nil
 }
 

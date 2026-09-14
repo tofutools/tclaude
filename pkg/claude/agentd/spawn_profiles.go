@@ -94,14 +94,15 @@ type spawnProfileJSON struct {
 	// JSON-RPC API). Unset resolves to send-keys at spawn. A value on a
 	// non-Copilot profile is a 400 (buildProfileFromJSON gates it on the
 	// profile's harness).
-	CopilotAPI     *bool `json:"copilot_api,omitempty"`
-	CodexAppServer *bool `json:"codex_app_server,omitempty"`
-	FastMode       *bool `json:"fast_mode,omitempty"`
-	AutoReview     *bool `json:"auto_review,omitempty"`
-	TrustDir       *bool `json:"trust_dir,omitempty"`
-	AutoMemory     *bool `json:"auto_memory,omitempty"`
-	PeerMessaging  *bool `json:"peer_messaging,omitempty"`
-	SSHWorkaround  *bool `json:"ssh_workaround,omitempty"`
+	CopilotAPI      *bool `json:"copilot_api,omitempty"`
+	CodexAppServer  *bool `json:"codex_app_server,omitempty"`
+	FastMode        *bool `json:"fast_mode,omitempty"`
+	NetworkAutoSync *bool `json:"network_auto_sync,omitempty"`
+	AutoReview      *bool `json:"auto_review,omitempty"`
+	TrustDir        *bool `json:"trust_dir,omitempty"`
+	AutoMemory      *bool `json:"auto_memory,omitempty"`
+	PeerMessaging   *bool `json:"peer_messaging,omitempty"`
+	SSHWorkaround   *bool `json:"ssh_workaround,omitempty"`
 	// RemoteControl is the profile's "start with Claude Code Remote Access on"
 	// default — tri-state (null = unset, false = off, true = on). A group's
 	// remote-control policy overrides it at spawn (JOH-262).
@@ -164,6 +165,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		CopilotAPI:                 p.CopilotAPI,
 		CodexAppServer:             p.CodexAppServer,
 		FastMode:                   p.FastMode,
+		NetworkAutoSync:            p.NetworkAutoSync,
 		AutoReview:                 p.AutoReview,
 		TrustDir:                   p.TrustDir,
 		AutoMemory:                 p.AutoMemory,
@@ -485,6 +487,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		CopilotAPI:                 body.CopilotAPI,
 		CodexAppServer:             body.CodexAppServer,
 		FastMode:                   body.FastMode,
+		NetworkAutoSync:            body.NetworkAutoSync,
 		AutoReview:                 body.AutoReview,
 		TrustDir:                   body.TrustDir,
 		RemoteControl:              body.RemoteControl,

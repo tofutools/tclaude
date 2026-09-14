@@ -860,7 +860,7 @@ export function createManagementActions({
         : options.targetName || original?.name || '';
       const preview = await sandbox.previewSandboxProfile(targetName, body);
       if (
-        preview.before &&
+        !options.syncRunning && preview.before &&
         JSON.stringify(preview.before) === JSON.stringify(preview.after)
       ) {
         notify('No sandbox profile changes to save');
@@ -889,7 +889,23 @@ export function createManagementActions({
         // the last mount would silently do nothing.
         ...(body.tmpfs === undefined ? {} : { tmpfs: body.tmpfs }),
       };
-      await sandbox.saveSandboxProfile(targetName, committed, preview.revision || '');
+      const saved = options.syncRunning
+        ? await sandbox.saveSandboxProfile(targetName, committed, preview.revision || '', true)
+        : await sandbox.saveSandboxProfile(targetName, committed, preview.revision || '');
+      if (saved?.network_sync_error) notify(`Profile saved; network sync failed: ${saved.network_sync_error}`, true);
+      if (saved?.network_sync?.length) {
+        notify(`Network updates queued for ${saved.network_sync.length} running agents`);
+        setTimeout(async () => {
+          try {
+            const response = await fetch('/api/sandbox-profiles?network_sync_status=1');
+            const rows = await response.json();
+            for (const queued of saved.network_sync) {
+              const row = rows.find(item => item.id === queued.id);
+              notify(`${queued.session_id}: ${row?.status || 'not running'}${row?.detail ? ': ' + row.detail : ''}`, row?.status === 'failed' || row?.status === 'restart_required');
+            }
+          } catch (error) { notify(`Could not read network sync status: ${error.message}`, true); }
+        }, 3500);
+      }
       state.closeDialog();
       notify(`sandbox profile saved: ${preview.after.name}`);
       await load('sandbox');
