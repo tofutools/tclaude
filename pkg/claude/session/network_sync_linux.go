@@ -76,6 +76,9 @@ func reconcileNetworkSync(id string, relay *preparedFilteredNetworkRelay, namesp
 	} else if row.Status != "starting" {
 		return
 	}
+	if err == nil && !requested && row.Status == "applied" && reflect.DeepEqual(current, row.Snapshot) {
+		return
+	}
 	status := "applied"
 	detail := ""
 	if err == nil {
