@@ -511,7 +511,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     const harnessFields = [
       'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer',
       'tools', 'askTimeout', 'trustDir', 'trustDirSpecified', 'remoteControl',
-      'autoMemory', 'peerMessaging', 'sshWorkaround', 'networkAutoSync', 'networkAutoSyncSpecified', 'autoCompactWindow', 'contextWindowMax',
+      'autoMemory', 'peerMessaging', 'sshWorkaround', 'autoCompactWindow', 'contextWindowMax',
       'copilotAPI', 'codexAppServer', 'fastMode', 'sandboxImpl', 'sandboxImplCleared', 'contextFeatures',
     ];
     for (const key of harnessFields) {

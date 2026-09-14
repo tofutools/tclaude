@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -279,6 +280,30 @@ func QueueProfileNetworkSync(profileID int64, includeManual bool) ([]NetworkSync
 	return queued, nil
 }
 
+// ErrNetworkSyncSessionPending indicates that the pane has not saved its session yet.
+var ErrNetworkSyncSessionPending = errors.New("network sync session is not yet available")
+
+// WaitForNetworkSyncLaunch keeps the frozen launch policy in effect until the
+// pane has persisted its session. OpenCode starts its server before that pane.
+// No heartbeat or reload is published while the session binding is pending.
+func WaitForNetworkSyncLaunch(ctx context.Context, id string) error {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := BeginNetworkSyncLaunch(id); !errors.Is(err, ErrNetworkSyncSessionPending) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 // BeginNetworkSyncLaunch binds updates to this concrete running generation.
 // A successor replaces the token, so an old supervisor cannot publish over it.
 func BeginNetworkSyncLaunch(id string) error {
@@ -291,8 +316,20 @@ func BeginNetworkSyncLaunch(id string) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err = tx.Exec(`UPDATE sessions SET network_sync_id=? WHERE id=(SELECT id FROM sessions WHERE id=(SELECT session_id FROM network_sync_launches WHERE id=?) OR agent_id=(SELECT session_id FROM network_sync_launches WHERE id=?) ORDER BY updated_at DESC LIMIT 1)`, id, id, id); err != nil {
+	result, err := tx.Exec(`UPDATE sessions SET network_sync_id=? WHERE id=(SELECT id FROM sessions WHERE id=(SELECT session_id FROM network_sync_launches WHERE id=?) OR agent_id=(SELECT session_id FROM network_sync_launches WHERE id=?) ORDER BY updated_at DESC LIMIT 1)`, id, id, id)
+	if err != nil {
 		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		var exists int
+		if err := tx.QueryRow(`SELECT 1 FROM network_sync_launches WHERE id=?`, id).Scan(&exists); err != nil {
+			return err
+		}
+		return ErrNetworkSyncSessionPending
 	}
 	if _, err = tx.Exec(`UPDATE network_sync_launches SET heartbeat=? WHERE id=?`, time.Now().Unix(), id); err != nil {
 		return err
