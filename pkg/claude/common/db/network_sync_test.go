@@ -138,3 +138,38 @@ func TestNetworkSyncPublishesOnlyNetworkAndGuardsSuccessor(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, changed.Effective.Network, row.EffectiveSandbox.Effective.Network)
 }
+
+func TestNetworkSyncResolvesChangedGlobalAndGroupAssignments(t *testing.T) {
+	setupTestDB(t)
+	for _, name := range []string{"global-old", "global-new", "group-old", "group-new", "included", "explicit"} {
+		p := &SandboxProfile{Name: name}
+		if name == "explicit" {
+			p.Includes = []string{"included"}
+		}
+		_, err := CreateSandboxProfile(p)
+		require.NoError(t, err)
+	}
+	groupID, err := CreateAgentGroup("crew", "")
+	require.NoError(t, err)
+	require.NoError(t, SetGlobalSandboxProfile("global-old"))
+	_, err = SetAgentGroupSandboxProfile("crew", "group-old")
+	require.NoError(t, err)
+	original, err := ResolveEffectiveSandboxSnapshot(groupID, "explicit")
+	require.NoError(t, err)
+	original.NetworkAutoSync = true
+	require.NoError(t, SetGlobalSandboxProfile("global-new"))
+	_, err = SetAgentGroupSandboxProfile("crew", "group-new")
+	require.NoError(t, err)
+	current, err := ResolveNetworkSyncSnapshot(original)
+	require.NoError(t, err)
+	require.True(t, current.NetworkAutoSync)
+	names := []string{}
+	for _, p := range current.Applied {
+		names = append(names, p.Name)
+	}
+	require.Contains(t, names, "global-new")
+	require.Contains(t, names, "group-new")
+	require.Contains(t, names, "explicit")
+	require.NotContains(t, names, "global-old")
+	require.NotContains(t, names, "group-old")
+}

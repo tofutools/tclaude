@@ -53,6 +53,7 @@ func runNetworkSyncSmoke(t *testing.T, bwrap, helper, workspace, home string, ol
 	wait := make(chan error, 1)
 	go func() { wait <- cmd.Wait() }()
 	waitForFilteredSmokeReady(t, ready, wait, logPath)
+	require.Eventually(t, func() bool { _, err := db.ReadNetworkSyncLaunch(spec.Contract.NetworkSyncID); return err == nil }, 10*time.Second, 20*time.Millisecond, "supervisor registration")
 	profile.Network = &sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeList, Allow: []sandboxpolicy.NetworkAllowEntry{{Loopback: true, Ports: []int{newPort}}}}
 	require.NoError(t, db.UpdateSandboxProfile(profile))
 	queued, err := db.QueueProfileNetworkSync(id, true)
