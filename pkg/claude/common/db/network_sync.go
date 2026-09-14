@@ -94,12 +94,14 @@ func RegisterNetworkSyncLaunch(id, sessionID string, snapshot sandboxpolicy.Snap
 	return err
 }
 
-func NetworkSyncLaunches() ([]NetworkSyncLaunch, error) {
+func NetworkSyncLaunches() ([]NetworkSyncLaunch, error) { return networkSyncLaunches("") }
+
+func networkSyncLaunches(id string) ([]NetworkSyncLaunch, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id,session_id,snapshot,dependencies,requested,revision,acknowledged,status,detail,heartbeat FROM network_sync_launches WHERE heartbeat > ? ORDER BY session_id`, time.Now().Add(-30*time.Second).Unix())
+	rows, err := d.Query(`SELECT id,session_id,snapshot,dependencies,requested,revision,acknowledged,status,detail,heartbeat FROM network_sync_launches WHERE heartbeat > ? AND (?='' OR id=?) ORDER BY session_id`, time.Now().Add(-30*time.Second).Unix(), id, id)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +131,7 @@ func NetworkSyncLaunches() ([]NetworkSyncLaunch, error) {
 }
 
 func ReadNetworkSyncLaunch(id string) (*NetworkSyncLaunch, error) {
-	rows, err := NetworkSyncLaunches()
+	rows, err := networkSyncLaunches(id)
 	if err != nil {
 		return nil, err
 	}
