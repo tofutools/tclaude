@@ -298,6 +298,9 @@ func runTclaudeLayerFilteredNetworkSmoke(t *testing.T, smokeKind string) {
 	if dnsSmoke {
 		return
 	}
+	if smokeKind == "" {
+		runNetworkSyncSmoke(t, bwrapBinary, helperBinary, helperDir, smokeHome, hostAllowedPort, hostDeniedPort)
+	}
 	if denySmoke {
 		runFilteredGatewayFailClosedSmoke(
 			t, wrapped[harness.DefaultName], helperDir, root, executables.Pasta,
