@@ -407,3 +407,24 @@ func TestLiveRecentlyMergedPRsResolverUsesFullPageAfterRepoFallback(t *testing.T
 	assert.Contains(t, gotArgs, "q=author:octocat is:merged type:pr")
 	assert.Contains(t, gotArgs, "per_page=100")
 }
+
+func TestPresentedPRCachePreservesAndRefreshesGitHubTitle(t *testing.T) {
+	setupTestDB(t)
+	const rawURL = "https://github.com/acme/app/pull/42"
+	now := time.Now()
+	for i, title := range []string{"GitHub title", "", "Renamed on GitHub", ""} {
+		at := now.Add(time.Duration(i) * time.Second)
+		savePresentedPRCache(presentedPRCacheKey(rawURL), rawURL, presentedPRInfo{
+			URL: rawURL, Title: title, State: "open", FetchedAt: at,
+		}, at)
+		states, titles := cachedPresentedPRMetadata([]string{rawURL + "/files"})
+		expected := "GitHub title"
+		if i >= 2 {
+			expected = "Renamed on GitHub"
+		}
+		view := unionLocallyKnownOpenPRs(dashboardAuthoredOpenPRs{Available: true},
+			[]locallyKnownPR{{URL: rawURL, Title: titles[prStateKey(rawURL)]}}, states, nil)
+		require.Len(t, view.Items, 1)
+		assert.Equal(t, expected, view.Items[0].Title)
+	}
+}

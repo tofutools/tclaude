@@ -93,8 +93,7 @@ type dashboardAuthoredOpenPR struct {
 }
 
 // locallyKnownPR is a PR candidate learned from an agent's branch/startup
-// links or an explicit presentation. Title is optional because branch-link
-// caches currently carry state and identity but not the PR title.
+// links or an explicit presentation. Title is optional and comes only from the GitHub metadata cache.
 type locallyKnownPR struct {
 	URL   string
 	Title string
@@ -202,7 +201,7 @@ func pollAuthoredOpenPRs() error {
 			state = "draft"
 		}
 		savePresentedPRCache(presentedPRCacheKey(view.Items[i].URL), view.Items[i].URL, presentedPRInfo{
-			Number: view.Items[i].Number, URL: view.Items[i].URL, State: state, FetchedAt: now,
+			Title: view.Items[i].Title, Number: view.Items[i].Number, URL: view.Items[i].URL, State: state, FetchedAt: now,
 		}, now)
 		if view.Items[i].Checks == nil {
 			continue
@@ -220,7 +219,7 @@ func pollAuthoredOpenPRs() error {
 	}
 	for i := range view.Recent {
 		savePresentedPRCache(presentedPRCacheKey(view.Recent[i].URL), view.Recent[i].URL, presentedPRInfo{
-			Number: view.Recent[i].Number, URL: view.Recent[i].URL,
+			Title: view.Recent[i].Title, Number: view.Recent[i].Number, URL: view.Recent[i].URL,
 			State: view.Recent[i].State, FetchedAt: now,
 		}, now)
 	}
@@ -430,13 +429,7 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 		}
 		view.Items = append(view.Items, item)
 	}
-	sort.SliceStable(view.Items, func(i, j int) bool {
-		ri, rj := authoredOpenPRAttentionRank(view.Items[i]), authoredOpenPRAttentionRank(view.Items[j])
-		if ri != rj {
-			return ri < rj
-		}
-		return view.Items[i].UpdatedAt > view.Items[j].UpdatedAt
-	})
+	sortAuthoredOpenPRs(view.Items)
 	for _, node := range payload.Data.Recent.Nodes {
 		ref, ok := githubPRRefFromURL(node.URL)
 		if !ok || node.Number <= 0 || ref.number != node.Number {
@@ -460,7 +453,7 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 	view.RecentTruncated = payload.Data.Recent.IssueCount > authoredRecentPRLimit
 	// Newest first: the recent list answers "what did I just land", so recency
 	// is the only useful order — unlike the open list, nothing here needs
-	// attention ranking.
+	// activity ordering.
 	sort.SliceStable(view.Recent, func(i, j int) bool {
 		return view.Recent[i].ClosedAt > view.Recent[j].ClosedAt
 	})
@@ -477,20 +470,15 @@ func truncateAuthoredPRTitle(raw string) string {
 	return title
 }
 
-func authoredOpenPRAttentionRank(pr dashboardAuthoredOpenPR) int {
-	if pr.Checks != nil {
-		switch pr.Checks.State {
-		case "failing":
-			return 0
-		case "passing":
-			return 2
-		case "pending":
-			// A clean run in flight is the one state that does not need
-			// operator attention yet, so keep it behind actionable PRs.
-			return 3
+// sortAuthoredOpenPRs keeps rows fixed as CI and activity timestamps change.
+func sortAuthoredOpenPRs(items []dashboardAuthoredOpenPR) {
+	sort.Slice(items, func(i, j int) bool {
+		ri, rj := strings.ToLower(items[i].Repository), strings.ToLower(items[j].Repository)
+		if ri != rj {
+			return ri < rj
 		}
-	}
-	return 1
+		return items[i].Number < items[j].Number
+	})
 }
 
 func reconcileTruncatedPRChecks(summary *prChecksSummary, rollupState string, total int) {
@@ -764,13 +752,7 @@ func unionLocallyKnownOpenPRs(
 		known[key] = struct{}{}
 	}
 
-	sort.SliceStable(view.Items, func(i, j int) bool {
-		ri, rj := authoredOpenPRAttentionRank(view.Items[i]), authoredOpenPRAttentionRank(view.Items[j])
-		if ri != rj {
-			return ri < rj
-		}
-		return view.Items[i].UpdatedAt > view.Items[j].UpdatedAt
-	})
+	sortAuthoredOpenPRs(view.Items)
 	return view
 }
 
