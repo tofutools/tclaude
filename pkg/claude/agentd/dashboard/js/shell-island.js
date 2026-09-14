@@ -24,8 +24,8 @@ function UsageToken({ token }) {
     return html`
       <span class="uw ucost" data-goto-tab="costs">
         <span class="ulabel">${token.label}</span>
-        ${token.today ? html`<span class="ucost-amt">${token.estimate ? '≈' : ''}${token.today}</span> <span class="urem">(today)</span>` : null}
-        <span class="ucost-amt">${token.estimate ? '≈' : ''}${token.mtd}</span> <span class="urem">(mtd)</span>
+        ${token.today ? html`<span class="ucost-amt">${token.today}</span> <span class="urem">(today)</span>` : null}
+        <span class="ucost-amt">${token.mtd}</span> <span class="urem">(mtd)</span>
       </span>
     `;
   }

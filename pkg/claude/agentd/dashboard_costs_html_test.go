@@ -19,12 +19,18 @@ func TestDashboardHTML_TopBarTotalCostWired(t *testing.T) {
 			t.Errorf("dashboard assets missing %q (%s)", needle, why)
 		}
 	}
+	mustNot := func(needle, why string) {
+		t.Helper()
+		if strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets unexpectedly contain %q (%s)", needle, why)
+		}
+	}
 	// shell-model.js derives the token from accepted snapshot state and only
 	// returns it for nonzero cost, formatted by costs-model.js's shared fmtUSD
 	// — the same grouping and sub-cent floor as the harness line.
 	must("const mtd = Number(usage?.total_cost_usd || 0)", "usageView reads the snapshot's month-to-date total")
 	must("const today = Number(usage?.today_cost_usd || 0)", "usageView reads the snapshot's today total")
-	must("function costToken(key, today, mtd, estimate = false)", "provider-keyed cost tokens support billed and estimated values")
+	must("function costToken(key, today, mtd)", "provider-keyed cost tokens share one value presentation")
 	must("label: `${providerLabel(item.provider)} API:`", "API-cost rows always carry a provider prefix")
 	must("return value >= 0.005 ? '$' + CENTS.format(value) : '<1¢'",
 		"grouped two-decimal dollar format with a sub-cent floor")
@@ -38,6 +44,8 @@ func TestDashboardHTML_TopBarTotalCostWired(t *testing.T) {
 		"today shown whenever anything was spent today, even when it equals mtd")
 	must(`<span class="urem">(today)</span>`, "today's amount keeps its explicit label")
 	must(`<span class="urem">(mtd)</span>`, "month-to-date amount keeps its explicit label")
+	must(`mode === 'cost' ? '≈$'`, "the WHAT-IF selector identifies estimated dollar values")
+	mustNot("token.estimate ? '≈' : ''", "WHAT-IF values do not repeat the selector's approximation mark")
 
 	// The token links to the Costs tab: shell-island.js tags it, the Costs island
 	// delegates the click to the nav button.
