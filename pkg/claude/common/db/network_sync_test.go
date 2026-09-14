@@ -184,7 +184,9 @@ func TestNetworkSyncWaitsForSessionBeforePublishing(t *testing.T) {
 	setupTestDB(t)
 	snapshot, err := ResolveEffectiveSandboxSnapshot(0, "")
 	require.NoError(t, err)
-	require.NoError(t, RegisterNetworkSyncLaunch("delayed", "agent-delayed", snapshot))
+	agentID, _, err := EnsureAgentForConv("late-conv", "test")
+	require.NoError(t, err)
+	require.NoError(t, RegisterNetworkSyncLaunch("delayed", agentID, snapshot))
 	require.ErrorIs(t, BeginNetworkSyncLaunch("delayed"), ErrNetworkSyncSessionPending)
 	rows, err := NetworkSyncLaunches()
 	require.NoError(t, err)
@@ -193,7 +195,7 @@ func TestNetworkSyncWaitsForSessionBeforePublishing(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- WaitForNetworkSyncLaunch(ctx, "delayed") }()
-	require.NoError(t, SaveSession(&SessionRow{ID: "late-session", AgentID: "agent-delayed", EffectiveSandbox: &snapshot}))
+	require.NoError(t, SaveSession(&SessionRow{ID: "late-session", ConvID: "late-conv", EffectiveSandbox: &snapshot}))
 	require.NoError(t, <-done)
 	changed := snapshot
 	changed.Effective.Network = &sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeList}
