@@ -4388,6 +4388,9 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile, observed bool) (*
 	if out.FastMode == nil {
 		out.FastMode = prev.FastMode
 	}
+	if out.NetworkAutoSync == nil {
+		out.NetworkAutoSync = prev.NetworkAutoSync
+	}
 	// ContextFeatures IS observable, so the traced value wins like harness/model —
 	// INCLUDING an observed "trims nothing", which must be able to CLEAR the
 	// template's previous trims. That is why the signal here is nil-vs-empty
@@ -4451,7 +4454,7 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile, observed bool) (*
 		out.ContextWindowMax == 0 &&
 		out.AutoReview == nil && out.TrustDir == nil && out.RemoteControl == nil && out.AutoMemory == nil && out.PeerMessaging == nil &&
 		out.SSHWorkaround == nil && out.FetchLatestWorktree == nil &&
-		out.CopilotAPI == nil && out.CodexAppServer == nil && out.FastMode == nil &&
+		out.CopilotAPI == nil && out.CodexAppServer == nil && out.FastMode == nil && out.NetworkAutoSync == nil &&
 		len(out.ContextFeatures) == 0 && len(out.Environment) == 0 &&
 		out.IsOwner == nil && len(out.PermissionOverrides) == 0 {
 		return nil, drop
