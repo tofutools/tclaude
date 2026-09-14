@@ -696,14 +696,18 @@ func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 	assert.Equal(t, filepath.Join(home, ".opencode"), spec.Contract.StateRoot)
 	assert.Equal(t, []string{filepath.Join(home, ".opencode", "bin")},
 		spec.Contract.ReadOnlyStateDirs)
-	assert.ElementsMatch(t, []string{
+	wantWriteDirs := []string{
 		cwd,
 		agentDir,
 		filepath.Join(home, ".local", "share", "opencode"),
 		filepath.Join(home, ".cache", "opencode"),
 		filepath.Join(home, ".config", "opencode"),
 		filepath.Join(home, ".local", "state", "opencode"),
-	}, spec.Contract.WriteDirs)
+	}
+	if runtime.GOOS == "darwin" {
+		wantWriteDirs = append(wantWriteDirs, filepath.Join(home, "Library", "Keychains"))
+	}
+	assert.ElementsMatch(t, wantWriteDirs, spec.Contract.WriteDirs)
 	require.NoError(t, PrepareTclaudeLayerHarnessState(spec))
 	for _, path := range spec.Contract.StateDirs {
 		info, statErr := os.Stat(path)
