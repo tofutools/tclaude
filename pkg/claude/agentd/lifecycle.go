@@ -3868,7 +3868,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 	var autoReviewSet, trustDirSet, sshWorkaroundSet bool
-	var autoReviewNote, trustDirNote, autoMemoryNote, peerMessagingNote, sshWorkaroundNote, networkAutoSyncNote, contextFeaturesNote string
+	var autoReviewNote, trustDirNote, autoMemoryNote, peerMessagingNote, sshWorkaroundNote, contextFeaturesNote string
 	body.AutoReview, autoReviewSet, _, autoReviewNote, fieldFail = resolveBoolLaunchField(
 		"auto_review", body.AutoReview, body.AutoReviewSpecified(), h.Name, profileTiers,
 		func(p *db.SpawnProfile) *bool { return p.AutoReview }, func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
