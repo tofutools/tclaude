@@ -46,7 +46,9 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   }, { claude: 'cost' });
   assert.deepEqual(switchable.lines[0].modes, ['usage', 'cost']);
   assert.equal(switchable.lines[0].tokens[0].key, 'claude-whatif');
-  assert.equal(switchable.lines[0].tokens[0].estimate, true);
+  assert.equal(switchable.lines[0].tokens[0].mtd, '$8.00');
+  assert.equal('estimate' in switchable.lines[0].tokens[0], false,
+    'the selector owns the WHAT-IF approximation label, not each value');
 
   const copilotUnits = usageView({
     copilot: { available: true, monthly: { pct: 58.2, used_units: 174.6, limit_units: 300 } },
