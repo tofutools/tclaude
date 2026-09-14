@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -997,8 +998,11 @@ func (c *Config) ScribeProfileName() string {
 // real spend. Default false = hide subscription estimates. Editable from the
 // dashboard's Config tab.
 type CostConfig struct {
-	EstimateFactor     *float64 `json:"estimate_factor,omitempty"`
-	ShowOnSubscription bool     `json:"show_on_subscription,omitempty"`
+	EstimateFactor *float64 `json:"estimate_factor,omitempty"`
+	// HarnessFactors replace EstimateFactor for a harness. An explicit 1 is
+	// meaningful: it disables adjustment even when the default is higher.
+	HarnessFactors     map[string]float64 `json:"harness_factors,omitempty"`
+	ShowOnSubscription bool               `json:"show_on_subscription,omitempty"`
 }
 
 // defaultCostFactor is the no-op multiplier: the displayed cost equals
@@ -1023,13 +1027,40 @@ func (c *Config) ResolvedCostFactor() float64 {
 		return defaultCostFactor
 	}
 	f := *c.Cost.EstimateFactor
-	if f <= 0 {
+	if f <= 0 || math.IsNaN(f) || math.IsInf(f, 0) {
 		return defaultCostFactor
 	}
 	if f > maxCostEstimateFactor {
 		return maxCostEstimateFactor
 	}
 	return f
+}
+
+// CostFactorForHarness resolves an override, otherwise the global default.
+// Unknown or missing harness identities use the default; OpenCode's factor
+// applies to every provider within that harness.
+func (c *Config) CostFactorForHarness(name string) float64 {
+	if c != nil && c.Cost != nil {
+		if f, ok := c.Cost.HarnessFactors[name]; ok && f > 0 && !math.IsNaN(f) && !math.IsInf(f, 0) {
+			return min(f, maxCostEstimateFactor)
+		}
+	}
+	return c.ResolvedCostFactor()
+}
+
+// ValidCostFactorHarness identifies the supported per-harness settings.
+func ValidCostFactorHarness(name string) bool {
+	switch name {
+	case "claude", "codex", "opencode", "copilot":
+		return true
+	default:
+		return false
+	}
+}
+
+// Empty reports whether the optional cost block can be omitted.
+func (c *CostConfig) Empty() bool {
+	return c == nil || (c.EstimateFactor == nil && len(c.HarnessFactors) == 0 && !c.ShowOnSubscription)
 }
 
 // OpenCodeConfig tunes tclaude's OpenCode integration.
@@ -3483,8 +3514,19 @@ func Validate(c *Config) []string {
 	}
 
 	if cc := c.Cost; cc != nil && cc.EstimateFactor != nil {
-		if f := *cc.EstimateFactor; f <= 0 || f > maxCostEstimateFactor {
+		if f := *cc.EstimateFactor; f <= 0 || f > maxCostEstimateFactor || math.IsNaN(f) || math.IsInf(f, 0) {
 			errs = append(errs, fmt.Sprintf("cost.estimate_factor %g is out of range (>0 and ≤%g) — it is a display multiplier, e.g. 1.1 for +10%%", f, maxCostEstimateFactor))
+		}
+	}
+
+	if cc := c.Cost; cc != nil {
+		for name, f := range cc.HarnessFactors {
+			if !ValidCostFactorHarness(name) {
+				errs = append(errs, fmt.Sprintf("cost.harness_factors.%s: unknown harness", name))
+			}
+			if f <= 0 || f > maxCostEstimateFactor || math.IsNaN(f) || math.IsInf(f, 0) {
+				errs = append(errs, fmt.Sprintf("cost.harness_factors.%s %g is out of range (>0 and ≤%g)", name, f, maxCostEstimateFactor))
+			}
 		}
 	}
 

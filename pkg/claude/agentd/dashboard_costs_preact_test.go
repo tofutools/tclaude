@@ -51,7 +51,7 @@ func TestDashboardCostsPreactBoundary(t *testing.T) {
 		"name: 'costs'",
 		"state: costsState",
 		"key=${`${agent.conv_id}:${agent.day}`}",
-		"function saveFactor(raw)",
+		"function saveFactor(raw, harness = '')",
 		"if (!state.commitFactor(token",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {

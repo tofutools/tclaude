@@ -399,14 +399,14 @@ func TestDashboardHTML_CostFactorWired(t *testing.T) {
 	}
 
 	// dashboard.html: the live input on the Costs tab + the Config tab field.
-	must(`id="costs-factor"`, "live cost-factor input on the Costs tab")
+	must("costs-factor-${key}", "live cost-factor input on the Costs tab")
 	must(`id="cfg-cost-factor"`, "cost-factor field on the Config tab")
 
 	// costs.js: load on activation, persist + reload on edit, all via
 	// /api/cost-factor.
 	must("/api/cost-factor", "costs.js talks to the cost-factor endpoint")
 	must("async function loadFactor", "factor loaded when the tab opens")
-	must("function saveFactor(raw)", "factor persisted + costs reloaded on edit")
+	must("function saveFactor(raw, harness = '')", "factor persisted + costs reloaded on edit")
 
 	// config.js: round-trips cost.estimate_factor.
 	must("estimate_factor", "config.js round-trips the cost.estimate_factor key")

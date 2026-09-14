@@ -690,3 +690,25 @@ test('Config remount discards loaded ownership and reloads the fresh form', asyn
   await second.unmount();
   nav.remove();
 });
+
+test('Config round-trips harness factors and distinguishes explicit 1 from inheritance', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'), harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+  ]);
+  const cfg = { cost: { estimate_factor: 2, harness_factors: { claude: 1.2, codex: 1 }, show_on_subscription: true } };
+  const state = createConfigState({ activeTab: harness.signals.signal('groups') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
+    fetchImpl: async () => ({ ok: true, json: async () => ({ raw: JSON.stringify(cfg) }) }),
+  }} />`);
+  await adapter.loadConfigTab();
+  assert.deepEqual(adapter.assembleConfig().cost, cfg.cost);
+  mounted.container.querySelector('#cfg-cost-factor-claude').value = '';
+  mounted.container.querySelector('#cfg-cost-factor-opencode').value = '1.5';
+  const cost = adapter.assembleConfig().cost;
+  assert.deepEqual(cost.harness_factors, { codex: 1, opencode: 1.5 });
+  assert.equal(cost.estimate_factor, 2);
+  assert.equal(cost.show_on_subscription, true);
+  await mounted.unmount();
+});

@@ -170,7 +170,7 @@ func refreshUsage() {
 // has gone stale, or carries no live rolling-limit window at all (an
 // API-billing account, or a subscription account idle long enough that
 // both windows have reset).
-func collectUsageSnapshot(idleTimeout time.Duration, includeWhatIf bool) (dashboardUsage, bool, []perfPhase, error) {
+func collectUsageSnapshot(idleTimeout time.Duration, includeWhatIf bool, displayConfig *config.Config) (dashboardUsage, bool, []perfPhase, error) {
 	var phases []perfPhase
 	timed := func(name string, run func()) {
 		start := time.Now()
@@ -190,6 +190,13 @@ func collectUsageSnapshot(idleTimeout time.Duration, includeWhatIf bool) (dashbo
 		costHistoryAvailable = err == nil
 		now := time.Now()
 		deltas := displayedCostDeltasFromRows(rows, includeWhatIf)
+		if displayConfig != nil {
+			harnesses, harnessErr := db.SessionHarnesses()
+			if harnessErr != nil {
+				slog.Debug("usage snapshot: harness fallback unavailable", "error", harnessErr)
+			}
+			scaleCostDeltas(deltas, displayConfig, harnesses)
+		}
 		totalCost, todayCost = dashboardCostTotalsFromDeltas(deltas, now, "real")
 		apiCosts = dashboardProviderCostsFromDeltas(deltas, now, "real")
 		for _, row := range rows {
@@ -301,7 +308,7 @@ func handleUsage(w http.ResponseWriter, r *http.Request) {
 		slog.Debug("usage readout: config load failed; using the default idle timeout", "error", err)
 	}
 	showWhatIf := cfg != nil && cfg.Cost != nil && cfg.Cost.ShowOnSubscription
-	usage, _, _, costErr := collectUsageSnapshot(cfg.ResolvedUsageIdleTimeout(), showWhatIf)
+	usage, _, _, costErr := collectUsageSnapshot(cfg.ResolvedUsageIdleTimeout(), showWhatIf, nil)
 	if costErr != nil {
 		// Same disposition as the dashboard snapshot: the cost history is one
 		// part of the readout, and losing it must not cost the rate-limit bars.

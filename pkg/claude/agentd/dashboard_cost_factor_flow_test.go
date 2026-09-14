@@ -105,3 +105,52 @@ func TestDashboardSnapshot_DisplayFactorScalesCost(t *testing.T) {
 	require.NoError(t, err)
 	assert.InDelta(t, 1.37, snapRow.CostUSD, 1e-9, "DB cost_usd stays raw")
 }
+
+// Claude and OpenCode both contribute to Anthropic, with distinct multipliers.
+// A provider-level multiplication after aggregation would give the wrong total.
+func TestDashboardCosts_HarnessFactorsAcrossSurfaces(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	for _, h := range []string{"claude", "codex", "opencode", "copilot"} {
+		id, conv := "factor-"+h, "conv-factor-"+h
+		f.HaveAliveSession(conv, id, "tmux-"+id, f.TestCwd(id))
+		f.HaveEnrolledAgent(conv)
+		require.NoError(t, db.SaveSession(&db.SessionRow{ID: id, ConvID: conv, TmuxSession: "tmux-" + id, Cwd: f.TestCwd(id), Status: "idle", Harness: h}))
+		if h == "opencode" {
+			require.NoError(t, db.UpdateSessionModel(id, "anthropic/claude-sonnet"))
+		}
+		if h == "copilot" {
+			require.NoError(t, db.UpdateSessionVirtualCost(id, 0.5))
+		} else {
+			require.NoError(t, db.UpdateSessionCost(id, 1))
+		}
+	}
+	factor := 2.0
+	require.NoError(t, config.Save(&config.Config{Cost: &config.CostConfig{
+		EstimateFactor: &factor, ShowOnSubscription: true,
+		HarnessFactors: map[string]float64{"claude": 1.5, "codex": 1},
+	}}))
+	mux := agentd.BuildDashboardHandlerForTest()
+	costs := fetchCosts(t, mux, "")
+	assert.InDelta(t, 5.5, costs.TotalUSD, 1e-9)
+	assert.InDelta(t, 4.5, costs.RealTotalUSD, 1e-9)
+	assert.InDelta(t, 1.0, costs.WhatIfTotalUSD, 1e-9)
+	assert.InDelta(t, 50, costs.VirtualCostCredits, 1e-9, "native credits stay raw")
+	assert.InDelta(t, 5.5, costs.Days[len(costs.Days)-1].CostUSD, 1e-9)
+	snap := fetchDashSnapshot(t, mux)
+	assert.InDelta(t, 4.5, snap.Usage.TotalCostUSD, 1e-9)
+	assert.InDelta(t, 4.5, snap.Usage.TodayCostUSD, 1e-9)
+	for _, provider := range snap.Usage.APICosts {
+		if provider.Provider == "anthropic" {
+			assert.InDelta(t, 3.5, provider.TotalCostUSD, 1e-9)
+		}
+	}
+	for _, row := range costs.Agents {
+		badge := findDashAgent(snap, row.ConvID)
+		require.NotNil(t, badge)
+		assert.InDelta(t, row.CostUSD, badge.State.CostUSD+badge.State.VirtualCostUSD, 1e-9)
+	}
+	setCostFactorConfig(t, 1)
+	raw := fetchCosts(t, mux, "")
+	assert.InDelta(t, 3, raw.TotalUSD, 1e-9, "real dollars restore exactly; WHAT-IF opt-in now off")
+}

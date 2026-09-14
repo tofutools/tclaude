@@ -46,7 +46,7 @@ export function createCostsState({
   const sort = signal({ key: 'activity', dir: 'desc' });
   const payload = signal(null);
   const request = signal({ phase: 'idle', requestId: 0, hasLoaded: false, error: null });
-  const factor = signal({ raw: '', status: '', error: false, editVersion: 0, requestId: 0 });
+  const factor = signal({ raw: '', overrides: {}, loaded: false, status: '', error: false, editVersion: 0, requestId: 0 });
   let initialized = false;
 
   // Keep cost-only derivations outside the snapshot-dependent view. The
@@ -280,8 +280,12 @@ export function createCostsState({
     return true;
   }
 
-  function editFactor(raw) {
-    factor.value = { ...factor.value, raw: String(raw ?? ''), status: '', error: false, editVersion: factor.value.editVersion + 1 };
+  function editFactor(raw, harness = '') {
+    const patch = harness ? { overrides: { ...factor.value.overrides, [harness]: String(raw ?? '') } } : { raw: String(raw ?? '') };
+    factor.value = { ...factor.value, ...patch, status: '', error: false, editVersion: factor.value.editVersion + 1 };
+  }
+  function resetFactors() {
+    factor.value = { ...factor.value, raw: '', overrides: {}, status: '', error: false, editVersion: factor.value.editVersion + 1 };
   }
   function beginFactor(status = 'saving…') {
     const requestId = factor.value.requestId + 1;
@@ -306,7 +310,7 @@ export function createCostsState({
     setFillEmpty, setIncludeWeekends, toggleProvider, toggleModel,
     setStackByProvider, setStackByModel, cycleSort, setQuery,
     beginRequest, commitRequest, failRequest, editFactor, beginFactor,
-    commitFactor, failFactor,
+    commitFactor, failFactor, resetFactors,
   });
 }
 

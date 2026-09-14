@@ -18641,3 +18641,17 @@ body.wizard .git-repositories-modal button:focus-visible, body.wizard .git-repos
 .git-repos-concurrency select:focus-visible { outline: 2px solid #6ba5ff; outline-offset: 2px; }
 body.wizard .git-repos-concurrency select { background: #140f28; border-color: #51406b; color: #e7d9f5; }
 body.wizard .git-repos-concurrency select:focus-visible { outline-color: #bb86fc; }
+
+/* A shared grid keeps every multiplier input aligned, including inherited rows
+   whose reset button is absent. Resets stay LEFT of the numeric column. */
+.cost-factor-menu { margin-left: auto; }
+.cost-filter-popover.cost-factor-popover { width: min(420px, calc(100vw - 16px)); }
+.cost-factor-popover p { color: #8b949e; font-size: 12px; line-height: 1.5; margin: 10px 2px; }
+.cost-factor-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 10px 74px; align-items: center; gap: 8px; padding: 10px 2px; border-top: 1px solid #293440; }
+.cost-factor-row label { color: #c9d1d9; }
+.cost-factor-row small { display: block; color: #8b949e; font-size: 11px; margin-top: 3px; }
+.cost-factor-row input { width: 74px; min-width: 0; padding: 6px; background: #0d131b; border: 1px solid #445263; border-radius: 4px; color: #d4d4d4; font: inherit; }
+.cost-factor-row input::placeholder { color: #8b949e; }
+.cost-factor-reset .tool, .cost-factor-footer .tool { color: #79c0ff; font-size: 11px; }
+.cost-factor-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding-top: 12px; border-top: 1px solid #293440; font-size: 11px; }
+.cfg-cost-factors { max-width: 440px; }

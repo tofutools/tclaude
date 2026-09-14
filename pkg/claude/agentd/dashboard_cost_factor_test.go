@@ -21,9 +21,10 @@ import (
 
 // costFactorResp is the GET / POST response shape.
 type costFactorResp struct {
-	EstimateFactor *float64 `json:"estimate_factor"`
-	Error          string   `json:"error"`
-	Code           string   `json:"code"`
+	EstimateFactor *float64           `json:"estimate_factor"`
+	HarnessFactors map[string]float64 `json:"harness_factors"`
+	Error          string             `json:"error"`
+	Code           string             `json:"code"`
 }
 
 func serveCostFactor(t *testing.T, method, body string) (*httptest.ResponseRecorder, costFactorResp) {
@@ -154,40 +155,53 @@ func mustLoadFactor(t *testing.T) float64 {
 	return cfg.ResolvedCostFactor()
 }
 
-// applyCostDisplayFactor scales every per-agent cost (Agents, Ungrouped,
-// and each group member) plus the top-bar usage figures, and is a no-op
-// at factor 1 so the common path is untouched.
 func TestApplyCostDisplayFactor(t *testing.T) {
-	build := func() snapshotPayload {
-		return snapshotPayload{
-			Usage: dashboardUsage{
-				TotalCostUSD: 10, TodayCostUSD: 2,
-				APICosts:    []dashboardAPICost{{Provider: "anthropic", TotalCostUSD: 10, TodayCostUSD: 2}},
-				WhatIfCosts: []dashboardAPICost{{Provider: "github", TotalCostUSD: 4, TodayCostUSD: 1}},
-			},
-			Agents:    []dashboardAgent{{ConvID: "a", State: agentState{CostUSD: 4}}},
-			Ungrouped: []dashboardAgent{{ConvID: "u", State: agentState{CostUSD: 1}}},
-			Groups: []dashboardGroup{{
-				Name:    "g",
-				Members: []dashboardMember{{ConvID: "m", State: agentState{CostUSD: 8}}},
-			}},
-		}
+	defaultFactor := 2.0
+	cfg := &config.Config{Cost: &config.CostConfig{EstimateFactor: &defaultFactor, HarnessFactors: map[string]float64{"claude": 1.5, "codex": 1}}}
+	out := snapshotPayload{
+		Usage:     dashboardUsage{TotalCostUSD: 10, TodayCostUSD: 2},
+		Agents:    []dashboardAgent{{State: agentState{Harness: "claude", CostUSD: 4, VirtualCostUSD: 6}}},
+		Ungrouped: []dashboardAgent{{State: agentState{Harness: "codex", CostUSD: 3}}},
+		Groups:    []dashboardGroup{{Members: []dashboardMember{{State: agentState{Harness: "copilot", VirtualCostUSD: 8, VirtualCostCredits: 800}}}}},
 	}
+	applyCostDisplayFactor(&out, cfg)
+	assert.Equal(t, 6.0, out.Agents[0].State.CostUSD)
+	assert.Equal(t, 9.0, out.Agents[0].State.VirtualCostUSD)
+	assert.Equal(t, 3.0, out.Ungrouped[0].State.CostUSD)
+	assert.Equal(t, 16.0, out.Groups[0].Members[0].State.VirtualCostUSD)
+	assert.Equal(t, 800.0, out.Groups[0].Members[0].State.VirtualCostCredits)
+	assert.Equal(t, 10.0, out.Usage.TotalCostUSD, "already aggregated usage must not be scaled twice")
+}
 
-	noop := build()
-	applyCostDisplayFactor(&noop, 1)
-	assert.Equal(t, 10.0, noop.Usage.TotalCostUSD, "factor 1 leaves usage untouched")
-	assert.Equal(t, 4.0, noop.Agents[0].State.CostUSD, "factor 1 leaves agents untouched")
-
-	scaled := build()
-	applyCostDisplayFactor(&scaled, 1.5)
-	assert.InDelta(t, 15.0, scaled.Usage.TotalCostUSD, 1e-9)
-	assert.InDelta(t, 3.0, scaled.Usage.TodayCostUSD, 1e-9)
-	assert.InDelta(t, 15.0, scaled.Usage.APICosts[0].TotalCostUSD, 1e-9)
-	assert.InDelta(t, 3.0, scaled.Usage.APICosts[0].TodayCostUSD, 1e-9)
-	assert.InDelta(t, 6.0, scaled.Usage.WhatIfCosts[0].TotalCostUSD, 1e-9)
-	assert.InDelta(t, 1.5, scaled.Usage.WhatIfCosts[0].TodayCostUSD, 1e-9)
-	assert.InDelta(t, 6.0, scaled.Agents[0].State.CostUSD, 1e-9)
-	assert.InDelta(t, 1.5, scaled.Ungrouped[0].State.CostUSD, 1e-9)
-	assert.InDelta(t, 12.0, scaled.Groups[0].Members[0].State.CostUSD, 1e-9)
+func TestCostFactorHarnessOverrides(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	w, _ := serveCostFactor(t, http.MethodPost, `{"estimate_factor":2}`)
+	require.Equal(t, http.StatusOK, w.Code)
+	w, response := serveCostFactor(t, http.MethodPost, `{"harness":"claude","estimate_factor":1}`)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 2.0, *response.EstimateFactor)
+	assert.Equal(t, 1.0, response.HarnessFactors["claude"], "explicit 1 is retained")
+	_, _ = serveCostFactor(t, http.MethodPost, `{"harness":"opencode","estimate_factor":1.5}`)
+	_, _ = serveCostFactor(t, http.MethodPost, `{"estimate_factor":1}`)
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Cost, "clearing default must preserve overrides")
+	assert.Equal(t, 1.5, cfg.CostFactorForHarness("opencode"))
+	_, response = serveCostFactor(t, http.MethodPost, `{"harness":"claude","estimate_factor":null}`)
+	assert.NotContains(t, response.HarnessFactors, "claude")
+	assert.Equal(t, 1.5, response.HarnessFactors["opencode"])
+	for _, body := range []string{`{"harness":"anthropic","estimate_factor":2}`, `{"harness":"codex","estimate_factor":0}`, `{"reset_all":true,"estimate_factor":2}`} {
+		w, _ = serveCostFactor(t, http.MethodPost, body)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	}
+	cfg.Cost.ShowOnSubscription = true
+	require.NoError(t, config.Save(cfg))
+	w, response = serveCostFactor(t, http.MethodPost, `{"reset_all":true}`)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, response.HarnessFactors)
+	assert.Equal(t, 1.0, *response.EstimateFactor)
+	cfg, err = config.Load()
+	require.NoError(t, err)
+	assert.True(t, cfg.Cost.ShowOnSubscription, "reset preserves unrelated settings")
 }

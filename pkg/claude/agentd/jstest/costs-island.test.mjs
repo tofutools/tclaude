@@ -410,3 +410,37 @@ test('Copilot WHAT-IF tooltips identify native credits and subscription value', 
     /43 credits — \$0\.43 subscription value/);
   await mounted.unmount();
 });
+
+test('Multiplier popover edits harnesses with reset buttons before aligned inputs', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createCostsState }, { CostsApp }] = await Promise.all([
+    harness.importDashboardModule('js/costs-state.js'), harness.importDashboardModule('js/costs-island.js'),
+  ]);
+  const state = createCostsState({ snapshot: harness.signals.signal({ cost_tab_visible: true }), activeTab: harness.signals.signal('groups'), prefs: storage });
+  state.commitFactor(state.beginFactor(''), { loaded: true, raw: '2', overrides: { claude: '1.2', codex: '1' } });
+  const saves = [];
+  const actions = {
+    load: async () => {}, loadFactor: async () => {},
+    saveFactor: async (raw, key) => saves.push([key, raw]),
+    resetFactors: async () => { state.resetFactors(); saves.push(['reset']); },
+  };
+  const mounted = await harness.mount(harness.html`<${CostsApp} state=${state} actions=${actions} />`);
+  const menu = mounted.container.querySelector('.cost-factor-menu');
+  assert.match(menu.querySelector('summary').textContent, /2 overrides/);
+  assert.equal(menu.querySelectorAll('input[type="number"]').length, 5);
+  const reset = menu.querySelector('button[aria-label="Use default for Claude Code"]');
+  const row = reset.closest('.cost-factor-row');
+  assert.ok([...row.children].indexOf(reset.parentElement) < [...row.children].indexOf(row.querySelector('input')), 'reset precedes the numeric column');
+  await harness.act(() => harness.fireEvent(reset, 'click'));
+  assert.deepEqual(saves.at(-1), ['claude', '']);
+  assert.equal(row.querySelector('input').value, '');
+  assert.equal(row.querySelector('input').placeholder, '2');
+  const input = menu.querySelector('#costs-factor-opencode');
+  await harness.input(input, '1.4');
+  await harness.act(() => harness.fireEvent(input, 'change'));
+  assert.deepEqual(saves.at(-1), ['opencode', '1.4']);
+  await harness.act(() => harness.fireEvent(getByRole(menu, 'button', { name: 'Reset all to ×1' }), 'click'));
+  assert.deepEqual(saves.at(-1), ['reset']);
+  assert.equal(menu.querySelector('#costs-factor-codex').value, '');
+  await mounted.unmount();
+});
