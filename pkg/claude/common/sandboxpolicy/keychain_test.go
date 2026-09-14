@@ -16,13 +16,16 @@ func TestKeychainOptOutSurvivesCompositionAndSnapshots(t *testing.T) {
 	effective, err := Resolve(Scopes{Global: &flat, Explicit: &Profile{Name: "explicit"}})
 	require.NoError(t, err)
 	require.True(t, effective.DarwinDisableKeychainWrite)
-	restricted := Snapshot{Version: SnapshotVersion, Effective: effective}
+	restricted := NewSnapshot(effective, nil)
 	encoded, err := json.Marshal(restricted)
 	require.NoError(t, err)
 	var decoded Snapshot
 	err = json.Unmarshal(encoded, &decoded)
 	require.NoError(t, err)
 	assert.True(t, decoded.Effective.DarwinDisableKeychainWrite)
+	validated, err := RevalidateSnapshot(decoded)
+	require.NoError(t, err)
+	assert.True(t, validated.Effective.DarwinDisableKeychainWrite)
 	allowed := restricted
 	allowed.Effective.DarwinDisableKeychainWrite = false
 	require.ErrorContains(t, RequireContained(restricted, allowed), "Keychain")

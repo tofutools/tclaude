@@ -14,11 +14,11 @@ import (
 var darwinClaudeRuntimeTempBase = "/private/tmp"
 
 // tclaudeLayerHarnessRuntimeWriteDirs prepares writable host paths required by
-// the harness before any tool subprocess starts. Every harness gets the user
-// Keychain directory for credential persistence through macOS Keychain APIs.
+// the harness before any tool subprocess starts. Unless the profile opts out,
+// every harness gets the user Keychain directory for credential persistence
+// through macOS Keychain APIs.
 // This is shared Keychain authority, not a grant scoped to one credential item.
-// Claude Code stages Bash tool
-// invocations below /private/tmp/claude-<uid> and writes per-command cwd state
+// Claude Code stages Bash tool invocations below /private/tmp/claude-<uid> and writes per-command cwd state
 // to unpredictable /tmp/claude-*-cwd files, independently of Darwin's standard
 // $TMPDIR. Since /tmp resolves to /private/tmp on macOS, the outer Seatbelt
 // layer must carry the canonical temp root as launch-contract authority even
