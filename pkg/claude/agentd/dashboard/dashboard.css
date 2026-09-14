@@ -9810,13 +9810,13 @@ body:has(#tab-terminals.active) > nav {
   flex: none;
 }
 
-/* Use a currentColor SVG so the cost toggle stays readable regardless of
-   the platform's emoji artwork. Both states retain full opacity. */
+/* A plain dollar sign uses the dashboard font and explicit state colours
+   instead of platform-specific emoji artwork. Both states retain full opacity. */
 .cost-toggle {
-  background: none; border: none; cursor: pointer; font-size: 14px;
+  background: none; border: none; cursor: pointer;
+  font-family: inherit; font-size: 16px; font-weight: 400; font-style: normal;
   padding: 2px 4px; line-height: 1; color: #3fb950;
 }
-.cost-toggle svg { display: block; }
 .cost-toggle:hover { color: #56d364; }
 .cost-toggle.off { color: #737c86; }
 .cost-toggle.off:hover { color: #c9d1d9; }

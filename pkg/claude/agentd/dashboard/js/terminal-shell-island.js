@@ -374,7 +374,7 @@ function TerminalCostToggle() {
   return html`<button type="button" class=${`cost-toggle mux-cost-toggle${hidden ? ' off' : ''}`}
     aria-label="Show agent costs" aria-pressed=${!hidden}
     title="Show or hide per-agent costs, in Terminals and Groups"
-    onClick=${toggleAgentCosts}><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M10.8 1h2.4v2.2c3.7.3 6 2.5 6.2 5.6h-3.6c-.2-1.5-1.3-2.4-2.6-2.6v4.2l1.4.4c3.4.9 5.2 2.6 5.2 5.4 0 3.1-2.5 5.2-6.6 5.5V24h-2.4v-2.3c-4.1-.4-6.7-2.7-6.8-6.1h3.7c.2 1.7 1.3 2.8 3.1 3.1v-4.8l-1.1-.3c-3.4-.9-5.3-2.5-5.3-5.3 0-2.9 2.4-4.9 6.4-5.2V1zm0 5.2c-1.7.2-2.7.9-2.7 2 0 1 .7 1.6 2.7 2.1V6.2zm2.4 8.4v4.1c1.8-.2 2.9-1 2.9-2.2 0-.9-.8-1.5-2.9-1.9z"/></svg></button>`;
+    onClick=${toggleAgentCosts}>$</button>`;
 }
 
 function TerminalCosts({ agent }) {
