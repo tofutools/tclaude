@@ -1,3 +1,4 @@
+import { COST_FACTOR_HARNESSES } from './cost-factors.js';
 import { dayKey, spanRange } from './costs-model.js';
 
 async function responseError(response) {
@@ -37,34 +38,53 @@ export function createCostsActions({ state, fetchImpl = globalThis.fetch } = {})
   }
 
   async function loadFactor() {
-    const token = state.beginFactor('');
+    const token = state.beginFactor('loading…');
     try {
       const response = await fetchImpl('/api/cost-factor', { credentials: 'same-origin' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       const value = Number(data.estimate_factor);
       const raw = Number.isFinite(value) && value !== 1 ? String(+value.toFixed(4)) : '';
-      return state.commitFactor(token, { raw, status: '' });
+      const overrides = {};
+      for (const { key } of COST_FACTOR_HARNESSES) {
+        const value = data.harness_factors?.[key];
+        if (value != null) overrides[key] = String(value);
+      }
+      if (!state.commitFactor(token, { raw, overrides, loaded: true, status: '' })) return false;
+      state.recordFactorSave('', null, true);
+      return true;
     } catch (error) {
       // Loading the factor is best-effort and must not block cost history.
-      state.commitFactor(token, { status: '' });
+      state.failFactor(token, 'Could not load multipliers. Retry.');
       return false;
     }
   }
 
-  function saveFactor(raw) {
+  function saveFactor(raw, harness = '') {
     raw = String(raw ?? '').trim();
     let value = null;
     if (raw !== '') {
       value = Number(raw);
       if (!Number.isFinite(value) || value <= 0 || value > 10) {
         const token = state.beginFactor('');
-        state.failFactor(token, 'must be 0–10');
+        const error = 'Multiplier must be greater than 0 and at most 10.';
+        state.recordFactorSave(harness || 'Default', error);
+        state.failFactor(token, error);
         return Promise.resolve(false);
       }
     }
+    return persistFactor({ estimate_factor: value, ...(harness ? { harness } : {}) });
+  }
+
+  function resetFactors() {
+    state.resetFactors();
+    return persistFactor({ reset_all: true });
+  }
+
+  function persistFactor(body) {
+    const field = body.reset_all ? 'Reset all' : (body.harness || 'Default');
     const token = state.beginFactor('saving…');
-    // The endpoint persists a shared scalar and has no revision precondition.
+    // The endpoint merges one setting at a time without a revision precondition.
     // Serialize POSTs in input order so an older, slower request can never
     // overwrite a newer value on the server. Tokens still prevent obsolete
     // responses from changing the latest input/status in the client.
@@ -73,13 +93,17 @@ export function createCostsActions({ state, fetchImpl = globalThis.fetch } = {})
         const response = await fetchImpl('/api/cost-factor', {
           method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ estimate_factor: value }),
+          body: JSON.stringify(body),
         });
         if (!response.ok) throw new Error(await responseError(response));
-        if (!state.commitFactor(token, { status: 'saved' })) return false;
+        state.recordFactorSave(field, null, body.reset_all);
+        const committed = state.commitFactor(token, { status: 'saved' });
+        // Even a superseded status may represent a successful independent
+        // setting change. Refresh totals if the next field's save later fails.
         await load();
-        return true;
+        return committed;
       } catch (error) {
+        state.recordFactorSave(field, error);
         state.failFactor(token, error);
         return false;
       }
@@ -88,5 +112,5 @@ export function createCostsActions({ state, fetchImpl = globalThis.fetch } = {})
     return operation;
   }
 
-  return Object.freeze({ load, loadFactor, saveFactor });
+  return Object.freeze({ load, loadFactor, saveFactor, resetFactors });
 }

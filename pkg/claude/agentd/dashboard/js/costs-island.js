@@ -1,6 +1,7 @@
 import { Fragment, h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { COST_FACTOR_HARNESSES } from './cost-factors.js';
 import { AsyncLoadState } from './async-load-state.js';
 import { CostsChart } from './costs-chart.js';
 import { CostsAccumulatedChart } from './costs-accumulated-chart.js';
@@ -42,25 +43,57 @@ function Summary({ current }) {
 
 function FactorEditor({ state, actions }) {
   const current = state.view.value.factor;
-  const timer = useRef(null);
-  useEffect(() => () => clearTimeout(timer.current), []);
-  const save = () => {
-    clearTimeout(timer.current);
-    void actions.saveFactor(state.factor.value.raw);
+  const menu = useCostFilterPosition();
+  const timers = useRef(new Map());
+  useEffect(() => () => timers.current.forEach(clearTimeout), []);
+  const rawFor = (key) => key ? (state.factor.value.overrides[key] ?? '') : state.factor.value.raw;
+  const save = (key) => {
+    clearTimeout(timers.current.get(key));
+    timers.current.delete(key);
+    void actions.saveFactor(rawFor(key), key);
   };
-  const edit = (raw) => {
-    state.editFactor(raw);
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => void actions.saveFactor(state.factor.value.raw), 600);
+  const edit = (key, raw) => {
+    state.editFactor(raw, key);
+    clearTimeout(timers.current.get(key));
+    timers.current.set(key, setTimeout(() => save(key), 600));
   };
-  return html`<label class="filter-toggle" id="costs-factor-label"
-    title="Display multiplier applied to every cost figure here, on the per-agent badges, and in the top bar. Display-only: recorded data is never changed; 1 = no adjustment.">
-    <span>×</span><input id="costs-factor" type="number" min="0" max="10" step="0.01" placeholder="1.0"
-      aria-label="Cost display multiplier" style="width:5em" value=${current.raw}
-      onInput=${(event) => edit(event.currentTarget.value)} onChange=${save}
-      onKeyDown=${(event) => { if (event.key === 'Enter') save(); }} />
-    <span id="costs-factor-status" class=${`muted${current.error ? ' error' : ''}`} role=${current.error ? 'alert' : 'status'}>${current.status}</span>
-  </label>`;
+  const inherit = (key) => { state.editFactor('', key); save(key); };
+  const reset = () => {
+    timers.current.forEach(clearTimeout);
+    timers.current.clear();
+    void actions.resetFactors();
+  };
+  const count = Object.values(current.overrides).filter((raw) => raw !== '').length;
+  const defaultFactor = current.raw || '1';
+  const row = (key, label) => {
+    const raw = key ? (current.overrides[key] ?? '') : current.raw;
+    const custom = key && raw !== '';
+    const hint = !key ? 'Used unless overridden' : key === 'opencode' ? 'All providers in OpenCode'
+      : custom ? 'Custom multiplier' : `Uses default · ×${defaultFactor}`;
+    return html`<div class="cost-factor-row" key=${key}>
+      <label for=${key ? `costs-factor-${key}` : 'costs-factor'}>${label}<small>${hint}</small></label>
+      <span class="cost-factor-reset">${custom && html`<button class="tool" disabled=${!current.loaded}
+        aria-label=${`Use default for ${label}`} onClick=${() => inherit(key)}>Use default</button>`}</span>
+      <span>×</span><input id=${key ? `costs-factor-${key}` : 'costs-factor'} type="number" min="0.01" max="10" step="0.01"
+        aria-label=${key ? `${label} cost display multiplier` : 'Cost display multiplier'} disabled=${!current.loaded}
+        placeholder=${key ? defaultFactor : '1'} value=${raw}
+        onInput=${(event) => edit(key, event.currentTarget.value)} onChange=${() => save(key)}
+        onKeyDown=${(event) => { if (event.key === 'Enter') save(key); }} />
+    </div>`;
+  };
+  return html`<details ref=${menu} class="cost-filter-menu cost-factor-menu" id="costs-factor-label" onToggle=${toggleCostFilter}>
+    <summary onClick=${closeSiblingFilters}><strong>Multipliers</strong><span>${count ? `${count} override${count === 1 ? '' : 's'}` : `×${defaultFactor}`}</span></summary>
+    <div class="cost-filter-popover cost-factor-popover" role="group" aria-label="Cost display multipliers">
+      <div class="cost-filter-popover-head"><strong>Cost display multipliers</strong><span>1 = no adjustment</span></div>
+      <p>Overrides replace the default. Leave a harness blank to use the default.</p>
+      ${row('', 'Default')}${COST_FACTOR_HARNESSES.map(({ key, label }) => row(key, label))}
+      <p>Applies to displayed costs across the dashboard, including WHAT-IF estimates. Recorded data stays unchanged.</p>
+      <div class="cost-factor-footer"><button class="tool" disabled=${!current.loaded} onClick=${reset}>Reset all to ×1</button>
+        <span id="costs-factor-status" class=${`muted${current.error ? ' error' : ''}`} role=${current.error ? 'alert' : 'status'}>${current.status}</span>
+        ${!current.loaded && current.error && html`<button class="tool" onClick=${actions.loadFactor}>Retry</button>`}
+      </div>
+    </div>
+  </details>`;
 }
 
 function Controls({ state, actions, current }) {

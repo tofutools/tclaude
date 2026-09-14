@@ -429,8 +429,14 @@ distinct throughout: totals split into `$real + ≈$whatif`, a banner appears
 whenever estimates are mixed in, and estimated rows carry ⚠︎ with a hover
 breakdown (Copilot credits show as "N credits — $X subscription value").
 The month projection extrapolates spend over elapsed weekdays, with toggles
-for filling empty weekdays and including weekends. A display-only cost
-multiplier input scales all displayed figures. On subscription accounts the
+for filling empty weekdays and including weekends. The **Multipliers** menu sets a display-only default and overrides for Claude Code,
+Codex, OpenCode, and Copilot. Overrides replace the default: leave a harness blank
+(or choose **Use default**) to inherit it; explicitly enter `1` to disable
+adjustment for that harness. OpenCode uses one multiplier across all its providers.
+**Reset all to ×1** removes all adjustments. Changes save automatically and apply
+to dashboard dollar amounts, including agent badges, charts, projections, and
+top-bar totals. Recorded costs and native credits remain unchanged. The same
+settings are available under Config → Usage, costs & rate limits. On subscription accounts the
 tab appears only when enabled in Config.
 
 ## Audit

@@ -51,8 +51,8 @@ func TestDashboardCostsPreactBoundary(t *testing.T) {
 		"name: 'costs'",
 		"state: costsState",
 		"key=${`${agent.conv_id}:${agent.day}`}",
-		"function saveFactor(raw)",
-		"if (!state.commitFactor(token",
+		"function saveFactor(raw, harness = '')",
+		"state.commitFactor(token",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("Costs Preact wiring missing %q", needle)

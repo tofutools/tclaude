@@ -212,19 +212,9 @@ const maxCostSpanDays = 366
 // month" spans. The maxCostSpanDays cap is measured back from to, so a
 // far-past from can't zero-fill years of empty points.
 //
-// factor is the display multiplier from config (config.ResolvedCostFactor):
-// every dollar figure in the response — the per-day bars, the per-agent
-// breakdown, and the total — is scaled by it as the last step, so a
-// compensation factor nudges the whole tab in lockstep while the
-// underlying session_cost_daily rows stay raw. factor 1 (the default)
-// is a no-op.
-//
-// Each daily session slice contributes real pay-per-token spend when present.
-// When includeWhatIf is true, a slice without real spend contributes its
-// subscription WHAT-IF estimate instead. The response carries both subtotals
-// and per-row kind metadata so the client can identify mixed spans without
-// maintaining a second aggregation path.
-func collectCosts(from, to time.Time, factor float64, includeWhatIf bool) (costsResponse, error) {
+// Display factors are applied to deltas after the raw baseline walk, before
+// summing across harnesses. Recorded dollars and native credits stay raw.
+func collectCosts(from, to time.Time, cfg *config.Config, includeWhatIf bool) (costsResponse, error) {
 	if min := to.AddDate(0, 0, -(maxCostSpanDays - 1)); from.Before(min) {
 		from = min
 	}
@@ -244,6 +234,8 @@ func collectCosts(from, to time.Time, factor float64, includeWhatIf bool) (costs
 	if err != nil {
 		return costsResponse{}, err
 	}
+
+	scaleCostDeltas(deltas, cfg, harnesses)
 
 	type kindTotals struct{ real, whatif, credits float64 }
 	byDay := map[string]kindTotals{}
@@ -382,26 +374,19 @@ func collectCosts(from, to time.Time, factor float64, includeWhatIf bool) (costs
 		})
 	}
 	sortCostAgentRows(out.Agents)
-	// Display-only compensation, applied last so it never feeds back into
-	// the per-conv baseline walk above. Scaling is monotonic for a
-	// positive factor, so the sort order is unchanged. factor 1 is the
-	// common path and a no-op.
-	if factor != 1 {
-		out.TotalUSD *= factor
-		out.RealTotalUSD *= factor
-		out.WhatIfTotalUSD *= factor
-		for i := range out.Days {
-			out.Days[i].CostUSD *= factor
-			out.Days[i].RealCostUSD *= factor
-			out.Days[i].WhatIfCostUSD *= factor
-		}
-		for i := range out.Agents {
-			out.Agents[i].CostUSD *= factor
-			out.Agents[i].RealCostUSD *= factor
-			out.Agents[i].WhatIfCostUSD *= factor
-		}
-	}
 	return out, nil
+}
+
+// scaleCostDeltas changes only the display copy, never the raw baseline walk.
+// Old history may lack a denormalized harness; use its surviving session as
+// fallback, just as the Costs table does. Missing identities inherit default.
+func scaleCostDeltas(deltas []costDelta, cfg *config.Config, harnesses map[string]string) {
+	for i := range deltas {
+		if deltas[i].harness == "" {
+			deltas[i].harness = harnesses[deltas[i].sessionID]
+		}
+		deltas[i].usd *= cfg.CostFactorForHarness(deltas[i].harness)
+	}
 }
 
 func costKind(real, whatif float64) string {
@@ -508,7 +493,7 @@ func handleDashboardCosts(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg, _ := config.Load()
 	includeWhatIf := cfg != nil && cfg.Cost != nil && cfg.Cost.ShowOnSubscription
-	out, err := collectCosts(from, to, cfg.ResolvedCostFactor(), includeWhatIf)
+	out, err := collectCosts(from, to, cfg, includeWhatIf)
 	if err != nil {
 		http.Error(w, "collect costs: "+err.Error(), http.StatusInternalServerError)
 		return

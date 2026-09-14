@@ -1,3 +1,4 @@
+import { COST_FACTOR_HARNESSES } from './cost-factors.js';
 import { createContext, h } from 'preact';
 import { useContext, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -280,9 +281,16 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
     <div class="cfg-section">
       <h3>Usage, costs & rate limits</h3>
       <div class="cfg-field">
-        <span class="cfg-label">Cost display multiplier</span>
-        <${ConfigInput} type="number" id="cfg-cost-factor" min="0" max="10" step="0.01" placeholder="1.0" aria-label="Cost display multiplier" style="min-width:120px" />
-        <span class="cfg-hint">Scales every <em>displayed</em> cost figure — the per-agent badge, the Costs tab, and the top-bar month-to-date / today figures. Use a value such as <code>1.1</code> only when you intentionally want a 10% display compensation. Recorded data is never changed, so resetting to <code>1</code> restores raw figures. Empty or <code>1</code> = no adjustment. Also editable live on the Costs tab.</span>
+        <span class="cfg-label">Cost display multipliers</span>
+        <div class="cfg-cost-factors">
+          <div class="cost-factor-row"><label for="cfg-cost-factor">Default<small>Used unless overridden</small></label><span></span><span>×</span>
+            <${ConfigInput} type="number" id="cfg-cost-factor" min="0.01" max="10" step="0.01" placeholder="1" aria-label="Cost display multiplier" /></div>
+          ${COST_FACTOR_HARNESSES.map(({ key, label }) => html`<div class="cost-factor-row" key=${key}>
+            <label for=${`cfg-cost-factor-${key}`}>${label}<small>${key === 'opencode' ? 'All providers in OpenCode' : 'Blank uses default'}</small></label><span></span><span>×</span>
+            <${ConfigInput} type="number" id=${`cfg-cost-factor-${key}`} min="0.01" max="10" step="0.01" placeholder="Default" aria-label=${`${label} cost display multiplier`} />
+          </div>`)}
+        </div>
+        <span class="cfg-hint">Scales displayed dollar amounts across the dashboard, including WHAT-IF estimates. Harness overrides <strong>replace</strong> the default; blank inherits it, and an explicit <code>1</code> means no adjustment. Recorded data stays unchanged. Also editable live in the Costs tab’s Multipliers menu.</span>
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Show cost on subscription</span>

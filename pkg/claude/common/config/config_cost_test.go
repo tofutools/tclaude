@@ -68,3 +68,31 @@ func TestValidate_CostEstimateFactor(t *testing.T) {
 		assert.NotContains(t, e, "cost.estimate_factor")
 	}
 }
+
+func TestCostFactorForHarness(t *testing.T) {
+	var absent *Config
+	assert.Equal(t, 1.0, absent.CostFactorForHarness("claude"))
+	cfg := &Config{Cost: &CostConfig{EstimateFactor: fptr(2), HarnessFactors: map[string]float64{"claude": 1.2, "codex": 1}}}
+	assert.Equal(t, 1.2, cfg.CostFactorForHarness("claude"), "override replaces default")
+	assert.Equal(t, 1.0, cfg.CostFactorForHarness("codex"), "explicit 1 opts out")
+	for _, name := range []string{"opencode", "copilot", "", "unknown"} {
+		assert.Equal(t, 2.0, cfg.CostFactorForHarness(name), "missing override inherits default")
+	}
+	cfg.Cost.HarnessFactors["claude"] = 0
+	assert.Equal(t, 2.0, cfg.CostFactorForHarness("claude"), "invalid override inherits")
+	cfg.Cost.HarnessFactors["claude"] = 100
+	assert.Equal(t, 10.0, cfg.CostFactorForHarness("claude"))
+}
+
+func TestValidateCostHarnessFactors(t *testing.T) {
+	for _, value := range []float64{0, -1, 11} {
+		cfg := DefaultConfig()
+		cfg.Cost = &CostConfig{HarnessFactors: map[string]float64{"claude": value}}
+		assert.Contains(t, strings.Join(Validate(cfg), " | "), "cost.harness_factors.claude")
+	}
+	cfg := DefaultConfig()
+	cfg.Cost = &CostConfig{HarnessFactors: map[string]float64{"claude": 1, "opencode": 1.2}}
+	assert.NotContains(t, strings.Join(Validate(cfg), " | "), "cost.harness_factors")
+	cfg.Cost.HarnessFactors["anthropic"] = 1.2
+	assert.Contains(t, strings.Join(Validate(cfg), " | "), "unknown harness")
+}

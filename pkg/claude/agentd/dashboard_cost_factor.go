@@ -22,10 +22,14 @@ import (
 
 // costFactorBody is the POST wire shape. EstimateFactor is a pointer so
 // the client can clear the override (send null) as distinct from setting
-// a value. A factor of 1 (or null) clears it — 1 is the no-op default,
+// a value. For the global default, 1 (or null) clears it; a harness
+// override of 1 is preserved, and only null restores inheritance.
+// The global 1 is the no-op default,
 // so we keep config.json tidy rather than persisting a redundant 1.
 type costFactorBody struct {
 	EstimateFactor *float64 `json:"estimate_factor"`
+	Harness        string   `json:"harness,omitempty"`
+	ResetAll       bool     `json:"reset_all,omitempty"`
 }
 
 // handleDashboardCostFactorAPI dispatches /api/cost-factor by method.
@@ -48,7 +52,16 @@ func handleDashboardCostFactorAPI(w http.ResponseWriter, r *http.Request) {
 // the client always renders a usable number even when the on-disk value
 // is absent or out of range.
 func writeCostFactor(w http.ResponseWriter, cfg *config.Config) {
+	overrides := map[string]float64{}
+	if cfg != nil && cfg.Cost != nil {
+		for name := range cfg.Cost.HarnessFactors {
+			if config.ValidCostFactorHarness(name) {
+				overrides[name] = cfg.CostFactorForHarness(name)
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
+		"harness_factors": overrides,
 		"estimate_factor": cfg.ResolvedCostFactor(),
 	})
 }
@@ -66,6 +79,15 @@ func handleDashboardCostFactorPost(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_json", "request body is not valid JSON: "+err.Error())
 		return
 	}
+	if body.Harness != "" && !config.ValidCostFactorHarness(body.Harness) {
+		writeError(w, http.StatusBadRequest, "unknown_harness", "unknown cost multiplier harness")
+		return
+	}
+	if body.ResetAll && (body.Harness != "" || body.EstimateFactor != nil) {
+		writeError(w, http.StatusBadRequest, "bad_request", "reset_all cannot be combined with a harness or factor")
+		return
+	}
+
 	// Reject an explicit out-of-range value up front so the human gets the
 	// same guard the Config tab's Validate gives. A null / 1 clears the
 	// override (handled below), so only a present, non-1 value is checked.
@@ -86,23 +108,31 @@ func handleDashboardCostFactorPost(w http.ResponseWriter, r *http.Request) {
 			// whatever it held. Refuse; the Config tab owns that recovery.
 			return errCostConfigMalformed
 		}
+		if cfg.Cost == nil {
+			cfg.Cost = &config.CostConfig{}
+		}
 		switch {
-		case body.EstimateFactor == nil || *body.EstimateFactor == 1:
-			// Clear the override: drop the field, and the whole block when
-			// it's all that remains, so config.json doesn't accrue a
-			// redundant no-op "cost": { "estimate_factor": 1 }.
-			if cfg.Cost != nil {
-				cfg.Cost.EstimateFactor = nil
-				if *cfg.Cost == (config.CostConfig{}) {
-					cfg.Cost = nil
+		case body.ResetAll:
+			cfg.Cost.EstimateFactor = nil
+			cfg.Cost.HarnessFactors = nil
+		case body.Harness != "":
+			if body.EstimateFactor == nil {
+				delete(cfg.Cost.HarnessFactors, body.Harness)
+			} else {
+				if cfg.Cost.HarnessFactors == nil {
+					cfg.Cost.HarnessFactors = map[string]float64{}
 				}
+				cfg.Cost.HarnessFactors[body.Harness] = *body.EstimateFactor
 			}
+		case body.EstimateFactor == nil || *body.EstimateFactor == 1:
+			cfg.Cost.EstimateFactor = nil
 		default:
-			if cfg.Cost == nil {
-				cfg.Cost = &config.CostConfig{}
-			}
 			cfg.Cost.EstimateFactor = body.EstimateFactor
 		}
+		if cfg.Cost.Empty() {
+			cfg.Cost = nil
+		}
+
 		return nil
 	})
 	if errors.Is(err, errCostConfigMalformed) {

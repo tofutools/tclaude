@@ -3761,7 +3761,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		snapshotNamedLoad{"links", func() { links = collectLinksSnapshot(groupNames) }},
 		snapshotNamedLoad{"usage", func() {
 			showWhatIf := cfg != nil && cfg.Cost != nil && cfg.Cost.ShowOnSubscription
-			usage, hasRealCost, usagePhases, costErr = collectUsageSnapshot(cfg.ResolvedUsageIdleTimeout(), showWhatIf)
+			usage, hasRealCost, usagePhases, costErr = collectUsageSnapshot(cfg.ResolvedUsageIdleTimeout(), showWhatIf, cfg)
 		}},
 		snapshotNamedLoad{"opencode_usage_activity", func() {
 			openCodeActivity, _ = db.HasOpenCodeUsageActivitySince(time.Now().Add(-db.OpenCodeUsageActivityRetention))
@@ -3848,7 +3848,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// Display-only cost compensation, applied as the final step over the
 	// fully-assembled payload (cfg was loaded once at the top). The DB
 	// rows feeding these figures stay raw — see config.CostConfig.
-	applyCostDisplayFactor(&out, cfg.ResolvedCostFactor())
+	applyCostDisplayFactor(&out, cfg)
 	span.mark("collectors")
 
 	// The large registries below change only after an explicit management
@@ -3885,44 +3885,24 @@ func snapshotStaticVersion(out snapshotPayload) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// applyCostDisplayFactor scales every cost figure in the snapshot by the
-// configured display multiplier: the per-agent badge (Agents, Ungrouped,
-// and each group member's State.CostUSD / State.VirtualCostUSD) plus the
-// top-bar month-to-date / today readouts. The WHAT-IF per-agent figure
-// (VirtualCostUSD) scales on the same factor as the real one, so the Groups
-// tab's hypothetical badge tracks the Costs tab's WHAT-IF total (which
-// collectCosts scales by the same factor). It is the snapshot twin of
-// collectCosts's scaling, so the per-agent badge, the Costs tab and the
-// top-bar headline all move together. A factor of 1 (the default / unset)
-// is a no-op, so the common path is untouched. Display-only: the DB keeps
-// raw values.
-func applyCostDisplayFactor(out *snapshotPayload, factor float64) {
-	if factor == 1 {
-		return
+// applyCostDisplayFactor scales session badges using their own harness. Usage
+// totals have already been scaled per delta before aggregation in the collector.
+// The database and native credit amounts are never changed.
+func applyCostDisplayFactor(out *snapshotPayload, cfg *config.Config) {
+	scale := func(state *agentState) {
+		factor := cfg.CostFactorForHarness(state.Harness)
+		state.CostUSD *= factor
+		state.VirtualCostUSD *= factor
 	}
-	out.Usage.TotalCostUSD *= factor
-	out.Usage.TodayCostUSD *= factor
-	for i := range out.Usage.APICosts {
-		out.Usage.APICosts[i].TotalCostUSD *= factor
-		out.Usage.APICosts[i].TodayCostUSD *= factor
+	for i := range out.Agents {
+		scale(&out.Agents[i].State)
 	}
-	for i := range out.Usage.WhatIfCosts {
-		out.Usage.WhatIfCosts[i].TotalCostUSD *= factor
-		out.Usage.WhatIfCosts[i].TodayCostUSD *= factor
+	for i := range out.Ungrouped {
+		scale(&out.Ungrouped[i].State)
 	}
-	scaleAgents := func(rows []dashboardAgent) {
-		for i := range rows {
-			rows[i].State.CostUSD *= factor
-			rows[i].State.VirtualCostUSD *= factor
-		}
-	}
-	scaleAgents(out.Agents)
-	scaleAgents(out.Ungrouped)
 	for gi := range out.Groups {
-		members := out.Groups[gi].Members
-		for mi := range members {
-			members[mi].State.CostUSD *= factor
-			members[mi].State.VirtualCostUSD *= factor
+		for mi := range out.Groups[gi].Members {
+			scale(&out.Groups[gi].Members[mi].State)
 		}
 	}
 }

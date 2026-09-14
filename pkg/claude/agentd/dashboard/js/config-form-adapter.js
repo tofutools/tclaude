@@ -1,3 +1,4 @@
+import { COST_FACTOR_HARNESSES } from './cost-factors.js';
 import { $, $$ } from './helpers.js';
 import { lineDiff as configLineDiff } from './line-diff.js';
 import { dashboardState } from './snapshot-store.js';
@@ -444,6 +445,9 @@ function populateConfigForm(cfg) {
   // value shows as-is so the human sees exactly what's on disk.
   const cf = cfg.cost && cfg.cost.estimate_factor;
   $('#cfg-cost-factor').value = (cf != null && cf !== '') ? cf : '';
+  for (const { key } of COST_FACTOR_HARNESSES) {
+    $(`#cfg-cost-factor-${key}`).value = cfg.cost?.harness_factors?.[key] ?? '';
+  }
   // Show the Costs tab + per-agent cost on a subscription (WHAT-IF mode).
   // Default off (auto-hide on subscription).
   $('#cfg-cost-show-on-subscription').checked = !!(cfg.cost && cfg.cost.show_on_subscription);
@@ -730,6 +734,14 @@ function assembleConfig() {
   const cfRaw = $('#cfg-cost-factor').value.trim();
   const cf = cfgFloat('cfg-cost-factor', 1);
   if (cfRaw !== '' && cf !== 1) cost.estimate_factor = cf; else delete cost.estimate_factor;
+  const harnessFactors = { ...cost.harness_factors };
+  for (const { key } of COST_FACTOR_HARNESSES) {
+    const id = `cfg-cost-factor-${key}`;
+    if ($('#' + id).value.trim() === '') delete harnessFactors[key];
+    else harnessFactors[key] = cfgFloat(id, 1);
+  }
+  if (Object.keys(harnessFactors).length) cost.harness_factors = harnessFactors;
+  else delete cost.harness_factors;
   // show_on_subscription: false is the default — drop it (matches the Go
   // `omitempty`) so an all-default cost block doesn't marshal a spurious key.
   if ($('#cfg-cost-show-on-subscription').checked) cost.show_on_subscription = true; else delete cost.show_on_subscription;
