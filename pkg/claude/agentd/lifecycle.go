@@ -3848,6 +3848,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
+	networkAutoSync, _, _, _, syncFail := resolveBoolLaunchField(
+		"network_auto_sync", body.NetworkAutoSync != nil && *body.NetworkAutoSync, body.NetworkAutoSync != nil, h.Name, profileTiers,
+		func(p *db.SpawnProfile) *bool { return p.NetworkAutoSync }, func(v bool) (bool, error) { return v, nil })
+	if syncFail != nil {
+		writeError(w, syncFail.Status, syncFail.Kind, syncFail.Msg)
+		return
+	}
 	var autoReviewSet, trustDirSet, sshWorkaroundSet bool
 	var autoReviewNote, trustDirNote, autoMemoryNote, peerMessagingNote, sshWorkaroundNote, contextFeaturesNote string
 	body.AutoReview, autoReviewSet, _, autoReviewNote, fieldFail = resolveBoolLaunchField(
@@ -4403,6 +4410,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", policyErr.Error())
 		return
 	}
+	effectiveSandbox.NetworkAutoSync = networkAutoSync
 	if applied, fail := applySpawnHarnessConfig(effectiveSandbox, body.HarnessConfig); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
