@@ -206,6 +206,7 @@ type templateInlineProfileJSON struct {
 	CopilotAPI             *bool                            `json:"copilot_api,omitempty"`
 	CodexAppServer         *bool                            `json:"codex_app_server,omitempty"`
 	FastMode               *bool                            `json:"fast_mode,omitempty"`
+	NetworkAutoSync        *bool                            `json:"network_auto_sync,omitempty"`
 	AutoReview             *bool                            `json:"auto_review,omitempty"`
 	TrustDir               *bool                            `json:"trust_dir,omitempty"`
 	RemoteControl          *bool                            `json:"remote_control,omitempty"`
@@ -241,6 +242,7 @@ func inlineProfileToJSON(p *SpawnProfile) string {
 		CopilotAPI:             p.CopilotAPI,
 		CodexAppServer:         p.CodexAppServer,
 		FastMode:               p.FastMode,
+		NetworkAutoSync:        p.NetworkAutoSync,
 		AutoReview:             p.AutoReview,
 		TrustDir:               p.TrustDir,
 		RemoteControl:          p.RemoteControl,
@@ -285,6 +287,7 @@ func inlineProfileFromJSON(s string) *SpawnProfile {
 		CopilotAPI:             j.CopilotAPI,
 		CodexAppServer:         j.CodexAppServer,
 		FastMode:               j.FastMode,
+		NetworkAutoSync:        j.NetworkAutoSync,
 		AutoReview:             j.AutoReview,
 		TrustDir:               j.TrustDir,
 		RemoteControl:          j.RemoteControl,

@@ -3,6 +3,8 @@ package db
 import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -74,3 +76,65 @@ func TestNetworkSyncSpawnProfileTriStateAndSnapshot(t *testing.T) {
 }
 
 func ptrBool(v bool) *bool { return &v }
+
+func TestNetworkSyncBrokenUnrelatedProfileDoesNotBlockQueue(t *testing.T) {
+	setupTestDB(t)
+	id, err := CreateSandboxProfile(&SandboxProfile{Name: "target"})
+	require.NoError(t, err)
+	_, err = CreateSandboxProfile(&SandboxProfile{Name: "deleted"})
+	require.NoError(t, err)
+	for _, name := range []string{"deleted", "target"} {
+		snapshot, err := ResolveEffectiveSandboxSnapshot(0, name)
+		require.NoError(t, err)
+		require.NoError(t, RegisterNetworkSyncLaunch(name, name, snapshot))
+		require.NoError(t, BeginNetworkSyncLaunch(name))
+	}
+	_, err = DeleteSandboxProfile("deleted")
+	require.NoError(t, err)
+	rows, err := QueueProfileNetworkSync(id, true)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "target", rows[0].ID)
+}
+
+func TestNetworkSyncPinsHostDatabaseAcrossChangedHome(t *testing.T) {
+	setupTestDB(t)
+	snapshot, err := ResolveEffectiveSandboxSnapshot(0, "")
+	require.NoError(t, err)
+	require.NoError(t, RegisterNetworkSyncLaunch("pinned", "session", snapshot))
+	hostDB := DBPath()
+	Close()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	require.NoError(t, PinNetworkSyncDatabase(hostDB))
+	require.NoError(t, BeginNetworkSyncLaunch("pinned"))
+	row, err := ReadNetworkSyncLaunch("pinned")
+	require.NoError(t, err)
+	require.Equal(t, "session", row.SessionID)
+	_, err = os.Stat(filepath.Join(home, ".tclaude", "data", "db.sqlite"))
+	require.True(t, os.IsNotExist(err))
+}
+
+func TestNetworkSyncPublishesOnlyNetworkAndGuardsSuccessor(t *testing.T) {
+	setupTestDB(t)
+	snapshot, err := ResolveEffectiveSandboxSnapshot(0, "")
+	require.NoError(t, err)
+	require.NoError(t, SaveSession(&SessionRow{ID: "session", EffectiveSandbox: &snapshot}))
+	require.NoError(t, RegisterNetworkSyncLaunch("first", "session", snapshot))
+	require.NoError(t, BeginNetworkSyncLaunch("first"))
+	changed := snapshot
+	changed.Effective.Network = &sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeList, Allow: []sandboxpolicy.NetworkAllowEntry{{Host: "example.com"}}}
+	changed.Effective.Environment = []sandboxpolicy.EnvironmentEntry{{Name: "UNAPPLIED", Value: "no"}}
+	require.NoError(t, AcknowledgeNetworkSync("first", 0, "applied", "", &changed))
+	row, err := LoadSession("session")
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	require.Equal(t, changed.Effective.Network, row.EffectiveSandbox.Effective.Network)
+	require.Equal(t, snapshot.Effective.Environment, row.EffectiveSandbox.Effective.Environment)
+	require.NoError(t, RegisterNetworkSyncLaunch("successor", "session", snapshot))
+	require.NoError(t, BeginNetworkSyncLaunch("successor"))
+	require.NoError(t, AcknowledgeNetworkSync("first", 0, "applied", "", &snapshot))
+	row, err = LoadSession("session")
+	require.NoError(t, err)
+	require.Equal(t, changed.Effective.Network, row.EffectiveSandbox.Effective.Network)
+}

@@ -29,6 +29,7 @@ func PrepareNetworkSyncLaunch(spec *TclaudeLayerLaunchSpec, snapshot *sandboxpol
 		return err
 	}
 	spec.Contract.NetworkSyncID = id
+	spec.Contract.NetworkSyncDatabase = db.DBPath()
 	return nil
 }
 
