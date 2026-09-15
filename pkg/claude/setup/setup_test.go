@@ -364,7 +364,9 @@ func TestRunSetup_AllHarnessesPreparesAbsentHarnesses(t *testing.T) {
 					assert.Contains(t, out, "Install and trust tclaude hooks for Codex CLI?")
 					assert.Contains(t, out, "Skipped Codex CLI hooks")
 					assert.NoFileExists(t, filepath.Join(codexHome, "hooks.json"))
-					assert.NoFileExists(t, filepath.Join(codexHome, "config.toml"))
+					codex, ok := harness.Get("codex")
+					require.True(t, ok)
+					assert.False(t, codex.Hooks.(harness.TrustedHookInstaller).Trusted())
 					assert.FileExists(t, filepath.Join(copilotHome, "hooks", "tclaude.json"))
 					continue
 				}
