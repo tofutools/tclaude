@@ -1164,3 +1164,81 @@ func TestWrapPreparedResourceCgroupCommandMarksManagedBoundaryShared(t *testing.
 	optional := wrapPreparedResourceCgroupCommand("s", "/sys/fs/cgroup/x/tclaude-a", "cmd", false, false, false, true)
 	assert.Contains(t, optional, "--optional-boundary")
 }
+
+func TestPrepareResourceCgroupRendersThePIDCeiling(t *testing.T) {
+	current := fakeCurrentResourceCgroup(t, "cpu memory pids io", "")
+	pids := uint64(512)
+
+	dir, cleanup, err := PrepareResourceCgroup("pid-ceiling", sandboxpolicy.ResourceLimits{PIDs: &pids})
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	rendered, err := os.ReadFile(filepath.Join(dir, "pids.max"))
+	require.NoError(t, err)
+	assert.Equal(t, "512", string(rendered))
+	assert.NoFileExists(t, filepath.Join(dir, "memory.max"), "the axes stay independently optional")
+	assert.NoFileExists(t, filepath.Join(dir, "cpu.max"))
+	enabled, err := os.ReadFile(filepath.Join(current, "cgroup.subtree_control"))
+	require.NoError(t, err)
+	assert.Equal(t, "+pids", string(enabled),
+		"an authored PID ceiling enables its own controller and nothing it does not need")
+
+	require.NoError(t, ValidatePreparedResourceCgroup(dir, sandboxpolicy.ResourceLimits{PIDs: &pids}))
+	raised := uint64(1024)
+	assert.Error(t, ValidatePreparedResourceCgroup(dir, sandboxpolicy.ResourceLimits{PIDs: &raised}))
+	assert.Error(t, ValidatePreparedResourceCgroup(dir, sandboxpolicy.ResourceLimits{}),
+		"removing the axis must not reuse a cgroup that retains the old ceiling")
+}
+
+func TestPrepareResourceCgroupFailsWhenThePIDsControllerIsNotDelegated(t *testing.T) {
+	fakeCurrentResourceCgroup(t, "cpu memory", "")
+	pids := uint64(512)
+
+	_, _, err := PrepareResourceCgroup("pid-undelegated", sandboxpolicy.ResourceLimits{PIDs: &pids})
+	// The documented delegation is `cpu memory`, so an operator who authors this
+	// ceiling has to widen it — and the refusal is the only place that says so.
+	assert.ErrorContains(t, err, "cgroup v2 pids controller")
+	assert.ErrorContains(t, err, "Delegate=cpu memory pids")
+}
+
+func TestValidatePreparedResourceCgroupAcceptsAMissingPIDsFileOnlyWithoutACeiling(t *testing.T) {
+	oldRoot := resourceCgroupRoot
+	resourceCgroupRoot = t.TempDir()
+	t.Cleanup(func() { resourceCgroupRoot = oldRoot })
+	delegation := filepath.Join(resourceCgroupRoot, "delegated")
+	dir := filepath.Join(delegation, "tclaude-no-pids-file")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	t.Setenv("TMUX", "")
+	t.Setenv(ResourceDelegationDirEnv, delegation)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "memory.max"), []byte("max\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "cpu.max"), []byte("max 100000\n"), 0o644))
+
+	// A delegation that never carried the pids controller leaves no pids.max at
+	// all, which is a boundary without counters rather than a changed ceiling.
+	require.NoError(t, ValidatePreparedResourceCgroup(dir, sandboxpolicy.ResourceLimits{}))
+	pids := uint64(512)
+	assert.Error(t, ValidatePreparedResourceCgroup(dir, sandboxpolicy.ResourceLimits{PIDs: &pids}),
+		"a ceiling the cgroup cannot even express must not validate")
+}
+
+// The FIRST refusal an operator meets has to carry the whole remedy. A host
+// with no delegated subtree at all never reaches the per-controller check, so
+// advising the documented `cpu memory` pair here would walk an operator who
+// authored a PID ceiling into a second refusal for the controller it left out.
+func TestPrepareResourceCgroupNamesEveryNeededControllerWhenNothingIsDelegated(t *testing.T) {
+	oldRoot := resourceCgroupRoot
+	resourceCgroupRoot = t.TempDir()
+	t.Cleanup(func() { resourceCgroupRoot = oldRoot })
+	missing := filepath.Join(resourceCgroupRoot, "absent-delegation")
+	t.Setenv("TMUX", "")
+	t.Setenv(ResourceDelegationDirEnv, "")
+	require.NoError(t, os.MkdirAll(missing, 0o755))
+
+	pids := uint64(512)
+	_, _, err := PrepareResourceCgroup("no-delegation-at-all",
+		sandboxpolicy.ResourceLimits{Memory: "1GiB", PIDs: &pids})
+	require.Error(t, err)
+	// Pin the branch as well as the advice: the per-controller refusal further
+	// down names the same directive, and this test is about the earlier one.
+	assert.ErrorContains(t, err, "requires a delegated cgroup v2 service subtree")
+	assert.ErrorContains(t, err, "Delegate=cpu memory pids")
+}

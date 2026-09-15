@@ -15,9 +15,19 @@ type ResourceLimits struct {
 	Memory      string   `json:"memory,omitempty"`
 	MemoryBytes uint64   `json:"memory_bytes,omitempty"`
 	CPU         *float64 `json:"cpu,omitempty"`
+	// PIDs is the most processes and threads the whole workload tree may hold
+	// at once, rendered as cgroup v2 `pids.max`. It is a plain count: the
+	// kernel accepts only `max` or a positive integer there, so this axis needs
+	// neither the byte-quantity grammar memory uses nor the period arithmetic
+	// CPU does. It bounds an exhaustion a memory and CPU ceiling do not — a
+	// fork bomb, an unbounded `make -j`, a tool loop leaking processes — each
+	// of which can starve the host of PIDs while staying inside both.
+	PIDs *uint64 `json:"pids,omitempty"`
 }
 
-func (r ResourceLimits) Enabled() bool { return r.Memory != "" || r.CPU != nil }
+func (r ResourceLimits) Enabled() bool {
+	return r.Memory != "" || r.CPU != nil || r.PIDs != nil
+}
 
 var memoryLimitRE = regexp.MustCompile(`^([0-9]+(?:\.[0-9]+)?|\.[0-9]+)([a-zA-Z]*)$`)
 
@@ -88,6 +98,13 @@ func NormalizeResourceLimits(in ResourceLimits) (ResourceLimits, error) {
 		}
 		value := *in.CPU
 		out.CPU = &value
+	}
+	if in.PIDs != nil {
+		if *in.PIDs == 0 {
+			return ResourceLimits{}, fmt.Errorf("PID limit must be at least 1 process")
+		}
+		value := *in.PIDs
+		out.PIDs = &value
 	}
 	return out, nil
 }
@@ -186,6 +203,10 @@ func cloneResourceLimits(in ResourceLimits) ResourceLimits {
 		value := *in.CPU
 		out.CPU = &value
 	}
+	if in.PIDs != nil {
+		value := *in.PIDs
+		out.PIDs = &value
+	}
 	return out
 }
 
@@ -214,6 +235,14 @@ func requireResourceLimitsContained(parent, child ResourceLimits) error {
 		}
 		if *child.CPU > *parent.CPU {
 			return fmt.Errorf("child CPU resource limit is weaker than the parent snapshot")
+		}
+	}
+	if parent.PIDs != nil {
+		if child.PIDs == nil {
+			return fmt.Errorf("PID resource limit from the parent snapshot is not preserved")
+		}
+		if *child.PIDs > *parent.PIDs {
+			return fmt.Errorf("child PID resource limit is weaker than the parent snapshot")
 		}
 	}
 	return nil

@@ -535,10 +535,11 @@ export function SandboxPolicyResult({ target, context, contextIndex, contexts = 
     <${SandboxOutcomeBucket} bucket=${buckets.notApplied} open=${true}
       helpOpen=${ruleHelpOpen} setHelpOpen=${setRuleHelpOpen}
       helpPrefix=${helpPrefix} targetLabel=${targetLabel}/>`}
-    ${(context.resource_limits?.memory || context.resource_limits?.cpu != null) && html`<div class="sbx-resource-evaluation">
+    ${(context.resource_limits?.memory || context.resource_limits?.cpu != null || context.resource_limits?.pids != null) && html`<div class="sbx-resource-evaluation">
       <strong>Resource limits — Linux only</strong>
       ${context.resource_limits.memory && html`<div>Memory: ${context.resource_limits.memory} → ${context.memory_limit_bytes} bytes (<code>memory.max</code>)</div>`}
       ${context.resource_limits.cpu != null && html`<div>CPU: ${context.resource_limits.cpu} cores → <code>cpu.max ${context.cpu_max}</code></div>`}
+      ${context.resource_limits.pids != null && html`<div>PIDs: ${context.resource_limits.pids} processes → <code>pids.max ${context.pids_max}</code></div>`}
       <div>${refusal?.kind === 'unsupported_resource_limits' ? 'This target cannot enforce these limits.' : 'This Linux target can enforce the requested cgroup-v2 limits; live controller delegation is checked again before launch.'}</div>
     </div>`}
     ${context.darwin_allow_mach_register && html`<div class="sbx-mach-register-evaluation">
@@ -1606,7 +1607,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     const axes = sandboxAccessAxes(seed || {});
     const network = sandboxNetworkAuthoring(seed || {});
     const filesystem_spellings = clone(seed?.filesystem_spellings ?? null);
-    return { id: seed?.id || 0, name: seed?.name || '', filesystem: sandboxFilesystemEditorRows(seed?.filesystem || [], filesystem_spellings), filesystem_spellings, filesystem_root: seed?.filesystem_root || '', harness_config: seed?.harness_config || '', environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: '', network, unix_sockets: axes.unix_sockets, resource_limits: { memory: seed?.resource_limits?.memory || '', cpu: seed?.resource_limits?.cpu == null ? '' : String(seed.resource_limits.cpu) }, darwin_allow_mach_register: !!seed?.darwin_allow_mach_register, darwin_disable_keychain_write: !!seed?.darwin_disable_keychain_write, ...(seed?.pre_launch ? { pre_launch: sandboxPreLaunchEditorRows(seed.pre_launch) } : {}), ...(seed?.tmpfs ? { tmpfs: sandboxTmpfsEditorRows(seed.tmpfs) } : {}) };
+    return { id: seed?.id || 0, name: seed?.name || '', filesystem: sandboxFilesystemEditorRows(seed?.filesystem || [], filesystem_spellings), filesystem_spellings, filesystem_root: seed?.filesystem_root || '', harness_config: seed?.harness_config || '', environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: '', network, unix_sockets: axes.unix_sockets, resource_limits: { memory: seed?.resource_limits?.memory || '', cpu: seed?.resource_limits?.cpu == null ? '' : String(seed.resource_limits.cpu), pids: seed?.resource_limits?.pids == null ? '' : String(seed.resource_limits.pids) }, darwin_allow_mach_register: !!seed?.darwin_allow_mach_register, darwin_disable_keychain_write: !!seed?.darwin_disable_keychain_write, ...(seed?.pre_launch ? { pre_launch: sandboxPreLaunchEditorRows(seed.pre_launch) } : {}), ...(seed?.tmpfs ? { tmpfs: sandboxTmpfsEditorRows(seed.tmpfs) } : {}) };
   }, [descriptor]);
   const initialFilesystemWire = sandboxFilesystemWire(baseline, baseline);
   const [draft, setDraft] = useState(() => clone(baseline)); const [advanced, setAdvanced] = useState(false); const [rawFS, setRawFS] = useState(() => JSON.stringify(initialFilesystemWire.filesystem, null, 2)); const [rawSpellings, setRawSpellings] = useState(() => JSON.stringify(initialFilesystemWire.filesystem_spellings, null, 2)); const [rawEnv, setRawEnv] = useState(() => JSON.stringify(baseline.environment, null, 2)); const [rawIncludes, setRawIncludes] = useState(() => JSON.stringify(baseline.includes, null, 2)); const [rawAgentDirs, setRawAgentDirs] = useState(() => JSON.stringify(baseline.agent_directories, null, 2)); const [rawNetwork, setRawNetwork] = useState(() => JSON.stringify(baseline.network, null, 2)); const [rawSockets, setRawSockets] = useState(() => JSON.stringify(baseline.unix_sockets, null, 2)); const [rawResources, setRawResources] = useState(() => JSON.stringify(sandboxResourceLimitsForWire(baseline.resource_limits), null, 2)); const [rawPreLaunch, setRawPreLaunch] = useState(() => JSON.stringify(sandboxPreLaunchForWire(baseline.pre_launch || []), null, 2)); const [rawTmpfs, setRawTmpfs] = useState(() => JSON.stringify(sandboxTmpfsForWire(baseline.tmpfs || []), null, 2));
@@ -1910,11 +1911,12 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     </${SandboxSection}>
     <${SandboxSection} id="sandbox-profile-editor-resource-limits-section" label="Resource limits — Linux only"
       help="Optional hard cgroup-v2 ceilings for the aggregate managed agent workload. Child test and build processes share the same budget. Linux harness-built-in, tclaude-owned, and combined sandbox launches can enforce them; macOS and sandbox implementation off cannot. Blank fields preserve the existing launch path and do not probe cgroups."
-      hidden=${advanced} entryCount=${Number(!!draft.resource_limits.memory) + Number(String(draft.resource_limits.cpu ?? '').trim() !== '')}>
+      hidden=${advanced} entryCount=${Number(!!draft.resource_limits.memory) + Number(String(draft.resource_limits.cpu ?? '').trim() !== '') + Number(String(draft.resource_limits.pids ?? '').trim() !== '')}>
       <div class="sbx-resource-intro"><strong>Linux only.</strong> Limits cover the harness and all descendant test/build workers. Generic host-memory views such as <code>/proc/meminfo</code> may still show total host RAM.</div>
       <div class="sbx-resource-fields">
         <label>Memory <input id="sandbox-profile-editor-memory-limit" value=${draft.resource_limits.memory} placeholder="e.g. 4GiB or 512MB" autocomplete="off" spellcheck="false" onInput=${(event) => setDraft((value) => ({ ...value, resource_limits: { ...value.resource_limits, memory: event.currentTarget.value } }))}/></label>
         <label>CPU cores <input id="sandbox-profile-editor-cpu-limit" value=${draft.resource_limits.cpu} placeholder="e.g. 0.5 or 2" inputmode="decimal" autocomplete="off" spellcheck="false" onInput=${(event) => setDraft((value) => ({ ...value, resource_limits: { ...value.resource_limits, cpu: event.currentTarget.value } }))}/></label>
+        <label>Processes <input id="sandbox-profile-editor-pids-limit" value=${draft.resource_limits.pids} placeholder="e.g. 512" inputmode="numeric" autocomplete="off" spellcheck="false" onInput=${(event) => setDraft((value) => ({ ...value, resource_limits: { ...value.resource_limits, pids: event.currentTarget.value } }))}/></label>
       </div>
     </${SandboxSection}>
     ${descriptor.sandboxImpl?.platform === 'darwin' && html`<${SandboxSection} id="sandbox-profile-editor-compatibility-section" label="Compatibility — macOS only"
@@ -2086,6 +2088,7 @@ function sandboxImportPolicyRows(profile) {
   const limits = profile.resource_limits || {};
   if (limits.memory) rows.push({ kind: 'limit', value: `memory ${limits.memory}` });
   if (limits.cpu != null) rows.push({ kind: 'limit', value: `CPU ${limits.cpu}` });
+  if (limits.pids != null) rows.push({ kind: 'limit', value: `PIDs ${limits.pids}` });
   if (profile.darwin_disable_keychain_write) rows.push({ kind: 'mach', value: 'automatic macOS Keychain writes disabled' });
   if (profile.darwin_allow_mach_register) rows.push({ kind: 'mach', value: 'allow Mach service registration on macOS' });
   return rows;

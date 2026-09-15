@@ -358,10 +358,12 @@ function resourceLimitLines(member) {
   const unenforced = (state.sandbox_access_notices || []).some((notice) =>
     notice?.axis === 'resource_limits' && notice?.effect === 'not_enforced');
   const cpu = state.resource_cpu_limit;
+  const pids = state.resource_pids_limit;
   return [
     `Cgroup: ${unenforced ? 'requested — not enforced' : 'on'}`,
     `Memory limit: ${state.resource_memory_limit || 'unlimited'}`,
     `CPU limit: ${typeof cpu === 'number' ? `${cpu} core${cpu === 1 ? '' : 's'}` : 'unlimited'}`,
+    `PID limit: ${typeof pids === 'number' ? `${pids} process${pids === 1 ? '' : 'es'}` : 'unlimited'}`,
   ];
 }
 

@@ -127,7 +127,7 @@ func buildSandboxImplCatalog() dashboardSandboxImpl {
 				Value: string(sandboxpolicy.ImplementationResourceOnly),
 				Label: "Resource limits only",
 				Descr: "No OS-level access confinement, but the launch runs in its own cgroup " +
-					"carrying the profile's CPU and memory limits, so one runaway agent cannot " +
+					"carrying the profile's CPU, memory and PID limits, so one runaway agent cannot " +
 					"exhaust the host. Linux only; needs no bwrap or namespaces. Pair the limits " +
 					"with {harness} built-in instead if you also want its access confinement.",
 			},

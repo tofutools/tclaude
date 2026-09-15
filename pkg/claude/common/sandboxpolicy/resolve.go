@@ -54,6 +54,7 @@ type ResolutionProvenance struct {
 	UnixSockets      *ProfileSource             `json:"unix_sockets,omitempty"`
 	ResourceMemory   *ProfileSource             `json:"resource_memory,omitempty"`
 	ResourceCPU      *ProfileSource             `json:"resource_cpu,omitempty"`
+	ResourcePIDs     *ProfileSource             `json:"resource_pids,omitempty"`
 }
 
 // EffectiveProfile is the fully-composed harness-neutral sandbox payload and
@@ -286,6 +287,12 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 			result.ResourceLimits.CPU = &value
 			resourceSource := source
 			result.Provenance.ResourceCPU = &resourceSource
+		}
+		if normalized.ResourceLimits.PIDs != nil {
+			value := *normalized.ResourceLimits.PIDs
+			result.ResourceLimits.PIDs = &value
+			resourceSource := source
+			result.Provenance.ResourcePIDs = &resourceSource
 		}
 		result.DarwinAllowMachRegister = result.DarwinAllowMachRegister || normalized.DarwinAllowMachRegister
 		result.DarwinDisableKeychainWrite = result.DarwinDisableKeychainWrite || normalized.DarwinDisableKeychainWrite

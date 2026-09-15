@@ -92,7 +92,7 @@ const sandboxProfileMaxBodyBytes = 8 << 20
 
 const (
 	sandboxProfileExportFormat        = "tclaude-sandbox-profiles"
-	sandboxProfileExportVersion       = 18
+	sandboxProfileExportVersion       = 19
 	sandboxProfileExportVersionLegacy = 9
 )
 
@@ -754,12 +754,24 @@ func handleSandboxProfilesExport(w http.ResponseWriter, r *http.Request) {
 	}
 	formatVersion := sandboxProfileExportVersionLegacy
 	for _, profile := range out {
-		if profile.DarwinDisableKeychainWrite {
-			formatVersion = 18
+		if profile.ResourceLimits.PIDs != nil {
+			formatVersion = sandboxProfileExportVersion
 			break
 		}
+		if profile.DarwinDisableKeychainWrite {
+			if formatVersion < 18 {
+				formatVersion = 18
+			}
+			continue
+		}
 		if len(profile.Tmpfs) > 0 {
-			formatVersion = 17
+			// Monotonic like every other arm: a later profile needing an OLDER
+			// floor must never lower a version an earlier one already required,
+			// or the bundle is written under an envelope its own import gate
+			// refuses.
+			if formatVersion < 17 {
+				formatVersion = 17
+			}
 			continue
 		}
 		if profile.HarnessConfig != "" {
@@ -1019,6 +1031,9 @@ func handleSandboxProfilesImportInspect(w http.ResponseWriter, r *http.Request) 
 // Version 17 adds temporary filesystems, which an older reader would drop
 // silently — and a profile whose scratch space vanished is a different policy,
 // not an older spelling of the same one.
+// Version 19 adds the PID resource ceiling. An older importer would drop it and
+// keep the rest of the budget, producing a profile that reads as enforced while
+// the process ceiling the operator authored is gone.
 //
 // Older versions stay readable so imports from older installations keep
 // working. The two removals are handled DIFFERENTLY on purpose. The retired
@@ -1041,6 +1056,15 @@ func supportedSandboxProfileExport(format string, version int) bool {
 
 func validateSandboxProfileExportVersionContent(env sandboxProfileExportEnvelope) *spawnFailure {
 	for _, profile := range env.Profiles {
+		if env.FormatVersion < 19 && profile.ResourceLimits.PIDs != nil {
+			return &spawnFailure{
+				Status: http.StatusBadRequest,
+				Kind:   "invalid_format",
+				Msg: fmt.Sprintf(
+					"sandbox profile %q contains a PID resource limit, which requires export format version 19",
+					profile.Name),
+			}
+		}
 		if env.FormatVersion < 18 && profile.DarwinDisableKeychainWrite {
 			return &spawnFailure{Status: http.StatusBadRequest, Kind: "invalid_format", Msg: "darwin_disable_keychain_write requires sandbox-profile export version 18"}
 		}

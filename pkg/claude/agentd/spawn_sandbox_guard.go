@@ -323,7 +323,7 @@ func planSandboxProfileAccessForLaunch(
 			Axis:   "resource_limits",
 			Reason: sandboxpolicy.AccessNoticeReasonOperatorUnenforcedLaunchOverride,
 			Effect: sandboxpolicy.AccessNoticeEffectNotEnforced,
-			Detail: "the human operator used the dashboard launch override; configured CPU and memory limits are not enforced: " + err.Error(),
+			Detail: "the human operator used the dashboard launch override; configured resource limits are not enforced: " + err.Error(),
 		})
 		snapshot.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
 			snapshot.Effective.AccessNotices, resourceNotices...)

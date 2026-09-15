@@ -208,9 +208,10 @@ const CASES = [
       harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
       sandbox_implementation: 'tclaude-layer',
       resource_cgroup: true, resource_memory_limit: '8GiB', resource_cpu_limit: 2.5,
+      resource_pids_limit: 512,
     },
     glyph: '🔒', danger: false,
-    tooltip: 'Status: ON\nImplementation: tclaude’s built-in sandbox\nProfile: None\nCgroup: on\nMemory limit: 8GiB\nCPU limit: 2.5 cores\nClick to temporarily disable',
+    tooltip: 'Status: ON\nImplementation: tclaude’s built-in sandbox\nProfile: None\nCgroup: on\nMemory limit: 8GiB\nCPU limit: 2.5 cores\nPID limit: 512 processes\nClick to temporarily disable',
   },
   {
     name: 'a resource-only launch has a cgroup and no access boundary',
@@ -219,16 +220,16 @@ const CASES = [
       sandbox_implementation: 'resource-only', resource_cgroup: true,
     },
     glyph: '⚠', danger: true,
-    tooltip: 'Status: OFF\nImplementation: None\nProfile: None\nCgroup: on\nMemory limit: unlimited\nCPU limit: unlimited',
+    tooltip: 'Status: OFF\nImplementation: None\nProfile: None\nCgroup: on\nMemory limit: unlimited\nCPU limit: unlimited\nPID limit: unlimited',
   },
   {
     name: 'a single-core ceiling is not pluralized',
     state: {
       harness: 'codex', sandbox_mode: 'workspace-write',
-      resource_cgroup: true, resource_cpu_limit: 1,
+      resource_cgroup: true, resource_cpu_limit: 1, resource_pids_limit: 1,
     },
     glyph: '🔒', danger: false,
-    tooltip: 'Status: ON\nImplementation: Codex\nProfile: None\nCgroup: on\nMemory limit: unlimited\nCPU limit: 1 core\nTemporary disable unavailable: Codex restores its persisted sandbox policy when this conversation resumes. Use tclaude’s built-in sandbox or start a new Codex conversation without the built-in sandbox.',
+    tooltip: 'Status: ON\nImplementation: Codex\nProfile: None\nCgroup: on\nMemory limit: unlimited\nCPU limit: 1 core\nPID limit: 1 process\nTemporary disable unavailable: Codex restores its persisted sandbox policy when this conversation resumes. Use tclaude’s built-in sandbox or start a new Codex conversation without the built-in sandbox.',
   },
   {
     name: 'a recorded budget that never took effect says so',
@@ -239,11 +240,11 @@ const CASES = [
       sandbox_access_notices: [{
         class: 'degradation', axis: 'resource_limits',
         reason: 'operator_unenforced_launch_override', effect: 'not_enforced',
-        detail: 'the human operator used the dashboard launch override; configured CPU and memory limits are not enforced',
+        detail: 'the human operator used the dashboard launch override; configured resource limits are not enforced',
       }],
     },
     glyph: '🔒', danger: false,
-    tooltip: 'Status: ON\nImplementation: tclaude’s built-in sandbox\nProfile: None\nCgroup: requested — not enforced\nMemory limit: 4GB\nCPU limit: unlimited\nWarning: the human operator used the dashboard launch override; configured CPU and memory limits are not enforced\nClick to temporarily disable',
+    tooltip: 'Status: ON\nImplementation: tclaude’s built-in sandbox\nProfile: None\nCgroup: requested — not enforced\nMemory limit: 4GB\nCPU limit: unlimited\nPID limit: unlimited\nWarning: the human operator used the dashboard launch override; configured resource limits are not enforced\nClick to temporarily disable',
   },
   {
     name: 'a launch with no cgroup spends no tooltip line on saying so',

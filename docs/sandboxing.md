@@ -3,9 +3,10 @@
 tclaude can confine an agent inside an operating-system sandbox: a wall around
 the harness process that decides which directories it can read or write, which
 network destinations it can reach, which Unix sockets it can connect to, and
-how much CPU and memory its whole process tree may consume. The policy is
-authored once, as a harness-neutral **sandbox profile**, and enforced by
-whichever backend can faithfully carry it — or the launch is refused.
+how much CPU, memory and how many processes its whole process tree may
+consume. The policy is authored once, as a harness-neutral **sandbox
+profile**, and enforced by whichever backend can faithfully carry it — or the
+launch is refused.
 
 Three ideas carry this page:
 
@@ -67,8 +68,8 @@ same layer. The values:
   OpenCode and macOS nested Seatbelt have no stacked contract and refuse.
 - **`resource-only`** (Linux only) — no access confinement at all: the harness
   runs in its native no-confinement mode, but every launch creates and joins a
-  per-launch cgroup. With `resource_limits` authored you get CPU/memory
-  ceilings; without them you still get per-agent accounting (`memory.peak`,
+  per-launch cgroup. With `resource_limits` authored you get CPU, memory and
+  PID ceilings; without them you still get per-agent accounting (`memory.peak`,
   `cpu.stat`), host-OOM attribution (`resource_limit_oom` exit reason), and a
   kill handle for everything the agent started. The profile chain still
   resolves — it carries the limits — and its access rules are recorded but not
@@ -239,9 +240,14 @@ The axes:
   axis on an otherwise host-open profile switches the launch to a constructed
   root; see [Network filtering](network-filtering.md#namespace-and-the-unix-socket-axis).
 - **`resource_limits`** — `memory` → cgroup `memory.max`, `cpu` (cores ≥ 0.01)
-  → `cpu.max` at a 100 ms period; Linux cgroup v2, whole workload tree,
-  orthogonal to confinement, works with any non-`off` implementation. Both
-  blank means no cgroup probing at all, except under `resource-only` (which
+  → `cpu.max` at a 100 ms period, and `pids` (a whole count ≥ 1) → `pids.max`;
+  Linux cgroup v2, whole workload tree, orthogonal to confinement, works with
+  any non-`off` implementation. The PID ceiling bounds an exhaustion the other
+  two do not — a fork bomb, an unbounded `make -j`, a tool loop leaking
+  processes — and needs the delegated `pids` controller, which the documented
+  `Delegate=cpu memory` does not carry: author one and the delegation needs
+  `Delegate=cpu memory pids`, which the refusal names. All three blank means no
+  cgroup probing at all, except under `resource-only` (which
   always creates its cgroup) and when launching with tclaude’s sandbox on
   Linux, alone or combined with the harness’s sandbox (which tries, and degrades to a notice if the host cannot). macOS, `off`, and
   hosts without delegated controllers refuse by default every cgroup a launch

@@ -517,11 +517,11 @@ func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits
 		}
 		delegation = resourceDelegationDir(current)
 	}
-	controllersRaw, err := os.ReadFile(filepath.Join(delegation, "cgroup.controllers"))
-	if err != nil {
-		return "", func() {}, fmt.Errorf("a per-agent cgroup requires a delegated cgroup v2 service subtree (set --resource-delegation-dir to an external delegated root, or configure tclaude-agentd.service with Delegate=cpu memory and DelegateSubgroup=%s): %w", resourceSupervisorCgroup, err)
-	}
-	available := strings.Fields(string(controllersRaw))
+	// The controllers this launch cannot proceed without are derived from the
+	// authored ceilings alone, so they are known before the delegation is read.
+	// That matters for the refusal below: an operator whose host has no delegated
+	// subtree at all must be told the whole Delegate= line their profile needs,
+	// not a shorter one that only carries them as far as the next refusal.
 	needed := []string{}
 	if limits.Memory != "" {
 		needed = append(needed, "memory")
@@ -529,9 +529,18 @@ func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits
 	if limits.CPU != nil {
 		needed = append(needed, "cpu")
 	}
+	if limits.PIDs != nil {
+		needed = append(needed, "pids")
+	}
+	controllersRaw, err := os.ReadFile(filepath.Join(delegation, "cgroup.controllers"))
+	if err != nil {
+		return "", func() {}, fmt.Errorf("a per-agent cgroup requires a delegated cgroup v2 service subtree (set --resource-delegation-dir to an external delegated root, or configure tclaude-agentd.service with Delegate=%s and DelegateSubgroup=%s): %w", delegateDirective(needed), resourceSupervisorCgroup, err)
+	}
+	available := strings.Fields(string(controllersRaw))
 	for _, controller := range needed {
 		if !containsString(available, controller) {
-			return "", func() {}, fmt.Errorf("the configured resource limit requires the delegated cgroup v2 %s controller; configure the external --resource-delegation-dir runtime with Delegate=cpu memory, or configure tclaude-agentd.service with Delegate=cpu memory and DelegateSubgroup=%s", controller, resourceSupervisorCgroup)
+			directive := delegateDirective(needed)
+			return "", func() {}, fmt.Errorf("the configured resource limit requires the delegated cgroup v2 %s controller; configure the external --resource-delegation-dir runtime with Delegate=%s, or configure tclaude-agentd.service with Delegate=%s and DelegateSubgroup=%s", controller, directive, directive, resourceSupervisorCgroup)
 		}
 	}
 	wanted := append([]string{}, needed...)
@@ -585,7 +594,8 @@ func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits
 		default:
 			// A node still holding processes reports EBUSY and is diagnosed above,
 			// so this carries only the delegation advice that remains.
-			return "", func() {}, fmt.Errorf("enable delegated cgroup v2 controllers %s: %w (the external --resource-delegation-dir runtime needs Delegate=cpu memory, or tclaude-agentd.service needs Delegate=cpu memory and DelegateSubgroup=%s)", strings.Join(wanted, ", "), err, resourceSupervisorCgroup)
+			directive := delegateDirective(needed)
+			return "", func() {}, fmt.Errorf("enable delegated cgroup v2 controllers %s: %w (the external --resource-delegation-dir runtime needs Delegate=%s, or tclaude-agentd.service needs Delegate=%s and DelegateSubgroup=%s)", strings.Join(wanted, ", "), err, directive, directive, resourceSupervisorCgroup)
 		}
 	}
 	digest := sha256.Sum256([]byte(sessionID))
@@ -639,6 +649,12 @@ func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits
 		if err := os.WriteFile(filepath.Join(dir, "cpu.max"), []byte(value), 0o644); err != nil {
 			cleanup()
 			return "", func() {}, fmt.Errorf("set cpu.max for session %q: %w", sessionID, err)
+		}
+	}
+	if limits.PIDs != nil {
+		if err := os.WriteFile(filepath.Join(dir, "pids.max"), []byte(strconv.FormatUint(*limits.PIDs, 10)), 0o644); err != nil {
+			cleanup()
+			return "", func() {}, fmt.Errorf("set pids.max for session %q: %w", sessionID, err)
 		}
 	}
 	return dir, cleanup, nil
@@ -747,7 +763,34 @@ func ValidatePreparedResourceCgroup(dir string, limits sandboxpolicy.ResourceLim
 	if err == nil && strings.TrimSpace(string(gotCPU)) != wantCPU {
 		return fmt.Errorf("prepared resource cgroup cpu.max no longer matches requested limit")
 	}
+	// An absent pids.max is only tolerated with no ceiling authored: the pids
+	// controller is enabled opportunistically, so a delegation that never
+	// carried it leaves the file missing rather than reading "max".
+	wantPIDs := "max"
+	if limits.PIDs != nil {
+		wantPIDs = strconv.FormatUint(*limits.PIDs, 10)
+	}
+	gotPIDs, err := os.ReadFile(filepath.Join(dir, "pids.max"))
+	if err != nil && (limits.PIDs != nil || !errors.Is(err, os.ErrNotExist)) {
+		return fmt.Errorf("prepared resource cgroup pids.max no longer matches requested limit")
+	}
+	if err == nil && strings.TrimSpace(string(gotPIDs)) != wantPIDs {
+		return fmt.Errorf("prepared resource cgroup pids.max no longer matches requested limit")
+	}
 	return nil
+}
+
+// delegateDirective renders the systemd Delegate= controller list an operator
+// has to configure for the controllers this launch needs. The documented
+// delegation is `cpu memory`, so pids appears only once an authored ceiling
+// actually requires it — naming a controller nothing needs would send the
+// operator to widen a delegation for no reason.
+func delegateDirective(needed []string) string {
+	directive := "cpu memory"
+	if containsString(needed, "pids") {
+		directive += " pids"
+	}
+	return directive
 }
 
 func containsString(values []string, wanted string) bool {

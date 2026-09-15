@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -194,6 +195,7 @@ type sandboxProfileEffectiveContext struct {
 	DarwinDisableKeychainWrite bool                              `json:"darwin_disable_keychain_write,omitempty"`
 	MemoryLimitBytes           string                            `json:"memory_limit_bytes,omitempty"`
 	CPUQuota                   string                            `json:"cpu_max,omitempty"`
+	PIDsMax                    string                            `json:"pids_max,omitempty"`
 	AgentdSocket               string                            `json:"agentd_socket"`
 	Notices                    []sandboxpolicy.AccessNotice      `json:"notices"`
 	policy                     sandboxpolicy.Profile
@@ -923,6 +925,10 @@ func effectiveDraftSandboxProfileContexts(
 			}
 			cpuMax = fmt.Sprintf("%d %d", quota, sandboxpolicy.CPUCgroupPeriodMicros)
 		}
+		pidsMax := ""
+		if policy.ResourceLimits.PIDs != nil {
+			pidsMax = strconv.FormatUint(*policy.ResourceLimits.PIDs, 10)
+		}
 		out = append(out, sandboxProfileEffectiveContext{
 			Context:                    context,
 			Filesystem:                 policy.Filesystem,
@@ -938,6 +944,7 @@ func effectiveDraftSandboxProfileContexts(
 			DarwinDisableKeychainWrite: policy.DarwinDisableKeychainWrite,
 			MemoryLimitBytes:           memoryBytes,
 			CPUQuota:                   cpuMax,
+			PIDsMax:                    pidsMax,
 			AgentdSocket:               "always reachable",
 			Notices:                    notices,
 			policy:                     policy,
