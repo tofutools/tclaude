@@ -184,13 +184,16 @@ func runSetup(params *Params) error {
 	// Install the selected harness's hooks and auto-detect other harnesses on
 	// PATH. --all-harnesses also prepares hook-capable harnesses whose CLIs are
 	// not installed yet; each installer creates its missing config directories.
-	// Non-selected trust-capable harnesses still require consent.
+	// Installed, non-selected trust-capable harnesses still require consent.
 	for i, hh := range hookInstallTargets(h, params.AllHarnesses, harnessOnPath) {
 		if i > 0 {
 			fmt.Println()
 		}
 		grantTrust := hh.Name == h.Name
-		if !grantTrust {
+		// An absent CLI cannot provide authoritative trust. Prepare its files
+		// without a trust prompt; setup can grant trust after it is installed.
+		prepareWithoutTrust := params.AllHarnesses && !harnessOnPath(hh)
+		if !grantTrust && !prepareWithoutTrust {
 			if _, trustCapable := hh.Hooks.(harness.TrustedHookInstaller); trustCapable {
 				if !consentToDetectedHookTrust(hh, params.Yes) {
 					fmt.Printf("• Skipped %s hooks (no hook trust was granted)\n", hh.DisplayName)

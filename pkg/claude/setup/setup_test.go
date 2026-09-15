@@ -320,9 +320,12 @@ func TestRunSetup_AllHarnessesPreparesAbsentHarnesses(t *testing.T) {
 		name              string
 		params            Params
 		customCopilotHome bool
+		codexPresent      bool
 	}{
 		{name: "install-all retains discovery", params: Params{Yes: true, InstallAll: true}},
 		{name: "all-harnesses", params: Params{Yes: true, AllHarnesses: true}},
+		{name: "interactive absent harnesses", params: Params{AllHarnesses: true}},
+		{name: "interactive detected Codex decline", params: Params{AllHarnesses: true}, codexPresent: true},
 		{name: "combined flags and custom home", params: Params{Yes: true, InstallAll: true, AllHarnesses: true}, customCopilotHome: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -338,6 +341,9 @@ func TestRunSetup_AllHarnessesPreparesAbsentHarnesses(t *testing.T) {
 			bin := t.TempDir()
 			require.NoError(t, os.WriteFile(filepath.Join(bin, "tmux"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
 			t.Setenv("PATH", bin)
+			if tc.codexPresent {
+				seedSupportedCodexOnPath(t)
+			}
 			t.Chdir(home)
 			for _, dir := range []string{filepath.Join(home, ".claude"), codexHome, copilotHome} {
 				require.NoDirExists(t, dir)
@@ -345,11 +351,21 @@ func TestRunSetup_AllHarnessesPreparesAbsentHarnesses(t *testing.T) {
 
 			for range 2 {
 				out := captureStdout(t, func() {
-					require.NoError(t, runSetup(&tc.params))
+					withStdin(t, strings.Repeat("n\n", 32), func() {
+						require.NoError(t, runSetup(&tc.params))
+					})
 				})
 				if !tc.params.AllHarnesses {
 					assert.NoFileExists(t, filepath.Join(codexHome, "hooks.json"))
 					assert.NoDirExists(t, copilotHome)
+					continue
+				}
+				if tc.codexPresent {
+					assert.Contains(t, out, "Install and trust tclaude hooks for Codex CLI?")
+					assert.Contains(t, out, "Skipped Codex CLI hooks")
+					assert.NoFileExists(t, filepath.Join(codexHome, "hooks.json"))
+					assert.NoFileExists(t, filepath.Join(codexHome, "config.toml"))
+					assert.FileExists(t, filepath.Join(copilotHome, "hooks", "tclaude.json"))
 					continue
 				}
 				for _, name := range []string{"claude", "codex", "copilot"} {
@@ -361,7 +377,9 @@ func TestRunSetup_AllHarnessesPreparesAbsentHarnesses(t *testing.T) {
 				}
 				assert.FileExists(t, filepath.Join(codexHome, "hooks.json"))
 				assert.FileExists(t, filepath.Join(copilotHome, "hooks", "tclaude.json"))
-				assert.Contains(t, out, "Automatic hook trust skipped")
+				assert.NotContains(t, out, "Install and trust tclaude hooks for Codex CLI?")
+				assert.Contains(t, out, "Codex hooks are installed but not trusted")
+				assert.NoFileExists(t, filepath.Join(codexHome, "config.toml"))
 				assert.Contains(t, out, "tclaude setup --harness codex")
 			}
 		})
