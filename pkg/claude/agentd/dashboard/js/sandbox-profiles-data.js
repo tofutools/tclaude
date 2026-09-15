@@ -110,9 +110,14 @@ export function sandboxResourceLimitErrors(resourceLimits = {}) {
   }
   // pids.max takes `max` or a whole count and nothing else, so a decimal point
   // is refused here rather than silently truncated on the way to the kernel.
+  // The upper bound is this editor's own: the wire value is a JSON number, and
+  // a count past Number.MAX_SAFE_INTEGER either rounds or — past ~1e308 —
+  // becomes Infinity, which serializes as null and reaches the server as NO
+  // ceiling at all. Refusing it is the only spelling that cannot silently
+  // delete the restriction the operator just authored.
   const pids = String(resourceLimits.pids ?? '').trim();
-  if (pids && (!/^\d+$/.test(pids) || Number(pids) < 1)) {
-    errors.push('PID limit must be a whole number of at least 1 process, such as 512.');
+  if (pids && (!/^\d+$/.test(pids) || !Number.isSafeInteger(Number(pids)) || Number(pids) < 1)) {
+    errors.push(`PID limit must be a whole number of processes between 1 and ${Number.MAX_SAFE_INTEGER}, such as 512.`);
   }
   return errors;
 }

@@ -765,7 +765,13 @@ func handleSandboxProfilesExport(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if len(profile.Tmpfs) > 0 {
-			formatVersion = 17
+			// Monotonic like every other arm: a later profile needing an OLDER
+			// floor must never lower a version an earlier one already required,
+			// or the bundle is written under an envelope its own import gate
+			// refuses.
+			if formatVersion < 17 {
+				formatVersion = 17
+			}
 			continue
 		}
 		if profile.HarnessConfig != "" {

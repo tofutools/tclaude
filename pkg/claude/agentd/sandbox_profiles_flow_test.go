@@ -776,3 +776,31 @@ func TestSandboxProfileRejectsAZeroPIDLimit(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "at least 1 process")
 }
+
+// Every arm of the export-version scan has to be monotonic. An earlier profile
+// that requires a newer envelope must not be lowered by a later one whose own
+// floor is older — the bundle would then be written under a version its own
+// import gate refuses.
+func TestSandboxProfileExportNeverLowersAVersionAnEarlierProfileRequired(t *testing.T) {
+	f := newFlow(t)
+	for _, profile := range []map[string]any{
+		{"name": "pids-first", "resource_limits": map[string]any{"pids": 512}},
+		{"name": "keychain-second", "darwin_disable_keychain_write": true},
+		{"name": "tmpfs-third", "tmpfs": []map[string]any{{"path": "/scratch"}}},
+	} {
+		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", profile)
+		require.Equalf(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
+	}
+
+	for _, query := range []string{
+		"name=pids-first&name=keychain-second&name=tmpfs-third",
+		"name=keychain-second&name=tmpfs-third",
+	} {
+		rec := profileReq(t, f, http.MethodGet, "/v1/sandbox-profiles/export?"+query, nil)
+		require.Equalf(t, http.StatusOK, rec.Code, "export body=%s", rec.Body.String())
+		var bundle map[string]any
+		testharness.DecodeJSON(t, rec, &bundle)
+		rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import/inspect", bundle)
+		assert.Equalf(t, http.StatusOK, rec.Code, "inspect %s body=%s", query, rec.Body.String())
+	}
+}
