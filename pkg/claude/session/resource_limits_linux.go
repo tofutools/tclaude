@@ -517,11 +517,11 @@ func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits
 		}
 		delegation = resourceDelegationDir(current)
 	}
-	controllersRaw, err := os.ReadFile(filepath.Join(delegation, "cgroup.controllers"))
-	if err != nil {
-		return "", func() {}, fmt.Errorf("a per-agent cgroup requires a delegated cgroup v2 service subtree (set --resource-delegation-dir to an external delegated root, or configure tclaude-agentd.service with Delegate=cpu memory and DelegateSubgroup=%s): %w", resourceSupervisorCgroup, err)
-	}
-	available := strings.Fields(string(controllersRaw))
+	// The controllers this launch cannot proceed without are derived from the
+	// authored ceilings alone, so they are known before the delegation is read.
+	// That matters for the refusal below: an operator whose host has no delegated
+	// subtree at all must be told the whole Delegate= line their profile needs,
+	// not a shorter one that only carries them as far as the next refusal.
 	needed := []string{}
 	if limits.Memory != "" {
 		needed = append(needed, "memory")
@@ -532,6 +532,11 @@ func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits
 	if limits.PIDs != nil {
 		needed = append(needed, "pids")
 	}
+	controllersRaw, err := os.ReadFile(filepath.Join(delegation, "cgroup.controllers"))
+	if err != nil {
+		return "", func() {}, fmt.Errorf("a per-agent cgroup requires a delegated cgroup v2 service subtree (set --resource-delegation-dir to an external delegated root, or configure tclaude-agentd.service with Delegate=%s and DelegateSubgroup=%s): %w", delegateDirective(needed), resourceSupervisorCgroup, err)
+	}
+	available := strings.Fields(string(controllersRaw))
 	for _, controller := range needed {
 		if !containsString(available, controller) {
 			directive := delegateDirective(needed)

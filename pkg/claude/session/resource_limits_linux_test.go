@@ -1219,3 +1219,26 @@ func TestValidatePreparedResourceCgroupAcceptsAMissingPIDsFileOnlyWithoutACeilin
 	assert.Error(t, ValidatePreparedResourceCgroup(dir, sandboxpolicy.ResourceLimits{PIDs: &pids}),
 		"a ceiling the cgroup cannot even express must not validate")
 }
+
+// The FIRST refusal an operator meets has to carry the whole remedy. A host
+// with no delegated subtree at all never reaches the per-controller check, so
+// advising the documented `cpu memory` pair here would walk an operator who
+// authored a PID ceiling into a second refusal for the controller it left out.
+func TestPrepareResourceCgroupNamesEveryNeededControllerWhenNothingIsDelegated(t *testing.T) {
+	oldRoot := resourceCgroupRoot
+	resourceCgroupRoot = t.TempDir()
+	t.Cleanup(func() { resourceCgroupRoot = oldRoot })
+	missing := filepath.Join(resourceCgroupRoot, "absent-delegation")
+	t.Setenv("TMUX", "")
+	t.Setenv(ResourceDelegationDirEnv, "")
+	require.NoError(t, os.MkdirAll(missing, 0o755))
+
+	pids := uint64(512)
+	_, _, err := PrepareResourceCgroup("no-delegation-at-all",
+		sandboxpolicy.ResourceLimits{Memory: "1GiB", PIDs: &pids})
+	require.Error(t, err)
+	// Pin the branch as well as the advice: the per-controller refusal further
+	// down names the same directive, and this test is about the earlier one.
+	assert.ErrorContains(t, err, "requires a delegated cgroup v2 service subtree")
+	assert.ErrorContains(t, err, "Delegate=cpu memory pids")
+}
