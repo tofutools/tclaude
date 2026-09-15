@@ -312,16 +312,24 @@ func TestRunSetup_BaselineRunsAlongsideExtras(t *testing.T) {
 	assert.Contains(t, out, "=== Agent Sandbox ===")
 }
 
-func TestRunSetup_InstallAllPreparesAbsentHarnesses(t *testing.T) {
+func TestRunSetup_AllHarnessesPreparesAbsentHarnesses(t *testing.T) {
 	if runtime.GOOS != "linux" || wsl.IsWSL() {
 		t.Skip("runSetup is only safe to exercise end-to-end on native Linux")
 	}
-	for _, customCopilotHome := range []bool{false, true} {
-		t.Run(fmt.Sprintf("custom Copilot home=%v", customCopilotHome), func(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		params            Params
+		customCopilotHome bool
+	}{
+		{name: "install-all retains discovery", params: Params{Yes: true, InstallAll: true}},
+		{name: "all-harnesses", params: Params{Yes: true, AllHarnesses: true}},
+		{name: "combined flags and custom home", params: Params{Yes: true, InstallAll: true, AllHarnesses: true}, customCopilotHome: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			home := tempHome(t)
 			codexHome := filepath.Join(home, ".codex")
 			copilotHome := filepath.Join(home, ".copilot")
-			if customCopilotHome {
+			if tc.customCopilotHome {
 				copilotHome = filepath.Join(home, "custom", "copilot")
 			}
 			t.Setenv("CODEX_HOME", codexHome)
@@ -337,8 +345,13 @@ func TestRunSetup_InstallAllPreparesAbsentHarnesses(t *testing.T) {
 
 			for range 2 {
 				out := captureStdout(t, func() {
-					require.NoError(t, runSetup(&Params{Yes: true, InstallAll: true}))
+					require.NoError(t, runSetup(&tc.params))
 				})
+				if !tc.params.AllHarnesses {
+					assert.NoFileExists(t, filepath.Join(codexHome, "hooks.json"))
+					assert.NoDirExists(t, copilotHome)
+					continue
+				}
 				for _, name := range []string{"claude", "codex", "copilot"} {
 					h, ok := harness.Get(name)
 					require.True(t, ok)
@@ -412,7 +425,7 @@ func TestHookInstallTargets(t *testing.T) {
 	assert.Equal(t, []string{"claude"},
 		harnessTargetNames(hookInstallTargets(claude, false, none)))
 
-	// --install-all prepares every hook-capable harness even with no CLIs.
+	// --all-harnesses prepares every hook-capable harness even with no CLIs.
 	assert.Equal(t, []string{"claude", "codex", "copilot"},
 		harnessTargetNames(hookInstallTargets(claude, true, none)))
 

@@ -110,11 +110,7 @@ tclaude setup --check
 
 Plain `tclaude setup` configures Claude Code, and auto-detects Codex and
 Copilot on `PATH` to offer their integrations too. Setup is idempotent. The
-optional `--install-all` flag prepares hooks for all supported harnesses even
-before their CLIs are installed, creating missing configuration directories.
-Codex hook trust still requires its CLI: after installing Codex, rerun
-`tclaude setup --harness codex -y` to grant trust.
-The flag also installs Claude Code sandbox hardening and
+optional `--install-all` flag also installs Claude Code sandbox hardening and
 the scripted-resume threshold override; review those policies before enabling
 them. Credential-proxy skills are a separate opt-in, excluded even from
 `--install-all`, so agents are not shown proxy capabilities that are not
@@ -123,6 +119,18 @@ configured:
 ```bash
 tclaude setup --install-proxy-skills
 ```
+
+To prepare hooks before installing the harness CLIs, explicitly add
+`--all-harnesses`. This creates missing configuration directories for every
+supported hook installer (Claude Code, Codex, and Copilot); `--install-all`
+alone keeps the usual harness detection.
+
+```bash
+tclaude setup --install-all --all-harnesses -y
+```
+
+Codex hook trust still requires its CLI: after installing Codex, rerun
+`tclaude setup --harness codex -y` to grant trust.
 
 Full walkthrough: [Getting started](https://tofutools.github.io/tclaude/).
 

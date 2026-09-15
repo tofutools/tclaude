@@ -64,9 +64,10 @@ type Params struct {
 	Force         bool `short:"f" long:"force" help:"Force re-registration of protocol handler"`
 	AbsolutePaths bool `long:"absolute-paths" help:"Use absolute paths to tclaude for desktop integrations (installed harness hooks and the Claude status bar remain portable)"`
 	Yes           bool `short:"y" long:"yes" help:"Assume yes on all prompts (for scripted usage)"`
+	AllHarnesses  bool `long:"all-harnesses" help:"Prepare hooks for every supported harness, creating missing directories even before its CLI is installed. Not implied by --install-all."`
 	// The --install-* flags add optional extras on top of the baseline
 	// setup (which always runs). They do not replace or gate the baseline.
-	InstallAll               bool `long:"install-all" help:"Prepare hooks for all supported harnesses, even before their CLIs are installed, and install all standard extras. Proxy skills remain opt-in via --install-proxy-skills."`
+	InstallAll               bool `long:"install-all" help:"Install all standard extras on top of the baseline setup. Proxy skills remain opt-in via --install-proxy-skills."`
 	InstallAgentSkills       bool `long:"install-agent-skills" help:"Also install (or refresh) the bundled coordination skills (agent-*, human-*, and process-templates) into Claude Code and Codex CLI user skill directories, including CODEX_HOME/skills. Idempotent; overwrites existing if present."`
 	InstallProxySkills       bool `long:"install-proxy-skills" help:"Also install (or refresh) the optional proxy-git, proxy-linear and proxy-awb skills into Claude Code and Codex CLI user skill directories, including CODEX_HOME/skills. Not included by --install-all."`
 	InstallDefaultAgentPerms bool `long:"install-default-agent-permissions" help:"Also grant the low-risk permission slugs the bundled agent-* skills exercise as agent defaults in ~/.tclaude/config.json. Idempotent; only adds missing slugs."`
@@ -91,8 +92,9 @@ func Cmd() *cobra.Command {
 			"The --install-* flags add optional extras on top of the baseline (they do not " +
 			"replace it): --install-agent-skills, --install-proxy-skills, --install-default-agent-permissions, " +
 			"--install-sandbox-hardening, --install-resume-threshold-override. " +
-			"--install-all also prepares hooks for every supported harness, creating missing directories even " +
-			"before its CLI is installed, and enables every standard extra; proxy skills remain explicit opt-in.",
+			"--install-all enables every standard extra; proxy skills remain explicit opt-in.\n\n" +
+			"Use --all-harnesses to also prepare hooks for harnesses whose CLIs are not installed, " +
+			"creating missing configuration directories. This is not implied by --install-all.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
 			if err := runSetup(params); err != nil {
@@ -180,10 +182,10 @@ func runSetup(params *Params) error {
 	}
 
 	// Install the selected harness's hooks and auto-detect other harnesses on
-	// PATH. --install-all also prepares hook-capable harnesses whose CLIs are
+	// PATH. --all-harnesses also prepares hook-capable harnesses whose CLIs are
 	// not installed yet; each installer creates its missing config directories.
 	// Non-selected trust-capable harnesses still require consent.
-	for i, hh := range hookInstallTargets(h, params.InstallAll, harnessOnPath) {
+	for i, hh := range hookInstallTargets(h, params.AllHarnesses, harnessOnPath) {
 		if i > 0 {
 			fmt.Println()
 		}
@@ -520,8 +522,8 @@ func consentToDetectedHookTrust(h *harness.Harness, assumeYes bool) bool {
 
 // hookInstallTargets returns the selected harness first, followed by other
 // registered hook-capable harnesses in name order. Normally only harnesses
-// reported by present are added; installAll also prepares absent harnesses.
-func hookInstallTargets(selected *harness.Harness, installAll bool, present func(*harness.Harness) bool) []*harness.Harness {
+// reported by present are added; allHarnesses also prepares absent harnesses.
+func hookInstallTargets(selected *harness.Harness, allHarnesses bool, present func(*harness.Harness) bool) []*harness.Harness {
 	targets := []*harness.Harness{selected}
 	seen := map[string]bool{selected.Name: true}
 	for _, name := range harness.Names() {
@@ -529,7 +531,7 @@ func hookInstallTargets(selected *harness.Harness, installAll bool, present func
 			continue
 		}
 		h, ok := harness.Get(name)
-		if !ok || !h.SupportsHooks() || (!installAll && !present(h)) {
+		if !ok || !h.SupportsHooks() || (!allHarnesses && !present(h)) {
 			continue
 		}
 		targets = append(targets, h)
