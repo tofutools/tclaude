@@ -62,6 +62,7 @@ export function sandboxProfileSummary(profile) {
   const limits = profile.resource_limits || {};
   if (limits.memory) parts.push(`memory ${limits.memory}`);
   if (limits.cpu != null) parts.push(`CPU ${limits.cpu}`);
+  if (limits.pids != null) parts.push(`PIDs ${limits.pids}`);
   if (profile.darwin_disable_keychain_write) parts.push('Keychain writes disabled');
   if (profile.darwin_allow_mach_register) parts.push('Mach registration');
   const authoredNetwork = sandboxNetworkAuthoring(profile);
@@ -86,9 +87,11 @@ export function sandboxProfileSummary(profile) {
 export function sandboxResourceLimitsForWire(resourceLimits = {}) {
   const memory = String(resourceLimits.memory ?? '').trim();
   const cpuText = String(resourceLimits.cpu ?? '').trim();
+  const pidsText = String(resourceLimits.pids ?? '').trim();
   return {
     ...(memory ? { memory } : {}),
     ...(cpuText ? { cpu: Number(cpuText) } : {}),
+    ...(pidsText ? { pids: Number(pidsText) } : {}),
   };
 }
 
@@ -104,6 +107,12 @@ export function sandboxResourceLimitErrors(resourceLimits = {}) {
   const cpu = String(resourceLimits.cpu ?? '').trim();
   if (cpu && (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(cpu) || !Number.isFinite(Number(cpu)) || Number(cpu) < 0.01)) {
     errors.push('CPU limit must be at least 0.01 finite cores, such as 0.5 or 2.');
+  }
+  // pids.max takes `max` or a whole count and nothing else, so a decimal point
+  // is refused here rather than silently truncated on the way to the kernel.
+  const pids = String(resourceLimits.pids ?? '').trim();
+  if (pids && (!/^\d+$/.test(pids) || Number(pids) < 1)) {
+    errors.push('PID limit must be a whole number of at least 1 process, such as 512.');
   }
   return errors;
 }

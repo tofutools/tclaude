@@ -739,3 +739,40 @@ func TestSandboxProfilesImportPreviewWarnsAndImportRetainsMissingPaths(t *testin
 	require.Len(t, stored.Filesystem, 1)
 	assert.Equal(t, missing, stored.Filesystem[0].Path)
 }
+
+func TestSandboxProfilePIDLimitRoundTripAndExportGate(t *testing.T) {
+	f := newFlow(t)
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name": "pid-capped", "resource_limits": map[string]any{"memory": "1GiB", "pids": 512},
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
+
+	rec = profileReq(t, f, http.MethodGet, "/v1/sandbox-profiles/pid-capped", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var stored map[string]any
+	testharness.DecodeJSON(t, rec, &stored)
+	limits, ok := stored["resource_limits"].(map[string]any)
+	require.True(t, ok, "body=%s", rec.Body.String())
+	assert.Equal(t, float64(512), limits["pids"])
+
+	rec = profileReq(t, f, http.MethodGet, "/v1/sandbox-profiles/export?name=pid-capped", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var bundle map[string]any
+	testharness.DecodeJSON(t, rec, &bundle)
+	assert.Equal(t, float64(19), bundle["format_version"],
+		"an older importer would drop the ceiling and keep the rest of the budget")
+
+	bundle["format_version"] = float64(18)
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import/inspect", bundle)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "requires export format version 19")
+}
+
+func TestSandboxProfileRejectsAZeroPIDLimit(t *testing.T) {
+	f := newFlow(t)
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name": "pid-zero", "resource_limits": map[string]any{"pids": 0},
+	})
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "at least 1 process")
+}

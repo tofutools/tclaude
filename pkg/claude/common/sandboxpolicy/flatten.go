@@ -342,6 +342,10 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 			value := *parts.resourceLimits.CPU
 			out.resourceLimits.CPU = &value
 		}
+		if parts.resourceLimits.PIDs != nil {
+			value := *parts.resourceLimits.PIDs
+			out.resourceLimits.PIDs = &value
+		}
 		out.darwinDisableKeychainWrite = out.darwinDisableKeychainWrite || parts.darwinDisableKeychainWrite
 		out.network = intersectNetworkRules(out.network, parts.network)
 		out.unixSockets = intersectUnixSocketRules(out.unixSockets, parts.unixSockets)
@@ -404,6 +408,10 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 	if p.ResourceLimits.CPU != nil {
 		value := *p.ResourceLimits.CPU
 		out.resourceLimits.CPU = &value
+	}
+	if p.ResourceLimits.PIDs != nil {
+		value := *p.ResourceLimits.PIDs
+		out.resourceLimits.PIDs = &value
 	}
 	out.darwinAllowMachRegister = out.darwinAllowMachRegister || p.DarwinAllowMachRegister
 	out.darwinDisableKeychainWrite = out.darwinDisableKeychainWrite || p.DarwinDisableKeychainWrite

@@ -16,7 +16,7 @@ func resourceLimitOverrideNotice(err error) sandboxpolicy.AccessNotice {
 		Reason: sandboxpolicy.AccessNoticeReasonOperatorUnenforcedLaunchOverride,
 		Effect: sandboxpolicy.AccessNoticeEffectNotEnforced,
 		Detail: fmt.Sprintf(
-			"the human operator used the dashboard launch override; configured CPU and memory limits are not enforced: %v",
+			"the human operator used the dashboard launch override; configured resource limits are not enforced: %v",
 			err,
 		),
 	}

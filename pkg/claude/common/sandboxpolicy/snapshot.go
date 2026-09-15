@@ -11,6 +11,10 @@ import (
 	"time"
 )
 
+// SnapshotVersion 16 adds the Linux PID ceiling (`pids.max`). An older binary
+// decoding such a snapshot would drop the field and resume the agent with no
+// process ceiling at all, so it must reject the snapshot instead.
+//
 // SnapshotVersion 15 adds the macOS automatic Keychain write opt-out. Older
 // binaries must not silently drop that restriction.
 //
@@ -42,7 +46,7 @@ import (
 // bump preserved the fail-closed downgrade property, where an older binary
 // rejects a newer snapshot rather than ignoring a marker it does not
 // understand. Version 5 removed the retired read-baseline mechanism (TCL-623).
-const SnapshotVersion = 15
+const SnapshotVersion = 16
 
 // AppliedProfile preserves stable registry provenance without making the
 // registry row authoritative after resolution. The effective values in the
@@ -559,6 +563,7 @@ func UnconfinedLaunchSnapshot(in Snapshot) Snapshot {
 	effective.Provenance.UnixSockets = nil
 	effective.Provenance.ResourceMemory = nil
 	effective.Provenance.ResourceCPU = nil
+	effective.Provenance.ResourcePIDs = nil
 	out := NewSnapshot(effective, in.Applied)
 	out.ResolutionGroupID = in.ResolutionGroupID
 	out.ProfilesOmitted = in.ProfilesOmitted
@@ -776,7 +781,7 @@ func NormalizeSnapshotVersion(in Snapshot) (Snapshot, error) {
 	// strictly narrows what the agent may write, so it cannot widen anything a
 	// human already sanctioned, and no live agent is stranded.
 	// TestEverySnapshotVersionUpToCurrentIsAccepted pins that.
-	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, SnapshotVersion:
+	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, SnapshotVersion:
 		in.Version = SnapshotVersion
 		return in, nil
 	default:
@@ -908,6 +913,7 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 			UnixSockets:      nil,
 			ResourceMemory:   nil,
 			ResourceCPU:      nil,
+			ResourcePIDs:     nil,
 		},
 	}
 	if in.Provenance.Tmpfs != nil {
@@ -948,6 +954,10 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 	if in.Provenance.ResourceCPU != nil {
 		source := cloneProfileSource(*in.Provenance.ResourceCPU)
 		out.Provenance.ResourceCPU = &source
+	}
+	if in.Provenance.ResourcePIDs != nil {
+		source := cloneProfileSource(*in.Provenance.ResourcePIDs)
+		out.Provenance.ResourcePIDs = &source
 	}
 	// The SAME canonical order normalizeFilesystem produces. RevalidateSnapshot
 	// compares the two with an order-sensitive DeepEqual, so a snapshot sorted by

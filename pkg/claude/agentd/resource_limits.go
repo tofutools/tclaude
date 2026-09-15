@@ -145,7 +145,7 @@ func appendManagedServerResourceOverride(snapshot *sandboxpolicy.Snapshot, err e
 			Class: sandboxpolicy.AccessNoticeClassDegradation, Axis: "resource_limits",
 			Reason: sandboxpolicy.AccessNoticeReasonOperatorUnenforcedLaunchOverride,
 			Effect: sandboxpolicy.AccessNoticeEffectNotEnforced,
-			Detail: fmt.Sprintf("the human operator used the dashboard launch override; configured CPU and memory limits are not enforced: %v", err),
+			Detail: fmt.Sprintf("the human operator used the dashboard launch override; configured resource limits are not enforced: %v", err),
 		})
 }
 

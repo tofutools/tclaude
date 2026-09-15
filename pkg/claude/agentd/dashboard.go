@@ -2303,6 +2303,10 @@ type agentState struct {
 	// ResourceCPULimit is the authored CPU ceiling in cores. nil means no CPU
 	// ceiling; a cgroup can exist with neither ceiling set.
 	ResourceCPULimit *float64 `json:"resource_cpu_limit,omitempty"`
+	// ResourcePIDsLimit is the authored process/thread ceiling rendered as
+	// `pids.max`. nil means no PID ceiling; a cgroup can exist with none of the
+	// three ceilings set.
+	ResourcePIDsLimit *uint64 `json:"resource_pids_limit,omitempty"`
 	// RemoteControl is tclaude's best-known state of whether the harness's
 	// built-in Remote Access is enabled for this agent (JOH-256). It is a
 	// best-known flag — the harness exposes no readback, so the dashboard
@@ -2459,6 +2463,10 @@ func stateForConvInSessionsBatched(
 	if limits.CPU != nil {
 		cpu := *limits.CPU
 		out.ResourceCPULimit = &cpu
+	}
+	if limits.PIDs != nil {
+		pids := *limits.PIDs
+		out.ResourcePIDsLimit = &pids
 	}
 	// Codex records collaboration-child lifecycle in its rollout even when an
 	// explicit interrupt does not invoke the configured SubagentStop hook. The
