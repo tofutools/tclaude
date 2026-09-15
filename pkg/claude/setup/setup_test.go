@@ -316,13 +316,12 @@ func TestRunSetup_InstallAllPreparesAbsentHarnesses(t *testing.T) {
 	if runtime.GOOS != "linux" || wsl.IsWSL() {
 		t.Skip("runSetup is only safe to exercise end-to-end on native Linux")
 	}
-	for _, customHomes := range []bool{false, true} {
-		t.Run(fmt.Sprintf("custom homes=%v", customHomes), func(t *testing.T) {
+	for _, customCopilotHome := range []bool{false, true} {
+		t.Run(fmt.Sprintf("custom Copilot home=%v", customCopilotHome), func(t *testing.T) {
 			home := tempHome(t)
 			codexHome := filepath.Join(home, ".codex")
 			copilotHome := filepath.Join(home, ".copilot")
-			if customHomes {
-				codexHome = filepath.Join(home, "custom", "codex")
+			if customCopilotHome {
 				copilotHome = filepath.Join(home, "custom", "copilot")
 			}
 			t.Setenv("CODEX_HOME", codexHome)
