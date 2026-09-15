@@ -312,6 +312,50 @@ func TestRunSetup_BaselineRunsAlongsideExtras(t *testing.T) {
 	assert.Contains(t, out, "=== Agent Sandbox ===")
 }
 
+func TestRunSetup_InstallAllPreparesAbsentHarnesses(t *testing.T) {
+	if runtime.GOOS != "linux" || wsl.IsWSL() {
+		t.Skip("runSetup is only safe to exercise end-to-end on native Linux")
+	}
+	for _, customHomes := range []bool{false, true} {
+		t.Run(fmt.Sprintf("custom homes=%v", customHomes), func(t *testing.T) {
+			home := tempHome(t)
+			codexHome := filepath.Join(home, ".codex")
+			copilotHome := filepath.Join(home, ".copilot")
+			if customHomes {
+				codexHome = filepath.Join(home, "custom", "codex")
+				copilotHome = filepath.Join(home, "custom", "copilot")
+			}
+			t.Setenv("CODEX_HOME", codexHome)
+			t.Setenv("COPILOT_HOME", copilotHome)
+			// Satisfy setup's tmux prerequisite without exposing any harness CLI.
+			bin := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(bin, "tmux"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+			t.Setenv("PATH", bin)
+			t.Chdir(home)
+			for _, dir := range []string{filepath.Join(home, ".claude"), codexHome, copilotHome} {
+				require.NoDirExists(t, dir)
+			}
+
+			for range 2 {
+				out := captureStdout(t, func() {
+					require.NoError(t, runSetup(&Params{Yes: true, InstallAll: true}))
+				})
+				for _, name := range []string{"claude", "codex", "copilot"} {
+					h, ok := harness.Get(name)
+					require.True(t, ok)
+					installed, missing, repair := h.Hooks.Check()
+					assert.True(t, installed, "%s hooks missing: %v", name, missing)
+					assert.False(t, repair, "%s hooks need repair", name)
+				}
+				assert.FileExists(t, filepath.Join(codexHome, "hooks.json"))
+				assert.FileExists(t, filepath.Join(copilotHome, "hooks", "tclaude.json"))
+				assert.Contains(t, out, "Automatic hook trust skipped")
+				assert.Contains(t, out, "tclaude setup --harness codex")
+			}
+		})
+	}
+}
+
 // checkStatus must surface the agent-sandbox advisory so that
 // `tclaude setup --check` points operators at the hardening doc. This
 // guards the call site, which TestSandboxAdvisory_NamesPathsAndDoc
@@ -367,11 +411,15 @@ func TestHookInstallTargets(t *testing.T) {
 
 	// Selected harness only — nothing else present → no auto-adds.
 	assert.Equal(t, []string{"claude"},
-		harnessTargetNames(hookInstallTargets(claude, none)))
+		harnessTargetNames(hookInstallTargets(claude, false, none)))
+
+	// --install-all prepares every hook-capable harness even with no CLIs.
+	assert.Equal(t, []string{"claude", "codex", "copilot"},
+		harnessTargetNames(hookInstallTargets(claude, true, none)))
 
 	// Codex present → auto-added after the selected default harness.
 	assert.Equal(t, []string{"claude", "codex"},
-		harnessTargetNames(hookInstallTargets(claude, onlyCodex)))
+		harnessTargetNames(hookInstallTargets(claude, false, onlyCodex)))
 
 	// Selecting codex: it leads, the present claude follows, and the
 	// selected harness is never duplicated by the auto-add pass. Copilot
@@ -379,13 +427,13 @@ func TestHookInstallTargets(t *testing.T) {
 	// discovery is capability-driven, so a harness gains (or loses) its
 	// place here purely by what it advertises.
 	assert.Equal(t, []string{"codex", "claude", "copilot"},
-		harnessTargetNames(hookInstallTargets(codex, all)))
+		harnessTargetNames(hookInstallTargets(codex, false, all)))
 
 	// A present Copilot is auto-added without being selected, exactly like
 	// Codex — and, having no trust store, it needs no consent prompt.
 	onlyCopilot := func(h *harness.Harness) bool { return h.Name == harness.CopilotName }
 	assert.Equal(t, []string{"claude", "copilot"},
-		harnessTargetNames(hookInstallTargets(claude, onlyCopilot)))
+		harnessTargetNames(hookInstallTargets(claude, false, onlyCopilot)))
 }
 
 func TestConsentToDetectedHookTrust(t *testing.T) {
