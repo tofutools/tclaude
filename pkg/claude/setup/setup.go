@@ -64,6 +64,7 @@ type Params struct {
 	Force         bool `short:"f" long:"force" help:"Force re-registration of protocol handler"`
 	AbsolutePaths bool `long:"absolute-paths" help:"Use absolute paths to tclaude for desktop integrations (installed harness hooks and the Claude status bar remain portable)"`
 	Yes           bool `short:"y" long:"yes" help:"Assume yes on all prompts (for scripted usage)"`
+	AllHarnesses  bool `long:"all-harnesses" help:"Prepare hooks for every supported harness, creating missing directories even before its CLI is installed. Not implied by --install-all."`
 	// The --install-* flags add optional extras on top of the baseline
 	// setup (which always runs). They do not replace or gate the baseline.
 	InstallAll               bool `long:"install-all" help:"Install all standard extras on top of the baseline setup. Proxy skills remain opt-in via --install-proxy-skills."`
@@ -91,7 +92,9 @@ func Cmd() *cobra.Command {
 			"The --install-* flags add optional extras on top of the baseline (they do not " +
 			"replace it): --install-agent-skills, --install-proxy-skills, --install-default-agent-permissions, " +
 			"--install-sandbox-hardening, --install-resume-threshold-override. " +
-			"--install-all enables every standard extra; proxy skills remain explicit opt-in.",
+			"--install-all enables every standard extra; proxy skills remain explicit opt-in.\n\n" +
+			"Use --all-harnesses to also prepare hooks for harnesses whose CLIs are not installed, " +
+			"creating missing configuration directories. This is not implied by --install-all.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
 			if err := runSetup(params); err != nil {
@@ -178,21 +181,19 @@ func runSetup(params *Params) error {
 		}
 	}
 
-	// 1. Install hooks — the mandatory core of the integration. Hooks go in
-	// for the selected harness (always, regardless of whether its CLI is on
-	// PATH) AND are auto-installed for every other registered hook-capable
-	// harness whose CLI is present on PATH — so a machine with Codex
-	// installed gets its Codex hooks without anyone having to pass
-	// `--harness codex`. Installing hooks for a harness you don't actively
-	// use is harmless: the status state machine tolerates a harness firing
-	// fewer events. A non-selected trust-capable harness gets an explicit prompt;
-	// declining leaves both its declarations and trust store untouched.
-	for i, hh := range hookInstallTargets(h, harnessOnPath) {
+	// Install the selected harness's hooks and auto-detect other harnesses on
+	// PATH. --all-harnesses also prepares hook-capable harnesses whose CLIs are
+	// not installed yet; each installer creates its missing config directories.
+	// Installed, non-selected trust-capable harnesses still require consent.
+	for i, hh := range hookInstallTargets(h, params.AllHarnesses, harnessOnPath) {
 		if i > 0 {
 			fmt.Println()
 		}
 		grantTrust := hh.Name == h.Name
-		if !grantTrust {
+		// An absent CLI cannot provide authoritative trust. Prepare its files
+		// without a trust prompt; setup can grant trust after it is installed.
+		prepareWithoutTrust := params.AllHarnesses && !harnessOnPath(hh)
+		if !grantTrust && !prepareWithoutTrust {
 			if _, trustCapable := hh.Hooks.(harness.TrustedHookInstaller); trustCapable {
 				if !consentToDetectedHookTrust(hh, params.Yes) {
 					fmt.Printf("• Skipped %s hooks (no hook trust was granted)\n", hh.DisplayName)
@@ -518,19 +519,14 @@ func installDefaultMusicVolume() error {
 }
 
 func consentToDetectedHookTrust(h *harness.Harness, assumeYes bool) bool {
-	prompt := fmt.Sprintf("Install and trust tclaude hooks for detected %s?", h.DisplayName)
+	prompt := fmt.Sprintf("Install and trust tclaude hooks for %s?", h.DisplayName)
 	return askYesNo(prompt, false, assumeYes)
 }
 
-// hookInstallTargets returns the harnesses whose tclaude callback hooks the
-// baseline should install: the selected harness always (hooks are the
-// mandatory core, installed regardless of whether its CLI is on PATH), plus
-// every OTHER registered hook-capable harness the `present` predicate
-// reports as available — so a Codex install is picked up automatically,
-// without `--harness codex`. The selected harness is first; the rest follow
-// in registry (name) order. `present` is a parameter so tests can drive the
-// auto-add path without depending on what's on the test machine's PATH.
-func hookInstallTargets(selected *harness.Harness, present func(*harness.Harness) bool) []*harness.Harness {
+// hookInstallTargets returns the selected harness first, followed by other
+// registered hook-capable harnesses in name order. Normally only harnesses
+// reported by present are added; allHarnesses also prepares absent harnesses.
+func hookInstallTargets(selected *harness.Harness, allHarnesses bool, present func(*harness.Harness) bool) []*harness.Harness {
 	targets := []*harness.Harness{selected}
 	seen := map[string]bool{selected.Name: true}
 	for _, name := range harness.Names() {
@@ -538,7 +534,7 @@ func hookInstallTargets(selected *harness.Harness, present func(*harness.Harness
 			continue
 		}
 		h, ok := harness.Get(name)
-		if !ok || !h.SupportsHooks() || !present(h) {
+		if !ok || !h.SupportsHooks() || (!allHarnesses && !present(h)) {
 			continue
 		}
 		targets = append(targets, h)
@@ -905,7 +901,7 @@ func checkStatus(harnessName string) error {
 	// hide auto-installed Codex hooks.
 	checkTargets := []*harness.Harness{h}
 	if harnessName == "" {
-		checkTargets = hookInstallTargets(h, harnessOnPath)
+		checkTargets = hookInstallTargets(h, false, harnessOnPath)
 	}
 	for _, hh := range checkTargets {
 		checkHooksForHarness(hh, harnessName == "" || hh.Name == h.Name)

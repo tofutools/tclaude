@@ -120,6 +120,18 @@ configured:
 tclaude setup --install-proxy-skills
 ```
 
+To prepare hooks before installing the harness CLIs, explicitly add
+`--all-harnesses`. This creates missing configuration directories for every
+supported hook installer (Claude Code, Codex, and Copilot); `--install-all`
+alone keeps the usual harness detection.
+
+```bash
+tclaude setup --install-all --all-harnesses -y
+```
+
+Codex hook trust still requires its CLI: after installing Codex, rerun
+`tclaude setup --harness codex -y` to grant trust.
+
 Full walkthrough: [Getting started](https://tofutools.github.io/tclaude/).
 
 ## Quick start
