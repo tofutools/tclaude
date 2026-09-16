@@ -7,6 +7,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -113,7 +116,7 @@ func TestAWBReadyPickupDoesNotLogResumedDispatch(t *testing.T) {
 }
 
 func TestAWBReadyInitialMessageLeavesClosureToOperator(t *testing.T) {
-	message := awbReadyInitialMessage("tcl-a1", false)
+	message := awbReadyInitialMessage("tcl-a1", false, false)
 	assert.Contains(t, message, "tclaude proxy awb show tcl-a1")
 	assert.Contains(t, message, "record progress")
 	assert.Contains(t, message, "Leave closing the issue to the operator")
@@ -121,8 +124,15 @@ func TestAWBReadyInitialMessageLeavesClosureToOperator(t *testing.T) {
 }
 
 func TestAWBReadyInitialMessageExplainsPRMonitoring(t *testing.T) {
-	message := awbReadyInitialMessage("tcl-a1", true)
+	message := awbReadyInitialMessage("tcl-a1", true, false)
 	assert.Contains(t, message, "awb update --pull-request-url")
+	assert.Contains(t, message, "daemon will close the issue")
+}
+
+func TestAWBReadyInitialMessageExplainsCommitMonitoring(t *testing.T) {
+	message := awbReadyInitialMessage("tcl-a1", false, true)
+	assert.Contains(t, message, "awb update --commit-hash")
+	assert.Contains(t, message, "origin/main")
 	assert.Contains(t, message, "daemon will close the issue")
 }
 
@@ -205,6 +215,117 @@ func TestAWBReadyMonitorDisabledDoesNotInspectPR(t *testing.T) {
 	worker := testAWBReadyMonitorWorker(t, server.URL)
 	worker.config.MonitorPR = false
 	require.NoError(t, worker.tick(context.Background()))
+}
+
+func TestAWBReadyMonitorCommitClosesAfterAgentSettles(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	agentID := testAWBReadyAgent(t, session.StatusIdle)
+	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", agentID)
+	require.NoError(t, err)
+	require.True(t, selected)
+	_, err = db.UpdateAWBReadyDispatch("builders", "tcl-a1", "spawned", "")
+	require.NoError(t, err)
+
+	const hash = "0123456789abcdef0123456789abcdef01234567"
+	var closeReason string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		issue := awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "in_progress", CommitHash: hash}
+		if r.Method == http.MethodPost && r.URL.Path == "/api/issues/tcl-a1/close" {
+			var body awbCloseBody
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			require.NotNil(t, body.Reason)
+			closeReason = *body.Reason
+			issue.Status = "closed"
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(issue))
+	}))
+	t.Cleanup(server.Close)
+
+	previous := liveAWBReadyCommitOnOriginMainFn
+	liveAWBReadyCommitOnOriginMainFn = func(_ context.Context, cwd, commit string) (bool, error) {
+		assert.Equal(t, "/repo", cwd)
+		assert.Equal(t, hash, commit)
+		return true, nil
+	}
+	t.Cleanup(func() { liveAWBReadyCommitOnOriginMainFn = previous })
+
+	worker := testAWBReadyMonitorWorker(t, server.URL)
+	worker.config.MonitorPR = false
+	worker.config.MonitorCommit = true
+	worker.config.Cwd = "/repo"
+	require.NoError(t, worker.tick(context.Background()))
+	assert.Equal(t, "Recorded commit reached origin/main and spawned agent settled", closeReason)
+	dispatch, err := db.GetAWBReadyDispatch("builders")
+	require.NoError(t, err)
+	assert.Nil(t, dispatch)
+}
+
+func TestAWBReadyCommitOnOriginMain(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{GitProxy: &config.GitProxyConfig{
+		AllowedRemotes: []string{"github.com/acme/repo"},
+	}}}))
+	repo := filepath.Join(t.TempDir(), "repo")
+	git := func(dir string, args ...string) string {
+		t.Helper()
+		cmdArgs := args
+		if dir != "" {
+			cmdArgs = append([]string{"-C", dir}, args...)
+		}
+		out, err := exec.Command("git", cmdArgs...).CombinedOutput()
+		require.NoError(t, err, "%s", out)
+		return strings.TrimSpace(string(out))
+	}
+	git("", "init", "-b", "main", repo)
+	git(repo, "config", "user.email", "test@example.invalid")
+	git(repo, "config", "user.name", "tclaude test")
+	git(repo, "config", "commit.gpgsign", "false")
+	git(repo, "remote", "add", "origin", "https://github.com/acme/repo.git")
+	git(repo, "commit", "--allow-empty", "-m", "pushed")
+	pushed := git(repo, "rev-parse", "HEAD")
+
+	realExec := proxyExec
+	var fetchCommand ProxyCommand
+	var fetchCalls int
+	t.Cleanup(SetProxyExecForTest(func(ctx context.Context, cmd ProxyCommand) (ProxyResult, error) {
+		isFetch := false
+		for _, arg := range cmd.Args {
+			isFetch = isFetch || arg == "fetch"
+		}
+		if isFetch {
+			fetchCalls++
+			fetchCommand = cmd
+			require.NoError(t, os.WriteFile(filepath.Join(cmd.Dir, "FETCH_HEAD"), []byte(pushed+"\n"), 0o600))
+			return ProxyResult{}, nil
+		}
+		return realExec(ctx, cmd)
+	}))
+
+	reached, err := liveAWBReadyCommitOnOriginMain(context.Background(), repo, pushed)
+	require.NoError(t, err)
+	assert.True(t, reached)
+	assert.Contains(t, strings.Join(fetchCommand.Args, " "), "-c core.hooksPath=")
+	assert.Contains(t, fetchCommand.Args, gitProxyUploadPack)
+	assert.Contains(t, fetchCommand.Args, "https://github.com/acme/repo.git")
+
+	git(repo, "commit", "--allow-empty", "-m", "local only")
+	localOnly := git(repo, "rev-parse", "HEAD")
+	reached, err = liveAWBReadyCommitOnOriginMain(context.Background(), repo, localOnly)
+	require.NoError(t, err)
+	assert.False(t, reached)
+
+	reached, err = liveAWBReadyCommitOnOriginMain(context.Background(), repo, strings.Repeat("f", 40))
+	require.NoError(t, err)
+	assert.False(t, reached, "an object not fetched yet is a normal waiting state")
+
+	before := fetchCalls
+	git(repo, "remote", "set-url", "origin", "https://attacker.invalid/acme/repo.git")
+	_, err = liveAWBReadyCommitOnOriginMain(context.Background(), repo, pushed)
+	assert.ErrorContains(t, err, "not on the operator's allow-list")
+	assert.Equal(t, before, fetchCalls, "an unauthorized origin must be refused before fetch")
 }
 
 func TestAWBReadyAgentSettledForMissingAgent(t *testing.T) {
@@ -304,6 +425,11 @@ func TestValidateAWBReadyPolling(t *testing.T) {
 	bad.Labels = []string{" bad label "}
 	_, err = validateAWBReadyPolling(policy, "builders", bad)
 	assert.ErrorContains(t, err, "invalid label")
+	bad = base
+	bad.MonitorPR = true
+	bad.MonitorCommit = true
+	_, err = validateAWBReadyPolling(policy, "builders", bad)
+	assert.ErrorContains(t, err, "alternatives")
 	policy.URL = "file:///tmp/awb"
 	_, err = validateAWBReadyPolling(policy, "builders", base)
 	assert.ErrorContains(t, err, "invalid url")

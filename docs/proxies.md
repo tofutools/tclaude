@@ -290,6 +290,16 @@ The `agent.awb_proxy` block in `~/.tclaude/data/config.json`:
   `allowed_remotes`, and a GitHub token available to agentd. The spawned agent's
   brief tells it to record the PR URL on the issue; an unreachable or non-GitHub
   URL is left alone and reported in the daemon log.
+  `monitor_commit` also defaults to `false` and is an alternative to
+  `monitor_pr` for workflows without pull requests; the two cannot be enabled
+  together. It watches the issue's `commit_hash` and, after the spawned agent
+  exits or becomes idle, performs a hardened, isolated fetch of `origin/main`
+  from the configured `cwd`. The `cwd` must therefore be a Git repository with
+  an `origin` remote allowed by `agent.git_proxy.allowed_remotes`. Once the
+  recorded commit is an ancestor of that remote branch, the worker closes the
+  issue and advances. This assumes the recorded commit reaches `main` verbatim;
+  a commit rewritten by rebase or squash never satisfies the check. The
+  spawned agent's brief tells it to record the commit hash on the issue.
   Multiple processes may use the same workspace when every process has a
   non-empty label filter and those configured label sets are disjoint. An
   unfiltered process therefore must be the workspace's only process.
@@ -311,13 +321,14 @@ The `agent.awb_proxy` block in `~/.tclaude/data/config.json`:
     "sandbox_profile": "repo-write",
     "harness": "codex",
     "worktree": true,
-    "monitor_pr": true
+    "monitor_commit": true
   },
   "tcl-frontend": {
     "workspace": "tcl",
     "labels": ["frontend"],
     "group": "builders",
-    "cwd": "/absolute/path/to/repo"
+    "cwd": "/absolute/path/to/repo",
+    "monitor_pr": true
   }
 }
 ```

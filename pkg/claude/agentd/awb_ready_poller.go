@@ -23,6 +23,8 @@ import (
 
 const defaultAWBReadyPollInterval = time.Minute
 
+var liveAWBReadyCommitOnOriginMainFn = liveAWBReadyCommitOnOriginMain
+
 const awbReadyPRStateQuery = `
 query PRState($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
@@ -88,6 +90,9 @@ func validateAWBReadyPolling(policy config.AWBProxyConfig, process string, p con
 	}
 	if !filepath.IsAbs(strings.TrimSpace(p.Cwd)) {
 		return 0, fmt.Errorf("cwd must be absolute")
+	}
+	if p.MonitorPR && p.MonitorCommit {
+		return 0, fmt.Errorf("monitor_pr and monitor_commit are alternatives and cannot both be enabled")
 	}
 	if p.Interval == "" {
 		return defaultAWBReadyPollInterval, nil
@@ -161,7 +166,7 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 		return err
 	}
 	if dispatch.Phase == "spawned" {
-		if w.config.MonitorPR && issue.PullRequestURL != "" {
+		if (w.config.MonitorPR && issue.PullRequestURL != "") || (w.config.MonitorCommit && issue.CommitHash != "") {
 			settled, settleErr := liveAWBReadyAgentSettled(dispatch.AgentID)
 			if settleErr != nil {
 				return settleErr
@@ -169,26 +174,39 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 			if !settled {
 				return nil
 			}
-			merged, reachable, mergeErr := liveAWBReadyPRMerged(ctx, issue.PullRequestURL)
-			if reachable {
-				status := http.StatusOK
-				if mergeErr != nil {
-					status = http.StatusBadGateway
+			readyToClose := false
+			if w.config.MonitorCommit {
+				readyToClose, err = liveAWBReadyCommitOnOriginMainFn(ctx, w.config.Cwd, issue.CommitHash)
+				if err != nil {
+					return err
 				}
-				w.audit("github.pr.view", dispatch.IssueID, status)
+			} else {
+				var reachable bool
+				readyToClose, reachable, err = liveAWBReadyPRMerged(ctx, issue.PullRequestURL)
+				if reachable {
+					status := http.StatusOK
+					if err != nil {
+						status = http.StatusBadGateway
+					}
+					w.audit("github.pr.view", dispatch.IssueID, status)
+				}
+				if err != nil {
+					return err
+				}
+				if !reachable {
+					slog.Warn("awb ready polling: pull request is not reachable through GitHub proxy",
+						"process", w.process, "workspace", w.workspace, "issue", dispatch.IssueID)
+				}
 			}
-			if mergeErr != nil {
-				return mergeErr
-			}
-			if !reachable {
-				slog.Warn("awb ready polling: pull request is not reachable through GitHub proxy",
-					"process", w.process, "workspace", w.workspace, "issue", dispatch.IssueID)
-			}
-			if merged {
-				if closeErr := w.close(ctx, dispatch.IssueID); closeErr != nil {
+			if readyToClose {
+				reason := "GitHub pull request merged and spawned agent settled"
+				if w.config.MonitorCommit {
+					reason = "Recorded commit reached origin/main and spawned agent settled"
+				}
+				if closeErr := w.close(ctx, dispatch.IssueID, reason); closeErr != nil {
 					return closeErr
 				}
-				slog.Info("awb ready polling: closed issue for merged pull request", "process", w.process,
+				slog.Info("awb ready polling: closed issue after monitored change reached main", "process", w.process,
 					"workspace", w.workspace, "issue", dispatch.IssueID, "agent_id", dispatch.AgentID)
 				_, err = db.ClearAWBReadyDispatch(w.process, dispatch.IssueID)
 				return err
@@ -265,9 +283,16 @@ func (w awbReadyWorker) validateRuntime() error {
 			return fmt.Errorf("harness %q does not exist", w.config.Harness)
 		}
 	}
-	if w.config.Worktree {
+	if w.config.Worktree || w.config.MonitorCommit {
 		if _, _, err := spawnWorktreeRepoRoot(w.config.Cwd); err != nil {
 			return fmt.Errorf("cwd %q is not in a git repository: %v", w.config.Cwd, err)
+		}
+	}
+	if w.config.MonitorCommit {
+		checkCtx, cancel := context.WithTimeout(context.Background(), gitProxyNetworkTimeout)
+		defer cancel()
+		if _, _, err := openAWBReadyCommitRemote(checkCtx, w.config.Cwd); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -333,11 +358,10 @@ func (w awbReadyWorker) claim(ctx context.Context, id string) (*awbIssue, error)
 	return &i, nil
 }
 
-func (w awbReadyWorker) close(ctx context.Context, id string) error {
+func (w awbReadyWorker) close(ctx context.Context, id, reason string) error {
 	if f := w.session.requireWrite(); f != nil {
 		return fmt.Errorf("%s", f.Msg)
 	}
-	reason := "GitHub pull request merged and spawned agent settled"
 	body, _ := json.Marshal(awbCloseBody{Reason: &reason})
 	var i awbIssue
 	_, f := w.session.exec(ctx, awbCall{Method: http.MethodPost, Path: "/api/issues/" + awbSegment(id) + "/close", Body: body, ContentType: "application/json"}, &i)
@@ -353,6 +377,71 @@ func (w awbReadyWorker) close(ctx context.Context, id string) error {
 		return fmt.Errorf("AWB close response did not close issue")
 	}
 	return nil
+}
+
+func liveAWBReadyCommitOnOriginMain(ctx context.Context, cwd, commit string) (bool, error) {
+	if _, fault := validateAWBCommitHash(commit); fault != nil {
+		return false, fmt.Errorf("invalid AWB commit hash: %s", fault.Msg)
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, gitProxyNetworkTimeout)
+	defer cancel()
+	s, remote, err := openAWBReadyCommitRemote(checkCtx, cwd)
+	if err != nil {
+		return false, err
+	}
+	xfer, fault := newGitProxyXfer(checkCtx, s, xferBorrowObjects)
+	if fault != nil {
+		return false, fmt.Errorf("prepare isolated fetch: %s", fault.Msg)
+	}
+	defer xfer.cleanup()
+	res, err := xfer.git(checkCtx, s, "fetch", gitProxyUploadPack, "--no-recurse-submodules", "--quiet", "--", remote.FetchURL, "main")
+	if err != nil || res.ExitCode != 0 {
+		return false, fmt.Errorf("fetch origin main: %s", proxyResultDetail(res, err))
+	}
+	verified, err := xfer.git(checkCtx, s, "rev-parse", "--verify", "--quiet", commit+"^{commit}")
+	if err != nil {
+		return false, fmt.Errorf("verify recorded commit: %w", err)
+	}
+	if verified.ExitCode != 0 || strings.TrimSpace(verified.Stdout) == "" {
+		return false, nil
+	}
+	res, err = xfer.git(checkCtx, s, "merge-base", "--is-ancestor", strings.TrimSpace(verified.Stdout), "FETCH_HEAD")
+	if err != nil {
+		return false, fmt.Errorf("check commit on origin/main: %w", err)
+	}
+	if res.ExitCode == 1 {
+		return false, nil
+	}
+	if res.ExitCode != 0 {
+		return false, fmt.Errorf("check commit on origin/main: %s", proxyResultDetail(res, nil))
+	}
+	return true, nil
+}
+
+func openAWBReadyCommitRemote(ctx context.Context, cwd string) (*gitProxySession, resolvedRemote, error) {
+	s, fault := newGitProxySessionBase(ctx, false)
+	if fault != nil {
+		return nil, resolvedRemote{}, fmt.Errorf("prepare hardened git session: %s", fault.Msg)
+	}
+	s.repoRoot = cwd
+	remote, fault := resolveProxyRemote(ctx, s, "origin")
+	if fault != nil {
+		return nil, resolvedRemote{}, fmt.Errorf("validate origin remote: %s", fault.Msg)
+	}
+	return s, remote, nil
+}
+
+func proxyResultDetail(res ProxyResult, err error) string {
+	if err != nil {
+		return err.Error()
+	}
+	if res.TimedOut {
+		return "git operation timed out"
+	}
+	if detail := strings.TrimSpace(res.Stderr); detail != "" {
+		return detail
+	}
+	return fmt.Sprintf("git exited with status %d", res.ExitCode)
 }
 
 func liveAWBReadyPRMerged(ctx context.Context, rawURL string) (merged, reachable bool, err error) {
@@ -423,7 +512,7 @@ func (w awbReadyWorker) spawn(issueID, reservedAgentID string) (string, error) {
 		cwd, wtPath, wtBranch, discard = out.Path, out.Path, issueID, out.DiscardToken
 	}
 	scope := fmt.Sprintf(`{"awb_workspace":[%q]}`, w.workspace)
-	body := agent.SpawnRequest{Name: issueID, Cwd: cwd, WorktreePath: wtPath, WorktreeBranch: wtBranch, Profile: w.config.Profile, SandboxProfile: w.config.SandboxProfile, Harness: w.config.Harness, TaskURL: strings.TrimRight(w.session.base, "/") + "/#/issues/" + issueID, TaskLabel: issueID, InitialMessage: awbReadyInitialMessage(issueID, w.config.MonitorPR), PermissionOverrides: map[string]db.PermissionOverride{PermAWBRead: db.ScopedOverride(db.PermEffectGrant, scope), PermAWBWrite: db.ScopedOverride(db.PermEffectGrant, scope)}}
+	body := agent.SpawnRequest{Name: issueID, Cwd: cwd, WorktreePath: wtPath, WorktreeBranch: wtBranch, Profile: w.config.Profile, SandboxProfile: w.config.SandboxProfile, Harness: w.config.Harness, TaskURL: strings.TrimRight(w.session.base, "/") + "/#/issues/" + issueID, TaskLabel: issueID, InitialMessage: awbReadyInitialMessage(issueID, w.config.MonitorPR, w.config.MonitorCommit), PermissionOverrides: map[string]db.PermissionOverride{PermAWBRead: db.ScopedOverride(db.PermEffectGrant, scope), PermAWBWrite: db.ScopedOverride(db.PermEffectGrant, scope)}}
 	raw, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/v1/groups/"+url.PathEscape(w.config.Group)+"/spawn", bytes.NewReader(raw))
 	req.SetPathValue("name", w.config.Group)
@@ -449,10 +538,13 @@ func (w awbReadyWorker) spawn(issueID, reservedAgentID string) (string, error) {
 	return out.AgentID, nil
 }
 
-func awbReadyInitialMessage(issueID string, monitorPR bool) string {
+func awbReadyInitialMessage(issueID string, monitorPR, monitorCommit bool) string {
 	message := fmt.Sprintf("Fetch %s with `tclaude proxy awb show %s`, work it to completion, and record progress through the AWB proxy. Leave closing the issue to the operator.", issueID, issueID)
 	if monitorPR {
 		message += fmt.Sprintf(" When you open a pull request, record it with `tclaude proxy awb update --pull-request-url <url> %s`; the daemon will close the issue after that pull request merges and you become idle or exit.", issueID)
+	}
+	if monitorCommit {
+		message += fmt.Sprintf(" When your change is on main, record its commit with `tclaude proxy awb update --commit-hash <hash> %s`; the daemon will close the issue after that commit reaches origin/main and you become idle or exit.", issueID)
 	}
 	return message
 }
