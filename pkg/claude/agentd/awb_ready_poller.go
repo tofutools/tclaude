@@ -23,7 +23,7 @@ import (
 
 const defaultAWBReadyPollInterval = time.Minute
 
-var liveAWBReadyCommitOnOriginMainFn = liveAWBReadyCommitOnOriginMain
+var liveAWBReadyCommitOnMainFn = liveAWBReadyCommitOnMain
 
 const awbReadyPRStateQuery = `
 query PRState($owner: String!, $name: String!, $number: Int!) {
@@ -175,8 +175,9 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 				return nil
 			}
 			readyToClose := false
+			localMain := false
 			if w.config.MonitorCommit {
-				readyToClose, err = liveAWBReadyCommitOnOriginMainFn(ctx, w.config.Cwd, issue.CommitHash)
+				readyToClose, localMain, err = liveAWBReadyCommitOnMainFn(ctx, w.config.Cwd, issue.CommitHash)
 				if err != nil {
 					return err
 				}
@@ -202,6 +203,9 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 				reason := "GitHub pull request merged and spawned agent settled"
 				if w.config.MonitorCommit {
 					reason = "Recorded commit reached origin/main and spawned agent settled"
+					if localMain {
+						reason = "Recorded commit reached local main and spawned agent settled"
+					}
 				}
 				if closeErr := w.close(ctx, dispatch.IssueID, reason); closeErr != nil {
 					return closeErr
@@ -291,8 +295,13 @@ func (w awbReadyWorker) validateRuntime() error {
 	if w.config.MonitorCommit {
 		checkCtx, cancel := context.WithTimeout(context.Background(), gitProxyNetworkTimeout)
 		defer cancel()
-		if _, _, err := openAWBReadyCommitRemote(checkCtx, w.config.Cwd); err != nil {
+		_, remote, err := openAWBReadyCommitRemote(checkCtx, w.config.Cwd)
+		if err != nil {
 			return err
+		}
+		if remote.FetchURL == "" {
+			slog.Info("awb ready polling: monitoring local main because no origin is configured",
+				"process", w.process, "workspace", w.workspace, "cwd", w.config.Cwd)
 		}
 	}
 	return nil
@@ -379,54 +388,92 @@ func (w awbReadyWorker) close(ctx context.Context, id, reason string) error {
 	return nil
 }
 
-func liveAWBReadyCommitOnOriginMain(ctx context.Context, cwd, commit string) (bool, error) {
+func liveAWBReadyCommitOnMain(ctx context.Context, cwd, commit string) (reached, local bool, err error) {
 	if _, fault := validateAWBCommitHash(commit); fault != nil {
-		return false, fmt.Errorf("invalid AWB commit hash: %s", fault.Msg)
+		return false, false, fmt.Errorf("invalid AWB commit hash: %s", fault.Msg)
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, gitProxyNetworkTimeout)
 	defer cancel()
 	s, remote, err := openAWBReadyCommitRemote(checkCtx, cwd)
 	if err != nil {
-		return false, err
+		return false, false, err
+	}
+	if remote.FetchURL == "" {
+		reached, err := awbReadyCommitOnLocalMain(checkCtx, s, commit)
+		return reached, true, err
 	}
 	xfer, fault := newGitProxyXfer(checkCtx, s, xferBorrowObjects)
 	if fault != nil {
-		return false, fmt.Errorf("prepare isolated fetch: %s", fault.Msg)
+		return false, false, fmt.Errorf("prepare isolated fetch: %s", fault.Msg)
 	}
 	defer xfer.cleanup()
 	res, err := xfer.git(checkCtx, s, "fetch", gitProxyUploadPack, "--no-recurse-submodules", "--quiet", "--", remote.FetchURL, "main")
 	if err != nil || res.ExitCode != 0 {
-		return false, fmt.Errorf("fetch origin main: %s", proxyResultDetail(res, err))
+		return false, false, fmt.Errorf("fetch origin main: %s", proxyResultDetail(res, err))
 	}
 	verified, err := xfer.git(checkCtx, s, "rev-parse", "--verify", "--quiet", commit+"^{commit}")
+	if err != nil {
+		return false, false, fmt.Errorf("verify recorded commit: %w", err)
+	}
+	if verified.ExitCode != 0 || strings.TrimSpace(verified.Stdout) == "" {
+		return false, false, nil
+	}
+	res, err = xfer.git(checkCtx, s, "merge-base", "--is-ancestor", strings.TrimSpace(verified.Stdout), "FETCH_HEAD")
+	if err != nil {
+		return false, false, fmt.Errorf("check commit on origin/main: %w", err)
+	}
+	if res.ExitCode == 1 {
+		return false, false, nil
+	}
+	if res.ExitCode != 0 {
+		return false, false, fmt.Errorf("check commit on origin/main: %s", proxyResultDetail(res, nil))
+	}
+	return true, false, nil
+}
+
+func awbReadyCommitOnLocalMain(ctx context.Context, s *gitProxySession, commit string) (bool, error) {
+	verified, err := s.git(ctx, "rev-parse", "--verify", "--quiet", commit+"^{commit}")
 	if err != nil {
 		return false, fmt.Errorf("verify recorded commit: %w", err)
 	}
 	if verified.ExitCode != 0 || strings.TrimSpace(verified.Stdout) == "" {
 		return false, nil
 	}
-	res, err = xfer.git(checkCtx, s, "merge-base", "--is-ancestor", strings.TrimSpace(verified.Stdout), "FETCH_HEAD")
+	res, err := s.git(ctx, "merge-base", "--is-ancestor", strings.TrimSpace(verified.Stdout), "refs/heads/main")
 	if err != nil {
-		return false, fmt.Errorf("check commit on origin/main: %w", err)
+		return false, fmt.Errorf("check commit on local main: %w", err)
 	}
-	if res.ExitCode == 1 {
+	if res.ExitCode == 1 || res.ExitCode == 128 {
 		return false, nil
 	}
 	if res.ExitCode != 0 {
-		return false, fmt.Errorf("check commit on origin/main: %s", proxyResultDetail(res, nil))
+		return false, fmt.Errorf("check commit on local main: %s", proxyResultDetail(res, nil))
 	}
 	return true, nil
 }
 
 func openAWBReadyCommitRemote(ctx context.Context, cwd string) (*gitProxySession, resolvedRemote, error) {
-	s, fault := newGitProxySessionBase(ctx, false)
+	s, fault := newGitProxySessionBase(ctx, true)
 	if fault != nil {
 		return nil, resolvedRemote{}, fmt.Errorf("prepare hardened git session: %s", fault.Msg)
 	}
 	s.repoRoot = cwd
 	remote, fault := resolveProxyRemote(ctx, s, "origin")
 	if fault != nil {
+		if fault.Code == "unknown_remote" {
+			res, err := s.git(ctx, "rev-parse", "--is-inside-work-tree")
+			if err != nil || res.ExitCode != 0 {
+				return nil, resolvedRemote{}, fmt.Errorf("validate git repository: %s", proxyResultDetail(res, err))
+			}
+			if strings.TrimSpace(res.Stdout) != "true" {
+				return nil, resolvedRemote{}, fmt.Errorf("validate git repository: cwd is not a Git work tree")
+			}
+			return s, resolvedRemote{}, nil
+		}
 		return nil, resolvedRemote{}, fmt.Errorf("validate origin remote: %s", fault.Msg)
+	}
+	if len(s.policy.AllowedRemotes) == 0 {
+		return nil, resolvedRemote{}, fmt.Errorf("prepare hardened git session: %s", gitProxyDisabledMessage)
 	}
 	return s, remote, nil
 }
@@ -544,7 +591,7 @@ func awbReadyInitialMessage(issueID string, monitorPR, monitorCommit bool) strin
 		message += fmt.Sprintf(" When you open a pull request, record it with `tclaude proxy awb update --pull-request-url <url> %s`; the daemon will close the issue after that pull request merges and you become idle or exit.", issueID)
 	}
 	if monitorCommit {
-		message += fmt.Sprintf(" When your change is on main, record its commit with `tclaude proxy awb update --commit-hash <hash> %s`; the daemon will close the issue after that commit reaches origin/main and you become idle or exit.", issueID)
+		message += fmt.Sprintf(" When your change is on main, record its commit with `tclaude proxy awb update --commit-hash <hash> %s`; the daemon will close the issue after that commit reaches the monitored main branch and you become idle or exit.", issueID)
 	}
 	return message
 }

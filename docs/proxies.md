@@ -293,11 +293,13 @@ The `agent.awb_proxy` block in `~/.tclaude/data/config.json`:
   `monitor_commit` also defaults to `false` and is an alternative to
   `monitor_pr` for workflows without pull requests; the two cannot be enabled
   together. It watches the issue's `commit_hash` and, after the spawned agent
-  exits or becomes idle, performs a hardened, isolated fetch of `origin/main`
-  from the configured `cwd`. The `cwd` must therefore be a Git repository with
-  an `origin` remote allowed by `agent.git_proxy.allowed_remotes`. Once the
-  recorded commit is an ancestor of that remote branch, the worker closes the
-  issue and advances. This assumes the recorded commit reaches `main` verbatim;
+  exits or becomes idle, checks `main` from the configured `cwd`. When an
+  `origin` remote exists, it must be allowed by
+  `agent.git_proxy.allowed_remotes`, and the worker checks a hardened, isolated
+  fetch of the remote branch. When no `origin` is configured, it checks the
+  local `main` branch instead. Once the recorded commit is an ancestor of the
+  applicable branch, the worker closes the issue and advances. This assumes the
+  recorded commit reaches `main` verbatim;
   a commit rewritten by rebase or squash never satisfies the check. The
   spawned agent's brief tells it to record the commit hash on the issue.
   Multiple processes may use the same workspace when every process has a

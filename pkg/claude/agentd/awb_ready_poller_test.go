@@ -132,7 +132,7 @@ func TestAWBReadyInitialMessageExplainsPRMonitoring(t *testing.T) {
 func TestAWBReadyInitialMessageExplainsCommitMonitoring(t *testing.T) {
 	message := awbReadyInitialMessage("tcl-a1", false, true)
 	assert.Contains(t, message, "awb update --commit-hash")
-	assert.Contains(t, message, "origin/main")
+	assert.Contains(t, message, "monitored main branch")
 	assert.Contains(t, message, "daemon will close the issue")
 }
 
@@ -242,20 +242,20 @@ func TestAWBReadyMonitorCommitClosesAfterAgentSettles(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	previous := liveAWBReadyCommitOnOriginMainFn
-	liveAWBReadyCommitOnOriginMainFn = func(_ context.Context, cwd, commit string) (bool, error) {
+	previous := liveAWBReadyCommitOnMainFn
+	liveAWBReadyCommitOnMainFn = func(_ context.Context, cwd, commit string) (bool, bool, error) {
 		assert.Equal(t, "/repo", cwd)
 		assert.Equal(t, hash, commit)
-		return true, nil
+		return true, true, nil
 	}
-	t.Cleanup(func() { liveAWBReadyCommitOnOriginMainFn = previous })
+	t.Cleanup(func() { liveAWBReadyCommitOnMainFn = previous })
 
 	worker := testAWBReadyMonitorWorker(t, server.URL)
 	worker.config.MonitorPR = false
 	worker.config.MonitorCommit = true
 	worker.config.Cwd = "/repo"
 	require.NoError(t, worker.tick(context.Background()))
-	assert.Equal(t, "Recorded commit reached origin/main and spawned agent settled", closeReason)
+	assert.Equal(t, "Recorded commit reached local main and spawned agent settled", closeReason)
 	dispatch, err := db.GetAWBReadyDispatch("builders")
 	require.NoError(t, err)
 	assert.Nil(t, dispatch)
@@ -304,28 +304,85 @@ func TestAWBReadyCommitOnOriginMain(t *testing.T) {
 		return realExec(ctx, cmd)
 	}))
 
-	reached, err := liveAWBReadyCommitOnOriginMain(context.Background(), repo, pushed)
+	reached, local, err := liveAWBReadyCommitOnMain(context.Background(), repo, pushed)
 	require.NoError(t, err)
 	assert.True(t, reached)
+	assert.False(t, local)
 	assert.Contains(t, strings.Join(fetchCommand.Args, " "), "-c core.hooksPath=")
 	assert.Contains(t, fetchCommand.Args, gitProxyUploadPack)
 	assert.Contains(t, fetchCommand.Args, "https://github.com/acme/repo.git")
 
 	git(repo, "commit", "--allow-empty", "-m", "local only")
 	localOnly := git(repo, "rev-parse", "HEAD")
-	reached, err = liveAWBReadyCommitOnOriginMain(context.Background(), repo, localOnly)
+	reached, local, err = liveAWBReadyCommitOnMain(context.Background(), repo, localOnly)
 	require.NoError(t, err)
 	assert.False(t, reached)
+	assert.False(t, local)
 
-	reached, err = liveAWBReadyCommitOnOriginMain(context.Background(), repo, strings.Repeat("f", 40))
+	reached, _, err = liveAWBReadyCommitOnMain(context.Background(), repo, strings.Repeat("f", 40))
 	require.NoError(t, err)
 	assert.False(t, reached, "an object not fetched yet is a normal waiting state")
 
 	before := fetchCalls
+	require.NoError(t, config.Save(&config.Config{}))
+	_, _, err = liveAWBReadyCommitOnMain(context.Background(), repo, pushed)
+	assert.ErrorContains(t, err, gitProxyDisabledMessage)
+	assert.Equal(t, before, fetchCalls, "an origin without an allow-list must be refused before fetch")
+
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{GitProxy: &config.GitProxyConfig{
+		AllowedRemotes: []string{"github.com/acme/repo"},
+	}}}))
 	git(repo, "remote", "set-url", "origin", "https://attacker.invalid/acme/repo.git")
-	_, err = liveAWBReadyCommitOnOriginMain(context.Background(), repo, pushed)
+	_, _, err = liveAWBReadyCommitOnMain(context.Background(), repo, pushed)
 	assert.ErrorContains(t, err, "not on the operator's allow-list")
 	assert.Equal(t, before, fetchCalls, "an unauthorized origin must be refused before fetch")
+}
+
+func TestAWBReadyCommitOnLocalMainWithoutOrigin(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	repo := filepath.Join(t.TempDir(), "repo")
+	git := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput()
+		require.NoError(t, err, "%s", out)
+		return strings.TrimSpace(string(out))
+	}
+	require.NoError(t, exec.Command("git", "init", "-b", "main", repo).Run())
+	git("config", "user.email", "test@example.invalid")
+	git("config", "user.name", "tclaude test")
+	git("config", "commit.gpgsign", "false")
+	git("commit", "--allow-empty", "-m", "on main")
+	onMain := git("rev-parse", "HEAD")
+
+	reached, local, err := liveAWBReadyCommitOnMain(context.Background(), repo, onMain)
+	require.NoError(t, err)
+	assert.True(t, reached)
+	assert.True(t, local)
+
+	git("switch", "-c", "feature")
+	git("commit", "--allow-empty", "-m", "feature only")
+	featureOnly := git("rev-parse", "HEAD")
+	reached, local, err = liveAWBReadyCommitOnMain(context.Background(), repo, featureOnly)
+	require.NoError(t, err)
+	assert.False(t, reached)
+	assert.True(t, local)
+
+	git("switch", "main")
+	git("merge", "--ff-only", "feature")
+	reached, local, err = liveAWBReadyCommitOnMain(context.Background(), repo, featureOnly)
+	require.NoError(t, err)
+	assert.True(t, reached)
+	assert.True(t, local)
+}
+
+func TestAWBReadyCommitWithoutOriginRejectsNonRepository(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	_, _, err := liveAWBReadyCommitOnMain(context.Background(), t.TempDir(), strings.Repeat("a", 40))
+	assert.ErrorContains(t, err, "validate git repository")
 }
 
 func TestAWBReadyAgentSettledForMissingAgent(t *testing.T) {
