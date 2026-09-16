@@ -324,6 +324,14 @@ func TestAWBReadyCommitOnOriginMain(t *testing.T) {
 	assert.False(t, reached, "an object not fetched yet is a normal waiting state")
 
 	before := fetchCalls
+	require.NoError(t, config.Save(&config.Config{}))
+	_, _, err = liveAWBReadyCommitOnMain(context.Background(), repo, pushed)
+	assert.ErrorContains(t, err, gitProxyDisabledMessage)
+	assert.Equal(t, before, fetchCalls, "an origin without an allow-list must be refused before fetch")
+
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{GitProxy: &config.GitProxyConfig{
+		AllowedRemotes: []string{"github.com/acme/repo"},
+	}}}))
 	git(repo, "remote", "set-url", "origin", "https://attacker.invalid/acme/repo.git")
 	_, _, err = liveAWBReadyCommitOnMain(context.Background(), repo, pushed)
 	assert.ErrorContains(t, err, "not on the operator's allow-list")

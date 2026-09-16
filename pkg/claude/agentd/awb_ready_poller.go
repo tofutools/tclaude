@@ -462,12 +462,18 @@ func openAWBReadyCommitRemote(ctx context.Context, cwd string) (*gitProxySession
 	if fault != nil {
 		if fault.Code == "unknown_remote" {
 			res, err := s.git(ctx, "rev-parse", "--is-inside-work-tree")
-			if err != nil || res.ExitCode != 0 || strings.TrimSpace(res.Stdout) != "true" {
+			if err != nil || res.ExitCode != 0 {
 				return nil, resolvedRemote{}, fmt.Errorf("validate git repository: %s", proxyResultDetail(res, err))
+			}
+			if strings.TrimSpace(res.Stdout) != "true" {
+				return nil, resolvedRemote{}, fmt.Errorf("validate git repository: cwd is not a Git work tree")
 			}
 			return s, resolvedRemote{}, nil
 		}
 		return nil, resolvedRemote{}, fmt.Errorf("validate origin remote: %s", fault.Msg)
+	}
+	if len(s.policy.AllowedRemotes) == 0 {
+		return nil, resolvedRemote{}, fmt.Errorf("prepare hardened git session: %s", gitProxyDisabledMessage)
 	}
 	return s, remote, nil
 }
