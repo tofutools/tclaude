@@ -4,14 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -24,6 +22,8 @@ import (
 )
 
 const defaultAWBReadyPollInterval = time.Minute
+
+var liveAWBReadyCommitOnOriginMainFn = liveAWBReadyCommitOnOriginMain
 
 const awbReadyPRStateQuery = `
 query PRState($owner: String!, $name: String!, $number: Int!) {
@@ -176,7 +176,7 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 			}
 			readyToClose := false
 			if w.config.MonitorCommit {
-				readyToClose, err = liveAWBReadyCommitOnOriginMain(ctx, w.config.Cwd, issue.CommitHash)
+				readyToClose, err = liveAWBReadyCommitOnOriginMainFn(ctx, w.config.Cwd, issue.CommitHash)
 				if err != nil {
 					return err
 				}
@@ -378,20 +378,52 @@ func liveAWBReadyCommitOnOriginMain(ctx context.Context, cwd, commit string) (bo
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	fetch := exec.CommandContext(checkCtx, "git", "-C", cwd, "fetch", "--quiet", "origin", "main")
-	fetch.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never")
-	if out, err := fetch.CombinedOutput(); err != nil {
-		return false, fmt.Errorf("fetch origin main: %s: %w", strings.TrimSpace(string(out)), err)
+	s, fault := newGitProxySessionBase(checkCtx, false)
+	if fault != nil {
+		return false, fmt.Errorf("prepare hardened git session: %s", fault.Msg)
 	}
-	check := exec.CommandContext(checkCtx, "git", "-C", cwd, "merge-base", "--is-ancestor", commit, "FETCH_HEAD")
-	if out, err := check.CombinedOutput(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-			return false, nil
-		}
-		return false, fmt.Errorf("check commit on origin/main: %s: %w", strings.TrimSpace(string(out)), err)
+	s.repoRoot = cwd
+	remote, fault := resolveProxyRemote(checkCtx, s, "origin")
+	if fault != nil {
+		return false, fmt.Errorf("validate origin remote: %s", fault.Msg)
+	}
+	xfer, fault := newGitProxyXfer(checkCtx, s, xferBorrowObjects)
+	if fault != nil {
+		return false, fmt.Errorf("prepare isolated fetch: %s", fault.Msg)
+	}
+	defer xfer.cleanup()
+	res, err := xfer.git(checkCtx, s, "fetch", gitProxyUploadPack, "--no-recurse-submodules", "--quiet", "--", remote.FetchURL, "main")
+	if err != nil || res.ExitCode != 0 {
+		return false, fmt.Errorf("fetch origin main: %s", proxyResultDetail(res, err))
+	}
+	verified, err := xfer.git(checkCtx, s, "rev-parse", "--verify", "--quiet", commit+"^{commit}")
+	if err != nil {
+		return false, fmt.Errorf("verify recorded commit: %w", err)
+	}
+	if verified.ExitCode != 0 || strings.TrimSpace(verified.Stdout) == "" {
+		return false, nil
+	}
+	res, err = xfer.git(checkCtx, s, "merge-base", "--is-ancestor", strings.TrimSpace(verified.Stdout), "FETCH_HEAD")
+	if err != nil {
+		return false, fmt.Errorf("check commit on origin/main: %w", err)
+	}
+	if res.ExitCode == 1 {
+		return false, nil
+	}
+	if res.ExitCode != 0 {
+		return false, fmt.Errorf("check commit on origin/main: %s", proxyResultDetail(res, nil))
 	}
 	return true, nil
+}
+
+func proxyResultDetail(res ProxyResult, err error) string {
+	if err != nil {
+		return err.Error()
+	}
+	if detail := strings.TrimSpace(res.Stderr); detail != "" {
+		return detail
+	}
+	return fmt.Sprintf("git exited with status %d", res.ExitCode)
 }
 
 func liveAWBReadyPRMerged(ctx context.Context, rawURL string) (merged, reachable bool, err error) {
