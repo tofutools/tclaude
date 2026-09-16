@@ -201,7 +201,7 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 			if readyToClose {
 				reason := "GitHub pull request merged and spawned agent settled"
 				if w.config.MonitorCommit {
-					reason = "Recorded commit reached origin/main and spawned agent settled"
+					reason = "Recorded commit reached main and spawned agent settled"
 				}
 				if closeErr := w.close(ctx, dispatch.IssueID, reason); closeErr != nil {
 					return closeErr
@@ -389,6 +389,9 @@ func liveAWBReadyCommitOnOriginMain(ctx context.Context, cwd, commit string) (bo
 	if err != nil {
 		return false, err
 	}
+	if remote.FetchURL == "" {
+		return awbReadyCommitOnLocalMain(checkCtx, s, commit)
+	}
 	xfer, fault := newGitProxyXfer(checkCtx, s, xferBorrowObjects)
 	if fault != nil {
 		return false, fmt.Errorf("prepare isolated fetch: %s", fault.Msg)
@@ -418,6 +421,27 @@ func liveAWBReadyCommitOnOriginMain(ctx context.Context, cwd, commit string) (bo
 	return true, nil
 }
 
+func awbReadyCommitOnLocalMain(ctx context.Context, s *gitProxySession, commit string) (bool, error) {
+	verified, err := s.git(ctx, "rev-parse", "--verify", "--quiet", commit+"^{commit}")
+	if err != nil {
+		return false, fmt.Errorf("verify recorded commit: %w", err)
+	}
+	if verified.ExitCode != 0 || strings.TrimSpace(verified.Stdout) == "" {
+		return false, nil
+	}
+	res, err := s.git(ctx, "merge-base", "--is-ancestor", strings.TrimSpace(verified.Stdout), "refs/heads/main")
+	if err != nil {
+		return false, fmt.Errorf("check commit on local main: %w", err)
+	}
+	if res.ExitCode == 1 || res.ExitCode == 128 {
+		return false, nil
+	}
+	if res.ExitCode != 0 {
+		return false, fmt.Errorf("check commit on local main: %s", proxyResultDetail(res, nil))
+	}
+	return true, nil
+}
+
 func openAWBReadyCommitRemote(ctx context.Context, cwd string) (*gitProxySession, resolvedRemote, error) {
 	s, fault := newGitProxySessionBase(ctx, false)
 	if fault != nil {
@@ -426,6 +450,9 @@ func openAWBReadyCommitRemote(ctx context.Context, cwd string) (*gitProxySession
 	s.repoRoot = cwd
 	remote, fault := resolveProxyRemote(ctx, s, "origin")
 	if fault != nil {
+		if fault.Code == "unknown_remote" {
+			return s, resolvedRemote{}, nil
+		}
 		return nil, resolvedRemote{}, fmt.Errorf("validate origin remote: %s", fault.Msg)
 	}
 	return s, remote, nil
