@@ -2133,6 +2133,7 @@ type AWBReadyPollingConfig struct {
 	Harness        string   `json:"harness,omitempty"`
 	Worktree       bool     `json:"worktree,omitempty"`
 	MonitorPR      bool     `json:"monitor_pr,omitempty"`
+	MonitorCommit  bool     `json:"monitor_commit,omitempty"`
 }
 
 // LinearProxyConfig is the operator's policy for the daemon-mediated Linear
