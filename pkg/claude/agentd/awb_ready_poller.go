@@ -376,7 +376,7 @@ func liveAWBReadyCommitOnOriginMain(ctx context.Context, cwd, commit string) (bo
 	if _, fault := validateAWBCommitHash(commit); fault != nil {
 		return false, fmt.Errorf("invalid AWB commit hash: %s", fault.Msg)
 	}
-	checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	checkCtx, cancel := context.WithTimeout(ctx, gitProxyNetworkTimeout)
 	defer cancel()
 	s, fault := newGitProxySessionBase(checkCtx, false)
 	if fault != nil {
@@ -419,6 +419,9 @@ func liveAWBReadyCommitOnOriginMain(ctx context.Context, cwd, commit string) (bo
 func proxyResultDetail(res ProxyResult, err error) string {
 	if err != nil {
 		return err.Error()
+	}
+	if res.TimedOut {
+		return "git operation timed out"
 	}
 	if detail := strings.TrimSpace(res.Stderr); detail != "" {
 		return detail
