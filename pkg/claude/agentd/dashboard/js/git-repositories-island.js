@@ -61,7 +61,8 @@ export function GitRepositoriesDialog({ current, state, actions }) {
     finally { running.current = false; setBusy(false); setDone(true); }
   };
   return html`<${Overlay} id="git-repositories-modal" dialogClass="cron-create-modal git-repositories-modal"
-    labelledby="git-repositories-title" onClose=${state.close} blocked=${busy} onSubmitHotkey=${submit} initialFocusRef=${filterRef}>
+    labelledby="git-repositories-title" onClose=${state.close} blocked=${busy}
+    onSubmitHotkey=${done ? state.close : submit} onSubmitEnter=${done ? state.close : null} initialFocusRef=${filterRef}>
     <div class="git-repos-heading">
       <h3 id="git-repositories-title"><${Words} plain=${`${verb} repositories`} wizard=${sync ? '✧ Harmonize repositories' : '↓ Summon latest code'} /></h3>
       <p role="status"><${Words} plain=${loading ? 'Discovering repositories…' : `${repos.length} repositories discovered in group homes and two levels of subdirectories.`}

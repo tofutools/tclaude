@@ -129,19 +129,29 @@ for (const modifier of ['ctrlKey', 'metaKey']) {
       await press('Enter', { [modifier]: true });
       assert.equal(submissions, 0, 'empty selection cannot submit');
       await harness.act(() => harness.fireEvent(host.querySelector('.git-repos-toolbar button'), 'click'));
+      await press('Enter');
+      assert.equal(submissions, 0, 'plain Enter cannot submit');
+      assert.equal(closes, 0, 'plain Enter cannot close before completion');
       await press('Enter', { [modifier]: true, isComposing: true });
       assert.equal(submissions, 0, 'IME composition cannot submit');
       await press('Enter', { [modifier]: true });
       assert.equal(submissions, 1);
       await press('Enter', { [modifier]: true });
+      await press('Enter');
       await press('Escape');
       assert.equal(submissions, 1, 'busy shortcut cannot start a second batch');
       assert.equal(closes, 0, 'busy Escape cannot hide the batch');
       await harness.act(async () => { finish(); await pending; });
+      await press('Enter', { [modifier]: true, isComposing: true });
+      await press('Enter', { isComposing: true });
+      assert.equal(closes, 0, 'IME composition cannot close the results');
       await press('Enter', { [modifier]: true });
       assert.equal(submissions, 1, 'completed batch cannot be submitted again');
+      assert.equal(closes, 1, 'modified Enter closes the results');
+      await press('Enter');
+      assert.equal(closes, 2, 'plain Enter closes the results');
       await press('Escape');
-      assert.equal(closes, 1, 'Escape closes the results');
+      assert.equal(closes, 3, 'Escape closes the results');
     });
   }
 }
