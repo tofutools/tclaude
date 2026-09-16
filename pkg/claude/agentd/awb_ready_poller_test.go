@@ -132,7 +132,7 @@ func TestAWBReadyInitialMessageExplainsPRMonitoring(t *testing.T) {
 func TestAWBReadyInitialMessageExplainsCommitMonitoring(t *testing.T) {
 	message := awbReadyInitialMessage("tcl-a1", false, true)
 	assert.Contains(t, message, "awb update --commit-hash")
-	assert.Contains(t, message, "origin/main")
+	assert.Contains(t, message, "monitored main branch")
 	assert.Contains(t, message, "daemon will close the issue")
 }
 
