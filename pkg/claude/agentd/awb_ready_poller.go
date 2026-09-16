@@ -288,6 +288,13 @@ func (w awbReadyWorker) validateRuntime() error {
 			return fmt.Errorf("cwd %q is not in a git repository: %v", w.config.Cwd, err)
 		}
 	}
+	if w.config.MonitorCommit {
+		checkCtx, cancel := context.WithTimeout(context.Background(), gitProxyNetworkTimeout)
+		defer cancel()
+		if _, _, err := openAWBReadyCommitRemote(checkCtx, w.config.Cwd); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -378,14 +385,9 @@ func liveAWBReadyCommitOnOriginMain(ctx context.Context, cwd, commit string) (bo
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, gitProxyNetworkTimeout)
 	defer cancel()
-	s, fault := newGitProxySessionBase(checkCtx, false)
-	if fault != nil {
-		return false, fmt.Errorf("prepare hardened git session: %s", fault.Msg)
-	}
-	s.repoRoot = cwd
-	remote, fault := resolveProxyRemote(checkCtx, s, "origin")
-	if fault != nil {
-		return false, fmt.Errorf("validate origin remote: %s", fault.Msg)
+	s, remote, err := openAWBReadyCommitRemote(checkCtx, cwd)
+	if err != nil {
+		return false, err
 	}
 	xfer, fault := newGitProxyXfer(checkCtx, s, xferBorrowObjects)
 	if fault != nil {
@@ -414,6 +416,19 @@ func liveAWBReadyCommitOnOriginMain(ctx context.Context, cwd, commit string) (bo
 		return false, fmt.Errorf("check commit on origin/main: %s", proxyResultDetail(res, nil))
 	}
 	return true, nil
+}
+
+func openAWBReadyCommitRemote(ctx context.Context, cwd string) (*gitProxySession, resolvedRemote, error) {
+	s, fault := newGitProxySessionBase(ctx, false)
+	if fault != nil {
+		return nil, resolvedRemote{}, fmt.Errorf("prepare hardened git session: %s", fault.Msg)
+	}
+	s.repoRoot = cwd
+	remote, fault := resolveProxyRemote(ctx, s, "origin")
+	if fault != nil {
+		return nil, resolvedRemote{}, fmt.Errorf("validate origin remote: %s", fault.Msg)
+	}
+	return s, remote, nil
 }
 
 func proxyResultDetail(res ProxyResult, err error) string {

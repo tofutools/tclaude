@@ -289,12 +289,14 @@ func TestAWBReadyCommitOnOriginMain(t *testing.T) {
 
 	realExec := proxyExec
 	var fetchCommand ProxyCommand
+	var fetchCalls int
 	t.Cleanup(SetProxyExecForTest(func(ctx context.Context, cmd ProxyCommand) (ProxyResult, error) {
 		isFetch := false
 		for _, arg := range cmd.Args {
 			isFetch = isFetch || arg == "fetch"
 		}
 		if isFetch {
+			fetchCalls++
 			fetchCommand = cmd
 			require.NoError(t, os.WriteFile(filepath.Join(cmd.Dir, "FETCH_HEAD"), []byte(pushed+"\n"), 0o600))
 			return ProxyResult{}, nil
@@ -318,6 +320,12 @@ func TestAWBReadyCommitOnOriginMain(t *testing.T) {
 	reached, err = liveAWBReadyCommitOnOriginMain(context.Background(), repo, strings.Repeat("f", 40))
 	require.NoError(t, err)
 	assert.False(t, reached, "an object not fetched yet is a normal waiting state")
+
+	before := fetchCalls
+	git(repo, "remote", "set-url", "origin", "https://attacker.invalid/acme/repo.git")
+	_, err = liveAWBReadyCommitOnOriginMain(context.Background(), repo, pushed)
+	assert.ErrorContains(t, err, "not on the operator's allow-list")
+	assert.Equal(t, before, fetchCalls, "an unauthorized origin must be refused before fetch")
 }
 
 func TestAWBReadyAgentSettledForMissingAgent(t *testing.T) {
