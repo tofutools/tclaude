@@ -48,6 +48,9 @@ import (
 // than a client hang-up that leaves the agent unsure whether a claim landed.
 const awbProxyTimeout = 90 * time.Second
 
+// AWB bounds the canonical encoded metadata object at 64 KiB.
+const maxAWBMetadataCLIBytes = 64 * 1024
+
 func awbCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:   "awb",
@@ -618,6 +621,7 @@ type awbCreateParams struct {
 	DescriptionFile string `long:"description-file" short:"F" optional:"true" help:"Read the description from this file (\"-\" reads stdin)."`
 	CommitHash      string `long:"commit-hash" short:"H" optional:"true" help:"Implementing commit hash."`
 	PullRequestURL  string `long:"pull-request-url" short:"U" optional:"true" help:"Implementing pull request URL."`
+	Metadata        string `long:"metadata" optional:"true" help:"Caller-owned JSON object to carry on the issue."`
 	Type            string `long:"type" optional:"true" help:"epic, feature, bug, task or chore (default: task)."`
 	Priority        *int   `long:"priority" help:"0 (highest) to 4 (lowest). Default 2."`
 	Workspace       string `long:"workspace" optional:"true" help:"The workspace to create the issue in. Optional when exactly one visible workspace is within your proxy gate."`
@@ -703,6 +707,14 @@ func buildAWBCreateBody(
 	if p.PullRequestURL != "" {
 		body["pull_request_url"] = p.PullRequestURL
 	}
+	if awbFlagGiven(cmd, "metadata") {
+		metadata, err := parseAWBMetadata(p.Metadata)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: metadata %v.\n", err)
+			return nil, rcInvalidArg
+		}
+		body["metadata"] = metadata
+	}
 	if v := strings.TrimSpace(p.Type); v != "" {
 		body["type"] = v
 	}
@@ -748,6 +760,7 @@ type awbUpdateParams struct {
 	DescriptionFile string  `long:"description-file" short:"F" optional:"true" help:"Read the new description from this file (\"-\" reads stdin)."`
 	CommitHash      *string `long:"commit-hash" short:"H" help:"Implementing commit hash; empty clears it."`
 	PullRequestURL  *string `long:"pull-request-url" short:"U" help:"Implementing pull request URL; empty clears it."`
+	Metadata        *string `long:"metadata" help:"JSON object merged into the existing metadata, top level only."`
 	Type            *string `long:"type" help:"epic, feature, bug, task or chore."`
 	Priority        *int    `long:"priority" help:"0 (highest) to 4 (lowest)."`
 	JSON            bool    `long:"json" optional:"true" help:"Print the stable JSON representation. This is the DEFAULT; the flag exists so an awb command line copies over unchanged."`
@@ -758,7 +771,9 @@ func awbUpdateCmd() *cobra.Command {
 	return boa.CmdT[awbUpdateParams]{
 		Use:   "update",
 		Short: "Change an issue's fields",
-		Long: "Change the title, description, implementation links, type or priority. Whichever you omit is left alone.\n\n" +
+		Long: "Change the title, description, implementation links, metadata, type or priority. Whichever you omit is left alone.\n\n" +
+			"--metadata takes a JSON object and merges it into the issue's existing metadata at the top level. " +
+			"Keys it names are replaced whole; keys it omits are kept.\n\n" +
 			"update cannot change the status or the assignee: claim, release, close, make-ready and " +
 			"reopen are the transitions of either, which keeps in_progress and an assignee from drifting apart " +
 			"and keeps a claim from being taken silently. It cannot change the labels either — that is " +
@@ -820,6 +835,14 @@ func buildAWBUpdateBody(
 	}
 	if p.PullRequestURL != nil {
 		body["pull_request_url"] = *p.PullRequestURL
+	}
+	if p.Metadata != nil {
+		metadata, err := parseAWBMetadata(*p.Metadata)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: metadata %v.\n", err)
+			return nil, rcInvalidArg
+		}
+		body["metadata"] = metadata
 	}
 	// `--description ""` means "clear it", which is not the same request as
 	// omitting the flag, and only cobra can tell the two apart — so it is sent
@@ -1467,6 +1490,7 @@ type awbCommentAddParams struct {
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
 	Body     string `long:"body" optional:"true" help:"Markdown comment text. Prefer --body-file for anything multi-line."`
 	BodyFile string `long:"body-file" short:"F" optional:"true" help:"Read the comment from this file (\"-\" reads stdin)."`
+	Key      string `long:"key" required:"true" help:"Idempotency key; reuse it when retrying an indeterminate request. Shared with every agent on the operator's AWB account, so include an agent-specific component."`
 	JSON     bool   `long:"json" optional:"true" help:"Print the stable JSON representation. This is the DEFAULT; the flag exists so an awb command line copies over unchanged."`
 	Compact  bool   `long:"compact" optional:"true" help:"Print awb's one terse line per issue instead. Cheapest output there is, and the one to prefer when you only need to see what is there."`
 }
@@ -1475,7 +1499,8 @@ func awbCommentAddCmd() *cobra.Command {
 	return boa.CmdT[awbCommentAddParams]{
 		Use:   "add",
 		Short: "Add a Markdown comment to an issue",
-		Long: "Append a comment to an issue's timeline. This is how an agent reports what it found, " +
+		Long: "Add a comment to an issue's timeline. Reusing the same key with the same body returns " +
+			"the original entry, so an indeterminate request can be retried safely. This is how an agent reports what it found, " +
 			"what it tried, and why it did what it did.\n\n" +
 			"The comment is stored byte for byte as sent and is attributed to the OPERATOR's AWB " +
 			"account — the daemon holds it, and you have no AWB identity of your own. Nothing edits or " +
@@ -1506,9 +1531,31 @@ func runAWBCommentAdd(p *awbCommentAddParams, stdin io.Reader, stdout, stderr io
 		fmt.Fprintln(stderr, "Error: a comment body is required (--body or --body-file).")
 		return rcInvalidArg
 	}
+	if p.Key == "" {
+		fmt.Fprintln(stderr, "Error: an idempotency key is required (--key).")
+		return rcInvalidArg
+	}
 	return awbProxyCall("/v1/awb/comment/add", map[string]any{
-		"id": strings.TrimSpace(p.ID), "body": body, "compact": compact,
+		"id": strings.TrimSpace(p.ID), "body": body, "key": p.Key, "compact": compact,
 	}, p.AskHuman, stdout, stderr)
+}
+
+func parseAWBMetadata(raw string) (json.RawMessage, error) {
+	if !utf8.ValidString(raw) {
+		return nil, fmt.Errorf("is not valid UTF-8")
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &object); err != nil || object == nil {
+		return nil, fmt.Errorf("must be a valid JSON object")
+	}
+	encoded, err := json.Marshal(object)
+	if err != nil {
+		return nil, fmt.Errorf("must be a valid JSON object")
+	}
+	if len(encoded) > maxAWBMetadataCLIBytes {
+		return nil, fmt.Errorf("is %d bytes; AWB's maximum is %d", len(encoded), maxAWBMetadataCLIBytes)
+	}
+	return encoded, nil
 }
 
 type awbCommentListParams struct {

@@ -159,6 +159,12 @@ const (
 	// from the server.
 	maxAWBCommentBytes = 64 * 1024
 
+	// Metadata and idempotency keys use AWB's own stored-object and rune bounds.
+	// Keeping them here lets the proxy name the invalid field before spending
+	// the operator's account on a request AWB would refuse.
+	maxAWBMetadataBytes = 64 * 1024
+	maxAWBCommentKeyLen = 100
+
 	// maxAWBOffset bounds how far into a timeline one request may skip.
 	//
 	// AWB itself sets no ceiling. The proxy does, for the same reason it
@@ -1262,6 +1268,48 @@ func validateAWBComment(body string) *proxyFault {
 	return nil
 }
 
+func validateAWBCommentKey(key string) (string, *proxyFault) {
+	if key == "" {
+		return "", faultf(http.StatusBadRequest, "invalid_arg", "a comment idempotency key is required")
+	}
+	if !utf8.ValidString(key) {
+		return "", faultf(http.StatusBadRequest, "invalid_arg", "the comment key is not valid UTF-8")
+	}
+	if utf8.RuneCountInString(key) > maxAWBCommentKeyLen {
+		return "", faultf(http.StatusBadRequest, "invalid_arg",
+			"the comment key is longer than %d characters", maxAWBCommentKeyLen)
+	}
+	for _, r := range key {
+		if unicode.IsControl(r) {
+			return "", faultf(http.StatusBadRequest, "invalid_arg",
+				"the comment key contains a control character (U+%04X)", r)
+		}
+	}
+	return key, nil
+}
+
+func validateAWBMetadata(raw json.RawMessage) (json.RawMessage, *proxyFault) {
+	var object map[string]json.RawMessage
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if !utf8.Valid(raw) {
+		return nil, faultf(http.StatusBadRequest, "invalid_arg", "metadata is not valid UTF-8")
+	}
+	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
+		return nil, faultf(http.StatusBadRequest, "invalid_arg", "metadata must be a valid JSON object")
+	}
+	encoded, err := json.Marshal(object)
+	if err != nil {
+		return nil, faultf(http.StatusBadRequest, "invalid_arg", "metadata must be a valid JSON object")
+	}
+	if len(encoded) > maxAWBMetadataBytes {
+		return nil, faultf(http.StatusBadRequest, "invalid_arg",
+			"metadata is %d bytes; AWB's maximum is %d", len(encoded), maxAWBMetadataBytes)
+	}
+	return encoded, nil
+}
+
 // validateAWBOffset bounds how far into a timeline a request may skip.
 func validateAWBOffset(offset int) (int, *proxyFault) {
 	if offset < 0 || offset > maxAWBOffset {
@@ -1535,6 +1583,7 @@ type awbIssue struct {
 	Description    string          `json:"description"`
 	CommitHash     string          `json:"commit_hash"`
 	PullRequestURL string          `json:"pull_request_url"`
+	Metadata       json.RawMessage `json:"metadata,omitempty"`
 	Type           string          `json:"type"`
 	Status         string          `json:"status"`
 	Priority       int             `json:"priority"`
