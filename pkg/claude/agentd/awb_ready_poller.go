@@ -38,6 +38,19 @@ type awbReadyWorker struct {
 	config    config.AWBReadyPollingConfig
 	interval  time.Duration
 	session   *awbProxySession
+	// gate carries the rate-limit hold this worker has already reported. It
+	// is a pointer so the value-receiver tick can update it; a nil gate
+	// (tests constructing a worker directly) only loses the log/audit
+	// de-duplication, never the hold itself.
+	gate *awbReadyGateState
+}
+
+// awbReadyGateState remembers the usage window a worker is currently held on,
+// so a wait spanning hundreds of polls reports itself once instead of once per
+// tick. The zero value means "not holding".
+type awbReadyGateState struct {
+	window   string
+	resetsAt time.Time
 }
 
 type reservedAgentIDContextKey struct{}
@@ -58,7 +71,8 @@ func startAWBReadyPollers(stop <-chan struct{}, cfg *config.Config) error {
 		interval, _ := validateAWBReadyPolling(policy, process, polling)
 		base, _ := validateAWBBaseURL(policy.URL)
 		w := awbReadyWorker{process: process, workspace: polling.Workspace, config: polling, interval: interval,
-			session: &awbProxySession{policy: policy, base: base, workspaces: []string{polling.Workspace}}}
+			session: &awbProxySession{policy: policy, base: base, workspaces: []string{polling.Workspace}},
+			gate:    &awbReadyGateState{}}
 		go w.run(stop)
 	}
 	return nil
@@ -136,6 +150,15 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 		}
 	}
 	if dispatch == nil {
+		// Nothing is in flight, so this is the point where the process would
+		// start burning the subscription on a new issue — and therefore the
+		// point the configured usage ceiling governs. A dispatch already
+		// selected is deliberately NOT gated: abandoning a claimed issue
+		// half-way would leave it assigned to the operator's account with
+		// nobody working it.
+		if w.holdForRateLimit(time.Now()) != nil {
+			return nil
+		}
 		issue, err := w.ready(ctx)
 		if err != nil || issue == nil {
 			return err
@@ -620,11 +643,95 @@ func containsFold(values []string, want string) bool {
 }
 
 func (w awbReadyWorker) audit(verb, issue string, status int) {
+	w.auditDetail(verb, issue, status, "")
+}
+
+// auditDetail is audit with extra key=value context appended to the recorded
+// detail, for a row whose workspace alone would not explain it.
+func (w awbReadyWorker) auditDetail(verb, issue string, status int, extra string) {
+	detail := "workspace=" + w.workspace
+	if extra != "" {
+		detail += " " + extra
+	}
 	if _, err := db.InsertAuditLog(db.AuditLogEntry{ActorKind: db.AuditActorSystem,
 		ActorLabel: "agentd AWB ready poller", Verb: verb, TargetLabel: issue,
-		GroupName: w.config.Group, Detail: "workspace=" + w.workspace,
+		GroupName: w.config.Group, Detail: detail,
 		Method: http.MethodPost, Path: "internal://awb-ready-poller", Status: status,
 		Source: db.AuditSourceReconcile}); err != nil {
 		slog.Warn("awb ready polling: failed to record audit", "workspace", w.workspace, "verb", verb, "error", err)
 	}
+}
+
+// holdForRateLimit reports the configured usage ceiling currently blocking a
+// new pickup for this process, or nil when the process may take an issue.
+//
+// The wait is served by the ordinary poll interval rather than by sleeping the
+// worker: every tick re-reads the cached usage, so the process resumes within
+// one interval of the window resetting, and an operator who edits the ceiling
+// or whose limit is lifted early is picked up just as quickly. Each tick costs
+// one local query, so polling through a five-hour hold is cheaper than the AWB
+// call it replaces.
+//
+// The hold is logged and audited once per distinct window/reset pair, so a
+// long wait leaves one explanation in the log and one row in the audit trail
+// instead of one per tick — and the operator can see why the process went
+// quiet without correlating it against a usage graph.
+func (w awbReadyWorker) holdForRateLimit(now time.Time) *rateLimitHold {
+	policy := loadRateLimitPolicy()
+	if policy == nil {
+		return nil
+	}
+	harnessName := w.spawnHarness()
+	hold := harnessRateLimitHold(policy, harnessName, now)
+	if hold == nil {
+		if w.gate != nil && w.gate.window != "" {
+			slog.Info("awb ready polling: usage back under the configured limit, resuming pickups",
+				"process", w.process, "workspace", w.workspace, "harness", harnessName)
+			*w.gate = awbReadyGateState{}
+		}
+		return nil
+	}
+	if w.gate == nil || w.gate.window != hold.Window || !w.gate.resetsAt.Equal(hold.ResetsAt) {
+		slog.Info("awb ready polling: holding pickups until the rate limit resets",
+			append([]any{"process", w.process, "workspace", w.workspace}, hold.LogAttrs()...)...)
+		w.auditDetail("awb.ready.ratelimited", "", http.StatusTooManyRequests,
+			fmt.Sprintf("harness=%s window=%s pct=%.1f max_pct=%.1f resets_at=%s",
+				hold.Harness, hold.Window, hold.Pct, hold.Threshold, hold.ResetsAt.UTC().Format(time.RFC3339)))
+		if w.gate != nil {
+			*w.gate = awbReadyGateState{window: hold.Window, resetsAt: hold.ResetsAt}
+		}
+	}
+	return hold
+}
+
+// spawnHarness resolves the harness this process's next spawn would launch,
+// mirroring handleGroupSpawn's independent harness chain: explicit
+// configuration, then the named spawn profile, then the group default profile,
+// then the global default profile, then Claude Code. The usage gate has to ask
+// the harness that will actually spend the subscription, and a process that
+// omits `harness` can still be pinned to Codex by any of those profile tiers.
+func (w awbReadyWorker) spawnHarness() string {
+	if name := strings.TrimSpace(w.config.Harness); name != "" {
+		return name
+	}
+	var named *db.SpawnProfile
+	if name := strings.TrimSpace(w.config.Profile); name != "" {
+		prof, err := db.ResolveSpawnProfile(name)
+		if err != nil {
+			slog.Warn("awb ready polling: failed to load spawn profile for the usage gate",
+				"process", w.process, "profile", name, "error", err)
+		}
+		named = prof
+	}
+	g, err := db.GetAgentGroupByName(w.config.Group)
+	if err != nil {
+		slog.Warn("awb ready polling: failed to load group for the usage gate",
+			"process", w.process, "group", w.config.Group, "error", err)
+	}
+	for _, prof := range []*db.SpawnProfile{named, groupDefaultProfile(g), globalDefaultProfile()} {
+		if prof != nil {
+			return harnessOrDefault(prof.Harness)
+		}
+	}
+	return harness.DefaultName
 }

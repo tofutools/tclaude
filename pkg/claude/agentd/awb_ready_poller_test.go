@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -490,4 +491,148 @@ func TestValidateAWBReadyPolling(t *testing.T) {
 	policy.URL = "file:///tmp/awb"
 	_, err = validateAWBReadyPolling(policy, "builders", base)
 	assert.ErrorContains(t, err, "invalid url")
+}
+
+func TestAWBReadyPickupHeldWhileHarnessIsOverItsUsageCeiling(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	_, err := db.CreateAgentGroup("builders", "")
+	require.NoError(t, err)
+	writeRateLimitConfig(t, 80, 95)
+	now := time.Now()
+	reset := now.Add(2 * time.Hour)
+	seedCodexUsage(t, harness.CodexUsage{
+		Observed: now.Add(-time.Minute),
+		FiveHour: &harness.CodexRateLimitWindow{UsedPercent: 93, ResetsAt: reset},
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("AWB was called at %q while the harness was over its usage ceiling", r.URL.Path)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	base, fault := validateAWBBaseURL(server.URL)
+	require.Nil(t, fault)
+	policy := config.AWBProxyConfig{URL: server.URL, Username: "worker", AllowWrite: true, AllowedWorkspaces: []string{"tcl"}}
+	worker := awbReadyWorker{
+		process:   "builders",
+		workspace: "tcl",
+		config: config.AWBReadyPollingConfig{Workspace: "tcl", Group: "builders",
+			Cwd: t.TempDir(), Harness: harness.CodexName},
+		session: &awbProxySession{policy: policy, base: base, workspaces: []string{"tcl"}},
+		gate:    &awbReadyGateState{},
+	}
+	require.NoError(t, worker.tick(context.Background()))
+	require.NoError(t, worker.tick(context.Background()))
+
+	dispatch, err := db.GetAWBReadyDispatch("builders")
+	require.NoError(t, err)
+	assert.Nil(t, dispatch, "nothing may be picked up while the ceiling holds")
+
+	got := logs.String()
+	assert.Contains(t, got, `"level":"INFO"`, "an operator scanning the daemon log must see the hold without debug logging")
+	assert.Contains(t, got, `"msg":"awb ready polling: holding pickups until the rate limit resets"`)
+	assert.Contains(t, got, `"harness":"codex"`)
+	assert.Contains(t, got, `"window":"five_hour"`)
+	assert.Equal(t, 1, strings.Count(got, "holding pickups until the rate limit resets"),
+		"a hold spanning many polls explains itself once, not once per tick")
+
+	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "awb.ready.ratelimited"})
+	require.NoError(t, err)
+	require.Len(t, rows, 1, "the operator can see why the process went quiet")
+	assert.Equal(t, http.StatusTooManyRequests, rows[0].Status)
+	assert.Contains(t, rows[0].Detail, "harness=codex")
+	assert.Contains(t, rows[0].Detail, "window=five_hour")
+	assert.Contains(t, rows[0].Detail, "max_pct=80.0")
+}
+
+func TestAWBReadyPickupResumesAfterTheRateLimitResets(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	_, err := db.CreateAgentGroup("builders", "")
+	require.NoError(t, err)
+	writeRateLimitConfig(t, 80, 95)
+	now := time.Now()
+	// A five-hour window whose reset has already elapsed: the percentage
+	// describes a window that has since rolled over, so it cannot hold.
+	seedCodexUsage(t, harness.CodexUsage{
+		Observed: now.Add(-6 * time.Hour),
+		FiveHour: &harness.CodexRateLimitWindow{UsedPercent: 93, ResetsAt: now.Add(-time.Minute)},
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		issue := awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "open"}
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/ready" {
+			if err := json.NewEncoder(w).Encode([]awbIssue{issue}); err != nil {
+				t.Errorf("encode ready response: %v", err)
+			}
+			return
+		}
+		issue.Status = "closed"
+		if err := json.NewEncoder(w).Encode(issue); err != nil {
+			t.Errorf("encode issue response: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	base, fault := validateAWBBaseURL(server.URL)
+	require.Nil(t, fault)
+	policy := config.AWBProxyConfig{URL: server.URL, Username: "worker", AllowWrite: true, AllowedWorkspaces: []string{"tcl"}}
+	worker := awbReadyWorker{
+		process:   "builders",
+		workspace: "tcl",
+		config: config.AWBReadyPollingConfig{Workspace: "tcl", Group: "builders",
+			Cwd: t.TempDir(), Harness: harness.CodexName},
+		session: &awbProxySession{policy: policy, base: base, workspaces: []string{"tcl"}},
+		gate:    &awbReadyGateState{},
+	}
+	require.NoError(t, worker.tick(context.Background()))
+
+	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "awb.ready"})
+	require.NoError(t, err)
+	assert.Len(t, rows, 1, "the reset window leaves the process free to ask AWB for work")
+}
+
+func TestAWBReadySpawnHarnessResolvesThroughProfileTiers(t *testing.T) {
+	setupTestDB(t)
+	_, err := db.CreateAgentGroup("builders", "")
+	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "codex-worker", Harness: harness.CodexName})
+	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "plain-worker"})
+	require.NoError(t, err)
+
+	worker := awbReadyWorker{process: "builders", workspace: "tcl",
+		config: config.AWBReadyPollingConfig{Workspace: "tcl", Group: "builders"}}
+	assert.Equal(t, harness.DefaultName, worker.spawnHarness(),
+		"a process that pins nothing spawns the default harness")
+
+	worker.config.Profile = "codex-worker"
+	assert.Equal(t, harness.CodexName, worker.spawnHarness(),
+		"a named profile can pin the harness the gate must ask about")
+
+	worker.config.Harness = harness.CopilotName
+	assert.Equal(t, harness.CopilotName, worker.spawnHarness(),
+		"explicit configuration outranks every profile tier")
+
+	worker.config.Harness = ""
+	worker.config.Profile = "plain-worker"
+	assert.Equal(t, harness.DefaultName, worker.spawnHarness(),
+		"the first profile tier that exists answers, even when it pins no harness")
+
+	worker.config.Profile = ""
+	_, err = db.SetAgentGroupDefaultProfile("builders", "codex-worker")
+	require.NoError(t, err)
+	group, err := db.GetAgentGroupByName("builders")
+	require.NoError(t, err)
+	require.Equal(t, "codex-worker", group.DefaultProfile)
+	assert.Equal(t, harness.CodexName, worker.spawnHarness(),
+		"a group default profile flips the harness just as handleGroupSpawn's chain does")
 }
