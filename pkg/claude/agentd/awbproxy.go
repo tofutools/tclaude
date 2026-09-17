@@ -157,7 +157,11 @@ const (
 	// — a comment is Markdown prose held to the same bounds — applied here so
 	// an over-long one is refused with the field named rather than as a 400
 	// from the server.
-	maxAWBCommentBytes  = 64 * 1024
+	maxAWBCommentBytes = 64 * 1024
+
+	// Metadata and idempotency keys use AWB's own stored-object and rune bounds.
+	// Keeping them here lets the proxy name the invalid field before spending
+	// the operator's account on a request AWB would refuse.
 	maxAWBMetadataBytes = 64 * 1024
 	maxAWBCommentKeyLen = 100
 
@@ -1289,6 +1293,9 @@ func validateAWBMetadata(raw json.RawMessage) (json.RawMessage, *proxyFault) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
+	if !utf8.Valid(raw) {
+		return nil, faultf(http.StatusBadRequest, "invalid_arg", "metadata is not valid UTF-8")
+	}
 	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
 		return nil, faultf(http.StatusBadRequest, "invalid_arg", "metadata must be a valid JSON object")
 	}
@@ -1576,7 +1583,7 @@ type awbIssue struct {
 	Description    string          `json:"description"`
 	CommitHash     string          `json:"commit_hash"`
 	PullRequestURL string          `json:"pull_request_url"`
-	Metadata       json.RawMessage `json:"metadata"`
+	Metadata       json.RawMessage `json:"metadata,omitempty"`
 	Type           string          `json:"type"`
 	Status         string          `json:"status"`
 	Priority       int             `json:"priority"`

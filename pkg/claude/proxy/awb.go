@@ -48,6 +48,9 @@ import (
 // than a client hang-up that leaves the agent unsure whether a claim landed.
 const awbProxyTimeout = 90 * time.Second
 
+// AWB bounds the canonical encoded metadata object at 64 KiB.
+const maxAWBMetadataCLIBytes = 64 * 1024
+
 func awbCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:   "awb",
@@ -1528,7 +1531,7 @@ func runAWBCommentAdd(p *awbCommentAddParams, stdin io.Reader, stdout, stderr io
 		fmt.Fprintln(stderr, "Error: a comment body is required (--body or --body-file).")
 		return rcInvalidArg
 	}
-	if strings.TrimSpace(p.Key) == "" {
+	if p.Key == "" {
 		fmt.Fprintln(stderr, "Error: an idempotency key is required (--key).")
 		return rcInvalidArg
 	}
@@ -1538,6 +1541,9 @@ func runAWBCommentAdd(p *awbCommentAddParams, stdin io.Reader, stdout, stderr io
 }
 
 func parseAWBMetadata(raw string) (json.RawMessage, error) {
+	if !utf8.ValidString(raw) {
+		return nil, fmt.Errorf("is not valid UTF-8")
+	}
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(raw), &object); err != nil || object == nil {
 		return nil, fmt.Errorf("must be a valid JSON object")
@@ -1546,8 +1552,8 @@ func parseAWBMetadata(raw string) (json.RawMessage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("must be a valid JSON object")
 	}
-	if len(encoded) > 64*1024 {
-		return nil, fmt.Errorf("is %d bytes; AWB's maximum is %d", len(encoded), 64*1024)
+	if len(encoded) > maxAWBMetadataCLIBytes {
+		return nil, fmt.Errorf("is %d bytes; AWB's maximum is %d", len(encoded), maxAWBMetadataCLIBytes)
 	}
 	return encoded, nil
 }

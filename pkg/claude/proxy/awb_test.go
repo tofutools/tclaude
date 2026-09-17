@@ -245,6 +245,7 @@ func parsedAWBCreate(t *testing.T, argv ...string) (*cobra.Command, *awbCreatePa
 	p.DescriptionFile = get("description-file")
 	p.CommitHash = get("commit-hash")
 	p.PullRequestURL = get("pull-request-url")
+	p.Metadata = get("metadata")
 	p.Workspace = get("workspace")
 	p.Type = get("type")
 	p.Claim, _ = flags.GetBool("claim")
@@ -308,6 +309,26 @@ func TestAWBCreateBody(t *testing.T) {
 		assert.Equal(t, "https://github.com/acme/repo/pull/42", body["pull_request_url"])
 	})
 
+	t.Run("metadata is sent only when named", func(t *testing.T) {
+		cmd, p := parsedAWBCreate(t, "--workspace", "awb", "--metadata", "{}", "Tagged")
+		body, rc := buildAWBCreateBody(p, cmd, strings.NewReader(""), os.Stderr)
+		require.Equal(t, rcOK, rc)
+		assert.JSONEq(t, `{}`, string(body["metadata"].(json.RawMessage)))
+
+		cmd, p = parsedAWBCreate(t, "--workspace", "awb", "Plain")
+		body, rc = buildAWBCreateBody(p, cmd, strings.NewReader(""), os.Stderr)
+		require.Equal(t, rcOK, rc)
+		assert.NotContains(t, body, "metadata")
+	})
+
+	t.Run("invalid metadata is refused before the daemon", func(t *testing.T) {
+		cmd, p := parsedAWBCreate(t, "--workspace", "awb", "--metadata", "null", "Bad")
+		var stderr bytes.Buffer
+		_, rc := buildAWBCreateBody(p, cmd, strings.NewReader(""), &stderr)
+		assert.Equal(t, rcInvalidArg, rc)
+		assert.Contains(t, stderr.String(), "metadata")
+	})
+
 	t.Run("backlog is sent only when requested", func(t *testing.T) {
 		cmd, p := parsedAWBCreate(t, "--workspace", "awb", "--backlog", "Parked")
 		body, rc := buildAWBCreateBody(p, cmd, strings.NewReader(""), os.Stderr)
@@ -364,6 +385,7 @@ func parsedAWBUpdate(t *testing.T, argv ...string) (*cobra.Command, *awbUpdatePa
 		{"type", &p.Type},
 		{"commit-hash", &p.CommitHash},
 		{"pull-request-url", &p.PullRequestURL},
+		{"metadata", &p.Metadata},
 	} {
 		if flags.Changed(bind.name) {
 			v, err := flags.GetString(bind.name)
@@ -427,6 +449,18 @@ func TestAWBUpdateBody(t *testing.T) {
 		require.Equal(t, rcOK, rc)
 		assert.Equal(t, "01234567", body["commit_hash"])
 		assert.Equal(t, "", body["pull_request_url"])
+	})
+
+	t.Run("metadata distinguishes omitted from an explicitly empty object", func(t *testing.T) {
+		cmd, p := parsedAWBUpdate(t, "--metadata", "{}", "awb-a3f9c1")
+		body, rc := buildAWBUpdateBody(p, cmd, strings.NewReader(""), os.Stderr)
+		require.Equal(t, rcOK, rc)
+		assert.JSONEq(t, `{}`, string(body["metadata"].(json.RawMessage)))
+
+		cmd, p = parsedAWBUpdate(t, "awb-a3f9c1")
+		body, rc = buildAWBUpdateBody(p, cmd, strings.NewReader(""), os.Stderr)
+		require.Equal(t, rcOK, rc)
+		assert.NotContains(t, body, "metadata")
 	})
 
 	t.Run("no field flags at all succeeds and changes nothing, as awb does", func(t *testing.T) {
@@ -645,4 +679,20 @@ func TestAWBCommentAddRefusesInvalidUTF8BeforeTheDaemon(t *testing.T) {
 	assert.NotContains(t, stderr.String(), "agentd is not running",
 		"the refusal must come before the daemon call, or it reports the wrong problem")
 	assert.Empty(t, stdout.String())
+}
+
+func TestParseAWBMetadataRejectsInvalidUTF8(t *testing.T) {
+	_, err := parseAWBMetadata("{\"value\":\"bad\xffbyte\"}")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not valid UTF-8")
+}
+
+func TestAWBCommentAddRequiresKeyBeforeTheDaemon(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	rc := runAWBCommentAdd(&awbCommentAddParams{
+		ID: "awb-a3f9c1", Body: "progress",
+	}, strings.NewReader(""), &stdout, &stderr)
+	assert.Equal(t, rcInvalidArg, rc)
+	assert.Contains(t, stderr.String(), "idempotency key")
+	assert.NotContains(t, stderr.String(), "agentd is not running")
 }

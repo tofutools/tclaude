@@ -599,6 +599,12 @@ func TestValidateAWBComment(t *testing.T) {
 	assert.Contains(t, fault.Msg, "maximum")
 }
 
+func TestValidateAWBMetadataRejectsInvalidUTF8(t *testing.T) {
+	_, fault := validateAWBMetadata(json.RawMessage("{\"value\":\"bad\xffbyte\"}"))
+	require.NotNil(t, fault)
+	assert.Contains(t, fault.Msg, "not valid UTF-8")
+}
+
 func TestValidateAWBOffset(t *testing.T) {
 	got, fault := validateAWBOffset(0)
 	require.Nil(t, fault)

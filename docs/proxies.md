@@ -182,7 +182,7 @@ tclaude proxy awb claim awb-a3f9c1
 tclaude proxy awb make-ready awb-a3f9c1
 tclaude proxy awb update awb-a3f9c1 --commit-hash 01234567
 tclaude proxy awb update awb-a3f9c1 --pull-request-url https://github.com/acme/repo/pull/42
-tclaude proxy awb comment add awb-a3f9c1 --key findings-v1 --body-file findings.md
+tclaude proxy awb comment add awb-a3f9c1 --key tcl-46f070-findings-v1 --body-file findings.md
 # other verbs: show, list, blocked, search, create, update, close, reopen,
 #              release, delete, label add|rm, dep add|rm|tree,
 #              comment list, activity, attach add|list|show|get|delete
@@ -214,6 +214,9 @@ terminal rather than the data: `--db`, `--attachments`, `--no-context`,
 Comments are an append-only timeline shared with AWB's change records.
 Each new comment requires a caller-chosen `--key`; retrying the same key and
 body returns the original entry instead of appending a duplicate.
+All proxy callers share the operator's AWB identity, and therefore share its
+per-issue key namespace. Include an agent- or task-specific component in the
+key. Reusing a key with a different body returns a conflict.
 `activity` reads the whole thing (`--kind comment|change` narrows it) and
 `comment list` is the same read with the kind fixed. A close reason lives there
 too: since AWB 0.6 `close --reason` records a typed comment rather than setting
@@ -221,7 +224,8 @@ a field on the issue, and the issue carries no `close_reason` at all.
 
 Issues can carry a caller-owned JSON object through `create --metadata` and
 `update --metadata`. Updates merge it at the top level, matching AWB's CLI and
-API; metadata appears in JSON issue detail rather than compact output.
+API; metadata appears in JSON issue detail and is omitted from summaries and
+compact output.
 
 `dep tree` is pruned to the caller's workspaces: AWB follows children across
 workspace boundaries by design, so a child outside the gate is dropped with its

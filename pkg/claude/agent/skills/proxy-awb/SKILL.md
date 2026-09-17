@@ -114,7 +114,8 @@ default JSON only when you need the description.
 tclaude proxy awb claim awb-a3f9c1
 tclaude proxy awb make-ready awb-a3f9c1             # activate parked backlog work
 tclaude proxy awb comment list awb-a3f9c1 --compact   # what has already been said
-tclaude proxy awb comment add awb-a3f9c1 --key findings-v1 --body-file findings.md
+tclaude proxy awb comment add awb-a3f9c1 --key agent7-findings-v1 \
+  --body-file findings.md
 tclaude proxy awb update awb-a3f9c1 --description-file findings.md
 tclaude proxy awb update awb-a3f9c1 --commit-hash 01234567
 tclaude proxy awb update awb-a3f9c1 --pull-request-url https://github.com/acme/repo/pull/42
@@ -125,11 +126,11 @@ tclaude proxy awb release awb-a3f9c1               # give it back
 
 `claim` joins the assignee list and fails only if the issue is blocked or closed;
 `--force` overrides those two checks. `update` changes the title, description,
-commit hash, pull request URL, metadata, type and priority and nothing else — the status
-and assignees move only through
-`claim`, `release`, `close`, `make-ready` and `reopen`, which is what keeps `in_progress` and
-an assignee from drifting apart. Labels are added and removed one at a time, so
-a whole-set replace cannot discard somebody else's edit.
+commit hash, pull request URL, metadata, type and priority and nothing else —
+the status and assignees move only through `claim`, `release`, `close`,
+`make-ready` and `reopen`, which is what keeps `in_progress` and an assignee
+from drifting apart. Labels are added and removed one at a time, so a whole-set
+replace cannot discard somebody else's edit.
 
 A claim is always assigned to the operator's AWB user. Agents that share that
 account must coordinate ownership elsewhere.
@@ -145,8 +146,10 @@ comment is to add another.
 
 ```bash
 tclaude proxy awb comment list awb-a3f9c1 --compact
-tclaude proxy awb comment add awb-a3f9c1 --key reproduction-v1 --body "Reproduced with an empty token stream."
-tclaude proxy awb comment add awb-a3f9c1 --key investigation-v1 --body-file investigation.md
+tclaude proxy awb comment add awb-a3f9c1 --key agent7-reproduction-v1 \
+  --body "Reproduced with an empty token stream."
+tclaude proxy awb comment add awb-a3f9c1 --key agent7-investigation-v1 \
+  --body-file investigation.md
 ```
 
 Comment on the issue rather than rewriting its description when you are
@@ -157,6 +160,8 @@ quoting entirely.
 Every comment needs a caller-chosen `--key`. Reuse that key when retrying an
 indeterminate request: the same key and body return the original entry rather
 than appending a duplicate. Reusing it with a different body is a conflict.
+The proxy uses the operator's AWB identity, so every agent shares its per-issue
+key namespace. Include an agent- or task-specific component in every key.
 
 **A close reason is a comment.** `close --reason` records a typed comment whose
 action is `closed`, in the same transaction as the transition, and it stays in
