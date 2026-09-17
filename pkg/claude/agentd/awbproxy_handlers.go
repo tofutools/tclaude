@@ -111,21 +111,22 @@ type awbFilterOptions struct {
 
 type awbCreateRequest struct {
 	awbCompactRequest
-	Workspace      string   `json:"workspace"`
-	Title          string   `json:"title"`
-	Description    *string  `json:"description,omitempty"`
-	CommitHash     string   `json:"commit_hash,omitempty"`
-	PullRequestURL string   `json:"pull_request_url,omitempty"`
-	Type           string   `json:"type,omitempty"`
-	Priority       *int     `json:"priority,omitempty"`
-	Claim          bool     `json:"claim,omitempty"`
-	Backlog        bool     `json:"backlog,omitempty"`
-	Labels         []string `json:"labels,omitempty"`
-	Assignees      []string `json:"assignees,omitempty"`
-	HasParent      string   `json:"has_parent,omitempty"`
-	BlockedBy      []string `json:"blocked_by,omitempty"`
-	DiscoveredFrom []string `json:"discovered_from,omitempty"`
-	Related        []string `json:"related,omitempty"`
+	Workspace      string          `json:"workspace"`
+	Title          string          `json:"title"`
+	Description    *string         `json:"description,omitempty"`
+	CommitHash     string          `json:"commit_hash,omitempty"`
+	PullRequestURL string          `json:"pull_request_url,omitempty"`
+	Metadata       json.RawMessage `json:"metadata,omitempty"`
+	Type           string          `json:"type,omitempty"`
+	Priority       *int            `json:"priority,omitempty"`
+	Claim          bool            `json:"claim,omitempty"`
+	Backlog        bool            `json:"backlog,omitempty"`
+	Labels         []string        `json:"labels,omitempty"`
+	Assignees      []string        `json:"assignees,omitempty"`
+	HasParent      string          `json:"has_parent,omitempty"`
+	BlockedBy      []string        `json:"blocked_by,omitempty"`
+	DiscoveredFrom []string        `json:"discovered_from,omitempty"`
+	Related        []string        `json:"related,omitempty"`
 }
 
 type awbUpdateRequest struct {
@@ -134,12 +135,13 @@ type awbUpdateRequest struct {
 	// awb update's whole contract is that it changes only what was named. An
 	// empty description is a real state ("this issue has no body"), so absent
 	// and "clear it" have to be told apart.
-	Title          *string `json:"title,omitempty"`
-	Description    *string `json:"description,omitempty"`
-	CommitHash     *string `json:"commit_hash,omitempty"`
-	PullRequestURL *string `json:"pull_request_url,omitempty"`
-	Type           *string `json:"type,omitempty"`
-	Priority       *int    `json:"priority,omitempty"`
+	Title          *string         `json:"title,omitempty"`
+	Description    *string         `json:"description,omitempty"`
+	CommitHash     *string         `json:"commit_hash,omitempty"`
+	PullRequestURL *string         `json:"pull_request_url,omitempty"`
+	Metadata       json.RawMessage `json:"metadata,omitempty"`
+	Type           *string         `json:"type,omitempty"`
+	Priority       *int            `json:"priority,omitempty"`
 }
 
 type awbClaimRequest struct {
@@ -181,6 +183,7 @@ type awbRelationRequest struct {
 type awbCommentAddRequest struct {
 	awbIssueRefRequest
 	Body string `json:"body"`
+	Key  string `json:"key"`
 }
 
 type awbCommentListRequest struct {
@@ -1275,6 +1278,7 @@ type awbIssueCreateBody struct {
 	Description    *string              `json:"description,omitempty"`
 	CommitHash     string               `json:"commit_hash,omitempty"`
 	PullRequestURL string               `json:"pull_request_url,omitempty"`
+	Metadata       json.RawMessage      `json:"metadata,omitempty"`
 	Type           string               `json:"type,omitempty"`
 	Priority       *int                 `json:"priority,omitempty"`
 	Assignees      []string             `json:"assignees,omitempty"`
@@ -1387,6 +1391,9 @@ func (s *awbProxySession) buildAWBCreateBody(
 	if out.PullRequestURL, fault = validateAWBPullRequestURL(body.PullRequestURL); fault != nil {
 		return nil, fault
 	}
+	if out.Metadata, fault = validateAWBMetadata(body.Metadata); fault != nil {
+		return nil, fault
+	}
 	if out.Type, fault = validateAWBType(body.Type); fault != nil {
 		return nil, fault
 	}
@@ -1458,12 +1465,13 @@ func nonEmptyRefs(ref string) []string {
 // that in_progress and an assignee cannot drift apart and a claim cannot be
 // taken silently.
 type awbIssuePatchBody struct {
-	Title          *string `json:"title,omitempty"`
-	Description    *string `json:"description,omitempty"`
-	CommitHash     *string `json:"commit_hash,omitempty"`
-	PullRequestURL *string `json:"pull_request_url,omitempty"`
-	Type           *string `json:"type,omitempty"`
-	Priority       *int    `json:"priority,omitempty"`
+	Title          *string         `json:"title,omitempty"`
+	Description    *string         `json:"description,omitempty"`
+	CommitHash     *string         `json:"commit_hash,omitempty"`
+	PullRequestURL *string         `json:"pull_request_url,omitempty"`
+	Metadata       json.RawMessage `json:"metadata,omitempty"`
+	Type           *string         `json:"type,omitempty"`
+	Priority       *int            `json:"priority,omitempty"`
 }
 
 // handleAWBProxyIssueUpdate serves POST /v1/awb/issue/update.
@@ -1509,6 +1517,14 @@ func handleAWBProxyIssueUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		patch.PullRequestURL = &value
+	}
+	if len(body.Metadata) > 0 {
+		metadata, fault := validateAWBMetadata(body.Metadata)
+		if fault != nil {
+			writeProxyFault(w, fault)
+			return
+		}
+		patch.Metadata = metadata
 	}
 	if body.Type != nil {
 		t, fault := validateAWBType(*body.Type)
@@ -1757,10 +1773,6 @@ func handleAWBProxyIssueDelete(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("issue=%s relations=%d", issue.ID, len(issue.Relations)))
 }
 
-type awbLabelBody struct {
-	Label string `json:"label"`
-}
-
 // handleAWBProxyLabelAdd serves POST /v1/awb/label/add.
 func handleAWBProxyLabelAdd(w http.ResponseWriter, r *http.Request) {
 	s, ref, label, body, ok := openAWBLabelVerb(w, r)
@@ -1768,8 +1780,9 @@ func handleAWBProxyLabelAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mutateIssue(w, r, "label.add", ref, body.Compact, awbCall{
-		Method: http.MethodPost, Path: "/api/issues/" + awbSegment(ref) + "/labels",
-	}, awbLabelBody{Label: label}, "label="+label)
+		Method: http.MethodPut, Path: "/api/issues/" + awbSegment(ref) + "/labels",
+		Query: url.Values{"label": []string{label}},
+	}, nil, "label="+label)
 }
 
 // handleAWBProxyLabelRemove serves POST /v1/awb/label/rm.
@@ -1894,6 +1907,11 @@ func handleAWBProxyCommentAdd(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
+	key, fault := validateAWBCommentKey(body.Key)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
 	encoded, err := json.Marshal(awbCommentBody{Body: body.Body})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "could not encode the AWB request")
@@ -1905,7 +1923,7 @@ func handleAWBProxyCommentAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	var entry awbActivity
 	if _, fault := s.exec(r.Context(), awbCall{
-		Method: http.MethodPost, Path: "/api/issues/" + awbSegment(ref) + "/comments",
+		Method: http.MethodPut, Path: "/api/issues/" + awbSegment(ref) + "/comments/" + awbSegment(key),
 		Body: encoded, ContentType: "application/json",
 	}, &entry); fault != nil {
 		writeProxyFault(w, fault)

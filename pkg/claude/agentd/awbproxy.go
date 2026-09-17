@@ -157,7 +157,9 @@ const (
 	// — a comment is Markdown prose held to the same bounds — applied here so
 	// an over-long one is refused with the field named rather than as a 400
 	// from the server.
-	maxAWBCommentBytes = 64 * 1024
+	maxAWBCommentBytes  = 64 * 1024
+	maxAWBMetadataBytes = 64 * 1024
+	maxAWBCommentKeyLen = 100
 
 	// maxAWBOffset bounds how far into a timeline one request may skip.
 	//
@@ -1262,6 +1264,45 @@ func validateAWBComment(body string) *proxyFault {
 	return nil
 }
 
+func validateAWBCommentKey(key string) (string, *proxyFault) {
+	if key == "" {
+		return "", faultf(http.StatusBadRequest, "invalid_arg", "a comment idempotency key is required")
+	}
+	if !utf8.ValidString(key) {
+		return "", faultf(http.StatusBadRequest, "invalid_arg", "the comment key is not valid UTF-8")
+	}
+	if utf8.RuneCountInString(key) > maxAWBCommentKeyLen {
+		return "", faultf(http.StatusBadRequest, "invalid_arg",
+			"the comment key is longer than %d characters", maxAWBCommentKeyLen)
+	}
+	for _, r := range key {
+		if unicode.IsControl(r) {
+			return "", faultf(http.StatusBadRequest, "invalid_arg",
+				"the comment key contains a control character (U+%04X)", r)
+		}
+	}
+	return key, nil
+}
+
+func validateAWBMetadata(raw json.RawMessage) (json.RawMessage, *proxyFault) {
+	var object map[string]json.RawMessage
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
+		return nil, faultf(http.StatusBadRequest, "invalid_arg", "metadata must be a valid JSON object")
+	}
+	encoded, err := json.Marshal(object)
+	if err != nil {
+		return nil, faultf(http.StatusBadRequest, "invalid_arg", "metadata must be a valid JSON object")
+	}
+	if len(encoded) > maxAWBMetadataBytes {
+		return nil, faultf(http.StatusBadRequest, "invalid_arg",
+			"metadata is %d bytes; AWB's maximum is %d", len(encoded), maxAWBMetadataBytes)
+	}
+	return encoded, nil
+}
+
 // validateAWBOffset bounds how far into a timeline a request may skip.
 func validateAWBOffset(offset int) (int, *proxyFault) {
 	if offset < 0 || offset > maxAWBOffset {
@@ -1535,6 +1576,7 @@ type awbIssue struct {
 	Description    string          `json:"description"`
 	CommitHash     string          `json:"commit_hash"`
 	PullRequestURL string          `json:"pull_request_url"`
+	Metadata       json.RawMessage `json:"metadata"`
 	Type           string          `json:"type"`
 	Status         string          `json:"status"`
 	Priority       int             `json:"priority"`

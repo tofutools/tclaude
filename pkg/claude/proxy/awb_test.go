@@ -637,7 +637,7 @@ func TestAWBCommentAddRefusesInvalidUTF8BeforeTheDaemon(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	rc := runAWBCommentAdd(&awbCommentAddParams{
-		ID: "awb-a3f9c1", BodyFile: file,
+		ID: "awb-a3f9c1", BodyFile: file, Key: "progress-1",
 	}, strings.NewReader(""), &stdout, &stderr)
 
 	assert.Equal(t, rcInvalidArg, rc)

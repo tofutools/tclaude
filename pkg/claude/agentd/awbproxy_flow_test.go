@@ -644,6 +644,41 @@ func TestAWBProxy_UpdateImplementationFields(t *testing.T) {
 	assert.JSONEq(t, `{"commit_hash":"89abcdef","pull_request_url":""}`, string(call.Body))
 }
 
+func TestAWBProxy_CreateAndUpdateMetadata(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+	w.grant(agentd.PermAWBWrite)
+	rec.response = func(agentd.AWBProxyRequest) (int, string) {
+		return http.StatusOK, awbIssueJSON("awb-a3f9c1", "awb")
+	}
+
+	w.outcome(w.post("/v1/awb/issue/create", map[string]any{
+		"workspace": "awb", "title": "Imported", "metadata": map[string]any{
+			"source": "github", "nested": map[string]any{"a": 1},
+		},
+	}))
+	call := rec.only(t)
+	assert.JSONEq(t, `{"workspace":"awb","title":"Imported","metadata":{"source":"github","nested":{"a":1}}}`, string(call.Body))
+
+	rec.reset()
+	w.outcome(w.post("/v1/awb/issue/update", map[string]any{
+		"id": "awb-a3f9c1", "metadata": map[string]any{"external_id": 4711},
+	}))
+	call = rec.only(t)
+	assert.JSONEq(t, `{"metadata":{"external_id":4711}}`, string(call.Body))
+}
+
+func TestAWBProxy_RejectsNonObjectMetadata(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+	w.grant(agentd.PermAWBWrite)
+	for _, metadata := range []any{nil, []any{"not", "an", "object"}, "text", 42} {
+		res := w.post("/v1/awb/issue/update", map[string]any{
+			"id": "awb-a3f9c1", "metadata": metadata,
+		})
+		assert.Equal(t, http.StatusBadRequest, res.Code, "metadata=%#v body=%s", metadata, res.Body.String())
+	}
+	assert.False(t, rec.sawAnyCall())
+}
+
 func TestAWBProxy_RejectsInvalidImplementationFields(t *testing.T) {
 	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
 	w.grant(agentd.PermAWBWrite)
@@ -784,6 +819,24 @@ func TestAWBProxy_LabelRemovalTravelsAsAQueryValue(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "/api/issues/awb-a3f9c1/labels", u.Path)
 	assert.Equal(t, "team/backend", u.Query().Get("label"))
+}
+
+func TestAWBProxy_LabelAdditionUsesPutAndQueryValue(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+	w.grant(agentd.PermAWBWrite)
+	rec.response = func(agentd.AWBProxyRequest) (int, string) {
+		return http.StatusOK, awbIssueJSON("awb-a3f9c1", "awb")
+	}
+
+	w.outcome(w.post("/v1/awb/label/add", map[string]any{
+		"id": "awb-a3f9c1", "label": "team/backend",
+	}))
+	call := rec.only(t)
+	assert.Equal(t, http.MethodPut, call.Method)
+	u, err := url.Parse(call.URL)
+	require.NoError(t, err)
+	assert.Equal(t, "team/backend", u.Query().Get("label"))
+	assert.Empty(t, call.Body)
 }
 
 // --- attachments ---
@@ -1336,14 +1389,15 @@ func TestAWBProxy_CommentAddSendsAWBsOwnBody(t *testing.T) {
 	}
 
 	res := w.post("/v1/awb/comment/add", map[string]any{
-		"id": "awb-a3f9c1", "body": "Reproduced.\nOn an empty token stream.", "compact": true,
+		"id": "awb-a3f9c1", "body": "Reproduced.\nOn an empty token stream.",
+		"key": "reproduction-1", "compact": true,
 	})
 	out := w.outcome(res)
 	assert.Empty(t, out.Text, "awb prints nothing on a successful comment")
 
 	call := rec.only(t)
-	assert.Equal(t, http.MethodPost, call.Method)
-	assert.Equal(t, "https://awb.example/api/issues/awb-a3f9c1/comments", call.URL)
+	assert.Equal(t, http.MethodPut, call.Method)
+	assert.Equal(t, "https://awb.example/api/issues/awb-a3f9c1/comments/reproduction-1", call.URL)
 	assert.Equal(t, "application/json", call.ContentType)
 	assert.JSONEq(t, `{"body":"Reproduced.\nOn an empty token stream."}`, string(call.Body),
 		"the body is stored byte for byte, so it must travel unaltered")
@@ -1356,10 +1410,24 @@ func TestAWBProxy_CommentAddRefusesAnEmptyBody(t *testing.T) {
 	w.grant(agentd.PermAWBWrite)
 
 	for _, blank := range []string{"", "   ", "\n\t"} {
-		res := w.post("/v1/awb/comment/add", map[string]any{"id": "awb-a3f9c1", "body": blank})
+		res := w.post("/v1/awb/comment/add", map[string]any{
+			"id": "awb-a3f9c1", "body": blank, "key": "blank-test",
+		})
 		assert.Equal(t, http.StatusBadRequest, res.Code, "%q: body=%s", blank, res.Body.String())
 	}
 	assert.False(t, rec.sawAnyCall(), "the cheap gate runs before the network")
+}
+
+func TestAWBProxy_CommentAddRequiresAValidKey(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+	w.grant(agentd.PermAWBWrite)
+	for _, key := range []string{"", "tab\tkey", strings.Repeat("x", 101)} {
+		res := w.post("/v1/awb/comment/add", map[string]any{
+			"id": "awb-a3f9c1", "body": "hello", "key": key,
+		})
+		assert.Equal(t, http.StatusBadRequest, res.Code, "key=%q body=%s", key, res.Body.String())
+	}
+	assert.False(t, rec.sawAnyCall())
 }
 
 // TestAWBProxy_CommentAddIsGatedByWorkspace — the same gate as every other verb,
@@ -1380,7 +1448,9 @@ func TestAWBProxy_CommentAddIsGatedByWorkspace(t *testing.T) {
 		rec.response = func(agentd.AWBProxyRequest) (int, string) {
 			return http.StatusCreated, awbActivityJSON(42, "secret-9", "", "landed elsewhere")
 		}
-		res := w.post("/v1/awb/comment/add", map[string]any{"id": "awb-a3f", "body": "hello"})
+		res := w.post("/v1/awb/comment/add", map[string]any{
+			"id": "awb-a3f", "body": "hello", "key": "greeting-1",
+		})
 		assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
 		assert.NotContains(t, res.Body.String(), "landed elsewhere")
 	})
