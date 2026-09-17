@@ -45,10 +45,13 @@ type awbReadyWorker struct {
 	gate *awbReadyGateState
 }
 
-// awbReadyGateState remembers the usage window a worker is currently held on,
-// so a wait spanning hundreds of polls reports itself once instead of once per
-// tick. The zero value means "not holding".
+// awbReadyGateState remembers the harness and usage window a worker is
+// currently held on, so a wait spanning hundreds of polls reports itself once
+// instead of once per tick. The harness is part of the key because a fallback
+// chain can move its hold from one vendor to another — a change worth one
+// fresh log line. The zero value means "not holding".
 type awbReadyGateState struct {
+	harness  string
 	window   string
 	resetsAt time.Time
 }
@@ -149,16 +152,21 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 			return err
 		}
 	}
+	// The harness this tick would launch, decided once and reused by the
+	// spawn below so the gate's verdict and the launch cannot disagree.
+	var spawnHarness string
 	if dispatch == nil {
 		// Nothing is in flight, so this is the point where the process would
 		// start burning the subscription on a new issue — and therefore the
-		// point the configured usage ceiling governs. A dispatch already
+		// point the configured usage ceilings govern. A dispatch already
 		// selected is deliberately NOT gated: abandoning a claimed issue
 		// half-way would leave it assigned to the operator's account with
 		// nobody working it.
-		if w.holdForRateLimit(time.Now()) != nil {
+		chosen, hold := w.chooseSpawnHarness(time.Now())
+		if w.reportRateLimitHold(hold) != nil {
 			return nil
 		}
+		spawnHarness = chosen
 		issue, err := w.ready(ctx)
 		if err != nil || issue == nil {
 			return err
@@ -175,7 +183,8 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 			return nil
 		}
 		slog.Info("awb ready polling: picked up issue", "process", w.process,
-			"workspace", w.workspace, "issue", dispatch.IssueID, "agent_id", dispatch.AgentID)
+			"workspace", w.workspace, "issue", dispatch.IssueID, "agent_id", dispatch.AgentID,
+			"harness", spawnHarness)
 	}
 	issue, err := w.show(ctx, dispatch.IssueID)
 	if err != nil {
@@ -267,7 +276,14 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 	if _, err = db.UpdateAWBReadyDispatch(w.process, dispatch.IssueID, "claimed", ""); err != nil {
 		return err
 	}
-	agentID, err := w.spawn(dispatch.IssueID, dispatch.AgentID)
+	if spawnHarness == "" {
+		// A dispatch selected by an earlier tick (or recovered after a crash)
+		// reaches the spawn without passing the gate. Choose from the same
+		// chain on the freshest reading available, but never hold: this issue
+		// is already claimed on the operator's account.
+		spawnHarness, _ = w.chooseSpawnHarness(time.Now())
+	}
+	agentID, err := w.spawn(dispatch.IssueID, dispatch.AgentID, spawnHarness)
 	if err != nil {
 		return err
 	}
@@ -305,9 +321,9 @@ func (w awbReadyWorker) validateRuntime() error {
 			return fmt.Errorf("sandbox profile %q does not exist", w.config.SandboxProfile)
 		}
 	}
-	if w.config.Harness != "" {
-		if _, ok := harness.Get(w.config.Harness); !ok {
-			return fmt.Errorf("harness %q does not exist", w.config.Harness)
+	for _, name := range w.config.Harness {
+		if _, ok := harness.Get(name); !ok {
+			return fmt.Errorf("harness %q does not exist", name)
 		}
 	}
 	if w.config.Worktree || w.config.MonitorCommit {
@@ -564,7 +580,22 @@ func liveAWBReadyAgentSettled(agentID string) (bool, error) {
 	return row == nil || row.Status == session.StatusIdle || row.Status == session.StatusExited, nil
 }
 
-func (w awbReadyWorker) spawn(issueID, reservedAgentID string) (string, error) {
+// spawnRequest builds the launch this process would submit for one issue.
+// harnessName is the harness the usage gate settled on, which is why it is a
+// parameter rather than read back off the configuration: a fallback chain's
+// second entry must reach the launch, not the operator's first choice.
+func (w awbReadyWorker) spawnRequest(issueID, cwd, wtPath, wtBranch, harnessName string) agent.SpawnRequest {
+	scope := fmt.Sprintf(`{"awb_workspace":[%q]}`, w.workspace)
+	return agent.SpawnRequest{Name: issueID, Cwd: cwd, WorktreePath: wtPath, WorktreeBranch: wtBranch,
+		Profile: w.config.Profile, SandboxProfile: w.config.SandboxProfile, Harness: harnessName,
+		TaskURL: strings.TrimRight(w.session.base, "/") + "/#/issues/" + issueID, TaskLabel: issueID,
+		InitialMessage: awbReadyInitialMessage(issueID, w.config.MonitorPR, w.config.MonitorCommit),
+		PermissionOverrides: map[string]db.PermissionOverride{
+			PermAWBRead:  db.ScopedOverride(db.PermEffectGrant, scope),
+			PermAWBWrite: db.ScopedOverride(db.PermEffectGrant, scope)}}
+}
+
+func (w awbReadyWorker) spawn(issueID, reservedAgentID, harnessName string) (string, error) {
 	g, err := db.GetAgentGroupByName(w.config.Group)
 	if err != nil {
 		return "", fmt.Errorf("load group %q: %w", w.config.Group, err)
@@ -581,8 +612,7 @@ func (w awbReadyWorker) spawn(issueID, reservedAgentID string) (string, error) {
 		}
 		cwd, wtPath, wtBranch, discard = out.Path, out.Path, issueID, out.DiscardToken
 	}
-	scope := fmt.Sprintf(`{"awb_workspace":[%q]}`, w.workspace)
-	body := agent.SpawnRequest{Name: issueID, Cwd: cwd, WorktreePath: wtPath, WorktreeBranch: wtBranch, Profile: w.config.Profile, SandboxProfile: w.config.SandboxProfile, Harness: w.config.Harness, TaskURL: strings.TrimRight(w.session.base, "/") + "/#/issues/" + issueID, TaskLabel: issueID, InitialMessage: awbReadyInitialMessage(issueID, w.config.MonitorPR, w.config.MonitorCommit), PermissionOverrides: map[string]db.PermissionOverride{PermAWBRead: db.ScopedOverride(db.PermEffectGrant, scope), PermAWBWrite: db.ScopedOverride(db.PermEffectGrant, scope)}}
+	body := w.spawnRequest(issueID, cwd, wtPath, wtBranch, harnessName)
 	raw, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/v1/groups/"+url.PathEscape(w.config.Group)+"/spawn", bytes.NewReader(raw))
 	req.SetPathValue("name", w.config.Group)
@@ -662,57 +692,100 @@ func (w awbReadyWorker) auditDetail(verb, issue string, status int, extra string
 	}
 }
 
-// holdForRateLimit reports the configured usage ceiling currently blocking a
-// new pickup for this process, or nil when the process may take an issue.
+// chooseSpawnHarness picks which harness this process should spawn next, and
+// reports the hold when none of its candidates may be used.
 //
-// The wait is served by the ordinary poll interval rather than by sleeping the
-// worker: every tick re-reads the cached usage, so the process resumes within
-// one interval of the window resetting, and an operator who edits the ceiling
-// or whose limit is lifted early is picked up just as quickly. Each tick costs
-// one local query, so polling through a five-hour hold is cheaper than the AWB
-// call it replaces.
+// A process may configure `harness` as an ordered fallback chain rather than a
+// single vendor. The first candidate still under the operator's ceilings wins,
+// so a process keeps working on a second vendor while the first one's window
+// recovers, and only a chain where EVERY candidate is over its ceiling holds
+// the process back.
 //
-// The hold is logged and audited once per distinct window/reset pair, so a
-// long wait leaves one explanation in the log and one row in the audit trail
-// instead of one per tick — and the operator can see why the process went
-// quiet without correlating it against a usage graph.
-func (w awbReadyWorker) holdForRateLimit(now time.Time) *rateLimitHold {
+// The hold returned in that case is the candidate resetting SOONEST — the
+// moment the chain frees up again. (Within one harness the rule is the
+// opposite: harnessRateLimitHold reports its LATEST exceeded window, because
+// that harness is unusable until all of them have reset.)
+//
+// The name returned alongside a hold is the first candidate: a caller that is
+// past the gate — a dispatch already claimed, which is never abandoned to a
+// ceiling — still needs a harness to launch, and the operator's first choice
+// is the honest answer.
+func (w awbReadyWorker) chooseSpawnHarness(now time.Time) (string, *rateLimitHold) {
+	candidates := w.spawnHarnessCandidates()
 	policy := loadRateLimitPolicy()
 	if policy == nil {
-		return nil
+		return candidates[0], nil
 	}
-	harnessName := w.spawnHarness()
-	hold := harnessRateLimitHold(policy, harnessName, now)
+	var soonest *rateLimitHold
+	for _, name := range candidates {
+		hold := harnessRateLimitHold(policy, name, now)
+		if hold == nil {
+			return name, nil
+		}
+		if soonest == nil || hold.ResetsAt.Before(soonest.ResetsAt) {
+			soonest = hold
+		}
+	}
+	return candidates[0], soonest
+}
+
+// reportRateLimitHold logs and audits a hold once per distinct harness/window/
+// reset triple, so a wait spanning hundreds of polls leaves one explanation in
+// the log and one row in the audit trail instead of one per tick — and an
+// operator can see why a process went quiet without correlating it against a
+// usage graph. It returns the hold unchanged so callers can gate on it.
+//
+// The wait itself is served by the ordinary poll interval rather than by
+// sleeping the worker: every tick re-reads the cached usage, so the process
+// resumes within one interval of the window resetting, and an operator who
+// edits a ceiling or whose limit lifts early is picked up just as quickly.
+// Each check is local, so polling through a five-hour hold costs less than the
+// AWB call it replaces.
+func (w awbReadyWorker) reportRateLimitHold(hold *rateLimitHold) *rateLimitHold {
 	if hold == nil {
 		if w.gate != nil && w.gate.window != "" {
 			slog.Info("awb ready polling: usage back under the configured limit, resuming pickups",
-				"process", w.process, "workspace", w.workspace, "harness", harnessName)
+				"process", w.process, "workspace", w.workspace, "harnesses", w.harnessChain())
 			*w.gate = awbReadyGateState{}
 		}
 		return nil
 	}
-	if w.gate == nil || w.gate.window != hold.Window || !w.gate.resetsAt.Equal(hold.ResetsAt) {
+	if w.gate == nil || w.gate.harness != hold.Harness ||
+		w.gate.window != hold.Window || !w.gate.resetsAt.Equal(hold.ResetsAt) {
 		slog.Info("awb ready polling: holding pickups until the rate limit resets",
-			append([]any{"process", w.process, "workspace", w.workspace}, hold.LogAttrs()...)...)
+			append([]any{"process", w.process, "workspace", w.workspace,
+				"harnesses", w.harnessChain()}, hold.LogAttrs()...)...)
 		w.auditDetail("awb.ready.ratelimited", "", http.StatusTooManyRequests,
-			fmt.Sprintf("harness=%s window=%s pct=%.1f max_pct=%.1f resets_at=%s",
-				hold.Harness, hold.Window, hold.Pct, hold.Threshold, hold.ResetsAt.UTC().Format(time.RFC3339)))
+			fmt.Sprintf("harnesses=%s harness=%s window=%s pct=%.1f max_pct=%.1f resets_at=%s",
+				w.harnessChain(), hold.Harness, hold.Window, hold.Pct, hold.Threshold,
+				hold.ResetsAt.UTC().Format(time.RFC3339)))
 		if w.gate != nil {
-			*w.gate = awbReadyGateState{window: hold.Window, resetsAt: hold.ResetsAt}
+			*w.gate = awbReadyGateState{harness: hold.Harness, window: hold.Window, resetsAt: hold.ResetsAt}
 		}
 	}
 	return hold
 }
 
-// spawnHarness resolves the harness this process's next spawn would launch,
-// mirroring handleGroupSpawn's independent harness chain: explicit
-// configuration, then the named spawn profile, then the group default profile,
-// then the global default profile, then Claude Code. The usage gate has to ask
-// the harness that will actually spend the subscription, and a process that
-// omits `harness` can still be pinned to Codex by any of those profile tiers.
-func (w awbReadyWorker) spawnHarness() string {
-	if name := strings.TrimSpace(w.config.Harness); name != "" {
-		return name
+// harnessChain renders the candidate chain for one log line or audit detail.
+// Resolved on demand rather than carried into every tick: only a hold, or the
+// line that lifts one, ever needs to name it.
+func (w awbReadyWorker) harnessChain() string {
+	return strings.Join(w.spawnHarnessCandidates(), ",")
+}
+
+// spawnHarnessCandidates returns the ordered harnesses this process may spawn,
+// always at least one entry.
+//
+// A configured `harness` — one name or a fallback list — is taken verbatim.
+// Otherwise the single answer is resolved exactly as handleGroupSpawn's
+// independent harness chain resolves it: the named spawn profile, then the
+// group default profile, then the global default profile, then Claude Code.
+// The usage gate has to ask the harness that will actually spend the
+// subscription, and a process that omits `harness` can still be pinned to
+// Codex by any of those profile tiers.
+func (w awbReadyWorker) spawnHarnessCandidates() []string {
+	if len(w.config.Harness) > 0 {
+		return append([]string(nil), w.config.Harness...)
 	}
 	var named *db.SpawnProfile
 	if name := strings.TrimSpace(w.config.Profile); name != "" {
@@ -730,8 +803,8 @@ func (w awbReadyWorker) spawnHarness() string {
 	}
 	for _, prof := range []*db.SpawnProfile{named, groupDefaultProfile(g), globalDefaultProfile()} {
 		if prof != nil {
-			return harnessOrDefault(prof.Harness)
+			return []string{harnessOrDefault(prof.Harness)}
 		}
 	}
-	return harness.DefaultName
+	return []string{harness.DefaultName}
 }

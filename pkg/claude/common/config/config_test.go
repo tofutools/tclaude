@@ -1439,6 +1439,32 @@ func TestAWBReadyPollingNormalizesWorkspaceAndRoundTrips(t *testing.T) {
 	assert.Contains(t, string(raw), `"monitor_commit":true`)
 }
 
+func TestAWBReadyPollingHarnessAcceptsOneNameOrAFallbackChain(t *testing.T) {
+	var cfg Config
+	require.NoError(t, json.Unmarshal([]byte(`{"agent":{"awb_proxy":{"ready_polling":{`+
+		`"single":{"workspace":"tcl","group":"one","cwd":"/one","harness":"codex"},`+
+		`"chain":{"workspace":"tcl","labels":["frontend"],"group":"two","cwd":"/two","harness":[" codex ","claude","codex",""]}}}}}`), &cfg))
+	resolved := cfg.ResolvedAWBProxy()
+	assert.Equal(t, HarnessList{"codex"}, resolved.ReadyPolling["single"].Harness,
+		"the historical single-string form keeps working unchanged")
+	assert.Equal(t, HarnessList{"codex", "claude"}, resolved.ReadyPolling["chain"].Harness,
+		"a chain is trimmed and de-duplicated but keeps the operator's fallback order")
+
+	raw, err := json.Marshal(&cfg)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"harness":"codex"`,
+		"a save must not rewrite a single harness into a one-element list")
+	assert.Contains(t, string(raw), `"harness":[" codex ","claude","codex",""]`,
+		"marshalling reproduces the configured list; normalization is a read-time view")
+}
+
+func TestAWBReadyPollingHarnessRejectsANonStringEntry(t *testing.T) {
+	var cfg Config
+	err := json.Unmarshal([]byte(`{"agent":{"awb_proxy":{"ready_polling":{"one":{"workspace":"tcl","group":"one","cwd":"/one","harness":7}}}}}`), &cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "harness must be a string or a list of strings")
+}
+
 func TestValidateAWBReadyPollingRejectsDuplicateNormalizedProcesses(t *testing.T) {
 	var cfg Config
 	require.NoError(t, json.Unmarshal([]byte(`{"agent":{"awb_proxy":{"ready_polling":{"BUILD":{"workspace":"tcl","group":"one","cwd":"/one"}," build ":{"workspace":"tcl","group":"two","cwd":"/two"}}}}}`), &cfg))
