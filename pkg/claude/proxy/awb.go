@@ -1490,7 +1490,7 @@ type awbCommentAddParams struct {
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
 	Body     string `long:"body" optional:"true" help:"Markdown comment text. Prefer --body-file for anything multi-line."`
 	BodyFile string `long:"body-file" short:"F" optional:"true" help:"Read the comment from this file (\"-\" reads stdin)."`
-	Key      string `long:"key" required:"true" help:"Idempotency key; reuse it when retrying an indeterminate request."`
+	Key      string `long:"key" required:"true" help:"Idempotency key; reuse it when retrying an indeterminate request. Shared with every agent on the operator's AWB account, so include an agent-specific component."`
 	JSON     bool   `long:"json" optional:"true" help:"Print the stable JSON representation. This is the DEFAULT; the flag exists so an awb command line copies over unchanged."`
 	Compact  bool   `long:"compact" optional:"true" help:"Print awb's one terse line per issue instead. Cheapest output there is, and the one to prefer when you only need to see what is there."`
 }

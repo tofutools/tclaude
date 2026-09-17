@@ -182,7 +182,7 @@ tclaude proxy awb claim awb-a3f9c1
 tclaude proxy awb make-ready awb-a3f9c1
 tclaude proxy awb update awb-a3f9c1 --commit-hash 01234567
 tclaude proxy awb update awb-a3f9c1 --pull-request-url https://github.com/acme/repo/pull/42
-tclaude proxy awb comment add awb-a3f9c1 --key tcl-46f070-findings-v1 --body-file findings.md
+tclaude proxy awb comment add awb-a3f9c1 --key agent7-findings-v1 --body-file findings.md
 # other verbs: show, list, blocked, search, create, update, close, reopen,
 #              release, delete, label add|rm, dep add|rm|tree,
 #              comment list, activity, attach add|list|show|get|delete
