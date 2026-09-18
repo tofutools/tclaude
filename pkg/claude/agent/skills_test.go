@@ -53,6 +53,20 @@ func TestProxySkillsNamesSelectsEnabledFamilies(t *testing.T) {
 	assert.Empty(t, (ProxySkills{}).names())
 }
 
+func TestInstallProxySkillsEmptySelectionDoesNotResolveRoots(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+	t.Setenv("CODEX_HOME", "")
+
+	installed, err := InstallProxySkills(true, ProxySkills{})
+	require.NoError(t, err)
+	assert.Empty(t, installed)
+
+	installed, err = InstallCodexProxySkills(true, ProxySkills{})
+	require.NoError(t, err)
+	assert.Empty(t, installed)
+}
+
 func TestBundledSkillFrontmatterIsValidYAML(t *testing.T) {
 	const maxCodexDescriptionChars = 1024
 

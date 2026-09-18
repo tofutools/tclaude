@@ -89,18 +89,26 @@ func InstallCodexSkills(force bool) ([]InstalledSkill, error) {
 // InstallProxySkills writes the selected optional proxy skills into
 // ~/.claude/skills/<name>/. An empty selection is a successful no-op.
 func InstallProxySkills(force bool, selection ProxySkills) ([]InstalledSkill, error) {
+	skills := selection.names()
+	if len(skills) == 0 {
+		return nil, nil
+	}
 	root, err := skillroots.Claude()
 	if err != nil {
 		return nil, err
 	}
-	return installSkillsInRoot(root, force, selection.names())
+	return installSkillsInRoot(root, force, skills)
 }
 
 // InstallCodexProxySkills writes the selected optional proxy skills into
 // Codex's user-scope skill directories. An empty selection is a successful
 // no-op.
 func InstallCodexProxySkills(force bool, selection ProxySkills) ([]InstalledSkill, error) {
-	return installCodexSkills(force, selection.names())
+	skills := selection.names()
+	if len(skills) == 0 {
+		return nil, nil
+	}
+	return installCodexSkills(force, skills)
 }
 
 // ProxySkills selects which credential-proxy skills to install.
