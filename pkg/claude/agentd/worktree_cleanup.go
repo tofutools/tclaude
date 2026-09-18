@@ -53,6 +53,12 @@ var (
 	// so repo-wide cleanup can remove a Git registration even after its
 	// worktree directory has disappeared.
 	removeRegisteredWorktreeFn = worktree.RemoveLinkedWorktreeFrom
+	// removeWorktreeAtFn is the conditional retire-time variant: the branch
+	// is deleted only while it still points at the commit the caller proved
+	// something about. It subsumes both removal shapes above (its first
+	// argument is the optional surviving-checkout anchor), because the
+	// callers that need a compare-and-swap need it on either shape.
+	removeWorktreeAtFn = worktree.RemoveLinkedWorktreeAndBranchAt
 )
 
 // agentWorktreeView is the cleanup-oriented view of the git worktree
@@ -79,6 +85,15 @@ type agentWorktreeView struct {
 	// still reach. Kept out of the JSON surface — the dashboard never asks
 	// for a half-sweep, so nothing over the wire needs to describe one.
 	KeepBranch bool `json:"-"`
+	// BranchTip makes the branch half of the cleanup CONDITIONAL on the
+	// branch still pointing at this commit, for a caller whose licence to
+	// delete rests on a proof about one specific tip. Cleanup can run long
+	// after that proof — the deferred path waits for a pane to exit — and
+	// the identity re-check before it (retireWorktreeDrift) compares the
+	// path, kind and branch NAME, none of which notices a branch that
+	// gained a commit. Empty keeps the unconditional `git branch -D` every
+	// other retire surface uses. Ignored when KeepBranch is set.
+	BranchTip string `json:"-"`
 }
 
 // Removable reports whether cleanup may delete this worktree: it must
@@ -681,11 +696,19 @@ func applyRetireWorktreeCleanup(wt agentWorktreeView, requested bool) (note stri
 	var removed, branchDeleted bool
 	var err error
 	deleteBranch := !wt.KeepBranch
-	if wt.RepoRoot != "" {
+	switch {
+	case deleteBranch && wt.BranchTip != "":
+		// One call covers both removal shapes: its anchor argument is
+		// wt.RepoRoot, which is exactly the "" / surviving-checkout split the
+		// two branches below make.
+		removed, branchDeleted, wt.Branch, err = removeWorktreeAtFn(
+			wt.RepoRoot, wt.Path, wt.Branch, wt.BranchTip, true,
+		)
+	case wt.RepoRoot != "":
 		removed, branchDeleted, wt.Branch, err = removeRegisteredWorktreeFn(
 			wt.RepoRoot, wt.Path, deleteBranch, true,
 		)
-	} else {
+	default:
 		// An empty branch is how removeWorktreeBranchFn is told to keep it,
 		// which is also the detached-HEAD case: nothing to delete either way.
 		branch := wt.Branch

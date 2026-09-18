@@ -238,12 +238,15 @@ type ghGQLAssignee struct {
 // unselected ones simply stay zero, and a single struct is what keeps the
 // projections below from drifting apart.
 type ghGQLPullRequest struct {
-	ID             string       `json:"id"`
-	Number         int          `json:"number"`
-	Title          string       `json:"title"`
-	State          string       `json:"state"`
-	IsDraft        bool         `json:"isDraft"`
-	HeadRefName    string       `json:"headRefName"`
+	ID          string `json:"id"`
+	Number      int    `json:"number"`
+	Title       string `json:"title"`
+	State       string `json:"state"`
+	IsDraft     bool   `json:"isDraft"`
+	HeadRefName string `json:"headRefName"`
+	// HeadRefOID is the head branch's commit, requested only where a caller has
+	// to know WHICH commit a verdict covers rather than just which branch.
+	HeadRefOID     string       `json:"headRefOid"`
 	BaseRefName    string       `json:"baseRefName"`
 	URL            string       `json:"url"`
 	Body           string       `json:"body"`

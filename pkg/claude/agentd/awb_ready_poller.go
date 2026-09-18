@@ -26,13 +26,14 @@ const defaultAWBReadyPollInterval = time.Minute
 var liveAWBReadyCommitOnMainFn = liveAWBReadyCommitOnMain
 
 // awbReadyPRStateQuery reads the merge verdict the poller closes on, plus the
-// two ref names that tell it WHICH branch that verdict covers. The refs are
-// what make the automatic branch cleanup safe on a squash or rebase merge,
-// where no local ancestry survives to prove the branch landed.
+// identity of what that verdict covers: which branch merged into which, and the
+// exact commit that was merged. Those three are what make the automatic branch
+// cleanup safe on a squash or rebase merge, where no local ancestry survives to
+// prove the branch landed.
 const awbReadyPRStateQuery = `
 query PRState($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) { state headRefName baseRefName }
+    pullRequest(number: $number) { state headRefName headRefOid baseRefName }
   }
 }`
 
@@ -542,12 +543,17 @@ func proxyResultDetail(res ProxyResult, err error) string {
 }
 
 // awbReadyPRState is the part of a monitored pull request the poller acts on:
-// whether it merged, and the branches it merged FROM and INTO. The zero value
-// is the honest answer for a PR that was never inspected — an unreachable URL,
-// or commit monitoring, where no pull request is involved at all.
+// whether it merged, the branches it merged FROM and INTO, and the commit that
+// branch was at when it merged. The zero value is the honest answer for a PR
+// that was never inspected — an unreachable URL, or commit monitoring, where no
+// pull request is involved at all.
 type awbReadyPRState struct {
 	Merged  bool
 	HeadRef string
+	// HeadOID is the head commit GitHub merged. It is what distinguishes "this
+	// branch was merged" from "this branch is merged": a branch that has moved
+	// on since the merge no longer matches it.
+	HeadOID string
 	BaseRef string
 }
 
@@ -578,7 +584,8 @@ func liveAWBReadyPRMerged(ctx context.Context, rawURL string) (state awbReadyPRS
 		return awbReadyPRState{}, true, fmt.Errorf("GitHub proxy: %s", strings.TrimSpace(failure.Stderr))
 	}
 	return awbReadyPRState{Merged: strings.EqualFold(pr.State, "merged"),
-		HeadRef: strings.TrimSpace(pr.HeadRefName), BaseRef: strings.TrimSpace(pr.BaseRefName)}, true, nil
+		HeadRef: strings.TrimSpace(pr.HeadRefName), HeadOID: strings.TrimSpace(pr.HeadRefOID),
+		BaseRef: strings.TrimSpace(pr.BaseRefName)}, true, nil
 }
 
 func liveAWBReadyAgentSettled(agentID string) (bool, error) {

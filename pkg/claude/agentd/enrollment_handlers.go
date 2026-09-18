@@ -67,6 +67,28 @@ func retireAgentConvWithPrecondition(
 	convID, by, reason string,
 	requireOffline bool,
 ) (retireConvOutcome, []int64, error) {
+	return retireAgentConvGuarded(convID, by, reason, requireOffline, nil)
+}
+
+// retireAgentConvGuarded is retireAgentConv with an arbitrary precondition
+// evaluated under the launch lock, immediately before the demotion commits.
+//
+// It exists for a caller whose decision to retire rests on a reading that takes
+// real time to obtain — an unattended sweep that consults a tracker, a remote,
+// or git before it acts. Re-checking at the caller shrinks nothing: whatever it
+// learned is already stale by the time the commit runs. Re-checking HERE bounds
+// the staleness to the commit itself. A guard that returns an error aborts the
+// retire with that error and changes nothing.
+//
+// The lock does not extend to the agent's pane, so this is a narrowing, not an
+// interlock: no lock in this daemon can stop a human typing into a tmux window.
+// What it buys is that a guard reading "still idle" was true microseconds before
+// the demotion rather than seconds, and that the abort path is fail-closed.
+func retireAgentConvGuarded(
+	convID, by, reason string,
+	requireOffline bool,
+	guard func() error,
+) (retireConvOutcome, []int64, error) {
 	// Publish cancellation before waiting for the in-process launch mutex. A
 	// recovery worker may already own that mutex while it prepares a resume;
 	// its final durable claim check immediately before Spawn then observes this
@@ -96,6 +118,11 @@ func retireAgentConvWithPrecondition(
 	defer launchLock.Unlock()
 	if requireOffline && pickAliveSession(convID) != nil {
 		return retireConvOutcome{}, nil, errRetireRequiresOffline
+	}
+	if guard != nil {
+		if err := guard(); err != nil {
+			return retireConvOutcome{}, nil, err
+		}
 	}
 	var out retireConvOutcome
 	retired, err := db.RetireAgentAuthorizationByConv(convID, by, reason)
