@@ -292,6 +292,9 @@ The `agent.awb_proxy` block in `~/.tclaude/data/config.json`:
   Each entry requires `workspace`, `group`, and an absolute `cwd`. Optional
   `labels` are passed as repeated AWB label filters. `interval` defaults to
   `1m`; `profile`, `sandbox_profile`, `harness`, and `worktree` are optional.
+  `harness` takes one name (`"codex"`) or an ordered fallback chain
+  (`["codex", "claude"]`) — see "Usage ceilings on pickup" below for what the
+  chain does.
   `monitor_pr` defaults to `false`; when true, the worker watches a GitHub pull
   request recorded in the issue's `pull_request_url` through the configured
   GitHub proxy. After the pull request is merged and the spawned agent exits or
@@ -344,6 +347,71 @@ The `agent.awb_proxy` block in `~/.tclaude/data/config.json`:
   }
 }
 ```
+
+### Usage ceilings on pickup
+
+When the top-level `ratelimit` block is configured, a polling process checks
+the usage of the harness it is about to spawn before it takes another issue,
+and holds off while that harness is over the ceiling:
+
+```json
+"ratelimit": {
+  "five_hour_percent_max_used": 90,
+  "seven_day_percent_max_used": 99
+}
+```
+
+`five_hour_percent_max_used` governs the harness's short rolling window and
+`seven_day_percent_max_used` its long one — Claude's 7-day buckets (including
+the Sonnet bucket), Codex's weekly window, and GitHub Copilot's monthly
+premium-request quota. Without the block, nothing is gated; this is the same
+configuration `tclaude task` waits on, so one setting covers both.
+
+The harness checked is the one the spawn would actually use: the process's
+`harness`, or whatever its `profile`, the group default profile, or the global
+default profile resolves to. OpenCode runs against the operator's own provider
+keys and has no account-wide window to read, so its processes are never held.
+
+A process can name several harnesses instead of one, as an ordered fallback
+chain:
+
+```json
+"tcl-backend": {
+  "workspace": "tcl",
+  "group": "builders",
+  "cwd": "/absolute/path/to/repo",
+  "harness": ["codex", "claude"]
+}
+```
+
+Each pickup takes the first entry still under its ceilings, so the process
+keeps working on the next vendor while the first one's window recovers, and
+only a chain whose every entry is spent holds the process. The hold then names
+the entry resetting soonest, because that is when the chain frees up again.
+Order is the preference: the chain is walked from the front on every pickup, so
+a recovered first choice is used again as soon as it is under its ceiling. An
+issue claimed before its spawn re-picks from the same chain on the freshest
+reading, but is never held — it is already assigned on the operator's account.
+
+Note that a chain is only a usage fallback. The harness a spawn lands on
+changes the vendor, model catalogue and sandbox posture of the agent that does
+the work, so every entry should be one the process's issues can actually be
+worked on; `profile` and `sandbox_profile` still apply to whichever entry is
+chosen.
+
+While a process is held it asks AWB for nothing, and it resumes within one
+`interval` of the offending window resetting. The hold is written to the daemon
+log at info level and to the audit trail — verb `awb.ready.ratelimited` — once
+per hold rather than once per poll, so a quiet process is explainable without
+reading a usage graph. An issue already picked up is never abandoned to a
+ceiling: the hold only decides whether to start something new.
+
+Readings come from the same local caches the dashboard's usage readout uses, so
+no network call is made to decide a hold, and a missing or stale reading lets
+work proceed rather than stalling it. That matters most for Claude, whose
+figures are refreshed by Claude Code's statusline callback while its sessions
+run; an operator who wants the gate to hold across long idle stretches should
+also enable `usage.poll_anthropic_api`.
 
 AWB applies its own authorization underneath: the daemon's account works in the
 workspaces it is a member of, and one it holds no access to answers `404`. That

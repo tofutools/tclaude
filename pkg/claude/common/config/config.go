@@ -2123,17 +2123,62 @@ type AWBProxyConfig struct {
 // Interval is a duration string so config files remain readable; an omitted
 // value resolves to one minute.
 type AWBReadyPollingConfig struct {
-	Workspace      string   `json:"workspace"`
-	Labels         []string `json:"labels,omitempty"`
-	Group          string   `json:"group"`
-	Cwd            string   `json:"cwd"`
-	Interval       string   `json:"interval,omitempty"`
-	Profile        string   `json:"profile,omitempty"`
-	SandboxProfile string   `json:"sandbox_profile,omitempty"`
-	Harness        string   `json:"harness,omitempty"`
-	Worktree       bool     `json:"worktree,omitempty"`
-	MonitorPR      bool     `json:"monitor_pr,omitempty"`
-	MonitorCommit  bool     `json:"monitor_commit,omitempty"`
+	Workspace      string      `json:"workspace"`
+	Labels         []string    `json:"labels,omitempty"`
+	Group          string      `json:"group"`
+	Cwd            string      `json:"cwd"`
+	Interval       string      `json:"interval,omitempty"`
+	Profile        string      `json:"profile,omitempty"`
+	SandboxProfile string      `json:"sandbox_profile,omitempty"`
+	Harness        HarnessList `json:"harness,omitempty"`
+	Worktree       bool        `json:"worktree,omitempty"`
+	MonitorPR      bool        `json:"monitor_pr,omitempty"`
+	MonitorCommit  bool        `json:"monitor_commit,omitempty"`
+}
+
+// HarnessList is a harness preference written as either one harness or an
+// ordered list of them. A list is a fallback chain: the daemon takes the first
+// entry whose subscription usage is still under the operator's `ratelimit`
+// ceilings, so a process can keep working on a second vendor while the first
+// one's window recovers.
+//
+// It accepts both JSON shapes so an existing `"harness": "codex"` keeps
+// working unchanged, and marshals a single entry back to a plain string so an
+// unrelated config save cannot silently rewrite an operator's file into a
+// shape they did not choose.
+type HarnessList []string
+
+func (h *HarnessList) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" {
+		*h = nil
+		return nil
+	}
+	if trimmed[0] == '[' {
+		var list []string
+		if err := json.Unmarshal(data, &list); err != nil {
+			return err
+		}
+		*h = list
+		return nil
+	}
+	var one string
+	if err := json.Unmarshal(data, &one); err != nil {
+		return fmt.Errorf("harness must be a string or a list of strings: %w", err)
+	}
+	*h = HarnessList{one}
+	return nil
+}
+
+func (h HarnessList) MarshalJSON() ([]byte, error) {
+	switch len(h) {
+	case 0:
+		return []byte("null"), nil
+	case 1:
+		return json.Marshal(h[0])
+	default:
+		return json.Marshal([]string(h))
+	}
 }
 
 // LinearProxyConfig is the operator's policy for the daemon-mediated Linear
@@ -2454,7 +2499,7 @@ func (c *Config) ResolvedAWBProxy() AWBProxyConfig {
 				polling.Interval = strings.TrimSpace(polling.Interval)
 				polling.Profile = strings.TrimSpace(polling.Profile)
 				polling.SandboxProfile = strings.TrimSpace(polling.SandboxProfile)
-				polling.Harness = strings.TrimSpace(polling.Harness)
+				polling.Harness = normalizeHarnessList(polling.Harness)
 				out.ReadyPolling[strings.ToLower(strings.TrimSpace(key))] = polling
 			}
 		}
@@ -2495,6 +2540,31 @@ func (p AWBProxyConfig) AWBWorkspaceAllowed(key string) bool {
 // preserving order and dropping duplicates. Lower-casing is safe here because
 // every pattern names a DNS host, a forge owner/repo, or a branch — and both
 // the remote matcher and the ref matcher compare lower-cased.
+// normalizeHarnessList trims each entry, drops the blanks, and de-duplicates
+// while preserving the operator's fallback order — the same treatment
+// normalizeGitProxyPatterns gives an allow-list, minus the lower-casing, since
+// a harness name is matched against the registry verbatim and an unknown one
+// is rejected loudly rather than folded.
+func normalizeHarnessList(in HarnessList) HarnessList {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(HarnessList, 0, len(in))
+	seen := make(map[string]bool, len(in))
+	for _, raw := range in {
+		name := strings.TrimSpace(raw)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func normalizeGitProxyPatterns(in []string) []string {
 	if len(in) == 0 {
 		return nil
