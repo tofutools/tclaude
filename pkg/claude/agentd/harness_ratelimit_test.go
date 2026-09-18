@@ -204,3 +204,28 @@ func TestHarnessRateLimitHoldNeverHoldsOpenCode(t *testing.T) {
 	assert.Nil(t, harnessRateLimitHold(loadRateLimitPolicy(), harness.OpenCodeName, now),
 		"OpenCode runs on the operator's own provider keys, so there is no subscription window to respect")
 }
+
+func TestHarnessRateLimitHoldDerivesCopilotResetFromTheObservation(t *testing.T) {
+	setupTestDB(t)
+	writeRateLimitConfig(t, 80, 90)
+	now := time.Now()
+	observed := now.Add(-time.Minute)
+	// A legacy Copilot sample: the CLI account snapshot's raw timestamp_utc
+	// was recorded as resetDate, so the stored reset is already in the past.
+	// Trusting it would read the window as reset and silently stop gating a
+	// spent monthly quota.
+	stored, err := db.SaveSubscriptionUsageSample(db.SubscriptionUsageSample{
+		Provider: db.SubscriptionProviderGitHub, ObservedAt: observed, Source: "test",
+		Windows: []db.SubscriptionUsageWindow{{
+			Name: "monthly", UsedPercent: 99, UsedUnits: 99, LimitUnits: 100, ResetsAt: observed,
+		}},
+	})
+	require.NoError(t, err)
+	require.True(t, stored)
+
+	hold := harnessRateLimitHold(loadRateLimitPolicy(), harness.CopilotName, now)
+	require.NotNil(t, hold, "a mislabeled stored reset must not drop the quota from the gate")
+	assert.Equal(t, "monthly", hold.Window)
+	assert.WithinDuration(t, copilotMonthlyResetAt(observed), hold.ResetsAt, time.Second,
+		"the allowance boundary is the first of the next month, as the dashboard readout derives it")
+}

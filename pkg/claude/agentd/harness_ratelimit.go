@@ -238,9 +238,14 @@ func copilotUsageWindows(idleTimeout time.Duration, now time.Time) []harnessUsag
 	if now.Sub(row.ObservedAt) > idleTimeout {
 		return nil
 	}
-	resetsAt := row.ResetsAt
-	if resetsAt.IsZero() {
-		resetsAt = copilotMonthlyResetAt(row.ObservedAt)
-	}
+	// The stored resets_at is deliberately NOT trusted: older Copilot samples
+	// recorded the CLI account snapshot's raw timestamp_utc mislabeled as
+	// resetDate, which reads as an already-elapsed window and would silently
+	// drop the quota from the gate on a legacy row. The allowance boundary is
+	// documented independently — the first day of the next calendar month at
+	// 00:00 UTC — so it is derived from the observation, exactly as the
+	// dashboard readout (collectCopilotUsageSnapshot) and the usage history
+	// series both do.
+	resetsAt := copilotMonthlyResetAt(row.ObservedAt)
 	return []harnessUsageWindow{{name: "monthly", pct: row.UsedPercent, resetsAt: resetsAt, long: true}}
 }
