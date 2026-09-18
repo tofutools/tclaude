@@ -29,6 +29,17 @@ import (
 // uses. No network call is made to decide a hold, so a gate check costs one
 // query and a missing, stale, or unparseable cache fails OPEN — the daemon
 // keeps working rather than stalling on figures it cannot obtain.
+//
+// "Fails open" covers figures that cannot be obtained or read, not figures
+// whose timestamps look odd. In particular a reading stamped in the FUTURE —
+// the shape a backwards clock step leaves behind, since the same host writes
+// and reads these caches — is still used. Its percentages are real, and a hold
+// needs a percentage over the ceiling AND a reset still ahead, so the worst a
+// skewed stamp costs is a hold that outlives the true reset by roughly the
+// skew. Discarding the reading instead would open the spend gate on an
+// exhausted subscription, which is the failure this whole gate exists to
+// prevent, and would leave the gate disagreeing with the dashboard readouts,
+// which judge the same caches on elapsed age alone.
 
 // harnessUsageWindow is one harness's rolling subscription window reduced to
 // what a rate-limit decision needs: how much of it is spent, when it resets,

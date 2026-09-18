@@ -229,3 +229,26 @@ func TestHarnessRateLimitHoldDerivesCopilotResetFromTheObservation(t *testing.T)
 	assert.WithinDuration(t, copilotMonthlyResetAt(observed), hold.ResetsAt, time.Second,
 		"the allowance boundary is the first of the next month, as the dashboard readout derives it")
 }
+
+// TestHarnessRateLimitHoldStillGatesAFutureDatedReading pins a deliberate
+// choice (raised in CodeRabbit review of PR #2625): a reading stamped in the
+// future is NOT discarded as invalid. A backwards clock step is how that shape
+// arises on the single host that both writes and reads these caches, and the
+// percentages in such a reading are real. Holding costs at most a hold that
+// outlives the true reset by the skew; discarding would spawn into an
+// exhausted subscription, the failure the gate exists to prevent.
+func TestHarnessRateLimitHoldStillGatesAFutureDatedReading(t *testing.T) {
+	setupTestDB(t)
+	writeRateLimitConfig(t, 80, 95)
+	now := time.Now()
+	reset := now.Add(2 * time.Hour)
+	seedClaudeUsage(t, now.Add(time.Hour), usageapi.CachedUsage{
+		FiveHour: &usageapi.CachedBucket{Pct: 97, ResetsAt: reset},
+	})
+
+	hold := harnessRateLimitHold(loadRateLimitPolicy(), harness.DefaultName, now)
+	require.NotNil(t, hold, "a clock-skewed stamp must not open the spend gate on a spent window")
+	assert.Equal(t, "five_hour", hold.Window)
+	assert.WithinDuration(t, reset, hold.ResetsAt, time.Second,
+		"the hold still ends at the window's own reset, so the skew cannot extend it indefinitely")
+}
