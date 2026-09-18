@@ -706,6 +706,10 @@ func installAgentSkills() error {
 // installProxySkills writes the optional credential-proxy skills into the
 // same user-scope skill directories as the ordinary bundled skills.
 func installProxySkills() error {
+	// Be strict here: selecting from defaults would advertise unavailable
+	// capabilities. Returning before later extras also prevents
+	// installDefaultAgentPermissions from loading defaults and overwriting a
+	// malformed operator config.
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load config for proxy skills: %w", err)
@@ -716,7 +720,10 @@ func installProxySkills() error {
 		AWB:    cfg.AWBProxyEnabled(),
 	}
 	if !selection.Git && !selection.Linear && !selection.AWB {
-		fmt.Println("- No configured credential proxies; no proxy skills installed")
+		fmt.Println("⚠ No proxy skills installed: setup found no agent.git_proxy.allowed_remotes, " +
+			"agent.linear_proxy key file/allow-list/workspace route, or agent.awb_proxy.url")
+		fmt.Println("  Host-side setup deliberately does not consult scoped grants or agentd's LINEAR_API_KEY; " +
+			"configure one of the keys above to select its skill.")
 		return nil
 	}
 

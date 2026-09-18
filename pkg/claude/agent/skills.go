@@ -41,11 +41,22 @@ var bundledSkills = []string{
 // corresponding credential proxy. Keep them out of the default agent-skill
 // set so installing the ordinary coordination tools does not advertise
 // unavailable proxy capabilities to every agent.
-var bundledProxySkills = []string{
-	"proxy-git",
-	"proxy-linear",
-	"proxy-awb",
+var bundledProxySkillSpecs = []struct {
+	name    string
+	enabled func(ProxySkills) bool
+}{
+	{"proxy-git", func(s ProxySkills) bool { return s.Git }},
+	{"proxy-linear", func(s ProxySkills) bool { return s.Linear }},
+	{"proxy-awb", func(s ProxySkills) bool { return s.AWB }},
 }
+
+var bundledProxySkills = func() []string {
+	skills := make([]string, 0, len(bundledProxySkillSpecs))
+	for _, spec := range bundledProxySkillSpecs {
+		skills = append(skills, spec.name)
+	}
+	return skills
+}()
 
 // InstalledSkill describes a skill that was written to disk.
 type InstalledSkill struct {
@@ -76,7 +87,7 @@ func InstallCodexSkills(force bool) ([]InstalledSkill, error) {
 }
 
 // InstallProxySkills writes the selected optional proxy skills into
-// ~/.claude/skills/<name>/.
+// ~/.claude/skills/<name>/. An empty selection is a successful no-op.
 func InstallProxySkills(force bool, selection ProxySkills) ([]InstalledSkill, error) {
 	root, err := skillroots.Claude()
 	if err != nil {
@@ -86,7 +97,8 @@ func InstallProxySkills(force bool, selection ProxySkills) ([]InstalledSkill, er
 }
 
 // InstallCodexProxySkills writes the selected optional proxy skills into
-// Codex's user-scope skill directories.
+// Codex's user-scope skill directories. An empty selection is a successful
+// no-op.
 func InstallCodexProxySkills(force bool, selection ProxySkills) ([]InstalledSkill, error) {
 	return installCodexSkills(force, selection.names())
 }
@@ -100,16 +112,9 @@ type ProxySkills struct {
 
 func (s ProxySkills) names() []string {
 	var skills []string
-	for _, candidate := range []struct {
-		name    string
-		enabled bool
-	}{
-		{"proxy-git", s.Git},
-		{"proxy-linear", s.Linear},
-		{"proxy-awb", s.AWB},
-	} {
-		if candidate.enabled {
-			skills = append(skills, candidate.name)
+	for _, spec := range bundledProxySkillSpecs {
+		if spec.enabled(s) {
+			skills = append(skills, spec.name)
 		}
 	}
 	return skills

@@ -217,6 +217,34 @@ func TestInstallExtras_ProxySkillsNoneConfigured(t *testing.T) {
 	assertNoSkills(t, home)
 }
 
+func TestInstallExtras_ProxySkillsRecognizesLinearKeyFile(t *testing.T) {
+	home := tempHome(t)
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{
+		LinearProxy: &config.LinearProxyConfig{APIKeyFile: "~/linear-key"},
+	}}))
+
+	require.NoError(t, installExtras(&Params{InstallProxySkills: true}))
+
+	assertProxySkillsInstalled(t, home, "proxy-linear")
+}
+
+func TestInstallExtras_ProxySkillsDoesNotRemoveDisabledSkills(t *testing.T) {
+	home := tempHome(t)
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{
+		GitProxy:    &config.GitProxyConfig{AllowedRemotes: []string{"github.com/acme"}},
+		LinearProxy: &config.LinearProxyConfig{APIKeyFile: "~/linear-key"},
+		AWBProxy:    &config.AWBProxyConfig{URL: "https://awb.example"},
+	}}))
+	require.NoError(t, installExtras(&Params{InstallProxySkills: true}))
+
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{
+		GitProxy: &config.GitProxyConfig{AllowedRemotes: []string{"github.com/acme"}},
+	}}))
+	require.NoError(t, installExtras(&Params{InstallProxySkills: true}))
+
+	assertProxySkillsInstalled(t, home, "proxy-git", "proxy-linear", "proxy-awb")
+}
+
 // --install-default-agent-permissions grants permissions only — it does
 // not install skills.
 func TestInstallExtras_PermsOnly(t *testing.T) {
