@@ -37,7 +37,7 @@ func TestInstallCodexProxySkillsInstallsOnlyProxySkillsInBothUserRoots(t *testin
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("CODEX_HOME", codexHome)
 
-	installed, err := InstallCodexProxySkills(true)
+	installed, err := InstallCodexProxySkills(true, ProxySkills{Git: true, Linear: true, AWB: true})
 
 	require.NoError(t, err)
 	assert.Len(t, installed, len(bundledProxySkills)*2)
@@ -46,6 +46,11 @@ func TestInstallCodexProxySkillsInstallsOnlyProxySkillsInBothUserRoots(t *testin
 		assert.DirExists(t, filepath.Join(root, "proxy-linear"))
 		assert.NoDirExists(t, filepath.Join(root, "agent-coord"))
 	}
+}
+
+func TestProxySkillsNamesSelectsEnabledFamilies(t *testing.T) {
+	assert.Equal(t, []string{"proxy-git", "proxy-awb"}, (ProxySkills{Git: true, AWB: true}).names())
+	assert.Empty(t, (ProxySkills{}).names())
 }
 
 func TestBundledSkillFrontmatterIsValidYAML(t *testing.T) {

@@ -423,9 +423,10 @@ bounds the operator; the allow-list above bounds the agent.
 tclaude setup --install-proxy-skills
 ```
 
-installs the `proxy-git`, `proxy-linear` and `proxy-awb` agent skills into the
-Claude Code and Codex skill directories, so agents discover the semantic commands instead
-of fighting their missing credentials. The flag is deliberately excluded from
+installs the agent skill for each configured credential proxy (`proxy-git`,
+`proxy-linear`, and/or `proxy-awb`) into the Claude Code and Codex skill
+directories, so agents discover the semantic commands instead of fighting
+their missing credentials. The flag is deliberately excluded from
 `--install-agent-skills` and `--install-all`: an operator who has not
 configured the proxies should not advertise them to agents.
 

@@ -75,20 +75,44 @@ func InstallCodexSkills(force bool) ([]InstalledSkill, error) {
 	return installCodexSkills(force, bundledSkills)
 }
 
-// InstallProxySkills writes the optional proxy skills into
+// InstallProxySkills writes the selected optional proxy skills into
 // ~/.claude/skills/<name>/.
-func InstallProxySkills(force bool) ([]InstalledSkill, error) {
+func InstallProxySkills(force bool, selection ProxySkills) ([]InstalledSkill, error) {
 	root, err := skillroots.Claude()
 	if err != nil {
 		return nil, err
 	}
-	return installSkillsInRoot(root, force, bundledProxySkills)
+	return installSkillsInRoot(root, force, selection.names())
 }
 
-// InstallCodexProxySkills writes the optional proxy skills into Codex's
-// user-scope skill directories.
-func InstallCodexProxySkills(force bool) ([]InstalledSkill, error) {
-	return installCodexSkills(force, bundledProxySkills)
+// InstallCodexProxySkills writes the selected optional proxy skills into
+// Codex's user-scope skill directories.
+func InstallCodexProxySkills(force bool, selection ProxySkills) ([]InstalledSkill, error) {
+	return installCodexSkills(force, selection.names())
+}
+
+// ProxySkills selects which credential-proxy skills to install.
+type ProxySkills struct {
+	Git    bool
+	Linear bool
+	AWB    bool
+}
+
+func (s ProxySkills) names() []string {
+	var skills []string
+	for _, candidate := range []struct {
+		name    string
+		enabled bool
+	}{
+		{"proxy-git", s.Git},
+		{"proxy-linear", s.Linear},
+		{"proxy-awb", s.AWB},
+	} {
+		if candidate.enabled {
+			skills = append(skills, candidate.name)
+		}
+	}
+	return skills
 }
 
 func installCodexSkills(force bool, skills []string) ([]InstalledSkill, error) {

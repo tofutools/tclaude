@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -116,15 +117,20 @@ func assertSkillsInstalled(t *testing.T, home string) {
 	}
 }
 
-func assertProxySkillsInstalled(t *testing.T, home string) {
+func assertProxySkillsInstalled(t *testing.T, home string, installed ...string) {
 	t.Helper()
 	for _, root := range []string{
 		filepath.Join(home, ".claude", "skills"),
 		filepath.Join(home, ".agents", "skills"),
 		filepath.Join(home, ".codex", "skills"),
 	} {
-		assert.DirExists(t, filepath.Join(root, "proxy-git"))
-		assert.DirExists(t, filepath.Join(root, "proxy-linear"))
+		for _, name := range []string{"proxy-git", "proxy-linear", "proxy-awb"} {
+			if slices.Contains(installed, name) {
+				assert.DirExists(t, filepath.Join(root, name))
+			} else {
+				assert.NoDirExists(t, filepath.Join(root, name))
+			}
+		}
 		assert.NoDirExists(t, filepath.Join(root, "agent-coord"))
 	}
 }
@@ -192,11 +198,23 @@ func TestInstallExtras_SkillsOnly(t *testing.T) {
 // ordinary coordination bundle.
 func TestInstallExtras_ProxySkillsOnly(t *testing.T) {
 	home := tempHome(t)
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{
+		GitProxy: &config.GitProxyConfig{AllowedRemotes: []string{"github.com/acme"}},
+		AWBProxy: &config.AWBProxyConfig{URL: "https://awb.example"},
+	}}))
 
 	require.NoError(t, installExtras(&Params{InstallProxySkills: true}))
 
-	assertProxySkillsInstalled(t, home)
+	assertProxySkillsInstalled(t, home, "proxy-git", "proxy-awb")
 	assertBundledPermsNotGranted(t)
+}
+
+func TestInstallExtras_ProxySkillsNoneConfigured(t *testing.T) {
+	home := tempHome(t)
+
+	require.NoError(t, installExtras(&Params{InstallProxySkills: true}))
+
+	assertNoSkills(t, home)
 }
 
 // --install-default-agent-permissions grants permissions only — it does
