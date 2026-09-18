@@ -135,7 +135,7 @@ func TestRemoveLinkedWorktreeAndBranch_NeverDeletesProtectedBranch(t *testing.T)
 	// Even if asked to delete a branch literally named "main"/"master",
 	// the worktree goes but the protected branch is kept.
 	for _, protected := range []string{"main", "master", "Main", "MASTER"} {
-		removed, branchDeleted, derr := removeLinkedWorktree(linkedPath, protected, true)
+		removed, branchDeleted, derr := removeLinkedWorktree(linkedPath, protected, "", true)
 		// Only the first iteration actually removes the (now-once) dir;
 		// the point is the protected branch is never deleted.
 		_ = removed
@@ -211,4 +211,88 @@ func TestRemoveLinkedWorktreeFrom_RemovesMissingDetachedWorktree(t *testing.T) {
 	assert.Empty(t, branch)
 	assert.True(t, branchExistsIn(repoPath, "feature-detached"),
 		"the branch detached from before deletion remains untouched")
+}
+
+// The conditional retire removal deletes the branch when it still points at the
+// proven commit, and reports a branch that moved since as kept rather than
+// deleting it anyway. That distinction is the whole reason the call exists.
+func TestRemoveLinkedWorktreeAndBranchAt(t *testing.T) {
+	repoPath, _ := setupTestRepo(t)
+	linkedPath, err := AddWorktreeIn(repoPath, "feature-x", "", "")
+	require.NoError(t, err)
+	tip, err := gitIn(repoPath, "rev-parse", "refs/heads/feature-x")
+	require.NoError(t, err)
+
+	removed, branchDeleted, branch, err := RemoveLinkedWorktreeAndBranchAt(
+		"", linkedPath, "feature-x", tip, true)
+	require.NoError(t, err)
+	assert.True(t, removed)
+	assert.True(t, branchDeleted)
+	assert.Equal(t, "feature-x", branch)
+	assert.False(t, branchExistsIn(repoPath, "feature-x"))
+}
+
+func TestRemoveLinkedWorktreeAndBranchAt_KeepsAMovedBranch(t *testing.T) {
+	repoPath, _ := setupTestRepo(t)
+	linkedPath, err := AddWorktreeIn(repoPath, "feature-moved", "", "")
+	require.NoError(t, err)
+	stale, err := gitIn(repoPath, "rev-parse", "refs/heads/feature-moved")
+	require.NoError(t, err)
+	_, err = gitIn(linkedPath, "commit", "--allow-empty", "-m", "committed after the proof")
+	require.NoError(t, err)
+
+	removed, branchDeleted, _, err := RemoveLinkedWorktreeAndBranchAt(
+		"", linkedPath, "feature-moved", stale, true)
+	require.NoError(t, err, "a branch that moved is a kept branch, not a failure")
+	assert.True(t, removed, "the working directory still goes")
+	assert.False(t, branchDeleted)
+	assert.True(t, branchExistsIn(repoPath, "feature-moved"),
+		"the commit made after the proof must survive")
+}
+
+func TestRemoveLinkedWorktreeAndBranchAt_AnchoredAtSurvivingCheckout(t *testing.T) {
+	repoPath, _ := setupTestRepo(t)
+	linkedPath, err := AddWorktreeIn(repoPath, "feature-gone", "", "")
+	require.NoError(t, err)
+	tip, err := gitIn(repoPath, "rev-parse", "refs/heads/feature-gone")
+	require.NoError(t, err)
+	// The directory disappears out-of-band; only Git's registration survives.
+	require.NoError(t, os.RemoveAll(linkedPath))
+
+	removed, branchDeleted, branch, err := RemoveLinkedWorktreeAndBranchAt(
+		repoPath, linkedPath, "", tip, true)
+	require.NoError(t, err)
+	assert.True(t, removed)
+	assert.True(t, branchDeleted)
+	assert.Equal(t, "feature-gone", branch, "the anchor supplies the authoritative branch name")
+	assert.False(t, branchExistsIn(repoPath, "feature-gone"))
+}
+
+func TestRemoveLinkedWorktreeAndBranchAt_RefusesANonCommitExpectation(t *testing.T) {
+	repoPath, _ := setupTestRepo(t)
+	linkedPath, err := AddWorktreeIn(repoPath, "feature-bad-tip", "", "")
+	require.NoError(t, err)
+
+	_, branchDeleted, _, err := RemoveLinkedWorktreeAndBranchAt(
+		"", linkedPath, "feature-bad-tip", "--not-a-commit", true)
+	assert.ErrorContains(t, err, "is not a commit id")
+	assert.False(t, branchDeleted)
+	assert.True(t, branchExistsIn(repoPath, "feature-bad-tip"))
+}
+
+func TestRemoveLinkedWorktreeAndBranchAt_NeverDeletesProtectedBranch(t *testing.T) {
+	repoPath, _ := setupTestRepo(t)
+	trunk, err := gitIn(repoPath, "rev-parse", "HEAD")
+	require.NoError(t, err)
+	linkedPath, err := AddWorktreeIn(repoPath, "feature-detour", "", "")
+	require.NoError(t, err)
+
+	// The guard is on the NAME, so a caller that hands over a trunk name is
+	// refused even with a matching tip.
+	removed, branchDeleted, _, err := RemoveLinkedWorktreeAndBranchAt(
+		"", linkedPath, "main", trunk, true)
+	require.NoError(t, err)
+	assert.True(t, removed)
+	assert.False(t, branchDeleted)
+	assert.True(t, branchExistsIn(repoPath, "main"))
 }

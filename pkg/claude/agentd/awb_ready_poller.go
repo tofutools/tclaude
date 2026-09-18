@@ -25,10 +25,15 @@ const defaultAWBReadyPollInterval = time.Minute
 
 var liveAWBReadyCommitOnMainFn = liveAWBReadyCommitOnMain
 
+// awbReadyPRStateQuery reads the merge verdict the poller closes on, plus the
+// identity of what that verdict covers: which branch merged into which, and the
+// exact commit that was merged. Those three are what make the automatic branch
+// cleanup safe on a squash or rebase merge, where no local ancestry survives to
+// prove the branch landed.
 const awbReadyPRStateQuery = `
 query PRState($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) { state }
+    pullRequest(number: $number) { state headRefName headRefOid baseRefName }
   }
 }`
 
@@ -208,6 +213,7 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 			}
 			readyToClose := false
 			localMain := false
+			var pr awbReadyPRState
 			if w.config.MonitorCommit {
 				readyToClose, localMain, err = liveAWBReadyCommitOnMainFn(ctx, w.config.Cwd, issue.CommitHash)
 				if err != nil {
@@ -215,7 +221,8 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 				}
 			} else {
 				var reachable bool
-				readyToClose, reachable, err = liveAWBReadyPRMerged(ctx, issue.PullRequestURL)
+				pr, reachable, err = liveAWBReadyPRMerged(ctx, issue.PullRequestURL)
+				readyToClose = pr.Merged
 				if reachable {
 					status := http.StatusOK
 					if err != nil {
@@ -244,6 +251,11 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 				}
 				slog.Info("awb ready polling: closed issue after monitored change reached main", "process", w.process,
 					"workspace", w.workspace, "issue", dispatch.IssueID, "agent_id", dispatch.AgentID)
+				// Housekeeping, deliberately before the dispatch is released and
+				// deliberately unable to fail the tick: the issue is already
+				// closed, so a cleanup that cannot finish must not re-run the
+				// closure or hold the process on a finished issue.
+				w.cleanupAfterClose(ctx, dispatch, pr)
 				_, err = db.ClearAWBReadyDispatch(w.process, dispatch.IssueID)
 				return err
 			}
@@ -530,33 +542,50 @@ func proxyResultDetail(res ProxyResult, err error) string {
 	return fmt.Sprintf("git exited with status %d", res.ExitCode)
 }
 
-func liveAWBReadyPRMerged(ctx context.Context, rawURL string) (merged, reachable bool, err error) {
+// awbReadyPRState is the part of a monitored pull request the poller acts on:
+// whether it merged, the branches it merged FROM and INTO, and the commit that
+// branch was at when it merged. The zero value is the honest answer for a PR
+// that was never inspected — an unreachable URL, or commit monitoring, where no
+// pull request is involved at all.
+type awbReadyPRState struct {
+	Merged  bool
+	HeadRef string
+	// HeadOID is the head commit GitHub merged. It is what distinguishes "this
+	// branch was merged" from "this branch is merged": a branch that has moved
+	// on since the merge no longer matches it.
+	HeadOID string
+	BaseRef string
+}
+
+func liveAWBReadyPRMerged(ctx context.Context, rawURL string) (state awbReadyPRState, reachable bool, err error) {
 	ref, ok := githubPRRefFromURL(rawURL)
 	if !ok {
-		return false, false, nil
+		return awbReadyPRState{}, false, nil
 	}
 	cfg, err := config.Load()
 	if err != nil {
-		return false, false, fmt.Errorf("load GitHub proxy policy: %w", err)
+		return awbReadyPRState{}, false, fmt.Errorf("load GitHub proxy policy: %w", err)
 	}
 	if !cfg.GitProxyEnabled() || !presentedPRRemoteAllowed(ref, cfg.ResolvedGitProxy().AllowedRemotes) {
-		return false, false, nil
+		return awbReadyPRState{}, false, nil
 	}
 	policy := cfg.ResolvedGitProxy()
 	token, _, fault := githubToken(ctx, policy)
 	if fault != nil {
-		return false, true, fmt.Errorf("GitHub proxy: %s", fault.Msg)
+		return awbReadyPRState{}, true, fmt.Errorf("GitHub proxy: %s", fault.Msg)
 	}
 	owner, repo, _ := strings.Cut(ref.repo, "/")
 	g := &ghProxySession{owner: owner, repo: repo, ownerRepo: ref.repo, remoteKey: "github.com/" + ref.repo, token: token}
 	pr, failure, err := g.pullRequest(ctx, awbReadyPRStateQuery, ref.number)
 	if err != nil {
-		return false, true, err
+		return awbReadyPRState{}, true, err
 	}
 	if failure != nil {
-		return false, true, fmt.Errorf("GitHub proxy: %s", strings.TrimSpace(failure.Stderr))
+		return awbReadyPRState{}, true, fmt.Errorf("GitHub proxy: %s", strings.TrimSpace(failure.Stderr))
 	}
-	return strings.EqualFold(pr.State, "merged"), true, nil
+	return awbReadyPRState{Merged: strings.EqualFold(pr.State, "merged"),
+		HeadRef: strings.TrimSpace(pr.HeadRefName), HeadOID: strings.TrimSpace(pr.HeadRefOID),
+		BaseRef: strings.TrimSpace(pr.BaseRefName)}, true, nil
 }
 
 func liveAWBReadyAgentSettled(agentID string) (bool, error) {

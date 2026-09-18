@@ -53,6 +53,12 @@ var (
 	// so repo-wide cleanup can remove a Git registration even after its
 	// worktree directory has disappeared.
 	removeRegisteredWorktreeFn = worktree.RemoveLinkedWorktreeFrom
+	// removeWorktreeAtFn is the conditional retire-time variant: the branch
+	// is deleted only while it still points at the commit the caller proved
+	// something about. It subsumes both removal shapes above (its first
+	// argument is the optional surviving-checkout anchor), because the
+	// callers that need a compare-and-swap need it on either shape.
+	removeWorktreeAtFn = worktree.RemoveLinkedWorktreeAndBranchAt
 )
 
 // agentWorktreeView is the cleanup-oriented view of the git worktree
@@ -71,6 +77,23 @@ type agentWorktreeView struct {
 	// registration for Path. It is set when Path itself could not be
 	// inspected (normally because its directory is already gone).
 	RepoRoot string `json:"-"`
+	// KeepBranch asks retire-time cleanup to remove the working directory
+	// but leave the branch checked out there alone. Retire normally sweeps
+	// an agent's whole git footprint; the AWB ready poller's automatic
+	// cleanup sets this when it could not prove the branch already landed
+	// on main, so unmerged commits survive as a branch the operator can
+	// still reach. Kept out of the JSON surface — the dashboard never asks
+	// for a half-sweep, so nothing over the wire needs to describe one.
+	KeepBranch bool `json:"-"`
+	// BranchTip makes the branch half of the cleanup CONDITIONAL on the
+	// branch still pointing at this commit, for a caller whose licence to
+	// delete rests on a proof about one specific tip. Cleanup can run long
+	// after that proof — the deferred path waits for a pane to exit — and
+	// the identity re-check before it (retireWorktreeDrift) compares the
+	// path, kind and branch NAME, none of which notices a branch that
+	// gained a commit. Empty keeps the unconditional `git branch -D` every
+	// other retire surface uses. Ignored when KeepBranch is set.
+	BranchTip string `json:"-"`
 }
 
 // Removable reports whether cleanup may delete this worktree: it must
@@ -643,7 +666,9 @@ func applyWorktreeCleanup(wt agentWorktreeView, requested bool) string {
 // local branch (main/master are always kept — worktree.go's
 // protected-branch guard). Retiring an agent that owns a throwaway
 // feature branch should leave no git footprint behind, where a plain
-// delete keeps the branch.
+// delete keeps the branch. wt.KeepBranch opts back out of the branch
+// half for a caller that removes the directory but must not destroy
+// commits — see its field comment.
 //
 // Same safety rules and never-errors contract as applyWorktreeCleanup:
 // a removal failure is reported in the returned note, never propagated,
@@ -670,12 +695,27 @@ func applyRetireWorktreeCleanup(wt agentWorktreeView, requested bool) (note stri
 	}
 	var removed, branchDeleted bool
 	var err error
-	if wt.RepoRoot != "" {
-		removed, branchDeleted, wt.Branch, err = removeRegisteredWorktreeFn(
-			wt.RepoRoot, wt.Path, true, true,
+	deleteBranch := !wt.KeepBranch
+	switch {
+	case deleteBranch && wt.BranchTip != "":
+		// One call covers both removal shapes: its anchor argument is
+		// wt.RepoRoot, which is exactly the "" / surviving-checkout split the
+		// two branches below make.
+		removed, branchDeleted, wt.Branch, err = removeWorktreeAtFn(
+			wt.RepoRoot, wt.Path, wt.Branch, wt.BranchTip, true,
 		)
-	} else {
-		removed, branchDeleted, err = removeWorktreeBranchFn(wt.Path, wt.Branch, true)
+	case wt.RepoRoot != "":
+		removed, branchDeleted, wt.Branch, err = removeRegisteredWorktreeFn(
+			wt.RepoRoot, wt.Path, deleteBranch, true,
+		)
+	default:
+		// An empty branch is how removeWorktreeBranchFn is told to keep it,
+		// which is also the detached-HEAD case: nothing to delete either way.
+		branch := wt.Branch
+		if !deleteBranch {
+			branch = ""
+		}
+		removed, branchDeleted, err = removeWorktreeBranchFn(wt.Path, branch, true)
 	}
 	switch {
 	case err != nil:
@@ -881,8 +921,12 @@ func scheduleRetireWorktreeCleanup(convID string, wt agentWorktreeView, shutdown
 			postRetireWorktreeNotice(title, "Retire worktree kept", note)
 		}
 	})
-	return retireWorktreePlan{Action: "scheduled",
-		Detail: "worktree + branch will be removed after the agent exits"}
+	detail := "worktree + branch will be removed after the agent exits"
+	if wt.KeepBranch {
+		detail = "worktree will be removed after the agent exits (branch " +
+			retireBranchLabel(wt.Branch) + " kept)"
+	}
+	return retireWorktreePlan{Action: "scheduled", Detail: detail}
 }
 
 // stopRetiringOpenCodeRuntime releases the daemon-owned server belonging to an

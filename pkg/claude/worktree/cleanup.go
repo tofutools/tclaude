@@ -62,7 +62,7 @@ func InspectWorktree(dir string) WorktreeStatus {
 // non-nil error comes back rather than nuking the user's primary
 // checkout.
 func RemoveLinkedWorktree(root string, force bool) (bool, error) {
-	removed, _, err := removeLinkedWorktree(root, "" /* keep branch */, force)
+	removed, _, err := removeLinkedWorktree(root, "" /* keep branch */, "", force)
 	return removed, err
 }
 
@@ -94,7 +94,43 @@ func RemoveLinkedWorktree(root string, force bool) (bool, error) {
 //   - err: a real git failure on either step, or the main-worktree
 //     refusal.
 func RemoveLinkedWorktreeAndBranch(root, branch string, force bool) (removed, branchDeleted bool, err error) {
-	return removeLinkedWorktree(root, branch, force)
+	return removeLinkedWorktree(root, branch, "", force)
+}
+
+// RemoveLinkedWorktreeAndBranchAt is the conditional form of the two removals
+// above, for a caller that has PROVEN something about the branch and must not
+// act on a branch that moved since.
+//
+// The branch is deleted with `git update-ref -d refs/heads/<branch> <expectTip>`
+// — a compare-and-swap. Git refuses the delete when the ref no longer points at
+// expectTip, and the refusal is reported as a kept branch rather than an error.
+// Reading the tip and then running `git branch -D` would be a different thing
+// entirely: the window between the two is exactly where a branch that gained a
+// commit gets destroyed anyway, and a branch carrying unpushed commits is the
+// one loss in worktree cleanup that nothing can undo.
+//
+// anchorPath, when non-empty, is a surviving checkout of the same repository to
+// run from, which also lets root already be absent (the out-of-band-deleted
+// case RemoveLinkedWorktreeFrom serves). Empty resolves the repository's main
+// worktree from root, like RemoveLinkedWorktreeAndBranch does.
+//
+// resolvedBranch is the branch Git reports for the worktree when anchorPath
+// supplied it, and the caller's own branch otherwise — the same contract as the
+// two functions this one generalises.
+//
+// A note on parity with `git branch -D`: update-ref removes the ref and its
+// reflog but not a `branch.<name>.*` config section, so a branch that had an
+// upstream configured leaves that section behind. It describes a branch that no
+// longer exists and git ignores it; removing it by name is not safely
+// expressible for a branch whose name contains a dot.
+func RemoveLinkedWorktreeAndBranchAt(
+	anchorPath, root, branch, expectTip string, force bool,
+) (removed, branchDeleted bool, resolvedBranch string, err error) {
+	if strings.TrimSpace(anchorPath) == "" {
+		removed, branchDeleted, err = removeLinkedWorktree(root, branch, expectTip, force)
+		return removed, branchDeleted, branch, err
+	}
+	return removeLinkedWorktreeFrom(anchorPath, root, true, expectTip, force)
 }
 
 // RemoveLinkedWorktreeFrom removes root while anchored at a surviving
@@ -109,6 +145,13 @@ func RemoveLinkedWorktreeAndBranch(root, branch string, force bool) (removed, br
 func RemoveLinkedWorktreeFrom(
 	repoPath, root string,
 	deleteBranch, force bool,
+) (removed, branchDeleted bool, branch string, err error) {
+	return removeLinkedWorktreeFrom(repoPath, root, deleteBranch, "", force)
+}
+
+func removeLinkedWorktreeFrom(
+	repoPath, root string,
+	deleteBranch bool, expectTip string, force bool,
 ) (removed, branchDeleted bool, branch string, err error) {
 	repoPath = strings.TrimSpace(repoPath)
 	root = strings.TrimSpace(root)
@@ -142,7 +185,7 @@ func RemoveLinkedWorktreeFrom(
 		removeBranch = branch
 	}
 	removed, branchDeleted, err = removeLinkedWorktreeAt(
-		mainPath, root, removeBranch, force,
+		mainPath, root, removeBranch, expectTip, force,
 	)
 	return removed, branchDeleted, branch, err
 }
@@ -152,7 +195,7 @@ func RemoveLinkedWorktreeFrom(
 // removes the linked worktree at root and, when branch is a non-empty
 // non-protected name, force-deletes it afterwards from the same main
 // anchor. branchDeleted is always false when branch == "".
-func removeLinkedWorktree(root, branch string, force bool) (removed, branchDeleted bool, err error) {
+func removeLinkedWorktree(root, branch, expectTip string, force bool) (removed, branchDeleted bool, err error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return false, false, nil
@@ -179,13 +222,13 @@ func removeLinkedWorktree(root, branch string, force bool) (removed, branchDelet
 	if mainPath == "" || sameDir(mainPath, root) {
 		return false, false, fmt.Errorf("refusing to remove the main worktree %s", root)
 	}
-	return removeLinkedWorktreeAt(mainPath, root, branch, force)
+	return removeLinkedWorktreeAt(mainPath, root, branch, expectTip, force)
 }
 
 // removeLinkedWorktreeAt performs the mutation from the surviving main
 // checkout. root may already be absent as long as Git still has a linked
 // worktree registration for it.
-func removeLinkedWorktreeAt(mainPath, root, branch string, force bool) (removed, branchDeleted bool, err error) {
+func removeLinkedWorktreeAt(mainPath, root, branch, expectTip string, force bool) (removed, branchDeleted bool, err error) {
 	args := []string{"worktree", "remove"}
 	if force {
 		args = append(args, "--force")
@@ -206,6 +249,10 @@ func removeLinkedWorktreeAt(mainPath, root, branch string, force bool) (removed,
 	if branch == "" || branch == "HEAD" || isProtectedBranch(branch) {
 		return removed, false, nil
 	}
+	if expectTip = strings.TrimSpace(expectTip); expectTip != "" {
+		deleted, casErr := deleteBranchAt(mainPath, branch, expectTip)
+		return removed, deleted, casErr
+	}
 	if _, brErr := gitIn(mainPath, "branch", "-D", branch); brErr != nil {
 		if isNoSuchBranchErr(brErr) {
 			return removed, false, nil
@@ -213,6 +260,53 @@ func removeLinkedWorktreeAt(mainPath, root, branch string, force bool) (removed,
 		return removed, false, fmt.Errorf("delete branch %s: %w", branch, brErr)
 	}
 	return removed, true, nil
+}
+
+// deleteBranchAt deletes branch from the repository at mainPath only while it
+// still points at expectTip. A branch that has moved (or is already gone) comes
+// back (false, nil): not an error, just a branch this cleanup no longer has
+// permission to destroy.
+//
+// A failure is classified by re-reading the ref rather than by matching git's
+// message, because "the old value does not match" and "the ref is locked" are
+// the same exit status with wording that has changed across git versions. If the
+// ref still reads expectTip after a failed delete, something other than a moved
+// branch went wrong and the caller is told.
+func deleteBranchAt(mainPath, branch, expectTip string) (bool, error) {
+	if !isHexOID(expectTip) {
+		return false, fmt.Errorf("delete branch %s: %q is not a commit id", branch, expectTip)
+	}
+	ref := "refs/heads/" + branch
+	if _, err := gitIn(mainPath, "update-ref", "-d", ref, expectTip); err != nil {
+		now, readErr := gitIn(mainPath, "rev-parse", "--verify", "--quiet", ref)
+		if readErr != nil || strings.TrimSpace(now) == "" {
+			// The ref is gone: somebody else deleted it, which is the outcome
+			// this call wanted anyway. Report it as not deleted BY US.
+			return false, nil
+		}
+		if !strings.EqualFold(strings.TrimSpace(now), expectTip) {
+			return false, nil
+		}
+		return false, fmt.Errorf("delete branch %s at %s: %w", branch, expectTip, err)
+	}
+	return true, nil
+}
+
+// isHexOID guards the compare-and-swap value before it reaches argv. A commit id
+// is the only thing update-ref's old-value slot may carry here, and a value that
+// cannot begin with "-" cannot be read as a flag either.
+func isHexOID(s string) bool {
+	if len(s) < 7 || len(s) > 64 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'f', r >= 'A' && r <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // isProtectedBranch reports whether branch is the repo trunk that

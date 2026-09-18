@@ -1511,6 +1511,18 @@ func SetRegisteredWorktreeFnForTest(
 	return func() { removeRegisteredWorktreeFn = prev }
 }
 
+// SetRetireWorktreeAtFnForTest swaps the CONDITIONAL retire-time removal
+// seam (removeWorktreeAtFn), the one whose branch deletion is a
+// compare-and-swap on a proven commit. Returns a restore func for
+// t.Cleanup.
+func SetRetireWorktreeAtFnForTest(
+	remove func(anchorPath, root, branch, expectTip string, force bool) (bool, bool, string, error),
+) func() {
+	prev := removeWorktreeAtFn
+	removeWorktreeAtFn = remove
+	return func() { removeWorktreeAtFn = prev }
+}
+
 // SetSweepWorktreeFnsForTest swaps the repo-wide worktree-janitor seams
 // — repo listing, repo-root resolution and dirty detection — so the
 // worktree-sweep discovery/cleanup flow tests run without real git repos.

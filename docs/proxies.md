@@ -315,6 +315,21 @@ The `agent.awb_proxy` block in `~/.tclaude/data/config.json`:
   recorded commit reaches `main` verbatim;
   a commit rewritten by rebase or squash never satisfies the check. The
   spawned agent's brief tells it to record the commit hash on the issue.
+  Whenever the worker closes an issue itself, it also clears up after that
+  pickup: the agent it spawned is retired and its pane soft-stopped, and with
+  `worktree: true` the linked worktree is removed. The branch is deleted only
+  when the worker can prove that the branch's current tip has landed — either
+  because the merged pull request it watched merged that exact commit into a
+  trunk, or because the tip is already contained in the `main` the process
+  monitors. An unproven branch is kept and the worktree directory is removed
+  without it, and even a proven branch is deleted with a compare-and-swap on
+  that commit, so a branch that gained work after the proof survives. An agent
+  that has gone back to work is left alone, agent and worktree both; the check
+  is taken again immediately before the retire commits, so a turn started while
+  the worker was still consulting git does not lose its agent. None of this
+  applies to an issue an operator closes by hand; the worker only tidies up
+  after its own automatic closure.
+
   Multiple processes may use the same workspace when every process has a
   non-empty label filter and those configured label sets are disjoint. An
   unfiltered process therefore must be the workspace's only process.
