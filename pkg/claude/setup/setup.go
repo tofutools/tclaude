@@ -69,7 +69,7 @@ type Params struct {
 	// setup (which always runs). They do not replace or gate the baseline.
 	InstallAll               bool `long:"install-all" help:"Install all standard extras on top of the baseline setup. Proxy skills remain opt-in via --install-proxy-skills."`
 	InstallAgentSkills       bool `long:"install-agent-skills" help:"Also install (or refresh) the bundled coordination skills (agent-*, human-*, and process-templates) into Claude Code and Codex CLI user skill directories, including CODEX_HOME/skills. Idempotent; overwrites existing if present."`
-	InstallProxySkills       bool `long:"install-proxy-skills" help:"Also install (or refresh) the optional proxy-git, proxy-linear and proxy-awb skills into Claude Code and Codex CLI user skill directories, including CODEX_HOME/skills. Not included by --install-all."`
+	InstallProxySkills       bool `long:"install-proxy-skills" help:"Also install (or refresh) skills for configured credential proxies into Claude Code and Codex CLI user skill directories, including CODEX_HOME/skills. Not included by --install-all."`
 	InstallDefaultAgentPerms bool `long:"install-default-agent-permissions" help:"Also grant the low-risk permission slugs the bundled agent-* skills exercise as agent defaults in ~/.tclaude/config.json. Idempotent; only adds missing slugs."`
 	InstallSandboxHardening  bool `long:"install-sandbox-hardening" help:"Also add the agent-sandbox hardening entries (sandbox.* and permissions.deny) to ~/.claude/settings.json, as described in docs/sandboxing.md. Append-only and idempotent; never removes or overwrites existing values."`
 	InstallResumeThreshold   bool `long:"install-resume-threshold-override" help:"Also write a claude_resume.threshold_minutes override to ~/.tclaude/config.json that suppresses Claude Code's interactive 'Resume from summary' prompt for tclaude-spawned panes (it breaks scripted resume). Idempotent; skips if a value is already configured, never overwrites it."`
@@ -706,14 +706,35 @@ func installAgentSkills() error {
 // installProxySkills writes the optional credential-proxy skills into the
 // same user-scope skill directories as the ordinary bundled skills.
 func installProxySkills() error {
-	installed, err := agent.InstallProxySkills(true)
+	// Be strict here: selecting from defaults would advertise unavailable
+	// capabilities. Returning before later extras also prevents
+	// installDefaultAgentPermissions from loading defaults and overwriting a
+	// malformed operator config.
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config for proxy skills: %w", err)
+	}
+	selection := agent.ProxySkills{
+		Git:    cfg.GitProxyEnabled(),
+		Linear: cfg.LinearProxyConfigured(),
+		AWB:    cfg.AWBProxyEnabled(),
+	}
+	if !selection.Git && !selection.Linear && !selection.AWB {
+		fmt.Println("⚠ No proxy skills installed: setup found no agent.git_proxy.allowed_remotes, " +
+			"agent.linear_proxy key file/allow-list/workspace route, or agent.awb_proxy.url")
+		fmt.Println("  Host-side setup deliberately does not consult scoped grants or agentd's LINEAR_API_KEY; " +
+			"configure one of the keys above to select its skill.")
+		return nil
+	}
+
+	installed, err := agent.InstallProxySkills(true, selection)
 	if err != nil {
 		return fmt.Errorf("install Claude Code proxy skills: %w", err)
 	}
 	for _, s := range installed {
 		fmt.Printf("✓ Installed %s skill for Claude Code at %s\n", s.Name, s.Path)
 	}
-	codexInstalled, err := agent.InstallCodexProxySkills(true)
+	codexInstalled, err := agent.InstallCodexProxySkills(true, selection)
 	if err != nil {
 		return fmt.Errorf("install Codex CLI proxy skills: %w", err)
 	}

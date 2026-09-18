@@ -41,11 +41,22 @@ var bundledSkills = []string{
 // corresponding credential proxy. Keep them out of the default agent-skill
 // set so installing the ordinary coordination tools does not advertise
 // unavailable proxy capabilities to every agent.
-var bundledProxySkills = []string{
-	"proxy-git",
-	"proxy-linear",
-	"proxy-awb",
+var bundledProxySkillSpecs = []struct {
+	name    string
+	enabled func(ProxySkills) bool
+}{
+	{"proxy-git", func(s ProxySkills) bool { return s.Git }},
+	{"proxy-linear", func(s ProxySkills) bool { return s.Linear }},
+	{"proxy-awb", func(s ProxySkills) bool { return s.AWB }},
 }
+
+var bundledProxySkills = func() []string {
+	skills := make([]string, 0, len(bundledProxySkillSpecs))
+	for _, spec := range bundledProxySkillSpecs {
+		skills = append(skills, spec.name)
+	}
+	return skills
+}()
 
 // InstalledSkill describes a skill that was written to disk.
 type InstalledSkill struct {
@@ -75,20 +86,46 @@ func InstallCodexSkills(force bool) ([]InstalledSkill, error) {
 	return installCodexSkills(force, bundledSkills)
 }
 
-// InstallProxySkills writes the optional proxy skills into
-// ~/.claude/skills/<name>/.
-func InstallProxySkills(force bool) ([]InstalledSkill, error) {
+// InstallProxySkills writes the selected optional proxy skills into
+// ~/.claude/skills/<name>/. An empty selection is a successful no-op.
+func InstallProxySkills(force bool, selection ProxySkills) ([]InstalledSkill, error) {
+	skills := selection.names()
+	if len(skills) == 0 {
+		return nil, nil
+	}
 	root, err := skillroots.Claude()
 	if err != nil {
 		return nil, err
 	}
-	return installSkillsInRoot(root, force, bundledProxySkills)
+	return installSkillsInRoot(root, force, skills)
 }
 
-// InstallCodexProxySkills writes the optional proxy skills into Codex's
-// user-scope skill directories.
-func InstallCodexProxySkills(force bool) ([]InstalledSkill, error) {
-	return installCodexSkills(force, bundledProxySkills)
+// InstallCodexProxySkills writes the selected optional proxy skills into
+// Codex's user-scope skill directories. An empty selection is a successful
+// no-op.
+func InstallCodexProxySkills(force bool, selection ProxySkills) ([]InstalledSkill, error) {
+	skills := selection.names()
+	if len(skills) == 0 {
+		return nil, nil
+	}
+	return installCodexSkills(force, skills)
+}
+
+// ProxySkills selects which credential-proxy skills to install.
+type ProxySkills struct {
+	Git    bool
+	Linear bool
+	AWB    bool
+}
+
+func (s ProxySkills) names() []string {
+	var skills []string
+	for _, spec := range bundledProxySkillSpecs {
+		if spec.enabled(s) {
+			skills = append(skills, spec.name)
+		}
+	}
+	return skills
 }
 
 func installCodexSkills(force bool, skills []string) ([]InstalledSkill, error) {

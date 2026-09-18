@@ -423,11 +423,20 @@ bounds the operator; the allow-list above bounds the agent.
 tclaude setup --install-proxy-skills
 ```
 
-installs the `proxy-git`, `proxy-linear` and `proxy-awb` agent skills into the
-Claude Code and Codex skill directories, so agents discover the semantic commands instead
-of fighting their missing credentials. The flag is deliberately excluded from
-`--install-agent-skills` and `--install-all`: an operator who has not
-configured the proxies should not advertise them to agents.
+installs the agent skill for each configured credential proxy (`proxy-git`,
+`proxy-linear`, and/or `proxy-awb`) into the Claude Code and Codex skill
+directories, so agents discover the semantic commands instead of fighting
+their missing credentials. "Configured" uses the host-side rules under
+[The command only appears when configured](#the-command-only-appears-when-configured).
+Setup answers from the config file alone: it deliberately does not consult
+per-agent scoped grants or agentd's environment. In particular, a Git proxy
+authorized only by a grant's `remote` scope does not select `proxy-git`, and a
+`LINEAR_API_KEY` present only in agentd's environment does not select
+`proxy-linear`. Re-running setup refreshes selected skills but deliberately
+does not remove previously installed, now-unselected skills. The flag is
+deliberately excluded from `--install-agent-skills` and `--install-all`: an
+operator who has not configured the proxies should not advertise them to
+agents.
 
 ## See also
 
