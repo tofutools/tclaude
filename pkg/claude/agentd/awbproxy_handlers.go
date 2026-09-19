@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1312,6 +1313,14 @@ func handleAWBProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload.Workspace = workspace
+	var identity awbIdentityResponse
+	if _, fault := s.exec(r.Context(), awbCall{
+		Method: http.MethodGet, Path: "/api/identity",
+	}, &identity); fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	issueID := awbCreateIssueID(workspace, identity.Identity, payload)
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "could not encode the AWB request")
@@ -1323,7 +1332,7 @@ func handleAWBProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	var issue awbIssue
 	if _, fault := s.exec(r.Context(), awbCall{
-		Method: http.MethodPost, Path: "/api/issues",
+		Method: http.MethodPut, Path: "/api/issues/" + awbSegment(issueID),
 		Body: encoded, ContentType: "application/json",
 	}, &issue); fault != nil {
 		writeProxyFault(w, fault)
@@ -1336,6 +1345,22 @@ func handleAWBProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 	// awb create is the exception to "a mutating command prints nothing":
 	// minting an id is the point, so the compact form is that id.
 	s.respond(w, r, "issue.create", body.Compact, &issue, issue.ID+"\n", "issue="+issue.ID)
+}
+
+// awbCreateIssueID follows AWB's client-side ID algorithm. Keeping the ID at
+// the proxy boundary makes a retried create target the same resource, while
+// preserving the agent-facing CLI that accepts no explicit ID.
+func awbCreateIssueID(workspace, identity string, body *awbIssueCreateBody) string {
+	typ := body.Type
+	if typ == "" {
+		typ = "task"
+	}
+	description := ""
+	if body.Description != nil {
+		description = *body.Description
+	}
+	sum := sha256.Sum256([]byte(identity + body.Title + typ + description))
+	return fmt.Sprintf("%s-%x", workspace, sum)[:len(workspace)+1+6]
 }
 
 // resolveCreateWorkspace accepts an explicit workspace or infers the only
