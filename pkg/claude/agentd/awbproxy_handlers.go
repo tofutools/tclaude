@@ -1351,6 +1351,7 @@ func handleAWBProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 // the proxy boundary makes a retried create target the same resource, while
 // preserving the agent-facing CLI that accepts no explicit ID.
 func awbCreateIssueID(workspace, identity string, body *awbIssueCreateBody) string {
+	const hashLen = 6
 	typ := body.Type
 	if typ == "" {
 		typ = "task"
@@ -1360,7 +1361,7 @@ func awbCreateIssueID(workspace, identity string, body *awbIssueCreateBody) stri
 		description = *body.Description
 	}
 	sum := sha256.Sum256([]byte(identity + body.Title + typ + description))
-	return fmt.Sprintf("%s-%x", workspace, sum)[:len(workspace)+1+6]
+	return fmt.Sprintf("%s-%x", workspace, sum)[:len(workspace)+1+hashLen]
 }
 
 // resolveCreateWorkspace accepts an explicit workspace or infers the only

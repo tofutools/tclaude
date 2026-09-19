@@ -545,22 +545,29 @@ func TestAWBProxy_CreateSendsAWBsOwnBody(t *testing.T) {
 func TestAWBProxy_CreateClaimBacklogAndLabels(t *testing.T) {
 	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
 	w.grant(agentd.PermAWBWrite)
-	rec.response = func(agentd.AWBProxyRequest) (int, string) {
+	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
+		if strings.HasSuffix(req.URL, "/api/identity") {
+			return http.StatusOK, `{"identity":"tclaude-bot"}`
+		}
 		return http.StatusOK, awbIssueJSON("awb-a3f9c1", "awb")
 	}
 
 	w.outcome(w.post("/v1/awb/issue/create", map[string]any{
 		"workspace": "awb", "title": "Claimed", "claim": true, "labels": []string{"parser"},
 	}))
+	calls := rec.snapshot()
+	require.Len(t, calls, 2)
 	assert.JSONEq(t, `{"workspace":"awb","title":"Claimed","assignees":["tclaude-bot"],"labels":["parser"]}`,
-		string(rec.last(t).Body))
+		string(calls[1].Body))
 
 	rec.reset()
 	w.outcome(w.post("/v1/awb/issue/create", map[string]any{
 		"workspace": "awb", "title": "Parked", "backlog": true,
 	}))
+	calls = rec.snapshot()
+	require.Len(t, calls, 2)
 	assert.JSONEq(t, `{"backlog":true,"workspace":"awb","title":"Parked"}`,
-		string(rec.last(t).Body))
+		string(calls[1].Body))
 
 	rec.reset()
 	res := w.post("/v1/awb/issue/create", map[string]any{
@@ -655,7 +662,10 @@ func TestAWBProxy_UpdateImplementationFields(t *testing.T) {
 func TestAWBProxy_CreateAndUpdateMetadata(t *testing.T) {
 	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
 	w.grant(agentd.PermAWBWrite)
-	rec.response = func(agentd.AWBProxyRequest) (int, string) {
+	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
+		if strings.HasSuffix(req.URL, "/api/identity") {
+			return http.StatusOK, `{"identity":"tclaude-bot"}`
+		}
 		return http.StatusOK, awbIssueJSON("awb-a3f9c1", "awb")
 	}
 
@@ -664,7 +674,9 @@ func TestAWBProxy_CreateAndUpdateMetadata(t *testing.T) {
 			"source": "github", "nested": map[string]any{"a": 1},
 		},
 	}))
-	call := rec.last(t)
+	calls := rec.snapshot()
+	require.Len(t, calls, 2)
+	call := calls[1]
 	assert.JSONEq(t, `{"workspace":"awb","title":"Imported","metadata":{"source":"github","nested":{"a":1}}}`, string(call.Body))
 
 	rec.reset()
@@ -673,6 +685,21 @@ func TestAWBProxy_CreateAndUpdateMetadata(t *testing.T) {
 	}))
 	call = rec.only(t)
 	assert.JSONEq(t, `{"metadata":{"external_id":4711}}`, string(call.Body))
+}
+
+func TestAWBProxy_CreateStopsWhenIdentityLookupFails(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+	w.grant(agentd.PermAWBWrite)
+	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
+		require.Equal(t, "https://awb.example/api/identity", req.URL)
+		return http.StatusServiceUnavailable, `{"error":"identity unavailable"}`
+	}
+
+	res := w.post("/v1/awb/issue/create", map[string]any{
+		"workspace": "awb", "title": "Parser crashes",
+	})
+	assert.Equal(t, http.StatusBadGateway, res.Code)
+	require.Len(t, rec.snapshot(), 1, "a failed identity lookup must prevent the PUT")
 }
 
 func TestAWBProxy_RejectsNonObjectMetadata(t *testing.T) {
