@@ -288,8 +288,10 @@ func SetAWBTransportForTest(
 }
 
 func resetAWBIdentityCache() {
-	awbIdentityCache = sync.Map{}
-	awbIdentityFlight = singleflight.Group{}
+	awbIdentityCache.Range(func(key, _ any) bool {
+		awbIdentityCache.Delete(key)
+		return true
+	})
 }
 
 // awbHTTPClient is the daemon's client for AWB. Explicitly constructed rather

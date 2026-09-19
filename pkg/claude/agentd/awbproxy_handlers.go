@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
@@ -1350,12 +1351,19 @@ func (s *awbProxySession) authenticatedIdentity(ctx context.Context) (string, *p
 	if identity, ok := awbIdentityCache.Load(key); ok {
 		return identity.(string), nil
 	}
-	value, _, _ := awbIdentityFlight.Do(key, func() (any, error) {
+	result := awbIdentityFlight.DoChan(key, func() (any, error) {
 		if identity, ok := awbIdentityCache.Load(key); ok {
 			return awbIdentityLookup{identity: identity.(string)}, nil
 		}
+		// A daemon-wide fill must not inherit the first request's cancellation
+		// or remaining request budget. Each waiter still selects on its own
+		// context below, while the shared lookup gets one ordinary call timeout.
+		lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), awbProxyTimeout)
+		defer cancel()
+		lookupSession := *s
+		lookupSession.deadline = time.Now().Add(awbProxyTimeout)
 		var response awbIdentityResponse
-		if _, fault := s.exec(ctx, awbCall{
+		if _, fault := lookupSession.exec(lookupCtx, awbCall{
 			Method: http.MethodGet, Path: "/api/identity",
 		}, &response); fault != nil {
 			return awbIdentityLookup{fault: fault}, nil
@@ -1367,8 +1375,14 @@ func (s *awbProxySession) authenticatedIdentity(ctx context.Context) (string, *p
 		awbIdentityCache.Store(key, response.Identity)
 		return awbIdentityLookup{identity: response.Identity}, nil
 	})
-	lookup := value.(awbIdentityLookup)
-	return lookup.identity, lookup.fault
+	select {
+	case <-ctx.Done():
+		return "", faultf(http.StatusBadGateway, "awb_unreachable",
+			"could not reach the AWB server: %v", ctx.Err())
+	case completed := <-result:
+		lookup := completed.Val.(awbIdentityLookup)
+		return lookup.identity, lookup.fault
+	}
 }
 
 // awbCreateIssueID follows AWB's client-side ID algorithm. Keeping the ID at

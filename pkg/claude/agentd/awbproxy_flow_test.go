@@ -691,9 +691,16 @@ func TestAWBProxy_CreateAndUpdateMetadata(t *testing.T) {
 func TestAWBProxy_CreateStopsWhenIdentityLookupFails(t *testing.T) {
 	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
 	w.grant(agentd.PermAWBWrite)
+	identityCalls := 0
 	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
-		require.Equal(t, "https://awb.example/api/identity", req.URL)
-		return http.StatusServiceUnavailable, `{"error":"identity unavailable"}`
+		if strings.HasSuffix(req.URL, "/api/identity") {
+			identityCalls++
+			if identityCalls == 1 {
+				return http.StatusServiceUnavailable, `{"error":"identity unavailable"}`
+			}
+			return http.StatusOK, `{"identity":"tclaude-bot"}`
+		}
+		return http.StatusOK, awbIssueJSON("awb-991b0e", "awb")
 	}
 
 	res := w.post("/v1/awb/issue/create", map[string]any{
@@ -701,14 +708,30 @@ func TestAWBProxy_CreateStopsWhenIdentityLookupFails(t *testing.T) {
 	})
 	assert.Equal(t, http.StatusBadGateway, res.Code)
 	require.Len(t, rec.snapshot(), 1, "a failed identity lookup must prevent the PUT")
+
+	res = w.post("/v1/awb/issue/create", map[string]any{
+		"workspace": "awb", "title": "Parser crashes",
+	})
+	w.outcome(res)
+	calls := rec.snapshot()
+	require.Len(t, calls, 3, "the failed lookup must not be cached")
+	assert.Equal(t, "https://awb.example/api/identity", calls[1].URL)
+	assert.Equal(t, http.MethodPut, calls[2].Method)
 }
 
 func TestAWBProxy_CreateRejectsEmptyIdentity(t *testing.T) {
 	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
 	w.grant(agentd.PermAWBWrite)
+	identityCalls := 0
 	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
-		require.Equal(t, "https://awb.example/api/identity", req.URL)
-		return http.StatusOK, `{"identity":"  "}`
+		if strings.HasSuffix(req.URL, "/api/identity") {
+			identityCalls++
+			if identityCalls == 1 {
+				return http.StatusOK, `{"identity":"  "}`
+			}
+			return http.StatusOK, `{"identity":"tclaude-bot"}`
+		}
+		return http.StatusOK, awbIssueJSON("awb-991b0e", "awb")
 	}
 
 	res := w.post("/v1/awb/issue/create", map[string]any{
@@ -717,6 +740,15 @@ func TestAWBProxy_CreateRejectsEmptyIdentity(t *testing.T) {
 	assert.Equal(t, http.StatusBadGateway, res.Code)
 	assert.Contains(t, res.Body.String(), "empty identity")
 	require.Len(t, rec.snapshot(), 1, "an empty identity must prevent the PUT")
+
+	res = w.post("/v1/awb/issue/create", map[string]any{
+		"workspace": "awb", "title": "Parser crashes",
+	})
+	w.outcome(res)
+	calls := rec.snapshot()
+	require.Len(t, calls, 3, "the malformed identity must not be cached")
+	assert.Equal(t, "https://awb.example/api/identity", calls[1].URL)
+	assert.Equal(t, http.MethodPut, calls[2].Method)
 }
 
 func TestAWBProxy_RejectsNonObjectMetadata(t *testing.T) {
