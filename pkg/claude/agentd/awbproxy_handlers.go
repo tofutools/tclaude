@@ -1320,6 +1320,11 @@ func handleAWBProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
+	if strings.TrimSpace(identity.Identity) == "" {
+		writeProxyFault(w, faultf(http.StatusBadGateway, "awb_failed",
+			"AWB returned an empty identity from /api/identity"))
+		return
+	}
 	issueID := awbCreateIssueID(workspace, identity.Identity, payload)
 	encoded, err := json.Marshal(payload)
 	if err != nil {

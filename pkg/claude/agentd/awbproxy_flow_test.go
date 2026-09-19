@@ -702,6 +702,22 @@ func TestAWBProxy_CreateStopsWhenIdentityLookupFails(t *testing.T) {
 	require.Len(t, rec.snapshot(), 1, "a failed identity lookup must prevent the PUT")
 }
 
+func TestAWBProxy_CreateRejectsEmptyIdentity(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+	w.grant(agentd.PermAWBWrite)
+	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
+		require.Equal(t, "https://awb.example/api/identity", req.URL)
+		return http.StatusOK, `{"identity":"  "}`
+	}
+
+	res := w.post("/v1/awb/issue/create", map[string]any{
+		"workspace": "awb", "title": "Parser crashes",
+	})
+	assert.Equal(t, http.StatusBadGateway, res.Code)
+	assert.Contains(t, res.Body.String(), "empty identity")
+	require.Len(t, rec.snapshot(), 1, "an empty identity must prevent the PUT")
+}
+
 func TestAWBProxy_RejectsNonObjectMetadata(t *testing.T) {
 	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
 	w.grant(agentd.PermAWBWrite)
@@ -758,6 +774,9 @@ func TestAWBProxy_CreateInfersTheOnlyVisibleWorkspace(t *testing.T) {
 		if strings.Contains(req.URL, "/api/workspaces") {
 			return http.StatusOK, awbWorkspacesJSON("awb")
 		}
+		if strings.HasSuffix(req.URL, "/api/identity") {
+			return http.StatusOK, `{"identity":"tclaude-bot"}`
+		}
 		return http.StatusOK, awbIssueJSON("awb-a3f9c1", "awb")
 	}
 
@@ -766,6 +785,8 @@ func TestAWBProxy_CreateInfersTheOnlyVisibleWorkspace(t *testing.T) {
 	calls := rec.snapshot()
 	require.Len(t, calls, 3, "workspace discovery and identity lookup must precede the mutation")
 	assert.Equal(t, "https://awb.example/api/identity", calls[1].URL)
+	assert.Equal(t, http.MethodPut, calls[2].Method)
+	assert.Equal(t, "https://awb.example/api/issues/awb-991b0e", calls[2].URL)
 	assert.JSONEq(t, `{"workspace":"awb","title":"Parser crashes"}`, string(calls[2].Body))
 }
 
