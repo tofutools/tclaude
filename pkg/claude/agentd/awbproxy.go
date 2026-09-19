@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -255,8 +256,9 @@ var awbDo = doAWBRequest
 // once per issue. The key changes when either configured endpoint or account
 // changes; singleflight also collapses concurrent cold-cache creates.
 var (
-	awbIdentityCache  sync.Map // map[string]string
-	awbIdentityFlight singleflight.Group
+	awbIdentityCache      sync.Map // map[string]string
+	awbIdentityFlight     singleflight.Group
+	awbIdentityGeneration atomic.Uint64
 )
 
 type awbIdentityLookup struct {
@@ -288,6 +290,10 @@ func SetAWBTransportForTest(
 }
 
 func resetAWBIdentityCache() {
+	// Invalidate cache and singleflight keys before deleting the old entries.
+	// A detached lookup from the previous transport generation may still finish,
+	// but it cannot be joined by or populate the cache for a later test.
+	awbIdentityGeneration.Add(1)
 	awbIdentityCache.Range(func(key, _ any) bool {
 		awbIdentityCache.Delete(key)
 		return true

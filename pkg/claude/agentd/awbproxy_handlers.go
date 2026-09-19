@@ -1347,7 +1347,8 @@ func handleAWBProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *awbProxySession) authenticatedIdentity(ctx context.Context) (string, *proxyFault) {
-	key := s.base + "\x00" + s.policy.Username
+	generation := awbIdentityGeneration.Load()
+	key := strconv.FormatUint(generation, 10) + "\x00" + s.base + "\x00" + s.policy.Username
 	if identity, ok := awbIdentityCache.Load(key); ok {
 		return identity.(string), nil
 	}
@@ -1372,7 +1373,9 @@ func (s *awbProxySession) authenticatedIdentity(ctx context.Context) (string, *p
 			return awbIdentityLookup{fault: faultf(http.StatusBadGateway, "awb_failed",
 				"AWB returned an empty identity from /api/identity")}, nil
 		}
-		awbIdentityCache.Store(key, response.Identity)
+		if awbIdentityGeneration.Load() == generation {
+			awbIdentityCache.Store(key, response.Identity)
+		}
 		return awbIdentityLookup{identity: response.Identity}, nil
 	})
 	select {
