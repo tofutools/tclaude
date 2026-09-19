@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
@@ -1312,6 +1314,12 @@ func handleAWBProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload.Workspace = workspace
+	identity, fault := s.authenticatedIdentity(r.Context())
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	issueID := awbCreateIssueID(workspace, identity, payload)
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "could not encode the AWB request")
@@ -1323,7 +1331,7 @@ func handleAWBProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	var issue awbIssue
 	if _, fault := s.exec(r.Context(), awbCall{
-		Method: http.MethodPost, Path: "/api/issues",
+		Method: http.MethodPut, Path: "/api/issues/" + awbSegment(issueID),
 		Body: encoded, ContentType: "application/json",
 	}, &issue); fault != nil {
 		writeProxyFault(w, fault)
@@ -1336,6 +1344,65 @@ func handleAWBProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 	// awb create is the exception to "a mutating command prints nothing":
 	// minting an id is the point, so the compact form is that id.
 	s.respond(w, r, "issue.create", body.Compact, &issue, issue.ID+"\n", "issue="+issue.ID)
+}
+
+func (s *awbProxySession) authenticatedIdentity(ctx context.Context) (string, *proxyFault) {
+	generation := awbIdentityGeneration.Load()
+	key := strconv.FormatUint(generation, 10) + "\x00" + s.base + "\x00" + s.policy.Username
+	if identity, ok := awbIdentityCache.Load(key); ok {
+		return identity.(string), nil
+	}
+	result := awbIdentityFlight.DoChan(key, func() (any, error) {
+		if identity, ok := awbIdentityCache.Load(key); ok {
+			return awbIdentityLookup{identity: identity.(string)}, nil
+		}
+		// A daemon-wide fill must not inherit the first request's cancellation
+		// or remaining request budget. Each waiter still selects on its own
+		// context below, while the shared lookup gets one ordinary call timeout.
+		lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), awbProxyTimeout)
+		defer cancel()
+		lookupSession := *s
+		lookupSession.deadline = time.Now().Add(awbProxyTimeout)
+		var response awbIdentityResponse
+		if _, fault := lookupSession.exec(lookupCtx, awbCall{
+			Method: http.MethodGet, Path: "/api/identity",
+		}, &response); fault != nil {
+			return awbIdentityLookup{fault: fault}, nil
+		}
+		if strings.TrimSpace(response.Identity) == "" {
+			return awbIdentityLookup{fault: faultf(http.StatusBadGateway, "awb_failed",
+				"AWB returned an empty identity from /api/identity")}, nil
+		}
+		if awbIdentityGeneration.Load() == generation {
+			awbIdentityCache.Store(key, response.Identity)
+		}
+		return awbIdentityLookup{identity: response.Identity}, nil
+	})
+	select {
+	case <-ctx.Done():
+		return "", faultf(http.StatusBadGateway, "awb_unreachable",
+			"could not reach the AWB server: %v", ctx.Err())
+	case completed := <-result:
+		lookup := completed.Val.(awbIdentityLookup)
+		return lookup.identity, lookup.fault
+	}
+}
+
+// awbCreateIssueID follows AWB's client-side ID algorithm. Keeping the ID at
+// the proxy boundary makes a retried create target the same resource, while
+// preserving the agent-facing CLI that accepts no explicit ID.
+func awbCreateIssueID(workspace, identity string, body *awbIssueCreateBody) string {
+	const hashLen = 6
+	typ := body.Type
+	if typ == "" {
+		typ = "task"
+	}
+	description := ""
+	if body.Description != nil {
+		description = *body.Description
+	}
+	sum := sha256.Sum256([]byte(identity + body.Title + typ + description))
+	return fmt.Sprintf("%s-%x", workspace, sum)[:len(workspace)+1+hashLen]
 }
 
 // resolveCreateWorkspace accepts an explicit workspace or infers the only

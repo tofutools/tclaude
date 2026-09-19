@@ -12,6 +12,30 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
+func TestAWBCreateIssueIDMatchesAWBVectors(t *testing.T) {
+	description := "details"
+	for _, tc := range []struct {
+		name      string
+		workspace string
+		identity  string
+		body      awbIssueCreateBody
+		want      string
+	}{
+		{
+			name: "default type and empty description", workspace: "awb", identity: "alice",
+			body: awbIssueCreateBody{Title: "Title"}, want: "awb-de4e24",
+		},
+		{
+			name: "explicit type and description", workspace: "team", identity: "bob",
+			body: awbIssueCreateBody{Title: "Parser", Type: "bug", Description: &description}, want: "team-a4f960",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, awbCreateIssueID(tc.workspace, tc.identity, &tc.body))
+		})
+	}
+}
+
 // awbproxy_test.go covers the pieces of the AWB proxy that are decisions rather
 // than plumbing: what an issue reference may be, what the operator's URL may
 // be, how the workspace gate prunes a tree, and the compact renderer — the last
