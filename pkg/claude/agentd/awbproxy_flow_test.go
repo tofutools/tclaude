@@ -565,9 +565,10 @@ func TestAWBProxy_CreateClaimBacklogAndLabels(t *testing.T) {
 		"workspace": "awb", "title": "Parked", "backlog": true,
 	}))
 	calls = rec.snapshot()
-	require.Len(t, calls, 2)
+	require.Len(t, calls, 1, "the second create reuses the cached AWB identity")
+	assert.Equal(t, http.MethodPut, calls[0].Method)
 	assert.JSONEq(t, `{"backlog":true,"workspace":"awb","title":"Parked"}`,
-		string(calls[1].Body))
+		string(calls[0].Body))
 
 	rec.reset()
 	res := w.post("/v1/awb/issue/create", map[string]any{

@@ -1313,19 +1313,12 @@ func handleAWBProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload.Workspace = workspace
-	var identity awbIdentityResponse
-	if _, fault := s.exec(r.Context(), awbCall{
-		Method: http.MethodGet, Path: "/api/identity",
-	}, &identity); fault != nil {
+	identity, fault := s.authenticatedIdentity(r.Context())
+	if fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
-	if strings.TrimSpace(identity.Identity) == "" {
-		writeProxyFault(w, faultf(http.StatusBadGateway, "awb_failed",
-			"AWB returned an empty identity from /api/identity"))
-		return
-	}
-	issueID := awbCreateIssueID(workspace, identity.Identity, payload)
+	issueID := awbCreateIssueID(workspace, identity, payload)
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "could not encode the AWB request")
@@ -1350,6 +1343,32 @@ func handleAWBProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 	// awb create is the exception to "a mutating command prints nothing":
 	// minting an id is the point, so the compact form is that id.
 	s.respond(w, r, "issue.create", body.Compact, &issue, issue.ID+"\n", "issue="+issue.ID)
+}
+
+func (s *awbProxySession) authenticatedIdentity(ctx context.Context) (string, *proxyFault) {
+	key := s.base + "\x00" + s.policy.Username
+	if identity, ok := awbIdentityCache.Load(key); ok {
+		return identity.(string), nil
+	}
+	value, _, _ := awbIdentityFlight.Do(key, func() (any, error) {
+		if identity, ok := awbIdentityCache.Load(key); ok {
+			return awbIdentityLookup{identity: identity.(string)}, nil
+		}
+		var response awbIdentityResponse
+		if _, fault := s.exec(ctx, awbCall{
+			Method: http.MethodGet, Path: "/api/identity",
+		}, &response); fault != nil {
+			return awbIdentityLookup{fault: fault}, nil
+		}
+		if strings.TrimSpace(response.Identity) == "" {
+			return awbIdentityLookup{fault: faultf(http.StatusBadGateway, "awb_failed",
+				"AWB returned an empty identity from /api/identity")}, nil
+		}
+		awbIdentityCache.Store(key, response.Identity)
+		return awbIdentityLookup{identity: response.Identity}, nil
+	})
+	lookup := value.(awbIdentityLookup)
+	return lookup.identity, lookup.fault
 }
 
 // awbCreateIssueID follows AWB's client-side ID algorithm. Keeping the ID at

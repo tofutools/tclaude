@@ -12,11 +12,13 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"golang.org/x/sync/singleflight"
 )
 
 // awbproxy.go is the daemon half of `tclaude proxy awb` — Agent Work Board
@@ -248,12 +250,27 @@ type awbHTTPResult struct {
 // the real request; tests swap in a recorder.
 var awbDo = doAWBRequest
 
+// The authenticated identity is stable for one AWB server/account pair. Keep
+// it across proxy requests so issue creation pays for /api/identity once, not
+// once per issue. The key changes when either configured endpoint or account
+// changes; singleflight also collapses concurrent cold-cache creates.
+var (
+	awbIdentityCache  sync.Map // map[string]string
+	awbIdentityFlight singleflight.Group
+)
+
+type awbIdentityLookup struct {
+	identity string
+	fault    *proxyFault
+}
+
 // SetAWBTransportForTest swaps the outbound-HTTP boundary. Returns a restore
 // func.
 func SetAWBTransportForTest(
 	fn func(ctx context.Context, req AWBProxyRequest) (int, []byte, http.Header, error),
 ) func() {
 	prev := awbDo
+	resetAWBIdentityCache()
 	awbDo = func(ctx context.Context, req AWBProxyRequest) (awbHTTPResult, error) {
 		status, body, headers, err := fn(ctx, req)
 		if err != nil {
@@ -264,7 +281,15 @@ func SetAWBTransportForTest(
 		}
 		return awbHTTPResult{Status: status, Body: body, Headers: headers}, nil
 	}
-	return func() { awbDo = prev }
+	return func() {
+		awbDo = prev
+		resetAWBIdentityCache()
+	}
+}
+
+func resetAWBIdentityCache() {
+	awbIdentityCache = sync.Map{}
+	awbIdentityFlight = singleflight.Group{}
 }
 
 // awbHTTPClient is the daemon's client for AWB. Explicitly constructed rather
