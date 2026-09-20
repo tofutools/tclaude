@@ -3306,6 +3306,11 @@ func TclaudeLayerHarnessStateRoot(harnessName string) (string, error) {
 		return filepath.Join(home, ".copilot"), nil
 	case harness.OpenCodeName:
 		return filepath.Join(home, ".opencode"), nil
+	case harness.ShellName:
+		// Shell has no native state directory; keep a dedicated writable root
+		// for the shared tclaude-layer launch contract rather than borrowing a
+		// coding harness's credentials or runtime state.
+		return filepath.Join(home, ".tclaude", "shell"), nil
 	default:
 		return "", fmt.Errorf("tclaude’s sandbox has no launch-contract state root for harness %q", harnessName)
 	}
