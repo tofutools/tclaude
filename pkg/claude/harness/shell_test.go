@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,7 +20,11 @@ func TestShellHarnessRegistration(t *testing.T) {
 func TestShellSpawnerBuildCommand(t *testing.T) {
 	t.Setenv("SHELL", "/bin/test shell")
 	spawner := shellSpawner{}
-	assert.Equal(t, `export A='b'; exec script -qefc 'exec '\''/bin/test shell'\'' -i' /dev/null`, spawner.BuildCommand(SpawnSpec{
+	wantInteractive := `export A='b'; exec script -qefc 'exec '\''/bin/test shell'\'' -i' /dev/null`
+	if runtime.GOOS == "darwin" {
+		wantInteractive = `export A='b'; exec script -q /dev/null '/bin/test shell' -i`
+	}
+	assert.Equal(t, wantInteractive, spawner.BuildCommand(SpawnSpec{
 		EnvExports: "export A='b'; ",
 	}))
 	assert.Equal(t, `exec '/bin/test shell' -c 'printf '\''hello world'\'''`,
