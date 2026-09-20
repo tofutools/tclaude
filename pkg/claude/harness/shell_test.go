@@ -19,7 +19,7 @@ func TestShellHarnessRegistration(t *testing.T) {
 func TestShellSpawnerBuildCommand(t *testing.T) {
 	t.Setenv("SHELL", "/bin/test shell")
 	spawner := shellSpawner{}
-	assert.Equal(t, `export A='b'; exec '/bin/test shell'`, spawner.BuildCommand(SpawnSpec{
+	assert.Equal(t, `export A='b'; exec setsid -w '/bin/test shell' -i`, spawner.BuildCommand(SpawnSpec{
 		EnvExports: "export A='b'; ",
 	}))
 	assert.Equal(t, `exec '/bin/test shell' -c 'printf '\''hello world'\'''`,

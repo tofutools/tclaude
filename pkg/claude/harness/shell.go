@@ -42,7 +42,11 @@ func (shellSpawner) BuildCommand(spec SpawnSpec) string {
 	prefix := spec.EnvExports + spec.PreLaunchScript
 	shell := clcommon.ShellQuoteArg(shellExecutable())
 	if spec.InitialPrompt == "" {
-		return prefix + "exec " + shell
+		// tclaude-layer deliberately starts a new session, so the shell is
+		// PID 1 without a controlling terminal. Create a session leader on the
+		// pane PTY and request interactive mode so bash/zsh can establish job
+		// control instead of warning that the terminal process group is absent.
+		return prefix + "exec setsid -w " + shell + " -i"
 	}
 	return prefix + "exec " + shell + " -c " + clcommon.ShellQuoteArg(spec.InitialPrompt)
 }
