@@ -171,6 +171,23 @@ func TestApprovalLineageAllowedMatrix(t *testing.T) {
 	}
 }
 
+func TestApprovalLineageAllowsConfinedShellChild(t *testing.T) {
+	for _, parent := range []struct {
+		harness, policy string
+	}{
+		{DefaultName, claudePermAuto},
+		{DefaultName, claudePermBypass},
+		{CodexName, ApprovalOnRequest},
+	} {
+		if !ApprovalLineageAllowed(parent.harness, parent.policy, false, ShellName, "", false) {
+			t.Fatalf("%s/%s should be able to delegate a confined shell", parent.harness, parent.policy)
+		}
+	}
+	if ApprovalLineageAllowed(DefaultName, claudePermAccept, false, ShellName, "", false) {
+		t.Fatal("a parent without unattended command capability must not delegate a shell")
+	}
+}
+
 // An empty harness name is the historic spelling of "Claude", on both sides.
 func TestApprovalLineageBlankHarnessIsClaude(t *testing.T) {
 	if !ApprovalLineageAllowed("", claudePermInherit, false, "", claudePermPlan, false) {

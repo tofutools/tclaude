@@ -115,6 +115,8 @@ func SandboxOffMode(h *Harness) (string, error) {
 		// posture with no tclaude-claimed containment, and for Copilot that is
 		// the mode whose containment claim is "none of mine".
 		mode = CopilotSandboxOff
+	case ShellName:
+		mode = ShellSandboxOff
 	default:
 		return "", fmt.Errorf("harness %q has no sandbox-off mode", h.Name)
 	}
