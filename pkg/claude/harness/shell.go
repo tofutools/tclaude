@@ -3,6 +3,7 @@ package harness
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -42,11 +43,15 @@ func (shellSpawner) BuildCommand(spec SpawnSpec) string {
 	prefix := spec.EnvExports + spec.PreLaunchScript
 	shell := clcommon.ShellQuoteArg(shellExecutable())
 	if spec.InitialPrompt == "" {
-		// tclaude-layer deliberately starts a new session, so the shell is
-		// PID 1 without a controlling terminal. Create a session leader on the
-		// pane PTY and request interactive mode so bash/zsh can establish job
-		// control instead of warning that the terminal process group is absent.
-		return prefix + "exec setsid -w " + shell + " -i"
+		// tclaude-layer deliberately starts a new session without a controlling
+		// terminal. `script` allocates a nested PTY, so bash/zsh can establish
+		// job control instead of warning that the terminal process group is
+		// absent.
+		interactive := "exec " + shell + " -i"
+		if runtime.GOOS == "darwin" {
+			return prefix + "exec script -q /dev/null " + shell + " -i"
+		}
+		return prefix + "exec script -qefc " + clcommon.ShellQuoteArg(interactive) + " /dev/null"
 	}
 	return prefix + "exec " + shell + " -c " + clcommon.ShellQuoteArg(spec.InitialPrompt)
 }
