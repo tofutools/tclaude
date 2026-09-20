@@ -650,9 +650,13 @@ func applyExitCallback(p exitCallbackParams) error {
 	}
 	if row, loadErr := db.LoadSession(p.SessionID); loadErr == nil && row != nil &&
 		row.Harness == harness.ShellName {
-		reason := "command_succeeded"
+		reason := "command_exit_unknown"
 		if code != nil {
-			reason = fmt.Sprintf("command_exit_code_%d", *code)
+			if *code == 0 {
+				reason = "command_succeeded"
+			} else {
+				reason = fmt.Sprintf("command_exit_code_%d", *code)
+			}
 		} else if p.Signal != "" {
 			reason = "command_signal_" + strings.ToLower(p.Signal)
 		}

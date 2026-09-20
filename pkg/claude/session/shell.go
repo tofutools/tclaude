@@ -248,6 +248,10 @@ func rejectShellUnsupportedFlags(params *NewParams) error {
 		return fmt.Errorf(notApplicable, "--effort", ShellHarnessName, "a shell session has no model")
 	case params.Sandbox != "":
 		return fmt.Errorf(notApplicable, "--sandbox", ShellHarnessName, "it has no launch-time sandbox mode")
+	case params.SandboxImpl != "":
+		return fmt.Errorf(notApplicable, "--sandbox-impl", ShellHarnessName, "it has no launch-time sandbox mode")
+	case params.SandboxProfile != "":
+		return fmt.Errorf(notApplicable, "--sandbox-profile", ShellHarnessName, "it has no sandbox profiles")
 	case params.PermissionProfile != "":
 		return fmt.Errorf(notApplicable, "--permission-profile", ShellHarnessName, "it has no permission profiles")
 	case params.Approval != "":

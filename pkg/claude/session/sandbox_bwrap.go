@@ -1052,9 +1052,6 @@ func ValidateTclaudeLayerNetwork(
 	if sandboxpolicy.NetworkRulesArePrivateRoutedOpen(axes.Network) {
 		return nil, nil
 	}
-	if h != nil && h.UsesCommandInput() {
-		return nil, nil
-	}
 	switch axes.Network.Mode {
 	case sandboxpolicy.AccessModeUnset:
 		return nil, nil
@@ -1062,8 +1059,14 @@ func ValidateTclaudeLayerNetwork(
 		if len(axes.Network.Deny) == 0 {
 			return nil, nil
 		}
+		if h != nil && h.UsesCommandInput() {
+			return nil, nil
+		}
 		fallthrough
 	case sandboxpolicy.AccessModeList:
+		if h != nil && h.UsesCommandInput() {
+			return nil, nil
+		}
 		deployedEngine, engineErr :=
 			sandboxpolicy.DeployedNetworkEngineForRules(axes.Network)
 		if engineErr != nil {
@@ -1116,6 +1119,9 @@ func ValidateTclaudeLayerNetwork(
 			Detail: detail,
 		}}, nil
 	case sandboxpolicy.AccessModeClosed:
+		if h != nil && h.UsesCommandInput() {
+			return nil, nil
+		}
 	default:
 		return nil, fmt.Errorf("unsupported tclaude sandbox network mode %q", axes.Network.Mode)
 	}

@@ -445,7 +445,7 @@ func sendNudgeBracket(toConv string, m *db.AgentMessage, nudge string) bool {
 
 func allowsPaneNudge(harnessName string) bool {
 	deliveryHarness, err := harness.Resolve(harnessName)
-	return err != nil || !deliveryHarness.UsesCommandInput()
+	return err == nil && !deliveryHarness.UsesCommandInput()
 }
 
 // commandInputConv checks the durable session rows without probing tmux. It
