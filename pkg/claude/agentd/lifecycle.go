@@ -6932,7 +6932,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		// turn. The non-empty check keeps briefingInlined strict: an empty
 		// briefing fits the launch prompt's clean "wait" welcome but has no inbox
 		// row to consume.
-		if spawnHarness.Name == harness.ShellName {
+		if spawnHarness.UsesCommandInput() {
 			// For the shell pseudo-harness the brief is executable command text,
 			// not an agent welcome. Empty means an interactive shell.
 			spawnArgs.InitialPrompt = p.InitialMessage
@@ -7232,7 +7232,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 				// recorded that terminal state, the preset conversation proves the
 				// launch happened; command exit (including non-zero) is completion,
 				// not a harness-startup failure.
-				if spawnHarness.Name == harness.ShellName && spawnArgs.InitialPrompt != "" &&
+				if spawnHarness.UsesCommandInput() && spawnArgs.InitialPrompt != "" &&
 					s.Status == session.StatusExited && s.ConvID != "" {
 					tmuxSession = s.TmuxSession
 					convID = s.ConvID
@@ -7241,7 +7241,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 				// The shell callback may still be racing this observation. Do not
 				// classify its retained, cleanly-finished pane as a failed harness
 				// startup; wait for the authenticated terminal-state write above.
-				if spawnHarness.Name == harness.ShellName && spawnArgs.InitialPrompt != "" {
+				if spawnHarness.UsesCommandInput() && spawnArgs.InitialPrompt != "" {
 					sleepSpawnPoll(deadline)
 					continue
 				}
@@ -7363,7 +7363,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 				spawnRowBelongsToLaunch(s, launchEnroll, preConvID, launchedAt) &&
 				s.TmuxSession != "" {
 				if session.IsTmuxSessionAlive(s.TmuxSession) ||
-					(spawnHarness.Name == harness.ShellName && spawnArgs.InitialPrompt != "" &&
+					(spawnHarness.UsesCommandInput() && spawnArgs.InitialPrompt != "" &&
 						s.Status == session.StatusExited && s.ConvID == preConvID) {
 					tmuxSession = s.TmuxSession
 				}
