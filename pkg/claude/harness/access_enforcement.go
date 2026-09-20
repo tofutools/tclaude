@@ -358,7 +358,7 @@ func accessEnforcementTable(
 		if implementation != sandboxpolicy.ImplementationTclaudeLayer ||
 			goos != "linux" || h == nil ||
 			(h.Name != DefaultName && h.Name != CodexName && h.Name != OpenCodeName &&
-				h.Name != CopilotName) {
+				h.Name != CopilotName && h.Name != ShellName) {
 			harnessName := "<unresolved>"
 			if h != nil {
 				harnessName = h.Name
@@ -976,7 +976,7 @@ func linuxHostOpenConstructedRootAvailable(
 		return false
 	}
 	if h == nil || (h.Name != DefaultName && h.Name != CodexName &&
-		h.Name != OpenCodeName && h.Name != CopilotName) {
+		h.Name != OpenCodeName && h.Name != CopilotName && h.Name != ShellName) {
 		return false
 	}
 	posture, err := sandboxpolicy.NetworkPostureForRules(axes.Network)
@@ -1047,7 +1047,7 @@ func SupportsExplicitFilesystemRoot(
 	return goos == "linux" &&
 		implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 		h != nil && (h.Name == DefaultName || h.Name == CodexName ||
-		h.Name == OpenCodeName || h.Name == CopilotName)
+		h.Name == OpenCodeName || h.Name == CopilotName || h.Name == ShellName)
 }
 
 // ValidateExplicitFilesystemRoot applies the explicit-root target matrix at

@@ -819,7 +819,7 @@ func TestSandboxOffPredictionNeverCreditsBuiltinEnforcement(t *testing.T) {
 			Mode: sandboxpolicy.AccessModeClosed,
 		},
 	}
-	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName, CopilotName} {
+	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName, CopilotName, ShellName} {
 		t.Run(harnessName, func(t *testing.T) {
 			prediction, err := PredictAccessEnforcement(
 				MustGet(harnessName), sandboxpolicy.ImplementationOff,
