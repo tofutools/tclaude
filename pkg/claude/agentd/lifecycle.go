@@ -6874,7 +6874,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		// the online-message flush can claim and inject a redundant nudge.
 		spawnContextBody := buildSpawnContextBody(groupName, p.GroupContext, p.ProfileContext, p.InitialMessage, p.Attachments)
 		inlineCap := spawnInlineMaxChars()
-		briefingInlined = spawnContextBody != "" && spawnBriefingFitsLaunch(spawnContextBody, inlineCap)
+		briefingInlined = !spawnHarness.UsesCommandInput() && spawnContextBody != "" && spawnBriefingFitsLaunch(spawnContextBody, inlineCap)
 		mid, actorCreated, fail := enrollSpawnedConv(g, p, preConvID, briefingInlined)
 		if fail != nil {
 			// Enrollment can fail with partial state already committed (the
