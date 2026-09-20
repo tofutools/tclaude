@@ -217,6 +217,12 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			Effort: effort, Model: model,
 		}
 	}
+	if h, resolveErr := harness.Resolve(relaunch.Harness); resolveErr == nil && h.UsesCommandInput() {
+		return cloneSpawnResult{}, &cloneSpawnError{
+			Status: http.StatusUnprocessableEntity, Code: "unsupported_harness",
+			Msg: "clone is not supported for command-input harness " + relaunch.Harness,
+		}
+	}
 	effort, model = relaunch.Effort, relaunch.Model
 	var fastModeAtLaunch *bool
 	if relaunch.Harness == harness.CodexName && relaunch.CodexStateRoot != "" {
