@@ -447,7 +447,7 @@ func accessEnforcementTable(
 		// their carriage smokes land.
 		packetGateway := deployedEngine != sandboxpolicy.NetworkEngineProxy
 		filteredGatewayHarness := h.Name == DefaultName || h.Name == CodexName ||
-			h.Name == OpenCodeName
+			h.Name == OpenCodeName || h.Name == ShellName
 		privateRoutedCopilot := h.Name == CopilotName &&
 			sandboxpolicy.NetworkRulesArePrivateRoutedOpen(axes.Network)
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
