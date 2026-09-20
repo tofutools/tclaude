@@ -143,6 +143,9 @@ func harnessConfigFloorCatalog(
 		// (pkg/claude/agentd/opencode_state_unix.go). A catalog here would be
 		// redundant, would aim at the wrong root under private state, and
 		// would materialize junk in the operator's real ~/.config/opencode.
+	case harness.ShellName:
+		// Shell has no persistent harness policy or executable-code catalog;
+		// its dedicated state root remains writable for the launch contract.
 	default:
 		return nil, fmt.Errorf(
 			"harness config floor has no catalog for harness %q", harnessName)
