@@ -222,6 +222,13 @@ func flushQueue(label string, list func() ([]*db.AgentMessage, error), canDelive
 		// lease-expiry window without weakening restart recovery.
 		registerActiveNudge(m.ID, token)
 		nudge, consumed := messageNudgeTextFor(m)
+		// Command-input panes (currently the shell pseudo-harness) use the
+		// durable inbox as their only delivery surface. sendNudgeBracket returns
+		// true for those panes to record delivery without typing peer-authored
+		// bytes, so never mark that inbox copy read here.
+		if sess := pickNudgeSession(m.ToConv); sess != nil && !allowsPaneNudge(sess.Harness) {
+			consumed = false
+		}
 		completed := func() bool {
 			defer unregisterActiveNudge(m.ID, token)
 			if !send(m, nudge) {
