@@ -183,7 +183,7 @@ func runUnreadReminderTickWith(now time.Time, st *unreadReminderState) {
 		// Command-input panes use the durable inbox rather than a prompt
 		// channel. In particular, never type a peer-authored reminder into a
 		// shell, where it would execute as a command.
-		if live := pickNudgeSession(conv); live != nil && !allowsPaneNudge(live.Harness) {
+		if !allowsPaneNudge(sess.Harness) {
 			continue
 		}
 		reminder := unreadReminderText(byConv[conv])

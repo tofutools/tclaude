@@ -226,7 +226,7 @@ func flushQueue(label string, list func() ([]*db.AgentMessage, error), canDelive
 		// durable inbox as their only delivery surface. sendNudgeBracket returns
 		// true for those panes to record delivery without typing peer-authored
 		// bytes, so never mark that inbox copy read here.
-		if sess := pickNudgeSession(m.ToConv); sess != nil && !allowsPaneNudge(sess.Harness) {
+		if commandInputConv(m.ToConv) {
 			consumed = false
 		}
 		completed := func() bool {
@@ -446,6 +446,23 @@ func sendNudgeBracket(toConv string, m *db.AgentMessage, nudge string) bool {
 func allowsPaneNudge(harnessName string) bool {
 	deliveryHarness, err := harness.Resolve(harnessName)
 	return err != nil || !deliveryHarness.UsesCommandInput()
+}
+
+// commandInputConv checks the durable session rows without probing tmux. It
+// is used only to decide whether a successful durable delivery should also
+// mark the inbox copy read; a transient pane-probe failure must not make that
+// security-sensitive decision fail open.
+func commandInputConv(convID string) bool {
+	rows, err := db.FindSessionsByConvID(convID)
+	if err != nil {
+		return false
+	}
+	for _, row := range rows {
+		if !allowsPaneNudge(row.Harness) {
+			return true
+		}
+	}
+	return false
 }
 
 // pickNudgeSession returns the most-recent row whose tmux pane answers the
