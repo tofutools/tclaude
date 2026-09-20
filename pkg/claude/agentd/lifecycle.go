@@ -6932,9 +6932,15 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		// turn. The non-empty check keeps briefingInlined strict: an empty
 		// briefing fits the launch prompt's clean "wait" welcome but has no inbox
 		// row to consume.
-		spawnArgs.InitialPrompt = buildSpawnLaunchPrompt(p.Name, p.Role, p.Descr, groupName,
-			preMsgID, p.InitialMessage != "", spawnContextBody, p.WorktreePath, p.WorktreeBranch,
-			resolveSpawnerTitle(p.SpawnedByConv, p.SpawnedByAgent), inlineCap)
+		if spawnHarness.Name == harness.ShellName {
+			// For the shell pseudo-harness the brief is executable command text,
+			// not an agent welcome. Empty means an interactive shell.
+			spawnArgs.InitialPrompt = p.InitialMessage
+		} else {
+			spawnArgs.InitialPrompt = buildSpawnLaunchPrompt(p.Name, p.Role, p.Descr, groupName,
+				preMsgID, p.InitialMessage != "", spawnContextBody, p.WorktreePath, p.WorktreeBranch,
+				resolveSpawnerTitle(p.SpawnedByConv, p.SpawnedByAgent), inlineCap)
+		}
 	} else if spawnHarness.NeedsSpawnSeed() {
 		// Seed-needing harness (Codex): the conv-id can't be preset, so
 		// enrollment + the inbox briefing happen post-connect. But the pane still

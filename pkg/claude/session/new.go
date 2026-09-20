@@ -553,20 +553,17 @@ func runNew(params *NewParams) error {
 	if err != nil {
 		return err
 	}
-	// "shell" is a sentinel, not a registered harness (see shell.go) — branch
-	// before any harness resolution so a plain shell never touches the
-	// coding-harness machinery below (model/effort validation, sandbox,
-	// approval, hooks, --join-group, …). --shell is shorthand for
-	// --harness shell; an explicit --harness naming anything else alongside
-	// it is a conflicting request rather than something to silently resolve.
+	// --shell preserves the lightweight standalone shell-session path. An
+	// explicit --harness shell is the registered pseudo-harness and therefore
+	// uses the managed agent/profile/sandbox pipeline below.
 	params.Harness = strings.TrimSpace(params.Harness)
 	if params.Shell {
 		if params.Harness != "" && params.Harness != ShellHarnessName {
 			return fmt.Errorf("--shell conflicts with --harness %s", params.Harness)
 		}
-		params.Harness = ShellHarnessName
+		return runNewShell(params)
 	}
-	if params.Harness == ShellHarnessName {
+	if params.Harness == ShellHarnessName && !params.ManagedLaunch {
 		return runNewShell(params)
 	}
 
@@ -614,7 +611,7 @@ func runNew(params *NewParams) error {
 			return fmt.Errorf("--session-id cannot be combined with --resume")
 		}
 		switch h.Name {
-		case harness.DefaultName, harness.CopilotName:
+		case harness.DefaultName, harness.CopilotName, harness.ShellName:
 			if !clcommon.IsValidUUID(params.SessionID) {
 				return fmt.Errorf("--session-id must be a valid UUID, got %q", params.SessionID)
 			}

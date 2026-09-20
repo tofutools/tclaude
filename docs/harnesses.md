@@ -5,7 +5,7 @@ tclaude-managed tmux pane. tclaude is harness-agnostic: sessions,
 conversations, `ask`, agent groups, lifecycle, and the dashboard all work
 across every harness, and a group can freely mix them.
 
-Four harnesses are supported:
+Four coding harnesses and one shell pseudo-harness are supported:
 
 | `--harness` | Harness | Binary in the pane |
 | --- | --- | --- |
@@ -13,17 +13,20 @@ Four harnesses are supported:
 | `codex` | OpenAI Codex CLI | `codex` |
 | `opencode` | OpenCode | managed `opencode serve` + an `attach` client |
 | `copilot` | GitHub Copilot CLI | `copilot` |
+| `shell` | ordinary shell (no model) | `$SHELL` or `/bin/sh` |
 
 tclaude owns everything around the pane — the tmux session, status tracking,
 the conversation index, groups and messaging, the dashboard — while each
 harness contributes only what is genuinely harness-specific: how to launch it,
 where it stores conversations, and which in-pane commands it understands.
 
-!!! note "`--harness shell` is not a harness"
-    `--shell` starts a plain interactive shell in a managed tmux session —
-    a convenience hack with no conversation, hooks, model, or sandbox. It is
-    deliberately not part of the harness lineup. See
-    [Sessions](sessions.md#shell-sessions).
+!!! note "Shell has two launch forms"
+    `session new --shell` (and the equivalent direct `--harness shell` form)
+    starts the lightweight standalone shell session described under
+    [Sessions](sessions.md#shell-sessions). `agent spawn --harness shell`
+    instead uses the managed agent pipeline: group enrollment, worktrees,
+    spawn profiles, and tclaude's OS sandbox are available, but model,
+    reasoning, hooks, and harness-native sandbox options are not.
 
 ## How capabilities work
 
@@ -68,6 +71,8 @@ described in [Spawning and lifecycle](spawning-and-lifecycle.md).
 tclaude session new --harness codex
 tclaude agent spawn --group crew --name worker --harness opencode
 tclaude session new --harness copilot --model gpt-5.4
+tclaude agent spawn --group crew --name checks --harness shell \
+  --initial-message 'go test ./...'
 ```
 
 ### Persistence and resume posture

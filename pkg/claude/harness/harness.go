@@ -751,7 +751,10 @@ func SpawnBinaries() []string {
 	defer registryMu.RUnlock()
 	out := make([]string, 0, len(registry))
 	for _, h := range registry {
-		if h.Spawn != nil {
+		// The shell pseudo-harness deliberately runs a ubiquitous system shell.
+		// Treating every sh/bash process as a coding-harness ancestor would make
+		// ordinary terminals eligible for hook attribution.
+		if h.Spawn != nil && h.Name != ShellName {
 			out = append(out, h.Spawn.Binary())
 		}
 	}
