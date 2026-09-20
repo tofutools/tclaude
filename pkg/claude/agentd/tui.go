@@ -461,7 +461,7 @@ func (a tuiAgentRow) name() string {
 func (a tuiAgentRow) status() string {
 	if !a.Online {
 		if a.State.Harness == "shell" && strings.HasPrefix(a.State.ExitReason, "command_") {
-			return a.State.ExitReason
+			return strings.TrimPrefix(a.State.ExitReason, "command_")
 		}
 		return "offline"
 	}
