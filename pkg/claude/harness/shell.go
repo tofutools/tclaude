@@ -2,6 +2,7 @@ package harness
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -22,16 +23,24 @@ func init() {
 		TclaudeLayerMode: ShellSandboxOff,
 		TmuxScrollback:   true,
 		LaunchEnrollment: true,
+		CommandInput:     true,
 	})
 }
 
 type shellSpawner struct{}
 
-func (shellSpawner) Binary() string { return "sh" }
+func (shellSpawner) Binary() string { return shellExecutable() }
+
+func shellExecutable() string {
+	if value := strings.TrimSpace(os.Getenv("SHELL")); value != "" {
+		return value
+	}
+	return "/bin/sh"
+}
 
 func (shellSpawner) BuildCommand(spec SpawnSpec) string {
 	prefix := spec.EnvExports + spec.PreLaunchScript
-	shell := `"${SHELL:-/bin/sh}"`
+	shell := clcommon.ShellQuoteArg(shellExecutable())
 	if spec.InitialPrompt == "" {
 		return prefix + "exec " + shell
 	}

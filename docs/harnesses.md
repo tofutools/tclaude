@@ -94,26 +94,26 @@ warning. Model and effort are remembered by the harness itself.
 
 ✅ yes · ⚠️ partial / with caveats · ❌ no
 
-| Capability | Claude Code | Codex CLI | OpenCode | Copilot CLI |
-| --- | --- | --- | --- | --- |
-| Sessions: spawn / resume | ✅ | ✅ | ✅ managed server + attach | ✅ |
-| One-shot [`ask`](ask.md) | ✅ live-streamed | ✅ buffered | ✅ buffered | ✅ buffered |
-| [Conversation](conversations.md) list & search | ✅ | ✅ | ✅ | ✅ |
-| Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only |
-| Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` |
-| Compact / reincarnate | ✅ | ✅ | ✅ (server API, no keystrokes) | ✅ |
-| Séance (ask posture) replay | ✅ | ✅ | ❌ | ❌ |
-| [Remote control](remote.md) | ✅ | ❌ | ❌ | ❌ |
-| [Status line](utilities.md#status-line) | ✅ command-backed | ⚠️ curated built-in items | ⚠️ OpenCode's own TUI status | ❌ |
-| [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ |
-| Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off |
-| [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ |
-| Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD |
-| Hooks via `tclaude setup` | ✅ | ✅ | ❌ (server liveness instead) | ✅ |
-| Directory pre-trust (`--trust-dir`) | ✅ | ✅ | — no trust dialog | ✅ |
-| Tool governance (`--tools`) | ❌ | ❌ | ✅ | ❌ |
-| Fast mode | ❌ | ✅ | ❌ | ❌ |
-| API/RPC drive | — n/a | ⚠️ experimental `--codex-app-server` | ✅ inherent | ⚠️ experimental `--copilot-api` |
+| Capability | Claude Code | Codex CLI | OpenCode | Copilot CLI | Shell |
+| --- | --- | --- | --- | --- | --- |
+| Sessions: spawn / resume | ✅ | ✅ | ✅ managed server + attach | ✅ | ✅ spawn only |
+| One-shot [`ask`](ask.md) | ✅ live-streamed | ✅ buffered | ✅ buffered | ✅ buffered | ❌ |
+| [Conversation](conversations.md) list & search | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only | ⚠️ durable inbox only; never injected into the shell |
+| Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` | ❌ |
+| Compact / reincarnate | ✅ | ✅ | ✅ (server API, no keystrokes) | ✅ | ❌ |
+| Séance (ask posture) replay | ✅ | ✅ | ❌ | ❌ | ❌ |
+| [Remote control](remote.md) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| [Status line](utilities.md#status-line) | ✅ command-backed | ⚠️ curated built-in items | ⚠️ OpenCode's own TUI status | ❌ | ❌ |
+| [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off | ❌ |
+| [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ | ✅ |
+| Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD | ❌ |
+| Hooks via `tclaude setup` | ✅ | ✅ | ❌ (server liveness instead) | ✅ | ❌ |
+| Directory pre-trust (`--trust-dir`) | ✅ | ✅ | — no trust dialog | ✅ | — |
+| Tool governance (`--tools`) | ❌ | ❌ | ✅ | ❌ | ❌ |
+| Fast mode | ❌ | ✅ | ❌ | ❌ | ❌ |
+| API/RPC drive | — n/a | ⚠️ experimental `--codex-app-server` | ✅ inherent | ⚠️ experimental `--copilot-api` | — n/a |
 
 The rest of this page walks each harness: setup, maturity, models, sandbox
 and approval knobs, and the extras only that harness has.

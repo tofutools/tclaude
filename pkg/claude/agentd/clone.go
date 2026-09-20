@@ -1300,6 +1300,11 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 		writeError(w, http.StatusConflict, "relaunch_profile", relaunchErr.Error())
 		return
 	}
+	if cloneHarness, err := harness.Resolve(relaunch.Harness); err == nil && cloneHarness.UsesCommandInput() {
+		writeError(w, http.StatusUnprocessableEntity, "unsupported_harness",
+			"shell agents cannot be cloned; start a new shell agent with the desired command")
+		return
+	}
 	cwd := oldSess.Cwd
 	if cwdOverride == "" {
 		var cwdErr error

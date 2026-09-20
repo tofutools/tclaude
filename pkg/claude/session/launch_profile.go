@@ -290,6 +290,9 @@ func firstInstalledHarness(lookPath func(string) (string, error)) string {
 	names := append([]string{harness.DefaultName}, harness.Names()...)
 	seen := map[string]bool{}
 	for _, name := range names {
+		if name == harness.ShellName {
+			continue
+		}
 		if seen[name] {
 			continue
 		}

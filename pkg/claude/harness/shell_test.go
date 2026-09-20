@@ -17,11 +17,12 @@ func TestShellHarnessRegistration(t *testing.T) {
 }
 
 func TestShellSpawnerBuildCommand(t *testing.T) {
+	t.Setenv("SHELL", "/bin/test shell")
 	spawner := shellSpawner{}
-	assert.Equal(t, `export A='b'; exec "${SHELL:-/bin/sh}"`, spawner.BuildCommand(SpawnSpec{
+	assert.Equal(t, `export A='b'; exec '/bin/test shell'`, spawner.BuildCommand(SpawnSpec{
 		EnvExports: "export A='b'; ",
 	}))
-	assert.Equal(t, `exec "${SHELL:-/bin/sh}" -c 'printf '\''hello world'\'''`,
+	assert.Equal(t, `exec '/bin/test shell' -c 'printf '\''hello world'\'''`,
 		spawner.BuildCommand(SpawnSpec{InitialPrompt: "printf 'hello world'"}))
 }
 

@@ -7227,6 +7227,24 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			// polling otherwise; the child may still be between its row write and
 			// `tmux new-session`.
 			if s.TmuxSession == "" || !session.IsTmuxSessionAlive(s.TmuxSession) {
+				// A one-shot shell is expected to make its pane disappear when
+				// the command completes. Once the authenticated exit callback has
+				// recorded that terminal state, the preset conversation proves the
+				// launch happened; command exit (including non-zero) is completion,
+				// not a harness-startup failure.
+				if spawnHarness.Name == harness.ShellName && spawnArgs.InitialPrompt != "" &&
+					s.Status == session.StatusExited && s.ConvID != "" {
+					tmuxSession = s.TmuxSession
+					convID = s.ConvID
+					break
+				}
+				// The shell callback may still be racing this observation. Do not
+				// classify its retained, cleanly-finished pane as a failed harness
+				// startup; wait for the authenticated terminal-state write above.
+				if spawnHarness.Name == harness.ShellName && spawnArgs.InitialPrompt != "" {
+					sleepSpawnPoll(deadline)
+					continue
+				}
 				// A retained dead pane is definitive startup-failure evidence. Its
 				// callback also copies the bounded error tail into the Logs tab before
 				// cleanup; fail the spawn response instead of enrolling an offline
@@ -7343,8 +7361,12 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		if tmuxSession == "" {
 			if s, err := db.LoadSession(label); err == nil && s != nil &&
 				spawnRowBelongsToLaunch(s, launchEnroll, preConvID, launchedAt) &&
-				s.TmuxSession != "" && session.IsTmuxSessionAlive(s.TmuxSession) {
-				tmuxSession = s.TmuxSession
+				s.TmuxSession != "" {
+				if session.IsTmuxSessionAlive(s.TmuxSession) ||
+					(spawnHarness.Name == harness.ShellName && spawnArgs.InitialPrompt != "" &&
+						s.Status == session.StatusExited && s.ConvID == preConvID) {
+					tmuxSession = s.TmuxSession
+				}
 			}
 		}
 		if tmuxSession == "" {

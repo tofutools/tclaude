@@ -35,5 +35,6 @@
   "opencode/sandbox/tclaude-layer": "Linux/macOS OS containment for the tool-executing OpenCode server, provided by tclaude’s built-in sandbox. The attach pane stays outside the sandbox; the authenticated local control connection, host networking, and ambient host Unix sockets remain reachable. The inner OpenCode access profile permits all paths while approval and tool-governance choices remain active.",
   "opencode/tools/allow": "Allow bash, glob, grep, lsp, task, and skill in every sandbox mode.",
   "opencode/tools/ask": "Ask before bash, glob, grep, lsp, task, or skill runs in every sandbox mode. ⚠ Detached agents can block waiting for a human response.",
-  "opencode/tools/deny": "Deny bash, glob, grep, lsp, task, and skill without prompting in every sandbox mode."
+  "opencode/tools/deny": "Deny bash, glob, grep, lsp, task, and skill without prompting in every sandbox mode.",
+  "shell/sandbox/off": "No harness-native sandbox. Choose tclaude’s sandbox implementation for OS confinement."
 }

@@ -119,8 +119,8 @@ and is usually what you want. See [Conversations](conversations.md).
 
 ## Shell sessions
 
-`--shell` (or `--harness shell`) is not a harness — it is a convenience hack
-that starts your `$SHELL` in a managed tmux session, so you get the same
+Direct `--shell` (or `session new --harness shell`) uses the lightweight shell
+session path and starts your `$SHELL` in managed tmux, so you get the same
 detach/reattach, `session ls` visibility, and kill handling for a plain
 terminal:
 
@@ -133,6 +133,11 @@ Shell sessions are ephemeral: no conversation, no hooks, none of the
 model/sandbox/approval machinery. Only `-C/--dir`, `--label`, and
 `-d/--detached` apply; any other `session new` flag errors out. Their status
 is `running` while the tmux session is alive and `exited` afterwards.
+
+`agent spawn --harness shell` is the registered managed pseudo-harness form.
+It adds agent identity, group enrollment, worktrees, profiles, environment,
+and tclaude-layer sandbox support. Its inbox remains durable but messages are
+never typed into the command interpreter; clone and reincarnate are unsupported.
 
 ## Listing, attaching, and status
 

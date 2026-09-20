@@ -330,6 +330,11 @@ func sendNudgeBracket(toConv string, m *db.AgentMessage, nudge string) bool {
 		// its UserPromptSubmit boundary before any of its tool hooks run.
 		return false
 	}
+	if !allowsPaneNudge(sess.Harness) {
+		// The durable inbox is the delivery surface for command-input panes.
+		// Typing peer-authored text into a shell would execute it.
+		return true
+	}
 	// Keep this name-keyed until TCL-675 defines the coherent managed-server
 	// delivery capability. ServerAuthoritative alone does not promise an
 	// OpenCode-compatible prompt sender for future harnesses.
@@ -429,6 +434,11 @@ func sendNudgeBracket(toConv string, m *db.AgentMessage, nudge string) bool {
 		return false
 	}
 	return true
+}
+
+func allowsPaneNudge(harnessName string) bool {
+	deliveryHarness, err := harness.Resolve(harnessName)
+	return err != nil || !deliveryHarness.UsesCommandInput()
 }
 
 // pickNudgeSession returns the most-recent row whose tmux pane answers the

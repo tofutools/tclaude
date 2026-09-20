@@ -49,6 +49,12 @@ func resetFlushState(_ *testing.T) {
 	flushDebounceMu.Unlock()
 }
 
+func TestAllowsPaneNudgeRefusesCommandInputHarness(t *testing.T) {
+	assert.False(t, allowsPaneNudge("shell"),
+		"peer-authored inbox text must never be submitted to a command interpreter")
+	assert.True(t, allowsPaneNudge("claude"))
+}
+
 func TestReleaseExpiredNudgeClaims_SkipsActiveDaemonOwner(t *testing.T) {
 	setupTestDB(t)
 	g, err := db.CreateAgentGroup("alpha", "")

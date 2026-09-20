@@ -95,11 +95,9 @@ type NewParams struct {
 	// launches OpenAI Codex CLI in the tmux pane via
 	// the codex Spawner. The chosen harness's ModelCatalog validates
 	// --model/--effort and its Spawner builds the launch command, so the
-	// rest of runNew stays harness-agnostic. The special value "shell"
-	// (ShellHarnessName) is NOT a registered harness — it starts a plain,
-	// ephemeral interactive shell instead (no conversation, no hooks, no
-	// model/sandbox/approval), handled by runNewShell before any harness
-	// resolution happens. See shell.go.
+	// rest of runNew stays harness-agnostic. Direct `--harness shell` keeps the
+	// lightweight session path; agentd's managed form uses the registered shell
+	// pseudo-harness so profiles and tclaude's sandbox still apply. See shell.go.
 	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude | codex | opencode | copilot | shell. Unset = global profile, then an installed harness (claude preferred)"`
 
 	// Shell is shorthand for --harness shell: it sets Harness to
@@ -1985,6 +1983,9 @@ func runNew(params *NewParams) error {
 		AskUserQuestionTimeout:   askTimeout,
 		Created:                  launchCreated,
 		Updated:                  launchCreated,
+	}
+	if h.UsesCommandInput() {
+		state.Status = StatusRunning
 	}
 	// Establish the fresh launch identity before any private barrier/token
 	// filesystem setup. Row reuse therefore cannot retain predecessor callback
