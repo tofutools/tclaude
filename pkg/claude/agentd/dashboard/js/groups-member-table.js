@@ -529,6 +529,10 @@ export function statusInfo(state, online) {
     return { status, detail, title: detail ? `${status}: ${detail}` : status };
   }
   if (!online) {
+	    if (state?.harness === 'shell' && String(state?.exit_reason || '').startsWith('command_')) {
+	      const outcome = String(state.exit_reason).replaceAll('_', ' ');
+	      return { status: outcome, detail: '', title: outcome };
+	    }
     const status = state?.exit_reason === 'unexpected' ? 'crashed' : 'offline';
     const age = relTime(state?.last_hook);
     return {

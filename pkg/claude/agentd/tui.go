@@ -429,8 +429,9 @@ type tuiAgentRow struct {
 
 // tuiAgentState is the activity subset of /v1/peers' state block.
 type tuiAgentState struct {
-	Harness string `json:"harness"`
-	Status  string `json:"status"`
+	Harness    string `json:"harness"`
+	Status     string `json:"status"`
+	ExitReason string `json:"exit_reason"`
 }
 
 // dir is the directory column: where the agent is working now, falling back
@@ -459,6 +460,9 @@ func (a tuiAgentRow) name() string {
 // the pane were still up.
 func (a tuiAgentRow) status() string {
 	if !a.Online {
+		if a.State.Harness == "shell" && strings.HasPrefix(a.State.ExitReason, "command_") {
+			return a.State.ExitReason
+		}
 		return "offline"
 	}
 	if s := strings.TrimSpace(a.State.Status); s != "" {
