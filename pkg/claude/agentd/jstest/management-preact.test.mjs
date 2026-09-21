@@ -50,8 +50,12 @@ async function waitForSelectorCount(harness, root, selector, count) {
   return [];
 }
 
+// Polls up to ~3s. The sandbox editor's effective preview runs a debounced
+// prediction, and a fixed sleep ahead of assertions on what it renders raced
+// that on the slower macOS post-merge runner; waiting for the rendered
+// condition keeps the fast path fast and gives a slow runner headroom.
 async function waitForCondition(harness, condition, message) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
     if (condition()) return;
     await harness.act(() => new Promise((resolve) => setTimeout(resolve, 10)));
   }
@@ -2064,7 +2068,9 @@ test('Advanced clear overrides newly added pre-launch editor rows without leakin
   assert.equal(JSON.parse(raw.value)[0].name, 'setup');
   raw.value = '[]';
   await harness.act(() => harness.fireEvent(raw, 'input'));
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  await waitForCondition(harness,
+    () => predictions.at(-1)?.pre_launch?.length === 0,
+    'the raw empty array should reach a new prediction');
 
   const hasPrivateKey = (value) => value != null && typeof value === 'object'
     && Object.entries(value).some(([key, child]) => key.startsWith('_') || hasPrivateKey(child));
@@ -2176,7 +2182,9 @@ test('sandbox editor tolerates legacy and modern sparse profile payloads', async
         };
       },
     });
-    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+    await waitForCondition(harness,
+      () => host.querySelector('.sbx-rule-bucket-applied .sbx-rule-count'),
+      'the effective policy preview should render its applied bucket');
 
     assert.ok(host.querySelector('#sandbox-profile-editor-modal'), `${label} renders`);
     const applied = host.querySelector('.sbx-rule-bucket-applied');
@@ -2330,7 +2338,9 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
       };
     },
   });
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  await waitForCondition(harness,
+    () => host.querySelector('#sandbox-profile-editor-evaluate-platform'),
+    'the editor should render its evaluation target selectors');
   assert.ok(host.querySelector('#sandbox-profile-editor-network-baseline'));
   assert.ok(host.querySelector('#sandbox-profile-editor-unix-sockets-mode'));
   assertAbsent(host.querySelector('#sandbox-profile-editor-evaluate-for'), 'the preview does not encode every target permutation in one selector');
@@ -2352,7 +2362,10 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
       'tclaude + Codex sandboxes',
     ],
   );
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  await waitForCondition(harness,
+    () => /Codex on Linux/.test(host.querySelector('.sbx-policy-target')?.textContent ?? '')
+      && host.querySelector('.sbx-rule-bucket-not-applied'),
+    'the preview should re-evaluate for Codex on Linux');
   assertAbsent(host.querySelector('.sbx-network-badge'), 'allow rows do not duplicate the Effective policy preview with a per-row verdict');
   assert.match(host.querySelector('.sbx-policy-target').textContent,
     /Codex on Linux · built-in sandbox · no filtered network sandbox yet/);
@@ -2370,7 +2383,10 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
   choose(evaluationPlatform, 'darwin');
   await harness.act(() => harness.fireEvent(evaluationPlatform, 'change'));
   assertAbsent(host.querySelector('.sbx-network-badge'), 'target changes keep evaluation status in the preview instead of adding row verdicts');
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  await waitForCondition(harness,
+    () => predictions.at(-1)?.targets?.[0]?.harness === 'opencode'
+      && predictions.at(-1)?.targets?.[0]?.platform === 'darwin',
+    'the target change should reach a new prediction');
   assert.deepEqual(predictions.at(-1).targets, [{
     implementation: 'tclaude-layer',
     harness: 'opencode',
@@ -2470,7 +2486,9 @@ test('effective-policy target alerts open their collapsed section without a comp
       };
     },
   });
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  await waitForCondition(harness,
+    () => host.querySelector('.sbx-other-assignments'),
+    'the preview should render the other-assignments alert');
   assert.equal(host.querySelector('#sandbox-profile-editor-effective-policy-section').open, true,
     'a target alert opens Effective policy preview even without a composition warning');
   assert.match(host.querySelector('.sbx-other-assignments').textContent,
@@ -2489,6 +2507,9 @@ test('blank new sandbox drafts do not request an enforcement prediction', async 
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
     async predictSandbox() { predictionCalls++; throw new Error('blank drafts must not reach prediction'); },
   });
+  // Deliberately a fixed wait: this asserts that NOTHING happened inside the
+  // debounce window, which no rendered condition can stand in for. A slow
+  // runner only makes the negative more certain.
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.equal(predictionCalls, 0);
   assertAbsent(host.querySelector('.sbx-capability-error'));
@@ -2512,12 +2533,16 @@ test('sandbox enforcement preview pauses for an incomplete access row and resume
       return { targets: [], contexts: [] };
     },
   });
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  await waitForCondition(harness,
+    () => predictions.length >= 1,
+    'the mounted editor should run its first prediction');
   assert.equal(predictions.length, 1);
 
   const network = host.querySelector('#sandbox-profile-editor-network-section');
   await harness.act(() => harness.fireEvent(network.querySelector('.sbx-add-row'), 'click'));
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  await waitForCondition(harness,
+    () => host.querySelector('.sbx-preview-status'),
+    'an incomplete row should pause the preview with a status line');
   assert.equal(predictions.length, 1, 'an incomplete row never reaches the enforcement endpoint');
   assert.match(host.querySelector('.sbx-preview-status').textContent,
     /preview paused: Network allow row 1 must set exactly one selector/);
@@ -2525,7 +2550,9 @@ test('sandbox enforcement preview pauses for an incomplete access row and resume
   const value = network.querySelector('.sbx-network-value');
   value.value = 'api.example.com';
   await harness.act(() => harness.fireEvent(value, 'input'));
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  await waitForCondition(harness,
+    () => predictions.length >= 2,
+    'the completed row should resume prediction');
   assert.equal(predictions.length, 2, 'preview resumes after the row becomes valid');
   assertAbsent(host.querySelector('.sbx-preview-status'));
   assert.equal(predictions.at(-1).network.allow[0].host, 'api.example.com');
@@ -2797,7 +2824,9 @@ test('network packs and manual destinations author deny mode without inline verd
     async saveSandbox(value) { saved = value; },
   });
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 50)));
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  await waitForCondition(harness,
+    () => [...mounted.host.querySelectorAll('.sbx-network-pack')].some((row) => /Local access/.test(row.textContent)),
+    'the network packs should render');
 
   const network = mounted.host.querySelector('#sandbox-profile-editor-network-section');
   const localPack = [...network.querySelectorAll('.sbx-network-pack')]
@@ -2947,7 +2976,15 @@ test('effective preview buckets normalized deny rows with target-specific help',
       };
     },
   });
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  // The effective-preview buckets render only once the debounced prediction
+  // has resolved. A fixed sleep raced that on a slow runner (the macOS
+  // post-merge cell), so wait for the rendered buckets themselves, as the raw
+  // access test does (#2618).
+  await waitForCondition(harness,
+    () => host.querySelector('.sbx-rule-bucket-applied')
+      && host.querySelector('.sbx-rule-bucket-partial')
+      && host.querySelector('.sbx-rule-bucket-not-applied'),
+    'the effective policy preview should finish prediction and render all three rule buckets');
   assert.equal(host.querySelector('.sbx-network-value').value, 'API.EXAMPLE.COM');
   assertAbsent(host.querySelector('.sbx-network-badge'));
   assert.equal(host.querySelector('.sbx-network-deny-note').textContent,
@@ -3193,7 +3230,9 @@ test('global harness filesystem rows start folded, remain immutable, and are nev
     async loadCommonRuleCatalog() { return { ...COMMON_RULES, global_config_warnings: ['Claude settings could not be parsed.'] }; },
     async saveSandbox(value) { saved = value; },
   });
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  await waitForCondition(harness,
+    () => host.querySelector('#sandbox-profile-editor-show-global-filesystem'),
+    'the editor should render the inherited-context toggle');
 
   const toggle = host.querySelector('#sandbox-profile-editor-show-global-filesystem');
   // LinkeDOM does not implement HTMLInputElement.checked, so use the
@@ -3297,7 +3336,9 @@ test('the common-rule menu inserts plain editable deny rows and warns at inserti
   });
   let saved = null;
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, { async saveSandbox(value) { saved = value; } });
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  await waitForCondition(harness,
+    () => host.querySelectorAll('.sbx-common-rule-entry').length >= 3,
+    'the common-rule catalog should load and render its entries');
 
   // The menu ships folded and lives on the filesystem table, not in a section
   // of its own — there is only one filesystem mechanism now.
@@ -3381,7 +3422,9 @@ test('a profile carrying retired baseline fields loads with no baseline UI at al
   });
   let saved = null;
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, { async saveSandbox(value) { saved = value; } });
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  await waitForCondition(harness,
+    () => host.querySelector('#sandbox-profile-editor-submit') && host.querySelector('.cron-create-error'),
+    'the editor should finish rendering');
   assertAbsent(host.querySelector('#sandbox-profile-editor-read-baseline'));
   assertAbsent(host.querySelector('.sbx-read-exclusions'));
   assert.equal(host.querySelector('#sandbox-profile-editor-modal').textContent.includes('future.secret-store'), false);
@@ -3407,7 +3450,9 @@ test('a failing common-rule feed blocks hidden pack authority but leaves manual 
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
     async loadCommonRuleCatalog() { if (feedOffline) throw new Error('feed offline'); return COMMON_RULES; },
   });
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  await waitForCondition(harness,
+    () => host.querySelector('#sandbox-profile-editor-common-rule-feed-error'),
+    'the failed catalog load should render its feed error');
   // The failure belongs to the menu it came from, not to the editor's shared
   // error line, and it offers a way back.
   const feedError = host.querySelector('#sandbox-profile-editor-common-rule-feed-error');
@@ -3469,7 +3514,11 @@ test('a failing common-rule feed also blocks hidden deny-pack intent under Allow
       return COMMON_RULES;
     },
   });
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  await waitForCondition(harness,
+    () => host.querySelector('.sbx-network-pack-visibility-error')
+      && host.querySelector('#sandbox-profile-editor-network-section')?.open === true
+      && host.querySelector('.sbx-network-packs')?.hasAttribute('open'),
+    'the hidden deny-pack diagnostics should render and open the network controls');
   assert.equal(host.querySelector('#sandbox-profile-editor-network-section').open, true);
   assert.equal(host.querySelector('.sbx-network-packs').hasAttribute('open'), true,
     'hidden deny-pack diagnostics auto-open the folded pack controls');
@@ -3511,7 +3560,9 @@ test('a hung or synchronously throwing common-rule feed can still be retried', a
       return Promise.resolve(COMMON_RULES);
     },
   });
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  await waitForCondition(harness,
+    () => /feed exploded/.test(host.querySelector('#sandbox-profile-editor-common-rule-feed-error')?.textContent ?? ''),
+    'the synchronous catalog failure should render as a feed error');
   const feedError = () => host.querySelector('#sandbox-profile-editor-common-rule-feed-error');
   assert.match(feedError().textContent, /feed exploded/, 'a synchronous throw surfaces as a feed failure');
   assert.notEqual(feedError().querySelector('button').disabled, true);
@@ -3547,7 +3598,9 @@ test('a late common-rule feed rejection does not overwrite a refused save', asyn
     loadCommonRuleCatalog() { return new Promise((_, reject) => { rejectFeed = reject; }); },
     async saveSandbox(value) { saved = value; },
   });
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  await waitForCondition(harness,
+    () => host.querySelector('.sbx-advanced-toggle'),
+    'the editor should render its advanced toggle');
 
   // The save is refused locally: advanced mode is authoritative and its raw
   // JSON does not parse.
@@ -3587,7 +3640,9 @@ test('common-rule insertion treats separator aliases as the same authored path',
   });
   let saved = null;
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, { async saveSandbox(value) { saved = value; } });
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  await waitForCondition(harness,
+    () => host.querySelectorAll('.sbx-common-rule-entry').length >= 2,
+    'the common-rule catalog should render its entries');
   const entries = [...host.querySelectorAll('.sbx-common-rule-entry')];
   entries[1].querySelector('.sbx-common-rule-add').click();
   await harness.act(() => Promise.resolve());
@@ -3620,7 +3675,9 @@ test('common-rule insertion treats ~ aliases as the same authored path', async (
   });
   let saved = null;
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, { async saveSandbox(value) { saved = value; } });
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  await waitForCondition(harness,
+    () => host.querySelector('.sbx-common-rule-entry[data-rule="secrets.ssh"] .sbx-common-rule-add'),
+    'the common-rule catalog should render its entries');
   host.querySelector('.sbx-common-rule-entry[data-rule="secrets.ssh"] .sbx-common-rule-add').click();
   await harness.act(() => Promise.resolve());
   assert.match(host.querySelector('#sandbox-profile-editor-common-rule-notice').textContent, /added no rows.*1 path was already in the table and left as authored/);
@@ -3648,7 +3705,9 @@ test('common-rule insertion leaves ~otheruser paths literal', async (t) => {
     options: {},
   });
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state);
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  await waitForCondition(harness,
+    () => host.querySelector('.sbx-common-rule-entry[data-rule="secrets.ssh"] .sbx-common-rule-add'),
+    'the common-rule catalog should render its entries');
   host.querySelector('.sbx-common-rule-entry[data-rule="secrets.ssh"] .sbx-common-rule-add').click();
   await harness.act(() => Promise.resolve());
   assert.match(host.querySelector('#sandbox-profile-editor-common-rule-notice').textContent, /Added 1 deny row/);
@@ -3666,7 +3725,9 @@ test('common-rule controls are described and named for assistive technology', as
   const state = createManagementState();
   state.openDialog({ kind: 'sandbox-editor', seed: { name: 'plain', filesystem: [], environment: [], includes: [], agent_directories: [] }, options: {} });
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state);
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  await waitForCondition(harness,
+    () => host.querySelector('.sbx-common-rule-entry[data-rule="home.directory"] .sbx-common-rule-add'),
+    'the common-rule catalog should render its entries');
 
   const home = host.querySelector('.sbx-common-rule-entry[data-rule="home.directory"]');
   const described = home.querySelector('.sbx-common-rule-add').getAttribute('aria-describedby').split(/\s+/);
@@ -3890,7 +3951,11 @@ test('sandbox editor separates resolved launch defaults from composed sandbox la
       };
     },
   });
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  await waitForCondition(harness,
+    () => host.querySelector('#sandbox-profile-editor-evaluate-harness')?.options?.length
+      && /Composed sandbox-profile layers/.test(host.querySelector('#sandbox-profile-editor-policy-layers')?.textContent ?? '')
+      && host.querySelector('.sbx-target-details'),
+    'the editor should resolve its launch defaults and render the composed policy layers');
 
   // Launch-parameter resolution: one phrase, in every target selector.
   assert.equal(host.querySelector('#sandbox-profile-editor-evaluate-harness').options[0].textContent,
