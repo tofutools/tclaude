@@ -400,6 +400,8 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		return exec.Command(falseBin)
 	case len(args) >= 3 && args[0] == "list-panes" && args[1] == "-t":
 		return t.listPanes(args[2])
+	case len(args) >= 4 && args[0] == "list-panes" && args[1] == "-a" && args[2] == "-F":
+		return t.listAllPanes(args[3])
 	}
 	return exec.Command(trueBin)
 }
@@ -547,6 +549,41 @@ func (t *TmuxSim) listPanes(target string) *exec.Cmd {
 		return exec.Command(falseBin)
 	}
 	return exec.Command(echoBin, strconv.Itoa(s.panePID))
+}
+
+// brokerPaneListFormat mirrors agentd's list-panes format for the brokered
+// proof's shared pane cache. Keep the two in step.
+const brokerPaneListFormat = "#{session_name}|#{pane_id}|#{pane_pid}|#{pane_dead}|#{@tclaude_exit_generation}"
+
+// listAllPanes models `tmux list-panes -a -F <format>` for the sim's one-pane
+// sessions: one line per registered session, in the one format production
+// asks for. Like real tmux, a killed session is absent, while a
+// remain-on-exit corpse is listed with pane_dead=1.
+func (t *TmuxSim) listAllPanes(format string) *exec.Cmd {
+	if format != brokerPaneListFormat {
+		return exec.Command(falseBin)
+	}
+	t.mu.Lock()
+	names := make([]string, 0, len(t.sessions))
+	for k := range t.sessions {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	var lines []string
+	for _, name := range names {
+		s := t.sessions[name]
+		dead := !t.sessionPaneAlive(s)
+		if dead && !s.remainOnExit {
+			continue
+		}
+		deadValue := "0"
+		if dead {
+			deadValue = "1"
+		}
+		lines = append(lines, name+"|"+s.paneID+"|"+strconv.Itoa(s.panePID)+"|"+deadValue+"|"+s.exitGeneration)
+	}
+	t.mu.Unlock()
+	return exec.Command(echoBin, strings.Join(lines, "\n"))
 }
 
 // paneRenderer is the optional capability a PaneSim implements to answer

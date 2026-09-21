@@ -72,8 +72,14 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 	// until the request claim can be checked against the live pane. The shared
 	// guard bounds that pre-proof work; only the final row is charged below.
 	// One process-table view for the whole request; see hook_broker.go.
+	timing := newBrokerTiming(endpoint, p.PID)
+	defer timing.finish()
 	procs := newBrokerProcTable()
 	row, _ := hookSessionRowForPIDIn(procs, p.PID)
+	timing.mark("resolve")
+	if row != nil {
+		timing.resolved = row.ID
+	}
 	preProofKey := brokerPreIdentityKey
 	if row != nil {
 		preProofKey = brokerPreIdentityKeyForRow(row.ID)
@@ -127,7 +133,10 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "auth", "caller exited before its identity could be verified")
 		return
 	}
+	timing.mark("parse")
 	proof := proveTclaudeLayerCallerIn(procs, p.PID, claimed)
+	timing.proof = &proof
+	timing.mark("proof")
 	proofDetail := proof.detail
 	refusal.Detail = proofDetail
 	layerClaim := proof.layerClaim
@@ -138,6 +147,7 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 		return
 	case layerClaim && proof.row != nil:
 		row = proof.row
+		timing.resolved = row.ID
 	case layerClaim:
 		if row != nil {
 			brokerRefusals.refuseAttributed(
@@ -180,6 +190,7 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := statusbar.ApplyBrokeredRender(req, row.ID, row.ConvID)
+	timing.mark("apply")
 	if err != nil {
 		slog.Debug("statusline broker: applying brokered render failed",
 			"session", row.ID, "error", err, "module", "hooks")

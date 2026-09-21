@@ -178,8 +178,14 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 	// here and the proof below read the same snapshot, so the proof cannot
 	// lose a race against a caller that exits mid-request (see
 	// broker_proc_table.go).
+	timing := newBrokerTiming(endpoint, p.PID)
+	defer timing.finish()
 	procs := newBrokerProcTable()
 	row, harnessPID := hookSessionRowForPIDIn(procs, p.PID)
+	timing.mark("resolve")
+	if row != nil {
+		timing.resolved = row.ID
+	}
 	preProofKey := brokerPreIdentityKey
 	if row != nil {
 		preProofKey = brokerPreIdentityKeyForRow(row.ID)
@@ -237,7 +243,10 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "auth", "caller exited before its identity could be verified")
 		return
 	}
+	timing.mark("parse")
 	proof := proveTclaudeLayerCallerIn(procs, p.PID, claimed)
+	timing.proof = &proof
+	timing.mark("proof")
 	proofDetail := proof.detail
 	refusal.Detail = proofDetail
 	layerClaim := proof.layerClaim
@@ -248,6 +257,7 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		return
 	case layerClaim && proof.row != nil:
 		row, harnessPID = proof.row, proof.harnessPID
+		timing.resolved = row.ID
 	case layerClaim:
 		if row != nil {
 			brokerRefusals.refuseAttributed(
@@ -325,6 +335,7 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	resp, err := session.PrepareHookEvent(ctx, req.Input, row.ID, amb)
+	timing.mark("apply")
 	releaseOwned := true
 	defer func() {
 		if releaseOwned {

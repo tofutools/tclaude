@@ -64,6 +64,7 @@ func TestMain(m *testing.M) {
 	tmuxSocketPath := filepath.Join(tmuxBase, fmt.Sprintf("tmux-%d", os.Getuid()), clcommon.TmuxSocketName)
 
 	agentd.InstallBrokerProcTableTestDefaults()
+	agentd.DisableBrokerPaneCacheForTest()
 	agentd.SetOpenTerminalForTest(func(string) error {
 		return errors.New("agentd tests: terminal spawn suppressed by default (TCL-584); swap agentd.SetOpenTerminalForTest to observe the open path")
 	})

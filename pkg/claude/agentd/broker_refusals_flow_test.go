@@ -652,3 +652,69 @@ func snapshotRefusalCounts(t *testing.T) (int, int) {
 	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 	return snap.BrokerRefusalsTotal, snap.BrokerRefusalsUnplaceable
 }
+
+// The proof's pane facts come from one shared `list-panes -a` read, not a
+// `display-message` round trip per callback. Three callbacks, zero probes.
+func TestBrokerIdentity_PaneFactsComeFromTheSharedListNotAProbe(t *testing.T) {
+	t.Cleanup(agentd.ResetBrokerRefusalsForTest())
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(agentd.ResetBrokerLimiterForTest())
+	t.Cleanup(agentd.EnableBrokerPaneCacheForTest())
+
+	f := newFlow(t)
+	haveLayerSession(t, f, brokerLayerConv, brokerLayerLabel, "tmux-broker-layer", brokerPanePID)
+	callerPID := layerProcTree(t)
+
+	probesBefore := f.World.Tmux.CommandCount("display-message")
+	listsBefore := f.World.Tmux.CommandCount("list-panes")
+	for range 3 {
+		token, err := agentd.RegisterHookAckForTest(brokerLayerLabel)
+		require.NoError(t, err)
+		code, _ := postBrokeredHook(t, f, callerPID, session.BrokeredHookRequest{
+			ClaimedSessionID: brokerLayerLabel, AckToken: token,
+		})
+		require.Equal(t, http.StatusOK, code)
+	}
+	assert.Equal(t, probesBefore, f.World.Tmux.CommandCount("display-message"),
+		"a proof served from the cache costs no display-message")
+	assert.Equal(t, listsBefore+1, f.World.Tmux.CommandCount("list-panes"),
+		"three callbacks share one list-panes read")
+	total, _ := snapshotRefusalCounts(t)
+	assert.Zero(t, total)
+}
+
+// A pane relaunched inside the cache TTL carries a generation the cached
+// table does not know. That is a MISS, and the live probe decides — so a
+// stale table can delay nothing and confirm nothing it should not.
+func TestBrokerIdentity_StalePaneCacheFallsBackToTheProbe(t *testing.T) {
+	t.Cleanup(agentd.ResetBrokerRefusalsForTest())
+	t.Cleanup(agentd.ResetBrokerLimiterForTest())
+	t.Cleanup(agentd.EnableBrokerPaneCacheForTest())
+
+	f := newFlow(t)
+	haveLayerSession(t, f, brokerLayerConv, brokerLayerLabel, "tmux-broker-layer", brokerPanePID)
+	callerPID := layerProcTree(t)
+
+	ack := func() int {
+		token, err := agentd.RegisterHookAckForTest(brokerLayerLabel)
+		require.NoError(t, err)
+		code, _ := postBrokeredHook(t, f, callerPID, session.BrokeredHookRequest{
+			ClaimedSessionID: brokerLayerLabel, AckToken: token,
+		})
+		return code
+	}
+	require.Equal(t, http.StatusOK, ack(), "warm the cache")
+	probesAfterWarm := f.World.Tmux.CommandCount("display-message")
+
+	// Relaunch: the pane and the row now agree on a new generation the
+	// cached table has not seen.
+	row, err := db.LoadSession(brokerLayerLabel)
+	require.NoError(t, err)
+	row.ExitLaunchGeneration = "relaunched-generation"
+	require.NoError(t, db.SaveSession(row))
+	f.World.Tmux.SetPaneExitGeneration("tmux-broker-layer", "relaunched-generation")
+
+	require.Equal(t, http.StatusOK, ack(), "the relaunched pane is proved against live tmux")
+	assert.Equal(t, probesAfterWarm+1, f.World.Tmux.CommandCount("display-message"),
+		"exactly one fallback probe")
+}
