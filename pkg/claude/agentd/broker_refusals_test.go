@@ -9,10 +9,7 @@ import (
 )
 
 func newTestRefusalRecorder(now *time.Time) *brokerRefusalRecorder {
-	return &brokerRefusalRecorder{
-		bySession: map[string]*brokerRefusal{},
-		now:       func() time.Time { return *now },
-	}
+	return newBrokerRefusalRecorder(func() time.Time { return *now })
 }
 
 // The attribution rule is the whole security property of this recorder,
@@ -177,4 +174,93 @@ func TestBrokerRefusals_PruneExpiredEntries(t *testing.T) {
 	_, stillThere := r.bySession["spwn-old"]
 	r.mu.Unlock()
 	assert.False(t, stillThere, "an entry outside the window must not live forever")
+}
+
+// A refusal must reach the daemon log, not only the dashboard: the notice
+// text promises "the daemon log has the caller pid". The throttle exists
+// because a statusline renders several times a second, so a permanently
+// refused agent would otherwise write a line per render. The first refusal
+// of a run always logs; the next line reports how many were suppressed.
+func TestBrokerRefusals_LogDecisionIsThrottledPerRun(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	r := newTestRefusalRecorder(&now)
+
+	first := r.recordClaimMismatch("spwn-resolved", "hook: failed live-pane proof")
+	assert.True(t, first.Log, "the first refusal of a run is always logged")
+	assert.Zero(t, first.Suppressed)
+	assert.Equal(t, 1, first.Count)
+
+	now = now.Add(time.Second)
+	second := r.recordClaimMismatch("spwn-resolved", "hook: failed live-pane proof")
+	assert.False(t, second.Log, "a refusal inside the log interval is counted, not logged")
+
+	now = now.Add(brokerRefusalLogInterval)
+	third := r.recordClaimMismatch("spwn-resolved", "hook: failed live-pane proof")
+	assert.True(t, third.Log)
+	assert.Equal(t, 1, third.Suppressed, "the next line reports what the throttle swallowed")
+	assert.Equal(t, 3, third.Count)
+
+	// Rows throttle independently: a second agent's first refusal is not
+	// hidden behind the first agent's interval.
+	other := r.recordClaimMismatch("spwn-other", "hook: failed live-pane proof")
+	assert.True(t, other.Log)
+
+	// So does the unplaceable counter.
+	unplaced := r.recordUnplaceable("hook: caller could not be placed")
+	assert.True(t, unplaced.Log)
+	assert.False(t, r.recordUnplaceable("hook: caller could not be placed").Log)
+}
+
+// A run that expired out of the window starts a fresh throttle too: the
+// operator fixed something, it broke again, and the first refusal of the
+// new episode should be as loud as the first one ever was.
+func TestBrokerRefusals_LogThrottleResetsWithTheRun(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	r := newTestRefusalRecorder(&now)
+
+	require.True(t, r.recordClaimMismatch("spwn-resolved", "x").Log)
+	now = now.Add(brokerRefusalWindow + time.Second)
+	d := r.recordClaimMismatch("spwn-resolved", "x")
+	assert.True(t, d.Log)
+	assert.Equal(t, 1, d.Count, "a new run counts from one")
+	assert.Zero(t, d.Suppressed)
+}
+
+// Unplaceable refusals share one dashboard counter but NOT one log
+// throttle: a chatty orphan's refused renders must not swallow the only
+// refusal a different caller ever produces, and a line's counts must
+// describe the caller it names. The key is the socket peer pid, a kernel
+// fact, never a caller string.
+func TestBrokerRefusals_UnplaceableLogThrottleIsPerCaller(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	r := newTestRefusalRecorder(&now)
+
+	require.True(t, r.recordUnplaceableFor(100, "statusline: caller could not be placed").Log)
+	for range 5 {
+		now = now.Add(200 * time.Millisecond)
+		assert.False(t, r.recordUnplaceableFor(100, "statusline: caller could not be placed").Log)
+	}
+
+	other := r.recordUnplaceableFor(200, "hook: caller could not be placed")
+	assert.True(t, other.Log, "a different caller's first refusal is not hidden behind pid 100's interval")
+	assert.Equal(t, 1, other.Count, "the line's count describes the caller it names")
+	assert.Zero(t, other.Suppressed)
+
+	total, unplaceable := r.counts()
+	assert.Equal(t, 7, unplaceable, "the dashboard counter stays daemon-wide")
+	assert.Equal(t, 7, total)
+}
+
+// The "omitted its claim" reason is wrong when the caller did send one and
+// the daemon simply could not load the row to check it.
+func TestBrokerClaimReason(t *testing.T) {
+	const fallback = "hook: tclaude’s sandbox callback omitted its session claim"
+	assert.Equal(t, fallback, brokerClaimReason(fallback, "", "loading claimed row failed: busy"),
+		"no claim sent: the fallback is the truth")
+	assert.Equal(t, fallback, brokerClaimReason(fallback, "spwn-x", ""),
+		"claim sent but no proof detail: nothing better to say")
+	assert.Equal(t, "hook: claimed session could not be loaded to check the claim",
+		brokerClaimReason(fallback, "spwn-x", "loading claimed row failed: busy"))
+	assert.Equal(t, "statusline: claimed session could not be loaded to check the claim",
+		brokerClaimReason("statusline: caller could not be placed", "spwn-x", "err"))
 }

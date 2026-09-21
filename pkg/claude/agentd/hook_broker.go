@@ -181,7 +181,8 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 	}
 	if checkBrokerRate(endpoint, preProofKey, brokerPreIdentityRatePerSecond).Reject {
 		if row == nil {
-			brokerRefusals.recordUnplaceable("hook: caller could not be placed")
+			brokerRefusals.refuseUnplaceable("hook: caller could not be placed",
+				brokerRefusalContext{Endpoint: endpoint, CallerPID: p.PID})
 		}
 		writeError(w, http.StatusTooManyRequests, "rate", "too many requests before identity verification")
 		return
@@ -215,37 +216,48 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
 		return
 	}
-	provedRow, provedHarnessPID, layerClaim := proveTclaudeLayerCaller(p.PID, claimed)
+	provedRow, provedHarnessPID, layerClaim, proofDetail := proveTclaudeLayerCallerDetailed(p.PID, claimed)
+	refusal := brokerRefusalContext{
+		Endpoint: endpoint, CallerPID: p.PID, Claimed: claimed,
+		Detail: proofDetail, Event: req.Input.HookEventName,
+	}
+	if row != nil {
+		refusal.Resolved = row.ID
+	}
 	switch {
 	case layerClaim && provedRow != nil:
 		row, harnessPID = provedRow, provedHarnessPID
 	case layerClaim:
 		if row != nil {
-			brokerRefusals.recordClaimMismatch(row.ID,
-				"hook: claimed tclaude’s sandbox session failed live-pane proof")
+			brokerRefusals.refuseAttributed(
+				"hook: claimed tclaude’s sandbox session failed live-pane proof", refusal)
 		} else {
-			brokerRefusals.recordUnplaceable("hook: tclaude’s sandbox caller failed live-pane proof")
+			brokerRefusals.refuseUnplaceable("hook: tclaude’s sandbox caller failed live-pane proof", refusal)
 		}
 		writeError(w, http.StatusForbidden, "auth", "claimed tclaude’s sandbox session does not own this caller")
 		return
 	case row == nil:
-		brokerRefusals.recordUnplaceable("hook: caller could not be placed")
+		brokerRefusals.refuseUnplaceable(
+			brokerClaimReason("hook: caller could not be placed", claimed, proofDetail), refusal)
 		writeError(w, http.StatusForbidden, "auth",
 			"could not resolve a session row for this caller; refusing to apply its hook")
 		return
 	case isTclaudeLayerRow(row):
-		brokerRefusals.recordUnplaceable("hook: tclaude’s sandbox callback omitted its session claim")
+		// The resolved row IS a layer row, so this is very likely the
+		// caller's own session; but a layer claim that did not PROVE is not
+		// trusted to attribute, so it stays unplaceable. The log line still
+		// carries the resolved row for the operator's correlation.
+		brokerRefusals.refuseUnplaceable(
+			brokerClaimReason("hook: tclaude’s sandbox callback omitted its session claim", claimed, proofDetail),
+			refusal)
 		writeError(w, http.StatusForbidden, "auth",
 			"tclaude’s sandbox hook callback requires a proved session claim")
 		return
 	case claimed != "" && claimed != row.ID:
-		slog.Warn("hook broker: rejecting event whose claimed session id disagrees with the resolved row",
-			"caller_pid", p.PID, "claimed_session", claimed, "resolved_session", row.ID,
-			"event", req.Input.HookEventName, "module", "hooks")
 		// Identity DID resolve here, so the refusal is attributed to the
 		// row the DAEMON concluded — never to the claimed one, which is
 		// the caller's own string. See broker_refusals.go.
-		brokerRefusals.recordClaimMismatch(row.ID, "hook: claimed session id disagrees with the resolved row")
+		brokerRefusals.refuseAttributed("hook: claimed session id disagrees with the resolved row", refusal)
 		writeError(w, http.StatusForbidden, "auth",
 			"claimed session id does not match the session resolved for this caller")
 		return

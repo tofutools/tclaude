@@ -521,6 +521,18 @@ const (
 	paneProbeUnknown
 )
 
+func (s paneProbeState) String() string {
+	switch s {
+	case paneProbeLive:
+		return "live"
+	case paneProbeDead:
+		return "dead"
+	case paneProbeUnknown:
+		return "unknown"
+	}
+	return fmt.Sprintf("paneProbeState(%d)", int(s))
+}
+
 type lifecyclePaneProbe struct {
 	state      paneProbeState
 	paneID     string

@@ -1522,43 +1522,92 @@ func hookSessionRowForPID(pid int) (*db.SessionRow, int) {
 // recorded PID is deliberately irrelevant: it can be zero during startup, the
 // pane PID after launch, or a corrected harness PID after a hook.
 func proveTclaudeLayerCaller(callerPID int, claimedID string) (row *db.SessionRow, harnessPID int, layerClaim bool) {
+	row, harnessPID, layerClaim, _ = proveTclaudeLayerCallerDetailed(callerPID, claimedID)
+	return row, harnessPID, layerClaim
+}
+
+// proveTclaudeLayerCallerDetailed is proveTclaudeLayerCaller with the reason
+// a proof FAILED spelled out, for the daemon log.
+//
+// The proof has half a dozen independent ways to fail, and several of them
+// are transient host conditions rather than misconfiguration: the pane probe
+// is a tmux subprocess under a deadline, the launch identity is a database
+// read, and on macOS every ancestry hop is a `ps` fork that can come back
+// empty under load. A refusal that only says "failed live-pane proof" leaves
+// the operator unable to tell a dead row from a busy machine, so each exit
+// names which fact was missing and what was observed. Nothing here is
+// caller-asserted beyond the claimed id, which the log labels as such.
+//
+// reason is empty when the proof succeeded or when layerClaim is false.
+func proveTclaudeLayerCallerDetailed(callerPID int, claimedID string) (row *db.SessionRow, harnessPID int, layerClaim bool, reason string) {
 	claimedID = strings.TrimSpace(claimedID)
 	if callerPID <= 1 || claimedID == "" {
-		return nil, 0, false
+		return nil, 0, false, ""
 	}
 	row, err := db.LoadSession(claimedID)
 	if err != nil || row == nil || !isTclaudeLayerRow(row) {
-		return nil, 0, false
+		// Not a layer claim as far as the proof is concerned, but a LoadSession
+		// error is worth distinguishing at the call site from "no such row":
+		// a busy database turns a valid claim into a missing one, and the
+		// caller is then refused for omitting a claim it did send.
+		if err != nil {
+			return nil, 0, false, fmt.Sprintf("loading claimed row failed: %v", err)
+		}
+		return nil, 0, false, ""
 	}
 	if row.TmuxSession == "" {
-		return nil, 0, true
+		return nil, 0, true, "claimed row records no tmux session"
 	}
 	identity, err := db.GetSessionExitLaunchIdentity(row.ID)
-	if err != nil || identity.Generation == "" || identity.TmuxSession != row.TmuxSession {
-		return nil, 0, true
+	switch {
+	case err != nil:
+		return nil, 0, true, fmt.Sprintf("reading launch identity failed: %v", err)
+	case identity.Generation == "":
+		return nil, 0, true, "claimed row has no launch generation"
+	case identity.TmuxSession != row.TmuxSession:
+		return nil, 0, true, fmt.Sprintf("launch identity names tmux session %q but the row records %q",
+			identity.TmuxSession, row.TmuxSession)
 	}
 	pane, err := brokerLivePaneProbe(row.TmuxSession)
-	if err != nil || pane.state != paneProbeLive || pane.panePID <= 1 ||
-		pane.generation == "" || pane.generation != identity.Generation {
-		return nil, 0, true
+	switch {
+	case err != nil:
+		return nil, 0, true, fmt.Sprintf("pane probe of tmux session %q failed: %v", row.TmuxSession, err)
+	case pane.state != paneProbeLive:
+		return nil, 0, true, fmt.Sprintf("pane of tmux session %q is not live (%s)", row.TmuxSession, pane.state)
+	case pane.panePID <= 1:
+		return nil, 0, true, fmt.Sprintf("pane of tmux session %q reports no usable pid (%d)", row.TmuxSession, pane.panePID)
+	case pane.generation == "":
+		return nil, 0, true, fmt.Sprintf("pane of tmux session %q carries no launch generation", row.TmuxSession)
+	case pane.generation != identity.Generation:
+		return nil, 0, true, fmt.Sprintf("pane generation %q does not match the row's launch generation %q",
+			pane.generation, identity.Generation)
 	}
 	panePID := pane.panePID
 
 	const maxAncestorHops = 256
 	cur := callerPID
+	hops := 0
 	for range maxAncestorHops {
 		if cur <= 1 {
-			return nil, 0, true
+			// The walk ran off the top of the tree before meeting the pane.
+			// A parent lookup that returned 0 mid-walk is the macOS `ps`
+			// failure mode; reaching pid 1 legitimately means the caller
+			// really is outside the pane.
+			return nil, 0, true, fmt.Sprintf(
+				"pane pid %d is not an ancestor of caller pid %d (walk ended at pid %d after %d hops)",
+				panePID, callerPID, cur, hops)
 		}
 		if cur == panePID {
-			return row, harnessPID, true
+			return row, harnessPID, true, ""
 		}
 		if harnessPID == 0 && harnessNameAt(cur, procName(cur)) != "" {
 			harnessPID = cur
 		}
 		cur = procParent(cur)
+		hops++
 	}
-	return nil, 0, true
+	return nil, 0, true, fmt.Sprintf(
+		"pane pid %d not found within %d ancestors of caller pid %d", panePID, maxAncestorHops, callerPID)
 }
 
 // Indirected so the startup-race regression can pin the kernel/tmux proof

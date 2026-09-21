@@ -1,7 +1,11 @@
 package agentd_test
 
 import (
+	"bytes"
+	"encoding/json"
+	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -434,4 +438,105 @@ func TestBrokerRefusals_StatuslineRefusalsAreRecordedToo(t *testing.T) {
 	require.NotNil(t, named)
 	assert.Zero(t, named.State.BrokerRefusals,
 		"the peer the render named must stay unmarked here too")
+}
+
+// captureDaemonLog swaps slog's default handler for a JSON buffer for the
+// rest of the test, so a flow can assert on what the daemon LOGGED — the
+// half of refusal surfacing the dashboard notice points the operator at
+// ("the daemon log has the caller pid").
+func captureDaemonLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return &logs
+}
+
+func refusalLogLines(t *testing.T, logs *bytes.Buffer) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &rec), "log line %q", line)
+		if msg, _ := rec["msg"].(string); strings.HasPrefix(msg, "broker: refused a brokered callback") {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
+// Every refusal used to record a dashboard badge and return silently, so
+// the operator saw 🚫 and had nothing to read. Each refusal branch now
+// writes a WARN naming the caller pid and, where a live-pane proof failed,
+// WHICH fact was missing — the difference between "dead row" and "tmux was
+// busy" that the badge alone cannot express.
+func TestBrokerRefusals_AreLoggedWithTheCallerPidAndReason(t *testing.T) {
+	t.Cleanup(agentd.ResetBrokerRefusalsForTest())
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	logs := captureDaemonLog(t)
+
+	f := newFlow(t)
+	haveLayerSession(t, f, brokerLayerConv, brokerLayerLabel, "tmux-broker-layer", brokerPanePID)
+
+	// An orphan caller: no row resolves, the layer claim cannot be proved
+	// because the pane pid is not among its ancestors.
+	const orphanPID = 8300
+	t.Cleanup(agentd.SetProcTreeForTest(map[int]string{orphanPID: "node"}, map[int]int{}))
+
+	code, _ := postBrokeredHook(t, f, orphanPID, session.BrokeredHookRequest{
+		Input:            session.HookCallbackInput{ConvID: brokerLayerConv, HookEventName: "Stop"},
+		ClaimedSessionID: brokerLayerLabel,
+	})
+	require.Equal(t, http.StatusForbidden, code)
+
+	lines := refusalLogLines(t, logs)
+	require.Len(t, lines, 1, "one refusal, one log line; got %s", logs.String())
+	rec := lines[0]
+	assert.Equal(t, "WARN", rec["level"])
+	assert.EqualValues(t, orphanPID, rec["caller_pid"])
+	assert.Equal(t, "/v1/whoami/hook", rec["endpoint"])
+	assert.Equal(t, brokerLayerLabel, rec["claimed_session"],
+		"the claimed id is logged for correlation (labelled as the caller's own)")
+	assert.Equal(t, "", rec["resolved_session"], "nothing resolved for an orphan")
+	assert.Equal(t, "Stop", rec["event"])
+	assert.Contains(t, rec["reason"], "failed live-pane proof")
+	assert.Contains(t, rec["detail"], "is not an ancestor of caller pid 8300",
+		"the proof names the fact that was missing")
+
+	// A second refusal inside the throttle interval is counted, not logged.
+	code, _ = postBrokeredHook(t, f, orphanPID, session.BrokeredHookRequest{
+		Input:            session.HookCallbackInput{ConvID: brokerLayerConv, HookEventName: "Stop"},
+		ClaimedSessionID: brokerLayerLabel,
+	})
+	require.Equal(t, http.StatusForbidden, code)
+	assert.Len(t, refusalLogLines(t, logs), 1, "the per-run throttle holds the second line back")
+}
+
+// The statusline endpoint refuses through the same recorder, and so logs
+// the same way.
+func TestBrokerRefusals_StatuslineRefusalsAreLoggedToo(t *testing.T) {
+	t.Cleanup(agentd.ResetBrokerRefusalsForTest())
+	logs := captureDaemonLog(t)
+
+	f := newFlow(t)
+	haveLayerSession(t, f, brokerLayerConv, brokerLayerLabel, "tmux-broker-layer", brokerPanePID)
+
+	const orphanPID = 8301
+	t.Cleanup(agentd.SetProcTreeForTest(map[int]string{orphanPID: "node"}, map[int]int{}))
+
+	req := testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/statusline",
+		statusbar.BrokeredRenderRequest{ClaimedSessionID: brokerLayerLabel})
+	req = agentd.AsAgentPeerWithPID(req, "", orphanPID)
+	rec := testharness.Serve(f.Mux, req)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+
+	lines := refusalLogLines(t, logs)
+	require.Len(t, lines, 1, "got %s", logs.String())
+	assert.Equal(t, "/v1/whoami/statusline", lines[0]["endpoint"])
+	assert.EqualValues(t, orphanPID, lines[0]["caller_pid"])
+	assert.Contains(t, lines[0]["reason"], "statusline:")
 }

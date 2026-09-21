@@ -362,7 +362,13 @@ func run() error {
 	if !hasLimits {
 		if usage, stale := facts.Usage, facts.UsageStale; usage != nil {
 			if stale {
-				slog.Warn("status-bar: using stale usage cache", "module", "hooks")
+				// Debug, not Warn: this runs on every render, and a stale
+				// cache is the steady state for an API-billing account,
+				// whose OAuth usage fetch can never succeed (the daemon's
+				// own refresh treats that failure as expected, see
+				// refreshUsage). The bar already marks the condition for
+				// the operator with the "~" prefix on the labels below.
+				slog.Debug("status-bar: using stale usage cache", "module", "hooks")
 			}
 			if usage.FiveHour != nil {
 				hasLimits = true
