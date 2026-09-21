@@ -41,9 +41,9 @@ test('the CI badge summarizes checks and opens a panel on hover', async (t) => {
 
   await t.test('a running check keeps counting up', () => {
     const now = Date.parse('2026-08-09T10:03:30Z');
-    assert.equal(elapsed({ started_at: '2026-08-09T10:00:00Z' }, now), '3m 30s');
+    assert.equal(elapsed({ bucket: 'pending', conclusion: 'in progress', started_at: '2026-08-09T10:00:00Z' }, now), '3m 30s');
     assert.equal(
-      elapsed({ started_at: '2026-08-09T10:00:00Z', completed_at: '0001-01-01T00:00:00Z' }, now),
+      elapsed({ bucket: 'pending', conclusion: 'in progress', started_at: '2026-08-09T10:00:00Z', completed_at: '0001-01-01T00:00:00Z' }, now),
       '3m 30s',
       'GitHub zero-time means the check is still running',
     );
@@ -75,6 +75,24 @@ test('the CI badge summarizes checks and opens a panel on hover', async (t) => {
     assert.equal(checkTimeLabel({
       bucket: 'pending', conclusion: 'in progress', started_at: '2026-08-09T10:00:00Z',
     }, now), '3m 30s');
+  });
+
+  await t.test('finished checks never count up without a completion timestamp', () => {
+    const now = Date.parse('2026-08-09T10:03:30Z');
+    for (const [bucket, conclusion] of [
+      ['skipped', 'skipped'], ['pass', 'success'], ['fail', 'failure'], ['fail', 'cancelled'],
+    ]) {
+      for (const completed_at of ['', '0001-01-01T00:00:00Z', 'invalid']) {
+        const check = { bucket, conclusion, started_at: '2026-08-09T10:00:00Z', completed_at };
+        assert.equal(checkTimeLabel(check, now), '—', conclusion);
+        assert.equal(checkTimeLabel(check, now + 60_000), '—', conclusion);
+      }
+      const check = {
+        bucket, conclusion, started_at: '2026-08-09T10:00:00Z', completed_at: '2026-08-09T10:00:42Z',
+      };
+      assert.equal(checkTimeLabel(check, now), '42s', conclusion);
+      assert.equal(checkTimeLabel(check, now + 60_000), '42s', conclusion);
+    }
   });
 
   await t.test('checks are ordered by attention state, then name', () => {
