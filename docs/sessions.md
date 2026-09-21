@@ -130,11 +130,11 @@ tclaude session new --shell -C /path/to/project --label scratch
 ```
 
 Shell sessions are ephemeral: no conversation, no hooks, none of the
-model/sandbox/approval machinery. Only `-C/--dir`, `--label`, and
-`-d/--detached` apply; any other `session new` flag errors out. This direct
-path bypasses global default spawn-profile resolution and does not accept model
-or effort settings. Its status is `running` while the tmux session is alive and
-`exited` afterwards.
+model/sandbox/approval machinery. Besides selecting this path with `--shell` or
+`--harness shell`, only `-C/--dir`, `--label`, and `-d/--detached` apply; any
+other `session new` flag errors out. This direct path bypasses global default
+spawn-profile resolution and does not accept model or effort settings. Its
+status is `running` while the tmux session is alive and `exited` afterwards.
 
 `agent spawn --harness shell` is the registered managed pseudo-harness form.
 It adds agent identity, group enrollment, worktrees, profiles, environment,

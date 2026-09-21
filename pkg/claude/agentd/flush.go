@@ -448,14 +448,22 @@ func allowsPaneNudge(harnessName string) bool {
 	return err == nil && !deliveryHarness.UsesCommandInput()
 }
 
+var findCommandInputSessions = db.FindSessionsByConvID
+
 // commandInputConv checks the durable session rows without probing tmux. It
 // is used only to decide whether a successful durable delivery should also
 // mark the inbox copy read; a transient pane-probe failure must not make that
 // security-sensitive decision fail open.
 func commandInputConv(convID string) bool {
-	rows, err := db.FindSessionsByConvID(convID)
+	rows, err := findCommandInputSessions(convID)
 	if err != nil {
-		return false
+		// This result controls whether the durable inbox copy is marked read
+		// after delivery. Uncertainty must fail closed: a later session lookup
+		// may still identify a command-input pane whose successful "delivery"
+		// deliberately consists only of leaving that inbox copy available.
+		slog.Warn("flush: session harness lookup failed; preserving durable inbox copy",
+			"error", err, "conv", convID)
+		return true
 	}
 	for _, row := range rows {
 		if !allowsPaneNudge(row.Harness) {
