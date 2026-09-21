@@ -1573,7 +1573,7 @@ func proveTclaudeLayerCallerDetailed(callerPID int, claimedID string) (row *db.S
 	case err != nil:
 		return nil, 0, true, fmt.Sprintf("pane probe of tmux session %q failed: %v", row.TmuxSession, err)
 	case pane.state != paneProbeLive:
-		return nil, 0, true, fmt.Sprintf("pane of tmux session %q is not live (state %d)", row.TmuxSession, pane.state)
+		return nil, 0, true, fmt.Sprintf("pane of tmux session %q is not live (%s)", row.TmuxSession, pane.state)
 	case pane.panePID <= 1:
 		return nil, 0, true, fmt.Sprintf("pane of tmux session %q reports no usable pid (%d)", row.TmuxSession, pane.panePID)
 	case pane.generation == "":

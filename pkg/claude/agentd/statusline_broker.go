@@ -132,12 +132,15 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "auth", "claimed tclaude’s sandbox session does not own this caller")
 		return
 	case row == nil:
-		brokerRefusals.refuseUnplaceable("statusline: caller could not be placed", refusal)
+		brokerRefusals.refuseUnplaceable(
+			brokerClaimReason("statusline: caller could not be placed", claimed, proofDetail), refusal)
 		writeError(w, http.StatusForbidden, "auth",
 			"could not resolve a session row for this caller; refusing to apply its statusline")
 		return
 	case isTclaudeLayerRow(row):
-		brokerRefusals.refuseUnplaceable("statusline: tclaude’s sandbox callback omitted its session claim", refusal)
+		brokerRefusals.refuseUnplaceable(
+			brokerClaimReason("statusline: tclaude’s sandbox callback omitted its session claim", claimed, proofDetail),
+			refusal)
 		writeError(w, http.StatusForbidden, "auth",
 			"tclaude’s sandbox statusline requires a proved session claim")
 		return

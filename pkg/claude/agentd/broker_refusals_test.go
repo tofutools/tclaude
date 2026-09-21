@@ -9,10 +9,7 @@ import (
 )
 
 func newTestRefusalRecorder(now *time.Time) *brokerRefusalRecorder {
-	return &brokerRefusalRecorder{
-		bySession: map[string]*brokerRefusal{},
-		now:       func() time.Time { return *now },
-	}
+	return newBrokerRefusalRecorder(func() time.Time { return *now })
 }
 
 // The attribution rule is the whole security property of this recorder,
@@ -227,4 +224,43 @@ func TestBrokerRefusals_LogThrottleResetsWithTheRun(t *testing.T) {
 	assert.True(t, d.Log)
 	assert.Equal(t, 1, d.Count, "a new run counts from one")
 	assert.Zero(t, d.Suppressed)
+}
+
+// Unplaceable refusals share one dashboard counter but NOT one log
+// throttle: a chatty orphan's refused renders must not swallow the only
+// refusal a different caller ever produces, and a line's counts must
+// describe the caller it names. The key is the socket peer pid, a kernel
+// fact, never a caller string.
+func TestBrokerRefusals_UnplaceableLogThrottleIsPerCaller(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	r := newTestRefusalRecorder(&now)
+
+	require.True(t, r.recordUnplaceableFor(100, "statusline: caller could not be placed").Log)
+	for range 5 {
+		now = now.Add(200 * time.Millisecond)
+		assert.False(t, r.recordUnplaceableFor(100, "statusline: caller could not be placed").Log)
+	}
+
+	other := r.recordUnplaceableFor(200, "hook: caller could not be placed")
+	assert.True(t, other.Log, "a different caller's first refusal is not hidden behind pid 100's interval")
+	assert.Equal(t, 1, other.Count, "the line's count describes the caller it names")
+	assert.Zero(t, other.Suppressed)
+
+	total, unplaceable := r.counts()
+	assert.Equal(t, 7, unplaceable, "the dashboard counter stays daemon-wide")
+	assert.Equal(t, 7, total)
+}
+
+// The "omitted its claim" reason is wrong when the caller did send one and
+// the daemon simply could not load the row to check it.
+func TestBrokerClaimReason(t *testing.T) {
+	const fallback = "hook: tclaude’s sandbox callback omitted its session claim"
+	assert.Equal(t, fallback, brokerClaimReason(fallback, "", "loading claimed row failed: busy"),
+		"no claim sent: the fallback is the truth")
+	assert.Equal(t, fallback, brokerClaimReason(fallback, "spwn-x", ""),
+		"claim sent but no proof detail: nothing better to say")
+	assert.Equal(t, "hook: claimed session could not be loaded to check the claim",
+		brokerClaimReason(fallback, "spwn-x", "loading claimed row failed: busy"))
+	assert.Equal(t, "statusline: claimed session could not be loaded to check the claim",
+		brokerClaimReason("statusline: caller could not be placed", "spwn-x", "err"))
 }

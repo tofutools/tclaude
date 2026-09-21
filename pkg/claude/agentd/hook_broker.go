@@ -237,7 +237,8 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "auth", "claimed tclaude’s sandbox session does not own this caller")
 		return
 	case row == nil:
-		brokerRefusals.refuseUnplaceable("hook: caller could not be placed", refusal)
+		brokerRefusals.refuseUnplaceable(
+			brokerClaimReason("hook: caller could not be placed", claimed, proofDetail), refusal)
 		writeError(w, http.StatusForbidden, "auth",
 			"could not resolve a session row for this caller; refusing to apply its hook")
 		return
@@ -246,7 +247,9 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		// caller's own session; but a layer claim that did not PROVE is not
 		// trusted to attribute, so it stays unplaceable. The log line still
 		// carries the resolved row for the operator's correlation.
-		brokerRefusals.refuseUnplaceable("hook: tclaude’s sandbox callback omitted its session claim", refusal)
+		brokerRefusals.refuseUnplaceable(
+			brokerClaimReason("hook: tclaude’s sandbox callback omitted its session claim", claimed, proofDetail),
+			refusal)
 		writeError(w, http.StatusForbidden, "auth",
 			"tclaude’s sandbox hook callback requires a proved session claim")
 		return

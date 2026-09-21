@@ -155,8 +155,9 @@ ancestry mismatch. Every refusal also writes a `broker: refused a brokered
 callback` WARN to the daemon log (the Logs tab) with the caller pid, the row
 the daemon resolved, the id the caller claimed, and, for a failed live-pane
 proof, which fact was missing (pane probe, launch generation, or ancestry).
-The line is throttled to one per ten seconds per row and reports how many
-refusals it suppressed. The sandbox badge's tooltip breaks down status,
+The line is throttled to one per ten seconds per resolved row (per caller
+pid for callers no row resolved for) and reports how many refusals it
+suppressed. The sandbox badge's tooltip breaks down status,
 implementation (TClaude / CC+TClaude / CC / None), profile, and cgroup memory
 and CPU limits; clicking it temporarily disables or restores the sandbox
 (not available for Codex built-in sandboxes). See
