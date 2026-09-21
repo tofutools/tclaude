@@ -151,13 +151,14 @@ with a non-zero count):
 The 🚫 broker-refusal badge deserves attention: when it shows, the entire row
 — status, model, cost, context, directory — is frozen at its last accepted
 value. The usual cause is a dead session row on the same pid or a session-id /
-ancestry mismatch. Every refusal also writes a `broker: refused a brokered
-callback` WARN to the daemon log (the Logs tab) with the caller pid, the row
-the daemon resolved, the id the caller claimed, and, for a failed live-pane
-proof, which fact was missing (pane probe, launch generation, or ancestry).
-The line is throttled to one per ten seconds per resolved row (per caller
-pid for callers no row resolved for) and reports how many refusals it
-suppressed. The sandbox badge's tooltip breaks down status,
+ancestry mismatch. Refusals also produce throttled `broker: refused a
+brokered callback` WARN records in the daemon log (the Logs tab) with the
+caller pid, the row the daemon resolved, the id the caller claimed, and, for
+a failed live-pane proof, which fact was missing (pane probe, launch
+generation, or ancestry). The first refusal of an episode always logs; later
+ones within ten seconds are counted per resolved row (per caller pid for
+callers no row resolved for), and the next permitted line reports how many
+were suppressed. The sandbox badge's tooltip breaks down status,
 implementation (TClaude / CC+TClaude / CC / None), profile, and cgroup memory
 and CPU limits; clicking it temporarily disables or restores the sandbox
 (not available for Codex built-in sandboxes). See
