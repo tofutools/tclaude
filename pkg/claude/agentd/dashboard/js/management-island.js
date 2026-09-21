@@ -42,7 +42,7 @@ import {
   sandboxTmpfsValidation,
 } from './sandbox-tmpfs.js';
 import {
-  approvalControlsVisibleFor, autoCompactWindowHintFor, contextWindowMaxHintFor, harnessBuiltinModeHelpForImplementation,
+  approvalControlsVisibleFor, approvalCaveatVisibleFor, autoCompactWindowHintFor, contextWindowMaxHintFor, harnessBuiltinModeHelpForImplementation,
   sandboxImplHintFor, sandboxImplCaveatFor, sandboxImplClearedNoticeFor, sandboxImplOptionsFor,
   harnessBuiltinModeControlLabel, harnessBuiltinModeOptionsForImplementation,
 } from './agent-spawn-model.js';
@@ -1281,6 +1281,9 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
       value=${draft.approval}
       options=${(hEntry?.approval_modes || []).map((value) => ({ value, label: approvalPolicyLabel(draft.harness, value, recommendedApproval) }))}
       onChange=${(event) => change(setDraft, 'approval', event.currentTarget.value)}
+      showCaveat=${approvalCaveatVisibleFor({
+        harness: draft.harness, approval: draft.approval, sandboxImpl: draft.sandbox_implementation,
+      })}
       help=${approvalHelp} open=${helpOpen === approvalID} setOpen=${setHelpOpen}
       disabled=${!hEntry?.can_approval || !showApprovalControls} />
     <${HelpField} id=${toolsID} label="Tool governance" title="Uniform action for OpenCode's bash, glob, grep, lsp, task, and skill tools."

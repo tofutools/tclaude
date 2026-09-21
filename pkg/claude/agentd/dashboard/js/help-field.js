@@ -98,9 +98,9 @@ export function HelpDisclosure({
    select does not resize when the help lands. */
 export function HelpField({
   id, descriptionID = `${id}-hint`, label, title, value, options,
-  onChange, help, open, setOpen, disabled = false, busy = false,
+  onChange, help, open, setOpen, disabled = false, busy = false, showCaveat = true,
 }) {
-  const caveat = helpCaveat(help);
+  const caveat = showCaveat ? helpCaveat(help) : '';
   return html`<div class="cron-create-row" id=${`${id}-row`} title=${title} hidden=${disabled}>
     <label class="cron-create-label" for=${id}>${label}</label>
     <div class="cron-create-target spawn-field-help-column">
