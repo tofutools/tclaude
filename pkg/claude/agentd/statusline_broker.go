@@ -78,7 +78,8 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 	}
 	if checkBrokerRate(endpoint, preProofKey, brokerPreIdentityRatePerSecond).Reject {
 		if row == nil {
-			brokerRefusals.recordUnplaceable("statusline: caller could not be placed")
+			brokerRefusals.refuseUnplaceable("statusline: caller could not be placed",
+				brokerRefusalContext{Endpoint: endpoint, CallerPID: p.PID})
 		}
 		writeError(w, http.StatusTooManyRequests, "rate", "too many requests before identity verification")
 		return
@@ -113,33 +114,35 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
 		return
 	}
-	provedRow, _, layerClaim := proveTclaudeLayerCaller(p.PID, claimed)
+	provedRow, _, layerClaim, proofDetail := proveTclaudeLayerCallerDetailed(p.PID, claimed)
+	refusal := brokerRefusalContext{Endpoint: endpoint, CallerPID: p.PID, Claimed: claimed, Detail: proofDetail}
+	if row != nil {
+		refusal.Resolved = row.ID
+	}
 	switch {
 	case layerClaim && provedRow != nil:
 		row = provedRow
 	case layerClaim:
 		if row != nil {
-			brokerRefusals.recordClaimMismatch(row.ID,
-				"statusline: claimed tclaude’s sandbox session failed live-pane proof")
+			brokerRefusals.refuseAttributed(
+				"statusline: claimed tclaude’s sandbox session failed live-pane proof", refusal)
 		} else {
-			brokerRefusals.recordUnplaceable("statusline: tclaude’s sandbox caller failed live-pane proof")
+			brokerRefusals.refuseUnplaceable("statusline: tclaude’s sandbox caller failed live-pane proof", refusal)
 		}
 		writeError(w, http.StatusForbidden, "auth", "claimed tclaude’s sandbox session does not own this caller")
 		return
 	case row == nil:
-		brokerRefusals.recordUnplaceable("statusline: caller could not be placed")
+		brokerRefusals.refuseUnplaceable("statusline: caller could not be placed", refusal)
 		writeError(w, http.StatusForbidden, "auth",
 			"could not resolve a session row for this caller; refusing to apply its statusline")
 		return
 	case isTclaudeLayerRow(row):
-		brokerRefusals.recordUnplaceable("statusline: tclaude’s sandbox callback omitted its session claim")
+		brokerRefusals.refuseUnplaceable("statusline: tclaude’s sandbox callback omitted its session claim", refusal)
 		writeError(w, http.StatusForbidden, "auth",
 			"tclaude’s sandbox statusline requires a proved session claim")
 		return
 	case claimed != "" && claimed != row.ID:
-		slog.Warn("statusline broker: rejecting render whose claimed session id disagrees with the resolved row",
-			"caller_pid", p.PID, "claimed_session", claimed, "resolved_session", row.ID, "module", "hooks")
-		brokerRefusals.recordClaimMismatch(row.ID, "statusline: claimed session id disagrees with the resolved row")
+		brokerRefusals.refuseAttributed("statusline: claimed session id disagrees with the resolved row", refusal)
 		writeError(w, http.StatusForbidden, "auth",
 			"claimed session id does not match the session resolved for this caller")
 		return

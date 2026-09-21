@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -55,11 +56,46 @@ const brokerRefusalWindow = 15 * time.Minute
 // against a pathological caller growing the map without bound.
 const brokerRefusalPruneEvery = 256
 
+// brokerRefusalLogInterval throttles the log line a refusal produces. A
+// statusline renders several times a second, so an agent whose every
+// callback is refused would otherwise write a WARN per render for the rest
+// of its life — the same reasoning as brokerLimitLogInterval. The first
+// refusal of a run is always logged; later ones within the interval are
+// counted and reported as `suppressed` on the next line.
+const brokerRefusalLogInterval = 10 * time.Second
+
 type brokerRefusal struct {
 	Count  int
 	First  time.Time
 	Last   time.Time
 	Reason string
+	// lastLogAt and suppressed drive the per-run log throttle. They are not
+	// exposed on the dashboard; the copy forSession hands out carries them
+	// only because it is a whole-struct copy.
+	lastLogAt  time.Time
+	suppressed int
+}
+
+// brokerRefusalLogDecision is what a record call tells its caller about
+// logging: whether to write a line now, and how many refusals of this run
+// went unlogged since the previous line.
+type brokerRefusalLogDecision struct {
+	Log        bool
+	Suppressed int
+	// Count is the run's total so far, for the log line.
+	Count int
+}
+
+// noteLogLocked applies the throttle to one entry and returns the decision.
+func (e *brokerRefusal) noteLogLocked(now time.Time) brokerRefusalLogDecision {
+	if !e.lastLogAt.IsZero() && now.Sub(e.lastLogAt) < brokerRefusalLogInterval {
+		e.suppressed++
+		return brokerRefusalLogDecision{Count: e.Count}
+	}
+	d := brokerRefusalLogDecision{Log: true, Suppressed: e.suppressed, Count: e.Count}
+	e.lastLogAt = now
+	e.suppressed = 0
+	return d
 }
 
 type brokerRefusalRecorder struct {
@@ -84,10 +120,9 @@ func (r *brokerRefusalRecorder) clock() time.Time {
 
 // recordClaimMismatch attributes a refusal to the row the daemon itself
 // resolved for the caller. sessionID must come from the ancestry walk.
-func (r *brokerRefusalRecorder) recordClaimMismatch(sessionID, reason string) {
+func (r *brokerRefusalRecorder) recordClaimMismatch(sessionID, reason string) brokerRefusalLogDecision {
 	if sessionID == "" {
-		r.recordUnplaceable(reason)
-		return
+		return r.recordUnplaceable(reason)
 	}
 	now := r.clock()
 	r.mu.Lock()
@@ -106,9 +141,10 @@ func (r *brokerRefusalRecorder) recordClaimMismatch(sessionID, reason string) {
 	if r.writes%brokerRefusalPruneEvery == 0 {
 		r.pruneLocked(now)
 	}
+	return e.noteLogLocked(now)
 }
 
-func (r *brokerRefusalRecorder) recordUnplaceable(reason string) {
+func (r *brokerRefusalRecorder) recordUnplaceable(reason string) brokerRefusalLogDecision {
 	now := r.clock()
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -118,6 +154,65 @@ func (r *brokerRefusalRecorder) recordUnplaceable(reason string) {
 	r.unplaceable.Count++
 	r.unplaceable.Last = now
 	r.unplaceable.Reason = reason
+	return r.unplaceable.noteLogLocked(now)
+}
+
+// brokerRefusalContext is what a refusal log line needs beyond the
+// recorder's own decision. Every field is daemon-derived except Claimed,
+// which is the caller's own string and labelled as such in the log.
+type brokerRefusalContext struct {
+	Endpoint  string
+	CallerPID int
+	// Resolved is the row the daemon's ancestry walk concluded, or "" when
+	// nothing resolved. It is also the row the refusal was attributed to.
+	Resolved string
+	// Claimed is the session id the caller sent. Logged for correlation
+	// only; it never selects the row the refusal is recorded against.
+	Claimed string
+	// Detail is the proof's own account of what was missing
+	// (proveTclaudeLayerCallerDetailed), or "" when there is none.
+	Detail string
+	// Event is the hook event name, or "" for the statusline endpoint.
+	Event string
+}
+
+// refuseAttributed records a refusal against the daemon-resolved row AND
+// writes the log line the dashboard notice promises ("the daemon log has
+// the caller pid"). The record and the log are one call on purpose: every
+// refusal branch used to record for the dashboard and then return silently,
+// so the badge said something was wrong and nothing said what.
+func (r *brokerRefusalRecorder) refuseAttributed(reason string, ctx brokerRefusalContext) {
+	r.logRefusal(r.recordClaimMismatch(ctx.Resolved, reason), reason, ctx)
+}
+
+// refuseUnplaceable is refuseAttributed for a caller no row resolved for.
+func (r *brokerRefusalRecorder) refuseUnplaceable(reason string, ctx brokerRefusalContext) {
+	ctx.Resolved = ""
+	r.logRefusal(r.recordUnplaceable(reason), reason, ctx)
+}
+
+func (r *brokerRefusalRecorder) logRefusal(d brokerRefusalLogDecision, reason string, ctx brokerRefusalContext) {
+	if !d.Log {
+		return
+	}
+	attrs := []any{
+		"endpoint", ctx.Endpoint,
+		"caller_pid", ctx.CallerPID,
+		"reason", reason,
+		"resolved_session", ctx.Resolved,
+		"claimed_session", ctx.Claimed,
+		"refusals_in_window", d.Count,
+		"suppressed_since_last_log", d.Suppressed,
+		"window", brokerRefusalWindow.String(),
+	}
+	if ctx.Detail != "" {
+		attrs = append(attrs, "detail", ctx.Detail)
+	}
+	if ctx.Event != "" {
+		attrs = append(attrs, "event", ctx.Event)
+	}
+	attrs = append(attrs, "module", "hooks")
+	slog.Warn("broker: refused a brokered callback; the caller's telemetry for this request is lost", attrs...)
 }
 
 func (r *brokerRefusalRecorder) pruneLocked(now time.Time) {
