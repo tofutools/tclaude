@@ -1925,3 +1925,50 @@ func SetProcAliveForTest(fn func(pid int) bool) func() {
 func RegisterHookAckForTest(sessionID string) (string, error) {
 	return registerHookAck(sessionID, nil, nil)
 }
+
+// DisableBrokerPaneCacheForTest makes the brokered proof always take the
+// direct pane probe. Called from TestMain: the existing proof tests pin
+// brokerLivePaneProbe to specific answers, and a cache fed by the simulator
+// would answer ahead of it. Tests of the cache itself opt back in with
+// EnableBrokerPaneCacheForTest.
+func DisableBrokerPaneCacheForTest() {
+	brokerPaneListFn = func() (map[string]brokerPaneEntry, error) { return nil, errDisabledForTest }
+	resetBrokerPaneCache()
+}
+
+// EnableBrokerPaneCacheForTest routes the proof's pane facts through the
+// shared cache, read from whatever clcommon.Default answers `list-panes -a`
+// with (the simulator, in a flow). Returns a restore function.
+func EnableBrokerPaneCacheForTest() func() {
+	prev := brokerPaneListFn
+	brokerPaneListFn = listBrokerPanes
+	resetBrokerPaneCache()
+	return func() {
+		brokerPaneListFn = prev
+		resetBrokerPaneCache()
+	}
+}
+
+// ResetBrokerPaneCacheForTest drops the cached pane table so the next proof
+// re-reads it.
+func ResetBrokerPaneCacheForTest() { resetBrokerPaneCache() }
+
+func resetBrokerPaneCache() {
+	brokerPaneCache.mu.Lock()
+	brokerPaneCache.table, brokerPaneCache.taken = nil, time.Time{}
+	brokerPaneCache.mu.Unlock()
+}
+
+// BrokerPaneCacheReadsForTest wraps the pane-list read to count how many
+// times the cache actually reached tmux. Returns the counter and a restore.
+func BrokerPaneCacheReadsForTest() (*int, func()) {
+	prev := brokerPaneListFn
+	reads := 0
+	brokerPaneListFn = func() (map[string]brokerPaneEntry, error) {
+		reads++
+		return prev()
+	}
+	return &reads, func() { brokerPaneListFn = prev }
+}
+
+var errDisabledForTest = errors.New("disabled for test")

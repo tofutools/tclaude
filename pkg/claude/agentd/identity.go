@@ -1551,6 +1551,11 @@ type layerProof struct {
 	// delivered to it. Endpoints report it as such rather than badging the
 	// row for a render the client retries anyway.
 	callerGone bool
+	// Where the time went, for the slow-request log: the database reads,
+	// the pane facts (and whether the cache or a live probe answered), and
+	// the ancestry walk.
+	dbDur, paneDur, walkDur time.Duration
+	paneSource              string
 }
 
 // proveTclaudeLayerCallerIn is proveTclaudeLayerCaller over a shared
@@ -1569,24 +1574,34 @@ func proveTclaudeLayerCallerIn(t *brokerProcTable, callerPID int, claimedID stri
 	if callerPID <= 1 || claimedID == "" {
 		return layerProof{}
 	}
+	var timing layerProof
+	phase := time.Now()
+	lap := func(into *time.Duration) {
+		now := time.Now()
+		*into += now.Sub(phase)
+		phase = now
+	}
 	row, err := db.LoadSession(claimedID)
+	lap(&timing.dbDur)
 	if err != nil || row == nil || !isTclaudeLayerRow(row) {
 		// Not a layer claim as far as the proof is concerned, but a LoadSession
 		// error is worth distinguishing at the call site from "no such row":
 		// a busy database turns a valid claim into a missing one, and the
 		// caller is then refused for omitting a claim it did send.
 		if err != nil {
-			return layerProof{detail: fmt.Sprintf("loading claimed row failed: %v", err)}
+			timing.detail = fmt.Sprintf("loading claimed row failed: %v", err)
 		}
-		return layerProof{}
+		return timing
 	}
 	fail := func(detail string) layerProof {
-		return layerProof{layerClaim: true, detail: detail}
+		timing.layerClaim, timing.detail = true, detail
+		return timing
 	}
 	if row.TmuxSession == "" {
 		return fail("claimed row records no tmux session")
 	}
 	identity, err := db.GetSessionExitLaunchIdentity(row.ID)
+	lap(&timing.dbDur)
 	switch {
 	case err != nil:
 		return fail(fmt.Sprintf("reading launch identity failed: %v", err))
@@ -1596,7 +1611,9 @@ func proveTclaudeLayerCallerIn(t *brokerProcTable, callerPID int, claimedID stri
 		return fail(fmt.Sprintf("launch identity names tmux session %q but the row records %q",
 			identity.TmuxSession, row.TmuxSession))
 	}
-	pane, err := brokerLivePaneProbe(row.TmuxSession)
+	pane, paneSource, err := brokerPaneFacts(row.TmuxSession, identity.Generation)
+	timing.paneSource = paneSource
+	lap(&timing.paneDur)
 	switch {
 	case err != nil:
 		return fail(fmt.Sprintf("pane probe of tmux session %q failed: %v", row.TmuxSession, err))
@@ -1618,20 +1635,25 @@ func proveTclaudeLayerCallerIn(t *brokerProcTable, callerPID int, claimedID stri
 	hops := 0
 	for range maxAncestorHops {
 		if cur <= 1 {
+			lap(&timing.walkDur)
 			// The walk ran off the top of the tree before meeting the pane.
 			// A caller that no longer exists is the timeout race, not a
 			// mismatch; reaching pid 1 with a live caller means the caller
 			// really is outside the pane.
 			if !t.exists(callerPID) {
-				return layerProof{layerClaim: true, callerGone: true, detail: fmt.Sprintf(
-					"caller pid %d no longer exists; it exited before the proof finished", callerPID)}
+				timing.layerClaim, timing.callerGone = true, true
+				timing.detail = fmt.Sprintf(
+					"caller pid %d no longer exists; it exited before the proof finished", callerPID)
+				return timing
 			}
 			return fail(fmt.Sprintf(
 				"pane pid %d is not an ancestor of caller pid %d (walk ended at pid %d after %d hops)",
 				panePID, callerPID, cur, hops))
 		}
 		if cur == panePID {
-			return layerProof{row: row, harnessPID: harnessPID, layerClaim: true}
+			lap(&timing.walkDur)
+			timing.row, timing.harnessPID, timing.layerClaim = row, harnessPID, true
+			return timing
 		}
 		if harnessPID == 0 && t.harnessName(cur) != "" {
 			harnessPID = cur
@@ -1639,6 +1661,7 @@ func proveTclaudeLayerCallerIn(t *brokerProcTable, callerPID int, claimedID stri
 		cur = t.parent(cur)
 		hops++
 	}
+	lap(&timing.walkDur)
 	return fail(fmt.Sprintf(
 		"pane pid %d not found within %d ancestors of caller pid %d", panePID, maxAncestorHops, callerPID))
 }

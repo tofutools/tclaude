@@ -162,8 +162,12 @@ were suppressed. A caller that had already exited when the daemon got to it
 is not a refusal: the client timed out and will retry, so no badge is set and
 the daemon logs `broker: caller exited before its callback could be verified`
 instead. Seeing that line regularly means the daemon is too slow to answer a
-statusline render within its client's three-second budget. The sandbox
-badge's tooltip breaks down status,
+statusline render within its client's three-second budget; the companion
+`broker: slow brokered request` WARN, written when a brokered callback takes
+over a second, breaks the time down by phase (process-table resolution,
+database reads, pane facts and whether the shared tmux cache or a live probe
+answered them, ancestry walk, applying the event) so the stall can be placed.
+The sandbox badge's tooltip breaks down status,
 implementation (TClaude / CC+TClaude / CC / None), profile, and cgroup memory
 and CPU limits; clicking it temporarily disables or restores the sandbox
 (not available for Codex built-in sandboxes). See
