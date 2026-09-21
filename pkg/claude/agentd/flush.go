@@ -222,6 +222,13 @@ func flushQueue(label string, list func() ([]*db.AgentMessage, error), canDelive
 		// lease-expiry window without weakening restart recovery.
 		registerActiveNudge(m.ID, token)
 		nudge, consumed := messageNudgeTextFor(m)
+		// Command-input panes (currently the shell pseudo-harness) use the
+		// durable inbox as their only delivery surface. sendNudgeBracket returns
+		// true for those panes to record delivery without typing peer-authored
+		// bytes, so never mark that inbox copy read here.
+		if commandInputConv(m.ToConv) {
+			consumed = false
+		}
 		completed := func() bool {
 			defer unregisterActiveNudge(m.ID, token)
 			if !send(m, nudge) {
@@ -330,6 +337,11 @@ func sendNudgeBracket(toConv string, m *db.AgentMessage, nudge string) bool {
 		// its UserPromptSubmit boundary before any of its tool hooks run.
 		return false
 	}
+	if !allowsPaneNudge(sess.Harness) {
+		// The durable inbox is the delivery surface for command-input panes.
+		// Typing peer-authored text into a shell would execute it.
+		return true
+	}
 	// Keep this name-keyed until TCL-675 defines the coherent managed-server
 	// delivery capability. ServerAuthoritative alone does not promise an
 	// OpenCode-compatible prompt sender for future harnesses.
@@ -429,6 +441,36 @@ func sendNudgeBracket(toConv string, m *db.AgentMessage, nudge string) bool {
 		return false
 	}
 	return true
+}
+
+func allowsPaneNudge(harnessName string) bool {
+	deliveryHarness, err := harness.Resolve(harnessName)
+	return err == nil && !deliveryHarness.UsesCommandInput()
+}
+
+var findCommandInputSessions = db.FindSessionsByConvID
+
+// commandInputConv checks the durable session rows without probing tmux. It
+// is used only to decide whether a successful durable delivery should also
+// mark the inbox copy read; a transient pane-probe failure must not make that
+// security-sensitive decision fail open.
+func commandInputConv(convID string) bool {
+	rows, err := findCommandInputSessions(convID)
+	if err != nil {
+		// This result controls whether the durable inbox copy is marked read
+		// after delivery. Uncertainty must fail closed: a later session lookup
+		// may still identify a command-input pane whose successful "delivery"
+		// deliberately consists only of leaving that inbox copy available.
+		slog.Warn("flush: session harness lookup failed; preserving durable inbox copy",
+			"error", err, "conv", convID)
+		return true
+	}
+	for _, row := range rows {
+		if !allowsPaneNudge(row.Harness) {
+			return true
+		}
+	}
+	return false
 }
 
 // pickNudgeSession returns the most-recent row whose tmux pane answers the

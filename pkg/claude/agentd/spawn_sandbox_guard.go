@@ -720,10 +720,12 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 		case harness.ClaudeSandboxInherit:
 			return childIsClaude(child, harness.ClaudeSandboxInherit, harness.ClaudeSandboxOn) ||
 				childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile) ||
+				childIsShell(child) ||
 				copilotProvenLineageLaunch(child)
 		case harness.ClaudeSandboxOn:
 			return childIsClaude(child, harness.ClaudeSandboxOn) ||
 				childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile) ||
+				childIsShell(child) ||
 				copilotProvenLineageLaunch(child)
 		}
 	}
@@ -735,6 +737,7 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 		case harness.SandboxManagedProfile:
 			return childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile) ||
 				childIsClaude(child, harness.ClaudeSandboxInherit, harness.ClaudeSandboxOn) ||
+				childIsShell(child) ||
 				copilotProvenLineageLaunch(child)
 		case harness.SandboxWorkspaceWrite:
 			return childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite)
@@ -750,12 +753,14 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 			return child.Harness == harness.OpenCodeName && child.HarnessBuiltinMode == harness.OpenCodeSandboxTclaudeLayer ||
 				childIsClaude(child, harness.ClaudeSandboxOn) ||
 				childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile) ||
+				childIsShell(child) ||
 				copilotProvenLineageLaunch(child)
 		case harness.OpenCodeSandboxAccessControl:
 			return child.Harness == harness.OpenCodeName &&
 				harnessBuiltinModeIn(child.HarnessBuiltinMode, harness.OpenCodeSandboxAccessControl, harness.OpenCodeSandboxTclaudeLayer) ||
 				childIsClaude(child, harness.ClaudeSandboxOn) ||
 				childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile) ||
+				childIsShell(child) ||
 				copilotProvenLineageLaunch(child)
 		}
 	}
@@ -784,7 +789,8 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 	if copilotProvenLineageLaunch(parent) {
 		return copilotProvenLineageLaunch(child) ||
 			childIsClaude(child, harness.ClaudeSandboxOn) ||
-			childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile)
+			childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile) ||
+			childIsShell(child)
 	}
 	return false
 }
@@ -917,6 +923,10 @@ func normalizeSpawnLineageSandbox(s spawnLineageSandbox) (spawnLineageSandbox, b
 		if copilotProvenLineageLaunch(s) {
 			return s, true
 		}
+	case harness.ShellName:
+		if s.HarnessBuiltinMode == harness.ShellSandboxOff {
+			return s, true
+		}
 	}
 	return spawnLineageSandbox{}, false
 }
@@ -929,6 +939,15 @@ func childIsClaude(child spawnLineageSandbox, modes ...string) bool {
 func childIsCodex(child spawnLineageSandbox, modes ...string) bool {
 	return child.Harness == harness.CodexName &&
 		harnessBuiltinModeIn(child.HarnessBuiltinMode, modes...)
+}
+
+// childIsShell admits only a shell launched inside tclaude's own wall. An
+// unconfined shell is arbitrary command execution and must not be mintable by
+// an agent merely because the shell pseudo-harness has no native sandbox.
+func childIsShell(child spawnLineageSandbox) bool {
+	return child.Harness == harness.ShellName &&
+		child.HarnessBuiltinMode == harness.ShellSandboxOff &&
+		child.Implementation == sandboxpolicy.ImplementationTclaudeLayer
 }
 
 func harnessBuiltinModeIn(builtinMode string, allowed ...string) bool {

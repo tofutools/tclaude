@@ -510,6 +510,12 @@ func RecordAgentRecoveryAudit(r AgentRecovery, verb, reason string, now time.Tim
 // has been merged, so richer callback evidence can promote an earlier unknown
 // reconciliation observation without the callback launching anything.
 func reconcileAgentRecoveryCandidateTx(tx *sql.Tx, meta exitSessionMeta, e AuditLogEntry, now time.Time) error {
+	// The shell pseudo-harness intentionally runs finite user commands. A
+	// non-zero command status is a terminal result, not a crashed agent that
+	// should be restarted or shown as suppressed recovery.
+	if meta.Harness == "shell" {
+		return nil
+	}
 	// Lifecycle-attributed exits are terminal until an operator explicitly
 	// resumes the agent. They are not failed recovery candidates: persisting a
 	// suppressed row here would still advance consecutive_crashes and surface a

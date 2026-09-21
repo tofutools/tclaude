@@ -10,6 +10,7 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	tbl "github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/common"
 	"golang.org/x/term"
@@ -97,6 +98,11 @@ func runList(params *ListParams) error {
 	var filtered []*SessionState
 	for _, state := range states {
 		RefreshSessionStatus(state)
+		if state.Status == StatusExited {
+			if reason, reasonErr := db.GetSessionExitReason(state.ID); reasonErr == nil {
+				state.ExitReason = reason
+			}
+		}
 		if !params.All && state.Status == StatusExited {
 			continue
 		}

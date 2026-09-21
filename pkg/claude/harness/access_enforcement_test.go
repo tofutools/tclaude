@@ -570,6 +570,7 @@ func TestFilteredNetworkCapabilityMatrixFlipsOnlySmokeBackedCells(t *testing.T) 
 		{"Claude tclaude", Default(), sandboxpolicy.ImplementationTclaudeLayer, ClaudeSandboxOff},
 		{"Codex tclaude", MustGet(CodexName), sandboxpolicy.ImplementationTclaudeLayer, SandboxDangerFull},
 		{"OpenCode tclaude", MustGet(OpenCodeName), sandboxpolicy.ImplementationTclaudeLayer, OpenCodeSandboxTclaudeLayer},
+		{"Shell tclaude", MustGet(ShellName), sandboxpolicy.ImplementationTclaudeLayer, ShellSandboxOff},
 		{"Claude stacked", Default(), sandboxpolicy.ImplementationStacked, ClaudeSandboxOn},
 		{"Codex stacked", MustGet(CodexName), sandboxpolicy.ImplementationStacked, SandboxManagedProfile},
 	}
@@ -587,7 +588,8 @@ func TestFilteredNetworkCapabilityMatrixFlipsOnlySmokeBackedCells(t *testing.T) 
 					target.implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 					(target.harness.Name == DefaultName ||
 						target.harness.Name == CodexName ||
-						target.harness.Name == OpenCodeName) {
+						target.harness.Name == OpenCodeName ||
+						target.harness.Name == ShellName) {
 					want = EnforceFull
 				}
 				assert.Equal(t, want, row.NetworkList,
@@ -597,7 +599,8 @@ func TestFilteredNetworkCapabilityMatrixFlipsOnlySmokeBackedCells(t *testing.T) 
 					target.implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 					(target.harness.Name == DefaultName ||
 						target.harness.Name == CodexName ||
-						target.harness.Name == OpenCodeName) {
+						target.harness.Name == OpenCodeName ||
+						target.harness.Name == ShellName) {
 					denyWant = EnforceFull
 				}
 				assert.Equal(t, denyWant, row.NetworkDenyPorts,
@@ -819,7 +822,7 @@ func TestSandboxOffPredictionNeverCreditsBuiltinEnforcement(t *testing.T) {
 			Mode: sandboxpolicy.AccessModeClosed,
 		},
 	}
-	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName, CopilotName} {
+	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName, CopilotName, ShellName} {
 		t.Run(harnessName, func(t *testing.T) {
 			prediction, err := PredictAccessEnforcement(
 				MustGet(harnessName), sandboxpolicy.ImplementationOff,

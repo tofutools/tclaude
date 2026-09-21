@@ -95,11 +95,9 @@ type NewParams struct {
 	// launches OpenAI Codex CLI in the tmux pane via
 	// the codex Spawner. The chosen harness's ModelCatalog validates
 	// --model/--effort and its Spawner builds the launch command, so the
-	// rest of runNew stays harness-agnostic. The special value "shell"
-	// (ShellHarnessName) is NOT a registered harness — it starts a plain,
-	// ephemeral interactive shell instead (no conversation, no hooks, no
-	// model/sandbox/approval), handled by runNewShell before any harness
-	// resolution happens. See shell.go.
+	// rest of runNew stays harness-agnostic. Direct `--harness shell` keeps the
+	// lightweight session path; agentd's managed form uses the registered shell
+	// pseudo-harness so profiles and tclaude's sandbox still apply. See shell.go.
 	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude | codex | opencode | copilot | shell. Unset = global profile, then an installed harness (claude preferred)"`
 
 	// Shell is shorthand for --harness shell: it sets Harness to
@@ -553,20 +551,17 @@ func runNew(params *NewParams) error {
 	if err != nil {
 		return err
 	}
-	// "shell" is a sentinel, not a registered harness (see shell.go) — branch
-	// before any harness resolution so a plain shell never touches the
-	// coding-harness machinery below (model/effort validation, sandbox,
-	// approval, hooks, --join-group, …). --shell is shorthand for
-	// --harness shell; an explicit --harness naming anything else alongside
-	// it is a conflicting request rather than something to silently resolve.
+	// --shell preserves the lightweight standalone shell-session path. An
+	// explicit --harness shell is the registered pseudo-harness and therefore
+	// uses the managed agent/profile/sandbox pipeline below.
 	params.Harness = strings.TrimSpace(params.Harness)
 	if params.Shell {
 		if params.Harness != "" && params.Harness != ShellHarnessName {
 			return fmt.Errorf("--shell conflicts with --harness %s", params.Harness)
 		}
-		params.Harness = ShellHarnessName
+		return runNewShell(params)
 	}
-	if params.Harness == ShellHarnessName {
+	if params.Harness == ShellHarnessName && !params.ManagedLaunch {
 		return runNewShell(params)
 	}
 
@@ -614,7 +609,7 @@ func runNew(params *NewParams) error {
 			return fmt.Errorf("--session-id cannot be combined with --resume")
 		}
 		switch h.Name {
-		case harness.DefaultName, harness.CopilotName:
+		case harness.DefaultName, harness.CopilotName, harness.ShellName:
 			if !clcommon.IsValidUUID(params.SessionID) {
 				return fmt.Errorf("--session-id must be a valid UUID, got %q", params.SessionID)
 			}
@@ -1988,6 +1983,9 @@ func runNew(params *NewParams) error {
 		AskUserQuestionTimeout:   askTimeout,
 		Created:                  launchCreated,
 		Updated:                  launchCreated,
+	}
+	if h.UsesCommandInput() {
+		state.Status = StatusRunning
 	}
 	// Establish the fresh launch identity before any private barrier/token
 	// filesystem setup. Row reuse therefore cannot retain predecessor callback

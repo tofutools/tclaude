@@ -180,6 +180,12 @@ func runUnreadReminderTickWith(now time.Time, st *unreadReminderState) {
 		if isTmuxInputBlocked(sess.Status) {
 			continue // permission/elicitation dialog up — noop, retry next tick
 		}
+		// Command-input panes use the durable inbox rather than a prompt
+		// channel. In particular, never type a peer-authored reminder into a
+		// shell, where it would execute as a command.
+		if !allowsPaneNudge(sess.Harness) {
+			continue
+		}
 		reminder := unreadReminderText(byConv[conv])
 		var err error
 		switch {

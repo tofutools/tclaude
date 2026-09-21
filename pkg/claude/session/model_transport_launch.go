@@ -43,6 +43,13 @@ func ResolveTclaudeLayerModelTransport(
 		return harness.ResolvedModelTransport{}, modelTransportLaunchError(
 			nil, "cannot resolve provider configuration without a harness")
 	}
+	// Command-input harnesses (such as the shell pseudo-harness) have no
+	// hosted model endpoint to resolve. Their authored network rules are the
+	// complete policy, enforced by the packet gateway; requiring a provider
+	// transport here would reject otherwise valid shell commands.
+	if h.UsesCommandInput() {
+		return harness.ResolvedModelTransport{}, nil
+	}
 	// With no selected OpenCode model there is no provider route for tclaude to
 	// inspect, including no claim that an inherited proxy is part of model
 	// transport. The authored network rules are the complete policy in this

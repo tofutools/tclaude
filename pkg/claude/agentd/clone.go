@@ -217,6 +217,12 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			Effort: effort, Model: model,
 		}
 	}
+	if h, resolveErr := harness.Resolve(relaunch.Harness); resolveErr == nil && h.UsesCommandInput() {
+		return cloneSpawnResult{}, &cloneSpawnError{
+			Status: http.StatusUnprocessableEntity, Code: "unsupported_harness",
+			Msg: "clone is not supported for command-input harness " + relaunch.Harness,
+		}
+	}
 	effort, model = relaunch.Effort, relaunch.Model
 	var fastModeAtLaunch *bool
 	if relaunch.Harness == harness.CodexName && relaunch.CodexStateRoot != "" {
@@ -1298,6 +1304,11 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	relaunch, relaunchErr := durableRelaunchConfigForConv(target)
 	if relaunchErr != nil {
 		writeError(w, http.StatusConflict, "relaunch_profile", relaunchErr.Error())
+		return
+	}
+	if cloneHarness, err := harness.Resolve(relaunch.Harness); err == nil && cloneHarness.UsesCommandInput() {
+		writeError(w, http.StatusUnprocessableEntity, "unsupported_harness",
+			"shell agents cannot be cloned; start a new shell agent with the desired command")
 		return
 	}
 	cwd := oldSess.Cwd

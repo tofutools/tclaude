@@ -34,6 +34,9 @@ type SessionState struct {
 	ConvID       string `json:"convId,omitempty"`
 	Status       string `json:"status"`
 	StatusDetail string `json:"statusDetail,omitempty"`
+	// ExitReason is populated for exited sessions (for example,
+	// command_exit_code_1 for a failed shell command).
+	ExitReason string `json:"exitReason,omitempty"`
 	// SubagentCount is a derived cache of Subagents (recomputed by the
 	// hook callback on every state-changing hook). Kept for read surfaces
 	// that only need the raw figure; TTL-aware readers should use

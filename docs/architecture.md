@@ -20,12 +20,14 @@ behind the harnesses are the only external part.
 
 ## Harnesses
 
-A *harness* is a wrapped coding CLI. tclaude supports four:
+A *harness* is a wrapped coding CLI (or the model-free shell pseudo-harness).
+tclaude supports:
 [Claude Code](https://claude.ai/code) (the default),
 [OpenAI Codex CLI](https://developers.openai.com/codex/cli),
 [OpenCode](https://opencode.ai), and
-[GitHub Copilot CLI](https://github.com/features/copilot/cli). A group can mix
-them freely, and the same commands drive all of them.
+[GitHub Copilot CLI](https://github.com/features/copilot/cli), plus `shell` for
+model-free command or interactive-shell agents. A group can mix them freely,
+and the same commands drive all of them.
 
 Harnesses do not expose identical primitives, so tclaude is built around
 *capability contracts*: each harness registers a descriptor composed of
@@ -37,8 +39,8 @@ visible all over the docs: phrases like "Claude Code only" or "not
 packet-filtered" are contract facts, not editorial hedges. See
 [Harnesses](harnesses.md) for the capability matrix.
 
-`--harness shell` also exists, but it is not a harness — just a convenient
-hack to bring up a plain terminal in a managed tmux session.
+The direct `session new --shell` form remains a lightweight plain terminal;
+the registered pseudo-harness is used by managed agent spawns.
 
 ## Sessions, conversations, agents
 

@@ -366,6 +366,11 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		writeError(w, http.StatusConflict, "relaunch_profile", relaunchErr.Error())
 		return
 	}
+	if relaunchHarness, err := harness.Resolve(relaunch.Harness); err == nil && relaunchHarness.UsesCommandInput() {
+		writeError(w, http.StatusUnprocessableEntity, "unsupported_harness",
+			"shell agents cannot be reincarnated; start a new shell agent with the desired command")
+		return
+	}
 	cwd, cwdErr := livePaneCwd(oldSess.TmuxSession)
 	if cwdErr != nil {
 		writeError(w, http.StatusInternalServerError, "io", cwdErr.Error())

@@ -1059,8 +1059,14 @@ func ValidateTclaudeLayerNetwork(
 		if len(axes.Network.Deny) == 0 {
 			return nil, nil
 		}
+		if h != nil && h.UsesCommandInput() {
+			return nil, nil
+		}
 		fallthrough
 	case sandboxpolicy.AccessModeList:
+		if h != nil && h.UsesCommandInput() {
+			return nil, nil
+		}
 		deployedEngine, engineErr :=
 			sandboxpolicy.DeployedNetworkEngineForRules(axes.Network)
 		if engineErr != nil {
@@ -1113,6 +1119,9 @@ func ValidateTclaudeLayerNetwork(
 			Detail: detail,
 		}}, nil
 	case sandboxpolicy.AccessModeClosed:
+		if h != nil && h.UsesCommandInput() {
+			return nil, nil
+		}
 	default:
 		return nil, fmt.Errorf("unsupported tclaude sandbox network mode %q", axes.Network.Mode)
 	}
@@ -3303,6 +3312,11 @@ func TclaudeLayerHarnessStateRoot(harnessName string) (string, error) {
 		return filepath.Join(home, ".copilot"), nil
 	case harness.OpenCodeName:
 		return filepath.Join(home, ".opencode"), nil
+	case harness.ShellName:
+		// Shell has no native state directory; keep a dedicated writable root
+		// for the shared tclaude-layer launch contract rather than borrowing a
+		// coding harness's credentials or runtime state.
+		return filepath.Join(home, ".tclaude", "shell"), nil
 	default:
 		return "", fmt.Errorf("tclaude’s sandbox has no launch-contract state root for harness %q", harnessName)
 	}

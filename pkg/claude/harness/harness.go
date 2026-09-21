@@ -188,6 +188,10 @@ type Harness struct {
 	// the welcome through prompt_async. Codex leaves this false because its id
 	// only appears after the first turn.
 	LaunchEnrollment bool
+	// CommandInput marks a pseudo-harness whose InitialPrompt is executable
+	// command text rather than a conversational turn. Callers must never send
+	// inbox nudges or lifecycle handoff prose into such a pane.
+	CommandInput bool
 
 	// SeedsFirstTurn marks a harness that needs a positional first-turn prompt
 	// at launch to materialise its conversation id / on-disk history: Codex
@@ -538,6 +542,10 @@ func (h *Harness) SupportsLaunchEnrollment() bool {
 	return h != nil && h.LaunchEnrollment && h.Spawn != nil
 }
 
+func (h *Harness) UsesCommandInput() bool {
+	return h != nil && h.CommandInput
+}
+
 // NeedsSpawnSeed reports whether a daemon-spawned pane of this harness needs a
 // positional first-turn prompt to materialise its conv-id (Codex does; Claude
 // Code reports its id at launch). When true, the spawn path always supplies a
@@ -751,7 +759,10 @@ func SpawnBinaries() []string {
 	defer registryMu.RUnlock()
 	out := make([]string, 0, len(registry))
 	for _, h := range registry {
-		if h.Spawn != nil {
+		// The shell pseudo-harness deliberately runs a ubiquitous system shell.
+		// Treating every sh/bash process as a coding-harness ancestor would make
+		// ordinary terminals eligible for hook attribution.
+		if h.Spawn != nil && h.Name != ShellName {
 			out = append(out, h.Spawn.Binary())
 		}
 	}

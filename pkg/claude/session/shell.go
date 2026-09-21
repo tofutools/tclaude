@@ -12,15 +12,10 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
-// ShellHarnessName is the sentinel `--harness` value that starts a plain,
-// ephemeral interactive shell instead of a coding harness. It is
-// deliberately NOT registered in pkg/claude/harness: a shell session has no
-// conversation, no hooks, and no model/sandbox/approval concepts, so
-// folding it into the harness registry would surface it across the
-// daemon's agent spawn/clone/reincarnate, spawn profiles, and conv
-// listing — machinery built around a coding agent's conversation. runNew
-// branches to runNewShell for this value before any harness resolution
-// happens, so none of that machinery is affected.
+// ShellHarnessName names both the lightweight direct shell-session sentinel
+// and the registered pseudo-harness used by managed agent spawns. runNew keeps
+// the direct form on this file's minimal path; agentd's --managed-launch form
+// uses the harness registry and the normal profile/sandbox pipeline.
 const ShellHarnessName = "shell"
 
 // ShellSession identifies a shell session that has just been created: the
@@ -253,6 +248,10 @@ func rejectShellUnsupportedFlags(params *NewParams) error {
 		return fmt.Errorf(notApplicable, "--effort", ShellHarnessName, "a shell session has no model")
 	case params.Sandbox != "":
 		return fmt.Errorf(notApplicable, "--sandbox", ShellHarnessName, "it has no launch-time sandbox mode")
+	case params.SandboxImpl != "":
+		return fmt.Errorf(notApplicable, "--sandbox-impl", ShellHarnessName, "it has no launch-time sandbox mode")
+	case params.SandboxProfile != "":
+		return fmt.Errorf(notApplicable, "--sandbox-profile", ShellHarnessName, "it has no sandbox profiles")
 	case params.PermissionProfile != "":
 		return fmt.Errorf(notApplicable, "--permission-profile", ShellHarnessName, "it has no permission profiles")
 	case params.Approval != "":

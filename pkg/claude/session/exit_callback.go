@@ -19,6 +19,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 const exitLaunchBarrierPolls = 3000 // 30s at 10ms: bounded parent-failure fallback
@@ -646,6 +647,22 @@ func applyExitCallback(p exitCallbackParams) error {
 			"session_id", p.SessionID, "tmux_session", p.TmuxSession,
 			"pane_id", p.PaneID, "error", err)
 		return fmt.Errorf("record managed pane exit: %w", err)
+	}
+	if row, loadErr := db.LoadSession(p.SessionID); loadErr == nil && row != nil &&
+		row.Harness == harness.ShellName {
+		reason := "command_exit_unknown"
+		if code != nil {
+			if *code == 0 {
+				reason = "command_succeeded"
+			} else {
+				reason = fmt.Sprintf("command_exit_code_%d", *code)
+			}
+		} else if p.Signal != "" {
+			reason = "command_signal_" + strings.ToLower(p.Signal)
+		}
+		if setErr := db.SetSessionExitReason(p.SessionID, reason); setErr != nil {
+			slog.Warn("exit audit: record shell command outcome failed", "session_id", p.SessionID, "error", setErr)
+		}
 	}
 	if result.LifecycleAction == "" && failedStartup &&
 		StartupPaneTextIsOurs(paneHarness, gateState, startupAge, SpawnFailureDiagnosticWindow) {

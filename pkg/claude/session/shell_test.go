@@ -20,6 +20,8 @@ func TestRunNewShell_RejectsCodingHarnessFlags(t *testing.T) {
 		{"model", NewParams{Model: "opus"}, "--model"},
 		{"effort", NewParams{Effort: "high"}, "--effort"},
 		{"sandbox", NewParams{Sandbox: "workspace-write"}, "--sandbox"},
+		{"sandbox-impl", NewParams{SandboxImpl: "tclaude-layer"}, "--sandbox-impl"},
+		{"sandbox-profile", NewParams{SandboxProfile: "default"}, "--sandbox-profile"},
 		{"permission-profile", NewParams{PermissionProfile: "tclaude-agent"}, "--permission-profile"},
 		{"approval", NewParams{Approval: "never"}, "--ask-for-approval"},
 		{"tools", NewParams{ToolGovernance: "deny"}, "--tools"},

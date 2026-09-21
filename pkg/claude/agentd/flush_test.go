@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -47,6 +48,23 @@ func resetFlushState(_ *testing.T) {
 	flushDebounceMu.Lock()
 	flushDebounce = map[string]time.Time{}
 	flushDebounceMu.Unlock()
+}
+
+func TestAllowsPaneNudgeRefusesCommandInputHarness(t *testing.T) {
+	assert.False(t, allowsPaneNudge("shell"),
+		"peer-authored inbox text must never be submitted to a command interpreter")
+	assert.True(t, allowsPaneNudge("claude"))
+}
+
+func TestCommandInputConvPreservesInboxOnLookupError(t *testing.T) {
+	previous := findCommandInputSessions
+	findCommandInputSessions = func(string) ([]*db.SessionRow, error) {
+		return nil, errors.New("temporary database failure")
+	}
+	t.Cleanup(func() { findCommandInputSessions = previous })
+
+	assert.True(t, commandInputConv("conv"),
+		"an unreadable harness posture must preserve the durable inbox copy")
 }
 
 func TestReleaseExpiredNudgeClaims_SkipsActiveDaemonOwner(t *testing.T) {

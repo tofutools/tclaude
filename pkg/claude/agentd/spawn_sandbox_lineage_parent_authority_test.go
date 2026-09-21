@@ -160,6 +160,9 @@ func TestSandboxLineageParentAuthorityVerdictDelta(t *testing.T) {
 		"claude/off[tclaude-layer] -> opencode/off[off]",
 		"claude/off[tclaude-layer] -> opencode/off[stacked]",
 		"claude/off[tclaude-layer] -> opencode/tclaude-layer[tclaude-layer]",
+		"claude/off[tclaude-layer] -> shell/off[harness-builtin]",
+		"claude/off[tclaude-layer] -> shell/off[off]",
+		"claude/off[tclaude-layer] -> shell/off[stacked]",
 		"codex/danger-full-access[tclaude-layer] -> claude/off[harness-builtin]",
 		"codex/danger-full-access[tclaude-layer] -> claude/off[off]",
 		"codex/danger-full-access[tclaude-layer] -> claude/off[stacked]",
@@ -172,6 +175,9 @@ func TestSandboxLineageParentAuthorityVerdictDelta(t *testing.T) {
 		"codex/danger-full-access[tclaude-layer] -> opencode/off[off]",
 		"codex/danger-full-access[tclaude-layer] -> opencode/off[stacked]",
 		"codex/danger-full-access[tclaude-layer] -> opencode/tclaude-layer[tclaude-layer]",
+		"codex/danger-full-access[tclaude-layer] -> shell/off[harness-builtin]",
+		"codex/danger-full-access[tclaude-layer] -> shell/off[off]",
+		"codex/danger-full-access[tclaude-layer] -> shell/off[stacked]",
 	}, tightened)
 }
 

@@ -670,6 +670,27 @@ func TestOpenCodeSandboxLineageClassifiesLayerAccessControlOffAndUnknown(t *test
 	))
 }
 
+func TestConfinedShellCanBeSpawnedByConfinedAgent(t *testing.T) {
+	shell := spawnLineageSandbox{
+		Harness: harness.ShellName, HarnessBuiltinMode: harness.ShellSandboxOff,
+		Implementation: sandboxpolicy.ImplementationTclaudeLayer,
+	}
+	for _, parent := range []spawnLineageSandbox{
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxInherit},
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOn},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxManagedProfile},
+		{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxAccessControl},
+		{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxTclaudeLayer},
+	} {
+		require.Truef(t, spawnSandboxLineageAllowed(parent, shell), "parent %#v", parent)
+	}
+	require.False(t, spawnSandboxLineageAllowed(
+		spawnLineageSandbox{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOn},
+		spawnLineageSandbox{Harness: harness.ShellName, HarnessBuiltinMode: harness.ShellSandboxOff,
+			Implementation: sandboxpolicy.ImplementationHarnessBuiltin},
+	))
+}
+
 func TestSandboxProfileCapabilityFailureRejectsUnsupportedNetworkOnlyProfile(t *testing.T) {
 	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
 		NetworkAccess: sandboxpolicy.NetworkAccessInternet,

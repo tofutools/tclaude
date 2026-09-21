@@ -360,6 +360,15 @@ func classifyApprovalLineage(harnessName, policy string, autoReview bool, child 
 		default:
 			return approvalLineagePosture{}
 		}
+	case ShellName:
+		// A shell has no approval UI or reviewer. Its command is unattended,
+		// so the child requires the same capability as an automatically-run
+		// in-sandbox command. The sandbox lineage guard separately requires the
+		// shell to be inside tclaude's wall; this arm governs only approval.
+		if autoReview || policy != "" {
+			return approvalLineagePosture{}
+		}
+		return approvalLineagePosture{capability: approvalAutoInSandbox, valid: true}
 	default:
 		return approvalLineagePosture{}
 	}

@@ -5,7 +5,7 @@ tclaude-managed tmux pane. tclaude is harness-agnostic: sessions,
 conversations, `ask`, agent groups, lifecycle, and the dashboard all work
 across every harness, and a group can freely mix them.
 
-Four harnesses are supported:
+Four coding harnesses and one shell pseudo-harness are supported:
 
 | `--harness` | Harness | Binary in the pane |
 | --- | --- | --- |
@@ -13,17 +13,20 @@ Four harnesses are supported:
 | `codex` | OpenAI Codex CLI | `codex` |
 | `opencode` | OpenCode | managed `opencode serve` + an `attach` client |
 | `copilot` | GitHub Copilot CLI | `copilot` |
+| `shell` | ordinary shell (no model) | `$SHELL` or `/bin/sh` |
 
 tclaude owns everything around the pane — the tmux session, status tracking,
 the conversation index, groups and messaging, the dashboard — while each
 harness contributes only what is genuinely harness-specific: how to launch it,
 where it stores conversations, and which in-pane commands it understands.
 
-!!! note "`--harness shell` is not a harness"
-    `--shell` starts a plain interactive shell in a managed tmux session —
-    a convenience hack with no conversation, hooks, model, or sandbox. It is
-    deliberately not part of the harness lineup. See
-    [Sessions](sessions.md#shell-sessions).
+!!! note "Shell has two launch forms"
+    `session new --shell` (and the equivalent direct `--harness shell` form)
+    starts the lightweight standalone shell session described under
+    [Sessions](sessions.md#shell-sessions). `agent spawn --harness shell`
+    instead uses the managed agent pipeline: group enrollment, worktrees,
+    spawn profiles, and tclaude's OS sandbox are available, but model,
+    reasoning, hooks, and harness-native sandbox options are not.
 
 ## How capabilities work
 
@@ -68,6 +71,8 @@ described in [Spawning and lifecycle](spawning-and-lifecycle.md).
 tclaude session new --harness codex
 tclaude agent spawn --group crew --name worker --harness opencode
 tclaude session new --harness copilot --model gpt-5.4
+tclaude agent spawn --group crew --name checks --harness shell \
+  --initial-message 'go test ./...'
 ```
 
 ### Persistence and resume posture
@@ -89,26 +94,26 @@ warning. Model and effort are remembered by the harness itself.
 
 ✅ yes · ⚠️ partial / with caveats · ❌ no
 
-| Capability | Claude Code | Codex CLI | OpenCode | Copilot CLI |
-| --- | --- | --- | --- | --- |
-| Sessions: spawn / resume | ✅ | ✅ | ✅ managed server + attach | ✅ |
-| One-shot [`ask`](ask.md) | ✅ live-streamed | ✅ buffered | ✅ buffered | ✅ buffered |
-| [Conversation](conversations.md) list & search | ✅ | ✅ | ✅ | ✅ |
-| Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only |
-| Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` |
-| Compact / reincarnate | ✅ | ✅ | ✅ (server API, no keystrokes) | ✅ |
-| Séance (ask posture) replay | ✅ | ✅ | ❌ | ❌ |
-| [Remote control](remote.md) | ✅ | ❌ | ❌ | ❌ |
-| [Status line](utilities.md#status-line) | ✅ command-backed | ⚠️ curated built-in items | ⚠️ OpenCode's own TUI status | ❌ |
-| [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ |
-| Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off |
-| [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ |
-| Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD |
-| Hooks via `tclaude setup` | ✅ | ✅ | ❌ (server liveness instead) | ✅ |
-| Directory pre-trust (`--trust-dir`) | ✅ | ✅ | — no trust dialog | ✅ |
-| Tool governance (`--tools`) | ❌ | ❌ | ✅ | ❌ |
-| Fast mode | ❌ | ✅ | ❌ | ❌ |
-| API/RPC drive | — n/a | ⚠️ experimental `--codex-app-server` | ✅ inherent | ⚠️ experimental `--copilot-api` |
+| Capability | Claude Code | Codex CLI | OpenCode | Copilot CLI | Shell |
+| --- | --- | --- | --- | --- | --- |
+| Sessions: spawn / resume | ✅ | ✅ | ✅ managed server + attach | ✅ | ✅ spawn only |
+| One-shot [`ask`](ask.md) | ✅ live-streamed | ✅ buffered | ✅ buffered | ✅ buffered | ❌ |
+| [Conversation](conversations.md) list & search | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only | ⚠️ durable inbox only; never injected into the shell |
+| Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` | ❌ |
+| Compact / reincarnate | ✅ | ✅ | ✅ (server API, no keystrokes) | ✅ | ❌ |
+| Séance (ask posture) replay | ✅ | ✅ | ❌ | ❌ | ❌ |
+| [Remote control](remote.md) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| [Status line](utilities.md#status-line) | ✅ command-backed | ⚠️ curated built-in items | ⚠️ OpenCode's own TUI status | ❌ | ❌ |
+| [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off | ❌ |
+| [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ | ✅ |
+| Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD | ❌ |
+| Hooks via `tclaude setup` | ✅ | ✅ | ❌ (server liveness instead) | ✅ | ❌ |
+| Directory pre-trust (`--trust-dir`) | ✅ | ✅ | — no trust dialog | ✅ | — |
+| Tool governance (`--tools`) | ❌ | ❌ | ✅ | ❌ | ❌ |
+| Fast mode | ❌ | ✅ | ❌ | ❌ | ❌ |
+| API/RPC drive | — n/a | ⚠️ experimental `--codex-app-server` | ✅ inherent | ⚠️ experimental `--copilot-api` | — n/a |
 
 The rest of this page walks each harness: setup, maturity, models, sandbox
 and approval knobs, and the extras only that harness has.
