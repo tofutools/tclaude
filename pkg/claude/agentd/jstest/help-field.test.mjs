@@ -236,3 +236,34 @@ test('HelpDisclosure marks a caveat in colour, glyph, and accessible name', asyn
   assertAbsent(host.querySelector('.spawn-field-help-trigger'));
   assertAbsent(host.querySelector('#demo-impl-help'));
 });
+
+test('Copilot yolo caveat follows explicit or resolved confinement and preserves help', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { HelpField } = await harness.importDashboardModule('js/help-field.js');
+  const { approvalCaveatVisibleFor } = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const help = modeHelp['copilot/approval/yolo'];
+  const cases = [
+    ['tclaude-layer', '', false],
+    ['', 'tclaude-layer', false],
+    ['off', 'tclaude-layer', true],
+    ['resource-only', 'tclaude-layer', true],
+    ['', '', true],
+    ['', 'off', true],
+  ];
+  for (const [sandboxImpl, resolved, visible] of cases) {
+    const draft = { harness: 'copilot', approval: 'yolo', sandboxImpl };
+    const { container } = await harness.mount(harness.h(HelpField, {
+      id: 'copilot', label: 'Permission mode', value: 'yolo',
+      options: [{ value: 'yolo', label: 'yolo' }], onChange() {},
+      help, open: false, setOpen() {},
+      showCaveat: approvalCaveatVisibleFor(draft, resolved),
+    }));
+    assert.equal(!!container.querySelector('.spawn-field-caveat'), visible,
+      JSON.stringify({ sandboxImpl, resolved }));
+    assert.equal(container.querySelector('select').title, help);
+    assert.equal(container.querySelector('#copilot-hint').textContent, help);
+  }
+  assert.equal(approvalCaveatVisibleFor({
+    harness: 'claude', approval: 'bypassPermissions', sandboxImpl: 'tclaude-layer',
+  }), true, 'other harness warnings remain visible');
+});

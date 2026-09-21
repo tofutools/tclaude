@@ -43,7 +43,7 @@ import {
   validateSpawnDraft,
   autoCompactWindowHintFor,
   contextWindowMaxHintFor,
-  harnessBuiltinModeHelpForImplementation,
+  harnessBuiltinModeHelpForImplementation, approvalCaveatVisibleFor,
   harnessBuiltinModeControlLabel,
   harnessBuiltinModeOptionsForImplementation,
   sandboxImplHintFor,
@@ -1214,6 +1214,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         value: mode, label: approvalPolicyLabel(draft.harness, mode, view.approval.recommended),
       }))}
       onChange=${(event) => update('approval', event.currentTarget.value)}
+      showCaveat=${approvalCaveatVisibleFor(draft, launchDefaults?.implementation)}
       help=${approvalHelp} open=${helpOpen === 'agent-spawn-approval'} setOpen=${setHelpOpen}
       disabled=${!view.approval.visible || !showApprovalControls} busy=${busy} />
     <div class=${`cron-create-row${sandboxInfo.length === 0 ? ' sandbox-info-pending' : ''}`}
