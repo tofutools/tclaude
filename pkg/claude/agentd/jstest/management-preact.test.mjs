@@ -2947,7 +2947,15 @@ test('effective preview buckets normalized deny rows with target-specific help',
       };
     },
   });
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  // The effective-preview buckets render only once the debounced prediction
+  // has resolved. A fixed sleep raced that on a slow runner (the macOS
+  // post-merge cell), so wait for the rendered buckets themselves, as the raw
+  // access test does (#2618).
+  await waitForCondition(harness,
+    () => host.querySelector('.sbx-rule-bucket-applied')
+      && host.querySelector('.sbx-rule-bucket-partial')
+      && host.querySelector('.sbx-rule-bucket-not-applied'),
+    'the effective policy preview should finish prediction and render all three rule buckets');
   assert.equal(host.querySelector('.sbx-network-value').value, 'API.EXAMPLE.COM');
   assertAbsent(host.querySelector('.sbx-network-badge'));
   assert.equal(host.querySelector('.sbx-network-deny-note').textContent,
