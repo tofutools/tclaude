@@ -252,7 +252,7 @@ test('Copilot yolo caveat follows explicit or resolved confinement and preserves
   ];
   for (const [sandboxImpl, resolved, visible] of cases) {
     const draft = { harness: 'copilot', approval: 'yolo', sandboxImpl };
-    const { container } = await harness.mount(harness.h(HelpField, {
+    const { container } = await harness.mount(harness.preact.h(HelpField, {
       id: 'copilot', label: 'Permission mode', value: 'yolo',
       options: [{ value: 'yolo', label: 'yolo' }], onChange() {},
       help, open: false, setOpen() {},
