@@ -251,7 +251,7 @@ function bucketGlyph(bucket) {
 
 // elapsed renders a check's runtime: completed checks keep their final
 // duration, a still-running one counts up from its start. Returns '' when the
-// check never reported a start time.
+// check never reported a start time or finished without a usable completion.
 export function elapsed(check, now = Date.now()) {
   const started = Date.parse(check?.started_at || '');
   if (!Number.isFinite(started)) return '';
@@ -259,7 +259,9 @@ export function elapsed(check, now = Date.now()) {
   // GitHub/older daemon responses can carry Go's zero-time sentinel for an
   // unfinished check. It parses successfully, but is not a completion: using
   // it produces a negative duration that would otherwise be frozen at 0s.
-  const end = Number.isFinite(ended) && ended >= started ? ended : now;
+  const completed = Number.isFinite(ended) && ended >= started;
+  if (!completed && !isRunningCheck(check)) return '';
+  const end = completed ? ended : now;
   const seconds = Math.max(0, Math.round((end - started) / 1000));
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
