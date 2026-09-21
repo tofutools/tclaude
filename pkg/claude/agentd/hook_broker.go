@@ -174,7 +174,12 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 	// the request claim is checked against the live pane below. The shared,
 	// high-capacity guard bounds pre-proof body parsing; the final row is charged
 	// exactly once after identity settles.
-	row, harnessPID := hookSessionRowForPID(p.PID)
+	// One process-table view for the whole request: the resolution walk
+	// here and the proof below read the same snapshot, so the proof cannot
+	// lose a race against a caller that exits mid-request (see
+	// broker_proc_table.go).
+	procs := newBrokerProcTable()
+	row, harnessPID := hookSessionRowForPIDIn(procs, p.PID)
 	preProofKey := brokerPreIdentityKey
 	if row != nil {
 		preProofKey = brokerPreIdentityKeyForRow(row.ID)
@@ -216,17 +221,33 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
 		return
 	}
-	provedRow, provedHarnessPID, layerClaim, proofDetail := proveTclaudeLayerCallerDetailed(p.PID, claimed)
 	refusal := brokerRefusalContext{
-		Endpoint: endpoint, CallerPID: p.PID, Claimed: claimed,
-		Detail: proofDetail, Event: req.Input.HookEventName,
+		Endpoint: endpoint, CallerPID: p.PID, Claimed: claimed, Event: req.Input.HookEventName,
 	}
 	if row != nil {
 		refusal.Resolved = row.ID
 	}
+	if !procs.exists(p.PID) {
+		// The client gave up (its own timeout) and exited before the daemon
+		// got here. Nothing can be delivered to it and it retries on its
+		// own, so this is logged as what it is rather than badged as a
+		// refusal — the badge means "this agent's telemetry is stuck",
+		// which a timed-out render is not.
+		brokerRefusals.noteCallerGone(refusal)
+		writeError(w, http.StatusForbidden, "auth", "caller exited before its identity could be verified")
+		return
+	}
+	proof := proveTclaudeLayerCallerIn(procs, p.PID, claimed)
+	proofDetail := proof.detail
+	refusal.Detail = proofDetail
+	layerClaim := proof.layerClaim
 	switch {
-	case layerClaim && provedRow != nil:
-		row, harnessPID = provedRow, provedHarnessPID
+	case proof.callerGone:
+		brokerRefusals.noteCallerGone(refusal)
+		writeError(w, http.StatusForbidden, "auth", "caller exited before its identity could be verified")
+		return
+	case layerClaim && proof.row != nil:
+		row, harnessPID = proof.row, proof.harnessPID
 	case layerClaim:
 		if row != nil {
 			brokerRefusals.refuseAttributed(

@@ -158,7 +158,12 @@ a failed live-pane proof, which fact was missing (pane probe, launch
 generation, or ancestry). The first refusal of an episode always logs; later
 ones within ten seconds are counted per resolved row (per caller pid for
 callers no row resolved for), and the next permitted line reports how many
-were suppressed. The sandbox badge's tooltip breaks down status,
+were suppressed. A caller that had already exited when the daemon got to it
+is not a refusal: the client timed out and will retry, so no badge is set and
+the daemon logs `broker: caller exited before its callback could be verified`
+instead. Seeing that line regularly means the daemon is too slow to answer a
+statusline render within its client's three-second budget. The sandbox
+badge's tooltip breaks down status,
 implementation (TClaude / CC+TClaude / CC / None), profile, and cgroup memory
 and CPU limits; clicking it temporarily disables or restores the sandbox
 (not available for Codex built-in sandboxes). See

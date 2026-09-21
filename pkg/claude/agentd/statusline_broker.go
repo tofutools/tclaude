@@ -71,7 +71,9 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 	// Resolve the ordinary candidate before parsing, but keep it provisional
 	// until the request claim can be checked against the live pane. The shared
 	// guard bounds that pre-proof work; only the final row is charged below.
-	row, _ := hookSessionRowForPID(p.PID)
+	// One process-table view for the whole request; see hook_broker.go.
+	procs := newBrokerProcTable()
+	row, _ := hookSessionRowForPIDIn(procs, p.PID)
 	preProofKey := brokerPreIdentityKey
 	if row != nil {
 		preProofKey = brokerPreIdentityKeyForRow(row.ID)
@@ -114,14 +116,28 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
 		return
 	}
-	provedRow, _, layerClaim, proofDetail := proveTclaudeLayerCallerDetailed(p.PID, claimed)
-	refusal := brokerRefusalContext{Endpoint: endpoint, CallerPID: p.PID, Claimed: claimed, Detail: proofDetail}
+	refusal := brokerRefusalContext{Endpoint: endpoint, CallerPID: p.PID, Claimed: claimed}
 	if row != nil {
 		refusal.Resolved = row.ID
 	}
+	if !procs.exists(p.PID) {
+		// See hook_broker.go: a vanished caller is the client's timeout,
+		// not a refusal to badge.
+		brokerRefusals.noteCallerGone(refusal)
+		writeError(w, http.StatusForbidden, "auth", "caller exited before its identity could be verified")
+		return
+	}
+	proof := proveTclaudeLayerCallerIn(procs, p.PID, claimed)
+	proofDetail := proof.detail
+	refusal.Detail = proofDetail
+	layerClaim := proof.layerClaim
 	switch {
-	case layerClaim && provedRow != nil:
-		row = provedRow
+	case proof.callerGone:
+		brokerRefusals.noteCallerGone(refusal)
+		writeError(w, http.StatusForbidden, "auth", "caller exited before its identity could be verified")
+		return
+	case layerClaim && proof.row != nil:
+		row = proof.row
 	case layerClaim:
 		if row != nil {
 			brokerRefusals.refuseAttributed(

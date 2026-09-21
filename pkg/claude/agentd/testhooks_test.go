@@ -622,7 +622,7 @@ func SetProcTreeForTest(name map[int]string, parent map[int]int) func() {
 // renamed its main thread. Copilot's Node SEA does this (comm "MainThread",
 // exe "copilot"), which is what made its panes unidentifiable — TCL-1049.
 func SetProcTreeWithExeForTest(name, exe map[int]string, parent map[int]int) func() {
-	prevName, prevParent, prevExe := procName, procParent, procExeName
+	prevName, prevParent, prevExe, prevAlive := procName, procParent, procExeName, procAlive
 	procName = func(pid int) string { return name[pid] }
 	procExeName = func(pid int) string { return exe[pid] }
 	procParent = func(pid int) int {
@@ -631,7 +631,42 @@ func SetProcTreeWithExeForTest(name, exe map[int]string, parent map[int]int) fun
 		}
 		return 1
 	}
-	return func() { procName, procParent, procExeName = prevName, prevParent, prevExe }
+	// A synthetic pid exists when the tree says anything about it. Unlisted
+	// pids are gone, which is what a test modelling a vanished caller wants.
+	procAlive = func(pid int) bool {
+		_, hasParent := parent[pid]
+		return hasParent || name[pid] != "" || exe[pid] != ""
+	}
+	return func() { procName, procParent, procExeName, procAlive = prevName, prevParent, prevExe, prevAlive }
+}
+
+// InstallBrokerProcTableTestDefaults turns off the whole-table process
+// snapshot for the test binary and makes liveness follow the per-pid parent
+// reader. Every identity test installs a synthetic tree over the per-pid
+// readers; a real `ps` snapshot would resolve those synthetic pids against
+// whatever host processes happen to hold the numbers. Called from TestMain.
+func InstallBrokerProcTableTestDefaults() {
+	brokerProcSnapshot = func() map[int]procTableEntry { return nil }
+	readProcEntry = func(pid int) procTableEntry {
+		return procTableEntry{ppid: procParent(pid), name: procName(pid)}
+	}
+	procAlive = func(pid int) bool { return pid > 0 && procParent(pid) != 0 }
+}
+
+// SetBrokerProcSnapshotForTest serves the brokered walks from a fixed
+// snapshot, modelling the macOS whole-table read. Returns a restore
+// function.
+func SetBrokerProcSnapshotForTest(snap map[int]struct {
+	PPID int
+	Name string
+}) func() {
+	prev := brokerProcSnapshot
+	table := map[int]procTableEntry{}
+	for pid, e := range snap {
+		table[pid] = procTableEntry{ppid: e.PPID, name: e.Name, exeName: true}
+	}
+	brokerProcSnapshot = func() map[int]procTableEntry { return table }
+	return func() { brokerProcSnapshot = prev }
 }
 
 // SetOperatorTokenForTest installs a known operator token so flow tests
@@ -1874,3 +1909,19 @@ func SetPowerOnOnlineGraceForTest(d time.Duration) func() {
 // flow tests can assert /api/snapshot surfaces the exact value the served
 // page was stamped with.
 func DashboardAssetsVersionForTest() string { return dashboardAssetsVersion }
+
+// SetProcAliveForTest replaces the caller-liveness probe the brokered
+// endpoints use to tell a vanished caller from an ancestry mismatch.
+// Returns a restore function.
+func SetProcAliveForTest(fn func(pid int) bool) func() {
+	prev := procAlive
+	procAlive = fn
+	return func() { procAlive = prev }
+}
+
+// RegisterHookAckForTest registers a pending hook acknowledgement bound to
+// sessionID and returns its token, so a flow test can drive the brokered
+// hook endpoint through its identity checks without hook side effects.
+func RegisterHookAckForTest(sessionID string) (string, error) {
+	return registerHookAck(sessionID, nil, nil)
+}
