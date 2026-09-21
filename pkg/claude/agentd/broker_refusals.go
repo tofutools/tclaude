@@ -216,6 +216,47 @@ func brokerClaimReason(fallback, claimed, proofDetail string) string {
 	return prefix + ": claimed session could not be loaded to check the claim"
 }
 
+// brokerCallerGoneKey namespaces the caller-gone log throttle in the broker
+// limiter's bucket map; the NUL prefix cannot collide with a session id.
+const brokerCallerGoneKey = "\x00caller-gone"
+
+// noteCallerGone logs a brokered request whose caller process had already
+// exited — the client's own timeout fired while the daemon was busy — and
+// deliberately records NO refusal: the badge and counter mean an agent's
+// telemetry is stuck, and a render the client retries is not that. It is
+// still a WARN, because a daemon losing this race is a daemon that is too
+// slow, and the operator should see that with the caller pid and the row
+// it concerned. Throttled per resolved row (one bucket for unplaced
+// callers) like the refusal line, since a busy daemon loses the race in
+// bursts.
+func (r *brokerRefusalRecorder) noteCallerGone(ctx brokerRefusalContext) {
+	key := brokerCallerGoneKey
+	if ctx.Resolved != "" {
+		key += ":row:" + ctx.Resolved
+	}
+	defaultBrokerLimiter.observe(key, 0)
+	log, suppressed := defaultBrokerLimiter.shouldLogExcess(key)
+	if !log {
+		return
+	}
+	attrs := []any{
+		"endpoint", ctx.Endpoint,
+		"caller_pid", ctx.CallerPID,
+		"resolved_session", ctx.Resolved,
+		"claimed_session", auditClip(ctx.Claimed, brokerRefusalLogClip),
+		"suppressed_since_last_log", suppressed - 1,
+	}
+	if ctx.Detail != "" {
+		attrs = append(attrs, "detail", ctx.Detail)
+	}
+	if ctx.Event != "" {
+		attrs = append(attrs, "event", auditClip(ctx.Event, brokerRefusalLogClip))
+	}
+	attrs = append(attrs, "module", "hooks")
+	slog.Warn("broker: caller exited before its callback could be verified; "+
+		"the client timed out while the daemon was busy and will retry, so nothing is badged", attrs...)
+}
+
 // brokerRefusalContext is what a refusal log line needs beyond the
 // recorder's own decision. Every field is daemon-derived except Claimed,
 // which is the caller's own string and labelled as such in the log.

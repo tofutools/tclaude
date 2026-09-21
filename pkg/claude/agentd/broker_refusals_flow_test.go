@@ -540,3 +540,115 @@ func TestBrokerRefusals_StatuslineRefusalsAreLoggedToo(t *testing.T) {
 	assert.EqualValues(t, orphanPID, lines[0]["caller_pid"])
 	assert.Contains(t, lines[0]["reason"], "statusline:")
 }
+
+func logLinesWithPrefix(t *testing.T, logs *bytes.Buffer, prefix string) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &rec), "log line %q", line)
+		if msg, _ := rec["msg"].(string); strings.HasPrefix(msg, prefix) {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
+// A statusline client gives up after three seconds and exits. When the
+// daemon is slow enough to lose that race, the caller pid is gone by the
+// time the daemon looks — which is the client's timeout, not an ancestry
+// mismatch, and not an agent whose telemetry is stuck. It must be logged
+// as what it is and must NOT badge the row or count as a refusal, because
+// the client retries on its own.
+func TestBrokerRefusals_AVanishedCallerIsLoggedNotBadged(t *testing.T) {
+	t.Cleanup(agentd.ResetBrokerRefusalsForTest())
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(agentd.ResetBrokerLimiterForTest())
+	logs := captureDaemonLog(t)
+
+	f := newFlow(t)
+	haveLayerSession(t, f, brokerLayerConv, brokerLayerLabel, "tmux-broker-layer", brokerPanePID)
+
+	// The wrapped ancestry is intact, but the caller itself is not in the
+	// tree at all: it exited. (SetProcTreeForTest reports unlisted pids as
+	// not alive.)
+	const gonePID = 7199
+	t.Cleanup(agentd.SetProcTreeForTest(
+		map[int]string{
+			brokerHarnessPID: "node", brokerInnerShPID: "sh", brokerBwrapPID: "bwrap", brokerPanePID: "sh",
+		},
+		map[int]int{
+			brokerHarnessPID: brokerInnerShPID, brokerInnerShPID: brokerBwrapPID, brokerBwrapPID: brokerPanePID,
+		},
+	))
+
+	code, _ := postBrokeredHook(t, f, gonePID, session.BrokeredHookRequest{
+		Input:            session.HookCallbackInput{ConvID: brokerLayerConv, HookEventName: "Stop"},
+		ClaimedSessionID: brokerLayerLabel,
+	})
+	require.Equal(t, http.StatusForbidden, code, "nothing can be applied for a caller that is gone")
+
+	f.HaveGroup("gonesquad")
+	f.HaveMember("gonesquad", brokerLayerConv)
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	assert.Zero(t, snap.BrokerRefusalsTotal, "a vanished caller is not a refusal")
+	assert.Zero(t, snap.BrokerRefusalsUnplaceable)
+	row := findDashMember(snap, "gonesquad", brokerLayerConv)
+	require.NotNil(t, row)
+	assert.Zero(t, row.State.BrokerRefusals, "the row the caller claimed is not badged")
+
+	assert.Empty(t, refusalLogLines(t, logs), "no refusal line either")
+	gone := logLinesWithPrefix(t, logs, "broker: caller exited before its callback could be verified")
+	require.Len(t, gone, 1, "got %s", logs.String())
+	assert.Equal(t, "WARN", gone[0]["level"])
+	assert.EqualValues(t, gonePID, gone[0]["caller_pid"])
+	assert.Equal(t, brokerLayerLabel, gone[0]["claimed_session"])
+	assert.Equal(t, "Stop", gone[0]["event"])
+}
+
+// The proof must not depend on the caller surviving the request. With the
+// ancestry served from the shared snapshot, the per-pid readers can report
+// every process dead and the proof still succeeds — this is the exact race
+// that produced "walk ended at pid 0 after 1 hops" on macOS.
+func TestBrokerIdentity_ProofIsServedFromTheSnapshotNotLiveReads(t *testing.T) {
+	t.Cleanup(agentd.ResetBrokerRefusalsForTest())
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(agentd.ResetBrokerLimiterForTest())
+
+	f := newFlow(t)
+	haveLayerSession(t, f, brokerLayerConv, brokerLayerLabel, "tmux-broker-layer", brokerPanePID)
+
+	// Per-pid readers know nothing (every process "gone")...
+	t.Cleanup(agentd.SetProcTreeForTest(map[int]string{}, map[int]int{}))
+	// ...but the caller is alive and the snapshot carries the chain.
+	t.Cleanup(agentd.SetProcAliveForTest(func(pid int) bool { return pid == brokerHookPID }))
+	t.Cleanup(agentd.SetBrokerProcSnapshotForTest(map[int]struct {
+		PPID int
+		Name string
+	}{
+		brokerHookPID:    {PPID: brokerHarnessPID, Name: "tclaude"},
+		brokerHarnessPID: {PPID: brokerInnerShPID, Name: "node"},
+		brokerInnerShPID: {PPID: brokerBwrapPID, Name: "sh"},
+		brokerBwrapPID:   {PPID: brokerPanePID, Name: "bwrap"},
+		brokerPanePID:    {PPID: 1, Name: "sh"},
+	}))
+
+	token, err := agentd.RegisterHookAckForTest(brokerLayerLabel)
+	require.NoError(t, err)
+	code, _ := postBrokeredHook(t, f, brokerHookPID, session.BrokeredHookRequest{
+		ClaimedSessionID: brokerLayerLabel,
+		AckToken:         token,
+	})
+	assert.Equal(t, http.StatusOK, code, "the snapshot proves the ancestry without a single live per-pid read")
+	total, _ := snapshotRefusalCounts(t)
+	assert.Zero(t, total)
+}
+
+func snapshotRefusalCounts(t *testing.T) (int, int) {
+	t.Helper()
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	return snap.BrokerRefusalsTotal, snap.BrokerRefusalsUnplaceable
+}
