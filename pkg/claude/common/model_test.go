@@ -22,6 +22,7 @@ func TestValidateModel(t *testing.T) {
 		{"case-folded 1m", "Sonnet[1M]", "sonnet[1m]", false},
 		{"trimmed and folded", "  HAIKU ", "haiku", false},
 		{"opusplan", "opusplan", "opusplan", false},
+		{"opus 5.5 full model id", "claude-opus-5-5", "claude-opus-5-5", false},
 		{"full model id", "claude-opus-4-8", "claude-opus-4-8", false},
 		{"full model id 1m", "claude-fable-5[1m]", "claude-fable-5[1m]", false},
 		{"full model id folded", "Claude-Fable-5", "claude-fable-5", false},
