@@ -3860,6 +3860,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
+	networkAutoSync, _, _, networkAutoSyncNote, syncFail := resolveBoolLaunchField(
+		networkAutoSyncField, body.NetworkAutoSync != nil && *body.NetworkAutoSync, body.NetworkAutoSync != nil, h.Name, profileTiers,
+		func(p *db.SpawnProfile) *bool { return p.NetworkAutoSync }, func(v bool) (bool, error) { return v, nil })
+	if syncFail != nil {
+		writeError(w, syncFail.Status, syncFail.Kind, syncFail.Msg)
+		return
+	}
 	var autoReviewSet, trustDirSet, sshWorkaroundSet bool
 	var autoReviewNote, trustDirNote, autoMemoryNote, peerMessagingNote, sshWorkaroundNote, contextFeaturesNote string
 	body.AutoReview, autoReviewSet, _, autoReviewNote, fieldFail = resolveBoolLaunchField(
@@ -4260,7 +4267,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if body.SandboxImplementation == "" && sandboxImplNote != "" {
 		resolvedLaunch.Notes = append(resolvedLaunch.Notes, sandboxImplNote)
 	}
-	for _, note := range append([]string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, copilotAPINote, codexAppServerNote, fastModeNote, autoReviewNote, trustDirNote, autoMemoryNote, peerMessagingNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote, includeGroupContextNote}, identityNotes...) {
+	for _, note := range append([]string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, copilotAPINote, codexAppServerNote, fastModeNote, autoReviewNote, trustDirNote, autoMemoryNote, peerMessagingNote, sshWorkaroundNote, networkAutoSyncNote, contextFeaturesNote, profileContextNote, includeGroupContextNote}, identityNotes...) {
 		if note != "" {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes, note)
 		}
@@ -4415,6 +4422,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", policyErr.Error())
 		return
 	}
+	effectiveSandbox.NetworkAutoSync = networkAutoSync
 	if applied, fail := applySpawnHarnessConfig(effectiveSandbox, body.HarnessConfig); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
@@ -5683,6 +5691,7 @@ const (
 	contextWindowMaxField    = "context_window_max"
 	includeGroupContextField = "include_group_context"
 	autoFocusField           = "auto_focus"
+	networkAutoSyncField     = "network_auto_sync"
 	isOwnerField             = "is_owner"
 	permissionOverridesField = "permission_overrides"
 	nameField                = "name"
@@ -5700,7 +5709,7 @@ const (
 // forget it.
 func harnessAgnosticLaunchField(field string) bool {
 	switch field {
-	case includeGroupContextField, autoFocusField, isOwnerField:
+	case includeGroupContextField, autoFocusField, isOwnerField, networkAutoSyncField:
 		return true
 	}
 	return false

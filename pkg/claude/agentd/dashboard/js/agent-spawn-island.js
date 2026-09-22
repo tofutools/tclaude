@@ -106,7 +106,7 @@ const UNENFORCED_SANDBOX_TITLE = 'Operator-only escape hatch. If closed network 
 const PROFILE_OWNED_FIELDS = [
   'profile', 'name', 'role', 'roleRefs', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout',
-  'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'peerMessaging', 'sshWorkaround', 'owner', 'permissionOverrides',
+  'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'peerMessaging', 'sshWorkaround', 'networkAutoSync', 'networkAutoSyncSpecified', 'owner', 'permissionOverrides',
   'contextFeatures', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'codexAppServer', 'fastMode', 'sandboxImpl', 'sandboxImplCleared',
   'syncWorktree', 'fetchLatestWorktree', 'autoFocus', 'includeGroupContext',
 ];
@@ -1404,6 +1404,11 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
           </div>
         </div>
       </div>`}
+    <label class="cron-create-enabled" title="Follow network edits across includes, group and global profiles. Requires a Linux tclaude packet sandbox; filesystem changes still require restart.">
+      <input id="agent-spawn-network-auto-sync" type="checkbox" checked=${draft.networkAutoSync} disabled=${busy}
+        onChange=${(event) => { update('networkAutoSync', event.currentTarget.checked); update('networkAutoSyncSpecified', true); }} />
+      Automatically sync network rules
+    </label>
     <label class="cron-create-enabled" id="agent-spawn-ssh-workaround-row" hidden=${!view.showSSHWorkaround}
       title="Use an agent-owned SSH client config when the launch needs it. It activates only for the Codex managed sandbox or tclaude packet filtering, and overrides Git core.sshCommand.">
       <input id="agent-spawn-ssh-workaround" type="checkbox"

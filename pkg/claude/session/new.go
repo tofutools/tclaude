@@ -2263,6 +2263,9 @@ func runNew(params *NewParams) error {
 		if specErr != nil {
 			return fmt.Errorf("build tclaude’s sandbox launch spec: %w", specErr)
 		}
+		if err := PrepareNetworkSyncLaunch(&spec, effectiveSandbox, sessionID); err != nil {
+			return err
+		}
 		layerSpec = spec
 		if prepareErr := PrepareTclaudeLayerHarnessState(layerSpec); prepareErr != nil {
 			return fmt.Errorf("prepare tclaude’s sandbox launch state: %w", prepareErr)
