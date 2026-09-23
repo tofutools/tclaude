@@ -94,6 +94,11 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	if err != nil {
 		return bad("unsupported_sandbox", err.Error())
 	}
+	posture.PeerMessaging = p.PeerMessaging
+	if posture.ShellEnvironment == nil {
+		posture.ShellEnvironment = make(map[string]string)
+	}
+	session.ApplyAutoMemoryEnv(h, p.AutoMemory, posture.ShellEnvironment)
 	var argv []string
 	if h.Name == harness.ShellName {
 		shell := strings.TrimSpace(os.Getenv("SHELL"))
@@ -133,7 +138,7 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	defer cancel()
 	stdout := &boundedHeadBuffer{max: maxNonInteractiveOutputBytes, onLimit: cancel}
 	stderr := &boundedHeadBuffer{max: maxNonInteractiveOutputBytes, onLimit: cancel}
-	cmd := executil.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd := executil.CommandContextWithGrace(ctx, 0, argv[0], argv[1:]...)
 	cmd.Dir = p.Cwd
 	cmd.Stdin = nil
 	cmd.Stdout = stdout

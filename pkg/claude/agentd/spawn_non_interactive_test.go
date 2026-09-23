@@ -78,6 +78,30 @@ func TestRunNonInteractiveSpawnUsesHarnessInitialPrompt(t *testing.T) {
 	}
 }
 
+func TestRunNonInteractiveSpawnClaudeLaunchSettings(t *testing.T) {
+	bin := t.TempDir()
+	path := filepath.Join(bin, "claude")
+	const fake = "#!/bin/sh\nprintf '%s\\n' \"${CLAUDE_CODE_DISABLE_AUTO_MEMORY-unset}\"\nfor arg do case $arg in *crossSessionInbound*) printf 'peer-blocked\\n';; esac; done\n"
+	if err := os.WriteFile(path, []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, tc := range []struct {
+		autoMemory, peerMessaging bool
+		want                      string
+	}{
+		{false, false, "1\npeer-blocked\n"},
+		{true, true, "0\n"},
+	} {
+		p := spawnParams{Harness: harness.DefaultName, Cwd: t.TempDir(),
+			InitialMessage: "task", AutoMemory: tc.autoMemory, PeerMessaging: tc.peerMessaging}
+		got, fail := runNonInteractiveSpawn(context.Background(), p, 30)
+		if fail != nil || got.ExitCode != 0 || got.Stdout != tc.want {
+			t.Fatalf("settings autoMemory=%t peerMessaging=%t result=%+v failure=%+v", tc.autoMemory, tc.peerMessaging, got, fail)
+		}
+	}
+}
+
 func TestRunNonInteractiveSpawnShellTclaudeLayer(t *testing.T) {
 	if err := session.TclaudeLayerServerHostAvailability(); err != nil {
 		t.Skipf("tclaude layer unavailable: %v", err)
