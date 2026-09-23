@@ -41,6 +41,7 @@ func TestDashboardPreactDnDChrome(t *testing.T) {
 		memberDragCancelState(),
 		groupDragCancelState(),
 		groupCloneModifierDropState(),
+		memberCloneModifierDropState(),
 	}
 	if filter := os.Getenv("TCLAUDE_DASHSNAP_FILTER"); filter != "" {
 		filtered := states[:0]
@@ -299,6 +300,99 @@ return (async function(){
   if (userAgentDescriptor) Object.defineProperty(navigator, 'userAgent', userAgentDescriptor);
   else delete navigator.userAgent;
   document.querySelector('#group-create-cancel').click();
+})();`,
+	}
+}
+
+// memberCloneModifierDropState is the agent-row twin of
+// groupCloneModifierDropState: a green Cmd-drag of a member row onto another
+// group must open the clone confirmation even when macOS Chrome delivers no
+// usable drop event and clears metaKey, while Escape/document-leave
+// cancellation invalidates the cached clone target first.
+func memberCloneModifierDropState() dashsnap.State {
+	return dashsnap.State{
+		Key:     "preact-member-clone-modifier-drop",
+		Title:   "Agent clone survives a missing drop event",
+		Caption: "A green Cmd-drag agent clone target still opens the clone confirmation when macOS Chrome reaches dragend with neither a usable drop event nor copy dropEffect.",
+		JS: openGroupsAndDockJS + `
+return (async function(){
+  function frames() { return new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); }); }
+  await frames();
+  var source = document.querySelector('.dnd-draggable[data-dnd-source-group]');
+  if (!source) throw new Error('member clone drag fixture missing source row');
+  var sourceGroup = source.getAttribute('data-dnd-source-group');
+  var target = Array.from(document.querySelectorAll('details[data-dnd-target-group]')).find(function(box){
+    return box.getAttribute('data-dnd-target-group') !== sourceGroup && box.getClientRects().length;
+  });
+  if (!target) throw new Error('member clone drag fixture missing target group');
+  var transfer = new DataTransfer();
+  function fire(element, type, options) {
+    var event = new DragEvent(type, Object.assign({bubbles:true, cancelable:true, dataTransfer:transfer}, options || {}));
+    if (event.dataTransfer !== transfer) Object.defineProperty(event, 'dataTransfer', {value:transfer});
+    element.dispatchEvent(event);
+  }
+  function end(effect) {
+    var dragend = new DragEvent('dragend', {bubbles:true, cancelable:false, dataTransfer:transfer});
+    Object.defineProperty(dragend, 'dataTransfer', {value:{dropEffect:effect}});
+    source.dispatchEvent(dragend);
+  }
+  function hover() {
+    var rect = target.getBoundingClientRect();
+    fire(target, 'dragover', {metaKey:true, clientX:rect.left + rect.width / 2, clientY:rect.top + Math.min(10, rect.height / 2)});
+    if (!target.classList.contains('dnd-effect-clone')) throw new Error('Cmd dragover did not paint clone intent');
+  }
+  function confirmOpen() { return document.querySelectorAll('#confirm-modal.show').length; }
+
+  fire(source, 'dragstart');
+  hover();
+  fire(target, 'dragleave', {relatedTarget:null, clientX:0, clientY:0});
+  end('copy');
+  await frames();
+  if (confirmOpen()) throw new Error('outside copy dragend consumed a stale clone target');
+
+  fire(source, 'dragstart');
+  hover();
+  document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
+  end('none');
+  await frames();
+  if (confirmOpen()) throw new Error('Escape dragend consumed a cancelled clone target');
+
+  fire(source, 'dragstart');
+  hover();
+  end('none');
+  await frames();
+  if (confirmOpen() !== 1) throw new Error('macOS-style dragend did not finish the live green clone');
+  document.querySelector('#confirm-cancel').click();
+  await frames();
+
+  var platformDescriptor = Object.getOwnPropertyDescriptor(navigator, 'platform');
+  var userAgentDescriptor = Object.getOwnPropertyDescriptor(navigator, 'userAgent');
+  var originalUserAgent = navigator.userAgent;
+  Object.defineProperty(navigator, 'platform', {value:'MacIntel', configurable:true});
+  Object.defineProperty(navigator, 'userAgent', {value:
+    'Mozilla/5.0 (Macintosh) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0', configurable:true});
+  fire(source, 'dragstart');
+  hover();
+  fire(target, 'dragleave', {relatedTarget:null, clientX:0, clientY:0, screenX:0, screenY:0});
+  end('none');
+  await frames();
+  if (confirmOpen()) throw new Error('macOS Edge zero-event bypassed ordinary exit cleanup');
+
+  Object.defineProperty(navigator, 'userAgent', {value:originalUserAgent, configurable:true});
+  fire(source, 'dragstart');
+  hover();
+  // Emulate macOS Chrome for its all-zero mouse-release dragleave.
+  fire(target, 'dragleave', {relatedTarget:null, clientX:0, clientY:0, screenX:0, screenY:0});
+  await frames();
+  if (confirmOpen() !== 1) throw new Error('macOS zero-event did not immediately finish the green clone');
+  end('none');
+  await frames();
+  if (confirmOpen() !== 1) throw new Error('delayed dragend duplicated the clone confirmation');
+  if (platformDescriptor) Object.defineProperty(navigator, 'platform', platformDescriptor);
+  else delete navigator.platform;
+  if (userAgentDescriptor) Object.defineProperty(navigator, 'userAgent', userAgentDescriptor);
+  else delete navigator.userAgent;
+  document.querySelector('#confirm-cancel').click();
 })();`,
 	}
 }

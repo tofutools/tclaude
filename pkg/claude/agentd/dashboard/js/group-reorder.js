@@ -52,7 +52,7 @@
 // sortGroupsByPref on render, both long after every module finishes
 // loading.
 
-import { $, $$ } from './helpers.js';
+import { $, $$, isMacChromeZeroReleaseLeave } from './helpers.js';
 import { setGroupOrderPref, sortGroupsByPref } from './group-order.js';
 import { renderGroupsTab } from './tabs.js';
 import { lastSnapshot } from './dashboard.js';
@@ -478,15 +478,8 @@ function bindGroupReorder() {
     // is NOT sufficient: macOS Chrome emits an all-zero event with that shape
     // at the in-place mouse release that ends a Cmd/Ctrl clone drag. That event
     // arrives 0.5–1s before dragend, so consume the still-green stored plan
-    // immediately instead of making the operator wait. Keep the exception
-    // platform-scoped so other browsers retain the existing exit lifecycle.
-    const macChromeZeroRelease = !e.relatedTarget
-      && e.clientX === 0 && e.clientY === 0
-      && e.screenX === 0 && e.screenY === 0
-      && /Mac/.test(navigator.platform || navigator.userAgent)
-      && /(?:Chrome|Chromium)\//.test(navigator.userAgent)
-      && !/(?:Edg|OPR|Vivaldi)\//.test(navigator.userAgent)
-      && !navigator.brave;
+    // immediately instead of making the operator wait.
+    const macChromeZeroRelease = isMacChromeZeroReleaseLeave(e);
     const releaseTarget = reorderTarget(e);
     if (macChromeZeroRelease && groupCloneHoverPlan
         && releaseTarget?.classList.contains('group-drop-clone')) {
