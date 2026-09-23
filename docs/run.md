@@ -32,7 +32,9 @@ uses read-only mode).
 `--sandbox-profile NAME` with it to apply a named profile; the global sandbox
 profile is also resolved. The named profile and global profile are read from
 tclaude's local database. The harness-native sandbox and tclaude layer are
-mutually exclusive for this command.
+mutually exclusive for this command. This one-shot layer path supports Claude,
+Codex, and shell. It refuses profiles with Unix socket rules because those
+rules require the managed session's socket materialization step.
 
 ```bash
 tclaude run --harness shell --sandbox-impl tclaude-layer \

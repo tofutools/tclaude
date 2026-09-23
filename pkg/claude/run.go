@@ -8,8 +8,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -149,6 +153,22 @@ func runOnce(p runParams, args []string, stdout, stderr io.Writer) (int, error) 
 		ctx, cancel = context.WithTimeout(ctx, duration)
 	}
 	defer cancel()
+	ctx, stopSignals := context.WithCancel(ctx)
+	defer stopSignals()
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(signals)
+	signalDone := make(chan struct{})
+	defer close(signalDone)
+	var receivedSignal atomic.Int32
+	go func() {
+		select {
+		case sig := <-signals:
+			receivedSignal.Store(int32(sig.(syscall.Signal)))
+			stopSignals()
+		case <-signalDone:
+		}
+	}()
 	command := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	command.Dir = cwd
 	// Force a pipe even when the caller's stdout is a terminal. OpenCode's
@@ -156,6 +176,7 @@ func runOnce(p runParams, args []string, stdout, stderr io.Writer) (int, error) 
 	command.Stdout = writerOnly{stdout}
 	command.Stdin = nil
 	configureRunProcess(command)
+	command.WaitDelay = 2 * time.Second
 	var captured bytes.Buffer
 	if h.Ask != nil && h.Ask.NoisyCaptureStderr() {
 		command.Stderr = &captured
@@ -169,14 +190,20 @@ func runOnce(p runParams, args []string, stdout, stderr io.Writer) (int, error) 
 	if err != nil && captured.Len() > 0 {
 		_, _ = io.Copy(stderr, &captured)
 	}
-	if ctx.Err() == context.DeadlineExceeded {
+	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return 124, fmt.Errorf("run timed out after %s", duration)
+	}
+	if sig := receivedSignal.Load(); sig != 0 {
+		return 128 + int(sig), fmt.Errorf("run interrupted by %s", syscall.Signal(sig))
 	}
 	if err == nil {
 		return 0, nil
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
+		if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+			return 128 + int(status.Signal()), nil
+		}
 		return exitErr.ExitCode(), nil
 	}
 	return 1, err
@@ -200,9 +227,19 @@ func scrubRunEnv(env, names []string) []string {
 }
 
 func wrapRunWithLayer(h *harness.Harness, cwd, profile string, argv []string) ([]string, error) {
+	if h.Name != harness.DefaultName && h.Name != harness.CodexName && h.Name != harness.ShellName {
+		return nil, fmt.Errorf("tclaude-layer is not supported for non-interactive %s runs", h.Name)
+	}
+	if err := session.ValidateTclaudeLayerHarness(h.Name); err != nil {
+		return nil, err
+	}
 	snapshot, err := db.ResolveEffectiveSandboxSnapshot(0, profile)
 	if err != nil {
 		return nil, fmt.Errorf("resolve sandbox profile: %w", err)
+	}
+	if err := session.ValidateTclaudeLayerHarnessPosture(
+		h, sandboxpolicy.EnvironmentForLaunch(&snapshot), nil); err != nil {
+		return nil, err
 	}
 	posture, err := session.TclaudeLayerNetworkPosture(snapshot.Effective)
 	if err != nil {
@@ -216,7 +253,33 @@ func wrapRunWithLayer(h *harness.Harness, cwd, profile string, argv []string) ([
 	if err != nil {
 		return nil, err
 	}
-	binary, _, err := session.ResolveTclaudeLayerForEngine(posture, root, engine)
+	axes, err := sandboxpolicy.PlannedEffectiveAccessAxes(snapshot.Effective)
+	if err != nil {
+		return nil, err
+	}
+	if axes.UnixSockets.Mode != sandboxpolicy.AccessModeUnset && axes.UnixSockets.Mode != sandboxpolicy.AccessModeOpen {
+		return nil, errors.New("non-interactive tclaude-layer does not support unix socket profile rules")
+	}
+	if posture == sandboxpolicy.NetworkFiltered && runtime.GOOS == "linux" && engine == sandboxpolicy.NetworkEnginePacket {
+		probe := session.ProbeFilteredNetworkPrerequisite()
+		if err := session.ValidateFilteredNetworkHarnessSupport(h, sandboxpolicy.ImplementationTclaudeLayer, axes, probe); err != nil {
+			return nil, err
+		}
+		if !probe.Detected {
+			return nil, errors.New("filtered network prerequisites are unavailable")
+		}
+	}
+	model, err := session.ResolveTclaudeLayerModelTransport(h, session.ModelTransportLaunchContext{
+		Cwd: cwd, Environment: sandboxpolicy.EnvironmentForLaunch(&snapshot),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if _, err := session.ValidateTclaudeLayerNetwork(h, snapshot.Effective, model); err != nil {
+		return nil, err
+	}
+	binary, _, err := session.ResolveTclaudeLayerForEngineWithIdentity(
+		posture, root, engine, posture == sandboxpolicy.NetworkFiltered && engine == sandboxpolicy.NetworkEnginePacket)
 	if err != nil {
 		return nil, err
 	}
