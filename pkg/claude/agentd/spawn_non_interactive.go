@@ -28,8 +28,14 @@ type nonInteractiveSpawnResult struct {
 // runNonInteractiveSpawn uses the ordinary spawn boundary's resolved fields,
 // but does not allocate a conversation, tmux session, or group membership.
 func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64) (nonInteractiveSpawnResult, *spawnFailure) {
+	if p.CleanupDirWriteProof {
+		defer cleanupDirWriteProofMarkers(p.DirWriteProofToken, p.DirWriteProofDirs)
+	}
 	bad := func(kind, message string) (nonInteractiveSpawnResult, *spawnFailure) {
 		return nonInteractiveSpawnResult{}, &spawnFailure{Status: 400, Kind: kind, Msg: message}
+	}
+	hostFailure := func(kind, message string) (nonInteractiveSpawnResult, *spawnFailure) {
+		return nonInteractiveSpawnResult{}, &spawnFailure{Status: 502, Kind: kind, Msg: message}
 	}
 	if seconds == 0 {
 		seconds = 3600
@@ -44,8 +50,8 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	}
 	if snapshot := p.EffectiveSandbox; snapshot != nil {
 		effective := snapshot.Effective
-		if effective.ResourceLimits.Enabled() || len(effective.PreLaunch) > 0 {
-			return bad("unsupported_sandbox", "one-shot runs cannot replay resource limits or pre-launch scripts")
+		if effective.ResourceLimits.Enabled() || len(effective.PreLaunch) > 0 || len(effective.AgentDirectories) > 0 {
+			return bad("unsupported_sandbox", "one-shot runs cannot replay resource limits, pre-launch scripts, or agent-owned directories")
 		}
 		if !layer && (effective.NetworkAccess == sandboxpolicy.NetworkAccessNone || effective.Network != nil ||
 			effective.UnixSockets != nil || len(effective.Tmpfs) > 0 ||
@@ -99,12 +105,12 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 		if h.NeedsManagedProfileForOneShot(posture.HarnessBuiltinMode) {
 			name, path, capability, profileErr := EnsureSeanceCodexProfile(p.Cwd, session.GenerateSessionID(), p.EffectiveSandbox)
 			if profileErr != nil {
-				return bad("sandbox_init", profileErr.Error())
+				return hostFailure("sandbox_init", profileErr.Error())
 			}
 			defer func() { _ = os.Remove(path) }()
 			if capability != nil {
 				if err := RevalidateSeanceCodexCapability(*capability); err != nil {
-					return bad("sandbox_init", err.Error())
+					return hostFailure("sandbox_init", err.Error())
 				}
 			}
 			posture.HarnessBuiltinMode = ""
@@ -133,12 +139,18 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Env = append(seanceProcessEnv(posture.ShellEnvironment), "TCLAUDE_AGENT_HINT=1")
+	if fail := reassertDirWriteProof(p.DirWriteProofDirs); fail != nil {
+		return nonInteractiveSpawnResult{}, fail
+	}
+	if p.CleanupDirWriteProof {
+		cleanupDirWriteProofMarkers(p.DirWriteProofToken, p.DirWriteProofDirs)
+	}
 	err = cmd.Run()
 	if stdout.truncated || stderr.truncated {
-		return bad("output_limit", "non-interactive output exceeded 4 MiB")
+		return nonInteractiveSpawnResult{Stdout: stdout.String(), Stderr: stderr.String() + "\nnon-interactive output exceeded 4 MiB\n", ExitCode: 125}, nil
 	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return nonInteractiveSpawnResult{Stdout: stdout.String(), Stderr: fmt.Sprintf("run timed out after %s\n", time.Duration(seconds)*time.Second), ExitCode: 124}, nil
+		return nonInteractiveSpawnResult{Stdout: stdout.String(), Stderr: stderr.String() + fmt.Sprintf("run timed out after %s\n", time.Duration(seconds)*time.Second), ExitCode: 124}, nil
 	}
 	result := nonInteractiveSpawnResult{Stdout: stdout.String(), Stderr: stderr.String()}
 	if err == nil {

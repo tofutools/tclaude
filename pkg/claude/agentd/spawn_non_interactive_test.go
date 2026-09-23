@@ -26,13 +26,37 @@ func TestRunNonInteractiveSpawnShell(t *testing.T) {
 }
 
 func TestRunNonInteractiveSpawnTimeout(t *testing.T) {
-	p := spawnParams{Harness: harness.ShellName, Cwd: t.TempDir(), InitialMessage: "sleep 5"}
+	p := spawnParams{Harness: harness.ShellName, Cwd: t.TempDir(), InitialMessage: "printf 'partial stderr\\n' >&2; sleep 5"}
 	got, fail := runNonInteractiveSpawn(context.Background(), p, 1)
 	if fail != nil {
 		t.Fatalf("run failed: %+v", fail)
 	}
-	if got.ExitCode != 124 || !strings.Contains(got.Stderr, "timed out") {
+	if got.ExitCode != 124 || !strings.Contains(got.Stderr, "timed out") || !strings.Contains(got.Stderr, "partial stderr") {
 		t.Fatalf("unexpected result: %+v", got)
+	}
+}
+
+func TestRunNonInteractiveSpawnRemovesWriteProofBeforeChildStarts(t *testing.T) {
+	dir := t.TempDir()
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const token = "one-shot-proof"
+	marker := filepath.Join(real, dirWriteProofFilePrefix+token)
+	if err := os.WriteFile(marker, []byte("proof"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := spawnParams{Harness: harness.ShellName, Cwd: real,
+		InitialMessage:       "test ! -e " + marker + " && printf 'clean\\n'",
+		CleanupDirWriteProof: true, DirWriteProofToken: token,
+		DirWriteProofDirs: []string{real}}
+	got, fail := runNonInteractiveSpawn(context.Background(), p, 30)
+	if fail != nil || got.ExitCode != 0 || got.Stdout != "clean\n" {
+		t.Fatalf("run result=%+v failure=%+v", got, fail)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("proof marker remains after run: %v", err)
 	}
 }
 
