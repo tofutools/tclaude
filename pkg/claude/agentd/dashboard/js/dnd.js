@@ -6,7 +6,7 @@
 // dndDragActive — in-flight member-drag routing state shared with reverse
 // dock capture.
 
-import { $, $$ } from './helpers.js';
+import { $, $$, isMacChromeZeroReleaseLeave } from './helpers.js';
 import { renderGroupsTab } from './tabs.js';
 // refresh()/toast()/confirmModal live in refresh.js;
 // lastSnapshot is dashboard.js's shared state (read-only here).
@@ -55,6 +55,19 @@ let dndSourcePending = false;
 // inert no-op (unless it's a clone) that must not highlight, especially
 // now that a drag starts right inside the source group's expanded box.
 let dndSourceGroup = '';
+// dndSourcePayload: the dragged row's decoded payload, stashed at dragstart
+// so a clone can finish from dragend (below) without the DataTransfer, whose
+// data browsers only expose to the drop event.
+let dndSourcePayload = null;
+// dndCloneHoverTarget: the real group a still-green Ctrl/Cmd clone hover
+// last pointed at (null otherwise). macOS Chrome can end a native copy drag
+// without delivering a usable drop event — and clears metaKey by the time
+// anything terminal fires — so the clone is finished from this cached target
+// on dragend (or on macOS Chrome's all-zero release dragleave). Cleared on
+// every non-clone / inert / off-target hover, on Escape, on leaving the
+// document, and by a drop that handled the gesture itself. Mirrors
+// group-reorder.js's groupCloneHoverPlan.
+let dndCloneHoverTarget = null;
 // Every droppable box — real group <details> AND the two droppable
 // virtual group <details> (Ungrouped, Retired). The drop target moved
 // from the <summary> header to the whole <details> so a release
@@ -186,10 +199,19 @@ function bindDnd() {
   });
   listen(document, 'pointerup', restoreDraggable);
   listen(document, 'pointercancel', restoreDraggable);
+  listen(document, 'keydown', (e) => {
+    if (dndDragActive && e.key === 'Escape') dndCloneHoverTarget = null;
+  });
   const endDndDrag = (e) => {
     if (!dndDragActive) return;
     // A source-local listener also invokes this when a structural Preact
     // publish detached the row before dragend could bubble to document.
+    // Capture a still-live clone hover before teardown: when no drop consumed
+    // it, this is macOS Chrome finishing a copy without a usable drop event.
+    const cloneTarget = dndCloneHoverTarget;
+    const clonePayload = dndSourcePayload;
+    dndCloneHoverTarget = null;
+    dndSourcePayload = null;
     dndDragActive = false;
     dndSourceUngrouped = false;
     dndSourceConversation = false;
@@ -203,6 +225,11 @@ function bindDnd() {
     if (row) row.classList.remove('dnd-source-row');
     $$('.dnd-drop-over').forEach(s => s.classList.remove('dnd-drop-over', 'dnd-effect-clone'));
     $('#dnd-pill')?.classList.remove('show', 'clone');
+    if (cloneTarget && clonePayload) {
+      // runDndClone opens the confirmation first and refreshes on every path.
+      runDndClone(clonePayload, cloneTarget);
+      return;
+    }
     refresh();
   };
   listen(document, 'dragstart', (e) => {
@@ -234,7 +261,8 @@ function bindDnd() {
     // most-supported channel; the JSON body keeps the encoding
     // self-describing. We allow both move (default) and copy effects
     // so Ctrl-drag can flip the cursor hint via dropEffect.
-    const payload = JSON.stringify({conv, agent, sourceGroup: sourceGroup || '', sourceUngrouped, sourceConversation, sourceRetired, sourcePending, label});
+    const payloadObj = {conv, agent, sourceGroup: sourceGroup || '', sourceUngrouped, sourceConversation, sourceRetired, sourcePending, label};
+    const payload = JSON.stringify(payloadObj);
     e.dataTransfer.setData('application/x-tclaude-member', payload);
     e.dataTransfer.setData('text/plain', payload);
     e.dataTransfer.effectAllowed = 'copyMove';
@@ -249,6 +277,8 @@ function bindDnd() {
     dndSourceRetired = sourceRetired;
     dndSourcePending = sourcePending;
     dndSourceGroup = sourceGroup || '';
+    dndSourcePayload = payloadObj;
+    dndCloneHoverTarget = null;
     // Reveal the fixed drag-to-retire bin for a retireable source (a
     // real-group member or an ungrouped agent — not an already-retired
     // row, not a plain conversation) OR a pending spawn (where the bin is
@@ -261,6 +291,7 @@ function bindDnd() {
     if (!dndDragActive) return;
     const box = e.target.closest(DND_TARGET_SEL);
     if (!box) {
+      dndCloneHoverTarget = null;
       updateDndPill(e, null);
       return;
     }
@@ -275,11 +306,13 @@ function bindDnd() {
     // Clear any highlight too, so toggling Ctrl/Cmd over the source's
     // own group (clone ⇄ no-op) doesn't strand a stale tint on the box.
     if (dndInertOnto(box, isClone)) {
+      dndCloneHoverTarget = null;
       box.classList.remove('dnd-drop-over', 'dnd-effect-clone');
       updateDndPill(e, null);
       return;
     }
     e.preventDefault(); // required for drop to fire on this element
+    dndCloneHoverTarget = isClone ? box.getAttribute('data-dnd-target-group') : null;
     // Own the highlight here rather than leaning on the dragenter that
     // (usually) preceded us: when the gesture flips inert→live in place
     // — e.g. pressing Ctrl/Cmd to clone into the source's own group,
@@ -310,6 +343,27 @@ function bindDnd() {
     box.classList.add('dnd-drop-over');
   });
   listen(document, 'dragleave', (e) => {
+    if (dndDragActive) {
+      // macOS Chrome's all-zero release dragleave (see helpers.js) arrives
+      // 0.5–1s before dragend with no usable drop. Finish the still-green
+      // clone immediately instead of making the operator wait for dragend.
+      const macChromeZeroRelease = isMacChromeZeroReleaseLeave(e);
+      const releaseBox = e.target.closest(DND_TARGET_SEL);
+      if (macChromeZeroRelease && dndCloneHoverTarget
+          && releaseBox?.classList.contains('dnd-effect-clone')) {
+        endDndDrag(e);
+        return;
+      }
+      // Leaving the document can finish as a native copy in another window
+      // or application; invalidate the cached clone so its later dragend
+      // cannot open a stale dashboard clone dialog.
+      const outside = !macChromeZeroRelease && !e.relatedTarget && (
+        e.clientX <= 0 || e.clientY <= 0
+        || e.clientX >= window.innerWidth - 1
+        || e.clientY >= window.innerHeight - 1
+      );
+      if (outside) dndCloneHoverTarget = null;
+    }
     const box = e.target.closest(DND_TARGET_SEL);
     if (!box) return;
     // dragleave fires when the cursor crosses into a child element too;
@@ -344,9 +398,17 @@ function bindDnd() {
     // tab is showing, so this is currently unreachable rather than a live bug —
     // the guard keeps the separation explicit instead of resting on that.
     if (e.dataTransfer.types.includes('application/x-tclaude-terminal-tab')) return;
+    // dragover only accepts (preventDefault) while this document's member
+    // drag is live, so an inactive drop is one the macOS release path above
+    // already finished — or a stray foreign drop. Never act on it twice.
+    if (!dndDragActive) return;
     const box = e.target.closest(DND_TARGET_SEL);
     if (!box) return;
     e.preventDefault();
+    // This drop handles the gesture itself; dragend must not finish it again.
+    dndCloneHoverTarget = null;
+    // Read the painted clone tint before clearing it (see isClone below).
+    const paintedClone = box.classList.contains('dnd-effect-clone');
     box.classList.remove('dnd-drop-over', 'dnd-effect-clone');
     $('#dnd-pill').classList.remove('show', 'clone');
     const raw = e.dataTransfer.getData('application/x-tclaude-member')
@@ -362,8 +424,12 @@ function bindDnd() {
     const sourceRetired = !!payload.sourceRetired;
     const sourcePending = !!payload.sourcePending;
     // Clone applies only to a real-group target, never to a retired
-    // source (that path reinstates).
-    const isClone = (!!e.ctrlKey || !!e.metaKey) && !targetUngrouped && !targetRetired && !sourceRetired;
+    // source (that path reinstates). Follow the native copy operation and the
+    // green tint dragover painted first: macOS Chrome clears metaKey on the
+    // terminal drop even though the accepted operation is still a copy.
+    const cloneIntent = e.dataTransfer?.dropEffect === 'copy' || paintedClone
+      || !!e.ctrlKey || !!e.metaKey;
+    const isClone = cloneIntent && !targetUngrouped && !targetRetired && !sourceRetired;
 
     // Confirmation gate. Each runDnd* function below opens its own
     // tailored confirmation modal as its first step, BEFORE any
@@ -450,6 +516,8 @@ function bindDnd() {
     dndSourceRetired = false;
     dndSourcePending = false;
     dndSourceGroup = '';
+    dndSourcePayload = null;
+    dndCloneHoverTarget = null;
     hideDndTrash();
     $$('.dnd-source-row').forEach((row) => row.classList.remove('dnd-source-row'));
     $$('.dnd-drop-over').forEach((target) =>

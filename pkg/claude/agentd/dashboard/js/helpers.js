@@ -24,6 +24,22 @@ const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 function isModifiedClick(e) {
   return e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0;
 }
+// isMacChromeZeroReleaseLeave recognises the all-zero dragleave (null
+// relatedTarget, zero client AND screen coordinates) that macOS Chrome emits
+// at the in-place mouse release ending a Cmd/Ctrl copy drag, typically
+// 0.5–1s before dragend and with no usable drop event. A null relatedTarget
+// alone means "left the document", so the platform scoping keeps other
+// browsers on their ordinary exit lifecycle. Shared by the group-reorder and
+// member-row DnD so both clone gestures finish on the same signal.
+function isMacChromeZeroReleaseLeave(e) {
+  return !e.relatedTarget
+    && e.clientX === 0 && e.clientY === 0
+    && e.screenX === 0 && e.screenY === 0
+    && /Mac/.test(navigator.platform || navigator.userAgent)
+    && /(?:Chrome|Chromium)\//.test(navigator.userAgent)
+    && !/(?:Edg|OPR|Vivaldi)\//.test(navigator.userAgent)
+    && !navigator.brave;
+}
 function esc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -578,7 +594,7 @@ function syncWizardOrbit() {
 export {
   syncBotAnimations,
   syncWizardOrbit,
-  $, $$, isModifiedClick, esc, themeWords, linkify, shortId, shortAgentId, idTooltip,
+  $, $$, isModifiedClick, isMacChromeZeroReleaseLeave, esc, themeWords, linkify, shortId, shortAgentId, idTooltip,
   makeModalResizable, bindModalSubmitHotkey,
   harnessCanRename, harnessCanRemoteControl,
   relTime, shortCwd, displayModel, offlineDefault, groupOfflineOverride, groupShowOffline,
