@@ -2,6 +2,8 @@ package claude
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +14,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 func TestRunShellOutputWorkdirAndExitStatus(t *testing.T) {
@@ -185,10 +189,11 @@ func TestRunWaitDelayKeepsSuccessfulChildStatus(t *testing.T) {
 func TestRunRejectsInvalidOptions(t *testing.T) {
 	for _, p := range []runParams{
 		{Harness: "shell", Timeout: "0s"},
-		{Harness: "shell", SandboxProfile: "x"},
-		{Harness: "shell", SandboxImpl: "invalid"},
 		{Harness: "shell", Sandbox: "read-only"},
-		{Harness: "opencode", SandboxImpl: "tclaude-layer"},
+		{Harness: "shell", CPU: "abc"},
+		{Harness: "shell", CPU: "0"},
+		{Harness: "shell", Memory: "lots"},
+		{Harness: "shell", PIDs: -1},
 	} {
 		code, err := runOnce(p, []string{"true"}, &bytes.Buffer{}, &bytes.Buffer{})
 		require.Equal(t, 1, code)
@@ -197,4 +202,50 @@ func TestRunRejectsInvalidOptions(t *testing.T) {
 	code, err := runOnce(runParams{Harness: "shell"}, []string{"  "}, &bytes.Buffer{}, &bytes.Buffer{})
 	require.Equal(t, 1, code)
 	require.True(t, strings.Contains(err.Error(), "required"))
+}
+
+func TestRunCgroupJoinsBeforeChildStarts(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("run cgroups are Linux only")
+	}
+	t.Setenv("SHELL", "/bin/sh")
+	marker := filepath.Join(t.TempDir(), "started")
+	var joined sandboxpolicy.ResourceLimits
+	old := joinRunCgroup
+	joinRunCgroup = func(limits sandboxpolicy.ResourceLimits, stderr io.Writer) (*agent.RunCgroupHold, error) {
+		_, err := os.Stat(marker)
+		require.True(t, os.IsNotExist(err), "child started before the cgroup was joined")
+		joined = limits
+		return nil, nil
+	}
+	t.Cleanup(func() { joinRunCgroup = old })
+	var out, errOut bytes.Buffer
+	code, err := runOnce(runParams{Harness: "shell", CPU: "1.5", Memory: "512MiB", PIDs: 64},
+		[]string{"touch " + marker}, &out, &errOut)
+	require.NoError(t, err)
+	require.Equal(t, 0, code)
+	require.NotNil(t, joined.CPU)
+	require.Equal(t, 1.5, *joined.CPU)
+	require.Equal(t, uint64(512<<20), joined.MemoryBytes)
+	require.NotNil(t, joined.PIDs)
+	require.Equal(t, uint64(64), *joined.PIDs)
+}
+
+func TestRunCgroupFailureStopsRun(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("run cgroups are Linux only")
+	}
+	t.Setenv("SHELL", "/bin/sh")
+	marker := filepath.Join(t.TempDir(), "started")
+	old := joinRunCgroup
+	joinRunCgroup = func(sandboxpolicy.ResourceLimits, io.Writer) (*agent.RunCgroupHold, error) {
+		return nil, errors.New("no delegation")
+	}
+	t.Cleanup(func() { joinRunCgroup = old })
+	code, err := runOnce(runParams{Harness: "shell", Cgroup: true},
+		[]string{"touch " + marker}, &bytes.Buffer{}, &bytes.Buffer{})
+	require.Equal(t, 1, code)
+	require.ErrorContains(t, err, "no delegation")
+	_, statErr := os.Stat(marker)
+	require.True(t, os.IsNotExist(statErr))
 }

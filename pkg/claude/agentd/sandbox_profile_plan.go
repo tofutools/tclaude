@@ -278,7 +278,8 @@ func hypotheticalSandboxProfilePlan(body sandboxProfilePlanRequest) (sandboxProf
 		Cwd:         cwd,
 		GitWriteDirs: harness.GitWorktreeWriteDirsForIdentity(
 			gitCommonDir, gitDir, home),
-		Snapshot: &snapshot,
+		Snapshot:                 &snapshot,
+		ExposeInstalledHarnesses: true,
 	})
 	if err != nil {
 		return sandboxProfilePlanResponse{}, err

@@ -2256,9 +2256,10 @@ func runNew(params *NewParams) error {
 				}
 				return darwinRouteReservation.Slots()
 			}(),
-			DarwinRouteReservation: darwinRouteReservation,
-			RouteHelper:            routeHelper,
-			HarnessReadPaths:       harnessReadPaths,
+			DarwinRouteReservation:   darwinRouteReservation,
+			RouteHelper:              routeHelper,
+			HarnessReadPaths:         harnessReadPaths,
+			ExposeInstalledHarnesses: true,
 		})
 		if specErr != nil {
 			return fmt.Errorf("build tclaude’s sandbox launch spec: %w", specErr)

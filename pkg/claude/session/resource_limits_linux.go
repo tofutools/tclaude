@@ -118,6 +118,20 @@ func configuredResourceDelegationDir() string {
 	return ExternalResourceDelegationDir()
 }
 
+// workloadResourceDelegationDir resolves the node under which workload cgroups
+// are created: the configured external root, or this process's own delegated
+// service subtree.
+func workloadResourceDelegationDir() (string, error) {
+	if delegation := configuredResourceDelegationDir(); delegation != "" {
+		return ValidateResourceDelegationDir(delegation)
+	}
+	current, err := currentCgroupDir()
+	if err != nil {
+		return "", fmt.Errorf("resource limits unavailable: %w", err)
+	}
+	return resourceDelegationDir(current), nil
+}
+
 // enableDelegatedControllers turns on the controllers a workload cgroup needs in
 // its parent. An empty request writes nothing at all rather than writing an
 // empty string, which keeps a launch working on a delegated node whose
@@ -503,19 +517,9 @@ func wrapResourceLimitedCommand(
 // Agentd uses this before starting an authoritative OpenCode server; ordinary
 // pane-owned harnesses call it through wrapResourceLimitedCommand.
 func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits) (string, func(), error) {
-	delegation := configuredResourceDelegationDir()
-	if delegation != "" {
-		validated, err := ValidateResourceDelegationDir(delegation)
-		if err != nil {
-			return "", func() {}, err
-		}
-		delegation = validated
-	} else {
-		current, err := currentCgroupDir()
-		if err != nil {
-			return "", func() {}, fmt.Errorf("resource limits unavailable: %w", err)
-		}
-		delegation = resourceDelegationDir(current)
+	delegation, err := workloadResourceDelegationDir()
+	if err != nil {
+		return "", func() {}, err
 	}
 	// The controllers this launch cannot proceed without are derived from the
 	// authored ceilings alone, so they are known before the delegation is read.

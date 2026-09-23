@@ -1,6 +1,6 @@
 ---
 name: agent-run
-description: Run a fresh, non-interactive Claude, Codex, OpenCode, Copilot, or shell turn with `tclaude run`. Use when an agent needs a one-shot command with optional piped input, timeout, or a named tclaude sandbox profile.
+description: Run a fresh, non-interactive Claude, Codex, OpenCode, Copilot, or shell turn with `tclaude run`. Use when an agent needs a one-shot command with optional piped input, timeout, or CPU/memory/PID limits in its own cgroup.
 ---
 
 # One-shot runs
@@ -20,8 +20,14 @@ The piped agent prompt is limited to 96 KiB because it becomes a command argumen
 
 `--workdir` selects the child's directory. The child exit status is returned; a timeout exits 124. Consult `tclaude run --help` and `docs/run.md` for sandbox choices and harness limits.
 
-## Sandbox inheritance
+## Sandbox and resource limits
 
-The child runs with your existing OS privileges and inherits your sandbox. `tclaude run` itself needs no agentd permission or running daemon. When you are already inside a tclaude layer, normally omit `--sandbox-impl`: another layer may fail because nested namespaces are unavailable. This does not loosen your current sandbox.
+The child runs with your existing OS privileges and inherits your sandbox. `tclaude run` needs no agentd permission. Inside tclaude's sandbox the installed harness executables are available, so a Claude agent can run `--harness codex` and vice versa; the other harness still needs its state directory (credentials) granted by your sandbox profile.
 
-When you are outside a sandbox and need a tclaude layer, use `--sandbox-impl tclaude-layer --sandbox-profile NAME`. Profile resolution reads the local tclaude database. Without a named profile, the global profile applies.
+To bound a run, pass `--cpu CORES`, `--memory QUANTITY` and/or `--pids N` (or just `--cgroup`):
+
+```bash
+tclaude run --harness shell --cpu 2 --memory 4GiB --pids 256 "go test ./..."
+```
+
+tclaude agentd creates the cgroup and moves the run into it, so the daemon must be running with cgroup delegation (Linux only). Limits are clamped to your own ceilings; unset axes inherit them. The cgroup and anything left in it are removed when `tclaude run` exits.

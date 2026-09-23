@@ -144,7 +144,12 @@ type TclaudeLayerLaunchInput struct {
 	// harness-native runtime closure. They become ordinary read grants so the
 	// same policy ordering and constructed-root renderer govern them.
 	HarnessReadPaths []string
-	OpenCodeControl  *TclaudeLayerOpenCodeControl
+	// ExposeInstalledHarnesses reopens every installed harness executable
+	// (see ResolveTclaudeLayerHarnessBinaries) so the agent can run another
+	// harness with `tclaude run`. Production launch paths set it; it is off
+	// for inputs whose output must not depend on the host's installs.
+	ExposeInstalledHarnesses bool
+	OpenCodeControl          *TclaudeLayerOpenCodeControl
 	// NetworkEngine is the resolved engine selection for this launch. See the
 	// contract field of the same name; production callers leave it unset until
 	// the selection surface exists.
@@ -282,6 +287,16 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	if cwd == "" {
 		return TclaudeLayerLaunchSpec{}, fmt.Errorf("tclaude’s sandbox launch cwd %q is not an absolute canonical path", input.Cwd)
 	}
+	// The installed-harness exposure is best effort, so it stays out of the
+	// launch-contract paths that operator remaps and tmpfs rows are refused
+	// against: a profile shadowing one of them costs that binary, not the launch.
+	var exposedHarnessReadPaths []string
+	var entryPointAliases []sandboxpolicy.MountAlias
+	if input.ExposeInstalledHarnesses && runtime.GOOS == "linux" {
+		binaries := ResolveTclaudeLayerHarnessBinaries()
+		exposedHarnessReadPaths = binaries.ReadPaths
+		entryPointAliases = tclaudeLayerEntryPointAliases(binaries.EntryPoints)
+	}
 	effective := sandboxpolicy.EffectiveProfile{}
 	if input.Snapshot != nil {
 		effective = input.Snapshot.Effective
@@ -291,6 +306,10 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 			return TclaudeLayerLaunchSpec{}, fmt.Errorf("freeze tclaude’s sandbox filesystem: %w", err)
 		}
 		effective.Filesystem = filesystem
+	}
+	if len(entryPointAliases) > 0 {
+		effective.MountAliases = append(
+			append([]sandboxpolicy.MountAlias(nil), effective.MountAliases...), entryPointAliases...)
 	}
 	if err := validateTclaudeLayerRouteHelper(effective, input.RouteHelper); err != nil {
 		return TclaudeLayerLaunchSpec{}, err
@@ -307,6 +326,7 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		launchContractReadDirs...,
 	)
 	launchReadDirs = append(launchReadDirs, input.HarnessReadPaths...)
+	launchReadDirs = append(launchReadDirs, exposedHarnessReadPaths...)
 	launchDenyDirs := sandboxDirsForEffective(effective, sandboxpolicy.AccessDeny)
 	remappedGrants := remappedGrantsForEffective(effective)
 	var err error

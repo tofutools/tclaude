@@ -523,8 +523,12 @@ split policy, because the launch contract adds its own reopens.
 Under a broad deny, tclaude pairs read reopens automatically for a short,
 closed list: the workspace and daemon-verified git admin paths, the profile's
 own `write` grants, declared `agent_directories`, the agentd socket, and — on
-Codex only, when a probe proves it needed — the Codex executable. Everything
-else is yours to enumerate. In particular, tclaude's own binary is *not*
+Linux `tclaude-layer` launches — every installed harness executable (`claude`,
+`codex`, `opencode`, `copilot`, their npm package roots, `node` when one is a
+Node.js launcher, and the symlinked `$PATH` spellings that reach them), so an
+agent can start another harness with `tclaude run`. Harness *state*, such as
+`~/.codex` credentials, is not included. Everything else is yours to
+enumerate. In particular, tclaude's own binary is *not*
 implicitly reopened: under `deny ~` an agent can reach the agentd socket and
 still get `tclaude: command not found` until you reopen the directory holding
 the binary (commonly `~/go/bin` or a version-manager install root).

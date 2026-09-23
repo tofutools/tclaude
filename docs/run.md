@@ -41,25 +41,39 @@ The accepted values follow `tclaude session new --help`. Without an explicit
 mode, the harness's non-interactive adapter chooses its own default (Codex
 uses read-only mode).
 
-`--sandbox-impl tclaude-layer` runs under tclaude's OS sandbox. Use
-`--sandbox-profile NAME` with it to apply a named profile; the global sandbox
-profile is also resolved. The named profile and global profile are read from
-tclaude's local database. The harness-native sandbox and tclaude layer are
-mutually exclusive for this command. This one-shot layer path supports Claude,
-Codex, and shell. It refuses profiles with Unix socket rules because those
-rules require the managed session's socket materialization step.
+The child executes with the caller's OS privileges and inherits the caller's
+existing sandbox; `tclaude run` never adds a tclaude sandbox layer of its own.
+An agent inside tclaude's sandbox can still run any installed harness: every
+tclaude-layer launch on Linux exposes the installed `claude`, `codex`,
+`opencode` and `copilot` executables read-only, together with their npm
+package roots and `node` when a harness is a Node.js launcher. Only the
+executables are exposed; a harness still needs its own state directory (for
+example `~/.codex` for Codex credentials) granted by the sandbox profile.
+
+## Resource limits
+
+`--cgroup` runs the command in a fresh cgroup. `--cpu`, `--memory` and
+`--pids` set limits on it and imply `--cgroup`:
 
 ```bash
-tclaude run --harness shell --sandbox-impl tclaude-layer \
-  --sandbox-profile build "go test ./..."
+tclaude run --harness shell --cpu 2 --memory 4GiB --pids 256 "go test ./..."
+tclaude run --harness codex --memory 2GiB "fix the failing test"
 ```
 
-A tclaude layer launch refuses to start if its required sandbox engine or
-profile cannot be resolved. Profile resolution reads the local tclaude
-database.
+`--cpu` is a number of cores (at least 0.01), `--memory` accepts quantities
+such as `512MiB` or `4GB`, and `--pids` bounds processes plus threads.
 
-The child executes with the caller's OS privileges and inherits the caller's
-existing sandbox. Agents can use `tclaude run` without an agentd permission or
-a running daemon. An agent already inside a tclaude layer normally leaves
-`--sandbox-impl` unset: a second layer can fail when its sandbox cannot create
-nested namespaces.
+The cgroup is created by `tclaude agentd`, which must be running with a
+delegated cgroup v2 subtree (see [Sandboxing](sandboxing.md) for
+`Delegate=` setup); this works from inside tclaude's sandbox, where
+`/sys/fs/cgroup` is not visible. agentd moves the calling `tclaude run`
+process into a new cgroup beside the caller's own, so the command and
+everything it starts are counted there. The caller must itself run inside
+agentd's delegated subtree, which is the case for agents agentd launched.
+Limits never exceed the caller's existing ceilings: a looser request is
+lowered, and an axis left unset inherits the caller's ceiling, with a note on
+stderr. When `tclaude run` exits, agentd kills anything left in the cgroup and
+removes it. Resource limits are Linux only.
+
+Agents can use `tclaude run` without an agentd permission. Without the cgroup
+flags it needs no running daemon.

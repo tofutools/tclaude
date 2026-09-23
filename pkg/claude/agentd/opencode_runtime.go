@@ -1963,6 +1963,8 @@ func buildOpenCodeTclaudeLayerLaunchSpec(
 		Environment:      layout.environment,
 		FinalHideDirs:    layout.finalHideDirs,
 		ReadOnlyBinds:    layout.readOnlyBinds,
+		// OpenCode tool commands run inside this server's sandbox.
+		ExposeInstalledHarnesses: true,
 	}
 	if unixRelay {
 		controlPath, controlErr := openCodeControlSocketPath(agentID)

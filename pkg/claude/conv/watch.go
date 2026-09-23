@@ -2846,10 +2846,11 @@ func resumeLaunchCmdWithStackedProof(
 			return "", "", nil, resolveErr
 		}
 		launchSpec, specErr := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
-			HarnessName:  h.Name,
-			Cwd:          resumeCwd,
-			GitWriteDirs: tclaudeLayerContractWriteDirs,
-			Snapshot:     effectiveSandbox,
+			HarnessName:              h.Name,
+			Cwd:                      resumeCwd,
+			GitWriteDirs:             tclaudeLayerContractWriteDirs,
+			Snapshot:                 effectiveSandbox,
+			ExposeInstalledHarnesses: true,
 		})
 		if specErr != nil {
 			return "", "", nil, fmt.Errorf("build resumed tclaude’s sandbox launch spec: %w", specErr)

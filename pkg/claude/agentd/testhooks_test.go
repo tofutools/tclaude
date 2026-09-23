@@ -286,6 +286,16 @@ func SetPrepareResourceCgroupForTest(
 	return func() { prepareResourceCgroup = previous }
 }
 
+// SetPrepareRunCgroupForTest swaps the host cgroup seam behind
+// /v1/run/cgroup; a test binary has no delegated cgroup subtree.
+func SetPrepareRunCgroupForTest(
+	fn func(pid int, limits sandboxpolicy.ResourceLimits) (string, sandboxpolicy.ResourceLimits, func(), error),
+) func() {
+	previous := prepareRunCgroup
+	prepareRunCgroup = fn
+	return func() { prepareRunCgroup = previous }
+}
+
 // SetTmuxCacheTTLForTest overrides the shared LiveTmuxSessions cache TTL and
 // clears any warm entry, returning a restore closure. newFlow sets it to 0 so
 // the cache is transparent (every call re-probes) — preserving each existing

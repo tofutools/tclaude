@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -18,11 +19,9 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
-	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
 	"golang.org/x/term"
 )
@@ -30,12 +29,14 @@ import (
 // runParams describes a fresh, foreground invocation. No conversation or tmux
 // session is created by tclaude; the harness owns any history it writes.
 type runParams struct {
-	Harness        string `long:"harness" optional:"true" help:"Harness: claude, codex, opencode, copilot, or shell (default: claude)"`
-	Workdir        string `long:"workdir" optional:"true" help:"Directory in which to run the command (default: current directory)"`
-	Sandbox        string `long:"sandbox" optional:"true" help:"Harness-native sandbox mode (see session new --help)"`
-	SandboxImpl    string `long:"sandbox-impl" optional:"true" help:"Sandbox implementation: harness-builtin (default) or tclaude-layer"`
-	SandboxProfile string `long:"sandbox-profile" optional:"true" help:"Named tclaude sandbox profile; requires --sandbox-impl tclaude-layer"`
-	Timeout        string `long:"timeout" optional:"true" help:"Maximum run duration, as a Go duration (for example 10m); unset means no timeout"`
+	Harness string `long:"harness" optional:"true" help:"Harness: claude, codex, opencode, copilot, or shell (default: claude)"`
+	Workdir string `long:"workdir" optional:"true" help:"Directory in which to run the command (default: current directory)"`
+	Sandbox string `long:"sandbox" optional:"true" help:"Harness-native sandbox mode (see session new --help)"`
+	Timeout string `long:"timeout" optional:"true" help:"Maximum run duration, as a Go duration (for example 10m); unset means no timeout"`
+	Cgroup  bool   `long:"cgroup" optional:"true" help:"Run in a fresh cgroup created by tclaude agentd (Linux only); implied by --cpu, --memory and --pids"`
+	CPU     string `long:"cpu" optional:"true" help:"CPU limit in cores for the run cgroup, for example 1.5"`
+	Memory  string `long:"memory" optional:"true" help:"Memory limit for the run cgroup, for example 512MiB or 4GB"`
+	PIDs    int    `long:"pids" optional:"true" help:"Maximum processes and threads in the run cgroup"`
 }
 
 const maxRunPipedPromptBytes = 96 << 10
@@ -78,6 +79,10 @@ func runOnceInput(p runParams, args []string, stdin io.Reader, stdout, stderr io
 		}
 		duration = parsed
 	}
+	limits, err := runCgroupLimits(p)
+	if err != nil {
+		return 1, err
+	}
 	ctx := context.Background()
 	cancel := func() {}
 	if duration > 0 {
@@ -92,7 +97,7 @@ func runOnceInput(p runParams, args []string, stdin io.Reader, stdout, stderr io
 			return 1, err
 		}
 	}
-	cwd, err := filepath.Abs(cwd)
+	cwd, err = filepath.Abs(cwd)
 	if err != nil {
 		return 1, fmt.Errorf("resolve workdir: %w", err)
 	}
@@ -133,15 +138,6 @@ func runOnceInput(p runParams, args []string, stdin io.Reader, stdout, stderr io
 	if strings.TrimSpace(prompt) == "" {
 		return 1, errors.New("a prompt or shell command is required")
 	}
-	if p.SandboxImpl != "" && p.SandboxImpl != "harness-builtin" && p.SandboxImpl != "tclaude-layer" {
-		return 1, fmt.Errorf("invalid --sandbox-impl %q (want harness-builtin or tclaude-layer)", p.SandboxImpl)
-	}
-	if p.SandboxProfile != "" && p.SandboxImpl != "tclaude-layer" {
-		return 1, errors.New("--sandbox-profile requires --sandbox-impl tclaude-layer")
-	}
-	if p.Sandbox != "" && p.SandboxImpl == "tclaude-layer" {
-		return 1, errors.New("--sandbox and --sandbox-impl tclaude-layer cannot be combined")
-	}
 	if p.Sandbox != "" && name != harness.DefaultName && name != harness.CodexName {
 		return 1, fmt.Errorf("--sandbox is not supported for non-interactive %s runs", name)
 	}
@@ -158,13 +154,7 @@ func runOnceInput(p runParams, args []string, stdin io.Reader, stdout, stderr io
 		argv = []string{shell, "-c", prompt}
 	} else {
 		spec := harness.AskSpec{Print: true, Prompt: prompt}
-		if p.SandboxImpl == "tclaude-layer" {
-			// The outer layer is the selected OS wall. Askers for the two
-			// supported native sandboxes can turn their inner wall off.
-			if name == harness.DefaultName || name == harness.CodexName {
-				spec.LaunchPosture = &harness.SpawnSpec{HarnessBuiltinMode: h.TclaudeLayerMode}
-			}
-		} else if mode != "" {
+		if mode != "" {
 			spec.LaunchPosture = &harness.SpawnSpec{HarnessBuiltinMode: mode}
 		}
 		argv = h.Ask.BuildAskArgv(spec)
@@ -172,11 +162,14 @@ func runOnceInput(p runParams, args []string, stdin io.Reader, stdout, stderr io
 	if len(argv) == 0 {
 		return 1, errors.New("harness produced an empty command")
 	}
-	if p.SandboxImpl == "tclaude-layer" {
-		argv, err = wrapRunWithLayer(h, cwd, p.SandboxProfile, argv)
+	if limits != nil {
+		hold, err := joinRunCgroup(*limits, stderr)
 		if err != nil {
 			return 1, err
 		}
+		// Closing the connection early would let agentd reap the run while
+		// it is still reporting its status.
+		defer runtime.KeepAlive(hold)
 	}
 
 	ctx, stopSignals := context.WithCancel(ctx)
@@ -289,83 +282,73 @@ func scrubRunEnv(env, names []string) []string {
 	return kept
 }
 
-func wrapRunWithLayer(h *harness.Harness, cwd, profile string, argv []string) ([]string, error) {
-	if h.Name != harness.DefaultName && h.Name != harness.CodexName && h.Name != harness.ShellName {
-		return nil, fmt.Errorf("tclaude-layer is not supported for non-interactive %s runs", h.Name)
+// runCgroupLimits turns the cgroup flags into limits, or nil when no cgroup
+// was asked for.
+func runCgroupLimits(p runParams) (*sandboxpolicy.ResourceLimits, error) {
+	if !p.Cgroup && p.CPU == "" && p.Memory == "" && p.PIDs == 0 {
+		return nil, nil
 	}
-	if err := session.ValidateTclaudeLayerHarness(h.Name); err != nil {
-		return nil, err
+	if runtime.GOOS != "linux" {
+		return nil, errors.New("--cgroup, --cpu, --memory and --pids are Linux only")
 	}
-	resolved, err := db.ResolveEffectiveSandboxSnapshot(0, profile)
-	if err != nil {
-		return nil, fmt.Errorf("resolve sandbox profile: %w", err)
-	}
-	snapshot := &resolved
-	if err := session.ValidateTclaudeLayerHarnessPosture(
-		h, sandboxpolicy.EnvironmentForLaunch(snapshot), nil); err != nil {
-		return nil, err
-	}
-	posture, err := session.TclaudeLayerNetworkPosture(snapshot.Effective)
-	if err != nil {
-		return nil, err
-	}
-	root, err := session.TclaudeLayerLaunchRootPosture(h, sandboxpolicy.ImplementationTclaudeLayer, posture, snapshot.Effective)
-	if err != nil {
-		return nil, err
-	}
-	engine, err := session.TclaudeLayerNetworkEngine(snapshot.Effective)
-	if err != nil {
-		return nil, err
-	}
-	axes, err := sandboxpolicy.PlannedEffectiveAccessAxes(snapshot.Effective)
-	if err != nil {
-		return nil, err
-	}
-	if axes.UnixSockets.Mode != sandboxpolicy.AccessModeUnset && axes.UnixSockets.Mode != sandboxpolicy.AccessModeOpen {
-		return nil, errors.New("non-interactive tclaude-layer does not support unix socket profile rules")
-	}
-	if posture == sandboxpolicy.NetworkFiltered && runtime.GOOS == "linux" && engine == sandboxpolicy.NetworkEnginePacket {
-		probe := session.ProbeFilteredNetworkPrerequisite()
-		if err := session.ValidateFilteredNetworkHarnessSupport(h, sandboxpolicy.ImplementationTclaudeLayer, axes, probe); err != nil {
-			return nil, err
-		}
-		if !probe.Detected {
-			return nil, errors.New("filtered network prerequisites are unavailable")
-		}
-	}
-	var model harness.ResolvedModelTransport
-	if posture == sandboxpolicy.NetworkFiltered && !sandboxpolicy.NetworkRulesArePrivateRoutedOpen(axes.Network) {
-		model, err = session.ResolveTclaudeLayerModelTransport(h, session.ModelTransportLaunchContext{
-			Cwd: cwd, Environment: sandboxpolicy.EnvironmentForLaunch(snapshot),
-		})
+	var limits sandboxpolicy.ResourceLimits
+	limits.Memory = p.Memory
+	if p.CPU != "" {
+		cores, err := strconv.ParseFloat(strings.TrimSpace(p.CPU), 64)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("--cpu must be a number of cores: %w", err)
 		}
+		limits.CPU = &cores
 	}
-	if _, err := session.ValidateTclaudeLayerNetwork(h, snapshot.Effective, model); err != nil {
-		return nil, err
+	if p.PIDs < 0 {
+		return nil, errors.New("--pids must be positive")
 	}
-	binary, _, err := session.ResolveTclaudeLayerForEngineWithIdentity(
-		posture, root, engine, posture == sandboxpolicy.NetworkFiltered && engine == sandboxpolicy.NetworkEnginePacket)
+	if p.PIDs > 0 {
+		pids := uint64(p.PIDs)
+		limits.PIDs = &pids
+	}
+	normalized, err := sandboxpolicy.NormalizeResourceLimits(limits)
 	if err != nil {
 		return nil, err
 	}
-	spec, err := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
-		HarnessName: h.Name, Cwd: cwd, Snapshot: snapshot, NetworkEngine: engine,
-	})
+	return &normalized, nil
+}
+
+// joinRunCgroup moves this process into an agentd-owned run cgroup. The
+// returned hold owns the connection that keeps the cgroup alive; it is never
+// released explicitly, because the process exiting closes the connection and
+// agentd then removes the cgroup. A seam for tests, which have no agentd.
+var joinRunCgroup = func(limits sandboxpolicy.ResourceLimits, stderr io.Writer) (*agent.RunCgroupHold, error) {
+	hold, resp, err := agent.JoinRunCgroup(limits)
 	if err != nil {
 		return nil, err
 	}
-	if err := session.PrepareTclaudeLayerHarnessState(spec); err != nil {
-		return nil, err
+	if !sameRunLimits(resp.Limits, limits) {
+		fmt.Fprintf(stderr, "tclaude run: cgroup limits clamped to the caller's own ceilings: %s\n",
+			describeRunLimits(resp.Limits))
 	}
-	quoted := make([]string, len(argv))
-	for i, arg := range argv {
-		quoted[i] = clcommon.ShellQuoteArg(arg)
+	return hold, nil
+}
+
+func sameRunLimits(a, b sandboxpolicy.ResourceLimits) bool {
+	sameCPU := (a.CPU == nil) == (b.CPU == nil) && (a.CPU == nil || *a.CPU == *b.CPU)
+	samePIDs := (a.PIDs == nil) == (b.PIDs == nil) && (a.PIDs == nil || *a.PIDs == *b.PIDs)
+	return a.MemoryBytes == b.MemoryBytes && sameCPU && samePIDs
+}
+
+func describeRunLimits(limits sandboxpolicy.ResourceLimits) string {
+	parts := []string{}
+	if limits.CPU != nil {
+		parts = append(parts, "cpu="+strconv.FormatFloat(*limits.CPU, 'f', -1, 64))
 	}
-	wrapped, err := session.WrapTclaudeLayerSpec(binary, spec, "exec "+strings.Join(quoted, " "))
-	if err != nil {
-		return nil, err
+	if limits.Memory != "" {
+		parts = append(parts, "memory="+limits.Memory)
 	}
-	return []string{"/bin/sh", "-c", wrapped}, nil
+	if limits.PIDs != nil {
+		parts = append(parts, "pids="+strconv.FormatUint(*limits.PIDs, 10))
+	}
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, " ")
 }

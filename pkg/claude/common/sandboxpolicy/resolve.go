@@ -530,6 +530,14 @@ func filesystemRootRank(mode FilesystemRootMode) int {
 	}
 }
 
+// MountAliasesForPath returns the symlinks a constructed root must recreate
+// for path to resolve as it does on the host. Launch contracts use it for
+// executable entry points they expose outside any profile row.
+func MountAliasesForPath(path string) ([]MountAlias, error) {
+	aliases, _, err := mountAliasesForPath(path)
+	return aliases, err
+}
+
 // mountAliasesForPath returns the symlinks a constructed root must recreate
 // for one spelling to resolve like the host. Each link points at its fully
 // resolved target prefix. Continuing the walk from that target finds a second
