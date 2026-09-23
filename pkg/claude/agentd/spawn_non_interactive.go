@@ -24,6 +24,7 @@ const maxNonInteractiveOutputBytes = 4 << 20
 var prepareNonInteractiveResourceCgroup = session.PrepareResourceCgroup
 var configureNonInteractiveResourceCgroup = session.ConfigureProcessResourceCgroup
 var removeNonInteractiveResourceCgroup = session.RemoveResourceCgroup
+var killNonInteractiveResourceCgroupMembers = session.KillResourceCgroupMembers
 
 type nonInteractiveSpawnResult struct {
 	Stdout   string `json:"stdout"`
@@ -145,6 +146,7 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	stdout := &boundedHeadBuffer{max: maxNonInteractiveOutputBytes, onLimit: cancel}
 	stderr := &boundedHeadBuffer{max: maxNonInteractiveOutputBytes, onLimit: cancel}
 	cmd := executil.CommandContextWithGrace(ctx, 0, argv[0], argv[1:]...)
+	cmd.WaitDelay = 2 * time.Second
 	cmd.Dir = p.Cwd
 	cmd.Stdin = nil
 	cmd.Stdout = stdout
@@ -174,6 +176,12 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 			return hostFailure("resource_limit_init", configureErr.Error())
 		}
 		defer closeFD()
+		stopCgroupKill := context.AfterFunc(ctx, func() {
+			if err := killNonInteractiveResourceCgroupMembers(cgroupDir); err != nil {
+				slog.Warn("one-shot resource cgroup cancellation failed", "dir", cgroupDir, "error", err)
+			}
+		})
+		defer stopCgroupKill()
 	}
 	if fail := reassertDirWriteProof(p.DirWriteProofDirs); fail != nil {
 		return nonInteractiveSpawnResult{}, fail
@@ -199,6 +207,11 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 			return result, nil
 		}
 		result.ExitCode = exit.ExitCode()
+		return result, nil
+	}
+	if errors.Is(err, exec.ErrWaitDelay) {
+		result.ExitCode = 125
+		result.Stderr += "\nrun ended with output pipes still open\n"
 		return result, nil
 	}
 	return nonInteractiveSpawnResult{}, &spawnFailure{Status: 502, Kind: "run_failed", Msg: err.Error()}

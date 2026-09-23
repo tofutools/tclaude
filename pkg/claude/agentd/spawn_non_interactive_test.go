@@ -7,8 +7,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -101,6 +104,82 @@ func TestRunNonInteractiveSpawnRefusesMissingResourceBoundary(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("child started without its resource boundary: %v", err)
+	}
+}
+
+func TestRunNonInteractiveSpawnCancellationKillsResourceCgroup(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("resource cgroups require Linux")
+	}
+	previousPrepare, previousConfigure, previousRemove, previousKill :=
+		prepareNonInteractiveResourceCgroup, configureNonInteractiveResourceCgroup,
+		removeNonInteractiveResourceCgroup, killNonInteractiveResourceCgroupMembers
+	t.Cleanup(func() {
+		prepareNonInteractiveResourceCgroup = previousPrepare
+		configureNonInteractiveResourceCgroup = previousConfigure
+		removeNonInteractiveResourceCgroup = previousRemove
+		killNonInteractiveResourceCgroupMembers = previousKill
+	})
+	const cgroupDir = "/test/one-shot-timeout"
+	prepareNonInteractiveResourceCgroup = func(string, sandboxpolicy.ResourceLimits) (string, func(), error) {
+		return cgroupDir, func() {}, nil
+	}
+	configureNonInteractiveResourceCgroup = func(*exec.Cmd, string) (func(), error) {
+		return func() {}, nil
+	}
+	removeNonInteractiveResourceCgroup = func(string) error { return nil }
+	killed := make(chan struct{}, 1)
+	killNonInteractiveResourceCgroupMembers = func(dir string) error {
+		if dir != cgroupDir {
+			t.Errorf("unexpected cgroup kill: %q", dir)
+		}
+		killed <- struct{}{}
+		return nil
+	}
+	pids := uint64(32)
+	snapshot := sandboxpolicy.NewSnapshot(sandboxpolicy.EffectiveProfile{
+		ResourceLimits: sandboxpolicy.ResourceLimits{PIDs: &pids},
+	}, nil)
+	p := spawnParams{Harness: harness.ShellName, Cwd: t.TempDir(),
+		SandboxImplementation: "harness-builtin", EffectiveSandbox: &snapshot,
+		InitialMessage: "sleep 5"}
+	got, fail := runNonInteractiveSpawn(context.Background(), p, 1)
+	if fail != nil || got.ExitCode != 124 {
+		t.Fatalf("result=%+v failure=%+v", got, fail)
+	}
+	select {
+	case <-killed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout did not kill the prepared resource cgroup")
+	}
+}
+
+func TestRunNonInteractiveSpawnBoundsEscapedOutputPipe(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("setsid smoke requires Linux")
+	}
+	if _, err := exec.LookPath("setsid"); err != nil {
+		t.Skip("setsid unavailable")
+	}
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "child.pid")
+	t.Cleanup(func() {
+		raw, err := os.ReadFile(pidFile)
+		if err != nil {
+			return
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+		if err == nil {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
+	p := spawnParams{Harness: harness.ShellName, Cwd: dir,
+		InitialMessage: "setsid sleep 10 & echo $! > " + pidFile}
+	started := time.Now()
+	got, fail := runNonInteractiveSpawn(context.Background(), p, 30)
+	if fail != nil || got.ExitCode != 125 || time.Since(started) > 8*time.Second {
+		t.Fatalf("escaped pipe holder delayed or failed run: result=%+v failure=%+v elapsed=%s",
+			got, fail, time.Since(started))
 	}
 }
 

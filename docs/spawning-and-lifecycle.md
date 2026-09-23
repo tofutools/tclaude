@@ -94,7 +94,8 @@ this mode. The harness-native and `tclaude-layer` sandbox implementations are
 supported for Claude, Codex, and shell. On Linux, a configured resource limit
 is applied to the one-shot process through a temporary cgroup. A resolved policy
 with pre-launch scripts or agent-owned directories fails before launch because
-the one-shot path cannot apply those settings.
+the one-shot path cannot apply those settings. A configured resource limit also
+refuses the run on macOS or when the Linux daemon lacks a delegated cgroup.
 When `--worktree` is used, the worktree remains after the run so its changes
 can be inspected.
 
