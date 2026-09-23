@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -18,12 +19,14 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
+	"golang.org/x/term"
 )
 
 // runParams describes a fresh, foreground invocation. No conversation or tmux
@@ -44,7 +47,16 @@ func runCmd() *cobra.Command {
 		Long:        "Run a fresh, non-interactive harness turn and wait for it to finish. With --harness shell, the argument is a shell command. The child exit status is returned to the caller; a timeout exits with status 124.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *runParams, cmd *cobra.Command, args []string) {
-			code, err := runOnce(*p, args, os.Stdout, os.Stderr)
+			snapshot, err := authorizeRun(*p)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			var input io.Reader
+			if !term.IsTerminal(int(os.Stdin.Fd())) {
+				input = os.Stdin
+			}
+			code, err := runOnceInput(*p, args, input, os.Stdout, os.Stderr, snapshot)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
 			}
@@ -57,11 +69,35 @@ func runCmd() *cobra.Command {
 	return c
 }
 
-func runOnce(p runParams, args []string, stdout, stderr io.Writer) (int, error) {
-	prompt := strings.Join(args, " ")
-	if strings.TrimSpace(prompt) == "" {
-		return 1, errors.New("a prompt or shell command is required")
+func authorizeRun(p runParams) (*sandboxpolicy.Snapshot, error) {
+	if !agent.DaemonAvailable() {
+		if os.Getenv("TCLAUDE_SESSION_ID") != "" {
+			return nil, errors.New("tclaude agentd is required to authorize an agent run")
+		}
+		return nil, nil // standalone human invocation
 	}
+	var response struct {
+		Snapshot *sandboxpolicy.Snapshot `json:"snapshot,omitempty"`
+	}
+	err := agent.DaemonRequest(http.MethodPost, "/v1/run/authorize", struct {
+		SandboxImpl    string `json:"sandbox_impl"`
+		SandboxProfile string `json:"sandbox_profile,omitempty"`
+	}{SandboxImpl: p.SandboxImpl, SandboxProfile: p.SandboxProfile}, &response, agent.DaemonOpts{})
+	if err != nil {
+		return nil, err
+	}
+	if p.SandboxImpl == "tclaude-layer" && response.Snapshot == nil {
+		return nil, errors.New("daemon did not return the selected sandbox profile")
+	}
+	return response.Snapshot, nil
+}
+
+func runOnce(p runParams, args []string, stdout, stderr io.Writer) (int, error) {
+	return runOnceInput(p, args, nil, stdout, stderr, nil)
+}
+
+func runOnceInput(p runParams, args []string, stdin io.Reader, stdout, stderr io.Writer, snapshot *sandboxpolicy.Snapshot) (int, error) {
+	prompt := strings.Join(args, " ")
 	cwd := p.Workdir
 	if cwd == "" {
 		var err error
@@ -92,6 +128,21 @@ func runOnce(p runParams, args []string, stdout, stderr io.Writer) (int, error) 
 	}
 	if name != harness.ShellName && !h.SupportsAsk() {
 		return 1, fmt.Errorf("harness %q has no non-interactive runner", name)
+	}
+	if name != harness.ShellName && stdin != nil {
+		payload, readErr := io.ReadAll(stdin)
+		if readErr != nil {
+			return 1, fmt.Errorf("read piped input: %w", readErr)
+		}
+		data := strings.TrimRight(string(payload), "\n")
+		if strings.TrimSpace(prompt) == "" {
+			prompt = data
+		} else if data != "" {
+			prompt += "\n\n--- piped input (stdin) ---\n" + data
+		}
+	}
+	if strings.TrimSpace(prompt) == "" {
+		return 1, errors.New("a prompt or shell command is required")
 	}
 	if p.SandboxImpl != "" && p.SandboxImpl != "harness-builtin" && p.SandboxImpl != "tclaude-layer" {
 		return 1, fmt.Errorf("invalid --sandbox-impl %q (want harness-builtin or tclaude-layer)", p.SandboxImpl)
@@ -141,7 +192,7 @@ func runOnce(p runParams, args []string, stdout, stderr io.Writer) (int, error) 
 		return 1, errors.New("harness produced an empty command")
 	}
 	if p.SandboxImpl == "tclaude-layer" {
-		argv, err = wrapRunWithLayer(h, cwd, p.SandboxProfile, argv)
+		argv, err = wrapRunWithLayer(h, cwd, p.SandboxProfile, argv, snapshot)
 		if err != nil {
 			return 1, err
 		}
@@ -174,7 +225,9 @@ func runOnce(p runParams, args []string, stdout, stderr io.Writer) (int, error) 
 	// Force a pipe even when the caller's stdout is a terminal. OpenCode's
 	// print adapter writes its clean answer to stdout only in this mode.
 	command.Stdout = writerOnly{stdout}
-	command.Stdin = nil
+	if name == harness.ShellName {
+		command.Stdin = stdin
+	}
 	configureRunProcess(command)
 	command.WaitDelay = 2 * time.Second
 	var captured bytes.Buffer
@@ -232,19 +285,22 @@ func scrubRunEnv(env, names []string) []string {
 	return kept
 }
 
-func wrapRunWithLayer(h *harness.Harness, cwd, profile string, argv []string) ([]string, error) {
+func wrapRunWithLayer(h *harness.Harness, cwd, profile string, argv []string, snapshot *sandboxpolicy.Snapshot) ([]string, error) {
 	if h.Name != harness.DefaultName && h.Name != harness.CodexName && h.Name != harness.ShellName {
 		return nil, fmt.Errorf("tclaude-layer is not supported for non-interactive %s runs", h.Name)
 	}
 	if err := session.ValidateTclaudeLayerHarness(h.Name); err != nil {
 		return nil, err
 	}
-	snapshot, err := db.ResolveEffectiveSandboxSnapshot(0, profile)
-	if err != nil {
-		return nil, fmt.Errorf("resolve sandbox profile: %w", err)
+	if snapshot == nil {
+		resolved, err := db.ResolveEffectiveSandboxSnapshot(0, profile)
+		if err != nil {
+			return nil, fmt.Errorf("resolve sandbox profile: %w", err)
+		}
+		snapshot = &resolved
 	}
 	if err := session.ValidateTclaudeLayerHarnessPosture(
-		h, sandboxpolicy.EnvironmentForLaunch(&snapshot), nil); err != nil {
+		h, sandboxpolicy.EnvironmentForLaunch(snapshot), nil); err != nil {
 		return nil, err
 	}
 	posture, err := session.TclaudeLayerNetworkPosture(snapshot.Effective)
@@ -278,7 +334,7 @@ func wrapRunWithLayer(h *harness.Harness, cwd, profile string, argv []string) ([
 	var model harness.ResolvedModelTransport
 	if posture == sandboxpolicy.NetworkFiltered && !sandboxpolicy.NetworkRulesArePrivateRoutedOpen(axes.Network) {
 		model, err = session.ResolveTclaudeLayerModelTransport(h, session.ModelTransportLaunchContext{
-			Cwd: cwd, Environment: sandboxpolicy.EnvironmentForLaunch(&snapshot),
+			Cwd: cwd, Environment: sandboxpolicy.EnvironmentForLaunch(snapshot),
 		})
 		if err != nil {
 			return nil, err
@@ -293,7 +349,7 @@ func wrapRunWithLayer(h *harness.Harness, cwd, profile string, argv []string) ([
 		return nil, err
 	}
 	spec, err := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
-		HarnessName: h.Name, Cwd: cwd, Snapshot: &snapshot, NetworkEngine: engine,
+		HarnessName: h.Name, Cwd: cwd, Snapshot: snapshot, NetworkEngine: engine,
 	})
 	if err != nil {
 		return nil, err

@@ -17,7 +17,17 @@ argument when it contains spaces or shell syntax. `--harness` accepts `claude`
 (the default), `codex`, `opencode`, `copilot`, and `shell`. The `shell` harness
 runs the text through `$SHELL -c`, falling back to `/bin/sh`.
 
-The child receives no standard input. Its exit status becomes `tclaude run`'s
+You can pipe input into `tclaude run`:
+
+```bash
+cat report.txt | tclaude run "summarize this report"
+cat data.json | tclaude run --harness shell "jq '.items | length'"
+```
+
+For agent harnesses, piped input is included in the prompt. It can be the
+entire prompt, or is appended after the positional prompt under a separator.
+For `--harness shell`, stdin is passed unchanged to the child command; a
+shell command argument is still required. The child's exit status becomes `tclaude run`'s
 exit status; timeout returns 124. `--timeout` takes a positive Go duration such
 as `30s` or `10m`. On Linux and macOS, timeout stops the child process group.
 
@@ -43,3 +53,17 @@ tclaude run --harness shell --sandbox-impl tclaude-layer \
 
 A tclaude layer launch refuses to start if its required sandbox engine or
 profile cannot be resolved.
+
+## Agent permission
+
+Agents need the `agent.run` permission and a running tclaude daemon. The
+permission supports `sandbox_profile` scoping, like `groups.member.spawn`:
+
+```bash
+tclaude agent permissions grant <agent> agent.run --scope 'sandbox_profile=build'
+```
+
+A grant scoped to `build` permits a tclaude-layer run using that profile. It
+does not authorize native sandbox runs or a different profile. Without an
+explicit `--sandbox-profile`, a tclaude-layer run is checked against the global
+profile. An unscoped grant permits any supported run.

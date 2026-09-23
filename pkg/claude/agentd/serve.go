@@ -1289,6 +1289,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/messages", handleMessages)
 	mux.HandleFunc("/v1/messages/", handleMessageByIDOrReply)
 	mux.HandleFunc("/v1/inbox", handleInbox)
+	mux.HandleFunc("POST /v1/run/authorize", handleRunAuthorize)
 	mux.HandleFunc("/v1/inbox/prune", handleInboxPrune)
 	// Head aliases: most-specific path goes first so HandleFunc's
 	// pattern table picks `/v1/agent/aliases` over `/v1/agent/`.

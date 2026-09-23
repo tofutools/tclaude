@@ -206,6 +206,11 @@ var permissionRegistry = []PermSlug{
 		Description: "Spawn a fresh agent into any group globally. Group-scoped authority uses groups.members.spawn.",
 	},
 	{
+		Slug:        PermAgentRun,
+		ScopeDims:   []ScopeDim{ScopeDimSandboxProfile},
+		Description: "Run a fresh non-interactive agent or shell command with tclaude run. A sandbox_profile scope admits only runs that apply the named tclaude-layer profile.",
+	},
+	{
 		Slug: PermGroupsMembersReincarnate, OwnerImplied: true, ScopeDims: []ScopeDim{ScopeDimGroup},
 		Description: "Reincarnate another agent when all of its current active group memberships are covered.",
 	},

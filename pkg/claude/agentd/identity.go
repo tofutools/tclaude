@@ -347,6 +347,7 @@ const (
 	PermAgentPR                           = "agent.pr"
 	PermAgentTags                         = "agent.tags"
 	PermAgentSpawn                        = "agent.spawn"
+	PermAgentRun                          = "agent.run"
 	PermGroupsAdmin                       = "groups.admin"
 	PermGroupsCreate                      = "groups.create"
 	PermGroupsDelete                      = "groups.delete"

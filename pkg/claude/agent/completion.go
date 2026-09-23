@@ -329,6 +329,7 @@ func completePermissionSlugs(_ *cobra.Command, _ []string, toComplete string) []
 			{"groups.settings.member-permissions", "Set live group permission grants"},
 			{"groups.settings.owner-scopes", "Set group owner-bypass scopes"},
 			{"groups.members.spawn", "Spawn a new agent into a group"},
+			{"agent.run", "Run a non-interactive agent or shell command"},
 			{"groups.members.stop", "Stop a group's running members"},
 			{"groups.members.resume", "Resume a group's offline members"},
 			{"groups.members.retire", "Retire a group's other members (bulk)"},
