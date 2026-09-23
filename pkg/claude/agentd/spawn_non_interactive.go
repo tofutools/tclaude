@@ -190,6 +190,13 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 		cleanupDirWriteProofMarkers(p.DirWriteProofToken, p.DirWriteProofDirs)
 	}
 	err = cmd.Run()
+	// The leader may have exited while children in its process group still hold
+	// stdout or stderr open. WaitDelay bounds pipe draining; reap that group
+	// before returning. A resource cgroup additionally catches descendants that
+	// created a different process group or session.
+	if cmd.Process != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
 	if stdout.truncated || stderr.truncated {
 		return nonInteractiveSpawnResult{Stdout: stdout.String(), Stderr: stderr.String() + "\nnon-interactive output exceeded 4 MiB\n", ExitCode: 125}, nil
 	}

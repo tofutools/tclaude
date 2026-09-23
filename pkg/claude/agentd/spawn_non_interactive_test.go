@@ -183,6 +183,51 @@ func TestRunNonInteractiveSpawnBoundsEscapedOutputPipe(t *testing.T) {
 	}
 }
 
+func TestRunNonInteractiveSpawnReapsBackgroundProcessGroup(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("process-state smoke requires Linux")
+	}
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "child.pid")
+	t.Cleanup(func() {
+		raw, err := os.ReadFile(pidFile)
+		if err == nil {
+			if pid, parseErr := strconv.Atoi(strings.TrimSpace(string(raw))); parseErr == nil {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	})
+	p := spawnParams{Harness: harness.ShellName, Cwd: dir,
+		InitialMessage: "sleep 10 & echo $! > " + pidFile}
+	got, fail := runNonInteractiveSpawn(context.Background(), p, 30)
+	if fail != nil || got.ExitCode != 125 {
+		t.Fatalf("background pipe holder result=%+v failure=%+v", got, fail)
+	}
+	raw, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		state, readErr := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+		if os.IsNotExist(readErr) {
+			return
+		}
+		if readErr == nil {
+			parts := strings.SplitN(string(state), ")", 2)
+			if len(parts) == 2 && strings.HasPrefix(strings.TrimSpace(parts[1]), "Z ") {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("background child remained running after one-shot return")
+}
+
 func TestRunNonInteractiveSpawnTimeout(t *testing.T) {
 	p := spawnParams{Harness: harness.ShellName, Cwd: t.TempDir(), InitialMessage: "printf 'partial stderr\\n' >&2; sleep 5"}
 	got, fail := runNonInteractiveSpawn(context.Background(), p, 1)

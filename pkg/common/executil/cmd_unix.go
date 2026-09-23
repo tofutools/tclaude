@@ -13,6 +13,7 @@ func setup(cmd *exec.Cmd) {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	cmd.SysProcAttr.Setpgid = true
+	cmd.SysProcAttr.Pgid = 0
 }
 
 func (c *Cmd) watch() {
