@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 const nonInteractiveBrokerGrace = 5 * time.Second
@@ -32,9 +32,11 @@ type nonInteractiveBrokerReply struct {
 	Failure *spawnFailure             `json:"failure,omitempty"`
 }
 
-var nonInteractiveTmuxCommand = func(shellCommand string) *exec.Cmd {
-	return clcommon.Default.Command("run-shell", shellCommand)
+var launchNonInteractiveTmuxSession = session.LaunchDetachedTmuxSession
+var killNonInteractiveTmuxSession = func(name string) {
+	_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(name)).Run()
 }
+var nonInteractiveTmuxSessionAlive = session.IsTmuxSessionAlive
 
 var nonInteractiveHelperShellCommand = func(requestPath, resultPath string) string {
 	// The standalone tclaude-agentd binary transitions back into the daemon's
@@ -45,25 +47,11 @@ var nonInteractiveHelperShellCommand = func(requestPath, resultPath string) stri
 		" --result " + clcommon.ShellQuoteArg(resultPath)
 }
 
-var nonInteractiveTmuxServerAvailable = func() bool {
-	out, err := clcommon.Default.Command("display-message", "-p", "#{pid}").Output()
-	if err != nil {
-		return false
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
-	return err == nil && pid > 0
-}
-
 // The daemon can be confined more tightly than the tmux server. Its normal
-// sandbox probe runs under tmux, so launch the matching one-shot boundary there
-// too. A tmux run-shell job creates no session or group member.
+// sandbox probe runs under tmux, so launch the matching one-shot boundary in a
+// detached pane using the same launcher as ordinary sessions. The pane is
+// transient and has no agent or group membership.
 func runNonInteractiveThroughTmux(ctx context.Context, command nonInteractiveCommand) (nonInteractiveSpawnResult, *spawnFailure) {
-	if !nonInteractiveTmuxServerAvailable() {
-		// With no server, tmux's capability probe uses this process too. The
-		// direct launch is therefore the matching context and avoids making a
-		// persistent server solely for a one-shot run.
-		return executeNonInteractiveCommand(ctx, command)
-	}
 	fail := func(message string) (nonInteractiveSpawnResult, *spawnFailure) {
 		return nonInteractiveSpawnResult{}, &spawnFailure{Status: 502, Kind: "run_failed", Msg: message}
 	}
@@ -98,47 +86,44 @@ func runNonInteractiveThroughTmux(ctx context.Context, command nonInteractiveCom
 		return fail(fmt.Sprintf("write one-shot handoff: %v", err))
 	}
 	shellCommand := nonInteractiveHelperShellCommand(requestPath, resultPath)
-	// tmux performs format expansion before the shell interprets quoting.
-	shellCommand = strings.ReplaceAll(shellCommand, "#", "##")
-	tmux := nonInteractiveTmuxCommand(shellCommand)
-	tmuxStdout := &boundedHeadBuffer{max: 16 << 10}
-	tmux.Stdout = tmuxStdout
-	tmuxStderr := &boundedHeadBuffer{max: 16 << 10}
-	tmux.Stderr = tmuxStderr
-	if err := tmux.Start(); err != nil {
-		return fail(fmt.Sprintf("start one-shot tmux job: %v", err))
+	name := "one-shot-" + session.GenerateSessionID()
+	if err := launchNonInteractiveTmuxSession(name, command.Cwd, "exec "+shellCommand); err != nil {
+		return fail(fmt.Sprintf("start one-shot tmux session: %v", err))
 	}
-	done := make(chan error, 1)
-	go func() { done <- tmux.Wait() }()
+	defer killNonInteractiveTmuxSession(name)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
 	grace := time.NewTimer(time.Until(deadline.Add(nonInteractiveBrokerGrace)))
 	defer grace.Stop()
-	var jobErr error
-	select {
-	case jobErr = <-done:
-	case <-ctx.Done():
-		if errors.Is(ctx.Err(), context.Canceled) {
-			_ = os.Remove(requestPath) // the helper watches this as its cancellation signal
-			_ = tmux.Process.Kill()
-			<-done
-			return fail("one-shot run canceled")
+	ctxDone := ctx.Done()
+	for {
+		data, err = os.ReadFile(resultPath)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return fail(fmt.Sprintf("read one-shot tmux result: %v", err))
+		}
+		if !nonInteractiveTmuxSessionAlive(name) {
+			// The helper writes the result before its pane exits. It may have
+			// written it between the first read and the liveness check.
+			if data, err = os.ReadFile(resultPath); err == nil {
+				break
+			}
+			return fail("one-shot tmux pane exited without a result")
 		}
 		select {
-		case jobErr = <-done:
+		case <-ticker.C:
+		case <-ctxDone:
+			if errors.Is(ctx.Err(), context.Canceled) {
+				_ = os.Remove(requestPath)
+				return fail("one-shot run canceled")
+			}
+			ctxDone = nil // wait for the helper's timeout result or the grace limit
 		case <-grace.C:
 			_ = os.Remove(requestPath)
-			_ = tmux.Process.Kill()
-			<-done
 			return nonInteractiveSpawnResult{Stderr: "run timed out\n", ExitCode: 124}, nil
 		}
-	case <-grace.C:
-		_ = os.Remove(requestPath)
-		_ = tmux.Process.Kill()
-		<-done
-		return nonInteractiveSpawnResult{Stderr: "run timed out\n", ExitCode: 124}, nil
-	}
-	data, err = os.ReadFile(resultPath)
-	if err != nil {
-		return fail(fmt.Sprintf("one-shot tmux job produced no result: %v (tmux: %v; output: %s%s)", err, jobErr, tmuxStdout.String(), tmuxStderr.String()))
 	}
 	// JSON may expand a control byte to a six-byte Unicode escape.
 	if len(data) > 12*maxNonInteractiveOutputBytes+8192 {
@@ -242,6 +227,7 @@ func runOneShotExecHelper(requestPath, resultPath string) error {
 			}
 		}
 	}()
+	request.Command.ObservePane = true
 	result, failure := executeNonInteractiveCommand(ctx, request.Command)
 	if value := watcherError.Load(); value != nil {
 		return fmt.Errorf("watch one-shot daemon identity: %w", value.(error))

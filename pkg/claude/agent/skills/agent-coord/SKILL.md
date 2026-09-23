@@ -258,12 +258,13 @@ tclaude agent spawn myteam --non-interactive --harness shell \
 
 The command waits, prints the output, and returns the child's exit status.
 `--timeout` covers the whole run (default one hour; timeout exits 124).
-It uses the group's launch settings but creates no persistent group member,
-tmux session, or agent identity. Group startup context is omitted by default;
+It uses the group's launch settings but creates no persistent group member or
+agent identity. Group startup context is omitted by default;
 pass `--group-context` to include it for an agent harness. With `--harness
 shell`, the prompt is a shell command and group context is unavailable.
-On Linux, tclaude-layer one-shots use a short tmux server job to launch the
-sandbox; they still create no tmux session.
+On Linux, one-shots run in a temporary detached tmux session.
+The output is visible in its pane while the run is active; the session closes
+when the run ends.
 
 This mode has no agent messaging or interactive approvals. Flags for those
 features, including `--reply-to`, `--auto-focus`, `--ask-for-approval`, and

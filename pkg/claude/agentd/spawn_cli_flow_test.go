@@ -137,6 +137,7 @@ func TestSpawnCLI_MultiLineInitialMessagePreserved(t *testing.T) {
 }
 
 func TestSpawnCLI_NonInteractiveShellDoesNotEnrollMember(t *testing.T) {
+	t.Cleanup(agentd.SetNonInteractiveDirectRunnerForTest())
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 	bridgeAgentClientToMux(t, f.Mux)
@@ -169,6 +170,7 @@ func TestSpawnCLI_NonInteractiveShellDoesNotEnrollMember(t *testing.T) {
 }
 
 func TestSpawnCLI_NonInteractiveGroupContextIsOptIn(t *testing.T) {
+	t.Cleanup(agentd.SetNonInteractiveDirectRunnerForTest())
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 	_, err := db.SetAgentGroupDefaultContext("alpha", "shared context")

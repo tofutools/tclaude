@@ -74,13 +74,13 @@ Either way the briefing lands durably in the agent's inbox — see
 ### One-shot non-interactive spawn
 
 Use `--non-interactive` to run one prompt, wait for completion, and print the
-answer on stdout. A one-shot uses the group's launch settings but does not
-create a tmux session, group member, or persistent tclaude agent. The prompt
-must be supplied directly with `--initial-message` or `--file`; it is passed
+answer on stdout. A one-shot uses the group's launch settings but creates no
+group member or persistent tclaude agent. The prompt must be supplied directly
+with `--initial-message` or `--file`; it is passed
 as the harness's initial prompt, not delivered to an inbox.
-On Linux, a tclaude-layer one-shot uses a short tmux server job to launch its
-sandbox under the same host confinement as the sandbox capability probe; the
-job does not create a tmux session.
+On Linux, each one-shot launches in a detached tmux pane under the same host
+confinement as a normal agent. Its output is visible
+in the pane while the run is active; the session closes when the run ends.
 
 ```bash
 tclaude agent spawn myteam --non-interactive --file task.md

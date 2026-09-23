@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -25,7 +26,7 @@ var prepareNonInteractiveResourceCgroup = session.PrepareResourceCgroup
 var configureNonInteractiveResourceCgroup = session.ConfigureProcessResourceCgroup
 var removeNonInteractiveResourceCgroup = session.RemoveResourceCgroup
 var killNonInteractiveResourceCgroupMembers = session.KillResourceCgroupMembers
-var runNonInteractiveLayerCommand = runNonInteractiveThroughTmux
+var runNonInteractiveTmuxCommand = runNonInteractiveThroughTmux
 
 type nonInteractiveSpawnResult struct {
 	Stdout   string `json:"stdout"`
@@ -34,7 +35,7 @@ type nonInteractiveSpawnResult struct {
 }
 
 // runNonInteractiveSpawn uses the ordinary spawn boundary's resolved fields,
-// but does not allocate a conversation, tmux session, or group membership.
+// but does not allocate a conversation or group membership.
 func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64) (nonInteractiveSpawnResult, *spawnFailure) {
 	if p.CleanupDirWriteProof {
 		defer cleanupDirWriteProofMarkers(p.DirWriteProofToken, p.DirWriteProofDirs)
@@ -159,8 +160,8 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	if p.CleanupDirWriteProof {
 		cleanupDirWriteProofMarkers(p.DirWriteProofToken, p.DirWriteProofDirs)
 	}
-	if layer && runtime.GOOS == "linux" {
-		return runNonInteractiveLayerCommand(ctx, command)
+	if runtime.GOOS == "linux" {
+		return runNonInteractiveTmuxCommand(ctx, command)
 	}
 	return executeNonInteractiveCommand(ctx, command)
 }
@@ -172,6 +173,7 @@ type nonInteractiveCommand struct {
 	SandboxImplementation string                       `json:"sandbox_implementation"`
 	ResourceLimits        sandboxpolicy.ResourceLimits `json:"resource_limits"`
 	TimeoutSeconds        int64                        `json:"timeout_seconds"`
+	ObservePane           bool                         `json:"-"`
 }
 
 func executeNonInteractiveCommand(ctx context.Context, command nonInteractiveCommand) (nonInteractiveSpawnResult, *spawnFailure) {
@@ -191,6 +193,10 @@ func executeNonInteractiveCommand(ctx context.Context, command nonInteractiveCom
 	cmd.Stdin = nil
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+	if command.ObservePane {
+		cmd.Stdout = io.MultiWriter(stdout, os.Stdout)
+		cmd.Stderr = io.MultiWriter(stderr, os.Stderr)
+	}
 	cmd.Env = command.Env
 	if command.ResourceLimits.Enabled() {
 		limits := command.ResourceLimits

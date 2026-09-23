@@ -63,10 +63,12 @@ func TestOneShotExecHelperReturnsResultFromPrivateHandoff(t *testing.T) {
 	}
 }
 
-func TestOneShotTmuxBrokerFallsBackWhenNoServer(t *testing.T) {
-	previous := nonInteractiveTmuxServerAvailable
-	nonInteractiveTmuxServerAvailable = func() bool { return false }
-	t.Cleanup(func() { nonInteractiveTmuxServerAvailable = previous })
+func TestOneShotTmuxSessionLaunchFailure(t *testing.T) {
+	previous := launchNonInteractiveTmuxSession
+	launchNonInteractiveTmuxSession = func(string, string, string, ...string) error {
+		return fmt.Errorf("tmux unavailable")
+	}
+	t.Cleanup(func() { launchNonInteractiveTmuxSession = previous })
 	command := nonInteractiveCommand{
 		Argv: []string{"/bin/sh", "-c", "printf 'direct-ok\\n'"},
 		Cwd:  t.TempDir(), Env: os.Environ(), TimeoutSeconds: 10,
@@ -74,7 +76,7 @@ func TestOneShotTmuxBrokerFallsBackWhenNoServer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	result, failure := runNonInteractiveThroughTmux(ctx, command)
-	if failure != nil || result.Stdout != "direct-ok\n" || result.ExitCode != 0 {
+	if failure == nil || failure.Kind != "run_failed" || result.Stdout != "" {
 		t.Fatalf("result=%+v failure=%+v", result, failure)
 	}
 }
@@ -85,21 +87,24 @@ func TestOneShotTmuxBrokerRoundTrip(t *testing.T) {
 	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("TCLAUDE_ONE_SHOT_TEST_HELPER", "1")
-	previousServer := nonInteractiveTmuxServerAvailable
-	previousCommand := nonInteractiveTmuxCommand
+	previousLaunch := launchNonInteractiveTmuxSession
+	previousAlive := nonInteractiveTmuxSessionAlive
+	previousKill := killNonInteractiveTmuxSession
 	previousHelper := nonInteractiveHelperShellCommand
-	nonInteractiveTmuxServerAvailable = func() bool { return true }
-	nonInteractiveTmuxCommand = func(shell string) *exec.Cmd {
-		return exec.Command("/bin/sh", "-c", shell)
+	launchNonInteractiveTmuxSession = func(_, _, shell string, _ ...string) error {
+		return exec.Command("/bin/sh", "-c", shell).Start()
 	}
+	nonInteractiveTmuxSessionAlive = func(string) bool { return true }
+	killNonInteractiveTmuxSession = func(string) {}
 	nonInteractiveHelperShellCommand = func(requestPath, resultPath string) string {
 		return clcommon.ShellQuoteArg(os.Args[0]) +
 			" -test.run=TestOneShotBrokerHelperSubprocess -- " +
 			clcommon.ShellQuoteArg(requestPath) + " " + clcommon.ShellQuoteArg(resultPath)
 	}
 	t.Cleanup(func() {
-		nonInteractiveTmuxServerAvailable = previousServer
-		nonInteractiveTmuxCommand = previousCommand
+		launchNonInteractiveTmuxSession = previousLaunch
+		nonInteractiveTmuxSessionAlive = previousAlive
+		killNonInteractiveTmuxSession = previousKill
 		nonInteractiveHelperShellCommand = previousHelper
 	})
 	command := nonInteractiveCommand{

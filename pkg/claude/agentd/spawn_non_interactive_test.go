@@ -18,7 +18,19 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
+func useDirectNonInteractiveRunner(t *testing.T) {
+	t.Helper()
+	t.Cleanup(SetNonInteractiveDirectRunnerForTest())
+}
+
+func SetNonInteractiveDirectRunnerForTest() func() {
+	previous := runNonInteractiveTmuxCommand
+	runNonInteractiveTmuxCommand = executeNonInteractiveCommand
+	return func() { runNonInteractiveTmuxCommand = previous }
+}
+
 func TestRunNonInteractiveSpawnShell(t *testing.T) {
+	useDirectNonInteractiveRunner(t)
 	p := spawnParams{Harness: harness.ShellName, Cwd: t.TempDir(),
 		InitialMessage: "printf 'hello\\n'; printf 'warning\\n' >&2; exit 7",
 		GroupContext:   "this is prose and must not enter the shell command"}
@@ -32,6 +44,7 @@ func TestRunNonInteractiveSpawnShell(t *testing.T) {
 }
 
 func TestRunNonInteractiveSpawnAppliesResourceLimit(t *testing.T) {
+	useDirectNonInteractiveRunner(t)
 	if runtime.GOOS != "linux" {
 		t.Skip("resource cgroups require Linux")
 	}
@@ -81,6 +94,7 @@ func TestRunNonInteractiveSpawnAppliesResourceLimit(t *testing.T) {
 }
 
 func TestRunNonInteractiveSpawnRefusesMissingResourceBoundary(t *testing.T) {
+	useDirectNonInteractiveRunner(t)
 	if runtime.GOOS != "linux" {
 		t.Skip("resource cgroups require Linux")
 	}
@@ -108,6 +122,7 @@ func TestRunNonInteractiveSpawnRefusesMissingResourceBoundary(t *testing.T) {
 }
 
 func TestRunNonInteractiveSpawnCancellationKillsResourceCgroup(t *testing.T) {
+	useDirectNonInteractiveRunner(t)
 	if runtime.GOOS != "linux" {
 		t.Skip("resource cgroups require Linux")
 	}
@@ -155,6 +170,7 @@ func TestRunNonInteractiveSpawnCancellationKillsResourceCgroup(t *testing.T) {
 }
 
 func TestRunNonInteractiveSpawnBoundsEscapedOutputPipe(t *testing.T) {
+	useDirectNonInteractiveRunner(t)
 	if runtime.GOOS != "linux" {
 		t.Skip("setsid smoke requires Linux")
 	}
@@ -184,6 +200,7 @@ func TestRunNonInteractiveSpawnBoundsEscapedOutputPipe(t *testing.T) {
 }
 
 func TestRunNonInteractiveSpawnReapsBackgroundProcessGroup(t *testing.T) {
+	useDirectNonInteractiveRunner(t)
 	if runtime.GOOS != "linux" {
 		t.Skip("process-state smoke requires Linux")
 	}
@@ -229,6 +246,7 @@ func TestRunNonInteractiveSpawnReapsBackgroundProcessGroup(t *testing.T) {
 }
 
 func TestRunNonInteractiveSpawnTimeout(t *testing.T) {
+	useDirectNonInteractiveRunner(t)
 	p := spawnParams{Harness: harness.ShellName, Cwd: t.TempDir(), InitialMessage: "printf 'partial stderr\\n' >&2; sleep 5"}
 	got, fail := runNonInteractiveSpawn(context.Background(), p, 1)
 	if fail != nil {
@@ -240,6 +258,7 @@ func TestRunNonInteractiveSpawnTimeout(t *testing.T) {
 }
 
 func TestRunNonInteractiveSpawnRemovesWriteProofBeforeChildStarts(t *testing.T) {
+	useDirectNonInteractiveRunner(t)
 	dir := t.TempDir()
 	real, err := filepath.EvalSymlinks(dir)
 	if err != nil {
@@ -264,6 +283,7 @@ func TestRunNonInteractiveSpawnRemovesWriteProofBeforeChildStarts(t *testing.T) 
 }
 
 func TestRunNonInteractiveSpawnUsesHarnessInitialPrompt(t *testing.T) {
+	useDirectNonInteractiveRunner(t)
 	bin := t.TempDir()
 	path := filepath.Join(bin, "claude")
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nfor arg do last=$arg; done\nprintf '%s' \"$last\"\n"), 0o755); err != nil {
@@ -282,6 +302,7 @@ func TestRunNonInteractiveSpawnUsesHarnessInitialPrompt(t *testing.T) {
 }
 
 func TestRunNonInteractiveSpawnClaudeLaunchSettings(t *testing.T) {
+	useDirectNonInteractiveRunner(t)
 	bin := t.TempDir()
 	path := filepath.Join(bin, "claude")
 	const fake = "#!/bin/sh\nprintf '%s\\n' \"${CLAUDE_CODE_DISABLE_AUTO_MEMORY-unset}\"\nfor arg do case $arg in *crossSessionInbound*) printf 'peer-blocked\\n';; esac; done\n"
@@ -309,9 +330,9 @@ func TestRunNonInteractiveSpawnShellTclaudeLayer(t *testing.T) {
 	if err := session.TclaudeLayerServerHostAvailability(); err != nil {
 		t.Skipf("tclaude layer unavailable: %v", err)
 	}
-	previous := runNonInteractiveLayerCommand
-	runNonInteractiveLayerCommand = executeNonInteractiveCommand
-	t.Cleanup(func() { runNonInteractiveLayerCommand = previous })
+	previous := runNonInteractiveTmuxCommand
+	runNonInteractiveTmuxCommand = executeNonInteractiveCommand
+	t.Cleanup(func() { runNonInteractiveTmuxCommand = previous })
 	t.Setenv("HOME", t.TempDir())
 	snapshot := sandboxpolicy.NewSnapshot(sandboxpolicy.EffectiveProfile{}, nil)
 	p := spawnParams{Harness: harness.ShellName, Cwd: t.TempDir(),
