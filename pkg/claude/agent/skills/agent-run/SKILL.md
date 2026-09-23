@@ -20,15 +20,8 @@ The piped agent prompt is limited to 96 KiB because it becomes a command argumen
 
 `--workdir` selects the child's directory. The child exit status is returned; a timeout exits 124. Consult `tclaude run --help` and `docs/run.md` for sandbox choices and harness limits.
 
-## Permission
+## Sandbox inheritance
 
-An agent needs an `agent.run` grant. The daemon must be running to authorize the call. An operator can grant access to a particular tclaude sandbox profile:
+The child runs with your existing OS privileges and inherits your sandbox. `tclaude run` itself needs no agentd permission or running daemon. When you are already inside a tclaude layer, normally omit `--sandbox-impl`: another layer may fail because nested namespaces are unavailable. This does not loosen your current sandbox.
 
-```bash
-tclaude agent permissions grant <agent> agent.run --scope 'sandbox_profile=build'
-tclaude run --harness shell --sandbox-impl tclaude-layer --sandbox-profile build "go test ./..."
-```
-
-The grant is checked against the resolved profile. A grant scoped to `build` does not authorize a native sandbox run or a different profile. With `--sandbox-impl tclaude-layer` and no explicit `--sandbox-profile`, the global profile is used. An unscoped `agent.run` grant permits any supported run. If authorization is denied, ask the operator for a suitable grant rather than trying another route.
-
-This permission gates the `tclaude run` CLI path; the child runs with your existing OS privileges. Your own sandbox remains the execution boundary.
+When you are outside a sandbox and need a tclaude layer, use `--sandbox-impl tclaude-layer --sandbox-profile NAME`. Profile resolution reads the local tclaude database. Without a named profile, the global profile applies.

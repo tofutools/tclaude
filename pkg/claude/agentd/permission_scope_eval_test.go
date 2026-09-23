@@ -355,7 +355,6 @@ func TestContextFreeResolutionFailsClosedOnScopedAllow(t *testing.T) {
 // bespoke, scope-blind gate for the better part of a phase.
 var scopedSlugEnforcementPaths = map[string]string{
 	PermAgentSpawn:                        "requireSpawnPermission — evaluates group, spawn_profile, and sandbox_profile",
-	PermAgentRun:                          "handleRunAuthorize / requirePermission — evaluates the selected sandbox_profile",
 	PermGroupsMembersSpawn:                "requireSpawnPermission — evaluates group, spawn_profile, and sandbox_profile",
 	PermGroupsMembersReincarnate:          "requireCrossAgentPermission — checks every current active group",
 	PermGroupsMembersCompact:              "requireCrossAgentPermission — checks every current active group",

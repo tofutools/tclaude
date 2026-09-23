@@ -2,8 +2,6 @@ package claude
 
 import (
 	"bytes"
-	"errors"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,48 +12,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"github.com/tofutools/tclaude/pkg/claude/agent"
-	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
-
-func TestAuthorizeRunRequiresDaemonForAgent(t *testing.T) {
-	previous := agent.DaemonAvailableImpl
-	t.Cleanup(func() { agent.DaemonAvailableImpl = previous })
-	agent.DaemonAvailableImpl = func() bool { return false }
-	t.Setenv("TCLAUDE_SESSION_ID", "runner")
-	_, err := authorizeRun(runParams{Harness: "shell"})
-	require.ErrorContains(t, err, "agentd is required")
-}
-
-func TestAuthorizeRunUsesDaemonSnapshot(t *testing.T) {
-	previousAvailable, previousRequest := agent.DaemonAvailableImpl, agent.DaemonRequestImpl
-	t.Cleanup(func() {
-		agent.DaemonAvailableImpl, agent.DaemonRequestImpl = previousAvailable, previousRequest
-	})
-	agent.DaemonAvailableImpl = func() bool { return true }
-	agent.DaemonRequestImpl = func(method, path string, in, out any, _ agent.DaemonOpts) error {
-		require.Equal(t, http.MethodPost, method)
-		require.Equal(t, "/v1/run/authorize", path)
-		require.Equal(t, "build", in.(struct {
-			SandboxImpl    string `json:"sandbox_impl"`
-			SandboxProfile string `json:"sandbox_profile,omitempty"`
-		}).SandboxProfile)
-		response := out.(*struct {
-			Snapshot *sandboxpolicy.Snapshot `json:"snapshot,omitempty"`
-		})
-		response.Snapshot = &sandboxpolicy.Snapshot{}
-		return nil
-	}
-	snapshot, err := authorizeRun(runParams{SandboxImpl: "tclaude-layer", SandboxProfile: "build"})
-	require.NoError(t, err)
-	require.NotNil(t, snapshot)
-
-	agent.DaemonRequestImpl = func(_, _ string, _, _ any, _ agent.DaemonOpts) error {
-		return errors.New("permission denied")
-	}
-	_, err = authorizeRun(runParams{SandboxImpl: "tclaude-layer", SandboxProfile: "build"})
-	require.ErrorContains(t, err, "permission denied")
-}
 
 func TestRunShellOutputWorkdirAndExitStatus(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -79,7 +36,7 @@ func TestRunShellOutputWorkdirAndExitStatus(t *testing.T) {
 func TestRunShellReceivesPipedStdin(t *testing.T) {
 	var out, errOut bytes.Buffer
 	code, err := runOnceInput(runParams{Harness: "shell"}, []string{"cat"},
-		strings.NewReader("line one\nline two\n"), &out, &errOut, nil)
+		strings.NewReader("line one\nline two\n"), &out, &errOut)
 	require.NoError(t, err)
 	require.Equal(t, 0, code)
 	require.Equal(t, "line one\nline two\n", out.String())
@@ -106,13 +63,13 @@ func TestRunHarnessFoldsPipedInputIntoPrompt(t *testing.T) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	var out, errOut bytes.Buffer
 	code, err := runOnceInput(runParams{Harness: "claude"}, []string{"summarize"},
-		strings.NewReader("first\nsecond\n"), &out, &errOut, nil)
+		strings.NewReader("first\nsecond\n"), &out, &errOut)
 	require.NoError(t, err)
 	require.Equal(t, 0, code)
 	require.Contains(t, out.String(), "summarize\n\n--- piped input (stdin) ---\nfirst\nsecond")
 	out.Reset()
 	code, err = runOnceInput(runParams{Harness: "claude"}, nil,
-		strings.NewReader("piped-only\n"), &out, &errOut, nil)
+		strings.NewReader("piped-only\n"), &out, &errOut)
 	require.NoError(t, err)
 	require.Equal(t, 0, code)
 	require.Equal(t, "-p\n--\npiped-only\n", out.String())
@@ -124,12 +81,12 @@ func TestRunPipedPromptTimeoutAndSizeLimit(t *testing.T) {
 	t.Cleanup(func() { _ = reader.Close(); _ = writer.Close() })
 	var out, errOut bytes.Buffer
 	code, err := runOnceInput(runParams{Harness: "claude", Timeout: "30ms"},
-		nil, reader, &out, &errOut, nil)
+		nil, reader, &out, &errOut)
 	require.Equal(t, 124, code)
 	require.ErrorContains(t, err, "timed out")
 
 	code, err = runOnceInput(runParams{Harness: "claude"}, nil,
-		strings.NewReader(strings.Repeat("x", maxRunPipedPromptBytes+1)), &out, &errOut, nil)
+		strings.NewReader(strings.Repeat("x", maxRunPipedPromptBytes+1)), &out, &errOut)
 	require.Equal(t, 1, code)
 	require.ErrorContains(t, err, "piped prompt exceeds")
 }

@@ -313,7 +313,6 @@ func completePermissionSlugs(_ *cobra.Command, _ []string, toComplete string) []
 			{"agent.task", "Set/clear ANOTHER agent's task-reference link"},
 			{"agent.pr", "Present/handle ANOTHER agent's PR"},
 			{"agent.tags", "Set ANOTHER agent's tags"},
-			{"agent.run", "Run a non-interactive agent or shell command"},
 			{"groups.admin", "Administer groups (umbrella permission)"},
 			{"groups.create", "Create new groups"},
 			{"groups.delete", "Delete groups"},

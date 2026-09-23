@@ -55,23 +55,11 @@ tclaude run --harness shell --sandbox-impl tclaude-layer \
 ```
 
 A tclaude layer launch refuses to start if its required sandbox engine or
-profile cannot be resolved.
+profile cannot be resolved. Profile resolution reads the local tclaude
+database.
 
-## Agent permission
-
-Agents need the `agent.run` permission and a running tclaude daemon. The
-permission supports `sandbox_profile` scoping, like `groups.members.spawn`:
-
-```bash
-tclaude agent permissions grant <agent> agent.run --scope 'sandbox_profile=build'
-```
-
-A grant scoped to `build` permits a tclaude-layer run using that profile. It
-does not authorize native sandbox runs or a different profile. Without an
-explicit `--sandbox-profile`, a tclaude-layer run is checked against the global
-profile. An unscoped grant permits any supported run.
-
-`agent.run` governs the `tclaude run` CLI path. The child executes with the
-caller's OS privileges; the caller's own sandbox is the execution boundary.
-The permission does not prevent an agent from invoking a harness or shell
-binary directly.
+The child executes with the caller's OS privileges and inherits the caller's
+existing sandbox. Agents can use `tclaude run` without an agentd permission or
+a running daemon. An agent already inside a tclaude layer normally leaves
+`--sandbox-impl` unset: a second layer can fail when its sandbox cannot create
+nested namespaces.
