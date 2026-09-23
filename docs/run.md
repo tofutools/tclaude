@@ -31,7 +31,8 @@ a command argument; use a file path in the prompt for larger input.
 For `--harness shell`, stdin is passed unchanged to the child command; a
 shell command argument is still required. The child's exit status becomes `tclaude run`'s
 exit status; timeout returns 124. `--timeout` takes a positive Go duration such
-as `30s` or `10m`. On Linux and macOS, timeout stops the child process group.
+as `30s` or `10m` and includes reading piped input. On Linux and macOS,
+timeout stops the child process group.
 
 ## Sandbox
 
