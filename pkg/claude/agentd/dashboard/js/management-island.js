@@ -585,6 +585,7 @@ function accessRowShapeError(network, unixSockets) {
    entry is stored — after insertion the rows are plain, editable table rows. */
 function CommonRuleEntry({ entry, onAdd, variant = 'filesystem' }) {
   const paths = commonRulePaths(entry);
+  const readOnly = commonRuleReadOnlyPaths(entry);
   // The rationale, the warning and the exact paths are what make the button
   // safe to press, so they are announced with it rather than left as nearby
   // text a screen-reader or keyboard operator can tab straight past.
@@ -600,7 +601,7 @@ function CommonRuleEntry({ entry, onAdd, variant = 'filesystem' }) {
     <button type="button" class=${variant === 'filesystem' ? 'sbx-common-rule-add' : 'sbx-access-template-add'} aria-describedby=${describedBy} aria-disabled=${noPaths ? 'true' : null} onClick=${() => { if (!noPaths) onAdd(entry); }}>＋ ${entry.label || entry.id}</button>
     <span class="sbx-common-rule-descr" id=${descrID}>${entry.description || ''}</span>
     ${entry.warning ? html`<span class="sbx-common-rule-warn" id=${warnID}>⚠ ${entry.warning}</span>` : null}
-    <code class="sbx-common-rule-paths" id=${pathsID}>${paths.length ? paths.join(' · ') : '(no audited paths on this platform)'}</code>
+    <code class="sbx-common-rule-paths" id=${pathsID}>${entry.access ? `${entry.access}: ` : ''}${paths.length ? paths.join(' · ') : '(no audited paths on this platform)'}${readOnly.length ? html`<br/>read-only: ${readOnly.join(' · ')}` : null}</code>
   </div>`;
 }
 
@@ -973,6 +974,10 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice, platf
 
 function commonRulePaths(entry) {
   return [...new Set((entry?.paths || []).map((path) => String(path || '').trim()).filter(Boolean))];
+}
+
+function commonRuleReadOnlyPaths(entry) {
+  return [...new Set((entry?.read_only || []).map((path) => String(path || '').trim()).filter(Boolean))];
 }
 
 function globalFilesystemAccessLabel(access) {
@@ -1830,17 +1835,22 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   // which no audited entry does today — if one ever did, the notice's skip
   // count would need to distinguish that from "already in the table".
   const addCommonRule = (entry) => {
-    const paths = commonRulePaths(entry);
+    // Entries carry their row access; one without it is a deny preset. A
+    // harness-state preset also carries read_only rows that keep that
+    // harness's settings and code surfaces read-only beneath its write rows.
+    const access = entry.access || 'deny';
+    const wanted = [...commonRulePaths(entry).map((path) => ({ path, access })),
+      ...commonRuleReadOnlyPaths(entry).map((path) => ({ path, access: 'read' }))];
     const existing = new Set(draft.filesystem.map((row) => pathIdentity(row.path, commonRules.home)).filter(Boolean));
-    const added = [];
-    for (const path of paths) {
-      const identity = pathIdentity(path, commonRules.home);
+    const rows = [];
+    for (const row of wanted) {
+      const identity = pathIdentity(row.path, commonRules.home);
       if (!identity || existing.has(identity)) continue;
       existing.add(identity);
-      added.push(path);
+      rows.push(row);
     }
-    if (added.length) setDraft((value) => ({ ...value, filesystem: [...value.filesystem, ...added.map((path) => ({ path, access: 'deny' }))] }));
-    setCommonRuleNotice({ label: entry.label || entry.id, added, skipped: paths.length - added.length, warning: entry.warning || '' });
+    if (rows.length) setDraft((value) => ({ ...value, filesystem: [...value.filesystem, ...rows] }));
+    setCommonRuleNotice({ label: entry.label || entry.id, access, added: rows.filter((row) => row.access === access).map((row) => row.path), readOnly: rows.filter((row) => row.access !== access).map((row) => row.path), skipped: wanted.length - rows.length, warning: entry.warning || '' });
   };
   const globalFilesystem = commonRules.global_filesystem || [];
   const visibleGlobalFilesystem = globalFilesystemForHarness(globalFilesystem, globalHarnessFilter);
@@ -1896,13 +1906,14 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
              the accessibility tree — so a feed failure has to be legible on the
              summary itself or an operator never learns the presets are gone. */ ''}
         <summary class="sbx-common-rule-summary">＋ add common rule${commonRuleFeedError ? ' — unavailable' : ''}</summary>
-        <div class="sbx-common-rule-intro">Audited presets for locations most profiles want denied. Each one inserts ordinary deny rows into the table above — visible, editable, and yours to adjust or remove afterwards. Nothing else is stored.</div>
+        <div class="sbx-common-rule-intro">Audited presets for locations most profiles want denied, and for the harness state an agent needs to run another harness with <code>tclaude run</code>. Each one inserts ordinary rows into the table above — visible, editable, and yours to adjust or remove afterwards. Nothing else is stored.</div>
         ${commonRuleFeedError && html`<div id="sandbox-profile-editor-common-rule-feed-error" class="sbx-common-rule-feed-error" role="alert">Could not load the common-rule catalog: ${commonRuleFeedError} <button type="button" onClick=${loadCommonRules}>${commonRuleFeedBusy ? 'retrying…' : 'retry'}</button></div>`}
-        <div class="sbx-common-rule-list">${(commonRules.categories || []).map((entry) => html`<${CommonRuleEntry} key=${entry.id} entry=${entry} onAdd=${addCommonRule}/>`)}</div>
+        <div class="sbx-common-rule-list">${(commonRules.categories || []).filter((entry) => entry.tier !== 'harness').map((entry) => html`<${CommonRuleEntry} key=${entry.id} entry=${entry} onAdd=${addCommonRule}/>`)}</div>
+        ${(commonRules.categories || []).some((entry) => entry.tier === 'harness') && html`<div id="sandbox-profile-editor-harness-state-rules" class="sbx-common-rule-group"><div class="sbx-common-rule-group-title">Harness state for <code>tclaude run</code></div><div class="sbx-common-rule-intro">Every agent in tclaude’s sandbox can already start the installed harness executables. To actually run a different harness it also needs that harness’s login and session state; these presets insert write rows for it.</div><div class="sbx-common-rule-list">${(commonRules.categories || []).filter((entry) => entry.tier === 'harness').map((entry) => html`<${CommonRuleEntry} key=${entry.id} entry=${entry} onAdd=${addCommonRule}/>`)}</div></div>`}
         ${(commonRules.informational || []).length > 0 && html`<details class="sbx-common-rule-informational"><summary>Required, non-removable access</summary>${(commonRules.informational || []).map((entry) => html`<div key=${entry.id} class="sbx-rule-note"><strong>${entry.label}:</strong> ${entry.description}</div>`)}</details>`}
       </details>
       ${commonRuleNotice && html`<div id="sandbox-profile-editor-common-rule-notice" class="sbx-common-rule-notice" role="status">
-        <span>${commonRuleNotice.added.length ? `Added ${commonRuleNotice.added.length} deny row${commonRuleNotice.added.length === 1 ? '' : 's'} from “${commonRuleNotice.label}”: ${commonRuleNotice.added.join(' · ')}.` : `“${commonRuleNotice.label}” added no rows.`}${commonRuleNotice.skipped ? ` ${commonRuleNotice.skipped} path${commonRuleNotice.skipped === 1 ? ' was' : 's were'} already in the table and left as authored.` : ''}</span>
+        <span>${commonRuleNotice.added.length ? `Added ${commonRuleNotice.added.length} ${commonRuleNotice.access || 'deny'} row${commonRuleNotice.added.length === 1 ? '' : 's'} from “${commonRuleNotice.label}”: ${commonRuleNotice.added.join(' · ')}.` : `“${commonRuleNotice.label}” added no ${commonRuleNotice.access || 'deny'} rows.`}${commonRuleNotice.readOnly?.length ? ` Added ${commonRuleNotice.readOnly.length} read-only row${commonRuleNotice.readOnly.length === 1 ? '' : 's'}: ${commonRuleNotice.readOnly.join(' · ')}.` : ''}${commonRuleNotice.skipped ? ` ${commonRuleNotice.skipped} path${commonRuleNotice.skipped === 1 ? ' was' : 's were'} already in the table and left as authored.` : ''}</span>
         ${commonRuleNotice.warning ? html`<span class="sbx-common-rule-warn">⚠ ${commonRuleNotice.warning}</span>` : null}
         <button type="button" class="sbx-common-rule-dismiss" aria-label="Dismiss common-rule notice" onClick=${() => setCommonRuleNotice(null)}>×</button>
       </div>`}

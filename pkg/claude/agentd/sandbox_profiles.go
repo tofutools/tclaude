@@ -13,6 +13,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // sandboxCommonRuleCatalogJSON carries both parts of the filesystem editor's
@@ -58,6 +59,11 @@ func handleSandboxCommonRuleCatalog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rules, err := sandboxpolicy.CommonRuleCatalog(home, runtime.GOOS)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	rules, err = session.ApplyHarnessConfigFloorToCommonRules(rules)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return

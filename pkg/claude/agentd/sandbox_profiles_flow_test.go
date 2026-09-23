@@ -215,10 +215,28 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 	assert.Equal(t, 1, catalog.Version)
 	assert.NotEmpty(t, catalog.Platform)
 	assert.Equal(t, canonicalHome, catalog.Home)
-	require.Len(t, catalog.Categories, 7)
+	require.Len(t, catalog.Categories, 11)
 	assert.Equal(t, "secrets.ssh", catalog.Categories[0]["id"])
 	assert.Equal(t, "home.directory", catalog.Categories[6]["id"])
 	assert.Equal(t, []any{canonicalHome}, catalog.Categories[6]["paths"])
+	// Harness-state presets for `tclaude run` grant state as write rows but
+	// keep that harness's config floor read-only: a Codex agent must not be
+	// handed Claude Code's settings.json, which runs in the human's next
+	// unsandboxed Claude session.
+	byID := map[string]map[string]any{}
+	for _, category := range catalog.Categories {
+		byID[category["id"].(string)] = category
+	}
+	claudeState := byID["harness.claude-state"]
+	require.NotNil(t, claudeState)
+	assert.Equal(t, "write", claudeState["access"])
+	settings := filepath.Join(canonicalHome, ".claude", "settings.json")
+	assert.NotContains(t, claudeState["paths"], settings)
+	assert.Contains(t, claudeState["read_only"], settings)
+	codexState := byID["harness.codex-state"]
+	require.NotNil(t, codexState)
+	assert.Equal(t, []any{filepath.Join(canonicalHome, ".codex")}, codexState["paths"])
+	assert.Contains(t, codexState["read_only"], filepath.Join(canonicalHome, ".codex", "hooks"))
 	assert.NotEmpty(t, catalog.Informational)
 	canonicalTmuxBase, err := filepath.EvalSymlinks(tmuxBase)
 	require.NoError(t, err)

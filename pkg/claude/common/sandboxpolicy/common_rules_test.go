@@ -108,3 +108,55 @@ func TestRemovedReadBaselineFieldsAreAbsentAndIgnored(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(`{"name":"legacy","read_baseline":"minimal","read_baseline_exclusions":["secrets.ssh"]}`), &decoded))
 	assert.Equal(t, Profile{Name: "legacy"}, decoded)
 }
+
+// The harness-state presets are the shortcut for letting an agent run another
+// harness with `tclaude run`: they insert WRITE rows, and the Claude preset
+// includes the ~/.claude.json settings file, which only a file row can name.
+func TestCommonRuleCatalogHarnessStatePresetsInsertWriteRows(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	canonicalHome, err := filepath.EvalSymlinks(home)
+	require.NoError(t, err)
+	for _, dir := range []string{"sessions", "projects", "todos"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(home, ".claude", dir), 0o700))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".claude", ".credentials.json"), []byte("{}"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".claude.json"), []byte("{}"), 0o600))
+	catalog, err := CommonRuleCatalog(home, "linux")
+	require.NoError(t, err)
+	byID := map[string]CommonRule{}
+	for _, rule := range catalog {
+		byID[rule.ID] = rule
+	}
+	for _, id := range []string{CommonRuleClaudeState, CommonRuleCodexState, CommonRuleCopilotState, CommonRuleOpenCodeState} {
+		rule := byID[id]
+		assert.Equal(t, AccessWrite, rule.Access, id)
+		assert.Equal(t, CommonRuleTierHarness, rule.Tier, id)
+		assert.NotEmpty(t, rule.Warning, id)
+		assert.NotEmpty(t, rule.Paths, id)
+	}
+	assert.Equal(t, []string{filepath.Join(canonicalHome, ".codex")}, byID[CommonRuleCodexState].Paths)
+	// ~/.claude itself would reach the protected ~/.claude/sessions, so the
+	// preset grants its other entries one by one.
+	assert.ElementsMatch(t, []string{
+		filepath.Join(canonicalHome, ".claude.json"),
+		filepath.Join(canonicalHome, ".claude", ".credentials.json"),
+		filepath.Join(canonicalHome, ".claude", "projects"),
+		filepath.Join(canonicalHome, ".claude", "todos"),
+	}, byID[CommonRuleClaudeState].Paths)
+	assert.Empty(t, byID[CommonRuleSSH].Access, "deny presets keep omitting access for older dashboards")
+
+	var inserted []FilesystemGrant
+	for _, path := range byID[CommonRuleClaudeState].Paths {
+		inserted = append(inserted, FilesystemGrant{Path: path, Access: AccessWrite})
+	}
+	normalized, _, err := NormalizeForPersistence(Profile{Name: "p", Filesystem: inserted})
+	require.NoError(t, err, "the inserted rows must save as an ordinary profile")
+	var saved []FilesystemGrant
+	for _, grant := range normalized.Filesystem {
+		// Normalization records the host kind (file/directory); the inserted
+		// path and access must come through unchanged.
+		saved = append(saved, FilesystemGrant{Path: grant.Path, Access: grant.Access})
+	}
+	assert.ElementsMatch(t, inserted, saved)
+}

@@ -431,3 +431,44 @@ func prepareHarnessConfigFloor(paths []string, dirs map[string]bool) error {
 	}
 	return nil
 }
+
+// ApplyHarnessConfigFloorToCommonRules fills each harness-state preset's
+// read-only rows from that harness's config-floor catalog, and drops any
+// write path that is itself a floor entry or lies beneath one. The per-launch
+// floor protects only the LAUNCHED harness's state; a profile granting another
+// harness's state would otherwise let an agent rewrite settings, hooks or
+// skills that run in the human's next unsandboxed session of that harness.
+func ApplyHarnessConfigFloorToCommonRules(rules []sandboxpolicy.CommonRule) ([]sandboxpolicy.CommonRule, error) {
+	out := make([]sandboxpolicy.CommonRule, 0, len(rules))
+	for _, rule := range rules {
+		if rule.Harness == "" || rule.StateRoot == "" {
+			out = append(out, rule)
+			continue
+		}
+		entries, err := harnessConfigFloorCatalog(rule.Harness, rule.StateRoot)
+		if err != nil {
+			return nil, fmt.Errorf("resolve %s config floor for common rule %q: %w", rule.Harness, rule.ID, err)
+		}
+		floors := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			floors = append(floors, entry.Path)
+		}
+		paths := make([]string, 0, len(rule.Paths))
+		for _, path := range rule.Paths {
+			floored := false
+			for _, floor := range floors {
+				if sandboxpolicy.PathContainsOrEqual(floor, path) {
+					floored = true
+					break
+				}
+			}
+			if !floored {
+				paths = append(paths, path)
+			}
+		}
+		rule.Paths = paths
+		rule.ReadOnly = append(append([]string(nil), rule.ReadOnly...), floors...)
+		out = append(out, rule)
+	}
+	return out, nil
+}

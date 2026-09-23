@@ -50,6 +50,14 @@ package roots and `node` when a harness is a Node.js launcher. Only the
 executables are exposed; a harness still needs its own state directory (for
 example `~/.codex` for Codex credentials) granted by the sandbox profile.
 
+The dashboard's sandbox profile editor has a shortcut for that grant: under
+**＋ add common rule → Harness state for `tclaude run`**, each preset inserts
+write rows for one harness's login and session state, plus read-only rows for
+that harness's settings, hooks, skills and similar surfaces. Keep the
+read-only rows: those files run in your next unsandboxed session of that
+harness. `~/.claude/sessions` is tclaude-protected, so the Claude Code preset
+grants the other entries of `~/.claude` one by one.
+
 ## Resource limits
 
 `--cgroup` runs the command in a fresh cgroup. `--cpu`, `--memory` and

@@ -32,6 +32,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1537,7 +1538,14 @@ setTimeout(function(){
 			Key:      "management-sandbox-editor-common-rules",
 			Title:    "Management — sandbox common-rule presets",
 			Caption:  "The \"add common rule\" menu expanded on the filesystem table: audited presets with their description, warning, and the exact paths each one would insert as ordinary deny rows.",
-			JS:       sandboxCommonRulesJS(),
+			JS:       sandboxCommonRulesJS(""),
+			SettleMS: 700,
+		},
+		{
+			Key:      "management-sandbox-editor-harness-state-rules",
+			Title:    "Management — harness-state presets for tclaude run",
+			Caption:  "The harness-state group of the common-rule menu: each preset grants one harness's login and session state as write rows and keeps that harness's settings, hooks and skills as read-only rows, so an agent can run it with `tclaude run`.",
+			JS:       sandboxCommonRulesJS("#sandbox-profile-editor-harness-state-rules"),
 			SettleMS: 700,
 		},
 		{
@@ -3703,8 +3711,9 @@ func sandboxImportPreviewDashSnapJS() string {
 // sandboxCommonRulesJS opens the sandbox-profile editor and expands the
 // "add common rule" menu on the filesystem table, so the snapshot captures the
 // preset entries with the warnings and paths they would insert.
-func sandboxCommonRulesJS() string {
+func sandboxCommonRulesJS(focus string) string {
 	return `return (async function(){
+  var focus = ` + strconv.Quote(focus) + `;
   var module = await import('/static/js/sandbox-profiles.js');
   module.openSandboxProfileEditor(null);
   var deadline = Date.now() + 5000;
@@ -3719,7 +3728,9 @@ func sandboxCommonRulesJS() string {
   // expanded rather than screenshotting a closed section.
   if (!menu.open) throw new Error('common-rule menu did not expand');
   if (!document.querySelector('.sbx-common-rule-entry')) throw new Error('common-rule entries did not render');
-  menu.scrollIntoView({ block: 'center' });
+  var target = focus ? document.querySelector(focus) : menu;
+  if (!target) throw new Error('focus target ' + focus + ' did not render');
+  target.scrollIntoView({ block: focus ? 'start' : 'center' });
   await new Promise(function(resolve){ setTimeout(resolve, 120); });
 })();`
 }

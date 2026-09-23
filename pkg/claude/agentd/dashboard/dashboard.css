@@ -7592,6 +7592,8 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
 .sbx-common-rule-summary:hover { background: #1c2330; border-color: #3a4553; color: #c9d1d9; }
 .sbx-common-rule-intro { color: #8b949e; font-size: 12px; line-height: 1.45; margin: 6px 0; }
 .sbx-common-rule-list { display: grid; gap: 6px; }
+.sbx-common-rule-group { margin-top: 12px; padding-top: 8px; border-top: 1px solid #30363d; }
+.sbx-common-rule-group-title { font-size: 12px; font-weight: 600; color: #c9d1d9; }
 .sbx-common-rule-entry,
 .sbx-access-template-entry {
   display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px;

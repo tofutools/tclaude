@@ -527,7 +527,9 @@ Linux `tclaude-layer` launches — every installed harness executable (`claude`,
 `codex`, `opencode`, `copilot`, their npm package roots, `node` when one is a
 Node.js launcher, and the symlinked `$PATH` spellings that reach them), so an
 agent can start another harness with `tclaude run`. Harness *state*, such as
-`~/.codex` credentials, is not included. Everything else is yours to
+`~/.codex` credentials, is not included; the editor's "Harness state for
+`tclaude run`" presets insert it as write rows, with that harness's config
+floor as read-only rows beneath them. Everything else is yours to
 enumerate. In particular, tclaude's own binary is *not*
 implicitly reopened: under `deny ~` an agent can reach the agentd socket and
 still get `tclaude: command not found` until you reopen the directory holding
