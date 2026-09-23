@@ -5,6 +5,7 @@ description: >-
   via `tclaude agent`. Routes through a `tclaude agentd` daemon (the human
   starts it; you don't). Use when you've been put in a group with peer agents
   and need to look them up, send them messages, or read messages they sent you.
+  Also use when spawning a one-shot agent with `agent spawn --non-interactive`.
   Triggered by a `[system: new agent message #...]` line appearing in your
   conversation, or when the user explicitly asks you to talk to another agent.
 ---
@@ -32,6 +33,7 @@ requires the `message.direct` permission; without it the send is refused.
   the inbox message first.
 - The user asked you to coordinate with another agent (e.g. "ask the
   reviewer agent what they think").
+- You need to run a one-shot task with a group's spawn settings.
 
 ## Prerequisite: daemon must be running
 
@@ -240,6 +242,34 @@ when a Claude Code agent should act. The mechanics, `self.compact` permission
 follow-up etiquette live in the dedicated **`agent-lifecycle`** skill —
 load that one when you need to compact or reincarnate yourself, not this
 one.
+
+## Running a one-shot task
+
+Use `tclaude agent spawn <group> --non-interactive` (requires
+`groups.members.spawn`) when you need one result from the group's configured
+harness. Pass exactly one prompt source: `--initial-message` or `--file`.
+The prompt becomes the harness's initial prompt, not an inbox message.
+
+```bash
+tclaude agent spawn myteam --non-interactive --file task.md
+tclaude agent spawn myteam --non-interactive --harness shell \
+  --initial-message 'printf "hello\n"'
+```
+
+The command waits, prints the output, and returns the child's exit status.
+`--timeout` covers the whole run (default one hour; timeout exits 124).
+It uses the group's launch settings but creates no persistent group member,
+tmux session, or agent identity. Group startup context is omitted by default;
+pass `--group-context` to include it for an agent harness. With `--harness
+shell`, the prompt is a shell command and group context is unavailable.
+
+This mode has no agent messaging or interactive approvals. Flags for those
+features, including `--reply-to`, `--auto-focus`, `--ask-for-approval`, and
+`--tools`, are unavailable; check `agent spawn --help` for the full list.
+Configured resource limits are enforced on Linux through a temporary cgroup;
+the run is refused if the daemon cannot apply them, including on macOS.
+Sandbox policies with pre-launch scripts or agent-owned directories are also
+refused. A `--worktree` remains after the run for inspection.
 
 ## Spawning workers — default resolution
 
