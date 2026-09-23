@@ -205,6 +205,10 @@ tclaude ask -i "help me refactor this interactively"
 All four harnesses support ask. The [Ask guide](ask.md) covers continuity,
 capture safety, and how the harness is chosen.
 
+For a fresh run in scripts, `tclaude run` accepts a prompt, workdir, timeout,
+and sandbox options. It also supports `--harness shell` for one-shot shell
+commands. See the [Run guide](run.md).
+
 ## Operate a fleet
 
 Solo sessions work without the daemon. For anything multi-agent — groups,

@@ -156,6 +156,7 @@ directory:
 ```bash
 tclaude ask "what should I know before changing this package?"
 git diff | tclaude ask "spot correctness risks in this diff"
+tclaude run --harness shell --timeout 2m "go test ./..."
 ```
 
 To operate a fleet, keep the daemon running in a non-sandboxed terminal and

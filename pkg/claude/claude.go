@@ -34,6 +34,7 @@ func Cmd() *cobra.Command {
 	// but its operator-facing command belongs beside `agent dashboard`.
 	agentCmd.AddCommand(agentd.TUIDashboardCmd())
 	subCmds := []*cobra.Command{
+		runCmd(),
 		conv.Cmd(),
 		session.Cmd(),
 		worktree.Cmd(),
