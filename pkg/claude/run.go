@@ -193,10 +193,16 @@ func runOnce(p runParams, args []string, stdout, stderr io.Writer) (int, error) 
 	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return 124, fmt.Errorf("run timed out after %s", duration)
 	}
-	if sig := receivedSignal.Load(); sig != 0 {
+	if sig := receivedSignal.Load(); err != nil && sig != 0 {
 		return 128 + int(sig), fmt.Errorf("run interrupted by %s", syscall.Signal(sig))
 	}
 	if err == nil {
+		return 0, nil
+	}
+	if errors.Is(err, exec.ErrWaitDelay) && command.ProcessState != nil && command.ProcessState.Success() {
+		// The direct child completed successfully, but a descendant kept an
+		// output pipe open. End the remaining process group before returning.
+		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
 		return 0, nil
 	}
 	var exitErr *exec.ExitError
@@ -269,11 +275,14 @@ func wrapRunWithLayer(h *harness.Harness, cwd, profile string, argv []string) ([
 			return nil, errors.New("filtered network prerequisites are unavailable")
 		}
 	}
-	model, err := session.ResolveTclaudeLayerModelTransport(h, session.ModelTransportLaunchContext{
-		Cwd: cwd, Environment: sandboxpolicy.EnvironmentForLaunch(&snapshot),
-	})
-	if err != nil {
-		return nil, err
+	var model harness.ResolvedModelTransport
+	if posture == sandboxpolicy.NetworkFiltered && !sandboxpolicy.NetworkRulesArePrivateRoutedOpen(axes.Network) {
+		model, err = session.ResolveTclaudeLayerModelTransport(h, session.ModelTransportLaunchContext{
+			Cwd: cwd, Environment: sandboxpolicy.EnvironmentForLaunch(&snapshot),
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 	if _, err := session.ValidateTclaudeLayerNetwork(h, snapshot.Effective, model); err != nil {
 		return nil, err

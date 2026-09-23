@@ -123,6 +123,20 @@ func TestRunInterruptHelper(t *testing.T) {
 	}
 }
 
+func TestRunWaitDelayKeepsSuccessfulChildStatus(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell pseudo-harness targets Unix")
+	}
+	t.Setenv("SHELL", "/bin/sh")
+	var out, errOut bytes.Buffer
+	code, err := runOnce(runParams{Harness: "shell"},
+		[]string{"echo hi; (sleep 5; echo late) &"}, &out, &errOut)
+	require.NoError(t, err)
+	require.Equal(t, 0, code)
+	require.Equal(t, "hi\n", out.String())
+	require.Empty(t, errOut.String())
+}
+
 func TestRunRejectsInvalidOptions(t *testing.T) {
 	for _, p := range []runParams{
 		{Harness: "shell", Timeout: "0s"},
