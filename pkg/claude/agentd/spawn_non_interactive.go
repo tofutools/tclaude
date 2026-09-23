@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -18,6 +20,10 @@ import (
 )
 
 const maxNonInteractiveOutputBytes = 4 << 20
+
+var prepareNonInteractiveResourceCgroup = session.PrepareResourceCgroup
+var configureNonInteractiveResourceCgroup = session.ConfigureProcessResourceCgroup
+var removeNonInteractiveResourceCgroup = session.RemoveResourceCgroup
 
 type nonInteractiveSpawnResult struct {
 	Stdout   string `json:"stdout"`
@@ -50,8 +56,8 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	}
 	if snapshot := p.EffectiveSandbox; snapshot != nil {
 		effective := snapshot.Effective
-		if effective.ResourceLimits.Enabled() || len(effective.PreLaunch) > 0 || len(effective.AgentDirectories) > 0 {
-			return bad("unsupported_sandbox", "one-shot runs cannot replay resource limits, pre-launch scripts, or agent-owned directories")
+		if len(effective.PreLaunch) > 0 || len(effective.AgentDirectories) > 0 {
+			return bad("unsupported_sandbox", "one-shot runs cannot replay pre-launch scripts or agent-owned directories")
 		}
 		if !layer && (effective.NetworkAccess == sandboxpolicy.NetworkAccessNone || effective.Network != nil ||
 			effective.UnixSockets != nil || len(effective.Tmpfs) > 0 ||
@@ -144,6 +150,31 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Env = append(seanceProcessEnv(posture.ShellEnvironment), "TCLAUDE_AGENT_HINT=1")
+	if p.EffectiveSandbox != nil && p.EffectiveSandbox.Effective.ResourceLimits.Enabled() {
+		limits := p.EffectiveSandbox.Effective.ResourceLimits
+		implementation, implErr := sandboxpolicy.NormalizeImplementation(p.SandboxImplementation)
+		if implErr != nil {
+			return bad("unsupported_sandbox", implErr.Error())
+		}
+		if err := sandboxpolicy.ValidateResourceLimitTarget(limits, implementation, runtime.GOOS); err != nil {
+			return bad("unsupported_sandbox", err.Error())
+		}
+		cgroupDir, cleanup, prepErr := prepareNonInteractiveResourceCgroup(session.GenerateSessionID(), limits)
+		if prepErr != nil {
+			return hostFailure("resource_limit_init", prepErr.Error())
+		}
+		defer func() {
+			if err := removeNonInteractiveResourceCgroup(cgroupDir); err != nil {
+				slog.Warn("one-shot resource cgroup cleanup failed", "dir", cgroupDir, "error", err)
+			}
+			cleanup()
+		}()
+		closeFD, configureErr := configureNonInteractiveResourceCgroup(cmd.Cmd, cgroupDir)
+		if configureErr != nil {
+			return hostFailure("resource_limit_init", configureErr.Error())
+		}
+		defer closeFD()
+	}
 	if fail := reassertDirWriteProof(p.DirWriteProofDirs); fail != nil {
 		return nonInteractiveSpawnResult{}, fail
 	}

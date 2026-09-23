@@ -2,8 +2,11 @@ package agentd
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -22,6 +25,82 @@ func TestRunNonInteractiveSpawnShell(t *testing.T) {
 	}
 	if got.Stdout != "hello\n" || got.Stderr != "warning\n" || got.ExitCode != 7 {
 		t.Fatalf("unexpected result: %+v", got)
+	}
+}
+
+func TestRunNonInteractiveSpawnAppliesResourceLimit(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("resource cgroups require Linux")
+	}
+	previousPrepare, previousConfigure, previousRemove :=
+		prepareNonInteractiveResourceCgroup, configureNonInteractiveResourceCgroup, removeNonInteractiveResourceCgroup
+	t.Cleanup(func() {
+		prepareNonInteractiveResourceCgroup = previousPrepare
+		configureNonInteractiveResourceCgroup = previousConfigure
+		removeNonInteractiveResourceCgroup = previousRemove
+	})
+	var prepared, configured, closed, removed, cleaned bool
+	const cgroupDir = "/test/one-shot-cgroup"
+	prepareNonInteractiveResourceCgroup = func(id string, limits sandboxpolicy.ResourceLimits) (string, func(), error) {
+		if id == "" || limits.PIDs == nil || *limits.PIDs != 32 {
+			t.Fatalf("unexpected cgroup request: id=%q limits=%+v", id, limits)
+		}
+		prepared = true
+		return cgroupDir, func() { cleaned = true }, nil
+	}
+	configureNonInteractiveResourceCgroup = func(cmd *exec.Cmd, dir string) (func(), error) {
+		if dir != cgroupDir || cmd == nil {
+			t.Fatalf("unexpected cgroup placement: dir=%q cmd=%v", dir, cmd)
+		}
+		configured = true
+		return func() { closed = true }, nil
+	}
+	removeNonInteractiveResourceCgroup = func(dir string) error {
+		if dir != cgroupDir || !closed {
+			t.Fatalf("cgroup removed before placement handle closed: dir=%q closed=%t", dir, closed)
+		}
+		removed = true
+		return nil
+	}
+	pids := uint64(32)
+	snapshot := sandboxpolicy.NewSnapshot(sandboxpolicy.EffectiveProfile{
+		ResourceLimits: sandboxpolicy.ResourceLimits{PIDs: &pids},
+	}, nil)
+	p := spawnParams{Harness: harness.ShellName, Cwd: t.TempDir(),
+		SandboxImplementation: "harness-builtin", EffectiveSandbox: &snapshot,
+		InitialMessage: "printf 'limited\\n'"}
+	got, fail := runNonInteractiveSpawn(context.Background(), p, 30)
+	if fail != nil || got.ExitCode != 0 || got.Stdout != "limited\n" ||
+		!prepared || !configured || !closed || !removed || !cleaned {
+		t.Fatalf("result=%+v failure=%+v lifecycle=%t/%t/%t/%t/%t", got, fail,
+			prepared, configured, closed, removed, cleaned)
+	}
+}
+
+func TestRunNonInteractiveSpawnRefusesMissingResourceBoundary(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("resource cgroups require Linux")
+	}
+	previous := prepareNonInteractiveResourceCgroup
+	t.Cleanup(func() { prepareNonInteractiveResourceCgroup = previous })
+	prepareNonInteractiveResourceCgroup = func(string, sandboxpolicy.ResourceLimits) (string, func(), error) {
+		return "", func() {}, errors.New("delegation unavailable")
+	}
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "ran")
+	pids := uint64(32)
+	snapshot := sandboxpolicy.NewSnapshot(sandboxpolicy.EffectiveProfile{
+		ResourceLimits: sandboxpolicy.ResourceLimits{PIDs: &pids},
+	}, nil)
+	p := spawnParams{Harness: harness.ShellName, Cwd: dir,
+		SandboxImplementation: "harness-builtin", EffectiveSandbox: &snapshot,
+		InitialMessage: "touch " + marker}
+	_, fail := runNonInteractiveSpawn(context.Background(), p, 30)
+	if fail == nil || fail.Kind != "resource_limit_init" || fail.Status != 502 {
+		t.Fatalf("missing resource boundary was accepted: %+v", fail)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("child started without its resource boundary: %v", err)
 	}
 }
 
