@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -20,8 +21,10 @@ import (
 const nonInteractiveBrokerGrace = 5 * time.Second
 
 type nonInteractiveBrokerRequest struct {
-	Command  nonInteractiveCommand `json:"command"`
-	Deadline time.Time             `json:"deadline"`
+	Command         nonInteractiveCommand `json:"command"`
+	Deadline        time.Time             `json:"deadline"`
+	DaemonPID       int                   `json:"daemon_pid"`
+	DaemonStartTime string                `json:"daemon_start_time"`
 }
 
 type nonInteractiveBrokerReply struct {
@@ -33,10 +36,34 @@ var nonInteractiveTmuxCommand = func(shellCommand string) *exec.Cmd {
 	return clcommon.Default.Command("run-shell", shellCommand)
 }
 
+var nonInteractiveHelperShellCommand = func(requestPath, resultPath string) string {
+	// The standalone tclaude-agentd binary transitions back into the daemon's
+	// AppArmor profile when exec'd by tmux. Invoke the sibling tclaude CLI,
+	// just as the tmux-based sandbox capability probe does.
+	return clcommon.DetectAbsoluteCmd("agentd", "one-shot-exec") +
+		" --request " + clcommon.ShellQuoteArg(requestPath) +
+		" --result " + clcommon.ShellQuoteArg(resultPath)
+}
+
+var nonInteractiveTmuxServerAvailable = func() bool {
+	out, err := clcommon.Default.Command("display-message", "-p", "#{pid}").Output()
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	return err == nil && pid > 0
+}
+
 // The daemon can be confined more tightly than the tmux server. Its normal
 // sandbox probe runs under tmux, so launch the matching one-shot boundary there
 // too. A tmux run-shell job creates no session or group member.
 func runNonInteractiveThroughTmux(ctx context.Context, command nonInteractiveCommand) (nonInteractiveSpawnResult, *spawnFailure) {
+	if !nonInteractiveTmuxServerAvailable() {
+		// With no server, tmux's capability probe uses this process too. The
+		// direct launch is therefore the matching context and avoids making a
+		// persistent server solely for a one-shot run.
+		return executeNonInteractiveCommand(ctx, command)
+	}
 	fail := func(message string) (nonInteractiveSpawnResult, *spawnFailure) {
 		return nonInteractiveSpawnResult{}, &spawnFailure{Status: 502, Kind: "run_failed", Msg: message}
 	}
@@ -55,7 +82,14 @@ func runNonInteractiveThroughTmux(ctx context.Context, command nonInteractiveCom
 	defer func() { _ = os.RemoveAll(dir) }()
 	requestPath := filepath.Join(dir, "request.json")
 	resultPath := filepath.Join(dir, "result.json")
-	request := nonInteractiveBrokerRequest{Command: command, Deadline: deadline}
+	startTime, err := oneShotProcessStartTime(os.Getpid())
+	if err != nil {
+		return fail(fmt.Sprintf("identify one-shot daemon: %v", err))
+	}
+	request := nonInteractiveBrokerRequest{
+		Command: command, Deadline: deadline,
+		DaemonPID: os.Getpid(), DaemonStartTime: startTime,
+	}
 	data, err := json.Marshal(request)
 	if err != nil {
 		return fail(fmt.Sprintf("encode one-shot handoff: %v", err))
@@ -63,23 +97,14 @@ func runNonInteractiveThroughTmux(ctx context.Context, command nonInteractiveCom
 	if err := os.WriteFile(requestPath, data, 0o600); err != nil {
 		return fail(fmt.Sprintf("write one-shot handoff: %v", err))
 	}
-	executable, err := os.Executable()
-	if err != nil {
-		return fail(fmt.Sprintf("resolve one-shot helper binary: %v", err))
-	}
-	verb := " agentd one-shot-exec"
-	if filepath.Base(executable) == "tclaude-agentd" {
-		verb = " one-shot-exec"
-	}
-	shellCommand := clcommon.ShellQuoteArg(executable) + verb +
-		" --request " + clcommon.ShellQuoteArg(requestPath) +
-		" --result " + clcommon.ShellQuoteArg(resultPath)
+	shellCommand := nonInteractiveHelperShellCommand(requestPath, resultPath)
 	// tmux performs format expansion before the shell interprets quoting.
 	shellCommand = strings.ReplaceAll(shellCommand, "#", "##")
 	tmux := nonInteractiveTmuxCommand(shellCommand)
-	tmux.Stdout = io.Discard
-	var tmuxStderr strings.Builder
-	tmux.Stderr = &tmuxStderr
+	tmuxStdout := &boundedHeadBuffer{max: 16 << 10}
+	tmux.Stdout = tmuxStdout
+	tmuxStderr := &boundedHeadBuffer{max: 16 << 10}
+	tmux.Stderr = tmuxStderr
 	if err := tmux.Start(); err != nil {
 		return fail(fmt.Sprintf("start one-shot tmux job: %v", err))
 	}
@@ -113,7 +138,7 @@ func runNonInteractiveThroughTmux(ctx context.Context, command nonInteractiveCom
 	}
 	data, err = os.ReadFile(resultPath)
 	if err != nil {
-		return fail(fmt.Sprintf("one-shot tmux job produced no result: %v (tmux: %v; stderr: %s)", err, jobErr, tmuxStderr.String()))
+		return fail(fmt.Sprintf("one-shot tmux job produced no result: %v (tmux: %v; output: %s%s)", err, jobErr, tmuxStdout.String(), tmuxStderr.String()))
 	}
 	// JSON may expand a control byte to a six-byte Unicode escape.
 	if len(data) > 12*maxNonInteractiveOutputBytes+8192 {
@@ -167,13 +192,24 @@ func runOneShotExecHelper(requestPath, resultPath string) error {
 	if err := json.Unmarshal(data, &request); err != nil {
 		return err
 	}
-	if len(request.Command.Argv) == 0 || request.Deadline.IsZero() {
+	if len(request.Command.Argv) == 0 || request.Deadline.IsZero() ||
+		request.DaemonPID <= 0 || request.DaemonStartTime == "" {
 		return errors.New("incomplete one-shot request")
+	}
+	start, err := oneShotProcessStartTime(request.DaemonPID)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("check one-shot daemon identity: %w", err)
+	}
+	if err != nil || start != request.DaemonStartTime {
+		_ = os.RemoveAll(filepath.Dir(requestPath))
+		return nil // the daemon that authorized this handoff is already gone
 	}
 	ctx, cancel := context.WithDeadline(context.Background(), request.Deadline)
 	defer cancel()
 	stop := make(chan struct{})
 	defer close(stop)
+	var orphaned atomic.Bool
+	var watcherError atomic.Value
 	go func() {
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
@@ -182,7 +218,24 @@ func runOneShotExecHelper(requestPath, resultPath string) error {
 			case <-stop:
 				return
 			case <-ticker.C:
-				if _, err := os.Stat(requestPath); errors.Is(err, os.ErrNotExist) {
+				if _, err := os.Stat(requestPath); err != nil {
+					if !errors.Is(err, os.ErrNotExist) {
+						watcherError.Store(err)
+						cancel()
+						return
+					}
+					orphaned.Store(true)
+					cancel()
+					return
+				}
+				start, err := oneShotProcessStartTime(request.DaemonPID)
+				if err != nil && !errors.Is(err, os.ErrNotExist) {
+					watcherError.Store(err)
+					cancel()
+					return
+				}
+				if err != nil || start != request.DaemonStartTime {
+					orphaned.Store(true)
 					cancel()
 					return
 				}
@@ -190,6 +243,13 @@ func runOneShotExecHelper(requestPath, resultPath string) error {
 		}
 	}()
 	result, failure := executeNonInteractiveCommand(ctx, request.Command)
+	if value := watcherError.Load(); value != nil {
+		return fmt.Errorf("watch one-shot daemon identity: %w", value.(error))
+	}
+	if orphaned.Load() {
+		_ = os.RemoveAll(filepath.Dir(requestPath))
+		return nil
+	}
 	reply, err := json.Marshal(nonInteractiveBrokerReply{Result: result, Failure: failure})
 	if err != nil {
 		return err
@@ -201,6 +261,46 @@ func runOneShotExecHelper(requestPath, resultPath string) error {
 	if err := os.Rename(partial, resultPath); err != nil {
 		_ = os.Remove(partial)
 		return err
+	}
+	return nil
+}
+
+// A PID can be reused after a daemon crash. Linux's starttime (field 22 of
+// /proc/<pid>/stat) distinguishes the daemon that authorized this handoff.
+func oneShotProcessStartTime(pid int) (string, error) {
+	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return "", err
+	}
+	end := strings.LastIndexByte(string(data), ')')
+	if end < 0 {
+		return "", errors.New("malformed process status")
+	}
+	fields := strings.Fields(string(data[end+1:]))
+	if len(fields) <= 19 {
+		return "", errors.New("process status has no start time")
+	}
+	return fields[19], nil
+}
+
+// A daemon restart owns no jobs from the prior process. Remove handoffs left
+// behind if it died before the helper could consume or clean them.
+func cleanupStaleOneShotHandoffs() error {
+	root := filepath.Join(config.DataDir(), "one-shot")
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "run-") {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
+			return err
+		}
 	}
 	return nil
 }

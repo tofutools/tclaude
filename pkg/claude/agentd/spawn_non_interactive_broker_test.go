@@ -1,13 +1,17 @@
 package agentd
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
@@ -20,12 +24,17 @@ func TestOneShotExecHelperReturnsResultFromPrivateHandoff(t *testing.T) {
 	}
 	requestPath := filepath.Join(dir, "request.json")
 	resultPath := filepath.Join(dir, "result.json")
+	start, err := oneShotProcessStartTime(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
 	request := nonInteractiveBrokerRequest{
 		Command: nonInteractiveCommand{
 			Argv: []string{"/bin/sh", "-c", "printf 'broker-ok\\n'; exit 7"},
 			Cwd:  t.TempDir(), Env: os.Environ(), TimeoutSeconds: 10,
 		},
-		Deadline: time.Now().Add(10 * time.Second),
+		Deadline:  time.Now().Add(10 * time.Second),
+		DaemonPID: os.Getpid(), DaemonStartTime: start,
 	}
 	data, err := json.Marshal(request)
 	if err != nil {
@@ -47,6 +56,93 @@ func TestOneShotExecHelperReturnsResultFromPrivateHandoff(t *testing.T) {
 	}
 	if reply.Failure != nil || reply.Result.Stdout != "broker-ok\n" || reply.Result.ExitCode != 7 {
 		t.Fatalf("unexpected helper reply: %+v", reply)
+	}
+}
+
+func TestOneShotTmuxBrokerFallsBackWhenNoServer(t *testing.T) {
+	previous := nonInteractiveTmuxServerAvailable
+	nonInteractiveTmuxServerAvailable = func() bool { return false }
+	t.Cleanup(func() { nonInteractiveTmuxServerAvailable = previous })
+	command := nonInteractiveCommand{
+		Argv: []string{"/bin/sh", "-c", "printf 'direct-ok\\n'"},
+		Cwd:  t.TempDir(), Env: os.Environ(), TimeoutSeconds: 10,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	result, failure := runNonInteractiveThroughTmux(ctx, command)
+	if failure != nil || result.Stdout != "direct-ok\n" || result.ExitCode != 0 {
+		t.Fatalf("result=%+v failure=%+v", result, failure)
+	}
+}
+
+func TestOneShotTmuxBrokerRoundTrip(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("TCLAUDE_ONE_SHOT_TEST_HELPER", "1")
+	previousServer := nonInteractiveTmuxServerAvailable
+	previousCommand := nonInteractiveTmuxCommand
+	previousHelper := nonInteractiveHelperShellCommand
+	nonInteractiveTmuxServerAvailable = func() bool { return true }
+	nonInteractiveTmuxCommand = func(shell string) *exec.Cmd {
+		return exec.Command("/bin/sh", "-c", shell)
+	}
+	nonInteractiveHelperShellCommand = func(requestPath, resultPath string) string {
+		return clcommon.ShellQuoteArg(os.Args[0]) +
+			" -test.run=TestOneShotBrokerHelperSubprocess -- " +
+			clcommon.ShellQuoteArg(requestPath) + " " + clcommon.ShellQuoteArg(resultPath)
+	}
+	t.Cleanup(func() {
+		nonInteractiveTmuxServerAvailable = previousServer
+		nonInteractiveTmuxCommand = previousCommand
+		nonInteractiveHelperShellCommand = previousHelper
+	})
+	command := nonInteractiveCommand{
+		Argv: []string{"/bin/sh", "-c", "printf 'broker-roundtrip\\n'"},
+		Cwd:  t.TempDir(), Env: os.Environ(), TimeoutSeconds: 10,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	result, failure := runNonInteractiveThroughTmux(ctx, command)
+	if failure != nil || result.Stdout != "broker-roundtrip\n" || result.ExitCode != 0 {
+		t.Fatalf("result=%+v failure=%+v", result, failure)
+	}
+	entries, err := os.ReadDir(filepath.Join(config.DataDir(), "one-shot"))
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("handoff not cleaned up: entries=%v error=%v", entries, err)
+	}
+}
+
+func TestOneShotBrokerHelperSubprocess(t *testing.T) {
+	if os.Getenv("TCLAUDE_ONE_SHOT_TEST_HELPER") != "1" {
+		return
+	}
+	args := os.Args
+	for i, arg := range args {
+		if arg == "--" && i+2 < len(args) {
+			if err := runOneShotExecHelper(args[i+1], args[i+2]); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			os.Exit(0)
+		}
+	}
+	t.Fatal("missing helper request and result paths")
+}
+
+func TestCleanupStaleOneShotHandoffs(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := filepath.Join(config.DataDir(), "one-shot")
+	stale := filepath.Join(root, "run-stale", "request.json")
+	if err := os.MkdirAll(filepath.Dir(stale), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stale, []byte("private prompt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cleanupStaleOneShotHandoffs(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale handoff remains: %v", err)
 	}
 }
 
