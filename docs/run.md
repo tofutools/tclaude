@@ -26,6 +26,8 @@ cat data.json | tclaude run --harness shell "jq '.items | length'"
 
 For agent harnesses, piped input is included in the prompt. It can be the
 entire prompt, or is appended after the positional prompt under a separator.
+The piped prompt is limited to 96 KiB because the harness adapters pass it as
+a command argument; use a file path in the prompt for larger input.
 For `--harness shell`, stdin is passed unchanged to the child command; a
 shell command argument is still required. The child's exit status becomes `tclaude run`'s
 exit status; timeout returns 124. `--timeout` takes a positive Go duration such
@@ -57,7 +59,7 @@ profile cannot be resolved.
 ## Agent permission
 
 Agents need the `agent.run` permission and a running tclaude daemon. The
-permission supports `sandbox_profile` scoping, like `groups.member.spawn`:
+permission supports `sandbox_profile` scoping, like `groups.members.spawn`:
 
 ```bash
 tclaude agent permissions grant <agent> agent.run --scope 'sandbox_profile=build'
@@ -67,3 +69,8 @@ A grant scoped to `build` permits a tclaude-layer run using that profile. It
 does not authorize native sandbox runs or a different profile. Without an
 explicit `--sandbox-profile`, a tclaude-layer run is checked against the global
 profile. An unscoped grant permits any supported run.
+
+`agent.run` governs the `tclaude run` CLI path. The child executes with the
+caller's OS privileges; the caller's own sandbox is the execution boundary.
+The permission does not prevent an agent from invoking a harness or shell
+binary directly.

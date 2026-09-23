@@ -118,6 +118,22 @@ func TestRunHarnessFoldsPipedInputIntoPrompt(t *testing.T) {
 	require.Equal(t, "-p\n--\npiped-only\n", out.String())
 }
 
+func TestRunPipedPromptTimeoutAndSizeLimit(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reader.Close(); _ = writer.Close() })
+	var out, errOut bytes.Buffer
+	code, err := runOnceInput(runParams{Harness: "claude", Timeout: "30ms"},
+		nil, reader, &out, &errOut, nil)
+	require.Equal(t, 124, code)
+	require.ErrorContains(t, err, "timed out")
+
+	code, err = runOnceInput(runParams{Harness: "claude"}, nil,
+		strings.NewReader(strings.Repeat("x", maxRunPipedPromptBytes+1)), &out, &errOut, nil)
+	require.Equal(t, 1, code)
+	require.ErrorContains(t, err, "piped prompt exceeds")
+}
+
 func TestRunOpenCodeGetsCaptureStdout(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "opencode")

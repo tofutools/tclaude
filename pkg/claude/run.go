@@ -40,6 +40,8 @@ type runParams struct {
 	Timeout        string `long:"timeout" optional:"true" help:"Maximum run duration, as a Go duration (for example 10m); unset means no timeout"`
 }
 
+const maxRunPipedPromptBytes = 96 << 10
+
 func runCmd() *cobra.Command {
 	c := boa.CmdT[runParams]{
 		Use:         "run [prompt or shell command]",
@@ -98,6 +100,20 @@ func runOnce(p runParams, args []string, stdout, stderr io.Writer) (int, error) 
 
 func runOnceInput(p runParams, args []string, stdin io.Reader, stdout, stderr io.Writer, snapshot *sandboxpolicy.Snapshot) (int, error) {
 	prompt := strings.Join(args, " ")
+	var duration time.Duration
+	if p.Timeout != "" {
+		parsed, err := time.ParseDuration(p.Timeout)
+		if err != nil || parsed <= 0 {
+			return 1, fmt.Errorf("--timeout must be a positive duration")
+		}
+		duration = parsed
+	}
+	ctx := context.Background()
+	cancel := func() {}
+	if duration > 0 {
+		ctx, cancel = context.WithTimeout(ctx, duration)
+	}
+	defer cancel()
 	cwd := p.Workdir
 	if cwd == "" {
 		var err error
@@ -130,8 +146,11 @@ func runOnceInput(p runParams, args []string, stdin io.Reader, stdout, stderr io
 		return 1, fmt.Errorf("harness %q has no non-interactive runner", name)
 	}
 	if name != harness.ShellName && stdin != nil {
-		payload, readErr := io.ReadAll(stdin)
+		payload, readErr := readRunPipedPrompt(ctx, stdin)
 		if readErr != nil {
+			if errors.Is(readErr, context.DeadlineExceeded) {
+				return 124, fmt.Errorf("run timed out after %s while reading piped input", duration)
+			}
 			return 1, fmt.Errorf("read piped input: %w", readErr)
 		}
 		data := strings.TrimRight(string(payload), "\n")
@@ -160,14 +179,6 @@ func runOnceInput(p runParams, args []string, stdin io.Reader, stdout, stderr io
 	if err != nil {
 		return 1, err
 	}
-	var duration time.Duration
-	if p.Timeout != "" {
-		duration, err = time.ParseDuration(p.Timeout)
-		if err != nil || duration <= 0 {
-			return 1, fmt.Errorf("--timeout must be a positive duration")
-		}
-	}
-
 	var argv []string
 	if name == harness.ShellName {
 		shell := strings.TrimSpace(os.Getenv("SHELL"))
@@ -198,12 +209,6 @@ func runOnceInput(p runParams, args []string, stdin io.Reader, stdout, stderr io
 		}
 	}
 
-	ctx := context.Background()
-	cancel := func() {}
-	if duration > 0 {
-		ctx, cancel = context.WithTimeout(ctx, duration)
-	}
-	defer cancel()
 	ctx, stopSignals := context.WithCancel(ctx)
 	defer stopSignals()
 	signals := make(chan os.Signal, 1)
@@ -266,6 +271,35 @@ func runOnceInput(p runParams, args []string, stdin io.Reader, stdout, stderr io
 		return exitErr.ExitCode(), nil
 	}
 	return 1, err
+}
+
+func readRunPipedPrompt(ctx context.Context, stdin io.Reader) ([]byte, error) {
+	type result struct {
+		payload []byte
+		err     error
+	}
+	read := func() result {
+		payload, err := io.ReadAll(io.LimitReader(stdin, maxRunPipedPromptBytes+1))
+		if err == nil && len(payload) > maxRunPipedPromptBytes {
+			err = fmt.Errorf("piped prompt exceeds %d KiB; pass a file path instead", maxRunPipedPromptBytes>>10)
+		}
+		return result{payload: payload, err: err}
+	}
+	if ctx.Done() == nil {
+		got := read()
+		return got.payload, got.err
+	}
+	done := make(chan result, 1)
+	go func() { done <- read() }()
+	select {
+	case got := <-done:
+		return got.payload, got.err
+	case <-ctx.Done():
+		if closer, ok := stdin.(io.Closer); ok {
+			_ = closer.Close()
+		}
+		return nil, ctx.Err()
+	}
 }
 
 type writerOnly struct{ io.Writer }

@@ -64,7 +64,7 @@ func handleRunAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	response := runAuthorizeResponse{}
 	if input.SandboxImpl == "tclaude-layer" {
-		snapshot, err := db.ResolveEffectiveSandboxSnapshot(0, input.SandboxProfile)
+		snapshot, err := db.ResolveEffectiveSandboxSnapshot(0, profileName)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "sandbox_profile", err.Error())
 			return

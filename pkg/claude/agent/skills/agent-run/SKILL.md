@@ -16,6 +16,8 @@ tclaude run --harness shell --timeout 2m "go test ./..."
 
 For agent harnesses, piped stdin becomes prompt text. If there is also a positional prompt, the input is appended under a `piped input (stdin)` separator. For `--harness shell`, stdin is passed unchanged to the shell command. A prompt can come entirely from stdin for agent harnesses; shell still needs a command argument.
 
+The piped agent prompt is limited to 96 KiB because it becomes a command argument. For larger input, point the harness at a file instead.
+
 `--workdir` selects the child's directory. The child exit status is returned; a timeout exits 124. Consult `tclaude run --help` and `docs/run.md` for sandbox choices and harness limits.
 
 ## Permission
@@ -28,3 +30,5 @@ tclaude run --harness shell --sandbox-impl tclaude-layer --sandbox-profile build
 ```
 
 The grant is checked against the resolved profile. A grant scoped to `build` does not authorize a native sandbox run or a different profile. With `--sandbox-impl tclaude-layer` and no explicit `--sandbox-profile`, the global profile is used. An unscoped `agent.run` grant permits any supported run. If authorization is denied, ask the operator for a suitable grant rather than trying another route.
+
+This permission gates the `tclaude run` CLI path; the child runs with your existing OS privileges. Your own sandbox remains the execution boundary.
