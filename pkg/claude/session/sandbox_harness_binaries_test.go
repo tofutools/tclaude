@@ -101,3 +101,27 @@ func TestBuildTclaudeLayerLaunchSpecExposesInstalledHarnesses(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, plain.Effective.MountAliases, "exposure is opt-in per launch path")
 }
+
+// The standalone Codex installer links ~/.local/bin/codex at
+// ~/.codex/packages/standalone/current/bin/codex, where `current` is itself a
+// symlink to a release. A sandbox that shows the host's own PATH link needs
+// `current` too, or the link dangles.
+func TestTclaudeLayerEntryPointAliasesFollowLinkChain(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	release := filepath.Join(root, ".codex", "packages", "standalone", "releases", "0.155.1")
+	current := filepath.Join(root, ".codex", "packages", "standalone", "current")
+	bin := filepath.Join(root, ".local", "bin")
+	require.NoError(t, os.MkdirAll(filepath.Join(release, "bin"), 0o755))
+	require.NoError(t, os.MkdirAll(bin, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(release, "bin", "codex"), []byte("\x7fELF"), 0o755))
+	require.NoError(t, os.Symlink("releases/0.155.1", current))
+	require.NoError(t, os.Symlink(filepath.Join(current, "bin", "codex"), filepath.Join(bin, "codex")))
+
+	aliases := tclaudeLayerEntryPointAliases([]string{filepath.Join(bin, "codex")})
+	assert.Contains(t, aliases, sandboxpolicy.MountAlias{
+		Link: filepath.Join(bin, "codex"), Target: filepath.Join(release, "bin", "codex"),
+	})
+	assert.Contains(t, aliases, sandboxpolicy.MountAlias{Link: current, Target: release},
+		"the intermediate `current` link must be recreated too")
+}

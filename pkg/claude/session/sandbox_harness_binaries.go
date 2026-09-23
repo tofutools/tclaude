@@ -130,14 +130,34 @@ func isNodeScript(path string) bool {
 // tclaudeLayerEntryPointAliases recreates each harness PATH spelling that is
 // a symlink, so a bare `codex` resolves inside a constructed root, or beneath
 // a hidden home, exactly as it does on the host.
+//
+// The whole link chain is followed, not just the PATH spelling: a sandbox
+// that shows the host's own link (for example ~/.local/bin/codex ->
+// ~/.codex/packages/standalone/current/bin/codex) also needs every later
+// symlink along that literal target, here `current`, or the link dangles.
 func tclaudeLayerEntryPointAliases(entryPoints []string) []sandboxpolicy.MountAlias {
 	var out []sandboxpolicy.MountAlias
 	for _, entry := range entryPoints {
-		aliases, err := sandboxpolicy.MountAliasesForPath(entry)
-		if err != nil {
-			continue
+		path := entry
+		for hop := 0; hop < 40; hop++ {
+			aliases, err := sandboxpolicy.MountAliasesForPath(path)
+			if err != nil {
+				break
+			}
+			out = append(out, aliases...)
+			info, err := os.Lstat(path)
+			if err != nil || info.Mode()&os.ModeSymlink == 0 {
+				break
+			}
+			target, err := os.Readlink(path)
+			if err != nil {
+				break
+			}
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(filepath.Dir(path), target)
+			}
+			path = filepath.Clean(target)
 		}
-		out = append(out, aliases...)
 	}
 	return out
 }
