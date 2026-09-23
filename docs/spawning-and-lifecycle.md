@@ -71,6 +71,30 @@ first-turn seed, with the title written to Codex's store out-of-band.
 Either way the briefing lands durably in the agent's inbox — see
 [Agents and groups](agents-and-groups.md#what-a-spawned-agent-receives).
 
+### One-shot non-interactive spawn
+
+Use `--non-interactive` to run one prompt, wait for completion, and print the
+answer on stdout. A one-shot uses the group's launch settings but does not
+create a tmux session, group member, or persistent tclaude agent. The prompt
+must be supplied directly with `--initial-message` or `--file`; it is passed
+as the harness's initial prompt, not delivered to an inbox.
+
+```bash
+tclaude agent spawn myteam --non-interactive --file task.md
+tclaude agent spawn myteam --non-interactive --harness shell \
+  --initial-message 'printf "hello\\n"'
+```
+
+`--timeout` covers the entire run and defaults to one hour. The child's exit
+status is returned to the caller; timeout exits 124. Group startup context is
+excluded by default; `--group-context` includes it. A shell prompt is a shell
+command, so `--group-context` is rejected for shell runs. Identity,
+messaging, interactive approval, and remote-control options do not apply to
+this mode. The harness-native and `tclaude-layer` sandbox implementations are
+supported for Claude, Codex, and shell. A resolved policy with resource limits
+or pre-launch scripts fails before launch because the one-shot path cannot
+apply those settings.
+
 ### Default resolution
 
 Each launch field (`--harness`, `--model`, `--effort`, `--sandbox`,

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -51,6 +52,42 @@ type SpawnResponse struct {
 	// spawn carried no task link, or on a response from an older daemon.
 	TaskRefURL   string `json:"task_ref_url,omitempty"`
 	TaskRefState string `json:"task_ref_state,omitempty"`
+}
+
+type nonInteractiveSpawnResponse struct {
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+	ExitCode int    `json:"exit_code"`
+}
+
+func nonInteractiveUnsupportedOption(p *SpawnParams) string {
+	for _, option := range []struct {
+		name string
+		set  bool
+	}{
+		{"--reply-to", p.ReplyTo != ""}, {"--auto-focus", p.AutoFocus},
+		{"--ask-user-question-timeout", p.AskUserQuestionTimeout != ""},
+		{"--ask-for-approval", p.Approval != ""}, {"--tools", p.ToolGovernance != ""},
+		{"--auto-review", p.AutoReview}, {"--remote-control", p.RemoteControl},
+		{"--copilot-api", p.CopilotAPI}, {"--codex-app-server", p.CodexAppServer || p.codexAppServerSpecified},
+		{"--owner", p.Owner}, {"--no-owner", p.NoOwner},
+		{"--name", p.Name != ""}, {"--role", p.Role != ""},
+		{"--role-ref", p.RoleRef != ""}, {"--descr", p.Descr != ""},
+		{"--task", p.Task != ""}, {"--task-label", p.TaskLabel != ""},
+		{"--peer-messaging", p.PeerMessaging},
+		{"--auto-memory", p.AutoMemory},
+		{"--context-features", p.ContextFeatures != ""},
+		{"--auto-compact-window", p.AutoCompactWindow != ""},
+		{"--context-window-max", p.ContextWindowMax != 0},
+		{"--fast-mode", p.FastMode != ""},
+		{"--trust-dir", p.TrustDir},
+		{"--harness-config", p.HarnessConfig != ""},
+	} {
+		if option.set {
+			return option.name
+		}
+	}
+	return ""
 }
 
 // ResolvedLaunch is the resolved launch shape echoed in a spawn response — the
@@ -260,6 +297,10 @@ type SpawnRequest struct {
 	// Descr so a long brief doesn't bloat the dashboard's description
 	// column.
 	InitialMessage string `json:"initial_message,omitempty"`
+	// NonInteractive runs InitialMessage as a one-shot prompt and returns its
+	// output. No group member or conversation is enrolled by tclaude.
+	NonInteractive    bool  `json:"non_interactive,omitempty"`
+	RunTimeoutSeconds int64 `json:"run_timeout_seconds,omitempty"`
 	// Cwd is the working directory for the new CC session. Empty falls
 	// back to the group's default_cwd, then the daemon's own cwd.
 	Cwd string `json:"cwd,omitempty"`
@@ -752,11 +793,13 @@ type SpawnParams struct {
 	Role           string   `long:"role" short:"r" optional:"true" help:"Role tag for the new member (e.g. 'tech-lead')"`
 	RoleRef        string   `long:"role-ref" optional:"true" help:"Behavioral guidance and default access from a saved role (see 'tclaude agent roles ls'); independent of --role's routing/display label"`
 	Descr          string   `long:"descr" short:"d" optional:"true" help:"Short one-line description shown on the dashboard. Keep it terse — use --initial-message for the task brief"`
-	InitialMessage string   `long:"initial-message" short:"m" optional:"true" help:"Task brief delivered to the new agent's inbox. Newlines are preserved — pass a full multi-line brief if you like"`
-	File           string   `long:"file" short:"f" optional:"true" help:"Read the task brief from this file instead of --initial-message ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing briefs. Mutually exclusive with --initial-message; same 16384-byte cap"`
+	InitialMessage string   `long:"initial-message" short:"m" optional:"true" help:"Task brief for an interactive agent; with --non-interactive, the one-shot prompt or shell command"`
+	File           string   `long:"file" short:"f" optional:"true" help:"Read --initial-message from this file ('-' reads stdin). Mutually exclusive with --initial-message; same 16384-byte cap"`
 	ReplyTo        string   `long:"reply-to" optional:"true" help:"Whom the new agent's reply to its startup brief should reach (conv-id / prefix / title). Defaults to you when you are an agent; empty for a human-initiated spawn"`
 	Cwd            string   `long:"cwd" short:"C" optional:"true" help:"Working directory for the new CC session (defaults to the caller's cwd)"`
-	Timeout        string   `long:"timeout" short:"t" optional:"true" help:"How long to wait for the new conv-id to materialise (e.g. 30s, 1m). Default 30s."`
+	Timeout        string   `long:"timeout" short:"t" optional:"true" help:"Interactive: conv-id wait (default 30s); non-interactive: entire run (default 1h)"`
+	NonInteractive bool     `long:"non-interactive" help:"Run one prompt to completion and print its result instead of opening an interactive agent"`
+	GroupContext   bool     `long:"group-context" help:"Include the group's startup context in a non-interactive prompt (off by default)"`
 	Environment    []string `long:"env" optional:"true" help:"Process environment NAME=value. Repeatable; later sources override group/profile values. Values may contain '='."`
 
 	// Profile pre-fills the spawn fields from a saved spawn profile (JOH-210),
@@ -781,7 +824,7 @@ type SpawnParams struct {
 	AskHuman string `long:"ask-human" short:"a" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
 
 	AutoFocus      bool `long:"auto-focus" help:"Open a terminal window attached to the new agent once it spawns (default: off — CLI spawns are usually programmatic; the dashboard's modal defaults this on)"`
-	NoGroupContext bool `long:"no-group-context" help:"Do not deliver the group's shared startup context to the new agent (default: the group context is included, same as every other spawn path)"`
+	NoGroupContext bool `long:"no-group-context" help:"Do not deliver the group's shared startup context (the default with --non-interactive)"`
 
 	// Task and TaskLabel take no short and are declared here — after every
 	// explicit-short field — for the same reason as Effort/Model/Harness
@@ -804,7 +847,7 @@ type SpawnParams struct {
 	// Harness picks the coding harness the new agent runs. Declared last
 	// (no explicit short) for the same reason as Effort/Model — boa's
 	// short-flag enricher must not steal a letter from an existing field.
-	Harness string `long:"harness" optional:"true" help:"Coding harness for the new agent: claude | codex. Other launch flags never infer or pin it. Unset resolves from --profile, the group default profile, the global default profile, then claude. See 'Default resolution' in the command help"`
+	Harness string `long:"harness" optional:"true" help:"Coding harness: claude | codex | opencode | copilot | shell. Other launch flags never infer or pin it. Unset resolves from --profile, the group default profile, the global default profile, then claude. Shell treats a non-interactive prompt as a command"`
 
 	// Sandbox is the launch-time harness-builtin sandbox mode for the new agent. Codex takes
 	// a native --sandbox enum; Claude Code has no launch flag, so its
@@ -919,6 +962,13 @@ func spawnCmd() *cobra.Command {
 			"For a long or multi-line brief, prefer --file <path> (or --file - to read " +
 			"stdin) — it reads the brief from a file and so sidesteps shell quoting, " +
 			"including backticks the shell would otherwise eat from an inline string. " +
+			"\n\n" +
+			"With --non-interactive, --initial-message or --file is required and becomes " +
+			"a one-shot initial prompt (a command with --harness shell). The command " +
+			"waits for completion, prints the result, and returns the child exit status. " +
+			"It uses group launch settings without registering a persistent member. " +
+			"--timeout covers the run (default 1h), and group startup context is " +
+			"excluded unless --group-context is passed. " +
 			"\n\n" +
 			"--worktree <branch> creates (or reuses) a git worktree on that branch and " +
 			"spawns the agent into it — the CLI equivalent of the dashboard spawn modal's " +
@@ -1258,6 +1308,24 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintln(stderr, "Error: group is required")
 		return nil, rcInvalidArg
 	}
+	if p.GroupContext && !p.NonInteractive {
+		fmt.Fprintln(stderr, "Error: --group-context requires --non-interactive")
+		return nil, rcInvalidArg
+	}
+	if p.GroupContext && p.NoGroupContext {
+		fmt.Fprintln(stderr, "Error: --group-context and --no-group-context are mutually exclusive")
+		return nil, rcInvalidArg
+	}
+	if p.NonInteractive {
+		if strings.TrimSpace(p.InitialMessage) == "" && strings.TrimSpace(p.File) == "" {
+			fmt.Fprintln(stderr, "Error: --non-interactive requires --initial-message or --file")
+			return nil, rcInvalidArg
+		}
+		if invalid := nonInteractiveUnsupportedOption(p); invalid != "" {
+			fmt.Fprintf(stderr, "Error: %s is not supported with --non-interactive\n", invalid)
+			return nil, rcInvalidArg
+		}
+	}
 	if p.IUnderstandBreakGlassRisk {
 		fmt.Fprintln(stderr, "Error:", breakGlassFlagRemoved())
 		return nil, rcInvalidArg
@@ -1298,18 +1366,29 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		return nil, rcInvalidArg
 	}
 	timeoutSeconds := 30
+	runTimeoutSeconds := int64(0)
+	if p.NonInteractive {
+		runTimeoutSeconds = 3600
+	}
 	if p.Timeout != "" {
 		d, err := parseDurationDays(p.Timeout)
 		if err != nil || d <= 0 {
 			fmt.Fprintf(stderr, "Error: invalid --timeout %q\n", p.Timeout)
 			return nil, rcInvalidArg
 		}
-		// Cap mirrors the daemon's 5-minute hard limit.
-		secs := int(d.Seconds())
-		if secs > 300 {
-			secs = 300
+		if p.NonInteractive {
+			runTimeoutSeconds = int64(d.Seconds())
+			if runTimeoutSeconds < 1 {
+				runTimeoutSeconds = 1
+			}
+		} else {
+			// Cap mirrors the daemon's 5-minute hard limit.
+			secs := int(d.Seconds())
+			if secs > 300 {
+				secs = 300
+			}
+			timeoutSeconds = secs
 		}
-		timeoutSeconds = secs
 	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return nil, rc
@@ -1352,6 +1431,9 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	// modal does — else it is rejected. The daemon re-validates/normalizes
 	// server-side (handleGroupSpawn) as the authoritative backstop.
 	name := strings.TrimSpace(merged.Name)
+	if p.NonInteractive {
+		name = ""
+	}
 	if !isValidSpawnName(name) {
 		if cfg, _ := config.Load(); cfg.SpawnNameNormalizeEnabled() {
 			name = NormalizeSpawnName(name)
@@ -1581,6 +1663,8 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	}
 
 	req := SpawnRequest{
+		NonInteractive:         p.NonInteractive,
+		RunTimeoutSeconds:      runTimeoutSeconds,
 		Environment:            environment,
 		Profile:                strings.TrimSpace(p.Profile),
 		SandboxProfile:         strings.TrimSpace(p.SandboxProfile),
@@ -1612,6 +1696,15 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		TrustDir:               trustDir,
 		IsOwner:                merged.IsOwner,
 		PermissionOverrides:    merged.PermissionOverrides,
+	}
+	if p.NonInteractive {
+		// Identity defaults on a selected profile have no one-shot recipient.
+		req.Name, req.Role, req.RoleRef, req.Descr = "", "", "", ""
+		req.RoleRefs = nil
+		req.PermissionOverrides = nil
+		req.IsOwner = false
+		req.AutoFocus = false
+		req.AutoReview = false
 	}
 	// An explicit owner choice outranks the profile stack in either direction;
 	// omission leaves the daemon free to resolve group/global defaults.
@@ -1663,6 +1756,10 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		selected := codexAppServer
 		req.CodexAppServer = &selected
 	}
+	if p.NonInteractive {
+		req.CodexAppServer = nil
+		req.CopilotAPI = nil
+	}
 	if strings.TrimSpace(p.FastMode) != "" {
 		req.FastMode = fastMode
 		if req.FastMode == harness.FastModeInherit {
@@ -1676,6 +1773,9 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	// it; an omitted pointer means the daemon includes the group context by
 	// default (every other spawn path does). Resolved in mergeProfileIntoSpawn.
 	req.IncludeGroupContext = merged.IncludeGroupContext
+	if p.NonInteractive {
+		req.IncludeGroupContext = &p.GroupContext
+	}
 
 	// Worktree handling. The daemon resolves the worktree — the same git
 	// operation the dashboard's worktree picker performs server-side, run
@@ -1718,6 +1818,22 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		}
 	}
 
+	if p.NonInteractive {
+		var result nonInteractiveSpawnResponse
+		err := DaemonRequestWithWriteProof(http.MethodPost, "/v1/groups/"+p.Group+"/spawn",
+			func(token string) any { req.WriteProofToken = token; return req }, &result,
+			DaemonOpts{Timeout: time.Duration(runTimeoutSeconds+30) * time.Second, AskHuman: ask})
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			if createdWorktree != "" {
+				undoSpawnWorktree(stderr, createdWorktree, discardWorktree, "spawn", ask)
+			}
+			return nil, MapDaemonErrorToRC(err)
+		}
+		_, _ = io.WriteString(stdout, result.Stdout)
+		_, _ = io.WriteString(stderr, result.Stderr)
+		return nil, result.ExitCode
+	}
 	var resp SpawnResponse
 	if ask > 0 {
 		// --ask-human is an authorization fallback, not a blanket trust-root
