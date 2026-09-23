@@ -309,6 +309,9 @@ func TestRunNonInteractiveSpawnShellTclaudeLayer(t *testing.T) {
 	if err := session.TclaudeLayerServerHostAvailability(); err != nil {
 		t.Skipf("tclaude layer unavailable: %v", err)
 	}
+	previous := runNonInteractiveLayerCommand
+	runNonInteractiveLayerCommand = executeNonInteractiveCommand
+	t.Cleanup(func() { runNonInteractiveLayerCommand = previous })
 	t.Setenv("HOME", t.TempDir())
 	snapshot := sandboxpolicy.NewSnapshot(sandboxpolicy.EffectiveProfile{}, nil)
 	p := spawnParams{Harness: harness.ShellName, Cwd: t.TempDir(),

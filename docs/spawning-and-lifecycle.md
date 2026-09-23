@@ -78,6 +78,9 @@ answer on stdout. A one-shot uses the group's launch settings but does not
 create a tmux session, group member, or persistent tclaude agent. The prompt
 must be supplied directly with `--initial-message` or `--file`; it is passed
 as the harness's initial prompt, not delivered to an inbox.
+On Linux, a tclaude-layer one-shot uses a short tmux server job to launch its
+sandbox under the same host confinement as the sandbox capability probe; the
+job does not create a tmux session.
 
 ```bash
 tclaude agent spawn myteam --non-interactive --file task.md

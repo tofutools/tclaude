@@ -25,6 +25,7 @@ var prepareNonInteractiveResourceCgroup = session.PrepareResourceCgroup
 var configureNonInteractiveResourceCgroup = session.ConfigureProcessResourceCgroup
 var removeNonInteractiveResourceCgroup = session.RemoveResourceCgroup
 var killNonInteractiveResourceCgroupMembers = session.KillResourceCgroupMembers
+var runNonInteractiveLayerCommand = runNonInteractiveThroughTmux
 
 type nonInteractiveSpawnResult struct {
 	Stdout   string `json:"stdout"`
@@ -143,18 +144,57 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	}
 	ctx, cancel := context.WithTimeout(parent, time.Duration(seconds)*time.Second)
 	defer cancel()
+	command := nonInteractiveCommand{
+		Argv: argv, Cwd: p.Cwd,
+		Env:                   append(seanceProcessEnv(posture.ShellEnvironment), "TCLAUDE_AGENT_HINT=1"),
+		SandboxImplementation: p.SandboxImplementation,
+		TimeoutSeconds:        seconds,
+	}
+	if p.EffectiveSandbox != nil {
+		command.ResourceLimits = p.EffectiveSandbox.Effective.ResourceLimits
+	}
+	if fail := reassertDirWriteProof(p.DirWriteProofDirs); fail != nil {
+		return nonInteractiveSpawnResult{}, fail
+	}
+	if p.CleanupDirWriteProof {
+		cleanupDirWriteProofMarkers(p.DirWriteProofToken, p.DirWriteProofDirs)
+	}
+	if layer && runtime.GOOS == "linux" {
+		return runNonInteractiveLayerCommand(ctx, command)
+	}
+	return executeNonInteractiveCommand(ctx, command)
+}
+
+type nonInteractiveCommand struct {
+	Argv                  []string                     `json:"argv"`
+	Cwd                   string                       `json:"cwd"`
+	Env                   []string                     `json:"env"`
+	SandboxImplementation string                       `json:"sandbox_implementation"`
+	ResourceLimits        sandboxpolicy.ResourceLimits `json:"resource_limits"`
+	TimeoutSeconds        int64                        `json:"timeout_seconds"`
+}
+
+func executeNonInteractiveCommand(ctx context.Context, command nonInteractiveCommand) (nonInteractiveSpawnResult, *spawnFailure) {
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	hostFailure := func(kind, message string) (nonInteractiveSpawnResult, *spawnFailure) {
+		return nonInteractiveSpawnResult{}, &spawnFailure{Status: 502, Kind: kind, Msg: message}
+	}
+	bad := func(kind, message string) (nonInteractiveSpawnResult, *spawnFailure) {
+		return nonInteractiveSpawnResult{}, &spawnFailure{Status: 400, Kind: kind, Msg: message}
+	}
 	stdout := &boundedHeadBuffer{max: maxNonInteractiveOutputBytes, onLimit: cancel}
 	stderr := &boundedHeadBuffer{max: maxNonInteractiveOutputBytes, onLimit: cancel}
-	cmd := executil.CommandContextWithGrace(ctx, 0, argv[0], argv[1:]...)
+	cmd := executil.CommandContextWithGrace(runCtx, 0, command.Argv[0], command.Argv[1:]...)
 	cmd.WaitDelay = 2 * time.Second
-	cmd.Dir = p.Cwd
+	cmd.Dir = command.Cwd
 	cmd.Stdin = nil
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	cmd.Env = append(seanceProcessEnv(posture.ShellEnvironment), "TCLAUDE_AGENT_HINT=1")
-	if p.EffectiveSandbox != nil && p.EffectiveSandbox.Effective.ResourceLimits.Enabled() {
-		limits := p.EffectiveSandbox.Effective.ResourceLimits
-		implementation, implErr := sandboxpolicy.NormalizeImplementation(p.SandboxImplementation)
+	cmd.Env = command.Env
+	if command.ResourceLimits.Enabled() {
+		limits := command.ResourceLimits
+		implementation, implErr := sandboxpolicy.NormalizeImplementation(command.SandboxImplementation)
 		if implErr != nil {
 			return bad("unsupported_sandbox", implErr.Error())
 		}
@@ -176,20 +216,14 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 			return hostFailure("resource_limit_init", configureErr.Error())
 		}
 		defer closeFD()
-		stopCgroupKill := context.AfterFunc(ctx, func() {
+		stopCgroupKill := context.AfterFunc(runCtx, func() {
 			if err := killNonInteractiveResourceCgroupMembers(cgroupDir); err != nil {
 				slog.Warn("one-shot resource cgroup cancellation failed", "dir", cgroupDir, "error", err)
 			}
 		})
 		defer stopCgroupKill()
 	}
-	if fail := reassertDirWriteProof(p.DirWriteProofDirs); fail != nil {
-		return nonInteractiveSpawnResult{}, fail
-	}
-	if p.CleanupDirWriteProof {
-		cleanupDirWriteProofMarkers(p.DirWriteProofToken, p.DirWriteProofDirs)
-	}
-	err = cmd.Run()
+	err := cmd.Run()
 	// The leader may have exited while children in its process group still hold
 	// stdout or stderr open. WaitDelay bounds pipe draining; reap that group
 	// before returning. A resource cgroup additionally catches descendants that
@@ -201,7 +235,7 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 		return nonInteractiveSpawnResult{Stdout: stdout.String(), Stderr: stderr.String() + "\nnon-interactive output exceeded 4 MiB\n", ExitCode: 125}, nil
 	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return nonInteractiveSpawnResult{Stdout: stdout.String(), Stderr: stderr.String() + fmt.Sprintf("run timed out after %s\n", time.Duration(seconds)*time.Second), ExitCode: 124}, nil
+		return nonInteractiveSpawnResult{Stdout: stdout.String(), Stderr: stderr.String() + fmt.Sprintf("run timed out after %s\n", time.Duration(command.TimeoutSeconds)*time.Second), ExitCode: 124}, nil
 	}
 	result := nonInteractiveSpawnResult{Stdout: stdout.String(), Stderr: stderr.String()}
 	if err == nil {

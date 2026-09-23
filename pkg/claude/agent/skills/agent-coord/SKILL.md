@@ -262,6 +262,8 @@ It uses the group's launch settings but creates no persistent group member,
 tmux session, or agent identity. Group startup context is omitted by default;
 pass `--group-context` to include it for an agent harness. With `--harness
 shell`, the prompt is a shell command and group context is unavailable.
+On Linux, tclaude-layer one-shots use a short tmux server job to launch the
+sandbox; they still create no tmux session.
 
 This mode has no agent messaging or interactive approvals. Flags for those
 features, including `--reply-to`, `--auto-focus`, `--ask-for-approval`, and
