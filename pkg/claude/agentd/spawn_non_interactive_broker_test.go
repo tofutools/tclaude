@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,9 @@ import (
 )
 
 func TestOneShotExecHelperReturnsResultFromPrivateHandoff(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("tmux one-shot broker runs on Linux")
+	}
 	t.Setenv("HOME", t.TempDir())
 	root := filepath.Join(config.DataDir(), "one-shot")
 	dir := filepath.Join(root, "run-test")
@@ -76,6 +80,9 @@ func TestOneShotTmuxBrokerFallsBackWhenNoServer(t *testing.T) {
 }
 
 func TestOneShotTmuxBrokerRoundTrip(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("tmux one-shot broker runs on Linux")
+	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("TCLAUDE_ONE_SHOT_TEST_HELPER", "1")
 	previousServer := nonInteractiveTmuxServerAvailable
