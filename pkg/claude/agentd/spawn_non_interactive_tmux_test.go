@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -120,6 +121,69 @@ func TestOneShotTmuxBrokerRoundTrip(t *testing.T) {
 	entries, err := os.ReadDir(filepath.Join(config.DataDir(), "one-shot"))
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("handoff not cleaned up: entries=%v error=%v", entries, err)
+	}
+}
+
+func TestOneShotTmuxCancellationWaitsForPaneCleanup(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("tmux one-shot launcher runs on Linux")
+	}
+	t.Setenv("HOME", t.TempDir())
+	previousLaunch := launchNonInteractiveTmuxSession
+	previousAlive := nonInteractiveTmuxSessionAlive
+	previousKill := killNonInteractiveTmuxSession
+	previousHelper := nonInteractiveHelperShellCommand
+	t.Cleanup(func() {
+		launchNonInteractiveTmuxSession = previousLaunch
+		nonInteractiveTmuxSessionAlive = previousAlive
+		killNonInteractiveTmuxSession = previousKill
+		nonInteractiveHelperShellCommand = previousHelper
+	})
+	request := make(chan string, 1)
+	var alive, cleaned, killedEarly atomic.Bool
+	alive.Store(true)
+	nonInteractiveHelperShellCommand = func(path, _ string) string {
+		request <- path
+		return "true"
+	}
+	launchNonInteractiveTmuxSession = func(_, _, _ string, _ ...string) error { return nil }
+	nonInteractiveTmuxSessionAlive = func(string) bool { return alive.Load() }
+	killNonInteractiveTmuxSession = func(string) {
+		if !cleaned.Load() {
+			killedEarly.Store(true)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	cwd := t.TempDir()
+	done := make(chan *spawnFailure, 1)
+	go func() {
+		_, failure := runNonInteractiveThroughTmux(ctx, nonInteractiveCommand{
+			Argv: []string{"/bin/sh", "-c", "true"}, Cwd: cwd, Env: os.Environ(), TimeoutSeconds: 5,
+		})
+		done <- failure
+	}()
+	var path string
+	select {
+	case path = <-request:
+	case <-time.After(2 * time.Second):
+		t.Fatal("one-shot launcher did not create a request")
+	}
+	cancel()
+	go func() {
+		for {
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				cleaned.Store(true)
+				alive.Store(false)
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	if failure := <-done; failure == nil || failure.Msg != "one-shot run canceled" {
+		t.Fatalf("failure=%+v", failure)
+	}
+	if killedEarly.Load() || !cleaned.Load() {
+		t.Fatalf("pane killed before helper cleanup: killedEarly=%v cleaned=%v", killedEarly.Load(), cleaned.Load())
 	}
 }
 

@@ -194,8 +194,8 @@ func executeNonInteractiveCommand(ctx context.Context, command nonInteractiveCom
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if command.ObservePane {
-		cmd.Stdout = io.MultiWriter(stdout, os.Stdout)
-		cmd.Stderr = io.MultiWriter(stderr, os.Stderr)
+		cmd.Stdout = io.MultiWriter(stdout, bestEffortPaneWriter{os.Stdout})
+		cmd.Stderr = io.MultiWriter(stderr, bestEffortPaneWriter{os.Stderr})
 	}
 	cmd.Env = command.Env
 	if command.ResourceLimits.Enabled() {
@@ -262,6 +262,15 @@ func executeNonInteractiveCommand(ctx context.Context, command nonInteractiveCom
 		return result, nil
 	}
 	return nonInteractiveSpawnResult{}, &spawnFailure{Status: 502, Kind: "run_failed", Msg: err.Error()}
+}
+
+// A detached pane may close while the command is still winding down. Keep
+// capturing its output even if the terminal can no longer accept writes.
+type bestEffortPaneWriter struct{ io.Writer }
+
+func (w bestEffortPaneWriter) Write(p []byte) (int, error) {
+	_, _ = w.Writer.Write(p)
+	return len(p), nil
 }
 
 func wrapNonInteractiveWithTclaudeLayer(p spawnParams, h *harness.Harness, argv []string) (string, error) {

@@ -81,6 +81,7 @@ as the harness's initial prompt, not delivered to an inbox.
 On Linux, each one-shot launches in a detached tmux pane under the same host
 confinement as a normal agent. Its output is visible
 in the pane while the run is active; the session closes when the run ends.
+Linux one-shots require a working tmux server, as regular agent launches do.
 
 ```bash
 tclaude agent spawn myteam --non-interactive --file task.md

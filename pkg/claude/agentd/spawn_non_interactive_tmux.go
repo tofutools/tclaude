@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -93,6 +96,8 @@ func runNonInteractiveThroughTmux(ctx context.Context, command nonInteractiveCom
 	defer killNonInteractiveTmuxSession(name)
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
+	liveness := time.NewTicker(time.Second)
+	defer liveness.Stop()
 	grace := time.NewTimer(time.Until(deadline.Add(nonInteractiveBrokerGrace)))
 	defer grace.Stop()
 	ctxDone := ctx.Done()
@@ -104,24 +109,33 @@ func runNonInteractiveThroughTmux(ctx context.Context, command nonInteractiveCom
 		if !errors.Is(err, os.ErrNotExist) {
 			return fail(fmt.Sprintf("read one-shot tmux result: %v", err))
 		}
-		if !nonInteractiveTmuxSessionAlive(name) {
-			// The helper writes the result before its pane exits. It may have
-			// written it between the first read and the liveness check.
-			if data, err = os.ReadFile(resultPath); err == nil {
-				break
-			}
-			return fail("one-shot tmux pane exited without a result")
-		}
 		select {
 		case <-ticker.C:
+		case <-liveness.C:
+			if !nonInteractiveTmuxSessionAlive(name) {
+				// The helper writes the result before its pane exits.
+				if _, err = os.ReadFile(resultPath); err == nil {
+					continue // the next read at loop top collects the complete reply
+				}
+				file, openErr := os.Open(filepath.Join(dir, "helper-error.txt"))
+				var detail []byte
+				if openErr == nil {
+					detail, _ = io.ReadAll(io.LimitReader(file, 4096))
+					_ = file.Close()
+				}
+				if len(detail) > 0 {
+					return fail("one-shot tmux pane exited without a result: " + strings.TrimSpace(string(detail)))
+				}
+				return fail("one-shot tmux pane exited without a result")
+			}
 		case <-ctxDone:
 			if errors.Is(ctx.Err(), context.Canceled) {
-				_ = os.Remove(requestPath)
+				cancelNonInteractivePane(requestPath, name)
 				return fail("one-shot run canceled")
 			}
 			ctxDone = nil // wait for the helper's timeout result or the grace limit
 		case <-grace.C:
-			_ = os.Remove(requestPath)
+			cancelNonInteractivePane(requestPath, name)
 			return nonInteractiveSpawnResult{Stderr: "run timed out\n", ExitCode: 124}, nil
 		}
 	}
@@ -136,6 +150,23 @@ func runNonInteractiveThroughTmux(ctx context.Context, command nonInteractiveCom
 	return reply.Result, reply.Failure
 }
 
+func cancelNonInteractivePane(requestPath, name string) {
+	_ = os.Remove(requestPath)
+	// The helper watches the request file and cancels its child. Give its
+	// process-group and cgroup cleanup time to finish before killing the pane.
+	deadline := time.NewTimer(4 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for nonInteractiveTmuxSessionAlive(name) {
+		select {
+		case <-ticker.C:
+		case <-deadline.C:
+			return
+		}
+	}
+}
+
 func oneShotExecCmd() *cobra.Command {
 	var requestPath, resultPath string
 	cmd := &cobra.Command{
@@ -143,7 +174,11 @@ func oneShotExecCmd() *cobra.Command {
 		Short:             "Run a daemon-authorized one-shot under the tmux server (internal)",
 		PersistentPreRunE: func(*cobra.Command, []string) error { return nil },
 		RunE: func(*cobra.Command, []string) error {
-			return runOneShotExecHelper(requestPath, resultPath)
+			err := runOneShotExecHelper(requestPath, resultPath)
+			if err != nil && validateOneShotHandoffPath(filepath.Join(config.DataDir(), "one-shot"), resultPath, "result.json") == nil {
+				_ = os.WriteFile(filepath.Join(filepath.Dir(resultPath), "helper-error.txt"), []byte(err.Error()), 0o600)
+			}
+			return err
 		},
 	}
 	cmd.Flags().StringVar(&requestPath, "request", "", "private one-shot request path (internal)")
@@ -189,7 +224,9 @@ func runOneShotExecHelper(requestPath, resultPath string) error {
 		_ = os.RemoveAll(filepath.Dir(requestPath))
 		return nil // the daemon that authorized this handoff is already gone
 	}
-	ctx, cancel := context.WithDeadline(context.Background(), request.Deadline)
+	base, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGHUP, syscall.SIGTERM)
+	defer stopSignals()
+	ctx, cancel := context.WithDeadline(base, request.Deadline)
 	defer cancel()
 	stop := make(chan struct{})
 	defer close(stop)

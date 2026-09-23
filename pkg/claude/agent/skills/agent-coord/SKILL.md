@@ -264,7 +264,7 @@ pass `--group-context` to include it for an agent harness. With `--harness
 shell`, the prompt is a shell command and group context is unavailable.
 On Linux, one-shots run in a temporary detached tmux session.
 The output is visible in its pane while the run is active; the session closes
-when the run ends.
+when the run ends. Linux one-shots require a working tmux server.
 
 This mode has no agent messaging or interactive approvals. Flags for those
 features, including `--reply-to`, `--auto-focus`, `--ask-for-approval`, and
