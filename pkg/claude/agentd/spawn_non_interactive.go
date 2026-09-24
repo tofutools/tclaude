@@ -108,6 +108,13 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	if posture.ShellEnvironment == nil {
 		posture.ShellEnvironment = make(map[string]string)
 	}
+	// Match ordinary Claude panes: its account and project state lives in the
+	// writable harness state root, not the top-level file in $HOME. Without
+	// this, a one-shot under a constructed root looks for ~/.claude.json and
+	// reports a missing config even when normal tclaude sessions are set up.
+	if err := session.ApplyClaudeConfigDirEnv(h.Name, posture.ShellEnvironment); err != nil {
+		return hostFailure("sandbox_init", err.Error())
+	}
 	session.ApplyAutoMemoryEnv(h, p.AutoMemory, posture.ShellEnvironment)
 	var argv []string
 	if h.Name == harness.ShellName {

@@ -43,6 +43,34 @@ func TestRunNonInteractiveSpawnShell(t *testing.T) {
 	}
 }
 
+func TestRunNonInteractiveSpawnClaudeUsesRelocatedConfig(t *testing.T) {
+	useDirectNonInteractiveRunner(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	const config = `{"oauthAccount":{"test":true}}`
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "claude"),
+		[]byte("#!/bin/sh\nprintf '%s\\n' \"$CLAUDE_CONFIG_DIR\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	got, fail := runNonInteractiveSpawn(context.Background(), spawnParams{
+		Harness: harness.DefaultName, Cwd: t.TempDir(), InitialMessage: "test prompt",
+	}, 30)
+	if fail != nil || got.ExitCode != 0 || strings.TrimSpace(got.Stdout) != filepath.Join(home, ".claude") {
+		t.Fatalf("one-shot config dir: result=%+v failure=%+v", got, fail)
+	}
+	seeded, err := os.ReadFile(filepath.Join(home, ".claude", ".claude.json"))
+	if err != nil || string(seeded) != config {
+		t.Fatalf("one-shot config seed: data=%q error=%v", seeded, err)
+	}
+}
+
 func TestRunNonInteractiveSpawnAppliesResourceLimit(t *testing.T) {
 	useDirectNonInteractiveRunner(t)
 	if runtime.GOOS != "linux" {
