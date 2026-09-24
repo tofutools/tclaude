@@ -24,6 +24,7 @@ const maxNonInteractiveOutputBytes = 4 << 20
 
 var prepareNonInteractiveResourceCgroup = session.PrepareResourceCgroup
 var configureNonInteractiveResourceCgroup = session.ConfigureProcessResourceCgroup
+var validateNonInteractivePreparedResourceCgroup = session.ValidatePreparedResourceCgroup
 var removeNonInteractiveResourceCgroup = session.RemoveResourceCgroup
 var killNonInteractiveResourceCgroupMembers = session.KillResourceCgroupMembers
 var runNonInteractiveTmuxCommand = runNonInteractiveThroughTmux
@@ -161,6 +162,22 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 		cleanupDirWriteProofMarkers(p.DirWriteProofToken, p.DirWriteProofDirs)
 	}
 	if runtime.GOOS == "linux" {
+		if command.ResourceLimits.Enabled() {
+			// Ordinary pane launches prepare their resource boundary in agentd
+			// and hand it to the tmux child. The pane's own cgroup may not have
+			// permission to create or configure a sibling boundary.
+			dir, cleanup, prepErr := prepareNonInteractiveResourceCgroup(session.GenerateSessionID(), command.ResourceLimits)
+			if prepErr != nil {
+				return hostFailure("resource_limit_init", prepErr.Error())
+			}
+			command.ResourceCgroupDir = dir
+			defer func() {
+				if err := removeNonInteractiveResourceCgroup(dir); err != nil {
+					slog.Warn("one-shot resource cgroup cleanup failed", "dir", dir, "error", err)
+				}
+				cleanup()
+			}()
+		}
 		return runNonInteractiveTmuxCommand(ctx, command)
 	}
 	return executeNonInteractiveCommand(ctx, command)
@@ -172,6 +189,7 @@ type nonInteractiveCommand struct {
 	Env                   []string                     `json:"env"`
 	SandboxImplementation string                       `json:"sandbox_implementation"`
 	ResourceLimits        sandboxpolicy.ResourceLimits `json:"resource_limits"`
+	ResourceCgroupDir     string                       `json:"resource_cgroup_dir,omitempty"`
 	TimeoutSeconds        int64                        `json:"timeout_seconds"`
 	ObservePane           bool                         `json:"-"`
 }
@@ -207,16 +225,25 @@ func executeNonInteractiveCommand(ctx context.Context, command nonInteractiveCom
 		if err := sandboxpolicy.ValidateResourceLimitTarget(limits, implementation, runtime.GOOS); err != nil {
 			return bad("unsupported_sandbox", err.Error())
 		}
-		cgroupDir, cleanup, prepErr := prepareNonInteractiveResourceCgroup(session.GenerateSessionID(), limits)
-		if prepErr != nil {
-			return hostFailure("resource_limit_init", prepErr.Error())
-		}
-		defer func() {
-			if err := removeNonInteractiveResourceCgroup(cgroupDir); err != nil {
-				slog.Warn("one-shot resource cgroup cleanup failed", "dir", cgroupDir, "error", err)
+		cgroupDir := command.ResourceCgroupDir
+		if cgroupDir != "" {
+			if err := validateNonInteractivePreparedResourceCgroup(cgroupDir, limits); err != nil {
+				return hostFailure("resource_limit_init", err.Error())
 			}
-			cleanup()
-		}()
+		} else {
+			var cleanup func()
+			var prepErr error
+			cgroupDir, cleanup, prepErr = prepareNonInteractiveResourceCgroup(session.GenerateSessionID(), limits)
+			if prepErr != nil {
+				return hostFailure("resource_limit_init", prepErr.Error())
+			}
+			defer func() {
+				if err := removeNonInteractiveResourceCgroup(cgroupDir); err != nil {
+					slog.Warn("one-shot resource cgroup cleanup failed", "dir", cgroupDir, "error", err)
+				}
+				cleanup()
+			}()
+		}
 		closeFD, configureErr := configureNonInteractiveResourceCgroup(cmd.Cmd, cgroupDir)
 		if configureErr != nil {
 			return hostFailure("resource_limit_init", configureErr.Error())

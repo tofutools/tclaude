@@ -48,12 +48,14 @@ func TestRunNonInteractiveSpawnAppliesResourceLimit(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("resource cgroups require Linux")
 	}
-	previousPrepare, previousConfigure, previousRemove :=
-		prepareNonInteractiveResourceCgroup, configureNonInteractiveResourceCgroup, removeNonInteractiveResourceCgroup
+	previousPrepare, previousConfigure, previousRemove, previousValidate :=
+		prepareNonInteractiveResourceCgroup, configureNonInteractiveResourceCgroup,
+		removeNonInteractiveResourceCgroup, validateNonInteractivePreparedResourceCgroup
 	t.Cleanup(func() {
 		prepareNonInteractiveResourceCgroup = previousPrepare
 		configureNonInteractiveResourceCgroup = previousConfigure
 		removeNonInteractiveResourceCgroup = previousRemove
+		validateNonInteractivePreparedResourceCgroup = previousValidate
 	})
 	var prepared, configured, closed, removed, cleaned bool
 	const cgroupDir = "/test/one-shot-cgroup"
@@ -70,6 +72,12 @@ func TestRunNonInteractiveSpawnAppliesResourceLimit(t *testing.T) {
 		}
 		configured = true
 		return func() { closed = true }, nil
+	}
+	validateNonInteractivePreparedResourceCgroup = func(dir string, _ sandboxpolicy.ResourceLimits) error {
+		if dir != cgroupDir {
+			t.Fatalf("unexpected prepared cgroup: %q", dir)
+		}
+		return nil
 	}
 	removeNonInteractiveResourceCgroup = func(dir string) error {
 		if dir != cgroupDir || !closed {
@@ -126,14 +134,16 @@ func TestRunNonInteractiveSpawnCancellationKillsResourceCgroup(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("resource cgroups require Linux")
 	}
-	previousPrepare, previousConfigure, previousRemove, previousKill :=
+	previousPrepare, previousConfigure, previousRemove, previousKill, previousValidate :=
 		prepareNonInteractiveResourceCgroup, configureNonInteractiveResourceCgroup,
-		removeNonInteractiveResourceCgroup, killNonInteractiveResourceCgroupMembers
+		removeNonInteractiveResourceCgroup, killNonInteractiveResourceCgroupMembers,
+		validateNonInteractivePreparedResourceCgroup
 	t.Cleanup(func() {
 		prepareNonInteractiveResourceCgroup = previousPrepare
 		configureNonInteractiveResourceCgroup = previousConfigure
 		removeNonInteractiveResourceCgroup = previousRemove
 		killNonInteractiveResourceCgroupMembers = previousKill
+		validateNonInteractivePreparedResourceCgroup = previousValidate
 	})
 	const cgroupDir = "/test/one-shot-timeout"
 	prepareNonInteractiveResourceCgroup = func(string, sandboxpolicy.ResourceLimits) (string, func(), error) {
@@ -142,6 +152,7 @@ func TestRunNonInteractiveSpawnCancellationKillsResourceCgroup(t *testing.T) {
 	configureNonInteractiveResourceCgroup = func(*exec.Cmd, string) (func(), error) {
 		return func() {}, nil
 	}
+	validateNonInteractivePreparedResourceCgroup = func(string, sandboxpolicy.ResourceLimits) error { return nil }
 	removeNonInteractiveResourceCgroup = func(string) error { return nil }
 	killed := make(chan struct{}, 1)
 	killNonInteractiveResourceCgroupMembers = func(dir string) error {
