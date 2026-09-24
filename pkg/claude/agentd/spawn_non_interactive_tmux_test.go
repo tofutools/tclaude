@@ -65,6 +65,7 @@ func TestOneShotExecHelperReturnsResultFromPrivateHandoff(t *testing.T) {
 }
 
 func TestOneShotTmuxSessionLaunchFailure(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	previous := launchNonInteractiveTmuxSession
 	launchNonInteractiveTmuxSession = func(string, string, string, ...string) error {
 		return fmt.Errorf("tmux unavailable")
