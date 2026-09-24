@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -266,6 +267,15 @@ func runOneShotExecHelper(requestPath, resultPath string) error {
 	}()
 	request.Command.ObservePane = true
 	result, failure := executeNonInteractiveCommand(ctx, request.Command)
+	if request.Command.ResourceCgroupDir != "" {
+		// The daemon normally removes this boundary after receiving the
+		// result. Also try here so a daemon crash does not strand it after the
+		// helper has reaped the workload.
+		if err := removeNonInteractiveResourceCgroup(request.Command.ResourceCgroupDir); err != nil {
+			slog.Warn("one-shot helper resource cgroup cleanup failed",
+				"dir", request.Command.ResourceCgroupDir, "error", err)
+		}
+	}
 	if value := watcherError.Load(); value != nil {
 		return fmt.Errorf("watch one-shot daemon identity: %w", value.(error))
 	}

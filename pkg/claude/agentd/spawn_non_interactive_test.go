@@ -57,13 +57,14 @@ func TestRunNonInteractiveSpawnAppliesResourceLimit(t *testing.T) {
 		removeNonInteractiveResourceCgroup = previousRemove
 		validateNonInteractivePreparedResourceCgroup = previousValidate
 	})
-	var prepared, configured, closed, removed, cleaned bool
+	var prepared int
+	var configured, closed, removed, cleaned bool
 	const cgroupDir = "/test/one-shot-cgroup"
 	prepareNonInteractiveResourceCgroup = func(id string, limits sandboxpolicy.ResourceLimits) (string, func(), error) {
 		if id == "" || limits.PIDs == nil || *limits.PIDs != 32 {
 			t.Fatalf("unexpected cgroup request: id=%q limits=%+v", id, limits)
 		}
-		prepared = true
+		prepared++
 		return cgroupDir, func() { cleaned = true }, nil
 	}
 	configureNonInteractiveResourceCgroup = func(cmd *exec.Cmd, dir string) (func(), error) {
@@ -95,9 +96,55 @@ func TestRunNonInteractiveSpawnAppliesResourceLimit(t *testing.T) {
 		InitialMessage: "printf 'limited\\n'"}
 	got, fail := runNonInteractiveSpawn(context.Background(), p, 30)
 	if fail != nil || got.ExitCode != 0 || got.Stdout != "limited\n" ||
-		!prepared || !configured || !closed || !removed || !cleaned {
-		t.Fatalf("result=%+v failure=%+v lifecycle=%t/%t/%t/%t/%t", got, fail,
+		prepared != 1 || !configured || !closed || !removed || !cleaned {
+		t.Fatalf("result=%+v failure=%+v lifecycle=%d/%t/%t/%t/%t", got, fail,
 			prepared, configured, closed, removed, cleaned)
+	}
+}
+
+func TestRunNonInteractiveSpawnRefusesChangedPreparedBoundary(t *testing.T) {
+	useDirectNonInteractiveRunner(t)
+	if runtime.GOOS != "linux" {
+		t.Skip("resource cgroups require Linux")
+	}
+	previousPrepare, previousValidate, previousRemove :=
+		prepareNonInteractiveResourceCgroup, validateNonInteractivePreparedResourceCgroup,
+		removeNonInteractiveResourceCgroup
+	t.Cleanup(func() {
+		prepareNonInteractiveResourceCgroup = previousPrepare
+		validateNonInteractivePreparedResourceCgroup = previousValidate
+		removeNonInteractiveResourceCgroup = previousRemove
+	})
+	const cgroupDir = "/test/one-shot-changed-boundary"
+	prepareNonInteractiveResourceCgroup = func(string, sandboxpolicy.ResourceLimits) (string, func(), error) {
+		return cgroupDir, func() {}, nil
+	}
+	validateNonInteractivePreparedResourceCgroup = func(dir string, _ sandboxpolicy.ResourceLimits) error {
+		if dir != cgroupDir {
+			t.Fatalf("unexpected prepared cgroup: %q", dir)
+		}
+		return errors.New("prepared cgroup limits changed")
+	}
+	removed := false
+	removeNonInteractiveResourceCgroup = func(dir string) error {
+		removed = true
+		return nil
+	}
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "ran")
+	pids := uint64(32)
+	snapshot := sandboxpolicy.NewSnapshot(sandboxpolicy.EffectiveProfile{
+		ResourceLimits: sandboxpolicy.ResourceLimits{PIDs: &pids},
+	}, nil)
+	p := spawnParams{Harness: harness.ShellName, Cwd: dir,
+		SandboxImplementation: "harness-builtin", EffectiveSandbox: &snapshot,
+		InitialMessage: "touch " + marker}
+	_, fail := runNonInteractiveSpawn(context.Background(), p, 30)
+	if fail == nil || fail.Kind != "resource_limit_init" || !removed {
+		t.Fatalf("changed boundary was accepted or leaked: failure=%+v removed=%t", fail, removed)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("child started with changed resource boundary: %v", err)
 	}
 }
 

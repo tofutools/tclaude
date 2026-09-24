@@ -163,6 +163,13 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	}
 	if runtime.GOOS == "linux" {
 		if command.ResourceLimits.Enabled() {
+			implementation, implErr := sandboxpolicy.NormalizeImplementation(command.SandboxImplementation)
+			if implErr != nil {
+				return bad("unsupported_sandbox", implErr.Error())
+			}
+			if err := sandboxpolicy.ValidateResourceLimitTarget(command.ResourceLimits, implementation, runtime.GOOS); err != nil {
+				return bad("unsupported_sandbox", err.Error())
+			}
 			// Ordinary pane launches prepare their resource boundary in agentd
 			// and hand it to the tmux child. The pane's own cgroup may not have
 			// permission to create or configure a sibling boundary.
@@ -226,23 +233,11 @@ func executeNonInteractiveCommand(ctx context.Context, command nonInteractiveCom
 			return bad("unsupported_sandbox", err.Error())
 		}
 		cgroupDir := command.ResourceCgroupDir
-		if cgroupDir != "" {
-			if err := validateNonInteractivePreparedResourceCgroup(cgroupDir, limits); err != nil {
-				return hostFailure("resource_limit_init", err.Error())
-			}
-		} else {
-			var cleanup func()
-			var prepErr error
-			cgroupDir, cleanup, prepErr = prepareNonInteractiveResourceCgroup(session.GenerateSessionID(), limits)
-			if prepErr != nil {
-				return hostFailure("resource_limit_init", prepErr.Error())
-			}
-			defer func() {
-				if err := removeNonInteractiveResourceCgroup(cgroupDir); err != nil {
-					slog.Warn("one-shot resource cgroup cleanup failed", "dir", cgroupDir, "error", err)
-				}
-				cleanup()
-			}()
+		if cgroupDir == "" {
+			return hostFailure("resource_limit_init", "one-shot resource limits require a daemon-prepared cgroup")
+		}
+		if err := validateNonInteractivePreparedResourceCgroup(cgroupDir, limits); err != nil {
+			return hostFailure("resource_limit_init", err.Error())
 		}
 		closeFD, configureErr := configureNonInteractiveResourceCgroup(cmd.Cmd, cgroupDir)
 		if configureErr != nil {
