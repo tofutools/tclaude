@@ -412,8 +412,11 @@ func TestRunNonInteractiveSpawnClaudeTclaudeLayerBindsExecutable(t *testing.T) {
 	useDirectNonInteractiveRunner(t)
 	t.Setenv("HOME", t.TempDir())
 	bin := t.TempDir()
-	path := filepath.Join(bin, "claude")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nfor arg do last=$arg; done\nprintf '%s' \"$last\"\n"), 0o755); err != nil {
+	target := filepath.Join(t.TempDir(), "claude-version")
+	if err := os.WriteFile(target, []byte("#!/bin/sh\nfor arg do last=$arg; done\nprintf '%s' \"$last\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(bin, "claude")); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
