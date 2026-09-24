@@ -43,6 +43,41 @@ func TestRunNonInteractiveSpawnShell(t *testing.T) {
 	}
 }
 
+func TestRunNonInteractiveSpawnShellKeepsSuccessfulStderr(t *testing.T) {
+	useDirectNonInteractiveRunner(t)
+	got, fail := runNonInteractiveSpawn(context.Background(), spawnParams{
+		Harness: harness.ShellName, Cwd: t.TempDir(),
+		InitialMessage: "printf 'shell-out\\n'; printf 'shell-err\\n' >&2",
+	}, 30)
+	if fail != nil || got.ExitCode != 0 || got.Stdout != "shell-out\n" || got.Stderr != "shell-err\n" {
+		t.Fatalf("unexpected shell result: result=%+v failure=%+v", got, fail)
+	}
+}
+
+func TestRunNonInteractiveSpawnCodexStderrDependsOnExit(t *testing.T) {
+	useDirectNonInteractiveRunner(t)
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(
+		"#!/bin/sh\nprintf 'codex-out\\n'\nprintf 'codex-diagnostic\\n' >&2\nexit \"$ONE_SHOT_TEST_EXIT\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, tc := range []struct {
+		exitCode int
+		stderr   string
+	}{{0, ""}, {7, "codex-diagnostic\n"}} {
+		t.Setenv("ONE_SHOT_TEST_EXIT", strconv.Itoa(tc.exitCode))
+		got, fail := runNonInteractiveSpawn(context.Background(), spawnParams{
+			Harness: harness.CodexName, Cwd: t.TempDir(),
+			HarnessBuiltinMode: harness.SandboxDangerFull, SandboxImplementation: "off",
+			ApprovalPolicy: harness.ApprovalNever, InitialMessage: "test prompt",
+		}, 30)
+		if fail != nil || got.ExitCode != tc.exitCode || got.Stdout != "codex-out\n" || got.Stderr != tc.stderr {
+			t.Fatalf("exit %d: result=%+v failure=%+v", tc.exitCode, got, fail)
+		}
+	}
+}
+
 func TestRunNonInteractiveSpawnClaudeUsesRelocatedConfig(t *testing.T) {
 	useDirectNonInteractiveRunner(t)
 	home := t.TempDir()
@@ -54,7 +89,7 @@ func TestRunNonInteractiveSpawnClaudeUsesRelocatedConfig(t *testing.T) {
 	}
 	bin := t.TempDir()
 	if err := os.WriteFile(filepath.Join(bin, "claude"),
-		[]byte("#!/bin/sh\nprintf '%s\\n' \"$CLAUDE_CONFIG_DIR\"\n"), 0o755); err != nil {
+		[]byte("#!/bin/sh\nprintf '%s\\n' \"$CLAUDE_CONFIG_DIR\"\nprintf 'claude-diagnostic\\n' >&2\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -62,7 +97,8 @@ func TestRunNonInteractiveSpawnClaudeUsesRelocatedConfig(t *testing.T) {
 	got, fail := runNonInteractiveSpawn(context.Background(), spawnParams{
 		Harness: harness.DefaultName, Cwd: t.TempDir(), InitialMessage: "test prompt",
 	}, 30)
-	if fail != nil || got.ExitCode != 0 || strings.TrimSpace(got.Stdout) != filepath.Join(home, ".claude") {
+	if fail != nil || got.ExitCode != 0 || got.Stderr != "" ||
+		strings.TrimSpace(got.Stdout) != filepath.Join(home, ".claude") {
 		t.Fatalf("one-shot config dir: result=%+v failure=%+v", got, fail)
 	}
 	seeded, err := os.ReadFile(filepath.Join(home, ".claude", ".claude.json"))

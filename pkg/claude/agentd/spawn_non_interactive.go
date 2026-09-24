@@ -168,6 +168,14 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	if p.CleanupDirWriteProof {
 		cleanupDirWriteProofMarkers(p.DirWriteProofToken, p.DirWriteProofDirs)
 	}
+	finish := func(result nonInteractiveSpawnResult, failure *spawnFailure) (nonInteractiveSpawnResult, *spawnFailure) {
+		if failure == nil && result.ExitCode == 0 && h.Name != harness.ShellName {
+			// Harness CLIs print diagnostics and session metadata to stderr even
+			// when the requested answer succeeded. The one-shot's answer is stdout.
+			result.Stderr = ""
+		}
+		return result, failure
+	}
 	if runtime.GOOS == "linux" {
 		if command.ResourceLimits.Enabled() {
 			implementation, implErr := sandboxpolicy.NormalizeImplementation(command.SandboxImplementation)
@@ -192,9 +200,9 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 				cleanup()
 			}()
 		}
-		return runNonInteractiveTmuxCommand(ctx, command)
+		return finish(runNonInteractiveTmuxCommand(ctx, command))
 	}
-	return executeNonInteractiveCommand(ctx, command)
+	return finish(executeNonInteractiveCommand(ctx, command))
 }
 
 type nonInteractiveCommand struct {
