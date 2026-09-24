@@ -404,3 +404,25 @@ func TestRunNonInteractiveSpawnShellTclaudeLayer(t *testing.T) {
 		t.Fatalf("unexpected result: %+v", got)
 	}
 }
+
+func TestRunNonInteractiveSpawnClaudeTclaudeLayerBindsExecutable(t *testing.T) {
+	if err := session.TclaudeLayerServerHostAvailability(); err != nil {
+		t.Skipf("tclaude layer unavailable: %v", err)
+	}
+	useDirectNonInteractiveRunner(t)
+	t.Setenv("HOME", t.TempDir())
+	bin := t.TempDir()
+	path := filepath.Join(bin, "claude")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nfor arg do last=$arg; done\nprintf '%s' \"$last\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	snapshot := sandboxpolicy.NewSnapshot(sandboxpolicy.EffectiveProfile{}, nil)
+	p := spawnParams{Harness: harness.DefaultName, Cwd: t.TempDir(),
+		InitialMessage: "claude-one-shot-test", SandboxImplementation: "tclaude-layer",
+		EffectiveSandbox: &snapshot}
+	got, fail := runNonInteractiveSpawn(context.Background(), p, 30)
+	if fail != nil || got.ExitCode != 0 || got.Stdout != "claude-one-shot-test" {
+		t.Fatalf("result=%+v failure=%+v", got, fail)
+	}
+}

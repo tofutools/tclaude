@@ -296,9 +296,29 @@ func (w bestEffortPaneWriter) Write(p []byte) (int, error) {
 }
 
 func wrapNonInteractiveWithTclaudeLayer(p spawnParams, h *harness.Harness, argv []string) (string, error) {
+	var harnessReadPaths []string
+	if runtime.GOOS == "linux" {
+		switch h.Name {
+		case harness.DefaultName:
+			resolved, err := harness.ResolveClaudeLaunchExecutable()
+			if err != nil {
+				return "", fmt.Errorf("resolve Claude executable for tclaude’s sandbox: %w", err)
+			}
+			argv[0] = resolved.Path
+			harnessReadPaths = append(harnessReadPaths, resolved.Path)
+		case harness.CodexName:
+			resolved, err := harness.ResolveCodexLaunchExecutable()
+			if err != nil {
+				return "", fmt.Errorf("resolve Codex executable for tclaude’s sandbox: %w", err)
+			}
+			argv[0] = resolved.Path
+			harnessReadPaths = append(harnessReadPaths, resolved.RuntimeRoot)
+		}
+	}
 	spec, err := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
 		HarnessName: h.Name, Cwd: p.Cwd, Snapshot: p.EffectiveSandbox,
-		GitWriteDirs: append([]string(nil), p.GitWorktreeWriteDirs...),
+		GitWriteDirs:     append([]string(nil), p.GitWorktreeWriteDirs...),
+		HarnessReadPaths: harnessReadPaths,
 	})
 	if err != nil {
 		return "", err
