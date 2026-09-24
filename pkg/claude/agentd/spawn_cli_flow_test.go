@@ -136,6 +136,68 @@ func TestSpawnCLI_MultiLineInitialMessagePreserved(t *testing.T) {
 	assert.Contains(t, rows[0].Body, brief, "multi-line brief must survive verbatim")
 }
 
+func TestSpawnCLI_NonInteractiveShellDoesNotEnrollMember(t *testing.T) {
+	t.Cleanup(agentd.SetNonInteractiveDirectRunnerForTest())
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	bridgeAgentClientToMux(t, f.Mux)
+	chdirTo(t, resolveSym(t, t.TempDir()))
+
+	stdout, stderr := new(bytes.Buffer), new(bytes.Buffer)
+	resp, rc := agent.RunSpawn(&agent.SpawnParams{
+		Group: "alpha", NonInteractive: true, Harness: "shell",
+		Environment:    []string{"ONE_SHOT_VALUE=one-shot-result"},
+		InitialMessage: "printf '%s\\n' \"$ONE_SHOT_VALUE\"",
+	}, stdout, stderr, new(bytes.Buffer))
+	require.Equal(t, 0, rc, "stderr=%s", stderr.String())
+	require.Nil(t, resp)
+	require.Equal(t, "one-shot-result\n", stdout.String())
+	commandFile := filepath.Join(t.TempDir(), "command.sh")
+	require.NoError(t, os.WriteFile(commandFile, []byte("printf 'from-file\\n'"), 0o600))
+	stdout.Reset()
+	stderr.Reset()
+	resp, rc = agent.RunSpawn(&agent.SpawnParams{Group: "alpha", NonInteractive: true,
+		Harness: "shell", File: commandFile}, stdout, stderr, new(bytes.Buffer))
+	require.Equal(t, 0, rc, "stderr=%s", stderr.String())
+	require.Nil(t, resp)
+	require.Equal(t, "from-file\n", stdout.String())
+
+	rr := httptest.NewRecorder()
+	f.Mux.ServeHTTP(rr, agentd.AsHumanPeer(httptest.NewRequest(http.MethodGet,
+		"/v1/groups/alpha/members", nil)))
+	require.Equal(t, http.StatusOK, rr.Code)
+	require.JSONEq(t, `[]`, rr.Body.String())
+}
+
+func TestSpawnCLI_NonInteractiveGroupContextIsOptIn(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Cleanup(agentd.SetNonInteractiveDirectRunnerForTest())
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	_, err := db.SetAgentGroupDefaultContext("alpha", "shared context")
+	require.NoError(t, err)
+	bridgeAgentClientToMux(t, f.Mux)
+	chdirTo(t, resolveSym(t, t.TempDir()))
+	bin := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "claude"),
+		[]byte("#!/bin/sh\nfor arg do last=$arg; done\nprintf '%s' \"$last\"\n"), 0o755))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, tc := range []struct {
+		include bool
+		want    string
+	}{
+		{false, "task"}, {true, "shared context\n\ntask"},
+	} {
+		stdout, stderr := new(bytes.Buffer), new(bytes.Buffer)
+		resp, rc := agent.RunSpawn(&agent.SpawnParams{Group: "alpha", NonInteractive: true,
+			Harness: "claude", InitialMessage: "task", GroupContext: tc.include},
+			stdout, stderr, new(bytes.Buffer))
+		require.Equal(t, 0, rc, "stderr=%s", stderr.String())
+		require.Nil(t, resp)
+		require.Equal(t, tc.want, stdout.String())
+	}
+}
+
 // Scenario: a human runs `tclaude agent spawn alpha worker --file brief.md`.
 // The CLI reads the brief from the file and delivers it to the new
 // agent's inbox exactly as --initial-message would — same delivery path,

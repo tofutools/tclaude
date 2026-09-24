@@ -100,7 +100,9 @@ func spawnApprovalLineageFailure(parentConvID, childHarness, childPolicy string,
 	}
 	childHarness = harnessOrDefault(childHarness)
 	childPolicy = strings.TrimSpace(childPolicy)
-	if parentPolicy == "" {
+	// Shell has no approval policy: an empty value is its recorded, known
+	// posture. Other harnesses use empty for an unreconstructable legacy row.
+	if parentPolicy == "" && parentHarness != harness.ShellName {
 		return &spawnFailure{http.StatusForbidden, "approval_restricted",
 			fmt.Sprintf("agent %s has a legacy %s launch whose approval posture cannot be reconstructed; relaunch it with current tclaude to record its approval posture before spawning a matching child",
 				short8(parentConvID), parentHarness)}

@@ -365,6 +365,9 @@ func runServe(p *serveParams) error {
 	if err := migrateStateIntoDataDir(); err != nil {
 		return fmt.Errorf("relocate daemon state into data dir: %w", err)
 	}
+	if err := cleanupStaleOneShotHandoffs(); err != nil {
+		slog.Warn("agentd: could not remove stale one-shot handoffs", "error", err)
+	}
 	if name, err := loadOrCreateDashboardCookieName(config.DataDir()); err != nil {
 		// Cookie isolation is defense against independent loopback dashboards,
 		// not a prerequisite for serving this one. The deterministic

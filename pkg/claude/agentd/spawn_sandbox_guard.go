@@ -764,6 +764,15 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 				copilotProvenLineageLaunch(child)
 		}
 	}
+	// A shell has no native sandbox. Only a shell launched inside tclaude's
+	// wall can delegate, and only to children with a proven confined launch.
+	if parent.Harness == harness.ShellName &&
+		parent.Implementation == sandboxpolicy.ImplementationTclaudeLayer {
+		return childIsShell(child) ||
+			childIsClaude(child, harness.ClaudeSandboxOn) ||
+			childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile) ||
+			copilotProvenLineageLaunch(child)
+	}
 
 	// A Copilot PARENT is classified by its persisted pair, not by its mode
 	// alone. Every parent arm now is — lineageConfinementMode runs over the

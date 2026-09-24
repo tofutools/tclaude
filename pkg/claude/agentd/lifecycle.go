@@ -3431,6 +3431,15 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if !decoded {
 		return
 	}
+	if body.NonInteractive && (body.ReplyTo != "" || body.Name != "" || body.Role != "" ||
+		body.RoleRef != "" || len(body.RoleRefs) > 0 || body.Descr != "" ||
+		body.TaskURL != "" || body.TaskLabel != "" || body.AutoFocus || body.AutoFocusWeb ||
+		body.IsOwner || len(body.PermissionOverrides) > 0 || body.RemoteControl != nil ||
+		body.CopilotAPI != nil || body.CodexAppServer != nil || body.AutoReview) {
+		writeError(w, http.StatusBadRequest, "invalid_request",
+			"non-interactive spawn does not accept identity, messaging, or interactive drive settings")
+		return
+	}
 	// Preserve the caller's decoded wire parameters before profile/default
 	// resolution, generated-name assignment, normalization, or permission
 	// attenuation mutates body below. Resolved and running launch state have
@@ -3502,7 +3511,14 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// is claimed after the validation gates below (claimSpawnRateSlot) so a
 	// refused request — including the dir write-proof challenge round-trip —
 	// never burns a slot. See spawn_guardrails.go.
-	if !checkSpawnGuardrails(w, g, spawnerConvID,
+	if body.NonInteractive {
+		// A one-shot does not consume a group seat. Keep the caller's group
+		// restriction and the rate limit while leaving max_members for members.
+		if spawnerConvID != "" && authorizedPermissionForRequest(r, "") != PermAgentSpawn &&
+			!checkSpawnGroupRestriction(w, g, spawnerConvID) {
+			return
+		}
+	} else if !checkSpawnGuardrails(w, g, spawnerConvID,
 		authorizedPermissionForRequest(r, "") == PermAgentSpawn) {
 		return
 	}
@@ -3518,6 +3534,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			fmt.Sprintf("initial_message must be at most %d characters; newlines and tabs "+
 				"are allowed (it is delivered to the agent's inbox, not typed into "+
 				"its pane), but other control characters are not", agent.MaxInitialMessageBytes))
+		return
+	}
+	if body.NonInteractive && body.InitialMessage == "" {
+		writeError(w, http.StatusBadRequest, "invalid_initial_message", "non_interactive requires initial_message")
 		return
 	}
 
@@ -3704,6 +3724,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	h, harnessErr := resolveSpawnHarness(body.Harness)
 	if harnessErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid_harness", harnessErr.Error())
+		return
+	}
+	if body.NonInteractive && h.Name == harness.ShellName && body.IncludeGroupContext != nil && *body.IncludeGroupContext {
+		writeError(w, http.StatusBadRequest, "invalid_group_context",
+			"--group-context is not meaningful for a shell command")
 		return
 	}
 	// Cross-harness spawn policy is evaluated only after the complete profile
@@ -3962,6 +3987,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if !includeGroupContextSet {
 		includeGroupContext = true
 	}
+	if body.NonInteractive {
+		includeGroupContext = body.IncludeGroupContext != nil && *body.IncludeGroupContext
+	}
 	// Disclose a tier nobody typed at this launch. A DEFAULT profile silently
 	// withholding the group's shared guidance is exactly the action-at-a-distance
 	// the launch echo exists to surface: the operator sees WHICH tier decided,
@@ -4005,6 +4033,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		identityNotes = append(identityNotes, profileNameNote)
 	}
 	roleRefs, roleRefsSource := resolveRoleRefsLaunchField(body, profileTiers)
+	if body.NonInteractive {
+		roleRefs = nil
+	}
 	selectedRoles := make([]*db.Role, 0, len(roleRefs))
 	for _, roleRef := range roleRefs {
 		selectedRole, roleErr := db.GetRole(roleRef)
@@ -4112,6 +4143,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			overridesSource = roleRefsSource
 		}
 		permOverrides = merged
+	}
+	if body.NonInteractive {
+		// A one-shot has no identity to receive role or birth-time grants.
+		isOwner = false
+		permOverrides = nil
 	}
 	// Birth-time access privilege gate, on the RESOLVED values. A human
 	// (dashboard) caller always passes; an agent caller must hold the SAME slug
@@ -4333,6 +4369,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if arErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid_auto_review", arErr.Error())
 		return
+	}
+	if body.NonInteractive {
+		autoReview = false
 	}
 	if home, herr := os.UserHomeDir(); herr == nil && harness.CodexSandboxCwdConflict(harnessBuiltinMode, cwd, home) {
 		writeError(w, http.StatusBadRequest, "invalid_cwd", fmt.Sprintf(
@@ -4697,6 +4736,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		}
 	}
 	remoteControl := resolveRemoteControlIntent(g.RemoteControl, profileRemoteControl, body.RemoteControl)
+	if body.NonInteractive {
+		remoteControl = false
+	}
 	if remoteControl && !h.CanRemoteControl() {
 		remoteControl = false
 	}
@@ -4826,6 +4868,15 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		"group_default":  groupProfile,
 		"global_default": globalProfile,
 	}))
+	if body.NonInteractive {
+		result, runErr := runNonInteractiveSpawn(r.Context(), p, body.RunTimeoutSeconds)
+		if runErr != nil {
+			writeError(w, runErr.Status, runErr.Kind, runErr.Msg)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
 
 	if beforeExecuteSpawnForTest != nil {
 		beforeExecuteSpawnForTest()
