@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -689,6 +690,79 @@ func TestConfinedShellCanBeSpawnedByConfinedAgent(t *testing.T) {
 		spawnLineageSandbox{Harness: harness.ShellName, HarnessBuiltinMode: harness.ShellSandboxOff,
 			Implementation: sandboxpolicy.ImplementationHarnessBuiltin},
 	))
+}
+
+func TestConfinedShellCanDelegateOnlyConfinedChildren(t *testing.T) {
+	parent := spawnLineageSandbox{
+		Harness: harness.ShellName, HarnessBuiltinMode: harness.ShellSandboxOff,
+		Implementation: sandboxpolicy.ImplementationTclaudeLayer,
+	}
+	for _, child := range []spawnLineageSandbox{
+		parent,
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOn},
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOff,
+			Implementation: sandboxpolicy.ImplementationTclaudeLayer},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxManagedProfile},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxDangerFull,
+			Implementation: sandboxpolicy.ImplementationTclaudeLayer},
+		{Harness: harness.CopilotName, HarnessBuiltinMode: harness.CopilotSandboxOff,
+			Implementation: sandboxpolicy.ImplementationTclaudeLayer},
+	} {
+		require.Truef(t, spawnSandboxLineageAllowed(parent, child), "child %#v", child)
+	}
+	for _, child := range []spawnLineageSandbox{
+		{Harness: harness.ShellName, HarnessBuiltinMode: harness.ShellSandboxOff,
+			Implementation: sandboxpolicy.ImplementationOff},
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxOff,
+			Implementation: sandboxpolicy.ImplementationOff},
+		{Harness: harness.DefaultName, HarnessBuiltinMode: harness.ClaudeSandboxInherit},
+		{Harness: harness.CodexName, HarnessBuiltinMode: harness.SandboxDangerFull,
+			Implementation: sandboxpolicy.ImplementationOff},
+		{Harness: harness.OpenCodeName, HarnessBuiltinMode: harness.OpenCodeSandboxTclaudeLayer,
+			Implementation: sandboxpolicy.ImplementationTclaudeLayer},
+	} {
+		require.Falsef(t, spawnSandboxLineageAllowed(parent, child), "child %#v", child)
+	}
+	for _, implementation := range []sandboxpolicy.Implementation{
+		sandboxpolicy.ImplementationOff, sandboxpolicy.ImplementationHarnessBuiltin,
+		sandboxpolicy.ImplementationStacked,
+	} {
+		unconfined := parent
+		unconfined.Implementation = implementation
+		require.Falsef(t, spawnSandboxLineageAllowed(unconfined, parent),
+			"unconfined shell parent with implementation %q", implementation)
+	}
+}
+
+func TestShellParentSpawnGuardsUseItsRecordedPosture(t *testing.T) {
+	setupTestDB(t)
+	const convID = "confined-shell-parent"
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "sess-" + convID, ConvID: convID, Cwd: t.TempDir(),
+		Harness: harness.ShellName, HarnessBuiltinMode: harness.ShellSandboxOff,
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		ApprovalPolicy:        "", // the shell's valid, sole approval posture
+	}))
+	for _, child := range []struct {
+		harness, mode, implementation, approval string
+	}{
+		{harness.ShellName, harness.ShellSandboxOff,
+			string(sandboxpolicy.ImplementationTclaudeLayer), ""},
+		{harness.DefaultName, harness.ClaudeSandboxOff,
+			string(sandboxpolicy.ImplementationTclaudeLayer), "auto"},
+		{harness.CodexName, harness.SandboxDangerFull,
+			string(sandboxpolicy.ImplementationTclaudeLayer), harness.ApprovalNever},
+	} {
+		require.Nilf(t, spawnSandboxLineageFailure(convID, child.harness, child.mode,
+			child.implementation), "sandbox child %#v", child)
+		require.Nilf(t, spawnApprovalLineageFailure(convID, child.harness,
+			child.approval, false), "approval child %#v", child)
+	}
+	require.Equal(t, "sandbox_restricted", spawnSandboxLineageFailure(convID,
+		harness.ShellName, harness.ShellSandboxOff,
+		string(sandboxpolicy.ImplementationOff)).Kind)
+	require.Equal(t, "approval_restricted", spawnApprovalLineageFailure(convID,
+		harness.DefaultName, "bypassPermissions", false).Kind)
 }
 
 func TestSandboxProfileCapabilityFailureRejectsUnsupportedNetworkOnlyProfile(t *testing.T) {
