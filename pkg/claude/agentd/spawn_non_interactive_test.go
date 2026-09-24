@@ -54,6 +54,18 @@ func TestRunNonInteractiveSpawnShellKeepsSuccessfulStderr(t *testing.T) {
 	}
 }
 
+func TestRunNonInteractiveSpawnSuppressesUnplaceableCallbacks(t *testing.T) {
+	useDirectNonInteractiveRunner(t)
+	t.Setenv("TCLAUDE_IGNORE_HOOKS", "inherited-value")
+	got, fail := runNonInteractiveSpawn(context.Background(), spawnParams{
+		Harness: harness.ShellName, Cwd: t.TempDir(),
+		InitialMessage: "printf '%s' \"$TCLAUDE_IGNORE_HOOKS\"",
+	}, 30)
+	if fail != nil || got.ExitCode != 0 || got.Stdout != "1" {
+		t.Fatalf("one-shot hook suppression: result=%+v failure=%+v", got, fail)
+	}
+}
+
 func TestRunNonInteractiveSpawnCodexStderrDependsOnExit(t *testing.T) {
 	useDirectNonInteractiveRunner(t)
 	bin := t.TempDir()

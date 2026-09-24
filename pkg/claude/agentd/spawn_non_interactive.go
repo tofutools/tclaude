@@ -155,7 +155,11 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	defer cancel()
 	command := nonInteractiveCommand{
 		Argv: argv, Cwd: p.Cwd,
-		Env:                   append(seanceProcessEnv(posture.ShellEnvironment), "TCLAUDE_AGENT_HINT=1"),
+		// A one-shot has no session row or group member. Installed harness
+		// callbacks cannot be attributed to it, so suppress those callbacks
+		// before they reach the broker and raise an unplaceable-caller alert.
+		Env: append(seanceProcessEnv(posture.ShellEnvironment),
+			"TCLAUDE_AGENT_HINT=1", "TCLAUDE_IGNORE_HOOKS=1"),
 		SandboxImplementation: p.SandboxImplementation,
 		TimeoutSeconds:        seconds,
 	}
