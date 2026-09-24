@@ -170,6 +170,7 @@ func TestSpawnCLI_NonInteractiveShellDoesNotEnrollMember(t *testing.T) {
 }
 
 func TestSpawnCLI_NonInteractiveGroupContextIsOptIn(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Cleanup(agentd.SetNonInteractiveDirectRunnerForTest())
 	f := newFlow(t)
 	f.HaveGroup("alpha")

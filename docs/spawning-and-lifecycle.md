@@ -94,7 +94,9 @@ status is returned to the caller; timeout exits 124. Group startup context is
 excluded by default; `--group-context` includes it. A shell prompt is a shell
 command, so `--group-context` is rejected for shell runs. Identity,
 messaging, interactive approval, and remote-control options do not apply to
-this mode. The harness-native and `tclaude-layer` sandbox implementations are
+this mode. Successful non-shell runs print stdout only; failed runs retain
+stderr, and shell runs always forward both streams. The harness-native and
+`tclaude-layer` sandbox implementations are
 supported for Claude, Codex, and shell. On Linux, a configured resource limit
 is applied to the one-shot process through a temporary cgroup. A resolved policy
 with pre-launch scripts or agent-owned directories fails before launch because
