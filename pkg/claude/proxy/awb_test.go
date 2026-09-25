@@ -112,7 +112,7 @@ func TestAWBReadyHidesTheFiltersItFixesForItself(t *testing.T) {
 	for _, flag := range []string{"mine", "assignee", "unassigned", "status", "include-closed"} {
 		assert.Nil(t, ready.Flags().Lookup(flag), "`awb ready` must not offer --%s", flag)
 	}
-	for _, flag := range []string{"type", "priority", "label", "workspace", "parent", "sort", "limit"} {
+	for _, flag := range []string{"type", "exclude-epic", "priority", "label", "workspace", "parent", "sort", "limit"} {
 		assert.NotNil(t, ready.Flags().Lookup(flag), "`awb ready` must offer --%s", flag)
 	}
 
@@ -120,6 +120,31 @@ func TestAWBReadyHidesTheFiltersItFixesForItself(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, blocked.Flags().Lookup("status"), "`blocked` fixes the status set for itself")
 	assert.NotNil(t, blocked.Flags().Lookup("mine"), "`blocked` does take an assignee filter")
+
+	for _, verb := range []string{"list", "blocked", "search"} {
+		cmd, _, err := root.Find([]string{verb})
+		require.NoError(t, err)
+		assert.Nil(t, cmd.Flags().Lookup("exclude-epic"), "only `ready` offers --exclude-epic, not `%s`", verb)
+	}
+}
+
+// TestAWBReadyExcludeEpic: --exclude-epic expands to every other type, and
+// refuses to be combined with --type.
+func TestAWBReadyExcludeEpic(t *testing.T) {
+	p := awbFilterParams{ExcludeEpic: true}
+	var stderr bytes.Buffer
+	assert.Equal(t, rcOK, p.checkFilterCombination(&stderr))
+	assert.Empty(t, stderr.String())
+	assert.Equal(t, []string{"feature", "bug", "task", "chore"}, p.values().body(true)["types"])
+
+	p = awbFilterParams{Types: []string{"epic"}}
+	assert.Equal(t, rcOK, p.checkFilterCombination(&stderr))
+	assert.Empty(t, stderr.String())
+	assert.Equal(t, []string{"epic"}, p.values().body(true)["types"])
+
+	p = awbFilterParams{ExcludeEpic: true, Types: []string{"bug"}}
+	assert.Equal(t, rcInvalidArg, p.checkFilterCombination(&stderr))
+	assert.Contains(t, stderr.String(), "mutually exclusive")
 }
 
 // TestAWBSearchDeclaresTheSameFiltersAsTheOtherListings is the guard the

@@ -79,6 +79,7 @@ answer, and why the two lists are printed side by side.
 ```bash
 tclaude proxy awb ready --compact                  # open, unblocked, unassigned, P0 first
 tclaude proxy awb ready --compact --type bug --priority-max 1
+tclaude proxy awb ready --compact --exclude-epic   # every type but epic
 tclaude proxy awb list --compact --mine            # what the daemon's account holds
 tclaude proxy awb blocked --compact                # each line carries its blockers
 tclaude proxy awb search parser crash --compact

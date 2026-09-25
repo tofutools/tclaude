@@ -435,11 +435,21 @@ type awbFilterParams struct {
 	Parent        string   `long:"parent" optional:"true" help:"Select the direct children of this issue — not the whole subtree, which is 'dep tree'."`
 	Limit         int      `long:"limit" optional:"true" help:"Cap the rows returned (1-500, default 50). awb itself returns every row by default; the proxy bounds it, because the rows land in an agent's context."`
 	Sort          string   `long:"sort" optional:"true" help:"Ordering, optionally prefixed with \"-\" for descending: order, workspace, status, assignee, blockers, priority, created, updated or id."`
+	// Only `ready` offers it (see awbListingOptions.excludeEpic). Declared last
+	// so the shorthand it may take cannot displace an existing flag's.
+	ExcludeEpic bool `long:"exclude-epic" optional:"true" help:"Select every type except epic. Shorthand for repeating --type with all the others; mutually exclusive with --type."`
 }
 
+// values resolves the flags into what the daemon is asked for. --exclude-epic
+// is expanded here into the explicit type set, so the daemon and awb see an
+// ordinary type filter.
 func (p *awbFilterParams) values() awbFilterValues {
+	types := p.Types
+	if p.ExcludeEpic {
+		types = awbNonEpicTypes()
+	}
 	return awbFilterValues{
-		Statuses: p.Statuses, IncludeClosed: p.IncludeClosed, Types: p.Types,
+		Statuses: p.Statuses, IncludeClosed: p.IncludeClosed, Types: types,
 		Priorities: p.Priorities, PriorityMax: p.PriorityMax, Labels: p.Labels,
 		Assignees: p.Assignees, Mine: p.Mine, Unassigned: p.Unassigned,
 		Workspaces: p.Workspaces, LegacyProjects: p.Workspaces, Parent: p.Parent, Limit: p.Limit, Sort: p.Sort,
@@ -449,9 +459,10 @@ func (p *awbFilterParams) values() awbFilterValues {
 // awbListingOptions says which filters one listing verb offers, mirroring awb's
 // filterOptions.
 type awbListingOptions struct {
-	status    bool
-	assignee  bool
-	relevance bool
+	status      bool
+	assignee    bool
+	relevance   bool
+	excludeEpic bool
 }
 
 // awbSortAlternatives is the ordering vocabulary one verb offers. boa ENFORCES
@@ -472,6 +483,26 @@ var (
 	awbTypeAlternatives   = []string{"epic", "feature", "bug", "task", "chore"}
 )
 
+// awbNonEpicTypes is every issue type but epic: what --exclude-epic selects.
+func awbNonEpicTypes() []string {
+	types := make([]string, 0, len(awbTypeAlternatives)-1)
+	for _, t := range awbTypeAlternatives {
+		if t != "epic" {
+			types = append(types, t)
+		}
+	}
+	return types
+}
+
+// checkFilterCombination refuses flag combinations that contradict each other.
+func (p *awbFilterParams) checkFilterCombination(stderr io.Writer) int {
+	if p.ExcludeEpic && len(trimmedNonEmptyStrings(p.Types)) > 0 {
+		fmt.Fprintln(stderr, "Error: --exclude-epic and --type are mutually exclusive.")
+		return rcInvalidArg
+	}
+	return rcOK
+}
+
 // hideRejectedFilters takes the flags a verb does not accept off its command
 // entirely.
 //
@@ -489,6 +520,9 @@ func hideRejectedFilters(ctx *boa.HookContext, f *awbFilterParams, opts awbListi
 	} else {
 		boa.GetParamT(ctx, &f.Statuses).SetIgnored(true)
 		boa.GetParamT(ctx, &f.IncludeClosed).SetIgnored(true)
+	}
+	if !opts.excludeEpic {
+		boa.GetParamT(ctx, &f.ExcludeEpic).SetIgnored(true)
 	}
 	if !opts.assignee {
 		boa.GetParamT(ctx, &f.Assignees).SetIgnored(true)
@@ -512,6 +546,9 @@ func awbListingCmd(use, short, long, path string, opts awbListingOptions) *cobra
 			if rc != rcOK {
 				os.Exit(rc)
 			}
+			if rc := p.checkFilterCombination(os.Stderr); rc != rcOK {
+				os.Exit(rc)
+			}
 			os.Exit(awbProxyCall(path, p.values().body(compact), p.AskHuman, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
@@ -531,8 +568,10 @@ func awbReadyCmd() *cobra.Command {
 			"ready lists only unassigned issues, because \"what should nobody-in-particular pick up "+
 			"next\" is the question it exists to answer. It therefore takes no assignee filter and no "+
 			"status filter: which issues you hold is `list --mine`.\n\n"+
+			"--exclude-epic leaves epics out, since an epic is usually decomposed rather than "+
+			"picked up directly.\n\n"+
 			"This is the primary entry point. Start here.",
-		"/v1/awb/issue/ready", awbListingOptions{})
+		"/v1/awb/issue/ready", awbListingOptions{excludeEpic: true})
 }
 
 func awbBlockedCmd() *cobra.Command {
