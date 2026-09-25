@@ -6516,6 +6516,12 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	if fail := applyDefaultProfile(g, &p); fail != nil {
 		return nil, fail
 	}
+	// Trigger and template spawns bypass handleGroupSpawn. Apply the shell rule
+	// here too, after their default profile has resolved the harness.
+	if p.Harness == harness.ShellName && strings.TrimSpace(p.InitialMessage) != "" {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_initial_message",
+			"shell spawn requires non_interactive when initial_message is set"}
+	}
 	if strings.TrimSpace(p.Name) == "" && groupName != "" {
 		p.Name = derivedGroupSpawnName(groupName, time.Now(), randomLabelToken())
 	}
