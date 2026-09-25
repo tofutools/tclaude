@@ -39,9 +39,8 @@ The flags that matter most:
   16384-byte cap) for anything long, multi-line, or containing backticks.
   `--reply-to` picks who the agent's first reply reaches; it defaults to
   the spawning agent, and is empty for human spawns.
-  With `--harness shell`, the brief is a shell command: it runs and the pane
-  exits when the command finishes. Omitting the brief starts an interactive
-  shell instead.
+  With `--harness shell`, omit the brief to start an interactive shell. To run
+  a shell command, use `--non-interactive` with `--initial-message` or `--file`.
 - **Launch shape**: `--harness`, `--model`, `--effort`, `--sandbox`
   (harness-builtin mode), `--sandbox-impl` (OS containment — see
   [Sandboxing](sandboxing.md)), `--ask-for-approval`, and per-harness

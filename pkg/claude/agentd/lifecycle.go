@@ -4074,6 +4074,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	body.InitialMessage, _, _ = resolveIdentityLaunchField(
 		initialMessageField, body.InitialMessage, body.InitialMessageSpecified(), profileTiers,
 		func(p *db.SpawnProfile) string { return p.InitialMessage }, nil)
+	if h.Name == harness.ShellName && !body.NonInteractive && body.InitialMessage != "" {
+		writeError(w, http.StatusBadRequest, "invalid_initial_message",
+			"shell spawn requires non_interactive when initial_message is set")
+		return
+	}
 	// Name an otherwise unnamed group spawn before building spawnParams and its
 	// durable/audit snapshots. executeSpawn retains the same fallback for
 	// non-HTTP adapters, but the shared HTTP path must record the name it
@@ -6510,6 +6515,12 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// sandboxed. A value invalid for the harness is a typed failure.
 	if fail := applyDefaultProfile(g, &p); fail != nil {
 		return nil, fail
+	}
+	// Trigger and template spawns bypass handleGroupSpawn. Apply the shell rule
+	// here too, after their default profile has resolved the harness.
+	if p.Harness == harness.ShellName && strings.TrimSpace(p.InitialMessage) != "" {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_initial_message",
+			"shell spawn requires non_interactive when initial_message is set"}
 	}
 	if strings.TrimSpace(p.Name) == "" && groupName != "" {
 		p.Name = derivedGroupSpawnName(groupName, time.Now(), randomLabelToken())
