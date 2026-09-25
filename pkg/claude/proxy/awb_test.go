@@ -134,15 +134,17 @@ func TestAWBReadyExcludeEpic(t *testing.T) {
 	p := awbFilterParams{ExcludeEpic: true}
 	var stderr bytes.Buffer
 	assert.Equal(t, rcOK, p.checkFilterCombination(&stderr))
+	assert.Empty(t, stderr.String())
 	assert.Equal(t, []string{"feature", "bug", "task", "chore"}, p.values().body(true)["types"])
-
-	p.Types = []string{"bug"}
-	assert.Equal(t, rcInvalidArg, p.checkFilterCombination(&stderr))
-	assert.Contains(t, stderr.String(), "mutually exclusive")
 
 	p = awbFilterParams{Types: []string{"epic"}}
 	assert.Equal(t, rcOK, p.checkFilterCombination(&stderr))
+	assert.Empty(t, stderr.String())
 	assert.Equal(t, []string{"epic"}, p.values().body(true)["types"])
+
+	p = awbFilterParams{ExcludeEpic: true, Types: []string{"bug"}}
+	assert.Equal(t, rcInvalidArg, p.checkFilterCombination(&stderr))
+	assert.Contains(t, stderr.String(), "mutually exclusive")
 }
 
 // TestAWBSearchDeclaresTheSameFiltersAsTheOtherListings is the guard the
