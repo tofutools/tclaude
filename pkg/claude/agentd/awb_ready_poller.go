@@ -209,7 +209,23 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 	// how far dispatch progressed. In particular, do not claim or spawn an
 	// issue that closed after it was selected.
 	if issue.Status == "closed" {
-		if dispatch.Phase == "spawned" && w.config.MonitorClose {
+		spawned := dispatch.Phase == "spawned"
+		if w.config.MonitorClose && !spawned {
+			// A crash can leave the phase at claimed after spawn committed.
+			// Recover the actor before releasing a closed issue's dispatch.
+			a, agentErr := db.GetAgent(dispatch.AgentID)
+			if agentErr != nil {
+				return agentErr
+			}
+			if a != nil && a.CurrentConvID != "" {
+				spawned = true
+			} else if pending, pendingErr := db.GetPendingSpawnByAgentID(dispatch.AgentID); pendingErr != nil {
+				return pendingErr
+			} else if pending != nil {
+				return nil
+			}
+		}
+		if spawned && w.config.MonitorClose {
 			settled, settleErr := liveAWBReadyAgentSettled(dispatch.AgentID)
 			if settleErr != nil {
 				return settleErr
@@ -371,28 +387,34 @@ func (w awbReadyWorker) validateRuntime() error {
 }
 
 func (w awbReadyWorker) ready(ctx context.Context) (*awbIssue, error) {
-	var issues []awbIssue
 	q := awbReadyQuery(w.workspace, w.config.Labels)
 	if w.config.SkipEpics {
-		// AWB returns the whole ordered ready queue without a limit. A limit
-		// could hide the first non-epic issue behind a page of epics.
-		q.Del("limit")
+		q.Set("limit", "50")
 	}
-	_, f := w.session.exec(ctx, awbCall{Method: http.MethodGet, Path: "/api/ready", Query: q}, &issues)
-	if f != nil {
-		w.audit("awb.ready", "", f.Status)
-		return nil, fmt.Errorf("%s", f.Msg)
-	}
-	w.audit("awb.ready", "", http.StatusOK)
-	for i := range issues {
-		if f := w.session.enforceIssueWorkspace(&issues[i]); f != nil {
+	for offset := 0; ; {
+		var issues []awbIssue
+		if offset > 0 {
+			q.Set("offset", fmt.Sprint(offset))
+		}
+		_, f := w.session.exec(ctx, awbCall{Method: http.MethodGet, Path: "/api/ready", Query: q}, &issues)
+		if f != nil {
+			w.audit("awb.ready", "", f.Status)
 			return nil, fmt.Errorf("%s", f.Msg)
 		}
-		if !w.config.SkipEpics || issues[i].Type != "epic" {
-			return &issues[i], nil
+		w.audit("awb.ready", "", http.StatusOK)
+		for i := range issues {
+			if f := w.session.enforceIssueWorkspace(&issues[i]); f != nil {
+				return nil, fmt.Errorf("%s", f.Msg)
+			}
+			if !w.config.SkipEpics || issues[i].Type != "epic" {
+				return &issues[i], nil
+			}
 		}
+		if !w.config.SkipEpics || len(issues) < 50 {
+			return nil, nil
+		}
+		offset += len(issues)
 	}
-	return nil, nil
 }
 
 func awbReadyQuery(workspace string, labels []string) url.Values {
@@ -629,15 +651,6 @@ func (w awbReadyWorker) spawn(issueID, reservedAgentID, harnessName string) (str
 	if g == nil {
 		return "", fmt.Errorf("group %q no longer exists", w.config.Group)
 	}
-	if w.config.MonitorCommit {
-		_, remote, err := openAWBReadyCommitRemote(context.Background(), w.config.Cwd)
-		if err != nil {
-			return "", err
-		}
-		if remote.FetchURL == "" {
-			w.config.MonitorCommit = false
-		}
-	}
 	cwd, wtPath, wtBranch, discard := w.config.Cwd, "", "", ""
 	if w.config.Worktree {
 		body := agent.WorktreePrepareRequest{Repo: w.config.Cwd, Group: w.config.Group, Branch: issueID}
@@ -684,7 +697,7 @@ func awbReadyInitialMessage(issueID string, monitorPR, monitorCommit, monitorClo
 		message += fmt.Sprintf(" When you open a pull request, record it with `tclaude proxy awb update --pull-request-url <url> %s`; the daemon will close the issue after that pull request merges and you become idle or exit.", issueID)
 	}
 	if monitorCommit {
-		message += fmt.Sprintf(" When your change is on main, record its commit with `tclaude proxy awb update --commit-hash <hash> %s`; the daemon will close the issue after that commit reaches the monitored main branch and you become idle or exit.", issueID)
+		message += fmt.Sprintf(" After pushing your change to origin/main, record its commit with `tclaude proxy awb update --commit-hash <hash> %s`; the daemon will close the issue after that commit reaches origin/main and you become idle or exit. Without an origin remote, commit monitoring has no effect and the operator closes the issue.", issueID)
 	}
 	return message
 }

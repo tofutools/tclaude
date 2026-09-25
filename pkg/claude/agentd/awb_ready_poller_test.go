@@ -171,7 +171,8 @@ func TestAWBReadyInitialMessageExplainsPRMonitoring(t *testing.T) {
 func TestAWBReadyInitialMessageExplainsCommitMonitoring(t *testing.T) {
 	message := awbReadyInitialMessage("tcl-a1", false, true, false)
 	assert.Contains(t, message, "awb update --commit-hash")
-	assert.Contains(t, message, "monitored main branch")
+	assert.Contains(t, message, "origin/main")
+	assert.Contains(t, message, "Without an origin remote")
 	assert.Contains(t, message, "daemon will close the issue")
 }
 
@@ -223,6 +224,34 @@ func TestAWBReadyMonitorCloseAdvancesAfterAgentSettles(t *testing.T) {
 	dispatch, err := db.GetAWBReadyDispatch("builders")
 	require.NoError(t, err)
 	assert.Nil(t, dispatch)
+}
+
+func TestAWBReadyMonitorCloseRecoversSpawnedAgentFromClaimedPhase(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	_, err := db.CreateAgentGroup("builders", "")
+	require.NoError(t, err)
+	agentID := testAWBReadyAgent(t, session.StatusIdle)
+	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", agentID)
+	require.NoError(t, err)
+	require.True(t, selected)
+	_, err = db.UpdateAWBReadyDispatch("builders", "tcl-a1", "claimed", "")
+	require.NoError(t, err)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "closed"}))
+	}))
+	t.Cleanup(server.Close)
+	worker := testAWBReadyMonitorWorker(t, server.URL)
+	worker.config.MonitorPR = false
+	worker.config.MonitorClose = true
+	require.NoError(t, worker.tick(context.Background()))
+	dispatch, err := db.GetAWBReadyDispatch("builders")
+	require.NoError(t, err)
+	assert.Nil(t, dispatch)
+	agent, err := db.GetAgent(agentID)
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	assert.False(t, agent.Active())
 }
 
 func TestAWBReadyMonitorClosesMergedPRAfterAgentSettles(t *testing.T) {
@@ -533,11 +562,36 @@ func TestAWBReadyQueryIncludesWorkspaceLabelsAndLimit(t *testing.T) {
 func TestAWBReadySkipEpicsSelectsFirstNonEpic(t *testing.T) {
 	t.Setenv("AWB_PASSWORD", "hunter2")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Empty(t, r.URL.Query().Get("limit"))
+		assert.Equal(t, "50", r.URL.Query().Get("limit"))
 		require.NoError(t, json.NewEncoder(w).Encode([]awbIssue{
 			{ID: "tcl-epic", Workspace: "tcl", Type: "epic"},
 			{ID: "tcl-task", Workspace: "tcl", Type: "task"},
 		}))
+	}))
+	t.Cleanup(server.Close)
+	base, fault := validateAWBBaseURL(server.URL)
+	require.Nil(t, fault)
+	worker := awbReadyWorker{workspace: "tcl", config: config.AWBReadyPollingConfig{SkipEpics: true},
+		session: &awbProxySession{base: base, policy: config.AWBProxyConfig{URL: server.URL, Username: "worker", AllowedWorkspaces: []string{"tcl"}}, workspaces: []string{"tcl"}}}
+	issue, err := worker.ready(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, issue)
+	assert.Equal(t, "tcl-task", issue.ID)
+}
+
+func TestAWBReadySkipEpicsSearchesNextPage(t *testing.T) {
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var issues []awbIssue
+		if r.URL.Query().Get("offset") == "" {
+			for range 50 {
+				issues = append(issues, awbIssue{ID: "tcl-epic", Workspace: "tcl", Type: "epic"})
+			}
+		} else {
+			assert.Equal(t, "50", r.URL.Query().Get("offset"))
+			issues = []awbIssue{{ID: "tcl-task", Workspace: "tcl", Type: "task"}}
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(issues))
 	}))
 	t.Cleanup(server.Close)
 	base, fault := validateAWBBaseURL(server.URL)

@@ -177,7 +177,7 @@ func (w awbReadyWorker) reportCleanupSkipped(issueID, agentID, convID string) {
 //     where the commits on main are new objects and no local ancestry ever
 //     connects them back. Pinning it to the tip is what keeps it from covering
 //     work committed on the branch after the merge.
-//   - Local ancestry contains that commit. The tip is already reachable from
+//   - Origin ancestry contains that commit. The tip is already reachable from
 //     origin/main — the ordinary merge-commit or
 //     fast-forward case, and the only proof available under commit monitoring.
 //
