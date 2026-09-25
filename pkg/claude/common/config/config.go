@@ -2134,6 +2134,8 @@ type AWBReadyPollingConfig struct {
 	Worktree       bool        `json:"worktree,omitempty"`
 	MonitorPR      bool        `json:"monitor_pr,omitempty"`
 	MonitorCommit  bool        `json:"monitor_commit,omitempty"`
+	MonitorClose   bool        `json:"monitor_close,omitempty"`
+	SkipEpics      bool        `json:"skip_epics,omitempty"`
 }
 
 // HarnessList is a harness preference written as either one harness or an

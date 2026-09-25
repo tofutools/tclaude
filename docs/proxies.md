@@ -294,7 +294,8 @@ The `agent.awb_proxy` block in `~/.tclaude/data/config.json`:
   `1m`; `profile`, `sandbox_profile`, `harness`, and `worktree` are optional.
   `harness` takes one name (`"codex"`) or an ordered fallback chain
   (`["codex", "claude"]`) — see "Usage ceilings on pickup" below for what the
-  chain does.
+  chain does. `skip_epics` defaults to `false`; when true, the worker skips
+  epic issues in the ready queue and picks its first ready non-epic issue.
   `monitor_pr` defaults to `false`; when true, the worker watches a GitHub pull
   request recorded in the issue's `pull_request_url` through the configured
   GitHub proxy. After the pull request is merged and the spawned agent exits or
@@ -304,17 +305,20 @@ The `agent.awb_proxy` block in `~/.tclaude/data/config.json`:
   brief tells it to record the PR URL on the issue; an unreachable or non-GitHub
   URL is left alone and reported in the daemon log.
   `monitor_commit` also defaults to `false` and is an alternative to
-  `monitor_pr` for workflows without pull requests; the two cannot be enabled
-  together. It watches the issue's `commit_hash` and, after the spawned agent
-  exits or becomes idle, checks `main` from the configured `cwd`. When an
-  `origin` remote exists, it must be allowed by
-  `agent.git_proxy.allowed_remotes`, and the worker checks a hardened, isolated
-  fetch of the remote branch. When no `origin` is configured, it checks the
-  local `main` branch instead. Once the recorded commit is an ancestor of the
-  applicable branch, the worker closes the issue and advances. This assumes the
+  `monitor_pr` for workflows without pull requests. It watches the issue's
+  `commit_hash` and, after the spawned agent exits or becomes idle, checks
+  `origin/main` through a hardened, isolated fetch. The `origin` remote must
+  be allowed by `agent.git_proxy.allowed_remotes`. Without an `origin` remote,
+  this option has no effect and the worker logs a warning when it picks up an
+  issue. Once the recorded commit is an ancestor of `origin/main`, the worker
+  closes the issue and advances. This assumes the
   recorded commit reaches `main` verbatim;
   a commit rewritten by rebase or squash never satisfies the check. The
   spawned agent's brief tells it to record the commit hash on the issue.
+  `monitor_close` also defaults to `false`. It instructs the spawned agent to
+  close its issue when done. Once the issue is closed and the agent is idle or
+  exited, the worker cleans up and advances. The three monitoring options are
+  mutually exclusive.
   Whenever the worker closes an issue itself, it also clears up after that
   pickup: the agent it spawned is retired and its pane soft-stopped, and with
   `worktree: true` the linked worktree is removed. The branch is deleted only
@@ -327,8 +331,7 @@ The `agent.awb_proxy` block in `~/.tclaude/data/config.json`:
   that has gone back to work is left alone, agent and worktree both; the check
   is taken again immediately before the retire commits, so a turn started while
   the worker was still consulting git does not lose its agent. None of this
-  applies to an issue an operator closes by hand; the worker only tidies up
-  after its own automatic closure.
+  applies to an issue an operator closes by hand outside `monitor_close` mode.
 
   Multiple processes may use the same workspace when every process has a
   non-empty label filter and those configured label sets are disjoint. An

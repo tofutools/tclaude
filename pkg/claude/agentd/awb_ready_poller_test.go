@@ -79,6 +79,43 @@ func TestAWBReadyPickupLogsSelectedDispatch(t *testing.T) {
 	assert.Nil(t, dispatch, "the closed issue releases the dispatch after logging its pickup")
 }
 
+func TestAWBReadyPickupWarnsWhenCommitMonitorHasNoOrigin(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	repo := t.TempDir()
+	out, err := exec.Command("git", "init", "-b", "main", repo).CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	_, err = db.CreateAgentGroup("builders", "")
+	require.NoError(t, err)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		status := "open"
+		if r.URL.Path != "/api/ready" {
+			status = "closed"
+		}
+		issue := awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: status}
+		if r.URL.Path == "/api/ready" {
+			require.NoError(t, json.NewEncoder(w).Encode([]awbIssue{issue}))
+		} else {
+			require.NoError(t, json.NewEncoder(w).Encode(issue))
+		}
+	}))
+	t.Cleanup(server.Close)
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+	base, fault := validateAWBBaseURL(server.URL)
+	require.Nil(t, fault)
+	policy := config.AWBProxyConfig{URL: server.URL, Username: "worker", AllowWrite: true, AllowedWorkspaces: []string{"tcl"}}
+	worker := awbReadyWorker{process: "builders", workspace: "tcl",
+		config:  config.AWBReadyPollingConfig{Workspace: "tcl", Group: "builders", Cwd: repo, MonitorCommit: true},
+		session: &awbProxySession{policy: policy, base: base, workspaces: []string{"tcl"}}}
+	require.NoError(t, worker.tick(context.Background()))
+	assert.Contains(t, logs.String(), "monitor_commit has no effect without an origin remote")
+}
+
 func TestAWBReadyPickupDoesNotLogResumedDispatch(t *testing.T) {
 	setupTestDB(t)
 	t.Setenv("AWB_PASSWORD", "hunter2")
@@ -118,7 +155,7 @@ func TestAWBReadyPickupDoesNotLogResumedDispatch(t *testing.T) {
 }
 
 func TestAWBReadyInitialMessageLeavesClosureToOperator(t *testing.T) {
-	message := awbReadyInitialMessage("tcl-a1", false, false)
+	message := awbReadyInitialMessage("tcl-a1", false, false, false)
 	assert.Contains(t, message, "tclaude proxy awb show tcl-a1")
 	assert.Contains(t, message, "record progress")
 	assert.Contains(t, message, "Leave closing the issue to the operator")
@@ -126,16 +163,132 @@ func TestAWBReadyInitialMessageLeavesClosureToOperator(t *testing.T) {
 }
 
 func TestAWBReadyInitialMessageExplainsPRMonitoring(t *testing.T) {
-	message := awbReadyInitialMessage("tcl-a1", true, false)
+	message := awbReadyInitialMessage("tcl-a1", true, false, false)
 	assert.Contains(t, message, "awb update --pull-request-url")
 	assert.Contains(t, message, "daemon will close the issue")
 }
 
 func TestAWBReadyInitialMessageExplainsCommitMonitoring(t *testing.T) {
-	message := awbReadyInitialMessage("tcl-a1", false, true)
+	message := awbReadyInitialMessage("tcl-a1", false, true, false)
 	assert.Contains(t, message, "awb update --commit-hash")
-	assert.Contains(t, message, "monitored main branch")
+	assert.Contains(t, message, "origin/main")
 	assert.Contains(t, message, "daemon will close the issue")
+}
+
+func TestAWBReadyInitialMessageExplainsAgentClosure(t *testing.T) {
+	message := awbReadyInitialMessage("tcl-a1", false, false, true)
+	assert.Contains(t, message, "tclaude proxy awb close tcl-a1")
+	assert.Contains(t, message, "daemon will clean up")
+	assert.NotContains(t, message, "Leave closing the issue to the operator")
+}
+
+func TestAWBReadyMonitorCloseWaitsForSettledAgent(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	agentID := testAWBReadyAgent(t, session.StatusWorking)
+	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", agentID)
+	require.NoError(t, err)
+	require.True(t, selected)
+	_, err = db.UpdateAWBReadyDispatch("builders", "tcl-a1", "spawned", "")
+	require.NoError(t, err)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "closed"}))
+	}))
+	t.Cleanup(server.Close)
+	worker := testAWBReadyMonitorWorker(t, server.URL)
+	worker.config.MonitorPR = false
+	worker.config.MonitorClose = true
+	require.NoError(t, worker.tick(context.Background()))
+	dispatch, err := db.GetAWBReadyDispatch("builders")
+	require.NoError(t, err)
+	assert.NotNil(t, dispatch)
+}
+
+func TestAWBReadyMonitorCloseAdvancesAfterAgentSettles(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", "agt_missing")
+	require.NoError(t, err)
+	require.True(t, selected)
+	_, err = db.UpdateAWBReadyDispatch("builders", "tcl-a1", "spawned", "")
+	require.NoError(t, err)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "closed"}))
+	}))
+	t.Cleanup(server.Close)
+	worker := testAWBReadyMonitorWorker(t, server.URL)
+	worker.config.MonitorPR = false
+	worker.config.MonitorClose = true
+	require.NoError(t, worker.tick(context.Background()))
+	dispatch, err := db.GetAWBReadyDispatch("builders")
+	require.NoError(t, err)
+	assert.Nil(t, dispatch)
+}
+
+func TestAWBReadyMonitorCloseRecoversSpawnedAgentFromClaimedPhase(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	_, err := db.CreateAgentGroup("builders", "")
+	require.NoError(t, err)
+	agentID := testAWBReadyAgent(t, session.StatusIdle)
+	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", agentID)
+	require.NoError(t, err)
+	require.True(t, selected)
+	_, err = db.UpdateAWBReadyDispatch("builders", "tcl-a1", "claimed", "")
+	require.NoError(t, err)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "closed"}))
+	}))
+	t.Cleanup(server.Close)
+	worker := testAWBReadyMonitorWorker(t, server.URL)
+	worker.config.MonitorPR = false
+	worker.config.MonitorClose = true
+	require.NoError(t, worker.tick(context.Background()))
+	dispatch, err := db.GetAWBReadyDispatch("builders")
+	require.NoError(t, err)
+	assert.Nil(t, dispatch)
+	agent, err := db.GetAgent(agentID)
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	assert.False(t, agent.Active())
+}
+
+func TestAWBReadyMonitorCloseRetriesCleanupWhenAgentResumes(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	installEmptyTmuxForTest(t)
+	agentID := testAWBReadyAgent(t, session.StatusIdle)
+	a, err := db.GetAgent(agentID)
+	require.NoError(t, err)
+	_, err = db.PromoteAgent(a.CurrentConvID, "promote")
+	require.NoError(t, err)
+	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", agentID)
+	require.NoError(t, err)
+	require.True(t, selected)
+	_, err = db.UpdateAWBReadyDispatch("builders", "tcl-a1", "spawned", "")
+	require.NoError(t, err)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "closed"}))
+	}))
+	t.Cleanup(server.Close)
+	worker := testAWBReadyMonitorWorker(t, server.URL)
+	worker.config.MonitorPR = false
+	worker.config.MonitorClose = true
+	previous := awbReadyStillSettledFn
+	awbReadyStillSettledFn = func(string) error { return errAWBReadyAgentBusy }
+	t.Cleanup(func() { awbReadyStillSettledFn = previous })
+	require.NoError(t, worker.tick(context.Background()))
+	dispatch, err := db.GetAWBReadyDispatch("builders")
+	require.NoError(t, err)
+	assert.NotNil(t, dispatch)
+	awbReadyStillSettledFn = previous
+	require.NoError(t, worker.tick(context.Background()))
+	dispatch, err = db.GetAWBReadyDispatch("builders")
+	require.NoError(t, err)
+	assert.Nil(t, dispatch)
+	state, err := db.AgentState(a.CurrentConvID)
+	require.NoError(t, err)
+	assert.Equal(t, db.AgentStateRetired, state)
 }
 
 func TestAWBReadyMonitorClosesMergedPRAfterAgentSettles(t *testing.T) {
@@ -257,7 +410,7 @@ func TestAWBReadyMonitorCommitClosesAfterAgentSettles(t *testing.T) {
 	worker.config.MonitorCommit = true
 	worker.config.Cwd = "/repo"
 	require.NoError(t, worker.tick(context.Background()))
-	assert.Equal(t, "Recorded commit reached local main and spawned agent settled", closeReason)
+	assert.Equal(t, "Recorded commit reached origin/main and spawned agent settled", closeReason)
 	dispatch, err := db.GetAWBReadyDispatch("builders")
 	require.NoError(t, err)
 	assert.Nil(t, dispatch)
@@ -340,7 +493,7 @@ func TestAWBReadyCommitOnOriginMain(t *testing.T) {
 	assert.Equal(t, before, fetchCalls, "an unauthorized origin must be refused before fetch")
 }
 
-func TestAWBReadyCommitOnLocalMainWithoutOrigin(t *testing.T) {
+func TestAWBReadyCommitDoesNotMonitorLocalMainWithoutOrigin(t *testing.T) {
 	setupTestDB(t)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -360,8 +513,8 @@ func TestAWBReadyCommitOnLocalMainWithoutOrigin(t *testing.T) {
 
 	reached, local, err := liveAWBReadyCommitOnMain(context.Background(), repo, onMain)
 	require.NoError(t, err)
-	assert.True(t, reached)
-	assert.True(t, local)
+	assert.False(t, reached)
+	assert.False(t, local)
 
 	git("switch", "-c", "feature")
 	git("commit", "--allow-empty", "-m", "feature only")
@@ -369,14 +522,14 @@ func TestAWBReadyCommitOnLocalMainWithoutOrigin(t *testing.T) {
 	reached, local, err = liveAWBReadyCommitOnMain(context.Background(), repo, featureOnly)
 	require.NoError(t, err)
 	assert.False(t, reached)
-	assert.True(t, local)
+	assert.False(t, local)
 
 	git("switch", "main")
 	git("merge", "--ff-only", "feature")
 	reached, local, err = liveAWBReadyCommitOnMain(context.Background(), repo, featureOnly)
 	require.NoError(t, err)
-	assert.True(t, reached)
-	assert.True(t, local)
+	assert.False(t, reached)
+	assert.False(t, local)
 }
 
 func TestAWBReadyCommitWithoutOriginRejectsNonRepository(t *testing.T) {
@@ -392,6 +545,30 @@ func TestAWBReadyAgentSettledForMissingAgent(t *testing.T) {
 	settled, err := liveAWBReadyAgentSettled("agt_missing")
 	require.NoError(t, err)
 	assert.True(t, settled, "an absent actor cannot still be working")
+}
+
+func TestAWBReadyMonitorCloseWaitsForPendingEnrollment(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	const agentID = "agt_pending"
+	require.NoError(t, db.InsertPendingSpawn(&db.PendingSpawn{
+		Label: "spwn-pending", AgentID: agentID, GroupID: 1}))
+	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", agentID)
+	require.NoError(t, err)
+	require.True(t, selected)
+	_, err = db.UpdateAWBReadyDispatch("builders", "tcl-a1", "spawned", "")
+	require.NoError(t, err)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "closed"}))
+	}))
+	t.Cleanup(server.Close)
+	worker := testAWBReadyMonitorWorker(t, server.URL)
+	worker.config.MonitorPR = false
+	worker.config.MonitorClose = true
+	require.NoError(t, worker.tick(context.Background()))
+	dispatch, err := db.GetAWBReadyDispatch("builders")
+	require.NoError(t, err)
+	assert.NotNil(t, dispatch, "a pending spawn can still enroll after the issue closes")
 }
 
 func TestAWBReadyAgentSettledForMissingSession(t *testing.T) {
@@ -443,6 +620,26 @@ func TestAWBReadyQueryIncludesWorkspaceLabelsAndLimit(t *testing.T) {
 	assert.Equal(t, []string{"backend", "urgent"}, query["label"])
 }
 
+func TestAWBReadySkipEpicsSelectsFirstNonEpic(t *testing.T) {
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "1", r.URL.Query().Get("limit"))
+		assert.Equal(t, []string{"feature", "bug", "task", "chore"}, r.URL.Query()["type"])
+		require.NoError(t, json.NewEncoder(w).Encode([]awbIssue{
+			{ID: "tcl-task", Workspace: "tcl", Type: "task"},
+		}))
+	}))
+	t.Cleanup(server.Close)
+	base, fault := validateAWBBaseURL(server.URL)
+	require.Nil(t, fault)
+	worker := awbReadyWorker{workspace: "tcl", config: config.AWBReadyPollingConfig{SkipEpics: true},
+		session: &awbProxySession{base: base, policy: config.AWBProxyConfig{URL: server.URL, Username: "worker", AllowedWorkspaces: []string{"tcl"}}, workspaces: []string{"tcl"}}}
+	issue, err := worker.ready(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, issue)
+	assert.Equal(t, "tcl-task", issue.ID)
+}
+
 func TestValidateAWBReadyPolling(t *testing.T) {
 	policy := config.AWBProxyConfig{URL: "https://awb.example", Username: "worker", AllowWrite: true, AllowedWorkspaces: []string{"tcl"}}
 	base := config.AWBReadyPollingConfig{Workspace: "tcl", Group: "builders", Cwd: "/repo"}
@@ -486,6 +683,15 @@ func TestValidateAWBReadyPolling(t *testing.T) {
 	assert.ErrorContains(t, err, "invalid label")
 	bad = base
 	bad.MonitorPR = true
+	bad.MonitorCommit = true
+	_, err = validateAWBReadyPolling(policy, "builders", bad)
+	assert.ErrorContains(t, err, "alternatives")
+	bad = base
+	bad.MonitorClose = true
+	bad.MonitorPR = true
+	_, err = validateAWBReadyPolling(policy, "builders", bad)
+	assert.ErrorContains(t, err, "alternatives")
+	bad.MonitorPR = false
 	bad.MonitorCommit = true
 	_, err = validateAWBReadyPolling(policy, "builders", bad)
 	assert.ErrorContains(t, err, "alternatives")

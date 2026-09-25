@@ -255,9 +255,8 @@ func TestAWBReadyBranchTipResolvesLocalBranches(t *testing.T) {
 	assert.ErrorContains(t, err, "invalid branch name")
 }
 
-// End-to-end over real git: an unmerged branch is kept, the same branch is
-// deletable once main contains it.
-func TestAWBReadyBranchMergedFollowsLocalAncestry(t *testing.T) {
+// Without origin, local main cannot prove a branch safe to delete.
+func TestAWBReadyBranchMergedIgnoresLocalAncestry(t *testing.T) {
 	setupTestDB(t)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -284,7 +283,7 @@ func TestAWBReadyBranchMergedFollowsLocalAncestry(t *testing.T) {
 	git("switch", "main")
 	git("merge", "--ff-only", "tcl-a1")
 	at, _ = w.branchMergedAt(context.Background(), "tcl-a1", awbReadyPRState{})
-	assert.Equal(t, git("rev-parse", "refs/heads/tcl-a1"), at)
+	assert.Empty(t, at)
 }
 
 func TestApplyRetireWorktreeCleanupKeepsBranchWhenAsked(t *testing.T) {

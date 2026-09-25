@@ -16,8 +16,9 @@ import (
 // has closed its issue.
 //
 // The poller's monitored closure already proves the work landed — a merged pull
-// request, or a recorded commit that reached main — and it only closes once the
-// spawned agent has settled. At that point the pickup's whole footprint is
+// request, or a recorded commit that reached origin/main — or the agent closed
+// its issue under monitor_close. Cleanup waits until the spawned agent has
+// settled. At that point the pickup's whole footprint is
 // finished work: an idle pane holding a context nobody will read again, a
 // linked worktree, and a feature branch. Leaving them behind made every
 // completed issue cost the operator a manual retire plus a `git worktree
@@ -52,27 +53,35 @@ const awbReadyRetireActor = "system:awb-ready-poller"
 var awbReadyBranchTipFn = awbReadyBranchTip
 
 // cleanupAfterClose retires the agent this dispatch spawned and removes the git
-// footprint the pickup created. Best-effort by construction: every failure is
-// logged and audited, none is returned, because the issue is already closed and
-// a tick that failed here would either re-close it or hold the process on
-// finished work.
+// footprint the pickup created. It returns false when retirement must be
+// retried. The caller decides whether to retain the closed dispatch; a
+// monitor_close dispatch must stay until its actor can be retired.
 //
 // pr carries the merge verdict for the monitored pull request, empty under
 // commit monitoring. It is what lets a squash- or rebase-merged branch still be
 // recognised as merged; see awbReadyBranchMerged.
-func (w awbReadyWorker) cleanupAfterClose(ctx context.Context, dispatch *db.AWBReadyDispatch, pr awbReadyPRState) {
+func (w awbReadyWorker) cleanupAfterClose(ctx context.Context, dispatch *db.AWBReadyDispatch, pr awbReadyPRState) bool {
 	agentID := strings.TrimSpace(dispatch.AgentID)
 	if agentID == "" {
-		return
+		return true
 	}
 	a, err := db.GetAgent(agentID)
 	if err != nil {
 		slog.Warn("awb ready polling: could not load the spawned agent for cleanup",
 			"process", w.process, "issue", dispatch.IssueID, "agent_id", agentID, "error", err)
-		return
+		return false
 	}
-	if a == nil || a.CurrentConvID == "" {
-		return
+	if a == nil {
+		pending, err := db.GetPendingSpawnByAgentID(agentID)
+		if err != nil {
+			slog.Warn("awb ready polling: could not check pending spawn before cleanup",
+				"process", w.process, "issue", dispatch.IssueID, "agent_id", agentID, "error", err)
+			return false
+		}
+		return pending == nil
+	}
+	if a.CurrentConvID == "" {
+		return true
 	}
 	convID := a.CurrentConvID
 	// A cheap early out for the overwhelmingly common "went back to work" case,
@@ -82,10 +91,10 @@ func (w awbReadyWorker) cleanupAfterClose(ctx context.Context, dispatch *db.AWBR
 	if settled, err := liveAWBReadyAgentSettled(agentID); err != nil {
 		slog.Warn("awb ready polling: could not confirm the spawned agent settled before cleanup",
 			"process", w.process, "issue", dispatch.IssueID, "agent_id", agentID, "error", err)
-		return
+		return false
 	} else if !settled {
 		w.reportCleanupSkipped(dispatch.IssueID, agentID, convID)
-		return
+		return false
 	}
 
 	// Resolve the worktree BEFORE anything is demoted or stopped: the
@@ -109,10 +118,10 @@ func (w awbReadyWorker) cleanupAfterClose(ctx context.Context, dispatch *db.AWBR
 	if a.Active() {
 		_, _, err := retireAgentConvGuarded(convID, awbReadyRetireActor,
 			"AWB issue "+dispatch.IssueID+" closed automatically", false,
-			func() error { return awbReadyStillSettled(agentID) })
+			func() error { return awbReadyStillSettledFn(agentID) })
 		if errors.Is(err, errAWBReadyAgentBusy) {
 			w.reportCleanupSkipped(dispatch.IssueID, agentID, convID)
-			return
+			return false
 		}
 		if err != nil {
 			slog.Warn("awb ready polling: could not retire the spawned agent",
@@ -120,7 +129,7 @@ func (w awbReadyWorker) cleanupAfterClose(ctx context.Context, dispatch *db.AWBR
 				"conv", convID, "error", err)
 			w.auditDetail("agent.retire", dispatch.IssueID, http.StatusInternalServerError,
 				"agent_id="+agentID+" error="+err.Error())
-			return
+			return false
 		}
 	}
 	// Shutdown is unconditional: an idle pane on a closed issue is exactly what
@@ -135,12 +144,15 @@ func (w awbReadyWorker) cleanupAfterClose(ctx context.Context, dispatch *db.AWBR
 		"process", w.process, "workspace", w.workspace, "issue", dispatch.IssueID,
 		"agent_id", agentID, "conv", convID, "notes", strings.Join(td.Notes, "; "))
 	w.auditDetail("agent.retire", dispatch.IssueID, http.StatusOK, detail)
+	return true
 }
 
 // errAWBReadyAgentBusy aborts the guarded retire when the actor is no longer
 // settled at the commit boundary. Distinct from a real failure: nothing went
 // wrong, the sweep simply has no licence to act any more.
 var errAWBReadyAgentBusy = errors.New("agent is no longer settled")
+
+var awbReadyStillSettledFn = awbReadyStillSettled
 
 // awbReadyStillSettled is the retire guard. A read error is treated as busy, not
 // as settled: the sweep is housekeeping and must fail toward leaving the actor
@@ -176,8 +188,8 @@ func (w awbReadyWorker) reportCleanupSkipped(issueID, agentID, convID string) {
 //     where the commits on main are new objects and no local ancestry ever
 //     connects them back. Pinning it to the tip is what keeps it from covering
 //     work committed on the branch after the merge.
-//   - Local ancestry contains that commit. The tip is already reachable from
-//     the main branch the process monitors — the ordinary merge-commit or
+//   - Origin ancestry contains that commit. The tip is already reachable from
+//     origin/main — the ordinary merge-commit or
 //     fast-forward case, and the only proof available under commit monitoring.
 //
 // Anything else — a detached HEAD, a branch that no longer resolves, a git
@@ -200,8 +212,8 @@ func (w awbReadyWorker) branchMergedAt(ctx context.Context, branch string, pr aw
 		return tip, "the merged pull request merged this exact commit into " + pr.BaseRef
 	}
 	// The same check the closure itself was decided by, so the branch verdict is
-	// taken against exactly the same main: an isolated, hardened fetch of
-	// origin/main where an allow-listed origin exists, the local main otherwise.
+	// taken against an isolated, hardened fetch of origin/main. With no origin,
+	// this proof is unavailable and the branch is kept.
 	reached, _, err := liveAWBReadyCommitOnMainFn(ctx, w.config.Cwd, tip)
 	if err != nil {
 		return "", "could not check whether the branch reached main: " + err.Error()

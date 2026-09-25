@@ -1439,6 +1439,18 @@ func TestAWBReadyPollingNormalizesWorkspaceAndRoundTrips(t *testing.T) {
 	assert.Contains(t, string(raw), `"monitor_commit":true`)
 }
 
+func TestAWBReadyPollingNewOptionsRoundTrip(t *testing.T) {
+	var cfg Config
+	require.NoError(t, json.Unmarshal([]byte(`{"agent":{"awb_proxy":{"ready_polling":{"builders":{"workspace":"tcl","group":"builders","cwd":"/repo","monitor_close":true,"skip_epics":true}}}}}`), &cfg))
+	polling := cfg.ResolvedAWBProxy().ReadyPolling["builders"]
+	assert.True(t, polling.MonitorClose)
+	assert.True(t, polling.SkipEpics)
+	raw, err := json.Marshal(&cfg)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"monitor_close":true`)
+	assert.Contains(t, string(raw), `"skip_epics":true`)
+}
+
 func TestAWBReadyPollingHarnessAcceptsOneNameOrAFallbackChain(t *testing.T) {
 	var cfg Config
 	require.NoError(t, json.Unmarshal([]byte(`{"agent":{"awb_proxy":{"ready_polling":{`+
