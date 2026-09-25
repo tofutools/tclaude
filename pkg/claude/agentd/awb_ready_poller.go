@@ -609,7 +609,11 @@ func liveAWBReadyAgentSettled(agentID string) (bool, error) {
 		return false, err
 	}
 	if a == nil {
-		return true, nil
+		pending, err := db.GetPendingSpawnByAgentID(agentID)
+		if err != nil {
+			return false, err
+		}
+		return pending == nil, nil
 	}
 	if !a.Active() {
 		return true, nil

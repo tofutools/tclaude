@@ -548,6 +548,30 @@ func TestAWBReadyAgentSettledForMissingAgent(t *testing.T) {
 	assert.True(t, settled, "an absent actor cannot still be working")
 }
 
+func TestAWBReadyMonitorCloseWaitsForPendingEnrollment(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	const agentID = "agt_pending"
+	require.NoError(t, db.InsertPendingSpawn(&db.PendingSpawn{
+		Label: "spwn-pending", AgentID: agentID, GroupID: 1}))
+	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", agentID)
+	require.NoError(t, err)
+	require.True(t, selected)
+	_, err = db.UpdateAWBReadyDispatch("builders", "tcl-a1", "spawned", "")
+	require.NoError(t, err)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "closed"}))
+	}))
+	t.Cleanup(server.Close)
+	worker := testAWBReadyMonitorWorker(t, server.URL)
+	worker.config.MonitorPR = false
+	worker.config.MonitorClose = true
+	require.NoError(t, worker.tick(context.Background()))
+	dispatch, err := db.GetAWBReadyDispatch("builders")
+	require.NoError(t, err)
+	assert.NotNil(t, dispatch, "a pending spawn can still enroll after the issue closes")
+}
+
 func TestAWBReadyAgentSettledForMissingSession(t *testing.T) {
 	setupTestDB(t)
 	agentID, err := db.AllocateAgent("conv-pruned", "spawn")

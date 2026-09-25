@@ -71,7 +71,16 @@ func (w awbReadyWorker) cleanupAfterClose(ctx context.Context, dispatch *db.AWBR
 			"process", w.process, "issue", dispatch.IssueID, "agent_id", agentID, "error", err)
 		return false
 	}
-	if a == nil || a.CurrentConvID == "" {
+	if a == nil {
+		pending, err := db.GetPendingSpawnByAgentID(agentID)
+		if err != nil {
+			slog.Warn("awb ready polling: could not check pending spawn before cleanup",
+				"process", w.process, "issue", dispatch.IssueID, "agent_id", agentID, "error", err)
+			return false
+		}
+		return pending == nil
+	}
+	if a.CurrentConvID == "" {
 		return true
 	}
 	convID := a.CurrentConvID
