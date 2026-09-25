@@ -691,13 +691,13 @@ func awbReadyInitialMessage(issueID string, monitorPR, monitorCommit, monitorClo
 	if monitorClose {
 		message += fmt.Sprintf(" When the work is done, close the issue with `tclaude proxy awb close %s --reason <reason>`; the daemon will clean up your agent and worktree after you become idle or exit, then advance to the next issue.", issueID)
 	} else {
-		message += " Leave closing the issue to the operator."
+		message += " Leave closing the issue to the operator or daemon."
 	}
 	if monitorPR {
 		message += fmt.Sprintf(" When you open a pull request, record it with `tclaude proxy awb update --pull-request-url <url> %s`; the daemon will close the issue after that pull request merges and you become idle or exit.", issueID)
 	}
 	if monitorCommit {
-		message += fmt.Sprintf(" After pushing your change to origin/main, record its commit with `tclaude proxy awb update --commit-hash <hash> %s`; the daemon will close the issue after that commit reaches origin/main and you become idle or exit. Without an origin remote, commit monitoring has no effect and the operator closes the issue.", issueID)
+		message += fmt.Sprintf(" When your change is on main, record its commit with `tclaude proxy awb update --commit-hash <hash> %s`; the daemon will close the issue after that commit reaches origin/main and you become idle or exit.", issueID)
 	}
 	return message
 }
