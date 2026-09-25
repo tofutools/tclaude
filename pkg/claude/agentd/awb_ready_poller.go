@@ -391,32 +391,26 @@ func (w awbReadyWorker) validateRuntime() error {
 func (w awbReadyWorker) ready(ctx context.Context) (*awbIssue, error) {
 	q := awbReadyQuery(w.workspace, w.config.Labels)
 	if w.config.SkipEpics {
-		q.Set("limit", "50")
-	}
-	for offset := 0; ; {
-		var issues []awbIssue
-		if offset > 0 {
-			q.Set("offset", fmt.Sprint(offset))
-		}
-		_, f := w.session.exec(ctx, awbCall{Method: http.MethodGet, Path: "/api/ready", Query: q}, &issues)
-		if f != nil {
-			w.audit("awb.ready", "", f.Status)
-			return nil, fmt.Errorf("%s", f.Msg)
-		}
-		w.audit("awb.ready", "", http.StatusOK)
-		for i := range issues {
-			if f := w.session.enforceIssueWorkspace(&issues[i]); f != nil {
-				return nil, fmt.Errorf("%s", f.Msg)
-			}
-			if !w.config.SkipEpics || issues[i].Type != "epic" {
-				return &issues[i], nil
+		for _, issueType := range awbTypes {
+			if issueType != "epic" {
+				q.Add("type", issueType)
 			}
 		}
-		if !w.config.SkipEpics || len(issues) < 50 {
-			return nil, nil
-		}
-		offset += len(issues)
 	}
+	var issues []awbIssue
+	_, f := w.session.exec(ctx, awbCall{Method: http.MethodGet, Path: "/api/ready", Query: q}, &issues)
+	if f != nil {
+		w.audit("awb.ready", "", f.Status)
+		return nil, fmt.Errorf("%s", f.Msg)
+	}
+	w.audit("awb.ready", "", http.StatusOK)
+	if len(issues) == 0 {
+		return nil, nil
+	}
+	if f := w.session.enforceIssueWorkspace(&issues[0]); f != nil {
+		return nil, fmt.Errorf("%s", f.Msg)
+	}
+	return &issues[0], nil
 }
 
 func awbReadyQuery(workspace string, labels []string) url.Values {

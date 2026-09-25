@@ -600,36 +600,11 @@ func TestAWBReadyQueryIncludesWorkspaceLabelsAndLimit(t *testing.T) {
 func TestAWBReadySkipEpicsSelectsFirstNonEpic(t *testing.T) {
 	t.Setenv("AWB_PASSWORD", "hunter2")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "50", r.URL.Query().Get("limit"))
+		assert.Equal(t, "1", r.URL.Query().Get("limit"))
+		assert.Equal(t, []string{"feature", "bug", "task", "chore"}, r.URL.Query()["type"])
 		require.NoError(t, json.NewEncoder(w).Encode([]awbIssue{
-			{ID: "tcl-epic", Workspace: "tcl", Type: "epic"},
 			{ID: "tcl-task", Workspace: "tcl", Type: "task"},
 		}))
-	}))
-	t.Cleanup(server.Close)
-	base, fault := validateAWBBaseURL(server.URL)
-	require.Nil(t, fault)
-	worker := awbReadyWorker{workspace: "tcl", config: config.AWBReadyPollingConfig{SkipEpics: true},
-		session: &awbProxySession{base: base, policy: config.AWBProxyConfig{URL: server.URL, Username: "worker", AllowedWorkspaces: []string{"tcl"}}, workspaces: []string{"tcl"}}}
-	issue, err := worker.ready(context.Background())
-	require.NoError(t, err)
-	require.NotNil(t, issue)
-	assert.Equal(t, "tcl-task", issue.ID)
-}
-
-func TestAWBReadySkipEpicsSearchesNextPage(t *testing.T) {
-	t.Setenv("AWB_PASSWORD", "hunter2")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var issues []awbIssue
-		if r.URL.Query().Get("offset") == "" {
-			for range 50 {
-				issues = append(issues, awbIssue{ID: "tcl-epic", Workspace: "tcl", Type: "epic"})
-			}
-		} else {
-			assert.Equal(t, "50", r.URL.Query().Get("offset"))
-			issues = []awbIssue{{ID: "tcl-task", Workspace: "tcl", Type: "task"}}
-		}
-		require.NoError(t, json.NewEncoder(w).Encode(issues))
 	}))
 	t.Cleanup(server.Close)
 	base, fault := validateAWBBaseURL(server.URL)
