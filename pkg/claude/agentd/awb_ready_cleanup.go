@@ -16,8 +16,9 @@ import (
 // has closed its issue.
 //
 // The poller's monitored closure already proves the work landed — a merged pull
-// request, or a recorded commit that reached main — and it only closes once the
-// spawned agent has settled. At that point the pickup's whole footprint is
+// request, or a recorded commit that reached origin/main — or the agent closed
+// its issue under monitor_close. Cleanup waits until the spawned agent has
+// settled. At that point the pickup's whole footprint is
 // finished work: an idle pane holding a context nobody will read again, a
 // linked worktree, and a feature branch. Leaving them behind made every
 // completed issue cost the operator a manual retire plus a `git worktree
@@ -177,7 +178,7 @@ func (w awbReadyWorker) reportCleanupSkipped(issueID, agentID, convID string) {
 //     connects them back. Pinning it to the tip is what keeps it from covering
 //     work committed on the branch after the merge.
 //   - Local ancestry contains that commit. The tip is already reachable from
-//     the main branch the process monitors — the ordinary merge-commit or
+//     origin/main — the ordinary merge-commit or
 //     fast-forward case, and the only proof available under commit monitoring.
 //
 // Anything else — a detached HEAD, a branch that no longer resolves, a git
@@ -200,8 +201,8 @@ func (w awbReadyWorker) branchMergedAt(ctx context.Context, branch string, pr aw
 		return tip, "the merged pull request merged this exact commit into " + pr.BaseRef
 	}
 	// The same check the closure itself was decided by, so the branch verdict is
-	// taken against exactly the same main: an isolated, hardened fetch of
-	// origin/main where an allow-listed origin exists, the local main otherwise.
+	// taken against an isolated, hardened fetch of origin/main. With no origin,
+	// this proof is unavailable and the branch is kept.
 	reached, _, err := liveAWBReadyCommitOnMainFn(ctx, w.config.Cwd, tip)
 	if err != nil {
 		return "", "could not check whether the branch reached main: " + err.Error()
