@@ -53,27 +53,26 @@ const awbReadyRetireActor = "system:awb-ready-poller"
 var awbReadyBranchTipFn = awbReadyBranchTip
 
 // cleanupAfterClose retires the agent this dispatch spawned and removes the git
-// footprint the pickup created. Best-effort by construction: every failure is
-// logged and audited, none is returned, because the issue is already closed and
-// a tick that failed here would either re-close it or hold the process on
-// finished work.
+// footprint the pickup created. It returns false when retirement must be
+// retried. The caller decides whether to retain the closed dispatch; a
+// monitor_close dispatch must stay until its actor can be retired.
 //
 // pr carries the merge verdict for the monitored pull request, empty under
 // commit monitoring. It is what lets a squash- or rebase-merged branch still be
 // recognised as merged; see awbReadyBranchMerged.
-func (w awbReadyWorker) cleanupAfterClose(ctx context.Context, dispatch *db.AWBReadyDispatch, pr awbReadyPRState) {
+func (w awbReadyWorker) cleanupAfterClose(ctx context.Context, dispatch *db.AWBReadyDispatch, pr awbReadyPRState) bool {
 	agentID := strings.TrimSpace(dispatch.AgentID)
 	if agentID == "" {
-		return
+		return true
 	}
 	a, err := db.GetAgent(agentID)
 	if err != nil {
 		slog.Warn("awb ready polling: could not load the spawned agent for cleanup",
 			"process", w.process, "issue", dispatch.IssueID, "agent_id", agentID, "error", err)
-		return
+		return false
 	}
 	if a == nil || a.CurrentConvID == "" {
-		return
+		return true
 	}
 	convID := a.CurrentConvID
 	// A cheap early out for the overwhelmingly common "went back to work" case,
@@ -83,10 +82,10 @@ func (w awbReadyWorker) cleanupAfterClose(ctx context.Context, dispatch *db.AWBR
 	if settled, err := liveAWBReadyAgentSettled(agentID); err != nil {
 		slog.Warn("awb ready polling: could not confirm the spawned agent settled before cleanup",
 			"process", w.process, "issue", dispatch.IssueID, "agent_id", agentID, "error", err)
-		return
+		return false
 	} else if !settled {
 		w.reportCleanupSkipped(dispatch.IssueID, agentID, convID)
-		return
+		return false
 	}
 
 	// Resolve the worktree BEFORE anything is demoted or stopped: the
@@ -110,10 +109,10 @@ func (w awbReadyWorker) cleanupAfterClose(ctx context.Context, dispatch *db.AWBR
 	if a.Active() {
 		_, _, err := retireAgentConvGuarded(convID, awbReadyRetireActor,
 			"AWB issue "+dispatch.IssueID+" closed automatically", false,
-			func() error { return awbReadyStillSettled(agentID) })
+			func() error { return awbReadyStillSettledFn(agentID) })
 		if errors.Is(err, errAWBReadyAgentBusy) {
 			w.reportCleanupSkipped(dispatch.IssueID, agentID, convID)
-			return
+			return false
 		}
 		if err != nil {
 			slog.Warn("awb ready polling: could not retire the spawned agent",
@@ -121,7 +120,7 @@ func (w awbReadyWorker) cleanupAfterClose(ctx context.Context, dispatch *db.AWBR
 				"conv", convID, "error", err)
 			w.auditDetail("agent.retire", dispatch.IssueID, http.StatusInternalServerError,
 				"agent_id="+agentID+" error="+err.Error())
-			return
+			return false
 		}
 	}
 	// Shutdown is unconditional: an idle pane on a closed issue is exactly what
@@ -136,12 +135,15 @@ func (w awbReadyWorker) cleanupAfterClose(ctx context.Context, dispatch *db.AWBR
 		"process", w.process, "workspace", w.workspace, "issue", dispatch.IssueID,
 		"agent_id", agentID, "conv", convID, "notes", strings.Join(td.Notes, "; "))
 	w.auditDetail("agent.retire", dispatch.IssueID, http.StatusOK, detail)
+	return true
 }
 
 // errAWBReadyAgentBusy aborts the guarded retire when the actor is no longer
 // settled at the commit boundary. Distinct from a real failure: nothing went
 // wrong, the sweep simply has no licence to act any more.
 var errAWBReadyAgentBusy = errors.New("agent is no longer settled")
+
+var awbReadyStillSettledFn = awbReadyStillSettled
 
 // awbReadyStillSettled is the retire guard. A read error is treated as busy, not
 // as settled: the sweep is housekeeping and must fail toward leaving the actor

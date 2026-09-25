@@ -233,7 +233,9 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 			if !settled {
 				return nil
 			}
-			w.cleanupAfterClose(ctx, dispatch, awbReadyPRState{})
+			if !w.cleanupAfterClose(ctx, dispatch, awbReadyPRState{}) {
+				return nil
+			}
 		}
 		_, err = db.ClearAWBReadyDispatch(w.process, dispatch.IssueID)
 		return err

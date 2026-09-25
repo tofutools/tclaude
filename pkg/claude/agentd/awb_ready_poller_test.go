@@ -254,6 +254,44 @@ func TestAWBReadyMonitorCloseRecoversSpawnedAgentFromClaimedPhase(t *testing.T) 
 	assert.False(t, agent.Active())
 }
 
+func TestAWBReadyMonitorCloseRetriesCleanupWhenAgentResumes(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	installEmptyTmuxForTest(t)
+	agentID := testAWBReadyAgent(t, session.StatusIdle)
+	a, err := db.GetAgent(agentID)
+	require.NoError(t, err)
+	_, err = db.PromoteAgent(a.CurrentConvID, "promote")
+	require.NoError(t, err)
+	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", agentID)
+	require.NoError(t, err)
+	require.True(t, selected)
+	_, err = db.UpdateAWBReadyDispatch("builders", "tcl-a1", "spawned", "")
+	require.NoError(t, err)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "closed"}))
+	}))
+	t.Cleanup(server.Close)
+	worker := testAWBReadyMonitorWorker(t, server.URL)
+	worker.config.MonitorPR = false
+	worker.config.MonitorClose = true
+	previous := awbReadyStillSettledFn
+	awbReadyStillSettledFn = func(string) error { return errAWBReadyAgentBusy }
+	t.Cleanup(func() { awbReadyStillSettledFn = previous })
+	require.NoError(t, worker.tick(context.Background()))
+	dispatch, err := db.GetAWBReadyDispatch("builders")
+	require.NoError(t, err)
+	assert.NotNil(t, dispatch)
+	awbReadyStillSettledFn = previous
+	require.NoError(t, worker.tick(context.Background()))
+	dispatch, err = db.GetAWBReadyDispatch("builders")
+	require.NoError(t, err)
+	assert.Nil(t, dispatch)
+	state, err := db.AgentState(a.CurrentConvID)
+	require.NoError(t, err)
+	assert.Equal(t, db.AgentStateRetired, state)
+}
+
 func TestAWBReadyMonitorClosesMergedPRAfterAgentSettles(t *testing.T) {
 	setupTestDB(t)
 	t.Setenv("AWB_PASSWORD", "hunter2")
