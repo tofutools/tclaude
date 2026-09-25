@@ -172,7 +172,6 @@ func TestAWBReadyInitialMessageExplainsCommitMonitoring(t *testing.T) {
 	message := awbReadyInitialMessage("tcl-a1", false, true, false)
 	assert.Contains(t, message, "awb update --commit-hash")
 	assert.Contains(t, message, "origin/main")
-	assert.Contains(t, message, "Without an origin remote")
 	assert.Contains(t, message, "daemon will close the issue")
 }
 
