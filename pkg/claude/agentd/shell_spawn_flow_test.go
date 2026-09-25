@@ -3,31 +3,38 @@ package agentd_test
 import (
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
-// A shell brief is command text, not an agent welcome. The flow simulator
-// keeps its pane alive like the other fake harnesses, which lets this exercise
-// the production request resolution, launch enrollment, and SpawnArgs seam.
-func TestSpawnShellPassesInitialMessageAsCommand(t *testing.T) {
+func TestSpawnShellRejectsInteractiveInitialMessage(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 
-	const command = "printf '%s\\n' hello && go test ./..."
 	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
 		"name":            "checks",
 		"harness":         "shell",
-		"initial_message": command,
+		"initial_message": "printf hello",
 	})
-	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	require.Equalf(t, http.StatusBadRequest, spawn.Code, "spawn body=%s", spawn.Raw)
+	assert.Contains(t, string(spawn.Raw), "non_interactive")
+}
 
-	f.AssertSpawnInitialPrompt(spawn.ConvID, command, 10*time.Second)
-	prompt, ok := f.World.SpawnInitialPrompt(spawn.ConvID)
-	require.True(t, ok)
-	assert.Equal(t, command, prompt, "shell command must not be wrapped in an agent welcome")
+func TestSpawnShellRejectsProfileInitialMessage(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "shell-command", Harness: "shell", InitialMessage: "printf hello",
+	})
+	require.NoError(t, err)
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name": "checks", "profile": "shell-command",
+	})
+	require.Equalf(t, http.StatusBadRequest, spawn.Code, "spawn body=%s", spawn.Raw)
+	assert.Contains(t, string(spawn.Raw), "non_interactive")
 }
 
 func TestSpawnShellWithoutInitialMessageStartsInteractive(t *testing.T) {

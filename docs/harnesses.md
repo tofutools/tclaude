@@ -71,7 +71,7 @@ described in [Spawning and lifecycle](spawning-and-lifecycle.md).
 tclaude session new --harness codex
 tclaude agent spawn --group crew --name worker --harness opencode
 tclaude session new --harness copilot --model gpt-5.4
-tclaude agent spawn --group crew --name checks --harness shell \
+tclaude agent spawn --group crew --non-interactive --harness shell \
   --initial-message 'go test ./...'
 ```
 

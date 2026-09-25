@@ -968,7 +968,8 @@ func spawnCmd() *cobra.Command {
 			"waits for completion, prints the result, and returns the child exit status. " +
 			"It uses group launch settings without registering a persistent member. " +
 			"--timeout covers the run (default 1h), and group startup context is " +
-			"excluded unless --group-context is passed. " +
+			"excluded unless --group-context is passed. An interactive --harness shell " +
+			"spawn accepts neither --initial-message nor --file. " +
 			"\n\n" +
 			"--worktree <branch> creates (or reuses) a git worktree on that branch and " +
 			"spawns the agent into it — the CLI equivalent of the dashboard spawn modal's " +
@@ -1314,6 +1315,11 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	}
 	if p.GroupContext && p.NoGroupContext {
 		fmt.Fprintln(stderr, "Error: --group-context and --no-group-context are mutually exclusive")
+		return nil, rcInvalidArg
+	}
+	if !p.NonInteractive && strings.TrimSpace(p.Harness) == harness.ShellName &&
+		(p.InitialMessage != "" || p.File != "") {
+		fmt.Fprintln(stderr, "Error: --harness shell requires --non-interactive with --initial-message or --file")
 		return nil, rcInvalidArg
 	}
 	if p.NonInteractive {

@@ -14,6 +14,26 @@ func TestNonInteractiveSpawnRequiresExplicitPrompt(t *testing.T) {
 	}
 }
 
+func TestInteractiveShellSpawnRejectsMessageOptions(t *testing.T) {
+	for _, option := range []struct {
+		name  string
+		apply func(*SpawnParams)
+	}{
+		{"initial-message", func(p *SpawnParams) { p.InitialMessage = "printf hello" }},
+		{"file", func(p *SpawnParams) { p.File = "command.sh" }},
+	} {
+		t.Run(option.name, func(t *testing.T) {
+			p := &SpawnParams{Group: "test", Harness: "shell"}
+			option.apply(p)
+			var stdout, stderr bytes.Buffer
+			_, code := RunSpawn(p, &stdout, &stderr, strings.NewReader(""))
+			if code != rcInvalidArg || !strings.Contains(stderr.String(), "requires --non-interactive") {
+				t.Fatalf("code=%d stderr=%q", code, stderr.String())
+			}
+		})
+	}
+}
+
 func TestNonInteractiveSpawnRejectsInapplicableFlags(t *testing.T) {
 	for _, option := range []struct {
 		name  string

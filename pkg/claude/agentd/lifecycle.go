@@ -4074,6 +4074,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	body.InitialMessage, _, _ = resolveIdentityLaunchField(
 		initialMessageField, body.InitialMessage, body.InitialMessageSpecified(), profileTiers,
 		func(p *db.SpawnProfile) string { return p.InitialMessage }, nil)
+	if h.Name == harness.ShellName && !body.NonInteractive && body.InitialMessage != "" {
+		writeError(w, http.StatusBadRequest, "invalid_initial_message",
+			"shell spawn requires non_interactive when initial_message is set")
+		return
+	}
 	// Name an otherwise unnamed group spawn before building spawnParams and its
 	// durable/audit snapshots. executeSpawn retains the same fallback for
 	// non-HTTP adapters, but the shared HTTP path must record the name it
