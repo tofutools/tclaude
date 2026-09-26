@@ -141,8 +141,7 @@ func (w awbReadyWorker) run(stop <-chan struct{}) {
 		if released && err == nil {
 			// The workspace was just freed by an issue that finished, so the
 			// next ready issue should be picked up now rather than one
-			// interval later. The interval only paces polls that found
-			// nothing to do.
+			// interval later. The interval paces every other poll.
 			select {
 			case <-stop:
 				return

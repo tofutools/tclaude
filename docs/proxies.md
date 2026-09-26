@@ -291,9 +291,9 @@ The `agent.awb_proxy` block in `~/.tclaude/data/config.json`:
 
   Each entry requires `workspace`, `group`, and an absolute `cwd`. Optional
   `labels` are passed as repeated AWB label filters. `interval` defaults to
-  `1m` and paces polls that find nothing to act on; once the issue in flight
-  closes, the worker asks for the next ready issue immediately rather than
-  waiting an interval. `profile`, `sandbox_profile`, `harness`, and `worktree` are optional.
+  `1m` and paces every poll except one that releases the issue in flight:
+  once that issue closes, the worker asks for the next ready issue
+  immediately rather than waiting an interval. `profile`, `sandbox_profile`, `harness`, and `worktree` are optional.
   `harness` takes one name (`"codex"`) or an ordered fallback chain
   (`["codex", "claude"]`) — see "Usage ceilings on pickup" below for what the
   chain does. `skip_epics` defaults to `false`; when true, the worker skips
