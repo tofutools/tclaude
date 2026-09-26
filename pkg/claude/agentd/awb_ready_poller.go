@@ -128,7 +128,8 @@ func validateAWBReadyPolling(policy config.AWBProxyConfig, process string, p con
 
 func (w awbReadyWorker) run(stop <-chan struct{}) {
 	for {
-		if err := w.tick(context.Background()); err != nil {
+		released, err := w.poll(context.Background())
+		if err != nil {
 			d, _ := db.GetAWBReadyDispatch(w.process)
 			attrs := []any{"process", w.process, "workspace", w.workspace, "error", err}
 			if d != nil {
@@ -136,6 +137,17 @@ func (w awbReadyWorker) run(stop <-chan struct{}) {
 				_, _ = db.UpdateAWBReadyDispatch(w.process, d.IssueID, d.Phase, err.Error())
 			}
 			slog.Error("awb ready polling: retry", attrs...)
+		}
+		if released && err == nil {
+			// The workspace was just freed by an issue that finished, so the
+			// next ready issue should be picked up now rather than one
+			// interval later. The interval paces every other poll.
+			select {
+			case <-stop:
+				return
+			default:
+				continue
+			}
 		}
 		t := time.NewTimer(w.interval)
 		select {
@@ -148,10 +160,33 @@ func (w awbReadyWorker) run(stop <-chan struct{}) {
 }
 
 func (w awbReadyWorker) tick(ctx context.Context) error {
+	_, err := w.poll(ctx)
+	return err
+}
+
+// poll runs one tick and reports whether it released a dispatch that was
+// already in flight when the tick started — the signal that the workspace is
+// free and the next ready issue can be polled for immediately. A dispatch
+// selected and released within the same tick (a ready listing that returned an
+// already-closed issue) deliberately does not count, so a stale listing cannot
+// spin the worker without pause.
+func (w awbReadyWorker) poll(ctx context.Context) (released bool, err error) {
 	dispatch, err := db.GetAWBReadyDispatch(w.process)
 	if err != nil {
+		return false, err
+	}
+	inFlight := dispatch != nil
+	release := func(issueID string) error {
+		cleared, err := db.ClearAWBReadyDispatch(w.process, issueID)
+		released = cleared && inFlight && err == nil
 		return err
 	}
+	err = w.tickDispatch(ctx, dispatch, release)
+	return released, err
+}
+
+func (w awbReadyWorker) tickDispatch(ctx context.Context, dispatch *db.AWBReadyDispatch, release func(issueID string) error) error {
+	var err error
 	if dispatch == nil || dispatch.Phase != "spawned" {
 		if err := w.validateRuntime(); err != nil {
 			return err
@@ -237,8 +272,7 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 				return nil
 			}
 		}
-		_, err = db.ClearAWBReadyDispatch(w.process, dispatch.IssueID)
-		return err
+		return release(dispatch.IssueID)
 	}
 	if dispatch.Phase == "spawned" {
 		if (w.config.MonitorPR && issue.PullRequestURL != "") || (w.config.MonitorCommit && issue.CommitHash != "") {
@@ -290,8 +324,7 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 				// closed, so a cleanup that cannot finish must not re-run the
 				// closure or hold the process on a finished issue.
 				w.cleanupAfterClose(ctx, dispatch, pr)
-				_, err = db.ClearAWBReadyDispatch(w.process, dispatch.IssueID)
-				return err
+				return release(dispatch.IssueID)
 			}
 		}
 		return nil

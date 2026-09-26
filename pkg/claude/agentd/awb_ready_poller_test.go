@@ -1025,3 +1025,106 @@ func TestAWBReadySpawnRequestCarriesTheChosenHarness(t *testing.T) {
 	assert.Equal(t, "tcl-a1", body.Name)
 	assert.Equal(t, "https://awb.example/#/issues/tcl-a1", body.TaskURL)
 }
+
+// testAWBReadyClosedIssueServer serves tcl-a1 as closed and an empty ready
+// listing, signalling each ready poll on the returned channel.
+func testAWBReadyClosedIssueServer(t *testing.T) (*httptest.Server, <-chan struct{}) {
+	t.Helper()
+	readyPolls := make(chan struct{}, 16)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/ready" {
+			select {
+			case readyPolls <- struct{}{}:
+			default:
+			}
+			assert.NoError(t, json.NewEncoder(w).Encode([]awbIssue{}))
+			return
+		}
+		assert.NoError(t, json.NewEncoder(w).Encode(awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "closed"}))
+	}))
+	t.Cleanup(server.Close)
+	return server, readyPolls
+}
+
+func TestAWBReadyPollReportsReleaseOfInFlightDispatch(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	_, err := db.CreateAgentGroup("builders", "")
+	require.NoError(t, err)
+	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", "agt_reserved")
+	require.NoError(t, err)
+	require.True(t, selected)
+	server, _ := testAWBReadyClosedIssueServer(t)
+	worker := testAWBReadyMonitorWorker(t, server.URL)
+	worker.config.MonitorPR = false
+	worker.config.MonitorClose = true
+
+	released, err := worker.poll(context.Background())
+	require.NoError(t, err)
+	assert.True(t, released, "closing the in-flight issue frees the workspace for an immediate re-poll")
+
+	released, err = worker.poll(context.Background())
+	require.NoError(t, err)
+	assert.False(t, released, "a poll that found nothing ready waits for the interval")
+}
+
+func TestAWBReadyPollDoesNotReportReleaseOfIssueSelectedSameTick(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	_, err := db.CreateAgentGroup("builders", "")
+	require.NoError(t, err)
+	// A ready listing that returns an issue already closed must not make the
+	// worker re-poll without pause.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		issue := awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "closed"}
+		if r.URL.Path == "/api/ready" {
+			assert.NoError(t, json.NewEncoder(w).Encode([]awbIssue{issue}))
+			return
+		}
+		assert.NoError(t, json.NewEncoder(w).Encode(issue))
+	}))
+	t.Cleanup(server.Close)
+	worker := testAWBReadyMonitorWorker(t, server.URL)
+	worker.config.MonitorPR = false
+	worker.config.MonitorClose = true
+
+	released, err := worker.poll(context.Background())
+	require.NoError(t, err)
+	assert.False(t, released)
+	dispatch, err := db.GetAWBReadyDispatch("builders")
+	require.NoError(t, err)
+	assert.Nil(t, dispatch)
+}
+
+func TestAWBReadyRunPollsForNextIssueImmediatelyAfterClose(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	_, err := db.CreateAgentGroup("builders", "")
+	require.NoError(t, err)
+	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", "agt_reserved")
+	require.NoError(t, err)
+	require.True(t, selected)
+	server, readyPolls := testAWBReadyClosedIssueServer(t)
+	worker := testAWBReadyMonitorWorker(t, server.URL)
+	worker.config.MonitorPR = false
+	worker.config.MonitorClose = true
+	worker.interval = time.Hour
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		worker.run(stop)
+	}()
+	defer func() {
+		close(stop)
+		<-done
+	}()
+
+	select {
+	case <-readyPolls:
+	case <-time.After(10 * time.Second):
+		t.Fatal("run waited for the poll interval before looking for the next ready issue")
+	}
+}
