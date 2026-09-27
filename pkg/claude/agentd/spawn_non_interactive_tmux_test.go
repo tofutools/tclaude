@@ -83,6 +83,13 @@ func TestOneShotTmuxSessionLaunchFailure(t *testing.T) {
 	}
 }
 
+func stubNonInteractiveTmuxSessionID(t *testing.T) {
+	t.Helper()
+	previous := nonInteractiveTmuxSessionID
+	nonInteractiveTmuxSessionID = func(string) (string, error) { return "$1", nil }
+	t.Cleanup(func() { nonInteractiveTmuxSessionID = previous })
+}
+
 func TestOneShotTmuxSessionName(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	previousLaunch := launchNonInteractiveTmuxSession
@@ -120,6 +127,62 @@ func TestOneShotTmuxSessionName(t *testing.T) {
 	}
 }
 
+// A named one-shot's session name is reusable once its pane exits, so the
+// liveness poll and cleanup must follow the launched session's id, never a
+// later session that took the same name.
+func TestOneShotTmuxTargetsLaunchedSessionID(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previousLaunch := launchNonInteractiveTmuxSession
+	previousAlive := nonInteractiveTmuxSessionAlive
+	previousKill := killNonInteractiveTmuxSession
+	previousID := nonInteractiveTmuxSessionID
+	previousUnique := uniqueNonInteractiveTmuxSessionName
+	t.Cleanup(func() {
+		launchNonInteractiveTmuxSession = previousLaunch
+		nonInteractiveTmuxSessionAlive = previousAlive
+		killNonInteractiveTmuxSession = previousKill
+		nonInteractiveTmuxSessionID = previousID
+		uniqueNonInteractiveTmuxSessionName = previousUnique
+	})
+	launchNonInteractiveTmuxSession = func(string, string, string, ...string) error { return nil }
+	uniqueNonInteractiveTmuxSessionName = func(base string) string { return base }
+	nonInteractiveTmuxSessionID = func(name string) (string, error) {
+		if name != "reviewer" {
+			return "", fmt.Errorf("unexpected session %q", name)
+		}
+		return "$42", nil
+	}
+	var polled, killed []string
+	nonInteractiveTmuxSessionAlive = func(target string) bool {
+		polled = append(polled, target)
+		return false
+	}
+	killNonInteractiveTmuxSession = func(target string) { killed = append(killed, target) }
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, failure := runNonInteractiveThroughTmux(ctx, nonInteractiveCommand{
+		Argv: []string{"true"}, Cwd: t.TempDir(), TimeoutSeconds: 10,
+		TmuxSessionName: "reviewer",
+	})
+	if failure == nil || !strings.Contains(failure.Msg, "exited without a result") {
+		t.Fatalf("failure=%+v", failure)
+	}
+	if len(polled) == 0 || polled[0] != "$42" || len(killed) != 1 || killed[0] != "$42" {
+		t.Fatalf("polled=%v killed=%v, want the session id $42", polled, killed)
+	}
+
+	// Without a readable id, fall back to the exact-name target.
+	nonInteractiveTmuxSessionID = func(string) (string, error) { return "", fmt.Errorf("gone") }
+	polled, killed = nil, nil
+	_, _ = runNonInteractiveThroughTmux(ctx, nonInteractiveCommand{
+		Argv: []string{"true"}, Cwd: t.TempDir(), TimeoutSeconds: 10,
+		TmuxSessionName: "reviewer",
+	})
+	if len(killed) != 1 || killed[0] != "=reviewer" {
+		t.Fatalf("killed=%v, want the exact-name fallback", killed)
+	}
+}
+
 func TestOneShotTmuxBrokerRoundTrip(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("tmux one-shot broker runs on Linux")
@@ -130,6 +193,7 @@ func TestOneShotTmuxBrokerRoundTrip(t *testing.T) {
 	previousAlive := nonInteractiveTmuxSessionAlive
 	previousKill := killNonInteractiveTmuxSession
 	previousHelper := nonInteractiveHelperShellCommand
+	stubNonInteractiveTmuxSessionID(t)
 	launchNonInteractiveTmuxSession = func(_, _, shell string, _ ...string) error {
 		return exec.Command("/bin/sh", "-c", shell).Start()
 	}
@@ -177,6 +241,7 @@ func TestOneShotTmuxCancellationWaitsForPaneCleanup(t *testing.T) {
 		killNonInteractiveTmuxSession = previousKill
 		nonInteractiveHelperShellCommand = previousHelper
 	})
+	stubNonInteractiveTmuxSessionID(t)
 	request := make(chan string, 1)
 	var alive, cleaned, killedEarly atomic.Bool
 	alive.Store(true)
