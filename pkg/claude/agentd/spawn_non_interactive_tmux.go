@@ -41,6 +41,7 @@ var killNonInteractiveTmuxSession = func(name string) {
 	_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(name)).Run()
 }
 var nonInteractiveTmuxSessionAlive = session.IsTmuxSessionAlive
+var uniqueNonInteractiveTmuxSessionName = session.UniqueTmuxSessionName
 
 var nonInteractiveHelperShellCommand = func(requestPath, resultPath string) string {
 	// The standalone tclaude-agentd binary transitions back into the daemon's
@@ -91,6 +92,9 @@ func runNonInteractiveThroughTmux(ctx context.Context, command nonInteractiveCom
 	}
 	shellCommand := nonInteractiveHelperShellCommand(requestPath, resultPath)
 	name := "one-shot-" + session.GenerateSessionID()
+	if command.TmuxSessionName != "" {
+		name = uniqueNonInteractiveTmuxSessionName(command.TmuxSessionName)
+	}
 	if err := launchNonInteractiveTmuxSession(name, command.Cwd, "exec "+shellCommand); err != nil {
 		return fail(fmt.Sprintf("start one-shot tmux session: %v", err))
 	}

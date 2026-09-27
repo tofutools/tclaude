@@ -83,6 +83,43 @@ func TestOneShotTmuxSessionLaunchFailure(t *testing.T) {
 	}
 }
 
+func TestOneShotTmuxSessionName(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previousLaunch := launchNonInteractiveTmuxSession
+	previousUnique := uniqueNonInteractiveTmuxSessionName
+	t.Cleanup(func() {
+		launchNonInteractiveTmuxSession = previousLaunch
+		uniqueNonInteractiveTmuxSessionName = previousUnique
+	})
+	var launched string
+	launchNonInteractiveTmuxSession = func(name, _, _ string, _ ...string) error {
+		launched = name
+		return fmt.Errorf("stop after naming")
+	}
+	uniqueNonInteractiveTmuxSessionName = func(base string) string { return base + "-2" }
+	for _, tc := range []struct{ name, wantPrefix, wantExact string }{
+		{name: "", wantPrefix: "one-shot-"},
+		{name: "reviewer", wantExact: "reviewer-2"},
+	} {
+		launched = ""
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_, failure := runNonInteractiveThroughTmux(ctx, nonInteractiveCommand{
+			Argv: []string{"true"}, Cwd: t.TempDir(), TimeoutSeconds: 10,
+			TmuxSessionName: tc.name,
+		})
+		cancel()
+		if failure == nil {
+			t.Fatalf("%q: expected the stubbed launch failure", tc.name)
+		}
+		if tc.wantExact != "" && launched != tc.wantExact {
+			t.Fatalf("%q: launched session %q, want %q", tc.name, launched, tc.wantExact)
+		}
+		if tc.wantPrefix != "" && !strings.HasPrefix(launched, tc.wantPrefix) {
+			t.Fatalf("%q: launched session %q, want prefix %q", tc.name, launched, tc.wantPrefix)
+		}
+	}
+}
+
 func TestOneShotTmuxBrokerRoundTrip(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("tmux one-shot broker runs on Linux")
