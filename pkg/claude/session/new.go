@@ -3463,6 +3463,24 @@ func LaunchDetachedTmuxSession(tmuxSession, cwd, cmd string, markerArgs ...strin
 	return launchDetachedTmuxSession(tmuxSession, cwd, cmd, markerArgs...)
 }
 
+// LaunchDetachedTmuxSessionID launches like LaunchDetachedTmuxSession and
+// returns the new session's tmux id ("$N"), read from new-session itself. A
+// caller that must later poll or kill exactly this session targets the id: a
+// session name is released when its last pane exits and can be reused, and
+// any lookup after launch could already see a replacement.
+func LaunchDetachedTmuxSessionID(tmuxSession, cwd, cmd string) (string, error) {
+	out, err := launchDetachedTmuxSessionOutput(tmuxSession, cwd, cmd, true)
+	if err != nil {
+		return "", err
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	id := strings.TrimSpace(lines[len(lines)-1])
+	if !strings.HasPrefix(id, "$") {
+		return "", fmt.Errorf("tmux did not report the new session id (got %q)", strings.TrimSpace(out))
+	}
+	return id, nil
+}
+
 // CodexProfileMarkerArgs returns the extra argv words a launch appends after
 // the script path when the pane runs a managed Codex launch profile: the
 // profile path itself, as an inert positional the script never reads. It is a
@@ -3501,6 +3519,13 @@ func CodexProfileMarkerArgs(profilePath string) []string {
 // tclaude (`session new -r` / agent resume), which builds a fresh script, so
 // only manual out-of-band respawns are affected.
 func launchDetachedTmuxSession(tmuxSession, cwd, cmd string, markerArgs ...string) error {
+	_, err := launchDetachedTmuxSessionOutput(tmuxSession, cwd, cmd, false, markerArgs...)
+	return err
+}
+
+// launchDetachedTmuxSessionOutput is launchDetachedTmuxSession with the tmux
+// client's output returned; printID asks new-session to print the session id.
+func launchDetachedTmuxSessionOutput(tmuxSession, cwd, cmd string, printID bool, markerArgs ...string) (string, error) {
 	// Never launch tmux from a dead working directory. If this process's cwd
 	// has been deleted (e.g. the daemon that forked us was started from a
 	// since-removed dir — Ansible's task tmpdir being the observed case), a
@@ -3514,35 +3539,40 @@ func launchDetachedTmuxSession(tmuxSession, cwd, cmd string, markerArgs ...strin
 		slog.Warn("tmux launch: process cwd is gone; re-homing before starting tmux",
 			"session", tmuxSession, "new_cwd", cwd, "getwd_error", err)
 		if cerr := os.Chdir(cwd); cerr != nil {
-			return fmt.Errorf("process cwd is gone and re-homing to %q failed: %w", cwd, cerr)
+			return "", fmt.Errorf("process cwd is gone and re-homing to %q failed: %w", cwd, cerr)
 		}
 	}
 	if err := RequireExternalTmuxServer(); err != nil {
-		return err
+		return "", err
 	}
 	scriptPath, cleanupScript, err := writeLaunchScript(cmd)
 	if err != nil {
-		return err
+		return "", err
 	}
 	// Multi-word command → tmux execvp's it directly (spawn.c), no extra
 	// shell join/quoting layer. The explicit -x/-y pin the pane to the
 	// canonical size (TCL-1136) instead of tmux's default-size, which the
 	// operator's tmux.conf can change out from under every harness.
-	args := append([]string{"new-session", "-d", "-s", tmuxSession, "-c", cwd,
+	args := []string{"new-session", "-d"}
+	if printID {
+		args = append(args, "-P", "-F", "#{session_id}")
+	}
+	args = append(args, "-s", tmuxSession, "-c", cwd,
 		"-x", strconv.Itoa(clcommon.CanonicalAgentPaneWidth),
-		"-y", strconv.Itoa(clcommon.CanonicalAgentPaneHeight)}, clcommon.BootstrapShellArgv()...)
+		"-y", strconv.Itoa(clcommon.CanonicalAgentPaneHeight))
+	args = append(args, clcommon.BootstrapShellArgv()...)
 	args = append(args, scriptPath)
 	args = append(args, markerArgs...)
 	args = ExternalTmuxNoStartArgs(args...)
 	if n := tmuxArgvBytes(args); n > tmuxClientArgvLimit {
 		cleanupScript()
-		return fmt.Errorf("tmux launch argv is %d bytes, over tclaude's %d-byte pre-flight bound "+
+		return "", fmt.Errorf("tmux launch argv is %d bytes, over tclaude's %d-byte pre-flight bound "+
 			"(tmux's client rejects ~16KB with an opaque \"command too long\"): "+
 			"session name %d bytes, launch dir %d bytes, script path %d bytes — shorten the launch directory path",
 			n, tmuxClientArgvLimit, len(tmuxSession), len(cwd), len(scriptPath))
 	}
 	// The tmux client's own diagnostic travels in the error rather than onto
-	// this process's terminal. `new-session -d` prints nothing on success, and
+	// this process's terminal. `new-session -d` prints nothing on success (bar the -P id), and
 	// on failure ("bad session name", "can't create socket") the message is the
 	// whole explanation — attaching it to the error keeps it with the caller
 	// that can render it. Writing it to os.Stderr instead would land it
@@ -3555,11 +3585,11 @@ func launchDetachedTmuxSession(tmuxSession, cwd, cmd string, markerArgs ...strin
 		// The pane never ran, so the script's self-delete never did either.
 		cleanupScript()
 		if detail := strings.TrimSpace(string(out)); detail != "" {
-			return fmt.Errorf("failed to create tmux session: %w: %s", err, detail)
+			return "", fmt.Errorf("failed to create tmux session: %w: %s", err, detail)
 		}
-		return fmt.Errorf("failed to create tmux session: %w", err)
+		return "", fmt.Errorf("failed to create tmux session: %w", err)
 	}
-	return nil
+	return string(out), nil
 }
 
 // isValidSpawnCwdProofToken accepts the daemon's challenge token alphabet

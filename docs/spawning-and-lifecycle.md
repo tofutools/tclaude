@@ -81,6 +81,8 @@ On Linux, each one-shot launches in a detached tmux pane under the same host
 confinement as a normal agent. Its output is visible
 in the pane while the run is active; the session closes when the run ends.
 Linux one-shots require a working tmux server, as regular agent launches do.
+`--name` is optional for a one-shot and names that tmux session (with a `-N`
+suffix if the name is taken); without it the session is `one-shot-<id>`.
 
 ```bash
 tclaude agent spawn myteam --non-interactive --file task.md
@@ -91,7 +93,7 @@ tclaude agent spawn myteam --non-interactive --harness shell \
 `--timeout` covers the entire run and defaults to one hour. The child's exit
 status is returned to the caller; timeout exits 124. Group startup context is
 excluded by default; `--group-context` includes it. A shell prompt is a shell
-command, so `--group-context` is rejected for shell runs. Identity,
+command, so `--group-context` is rejected for shell runs. Identity (other than `--name`),
 messaging, interactive approval, and remote-control options do not apply to
 this mode. Successful non-shell runs print stdout only; failed runs retain
 stderr, and shell runs always forward both streams. The harness-native and

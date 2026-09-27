@@ -162,6 +162,7 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 			"TCLAUDE_AGENT_HINT=1", "TCLAUDE_IGNORE_HOOKS=1"),
 		SandboxImplementation: p.SandboxImplementation,
 		TimeoutSeconds:        seconds,
+		TmuxSessionName:       p.OneShotName,
 	}
 	if p.EffectiveSandbox != nil {
 		command.ResourceLimits = p.EffectiveSandbox.Effective.ResourceLimits
@@ -218,6 +219,9 @@ type nonInteractiveCommand struct {
 	ResourceCgroupDir     string                       `json:"resource_cgroup_dir,omitempty"`
 	TimeoutSeconds        int64                        `json:"timeout_seconds"`
 	ObservePane           bool                         `json:"-"`
+	// TmuxSessionName names the Linux one-shot pane's tmux session. Empty
+	// picks a generated one-shot-<id>. Daemon-side only.
+	TmuxSessionName string `json:"-"`
 }
 
 func executeNonInteractiveCommand(ctx context.Context, command nonInteractiveCommand) (nonInteractiveSpawnResult, *spawnFailure) {

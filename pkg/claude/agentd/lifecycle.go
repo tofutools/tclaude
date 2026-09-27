@@ -3431,13 +3431,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if !decoded {
 		return
 	}
-	if body.NonInteractive && (body.ReplyTo != "" || body.Name != "" || body.Role != "" ||
+	if body.NonInteractive && (body.ReplyTo != "" || body.Role != "" ||
 		body.RoleRef != "" || len(body.RoleRefs) > 0 || body.Descr != "" ||
 		body.TaskURL != "" || body.TaskLabel != "" || body.AutoFocus || body.AutoFocusWeb ||
 		body.IsOwner || len(body.PermissionOverrides) > 0 || body.RemoteControl != nil ||
 		body.CopilotAPI != nil || body.CodexAppServer != nil || body.AutoReview) {
 		writeError(w, http.StatusBadRequest, "invalid_request",
-			"non-interactive spawn does not accept identity, messaging, or interactive drive settings")
+			"non-interactive spawn does not accept identity (other than name), messaging, or interactive drive settings")
 		return
 	}
 	// Preserve the caller's decoded wire parameters before profile/default
@@ -3572,6 +3572,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 				"allowed (the name doubles as a git worktree branch name and becomes "+
 				"the conversation title)", agent.MaxSpawnNameLen))
 		return
+	}
+	// A one-shot's only use for a name is its tmux session, and only an
+	// explicit one: profile agent_name and the derived group label below
+	// would name a member the one-shot never becomes.
+	oneShotName := ""
+	if body.NonInteractive {
+		oneShotName = body.Name
 	}
 
 	// Attachment paths (uploaded files / pasted screenshots from the dashboard's
@@ -4874,6 +4881,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		"global_default": globalProfile,
 	}))
 	if body.NonInteractive {
+		p.OneShotName = oneShotName
 		result, runErr := runNonInteractiveSpawn(r.Context(), p, body.RunTimeoutSeconds)
 		if runErr != nil {
 			writeError(w, runErr.Status, runErr.Kind, runErr.Msg)
@@ -5003,6 +5011,9 @@ type spawnParams struct {
 	// versioned snapshot even when it is explicitly empty.
 	EffectiveSandbox *sandboxpolicy.Snapshot
 	Name             string
+	// OneShotName is the caller's explicit name for a non-interactive spawn,
+	// used as its tmux session name. Empty picks a generated one-shot-<id>.
+	OneShotName string
 	Role             string
 	Descr            string
 	// TaskURL / TaskLabel are the optional per-agent task-reference link

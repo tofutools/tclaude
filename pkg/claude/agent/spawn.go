@@ -71,7 +71,7 @@ func nonInteractiveUnsupportedOption(p *SpawnParams) string {
 		{"--auto-review", p.AutoReview}, {"--remote-control", p.RemoteControl},
 		{"--copilot-api", p.CopilotAPI}, {"--codex-app-server", p.CodexAppServer || p.codexAppServerSpecified},
 		{"--owner", p.Owner}, {"--no-owner", p.NoOwner},
-		{"--name", p.Name != ""}, {"--role", p.Role != ""},
+		{"--role", p.Role != ""},
 		{"--role-ref", p.RoleRef != ""}, {"--descr", p.Descr != ""},
 		{"--task", p.Task != ""}, {"--task-label", p.TaskLabel != ""},
 		{"--peer-messaging", p.PeerMessaging},
@@ -270,7 +270,8 @@ type SpawnRequest struct {
 	// Name, when set, becomes the new agent's conversation title:
 	// runSpawnPostInit injects `/rename <name>` into the fresh pane. An
 	// agent has exactly one name — its title — so there is no separate
-	// per-group handle.
+	// per-group handle. On a non-interactive spawn it names the one-shot's
+	// tmux session instead.
 	Name string `json:"name,omitempty"`
 	Role string `json:"role,omitempty"`
 	// RoleRef selects behavioral guidance and access defaults from the role
@@ -968,7 +969,8 @@ func spawnCmd() *cobra.Command {
 			"waits for completion, prints the result, and returns the child exit status. " +
 			"It uses group launch settings without registering a persistent member. " +
 			"--timeout covers the run (default 1h), and group startup context is " +
-			"excluded unless --group-context is passed. An interactive --harness shell " +
+			"excluded unless --group-context is passed. --name is optional and names the " +
+			"one-shot's tmux session (Linux). An interactive --harness shell " +
 			"spawn accepts neither --initial-message nor --file. " +
 			"\n\n" +
 			"--worktree <branch> creates (or reuses) a git worktree on that branch and " +
@@ -1438,7 +1440,9 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	// server-side (handleGroupSpawn) as the authoritative backstop.
 	name := strings.TrimSpace(merged.Name)
 	if p.NonInteractive {
-		name = ""
+		// A profile's agent_name has no one-shot recipient; only an explicit
+		// --name applies, and it names the one-shot's tmux session.
+		name = strings.TrimSpace(p.Name)
 	}
 	if !isValidSpawnName(name) {
 		if cfg, _ := config.Load(); cfg.SpawnNameNormalizeEnabled() {
@@ -1705,7 +1709,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	}
 	if p.NonInteractive {
 		// Identity defaults on a selected profile have no one-shot recipient.
-		req.Name, req.Role, req.RoleRef, req.Descr = "", "", "", ""
+		req.Role, req.RoleRef, req.Descr = "", "", ""
 		req.RoleRefs = nil
 		req.PermissionOverrides = nil
 		req.IsOwner = false

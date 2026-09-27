@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -161,6 +162,38 @@ func TestSpawnCLI_NonInteractiveShellDoesNotEnrollMember(t *testing.T) {
 	require.Equal(t, 0, rc, "stderr=%s", stderr.String())
 	require.Nil(t, resp)
 	require.Equal(t, "from-file\n", stdout.String())
+
+	rr := httptest.NewRecorder()
+	f.Mux.ServeHTTP(rr, agentd.AsHumanPeer(httptest.NewRequest(http.MethodGet,
+		"/v1/groups/alpha/members", nil)))
+	require.Equal(t, http.StatusOK, rr.Code)
+	require.JSONEq(t, `[]`, rr.Body.String())
+}
+
+func TestSpawnCLI_NonInteractiveNameNamesTmuxSession(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("one-shots run through tmux only on Linux")
+	}
+	var names []string
+	t.Cleanup(agentd.SetNonInteractiveSessionNameRecorderForTest(&names))
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	bridgeAgentClientToMux(t, f.Mux)
+	chdirTo(t, resolveSym(t, t.TempDir()))
+
+	for _, name := range []string{"one shot!", ""} {
+		stdout, stderr := new(bytes.Buffer), new(bytes.Buffer)
+		resp, rc := agent.RunSpawn(&agent.SpawnParams{
+			Group: "alpha", NonInteractive: true, Harness: "shell", Name: name,
+			InitialMessage: "printf 'named\\n'",
+		}, stdout, stderr, new(bytes.Buffer))
+		require.Equal(t, 0, rc, "stderr=%s", stderr.String())
+		require.Nil(t, resp)
+		require.Equal(t, "named\n", stdout.String())
+	}
+	// The name is normalized like any spawn name; an omitted one is left for
+	// the runner to generate rather than filled with a derived member label.
+	require.Equal(t, []string{"one-shot", ""}, names)
 
 	rr := httptest.NewRecorder()
 	f.Mux.ServeHTTP(rr, agentd.AsHumanPeer(httptest.NewRequest(http.MethodGet,

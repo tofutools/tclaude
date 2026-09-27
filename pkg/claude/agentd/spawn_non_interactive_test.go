@@ -29,6 +29,17 @@ func SetNonInteractiveDirectRunnerForTest() func() {
 	return func() { runNonInteractiveTmuxCommand = previous }
 }
 
+// SetNonInteractiveSessionNameRecorderForTest runs one-shots directly and
+// records the tmux session name each would have been given.
+func SetNonInteractiveSessionNameRecorderForTest(names *[]string) func() {
+	previous := runNonInteractiveTmuxCommand
+	runNonInteractiveTmuxCommand = func(ctx context.Context, command nonInteractiveCommand) (nonInteractiveSpawnResult, *spawnFailure) {
+		*names = append(*names, command.TmuxSessionName)
+		return executeNonInteractiveCommand(ctx, command)
+	}
+	return func() { runNonInteractiveTmuxCommand = previous }
+}
+
 func TestRunNonInteractiveSpawnShell(t *testing.T) {
 	useDirectNonInteractiveRunner(t)
 	p := spawnParams{Harness: harness.ShellName, Cwd: t.TempDir(),

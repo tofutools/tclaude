@@ -36,11 +36,24 @@ type nonInteractiveBrokerReply struct {
 	Failure *spawnFailure             `json:"failure,omitempty"`
 }
 
-var launchNonInteractiveTmuxSession = session.LaunchDetachedTmuxSession
-var killNonInteractiveTmuxSession = func(name string) {
-	_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(name)).Run()
+// launchNonInteractiveTmuxSession returns the new session's tmux id. The
+// pane has no remain-on-exit, so its name is released the moment the run
+// ends and a caller-chosen --name is reusable; polling and cleanup target the
+// id so a later same-named session is never mistaken for ours.
+var launchNonInteractiveTmuxSession = session.LaunchDetachedTmuxSessionID
+
+// The kill and liveness hooks take the launched session's tmux id.
+var killNonInteractiveTmuxSession = func(target string) {
+	_ = clcommon.TmuxCommand("kill-session", "-t", target).Run()
 }
-var nonInteractiveTmuxSessionAlive = session.IsTmuxSessionAlive
+var nonInteractiveTmuxSessionAlive = func(target string) bool {
+	if clcommon.TmuxCommand("has-session", "-t", target).Run() != nil {
+		return false
+	}
+	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", target, "#{pane_dead}").Output()
+	return err != nil || strings.TrimSpace(string(out)) != "1"
+}
+var uniqueNonInteractiveTmuxSessionName = session.UniqueTmuxSessionName
 
 var nonInteractiveHelperShellCommand = func(requestPath, resultPath string) string {
 	// The standalone tclaude-agentd binary transitions back into the daemon's
@@ -91,10 +104,16 @@ func runNonInteractiveThroughTmux(ctx context.Context, command nonInteractiveCom
 	}
 	shellCommand := nonInteractiveHelperShellCommand(requestPath, resultPath)
 	name := "one-shot-" + session.GenerateSessionID()
-	if err := launchNonInteractiveTmuxSession(name, command.Cwd, "exec "+shellCommand); err != nil {
+	if command.TmuxSessionName != "" {
+		name = uniqueNonInteractiveTmuxSessionName(command.TmuxSessionName)
+	}
+	// On failure a pane may still have started; removing the handoff dir
+	// (deferred above) takes away its request file, which cancels it.
+	target, err := launchNonInteractiveTmuxSession(name, command.Cwd, "exec "+shellCommand)
+	if err != nil {
 		return fail(fmt.Sprintf("start one-shot tmux session: %v", err))
 	}
-	defer killNonInteractiveTmuxSession(name)
+	defer killNonInteractiveTmuxSession(target)
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	liveness := time.NewTicker(time.Second)
@@ -113,7 +132,7 @@ func runNonInteractiveThroughTmux(ctx context.Context, command nonInteractiveCom
 		select {
 		case <-ticker.C:
 		case <-liveness.C:
-			if !nonInteractiveTmuxSessionAlive(name) {
+			if !nonInteractiveTmuxSessionAlive(target) {
 				// The helper writes the result before its pane exits.
 				if _, err = os.ReadFile(resultPath); err == nil {
 					continue // the next read at loop top collects the complete reply
@@ -131,12 +150,12 @@ func runNonInteractiveThroughTmux(ctx context.Context, command nonInteractiveCom
 			}
 		case <-ctxDone:
 			if errors.Is(ctx.Err(), context.Canceled) {
-				cancelNonInteractivePane(requestPath, name)
+				cancelNonInteractivePane(requestPath, target)
 				return fail("one-shot run canceled")
 			}
 			ctxDone = nil // wait for the helper's timeout result or the grace limit
 		case <-grace.C:
-			cancelNonInteractivePane(requestPath, name)
+			cancelNonInteractivePane(requestPath, target)
 			return nonInteractiveSpawnResult{Stderr: "run timed out\n", ExitCode: 124}, nil
 		}
 	}
@@ -151,7 +170,7 @@ func runNonInteractiveThroughTmux(ctx context.Context, command nonInteractiveCom
 	return reply.Result, reply.Failure
 }
 
-func cancelNonInteractivePane(requestPath, name string) {
+func cancelNonInteractivePane(requestPath, target string) {
 	_ = os.Remove(requestPath)
 	// The helper watches the request file and cancels its child. Give its
 	// process-group and cgroup cleanup time to finish before killing the pane.
@@ -159,7 +178,7 @@ func cancelNonInteractivePane(requestPath, name string) {
 	defer deadline.Stop()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-	for nonInteractiveTmuxSessionAlive(name) {
+	for nonInteractiveTmuxSessionAlive(target) {
 		select {
 		case <-ticker.C:
 		case <-deadline.C:
