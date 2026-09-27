@@ -514,7 +514,7 @@ func TestAWBProxy_CreateSendsAWBsOwnBody(t *testing.T) {
 		if strings.HasSuffix(req.URL, "/api/identity") {
 			return http.StatusOK, `{"identity":"tclaude-bot"}`
 		}
-		return http.StatusOK, awbIssueJSON("awb-cab87d", "awb")
+		return http.StatusOK, awbIssueJSON("awb-s4gkab", "awb")
 	}
 
 	res := w.post("/v1/awb/issue/create", map[string]any{
@@ -525,7 +525,7 @@ func TestAWBProxy_CreateSendsAWBsOwnBody(t *testing.T) {
 		"compact":    true,
 	})
 	out := w.outcome(res)
-	assert.Equal(t, "awb-cab87d\n", out.Text,
+	assert.Equal(t, "awb-s4gkab\n", out.Text,
 		"create is awb's exception to 'a mutation prints nothing': the new id is the point")
 
 	calls := rec.snapshot()
@@ -534,7 +534,7 @@ func TestAWBProxy_CreateSendsAWBsOwnBody(t *testing.T) {
 	assert.Equal(t, "https://awb.example/api/identity", calls[0].URL)
 	call := calls[1]
 	assert.Equal(t, http.MethodPut, call.Method)
-	assert.Equal(t, "https://awb.example/api/issues/awb-cab87d", call.URL)
+	assert.Equal(t, "https://awb.example/api/issues/awb-s4gkab", call.URL)
 	assert.JSONEq(t, `{"workspace":"awb","title":"Parser crashes","commit_hash":"01234567",`+
 		`"pull_request_url":"https://github.com/acme/repo/pull/42","type":"bug","priority":1,`+
 		`"assignees":["claude-1","claude-2"],"labels":["parser"],`+
@@ -700,7 +700,7 @@ func TestAWBProxy_CreateStopsWhenIdentityLookupFails(t *testing.T) {
 			}
 			return http.StatusOK, `{"identity":"tclaude-bot"}`
 		}
-		return http.StatusOK, awbIssueJSON("awb-991b0e", "awb")
+		return http.StatusOK, awbIssueJSON("awb-l8nxwj", "awb")
 	}
 
 	res := w.post("/v1/awb/issue/create", map[string]any{
@@ -731,7 +731,7 @@ func TestAWBProxy_CreateRejectsEmptyIdentity(t *testing.T) {
 			}
 			return http.StatusOK, `{"identity":"tclaude-bot"}`
 		}
-		return http.StatusOK, awbIssueJSON("awb-991b0e", "awb")
+		return http.StatusOK, awbIssueJSON("awb-l8nxwj", "awb")
 	}
 
 	res := w.post("/v1/awb/issue/create", map[string]any{
@@ -819,7 +819,7 @@ func TestAWBProxy_CreateInfersTheOnlyVisibleWorkspace(t *testing.T) {
 	require.Len(t, calls, 3, "workspace discovery and identity lookup must precede the mutation")
 	assert.Equal(t, "https://awb.example/api/identity", calls[1].URL)
 	assert.Equal(t, http.MethodPut, calls[2].Method)
-	assert.Equal(t, "https://awb.example/api/issues/awb-991b0e", calls[2].URL)
+	assert.Equal(t, "https://awb.example/api/issues/awb-l8nxwj", calls[2].URL)
 	assert.JSONEq(t, `{"workspace":"awb","title":"Parser crashes"}`, string(calls[2].Body))
 }
 

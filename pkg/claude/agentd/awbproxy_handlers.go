@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1392,7 +1393,6 @@ func (s *awbProxySession) authenticatedIdentity(ctx context.Context) (string, *p
 // the proxy boundary makes a retried create target the same resource, while
 // preserving the agent-facing CLI that accepts no explicit ID.
 func awbCreateIssueID(workspace, identity string, body *awbIssueCreateBody) string {
-	const hashLen = 6
 	typ := body.Type
 	if typ == "" {
 		typ = "task"
@@ -1402,7 +1402,9 @@ func awbCreateIssueID(workspace, identity string, body *awbIssueCreateBody) stri
 		description = *body.Description
 	}
 	sum := sha256.Sum256([]byte(identity + body.Title + typ + description))
-	return fmt.Sprintf("%s-%x", workspace, sum)[:len(workspace)+1+hashLen]
+	// The first 31 digest bits are read in network order.
+	hash := strconv.FormatUint(uint64(binary.BigEndian.Uint32(sum[:4])>>1), 36)
+	return workspace + "-" + strings.Repeat("0", 6-len(hash)) + hash
 }
 
 // resolveCreateWorkspace accepts an explicit workspace or infers the only

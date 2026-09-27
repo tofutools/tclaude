@@ -14,6 +14,8 @@ import (
 
 func TestAWBCreateIssueIDMatchesAWBVectors(t *testing.T) {
 	description := "details"
+	empty := ""
+	unicodeDescription := "詳細"
 	for _, tc := range []struct {
 		name      string
 		workspace string
@@ -23,11 +25,23 @@ func TestAWBCreateIssueIDMatchesAWBVectors(t *testing.T) {
 	}{
 		{
 			name: "default type and empty description", workspace: "awb", identity: "alice",
-			body: awbIssueCreateBody{Title: "Title"}, want: "awb-de4e24",
+			body: awbIssueCreateBody{Title: "Title"}, want: "awb-uu9t97",
 		},
 		{
 			name: "explicit type and description", workspace: "team", identity: "bob",
-			body: awbIssueCreateBody{Title: "Parser", Type: "bug", Description: &description}, want: "team-a4f960",
+			body: awbIssueCreateBody{Title: "Parser", Type: "bug", Description: &description}, want: "team-mvxuls",
+		},
+		{
+			name: "explicit defaults", workspace: "awb", identity: "alice",
+			body: awbIssueCreateBody{Title: "Title", Type: "task", Description: &empty}, want: "awb-uu9t97",
+		},
+		{
+			name: "leading zero", workspace: "awb", identity: "alice",
+			body: awbIssueCreateBody{Title: "Padding42"}, want: "awb-0y3f8g",
+		},
+		{
+			name: "UTF-8", workspace: "awb", identity: "álîce",
+			body: awbIssueCreateBody{Title: "修正", Description: &unicodeDescription}, want: "awb-kawbr8",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -63,9 +77,9 @@ func TestValidateAWBIssueRef(t *testing.T) {
 	})
 
 	t.Run("capitals resolve, as they do in awb", func(t *testing.T) {
-		ref, fault := validateAWBIssueRef("AWB-A3F9C1")
+		ref, fault := validateAWBIssueRef("AWB-UU9TZ7")
 		require.Nil(t, fault)
-		assert.Equal(t, "awb-a3f9c1", ref)
+		assert.Equal(t, "awb-uu9tz7", ref)
 	})
 
 	t.Run("a workspace key may contain hyphens, so the split is on the LAST one", func(t *testing.T) {
@@ -82,10 +96,10 @@ func TestValidateAWBIssueRef(t *testing.T) {
 			"the refusal has to say WHY a form awb itself accepts is refused here")
 	})
 
-	t.Run("a non-hex tail is not an id", func(t *testing.T) {
-		_, fault := validateAWBIssueRef("awb-zzzz")
+	t.Run("a non-base-36 tail is not an id", func(t *testing.T) {
+		_, fault := validateAWBIssueRef("awb-zz_z")
 		require.NotNil(t, fault)
-		assert.Contains(t, fault.Msg, "hexadecimal")
+		assert.Contains(t, fault.Msg, "base-36")
 	})
 
 	t.Run("a path separator cannot ride in", func(t *testing.T) {
