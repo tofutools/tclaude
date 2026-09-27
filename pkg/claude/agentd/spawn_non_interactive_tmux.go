@@ -36,10 +36,13 @@ type nonInteractiveBrokerReply struct {
 	Failure *spawnFailure             `json:"failure,omitempty"`
 }
 
-var launchNonInteractiveTmuxSession = session.LaunchDetachedTmuxSession
+// launchNonInteractiveTmuxSession returns the new session's tmux id. The
+// pane has no remain-on-exit, so its name is released the moment the run
+// ends and a caller-chosen --name is reusable; polling and cleanup target the
+// id so a later same-named session is never mistaken for ours.
+var launchNonInteractiveTmuxSession = session.LaunchDetachedTmuxSessionID
 
-// The kill and liveness hooks take a tmux target (see
-// nonInteractiveTmuxTarget), not a bare session name.
+// The kill and liveness hooks take the launched session's tmux id.
 var killNonInteractiveTmuxSession = func(target string) {
 	_ = clcommon.TmuxCommand("kill-session", "-t", target).Run()
 }
@@ -50,27 +53,7 @@ var nonInteractiveTmuxSessionAlive = func(target string) bool {
 	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", target, "#{pane_dead}").Output()
 	return err != nil || strings.TrimSpace(string(out)) != "1"
 }
-var nonInteractiveTmuxSessionID = func(name string) (string, error) {
-	out, err := clcommon.TmuxCommand("display-message", "-p", "-t",
-		clcommon.ExactTarget(name), "#{session_id}").Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
-}
 var uniqueNonInteractiveTmuxSessionName = session.UniqueTmuxSessionName
-
-// nonInteractiveTmuxTarget pins a just-launched one-shot session by its tmux
-// session id. The pane has no remain-on-exit, so its name is released the
-// moment the run ends; a caller-chosen --name is reusable, and a same-named
-// session created in that gap must not be polled or killed as ours. If the id
-// cannot be read, fall back to the exact name.
-func nonInteractiveTmuxTarget(name string) string {
-	if id, err := nonInteractiveTmuxSessionID(name); err == nil && strings.HasPrefix(id, "$") {
-		return id
-	}
-	return clcommon.ExactTarget(name)
-}
 
 var nonInteractiveHelperShellCommand = func(requestPath, resultPath string) string {
 	// The standalone tclaude-agentd binary transitions back into the daemon's
@@ -124,10 +107,12 @@ func runNonInteractiveThroughTmux(ctx context.Context, command nonInteractiveCom
 	if command.TmuxSessionName != "" {
 		name = uniqueNonInteractiveTmuxSessionName(command.TmuxSessionName)
 	}
-	if err := launchNonInteractiveTmuxSession(name, command.Cwd, "exec "+shellCommand); err != nil {
+	// On failure a pane may still have started; removing the handoff dir
+	// (deferred above) takes away its request file, which cancels it.
+	target, err := launchNonInteractiveTmuxSession(name, command.Cwd, "exec "+shellCommand)
+	if err != nil {
 		return fail(fmt.Sprintf("start one-shot tmux session: %v", err))
 	}
-	target := nonInteractiveTmuxTarget(name)
 	defer killNonInteractiveTmuxSession(target)
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -170,6 +171,9 @@ func TestSpawnCLI_NonInteractiveShellDoesNotEnrollMember(t *testing.T) {
 }
 
 func TestSpawnCLI_NonInteractiveNameNamesTmuxSession(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("one-shots run through tmux only on Linux")
+	}
 	var names []string
 	t.Cleanup(agentd.SetNonInteractiveSessionNameRecorderForTest(&names))
 	f := newFlow(t)

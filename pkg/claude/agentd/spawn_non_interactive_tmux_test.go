@@ -67,8 +67,8 @@ func TestOneShotExecHelperReturnsResultFromPrivateHandoff(t *testing.T) {
 func TestOneShotTmuxSessionLaunchFailure(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	previous := launchNonInteractiveTmuxSession
-	launchNonInteractiveTmuxSession = func(string, string, string, ...string) error {
-		return fmt.Errorf("tmux unavailable")
+	launchNonInteractiveTmuxSession = func(string, string, string) (string, error) {
+		return "", fmt.Errorf("tmux unavailable")
 	}
 	t.Cleanup(func() { launchNonInteractiveTmuxSession = previous })
 	command := nonInteractiveCommand{
@@ -83,14 +83,10 @@ func TestOneShotTmuxSessionLaunchFailure(t *testing.T) {
 	}
 }
 
-func stubNonInteractiveTmuxSessionID(t *testing.T) {
-	t.Helper()
-	previous := nonInteractiveTmuxSessionID
-	nonInteractiveTmuxSessionID = func(string) (string, error) { return "$1", nil }
-	t.Cleanup(func() { nonInteractiveTmuxSessionID = previous })
-}
-
 func TestOneShotTmuxSessionName(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("tmux one-shot launcher runs on Linux")
+	}
 	t.Setenv("HOME", t.TempDir())
 	previousLaunch := launchNonInteractiveTmuxSession
 	previousUnique := uniqueNonInteractiveTmuxSessionName
@@ -99,9 +95,9 @@ func TestOneShotTmuxSessionName(t *testing.T) {
 		uniqueNonInteractiveTmuxSessionName = previousUnique
 	})
 	var launched string
-	launchNonInteractiveTmuxSession = func(name, _, _ string, _ ...string) error {
+	launchNonInteractiveTmuxSession = func(name, _, _ string) (string, error) {
 		launched = name
-		return fmt.Errorf("stop after naming")
+		return "", fmt.Errorf("stop after naming")
 	}
 	uniqueNonInteractiveTmuxSessionName = func(base string) string { return base + "-2" }
 	for _, tc := range []struct{ name, wantPrefix, wantExact string }{
@@ -131,27 +127,22 @@ func TestOneShotTmuxSessionName(t *testing.T) {
 // liveness poll and cleanup must follow the launched session's id, never a
 // later session that took the same name.
 func TestOneShotTmuxTargetsLaunchedSessionID(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("tmux one-shot launcher runs on Linux")
+	}
 	t.Setenv("HOME", t.TempDir())
 	previousLaunch := launchNonInteractiveTmuxSession
 	previousAlive := nonInteractiveTmuxSessionAlive
 	previousKill := killNonInteractiveTmuxSession
-	previousID := nonInteractiveTmuxSessionID
 	previousUnique := uniqueNonInteractiveTmuxSessionName
 	t.Cleanup(func() {
 		launchNonInteractiveTmuxSession = previousLaunch
 		nonInteractiveTmuxSessionAlive = previousAlive
 		killNonInteractiveTmuxSession = previousKill
-		nonInteractiveTmuxSessionID = previousID
 		uniqueNonInteractiveTmuxSessionName = previousUnique
 	})
-	launchNonInteractiveTmuxSession = func(string, string, string, ...string) error { return nil }
+	launchNonInteractiveTmuxSession = func(string, string, string) (string, error) { return "$42", nil }
 	uniqueNonInteractiveTmuxSessionName = func(base string) string { return base }
-	nonInteractiveTmuxSessionID = func(name string) (string, error) {
-		if name != "reviewer" {
-			return "", fmt.Errorf("unexpected session %q", name)
-		}
-		return "$42", nil
-	}
 	var polled, killed []string
 	nonInteractiveTmuxSessionAlive = func(target string) bool {
 		polled = append(polled, target)
@@ -170,17 +161,6 @@ func TestOneShotTmuxTargetsLaunchedSessionID(t *testing.T) {
 	if len(polled) == 0 || polled[0] != "$42" || len(killed) != 1 || killed[0] != "$42" {
 		t.Fatalf("polled=%v killed=%v, want the session id $42", polled, killed)
 	}
-
-	// Without a readable id, fall back to the exact-name target.
-	nonInteractiveTmuxSessionID = func(string) (string, error) { return "", fmt.Errorf("gone") }
-	polled, killed = nil, nil
-	_, _ = runNonInteractiveThroughTmux(ctx, nonInteractiveCommand{
-		Argv: []string{"true"}, Cwd: t.TempDir(), TimeoutSeconds: 10,
-		TmuxSessionName: "reviewer",
-	})
-	if len(killed) != 1 || killed[0] != "=reviewer" {
-		t.Fatalf("killed=%v, want the exact-name fallback", killed)
-	}
 }
 
 func TestOneShotTmuxBrokerRoundTrip(t *testing.T) {
@@ -193,9 +173,8 @@ func TestOneShotTmuxBrokerRoundTrip(t *testing.T) {
 	previousAlive := nonInteractiveTmuxSessionAlive
 	previousKill := killNonInteractiveTmuxSession
 	previousHelper := nonInteractiveHelperShellCommand
-	stubNonInteractiveTmuxSessionID(t)
-	launchNonInteractiveTmuxSession = func(_, _, shell string, _ ...string) error {
-		return exec.Command("/bin/sh", "-c", shell).Start()
+	launchNonInteractiveTmuxSession = func(_, _, shell string) (string, error) {
+		return "$1", exec.Command("/bin/sh", "-c", shell).Start()
 	}
 	nonInteractiveTmuxSessionAlive = func(string) bool { return true }
 	killNonInteractiveTmuxSession = func(string) {}
@@ -241,7 +220,6 @@ func TestOneShotTmuxCancellationWaitsForPaneCleanup(t *testing.T) {
 		killNonInteractiveTmuxSession = previousKill
 		nonInteractiveHelperShellCommand = previousHelper
 	})
-	stubNonInteractiveTmuxSessionID(t)
 	request := make(chan string, 1)
 	var alive, cleaned, killedEarly atomic.Bool
 	alive.Store(true)
@@ -249,7 +227,7 @@ func TestOneShotTmuxCancellationWaitsForPaneCleanup(t *testing.T) {
 		request <- path
 		return "true"
 	}
-	launchNonInteractiveTmuxSession = func(_, _, _ string, _ ...string) error { return nil }
+	launchNonInteractiveTmuxSession = func(_, _, _ string) (string, error) { return "$1", nil }
 	nonInteractiveTmuxSessionAlive = func(string) bool { return alive.Load() }
 	killNonInteractiveTmuxSession = func(string) {
 		if !cleaned.Load() {

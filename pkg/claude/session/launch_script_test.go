@@ -33,6 +33,7 @@ import (
 type launchRecordingTmux struct {
 	argv            [][]string
 	failNewSession  bool
+	newSessionOut   string
 	failServerProbe bool
 	resourceEnv     string
 	resourceEnvGone bool
@@ -57,6 +58,9 @@ func (r *launchRecordingTmux) Command(args ...string) *exec.Cmd {
 	command := recordedTmuxCommand(args)
 	if r.failNewSession && command == "new-session" {
 		return exec.Command("false")
+	}
+	if r.newSessionOut != "" && command == "new-session" {
+		return exec.Command("printf", "%s", r.newSessionOut)
 	}
 	if r.failServerProbe && command == "display-message" {
 		return exec.Command("false")
@@ -139,10 +143,10 @@ func parseNewSession(t *testing.T, argv []string) recordedNewSession {
 	for len(rest) > 0 && strings.HasPrefix(rest[0], "-") {
 		flag := rest[0]
 		switch flag {
-		case "-d":
+		case "-d", "-P":
 			parsed.opts[flag] = ""
 			rest = rest[1:]
-		case "-s", "-c", "-x", "-y":
+		case "-s", "-c", "-x", "-y", "-F":
 			require.GreaterOrEqual(t, len(rest), 2, "new-session %s is missing its value", flag)
 			parsed.opts[flag] = rest[1]
 			rest = rest[2:]
@@ -288,6 +292,30 @@ func TestLaunchArgvCarriesNoStartFlagInsideTclaudeTmuxServer(t *testing.T) {
 		"pane command must run the script under tclaude's pinned bootstrap shell")
 	assert.Contains(t, parsed.pane[len(shell)], "launch-scripts",
 		"script must live in the private launch-scripts dir")
+}
+
+// The one-shot runner targets the id new-session itself prints, so a
+// released and reused session name can never be polled or killed as its own.
+func TestLaunchDetachedTmuxSessionIDReadsNewSessionOutput(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv(ResourceDelegationDirEnv, "")
+	t.Setenv("TMUX", filepath.Join("/tmp", "tmux-1000", clcommon.TmuxSocketName)+",1,0")
+	rec := &launchRecordingTmux{newSessionOut: "$17\n"}
+	swapTmux(t, rec)
+
+	id, err := LaunchDetachedTmuxSessionID("reviewer", t.TempDir(), "exec true")
+	require.NoError(t, err)
+	assert.Equal(t, "$17", id)
+	launches := rec.newSessions()
+	require.Len(t, launches, 1)
+	parsed := parseNewSession(t, launches[0])
+	assert.Contains(t, parsed.opts, "-P")
+	assert.Equal(t, "#{session_id}", parsed.opts["-F"])
+	assert.Equal(t, "reviewer", parsed.opts["-s"])
+
+	rec.newSessionOut = "not-an-id\n"
+	_, err = LaunchDetachedTmuxSessionID("reviewer", t.TempDir(), "exec true")
+	require.ErrorContains(t, err, "did not report the new session id")
 }
 
 func TestLaunchPreflightRejectsOversizedArgvBeforeTmux(t *testing.T) {
