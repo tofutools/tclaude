@@ -1401,6 +1401,11 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/notify-human", handleNotifyHuman)
 	mux.HandleFunc("/v1/notify-human/attachment", handleNotifyHumanAttachment)
 	mux.HandleFunc("/v1/clipboard", handleClipboard)
+	// Operator-only status and reset surface for the AWB ready pollers
+	// (`tclaude pickup`). Human-token gated; no agent path. Deliberately
+	// outside /v1/awb/, which is the agent-facing credential proxy.
+	mux.HandleFunc("GET /v1/pickup", handleAWBPickupList)
+	mux.HandleFunc("POST /v1/pickup/{process}/reset", handleAWBPickupReset)
 	// Git-remote / GitHub proxy. agentd runs git and gh on the host with its
 	// own credentials so a sandboxed agent never holds them. Gated on the
 	// git.*/github.* slugs (none default-granted) AND on the operator's

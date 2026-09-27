@@ -47,3 +47,25 @@ func TestAWBReadyDispatchLifecycleAndCAS(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, ok)
 }
+
+func TestAWBReadyDispatchList(t *testing.T) {
+	setupTestDB(t)
+	for _, p := range []struct{ process, issue string }{{"zeta", "tcl-z"}, {"alpha", "tcl-a"}} {
+		selected, err := SelectAWBReadyDispatch(p.process, "tcl", p.issue, "agt_"+p.process)
+		require.NoError(t, err)
+		require.True(t, selected)
+	}
+	rows, err := ListAWBReadyDispatches()
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.Equal(t, "alpha", rows[0].Process)
+	assert.Equal(t, "tcl-z", rows[1].IssueID)
+
+	cleared, err := ClearAWBReadyDispatch("alpha", "tcl-a")
+	require.NoError(t, err)
+	assert.True(t, cleared)
+	rows, err = ListAWBReadyDispatches()
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "zeta", rows[0].Process)
+}

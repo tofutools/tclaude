@@ -88,6 +88,49 @@ func TestProxyTreeRequiresSemanticProxyConfig(t *testing.T) {
 	})
 }
 
+func TestPickupTreeRequiresAWBProxy(t *testing.T) {
+	agentipctest.IsolateManagedAgentEnv(t)
+	hasPickup := func(root *cobra.Command) bool {
+		for _, child := range root.Commands() {
+			if child.Name() == "pickup" {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("absent", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		if hasPickup(Cmd()) {
+			t.Fatal("pickup subtree present without an AWB proxy")
+		}
+	})
+
+	t.Run("other proxy only", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		if err := config.Save(&config.Config{Agent: &config.AgentConfig{
+			GitProxy: &config.GitProxyConfig{AllowedRemotes: []string{"github.com/acme"}},
+		}}); err != nil {
+			t.Fatalf("save config: %v", err)
+		}
+		if hasPickup(Cmd()) {
+			t.Fatal("pickup subtree present with only the git proxy configured")
+		}
+	})
+
+	t.Run("configured", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		if err := config.Save(&config.Config{Agent: &config.AgentConfig{
+			AWBProxy: &config.AWBProxyConfig{URL: "https://awb.example"},
+		}}); err != nil {
+			t.Fatalf("save config: %v", err)
+		}
+		if !hasPickup(Cmd()) {
+			t.Fatal("pickup subtree absent with an AWB proxy configured")
+		}
+	})
+}
+
 func TestTUIDashboardLivesBesideBrowserDashboard(t *testing.T) {
 	root := Cmd()
 	agentCmd, _, err := root.Find([]string{"agent"})

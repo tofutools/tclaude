@@ -13,6 +13,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/dbcmd"
 	"github.com/tofutools/tclaude/pkg/claude/memoryfiles"
+	"github.com/tofutools/tclaude/pkg/claude/pickup"
 	"github.com/tofutools/tclaude/pkg/claude/processcmd"
 	"github.com/tofutools/tclaude/pkg/claude/proxy"
 	"github.com/tofutools/tclaude/pkg/claude/remoteaccess"
@@ -51,6 +52,11 @@ func Cmd() *cobra.Command {
 	// leaves) makes an unconfigured `tclaude proxy ...` an unknown command.
 	if proxy.Configured() {
 		subCmds = append(subCmds, proxy.Cmd())
+	}
+	// Likewise the operator's view of the AWB ready pollers: without an AWB
+	// proxy there are no pollers, so `tclaude pickup` does not exist.
+	if pickup.Enabled() {
+		subCmds = append(subCmds, pickup.Cmd())
 	}
 	subCmds = append(subCmds,
 		agentd.Cmd(),

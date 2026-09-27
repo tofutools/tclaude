@@ -82,3 +82,28 @@ func ClearAWBReadyDispatch(process, issueID string) (bool, error) {
 	n, err := r.RowsAffected()
 	return n == 1, err
 }
+
+// ListAWBReadyDispatches returns every in-flight dispatch, ordered by process.
+func ListAWBReadyDispatches() ([]AWBReadyDispatch, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT process,workspace,issue_id,phase,agent_id,latest_error,created_at,updated_at FROM awb_ready_dispatches ORDER BY process`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []AWBReadyDispatch
+	for rows.Next() {
+		var row AWBReadyDispatch
+		var created, updated int64
+		if err := rows.Scan(&row.Process, &row.Workspace, &row.IssueID, &row.Phase, &row.AgentID, &row.LatestError, &created, &updated); err != nil {
+			return nil, err
+		}
+		row.CreatedAt = time.Unix(0, created)
+		row.UpdatedAt = time.Unix(0, updated)
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}

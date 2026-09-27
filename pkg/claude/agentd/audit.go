@@ -301,6 +301,10 @@ var auditRoutes = []auditRoute{
 	{method: http.MethodPost, segs: []string{"remote-access", "add-hosts"}, verb: "remote-access.add-hosts", describe: describeRemoteAccessHosts},
 	{method: http.MethodPost, segs: []string{"remote-access", "setup"}, verb: "remote-access.setup", describe: describeRemoteAccessSetup},
 
+	// Releasing an AWB pickup process from its issue (`tclaude pickup
+	// reset`). The handler records the process and the released dispatch.
+	{method: http.MethodPost, segs: []string{"pickup", "{process}", "reset"}, verb: "pickup.reset"},
+
 	// Agent power control (dashboard): shutting down / powering on a group
 	// or all agents is a fleet-wide state change.
 	{method: http.MethodPost, segs: []string{"shutdown"}, verb: "power.shutdown", describe: describePower},
