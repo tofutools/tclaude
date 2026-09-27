@@ -243,3 +243,14 @@ func TestAWBPickup_DeadTmuxSessionIsStuckWhateverTheStoredStatus(t *testing.T) {
 		"a pane that died without a final hook must not look healthy")
 	assert.Equal(t, session.StatusExited, alpha.Dispatch.Agent.SessionStatus)
 }
+
+func TestAWBPickup_ClosedIssueHintFollowsCloseMonitoring(t *testing.T) {
+	f, rec := pickupWorld(t)
+	rec.response = func(agentd.AWBProxyRequest) (int, string) {
+		return http.StatusOK, `{"id":"tcl-1","workspace":"tcl","status":"closed"}`
+	}
+	haveDispatch(t, "alpha", "tcl", "tcl-1", "")
+	alpha := pickupList(t, f)["alpha"]
+	assert.Equal(t, agent.AWBPickupStateReleasing, alpha.State)
+	assert.Contains(t, alpha.Hint, "next poll", "without monitor_close the worker releases a closed issue immediately")
+}

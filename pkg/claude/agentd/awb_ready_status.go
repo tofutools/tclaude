@@ -286,11 +286,7 @@ func awbPickupStatus(ctx context.Context) (agent.AWBPickupList, error) {
 	wg.Wait()
 	for i := range out.Processes {
 		p := &out.Processes[i]
-		var monitored bool
-		if wk, ok := workers[p.Process]; ok {
-			monitored = wk.config.MonitorPR || wk.config.MonitorCommit
-		}
-		p.State, p.Hint = awbPickupState(*p, monitored)
+		p.State, p.Hint = awbPickupState(*p, workers[p.Process].config)
 	}
 	return out, nil
 }
@@ -356,7 +352,7 @@ func awbPickupAgentStatus(agentID string, aliveTmux map[string]struct{}) *agent.
 
 // awbPickupState condenses a process's dispatch, issue, and agent into one
 // state plus a hint explaining what, if anything, the operator should do.
-func awbPickupState(p agent.AWBPickupProcess, monitored bool) (string, string) {
+func awbPickupState(p agent.AWBPickupProcess, cfg config.AWBReadyPollingConfig) (string, string) {
 	d := p.Dispatch
 	if d == nil {
 		switch {
@@ -371,7 +367,10 @@ func awbPickupState(p agent.AWBPickupProcess, monitored bool) (string, string) {
 		return agent.AWBPickupStateOrphaned, "process is not running in this daemon; reset to clear the leftover dispatch"
 	}
 	if d.Issue != nil && d.Issue.Status == "closed" {
-		return agent.AWBPickupStateReleasing, "issue closed; released once the agent settles"
+		if cfg.MonitorClose {
+			return agent.AWBPickupStateReleasing, "issue closed; released once the agent settles"
+		}
+		return agent.AWBPickupStateReleasing, "issue closed; released on the next poll"
 	}
 	a := d.Agent
 	if d.Phase != "spawned" && (a == nil || (!a.Exists && !a.PendingSpawn)) {
@@ -390,7 +389,7 @@ func awbPickupState(p agent.AWBPickupProcess, monitored bool) (string, string) {
 	case a.SessionStatus == "" || a.SessionStatus == session.StatusExited:
 		return agent.AWBPickupStateStuck, "agent session is not running but the issue is still open"
 	case a.SessionStatus == session.StatusIdle:
-		if monitored && d.Issue != nil && (d.Issue.PullRequestURL != "" || d.Issue.CommitHash != "") {
+		if (cfg.MonitorPR || cfg.MonitorCommit) && d.Issue != nil && (d.Issue.PullRequestURL != "" || d.Issue.CommitHash != "") {
 			return agent.AWBPickupStateAwaiting, "waiting for the recorded change to reach main"
 		}
 		return agent.AWBPickupStateAgentIdle, "agent is idle; the issue is still open"
