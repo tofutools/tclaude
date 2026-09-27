@@ -437,6 +437,39 @@ AWB applies its own authorization underneath: the daemon's account works in the
 workspaces it is a member of, and one it holds no access to answers `404`. That
 bounds the operator; the allow-list above bounds the agent.
 
+### Inspecting and resetting pickup processes
+
+Because a process never advances past an issue that does not close, an issue
+nobody finishes blocks its process indefinitely. `tclaude pickup` is the
+operator's view of every process and the way to unblock one. Like `tclaude
+proxy`, the command only exists when an AWB proxy (`agent.awb_proxy.url`) is
+configured, and both of its daemon endpoints are human-only.
+
+```bash
+tclaude pickup ls              # every process, its issue, and the agent on it
+tclaude pickup ls --json       # the same, as the daemon's JSON
+tclaude pickup watch           # live view; r resets the selected process
+tclaude pickup reset tcl-backend [--issue tcl-a1]
+```
+
+The listing joins the daemon's dispatch record with the issue's live AWB status
+(read with the operator's account) and the live state of the spawned agent, and
+condenses them into one state: `polling` (nothing in flight), `held` (usage
+ceiling), `error` (the last poll failed), `starting`, `working`, `idle` (the
+agent is idle but the issue is open), `awaiting` (a monitored PR or commit is
+recorded and the agent is idle), `releasing` (the issue closed), `stuck` (the
+agent is retired, gone, or its session is not running while the issue is still
+open), and `orphaned` (a dispatch left behind by a process this daemon no
+longer runs).
+
+`reset` only removes the daemon's dispatch record, so the process polls for the
+next ready issue on its next tick. It deliberately leaves the AWB issue and the
+agent alone: release or close the issue, and retire the agent, yourself if they
+should not continue. An issue that is still ready and unassigned may be picked
+up again. `--issue` makes the reset conditional on the process still holding
+that issue; `watch` always resets that way, so a refresh cannot redirect a
+confirmed reset onto a newly picked-up issue.
+
 ## Teaching agents to use the proxies
 
 ```bash
