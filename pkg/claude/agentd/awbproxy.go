@@ -1074,10 +1074,10 @@ func validateAWBIssueRef(raw string) (string, *proxyFault) {
 		return "", fault
 	}
 	for _, r := range hash {
-		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'z') {
 			return "", faultf(http.StatusBadRequest, "invalid_arg",
 				"%q is not an issue id (the form is <workspace>-<hash>); the part after the workspace "+
-					"key must be lowercase hexadecimal", raw)
+					"key must contain only lowercase base-36 characters [0-9a-z]", raw)
 		}
 	}
 	return id, nil
