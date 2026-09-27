@@ -810,11 +810,16 @@ func TestAWBProxy_CreateInfersTheOnlyVisibleWorkspace(t *testing.T) {
 		if strings.HasSuffix(req.URL, "/api/identity") {
 			return http.StatusOK, `{"identity":"tclaude-bot"}`
 		}
-		return http.StatusOK, awbIssueJSON("awb-a3f9c1", "awb")
+		return http.StatusOK, awbIssueJSON("awb-l8nxwj", "awb")
 	}
 
 	res := w.post("/v1/awb/issue/create", map[string]any{"title": "Parser crashes"})
-	w.outcome(res)
+	out := w.outcome(res)
+	var issue struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(out.JSON, &issue))
+	assert.Equal(t, "awb-l8nxwj", issue.ID)
 	calls := rec.snapshot()
 	require.Len(t, calls, 3, "workspace discovery and identity lookup must precede the mutation")
 	assert.Equal(t, "https://awb.example/api/identity", calls[1].URL)
