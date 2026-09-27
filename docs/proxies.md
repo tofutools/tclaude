@@ -466,7 +466,10 @@ longer runs).
 next ready issue on its next tick. It deliberately leaves the AWB issue and the
 agent alone: release or close the issue, and retire the agent, yourself if they
 should not continue. An issue that is still ready and unassigned may be picked
-up again. `--issue` makes the reset conditional on the process still holding
+up again. A reset waits (briefly) for a poll of the same
+process that is already running, so it never cuts off a claim or spawn half
+way; if the poll does not finish in time the reset is refused and can simply be
+retried. `--issue` makes the reset conditional on the process still holding
 that issue; `watch` always resets that way, so a refresh cannot redirect a
 confirmed reset onto a newly picked-up issue.
 

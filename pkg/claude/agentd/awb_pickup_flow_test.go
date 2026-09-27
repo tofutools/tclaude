@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -209,4 +210,36 @@ func TestAWBPickup_AgentsCannotInspectOrReset(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, d, "a refused reset leaves the dispatch in place")
 	assert.False(t, rec.sawAnyCall(), "a refused caller never reaches AWB")
+}
+
+func TestAWBPickup_ResetWaitsForAnInProgressPoll(t *testing.T) {
+	f, _ := pickupWorld(t)
+	haveDispatch(t, "alpha", "tcl", "tcl-1", "")
+
+	release := agentd.HoldAWBReadyProcessForTest("alpha", 50*time.Millisecond)
+	res := pickupReset(t, f, "alpha", "")
+	assert.Equal(t, http.StatusConflict, res.Code, "a reset must not race a poll that is claiming or spawning")
+	assert.Contains(t, res.Body.String(), "busy")
+	d, err := db.GetAWBReadyDispatch("alpha")
+	require.NoError(t, err)
+	require.NotNil(t, d, "the refused reset leaves the dispatch in place")
+
+	release()
+	res = pickupReset(t, f, "alpha", "")
+	require.Equal(t, http.StatusOK, res.Code, res.Body.String())
+}
+
+func TestAWBPickup_DeadTmuxSessionIsStuckWhateverTheStoredStatus(t *testing.T) {
+	f, _ := pickupWorld(t)
+	f.HaveEnrolledAgent("conv-alpha")
+	f.HaveAliveSession("conv-alpha", "alpha", "tmux-alpha", f.TestCwd("alpha"))
+	f.SetSessionStatus("conv-alpha", session.StatusWorking)
+	haveDispatch(t, "alpha", "tcl", "tcl-1", "conv-alpha")
+	require.Equal(t, agent.AWBPickupStateWorking, pickupList(t, f)["alpha"].State)
+
+	f.MarkOffline("tmux-alpha")
+	alpha := pickupList(t, f)["alpha"]
+	assert.Equal(t, agent.AWBPickupStateStuck, alpha.State,
+		"a pane that died without a final hook must not look healthy")
+	assert.Equal(t, session.StatusExited, alpha.Dispatch.Agent.SessionStatus)
 }

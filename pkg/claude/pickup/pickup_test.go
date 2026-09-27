@@ -128,3 +128,23 @@ func TestWatchShowsFetchError(t *testing.T) {
 	m = runCmd(t, m, m.Init())
 	assert.True(t, strings.Contains(m.View().Content, "daemon down"))
 }
+
+func TestWatchManualRefreshDoesNotStackTimers(t *testing.T) {
+	fetches := 0
+	var m tea.Model = newWatchModel(func() (agent.AWBPickupList, error) {
+		fetches++
+		return sampleList(), nil
+	}, nil, time.Second, newWatchStyles(""))
+	m = runCmd(t, m, m.Init()) // first fetch; starts chain 1
+	staleTick := tickMsg{gen: m.(watchModel).tickGen}
+	m, cmd := m.Update(key("g")) // manual refresh
+	m = runCmd(t, m, cmd)        // its result starts chain 2
+	require.Equal(t, 2, fetches)
+
+	m, cmd = m.Update(staleTick)
+	assert.Nil(t, cmd, "the superseded chain's tick must not fetch or reschedule")
+	m, cmd = m.Update(tickMsg{gen: m.(watchModel).tickGen})
+	require.NotNil(t, cmd, "the current chain's tick fetches")
+	runCmd(t, m, cmd)
+	assert.Equal(t, 3, fetches)
+}

@@ -51,6 +51,11 @@ type awbReadyWorker struct {
 	// runtime records the latest poll for `tclaude pickup`. Nil in tests
 	// that construct a worker directly; every recorder is nil-safe.
 	runtime *awbReadyRuntime
+	// busy is held for the whole of each poll and by an operator reset, so a
+	// reset never deletes a dispatch a poll is part-way through claiming or
+	// spawning. A one-slot channel rather than a mutex so the reset can give
+	// up after a bounded wait. Nil in tests that construct a worker directly.
+	busy chan struct{}
 }
 
 // awbReadyGateState remembers the harness and usage window a worker is
@@ -92,7 +97,7 @@ func newAWBReadyWorker(policy config.AWBProxyConfig, process string, polling con
 	base, _ := validateAWBBaseURL(policy.URL)
 	return awbReadyWorker{process: process, workspace: polling.Workspace, config: polling, interval: interval,
 		session: &awbProxySession{policy: policy, base: base, workspaces: []string{polling.Workspace}},
-		gate:    &awbReadyGateState{}, runtime: &awbReadyRuntime{}}
+		gate:    &awbReadyGateState{}, runtime: &awbReadyRuntime{}, busy: make(chan struct{}, 1)}
 }
 
 func validateAWBReadyPolling(policy config.AWBProxyConfig, process string, p config.AWBReadyPollingConfig) (time.Duration, error) {
@@ -137,7 +142,7 @@ func validateAWBReadyPolling(policy config.AWBProxyConfig, process string, p con
 
 func (w awbReadyWorker) run(stop <-chan struct{}) {
 	for {
-		released, err := w.poll(context.Background())
+		released, err := w.pollExclusive(context.Background())
 		w.runtime.recordPoll(err)
 		if err != nil {
 			d, _ := db.GetAWBReadyDispatch(w.process)
@@ -167,6 +172,15 @@ func (w awbReadyWorker) run(stop <-chan struct{}) {
 		case <-t.C:
 		}
 	}
+}
+
+// pollExclusive is poll under the worker's busy slot.
+func (w awbReadyWorker) pollExclusive(ctx context.Context) (bool, error) {
+	if w.busy != nil {
+		w.busy <- struct{}{}
+		defer func() { <-w.busy }()
+	}
+	return w.poll(ctx)
 }
 
 func (w awbReadyWorker) tick(ctx context.Context) error {

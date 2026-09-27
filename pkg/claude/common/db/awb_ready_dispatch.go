@@ -107,18 +107,3 @@ func ListAWBReadyDispatches() ([]AWBReadyDispatch, error) {
 	}
 	return out, rows.Err()
 }
-
-// ResetAWBReadyDispatch removes a process's dispatch whatever issue it holds,
-// so the operator can unblock a process whose issue will never be completed.
-func ResetAWBReadyDispatch(process string) (bool, error) {
-	d, err := Open()
-	if err != nil {
-		return false, err
-	}
-	r, err := d.Exec(`DELETE FROM awb_ready_dispatches WHERE process=?`, process)
-	if err != nil {
-		return false, err
-	}
-	n, err := r.RowsAffected()
-	return n == 1, err
-}

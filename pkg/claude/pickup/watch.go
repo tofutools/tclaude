@@ -58,7 +58,10 @@ func newWatchStyles(scheme string) watchStyles {
 }
 
 type (
-	tickMsg   time.Time
+	// tickMsg carries the generation of the timer chain that scheduled it;
+	// only the newest chain's tick triggers a fetch, so a manual refresh
+	// never leaves a second timer chain running.
+	tickMsg   struct{ gen int }
 	statusMsg struct {
 		list agent.AWBPickupList
 		err  error
@@ -90,6 +93,7 @@ type watchModel struct {
 	notice     string
 	updatedAt  time.Time
 	confirming *resetTarget
+	tickGen    int
 }
 
 func newWatchModel(fetch fetchFunc, reset resetFunc, interval time.Duration, styles watchStyles) watchModel {
@@ -119,8 +123,11 @@ func (m watchModel) fetchCmd() tea.Cmd {
 	}
 }
 
-func (m watchModel) tickCmd() tea.Cmd {
-	return tea.Tick(m.interval, func(t time.Time) tea.Msg { return tickMsg(t) })
+// nextTick starts a new timer chain, superseding any tick still pending.
+func (m *watchModel) nextTick() tea.Cmd {
+	m.tickGen++
+	gen := m.tickGen
+	return tea.Tick(m.interval, func(time.Time) tea.Msg { return tickMsg{gen: gen} })
 }
 
 func (m watchModel) resetCmd(t resetTarget) tea.Cmd {
@@ -137,8 +144,10 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
 	case tickMsg:
-		if m.loading {
-			return m, m.tickCmd()
+		if msg.gen != m.tickGen || m.loading {
+			// A superseded chain, or a fetch already in flight whose
+			// result will start the next chain.
+			return m, nil
 		}
 		m.loading = true
 		return m, m.fetchCmd()
@@ -152,7 +161,7 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updatedAt = time.Now()
 		}
 		m.cursor = min(m.cursor, max(0, len(m.procs)-1))
-		return m, m.tickCmd()
+		return m, m.nextTick()
 	case resetMsg:
 		if msg.err != nil {
 			m.notice = "Reset failed: " + msg.err.Error()

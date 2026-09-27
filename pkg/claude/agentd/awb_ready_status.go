@@ -23,6 +23,11 @@ import (
 // so one slow or unreachable server cannot hang `tclaude pickup ls`.
 const awbPickupIssueTimeout = 5 * time.Second
 
+// awbPickupResetWait bounds how long a reset waits for an in-progress poll of
+// the same process to finish. A poll that spawns an agent can take a while;
+// the operator gets a retryable conflict rather than a hung command.
+var awbPickupResetWait = 15 * time.Second
+
 // awbReadyRuntime is the in-memory record of a worker's most recent poll —
 // the part of a process's health the dispatch row cannot hold, because a
 // process with nothing in flight has no row.
@@ -110,6 +115,20 @@ func RecordAWBReadyPollForTest(process string, err error) {
 	registeredAWBReadyWorkers()[process].runtime.recordPoll(err)
 }
 
+// HoldAWBReadyProcessForTest occupies a registered process's busy slot as an
+// in-progress poll would, and shortens how long a reset waits for it. Returns
+// the release func.
+func HoldAWBReadyProcessForTest(process string, resetWait time.Duration) func() {
+	wk := registeredAWBReadyWorkers()[process]
+	wk.busy <- struct{}{}
+	prev := awbPickupResetWait
+	awbPickupResetWait = resetWait
+	return func() {
+		awbPickupResetWait = prev
+		<-wk.busy
+	}
+}
+
 func registeredAWBReadyWorkers() map[string]awbReadyWorker {
 	awbReadyRegistry.mu.Lock()
 	defer awbReadyRegistry.mu.Unlock()
@@ -153,6 +172,24 @@ func handleAWBPickupReset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid JSON body: "+err.Error())
 		return
 	}
+	// Hold the worker's busy slot across the read and the delete: the worker
+	// must not be part-way through claiming or spawning the issue being
+	// released, nor replace it with another issue in between.
+	if wk, ok := registeredAWBReadyWorkers()[process]; ok && wk.busy != nil {
+		t := time.NewTimer(awbPickupResetWait)
+		select {
+		case wk.busy <- struct{}{}:
+			t.Stop()
+			defer func() { <-wk.busy }()
+		case <-t.C:
+			writeError(w, http.StatusConflict, "busy", fmt.Sprintf(
+				"process %s is in the middle of a poll; retry the reset", process))
+			return
+		case <-r.Context().Done():
+			t.Stop()
+			return
+		}
+	}
 	existing, err := db.GetAWBReadyDispatch(process)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -166,17 +203,14 @@ func handleAWBPickupReset(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, agent.AWBPickupResetResponse{Process: process})
 		return
 	}
-	var reset bool
-	if want := strings.TrimSpace(req.IssueID); want != "" {
-		if !strings.EqualFold(want, existing.IssueID) {
-			writeError(w, http.StatusConflict, "conflict", fmt.Sprintf(
-				"process %s now holds issue %s, not %s; nothing reset", process, existing.IssueID, want))
-			return
-		}
-		reset, err = db.ClearAWBReadyDispatch(process, existing.IssueID)
-	} else {
-		reset, err = db.ResetAWBReadyDispatch(process)
+	if want := strings.TrimSpace(req.IssueID); want != "" && !strings.EqualFold(want, existing.IssueID) {
+		writeError(w, http.StatusConflict, "conflict", fmt.Sprintf(
+			"process %s now holds issue %s, not %s; nothing reset", process, existing.IssueID, want))
+		return
 	}
+	// Delete by process AND issue, so the row removed is always the one the
+	// response and audit row describe.
+	reset, err := db.ClearAWBReadyDispatch(process, existing.IssueID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
@@ -195,6 +229,9 @@ func handleAWBPickupReset(w http.ResponseWriter, r *http.Request) {
 
 func awbPickupStatus(ctx context.Context) (agent.AWBPickupList, error) {
 	workers := registeredAWBReadyWorkers()
+	// One liveness snapshot for every agent in the listing. A failed probe
+	// leaves it nil, which falls back to the stored session status.
+	alive, _ := cachedLiveTmuxSessions()
 	rows, err := db.ListAWBReadyDispatches()
 	if err != nil {
 		return agent.AWBPickupList{}, err
@@ -235,7 +272,7 @@ func awbPickupStatus(ctx context.Context) (agent.AWBPickupList, error) {
 				p.Workspace = row.Workspace
 			}
 			p.Dispatch = awbPickupDispatchJSON(&row)
-			p.Dispatch.Agent = awbPickupAgentStatus(row.AgentID)
+			p.Dispatch.Agent = awbPickupAgentStatus(row.AgentID, alive)
 			if configured {
 				wg.Add(1)
 				go func(d *agent.AWBPickupDispatch) {
@@ -281,7 +318,7 @@ func (w awbReadyWorker) liveIssue(ctx context.Context, id string) (*agent.AWBPic
 		URL: strings.TrimRight(w.session.base, "/") + "/#/issues/" + id}, ""
 }
 
-func awbPickupAgentStatus(agentID string) *agent.AWBPickupAgent {
+func awbPickupAgentStatus(agentID string, aliveTmux map[string]struct{}) *agent.AWBPickupAgent {
 	out := &agent.AWBPickupAgent{}
 	if agentID == "" {
 		return out
@@ -305,6 +342,13 @@ func awbPickupAgentStatus(agentID string) *agent.AWBPickupAgent {
 		}
 		if row, err := db.FindSessionByConvID(a.CurrentConvID); err == nil && row != nil {
 			out.SessionStatus = row.Status
+			// The stored status lags a pane that died without a final hook;
+			// a vanished tmux session is exited whatever the row says.
+			if aliveTmux != nil && row.TmuxSession != "" {
+				if _, ok := aliveTmux[row.TmuxSession]; !ok {
+					out.SessionStatus = session.StatusExited
+				}
+			}
 		}
 	}
 	return out
