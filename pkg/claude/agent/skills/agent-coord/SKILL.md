@@ -245,10 +245,12 @@ one.
 
 ## Running a one-shot task
 
-Use `tclaude agent spawn <group> --non-interactive` (requires
+Use `tclaude agent spawn [group] --non-interactive` (requires
 `groups.members.spawn`) when you need one result from the group's configured
 harness. Pass exactly one prompt source: `--initial-message` or `--file`.
 The prompt becomes the harness's initial prompt, not an inbox message.
+An agent in exactly one active group may omit the group argument. Human callers
+and agents in zero or multiple active groups must name it explicitly.
 
 ```bash
 tclaude agent spawn myteam --non-interactive --file task.md
@@ -284,7 +286,7 @@ exception, for when no suitable profile exists or the task pins a specific
 vendor/model (see the policy-bound warning below).
 
 When you delegate work by spawning a fresh agent
-(`tclaude agent spawn <group> …`, needs `groups.members.spawn`), the launch shape is
+(`tclaude agent spawn [group] …`, needs `groups.members.spawn`), the launch shape is
 **not** simply "the flags you passed, else the harness default". Each launch
 field (`--harness`, `--model`, `--effort`, `--sandbox`, `--ask-for-approval`,
 `--ask-user-question-timeout`) is resolved independently through this
