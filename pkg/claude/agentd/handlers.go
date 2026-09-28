@@ -52,11 +52,12 @@ func handleInfo(w http.ResponseWriter, r *http.Request) {
 // --- /v1/whoami ---
 
 type whoamiResp struct {
-	IsHuman bool     `json:"is_human"`
-	AgentID string   `json:"agent_id,omitempty"` // stable actor key — the canonical identity
-	ConvID  string   `json:"conv_id,omitempty"`  // live generation behind it (rotates)
-	Title   string   `json:"title,omitempty"`
-	Groups  []string `json:"groups,omitempty"`
+	IsHuman      bool     `json:"is_human"`
+	AgentID      string   `json:"agent_id,omitempty"` // stable actor key — the canonical identity
+	ConvID       string   `json:"conv_id,omitempty"`  // live generation behind it (rotates)
+	Title        string   `json:"title,omitempty"`
+	Groups       []string `json:"groups,omitempty"`
+	ActiveGroups []string `json:"active_groups,omitempty"` // current memberships eligible for an implicit spawn target
 	// Phases lists the advisory process phase (JOH-242) of each group the
 	// caller is in that HAS a process — one "<group>: phase <n>/<m>: <name>"
 	// line per such group. Omitted when no group the caller is in has a
@@ -102,9 +103,13 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 	}
 	groups, _ := db.ListGroupsForConv(p.ConvID)
 	gs := make([]string, 0, len(groups))
+	activeGroups := make([]string, 0, len(groups))
 	var phases []string
 	for _, g := range groups {
 		gs = append(gs, g.Name)
+		if !g.IsArchived() {
+			activeGroups = append(activeGroups, g.Name)
+		}
 		// Advisory process (JOH-242): surface the group's current phase when it
 		// has a process. Best-effort — a lookup error just omits the line.
 		if st, err := db.GetGroupProcessState(g.ID); err == nil && st != nil {
@@ -112,7 +117,7 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	agentID, _ := db.AgentIDForConv(p.ConvID)
-	writeJSON(w, http.StatusOK, whoamiResp{AgentID: agentID, ConvID: p.ConvID, Title: title, Groups: gs, Phases: phases})
+	writeJSON(w, http.StatusOK, whoamiResp{AgentID: agentID, ConvID: p.ConvID, Title: title, Groups: gs, ActiveGroups: activeGroups, Phases: phases})
 }
 
 // --- /v1/lookup ---

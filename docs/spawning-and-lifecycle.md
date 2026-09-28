@@ -26,6 +26,12 @@ either slug may be restricted to named spawn and sandbox profiles; a
 `sandbox_profile` scope matches the profile the launch resolves to, which is
 the inherited group or global assignment when `--sandbox-profile` is omitted.
 
+An agent that belongs to exactly one active group may omit `myteam` in the
+example above; the new agent joins that group. A human caller, or an agent
+with zero or multiple active group memberships, must name the group. Archived
+groups do not count toward the implicit choice. This also applies to one-shot
+spawns.
+
 The flags that matter most:
 
 - **Identity**: `--name` (becomes the conversation title; charset

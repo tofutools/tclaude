@@ -786,10 +786,10 @@ func (r SpawnRequest) IsOwnerSpecified() bool { return r.isOwnerSpecified }
 // decoded JSON.
 func (r SpawnRequest) PermissionOverridesSpecified() bool { return r.permissionOverridesSpecified }
 
-// SpawnParams drives `tclaude agent spawn <group>`. The daemon does
+// SpawnParams drives `tclaude agent spawn [group]`. The daemon does
 // the actual spawn + group-join; this struct just shapes the request.
 type SpawnParams struct {
-	Group          string   `pos:"true" help:"Existing group to join the new agent into"`
+	Group          string   `pos:"true" optional:"true" help:"Existing group to join the new agent into (optional for an agent in exactly one active group)"`
 	Name           string   `long:"name" short:"n" optional:"true" help:"Name for the new agent (e.g. 'reviewer'). Becomes its conversation title via /rename"`
 	Role           string   `long:"role" short:"r" optional:"true" help:"Role tag for the new member (e.g. 'tech-lead')"`
 	RoleRef        string   `long:"role-ref" optional:"true" help:"Behavioral guidance and default access from a saved role (see 'tclaude agent roles ls'); independent of --role's routing/display label"`
@@ -899,12 +899,8 @@ type SpawnParams struct {
 	// leaves the pointer nil so a profile default can still speak, matching
 	// --auto-memory's opt-in-only CLI shape; an explicit "none" is how the CLI
 	// says "trim nothing, ignore the profile".
-	// No --help-context-features twin here: Group is a REQUIRED positional, and
-	// cobra validates args before RunFunc, so a bare `agent spawn
-	// --help-context-features` could only ever fail with "accepts 1 arg". The
-	// catalog listing lives on `tclaude session new`, which has no required
-	// positional; the help below points there rather than shipping a flag that
-	// cannot work.
+	// The catalog listing lives on `tclaude session new`; the help below
+	// points there rather than shipping a second flag for the same catalog.
 	ContextFeatures string `long:"context-features" optional:"true" help:"Trim the new agent's Claude Code startup context: comma-separated <feature>[=on|off] (a bare feature means off), or 'none' to override a profile and trim nothing. E.g. bundled-skills,artifact,workflows. Unset = filled by the profile chain. Run 'tclaude session new --help-context-features' for the catalog. Not applicable to codex"`
 
 	// AutoCompactWindow pins where Claude Code auto-compacts for the new agent.
@@ -955,9 +951,11 @@ func spawnCmd() *cobra.Command {
 			"no other launch flags are needed. " +
 			"\n\n" +
 			"Launches `tclaude session new -d --global` with a generated label, " +
-			"waits for the new conv-id to materialise, and adds the new conv to <group> " +
-			"with the given role/descr. --name becomes the new agent's conversation " +
-			"title (injected as /rename on its pane). Prints the attach command for the " +
+			"waits for the new conv-id to materialise, and adds the new conv to the selected group " +
+			"with the given role/descr. An agent in exactly one active group may omit " +
+			"<group>; human callers and agents in zero or multiple active groups must " +
+			"name it. --name becomes the new agent's conversation title (injected as " +
+			"/rename on its pane). Prints the attach command for the " +
 			"new session. --descr is the short dashboard label; pass --initial-message to " +
 			"deliver the new agent its first task brief to its inbox (newlines preserved). " +
 			"For a long or multi-line brief, prefer --file <path> (or --file - to read " +
@@ -1307,10 +1305,6 @@ func validateSpawnSandboxImplementation(h *harness.Harness, raw string) (string,
 // printed; the CLI wrapper just propagates the exit code. stdin backs
 // `--file -` (read the brief from a pipe).
 func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*SpawnResponse, int) {
-	if p.Group == "" {
-		fmt.Fprintln(stderr, "Error: group is required")
-		return nil, rcInvalidArg
-	}
 	if p.GroupContext && !p.NonInteractive {
 		fmt.Fprintln(stderr, "Error: --group-context requires --non-interactive")
 		return nil, rcInvalidArg
@@ -1400,6 +1394,13 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return nil, rc
+	}
+	if p.Group == "" {
+		group, rc := implicitSpawnGroup(stderr)
+		if rc != rcOK {
+			return nil, rc
+		}
+		p.Group = group
 	}
 
 	// Fetch the named --profile (reads are open on the daemon) so its saved
@@ -1927,6 +1928,27 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintf(stdout, "  Worktree: %s (branch %s)\n", wtPath, wt)
 	}
 	return &resp, rcOK
+}
+
+func implicitSpawnGroup(stderr io.Writer) (string, int) {
+	var caller struct {
+		IsHuman      bool     `json:"is_human"`
+		ConvID       string   `json:"conv_id"`
+		ActiveGroups []string `json:"active_groups"`
+	}
+	if err := DaemonGet("/v1/whoami", &caller); err != nil {
+		fmt.Fprintf(stderr, "Error: resolve caller group: %v\n", err)
+		return "", MapDaemonErrorToRC(err)
+	}
+	if caller.IsHuman || caller.ConvID == "" || len(caller.ActiveGroups) == 0 {
+		fmt.Fprintln(stderr, "Error: group is required unless the caller is an agent in exactly one active group")
+		return "", rcInvalidArg
+	}
+	if len(caller.ActiveGroups) > 1 {
+		fmt.Fprintf(stderr, "Error: group is ambiguous (%s); name one explicitly\n", strings.Join(caller.ActiveGroups, ", "))
+		return "", rcInvalidArg
+	}
+	return caller.ActiveGroups[0], rcOK
 }
 
 func parseEnvironmentFlags(values []string) ([]sandboxpolicy.EnvironmentEntry, error) {

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -36,6 +37,51 @@ func TestRunSpawn_AskHumanDoesNotClaimPendingPopupBeforeLineageDenial(t *testing
 	assert.NotContains(t, stdout.String(), "Waiting", "no popup was known to be pending")
 	assert.Contains(t, stdout.String(), "may be requested")
 	assert.Contains(t, stderr.String(), "approval lineage")
+}
+
+func TestImplicitSpawnGroup(t *testing.T) {
+	previous := DaemonRequestImpl
+	t.Cleanup(func() { DaemonRequestImpl = previous })
+	for _, tc := range []struct {
+		name, convID string
+		human        bool
+		groups       []string
+		want         string
+		wantError    string
+	}{
+		{name: "one active group", convID: "caller", groups: []string{"team"}, want: "team"},
+		{name: "human", human: true, wantError: "group is required"},
+		{name: "unknown caller", wantError: "group is required"},
+		{name: "no active groups", convID: "caller", wantError: "group is required"},
+		{name: "multiple active groups", convID: "caller", groups: []string{"alpha", "beta"}, wantError: "ambiguous (alpha, beta)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			DaemonRequestImpl = func(method, path string, _ any, out any, _ DaemonOpts) error {
+				assert.Equal(t, http.MethodGet, method)
+				assert.Equal(t, "/v1/whoami", path)
+				// Decode through JSON so this test exercises the response's wire fields.
+				body, err := json.Marshal(map[string]any{"is_human": tc.human, "conv_id": tc.convID, "active_groups": tc.groups})
+				require.NoError(t, err)
+				return json.Unmarshal(body, out)
+			}
+			stderr := new(bytes.Buffer)
+			got, rc := implicitSpawnGroup(stderr)
+			if tc.wantError != "" {
+				assert.Equal(t, rcInvalidArg, rc)
+				assert.Contains(t, stderr.String(), tc.wantError)
+				return
+			}
+			assert.Equal(t, rcOK, rc)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestSpawnCommandAcceptsOmittedGroup(t *testing.T) {
+	cmd := spawnCmd()
+	require.NoError(t, cmd.ValidateArgs(nil))
+	require.NoError(t, cmd.ValidateArgs([]string{"team"}))
+	assert.Error(t, cmd.ValidateArgs([]string{"team", "other"}))
 }
 
 func TestRunSpawn_ExplicitFastModeInheritStaysOnWire(t *testing.T) {
