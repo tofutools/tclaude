@@ -82,7 +82,7 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	require.NotNil(t, codex, "catalog missing codex; have %+v", snap.Harnesses)
 	assert.Equal(t, "Codex CLI", codex.DisplayName)
 	assert.Equal(t, []string{
-		"gpt-6-astra", "gpt-6-sol", "gpt-6-terra", "gpt-6-luna",
+		"gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-terra", "gpt-6-luna",
 		"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
 		"gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark",
 	}, codex.Models, "codex exposes the curated dropdown suggestions")
@@ -157,7 +157,7 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.Equal(t, "GitHub Copilot CLI", copilot.DisplayName)
 	assert.Equal(t, harness.MustGet(harness.CopilotName).Models.Models(), copilot.Models,
 		"the dashboard must expose the complete Copilot model catalog")
-	assert.Len(t, copilot.Models, 32, "auto plus the 31 concrete Copilot model suggestions")
+	assert.Len(t, copilot.Models, 33, "auto plus the 32 concrete Copilot model suggestions")
 	assert.Equal(t, harness.MustGet(harness.CopilotName).SupportsAwaitingInputObservation(),
 		copilot.CanObserveAwaitingInput, "awaiting-input observation follows the harness registry")
 }

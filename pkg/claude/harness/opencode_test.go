@@ -208,7 +208,7 @@ func TestParseOpenCodeModelsVerbose(t *testing.T) {
     }
   }
 }
-openai/gpt-b
+openai/gpt-6.1-sol
 {
   "variants": {
     "low": {
@@ -228,7 +228,7 @@ ollama/llama3.2:latest
 }`
 	models, efforts := parseOpenCodeModelsVerbose(input)
 	if !reflect.DeepEqual(models, []string{
-		"openai/gpt-a", "openai/gpt-b", "ollama/llama3.2:latest",
+		"openai/gpt-a", "openai/gpt-6.1-sol", "ollama/llama3.2:latest",
 	}) {
 		t.Fatalf("models = %v", models)
 	}

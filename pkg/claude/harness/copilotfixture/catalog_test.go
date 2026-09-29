@@ -48,7 +48,7 @@ func TestCopilotModelCatalogMatchesPinnedHelpFixture(t *testing.T) {
 	if gptStart < 0 {
 		t.Fatal("pinned Copilot model fixture is missing the first released GPT suggestion")
 	}
-	want = slices.Insert(want, gptStart, "gpt-6-astra", "gpt-6-sol", "gpt-6-terra", "gpt-6-luna")
+	want = slices.Insert(want, gptStart, "gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-terra", "gpt-6-luna")
 	opusStart := slices.Index(want, "claude-opus-5")
 	if opusStart < 0 {
 		t.Fatal("pinned Copilot model fixture is missing the newest released Opus suggestion")
