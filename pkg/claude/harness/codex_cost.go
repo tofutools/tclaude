@@ -47,6 +47,21 @@ var codexModelPrices = map[string]OpenAIModelPricing{
 		Short: OpenAIModelPrice{InputPerMTok: 10.00, CachedInputPerMTok: 1.00, CacheWritePerMTok: 12.50, OutputPerMTok: 50.00},
 		Long:  &OpenAIModelPrice{InputPerMTok: 20.00, CachedInputPerMTok: 2.00, CacheWritePerMTok: 25.00, OutputPerMTok: 75.00},
 	},
+	// https://developers.openai.com/api/docs/models/gpt-6.1-sol
+	"gpt-6.1-sol": {
+		Short: OpenAIModelPrice{InputPerMTok: 2.00, CachedInputPerMTok: 0.10, CacheWritePerMTok: 2.50, OutputPerMTok: 10.00},
+		Long:  &OpenAIModelPrice{InputPerMTok: 4.00, CachedInputPerMTok: 0.20, CacheWritePerMTok: 5.00, OutputPerMTok: 15.00},
+	},
+	// https://developers.openai.com/api/docs/models/gpt-6-sol
+	"gpt-6-sol": {
+		Short: OpenAIModelPrice{InputPerMTok: 2.00, CachedInputPerMTok: 0.20, CacheWritePerMTok: 2.50, OutputPerMTok: 10.00},
+		Long:  &OpenAIModelPrice{InputPerMTok: 4.00, CachedInputPerMTok: 0.40, CacheWritePerMTok: 5.00, OutputPerMTok: 15.00},
+	},
+	// https://developers.openai.com/api/docs/models/gpt-6-luna
+	"gpt-6-luna": {
+		Short: OpenAIModelPrice{InputPerMTok: 0.10, CachedInputPerMTok: 0.01, CacheWritePerMTok: 0.125, OutputPerMTok: 0.50},
+		Long:  &OpenAIModelPrice{InputPerMTok: 0.20, CachedInputPerMTok: 0.02, CacheWritePerMTok: 0.25, OutputPerMTok: 0.75},
+	},
 	"gpt-5.6-sol": {
 		Short: OpenAIModelPrice{InputPerMTok: 5.00, CachedInputPerMTok: 0.50, CacheWritePerMTok: 6.25, OutputPerMTok: 30.00},
 		Long:  &OpenAIModelPrice{InputPerMTok: 10.00, CachedInputPerMTok: 1.00, CacheWritePerMTok: 12.50, OutputPerMTok: 45.00},
