@@ -155,24 +155,25 @@ export function mountImperativeCostChart(host, chart) {
   host.append(shell, status);
 
   let tooltip = null;
-  const highlight = (activeKey) => {
-    for (const [bar, key] of seriesBars) {
-      bar.classList.toggle('cost-series-focused', activeKey != null && key === activeKey);
+  const highlight = (activeBar) => {
+    for (const bar of seriesBars.keys()) {
+      bar.classList.toggle('cost-series-focused', bar === activeBar);
     }
-    shell.classList.toggle('has-cost-series-focus', activeKey != null);
+    shell.classList.toggle('has-cost-series-focus', activeBar != null);
   };
   const hide = () => {
     if (tooltip) tooltip.style.display = 'none';
     highlight(null);
   };
-  const show = (column, clientX, clientY, announce = false, activeKey = null) => {
+  const show = (column, clientX, clientY, announce = false, activeBar = null) => {
     if (!column) { hide(); return; }
     if (!tooltip) {
       tooltip = element('div', 'cost-tip');
       document.body.append(tooltip);
     }
     const day = byDay.get(column.dataset.day);
-    highlight(activeKey);
+    highlight(activeBar);
+    const activeKey = seriesBars.get(activeBar) ?? null;
     tooltip.replaceChildren();
     if (showBreakdown && day?.segments?.length) tooltip.append(tooltipRows(day, chart, activeKey));
     else tooltip.textContent = column.dataset.tip;
@@ -188,7 +189,7 @@ export function mountImperativeCostChart(host, chart) {
     tooltip.style.top = Math.max(4, top) + 'px';
   };
   const move = (event) => show(event.target.closest?.('.cost-col[data-tip]'), event.clientX, event.clientY,
-    false, seriesBars.get(event.target.closest?.('.cost-seg')) ?? null);
+    false, event.target.closest?.('.cost-seg') ?? null);
   const makeTabStop = (column) => {
     for (const candidate of spendColumns) candidate.setAttribute('tabindex', candidate === column ? '0' : '-1');
   };
