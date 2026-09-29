@@ -280,9 +280,9 @@ func TestOpenCodeModelCatalogFallsBackForZeroPricedOpenAISubscription(t *testing
 		t.Run(tc.model, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, "/config/providers", r.URL.Path)
-				_, _ = w.Write([]byte(fmt.Sprintf(`{"providers":[`+
+				_, _ = fmt.Fprintf(w, `{"providers":[`+
 					`{"id":"openai","models":{"%s":{"cost":{"input":0,"output":0,"cache":{"read":0,"write":0}},"limit":{"context":1050000}}}},`+
-					`{"id":"local","models":{"free":{"cost":{"input":0,"output":0,"cache":{"read":0,"write":0}},"limit":{"context":200000}}}}]}`, tc.model)))
+					`{"id":"local","models":{"free":{"cost":{"input":0,"output":0,"cache":{"read":0,"write":0}},"limit":{"context":200000}}}}]}`, tc.model)
 			}))
 			t.Cleanup(server.Close)
 			runtime := db.OpenCodeRuntime{
