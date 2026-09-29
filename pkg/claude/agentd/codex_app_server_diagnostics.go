@@ -7,11 +7,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/codexappserver"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
-const codexAppServerSupportedVersions = ">=0.147.0,<0.148.0"
+const codexAppServerSupportedVersions = ">=" + codexappserver.MinimumCodexVersion
 
 var codexDiagnosticAbsolutePath = regexp.MustCompile(`(^|[[:space:]\(\"'=:])/[^\s,;:)\"]+`)
 

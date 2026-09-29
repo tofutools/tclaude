@@ -30,7 +30,7 @@ func TestVerifyCodexAppServerLaunchVersionProbesExactLaunchExecutable(t *testing
 	var probed string
 	codexAppServerVersionProbe = func(executable, _ string, _ map[string]string) ([]byte, error) {
 		probed = executable
-		return []byte("codex-cli 0.147.2\n"), nil
+		return []byte("codex-cli 0.159.0\n"), nil
 	}
 	t.Cleanup(func() { codexAppServerVersionProbe = oldProbe })
 
@@ -43,7 +43,7 @@ func TestVerifyCodexAppServerLaunchVersionProbesExactLaunchExecutable(t *testing
 	runtime, err := db.GetCodexAppServerRuntime(generation)
 	require.NoError(t, err)
 	require.NotNil(t, runtime)
-	assert.Equal(t, "0.147.2", runtime.CodexVersion)
+	assert.Equal(t, "0.159.0", runtime.CodexVersion)
 }
 
 func TestVerifyCodexAppServerLaunchVersionFailsClosedAndMarksUnavailable(t *testing.T) {
@@ -60,7 +60,7 @@ func TestVerifyCodexAppServerLaunchVersionFailsClosedAndMarksUnavailable(t *test
 	}))
 	oldProbe := codexAppServerVersionProbe
 	codexAppServerVersionProbe = func(string, string, map[string]string) ([]byte, error) {
-		return []byte("codex-cli 0.148.0\n"), nil
+		return []byte("codex-cli 0.146.9\n"), nil
 	}
 	t.Cleanup(func() { codexAppServerVersionProbe = oldProbe })
 

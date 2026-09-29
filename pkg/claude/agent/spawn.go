@@ -917,7 +917,7 @@ type SpawnParams struct {
 	// &true and its absence leaves the pointer nil so a profile default can still
 	// speak (and, unset everywhere, resolve to the send-keys default).
 	CopilotAPI     bool `long:"copilot-api" help:"EXPERIMENTAL: drive the new Copilot agent over its embedded JSON-RPC API (copilot --ui-server) instead of tmux send-keys — messages, rename and compaction become typed calls, context is read live, and an agent blocked on a permission prompt becomes visible; soft exit uses keystrokes because the API cannot exit the CLI. Refuses unless the launch dir is already trusted (or --trust-dir) and the pane shares host loopback. The endpoint is unauthenticated and loopback-bound. Off by default; unset = filled by the profile chain, then off. Copilot only"`
-	CodexAppServer bool `long:"codex-app-server" help:"EXPERIMENTAL: drive the new Codex agent through a private per-agent app-server while keeping the normal TUI attached. Requires Codex 0.147.x. Off by default; unset = profile chain, then legacy send-keys. Pass --codex-app-server=false to override an opted-in profile for deliberate A/B testing. Codex only"`
+	CodexAppServer bool `long:"codex-app-server" help:"EXPERIMENTAL: drive the new Codex agent through a private per-agent app-server while keeping the normal TUI attached. Requires Codex 0.147.0 or newer. Off by default; unset = profile chain, then legacy send-keys. Pass --codex-app-server=false to override an opted-in profile for deliberate A/B testing. Codex only"`
 	// codexAppServerSpecified distinguishes an omitted bool flag (profile tiers
 	// may speak) from --codex-app-server=false (authoritative send-keys). Cobra
 	// tracks that distinction even though the decoded Go bool cannot.
