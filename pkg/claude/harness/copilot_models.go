@@ -15,6 +15,7 @@ import (
 // `auto` leads because it is the choice that never goes stale.
 var copilotKnownModels = []string{
 	"auto",
+	"claude-sonnet-5.5",
 	"claude-sonnet-5",
 	"claude-sonnet-4.6",
 	"claude-sonnet-4.5",

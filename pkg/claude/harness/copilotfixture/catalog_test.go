@@ -54,6 +54,11 @@ func TestCopilotModelCatalogMatchesPinnedHelpFixture(t *testing.T) {
 		t.Fatal("pinned Copilot model fixture is missing the newest released Opus suggestion")
 	}
 	want = slices.Insert(want, opusStart, "claude-opus-5.5")
+	sonnetStart := slices.Index(want, "claude-sonnet-5")
+	if sonnetStart < 0 {
+		t.Fatal("pinned Copilot model fixture is missing the newest released Sonnet suggestion")
+	}
+	want = slices.Insert(want, sonnetStart, "claude-sonnet-5.5")
 	h := harness.MustGet(harness.CopilotName)
 	got := h.Models.Models()
 	if !slices.Equal(got, want) {
