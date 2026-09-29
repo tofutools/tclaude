@@ -158,7 +158,6 @@ export function mountImperativeCostChart(host, chart) {
   const highlight = (activeKey) => {
     for (const [bar, key] of seriesBars) {
       bar.classList.toggle('cost-series-focused', activeKey != null && key === activeKey);
-      bar.classList.toggle('cost-series-muted', activeKey != null && key !== activeKey);
     }
     shell.classList.toggle('has-cost-series-focus', activeKey != null);
   };

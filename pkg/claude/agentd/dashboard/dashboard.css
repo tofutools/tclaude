@@ -3690,8 +3690,6 @@ details.cost-filter-menu[open] > summary::before { content: none; }
 .cost-accumulated-tip-sw { display: inline-block; width: 9px; height: 9px; margin-top: 2px; border-radius: 2px; }
 .cost-accumulated-tip-total { margin-top: 5px; padding-top: 5px; border-top: 1px solid #3a4655; }
 .cost-accumulated-tip-panel small { display: block; margin-top: 5px; color: #8b949e; }
-.cost-series-muted { opacity: .32; }
-.cost-seg.cost-seg-projected.cost-series-muted { opacity: .14; }
 .cost-seg.cost-seg-projected.cost-series-focused { opacity: .65; }
 .cost-accumulated-stack, .cost-accumulated-stack-line, .cost-seg,
 .cost-accumulated-svg > g { transition: opacity 100ms ease, fill-opacity 100ms ease; }

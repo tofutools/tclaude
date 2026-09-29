@@ -26,7 +26,8 @@ test('accumulated hover identifies the sloping band and emphasizes its cumulativ
   assert.match(row.textContent, /Alpha.*\$1.00/,
     'band hit uses interpolated heights even when the nearest day has a smaller total');
   assert.equal(mounted.container.querySelectorAll('g.cost-series-focused polygon').length, 1);
-  assert.equal(mounted.container.querySelectorAll('g.cost-series-muted polygon').length, 1);
+  assert.equal(mounted.container.querySelector('polygon.cost-series-1').parentElement.getAttribute('class'), '',
+    'the other accumulated band retains its normal styling');
   await move(.6, 4);
   row = mounted.container.querySelector('.cost-accumulated-tip-row.cost-series-focused');
   assert.match(row.textContent, /Alpha.*≈\$10.00/,
@@ -34,7 +35,7 @@ test('accumulated hover identifies the sloping band and emphasizes its cumulativ
   await move(.6, 1);
   assert.match(mounted.container.querySelector('.cost-accumulated-tip-row.cost-series-focused').textContent, /Beta/);
   await move(.6, 15);
-  assert.equal(mounted.container.querySelectorAll('.cost-series-focused, .cost-series-muted').length, 0);
+  assert.equal(mounted.container.querySelectorAll('.cost-series-focused').length, 0);
   assert.ok(mounted.container.querySelector('.cost-accumulated-tip-panel'), 'outside the bands still inspects the day');
   const emerging = buildAccumulatedCostChart({ stackByProvider: false, stackByModel: true,
     days: [
@@ -51,6 +52,6 @@ test('accumulated hover identifies the sloping band and emphasizes its cumulativ
     'a newly appearing wedge has a highlighted zero row when the inspected date precedes its first spend');
   assert.match(mounted.container.querySelector('.cost-accumulated-tip-total').textContent, /\$1.00/);
   await harness.act(() => harness.fireEvent(target, 'mouseleave'));
-  assert.equal(mounted.container.querySelectorAll('.cost-series-focused, .cost-series-muted').length, 0);
+  assert.equal(mounted.container.querySelectorAll('.cost-series-focused').length, 0);
   assert.equal(mounted.container.querySelector('.cost-accumulated-tip-panel'), null);
 });

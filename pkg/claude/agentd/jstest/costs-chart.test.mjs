@@ -83,8 +83,10 @@ test('hovering a daily model highlights its series across recorded and projected
   const bars = host.querySelectorAll('.cost-seg');
   harness.fireEvent(bars[0], 'mousemove', { clientX: 20, clientY: 30 });
   assert.equal(host.querySelectorAll('.cost-seg.cost-series-focused').length, 2);
-  assert.equal(host.querySelectorAll('.cost-seg.cost-series-muted').length, 2,
-    'series with the same model name and reused palette color remain distinct');
+  assert.equal(bars[1].className, 'cost-seg cost-series-0',
+    'other series retain their normal styling even with the same model name and reused palette color');
+  assert.equal(bars[3].className, 'cost-seg cost-seg-projected cost-series-0',
+    'unselected projected series retain their normal styling');
   let row = harness.document.body.querySelector('.cost-tip-row.cost-series-focused');
   assert.match(row.textContent, /shared.*\$3.00/);
   harness.fireEvent(bars[1], 'mousemove', { clientX: 20, clientY: 40 });
@@ -92,10 +94,10 @@ test('hovering a daily model highlights its series across recorded and projected
   assert.match(row.textContent, /shared.*\$2.00/);
   assert.equal(bars[1].classList.contains('cost-series-focused'), true);
   harness.fireEvent(host.querySelector('.cost-col'), 'mousemove', { clientX: 20, clientY: 5 });
-  assert.equal(host.querySelectorAll('.cost-series-focused, .cost-series-muted').length, 0,
+  assert.equal(host.querySelectorAll('.cost-series-focused').length, 0,
     'empty space still shows the day tooltip but clears the model emphasis');
   harness.fireEvent(bars[0], 'mousemove', { clientX: 20, clientY: 30 });
   harness.fireEvent(host, 'mouseleave');
-  assert.equal(host.querySelectorAll('.cost-series-focused, .cost-series-muted').length, 0);
+  assert.equal(host.querySelectorAll('.cost-series-focused').length, 0);
   assert.equal(harness.document.body.querySelector('.cost-tip').style.display, 'none');
 });

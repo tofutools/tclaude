@@ -202,9 +202,9 @@ export function CostsAccumulatedChart({ chart }) {
         const upper = part.points.map((point) => `${x(point.index)},${y(point.upper)}`).join(' ');
         const lower = [...part.points].reverse().map((point) => `${x(point.index)},${y(point.lower)}`).join(' ');
         const boundary = visibleBoundary(part.points);
-        const emphasis = tooltip?.seriesKey != null
-          ? tooltip.seriesKey === stack.key ? ' cost-series-focused' : ' cost-series-muted' : '';
-        return html`<g class=${emphasis.trim()} key=${`stack-${stack.key}-${index}`}>
+        const emphasis = tooltip?.seriesKey != null && tooltip.seriesKey === stack.key
+          ? 'cost-series-focused' : '';
+        return html`<g class=${emphasis} key=${`stack-${stack.key}-${index}`}>
           <polygon class=${`cost-accumulated-stack ${stack.className}${part.projected ? ' projected' : ''}`}
             points=${`${upper} ${lower}`} />
           ${boundary.length > 1 && html`<polyline
