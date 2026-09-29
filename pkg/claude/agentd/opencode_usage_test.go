@@ -267,37 +267,58 @@ func TestApplyOpenCodeVirtualCostUsageIsReplaySafeAndHandlesModelChanges(t *test
 }
 
 func TestOpenCodeModelCatalogFallsBackForZeroPricedOpenAISubscription(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/config/providers", r.URL.Path)
-		_, _ = w.Write([]byte(`{"providers":[` +
-			`{"id":"openai","models":{"gpt-5.6-sol":{"cost":{"input":0,"output":0,"cache":{"read":0,"write":0}},"limit":{"context":1050000}}}},` +
-			`{"id":"local","models":{"free":{"cost":{"input":0,"output":0,"cache":{"read":0,"write":0}},"limit":{"context":200000}}}}]}`))
-	}))
-	t.Cleanup(server.Close)
-	runtime := db.OpenCodeRuntime{
-		SessionID: "oc-zero-price", ConvID: "ses-zero-price", ServerURL: server.URL,
-		Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	cases := []struct {
+		model                                        string
+		input, output, cached, write, want, longWant float64
+	}{
+		{"gpt-5.6-sol", 5, 30, 0.5, 6.25, 0.0096625, 7.725},
+		{"gpt-6.1-sol", 2, 10, 0.1, 2.5, 0.003545, 2.77},
+		{"gpt-6-sol", 2, 10, 0.2, 2.5, 0.003565, 2.79},
+		{"gpt-6-luna", 0.1, 0.5, 0.01, 0.125, 0.00017825, 0.1395},
 	}
+	for _, tc := range cases {
+		t.Run(tc.model, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, "/config/providers", r.URL.Path)
+				_, _ = fmt.Fprintf(w, `{"providers":[`+
+					`{"id":"openai","models":{"%s":{"cost":{"input":0,"output":0,"cache":{"read":0,"write":0}},"limit":{"context":1050000}}}},`+
+					`{"id":"local","models":{"free":{"cost":{"input":0,"output":0,"cache":{"read":0,"write":0}},"limit":{"context":200000}}}}]}`, tc.model)
+			}))
+			t.Cleanup(server.Close)
+			runtime := db.OpenCodeRuntime{
+				SessionID: "oc-zero-price", ConvID: "ses-zero-price", ServerURL: server.URL,
+				Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+			}
 
-	_, prices, err := fetchOpenCodeModelCatalog(context.Background(), runtime)
-	require.NoError(t, err)
-	price := prices["openai/gpt-5.6-sol"]
-	assert.Equal(t, 5.0, price.Input)
-	assert.Equal(t, 30.0, price.Output)
-	assert.Equal(t, 0.5, price.Cache.Read)
-	assert.Equal(t, 6.25, price.Cache.Write)
-	require.Len(t, price.Tiers, 1)
-	assert.Equal(t, float64(harness.OpenAIShortContextInputMax), price.Tiers[0].Tier.Size)
-	assert.Equal(t, openCodeModelPrice{}, prices["local/free"],
-		"zero-priced non-OpenAI models remain genuinely free")
+			_, prices, err := fetchOpenCodeModelCatalog(context.Background(), runtime)
+			require.NoError(t, err)
+			price := prices["openai/"+tc.model]
+			assert.Equal(t, tc.input, price.Input)
+			assert.Equal(t, tc.output, price.Output)
+			assert.Equal(t, tc.cached, price.Cache.Read)
+			assert.Equal(t, tc.write, price.Cache.Write)
+			require.Len(t, price.Tiers, 1)
+			assert.Equal(t, float64(harness.OpenAIShortContextInputMax), price.Tiers[0].Tier.Size)
+			assert.Equal(t, openCodeModelPrice{}, prices["local/free"],
+				"zero-priced non-OpenAI models remain genuinely free")
 
-	zero := 0.0
-	projected := projectOpenCodeMessageCost(openCodeContextUsage{
-		MessageID: "msg", ProviderID: "openai", ModelID: "gpt-5.6-sol", ReportedCost: &zero,
-		Input: 1_000, Output: 100, Reasoning: 50, CacheRead: 200, CacheWrite: 10,
-	}, prices, config.DefaultOpenCodeLegacyLongContextPricingCutoff)
-	require.True(t, projected.eligible)
-	assert.InDelta(t, 0.0096625, projected.usd, 1e-12)
+			zero := 0.0
+			projected := projectOpenCodeMessageCost(openCodeContextUsage{
+				MessageID: "msg", ProviderID: "openai", ModelID: tc.model, ReportedCost: &zero,
+				Input: 1_000, Output: 100, Reasoning: 50, CacheRead: 200, CacheWrite: 10,
+			}, prices, config.DefaultOpenCodeLegacyLongContextPricingCutoff)
+			require.True(t, projected.eligible)
+			assert.InDelta(t, tc.want, projected.usd, 1e-12)
+
+			long := projectOpenCodeMessageCost(openCodeContextUsage{
+				MessageID: "msg-long", ProviderID: "openai", ModelID: tc.model, ReportedCost: &zero,
+				Input: 300_000, Output: 100_000, CacheRead: 100_000, CacheWrite: 10_000,
+			}, prices, config.DefaultOpenCodeLegacyLongContextPricingCutoff)
+			require.True(t, long.eligible)
+			assert.InDelta(t, tc.longWant, long.usd, 1e-12)
+
+		})
+	}
 }
 
 func TestOpenCodeVirtualCostRetainsHistoryAcrossTransientCatalogFailure(t *testing.T) {
