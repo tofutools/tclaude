@@ -43,7 +43,12 @@ function AccumulatedTip({ description, chart, onLeave }) {
   const panel = useRef(null);
   const [position, setPosition] = useState(null);
   const { point, projected, seriesKey } = description;
-  const rows = point.breakdown || [];
+  let rows = point.breakdown || [];
+  if (seriesKey != null && !rows.some((row) => row.key === seriesKey)) {
+    // A new series' sloping wedge can precede its first recorded day.
+    rows = chart.stacks.filter((stack) => stack.key === seriesKey || rows.some((row) => row.key === stack.key))
+      .map((stack) => rows.find((row) => row.key === stack.key) || { ...stack, cost: 0 });
+  }
   useLayoutEffect(() => {
     const node = panel.current;
     if (!node) return;

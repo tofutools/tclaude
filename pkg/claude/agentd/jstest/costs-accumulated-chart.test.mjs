@@ -36,7 +36,20 @@ test('accumulated hover identifies the sloping band and emphasizes its cumulativ
   await move(.6, 15);
   assert.equal(mounted.container.querySelectorAll('.cost-series-focused, .cost-series-muted').length, 0);
   assert.ok(mounted.container.querySelector('.cost-accumulated-tip-panel'), 'outside the bands still inspects the day');
-  await move(.6, 1);
+  const emerging = buildAccumulatedCostChart({ stackByProvider: false, stackByModel: true,
+    days: [
+      { day: '2026-07-10', cost: 1, segments: [{ key: 'b', model: 'Beta', cost: 1, className: 'cost-series-1' }] },
+      { day: '2026-07-11', cost: 10, segments: [
+        { key: 'a', model: 'Alpha', cost: 9, className: 'cost-series-0' },
+        { key: 'b', model: 'Beta', cost: 1, className: 'cost-series-1' },
+      ] },
+    ] });
+  emerging.scaleMax = 20;
+  await harness.act(() => harness.preact.render(harness.html`<${CostsAccumulatedChart} chart=${emerging} />`, mounted.container));
+  await move(.4, 3);
+  assert.match(mounted.container.querySelector('.cost-accumulated-tip-row.cost-series-focused').textContent, /Alpha.*\$0.00/,
+    'a newly appearing wedge has a highlighted zero row when the inspected date precedes its first spend');
+  assert.match(mounted.container.querySelector('.cost-accumulated-tip-total').textContent, /\$1.00/);
   await harness.act(() => harness.fireEvent(target, 'mouseleave'));
   assert.equal(mounted.container.querySelectorAll('.cost-series-focused, .cost-series-muted').length, 0);
   assert.equal(mounted.container.querySelector('.cost-accumulated-tip-panel'), null);
