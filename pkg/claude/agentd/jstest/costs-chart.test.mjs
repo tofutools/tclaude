@@ -68,3 +68,34 @@ test('Costs chart names a single-day provider when the selected span has multipl
   assert.equal(columns[1].getAttribute('tabindex'), '0', 'arrow navigation transfers the roving Tab stop');
   cleanup();
 });
+
+test('hovering a daily model highlights its series across recorded and projected days and its grouped tooltip row', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mountImperativeCostChart } = await harness.importDashboardModule('js/costs-chart.js');
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const segments = [
+    { key: 'a', provider: 'openai', model: 'shared', cost: 3, className: 'cost-series-0' },
+    { key: 'b', provider: 'anthropic', model: 'shared', cost: 2, className: 'cost-series-0' },
+  ];
+  const cleanup = mountImperativeCostChart(host, { scaleMax: 5, stackByProvider: true, stackByModel: true,
+    days: [false, true].map((projected, i) => ({ day: `2026-07-${10 + i}`, cost: 5, projected, segments })) });
+  t.after(cleanup);
+  const bars = host.querySelectorAll('.cost-seg');
+  harness.fireEvent(bars[0], 'mousemove', { clientX: 20, clientY: 30 });
+  assert.equal(host.querySelectorAll('.cost-seg.cost-series-focused').length, 2);
+  assert.equal(host.querySelectorAll('.cost-seg.cost-series-muted').length, 2,
+    'series with the same model name and reused palette color remain distinct');
+  let row = harness.document.body.querySelector('.cost-tip-row.cost-series-focused');
+  assert.match(row.textContent, /shared.*\$3.00/);
+  harness.fireEvent(bars[1], 'mousemove', { clientX: 20, clientY: 40 });
+  row = harness.document.body.querySelector('.cost-tip-row.cost-series-focused');
+  assert.match(row.textContent, /shared.*\$2.00/);
+  assert.equal(bars[1].classList.contains('cost-series-focused'), true);
+  harness.fireEvent(host.querySelector('.cost-col'), 'mousemove', { clientX: 20, clientY: 5 });
+  assert.equal(host.querySelectorAll('.cost-series-focused, .cost-series-muted').length, 0,
+    'empty space still shows the day tooltip but clears the model emphasis');
+  harness.fireEvent(bars[0], 'mousemove', { clientX: 20, clientY: 30 });
+  harness.fireEvent(host, 'mouseleave');
+  assert.equal(host.querySelectorAll('.cost-series-focused, .cost-series-muted').length, 0);
+  assert.equal(harness.document.body.querySelector('.cost-tip').style.display, 'none');
+});

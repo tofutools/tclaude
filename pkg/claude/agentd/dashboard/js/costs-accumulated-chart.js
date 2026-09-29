@@ -42,7 +42,7 @@ function breakdownLabel(item, chart) {
 function AccumulatedTip({ description, chart, onLeave }) {
   const panel = useRef(null);
   const [position, setPosition] = useState(null);
-  const { point, projected } = description;
+  const { point, projected, seriesKey } = description;
   const rows = point.breakdown || [];
   useLayoutEffect(() => {
     const node = panel.current;
@@ -69,14 +69,14 @@ function AccumulatedTip({ description, chart, onLeave }) {
         const children = rows.filter((row) => row.provider === provider);
         return html`<div class="cost-accumulated-tip-group" key=${provider}>
           <div class="cost-accumulated-tip-group-head"><span></span><b>${provider}</b><b>${projected ? '≈' : ''}${fmtExactUSD(children.reduce((sum, row) => sum + row.cost, 0))}</b></div>
-          ${children.map((row) => html`<div class=${`cost-accumulated-tip-row child ${row.className}`} key=${row.key}>
+          ${children.map((row) => html`<div class=${`cost-accumulated-tip-row child ${row.className}${seriesKey != null && row.key === seriesKey ? ' cost-series-focused' : ''}`} key=${row.key}>
             <i class="cost-accumulated-tip-sw"></i>
             <span>${breakdownLabel({ ...row, provider: '' }, chart)}</span>
             <span>${projected ? '≈' : ''}${fmtExactUSD(row.cost)}</span>
           </div>`)}
         </div>`;
       })
-      : rows.map((row) => html`<div class=${`cost-accumulated-tip-row ${row.className}`} key=${row.key}>
+      : rows.map((row) => html`<div class=${`cost-accumulated-tip-row ${row.className}${seriesKey != null && row.key === seriesKey ? ' cost-series-focused' : ''}`} key=${row.key}>
         <i class="cost-accumulated-tip-sw"></i>
         <span>${breakdownLabel(row, chart)}</span><span>${projected ? '≈' : ''}${fmtExactUSD(row.cost)}</span>
       </div>`)}
@@ -143,7 +143,22 @@ export function CostsAccumulatedChart({ chart }) {
     const cursorX = (event.clientX - rect.left) * width / Math.max(rect.width, 1);
     const point = points.reduce((nearest, candidate) =>
       Math.abs(x(candidate.index) - cursorX) < Math.abs(x(nearest.index) - cursorX) ? candidate : nearest);
-    inspectPoint(describePoint(point, point.projected, { x: event.clientX, y: event.clientY }), announce);
+    const cursorY = (event.clientY - rect.top) * H / Math.max(rect.height, 1);
+    const cost = (H - PAD.bottom - cursorY) / (H - PAD.top - PAD.bottom) * chart.scaleMax;
+    const domainIndex = Math.max(0, Math.min(points.length - 1,
+      (cursorX - PAD.left) / Math.max(width - PAD.left - PAD.right, 1) * (points.length - 1)));
+    const leftIndex = Math.floor(domainIndex);
+    const fraction = domainIndex - leftIndex;
+    // Hit-test the sloping band at the cursor, not the nearest day's height.
+    const hovered = (chart.stacks || []).find((stack) => {
+      const left = stack.points[leftIndex];
+      const right = stack.points[Math.min(leftIndex + 1, points.length - 1)];
+      const lower = left.lower + (right.lower - left.lower) * fraction;
+      const upper = left.upper + (right.upper - left.upper) * fraction;
+      return upper > lower && cost >= lower && cost <= upper;
+    });
+    const description = describePoint(point, point.projected, { x: event.clientX, y: event.clientY });
+    inspectPoint({ ...description, seriesKey: hovered?.key ?? null }, announce);
   };
   const leaveTooltip = () => {
     const svg = host.current?.querySelector('.cost-accumulated-svg');
@@ -162,6 +177,9 @@ export function CostsAccumulatedChart({ chart }) {
       : Math.max(0, Math.min(points.length - 1, current + moves[event.key]));
     inspectPoint(describePoint(points[index]), true);
   };
+  const selectedStackPoint = tooltip?.seriesKey != null
+    ? chart.stacks.find((stack) => stack.key === tooltip.seriesKey)?.points[tooltip.point.index] : null;
+  const markerY = selectedStackPoint ? y((selectedStackPoint.lower + selectedStackPoint.upper) / 2) : tooltip?.y;
   const accessibleSummary = lastPoint.projected
     ? `Accumulated cost. Recorded through ${lastRecorded.day}: ${fmtExactUSD(lastRecorded.cost)}. Projected through ${lastPoint.day}: ${fmtExactUSD(lastPoint.cost)}. Focus and use Left and Right Arrow keys to inspect daily values.`
     : `Accumulated cost recorded through ${lastPoint.day}: ${fmtExactUSD(lastPoint.cost)}. Focus and use Left and Right Arrow keys to inspect daily values.`;
@@ -179,7 +197,9 @@ export function CostsAccumulatedChart({ chart }) {
         const upper = part.points.map((point) => `${x(point.index)},${y(point.upper)}`).join(' ');
         const lower = [...part.points].reverse().map((point) => `${x(point.index)},${y(point.lower)}`).join(' ');
         const boundary = visibleBoundary(part.points);
-        return html`<g key=${`stack-${stack.key}-${index}`}>
+        const emphasis = tooltip?.seriesKey != null
+          ? tooltip.seriesKey === stack.key ? ' cost-series-focused' : ' cost-series-muted' : '';
+        return html`<g class=${emphasis.trim()} key=${`stack-${stack.key}-${index}`}>
           <polygon class=${`cost-accumulated-stack ${stack.className}${part.projected ? ' projected' : ''}`}
             points=${`${upper} ${lower}`} />
           ${boundary.length > 1 && html`<polyline
@@ -203,7 +223,7 @@ export function CostsAccumulatedChart({ chart }) {
         onmouseleave=${leavePlot} />
       ${tooltip && html`<g class=${`cost-accumulated-tooltip${tooltip.projected ? ' projected' : ''}`} pointer-events="none">
         <line x1=${tooltip.x} x2=${tooltip.x} y1=${PAD.top} y2=${H - PAD.bottom} />
-        <circle cx=${tooltip.x} cy=${tooltip.y} r="4" />
+        <circle cx=${tooltip.x} cy=${markerY} r="4" />
         <text aria-hidden="true" opacity="0">${tooltip.point.day} · ${tooltip.projected ? 'projection' : 'recorded'}</text>
       </g>`}
     </svg>
