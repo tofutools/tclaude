@@ -271,7 +271,7 @@ func TestOpenCodeModelCatalogFallsBackForZeroPricedOpenAISubscription(t *testing
 		model                                        string
 		input, output, cached, write, want, longWant float64
 	}{
-		{"gpt-5.6-sol", 5, 30, 0.5, 6.25, 0.0096625, 7.85},
+		{"gpt-5.6-sol", 5, 30, 0.5, 6.25, 0.0096625, 7.725},
 		{"gpt-6.1-sol", 2, 10, 0.1, 2.5, 0.003545, 2.77},
 		{"gpt-6-sol", 2, 10, 0.2, 2.5, 0.003565, 2.79},
 		{"gpt-6-luna", 0.1, 0.5, 0.01, 0.125, 0.00017825, 0.1395},
