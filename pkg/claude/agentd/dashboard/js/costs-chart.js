@@ -21,8 +21,9 @@ function segmentName(segment, chart) {
   return parts.join(' · ');
 }
 
-function appendTooltipSegment(fragment, segment, chart, child = false) {
+function appendTooltipSegment(fragment, segment, chart, child = false, activeKey = null) {
   const row = element('div', `cost-tip-row${child ? ' child' : ''} ${segment.className}`);
+  row.classList.toggle('cost-series-focused', activeKey != null && segment.key === activeKey);
   row.append(element('span', 'cost-tip-sw'));
   row.append(element('span', 'cost-tip-name', segmentName(segment, chart)));
   const amount = segment.kind === 'what_if' && segment.credits > 0
@@ -32,7 +33,7 @@ function appendTooltipSegment(fragment, segment, chart, child = false) {
   fragment.append(row);
 }
 
-function tooltipRows(day, chart) {
+function tooltipRows(day, chart, activeKey) {
   const fragment = document.createDocumentFragment();
   fragment.append(element('div', 'cost-tip-day', `${day.day}${day.projected ? ' · projection' : ''}`));
   if (chart.stackByProvider !== false && chart.stackByModel) {
@@ -50,10 +51,10 @@ function tooltipRows(day, chart) {
         element('strong', 'cost-tip-name', provider),
         element('strong', 'cost-tip-amt', `${day.projected ? '≈' : ''}${fmtUSD(segments.reduce((sum, item) => sum + item.cost, 0))}`));
       fragment.append(header);
-      for (const segment of segments) appendTooltipSegment(fragment, segment, chart, true);
+      for (const segment of segments) appendTooltipSegment(fragment, segment, chart, true, activeKey);
     }
   } else {
-    for (const segment of day.segments) appendTooltipSegment(fragment, segment, chart);
+    for (const segment of day.segments) appendTooltipSegment(fragment, segment, chart, false, activeKey);
   }
   const total = element('div', 'cost-tip-total');
   const spacer = element('span', 'cost-tip-sw');
@@ -107,6 +108,7 @@ export function mountImperativeCostChart(host, chart) {
   const columns = element('div', 'cost-cols');
   const byDay = new Map();
   const spendColumns = [];
+  const seriesBars = new Map();
   const showBreakdown = chart.stackByProvider !== false || chart.stackByModel || chart.days.some((day) =>
     (day.segments || []).some((segment) => segment.kind === 'what_if'));
   const labelEvery = chart.days.length > 62 ? 7 : chart.days.length > 35 ? 2 : 1;
@@ -133,6 +135,7 @@ export function mountImperativeCostChart(host, chart) {
       for (const segment of day.segments) {
         const bar = element('div', `cost-seg${day.projected ? ' cost-seg-projected' : ''} ${segment.className}`);
         bar.style.height = Math.max(segment.cost > 0 ? 1 : 0, segment.cost / chart.scaleMax * 100).toFixed(3) + '%';
+        seriesBars.set(bar, segment.key);
         area.append(bar);
       }
     }
@@ -152,16 +155,27 @@ export function mountImperativeCostChart(host, chart) {
   host.append(shell, status);
 
   let tooltip = null;
-  const hide = () => { if (tooltip) tooltip.style.display = 'none'; };
-  const show = (column, clientX, clientY, announce = false) => {
+  const highlight = (activeBar) => {
+    for (const bar of seriesBars.keys()) {
+      bar.classList.toggle('cost-series-focused', bar === activeBar);
+    }
+    shell.classList.toggle('has-cost-series-focus', activeBar != null);
+  };
+  const hide = () => {
+    if (tooltip) tooltip.style.display = 'none';
+    highlight(null);
+  };
+  const show = (column, clientX, clientY, announce = false, activeBar = null) => {
     if (!column) { hide(); return; }
     if (!tooltip) {
       tooltip = element('div', 'cost-tip');
       document.body.append(tooltip);
     }
     const day = byDay.get(column.dataset.day);
+    highlight(activeBar);
+    const activeKey = seriesBars.get(activeBar) ?? null;
     tooltip.replaceChildren();
-    if (showBreakdown && day?.segments?.length) tooltip.append(tooltipRows(day, chart));
+    if (showBreakdown && day?.segments?.length) tooltip.append(tooltipRows(day, chart, activeKey));
     else tooltip.textContent = column.dataset.tip;
     if (announce) status.textContent = daySummary(day, chart);
     tooltip.style.display = 'block';
@@ -174,7 +188,8 @@ export function mountImperativeCostChart(host, chart) {
     tooltip.style.left = Math.max(4, left) + 'px';
     tooltip.style.top = Math.max(4, top) + 'px';
   };
-  const move = (event) => show(event.target.closest?.('.cost-col[data-tip]'), event.clientX, event.clientY);
+  const move = (event) => show(event.target.closest?.('.cost-col[data-tip]'), event.clientX, event.clientY,
+    false, event.target.closest?.('.cost-seg') ?? null);
   const makeTabStop = (column) => {
     for (const candidate of spendColumns) candidate.setAttribute('tabindex', candidate === column ? '0' : '-1');
   };
