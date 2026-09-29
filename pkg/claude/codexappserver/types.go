@@ -4,7 +4,6 @@ import "encoding/json"
 
 const (
 	MinimumCodexVersion = "0.147.0"
-	MaximumCodexVersion = "0.148.0"
 
 	MethodInitialize            = "initialize"
 	MethodInitialized           = "initialized"

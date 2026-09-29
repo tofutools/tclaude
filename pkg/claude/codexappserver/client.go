@@ -211,7 +211,8 @@ func versionFromUserAgent(userAgent string) (string, bool) {
 	return strings.Join(m[1:], "."), true
 }
 
-// CheckVersion fails closed outside the schema-validated M1 range.
+// CheckVersion requires the minimum version that provides the control protocol.
+// Newer releases are admitted; protocol and server identity checks still apply.
 func CheckVersion(version string) error {
 	canonical, err := normalizeCodexVersion(version)
 	if err != nil {
@@ -220,9 +221,9 @@ func CheckVersion(version string) error {
 	parts := strings.Split(canonical, ".")
 	major, _ := strconv.Atoi(parts[0])
 	minor, _ := strconv.Atoi(parts[1])
-	if major != 0 || minor != 147 {
-		return fmt.Errorf("%w: %s (need >=%s,<%s)", ErrUnsupportedVersion,
-			version, MinimumCodexVersion, MaximumCodexVersion)
+	if major == 0 && minor < 147 {
+		return fmt.Errorf("%w: %s (need >=%s)", ErrUnsupportedVersion,
+			version, MinimumCodexVersion)
 	}
 	return nil
 }
@@ -232,14 +233,14 @@ func normalizeCodexVersion(version string) (string, error) {
 	trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "codex-cli "))
 	parts := strings.Split(trimmed, ".")
 	if len(parts) != 3 {
-		return "", fmt.Errorf("%w: %q (need >=%s,<%s)", ErrUnsupportedVersion,
-			version, MinimumCodexVersion, MaximumCodexVersion)
+		return "", fmt.Errorf("%w: %q (need >=%s)", ErrUnsupportedVersion,
+			version, MinimumCodexVersion)
 	}
 	for i, part := range parts {
 		value, err := strconv.Atoi(part)
 		if err != nil || value < 0 {
-			return "", fmt.Errorf("%w: %q (need >=%s,<%s)", ErrUnsupportedVersion,
-				version, MinimumCodexVersion, MaximumCodexVersion)
+			return "", fmt.Errorf("%w: %q (need >=%s)", ErrUnsupportedVersion,
+				version, MinimumCodexVersion)
 		}
 		parts[i] = strconv.Itoa(value)
 	}

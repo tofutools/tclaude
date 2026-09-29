@@ -322,10 +322,10 @@ func TestDisconnectFailsInflightAndFutureCalls(t *testing.T) {
 }
 
 func TestVersionCompatibilityRange(t *testing.T) {
-	for _, version := range []string{"0.147.0", "0.147.1", "codex-cli 0.147.99"} {
+	for _, version := range []string{"0.147.0", "0.147.1", "codex-cli 0.147.99", "0.148.0", "codex-cli 0.159.0", "1.0.0", "1.147.0"} {
 		assert.NoError(t, codexappserver.CheckVersion(version), version)
 	}
-	for _, version := range []string{"0.146.9", "0.148.0", "1.147.0", "dev"} {
+	for _, version := range []string{"0.146.9", "dev", "0.159", "0.159.-1"} {
 		assert.ErrorIs(t, codexappserver.CheckVersion(version), codexappserver.ErrUnsupportedVersion, version)
 	}
 }
@@ -363,7 +363,7 @@ func TestDialRejectsUnverifiedOrMismatchedServerVersion(t *testing.T) {
 		userAgent    string
 		codexVersion string
 	}{
-		{name: "outside range", userAgent: "codex_app_server/0.148.0"},
+		{name: "below minimum", userAgent: "codex_app_server/0.146.9"},
 		{name: "unidentified", userAgent: "future-server"},
 		{name: "launch mismatch", userAgent: "codex_app_server/0.147.1", codexVersion: "0.147.0"},
 	} {
@@ -394,4 +394,24 @@ func TestUnknownNotificationIsToleratedAndQueueIsBounded(t *testing.T) {
 		t.Fatal("notification overrun did not terminate the connection")
 	}
 	assert.True(t, errors.Is(client.Err(), codexappserver.ErrNotificationOverrun))
+}
+
+func TestDialAcceptsNewerServerVersion(t *testing.T) {
+	for _, launchVersion := range []string{"", "codex-cli 0.159.0"} {
+		t.Run(launchVersion, func(t *testing.T) {
+			dir, err := os.MkdirTemp("/tmp", "codexappserver-newer-version-")
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = os.RemoveAll(dir) })
+			sim, err := testharness.StartCodexAppServerSim(filepath.Join(dir, "app.sock"))
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = sim.Close() })
+			sim.InitializeResult.UserAgent = "codex_app_server/0.159.0"
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			client, err := codexappserver.Dial(ctx, sim.SocketPath(), &codexappserver.Options{CodexVersion: launchVersion})
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = client.Close() })
+			assert.Equal(t, "0.159.0", client.CodexVersion())
+		})
+	}
 }

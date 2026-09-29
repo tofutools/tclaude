@@ -284,7 +284,7 @@ profile (`codex -p <name>`) instead; it is mutually exclusive with
   tmux send-keys. `--codex-app-server` (or the `codex_app_server` profile
   field, or the dashboard control) opts a spawn into Codex's authenticated
   app-server API instead: durable message delivery, rename, compaction, and
-  interrupt as typed calls. Requires Codex CLI 0.147.x; an explicitly
+  interrupt as typed calls. Requires Codex CLI 0.147.0 or newer; an explicitly
   selected drive **fails closed** rather than silently falling back to
   send-keys. The drive carries over to resume, reincarnate, and clone;
   `tclaude agent codex-app-server status` diagnoses it, and
