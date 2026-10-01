@@ -1,0 +1,155 @@
+package harness
+
+import (
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// TestGeminiDescriptor pins the first Gemini wave's capability surface. The
+// negative half matters as much as the positive one: a contract that quietly
+// appeared here would make callers act on a capability nobody backed.
+func TestGeminiDescriptor(t *testing.T) {
+	h, ok := Get(GeminiName)
+	require.True(t, ok, "gemini harness is not registered")
+	assert.Equal(t, "Gemini CLI", h.DisplayName)
+	require.NotNil(t, h.Spawn)
+	require.NotNil(t, h.Models)
+	require.NotNil(t, h.Life)
+
+	_, err := ResolveSpawnable(GeminiName)
+	require.NoError(t, err)
+	assert.Equal(t, "gemini", h.Spawn.Binary())
+	assert.True(t, slices.Contains(SpawnBinaries(), "gemini"))
+
+	assert.True(t, h.SupportsLaunchEnrollment(), "--session-id makes the conv-id knowable before launch")
+	assert.False(t, h.NeedsSpawnSeed())
+	assert.False(t, h.TmuxScrollback, "Gemini's TUI renders its own scroll-back")
+
+	assert.False(t, h.SupportsRename(), "Gemini CLI has no in-pane rename command")
+	assert.True(t, h.SupportsCompact())
+	assert.True(t, h.SupportsSoftExit())
+	assert.False(t, h.SupportsRemoteControl())
+	assert.NotEmpty(t, h.SignalExitKeys())
+}
+
+func TestGeminiLifecycleTokensAreConstants(t *testing.T) {
+	life := geminiLifecycle{}
+	assert.Equal(t, "", life.RenameCommand())
+	assert.Equal(t, "/compress", life.CompactCommand())
+	assert.Equal(t, "/quit", life.SoftExitCommand())
+	assert.Equal(t, "", life.RemoteControlCommand())
+	assert.Equal(t, "", life.FastModeCommand())
+	assert.Equal(t, []string{"C-c"}, life.SoftExitPrefixKeys())
+	assert.Equal(t, []string{"Escape", "C-c", "C-c", "C-c"}, life.SignalExitKeys())
+}
+
+func TestGeminiSpawnerFreshLaunch(t *testing.T) {
+	cmd := geminiSpawner{}.BuildCommand(SpawnSpec{
+		EnvExports:    "export A=1; ",
+		SessionID:     "8d3c0d5e-6f1a-4b8e-9a51-2f6f0e2c1a11",
+		Name:          "ignored name",
+		Model:         "gemini-3.1-pro-preview",
+		ExtraArgs:     []string{"--debug", "it's"},
+		InitialPrompt: "hello 'world'",
+	})
+	assert.Equal(t, "export A=1; gemini"+
+		" --session-id 8d3c0d5e-6f1a-4b8e-9a51-2f6f0e2c1a11"+
+		" --model gemini-3.1-pro-preview"+
+		" --debug 'it'\\''s'"+
+		" -i 'hello '\\''world'\\'''", cmd)
+	assert.NotContains(t, cmd, "ignored name", "Gemini has no launch-name flag; the name must not leak into argv")
+}
+
+func TestGeminiSpawnerMinimalAndResume(t *testing.T) {
+	assert.Equal(t, "gemini", geminiSpawner{}.BuildCommand(SpawnSpec{}))
+
+	cmd := geminiSpawner{}.BuildCommand(SpawnSpec{
+		ResumeID:      "8d3c0d5e-6f1a-4b8e-9a51-2f6f0e2c1a11",
+		SessionID:     "must-not-appear",
+		InitialPrompt: "welcome back",
+	})
+	assert.Equal(t, "gemini --resume 8d3c0d5e-6f1a-4b8e-9a51-2f6f0e2c1a11 -i 'welcome back'", cmd)
+	assert.NotContains(t, cmd, "--session-id", "--resume and --session-id are mutually exclusive in Gemini CLI")
+}
+
+func TestGeminiSpawnerExecutablePathIsQuoted(t *testing.T) {
+	cmd := geminiSpawner{}.BuildCommand(SpawnSpec{ExecutablePath: "/opt/my tools/gemini"})
+	assert.Equal(t, "'/opt/my tools/gemini'", cmd)
+}
+
+func TestGeminiModelCatalog(t *testing.T) {
+	m := geminiModels{}
+	for _, ok := range []string{"auto", "pro", "flash", "gemini-3.1-pro-preview", "gemma-4-31b-it", "Custom-Tuned-Model"} {
+		got, err := m.ValidateModel("  " + ok + " ")
+		require.NoError(t, err, ok)
+		assert.Equal(t, ok, got, "case and bytes are preserved")
+	}
+	got, err := m.ValidateModel("")
+	require.NoError(t, err)
+	assert.Equal(t, "", got)
+
+	for _, bad := range []string{"claude-sonnet-5", "opus", "sonnet[1m]", "gpt-5.4", "o3-mini", "two words", strings.Repeat("x", 129)} {
+		_, err := m.ValidateModel(bad)
+		assert.Error(t, err, bad)
+	}
+
+	got, err = m.ValidateEffort(" ")
+	require.NoError(t, err)
+	assert.Equal(t, "", got)
+	_, err = m.ValidateEffort("high")
+	assert.ErrorContains(t, err, "no reasoning-effort")
+	assert.Empty(t, m.EffortLevels())
+	assert.Contains(t, m.Models(), "auto")
+}
+
+func TestGeminiExtraArgsAudit(t *testing.T) {
+	h, ok := Get(GeminiName)
+	require.True(t, ok)
+
+	for _, allowed := range [][]string{
+		{"--debug"},
+		{"-d"},
+		{"--include-directories", "../shared"},
+		{"--screen-reader"},
+		{"some positional text"},
+		{"--"},
+	} {
+		assert.NoError(t, ValidateLaunchExtraArgs(h, allowed), "%v", allowed)
+	}
+
+	for _, refused := range [][]string{
+		{"--resume", "latest"},
+		{"-r", "3"},
+		{"--resume=abc"},
+		{"--session-id", "x"},
+		{"--sessionId", "x"},
+		{"--session-file", "/tmp/s.json"},
+		{"-i", "hi"},
+		{"--prompt-interactive=hi"},
+		{"--promptInteractive", "hi"},
+		{"-p", "hi"},
+		{"-phi"},
+		{"--model", "pro"},
+		{"-mpro"},
+		{"--approval-mode", "yolo"},
+		{"--yolo"},
+		{"--no-yolo"},
+		{"-y"},
+		{"-dy"},
+		{"--skip-trust"},
+		{"--sandbox"},
+		{"-s"},
+		{"--worktree"},
+		{"--acp"},
+		{"--policy", "p.toml"},
+	} {
+		err := ValidateLaunchExtraArgs(h, refused)
+		assert.Error(t, err, "%v", refused)
+	}
+	err := ValidateLaunchExtraArgs(h, []string{"--yolo"})
+	assert.ErrorContains(t, err, "the approval mode")
+}

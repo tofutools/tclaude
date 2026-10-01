@@ -10,8 +10,8 @@ implementation diary, roadmap, or project-management scratchpad.
 session management, conversation search, usage/status reporting, worktree
 helpers, and multi-agent coordination.
 
-The project is harness-agnostic. Four harnesses are registered via
-`--harness claude|codex|opencode|copilot` (Claude Code is the default); the
+The project is harness-agnostic. Five harnesses are registered via
+`--harness claude|codex|opencode|copilot|gemini` (Claude Code is the default); the
 selected harness is persisted per conversation. The harness seam lives in
 `pkg/claude/harness`.
 

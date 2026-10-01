@@ -595,8 +595,10 @@ func runNew(params *NewParams) error {
 	params.Model = model
 
 	// --session-id pins a fresh conversation id for a harness that accepts a
-	// preset one: Claude Code (`claude --session-id`) and GitHub Copilot CLI
-	// (`copilot --session-id`), both of which want a UUID — Copilot creates a
+	// preset one: Claude Code (`claude --session-id`), GitHub Copilot CLI
+	// (`copilot --session-id`) and Gemini CLI (`gemini --session-id`, which
+	// accepts any [A-Za-z0-9_-] id but tclaude only ever mints UUIDs), all of
+	// which want a UUID — Copilot creates a
 	// session for an unmatched value ONLY when it is a valid UUID, so a name or
 	// an id prefix would silently leave the pane on a different conversation
 	// than the one tclaude enrolled. It is mutually exclusive with --resume (a
@@ -609,7 +611,7 @@ func runNew(params *NewParams) error {
 			return fmt.Errorf("--session-id cannot be combined with --resume")
 		}
 		switch h.Name {
-		case harness.DefaultName, harness.CopilotName, harness.ShellName:
+		case harness.DefaultName, harness.CopilotName, harness.GeminiName, harness.ShellName:
 			if !clcommon.IsValidUUID(params.SessionID) {
 				return fmt.Errorf("--session-id must be a valid UUID, got %q", params.SessionID)
 			}

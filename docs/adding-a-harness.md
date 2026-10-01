@@ -5,10 +5,10 @@ coding CLI (Gemini CLI, Aider, an in-house tool, …). The harness seam was
 built so this is a recipe, not a rewrite: you implement a handful of small,
 focused contracts and register a descriptor. Everything tclaude owns — tmux
 sessions, the conversation index, agent coordination, the
-[dashboard](dashboard.md) — then works for your harness unchanged. Four
-harnesses are registered today: Claude Code, Codex CLI, OpenCode, and Copilot
-CLI. Between them they cover every contract below at least once, so for each
-one there is a concrete implementation to copy.
+[dashboard](dashboard.md) — then works for your harness unchanged. Five
+harnesses are registered today: Claude Code, Codex CLI, OpenCode, Copilot
+CLI, and Gemini CLI. Between them they cover every contract below at least
+once, so for each one there is a concrete implementation to copy.
 
 !!! note
     `--harness shell` (`session/shell.go`) starts a plain, conversation-less
