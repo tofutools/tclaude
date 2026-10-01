@@ -78,7 +78,9 @@ func TestGeminiSpawn_LaunchEnrollmentIdentity(t *testing.T) {
 	assert.Equal(t, resp.ConvID, sim.ConvID)
 
 	// The production cold-read path finds the conversation in Gemini's own
-	// chat files and overlays the launch name as its title.
+	// chat files and overlays the launch name as its title. (The simulator
+	// stands in for `session new` in writing that name to the index; this
+	// asserts that the store reads it back, not that session new writes it.)
 	h := geminiHarness(t)
 	exists, err := h.Convs.Exists(resp.ConvID, sim.Cwd)
 	require.NoError(t, err)

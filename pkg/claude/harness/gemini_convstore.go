@@ -70,6 +70,12 @@ const (
 
 // geminiHome returns the directory Gemini CLI treats as home: GEMINI_CLI_HOME
 // when set, otherwise the OS home. Empty when neither resolves.
+//
+// Known gap: under Gemini's own macOS Seatbelt sandbox (SANDBOX=sandbox-exec)
+// the CLI keeps tmp/ and projects.json under <home>/.cache/.gemini instead
+// (Storage.getGlobalRuntimeDir). tclaude refuses Gemini's --sandbox today, so
+// no tclaude-launched pane writes there; modelling the sandbox must move this
+// resolution with it.
 func geminiHome() string {
 	if home := strings.TrimSpace(os.Getenv(GeminiHomeEnvVar)); home != "" {
 		return filepath.Clean(home)
@@ -318,14 +324,14 @@ func (g *geminiSession) putMessage(raw json.RawMessage) {
 	if json.Unmarshal(raw, &msg) != nil || msg.ID == "" {
 		return
 	}
-	text := geminiContentText(msg.Content)
+	verbose := strings.TrimSpace(geminiContentString(msg.Content, true))
 	switch msg.Type {
 	case "user":
 		msg.isUser = true
-		msg.resumable = !geminiIgnoredUserContent(strings.TrimSpace(text))
-		msg.userPrompt = strings.TrimSpace(text)
+		msg.resumable = !geminiIgnoredUserContent(verbose)
+		msg.userPrompt = strings.TrimSpace(geminiContentText(msg.Content))
 	case "gemini":
-		msg.resumable = strings.TrimSpace(text) != "" || len(msg.ToolCalls) > 0 || len(msg.Thoughts) > 0
+		msg.resumable = verbose != "" || len(msg.ToolCalls) > 0 || len(msg.Thoughts) > 0
 	}
 	if at, ok := g.index[msg.ID]; ok {
 		g.messages[at] = msg
@@ -509,6 +515,24 @@ func geminiIgnoredUserContent(trimmed string) bool {
 // geminiContentText flattens a PartListUnion (a string, a part object, or an
 // array of strings/parts) to its text, ignoring non-text parts.
 func geminiContentText(raw json.RawMessage) string {
+	return geminiContentString(raw, false)
+}
+
+// geminiVerbosePartFields are the Part fields partToString's verbose mode
+// renders as a bracketed placeholder instead of the part's text.
+var geminiVerbosePartFields = []string{
+	"videoMetadata", "thought", "codeExecutionResult", "executableCode",
+	"fileData", "functionCall", "functionResponse", "inlineData",
+}
+
+// geminiContentString mirrors partToString. verbose matches the mode
+// isResumableMessageRecord uses (partListUnionToString): a non-text part —
+// a pasted image, a file, a function response — renders as a bracketed
+// placeholder, so a turn made only of one still counts as content and a
+// leading image keeps a later "/" from reading as a slash command. Only the
+// placeholder's leading bracket matters to the callers, so its exact text is
+// not reproduced.
+func geminiContentString(raw json.RawMessage, verbose bool) string {
 	if len(raw) == 0 {
 		return ""
 	}
@@ -516,26 +540,27 @@ func geminiContentText(raw json.RawMessage) string {
 	if json.Unmarshal(raw, &text) == nil {
 		return text
 	}
-	var part struct {
-		Text string `json:"text"`
-	}
 	var parts []json.RawMessage
 	if json.Unmarshal(raw, &parts) == nil {
 		var b strings.Builder
 		for _, p := range parts {
-			if json.Unmarshal(p, &text) == nil {
-				b.WriteString(text)
-				continue
-			}
-			part.Text = ""
-			if json.Unmarshal(p, &part) == nil {
-				b.WriteString(part.Text)
-			}
+			b.WriteString(geminiContentString(p, verbose))
 		}
 		return b.String()
 	}
-	if json.Unmarshal(raw, &part) == nil {
-		return part.Text
+	var part map[string]json.RawMessage
+	if json.Unmarshal(raw, &part) != nil {
+		return ""
+	}
+	if verbose {
+		for _, field := range geminiVerbosePartFields {
+			if _, ok := part[field]; ok {
+				return "[" + field + "]"
+			}
+		}
+	}
+	if json.Unmarshal(part["text"], &text) == nil {
+		return text
 	}
 	return ""
 }
@@ -555,7 +580,7 @@ func geminiTimestamp(value string) string {
 }
 
 // syncGeminiConvIndex mirrors the listing into tclaude's conv_index cache and
-// overlays the two tclaude-owned columns back onto it: the archived flag and
+// overlays the two tclaude-owned columns onto the returned entries: the archived flag and
 // the custom title (Gemini has no title store, so a tclaude rename lives only
 // here). Upsert-only, for the reason Copilot's sync gives: GEMINI_CLI_HOME can
 // be repointed, and evicting rows the current home does not mention would
@@ -583,14 +608,11 @@ func syncGeminiConvIndex(entries []convops.SessionEntry) {
 				entries[i].ArchivedAt = row.ArchivedAt.UTC().Format(time.RFC3339)
 			}
 		}
-		next := geminiEntryDBRow(entries[i])
-		if row != nil {
-			// Branches are observed by hooks, never by this cold read; keep
-			// whatever a live observation recorded.
-			next.GitBranch = row.GitBranch
-			next.GitBranchStartup = row.GitBranchStartup
-		}
-		if err := db.UpsertConvIndex(next); err != nil {
+		// The cold-scan upsert never writes custom_title or the branch
+		// columns on an existing row: the title overlay is the ONLY copy of
+		// a Gemini title, and writing back the value read above would undo
+		// a rename that landed in between. Branches are observed by hooks.
+		if err := db.UpsertConvIndexColdScan(geminiEntryDBRow(entries[i])); err != nil {
 			slog.Warn("gemini convstore: conv_index upsert failed; continuing from Gemini",
 				"conv", entries[i].SessionID, "error", err)
 		}

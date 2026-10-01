@@ -277,3 +277,50 @@ func TestGeminiAskerArgv(t *testing.T) {
 		a.BuildAskArgv(AskSpec{ResumeID: geminiIDA, SessionID: "ignored", Prompt: "follow up"}))
 	assert.Equal(t, []string{"gemini"}, a.BuildAskArgv(AskSpec{}))
 }
+
+// A rescan must never write the title column of an existing row: the overlay
+// is the only copy of a Gemini title, and a scan that read the row before a
+// concurrent rename would otherwise write the old title back over it.
+func TestGeminiConvStoreScanNeverWritesTheTitleColumn(t *testing.T) {
+	store, dir := geminiTestStore(t)
+	slug := geminiProject(t, dir, "p", t.TempDir())
+	geminiWriteSession(t, slug, "session-2026-10-01T10-00-11111111.jsonl",
+		`{"sessionId":"`+geminiIDA+`","projectHash":"h"}`,
+		`{"id":"m1","type":"user","content":"hello"}`,
+	)
+	all, err := store.ListConvs("")
+	require.NoError(t, err)
+	require.Len(t, all, 1)
+
+	require.NoError(t, store.SetTitle(geminiIDA, "renamed"))
+	// Replay what a scan that read the row before the rename would write.
+	stale := geminiEntryDBRow(all[0])
+	stale.CustomTitle = ""
+	require.NoError(t, db.UpsertConvIndexColdScan(stale))
+
+	title, err := store.Title(geminiIDA)
+	require.NoError(t, err)
+	assert.Equal(t, "renamed", title)
+}
+
+// Resumability follows partToString's verbose mode: a turn made only of a
+// non-text part is content, and a leading image keeps a later "/" from
+// reading as a slash command.
+func TestGeminiConvStoreNonTextUserTurnIsResumable(t *testing.T) {
+	store, dir := geminiTestStore(t)
+	slug := geminiProject(t, dir, "p", t.TempDir())
+	geminiWriteSession(t, slug, "session-2026-10-01T10-00-11111111.jsonl",
+		`{"sessionId":"`+geminiIDA+`","projectHash":"h"}`,
+		`{"id":"m1","type":"user","content":[{"inlineData":{"mimeType":"image/png","data":"AAAA"}}]}`,
+	)
+	geminiWriteSession(t, slug, "session-2026-10-01T11-00-22222222.jsonl",
+		`{"sessionId":"`+geminiIDB+`","projectHash":"h"}`,
+		`{"id":"m1","type":"user","content":[{"fileData":{"fileUri":"x"}},{"text":"/foo"}]}`,
+	)
+	all, err := store.ListConvs("")
+	require.NoError(t, err)
+	assert.Len(t, all, 2)
+
+	assert.Equal(t, "[inlineData]", geminiContentString([]byte(`[{"inlineData":{}}]`), true))
+	assert.Equal(t, "", geminiContentString([]byte(`[{"inlineData":{}}]`), false))
+}

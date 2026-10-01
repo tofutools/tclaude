@@ -157,6 +157,10 @@ func New(t *testing.T) *World {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	// Gemini CLI resolves its home from GEMINI_CLI_HOME before HOME; an
+	// operator's exported value would point the production Gemini store at
+	// their real chats instead of the simulator's.
+	t.Setenv(harness.GeminiHomeEnvVar, "")
 	// Launches now resolve Claude Code's OS-sandbox posture, and the enterprise
 	// managed-policy tier lives at a machine-global path that $HOME cannot
 	// redirect. Left alone, every simulated Claude spawn would read whatever

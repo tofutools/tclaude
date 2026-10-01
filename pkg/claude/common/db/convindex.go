@@ -98,6 +98,50 @@ func UpsertConvIndex(row *ConvIndexRow) error {
 	return err
 }
 
+// UpsertConvIndexColdScan is UpsertConvIndex for a scanner whose harness has
+// no title store of its own, so the conv_index row is the ONLY copy of the
+// tclaude title. On conflict it refreshes the scanned metadata and leaves the
+// tclaude-owned columns — custom_title, git_branch, git_branch_startup — to
+// their own writers (SetConvIndexCustomTitle, the hook branch snapshot). A
+// read-then-upsert of those columns would race a concurrent rename and lose
+// it for good. On INSERT the row's values are written as given.
+func UpsertConvIndexColdScan(row *ConvIndexRow) error {
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	if row.IndexedAt.IsZero() {
+		row.IndexedAt = time.Now()
+	}
+	sidechain := 0
+	if row.IsSidechain {
+		sidechain = 1
+	}
+	harness := row.Harness
+	if harness == "" {
+		harness = DefaultHarness
+	}
+	_, err = db.Exec(`INSERT INTO conv_index
+		(conv_id, project_dir, full_path, file_mtime, file_size,
+		 first_prompt, summary, custom_title, message_count,
+		 created, modified, git_branch, project_path, is_sidechain, indexed_at,
+		 git_branch_startup, harness)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(conv_id) DO UPDATE SET
+		 project_dir=excluded.project_dir, full_path=excluded.full_path,
+		 file_mtime=excluded.file_mtime, file_size=excluded.file_size,
+		 first_prompt=excluded.first_prompt, summary=excluded.summary,
+		 message_count=excluded.message_count,
+		 created=excluded.created, modified=excluded.modified,
+		 project_path=excluded.project_path,
+		 is_sidechain=excluded.is_sidechain, indexed_at=excluded.indexed_at`,
+		row.ConvID, row.ProjectDir, row.FullPath, nullableFileMtime(row.FileMtime), row.FileSize,
+		row.FirstPrompt, row.Summary, row.CustomTitle, row.MessageCount,
+		nullableDBTimeText(row.Created), nullableDBTimeText(row.Modified), row.GitBranch, row.ProjectPath,
+		sidechain, dbTime(row.IndexedAt), row.GitBranchStartup, harness)
+	return err
+}
+
 // SetConvIndexCustomTitle stamps a conversation's display title in the
 // local cache without touching the rest of the indexed metadata. Harnesses
 // with an out-of-band title store (Codex's threads DB) use this after a
