@@ -64,7 +64,7 @@ func TestGeminiHookInstallPreservesSettingsAndIsIdempotent(t *testing.T) {
 	installed, missing, repair := inst.Check()
 	assert.False(t, installed)
 	assert.ElementsMatch(t, GeminiHookEvents, missing)
-	assert.True(t, repair, "a stale tclaude command under an event tclaude no longer installs")
+	assert.True(t, repair, "a stale tclaude command inside a mixed group")
 
 	require.NoError(t, inst.Install())
 	first, err := os.ReadFile(path)
@@ -91,7 +91,7 @@ func TestGeminiHookInstallPreservesSettingsAndIsIdempotent(t *testing.T) {
 	afterAgent := hooks["AfterAgent"].([]any)
 	require.Len(t, afterAgent, 2, "the operator's own AfterAgent hook is kept")
 	beforeTool := hooks["BeforeTool"].([]any)
-	require.Len(t, beforeTool, 1)
+	require.Len(t, beforeTool, 2, "the operator's group, then tclaude's own")
 	entries := beforeTool[0].(map[string]any)["hooks"].([]any)
 	require.Len(t, entries, 1, "only the stale tclaude command is stripped from a mixed group")
 	assert.Equal(t, "audit.sh", entries[0].(map[string]any)["command"])
@@ -126,4 +126,20 @@ func TestGeminiHookInstallCreatesSettings(t *testing.T) {
 	installed, _, _ = inst.Check()
 	assert.True(t, installed)
 	assert.NotEmpty(t, inst.TrustNote())
+}
+
+// Gemini still accepts the legacy hooksConfig fields inside `hooks`; they are
+// not events and must survive an install untouched.
+func TestGeminiHookInstallCarriesLegacyHooksFields(t *testing.T) {
+	path, _ := seedGeminiHome(t)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(`{"hooks":{"disabled":["foo"],"enabled":true}}`), 0o600))
+	inst := geminiHookInstaller{}
+	require.NoError(t, inst.Install())
+	installed, missing, repair := inst.Check()
+	assert.True(t, installed, "missing=%v", missing)
+	assert.False(t, repair)
+	hooks := readGeminiSettingsForTest(t, path)["hooks"].(map[string]any)
+	assert.Equal(t, []any{"foo"}, hooks["disabled"])
+	assert.Equal(t, true, hooks["enabled"])
 }

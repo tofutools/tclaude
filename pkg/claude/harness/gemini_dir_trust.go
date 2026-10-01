@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -117,7 +118,7 @@ func planGeminiDirTrust(data []byte, dir string) (bool, []byte, error) {
 		}
 	}
 	for path, level := range rules {
-		if filepath.Clean(path) != dir {
+		if !geminiSameTrustPath(path, dir) {
 			continue
 		}
 		switch level {
@@ -142,4 +143,17 @@ func geminiIsTrustLevel(level string) bool {
 		return true
 	}
 	return false
+}
+
+// geminiSameTrustPath compares two rule paths the way Gemini's normalizePath
+// does: case-insensitively on macOS, where the CLI lowercases every key it
+// loads and saves, and exactly elsewhere. Without it a Gemini-written
+// lowercase DO_NOT_TRUST would go unseen, and tclaude would report a folder
+// trusted that Gemini still distrusts.
+func geminiSameTrustPath(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if runtime.GOOS == "darwin" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }

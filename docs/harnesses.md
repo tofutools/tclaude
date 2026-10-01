@@ -455,14 +455,18 @@ that would need approval. Live streaming is not supported.
 **Setup and live status.** `tclaude setup` installs the tclaude callback
 into the `hooks` section of `~/.gemini/settings.json` (or
 `$GEMINI_CLI_HOME/.gemini/settings.json`). It installs for `SessionStart`,
-`BeforeAgent`, `AfterTool`, `AfterAgent`, `Notification` and `SessionEnd`,
+`BeforeAgent`, `BeforeTool`, `AfterTool`, `AfterAgent`, `Notification` and
+`SessionEnd`,
 and the callback maps them onto tclaude's turn states: working, idle, and
 awaiting permission while Gemini shows a tool-confirmation dialog. The
 installed command discards its output and always exits 0, so it can never
 block, retry or comment on a Gemini turn. A `settings.json` with comments
 is left alone, and setup asks you to add the hooks by hand. Gemini runs
 settings hooks **only in trusted folders**, so live status needs the
-project directory trusted.
+project directory trusted. One known gap: Gemini fires no hook when a turn
+ends because every pending tool was declined or cancelled (Esc, or "No" on
+the confirmation). Such a row keeps showing working or awaiting permission
+until the next prompt.
 
 **Directory trust.** Folder trust is on by default in Gemini CLI. In an
 untrusted folder the pane stops on a trust dialog, hooks are off, and

@@ -13,8 +13,9 @@ import (
 // CLI can produce them for a launch with an `-i` first turn: the prompt's
 // BeforeAgent may arrive before SessionStart (the app marks its config ready
 // before it awaits the SessionStart hook). The payloads use Gemini's event
-// names and go through the callback's real decode, so the name translation is
-// exercised end to end, and the status is read back from the dashboard.
+// names and go through the callback's real decode and ApplyHook (not the
+// stdin/broker wrapper around them), and the status is read back from the
+// dashboard.
 func TestGeminiHooks_TurnGoesWorkingThenIdle(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	f := newFlow(t)
@@ -50,12 +51,18 @@ func TestGeminiHooks_TurnGoesWorkingThenIdle(t *testing.T) {
 	assert.Equal(t, session.StatusAwaitingPermission, member().State.Status,
 		"a tool-confirmation dialog is a human-attention state")
 
+	fire("BeforeTool", map[string]any{
+		"tool_name": "run_shell_command", "tool_input": map[string]any{"command": "go test ./..."},
+	})
+	assert.Equal(t, session.StatusWorking, member().State.Status,
+		"an approved tool leaves the permission wait as soon as it starts running")
+
 	fire("AfterTool", map[string]any{
 		"tool_name":     "run_shell_command",
 		"tool_input":    map[string]any{"command": "go test ./..."},
 		"tool_response": map[string]any{"llmContent": "ok"},
 	})
-	assert.Equal(t, session.StatusWorking, member().State.Status, "the tool ran: back to working")
+	assert.Equal(t, session.StatusWorking, member().State.Status, "still working after the tool")
 
 	fire("AfterAgent", map[string]any{
 		"prompt": "start work", "prompt_response": "Done.", "stop_hook_active": false,

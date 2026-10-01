@@ -10,10 +10,11 @@ import "encoding/json"
 // name is the only translation most events need.
 //
 // The source names are unique to Gemini — no other harness emits BeforeAgent,
-// AfterAgent or AfterTool — so the mapping is decided from the payload alone
+// AfterAgent, BeforeTool or AfterTool — so the mapping is decided from the payload alone
 // and needs no per-harness flag on the installed command.
 var geminiHookEventNames = map[string]string{
 	"BeforeAgent": "UserPromptSubmit",
+	"BeforeTool":  "PreToolUse",
 	"AfterAgent":  "Stop",
 	"AfterTool":   "PostToolUse",
 }

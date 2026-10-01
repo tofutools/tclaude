@@ -47,3 +47,9 @@ func TestNormalizeGeminiHookEvent(t *testing.T) {
 		assert.Equal(t, want, decodeGeminiHookForTest(t, raw), raw)
 	}
 }
+
+func TestNormalizeGeminiBeforeTool(t *testing.T) {
+	in := decodeGeminiHookForTest(t, `{"session_id":"s","hook_event_name":"BeforeTool","tool_name":"write_file"}`)
+	assert.Equal(t, "PreToolUse", in.HookEventName)
+	assert.Equal(t, "write_file", in.ToolName)
+}

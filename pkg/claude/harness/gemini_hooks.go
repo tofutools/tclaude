@@ -56,8 +56,11 @@ const (
 //
 //   - BeforeAgent / AfterAgent bracket one user turn: the working→idle
 //     transition. AfterAgent fires once per turn after the final response.
-//   - AfterTool keeps a long turn visibly alive and clears a resolved
-//     permission wait.
+//   - BeforeTool fires after a tool is confirmed and right before it runs, so
+//     an approved tool moves the row out of "awaiting permission" at once
+//     instead of only when it finishes. Gemini reads exit code 2 from it as
+//     "block this tool", which the exit-neutral sink below rules out.
+//   - AfterTool keeps a long turn visibly alive.
 //   - Notification fires with notification_type ToolPermission exactly when
 //     Gemini shows a tool-confirmation dialog (scheduler/confirmation.ts) — a
 //     real "a human must answer this" signal.
@@ -66,9 +69,6 @@ const (
 //
 // Deliberately NOT installed:
 //
-//   - BeforeTool: Gemini reads exit code 2 from it as "block this tool". The
-//     installed command is exit-neutral, but the operator's tool calls are not
-//     worth a status detail AfterTool reports a moment later anyway.
 //   - PreCompress: tclaude's PreCompact handling is a gate that may answer
 //     "block", while Gemini's PreCompress is advisory and fired without
 //     waiting. Mapping it would let tclaude believe a compaction was refused
@@ -78,6 +78,7 @@ const (
 var GeminiHookEvents = []string{
 	"SessionStart",
 	"BeforeAgent",
+	"BeforeTool",
 	"AfterTool",
 	"AfterAgent",
 	"Notification",
@@ -220,7 +221,7 @@ func (geminiHookInstaller) Install() error {
 // group from every event, then add exactly one current group per event.
 // Every other settings key, and every non-tclaude hook, is carried through.
 func planGeminiHookInstall(path string) ([]byte, error) {
-	settings, hooks, err := readGeminiSettingsHooks(path)
+	settings, hooks, others, err := readGeminiSettingsHooksAll(path)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
@@ -245,7 +246,18 @@ func planGeminiHookInstall(path string) ([]byte, error) {
 	for _, event := range GeminiHookEvents {
 		hooks[event] = append(hooks[event], group)
 	}
-	rawHooks, err := json.Marshal(hooks)
+	members := map[string]json.RawMessage{}
+	for key, value := range others {
+		members[key] = value
+	}
+	for event, groups := range hooks {
+		raw, err := json.Marshal(groups)
+		if err != nil {
+			return nil, err
+		}
+		members[event] = raw
+	}
+	rawHooks, err := json.Marshal(members)
 	if err != nil {
 		return nil, err
 	}
@@ -262,28 +274,48 @@ func planGeminiHookInstall(path string) ([]byte, error) {
 // including the comments Gemini itself tolerates — is an error: rewriting it
 // would drop content tclaude cannot reproduce.
 func readGeminiSettingsHooks(path string) (map[string]json.RawMessage, map[string][]json.RawMessage, error) {
+	settings, hooks, _, err := readGeminiSettingsHooksAll(path)
+	return settings, hooks, err
+}
+
+// readGeminiSettingsHooksAll also returns the non-array members of `hooks`.
+// Gemini still tolerates the legacy hooksConfig fields (enabled, disabled,
+// notifications) inside `hooks` and skips them when loading events, so they
+// are carried through untouched rather than treated as a parse error.
+func readGeminiSettingsHooksAll(path string) (map[string]json.RawMessage, map[string][]json.RawMessage, map[string]json.RawMessage, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if len(bytes.TrimSpace(data)) == 0 {
-		return nil, nil, emptyFileAsNotExist(path)
+		return nil, nil, nil, emptyFileAsNotExist(path)
 	}
 	var settings map[string]json.RawMessage
 	if err := json.Unmarshal(data, &settings); err != nil {
-		return nil, nil, fmt.Errorf("parse %s (tclaude edits only strict JSON; remove comments "+
+		return nil, nil, nil, fmt.Errorf("parse %s (tclaude edits only strict JSON; remove comments "+
 			"or add the hooks by hand): %w", path, err)
 	}
 	if settings == nil {
-		return nil, nil, fmt.Errorf("parse %s: top level is not an object", path)
+		return nil, nil, nil, fmt.Errorf("parse %s: top level is not an object", path)
 	}
 	var hooks map[string][]json.RawMessage
+	others := map[string]json.RawMessage{}
 	if raw, ok := settings["hooks"]; ok && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		if err := json.Unmarshal(raw, &hooks); err != nil {
-			return nil, nil, fmt.Errorf("parse hooks in %s: %w", path, err)
+		var members map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &members); err != nil {
+			return nil, nil, nil, fmt.Errorf("parse hooks in %s: %w", path, err)
+		}
+		hooks = map[string][]json.RawMessage{}
+		for key, value := range members {
+			var groups []json.RawMessage
+			if bytes.HasPrefix(bytes.TrimSpace(value), []byte("[")) && json.Unmarshal(value, &groups) == nil {
+				hooks[key] = groups
+				continue
+			}
+			others[key] = value
 		}
 	}
-	return settings, hooks, nil
+	return settings, hooks, others, nil
 }
 
 func geminiDesiredHookGroup() geminiHookGroup {
