@@ -40,8 +40,11 @@ func init() {
 		// id does not depend on a turn having run.
 		//
 		// Unlike Claude Code and Copilot there is no launch-time NAME flag, so
-		// a spawn's name is carried by tclaude's own conversation index
-		// instead; see geminiSpawner.BuildCommand.
+		// `session new` records a fresh launch's name in tclaude's own
+		// conversation index instead. For the same reason that Gemini has no
+		// hooks in this build, `session new` also mints the id for a fresh
+		// launch that was not handed one, so even a plain interactive session
+		// is known by its conversation id from the start.
 		LaunchEnrollment: true,
 
 		// Gemini CLI is an Ink TUI that renders its own scroll-back (it has a

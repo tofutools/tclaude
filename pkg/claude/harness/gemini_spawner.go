@@ -26,8 +26,8 @@ import (
 //     [A-Za-z0-9_-]; tclaude only ever passes a UUID.
 //   - `--resume`, `--session-id` and `--session-file` are mutually exclusive
 //     (a yargs .check), hence the either/or below.
-//   - `--model <m>` (`-m`).
-//   - `-i <prompt>` (`--prompt-interactive`) submits the prompt and stays
+//   - `--model=<m>` (`-m`).
+//   - `--prompt-interactive=<prompt>` (`-i`) submits the prompt and stays
 //     interactive. `-p` is the headless form that exits after the turn, so it
 //     must never appear in a pane.
 //
@@ -41,7 +41,7 @@ func (geminiSpawner) Binary() string { return "gemini" }
 // BuildCommand assembles the Gemini invocation: env exports + the binary, then
 // either an exact `--resume <id>` or a fresh launch's `--session-id`, an
 // optional `--model`, any pass-through args, and finally the optional
-// `-i <prompt>` first turn.
+// `--prompt-interactive=<prompt>` first turn.
 //
 // Fields with no Gemini flag are IGNORED rather than approximated: there is no
 // effort flag (the catalog rejects a non-empty effort first), and the sandbox,
@@ -50,8 +50,9 @@ func (geminiSpawner) Binary() string { return "gemini" }
 // value before a spec reaches this function.
 //
 // spec.Name is also ignored, and that one is worth stating: Gemini CLI has no
-// launch-time name flag and no title store of its own. A spawn's name is kept
-// in tclaude's conversation index by the spawn path instead.
+// launch-time name flag and no title store of its own. `session new` records a
+// fresh launch's name in tclaude's conversation index instead, keyed by the
+// session id it pins.
 func (geminiSpawner) BuildCommand(spec SpawnSpec) string {
 	binary := "gemini"
 	if spec.ExecutablePath != "" {
@@ -65,9 +66,9 @@ func (geminiSpawner) BuildCommand(spec SpawnSpec) string {
 		cmd += " --session-id " + clcommon.ShellQuoteArg(spec.SessionID)
 	}
 	if spec.Model != "" {
-		// Quoted defensively: the catalog gates the token, but this string is
-		// handed to `sh -c`.
-		cmd += " --model " + clcommon.ShellQuoteArg(spec.Model)
+		// `--model=<m>`, attached for the same yargs reason as the first turn
+		// below, and quoted because this string is handed to `sh -c`.
+		cmd += " " + clcommon.ShellQuoteArg("--model="+spec.Model)
 	}
 	if len(spec.ExtraArgs) > 0 {
 		quoted := make([]string, len(spec.ExtraArgs))
@@ -76,14 +77,19 @@ func (geminiSpawner) BuildCommand(spec SpawnSpec) string {
 		}
 		cmd += " " + strings.Join(quoted, " ")
 	}
-	// `-i` is emitted on a resume too. The TUI submits the initial prompt only
-	// once the Gemini client has initialized (AppContainer's initial-prompt
-	// effect waits on geminiClient.isInitialized), and a resumed launch hands
-	// the loaded conversation to that same client, so the prompt lands in the
-	// resumed conversation rather than a fresh one. Emitted last, as one
-	// quoted argument, so no other option can swallow it.
+	// The first turn is emitted on a resume too. The TUI submits the initial
+	// prompt only once the Gemini client has initialized (AppContainer's
+	// initial-prompt effect waits on geminiClient.isInitialized), and a resumed
+	// launch hands the loaded conversation to that same client, so the prompt
+	// lands in the resumed conversation rather than a fresh one.
+	//
+	// Spelled `--prompt-interactive=<prompt>` rather than `-i <prompt>`: the
+	// option is `nargs: 1`, and yargs will not take a following token that
+	// starts with `-` as its value — `gemini -i "- fix the tests"` exits with
+	// "Not enough arguments" before the TUI starts. The attached form binds
+	// everything after the first `=`. Emitted last, as one quoted argument.
 	if spec.InitialPrompt != "" {
-		cmd += " -i " + clcommon.ShellQuoteArg(spec.InitialPrompt)
+		cmd += " " + clcommon.ShellQuoteArg("--prompt-interactive="+spec.InitialPrompt)
 	}
 	return cmd
 }

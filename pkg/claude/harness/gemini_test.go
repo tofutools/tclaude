@@ -58,9 +58,9 @@ func TestGeminiSpawnerFreshLaunch(t *testing.T) {
 	})
 	assert.Equal(t, "export A=1; gemini"+
 		" --session-id 8d3c0d5e-6f1a-4b8e-9a51-2f6f0e2c1a11"+
-		" --model gemini-3.1-pro-preview"+
+		" --model=gemini-3.1-pro-preview"+
 		" --debug 'it'\\''s'"+
-		" -i 'hello '\\''world'\\'''", cmd)
+		" '--prompt-interactive=hello '\\''world'\\'''", cmd)
 	assert.NotContains(t, cmd, "ignored name", "Gemini has no launch-name flag; the name must not leak into argv")
 }
 
@@ -72,8 +72,15 @@ func TestGeminiSpawnerMinimalAndResume(t *testing.T) {
 		SessionID:     "must-not-appear",
 		InitialPrompt: "welcome back",
 	})
-	assert.Equal(t, "gemini --resume 8d3c0d5e-6f1a-4b8e-9a51-2f6f0e2c1a11 -i 'welcome back'", cmd)
+	assert.Equal(t, "gemini --resume 8d3c0d5e-6f1a-4b8e-9a51-2f6f0e2c1a11 '--prompt-interactive=welcome back'", cmd)
 	assert.NotContains(t, cmd, "--session-id", "--resume and --session-id are mutually exclusive in Gemini CLI")
+}
+
+// A first turn that starts with a dash must still bind as the option's value:
+// `gemini -i "- fix"` exits with "Not enough arguments" before the TUI starts.
+func TestGeminiSpawnerDashLeadingPromptStaysBound(t *testing.T) {
+	cmd := geminiSpawner{}.BuildCommand(SpawnSpec{InitialPrompt: "- fix the tests"})
+	assert.Equal(t, "gemini '--prompt-interactive=- fix the tests'", cmd)
 }
 
 func TestGeminiSpawnerExecutablePathIsQuoted(t *testing.T) {
@@ -92,7 +99,7 @@ func TestGeminiModelCatalog(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "", got)
 
-	for _, bad := range []string{"claude-sonnet-5", "opus", "sonnet[1m]", "gpt-5.4", "o3-mini", "two words", strings.Repeat("x", 129)} {
+	for _, bad := range []string{"-y", "--yolo", "claude-sonnet-5", "opus", "sonnet[1m]", "gpt-5.4", "o3-mini", "two words", strings.Repeat("x", 129)} {
 		_, err := m.ValidateModel(bad)
 		assert.Error(t, err, bad)
 	}
@@ -113,10 +120,10 @@ func TestGeminiExtraArgsAudit(t *testing.T) {
 	for _, allowed := range [][]string{
 		{"--debug"},
 		{"-d"},
-		{"--include-directories", "../shared"},
+		{"--include-directories", "../shared", "../other"},
+		{"-e", "ext-one", "ext-two", "--debug"},
+		{"--include-directories=../shared"},
 		{"--screen-reader"},
-		{"some positional text"},
-		{"--"},
 	} {
 		assert.NoError(t, ValidateLaunchExtraArgs(h, allowed), "%v", allowed)
 	}
@@ -146,10 +153,21 @@ func TestGeminiExtraArgsAudit(t *testing.T) {
 		{"--worktree"},
 		{"--acp"},
 		{"--policy", "p.toml"},
+		{"some positional text"},
+		{"mcp"},
+		{"--debug", "stray"},
+		{"--include-directories=../shared", "stray"},
+		{"--"},
+		{"--", "x"},
+		{"-v"},
+		{"-l"},
+		{"--list-extensions"},
 	} {
 		err := ValidateLaunchExtraArgs(h, refused)
 		assert.Error(t, err, "%v", refused)
 	}
 	err := ValidateLaunchExtraArgs(h, []string{"--yolo"})
 	assert.ErrorContains(t, err, "the approval mode")
+	err = ValidateLaunchExtraArgs(h, []string{"fix the tests"})
+	assert.ErrorContains(t, err, "initial prompt or a subcommand")
 }

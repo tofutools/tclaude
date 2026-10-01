@@ -24,6 +24,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/ratelimit"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -622,6 +623,15 @@ func runNew(params *NewParams) error {
 		default:
 			return fmt.Errorf("--session-id is not supported for the %q harness", h.Name)
 		}
+	}
+	// Gemini CLI has no hook installer in this build, so nothing would ever
+	// report the id it mints for itself, and the session row would stay
+	// conversation-less for good — unresumable and invisible to every
+	// conv-keyed surface. Its `--session-id` accepts a caller-chosen id, so a
+	// fresh launch that was not handed one gets one here and is known from
+	// the first moment, exactly like a launch-enrolled daemon spawn.
+	if h.Name == harness.GeminiName && params.SessionID == "" && params.Resume == "" {
+		params.SessionID = convops.GenerateUUID()
 	}
 	params.CwdWriteProof = strings.TrimSpace(params.CwdWriteProof)
 	if params.CwdWriteProof != "" && !isValidSpawnCwdProofToken(params.CwdWriteProof) {
@@ -1915,6 +1925,15 @@ func runNew(params *NewParams) error {
 	rowConvID := fullConvID
 	if params.SessionID != "" && fullConvID == "" {
 		rowConvID = params.SessionID
+	}
+	// Gemini CLI has no launch-name flag and no title store, so a fresh
+	// launch's --name is recorded where every tclaude surface reads titles
+	// from: the conversation index. Best effort — a failed write leaves an
+	// unnamed conversation, never a failed launch.
+	if h.Name == harness.GeminiName && params.Name != "" && fullConvID == "" && rowConvID != "" {
+		if err := db.SetConvIndexCustomTitle(rowConvID, params.Name, h.Name); err != nil {
+			slog.Warn("could not record the Gemini launch name", "conv", rowConvID, "error", err)
+		}
 	}
 	var darwinRouteReservation *DarwinRouteSlotReservation
 	darwinRouteRegistered := false
@@ -3793,6 +3812,23 @@ func resolveResumeConv(h *harness.Harness, shortID string, global bool, cwd stri
 	// already carry the full server-issued id and the durable cwd, so they can
 	// resume without pretending a partial-id ConvStore exists.
 	if h.Name == harness.OpenCodeName && strings.HasPrefix(shortID, "ses_") {
+		return shortID, cwd, nil
+	}
+	// Gemini CLI: a FULL session UUID plus the caller's cwd is everything
+	// `gemini --resume <uuid>` needs — Gemini resolves the id itself, scoped to
+	// the project of the process cwd, which is the cwd the pane is launched in.
+	// Managed relaunches always carry both (the recorded conv id and `-C` with
+	// the recorded cwd), so they must not depend on tclaude's own reading of
+	// Gemini's store: that reading mirrors Gemini's "has resumable content"
+	// rule and so cannot see a conversation whose first turn never landed,
+	// which Gemini will then report itself. The store is still consulted first
+	// when there is one, because it knows the conversation's real project.
+	if h.Name == harness.GeminiName && clcommon.IsValidUUID(shortID) {
+		if h.SupportsConvs() {
+			if ref, err := h.Convs.Resolve(shortID, cwd, true); err == nil && ref != nil {
+				return ref.ConvID, ref.ProjectPath, nil
+			}
+		}
 		return shortID, cwd, nil
 	}
 	if !h.SupportsConvs() {

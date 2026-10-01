@@ -68,6 +68,9 @@ func (geminiModels) ValidateModel(s string) (string, error) {
 				"whitespace (e.g. auto, pro, flash, gemini-3.1-pro-preview)", s)
 		}
 	}
+	if strings.HasPrefix(s, "-") {
+		return "", fmt.Errorf("invalid model %q: a model id cannot start with '-'", s)
+	}
 	lower := strings.ToLower(s)
 	if slices.Contains(geminiClaudeAliases, strings.TrimSuffix(lower, "[1m]")) {
 		return "", fmt.Errorf("model %q is a Claude Code alias; Gemini CLI serves Gemini models only "+

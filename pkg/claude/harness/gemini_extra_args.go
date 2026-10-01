@@ -64,6 +64,42 @@ var geminiOwnedFlags = map[string]geminiOwnedFlag{
 	// Runtime: what the pane actually is.
 	"acp":              {"the pane's protocol", geminiNoRuntime},
 	"experimental-acp": {"the pane's protocol", geminiNoRuntime},
+	// One-shot commands that print and exit instead of starting the TUI.
+	// (`--help`/`-h`/`--version` are routed to a direct run before a launch is
+	// built; `-v` is Gemini's own short alias and is not.)
+	"list-extensions": {"the pane's runtime (it lists extensions and exits)", geminiNoRuntime},
+	"version":         {"the pane's runtime (it prints a version and exits)", geminiNoRuntime},
+}
+
+// geminiArrayOptions are Gemini options that are NOT audited and that take
+// one or more values (yargs `array` type). The bare tokens that follow one of
+// them, up to the next dash-led token, are its values rather than positional
+// arguments.
+var geminiArrayOptions = map[string]bool{
+	"include-directories":      true,
+	"extensions":               true,
+	"allowed-mcp-server-names": true,
+}
+
+// geminiArrayShortFlags maps the short aliases of geminiArrayOptions.
+var geminiArrayShortFlags = map[rune]bool{'e': true}
+
+// geminiPositional is the audit entry for a bare argument. Gemini treats a
+// positional as the interactive initial prompt (config.ts assigns the
+// positional query to promptInteractive when stdin is a TTY), so it would
+// REPLACE the briefing tclaude submits; a positional matching a subcommand
+// name (`mcp`, `extensions`, `skills`, `hooks`, `gemma`) runs that command
+// instead of the TUI at all.
+var geminiPositional = geminiOwnedFlag{
+	axis:   "the submitted first turn (Gemini reads a positional argument as the initial prompt or a subcommand)",
+	remedy: geminiUsePrompt,
+}
+
+// geminiEndOfOptions is the audit entry for a bare `--`: everything after it,
+// including the first turn tclaude appends, would become positional.
+var geminiEndOfOptions = geminiOwnedFlag{
+	axis:   "option parsing (a bare -- turns tclaude's own first-turn option into positional text)",
+	remedy: "drop the separator; pass options directly",
 }
 
 // geminiShortFlags maps the single-letter aliases yargs registers for the
@@ -77,6 +113,8 @@ var geminiShortFlags = map[rune]string{
 	'm': "model",
 	'y': "yolo",
 	's': "sandbox",
+	'l': "list-extensions",
+	'v': "version",
 }
 
 const (
@@ -103,8 +141,26 @@ const (
 
 // validateGeminiExtraArgs is ValidateLaunchExtraArgs' Gemini arm.
 func validateGeminiExtraArgs(args []string) error {
+	inArray := false
 	for _, arg := range args {
-		flag, owned, ok := geminiOwnedArg(arg)
+		token := strings.TrimSpace(arg)
+		var (
+			flag  string
+			owned geminiOwnedFlag
+			ok    bool
+		)
+		switch {
+		case token == "--":
+			flag, owned, ok = "--", geminiEndOfOptions, true
+		case !strings.HasPrefix(token, "-") || token == "-":
+			if inArray {
+				continue
+			}
+			flag, owned, ok = fmt.Sprintf("%q", arg), geminiPositional, true
+		default:
+			flag, owned, ok = geminiOwnedArg(token)
+			inArray = !ok && geminiStartsArray(token)
+		}
 		if !ok {
 			continue
 		}
@@ -115,6 +171,22 @@ func validateGeminiExtraArgs(args []string) error {
 			flag, owned.axis, owned.remedy, strings.Join(geminiOwnedFlagNames(), " "))
 	}
 	return nil
+}
+
+// geminiStartsArray reports whether a dash-led, unaudited token is an array
+// option whose values follow as separate arguments (no `=value` attached).
+func geminiStartsArray(token string) bool {
+	if strings.Contains(token, "=") {
+		return false
+	}
+	if name, ok := strings.CutPrefix(token, "--"); ok {
+		return geminiArrayOptions[geminiKebab(name)]
+	}
+	letters := strings.TrimPrefix(token, "-")
+	if letters == "" {
+		return false
+	}
+	return geminiArrayShortFlags[[]rune(letters)[len([]rune(letters))-1]]
 }
 
 // geminiOwnedArg reports whether one pass-through argument names an audited
@@ -128,7 +200,8 @@ func validateGeminiExtraArgs(args []string) error {
 //     single-dash token is checked, which may over-refuse a value glued to a
 //     short flag but can never miss an audited alias
 //
-// Positional tokens (no leading dash) are never options and pass through.
+// Positional tokens and a bare `--` are judged by validateGeminiExtraArgs,
+// which knows whether they are an array option's values.
 func geminiOwnedArg(arg string) (string, geminiOwnedFlag, bool) {
 	token := strings.TrimSpace(arg)
 	switch {
