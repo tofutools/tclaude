@@ -110,8 +110,8 @@ warning. Model and effort are remembered by the harness itself.
 | Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off | ❌ not modelled | ❌ |
 | [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ | ❌ not yet | ✅ |
 | Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD | ❌ | ❌ |
-| Hooks via `tclaude setup` | ✅ | ✅ | ❌ (server liveness instead) | ✅ | ❌ not yet | ❌ |
-| Directory pre-trust (`--trust-dir`) | ✅ | ✅ | — no trust dialog | ✅ | ❌ not yet | — |
+| Hooks via `tclaude setup` | ✅ | ✅ | ❌ (server liveness instead) | ✅ | ✅ settings.json hooks | ❌ |
+| Directory pre-trust (`--trust-dir`) | ✅ | ✅ | — no trust dialog | ✅ | ✅ | — |
 | Tool governance (`--tools`) | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
 | Fast mode | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | API/RPC drive | — n/a | ⚠️ experimental `--codex-app-server` | ✅ inherent | ⚠️ experimental `--copilot-api` | — | — n/a |
@@ -417,8 +417,8 @@ account, so it claims only what the CLI's own argument parser and command
 table prove. What it has today: spawn, exact resume, model selection, a
 pre-minted conversation id (so daemon spawns are enrolled before the pane
 starts), the launch briefing as Gemini's `-i` first turn, conversation
-listing and search, buffered `ask`, rename, in-pane compaction, and soft
-exit.
+listing and search, buffered `ask`, rename, live status through hooks,
+directory pre-trust, in-pane compaction, and soft exit.
 
 **Models.** `--model` offers Gemini's own aliases (`auto`, `pro`, `flash`,
 `flash-lite`) and current concrete ids as suggestions; any other single
@@ -452,6 +452,28 @@ directory, as in the CLI.
 returns the buffered answer. In headless mode Gemini denies any tool call
 that would need approval. Live streaming is not supported.
 
+**Setup and live status.** `tclaude setup` installs the tclaude callback
+into the `hooks` section of `~/.gemini/settings.json` (or
+`$GEMINI_CLI_HOME/.gemini/settings.json`). It installs for `SessionStart`,
+`BeforeAgent`, `AfterTool`, `AfterAgent`, `Notification` and `SessionEnd`,
+and the callback maps them onto tclaude's turn states: working, idle, and
+awaiting permission while Gemini shows a tool-confirmation dialog. The
+installed command discards its output and always exits 0, so it can never
+block, retry or comment on a Gemini turn. A `settings.json` with comments
+is left alone, and setup asks you to add the hooks by hand. Gemini runs
+settings hooks **only in trusted folders**, so live status needs the
+project directory trusted.
+
+**Directory trust.** Folder trust is on by default in Gemini CLI. In an
+untrusted folder the pane stops on a trust dialog, hooks are off, and
+headless `ask` fails. `--trust-dir` (or the dashboard's spawn option)
+records the launch directory as `TRUST_FOLDER` in
+`~/.gemini/trustedFolders.json`, or wherever
+`GEMINI_CLI_TRUSTED_FOLDERS_PATH` points. It never overrides an explicit
+`DO_NOT_TRUST` for the same directory, and it refuses to rewrite a file
+it cannot parse strictly. Gemini treats a malformed trust file as a fatal
+startup error.
+
 **Pass-through arguments.** Arguments after `--` that would make the pane
 disagree with what tclaude recorded — `--resume`, `--session-id`, `-i`/`-p`,
 `--model`, `--worktree`, the approval and trust options, `--sandbox`, `--acp`,
@@ -460,10 +482,8 @@ use instead. So are bare positional arguments (Gemini would read them as the
 initial prompt, replacing the briefing, or as a subcommand) other than the
 values of Gemini's list options such as `--include-directories`.
 
-**Not yet:** hooks (and so live status), directory pre-trust, the approval catalog, sandbox integration, and usage.
-Note that Gemini CLI shows a folder-trust dialog the first time it starts in
-an untrusted directory; until pre-trust lands, trust the directory once in an
-interactive `gemini` session before spawning detached Gemini agents there.
+**Not yet:** the approval catalog (Gemini's own `--approval-mode`), sandbox
+integration, and usage.
 
 ## Related pages
 

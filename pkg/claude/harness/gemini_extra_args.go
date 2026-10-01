@@ -131,8 +131,8 @@ const (
 	geminiNoApproval = "tclaude does not yet model Gemini CLI's approval modes or policy engine, " +
 		"so there is no recorded launch a pass-through approval option could agree with; " +
 		"configure the default in Gemini's own settings.json instead"
-	geminiNoTrust = "tclaude does not yet model Gemini CLI's folder trust; trust the directory " +
-		"once in an interactive Gemini session (or in Gemini's trustedFolders.json) instead"
+	geminiNoTrust = "use tclaude's own `--trust-dir` option, which records the directory as " +
+		"trusted in Gemini's trustedFolders.json for this launch and every later one"
 	geminiNoSandbox = "tclaude does not model Gemini CLI's container/Seatbelt sandbox, so there " +
 		"is no recorded launch a pass-through sandbox flag could agree with"
 	geminiNoRuntime = "tclaude manages a local interactive Gemini TUI in a tmux pane; it has no " +

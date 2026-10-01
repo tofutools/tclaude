@@ -16,8 +16,8 @@ const GeminiPinnedVersion = "0.62.0"
 // The first Gemini wave was the MINIMUM BAR from docs/adding-a-harness.md: a
 // Spawner, a ModelCatalog and the lifecycle tokens, plus LaunchEnrollment. The
 // second adds the cold ConvStore and the Ask surface, both read from the CLI's
-// own storage and headless code paths. Every other contract stays nil until a
-// later wave backs it.
+// own storage and headless code paths; the third adds hooks. Every other
+// contract stays nil until a later wave backs it.
 //
 // The bar is the same one the Copilot adapter started from, and for the same
 // reason: a launch flag read from the CLI's own argument parser is a contract,
@@ -48,6 +48,28 @@ func init() {
 		// but parsing it is its own contract. See gemini_asker.go.
 		Ask: geminiAsker{},
 
+		// Live status through Gemini's settings.json hooks (see
+		// gemini_hooks.go). The callback maps Gemini's event names onto
+		// tclaude's vocabulary; nothing here needs a translator per field.
+		Hooks: geminiHookInstaller{},
+
+		// Gemini fires SessionEnd from its exit cleanup and explicitly does
+		// not wait for it (hookSystem: "best effort"), and a killed process
+		// never fires it at all. Exit detection stays with the reaper.
+		SessionEndBestEffort: true,
+
+		// The interactive app marks its config initialized BEFORE it awaits
+		// the SessionStart hook (AppContainer.tsx), and the `-i` first turn is
+		// submitted as soon as the config is initialized — so the launch
+		// prompt's BeforeAgent can reach tclaude ahead of SessionStart.
+		SessionStartAfterPrompt: true,
+
+		// Folder trust is on by default and an untrusted folder parks the
+		// pane on a dialog, switches settings hooks off and makes headless
+		// runs fail. `--trust-dir` seeds trustedFolders.json (see
+		// gemini_dir_trust.go).
+		DirTrust: true,
+
 		// `--session-id <id>` starts a NEW session under a caller-chosen id
 		// (packages/cli/src/config/config.ts; gemini.tsx resolveSessionId
 		// refuses an id that already exists rather than resuming it), and
@@ -59,10 +81,9 @@ func init() {
 		// Unlike Claude Code and Copilot there is no launch-time NAME flag, so
 		// `session new` records a fresh launch's name in tclaude's own
 		// conversation index instead (which the ConvStore overlays as the
-		// custom title). For the same reason that Gemini has no
-		// hooks in this build, `session new` also mints the id for a fresh
-		// launch that was not handed one, so even a plain interactive session
-		// is known by its conversation id from the start.
+		// custom title). `session new` also mints the id for a fresh launch
+		// that was not handed one, so even a plain interactive session is
+		// known by its conversation id from the start, before any hook fires.
 		LaunchEnrollment: true,
 
 		// Gemini CLI is an Ink TUI that renders its own scroll-back (it has a
