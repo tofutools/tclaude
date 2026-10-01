@@ -86,6 +86,11 @@ type World struct {
 	// that.
 	Copilots *CopilotRegistry
 
+	// Geminis is the Gemini CLI analog, and geminiLaunchCmds the production
+	// launch strings its spawns were booted from, keyed by conv-id.
+	Geminis          *GeminiRegistry
+	geminiLaunchCmds map[string]string
+
 	// CopilotLaunches records, keyed by conv-id, the launch command string the
 	// PRODUCTION Copilot spawner produced for each simulated spawn. A flow
 	// test asserts on the parsed form (World.CopilotLaunchCommand); the raw string is
@@ -168,6 +173,8 @@ func New(t *testing.T) *World {
 		SandboxLayer:        &SandboxLayerSim{},
 		Codexes:             newCodexRegistry(),
 		Copilots:            newCopilotRegistry(),
+		Geminis:             newGeminiRegistry(),
+		geminiLaunchCmds:    map[string]string{},
 		copilotLaunchCmds:   map[string]string{},
 		spawnEfforts:        map[string]string{},
 		spawnModels:         map[string]string{},
@@ -797,6 +804,23 @@ func (w *World) RecordCopilotLaunchCommand(convID, cmd string) {
 	w.spawnMu.Lock()
 	defer w.spawnMu.Unlock()
 	w.copilotLaunchCmds[convID] = cmd
+}
+
+// RecordGeminiLaunchCommand captures the production-rendered Gemini launch
+// string for a simulated spawn, keyed by conv-id.
+func (w *World) RecordGeminiLaunchCommand(convID, cmd string) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.geminiLaunchCmds[convID] = cmd
+}
+
+// GeminiLaunchCommand returns the latest Gemini launch string recorded for a
+// conv-id and whether one was observed.
+func (w *World) GeminiLaunchCommand(convID string) (string, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	cmd, ok := w.geminiLaunchCmds[convID]
+	return cmd, ok
 }
 
 // CopilotLaunchCommand returns the launch string recorded for a conv-id and

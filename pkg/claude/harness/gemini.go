@@ -13,9 +13,11 @@ const GeminiName = "gemini"
 // turn could prove is called out as such where it matters.
 const GeminiPinnedVersion = "0.62.0"
 
-// The first Gemini wave is the MINIMUM BAR from docs/adding-a-harness.md: a
-// Spawner, a ModelCatalog and the lifecycle tokens, plus LaunchEnrollment.
-// Every other contract stays nil until a later wave backs it.
+// The first Gemini wave was the MINIMUM BAR from docs/adding-a-harness.md: a
+// Spawner, a ModelCatalog and the lifecycle tokens, plus LaunchEnrollment. The
+// second adds the cold ConvStore and the Ask surface, both read from the CLI's
+// own storage and headless code paths. Every other contract stays nil until a
+// later wave backs it.
 //
 // The bar is the same one the Copilot adapter started from, and for the same
 // reason: a launch flag read from the CLI's own argument parser is a contract,
@@ -31,6 +33,21 @@ func init() {
 		Models:      geminiModels{},
 		Life:        geminiLifecycle{},
 
+		// The cold conversation store reads Gemini's own per-project chat
+		// files (see gemini_convstore.go for the layout and the "what counts
+		// as a conversation" rule it mirrors from the CLI). Gemini has no
+		// title store, so SetTitle writes tclaude's conv_index overlay —
+		// which is also what makes rename deliverable (CanRename) without an
+		// in-pane command.
+		Convs: geminiConvStore{},
+
+		// One-shot `tclaude ask`, buffered only. Headless `--prompt=` writes
+		// the answer to stdout and turns every ask_user approval into a deny,
+		// and `--session-id` pins a fresh ask's id up front. StreamAsker is
+		// deliberately not implemented: `--output-format stream-json` exists,
+		// but parsing it is its own contract. See gemini_asker.go.
+		Ask: geminiAsker{},
+
 		// `--session-id <id>` starts a NEW session under a caller-chosen id
 		// (packages/cli/src/config/config.ts; gemini.tsx resolveSessionId
 		// refuses an id that already exists rather than resuming it), and
@@ -41,7 +58,8 @@ func init() {
 		//
 		// Unlike Claude Code and Copilot there is no launch-time NAME flag, so
 		// `session new` records a fresh launch's name in tclaude's own
-		// conversation index instead. For the same reason that Gemini has no
+		// conversation index instead (which the ConvStore overlays as the
+		// custom title). For the same reason that Gemini has no
 		// hooks in this build, `session new` also mints the id for a fresh
 		// launch that was not handed one, so even a plain interactive session
 		// is known by its conversation id from the start.
@@ -62,8 +80,8 @@ type geminiLifecycle struct{}
 
 // Gemini CLI has no rename command and no user-settable session title. The
 // session's only label is `summary`, which Gemini generates itself. Rename
-// therefore has no in-pane path; it is delivered out of band once a ConvStore
-// exists (see CanRename).
+// therefore has no in-pane path; it is delivered out of band through the
+// ConvStore's tclaude-side title overlay (see CanRename).
 func (geminiLifecycle) RenameCommand() string { return "" }
 
 // `/compress` summarizes the chat history in place (compressCommand.ts; its

@@ -1,0 +1,171 @@
+package agentd_test
+
+import (
+	"net/http"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/testharness"
+)
+
+// Daemon-spawned Gemini CLI panes, driven through the production spawn,
+// rename, compact, stop and resume paths against a simulator that writes the
+// CLI's own chat-file layout (pkg/testharness/gemini_sim.go).
+//
+// The simulator is launched from the REAL spawner's output, and the
+// conversation reads go through the REAL Gemini ConvStore, so a flag respelling
+// or a storage-layout drift fails here. No Gemini account was available when
+// this was written: the simulator's behavior is read from the CLI source at
+// harness.GeminiPinnedVersion, not measured from a live pane.
+
+func spawnGemini(t *testing.T, f *testharness.Flow, group string, body map[string]any) (
+	testharness.SpawnResp, *testharness.GeminiSim,
+) {
+	t.Helper()
+	body["harness"] = harness.GeminiName
+	resp := f.AsHuman().SpawnWith(group, body)
+	require.Equalf(t, http.StatusOK, resp.Code, "gemini spawn body=%s", resp.Raw)
+	sim := f.World.Geminis.GetByConvID(resp.ConvID)
+	require.NotNil(t, sim, "the spawn should have built a Gemini pane simulator")
+	return resp, sim
+}
+
+func geminiLaunchOf(t *testing.T, f *testharness.Flow, convID string) testharness.GeminiLaunch {
+	t.Helper()
+	cmd, ok := f.World.GeminiLaunchCommand(convID)
+	require.Truef(t, ok, "no Gemini launch recorded for %s", convID)
+	launch, err := testharness.ParseGeminiLaunch(cmd)
+	require.NoErrorf(t, err, "the production spawner produced a launch the CLI would reject: %s", cmd)
+	return launch
+}
+
+func geminiHarness(t *testing.T) *harness.Harness {
+	t.Helper()
+	h, err := harness.Resolve(harness.GeminiName)
+	require.NoError(t, err)
+	return h
+}
+
+// TestGeminiSpawn_LaunchEnrollmentIdentity: the daemon presets the conv id,
+// the pane is launched under exactly it with the briefing in the argv, and the
+// name lands in tclaude's title overlay because Gemini has no name flag.
+// Nothing is typed into the pane.
+func TestGeminiSpawn_LaunchEnrollmentIdentity(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	resp, sim := spawnGemini(t, f, "crew", map[string]any{
+		"name":            "gemini-worker",
+		"initial_message": "Investigate the flaky deploy job and report back",
+		"model":           "gemini-3.1-pro-preview",
+	})
+
+	row, err := db.LoadSession(resp.Label)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, resp.ConvID, row.ConvID)
+	assert.Equal(t, harness.GeminiName, row.Harness)
+
+	launch := geminiLaunchOf(t, f, resp.ConvID)
+	assert.Equal(t, resp.ConvID, launch.SessionID, "the pane must be launched under the enrolled id")
+	assert.Empty(t, launch.ResumeID)
+	assert.Equal(t, "gemini-3.1-pro-preview", launch.Model)
+	assert.Contains(t, launch.InitialPrompt, "Investigate the flaky deploy job",
+		"the briefing rides the launch argv rather than being typed into the pane")
+	assert.Equal(t, resp.ConvID, sim.ConvID)
+
+	// The production cold-read path finds the conversation in Gemini's own
+	// chat files and overlays the launch name as its title.
+	h := geminiHarness(t)
+	exists, err := h.Convs.Exists(resp.ConvID, sim.Cwd)
+	require.NoError(t, err)
+	assert.True(t, exists, "the ConvStore must find the pane's session file")
+	title, err := h.Convs.Title(resp.ConvID)
+	require.NoError(t, err)
+	assert.Equal(t, "gemini-worker", title)
+
+	assert.Empty(t, f.World.Tmux.Sent(), "a launch-enrolled Gemini spawn must not send-keys")
+}
+
+// TestGeminiSpawn_RenameUsesTheTitleOverlay: Gemini CLI has no rename command,
+// so a rename is written to tclaude's title overlay and nothing is typed.
+func TestGeminiSpawn_RenameUsesTheTitleOverlay(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	resp, _ := spawnGemini(t, f, "crew", map[string]any{
+		"name":            "gemini-worker",
+		"initial_message": "start work",
+	})
+
+	r := f.AsHuman().Rename(resp.ConvID, "renamed-worker")
+	require.Equalf(t, http.StatusOK, r.Code, "rename body=%s", r.Raw)
+
+	title, err := geminiHarness(t).Convs.Title(resp.ConvID)
+	require.NoError(t, err)
+	assert.Equal(t, "renamed-worker", title)
+	for _, sk := range f.World.Tmux.Sent() {
+		assert.NotContains(t, sk.Text, "rename", "Gemini has no in-pane rename; nothing may be typed")
+	}
+}
+
+// TestGeminiSpawn_CompactTypesCompress: compaction types the canonical
+// `/compress` command into the pane.
+func TestGeminiSpawn_CompactTypesCompress(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	resp, sim := spawnGemini(t, f, "crew", map[string]any{
+		"name":            "gemini-worker",
+		"initial_message": "start work",
+	})
+	sim.WriteGeminiReply("on it", "gemini-3-flash")
+
+	c := f.AsHuman().Compact(resp.ConvID)
+	require.Equalf(t, http.StatusOK, c.Code, "compact body=%s", c.Raw)
+	assert.Equal(t, 1, sim.Compressions())
+	assert.True(t, sim.IsAlive())
+}
+
+// TestGeminiSpawn_StopThenResumeReopensTheSameConversation: a soft stop
+// closes the pane through the CLI's own exit path, and a resume relaunches it
+// with `--resume <full id>` against the SAME session file.
+func TestGeminiSpawn_StopThenResumeReopensTheSameConversation(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	resp, sim := spawnGemini(t, f, "crew", map[string]any{
+		"name":            "gemini-worker",
+		"initial_message": "start work",
+	})
+	sim.WriteGeminiReply("done", "gemini-3-flash")
+
+	f.AssertSoftStopped(f.AsHuman().Stop(resp.ConvID, false))
+	assert.False(t, sim.IsAlive(), "the soft exit must close the Gemini pane")
+
+	resume := f.Resume(resp.ConvID)
+	require.Equalf(t, http.StatusOK, resume.Code, "resume body=%s", resume.Raw)
+
+	relaunch := geminiLaunchOf(t, f, resp.ConvID)
+	assert.Equal(t, resp.ConvID, relaunch.ResumeID, "a relaunch must name the full conversation id")
+	assert.Empty(t, relaunch.SessionID, "--resume and --session-id are mutually exclusive")
+
+	resumed := f.World.Geminis.GetByConvID(resp.ConvID)
+	require.NotNil(t, resumed)
+	assert.True(t, resumed.IsAlive())
+
+	// Still one conversation, still titled by the overlay.
+	h := geminiHarness(t)
+	convs, err := h.Convs.ListConvs(sim.Cwd)
+	require.NoError(t, err)
+	n := 0
+	for _, c := range convs {
+		if c.SessionID == resp.ConvID {
+			n++
+		}
+	}
+	assert.Equal(t, 1, n, "a resume must not fork the conversation")
+	title, err := h.Convs.Title(resp.ConvID)
+	require.NoError(t, err)
+	assert.Equal(t, "gemini-worker", title)
+}
