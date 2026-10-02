@@ -263,6 +263,14 @@ func runSetup(params *Params) error {
 		configureCopilotClipboard(params)
 	}
 
+	// 2a‴. Gemini CLI alternate-screen renderer, the counterpart of Claude
+	// Code's fullscreen TUI: without it the mouse wheel in a tclaude pane
+	// pages through Gemini's prompt history instead of scrolling.
+	if gemini, ok := harness.Get(harness.GeminiName); ok && harnessOnPath(gemini) {
+		fmt.Println("\n=== Gemini Renderer ===")
+		configureGeminiAlternateBuffer(params)
+	}
+
 	// 2b. Codex CLI status line (when codex is installed). Codex has no
 	// command-backed status line (openai/codex#17827), so tclaude can't
 	// install its renderer there; instead it curates Codex's built-in
@@ -948,6 +956,11 @@ func checkStatus(harnessName string) error {
 	if copilot, ok := harness.Get(harness.CopilotName); ok && harnessOnPath(copilot) {
 		fmt.Println("\n=== Copilot Clipboard ===")
 		checkCopilotClipboard()
+	}
+
+	if gemini, ok := harness.Get(harness.GeminiName); ok && harnessOnPath(gemini) {
+		fmt.Println("\n=== Gemini Renderer ===")
+		checkGeminiAlternateBuffer()
 	}
 
 	// Check Codex status line
