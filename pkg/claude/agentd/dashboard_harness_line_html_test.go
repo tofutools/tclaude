@@ -41,7 +41,7 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	must("import { HarnessMark } from './harness-mark.js'", "the member table imports the shared harness-mark component")
 	must("<${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} tooltip=${drive ? title : labels.long} />",
 		"the harness line renders the mark with full-name and fallback labels")
-	must("const PRODUCT_MARKS = new Set(['claude', 'codex', 'copilot', 'opencode'])",
+	must("const PRODUCT_MARKS = new Set(['claude', 'codex', 'copilot', 'gemini', 'opencode'])",
 		"the known product-mark set is explicit")
 	must(`role="img" aria-label=${longLabel} title=${tooltip}`,
 		"each mark keeps its full harness name for assistive tech and accepts the general tooltip on hover")

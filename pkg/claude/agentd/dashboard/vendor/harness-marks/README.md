@@ -16,6 +16,10 @@ the SVG geometry comes from the sources below.
   whose per-icon metadata identifies the upstream Primer icon and its MIT
   license. See `LICENSE-GitHub-Primer.txt`.
   Source: https://primer.style/foundations/icons/copilot-24
+- **Gemini CLI:** `gemini.svg` (the monochrome Gemini spark) from
+  `@lobehub/icons-static-svg` 1.94.0. LobeHub Icons is MIT licensed; see
+  `LICENSE-LobeHub.txt`.
+  Source: https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini.svg
 - **OpenCode:** OpenCode's own `packages/identity/mark.svg`. OpenCode is MIT
   licensed; see `LICENSE-OpenCode.txt`.
   Source: https://github.com/anomalyco/opencode/blob/1251a870cb384543c150c4a72fb101b55eec971b/packages/identity/mark.svg

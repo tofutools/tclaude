@@ -276,6 +276,27 @@ func TestGeminiSpawn_DashboardShowsUsageFromTheSessionFile(t *testing.T) {
 	assert.Equal(t, int64(1_000), stored.TokensOutput, "output and thinking tokens summed over the conversation")
 }
 
+// TestGeminiSpawn_DashboardShowsTheModelSwitchedInPane: a /model switch made
+// inside the pane shows as the agent's model, read from the model Gemini
+// stamps on each call — not the one it was launched with.
+func TestGeminiSpawn_DashboardShowsTheModelSwitchedInPane(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	resp, sim := spawnGemini(t, f, "crew", map[string]any{
+		"name":            "switching-gemini",
+		"model":           "gemini-3-flash",
+		"initial_message": "start work",
+	})
+	sim.WriteGeminiReplyWithTokens("first", "gemini-3-flash", 10_000, 300, 0)
+	sim.WriteGeminiReplyWithTokens("after /model", "gemini-3.1-pro-preview", 12_000, 300, 0)
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	row := findDashAgent(snap, resp.ConvID)
+	require.NotNil(t, row, "the Gemini agent must be on the dashboard")
+	assert.Equal(t, "gemini-3.1-pro-preview", row.State.Model, "the latest call's model")
+}
+
 // TestGeminiSpawn_WhatIfCostFromTheSessionFile: a priced model's calls show
 // up as the agent's WHAT-IF cost, priced at Gemini API rates.
 func TestGeminiSpawn_WhatIfCostFromTheSessionFile(t *testing.T) {
