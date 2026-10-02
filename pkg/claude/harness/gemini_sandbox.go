@@ -114,8 +114,8 @@ func (geminiSandbox) ValidateMode(mode string) (string, error) {
 var geminiSandboxModeHelp = map[string]string{
 	GeminiSandboxInherit: "Use your Gemini CLI sandbox settings as-is (settings.json `tools.sandbox` or GEMINI_SANDBOX). tclaude makes no containment claim for this mode; note that a container sandbox re-runs Gemini inside docker/podman, out of reach of tclaude's hooks.",
 	GeminiSandboxOff:     "Gemini CLI's own sandbox is forced OFF for this launch (GEMINI_SANDBOX=false outranks settings.json), so tclaude’s built-in sandbox can be the single enforcement boundary. On its own, without tclaude’s sandbox, nothing confines the agent.",
-	GeminiSandboxSeatbelt: "Gemini CLI's own macOS Seatbelt sandbox (sandbox-exec, profile permissive-open): writes are confined to the project, temp and cache directories, Gemini's config and credential files are write-protected, and outbound network stays open. " +
-		"⚠ Gemini keeps this mode's chats under ~/.cache/.gemini, so a conversation started in another mode is not resumable in this one, and the reverse.",
+	GeminiSandboxSeatbelt: "Gemini CLI's own macOS Seatbelt sandbox (sandbox-exec, profile permissive-open): writes are confined to the project, temp and cache directories, Gemini's config and credential files are write-protected, and outbound network stays open. Needs an API-key or Vertex AI sign-in: the profile hides Google sign-in credentials from the sandboxed CLI. " +
+		"⚠ The profile does not restrict Unix sockets, so the agent can reach tclaude's tmux server and run commands outside the sandbox through it, and it can read ~/.tclaude; git writes to a linked worktree's main repository are denied; and chats live under ~/.cache/.gemini, so a conversation started in another mode is not resumable in this one. Use --sandbox-impl tclaude-layer for a sandbox tclaude enforces.",
 }
 
 func (geminiSandbox) ModeHelp(mode string) string {

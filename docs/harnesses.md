@@ -502,7 +502,22 @@ values:
 
   Gemini runs its hooks inside that profile, where tclaude's database is
   read-only, so tclaude brokers the hook callbacks through agentd, as it does
-  under tclaude-layer. Gemini also keeps this mode's chats under
+  under tclaude-layer. The profile also hides Gemini's own credentials and
+  trust store from the sandboxed CLI, which has these effects:
+  - The mode is refused for a Google sign-in. Use an API key or Vertex AI.
+  - tclaude exports `GEMINI_CLI_TRUST_WORKSPACE=true` for a folder your trust
+    store (or `--trust-dir`) trusts.
+  - Sandbox-profile filesystem rules are refused, because the profile is
+    Gemini's, not tclaude's.
+
+  Weaker than tclaude-layer in several ways:
+  - Unix sockets are unrestricted, so the agent can reach tclaude's tmux
+    server and run commands outside the sandbox through it.
+  - It can read `~/.tclaude`.
+  - Git writes to a linked worktree's main repository are denied.
+  - Gemini refuses to start in a sensitive directory such as `$HOME`.
+  - Under `inherit`, an operator's own `tools.sandbox: true` selects this
+    sandbox without tclaude knowing, so hook callbacks are not brokered. Gemini also keeps this mode's chats under
   `~/.cache/.gemini`. tclaude lists conversations from both places, but Gemini
   can resume a conversation only in the mode that created it. Agents cannot
   spawn Seatbelt-mode Gemini children; a human can.

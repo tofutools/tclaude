@@ -2647,6 +2647,9 @@ func resumeLaunchCmdWithStackedProof(
 			return "", "", nil, err
 		}
 	}
+	if !outerLayer && !unconfined && h.Name == harness.GeminiName && len(denyDirs)+len(readDirs)+len(writeDirs) > 0 {
+		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Gemini CLI's own sandbox cannot represent sandbox-profile filesystem rules; use --sandbox-impl tclaude-layer")
+	}
 	if !outerLayer && !unconfined && h.Name == harness.DefaultName && len(denyDirs) > 0 && harnessBuiltinMode != harness.ClaudeSandboxOn {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
 	}
@@ -2671,6 +2674,27 @@ func resumeLaunchCmdWithStackedProof(
 		// The spawn seam's rule for Gemini's Seatbelt mode: its hooks run
 		// inside a profile that makes the database read-only.
 		resumeEnv[session.HookBrokerEnvVar] = session.HookBrokerAgentd
+	}
+	if h.Name == harness.GeminiName && harnessBuiltinMode == harness.GeminiSandboxSeatbelt {
+		// The spawn seam's Seatbelt checks (session/new.go), against the
+		// trust the spawn already recorded.
+		getenv := func(name string) string {
+			if value, ok := resumeEnv[name]; ok {
+				return value
+			}
+			return os.Getenv(name)
+		}
+		if err := harness.ValidateGeminiSeatbeltLaunch(getenv, resumeCwd); err != nil {
+			return "", "", nil, err
+		}
+		trustEnv, err := harness.GeminiSeatbeltLaunchEnv(getenv, resumeCwd, false)
+		if err != nil {
+			slog.Warn("gemini seatbelt: cannot read the trust store; the sandboxed pane may ask for folder trust",
+				"cwd", resumeCwd, "err", err)
+		}
+		for name, value := range trustEnv {
+			resumeEnv[name] = value
+		}
 	}
 	// A deny covering the workspace narrows the Git grants the same way the
 	// spawn path does: the historical repository container would reopen every

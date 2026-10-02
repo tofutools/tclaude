@@ -99,3 +99,53 @@ func TestGeminiConvStoreReadsTheSeatbeltRuntimeDir(t *testing.T) {
 	require.True(t, found)
 	assert.Equal(t, path, located)
 }
+
+func TestValidateGeminiSeatbeltLaunchNeedsEnvironmentAuth(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	cwd := filepath.Join(root, "proj")
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".gemini"), 0o755))
+	require.NoError(t, os.MkdirAll(cwd, 0o755))
+	env := map[string]string{"HOME": home, geminiSystemSettingsEnvVar: filepath.Join(root, "none.json")}
+	getenv := func(name string) string { return env[name] }
+	settings := filepath.Join(home, ".gemini", "settings.json")
+
+	assert.ErrorContains(t, ValidateGeminiSeatbeltLaunch(getenv, cwd), "selected auth type")
+	require.NoError(t, os.WriteFile(settings, []byte(`{"security":{"auth":{"selectedType":"oauth-personal"}}}`), 0o644))
+	assert.ErrorContains(t, ValidateGeminiSeatbeltLaunch(getenv, cwd), "OAuth credentials")
+	for _, authType := range []string{GeminiAuthAPIKey, "vertex-ai"} {
+		require.NoError(t, os.WriteFile(settings, []byte(`{"security":{"auth":{"selectedType":"`+authType+`"}}}`), 0o644))
+		assert.NoErrorf(t, ValidateGeminiSeatbeltLaunch(getenv, cwd), "auth type %s", authType)
+	}
+}
+
+func TestGeminiSeatbeltLaunchEnvCarriesOnlyTheHostsTrust(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	proj := filepath.Join(root, "work", "proj")
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".gemini"), 0o755))
+	env := map[string]string{"HOME": home}
+	getenv := func(name string) string { return env[name] }
+	store := filepath.Join(home, ".gemini", "trustedFolders.json")
+	trust := func(trustDir bool) bool {
+		t.Helper()
+		got, err := GeminiSeatbeltLaunchEnv(getenv, proj, trustDir)
+		require.NoError(t, err)
+		return got[geminiTrustWorkspaceEnvVar] == "true"
+	}
+
+	assert.False(t, trust(false), "no rule and no --trust-dir: Gemini decides")
+	assert.True(t, trust(true), "--trust-dir is about to trust it")
+
+	require.NoError(t, os.WriteFile(store, []byte(`{"`+filepath.Join(root, "work")+`":"TRUST_FOLDER"}`), 0o644))
+	assert.True(t, trust(false), "a trusted ancestor covers the folder")
+
+	require.NoError(t, os.WriteFile(store, []byte(`{"`+filepath.Join(root, "work")+`":"TRUST_FOLDER","`+proj+`":"DO_NOT_TRUST"}`), 0o644))
+	assert.False(t, trust(true), "the longest rule wins, and distrust is never overridden")
+
+	require.NoError(t, os.WriteFile(store, []byte(`{"`+filepath.Join(proj, "child")+`":"TRUST_PARENT"}`), 0o644))
+	assert.True(t, trust(false), "TRUST_PARENT covers the rule's parent")
+
+	require.NoError(t, os.WriteFile(store, []byte(`{"`+filepath.Join(root, "work", "projX")+`":"TRUST_FOLDER"}`), 0o644))
+	assert.False(t, trust(false), "a sibling with a shared prefix is not an ancestor")
+}
