@@ -500,6 +500,14 @@ ends because every pending tool was declined or cancelled (Esc, or "No" on
 the confirmation). Such a row keeps showing working or awaiting permission
 until the next prompt.
 
+**Renderer and mouse wheel.** By default Gemini CLI renders inline and leaves
+its history in the terminal's scroll-back. Inside tclaude's tmux pane, and in
+the dashboard terminal, the mouse wheel then arrives as Up/Down keys, which
+Gemini reads as prompt history. Gemini's alternate-screen renderer
+(`ui.useAlternateBuffer`) handles the mouse itself, so the wheel scrolls the
+conversation, as in Claude Code's fullscreen TUI. `tclaude setup` offers to
+enable it in `~/.gemini/settings.json`; an existing value is left alone.
+
 **Directory trust.** Folder trust is on by default in Gemini CLI. In an
 untrusted folder the pane stops on a trust dialog, hooks are off, and
 headless `ask` fails. `--trust-dir` (or the dashboard's spawn option)
