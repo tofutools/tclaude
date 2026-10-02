@@ -46,7 +46,8 @@ func init() {
 		// and `--session-id` pins a fresh ask's id up front. StreamAsker is
 		// deliberately not implemented: `--output-format stream-json` exists,
 		// but parsing it is its own contract. See gemini_asker.go.
-		Ask: geminiAsker{},
+		Ask:           geminiAsker{},
+		OneShotReplay: OneShotReplayTclaudeLayer,
 
 		// Live status through Gemini's settings.json hooks (see
 		// gemini_hooks.go). The callback maps Gemini's event names onto

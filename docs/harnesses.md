@@ -103,7 +103,7 @@ warning. Model and effort are remembered by the harness itself.
 | Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only | ⚠️ send-keys only, not yet exercised against a live pane | ⚠️ durable inbox only; never injected into the shell |
 | Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` | ✅ tclaude title overlay | ❌ |
 | Compact / reincarnate | ✅ | ✅ | ✅ (server API, no keystrokes) | ✅ | ✅ in-pane `/compress` | ❌ |
-| Séance (ask posture) replay | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Séance (ask posture) replay | ✅ | ✅ | ❌ | ❌ | ✅ fork of a copy | ❌ |
 | [Remote control](remote.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | [Status line](utilities.md#status-line) | ✅ command-backed | ⚠️ curated built-in items | ⚠️ OpenCode's own TUI status | ❌ | ❌ | ❌ |
 | [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
@@ -451,6 +451,20 @@ directory, as in the CLI.
 **Ask.** `tclaude ask --harness gemini` runs headless `gemini --prompt` and
 returns the buffered answer. In headless mode Gemini denies any tool call
 that would need approval. Live streaming is not supported.
+
+**Séance and non-interactive runs.** A séance replays the predecessor's
+recorded posture: its Gemini sandbox mode, its `--approval-mode`, and, for a
+generation that ran under tclaude's sandbox, that sandbox again. Gemini has no
+flag that keeps a headless `--resume` out of the conversation, so the turn
+runs on a fork:
+- tclaude copies the predecessor's session file and starts
+  `gemini --session-file <copy>`, which imports the copy into a new session.
+- The predecessor's own file is only read.
+- After the answer, tclaude deletes the copy and the new session Gemini wrote
+  for it.
+
+`--print-cmd` shows the copy as `<copy-of-…>`. Non-interactive spawns use the
+same posture replay.
 
 **Setup and live status.** `tclaude setup` installs the tclaude callback
 into the `hooks` section of `~/.gemini/settings.json` (or
