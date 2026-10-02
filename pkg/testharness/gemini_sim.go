@@ -594,6 +594,7 @@ func (s *simSpawner) startGemini(args clcommon.SpawnArgs, label, cwd, cmd string
 	s.w.RecordSpawnApproval(sim.ConvID, args.Approval)
 	s.w.RecordSpawnSandbox(sim.ConvID, args.Sandbox)
 	s.w.RecordSpawnSandboxImplementation(sim.ConvID, args.SandboxImplementation)
+	s.w.RecordSpawnSandboxPolicy(sim.ConvID, args.EffectiveSandbox)
 	// Production `session new` records a fresh launch's --name in the
 	// conversation index (Gemini has no launch-name flag); mirror it.
 	if args.Name != "" && args.ConvID == "" {
