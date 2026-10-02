@@ -942,6 +942,21 @@ func accessEnforcementTable(
 			caps.SocketList = EnforceFull
 		}
 		return caps, nil
+	case GeminiName:
+		// Gemini CLI's own Seatbelt mode (macOS) runs the whole CLI, its tools
+		// and MCP servers under Gemini's fixed permissive-open profile:
+		// writes are confined, but outbound network and Unix sockets are left
+		// open, and tclaude cannot add rules to that profile.
+		return accessEnforcementTableRow{
+			NetworkClosed:                EnforceNone,
+			NetworkList:                  EnforceNone,
+			NetworkListUnavailableDetail: GeminiBuiltinNetworkDisclosure,
+			SocketOpen:                   EnforceFull,
+			SocketClosed:                 EnforceNone,
+			SocketList:                   EnforceNone,
+			Scope:                        "process",
+			Mechanism:                    "Gemini CLI Seatbelt sandbox (permissive-open)",
+		}, nil
 	default:
 		return accessEnforcementTableRow{}, fmt.Errorf("harness %q has no access-enforcement capability descriptor", h.Name)
 	}
@@ -1509,6 +1524,12 @@ const CodexBuiltinFilteredNetworkDisclosure = "Codex has no filtered network san
 	"Its upstream proxy is experimental and off by default; it admits only proxy-aware clients " +
 	"and on Linux prevents access to the tclaude agentd socket, so it cannot enforce this profile's " +
 	"ordinary TCP/UDP access list. Use tclaude’s sandbox filtering on Linux, or choose network open (Allow all)."
+
+// GeminiBuiltinNetworkDisclosure explains why Gemini CLI's own sandbox cannot
+// carry a profile's network rules.
+const GeminiBuiltinNetworkDisclosure = "Gemini CLI's own sandbox (Seatbelt, permissive-open profile) " +
+	"leaves outbound network open and takes no rules from tclaude. " +
+	"Use tclaude’s sandbox for network rules, or choose network open (Allow all)."
 
 func networkListUnavailableDetail(caps PredictedAccessEnforcement) string {
 	if caps.NetworkListUnavailableDetail != "" {

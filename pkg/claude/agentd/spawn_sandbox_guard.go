@@ -295,6 +295,26 @@ func sandboxProfileCapabilityFailure(
 		return &spawnFailure{http.StatusUnprocessableEntity, kind,
 			fmt.Sprintf("OpenCode sandbox %q cannot represent sandbox profile %s rules; use %q",
 				harnessBuiltinMode, detail, harness.OpenCodeSandboxAccessControl)}
+	case harness.GeminiName:
+		// Gemini's own sandbox takes no rules from tclaude in any mode: Seatbelt
+		// runs Gemini's fixed permissive-open profile, and off/inherit confine
+		// nothing tclaude controls.
+		reason := fmt.Sprintf("Gemini CLI sandbox mode %q takes no rules from tclaude", harnessBuiltinMode)
+		if strings.TrimSpace(harnessBuiltinMode) == harness.GeminiSandboxSeatbelt {
+			reason = "Gemini CLI's Seatbelt sandbox runs Gemini's own permissive-open profile and takes no rules from tclaude"
+		}
+		remedy := fmt.Sprintf("use tclaude’s sandbox (sandbox implementation %q)", sandboxpolicy.ImplementationTclaudeLayer)
+		if len(filesystem) == 0 && len(snapshot.Effective.AgentDirectories) == 0 && hasNetworkPolicy {
+			if snapshot.Effective.NetworkAccess == sandboxpolicy.NetworkAccessInternet {
+				// The legacy open-network spelling: nothing to enforce, and
+				// the profile already leaves outbound network open.
+				return nil
+			}
+			return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_network",
+				reason + ", so it cannot represent sandbox profile network rules; " + remedy + ", or choose network open (Allow all)"}
+		}
+		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
+			reason + ", so it cannot represent sandbox profile filesystem rules; " + remedy + ", or a sandbox profile without filesystem rules"}
 	default:
 		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
 			fmt.Sprintf("harness %q cannot represent sandbox filesystem rules", harnessName)}
