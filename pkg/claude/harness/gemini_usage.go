@@ -310,9 +310,11 @@ func (f *GeminiUsageFollower) ensureStream() *filefollow.Follower[geminiUsageFol
 // rebuildFold is the starting state of a re-fold: an empty conversation that
 // keeps every call billed so far.
 func (f *GeminiUsageFollower) rebuildFold() geminiUsageFold {
-	fold := f.fold.clone()
-	fold.reset()
-	return fold
+	return geminiUsageFold{
+		index:       map[string]int{},
+		billed:      slices.Clone(f.fold.billed),
+		billedIndex: maps.Clone(f.fold.billedIndex),
+	}
 }
 
 func scanGeminiUsageLines(r io.Reader, _ string, fold *geminiUsageFold, strict bool) (int64, bool, error) {

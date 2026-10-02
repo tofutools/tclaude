@@ -150,7 +150,7 @@ func TestGeminiUsageFollowerReadsOnlyAppendedBytes(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv(GeminiHomeEnvVar, home)
 	path := writeGeminiUsageFixture(t, home, geminiUsageTestConv,
-		`{"id":"g1","type":"gemini","content":"a","model":"gemini-3-flash","tokens":{"input":1000,"output":10,"cached":0,"total":1010}}`,
+		`{"id":"g1","type":"gemini","content":"a","model":"gemini-3.5-flash","tokens":{"input":1000,"output":10,"cached":0,"total":1010}}`,
 	)
 	var follower GeminiUsageFollower
 	_, _, err := follower.Read(path)
@@ -170,17 +170,62 @@ func TestGeminiUsageFollowerReadsOnlyAppendedBytes(t *testing.T) {
 	assert.Equal(t, before.Rebuilds, after.Rebuilds)
 	assert.Equal(t, 2, usage.Calls)
 	assert.Equal(t, "gemini-3.1-pro-preview", usage.Model)
+	billedCost := usage.CostUSD
+	require.Positive(t, billedCost)
+
+	// A line that does not decode is doubt: one re-fold skips it, and the
+	// next append is incremental again.
+	appendGeminiUsageFixture(t, path, `{"id":17,"type":"gemini"}`+"\n")
+	usage, _, err = follower.Read(path)
+	require.NoError(t, err)
+	assert.Equal(t, after.Rebuilds+1, follower.stream.Stats().Rebuilds, "an undecodable append is re-folded once")
+	assert.Equal(t, 2, usage.Calls)
+	assert.InDelta(t, billedCost, usage.CostUSD, 1e-12)
+	appendGeminiUsageFixture(t, path, `{"id":"u3","type":"user","content":"next"}`+"\n")
+	_, _, err = follower.Read(path)
+	require.NoError(t, err)
+	after = follower.stream.Stats()
+	assert.Equal(t, before.Rebuilds+1, after.Rebuilds, "the bad line stays behind the cursor")
 
 	// Same inode, rewritten in place and longer than before: size and
 	// identity alone would admit an append scan from the stale offset.
 	rewritten := geminiUsageTestMeta(geminiUsageTestConv, "2026-10-02T09:00:00Z") + "\n" +
 		`{"id":"g7","type":"gemini","content":"rewritten history that is longer than the one it replaced","model":"gemini-3-flash","tokens":{"input":7,"output":3,"cached":0,"total":10}}` + "\n" +
 		`{"id":"u8","type":"user","content":"padding padding padding padding padding padding padding padding padding padding"}` + "\n"
-	require.Greater(t, len(rewritten), int(after.PayloadBytes))
+	current, err := os.Stat(path)
+	require.NoError(t, err)
+	for int64(len(rewritten)) <= current.Size() {
+		rewritten += `{"id":"pad","type":"user","content":"padding"}` + "\n"
+	}
 	require.NoError(t, os.WriteFile(path, []byte(rewritten), 0o644))
 	usage, _, err = follower.Read(path)
 	require.NoError(t, err)
 	assert.Equal(t, after.Rebuilds+1, follower.stream.Stats().Rebuilds, "the anchor mismatch forces a re-fold")
 	assert.Equal(t, 1, usage.Calls)
 	assert.Equal(t, int64(7), usage.ContextTokens)
+	assert.InDelta(t, billedCost, usage.CostUSD, 1e-12, "a re-fold never un-bills a counted call")
+}
+
+// A resumed legacy session moves to the migrated `.jsonl`; the calls billed
+// from the legacy record stay billed across the switch.
+func TestGeminiUsageFollowerCostSurvivesTheLegacyMigration(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(GeminiHomeEnvVar, home)
+	jsonl := writeGeminiUsageFixture(t, home, geminiUsageTestConv, `{"id":"u1","type":"user","content":"hi"}`)
+	legacy := strings.TrimSuffix(jsonl, "l")
+	require.NoError(t, os.WriteFile(legacy, []byte(`{"sessionId":"`+geminiUsageTestConv+
+		`","lastUpdated":"2026-10-02T08:00:00Z","messages":[{"id":"g0","type":"gemini","content":"old",`+
+		`"model":"gemini-3.5-flash","tokens":{"input":100000,"output":1000,"cached":0,"total":101000}}]}`), 0o644))
+
+	var follower GeminiUsageFollower
+	usage, _, err := follower.Read(legacy)
+	require.NoError(t, err)
+	legacyCost := usage.CostUSD
+	require.Positive(t, legacyCost)
+
+	usage, found, err := follower.Read(jsonl)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Zero(t, usage.Calls, "the migrated file's history is its own")
+	assert.InDelta(t, legacyCost, usage.CostUSD, 1e-12, "the legacy record's calls stay billed")
 }
