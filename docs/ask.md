@@ -3,8 +3,9 @@
 `tclaude ask` puts a one-shot question to a coding harness without creating
 a tmux session or taking over your terminal. It prints the answer, exits
 with the harness's status, and keeps a resumable thread for the next
-question from the same terminal and directory. All four harnesses — Claude
-Code, Codex CLI, OpenCode, and Copilot CLI — have an ask surface.
+question from the same terminal and directory. All five agent harnesses —
+Claude Code, Codex CLI, OpenCode, Copilot CLI, and Gemini CLI — have an ask
+surface.
 
 ![Piped input and a follow-up on the same per-terminal thread](assets/term-ask.png)
 
@@ -97,8 +98,11 @@ workspace:
   turn finishes without it. tclaude also unsets `COPILOT_ALLOW_ALL` for
   every ask so that variable cannot promote the turn from your environment.
   This is Copilot's own headless fallback, not an OS sandbox.
+- **Gemini** print runs headless `gemini --prompt`, buffered. Like Copilot,
+  headless Gemini denies any tool call that would need approval. Gemini
+  refuses to run headless in a directory it does not trust.
 
-Codex and Copilot write verbose transcripts to stderr; tclaude hides them by
+Codex, Copilot, and Gemini write verbose transcripts to stderr; tclaude hides them by
 default and keeps only the answer on stdout. `-v/--verbose` shows the
 transcript, and a failure always reveals it so auth or model errors are not
 swallowed.

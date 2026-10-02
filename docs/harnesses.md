@@ -98,10 +98,10 @@ warning. Model and effort are remembered by the harness itself.
 | Capability | Claude Code | Codex CLI | OpenCode | Copilot CLI | Gemini CLI | Shell |
 | --- | --- | --- | --- | --- | --- | --- |
 | Sessions: spawn / resume | ✅ | ✅ | ✅ managed server + attach | ✅ | ✅ | ✅ spawn only |
-| One-shot [`ask`](ask.md) | ✅ live-streamed | ✅ buffered | ✅ buffered | ✅ buffered | ❌ | ❌ |
-| [Conversation](conversations.md) list & search | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| One-shot [`ask`](ask.md) | ✅ live-streamed | ✅ buffered | ✅ buffered | ✅ buffered | ✅ buffered | ❌ |
+| [Conversation](conversations.md) list & search | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only | ⚠️ send-keys only, not yet exercised against a live pane | ⚠️ durable inbox only; never injected into the shell |
-| Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` | ❌ no rename command or title store | ❌ |
+| Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` | ✅ tclaude title overlay | ❌ |
 | Compact / reincarnate | ✅ | ✅ | ✅ (server API, no keystrokes) | ✅ | ✅ in-pane `/compress` | ❌ |
 | Séance (ask posture) replay | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | [Remote control](remote.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
@@ -416,8 +416,9 @@ Gemini CLI 0.62.0 package and its upstream source tree, without a Gemini
 account, so it claims only what the CLI's own argument parser and command
 table prove. What it has today: spawn, exact resume, model selection, a
 pre-minted conversation id (so daemon spawns are enrolled before the pane
-starts), the launch briefing as Gemini's `-i` first turn, in-pane compaction,
-and soft exit.
+starts), the launch briefing as Gemini's `-i` first turn, conversation
+listing and search, buffered `ask`, rename, in-pane compaction, and soft
+exit.
 
 **Models.** `--model` offers Gemini's own aliases (`auto`, `pro`, `flash`,
 `flash-lite`) and current concrete ids as suggestions; any other single
@@ -429,13 +430,27 @@ is refused rather than silently dropped.
 **Lifecycle.** Compaction types `/compress`; soft exit sends Escape and a
 double Ctrl+C (Gemini quits on the second press inside a 3 s window), with
 `/quit` as the typed form. Gemini has no rename command and no title of its
-own, so rename is not available yet.
+own, so rename writes a title into tclaude's conversation index, which the
+conversation listing shows over Gemini's generated summary. Nothing is typed
+into the pane.
 
 **Conversation ids.** Every fresh Gemini launch is given its conversation id
 up front (`gemini --session-id`), including a plain interactive
 `session new`, so it is resumable and tracked from the first moment even
 without hooks. A launch `--name` is kept in tclaude's conversation index,
 since Gemini has nowhere to store one.
+
+**Conversations.** tclaude reads Gemini's own chat files under
+`~/.gemini/tmp/<project>/chats/` (or `$GEMINI_CLI_HOME/.gemini`), replaying
+the JSONL record stream the way the CLI does — rewinds, metadata updates and
+legacy whole-file `.json` sessions included. A session counts as a
+conversation exactly when Gemini's own `--resume` would offer it: it has real
+content and is not a subagent session. Resume is scoped to the project
+directory, as in the CLI.
+
+**Ask.** `tclaude ask --harness gemini` runs headless `gemini --prompt` and
+returns the buffered answer. In headless mode Gemini denies any tool call
+that would need approval. Live streaming is not supported.
 
 **Pass-through arguments.** Arguments after `--` that would make the pane
 disagree with what tclaude recorded — `--resume`, `--session-id`, `-i`/`-p`,
@@ -445,8 +460,7 @@ use instead. So are bare positional arguments (Gemini would read them as the
 initial prompt, replacing the briefing, or as a subcommand) other than the
 values of Gemini's list options such as `--include-directories`.
 
-**Not yet:** hooks (and so live status), the conversation store, `ask`,
-directory pre-trust, the approval catalog, sandbox integration, and usage.
+**Not yet:** hooks (and so live status), directory pre-trust, the approval catalog, sandbox integration, and usage.
 Note that Gemini CLI shows a folder-trust dialog the first time it starts in
 an untrusted directory; until pre-trust lands, trust the directory once in an
 interactive `gemini` session before spawning detached Gemini agents there.
