@@ -155,7 +155,10 @@ func TestGeminiSpawn_StopThenResumeReopensTheSameConversation(t *testing.T) {
 
 	resumed := f.World.Geminis.GetByConvID(resp.ConvID)
 	require.NotNil(t, resumed)
-	assert.True(t, resumed.IsAlive())
+	launchCmd, _ := f.World.GeminiLaunchCommand(resp.ConvID)
+	require.NotSamef(t, sim, resumed,
+		"the resumed pane never started (resume body=%s, launch=%s, spawn cwd=%s)", resume.Raw, launchCmd, sim.Cwd)
+	assert.Truef(t, resumed.IsAlive(), "the resumed pane died (launch=%s, cwd=%s)", launchCmd, resumed.Cwd)
 
 	// Still one conversation, still titled by the overlay.
 	h := geminiHarness(t)
