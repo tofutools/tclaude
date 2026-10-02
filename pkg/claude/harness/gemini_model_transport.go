@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 
@@ -83,6 +84,8 @@ var geminiRouteMovingEnvVars = []string{
 	"CODE_ASSIST_ENDPOINT",
 	"GOOGLE_GEMINI_BASE_URL",
 	"GOOGLE_VERTEX_BASE_URL",
+	// Rewrites every *.googleapis.com host the Google client libraries use.
+	"GOOGLE_CLOUD_UNIVERSE_DOMAIN",
 }
 
 // GeminiRouteMovingEnvVars returns a fresh copy of the refused variables.
@@ -299,9 +302,15 @@ func geminiFindEnvFile(home, cwd string, trusted bool) string {
 	return ""
 }
 
-// readGeminiDotEnv parses the KEY=VALUE subset of dotenv that names a
-// variable: `export` prefixes, quotes and `#` comments. Values are only tested
-// for being non-empty.
+// geminiDotEnvLine is the bundled dotenv's LINE grammar, reduced to what this
+// check needs: an optional `export` with any whitespace, a [\w.-]+ key, and
+// either `=` or the `KEY: value` colon form.
+var geminiDotEnvLine = regexp.MustCompile(`^\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*|:\s+)(.*)$`)
+
+// readGeminiDotEnv reads the variables a dotenv file sets. Values are only
+// tested for being non-empty, so a quoted value is unwrapped and an unquoted
+// one is cut at an inline ` #` comment; a multi-line quoted value counts by
+// its first line.
 func readGeminiDotEnv(path string) (map[string]string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -315,18 +324,17 @@ func readGeminiDotEnv(path string) (map[string]string, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
-		key, value, ok := strings.Cut(line, "=")
-		if !ok {
+		match := geminiDotEnvLine.FindStringSubmatch(line)
+		if match == nil {
 			continue
 		}
-		value = strings.TrimSpace(value)
+		key, value := match[1], strings.TrimSpace(match[2])
 		if len(value) >= 2 && (value[0] == '"' || value[0] == '\'' || value[0] == '`') && value[len(value)-1] == value[0] {
 			value = value[1 : len(value)-1]
 		} else if at := strings.Index(value, " #"); at >= 0 {
 			value = strings.TrimSpace(value[:at])
 		}
-		values[strings.TrimSpace(key)] = value
+		values[key] = value
 	}
 	return values, scanner.Err()
 }

@@ -296,8 +296,8 @@ authored list:
 The launch is refused, with a reason, in these cases:
 - No auth type is selected (the pane would stop on Gemini's sign-in dialog).
 - The auth type is another one (Vertex AI, compute ADC, a gateway).
-- `CODE_ASSIST_ENDPOINT`, `GOOGLE_GEMINI_BASE_URL` or
-  `GOOGLE_VERTEX_BASE_URL` is set.
+- `CODE_ASSIST_ENDPOINT`, `GOOGLE_GEMINI_BASE_URL`,
+  `GOOGLE_VERTEX_BASE_URL` or `GOOGLE_CLOUD_UNIVERSE_DOMAIN` is set.
 - The `.env` file Gemini loads sets one of those variables, or a proxy.
 
 Unlike the other harnesses' routes, these were read from the Gemini CLI

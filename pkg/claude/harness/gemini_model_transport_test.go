@@ -128,6 +128,14 @@ func TestResolveGeminiLaunchAuthType(t *testing.T) {
 		_, err := fx.resolve()
 		assert.ErrorContains(t, err, "GOOGLE_GEMINI_BASE_URL")
 
+		// dotenv's colon form and a tab after export are variables too.
+		fx.write(t, env, "export\tGOOGLE_CLOUD_UNIVERSE_DOMAIN=example.test\n")
+		_, err = fx.resolve()
+		assert.ErrorContains(t, err, "GOOGLE_CLOUD_UNIVERSE_DOMAIN")
+		fx.write(t, env, "CODE_ASSIST_ENDPOINT: https://gw.example\n")
+		_, err = fx.resolve()
+		assert.ErrorContains(t, err, "CODE_ASSIST_ENDPOINT")
+
 		// The trusted-folder .gemini/.env shadows it; a proxy there is refused.
 		fx.write(t, filepath.Join(fx.cwd, ".gemini", ".env"), "HTTPS_PROXY=http://proxy.example:8080\n")
 		_, err = fx.resolve()
