@@ -2708,6 +2708,14 @@ func runNew(params *NewParams) error {
 			slog.Warn("failed to seed session effort", "harness", h.Name, "session_id", sessionID, "error", err)
 		}
 	}
+	// Gemini's session file names each call's model, but only once the first
+	// call lands. Until then show the launch choice; the usage refresh replaces
+	// it with the observed model. Display only: the relaunch model is unchanged.
+	if h.Name == harness.GeminiName && model != "" {
+		if err := db.UpdateSessionModel(sessionID, model); err != nil {
+			slog.Warn("failed to seed session model", "harness", h.Name, "session_id", sessionID, "error", err)
+		}
+	}
 	if err := exitGuard.release(); err != nil {
 		killLaunchPane()
 		return fmt.Errorf("bind managed pane exit audit: %w", err)
