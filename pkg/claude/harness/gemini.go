@@ -108,10 +108,15 @@ func init() {
 		// known by its conversation id from the start, before any hook fires.
 		LaunchEnrollment: true,
 
-		// Gemini CLI is an Ink TUI that renders its own scroll-back (it has a
-		// dedicated copy mode and mouse handling), so tmux mouse mode would
-		// fight it exactly as it would for Claude Code.
-		TmuxScrollback: false,
+		// By default Gemini CLI renders inline and leaves its history in the
+		// terminal's scroll-back, like Codex: it switches to an alternate
+		// screen with its own mouse handling only when the operator opts in
+		// (settings ui.useAlternateBuffer, default false). Without tmux mouse
+		// mode the wheel in an alternate-screen client (tmux, the dashboard
+		// terminal) arrives as Up/Down keys, which Gemini reads as prompt
+		// history. With it on, the wheel scrolls the pane; an opted-in Gemini
+		// requests mouse reporting itself, and tmux then hands it the wheel.
+		TmuxScrollback: true,
 	})
 }
 

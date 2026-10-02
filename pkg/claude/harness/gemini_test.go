@@ -28,7 +28,7 @@ func TestGeminiDescriptor(t *testing.T) {
 
 	assert.True(t, h.SupportsLaunchEnrollment(), "--session-id makes the conv-id knowable before launch")
 	assert.False(t, h.NeedsSpawnSeed())
-	assert.False(t, h.TmuxScrollback, "Gemini's TUI renders its own scroll-back")
+	assert.True(t, h.TmuxScrollback, "Gemini renders inline by default and leaves scroll-back to the terminal")
 
 	require.NotNil(t, h.Convs, "the cold store reads Gemini's own chat files")
 	require.NotNil(t, h.Ask, "headless --prompt backs the one-shot ask surface")
