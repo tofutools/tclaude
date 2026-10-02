@@ -166,7 +166,13 @@ func TestGeminiSeatbeltAccessEnforcementRow(t *testing.T) {
 	assert.Contains(t, predicted.Mechanism, "Gemini CLI Seatbelt")
 	assert.Equal(t, GeminiBuiltinNetworkDisclosure, predicted.NetworkListUnavailableDetail)
 
-	listed := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeClosed}}
+	closed := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeClosed}}
+	assert.Equal(t, AccessPredictionRefused, DescribePredictedAccess(closed, predicted).Network.Outcome)
+
+	// An access list widens to open and says why, like Codex's builtin row.
+	listed := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList, Allow: []sandboxpolicy.NetworkAllowEntry{{Host: "example.com"}}}}
 	described := DescribePredictedAccess(listed, predicted)
-	assert.Equal(t, AccessPredictionRefused, described.Network.Outcome)
+	assert.Equal(t, AccessPredictionNotEnforced, described.Network.Outcome)
+	assert.Contains(t, described.Network.Detail, "permissive-open")
 }

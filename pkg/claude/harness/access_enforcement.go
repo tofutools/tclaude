@@ -1520,16 +1520,16 @@ func predictNetworkBaselineAxis(
 // harness-owned target. Codex's upstream proxy cannot honestly satisfy the
 // ordinary TCP/UDP access-list contract, so the capability remains None and
 // launch planning continues to widen to open exactly as before.
-// GeminiBuiltinNetworkDisclosure explains why Gemini CLI's own sandbox cannot
-// carry a profile's network rules.
-const GeminiBuiltinNetworkDisclosure = "Gemini CLI's Seatbelt sandbox runs Gemini's own permissive-open profile, " +
-	"which leaves outbound network open and takes no rules from tclaude. " +
-	"Use tclaude’s sandbox for network rules, or choose network open (Allow all)."
-
 const CodexBuiltinFilteredNetworkDisclosure = "Codex has no filtered network sandbox yet. " +
 	"Its upstream proxy is experimental and off by default; it admits only proxy-aware clients " +
 	"and on Linux prevents access to the tclaude agentd socket, so it cannot enforce this profile's " +
 	"ordinary TCP/UDP access list. Use tclaude’s sandbox filtering on Linux, or choose network open (Allow all)."
+
+// GeminiBuiltinNetworkDisclosure explains why Gemini CLI's own sandbox cannot
+// carry a profile's network rules.
+const GeminiBuiltinNetworkDisclosure = "Gemini CLI's own sandbox (Seatbelt, permissive-open profile) " +
+	"leaves outbound network open and takes no rules from tclaude. " +
+	"Use tclaude’s sandbox for network rules, or choose network open (Allow all)."
 
 func networkListUnavailableDetail(caps PredictedAccessEnforcement) string {
 	if caps.NetworkListUnavailableDetail != "" {
