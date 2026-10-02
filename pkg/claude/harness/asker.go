@@ -123,6 +123,14 @@ type EphemeralResumer interface {
 	PrepareEphemeralResume(convID string) (resumeFile string, cleanup func(), err error)
 }
 
+// EphemeralSessionRemover is the fresh-turn half of the same gap: a harness
+// that persists every headless turn as a conversation, with no flag to stop
+// it, removes the one it created under convID (pinned up front through
+// AskSpec.SessionID) once an ephemeral one-shot is done.
+type EphemeralSessionRemover interface {
+	RemoveEphemeralSession(convID string)
+}
+
 // AskEnvScrubber is an optional Asker capability: a harness whose containment
 // can be silently PROMOTED by an ambient environment variable names that
 // variable here, and `tclaude ask` removes it from the child's environment.

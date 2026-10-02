@@ -516,3 +516,55 @@ func TestRunNonInteractiveSpawnClaudeTclaudeLayerBindsExecutable(t *testing.T) {
 		t.Fatalf("result=%+v failure=%+v", got, fail)
 	}
 }
+
+// A Gemini one-shot replays its posture and leaves no conversation behind:
+// Gemini persists every headless turn, so the run pins an id and removes the
+// session it created.
+func TestRunNonInteractiveSpawnGeminiRemovesItsSession(t *testing.T) {
+	useDirectNonInteractiveRunner(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(harness.GeminiHomeEnvVar, home)
+	bin := t.TempDir()
+	argsFile := filepath.Join(t.TempDir(), "args")
+	// A stand-in for `gemini`: records its argv and writes the session file the
+	// real CLI would for --session-id, then answers.
+	script := `#!/bin/sh
+printf '%s\n' "$@" > ` + argsFile + `
+id=""; while [ $# -gt 0 ]; do [ "$1" = "--session-id" ] && id="$2"; shift; done
+chats="$GEMINI_CLI_HOME/.gemini/tmp/proj/chats"; mkdir -p "$chats"
+short=$(printf '%s' "$id" | cut -c1-8)
+printf '{"sessionId":"%s","kind":"main"}\n{"id":"u1","type":"user","content":"x"}\n' "$id" > "$chats/session-1790925491807-$short.jsonl"
+printf 'answered\n'
+`
+	if err := os.WriteFile(filepath.Join(bin, "gemini"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	snapshot := sandboxpolicy.NewSnapshot(sandboxpolicy.EffectiveProfile{}, nil)
+	p := spawnParams{Harness: harness.GeminiName, Cwd: t.TempDir(), InitialMessage: "one question",
+		HarnessBuiltinMode: harness.GeminiSandboxOff, ApprovalPolicy: harness.GeminiApprovalYolo,
+		EffectiveSandbox: &snapshot}
+	got, fail := runNonInteractiveSpawn(context.Background(), p, 30)
+	if fail != nil || got.ExitCode != 0 || got.Stdout != "answered\n" {
+		t.Fatalf("result=%+v failure=%+v", got, fail)
+	}
+	raw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	for _, want := range []string{"--session-id", "--approval-mode=yolo", "--prompt=one question"} {
+		found := false
+		for _, arg := range args {
+			found = found || arg == want
+		}
+		if !found {
+			t.Fatalf("argv %q lacks %q", args, want)
+		}
+	}
+	sessions, _ := filepath.Glob(filepath.Join(home, ".gemini", "tmp", "*", "chats", "session-*"))
+	if len(sessions) != 0 {
+		t.Fatalf("the one-shot left its conversation behind: %v", sessions)
+	}
+}

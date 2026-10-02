@@ -64,3 +64,26 @@ func TestGeminiEphemeralResumeForksACopyAndRemovesTheFork(t *testing.T) {
 	assert.Equal(t, before, after, "the predecessor's own file is untouched")
 	assert.False(t, strings.HasPrefix(copyPath, chats), "the copy never lives where conversations are listed")
 }
+
+func TestGeminiEphemeralResumeRefusesAPlantedSymlink(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(GeminiHomeEnvVar, home)
+	writeGeminiUsageFixture(t, home, geminiUsageTestConv, `{"id":"u1","type":"user","content":"x"}`)
+	elsewhere := t.TempDir()
+	require.NoError(t, os.Symlink(elsewhere, filepath.Join(home, ".gemini", geminiSeanceDirName)))
+
+	_, cleanup, err := geminiAsker{}.PrepareEphemeralResume(geminiUsageTestConv)
+	cleanup()
+	assert.ErrorContains(t, err, "not a plain directory")
+	entries, _ := os.ReadDir(elsewhere)
+	assert.Empty(t, entries, "nothing is written through the planted link")
+}
+
+func TestGeminiRemoveEphemeralSessionDeletesThePinnedConversation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(GeminiHomeEnvVar, home)
+	path := writeGeminiUsageFixture(t, home, geminiUsageTestConv, `{"id":"u1","type":"user","content":"x"}`)
+	geminiAsker{}.RemoveEphemeralSession(geminiUsageTestConv)
+	assert.NoFileExists(t, path)
+	geminiAsker{}.RemoveEphemeralSession(geminiUsageTestConv) // nothing left: a no-op
+}

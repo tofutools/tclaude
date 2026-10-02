@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -138,8 +139,15 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 			posture.HarnessBuiltinMode = ""
 			posture.PermissionProfile = name
 		}
-		argv = h.Ask.BuildAskArgv(harness.AskSpec{Prompt: prompt, Print: true, Ephemeral: true,
-			Model: p.Model, Effort: p.Effort, LaunchPosture: &posture})
+		askSpec := harness.AskSpec{Prompt: prompt, Print: true, Ephemeral: true,
+			Model: p.Model, Effort: p.Effort, LaunchPosture: &posture}
+		if remover, ok := h.Ask.(harness.EphemeralSessionRemover); ok && h.PreMintsAskConvID() {
+			// The harness persists the turn anyway; pin its id so the
+			// conversation it creates is removed once the run is over.
+			askSpec.SessionID = uuid.NewString()
+			defer remover.RemoveEphemeralSession(askSpec.SessionID)
+		}
+		argv = h.Ask.BuildAskArgv(askSpec)
 	}
 	if len(argv) == 0 {
 		return bad("unsupported_harness", "harness returned an empty command")

@@ -22,7 +22,21 @@ import (
 // info message names a path no other session can carry, which is how cleanup
 // finds the imported session again without guessing at ids or timing.
 
-var _ EphemeralResumer = geminiAsker{}
+var (
+	_ EphemeralResumer        = geminiAsker{}
+	_ EphemeralSessionRemover = geminiAsker{}
+)
+
+// RemoveEphemeralSession deletes every session file holding convID, a fresh
+// headless turn's pinned id: Gemini persists each turn as a conversation.
+func (geminiAsker) RemoveEphemeralSession(convID string) {
+	for {
+		path, found, err := LocateGeminiSessionFile(convID)
+		if err != nil || !found || os.Remove(path) != nil {
+			return
+		}
+	}
+}
 
 // geminiImportMarker is the content prefix of the info message an imported
 // session starts with (gemini.tsx resolveSessionId).
@@ -49,6 +63,11 @@ func (geminiAsker) PrepareEphemeralResume(convID string) (string, func(), error)
 	parent := filepath.Join(root, geminiSeanceDirName)
 	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return "", noop, err
+	}
+	// ~/.gemini is writable to a confined Gemini agent, which could plant
+	// this directory as a symlink to steer where the daemon writes.
+	if info, err := os.Lstat(parent); err != nil || !info.IsDir() {
+		return "", noop, fmt.Errorf("gemini: %s is not a plain directory", parent)
 	}
 	dir, err := os.MkdirTemp(parent, "resume-")
 	if err != nil {

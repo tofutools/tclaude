@@ -586,6 +586,9 @@ func resolveSeancePlan(
 	if insideLayer {
 		implementation = string(sandboxpolicy.ImplementationTclaudeLayer)
 		postureSnapshot = nil
+		// The layer's own mode, never the recorded one: a blank or legacy
+		// value would let Gemini start its own sandbox inside the wall.
+		harnessBuiltinMode = h.TclaudeLayerMode
 	}
 	if fail := sandboxProfileCapabilityFailure(h.Name, harnessBuiltinMode, effectiveSandbox, implementation); fail != nil {
 		writeError(w, http.StatusConflict, "sandbox_profile_changed",
