@@ -215,6 +215,7 @@ func runSetup(params *Params) error {
 			// to skip it. Report it and carry on.
 			if hh.Name != h.Name {
 				fmt.Printf("  ⚠ Skipped %s hooks: %v\n", hh.DisplayName, err)
+				fmt.Printf("  ⚠ %s will not work properly under tclaude without hooks; fix the error and re-run `tclaude setup`.\n", hh.DisplayName)
 				continue
 			}
 			return err
