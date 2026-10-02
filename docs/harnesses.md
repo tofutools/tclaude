@@ -5,7 +5,7 @@ tclaude-managed tmux pane. tclaude is harness-agnostic: sessions,
 conversations, `ask`, agent groups, lifecycle, and the dashboard all work
 across every harness, and a group can freely mix them.
 
-Four coding harnesses and one shell pseudo-harness are supported:
+Five coding harnesses and one shell pseudo-harness are supported:
 
 | `--harness` | Harness | Binary in the pane |
 | --- | --- | --- |
@@ -13,6 +13,7 @@ Four coding harnesses and one shell pseudo-harness are supported:
 | `codex` | OpenAI Codex CLI | `codex` |
 | `opencode` | OpenCode | managed `opencode serve` + an `attach` client |
 | `copilot` | GitHub Copilot CLI | `copilot` |
+| `gemini` | Google Gemini CLI | `gemini` |
 | `shell` | ordinary shell (no model) | `$SHELL` or `/bin/sh` |
 
 tclaude owns everything around the pane — the tmux session, status tracking,
@@ -60,7 +61,7 @@ takes `--harness`. When the flag is omitted, resolution is:
    `tclaude agent profiles default set`; its harness/model/effort apply to
    fresh terminal launches, each field overridable per launch.
 3. **First installed harness** — Claude Code is checked first; otherwise the
-   registry is walked in sorted order (codex, copilot, opencode) and the first
+   registry is walked in sorted order (codex, copilot, gemini, opencode) and the first
    harness whose binary is on `PATH` wins. With nothing installed the launch
    reports the missing `claude` executable.
 
@@ -94,26 +95,26 @@ warning. Model and effort are remembered by the harness itself.
 
 ✅ yes · ⚠️ partial / with caveats · ❌ no
 
-| Capability | Claude Code | Codex CLI | OpenCode | Copilot CLI | Shell |
-| --- | --- | --- | --- | --- | --- |
-| Sessions: spawn / resume | ✅ | ✅ | ✅ managed server + attach | ✅ | ✅ spawn only |
-| One-shot [`ask`](ask.md) | ✅ live-streamed | ✅ buffered | ✅ buffered | ✅ buffered | ❌ |
-| [Conversation](conversations.md) list & search | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only | ⚠️ durable inbox only; never injected into the shell |
-| Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` | ❌ |
-| Compact / reincarnate | ✅ | ✅ | ✅ (server API, no keystrokes) | ✅ | ❌ |
-| Séance (ask posture) replay | ✅ | ✅ | ❌ | ❌ | ❌ |
-| [Remote control](remote.md) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| [Status line](utilities.md#status-line) | ✅ command-backed | ⚠️ curated built-in items | ⚠️ OpenCode's own TUI status | ❌ | ❌ |
-| [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off | ❌ |
-| [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ | ✅ |
-| Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD | ❌ |
-| Hooks via `tclaude setup` | ✅ | ✅ | ❌ (server liveness instead) | ✅ | ❌ |
-| Directory pre-trust (`--trust-dir`) | ✅ | ✅ | — no trust dialog | ✅ | — |
-| Tool governance (`--tools`) | ❌ | ❌ | ✅ | ❌ | ❌ |
-| Fast mode | ❌ | ✅ | ❌ | ❌ | ❌ |
-| API/RPC drive | — n/a | ⚠️ experimental `--codex-app-server` | ✅ inherent | ⚠️ experimental `--copilot-api` | — n/a |
+| Capability | Claude Code | Codex CLI | OpenCode | Copilot CLI | Gemini CLI | Shell |
+| --- | --- | --- | --- | --- | --- | --- |
+| Sessions: spawn / resume | ✅ | ✅ | ✅ managed server + attach | ✅ | ✅ | ✅ spawn only |
+| One-shot [`ask`](ask.md) | ✅ live-streamed | ✅ buffered | ✅ buffered | ✅ buffered | ❌ | ❌ |
+| [Conversation](conversations.md) list & search | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only | ⚠️ send-keys only, not yet exercised against a live pane | ⚠️ durable inbox only; never injected into the shell |
+| Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` | ❌ no rename command or title store | ❌ |
+| Compact / reincarnate | ✅ | ✅ | ✅ (server API, no keystrokes) | ✅ | ✅ in-pane `/compress` | ❌ |
+| Séance (ask posture) replay | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| [Remote control](remote.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| [Status line](utilities.md#status-line) | ✅ command-backed | ⚠️ curated built-in items | ⚠️ OpenCode's own TUI status | ❌ | ❌ | ❌ |
+| [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off | ❌ not modelled | ❌ |
+| [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ | ❌ not yet | ✅ |
+| Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD | ❌ | ❌ |
+| Hooks via `tclaude setup` | ✅ | ✅ | ❌ (server liveness instead) | ✅ | ❌ not yet | ❌ |
+| Directory pre-trust (`--trust-dir`) | ✅ | ✅ | — no trust dialog | ✅ | ❌ not yet | — |
+| Tool governance (`--tools`) | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Fast mode | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| API/RPC drive | — n/a | ⚠️ experimental `--codex-app-server` | ✅ inherent | ⚠️ experimental `--copilot-api` | — | — n/a |
 
 The rest of this page walks each harness: setup, maturity, models, sandbox
 and approval knobs, and the extras only that harness has.
@@ -407,6 +408,48 @@ never reaches its first turn. `--trust-dir` seeds the entry in
   The dashboard also samples premium-request quota for metered plans.
 - **No status line, no remote control, no tool governance, no streaming
   `ask`** — each an honest absence, refused or degraded with a message.
+
+## Gemini CLI
+
+An early, deliberately minimal adapter. It was written against the published
+Gemini CLI 0.62.0 package and its upstream source tree, without a Gemini
+account, so it claims only what the CLI's own argument parser and command
+table prove. What it has today: spawn, exact resume, model selection, a
+pre-minted conversation id (so daemon spawns are enrolled before the pane
+starts), the launch briefing as Gemini's `-i` first turn, in-pane compaction,
+and soft exit.
+
+**Models.** `--model` offers Gemini's own aliases (`auto`, `pro`, `flash`,
+`flash-lite`) and current concrete ids as suggestions; any other single
+Gemini model token is forwarded and Gemini validates it. Claude and OpenAI
+slugs are rejected with a clear error. Gemini CLI has **no reasoning-effort
+launch option** (thinking budgets live in its `settings.json`), so `--effort`
+is refused rather than silently dropped.
+
+**Lifecycle.** Compaction types `/compress`; soft exit sends Escape and a
+double Ctrl+C (Gemini quits on the second press inside a 3 s window), with
+`/quit` as the typed form. Gemini has no rename command and no title of its
+own, so rename is not available yet.
+
+**Conversation ids.** Every fresh Gemini launch is given its conversation id
+up front (`gemini --session-id`), including a plain interactive
+`session new`, so it is resumable and tracked from the first moment even
+without hooks. A launch `--name` is kept in tclaude's conversation index,
+since Gemini has nowhere to store one.
+
+**Pass-through arguments.** Arguments after `--` that would make the pane
+disagree with what tclaude recorded — `--resume`, `--session-id`, `-i`/`-p`,
+`--model`, `--worktree`, the approval and trust options, `--sandbox`, `--acp`,
+one-shot listing options — are refused with the dedicated tclaude option to
+use instead. So are bare positional arguments (Gemini would read them as the
+initial prompt, replacing the briefing, or as a subcommand) other than the
+values of Gemini's list options such as `--include-directories`.
+
+**Not yet:** hooks (and so live status), the conversation store, `ask`,
+directory pre-trust, the approval catalog, sandbox integration, and usage.
+Note that Gemini CLI shows a folder-trust dialog the first time it starts in
+an untrusted directory; until pre-trust lands, trust the directory once in an
+interactive `gemini` session before spawning detached Gemini agents there.
 
 ## Related pages
 
