@@ -18,9 +18,10 @@ import (
 //   - Codex       ~/.codex/config.toml   [projects."<dir>"] trust_level = "trusted"
 //   - Claude Code ~/.claude.json         projects.<dir>.hasTrustDialogAccepted = true
 //   - Copilot     $COPILOT_HOME/config.json   trustedFolders: ["<dir>", …]
+//   - Gemini      ~/.gemini/trustedFolders.json   {"<dir>": "TRUST_FOLDER"}
 //
 // The per-harness editors live in codex_dir_trust.go / claude_dir_trust.go /
-// copilot_dir_trust.go and
+// copilot_dir_trust.go / gemini_dir_trust.go and
 // share the same conservative contract (atomic, idempotent, fail-safe, refusing
 // a shape they cannot edit rather than corrupting it). This file holds the two
 // harness-agnostic entry points every caller should use: ResolveTrustDir to
@@ -50,7 +51,7 @@ func ResolveTrustDir(h *Harness, requested bool) (bool, error) {
 			name = h.Name
 		}
 		return false, fmt.Errorf("--trust-dir applies only to a harness with a directory-trust dialog "+
-			"(claude, codex, copilot); %s has no directory-trust prompt", name)
+			"(claude, codex, copilot, gemini); %s has no directory-trust prompt", name)
 	}
 	return true, nil
 }
@@ -76,6 +77,8 @@ func DirTrustStore(h *Harness) string {
 		// file this edits, and consent copy that named the default would be
 		// wrong for exactly the operator who moved it.
 		return "$COPILOT_HOME/config.json"
+	case GeminiName:
+		return geminiTrustStoreUI
 	default:
 		return ""
 	}
@@ -140,6 +143,10 @@ func EnsureDirTrustedForLaunch(
 			home = resolved
 		}
 		return EnsureCopilotDirTrustedForLaunch(getenv, home, projectDir)
+	case GeminiName:
+		// Gemini's store follows GEMINI_CLI_HOME (or an explicit
+		// GEMINI_CLI_TRUSTED_FOLDERS_PATH), so the launch environment picks it.
+		return EnsureGeminiDirTrustedForLaunch(getenv, home, projectDir)
 	default:
 		// A harness declared DirTrust but has no editor wired here. Refuse
 		// rather than silently pretend it was trusted, so the gap surfaces at

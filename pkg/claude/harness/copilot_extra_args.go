@@ -51,11 +51,14 @@ import (
 // names, plus the `=value` and glued-short-value spellings, rather than relying
 // on parser behavior that has not been measured.
 //
-// Harnesses other than Copilot are unaffected — they have their own launch
-// plumbing and their own gates, and widening this to them is not in TCL-973's
-// scope. Ordinary args (`--log-level=debug`, `--banner`, `--no-color`, anything
+// Gemini CLI has its own audited set, for the same reasons; see
+// gemini_extra_args.go. Other harnesses are unaffected — they have their own
+// launch plumbing and their own gates. Ordinary args (`--log-level=debug`, `--banner`, `--no-color`, anything
 // tclaude neither renders nor records) keep working.
 func ValidateLaunchExtraArgs(h *Harness, args []string) error {
+	if h != nil && h.Name == GeminiName && len(args) > 0 {
+		return validateGeminiExtraArgs(args)
+	}
 	if h == nil || h.Name != CopilotName || len(args) == 0 {
 		return nil
 	}

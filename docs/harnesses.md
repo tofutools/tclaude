@@ -5,7 +5,7 @@ tclaude-managed tmux pane. tclaude is harness-agnostic: sessions,
 conversations, `ask`, agent groups, lifecycle, and the dashboard all work
 across every harness, and a group can freely mix them.
 
-Four coding harnesses and one shell pseudo-harness are supported:
+Five coding harnesses and one shell pseudo-harness are supported:
 
 | `--harness` | Harness | Binary in the pane |
 | --- | --- | --- |
@@ -13,6 +13,7 @@ Four coding harnesses and one shell pseudo-harness are supported:
 | `codex` | OpenAI Codex CLI | `codex` |
 | `opencode` | OpenCode | managed `opencode serve` + an `attach` client |
 | `copilot` | GitHub Copilot CLI | `copilot` |
+| `gemini` | Google Gemini CLI | `gemini` |
 | `shell` | ordinary shell (no model) | `$SHELL` or `/bin/sh` |
 
 tclaude owns everything around the pane — the tmux session, status tracking,
@@ -60,7 +61,7 @@ takes `--harness`. When the flag is omitted, resolution is:
    `tclaude agent profiles default set`; its harness/model/effort apply to
    fresh terminal launches, each field overridable per launch.
 3. **First installed harness** — Claude Code is checked first; otherwise the
-   registry is walked in sorted order (codex, copilot, opencode) and the first
+   registry is walked in sorted order (codex, copilot, gemini, opencode) and the first
    harness whose binary is on `PATH` wins. With nothing installed the launch
    reports the missing `claude` executable.
 
@@ -94,26 +95,26 @@ warning. Model and effort are remembered by the harness itself.
 
 ✅ yes · ⚠️ partial / with caveats · ❌ no
 
-| Capability | Claude Code | Codex CLI | OpenCode | Copilot CLI | Shell |
-| --- | --- | --- | --- | --- | --- |
-| Sessions: spawn / resume | ✅ | ✅ | ✅ managed server + attach | ✅ | ✅ spawn only |
-| One-shot [`ask`](ask.md) | ✅ live-streamed | ✅ buffered | ✅ buffered | ✅ buffered | ❌ |
-| [Conversation](conversations.md) list & search | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only | ⚠️ durable inbox only; never injected into the shell |
-| Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` | ❌ |
-| Compact / reincarnate | ✅ | ✅ | ✅ (server API, no keystrokes) | ✅ | ❌ |
-| Séance (ask posture) replay | ✅ | ✅ | ❌ | ❌ | ❌ |
-| [Remote control](remote.md) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| [Status line](utilities.md#status-line) | ✅ command-backed | ⚠️ curated built-in items | ⚠️ OpenCode's own TUI status | ❌ | ❌ |
-| [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off | ❌ |
-| [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ | ✅ |
-| Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD | ❌ |
-| Hooks via `tclaude setup` | ✅ | ✅ | ❌ (server liveness instead) | ✅ | ❌ |
-| Directory pre-trust (`--trust-dir`) | ✅ | ✅ | — no trust dialog | ✅ | — |
-| Tool governance (`--tools`) | ❌ | ❌ | ✅ | ❌ | ❌ |
-| Fast mode | ❌ | ✅ | ❌ | ❌ | ❌ |
-| API/RPC drive | — n/a | ⚠️ experimental `--codex-app-server` | ✅ inherent | ⚠️ experimental `--copilot-api` | — n/a |
+| Capability | Claude Code | Codex CLI | OpenCode | Copilot CLI | Gemini CLI | Shell |
+| --- | --- | --- | --- | --- | --- | --- |
+| Sessions: spawn / resume | ✅ | ✅ | ✅ managed server + attach | ✅ | ✅ | ✅ spawn only |
+| One-shot [`ask`](ask.md) | ✅ live-streamed | ✅ buffered | ✅ buffered | ✅ buffered | ✅ buffered | ❌ |
+| [Conversation](conversations.md) list & search | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only | ⚠️ send-keys only, not yet exercised against a live pane | ⚠️ durable inbox only; never injected into the shell |
+| Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` | ✅ tclaude title overlay | ❌ |
+| Compact / reincarnate | ✅ | ✅ | ✅ (server API, no keystrokes) | ✅ | ✅ in-pane `/compress` | ❌ |
+| Séance (ask posture) replay | ✅ | ✅ | ❌ | ❌ | ✅ fork of a copy | ❌ |
+| [Remote control](remote.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| [Status line](utilities.md#status-line) | ✅ command-backed | ⚠️ curated built-in items | ⚠️ OpenCode's own TUI status | ❌ | ❌ | ❌ |
+| [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off | ⚠️ macOS only (`seatbelt`) | ❌ |
+| [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ | ✅ | ✅ |
+| Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD | ✅ what-if cost | ❌ |
+| Hooks via `tclaude setup` | ✅ | ✅ | ❌ (server liveness instead) | ✅ | ✅ settings.json hooks | ❌ |
+| Directory pre-trust (`--trust-dir`) | ✅ | ✅ | — no trust dialog | ✅ | ✅ | — |
+| Tool governance (`--tools`) | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Fast mode | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| API/RPC drive | — n/a | ⚠️ experimental `--codex-app-server` | ✅ inherent | ⚠️ experimental `--copilot-api` | — | — n/a |
 
 The rest of this page walks each harness: setup, maturity, models, sandbox
 and approval knobs, and the extras only that harness has.
@@ -407,6 +408,224 @@ never reaches its first turn. `--trust-dir` seeds the entry in
   The dashboard also samples premium-request quota for metered plans.
 - **No status line, no remote control, no tool governance, no streaming
   `ask`** — each an honest absence, refused or degraded with a message.
+
+## Gemini CLI
+
+The Gemini CLI adapter, pinned to 0.62.0, covers:
+
+- Spawn and exact resume, with a pre-minted conversation id, so daemon
+  spawns are enrolled before the pane starts.
+- The launch briefing as Gemini's `-i` first turn.
+- Model selection.
+- Conversation listing and search.
+- Buffered `ask` and séance.
+- Rename, in-pane compaction and soft exit.
+- Live status through hooks, and directory pre-trust.
+- Gemini's approval modes, and its own sandbox modes.
+- tclaude's sandbox, with both Linux network engines and the separate
+  filesystem root.
+- Usage with a what-if cost.
+
+It was written from the CLI's source without a Gemini account. CI runs the
+real pinned binary in two places:
+- **Against a local mock model:** session files, resume, the séance fork,
+  hook firing, folder trust and every approval mode.
+- **Behind the proxy network engine:** its model egress.
+
+What is not machine-checked is the interactive pane: typed lifecycle
+commands, dialogs, and how it reacts to keystrokes.
+
+**Models.** `--model` offers Gemini's own aliases (`auto`, `pro`, `flash`,
+`flash-lite`) and current concrete ids as suggestions; any other single
+Gemini model token is forwarded and Gemini validates it. Claude and OpenAI
+slugs are rejected with a clear error. Gemini CLI has **no reasoning-effort
+launch option**, so `--effort` is refused rather than silently dropped.
+Thinking budgets live only in settings files. The only settings paths a
+launch can redirect are Gemini's system settings files, and Gemini ignores
+those unless the file and its directories are owned by root. So tclaude
+cannot set a budget for a single launch without editing your settings.
+
+**Lifecycle.** Compaction types `/compress`; soft exit sends Escape and a
+double Ctrl+C (Gemini quits on the second press inside a 3 s window), with
+`/quit` as the typed form. Gemini has no rename command and no title of its
+own, so rename writes a title into tclaude's conversation index, which the
+conversation listing shows over Gemini's generated summary. Nothing is typed
+into the pane.
+
+**Conversation ids.** Every fresh Gemini launch is given its conversation id
+up front (`gemini --session-id`), including a plain interactive
+`session new`, so it is resumable and tracked from the first moment even
+without hooks. A launch `--name` is kept in tclaude's conversation index,
+since Gemini has nowhere to store one.
+
+**Conversations.** tclaude reads Gemini's own chat files under
+`~/.gemini/tmp/<project>/chats/` (or `$GEMINI_CLI_HOME/.gemini`), replaying
+the JSONL record stream the way the CLI does — rewinds, metadata updates and
+legacy whole-file `.json` sessions included. A session counts as a
+conversation exactly when Gemini's own `--resume` would offer it: it has real
+content and is not a subagent session. Resume is scoped to the project
+directory, as in the CLI.
+
+**Ask.** `tclaude ask --harness gemini` runs headless `gemini --prompt` and
+returns the buffered answer. In headless mode Gemini denies any tool call
+that would need approval. Live streaming is not supported.
+
+**Séance and non-interactive runs.** A séance replays the predecessor's
+recorded posture: its Gemini sandbox mode, its `--approval-mode`, and, for a
+generation that ran under tclaude's sandbox, that sandbox again. Gemini has no
+flag that keeps a headless `--resume` out of the conversation, so the turn
+runs on a fork:
+- tclaude copies the predecessor's session file and starts
+  `gemini --session-file <copy>`, which imports the copy into a new session.
+- The predecessor's own file is only read.
+- After the answer, tclaude deletes the copy and the new session Gemini wrote
+  for it.
+
+`--print-cmd` shows the copy as `<copy-of-…>`. Non-interactive spawns use the
+same posture replay.
+
+**Setup and live status.** `tclaude setup` installs the tclaude callback
+into the `hooks` section of `~/.gemini/settings.json` (or
+`$GEMINI_CLI_HOME/.gemini/settings.json`). It installs for `SessionStart`,
+`BeforeAgent`, `BeforeTool`, `AfterTool`, `AfterAgent`, `Notification` and
+`SessionEnd`,
+and the callback maps them onto tclaude's turn states: working, idle, and
+awaiting permission while Gemini shows a tool-confirmation dialog. The
+installed command discards its output and always exits 0, so it can never
+block, retry or comment on a Gemini turn. A `settings.json` with comments
+is left alone, and setup asks you to add the hooks by hand. Gemini runs
+settings hooks **only in trusted folders**, so live status needs the
+project directory trusted. One known gap: Gemini fires no hook when a turn
+ends because every pending tool was declined or cancelled (Esc, or "No" on
+the confirmation). Such a row keeps showing working or awaiting permission
+until the next prompt.
+
+**Directory trust.** Folder trust is on by default in Gemini CLI. In an
+untrusted folder the pane stops on a trust dialog, hooks are off, and
+headless `ask` fails. `--trust-dir` (or the dashboard's spawn option)
+records the launch directory as `TRUST_FOLDER` in
+`~/.gemini/trustedFolders.json`, or wherever
+`GEMINI_CLI_TRUSTED_FOLDERS_PATH` points. It never overrides an explicit
+`DO_NOT_TRUST` for the same directory, and it refuses to rewrite a file
+it cannot parse strictly. Gemini treats a malformed trust file as a fatal
+startup error.
+
+**Pass-through arguments.** Arguments after `--` that would make the pane
+disagree with what tclaude recorded — `--resume`, `--session-id`, `-i`/`-p`,
+`--model`, `--worktree`, the approval and trust options, `--sandbox`, `--acp`,
+one-shot listing options — are refused with the dedicated tclaude option to
+use instead. So are bare positional arguments (Gemini would read them as the
+initial prompt, replacing the briefing, or as a subcommand) other than the
+values of Gemini's list options such as `--include-directories`.
+
+**Sandbox.** tclaude's built-in sandbox (`--sandbox-impl tclaude-layer`) wraps
+the Gemini pane like any other harness. Gemini's own sandbox mode has these
+values:
+- `inherit` (the default) leaves your Gemini sandbox settings alone.
+- `off` exports `GEMINI_SANDBOX=false`, which outranks `--sandbox` and
+  settings.json `tools.sandbox`, and exports an empty `SANDBOX` (so a workspace `.env` cannot refill it).
+- `seatbelt` (macOS only, with `--sandbox-impl harness-builtin`) runs Gemini
+  under its own Seatbelt sandbox. It exports `GEMINI_SANDBOX=sandbox-exec`
+  and `SEATBELT_PROFILE=permissive-open`, plus the same empty `SANDBOX`. In
+  this mode:
+  - Writes are confined to the project, temp and cache directories.
+  - `~/.gemini` and the credential files are write-protected.
+  - Outbound network stays open.
+
+  Gemini runs its hooks inside that profile, where tclaude's database is
+  read-only, so tclaude brokers the hook callbacks through agentd, as it does
+  under tclaude-layer. The profile also hides Gemini's own credentials and
+  trust store from the sandboxed CLI, which has these effects:
+  - The mode is refused for a Google sign-in. Use an API key or Vertex AI.
+  - tclaude exports `GEMINI_CLI_TRUST_WORKSPACE=true` for a folder your trust
+    store (or `--trust-dir`) trusts.
+  - Sandbox-profile filesystem rules are refused, because the profile is
+    Gemini's, not tclaude's.
+
+  Weaker than tclaude-layer in several ways:
+  - Unix sockets are unrestricted, so the agent can reach tclaude's tmux
+    server and run commands outside the sandbox through it.
+  - It can read `~/.tclaude`.
+  - Git writes to a linked worktree's main repository are denied.
+  - Gemini refuses to start in a sensitive directory such as `$HOME`.
+  - Under `inherit`, an operator's own `tools.sandbox: true` selects this
+    sandbox without tclaude knowing, so hook callbacks are not brokered. Gemini also keeps this mode's chats under
+  `~/.cache/.gemini`. tclaude lists conversations from both places, but Gemini
+  can resume a conversation only in the mode that created it. Agents cannot
+  spawn Seatbelt-mode Gemini children; a human can.
+
+tclaude-layer launches always use `off`. A container sandbox would re-run
+Gemini outside tclaude's wall and out of reach of its hooks. Inside the
+wall, `~/.gemini` stays writable for chats and credentials. Its policy and
+code surface is floored read-only (see
+[the harness-config floor](sandboxing.md#the-harness-config-floor)). Agents
+may spawn Gemini children only in this walled topology, the same rule as
+Copilot. A filtered network list is enforced by the Linux packet gateway.
+tclaude checks it against the route of Gemini's selected auth type, using the
+`net-google-gemini-api` and `net-google-gemini-login` packs (see
+[Network filtering](network-filtering.md#gemini-cli)).
+
+**Approvals.** `--ask-for-approval` renders Gemini's `--approval-mode`. The
+semantics below come from Gemini's built-in policy files, not from a live pane:
+
+- `yolo` *(default for daemon spawns)*: every tool call runs without
+  confirmation, shell commands included. Gemini's own file tools stay inside
+  the workspace; its shell commands are confined only by tclaude's sandbox.
+  Gemini's `ask_user` tool still asks a human, since it is a question rather
+  than a permission.
+- `auto_edit`: workspace edits and web fetches run unattended, but shell
+  commands still ask.
+- `default`: edits, shell commands, web fetches and skills all ask.
+- `plan`: read-only, so every mutating tool is denied.
+- `inherit`: no flag; settings.json `general.defaultApprovalMode` decides.
+
+Gemini drops `yolo` and `auto_edit` back to `default` in a folder it does not
+trust, which is one more reason to pass `--trust-dir`. If your settings set
+`security.disableYoloMode` or `admin.secureModeEnabled`, Gemini refuses
+`--approval-mode=yolo` at startup. Pick another mode for those launches, or
+make it the profile's default. For agent spawn
+lineage, `yolo` counts as unattended command execution (the same weight as
+Copilot `allow-tools` or Codex `never`), and an `inherit` child counts as the
+broadest posture. The policy engine (`--policy`, `--allowed-tools`) is not
+modeled, so those options are refused as pass-through arguments.
+
+Known gap: the lineage classes assume the workspace's own Gemini
+configuration is untouched. An agent that can edit files (Gemini `auto_edit`,
+or an edits-capable agent of another harness) can write
+`<cwd>/.gemini/settings.json`, including MCP server commands. In a trusted
+folder, the next Gemini launch there loads that file. The same holds for
+other harnesses' project config files. It is a sandbox-axis concern: a
+profile can deny writes to `.gemini/`.
+
+**Usage.** Gemini stamps each model message in its session file with that
+call's token usage. tclaude reads that back on every dashboard and agent-API
+read, the same read-through pattern Copilot uses:
+- The context meter shows the latest call's prompt size against Gemini's own
+  per-model limit (1,048,576 tokens, or 256k for Gemma 4), the same figure the
+  pane's footer shows.
+- Output tokens (thinking included) are summed over the conversation.
+
+Gemini records no price, so tclaude reports a **what-if cost**: each model
+call priced at Gemini API pay-per-token rates, the same opt-in estimate Codex
+gets (`cost.show_on_subscription`). Cached prompt tokens get the cached rate,
+thinking tokens are priced as output, and Pro models switch to the long-context
+rate for prompts over 200k tokens. Calls dropped by a rewind or a `/compress`
+still count, because they were made. A model without a published rate, such as
+an older preview, adds nothing rather than borrowing another model's price.
+The output total
+covers only the turns that survive in the file, so it can go down after a
+rewind or a `/compress`. After a compression, the context reading keeps its
+old value until the next model call reports usage.
+
+**Not yet:**
+- The proxy network engine on macOS (it works on Linux).
+
+Gemini's own sandbox is offered only as Seatbelt on macOS. On Linux it is a
+container that would run the agent outside tclaude's hooks, so use tclaude's
+sandbox there.
+
+Gemini has no counterpart for remote control, fast mode, a command-backed
+status line, or tclaude's task runner.
 
 ## Related pages
 

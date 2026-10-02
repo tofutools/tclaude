@@ -67,3 +67,26 @@ func TestOpenCodeResumeKeepsServerIssuedID(t *testing.T) {
 	assert.Equal(t, convID, full)
 	assert.Equal(t, "/home/u/proj", proj)
 }
+
+// TestGeminiResumeAcceptsAFullUUIDWithTheCallerCwd: a Gemini resume carries a
+// full session UUID and the launch cwd, which is everything `gemini --resume`
+// needs. It must not depend on tclaude's own reading of Gemini's store, which
+// (like Gemini's) cannot see a conversation whose first turn never landed.
+func TestGeminiResumeAcceptsAFullUUIDWithTheCallerCwd(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+
+	h, err := harness.Resolve(harness.GeminiName)
+	require.NoError(t, err)
+	const convID = "8d3c0d5e-6f1a-4b8e-9a51-2f6f0e2c1a11"
+
+	full, proj, err := resolveResumeConv(h, convID, true, "/home/u/proj")
+	require.NoError(t, err)
+	assert.Equal(t, convID, full)
+	assert.Equal(t, "/home/u/proj", proj)
+
+	_, _, err = resolveResumeConv(h, "8d3c0d5e", false, "/home/u/proj")
+	require.Error(t, err, "a prefix is not something Gemini can resume by; it must resolve or fail")
+}

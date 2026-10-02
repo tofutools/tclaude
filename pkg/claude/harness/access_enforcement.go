@@ -228,6 +228,15 @@ func BuiltinLaunchOSSandboxForValidatedMode(
 		default:
 			return LaunchOSSandbox{State: "unconfigured", Source: "builtin Codex sandbox mode was omitted"}, nil
 		}
+	case GeminiName:
+		switch mode {
+		case GeminiSandboxSeatbelt:
+			return LaunchOSSandbox{State: "on", Source: "validated builtin Gemini CLI Seatbelt sandbox mode"}, nil
+		case GeminiSandboxOff:
+			return LaunchOSSandbox{State: "off", Source: "validated builtin Gemini CLI sandbox-off mode"}, nil
+		default:
+			return LaunchOSSandbox{State: "unconfigured", Source: "builtin Gemini CLI sandbox mode inherits the operator's settings"}, nil
+		}
 	default:
 		return LaunchOSSandbox{}, fmt.Errorf("harness %q has no builtin access-enforcement verdict mapping", h.Name)
 	}
@@ -358,13 +367,13 @@ func accessEnforcementTable(
 		if implementation != sandboxpolicy.ImplementationTclaudeLayer ||
 			goos != "linux" || h == nil ||
 			(h.Name != DefaultName && h.Name != CodexName && h.Name != OpenCodeName &&
-				h.Name != CopilotName && h.Name != ShellName) {
+				h.Name != CopilotName && h.Name != GeminiName && h.Name != ShellName) {
 			harnessName := "<unresolved>"
 			if h != nil {
 				harnessName = h.Name
 			}
 			return accessEnforcementTableRow{}, fmt.Errorf(
-				"network.namespace %q requires tclaude’s sandbox on Linux with Claude Code, Codex, OpenCode, or Copilot; resolved target is harness %q, sandbox implementation %q, platform %q",
+				"network.namespace %q requires tclaude’s sandbox on Linux with Claude Code, Codex, OpenCode, Copilot, or Gemini CLI; resolved target is harness %q, sandbox implementation %q, platform %q",
 				axes.Network.Namespace, harnessName, implementation, goos)
 		}
 		// A deny-all baseline materializes as closed networking. That posture
@@ -446,8 +455,12 @@ func accessEnforcementTable(
 		// launch does not run. The proxy's own cells stay EnforceNone until
 		// their carriage smokes land.
 		packetGateway := deployedEngine != sandboxpolicy.NetworkEngineProxy
+		// Gemini joins on the strength of its model-route resolver
+		// (gemini_model_transport.go) rather than a recorded real-harness
+		// smoke: the gateway itself is harness-agnostic, and a route the
+		// resolver got wrong is denied at the wall, never widened.
 		filteredGatewayHarness := h.Name == DefaultName || h.Name == CodexName ||
-			h.Name == OpenCodeName || h.Name == ShellName
+			h.Name == OpenCodeName || h.Name == GeminiName || h.Name == ShellName
 		privateRoutedCopilot := h.Name == CopilotName &&
 			sandboxpolicy.NetworkRulesArePrivateRoutedOpen(axes.Network)
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
@@ -945,7 +958,7 @@ func accessEnforcementTable(
 //     host-open root has no smoke evidence, and an unproven combination may not
 //     raise a capability rating.
 //   - A harness whose tclaude-layer renderer supports a constructed root.
-//     Claude Code, Codex, and Copilot render the pane inside that root;
+//     Claude Code, Codex, Copilot, and Gemini CLI render the pane inside that root;
 //     OpenCode renders its agentd-owned tool server there while its attach pane
 //     remains outside.
 //   - A host-open network posture. An allow list or any deny renders the
@@ -976,7 +989,8 @@ func linuxHostOpenConstructedRootAvailable(
 		return false
 	}
 	if h == nil || (h.Name != DefaultName && h.Name != CodexName &&
-		h.Name != OpenCodeName && h.Name != CopilotName && h.Name != ShellName) {
+		h.Name != OpenCodeName && h.Name != CopilotName && h.Name != GeminiName &&
+		h.Name != ShellName) {
 		return false
 	}
 	posture, err := sandboxpolicy.NetworkPostureForRules(axes.Network)
@@ -1047,7 +1061,8 @@ func SupportsExplicitFilesystemRoot(
 	return goos == "linux" &&
 		implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 		h != nil && (h.Name == DefaultName || h.Name == CodexName ||
-		h.Name == OpenCodeName || h.Name == CopilotName || h.Name == ShellName)
+		h.Name == OpenCodeName || h.Name == CopilotName || h.Name == GeminiName ||
+		h.Name == ShellName)
 }
 
 // ValidateExplicitFilesystemRoot applies the explicit-root target matrix at
@@ -1071,7 +1086,7 @@ func ValidateExplicitFilesystemRoot(
 		Harness: harnessName,
 		Kind:    SandboxCapabilityFilesystemRoot,
 		Message: fmt.Sprintf(
-			"filesystem_root %q requires tclaude’s sandbox on Linux with Claude Code, Codex, OpenCode, or Copilot; resolved target is harness %q, sandbox implementation %q, platform %q",
+			"filesystem_root %q requires tclaude’s sandbox on Linux with Claude Code, Codex, OpenCode, Copilot, or Gemini CLI; resolved target is harness %q, sandbox implementation %q, platform %q",
 			mode, harnessName, implementation, goos),
 	}
 }

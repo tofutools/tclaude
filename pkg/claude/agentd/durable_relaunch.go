@@ -70,12 +70,13 @@ func (c *durableRelaunchConfig) activeSandboxImplementation() string {
 
 // temporarySandboxLaunchSnapshot derives the process-only policy paired with a
 // temporary sandbox-off mode. Codex's raw full-access mode cannot accept any
-// profile values; Claude Code and OpenCode can still receive plain environment
+// profile values, but still receives the launch environment, which is not
+// sandbox policy; Claude Code and OpenCode can still receive plain environment
 // entries, but no filesystem, network, break-glass, or agent-directory policy
 // is represented as confinement while their sandbox is disabled.
 func temporarySandboxLaunchSnapshot(harnessName string, stable *sandboxpolicy.Snapshot) *sandboxpolicy.Snapshot {
 	if harnessName == harness.CodexName {
-		omitted := sandboxpolicy.OmittedProfilesSnapshot()
+		omitted := sandboxpolicy.OmittedProfilesSnapshotKeepingLaunchEnvironment(stable)
 		return &omitted
 	}
 	if stable == nil {

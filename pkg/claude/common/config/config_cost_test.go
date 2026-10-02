@@ -91,7 +91,7 @@ func TestValidateCostHarnessFactors(t *testing.T) {
 		assert.Contains(t, strings.Join(Validate(cfg), " | "), "cost.harness_factors.claude")
 	}
 	cfg := DefaultConfig()
-	cfg.Cost = &CostConfig{HarnessFactors: map[string]float64{"claude": 1, "opencode": 1.2}}
+	cfg.Cost = &CostConfig{HarnessFactors: map[string]float64{"claude": 1, "opencode": 1.2, "gemini": 1.1}}
 	assert.NotContains(t, strings.Join(Validate(cfg), " | "), "cost.harness_factors")
 	cfg.Cost.HarnessFactors["anthropic"] = 1.2
 	assert.Contains(t, strings.Join(Validate(cfg), " | "), "unknown harness")

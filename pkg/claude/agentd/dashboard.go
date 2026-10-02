@@ -1476,13 +1476,18 @@ func buildHarnessCatalog() []dashboardHarness {
 			CanPeerMessaging:        h.CanPeerMessaging(),
 			CanSSHWorkaround:        h.CanSSHWorkaround(),
 
-			CanContextFeatures:         h.CanContextFeatures(),
-			CanAutoCompactWindow:       h.CanAutoCompactWindow(),
-			CanContextWindowMax:        h.Name == harness.CopilotName,
-			CanCopilotAPI:              h.CanCopilotAPI(),
-			CanCodexAppServer:          h.CanCodexAppServer(),
-			CanFastMode:                h.CanFastMode(),
-			CanTclaudeLayer:            session.ValidateTclaudeLayerHarness(h.Name) == nil,
+			CanContextFeatures:   h.CanContextFeatures(),
+			CanAutoCompactWindow: h.CanAutoCompactWindow(),
+			CanContextWindowMax:  h.Name == harness.CopilotName,
+			CanCopilotAPI:        h.CanCopilotAPI(),
+			CanCodexAppServer:    h.CanCodexAppServer(),
+			CanFastMode:          h.CanFastMode(),
+			// The platform check alone passes every harness on Linux; a harness
+			// that has not declared its single-wall launch posture (Gemini CLI
+			// today) is refused at launch by TclaudeLayerHarnessBuiltinMode, so
+			// the dialog must not offer what the launch will reject.
+			CanTclaudeLayer: session.ValidateTclaudeLayerHarness(h.Name) == nil &&
+				strings.TrimSpace(h.TclaudeLayerMode) != "",
 			CanStacked:                 h.SupportsNestedSandbox(),
 			TclaudeLayerServerBoundary: session.TclaudeLayerUsesServerBoundary(h.Name),
 		}
@@ -2481,6 +2486,8 @@ func stateForConvInSessionsBatched(
 	// projection: its durable log carries no per-call usage and no live
 	// context window, so there is no batching or cost history to fold in.
 	refreshCopilotContextSnapshotOnRead(pick, alive)
+	// Gemini's session file carries per-call usage; see gemini_context_refresh.go.
+	refreshGeminiContextSnapshotOnRead(pick, alive)
 	codexInterruptedSubagents := codexRefresh.interruptedSubagents
 	if codexRefresh.hasFastMode {
 		fastMode := codexRefresh.fastMode

@@ -492,7 +492,7 @@ func TestHookInstallTargets(t *testing.T) {
 		harnessTargetNames(hookInstallTargets(claude, false, none)))
 
 	// --all-harnesses prepares every hook-capable harness even with no CLIs.
-	assert.Equal(t, []string{"claude", "codex", "copilot"},
+	assert.Equal(t, []string{"claude", "codex", "copilot", "gemini"},
 		harnessTargetNames(hookInstallTargets(claude, true, none)))
 
 	// Codex present → auto-added after the selected default harness.
@@ -504,7 +504,7 @@ func TestHookInstallTargets(t *testing.T) {
 	// joins the tail because its descriptor now carries a HookInstaller —
 	// discovery is capability-driven, so a harness gains (or loses) its
 	// place here purely by what it advertises.
-	assert.Equal(t, []string{"codex", "claude", "copilot"},
+	assert.Equal(t, []string{"codex", "claude", "copilot", "gemini"},
 		harnessTargetNames(hookInstallTargets(codex, false, all)))
 
 	// A present Copilot is auto-added without being selected, exactly like

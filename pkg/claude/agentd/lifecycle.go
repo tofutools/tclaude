@@ -6546,7 +6546,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// global/group policy even though this agent explicitly selects Codex's raw
 	// no-sandbox mode.
 	if sandboxProfilesDisabled(p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation) {
-		omitted := sandboxpolicy.OmittedProfilesSnapshot()
+		omitted := sandboxpolicy.OmittedProfilesSnapshotKeepingLaunchEnvironment(p.EffectiveSandbox)
 		p.EffectiveSandbox = &omitted
 	}
 	if spawnUsesPinnedGitCommonDir(

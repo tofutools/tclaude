@@ -24,6 +24,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/ratelimit"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -170,7 +171,7 @@ type NewParams struct {
 	// daemon spawn path defaults it to each harness's safe value (Codex: never,
 	// so a detached pane can't deadlock; Claude: inherit, no override). See
 	// JOH-200.
-	Approval string `long:"ask-for-approval" optional:"true" help:"Launch approval/permission posture (per-harness). Codex policy: untrusted|on-failure|on-request|never. Claude Code permission mode: inherit|plan|acceptEdits|default|auto|dontAsk|bypassPermissions. Unset = no override (each harness uses its own config)"`
+	Approval string `long:"ask-for-approval" optional:"true" help:"Launch approval/permission posture (per-harness). Codex policy: untrusted|on-failure|on-request|never. Claude Code permission mode: inherit|plan|acceptEdits|default|auto|dontAsk|bypassPermissions. Gemini CLI approval mode: yolo|auto_edit|default|plan|inherit. Unset = no override (each harness uses its own config)"`
 
 	// ToolGovernance controls OpenCode's homogeneous built-in tool block. A
 	// direct session launch validates but does not default it; daemon launches
@@ -595,8 +596,10 @@ func runNew(params *NewParams) error {
 	params.Model = model
 
 	// --session-id pins a fresh conversation id for a harness that accepts a
-	// preset one: Claude Code (`claude --session-id`) and GitHub Copilot CLI
-	// (`copilot --session-id`), both of which want a UUID — Copilot creates a
+	// preset one: Claude Code (`claude --session-id`), GitHub Copilot CLI
+	// (`copilot --session-id`) and Gemini CLI (`gemini --session-id`, which
+	// accepts any [A-Za-z0-9_-] id but tclaude only ever mints UUIDs), all of
+	// which want a UUID — Copilot creates a
 	// session for an unmatched value ONLY when it is a valid UUID, so a name or
 	// an id prefix would silently leave the pane on a different conversation
 	// than the one tclaude enrolled. It is mutually exclusive with --resume (a
@@ -609,7 +612,7 @@ func runNew(params *NewParams) error {
 			return fmt.Errorf("--session-id cannot be combined with --resume")
 		}
 		switch h.Name {
-		case harness.DefaultName, harness.CopilotName, harness.ShellName:
+		case harness.DefaultName, harness.CopilotName, harness.GeminiName, harness.ShellName:
 			if !clcommon.IsValidUUID(params.SessionID) {
 				return fmt.Errorf("--session-id must be a valid UUID, got %q", params.SessionID)
 			}
@@ -620,6 +623,15 @@ func runNew(params *NewParams) error {
 		default:
 			return fmt.Errorf("--session-id is not supported for the %q harness", h.Name)
 		}
+	}
+	// Gemini CLI has no hook installer in this build, so nothing would ever
+	// report the id it mints for itself, and the session row would stay
+	// conversation-less for good — unresumable and invisible to every
+	// conv-keyed surface. Its `--session-id` accepts a caller-chosen id, so a
+	// fresh launch that was not handed one gets one here and is known from
+	// the first moment, exactly like a launch-enrolled daemon spawn.
+	if h.Name == harness.GeminiName && params.SessionID == "" && params.Resume == "" {
+		params.SessionID = convops.GenerateUUID()
 	}
 	params.CwdWriteProof = strings.TrimSpace(params.CwdWriteProof)
 	if params.CwdWriteProof != "" && !isValidSpawnCwdProofToken(params.CwdWriteProof) {
@@ -791,6 +803,10 @@ func runNew(params *NewParams) error {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
 	}
 	if !outerLayer && !unconfined && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
+		h.Name == harness.GeminiName {
+		return fmt.Errorf("unsupported_sandbox_profile_filesystem: Gemini CLI's own sandbox cannot represent sandbox-profile filesystem rules; use --sandbox-impl tclaude-layer")
+	}
+	if !outerLayer && !unconfined && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
 		h.Name == harness.OpenCodeName && harnessBuiltinMode != harness.OpenCodeSandboxAccessControl {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: OpenCode filesystem rules require soft access-control mode %s", harness.OpenCodeSandboxAccessControl)
 	}
@@ -902,6 +918,10 @@ func runNew(params *NewParams) error {
 		// approval guard, and a human's own session could not spawn even the
 		// baseline children its posture provably permits.
 		recordedApprovalPolicy = harness.CopilotApprovalInherit
+	}
+	if h.Name == harness.GeminiName && recordedApprovalPolicy == "" {
+		// And for Gemini: no --approval-mode IS the inherit posture.
+		recordedApprovalPolicy = harness.GeminiApprovalInherit
 	}
 	params.Approval = approvalPolicy
 
@@ -1290,14 +1310,34 @@ func runNew(params *NewParams) error {
 			additionalEnv[entry.Name] = entry.Value
 		}
 	}
-	if outerLayer {
+	if outerLayer || harness.HooksRunInsideBuiltinSandbox(h, harnessBuiltinMode) {
 		// Hook callbacks write private SQLite state, which this launch's own
-		// namespace hides. Route them through agentd instead, which applies
+		// namespace hides (or, for Gemini's Seatbelt mode, its profile makes
+		// read-only). Route them through agentd instead, which applies
 		// them host-side on the caller's behalf (TCL-754). Apply after the
 		// profile environment so policy cannot unset the marker for an
 		// outer-layer launch and silently send the pane's telemetry into the
 		// throwaway database behind the wall.
 		additionalEnv[HookBrokerEnvVar] = HookBrokerAgentd
+	}
+	if h.Name == harness.GeminiName && harnessBuiltinMode == harness.GeminiSandboxSeatbelt {
+		// Gemini's Seatbelt profile hides its OAuth credentials and every
+		// trust store from the sandboxed CLI (gemini_seatbelt.go): refuse an
+		// auth type that cannot work in there, and carry the host's trust
+		// decision in as the environment Gemini honours ahead of the file.
+		seatbeltEnv := launchModelEnvironment(sandboxpolicy.EnvironmentForLaunch(effectiveSandbox))
+		getenv := func(name string) string { return seatbeltEnv[name] }
+		if err := harness.ValidateGeminiSeatbeltLaunch(getenv, cwd); err != nil {
+			return err
+		}
+		trustEnv, err := harness.GeminiSeatbeltLaunchEnv(getenv, cwd, params.TrustDir)
+		if err != nil {
+			slog.Warn("gemini seatbelt: cannot read the trust store; the sandboxed pane may ask for folder trust",
+				"cwd", cwd, "err", err)
+		}
+		for name, value := range trustEnv {
+			additionalEnv[name] = value
+		}
 	}
 	launchPermissionProfile := params.PermissionProfile
 	launchProfilePath := ""
@@ -1913,6 +1953,15 @@ func runNew(params *NewParams) error {
 	rowConvID := fullConvID
 	if params.SessionID != "" && fullConvID == "" {
 		rowConvID = params.SessionID
+	}
+	// Gemini CLI has no launch-name flag and no title store, so a fresh
+	// launch's --name is recorded where every tclaude surface reads titles
+	// from: the conversation index. Best effort — a failed write leaves an
+	// unnamed conversation, never a failed launch.
+	if h.Name == harness.GeminiName && params.Name != "" && fullConvID == "" && rowConvID != "" {
+		if err := db.SetConvIndexCustomTitle(rowConvID, params.Name, h.Name); err != nil {
+			slog.Warn("could not record the Gemini launch name", "conv", rowConvID, "error", err)
+		}
 	}
 	var darwinRouteReservation *DarwinRouteSlotReservation
 	darwinRouteRegistered := false
@@ -3791,6 +3840,23 @@ func resolveResumeConv(h *harness.Harness, shortID string, global bool, cwd stri
 	// already carry the full server-issued id and the durable cwd, so they can
 	// resume without pretending a partial-id ConvStore exists.
 	if h.Name == harness.OpenCodeName && strings.HasPrefix(shortID, "ses_") {
+		return shortID, cwd, nil
+	}
+	// Gemini CLI: a FULL session UUID plus the caller's cwd is everything
+	// `gemini --resume <uuid>` needs — Gemini resolves the id itself, scoped to
+	// the project of the process cwd, which is the cwd the pane is launched in.
+	// Managed relaunches always carry both (the recorded conv id and `-C` with
+	// the recorded cwd), so they must not depend on tclaude's own reading of
+	// Gemini's store: that reading mirrors Gemini's "has resumable content"
+	// rule and so cannot see a conversation whose first turn never landed,
+	// which Gemini will then report itself. The store is still consulted first
+	// when there is one, because it knows the conversation's real project.
+	if h.Name == harness.GeminiName && clcommon.IsValidUUID(shortID) {
+		if h.SupportsConvs() {
+			if ref, err := h.Convs.Resolve(shortID, cwd, true); err == nil && ref != nil {
+				return ref.ConvID, ref.ProjectPath, nil
+			}
+		}
 		return shortID, cwd, nil
 	}
 	if !h.SupportsConvs() {

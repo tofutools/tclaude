@@ -49,6 +49,8 @@ and frozen into launch snapshots. The current registry:
 | `net-openai-codex` | Direct OpenAI API-key endpoints (`api.openai.com:443`) |
 | `net-openai-chatgpt` | ChatGPT-signed-in Codex (`chatgpt.com:443`, `auth.openai.com:443`) |
 | `net-github-copilot` | GitHub Copilot CLI model and auth traffic |
+| `net-google-gemini-api` | Gemini CLI signed in with an API key (`generativelanguage.googleapis.com:443`) |
+| `net-google-gemini-login` | Gemini CLI signed in with Google (`cloudcode-pa.googleapis.com:443`, `oauth2.googleapis.com:443`) |
 | `net-github` | GitHub (`github.com`, `api.github.com`, and friends) |
 | `net-go-modules` | The Go module proxy and checksum database |
 | `net-npm` | The npm registry |
@@ -77,7 +79,7 @@ network; `private` gives the launch its own Linux network namespace routed
 through `pasta` with default-accept — it separates abstract Unix sockets and
 host loopback from the agent without making IP traffic deny-by-default. It is
 supported with tclaude’s sandbox alone on Linux for Claude Code, Codex,
-OpenCode, and Copilot launches, and refuses elsewhere rather than falling back. A private
+OpenCode, Copilot, and Gemini CLI launches, and refuses elsewhere rather than falling back. A private
 namespace in a global or included profile cannot be widened by a child.
 
 The `unix_sockets` axis (`mode: open|closed|list` plus `path`/`path_glob`
@@ -248,9 +250,9 @@ local address is reachable.
 ### Activation
 
 Enforcement is claimed only where a real harness/platform smoke has proven it.
-The current activation record: **Linux — Claude Code, Codex, OpenCode; macOS —
-Claude Code, Codex, OpenCode** (pinned against Claude Code 2.1.220, Codex
-0.145.0, OpenCode 1.18.6). Selecting the proxy engine for a non-activated cell
+The current activation record: **Linux — Claude Code, Codex, OpenCode, Gemini
+CLI; macOS — Claude Code, Codex, OpenCode** (pinned against Claude Code
+2.1.220, Codex 0.145.0, OpenCode 1.18.6, Gemini CLI 0.62.0). Selecting the proxy engine for a non-activated cell
 leaves the rules unenforced with a notice. Engine defaults do not flip: unset
 means the packet engine on Linux and historical behavior on macOS.
 
@@ -279,6 +281,39 @@ private namespace and the proxy engine is an explicit refusal). Its one
 private-namespace option is default-accept routing via
 `network.namespace: private`. Author network lists for Copilot with that in
 mind: they document intent, they do not yet enforce it.
+
+## Gemini CLI
+
+Gemini CLI launches are enforced by the Linux packet gateway, the same as
+Claude Code and Codex. On Linux the proxy engine works for Gemini too; it is
+not yet activated on macOS. Gemini is a Node program, and on current Node its
+model client honours the proxy variables only when `NODE_USE_ENV_PROXY=1` is
+set, so every Gemini launch under tclaude's sandbox exports it. The agent's
+own Node commands inherit it, which has one visible effect behind the proxy
+engine: a Node program that calls a server it started on `localhost` sends
+that request to the proxy, which treats loopback as the host's, so it is
+refused, or with a loopback row, reaches the host's service on that port instead
+of the sandbox's. Gemini's
+telemetry origin (`play.googleapis.com`) is not in either Gemini pack, so the
+proxy refuses it and Gemini carries on without it.
+tclaude resolves the model route from Gemini's own selected auth type
+(settings.json `security.auth.selectedType`) and checks it against the
+authored list:
+
+- `gemini-api-key` needs `net-google-gemini-api`.
+- `oauth-personal` (Google sign-in) needs `net-google-gemini-login`.
+
+The launch is refused, with a reason, in these cases:
+- No auth type is selected (the pane would stop on Gemini's sign-in dialog).
+- The auth type is another one (Vertex AI, compute ADC, a gateway).
+- `CODE_ASSIST_ENDPOINT`, `GOOGLE_GEMINI_BASE_URL`,
+  `GOOGLE_VERTEX_BASE_URL` or `GOOGLE_CLOUD_UNIVERSE_DOMAIN` is set.
+- The `.env` file Gemini loads sets one of those variables, or a proxy.
+
+Unlike the other harnesses' routes, these were read from the Gemini CLI
+source rather than observed on an authenticated run. A wrong guess fails
+closed: the wall denies the traffic. The first browser sign-in, telemetry,
+web tools and MCP servers need their own destinations.
 
 ## Troubleshooting
 

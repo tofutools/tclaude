@@ -54,8 +54,9 @@ import (
 // harness's model origin in the HOST's /etc/hosts to TCLAUDE_FILTERED_ALLOWED_ADDR
 // and run a listener there on port 443:
 //
-//	api.anthropic.com -> TCLAUDE_FILTERED_ALLOWED_ADDR
-//	api.openai.com    -> TCLAUDE_FILTERED_ALLOWED_ADDR
+//	api.anthropic.com                 -> TCLAUDE_FILTERED_ALLOWED_ADDR
+//	api.openai.com                    -> TCLAUDE_FILTERED_ALLOWED_ADDR
+//	generativelanguage.googleapis.com -> TCLAUDE_FILTERED_ALLOWED_ADDR
 //
 // and a listener on port 443 at that address. 443 is mandatory, not a
 // parameter: the pinned harnesses pick it themselves.
@@ -109,6 +110,7 @@ func TestPinnedProxyHarnessCooperation(t *testing.T) {
 
 	claude := requirePinnedFilteredHarness(t, "claude", filteredClaudePinnedVersion)
 	codex := requirePinnedFilteredHarness(t, "codex", filteredCodexPinnedVersion)
+	gemini := requirePinnedFilteredHarness(t, "gemini", filteredGeminiPinnedVersion)
 
 	carriageByHarness := map[string][]string{}
 	for _, scenario := range []proxyCooperationScenario{
@@ -146,6 +148,34 @@ func TestPinnedProxyHarnessCooperation(t *testing.T) {
 					[]byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"invalid-ci-evidence-key"}`),
 					0o600))
 				return map[string]string{"CODEX_HOME": codexHome}
+			},
+		},
+		{
+			// Gemini CLI on an invalid API key: headless --prompt with the
+			// API-key auth type, which reaches the Gemini API origin. Its
+			// telemetry origin is undeclared on purpose and must be refused.
+			name:    "gemini",
+			binary:  gemini,
+			version: filteredGeminiPinnedVersion,
+			args: []string{
+				"--model=gemini-2.5-flash", "--prompt=Reply with exactly ok.",
+			},
+			env: map[string]string{
+				"GEMINI_API_KEY": "invalid-ci-evidence-key",
+				// Headless Gemini refuses an untrusted folder before any
+				// request; the workspace is trusted for this launch only.
+				"GEMINI_CLI_TRUST_WORKSPACE": "true",
+				// What tclaude's Gemini `off` launch mode exports
+				// (harness.geminiSandboxEnvPrefix); without it the model
+				// client ignores the proxy variables on current Node.
+				"NODE_USE_ENV_PROXY": "1",
+			},
+			origins: []string{"generativelanguage.googleapis.com"},
+			prepare: func(t *testing.T, home, workspace string) map[string]string {
+				t.Helper()
+				// Gemini writes its state under <GEMINI_CLI_HOME>/.gemini; only
+				// the workspace is visible inside the constructed root.
+				return map[string]string{"GEMINI_CLI_HOME": workspace}
 			},
 		},
 	} {
@@ -219,7 +249,7 @@ func TestPinnedProxyHarnessCooperation(t *testing.T) {
 		})
 	}
 
-	require.Len(t, carriageByHarness, 2,
+	require.Len(t, carriageByHarness, 3,
 		"every declared harness scenario must have produced a carriage record")
 }
 

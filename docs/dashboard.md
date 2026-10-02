@@ -446,7 +446,7 @@ whenever estimates are mixed in, and estimated rows carry ⚠︎ with a hover
 breakdown (Copilot credits show as "N credits — $X subscription value").
 The month projection extrapolates spend over elapsed weekdays, with toggles
 for filling empty weekdays and including weekends. The **Multipliers** menu sets a display-only default and overrides for Claude Code,
-Codex, OpenCode, and Copilot. Overrides replace the default: leave a harness blank
+Codex, OpenCode, Copilot, and Gemini CLI. Overrides replace the default: leave a harness blank
 (or choose **Use default**) to inherit it; explicitly enter `1` to disable
 adjustment for that harness. OpenCode uses one multiplier across all its providers.
 **Reset all to ×1** removes all adjustments. Changes save automatically and apply

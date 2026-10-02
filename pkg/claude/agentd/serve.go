@@ -963,6 +963,7 @@ func runServe(p *serveParams) error {
 	// Graceful shutdown.
 	stopCodexContextRefreshes()
 	stopCopilotContextRefreshes()
+	stopGeminiContextRefreshes()
 	stopCopilotUsagePoller()
 	stopCopilotAPIStateConsumers()
 	if err := preserveDashboardSessionForRestart(); err != nil {

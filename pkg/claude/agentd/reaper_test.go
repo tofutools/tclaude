@@ -26,6 +26,8 @@ func TestReaperFallbackExitReason(t *testing.T) {
 	assert.Equal(t, "", reaperFallbackExitReason("codex"))
 	assert.Equal(t, "", reaperFallbackExitReason(harness.CopilotName),
 		"copilot installs no hooks at all, so a graceful /exit must not read as an abnormal death")
+	assert.Equal(t, "", reaperFallbackExitReason(harness.GeminiName),
+		"gemini's SessionEnd hook is best effort, so a graceful /quit must not read as an abnormal death")
 	assert.Equal(t, "", reaperFallbackExitReason(session.ShellHarnessName), "clean shell exit is normal, not unexpected")
 }
 

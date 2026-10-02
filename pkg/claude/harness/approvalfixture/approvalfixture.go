@@ -51,6 +51,11 @@ func Cases() []Case {
 			Want: harness.CopilotApprovalAllowTools, Reresolved: true,
 		},
 		{
+			Name:    "gemini blank re-resolves to the current default",
+			Harness: harness.GeminiName, Recorded: "",
+			Want: harness.GeminiApprovalYolo, Reresolved: true,
+		},
+		{
 			Name:    "opencode blank re-resolves to the current default",
 			Harness: harness.OpenCodeName, Recorded: "",
 			Want: harness.OpenCodeApprovalDeny, Reresolved: true,
@@ -81,6 +86,16 @@ func Cases() []Case {
 			Name:    "copilot explicit inherit is reproduced",
 			Harness: harness.CopilotName, Recorded: harness.CopilotApprovalInherit,
 			Want: harness.CopilotApprovalInherit,
+		},
+		{
+			Name:    "gemini explicit inherit is reproduced",
+			Harness: harness.GeminiName, Recorded: harness.GeminiApprovalInherit,
+			Want: harness.GeminiApprovalInherit,
+		},
+		{
+			Name:    "gemini explicit plan is reproduced",
+			Harness: harness.GeminiName, Recorded: harness.GeminiApprovalPlan,
+			Want: harness.GeminiApprovalPlan,
 		},
 		{
 			Name:    "opencode explicit ask is reproduced",

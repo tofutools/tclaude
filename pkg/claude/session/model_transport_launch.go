@@ -81,6 +81,19 @@ func ResolveTclaudeLayerModelTransport(
 		return resolveCodexModelTransport(h, context, environment)
 	case harness.CopilotName:
 		return resolveCopilotModelTransport(h, context, environment)
+	case harness.GeminiName:
+		authType, err := harness.ResolveGeminiLaunchAuthType(
+			func(name string) string { return strings.TrimSpace(environment[name]) }, context.Cwd)
+		if err != nil {
+			return harness.ResolvedModelTransport{}, modelTransportLaunchError(h, err.Error())
+		}
+		// The provider is the auth type: it, not the model, selects Gemini's
+		// endpoint (gemini_model_transport.go).
+		return harness.ResolvedModelTransport{
+			Model:            context.Model,
+			Provider:         authType,
+			ProviderResolved: true,
+		}, nil
 	default:
 		return harness.ResolvedModelTransport{
 			Model: context.Model,
@@ -762,11 +775,9 @@ func launchModelEnvironment(
 // rather than refused over (docs/sandboxing.md, "the proxy environment is
 // tclaude's").
 func ModelTransportProxyVariables() []string {
-	return []string{
-		"HTTPS_PROXY", "https_proxy",
-		"HTTP_PROXY", "http_proxy",
-		"ALL_PROXY", "all_proxy",
-	}
+	// One list, owned by the harness package, which also needs it to inspect
+	// the `.env` file Gemini loads into its own environment.
+	return harness.ModelTransportProxyEnvVars()
 }
 
 func modelTransportProxyVariable(environment map[string]string) string {

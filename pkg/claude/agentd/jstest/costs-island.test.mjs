@@ -427,7 +427,7 @@ test('Multiplier popover edits harnesses with reset buttons before aligned input
   const mounted = await harness.mount(harness.html`<${CostsApp} state=${state} actions=${actions} />`);
   const menu = mounted.container.querySelector('.cost-factor-menu');
   assert.match(menu.querySelector('summary').textContent, /2 overrides/);
-  assert.equal(menu.querySelectorAll('input[type="number"]').length, 5);
+  assert.equal(menu.querySelectorAll('input[type="number"]').length, 6);
   const reset = menu.querySelector('button[aria-label="Use default for Claude Code"]');
   const row = reset.closest('.cost-factor-row');
   assert.ok([...row.children].indexOf(reset.parentElement) < [...row.children].indexOf(row.querySelector('input')), 'reset precedes the numeric column');

@@ -663,7 +663,9 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 // fixture-backed, a human typing `/exit` — the graceful stop tclaude itself
 // wires up — must not be reported as an abnormal death, so exit authority
 // stays with the reaper's tmux/PID liveness and Copilot keeps the reasonless
-// treatment.
+// treatment. Gemini CLI joins the set for a stronger reason still: its own
+// docs call SessionEnd "best effort" — the CLI does not wait for the hook to
+// finish before exiting — so even a clean `/quit` may never be reported.
 //
 // The predicate this switch really encodes is "does the harness emit a
 // reliable session-END hook", which today is Claude Code alone; it is
@@ -673,7 +675,8 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 // treatment rather than silently going quiet.
 func reaperFallbackExitReason(h string) string {
 	if h == harness.CodexName || h == harness.OpenCodeName ||
-		h == harness.CopilotName || h == session.ShellHarnessName {
+		h == harness.CopilotName || h == harness.GeminiName ||
+		h == session.ShellHarnessName {
 		return ""
 	}
 	return unexpectedExitReason

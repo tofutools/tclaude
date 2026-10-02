@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -138,8 +139,15 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 			posture.HarnessBuiltinMode = ""
 			posture.PermissionProfile = name
 		}
-		argv = h.Ask.BuildAskArgv(harness.AskSpec{Prompt: prompt, Print: true, Ephemeral: true,
-			Model: p.Model, Effort: p.Effort, LaunchPosture: &posture})
+		askSpec := harness.AskSpec{Prompt: prompt, Print: true, Ephemeral: true,
+			Model: p.Model, Effort: p.Effort, LaunchPosture: &posture}
+		if remover, ok := h.Ask.(harness.EphemeralSessionRemover); ok && h.PreMintsAskConvID() {
+			// The harness persists the turn anyway; pin its id so the
+			// conversation it creates is removed once the run is over.
+			askSpec.SessionID = uuid.NewString()
+			defer remover.RemoveEphemeralSession(askSpec.SessionID)
+		}
+		argv = h.Ask.BuildAskArgv(askSpec)
 	}
 	if len(argv) == 0 {
 		return bad("unsupported_harness", "harness returned an empty command")
@@ -319,6 +327,15 @@ func (w bestEffortPaneWriter) Write(p []byte) (int, error) {
 }
 
 func wrapNonInteractiveWithTclaudeLayer(p spawnParams, h *harness.Harness, argv []string) (string, error) {
+	return wrapOneShotWithTclaudeLayer(h, p.Cwd, p.EffectiveSandbox, p.GitWorktreeWriteDirs, argv)
+}
+
+// wrapOneShotWithTclaudeLayer renders a one-shot argv as a shell command run
+// inside tclaude's built-in sandbox for cwd and snapshot. Shared by
+// non-interactive spawns and séances replaying a tclaude-layer generation.
+func wrapOneShotWithTclaudeLayer(
+	h *harness.Harness, cwd string, snapshot *sandboxpolicy.Snapshot, gitWriteDirs, argv []string,
+) (string, error) {
 	var harnessReadPaths []string
 	if runtime.GOOS == "linux" {
 		switch h.Name {
@@ -339,8 +356,8 @@ func wrapNonInteractiveWithTclaudeLayer(p spawnParams, h *harness.Harness, argv 
 		}
 	}
 	spec, err := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
-		HarnessName: h.Name, Cwd: p.Cwd, Snapshot: p.EffectiveSandbox,
-		GitWriteDirs:     append([]string(nil), p.GitWorktreeWriteDirs...),
+		HarnessName: h.Name, Cwd: cwd, Snapshot: snapshot,
+		GitWriteDirs:     append([]string(nil), gitWriteDirs...),
 		HarnessReadPaths: harnessReadPaths,
 	})
 	if err != nil {
