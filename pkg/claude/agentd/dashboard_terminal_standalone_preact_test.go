@@ -13,10 +13,10 @@ func TestStandaloneTerminalShell_PreactOwnsStableRoot(t *testing.T) {
 		`<div id="message-access-dialog-root"></div>`,
 		`<link rel="stylesheet" href="/static/dashboard.css">`,
 		`<script type="importmap">`,
-		`"preact/hooks": "/static/vendor/preact/hooks.module.js"`,
-		`"@preact/signals-core": "/static/vendor/preact/signals-core.module.js"`,
-		`"@preact/signals": "/static/vendor/preact/signals.module.js"`,
-		`"htm": "/static/vendor/preact/htm.module.js"`,
+		`"preact/hooks": "/static/third_party/preact/hooks.module.js"`,
+		`"@preact/signals-core": "/static/third_party/preact/signals-core.module.js"`,
+		`"@preact/signals": "/static/third_party/preact/signals.module.js"`,
+		`"htm": "/static/third_party/preact/htm.module.js"`,
 		`<script type="module" src="/static/js/terminals.js"></script>`,
 	} {
 		if !strings.Contains(html, want) {

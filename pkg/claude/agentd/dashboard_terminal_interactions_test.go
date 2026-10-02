@@ -151,11 +151,11 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
-		if !strings.Contains(string(data), `/static/vendor/xterm/addon-web-links.min.js`) {
+		if !strings.Contains(string(data), `/static/third_party/xterm/addon-web-links.min.js`) {
 			t.Errorf("%s does not load the web-links addon", name)
 		}
 	}
-	if data, err := fs.ReadFile(dashboardAssetsFS, "vendor/xterm/addon-web-links.min.js"); err != nil || len(data) < 1000 {
+	if data, err := fs.ReadFile(dashboardAssetsFS, "third_party/xterm/addon-web-links.min.js"); err != nil || len(data) < 1000 {
 		t.Errorf("vendored web-links addon missing or unexpectedly small: bytes=%d err=%v", len(data), err)
 	}
 	if !strings.Contains(shell, `id="term-session-copy"`) {

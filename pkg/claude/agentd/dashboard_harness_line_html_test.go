@@ -118,10 +118,10 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 
 func TestDashboardHarnessMarkNoticesEmbedded(t *testing.T) {
 	tests := map[string]string{
-		"vendor/harness-marks/README.md":                 "@lobehub/icons-static-svg",
-		"vendor/harness-marks/LICENSE-LobeHub.txt":       "Copyright (c) 2023 LobeHub",
-		"vendor/harness-marks/LICENSE-GitHub-Primer.txt": "Copyright (c) 2026 GitHub Inc.",
-		"vendor/harness-marks/LICENSE-OpenCode.txt":      "Copyright (c) 2025 opencode",
+		"third_party/harness-marks/README.md":                 "@lobehub/icons-static-svg",
+		"third_party/harness-marks/LICENSE-LobeHub.txt":       "Copyright (c) 2023 LobeHub",
+		"third_party/harness-marks/LICENSE-GitHub-Primer.txt": "Copyright (c) 2026 GitHub Inc.",
+		"third_party/harness-marks/LICENSE-OpenCode.txt":      "Copyright (c) 2025 opencode",
 	}
 	for path, notice := range tests {
 		body := string(mustReadFS(dashboardAssetsFS, path))

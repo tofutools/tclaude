@@ -38,8 +38,8 @@ import (
 // and JS as static assets under /static/ (see registerDashboardRoutes).
 // The dashboard shell, feature islands, and retained imperative integrations
 // load source JS as native ES modules.
-// Preact, HTM, and Signals are vendored under dashboard/vendor/preact/, and
-// markdown-it (the Markdown viewer's parser) under dashboard/vendor/markdown-it/;
+// Preact, HTM, and Signals are vendored under dashboard/third_party/preact/, and
+// markdown-it (the Markdown viewer's parser) under dashboard/third_party/markdown-it/;
 // an import map gives application modules normal package specifiers. Islands are
 // dynamically loaded so a missing optional feature module cannot prevent the
 // static entry graph from linking.

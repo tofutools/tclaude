@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="/static/dashboard.css">
 <!-- Vendored (not CDN, like every other dashboard asset) — backs the opaque
      xterm hosts mounted inside the Preact terminal shell. -->
-<link rel="stylesheet" href="/static/vendor/xterm/xterm.min.css">
+<link rel="stylesheet" href="/static/third_party/xterm/xterm.min.css">
 <!-- Shared terminal-multiplexer widget styles, used by the in-SPA "Terminals"
      tab (#tab-terminals) and the standalone /terminals pop-out page. -->
 <link rel="stylesheet" href="/static/mux.css">
@@ -24,12 +24,12 @@
 <script type="importmap">
 {
   "imports": {
-    "preact": "/static/vendor/preact/preact.module.js",
-    "preact/hooks": "/static/vendor/preact/hooks.module.js",
-    "@preact/signals-core": "/static/vendor/preact/signals-core.module.js",
-    "@preact/signals": "/static/vendor/preact/signals.module.js",
-    "htm": "/static/vendor/preact/htm.module.js",
-    "markdown-it": "/static/vendor/markdown-it/markdown-it.esm.min.mjs"
+    "preact": "/static/third_party/preact/preact.module.js",
+    "preact/hooks": "/static/third_party/preact/hooks.module.js",
+    "@preact/signals-core": "/static/third_party/preact/signals-core.module.js",
+    "@preact/signals": "/static/third_party/preact/signals.module.js",
+    "htm": "/static/third_party/preact/htm.module.js",
+    "markdown-it": "/static/third_party/markdown-it/markdown-it.esm.min.mjs"
   }
 }
 </script>
@@ -746,8 +746,8 @@
      window.fetch. When agentd says the HttpOnly session is no longer valid,
      the top-level page reloads into the server-rendered sign-in screen. -->
 <script src="/static/js/auth-session.js"></script>
-<script src="/static/vendor/xterm/addon-fit.min.js"></script>
-<script src="/static/vendor/xterm/addon-web-links.min.js"></script>
+<script src="/static/third_party/xterm/addon-fit.min.js"></script>
+<script src="/static/third_party/xterm/addon-web-links.min.js"></script>
 <!-- The import map lives in <head>, ahead of the modulepreload block, because a
      map must be parsed before any module load it governs is triggered — the
      preloaded boot graph resolves bare specifiers (preact / @preact/signals /
