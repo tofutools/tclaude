@@ -600,7 +600,7 @@ rewind or a `/compress`. After a compression, the context reading keeps its
 old value until the next model call reports usage.
 
 **Not yet:**
-- The proxy network engine.
+- The proxy network engine on macOS (it works on Linux).
 - An explicit or socket-driven separate filesystem root.
 
 ## Related pages

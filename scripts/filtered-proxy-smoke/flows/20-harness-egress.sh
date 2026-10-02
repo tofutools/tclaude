@@ -51,7 +51,7 @@ flow::run() {
   # proxy resolves it.
   fixture::hosts_add \
     "$allowed allowed.proxy.tclaude.test" \
-    "$allowed api.anthropic.com api.openai.com" \
+    "$allowed api.anthropic.com api.openai.com generativelanguage.googleapis.com" \
     "127.0.0.1 egress.proxy.tclaude.test"
 
   local port
@@ -76,13 +76,14 @@ flow::run() {
       -count=1 -v -timeout=900s
 }
 
-# The cooperation arm launches BOTH pinned harnesses — see
+# The cooperation arm launches every pinned plain-CLI harness — see
 # proxy_harness_cooperation_smoke_linux_test.go, which requires the pinned
-# `claude` and `codex` binaries by name and version before it measures anything.
+# `claude`, `codex` and `gemini` binaries by name and version before it
+# measures anything.
 # The tool-egress arm in the same flow needs curl, git and go, which are
 # prerequisites rather than harnesses (lib/prereqs.sh).
 flow::harnesses() {
-  echo claude codex
+  echo claude codex gemini
 }
 
 flow::describe() {

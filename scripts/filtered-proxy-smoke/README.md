@@ -82,7 +82,7 @@ own file, and each shard's install set is *derived* as the union:
 
 ```bash
 # flows/20-harness-egress.sh
-flow::harnesses() { echo claude codex; }
+flow::harnesses() { echo claude codex gemini; }
 
 # flows/10-floor-policy.sh — launches a Go test binary inside the floor
 flow::harnesses() { echo none; }

@@ -4,7 +4,7 @@
 #
 # A shard is a subset of the flows that one CI job runs. The split exists because
 # the two halves are independent: flows 10 and 20 exercise the session-layer
-# proxy with Claude Code and Codex, flows 30 and 40 exercise the agentd-owned
+# proxy with Claude Code, Codex and Gemini CLI, flows 30 and 40 exercise the agentd-owned
 # OpenCode relay — disjoint subnets, disjoint harnesses, disjoint Go packages.
 # Running them as two jobs halves the wall-clock and lets each job install only
 # the harnesses it actually launches.
@@ -47,7 +47,7 @@
 # the harness set, rather than failing later and somewhere else.
 
 # Session-layer proxy floor, policy engine and pinned-harness egress.
-# Derived install set: claude codex — from 20-harness-egress. 10-floor-policy
+# Derived install set: claude codex gemini — from 20-harness-egress. 10-floor-policy
 # runs a Go test binary inside the floor and declares `none`.
 session flows      10-floor-policy 20-harness-egress
 

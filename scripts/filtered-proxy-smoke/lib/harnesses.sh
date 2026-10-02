@@ -19,6 +19,9 @@ HARNESS_CODEX_VERSION="0.145.0"
 # is about the same binary those smokes exercise. A carriage result is a fact
 # about a version, not about OpenCode forever.
 HARNESS_OPENCODE_VERSION="1.18.6"
+# The Gemini CLI version the adapter in pkg/claude/harness is pinned to
+# (GeminiPinnedVersion), so the cooperation record is about the same CLI.
+HARNESS_GEMINI_VERSION="0.62.0"
 
 # Where a CI cache may keep pinned harness artifacts between runs. The workflow
 # keys its cache on a hash of THIS FILE, which is where the pins live — a
@@ -175,6 +178,27 @@ harnesses::install_opencode() {
   opencode --version
   opencode --version | grep -qF "$HARNESS_OPENCODE_VERSION" || {
     smoke::error "opencode is not at the pinned version ${HARNESS_OPENCODE_VERSION}"
+    return 1
+  }
+}
+
+harnesses::install_gemini() {
+  smoke::log "Installing pinned Gemini CLI ${HARNESS_GEMINI_VERSION}"
+  npm install --global "@google/gemini-cli@${HARNESS_GEMINI_VERSION}"
+  # Must resolve under the read-only OS surface the constructed root binds,
+  # for the same reason as every harness above.
+  local resolved
+  resolved="$(command -v gemini)"
+  case "$resolved" in
+    /usr/*|/opt/*) ;;
+    *)
+      smoke::error "gemini resolved to $resolved, which the sandbox root does not bind"
+      return 1
+      ;;
+  esac
+  gemini --version
+  gemini --version | grep -qF "$HARNESS_GEMINI_VERSION" || {
+    smoke::error "gemini is not at the pinned version ${HARNESS_GEMINI_VERSION}"
     return 1
   }
 }

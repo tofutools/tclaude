@@ -217,7 +217,8 @@ filtered.
 The launcher owns all eight proxy environment variables
 (`HTTP_PROXY`/`HTTPS_PROXY` and lowercase forms pointing at the listener,
 `ALL_PROXY=socks5h://…`, and `NO_PROXY` forced empty with a disclosure when
-the host carried a value), injected *after* the model-transport gate reads the
+the host carried a value), plus `NODE_USE_ENV_PROXY=1` so Node clients use
+them, injected *after* the model-transport gate reads the
 pre-injection environment — so tclaude's own variables never trigger the
 foreign-proxy refusal. A loopback-only `/etc/hosts` and refusal of resolver
 sockets on the unix-socket or filesystem axis preserve name authority.
@@ -250,9 +251,9 @@ local address is reachable.
 ### Activation
 
 Enforcement is claimed only where a real harness/platform smoke has proven it.
-The current activation record: **Linux — Claude Code, Codex, OpenCode; macOS —
-Claude Code, Codex, OpenCode** (pinned against Claude Code 2.1.220, Codex
-0.145.0, OpenCode 1.18.6). Selecting the proxy engine for a non-activated cell
+The current activation record: **Linux — Claude Code, Codex, OpenCode, Gemini
+CLI; macOS — Claude Code, Codex, OpenCode** (pinned against Claude Code
+2.1.220, Codex 0.145.0, OpenCode 1.18.6, Gemini CLI 0.62.0). Selecting the proxy engine for a non-activated cell
 leaves the rules unenforced with a notice. Engine defaults do not flip: unset
 means the packet engine on Linux and historical behavior on macOS.
 
@@ -285,7 +286,12 @@ mind: they document intent, they do not yet enforce it.
 ## Gemini CLI
 
 Gemini CLI launches are enforced by the Linux packet gateway, the same as
-Claude Code and Codex. The proxy engine is not activated for Gemini.
+Claude Code and Codex. On Linux the proxy engine works for Gemini too; it is
+not yet activated on macOS. Gemini is a Node program, and on current Node its
+model client honours the proxy variables only when `NODE_USE_ENV_PROXY=1` is
+set, so the proxy launcher sets that variable for every launch. Gemini's
+telemetry origin (`play.googleapis.com`) is not in either Gemini pack, so the
+proxy refuses it and Gemini carries on without it.
 tclaude resolves the model route from Gemini's own selected auth type
 (settings.json `security.auth.selectedType`) and checks it against the
 authored list:
