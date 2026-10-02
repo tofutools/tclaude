@@ -4,7 +4,7 @@ import { assertAbsent, assertSameNode } from './assertions.mjs';
 import {
   ProcessGraph, interactionNode, isGraphTypingTarget, normalizeWheelDelta,
 } from '../dashboard/js/process-graph.js';
-import { parseHTML } from './vendor/linkedom.mjs';
+import { parseHTML } from './third_party/linkedom.mjs';
 
 test('interaction node identity is exact, deterministic, and bounded to live nodes', () => {
   const nodes = [{ id: 'alpha' }, { id: '10' }, { id: 'beta' }];

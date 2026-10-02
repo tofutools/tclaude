@@ -3,10 +3,10 @@ import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/pr
 import { dirname, join, relative, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { HTMLClasses, parseHTML } from './vendor/linkedom.mjs';
+import { HTMLClasses, parseHTML } from './third_party/linkedom.mjs';
 
 const dashboardDir = fileURLToPath(new URL('../dashboard/', import.meta.url));
-const testUtilsSource = fileURLToPath(new URL('./vendor/preact-test-utils.mjs', import.meta.url));
+const testUtilsSource = fileURLToPath(new URL('./third_party/preact-test-utils.mjs', import.meta.url));
 
 function moduleSpecifier(fromFile, toFile) {
   let value = relative(dirname(fromFile), toFile).split(sep).join('/');

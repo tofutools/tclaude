@@ -23,7 +23,7 @@ import (
 // nodeTestInputs makes every suite, harness module, and nested vendor runtime
 // part of the test binary's content-addressed build ID.
 //
-//go:embed *.mjs vendor
+//go:embed *.mjs third_party
 var nodeTestInputs embed.FS
 
 // Dashboard pure-module and Preact component suites run with Node's

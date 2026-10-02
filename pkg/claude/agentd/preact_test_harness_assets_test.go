@@ -10,10 +10,10 @@ import (
 
 func TestPreactTestHarnessVendorAssets(t *testing.T) {
 	wantHashes := map[string]string{
-		"jstest/vendor/linkedom.mjs":            "196efeb17c260e001979dbc54a3c30e701a881c6e8a3eedaddc5ad83c99ee5ff",
-		"jstest/vendor/preact-test-utils.mjs":   "17a3bfef8f2d7d552b3b5e3f4cc9a92ab82338a9f51607a620267dac71fcd8f3",
-		"jstest/vendor/testUtils.module.js.map": "84c6d2b7ee7862c3f2e44e483a0266d2f5cabbeb20c9f6d54c41e4c5fedb89fa",
-		"jstest/vendor/LICENSE-linkedom.txt":    "dc6d4961d8b6ee747231582ae9c53ce1d66bf76bc9f5a28f554c0e97210953bf",
+		"jstest/third_party/linkedom.mjs":            "196efeb17c260e001979dbc54a3c30e701a881c6e8a3eedaddc5ad83c99ee5ff",
+		"jstest/third_party/preact-test-utils.mjs":   "17a3bfef8f2d7d552b3b5e3f4cc9a92ab82338a9f51607a620267dac71fcd8f3",
+		"jstest/third_party/testUtils.module.js.map": "84c6d2b7ee7862c3f2e44e483a0266d2f5cabbeb20c9f6d54c41e4c5fedb89fa",
+		"jstest/third_party/LICENSE-linkedom.txt":    "dc6d4961d8b6ee747231582ae9c53ce1d66bf76bc9f5a28f554c0e97210953bf",
 	}
 	for name, want := range wantHashes {
 		data, err := os.ReadFile(name)
@@ -27,7 +27,7 @@ func TestPreactTestHarnessVendorAssets(t *testing.T) {
 		}
 	}
 
-	manifest, err := os.ReadFile("jstest/vendor/README.md")
+	manifest, err := os.ReadFile("jstest/third_party/README.md")
 	if err != nil {
 		t.Fatal(err)
 	}
