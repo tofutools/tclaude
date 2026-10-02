@@ -253,7 +253,13 @@ func geminiSimProjectDir(home, cwd string) (string, error) {
 			registry.Projects = map[string]string{}
 		}
 	}
+	// Gemini keys the project by process.cwd(), which the kernel reports with
+	// symlinks resolved (macOS's /var → /private/var), so a spawn and a resume
+	// that spell the same directory differently land in one project.
 	root := filepath.Clean(cwd)
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
 	slug, ok := registry.Projects[root]
 	if !ok {
 		base := strings.ToLower(regexp.MustCompile(`[^a-z0-9-]+`).ReplaceAllString(

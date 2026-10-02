@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // The spawn and profile dialogs collapse per-mode help behind a [?] but keep
@@ -22,6 +23,9 @@ const modeHelpFixturePath = "jstest/mode-help-fixture.json"
 // keyed harness/axis/mode, straight off the descriptors the catalog serves.
 func collectModeHelp(t *testing.T) map[string]string {
 	t.Helper()
+	// Gemini lists its Seatbelt mode only on macOS; pin it on so the
+	// fixture is the same whichever host regenerates or checks it.
+	t.Cleanup(harness.SetGeminiSeatbeltAvailableForTest(true))
 	help := map[string]string{}
 	for _, entry := range buildHarnessCatalog() {
 		for mode, text := range entry.HarnessBuiltinModeHelp {

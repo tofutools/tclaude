@@ -124,7 +124,7 @@ func (geminiModelTransport) ResolveModelTransport(
 		}, nil
 	default:
 		return ModelTransportRequirement{}, fmt.Errorf(
-			"Gemini auth type %q has no reviewed filtered-network route; use %q or %q, or use network open",
+			"gemini auth type %q has no reviewed filtered-network route; use %q or %q, or use network open",
 			resolved.Provider, GeminiAuthAPIKey, GeminiAuthLoginWithGoogle)
 	}
 }
@@ -138,7 +138,7 @@ func ResolveGeminiLaunchAuthType(getenv func(string) string, cwd string) (string
 	}
 	for _, variable := range geminiRouteMovingEnvVars {
 		if strings.TrimSpace(getenv(variable)) != "" {
-			return "", fmt.Errorf("Gemini launch variable %s moves the model route away from the "+
+			return "", fmt.Errorf("gemini launch variable %s moves the model route away from the "+
 				"default endpoint, and tclaude has no reviewed filtered-network resolver for it; "+
 				"remove it, or use network open", variable)
 		}
@@ -168,7 +168,7 @@ func ResolveGeminiLaunchAuthType(getenv func(string) string, cwd string) (string
 	case GeminiAuthAPIKey, GeminiAuthLoginWithGoogle:
 		return selected, nil
 	default:
-		return "", fmt.Errorf("Gemini auth type %q (from %s) has no reviewed filtered-network route; "+
+		return "", fmt.Errorf("gemini auth type %q (from %s) has no reviewed filtered-network route; "+
 			"use %q or %q, or use network open", selected, source, GeminiAuthAPIKey, GeminiAuthLoginWithGoogle)
 	}
 }

@@ -86,6 +86,15 @@ func (geminiSandbox) DefaultMode() string { return GeminiSandboxInherit }
 // this host: sandbox-exec is macOS's.
 var geminiSeatbeltAvailable = runtime.GOOS == "darwin"
 
+// SetGeminiSeatbeltAvailableForTest overrides Seatbelt availability for the
+// mode catalog and returns the restore func, so a test that pins catalog
+// output (the dashboard's mode-help fixture) reads the same on every host.
+func SetGeminiSeatbeltAvailableForTest(available bool) (restore func()) {
+	prior := geminiSeatbeltAvailable
+	geminiSeatbeltAvailable = available
+	return func() { geminiSeatbeltAvailable = prior }
+}
+
 func geminiSandboxModes() []string {
 	if geminiSeatbeltAvailable {
 		return []string{GeminiSandboxInherit, GeminiSandboxOff, GeminiSandboxSeatbelt}
