@@ -121,6 +121,8 @@ func TestGeminiSeanceForkLeavesThePredecessorUntouched(t *testing.T) {
 	res.RequireOK(t)
 	calls := w.Mock.ModelCalls()
 	assert.Contains(t, calls[len(calls)-1].Body, "the predecessor's question")
+	_, beforeCleanup := w.listedConv(convID)
+	require.Equal(t, 2, beforeCleanup, "the import did not persist a fork, so cleanup proves nothing")
 	cleanup()
 
 	after, err := os.ReadFile(path)
@@ -138,10 +140,13 @@ func TestGeminiRemoveEphemeralSessionDeletesARealRun(t *testing.T) {
 	w := NewWorld(t)
 	convID := uuid.NewString()
 	w.ask(harness.AskSpec{SessionID: convID, Prompt: "throwaway"}, TrustWorkspaceEnv).RequireOK(t)
+	_, found, err := harness.LocateGeminiSessionFile(convID)
+	require.NoError(t, err)
+	require.True(t, found, "nothing to remove")
 	remover, ok := gemini().Ask.(harness.EphemeralSessionRemover)
 	require.True(t, ok)
 	remover.RemoveEphemeralSession(convID)
-	_, found, err := harness.LocateGeminiSessionFile(convID)
+	_, found, err = harness.LocateGeminiSessionFile(convID)
 	require.NoError(t, err)
 	assert.False(t, found)
 }
@@ -209,6 +214,7 @@ func TestGeminiDirTrustSatisfiesTheHeadlessTrustCheck(t *testing.T) {
 	w := NewWorld(t)
 	refused := w.ask(harness.AskSpec{SessionID: uuid.NewString(), Prompt: "untrusted"})
 	require.Error(t, refused.Err, "an untrusted folder ran headless; the trust premise no longer holds")
+	assert.Contains(t, refused.Stdout+refused.Stderr, "trusted directory", "refused for another reason")
 
 	require.NoError(t, harness.EnsureGeminiDirTrustedForLaunch(nil, "", w.Project))
 	w.ask(harness.AskSpec{SessionID: uuid.NewString(), Prompt: "trusted"}).RequireOK(t)
@@ -220,12 +226,16 @@ func TestGeminiApprovalModesAreAccepted(t *testing.T) {
 	w := NewWorld(t)
 	for _, mode := range gemini().Approval.Modes() {
 		t.Run(mode, func(t *testing.T) {
-			w.ask(harness.AskSpec{
-				SessionID: uuid.NewString(), Prompt: "mode " + mode,
+			argv := gemini().Ask.BuildAskArgv(harness.AskSpec{
+				Print: true, Model: fixtureModel, SessionID: uuid.NewString(), Prompt: "mode " + mode,
 				LaunchPosture: &harness.SpawnSpec{
 					ApprovalPolicy: mode, HarnessBuiltinMode: harness.GeminiSandboxOff, Cwd: w.Project,
 				},
-			}, TrustWorkspaceEnv).RequireOK(t)
+			})
+			if mode != harness.GeminiApprovalInherit {
+				require.Contains(t, argv, "--approval-mode="+mode)
+			}
+			w.Run(argv, TrustWorkspaceEnv).RequireOK(t)
 		})
 	}
 }

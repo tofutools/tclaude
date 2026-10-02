@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // SmokeEnvVar gates the suite: the scenarios run a third-party binary, so a
@@ -145,6 +146,9 @@ func NewWorld(t *testing.T) *World {
 	t.Setenv("HOME", home)
 	t.Setenv("GEMINI_CLI_HOME", "")
 	t.Setenv("GEMINI_CLI_TRUSTED_FOLDERS_PATH", "")
+	// tclaude's database follows HOME; reopen it under this world's.
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
 	return &World{T: t, Bin: bin, Home: home, Project: project, Mock: mock, baseURL: server.URL}
 }
 
