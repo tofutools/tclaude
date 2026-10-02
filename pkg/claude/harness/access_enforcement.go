@@ -358,13 +358,13 @@ func accessEnforcementTable(
 		if implementation != sandboxpolicy.ImplementationTclaudeLayer ||
 			goos != "linux" || h == nil ||
 			(h.Name != DefaultName && h.Name != CodexName && h.Name != OpenCodeName &&
-				h.Name != CopilotName && h.Name != ShellName) {
+				h.Name != CopilotName && h.Name != GeminiName && h.Name != ShellName) {
 			harnessName := "<unresolved>"
 			if h != nil {
 				harnessName = h.Name
 			}
 			return accessEnforcementTableRow{}, fmt.Errorf(
-				"network.namespace %q requires tclaude’s sandbox on Linux with Claude Code, Codex, OpenCode, or Copilot; resolved target is harness %q, sandbox implementation %q, platform %q",
+				"network.namespace %q requires tclaude’s sandbox on Linux with Claude Code, Codex, OpenCode, Copilot, or Gemini CLI; resolved target is harness %q, sandbox implementation %q, platform %q",
 				axes.Network.Namespace, harnessName, implementation, goos)
 		}
 		// A deny-all baseline materializes as closed networking. That posture
@@ -446,8 +446,12 @@ func accessEnforcementTable(
 		// launch does not run. The proxy's own cells stay EnforceNone until
 		// their carriage smokes land.
 		packetGateway := deployedEngine != sandboxpolicy.NetworkEngineProxy
+		// Gemini joins on the strength of its model-route resolver
+		// (gemini_model_transport.go) rather than a recorded real-harness
+		// smoke: the gateway itself is harness-agnostic, and a route the
+		// resolver got wrong is denied at the wall, never widened.
 		filteredGatewayHarness := h.Name == DefaultName || h.Name == CodexName ||
-			h.Name == OpenCodeName || h.Name == ShellName
+			h.Name == OpenCodeName || h.Name == GeminiName || h.Name == ShellName
 		privateRoutedCopilot := h.Name == CopilotName &&
 			sandboxpolicy.NetworkRulesArePrivateRoutedOpen(axes.Network)
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&

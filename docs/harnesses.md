@@ -499,8 +499,10 @@ wall, `~/.gemini` stays writable for chats and credentials. Its policy and
 code surface is floored read-only (see
 [the harness-config floor](sandboxing.md#the-harness-config-floor)). Agents
 may spawn Gemini children only in this walled topology, the same rule as
-Copilot. A filtered-network launch has no Gemini model-route resolver yet,
-so its authored network list must include Google's API hosts.
+Copilot. A filtered network list is enforced by the Linux packet gateway.
+tclaude checks it against the route of Gemini's selected auth type, using the
+`net-google-gemini-api` and `net-google-gemini-login` packs (see
+[Network filtering](network-filtering.md#gemini-cli)).
 
 **Approvals.** `--ask-for-approval` renders Gemini's `--approval-mode`. The
 semantics below come from Gemini's built-in policy files, not from a live pane:
@@ -547,8 +549,10 @@ covers only the turns that survive in the file, so it can go down after a
 rewind or a `/compress`. After a compression, the context reading keeps its
 old value until the next model call reports usage.
 
-**Not yet:** Gemini's own Seatbelt sandbox as a selectable mode, and a
-filtered-network model route.
+**Not yet:**
+- Gemini's own Seatbelt sandbox as a selectable mode.
+- The proxy network engine.
+- An explicit or socket-driven separate filesystem root.
 
 ## Related pages
 

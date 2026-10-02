@@ -82,6 +82,10 @@ func init() {
 		// gemini_approval.go.
 		Approval: geminiApproval{},
 
+		// The filtered-network model route: the API-key or Google sign-in
+		// endpoint selected in settings.json; see gemini_model_transport.go.
+		ModelTransport: geminiModelTransport{},
+
 		// `--session-id <id>` starts a NEW session under a caller-chosen id
 		// (packages/cli/src/config/config.ts; gemini.tsx resolveSessionId
 		// refuses an id that already exists rather than resuming it), and
