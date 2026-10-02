@@ -62,7 +62,15 @@ func EnableGeminiAlternateBuffer() error {
 	if path == "" {
 		return errors.New("cannot determine Gemini settings path")
 	}
-	return editHarnessConfigFile("Gemini settings", path, 0o600, planGeminiAlternateBuffer, prepareAtomicWriteFile)
+	// Serialize with the hooks installer, which edits the same file: the same
+	// in-process mutex, and the same lock file beside the resolved target.
+	installGeminiHooksMu.Lock()
+	defer installGeminiHooksMu.Unlock()
+	target, err := atomicWriteTarget(path)
+	if err != nil {
+		return err
+	}
+	return editHarnessConfigFile("Gemini settings", target, 0o600, planGeminiAlternateBuffer, prepareAtomicWriteFile)
 }
 
 const geminiAlternateBufferKey = "useAlternateBuffer"
@@ -94,7 +102,7 @@ func parseGeminiUISettings(data []byte) (map[string]json.RawMessage, map[string]
 	settings := map[string]json.RawMessage{}
 	if len(bytes.TrimSpace(data)) > 0 {
 		if err := json.Unmarshal(data, &settings); err != nil {
-			return nil, nil, fmt.Errorf("not strict JSON (Gemini allows comments, which tclaude cannot preserve): %w", err)
+			return nil, nil, fmt.Errorf("not a strict JSON object (tclaude cannot preserve comments or rewrite other shapes): %w", err)
 		}
 		if settings == nil {
 			settings = map[string]json.RawMessage{}
