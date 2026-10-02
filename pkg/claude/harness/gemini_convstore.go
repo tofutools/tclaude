@@ -96,6 +96,18 @@ func geminiDir() string {
 	return filepath.Join(home, geminiDirName)
 }
 
+// GeminiStateDir is the directory Gemini CLI keeps its state in
+// (<GEMINI_CLI_HOME or HOME>/.gemini), for callers outside this package that
+// must name the same directory — the tclaude-layer launch contract's state
+// root. "" when no home resolves.
+func GeminiStateDir() string {
+	dir := geminiDir()
+	if dir == "" || !filepath.IsAbs(dir) {
+		return ""
+	}
+	return dir
+}
+
 type geminiConvStore struct {
 	// dir overrides the <home>/.gemini resolution. Empty means "resolve
 	// normally"; tests set it to a fixture root.

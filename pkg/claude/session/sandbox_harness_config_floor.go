@@ -134,6 +134,27 @@ func harnessConfigFloorCatalog(
 		// have to be floored or the weaker one decides.
 		files = under(harness.CopilotSettingsFileName, "config.json",
 			"mcp-config.json")
+	case harness.GeminiName:
+		// Read from Gemini's Storage paths and its own Seatbelt profiles
+		// (sandbox-macos-*.sb deny writes to the same policy files):
+		//   - settings.json carries the tclaude hooks AND tools.sandbox, and
+		//     .env is loaded into the CLI's environment at startup;
+		//   - trustedFolders.json / trusted_hooks.json / policy_integrity.json
+		//     are the folder-trust, project-hook-trust and policy-integrity
+		//     decisions — writing them pre-answers a human's trust question
+		//     for the next, unsandboxed session;
+		//   - extensions/, commands/, skills/, agents/ and policies/ hold code
+		//     and policy the CLI loads (extension hooks run even in untrusted
+		//     folders);
+		//   - GEMINI.md is the global memory the CLI injects into every
+		//     session (its save_memory tool fails inside the wall, the same
+		//     cost CLAUDE.md has for Claude Code).
+		// NOT floored: tmp/ (chats, the ripgrep download), projects.json,
+		// installation_id, the OAuth credential files (token refresh writes
+		// them) and acknowledgments/.
+		dirs = under("extensions", "commands", "skills", "agents", "policies")
+		files = under("settings.json", ".env", "trustedFolders.json",
+			"trusted_hooks.json", "policy_integrity.json", "GEMINI.md")
 	case harness.OpenCodeName:
 		// Nothing. OpenCode's config surface is ALREADY floored by its own
 		// state management: agentd's layout binds the whole ambient config

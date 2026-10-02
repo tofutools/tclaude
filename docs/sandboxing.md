@@ -36,10 +36,11 @@ same layer. The values:
 - **tclaude’s built-in sandbox (`tclaude-layer`)** — wraps the tool-executing
   harness process in its own sandbox: bubblewrap mount/IPC/cgroup/PID (and optionally network) namespaces
   on Linux, Seatbelt (`sandbox-exec`) on macOS. The harness's own OS sandbox is forced
-  off inside it (Claude Code mode `off`, Codex `danger-full-access`; Copilot
-  has no off-flag tclaude can set, so its configuration is verified instead and
-  an unverifiable posture refuses). Supported for Claude Code, Codex, OpenCode,
-  and Copilot, on Linux and macOS. For OpenCode the wrapped process is the
+  off inside it (Claude Code mode `off`, Codex `danger-full-access`, Gemini
+  CLI `off` via `GEMINI_SANDBOX=false`; Copilot has no off-flag tclaude can
+  set, so its configuration is verified instead and an unverifiable posture
+  refuses). Supported for Claude Code, Codex, OpenCode, Copilot, and Gemini
+  CLI, on Linux and macOS. For OpenCode the wrapped process is the
   agentd-owned `opencode serve` executor; the attach pane stays outside.
   Requires `bwrap` and working unprivileged user namespaces on Linux; a missing
   capability refuses the launch — never a silent fallback — from whichever tier
@@ -298,6 +299,7 @@ access controls still apply. Harness-native sandbox policies are unchanged.
 
 Under tclaude’s sandbox the launch contract binds the harness's state root
 read-write — `~/.claude`, `$CODEX_HOME`/`~/.codex`, `$COPILOT_HOME`/`~/.copilot`,
+`~/.gemini` (or `$GEMINI_CLI_HOME/.gemini`),
 `~/.opencode` plus OpenCode's XDG roots — because that is where the harness
 keeps state it genuinely must write: transcripts, project records, todos,
 history, account/onboarding data. The same tree also holds the harness's
@@ -324,6 +326,7 @@ bubblewrap and Seatbelt.
 | claude | `hooks/`, `skills/`, `agents/`, `commands/`, `output-styles/`, `plugins/`, `workflows/`, `routines/`, `rules/`, `local/`, `cowork_plugins/`, `settings.json`, `settings.local.json`, `CLAUDE.md`, `keybindings.json` |
 | codex | `hooks/`, `prompts/`, `config.toml`, `hooks.json`, `AGENTS.md`, `tclaude-agent.config.toml` |
 | copilot | `hooks/`, `settings.json`, `config.json`, `mcp-config.json` |
+| gemini | `extensions/`, `commands/`, `skills/`, `agents/`, `policies/`, `settings.json`, `.env`, `trustedFolders.json`, `trusted_hooks.json`, `policy_integrity.json`, `GEMINI.md` |
 | opencode | nothing — its config tree is already bound read-only by OpenCode's own state layout, in both legacy-shared and private modes |
 
 Claude Code's own sandbox deny-writes a broadly similar set for its Bash tool;

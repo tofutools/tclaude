@@ -171,3 +171,32 @@ func TestGeminiSpawn_StopThenResumeReopensTheSameConversation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "gemini-worker", title)
 }
+
+// TestGeminiSpawn_TclaudeLayerForcesGeminisOwnSandboxOff: under tclaude's own
+// wall the pane is launched with Gemini's sandbox forced off, so the outer
+// wall is the single enforcement boundary — GEMINI_SANDBOX outranks a
+// settings.json `tools.sandbox` that would otherwise re-run the CLI in a
+// container outside the wall.
+func TestGeminiSpawn_TclaudeLayerForcesGeminisOwnSandboxOff(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	resp, _ := spawnGemini(t, f, "crew", map[string]any{
+		"name":                   "walled-gemini",
+		"sandbox_implementation": "tclaude-layer",
+	})
+	launch := geminiLaunchOf(t, f, resp.ConvID)
+	assert.Equal(t, "false", launch.Env["GEMINI_SANDBOX"])
+	assert.True(t, launch.Unset["SANDBOX"], "a stray SANDBOX would make Gemini believe it is already contained")
+
+	row, err := db.LoadSession(resp.Label)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, "tclaude-layer", row.SandboxImplementation)
+	assert.Equal(t, harness.GeminiSandboxOff, row.HarnessBuiltinMode)
+
+	// A plain spawn leaves the operator's Gemini sandbox posture alone.
+	plain, _ := spawnGemini(t, f, "crew", map[string]any{"name": "plain-gemini"})
+	plainLaunch := geminiLaunchOf(t, f, plain.ConvID)
+	_, forced := plainLaunch.Env["GEMINI_SANDBOX"]
+	assert.False(t, forced)
+}
