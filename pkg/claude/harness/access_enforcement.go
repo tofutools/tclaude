@@ -228,6 +228,15 @@ func BuiltinLaunchOSSandboxForValidatedMode(
 		default:
 			return LaunchOSSandbox{State: "unconfigured", Source: "builtin Codex sandbox mode was omitted"}, nil
 		}
+	case GeminiName:
+		switch mode {
+		case GeminiSandboxSeatbelt:
+			return LaunchOSSandbox{State: "on", Source: "validated builtin Gemini CLI Seatbelt sandbox mode"}, nil
+		case GeminiSandboxOff:
+			return LaunchOSSandbox{State: "off", Source: "validated builtin Gemini CLI sandbox-off mode"}, nil
+		default:
+			return LaunchOSSandbox{State: "unconfigured", Source: "builtin Gemini CLI sandbox mode inherits the operator's settings"}, nil
+		}
 	default:
 		return LaunchOSSandbox{}, fmt.Errorf("harness %q has no builtin access-enforcement verdict mapping", h.Name)
 	}

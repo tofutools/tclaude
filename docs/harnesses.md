@@ -107,7 +107,7 @@ warning. Model and effort are remembered by the harness itself.
 | [Remote control](remote.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | [Status line](utilities.md#status-line) | ✅ command-backed | ⚠️ curated built-in items | ⚠️ OpenCode's own TUI status | ❌ | ❌ | ❌ |
 | [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off | ❌ forced off (`off`) | ❌ |
+| Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off | ⚠️ macOS only (`seatbelt`) | ❌ |
 | [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ | ✅ | ✅ |
 | Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD | ⚠️ tokens + context, no cost | ❌ |
 | Hooks via `tclaude setup` | ✅ | ✅ | ❌ (server liveness instead) | ✅ | ✅ settings.json hooks | ❌ |
@@ -487,11 +487,40 @@ initial prompt, replacing the briefing, or as a subcommand) other than the
 values of Gemini's list options such as `--include-directories`.
 
 **Sandbox.** tclaude's built-in sandbox (`--sandbox-impl tclaude-layer`) wraps
-the Gemini pane like any other harness. Gemini's own sandbox mode has two
+the Gemini pane like any other harness. Gemini's own sandbox mode has these
 values:
 - `inherit` (the default) leaves your Gemini sandbox settings alone.
 - `off` exports `GEMINI_SANDBOX=false`, which outranks `--sandbox` and
   settings.json `tools.sandbox`, and exports an empty `SANDBOX` (so a workspace `.env` cannot refill it).
+- `seatbelt` (macOS only, with `--sandbox-impl harness-builtin`) runs Gemini
+  under its own Seatbelt sandbox. It exports `GEMINI_SANDBOX=sandbox-exec`
+  and `SEATBELT_PROFILE=permissive-open`, plus the same empty `SANDBOX`. In
+  this mode:
+  - Writes are confined to the project, temp and cache directories.
+  - `~/.gemini` and the credential files are write-protected.
+  - Outbound network stays open.
+
+  Gemini runs its hooks inside that profile, where tclaude's database is
+  read-only, so tclaude brokers the hook callbacks through agentd, as it does
+  under tclaude-layer. The profile also hides Gemini's own credentials and
+  trust store from the sandboxed CLI, which has these effects:
+  - The mode is refused for a Google sign-in. Use an API key or Vertex AI.
+  - tclaude exports `GEMINI_CLI_TRUST_WORKSPACE=true` for a folder your trust
+    store (or `--trust-dir`) trusts.
+  - Sandbox-profile filesystem rules are refused, because the profile is
+    Gemini's, not tclaude's.
+
+  Weaker than tclaude-layer in several ways:
+  - Unix sockets are unrestricted, so the agent can reach tclaude's tmux
+    server and run commands outside the sandbox through it.
+  - It can read `~/.tclaude`.
+  - Git writes to a linked worktree's main repository are denied.
+  - Gemini refuses to start in a sensitive directory such as `$HOME`.
+  - Under `inherit`, an operator's own `tools.sandbox: true` selects this
+    sandbox without tclaude knowing, so hook callbacks are not brokered. Gemini also keeps this mode's chats under
+  `~/.cache/.gemini`. tclaude lists conversations from both places, but Gemini
+  can resume a conversation only in the mode that created it. Agents cannot
+  spawn Seatbelt-mode Gemini children; a human can.
 
 tclaude-layer launches always use `off`. A container sandbox would re-run
 Gemini outside tclaude's wall and out of reach of its hooks. Inside the
@@ -550,7 +579,6 @@ rewind or a `/compress`. After a compression, the context reading keeps its
 old value until the next model call reports usage.
 
 **Not yet:**
-- Gemini's own Seatbelt sandbox as a selectable mode.
 - The proxy network engine.
 - An explicit or socket-driven separate filesystem root.
 

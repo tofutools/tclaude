@@ -803,6 +803,10 @@ func runNew(params *NewParams) error {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
 	}
 	if !outerLayer && !unconfined && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
+		h.Name == harness.GeminiName {
+		return fmt.Errorf("unsupported_sandbox_profile_filesystem: Gemini CLI's own sandbox cannot represent sandbox-profile filesystem rules; use --sandbox-impl tclaude-layer")
+	}
+	if !outerLayer && !unconfined && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
 		h.Name == harness.OpenCodeName && harnessBuiltinMode != harness.OpenCodeSandboxAccessControl {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: OpenCode filesystem rules require soft access-control mode %s", harness.OpenCodeSandboxAccessControl)
 	}
@@ -1306,14 +1310,34 @@ func runNew(params *NewParams) error {
 			additionalEnv[entry.Name] = entry.Value
 		}
 	}
-	if outerLayer {
+	if outerLayer || harness.HooksRunInsideBuiltinSandbox(h, harnessBuiltinMode) {
 		// Hook callbacks write private SQLite state, which this launch's own
-		// namespace hides. Route them through agentd instead, which applies
+		// namespace hides (or, for Gemini's Seatbelt mode, its profile makes
+		// read-only). Route them through agentd instead, which applies
 		// them host-side on the caller's behalf (TCL-754). Apply after the
 		// profile environment so policy cannot unset the marker for an
 		// outer-layer launch and silently send the pane's telemetry into the
 		// throwaway database behind the wall.
 		additionalEnv[HookBrokerEnvVar] = HookBrokerAgentd
+	}
+	if h.Name == harness.GeminiName && harnessBuiltinMode == harness.GeminiSandboxSeatbelt {
+		// Gemini's Seatbelt profile hides its OAuth credentials and every
+		// trust store from the sandboxed CLI (gemini_seatbelt.go): refuse an
+		// auth type that cannot work in there, and carry the host's trust
+		// decision in as the environment Gemini honours ahead of the file.
+		seatbeltEnv := launchModelEnvironment(sandboxpolicy.EnvironmentForLaunch(effectiveSandbox))
+		getenv := func(name string) string { return seatbeltEnv[name] }
+		if err := harness.ValidateGeminiSeatbeltLaunch(getenv, cwd); err != nil {
+			return err
+		}
+		trustEnv, err := harness.GeminiSeatbeltLaunchEnv(getenv, cwd, params.TrustDir)
+		if err != nil {
+			slog.Warn("gemini seatbelt: cannot read the trust store; the sandboxed pane may ask for folder trust",
+				"cwd", cwd, "err", err)
+		}
+		for name, value := range trustEnv {
+			additionalEnv[name] = value
+		}
 	}
 	launchPermissionProfile := params.PermissionProfile
 	launchProfilePath := ""

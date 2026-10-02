@@ -156,6 +156,26 @@ func ResolveGeminiLaunchAuthType(getenv func(string) string, cwd string) (string
 		return "", err
 	}
 
+	selected, source, err := geminiSelectedAuthType(getenv, home, cwd)
+	if err != nil {
+		return "", err
+	}
+	switch selected {
+	case "":
+		return "", errors.New("no Gemini auth type is selected (settings.json " +
+			"`security.auth.selectedType`), so the pane would stop on Gemini's sign-in dialog and its " +
+			"model route is unknown; sign in once in an interactive Gemini session, or use network open")
+	case GeminiAuthAPIKey, GeminiAuthLoginWithGoogle:
+		return selected, nil
+	default:
+		return "", fmt.Errorf("Gemini auth type %q (from %s) has no reviewed filtered-network route; "+
+			"use %q or %q, or use network open", selected, source, GeminiAuthAPIKey, GeminiAuthLoginWithGoogle)
+	}
+}
+
+// geminiSelectedAuthType reads security.auth.selectedType from Gemini's merged
+// settings, returning the value and the file that set it ("" when none did).
+func geminiSelectedAuthType(getenv func(string) string, home, cwd string) (selected, source string, err error) {
 	// Gemini's merge order, lowest first: system defaults, user, workspace,
 	// system (settings.ts loadSettings). Workspace settings apply only in a
 	// trusted folder; they are honoured here regardless, since a daemon
@@ -175,27 +195,16 @@ func ResolveGeminiLaunchAuthType(getenv func(string) string, cwd string) (string
 	}
 	paths = append(paths, systemPath)
 
-	selected, source := "", ""
 	for _, path := range paths {
 		value, set, err := geminiSettingsSelectedAuthType(path)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		if set {
 			selected, source = value, path
 		}
 	}
-	switch selected {
-	case "":
-		return "", errors.New("no Gemini auth type is selected (settings.json " +
-			"`security.auth.selectedType`), so the pane would stop on Gemini's sign-in dialog and its " +
-			"model route is unknown; sign in once in an interactive Gemini session, or use network open")
-	case GeminiAuthAPIKey, GeminiAuthLoginWithGoogle:
-		return selected, nil
-	default:
-		return "", fmt.Errorf("Gemini auth type %q (from %s) has no reviewed filtered-network route; "+
-			"use %q or %q, or use network open", selected, source, GeminiAuthAPIKey, GeminiAuthLoginWithGoogle)
-	}
+	return selected, source, nil
 }
 
 func geminiDefaultSystemSettingsPath() string {

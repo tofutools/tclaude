@@ -71,11 +71,9 @@ const (
 // geminiHome returns the directory Gemini CLI treats as home: GEMINI_CLI_HOME
 // when set, otherwise the OS home. Empty when neither resolves.
 //
-// Known gap: under Gemini's own macOS Seatbelt sandbox (SANDBOX=sandbox-exec)
-// the CLI keeps tmp/ and projects.json under <home>/.cache/.gemini instead
-// (Storage.getGlobalRuntimeDir). tclaude refuses Gemini's --sandbox today, so
-// no tclaude-launched pane writes there; modelling the sandbox must move this
-// resolution with it.
+// Under Gemini's own macOS Seatbelt sandbox (SANDBOX=sandbox-exec) the CLI
+// keeps tmp/ and projects.json under <home>/.cache/.gemini instead
+// (Storage.getGlobalRuntimeDir); geminiRuntimeDirs names both.
 func geminiHome() string {
 	if home := strings.TrimSpace(os.Getenv(GeminiHomeEnvVar)); home != "" {
 		return filepath.Clean(home)
@@ -94,6 +92,29 @@ func geminiDir() string {
 		return ""
 	}
 	return filepath.Join(home, geminiDirName)
+}
+
+// geminiSeatbeltRuntimeDir is <home>/.cache/.gemini, where a Seatbelt-sandboxed
+// Gemini keeps its runtime state, or "" when no home resolves.
+func geminiSeatbeltRuntimeDir() string {
+	home := geminiHome()
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".cache", geminiDirName)
+}
+
+// geminiRuntimeDirs lists every directory a Gemini launch may keep its chats
+// under: ~/.gemini for an unsandboxed (or tclaude-walled) launch, and
+// ~/.cache/.gemini for one under Gemini's own Seatbelt sandbox.
+func geminiRuntimeDirs() []string {
+	var dirs []string
+	for _, dir := range []string{geminiDir(), geminiSeatbeltRuntimeDir()} {
+		if dir != "" {
+			dirs = append(dirs, dir)
+		}
+	}
+	return dirs
 }
 
 // GeminiStateDir is the directory Gemini CLI keeps its state in
@@ -116,15 +137,15 @@ type geminiConvStore struct {
 
 var _ ConvStore = geminiConvStore{}
 
-func (s geminiConvStore) root() (string, error) {
-	dir := s.dir
-	if dir == "" {
-		dir = geminiDir()
+func (s geminiConvStore) roots() ([]string, error) {
+	if s.dir != "" {
+		return []string{s.dir}, nil
 	}
-	if dir == "" {
-		return "", errors.New("gemini: cannot determine the Gemini CLI home directory")
+	dirs := geminiRuntimeDirs()
+	if len(dirs) == 0 {
+		return nil, errors.New("gemini: cannot determine the Gemini CLI home directory")
 	}
-	return dir, nil
+	return dirs, nil
 }
 
 // ListConvs assembles one SessionEntry per Gemini session. An empty cwd lists
@@ -166,21 +187,35 @@ func (s geminiConvStore) ListConvs(cwd string) ([]convops.SessionEntry, error) {
 // scan reads every project's chats directory and returns one deduplicated entry
 // per conversation, without touching tclaude's cache.
 func (s geminiConvStore) scan() ([]convops.SessionEntry, error) {
-	root, err := s.root()
+	roots, err := s.roots()
 	if err != nil {
 		return nil, err
 	}
+	bestByID := map[string]convops.SessionEntry{}
+	for _, root := range roots {
+		if err := scanGeminiRuntimeDir(root, bestByID); err != nil {
+			return nil, err
+		}
+	}
+	entries := make([]convops.SessionEntry, 0, len(bestByID))
+	for _, entry := range bestByID {
+		entries = append(entries, entry)
+	}
+	return entries, nil
+}
+
+// scanGeminiRuntimeDir folds one runtime directory's sessions into bestByID,
+// keeping the later-updated file when an id appears twice.
+func scanGeminiRuntimeDir(root string, bestByID map[string]convops.SessionEntry) error {
 	tmpDir := filepath.Join(root, geminiTmpDirName)
 	projectDirs, err := os.ReadDir(tmpDir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return []convops.SessionEntry{}, nil
+			return nil
 		}
-		return nil, fmt.Errorf("gemini: read %s: %w", tmpDir, err)
+		return fmt.Errorf("gemini: read %s: %w", tmpDir, err)
 	}
 	registry := readGeminiProjectRegistry(root)
-
-	bestByID := map[string]convops.SessionEntry{}
 	for _, projectDir := range projectDirs {
 		if !projectDir.IsDir() {
 			continue
@@ -218,11 +253,7 @@ func (s geminiConvStore) scan() ([]convops.SessionEntry, error) {
 			bestByID[entry.SessionID] = entry
 		}
 	}
-	entries := make([]convops.SessionEntry, 0, len(bestByID))
-	for _, entry := range bestByID {
-		entries = append(entries, entry)
-	}
-	return entries, nil
+	return nil
 }
 
 func geminiIsSessionFile(name string) bool {
