@@ -49,6 +49,8 @@ and frozen into launch snapshots. The current registry:
 | `net-openai-codex` | Direct OpenAI API-key endpoints (`api.openai.com:443`) |
 | `net-openai-chatgpt` | ChatGPT-signed-in Codex (`chatgpt.com:443`, `auth.openai.com:443`) |
 | `net-github-copilot` | GitHub Copilot CLI model and auth traffic |
+| `net-google-gemini-api` | Gemini CLI signed in with an API key (`generativelanguage.googleapis.com:443`) |
+| `net-google-gemini-login` | Gemini CLI signed in with Google (`cloudcode-pa.googleapis.com:443`, `oauth2.googleapis.com:443`) |
 | `net-github` | GitHub (`github.com`, `api.github.com`, and friends) |
 | `net-go-modules` | The Go module proxy and checksum database |
 | `net-npm` | The npm registry |
@@ -77,7 +79,7 @@ network; `private` gives the launch its own Linux network namespace routed
 through `pasta` with default-accept — it separates abstract Unix sockets and
 host loopback from the agent without making IP traffic deny-by-default. It is
 supported with tclaude’s sandbox alone on Linux for Claude Code, Codex,
-OpenCode, and Copilot launches, and refuses elsewhere rather than falling back. A private
+OpenCode, Copilot, and Gemini CLI launches, and refuses elsewhere rather than falling back. A private
 namespace in a global or included profile cannot be widened by a child.
 
 The `unix_sockets` axis (`mode: open|closed|list` plus `path`/`path_glob`
@@ -279,6 +281,29 @@ private namespace and the proxy engine is an explicit refusal). Its one
 private-namespace option is default-accept routing via
 `network.namespace: private`. Author network lists for Copilot with that in
 mind: they document intent, they do not yet enforce it.
+
+## Gemini CLI
+
+Gemini CLI launches are enforced by the Linux packet gateway, the same as
+Claude Code and Codex. The proxy engine is not activated for Gemini.
+tclaude resolves the model route from Gemini's own selected auth type
+(settings.json `security.auth.selectedType`) and checks it against the
+authored list:
+
+- `gemini-api-key` needs `net-google-gemini-api`.
+- `oauth-personal` (Google sign-in) needs `net-google-gemini-login`.
+
+The launch is refused, with a reason, in these cases:
+- No auth type is selected (the pane would stop on Gemini's sign-in dialog).
+- The auth type is another one (Vertex AI, compute ADC, a gateway).
+- `CODE_ASSIST_ENDPOINT`, `GOOGLE_GEMINI_BASE_URL`,
+  `GOOGLE_VERTEX_BASE_URL` or `GOOGLE_CLOUD_UNIVERSE_DOMAIN` is set.
+- The `.env` file Gemini loads sets one of those variables, or a proxy.
+
+Unlike the other harnesses' routes, these were read from the Gemini CLI
+source rather than observed on an authenticated run. A wrong guess fails
+closed: the wall denies the traffic. The first browser sign-in, telemetry,
+web tools and MCP servers need their own destinations.
 
 ## Troubleshooting
 

@@ -57,6 +57,25 @@ var networkPackRegistry = []NetworkPack{
 		Warning: "Covers the DEFAULT first-party route only, and only the plan tiers an authenticated run has actually reached. A business or enterprise-tier CAPI host is NOT included — no run here observed one, and an unobserved destination is authored nowhere rather than guessed at, so such a launch is denied and needs its host authored explicitly. An Enterprise or data-residency host (GH_HOST / COPILOT_GH_HOST), a moved COPILOT_API_URL, and BYOK providers are refused by the Copilot launch resolver rather than covered here. Telemetry (telemetry.*.githubcopilot.com, which an observed session contacted only intermittently and completed without), MCP servers, web tools and `gh` are separate features needing their own destinations.",
 	},
 	{
+		ID: "net-google-gemini-api", Label: "Gemini API (API key)",
+		Group: "Cloud model APIs",
+		Entries: []NetworkAllowEntry{
+			{Domain: "generativelanguage.googleapis.com", Ports: []int{443}},
+		},
+		Note:    "Gemini CLI signed in with a Gemini API key (security.auth.selectedType gemini-api-key) sends model traffic to the public Gemini API.",
+		Warning: "Read from the Gemini CLI source, not observed on an authenticated run. Vertex AI, a GOOGLE_GEMINI_BASE_URL gateway and Google sign-in use other destinations.",
+	},
+	{
+		ID: "net-google-gemini-login", Label: "Gemini (Google sign-in)",
+		Group: "Cloud model APIs",
+		Entries: []NetworkAllowEntry{
+			{Domain: "cloudcode-pa.googleapis.com", Ports: []int{443}},
+			{Domain: "oauth2.googleapis.com", Ports: []int{443}},
+		},
+		Note:    "Gemini CLI signed in with a Google account (security.auth.selectedType oauth-personal) talks to the Code Assist server and refreshes its cached token at oauth2.googleapis.com.",
+		Warning: "Read from the Gemini CLI source, not observed on an authenticated run. The first browser sign-in, telemetry (play.googleapis.com) and a CODE_ASSIST_ENDPOINT override need their own destinations.",
+	},
+	{
 		ID: "net-github", Label: "GitHub essentials",
 		Entries: []NetworkAllowEntry{
 			{Domain: "github.com"},
