@@ -210,3 +210,37 @@ func TestGeminiSpawn_TclaudeLayerForcesGeminisOwnSandboxOff(t *testing.T) {
 	_, forced := plainLaunch.Env["GEMINI_SANDBOX"]
 	assert.False(t, forced)
 }
+
+// TestGeminiSpawn_ApprovalModeIsRenderedAndRecorded: an unchosen posture
+// resolves to the nonblocking `yolo`, an explicit one threads through, and
+// `inherit` emits no flag — each recorded on the session row so a relaunch
+// reproduces it.
+func TestGeminiSpawn_ApprovalModeIsRenderedAndRecorded(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	for _, tc := range []struct {
+		name, approval, wantFlag, wantRow string
+	}{
+		{"default-gemini", "", harness.GeminiApprovalYolo, harness.GeminiApprovalYolo},
+		{"edit-gemini", harness.GeminiApprovalAutoEdit, harness.GeminiApprovalAutoEdit, harness.GeminiApprovalAutoEdit},
+		{"plan-gemini", harness.GeminiApprovalPlan, harness.GeminiApprovalPlan, harness.GeminiApprovalPlan},
+		{"inherit-gemini", harness.GeminiApprovalInherit, "", harness.GeminiApprovalInherit},
+	} {
+		body := map[string]any{"name": tc.name}
+		if tc.approval != "" {
+			body["approval"] = tc.approval
+		}
+		resp, _ := spawnGemini(t, f, "crew", body)
+		assert.Equalf(t, tc.wantFlag, geminiLaunchOf(t, f, resp.ConvID).ApprovalMode, "%s: rendered flag", tc.name)
+		row, err := db.LoadSession(resp.Label)
+		require.NoError(t, err)
+		require.NotNil(t, row)
+		assert.Equalf(t, tc.wantRow, row.ApprovalPolicy, "%s: recorded policy", tc.name)
+	}
+
+	bad := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "bad-gemini", "harness": harness.GeminiName, "approval": "never",
+	})
+	assert.NotEqual(t, http.StatusOK, bad.Code, "a Codex token is not a Gemini approval mode")
+}

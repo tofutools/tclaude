@@ -46,11 +46,13 @@ var geminiOwnedFlags = map[string]geminiOwnedFlag{
 	// Metadata tclaude validates and records.
 	"model": {"the model", geminiUseModel},
 
-	// Permission: approval and trust. tclaude does not model Gemini's
-	// approval axis yet, so a pane launched with one of these would run under
-	// a posture nothing recorded — refused rather than silently unaccounted.
-	"approval-mode": {"the approval mode", geminiNoApproval},
-	"yolo":          {"the approval mode", geminiNoApproval},
+	// Permission: approval and trust. The approval mode is tclaude's own
+	// --ask-for-approval axis, rendered and recorded per launch; the policy
+	// engine is not modeled, so a pane launched with one of those would run
+	// under a posture nothing recorded — refused rather than silently
+	// unaccounted.
+	"approval-mode": {"the approval mode", geminiUseApproval},
+	"yolo":          {"the approval mode", geminiUseApproval},
 	"skip-trust":    {"the folder-trust decision", geminiNoTrust},
 	"policy":        {"the approval policy", geminiNoApproval},
 	"admin-policy":  {"the approval policy", geminiNoApproval},
@@ -127,8 +129,11 @@ const (
 	geminiNoHeadless  = "a tclaude pane is interactive by construction, so drop the flag"
 	geminiUseWorktree = "use tclaude's own worktree option, which creates the tree, launches the " +
 		"pane inside it and records the directory it used"
-	geminiUseModel   = "use tclaude's own `--model` option, which it validates and records"
-	geminiNoApproval = "tclaude does not yet model Gemini CLI's approval modes or policy engine, " +
+	geminiUseModel    = "use tclaude's own `--model` option, which it validates and records"
+	geminiUseApproval = "use tclaude's own `--ask-for-approval` option " +
+		"(yolo|auto_edit|default|plan|inherit), which renders Gemini's --approval-mode and " +
+		"records it for every later relaunch"
+	geminiNoApproval = "tclaude does not model Gemini CLI's policy engine, " +
 		"so there is no recorded launch a pass-through approval option could agree with; " +
 		"configure the default in Gemini's own settings.json instead"
 	geminiNoTrust = "use tclaude's own `--trust-dir` option, which records the directory as " +

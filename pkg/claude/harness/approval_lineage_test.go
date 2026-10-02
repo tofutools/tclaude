@@ -158,8 +158,25 @@ func TestApprovalLineageAllowedMatrix(t *testing.T) {
 		{"opencode auto-review child is malformed", DefaultName, claudePermBypass, false, OpenCodeName, OpenCodeApprovalDeny, true, false},
 		{"claude auto-review is malformed on the parent", DefaultName, claudePermDefault, true, DefaultName, claudePermDefault, false, false},
 		{"claude auto-review is malformed on the child", DefaultName, claudePermBypass, false, DefaultName, claudePermAuto, true, false},
-		{"unknown harness fails closed", "gemini", "whatever", false, DefaultName, claudePermPlan, false, false},
-		{"unknown child harness fails closed", DefaultName, claudePermBypass, false, "gemini", "whatever", false, false},
+		{"unknown harness fails closed", "nosuch", "whatever", false, DefaultName, claudePermPlan, false, false},
+		{"unknown child harness fails closed", DefaultName, claudePermBypass, false, "nosuch", "whatever", false, false},
+
+		// --- Gemini: yolo is Copilot allow-tools' shape, auto_edit edits only ---
+		{"claude auto can mint gemini yolo", DefaultName, claudePermAuto, false, GeminiName, GeminiApprovalYolo, false, true},
+		{"copilot allow-tools can mint gemini yolo", CopilotName, CopilotApprovalAllowTools, false, GeminiName, GeminiApprovalYolo, false, true},
+		{"gemini yolo can mint copilot allow-tools", GeminiName, GeminiApprovalYolo, false, CopilotName, CopilotApprovalAllowTools, false, true},
+		{"gemini yolo cannot mint claude bypass", GeminiName, GeminiApprovalYolo, false, DefaultName, claudePermBypass, false, false},
+		{"gemini yolo cannot mint copilot yolo", GeminiName, GeminiApprovalYolo, false, CopilotName, CopilotApprovalYolo, false, false},
+		{"gemini auto_edit cannot mint gemini yolo", GeminiName, GeminiApprovalAutoEdit, false, GeminiName, GeminiApprovalYolo, false, false},
+		{"gemini auto_edit can mint gemini default", GeminiName, GeminiApprovalAutoEdit, false, GeminiName, GeminiApprovalDefault, false, true},
+		{"gemini plan can mint gemini default", GeminiName, GeminiApprovalPlan, false, GeminiName, GeminiApprovalDefault, false, true},
+		{"gemini default cannot mint gemini auto_edit", GeminiName, GeminiApprovalDefault, false, GeminiName, GeminiApprovalAutoEdit, false, false},
+		{"gemini yolo cannot mint gemini inherit", GeminiName, GeminiApprovalYolo, false, GeminiName, GeminiApprovalInherit, false, false},
+		{"claude bypass can mint gemini inherit", DefaultName, claudePermBypass, false, GeminiName, GeminiApprovalInherit, false, true},
+		{"gemini inherit parent is credited the baseline", GeminiName, GeminiApprovalInherit, false, GeminiName, GeminiApprovalDefault, false, true},
+		{"gemini inherit parent cannot mint gemini yolo", GeminiName, GeminiApprovalInherit, false, GeminiName, GeminiApprovalYolo, false, false},
+		{"legacy blank gemini child fails closed", DefaultName, claudePermBypass, false, GeminiName, "", false, false},
+		{"gemini auto-review child is malformed", DefaultName, claudePermBypass, false, GeminiName, GeminiApprovalDefault, true, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

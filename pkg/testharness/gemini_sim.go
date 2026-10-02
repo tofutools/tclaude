@@ -68,6 +68,8 @@ type GeminiLaunch struct {
 	ResumeID      string
 	Model         string
 	InitialPrompt string
+	// ApprovalMode is the rendered `--approval-mode=` value; "" when none.
+	ApprovalMode string
 	// Extra holds pass-through arguments the parser does not model.
 	Extra []string
 }
@@ -146,6 +148,8 @@ func ParseGeminiLaunch(cmd string) (GeminiLaunch, error) {
 				return GeminiLaunch{}, err
 			}
 			launch.Model = v
+		case strings.HasPrefix(arg, "--approval-mode="):
+			launch.ApprovalMode = strings.TrimPrefix(arg, "--approval-mode=")
 		case strings.HasPrefix(arg, "--prompt-interactive="):
 			launch.InitialPrompt = strings.TrimPrefix(arg, "--prompt-interactive=")
 		case arg == "--prompt-interactive" || arg == "-i":
@@ -523,6 +527,7 @@ func (s *simSpawner) spawnNewGemini(args clcommon.SpawnArgs) error {
 	cmd, err := geminiBuildLaunchCommand(harness.SpawnSpec{
 		Cwd: cwd, SessionID: args.SessionID, Name: args.Name, Model: args.Model,
 		Effort: args.Effort, InitialPrompt: args.InitialPrompt, HarnessBuiltinMode: launchHarnessBuiltinMode(geminiHarnessName, args.Sandbox, args.SandboxImplementation),
+		ApprovalPolicy: args.Approval,
 	})
 	if err != nil {
 		return err
@@ -538,6 +543,7 @@ func (s *simSpawner) spawnResumeGemini(args clcommon.SpawnArgs) error {
 	cmd, err := geminiBuildLaunchCommand(harness.SpawnSpec{
 		Cwd: cwd, ResumeID: args.ConvID, Model: args.Model, Effort: args.Effort,
 		InitialPrompt: args.InitialPrompt, HarnessBuiltinMode: launchHarnessBuiltinMode(geminiHarnessName, args.Sandbox, args.SandboxImplementation),
+		ApprovalPolicy: args.Approval,
 	})
 	if err != nil {
 		return err

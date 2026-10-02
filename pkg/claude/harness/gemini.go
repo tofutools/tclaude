@@ -77,6 +77,11 @@ func init() {
 		Sandbox:          geminiSandbox{},
 		TclaudeLayerMode: GeminiSandboxOff,
 
+		// `--approval-mode`, rendered from the catalog; the daemon default is
+		// yolo, the one posture a detached pane cannot deadlock in. See
+		// gemini_approval.go.
+		Approval: geminiApproval{},
+
 		// `--session-id <id>` starts a NEW session under a caller-chosen id
 		// (packages/cli/src/config/config.ts; gemini.tsx resolveSessionId
 		// refuses an id that already exists rather than resuming it), and
