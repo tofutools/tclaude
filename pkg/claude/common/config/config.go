@@ -1051,7 +1051,7 @@ func (c *Config) CostFactorForHarness(name string) float64 {
 // ValidCostFactorHarness identifies the supported per-harness settings.
 func ValidCostFactorHarness(name string) bool {
 	switch name {
-	case "claude", "codex", "opencode", "copilot":
+	case "claude", "codex", "opencode", "copilot", "gemini":
 		return true
 	default:
 		return false

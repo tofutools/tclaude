@@ -275,3 +275,25 @@ func TestGeminiSpawn_DashboardShowsUsageFromTheSessionFile(t *testing.T) {
 	assert.Equal(t, int64(104_857), stored.TokensInput, "context occupancy is the LATEST call's prompt")
 	assert.Equal(t, int64(1_000), stored.TokensOutput, "output and thinking tokens summed over the conversation")
 }
+
+// TestGeminiSpawn_WhatIfCostFromTheSessionFile: a priced model's calls show
+// up as the agent's WHAT-IF cost, priced at Gemini API rates.
+func TestGeminiSpawn_WhatIfCostFromTheSessionFile(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f.HaveGroup("crew")
+	resp, sim := spawnGemini(t, f, "crew", map[string]any{
+		"name":            "priced-gemini",
+		"initial_message": "start work",
+	})
+	sim.WriteGeminiReplyWithTokens("first", "gemini-3.5-flash", 100_000, 4_000, 6_000)
+	sim.WriteGeminiReplyWithTokens("unpriced", "gemini-3-flash", 100_000, 4_000, 0)
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	row := findDashAgent(snap, resp.ConvID)
+	require.NotNil(t, row, "the Gemini agent must be on the dashboard")
+	// 100k input at $1.50/M plus 10k output+thinking at $9.00/M; the call on a
+	// model with no published rate adds nothing.
+	assert.InDelta(t, 0.15+0.09, row.State.VirtualCostUSD, 1e-9)
+	assert.Zero(t, row.State.CostUSD, "a what-if estimate is never a real charge")
+}
