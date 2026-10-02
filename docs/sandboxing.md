@@ -895,7 +895,9 @@ root and PID namespace as the isolated posture, binds the agentd socket and any
 listed sockets back, and does NOT create a network namespace, so host IP
 networking, host loopback services, and the IDE bridge keep working. For
 OpenCode, the attach pane remains outside while its agentd-owned tool server is
-wrapped by that root.
+wrapped by that root. Gemini CLI finds its IDE companion through files under
+`/tmp`, which the constructed root replaces with a fresh one, so Gemini's IDE
+integration may not connect in this posture.
 
 That posture is deliberately rated **partially enforced**, permanently. With the
 host network namespace shared, Linux abstract-namespace Unix sockets (`@…`) are

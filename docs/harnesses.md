@@ -411,21 +411,39 @@ never reaches its first turn. `--trust-dir` seeds the entry in
 
 ## Gemini CLI
 
-An early, deliberately minimal adapter. It was written against the published
-Gemini CLI 0.62.0 package and its upstream source tree, without a Gemini
-account, so it claims only what the CLI's own argument parser and command
-table prove. What it has today: spawn, exact resume, model selection, a
-pre-minted conversation id (so daemon spawns are enrolled before the pane
-starts), the launch briefing as Gemini's `-i` first turn, conversation
-listing and search, buffered `ask`, rename, live status through hooks,
-directory pre-trust, in-pane compaction, and soft exit.
+The Gemini CLI adapter, pinned to 0.62.0, covers:
+
+- Spawn and exact resume, with a pre-minted conversation id, so daemon
+  spawns are enrolled before the pane starts.
+- The launch briefing as Gemini's `-i` first turn.
+- Model selection.
+- Conversation listing and search.
+- Buffered `ask` and séance.
+- Rename, in-pane compaction and soft exit.
+- Live status through hooks, and directory pre-trust.
+- Gemini's approval modes, and its own sandbox modes.
+- tclaude's sandbox, with both Linux network engines and the separate
+  filesystem root.
+- Usage with a what-if cost.
+
+It was written from the CLI's source without a Gemini account. CI runs the
+real pinned binary in two places:
+- **Against a local mock model:** session files, resume, the séance fork,
+  hook firing, folder trust and every approval mode.
+- **Behind the proxy network engine:** its model egress.
+
+What is not machine-checked is the interactive pane: typed lifecycle
+commands, dialogs, and how it reacts to keystrokes.
 
 **Models.** `--model` offers Gemini's own aliases (`auto`, `pro`, `flash`,
 `flash-lite`) and current concrete ids as suggestions; any other single
 Gemini model token is forwarded and Gemini validates it. Claude and OpenAI
 slugs are rejected with a clear error. Gemini CLI has **no reasoning-effort
-launch option** (thinking budgets live in its `settings.json`), so `--effort`
-is refused rather than silently dropped.
+launch option**, so `--effort` is refused rather than silently dropped.
+Thinking budgets live only in settings files. The only settings paths a
+launch can redirect are Gemini's system settings files, and Gemini ignores
+those unless the file and its directories are owned by root. So tclaude
+cannot set a budget for a single launch without editing your settings.
 
 **Lifecycle.** Compaction types `/compress`; soft exit sends Escape and a
 double Ctrl+C (Gemini quits on the second press inside a 3 s window), with
@@ -601,7 +619,13 @@ old value until the next model call reports usage.
 
 **Not yet:**
 - The proxy network engine on macOS (it works on Linux).
-- An explicit or socket-driven separate filesystem root.
+
+Gemini's own sandbox is offered only as Seatbelt on macOS. On Linux it is a
+container that would run the agent outside tclaude's hooks, so use tclaude's
+sandbox there.
+
+Gemini has no counterpart for remote control, fast mode, a command-backed
+status line, or tclaude's task runner.
 
 ## Related pages
 
