@@ -25,6 +25,15 @@ func TestExplicitFilesystemRootLaunchPostureUsesProvenTargetMatrix(t *testing.T)
 	require.NoError(t, err)
 	assert.Equal(t, sandboxpolicy.RootConstructed, root)
 
+	root, err = TclaudeLayerLaunchRootPosture(
+		harness.MustGet(harness.GeminiName),
+		sandboxpolicy.ImplementationTclaudeLayer,
+		sandboxpolicy.NetworkHostOpen,
+		effective,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.RootConstructed, root)
+
 	_, err = TclaudeLayerLaunchRootPosture(
 		harness.MustGet(harness.CodexName),
 		sandboxpolicy.ImplementationStacked,
