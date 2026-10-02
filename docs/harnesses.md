@@ -109,7 +109,7 @@ warning. Model and effort are remembered by the harness itself.
 | [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off | ⚠️ macOS only (`seatbelt`) | ❌ |
 | [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ | ✅ | ✅ |
-| Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD | ⚠️ tokens + context, no cost | ❌ |
+| Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD | ✅ what-if cost | ❌ |
 | Hooks via `tclaude setup` | ✅ | ✅ | ❌ (server liveness instead) | ✅ | ✅ settings.json hooks | ❌ |
 | Directory pre-trust (`--trust-dir`) | ✅ | ✅ | — no trust dialog | ✅ | ✅ | — |
 | Tool governance (`--tools`) | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
@@ -573,7 +573,14 @@ read, the same read-through pattern Copilot uses:
   pane's footer shows.
 - Output tokens (thinking included) are summed over the conversation.
 
-No cost is reported, because Gemini records no price. The output total
+Gemini records no price, so tclaude reports a **what-if cost**: each model
+call priced at Gemini API pay-per-token rates, the same opt-in estimate Codex
+gets (`cost.show_on_subscription`). Cached prompt tokens get the cached rate,
+thinking tokens are priced as output, and Pro models switch to the long-context
+rate for prompts over 200k tokens. Calls dropped by a rewind or a `/compress`
+still count, because they were made. A model without a published rate, such as
+an older preview, adds nothing rather than borrowing another model's price.
+The output total
 covers only the turns that survive in the file, so it can go down after a
 rewind or a `/compress`. After a compression, the context reading keeps its
 old value until the next model call reports usage.

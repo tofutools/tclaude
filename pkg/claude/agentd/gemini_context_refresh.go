@@ -36,6 +36,10 @@ type geminiContextRefreshState struct {
 	// persisted is the projection last written. It advances only on a
 	// successful write, so a failed one is retried on the next refresh.
 	persisted harness.GeminiUsage
+	// persistedCost is the WHAT-IF total last written, and costWritten whether
+	// any was; same retry rule.
+	persistedCost float64
+	costWritten   bool
 }
 
 var geminiContextRefreshMu struct {
@@ -88,6 +92,7 @@ func refreshGeminiContextSnapshotOnRead(sess *db.SessionRow, alive bool) {
 		return
 	}
 	persistGeminiContextSnapshot(sess, state, usage)
+	persistGeminiVirtualCost(sess, state, usage)
 }
 
 // persistGeminiContextSnapshot writes the projection when it changed. A file
@@ -106,6 +111,33 @@ func persistGeminiContextSnapshot(sess *db.SessionRow, state *geminiContextRefre
 	}
 	if updated {
 		state.persisted = usage
+	}
+}
+
+// persistGeminiVirtualCost writes the conversation's WHAT-IF cost history
+// when the total changed. The rows are replaced across the conversation (a
+// resume keeps the conv id under a new session id), so a resumed generation
+// never double-counts its predecessor's calls.
+func persistGeminiVirtualCost(sess *db.SessionRow, state *geminiContextRefreshState, usage harness.GeminiUsage) {
+	if usage.CostUSD <= 0 || (state.costWritten && usage.CostUSD == state.persistedCost) {
+		return
+	}
+	history := state.follower.CostHistory(time.Now())
+	daily := make([]db.VirtualCostDailySnapshot, 0, len(history))
+	for _, day := range history {
+		daily = append(daily, db.VirtualCostDailySnapshot{
+			Day: day.Day, CostUSD: day.CostUSD, UpdatedAt: day.Observed, Model: day.Model,
+		})
+	}
+	updated, err := db.ReplaceSessionVirtualCostHistoryForGeneration(
+		sess.ID, sess.ConvID, sess.CreatedAt, usage.CostUSD, daily)
+	if err != nil {
+		slog.Warn("gemini-usage: failed to persist the what-if cost",
+			"session_id", sess.ID, "model", usage.Model, "error", err, "module", "agentd")
+		return
+	}
+	if updated {
+		state.persistedCost, state.costWritten = usage.CostUSD, true
 	}
 }
 

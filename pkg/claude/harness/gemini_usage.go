@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Gemini CLI token usage, read from the conversation's own session file.
@@ -58,6 +59,10 @@ type GeminiUsage struct {
 	ContextWindow int64
 	// Calls counts the messages that carried usage.
 	Calls int
+	// CostUSD is the WHAT-IF cost of every priced call the file recorded,
+	// including calls a rewind or compression later dropped (gemini_cost.go).
+	// 0 when no call used a priced model.
+	CostUSD float64
 }
 
 // ContextPct is ContextTokens as a percentage of ContextWindow, or 0 when
@@ -91,11 +96,12 @@ func GeminiContextWindow(model string) int64 {
 // the decoder rather than materialized, which is what keeps a refresh of a
 // tool-heavy session cheap.
 type geminiUsageLine struct {
-	ID       *string       `json:"id"`
-	Model    string        `json:"model"`
-	Tokens   *geminiTokens `json:"tokens"`
-	RewindTo *string       `json:"$rewindTo"`
-	Set      *struct {
+	ID        *string       `json:"id"`
+	Model     string        `json:"model"`
+	Timestamp string        `json:"timestamp"`
+	Tokens    *geminiTokens `json:"tokens"`
+	RewindTo  *string       `json:"$rewindTo"`
+	Set       *struct {
 		Messages *[]geminiUsageLine `json:"messages"`
 	} `json:"$set"`
 	// Messages is a legacy whole-file record's inline message list.
@@ -111,20 +117,57 @@ type geminiUsageRecord struct {
 // geminiUsageFold is the usage-only counterpart of geminiSession: the same
 // replace-by-id, rewind and checkpoint rules (loadConversationRecord), over
 // just the fields usage needs.
+//
+// billed is kept apart from the fold: every call the file ever recorded, by
+// message id, whether or not a rewind or a checkpoint later dropped it, since
+// the WHAT-IF cost prices calls made rather than history kept.
 type geminiUsageFold struct {
 	records []geminiUsageRecord
 	index   map[string]int
+
+	billed      []geminiBilledCall
+	billedIndex map[string]int
 }
 
+// reset clears the conversation fold only; see clear for a full restart.
 func (g *geminiUsageFold) reset() {
 	g.records = nil
 	g.index = map[string]int{}
+}
+
+// clear forgets everything, for a re-read of a replaced or shrunk file.
+func (g *geminiUsageFold) clear() {
+	g.reset()
+	g.billed = nil
+	g.billedIndex = map[string]int{}
+}
+
+// bill records a call's usage under its message id; a re-appended record (the
+// usage landing after the message) or a checkpoint's restatement replaces it.
+func (g *geminiUsageFold) bill(line geminiUsageLine) {
+	if line.ID == nil || *line.ID == "" || line.Tokens == nil {
+		return
+	}
+	call := geminiBilledCall{model: line.Model, tokens: *line.Tokens}
+	if at, err := time.Parse(time.RFC3339Nano, line.Timestamp); err == nil {
+		call.timestamp = at
+	}
+	if g.billedIndex == nil {
+		g.billedIndex = map[string]int{}
+	}
+	if at, ok := g.billedIndex[*line.ID]; ok {
+		g.billed[at] = call
+		return
+	}
+	g.billedIndex[*line.ID] = len(g.billed)
+	g.billed = append(g.billed, call)
 }
 
 func (g *geminiUsageFold) put(line geminiUsageLine) {
 	if line.ID == nil || *line.ID == "" {
 		return
 	}
+	g.bill(line)
 	record := geminiUsageRecord{id: *line.ID, model: line.Model, tokens: line.Tokens}
 	if at, ok := g.index[record.id]; ok {
 		g.records[at] = record
@@ -185,6 +228,7 @@ func (g *geminiUsageFold) usage() GeminiUsage {
 	if usage.Calls > 0 {
 		usage.ContextWindow = GeminiContextWindow(usage.Model)
 	}
+	usage.CostUSD, _ = geminiCostHistory(g.billed, time.Now())
 	return usage
 }
 
@@ -237,7 +281,7 @@ func (f *GeminiUsageFollower) Read(path string) (usage GeminiUsage, found bool, 
 		return f.fold.usage(), true, nil
 	case !sameFile || legacy || info.Size() < f.offset:
 		f.path, f.offset = path, 0
-		f.fold.reset()
+		f.fold.clear()
 	}
 	f.info = info
 
@@ -301,9 +345,16 @@ func (f *GeminiUsageFollower) foldLines(reader *bufio.Reader) (int64, error) {
 	}
 }
 
+// CostHistory is the WHAT-IF cost as cumulative per-day rows, as of the last
+// Read. now places calls that carry no timestamp.
+func (f *GeminiUsageFollower) CostHistory(now time.Time) []GeminiCostDay {
+	_, history := geminiCostHistory(f.fold.billed, now)
+	return history
+}
+
 func (f *GeminiUsageFollower) forget() {
 	f.path, f.info, f.offset = "", nil, 0
-	f.fold.reset()
+	f.fold.clear()
 }
 
 // LocateGeminiSessionFile finds the file that holds convID, without the full
