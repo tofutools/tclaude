@@ -142,3 +142,45 @@ func TestLocateGeminiSessionFileIgnoresAPrefixCollision(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, found)
 }
+
+// The follower rides the shared filefollow cursor: an append folds only the
+// appended bytes, an unchanged file reads nothing, and an in-place rewrite
+// that grows past the cursor is caught by its tail anchor and re-folded.
+func TestGeminiUsageFollowerReadsOnlyAppendedBytes(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(GeminiHomeEnvVar, home)
+	path := writeGeminiUsageFixture(t, home, geminiUsageTestConv,
+		`{"id":"g1","type":"gemini","content":"a","model":"gemini-3-flash","tokens":{"input":1000,"output":10,"cached":0,"total":1010}}`,
+	)
+	var follower GeminiUsageFollower
+	_, _, err := follower.Read(path)
+	require.NoError(t, err)
+
+	before := follower.stream.Stats()
+	_, _, err = follower.Read(path)
+	require.NoError(t, err)
+	assert.Equal(t, before.PayloadBytes, follower.stream.Stats().PayloadBytes, "an unchanged file is not read")
+
+	appended := `{"id":"g2","type":"gemini","content":"b","model":"gemini-3.1-pro-preview","tokens":{"input":2000,"output":20,"cached":0,"total":2020}}` + "\n"
+	appendGeminiUsageFixture(t, path, appended)
+	usage, _, err := follower.Read(path)
+	require.NoError(t, err)
+	after := follower.stream.Stats()
+	assert.Equal(t, int64(len(appended)), after.PayloadBytes-before.PayloadBytes, "only the appended record is read")
+	assert.Equal(t, before.Rebuilds, after.Rebuilds)
+	assert.Equal(t, 2, usage.Calls)
+	assert.Equal(t, "gemini-3.1-pro-preview", usage.Model)
+
+	// Same inode, rewritten in place and longer than before: size and
+	// identity alone would admit an append scan from the stale offset.
+	rewritten := geminiUsageTestMeta(geminiUsageTestConv, "2026-10-02T09:00:00Z") + "\n" +
+		`{"id":"g7","type":"gemini","content":"rewritten history that is longer than the one it replaced","model":"gemini-3-flash","tokens":{"input":7,"output":3,"cached":0,"total":10}}` + "\n" +
+		`{"id":"u8","type":"user","content":"padding padding padding padding padding padding padding padding padding padding"}` + "\n"
+	require.Greater(t, len(rewritten), int(after.PayloadBytes))
+	require.NoError(t, os.WriteFile(path, []byte(rewritten), 0o644))
+	usage, _, err = follower.Read(path)
+	require.NoError(t, err)
+	assert.Equal(t, after.Rebuilds+1, follower.stream.Stats().Rebuilds, "the anchor mismatch forces a re-fold")
+	assert.Equal(t, 1, usage.Calls)
+	assert.Equal(t, int64(7), usage.ContextTokens)
+}

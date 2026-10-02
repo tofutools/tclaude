@@ -1,16 +1,19 @@
 package harness
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/filefollow"
 )
 
 // Gemini CLI token usage, read from the conversation's own session file.
@@ -182,11 +185,12 @@ func (g *geminiUsageFold) replace(lines []geminiUsageLine) {
 }
 
 // apply folds one line in loadConversationRecord's precedence: rewind,
-// message, metadata update, metadata.
-func (g *geminiUsageFold) apply(raw []byte) {
+// message, metadata update, metadata. It reports false for a line that does
+// not decode, which an append scan treats as doubt and re-folds.
+func (g *geminiUsageFold) apply(raw []byte) bool {
 	var line geminiUsageLine
 	if json.Unmarshal(raw, &line) != nil {
-		return
+		return false
 	}
 	switch {
 	case line.RewindTo != nil:
@@ -206,6 +210,19 @@ func (g *geminiUsageFold) apply(raw []byte) {
 		}
 	case line.Messages != nil:
 		g.replace(*line.Messages)
+	}
+	return true
+}
+
+// clone copies the fold so an append scan can be discarded without touching
+// the committed state. Records' token pointers are never mutated once stored,
+// so they are shared.
+func (g geminiUsageFold) clone() geminiUsageFold {
+	return geminiUsageFold{
+		records:     slices.Clone(g.records),
+		index:       maps.Clone(g.index),
+		billed:      slices.Clone(g.billed),
+		billedIndex: maps.Clone(g.billedIndex),
 	}
 }
 
@@ -236,17 +253,24 @@ func (g *geminiUsageFold) usage() GeminiUsage {
 const geminiUsageLineLimit = geminiLegacyFileLimit
 
 // GeminiUsageFollower follows one conversation's session file. A JSONL file is
-// only ever appended to by Gemini between atomic rewrites, so the follower
-// reads just the bytes added since the last call, and re-folds from the start
-// only when the file was replaced or shrank. A legacy `.json` record is re-read
-// whole; Gemini never appends to one.
+// only ever appended to by Gemini between atomic rewrites, so it is read
+// through the shared filefollow cursor: only the bytes added since the last
+// call are folded, and the file is re-folded from the start when it was
+// replaced, shrank, or rewritten under the cursor. A legacy `.json` record is
+// re-read whole when it changes; Gemini never appends to one.
 //
-// Not safe for concurrent use; callers serialize per conversation.
+// A rebuild starts from the calls already billed (see geminiUsageFold.reset),
+// so a rewrite never un-bills a call the WHAT-IF cost already counted.
+//
+// Not safe for concurrent use; callers serialize per conversation. Not to be
+// copied after the first Read.
 type GeminiUsageFollower struct {
 	path   string
-	info   os.FileInfo
-	offset int64
-	fold   geminiUsageFold
+	stream *filefollow.Follower[geminiUsageFold]
+	// fold is the state the last successful read committed.
+	fold geminiUsageFold
+	// legacyInfo is the stat of the legacy `.json` file last folded.
+	legacyInfo os.FileInfo
 }
 
 // Path is the file the follower last read, "" before the first read.
@@ -256,6 +280,58 @@ func (f *GeminiUsageFollower) Path() string { return f.path }
 // false when the file is gone (Gemini migrates and rewrites these), in which
 // case the follower forgets it.
 func (f *GeminiUsageFollower) Read(path string) (usage GeminiUsage, found bool, err error) {
+	if strings.HasSuffix(path, ".json") {
+		return f.readLegacy(path)
+	}
+	f.legacyInfo = nil
+	update, err := f.ensureStream().Refresh(path)
+	if err != nil {
+		f.forget()
+		if errors.Is(err, os.ErrNotExist) {
+			return GeminiUsage{}, false, nil
+		}
+		return GeminiUsage{}, false, err
+	}
+	f.path, f.fold = path, update.State
+	return f.fold.usage(), true, nil
+}
+
+func (f *GeminiUsageFollower) ensureStream() *filefollow.Follower[geminiUsageFold] {
+	if f.stream == nil {
+		f.stream = filefollow.New(filefollow.Config[geminiUsageFold]{
+			NewState:   func(string, int64) geminiUsageFold { return f.rebuildFold() },
+			CloneState: geminiUsageFold.clone,
+			Scan:       scanGeminiUsageLines,
+		})
+	}
+	return f.stream
+}
+
+// rebuildFold is the starting state of a re-fold: an empty conversation that
+// keeps every call billed so far.
+func (f *GeminiUsageFollower) rebuildFold() geminiUsageFold {
+	fold := f.fold.clone()
+	fold.reset()
+	return fold
+}
+
+func scanGeminiUsageLines(r io.Reader, _ string, fold *geminiUsageFold, strict bool) (int64, bool, error) {
+	return filefollow.ScanLines(r, filefollow.LineConfig{MaxRecordBytes: geminiUsageLineLimit},
+		func(line filefollow.Line) bool {
+			if line.Oversized {
+				// Consumed but not decoded, as the convstore does.
+				return true
+			}
+			trimmed := bytes.TrimSpace(line.Data)
+			if len(trimmed) == 0 {
+				return true
+			}
+			return fold.apply(trimmed)
+		}, strict)
+}
+
+// readLegacy re-folds a legacy whole-file record when its stat changed.
+func (f *GeminiUsageFollower) readLegacy(path string) (GeminiUsage, bool, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		f.forget()
@@ -270,76 +346,22 @@ func (f *GeminiUsageFollower) Read(path string) (usage GeminiUsage, found bool, 
 		f.forget()
 		return GeminiUsage{}, false, err
 	}
-
-	legacy := strings.HasSuffix(path, ".json")
-	sameFile := f.path == path && f.info != nil && os.SameFile(f.info, info)
-	switch {
-	case sameFile && info.Size() == f.offset && info.ModTime().Equal(f.info.ModTime()):
-		return f.fold.usage(), true, nil
-	case !sameFile || legacy || info.Size() < f.offset:
-		f.path, f.offset = path, 0
-		f.fold.reset()
-	}
-	f.info = info
-
-	if legacy {
-		raw, err := io.ReadAll(io.LimitReader(file, geminiLegacyFileLimit))
-		if err != nil {
-			f.forget()
-			return GeminiUsage{}, false, err
-		}
-		f.fold.apply(raw)
-		f.offset = info.Size()
+	if f.path == path && f.legacyInfo != nil && os.SameFile(f.legacyInfo, info) &&
+		info.Size() == f.legacyInfo.Size() && info.ModTime().Equal(f.legacyInfo.ModTime()) {
 		return f.fold.usage(), true, nil
 	}
-	if _, err := file.Seek(f.offset, io.SeekStart); err != nil {
-		f.forget()
-		return GeminiUsage{}, false, err
-	}
-	consumed, err := f.foldLines(bufio.NewReaderSize(file, 64<<10))
-	f.offset += consumed
+	raw, err := io.ReadAll(io.LimitReader(file, geminiLegacyFileLimit))
 	if err != nil {
 		f.forget()
 		return GeminiUsage{}, false, err
 	}
-	return f.fold.usage(), true, nil
-}
-
-// foldLines folds every COMPLETE line and reports the bytes consumed. A final
-// line without its newline is a record Gemini is still writing; it is left for
-// the next read. An oversized line is consumed but not decoded.
-func (f *GeminiUsageFollower) foldLines(reader *bufio.Reader) (int64, error) {
-	var consumed int64
-	var line []byte
-	lineBytes := int64(0)
-	overLimit := false
-	for {
-		chunk, err := reader.ReadSlice('\n')
-		lineBytes += int64(len(chunk))
-		if !overLimit {
-			if len(line)+len(chunk) > geminiUsageLineLimit {
-				overLimit, line = true, nil
-			} else {
-				line = append(line, chunk...)
-			}
-		}
-		if errors.Is(err, bufio.ErrBufferFull) {
-			continue
-		}
-		if errors.Is(err, io.EOF) {
-			return consumed, nil
-		}
-		if err != nil {
-			return consumed, err
-		}
-		if !overLimit {
-			if trimmed := bytes.TrimSpace(line); len(trimmed) > 0 {
-				f.fold.apply(trimmed)
-			}
-		}
-		consumed += lineBytes
-		line, lineBytes, overLimit = line[:0], 0, false
+	fold := f.rebuildFold()
+	fold.apply(raw)
+	if f.stream != nil {
+		f.stream.Reset()
 	}
+	f.path, f.fold, f.legacyInfo = path, fold, info
+	return f.fold.usage(), true, nil
 }
 
 // CostHistory is the WHAT-IF cost as cumulative per-day rows, as of the last
@@ -350,8 +372,11 @@ func (f *GeminiUsageFollower) CostHistory(now time.Time) []GeminiCostDay {
 }
 
 func (f *GeminiUsageFollower) forget() {
-	f.path, f.info, f.offset = "", nil, 0
-	f.fold.reset()
+	if f.stream != nil {
+		f.stream.Reset()
+	}
+	f.path, f.legacyInfo = "", nil
+	f.fold = f.rebuildFold()
 }
 
 // LocateGeminiSessionFile finds the file that holds convID, without the full
