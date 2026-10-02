@@ -42,7 +42,7 @@ func TestGeminiDescriptor(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, GeminiSandboxOff, off)
 	assert.False(t, h.SupportsBuiltinOSSandbox(), "no catalog mode selects Gemini's own sandbox yet")
-	assert.Nil(t, h.Approval)
+	assert.True(t, h.SupportsApproval())
 	assert.True(t, h.SupportsDirTrust())
 
 	assert.False(t, h.SupportsRename(), "Gemini CLI has no in-pane rename command")
@@ -211,4 +211,3 @@ func TestGeminiSpawnerSandboxOffForcesTheEnvironment(t *testing.T) {
 		assert.NotEmpty(t, m.ModeHelp(mode))
 	}
 }
-

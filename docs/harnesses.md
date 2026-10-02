@@ -502,9 +502,40 @@ may spawn Gemini children only in this walled topology, the same rule as
 Copilot. A filtered-network launch has no Gemini model-route resolver yet,
 so its authored network list must include Google's API hosts.
 
-**Not yet:** the approval catalog (Gemini's own `--approval-mode`), Gemini's
-own Seatbelt sandbox as a selectable mode, a filtered-network model route,
-and usage.
+**Approvals.** `--ask-for-approval` renders Gemini's `--approval-mode`. The
+semantics below come from Gemini's built-in policy files, not from a live pane:
+
+- `yolo` *(default for daemon spawns)*: every tool call runs without
+  confirmation, shell commands included. Gemini's own file tools stay inside
+  the workspace; its shell commands are confined only by tclaude's sandbox.
+  Gemini's `ask_user` tool still asks a human, since it is a question rather
+  than a permission.
+- `auto_edit`: workspace edits and web fetches run unattended, but shell
+  commands still ask.
+- `default`: edits, shell commands, web fetches and skills all ask.
+- `plan`: read-only, so every mutating tool is denied.
+- `inherit`: no flag; settings.json `general.defaultApprovalMode` decides.
+
+Gemini drops `yolo` and `auto_edit` back to `default` in a folder it does not
+trust, which is one more reason to pass `--trust-dir`. If your settings set
+`security.disableYoloMode` or `admin.secureModeEnabled`, Gemini refuses
+`--approval-mode=yolo` at startup. Pick another mode for those launches, or
+make it the profile's default. For agent spawn
+lineage, `yolo` counts as unattended command execution (the same weight as
+Copilot `allow-tools` or Codex `never`), and an `inherit` child counts as the
+broadest posture. The policy engine (`--policy`, `--allowed-tools`) is not
+modeled, so those options are refused as pass-through arguments.
+
+Known gap: the lineage classes assume the workspace's own Gemini
+configuration is untouched. An agent that can edit files (Gemini `auto_edit`,
+or an edits-capable agent of another harness) can write
+`<cwd>/.gemini/settings.json`, including MCP server commands. In a trusted
+folder, the next Gemini launch there loads that file. The same holds for
+other harnesses' project config files. It is a sandbox-axis concern: a
+profile can deny writes to `.gemini/`.
+
+**Not yet:** Gemini's own Seatbelt sandbox as a selectable mode, a
+filtered-network model route, and usage.
 
 ## Related pages
 

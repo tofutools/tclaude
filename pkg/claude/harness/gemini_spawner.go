@@ -45,10 +45,11 @@ func (geminiSpawner) Binary() string { return "gemini" }
 //
 // Fields with no Gemini flag are IGNORED rather than approximated: there is no
 // effort flag (the catalog rejects a non-empty effort first), and the
-// approval, auto-review, permission-profile and remote-control fields belong
+// auto-review, permission-profile and remote-control fields belong
 // to contracts this descriptor leaves nil, so the resolvers refuse an explicit
 // value before a spec reaches this function. HarnessBuiltinMode is honored as
-// environment rather than a flag (see gemini_sandbox.go).
+// environment rather than a flag (see gemini_sandbox.go), and ApprovalPolicy as
+// `--approval-mode=<mode>` (see gemini_approval.go).
 //
 // spec.Name is also ignored, and that one is worth stating: Gemini CLI has no
 // launch-time name flag and no title store of its own. `session new` records a
@@ -74,6 +75,9 @@ func (geminiSpawner) BuildCommand(spec SpawnSpec) string {
 		// `--model=<m>`, attached for the same yargs reason as the first turn
 		// below, and quoted because this string is handed to `sh -c`.
 		cmd += " " + clcommon.ShellQuoteArg("--model="+spec.Model)
+	}
+	if arg := geminiApprovalArg(spec.ApprovalPolicy); arg != "" {
+		cmd += " " + arg
 	}
 	if len(spec.ExtraArgs) > 0 {
 		quoted := make([]string, len(spec.ExtraArgs))

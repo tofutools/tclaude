@@ -102,6 +102,17 @@ func ApprovalLineageDenialHint(parentHarness, parentPolicy string, parentAutoRev
 			return hint + fmt.Sprintf("; pass %q to spawn a child whose posture tclaude renders and records itself", CopilotApprovalAllowTools)
 		}
 		return hint + "; this parent cannot delegate any provable Copilot posture, so a human must spawn this child"
+	case GeminiName:
+		if strings.TrimSpace(childPolicy) != GeminiApprovalInherit {
+			return ""
+		}
+		hint := fmt.Sprintf("the child requested %q, which emits no --approval-mode, so its posture is decided by the operator's Gemini settings; it cannot be proven at spawn time and is therefore treated as the broadest posture", GeminiApprovalInherit)
+		for _, mode := range []string{GeminiApprovalYolo, GeminiApprovalAutoEdit, GeminiApprovalDefault} {
+			if ApprovalLineageAllowed(parentHarness, parentPolicy, parentAutoReview, GeminiName, mode, false) {
+				return hint + fmt.Sprintf("; pass %q to spawn a child whose posture tclaude renders and records itself", mode)
+			}
+		}
+		return hint + "; this parent cannot delegate any provable Gemini posture, so a human must spawn this child"
 	case OpenCodeName:
 		if strings.TrimSpace(childPolicy) != OpenCodeApprovalAllowTools {
 			return ""
@@ -358,6 +369,38 @@ func classifyApprovalLineage(harnessName, policy string, autoReview bool, child 
 			// inherited sandbox profile.
 			return approvalLineagePosture{capability: approvalAutoEdits, valid: true}
 		default:
+			return approvalLineagePosture{}
+		}
+	case GeminiName:
+		// Gemini has no reviewer; auto-review is a Codex-only axis.
+		if autoReview {
+			return approvalLineagePosture{}
+		}
+		switch policy {
+		case GeminiApprovalDefault, GeminiApprovalPlan:
+			// Everything that acts asks a human (default) or is denied (plan).
+			return approvalLineagePosture{capability: approvalAutoBaseline, valid: true}
+		case GeminiApprovalAutoEdit:
+			// Workspace edits run unattended; shell still asks.
+			return approvalLineagePosture{capability: approvalAutoEdits, valid: true}
+		case GeminiApprovalYolo:
+			// Arbitrary shell commands with no human and no reviewer: the same
+			// shape Copilot `allow-tools`, Codex `never` and Claude `auto` are
+			// charged. As there, "InSandbox" names the capability, not a claim
+			// that anything confines it — that is the sandbox axis's guard.
+			return approvalLineagePosture{capability: approvalAutoInSandbox, valid: true}
+		case GeminiApprovalInherit:
+			// Copilot's dual bound, for the same reason: no flag means
+			// settings.json decides, which may be yolo. A parent is credited the
+			// baseline it certainly has; a child is charged the broadest posture
+			// it could turn out to hold.
+			capability := approvalAutoBaseline
+			if child {
+				capability = approvalAutoInSandbox | approvalAutoReviewer | approvalAutoUnreviewed
+			}
+			return approvalLineagePosture{capability: capability, valid: true}
+		default:
+			// Blank is a pre-catalog Gemini row: unreconstructable, fail closed.
 			return approvalLineagePosture{}
 		}
 	case ShellName:
