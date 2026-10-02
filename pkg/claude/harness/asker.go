@@ -66,6 +66,11 @@ type AskSpec struct {
 	// from LaunchPosture: the predecessor keeps its recorded authority while
 	// remaining retired.
 	Ephemeral bool
+	// ResumeFile is a copy of the conversation to continue in a FRESH
+	// session, for a harness that implements Ephemeral by forking rather than
+	// by a no-persistence flag (EphemeralResumer). When set it replaces
+	// ResumeID on the command line.
+	ResumeFile string
 	// Prompt is the question, already assembled by the caller (it folds in
 	// any piped stdin payload). The Asker emits it as the harness's single
 	// positional prompt argument, shell-quoted, so it is never split into
@@ -106,6 +111,16 @@ type Asker interface {
 	// `-p` keeps stderr quiet already, so it returns false. Only consulted in
 	// print mode; an interactive turn always passes stderr through.
 	NoisyCaptureStderr() bool
+}
+
+// EphemeralResumer is an optional Asker capability for a harness with no flag
+// that keeps a resumed headless turn out of the conversation. It prepares a
+// copy of convID for AskSpec.ResumeFile; the harness continues the copy in a
+// new session, and cleanup (always safe to call) removes the copy and that
+// session. A caller that sets Ephemeral on a resume must use it when the
+// Asker implements it: such an Asker refuses an ephemeral resume without one.
+type EphemeralResumer interface {
+	PrepareEphemeralResume(convID string) (resumeFile string, cleanup func(), err error)
 }
 
 // AskEnvScrubber is an optional Asker capability: a harness whose containment

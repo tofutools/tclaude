@@ -55,6 +55,11 @@ const (
 	// agentd must materialize and pin a split-home managed profile when the
 	// recorded sandbox mode requests one.
 	OneShotReplayCodex
+	// OneShotReplayTclaudeLayer means the Asker renders the harness's native
+	// posture (Gemini CLI's sandbox-mode environment and approval flag), and a
+	// generation recorded under tclaude's built-in sandbox is replayed inside
+	// that same sandbox: its native mode alone (`off`) is no containment.
+	OneShotReplayTclaudeLayer
 )
 
 // Harness is a descriptor composing the segregated per-harness contracts
@@ -447,7 +452,14 @@ func (h *Harness) SupportsAsk() bool {
 // is false so adding an Asker alone never silently enables a billable séance.
 func (h *Harness) CanReplayOneShotLaunchPosture() bool {
 	return h != nil && h.Ask != nil &&
-		(h.OneShotReplay == OneShotReplayDirect || h.OneShotReplay == OneShotReplayCodex)
+		(h.OneShotReplay == OneShotReplayDirect || h.OneShotReplay == OneShotReplayCodex ||
+			h.OneShotReplay == OneShotReplayTclaudeLayer)
+}
+
+// ReplaysOneShotInsideTclaudeLayer reports whether a one-shot replay of a
+// generation recorded under tclaude's built-in sandbox must run inside it.
+func (h *Harness) ReplaysOneShotInsideTclaudeLayer() bool {
+	return h != nil && h.OneShotReplay == OneShotReplayTclaudeLayer
 }
 
 // UsesCodexOneShotReplay reports whether replay needs Codex's cwd-safety guard

@@ -319,6 +319,15 @@ func (w bestEffortPaneWriter) Write(p []byte) (int, error) {
 }
 
 func wrapNonInteractiveWithTclaudeLayer(p spawnParams, h *harness.Harness, argv []string) (string, error) {
+	return wrapOneShotWithTclaudeLayer(h, p.Cwd, p.EffectiveSandbox, p.GitWorktreeWriteDirs, argv)
+}
+
+// wrapOneShotWithTclaudeLayer renders a one-shot argv as a shell command run
+// inside tclaude's built-in sandbox for cwd and snapshot. Shared by
+// non-interactive spawns and séances replaying a tclaude-layer generation.
+func wrapOneShotWithTclaudeLayer(
+	h *harness.Harness, cwd string, snapshot *sandboxpolicy.Snapshot, gitWriteDirs, argv []string,
+) (string, error) {
 	var harnessReadPaths []string
 	if runtime.GOOS == "linux" {
 		switch h.Name {
@@ -339,8 +348,8 @@ func wrapNonInteractiveWithTclaudeLayer(p spawnParams, h *harness.Harness, argv 
 		}
 	}
 	spec, err := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
-		HarnessName: h.Name, Cwd: p.Cwd, Snapshot: p.EffectiveSandbox,
-		GitWriteDirs:     append([]string(nil), p.GitWorktreeWriteDirs...),
+		HarnessName: h.Name, Cwd: cwd, Snapshot: snapshot,
+		GitWriteDirs:     append([]string(nil), gitWriteDirs...),
 		HarnessReadPaths: harnessReadPaths,
 	})
 	if err != nil {

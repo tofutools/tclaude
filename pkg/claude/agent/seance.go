@@ -202,6 +202,11 @@ func runSeance(p *seanceParams, stdin io.Reader, stdout, stderr io.Writer) int {
 		Model:         model,
 		Effort:        effort,
 	}
+	if _, forks := h.Ask.(harness.EphemeralResumer); forks {
+		// The daemon continues a private copy of the conversation in a new
+		// session it removes afterwards; name that copy symbolically here.
+		spec.ResumeFile = "<copy-of-" + short(target) + ">"
+	}
 	argv := h.Ask.BuildAskArgv(spec)
 
 	if !resolved.Exact && resolved.Hops > 0 && resolved.Hops < resolved.Requested {

@@ -60,6 +60,9 @@ type seanceResolveResp struct {
 	// the daemon-private, DB-backed launch contract consumed by /run.
 	launchPosture    harness.SpawnSpec
 	effectiveSandbox *sandboxpolicy.Snapshot
+	// insideTclaudeLayer replays a generation recorded under tclaude's
+	// built-in sandbox inside it (harness.OneShotReplayTclaudeLayer).
+	insideTclaudeLayer bool
 }
 
 type seanceRunReq struct {
@@ -282,7 +285,7 @@ func handleWhoamiSeanceRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	argv := h.Ask.BuildAskArgv(harness.AskSpec{
+	askSpec := harness.AskSpec{
 		ResumeID:      resolved.Predecessor,
 		Prompt:        req.Question,
 		Print:         true,
@@ -290,13 +293,36 @@ func handleWhoamiSeanceRun(w http.ResponseWriter, r *http.Request) {
 		LaunchPosture: &posture,
 		Model:         model,
 		Effort:        effort,
-	})
+	}
+	if resumer, ok := h.Ask.(harness.EphemeralResumer); ok {
+		// No flag keeps this harness's headless resume out of the
+		// conversation, so the turn runs on a fork of a copy, which cleanup
+		// removes along with the copy once the answer is in.
+		resumeFile, cleanup, prepErr := resumer.PrepareEphemeralResume(resolved.Predecessor)
+		defer cleanup()
+		if prepErr != nil {
+			writeError(w, http.StatusBadGateway, "seance_init",
+				"cannot prepare the predecessor's conversation: "+prepErr.Error())
+			return
+		}
+		askSpec.ResumeFile = resumeFile
+	}
+	argv := h.Ask.BuildAskArgv(askSpec)
 	if len(argv) == 0 {
 		writeError(w, http.StatusConflict, "unsupported_harness", "the resolved harness returned an empty command")
 		return
 	}
 	if splitCapability != nil {
 		argv[0] = splitCapability.ExecutablePath
+	}
+	if resolved.insideTclaudeLayer {
+		wrapped, wrapErr := wrapOneShotWithTclaudeLayer(h, resolved.Cwd, resolved.effectiveSandbox, nil, argv)
+		if wrapErr != nil {
+			writeError(w, http.StatusConflict, "sandbox_profile_changed",
+				"cannot reproduce the predecessor's tclaude sandbox: "+wrapErr.Error())
+			return
+		}
+		argv = []string{"/bin/sh", "-c", wrapped}
 	}
 
 	setAuditTargetConv(r, resolved.Predecessor)
@@ -549,31 +575,44 @@ func resolveSeancePlan(
 			"the predecessor's recorded sandbox is no longer valid: "+err.Error())
 		return seanceResolveResp{}, false
 	}
-	if fail := sandboxProfileCapabilityFailure(h.Name, harnessBuiltinMode, effectiveSandbox); fail != nil {
+	// A harness whose replay honours tclaude's own sandbox runs a generation
+	// recorded under it inside it again, where its recorded native mode is
+	// the layer's (`off`); the layer then owns the filesystem grants, as for
+	// a non-interactive spawn.
+	insideLayer := h.ReplaysOneShotInsideTclaudeLayer() &&
+		sandboxpolicy.Implementation(strings.TrimSpace(sourceRow.SandboxImplementation)) == sandboxpolicy.ImplementationTclaudeLayer
+	implementation := ""
+	postureSnapshot := effectiveSandbox
+	if insideLayer {
+		implementation = string(sandboxpolicy.ImplementationTclaudeLayer)
+		postureSnapshot = nil
+	}
+	if fail := sandboxProfileCapabilityFailure(h.Name, harnessBuiltinMode, effectiveSandbox, implementation); fail != nil {
 		writeError(w, http.StatusConflict, "sandbox_profile_changed",
 			"cannot reproduce the predecessor's recorded sandbox: "+fail.Msg)
 		return seanceResolveResp{}, false
 	}
 	posture, err := session.OneShotLaunchPosture(
-		cwd, h, harnessBuiltinMode, approvalPolicy, autoReview, effectiveSandbox)
+		cwd, h, harnessBuiltinMode, approvalPolicy, autoReview, postureSnapshot)
 	if err != nil {
 		writeError(w, http.StatusConflict, "sandbox_profile_changed",
 			"cannot reproduce the predecessor's recorded sandbox: "+err.Error())
 		return seanceResolveResp{}, false
 	}
 	return seanceResolveResp{
-		Predecessor:      target,
-		Harness:          h.Name,
-		Cwd:              cwd,
-		Hops:             hops,
-		Requested:        req.Back,
-		Exact:            exact,
-		Sandbox:          harnessBuiltinMode,
-		Approval:         approvalPolicy,
-		AutoReview:       autoReview,
-		SandboxDenyDirs:  append([]string(nil), posture.SandboxDenyDirs...),
-		launchPosture:    posture,
-		effectiveSandbox: effectiveSandbox,
+		Predecessor:        target,
+		Harness:            h.Name,
+		Cwd:                cwd,
+		Hops:               hops,
+		Requested:          req.Back,
+		Exact:              exact,
+		Sandbox:            harnessBuiltinMode,
+		Approval:           approvalPolicy,
+		AutoReview:         autoReview,
+		SandboxDenyDirs:    append([]string(nil), posture.SandboxDenyDirs...),
+		launchPosture:      posture,
+		effectiveSandbox:   effectiveSandbox,
+		insideTclaudeLayer: insideLayer,
 	}, true
 }
 
