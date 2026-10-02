@@ -434,34 +434,10 @@ func readGeminiSessionFile(path, projectRoot string) (convops.SessionEntry, bool
 		return convops.SessionEntry{}, false
 	}
 
-	session := newGeminiSession()
-	if strings.HasSuffix(path, ".json") {
-		// Legacy whole-file record (pretty-printed, so not line-oriented).
-		raw, err := io.ReadAll(io.LimitReader(file, geminiLegacyFileLimit))
-		if err != nil {
-			return convops.SessionEntry{}, false
-		}
-		session.applyRecord(raw)
-	} else {
-		reader := bufio.NewReaderSize(file, 64<<10)
-		for {
-			// Copilot's bounded line reader: an oversized line (a huge tool
-			// result) is dropped rather than ending the scan, and a final
-			// partially flushed line from a live writer is tolerated.
-			line, readErr := readCopilotEventLine(reader)
-			if len(line) > 0 {
-				session.applyRecord(line)
-			}
-			if readErr != nil {
-				if !errors.Is(readErr, io.EOF) {
-					slog.Warn("gemini convstore: session scan stopped early; listing what was read",
-						"path", path, "error", readErr)
-				}
-				break
-			}
-		}
+	session, ok := foldGeminiSessionFile(file, path)
+	if !ok {
+		return convops.SessionEntry{}, false
 	}
-
 	if session.meta.SessionID == "" || session.meta.Kind == "subagent" {
 		return convops.SessionEntry{}, false
 	}
@@ -509,6 +485,39 @@ func readGeminiSessionFile(path, projectRoot string) (convops.SessionEntry, bool
 		Harness:      GeminiName,
 		Model:        model,
 	}, true
+}
+
+// foldGeminiSessionFile folds one open session file the way
+// loadConversationRecord does. ok is false only when a legacy `.json` record
+// cannot be read at all; a JSONL scan that stops early keeps what it read.
+func foldGeminiSessionFile(file io.Reader, path string) (*geminiSession, bool) {
+	session := newGeminiSession()
+	if strings.HasSuffix(path, ".json") {
+		// Legacy whole-file record (pretty-printed, so not line-oriented).
+		raw, err := io.ReadAll(io.LimitReader(file, geminiLegacyFileLimit))
+		if err != nil {
+			return nil, false
+		}
+		session.applyRecord(raw)
+		return session, true
+	}
+	reader := bufio.NewReaderSize(file, 64<<10)
+	for {
+		// Copilot's bounded line reader: an oversized line (a huge tool
+		// result) is dropped rather than ending the scan, and a final
+		// partially flushed line from a live writer is tolerated.
+		line, readErr := readCopilotEventLine(reader)
+		if len(line) > 0 {
+			session.applyRecord(line)
+		}
+		if readErr != nil {
+			if !errors.Is(readErr, io.EOF) {
+				slog.Warn("gemini convstore: session scan stopped early; keeping what was read",
+					"path", path, "error", readErr)
+			}
+			return session, true
+		}
+	}
 }
 
 // geminiLegacyFileLimit bounds a legacy whole-file `.json` read.

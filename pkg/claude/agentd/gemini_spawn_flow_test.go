@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -243,4 +244,31 @@ func TestGeminiSpawn_ApprovalModeIsRenderedAndRecorded(t *testing.T) {
 		"name": "bad-gemini", "harness": harness.GeminiName, "approval": "never",
 	})
 	assert.NotEqual(t, http.StatusOK, bad.Code, "a Codex token is not a Gemini approval mode")
+}
+
+// TestGeminiSpawn_DashboardShowsUsageFromTheSessionFile: the per-call usage
+// Gemini stamps on each model message reaches the dashboard's context meter —
+// the latest call's prompt size against Gemini's own model limit, and output
+// summed over the conversation.
+func TestGeminiSpawn_DashboardShowsUsageFromTheSessionFile(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	resp, sim := spawnGemini(t, f, "crew", map[string]any{
+		"name":            "metered-gemini",
+		"initial_message": "start work",
+	})
+	sim.WriteGeminiReplyWithTokens("first", "gemini-3-flash", 10_000, 300, 200)
+	sim.WriteGeminiReplyWithTokens("second", "gemini-3-flash", 104_857, 500, 0)
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	row := findDashAgent(snap, resp.ConvID)
+	require.NotNil(t, row, "the Gemini agent must be on the dashboard")
+	assert.Equal(t, int64(1_048_576), row.State.ContextWindowSize)
+	assert.InDelta(t, 10.0, row.State.ContextPct, 0.01)
+
+	stored, err := db.GetContextSnapshot(resp.Label)
+	require.NoError(t, err)
+	assert.Equal(t, int64(104_857), stored.TokensInput, "context occupancy is the LATEST call's prompt")
+	assert.Equal(t, int64(1_000), stored.TokensOutput, "output and thinking tokens summed over the conversation")
 }
