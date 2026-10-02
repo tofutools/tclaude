@@ -371,7 +371,7 @@ func TestRunSetup_AllHarnessesPreparesAbsentHarnesses(t *testing.T) {
 		{name: "install-all retains discovery", params: Params{Yes: true, InstallAll: true}},
 		{name: "all-harnesses", params: Params{Yes: true, AllHarnesses: true}},
 		{name: "interactive absent harnesses", params: Params{AllHarnesses: true}},
-		{name: "interactive detected Codex decline", params: Params{AllHarnesses: true}, codexPresent: true},
+		{name: "interactive detected Codex auto-trusts", params: Params{AllHarnesses: true}, codexPresent: true},
 		{name: "combined flags and custom home", params: Params{Yes: true, InstallAll: true, AllHarnesses: true}, customCopilotHome: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -407,12 +407,13 @@ func TestRunSetup_AllHarnessesPreparesAbsentHarnesses(t *testing.T) {
 					continue
 				}
 				if tc.codexPresent {
-					assert.Contains(t, out, "Install and trust tclaude hooks for Codex CLI?")
-					assert.Contains(t, out, "Skipped Codex CLI hooks")
-					assert.NoFileExists(t, filepath.Join(codexHome, "hooks.json"))
+					// A detected Codex is installed and trusted like any other
+					// harness: no prompt, even when every prompt is declined.
+					assert.NotContains(t, out, "Install and trust tclaude hooks")
+					assert.FileExists(t, filepath.Join(codexHome, "hooks.json"))
 					codex, ok := harness.Get("codex")
 					require.True(t, ok)
-					assert.False(t, codex.Hooks.(harness.TrustedHookInstaller).Trusted())
+					assert.True(t, codex.Hooks.(harness.TrustedHookInstaller).Trusted())
 					assert.FileExists(t, filepath.Join(copilotHome, "hooks", "tclaude.json"))
 					continue
 				}
@@ -508,36 +509,10 @@ func TestHookInstallTargets(t *testing.T) {
 		harnessTargetNames(hookInstallTargets(codex, false, all)))
 
 	// A present Copilot is auto-added without being selected, exactly like
-	// Codex — and, having no trust store, it needs no consent prompt.
+	// Codex — and, having no trust store, it needs no trust grant.
 	onlyCopilot := func(h *harness.Harness) bool { return h.Name == harness.CopilotName }
 	assert.Equal(t, []string{"claude", "copilot"},
 		harnessTargetNames(hookInstallTargets(claude, false, onlyCopilot)))
-}
-
-func TestConsentToDetectedHookTrust(t *testing.T) {
-	codex, ok := harness.Get("codex")
-	require.True(t, ok)
-
-	t.Run("yes flag", func(t *testing.T) {
-		withStdin(t, "", func() {
-			assert.True(t, consentToDetectedHookTrust(codex, true))
-		})
-	})
-	t.Run("affirmative response", func(t *testing.T) {
-		withStdin(t, "y\n", func() {
-			assert.True(t, consentToDetectedHookTrust(codex, false))
-		})
-	})
-	t.Run("decline", func(t *testing.T) {
-		withStdin(t, "n\n", func() {
-			assert.False(t, consentToDetectedHookTrust(codex, false))
-		})
-	})
-	t.Run("empty answer defaults yes", func(t *testing.T) {
-		withStdin(t, "\n", func() {
-			assert.True(t, consentToDetectedHookTrust(codex, false))
-		})
-	})
 }
 
 // installHooksForHarness writes the harness's own hook config and trust state —

@@ -360,9 +360,11 @@ TrustedHookInstaller interface {
 Some harnesses gate command hooks behind a separate executable-trust store,
 so installing the declaration is not enough — it must also be trusted before
 it runs. Codex's `codex_hook_trust.go` is the worked example. Setup invokes
-the trusted path only when the operator explicitly selects that harness:
-finding another harness on `PATH` is enough to install its declarations,
-never to grant it execution trust. When authoritative identity is available
+the trusted path for the selected harness and for every other harness found
+on `PATH`, without a prompt — a harness does not work properly under tclaude
+without its hooks. A harness prepared by `--all-harnesses` whose CLI is not
+installed gets declarations only; re-running setup once it is installed
+grants trust. When authoritative identity is available
 only for installed declarations, `InstallTrusted` may install first, discover
 identity, then persist trust — but it must roll the declaration back on any
 discovery or trust failure so it cannot leave an invisible startup review
