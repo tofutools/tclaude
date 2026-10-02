@@ -74,7 +74,8 @@ var geminiApprovalModeHelp = map[string]string{
 		"(--approval-mode=yolo). Gemini's ask_user tool still asks a human. " +
 		"⚠ Shell commands are not confined by Gemini itself: without --sandbox-impl " +
 		"tclaude-layer the agent can do anything the pane's user can. Gemini also drops " +
-		"to `default` in a folder it does not trust.",
+		"to `default` in a folder it does not trust, and refuses to start when your settings " +
+		"disable yolo (security.disableYoloMode, admin.secureModeEnabled).",
 	GeminiApprovalAutoEdit: "File edits inside the workspace and web fetches run without " +
 		"confirmation; shell commands still ask. " +
 		"⚠ A detached agent waits for a human on its first shell command.",
