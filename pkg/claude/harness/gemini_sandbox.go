@@ -31,6 +31,7 @@ import (
 //     the posture tclaude-layer launches under, so tclaude's outer wall is
 //     the single enforcement boundary. A container re-exec would move the
 //     process — and the hook callback — out of the wall tclaude built.
+//     It also exports NODE_USE_ENV_PROXY=1 (geminiNodeEnvProxyVar).
 //   - seatbelt: macOS only, the harness-builtin posture. The launch exports
 //     GEMINI_SANDBOX=sandbox-exec and SEATBELT_PROFILE=permissive-open, so
 //     Gemini re-executes itself under its own Seatbelt profile: writes are
@@ -131,12 +132,24 @@ func (geminiSandbox) ModeHelp(mode string) string {
 	return geminiSandboxModeHelp[strings.TrimSpace(mode)]
 }
 
+// geminiNodeEnvProxyVar makes Node's built-in fetch honour HTTP(S)_PROXY.
+// Gemini means to honour those variables (it installs a proxy dispatcher from
+// them), but measured with 0.62.0 on Node 26 its model client ignores them
+// unless this is set, so behind tclaude's proxy network engine it dials
+// directly into the empty namespace and every model call fails. Set for the
+// `off` mode only, the one every tclaude-layer launch uses, so it never
+// reaches a pane outside tclaude's sandbox through a mode it did not ask for.
+// It is inherited by the agent's own Node commands, and it has no effect
+// unless a proxy variable is set.
+const geminiNodeEnvProxyVar = "NODE_USE_ENV_PROXY"
+
 // geminiSandboxEnvPrefix renders the environment a mode needs, placed directly
 // before the binary so nothing earlier in the launch line can override it.
 func geminiSandboxEnvPrefix(mode string) string {
 	switch strings.TrimSpace(mode) {
 	case GeminiSandboxOff:
-		return "export " + GeminiSandboxEnvVar + "=false; export " + geminiInSandboxEnvVar + "=; "
+		return "export " + GeminiSandboxEnvVar + "=false; export " + geminiInSandboxEnvVar + "=; export " +
+			geminiNodeEnvProxyVar + "=1; "
 	case GeminiSandboxSeatbelt:
 		// SANDBOX is exported empty for the same reason as in `off`: unset,
 		// a .env could refill it, and a set SANDBOX tells Gemini it is

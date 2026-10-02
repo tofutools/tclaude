@@ -26,6 +26,9 @@ const (
 	filteredModelEndpointSmokeEnv = "TCLAUDE_FILTERED_MODEL_ENDPOINT_SMOKE"
 	filteredClaudePinnedVersion   = "2.1.220"
 	filteredCodexPinnedVersion    = "0.145.0"
+	// filteredGeminiPinnedVersion is HARNESS_GEMINI_VERSION in
+	// scripts/filtered-proxy-smoke/lib/harnesses.sh.
+	filteredGeminiPinnedVersion = "0.62.0"
 )
 
 // TestPinnedFilteredModelEndpointEvidence runs the exact Claude and Codex

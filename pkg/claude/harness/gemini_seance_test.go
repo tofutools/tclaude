@@ -17,7 +17,7 @@ func TestGeminiAskerRendersTheRecordedPosture(t *testing.T) {
 		LaunchPosture: &SpawnSpec{HarnessBuiltinMode: GeminiSandboxOff, ApprovalPolicy: GeminiApprovalYolo},
 	})
 	assert.Equal(t, []string{
-		"env", "GEMINI_SANDBOX=false", "SANDBOX=", "gemini",
+		"env", "GEMINI_SANDBOX=false", "SANDBOX=", "NODE_USE_ENV_PROXY=1", "gemini",
 		"--session-file", "/state/copy.jsonl", "--model", "flash", "--approval-mode=yolo", "--prompt=--why?",
 	}, argv, "the copy replaces --resume; the sandbox env and approval are the recorded ones")
 
