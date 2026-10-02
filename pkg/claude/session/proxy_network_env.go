@@ -14,11 +14,10 @@ import (
 // proxyNetworkSandboxEnv injects the sandbox's proxy discovery after the
 // platform launcher has bound its actual endpoint.
 func proxyNetworkSandboxEnv(environ []string, port int) []string {
-	owned := make(map[string]struct{}, len(proxyNetworkProxyVariables)+1)
+	owned := make(map[string]struct{}, len(proxyNetworkProxyVariables))
 	for _, name := range proxyNetworkProxyVariables {
 		owned[name] = struct{}{}
 	}
-	owned[proxyNetworkNodeEnvProxyVariable] = struct{}{}
 	out := make([]string, 0, len(environ)+len(proxyNetworkProxyVariables))
 	for _, pair := range environ {
 		name, _, ok := strings.Cut(pair, "=")
@@ -33,18 +32,8 @@ func proxyNetworkSandboxEnv(environ []string, port int) []string {
 	for _, entry := range ProxyNetworkCarriage(endpoint) {
 		out = append(out, entry.Name+"="+entry.Value)
 	}
-	return append(out, proxyNetworkNodeEnvProxyVariable+"=1")
+	return out
 }
-
-// proxyNetworkNodeEnvProxyVariable makes Node's built-in fetch and http
-// clients honour the proxy variables above. It routes nothing on its own and
-// is not a carriage: it only lets a Node harness find the one exit that
-// exists. Without it a Node CLI whose own proxy wiring misses Node's bundled
-// fetch connects directly, into an empty namespace, and every model call
-// fails — measured with Gemini CLI 0.62.0 on Node 26, whose model client
-// ignores HTTPS_PROXY unless this is set. Owned like the routing variables,
-// so an inherited `0` cannot switch it off.
-const proxyNetworkNodeEnvProxyVariable = "NODE_USE_ENV_PROXY"
 
 const (
 	ProxyNetworkDecisionMessage = "sandbox filtering proxy decision"

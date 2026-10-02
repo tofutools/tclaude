@@ -217,8 +217,7 @@ filtered.
 The launcher owns all eight proxy environment variables
 (`HTTP_PROXY`/`HTTPS_PROXY` and lowercase forms pointing at the listener,
 `ALL_PROXY=socks5h://…`, and `NO_PROXY` forced empty with a disclosure when
-the host carried a value), plus `NODE_USE_ENV_PROXY=1` so Node clients use
-them, injected *after* the model-transport gate reads the
+the host carried a value), injected *after* the model-transport gate reads the
 pre-injection environment — so tclaude's own variables never trigger the
 foreign-proxy refusal. A loopback-only `/etc/hosts` and refusal of resolver
 sockets on the unix-socket or filesystem axis preserve name authority.
@@ -289,7 +288,12 @@ Gemini CLI launches are enforced by the Linux packet gateway, the same as
 Claude Code and Codex. On Linux the proxy engine works for Gemini too; it is
 not yet activated on macOS. Gemini is a Node program, and on current Node its
 model client honours the proxy variables only when `NODE_USE_ENV_PROXY=1` is
-set, so the proxy launcher sets that variable for every launch. Gemini's
+set, so every Gemini launch under tclaude's sandbox exports it. The agent's
+own Node commands inherit it, which has one visible effect behind the proxy
+engine: a Node program that calls a server it started on `localhost` sends
+that request to the proxy, which treats loopback as the host's, so it is
+refused, or with a loopback row, reaches the host's service on that port instead
+of the sandbox's. Gemini's
 telemetry origin (`play.googleapis.com`) is not in either Gemini pack, so the
 proxy refuses it and Gemini carries on without it.
 tclaude resolves the model route from Gemini's own selected auth type

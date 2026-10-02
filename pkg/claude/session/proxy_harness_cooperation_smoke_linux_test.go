@@ -165,6 +165,10 @@ func TestPinnedProxyHarnessCooperation(t *testing.T) {
 				// Headless Gemini refuses an untrusted folder before any
 				// request; the workspace is trusted for this launch only.
 				"GEMINI_CLI_TRUST_WORKSPACE": "true",
+				// What tclaude's Gemini `off` launch mode exports
+				// (harness.geminiSandboxEnvPrefix); without it the model
+				// client ignores the proxy variables on current Node.
+				"NODE_USE_ENV_PROXY": "1",
 			},
 			origins: []string{"generativelanguage.googleapis.com"},
 			prepare: func(t *testing.T, home, workspace string) map[string]string {

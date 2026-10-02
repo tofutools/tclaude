@@ -224,7 +224,6 @@ func TestProxyNetworkSandboxEnvReplacesInheritedProxyDiscovery(t *testing.T) {
 		"NO_PROXY=localhost,10.0.0.0/8",
 		"no_proxy=localhost,10.0.0.0/8",
 		"HOME=/home/agent",
-		"NODE_USE_ENV_PROXY=0",
 	}
 	got := proxyNetworkSandboxEnv(environ, 41234)
 	assert.NotContains(t, strings.Join(got, "\n"), "attacker.invalid",
@@ -242,12 +241,9 @@ func TestProxyNetworkSandboxEnvReplacesInheritedProxyDiscovery(t *testing.T) {
 		"all_proxy=socks5h://127.0.0.1:41234",
 		"NO_PROXY=",
 		"no_proxy=",
-		// Node clients honour the variables above only when asked to.
-		"NODE_USE_ENV_PROXY=1",
 	} {
 		assert.Contains(t, got, want)
 	}
-	assert.Equal(t, 1, proxyBridgeCountVariable(got, "NODE_USE_ENV_PROXY"))
 	for _, name := range proxyNetworkProxyVariables {
 		assert.Equal(t, 1, proxyBridgeCountVariable(got, name),
 			"%s must appear exactly once", name)

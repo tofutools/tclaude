@@ -105,7 +105,7 @@ func geminiOneShotEnv(posture SpawnSpec) []string {
 	var env []string
 	switch strings.TrimSpace(posture.HarnessBuiltinMode) {
 	case GeminiSandboxOff:
-		env = append(env, GeminiSandboxEnvVar+"=false", geminiInSandboxEnvVar+"=")
+		env = append(env, GeminiSandboxEnvVar+"=false", geminiInSandboxEnvVar+"=", geminiNodeEnvProxyVar+"=1")
 	case GeminiSandboxSeatbelt:
 		env = append(env, GeminiSandboxEnvVar+"="+geminiSeatbeltCommand,
 			geminiSeatbeltProfileVar+"="+geminiSeatbeltProfile, geminiInSandboxEnvVar+"=")

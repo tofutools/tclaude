@@ -250,10 +250,10 @@ var proxyEngineActivatedSmokes = map[string]map[string][]string{
 			"TestPinnedProxyToolEgress",
 		},
 		// Gemini CLI's arm of the plain-CLI cooperation smoke launches the
-		// pinned 0.62.0 binary behind the real floor. It needs the launcher's
-		// NODE_USE_ENV_PROXY: without it Gemini's model client ignores the
-		// proxy variables on current Node and dials directly into the empty
-		// namespace. The tool-egress floor evidence is cited as for every row.
+		// pinned 0.62.0 binary behind the real floor, with the
+		// NODE_USE_ENV_PROXY=1 its `off` launch mode exports (without it the
+		// model client ignores the proxy variables on current Node). The
+		// tool-egress floor evidence is cited as for every row.
 		GeminiName: {
 			"TestPinnedProxyHarnessCooperation",
 			"TestPinnedProxyToolEgress",
