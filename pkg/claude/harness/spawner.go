@@ -12,6 +12,11 @@ type SpawnSpec struct {
 	// Codex strict-Home launches set this to the binary whose split-policy
 	// behavior and identity were probed, preventing a later PATH substitution.
 	ExecutablePath string
+	// ExecutableInterpreter, when set, starts ExecutablePath through this
+	// absolute interpreter instead of through the file's own `#!` line. Gemini
+	// sets it for a constructed root, where its `#!/usr/bin/env node` PATH
+	// lookup cannot see a Node installed under the home directory.
+	ExecutableInterpreter string
 	// CodexAppServerSocket selects the opt-in Codex app-server drive. The
 	// adapter starts a private app-server in the same launch envelope, points
 	// the normal TUI at it with --remote, and records the server pid for agentd.

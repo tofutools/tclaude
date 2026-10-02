@@ -899,6 +899,15 @@ wrapped by that root. Gemini CLI finds its IDE companion through files under
 `/tmp`, which the constructed root replaces with a fresh one, so Gemini's IDE
 integration may not connect in this posture.
 
+A constructed root carries only the OS surface and your grants, so a harness
+installed under your home directory would be missing from it. tclaude resolves
+the harness executable on the host before entering the root and mounts it
+read-only: Claude Code's versioned binary, Codex's native runtime, and for
+Gemini CLI the npm package, any of its dependencies installed beside it, and
+the Node interpreter its `#!/usr/bin/env node` line would find (an npm user
+prefix, nvm, mise, …). Gemini is then started as `<node> <bundle>` by absolute
+path, so the shebang's PATH lookup never runs inside the root.
+
 That posture is deliberately rated **partially enforced**, permanently. With the
 host network namespace shared, Linux abstract-namespace Unix sockets (`@…`) are
 not filesystem objects at all, so no mount plan can hide them; close network

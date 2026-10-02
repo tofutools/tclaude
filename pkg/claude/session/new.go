@@ -2105,6 +2105,7 @@ func runNew(params *NewParams) error {
 		}
 	}
 	executablePath := ""
+	executableInterpreter := ""
 	var harnessReadPaths []string
 	if launchCodexSplitCapability != nil {
 		executablePath = launchCodexSplitCapability.ExecutablePath
@@ -2122,6 +2123,18 @@ func runNew(params *NewParams) error {
 		}
 		executablePath = resolvedClaude.Path
 		harnessReadPaths = append(harnessReadPaths, resolvedClaude.Path)
+	} else if tclaudeLayerOnly && h.Name == harness.GeminiName && runtime.GOOS == "linux" &&
+		tclaudeLayerRoot == sandboxpolicy.RootConstructed {
+		// Only a constructed root needs this: a host-inherited one still sees
+		// the pane's own PATH, profile environment and pre-launch script, so a
+		// launch there keeps resolving `gemini` and `node` as it did before.
+		resolvedGemini, resolveErr := harness.ResolveGeminiLaunchExecutable()
+		if resolveErr != nil {
+			return fmt.Errorf("resolve Gemini executable for tclaude’s sandbox: %w", resolveErr)
+		}
+		executablePath = resolvedGemini.Path
+		executableInterpreter = resolvedGemini.Interpreter
+		harnessReadPaths = append(harnessReadPaths, resolvedGemini.ReadPaths...)
 	} else if h.Name == harness.OpenCodeName {
 		executablePath, err = harness.OpenCodeExecutable()
 		if err != nil {
@@ -2218,6 +2231,7 @@ func runNew(params *NewParams) error {
 	}
 	spawnSpec := harness.SpawnSpec{
 		ExecutablePath:                 executablePath,
+		ExecutableInterpreter:          executableInterpreter,
 		CodexAppServerSocket:           params.CodexAppServerSocket,
 		CodexAppServerURL:              params.CodexAppServerURL,
 		CodexAppServerTokenSHA256:      params.CodexAppServerTokenSHA256,

@@ -105,6 +105,14 @@ func TestGeminiSpawnerDashLeadingPromptStaysBound(t *testing.T) {
 func TestGeminiSpawnerExecutablePathIsQuoted(t *testing.T) {
 	cmd := geminiSpawner{}.BuildCommand(SpawnSpec{ExecutablePath: "/opt/my tools/gemini"})
 	assert.Equal(t, "'/opt/my tools/gemini'", cmd)
+
+	cmd = geminiSpawner{}.BuildCommand(SpawnSpec{
+		ExecutablePath:        "/home/u/.npm global/lib/node_modules/@google/gemini-cli/bundle/gemini.js",
+		ExecutableInterpreter: "/home/u/.nvm/versions/node/v24/bin/node",
+	})
+	assert.Equal(t, "/home/u/.nvm/versions/node/v24/bin/node "+
+		"'/home/u/.npm global/lib/node_modules/@google/gemini-cli/bundle/gemini.js'", cmd,
+		"a Node bundle is started through the resolved interpreter, not its shebang")
 }
 
 func TestGeminiModelCatalog(t *testing.T) {

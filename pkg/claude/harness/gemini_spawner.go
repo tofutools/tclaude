@@ -59,6 +59,9 @@ func (geminiSpawner) BuildCommand(spec SpawnSpec) string {
 	binary := "gemini"
 	if spec.ExecutablePath != "" {
 		binary = clcommon.ShellQuoteArg(spec.ExecutablePath)
+		if spec.ExecutableInterpreter != "" {
+			binary = clcommon.ShellQuoteArg(spec.ExecutableInterpreter) + " " + binary
+		}
 	}
 	// The sandbox mode's environment goes LAST before the binary: GEMINI_SANDBOX
 	// outranks Gemini's flag and settings.json, and placing it after the
