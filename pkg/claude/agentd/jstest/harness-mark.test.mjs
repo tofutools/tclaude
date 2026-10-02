@@ -15,6 +15,7 @@ test('known harnesses render named product marks and unknown ones retain text', 
     ['claude', 'CC', 'Claude Code'],
     ['codex', 'Codex', 'Codex CLI'],
     ['copilot', 'COP', 'GitHub Copilot CLI'],
+    ['gemini', 'GEM', 'Gemini CLI'],
     ['opencode', 'OC', 'OpenCode'],
   ];
   for (const [name, shortLabel, longLabel] of known) {

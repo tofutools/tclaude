@@ -98,12 +98,16 @@ func refreshGeminiContextSnapshotOnRead(sess *db.SessionRow, alive bool) {
 // persistGeminiContextSnapshot writes the projection when it changed. A file
 // with no usage yet (the first turn is still in flight) writes nothing, so an
 // earlier reading is never blanked.
+//
+// The model column carries the latest call's model, so a switch made inside
+// the pane with /model reaches the dashboard. Gemini records no reasoning
+// effort anywhere (and tclaude refuses one at launch), so effort stays empty.
 func persistGeminiContextSnapshot(sess *db.SessionRow, state *geminiContextRefreshState, usage harness.GeminiUsage) {
 	if usage.Calls == 0 || usage == state.persisted {
 		return
 	}
-	updated, err := db.UpdateContextSnapshotForGeneration(sess.ID, sess.ConvID, sess.CreatedAt,
-		usage.ContextPct(), usage.ContextTokens, usage.OutputTokens, usage.ContextWindow)
+	updated, err := db.UpdateContextSnapshotAndModelEffortForGeneration(sess.ID, sess.ConvID, sess.CreatedAt,
+		usage.ContextPct(), usage.ContextTokens, usage.OutputTokens, usage.ContextWindow, usage.Model, "")
 	if err != nil {
 		slog.Warn("gemini-usage: failed to persist the context snapshot",
 			"session_id", sess.ID, "error", err, "module", "agentd")
