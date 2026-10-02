@@ -197,6 +197,7 @@ func runSetup(params *Params) error {
 			if _, trustCapable := hh.Hooks.(harness.TrustedHookInstaller); trustCapable {
 				if !consentToDetectedHookTrust(hh, params.Yes) {
 					fmt.Printf("• Skipped %s hooks (no hook trust was granted)\n", hh.DisplayName)
+					fmt.Printf("  ⚠ %s will not work properly under tclaude without hooks; re-run `tclaude setup` to install them.\n", hh.DisplayName)
 					continue
 				}
 				grantTrust = true
@@ -527,8 +528,10 @@ func installDefaultMusicVolume() error {
 }
 
 func consentToDetectedHookTrust(h *harness.Harness, assumeYes bool) bool {
+	fmt.Printf("  tclaude needs its hooks to track %s sessions (status, notifications,\n", h.DisplayName)
+	fmt.Println("  agent coordination). Without them the harness will not work properly under tclaude.")
 	prompt := fmt.Sprintf("Install and trust tclaude hooks for %s?", h.DisplayName)
-	return askYesNo(prompt, false, assumeYes)
+	return askYesNo(prompt, true, assumeYes)
 }
 
 // hookInstallTargets returns the selected harness first, followed by other

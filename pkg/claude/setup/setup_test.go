@@ -533,9 +533,9 @@ func TestConsentToDetectedHookTrust(t *testing.T) {
 			assert.False(t, consentToDetectedHookTrust(codex, false))
 		})
 	})
-	t.Run("eof defaults no", func(t *testing.T) {
-		withStdin(t, "", func() {
-			assert.False(t, consentToDetectedHookTrust(codex, false))
+	t.Run("empty answer defaults yes", func(t *testing.T) {
+		withStdin(t, "\n", func() {
+			assert.True(t, consentToDetectedHookTrust(codex, false))
 		})
 	})
 }
