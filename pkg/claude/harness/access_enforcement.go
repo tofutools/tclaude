@@ -958,7 +958,7 @@ func accessEnforcementTable(
 //     host-open root has no smoke evidence, and an unproven combination may not
 //     raise a capability rating.
 //   - A harness whose tclaude-layer renderer supports a constructed root.
-//     Claude Code, Codex, and Copilot render the pane inside that root;
+//     Claude Code, Codex, Copilot, and Gemini CLI render the pane inside that root;
 //     OpenCode renders its agentd-owned tool server there while its attach pane
 //     remains outside.
 //   - A host-open network posture. An allow list or any deny renders the
@@ -989,7 +989,8 @@ func linuxHostOpenConstructedRootAvailable(
 		return false
 	}
 	if h == nil || (h.Name != DefaultName && h.Name != CodexName &&
-		h.Name != OpenCodeName && h.Name != CopilotName && h.Name != ShellName) {
+		h.Name != OpenCodeName && h.Name != CopilotName && h.Name != GeminiName &&
+		h.Name != ShellName) {
 		return false
 	}
 	posture, err := sandboxpolicy.NetworkPostureForRules(axes.Network)
@@ -1060,7 +1061,8 @@ func SupportsExplicitFilesystemRoot(
 	return goos == "linux" &&
 		implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 		h != nil && (h.Name == DefaultName || h.Name == CodexName ||
-		h.Name == OpenCodeName || h.Name == CopilotName || h.Name == ShellName)
+		h.Name == OpenCodeName || h.Name == CopilotName || h.Name == GeminiName ||
+		h.Name == ShellName)
 }
 
 // ValidateExplicitFilesystemRoot applies the explicit-root target matrix at
@@ -1084,7 +1086,7 @@ func ValidateExplicitFilesystemRoot(
 		Harness: harnessName,
 		Kind:    SandboxCapabilityFilesystemRoot,
 		Message: fmt.Sprintf(
-			"filesystem_root %q requires tclaude’s sandbox on Linux with Claude Code, Codex, OpenCode, or Copilot; resolved target is harness %q, sandbox implementation %q, platform %q",
+			"filesystem_root %q requires tclaude’s sandbox on Linux with Claude Code, Codex, OpenCode, Copilot, or Gemini CLI; resolved target is harness %q, sandbox implementation %q, platform %q",
 			mode, harnessName, implementation, goos),
 	}
 }

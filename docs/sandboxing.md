@@ -879,8 +879,8 @@ A sandbox profile can select the filesystem root explicitly with
 `filesystem_root`: omit it for **Automatic**, use `inherit` to prefer the
 read-only host root, or use `separate` to request the minimal constructed root
 even when network and Unix sockets remain open. Explicit separation is
-supported by tclaude’s sandbox on Linux for Claude Code, Codex, OpenCode, and
-Copilot; other targets refuse it during preview/spawn rather than ignoring it.
+supported by tclaude’s sandbox on Linux for Claude Code, Codex, OpenCode,
+Copilot, and Gemini CLI; other targets refuse it during preview/spawn rather than ignoring it.
 
 The setting composes monotonically. `separate` in any included, global, group,
 or explicit profile wins. `inherit` cannot weaken a private/restricted network
@@ -890,7 +890,7 @@ automatic derivation they had before the control existed.
 
 A profile that leaves network access open but authors the `unix_sockets` axis
 as `closed` or an allow `list` gets a **host-network constructed root** on
-Linux for Claude Code, Codex, OpenCode, and Copilot: bubblewrap builds the same fresh
+Linux for Claude Code, Codex, OpenCode, Copilot, and Gemini CLI: bubblewrap builds the same fresh
 root and PID namespace as the isolated posture, binds the agentd socket and any
 listed sockets back, and does NOT create a network namespace, so host IP
 networking, host loopback services, and the IDE bridge keep working. For
