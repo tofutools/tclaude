@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -353,6 +354,23 @@ func wrapOneShotWithTclaudeLayer(
 			}
 			argv[0] = resolved.Path
 			harnessReadPaths = append(harnessReadPaths, resolved.RuntimeRoot)
+		case harness.GeminiName:
+			resolved, err := harness.ResolveGeminiLaunchExecutable()
+			if err != nil {
+				return "", fmt.Errorf("resolve Gemini executable for tclaude’s sandbox: %w", err)
+			}
+			// The asker's argv may lead with an `env K=V…` prefix carrying the
+			// sandbox mode, so the binary is located rather than assumed first.
+			at := slices.Index(argv, "gemini")
+			if at < 0 {
+				return "", fmt.Errorf("gemini one-shot argv has no gemini binary")
+			}
+			entry := []string{resolved.Path}
+			if resolved.Interpreter != "" {
+				entry = []string{resolved.Interpreter, resolved.Path}
+			}
+			argv = slices.Concat(argv[:at], entry, argv[at+1:])
+			harnessReadPaths = append(harnessReadPaths, resolved.ReadPaths...)
 		}
 	}
 	spec, err := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
