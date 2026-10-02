@@ -528,8 +528,8 @@ func installDefaultMusicVolume() error {
 }
 
 func consentToDetectedHookTrust(h *harness.Harness, assumeYes bool) bool {
-	fmt.Printf("  tclaude needs its hooks to track %s sessions (status, notifications,\n", h.DisplayName)
-	fmt.Println("  agent coordination). Without them the harness will not work properly under tclaude.")
+	fmt.Printf("  ⚠ %s will not work properly under tclaude without its hooks: tclaude needs\n", h.DisplayName)
+	fmt.Println("    them to track session status, send notifications, and coordinate agents.")
 	prompt := fmt.Sprintf("Install and trust tclaude hooks for %s?", h.DisplayName)
 	return askYesNo(prompt, true, assumeYes)
 }
