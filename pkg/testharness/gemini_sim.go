@@ -16,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // GeminiSim simulates one Gemini CLI pane (GeminiPinnedVersion), the Gemini
@@ -394,6 +395,40 @@ func (g *GeminiSim) Receive(text string) {
 			g.writeUserTurnLocked(line)
 		}
 	}
+}
+
+// FireHook delivers one Gemini-shaped hook payload to the production callback
+// — session.DecodeHookCallbackInput (which translates Gemini's event names)
+// then session.ApplyHook — the way a settings.json hook would. The base
+// fields every Gemini hook carries are filled in; fields adds the per-event
+// ones (prompt, prompt_response, tool_name, notification_type, …).
+//
+// Explicit rather than automatic: a real pane fires hooks only once they are
+// installed AND the folder is trusted, which a test states by calling this.
+// The lock is not held across ApplyHook (see CopilotSim.applyHook).
+func (g *GeminiSim) FireHook(event string, fields map[string]any) error {
+	g.mu.Lock()
+	payload := map[string]any{
+		"session_id":      g.ConvID,
+		"transcript_path": g.path,
+		"cwd":             g.Cwd,
+		"hook_event_name": event,
+		"timestamp":       time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	sessionID := g.sessionID
+	g.mu.Unlock()
+	for k, v := range fields {
+		payload[k] = v
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	in, err := session.DecodeHookCallbackInput(raw)
+	if err != nil {
+		return err
+	}
+	return session.ApplyHook(in, sessionID)
 }
 
 // Compressions reports how many /compress commands the pane accepted.

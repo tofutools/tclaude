@@ -33,10 +33,10 @@ func TestGeminiDescriptor(t *testing.T) {
 	require.NotNil(t, h.Ask, "headless --prompt backs the one-shot ask surface")
 	assert.False(t, h.SupportsAskStream(), "stream-json parsing is not contracted")
 	assert.False(t, h.CanReplayOneShotLaunchPosture())
-	assert.Nil(t, h.Hooks)
+	require.NotNil(t, h.Hooks, "settings.json hooks back live status")
 	assert.Nil(t, h.Sandbox)
 	assert.Nil(t, h.Approval)
-	assert.False(t, h.SupportsDirTrust())
+	assert.True(t, h.SupportsDirTrust())
 
 	assert.False(t, h.SupportsRename(), "Gemini CLI has no in-pane rename command")
 	assert.True(t, h.CanRename(), "rename is delivered through the ConvStore title overlay")

@@ -611,6 +611,19 @@ func isValidRenameTitle(t string) bool {
 	return true
 }
 
+// DecodeHookCallbackInput parses one hook payload as the callback receives it
+// on stdin, including the translation of Gemini CLI's event vocabulary (see
+// normalizeGeminiHookEvent). Simulators that replay harness-shaped payloads
+// go through here so they exercise the same decode the binary does.
+func DecodeHookCallbackInput(raw []byte) (HookCallbackInput, error) {
+	var input HookCallbackInput
+	if err := json.NewDecoder(bytes.NewReader(raw)).Decode(&input); err != nil {
+		return HookCallbackInput{}, fmt.Errorf("failed to parse hook input: %w", err)
+	}
+	normalizeGeminiHookEvent(&input, raw)
+	return input, nil
+}
+
 func runHookCallback() error {
 	// Read hook input from stdin
 	stdinData, err := io.ReadAll(os.Stdin)
@@ -641,14 +654,13 @@ func runHookCallback() error {
 		}
 	}
 
-	var input HookCallbackInput
-	if len(stdinData) > 0 {
-		if err := json.NewDecoder(bytes.NewReader(stdinData)).Decode(&input); err != nil {
-			slog.Error("failed to parse hook input", "error", err, "input_bytes", len(stdinData), "module", "hooks")
-			return fmt.Errorf("failed to parse hook input: %w", err)
-		}
-	} else {
+	if len(stdinData) == 0 {
 		return fmt.Errorf("no input received on stdin")
+	}
+	input, err := DecodeHookCallbackInput(stdinData)
+	if err != nil {
+		slog.Error("failed to parse hook input", "error", err, "input_bytes", len(stdinData), "module", "hooks")
+		return err
 	}
 
 	// Route the event. A `tclaude-layer` launch cannot reach the real
@@ -2018,7 +2030,7 @@ func harnessUsesSlashContextControls(name string) bool {
 
 // persistHookWorkspaceSnapshot replaces Claude Code's command-backed
 // statusline workspace write for harnesses without that surface. Codex,
-// Copilot, and OpenCode all carry the session cwd on every hook, so resolve git there at
+// Copilot, OpenCode, and Gemini all carry the session cwd on every hook, so resolve git there at
 // hook time and publish the same agent_workspace row the dashboard already
 // reads. The first branch observed also seeds conv_index.git_branch_startup;
 // later observations update only the current branch so the UI can keep showing
@@ -2027,7 +2039,7 @@ func harnessUsesSlashContextControls(name string) bool {
 func persistHookWorkspaceSnapshot(state *SessionState, input HookCallbackInput) {
 	if state == nil || state.ConvID == "" ||
 		(state.Harness != harness.CodexName && state.Harness != harness.CopilotName &&
-			state.Harness != harness.OpenCodeName) {
+			state.Harness != harness.OpenCodeName && state.Harness != harness.GeminiName) {
 		return
 	}
 	if input.ConvID != "" && input.ConvID != state.ConvID {

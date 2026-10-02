@@ -601,6 +601,13 @@ func seedScribeDirTrust(harnessName, dir string) {
 		if err := harness.EnsureCopilotDirTrusted(dir); err != nil {
 			slog.Warn("scribe: pre-trust copilot workdir failed", "dir", dir, "error", err)
 		}
+	case harness.GeminiName:
+		// Same ambient-environment caveat as Copilot: GEMINI_CLI_HOME can
+		// move the trust store, and a scribe profile that moves it is not
+		// followed here.
+		if err := harness.EnsureGeminiDirTrustedForLaunch(nil, "", dir); err != nil {
+			slog.Warn("scribe: pre-trust gemini workdir failed", "dir", dir, "error", err)
+		}
 	default:
 		// A harness with no known trust store (or one added later without a
 		// seeding path wired here). Skip rather than guess — the pane may raise
