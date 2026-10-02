@@ -171,3 +171,42 @@ func TestGeminiSpawn_StopThenResumeReopensTheSameConversation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "gemini-worker", title)
 }
+
+// TestGeminiSpawn_TclaudeLayerForcesGeminisOwnSandboxOff: under tclaude's own
+// wall the pane is launched with Gemini's sandbox forced off, so the outer
+// wall is the single enforcement boundary — GEMINI_SANDBOX outranks a
+// settings.json `tools.sandbox` that would otherwise re-run the CLI in a
+// container outside the wall.
+func TestGeminiSpawn_TclaudeLayerForcesGeminisOwnSandboxOff(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	resp, _ := spawnGemini(t, f, "crew", map[string]any{
+		"name":                   "walled-gemini",
+		"sandbox_implementation": "tclaude-layer",
+	})
+	launch := geminiLaunchOf(t, f, resp.ConvID)
+	assert.Equal(t, "false", launch.Env["GEMINI_SANDBOX"])
+	sandboxVar, set := launch.Env["SANDBOX"]
+	assert.True(t, set && sandboxVar == "",
+		"SANDBOX must be exported empty: a stray value would make Gemini believe it is already contained, "+
+			"and an unset one could be refilled by a workspace .env")
+
+	row, err := db.LoadSession(resp.Label)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, "tclaude-layer", row.SandboxImplementation)
+	assert.Equal(t, harness.GeminiSandboxOff, row.HarnessBuiltinMode)
+
+	// A resume relaunches under the recorded posture, not a re-defaulted one.
+	f.AssertSoftStopped(f.AsHuman().Stop(resp.ConvID, false))
+	require.Equal(t, http.StatusOK, f.Resume(resp.ConvID).Code)
+	relaunch := geminiLaunchOf(t, f, resp.ConvID)
+	require.Equal(t, resp.ConvID, relaunch.ResumeID)
+	assert.Equal(t, "false", relaunch.Env["GEMINI_SANDBOX"], "a resumed walled pane must keep Gemini's sandbox off")
+
+	// A plain spawn leaves the operator's Gemini sandbox posture alone.
+	plain, _ := spawnGemini(t, f, "crew", map[string]any{"name": "plain-gemini"})
+	plainLaunch := geminiLaunchOf(t, f, plain.ConvID)
+	_, forced := plainLaunch.Env["GEMINI_SANDBOX"]
+	assert.False(t, forced)
+}

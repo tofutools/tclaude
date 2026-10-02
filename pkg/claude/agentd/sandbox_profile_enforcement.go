@@ -1127,7 +1127,7 @@ func parseSandboxProfileEnforcementTarget(raw string) (parsedSandboxProfileEnfor
 		harnessName = parts[1]
 	}
 	switch harnessName {
-	case harness.DefaultName, harness.CodexName, harness.OpenCodeName, harness.CopilotName:
+	case harness.DefaultName, harness.CodexName, harness.OpenCodeName, harness.CopilotName, harness.GeminiName:
 	default:
 		return parsedSandboxProfileEnforcementTarget{}, invalidSandboxProfileTarget(raw)
 	}
@@ -1166,7 +1166,7 @@ func invalidSandboxProfileTarget(raw string) error {
 	return fmt.Errorf(
 		`invalid --for target %q (want implementation[/harness[/platform]]; `+
 			`implementation: off, resource-only, harness-builtin, tclaude-layer, stacked; `+
-			`harness: claude, codex, opencode; platform: linux, darwin)`,
+			`harness: claude, codex, opencode, copilot, gemini; platform: linux, darwin)`,
 		raw,
 	)
 }

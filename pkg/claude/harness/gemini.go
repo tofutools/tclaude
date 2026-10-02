@@ -70,6 +70,13 @@ func init() {
 		// gemini_dir_trust.go).
 		DirTrust: true,
 
+		// Gemini's own sandbox has a real per-launch lever (GEMINI_SANDBOX
+		// outranks the flag and settings.json), so `off` is enforced, not
+		// asserted; tclaude-layer launches use it so tclaude's outer wall is
+		// the single boundary. See gemini_sandbox.go.
+		Sandbox:          geminiSandbox{},
+		TclaudeLayerMode: GeminiSandboxOff,
+
 		// `--session-id <id>` starts a NEW session under a caller-chosen id
 		// (packages/cli/src/config/config.ts; gemini.tsx resolveSessionId
 		// refuses an id that already exists rather than resuming it), and

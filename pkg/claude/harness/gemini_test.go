@@ -34,7 +34,14 @@ func TestGeminiDescriptor(t *testing.T) {
 	assert.False(t, h.SupportsAskStream(), "stream-json parsing is not contracted")
 	assert.False(t, h.CanReplayOneShotLaunchPosture())
 	require.NotNil(t, h.Hooks, "settings.json hooks back live status")
-	assert.Nil(t, h.Sandbox)
+	require.NotNil(t, h.Sandbox)
+	mode, err := TclaudeLayerHarnessBuiltinMode(h)
+	require.NoError(t, err)
+	assert.Equal(t, GeminiSandboxOff, mode, "tclaude-layer forces Gemini's own sandbox off")
+	off, err := SandboxOffMode(h)
+	require.NoError(t, err)
+	assert.Equal(t, GeminiSandboxOff, off)
+	assert.False(t, h.SupportsBuiltinOSSandbox(), "no catalog mode selects Gemini's own sandbox yet")
 	assert.Nil(t, h.Approval)
 	assert.True(t, h.SupportsDirTrust())
 
@@ -181,3 +188,27 @@ func TestGeminiExtraArgsAudit(t *testing.T) {
 	err = ValidateLaunchExtraArgs(h, []string{"fix the tests"})
 	assert.ErrorContains(t, err, "initial prompt or a subcommand")
 }
+
+func TestGeminiSpawnerSandboxOffForcesTheEnvironment(t *testing.T) {
+	cmd := geminiSpawner{}.BuildCommand(SpawnSpec{
+		EnvExports:         "export GEMINI_SANDBOX=docker; ",
+		PreLaunchScript:    "echo pre; ",
+		HarnessBuiltinMode: GeminiSandboxOff,
+	})
+	assert.Equal(t, "export GEMINI_SANDBOX=docker; echo pre; export GEMINI_SANDBOX=false; export SANDBOX=; gemini", cmd,
+		"the forced posture comes last so nothing earlier can override it")
+	assert.Equal(t, "gemini", geminiSpawner{}.BuildCommand(SpawnSpec{HarnessBuiltinMode: GeminiSandboxInherit}))
+
+	m := geminiSandbox{}
+	for _, ok := range []string{"inherit", " off "} {
+		_, err := m.ValidateMode(ok)
+		assert.NoError(t, err)
+	}
+	_, err := m.ValidateMode("docker")
+	assert.Error(t, err)
+	assert.Equal(t, GeminiSandboxInherit, m.DefaultMode())
+	for _, mode := range m.Modes() {
+		assert.NotEmpty(t, m.ModeHelp(mode))
+	}
+}
+

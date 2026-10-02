@@ -113,7 +113,7 @@ func lineageParentAuthorityNote(parent spawnLineageSandbox) string {
 		normalized.Implementation, normalized.Harness, authority, normalized.HarnessBuiltinMode)
 }
 
-// copilotLineageRemedy names the way out of a Copilot refusal the caller can
+// copilotLineageRemedy names the way out of a Copilot (or Gemini) refusal the caller can
 // act on, because the posture pair alone does not say which value to change.
 // Copilot enters the matrix in exactly one launch pair while the spawn defaults
 // land elsewhere, so a refused Copilot child is usually a defaulted request
@@ -126,12 +126,18 @@ func lineageParentAuthorityNote(parent spawnLineageSandbox) string {
 // enumerated, so the advice is true by construction and cannot drift out of
 // sync with the arms; it also subsumes the child that already spells the pair.
 func copilotLineageRemedy(parent, child spawnLineageSandbox) string {
-	if child.Harness != harness.CopilotName {
+	var offMode string
+	switch child.Harness {
+	case harness.CopilotName:
+		offMode = harness.CopilotSandboxOff
+	case harness.GeminiName:
+		offMode = harness.GeminiSandboxOff
+	default:
 		return ""
 	}
 	admitted := spawnLineageSandbox{
-		Harness:            harness.CopilotName,
-		HarnessBuiltinMode: harness.CopilotSandboxOff,
+		Harness:            child.Harness,
+		HarnessBuiltinMode: offMode,
 		Implementation:     sandboxpolicy.ImplementationTclaudeLayer,
 	}
 	if !spawnSandboxLineageAllowed(parent, admitted) {
@@ -139,8 +145,8 @@ func copilotLineageRemedy(parent, child spawnLineageSandbox) string {
 	}
 	return fmt.Sprintf(
 		"%s agents are admitted in exactly one launch topology — pass sandbox_implementation=%s (`--sandbox-impl %s`; mode resolves to %q)",
-		harness.CopilotName, sandboxpolicy.ImplementationTclaudeLayer,
-		sandboxpolicy.ImplementationTclaudeLayer, harness.CopilotSandboxOff)
+		child.Harness, sandboxpolicy.ImplementationTclaudeLayer,
+		sandboxpolicy.ImplementationTclaudeLayer, offMode)
 }
 
 func sandboxProfileCapabilityFailure(
@@ -721,12 +727,12 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 			return childIsClaude(child, harness.ClaudeSandboxInherit, harness.ClaudeSandboxOn) ||
 				childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile) ||
 				childIsShell(child) ||
-				copilotProvenLineageLaunch(child)
+				walledOffLineageLaunch(child)
 		case harness.ClaudeSandboxOn:
 			return childIsClaude(child, harness.ClaudeSandboxOn) ||
 				childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile) ||
 				childIsShell(child) ||
-				copilotProvenLineageLaunch(child)
+				walledOffLineageLaunch(child)
 		}
 	}
 
@@ -738,7 +744,7 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 			return childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile) ||
 				childIsClaude(child, harness.ClaudeSandboxInherit, harness.ClaudeSandboxOn) ||
 				childIsShell(child) ||
-				copilotProvenLineageLaunch(child)
+				walledOffLineageLaunch(child)
 		case harness.SandboxWorkspaceWrite:
 			return childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite)
 		case harness.SandboxReadOnly:
@@ -754,14 +760,14 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 				childIsClaude(child, harness.ClaudeSandboxOn) ||
 				childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile) ||
 				childIsShell(child) ||
-				copilotProvenLineageLaunch(child)
+				walledOffLineageLaunch(child)
 		case harness.OpenCodeSandboxAccessControl:
 			return child.Harness == harness.OpenCodeName &&
 				harnessBuiltinModeIn(child.HarnessBuiltinMode, harness.OpenCodeSandboxAccessControl, harness.OpenCodeSandboxTclaudeLayer) ||
 				childIsClaude(child, harness.ClaudeSandboxOn) ||
 				childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile) ||
 				childIsShell(child) ||
-				copilotProvenLineageLaunch(child)
+				walledOffLineageLaunch(child)
 		}
 	}
 	// A shell has no native sandbox. Only a shell launched inside tclaude's
@@ -771,7 +777,7 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 		return childIsShell(child) ||
 			childIsClaude(child, harness.ClaudeSandboxOn) ||
 			childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile) ||
-			copilotProvenLineageLaunch(child)
+			walledOffLineageLaunch(child)
 	}
 
 	// A Copilot PARENT is classified by its persisted pair, not by its mode
@@ -795,8 +801,8 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 	// wrapping the pane, and no equivalence between that topology and this one
 	// has been proven. Inventing one here would be a containment claim backed by
 	// nothing.
-	if copilotProvenLineageLaunch(parent) {
-		return copilotProvenLineageLaunch(child) ||
+	if walledOffLineageLaunch(parent) {
+		return walledOffLineageLaunch(child) ||
 			childIsClaude(child, harness.ClaudeSandboxOn) ||
 			childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile) ||
 			childIsShell(child)
@@ -817,6 +823,26 @@ func copilotProvenLineageLaunch(s spawnLineageSandbox) bool {
 	return s.Harness == harness.CopilotName &&
 		s.HarnessBuiltinMode == harness.CopilotSandboxOff &&
 		s.Implementation == sandboxpolicy.ImplementationTclaudeLayer
+}
+
+// geminiProvenLineageLaunch is Gemini CLI's single reviewed pair, the same
+// shape as Copilot's: tclaude's own wall with Gemini's sandbox off. Gemini's
+// `off` is enforced rather than asserted (GEMINI_SANDBOX=false outranks its
+// settings), but the mode is still ambiguous on its own — as a harness-builtin
+// row it is an unconfined agent — so only the implementation separates the
+// two, exactly as for Copilot. Gemini has no reviewed stacked topology.
+func geminiProvenLineageLaunch(s spawnLineageSandbox) bool {
+	return s.Harness == harness.GeminiName &&
+		s.HarnessBuiltinMode == harness.GeminiSandboxOff &&
+		s.Implementation == sandboxpolicy.ImplementationTclaudeLayer
+}
+
+// walledOffLineageLaunch covers the harnesses whose only confined launch is
+// tclaude's wall around a pane whose own sandbox is off: Copilot and Gemini.
+// They delegate, and are delegated to, as one class — the outer wall is the
+// whole of the containment either way.
+func walledOffLineageLaunch(s spawnLineageSandbox) bool {
+	return copilotProvenLineageLaunch(s) || geminiProvenLineageLaunch(s)
 }
 
 // lineageConfinementMode maps a launch — either side of the relation — onto the
@@ -930,6 +956,13 @@ func normalizeSpawnLineageSandbox(s spawnLineageSandbox) (spawnLineageSandbox, b
 		// re-verifies the assert-off claim separately on every path that starts
 		// a pane (TCL-989).
 		if copilotProvenLineageLaunch(s) {
+			return s, true
+		}
+	case harness.GeminiName:
+		// The Copilot arm's reasoning applies unchanged: one admitted pair,
+		// gated at normalization so the parent arms that return true for every
+		// child cannot admit an unconfined Gemini.
+		if geminiProvenLineageLaunch(s) {
 			return s, true
 		}
 	case harness.ShellName:

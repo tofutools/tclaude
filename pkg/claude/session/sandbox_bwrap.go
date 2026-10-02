@@ -3312,6 +3312,14 @@ func TclaudeLayerHarnessStateRoot(harnessName string) (string, error) {
 		return filepath.Join(home, ".copilot"), nil
 	case harness.OpenCodeName:
 		return filepath.Join(home, ".opencode"), nil
+	case harness.GeminiName:
+		// Gemini's own resolver: GEMINI_CLI_HOME replaces the home directory
+		// and the state lives in its .gemini (harness.GeminiStateDir), so the
+		// launch contract and the conversation store name one directory.
+		if root := harness.GeminiStateDir(); root != "" {
+			return root, nil
+		}
+		return filepath.Join(home, ".gemini"), nil
 	case harness.ShellName:
 		// Shell has no native state directory; keep a dedicated writable root
 		// for the shared tclaude-layer launch contract rather than borrowing a

@@ -107,8 +107,8 @@ warning. Model and effort are remembered by the harness itself.
 | [Remote control](remote.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | [Status line](utilities.md#status-line) | ✅ command-backed | ⚠️ curated built-in items | ⚠️ OpenCode's own TUI status | ❌ | ❌ | ❌ |
 | [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off | ❌ not modelled | ❌ |
-| [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ | ❌ not yet | ✅ |
+| Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off | ❌ forced off (`off`) | ❌ |
+| [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ | ✅ | ✅ |
 | Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD | ❌ | ❌ |
 | Hooks via `tclaude setup` | ✅ | ✅ | ❌ (server liveness instead) | ✅ | ✅ settings.json hooks | ❌ |
 | Directory pre-trust (`--trust-dir`) | ✅ | ✅ | — no trust dialog | ✅ | ✅ | — |
@@ -486,8 +486,25 @@ use instead. So are bare positional arguments (Gemini would read them as the
 initial prompt, replacing the briefing, or as a subcommand) other than the
 values of Gemini's list options such as `--include-directories`.
 
-**Not yet:** the approval catalog (Gemini's own `--approval-mode`), sandbox
-integration, and usage.
+**Sandbox.** tclaude's built-in sandbox (`--sandbox-impl tclaude-layer`) wraps
+the Gemini pane like any other harness. Gemini's own sandbox mode has two
+values:
+- `inherit` (the default) leaves your Gemini sandbox settings alone.
+- `off` exports `GEMINI_SANDBOX=false`, which outranks `--sandbox` and
+  settings.json `tools.sandbox`, and exports an empty `SANDBOX` (so a workspace `.env` cannot refill it).
+
+tclaude-layer launches always use `off`. A container sandbox would re-run
+Gemini outside tclaude's wall and out of reach of its hooks. Inside the
+wall, `~/.gemini` stays writable for chats and credentials. Its policy and
+code surface is floored read-only (see
+[the harness-config floor](sandboxing.md#the-harness-config-floor)). Agents
+may spawn Gemini children only in this walled topology, the same rule as
+Copilot. A filtered-network launch has no Gemini model-route resolver yet,
+so its authored network list must include Google's API hosts.
+
+**Not yet:** the approval catalog (Gemini's own `--approval-mode`), Gemini's
+own Seatbelt sandbox as a selectable mode, a filtered-network model route,
+and usage.
 
 ## Related pages
 

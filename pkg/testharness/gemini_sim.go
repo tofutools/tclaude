@@ -59,8 +59,11 @@ type GeminiSim struct {
 
 // GeminiLaunch is one parsed `gemini` invocation.
 type GeminiLaunch struct {
-	Binary        string
-	Env           map[string]string
+	Binary string
+	Env    map[string]string
+	// Unset names the variables the launch line removes from the inherited
+	// environment (after any export of the same name).
+	Unset         map[string]bool
 	SessionID     string
 	ResumeID      string
 	Model         string
@@ -81,7 +84,7 @@ func ParseGeminiLaunch(cmd string) (GeminiLaunch, error) {
 	if err != nil {
 		return GeminiLaunch{}, err
 	}
-	launch := GeminiLaunch{Env: map[string]string{}}
+	launch := GeminiLaunch{Env: map[string]string{}, Unset: map[string]bool{}}
 	var argv []string
 	for i, stmt := range statements {
 		if len(stmt) == 0 {
@@ -90,8 +93,16 @@ func ParseGeminiLaunch(cmd string) (GeminiLaunch, error) {
 		if stmt[0] == "export" && len(stmt) == 2 {
 			if key, value, ok := strings.Cut(stmt[1], "="); ok {
 				launch.Env[key] = value
+				delete(launch.Unset, key)
 				continue
 			}
+		}
+		if stmt[0] == "unset" && len(stmt) >= 2 {
+			for _, key := range stmt[1:] {
+				delete(launch.Env, key)
+				launch.Unset[key] = true
+			}
+			continue
 		}
 		if i != len(statements)-1 {
 			return GeminiLaunch{}, fmt.Errorf("gemini launch: unexpected statement %q", strings.Join(stmt, " "))
@@ -511,7 +522,7 @@ func (s *simSpawner) spawnNewGemini(args clcommon.SpawnArgs) error {
 	cwd := s.geminiSpawnCwd(args.Cwd)
 	cmd, err := geminiBuildLaunchCommand(harness.SpawnSpec{
 		Cwd: cwd, SessionID: args.SessionID, Name: args.Name, Model: args.Model,
-		Effort: args.Effort, InitialPrompt: args.InitialPrompt,
+		Effort: args.Effort, InitialPrompt: args.InitialPrompt, HarnessBuiltinMode: launchHarnessBuiltinMode(geminiHarnessName, args.Sandbox, args.SandboxImplementation),
 	})
 	if err != nil {
 		return err
@@ -526,7 +537,7 @@ func (s *simSpawner) spawnResumeGemini(args clcommon.SpawnArgs) error {
 	cwd := s.geminiSpawnCwd(args.Cwd)
 	cmd, err := geminiBuildLaunchCommand(harness.SpawnSpec{
 		Cwd: cwd, ResumeID: args.ConvID, Model: args.Model, Effort: args.Effort,
-		InitialPrompt: args.InitialPrompt,
+		InitialPrompt: args.InitialPrompt, HarnessBuiltinMode: launchHarnessBuiltinMode(geminiHarnessName, args.Sandbox, args.SandboxImplementation),
 	})
 	if err != nil {
 		return err
@@ -563,15 +574,17 @@ func (s *simSpawner) startGemini(args clcommon.SpawnArgs, label, cwd, cmd string
 		}
 	}
 	if err := saveSessionWithResumeProvenance(&db.SessionRow{
-		ID:                    label,
-		TmuxSession:           label,
-		ConvID:                sim.ConvID,
-		Cwd:                   sim.Cwd,
-		Status:                "running",
-		Harness:               geminiHarnessName,
-		SandboxImplementation: args.SandboxImplementation,
-		EffectiveSandbox:      args.EffectiveSandbox,
-		ApprovalPolicy:        args.Approval,
+		ID:                       label,
+		TmuxSession:              label,
+		ConvID:                   sim.ConvID,
+		Cwd:                      sim.Cwd,
+		Status:                   "running",
+		Harness:                  geminiHarnessName,
+		SandboxImplementation:    args.SandboxImplementation,
+		HarnessBuiltinMode:       launchHarnessBuiltinMode(geminiHarnessName, args.Sandbox, args.SandboxImplementation),
+		HarnessBuiltinModeSource: args.SandboxChosenBy,
+		EffectiveSandbox:         args.EffectiveSandbox,
+		ApprovalPolicy:           args.Approval,
 	}); err != nil {
 		return err
 	}

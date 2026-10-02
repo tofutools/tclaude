@@ -44,10 +44,11 @@ func (geminiSpawner) Binary() string { return "gemini" }
 // `--prompt-interactive=<prompt>` first turn.
 //
 // Fields with no Gemini flag are IGNORED rather than approximated: there is no
-// effort flag (the catalog rejects a non-empty effort first), and the sandbox,
+// effort flag (the catalog rejects a non-empty effort first), and the
 // approval, auto-review, permission-profile and remote-control fields belong
 // to contracts this descriptor leaves nil, so the resolvers refuse an explicit
-// value before a spec reaches this function.
+// value before a spec reaches this function. HarnessBuiltinMode is honored as
+// environment rather than a flag (see gemini_sandbox.go).
 //
 // spec.Name is also ignored, and that one is worth stating: Gemini CLI has no
 // launch-time name flag and no title store of its own. `session new` records a
@@ -58,7 +59,11 @@ func (geminiSpawner) BuildCommand(spec SpawnSpec) string {
 	if spec.ExecutablePath != "" {
 		binary = clcommon.ShellQuoteArg(spec.ExecutablePath)
 	}
-	cmd := spec.EnvExports + spec.PreLaunchScript + binary
+	// The sandbox mode's environment goes LAST before the binary: GEMINI_SANDBOX
+	// outranks Gemini's flag and settings.json, and placing it after the
+	// forwarded exports and the profile's pre-launch script means neither can
+	// override the posture that was recorded. See gemini_sandbox.go.
+	cmd := spec.EnvExports + spec.PreLaunchScript + geminiSandboxEnvPrefix(spec.HarnessBuiltinMode) + binary
 	if spec.ResumeID != "" {
 		cmd += " --resume " + clcommon.ShellQuoteArg(spec.ResumeID)
 	} else if spec.SessionID != "" {
