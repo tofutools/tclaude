@@ -295,6 +295,15 @@ func sandboxProfileCapabilityFailure(
 		return &spawnFailure{http.StatusUnprocessableEntity, kind,
 			fmt.Sprintf("OpenCode sandbox %q cannot represent sandbox profile %s rules; use %q",
 				harnessBuiltinMode, detail, harness.OpenCodeSandboxAccessControl)}
+	case harness.GeminiName:
+		if len(filesystem) == 0 && len(snapshot.Effective.AgentDirectories) == 0 && hasNetworkPolicy {
+			return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_network",
+				harness.GeminiBuiltinNetworkDisclosure}
+		}
+		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
+			fmt.Sprintf("Gemini CLI sandbox %q runs Gemini's own profile and cannot represent sandbox profile filesystem rules; "+
+				"use tclaude’s sandbox (sandbox implementation %q), or a sandbox profile without filesystem rules",
+				harnessBuiltinMode, sandboxpolicy.ImplementationTclaudeLayer)}
 	default:
 		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
 			fmt.Sprintf("harness %q cannot represent sandbox filesystem rules", harnessName)}

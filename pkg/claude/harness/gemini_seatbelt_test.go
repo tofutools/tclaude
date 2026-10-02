@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // withGeminiSeatbelt pretends this host has sandbox-exec, and returns a
@@ -148,4 +149,24 @@ func TestGeminiSeatbeltLaunchEnvCarriesOnlyTheHostsTrust(t *testing.T) {
 
 	require.NoError(t, os.WriteFile(store, []byte(`{"`+filepath.Join(root, "work", "projX")+`":"TRUST_FOLDER"}`), 0o644))
 	assert.False(t, trust(false), "a sibling with a shared prefix is not an ancestor")
+}
+
+// Gemini's Seatbelt mode has an access-enforcement row, so a sandbox profile
+// can be evaluated against it: network rules are not enforceable (the profile
+// leaves outbound network open) and the refusal says why.
+func TestGeminiSeatbeltAccessEnforcementRow(t *testing.T) {
+	h := withGeminiSeatbelt(t)
+	predicted, err := PredictAccessEnforcement(h, sandboxpolicy.ImplementationHarnessBuiltin,
+		sandboxpolicy.ResolvedAxes{}, GeminiSandboxSeatbelt, "darwin")
+	require.NoError(t, err)
+	assert.Equal(t, EnforceNone, predicted.NetworkClosed)
+	assert.Equal(t, EnforceNone, predicted.NetworkList)
+	assert.Equal(t, EnforceFull, predicted.SocketOpen)
+	assert.Equal(t, "process", predicted.Scope)
+	assert.Contains(t, predicted.Mechanism, "Gemini CLI Seatbelt")
+	assert.Equal(t, GeminiBuiltinNetworkDisclosure, predicted.NetworkListUnavailableDetail)
+
+	listed := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeClosed}}
+	described := DescribePredictedAccess(listed, predicted)
+	assert.Equal(t, AccessPredictionRefused, described.Network.Outcome)
 }
