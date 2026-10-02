@@ -24,7 +24,7 @@ import (
 //
 //   - inherit : tclaude sets nothing; the operator's settings and environment
 //     decide. tclaude makes no containment claim for this mode.
-//   - off     : the launch exports GEMINI_SANDBOX=false and unsets SANDBOX, so
+//   - off     : the launch exports GEMINI_SANDBOX=false and an EMPTY SANDBOX, so
 //     Gemini's own sandbox is OFF whatever settings.json says. This is
 //     the posture tclaude-layer launches under, so tclaude's outer wall is
 //     the single enforcement boundary. A container re-exec would move the
@@ -39,7 +39,12 @@ const (
 	// GeminiSandboxEnvVar selects Gemini CLI's own sandbox and outranks the
 	// flag and settings.json.
 	GeminiSandboxEnvVar = "GEMINI_SANDBOX"
-	// geminiInSandboxEnvVar is set by Gemini inside its own sandbox.
+	// geminiInSandboxEnvVar is set by Gemini inside its own sandbox. tclaude
+	// exports it EMPTY rather than unsetting it: Gemini's .env loader only
+	// fills variables that are absent, so an unset SANDBOX could be refilled
+	// by a .env in the writable workspace (on macOS that relocates Gemini's
+	// state out of the store tclaude reads), while an empty one reads as
+	// false everywhere the CLI checks it.
 	geminiInSandboxEnvVar = "SANDBOX"
 )
 
@@ -84,5 +89,5 @@ func geminiSandboxEnvPrefix(mode string) string {
 	if strings.TrimSpace(mode) != GeminiSandboxOff {
 		return ""
 	}
-	return "export " + GeminiSandboxEnvVar + "=false; unset " + geminiInSandboxEnvVar + "; "
+	return "export " + GeminiSandboxEnvVar + "=false; export " + geminiInSandboxEnvVar + "=; "
 }

@@ -747,6 +747,18 @@ cannot `send-keys` at tclaude's tmux server.
   outer wall. This is the residual member of the same escalation family the
   floor closes, and closing it needs a different mechanism than a read-only
   bind.
+- **Gemini's floor protects only the policy files that already exist.** Like
+  every floor entry, a missing file is not materialized, and in a typical
+  `~/.gemini` most of the dangerous ones are missing: `.env`,
+  `trusted_hooks.json`, `policy_integrity.json`, `GEMINI.md`, and
+  `trustedFolders.json` until `--trust-dir` first writes it. A walled Gemini
+  agent can create `~/.gemini/.env` (loaded into the environment of the
+  operator's next `gemini` in a trusted folder: base URLs, `GEMINI_SYSTEM_MD`,
+  `NODE_OPTIONS`) or a `trustedFolders.json` that trusts `/`. An empty
+  placeholder is no fix for `.env`: Gemini stops at the first `.env` it finds,
+  so an empty `~/.gemini/.env` would hide the operator's `~/.env`. To close
+  the hole, create the files you care about yourself; once present, they are
+  bound read-only.
 - **MCP bypasses both layers entirely.** MCP servers run in the harness host
   process over their own transport, outside the Bash sandbox and the permission
   rules. An agent that cannot see `~/.config/gh` may still file a GitHub issue

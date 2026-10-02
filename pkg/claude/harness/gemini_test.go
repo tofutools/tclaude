@@ -195,7 +195,7 @@ func TestGeminiSpawnerSandboxOffForcesTheEnvironment(t *testing.T) {
 		PreLaunchScript:    "echo pre; ",
 		HarnessBuiltinMode: GeminiSandboxOff,
 	})
-	assert.Equal(t, "export GEMINI_SANDBOX=docker; echo pre; export GEMINI_SANDBOX=false; unset SANDBOX; gemini", cmd,
+	assert.Equal(t, "export GEMINI_SANDBOX=docker; echo pre; export GEMINI_SANDBOX=false; export SANDBOX=; gemini", cmd,
 		"the forced posture comes last so nothing earlier can override it")
 	assert.Equal(t, "gemini", geminiSpawner{}.BuildCommand(SpawnSpec{HarnessBuiltinMode: GeminiSandboxInherit}))
 

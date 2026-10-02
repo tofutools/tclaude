@@ -491,7 +491,7 @@ the Gemini pane like any other harness. Gemini's own sandbox mode has two
 values:
 - `inherit` (the default) leaves your Gemini sandbox settings alone.
 - `off` exports `GEMINI_SANDBOX=false`, which outranks `--sandbox` and
-  settings.json `tools.sandbox`, and unsets `SANDBOX`.
+  settings.json `tools.sandbox`, and exports an empty `SANDBOX` (so a workspace `.env` cannot refill it).
 
 tclaude-layer launches always use `off`. A container sandbox would re-run
 Gemini outside tclaude's wall and out of reach of its hooks. Inside the
