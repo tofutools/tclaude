@@ -48,11 +48,11 @@ var bootStaticImportRe = regexp.MustCompile(`(?:\bfrom|\bimport)\s*['"](\.\.?\/[
 // preload set and the progress denominator. Kept in sync with the import map in
 // dashboard.html.
 var bootVendorPreload = []string{
-	"vendor/preact/preact.module.js",
-	"vendor/preact/hooks.module.js",
-	"vendor/preact/signals-core.module.js",
-	"vendor/preact/signals.module.js",
-	"vendor/preact/htm.module.js",
+	"third_party/preact/preact.module.js",
+	"third_party/preact/hooks.module.js",
+	"third_party/preact/signals-core.module.js",
+	"third_party/preact/signals.module.js",
+	"third_party/preact/htm.module.js",
 }
 
 // bootPreloadEntry is the entry module the SPA's <script type="module"> loads.

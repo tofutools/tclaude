@@ -5,7 +5,7 @@
 // xterm in its HTML because opening that page is itself terminal intent.
 // dashboard-imperative-boundary: browser-io
 
-const XTERM_RUNTIME_SRC = '/static/vendor/xterm/xterm.min.js';
+const XTERM_RUNTIME_SRC = '/static/third_party/xterm/xterm.min.js';
 
 let runtimePromise = null;
 

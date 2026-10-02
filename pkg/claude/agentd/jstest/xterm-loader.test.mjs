@@ -35,10 +35,10 @@ test('xterm runtime is appended only on demand and concurrent callers share it',
   await Promise.resolve();
   assert.equal(appended.length, 1);
   assert.deepEqual(fetches.at(-1), {
-    url: '/static/vendor/xterm/xterm.min.js',
+    url: '/static/third_party/xterm/xterm.min.js',
     options: { method: 'HEAD', credentials: 'same-origin' },
   });
-  assert.equal(appended[0].src, '/static/vendor/xterm/xterm.min.js');
+  assert.equal(appended[0].src, '/static/third_party/xterm/xterm.min.js');
   assert.equal(appended[0].dataset.tclaudeXtermRuntime, '1');
 
   globalRef.Terminal = function Terminal() {};

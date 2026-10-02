@@ -7,7 +7,7 @@ const PRODUCT_MARKS = new Set(['claude', 'codex', 'copilot', 'gemini', 'opencode
 // These deliberately retain the products' recognizable silhouettes while the
 // surrounding CSS gives every mark the same quiet, monochrome treatment.
 // Source and license details live beside the embedded dashboard assets in
-// vendor/harness-marks/README.md. Keep those notices with any future updates.
+// third_party/harness-marks/README.md. Keep those notices with any future updates.
 function ProductMark({ name }) {
   switch (name) {
     case 'claude':

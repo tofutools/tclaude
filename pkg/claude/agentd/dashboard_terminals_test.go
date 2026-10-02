@@ -13,11 +13,11 @@ import (
 
 func TestDashboardXtermVendorAssets(t *testing.T) {
 	wantHashes := map[string]string{
-		"vendor/xterm/xterm.min.js":           "e4d246be46c786a973e6d6eea46aef1eed56660b2a7f469a3b48b3738321646e",
-		"vendor/xterm/xterm.min.css":          "99ae5d3f0651a557ba34946aeaa384c4ddd0e697ff205c7c1f5f955867063907",
-		"vendor/xterm/addon-fit.min.js":       "696bd2890cb91f96b6db0a83103d49088892ff440bf01d2da654c905cff7696c",
-		"vendor/xterm/addon-web-links.min.js": "7b5d634522f0e93ef567b4f6d72d4b71f0a5e95070f079b004f7b945b7c4c9ab",
-		"vendor/xterm/LICENSE.xterm":          "b569f629d00f2626a8100df2a1798210535621e42164dfd426a6fe5aac7b0ccd",
+		"third_party/xterm/xterm.min.js":           "e4d246be46c786a973e6d6eea46aef1eed56660b2a7f469a3b48b3738321646e",
+		"third_party/xterm/xterm.min.css":          "99ae5d3f0651a557ba34946aeaa384c4ddd0e697ff205c7c1f5f955867063907",
+		"third_party/xterm/addon-fit.min.js":       "696bd2890cb91f96b6db0a83103d49088892ff440bf01d2da654c905cff7696c",
+		"third_party/xterm/addon-web-links.min.js": "7b5d634522f0e93ef567b4f6d72d4b71f0a5e95070f079b004f7b945b7c4c9ab",
+		"third_party/xterm/LICENSE.xterm":          "b569f629d00f2626a8100df2a1798210535621e42164dfd426a6fe5aac7b0ccd",
 	}
 	for name, want := range wantHashes {
 		data, err := fs.ReadFile(dashboardAssetsFS, name)
@@ -30,7 +30,7 @@ func TestDashboardXtermVendorAssets(t *testing.T) {
 			t.Errorf("embedded xterm asset %q hash changed; update the vendored manifest intentionally", name)
 		}
 	}
-	manifest, err := fs.ReadFile(dashboardAssetsFS, "vendor/xterm/README.md")
+	manifest, err := fs.ReadFile(dashboardAssetsFS, "third_party/xterm/README.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,13 +131,13 @@ func TestDashboardTerminals_SoloServesPopout(t *testing.T) {
 		`id="terminals-root"`,
 		`id="message-access-dialog-root"`,
 		`type="importmap"`,
-		`"preact": "/static/vendor/preact/preact.module.js"`,
+		`"preact": "/static/third_party/preact/preact.module.js"`,
 		`/static/js/terminals.js`,
 		`/static/terminals.css`,
 		`/static/dashboard.css`,
 		`/static/mux.css`,
-		`/static/vendor/xterm/xterm.min.js`,
-		`/static/vendor/xterm/addon-web-links.min.js`,
+		`/static/third_party/xterm/xterm.min.js`,
+		`/static/third_party/xterm/addon-web-links.min.js`,
 	} {
 		if !strings.Contains(body, needle) {
 			t.Errorf("terminals popout page missing %q", needle)
@@ -160,7 +160,7 @@ func TestDashboardTerminals_SoloServesPopout(t *testing.T) {
 func TestDashboardTerminals_XtermCoreIsLazy(t *testing.T) {
 	dashboard := string(dashboardIndexHTML)
 	popout := string(terminalsPageHTML)
-	const core = `<script src="/static/vendor/xterm/xterm.min.js"></script>`
+	const core = `<script src="/static/third_party/xterm/xterm.min.js"></script>`
 	if strings.Contains(dashboard, core) {
 		t.Error("dashboard must not fetch xterm core before a terminal is requested")
 	}
@@ -168,7 +168,7 @@ func TestDashboardTerminals_XtermCoreIsLazy(t *testing.T) {
 		t.Error("standalone terminals page must load xterm core immediately")
 	}
 	loader := string(mustReadFS(dashboardAssetsFS, "js/xterm-loader.js"))
-	for _, needle := range []string{"loadXtermRuntime", "/static/vendor/xterm/xterm.min.js", "runtimePromise"} {
+	for _, needle := range []string{"loadXtermRuntime", "/static/third_party/xterm/xterm.min.js", "runtimePromise"} {
 		if !strings.Contains(loader, needle) {
 			t.Errorf("lazy xterm loader missing %q", needle)
 		}

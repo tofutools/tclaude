@@ -115,7 +115,7 @@ The dashboard uses browser-native ES modules. Preact islands use HTM for
 component templates, so editing or running the dashboard requires no Node
 install, compiler, or frontend build step: the normal `go install` workflow
 embeds everything it needs. Runtime modules are pinned and committed under
-`pkg/claude/agentd/dashboard/vendor/preact/`; the dashboard never loads them
+`pkg/claude/agentd/dashboard/third_party/preact/`; the dashboard never loads them
 from a CDN.
 
 Dependency upgrades are deliberately rare and reviewed as vendored-code

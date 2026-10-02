@@ -11,11 +11,11 @@ import (
 // TestDashboardMarkdownVendorAssets pins the vendored markdown-it bundle. A
 // silent swap of a parser that renders agent-published text is exactly the
 // change that must be deliberate, so the hashes live here and in
-// dashboard/vendor/markdown-it/README.md together.
+// dashboard/third_party/markdown-it/README.md together.
 func TestDashboardMarkdownVendorAssets(t *testing.T) {
 	wantHashes := map[string]string{
-		"vendor/markdown-it/markdown-it.esm.min.mjs":     "eb0a6cb2beb08326ea4d3e0e3b25ac72c1e6f119a619d9bbe061e72000ffa118",
-		"vendor/markdown-it/markdown-it.esm.min.mjs.map": "a1fccb4bda2e184b3f5e25b8dd7d020bedc30975e0e8bfec89d03811aee3312a",
+		"third_party/markdown-it/markdown-it.esm.min.mjs":     "eb0a6cb2beb08326ea4d3e0e3b25ac72c1e6f119a619d9bbe061e72000ffa118",
+		"third_party/markdown-it/markdown-it.esm.min.mjs.map": "a1fccb4bda2e184b3f5e25b8dd7d020bedc30975e0e8bfec89d03811aee3312a",
 	}
 	for name, want := range wantHashes {
 		data, err := fs.ReadFile(dashboardAssetsFS, name)
@@ -30,8 +30,8 @@ func TestDashboardMarkdownVendorAssets(t *testing.T) {
 	}
 
 	for _, name := range []string{
-		"vendor/markdown-it/LICENSE-markdown-it.txt",
-		"vendor/markdown-it/README.md",
+		"third_party/markdown-it/LICENSE-markdown-it.txt",
+		"third_party/markdown-it/README.md",
 	} {
 		data, err := fs.ReadFile(dashboardAssetsFS, name)
 		if err != nil {
@@ -45,7 +45,7 @@ func TestDashboardMarkdownVendorAssets(t *testing.T) {
 
 	// The browser bundle is self-contained. If an upgrade ever brings one that
 	// imports its dependencies instead, the module would 404 at runtime.
-	bundle := string(mustReadFS(dashboardAssetsFS, "vendor/markdown-it/markdown-it.esm.min.mjs"))
+	bundle := string(mustReadFS(dashboardAssetsFS, "third_party/markdown-it/markdown-it.esm.min.mjs"))
 	if strings.Contains(bundle, "from\"") || strings.Contains(bundle, "from '") {
 		t.Error("vendored markdown-it bundle carries external imports; it must be the self-contained dist/browser build")
 	}
@@ -53,7 +53,7 @@ func TestDashboardMarkdownVendorAssets(t *testing.T) {
 
 func TestDashboardMarkdownImportMap(t *testing.T) {
 	html := string(dashboardIndexHTML)
-	const mapping = `"markdown-it": "/static/vendor/markdown-it/markdown-it.esm.min.mjs"`
+	const mapping = `"markdown-it": "/static/third_party/markdown-it/markdown-it.esm.min.mjs"`
 	if !strings.Contains(html, mapping) {
 		t.Errorf("dashboard import map missing %s", mapping)
 	}
