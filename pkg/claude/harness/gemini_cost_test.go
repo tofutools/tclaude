@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -75,4 +76,27 @@ func TestGeminiUsageFollowerCostSurvivesRewindAndCheckpoint(t *testing.T) {
 	history := follower.CostHistory(time.Now())
 	require.Len(t, history, 1)
 	assert.InDelta(t, 0.60, history[0].CostUSD, 1e-9)
+}
+
+func TestGeminiUsageFollowerCostSurvivesAFileRewrite(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(GeminiHomeEnvVar, home)
+	path := writeGeminiUsageFixture(t, home, geminiUsageTestConv,
+		`{"id":"g1","type":"gemini","model":"gemini-2.5-flash","tokens":{"input":1000000,"output":0}}`,
+		`{"id":"g2","type":"gemini","model":"gemini-2.5-flash","tokens":{"input":1000000,"output":0}}`,
+	)
+	var follower GeminiUsageFollower
+	usage, _, err := follower.Read(path)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.60, usage.CostUSD, 1e-9)
+
+	// An atomic rewrite that keeps only g2: g1 was still made.
+	rewritten := path + ".tmp"
+	require.NoError(t, os.WriteFile(rewritten, []byte(geminiUsageTestMeta(geminiUsageTestConv, "2026-10-02T09:00:00Z")+"\n"+
+		`{"id":"g2","type":"gemini","model":"gemini-2.5-flash","tokens":{"input":1000000,"output":0}}`+"\n"), 0o644))
+	require.NoError(t, os.Rename(rewritten, path))
+	usage, _, err = follower.Read(path)
+	require.NoError(t, err)
+	assert.Equal(t, 1, usage.Calls)
+	assert.InDelta(t, 0.60, usage.CostUSD, 1e-9, "a rewrite never lowers the cost of calls already made")
 }

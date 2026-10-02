@@ -129,17 +129,14 @@ type geminiUsageFold struct {
 	billedIndex map[string]int
 }
 
-// reset clears the conversation fold only; see clear for a full restart.
+// reset clears the conversation fold. billed survives it, including a
+// re-read of a rewritten or shrunk file: every record in it belongs to this
+// conversation and is keyed by message id, so a call the rewrite restates
+// replaces its entry and one it dropped stays billed. Only a new follower
+// (a new session generation, or a daemon restart) starts it empty.
 func (g *geminiUsageFold) reset() {
 	g.records = nil
 	g.index = map[string]int{}
-}
-
-// clear forgets everything, for a re-read of a replaced or shrunk file.
-func (g *geminiUsageFold) clear() {
-	g.reset()
-	g.billed = nil
-	g.billedIndex = map[string]int{}
 }
 
 // bill records a call's usage under its message id; a re-appended record (the
@@ -281,7 +278,7 @@ func (f *GeminiUsageFollower) Read(path string) (usage GeminiUsage, found bool, 
 		return f.fold.usage(), true, nil
 	case !sameFile || legacy || info.Size() < f.offset:
 		f.path, f.offset = path, 0
-		f.fold.clear()
+		f.fold.reset()
 	}
 	f.info = info
 
@@ -354,7 +351,7 @@ func (f *GeminiUsageFollower) CostHistory(now time.Time) []GeminiCostDay {
 
 func (f *GeminiUsageFollower) forget() {
 	f.path, f.info, f.offset = "", nil, 0
-	f.fold.clear()
+	f.fold.reset()
 }
 
 // LocateGeminiSessionFile finds the file that holds convID, without the full
