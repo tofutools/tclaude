@@ -2486,6 +2486,8 @@ func stateForConvInSessionsBatched(
 	// projection: its durable log carries no per-call usage and no live
 	// context window, so there is no batching or cost history to fold in.
 	refreshCopilotContextSnapshotOnRead(pick, alive)
+	// Gemini's session file carries per-call usage; see gemini_context_refresh.go.
+	refreshGeminiContextSnapshotOnRead(pick, alive)
 	codexInterruptedSubagents := codexRefresh.interruptedSubagents
 	if codexRefresh.hasFastMode {
 		fastMode := codexRefresh.fastMode

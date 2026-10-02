@@ -359,6 +359,22 @@ func (g *GeminiSim) WriteGeminiReply(text, model string) {
 	})
 }
 
+// WriteGeminiReplyWithTokens appends a model reply carrying the usage record
+// chatRecordingService.recordMessageTokens stamps on it.
+func (g *GeminiSim) WriteGeminiReplyWithTokens(text, model string, input, output, thoughts int64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.nextMsg++
+	_ = g.appendLocked(map[string]any{
+		"id": fmt.Sprintf("g-%d", g.nextMsg), "timestamp": time.Now().UTC().Format(time.RFC3339Nano),
+		"type": "gemini", "content": text, "model": model,
+		"tokens": map[string]int64{
+			"input": input, "output": output, "cached": 0, "thoughts": thoughts,
+			"tool": 0, "total": input + output + thoughts,
+		},
+	})
+}
+
 // SetSummary writes Gemini's own generated summary for the session.
 func (g *GeminiSim) SetSummary(summary string) {
 	g.mu.Lock()

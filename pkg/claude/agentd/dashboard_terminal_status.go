@@ -63,6 +63,7 @@ func terminalStatusForSessions(
 	}
 	if online {
 		refreshCopilotContextSnapshotOnRead(pick, true)
+		refreshGeminiContextSnapshotOnRead(pick, true)
 		codexInterruptedSubagents := refreshCodexInterruptedSubagentsForStatus(pick, true)
 		if set := db.ParseSubagentSet(pick.SubagentsJSON); set != nil {
 			for id := range codexInterruptedSubagents {

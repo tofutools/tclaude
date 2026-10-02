@@ -109,7 +109,7 @@ warning. Model and effort are remembered by the harness itself.
 | [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off | ❌ forced off (`off`) | ❌ |
 | [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ | ✅ | ✅ |
-| Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD | ❌ | ❌ |
+| Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD | ⚠️ tokens + context, no cost | ❌ |
 | Hooks via `tclaude setup` | ✅ | ✅ | ❌ (server liveness instead) | ✅ | ✅ settings.json hooks | ❌ |
 | Directory pre-trust (`--trust-dir`) | ✅ | ✅ | — no trust dialog | ✅ | ✅ | — |
 | Tool governance (`--tools`) | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
@@ -534,8 +534,21 @@ folder, the next Gemini launch there loads that file. The same holds for
 other harnesses' project config files. It is a sandbox-axis concern: a
 profile can deny writes to `.gemini/`.
 
-**Not yet:** Gemini's own Seatbelt sandbox as a selectable mode, a
-filtered-network model route, and usage.
+**Usage.** Gemini stamps each model message in its session file with that
+call's token usage. tclaude reads that back on every dashboard and agent-API
+read, the same read-through pattern Copilot uses:
+- The context meter shows the latest call's prompt size against Gemini's own
+  per-model limit (1,048,576 tokens, or 256k for Gemma 4), the same figure the
+  pane's footer shows.
+- Output tokens (thinking included) are summed over the conversation.
+
+No cost is reported, because Gemini records no price. The output total
+covers only the turns that survive in the file, so it can go down after a
+rewind or a `/compress`. After a compression, the context reading keeps its
+old value until the next model call reports usage.
+
+**Not yet:** Gemini's own Seatbelt sandbox as a selectable mode, and a
+filtered-network model route.
 
 ## Related pages
 
