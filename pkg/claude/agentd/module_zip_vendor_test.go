@@ -1,3 +1,5 @@
+//ci:whole-tree
+
 package agentd
 
 import (
@@ -33,8 +35,9 @@ func TestNoVendorDirsInModule(t *testing.T) {
 			return nil
 		}
 		switch name := d.Name(); {
-		case path != root && strings.HasPrefix(name, "."):
-			// Hidden dirs (.git, editor/agent state) are not module content.
+		case path != root && (strings.HasPrefix(name, ".") || name == "node_modules"):
+			// Hidden dirs (.git, editor/agent state) and local npm installs are
+			// not module content.
 			return fs.SkipDir
 		case name == "vendor":
 			rel, _ := filepath.Rel(root, path)
