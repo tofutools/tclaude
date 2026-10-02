@@ -40,7 +40,7 @@ func geminiFakeNode(t *testing.T, dir string) string {
 }
 
 func TestResolveGeminiLaunchHoistedInstall(t *testing.T) {
-	home := t.TempDir()
+	home := geminiRealTempDir(t)
 	modules := filepath.Join(home, "proj", "node_modules")
 	entry := geminiLaunchFixture(t, modules, "#!/usr/bin/env node", false)
 	node := geminiFakeNode(t, filepath.Join(home, ".local", "share", "mise", "installs", "node", "26", "bin"))
@@ -64,7 +64,7 @@ func TestResolveGeminiLaunchHoistedInstall(t *testing.T) {
 }
 
 func TestResolveGeminiLaunchGlobalInstallWithAbsoluteShebang(t *testing.T) {
-	home := t.TempDir()
+	home := geminiRealTempDir(t)
 	node := geminiFakeNode(t, filepath.Join(home, ".nvm", "versions", "node", "v24", "bin"))
 	modules := filepath.Join(home, ".nvm", "versions", "node", "v24", "lib", "node_modules")
 	entry := geminiLaunchFixture(t, modules, "#!"+node, true)
@@ -79,7 +79,7 @@ func TestResolveGeminiLaunchGlobalInstallWithAbsoluteShebang(t *testing.T) {
 }
 
 func TestResolveGeminiLaunchFollowsHoistedDependenciesWithinNodeModules(t *testing.T) {
-	home := t.TempDir()
+	home := geminiRealTempDir(t)
 	modules := filepath.Join(home, "proj", "node_modules")
 	entry := geminiLaunchFixture(t, modules, "#!/usr/bin/env node", false)
 	// node-pty's per-platform build is ITS dependency, not Gemini's.
@@ -101,7 +101,7 @@ func TestResolveGeminiLaunchFollowsHoistedDependenciesWithinNodeModules(t *testi
 }
 
 func TestResolveGeminiLaunchRefusals(t *testing.T) {
-	dir := t.TempDir()
+	dir := geminiRealTempDir(t)
 	native := filepath.Join(dir, "gemini")
 	require.NoError(t, os.WriteFile(native, []byte("\x7fELF"), 0o755))
 	got, err := resolveGeminiLaunchFrom(native, nil)
@@ -153,4 +153,14 @@ func TestGeminiLaunchSpliceArgv(t *testing.T) {
 
 	_, err = node.SpliceArgv([]string{"env", "X=1"})
 	require.Error(t, err)
+}
+
+// geminiRealTempDir resolves the temp dir's symlinks (macOS keeps it behind
+// /var -> /private/var): production resolves the entry point and every
+// returned path, so the fixtures must start from real paths too.
+func geminiRealTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	return dir
 }
