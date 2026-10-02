@@ -78,19 +78,29 @@ func TestResolveGeminiLaunchGlobalInstallWithAbsoluteShebang(t *testing.T) {
 		"dependencies nested in the package are covered by its root")
 }
 
-func TestResolveGeminiLaunchEnvSplitShebang(t *testing.T) {
+func TestResolveGeminiLaunchFollowsHoistedDependenciesWithinNodeModules(t *testing.T) {
 	home := t.TempDir()
-	entry := geminiLaunchFixture(t, filepath.Join(home, "node_modules"), "#!/usr/bin/env -S node --no-warnings", false)
+	modules := filepath.Join(home, "proj", "node_modules")
+	entry := geminiLaunchFixture(t, modules, "#!/usr/bin/env node", false)
+	// node-pty's per-platform build is ITS dependency, not Gemini's.
+	pty := filepath.Join(modules, "@lydell", "node-pty")
+	require.NoError(t, os.WriteFile(filepath.Join(pty, "package.json"),
+		[]byte(`{"name":"@lydell/node-pty","optionalDependencies":{"@lydell/node-pty-linux-x64":"1"}}`), 0o644))
+	platform := filepath.Join(modules, "@lydell", "node-pty-linux-x64")
+	require.NoError(t, os.MkdirAll(platform, 0o755))
+	// A dependency symlinked out of node_modules must not become a grant.
+	secret := filepath.Join(home, ".ssh")
+	require.NoError(t, os.MkdirAll(secret, 0o700))
+	require.NoError(t, os.Symlink(secret, filepath.Join(modules, "node-pty")))
 	node := geminiFakeNode(t, filepath.Join(home, "bin"))
-	got, err := resolveGeminiLaunchFrom(entry, func(name string) (string, error) {
-		assert.Equal(t, "node", name)
-		return node, nil
-	})
+
+	got, err := resolveGeminiLaunchFrom(entry, func(string) (string, error) { return node, nil })
 	require.NoError(t, err)
-	assert.Equal(t, node, got.Interpreter)
+	assert.Equal(t, []string{node, filepath.Join(modules, "@google", "gemini-cli"), pty, platform}, got.ReadPaths)
+	assert.NotContains(t, got.ReadPaths, secret)
 }
 
-func TestResolveGeminiLaunchNativeAndRefusals(t *testing.T) {
+func TestResolveGeminiLaunchRefusals(t *testing.T) {
 	dir := t.TempDir()
 	native := filepath.Join(dir, "gemini")
 	require.NoError(t, os.WriteFile(native, []byte("\x7fELF"), 0o755))
@@ -99,14 +109,48 @@ func TestResolveGeminiLaunchNativeAndRefusals(t *testing.T) {
 	assert.Empty(t, got.Interpreter, "a native build runs as itself")
 	assert.Equal(t, []string{native}, got.ReadPaths)
 
-	python := filepath.Join(dir, "gemini.py")
-	require.NoError(t, os.WriteFile(python, []byte("#!/usr/bin/env python3\n"), 0o755))
-	_, err = resolveGeminiLaunchFrom(python, nil)
-	require.Error(t, err, "an unrecognized interpreter is refused rather than half-mounted")
+	// mise and Volta shims are one binary choosing the tool from argv[0].
+	shim := filepath.Join(dir, "mise")
+	require.NoError(t, os.WriteFile(shim, []byte("\x7fELF"), 0o755))
+	_, err = resolveGeminiLaunchFrom(shim, nil)
+	require.ErrorContains(t, err, "version-manager shim")
+
+	for name, shebang := range map[string]string{
+		"asdf shell shim":          "#!/usr/bin/env bash",
+		"interpreter arguments":    "#!/usr/bin/env -S node --no-warnings",
+		"env options":              "#!/usr/bin/env -u FOO node",
+		"node-prefixed other tool": "#!/usr/bin/env nodemon",
+	} {
+		path := filepath.Join(dir, "gemini-"+filepath.Base(t.Name())+"-"+name)
+		require.NoError(t, os.WriteFile(path, []byte(shebang+"\n"), 0o755))
+		_, err = resolveGeminiLaunchFrom(path, nil)
+		require.Errorf(t, err, "%s must be refused", name)
+	}
+
+	loose := filepath.Join(dir, "loose", "gemini.js")
+	require.NoError(t, os.MkdirAll(filepath.Dir(loose), 0o755))
+	require.NoError(t, os.WriteFile(loose, []byte("#!/usr/bin/env node\n"), 0o755))
+	node := geminiFakeNode(t, filepath.Join(dir, "bin"))
+	_, err = resolveGeminiLaunchFrom(loose, func(string) (string, error) { return node, nil })
+	require.ErrorContains(t, err, "not inside an installed", "an unrecognized layout mounts nothing")
 
 	entry := geminiLaunchFixture(t, filepath.Join(dir, "node_modules"), "#!/usr/bin/env node", false)
 	_, err = resolveGeminiLaunchFrom(entry, func(string) (string, error) {
 		return "", errors.New("not found")
 	})
 	require.ErrorContains(t, err, "not on PATH")
+}
+
+func TestGeminiLaunchSpliceArgv(t *testing.T) {
+	node := GeminiLaunchExecutable{Interpreter: "/n/node", Path: "/p/gemini.js"}
+	got, err := node.SpliceArgv([]string{"env", "GEMINI_SANDBOX=false", "SANDBOX=", "gemini", "--prompt=gemini"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"env", "GEMINI_SANDBOX=false", "SANDBOX=", "/n/node", "/p/gemini.js", "--prompt=gemini"}, got)
+
+	got, err = GeminiLaunchExecutable{Path: "/p/gemini"}.SpliceArgv([]string{"gemini", "-m", "x"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/p/gemini", "-m", "x"}, got)
+
+	_, err = node.SpliceArgv([]string{"env", "X=1"})
+	require.Error(t, err)
 }

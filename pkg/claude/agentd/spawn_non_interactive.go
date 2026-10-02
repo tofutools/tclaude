@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -354,34 +353,15 @@ func wrapOneShotWithTclaudeLayer(
 			}
 			argv[0] = resolved.Path
 			harnessReadPaths = append(harnessReadPaths, resolved.RuntimeRoot)
-		case harness.GeminiName:
-			resolved, err := harness.ResolveGeminiLaunchExecutable()
-			if err != nil {
-				return "", fmt.Errorf("resolve Gemini executable for tclaude’s sandbox: %w", err)
-			}
-			// The asker's argv may lead with an `env K=V…` prefix carrying the
-			// sandbox mode, so the binary is located rather than assumed first.
-			at := slices.Index(argv, "gemini")
-			if at < 0 {
-				return "", fmt.Errorf("gemini one-shot argv has no gemini binary")
-			}
-			entry := []string{resolved.Path}
-			if resolved.Interpreter != "" {
-				entry = []string{resolved.Interpreter, resolved.Path}
-			}
-			argv = slices.Concat(argv[:at], entry, argv[at+1:])
-			harnessReadPaths = append(harnessReadPaths, resolved.ReadPaths...)
 		}
 	}
-	spec, err := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
+	input := session.TclaudeLayerLaunchInput{
 		HarnessName: h.Name, Cwd: cwd, Snapshot: snapshot,
 		GitWriteDirs:     append([]string(nil), gitWriteDirs...),
 		HarnessReadPaths: harnessReadPaths,
-	})
-	if err != nil {
-		return "", err
 	}
-	if err := session.PrepareTclaudeLayerHarnessState(spec); err != nil {
+	spec, err := session.BuildTclaudeLayerLaunchSpec(input)
+	if err != nil {
 		return "", err
 	}
 	posture, err := session.TclaudeLayerNetworkPosture(spec.Effective)
@@ -390,6 +370,26 @@ func wrapOneShotWithTclaudeLayer(
 	}
 	root, err := session.TclaudeLayerRootPosture(posture, spec.Effective)
 	if err != nil {
+		return "", err
+	}
+	if h.Name == harness.GeminiName && runtime.GOOS == "linux" && root == sandboxpolicy.RootConstructed {
+		// Only a constructed root needs this: a host-inherited one still sees
+		// the pane's own PATH, so a launch there keeps resolving `gemini` and
+		// `node` exactly as it did before.
+		resolved, err := harness.ResolveGeminiLaunchExecutable()
+		if err != nil {
+			return "", fmt.Errorf("resolve Gemini executable for tclaude’s sandbox: %w", err)
+		}
+		argv, err = resolved.SpliceArgv(argv)
+		if err != nil {
+			return "", err
+		}
+		input.HarnessReadPaths = append(input.HarnessReadPaths, resolved.ReadPaths...)
+		if spec, err = session.BuildTclaudeLayerLaunchSpec(input); err != nil {
+			return "", err
+		}
+	}
+	if err := session.PrepareTclaudeLayerHarnessState(spec); err != nil {
 		return "", err
 	}
 	binary, _, err := session.ResolveTclaudeLayerServerForEngine(posture, root, spec.Contract.NetworkEngine)

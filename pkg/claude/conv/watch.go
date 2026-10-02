@@ -2874,11 +2874,25 @@ func resumeLaunchCmdWithStackedProof(
 		if resolveErr != nil {
 			return "", "", nil, resolveErr
 		}
+		var harnessReadPaths []string
+		if !stacked && h.Name == harness.GeminiName && runtime.GOOS == "linux" &&
+			root == sandboxpolicy.RootConstructed {
+			// The same resolution `session new` performs: a constructed root
+			// cannot see a Gemini or Node installed under the home directory.
+			resolved, resolveErr := harness.ResolveGeminiLaunchExecutable()
+			if resolveErr != nil {
+				return "", "", nil, fmt.Errorf("resolve Gemini executable for tclaude’s sandbox: %w", resolveErr)
+			}
+			spec.ExecutablePath = resolved.Path
+			spec.ExecutableInterpreter = resolved.Interpreter
+			harnessReadPaths = resolved.ReadPaths
+		}
 		launchSpec, specErr := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
-			HarnessName:  h.Name,
-			Cwd:          resumeCwd,
-			GitWriteDirs: tclaudeLayerContractWriteDirs,
-			Snapshot:     effectiveSandbox,
+			HarnessName:      h.Name,
+			Cwd:              resumeCwd,
+			GitWriteDirs:     tclaudeLayerContractWriteDirs,
+			Snapshot:         effectiveSandbox,
+			HarnessReadPaths: harnessReadPaths,
 		})
 		if specErr != nil {
 			return "", "", nil, fmt.Errorf("build resumed tclaude’s sandbox launch spec: %w", specErr)

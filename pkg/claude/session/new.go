@@ -2123,7 +2123,11 @@ func runNew(params *NewParams) error {
 		}
 		executablePath = resolvedClaude.Path
 		harnessReadPaths = append(harnessReadPaths, resolvedClaude.Path)
-	} else if tclaudeLayerOnly && h.Name == harness.GeminiName && runtime.GOOS == "linux" {
+	} else if tclaudeLayerOnly && h.Name == harness.GeminiName && runtime.GOOS == "linux" &&
+		tclaudeLayerRoot == sandboxpolicy.RootConstructed {
+		// Only a constructed root needs this: a host-inherited one still sees
+		// the pane's own PATH, profile environment and pre-launch script, so a
+		// launch there keeps resolving `gemini` and `node` as it did before.
 		resolvedGemini, resolveErr := harness.ResolveGeminiLaunchExecutable()
 		if resolveErr != nil {
 			return fmt.Errorf("resolve Gemini executable for tclaude’s sandbox: %w", resolveErr)
