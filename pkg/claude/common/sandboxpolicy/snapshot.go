@@ -534,6 +534,24 @@ func OmittedProfilesSnapshot() Snapshot {
 	return out
 }
 
+// OmittedProfilesSnapshotKeepingLaunchEnvironment is OmittedProfilesSnapshot
+// that keeps previous's launch environment (group, spawn-profile and explicit
+// entries) and the group it was resolved from. That environment is not
+// sandbox policy, so a launch that omits the profiles still receives it. No
+// other field of previous is carried. previous may be nil.
+func OmittedProfilesSnapshotKeepingLaunchEnvironment(previous *Snapshot) Snapshot {
+	out := OmittedProfilesSnapshot()
+	if previous == nil {
+		return out
+	}
+	out.LaunchEnvironment = append([]EnvironmentEntry(nil), previous.LaunchEnvironment...)
+	out.LaunchEnvironmentOverrides = append(
+		[]EnvironmentEntry(nil), previous.LaunchEnvironmentOverrides...)
+	out.RefreshGroupEnvironment = previous.RefreshGroupEnvironment
+	out.ResolutionGroupID = previous.ResolutionGroupID
+	return out
+}
+
 // UnconfinedLaunchSnapshot retains a profile's plain environment entries and
 // audit provenance while withholding every confinement-dependent or
 // host-authority field for a deliberately sandbox-off launch. The stable
