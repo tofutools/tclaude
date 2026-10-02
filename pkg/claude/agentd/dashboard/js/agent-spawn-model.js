@@ -156,11 +156,13 @@ export function nativeCodexRegistryWarningFor(draft, harness, resolvedImplementa
     || 'setup is missing or invalid';
 }
 
-// Copilot's yolo caveat recommends the outer sandbox. Once that sandbox is
-// selected or resolved from defaults, keep the full copy in help only.
+// Copilot's and Gemini's yolo caveats recommend the outer sandbox. Once that
+// sandbox is selected or resolved from defaults, keep the full copy in help
+// only.
 export function approvalCaveatVisibleFor(draft, resolvedImplementation = '') {
   const implementation = text(draft?.sandboxImpl) || text(resolvedImplementation);
-  return !(draft?.harness === 'copilot' && draft?.approval === 'yolo'
+  return !((draft?.harness === 'copilot' || draft?.harness === 'gemini')
+    && draft?.approval === 'yolo'
     && implementation === SANDBOX_IMPL_TCLAUDE_LAYER);
 }
 
