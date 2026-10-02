@@ -184,24 +184,16 @@ func runSetup(params *Params) error {
 	// Install the selected harness's hooks and auto-detect other harnesses on
 	// PATH. --all-harnesses also prepares hook-capable harnesses whose CLIs are
 	// not installed yet; each installer creates its missing config directories.
-	// Installed, non-selected trust-capable harnesses still require consent.
+	// Every harness on PATH is treated the same: its hooks are installed and,
+	// for a trust-capable harness (Codex), trusted without a prompt — a
+	// harness runs badly under tclaude without its hooks.
 	for i, hh := range hookInstallTargets(h, params.AllHarnesses, harnessOnPath) {
 		if i > 0 {
 			fmt.Println()
 		}
-		grantTrust := hh.Name == h.Name
 		// An absent CLI cannot provide authoritative trust. Prepare its files
-		// without a trust prompt; setup can grant trust after it is installed.
-		prepareWithoutTrust := params.AllHarnesses && !harnessOnPath(hh)
-		if !grantTrust && !prepareWithoutTrust {
-			if _, trustCapable := hh.Hooks.(harness.TrustedHookInstaller); trustCapable {
-				if !consentToDetectedHookTrust(hh, params.Yes) {
-					fmt.Printf("• Skipped %s hooks (no hook trust was granted)\n", hh.DisplayName)
-					continue
-				}
-				grantTrust = true
-			}
-		}
+		// without trust; setup can grant trust after it is installed.
+		grantTrust := hh.Name == h.Name || harnessOnPath(hh)
 		if err := installHooksForHarness(hh, grantTrust); err != nil {
 			// The SELECTED harness's hooks are the mandatory core: failing to
 			// install them fails setup. A harness that was merely auto-added
@@ -214,6 +206,7 @@ func runSetup(params *Params) error {
 			// to skip it. Report it and carry on.
 			if hh.Name != h.Name {
 				fmt.Printf("  ⚠ Skipped %s hooks: %v\n", hh.DisplayName, err)
+				fmt.Printf("  ⚠ %s will not work properly under tclaude without hooks; fix the error and re-run `tclaude setup`.\n", hh.DisplayName)
 				continue
 			}
 			return err
@@ -524,11 +517,6 @@ func installDefaultMusicVolume() error {
 	}
 	fmt.Printf("✓ Set slop.music_volume=%d%% (Vegas/slop + wizard-mode soundtrack starts at half volume)\n", v)
 	return nil
-}
-
-func consentToDetectedHookTrust(h *harness.Harness, assumeYes bool) bool {
-	prompt := fmt.Sprintf("Install and trust tclaude hooks for %s?", h.DisplayName)
-	return askYesNo(prompt, false, assumeYes)
 }
 
 // hookInstallTargets returns the selected harness first, followed by other
@@ -885,7 +873,17 @@ func askYesNo(prompt string, defaultYes bool, assumeYes bool) bool {
 		fmt.Printf("%s [y]: yes\n", prompt)
 		return true
 	}
+	return readYesNo(prompt, defaultYes, defaultYes)
+}
 
+// askYesNoNoOnEOF is askYesNo for a prompt whose change must never happen
+// without a human at the terminal: an empty answer still takes the default,
+// but closed stdin (a piped/CI run without --yes) declines.
+func askYesNoNoOnEOF(prompt string, defaultYes bool) bool {
+	return readYesNo(prompt, defaultYes, false)
+}
+
+func readYesNo(prompt string, defaultYes, onEOF bool) bool {
 	reader := bufio.NewReader(os.Stdin)
 
 	defaultStr := "Y/n"
@@ -896,7 +894,7 @@ func askYesNo(prompt string, defaultYes bool, assumeYes bool) bool {
 	fmt.Printf("%s [%s]: ", prompt, defaultStr)
 	input, err := reader.ReadString('\n')
 	if err != nil {
-		return defaultYes
+		return onEOF
 	}
 
 	input = strings.TrimSpace(strings.ToLower(input))

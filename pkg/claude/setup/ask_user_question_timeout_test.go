@@ -115,6 +115,36 @@ func TestConfigureAskTimeout_InteractiveDeclineSkips(t *testing.T) {
 	assert.False(t, ok, "declining must not write the key")
 }
 
+// An empty answer takes the [Y/n] default and writes the key.
+func TestConfigureAskTimeout_EmptyAnswerWrites(t *testing.T) {
+	tempHome(t)
+
+	withStdin(t, "\n", func() {
+		captureStdout(t, func() {
+			configureAskUserQuestionTimeout(&Params{Yes: false})
+		})
+	})
+
+	got, ok := readAskTimeoutFromDisk(t)
+	require.True(t, ok, "an empty answer accepts the default")
+	assert.Equal(t, "5m", got)
+}
+
+// Closed stdin (a piped/CI run without --yes) is not consent: the global
+// setting is never written without a human answering the prompt.
+func TestConfigureAskTimeout_EOFDoesNotWrite(t *testing.T) {
+	tempHome(t)
+
+	withStdin(t, "", func() {
+		captureStdout(t, func() {
+			configureAskUserQuestionTimeout(&Params{Yes: false})
+		})
+	})
+
+	_, ok := readAskTimeoutFromDisk(t)
+	assert.False(t, ok, "EOF must not write the key")
+}
+
 // A corrupt settings.json is never rewritten: it also carries hooks,
 // permissions and sandbox config, so the configure step warns and leaves the
 // file byte-for-byte as it found it.

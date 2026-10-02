@@ -25,7 +25,7 @@ import (
 // This is a global setting (it also affects the operator's own interactive
 // sessions), so — per the "don't modify by default" project directive — this
 // step never silently writes it: it prints a recommendation always, offers to
-// set it only in an interactive run (default no), and is skipped under --yes.
+// set it only in an interactive run (default yes), and is skipped under --yes.
 // Per-agent / per-profile overrides (the spawn dialog + profile editor) are the
 // non-global way to enable it for just the agents, delivered as a `--settings`
 // override that leaves settings.json untouched.
@@ -150,7 +150,7 @@ func detectAskTimeoutStatus(settingsPath string) (status askTimeoutStatus, value
 // It respects an existing value: any present "askUserQuestionTimeout" (an
 // interval or a deliberate "never") is left exactly as-is, so a re-run never
 // nags. On a fresh config (no key) it prints the recommendation and — only in an
-// interactive run — offers to set the recommended interval (default no). It
+// interactive run — offers to set the recommended interval (default yes). It
 // never writes under --yes: this is a global behaviour change, so a scripted
 // setup only prints the advice, matching the "don't modify by default" policy.
 func configureAskUserQuestionTimeout(params *Params) {
@@ -191,7 +191,7 @@ func configureAskUserQuestionTimeout(params *Params) {
 		return
 	}
 
-	if askYesNo(fmt.Sprintf("Set askUserQuestionTimeout to %q now (applies to ALL your Claude Code sessions)?", recommendedAskTimeout), false, false) {
+	if askYesNoNoOnEOF(fmt.Sprintf("Set askUserQuestionTimeout to %q now (applies to ALL your Claude Code sessions)?", recommendedAskTimeout), true) {
 		if werr := writeClaudeAskTimeout(settingsPath, recommendedAskTimeout); werr != nil {
 			fmt.Printf("  Warning: failed to set askUserQuestionTimeout: %v\n", werr)
 			return
