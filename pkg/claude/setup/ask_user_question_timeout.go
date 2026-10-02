@@ -191,7 +191,7 @@ func configureAskUserQuestionTimeout(params *Params) {
 		return
 	}
 
-	if askYesNo(fmt.Sprintf("Set askUserQuestionTimeout to %q now (applies to ALL your Claude Code sessions)?", recommendedAskTimeout), true, false) {
+	if askYesNoNoOnEOF(fmt.Sprintf("Set askUserQuestionTimeout to %q now (applies to ALL your Claude Code sessions)?", recommendedAskTimeout), true) {
 		if werr := writeClaudeAskTimeout(settingsPath, recommendedAskTimeout); werr != nil {
 			fmt.Printf("  Warning: failed to set askUserQuestionTimeout: %v\n", werr)
 			return

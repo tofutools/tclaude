@@ -888,7 +888,17 @@ func askYesNo(prompt string, defaultYes bool, assumeYes bool) bool {
 		fmt.Printf("%s [y]: yes\n", prompt)
 		return true
 	}
+	return readYesNo(prompt, defaultYes, defaultYes)
+}
 
+// askYesNoNoOnEOF is askYesNo for a prompt whose change must never happen
+// without a human at the terminal: an empty answer still takes the default,
+// but closed stdin (a piped/CI run without --yes) declines.
+func askYesNoNoOnEOF(prompt string, defaultYes bool) bool {
+	return readYesNo(prompt, defaultYes, false)
+}
+
+func readYesNo(prompt string, defaultYes, onEOF bool) bool {
 	reader := bufio.NewReader(os.Stdin)
 
 	defaultStr := "Y/n"
@@ -899,7 +909,7 @@ func askYesNo(prompt string, defaultYes bool, assumeYes bool) bool {
 	fmt.Printf("%s [%s]: ", prompt, defaultStr)
 	input, err := reader.ReadString('\n')
 	if err != nil {
-		return defaultYes
+		return onEOF
 	}
 
 	input = strings.TrimSpace(strings.ToLower(input))
