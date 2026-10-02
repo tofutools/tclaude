@@ -411,7 +411,7 @@ never reaches its first turn. `--trust-dir` seeds the entry in
 
 ## Gemini CLI
 
-A full adapter for Gemini CLI, pinned to 0.62.0. It covers:
+The Gemini CLI adapter, pinned to 0.62.0, covers:
 
 - Spawn and exact resume, with a pre-minted conversation id, so daemon
   spawns are enrolled before the pane starts.
@@ -440,8 +440,9 @@ commands, dialogs, and how it reacts to keystrokes.
 Gemini model token is forwarded and Gemini validates it. Claude and OpenAI
 slugs are rejected with a clear error. Gemini CLI has **no reasoning-effort
 launch option**, so `--effort` is refused rather than silently dropped.
-Thinking budgets live only in `settings.json`. Gemini reads one extra
-settings file per launch only if a root-owned directory holds it, so tclaude
+Thinking budgets live only in settings files. The only settings paths a
+launch can redirect are Gemini's system settings files, and Gemini ignores
+those unless the file and its directories are owned by root. So tclaude
 cannot set a budget for a single launch without editing your settings.
 
 **Lifecycle.** Compaction types `/compress`; soft exit sends Escape and a
@@ -618,7 +619,10 @@ old value until the next model call reports usage.
 
 **Not yet:**
 - The proxy network engine on macOS (it works on Linux).
-- Gemini's own sandbox on Linux. Use tclaude's sandbox there.
+
+Gemini's own sandbox is offered only as Seatbelt on macOS. On Linux it is a
+container that would run the agent outside tclaude's hooks, so use tclaude's
+sandbox there.
 
 Gemini has no counterpart for remote control, fast mode, a command-backed
 status line, or tclaude's task runner.
