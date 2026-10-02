@@ -269,16 +269,12 @@ func geminiProjectRoot(slugDir, slug string, registry map[string]string) string 
 
 // geminiMessage is the subset of one message record the store needs.
 type geminiMessage struct {
-	ID        string          `json:"id"`
-	Type      string          `json:"type"`
-	Content   json.RawMessage `json:"content"`
-	Model     string          `json:"model"`
-	ToolCalls []any           `json:"toolCalls"`
-	// Tokens is the usage of the model call that produced this message
-	// (chatRecordingService.recordMessageTokens); nil on user messages and
-	// on a gemini message whose usage has not landed yet.
-	Tokens     *geminiTokens `json:"tokens"`
-	Thoughts   []any         `json:"thoughts"`
+	ID         string          `json:"id"`
+	Type       string          `json:"type"`
+	Content    json.RawMessage `json:"content"`
+	Model      string          `json:"model"`
+	ToolCalls  []any           `json:"toolCalls"`
+	Thoughts   []any           `json:"thoughts"`
 	resumable  bool
 	isUser     bool
 	userPrompt string

@@ -244,6 +244,7 @@ func TestGeminiSpawn_ApprovalModeIsRenderedAndRecorded(t *testing.T) {
 		"name": "bad-gemini", "harness": harness.GeminiName, "approval": "never",
 	})
 	assert.NotEqual(t, http.StatusOK, bad.Code, "a Codex token is not a Gemini approval mode")
+}
 
 // TestGeminiSpawn_DashboardShowsUsageFromTheSessionFile: the per-call usage
 // Gemini stamps on each model message reaches the dashboard's context meter —

@@ -16,9 +16,9 @@ import (
 //
 // Gemini's session file carries per-call usage on every model message (see
 // harness/gemini_usage.go), so unlike Copilot's durable log it can say what
-// the context occupancy is after every turn. What it does not need is a byte-
-// offset follower: one conversation's file is small and is re-folded whole,
-// and only when its size or mtime moved.
+// the context occupancy is after every turn. The follower reads only the bytes
+// appended since the previous refresh, and decodes only the usage fields, so a
+// refresh during a tool-heavy turn stays cheap on this request path.
 
 const geminiContextRefreshInterval = 2 * time.Second
 
@@ -31,10 +31,10 @@ type geminiContextRefreshState struct {
 	lastRefresh time.Time
 	refreshing  bool
 
-	// file is the located session file and what it looked like at the last
-	// fold; an unchanged stat skips the re-read.
-	file harness.GeminiSessionFileStat
+	follower harness.GeminiUsageFollower
 
+	// persisted is the projection last written. It advances only on a
+	// successful write, so a failed one is retried on the next refresh.
 	persisted harness.GeminiUsage
 }
 
@@ -58,17 +58,12 @@ func refreshGeminiContextSnapshotOnRead(sess *db.SessionRow, alive bool) {
 	}
 	defer releaseGeminiContextRefresh(state)
 
-	if state.file.Path != "" {
-		stat, found := harness.StatGeminiSessionFile(state.file.Path)
-		if found && stat.Size == state.file.Size && stat.ModTime.Equal(state.file.ModTime) {
-			return
-		}
-		if !found {
-			// Migrated (.json → .jsonl) or removed: locate it afresh.
-			state.file = harness.GeminiSessionFileStat{}
-		}
+	path := state.follower.Path()
+	if migrated := harness.GeminiMigratedSessionFile(path); migrated != "" {
+		// A resumed legacy session: Gemini migrated it to a sibling `.jsonl`
+		// and writes only there from now on, leaving the `.json` in place.
+		path = migrated
 	}
-	path := state.file.Path
 	if path == "" {
 		located, found, err := harness.LocateGeminiSessionFile(sess.ConvID)
 		if err != nil {
@@ -80,14 +75,18 @@ func refreshGeminiContextSnapshotOnRead(sess *db.SessionRow, alive bool) {
 			// Gemini creates the file on the first recorded message.
 			return
 		}
-		path = located.Path
+		path = located
 	}
-	usage, stat, ok := harness.GeminiUsageFromFile(path)
-	if !ok {
-		state.file = harness.GeminiSessionFileStat{}
+	usage, found, err := state.follower.Read(path)
+	if err != nil {
+		slog.Warn("gemini-usage: cannot read the session file",
+			"session_id", sess.ID, "path", path, "error", err, "module", "agentd")
 		return
 	}
-	state.file = stat
+	if !found {
+		// Migrated or removed; the next refresh locates it afresh.
+		return
+	}
 	persistGeminiContextSnapshot(sess, state, usage)
 }
 
