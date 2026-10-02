@@ -2667,6 +2667,11 @@ func resumeLaunchCmdWithStackedProof(
 	if err != nil {
 		return "", "", nil, err
 	}
+	if harness.HooksRunInsideBuiltinSandbox(h, harnessBuiltinMode) {
+		// The spawn seam's rule for Gemini's Seatbelt mode: its hooks run
+		// inside a profile that makes the database read-only.
+		resumeEnv[session.HookBrokerEnvVar] = session.HookBrokerAgentd
+	}
 	// A deny covering the workspace narrows the Git grants the same way the
 	// spawn path does: the historical repository container would reopen every
 	// sibling repo beneath the deny.

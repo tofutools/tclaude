@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -41,7 +42,7 @@ func TestGeminiDescriptor(t *testing.T) {
 	off, err := SandboxOffMode(h)
 	require.NoError(t, err)
 	assert.Equal(t, GeminiSandboxOff, off)
-	assert.False(t, h.SupportsBuiltinOSSandbox(), "no catalog mode selects Gemini's own sandbox yet")
+	assert.Equal(t, runtime.GOOS == "darwin", h.SupportsBuiltinOSSandbox(), "Gemini's own OS sandbox is its macOS Seatbelt mode")
 	assert.True(t, h.SupportsApproval())
 	assert.True(t, h.SupportsDirTrust())
 

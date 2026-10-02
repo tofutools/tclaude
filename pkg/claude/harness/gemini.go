@@ -77,6 +77,11 @@ func init() {
 		Sandbox:          geminiSandbox{},
 		TclaudeLayerMode: GeminiSandboxOff,
 
+		// Gemini's own Seatbelt sandbox is a real OS sandbox, but only on
+		// macOS; elsewhere harness-builtin is refused with the reason.
+		BuiltinOSSandbox:              geminiSeatbeltAvailable,
+		BuiltinOSSandboxAbsenceReason: GeminiBuiltinOSSandboxAbsenceReason,
+
 		// `--approval-mode`, rendered from the catalog; the daemon default is
 		// yolo, the one posture a detached pane cannot deadlock in. See
 		// gemini_approval.go.

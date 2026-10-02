@@ -27,7 +27,8 @@ same layer. The values:
 
 - **`harness-builtin`** — the harness confines itself with its own OS sandbox.
   Valid as an explicit pin only for harnesses that really own one: Claude Code
-  (bubblewrap on Linux, Seatbelt on macOS) and Codex. OpenCode refuses the pin
+  (bubblewrap on Linux, Seatbelt on macOS), Codex, and Gemini CLI on macOS
+  (its Seatbelt mode `seatbelt`). OpenCode refuses the pin
   — its access control is a command filter, not confinement — and Copilot's
   descriptor declares no built-in OS sandbox. Leaving the implementation
   *unset* is different from pinning `harness-builtin`: unset falls through the

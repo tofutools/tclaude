@@ -1306,9 +1306,10 @@ func runNew(params *NewParams) error {
 			additionalEnv[entry.Name] = entry.Value
 		}
 	}
-	if outerLayer {
+	if outerLayer || harness.HooksRunInsideBuiltinSandbox(h, harnessBuiltinMode) {
 		// Hook callbacks write private SQLite state, which this launch's own
-		// namespace hides. Route them through agentd instead, which applies
+		// namespace hides (or, for Gemini's Seatbelt mode, its profile makes
+		// read-only). Route them through agentd instead, which applies
 		// them host-side on the caller's behalf (TCL-754). Apply after the
 		// profile environment so policy cannot unset the marker for an
 		// outer-layer launch and silently send the pane's telemetry into the

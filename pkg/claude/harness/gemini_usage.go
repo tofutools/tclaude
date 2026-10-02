@@ -308,7 +308,8 @@ func (f *GeminiUsageFollower) forget() {
 
 // LocateGeminiSessionFile finds the file that holds convID, without the full
 // store scan: Gemini names a session file `session-<timestamp>-<id[:8]>`, so
-// only same-prefix files are opened. When a legacy `.json` and its migrated
+// only same-prefix files are opened, under both runtime directories (the
+// Seatbelt mode keeps chats in ~/.cache/.gemini). When a legacy `.json` and its migrated
 // `.jsonl` both carry the id, the `.jsonl` wins — Gemini writes only to it
 // after the migration, and the two share a lastUpdated until the first new
 // message lands. found is false when no file holds the conversation yet.
@@ -317,15 +318,19 @@ func LocateGeminiSessionFile(convID string) (path string, found bool, err error)
 	if len(convID) < 8 || strings.ContainsAny(convID, `/\*?[`) {
 		return "", false, nil
 	}
-	root := geminiDir()
-	if root == "" {
+	roots := geminiRuntimeDirs()
+	if len(roots) == 0 {
 		return "", false, errors.New("gemini: cannot determine the Gemini CLI home directory")
 	}
-	pattern := filepath.Join(root, geminiTmpDirName, "*", geminiChatsDirName,
-		geminiSessionPrefix+"*-"+convID[:8]+".json*")
-	matches, err := filepath.Glob(pattern)
-	if err != nil {
-		return "", false, fmt.Errorf("gemini: locate %s: %w", convID, err)
+	var matches []string
+	for _, root := range roots {
+		pattern := filepath.Join(root, geminiTmpDirName, "*", geminiChatsDirName,
+			geminiSessionPrefix+"*-"+convID[:8]+".json*")
+		found, err := filepath.Glob(pattern)
+		if err != nil {
+			return "", false, fmt.Errorf("gemini: locate %s: %w", convID, err)
+		}
+		matches = append(matches, found...)
 	}
 	bestUpdated := ""
 	for _, candidate := range matches {
