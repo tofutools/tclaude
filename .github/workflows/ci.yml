@@ -1072,6 +1072,67 @@ jobs:
           fi
 
 
+  # The real Gemini CLI against a loopback mock model (pkg/claude/harness/
+  # geminifixture): tclaude's session reader, usage and what-if cost, séance
+  # fork, hook install, folder trust and approval rendering, checked against
+  # what the pinned binary actually writes and accepts. Credential-free.
+  gemini-smoke:
+    name: Gemini CLI smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          # This job runs `npm install --global` and then a third-party CLI.
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node for the Gemini CLI
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # Keep in step with harness.GeminiPinnedVersion and the filtered proxy
+      # smoke's HARNESS_GEMINI_VERSION.
+      - name: Install the Gemini CLI
+        shell: bash
+        run: |
+          npm install --global @google/gemini-cli@0.62.0
+          gemini --version
+
+      - name: Gemini regression smoke
+        shell: bash
+        env:
+          TCLAUDE_GEMINI_FIXTURE_SMOKE: "1"
+        run: |
+          set -o pipefail
+          go test ./pkg/claude/harness/geminifixture/... -run '^TestGemini' \
+            -v -count=1 -timeout 600s 2>&1 | tee "$RUNNER_TEMP/gemini-smoke.log"
+
+      # A skipped test still exits 0, so require an explicit pass from every
+      # scenario the package defines.
+      - name: Reject a silently skipped smoke
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/gemini-smoke.log"
+          scenarios="$(go test -list '^TestGemini' ./pkg/claude/harness/geminifixture/ | grep '^Test' || true)"
+          if [[ -z "$scenarios" ]]; then
+            echo "::error::the Gemini fixture package defines no scenarios"
+            exit 1
+          fi
+          missing=()
+          while read -r test_name; do
+            grep -qE "^--- PASS: $test_name " "$log" || missing+=("$test_name")
+          done <<< "$scenarios"
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::Gemini smoke scenarios did not report an explicit pass: ${missing[*]}"
+            exit 1
+          fi
+
   # The filtered-network proxy smokes build real sandboxes against live
   # fixtures. Everything that decides what runs, what counts as evidence, which
   # harness versions are pinned and how fixtures are built lives in
