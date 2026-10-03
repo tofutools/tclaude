@@ -78,14 +78,18 @@ func TestAccountUsagePreservesMissingExpiredAndStaleObservations(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
 	require.Len(t, out.Windows, 4, "missing Claude weekly window must not be synthesized")
 	for _, w := range out.Windows {
-		assert.NotEmpty(t, w.Observed)
+		if w.Provider != "anthropic" {
+			assert.NotEmpty(t, w.Observed)
+		}
 		switch w.Provider + ":" + w.Name {
 		case "anthropic:five_hour":
 			assert.Equal(t, "reset", w.Status)
 			assert.False(t, w.Available)
 			assert.Equal(t, 72.0, w.Pct)
 		case "anthropic:seven_day_sonnet":
-			assert.True(t, w.Available)
+			assert.False(t, w.Available)
+			assert.Equal(t, "unknown_age", w.Status)
+			assert.Empty(t, w.Observed)
 			assert.Equal(t, 15.0, w.Pct)
 		case "openai:seven_day":
 			assert.True(t, w.Available)
@@ -106,7 +110,7 @@ func TestAccountCostsRawSplitAndSelfIncludesPriorGenerations(t *testing.T) {
 	f := newFlow(t)
 	const conv = "spending-agent"
 	f.HaveConvWithTitle(conv, "spending-agent")
-	agentID, err := db.AgentIDForConv(conv)
+	agentID, _, err := db.EnsureAgentForConv(conv, "test")
 	require.NoError(t, err)
 	require.NotEmpty(t, agentID)
 	require.NoError(t, db.LinkConvToAgent("prior-generation", agentID, "prior", "test"))
@@ -154,5 +158,46 @@ func TestAccountCostsRejectsBadRanges(t *testing.T) {
 	for _, q := range []string{"from=bad", "to=bad", "from=2026-04-02&to=2026-04-01", "from=2020-01-01&to=2026-01-01", "self=false"} {
 		rec := accountQuery(t, f, "", "/v1/costs?"+q)
 		assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+}
+
+func TestAccountUsageClaudeCarryForwardDoesNotRefreshWindowAge(t *testing.T) {
+	f := newFlow(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	old := now.Add(-4 * 24 * time.Hour)
+	reset := now.Add(2 * 24 * time.Hour)
+	_, err := db.SaveSubscriptionUsageSample(db.SubscriptionUsageSample{
+		Provider: db.SubscriptionProviderAnthropic, ObservedAt: old, Source: "statusline",
+		Windows: []db.SubscriptionUsageWindow{{Name: "seven_day", UsedPercent: 40, ResetsAt: reset}},
+	})
+	require.NoError(t, err)
+	seedUsageCache(t, usageapi.CachedUsage{SevenDay: &usageapi.CachedBucket{Pct: 40, ResetsAt: reset}, FetchedAt: old})
+	// Production statusline update omits weekly: the cache carries it forward,
+	// while only five_hour receives a new per-window history observation.
+	usageapi.UpdateFromStatusLine(&usageapi.CachedBucket{Pct: 10, ResetsAt: now.Add(time.Hour)}, nil, nil)
+	rec := accountQuery(t, f, "", "/v1/usage/summary")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var out struct {
+		Windows []struct {
+			Name       string `json:"window_name"`
+			Status     string `json:"status"`
+			ObservedAt string `json:"observed_at"`
+			Age        int64  `json:"age_seconds"`
+			Available  bool   `json:"available"`
+		} `json:"windows"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.Len(t, out.Windows, 2)
+	for _, w := range out.Windows {
+		if w.Name == "seven_day" {
+			assert.Equal(t, "stale", w.Status)
+			assert.False(t, w.Available)
+			assert.Equal(t, old.Format(time.RFC3339Nano), w.ObservedAt)
+			assert.GreaterOrEqual(t, w.Age, int64(4*24*60*60))
+		} else {
+			assert.Equal(t, "current", w.Status)
+			assert.True(t, w.Available)
+			assert.Less(t, w.Age, int64(60))
+		}
 	}
 }

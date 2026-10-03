@@ -22,12 +22,12 @@ type accountUsageWindow struct {
 	Provider   string                          `json:"provider"`
 	WindowName string                          `json:"window_name"`
 	Available  bool                            `json:"available"`
-	Status     string                          `json:"status"` // current | stale | reset
+	Status     string                          `json:"status"` // current | stale | reset | unknown_age
 	Pct        float64                         `json:"pct"`    // last observed, never an inferred zero after reset
 	UsedUnits  float64                         `json:"used_units,omitempty"`
 	LimitUnits float64                         `json:"limit_units,omitempty"`
-	ObservedAt string                          `json:"observed_at"`
-	AgeSeconds int64                           `json:"age_seconds"`
+	ObservedAt string                          `json:"observed_at,omitempty"`
+	AgeSeconds *int64                          `json:"age_seconds,omitempty"`
 	ResetsAt   string                          `json:"resets_at,omitempty"`
 	Source     string                          `json:"source,omitempty"`
 	Forecasts  map[string]usageHistoryForecast `json:"forecasts"`
@@ -80,7 +80,7 @@ func collectAccountUsage(now time.Time, idleTimeout time.Duration) (accountUsage
 			status = "reset"
 		}
 		age := max(int64(0), int64(now.Sub(observed)/time.Second))
-		w := accountUsageWindow{Provider: provider, WindowName: name, Available: status == "current", Status: status, Pct: pct, UsedUnits: used, LimitUnits: limit, ObservedAt: observed.UTC().Format(time.RFC3339Nano), AgeSeconds: age, Source: source, Forecasts: forecasts[key]}
+		w := accountUsageWindow{Provider: provider, WindowName: name, Available: status == "current", Status: status, Pct: pct, UsedUnits: used, LimitUnits: limit, ObservedAt: observed.UTC().Format(time.RFC3339Nano), AgeSeconds: &age, Source: source, Forecasts: forecasts[key]}
 		if w.Forecasts == nil {
 			w.Forecasts = map[string]usageHistoryForecast{}
 		}
@@ -111,7 +111,22 @@ func collectAccountUsage(now time.Time, idleTimeout time.Duration) (accountUsage
 		if json.Unmarshal(claude.Data, &c) == nil {
 			for name, b := range map[string]*usageapi.CachedBucket{"five_hour": c.FiveHour, "seven_day": c.SevenDay, "seven_day_sonnet": c.SevenDaySonnet} {
 				if b != nil {
-					add(db.SubscriptionProviderAnthropic, name, b.Pct, 0, 0, c.FetchedAt, b.ResetsAt, "cache")
+					key := usageSeriesKey{db.SubscriptionProviderAnthropic, name}
+					// Claude carries forward omitted buckets while advancing the
+					// cache-wide FetchedAt. Only history proves a bucket's age.
+					if _, exists := windows[key]; exists {
+						continue
+					}
+					status := "unknown_age"
+					if !b.ResetsAt.IsZero() && !b.ResetsAt.After(now) {
+						status = "reset"
+					}
+					windows[key] = accountUsageWindow{
+						Provider: db.SubscriptionProviderAnthropic, WindowName: name,
+						Status: status, Pct: b.Pct, Source: "cache",
+						ResetsAt:  formatResetsAt(b.ResetsAt),
+						Forecasts: map[string]usageHistoryForecast{},
+					}
 				}
 			}
 		}

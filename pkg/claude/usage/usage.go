@@ -83,7 +83,7 @@ type usageReadout struct {
 		Pct       float64             `json:"pct"`
 		Used      float64             `json:"used_units"`
 		Limit     float64             `json:"limit_units"`
-		Age       int64               `json:"age_seconds"`
+		Age       *int64              `json:"age_seconds"`
 		ResetsAt  string              `json:"resets_at"`
 		Forecasts map[string]forecast `json:"forecasts"`
 	} `json:"windows"`
@@ -125,7 +125,11 @@ func renderUsage(raw json.RawMessage, out io.Writer) error {
 		if reset == "" {
 			reset = "unknown"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", w.Provider, w.Name, used, w.Status, (time.Duration(w.Age) * time.Second).Round(time.Second), reset, prediction)
+		age := "unknown"
+		if w.Age != nil {
+			age = (time.Duration(*w.Age) * time.Second).String()
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", w.Provider, w.Name, used, w.Status, age, reset, prediction)
 	}
 	if err := tw.Flush(); err != nil {
 		return err

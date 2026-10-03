@@ -31,8 +31,10 @@ The response contains `generated_at`, account `scope`, `windows`, and
 - `pct`: last observed percentage consumed, with native `used_units` and
   `limit_units` when known.
 - `observed_at`, `age_seconds`, and `source`: the reading's freshness and origin.
+  Observation time and age are omitted when a legacy Claude cache is the only
+  source: its overall refresh timestamp cannot establish each bucket's age.
 - `resets_at`: reset time, when reported.
-- `status`: `current`, `stale`, or `reset`; `available` is true only for a
+- `status`: `current`, `stale`, `reset`, or `unknown_age`; `available` is true only for a
   current reading. A reset reading retains its old percentage as historical
   information; it does not assert current usage is zero.
 - `forecasts`: the Usage tab's `span`, `recent`, and `fit` predictions,
@@ -41,7 +43,7 @@ The response contains `generated_at`, account `scope`, `windows`, and
 
 Missing windows are omitted; an empty array means no quota observations are
 available. Do not interpret an absent quota as unlimited capacity. Forecast
-freshness is independent of the current reading: a cache can be newer than
+freshness is independent of the current reading: Codex cache readings can be newer than
 sampled history. Check the forecast's status before using its rate or ETA.
 Forecasts need at least three samples over thirty minutes and pause when stale.
 These quotas and forecasts describe shared account usage, not just the caller.
