@@ -235,23 +235,3 @@ func TestWantsTmuxScrollback(t *testing.T) {
 		t.Fatalf("nil harness must not request tmux scrollback")
 	}
 }
-
-func TestWantsTmuxPassthrough(t *testing.T) {
-	for _, name := range []string{DefaultName, CodexName, CopilotName, OpenCodeName} {
-		h, ok := Get(name)
-		if !ok {
-			t.Fatalf("%s harness not registered", name)
-		}
-		if !h.WantsTmuxPassthrough() {
-			t.Fatalf("%s emits DCS-wrapped clipboard sequences; WantsTmuxPassthrough must be true", name)
-		}
-	}
-
-	if (&Harness{Name: "bare"}).WantsTmuxPassthrough() {
-		t.Fatal("bare harness must not request tmux passthrough")
-	}
-	var nilH *Harness
-	if nilH.WantsTmuxPassthrough() {
-		t.Fatal("nil harness must not request tmux passthrough")
-	}
-}

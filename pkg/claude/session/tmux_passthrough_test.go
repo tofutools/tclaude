@@ -3,52 +3,15 @@ package session
 import (
 	"reflect"
 	"testing"
-
-	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 func TestConfigureTmuxPassthrough(t *testing.T) {
-	tests := []struct {
-		name    string
-		harness *harness.Harness
-		want    [][]string
-	}{
-		{
-			name:    "copilot",
-			harness: mustTestHarness(t, harness.CopilotName),
-			want: [][]string{{
-				"set-option", "-t", "=sess-harness:", "allow-passthrough", "on",
-			}},
-		},
-		{
-			name:    "opencode",
-			harness: mustTestHarness(t, harness.OpenCodeName),
-			want: [][]string{{
-				"set-option", "-t", "=sess-harness:", "allow-passthrough", "on",
-			}},
-		},
-		{name: "claude", harness: harness.Default(), want: [][]string{{"set-option", "-t", "=sess-harness:", "allow-passthrough", "on"}}},
-		{name: "codex", harness: mustTestHarness(t, harness.CodexName), want: [][]string{{"set-option", "-t", "=sess-harness:", "allow-passthrough", "on"}}},
-		{name: "bare", harness: &harness.Harness{Name: "bare"}},
-		{name: "nil", harness: nil},
+	rec := withRecordingTmux(t)
+	ConfigureTmuxPassthrough("sess-harness")
+	// The default must target exactly the managed window, never the server
+	// or global window defaults (which may affect unrelated operator sessions).
+	want := [][]string{{"set-option", "-t", "=sess-harness:", "allow-passthrough", "on"}}
+	if !reflect.DeepEqual(rec.calls, want) {
+		t.Fatalf("tmux passthrough config = %v, want %v", rec.calls, want)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rec := withRecordingTmux(t)
-			ConfigureTmuxPassthrough("sess-harness", tt.harness)
-			if !reflect.DeepEqual(rec.calls, tt.want) {
-				t.Fatalf("tmux passthrough config = %v, want %v", rec.calls, tt.want)
-			}
-		})
-	}
-}
-
-func mustTestHarness(t *testing.T, name string) *harness.Harness {
-	t.Helper()
-	h, ok := harness.Get(name)
-	if !ok {
-		t.Fatalf("%s harness not registered", name)
-	}
-	return h
 }

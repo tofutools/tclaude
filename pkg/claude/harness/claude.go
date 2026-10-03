@@ -25,14 +25,12 @@ import (
 // behavior change.
 func init() {
 	Register(&Harness{
-		Name:        DefaultName,
-		DisplayName: "Claude Code",
-		Spawn:       claudeSpawner{},
-		Ask:         claudeAsker{},
-		// Forward application-owned clipboard writes to attached terminals.
-		TmuxPassthrough: true,
-		OneShotReplay:   OneShotReplayDirect,
-		Models:          claudeModels{},
+		Name:          DefaultName,
+		DisplayName:   "Claude Code",
+		Spawn:         claudeSpawner{},
+		Ask:           claudeAsker{},
+		OneShotReplay: OneShotReplayDirect,
+		Models:        claudeModels{},
 		ModelTransport: staticModelTransport{
 			provider:    "anthropic",
 			template:    "net-anthropic",
