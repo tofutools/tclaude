@@ -585,6 +585,9 @@ func tclaudeLayerUnixRelayServerCommandArgs(
 		policyFlag, encoded,
 	}
 	if !tclaudeLayerPlanDeploysProxy(plan) {
+		if plan.NetworkSyncID != "" {
+			argv = append(argv, "--network-sync-id", plan.NetworkSyncID, "--network-sync-database", plan.NetworkSyncDatabase)
+		}
 		argv = append(argv, "--filtered-network-preserve-caller-identity")
 	}
 	argv = append(argv, "--")

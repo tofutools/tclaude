@@ -18,6 +18,7 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/probehelper"
 	"golang.org/x/sys/unix"
 )
@@ -33,6 +34,8 @@ type stackedRelayBindingOptions struct {
 	ManifestSHA256         string
 	Consume                bool
 	ReadyPath              string
+	NetworkSyncID          string
+	NetworkSyncDatabase    string
 	FilteredPolicy         string
 	PreserveCallerIdentity bool
 	// ProxyPolicy carries the proxy engine's compiled policy. It is a separate
@@ -150,6 +153,8 @@ func tclaudeLayerWinchRelayCmd() *cobra.Command {
 	)
 	cmd.Flags().StringVar(&binding.RouteSocketPath, "route-helper-socket", "", "route authority Unix socket (internal)")
 	cmd.Flags().StringVar(&binding.RouteAgentID, "route-helper-agent-id", "", "route authority agent identity (internal)")
+	cmd.Flags().StringVar(&binding.NetworkSyncDatabase, "network-sync-database", "", "private host database (internal)")
+	cmd.Flags().StringVar(&binding.NetworkSyncID, "network-sync-id", "", "private network sync mailbox (internal)")
 	cmd.Flags().StringVar(&binding.RouteConvID, "route-helper-conv-id", "", "route authority conversation identity (internal)")
 	cmd.Flags().StringVar(&binding.RouteLaunchGeneration, "route-helper-launch-generation", "", "route authority launch generation (internal)")
 	cmd.Flags().Int64SliceVar(&binding.RouteGroupIDs, "route-helper-group-id", nil, "route authority target group (internal)")
@@ -167,6 +172,14 @@ func runTclaudeLayerWinchRelay(
 	winch <-chan os.Signal,
 	binding stackedRelayBindingOptions,
 ) (int, error) {
+	if binding.NetworkSyncID != "" || binding.NetworkSyncDatabase != "" {
+		if binding.NetworkSyncID == "" || binding.NetworkSyncDatabase == "" || binding.FilteredPolicy == "" {
+			return 125, fmt.Errorf("network sync requires packet policy and complete launch metadata")
+		}
+		if err := db.PinNetworkSyncDatabase(binding.NetworkSyncDatabase); err != nil {
+			return 125, err
+		}
+	}
 	if len(argv) == 0 || argv[0] == "" {
 		return 125, fmt.Errorf("missing bubblewrap command")
 	}
@@ -429,6 +442,8 @@ func runTclaudeLayerWinchRelay(
 		}
 	}
 
+	stopSync := startNetworkSyncLoop(binding.NetworkSyncID, &filtered, status.ChildPID)
+	defer stopSync()
 	for {
 		select {
 		case _, ok := <-winch:

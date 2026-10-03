@@ -77,6 +77,7 @@ type profileJSON struct {
 	CopilotAPI     *bool `json:"copilot_api,omitempty"`
 	CodexAppServer *bool `json:"codex_app_server,omitempty"`
 	// FastMode is Codex's nullable service-tier choice: nil inherits the global
+	NetworkAutoSync *bool `json:"network_auto_sync,omitempty"`
 	// Codex config, true forces fast, false forces standard.
 	FastMode   *bool `json:"fast_mode,omitempty"`
 	AutoReview *bool `json:"auto_review,omitempty"`

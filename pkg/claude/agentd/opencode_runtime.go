@@ -1981,6 +1981,9 @@ func buildOpenCodeTclaudeLayerLaunchSpec(
 	if err != nil {
 		return nil, err
 	}
+	if err := session.PrepareNetworkSyncLaunch(&spec, snapshot, agentID); err != nil {
+		return nil, err
+	}
 	return &spec, nil
 }
 

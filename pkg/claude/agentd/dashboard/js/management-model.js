@@ -151,6 +151,7 @@ export function profileDraft(seed = null, { editExisting = true, local = null, c
     peer_messaging: triValue(seed?.peer_messaging),
     copilot_api: triValue(seed?.copilot_api), codex_app_server: triValue(seed?.codex_app_server),
     fast_mode: triValue(seed?.fast_mode),
+    network_auto_sync: seed?.network_auto_sync == null ? '' : (seed.network_auto_sync ? '1' : '0'),
     ssh_workaround: seed?.ssh_workaround !== false,
     agent_name: seed?.agent_name || '', role: seed?.role || '',
     role_refs: Array.isArray(seed?.role_refs) && seed.role_refs.length
@@ -218,6 +219,7 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
   if (codexAppServer != null) body.codex_app_server = codexAppServer;
   const fastMode = (!h || h.can_fast_mode) ? readTri(draft.fast_mode) : null;
   if (fastMode != null) body.fast_mode = fastMode;
+  if (draft.network_auto_sync !== '') body.network_auto_sync = draft.network_auto_sync === '1';
   if (h?.can_ssh_workaround) {
     body.ssh_workaround = !!draft.ssh_workaround;
   }
