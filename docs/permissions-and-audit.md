@@ -72,7 +72,9 @@ inherited state.
 `tclaude setup --install-default-agent-permissions` (idempotent) grants the
 self-management baseline: `self.rename`, `self.compact`, `self.interrupt`,
 `self.clone`, `self.schedule`, `self.remote-control`, `self.task`, `self.pr`,
-`self.tags`, `self.dir-repair`, plus `process.templates.read`.
+`self.tags`, `self.dir-repair`, plus `process.templates.read`, `usage.read`, and `costs.read`.
+The account read permissions expose quotas/forecasts and cost history through
+[`tclaude usage` and `tclaude costs`](usage-and-costs.md).
 Self-reincarnation deliberately needs no slug at all. These defaults let an
 agent manage its own conversation without letting it touch anyone else's —
 every cross-agent verb still needs a separate grant. See

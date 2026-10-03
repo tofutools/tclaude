@@ -663,3 +663,17 @@ func TestUpdateFromStatusLine_DropsSevenDayPastReset(t *testing.T) {
 	require.NotNil(t, cached, "expected cache present")
 	assert.Nil(t, cached.SevenDay, "expired 7d window dropped, not carried forward")
 }
+
+func TestFreshAPIReadingHistoryPreservesEffectiveReset(t *testing.T) {
+	setupTestCache(t)
+	reset := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	saveCache(&CachedUsage{SevenDay: &CachedBucket{Pct: 20, ResetsAt: reset}, FetchedAt: time.Now()}, "", nil)
+	cached, windows := buildCachedUsage(&Response{SevenDay: &Bucket{Utilization: 25}})
+	saveCache(cached, "api", windows)
+	rows, err := db.SubscriptionUsageHistorySince(time.Now().Add(-time.Hour))
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, 25.0, rows[0].UsedPercent)
+	assert.Equal(t, reset, rows[0].ResetsAt)
+	assert.Equal(t, cached.FetchedAt.UTC(), rows[0].ObservedAt)
+}

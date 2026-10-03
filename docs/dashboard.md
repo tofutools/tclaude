@@ -377,6 +377,9 @@ operator dialog with role filtering and attachments for offline recipients.
 
 ## Usage
 
+Agents and operators can also query quotas and costs through the daemon with
+[`tclaude usage` and `tclaude costs`](usage-and-costs.md), including JSON output.
+
 Subscription quota and forecasting: one card per provider × quota window
 (Claude 5-hour / 7-day / 7-day-Sonnet; Codex 5-hour / weekly; Copilot monthly
 premium requests). Each card shows the current percentage, sample age, and

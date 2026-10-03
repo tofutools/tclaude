@@ -45,6 +45,8 @@ var defaultPermsForBundledSkills = []string{
 	"self.tags",
 	"self.dir-repair",
 	"process.templates.read",
+	"usage.read",
+	"costs.read",
 }
 
 // Protocol version - bump this when the handler needs to be re-registered
