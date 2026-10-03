@@ -10,3 +10,7 @@ import (
 func removeDirAtNoFollow(_, _ string) (bool, error) {
 	return false, fmt.Errorf("secure sandbox-profile directory removal is not supported on %s", runtime.GOOS)
 }
+
+func removeAgentOwnedDirAtNoFollow(_, _ string) (bool, error) {
+	return false, fmt.Errorf("secure agent-owned directory removal is not supported on %s", runtime.GOOS)
+}

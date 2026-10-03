@@ -17,6 +17,18 @@ import (
 // the filesystem root through the recursive walk closes the check/use gap that
 // string-path os.RemoveAll would leave behind.
 func removeDirAtNoFollow(base, name string) (bool, error) {
+	return removeDirAtNoFollowWithPermissions(base, name, false)
+}
+
+// removeAgentOwnedDirAtNoFollow is only for validated, disposable agent-dirs
+// roots. Unlike ordinary cleanup it repairs read-only directory permissions,
+// such as those Go sets on extracted module caches. Files are never chmodded:
+// they may be hard links to data outside the owned tree.
+func removeAgentOwnedDirAtNoFollow(base, name string) (bool, error) {
+	return removeDirAtNoFollowWithPermissions(base, name, true)
+}
+
+func removeDirAtNoFollowWithPermissions(base, name string, repairPermissions bool) (bool, error) {
 	if name == "" || name == "." || name == ".." || strings.Contains(name, string(filepath.Separator)) {
 		return false, fmt.Errorf("invalid directory child %q", name)
 	}
@@ -28,7 +40,7 @@ func removeDirAtNoFollow(base, name string) (bool, error) {
 		return false, err
 	}
 	defer func() { _ = unix.Close(parent) }()
-	return removeEntryAtNoFollow(parent, name)
+	return removeEntryAtNoFollow(parent, name, repairPermissions)
 }
 
 func openDirectoryPathNoFollow(path string) (int, error) {
@@ -59,7 +71,7 @@ func openDirectoryPathNoFollow(path string) (int, error) {
 	return current, nil
 }
 
-func removeEntryAtNoFollow(parent int, name string) (bool, error) {
+func removeEntryAtNoFollow(parent int, name string, repairPermissions bool) (bool, error) {
 	flags := unix.O_RDONLY | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_CLOEXEC
 	fd, err := unix.Openat(parent, name, flags, 0)
 	if errors.Is(err, unix.ENOENT) {
@@ -74,6 +86,21 @@ func removeEntryAtNoFollow(parent int, name string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if repairPermissions {
+		// Use the opened O_NOFOLLOW descriptor, never a path-based chmod that
+		// could follow a substituted symlink to a non-owned directory.
+		var stat unix.Stat_t
+		if err := unix.Fstat(fd, &stat); err != nil {
+			_ = unix.Close(fd)
+			return false, err
+		}
+		if stat.Mode&0o700 != 0o700 {
+			if err := unix.Fchmod(fd, uint32(stat.Mode&0o7777)|0o700); err != nil {
+				_ = unix.Close(fd)
+				return false, fmt.Errorf("make agent-owned directory writable: %w", err)
+			}
+		}
+	}
 	dir := os.NewFile(uintptr(fd), name)
 	if dir == nil {
 		_ = unix.Close(fd)
@@ -86,7 +113,7 @@ func removeEntryAtNoFollow(parent int, name string) (bool, error) {
 	}
 	var errs []error
 	for _, child := range names {
-		if _, err := removeEntryAtNoFollow(fd, child); err != nil {
+		if _, err := removeEntryAtNoFollow(fd, child, repairPermissions); err != nil {
 			errs = append(errs, fmt.Errorf("remove %q: %w", child, err))
 		}
 	}
