@@ -45,7 +45,7 @@ func TestUsageDoesNotPresentExpiredReadingAsCurrent(t *testing.T) {
 }
 
 func TestCostsQueriesDaemonWithRangeAndSelf(t *testing.T) {
-	stubQuery(t, "/v1/costs?from=2026-10-01&self=true&to=2026-10-03", `{"scope":"self","from":"2026-10-01","to":"2026-10-03","timezone":"UTC","real_total_usd":2,"what_if_total_usd":3,"today_real_usd":1,"what_if_enabled":true,"agents":[{"provider":"anthropic","real_cost_usd":2,"what_if_cost_usd":3}]}`)
+	stubQuery(t, "/v1/costs?from=2026-10-01&self=true&to=2026-10-03", `{"scope":"self","from":"2026-10-01","to":"2026-10-03","timezone":"UTC","real_total_usd":2,"what_if_total_usd":3,"today_real_usd":1,"what_if_enabled":true,"providers":[{"name":"anthropic","real_total_usd":2,"what_if_total_usd":3}]}`)
 	var out bytes.Buffer
 	require.NoError(t, runCosts(&CostsParams{From: "2026-10-01", To: "2026-10-03", Self: true}, &out))
 	for _, s := range []string{"Recorded API: $2.0000", "WHAT-IF subscription estimate: $3.0000", "anthropic", "raw USD"} {
@@ -63,4 +63,21 @@ func TestQueriesPropagateDaemonErrorsAndValidateDates(t *testing.T) {
 	assert.ErrorContains(t, runCosts(&CostsParams{From: "invalid"}, &out), "bad from date")
 	assert.ErrorContains(t, runCosts(&CostsParams{From: "2026-10-03", To: "2026-10-01"}, &out), "from must be")
 	assert.Empty(t, out.String())
+}
+
+func TestCostsRequestsOptionalBreakdownsInJSON(t *testing.T) {
+	response := `{"providers":[],"days":[],"agents":[],"models":[],"harnesses":[]}`
+	stubQuery(t, "/v1/costs?agents=true&days=true&harnesses=true&models=true", response)
+	var out bytes.Buffer
+	require.NoError(t, runCosts(&CostsParams{JSON: true, Days: true, Agents: true, Models: true, Harnesses: true}, &out))
+	assert.JSONEq(t, response, out.String())
+}
+
+func TestCostsTextRendersRequestedBreakdowns(t *testing.T) {
+	stubQuery(t, "/v1/costs?agents=true&days=true&harnesses=true&models=true", `{"providers":[],"models":[{"name":"test-model","real_total_usd":2}],"harnesses":[{"name":"test-harness","real_total_usd":2}],"days":[{"day":"2026-10-03","real_cost_usd":2}],"agents":[{"conv_id":"test-conv","title":"test-title","day":"2026-10-03","provider":"test-provider","model":"test-model","real_cost_usd":2}]}`)
+	var out bytes.Buffer
+	require.NoError(t, runCosts(&CostsParams{Days: true, Agents: true, Models: true, Harnesses: true}, &out))
+	for _, value := range []string{"MODEL", "HARNESS", "DAY", "AGENT / CONVERSATION", "test-model", "test-harness", "test-conv", "test-title", "test-provider"} {
+		assert.Contains(t, out.String(), value)
+	}
 }

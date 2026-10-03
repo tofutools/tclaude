@@ -167,15 +167,90 @@ func handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// accountCostBreakdown is a compact rollup within one requested category.
+type accountCostBreakdown struct {
+	Name               string  `json:"name"`
+	TotalUSD           float64 `json:"total_usd"`
+	RealUSD            float64 `json:"real_total_usd"`
+	WhatIfUSD          float64 `json:"what_if_total_usd"`
+	VirtualCostCredits float64 `json:"virtual_cost_credits,omitempty"`
+	CostKind           string  `json:"cost_kind,omitempty"`
+}
+
 type accountCostsResponse struct {
-	costsResponse
-	GeneratedAt    string  `json:"generated_at"`
-	Timezone       string  `json:"timezone"`
-	Scope          string  `json:"scope"`
-	AgentID        string  `json:"agent_id,omitempty"`
-	WhatIfEnabled  bool    `json:"what_if_enabled"`
-	TodayRealUSD   float64 `json:"today_real_usd"`
-	TodayWhatIfUSD float64 `json:"today_what_if_usd"`
+	From               string                  `json:"from"`
+	To                 string                  `json:"to"`
+	TotalUSD           float64                 `json:"total_usd"`
+	RealTotalUSD       float64                 `json:"real_total_usd"`
+	WhatIfTotalUSD     float64                 `json:"what_if_total_usd"`
+	VirtualCostCredits float64                 `json:"virtual_cost_credits,omitempty"`
+	CostKind           string                  `json:"cost_kind,omitempty"`
+	GeneratedAt        string                  `json:"generated_at"`
+	Timezone           string                  `json:"timezone"`
+	Scope              string                  `json:"scope"`
+	AgentID            string                  `json:"agent_id,omitempty"`
+	WhatIfEnabled      bool                    `json:"what_if_enabled"`
+	TodayRealUSD       float64                 `json:"today_real_usd"`
+	TodayWhatIfUSD     float64                 `json:"today_what_if_usd"`
+	Providers          []accountCostBreakdown  `json:"providers"`
+	Models             *[]accountCostBreakdown `json:"models,omitempty"`
+	Harnesses          *[]accountCostBreakdown `json:"harnesses,omitempty"`
+	Days               *[]costDayPoint         `json:"days,omitempty"`
+	Agents             *[]costAgentRow         `json:"agents,omitempty"`
+}
+
+// summarizeAccountCosts uses the same raw agent/day slices as the dashboard.
+// Optional slices are pointers so a requested empty breakdown stays an array,
+// while unrequested categories are absent from the wire response.
+func summarizeAccountCosts(costs costsResponse, details map[string]bool) accountCostsResponse {
+	out := accountCostsResponse{From: costs.From, To: costs.To, TotalUSD: costs.TotalUSD,
+		RealTotalUSD: costs.RealTotalUSD, WhatIfTotalUSD: costs.WhatIfTotalUSD,
+		VirtualCostCredits: costs.VirtualCostCredits, CostKind: costs.CostKind}
+	rollup := func(category string) []accountCostBreakdown {
+		totals := map[string]accountCostBreakdown{}
+		for _, row := range costs.Agents {
+			name := row.Provider
+			switch category {
+			case "models":
+				name = row.Model
+			case "harnesses":
+				name = row.Harness
+			}
+			if name == "" {
+				name = "unknown"
+			}
+			value := totals[name]
+			value.Name = name
+			value.TotalUSD += row.CostUSD
+			value.RealUSD += row.RealCostUSD
+			value.WhatIfUSD += row.WhatIfCostUSD
+			value.VirtualCostCredits += row.VirtualCostCredits
+			value.CostKind = costKind(value.RealUSD, value.WhatIfUSD)
+			totals[name] = value
+		}
+		result := make([]accountCostBreakdown, 0, len(totals))
+		for _, value := range totals {
+			result = append(result, value)
+		}
+		sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+		return result
+	}
+	out.Providers = rollup("providers")
+	if details["models"] {
+		rows := rollup("models")
+		out.Models = &rows
+	}
+	if details["harnesses"] {
+		rows := rollup("harnesses")
+		out.Harnesses = &rows
+	}
+	if details["days"] {
+		out.Days = &costs.Days
+	}
+	if details["agents"] {
+		out.Agents = &costs.Agents
+	}
+	return out
 }
 
 func accountCostRange(r *http.Request, now time.Time) (time.Time, time.Time, error) {
@@ -203,6 +278,17 @@ func handleAccountCosts(w http.ResponseWriter, r *http.Request) {
 	conv, ok := requirePermission(w, r, PermCostsRead)
 	if !ok {
 		return
+	}
+	details := map[string]bool{}
+	for _, name := range []string{"days", "agents", "models", "harnesses"} {
+		switch value := r.URL.Query().Get(name); value {
+		case "", "false":
+		case "true":
+			details[name] = true
+		default:
+			writeError(w, http.StatusBadRequest, "bad_details", name+" must be true or false")
+			return
+		}
 	}
 	now := time.Now()
 	from, to, err := accountCostRange(r, now)
@@ -242,7 +328,12 @@ func handleAccountCosts(w http.ResponseWriter, r *http.Request) {
 	if agentID != "" {
 		costs = costsForAgent(costs, agentID)
 	}
-	out := accountCostsResponse{costsResponse: costs, GeneratedAt: now.UTC().Format(time.RFC3339Nano), Timezone: now.Location().String(), Scope: "account", AgentID: agentID, WhatIfEnabled: includeWhatIf}
+	out := summarizeAccountCosts(costs, details)
+	out.GeneratedAt = now.UTC().Format(time.RFC3339Nano)
+	out.Timezone = now.Location().String()
+	out.Scope = "account"
+	out.AgentID = agentID
+	out.WhatIfEnabled = includeWhatIf
 	if agentID != "" {
 		out.Scope = "self"
 	}
