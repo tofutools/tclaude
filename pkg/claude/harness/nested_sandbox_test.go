@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/probehelper"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 func TestNestedSandboxContractsPrepareRealInnerEngines(t *testing.T) {
@@ -97,7 +98,7 @@ func TestCodexNestedSandboxResolvesNPMNativeBackend(t *testing.T) {
 	}
 	packageName, targetTriple, err := codexLinuxNativeTarget()
 	require.NoError(t, err)
-	root := t.TempDir()
+	root := testutil.CanonicalTempDir(t)
 	launcher := filepath.Join(
 		root,
 		"node_modules",
@@ -203,7 +204,7 @@ func TestResolveCodexNativeLaunchExecutableDoesNotProbeVersion(t *testing.T) {
 	}
 	packageName, targetTriple, err := codexLinuxNativeTarget()
 	require.NoError(t, err)
-	root := t.TempDir()
+	root := testutil.CanonicalTempDir(t)
 	launcher := filepath.Join(root, "node_modules", "@openai", "codex", "bin", "codex.js")
 	require.NoError(t, os.MkdirAll(filepath.Dir(launcher), 0o700))
 	require.NoError(t, os.WriteFile(launcher, []byte("#!/bin/sh\nexit 99\n"), 0o700))

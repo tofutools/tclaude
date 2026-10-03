@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/testutil"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -75,9 +76,9 @@ func TestResumeTclaudeLayerNetworkPostureIncludesDefaultAllowDenies(t *testing.T
 func TestResumeLaunchCmd_AppliesActorSnapshotAndStripsOperatorToken(t *testing.T) {
 	setupTestDB(t)
 	t.Setenv("TCLAUDE_HUMAN_TOKEN", "must-not-reach-pane")
-	readDir := t.TempDir()
-	writeDir := t.TempDir()
-	denyDir := t.TempDir()
+	readDir := testutil.CanonicalTempDir(t)
+	writeDir := testutil.CanonicalTempDir(t)
+	denyDir := testutil.CanonicalTempDir(t)
 	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
 		Name: "resume-policy",
 		Filesystem: []sandboxpolicy.FilesystemGrant{

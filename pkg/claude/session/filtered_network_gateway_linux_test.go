@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 func TestFilteredNetworkHelperEnvExcludesAmbientInjectionVariables(t *testing.T) {
@@ -98,7 +99,7 @@ func TestFilteredNetworkPastaArgsJoinNetworkNamespaceOwner(t *testing.T) {
 }
 
 func TestFilteredNetworkResolvMountMaterializesRuntimeSymlinkTarget(t *testing.T) {
-	root := t.TempDir()
+	root := testutil.CanonicalTempDir(t)
 	configRoot := filepath.Join(root, "etc")
 	runtimeRoot := filepath.Join(root, "run")
 	target := filepath.Join(runtimeRoot, "systemd", "resolve", "stub-resolv.conf")
