@@ -645,7 +645,10 @@ func TestRemoveDirAtNoFollowDoesNotRepairPermissions(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root can unlink files in read-only directories")
 	}
-	base := t.TempDir()
+	// Like production callers, resolve the host's temp-path aliases first
+	// (macOS /var -> /private/var); the remover deliberately rejects symlinks.
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	dir := filepath.Join(base, "ordinary-cleanup")
 	require.NoError(t, os.Mkdir(dir, 0o700))
 	marker := filepath.Join(dir, "keep")

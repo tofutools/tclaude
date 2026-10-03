@@ -21,8 +21,9 @@ func removeDirAtNoFollow(base, name string) (bool, error) {
 }
 
 // removeAgentOwnedDirAtNoFollow is only for validated, disposable agent-dirs
-// roots. Unlike ordinary cleanup it repairs read-only directory permissions,
-// such as those Go sets on extracted module caches. Files are never chmodded:
+// roots. Unlike ordinary cleanup it repairs readable, read-only directories,
+// such as Go's 0555 extracted module caches. Unreadable directories still fail
+// closed at the no-follow open. Files are never chmodded:
 // they may be hard links to data outside the owned tree.
 func removeAgentOwnedDirAtNoFollow(base, name string) (bool, error) {
 	return removeDirAtNoFollowWithPermissions(base, name, true)
