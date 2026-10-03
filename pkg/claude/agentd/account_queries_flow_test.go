@@ -126,7 +126,7 @@ func TestAccountCostsRawSplitAndSelfIncludesPriorGenerations(t *testing.T) {
 			require.NoError(t, db.UpdateSessionVirtualCost(row.id, row.virtual))
 		}
 	}
-	rec := accountQuery(t, f, conv, "/v1/costs?self=true")
+	rec := accountQuery(t, f, conv, "/v1/costs?self=true&agents=true")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var out struct {
 		costsResp
@@ -155,7 +155,7 @@ func TestAccountCostsRawSplitAndSelfIncludesPriorGenerations(t *testing.T) {
 
 func TestAccountCostsRejectsBadRanges(t *testing.T) {
 	f := newFlow(t)
-	for _, q := range []string{"from=bad", "to=bad", "from=2026-04-02&to=2026-04-01", "from=2020-01-01&to=2026-01-01", "self=false"} {
+	for _, q := range []string{"from=bad", "to=bad", "from=2026-04-02&to=2026-04-01", "from=2020-01-01&to=2026-01-01", "self=false", "days=bad", "agents=bad", "models=bad", "harnesses=bad"} {
 		rec := accountQuery(t, f, "", "/v1/costs?"+q)
 		assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	}
@@ -210,4 +210,95 @@ func TestAccountCostsSelfRejectsUnlinkedConversation(t *testing.T) {
 	rec := accountQuery(t, f, conv, "/v1/costs?self=true")
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "agent_required")
+}
+
+func TestAccountCostsDefaultSummaryAndOptInBreakdowns(t *testing.T) {
+	f := newFlow(t)
+	for _, item := range []struct {
+		id, providerHarness, model string
+		real, virtual              float64
+	}{
+		{"summary-real", "claude", "claude-sonnet", 2, 0},
+		{"summary-estimate", "codex", "gpt-6-sol", 0, 3},
+	} {
+		require.NoError(t, db.SaveSession(&db.SessionRow{ID: item.id, TmuxSession: item.id, ConvID: item.id, Cwd: "/tmp", Status: "idle", Harness: item.providerHarness}))
+		require.NoError(t, db.UpdateSessionModel(item.id, item.model))
+		if item.real > 0 {
+			require.NoError(t, db.UpdateSessionCost(item.id, item.real))
+		} else {
+			require.NoError(t, db.UpdateSessionVirtualCost(item.id, item.virtual))
+		}
+	}
+	require.NoError(t, config.Save(&config.Config{Cost: &config.CostConfig{ShowOnSubscription: true}}))
+	fetch := func(query string) map[string]json.RawMessage {
+		rec := accountQuery(t, f, "", "/v1/costs"+query)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var out map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+		return out
+	}
+	summary := fetch("")
+	for _, category := range []string{"days", "agents", "models", "harnesses"} {
+		assert.NotContains(t, summary, category)
+	}
+	var providers []struct {
+		Name   string  `json:"name"`
+		Real   float64 `json:"real_total_usd"`
+		WhatIf float64 `json:"what_if_total_usd"`
+	}
+	require.NoError(t, json.Unmarshal(summary["providers"], &providers))
+	require.Len(t, providers, 2)
+	assert.Equal(t, "anthropic", providers[0].Name)
+	assert.Equal(t, 2.0, providers[0].Real)
+	assert.Equal(t, "openai", providers[1].Name)
+	assert.Equal(t, 3.0, providers[1].WhatIf)
+	for _, category := range []string{"days", "agents", "models", "harnesses"} {
+		detailed := fetch("?" + category + "=true")
+		assert.Contains(t, detailed, category)
+		for _, other := range []string{"days", "agents", "models", "harnesses"} {
+			if other != category {
+				assert.NotContains(t, detailed, other)
+			}
+		}
+		for _, key := range []string{"providers", "total_usd", "real_total_usd", "what_if_total_usd", "today_real_usd", "today_what_if_usd"} {
+			assert.JSONEq(t, string(summary[key]), string(detailed[key]))
+		}
+		var rows []json.RawMessage
+		require.NoError(t, json.Unmarshal(detailed[category], &rows))
+		assert.NotEmpty(t, rows)
+	}
+	all := fetch("?days=true&agents=true&models=true&harnesses=true")
+	for _, category := range []string{"days", "agents", "models", "harnesses"} {
+		assert.Contains(t, all, category)
+	}
+	for _, category := range []string{"models", "harnesses"} {
+		var rows []struct {
+			Total  float64 `json:"total_usd"`
+			Real   float64 `json:"real_total_usd"`
+			WhatIf float64 `json:"what_if_total_usd"`
+		}
+		require.NoError(t, json.Unmarshal(all[category], &rows))
+		total, real, whatif := 0.0, 0.0, 0.0
+		for _, row := range rows {
+			total += row.Total
+			real += row.Real
+			whatif += row.WhatIf
+		}
+		assert.Equal(t, 5.0, total)
+		assert.Equal(t, 2.0, real)
+		assert.Equal(t, 3.0, whatif)
+	}
+	assert.NotContains(t, fetch("?days=false&agents=false&models=false&harnesses=false"), "days")
+}
+
+func TestAccountCostsRequestedEmptyBreakdownsAreArrays(t *testing.T) {
+	f := newFlow(t)
+	rec := accountQuery(t, f, "", "/v1/costs?agents=true&models=true&harnesses=true")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var out map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	for _, category := range []string{"providers", "agents", "models", "harnesses"} {
+		assert.JSONEq(t, "[]", string(out[category]))
+	}
+	assert.NotContains(t, out, "days")
 }

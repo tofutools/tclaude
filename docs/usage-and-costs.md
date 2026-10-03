@@ -10,6 +10,8 @@ tclaude usage --json
 tclaude costs
 tclaude costs --from 2026-10-01 --to 2026-10-03 --json
 tclaude costs --self --json
+tclaude costs --json --days --agents
+tclaude costs --models --harnesses
 ```
 
 Agents need `usage.read` and `costs.read`, respectively. Both are installed by
@@ -56,12 +58,28 @@ the daemon's local timezone, defaulting to month start and today. Requests must
 have ordered dates and span at most 366 days. `self=true` selects the caller's
 stable agent ID.
 
-JSON includes the range, `generated_at`, `timezone`, `scope`, `total_usd`,
-`real_total_usd`, `what_if_total_usd`, `cost_kind`, daily `days`, and per-day
-conversation `agents` with provider, model, and stable agent attribution when
-known. Zero split totals may be omitted; treat them as zero. `today_real_usd`
-and `today_what_if_usd` count today only when it is in the requested range.
-`agent_id` is present for self queries.
+JSON defaults to a compact summary: the range, `generated_at`, `timezone`,
+`scope`, `total_usd`, `real_total_usd`, `what_if_total_usd`, `cost_kind`, and
+`providers` rollups. Each rollup has `name`, `total_usd`, `real_total_usd`,
+`what_if_total_usd`, and `cost_kind` when there is spend. Native Copilot credits
+appear as `virtual_cost_credits` when recorded.
+`today_real_usd` and `today_what_if_usd` count today only when it is in the
+requested range. `agent_id` is present for self queries.
+
+Details are opt-in and can be combined, in both text and JSON output:
+
+- `--days`: daily totals, including zero-spend dates in the requested range.
+- `--agents`: detailed per-day conversation costs, with provider, model, and
+  stable agent attribution when known. This can be a large response.
+- `--models`: totals grouped by the last observed model for each agent/day.
+- `--harnesses`: totals grouped by coding harness.
+
+The daemon accepts matching boolean query parameters (`days=true`,
+`agents=true`, `models=true`, `harnesses=true`). Unrequested categories are
+omitted entirely; requested empty breakdowns are empty arrays. All summaries
+and breakdowns use the same costs as the dashboard, and all respect `--self`
+and the requested date range. Unknown provider, model, or harness attribution
+is grouped under `unknown`.
 
 Recorded API costs and hypothetical subscription equivalents remain separate.
 `total_usd` can contain both: use `real_total_usd` when comparing recorded API

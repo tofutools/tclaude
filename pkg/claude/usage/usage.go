@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/url"
 	"os"
-	"sort"
 	"text/tabwriter"
 	"time"
 
@@ -32,14 +31,18 @@ func Cmd() *cobra.Command {
 }
 
 type CostsParams struct {
-	JSON bool   `long:"json" help:"Output structured raw costs and daily agent breakdowns"`
-	From string `long:"from" optional:"true" help:"First local calendar date (YYYY-MM-DD); defaults to month start"`
-	To   string `long:"to" optional:"true" help:"Last local calendar date (YYYY-MM-DD); defaults to today"`
-	Self bool   `long:"self" help:"Only the calling agent's spend across linked conversations"`
+	JSON      bool   `long:"json" help:"Output compact cost totals and provider summaries as JSON"`
+	From      string `long:"from" optional:"true" help:"First local calendar date (YYYY-MM-DD); defaults to month start"`
+	To        string `long:"to" optional:"true" help:"Last local calendar date (YYYY-MM-DD); defaults to today"`
+	Self      bool   `long:"self" help:"Only the calling agent's spend across linked conversations"`
+	Days      bool   `long:"days" help:"Include daily cost totals"`
+	Agents    bool   `long:"agents" help:"Include detailed per-day conversation costs and agent attribution"`
+	Models    bool   `long:"models" help:"Include cost totals grouped by model"`
+	Harnesses bool   `long:"harnesses" help:"Include cost totals grouped by coding harness"`
 }
 
 func CostsCmd() *cobra.Command {
-	return boa.CmdT[CostsParams]{Use: "costs", Short: "Show recorded API costs and subscription WHAT-IF estimates", Long: "Read raw cost history through agentd (agents require costs.read).\nDefaults to month-to-date, with today's totals and per-provider totals.\nWHAT-IF estimates follow the operator's subscription-cost setting and are shown separately.\nDashboard display multipliers are not applied. --self requires an identified agent.", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *CostsParams, cmd *cobra.Command, _ []string) {
+	return boa.CmdT[CostsParams]{Use: "costs", Short: "Show recorded API costs and subscription WHAT-IF estimates", Long: "Read raw cost history through agentd (agents require costs.read).\nDefaults to month-to-date, with today's totals and per-provider totals.\nAdd --days, --agents, --models, or --harnesses for optional breakdowns in text or JSON.\nWHAT-IF estimates follow the operator's subscription-cost setting and are shown separately.\nDashboard display multipliers are not applied. --self requires an identified agent.", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *CostsParams, cmd *cobra.Command, _ []string) {
 		if err := runCosts(p, cmd.OutOrStdout()); err != nil {
 			fmt.Fprintln(cmd.ErrOrStderr(), "Error:", err)
 			os.Exit(1)
@@ -156,6 +159,11 @@ func runCosts(p *CostsParams, out io.Writer) error {
 	if p.Self {
 		q.Set("self", "true")
 	}
+	for name, include := range map[string]bool{"days": p.Days, "agents": p.Agents, "models": p.Models, "harnesses": p.Harnesses} {
+		if include {
+			q.Set(name, "true")
+		}
+	}
 	path := "/v1/costs"
 	if len(q) > 0 {
 		path += "?" + q.Encode()
@@ -163,18 +171,37 @@ func runCosts(p *CostsParams, out io.Writer) error {
 	return query(path, p.JSON, out, renderCosts)
 }
 
+type costSummary struct {
+	Name   string  `json:"name"`
+	Real   float64 `json:"real_total_usd"`
+	WhatIf float64 `json:"what_if_total_usd"`
+}
+
 type costReadout struct {
-	From          string  `json:"from"`
-	To            string  `json:"to"`
-	Timezone      string  `json:"timezone"`
-	Scope         string  `json:"scope"`
-	Real          float64 `json:"real_total_usd"`
-	WhatIf        float64 `json:"what_if_total_usd"`
-	TodayReal     float64 `json:"today_real_usd"`
-	TodayWhatIf   float64 `json:"today_what_if_usd"`
-	WhatIfEnabled bool    `json:"what_if_enabled"`
-	Agents        []struct {
+	From          string        `json:"from"`
+	To            string        `json:"to"`
+	Timezone      string        `json:"timezone"`
+	Scope         string        `json:"scope"`
+	Real          float64       `json:"real_total_usd"`
+	WhatIf        float64       `json:"what_if_total_usd"`
+	TodayReal     float64       `json:"today_real_usd"`
+	TodayWhatIf   float64       `json:"today_what_if_usd"`
+	WhatIfEnabled bool          `json:"what_if_enabled"`
+	Providers     []costSummary `json:"providers"`
+	Models        []costSummary `json:"models"`
+	Harnesses     []costSummary `json:"harnesses"`
+	Days          []struct {
+		Day    string  `json:"day"`
+		Real   float64 `json:"real_cost_usd"`
+		WhatIf float64 `json:"what_if_cost_usd"`
+	} `json:"days"`
+	Agents []struct {
+		AgentID  string  `json:"agent_id"`
+		ConvID   string  `json:"conv_id"`
+		Title    string  `json:"title"`
+		Day      string  `json:"day"`
 		Provider string  `json:"provider"`
+		Model    string  `json:"model"`
 		Real     float64 `json:"real_cost_usd"`
 		WhatIf   float64 `json:"what_if_cost_usd"`
 	} `json:"agents"`
@@ -192,28 +219,41 @@ func renderCosts(raw json.RawMessage, out io.Writer) error {
 	} else {
 		fmt.Fprintln(out, "WHAT-IF subscription estimates: disabled")
 	}
-	totals := map[string][2]float64{}
-	for _, row := range data.Agents {
-		provider := row.Provider
-		if provider == "" {
-			provider = "unknown"
-		}
-		t := totals[provider]
-		t[0] += row.Real
-		t[1] += row.WhatIf
-		totals[provider] = t
-	}
-	keys := make([]string, 0, len(totals))
-	for key := range totals {
-		keys = append(keys, key)
-	}
-	// A stable order makes repeated terminal queries easy to compare.
-	sort.Strings(keys)
 	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "PROVIDER\tRECORDED USD\tWHAT-IF USD")
-	for _, key := range keys {
-		t := totals[key]
-		fmt.Fprintf(tw, "%s\t%.4f\t%.4f\n", key, t[0], t[1])
+	summary := func(label string, rows []costSummary) {
+		fmt.Fprintf(tw, "%s\tRECORDED USD\tWHAT-IF USD\n", label)
+		for _, row := range rows {
+			fmt.Fprintf(tw, "%s\t%.4f\t%.4f\n", row.Name, row.Real, row.WhatIf)
+		}
+	}
+	summary("PROVIDER", data.Providers)
+	if data.Models != nil {
+		fmt.Fprintln(tw)
+		summary("MODEL", data.Models)
+	}
+	if data.Harnesses != nil {
+		fmt.Fprintln(tw)
+		summary("HARNESS", data.Harnesses)
+	}
+	if data.Days != nil {
+		fmt.Fprintln(tw, "\nDAY\tRECORDED USD\tWHAT-IF USD")
+		for _, row := range data.Days {
+			fmt.Fprintf(tw, "%s\t%.4f\t%.4f\n", row.Day, row.Real, row.WhatIf)
+		}
+	}
+	if data.Agents != nil {
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+		tw = tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "\nAGENT / CONVERSATION\tTITLE\tDAY\tPROVIDER\tMODEL\tRECORDED USD\tWHAT-IF USD")
+		for _, row := range data.Agents {
+			id := row.AgentID
+			if id == "" {
+				id = row.ConvID
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%.4f\t%.4f\n", id, row.Title, row.Day, row.Provider, row.Model, row.Real, row.WhatIf)
+		}
 	}
 	return tw.Flush()
 }
