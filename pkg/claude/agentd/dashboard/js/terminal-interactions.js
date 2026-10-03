@@ -23,6 +23,7 @@ const MAX_OSC52_BYTES = 1024 * 1024;
 // tmux copy across every terminal pane; a newer gesture supersedes the older
 // one, matching Clipboard.write's own ordering contract.
 let activeTmuxClipboardCopy = null;
+let clipboardDebugPaneID = 0;
 
 // Browsers expose Shift+Enter distinctly, but xterm's default legacy keyboard
 // encoding sends the same carriage return as plain Enter. Translate the
@@ -465,6 +466,18 @@ export function attachTerminalInteractions({
   let pendingTmuxCopy = null;
   const disposables = [];
   const ownerDocument = host.ownerDocument || document;
+  const debugPane = ++clipboardDebugPaneID;
+  // Opt in from DevTools with window.__tclaudeClipboardDebug = true.
+  // Log only routing/state metadata, never clipboard text or terminal paths.
+  const debugCopy = (event, details = {}) => {
+    if (globalThis.__tclaudeClipboardDebug !== true) return;
+    console.info('[tclaude-copy]', JSON.stringify({
+      pane: debugPane, event,
+      activation: globalThis.navigator?.userActivation?.isActive,
+      focused: ownerDocument.hasFocus?.(),
+      ...details,
+    }));
+  };
 
   function flash(message, delay = 2200) {
     if (!setStatus) return;
@@ -493,6 +506,7 @@ export function attachTerminalInteractions({
 
   function finishPendingTmuxCopy(token) {
     if (pendingTmuxCopy !== token || !token.oscReceived || token.result === null) return;
+    debugCopy('finished', { success: token.result });
     if (token.timer) clearTimeout(token.timer);
     pendingTmuxCopy = null;
     if (activeTmuxClipboardCopy === token) activeTmuxClipboardCopy = null;
@@ -502,8 +516,14 @@ export function attachTerminalInteractions({
   function armTmuxClipboardFromGesture() {
     if (activeTmuxClipboardCopy) activeTmuxClipboardCopy.cancel();
     const deferred = beginGestureClipboardWrite();
+    debugCopy('armed', {
+      deferred: !!deferred,
+      secureContext: globalThis.isSecureContext,
+      clipboardAPI: !!globalThis.navigator?.clipboard,
+    });
     const token = { deferred, timer: null, oscReceived: false, result: null };
     token.cancel = () => {
+      debugCopy('canceled', { oscReceived: token.oscReceived });
       if (token.timer) clearTimeout(token.timer);
       if (token.deferred) token.deferred.cancel();
       if (pendingTmuxCopy === token) pendingTmuxCopy = null;
@@ -511,6 +531,7 @@ export function attachTerminalInteractions({
     };
     token.timer = setTimeout(() => {
       if (activeTmuxClipboardCopy !== token) return;
+      debugCopy('timeout');
       token.cancel();
       // A drag can belong to the running TUI rather than tmux copy-mode. A
       // missing OSC 52 is therefore a quiet no-op, not an error to flash.
@@ -529,6 +550,10 @@ export function attachTerminalInteractions({
   }
 
   const onTmuxMouseDown = (event) => {
+    debugCopy('mousedown', {
+      button: event.button, shift: event.shiftKey, alt: event.altKey,
+      ctrl: event.ctrlKey, meta: event.metaKey, trusted: event.isTrusted,
+    });
     if (event.button !== 0 || event.altKey || event.shiftKey || event.ctrlKey || event.metaKey) {
       tmuxDrag = null;
       return;
@@ -544,7 +569,14 @@ export function attachTerminalInteractions({
   const onTmuxMouseUp = (event) => {
     const drag = tmuxDrag;
     tmuxDrag = null;
-    if (!shouldArmTmuxClipboard(drag, event, term.modes.mouseTrackingMode)) return;
+    const mouseTrackingMode = term.modes.mouseTrackingMode;
+    const arm = shouldArmTmuxClipboard(drag, event, mouseTrackingMode);
+    if (drag) debugCopy('mouseup', {
+      moved: drag.moved, clicks: event.detail, mouseTrackingMode, arm,
+      button: event.button, shift: event.shiftKey, alt: event.altKey,
+      ctrl: event.ctrlKey, meta: event.metaKey, trusted: event.isTrusted,
+    });
+    if (!arm) return;
     // This document-capture listener runs before xterm forwards mouseup to
     // tmux. Arm the permission-sensitive write now; OSC 52 resolves it later.
     armTmuxClipboardFromGesture();
@@ -666,6 +698,12 @@ export function attachTerminalInteractions({
   // native terminal, without polling tmux or adding a second server protocol.
   disposables.push(term.parser.registerOscHandler(52, (payload) => {
     const text = decodeOSC52(payload);
+    debugCopy('osc52', {
+      valid: text !== null,
+      textLength: text?.length,
+      pending: !!pendingTmuxCopy,
+      ownsCopy: !!pendingTmuxCopy && activeTmuxClipboardCopy === pendingTmuxCopy,
+    });
     // Ignore unsolicited OSC 52 completely. With tmux's default
     // set-clipboard=external, pane applications are filtered by tmux already;
     // this armed-only gate adds defense in depth (including when a user has
@@ -681,6 +719,7 @@ export function attachTerminalInteractions({
         token.deferred.resolve(text);
         finishPendingTmuxCopy(token);
       } else {
+        debugCopy('fallback-write');
         // Older browsers cannot hold a promise-backed ClipboardItem open from
         // mouseup, but still get a best-effort write while the armed gesture's
         // transient activation may remain live.
