@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	tclcommon "github.com/tofutools/tclaude/pkg/common"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 // withAgentDirsMountParent isolates the config home for the test and writes an
@@ -421,8 +422,7 @@ func TestMaterializeAgentDirectoriesCloneDropsSourceParentGrant(t *testing.T) {
 }
 
 func TestMaterializeAgentDirectoriesMountParentCoexistsWithExplicitBaseGrant(t *testing.T) {
-	cache, err := filepath.EvalSymlinks(t.TempDir())
-	require.NoError(t, err)
+	cache := testutil.CanonicalTempDir(t)
 	t.Setenv("XDG_CACHE_HOME", cache)
 	withAgentDirsMountParent(t, true)
 
@@ -452,8 +452,7 @@ func TestMaterializeAgentDirectoriesMountParentCoexistsWithExplicitBaseGrant(t *
 }
 
 func TestMaterializeAgentDirectoriesMountParentUpgradesExistingReadGrant(t *testing.T) {
-	cache, err := filepath.EvalSymlinks(t.TempDir())
-	require.NoError(t, err)
+	cache := testutil.CanonicalTempDir(t)
 	t.Setenv("XDG_CACHE_HOME", cache)
 	withAgentDirsMountParent(t, true)
 
