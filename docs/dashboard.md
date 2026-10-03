@@ -236,9 +236,15 @@ Directory fields also use the in-dashboard web picker by default. Set
 `dashboard.default_directory_picker` to `"native"` to use the host OS chooser
 on a local dashboard; remote dashboards always use the web picker.
 
-Mouse selections owned by OpenCode and Copilot are copied into the browser
-through OSC 52. Their tmux passthrough permission is enabled only on those
-harness windows; the shared tmux server and other harnesses remain unchanged.
+All tclaude-managed harness windows enable tmux passthrough so application
+terminal sequences, including OSC 52 clipboard writes, can reach the attached
+terminal. The setting applies only to each managed window, leaving the shared
+tmux server's global policy unchanged. The web terminal accepts clipboard
+writes only after a supported copy gesture; passthrough alone does not enable
+every harness-specific copy command.
+This is configured when a harness window is created; existing windows need
+`tmux -L tclaude set-option -w -t SESSION:WINDOW allow-passthrough on`
+(substitute the target window) or a new harness session.
 To make a browser-owned selection instead, use Option-drag on macOS or
 Shift-drag on Linux/Windows.
 

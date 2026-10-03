@@ -2646,10 +2646,9 @@ func runNew(params *NewParams) error {
 	}
 	applyTmuxWindowTitle(tmuxSession, sessionID)
 
-	// Harnesses that wrap clipboard OSC 52 in tmux's passthrough envelope opt
-	// into that capability on their own window; the shared tmux server and all
-	// other harness windows retain their existing passthrough policy.
-	ConfigureTmuxPassthrough(tmuxSession, h)
+	// All harness windows allow terminal integration sequences (such as
+	// clipboard OSC 52) through tmux without changing the server-wide policy.
+	ConfigureTmuxPassthrough(tmuxSession)
 
 	// Enable tmux mouse-wheel scrollback for this session when the harness
 	// relies on tmux for history (Codex CLI). Scoped to this session only so
