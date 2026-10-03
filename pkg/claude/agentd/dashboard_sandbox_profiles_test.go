@@ -16,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 func TestSandboxProfilePredictionTargetAcceptsCopilotTclaudeLayer(t *testing.T) {
@@ -154,7 +155,7 @@ func TestDashboardSandboxProfileDraftEnforcementUsesSharedAuthenticatedRoute(t *
 func TestDashboardSandboxProfileMissingDirectoriesCanBeSavedAndCreatedExplicitly(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
-	missing := filepath.Join(t.TempDir(), "nested", "cache")
+	missing := filepath.Join(testutil.CanonicalTempDir(t), "nested", "cache")
 	body := `{"name":"future-cache","filesystem":[{"path":"` + missing + `","access":"write"}]}`
 	directoryBody := `{"name":"","filesystem":[{"path":"` + missing + `","access":"write"}],"environment":[{"name":"HOME","value":"in-progress-invalid-edit"}]}`
 

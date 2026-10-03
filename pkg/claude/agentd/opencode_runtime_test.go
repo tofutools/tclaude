@@ -99,8 +99,11 @@ func TestOpenCodeHealthyUnixTransportNeverDialsLogicalHostTCP(t *testing.T) {
 		tcpCalls.Add(1)
 	}))
 	defer trap.Close()
-	root := filepath.Join(agentipctest.ShortSocketDir(t),
-		"agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	// The control socket contract requires a canonical parent; retain the
+	// short-path allocator so the Unix socket stays within sun_path limits.
+	socketDir, err := filepath.EvalSymlinks(agentipctest.ShortSocketDir(t))
+	require.NoError(t, err)
+	root := filepath.Join(socketDir, "agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	require.NoError(t, os.Mkdir(root, 0o700))
 	socketPath := filepath.Join(root, "control.sock")
 	listener, device, inode, err := opencodeapi.CreateUnixListener(socketPath)

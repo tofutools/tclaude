@@ -66,6 +66,38 @@ can reach passed", not "the whole suite ran". And running the selector by hand
 against your working tree under-reports untracked files, since it grades a
 `git diff`; commit first, or pass `-head`.
 
+### Filesystem paths in tests
+
+A temporary directory's spelling is not its identity. macOS commonly returns
+`/var/folders/...` while Git and filesystem canonicalization return
+`/private/var/folders/...`. `filepath.Clean` and `filepath.Abs` do not resolve
+symlinks.
+
+Use `testutil.CanonicalTempDir(t)` from `pkg/testutil` for fixtures that need a
+canonical path: Git identity comparisons, resolved sandbox grants, and
+no-follow filesystem operations. The helper retains `t.TempDir` cleanup and
+has no application dependencies, so low-level packages can import it too.
+Migrate existing fixtures when touching them; ordinary temporary files do not
+need a repository-wide rewrite.
+
+When testing a public API that accepts paths, explicitly include a symlinked
+input and check the intended contract: preserve the supplied spelling, resolve
+it, or reject it. Do not canonicalize those inputs merely to make assertions
+pass, and do not weaken production no-follow checks to accommodate a fixture.
+
+Run focused tests through the shared wrapper:
+
+```bash
+scripts/test.sh ./pkg/claude/agentd -run '^TestMaterializeAgentDirectories' -count=1
+```
+
+It forwards all arguments to `go test` (defaults to `./...`), supplies a fresh
+symlinked `TMPDIR`, and removes its scratch directory after the command exits.
+Tests and subprocesses therefore see the alias even on Linux. The shared CI
+action uses this wrapper for Linux shards; macOS retains its native temp
+layout. A fresh `TMPDIR` can invalidate cached test results for tests that read
+it. The wrapper does not simulate other macOS behavior or replace macOS CI.
+
 ### Deterministic timing in tests
 
 Make correctness conditions causal. Use a channel, barrier, callback, wait

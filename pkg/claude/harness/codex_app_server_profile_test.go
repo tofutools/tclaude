@@ -11,10 +11,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 func TestCodexAppServerProfileOverridesCarriesCompleteManagedPosture(t *testing.T) {
-	home := t.TempDir()
+	home := testutil.CanonicalTempDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	t.Setenv("TCLAUDE_AGENTD_SOCKET", filepath.Join(home, ".tclaude", "api", "agentd.sock"))

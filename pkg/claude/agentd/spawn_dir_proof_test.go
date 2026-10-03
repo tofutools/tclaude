@@ -11,6 +11,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 func TestDirWriteChallenge_SingleUse(t *testing.T) {
@@ -98,8 +99,7 @@ func TestReassertDirWriteProof(t *testing.T) {
 	// resolveDirWriteProofDirs, and on macOS t.TempDir() sits under the
 	// /var -> /private/var symlink, so a raw temp path is non-canonical and
 	// would (correctly) be rejected — that is not the case under test here.
-	base, err := filepath.EvalSymlinks(t.TempDir())
-	require.NoError(t, err)
+	base := testutil.CanonicalTempDir(t)
 	real := filepath.Join(base, "real")
 	require.NoError(t, os.Mkdir(real, 0o755))
 

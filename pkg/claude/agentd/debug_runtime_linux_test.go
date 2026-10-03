@@ -11,12 +11,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 func TestObserveAgentProcessUsesValidatedHostHarnessPID(t *testing.T) {
 	self, err := os.Executable()
 	require.NoError(t, err)
-	stub := filepath.Join(t.TempDir(), "codex")
+	stub := filepath.Join(testutil.CanonicalTempDir(t), "codex")
 	bytes, err := os.ReadFile(self)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(stub, bytes, 0o700))

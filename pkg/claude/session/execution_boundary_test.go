@@ -24,6 +24,8 @@ func TestBuildExecutionBoundaryRecordsInjectedCLIPathAndIdentity(t *testing.T) {
 	for _, path := range []string{launcher, tclaude, harnessBinary} {
 		require.NoError(t, os.WriteFile(path, []byte("fixture"), 0o700))
 	}
+	canonicalCLI, err := filepath.EvalSymlinks(tclaude)
+	require.NoError(t, err)
 	canonicalLauncher, err := filepath.EvalSymlinks(launcher)
 	require.NoError(t, err)
 	canonicalHarnessBinary, err := filepath.EvalSymlinks(harnessBinary)
@@ -53,7 +55,7 @@ func TestBuildExecutionBoundaryRecordsInjectedCLIPathAndIdentity(t *testing.T) {
 	if runtime.GOOS == "linux" {
 		assert.Equal(t, "constructed", boundary.RootMode)
 		require.NotNil(t, boundary.Tclaude)
-		assert.Equal(t, tclaude, boundary.Tclaude.HostPath)
+		assert.Equal(t, canonicalCLI, boundary.Tclaude.HostPath)
 		assert.Equal(t, tclaudeLayerConstructedRootTclaudePath, boundary.Tclaude.SandboxPath)
 		assert.Equal(t, "/.tclaude/bin:/profile/bin:/usr/bin", boundary.PATH.BeforePreLaunch)
 	} else {
@@ -67,7 +69,7 @@ func TestBuildExecutionBoundaryRecordsInjectedCLIPathAndIdentity(t *testing.T) {
 	assert.Equal(t, canonicalLauncher, boundary.Launcher.HostPath)
 	if runtime.GOOS == "linux" {
 		assert.Contains(t, boundary.AutomaticEntries, ExecutionNamespaceEntry{
-			Kind: "bind", Source: tclaude, Target: tclaudeLayerConstructedRootTclaudePath,
+			Kind: "bind", Source: canonicalCLI, Target: tclaudeLayerConstructedRootTclaudePath,
 			Access: "read-only", Origin: "tclaude coordination CLI",
 		})
 		assert.Equal(t, os.Getuid(), boundary.Identity.Host.UID)

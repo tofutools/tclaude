@@ -123,4 +123,10 @@ runs:
           pkgs="$selected"
         fi
 
-        go test $race $pkgs
+        # Exercise macOS-style temp path aliases on Linux as well. Keep the
+        # native macOS temp layout so both sources of aliases remain covered.
+        if [ "$RUNNER_OS" = Linux ]; then
+          scripts/test.sh $race $pkgs
+        else
+          go test $race $pkgs
+        fi

@@ -89,6 +89,12 @@ the code tree and focused docs as the source of truth.
 
 ## Testing guidance
 
+For filesystem-identity fixtures (Git paths, sandbox grants, no-follow I/O),
+use `testutil.CanonicalTempDir(t)` from `pkg/testutil`; raw `t.TempDir()` paths
+may contain symlinks on macOS. Preserve explicit aliases in symlink-behavior
+tests. Run focused tests via `scripts/test.sh`, which supplies a symlinked
+`TMPDIR` on Linux too. See `CONTRIBUTING.md` for path-testing guidance.
+
 Unit tests live next to the code they cover. Flow tests live under
 `pkg/claude/agentd/*_flow_test.go` and run under plain `go test ./...`.
 

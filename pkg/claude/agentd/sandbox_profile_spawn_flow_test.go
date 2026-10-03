@@ -15,6 +15,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 func TestSandboxProfileSpawnRefreshesExplicitValuesOnResumeAndAgentSelectionPreservesLineage(t *testing.T) {
@@ -401,7 +402,7 @@ func TestSandboxProfileSpawnRejectsAmbientCapabilityWideningAfterParentLaunch(t 
 			require.Equalf(t, http.StatusOK, parent.Code, "spawn body=%s", parent.Raw)
 			require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsMembersSpawn, "test"))
 
-			writeRoot := t.TempDir()
+			writeRoot := testutil.CanonicalTempDir(t)
 			_, err := db.CreateSandboxProfile(&db.SandboxProfile{
 				Name: "widened-" + scope,
 				Filesystem: []db.SandboxFilesystemGrant{{
