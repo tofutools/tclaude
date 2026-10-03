@@ -1,4 +1,4 @@
-package scripts
+package main
 
 import (
 	"errors"
@@ -11,6 +11,7 @@ import (
 )
 
 func TestTestRunner(t *testing.T) {
+	runner := filepath.Join(moduleRoot(t), "scripts", "test.sh")
 	for _, tc := range []struct {
 		name     string
 		args     []string
@@ -45,7 +46,7 @@ exit "$TEST_RUNNER_EXIT"
 			t.Setenv("TMPDIR", root)
 			t.Setenv("TEST_RUNNER_REPORT", report)
 			t.Setenv("TEST_RUNNER_EXIT", tc.exit)
-			cmd := exec.Command("bash", append([]string{"test.sh"}, tc.args...)...)
+			cmd := exec.Command("bash", append([]string{runner}, tc.args...)...)
 			out, err := cmd.CombinedOutput()
 			exit := 0
 			if err != nil {

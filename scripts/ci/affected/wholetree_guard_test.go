@@ -118,3 +118,19 @@ func moduleRoot(t *testing.T) string {
 		dir = parent
 	}
 }
+
+// Shared runners affect every test binary without a Go import edge. In
+// particular, adding Go tests directly under scripts/ must not silently claim
+// the shell scripts for just that package and skip the application shards.
+func TestSharedScriptsForceFullShards(t *testing.T) {
+	s, err := newSelector()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []string{"scripts/test.sh", "scripts/lib/smoke/common.sh"} {
+		pkgs, reason := s.mapChangedFiles([]string{file})
+		if reason == "" {
+			t.Errorf("%s selected only %v; shared scripts must force full shards", file, pkgs)
+		}
+	}
+}
