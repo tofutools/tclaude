@@ -292,11 +292,8 @@ func collectCopilotUsageSnapshot(row *db.SubscriptionUsageHistoryRow, idleTimeou
 // the cached last-known figures, so polling it is cheap and a missing or stale
 // cache degrades to available=false rather than an error.
 //
-// Human-only. These are the operator's own billing/subscription figures, and
-// nothing an agent does needs them; an agent that legitimately wants its
-// account's limits has `tclaude usage`, which goes to the Anthropic API under
-// the credentials it already has, rather than reading the operator's console
-// readout through the daemon.
+// Human-only because this legacy console payload combines quotas and costs.
+// Agent CLI queries use the separately permission-gated account endpoints.
 func handleUsage(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "read subscription usage") {
 		return

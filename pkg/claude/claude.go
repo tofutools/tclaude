@@ -40,6 +40,7 @@ func Cmd() *cobra.Command {
 		worktree.Cmd(),
 		stats.Cmd(),
 		usage.Cmd(),
+		usage.CostsCmd(),
 		setup.Cmd(),
 		statusbar.Cmd(),
 		selftest.Cmd(),

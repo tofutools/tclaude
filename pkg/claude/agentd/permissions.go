@@ -124,6 +124,8 @@ func init() { initPermissionRegistry() }
 // build registers it; all mutation and authorization boundaries accept only
 // this vocabulary.
 var permissionRegistry = []PermSlug{
+	{Slug: PermUsageRead, Description: "Read cached account subscription quotas and usage forecasts (tclaude usage)."},
+	{Slug: PermCostsRead, Description: "Read account cost history and agent spend (tclaude costs)."},
 	{
 		Slug:        PermSelfRename,
 		Description: "Rename own conversation via /rename (tclaude agent rename)",

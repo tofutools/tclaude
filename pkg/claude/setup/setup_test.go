@@ -621,3 +621,8 @@ func TestCheckStatus_HarnessDispatch(t *testing.T) {
 
 	require.Error(t, checkStatus("no-such-harness"), "an unknown --harness must error")
 }
+
+func TestBundledPermissionDefaultsGrantAccountReadQueries(t *testing.T) {
+	assert.Contains(t, defaultPermsForBundledSkills, "usage.read")
+	assert.Contains(t, defaultPermsForBundledSkills, "costs.read")
+}
