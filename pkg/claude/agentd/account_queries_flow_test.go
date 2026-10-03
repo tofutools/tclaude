@@ -201,3 +201,13 @@ func TestAccountUsageClaudeCarryForwardDoesNotRefreshWindowAge(t *testing.T) {
 		}
 	}
 }
+
+func TestAccountCostsSelfRejectsUnlinkedConversation(t *testing.T) {
+	f := newFlow(t)
+	const conv = "unlinked-cost-reader"
+	f.HaveConvWithTitle(conv, conv)
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{DefaultPermissions: []string{agentd.PermCostsRead}}}))
+	rec := accountQuery(t, f, conv, "/v1/costs?self=true")
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "agent_required")
+}

@@ -222,8 +222,12 @@ func handleAccountCosts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		agentID, err = db.AgentIDForConv(conv)
-		if err != nil || agentID == "" {
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, "agent_lookup", "could not resolve caller's stable agent ID")
+			return
+		}
+		if agentID == "" {
+			writeError(w, http.StatusBadRequest, "agent_required", "--self requires a caller with a stable agent ID")
 			return
 		}
 	}

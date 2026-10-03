@@ -161,6 +161,19 @@ func saveCache(usage *CachedUsage, source string, windows []db.SubscriptionUsage
 	if source == "" || usage.FetchedAt.IsZero() || len(windows) == 0 {
 		return
 	}
+	// Only supplied windows enter history. Preserve their effective reset after
+	// carryForwardWindows has repaired an omitted/elapsed reset, so cache and
+	// history agree when the known boundary later passes. This does not advance
+	// observation times for windows omitted from the fresh reading.
+	buckets := map[string]*CachedBucket{
+		"five_hour": usage.FiveHour, "seven_day": usage.SevenDay,
+		"seven_day_sonnet": usage.SevenDaySonnet,
+	}
+	for i := range windows {
+		if bucket := buckets[windows[i].Name]; bucket != nil {
+			windows[i].ResetsAt = bucket.ResetsAt
+		}
+	}
 	if _, err := db.SaveSubscriptionUsageSample(db.SubscriptionUsageSample{
 		Provider: db.SubscriptionProviderAnthropic, ObservedAt: usage.FetchedAt,
 		Source: source, Windows: windows,
