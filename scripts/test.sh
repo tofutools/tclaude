@@ -10,6 +10,10 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+# TMPDIR may be relative; both the exported path and symlink target must work
+# after a test or subprocess changes its working directory.
+canonical_scratch=$(cd -- "$scratch" && pwd -P)
+scratch=$canonical_scratch
 mkdir "$scratch/real"
 ln -s "$scratch/real" "$scratch/alias"
 export TMPDIR="$scratch/alias"

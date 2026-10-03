@@ -13,15 +13,17 @@ import (
 func TestTestRunner(t *testing.T) {
 	runner := filepath.Join(moduleRoot(t), "scripts", "test.sh")
 	for _, tc := range []struct {
-		name     string
-		args     []string
-		wantArgs []string
-		exit     string
-		wantExit int
+		name         string
+		args         []string
+		wantArgs     []string
+		exit         string
+		wantExit     int
+		relativeTemp bool
 	}{
-		{"default", nil, []string{"test", "./..."}, "0", 0},
-		{"arguments", []string{"./some/package", "-run", "a test with spaces", "-count=1"}, []string{"test", "./some/package", "-run", "a test with spaces", "-count=1"}, "0", 0},
-		{"failure", []string{"./some/package"}, []string{"test", "./some/package"}, "23", 23},
+		{"default", nil, []string{"test", "./..."}, "0", 0, false},
+		{"arguments", []string{"./some/package", "-run", "a test with spaces", "-count=1"}, []string{"test", "./some/package", "-run", "a test with spaces", "-count=1"}, "0", 0, false},
+		{"failure", []string{"./some/package"}, []string{"test", "./some/package"}, "23", 23, false},
+		{"relative-temp", nil, []string{"test", "./..."}, "0", 0, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -43,10 +45,15 @@ exit "$TEST_RUNNER_EXIT"
 				t.Fatal(err)
 			}
 			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-			t.Setenv("TMPDIR", root)
+			tempDir := root
+			if tc.relativeTemp {
+				tempDir = "."
+			}
+			t.Setenv("TMPDIR", tempDir)
 			t.Setenv("TEST_RUNNER_REPORT", report)
 			t.Setenv("TEST_RUNNER_EXIT", tc.exit)
 			cmd := exec.Command("bash", append([]string{runner}, tc.args...)...)
+			cmd.Dir = root
 			out, err := cmd.CombinedOutput()
 			exit := 0
 			if err != nil {
@@ -70,7 +77,7 @@ exit "$TEST_RUNNER_EXIT"
 			if _, err := os.Lstat(filepath.Dir(parts[0])); !os.IsNotExist(err) {
 				t.Fatalf("scratch directory survived: %v", err)
 			}
-			if os.Getenv("TMPDIR") != root {
+			if os.Getenv("TMPDIR") != tempDir {
 				t.Fatal("wrapper changed caller TMPDIR")
 			}
 		})
