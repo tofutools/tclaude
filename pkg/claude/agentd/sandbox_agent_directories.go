@@ -124,7 +124,7 @@ func materializeAgentDirectories(snapshot sandboxpolicy.Snapshot, launchKey stri
 	}
 	base := filepath.Join(cacheDir, "agent-dirs")
 	root := filepath.Join(base, launchKey)
-	cleanup := func() { _, _ = removeDirAtNoFollow(base, launchKey) }
+	cleanup := func() { _, _ = removeAgentOwnedDirAtNoFollow(base, launchKey) }
 	if err := mkdirAllNoFollow(root, 0o700); err != nil {
 		return sandboxpolicy.Snapshot{}, func() {}, fmt.Errorf("create agent-owned directory root: %w", err)
 	}
@@ -444,7 +444,7 @@ func removeMaterializedAgentDirectoryRoots(base string, roots map[string]string)
 	var removed int
 	var errs []error
 	for _, rel := range roots {
-		didRemove, err := removeDirAtNoFollow(base, rel)
+		didRemove, err := removeAgentOwnedDirAtNoFollow(base, rel)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("remove agent-owned directory root: %w", err))
 			continue

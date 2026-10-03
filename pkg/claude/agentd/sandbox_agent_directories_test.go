@@ -238,11 +238,16 @@ func TestRemoveMaterializedAgentDirectoriesDoesNotFollowNestedSymlink(t *testing
 	marker := filepath.Join(outside, "keep")
 	require.NoError(t, os.WriteFile(marker, []byte("keep"), 0o600))
 	require.NoError(t, os.Symlink(outside, binding))
+	require.NoError(t, os.Chmod(outside, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(outside, 0o700) })
 
 	_, err = removeMaterializedAgentDirectories(snapshot)
 	require.NoError(t, err)
 	assert.FileExists(t, marker, "recursive deletion must unlink rather than follow nested symlinks")
 	assert.NoDirExists(t, filepath.Dir(binding))
+	info, err := os.Stat(outside)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o555), info.Mode().Perm(), "symlink targets must not be chmodded")
 }
 
 func TestRemoveMaterializedAgentDirectoriesTraversesSearchOnlyAncestorOnLinux(t *testing.T) {
@@ -553,4 +558,108 @@ func TestReconcileAgentDirectoriesForResumeMountsParentPerRoot(t *testing.T) {
 	assert.Len(t, wantParents, 2, "existing and new bindings should live under different roots")
 	_, err = sandboxpolicy.RevalidateSnapshot(resumed)
 	require.NoError(t, err)
+}
+
+func TestRemoveMaterializedAgentDirectoriesReadOnlyCachePreservesExternalData(t *testing.T) {
+	for _, failedLaunch := range []bool{false, true} {
+		name := "retire"
+		if failedLaunch {
+			name = "failed-launch"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("XDG_CACHE_HOME", t.TempDir())
+			outside := t.TempDir()
+			marker := filepath.Join(outside, "keep")
+			require.NoError(t, os.WriteFile(marker, []byte("external data"), 0o444))
+			require.NoError(t, os.Chmod(outside, 0o555))
+			t.Cleanup(func() { _ = os.Chmod(outside, 0o700) })
+			effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+				Name: "cache", AgentDirectories: []string{"GOTMPDIR"},
+				Filesystem: []sandboxpolicy.FilesystemGrant{{Path: outside, Access: sandboxpolicy.AccessRead, MountPath: "/mirrored-cache"}},
+			}})
+			require.NoError(t, err)
+			snapshot, cleanup, err := materializeAgentDirectories(sandboxpolicy.NewSnapshot(effective, nil), "spwn-readonly")
+			require.NoError(t, err)
+			t.Cleanup(cleanup)
+			binding := snapshot.Effective.Environment[0].Value
+			module := filepath.Join(binding, "TestDepsHelper", "002", "example.com", "direct@v1.0.0")
+			require.NoError(t, os.MkdirAll(module, 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(module, "dep.go"), []byte("package dep"), 0o444))
+			require.NoError(t, os.WriteFile(filepath.Join(module, "go.mod"), []byte("module example.com/direct"), 0o444))
+			require.NoError(t, os.Symlink(outside, filepath.Join(module, "outside")))
+			require.NoError(t, os.Link(marker, filepath.Join(module, "hardlink")))
+			root := filepath.Dir(binding)
+			// Include read-only ancestors and the root, not just the leaf module.
+			for dir := module; dir != filepath.Dir(root); dir = filepath.Dir(dir) {
+				dir := dir
+				t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+				require.NoError(t, os.Chmod(dir, 0o555))
+			}
+
+			if failedLaunch {
+				cleanup()
+			} else {
+				removed, err := removeMaterializedAgentDirectories(snapshot)
+				require.NoError(t, err)
+				assert.Equal(t, 1, removed)
+			}
+			assert.NoDirExists(t, root)
+			data, err := os.ReadFile(marker)
+			require.NoError(t, err)
+			assert.Equal(t, "external data", string(data))
+			info, err := os.Stat(outside)
+			require.NoError(t, err)
+			assert.Equal(t, os.FileMode(0o555), info.Mode().Perm(), "external directory must not be chmodded")
+			info, err = os.Stat(marker)
+			require.NoError(t, err)
+			assert.Equal(t, os.FileMode(0o444), info.Mode().Perm(), "hard-linked files must not be chmodded")
+		})
+	}
+}
+
+func TestRemoveMaterializedAgentDirectoriesIgnoresFilesystemGrants(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	outside := t.TempDir()
+	marker := filepath.Join(outside, "keep")
+	require.NoError(t, os.WriteFile(marker, []byte("keep"), 0o444))
+	require.NoError(t, os.Chmod(outside, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(outside, 0o700) })
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name: "external-cache",
+		Filesystem: []sandboxpolicy.FilesystemGrant{
+			{Path: outside, Access: sandboxpolicy.AccessRead, MountPath: "/mirrored-cache"},
+		},
+		Environment: []sandboxpolicy.EnvironmentEntry{{Name: "GOTMPDIR", Value: outside}},
+	}})
+	require.NoError(t, err)
+	removed, err := removeMaterializedAgentDirectories(sandboxpolicy.NewSnapshot(effective, nil))
+	require.NoError(t, err)
+	assert.Zero(t, removed)
+	assert.FileExists(t, marker)
+	info, err := os.Stat(outside)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o555), info.Mode().Perm())
+}
+
+func TestRemoveDirAtNoFollowDoesNotRepairPermissions(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can unlink files in read-only directories")
+	}
+	// Like production callers, resolve the host's temp-path aliases first
+	// (macOS /var -> /private/var); the remover deliberately rejects symlinks.
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	dir := filepath.Join(base, "ordinary-cleanup")
+	require.NoError(t, os.Mkdir(dir, 0o700))
+	marker := filepath.Join(dir, "keep")
+	require.NoError(t, os.WriteFile(marker, []byte("keep"), 0o444))
+	require.NoError(t, os.Chmod(dir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	removed, err := removeDirAtNoFollow(base, filepath.Base(dir))
+	require.ErrorIs(t, err, os.ErrPermission)
+	assert.False(t, removed)
+	assert.FileExists(t, marker)
+	info, err := os.Stat(dir)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o555), info.Mode().Perm())
 }
