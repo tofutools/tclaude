@@ -6,8 +6,8 @@ import (
 )
 
 // ConfigureTmuxPassthrough lets a harness deliver the terminal control
-// sequences it deliberately wraps in tmux's DCS passthrough envelope. Copilot
-// and OpenCode use that path for OSC 52 clipboard writes while running under
+// sequences it deliberately wraps in tmux's DCS passthrough envelope. Claude
+// Code, Codex, Copilot, and OpenCode use that path for OSC 52 clipboard writes while running under
 // tmux; tmux drops the envelope while allow-passthrough is off.
 //
 // allow-passthrough is a window option, so target only this harness window.

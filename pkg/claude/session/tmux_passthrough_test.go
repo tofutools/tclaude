@@ -27,8 +27,8 @@ func TestConfigureTmuxPassthrough(t *testing.T) {
 				"set-option", "-t", "=sess-harness:", "allow-passthrough", "on",
 			}},
 		},
-		{name: "claude", harness: harness.Default()},
-		{name: "codex", harness: mustTestHarness(t, harness.CodexName)},
+		{name: "claude", harness: harness.Default(), want: [][]string{{"set-option", "-t", "=sess-harness:", "allow-passthrough", "on"}}},
+		{name: "codex", harness: mustTestHarness(t, harness.CodexName), want: [][]string{{"set-option", "-t", "=sess-harness:", "allow-passthrough", "on"}}},
 		{name: "bare", harness: &harness.Harness{Name: "bare"}},
 		{name: "nil", harness: nil},
 	}

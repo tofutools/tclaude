@@ -23,12 +23,14 @@ const CodexName = "codex"
 // ConvStore.SetTitle.
 func init() {
 	Register(&Harness{
-		Name:          CodexName,
-		DisplayName:   "Codex CLI",
-		Spawn:         codexSpawner{},
-		Ask:           codexAsker{},
-		OneShotReplay: OneShotReplayCodex,
-		Models:        codexModels{},
+		Name:        CodexName,
+		DisplayName: "Codex CLI",
+		Spawn:       codexSpawner{},
+		Ask:         codexAsker{},
+		// Forward application-owned clipboard writes to attached terminals.
+		TmuxPassthrough: true,
+		OneShotReplay:   OneShotReplayCodex,
+		Models:          codexModels{},
 		ModelTransport: staticModelTransport{
 			provider:    "openai",
 			template:    "net-openai-codex",

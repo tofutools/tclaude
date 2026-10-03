@@ -180,7 +180,7 @@ type Harness struct {
 	// sequences in tmux's DCS passthrough envelope. The spawn path enables
 	// allow-passthrough on only that harness's window so those sequences can
 	// reach the attached terminal without relaxing the shared tmux server.
-	// Copilot and OpenCode use this for OSC 52 clipboard writes.
+	// Claude Code, Codex, Copilot, and OpenCode use this for OSC 52 clipboard writes.
 	TmuxPassthrough bool
 
 	// LaunchEnrollment marks a harness whose conv-id can be known before its

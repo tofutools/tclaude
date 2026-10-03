@@ -237,7 +237,7 @@ func TestWantsTmuxScrollback(t *testing.T) {
 }
 
 func TestWantsTmuxPassthrough(t *testing.T) {
-	for _, name := range []string{CopilotName, OpenCodeName} {
+	for _, name := range []string{DefaultName, CodexName, CopilotName, OpenCodeName} {
 		h, ok := Get(name)
 		if !ok {
 			t.Fatalf("%s harness not registered", name)
@@ -247,16 +247,6 @@ func TestWantsTmuxPassthrough(t *testing.T) {
 		}
 	}
 
-	if Default().WantsTmuxPassthrough() {
-		t.Fatal("claude must not request tmux passthrough")
-	}
-	codex, ok := Get(CodexName)
-	if !ok {
-		t.Fatal("codex harness not registered")
-	}
-	if codex.WantsTmuxPassthrough() {
-		t.Fatal("codex must not request tmux passthrough")
-	}
 	if (&Harness{Name: "bare"}).WantsTmuxPassthrough() {
 		t.Fatal("bare harness must not request tmux passthrough")
 	}
