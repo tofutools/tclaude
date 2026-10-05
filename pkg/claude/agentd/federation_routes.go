@@ -61,6 +61,9 @@ type fedRouteState struct {
 	starting map[string]chan struct{}       // proxies being attached
 	mirrors  map[string]*fedRouteEnd        // consumer side, mirror route id
 	opens    map[string][]time.Time         // per-peer route open limiter
+	// stopped is set when the runtime stops; ends finishing their start
+	// afterwards are shut down instead of registered.
+	stopped bool
 }
 
 type fedRouteAnswer struct {
@@ -84,6 +87,7 @@ func (rt *fedRuntime) routesLocked() *fedRouteState {
 // stopRoutes tears down every mirror and proxy when the runtime stops.
 func (rt *fedRuntime) stopRoutes() {
 	rt.mu.Lock()
+	rt.routesLocked().stopped = true
 	var ends []*fedRouteEnd
 	if rt.routes != nil {
 		for _, e := range rt.routes.mirrors {
@@ -162,6 +166,9 @@ type fedRouteStream struct {
 	// end and must not discard what is still queued.
 	halfIn, halfOut bool
 	gotHalfClose    bool
+	// sentHalfClose is set before our HalfClose is written, so it is set
+	// whenever the broker's orderly CLOSE can arrive.
+	sentHalfClose bool
 }
 
 // push buffers a broker frame for the remote side; false when over budget.
@@ -231,7 +238,13 @@ func (e *fedRouteEnd) write(f routebroker.Frame) error {
 	e.wmu.Lock()
 	defer e.wmu.Unlock()
 	_ = e.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	return routebroker.WriteFrame(e.conn, f, 0)
+	err := routebroker.WriteFrame(e.conn, f, 0)
+	if err != nil {
+		// A frame may be half written: the channel's framing can no
+		// longer be trusted.
+		e.shutdown()
+	}
+	return err
 }
 
 // newStream registers stream id before anything can arrive for it.
@@ -285,7 +298,9 @@ func (e *fedRouteEnd) serve() {
 			}
 			if f.Kind == routebroker.KindClose {
 				s.mu.Lock()
-				orderly := s.gotHalfClose
+				// Orderly only after both directions half-closed; a CLOSE
+				// after just the local half-close is an abort.
+				orderly := s.gotHalfClose && s.sentHalfClose
 				s.mu.Unlock()
 				if orderly {
 					continue // the bridge finishes once the queue drains
@@ -399,6 +414,9 @@ func (e *fedRouteEnd) bridge(s *fedRouteStream) {
 			e.endStream(s, true)
 			return
 		}
+		s.mu.Lock()
+		s.sentHalfClose = true
+		s.mu.Unlock()
 		_ = e.write(routebroker.Frame{Kind: routebroker.KindHalfClose, Stream: s.id})
 		if s.halfClosed(false) {
 			e.endStream(s, false)
@@ -579,7 +597,13 @@ func (rt *fedRuntime) startMirror(route *db.AgentRoute, peer, remote string, che
 		return err
 	}
 	rt.mu.Lock()
-	rt.routesLocked().mirrors[route.ID] = e
+	st := rt.routesLocked()
+	if st.stopped {
+		rt.mu.Unlock()
+		e.shutdown()
+		return errors.New("federation stopped")
+	}
+	st.mirrors[route.ID] = e
 	rt.mu.Unlock()
 	go e.serve()
 	go e.watch(check)
@@ -892,6 +916,11 @@ func (rt *fedRuntime) proxyFor(peer string, route *db.AgentRoute) (*fedRouteEnd,
 	e, err := rt.startProxy(key, peer, route)
 	rt.mu.Lock()
 	st := rt.routesLocked()
+	if err == nil && st.stopped {
+		e.shutdown()
+		_ = db.CloseAgentRouteLease(e.lease.ID, e.lease.ConsumerAgentID, e.lease.ConsumerConvID)
+		e, err = nil, errors.New("federation stopped")
+	}
 	if err == nil {
 		st.proxies[key] = e
 	}

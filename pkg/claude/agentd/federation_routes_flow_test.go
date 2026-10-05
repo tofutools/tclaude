@@ -189,6 +189,26 @@ func TestFederation_RoutesServeRemoteConsumer(t *testing.T) {
 	fr = readBrokerFrameWithin(t, helper, 10*time.Second)
 	require.Equal(t, routebroker.KindClose, fr.Kind)
 
+	// A target that half-closes and then aborts resets the peer's side: a
+	// CLOSE after one half-close is not the broker's orderly end.
+	sid = proto.NewEnvelopeID()
+	p.send(p.envelope(proto.KindRouteOpen, proto.Endpoint{}, proto.RouteOpenPayload{Route: routeID, Stream: sid, Key: kp.Pub}))
+	fr = readBrokerFrameWithin(t, helper, 10*time.Second)
+	require.Equal(t, routebroker.KindOpen, fr.Kind)
+	require.NoError(t, routebroker.WriteFrame(helper, routebroker.Frame{Kind: routebroker.KindOpenOK, Stream: fr.Stream}, 0))
+	ans = fedRouteAnswerFor(t, p, sid)
+	require.True(t, ans.OK, ans.Reason)
+	halfThenAbort := fedPeerStream(t, p, sid, kp, ans.Key, true)
+	require.NoError(t, routebroker.WriteFrame(helper, routebroker.Frame{Kind: routebroker.KindHalfClose, Stream: fr.Stream}, 0))
+	_, err = io.ReadAll(halfThenAbort)
+	require.NoError(t, err)
+	require.NoError(t, routebroker.WriteFrame(helper, routebroker.Frame{Kind: routebroker.KindClose, Stream: fr.Stream}, 0))
+	_, err = halfThenAbort.Write([]byte("more"))
+	if err == nil {
+		err = halfThenAbort.Drain()
+	}
+	require.Error(t, err, "the peer must see the abort")
+
 	// Unexporting withdraws authority: the proxy lease closes.
 	rec = fedHuman(t, f, http.MethodDelete, "/v1/federation/exports", map[string]any{"group": "svc", "peer": "bob"})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
