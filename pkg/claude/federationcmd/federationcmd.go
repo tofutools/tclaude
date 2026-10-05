@@ -37,7 +37,10 @@ Flow:
   6. agents: tclaude agent message <member>@bob "..." (needs the
      federation.message slug); replies need nothing extra.
 
-Every federation command is human-only.`
+  7. agents: tclaude federation spawn-request <group>@bob --brief "..."
+     (needs the federation.spawn slug; bob's operator approves or denies)
+
+Every federation command is human-only except spawn-request.`
 
 // Cmd returns `tclaude federation`.
 func Cmd() *cobra.Command {
@@ -51,6 +54,7 @@ func Cmd() *cobra.Command {
 			peersCmd(), trustCmd(), untrustCmd(),
 			exportCmd(), unexportCmd(), remoteCmd(), importCmd(), unimportCmd(),
 			sendCmd(), outboxCmd(), notifyCmd(), inboxCmd(),
+			spawnRequestCmd(), requestsCmd(),
 		},
 	}.ToCobra()
 }
@@ -709,6 +713,156 @@ func outboxCmd() *cobra.Command {
 				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n", r.EnvelopeID[:12], r.From, r.To, r.State, r.Attempts, ago(r.CreatedAt), r.Preview, r.LastError)
 			}
 			_ = tw.Flush()
+		},
+	}.ToCobra()
+}
+
+// --- remote spawn requests ---
+
+type spawnRequestParams struct {
+	Target string `pos:"true" help:"<group>@<peer>: a remote group that exports spawn and is imported here"`
+	Brief  string `long:"brief" help:"What the worker should do (sent to the remote operator and, if approved, to the worker)"`
+	Name   string `long:"name" optional:"true" help:"Requested worker name"`
+	Role   string `long:"role" optional:"true" help:"Requested worker role"`
+}
+
+func spawnRequestCmd() *cobra.Command {
+	return boa.CmdT[spawnRequestParams]{
+		Use:   "spawn-request",
+		Short: "Ask a remote instance to spawn a worker into one of its groups (its operator decides)",
+		Long: "Agent-callable (needs the federation.spawn slug) as well as usable by the operator. The remote group must export `spawn` and be imported " +
+			"into one of your groups. The request waits for the remote operator; the decision arrives in your inbox.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *spawnRequestParams, _ *cobra.Command, _ []string) {
+			i := strings.LastIndex(p.Target, "@")
+			if i <= 0 || i == len(p.Target)-1 {
+				os.Exit(fail(os.Stderr, fmt.Errorf("target must be <group>@<peer>")))
+			}
+			var out struct {
+				EnvelopeID string `json:"envelope_id"`
+				To         string `json:"to"`
+				State      string `json:"state"`
+				Connected  bool   `json:"hub_connected"`
+			}
+			req := map[string]any{"group": p.Target[:i], "peer": p.Target[i+1:], "brief": p.Brief, "name": p.Name, "role": p.Role}
+			if rc := post(os.Stderr, "/v1/federation/spawn-requests", req, &out); rc != 0 {
+				os.Exit(rc)
+			}
+			fmt.Printf("spawn request %s to %s (envelope %s); the decision will arrive in your inbox\n", out.State, out.To, out.EnvelopeID[:12])
+			if !out.Connected {
+				fmt.Fprintln(os.Stderr, "hub not connected; the request will be sent when it is")
+			}
+		},
+	}.ToCobra()
+}
+
+type spawnRequestRow struct {
+	ID          int64     `json:"id"`
+	From        string    `json:"from"`
+	Group       string    `json:"group"`
+	Name        string    `json:"name"`
+	Role        string    `json:"role"`
+	Brief       string    `json:"brief"`
+	Status      string    `json:"status"`
+	ResultAgent string    `json:"result_agent"`
+	Reason      string    `json:"reason"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type requestsParams struct {
+	JSON bool `long:"json" help:"Output JSON"`
+	All  bool `long:"all" help:"Include decided and expired requests"`
+}
+
+func requestsCmd() *cobra.Command {
+	cmd := boa.CmdT[requestsParams]{
+		Use:         "requests",
+		Short:       "List spawn requests remote peers sent to your exported groups",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *requestsParams, _ *cobra.Command, _ []string) {
+			if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
+				os.Exit(rc)
+			}
+			var rows []spawnRequestRow
+			if err := agent.DaemonGet("/v1/federation/spawn-requests", &rows); err != nil {
+				os.Exit(fail(os.Stderr, err))
+			}
+			kept := rows[:0]
+			for _, r := range rows {
+				if p.All || r.Status == "pending" {
+					kept = append(kept, r)
+				}
+			}
+			if p.JSON {
+				os.Exit(printJSON(os.Stdout, kept))
+			}
+			if len(kept) == 0 {
+				fmt.Println("no pending spawn requests (--all shows decided ones)")
+				return
+			}
+			for _, r := range kept {
+				fmt.Printf("#%d  %s  from %s  into %s  %s\n", r.ID, r.Status, r.From, r.Group, ago(r.CreatedAt))
+				if r.Name != "" || r.Role != "" {
+					fmt.Printf("    name %q  role %q\n", r.Name, r.Role)
+				}
+				if r.ResultAgent != "" {
+					fmt.Printf("    spawned %s\n", r.ResultAgent)
+				}
+				if r.Reason != "" {
+					fmt.Printf("    reason: %s\n", r.Reason)
+				}
+				fmt.Printf("    %s\n\n", strings.ReplaceAll(strings.TrimSpace(r.Brief), "\n", "\n    "))
+			}
+		},
+	}.ToCobra()
+	cmd.AddCommand(approveCmd(), denyCmd())
+	return cmd
+}
+
+type approveParams struct {
+	ID      int64  `pos:"true" help:"Request id"`
+	Name    string `long:"name" optional:"true" help:"Override the worker name"`
+	Profile string `long:"profile" optional:"true" help:"Spawn profile to launch with"`
+	Cwd     string `long:"cwd" optional:"true" help:"Working directory"`
+	Harness string `long:"harness" optional:"true" help:"Harness to launch"`
+	Model   string `long:"model" optional:"true" help:"Model to launch"`
+}
+
+func approveCmd() *cobra.Command {
+	return boa.CmdT[approveParams]{
+		Use:         "approve",
+		Short:       "Approve a spawn request: spawn the worker into the exported group",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *approveParams, _ *cobra.Command, _ []string) {
+			var out struct {
+				Group   string `json:"group"`
+				AgentID string `json:"agent_id"`
+				Label   string `json:"label"`
+			}
+			body := map[string]any{"name": p.Name, "profile": p.Profile, "cwd": p.Cwd, "harness": p.Harness, "model": p.Model}
+			if rc := post(os.Stderr, fmt.Sprintf("/v1/federation/spawn-requests/%d/approve", p.ID), body, &out); rc != 0 {
+				os.Exit(rc)
+			}
+			fmt.Printf("spawned %s (%s) into %s; the requester is being told\n", out.Label, out.AgentID, out.Group)
+		},
+	}.ToCobra()
+}
+
+type denyParams struct {
+	ID     int64  `pos:"true" help:"Request id"`
+	Reason string `long:"reason" optional:"true" help:"Reason sent back to the requester"`
+}
+
+func denyCmd() *cobra.Command {
+	return boa.CmdT[denyParams]{
+		Use:         "deny",
+		Short:       "Deny a spawn request",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *denyParams, _ *cobra.Command, _ []string) {
+			if rc := post(os.Stderr, fmt.Sprintf("/v1/federation/spawn-requests/%d/deny", p.ID), map[string]any{"reason": p.Reason}, nil); rc != 0 {
+				os.Exit(rc)
+			}
+			fmt.Printf("denied request #%d\n", p.ID)
 		},
 	}.ToCobra()
 }

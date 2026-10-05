@@ -22,6 +22,11 @@ const (
 	// KindOperatorMail is mail from one instance's human operator to
 	// another's. It carries a MailPayload and no To.Agent.
 	KindOperatorMail = "operator_mail"
+	// KindSpawnReq asks the recipient to spawn a worker into one of its
+	// exported groups. The recipient's operator decides; KindSpawnRes
+	// (InReplyTo = the request) reports the decision.
+	KindSpawnReq = "spawn_req"
+	KindSpawnRes = "spawn_res"
 )
 
 // Export capabilities a catalog group can grant.
@@ -32,10 +37,13 @@ const (
 	// CapAttachments lets mail from the peer carry files. It only means
 	// something together with CapMail.
 	CapAttachments = "attachments"
+	// CapSpawn lets the peer ask for a worker to be spawned into the group.
+	// Every request still waits for the local operator's approval.
+	CapSpawn = "spawn"
 )
 
 // AllCaps lists every known capability in canonical order.
-var AllCaps = []string{CapRoster, CapPresence, CapMail, CapAttachments}
+var AllCaps = []string{CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn}
 
 // MaxMailBody caps a mail envelope's body in bytes.
 const MaxMailBody = 16 * 1024
@@ -105,6 +113,31 @@ func (p *MailPayload) AttachmentBytes() int {
 		n += len(a.Data)
 	}
 	return n
+}
+
+// MaxSpawnBrief caps a spawn request's brief.
+const MaxSpawnBrief = 8 * 1024
+
+// SpawnRequestPayload is the payload of a KindSpawnReq envelope.
+type SpawnRequestPayload struct {
+	Group string `json:"group"`
+	Name  string `json:"name,omitempty"`
+	Role  string `json:"role,omitempty"`
+	Brief string `json:"brief"`
+}
+
+// Spawn result statuses.
+const (
+	SpawnApproved = "approved"
+	SpawnDenied   = "denied"
+)
+
+// SpawnResultPayload is the payload of a KindSpawnRes envelope.
+type SpawnResultPayload struct {
+	Status string `json:"status"`
+	Agent  string `json:"agent,omitempty"`
+	Name   string `json:"name,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // Ack statuses.

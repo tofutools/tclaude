@@ -752,3 +752,185 @@ func TestFederation_Attachments(t *testing.T) {
 		"attachments": []proto.AttachmentPayload{{Name: "a.txt", Data: []byte("x")}}})
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 }
+
+func TestFederation_InboundSpawnRequest(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	f.HaveGroup("team")
+	f.HaveGroup("private")
+
+	request := func(group, name string) *proto.Envelope {
+		env := p.envelope(proto.KindSpawnReq, proto.Endpoint{}, proto.SpawnRequestPayload{Group: group, Name: name, Role: "reviewer", Brief: "review PR 42\x1b[2K"})
+		p.send(env)
+		return env
+	}
+
+	// Only a group exported with `spawn` takes requests, and the refusal
+	// does not reveal whether the group exists.
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/exports", map[string]any{"group": "team", "peer": "bob", "caps": []string{"mail"}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	r1 := request("team", "helper")
+	r2 := request("private", "helper")
+	a1, a2 := fedAckFor(t, p, r1.ID), fedAckFor(t, p, r2.ID)
+	require.Equal(t, proto.AckRefused, a1.Status)
+	require.Equal(t, a1.Reason, a2.Reason)
+
+	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/exports", map[string]any{"group": "team", "peer": "bob", "caps": []string{"mail", "spawn"}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	ok1 := request("team", "helper")
+	require.Equal(t, proto.AckAccepted, fedAckFor(t, p, ok1.ID).Status)
+	ok2 := request("team", "other")
+	require.Equal(t, proto.AckAccepted, fedAckFor(t, p, ok2.ID).Status)
+
+	type reqRow struct {
+		ID     int64  `json:"id"`
+		From   string `json:"from"`
+		Group  string `json:"group"`
+		Name   string `json:"name"`
+		Brief  string `json:"brief"`
+		Status string `json:"status"`
+	}
+	list := func() []reqRow {
+		rec := fedHuman(t, f, http.MethodGet, "/v1/federation/spawn-requests", nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var rows []reqRow
+		testharness.DecodeJSON(t, rec, &rows)
+		return rows
+	}
+	rows := list()
+	require.Len(t, rows, 2)
+	byName := map[string]reqRow{}
+	for _, r := range rows {
+		byName[r.Name] = r
+		require.Equal(t, "pending", r.Status)
+		require.Equal(t, "team", r.Group)
+		require.Equal(t, "bob-agent@bob", r.From)
+		require.Equal(t, "review PR 42[2K", r.Brief, "control characters stripped")
+	}
+	// The operator was told.
+	require.NotEmpty(t, fedInbox(t, f))
+
+	// Approve: the worker is spawned into the exported group and the
+	// requester hears back.
+	rec = fedHuman(t, f, http.MethodPost, fmt.Sprintf("/v1/federation/spawn-requests/%d/approve", byName["helper"].ID), map[string]any{})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var approved struct {
+		AgentID string `json:"agent_id"`
+		ConvID  string `json:"conv_id"`
+	}
+	testharness.DecodeJSON(t, rec, &approved)
+	require.NotEmpty(t, approved.AgentID)
+	f.AssertGroupMember("team", approved.ConvID, "helper", 5*time.Second)
+
+	result := func(reqID string) proto.SpawnResultPayload {
+		var out proto.SpawnResultPayload
+		fedEventually(t, "spawn result", func() bool {
+			agentd.FlushFederationOutboxForTest()
+			for _, e := range p.envelopes(proto.KindSpawnRes) {
+				if e.InReplyTo == reqID {
+					return e.DecodePayload(&out) == nil
+				}
+			}
+			return false
+		})
+		return out
+	}
+	res := result(ok1.ID)
+	require.Equal(t, proto.SpawnApproved, res.Status)
+	require.Equal(t, approved.AgentID, res.Agent)
+
+	// A decided request cannot be decided again.
+	rec = fedHuman(t, f, http.MethodPost, fmt.Sprintf("/v1/federation/spawn-requests/%d/deny", byName["helper"].ID), map[string]any{})
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+
+	// Deny the other one with a reason.
+	rec = fedHuman(t, f, http.MethodPost, fmt.Sprintf("/v1/federation/spawn-requests/%d/deny", byName["other"].ID), map[string]any{"reason": "not today"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	res = result(ok2.ID)
+	require.Equal(t, proto.SpawnDenied, res.Status)
+	require.Equal(t, "not today", res.Reason)
+
+	// Agents cannot decide requests.
+	const agentConv = "fed8-agent-bbbb-cccc-000000000001"
+	f.HaveConvWithTitle(agentConv, "some-agent")
+	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/federation/spawn-requests", nil), agentConv))
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+}
+
+func TestFederation_OutboundSpawnRequest(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	const alice = "fed9-alice-bbbb-cccc-000000000001"
+	f.HaveGroup("team")
+	f.HaveConvWithTitle(alice, "alice-agent")
+	f.HaveMember("team", alice)
+
+	p.send(p.envelope(proto.KindCatalog, proto.Endpoint{}, proto.CatalogPayload{Groups: []proto.CatalogGroup{
+		{Name: "builders", Caps: []string{proto.CapMail, proto.CapSpawn}},
+		{Name: "closed", Caps: []string{proto.CapMail}},
+	}}))
+	fedEventually(t, "catalog stored", func() bool { raw, _, _ := db.GetFederationCatalog(p.id.ID()); return raw != "" })
+	for _, g := range []string{"builders", "closed"} {
+		rec := fedHuman(t, f, http.MethodPost, "/v1/federation/imports", map[string]any{"local_group": "team", "peer": "bob", "remote_group": g})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	}
+	send := func(group string) *httptest.ResponseRecorder {
+		return testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/federation/spawn-requests",
+			map[string]any{"peer": "bob", "group": group, "name": "helper", "brief": "build the thing"}), alice))
+	}
+
+	rec := send("closed")
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "not_exported")
+	rec = send("builders")
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), agentd.PermFederationSpawn)
+
+	require.NoError(t, db.GrantAgentPermission(alice, agentd.PermFederationSpawn, "test"))
+	rec = send("builders")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var resp struct {
+		EnvelopeID string `json:"envelope_id"`
+	}
+	testharness.DecodeJSON(t, rec, &resp)
+	var got *proto.Envelope
+	fedEventually(t, "spawn request at peer", func() bool {
+		agentd.FlushFederationOutboxForTest()
+		for _, e := range p.envelopes(proto.KindSpawnReq) {
+			if e.ID == resp.EnvelopeID {
+				got = e
+				return true
+			}
+		}
+		return false
+	})
+	var sp proto.SpawnRequestPayload
+	require.NoError(t, got.DecodePayload(&sp))
+	require.Equal(t, "builders", sp.Group)
+	require.Equal(t, "build the thing", sp.Brief)
+
+	// The peer approves; alice gets a message saying so, once.
+	res := p.envelope(proto.KindSpawnRes, proto.Endpoint{}, proto.SpawnResultPayload{Status: proto.SpawnApproved, Agent: "agt_newworker0000000000000000", Name: "helper"})
+	res.InReplyTo = resp.EnvelopeID
+	p.send(res)
+	require.Equal(t, proto.AckAccepted, fedAckFor(t, p, res.ID).Status)
+	p.send(res)
+	inbox := func() []string {
+		msgs, err := db.ListAgentMessagesForConv(alice, 50)
+		require.NoError(t, err)
+		var subjects []string
+		for _, m := range msgs {
+			subjects = append(subjects, m.Subject)
+		}
+		return subjects
+	}
+	fedEventually(t, "result in inbox", func() bool { return len(inbox()) > 0 })
+	time.Sleep(200 * time.Millisecond)
+	require.Equal(t, []string{"remote spawn request approved"}, inbox())
+
+	// A result for a request we never sent is refused.
+	bogus := p.envelope(proto.KindSpawnRes, proto.Endpoint{}, proto.SpawnResultPayload{Status: proto.SpawnApproved})
+	bogus.InReplyTo = "ffffffffffffffffffffffffffffffff"
+	p.send(bogus)
+	require.Equal(t, proto.AckRefused, fedAckFor(t, p, bogus.ID).Status)
+}

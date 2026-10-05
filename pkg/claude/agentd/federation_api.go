@@ -244,27 +244,50 @@ func queueFederatedMail(fromConv string, t *fedTarget, subject, body, inReplyTo 
 			return nil, newFedErr(http.StatusForbidden, "not_exported", "%s does not accept attachments from this instance", t.label())
 		}
 	}
+	kind := proto.KindMail
+	if t.operator {
+		kind = proto.KindOperatorMail
+	}
+	return queueFederatedEnvelope(fedOutgoing{
+		fromConv: fromConv, peer: t.peer, kind: kind, toAgent: t.agentID, toLabel: t.label(),
+		subject: subject, preview: body, inReplyTo: inReplyTo, ttl: fedMailTTL,
+		payload: proto.MailPayload{Subject: subject, Body: body, Attachments: atts},
+	})
+}
+
+// fedOutgoing describes one envelope for the outbox.
+type fedOutgoing struct {
+	fromConv  string // "" = the human operator
+	peer      *db.FederationPeer
+	kind      string
+	toAgent   string
+	toLabel   string
+	subject   string
+	preview   string
+	inReplyTo string
+	ttl       time.Duration
+	payload   any
+}
+
+// queueFederatedEnvelope seals o for its peer and writes the durable outbox
+// row; the outbox loop sends and retries it until acknowledged.
+func queueFederatedEnvelope(o fedOutgoing) (*db.FederationOutboxRow, error) {
 	id, err := federationIdentity()
 	if err != nil {
 		return nil, err
 	}
 	from := proto.Endpoint{Name: "human operator"}
 	fromAgent := ""
-	if fromConv != "" {
-		fromAgent, _ = db.AgentIDForConv(fromConv)
-		from = proto.Endpoint{Agent: fromAgent, Name: agent.TitleFor(fromConv)}
+	if o.fromConv != "" {
+		fromAgent, _ = db.AgentIDForConv(o.fromConv)
+		from = proto.Endpoint{Agent: fromAgent, Name: agent.TitleFor(o.fromConv)}
 	}
-	kind := proto.KindMail
-	if t.operator {
-		kind = proto.KindOperatorMail
-	}
-	env, err := proto.NewEnvelope(id, kind, from, proto.Endpoint{Instance: t.peer.InstanceID, Agent: t.agentID}, fedMailTTL,
-		proto.MailPayload{Subject: subject, Body: body, Attachments: atts})
+	env, err := proto.NewEnvelope(id, o.kind, from, proto.Endpoint{Instance: o.peer.InstanceID, Agent: o.toAgent}, o.ttl, o.payload)
 	if err != nil {
 		return nil, err
 	}
-	env.InReplyTo = inReplyTo
-	sealed, err := proto.Seal(id, env, ed25519.PublicKey(t.peer.PubKey))
+	env.InReplyTo = o.inReplyTo
+	sealed, err := proto.Seal(id, env, ed25519.PublicKey(o.peer.PubKey))
 	if errors.Is(err, proto.ErrTooLarge) {
 		return nil, newFedErr(http.StatusRequestEntityTooLarge, "too_large", "message and attachments are too large once encoded; send fewer or smaller files")
 	}
@@ -272,8 +295,8 @@ func queueFederatedMail(fromConv string, t *fedTarget, subject, body, inReplyTo 
 		return nil, err
 	}
 	row := db.FederationOutboxRow{
-		EnvelopeID: env.ID, Kind: kind, ToInstance: t.peer.InstanceID, ToAgent: t.agentID, ToLabel: t.label(),
-		FromConv: fromConv, FromAgent: fromAgent, InReplyTo: inReplyTo, Subject: subject, BodyPreview: preview(body),
+		EnvelopeID: env.ID, Kind: o.kind, ToInstance: o.peer.InstanceID, ToAgent: o.toAgent, ToLabel: o.toLabel,
+		FromConv: o.fromConv, FromAgent: fromAgent, InReplyTo: o.inReplyTo, Subject: o.subject, BodyPreview: preview(o.preview),
 		Sealed: packSealed(sealed), ExpiresAt: env.ExpiresAt,
 	}
 	if err := db.InsertFederationOutbox(row); err != nil {
@@ -871,7 +894,7 @@ func handleFederationOutbox(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []fedOutboxJSON{}
 	for _, row := range rows {
-		if row.Kind != proto.KindMail && row.Kind != proto.KindOperatorMail {
+		if row.Kind == proto.KindCatalog || row.Kind == proto.KindCatalogReq || row.Kind == proto.KindAck {
 			continue
 		}
 		from := "human operator"
@@ -1148,6 +1171,10 @@ func registerFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/federation/notify", handleFederationNotify)
 	mux.HandleFunc("GET /v1/federation/inbox", handleFederationInbox)
 	mux.HandleFunc("GET /v1/federation/reachable", handleFederationReachable)
+	mux.HandleFunc("POST /v1/federation/spawn-requests", handleFederationSpawnRequestSend)
+	mux.HandleFunc("GET /v1/federation/spawn-requests", handleFederationSpawnRequestList)
+	mux.HandleFunc("POST /v1/federation/spawn-requests/{id}/approve", handleFederationSpawnRequestApprove)
+	mux.HandleFunc("POST /v1/federation/spawn-requests/{id}/deny", handleFederationSpawnRequestDeny)
 	mux.HandleFunc("/v1/federation/config", handleFederationConfig)
 	mux.HandleFunc("/v1/federation/peers/trust", handleFederationTrust)
 	mux.HandleFunc("/v1/federation/peers/untrust", handleFederationUntrust)

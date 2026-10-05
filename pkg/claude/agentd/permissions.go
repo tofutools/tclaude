@@ -501,6 +501,12 @@ var permissionRegistry = []PermSlug{
 			"Scope group = the importing local group, peer = the remote instance id. Replies to received remote mail need no slug. Not default-granted, not conferred by ownership.",
 	},
 	{
+		Slug: PermFederationSpawn, ScopeDims: []ScopeDim{ScopeDimGroup, ScopeDimPeer},
+		Description: "Ask a remote instance to spawn a worker into one of its groups that exports `spawn` and is imported into one of the sender's groups. " +
+			"Only a request: the remote operator approves or denies it. Scope group = the importing local group, peer = the remote instance id. " +
+			"Not default-granted, not conferred by ownership.",
+	},
+	{
 		Slug:        PermMessageDirect,
 		Description: "Send a 1:1 message to ANY agent regardless of shared-group membership — the off-group escape hatch (tclaude agent message). Intra-group messaging, owner-of-group, and via-link reach need no slug; this covers everything else. Not default-granted.",
 	},

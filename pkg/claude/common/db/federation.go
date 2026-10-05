@@ -571,3 +571,165 @@ func FederationInboundForMessage(messageID int64) (*FederationInbound, error) {
 	return scanFedInbound(d.QueryRow(`SELECT message_id, envelope_id, from_instance, from_agent, from_name, received_at
 		FROM federation_inbound WHERE message_id=?`, messageID))
 }
+
+// Federation spawn request statuses.
+const (
+	FedSpawnPending  = "pending"
+	FedSpawnApproved = "approved"
+	FedSpawnDenied   = "denied"
+)
+
+// FederationSpawnRequest is a spawn request a peer sent into an exported
+// group, waiting for (or decided by) the local operator.
+type FederationSpawnRequest struct {
+	ID           int64
+	FromInstance string
+	EnvelopeID   string
+	FromAgent    string
+	FromName     string
+	GroupID      int64
+	GroupName    string
+	Name         string
+	Role         string
+	Brief        string
+	Status       string
+	ResultAgent  string
+	Reason       string
+	CreatedAt    time.Time
+	ExpiresAt    time.Time
+	DecidedAt    time.Time
+}
+
+// Expired reports whether a pending request has passed its expiry.
+func (r *FederationSpawnRequest) Expired(now time.Time) bool {
+	return r.Status == FedSpawnPending && now.After(r.ExpiresAt)
+}
+
+// InsertFederationSpawnRequest records a pending request. A repeated
+// (sender, envelope id) returns ErrFederationDuplicate; more than
+// pendingLimit live pending requests from the sender returns
+// *AgentMessageQueueFullError. Either writes nothing.
+func InsertFederationSpawnRequest(r *FederationSpawnRequest, pendingLimit int) (int64, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var n int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM federation_spawn_requests WHERE from_instance=? AND envelope_id=?`,
+		r.FromInstance, r.EnvelopeID).Scan(&n); err != nil {
+		return 0, err
+	}
+	if n > 0 {
+		return 0, ErrFederationDuplicate
+	}
+	if pendingLimit > 0 {
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM federation_spawn_requests WHERE from_instance=? AND status=? AND expires_at>=?`,
+			r.FromInstance, FedSpawnPending, dbTime(time.Now())).Scan(&n); err != nil {
+			return 0, err
+		}
+		if n >= pendingLimit {
+			return 0, &AgentMessageQueueFullError{Pending: n, Limit: pendingLimit}
+		}
+	}
+	now := time.Now()
+	res, err := tx.Exec(`INSERT INTO federation_spawn_requests
+		(from_instance, envelope_id, from_agent, from_name, group_id, group_name, name, role, brief, status, created_at, expires_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+		r.FromInstance, r.EnvelopeID, r.FromAgent, r.FromName, r.GroupID, r.GroupName, r.Name, r.Role, r.Brief,
+		FedSpawnPending, dbTime(now), dbTime(r.ExpiresAt))
+	if err != nil {
+		return 0, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	return id, tx.Commit()
+}
+
+const fedSpawnColumns = `id, from_instance, envelope_id, from_agent, from_name, group_id, group_name, name, role, brief,
+	status, result_agent, reason, created_at, expires_at, decided_at`
+
+func scanFedSpawn(scan func(...any) error) (*FederationSpawnRequest, error) {
+	var r FederationSpawnRequest
+	var created, expires, decided dbTimestamp
+	if err := scan(&r.ID, &r.FromInstance, &r.EnvelopeID, &r.FromAgent, &r.FromName, &r.GroupID, &r.GroupName,
+		&r.Name, &r.Role, &r.Brief, &r.Status, &r.ResultAgent, &r.Reason, &created, &expires, &decided); err != nil {
+		return nil, err
+	}
+	r.CreatedAt, r.ExpiresAt, r.DecidedAt = created.Time(), expires.Time(), decided.Time()
+	return &r, nil
+}
+
+// GetFederationSpawnRequest returns one request, or nil.
+func GetFederationSpawnRequest(id int64) (*FederationSpawnRequest, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	r, err := scanFedSpawn(d.QueryRow(`SELECT `+fedSpawnColumns+` FROM federation_spawn_requests WHERE id=?`, id).Scan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return r, err
+}
+
+// ListFederationSpawnRequests returns requests newest first.
+func ListFederationSpawnRequests(limit int) ([]*FederationSpawnRequest, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT `+fedSpawnColumns+` FROM federation_spawn_requests ORDER BY id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*FederationSpawnRequest
+	for rows.Next() {
+		r, err := scanFedSpawn(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// DecideFederationSpawnRequest moves a pending request to status. It
+// reports false when the request was no longer pending, so two concurrent
+// decisions cannot both win.
+func DecideFederationSpawnRequest(id int64, status, resultAgent, reason string) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`UPDATE federation_spawn_requests SET status=?, result_agent=?, reason=?, decided_at=?
+		WHERE id=? AND status=?`, status, resultAgent, reason, dbTime(time.Now()), id, FedSpawnPending)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
+
+// MarkFederationEnvelopeSeen records (sender, envelope id) in the replay
+// guard and reports whether it was new.
+func MarkFederationEnvelopeSeen(fromInstance, envelopeID string, expiresAt time.Time) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`INSERT OR IGNORE INTO federation_seen(from_instance, envelope_id, expires_at) VALUES(?,?,?)`,
+		fromInstance, envelopeID, dbTime(expiresAt))
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}

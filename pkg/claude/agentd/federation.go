@@ -482,6 +482,10 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		rt.acceptMail(peer, env)
 	case proto.KindAck:
 		rt.handleAck(env)
+	case proto.KindSpawnReq:
+		rt.acceptSpawnRequest(peer, env)
+	case proto.KindSpawnRes:
+		rt.handleSpawnResult(peer, env)
 	default:
 		slog.Debug("federation: ignoring unknown envelope kind", "kind", env.Kind, "from", from)
 	}

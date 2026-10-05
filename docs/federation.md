@@ -150,6 +150,7 @@ tclaude federation unexport builders --to bob
 | `presence` | online/offline per member |
 | `mail` | members may receive mail from the peer (names and ids are shared so they are addressable) |
 | `attachments` | with `mail`: that mail may carry files |
+| `spawn` | the peer may *ask* for a worker to be spawned into the group; you approve or deny each request |
 
 Nothing is exported by default. A peer receives a signed **catalog** listing
 exactly what you export to it. Catalogs go straight to the peer and are never
@@ -254,6 +255,39 @@ retries. Untrust the peer to stop it entirely. Agents cannot send operator
 mail yet, and replying from the dashboard is not wired up: answer with
 `tclaude federation notify`.
 
+## Remote spawn requests
+
+An agent can ask a peer for a worker in one of the peer's groups. It is
+always a request; nothing runs until that instance's operator approves it.
+
+```bash
+# requester side (agent-callable; needs federation.spawn)
+tclaude agent permissions grant lead federation.spawn --scope group=team --scope peer=inst_…
+tclaude federation spawn-request builders@bob --brief "port the parser to Go" --name parser-port --role worker
+```
+
+The remote group must export `spawn` to you and be imported into one of
+the requester's groups. On the receiving side:
+
+```bash
+tclaude federation requests [--all]           # pending requests, with their briefs
+tclaude federation requests approve 7 [--profile p] [--cwd dir] [--harness h] [--model m] [--name n]
+tclaude federation requests deny 7 --reason "no capacity this week"
+```
+
+You choose how the worker launches. Approval goes through the ordinary
+group spawn path, so group guardrails, member caps and spawn rate limits
+apply. The worker joins the exported group with the brief as its first
+message, bannered as an outside request, so it becomes reachable to the
+requester through the existing export. If the spawn fails, the request stays
+pending and you can retry with other options. The decision travels back
+and lands in the requester's inbox (the operator's inbox when the operator
+asked).
+
+You are notified of each new request in your inbox. A peer may have at most
+10 undecided requests here, and requests expire after 72 hours. Untrusting
+the peer makes its pending requests unapprovable.
+
 ## Delivery
 
 Mail is store-and-forward. The sender writes a durable outbox row before
@@ -301,7 +335,8 @@ is by inspecting the caller's process tree.
 - No `group:` multicast across instances, no `--cc` to remote recipients.
 - Attachments ride inline and are capped at 512 KiB per message; operator
   mail and replies cannot carry them.
-- Mail only: no remote spawn, stop, or transcript access.
+- No remote stop, restart, or transcript access; remote spawn is
+  request-and-approve only.
 - Operator mail is sent from the CLI only; agents cannot reach a remote
   operator.
 - One hub per instance. Hub-to-hub federation is a later step.

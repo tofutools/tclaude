@@ -1556,3 +1556,26 @@ CREATE TABLE federation_seen (
 	expires_at    INTEGER NOT NULL,
 	PRIMARY KEY (from_instance, envelope_id)
 ) STRICT;
+
+CREATE TABLE federation_spawn_requests (
+	id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	from_instance TEXT NOT NULL,
+	envelope_id   TEXT NOT NULL,
+	from_agent    TEXT NOT NULL DEFAULT '',
+	from_name     TEXT NOT NULL DEFAULT '',
+	group_id      INTEGER NOT NULL,
+	group_name    TEXT NOT NULL,
+	name          TEXT NOT NULL DEFAULT '',
+	role          TEXT NOT NULL DEFAULT '',
+	brief         TEXT NOT NULL DEFAULT '',
+	status        TEXT NOT NULL,
+	result_agent  TEXT NOT NULL DEFAULT '',
+	reason        TEXT NOT NULL DEFAULT '',
+	created_at    INTEGER NOT NULL,
+	expires_at    INTEGER NOT NULL,
+	decided_at    INTEGER,
+	UNIQUE (from_instance, envelope_id)
+) STRICT;
+
+CREATE INDEX idx_federation_spawn_requests_status
+	ON federation_spawn_requests(status, from_instance);
