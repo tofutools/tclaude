@@ -1,0 +1,101 @@
+package db
+
+import (
+	"database/sql"
+	"fmt"
+)
+
+// migrateV229toV230 adds the federation tables (epic tcl-ozzhre): trusted
+// peer instances, group exports and imports, cached remote catalogs, the
+// durable outbound envelope queue, and the side table that marks
+// agent_messages rows received from a remote instance.
+//
+// The inbound marker is a side table (like operator_agent_messages) rather
+// than new agent_messages columns, so agentMessageColumns and every scan
+// stay untouched. All statements are IF NOT EXISTS so a half-applied run
+// converges on re-run.
+func migrateV229toV230(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v229→v230 (federation): begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(federationSchema); err != nil {
+		return fmt.Errorf("migrate v229→v230 (federation): %w", err)
+	}
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 230`); err != nil {
+		return fmt.Errorf("migrate v229→v230 (version): %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate v229→v230 (commit): %w", err)
+	}
+	return nil
+}
+
+const federationSchema = `
+CREATE TABLE IF NOT EXISTS federation_peers (
+	instance_id TEXT PRIMARY KEY,
+	pubkey      BLOB NOT NULL,
+	label       TEXT NOT NULL DEFAULT '',
+	name        TEXT NOT NULL DEFAULT '',
+	trusted_at  INTEGER NOT NULL
+) STRICT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_federation_peers_label
+	ON federation_peers(label) WHERE label != '';
+
+CREATE TABLE IF NOT EXISTS federation_exports (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	group_id   INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+	peer       TEXT NOT NULL,
+	caps       TEXT NOT NULL,
+	created_at INTEGER NOT NULL,
+	UNIQUE (group_id, peer)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS federation_imports (
+	id             INTEGER PRIMARY KEY AUTOINCREMENT,
+	local_group_id INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+	peer           TEXT NOT NULL,
+	remote_group   TEXT NOT NULL,
+	created_at     INTEGER NOT NULL,
+	UNIQUE (local_group_id, peer, remote_group)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS federation_catalogs (
+	peer        TEXT PRIMARY KEY,
+	payload     TEXT NOT NULL,
+	received_at INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS federation_outbox (
+	envelope_id     TEXT PRIMARY KEY,
+	kind            TEXT NOT NULL,
+	to_instance     TEXT NOT NULL,
+	to_agent        TEXT NOT NULL DEFAULT '',
+	to_label        TEXT NOT NULL DEFAULT '',
+	from_conv       TEXT NOT NULL DEFAULT '',
+	from_agent      TEXT NOT NULL DEFAULT '',
+	in_reply_to     TEXT NOT NULL DEFAULT '',
+	subject         TEXT NOT NULL DEFAULT '',
+	body_preview    TEXT NOT NULL DEFAULT '',
+	sealed          BLOB NOT NULL,
+	state           TEXT NOT NULL,
+	attempts        INTEGER NOT NULL DEFAULT 0,
+	next_attempt_at INTEGER NOT NULL,
+	last_error      TEXT NOT NULL DEFAULT '',
+	created_at      INTEGER NOT NULL,
+	expires_at      INTEGER NOT NULL,
+	updated_at      INTEGER NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_federation_outbox_state
+	ON federation_outbox(state, next_attempt_at);
+
+CREATE TABLE IF NOT EXISTS federation_inbound (
+	message_id    INTEGER PRIMARY KEY REFERENCES agent_messages(id) ON DELETE CASCADE,
+	envelope_id   TEXT NOT NULL UNIQUE,
+	from_instance TEXT NOT NULL,
+	from_agent    TEXT NOT NULL DEFAULT '',
+	from_name     TEXT NOT NULL DEFAULT '',
+	received_at   INTEGER NOT NULL
+) STRICT;
+`

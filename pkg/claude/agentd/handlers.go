@@ -674,6 +674,11 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
+	if isFederatedAddress(strings.TrimSpace(req.To)) {
+		req.To = strings.TrimSpace(req.To)
+		handleFederatedAgentSend(w, r, fromID, &req)
+		return
+	}
 	dispatchSend(w, fromID, &req)
 }
 
@@ -1397,6 +1402,9 @@ func messageNudgeTextFor(m *db.AgentMessage) (text string, consumed bool) {
 	if db.IsOperatorAgentMessage(m.ID) {
 		return fmt.Sprintf("[system: new agent message #%d from the human operator. Read it with: tclaude agent inbox read %d.]", m.ID, m.ID), false
 	}
+	if remote, _ := remoteSenderLabel(m.ID); remote != "" {
+		return fmt.Sprintf("[system: new agent message #%d from %s for you. fetch with: tclaude agent inbox read %d]", m.ID, remote, m.ID), false
+	}
 	if sender := agent.MessageSenderLabel(m.FromConv, m.FromAgent); sender != "" {
 		return fmt.Sprintf("[system: new agent message #%d from %s for you. fetch with: tclaude agent inbox read %d]", m.ID, sender, m.ID), false
 	}
@@ -1444,6 +1452,9 @@ func messageInlineText(m *db.AgentMessage) (string, bool) {
 	var b strings.Builder
 	operatorAuthored := db.IsOperatorAgentMessage(m.ID)
 	sender := agent.MessageSenderLabel(m.FromConv, m.FromAgent)
+	if remote, _ := remoteSenderLabel(m.ID); remote != "" {
+		sender = remote
+	}
 	fmt.Fprintf(&b, "[system: new agent message #%d", m.ID)
 	switch {
 	case operatorAuthored:
@@ -2923,6 +2934,15 @@ func handleMessageReply(w http.ResponseWriter, r *http.Request, idStr string) {
 	if subject == "" && orig.Subject != "" {
 		subject = "Re: " + orig.Subject
 	}
+	// A reply to mail received from a remote instance goes back over
+	// federation; reply authority comes from having received it.
+	if in, err := db.FederationInboundForMessage(orig.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	} else if in != nil {
+		handleFederatedReply(w, r, myID, in, subject, body.Body)
+		return
+	}
 	// Reply path is open: if you received a message, you can reply
 	// to it regardless of current group membership. This lets a
 	// group owner address a member without being a peer themselves
@@ -3076,11 +3096,22 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 	}
 	operatorAuthored := db.IsOperatorAgentMessage(m.ID)
 	replyable := !operatorAuthored && m.FromConv != ""
+	remoteLabel, remoteAddr := remoteSenderLabel(m.ID)
+	if remoteLabel != "" {
+		resp["from_title"] = remoteLabel
+		resp["from_agent"] = remoteAddr
+		resp["remote"] = true
+		replyable = strings.Contains(remoteAddr, "@")
+		if replyable {
+			resp["reply_to"] = remoteAddr
+			resp["reply_cmd"] = fmt.Sprintf("tclaude agent reply %d \"<your reply body>\"", m.ID)
+		}
+	}
 	resp["replyable"] = replyable
 	if operatorAuthored {
 		resp["from_title"] = "human operator"
 	}
-	if replyable {
+	if replyable && remoteLabel == "" {
 		// Operator-authored mail has no mailbox return address and advertises
 		// replyable=false above. Senderless system mail is likewise not
 		// replyable. Agent-authored mail keeps the existing reply affordances.

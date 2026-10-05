@@ -496,6 +496,11 @@ var permissionRegistry = []PermSlug{
 		Description: "Watch another member's inbox when its current active groups are covered.",
 	},
 	{
+		Slug: PermFederationMessage, ScopeDims: []ScopeDim{ScopeDimGroup},
+		Description: "Send mail to members of a remote instance's group that is imported into one of the sender's groups (tclaude agent message member@peer). " +
+			"Scope group = the importing local group. Replies to received remote mail need no slug. Not default-granted, not conferred by ownership.",
+	},
+	{
 		Slug:        PermMessageDirect,
 		Description: "Send a 1:1 message to ANY agent regardless of shared-group membership — the off-group escape hatch (tclaude agent message). Intra-group messaging, owner-of-group, and via-link reach need no slug; this covers everything else. Not default-granted.",
 	},

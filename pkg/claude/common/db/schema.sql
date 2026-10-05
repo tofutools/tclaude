@@ -1478,3 +1478,71 @@ CREATE TABLE awb_ready_dispatches (
 		updated_at INTEGER NOT NULL,
 		UNIQUE(workspace, issue_id)
 	) STRICT;
+
+CREATE TABLE federation_peers (
+	instance_id TEXT PRIMARY KEY,
+	pubkey      BLOB NOT NULL,
+	label       TEXT NOT NULL DEFAULT '',
+	name        TEXT NOT NULL DEFAULT '',
+	trusted_at  INTEGER NOT NULL
+) STRICT;
+
+CREATE UNIQUE INDEX idx_federation_peers_label
+	ON federation_peers(label) WHERE label != '';
+
+CREATE TABLE federation_exports (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	group_id   INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+	peer       TEXT NOT NULL,
+	caps       TEXT NOT NULL,
+	created_at INTEGER NOT NULL,
+	UNIQUE (group_id, peer)
+) STRICT;
+
+CREATE TABLE federation_imports (
+	id             INTEGER PRIMARY KEY AUTOINCREMENT,
+	local_group_id INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+	peer           TEXT NOT NULL,
+	remote_group   TEXT NOT NULL,
+	created_at     INTEGER NOT NULL,
+	UNIQUE (local_group_id, peer, remote_group)
+) STRICT;
+
+CREATE TABLE federation_catalogs (
+	peer        TEXT PRIMARY KEY,
+	payload     TEXT NOT NULL,
+	received_at INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE federation_outbox (
+	envelope_id     TEXT PRIMARY KEY,
+	kind            TEXT NOT NULL,
+	to_instance     TEXT NOT NULL,
+	to_agent        TEXT NOT NULL DEFAULT '',
+	to_label        TEXT NOT NULL DEFAULT '',
+	from_conv       TEXT NOT NULL DEFAULT '',
+	from_agent      TEXT NOT NULL DEFAULT '',
+	in_reply_to     TEXT NOT NULL DEFAULT '',
+	subject         TEXT NOT NULL DEFAULT '',
+	body_preview    TEXT NOT NULL DEFAULT '',
+	sealed          BLOB NOT NULL,
+	state           TEXT NOT NULL,
+	attempts        INTEGER NOT NULL DEFAULT 0,
+	next_attempt_at INTEGER NOT NULL,
+	last_error      TEXT NOT NULL DEFAULT '',
+	created_at      INTEGER NOT NULL,
+	expires_at      INTEGER NOT NULL,
+	updated_at      INTEGER NOT NULL
+) STRICT;
+
+CREATE INDEX idx_federation_outbox_state
+	ON federation_outbox(state, next_attempt_at);
+
+CREATE TABLE federation_inbound (
+	message_id    INTEGER PRIMARY KEY REFERENCES agent_messages(id) ON DELETE CASCADE,
+	envelope_id   TEXT NOT NULL UNIQUE,
+	from_instance TEXT NOT NULL,
+	from_agent    TEXT NOT NULL DEFAULT '',
+	from_name     TEXT NOT NULL DEFAULT '',
+	received_at   INTEGER NOT NULL
+) STRICT;

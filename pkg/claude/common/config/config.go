@@ -99,6 +99,11 @@ type Config struct {
 	// keeps agentd loopback-only.
 	RemoteAccess *RemoteAccessConfig `json:"remote_access,omitempty"`
 
+	// Federation links this agentd to other instances through a
+	// tclaude-hub. Absent / disabled → no hub connection. See
+	// FederationConfig and docs/federation.md.
+	Federation *FederationConfig `json:"federation,omitempty"`
+
 	// ClaudeResume tunes Claude Code's interactive "Resume from summary"
 	// prompt for tclaude-spawned panes — see ClaudeResumeConfig. Absent /
 	// nil keeps Claude Code's own defaults.
@@ -801,6 +806,23 @@ func (c *Config) ResolvedAuditRetentionDays() (days int, prune bool) {
 // hash, and the cookie-signing key — lives as 0600 files under
 // RemoteAccessDir (~/.tclaude/remote-access/), never in this config file.
 // Generate it with `tclaude remote-access setup`.
+// FederationConfig configures the outbound hub connection.
+type FederationConfig struct {
+	// Enabled starts the hub client. Default false.
+	Enabled bool `json:"enabled,omitempty"`
+	// HubURL is the hub's WebSocket URL: wss://host[:port], or ws:// to a
+	// loopback hub only.
+	HubURL string `json:"hub_url,omitempty"`
+	// Name is this instance's display name on the hub (default
+	// user@hostname).
+	Name string `json:"name,omitempty"`
+	// Invite is a single-use hub invite token, presented until admitted.
+	Invite string `json:"invite,omitempty"`
+	// HubCAFile is an optional PEM bundle trusted for the hub's TLS
+	// certificate instead of the system roots.
+	HubCAFile string `json:"hub_ca_file,omitempty"`
+}
+
 type RemoteAccessConfig struct {
 	// Enabled starts the remote HTTPS listener. Default false: tclaude never
 	// exposes the control plane to the network without an explicit opt-in.

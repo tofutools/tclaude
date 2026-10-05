@@ -652,6 +652,7 @@ func runServe(p *serveParams) error {
 	// and stops when the daemon-wide quit channel closes.
 	cronStop := make(chan struct{})
 	defer close(cronStop)
+	startFederation()
 	startCronScheduler(cronStop)
 	startStandingOrderDebounceScheduler(cronStop)
 	startTriggerScheduler(cronStop)
@@ -1292,6 +1293,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("GET /v1/usage/summary", handleAccountUsage)
 	mux.HandleFunc("GET /v1/costs", handleAccountCosts)
 	mux.HandleFunc("/v1/peers", handlePeers)
+	registerFederationRoutes(mux)
 	mux.HandleFunc("/v1/messages", handleMessages)
 	mux.HandleFunc("/v1/messages/", handleMessageByIDOrReply)
 	mux.HandleFunc("/v1/inbox", handleInbox)
