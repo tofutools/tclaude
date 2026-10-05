@@ -323,14 +323,20 @@ func broadcastFederationCatalogs() {
 	}
 }
 
-// sendControl seals and sends a best-effort control envelope.
+// sendControl seals and sends a best-effort control envelope. Only trusted
+// peers are ever addressed: the payload is encrypted to the key pinned at
+// trust time.
 func (rt *fedRuntime) sendControl(to, kind, inReplyTo string, payload any) {
+	peer, err := db.GetFederationPeer(to)
+	if err != nil || peer == nil {
+		return
+	}
 	env, err := proto.NewEnvelope(rt.id, kind, proto.Endpoint{Name: rt.name}, proto.Endpoint{Instance: to}, fedControlTTL, payload)
 	if err != nil {
 		return
 	}
 	env.InReplyTo = inReplyTo
-	sealed, err := proto.Seal(rt.id, env)
+	sealed, err := proto.Seal(rt.id, env, ed25519.PublicKey(peer.PubKey))
 	if err != nil {
 		slog.Warn("federation: seal failed", "kind", kind, "error", err)
 		return
@@ -450,7 +456,7 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		slog.Debug("federation: dropping envelope from untrusted instance", "from", from)
 		return
 	}
-	env, err := proto.Open(sealed, ed25519.PublicKey(peer.PubKey), rt.id.ID(), time.Now())
+	env, err := proto.Open(sealed, ed25519.PublicKey(peer.PubKey), rt.id, time.Now())
 	if err != nil {
 		slog.Warn("federation: rejecting envelope", "from", from, "error", err)
 		return

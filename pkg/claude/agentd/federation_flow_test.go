@@ -47,7 +47,9 @@ func (p *fedPeer) envelopes(kind string) []*proto.Envelope {
 
 func (p *fedPeer) send(env *proto.Envelope) {
 	p.t.Helper()
-	s, err := proto.Seal(p.id, env)
+	key, ok := p.cl.LookupKey(p.agentdID)
+	require.True(p.t, ok, "daemon key not in the peer's directory")
+	s, err := proto.Seal(p.id, env, ed25519.PublicKey(key))
 	require.NoError(p.t, err)
 	res, err := p.cl.Send(context.Background(), p.agentdID, s)
 	require.NoError(p.t, err)
@@ -141,7 +143,7 @@ func newFedHarness(t *testing.T) *fedHarness {
 			if !ok {
 				return
 			}
-			env, err := proto.Open(s, ed25519.PublicKey(key), peerID.ID(), time.Now())
+			env, err := proto.Open(s, ed25519.PublicKey(key), peerID, time.Now())
 			if err != nil {
 				return
 			}

@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -243,7 +244,7 @@ func queueFederatedMail(fromConv string, t *fedTarget, subject, body, inReplyTo 
 		return nil, err
 	}
 	env.InReplyTo = inReplyTo
-	sealed, err := proto.Seal(id, env)
+	sealed, err := proto.Seal(id, env, ed25519.PublicKey(t.peer.PubKey))
 	if err != nil {
 		return nil, err
 	}

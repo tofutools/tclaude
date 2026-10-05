@@ -56,7 +56,10 @@ type Envelope struct {
 	CreatedAt time.Time       `json:"created_at"`
 	ExpiresAt time.Time       `json:"expires_at"`
 	InReplyTo string          `json:"in_reply_to,omitempty"`
-	Payload   json.RawMessage `json:"payload,omitempty"`
+	// Payload is the plaintext payload. It never travels: Seal encrypts it
+	// into Enc for the recipient and Open restores it.
+	Payload json.RawMessage `json:"payload,omitempty"`
+	Enc     *Encrypted      `json:"enc,omitempty"`
 }
 
 // Sealed is an encoded envelope plus the origin instance's signature over
@@ -144,12 +147,28 @@ func NewEnvelope(id *Identity, kind string, from, to Endpoint, ttl time.Duration
 	}, nil
 }
 
-// Seal encodes and signs env with id. env.From.Instance must be id's own.
-func Seal(id *Identity, env *Envelope) (*Sealed, error) {
+// Seal encrypts env's payload to the recipient's identity key, then encodes
+// and signs the envelope with id. env.From.Instance must be id's own and
+// recipient must be the key of env.To.Instance. env itself is not modified.
+func Seal(id *Identity, env *Envelope, recipient ed25519.PublicKey) (*Sealed, error) {
 	if env.From.Instance != id.ID() {
 		return nil, errors.New("envelope from.instance does not match signing identity")
 	}
-	raw, err := json.Marshal(env)
+	if InstanceID(recipient) != env.To.Instance {
+		return nil, errors.New("recipient key does not match envelope to.instance")
+	}
+	payload := env.Payload
+	if len(payload) == 0 {
+		payload = json.RawMessage("{}")
+	}
+	enc, err := encryptPayload(recipient, env.ID, payload)
+	if err != nil {
+		return nil, err
+	}
+	wire := *env
+	wire.Payload = nil
+	wire.Enc = enc
+	raw, err := json.Marshal(&wire)
 	if err != nil {
 		return nil, err
 	}
@@ -169,8 +188,8 @@ var (
 )
 
 // Open verifies s against the sender's pinned key and that it is addressed
-// to self, then decodes it. now bounds expiry.
-func Open(s *Sealed, senderPub ed25519.PublicKey, self string, now time.Time) (*Envelope, error) {
+// to self, then decrypts its payload. now bounds expiry.
+func Open(s *Sealed, senderPub ed25519.PublicKey, self *Identity, now time.Time) (*Envelope, error) {
 	if len(s.Env) == 0 || len(s.Env) > MaxEnvelopeBytes || len(senderPub) != ed25519.PublicKeySize {
 		return nil, ErrMalformed
 	}
@@ -187,12 +206,22 @@ func Open(s *Sealed, senderPub ed25519.PublicKey, self string, now time.Time) (*
 	if env.From.Instance != InstanceID(senderPub) {
 		return nil, ErrWrongSender
 	}
-	if env.To.Instance != self {
+	if env.To.Instance != self.ID() {
 		return nil, ErrWrongTarget
 	}
 	if !env.ExpiresAt.IsZero() && now.After(env.ExpiresAt) {
 		return nil, ErrExpired
 	}
+	// Plaintext payloads are not accepted: the hub must only ever route
+	// ciphertext.
+	if len(env.Payload) != 0 || env.Enc == nil {
+		return nil, ErrMalformed
+	}
+	pt, err := decryptPayload(self, env.ID, env.Enc)
+	if err != nil {
+		return nil, err
+	}
+	env.Payload, env.Enc = pt, nil
 	return &env, nil
 }
 

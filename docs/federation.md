@@ -15,8 +15,8 @@ laptops behind NAT or a corporate network work as-is.
 !!! note "Status"
     This is the first slice: discovery and mail, CLI only. Remote control
     (spawning or stopping a colleague's agents, reading their transcripts),
-    attachments, cross-instance group multicast, end-to-end encryption, and a
-    dashboard view are not built yet.
+    attachments, cross-instance group multicast, and a dashboard view are not
+    built yet.
 
 ## Trust model
 
@@ -29,8 +29,13 @@ The hub routes; it is never the authority over what an agent may do.
 - **Signed envelopes.** Everything one instance sends another (catalogs,
   mail, acknowledgements) is a signed envelope. The receiver verifies it
   against the key it pinned when it trusted the sender. The hub cannot forge
-  or alter envelopes. In this version it can still read them; end-to-end
-  encryption is planned.
+  or alter envelopes.
+- **End-to-end encrypted payloads.** Each payload (mail bodies, catalogs,
+  acknowledgements) is encrypted to the recipient instance's key with an
+  ephemeral X25519 key and ChaCha20-Poly1305, so the hub routes ciphertext
+  only. The encryption key is derived from the identity key, so trusting a
+  peer's fingerprint covers both. The hub still sees routing metadata: who
+  talks to whom, when, envelope kinds and sizes.
 - **A remote instance speaks only for its own agents**, and only reaches
   what you exported to it.
 - **Remote content is untrusted.** Every inbound remote body starts with a
@@ -232,7 +237,8 @@ is by inspecting the caller's process tree.
 
 ## Limitations
 
-- The hub can read message contents.
+- The hub sees routing metadata (sender, recipient, kind, size, timing),
+  though not payloads.
 - No attachments, no `group:` multicast across instances, no `--cc` to
   remote recipients.
 - Mail only: no remote spawn, stop, or transcript access.

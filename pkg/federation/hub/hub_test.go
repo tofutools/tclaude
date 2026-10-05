@@ -119,13 +119,13 @@ func TestRouteBetweenAdmittedInstances(t *testing.T) {
 	eventually(t, "a sees b online", func() bool { return online(pa, b.ID()) })
 
 	env, _ := proto.NewEnvelope(a, proto.KindMail, proto.Endpoint{}, proto.Endpoint{Instance: b.ID()}, time.Hour, proto.MailPayload{Body: "hi"})
-	sealed, _ := proto.Seal(a, env)
+	sealed, _ := proto.Seal(a, env, b.Pub)
 	res, err := pa.cl.Send(context.Background(), b.ID(), sealed)
 	if err != nil || res.Status != proto.SendDelivered {
 		t.Fatalf("send: %+v %v", res, err)
 	}
 	eventually(t, "b receives", func() bool { return len(pb.received()) == 1 })
-	got, err := proto.Open(pb.received()[0], a.Pub, b.ID(), time.Now())
+	got, err := proto.Open(pb.received()[0], a.Pub, b, time.Now())
 	if err != nil || got.ID != env.ID {
 		t.Fatalf("open: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestSpacesScopeVisibility(t *testing.T) {
 		}
 	}
 	env, _ := proto.NewEnvelope(a, proto.KindMail, proto.Endpoint{}, proto.Endpoint{Instance: c.ID()}, time.Hour, proto.MailPayload{Body: "x"})
-	sealed, _ := proto.Seal(a, env)
+	sealed, _ := proto.Seal(a, env, c.Pub)
 	res, err := pa.cl.Send(context.Background(), c.ID(), sealed)
 	if err != nil || res.Status != proto.SendRefused || res.Code != proto.CodeNotVisible {
 		t.Fatalf("cross-space send: %+v %v", res, err)
@@ -200,7 +200,7 @@ func TestRateLimit(t *testing.T) {
 	var last string
 	for i := 0; i < 3; i++ {
 		env, _ := proto.NewEnvelope(a, proto.KindMail, proto.Endpoint{}, proto.Endpoint{Instance: b.ID()}, time.Hour, proto.MailPayload{Body: "x"})
-		sealed, _ := proto.Seal(a, env)
+		sealed, _ := proto.Seal(a, env, b.Pub)
 		res, err := pa.cl.Send(context.Background(), b.ID(), sealed)
 		if err != nil {
 			t.Fatal(err)
@@ -221,7 +221,7 @@ func TestOfflineTarget(t *testing.T) {
 	pa := startPeer(t, url, "a", "", a)
 	eventually(t, "a connected", func() bool { return pa.status().State == client.StateConnected })
 	env, _ := proto.NewEnvelope(a, proto.KindMail, proto.Endpoint{}, proto.Endpoint{Instance: b.ID()}, time.Hour, proto.MailPayload{Body: "x"})
-	sealed, _ := proto.Seal(a, env)
+	sealed, _ := proto.Seal(a, env, b.Pub)
 	res, err := pa.cl.Send(context.Background(), b.ID(), sealed)
 	if err != nil || res.Status != proto.SendOffline {
 		t.Fatalf("offline send: %+v %v", res, err)

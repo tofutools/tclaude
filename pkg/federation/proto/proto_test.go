@@ -1,12 +1,16 @@
 package proto
 
 import (
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/curve25519"
 )
 
 func TestIdentityRoundTripAndPerms(t *testing.T) {
@@ -45,12 +49,12 @@ func TestSealOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := Seal(alice, env)
+	s, err := Seal(alice, env, bob.Pub)
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	got, err := Open(s, alice.Pub, bob.ID(), now)
+	got, err := Open(s, alice.Pub, bob, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,15 +64,15 @@ func TestSealOpen(t *testing.T) {
 	}
 
 	// Wrong pinned key.
-	if _, err := Open(s, bob.Pub, bob.ID(), now); !errors.Is(err, ErrBadSignature) {
+	if _, err := Open(s, bob.Pub, bob, now); !errors.Is(err, ErrBadSignature) {
 		t.Fatalf("wrong key: %v", err)
 	}
 	// Wrong recipient.
-	if _, err := Open(s, alice.Pub, alice.ID(), now); !errors.Is(err, ErrWrongTarget) {
+	if _, err := Open(s, alice.Pub, alice, now); !errors.Is(err, ErrWrongTarget) {
 		t.Fatalf("wrong target: %v", err)
 	}
 	// Expired.
-	if _, err := Open(s, alice.Pub, bob.ID(), now.Add(2*time.Hour)); !errors.Is(err, ErrExpired) {
+	if _, err := Open(s, alice.Pub, bob, now.Add(2*time.Hour)); !errors.Is(err, ErrExpired) {
 		t.Fatalf("expired: %v", err)
 	}
 	// Tampered bytes.
@@ -76,13 +80,13 @@ func TestSealOpen(t *testing.T) {
 	_ = json.Unmarshal(s.Env, &m)
 	m["kind"] = KindAck
 	tampered, _ := json.Marshal(m)
-	if _, err := Open(&Sealed{Env: tampered, Sig: s.Sig}, alice.Pub, bob.ID(), now); !errors.Is(err, ErrBadSignature) {
+	if _, err := Open(&Sealed{Env: tampered, Sig: s.Sig}, alice.Pub, bob, now); !errors.Is(err, ErrBadSignature) {
 		t.Fatalf("tampered: %v", err)
 	}
 	// Signed by alice but claiming to be from bob's instance.
 	env2 := *env
 	env2.From.Instance = bob.ID()
-	if _, err := Seal(alice, &env2); err == nil {
+	if _, err := Seal(alice, &env2, bob.Pub); err == nil {
 		t.Fatal("Seal accepted a foreign from.instance")
 	}
 }
@@ -125,5 +129,63 @@ func TestSafeName(t *testing.T) {
 	long := SafeName(string(make([]byte, 500)), false)
 	if len(long) > MaxNameLen {
 		t.Errorf("not capped: %d", len(long))
+	}
+}
+
+func TestPayloadIsEncrypted(t *testing.T) {
+	alice, _ := NewIdentity()
+	bob, _ := NewIdentity()
+	carol, _ := NewIdentity()
+	env, _ := NewEnvelope(alice, KindMail, Endpoint{}, Endpoint{Instance: bob.ID()}, time.Hour, MailPayload{Body: "top secret body"})
+	s, err := Seal(alice, env, bob.Pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(s.Env), "top secret") {
+		t.Fatal("plaintext payload on the wire")
+	}
+	if len(env.Payload) == 0 {
+		t.Fatal("Seal mutated the caller's envelope")
+	}
+	got, err := Open(s, alice.Pub, bob, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mp MailPayload
+	if err := got.DecodePayload(&mp); err != nil || mp.Body != "top secret body" {
+		t.Fatalf("decrypted payload = %+v %v", mp, err)
+	}
+	// Wrong recipient key at seal time is refused.
+	if _, err := Seal(alice, env, carol.Pub); err == nil {
+		t.Fatal("sealed to a key that is not to.instance")
+	}
+	// A signed envelope carrying plaintext is rejected.
+	wire := *env
+	raw, _ := json.Marshal(&wire)
+	plain := &Sealed{Env: raw, Sig: ed25519.Sign(alice.Priv, raw)}
+	if _, err := Open(plain, alice.Pub, bob, time.Now()); !errors.Is(err, ErrMalformed) {
+		t.Fatalf("plaintext accepted: %v", err)
+	}
+}
+
+func TestX25519DerivationAgrees(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		a, _ := NewIdentity()
+		b, _ := NewIdentity()
+		aPub, err := X25519PublicFromEd25519(a.Pub)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bPub, _ := X25519PublicFromEd25519(b.Pub)
+		ab, err1 := curve25519.X25519(a.x25519Private(), bPub)
+		ba, err2 := curve25519.X25519(b.x25519Private(), aPub)
+		if err1 != nil || err2 != nil || string(ab) != string(ba) {
+			t.Fatalf("shared secrets differ (iteration %d)", i)
+		}
+		// The derived public key matches the derived private scalar.
+		direct, _ := curve25519.X25519(a.x25519Private(), curve25519.Basepoint)
+		if string(direct) != string(aPub) {
+			t.Fatalf("public key mismatch (iteration %d)", i)
+		}
 	}
 }
