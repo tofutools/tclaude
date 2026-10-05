@@ -348,7 +348,22 @@ func TestFederation_OutboundMailRequiresImportAndSlug(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), agentd.PermFederationMessage)
 
-	require.NoError(t, db.GrantAgentPermission(alice, agentd.PermFederationMessage, "test"))
+	// The peer scope takes instance ids only, never a movable label.
+	grant := func(scope map[string]any) *httpResult {
+		return postPermissionScope(t, f, "grant", map[string]any{"target": alice, "slug": agentd.PermFederationMessage, "scope": scope})
+	}
+	require.Equal(t, http.StatusBadRequest, grant(map[string]any{"peer": []string{"bob"}}).Code)
+
+	// A grant scoped to another peer does not reach bob.
+	other, err := proto.NewIdentity()
+	require.NoError(t, err)
+	g := grant(map[string]any{"peer": []string{other.ID()}})
+	require.Equal(t, http.StatusOK, g.Code, g.Body)
+	rec = send()
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+
+	g = grant(map[string]any{"group": []string{"team"}, "peer": []string{p.id.ID()}})
+	require.Equal(t, http.StatusOK, g.Code, g.Body)
 	rec = send()
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var resp struct {

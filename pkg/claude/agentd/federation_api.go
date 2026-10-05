@@ -300,13 +300,13 @@ func handleFederatedAgentSend(w http.ResponseWriter, r *http.Request, fromConv s
 	// handles --ask-human and writes the 403) on the first.
 	via := ""
 	for _, g := range t.localGroups {
-		if ok, _, err := permissionAllowsAction(r, fromConv, PermFederationMessage, ActionContext{Group: g}); err == nil && ok {
+		if ok, _, err := permissionAllowsAction(r, fromConv, PermFederationMessage, ActionContext{Group: g, Peer: t.peer.InstanceID}); err == nil && ok {
 			via = g
 			break
 		}
 	}
 	if via == "" {
-		if _, ok := requirePermission(w, r, PermFederationMessage, ActionContext{Group: t.localGroups[0]}); !ok {
+		if _, ok := requirePermission(w, r, PermFederationMessage, ActionContext{Group: t.localGroups[0], Peer: t.peer.InstanceID}); !ok {
 			return
 		}
 		via = t.localGroups[0]

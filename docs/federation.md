@@ -181,11 +181,17 @@ A spontaneous remote send requires all of the following:
 - it is imported into a local group the sender belongs to;
 - the sender holds **`federation.message`**, which is not default-granted and
   not conferred by group ownership. Narrow it to the importing group with
-  `--scope group=<local-group>`:
+  `--scope group=<local-group>`, and to one remote instance with
+  `--scope peer=<instance id>`:
 
 ```bash
 tclaude agent permissions grant lead federation.message --scope group=team
+tclaude agent permissions grant lead federation.message --scope group=team --scope peer=inst_…
 ```
+
+The `peer` scope takes the full instance id from `tclaude federation peers`,
+not a label: labels are local nicknames you can move, and a grant must not
+follow one to a different instance.
 
 Replies to received remote mail need neither an import nor the slug. The
 other side accepts them because they answer mail it sent from that agent.
@@ -265,7 +271,5 @@ is by inspecting the caller's process tree.
 - Mail only: no remote spawn, stop, or transcript access.
 - Operator mail is sent from the CLI only; agents cannot reach a remote
   operator.
-- `federation.message` scopes by local group only; there is no per-peer
-  scope dimension yet.
 - One hub per instance. Hub-to-hub federation is a later step.
 - CLI only; the dashboard does not show federation yet.

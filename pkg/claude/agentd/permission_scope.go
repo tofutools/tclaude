@@ -9,6 +9,7 @@ import (
 	"unicode"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 // permissionScopeMaxJSONBytes is shared conceptually with the v195 column
@@ -29,6 +30,8 @@ const (
 	ScopeDimLinearTeam      ScopeDim = "linear_team"
 	ScopeDimAWBWorkspace    ScopeDim = "awb_workspace"
 	ScopeDimTargetAgent     ScopeDim = "target_agent"
+	// ScopeDimPeer is a trusted federation peer's instance id (inst_…).
+	ScopeDimPeer ScopeDim = "peer"
 	// legacyScopeDimAWBProject is accepted only while parsing persisted grants
 	// written before AWB renamed projects to workspaces. Canonical output always
 	// uses ScopeDimAWBWorkspace, so any subsequent write upgrades the row.
@@ -62,6 +65,11 @@ const (
 	// letter. One kind checking two vocabularies would have to accept the union
 	// of both, which is a matcher neither proxy can ever match.
 	permissionScopeMatchWorkspaceKey
+	// permissionScopeMatchInstanceID is an exact comparison whose shape is a
+	// federation instance id. Labels are deliberately not accepted: a label
+	// is a local nickname the operator can move to another instance, and a
+	// grant must not silently follow it there.
+	permissionScopeMatchInstanceID
 )
 
 type permissionScopeDimension struct {
@@ -100,6 +108,7 @@ var permissionScopeDimensions = map[ScopeDim]permissionScopeDimension{
 	ScopeDimRemote:          {matcher: permissionScopeMatchRemotePattern},
 	ScopeDimLinearTeam:      {matcher: permissionScopeMatchTeamKey, enumerable: true},
 	ScopeDimAWBWorkspace:    {matcher: permissionScopeMatchWorkspaceKey, enumerable: true},
+	ScopeDimPeer:            {matcher: permissionScopeMatchInstanceID},
 	ScopeDimTargetAgent: {selectors: map[string]struct{}{
 		"@descendants":  {},
 		"@self-spawned": {},
@@ -200,6 +209,11 @@ func permissionScopeMatcherShape(dim ScopeDim, spec permissionScopeDimension, ma
 		if err := linearTeamKeyShapeErr(matcher); err != nil {
 			return fmt.Errorf("permission scope dimension %q: %w (there is no wildcard: a team key "+
 				"is matched whole, case-insensitively)", dim, err)
+		}
+	case permissionScopeMatchInstanceID:
+		if !proto.ValidInstanceID(matcher) {
+			return fmt.Errorf("permission scope dimension %q: %q is not an instance id (inst_…); "+
+				"labels are not accepted, see tclaude federation peers", dim, matcher)
 		}
 	case permissionScopeMatchWorkspaceKey:
 		// Same reasoning one vocabulary over: an AWB workspace key is what the AWB

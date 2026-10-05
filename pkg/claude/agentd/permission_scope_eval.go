@@ -62,6 +62,8 @@ type ActionContext struct {
 	// several workspaces describes each of them in turn rather than passing a
 	// set, so every check is one workspace against one grant.
 	AWBWorkspace string
+	// Peer is the federation peer's instance id a remote send targets.
+	Peer string
 
 	// structuralGroup is the group whose ownership or membership may confer the requested slug.
 	// It is deliberately distinct from Group: Group evaluates an explicit
@@ -112,6 +114,8 @@ func (a ActionContext) value(dim ScopeDim) string {
 		return a.LinearTeam
 	case ScopeDimAWBWorkspace:
 		return a.AWBWorkspace
+	case ScopeDimPeer:
+		return a.Peer
 	}
 	return ""
 }
@@ -234,7 +238,7 @@ func permissionScopeLiteralMatches(dim ScopeDim, matcher, value string) bool {
 		return false
 	}
 	switch spec.matcher {
-	case permissionScopeMatchExact:
+	case permissionScopeMatchExact, permissionScopeMatchInstanceID:
 		return matcher == value
 	case permissionScopeMatchRemotePattern:
 		pattern := strings.Split(strings.ToLower(strings.Trim(matcher, "/")), "/")
