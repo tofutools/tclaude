@@ -205,10 +205,14 @@ func Seal(id *Identity, env *Envelope, recipient ed25519.PublicKey) (*Sealed, er
 		return nil, err
 	}
 	if len(raw) > MaxEnvelopeBytes {
-		return nil, fmt.Errorf("envelope too large (%d bytes)", len(raw))
+		return nil, fmt.Errorf("%w (%d bytes)", ErrTooLarge, len(raw))
 	}
 	return &Sealed{Env: raw, Sig: ed25519.Sign(id.Priv, raw)}, nil
 }
+
+// ErrTooLarge is returned by Seal when the encoded envelope exceeds
+// MaxEnvelopeBytes.
+var ErrTooLarge = errors.New("envelope too large")
 
 // Errors returned by Open.
 var (

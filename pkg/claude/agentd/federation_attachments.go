@@ -141,10 +141,11 @@ func storeFedAttachments(instance string, atts []proto.AttachmentPayload) (rows 
 			_ = os.RemoveAll(dir)
 			return nil, "", err
 		}
-		if used[name] {
+		// Case-folded: macOS filesystems are case-insensitive.
+		if used[strings.ToLower(name)] {
 			name = fmt.Sprintf("%d-%s", i+1, name)
 		}
-		used[name] = true
+		used[strings.ToLower(name)] = true
 		path := filepath.Join(dir, name)
 		if err := writeNewFile(path, a.Data); err != nil {
 			_ = os.RemoveAll(dir)

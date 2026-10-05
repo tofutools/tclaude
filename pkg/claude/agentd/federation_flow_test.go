@@ -21,6 +21,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/federation/hub"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/testharness"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 // fedPeer is a scripted remote instance speaking the real wire protocol.
@@ -667,7 +668,7 @@ func TestFederation_ReachableRemoteMembers(t *testing.T) {
 func TestFederation_Attachments(t *testing.T) {
 	fh := newFedHarness(t)
 	f, p := fh.f, fh.peer
-	t.Cleanup(agentd.SetOperatorMessageAttachmentBasesForTest(t.TempDir(), t.TempDir()))
+	t.Cleanup(agentd.SetOperatorMessageAttachmentBasesForTest(testutil.CanonicalTempDir(t), testutil.CanonicalTempDir(t)))
 
 	const alice = "fed7-alice-bbbb-cccc-000000000001"
 	f.HaveGroup("team")

@@ -265,6 +265,9 @@ func queueFederatedMail(fromConv string, t *fedTarget, subject, body, inReplyTo 
 	}
 	env.InReplyTo = inReplyTo
 	sealed, err := proto.Seal(id, env, ed25519.PublicKey(t.peer.PubKey))
+	if errors.Is(err, proto.ErrTooLarge) {
+		return nil, newFedErr(http.StatusRequestEntityTooLarge, "too_large", "message and attachments are too large once encoded; send fewer or smaller files")
+	}
 	if err != nil {
 		return nil, err
 	}

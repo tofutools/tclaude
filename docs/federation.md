@@ -279,6 +279,12 @@ A full inbox is retried rather than refused. Inbound remote mail is recorded
 in the [audit trail](permissions-and-audit.md) as `federation.mail.in`, and
 every operator change under `/v1/federation/*` is audited too.
 
+## Upgrading
+
+The envelope format is versioned. Instances on different envelope versions
+cannot exchange mail (envelopes are dropped and outbox rows eventually
+expire), so upgrade linked instances together. This branch uses version 2.
+
 ## Trying it locally
 
 `scripts/federation-smoke.sh` builds the binaries and starts a hub plus two
