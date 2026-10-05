@@ -114,9 +114,11 @@ func isFederatedAddress(to string) bool {
 
 // fedTarget is a resolved remote recipient.
 type fedTarget struct {
-	peer        *db.FederationPeer
-	agentID     string
-	name        string
+	peer    *db.FederationPeer
+	agentID string
+	name    string
+	// operator addresses the peer's human operator instead of an agent.
+	operator    bool
 	remoteGroup []string
 	// localGroups are the importing local groups the sender may use, in
 	// name order. Empty for the human sender without membership.
@@ -238,7 +240,11 @@ func queueFederatedMail(fromConv string, t *fedTarget, subject, body, inReplyTo 
 		fromAgent, _ = db.AgentIDForConv(fromConv)
 		from = proto.Endpoint{Agent: fromAgent, Name: agent.TitleFor(fromConv)}
 	}
-	env, err := proto.NewEnvelope(id, proto.KindMail, from, proto.Endpoint{Instance: t.peer.InstanceID, Agent: t.agentID}, fedMailTTL,
+	kind := proto.KindMail
+	if t.operator {
+		kind = proto.KindOperatorMail
+	}
+	env, err := proto.NewEnvelope(id, kind, from, proto.Endpoint{Instance: t.peer.InstanceID, Agent: t.agentID}, fedMailTTL,
 		proto.MailPayload{Subject: subject, Body: body})
 	if err != nil {
 		return nil, err
@@ -249,7 +255,7 @@ func queueFederatedMail(fromConv string, t *fedTarget, subject, body, inReplyTo 
 		return nil, err
 	}
 	row := db.FederationOutboxRow{
-		EnvelopeID: env.ID, Kind: proto.KindMail, ToInstance: t.peer.InstanceID, ToAgent: t.agentID, ToLabel: t.label(),
+		EnvelopeID: env.ID, Kind: kind, ToInstance: t.peer.InstanceID, ToAgent: t.agentID, ToLabel: t.label(),
 		FromConv: fromConv, FromAgent: fromAgent, InReplyTo: inReplyTo, Subject: subject, BodyPreview: preview(body),
 		Sealed: packSealed(sealed), ExpiresAt: env.ExpiresAt,
 	}
@@ -848,7 +854,7 @@ func handleFederationOutbox(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []fedOutboxJSON{}
 	for _, row := range rows {
-		if row.Kind != proto.KindMail {
+		if row.Kind != proto.KindMail && row.Kind != proto.KindOperatorMail {
 			continue
 		}
 		from := "human operator"
@@ -899,6 +905,77 @@ func handleFederationSend(w http.ResponseWriter, r *http.Request) {
 		State: row.State, Connected: fedConnected()})
 }
 
+type fedNotifyReq struct {
+	Peer    string `json:"peer"`
+	Subject string `json:"subject,omitempty"`
+	Body    string `json:"body"`
+}
+
+// handleFederationNotify sends mail from the local operator to a trusted
+// peer's operator. No export or import is involved: trusting each other is
+// what lets two operators talk.
+func handleFederationNotify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+		return
+	}
+	if !requireHuman(w, r, "message a remote operator") {
+		return
+	}
+	var req fedNotifyReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	peer, err := resolveFederationPeer(req.Peer)
+	if err != nil {
+		writeFedErr(w, err)
+		return
+	}
+	t := &fedTarget{peer: peer, name: "operator", operator: true}
+	row, err := queueFederatedMail("", t, req.Subject, req.Body, "")
+	if err != nil {
+		writeFedErr(w, err)
+		return
+	}
+	setAuditTargetLabel(r, t.label())
+	writeJSON(w, http.StatusOK, fedSendResp{EnvelopeID: row.EnvelopeID, To: t.label(), ToAgent: "@" + peer.InstanceID,
+		State: row.State, Connected: fedConnected()})
+}
+
+type fedInboxJSON struct {
+	ID        int64     `json:"id"`
+	From      string    `json:"from"`
+	Instance  string    `json:"instance"`
+	Subject   string    `json:"subject,omitempty"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
+	Read      bool      `json:"read"`
+}
+
+// handleFederationInbox lists messages remote operators sent the local
+// operator. They also appear in the dashboard Messages tab.
+func handleFederationInbox(w http.ResponseWriter, r *http.Request) {
+	if !requireHuman(w, r, "read remote operator mail") {
+		return
+	}
+	msgs, err := db.ListHumanMessages()
+	if err != nil {
+		writeFedErr(w, err)
+		return
+	}
+	prefix := db.FederationHumanGroup("")
+	out := []fedInboxJSON{}
+	for _, m := range msgs {
+		if !strings.HasPrefix(m.GroupName, prefix) {
+			continue
+		}
+		out = append(out, fedInboxJSON{ID: m.ID, From: m.FromTitle, Instance: strings.TrimPrefix(m.GroupName, prefix),
+			Subject: m.Subject, Body: m.Body, CreatedAt: m.CreatedAt, Read: m.IsRead()})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // remoteSenderLabel names the sender of an inbound remote message for
 // nudges and inbox views, or "" for local mail.
 func remoteSenderLabel(messageID int64) (label, addr string) {
@@ -930,6 +1007,8 @@ func fedFirst(a, b string) string {
 
 func registerFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/federation/status", handleFederationStatus)
+	mux.HandleFunc("/v1/federation/notify", handleFederationNotify)
+	mux.HandleFunc("GET /v1/federation/inbox", handleFederationInbox)
 	mux.HandleFunc("/v1/federation/config", handleFederationConfig)
 	mux.HandleFunc("/v1/federation/peers/trust", handleFederationTrust)
 	mux.HandleFunc("/v1/federation/peers/untrust", handleFederationUntrust)

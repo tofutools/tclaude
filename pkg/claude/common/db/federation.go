@@ -476,6 +476,53 @@ func InsertFederationInboundMessage(m *AgentMessage, in FederationInbound, expir
 	return id, tx.Commit()
 }
 
+// FederationHumanGroup is the group_name snapshot stored on human_messages
+// rows that came from a remote operator: it marks the row as remote and
+// names the sending instance, which bounds that peer's unread backlog.
+func FederationHumanGroup(instanceID string) string { return "federation:" + instanceID }
+
+// InsertFederationInboundHumanMessage atomically records the envelope as
+// seen and inserts m into the operator's Messages inbox. m.GroupName must be
+// FederationHumanGroup(fromInstance). A repeated (sender, envelope id)
+// returns ErrFederationDuplicate; more than unreadLimit unread messages from
+// that instance returns *AgentMessageQueueFullError. Either writes nothing.
+func InsertFederationInboundHumanMessage(m *HumanMessage, fromInstance, envelopeID string, expiresAt time.Time, unreadLimit int) (int64, error) {
+	if m.GroupName != FederationHumanGroup(fromInstance) {
+		return 0, errors.New("remote operator message must be filed under its instance")
+	}
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(`INSERT OR IGNORE INTO federation_seen(from_instance, envelope_id, expires_at) VALUES(?,?,?)`,
+		fromInstance, envelopeID, dbTime(expiresAt))
+	if err != nil {
+		return 0, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return 0, ErrFederationDuplicate
+	}
+	if unreadLimit > 0 {
+		var pending int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM human_messages WHERE group_name=? AND read_at IS NULL`, m.GroupName).Scan(&pending); err != nil {
+			return 0, err
+		}
+		if pending >= unreadLimit {
+			return 0, &AgentMessageQueueFullError{Pending: pending, Limit: unreadLimit}
+		}
+	}
+	id, err := insertHumanMessage(tx, m)
+	if err != nil {
+		return 0, err
+	}
+	return id, tx.Commit()
+}
+
 // PruneFederationSeen drops replay-guard rows whose envelopes have expired.
 func PruneFederationSeen(now time.Time) error {
 	d, err := Open()

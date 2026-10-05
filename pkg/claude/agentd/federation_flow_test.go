@@ -484,3 +484,104 @@ func TestFederation_ConfigGuards(t *testing.T) {
 	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/config", map[string]any{"enabled": true, "hub_url": "ws://hub.example.com"})
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 }
+
+// fedAckFor waits for the daemon's ack of envelope id and returns it.
+func fedAckFor(t *testing.T, p *fedPeer, id string) proto.AckPayload {
+	t.Helper()
+	var got proto.AckPayload
+	fedEventually(t, "ack for "+id, func() bool {
+		for _, a := range p.envelopes(proto.KindAck) {
+			if a.InReplyTo == id {
+				return a.DecodePayload(&got) == nil
+			}
+		}
+		return false
+	})
+	return got
+}
+
+type fedInboxRow struct {
+	From     string `json:"from"`
+	Instance string `json:"instance"`
+	Subject  string `json:"subject"`
+	Body     string `json:"body"`
+}
+
+func fedInbox(t *testing.T, f *testharness.Flow) []fedInboxRow {
+	t.Helper()
+	rec := fedHuman(t, f, http.MethodGet, "/v1/federation/inbox", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var rows []fedInboxRow
+	testharness.DecodeJSON(t, rec, &rows)
+	return rows
+}
+
+func TestFederation_OperatorMail(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+
+	// A trusted peer's operator reaches the local operator's inbox without
+	// any export; the body carries the untrusted-content banner.
+	mail := p.envelope(proto.KindOperatorMail, proto.Endpoint{}, proto.MailPayload{Subject: "lunch", Body: "are your agents done?"})
+	p.send(mail)
+	require.Equal(t, proto.AckAccepted, fedAckFor(t, p, mail.ID).Status)
+	rows := fedInbox(t, f)
+	require.Len(t, rows, 1)
+	require.Equal(t, "bob-agent@bob (remote)", rows[0].From)
+	require.Equal(t, p.id.ID(), rows[0].Instance)
+	require.Equal(t, "lunch", rows[0].Subject)
+	require.Contains(t, rows[0].Body, "[remote message from bob-agent@bob")
+	require.Contains(t, rows[0].Body, "are your agents done?")
+
+	// A resend is re-acked and not stored twice.
+	p.send(mail)
+	fedEventually(t, "second ack", func() bool {
+		n := 0
+		for _, a := range p.envelopes(proto.KindAck) {
+			if a.InReplyTo == mail.ID {
+				n++
+			}
+		}
+		return n == 2
+	})
+	require.Len(t, fedInbox(t, f), 1)
+
+	// Operator mail may not target an agent.
+	bad := p.envelope(proto.KindOperatorMail, proto.Endpoint{Agent: "agt_someone000000000000000000"}, proto.MailPayload{Body: "x"})
+	p.send(bad)
+	require.Equal(t, proto.AckRefused, fedAckFor(t, p, bad.ID).Status)
+	require.Len(t, fedInbox(t, f), 1)
+
+	// The local operator writes back; the peer receives operator mail and
+	// its ack settles the outbox row.
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/notify", map[string]any{"peer": "bob", "body": "almost", "subject": "re: lunch"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var resp struct {
+		EnvelopeID string `json:"envelope_id"`
+		To         string `json:"to"`
+	}
+	testharness.DecodeJSON(t, rec, &resp)
+	require.Equal(t, "operator@bob", resp.To)
+	var got *proto.Envelope
+	fedEventually(t, "operator mail at peer", func() bool {
+		agentd.FlushFederationOutboxForTest()
+		for _, m := range p.envelopes(proto.KindOperatorMail) {
+			if m.ID == resp.EnvelopeID {
+				got = m
+				return true
+			}
+		}
+		return false
+	})
+	require.Empty(t, got.To.Agent)
+	var mp proto.MailPayload
+	require.NoError(t, got.DecodePayload(&mp))
+	require.Equal(t, "almost", mp.Body)
+	ack := p.envelope(proto.KindAck, proto.Endpoint{}, proto.AckPayload{Status: proto.AckAccepted})
+	ack.InReplyTo = resp.EnvelopeID
+	p.send(ack)
+	fedEventually(t, "outbox accepted", func() bool {
+		row, _ := db.GetFederationOutbox(resp.EnvelopeID)
+		return row != nil && row.State == db.FedOutboxAccepted
+	})
+}

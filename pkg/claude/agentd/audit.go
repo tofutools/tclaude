@@ -252,6 +252,7 @@ var auditRoutes = []auditRoute{
 	{method: http.MethodPost, segs: []string{"federation", "imports"}, verb: "federation.import"},
 	{method: http.MethodDelete, segs: []string{"federation", "imports"}, verb: "federation.import.remove"},
 	{method: http.MethodPost, segs: []string{"federation", "send"}, verb: "federation.send"},
+	{method: http.MethodPost, segs: []string{"federation", "notify"}, verb: "federation.notify"},
 	// Inter-group links.
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "links"}, verb: "link.add"},
 	{method: http.MethodPatch, segs: []string{"groups", "{name}", "links", "{id}"}, verb: "link.update"},

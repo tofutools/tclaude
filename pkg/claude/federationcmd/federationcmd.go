@@ -50,7 +50,7 @@ func Cmd() *cobra.Command {
 			statusCmd(), identityCmd(), connectCmd(), disconnectCmd(),
 			peersCmd(), trustCmd(), untrustCmd(),
 			exportCmd(), unexportCmd(), remoteCmd(), importCmd(), unimportCmd(),
-			sendCmd(), outboxCmd(),
+			sendCmd(), outboxCmd(), notifyCmd(), inboxCmd(),
 		},
 	}.ToCobra()
 }
@@ -575,6 +575,90 @@ func sendCmd() *cobra.Command {
 			fmt.Printf("%s to %s (envelope %s)\n", out.State, out.To, out.EnvelopeID[:12])
 			if !out.Connected {
 				fmt.Fprintln(os.Stderr, "hub not connected; the message will be sent when it is")
+			}
+		},
+	}.ToCobra()
+}
+
+type notifyParams struct {
+	Peer    string `pos:"true" help:"Trusted peer (label, name or instance id)"`
+	Body    string `pos:"true" help:"Message body"`
+	Subject string `long:"subject" optional:"true" help:"Subject"`
+}
+
+func notifyCmd() *cobra.Command {
+	return boa.CmdT[notifyParams]{
+		Use:         "notify",
+		Short:       "Message a trusted peer's human operator (lands in their Messages inbox)",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *notifyParams, _ *cobra.Command, _ []string) {
+			var out struct {
+				EnvelopeID string `json:"envelope_id"`
+				To         string `json:"to"`
+				State      string `json:"state"`
+				Connected  bool   `json:"hub_connected"`
+			}
+			if rc := post(os.Stderr, "/v1/federation/notify", map[string]any{"peer": p.Peer, "body": p.Body, "subject": p.Subject}, &out); rc != 0 {
+				os.Exit(rc)
+			}
+			fmt.Printf("%s to %s (envelope %s)\n", out.State, out.To, out.EnvelopeID[:12])
+			if !out.Connected {
+				fmt.Fprintln(os.Stderr, "hub not connected; the message will be sent when it is")
+			}
+		},
+	}.ToCobra()
+}
+
+type inboxParams struct {
+	JSON   bool `long:"json" help:"Output JSON"`
+	Unread bool `long:"unread" help:"Only unread messages"`
+}
+
+func inboxCmd() *cobra.Command {
+	return boa.CmdT[inboxParams]{
+		Use:         "inbox",
+		Short:       "Show messages remote operators sent you",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *inboxParams, _ *cobra.Command, _ []string) {
+			if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
+				os.Exit(rc)
+			}
+			type msg struct {
+				ID        int64     `json:"id"`
+				From      string    `json:"from"`
+				Instance  string    `json:"instance"`
+				Subject   string    `json:"subject,omitempty"`
+				Body      string    `json:"body"`
+				CreatedAt time.Time `json:"created_at"`
+				Read      bool      `json:"read"`
+			}
+			var rows []msg
+			if err := agent.DaemonGet("/v1/federation/inbox", &rows); err != nil {
+				os.Exit(fail(os.Stderr, err))
+			}
+			kept := rows[:0]
+			for _, r := range rows {
+				if !p.Unread || !r.Read {
+					kept = append(kept, r)
+				}
+			}
+			if p.JSON {
+				os.Exit(printJSON(os.Stdout, kept))
+			}
+			if len(kept) == 0 {
+				fmt.Println("no remote operator messages")
+				return
+			}
+			for _, r := range kept {
+				state := "unread"
+				if r.Read {
+					state = "read"
+				}
+				fmt.Printf("#%d  %s  %s  %s\n", r.ID, r.From, ago(r.CreatedAt), state)
+				if r.Subject != "" {
+					fmt.Printf("Subject: %s\n", r.Subject)
+				}
+				fmt.Printf("%s\n\n", strings.TrimRight(r.Body, "\n"))
 			}
 		},
 	}.ToCobra()

@@ -201,6 +201,27 @@ prefix. `peer` may be the label, the hub-reported name, or an instance-id
 prefix. An address whose `@…` part does not name a trusted peer is resolved
 locally as before, so local titles containing `@` keep working.
 
+## Operator to operator
+
+Operators of two trusted instances can message each other directly, with no
+export or import involved; trusting a peer is the consent.
+
+```bash
+tclaude federation notify bob "are your agents done with the release?" --subject release
+tclaude federation inbox [--unread]          # messages remote operators sent you
+```
+
+Inbound operator mail lands in the local operator's inbox: the dashboard
+Messages tab (filed under the group `federation:<instance id>`) and
+`tclaude federation inbox`. It carries the same untrusted-content banner as
+remote agent mail and raises a desktop notification if those are enabled. It
+is a plain inbox entry: it cannot answer a permission prompt, an
+`--ask-human` request or anything else that needs local approval. At most
+100 unread messages per peer are kept; beyond that the sender's outbox
+retries. Untrust the peer to stop it entirely. Agents cannot send operator
+mail yet, and replying from the dashboard is not wired up: answer with
+`tclaude federation notify`.
+
 ## Delivery
 
 Mail is store-and-forward. The sender writes a durable outbox row before
@@ -242,6 +263,8 @@ is by inspecting the caller's process tree.
 - No attachments, no `group:` multicast across instances, no `--cc` to
   remote recipients.
 - Mail only: no remote spawn, stop, or transcript access.
+- Operator mail is sent from the CLI only; agents cannot reach a remote
+  operator.
 - `federation.message` scopes by local group only; there is no per-peer
   scope dimension yet.
 - One hub per instance. Hub-to-hub federation is a later step.

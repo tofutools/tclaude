@@ -19,6 +19,9 @@ const (
 	KindCatalogReq = "catalog_req"
 	KindMail       = "mail"
 	KindAck        = "ack"
+	// KindOperatorMail is mail from one instance's human operator to
+	// another's. It carries a MailPayload and no To.Agent.
+	KindOperatorMail = "operator_mail"
 )
 
 // Export capabilities a catalog group can grant.
@@ -48,14 +51,14 @@ type Endpoint struct {
 // hub routes it on To.Instance but cannot alter it: the signature covers
 // the exact encoded bytes.
 type Envelope struct {
-	V         int             `json:"v"`
-	ID        string          `json:"id"`
-	Kind      string          `json:"kind"`
-	From      Endpoint        `json:"from"`
-	To        Endpoint        `json:"to"`
-	CreatedAt time.Time       `json:"created_at"`
-	ExpiresAt time.Time       `json:"expires_at"`
-	InReplyTo string          `json:"in_reply_to,omitempty"`
+	V         int       `json:"v"`
+	ID        string    `json:"id"`
+	Kind      string    `json:"kind"`
+	From      Endpoint  `json:"from"`
+	To        Endpoint  `json:"to"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+	InReplyTo string    `json:"in_reply_to,omitempty"`
 	// Payload is the plaintext payload. It never travels: Seal encrypts it
 	// into Enc for the recipient and Open restores it.
 	Payload json.RawMessage `json:"payload,omitempty"`

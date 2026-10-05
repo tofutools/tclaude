@@ -478,7 +478,7 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		}
 	case proto.KindCatalogReq:
 		rt.sendCatalog(from)
-	case proto.KindMail:
+	case proto.KindMail, proto.KindOperatorMail:
 		rt.acceptMail(peer, env)
 	case proto.KindAck:
 		rt.handleAck(env)
@@ -563,6 +563,10 @@ func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
 		refuse(fedCodeRateLimited, "peer exceeded inbound mail rate")
 		return
 	}
+	if env.Kind == proto.KindOperatorMail {
+		rt.acceptOperatorMail(peer, env, senderName, mp, refuse)
+		return
+	}
 	conv, err := db.CurrentConvForAgent(env.To.Agent)
 	if err != nil || conv == "" {
 		refuse(fedCodeUnknownAgent, "no such agent")
@@ -597,6 +601,42 @@ func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
 	}
 	enqueueDeliveryForConv(conv)
 	recordFederationAudit("federation.mail.in", senderName+"@"+peerDisplay(peer), conv, "", fmt.Sprintf("#%d %s", id, preview(mp.Body)), 200)
+	rt.sendControl(env.From.Instance, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckAccepted})
+}
+
+// fedOperatorUnreadLimit bounds how many unread messages one peer's
+// operator may leave in the local operator's inbox.
+const fedOperatorUnreadLimit = 100
+
+// acceptOperatorMail files mail from a trusted peer's operator in the local
+// operator's Messages inbox. Trusting the peer is the consent: there is no
+// per-group export for the operator's own inbox. Nothing here can approve
+// or answer a local permission prompt; it is a plain inbox row.
+func (rt *fedRuntime) acceptOperatorMail(peer *db.FederationPeer, env *proto.Envelope, senderName string, mp proto.MailPayload, refuse func(code, reason string)) {
+	if env.To.Agent != "" {
+		refuse(fedCodeMalformed, "operator mail must not name an agent")
+		return
+	}
+	title := senderName + "@" + proto.SafeName(peerDisplay(peer), true) + " (remote)"
+	group := db.FederationHumanGroup(peer.InstanceID)
+	body := fedRemoteBanner(senderName, peerDisplay(peer), peer.InstanceID) + mp.Body
+	m := &db.HumanMessage{FromTitle: title, GroupName: group, Subject: mp.Subject, Body: body, CreatedAt: time.Now()}
+	id, err := db.InsertFederationInboundHumanMessage(m, peer.InstanceID, env.ID, env.ExpiresAt, fedOperatorUnreadLimit)
+	switch {
+	case errors.Is(err, db.ErrFederationDuplicate):
+		rt.sendControl(env.From.Instance, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckAccepted})
+		return
+	case err != nil:
+		if _, full := agentMessageQueueFull(err); full {
+			refuse(fedCodeQueueFull, "operator inbox backlog from this instance is full")
+			return
+		}
+		slog.Error("federation: inbound operator mail insert failed", "error", err)
+		refuse(fedCodeInternal, "could not store message")
+		return
+	}
+	dispatchHumanMessageNotification("", title, group, mp.Subject, body)
+	recordFederationAudit("federation.operator_mail.in", title, "", "", fmt.Sprintf("#%d %s", id, preview(mp.Body)), 200)
 	rt.sendControl(env.From.Instance, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckAccepted})
 }
 
