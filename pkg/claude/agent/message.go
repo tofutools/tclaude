@@ -239,12 +239,18 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 			hub = "hub not connected; it will be sent when the connection returns"
 		}
 		fmt.Fprintf(stdout, "Queued remote message to %s via group %q (envelope %s, %s; %s).\n", resp.To, resp.ViaGroup, resp.EnvelopeID, resp.State, hub)
+		failed := 0
 		for _, c := range resp.Cc {
 			if c.EnvelopeID == "" {
+				failed++
 				fmt.Fprintf(stdout, "  cc %s: %s\n", c.To, c.State)
 				continue
 			}
 			fmt.Fprintf(stdout, "  cc %s: envelope %s, %s\n", c.To, c.EnvelopeID, c.State)
+		}
+		if failed > 0 {
+			fmt.Fprintf(stderr, "Warning: %d cc copy(ies) were not queued; see above.\n", failed)
+			return rcIOFailure
 		}
 		fmt.Fprintln(stdout, "Track delivery with: tclaude federation outbox")
 		return rcOK

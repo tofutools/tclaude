@@ -3,10 +3,12 @@ package agentd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 // Remote --cc recipients. Each remote cc is its own sealed mail to that
@@ -31,29 +33,90 @@ type fedCC struct {
 	via    string
 }
 
-// authorizeFederatedCC resolves and authorizes every remote cc, or writes
-// the refusal and returns false.
-func authorizeFederatedCC(w http.ResponseWriter, r *http.Request, fromConv string, addrs []string) ([]fedCC, bool) {
-	var out []fedCC
-	seen := map[string]bool{}
+// resolveFederatedCC resolves remote cc addresses, dropping duplicates and
+// any already in seen (peer/agent keys, e.g. the primary).
+func resolveFederatedCC(fromConv string, addrs []string, seen map[string]bool) ([]*fedTarget, error) {
+	var out []*fedTarget
 	for _, a := range addrs {
 		t, err := resolveFederatedTarget(fromConv, a)
 		if err != nil {
-			writeFedErr(w, err)
-			return nil, false
+			return nil, err
 		}
 		key := t.peer.InstanceID + "/" + t.agentID
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		via, ok := authorizeFederatedTarget(w, r, fromConv, t)
+		out = append(out, t)
+	}
+	return out, nil
+}
+
+// authorizeFederatedTargets authorizes a send to several remote targets.
+// Each must be covered by the sender's own federation.message grants; at
+// most one may fall through to the full gate, because a one-shot
+// --ask-human approval is scoped to the single target it showed the human
+// and must not carry over to other peers or groups.
+func authorizeFederatedTargets(w http.ResponseWriter, r *http.Request, fromConv string, targets []*fedTarget) ([]fedCC, bool) {
+	out := make([]fedCC, len(targets))
+	var uncovered []int
+	for i, t := range targets {
+		out[i].target = t
+		for _, g := range t.localGroups {
+			if ok, _, err := permissionAllowsAction(r, fromConv, PermFederationMessage, ActionContext{Group: g, Peer: t.peer.InstanceID}); err == nil && ok {
+				out[i].via = g
+				break
+			}
+		}
+		if out[i].via == "" {
+			uncovered = append(uncovered, i)
+		}
+	}
+	switch len(uncovered) {
+	case 0:
+		return out, true
+	case 1:
+		via, ok := authorizeFederatedTarget(w, r, fromConv, targets[uncovered[0]])
 		if !ok {
 			return nil, false
 		}
-		out = append(out, fedCC{target: t, via: via})
+		out[uncovered[0]].via = via
+		return out, true
+	default:
+		var labels []string
+		for _, i := range uncovered {
+			labels = append(labels, targets[i].label())
+		}
+		writeError(w, http.StatusForbidden, "permission",
+			fmt.Sprintf("%q does not cover %s; an approval covers one remote recipient, so get a grant scoped to these peers or send separately",
+				PermFederationMessage, strings.Join(labels, ", ")))
+		return nil, false
 	}
-	return out, true
+}
+
+// validateFederatedCopies checks everything queueFederatedMail would refuse,
+// for every target, before anything is written.
+func validateFederatedCopies(targets []*fedTarget, subject, body string, atts []proto.AttachmentPayload) error {
+	if strings.TrimSpace(body) == "" {
+		return newFedErr(http.StatusBadRequest, "invalid_arg", "body is empty")
+	}
+	if len(body) > proto.MaxMailBody {
+		return newFedErr(http.StatusRequestEntityTooLarge, "too_large", "remote messages are limited to %d bytes", proto.MaxMailBody)
+	}
+	if len(subject) > fedMaxSubject {
+		return newFedErr(http.StatusBadRequest, "invalid_arg", "remote message subjects are limited to %d bytes", fedMaxSubject)
+	}
+	if len(atts) > 0 {
+		if err := validateFedAttachments(atts); err != nil {
+			return newFedErr(http.StatusBadRequest, "invalid_arg", "%v", err)
+		}
+		for _, t := range targets {
+			if !t.attachments {
+				return newFedErr(http.StatusForbidden, "not_exported", "%s does not accept attachments from this instance", t.label())
+			}
+		}
+	}
+	return nil
 }
 
 // captureWriter records a handler's response so it can be extended.
@@ -69,7 +132,8 @@ func (c *captureWriter) WriteHeader(code int)        { c.code = code }
 
 // handleSendWithRemoteCC sends to a local target (and local ccs) through the
 // ordinary path, then queues a remote copy per remote cc, reporting all of
-// them as one multi-recipient result.
+// them as one multi-recipient result. Everything that can refuse the remote
+// copies is checked before the local send writes anything.
 func handleSendWithRemoteCC(w http.ResponseWriter, r *http.Request, fromID string, req *sendReq, localCC, remoteCC []string) {
 	if strings.HasPrefix(strings.TrimSpace(req.To), multicastPrefix) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "cc is not valid with a 'group:' target")
@@ -83,7 +147,23 @@ func handleSendWithRemoteCC(w http.ResponseWriter, r *http.Request, fromID strin
 		writeError(w, http.StatusBadRequest, "invalid_arg", "attachments are only supported when every recipient is remote")
 		return
 	}
-	ccs, ok := authorizeFederatedCC(w, r, fromID, remoteCC)
+	// Cheap failures first, so nobody is asked to approve a send that
+	// cannot happen.
+	primary, _, err := agent.ResolveSelector(req.To)
+	if err != nil || primary == nil || strings.TrimSpace(req.Body) == "" {
+		req.Cc = localCC
+		dispatchSend(w, fromID, req) // writes the ordinary error
+		return
+	}
+	targets, err := resolveFederatedCC(fromID, remoteCC, map[string]bool{})
+	if err == nil {
+		err = validateFederatedCopies(targets, req.Subject, req.Body, nil)
+	}
+	if err != nil {
+		writeFedErr(w, err)
+		return
+	}
+	ccs, ok := authorizeFederatedTargets(w, r, fromID, targets)
 	if !ok {
 		return
 	}
@@ -106,10 +186,7 @@ func handleSendWithRemoteCC(w http.ResponseWriter, r *http.Request, fromID strin
 	if len(resp.Recipients) == 0 {
 		// A direct send answers in the single-recipient shape; restate it
 		// as the first recipient of the multi-recipient result.
-		conv := ""
-		if target, _, err := agent.ResolveSelector(req.To); err == nil && target != nil {
-			conv = target.ConvID
-		}
+		conv := primary.ConvID
 		resp.Recipients = []recipient{{
 			ConvID: conv, AgentID: peerAgentID(conv), Title: agent.TitleFor(conv),
 			MessageID: resp.ID, Queued: resp.Queued, Pending: resp.Pending, Held: resp.Held,

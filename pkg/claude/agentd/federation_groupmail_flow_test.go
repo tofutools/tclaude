@@ -276,6 +276,12 @@ func TestFederation_RemoteCC(t *testing.T) {
 	code, out := send(map[string]any{"to": "carol-agent", "cc": []string{"bob-agent@bob"}})
 	require.Equal(t, http.StatusForbidden, code, out)
 	require.Empty(t, fedRemoteBodies(t, carol))
+	// Several uncovered recipients are refused outright: a one-shot
+	// approval would only ever show the human one of them.
+	code, out = send(map[string]any{"to": "carol-agent", "cc": []string{"bob-agent@bob", "dan-agent@bob"}})
+	require.Equal(t, http.StatusForbidden, code, out)
+	require.Contains(t, out["error"], "dan-agent@bob")
+	require.Empty(t, fedRemoteBodies(t, carol))
 
 	g := postPermissionScope(t, f, "grant", map[string]any{"target": alice, "slug": agentd.PermFederationMessage, "scope": map[string]any{"group": []string{"team"}}})
 	require.Equal(t, http.StatusOK, g.Code, g.Body)
@@ -299,6 +305,16 @@ func TestFederation_RemoteCC(t *testing.T) {
 		}
 		return false
 	})
+
+	// What a remote copy would refuse is checked before the local send.
+	code, out = send(map[string]any{"to": "carol-agent", "cc": []string{"bob-agent@bob"}, "subject": strings.Repeat("s", 600)})
+	require.Equal(t, http.StatusBadRequest, code, out)
+	require.Len(t, fedRemoteBodies(t, carol), 1)
+
+	// The primary is not sent twice when it is also cc'd.
+	code, out = send(map[string]any{"to": "bob-agent@bob", "cc": []string{"bob-agent@bob"}})
+	require.Equal(t, http.StatusOK, code, out)
+	require.Nil(t, out["cc"])
 
 	// A remote primary may cc other remote members, not local agents.
 	code, out = send(map[string]any{"to": "bob-agent@bob", "cc": []string{"dan-agent@bob"}})

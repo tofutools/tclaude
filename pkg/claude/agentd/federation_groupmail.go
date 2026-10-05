@@ -107,6 +107,10 @@ func handleFederatedGroupSend(w http.ResponseWriter, r *http.Request, fromConv s
 		writeError(w, http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("remote messages are limited to %d bytes", proto.MaxMailBody))
 		return
 	}
+	if len(req.Subject) > fedMaxSubject {
+		writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("remote message subjects are limited to %d bytes", fedMaxSubject))
+		return
+	}
 	row, err := queueFederatedEnvelope(fedOutgoing{
 		fromConv: fromConv, peer: peer, kind: proto.KindGroupMail, toLabel: label,
 		subject: req.Subject, preview: req.Body, ttl: fedMailTTL,

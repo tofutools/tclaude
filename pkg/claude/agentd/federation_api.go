@@ -233,6 +233,9 @@ func queueFederatedMail(fromConv string, t *fedTarget, subject, body, inReplyTo 
 	if len(body) > proto.MaxMailBody {
 		return nil, newFedErr(http.StatusRequestEntityTooLarge, "too_large", "remote messages are limited to %d bytes", proto.MaxMailBody)
 	}
+	if len(subject) > fedMaxSubject {
+		return nil, newFedErr(http.StatusBadRequest, "invalid_arg", "remote message subjects are limited to %d bytes", fedMaxSubject)
+	}
 	if len(atts) > 0 {
 		if t.operator {
 			return nil, newFedErr(http.StatusBadRequest, "invalid_arg", "operator mail does not carry attachments")
@@ -254,6 +257,9 @@ func queueFederatedMail(fromConv string, t *fedTarget, subject, body, inReplyTo 
 		payload: proto.MailPayload{Subject: subject, Body: body, Attachments: atts},
 	})
 }
+
+// fedMaxSubject matches what receivers accept.
+const fedMaxSubject = 512
 
 // fedOutgoing describes one envelope for the outbox.
 type fedOutgoing struct {
@@ -337,14 +343,19 @@ func handleFederatedAgentSend(w http.ResponseWriter, r *http.Request, fromConv s
 		writeFedErr(w, err)
 		return
 	}
-	via, ok := authorizeFederatedTarget(w, r, fromConv, t)
+	ccTargets, err := resolveFederatedCC(fromConv, req.Cc, map[string]bool{t.peer.InstanceID + "/" + t.agentID: true})
+	if err == nil {
+		err = validateFederatedCopies(append([]*fedTarget{t}, ccTargets...), req.Subject, req.Body, req.Attachments)
+	}
+	if err != nil {
+		writeFedErr(w, err)
+		return
+	}
+	auth, ok := authorizeFederatedTargets(w, r, fromConv, append([]*fedTarget{t}, ccTargets...))
 	if !ok {
 		return
 	}
-	ccs, ok := authorizeFederatedCC(w, r, fromConv, req.Cc)
-	if !ok {
-		return
-	}
+	via, ccs := auth[0].via, auth[1:]
 	row, err := queueFederatedMail(fromConv, t, req.Subject, req.Body, "", req.Attachments)
 	if err != nil {
 		writeFedErr(w, err)
