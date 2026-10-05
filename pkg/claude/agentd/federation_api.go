@@ -1182,4 +1182,5 @@ func registerFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/federation/imports", handleFederationImports)
 	mux.HandleFunc("GET /v1/federation/outbox", handleFederationOutbox)
 	mux.HandleFunc("/v1/federation/send", handleFederationSend)
+	mux.HandleFunc("POST /v1/federation/routes/open", handleFederatedRouteOpen)
 }

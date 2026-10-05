@@ -112,6 +112,10 @@ type status struct {
 				Role     string `json:"role"`
 				Presence string `json:"presence"`
 			} `json:"members"`
+			Routes []struct {
+				Publisher string `json:"publisher"`
+				Name      string `json:"name"`
+			} `json:"routes"`
 		} `json:"groups"`
 	} `json:"remote"`
 }
@@ -481,6 +485,9 @@ func runRemote(p *jsonParam, stdout, stderr io.Writer) int {
 					extra += " " + m.Presence
 				}
 				fmt.Fprintf(stdout, "    %s@%s%s\n", m.Name, r.Label, extra)
+			}
+			for _, rt := range g.Routes {
+				fmt.Fprintf(stdout, "    route %s/%s@%s\n", rt.Publisher, rt.Name, r.Label)
 			}
 		}
 	}

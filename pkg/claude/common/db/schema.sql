@@ -1579,3 +1579,18 @@ CREATE TABLE federation_spawn_requests (
 
 CREATE INDEX idx_federation_spawn_requests_status
 	ON federation_spawn_requests(status, from_instance);
+
+CREATE TABLE federation_route_mirrors (
+	route_id      TEXT PRIMARY KEY REFERENCES agent_routes(id) ON DELETE CASCADE,
+	peer          TEXT NOT NULL,
+	remote_route  TEXT NOT NULL,
+	remote_label  TEXT NOT NULL DEFAULT '',
+	created_at    INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE federation_route_proxies (
+	lease_id      TEXT PRIMARY KEY REFERENCES agent_route_leases(id) ON DELETE CASCADE,
+	peer          TEXT NOT NULL,
+	route_id      TEXT NOT NULL,
+	created_at    INTEGER NOT NULL
+) STRICT;

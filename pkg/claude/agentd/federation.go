@@ -125,6 +125,7 @@ type fedRuntime struct {
 	id     *proto.Identity
 	name   string
 	cl     *client.Client
+	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
@@ -134,6 +135,7 @@ type fedRuntime struct {
 	mu        sync.Mutex
 	online    map[string]bool
 	inLimiter map[string][]time.Time
+	routes    *fedRouteState
 }
 
 type fedInbound struct {
@@ -199,6 +201,7 @@ func stopFederationLocked() {
 	if rt != nil {
 		rt.cancel()
 		rt.wg.Wait()
+		withdrawStaleFederationMirrors()
 	}
 }
 
@@ -245,7 +248,8 @@ func startFederationWith(fc *config.FederationConfig) error {
 	}
 	rt.cl = cl
 	ctx, cancel := context.WithCancel(context.Background())
-	rt.cancel = cancel
+	rt.ctx, rt.cancel = ctx, cancel
+	withdrawStaleFederationMirrors()
 	rt.wg.Add(3)
 	go func() { defer rt.wg.Done(); cl.Run(ctx) }()
 	go func() { defer rt.wg.Done(); rt.inboundLoop(ctx) }()
@@ -426,6 +430,9 @@ func buildFederationCatalog(peer string) (*proto.CatalogPayload, error) {
 				}
 			}
 		}
+		if g.HasCap(proto.CapRoutes) {
+			g.Routes = fedCatalogRoutes(gid)
+		}
 		cat.Groups = append(cat.Groups, g)
 	}
 	sort.Slice(cat.Groups, func(i, j int) bool { return cat.Groups[i].Name < cat.Groups[j].Name })
@@ -486,6 +493,15 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		rt.acceptSpawnRequest(peer, env)
 	case proto.KindSpawnRes:
 		rt.handleSpawnResult(peer, env)
+	case proto.KindRouteOpen:
+		// One open per envelope: a replayed route_open must not make the
+		// publisher accept a connection nobody can join.
+		if fresh, err := db.MarkFederationEnvelopeSeen(from, "routeopen:"+env.ID, time.Now().Add(fedControlTTL+time.Minute)); err != nil || !fresh {
+			return
+		}
+		go rt.handleRouteOpen(peer, env)
+	case proto.KindRouteAnswer:
+		rt.handleRouteAnswer(peer, env)
 	default:
 		slog.Debug("federation: ignoring unknown envelope kind", "kind", env.Kind, "from", from)
 	}

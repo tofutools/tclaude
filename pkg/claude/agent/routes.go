@@ -174,7 +174,7 @@ func validateRoutePublishCLI(p *routesPublishParams, stderr io.Writer) (name, gr
 }
 
 type routesOpenParams struct {
-	Reference string `pos:"true" help:"Route ID or message-friendly reference (<publisher>/<name> or <group-id>/<publisher>/<name>)"`
+	Reference string `pos:"true" help:"Route ID or message-friendly reference (<publisher>/<name>, <group-id>/<publisher>/<name>, or <publisher>/<name>@<peer> for a federated route)"`
 	Group     string `long:"group" short:"g" help:"Explicit target group name or numeric ID"`
 	JSON      bool   `long:"json" help:"Output stable JSON"`
 }
@@ -208,15 +208,33 @@ func runRoutesOpen(p *routesOpenParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	routeID, route, rc := resolveRouteCLIReference(ref, group, stderr)
-	if rc != rcOK {
-		return rc
-	}
+	var route routeCLI
 	var lease routeLeaseCLI
-	payload := map[string]any{"route_id": routeID, "group": group}
-	if err := DaemonRequest(http.MethodPost, "/v1/routes/open", payload, &lease, DaemonOpts{}); err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return MapDaemonErrorToRC(err)
+	at := strings.LastIndex(ref, "@")
+	if at > 0 {
+		// <publisher>/<route>@<peer>: a route another instance exports to a
+		// group this one imports. The daemon answers with an ordinary lease.
+		if group == "" {
+			fmt.Fprintln(stderr, "Error: --group is required to open a remote route")
+			return rcInvalidArg
+		}
+		route.Reference = ref
+		payload := map[string]any{"group": group, "peer": ref[at+1:], "route": ref[:at]}
+		if err := DaemonRequest(http.MethodPost, "/v1/federation/routes/open", payload, &lease, DaemonOpts{}); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return MapDaemonErrorToRC(err)
+		}
+	} else {
+		routeID, resolved, rc := resolveRouteCLIReference(ref, group, stderr)
+		if rc != rcOK {
+			return rc
+		}
+		route = resolved
+		payload := map[string]any{"route_id": routeID, "group": group}
+		if err := DaemonRequest(http.MethodPost, "/v1/routes/open", payload, &lease, DaemonOpts{}); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return MapDaemonErrorToRC(err)
+		}
 	}
 	waitGroup := group
 	if waitGroup == "" {
@@ -239,7 +257,9 @@ func runRoutesOpen(p *routesOpenParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %s\n", message)
 		return rcIOFailure
 	}
-	if lease.RouteReference == "" {
+	if lease.RouteReference == "" || at > 0 {
+		// A remote route's lease is on its private local mirror; name the
+		// route the caller asked for.
 		lease.RouteReference = route.Reference
 	}
 	if p.JSON {

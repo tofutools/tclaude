@@ -345,6 +345,7 @@ func refreshRoutePublisher(route *db.AgentRoute) *db.AgentRoute {
 	}
 	if err := db.MarkAgentRoutePublisherLost(route.ID, "publisher generation is no longer current"); err == nil {
 		routeAdapterCloseRoute(route.ID)
+		broadcastFederationCatalogs()
 	}
 	updated, err := db.GetAgentRoute(route.ID)
 	if err == nil && updated != nil {
@@ -627,6 +628,7 @@ func handleRoutePublish(w http.ResponseWriter, r *http.Request) {
 		writeRouteError(w, http.StatusConflict, "route_adapter", err.Error())
 		return
 	}
+	broadcastFederationCatalogs()
 	writeJSON(w, http.StatusCreated, routeViewFor(route))
 }
 
@@ -646,7 +648,12 @@ func handleRouteByID(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		if classify(peerFromContext(r.Context())) == classAgent {
-			if _, _, ok := requireRouteMembership(w, r, g); !ok {
+			_, agentID, ok := requireRouteMembership(w, r, g)
+			if !ok {
+				return
+			}
+			if m, _ := db.GetFederationRouteMirror(route.ID); m != nil && route.PublisherAgentID != agentID {
+				writeRouteError(w, http.StatusNotFound, "route_not_found", "no such route")
 				return
 			}
 		} else if classify(peerFromContext(r.Context())) != classHuman {
@@ -668,6 +675,7 @@ func handleRouteByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		routeAdapterCloseRoute(route.ID)
+		broadcastFederationCatalogs()
 		writeJSON(w, http.StatusOK, routeViewFor(refreshRoutePublisher(mustRoute(route.ID))))
 	case http.MethodPost:
 		handleRouteAction(w, r, route, g)
@@ -712,6 +720,11 @@ func handleRouteAction(w http.ResponseWriter, r *http.Request, route *db.AgentRo
 		if body.GroupGeneration == nil {
 			body.GroupGeneration = &g.RouteGeneration
 		}
+		// A federation mirror is private to the agent that opened it.
+		if m, _ := db.GetFederationRouteMirror(route.ID); m != nil && route.PublisherAgentID != agentID {
+			writeRouteError(w, http.StatusNotFound, "route_not_found", "no such route")
+			return
+		}
 		launchGeneration, err := routeLaunchGeneration(convID, body.LaunchGeneration)
 		if err != nil {
 			if errors.Is(err, errRouteStaleLaunchGeneration) {
@@ -754,6 +767,7 @@ func handleRouteAction(w http.ResponseWriter, r *http.Request, route *db.AgentRo
 			return
 		}
 		routeAdapterCloseRoute(route.ID)
+		broadcastFederationCatalogs()
 		writeJSON(w, http.StatusOK, routeViewFor(mustRoute(route.ID)))
 	default:
 		writeRouteError(w, http.StatusNotFound, "route_action", "unknown route action")

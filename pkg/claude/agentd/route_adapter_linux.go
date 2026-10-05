@@ -79,6 +79,11 @@ func handleRouteChannel(w http.ResponseWriter, r *http.Request) {
 			writeRouteError(w, http.StatusInternalServerError, "route_io", "route registry unavailable")
 			return
 		}
+		// A federation mirror's only publisher is agentd's federation proxy.
+		if m, _ := db.GetFederationRouteMirror(route.ID); m != nil {
+			writeRouteError(w, http.StatusForbidden, "route_target_not_local", "federated routes are published by agentd")
+			return
+		}
 		if _, targetErr := routeadapter.ValidatePublisherTarget(route.Target); targetErr != nil {
 			writeRouteError(w, http.StatusForbidden, "route_target_not_local", targetErr.Error())
 			return
@@ -98,6 +103,12 @@ func handleRouteChannel(w http.ResponseWriter, r *http.Request) {
 		leaseID := strings.TrimSpace(r.Header.Get("X-Tclaude-Route-Lease-ID"))
 		if leaseID == "" {
 			writeRouteError(w, http.StatusBadRequest, "route_channel", "consumer lease id is required")
+			return
+		}
+		// Proxy leases carry a remote instance's connections; a helper can
+		// never consume through one.
+		if isProxy, proxyErr := db.IsFederationProxyLease(leaseID); proxyErr != nil || isProxy {
+			writeRouteError(w, http.StatusForbidden, "route_authority", "lease is not available to helpers")
 			return
 		}
 		consumerEndpoint = strings.TrimSpace(r.Header.Get("X-Tclaude-Route-Consumer-Endpoint"))

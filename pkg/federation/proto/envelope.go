@@ -27,6 +27,12 @@ const (
 	// (InReplyTo = the request) reports the decision.
 	KindSpawnReq = "spawn_req"
 	KindSpawnRes = "spawn_res"
+	// KindRouteOpen asks the recipient to open one TCP connection to one of
+	// its exported routes; KindRouteAnswer accepts (then both dial the hub
+	// stream relay) or refuses it. These are real-time control envelopes,
+	// not queued in the outbox.
+	KindRouteOpen   = "route_open"
+	KindRouteAnswer = "route_answer"
 )
 
 // Export capabilities a catalog group can grant.
@@ -40,10 +46,13 @@ const (
 	// CapSpawn lets the peer ask for a worker to be spawned into the group.
 	// Every request still waits for the local operator's approval.
 	CapSpawn = "spawn"
+	// CapRoutes lists the group's ready routes in the catalog and lets the
+	// peer open connections to them through the hub stream relay.
+	CapRoutes = "routes"
 )
 
 // AllCaps lists every known capability in canonical order.
-var AllCaps = []string{CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn}
+var AllCaps = []string{CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes}
 
 // MaxMailBody caps a mail envelope's body in bytes.
 const MaxMailBody = 16 * 1024
@@ -165,6 +174,30 @@ type CatalogGroup struct {
 	Description string          `json:"description,omitempty"`
 	Caps        []string        `json:"caps"`
 	Members     []CatalogMember `json:"members,omitempty"`
+	Routes      []CatalogRoute  `json:"routes,omitempty"`
+}
+
+// CatalogRoute is one ready route of an exported group (CapRoutes).
+type CatalogRoute struct {
+	ID        string `json:"id"`
+	Publisher string `json:"publisher"`
+	Name      string `json:"name"`
+}
+
+// RouteOpenPayload is the payload of a KindRouteOpen envelope.
+type RouteOpenPayload struct {
+	Route  string `json:"route"`
+	Stream string `json:"stream"`
+	Key    []byte `json:"key"`
+}
+
+// RouteAnswerPayload is the payload of a KindRouteAnswer envelope.
+// InReplyTo names the open; Key is set on acceptance.
+type RouteAnswerPayload struct {
+	Stream string `json:"stream"`
+	OK     bool   `json:"ok"`
+	Key    []byte `json:"key,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // HasCap reports whether the group grants capability c.

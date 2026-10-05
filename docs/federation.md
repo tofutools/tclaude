@@ -13,10 +13,10 @@ a shared relay, **`tclaude-hub`**, so no machine needs an inbound listener and
 laptops behind NAT or a corporate network work as-is.
 
 !!! note "Status"
-    This is the first slice: discovery and mail, CLI only. Remote control
-    (spawning or stopping a colleague's agents, reading their transcripts),
-    attachments, cross-instance group multicast, and a dashboard view are not
-    built yet.
+    CLI only. Built: discovery, mail with attachments, operator mail,
+    request-and-approve remote spawn, and cross-instance group routes.
+    Stopping or reading a colleague's agents, cross-instance group
+    multicast, and a dashboard view are not built yet.
 
 ## Trust model
 
@@ -151,6 +151,7 @@ tclaude federation unexport builders --to bob
 | `mail` | members may receive mail from the peer (names and ids are shared so they are addressable) |
 | `attachments` | with `mail`: that mail may carry files |
 | `spawn` | the peer may *ask* for a worker to be spawned into the group; you approve or deny each request |
+| `routes` | the group's ready [group routes](group-routes.md) are listed, and the peer's agents may open them |
 
 Nothing is exported by default. A peer receives a signed **catalog** listing
 exactly what you export to it. Catalogs go straight to the peer and are never
@@ -288,6 +289,49 @@ You are notified of each new request in your inbox. A peer may have at most
 10 undecided requests here, and requests expire after 72 hours. Untrusting
 the peer makes its pending requests unapprovable.
 
+## Remote group routes
+
+A [group route](group-routes.md) can be opened from another instance. Export
+the publisher's group with `routes`. The peer then imports it into a local
+group whose members hold `routes.consume`, and those members open the route
+by naming the peer:
+
+```bash
+# publisher side (operator)
+tclaude federation export svc --to bob --cap roster,routes
+
+# consumer side (operator, then agent)
+tclaude federation import alice/svc --into team
+tclaude agent routes open api-server/api@alice -g team
+```
+
+The consumer gets an ordinary lease and local endpoint, exactly as for a
+local route. Neither sandbox changes. On the consumer's side, `agentd`
+creates a private mirror route that only the opening agent can see or use,
+and serves it itself. On the publisher's side, `agentd` connects to the real
+route like any other consumer. `tclaude federation status` lists each
+exported route as `route <publisher>/<name>@<peer>`.
+
+Each TCP connection becomes one **hub stream**. The route id, stream id and
+an ephemeral X25519 key travel in sealed control envelopes. The two
+instances derive per-direction ChaCha20-Poly1305 keys, so the hub relays
+ciphertext it cannot read, and a truncated stream is detected, not mistaken
+for a clean end. The hub limits each instance to 16 concurrent streams and
+1 MiB/s by default (`tclaude-hub serve --max-streams`,
+`--stream-bytes-per-second`).
+
+Authority is checked on both sides, continuously. Within a few seconds of
+any of these changes, open connections close and the consumer's lease ends:
+
+- the route is withdrawn or its publisher exits;
+- the export loses `routes`;
+- the import is removed;
+- the peer is untrusted;
+- the group's membership changes.
+
+A route that is not exported is refused with the same answer as one that
+does not exist.
+
 ## Delivery
 
 Mail is store-and-forward. The sender writes a durable outbox row before
@@ -333,6 +377,9 @@ is by inspecting the caller's process tree.
 - The hub sees routing metadata (sender, recipient, kind, size, timing),
   though not payloads.
 - No `group:` multicast across instances, no `--cc` to remote recipients.
+- Remote routes relay through the hub, so their throughput is bounded by
+  the hub's stream limits. Routes are not re-exported: a mirror cannot be
+  exported onward.
 - Attachments ride inline and are capped at 512 KiB per message; operator
   mail and replies cannot carry them.
 - No remote stop, restart, or transcript access; remote spawn is

@@ -574,12 +574,12 @@ func FederationInboundForMessage(messageID int64) (*FederationInbound, error) {
 
 // Federation spawn request statuses.
 const (
-	FedSpawnPending  = "pending"
+	FedSpawnPending = "pending"
 	// FedSpawnApproving is held by one approve call while it spawns, so a
 	// concurrent approve or deny cannot also act on the request.
 	FedSpawnApproving = "approving"
-	FedSpawnApproved = "approved"
-	FedSpawnDenied   = "denied"
+	FedSpawnApproved  = "approved"
+	FedSpawnDenied    = "denied"
 )
 
 // FederationSpawnRequest is a spawn request a peer sent into an exported

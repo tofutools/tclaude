@@ -43,7 +43,7 @@ type Config struct {
 	StreamWait time.Duration
 	StreamIdle time.Duration
 	Logger     *slog.Logger
-	Version      string
+	Version    string
 }
 
 func (c *Config) defaults() {

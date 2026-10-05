@@ -36,6 +36,10 @@ neither is default-granted, and both additionally require *current*
 membership in the named group. See
 [Permissions and audit](permissions-and-audit.md).
 
+A route can also be opened from another tclaude instance whose group
+imports this one through [federation](federation.md#remote-group-routes):
+`tclaude agent routes open <publisher>/<name>@<peer> -g <group>`.
+
 ## What a route is not
 
 Targets are loopback-only. There is no UDP, no ambient mesh networking, no

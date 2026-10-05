@@ -88,7 +88,30 @@ func SanitizeCatalog(c *CatalogPayload) {
 			members = append(members, m)
 		}
 		g.Members = members
+		routes := g.Routes[:0]
+		for _, rt := range g.Routes {
+			if !ValidRouteID(rt.ID) {
+				continue
+			}
+			rt.Publisher = SafeName(rt.Publisher, false)
+			rt.Name = SafeName(rt.Name, false)
+			routes = append(routes, rt)
+		}
+		g.Routes = routes
 	}
+}
+
+// ValidRouteID reports whether s has the shape of a route id ("rte_" + hex).
+func ValidRouteID(s string) bool {
+	if !strings.HasPrefix(s, "rte_") || len(s) < 8 || len(s) > 64 {
+		return false
+	}
+	for _, r := range s[4:] {
+		if (r < 'a' || r > 'f') && (r < '0' || r > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 func safeOptional(s string) string {

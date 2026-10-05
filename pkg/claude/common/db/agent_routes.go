@@ -51,12 +51,24 @@ type AgentRouteLease struct {
 	ClosedAt                 time.Time
 }
 
+// Federation proxy rows (see migrateV231toV232) never appear in route or
+// lease listings: launch helpers sync from those and must not attach to them.
+const (
+	notFederationMirror = `r.id NOT IN (SELECT route_id FROM federation_route_mirrors)`
+	notFederationProxy  = `l.id NOT IN (SELECT lease_id FROM federation_route_proxies)`
+)
+
 func newRouteID() string      { return "rte_" + strings.ReplaceAll(uuid.NewString(), "-", "") }
 func newRouteLeaseID() string { return "rlease_" + strings.ReplaceAll(uuid.NewString(), "-", "") }
 
 // CreateAgentRoute creates a ready route only when the publisher is a current
 // member of the selected active group and the supplied epoch is current.
 func CreateAgentRoute(groupID int64, publisherAgentID, publisherConvID, launchGeneration string, groupGeneration int64, name, transport, target string) (*AgentRoute, error) {
+	return createAgentRoute(groupID, publisherAgentID, publisherConvID, launchGeneration, groupGeneration, name, transport, target, nil)
+}
+
+// createAgentRoute runs extra, if set, inside the creating transaction.
+func createAgentRoute(groupID int64, publisherAgentID, publisherConvID, launchGeneration string, groupGeneration int64, name, transport, target string, extra func(*sql.Tx, *AgentRoute) error) (*AgentRoute, error) {
 	if strings.TrimSpace(publisherAgentID) == "" || strings.TrimSpace(launchGeneration) == "" {
 		return nil, errors.New("publisher agent and launch generation are required")
 	}
@@ -106,6 +118,11 @@ func CreateAgentRoute(groupID int64, publisherAgentID, publisherConvID, launchGe
 	if err := insertRouteAuditTx(tx, created, "publish", "ok", groupID, route.ID, "", publisherAgentID, publisherConvID, ""); err != nil {
 		return nil, err
 	}
+	if extra != nil {
+		if err := extra(tx, route); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -135,7 +152,7 @@ func ListAgentRoutes(groupID int64) ([]*AgentRoute, error) {
 		r.publisher_launch_generation, r.group_generation, r.name, r.transport, r.target, r.state,
 		r.created_at, r.withdrawn_at, r.withdraw_reason
 		FROM agent_routes r JOIN agent_groups g ON g.id = r.group_id
-		WHERE r.group_id = ? ORDER BY r.created_at, r.id`, groupID)
+		WHERE r.group_id = ? AND `+notFederationMirror+` ORDER BY r.created_at, r.id`, groupID)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +210,7 @@ func ListAgentRoutesBatch(groupIDs []int64) (map[int64][]*AgentRoute, error) {
 					r.created_at DESC, r.id DESC
 			) AS projection_rank
 		FROM agent_routes r JOIN agent_groups g ON g.id = r.group_id
-		WHERE r.group_id IN (`+strings.Join(placeholders, ",")+
+		WHERE `+notFederationMirror+` AND r.group_id IN (`+strings.Join(placeholders, ",")+
 		`)
 	)
 	SELECT id, group_id, group_name, publisher_agent_id, publisher_conv_id,
@@ -367,6 +384,11 @@ func markAgentRouteConsumerLeasesLostTx(tx *sql.Tx, consumerAgentID, consumerCon
 }
 
 func OpenAgentRouteLease(routeID, consumerAgentID, consumerConvID, launchGeneration string, groupGeneration int64) (*AgentRouteLease, error) {
+	return openAgentRouteLease(routeID, consumerAgentID, consumerConvID, launchGeneration, groupGeneration, nil)
+}
+
+// openAgentRouteLease runs extra, if set, inside the opening transaction.
+func openAgentRouteLease(routeID, consumerAgentID, consumerConvID, launchGeneration string, groupGeneration int64, extra func(*sql.Tx, *AgentRouteLease) error) (*AgentRouteLease, error) {
 	if strings.TrimSpace(consumerAgentID) == "" || strings.TrimSpace(launchGeneration) == "" {
 		return nil, errors.New("consumer agent and launch generation are required")
 	}
@@ -415,6 +437,11 @@ func OpenAgentRouteLease(routeID, consumerAgentID, consumerConvID, launchGenerat
 	if err := insertRouteAuditTx(tx, now, "consume", "ok", groupID, routeID, lease.ID, consumerAgentID, consumerConvID, ""); err != nil {
 		return nil, err
 	}
+	if extra != nil {
+		if err := extra(tx, lease); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -451,7 +478,7 @@ func ListAgentRouteLeases(groupID int64, consumerAgentID, consumerConvID string)
 	rows, err := d.Query(`SELECT l.id, l.route_id, l.consumer_agent_id, l.consumer_conv_id,
 		l.consumer_launch_generation, l.group_generation, l.state, l.opened_at, l.closed_at
 		FROM agent_route_leases l JOIN agent_routes r ON r.id = l.route_id
-		WHERE r.group_id = ? AND l.consumer_agent_id = ? AND l.consumer_conv_id = ?
+		WHERE r.group_id = ? AND l.consumer_agent_id = ? AND l.consumer_conv_id = ? AND `+notFederationProxy+`
 		ORDER BY l.opened_at, l.id`, groupID, consumerAgentID, consumerConvID)
 	if err != nil {
 		return nil, err
@@ -502,7 +529,7 @@ func ListAgentRouteLeasesBatch(groupIDs []int64) (map[int64][]*AgentRouteLease, 
 					r.created_at DESC, r.id DESC
 			) AS projection_rank
 		FROM agent_routes r
-		WHERE r.group_id IN (`+strings.Join(placeholders, ",")+
+		WHERE `+notFederationMirror+` AND r.group_id IN (`+strings.Join(placeholders, ",")+
 		`)), retained_routes AS (
 		SELECT id, group_id FROM ranked_routes
 		WHERE projection_rank <= ?
@@ -511,7 +538,7 @@ func ListAgentRouteLeasesBatch(groupIDs []int64) (map[int64][]*AgentRouteLease, 
 			l.consumer_conv_id, l.consumer_launch_generation, l.group_generation,
 			l.state, l.opened_at, l.closed_at, 0 AS terminal_rank
 		FROM agent_route_leases l JOIN retained_routes rr ON rr.id = l.route_id
-		WHERE l.state = ?
+		WHERE l.state = ? AND `+notFederationProxy+`
 		UNION ALL
 		SELECT rr.group_id, l.id, l.route_id, l.consumer_agent_id,
 			l.consumer_conv_id, l.consumer_launch_generation, l.group_generation,
@@ -521,7 +548,7 @@ func ListAgentRouteLeasesBatch(groupIDs []int64) (map[int64][]*AgentRouteLease, 
 				ORDER BY l.opened_at DESC, l.id DESC
 			) AS terminal_rank
 		FROM agent_route_leases l JOIN retained_routes rr ON rr.id = l.route_id
-		WHERE l.state != ?
+		WHERE l.state != ? AND `+notFederationProxy+`
 		)
 		SELECT group_id, id, route_id, consumer_agent_id, consumer_conv_id,
 			consumer_launch_generation, group_generation, state, opened_at, closed_at

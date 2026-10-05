@@ -83,6 +83,8 @@ type serveParams struct {
 	FramesPerMinute int           `long:"frames-per-minute" default:"120" help:"Per-instance send rate limit (frames)"`
 	BytesPerMinute  int           `long:"bytes-per-minute" default:"8388608" help:"Per-instance send rate limit (bytes)"`
 	PolicyRefresh   time.Duration `long:"policy-refresh" default:"15s" help:"How often admin edits are re-read"`
+	MaxStreams      int           `long:"max-streams" default:"16" help:"Per-instance limit on concurrent relayed route streams"`
+	StreamBytes     int           `long:"stream-bytes-per-second" default:"1048576" help:"Per-instance relayed stream bandwidth (bytes/second)"`
 }
 
 func serveCmd() *cobra.Command {
@@ -102,6 +104,7 @@ func serveCmd() *cobra.Command {
 			h, err := hub.New(st, hub.Config{
 				Open: p.Open, FramesPerMinute: p.FramesPerMinute, BytesPerMinute: p.BytesPerMinute,
 				PolicyRefresh: p.PolicyRefresh, Version: buildversion.AppVersion(),
+				MaxStreams: p.MaxStreams, StreamBytesPerSecond: p.StreamBytes,
 			})
 			if err != nil {
 				fail(err)
