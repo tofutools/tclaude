@@ -11,6 +11,14 @@ const ProtocolVersion = 1
 // WSPath is the hub's WebSocket endpoint.
 const WSPath = "/v1/connect"
 
+// StreamPath is the hub's stream relay endpoint. Two instances that agreed
+// on a stream id (over sealed envelopes) each dial it; the hub pairs them
+// and forwards binary messages between them without interpreting them.
+const StreamPath = "/v1/stream"
+
+// MaxStreamMessage caps one binary stream message.
+const MaxStreamMessage = 64 << 10
+
 // Frame types. Every WebSocket text message is one JSON Frame.
 const (
 	// hub → instance
@@ -20,6 +28,9 @@ const (
 	FrameDeliver    = "deliver"
 	FrameSendResult = "send_result"
 	FrameError      = "error"
+	// FrameStreamReady tells a stream dialer that its peer has joined and
+	// binary forwarding has begun.
+	FrameStreamReady = "stream_ready"
 	// instance → hub
 	FrameHello = "hello"
 	FrameSend  = "send"
@@ -43,6 +54,8 @@ const (
 	CodeRateLimited  = "rate_limited"
 	CodeReplaced     = "replaced"
 	CodeShuttingDown = "shutting_down"
+	CodeStreamLimit  = "stream_limit"
+	CodeStreamWait   = "stream_timeout"
 )
 
 // Frame is the single JSON shape of every hub WebSocket message; Type
@@ -65,6 +78,10 @@ type Frame struct {
 
 	// welcome
 	Spaces []string `json:"spaces,omitempty"`
+
+	// stream hello: the stream id and the instance expected on the other end
+	Stream string `json:"stream,omitempty"`
+	Peer   string `json:"peer,omitempty"`
 
 	// directory
 	Instances []DirectoryEntry `json:"instances,omitempty"`
@@ -114,4 +131,17 @@ func VerifyHello(f *Frame, hubID, nonce string) bool {
 		return false
 	}
 	return ed25519.Verify(pub, HelloMessage(hubID, nonce, f.InstanceID), f.Sig)
+}
+
+// ValidStreamID reports whether s has the shape of a stream id (128-bit hex).
+func ValidStreamID(s string) bool {
+	if len(s) != 32 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }

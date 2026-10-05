@@ -34,7 +34,15 @@ type Config struct {
 	PolicyRefresh time.Duration
 	// HelloTimeout bounds the challenge/hello handshake.
 	HelloTimeout time.Duration
-	Logger       *slog.Logger
+	// MaxStreams caps one instance's concurrent stream dialers (route
+	// relays); StreamBytesPerSecond caps the bandwidth they share.
+	MaxStreams           int
+	StreamBytesPerSecond int
+	// StreamWait bounds how long a stream dialer waits for its peer, and
+	// StreamIdle how long a stream may go without traffic or pongs.
+	StreamWait time.Duration
+	StreamIdle time.Duration
+	Logger     *slog.Logger
 	Version      string
 }
 
@@ -50,6 +58,18 @@ func (c *Config) defaults() {
 	}
 	if c.HelloTimeout <= 0 {
 		c.HelloTimeout = 10 * time.Second
+	}
+	if c.MaxStreams <= 0 {
+		c.MaxStreams = 16
+	}
+	if c.StreamBytesPerSecond <= 0 {
+		c.StreamBytesPerSecond = 1 << 20
+	}
+	if c.StreamWait <= 0 {
+		c.StreamWait = 30 * time.Second
+	}
+	if c.StreamIdle <= 0 {
+		c.StreamIdle = 90 * time.Second
 	}
 	if c.Logger == nil {
 		c.Logger = slog.Default()
@@ -72,6 +92,8 @@ type Hub struct {
 	// limiters are per instance, not per connection, so reconnecting does
 	// not refill an instance's budget.
 	limiters map[string]*bucketPair
+	// streams is the stream relay state (see stream.go).
+	streams *streamState
 
 	stop chan struct{}
 	wg   sync.WaitGroup
@@ -106,6 +128,7 @@ func (h *Hub) ID() string { return h.hubID }
 func (h *Hub) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc(proto.WSPath, h.serveWS)
+	mux.HandleFunc(proto.StreamPath, h.serveStream)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "hub_id": h.hubID, "online": h.OnlineCount()})
@@ -132,10 +155,14 @@ func (h *Hub) Close() {
 	for _, c := range h.conns {
 		conns = append(conns, c)
 	}
+	streams := h.streamsToDropLocked(func(string) bool { return false })
 	h.mu.Unlock()
 	close(h.stop)
 	for _, c := range conns {
 		c.fail(proto.CodeShuttingDown, "hub shutting down")
+	}
+	for _, s := range streams {
+		s.close()
 	}
 	h.wg.Wait()
 }
@@ -157,9 +184,24 @@ func (h *Hub) RefreshPolicy() {
 			drop = append(drop, c)
 		}
 	}
+	// A stream survives only while both of its ends stay admitted and
+	// visible to each other.
+	var dropStreams []*streamSession
+	if h.streams != nil {
+		for _, set := range h.streams.sessions {
+			for s := range set {
+				if !snap.admitted[s.id] || !snap.visible(s.id, s.peer) {
+					dropStreams = append(dropStreams, s)
+				}
+			}
+		}
+	}
 	h.mu.Unlock()
 	for _, c := range drop {
 		c.fail(proto.CodeNotAdmitted, "instance revoked")
+	}
+	for _, s := range dropStreams {
+		s.fail(proto.CodeNotAdmitted, "stream endpoint revoked")
 	}
 	h.broadcastDirectories()
 }
