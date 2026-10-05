@@ -45,15 +45,22 @@ import (
 const (
 	fedRouteOpenTimeout   = 20 * time.Second
 	fedRouteCheckInterval = 5 * time.Second
-	// fedRouteStreamQueue bounds frames buffered toward one remote stream.
-	fedRouteStreamQueue = 32
+	// fedRouteStreamBuffer bounds bytes buffered toward one remote stream.
+	// The broker has no flow control, so a local sender faster than the
+	// hub's per-instance bandwidth fills this and the connection is reset.
+	fedRouteStreamBuffer = 4 << 20
+	// fedRouteOpensPerMinute bounds route opens accepted from one peer,
+	// separately from its mail budget.
+	fedRouteOpensPerMinute = 240
 )
 
 // fedRouteState is the runtime's route bookkeeping, guarded by fedRuntime.mu.
 type fedRouteState struct {
-	waiters map[string]chan fedRouteAnswer // stream id → open waiter
-	proxies map[string]*fedRouteEnd        // publisher side, peer+"|"+route id
-	mirrors map[string]*fedRouteEnd        // consumer side, mirror route id
+	waiters  map[string]chan fedRouteAnswer // stream id → open waiter
+	proxies  map[string]*fedRouteEnd        // publisher side, peer+"|"+route id
+	starting map[string]chan struct{}       // proxies being attached
+	mirrors  map[string]*fedRouteEnd        // consumer side, mirror route id
+	opens    map[string][]time.Time         // per-peer route open limiter
 }
 
 type fedRouteAnswer struct {
@@ -64,12 +71,33 @@ type fedRouteAnswer struct {
 func (rt *fedRuntime) routesLocked() *fedRouteState {
 	if rt.routes == nil {
 		rt.routes = &fedRouteState{
-			waiters: map[string]chan fedRouteAnswer{},
-			proxies: map[string]*fedRouteEnd{},
-			mirrors: map[string]*fedRouteEnd{},
+			waiters:  map[string]chan fedRouteAnswer{},
+			proxies:  map[string]*fedRouteEnd{},
+			starting: map[string]chan struct{}{},
+			mirrors:  map[string]*fedRouteEnd{},
+			opens:    map[string][]time.Time{},
 		}
 	}
 	return rt.routes
+}
+
+// stopRoutes tears down every mirror and proxy when the runtime stops.
+func (rt *fedRuntime) stopRoutes() {
+	rt.mu.Lock()
+	var ends []*fedRouteEnd
+	if rt.routes != nil {
+		for _, e := range rt.routes.mirrors {
+			ends = append(ends, e)
+		}
+		for _, e := range rt.routes.proxies {
+			ends = append(ends, e)
+		}
+	}
+	rt.mu.Unlock()
+	for _, e := range ends {
+		e.shutdown()
+		<-e.done
+	}
 }
 
 // fedRouteEnd is agentd's broker channel for one mirror (publisher role) or
@@ -82,6 +110,9 @@ type fedRouteEnd struct {
 	route  *db.AgentRoute
 	lease  *db.AgentRouteLease // proxy only
 	remote string              // mirror only: the remote route id
+	// ctx scopes agentd's own goroutines. The broker channel itself is
+	// attached without it and ended only by closing conn: a cancelled
+	// broker session context would fail the real publisher's forwards.
 	ctx    context.Context
 	cancel context.CancelFunc
 	conn   net.Conn
@@ -95,23 +126,99 @@ type fedRouteEnd struct {
 	done    chan struct{}
 }
 
-type fedRouteStream struct {
-	id   uint64
-	conn *stream.Conn
-	q    chan routebroker.Frame
-	once sync.Once
-	done chan struct{}
+func newFedRouteEnd(rt *fedRuntime, key, role, peer string, route *db.AgentRoute, conn net.Conn) *fedRouteEnd {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &fedRouteEnd{
+		rt: rt, key: key, role: role, peer: peer, route: route, ctx: ctx, cancel: cancel, conn: conn,
+		opening: map[uint64]chan routebroker.Frame{}, streams: map[uint64]*fedRouteStream{}, done: make(chan struct{}),
+	}
+}
 
-	// The broker retires a stream silently once both directions have
-	// half-closed, so the bridge must notice that itself.
-	hmu             sync.Mutex
+// shutdown ends the broker channel; serve then tears everything down.
+func (e *fedRouteEnd) shutdown() {
+	_ = e.conn.Close()
+	e.cancel()
+}
+
+// fedRouteStream is one TCP connection. It is registered as soon as its
+// broker stream exists, so frames that arrive while the hub stream is
+// still being joined (a server's greeting, an early close) are buffered
+// or acted on rather than lost.
+type fedRouteStream struct {
+	id     uint64
+	ctx    context.Context
+	cancel context.CancelFunc
+	once   sync.Once
+
+	mu     sync.Mutex
+	conn   *stream.Conn
+	frames []routebroker.Frame
+	bytes  int
+	wake   chan struct{}
+
+	// halfIn/halfOut record each direction finishing. gotHalfClose is set
+	// when the local side's HalfClose is queued: the broker follows the
+	// second half-close with a terminal CLOSE, which is then an orderly
+	// end and must not discard what is still queued.
 	halfIn, halfOut bool
+	gotHalfClose    bool
+}
+
+// push buffers a broker frame for the remote side; false when over budget.
+func (s *fedRouteStream) push(f routebroker.Frame) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.bytes+len(f.Payload) > fedRouteStreamBuffer {
+		return false
+	}
+	s.frames = append(s.frames, f)
+	s.bytes += len(f.Payload)
+	if f.Kind == routebroker.KindHalfClose {
+		s.gotHalfClose = true
+	}
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+	return true
+}
+
+// pop waits for the next buffered frame; false once the stream ended.
+func (s *fedRouteStream) pop() (routebroker.Frame, bool) {
+	for {
+		s.mu.Lock()
+		if len(s.frames) > 0 {
+			f := s.frames[0]
+			s.frames = s.frames[1:]
+			s.bytes -= len(f.Payload)
+			s.mu.Unlock()
+			return f, true
+		}
+		s.mu.Unlock()
+		select {
+		case <-s.wake:
+		case <-s.ctx.Done():
+			return routebroker.Frame{}, false
+		}
+	}
+}
+
+// attach hands the joined hub stream over; false if the stream already ended.
+func (s *fedRouteStream) attach(conn *stream.Conn) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ctx.Err() != nil {
+		go func() { _ = conn.Close() }()
+		return false
+	}
+	s.conn = conn
+	return true
 }
 
 // halfClosed records one direction finishing and reports whether both have.
 func (s *fedRouteStream) halfClosed(in bool) bool {
-	s.hmu.Lock()
-	defer s.hmu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if in {
 		s.halfIn = true
 	} else {
@@ -127,7 +234,18 @@ func (e *fedRouteEnd) write(f routebroker.Frame) error {
 	return routebroker.WriteFrame(e.conn, f, 0)
 }
 
-// serve reads broker frames until the channel ends, then tears down.
+// newStream registers stream id before anything can arrive for it.
+func (e *fedRouteEnd) newStream(id uint64) *fedRouteStream {
+	ctx, cancel := context.WithCancel(e.ctx)
+	s := &fedRouteStream{id: id, ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1)}
+	e.mu.Lock()
+	e.streams[id] = s
+	e.mu.Unlock()
+	return s
+}
+
+// serve reads broker frames until the channel ends, then tears down. It
+// never blocks on the remote side.
 func (e *fedRouteEnd) serve() {
 	defer e.teardown()
 	for {
@@ -143,7 +261,13 @@ func (e *fedRouteEnd) serve() {
 			if e.role != "mirror" {
 				return
 			}
-			go e.openRemote(f.Stream)
+			e.mu.Lock()
+			dup := e.streams[f.Stream] != nil
+			e.mu.Unlock()
+			if dup {
+				return
+			}
+			go e.openRemote(e.newStream(f.Stream))
 		case routebroker.KindOpenOK, routebroker.KindOpenError:
 			e.mu.Lock()
 			ch := e.opening[f.Stream]
@@ -159,11 +283,19 @@ func (e *fedRouteEnd) serve() {
 			if s == nil {
 				continue
 			}
-			select {
-			case s.q <- f:
-			default:
-				// The remote side is not draining; drop the connection
-				// rather than stall every stream on this channel.
+			if f.Kind == routebroker.KindClose {
+				s.mu.Lock()
+				orderly := s.gotHalfClose
+				s.mu.Unlock()
+				if orderly {
+					continue // the bridge finishes once the queue drains
+				}
+				// The local side reset the connection: abort, which also
+				// cancels an open still in flight.
+				e.endStream(s, false)
+				continue
+			}
+			if !s.push(f) {
 				e.endStream(s, true)
 			}
 		}
@@ -181,8 +313,7 @@ func (e *fedRouteEnd) watch(check func() error) {
 		case <-t.C:
 			if err := check(); err != nil {
 				slog.Info("federation: route authority withdrawn", "role", e.role, "route", e.route.ID, "peer", e.peer, "reason", err)
-				e.cancel()
-				_ = e.conn.Close()
+				e.shutdown()
 				return
 			}
 		}
@@ -190,8 +321,7 @@ func (e *fedRouteEnd) watch(check func() error) {
 }
 
 func (e *fedRouteEnd) teardown() {
-	e.cancel()
-	_ = e.conn.Close()
+	e.shutdown()
 	e.mu.Lock()
 	streams := make([]*fedRouteStream, 0, len(e.streams))
 	for _, s := range e.streams {
@@ -222,91 +352,101 @@ func (e *fedRouteEnd) teardown() {
 	close(e.done)
 }
 
-// bridge pumps one broker stream and one encrypted hub stream until both
-// directions finish.
+// bridge pumps one broker stream and its joined hub stream until both
+// directions finish or either side aborts.
 func (e *fedRouteEnd) bridge(s *fedRouteStream) {
+	conn := s.conn
 	// broker → remote
 	go func() {
 		for {
-			select {
-			case <-e.ctx.Done():
-				e.endStream(s, false)
+			f, ok := s.pop()
+			if !ok {
 				return
-			case <-s.done:
-				return
-			case f := <-s.q:
-				switch f.Kind {
-				case routebroker.KindData:
-					if _, err := s.conn.Write(f.Payload); err != nil {
-						e.endStream(s, true)
-						return
-					}
-				case routebroker.KindHalfClose:
-					_ = s.conn.CloseWrite()
-					if s.halfClosed(true) {
-						e.endStream(s, false)
-						return
-					}
-				case routebroker.KindClose:
-					e.endStream(s, false)
+			}
+			switch f.Kind {
+			case routebroker.KindData:
+				if _, err := conn.Write(f.Payload); err != nil {
+					e.endStream(s, true)
 					return
 				}
+			case routebroker.KindHalfClose:
+				if err := conn.CloseWrite(); err != nil {
+					e.endStream(s, true)
+					return
+				}
+				if s.halfClosed(true) {
+					e.endStream(s, false)
+				}
+				return
 			}
 		}
 	}()
 	// remote → broker
 	buf := make([]byte, routebroker.MaxFramePayload)
 	for {
-		n, err := s.conn.Read(buf)
+		n, err := conn.Read(buf)
 		if n > 0 {
 			if werr := e.write(routebroker.Frame{Kind: routebroker.KindData, Stream: s.id, Payload: append([]byte(nil), buf[:n]...)}); werr != nil {
 				e.endStream(s, false)
 				return
 			}
 		}
-		if errors.Is(err, io.EOF) {
-			_ = e.write(routebroker.Frame{Kind: routebroker.KindHalfClose, Stream: s.id})
-			if s.halfClosed(false) {
-				e.endStream(s, false)
-			}
-			return
+		if err == nil {
+			continue
 		}
-		if err != nil {
+		if !errors.Is(err, io.EOF) {
+			// Reset, truncation or tampering: never an orderly end.
 			e.endStream(s, true)
 			return
 		}
+		_ = e.write(routebroker.Frame{Kind: routebroker.KindHalfClose, Stream: s.id})
+		if s.halfClosed(false) {
+			e.endStream(s, false)
+			return
+		}
+		// Keep reading so keepalives are answered and a later reset or a
+		// dropped relay is noticed while our direction is still open.
+		derr := conn.Drain()
+		s.mu.Lock()
+		both := s.halfIn && s.halfOut
+		s.mu.Unlock()
+		e.endStream(s, !both || errors.Is(derr, stream.ErrReset))
+		return
 	}
 }
 
-// endStream closes the remote side and, if notify, tells the broker.
+// endStream ends one connection: aborts the remote side unless it finished
+// cleanly, and, if notify, resets the local side through the broker. It
+// never blocks on the relay.
 func (e *fedRouteEnd) endStream(s *fedRouteStream, notify bool) {
 	s.once.Do(func() {
 		e.mu.Lock()
 		delete(e.streams, s.id)
 		e.mu.Unlock()
-		close(s.done)
-		_ = s.conn.Close()
+		s.mu.Lock()
+		s.cancel()
+		conn := s.conn
+		s.mu.Unlock()
+		if conn != nil {
+			go func() { _ = conn.Close() }()
+		}
 		if notify {
 			_ = e.write(routebroker.Frame{Kind: routebroker.KindClose, Stream: s.id})
 		}
 	})
 }
 
-func (e *fedRouteEnd) addStream(id uint64, conn *stream.Conn) *fedRouteStream {
-	s := &fedRouteStream{id: id, conn: conn, q: make(chan routebroker.Frame, fedRouteStreamQueue), done: make(chan struct{})}
-	e.mu.Lock()
-	e.streams[id] = s
-	e.mu.Unlock()
-	return s
-}
-
 // --- consumer side: mirrors ---
 
 // openRemote handles one consumer connection on a mirror: ask the peer to
 // open the real route, then join the hub stream.
-func (e *fedRouteEnd) openRemote(id uint64) {
+func (e *fedRouteEnd) openRemote(s *fedRouteStream) {
 	fail := func(reason string) {
-		_ = e.write(routebroker.Frame{Kind: routebroker.KindOpenError, Stream: id, Payload: []byte(routebroker.OpenErrorTargetUnavailable)})
+		if s.ctx.Err() != nil {
+			return // the consumer already gave up
+		}
+		e.endStream(s, false)
+		_ = e.write(routebroker.Frame{Kind: routebroker.KindOpenError, Stream: s.id, Payload: []byte(routebroker.OpenErrorTargetUnavailable)})
 		slog.Info("federation: remote route open failed", "route", e.remote, "peer", e.peer, "reason", reason)
 	}
 	kp, err := stream.NewKeyPair()
@@ -315,18 +455,20 @@ func (e *fedRouteEnd) openRemote(id uint64) {
 		return
 	}
 	sid := proto.NewEnvelopeID()
-	ans, err := e.rt.askRouteOpen(e.ctx, e.peer, proto.RouteOpenPayload{Route: e.remote, Stream: sid, Key: kp.Pub})
+	ans, err := e.rt.askRouteOpen(s.ctx, e.peer, proto.RouteOpenPayload{Route: e.remote, Stream: sid, Key: kp.Pub})
 	if err != nil {
 		fail(err.Error())
 		return
 	}
-	conn, err := e.rt.joinStream(e.ctx, e.peer, sid, kp, ans.Key, true)
+	conn, err := e.rt.joinStream(s.ctx, e.peer, sid, kp, ans.Key, true)
 	if err != nil {
 		fail(err.Error())
 		return
 	}
-	s := e.addStream(id, conn)
-	if err := e.write(routebroker.Frame{Kind: routebroker.KindOpenOK, Stream: id}); err != nil {
+	if !s.attach(conn) {
+		return
+	}
+	if err := e.write(routebroker.Frame{Kind: routebroker.KindOpenOK, Stream: s.id}); err != nil {
 		e.endStream(s, false)
 		return
 	}
@@ -393,42 +535,48 @@ func (rt *fedRuntime) handleRouteAnswer(peer *db.FederationPeer, env *proto.Enve
 	}
 }
 
+// attachEnd attaches e to the broker through attach and waits until the
+// broker has accepted it. The channel then lives until e.conn closes.
+func attachEnd(e *fedRouteEnd, theirs net.Conn, attach func(ready func(error)) error) error {
+	attached := make(chan error, 1)
+	report := func(err error) {
+		select {
+		case attached <- err:
+		default:
+		}
+	}
+	go func() {
+		report(attach(report))
+		_ = theirs.Close()
+		e.shutdown()
+	}()
+	select {
+	case err := <-attached:
+		if err == nil {
+			return nil
+		}
+		e.shutdown()
+		return err
+	case <-time.After(10 * time.Second):
+		e.shutdown()
+		return errors.New("route broker did not accept the federation channel")
+	}
+}
+
 // startMirror attaches agentd as the broker publisher of a mirror route.
 func (rt *fedRuntime) startMirror(route *db.AgentRoute, peer, remote string, check func() error) error {
-	ctx, cancel := context.WithCancel(rt.ctx)
 	ours, theirs := net.Pipe()
-	e := &fedRouteEnd{
-		rt: rt, key: route.ID, role: "mirror", peer: peer, route: route, remote: remote,
-		ctx: ctx, cancel: cancel, conn: ours,
-		opening: map[uint64]chan routebroker.Frame{}, streams: map[uint64]*fedRouteStream{}, done: make(chan struct{}),
-	}
+	e := newFedRouteEnd(rt, route.ID, "mirror", peer, route, ours)
+	e.remote = remote
 	auth := routebroker.PublisherAuth{
 		RouteID: route.ID, AgentID: route.PublisherAgentID, ConvID: route.PublisherConvID,
 		LaunchGeneration: route.PublisherLaunchGeneration, GroupGeneration: route.GroupGeneration,
 	}
-	attached := make(chan error, 1)
-	go func() {
-		err := GroupRouteBroker().AttachPublisherReady(ctx, auth, theirs, func(err error) { attached <- err })
-		if err != nil {
-			select {
-			case attached <- err:
-			default:
-			}
-		}
-		_ = theirs.Close()
-		cancel()
-	}()
-	select {
-	case err := <-attached:
-		if err != nil {
-			cancel()
-			_ = ours.Close()
-			return err
-		}
-	case <-time.After(10 * time.Second):
-		cancel()
-		_ = ours.Close()
-		return errors.New("route broker did not accept the federation publisher")
+	err := attachEnd(e, theirs, func(ready func(error)) error {
+		return GroupRouteBroker().AttachPublisherReady(context.Background(), auth, theirs, ready)
+	})
+	if err != nil {
+		return err
 	}
 	rt.mu.Lock()
 	rt.routesLocked().mirrors[route.ID] = e
@@ -643,7 +791,10 @@ func (rt *fedRuntime) handleRouteOpen(peer *db.FederationPeer, env *proto.Envelo
 		a.Stream = p.Stream
 		rt.sendControl(peer.InstanceID, proto.KindRouteAnswer, env.ID, a)
 	}
-	if !rt.allowInbound(peer.InstanceID) {
+	rt.mu.Lock()
+	allowed := allowPerMinute(rt.routesLocked().opens, peer.InstanceID, fedRouteOpensPerMinute)
+	rt.mu.Unlock()
+	if !allowed {
 		answer(proto.RouteAnswerPayload{Reason: "rate limited"})
 		return
 	}
@@ -658,120 +809,141 @@ func (rt *fedRuntime) handleRouteOpen(peer *db.FederationPeer, env *proto.Envelo
 		slog.Info("federation: route proxy failed", "route", route.ID, "error", err)
 		return
 	}
-	// Open the broker stream first, so the peer only joins a hub stream
-	// for a connection the publisher actually accepted.
+	// Register the stream before opening it, so whatever the target sends
+	// first is buffered while the peer joins; and open the broker stream
+	// before answering, so the peer only joins a hub stream for a
+	// connection the publisher accepted.
 	e.mu.Lock()
 	e.nextID++
 	id := e.nextID
 	ch := make(chan routebroker.Frame, 1)
 	e.opening[id] = ch
 	e.mu.Unlock()
+	s := e.newStream(id)
+	refuse := func(reason string, notify bool) {
+		e.mu.Lock()
+		delete(e.opening, id)
+		e.mu.Unlock()
+		e.endStream(s, notify)
+		answer(proto.RouteAnswerPayload{Reason: reason})
+	}
 	if err := e.write(routebroker.Frame{Kind: routebroker.KindOpen, Stream: id}); err != nil {
-		answer(proto.RouteAnswerPayload{Reason: "route unavailable"})
+		refuse("route unavailable", false)
 		return
 	}
 	select {
 	case f := <-ch:
 		if f.Kind != routebroker.KindOpenOK {
-			answer(proto.RouteAnswerPayload{Reason: "publisher refused: " + string(f.Payload)})
+			refuse("publisher refused: "+string(f.Payload), false)
 			return
 		}
 	case <-time.After(fedRouteOpenTimeout):
-		e.mu.Lock()
-		delete(e.opening, id)
-		e.mu.Unlock()
-		_ = e.write(routebroker.Frame{Kind: routebroker.KindClose, Stream: id})
-		answer(proto.RouteAnswerPayload{Reason: "publisher did not answer"})
+		refuse("publisher did not answer", true)
 		return
-	case <-e.ctx.Done():
-		answer(proto.RouteAnswerPayload{Reason: "route unavailable"})
+	case <-s.ctx.Done():
+		refuse("route unavailable", false)
 		return
 	}
 	kp, err := stream.NewKeyPair()
 	if err != nil {
-		_ = e.write(routebroker.Frame{Kind: routebroker.KindClose, Stream: id})
+		refuse("route unavailable", true)
 		return
 	}
 	answer(proto.RouteAnswerPayload{OK: true, Key: kp.Pub})
-	conn, err := rt.joinStream(e.ctx, peer.InstanceID, p.Stream, kp, p.Key, false)
+	conn, err := rt.joinStream(s.ctx, peer.InstanceID, p.Stream, kp, p.Key, false)
 	if err != nil {
-		_ = e.write(routebroker.Frame{Kind: routebroker.KindClose, Stream: id})
+		e.endStream(s, true)
 		return
 	}
-	e.bridge(e.addStream(id, conn))
+	if s.attach(conn) {
+		e.bridge(s)
+	}
 }
 
 // proxyFor returns the live proxy consumer for (peer, route), starting one.
+// Concurrent opens share one start: each proxy holds a broker consumer
+// slot on the route.
 func (rt *fedRuntime) proxyFor(peer string, route *db.AgentRoute) (*fedRouteEnd, error) {
 	key := peer + "|" + route.ID
-	rt.mu.Lock()
-	if e := rt.routesLocked().proxies[key]; e != nil {
-		select {
-		case <-e.done:
-		default:
+	for {
+		rt.mu.Lock()
+		st := rt.routesLocked()
+		if e := st.proxies[key]; e != nil {
+			select {
+			case <-e.done:
+			default:
+				rt.mu.Unlock()
+				return e, nil
+			}
+		}
+		wait := st.starting[key]
+		if wait == nil {
+			st.starting[key] = make(chan struct{})
 			rt.mu.Unlock()
-			return e, nil
+			break
+		}
+		rt.mu.Unlock()
+		select {
+		case <-wait:
+		case <-time.After(15 * time.Second):
+			return nil, errors.New("route proxy start timed out")
 		}
 	}
+	e, err := rt.startProxy(key, peer, route)
+	rt.mu.Lock()
+	st := rt.routesLocked()
+	if err == nil {
+		st.proxies[key] = e
+	}
+	close(st.starting[key])
+	delete(st.starting, key)
 	rt.mu.Unlock()
-	lease, err := db.OpenFederationProxyLease(route, peer)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithCancel(rt.ctx)
-	ours, theirs := net.Pipe()
-	e := &fedRouteEnd{
-		rt: rt, key: key, role: "proxy", peer: peer, route: route, lease: lease,
-		ctx: ctx, cancel: cancel, conn: ours,
-		opening: map[uint64]chan routebroker.Frame{}, streams: map[uint64]*fedRouteStream{}, done: make(chan struct{}),
-	}
-	auth := routebroker.ConsumerAuth{
-		LeaseID: lease.ID, RouteID: route.ID, AgentID: lease.ConsumerAgentID, ConvID: lease.ConsumerConvID,
-		LaunchGeneration: lease.ConsumerLaunchGeneration, GroupGeneration: lease.GroupGeneration,
-	}
-	attached := make(chan error, 1)
-	go func() {
-		err := GroupRouteBroker().AttachConsumerWithReady(ctx, auth, theirs, func() error { attached <- nil; return nil })
-		select {
-		case attached <- err:
-		default:
-		}
-		_ = theirs.Close()
-		cancel()
-	}()
-	select {
-	case err := <-attached:
-		if err != nil {
-			cancel()
-			_ = ours.Close()
-			_ = db.CloseAgentRouteLease(lease.ID, lease.ConsumerAgentID, lease.ConsumerConvID)
-			return nil, err
-		}
-	case <-time.After(10 * time.Second):
-		cancel()
-		_ = ours.Close()
-		_ = db.CloseAgentRouteLease(lease.ID, lease.ConsumerAgentID, lease.ConsumerConvID)
-		return nil, errors.New("route broker did not accept the federation consumer")
-	}
-	rt.mu.Lock()
-	rt.routesLocked().proxies[key] = e
-	rt.mu.Unlock()
 	go e.serve()
 	go e.watch(func() error { _, err := fedProxyAuthorized(peer, route.ID); return err })
 	return e, nil
 }
 
+func (rt *fedRuntime) startProxy(key, peer string, route *db.AgentRoute) (*fedRouteEnd, error) {
+	lease, err := db.OpenFederationProxyLease(route, peer)
+	if err != nil {
+		return nil, err
+	}
+	ours, theirs := net.Pipe()
+	e := newFedRouteEnd(rt, key, "proxy", peer, route, ours)
+	e.lease = lease
+	auth := routebroker.ConsumerAuth{
+		LeaseID: lease.ID, RouteID: route.ID, AgentID: lease.ConsumerAgentID, ConvID: lease.ConsumerConvID,
+		LaunchGeneration: lease.ConsumerLaunchGeneration, GroupGeneration: lease.GroupGeneration,
+	}
+	err = attachEnd(e, theirs, func(ready func(error)) error {
+		return GroupRouteBroker().AttachConsumerWithReady(context.Background(), auth, theirs, func() error { ready(nil); return nil })
+	})
+	if err != nil {
+		_ = db.CloseAgentRouteLease(lease.ID, lease.ConsumerAgentID, lease.ConsumerConvID)
+		return nil, err
+	}
+	return e, nil
+}
+
 // withdrawStaleFederationMirrors withdraws mirrors left from a previous
-// runtime: their proxy is gone, so they cannot carry traffic.
+// runtime (their proxy is gone, so they cannot carry traffic) and drops
+// withdrawn mirror rows.
 func withdrawStaleFederationMirrors() {
 	mirrors, err := db.ListFederationRouteMirrors()
 	if err != nil {
 		return
 	}
 	for _, m := range mirrors {
-		if route, _ := db.GetAgentRoute(m.RouteID); route != nil {
+		if route, _ := db.GetAgentRoute(m.RouteID); route != nil && route.State == db.RouteStateReady {
 			_ = db.WithdrawAgentRoute(route.ID, route.PublisherAgentID, route.PublisherConvID, "federation runtime restarted")
+			routeAdapterCloseRoute(route.ID)
 		}
+	}
+	if err := db.DeleteStaleFederationRouteMirrors(); err != nil {
+		slog.Debug("federation: drop stale route mirrors failed", "error", err)
 	}
 }
 

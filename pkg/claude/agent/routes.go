@@ -212,6 +212,13 @@ func runRoutesOpen(p *routesOpenParams, stdout, stderr io.Writer) int {
 	var lease routeLeaseCLI
 	at := strings.LastIndex(ref, "@")
 	if at > 0 {
+		// Local route names and titles may contain '@': a reference that
+		// resolves locally stays local.
+		if _, _, rc := resolveRouteCLIReference(ref, group, io.Discard); rc == rcOK {
+			at = -1
+		}
+	}
+	if at > 0 {
 		// <publisher>/<route>@<peer>: a route another instance exports to a
 		// group this one imports. The daemon answers with an ordinary lease.
 		if group == "" {

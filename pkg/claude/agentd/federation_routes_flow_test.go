@@ -135,9 +135,15 @@ func TestFederation_RoutesServeRemoteConsumer(t *testing.T) {
 	fr := readBrokerFrameWithin(t, helper, 10*time.Second)
 	require.Equal(t, routebroker.KindOpen, fr.Kind)
 	require.NoError(t, routebroker.WriteFrame(helper, routebroker.Frame{Kind: routebroker.KindOpenOK, Stream: fr.Stream}, 0))
+	// Server-speaks-first: the target greets before the peer has joined.
+	require.NoError(t, routebroker.WriteFrame(helper, routebroker.Frame{Kind: routebroker.KindData, Stream: fr.Stream, Payload: []byte("220 ready\r\n")}, 0))
 	ans = fedRouteAnswerFor(t, p, sid)
 	require.True(t, ans.OK, ans.Reason)
 	conn := fedPeerStream(t, p, sid, kp, ans.Key, true)
+	greeting := make([]byte, len("220 ready\r\n"))
+	_, err = io.ReadFull(conn, greeting)
+	require.NoError(t, err)
+	require.Equal(t, "220 ready\r\n", string(greeting))
 
 	// The proxy lease stays out of route listings.
 	rec, leases := serveRouteAgent(t, f, http.MethodGet, "/v1/routes/leases?group=svc", pub, nil)
@@ -158,9 +164,30 @@ func TestFederation_RoutesServeRemoteConsumer(t *testing.T) {
 	got, err := io.ReadAll(conn)
 	require.NoError(t, err)
 	require.Equal(t, "HTTP/1.0 200 OK\r\n\r\nhi", string(got))
+	// Both directions finished: the broker retires the stream.
+	fr = readBrokerFrameWithin(t, helper, 10*time.Second)
+	require.Equal(t, routebroker.KindClose, fr.Kind)
+	require.Equal(t, stream, fr.Stream)
 
 	// A replayed open is ignored rather than opening another stream.
 	p.send(open)
+
+	// A peer that aborts mid-stream resets the local connection; it is
+	// never presented to the target as a finished request.
+	sid = proto.NewEnvelopeID()
+	p.send(p.envelope(proto.KindRouteOpen, proto.Endpoint{}, proto.RouteOpenPayload{Route: routeID, Stream: sid, Key: kp.Pub}))
+	fr = readBrokerFrameWithin(t, helper, 10*time.Second)
+	require.Equal(t, routebroker.KindOpen, fr.Kind, "the replayed open must not have opened a stream")
+	require.NoError(t, routebroker.WriteFrame(helper, routebroker.Frame{Kind: routebroker.KindOpenOK, Stream: fr.Stream}, 0))
+	ans = fedRouteAnswerFor(t, p, sid)
+	require.True(t, ans.OK, ans.Reason)
+	aborted := fedPeerStream(t, p, sid, kp, ans.Key, true)
+	_, err = aborted.Write([]byte("POST /upload HTTP/1.0\r\nContent-Length: 999\r\n\r\npart"))
+	require.NoError(t, err)
+	require.Equal(t, routebroker.KindData, readBrokerFrameWithin(t, helper, 10*time.Second).Kind)
+	require.NoError(t, aborted.Close())
+	fr = readBrokerFrameWithin(t, helper, 10*time.Second)
+	require.Equal(t, routebroker.KindClose, fr.Kind)
 
 	// Unexporting withdraws authority: the proxy lease closes.
 	rec = fedHuman(t, f, http.MethodDelete, "/v1/federation/exports", map[string]any{"group": "svc", "peer": "bob"})
@@ -286,7 +313,18 @@ func TestFederation_RoutesOpenRemoteRoute(t *testing.T) {
 	rec = fedHuman(t, f, http.MethodDelete, "/v1/federation/imports", map[string]any{"local_group": "team", "peer": "bob", "remote_group": "builders"})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	fedEventually(t, "mirror withdrawn", func() bool {
-		r, err := db.GetAgentRoute(mirrorID)
-		return err == nil && r != nil && r.State != db.RouteStateReady
+		r, _ := db.GetAgentRoute(mirrorID)
+		return r == nil || r.State != db.RouteStateReady
 	})
+
+	// Re-importing lets alice open the route again with a fresh mirror.
+	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/imports", map[string]any{"local_group": "team", "peer": "bob", "remote_group": "builders"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	res, lease = openRemote(alice)
+	require.Equal(t, http.StatusCreated, res.StatusCode, lease)
+	require.NotEqual(t, mirrorID, lease["route_id"])
+	// Opening again while the mirror is live reuses it.
+	res, again := openRemote(alice)
+	require.Equal(t, http.StatusCreated, res.StatusCode, again)
+	require.Equal(t, lease["route_id"], again["route_id"])
 }

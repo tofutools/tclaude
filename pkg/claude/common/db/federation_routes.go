@@ -18,6 +18,12 @@ type FederationRouteMirror struct {
 // CreateFederationRouteMirror creates the mirror route row and its marker in
 // one step: the row is never visible unmarked.
 func CreateFederationRouteMirror(groupID int64, agentID, convID, launchGeneration string, groupGeneration int64, name string, m FederationRouteMirror) (*AgentRoute, error) {
+	// Route names stay unique per publisher across states, so a mirror
+	// withdrawn earlier (restart, revocation, relaunch) would block its
+	// own reopen. Mirrors keep no history worth that: drop them.
+	if err := deleteStaleFederationRouteMirrors(`AND r.group_id = ? AND r.publisher_agent_id = ? AND r.name = ?`, groupID, agentID, name); err != nil {
+		return nil, err
+	}
 	return createAgentRoute(groupID, agentID, convID, launchGeneration, groupGeneration, name, "tcp", "federation://"+m.Peer+"/"+m.RemoteRoute,
 		func(tx *sql.Tx, route *AgentRoute) error {
 			_, err := tx.Exec(`INSERT INTO federation_route_mirrors(route_id, peer, remote_route, remote_label, created_at) VALUES(?,?,?,?,?)`,
@@ -104,4 +110,21 @@ func IsFederationProxyLease(leaseID string) (bool, error) {
 	var n int
 	err = d.QueryRow(`SELECT COUNT(*) FROM federation_route_proxies WHERE lease_id=?`, leaseID).Scan(&n)
 	return n > 0, err
+}
+
+// DeleteStaleFederationRouteMirrors removes every mirror that is no longer
+// ready, with its leases and marker.
+func DeleteStaleFederationRouteMirrors() error {
+	return deleteStaleFederationRouteMirrors("")
+}
+
+func deleteStaleFederationRouteMirrors(filter string, args ...any) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`DELETE FROM agent_routes WHERE id IN (
+		SELECT r.id FROM agent_routes r JOIN federation_route_mirrors m ON m.route_id = r.id
+		WHERE r.state != ? `+filter+`)`, append([]any{RouteStateReady}, args...)...)
+	return err
 }

@@ -32,6 +32,10 @@ type streamSession struct {
 	once sync.Once
 	// paired receives the other side once it arrives.
 	paired chan *streamSession
+	// ready closes once this side has been sent stream_ready; the other
+	// side's forwarder holds binary data until then, so a dialer never
+	// reads data where it expects the ready frame.
+	ready chan struct{}
 }
 
 func (s *streamSession) writeJSON(f *proto.Frame) error {
@@ -131,6 +135,7 @@ func (h *Hub) serveStream(w http.ResponseWriter, r *http.Request) {
 		other.close()
 		return
 	}
+	close(s.ready)
 	// Each side forwards its own reads to the other; the first to stop
 	// tears both down.
 	h.forwardStream(s, other)
@@ -143,6 +148,13 @@ func (h *Hub) forwardStream(src, dst *streamSession) {
 	h.mu.Lock()
 	lim := h.streamsLocked().limiters[src.id]
 	h.mu.Unlock()
+	select {
+	case <-dst.ready:
+	case <-dst.done:
+		return
+	case <-src.done:
+		return
+	}
 	for {
 		mt, p, err := src.ws.ReadMessage()
 		if err != nil {
@@ -204,7 +216,7 @@ func (h *Hub) streamHandshake(ws *websocket.Conn) (*streamSession, error) {
 	if len(st.sessions[id]) >= h.cfg.MaxStreams {
 		return refuse(proto.CodeStreamLimit, "too many concurrent streams for this instance")
 	}
-	s := &streamSession{ws: ws, id: id, peer: hello.Peer, sid: hello.Stream, done: make(chan struct{}), paired: make(chan *streamSession, 1)}
+	s := &streamSession{ws: ws, id: id, peer: hello.Peer, sid: hello.Stream, done: make(chan struct{}), paired: make(chan *streamSession, 1), ready: make(chan struct{})}
 	if st.sessions[id] == nil {
 		st.sessions[id] = map[*streamSession]bool{}
 	}

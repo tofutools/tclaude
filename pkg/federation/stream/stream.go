@@ -82,8 +82,11 @@ func DeriveKeys(kp *KeyPair, peerPub []byte, sid string, initiator bool) (*Keys,
 }
 
 const (
-	recData byte = 0
-	recFin  byte = 1
+	recData  byte = 0
+	recFin   byte = 1
+	recReset byte = 2
+	// writeTimeout bounds one record's write through the relay.
+	writeTimeout = 30 * time.Second
 	// maxChunk leaves room for the record header and AEAD tag.
 	maxChunk = proto.MaxStreamMessage - 64
 )
@@ -127,6 +130,10 @@ func nonce(seq uint64) []byte {
 // ErrTampered is returned when a record fails authentication.
 var ErrTampered = errors.New("stream record failed authentication")
 
+// ErrReset is returned when the peer aborted the stream: its side of the
+// connection was reset rather than finished.
+var ErrReset = errors.New("stream reset by peer")
+
 func (c *Conn) Read(p []byte) (int, error) {
 	c.rmu.Lock()
 	defer c.rmu.Unlock()
@@ -152,6 +159,8 @@ func (c *Conn) Read(p []byte) (int, error) {
 		switch pt[0] {
 		case recFin:
 			c.rerr = io.EOF
+		case recReset:
+			c.rerr = ErrReset
 		case recData:
 			c.rbuf = pt[1:]
 		default:
@@ -169,6 +178,9 @@ func (c *Conn) writeRecord(typ byte, data []byte) error {
 	copy(pt[1:], data)
 	ct := c.send.Seal(nil, nonce(c.sendSeq), pt, nil)
 	c.sendSeq++
+	if typ != recReset {
+		_ = c.ws.SetWriteDeadline(time.Now().Add(writeTimeout))
+	}
 	return c.ws.WriteMessage(websocket.BinaryMessage, ct)
 }
 
@@ -204,11 +216,50 @@ func (c *Conn) CloseWrite() error {
 	return c.writeRecord(recFin, nil)
 }
 
-// Close sends FIN if needed and closes the websocket.
+// Drain keeps reading after Read has returned io.EOF, so keepalives are
+// still answered and the end of the peer's side is noticed. It returns
+// ErrReset if the peer aborts, ErrTampered on a record after FIN, and
+// io.ErrUnexpectedEOF once the websocket ends.
+func (c *Conn) Drain() error {
+	c.rmu.Lock()
+	defer c.rmu.Unlock()
+	if c.rerr != io.EOF {
+		return c.rerr
+	}
+	mt, msg, err := c.ws.ReadMessage()
+	if err != nil {
+		return io.ErrUnexpectedEOF
+	}
+	if mt != websocket.BinaryMessage {
+		return ErrTampered
+	}
+	pt, err := c.recv.Open(nil, nonce(c.recvSeq), msg, nil)
+	if err != nil || len(pt) == 0 {
+		return ErrTampered
+	}
+	c.recvSeq++
+	if pt[0] == recReset {
+		return ErrReset
+	}
+	return ErrTampered
+}
+
+// Close closes the stream. After CloseWrite it is an orderly close;
+// otherwise this side is aborted and the peer reads ErrReset, never a
+// clean end of stream.
 func (c *Conn) Close() error {
 	var err error
 	c.closeOnce.Do(func() {
-		_ = c.CloseWrite()
+		// A write blocked on a throttled relay holds wmu; then just drop
+		// the websocket, which the peer also reads as an abort.
+		if c.wmu.TryLock() {
+			if !c.finSent {
+				c.finSent = true
+				_ = c.ws.SetWriteDeadline(time.Now().Add(time.Second))
+				_ = c.writeRecord(recReset, nil)
+			}
+			c.wmu.Unlock()
+		}
 		_ = c.ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
 		err = c.ws.Close()
 	})

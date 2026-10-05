@@ -378,8 +378,14 @@ is by inspecting the caller's process tree.
   though not payloads.
 - No `group:` multicast across instances, no `--cc` to remote recipients.
 - Remote routes relay through the hub, so their throughput is bounded by
-  the hub's stream limits. Routes are not re-exported: a mirror cannot be
-  exported onward.
+  the hub's stream limits. There is no end-to-end flow control yet: about
+  4 MiB is buffered per connection, and a sender that outruns the hub's
+  bandwidth for longer resets its connection. Remote routes suit
+  interactive traffic and moderate transfers, not bulk copies.
+- Each remote route connection costs one sealed control frame from each
+  instance against the hub's per-instance frame budget (120 a minute by
+  default, shared with mail). A peer accepts at most 240 opens a minute.
+- Routes are not re-exported: a mirror cannot be exported onward.
 - Attachments ride inline and are capped at 512 KiB per message; operator
   mail and replies cannot carry them.
 - No remote stop, restart, or transcript access; remote spawn is

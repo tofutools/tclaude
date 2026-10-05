@@ -201,6 +201,7 @@ func stopFederationLocked() {
 	if rt != nil {
 		rt.cancel()
 		rt.wg.Wait()
+		rt.stopRoutes()
 		withdrawStaleFederationMirrors()
 	}
 }
@@ -510,19 +511,25 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 func (rt *fedRuntime) allowInbound(peer string) bool {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
+	return allowPerMinute(rt.inLimiter, peer, fedInboundMailPerMinute)
+}
+
+// allowPerMinute is a sliding one-minute window over m[peer]; the caller
+// holds rt.mu.
+func allowPerMinute(m map[string][]time.Time, peer string, limit int) bool {
 	now := time.Now()
 	cut := now.Add(-time.Minute)
-	kept := rt.inLimiter[peer][:0]
-	for _, t := range rt.inLimiter[peer] {
+	kept := m[peer][:0]
+	for _, t := range m[peer] {
 		if t.After(cut) {
 			kept = append(kept, t)
 		}
 	}
-	if len(kept) >= fedInboundMailPerMinute {
-		rt.inLimiter[peer] = kept
+	if len(kept) >= limit {
+		m[peer] = kept
 		return false
 	}
-	rt.inLimiter[peer] = append(kept, now)
+	m[peer] = append(kept, now)
 	return true
 }
 
