@@ -95,7 +95,8 @@ itself.
     go install github.com/tofutools/tclaude/cmd/tclaude-agentd@latest
     ```
 
-    From a source checkout, `go install . ./cmd/...` installs both at once.
+    From a source checkout, `go install . ./cmd/...` installs both at once,
+    plus the `tclaude-hub` [federation](federation.md) relay.
 
 === "Prebuilt release"
 

@@ -83,7 +83,8 @@ therefore a separate install:
 go install github.com/tofutools/tclaude/cmd/tclaude-agentd@latest
 ```
 
-From a source checkout, `go install . ./cmd/...` installs both at once.
+From a source checkout, `go install . ./cmd/...` installs both at once,
+plus the `tclaude-hub` [federation](docs/federation.md) relay.
 
 **Prebuilt release** — download a Linux amd64/arm64 or macOS arm64 archive
 from the [Releases page](https://github.com/tofutools/tclaude/releases),

@@ -55,6 +55,23 @@ builds:
     goarch:
       - arm64
 
+  # The federation relay (docs/federation.md). Pure Go with no systray, so
+  # every platform builds without cgo.
+  - id: tclaude-hub
+    main: ./cmd/tclaude-hub
+    binary: tclaude-hub
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: darwin
+        goarch: amd64
+
 archives:
   - format: tar.gz
     name_template: >-

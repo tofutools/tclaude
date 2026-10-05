@@ -48,9 +48,10 @@ Three layers decide what is allowed, and each one can only narrow:
 
 ## Running a hub
 
-`tclaude-hub` is a separate binary (`go install ./cmd/tclaude-hub`). Run it
-anywhere every instance can reach: a team server, a cloud VM, or one of your
-own machines.
+`tclaude-hub` is a separate binary, included in the release archives, or
+built with `go install github.com/tofutools/tclaude/cmd/tclaude-hub@latest`.
+Run it anywhere every instance can reach: a team server, a cloud VM, or one
+of your own machines.
 
 ```bash
 tclaude-hub serve --listen 0.0.0.0:8470 --tls-cert hub.crt --tls-key hub.key
@@ -61,6 +62,26 @@ loopback. Otherwise front it with a TLS-terminating proxy or use the flags
 above. Its state is a SQLite file under `$TCLAUDE_HUB_DIR` (default
 `~/.tclaude-hub/`). It stores admitted instances, spaces and invites, never
 messages.
+
+As a systemd service:
+
+```ini
+# /etc/systemd/system/tclaude-hub.service
+[Unit]
+Description=tclaude federation hub
+After=network-online.target
+
+[Service]
+User=tclaude-hub
+Environment=TCLAUDE_HUB_DIR=/var/lib/tclaude-hub
+ExecStart=/usr/local/bin/tclaude-hub serve --listen 0.0.0.0:8470 \
+  --tls-cert /etc/tclaude-hub/hub.crt --tls-key /etc/tclaude-hub/hub.key
+Restart=on-failure
+StateDirectory=tclaude-hub
+
+[Install]
+WantedBy=multi-user.target
+```
 
 Admitting instances:
 
