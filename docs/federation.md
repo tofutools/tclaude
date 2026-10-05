@@ -230,10 +230,18 @@ The same rules apply as for a single member: the group must export `mail`
 to you and be imported into one of your groups, and you need
 `federation.message`. One envelope crosses the hub. The receiving instance
 delivers it to the group's members as of arrival, not to the roster in your
-catalog. `--role` narrows the recipients there, case-insensitively. Members
-can reply, and their replies come back to you. Group mail is text only: no
-`--cc`, `--attach` or member subsets. `tclaude federation outbox` shows it
-as accepted once the peer has stored it.
+catalog. `--role` narrows the recipients there, case-insensitively. It needs
+the group's `roster` export, since otherwise it would reveal roles that the
+export hides. Members can reply, and their replies come back to you.
+
+Group mail is text only: no `--cc`, `--attach` or member subsets. Each
+recipient counts against the peer's inbound mail budget. Delivery is
+reported like this:
+
+- When nobody matches, the mail is refused (`no_recipients`).
+- When every recipient's backlog is full, it is retried later.
+- Otherwise `tclaude federation outbox` shows it as accepted, with
+  "delivered to N members" when the roster is shared.
 
 ### Attachments
 

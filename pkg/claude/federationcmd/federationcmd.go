@@ -715,7 +715,7 @@ func outboxCmd() *cobra.Command {
 				os.Exit(printJSON(os.Stdout, rows))
 			}
 			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-			_, _ = fmt.Fprintln(tw, "ENVELOPE\tFROM\tTO\tSTATE\tTRIES\tSENT\tPREVIEW\tLAST ERROR")
+			_, _ = fmt.Fprintln(tw, "ENVELOPE\tFROM\tTO\tSTATE\tTRIES\tSENT\tPREVIEW\tNOTE")
 			for _, r := range rows {
 				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n", r.EnvelopeID[:12], r.From, r.To, r.State, r.Attempts, ago(r.CreatedAt), r.Preview, r.LastError)
 			}

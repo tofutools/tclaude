@@ -482,7 +482,10 @@ func InsertFederationInboundMessage(m *AgentMessage, in FederationInbound, expir
 // InsertFederationInboundGroupMessages records one group_mail envelope as
 // seen and inserts one message per recipient, atomically. A recipient whose
 // regular backlog is at limit is skipped (its id is 0) rather than failing
-// the others. A repeated envelope returns ErrFederationDuplicate.
+// the others; if every recipient is skipped nothing is written (not even
+// the seen mark, so a resend can still deliver) and the result is
+// *AgentMessageQueueFullError. A repeated envelope returns
+// ErrFederationDuplicate.
 func InsertFederationInboundGroupMessages(msgs []*AgentMessage, in FederationInbound, expiresAt time.Time, limit int) ([]int64, error) {
 	d, err := Open()
 	if err != nil {
@@ -502,6 +505,8 @@ func InsertFederationInboundGroupMessages(msgs []*AgentMessage, in FederationInb
 		return nil, ErrFederationDuplicate
 	}
 	ids := make([]int64, len(msgs))
+	inserted := 0
+	var full *AgentMessageQueueFullError
 	for i, m := range msgs {
 		m.RegularSend = true
 		if limit > 0 {
@@ -510,9 +515,11 @@ func InsertFederationInboundGroupMessages(msgs []*AgentMessage, in FederationInb
 				return nil, err
 			}
 			if pending >= limit {
+				full = &AgentMessageQueueFullError{Pending: pending, Limit: limit}
 				continue
 			}
 		}
+		inserted++
 		id, err := insertAgentMessage(tx, m)
 		if err != nil {
 			return nil, err
@@ -522,6 +529,9 @@ func InsertFederationInboundGroupMessages(msgs []*AgentMessage, in FederationInb
 			return nil, err
 		}
 		ids[i] = id
+	}
+	if inserted == 0 && full != nil {
+		return nil, full
 	}
 	return ids, tx.Commit()
 }

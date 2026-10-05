@@ -77,6 +77,8 @@ const (
 	fedCodeQueueFull    = "queue_full"
 	fedCodeMalformed    = "malformed"
 	fedCodeInternal     = "internal"
+	// fedCodeNoRecipients: a group mail matched no current member.
+	fedCodeNoRecipients = "no_recipients"
 )
 
 func fedRetryableCode(code string) bool {
@@ -516,6 +518,19 @@ func (rt *fedRuntime) allowInbound(peer string) bool {
 	return allowPerMinute(rt.inLimiter, peer, fedInboundMailPerMinute)
 }
 
+// allowInboundN takes n tokens from peer's mail budget, all or none.
+func (rt *fedRuntime) allowInboundN(peer string, n int) bool {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if !allowPerMinute(rt.inLimiter, peer, fedInboundMailPerMinute-n+1) {
+		return false
+	}
+	for i := 1; i < n; i++ {
+		rt.inLimiter[peer] = append(rt.inLimiter[peer], time.Now())
+	}
+	return true
+}
+
 // allowPerMinute is a sliding one-minute window over m[peer]; the caller
 // holds rt.mu.
 func allowPerMinute(m map[string][]time.Time, peer string, limit int) bool {
@@ -752,7 +767,11 @@ func (rt *fedRuntime) handleAck(env *proto.Envelope) {
 	}
 	switch {
 	case ack.Status == proto.AckAccepted:
-		_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxAccepted, "")
+		note := ""
+		if row.Kind == proto.KindGroupMail && ack.Delivered > 0 {
+			note = fmt.Sprintf("delivered to %d members", ack.Delivered)
+		}
+		_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxAccepted, note)
 	case fedRetryableCode(ack.Code):
 		_ = db.UpdateFederationOutbox(row.EnvelopeID, db.FedOutboxQueued, time.Now().Add(fedBackoff(row.Attempts)), ack.Code+": "+ack.Reason, 0)
 	default:

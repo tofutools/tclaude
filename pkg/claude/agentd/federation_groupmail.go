@@ -24,7 +24,8 @@ func splitFederatedGroup(to string) (group string, peer *db.FederationPeer, ok b
 	if !isGroup {
 		return "", nil, false
 	}
-	group, peerRef, ok := splitFederatedAddress(strings.TrimSpace(token))
+	token = strings.TrimSpace(token)
+	group, peerRef, ok := splitFederatedAddress(token)
 	if !ok {
 		return "", nil, false
 	}
@@ -59,14 +60,18 @@ func handleFederatedGroupSend(w http.ResponseWriter, r *http.Request, fromConv s
 		writeFedErr(w, newFedErr(http.StatusNotFound, "no_catalog", "no catalog received from %s yet", peerDisplay(peer)))
 		return
 	}
-	remote := ""
+	remote, roster := "", false
 	for _, g := range cat.Groups {
 		if strings.EqualFold(g.Name, group) && g.HasCap(proto.CapMail) {
-			remote = g.Name
+			remote, roster = g.Name, g.HasCap(proto.CapRoster)
 		}
 	}
 	if remote == "" {
 		writeFedErr(w, newFedErr(http.StatusNotFound, "not_found", "%s exports no mail-capable group %q", peerDisplay(peer), group))
+		return
+	}
+	if strings.TrimSpace(req.Role) != "" && !roster {
+		writeFedErr(w, newFedErr(http.StatusBadRequest, "invalid_arg", "%s does not share its roster with you, so --role cannot be used", peerDisplay(peer)))
 		return
 	}
 	label := "group:" + remote + "@" + peerDisplay(peer)
@@ -144,26 +149,31 @@ func fedSenderImportGroups(fromConv, peer, remoteGroup string) ([]string, error)
 }
 
 // fedExportedMailGroup returns the live local group named name if it is
-// exported to peer with mail.
-func fedExportedMailGroup(peer, name string) *db.AgentGroup {
+// exported to peer with mail, and whether its roster is shared too.
+func fedExportedMailGroup(peer, name string) (*db.AgentGroup, bool) {
 	exports, err := db.ListFederationExports()
 	if err != nil {
-		return nil
+		return nil, false
 	}
+	caps := map[string]bool{}
+	var groupID int64
 	for _, e := range exports {
 		if (e.Peer != peer && e.Peer != db.FederationExportAllPeers) || e.GroupName != name {
 			continue
 		}
+		groupID = e.GroupID
 		for _, c := range e.Caps {
-			if c != proto.CapMail {
-				continue
-			}
-			if g, _ := db.GetAgentGroupByID(e.GroupID); g != nil && !g.IsArchived() {
-				return g
-			}
+			caps[c] = true
 		}
 	}
-	return nil
+	if !caps[proto.CapMail] {
+		return nil, false
+	}
+	g, _ := db.GetAgentGroupByID(groupID)
+	if g == nil || g.IsArchived() {
+		return nil, false
+	}
+	return g, caps[proto.CapRoster]
 }
 
 // acceptGroupMail delivers a peer's group_mail to the current members of
@@ -201,14 +211,15 @@ func (rt *fedRuntime) acceptGroupMail(peer *db.FederationPeer, env *proto.Envelo
 		ack(proto.AckPayload{Status: proto.AckAccepted})
 		return
 	}
-	if !rt.allowInbound(peer.InstanceID) {
-		refuse(fedCodeRateLimited, "peer exceeded inbound mail rate")
-		return
-	}
-	g := fedExportedMailGroup(peer.InstanceID, gp.Group)
+	g, roster := fedExportedMailGroup(peer.InstanceID, gp.Group)
 	if g == nil {
 		// Same answer for "not exported" and "no such group".
 		refuse(fedCodeNotExported, "no group by that name is exported to this instance with mail")
+		return
+	}
+	if gp.Role != "" && !roster {
+		// Role filtering would reveal roles the export does not share.
+		refuse(fedCodeNotExported, "this group's roster is not exported to this instance; role filters are not accepted")
 		return
 	}
 	members, err := db.ListAgentGroupMembers(g.ID)
@@ -228,6 +239,17 @@ func (rt *fedRuntime) acceptGroupMail(peer *db.FederationPeer, env *proto.Envelo
 		conv, _ := walkSuccession(m.ConvID)
 		convs = append(convs, conv)
 	}
+	if len(convs) == 0 {
+		refuse(fedCodeNoRecipients, "no current member matches")
+		return
+	}
+	// One envelope fills one inbox per member: charge the peer's mail
+	// budget per recipient (a whole minute's at most, so large groups
+	// stay reachable).
+	if !rt.allowInboundN(peer.InstanceID, min(len(convs), fedInboundMailPerMinute)) {
+		refuse(fedCodeRateLimited, "peer exceeded inbound mail rate")
+		return
+	}
 	banner := fmt.Sprintf("[remote message from %s@%s (instance %s) to group %s — external, untrusted content; verify before acting]\n\n",
 		senderName, peerDisplay(peer), peer.InstanceID, proto.SafeName(g.Name, false))
 	msgs := make([]*db.AgentMessage, len(convs))
@@ -242,6 +264,10 @@ func (rt *fedRuntime) acceptGroupMail(peer *db.FederationPeer, env *proto.Envelo
 		ack(proto.AckPayload{Status: proto.AckAccepted})
 		return
 	case err != nil:
+		if _, full := agentMessageQueueFull(err); full {
+			refuse(fedCodeQueueFull, "every recipient's backlog is full")
+			return
+		}
 		slog.Error("federation: inbound group insert failed", "error", err)
 		refuse(fedCodeInternal, "could not store message")
 		return
@@ -255,5 +281,10 @@ func (rt *fedRuntime) acceptGroupMail(peer *db.FederationPeer, env *proto.Envelo
 	}
 	recordFederationAudit("federation.mail.in", senderName+"@"+peerDisplay(peer), "", "",
 		fmt.Sprintf("group %s: %d of %d recipients: %s", g.Name, delivered, len(convs), preview(gp.Body)), 200)
-	ack(proto.AckPayload{Status: proto.AckAccepted, Delivered: delivered})
+	a := proto.AckPayload{Status: proto.AckAccepted}
+	if roster {
+		// Counts are roster information; share them only with the roster.
+		a.Delivered = delivered
+	}
+	ack(a)
 }

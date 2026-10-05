@@ -57,8 +57,12 @@ func TestFederation_InboundGroupMail(t *testing.T) {
 	f.HaveMemberWithRole("builders", rev, "Reviewer")
 	f.HaveMemberWithRole("builders", dev, "dev")
 	f.HaveMember("private", out)
+	f.HaveGroup("quiet")
+	f.HaveMemberWithRole("quiet", out, "lead")
 
-	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/exports", map[string]any{"group": "builders", "peer": "bob", "caps": []string{"mail"}})
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/exports", map[string]any{"group": "builders", "peer": "bob", "caps": []string{"roster", "mail"}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/exports", map[string]any{"group": "quiet", "peer": "bob", "caps": []string{"mail"}})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	all := p.envelope(proto.KindGroupMail, proto.Endpoint{}, proto.GroupMailPayload{Group: "builders", Subject: "standup", Body: "status please"})
@@ -102,6 +106,23 @@ func TestFederation_InboundGroupMail(t *testing.T) {
 	}
 	require.Empty(t, fedRemoteBodies(t, out))
 
+	// A role nobody holds is refused, not silently accepted.
+	none := p.envelope(proto.KindGroupMail, proto.Endpoint{}, proto.GroupMailPayload{Group: "builders", Role: "reviwer", Body: "typo"})
+	p.send(none)
+	require.Equal(t, "no_recipients", fedAckOf(t, p, none.ID).Code)
+
+	// Without the roster, role filters are refused (they would reveal
+	// roles) and acks carry no counts.
+	probe := p.envelope(proto.KindGroupMail, proto.Endpoint{}, proto.GroupMailPayload{Group: "quiet", Role: "lead", Body: "who leads?"})
+	p.send(probe)
+	ack := fedAckOf(t, p, probe.ID)
+	require.Equal(t, proto.AckRefused, ack.Status)
+	require.Equal(t, "not_exported", ack.Code)
+	plain := p.envelope(proto.KindGroupMail, proto.Endpoint{}, proto.GroupMailPayload{Group: "quiet", Body: "hello quiet"})
+	p.send(plain)
+	require.Equal(t, proto.AckPayload{Status: proto.AckAccepted}, fedAckOf(t, p, plain.ID))
+	require.Len(t, fedRemoteBodies(t, out), 1)
+
 	// A member replies; the reply goes back to the sender as mail.
 	in, err := db.FederationInboundByEnvelope(p.id.ID(), reviewers.ID)
 	require.NoError(t, err)
@@ -131,12 +152,13 @@ func TestFederation_OutboundGroupMail(t *testing.T) {
 	f.HaveConvWithTitle(alice, "alice-agent")
 	f.HaveMember("team", alice)
 	p.send(p.envelope(proto.KindCatalog, proto.Endpoint{}, proto.CatalogPayload{Groups: []proto.CatalogGroup{
-		{Name: "builders", Caps: []string{proto.CapMail}, Members: []proto.CatalogMember{{Agent: "agt_bobremote0000000000000000", Name: "bob-agent"}}},
+		{Name: "builders", Caps: []string{proto.CapRoster, proto.CapMail}, Members: []proto.CatalogMember{{Agent: "agt_bobremote0000000000000000", Name: "bob-agent"}}},
 		{Name: "lurkers", Caps: []string{proto.CapRoster}},
+		{Name: "quiet", Caps: []string{proto.CapMail}},
 	}}))
 	fedEventually(t, "remote catalog visible", func() bool {
 		for _, r := range fedStatus(t, f).Remote {
-			if r.Label == "bob" && len(r.Groups) == 2 {
+			if r.Label == "bob" && len(r.Groups) == 3 {
 				return true
 			}
 		}
@@ -171,6 +193,9 @@ func TestFederation_OutboundGroupMail(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, code, out)
 	code, _ = send("group:builders@bob", map[string]any{"cc": []string{"someone"}})
 	require.Equal(t, http.StatusBadRequest, code)
+	// --role needs the roster.
+	code, out = send("group:quiet@bob", map[string]any{"role": "lead"})
+	require.Equal(t, http.StatusBadRequest, code, out)
 
 	code, out = send("group:builders@bob", map[string]any{"role": "reviewer"})
 	require.Equal(t, http.StatusOK, code, out)
@@ -198,6 +223,10 @@ func TestFederation_OutboundGroupMail(t *testing.T) {
 	ack := p.envelope(proto.KindAck, proto.Endpoint{}, proto.AckPayload{Status: proto.AckAccepted, Delivered: 3})
 	ack.InReplyTo = envID
 	p.send(ack)
+	fedEventually(t, "outbox notes delivery", func() bool {
+		row, _ := db.GetFederationOutbox(envID)
+		return row != nil && row.State == db.FedOutboxAccepted && row.LastError == "delivered to 3 members"
+	})
 	reply := p.envelope(proto.KindMail, proto.Endpoint{Agent: aliceAgent}, proto.MailPayload{Body: "ack from builders"})
 	reply.InReplyTo = envID
 	p.send(reply)
