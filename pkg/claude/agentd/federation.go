@@ -65,7 +65,7 @@ const (
 
 // Ack refusal codes. Retryable codes leave the sender's outbox row queued.
 const (
-	fedCodeNotExported = "not_exported"
+	fedCodeNotExported  = "not_exported"
 	fedCodeUnknownAgent = "unknown_agent"
 	fedCodeTooLarge     = "too_large"
 	fedCodeRateLimited  = "rate_limited"

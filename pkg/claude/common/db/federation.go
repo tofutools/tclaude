@@ -11,7 +11,6 @@ import (
 // Federation state (schema v230). See migrateV229toV230 and
 // pkg/claude/agentd/federation*.go.
 
-
 // FederationPeer is a remote instance the operator trusts.
 type FederationPeer struct {
 	InstanceID string
