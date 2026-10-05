@@ -166,6 +166,13 @@ An import is a directed link, like
 [`groups link add`](agents-and-groups.md#inter-group-links): members of the
 local group may address members of the remote group.
 
+Agents (and you) see the imported members next to local ones with
+`tclaude agent ls --remote`. The remote section shows each member's address,
+harness, role, presence, remote group and the importing local group. An agent
+sees only what its own groups import. Presence is marked stale when the peer
+is offline or its catalog has not been refreshed for several minutes. With
+`--json` the output becomes `{"local": [...], "remote": [...]}`.
+
 ## Sending
 
 Agents use the ordinary messaging command with a `member@peer` address:

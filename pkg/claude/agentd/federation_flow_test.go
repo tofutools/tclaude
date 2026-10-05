@@ -600,3 +600,65 @@ func TestFederation_OperatorMail(t *testing.T) {
 		return row != nil && row.State == db.FedOutboxAccepted
 	})
 }
+
+func TestFederation_ReachableRemoteMembers(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+
+	const alice = "fed6-alice-bbbb-cccc-000000000001"
+	const outsider = "fed6-outs-bbbb-cccc-000000000002"
+	f.HaveGroup("team")
+	f.HaveGroup("solo")
+	f.HaveConvWithTitle(alice, "alice-agent")
+	f.HaveMember("team", alice)
+	f.HaveConvWithTitle(outsider, "outsider")
+	f.HaveMember("solo", outsider)
+
+	p.send(p.envelope(proto.KindCatalog, proto.Endpoint{}, proto.CatalogPayload{Groups: []proto.CatalogGroup{{
+		Name: "builders", Caps: []string{proto.CapRoster, proto.CapPresence, proto.CapMail},
+		Members: []proto.CatalogMember{{Agent: "agt_bobremote0000000000000000", Name: "bob-agent", Role: "reviewer", Harness: "codex", Presence: "online"}},
+	}}}))
+	fedEventually(t, "catalog stored", func() bool {
+		raw, _, _ := db.GetFederationCatalog(p.id.ID())
+		return raw != ""
+	})
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/imports", map[string]any{"local_group": "team", "peer": "bob", "remote_group": "builders"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	type member struct {
+		Address     string   `json:"address"`
+		Role        string   `json:"role"`
+		Harness     string   `json:"harness"`
+		Presence    string   `json:"presence"`
+		LocalGroups []string `json:"local_groups"`
+		Mail        bool     `json:"mail"`
+		Stale       bool     `json:"stale"`
+	}
+	list := func(req *http.Request) []member {
+		rec := testharness.Serve(f.Mux, req)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var out []member
+		testharness.DecodeJSON(t, rec, &out)
+		return out
+	}
+	get := func() *http.Request {
+		return testharness.JSONRequest(t, http.MethodGet, "/v1/federation/reachable", nil)
+	}
+
+	// A member of the importing group sees the remote member.
+	got := list(agentd.AsAgentPeer(get(), alice))
+	require.Len(t, got, 1)
+	require.Equal(t, member{Address: "bob-agent@bob", Role: "reviewer", Harness: "codex", Presence: "online",
+		LocalGroups: []string{"team"}, Mail: true}, got[0])
+
+	// An agent outside every importing group sees nothing; the operator sees all.
+	require.Empty(t, list(agentd.AsAgentPeer(get(), outsider)))
+	require.Len(t, list(agentd.AsHumanPeer(get())), 1)
+
+	// Once the peer disconnects its presence is reported stale.
+	fh.hub.Close()
+	fedEventually(t, "stale after hub loss", func() bool {
+		got := list(agentd.AsHumanPeer(get()))
+		return len(got) == 1 && got[0].Stale
+	})
+}

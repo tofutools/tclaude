@@ -976,6 +976,124 @@ func handleFederationInbox(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// fedStaleAfter is how old a catalog may get before its presence data is
+// reported as stale. Catalogs refresh every fedCatalogRefresh while the peer
+// is online.
+const fedStaleAfter = 3 * fedCatalogRefresh
+
+// fedRemoteMember is one remote member reachable through an import.
+type fedRemoteMember struct {
+	// Address is what `tclaude agent message` accepts: name@label, or
+	// name@instance-id for a peer without a label.
+	Address     string    `json:"address"`
+	Agent       string    `json:"agent"`
+	Name        string    `json:"name"`
+	Role        string    `json:"role,omitempty"`
+	Harness     string    `json:"harness,omitempty"`
+	Presence    string    `json:"presence,omitempty"`
+	Peer        string    `json:"peer"`
+	Instance    string    `json:"instance"`
+	RemoteGroup string    `json:"remote_group"`
+	LocalGroups []string  `json:"local_groups"`
+	Mail        bool      `json:"mail"`
+	PeerOnline  bool      `json:"peer_online"`
+	CatalogAt   time.Time `json:"catalog_received_at"`
+	// Stale marks presence that may be out of date: the peer is offline or
+	// its catalog has not been refreshed recently.
+	Stale bool `json:"stale"`
+}
+
+// handleFederationReachable lists the remote members imported into the
+// caller's groups (every import for the operator): the remote half of
+// `tclaude agent ls --remote`. It mirrors /v1/peers' visibility: an agent
+// sees only what its own groups import.
+func handleFederationReachable(w http.ResponseWriter, r *http.Request) {
+	myID, isHuman, ok := authedCaller(w, r)
+	if !ok {
+		return
+	}
+	visible := map[int64]bool{}
+	var groups []*db.AgentGroup
+	var err error
+	if isHuman {
+		groups, err = db.ListAgentGroups()
+	} else {
+		groups, err = db.ListGroupsForConv(myID)
+	}
+	if err != nil {
+		writeFedErr(w, err)
+		return
+	}
+	filter := strings.TrimSpace(r.URL.Query().Get("group"))
+	for _, g := range groups {
+		if g.IsArchived() || (filter != "" && g.Name != filter && strconv.FormatInt(g.ID, 10) != filter) {
+			continue
+		}
+		visible[g.ID] = true
+	}
+	imports, err := db.ListFederationImports()
+	if err != nil {
+		writeFedErr(w, err)
+		return
+	}
+	rt := currentFederation()
+	now := time.Now()
+	byKey := map[string]*fedRemoteMember{}
+	var order []string
+	for _, im := range imports {
+		if !visible[im.LocalGroupID] {
+			continue
+		}
+		peer, _ := db.GetFederationPeer(im.Peer)
+		if peer == nil {
+			continue
+		}
+		cat, at, err := fedCatalogFor(peer.InstanceID)
+		if err != nil || cat == nil {
+			continue
+		}
+		online := rt != nil && rt.isOnline(peer.InstanceID)
+		addrPeer := peer.Label
+		if addrPeer == "" {
+			addrPeer = peer.InstanceID
+		}
+		for _, g := range cat.Groups {
+			if g.Name != im.RemoteGroup {
+				continue
+			}
+			for _, m := range g.Members {
+				key := peer.InstanceID + "/" + m.Agent + "/" + g.Name
+				rm := byKey[key]
+				if rm == nil {
+					rm = &fedRemoteMember{
+						Address: m.Name + "@" + addrPeer, Agent: m.Agent, Name: m.Name, Role: m.Role, Harness: m.Harness,
+						Presence: m.Presence, Peer: peerDisplay(peer), Instance: peer.InstanceID, RemoteGroup: g.Name,
+						Mail: g.HasCap(proto.CapMail), PeerOnline: online, CatalogAt: at,
+						Stale: !online || now.Sub(at) > fedStaleAfter,
+					}
+					byKey[key] = rm
+					order = append(order, key)
+				}
+				if !containsString(rm.LocalGroups, im.LocalGroupName) {
+					rm.LocalGroups = append(rm.LocalGroups, im.LocalGroupName)
+				}
+			}
+		}
+	}
+	out := make([]*fedRemoteMember, 0, len(order))
+	for _, k := range order {
+		sort.Strings(byKey[k].LocalGroups)
+		out = append(out, byKey[k])
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Peer != out[j].Peer {
+			return out[i].Peer < out[j].Peer
+		}
+		return out[i].Address < out[j].Address
+	})
+	writeJSON(w, http.StatusOK, out)
+}
+
 // remoteSenderLabel names the sender of an inbound remote message for
 // nudges and inbox views, or "" for local mail.
 func remoteSenderLabel(messageID int64) (label, addr string) {
@@ -1009,6 +1127,7 @@ func registerFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/federation/status", handleFederationStatus)
 	mux.HandleFunc("/v1/federation/notify", handleFederationNotify)
 	mux.HandleFunc("GET /v1/federation/inbox", handleFederationInbox)
+	mux.HandleFunc("GET /v1/federation/reachable", handleFederationReachable)
 	mux.HandleFunc("/v1/federation/config", handleFederationConfig)
 	mux.HandleFunc("/v1/federation/peers/trust", handleFederationTrust)
 	mux.HandleFunc("/v1/federation/peers/untrust", handleFederationUntrust)
