@@ -679,6 +679,10 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
+	if group, peer, ok := splitFederatedGroup(req.To); ok {
+		handleFederatedGroupSend(w, r, fromID, &req, group, peer)
+		return
+	}
 	if isFederatedAddress(strings.TrimSpace(req.To)) {
 		req.To = strings.TrimSpace(req.To)
 		handleFederatedAgentSend(w, r, fromID, &req)

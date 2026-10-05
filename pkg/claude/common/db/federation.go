@@ -479,6 +479,53 @@ func InsertFederationInboundMessage(m *AgentMessage, in FederationInbound, expir
 	return id, tx.Commit()
 }
 
+// InsertFederationInboundGroupMessages records one group_mail envelope as
+// seen and inserts one message per recipient, atomically. A recipient whose
+// regular backlog is at limit is skipped (its id is 0) rather than failing
+// the others. A repeated envelope returns ErrFederationDuplicate.
+func InsertFederationInboundGroupMessages(msgs []*AgentMessage, in FederationInbound, expiresAt time.Time, limit int) ([]int64, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(`INSERT OR IGNORE INTO federation_seen(from_instance, envelope_id, expires_at) VALUES(?,?,?)`,
+		in.FromInstance, in.EnvelopeID, dbTime(expiresAt))
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, ErrFederationDuplicate
+	}
+	ids := make([]int64, len(msgs))
+	for i, m := range msgs {
+		m.RegularSend = true
+		if limit > 0 {
+			pending, err := countUnprocessedRegularMessageBacklog(tx, m)
+			if err != nil {
+				return nil, err
+			}
+			if pending >= limit {
+				continue
+			}
+		}
+		id, err := insertAgentMessage(tx, m)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.Exec(`INSERT INTO federation_inbound(message_id, envelope_id, from_instance, from_agent, from_name, received_at)
+			VALUES(?,?,?,?,?,?)`, id, in.EnvelopeID, in.FromInstance, in.FromAgent, in.FromName, dbTime(time.Now())); err != nil {
+			return nil, err
+		}
+		ids[i] = id
+	}
+	return ids, tx.Commit()
+}
+
 // FederationHumanGroup is the group_name snapshot stored on human_messages
 // rows that came from a remote operator: it marks the row as remote and
 // names the sending instance, which bounds that peer's unread backlog.

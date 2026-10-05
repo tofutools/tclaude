@@ -26,7 +26,7 @@ func queuedState(pending int) string {
 }
 
 type messageParams struct {
-	Target    string   `pos:"true" optional:"true" help:"Target conv (UUID/prefix/title), 'group:<name|id>' to broadcast, or bare 'group:' for your own group (or use --to / --recipient)"`
+	Target    string   `pos:"true" optional:"true" help:"Target conv (UUID/prefix/title), 'group:<name|id>' to broadcast, bare 'group:' for your own group, or member@peer / group:<group>@peer for a federated recipient (or use --to / --recipient)"`
 	Text      string   `pos:"true" optional:"true" help:"Message body (or use --body / --stdin / --file)"`
 	Body      string   `long:"body" optional:"true" help:"Message body as a flag instead of positional text"`
 	Subject   string   `long:"subject" short:"s" optional:"true" help:"Optional subject line"`
@@ -171,7 +171,12 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 		Pending        int    `json:"pending,omitempty"`
 		ViaGroup       string `json:"via_group"`
 		RedirectedFrom string `json:"redirected_from,omitempty"`
-		Recipients     []struct {
+		// Remote (federated) sends answer with the queued envelope.
+		EnvelopeID string `json:"envelope_id,omitempty"`
+		To         string `json:"to,omitempty"`
+		State      string `json:"state,omitempty"`
+		Connected  bool   `json:"hub_connected,omitempty"`
+		Recipients []struct {
 			ConvID         string `json:"conv_id"`
 			AgentID        string `json:"agent_id,omitempty"`
 			Title          string `json:"title,omitempty"`
@@ -222,6 +227,15 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 	//
 	// `--cc` also fans out per-recipient (one row per To + each CC),
 	// so we reuse the multicast rendering path in that case too.
+	if resp.EnvelopeID != "" {
+		hub := "hub connected"
+		if !resp.Connected {
+			hub = "hub not connected; it will be sent when the connection returns"
+		}
+		fmt.Fprintf(stdout, "Queued remote message to %s via group %q (envelope %s, %s; %s).\n", resp.To, resp.ViaGroup, resp.EnvelopeID, resp.State, hub)
+		fmt.Fprintln(stdout, "Track delivery with: tclaude federation outbox")
+		return rcOK
+	}
 	isMulticast := strings.HasPrefix(p.Target, "group:")
 	hasCC := len(p.Cc) > 0
 	if isMulticast || hasCC {

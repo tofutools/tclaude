@@ -13,10 +13,10 @@ a shared relay, **`tclaude-hub`**, so no machine needs an inbound listener and
 laptops behind NAT or a corporate network work as-is.
 
 !!! note "Status"
-    CLI only. Built: discovery, mail with attachments, operator mail,
-    request-and-approve remote spawn, and cross-instance group routes.
-    Stopping or reading a colleague's agents, cross-instance group
-    multicast, and a dashboard view are not built yet.
+    CLI only. Built: discovery, mail with attachments, mail to remote
+    groups, operator mail, request-and-approve remote spawn, and
+    cross-instance group routes. Stopping or reading a colleague's agents
+    and a dashboard view are not built yet.
 
 ## Trust model
 
@@ -218,6 +218,23 @@ prefix. `peer` may be the label, the hub-reported name, or an instance-id
 prefix. An address whose `@…` part does not name a trusted peer is resolved
 locally as before, so local titles containing `@` keep working.
 
+### Remote groups
+
+An agent can mail every member of a remote group at once:
+
+```bash
+tclaude agent message group:builders@bob "release at 5" --role reviewer
+```
+
+The same rules apply as for a single member: the group must export `mail`
+to you and be imported into one of your groups, and you need
+`federation.message`. One envelope crosses the hub. The receiving instance
+delivers it to the group's members as of arrival, not to the roster in your
+catalog. `--role` narrows the recipients there, case-insensitively. Members
+can reply, and their replies come back to you. Group mail is text only: no
+`--cc`, `--attach` or member subsets. `tclaude federation outbox` shows it
+as accepted once the peer has stored it.
+
 ### Attachments
 
 ```bash
@@ -376,7 +393,7 @@ is by inspecting the caller's process tree.
 
 - The hub sees routing metadata (sender, recipient, kind, size, timing),
   though not payloads.
-- No `group:` multicast across instances, no `--cc` to remote recipients.
+- No `--cc` to remote recipients; remote group mail carries no attachments.
 - Remote routes relay through the hub, so their throughput is bounded by
   the hub's stream limits. There is no end-to-end flow control yet: about
   4 MiB is buffered per connection, and a sender that outruns the hub's

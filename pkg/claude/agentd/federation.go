@@ -488,6 +488,8 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		rt.sendCatalog(from)
 	case proto.KindMail, proto.KindOperatorMail:
 		rt.acceptMail(peer, env)
+	case proto.KindGroupMail:
+		rt.acceptGroupMail(peer, env)
 	case proto.KindAck:
 		rt.handleAck(env)
 	case proto.KindSpawnReq:
@@ -731,7 +733,7 @@ func federationInboundAuthorized(peer string, env *proto.Envelope, conv string) 
 		// that mail is live: a refused, expired or long-gone original
 		// confers nothing.
 		if row, _ := db.GetFederationOutbox(env.InReplyTo); row != nil &&
-			row.Kind == proto.KindMail && row.ToInstance == peer && row.FromAgent != "" && row.FromAgent == env.To.Agent &&
+			(row.Kind == proto.KindMail || row.Kind == proto.KindGroupMail) && row.ToInstance == peer && row.FromAgent != "" && row.FromAgent == env.To.Agent &&
 			(row.State == db.FedOutboxSent || row.State == db.FedOutboxAccepted) && time.Now().Before(row.ExpiresAt) {
 			return 0, true
 		}

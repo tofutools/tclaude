@@ -33,6 +33,10 @@ const (
 	// not queued in the outbox.
 	KindRouteOpen   = "route_open"
 	KindRouteAnswer = "route_answer"
+	// KindGroupMail is mail to every current member of an exported group
+	// (optionally narrowed by role). The receiver resolves the members:
+	// it, not the sender's catalog, is the authority on its roster.
+	KindGroupMail = "group_mail"
 )
 
 // Export capabilities a catalog group can grant.
@@ -161,6 +165,16 @@ type AckPayload struct {
 	Status string `json:"status"`
 	Code   string `json:"code,omitempty"`
 	Reason string `json:"reason,omitempty"`
+	// Delivered counts the recipients of an accepted group_mail.
+	Delivered int `json:"delivered,omitempty"`
+}
+
+// GroupMailPayload is mail to an exported group's members.
+type GroupMailPayload struct {
+	Group   string `json:"group"`
+	Role    string `json:"role,omitempty"`
+	Subject string `json:"subject,omitempty"`
+	Body    string `json:"body"`
 }
 
 // CatalogPayload lists what an instance exports to the receiving peer.
