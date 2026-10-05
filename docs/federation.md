@@ -218,6 +218,18 @@ prefix. `peer` may be the label, the hub-reported name, or an instance-id
 prefix. An address whose `@…` part does not name a trusted peer is resolved
 locally as before, so local titles containing `@` keep working.
 
+`--cc` may name remote members too:
+
+```bash
+tclaude agent message carol "release notes attached below" --cc bob-agent@bob --cc dan@bob
+```
+
+Each remote cc gets its own copy. It needs the same import and
+`federation.message` as a direct send, and all of them are checked before
+anything is sent: one refused cc aborts the whole send. A remote message
+can cc other remote members, but not local agents. Recipients on another
+instance do not see who else received the message.
+
 ### Remote groups
 
 An agent can mail every member of a remote group at once:
@@ -401,7 +413,8 @@ is by inspecting the caller's process tree.
 
 - The hub sees routing metadata (sender, recipient, kind, size, timing),
   though not payloads.
-- No `--cc` to remote recipients; remote group mail carries no attachments.
+- Remote group mail carries no attachments, and remote cc recipients do
+  not see each other.
 - Remote routes relay through the hub, so their throughput is bounded by
   the hub's stream limits. There is no end-to-end flow control yet: about
   4 MiB is buffered per connection, and a sender that outruns the hub's

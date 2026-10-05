@@ -581,6 +581,9 @@ type sendResp struct {
 
 type recipient struct {
 	ConvID string `json:"conv_id"`
+	// EnvelopeID is set instead of MessageID for a remote (member@peer)
+	// recipient: the message is queued in the federation outbox.
+	EnvelopeID string `json:"envelope_id,omitempty"`
 	// AgentID is the recipient's stable agent_id (JOH-27 PR3b-2), resolved
 	// from ConvID at send time so the sender's receipt names each recipient
 	// by the rotation-immune handle instead of a conv-id prefix. Empty when
@@ -683,9 +686,18 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		handleFederatedGroupSend(w, r, fromID, &req, group, peer)
 		return
 	}
+	localCC, remoteCC := splitFederatedCC(req.Cc)
 	if isFederatedAddress(strings.TrimSpace(req.To)) {
 		req.To = strings.TrimSpace(req.To)
+		if len(localCC) > 0 {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "a remote message can only cc other remote (member@peer) recipients; message local agents separately")
+			return
+		}
 		handleFederatedAgentSend(w, r, fromID, &req)
+		return
+	}
+	if len(remoteCC) > 0 {
+		handleSendWithRemoteCC(w, r, fromID, &req, localCC, remoteCC)
 		return
 	}
 	if len(req.Attachments) > 0 {

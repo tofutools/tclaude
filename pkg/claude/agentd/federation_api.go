@@ -316,6 +316,8 @@ type fedSendResp struct {
 	State      string `json:"state"`
 	ViaGroup   string `json:"via_group,omitempty"`
 	Connected  bool   `json:"hub_connected"`
+	// Cc lists the copies queued for remote cc recipients.
+	Cc []fedSendResp `json:"cc,omitempty"`
 }
 
 func fedConnected() bool {
@@ -326,8 +328,8 @@ func fedConnected() bool {
 // handleFederatedAgentSend is the agent path of `tclaude agent message
 // member@peer`, reached from handleMessages.
 func handleFederatedAgentSend(w http.ResponseWriter, r *http.Request, fromConv string, req *sendReq) {
-	if len(req.Cc) > 0 || req.Role != "" || len(req.Members) > 0 || req.Gen != "" {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "cc, role, members and gen are not supported for remote recipients")
+	if req.Role != "" || len(req.Members) > 0 || req.Gen != "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "role, members and gen are not supported for remote recipients")
 		return
 	}
 	t, err := resolveFederatedTarget(fromConv, req.To)
@@ -335,21 +337,13 @@ func handleFederatedAgentSend(w http.ResponseWriter, r *http.Request, fromConv s
 		writeFedErr(w, err)
 		return
 	}
-	// The sender needs federation.message for at least one importing group
-	// it belongs to. Try each silently; fall back to the full gate (which
-	// handles --ask-human and writes the 403) on the first.
-	via := ""
-	for _, g := range t.localGroups {
-		if ok, _, err := permissionAllowsAction(r, fromConv, PermFederationMessage, ActionContext{Group: g, Peer: t.peer.InstanceID}); err == nil && ok {
-			via = g
-			break
-		}
+	via, ok := authorizeFederatedTarget(w, r, fromConv, t)
+	if !ok {
+		return
 	}
-	if via == "" {
-		if _, ok := requirePermission(w, r, PermFederationMessage, ActionContext{Group: t.localGroups[0], Peer: t.peer.InstanceID}); !ok {
-			return
-		}
-		via = t.localGroups[0]
+	ccs, ok := authorizeFederatedCC(w, r, fromConv, req.Cc)
+	if !ok {
+		return
 	}
 	row, err := queueFederatedMail(fromConv, t, req.Subject, req.Body, "", req.Attachments)
 	if err != nil {
@@ -357,8 +351,34 @@ func handleFederatedAgentSend(w http.ResponseWriter, r *http.Request, fromConv s
 		return
 	}
 	setAuditTargetLabel(r, t.label())
-	writeJSON(w, http.StatusOK, fedSendResp{EnvelopeID: row.EnvelopeID, To: t.label(), ToAgent: t.agentID + "@" + t.peer.InstanceID,
-		State: row.State, ViaGroup: via, Connected: fedConnected()})
+	resp := fedSendResp{EnvelopeID: row.EnvelopeID, To: t.label(), ToAgent: t.agentID + "@" + t.peer.InstanceID,
+		State: row.State, ViaGroup: via, Connected: fedConnected()}
+	for _, c := range ccs {
+		cr := fedSendResp{To: c.target.label(), ToAgent: c.target.agentID + "@" + c.target.peer.InstanceID, ViaGroup: c.via}
+		if row, err := queueFederatedMail(fromConv, c.target, req.Subject, req.Body, "", req.Attachments); err != nil {
+			cr.State = "failed: " + err.Error()
+		} else {
+			cr.EnvelopeID, cr.State = row.EnvelopeID, row.State
+		}
+		resp.Cc = append(resp.Cc, cr)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// authorizeFederatedTarget checks that fromConv holds federation.message
+// for at least one importing group it belongs to and returns that group.
+// It tries each silently and falls back to the full gate (which handles
+// --ask-human and writes the 403) on the first.
+func authorizeFederatedTarget(w http.ResponseWriter, r *http.Request, fromConv string, t *fedTarget) (string, bool) {
+	for _, g := range t.localGroups {
+		if ok, _, err := permissionAllowsAction(r, fromConv, PermFederationMessage, ActionContext{Group: g, Peer: t.peer.InstanceID}); err == nil && ok {
+			return g, true
+		}
+	}
+	if _, ok := requirePermission(w, r, PermFederationMessage, ActionContext{Group: t.localGroups[0], Peer: t.peer.InstanceID}); !ok {
+		return "", false
+	}
+	return t.localGroups[0], true
 }
 
 // handleFederatedReply answers an inbound remote message. Reply authority

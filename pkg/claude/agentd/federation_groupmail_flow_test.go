@@ -232,3 +232,80 @@ func TestFederation_OutboundGroupMail(t *testing.T) {
 	p.send(reply)
 	require.Equal(t, proto.AckAccepted, fedAckOf(t, p, reply.ID).Status)
 }
+
+// TestFederation_RemoteCC: remote member@peer entries in --cc each get their
+// own sealed copy; they are authorized before anything is written.
+func TestFederation_RemoteCC(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+
+	const alice = "fedc1-alice-bbbb-cccc-000000000001"
+	const carol = "fedc1-carol-bbbb-cccc-000000000002"
+	f.HaveGroup("team")
+	f.HaveConvWithTitle(alice, "alice-agent")
+	f.HaveConvWithTitle(carol, "carol-agent")
+	f.HaveMember("team", alice)
+	f.HaveMember("team", carol)
+	p.send(p.envelope(proto.KindCatalog, proto.Endpoint{}, proto.CatalogPayload{Groups: []proto.CatalogGroup{{
+		Name: "builders", Caps: []string{proto.CapMail},
+		Members: []proto.CatalogMember{
+			{Agent: "agt_bobremote0000000000000000", Name: "bob-agent"},
+			{Agent: "agt_danremote0000000000000000", Name: "dan-agent"},
+		},
+	}}}))
+	fedEventually(t, "remote catalog visible", func() bool {
+		for _, r := range fedStatus(t, f).Remote {
+			if r.Label == "bob" && len(r.Groups) == 1 {
+				return true
+			}
+		}
+		return false
+	})
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/imports", map[string]any{"local_group": "team", "peer": "bob", "remote_group": "builders"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	send := func(body map[string]any) (int, map[string]any) {
+		body["body"] = "ship it"
+		rec := postMessage(t, f, alice, body)
+		var out map[string]any
+		testharness.DecodeJSON(t, rec, &out)
+		return rec.Code, out
+	}
+
+	// Without federation.message the whole send is refused: carol gets
+	// nothing either.
+	code, out := send(map[string]any{"to": "carol-agent", "cc": []string{"bob-agent@bob"}})
+	require.Equal(t, http.StatusForbidden, code, out)
+	require.Empty(t, fedRemoteBodies(t, carol))
+
+	g := postPermissionScope(t, f, "grant", map[string]any{"target": alice, "slug": agentd.PermFederationMessage, "scope": map[string]any{"group": []string{"team"}}})
+	require.Equal(t, http.StatusOK, g.Code, g.Body)
+
+	code, out = send(map[string]any{"to": "carol-agent", "cc": []string{"bob-agent@bob"}})
+	require.Equal(t, http.StatusOK, code, out)
+	rcpts := out["recipients"].([]any)
+	require.Len(t, rcpts, 2)
+	require.Equal(t, "carol-agent", rcpts[0].(map[string]any)["title"])
+	remote := rcpts[1].(map[string]any)
+	require.Equal(t, "bob-agent@bob", remote["title"])
+	require.Equal(t, true, remote["queued"])
+	envID := remote["envelope_id"].(string)
+	require.Len(t, fedRemoteBodies(t, carol), 1)
+	fedEventually(t, "cc copy at peer", func() bool {
+		agentd.FlushFederationOutboxForTest()
+		for _, m := range p.envelopes(proto.KindMail) {
+			if m.ID == envID && m.To.Agent == "agt_bobremote0000000000000000" {
+				return true
+			}
+		}
+		return false
+	})
+
+	// A remote primary may cc other remote members, not local agents.
+	code, out = send(map[string]any{"to": "bob-agent@bob", "cc": []string{"dan-agent@bob"}})
+	require.Equal(t, http.StatusOK, code, out)
+	cc := out["cc"].([]any)
+	require.Len(t, cc, 1)
+	require.Equal(t, "dan-agent@bob", cc[0].(map[string]any)["to"])
+	code, out = send(map[string]any{"to": "bob-agent@bob", "cc": []string{"carol-agent"}})
+	require.Equal(t, http.StatusBadRequest, code, out)
+}

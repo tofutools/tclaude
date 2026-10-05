@@ -176,7 +176,13 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 		To         string `json:"to,omitempty"`
 		State      string `json:"state,omitempty"`
 		Connected  bool   `json:"hub_connected,omitempty"`
+		Cc         []struct {
+			To         string `json:"to"`
+			EnvelopeID string `json:"envelope_id"`
+			State      string `json:"state"`
+		} `json:"cc,omitempty"`
 		Recipients []struct {
+			EnvelopeID     string `json:"envelope_id,omitempty"`
 			ConvID         string `json:"conv_id"`
 			AgentID        string `json:"agent_id,omitempty"`
 			Title          string `json:"title,omitempty"`
@@ -233,6 +239,13 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 			hub = "hub not connected; it will be sent when the connection returns"
 		}
 		fmt.Fprintf(stdout, "Queued remote message to %s via group %q (envelope %s, %s; %s).\n", resp.To, resp.ViaGroup, resp.EnvelopeID, resp.State, hub)
+		for _, c := range resp.Cc {
+			if c.EnvelopeID == "" {
+				fmt.Fprintf(stdout, "  cc %s: %s\n", c.To, c.State)
+				continue
+			}
+			fmt.Fprintf(stdout, "  cc %s: envelope %s, %s\n", c.To, c.EnvelopeID, c.State)
+		}
 		fmt.Fprintln(stdout, "Track delivery with: tclaude federation outbox")
 		return rcOK
 	}
@@ -292,6 +305,14 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 				// hop so the sender can update their selector if they
 				// were typing a stale UUID.
 				redirect = fmt.Sprintf("  [redirected from %s, superseded]", short(rcp.RedirectedFrom))
+			}
+			if rcp.EnvelopeID != "" || (rcp.ConvID == "" && strings.Contains(rcp.AgentID, "@")) {
+				// A remote recipient: queued in the federation outbox.
+				if rcp.Queued {
+					state = "queued remotely, envelope " + rcp.EnvelopeID
+				}
+				fmt.Fprintf(stdout, "  remote   %s  (%s)\n", name, state)
+				continue
 			}
 			fmt.Fprintf(stdout, "  #%-6d %s  %s  (%s)%s\n", rcp.MessageID, shortAgentID(rcp.AgentID, rcp.ConvID), name, state, redirect)
 		}
