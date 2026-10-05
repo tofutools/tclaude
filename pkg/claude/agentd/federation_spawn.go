@@ -302,8 +302,14 @@ func (rt *fedRuntime) handleSpawnResult(peer *db.FederationPeer, env *proto.Enve
 		rt.refuseInbound(peer, env, "federation.spawn.result", "operator", fedCodeMalformed, "no such spawn request")
 		return
 	}
-	if fresh, err := db.MarkFederationEnvelopeSeen(peer.InstanceID, env.ID, env.ExpiresAt); err != nil || !fresh {
-		ack() // a resend after a lost ack: deliver nothing twice
+	if !rt.allowInbound(peer.InstanceID) {
+		rt.refuseInbound(peer, env, "federation.spawn.result", "operator", fedCodeRateLimited, "peer exceeded inbound rate")
+		return
+	}
+	// One result per request, whatever envelope ids the peer uses: a resend
+	// (or a second, contradicting answer) is acknowledged and dropped.
+	if fresh, err := db.MarkFederationEnvelopeSeen(peer.InstanceID, "spawnres:"+row.EnvelopeID, row.ExpiresAt.Add(fedMailTTL)); err != nil || !fresh {
+		ack()
 		return
 	}
 	peerName := proto.SafeName(peerDisplay(peer), true)
@@ -468,6 +474,21 @@ func handleFederationSpawnRequestApprove(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusConflict, "not_exported", "group "+req.GroupName+" no longer accepts spawn requests from "+peerDisplay(peer))
 		return
 	}
+	// Claim the request before spawning: a concurrent approve or deny now
+	// sees it as taken.
+	if won, err := db.ClaimFederationSpawnRequest(req.ID); err != nil || !won {
+		writeError(w, http.StatusConflict, "decided", fmt.Sprintf("spawn request #%d is being decided by another call", req.ID))
+		return
+	}
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			if err := db.ReleaseFederationSpawnRequest(req.ID); err != nil {
+				slog.Warn("federation: releasing spawn request failed", "request", req.ID, "error", err)
+			}
+		}
+	}
 	from := req.FromName + "@" + proto.SafeName(peerDisplay(peer), true)
 	spawn := agent.SpawnRequest{
 		Name:    fedFirst(strings.TrimSpace(in.Name), req.Name),
@@ -480,6 +501,7 @@ func handleFederationSpawnRequestApprove(w http.ResponseWriter, r *http.Request)
 	}
 	raw, err := json.Marshal(spawn)
 	if err != nil {
+		release()
 		writeFedErr(w, err)
 		return
 	}
@@ -490,8 +512,9 @@ func handleFederationSpawnRequestApprove(w http.ResponseWriter, r *http.Request)
 	rec := httptest.NewRecorder()
 	handleGroupSpawn(rec, inner, g)
 	if rec.Code != http.StatusOK {
-		// The request stays pending so the operator can retry with other
-		// launch options.
+		// The request goes back to pending so the operator can retry with
+		// other launch options.
+		release()
 		for k, v := range rec.Header() {
 			w.Header()[k] = v
 		}
@@ -501,9 +524,8 @@ func handleFederationSpawnRequestApprove(w http.ResponseWriter, r *http.Request)
 	}
 	var sr agent.SpawnResponse
 	_ = json.Unmarshal(rec.Body.Bytes(), &sr)
-	won, err := db.DecideFederationSpawnRequest(req.ID, db.FedSpawnApproved, sr.AgentID, "")
-	if err != nil || !won {
-		slog.Warn("federation: spawn request decided concurrently", "request", req.ID, "error", err)
+	if _, err := db.DecideFederationSpawnRequest(req.ID, db.FedSpawnApproving, db.FedSpawnApproved, sr.AgentID, ""); err != nil {
+		slog.Warn("federation: recording spawn approval failed", "request", req.ID, "error", err)
 	}
 	queueSpawnResult(req, peer, proto.SpawnResultPayload{Status: proto.SpawnApproved, Agent: sr.AgentID, Name: fedFirst(spawn.Name, sr.Label)})
 	broadcastFederationCatalogs()
@@ -533,7 +555,7 @@ func handleFederationSpawnRequestDeny(w http.ResponseWriter, r *http.Request) {
 	if len(reason) > 300 {
 		reason = reason[:300]
 	}
-	won, err := db.DecideFederationSpawnRequest(req.ID, db.FedSpawnDenied, "", reason)
+	won, err := db.DecideFederationSpawnRequest(req.ID, db.FedSpawnPending, db.FedSpawnDenied, "", reason)
 	if err != nil {
 		writeFedErr(w, err)
 		return

@@ -575,6 +575,9 @@ func FederationInboundForMessage(messageID int64) (*FederationInbound, error) {
 // Federation spawn request statuses.
 const (
 	FedSpawnPending  = "pending"
+	// FedSpawnApproving is held by one approve call while it spawns, so a
+	// concurrent approve or deny cannot also act on the request.
+	FedSpawnApproving = "approving"
 	FedSpawnApproved = "approved"
 	FedSpawnDenied   = "denied"
 )
@@ -701,16 +704,16 @@ func ListFederationSpawnRequests(limit int) ([]*FederationSpawnRequest, error) {
 	return out, rows.Err()
 }
 
-// DecideFederationSpawnRequest moves a pending request to status. It
-// reports false when the request was no longer pending, so two concurrent
-// decisions cannot both win.
-func DecideFederationSpawnRequest(id int64, status, resultAgent, reason string) (bool, error) {
+// DecideFederationSpawnRequest moves a request from status `from` to
+// status. It reports false when the request was no longer in `from`, so two
+// concurrent decisions cannot both win.
+func DecideFederationSpawnRequest(id int64, from, status, resultAgent, reason string) (bool, error) {
 	d, err := Open()
 	if err != nil {
 		return false, err
 	}
 	res, err := d.Exec(`UPDATE federation_spawn_requests SET status=?, result_agent=?, reason=?, decided_at=?
-		WHERE id=? AND status=?`, status, resultAgent, reason, dbTime(time.Now()), id, FedSpawnPending)
+		WHERE id=? AND status=?`, status, resultAgent, reason, dbTime(time.Now()), id, from)
 	if err != nil {
 		return false, err
 	}
@@ -732,4 +735,30 @@ func MarkFederationEnvelopeSeen(fromInstance, envelopeID string, expiresAt time.
 	}
 	n, _ := res.RowsAffected()
 	return n == 1, nil
+}
+
+// ClaimFederationSpawnRequest moves a pending request to approving and
+// reports whether this caller won it.
+func ClaimFederationSpawnRequest(id int64) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`UPDATE federation_spawn_requests SET status=? WHERE id=? AND status=?`, FedSpawnApproving, id, FedSpawnPending)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
+
+// ReleaseFederationSpawnRequest returns an approving request to pending
+// after a failed spawn.
+func ReleaseFederationSpawnRequest(id int64) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE federation_spawn_requests SET status=? WHERE id=? AND status=?`, FedSpawnPending, id, FedSpawnApproving)
+	return err
 }

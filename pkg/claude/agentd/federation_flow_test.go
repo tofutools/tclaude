@@ -915,6 +915,11 @@ func TestFederation_OutboundSpawnRequest(t *testing.T) {
 	p.send(res)
 	require.Equal(t, proto.AckAccepted, fedAckFor(t, p, res.ID).Status)
 	p.send(res)
+	// A second answer under a fresh envelope id is dropped too.
+	flip := p.envelope(proto.KindSpawnRes, proto.Endpoint{}, proto.SpawnResultPayload{Status: proto.SpawnDenied, Reason: "changed my mind"})
+	flip.InReplyTo = resp.EnvelopeID
+	p.send(flip)
+	require.Equal(t, proto.AckAccepted, fedAckFor(t, p, flip.ID).Status)
 	inbox := func() []string {
 		msgs, err := db.ListAgentMessagesForConv(alice, 50)
 		require.NoError(t, err)
