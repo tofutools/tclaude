@@ -81,7 +81,7 @@ type serveParams struct {
 	TLSKey          string        `long:"tls-key" optional:"true" help:"TLS private key (PEM)"`
 	Open            bool          `long:"open" help:"Admit any instance that proves key possession (development only)"`
 	FramesPerMinute int           `long:"frames-per-minute" default:"120" help:"Per-instance send rate limit (frames)"`
-	BytesPerMinute  int           `long:"bytes-per-minute" default:"2097152" help:"Per-instance send rate limit (bytes)"`
+	BytesPerMinute  int           `long:"bytes-per-minute" default:"8388608" help:"Per-instance send rate limit (bytes)"`
 	PolicyRefresh   time.Duration `long:"policy-refresh" default:"15s" help:"How often admin edits are re-read"`
 }
 

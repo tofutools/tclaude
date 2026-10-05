@@ -552,9 +552,10 @@ func unimportCmd() *cobra.Command {
 // --- mail ---
 
 type sendParams struct {
-	To      string `pos:"true" help:"member@peer"`
-	Body    string `pos:"true" help:"Message body"`
-	Subject string `long:"subject" optional:"true" help:"Subject"`
+	To      string   `pos:"true" help:"member@peer"`
+	Body    string   `pos:"true" help:"Message body"`
+	Subject string   `long:"subject" optional:"true" help:"Subject"`
+	Attach  []string `long:"attach" short:"a" optional:"true" help:"Attach a file (repeatable; the remote group must accept attachments)"`
 }
 
 func sendCmd() *cobra.Command {
@@ -569,7 +570,15 @@ func sendCmd() *cobra.Command {
 				State      string `json:"state"`
 				Connected  bool   `json:"hub_connected"`
 			}
-			if rc := post(os.Stderr, "/v1/federation/send", map[string]any{"to": p.To, "body": p.Body, "subject": p.Subject}, &out); rc != 0 {
+			req := map[string]any{"to": p.To, "body": p.Body, "subject": p.Subject}
+			if len(p.Attach) > 0 {
+				atts, err := agent.ReadRemoteAttachments(p.Attach)
+				if err != nil {
+					os.Exit(fail(os.Stderr, err))
+				}
+				req["attachments"] = atts
+			}
+			if rc := post(os.Stderr, "/v1/federation/send", req, &out); rc != 0 {
 				os.Exit(rc)
 			}
 			fmt.Printf("%s to %s (envelope %s)\n", out.State, out.To, out.EnvelopeID[:12])

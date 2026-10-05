@@ -5,10 +5,12 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/sha512"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"math/big"
+	"strconv"
 
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/curve25519"
@@ -26,8 +28,10 @@ import (
 // Scheme (ECIES-style): the sender draws an ephemeral X25519 key, computes
 // shared = X25519(eph, recipient), derives key = HKDF-SHA256(shared,
 // salt=envelope id, info="tclaude-fed-payload-v1"||eph_pub||recipient_pub),
-// and seals the payload with ChaCha20-Poly1305 (random nonce, AAD = envelope
-// id). The whole envelope, ciphertext included, is then signed with the
+// and seals the payload with ChaCha20-Poly1305 (random nonce, AAD = the
+// envelope header: version, id, kind, both endpoints, reply link and expiry).
+// Binding the header stops a trusted peer from lifting another sender's
+// ciphertext into an envelope of its own. The whole envelope, ciphertext included, is then signed with the
 // sender's identity key as before, which authenticates the sender; the
 // ephemeral key gives forward secrecy against a later compromise of the
 // sender's key (not of the recipient's).
@@ -102,7 +106,7 @@ func payloadKey(shared, envelopeID, ephPub, recipientPub []byte) ([]byte, error)
 }
 
 // encryptPayload seals plaintext to the recipient's identity key.
-func encryptPayload(recipient ed25519.PublicKey, envelopeID string, plaintext []byte) (*Encrypted, error) {
+func encryptPayload(recipient ed25519.PublicKey, envelopeID string, aad, plaintext []byte) (*Encrypted, error) {
 	rpub, err := X25519PublicFromEd25519(recipient)
 	if err != nil {
 		return nil, err
@@ -131,14 +135,14 @@ func encryptPayload(recipient ed25519.PublicKey, envelopeID string, plaintext []
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, err
 	}
-	return &Encrypted{EphemeralPub: ephPub, Nonce: nonce, Ciphertext: aead.Seal(nil, nonce, plaintext, []byte(envelopeID))}, nil
+	return &Encrypted{EphemeralPub: ephPub, Nonce: nonce, Ciphertext: aead.Seal(nil, nonce, plaintext, aad)}, nil
 }
 
 // ErrDecrypt is returned when a payload does not decrypt for this instance.
 var ErrDecrypt = errors.New("envelope payload does not decrypt")
 
 // decryptPayload opens an Encrypted addressed to id.
-func decryptPayload(id *Identity, envelopeID string, enc *Encrypted) ([]byte, error) {
+func decryptPayload(id *Identity, envelopeID string, aad []byte, enc *Encrypted) ([]byte, error) {
 	if enc == nil || len(enc.EphemeralPub) != curve25519.PointSize || len(enc.Nonce) != chacha20poly1305.NonceSize {
 		return nil, ErrDecrypt
 	}
@@ -158,9 +162,30 @@ func decryptPayload(id *Identity, envelopeID string, enc *Encrypted) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
-	pt, err := aead.Open(nil, enc.Nonce, enc.Ciphertext, []byte(envelopeID))
+	pt, err := aead.Open(nil, enc.Nonce, enc.Ciphertext, aad)
 	if err != nil {
 		return nil, ErrDecrypt
 	}
 	return pt, nil
+}
+
+// headerAAD is the length-prefixed envelope header the payload is bound to.
+func headerAAD(e *Envelope) []byte {
+	var b []byte
+	put := func(s string) {
+		b = binary.BigEndian.AppendUint32(b, uint32(len(s)))
+		b = append(b, s...)
+	}
+	put("tclaude-fed-aad-v2")
+	put(strconv.Itoa(e.V))
+	put(e.ID)
+	put(e.Kind)
+	put(e.From.Instance)
+	put(e.From.Agent)
+	put(e.To.Instance)
+	put(e.To.Agent)
+	put(e.InReplyTo)
+	put(strconv.FormatInt(e.CreatedAt.UnixNano(), 10))
+	put(strconv.FormatInt(e.ExpiresAt.UnixNano(), 10))
+	return b
 }

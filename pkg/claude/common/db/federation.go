@@ -437,7 +437,7 @@ func FederationEnvelopeSeen(fromInstance, envelopeID string) (bool, error) {
 // inserts m bounded like a regular send, and marks it remote. A repeated
 // (sender, envelope id) returns ErrFederationDuplicate and writes nothing;
 // a full backlog returns *AgentMessageQueueFullError and writes nothing.
-func InsertFederationInboundMessage(m *AgentMessage, in FederationInbound, expiresAt time.Time, limit int) (int64, error) {
+func InsertFederationInboundMessage(m *AgentMessage, in FederationInbound, expiresAt time.Time, limit int, attachments []AgentMessageAttachment) (int64, error) {
 	d, err := Open()
 	if err != nil {
 		return 0, err
@@ -467,6 +467,9 @@ func InsertFederationInboundMessage(m *AgentMessage, in FederationInbound, expir
 	}
 	id, err := insertAgentMessage(tx, m)
 	if err != nil {
+		return 0, err
+	}
+	if err := insertAgentMessageAttachments(tx, id, attachments); err != nil {
 		return 0, err
 	}
 	if _, err := tx.Exec(`INSERT INTO federation_inbound(message_id, envelope_id, from_instance, from_agent, from_name, received_at)
@@ -509,7 +512,7 @@ func InsertFederationInboundHumanMessage(m *HumanMessage, fromInstance, envelope
 	}
 	if unreadLimit > 0 {
 		var pending int
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM human_messages WHERE group_name=? AND read_at IS NULL`, m.GroupName).Scan(&pending); err != nil {
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM human_messages WHERE group_name=? AND from_conv='' AND read_at IS NULL`, m.GroupName).Scan(&pending); err != nil {
 			return 0, err
 		}
 		if pending >= unreadLimit {

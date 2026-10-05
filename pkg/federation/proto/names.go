@@ -97,3 +97,17 @@ func safeOptional(s string) string {
 	}
 	return SafeName(s, false)
 }
+
+// StripControls removes C0/C1 control characters (and DEL) from remote
+// text, keeping newlines and tabs, so it cannot drive a terminal.
+func StripControls(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return r
+		}
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			return -1
+		}
+		return r
+	}, s)
+}

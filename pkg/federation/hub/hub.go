@@ -43,7 +43,7 @@ func (c *Config) defaults() {
 		c.FramesPerMinute = 120
 	}
 	if c.BytesPerMinute <= 0 {
-		c.BytesPerMinute = 2 << 20
+		c.BytesPerMinute = 8 << 20
 	}
 	if c.PolicyRefresh <= 0 {
 		c.PolicyRefresh = 15 * time.Second

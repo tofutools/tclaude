@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -661,4 +662,92 @@ func TestFederation_ReachableRemoteMembers(t *testing.T) {
 		got := list(agentd.AsHumanPeer(get()))
 		return len(got) == 1 && got[0].Stale
 	})
+}
+
+func TestFederation_Attachments(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	t.Cleanup(agentd.SetOperatorMessageAttachmentBasesForTest(t.TempDir(), t.TempDir()))
+
+	const alice = "fed7-alice-bbbb-cccc-000000000001"
+	f.HaveGroup("team")
+	f.HaveConvWithTitle(alice, "alice-agent")
+	f.HaveMember("team", alice)
+	aliceAgent, err := db.AgentIDForConv(alice)
+	require.NoError(t, err)
+
+	export := func(caps ...string) {
+		rec := fedHuman(t, f, http.MethodPost, "/v1/federation/exports", map[string]any{"group": "team", "peer": "bob", "caps": caps})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	}
+	mailWith := func(atts ...proto.AttachmentPayload) *proto.Envelope {
+		m := p.envelope(proto.KindMail, proto.Endpoint{Agent: aliceAgent}, proto.MailPayload{Body: "see attached", Attachments: atts})
+		p.send(m)
+		return m
+	}
+	png := proto.AttachmentPayload{Name: "../../shot.png", Data: []byte("\x89PNG fake")}
+
+	// Mail alone does not admit files.
+	export("mail")
+	m := mailWith(png)
+	ack := fedAckFor(t, p, m.ID)
+	require.Equal(t, proto.AckRefused, ack.Status)
+	require.Contains(t, ack.Reason, "attachments")
+
+	// With the capability the file lands next to the message, renamed safely.
+	export("mail", "attachments")
+	m = mailWith(png)
+	require.Equal(t, proto.AckAccepted, fedAckFor(t, p, m.ID).Status)
+	in, err := db.FederationInboundByEnvelope(p.id.ID(), m.ID)
+	require.NoError(t, err)
+	require.NotNil(t, in)
+	atts, err := db.ListAgentMessageAttachments(in.MessageID)
+	require.NoError(t, err)
+	require.Len(t, atts, 1)
+	require.Equal(t, "shot.png", atts[0].Filename)
+	require.Equal(t, "image/png", atts[0].ContentType)
+	data, err := os.ReadFile(atts[0].StoragePath)
+	require.NoError(t, err)
+	require.Equal(t, png.Data, data)
+
+	// Types outside the allow-list are refused.
+	m = mailWith(proto.AttachmentPayload{Name: "page.html", Data: []byte("<script>")})
+	require.Equal(t, proto.AckRefused, fedAckFor(t, p, m.ID).Status)
+
+	// Outbound: bob's group accepts files, so alice may attach.
+	p.send(p.envelope(proto.KindCatalog, proto.Endpoint{}, proto.CatalogPayload{Groups: []proto.CatalogGroup{{
+		Name: "builders", Caps: []string{proto.CapMail, proto.CapAttachments},
+		Members: []proto.CatalogMember{{Agent: "agt_bobremote0000000000000000", Name: "bob-agent"}},
+	}}}))
+	fedEventually(t, "catalog stored", func() bool { raw, _, _ := db.GetFederationCatalog(p.id.ID()); return raw != "" })
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/imports", map[string]any{"local_group": "team", "peer": "bob", "remote_group": "builders"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NoError(t, db.GrantAgentPermission(alice, agentd.PermFederationMessage, "test"))
+	rec = postMessage(t, f, alice, map[string]any{"to": "bob-agent@bob", "body": "log attached",
+		"attachments": []proto.AttachmentPayload{{Name: "build.log", Data: []byte("ok\n")}}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var resp struct {
+		EnvelopeID string `json:"envelope_id"`
+	}
+	testharness.DecodeJSON(t, rec, &resp)
+	var got *proto.Envelope
+	fedEventually(t, "mail at peer", func() bool {
+		agentd.FlushFederationOutboxForTest()
+		for _, e := range p.envelopes(proto.KindMail) {
+			if e.ID == resp.EnvelopeID {
+				got = e
+				return true
+			}
+		}
+		return false
+	})
+	var mp proto.MailPayload
+	require.NoError(t, got.DecodePayload(&mp))
+	require.Len(t, mp.Attachments, 1)
+	require.Equal(t, "build.log", mp.Attachments[0].Name)
+
+	// Local recipients do not take attachments.
+	rec = postMessage(t, f, alice, map[string]any{"to": alice, "body": "x",
+		"attachments": []proto.AttachmentPayload{{Name: "a.txt", Data: []byte("x")}}})
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 }

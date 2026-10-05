@@ -11,7 +11,7 @@ import (
 )
 
 // EnvelopeVersion is the current envelope format version.
-const EnvelopeVersion = 1
+const EnvelopeVersion = 2
 
 // Envelope kinds.
 const (
@@ -29,16 +29,27 @@ const (
 	CapRoster   = "roster"
 	CapPresence = "presence"
 	CapMail     = "mail"
+	// CapAttachments lets mail from the peer carry files. It only means
+	// something together with CapMail.
+	CapAttachments = "attachments"
 )
 
 // AllCaps lists every known capability in canonical order.
-var AllCaps = []string{CapRoster, CapPresence, CapMail}
+var AllCaps = []string{CapRoster, CapPresence, CapMail, CapAttachments}
 
 // MaxMailBody caps a mail envelope's body in bytes.
 const MaxMailBody = 16 * 1024
 
+// Attachment limits per mail. Files travel inline in the encrypted payload,
+// so they are base64-encoded twice on the wire; MaxEnvelopeBytes leaves room
+// for that.
+const (
+	MaxAttachments     = 4
+	MaxAttachmentBytes = 512 * 1024
+)
+
 // MaxEnvelopeBytes caps a sealed envelope's encoded size.
-const MaxEnvelopeBytes = 256 * 1024
+const MaxEnvelopeBytes = 1024 * 1024
 
 // Endpoint names an instance and optionally one of its agents.
 type Endpoint struct {
@@ -74,8 +85,26 @@ type Sealed struct {
 
 // MailPayload is the payload of a KindMail envelope.
 type MailPayload struct {
-	Subject string `json:"subject,omitempty"`
-	Body    string `json:"body"`
+	Subject     string              `json:"subject,omitempty"`
+	Body        string              `json:"body"`
+	Attachments []AttachmentPayload `json:"attachments,omitempty"`
+}
+
+// AttachmentPayload is one file carried by a mail. The receiver derives
+// the content type from the (sanitized) name; senders do not get to claim
+// one.
+type AttachmentPayload struct {
+	Name string `json:"name"`
+	Data []byte `json:"data"`
+}
+
+// AttachmentBytes is the total size of p's attachments.
+func (p *MailPayload) AttachmentBytes() int {
+	n := 0
+	for _, a := range p.Attachments {
+		n += len(a.Data)
+	}
+	return n
 }
 
 // Ack statuses.
@@ -164,7 +193,7 @@ func Seal(id *Identity, env *Envelope, recipient ed25519.PublicKey) (*Sealed, er
 	if len(payload) == 0 {
 		payload = json.RawMessage("{}")
 	}
-	enc, err := encryptPayload(recipient, env.ID, payload)
+	enc, err := encryptPayload(recipient, env.ID, headerAAD(env), payload)
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +249,7 @@ func Open(s *Sealed, senderPub ed25519.PublicKey, self *Identity, now time.Time)
 	if len(env.Payload) != 0 || env.Enc == nil {
 		return nil, ErrMalformed
 	}
-	pt, err := decryptPayload(self, env.ID, env.Enc)
+	pt, err := decryptPayload(self, env.ID, headerAAD(&env), env.Enc)
 	if err != nil {
 		return nil, err
 	}

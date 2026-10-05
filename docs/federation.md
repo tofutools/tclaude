@@ -33,7 +33,8 @@ The hub routes; it is never the authority over what an agent may do.
 - **End-to-end encrypted payloads.** Each payload (mail bodies, catalogs,
   acknowledgements) is encrypted to the recipient instance's key with an
   ephemeral X25519 key and ChaCha20-Poly1305, so the hub routes ciphertext
-  only. The encryption key is derived from the identity key, so trusting a
+  only. The ciphertext is bound to the envelope header, so no other peer can
+  lift it into an envelope of its own. The encryption key is derived from the identity key, so trusting a
   peer's fingerprint covers both. The hub still sees routing metadata: who
   talks to whom, when, envelope kinds and sizes.
 - **A remote instance speaks only for its own agents**, and only reaches
@@ -101,7 +102,7 @@ tclaude-hub revoke inst_…                   # drop it (live within ~15s)
 Instances see each other only if they share a **space**. Admin commands edit
 the database directly. A running hub picks up changes at its next policy
 refresh (`--policy-refresh`, default 15s). Per-instance send limits are
-`--frames-per-minute` (default 120) and `--bytes-per-minute` (default 2 MiB).
+`--frames-per-minute` (default 120) and `--bytes-per-minute` (default 8 MiB).
 `--open` admits anyone who proves key possession and is for development only.
 
 ## Joining
@@ -148,6 +149,7 @@ tclaude federation unexport builders --to bob
 | `roster` | member names and roles |
 | `presence` | online/offline per member |
 | `mail` | members may receive mail from the peer (names and ids are shared so they are addressable) |
+| `attachments` | with `mail`: that mail may carry files |
 
 Nothing is exported by default. A peer receives a signed **catalog** listing
 exactly what you export to it. Catalogs go straight to the peer and are never
@@ -214,6 +216,23 @@ prefix. `peer` may be the label, the hub-reported name, or an instance-id
 prefix. An address whose `@…` part does not name a trusted peer is resolved
 locally as before, so local titles containing `@` keep working.
 
+### Attachments
+
+```bash
+tclaude agent message bob-agent@bob "build log attached" --attach build.log --attach shot.png
+tclaude federation send bob-agent@bob "see attached" --attach diff.patch
+```
+
+The CLI reads the files as the caller, so an agent can attach only what it
+can read itself. Files travel inside the encrypted envelope: at most 4 per
+message and 512 KiB in total. The receiver accepts them only for a recipient
+in a group exported to the sender with both `mail` and `attachments`. It
+re-derives each file's name and type itself and accepts only images, text,
+Markdown, CSV, JSON, YAML, diffs/patches and PDF; HTML, SVG, archives and
+executables are refused. Each peer may keep at most 64 MiB of files on the
+receiving side. Received files appear on the message like any other inbox
+attachment. Local recipients do not take attachments: send them a path.
+
 ## Operator to operator
 
 Operators of two trusted instances can message each other directly, with no
@@ -254,7 +273,7 @@ tclaude federation outbox     # queued → sent → accepted | refused | expired
 | `refused` | rejected by the peer (for example `not_exported`); final |
 | `expired` | never acknowledged in time |
 
-Bodies are text only, up to 16 KiB. The receiver applies a per-peer rate
+Bodies are text, up to 16 KiB; control characters are stripped on receipt. The receiver applies a per-peer rate
 limit (30 mails a minute) and the usual unprocessed-message cap per recipient.
 A full inbox is retried rather than refused. Inbound remote mail is recorded
 in the [audit trail](permissions-and-audit.md) as `federation.mail.in`, and
@@ -273,8 +292,9 @@ is by inspecting the caller's process tree.
 
 - The hub sees routing metadata (sender, recipient, kind, size, timing),
   though not payloads.
-- No attachments, no `group:` multicast across instances, no `--cc` to
-  remote recipients.
+- No `group:` multicast across instances, no `--cc` to remote recipients.
+- Attachments ride inline and are capped at 512 KiB per message; operator
+  mail and replies cannot carry them.
 - Mail only: no remote spawn, stop, or transcript access.
 - Operator mail is sent from the CLI only; agents cannot reach a remote
   operator.

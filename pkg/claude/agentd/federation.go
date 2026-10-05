@@ -545,9 +545,20 @@ func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
 		refuse(fedCodeMalformed, "bad mail payload")
 		return
 	}
+	mp.Subject, mp.Body = proto.StripControls(mp.Subject), proto.StripControls(mp.Body)
 	if len(mp.Body) > proto.MaxMailBody || len(mp.Subject) > 512 || strings.TrimSpace(mp.Body) == "" {
 		refuse(fedCodeTooLarge, "body empty or too large")
 		return
+	}
+	if len(mp.Attachments) > 0 {
+		if env.Kind == proto.KindOperatorMail {
+			refuse(fedCodeMalformed, "operator mail does not carry attachments")
+			return
+		}
+		if err := validateFedAttachments(mp.Attachments); err != nil {
+			refuse(fedCodeTooLarge, err.Error())
+			return
+		}
 	}
 	if env.ExpiresAt.IsZero() || env.ExpiresAt.After(time.Now().Add(fedMaxInboundTTL)) {
 		refuse(fedCodeMalformed, "missing or too distant expiry")
@@ -577,6 +588,24 @@ func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
 		refuse(fedCodeNotExported, "recipient is not in a group exported to this instance with mail")
 		return
 	}
+	var attachments []db.AgentMessageAttachment
+	attachDir := ""
+	if len(mp.Attachments) > 0 {
+		if !fedAttachmentsAllowed(peer.InstanceID, conv) {
+			refuse(fedCodeNotExported, "recipient does not accept attachments from this instance")
+			return
+		}
+		if fedAttachmentUsage(peer.InstanceID)+int64(mp.AttachmentBytes()) > fedAttachmentPeerQuota {
+			refuse(fedCodeQueueFull, "attachment storage quota for this instance is full")
+			return
+		}
+		attachments, attachDir, err = storeFedAttachments(peer.InstanceID, mp.Attachments)
+		if err != nil {
+			slog.Error("federation: storing attachments failed", "error", err)
+			refuse(fedCodeInternal, "could not store attachments")
+			return
+		}
+	}
 	m := &db.AgentMessage{
 		GroupID: groupID, FromConv: "", ToConv: conv,
 		Subject:      mp.Subject,
@@ -585,7 +614,10 @@ func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
 	}
 	id, err := db.InsertFederationInboundMessage(m, db.FederationInbound{
 		EnvelopeID: env.ID, FromInstance: peer.InstanceID, FromAgent: senderAgent, FromName: senderName,
-	}, env.ExpiresAt, regularAgentMessageQueueLimit)
+	}, env.ExpiresAt, regularAgentMessageQueueLimit, attachments)
+	if err != nil && attachDir != "" {
+		_ = os.RemoveAll(attachDir)
+	}
 	switch {
 	case errors.Is(err, db.ErrFederationDuplicate):
 		rt.sendControl(env.From.Instance, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckAccepted})

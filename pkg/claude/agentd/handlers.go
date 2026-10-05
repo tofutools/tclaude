@@ -19,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 // --- /v1/info ---
@@ -534,6 +535,10 @@ type sendReq struct {
 	// gates the sender on group membership/ownership, and Members can
 	// only shrink reach, so an agent gains no authority it lacked.
 	Members []string `json:"members,omitempty"`
+	// Attachments are files the CLI read on the sender's behalf. Only
+	// remote (federated) recipients accept them; local agents share a
+	// filesystem and are sent paths instead.
+	Attachments []proto.AttachmentPayload `json:"attachments,omitempty"`
 }
 
 // sendResp carries the result of either a direct send or a group
@@ -677,6 +682,10 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	if isFederatedAddress(strings.TrimSpace(req.To)) {
 		req.To = strings.TrimSpace(req.To)
 		handleFederatedAgentSend(w, r, fromID, &req)
+		return
+	}
+	if len(req.Attachments) > 0 {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "attachments are only supported for remote (member@peer) recipients; send local agents a file path instead")
 		return
 	}
 	dispatchSend(w, fromID, &req)

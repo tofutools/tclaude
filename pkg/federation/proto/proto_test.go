@@ -189,3 +189,38 @@ func TestX25519DerivationAgrees(t *testing.T) {
 		}
 	}
 }
+
+// A trusted peer that sees another sender's ciphertext cannot re-sign it
+// as its own envelope: the payload is bound to the header.
+func TestCiphertextBoundToHeader(t *testing.T) {
+	alice, _ := NewIdentity()
+	bob, _ := NewIdentity()
+	mallory, _ := NewIdentity()
+	env, err := NewEnvelope(alice, KindMail, Endpoint{}, Endpoint{Instance: bob.ID(), Agent: "agt_x"}, time.Hour, MailPayload{Body: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := Seal(alice, env, bob.Pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire Envelope
+	if err := json.Unmarshal(s.Env, &wire); err != nil {
+		t.Fatal(err)
+	}
+	wire.From = Endpoint{Instance: mallory.ID()}
+	raw, _ := json.Marshal(&wire)
+	forged := &Sealed{Env: raw, Sig: ed25519.Sign(mallory.Priv, raw)}
+	if _, err := Open(forged, mallory.Pub, bob, time.Now()); !errors.Is(err, ErrDecrypt) {
+		t.Fatalf("lifted ciphertext opened: %v", err)
+	}
+	if _, err := Open(s, alice.Pub, bob, time.Now()); err != nil {
+		t.Fatalf("genuine envelope: %v", err)
+	}
+}
+
+func TestStripControls(t *testing.T) {
+	if got := StripControls("a\x1b[2Kb\n\tc\u009bd\x7f"); got != "a[2Kb\n\tcd" {
+		t.Fatalf("got %q", got)
+	}
+}

@@ -1,6 +1,9 @@
 package db
 
-import "fmt"
+import (
+	"database/sql"
+	"fmt"
+)
 
 // AgentMessageAttachment is daemon-owned metadata for a file accompanying an
 // inbox message. StoragePath is an absolute, agent-readable path.
@@ -60,20 +63,8 @@ func insertAgentMessageWithAttachmentsBounded(m *AgentMessage, attachments []Age
 			return 0, 0, err
 		}
 	}
-	for i := range attachments {
-		a := &attachments[i]
-		a.MessageID = id
-		a.Ordinal = i
-		if a.ContentType == "" {
-			a.ContentType = "application/octet-stream"
-		}
-		res, err := tx.Exec(`INSERT INTO agent_message_attachments
-			(message_id, ordinal, filename, content_type, size_bytes, storage_path)
-			VALUES (?, ?, ?, ?, ?, ?)`, id, i, a.Filename, a.ContentType, a.SizeBytes, a.StoragePath)
-		if err != nil {
-			return 0, 0, err
-		}
-		a.ID, _ = res.LastInsertId()
+	if err := insertAgentMessageAttachments(tx, id, attachments); err != nil {
+		return 0, 0, err
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, 0, err
@@ -170,4 +161,25 @@ func DeleteAgentMessageAttachment(id int64) error {
 	}
 	_, err = d.Exec(`DELETE FROM agent_message_attachments WHERE id = ?`, id)
 	return err
+}
+
+// insertAgentMessageAttachments writes attachment metadata for message id
+// inside the caller's transaction, in order.
+func insertAgentMessageAttachments(tx *sql.Tx, id int64, attachments []AgentMessageAttachment) error {
+	for i := range attachments {
+		a := &attachments[i]
+		a.MessageID = id
+		a.Ordinal = i
+		if a.ContentType == "" {
+			a.ContentType = "application/octet-stream"
+		}
+		res, err := tx.Exec(`INSERT INTO agent_message_attachments
+			(message_id, ordinal, filename, content_type, size_bytes, storage_path)
+			VALUES (?, ?, ?, ?, ?, ?)`, id, i, a.Filename, a.ContentType, a.SizeBytes, a.StoragePath)
+		if err != nil {
+			return err
+		}
+		a.ID, _ = res.LastInsertId()
+	}
+	return nil
 }

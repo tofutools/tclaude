@@ -117,6 +117,8 @@ type fedTarget struct {
 	peer    *db.FederationPeer
 	agentID string
 	name    string
+	// attachments: some matched remote group accepts files from us.
+	attachments bool
 	// operator addresses the peer's human operator instead of an agent.
 	operator    bool
 	remoteGroup []string
@@ -158,6 +160,7 @@ func resolveFederatedTarget(fromConv, addr string) (*fedTarget, error) {
 				}
 				t.agentID, t.name = m.Agent, m.Name
 				t.remoteGroup = append(t.remoteGroup, g.Name)
+				t.attachments = t.attachments || g.HasCap(proto.CapAttachments)
 			}
 		}
 	}
@@ -223,12 +226,23 @@ func containsString(xs []string, x string) bool {
 
 // queueFederatedMail seals mail from fromConv ("" = human operator) to the
 // target and writes the durable outbox row.
-func queueFederatedMail(fromConv string, t *fedTarget, subject, body, inReplyTo string) (*db.FederationOutboxRow, error) {
+func queueFederatedMail(fromConv string, t *fedTarget, subject, body, inReplyTo string, atts []proto.AttachmentPayload) (*db.FederationOutboxRow, error) {
 	if strings.TrimSpace(body) == "" {
 		return nil, newFedErr(http.StatusBadRequest, "invalid_arg", "body is empty")
 	}
 	if len(body) > proto.MaxMailBody {
 		return nil, newFedErr(http.StatusRequestEntityTooLarge, "too_large", "remote messages are limited to %d bytes", proto.MaxMailBody)
+	}
+	if len(atts) > 0 {
+		if t.operator {
+			return nil, newFedErr(http.StatusBadRequest, "invalid_arg", "operator mail does not carry attachments")
+		}
+		if err := validateFedAttachments(atts); err != nil {
+			return nil, newFedErr(http.StatusBadRequest, "invalid_arg", "%v", err)
+		}
+		if !t.attachments {
+			return nil, newFedErr(http.StatusForbidden, "not_exported", "%s does not accept attachments from this instance", t.label())
+		}
 	}
 	id, err := federationIdentity()
 	if err != nil {
@@ -245,7 +259,7 @@ func queueFederatedMail(fromConv string, t *fedTarget, subject, body, inReplyTo 
 		kind = proto.KindOperatorMail
 	}
 	env, err := proto.NewEnvelope(id, kind, from, proto.Endpoint{Instance: t.peer.InstanceID, Agent: t.agentID}, fedMailTTL,
-		proto.MailPayload{Subject: subject, Body: body})
+		proto.MailPayload{Subject: subject, Body: body, Attachments: atts})
 	if err != nil {
 		return nil, err
 	}
@@ -311,7 +325,7 @@ func handleFederatedAgentSend(w http.ResponseWriter, r *http.Request, fromConv s
 		}
 		via = t.localGroups[0]
 	}
-	row, err := queueFederatedMail(fromConv, t, req.Subject, req.Body, "")
+	row, err := queueFederatedMail(fromConv, t, req.Subject, req.Body, "", req.Attachments)
 	if err != nil {
 		writeFedErr(w, err)
 		return
@@ -339,7 +353,7 @@ func handleFederatedReply(w http.ResponseWriter, r *http.Request, fromConv strin
 		return
 	}
 	t := &fedTarget{peer: peer, agentID: in.FromAgent, name: in.FromName}
-	row, err := queueFederatedMail(fromConv, t, subject, body, in.EnvelopeID)
+	row, err := queueFederatedMail(fromConv, t, subject, body, in.EnvelopeID, nil)
 	if err != nil {
 		writeFedErr(w, err)
 		return
@@ -871,9 +885,10 @@ func handleFederationOutbox(w http.ResponseWriter, r *http.Request) {
 }
 
 type fedHumanSendReq struct {
-	To      string `json:"to"`
-	Subject string `json:"subject,omitempty"`
-	Body    string `json:"body"`
+	To          string                    `json:"to"`
+	Subject     string                    `json:"subject,omitempty"`
+	Body        string                    `json:"body"`
+	Attachments []proto.AttachmentPayload `json:"attachments,omitempty"`
 }
 
 // handleFederationSend is the human operator's remote send.
@@ -895,7 +910,7 @@ func handleFederationSend(w http.ResponseWriter, r *http.Request) {
 		writeFedErr(w, err)
 		return
 	}
-	row, err := queueFederatedMail("", t, req.Subject, req.Body, "")
+	row, err := queueFederatedMail("", t, req.Subject, req.Body, "", req.Attachments)
 	if err != nil {
 		writeFedErr(w, err)
 		return
@@ -933,7 +948,7 @@ func handleFederationNotify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t := &fedTarget{peer: peer, name: "operator", operator: true}
-	row, err := queueFederatedMail("", t, req.Subject, req.Body, "")
+	row, err := queueFederatedMail("", t, req.Subject, req.Body, "", nil)
 	if err != nil {
 		writeFedErr(w, err)
 		return
@@ -967,7 +982,9 @@ func handleFederationInbox(w http.ResponseWriter, r *http.Request) {
 	prefix := db.FederationHumanGroup("")
 	out := []fedInboxJSON{}
 	for _, m := range msgs {
-		if !strings.HasPrefix(m.GroupName, prefix) {
+		// Remote operator rows have no local sender; a local group that
+		// happens to be named federation:… cannot pose as one.
+		if m.FromConv != "" || !strings.HasPrefix(m.GroupName, prefix) {
 			continue
 		}
 		out = append(out, fedInboxJSON{ID: m.ID, From: m.FromTitle, Instance: strings.TrimPrefix(m.GroupName, prefix),
