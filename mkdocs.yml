@@ -52,6 +52,7 @@ nav:
       - Group routes: group-routes.md
       - Dashboard: dashboard.md
       - Operating remotely: remote.md
+      - Federation: federation.md
   - Confinement:
       - Sandboxing: sandboxing.md
       - Network filtering: network-filtering.md

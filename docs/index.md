@@ -39,6 +39,7 @@ agents, and the daemon, read [Architecture](architecture.md).
 | Deploy whole rosters from templates, on a schedule | [Teams at scale](teams-at-scale.md) |
 | Watch the whole fleet from a browser | [Dashboard](dashboard.md) |
 | Operate away from the host machine | [Remote](remote.md) |
+| Link your instance with colleagues' or your other machines | [Federation](federation.md) |
 | Confine what agents can touch | [Sandboxing](sandboxing.md) and [network filtering](network-filtering.md) |
 | Give tokenless agents git/GitHub/Linear access | [Proxies](proxies.md) |
 | Run enforced multi-step workflows | [Processes](processes.md) |

@@ -32,9 +32,9 @@ golangci-lint run ./...
 go install . ./cmd/...
 ```
 
-The repo builds two binaries: a bare `go install .` gets you only `tclaude`,
-while `. ./cmd/...` adds the standalone `tclaude-agentd` daemon. See
-`CONTRIBUTING.md` for why not `./...`.
+The repo builds three binaries: a bare `go install .` gets you only `tclaude`,
+while `. ./cmd/...` adds the standalone `tclaude-agentd` daemon and the
+`tclaude-hub` federation relay. See `CONTRIBUTING.md` for why not `./...`.
 
 CI runs `go test ./...` and `golangci-lint run ./...`. Do make sure your changes at 
 least build, and run focused local tests when they help your own iteration on the code 
@@ -57,6 +57,8 @@ features around native Windows behavior unless the operator explicitly asks.
 - Agent coordination: `docs/agents-and-groups.md` and
   `docs/spawning-and-lifecycle.md`.
 - Dashboard: `docs/dashboard.md`.
+- Federation (linking instances through `tclaude-hub`): `docs/federation.md`;
+  code in `pkg/federation/` and `pkg/claude/agentd/federation*.go`.
 - Sessions, conversations, worktrees, tasks, status bar, notifications:
   corresponding files under `docs/`.
 - Flow-test helpers and simulators: `pkg/testharness/`.
