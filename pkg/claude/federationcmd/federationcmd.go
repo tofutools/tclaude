@@ -563,9 +563,10 @@ func unimportCmd() *cobra.Command {
 // --- mail ---
 
 type sendParams struct {
-	To      string   `pos:"true" help:"member@peer"`
+	To      string   `pos:"true" help:"member@peer, or group:<group>@peer for every member of a remote group"`
 	Body    string   `pos:"true" help:"Message body"`
 	Subject string   `long:"subject" optional:"true" help:"Subject"`
+	Role    string   `long:"role" optional:"true" help:"With group:<group>@peer, only members holding this role (needs the group's roster export)"`
 	Attach  []string `long:"attach" short:"a" optional:"true" help:"Attach a file (repeatable; the remote group must accept attachments)"`
 }
 
@@ -582,6 +583,9 @@ func sendCmd() *cobra.Command {
 				Connected  bool   `json:"hub_connected"`
 			}
 			req := map[string]any{"to": p.To, "body": p.Body, "subject": p.Subject}
+			if p.Role != "" {
+				req["role"] = p.Role
+			}
 			if len(p.Attach) > 0 {
 				atts, err := agent.ReadRemoteAttachments(p.Attach)
 				if err != nil {

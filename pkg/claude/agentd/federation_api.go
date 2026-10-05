@@ -943,6 +943,7 @@ func handleFederationOutbox(w http.ResponseWriter, r *http.Request) {
 
 type fedHumanSendReq struct {
 	To          string                    `json:"to"`
+	Role        string                    `json:"role,omitempty"`
 	Subject     string                    `json:"subject,omitempty"`
 	Body        string                    `json:"body"`
 	Attachments []proto.AttachmentPayload `json:"attachments,omitempty"`
@@ -960,6 +961,14 @@ func handleFederationSend(w http.ResponseWriter, r *http.Request) {
 	var req fedHumanSendReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	if group, peer, ok := splitFederatedGroup(req.To); ok {
+		handleFederatedGroupSend(w, r, "", &sendReq{To: req.To, Role: req.Role, Subject: req.Subject, Body: req.Body, Attachments: req.Attachments}, group, peer)
+		return
+	}
+	if req.Role != "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "role is only valid with a group:<group>@<peer> target")
 		return
 	}
 	t, err := resolveFederatedTarget("", req.To)

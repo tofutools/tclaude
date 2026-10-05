@@ -40,8 +40,10 @@ func splitFederatedGroup(to string) (group string, peer *db.FederationPeer, ok b
 	return group, p, true
 }
 
-// handleFederatedGroupSend is the agent path of `tclaude agent message
-// group:<group>@<peer>`.
+// handleFederatedGroupSend sends group mail to group@peer: the agent path of
+// `tclaude agent message group:<group>@<peer>`, or the operator's
+// `tclaude federation send` when fromConv is "" (the operator needs only
+// the import, like its 1:1 remote mail).
 func handleFederatedGroupSend(w http.ResponseWriter, r *http.Request, fromConv string, req *sendReq, group string, peer *db.FederationPeer) {
 	if len(req.Cc) > 0 || len(req.Members) > 0 || req.Gen != "" || len(req.Attachments) > 0 {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "cc, members, gen and attachments are not supported for remote groups")
@@ -86,19 +88,6 @@ func handleFederatedGroupSend(w http.ResponseWriter, r *http.Request, fromConv s
 			label, peerDisplay(peer), remote))
 		return
 	}
-	via := ""
-	for _, g := range locals {
-		if ok, _, err := permissionAllowsAction(r, fromConv, PermFederationMessage, ActionContext{Group: g, Peer: peer.InstanceID}); err == nil && ok {
-			via = g
-			break
-		}
-	}
-	if via == "" {
-		if _, ok := requirePermission(w, r, PermFederationMessage, ActionContext{Group: locals[0], Peer: peer.InstanceID}); !ok {
-			return
-		}
-		via = locals[0]
-	}
 	if strings.TrimSpace(req.Body) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "body is empty")
 		return
@@ -110,6 +99,22 @@ func handleFederatedGroupSend(w http.ResponseWriter, r *http.Request, fromConv s
 	if len(req.Subject) > fedMaxSubject {
 		writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("remote message subjects are limited to %d bytes", fedMaxSubject))
 		return
+	}
+	via := locals[0]
+	if fromConv != "" {
+		via = ""
+		for _, g := range locals {
+			if ok, _, err := permissionAllowsAction(r, fromConv, PermFederationMessage, ActionContext{Group: g, Peer: peer.InstanceID}); err == nil && ok {
+				via = g
+				break
+			}
+		}
+		if via == "" {
+			if _, ok := requirePermission(w, r, PermFederationMessage, ActionContext{Group: locals[0], Peer: peer.InstanceID}); !ok {
+				return
+			}
+			via = locals[0]
+		}
 	}
 	row, err := queueFederatedEnvelope(fedOutgoing{
 		fromConv: fromConv, peer: peer, kind: proto.KindGroupMail, toLabel: label,
@@ -125,25 +130,33 @@ func handleFederatedGroupSend(w http.ResponseWriter, r *http.Request, fromConv s
 }
 
 // fedSenderImportGroups lists the live local groups fromConv belongs to
-// that import peer's remoteGroup, in name order.
+// that import peer's remoteGroup, in name order. For the operator
+// (fromConv "") it lists every live importing group.
 func fedSenderImportGroups(fromConv, peer, remoteGroup string) ([]string, error) {
 	imports, err := db.ListFederationImports()
 	if err != nil {
 		return nil, err
 	}
-	groups, err := db.ListGroupsForConv(fromConv)
-	if err != nil {
-		return nil, err
-	}
 	member := map[int64]bool{}
-	for _, g := range groups {
-		if !g.IsArchived() {
-			member[g.ID] = true
+	if fromConv != "" {
+		groups, err := db.ListGroupsForConv(fromConv)
+		if err != nil {
+			return nil, err
+		}
+		for _, g := range groups {
+			if !g.IsArchived() {
+				member[g.ID] = true
+			}
 		}
 	}
 	var out []string
 	seen := map[string]bool{}
 	for _, im := range imports {
+		if fromConv == "" {
+			if g, _ := db.GetAgentGroupByID(im.LocalGroupID); g != nil && !g.IsArchived() {
+				member[im.LocalGroupID] = true
+			}
+		}
 		if im.Peer == peer && im.RemoteGroup == remoteGroup && member[im.LocalGroupID] && !seen[im.LocalGroupName] {
 			seen[im.LocalGroupName] = true
 			out = append(out, im.LocalGroupName)

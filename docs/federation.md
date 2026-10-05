@@ -236,6 +236,7 @@ An agent can mail every member of a remote group at once:
 
 ```bash
 tclaude agent message group:builders@bob "release at 5" --role reviewer
+tclaude federation send group:builders@bob "maintenance at 6" # as the operator
 ```
 
 The same rules apply as for a single member: the group must export `mail`

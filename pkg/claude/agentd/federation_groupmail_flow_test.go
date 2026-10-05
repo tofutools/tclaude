@@ -185,6 +185,23 @@ func TestFederation_OutboundGroupMail(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, code, out)
 	require.Contains(t, fmt.Sprint(out), agentd.PermFederationMessage)
 
+	// The operator needs only the import.
+	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/send", map[string]any{"to": "group:builders@bob", "body": "operator says hi"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var opResp struct {
+		EnvelopeID string `json:"envelope_id"`
+	}
+	testharness.DecodeJSON(t, rec, &opResp)
+	fedEventually(t, "operator group mail at peer", func() bool {
+		agentd.FlushFederationOutboxForTest()
+		for _, m := range p.envelopes(proto.KindGroupMail) {
+			if m.ID == opResp.EnvelopeID {
+				return m.From.Agent == "" && m.From.Name == "human operator"
+			}
+		}
+		return false
+	})
+
 	g := postPermissionScope(t, f, "grant", map[string]any{"target": alice, "slug": agentd.PermFederationMessage, "scope": map[string]any{"group": []string{"team"}, "peer": []string{p.id.ID()}}})
 	require.Equal(t, http.StatusOK, g.Code, g.Body)
 
