@@ -270,6 +270,9 @@ func (s *Store) CreateInvite(space string, ttl time.Duration) (string, error) {
 // ErrInvalidInvite is returned for unknown, used, or expired invites.
 var ErrInvalidInvite = errors.New("invalid, used, or expired invite")
 
+// ErrRevoked is returned when a revoked instance presents an invite.
+var ErrRevoked = errors.New("instance is revoked; ask the hub admin to admit it again")
+
 // RedeemInvite consumes token and admits instanceID into its space.
 func (s *Store) RedeemInvite(token, instanceID string, now time.Time) error {
 	tx, err := s.db.Begin()
@@ -288,11 +291,20 @@ func (s *Store) RedeemInvite(token, instanceID string, now time.Time) error {
 	if used != "" || now.After(parseTS(exp)) {
 		return ErrInvalidInvite
 	}
+	// Revocation is sticky: an invite cannot undo it, only an explicit
+	// admin `admit` can.
+	var revoked int
+	switch err := tx.QueryRow(`SELECT revoked FROM instances WHERE instance_id=?`, instanceID).Scan(&revoked); {
+	case errors.Is(err, sql.ErrNoRows):
+	case err != nil:
+		return err
+	case revoked != 0:
+		return ErrRevoked
+	}
 	if _, err := tx.Exec(`UPDATE invites SET used_by=?, used_at=? WHERE token_hash=?`, instanceID, ts(now), hashToken(token)); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT INTO instances(instance_id, admitted_at) VALUES(?,?)
-		ON CONFLICT(instance_id) DO UPDATE SET revoked=0`, instanceID, ts(now)); err != nil {
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO instances(instance_id, admitted_at) VALUES(?,?)`, instanceID, ts(now)); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`INSERT OR IGNORE INTO instance_spaces(instance_id, space) VALUES(?,?)`, instanceID, space); err != nil {

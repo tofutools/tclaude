@@ -50,8 +50,13 @@ import (
 const (
 	// fedMailTTL is how long an outbound mail keeps retrying.
 	fedMailTTL = 7 * 24 * time.Hour
-	// fedControlTTL bounds catalogs, catalog requests, and acks.
-	fedControlTTL = 10 * time.Minute
+	// fedControlTTL bounds catalogs, catalog requests, and acks. Generous
+	// so modest clock skew between instances cannot silently drop acks.
+	fedControlTTL = time.Hour
+	// fedMaxInboundTTL rejects mail whose expiry lies further out than any
+	// honest sender sets: the replay guard is kept until expiry, so an
+	// unbounded expiry would mean an unbounded guard.
+	fedMaxInboundTTL = fedMailTTL + 24*time.Hour
 	// fedAckWait is how long a routed mail waits for an ack before it is
 	// resent (receivers dedupe by envelope id).
 	fedAckWait = 2 * time.Minute
@@ -139,6 +144,10 @@ type fedInbound struct {
 var (
 	fedMu      sync.Mutex
 	fedCurrent *fedRuntime
+	// fedLifecycleMu serialises stop/start so concurrent reloads cannot
+	// orphan a runtime (two clients with one identity would make the hub
+	// replace each connection with the other forever).
+	fedLifecycleMu sync.Mutex
 )
 
 func currentFederation() *fedRuntime {
@@ -150,6 +159,8 @@ func currentFederation() *fedRuntime {
 // startFederation starts the hub client when config enables it. Errors are
 // logged, never fatal: federation is an optional add-on to a local daemon.
 func startFederation() {
+	fedLifecycleMu.Lock()
+	defer fedLifecycleMu.Unlock()
 	cfg, err := config.Load()
 	if err != nil || cfg == nil || cfg.Federation == nil || !cfg.Federation.Enabled || cfg.Federation.HubURL == "" {
 		return
@@ -161,7 +172,9 @@ func startFederation() {
 
 // reloadFederation restarts the runtime from current config.
 func reloadFederation() error {
-	stopFederation()
+	fedLifecycleMu.Lock()
+	defer fedLifecycleMu.Unlock()
+	stopFederationLocked()
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -173,6 +186,12 @@ func reloadFederation() error {
 }
 
 func stopFederation() {
+	fedLifecycleMu.Lock()
+	defer fedLifecycleMu.Unlock()
+	stopFederationLocked()
+}
+
+func stopFederationLocked() {
 	fedMu.Lock()
 	rt := fedCurrent
 	fedCurrent = nil
@@ -370,7 +389,7 @@ func buildFederationCatalog(peer string) (*proto.CatalogPayload, error) {
 		if grp, _ := db.GetAgentGroupByID(gid); grp != nil {
 			g.Description = grp.Descr
 		}
-		if g.HasCap(proto.CapRoster) || g.HasCap(proto.CapMail) {
+		if g.HasCap(proto.CapRoster) || g.HasCap(proto.CapMail) || g.HasCap(proto.CapPresence) {
 			members, err := db.ListAgentGroupMembers(gid)
 			if err != nil {
 				return nil, err
@@ -393,8 +412,8 @@ func buildFederationCatalog(peer string) (*proto.CatalogPayload, error) {
 				g.Members = append(g.Members, cm)
 			}
 			sort.Slice(g.Members, func(i, j int) bool { return g.Members[i].Name < g.Members[j].Name })
-			// Mail without roster still needs addressable members, but
-			// only their ids and names: drop roles.
+			// Mail or presence without roster still need identifiable
+			// members, but only their ids and names: drop roles.
 			if !g.HasCap(proto.CapRoster) {
 				for i := range g.Members {
 					g.Members[i].Role = ""
@@ -418,6 +437,9 @@ func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 			rt.handleInbound(in.from, in.sealed)
 		case <-refresh.C:
 			rt.broadcastCatalogs()
+			if err := db.PruneFederationSeen(time.Now()); err != nil {
+				slog.Debug("federation: prune replay guard failed", "error", err)
+			}
 		}
 	}
 }
@@ -440,7 +462,12 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 			slog.Warn("federation: bad catalog", "from", from, "error", err)
 			return
 		}
-		if err := db.PutFederationCatalog(from, string(env.Payload), time.Now()); err != nil {
+		proto.SanitizeCatalog(&cat)
+		clean, err := json.Marshal(cat)
+		if err != nil {
+			return
+		}
+		if err := db.PutFederationCatalog(from, string(clean), time.Now()); err != nil {
 			slog.Warn("federation: store catalog failed", "from", from, "error", err)
 		}
 	case proto.KindCatalogReq:
@@ -493,9 +520,18 @@ func fedRemoteBanner(senderName, peer, instance string) string {
 }
 
 func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
+	// Everything the peer names itself goes toward pane injection: gate it.
+	senderAgent := ""
+	if proto.ValidAgentRef(env.From.Agent) {
+		senderAgent = env.From.Agent
+	}
+	senderName := proto.SafeName(env.From.Name, false)
+	if strings.TrimSpace(env.From.Name) == "" && senderAgent != "" {
+		senderName = senderAgent
+	}
 	refuse := func(code, reason string) {
 		slog.Info("federation: refused inbound mail", "from", env.From.Instance, "to_agent", env.To.Agent, "code", code, "reason", reason)
-		recordFederationAudit("federation.mail.in", env.From.Name+"@"+peerDisplay(peer), "", "", code+": "+reason, 403)
+		recordFederationAudit("federation.mail.in", senderName+"@"+peerDisplay(peer), "", "", code+": "+reason, 403)
 		rt.sendControl(env.From.Instance, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckRefused, Code: code, Reason: reason})
 	}
 	var mp proto.MailPayload
@@ -507,8 +543,13 @@ func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
 		refuse(fedCodeTooLarge, "body empty or too large")
 		return
 	}
-	if existing, _ := db.FederationInboundByEnvelope(env.ID); existing != nil {
-		// A resend after a lost ack: acknowledge again, deliver nothing.
+	if env.ExpiresAt.IsZero() || env.ExpiresAt.After(time.Now().Add(fedMaxInboundTTL)) {
+		refuse(fedCodeMalformed, "missing or too distant expiry")
+		return
+	}
+	if seen, _ := db.FederationEnvelopeSeen(peer.InstanceID, env.ID); seen {
+		// A resend after a lost ack (or a replay): acknowledge again,
+		// deliver nothing.
 		rt.sendControl(env.From.Instance, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckAccepted})
 		return
 	}
@@ -526,10 +567,6 @@ func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
 		refuse(fedCodeNotExported, "recipient is not in a group exported to this instance with mail")
 		return
 	}
-	senderName := env.From.Name
-	if senderName == "" {
-		senderName = env.From.Agent
-	}
 	m := &db.AgentMessage{
 		GroupID: groupID, FromConv: "", ToConv: conv,
 		Subject:      mp.Subject,
@@ -537,8 +574,8 @@ func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
 		ToRecipients: []string{conv},
 	}
 	id, err := db.InsertFederationInboundMessage(m, db.FederationInbound{
-		EnvelopeID: env.ID, FromInstance: peer.InstanceID, FromAgent: env.From.Agent, FromName: senderName,
-	}, regularAgentMessageQueueLimit)
+		EnvelopeID: env.ID, FromInstance: peer.InstanceID, FromAgent: senderAgent, FromName: senderName,
+	}, env.ExpiresAt, regularAgentMessageQueueLimit)
 	switch {
 	case errors.Is(err, db.ErrFederationDuplicate):
 		rt.sendControl(env.From.Instance, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckAccepted})
@@ -578,15 +615,19 @@ func federationInboundAuthorized(peer string, env *proto.Envelope, conv string) 
 		}
 		if groups, err := db.ListGroupsForConv(conv); err == nil {
 			for _, g := range groups {
-				if mailGroups[g.ID] {
+				if mailGroups[g.ID] && !g.IsArchived() {
 					return g.ID, true
 				}
 			}
 		}
 	}
 	if env.InReplyTo != "" {
+		// Only replies to mail the peer actually received, and only while
+		// that mail is live: a refused, expired or long-gone original
+		// confers nothing.
 		if row, _ := db.GetFederationOutbox(env.InReplyTo); row != nil &&
-			row.Kind == proto.KindMail && row.ToInstance == peer && row.FromAgent != "" && row.FromAgent == env.To.Agent {
+			row.Kind == proto.KindMail && row.ToInstance == peer && row.FromAgent != "" && row.FromAgent == env.To.Agent &&
+			(row.State == db.FedOutboxSent || row.State == db.FedOutboxAccepted) && time.Now().Before(row.ExpiresAt) {
 			return 0, true
 		}
 	}
@@ -655,6 +696,10 @@ func (rt *fedRuntime) flushOutbox(ctx context.Context) {
 			_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxExpired, "not acknowledged before expiry")
 			continue
 		}
+		if p, _ := db.GetFederationPeer(row.ToInstance); p == nil {
+			_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxRefused, "peer untrusted locally")
+			continue
+		}
 		sctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		res, err := rt.cl.Send(sctx, row.ToInstance, &proto.Sealed{Env: row.Sealed[:len(row.Sealed)-ed25519.SignatureSize], Sig: row.Sealed[len(row.Sealed)-ed25519.SignatureSize:]})
 		cancel()
@@ -664,7 +709,14 @@ func (rt *fedRuntime) flushOutbox(ctx context.Context) {
 		}
 		switch res.Status {
 		case proto.SendDelivered:
-			_ = db.UpdateFederationOutbox(row.EnvelopeID, db.FedOutboxSent, time.Now().Add(fedAckWait), "", 1)
+			// A peer that silently drops our envelopes (it has not trusted
+			// us, or untrusted us) never acks: back off instead of resending
+			// every fedAckWait for the whole TTL.
+			wait := fedBackoff(row.Attempts)
+			if wait < fedAckWait {
+				wait = fedAckWait
+			}
+			_ = db.UpdateFederationOutbox(row.EnvelopeID, db.FedOutboxSent, time.Now().Add(wait), "", 1)
 		default:
 			msg := res.Status
 			if res.Code != "" {

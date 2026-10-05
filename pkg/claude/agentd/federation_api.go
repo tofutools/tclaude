@@ -47,6 +47,14 @@ func writeFedErr(w http.ResponseWriter, err error) {
 // resolveFederationPeer resolves a peer reference: label, hub-reported
 // name, full instance id, or an instance-id prefix of 8+ characters.
 func resolveFederationPeer(ref string) (*db.FederationPeer, error) {
+	return resolveFederationPeerOpt(ref, true)
+}
+
+// resolveFederationPeerOpt is resolveFederationPeer with the hub-reported
+// name optionally excluded. Message addressing excludes it: that name is
+// chosen by the peer (or the hub), so it must not be able to capture an
+// address meant for a local agent.
+func resolveFederationPeerOpt(ref string, allowName bool) (*db.FederationPeer, error) {
 	ref = strings.TrimSpace(ref)
 	peers, err := db.ListFederationPeers()
 	if err != nil {
@@ -57,7 +65,7 @@ func resolveFederationPeer(ref string) (*db.FederationPeer, error) {
 		switch {
 		case p.InstanceID == ref, p.Label != "" && p.Label == ref:
 			return &p, nil
-		case p.Name != "" && strings.EqualFold(p.Name, ref),
+		case allowName && p.Name != "" && strings.EqualFold(p.Name, ref),
 			len(ref) >= 8 && strings.HasPrefix(p.InstanceID, ref),
 			len(ref) >= 8 && strings.HasPrefix(p.InstanceID, proto.InstanceIDPrefix+ref):
 			hits = append(hits, p)
@@ -82,9 +90,9 @@ func splitFederatedAddress(addr string) (member, peer string, ok bool) {
 }
 
 // isFederatedAddress reports whether to should be routed to a remote
-// instance: it has the member@peer shape and the peer part names a trusted
-// peer. Anything else falls through to local resolution, so a local title
-// containing '@' keeps working.
+// instance: it does not resolve locally, has the member@peer shape, and the
+// peer part is a trusted peer's operator-chosen label or instance id. A local
+// agent whose title contains '@' therefore always wins.
 func isFederatedAddress(to string) bool {
 	if strings.HasPrefix(to, multicastPrefix) {
 		return false
@@ -93,8 +101,14 @@ func isFederatedAddress(to string) bool {
 	if !ok {
 		return false
 	}
-	p, err := resolveFederationPeer(peerRef)
-	return err == nil && p != nil
+	p, err := resolveFederationPeerOpt(peerRef, false)
+	if err != nil || p == nil {
+		return false
+	}
+	if _, _, lerr := agent.ResolveSelector(to); lerr == nil || errors.Is(lerr, agent.ErrAmbiguous) {
+		return false
+	}
+	return true
 }
 
 // fedTarget is a resolved remote recipient.
@@ -118,7 +132,7 @@ func resolveFederatedTarget(fromConv, addr string) (*fedTarget, error) {
 	if !ok {
 		return nil, newFedErr(http.StatusBadRequest, "invalid_arg", "remote address must be member@peer")
 	}
-	peer, err := resolveFederationPeer(peerRef)
+	peer, err := resolveFederationPeerOpt(peerRef, false)
 	if err != nil {
 		return nil, err
 	}
@@ -159,13 +173,18 @@ func resolveFederatedTarget(fromConv, addr string) (*fedTarget, error) {
 			return nil, err
 		}
 		for _, g := range groups {
-			senderGroups[g.ID] = true
+			if !g.IsArchived() {
+				senderGroups[g.ID] = true
+			}
 		}
 	}
 	seen := map[string]bool{}
 	imported := false
 	for _, im := range imports {
 		if im.Peer != peer.InstanceID || !containsString(t.remoteGroup, im.RemoteGroup) {
+			continue
+		}
+		if g, _ := db.GetAgentGroupByID(im.LocalGroupID); g == nil || g.IsArchived() {
 			continue
 		}
 		imported = true
@@ -593,7 +612,7 @@ func handleFederationTrust(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "bad_directory", "hub directory key does not match the instance id; refusing to trust")
 		return
 	}
-	if err := db.TrustFederationPeer(db.FederationPeer{InstanceID: entry.InstanceID, PubKey: entry.PubKey, Label: req.Label, Name: entry.Name}); err != nil {
+	if err := db.TrustFederationPeer(db.FederationPeer{InstanceID: entry.InstanceID, PubKey: entry.PubKey, Label: req.Label, Name: proto.SafeName(entry.Name, true)}); err != nil {
 		writeError(w, http.StatusConflict, "conflict", err.Error())
 		return
 	}
@@ -890,10 +909,10 @@ func remoteSenderLabel(messageID int64) (label, addr string) {
 	if p, _ := db.GetFederationPeer(in.FromInstance); p != nil {
 		peer = peerDisplay(p)
 	}
-	name := in.FromName
-	if name == "" {
-		name = in.FromAgent
-	}
+	// Stored values were gated on receipt; gate again on render (these
+	// labels go into pane nudges).
+	name := proto.SafeName(fedFirst(in.FromName, in.FromAgent), false)
+	peer = proto.SafeName(peer, true)
 	addr = in.FromInstance
 	if in.FromAgent != "" {
 		addr = in.FromAgent + "@" + in.FromInstance

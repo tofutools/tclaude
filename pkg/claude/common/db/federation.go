@@ -63,6 +63,12 @@ func UntrustFederationPeer(instanceID string) (bool, error) {
 			return false, err
 		}
 	}
+	// Nothing more goes to an untrusted instance.
+	if _, err := tx.Exec(`UPDATE federation_outbox SET state=?, last_error=?, updated_at=?
+		WHERE to_instance=? AND state IN (?, ?)`,
+		FedOutboxRefused, "peer untrusted locally", dbTime(time.Now()), instanceID, FedOutboxQueued, FedOutboxSent); err != nil {
+		return false, err
+	}
 	return n > 0, tx.Commit()
 }
 
@@ -412,37 +418,72 @@ type FederationInbound struct {
 	ReceivedAt   time.Time
 }
 
-// ErrFederationDuplicate is returned when an envelope was already delivered.
+// ErrFederationDuplicate is returned when an envelope was already accepted.
 var ErrFederationDuplicate = errors.New("federation envelope already delivered")
 
-// InsertFederationInboundMessage inserts m (bounded by limit like a regular
-// send) together with its inbound marker in one transaction. A repeated
-// envelope id returns ErrFederationDuplicate and writes nothing.
-func InsertFederationInboundMessage(m *AgentMessage, in FederationInbound, limit int) (int64, error) {
-	if existing, err := FederationInboundByEnvelope(in.EnvelopeID); err != nil {
-		return 0, err
-	} else if existing != nil {
-		return existing.MessageID, ErrFederationDuplicate
-	}
-	id, _, err := InsertAgentMessageBounded(m, limit)
+// FederationEnvelopeSeen reports whether a mail envelope from fromInstance
+// was already accepted.
+func FederationEnvelopeSeen(fromInstance, envelopeID string) (bool, error) {
+	d, err := Open()
 	if err != nil {
-		return 0, err
+		return false, err
 	}
+	var n int
+	err = d.QueryRow(`SELECT COUNT(*) FROM federation_seen WHERE from_instance=? AND envelope_id=?`, fromInstance, envelopeID).Scan(&n)
+	return n > 0, err
+}
+
+// InsertFederationInboundMessage atomically records the envelope as seen,
+// inserts m bounded like a regular send, and marks it remote. A repeated
+// (sender, envelope id) returns ErrFederationDuplicate and writes nothing;
+// a full backlog returns *AgentMessageQueueFullError and writes nothing.
+func InsertFederationInboundMessage(m *AgentMessage, in FederationInbound, expiresAt time.Time, limit int) (int64, error) {
 	d, err := Open()
 	if err != nil {
 		return 0, err
 	}
-	_, err = d.Exec(`INSERT INTO federation_inbound(message_id, envelope_id, from_instance, from_agent, from_name, received_at)
-		VALUES(?,?,?,?,?,?)`, id, in.EnvelopeID, in.FromInstance, in.FromAgent, in.FromName, dbTime(time.Now()))
+	tx, err := d.Begin()
 	if err != nil {
-		// Lost a race with a concurrent duplicate: remove our copy.
-		_, _ = d.Exec(`DELETE FROM agent_messages WHERE id=?`, id)
-		if strings.Contains(err.Error(), "UNIQUE") {
-			return 0, ErrFederationDuplicate
-		}
 		return 0, err
 	}
-	return id, nil
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(`INSERT OR IGNORE INTO federation_seen(from_instance, envelope_id, expires_at) VALUES(?,?,?)`,
+		in.FromInstance, in.EnvelopeID, dbTime(expiresAt))
+	if err != nil {
+		return 0, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return 0, ErrFederationDuplicate
+	}
+	m.RegularSend = true
+	if limit > 0 {
+		pending, err := countUnprocessedRegularMessageBacklog(tx, m)
+		if err != nil {
+			return 0, err
+		}
+		if pending >= limit {
+			return 0, &AgentMessageQueueFullError{Pending: pending, Limit: limit}
+		}
+	}
+	id, err := insertAgentMessage(tx, m)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(`INSERT INTO federation_inbound(message_id, envelope_id, from_instance, from_agent, from_name, received_at)
+		VALUES(?,?,?,?,?,?)`, id, in.EnvelopeID, in.FromInstance, in.FromAgent, in.FromName, dbTime(time.Now())); err != nil {
+		return 0, err
+	}
+	return id, tx.Commit()
+}
+
+// PruneFederationSeen drops replay-guard rows whose envelopes have expired.
+func PruneFederationSeen(now time.Time) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`DELETE FROM federation_seen WHERE expires_at < ?`, dbTime(now))
+	return err
 }
 
 func scanFedInbound(row *sql.Row) (*FederationInbound, error) {
@@ -459,14 +500,15 @@ func scanFedInbound(row *sql.Row) (*FederationInbound, error) {
 	return &in, nil
 }
 
-// FederationInboundByEnvelope returns the inbound marker for an envelope id.
-func FederationInboundByEnvelope(envelopeID string) (*FederationInbound, error) {
+// FederationInboundByEnvelope returns the inbound marker for a sender's
+// envelope id, or nil (also when the message has since been deleted).
+func FederationInboundByEnvelope(fromInstance, envelopeID string) (*FederationInbound, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
 	return scanFedInbound(d.QueryRow(`SELECT message_id, envelope_id, from_instance, from_agent, from_name, received_at
-		FROM federation_inbound WHERE envelope_id=?`, envelopeID))
+		FROM federation_inbound WHERE from_instance=? AND envelope_id=?`, fromInstance, envelopeID))
 }
 
 // FederationInboundForMessage returns the inbound marker for a message id,

@@ -1540,9 +1540,19 @@ CREATE INDEX idx_federation_outbox_state
 
 CREATE TABLE federation_inbound (
 	message_id    INTEGER PRIMARY KEY REFERENCES agent_messages(id) ON DELETE CASCADE,
-	envelope_id   TEXT NOT NULL UNIQUE,
+	envelope_id   TEXT NOT NULL,
 	from_instance TEXT NOT NULL,
 	from_agent    TEXT NOT NULL DEFAULT '',
 	from_name     TEXT NOT NULL DEFAULT '',
 	received_at   INTEGER NOT NULL
+) STRICT;
+
+CREATE INDEX idx_federation_inbound_envelope
+	ON federation_inbound(from_instance, envelope_id);
+
+CREATE TABLE federation_seen (
+	from_instance TEXT NOT NULL,
+	envelope_id   TEXT NOT NULL,
+	expires_at    INTEGER NOT NULL,
+	PRIMARY KEY (from_instance, envelope_id)
 ) STRICT;

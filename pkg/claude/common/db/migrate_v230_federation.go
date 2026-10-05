@@ -10,6 +10,11 @@ import (
 // durable outbound envelope queue, and the side table that marks
 // agent_messages rows received from a remote instance.
 //
+// federation_seen is the replay guard: one row per accepted mail envelope,
+// keyed by sender, kept until the envelope expires and deliberately not tied
+// to the message row, so deleting or pruning the message cannot reopen the
+// envelope for replay.
+//
 // The inbound marker is a side table (like operator_agent_messages) rather
 // than new agent_messages columns, so agentMessageColumns and every scan
 // stay untouched. All statements are IF NOT EXISTS so a half-applied run
@@ -92,10 +97,19 @@ CREATE INDEX IF NOT EXISTS idx_federation_outbox_state
 
 CREATE TABLE IF NOT EXISTS federation_inbound (
 	message_id    INTEGER PRIMARY KEY REFERENCES agent_messages(id) ON DELETE CASCADE,
-	envelope_id   TEXT NOT NULL UNIQUE,
+	envelope_id   TEXT NOT NULL,
 	from_instance TEXT NOT NULL,
 	from_agent    TEXT NOT NULL DEFAULT '',
 	from_name     TEXT NOT NULL DEFAULT '',
 	received_at   INTEGER NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_federation_inbound_envelope
+	ON federation_inbound(from_instance, envelope_id);
+
+CREATE TABLE IF NOT EXISTS federation_seen (
+	from_instance TEXT NOT NULL,
+	envelope_id   TEXT NOT NULL,
+	expires_at    INTEGER NOT NULL,
+	PRIMARY KEY (from_instance, envelope_id)
 ) STRICT;
 `

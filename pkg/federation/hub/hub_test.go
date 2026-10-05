@@ -239,3 +239,18 @@ func TestClientRejectsPlainRemoteWS(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRevokedCannotRedeemInvite(t *testing.T) {
+	_, st, url := newHub(t, hub.Config{})
+	id, _ := proto.NewIdentity()
+	_ = st.Admit(id.ID())
+	if err := st.Revoke(id.ID()); err != nil {
+		t.Fatal(err)
+	}
+	tok, _ := st.CreateInvite("default", time.Hour)
+	p := startPeer(t, url, "revoked", tok, id)
+	eventually(t, "refused", func() bool { return p.status().State == client.StateRefused })
+	if !strings.Contains(p.status().LastError, "revoked") {
+		t.Fatalf("error = %q", p.status().LastError)
+	}
+}

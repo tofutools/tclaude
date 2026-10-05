@@ -69,6 +69,9 @@ type Hub struct {
 	conns  map[string]*conn
 	policy *admittedSnapshot
 	closed bool
+	// limiters are per instance, not per connection, so reconnecting does
+	// not refill an instance's budget.
+	limiters map[string]*bucketPair
 
 	stop chan struct{}
 	wg   sync.WaitGroup
@@ -89,6 +92,7 @@ func New(store *Store, cfg Config) (*Hub, error) {
 		cfg: cfg, store: store, hubID: hubID, log: cfg.Logger.With("component", "hub"),
 		upgrader: websocket.Upgrader{ReadBufferSize: 16 << 10, WriteBufferSize: 16 << 10},
 		conns:    map[string]*conn{}, policy: snap, stop: make(chan struct{}),
+		limiters: map[string]*bucketPair{},
 	}
 	h.wg.Add(1)
 	go h.refreshLoop()
@@ -352,10 +356,17 @@ func (h *Hub) handshake(ws *websocket.Conn) (*conn, error) {
 	_ = ws.SetWriteDeadline(time.Time{})
 	ws.SetPongHandler(func(string) error { _ = ws.SetReadDeadline(time.Now().Add(90 * time.Second)); return nil })
 	_ = ws.SetReadDeadline(time.Now().Add(90 * time.Second))
+	h.mu.Lock()
+	lim := h.limiters[id]
+	if lim == nil {
+		lim = newBucketPair(h.cfg.FramesPerMinute, h.cfg.BytesPerMinute)
+		h.limiters[id] = lim
+	}
+	h.mu.Unlock()
 	return &conn{
 		hub: h, ws: ws, id: id, name: name, version: hello.Version, pub: hello.PubKey,
 		out: make(chan *proto.Frame, 256), done: make(chan struct{}),
-		limiter: newBucketPair(h.cfg.FramesPerMinute, h.cfg.BytesPerMinute),
+		limiter: lim,
 	}, nil
 }
 
