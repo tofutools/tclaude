@@ -247,3 +247,28 @@ func TestPermEditorHTTPProxyScope(t *testing.T) {
 	assert.Equal(t, "grant", view.Permissions.Overrides[conv][agentd.PermHTTP])
 	assert.Equal(t, map[string][]string{"http_proxy": {"inventory"}}, view.Permissions.Scopes[conv][agentd.PermHTTP])
 }
+
+func TestPermEditorHTTPProxyVisibleBeforeConfiguration(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	const conv = "http-dashboard-unconfigured"
+	f.HaveConvWithTitle(conv, "http-unconfigured")
+	f.HaveEnrolledAgent(conv)
+	require.NoError(t, config.Save(&config.Config{}))
+	mux := agentd.BuildDashboardHandlerForTest()
+	view := fetchScopeView(t, mux)
+	found := false
+	for _, slug := range view.Slugs {
+		if slug.Slug == agentd.PermHTTP {
+			found = true
+		}
+	}
+	require.True(t, found, "HTTP permission must be editable before configuring an instance")
+	assert.Empty(t, view.Permissions.DimOpts["http_proxy"].Values)
+	code, body := postScopedPerms(t, mux, map[string]any{
+		"conv": conv, "overrides": map[string]string{agentd.PermHTTP: "grant"},
+	})
+	require.Equal(t, http.StatusOK, code, body)
+	view = fetchScopeView(t, mux)
+	assert.Equal(t, "grant", view.Permissions.Overrides[conv][agentd.PermHTTP])
+}
