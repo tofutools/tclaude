@@ -96,21 +96,33 @@ the other machine. The label is the short name used in addresses
 
 ## 7. Share a group
 
-Nothing is shared until you grant it. On the **desktop**, grant access to a group to
-the laptop:
+These are two separate grants: the desktop’s operator grants the laptop
+**instance** access; the laptop’s operator grants a local **agent** permission
+to use it. Local defaults and group ownership do not authorize remote actions.
+
+On the **desktop**, where the laptop is trusted with label `laptop`, grant
+mail access to the local group `builders`. Roster and presence grants also
+share roles and online/offline status:
 
 ```bash
 tclaude federation grant laptop message.direct --scope group=builders
 tclaude federation grant laptop groups.roster.read --scope group=builders
 tclaude federation grant laptop groups.presence.read --scope group=builders
+tclaude federation grants laptop
 ```
 
-On the **laptop**, see what the desktop offers and grant an agent reach to
-the remote group:
+On the **laptop**, where the desktop is trusted with label `desktop`, see
+what it offers and grant the local agent `lead` permission to mail its
+`builders` group. Run the first two commands as the operator:
 
 ```bash
 tclaude federation remote
 tclaude agent permissions grant lead message.direct --scope peer=desktop/builders
+```
+
+The agent can then discover the shared members:
+
+```bash
 tclaude agent ls --remote
 ```
 
@@ -122,24 +134,23 @@ As the operator, from the laptop:
 tclaude federation send some-agent@desktop "hello from the laptop"
 ```
 
-For an agent to send on its own, it needs `message.direct` scoped to the
-desktop peer and its builders group:
-
-```bash
-tclaude agent permissions grant lead message.direct --scope peer=desktop/builders
-```
-
-The agent then uses its ordinary messaging command with the remote address,
-and replies come back the same way:
+The operator send uses the desktop’s peer mail grant and needs no local
+agent grant. With the peer-scoped grant from step 7, `lead` can send using
+its ordinary messaging command:
 
 ```bash
 tclaude agent message some-agent@desktop "can you review PR 42?"
 ```
 
+The recipient can answer with `tclaude agent reply <id> "done"`; a reply to
+received remote agent mail needs no standing grant in the reverse direction.
+
 ## Where to go next
 
-- More capabilities to export: `attachments`, `spawn` (ask for a worker on
-  the other side) and `routes` (open a TCP service across instances). See
+- Other peer grants: `message.attachments` (files with mail),
+  `groups.members.spawn` (automatically launch workers under local settings)
+  and `routes.consume` (open a TCP service across instances). Agents requesting
+  workers or opening routes also need the corresponding `peer=` grants. See
   [Peer grants](federation.md#peer-grants-what-a-peer-may-see-and-do).
 - Mailing a whole remote group, `--cc` to remote members, operator to
   operator: [Sending](federation.md#sending).
@@ -153,5 +164,9 @@ tclaude agent message some-agent@desktop "can you review PR 42?"
 | `connect` fails with a certificate error | the host in the URL is not in the certificate's `subjectAltName`, or `--ca-file` is missing |
 | `connect` refuses a `ws://` URL | plain `ws://` is accepted only for a loopback hub |
 | `status` shows connected but `peers` is empty | the instances are in different spaces (`tclaude-hub ls`), or the other one is offline |
-| `remote` lists nothing | the other side has not exported a group to you, or has not trusted you yet |
-| an agent's send is refused | the peer does not grant mail access, or the agent lacks `message.direct` scoped to the peer/group |
+| `remote` lists nothing | the other side has not granted your instance access to a group, or has not trusted you yet |
+| `agent ls --remote` lists nothing | the agent lacks a matching `peer=` grant, or the peer's catalog contains no shared members |
+| an agent's send is refused | the peer lacks a `message.direct` grant for your instance on the target group, or the agent lacks `message.direct` scoped to the peer/group |
+| a local grant does not permit a remote send | remote actions require `peer=desktop/builders`; unscoped and local grants never authorize them |
+| a spawn request stays `pending` | the receiving peer has no `groups.members.spawn` grant, or an automatic launch failed or hit a worker/rate cap; its operator can inspect and approve it |
+| a worker stays `launching` | startup is unconfirmed; inspect `tclaude federation requests --all` before explicitly abandoning the launch |

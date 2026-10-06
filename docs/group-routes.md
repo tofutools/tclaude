@@ -36,8 +36,10 @@ neither is default-granted, and both additionally require *current*
 membership in the named group. See
 [Permissions and audit](permissions-and-audit.md).
 
-A route can also be opened from another tclaude instance whose group
-imports this one through [federation](federation.md#remote-group-routes):
+A route can also be opened from another tclaude instance through
+[federation](federation.md#remote-group-routes). The publisher’s operator
+grants the consuming peer `routes.consume` on the publishing group; the
+consumer’s operator grants its agent `routes.consume` scoped to that peer/group:
 `tclaude agent routes open <publisher>/<name>@<peer> -g <group>`.
 
 ## What a route is not
