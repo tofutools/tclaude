@@ -186,6 +186,47 @@ func TestBrokerPreservesHalfCloseAndConsumerExit(t *testing.T) {
 	require.Equal(t, live.Stream, consumerClose.Stream)
 }
 
+// Simultaneous half-closes must arrive before the reclaim CLOSE at both
+// endpoints, including the final DATA that was queued in each direction.
+func TestBrokerConcurrentHalfClosesPreserveOrder(t *testing.T) {
+	b := newBroker(t, newTestAuthorizer(), routebroker.Config{WriteTimeout: 5 * time.Second})
+	publisher, consumer := auths()
+	publisher.FlowWindow, consumer.FlowWindow = routebroker.InitialWindow, routebroker.InitialWindow
+	pair := attachPair(t, b, publisher, consumer)
+	for id := uint64(1); id <= 1000; id++ {
+		globalID := openStream(t, pair, id)
+		writeFrame(t, pair.pubPeer, routebroker.Frame{Kind: routebroker.KindOpenOK, Stream: globalID})
+		require.Equal(t, routebroker.KindOpenOK, readFrame(t, pair.conPeer).Kind)
+
+		start := make(chan struct{})
+		sent := make(chan error, 2)
+		sendTail := func(conn net.Conn, streamID uint64) {
+			<-start
+			err := routebroker.WriteFrame(conn, routebroker.Frame{Kind: routebroker.KindData, Stream: streamID, Payload: []byte("tail")}, 0)
+			if err == nil {
+				err = routebroker.WriteFrame(conn, routebroker.Frame{Kind: routebroker.KindHalfClose, Stream: streamID}, 0)
+			}
+			sent <- err
+		}
+		go sendTail(pair.pubPeer, globalID)
+		go sendTail(pair.conPeer, id)
+		close(start)
+		require.NoError(t, <-sent)
+		require.NoError(t, <-sent)
+		for _, endpoint := range []struct {
+			conn     net.Conn
+			streamID uint64
+		}{{pair.pubPeer, globalID}, {pair.conPeer, id}} {
+			tail := readFrame(t, endpoint.conn)
+			require.Equal(t, routebroker.KindData, tail.Kind, "stream %d", id)
+			require.Equal(t, []byte("tail"), tail.Payload)
+			require.Equal(t, endpoint.streamID, tail.Stream)
+			require.Equal(t, routebroker.KindHalfClose, readFrame(t, endpoint.conn).Kind, "stream %d", id)
+			require.Equal(t, routebroker.KindClose, readFrame(t, endpoint.conn).Kind, "stream %d", id)
+		}
+	}
+}
+
 // dualHalfClose ends one stream the way an ordinary request/response does:
 // both directions half-close and neither endpoint sends CLOSE. It returns once
 // the broker has told both endpoints the stream was reclaimed.
