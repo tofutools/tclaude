@@ -293,7 +293,13 @@ The `agent.awb_proxy` block in `~/.tclaude/data/config.json`:
   `labels` are passed as repeated AWB label filters. `interval` defaults to
   `1m` and paces every poll except one that releases the issue in flight:
   once that issue closes, the worker asks for the next ready issue
-  immediately rather than waiting an interval. `profile`, `sandbox_profile`, `harness`, and `worktree` are optional.
+  immediately rather than waiting an interval. `profile`, `sandbox_profile`, `harness`, `model`, `effort`, and `worktree` are optional.
+  Non-empty fields in issue metadata override the corresponding pickup defaults,
+  for example `"agent": {"harness": "claude", "model": "sonnet", "effort": "high"}`.
+  A metadata harness pins that issue to one vendor, replacing the fallback chain.
+  Omitted or empty fields retain the configured defaults; unset model and effort
+  resolve through the spawn profile chain. Invalid agent settings stop pickup
+  and are reported for correction.
   `harness` takes one name (`"codex"`) or an ordered fallback chain
   (`["codex", "claude"]`) — see "Usage ceilings on pickup" below for what the
   chain does. `skip_epics` defaults to `false`; when true, the worker skips
@@ -388,7 +394,7 @@ premium-request quota. Without the block, nothing is gated; this is the same
 configuration `tclaude task` waits on, so one setting covers both.
 
 The harness checked is the one the spawn would actually use: the process's
-`harness`, or whatever its `profile`, the group default profile, or the global
+issue metadata `agent.harness`, then the process's `harness`, or whatever its `profile`, the group default profile, or the global
 default profile resolves to. OpenCode runs against the operator's own provider
 keys and has no account-wide window to read, so its processes are never held.
 
@@ -419,7 +425,8 @@ the work, so every entry should be one the process's issues can actually be
 worked on; `profile` and `sandbox_profile` still apply to whichever entry is
 chosen.
 
-While a process is held it asks AWB for nothing, and it resumes within one
+While a process is held it reads the next ready issue and its metadata without
+claiming it, and it resumes within one
 `interval` of the offending window resetting. The hold is written to the daemon
 log at info level and to the audit trail — verb `awb.ready.ratelimited` — once
 per hold rather than once per poll, so a quiet process is explainable without

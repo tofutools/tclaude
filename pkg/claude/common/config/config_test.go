@@ -1507,3 +1507,15 @@ func TestPresentPRNotification(t *testing.T) {
 	assert.False(t, (&Config{Agent: &AgentConfig{}}).PresentPRNotification(), "an absent key means off")
 	assert.True(t, (&Config{Agent: &AgentConfig{PresentPRNotification: true}}).PresentPRNotification())
 }
+
+func TestAWBReadyPollingModelAndEffort(t *testing.T) {
+	var cfg Config
+	require.NoError(t, json.Unmarshal([]byte(`{"agent":{"awb_proxy":{"ready_polling":{"builders":{"workspace":"tcl","group":"builders","cwd":"/repo","model":" sonnet ","effort":" high "}}}}}`), &cfg))
+	polling := cfg.ResolvedAWBProxy().ReadyPolling["builders"]
+	assert.Equal(t, "sonnet", polling.Model)
+	assert.Equal(t, "high", polling.Effort)
+	raw, err := json.Marshal(polling)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"model":"sonnet"`)
+	assert.Contains(t, string(raw), `"effort":"high"`)
+}

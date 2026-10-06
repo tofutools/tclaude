@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -714,8 +715,15 @@ func TestAWBReadyPickupHeldWhileHarnessIsOverItsUsageCeiling(t *testing.T) {
 	})
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("AWB was called at %q while the harness was over its usage ceiling", r.URL.Path)
-		w.WriteHeader(http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json")
+		issue := awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "open"}
+		if r.URL.Path == "/api/ready" {
+			_ = json.NewEncoder(w).Encode([]awbIssue{issue})
+		} else if r.Method == http.MethodGet {
+			_ = json.NewEncoder(w).Encode(issue)
+		} else {
+			t.Errorf("issue was mutated while the harness was over its usage ceiling")
+		}
 	}))
 	t.Cleanup(server.Close)
 
@@ -970,8 +978,15 @@ func TestAWBReadyPickupHeldWhenEveryHarnessInTheChainIsSpent(t *testing.T) {
 	})
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("AWB was called at %q while every harness in the chain was spent", r.URL.Path)
-		w.WriteHeader(http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json")
+		issue := awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "open"}
+		if r.URL.Path == "/api/ready" {
+			_ = json.NewEncoder(w).Encode([]awbIssue{issue})
+		} else if r.Method == http.MethodGet {
+			_ = json.NewEncoder(w).Encode(issue)
+		} else {
+			t.Errorf("issue was mutated while every harness in the chain was spent")
+		}
 	}))
 	t.Cleanup(server.Close)
 
@@ -1126,5 +1141,77 @@ func TestAWBReadyRunPollsForNextIssueImmediatelyAfterClose(t *testing.T) {
 	case <-readyPolls:
 	case <-time.After(10 * time.Second):
 		t.Fatal("run waited for the poll interval before looking for the next ready issue")
+	}
+}
+
+func TestAWBReadyIssueAgentOverrides(t *testing.T) {
+	worker := awbReadyWorker{workspace: "tcl", config: config.AWBReadyPollingConfig{
+		Harness: config.HarnessList{"codex", "claude"}, Model: "configured", Effort: "medium",
+	}, session: &awbProxySession{base: "https://awb.example"}}
+	for _, tc := range []struct {
+		name, metadata, harness, model, effort string
+		invalid                                bool
+	}{
+		{name: "absent", metadata: `{}`, harness: "codex", model: "configured", effort: "medium"},
+		{name: "unrelated", metadata: `{"other":true}`, harness: "codex", model: "configured", effort: "medium"},
+		{name: "all", metadata: `{"agent":{"harness":"claude","model":"sonnet","effort":"high"}}`, harness: "claude", model: "sonnet", effort: "high"},
+		{name: "partial", metadata: `{"agent":{"effort":"high"}}`, harness: "codex", model: "configured", effort: "high"},
+		{name: "empty", metadata: `{"agent":{"harness":" ","model":"","effort":null}}`, harness: "codex", model: "configured", effort: "medium"},
+		{name: "wrong type", metadata: `{"agent":{"model":7}}`, invalid: true},
+		{name: "unknown harness", metadata: `{"agent":{"harness":"unknown"}}`, invalid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			effective, err := worker.withIssueAgent(json.RawMessage(tc.metadata))
+			if tc.invalid {
+				require.ErrorContains(t, err, "invalid AWB agent metadata")
+				return
+			}
+			require.NoError(t, err)
+			body := effective.spawnRequest("tcl-a1", "/repo", "", "", effective.config.Harness[0])
+			assert.Equal(t, tc.harness, body.Harness)
+			assert.Equal(t, tc.model, body.Model)
+			assert.Equal(t, tc.effort, body.Effort)
+			assert.Equal(t, config.HarnessList{"codex", "claude"}, worker.config.Harness)
+			assert.Equal(t, "configured", worker.config.Model)
+		})
+	}
+}
+
+func TestAWBReadyMetadataHarnessGovernsUsageGate(t *testing.T) {
+	for _, tc := range []struct {
+		name, configured, override string
+		held                       bool
+	}{
+		{"available override", "codex", "claude", false},
+		{"spent override", "claude", "codex", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupTestDB(t)
+			t.Setenv("AWB_PASSWORD", "hunter2")
+			_, err := db.CreateAgentGroup("builders", "")
+			require.NoError(t, err)
+			writeRateLimitConfig(t, 80, 95)
+			now := time.Now()
+			seedCodexUsage(t, harness.CodexUsage{Observed: now, FiveHour: &harness.CodexRateLimitWindow{UsedPercent: 93, ResetsAt: now.Add(time.Hour)}})
+			seedClaudeUsage(t, now, usageapi.CachedUsage{FiveHour: &usageapi.CachedBucket{Pct: 20, ResetsAt: now.Add(time.Hour)}})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				issue := awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "closed"}
+				if r.URL.Path == "/api/ready" {
+					// Ready listings may omit metadata; use the full issue read.
+					_ = json.NewEncoder(w).Encode([]awbIssue{{ID: issue.ID, Workspace: "tcl", Status: "open"}})
+				} else {
+					issue.Metadata = json.RawMessage(fmt.Sprintf(`{"agent":{"harness":%q}}`, tc.override))
+					_ = json.NewEncoder(w).Encode(issue)
+				}
+			}))
+			t.Cleanup(server.Close)
+			policy := config.AWBProxyConfig{URL: server.URL, Username: "worker", AllowWrite: true, AllowedWorkspaces: []string{"tcl"}}
+			worker := newAWBReadyWorker(policy, "builders", config.AWBReadyPollingConfig{Workspace: "tcl", Group: "builders", Cwd: t.TempDir(), Harness: config.HarnessList{tc.configured}})
+			require.NoError(t, worker.tick(context.Background()))
+			held, err := db.ListAuditLog(db.AuditLogFilter{Verb: "awb.ready.ratelimited"})
+			require.NoError(t, err)
+			assert.Equal(t, tc.held, len(held) > 0)
+		})
 	}
 }
