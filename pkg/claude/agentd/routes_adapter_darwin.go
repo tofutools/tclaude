@@ -38,6 +38,7 @@ func configuredDarwinRouteAdapter() (*routeadapter.Adapter, bool, error) {
 	adapter.SetConsumerRefusalObserver(func(consumer routeadapter.Consumer, err error) {
 		recordDarwinConsumerRefusal(adapter, consumer, err)
 	})
+	adapter.SetFlowWindow(routeFlowWindow)
 	ctx, cancel := context.WithCancel(context.Background())
 	darwinRouteAdapterState.adapter = adapter
 	darwinRouteAdapterState.cancel = cancel

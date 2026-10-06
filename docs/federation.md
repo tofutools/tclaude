@@ -426,9 +426,10 @@ is by inspecting the caller's process tree.
 - Remote routes relay through the hub, so their throughput is bounded by
   the hub's stream limits, and each connection moves at most one window
   (`routes.window_kib`) per round trip through the hub. Connections whose
-  local end runs without flow control (an older helper, or the macOS
-  adapter) fall back to about 4 MiB of buffering, and a sender that
-  outruns the hub's bandwidth for longer resets its connection.
+  local end runs without flow control (an older Linux helper, or
+  `routes.flow_control` off) fall back to about 4 MiB of buffering, and a
+  sender that outruns the hub's bandwidth for longer resets its
+  connection.
 - Each remote route connection costs one sealed control frame from each
   instance against the hub's per-instance frame budget (120 a minute by
   default, shared with mail). A peer accepts at most 240 opens a minute.

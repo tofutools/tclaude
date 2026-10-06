@@ -69,7 +69,9 @@ func TestFlowControlCarriesBulkPastSlowReaders(t *testing.T) {
 	ready := make(chan error, 1)
 	go func() { _ = b.AttachPublisherReady(ctx, pub, pubBroker, func(err error) { ready <- err }) }()
 	require.NoError(t, <-ready)
-	go func() { _ = RunPublisher(ctx, flowConn{pubHelper, routebroker.InitialWindow}, "tcp://"+targetLn.Addr().String()) }()
+	go func() {
+		_ = RunPublisher(ctx, flowConn{pubHelper, routebroker.InitialWindow}, "tcp://"+targetLn.Addr().String())
+	}()
 
 	conBroker, conHelper := net.Pipe()
 	go func() { _ = b.AttachConsumer(ctx, con, conBroker) }()

@@ -64,10 +64,9 @@ turn flow control off, in `~/.tclaude/config.json`:
 `window_kib` (default 256, range 256–16384) trades memory per connection
 for throughput over slow or distant links such as a
 [federation](federation.md) hub. Changes apply to route channels attached
-afterwards. Flow control is negotiated, so helpers from an older release
-keep working without it. The macOS adapter does not implement it yet: its
-connections keep the older fixed buffers, and a reader that falls far
-behind still resets its connection.
+afterwards. It works the same on Linux and macOS. Flow control is
+negotiated, so Linux helpers from an older release keep working without
+it.
 
 ## Fail-closed by generation
 
