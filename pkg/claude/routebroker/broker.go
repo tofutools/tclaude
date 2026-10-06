@@ -712,12 +712,22 @@ func (b *Broker) forwardFromConsumer(consumer *session, frame Frame) error {
 	}
 	queueCap := b.queueCap(stream)
 	queued := dataCredit(stream.toPublisher, frame)
+	item := outbound{frame: Frame{Kind: frame.Kind, Stream: stream.globalID, Payload: frame.Payload}, terminal: frame.Kind == KindClose, queued: queued}
+	var err error
+	// Publish the HALF_CLOSE to its writer before the opposite session can
+	// observe both half-close flags and queue the terminal CLOSE. Enqueue
+	// never waits for channel I/O; b.mu -> writersMu is also used by detach.
+	if frame.Kind == KindHalfClose && publisher != nil {
+		err = publisher.enqueueOut(stream.globalID, item, queueCap)
+	}
 	b.mu.Unlock()
 	if publisher == nil {
 		return ErrClosed
 	}
-	terminal := frame.Kind == KindClose
-	if err := publisher.enqueueOut(stream.globalID, outbound{frame: Frame{Kind: frame.Kind, Stream: stream.globalID, Payload: frame.Payload}, terminal: terminal, queued: queued}, queueCap); err != nil {
+	if frame.Kind != KindHalfClose {
+		err = publisher.enqueueOut(stream.globalID, item, queueCap)
+	}
+	if err != nil {
 		if errors.Is(err, ErrBackpressure) {
 			b.rejectedStreamsMetric.Add(1)
 			publisher.close()
@@ -771,9 +781,18 @@ func (b *Broker) forwardFromPublisher(publisher *session, frame Frame) error {
 	localID := stream.localID
 	queueCap := b.queueCap(stream)
 	queued := dataCredit(stream.toConsumer, frame)
+	item := outbound{frame: Frame{Kind: frame.Kind, Stream: localID, Payload: payload}, terminal: frame.Kind == KindClose || frame.Kind == KindOpenError, queued: queued}
+	var err error
+	// Keep the half-close flag and its queued notice atomic with respect to
+	// reclamation by the consumer's session (see forwardFromConsumer).
+	if frame.Kind == KindHalfClose {
+		err = consumer.enqueueOut(localID, item, queueCap)
+	}
 	b.mu.Unlock()
-	terminal := frame.Kind == KindClose || frame.Kind == KindOpenError
-	if err := consumer.enqueueOut(localID, outbound{frame: Frame{Kind: frame.Kind, Stream: localID, Payload: payload}, terminal: terminal, queued: queued}, queueCap); err != nil {
+	if frame.Kind != KindHalfClose {
+		err = consumer.enqueueOut(localID, item, queueCap)
+	}
+	if err != nil {
 		if errors.Is(err, ErrBackpressure) {
 			b.rejectedStreamsMetric.Add(1)
 			consumer.close()
