@@ -587,8 +587,8 @@ Agents launched or resumed by tclaude receive one environment variable for
 each instance their effective `proxy.http` grant permits:
 
 ```bash
-curl "${TCLAUDE_HTTP_PROXY_inventory}items?limit=10"
-curl -X POST -H 'Content-Type: application/json' \
+curl --noproxy 127.0.0.1 "${TCLAUDE_HTTP_PROXY_inventory}items?limit=10"
+curl --noproxy 127.0.0.1 -X POST -H 'Content-Type: application/json' \
   --data-binary @item.json "${TCLAUDE_HTTP_PROXY_inventory}items"
 ```
 
