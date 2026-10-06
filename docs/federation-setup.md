@@ -105,12 +105,12 @@ tclaude federation grant laptop groups.roster.read --scope group=builders
 tclaude federation grant laptop groups.presence.read --scope group=builders
 ```
 
-On the **laptop**, see what the desktop offers and import it into a local
-group, which lets that group's members address it:
+On the **laptop**, see what the desktop offers and grant an agent reach to
+the remote group:
 
 ```bash
 tclaude federation remote
-tclaude federation import desktop/builders --into team
+tclaude agent permissions grant lead message.direct --scope peer=desktop/builders
 tclaude agent ls --remote
 ```
 
@@ -122,11 +122,11 @@ As the operator, from the laptop:
 tclaude federation send some-agent@desktop "hello from the laptop"
 ```
 
-For an agent in `team` to send on its own, it also needs the
-`federation.message` permission, which is never granted by default:
+For an agent to send on its own, it needs `message.direct` scoped to the
+desktop peer and its builders group:
 
 ```bash
-tclaude agent permissions grant lead federation.message --scope group=team
+tclaude agent permissions grant lead message.direct --scope peer=desktop/builders
 ```
 
 The agent then uses its ordinary messaging command with the remote address,
@@ -154,4 +154,4 @@ tclaude agent message some-agent@desktop "can you review PR 42?"
 | `connect` refuses a `ws://` URL | plain `ws://` is accepted only for a loopback hub |
 | `status` shows connected but `peers` is empty | the instances are in different spaces (`tclaude-hub ls`), or the other one is offline |
 | `remote` lists nothing | the other side has not exported a group to you, or has not trusted you yet |
-| an agent's send is refused | its group does not import the remote group, or it lacks `federation.message` |
+| an agent's send is refused | the peer does not grant mail access, or the agent lacks `message.direct` scoped to the peer/group |

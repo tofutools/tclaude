@@ -52,7 +52,7 @@ Three layers decide what is allowed, and each one can only narrow:
 | Layer | Decides |
 |---|---|
 | Hub | which instances may connect, who can see whom (spaces), rate limits |
-| Your exports | which local groups a peer can see and mail, with which capabilities |
+| Your peer grants | which local groups a peer can see and mail, with which capabilities |
 | Your peer-scoped grants | which agents and local group members may act on which peer groups |
 
 ## Running a hub

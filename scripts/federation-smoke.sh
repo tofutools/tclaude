@@ -103,18 +103,19 @@ log "trusting"
 inst alice tclaude federation trust "$BOB_ID" --label bob
 inst bob tclaude federation trust "$ALICE_ID" --label alice
 
-log "bob: shell agent in group builders, exported to alice"
+log "bob: shell agent in group builders, granted to alice"
 inst bob tclaude agent groups create builders
 inst bob tclaude agent spawn builders --harness shell --name bob-shell
-inst bob tclaude federation export builders --to alice --cap roster,presence,mail
+inst bob tclaude federation grant alice groups.roster.read --scope group=builders
+inst bob tclaude federation grant alice groups.presence.read --scope group=builders
+inst bob tclaude federation grant alice message.direct --scope group=builders
 
 catalog_has() { inst alice tclaude federation remote | grep -q "bob-shell@bob"; }
 wait_for "alice receives bob's catalog" catalog_has
 inst alice tclaude federation remote
 
-log "alice: import and send"
+log "alice: operator send"
 inst alice tclaude agent groups create team
-inst alice tclaude federation import bob/builders --into team
 inst alice tclaude federation send bob-shell@bob "hello from alice's operator" --subject smoke
 
 accepted() { inst alice tclaude federation outbox --json | grep -q '"state": "accepted"'; }

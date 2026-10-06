@@ -186,15 +186,6 @@ func fedMemberMatches(m proto.CatalogMember, member string) bool {
 	return m.Agent == member || strings.EqualFold(m.Name, member) || (len(member) >= 8 && strings.HasPrefix(m.Agent, member))
 }
 
-func containsString(xs []string, x string) bool {
-	for _, s := range xs {
-		if s == x {
-			return true
-		}
-	}
-	return false
-}
-
 // queueFederatedMail seals mail from fromConv ("" = human operator) to the
 // target and writes the durable outbox row.
 func queueFederatedMail(fromConv string, t *fedTarget, subject, body, inReplyTo string, atts []proto.AttachmentPayload) (*db.FederationOutboxRow, error) {
