@@ -18,6 +18,9 @@ laptops behind NAT or a corporate network work as-is.
     cross-instance group routes. Stopping or reading a colleague's agents
     and a dashboard view are not built yet.
 
+For a step-by-step first setup, including the hub's TLS certificate, see
+the [setup walkthrough](federation-setup.md).
+
 ## Trust model
 
 The hub routes; it is never the authority over what an agent may do.

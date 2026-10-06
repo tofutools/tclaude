@@ -53,6 +53,7 @@ nav:
       - Dashboard: dashboard.md
       - Operating remotely: remote.md
       - Federation: federation.md
+      - Federation setup: federation-setup.md
   - Confinement:
       - Sandboxing: sandboxing.md
       - Network filtering: network-filtering.md

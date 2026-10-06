@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -286,7 +287,14 @@ func connectCmd() *cobra.Command {
 				req["name"] = p.Name
 			}
 			if p.CAFile != "" {
-				req["hub_ca_file"] = p.CAFile
+				// agentd reads the file itself, from its own working
+				// directory, so a relative path must be resolved here.
+				ca, err := filepath.Abs(p.CAFile)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					os.Exit(1)
+				}
+				req["hub_ca_file"] = ca
 			}
 			if rc := post(os.Stderr, "/v1/federation/config", req, nil); rc != 0 {
 				os.Exit(rc)
