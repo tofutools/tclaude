@@ -64,3 +64,31 @@ func TestPeerScopeAttenuation(t *testing.T) {
 	require.False(t, permissionScopeCovers(group, wholePeer))
 	require.False(t, permissionScopeCovers(wholePeer, PermissionScope{ScopeDimPeer: {"inst_other/builders"}}))
 }
+
+func TestPeerScopePreservesIndependentLocalAuthorityAndBlanketDeny(t *testing.T) {
+	const slug = PermRoutesConsume
+	src := permSources{resolvable: true,
+		sudo:     map[string]sudoPermSource{slug: {ID: 1, ScopeJSON: `{"peer":["inst_peer/builders"]}`}},
+		override: map[string]overridePermSource{slug: {Effect: db.PermEffectGrant, ScopeJSON: `{"peer":["inst_peer/builders"]}`}},
+		group:    map[string][]string{slug: {`{"group":["team"]}`}},
+	}
+	local := localPermissionSources(src)
+	v := resolvePermissionVerdictFrom(local, slug, false)
+	require.Equal(t, permSourceGroup, v.Source)
+	allowed, _ := permissionVerdictAllowsAction(v, "caller", slug, ActionContext{Group: "team"})
+	require.True(t, allowed)
+	src.override[slug] = overridePermSource{Effect: db.PermEffectDeny}
+	// Remove sudo: human elevation is still allowed to override a blanket deny.
+	src.sudo = nil
+	for _, action := range []ActionContext{{Group: "team"}, {RemotePeer: "inst_peer", RemoteGroup: "builders"}} {
+		var v permVerdict
+		if action.RemotePeer != "" {
+			v = resolveRemotePermissionVerdictFrom(src, slug)
+		} else {
+			v = resolvePermissionVerdictFrom(localPermissionSources(src), slug, true)
+		}
+		require.Equal(t, permDeny, v.Resolution)
+		allowed, _ := permissionVerdictAllowsAction(v, "caller", slug, action)
+		require.False(t, allowed)
+	}
+}

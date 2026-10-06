@@ -2,9 +2,11 @@ package agentd_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"runtime"
 	"testing"
 	"time"
@@ -345,4 +347,46 @@ func TestFederation_RoutesOpenRemoteRoute(t *testing.T) {
 	res, again := openRemote(alice)
 	require.Equal(t, http.StatusCreated, res.StatusCode, again)
 	require.Equal(t, lease["route_id"], again["route_id"])
+}
+
+func TestFederation_PeerGrantPreservesLocalRouteAuthority(t *testing.T) {
+	skipFedRoutes(t)
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	const publisher = "fed-local-publisher"
+	const consumer = "fed-local-consumer"
+	f.HaveGroup("team")
+	f.HaveConvWithTitle(publisher, "publisher")
+	f.HaveConvWithTitle(consumer, "consumer")
+	f.HaveMember("team", publisher)
+	f.HaveMember("team", consumer)
+	group, err := db.GetAgentGroupByName("team")
+	require.NoError(t, err)
+	require.NoError(t, db.ReplaceAgentGroupPermissions(group.ID, []string{agentd.PermRoutesPublish, agentd.PermRoutesConsume}, "test"))
+	rec, route := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/publish", publisher, map[string]any{"group": "team", "name": "api", "target": "tcp://127.0.0.1:43177"})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	grant := postPermissionScope(t, f, "grant", map[string]any{"target": consumer, "slug": agentd.PermRoutesConsume, "scope": map[string]any{"peer": []string{"bob/builders"}}})
+	require.Equal(t, http.StatusOK, grant.Code, grant.Body)
+	openLocal := func() *httptest.ResponseRecorder {
+		rec, _ := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/open", consumer, map[string]any{"group": "team", "route_id": route["id"]})
+		return rec
+	}
+	// Adding peer reach leaves the inherited local group grant effective.
+	rec = openLocal()
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	// A peer grant alone must never authorize a local route.
+	require.NoError(t, db.ReplaceAgentGroupPermissions(group.ID, []string{agentd.PermRoutesPublish}, "test"))
+	rec = openLocal()
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	require.NoError(t, db.ReplaceAgentGroupPermissions(group.ID, []string{agentd.PermRoutesPublish, agentd.PermRoutesConsume}, "test"))
+	require.NoError(t, db.SetAgentPermissionOverride(consumer, agentd.PermRoutesConsume, db.PermEffectDeny, "test"))
+	rec = openLocal()
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	cat := proto.CatalogPayload{Groups: []proto.CatalogGroup{{Name: "builders", Caps: []string{proto.CapRoutes}, Routes: []proto.CatalogRoute{{ID: "rte_00112233445566778899aabbccddeeff", Publisher: "srv", Name: "api"}}}}}
+	raw, err := json.Marshal(cat)
+	require.NoError(t, err)
+	require.NoError(t, db.PutFederationCatalog(p.id.ID(), string(raw), time.Now()))
+	rec, _ = serveRouteAgent(t, f, http.MethodPost, "/v1/federation/routes/open", consumer, map[string]any{"group": "team", "peer": "bob", "route": "srv/api"})
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "route_permission")
 }

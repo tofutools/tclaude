@@ -533,11 +533,12 @@ func resolvePermissionWithSudoGrantID(convID, slug string) (permResolution, int6
 // gates use. They need the whole verdict, not just the resolution, because a
 // scoped allow can only be answered against the request's ActionContext.
 func resolvePermissionVerdictForRequest(r *http.Request, convID, slug string) permVerdict {
+	src := localPermissionSources(loadPermSources(convID))
 	if defaults, ok := r.Context().Value(permissionDefaultsKey{}).(map[string]bool); ok {
-		return resolveEffectivePermissionVerdict(convID, slug, defaults[slug], defaults[PermGroupsAdmin])
+		return resolveEffectivePermissionVerdictFrom(src, slug, defaults[slug], defaults[PermGroupsAdmin])
 	}
 	cfg, _ := config.Load()
-	return resolveEffectivePermissionVerdict(convID, slug,
+	return resolveEffectivePermissionVerdictFrom(src, slug,
 		cfg.HasDefaultPermission(slug), cfg.HasDefaultPermission(PermGroupsAdmin))
 }
 
@@ -547,7 +548,7 @@ func resolvePermissionVerdictForRequest(r *http.Request, convID, slug string) pe
 // does not suppress a separately granted dedicated capability; it only removes
 // the umbrella source.
 func resolveEffectivePermissionVerdict(convID, slug string, defaultAllowed, adminDefaultAllowed bool) permVerdict {
-	src := loadPermSources(convID)
+	src := localPermissionSources(loadPermSources(convID))
 	return resolveEffectivePermissionVerdictFrom(src, slug, defaultAllowed, adminDefaultAllowed)
 }
 
@@ -744,6 +745,7 @@ func resolveGroupBoundPermissionVerdictForRequest(r *http.Request, convID, slug 
 	if err != nil {
 		return permVerdict{}, err
 	}
+	src = localPermissionSources(src)
 	var targetScopes []string
 	for _, grant := range src.groupRows[slug] {
 		if grant.GroupID == targetGroupID {
@@ -939,6 +941,47 @@ func resolvePermissionVerdictForAction(r *http.Request, convID, slug string, act
 	}
 	src := loadPermSources(convID)
 	return resolveRemotePermissionVerdictFrom(src, slug)
+}
+
+// localPermissionSources excludes positive peer rows before local precedence.
+// Denies remain unconditional in both domains. Copy maps because listings may
+// still need the complete source snapshot to display remote grants.
+func localPermissionSources(src permSources) permSources {
+	local := src
+	local.sudo = map[string]sudoPermSource{}
+	local.override = map[string]overridePermSource{}
+	local.group = map[string][]string{}
+	localScope := func(raw string) bool {
+		scope, err := permissionScopeForEval(raw)
+		return err != nil || len(scope[ScopeDimPeer]) == 0
+	}
+	for slug, sudo := range src.sudo {
+		if localScope(sudo.ScopeJSON) {
+			local.sudo[slug] = sudo
+		}
+	}
+	for slug, override := range src.override {
+		if override.Effect == db.PermEffectDeny || localScope(override.ScopeJSON) {
+			local.override[slug] = override
+		}
+	}
+	for slug, scopes := range src.group {
+		for _, raw := range scopes {
+			if localScope(raw) {
+				local.group[slug] = append(local.group[slug], raw)
+			}
+		}
+	}
+	// Routes restrict group-tier rows to one local group after filtering.
+	local.groupRows = map[string][]db.AgentGroupPermission{}
+	for slug, rows := range src.groupRows {
+		for _, row := range rows {
+			if localScope(row.ScopeJSON) {
+				local.groupRows[slug] = append(local.groupRows[slug], row)
+			}
+		}
+	}
+	return local
 }
 
 func resolveRemotePermissionVerdictFrom(src permSources, slug string) permVerdict {
