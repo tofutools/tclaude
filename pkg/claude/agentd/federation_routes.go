@@ -196,7 +196,9 @@ type fedStreamFlow struct {
 // the stream is open.
 func (s *fedRouteStream) enableFlow(window int) int {
 	recv, grant := routebroker.NewRecvWindow(window)
+	s.mu.Lock()
 	s.flow = &fedStreamFlow{send: routebroker.NewSendWindow(), recv: recv}
+	s.mu.Unlock()
 	return grant
 }
 
@@ -445,7 +447,12 @@ func (e *fedRouteEnd) bridge(s *fedRouteStream) {
 					e.endStream(s, true)
 					return
 				}
-				if s.flow != nil {
+				s.mu.Lock()
+				// Once the local side half-closed no more DATA can come,
+				// so a grant would only trail the stream's end.
+				finished := s.gotHalfClose
+				s.mu.Unlock()
+				if s.flow != nil && !finished {
 					if g := s.flow.recv.Consumed(len(f.Payload)); g > 0 {
 						if err := e.write(routebroker.WindowFrame(s.id, g)); err != nil {
 							return // the channel is gone; teardown ends the stream
@@ -522,10 +529,10 @@ func (e *fedRouteEnd) endStream(s *fedRouteStream, notify bool) {
 		e.mu.Unlock()
 		s.mu.Lock()
 		s.cancel()
-		conn := s.conn
+		conn, flow := s.conn, s.flow
 		s.mu.Unlock()
-		if s.flow != nil {
-			s.flow.send.Close()
+		if flow != nil {
+			flow.send.Close()
 		}
 		if conn != nil {
 			go func() { _ = conn.Close() }()
@@ -677,7 +684,7 @@ func (rt *fedRuntime) startMirror(route *db.AgentRoute, peer, remote string, che
 	auth := routebroker.PublisherAuth{
 		RouteID: route.ID, AgentID: route.PublisherAgentID, ConvID: route.PublisherConvID,
 		LaunchGeneration: route.PublisherLaunchGeneration, GroupGeneration: route.GroupGeneration,
-		FlowControl: e.window > 0,
+		FlowWindow: e.window,
 	}
 	err := attachEnd(e, theirs, func(ready func(error)) error {
 		return GroupRouteBroker().AttachPublisherReady(context.Background(), auth, theirs, ready)
@@ -1035,7 +1042,7 @@ func (rt *fedRuntime) startProxy(key, peer string, route *db.AgentRoute) (*fedRo
 	auth := routebroker.ConsumerAuth{
 		LeaseID: lease.ID, RouteID: route.ID, AgentID: lease.ConsumerAgentID, ConvID: lease.ConsumerConvID,
 		LaunchGeneration: lease.ConsumerLaunchGeneration, GroupGeneration: lease.GroupGeneration,
-		FlowControl: e.window > 0,
+		FlowWindow: e.window,
 	}
 	err = attachEnd(e, theirs, func(ready func(error)) error {
 		return GroupRouteBroker().AttachConsumerWithReady(context.Background(), auth, theirs, func() error { ready(nil); return nil })

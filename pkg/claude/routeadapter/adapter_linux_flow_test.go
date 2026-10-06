@@ -60,8 +60,8 @@ func TestFlowControlCarriesBulkPastSlowReaders(t *testing.T) {
 	b, err := routebroker.New(routebroker.Config{Authorizer: allowAll{}, WriteTimeout: 150 * time.Millisecond})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
-	pub := routebroker.PublisherAuth{RouteID: "r", AgentID: "p", ConvID: "pc", LaunchGeneration: "g", FlowControl: true}
-	con := routebroker.ConsumerAuth{LeaseID: "l", RouteID: "r", AgentID: "c", ConvID: "cc", LaunchGeneration: "g", FlowControl: true}
+	pub := routebroker.PublisherAuth{RouteID: "r", AgentID: "p", ConvID: "pc", LaunchGeneration: "g", FlowWindow: routebroker.InitialWindow}
+	con := routebroker.ConsumerAuth{LeaseID: "l", RouteID: "r", AgentID: "c", ConvID: "cc", LaunchGeneration: "g", FlowWindow: routebroker.InitialWindow}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

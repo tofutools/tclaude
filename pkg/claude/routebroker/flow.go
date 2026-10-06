@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 )
 
 // Flow control.
@@ -19,8 +20,8 @@ import (
 // source, and TCP carries the backpressure the rest of the way.
 //
 // Flow control is negotiated per channel and then decided per stream. An
-// endpoint that implements it says so when it attaches (PublisherAuth and
-// ConsumerAuth FlowControl); the broker enables it on a stream only when both
+// endpoint that implements it says so when it attaches, with its receive
+// window (PublisherAuth and ConsumerAuth FlowWindow); the broker enables it on a stream only when both
 // of that stream's channels do, and tells each end by putting
 // OpenFlowControl in the OPEN it sends the publisher and in the OPEN_OK it
 // forwards to the consumer. An endpoint that never sees the marker runs the
@@ -29,8 +30,9 @@ import (
 // Both directions start with InitialWindow of credit, implicitly. A receiver
 // that wants a larger window grants the difference up front. The broker
 // tracks the same credit and treats a sender that exceeds it as a protocol
-// violation, so a misbehaving endpoint fails its own channel instead of
-// filling a queue that belongs to its peer.
+// violation, and never holds more than a receiver's declared window queued
+// toward it, so a misbehaving endpoint on either side fails its own channel
+// instead of growing agentd's memory.
 
 // InitialWindow is each direction's implicit starting credit on a
 // flow-controlled stream.
@@ -80,22 +82,51 @@ func ClampWindow(n int) int {
 	return min(max(n, InitialWindow), MaxWindow)
 }
 
-// credit is one direction's outstanding credit as the broker sees it.
-type credit struct{ n int }
+// credit is one direction's outstanding credit as the broker sees it: n is
+// granted and unspent (guarded by the broker mutex), queued is spent but
+// still in the broker's queue toward the receiver. Together they never
+// exceed the receiver's declared window, so a receiver that grants
+// without reading cannot make the broker hold more than that.
+type credit struct {
+	window int
+	n      int
+	queued atomic.Int64
+}
+
+func newCredit(window int) *credit {
+	return &credit{window: ClampWindow(window), n: InitialWindow}
+}
 
 func (c *credit) spend(n int) error {
 	if n > c.n {
 		return ErrFlowViolation
 	}
 	c.n -= n
+	c.queued.Add(int64(n))
 	return nil
 }
 
 func (c *credit) grant(n int) error {
-	if c.n+n > MaxWindow {
+	if int64(c.n+n)+c.queued.Load() > int64(c.window) {
 		return ErrFlowViolation
 	}
 	c.n += n
+	return nil
+}
+
+// dequeued releases n queued bytes; nil-safe.
+func (c *credit) dequeued(n int) {
+	if c != nil {
+		c.queued.Add(-int64(n))
+	}
+}
+
+// dataCredit is the credit a frame occupies while queued: DATA on a
+// flow-controlled stream only.
+func dataCredit(c *credit, f Frame) *credit {
+	if f.Kind == KindData {
+		return c
+	}
 	return nil
 }
 

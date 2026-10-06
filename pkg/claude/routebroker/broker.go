@@ -21,10 +21,12 @@ type PublisherAuth struct {
 	ConvID           string
 	LaunchGeneration string
 	GroupGeneration  int64
-	// FlowControl advertises that the endpoint implements WINDOW credit
-	// (see flow.go). It is a channel capability, not identity: authorizers
-	// ignore it.
-	FlowControl bool
+	// FlowWindow advertises that the endpoint implements WINDOW credit
+	// (see flow.go) with this receive window; 0 means it does not. It is a
+	// channel capability, not identity: authorizers ignore it. The broker
+	// never lets more than this many bytes be outstanding toward the
+	// endpoint, whatever it grants.
+	FlowWindow int
 }
 
 // ConsumerAuth is the M1 lease identity presented by a consumer-side helper.
@@ -36,8 +38,8 @@ type ConsumerAuth struct {
 	ConvID           string
 	LaunchGeneration string
 	GroupGeneration  int64
-	// FlowControl: see PublisherAuth.
-	FlowControl bool
+	// FlowWindow: see PublisherAuth.
+	FlowWindow int
 }
 
 // Authorizer is the narrow seam to M1's route/lease authority. Authorize is
@@ -212,7 +214,7 @@ type stream struct {
 	// that exceeds what its receiver granted is caught here, at its own
 	// channel, before it can fill the receiver's queue.
 	flow                    bool
-	toPublisher, toConsumer credit
+	toPublisher, toConsumer *credit
 }
 
 // queueCap is the writer queue bound for this stream's frames.
@@ -232,6 +234,9 @@ type streamTombstone struct {
 type outbound struct {
 	frame    Frame
 	terminal bool
+	// queued is the flow credit this DATA frame counts against while it
+	// waits in the queue; nil when not flow-controlled.
+	queued *credit
 }
 
 type streamWriter struct {
@@ -655,9 +660,10 @@ func (b *Broker) openStream(consumer *session, localID uint64) error {
 	globalID := r.nextStreamID
 	r.nextStreamID++
 	stream := &stream{globalID: globalID, localID: localID, consumer: consumer, agentID: agentID}
-	if r.publisher.publisherAuth.FlowControl && consumer.consumerAuth.FlowControl {
+	if pw, cw := r.publisher.publisherAuth.FlowWindow, consumer.consumerAuth.FlowWindow; pw > 0 && cw > 0 {
 		stream.flow = true
-		stream.toPublisher.n, stream.toConsumer.n = InitialWindow, InitialWindow
+		stream.toPublisher = newCredit(pw)
+		stream.toConsumer = newCredit(cw)
 	}
 	r.streams[globalID] = stream
 	b.agentStreams[agentID]++
@@ -687,13 +693,15 @@ func (b *Broker) forwardFromConsumer(consumer *session, frame Frame) error {
 	stream, tombstone := b.findConsumerStreamLocked(consumer, frame.Stream)
 	if stream == nil {
 		b.mu.Unlock()
-		if tombstone {
+		// A grant can trail an orderly end by as long as the receiver
+		// takes to deliver the tail, long after the tombstone expired.
+		if tombstone || frame.Kind == KindWindow {
 			return nil
 		}
 		return fmt.Errorf("%w: unknown consumer stream", ErrProtocol)
 	}
 	publisher := stream.consumer.route.publisher
-	if forward, err := b.flowLocked(stream, frame, &stream.toPublisher, &stream.toConsumer); !forward {
+	if forward, err := b.flowLocked(stream, frame, stream.toPublisher, stream.toConsumer); !forward {
 		b.mu.Unlock()
 		return err
 	}
@@ -703,12 +711,13 @@ func (b *Broker) forwardFromConsumer(consumer *session, frame Frame) error {
 		reclaim = b.claimStreamReclaimLocked(stream)
 	}
 	queueCap := b.queueCap(stream)
+	queued := dataCredit(stream.toPublisher, frame)
 	b.mu.Unlock()
 	if publisher == nil {
 		return ErrClosed
 	}
 	terminal := frame.Kind == KindClose
-	if err := publisher.enqueueCap(stream.globalID, Frame{Kind: frame.Kind, Stream: stream.globalID, Payload: frame.Payload}, terminal, queueCap); err != nil {
+	if err := publisher.enqueueOut(stream.globalID, outbound{frame: Frame{Kind: frame.Kind, Stream: stream.globalID, Payload: frame.Payload}, terminal: terminal, queued: queued}, queueCap); err != nil {
 		if errors.Is(err, ErrBackpressure) {
 			b.rejectedStreamsMetric.Add(1)
 			publisher.close()
@@ -735,12 +744,12 @@ func (b *Broker) forwardFromPublisher(publisher *session, frame Frame) error {
 	stream := r.streams[frame.Stream]
 	if stream == nil {
 		b.mu.Unlock()
-		if _, ok := r.tombstones[frame.Stream]; ok {
-			return nil
+		if _, ok := r.tombstones[frame.Stream]; ok || frame.Kind == KindWindow {
+			return nil // see forwardFromConsumer
 		}
 		return fmt.Errorf("%w: unknown publisher stream", ErrProtocol)
 	}
-	if forward, err := b.flowLocked(stream, frame, &stream.toConsumer, &stream.toPublisher); !forward {
+	if forward, err := b.flowLocked(stream, frame, stream.toConsumer, stream.toPublisher); !forward {
 		b.mu.Unlock()
 		return err
 	}
@@ -761,9 +770,10 @@ func (b *Broker) forwardFromPublisher(publisher *session, frame Frame) error {
 	consumer := stream.consumer
 	localID := stream.localID
 	queueCap := b.queueCap(stream)
+	queued := dataCredit(stream.toConsumer, frame)
 	b.mu.Unlock()
 	terminal := frame.Kind == KindClose || frame.Kind == KindOpenError
-	if err := consumer.enqueueCap(localID, Frame{Kind: frame.Kind, Stream: localID, Payload: payload}, terminal, queueCap); err != nil {
+	if err := consumer.enqueueOut(localID, outbound{frame: Frame{Kind: frame.Kind, Stream: localID, Payload: payload}, terminal: terminal, queued: queued}, queueCap); err != nil {
 		if errors.Is(err, ErrBackpressure) {
 			b.rejectedStreamsMetric.Add(1)
 			consumer.close()
@@ -1022,6 +1032,10 @@ func (s *session) enqueue(id uint64, frame Frame, terminal bool) error {
 // enqueueCap is enqueue with the queue bound used if this call creates the
 // stream's writer.
 func (s *session) enqueueCap(id uint64, frame Frame, terminal bool, queueCap int) error {
+	return s.enqueueOut(id, outbound{frame: frame, terminal: terminal}, queueCap)
+}
+
+func (s *session) enqueueOut(id uint64, item outbound, queueCap int) error {
 	s.writersMu.Lock()
 	if s.ctx.Err() != nil {
 		s.writersMu.Unlock()
@@ -1035,11 +1049,12 @@ func (s *session) enqueueCap(id uint64, frame Frame, terminal bool, queueCap int
 		go writer.run()
 	}
 	select {
-	case writer.queue <- outbound{frame: frame, terminal: terminal}:
+	case writer.queue <- item:
 		s.writersMu.Unlock()
 		return nil
 	default:
 		s.writersMu.Unlock()
+		item.queued.dequeued(len(item.frame.Payload))
 		return ErrBackpressure
 	}
 }
@@ -1050,6 +1065,10 @@ func (w *streamWriter) run() {
 		case <-w.ctx.Done():
 			return
 		case item := <-w.queue:
+			// Released as it leaves the queue: by the time the receiver
+			// has read and delivered these bytes and granted them back,
+			// they no longer count against its window here.
+			item.queued.dequeued(len(item.frame.Payload))
 			if err := w.session.write(item.frame); err != nil {
 				w.session.close()
 				return

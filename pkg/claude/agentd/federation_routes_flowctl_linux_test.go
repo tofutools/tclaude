@@ -89,7 +89,7 @@ func TestFederation_RouteFlowControlServesBulkToSlowPeer(t *testing.T) {
 		_ = agentd.GroupRouteBroker().AttachPublisher(ctx, routebroker.PublisherAuth{
 			RouteID: routeID, AgentID: route["publisher_agent_id"].(string), ConvID: route["publisher_conv_id"].(string),
 			LaunchGeneration: route["publisher_launch_generation"].(string), GroupGeneration: int64(route["group_generation"].(float64)),
-			FlowControl: true,
+			FlowWindow: routebroker.InitialWindow,
 		}, brokerSide)
 	}()
 	go func() {
@@ -171,7 +171,7 @@ func TestFederation_RouteFlowControlOpensRemoteRouteInBulk(t *testing.T) {
 		_ = agentd.GroupRouteBroker().AttachConsumerWithReady(ctx, routebroker.ConsumerAuth{
 			LeaseID: lease["id"].(string), RouteID: lease["route_id"].(string), AgentID: lease["consumer_agent_id"].(string), ConvID: lease["consumer_conv_id"].(string),
 			LaunchGeneration: lease["consumer_launch_generation"].(string), GroupGeneration: int64(lease["group_generation"].(float64)),
-			FlowControl: true,
+			FlowWindow: routebroker.InitialWindow,
 		}, brokerSide, func() error { close(attached); return nil })
 	}()
 	<-attached

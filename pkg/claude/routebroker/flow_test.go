@@ -10,7 +10,12 @@ import (
 
 func flowAuths(pubFlow, conFlow bool) (routebroker.PublisherAuth, routebroker.ConsumerAuth) {
 	pub, con := auths()
-	pub.FlowControl, con.FlowControl = pubFlow, conFlow
+	if pubFlow {
+		pub.FlowWindow = routebroker.InitialWindow
+	}
+	if conFlow {
+		con.FlowWindow = routebroker.InitialWindow
+	}
 	return pub, con
 }
 
@@ -61,8 +66,15 @@ func TestBrokerForwardsWindowsAndEnforcesCredit(t *testing.T) {
 	pair := attachPair(t, b, pub, con)
 	global, _, _ := openFlowStream(t, pair)
 
-	// The publisher grants the consumer more credit; the consumer sees it
-	// under its own stream id.
+	// The consumer may send its implicit window, and the publisher reads it.
+	chunk := make([]byte, routebroker.MaxFramePayload)
+	for range routebroker.InitialWindow / len(chunk) {
+		writeFrame(t, pair.conPeer, routebroker.Frame{Kind: routebroker.KindData, Stream: 1, Payload: chunk})
+		require.Equal(t, routebroker.KindData, readFrame(t, pair.pubPeer).Kind)
+	}
+
+	// Having delivered it, the publisher grants more; the consumer sees the
+	// grant under its own stream id.
 	writeFrame(t, pair.pubPeer, routebroker.WindowFrame(global, 1000))
 	w := readFrame(t, pair.conPeer)
 	require.Equal(t, routebroker.KindWindow, w.Kind)
@@ -71,16 +83,7 @@ func TestBrokerForwardsWindowsAndEnforcesCredit(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1000, n)
 
-	// The consumer may now send InitialWindow+1000 bytes, and no more.
-	chunk := make([]byte, routebroker.MaxFramePayload)
-	sent := 0
-	for sent+len(chunk) <= routebroker.InitialWindow+1000 {
-		writeFrame(t, pair.conPeer, routebroker.Frame{Kind: routebroker.KindData, Stream: 1, Payload: chunk})
-		require.Equal(t, routebroker.KindData, readFrame(t, pair.pubPeer).Kind)
-		sent += len(chunk)
-	}
-	rest := routebroker.InitialWindow + 1000 - sent
-	writeFrame(t, pair.conPeer, routebroker.Frame{Kind: routebroker.KindData, Stream: 1, Payload: make([]byte, rest)})
+	writeFrame(t, pair.conPeer, routebroker.Frame{Kind: routebroker.KindData, Stream: 1, Payload: make([]byte, 1000)})
 	require.Equal(t, routebroker.KindData, readFrame(t, pair.pubPeer).Kind)
 
 	// One byte over is a violation: the sender's channel is closed.
@@ -91,6 +94,36 @@ func TestBrokerForwardsWindowsAndEnforcesCredit(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("consumer channel survived a credit violation")
 	}
+}
+
+// TestBrokerHoldsAReceiverToItsDeclaredWindow: a receiver that grants
+// beyond the window it declared — say, to make the broker queue a sender's
+// bytes it never reads — fails its own channel.
+func TestBrokerHoldsAReceiverToItsDeclaredWindow(t *testing.T) {
+	b := newBroker(t, newTestAuthorizer(), routebroker.Config{})
+	pub, con := flowAuths(true, true)
+	pair := attachPair(t, b, pub, con)
+	global, _, _ := openFlowStream(t, pair)
+
+	writeFrame(t, pair.pubPeer, routebroker.WindowFrame(global, 1))
+	select {
+	case err := <-pair.pubDone:
+		require.ErrorIs(t, err, routebroker.ErrFlowViolation)
+	case <-time.After(2 * time.Second):
+		t.Fatal("publisher granted past its declared window")
+	}
+}
+
+// TestBrokerDropsWindowForRetiredStreams: a grant trailing an orderly end
+// arrives after the stream, and possibly its tombstone, is gone. It must
+// not cost the sender its channel.
+func TestBrokerDropsWindowForRetiredStreams(t *testing.T) {
+	b := newBroker(t, newTestAuthorizer(), routebroker.Config{})
+	pub, con := flowAuths(true, true)
+	pair := attachPair(t, b, pub, con)
+	writeFrame(t, pair.pubPeer, routebroker.WindowFrame(999, 4096))
+	writeFrame(t, pair.conPeer, routebroker.WindowFrame(999, 4096))
+	_, _, _ = openFlowStream(t, pair) // both channels still serve
 }
 
 func TestBrokerDropsWindowOnStreamsWithoutFlowControl(t *testing.T) {

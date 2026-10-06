@@ -56,18 +56,27 @@ func (s *streamSession) writeBinary(p []byte) error {
 	return s.ws.WriteMessage(websocket.BinaryMessage, p)
 }
 
+// close never waits behind a forwarded write: flow control can hold one
+// for up to the stream idle time, and revocation and shutdown close streams
+// one after another. Closing the socket is what unblocks such a write.
 func (s *streamSession) close() {
 	s.once.Do(func() {
 		close(s.done)
-		s.wmu.Lock()
-		_ = s.ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
-		s.wmu.Unlock()
+		if s.wmu.TryLock() {
+			_ = s.ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
+			s.wmu.Unlock()
+		}
 		_ = s.ws.Close()
 	})
 }
 
+// fail reports an error frame when nothing else is writing, and closes.
 func (s *streamSession) fail(code, msg string) {
-	_ = s.writeJSON(&proto.Frame{Type: proto.FrameError, Code: code, Message: msg})
+	if s.wmu.TryLock() {
+		_ = s.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		_ = s.ws.WriteJSON(&proto.Frame{Type: proto.FrameError, Code: code, Message: msg})
+		s.wmu.Unlock()
+	}
 	s.close()
 }
 

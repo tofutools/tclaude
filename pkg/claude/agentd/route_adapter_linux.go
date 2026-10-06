@@ -103,7 +103,7 @@ func handleRouteChannel(w http.ResponseWriter, r *http.Request) {
 		auth := routebroker.PublisherAuth{
 			RouteID: routeID, AgentID: agentID, ConvID: convID,
 			LaunchGeneration: launchGeneration, GroupGeneration: groupGeneration,
-			FlowControl: flowWindow > 0,
+			FlowWindow: flowWindow,
 		}
 		if authErr := (databaseRouteAuthority{}).AuthorizePublisher(r.Context(), auth); authErr != nil {
 			writeRouteError(w, http.StatusForbidden, "route_authority", authErr.Error())
@@ -136,7 +136,7 @@ func handleRouteChannel(w http.ResponseWriter, r *http.Request) {
 		consumerAuth = routebroker.ConsumerAuth{
 			LeaseID: leaseID, RouteID: routeID, AgentID: agentID, ConvID: convID,
 			LaunchGeneration: launchGeneration, GroupGeneration: groupGeneration,
-			FlowControl: flowWindow > 0,
+			FlowWindow: flowWindow,
 		}
 		if authErr := (databaseRouteAuthority{}).AuthorizeConsumer(r.Context(), consumerAuth); authErr != nil {
 			writeRouteError(w, http.StatusForbidden, "route_authority", authErr.Error())

@@ -260,6 +260,7 @@ func openPublisherStream(ctx context.Context, target string, streamID uint64, st
 			}
 			if readErr != nil {
 				if errors.Is(readErr, io.EOF) {
+					stream.markHalfCloseSent()
 					_ = w.write(routebroker.Frame{Kind: routebroker.KindHalfClose, Stream: streamID})
 				} else {
 					_ = w.write(routebroker.Frame{Kind: routebroker.KindClose, Stream: streamID})
@@ -456,7 +457,8 @@ func openConsumerStream(ctx context.Context, conn net.Conn, streams *consumerStr
 
 func readConsumerStream(ctx context.Context, id uint64, conn net.Conn, streams *consumerStreams, w *connWriter) {
 	var flow *streamFlow
-	if out := streams.flowOut(id); out != nil {
+	out := streams.flowOut(id)
+	if out != nil {
 		flow = out.flow
 	}
 	buf := make([]byte, 32<<10)
@@ -469,6 +471,9 @@ func readConsumerStream(ctx context.Context, id uint64, conn net.Conn, streams *
 		}
 		if err != nil {
 			if errors.Is(err, io.EOF) {
+				if out != nil {
+					out.markHalfCloseSent()
+				}
 				_ = w.write(routebroker.Frame{Kind: routebroker.KindHalfClose, Stream: id})
 			} else if ctx.Err() == nil {
 				_ = w.write(routebroker.Frame{Kind: routebroker.KindClose, Stream: id})
@@ -657,9 +662,17 @@ type helperPublisherStream struct {
 	// for its local sockets on such streams.
 	flow    *streamFlow
 	granted func(n int)
-	// sawHalfClose records that the peer finished its direction; finishing
-	// asks the pump to close the stream once it has delivered everything.
-	sawHalfClose, finishing bool
+	// sawHalfClose records that the peer finished its direction and
+	// sentHalfClose that this side finished its own; finishing asks the
+	// pump to close the stream once it has delivered everything.
+	sawHalfClose, sentHalfClose, finishing bool
+}
+
+// markHalfCloseSent records this side's HALF_CLOSE; call it before sending.
+func (s *helperPublisherStream) markHalfCloseSent() {
+	s.mu.Lock()
+	s.sentHalfClose = true
+	s.mu.Unlock()
 }
 
 // enableFlow makes the stream flow-controlled with a receive window of
@@ -731,13 +744,12 @@ func (s *helperPublisherStream) closeWrite() {
 }
 
 // finishOrClose handles the broker's CLOSE. On a flow-controlled stream
-// whose peer already half-closed it is the orderly end that follows both
-// half-closes, and the pump may still hold the tail of what the peer sent:
+// where both sides already half-closed it is the orderly end that follows, and the pump may still hold the tail of what the peer sent:
 // it delivers that, under the write deadline, before closing. Otherwise
 // CLOSE is an abort and the stream closes at once.
 func (s *helperPublisherStream) finishOrClose() {
 	s.mu.Lock()
-	if s.flow != nil && s.sawHalfClose && s.conn != nil && !s.closed {
+	if s.flow != nil && s.sawHalfClose && s.sentHalfClose && s.conn != nil && !s.closed {
 		s.finishing = true
 		s.wake.Signal()
 		s.mu.Unlock()
@@ -769,6 +781,9 @@ func (s *helperPublisherStream) pump() {
 			s.pendingBytes -= len(payload)
 			conn := s.conn
 			deadline := s.flow == nil || s.finishing
+			// Once the peer finished sending, credit can unlock nothing,
+			// and a late grant could outlive the stream on the broker.
+			grant := s.granted != nil && !s.sawHalfClose
 			s.mu.Unlock()
 			// The deadline bounds the write, and because close() closes the
 			// connection outside the mutex, a close interrupts a write already
@@ -782,7 +797,7 @@ func (s *helperPublisherStream) pump() {
 				s.failStream()
 				return
 			}
-			if s.granted != nil {
+			if grant {
 				s.granted(len(payload))
 			}
 			continue
