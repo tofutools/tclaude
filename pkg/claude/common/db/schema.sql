@@ -1490,24 +1490,6 @@ CREATE TABLE federation_peers (
 CREATE UNIQUE INDEX idx_federation_peers_label
 	ON federation_peers(label) WHERE label != '';
 
-CREATE TABLE federation_exports (
-	id         INTEGER PRIMARY KEY AUTOINCREMENT,
-	group_id   INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
-	peer       TEXT NOT NULL,
-	caps       TEXT NOT NULL,
-	created_at INTEGER NOT NULL,
-	UNIQUE (group_id, peer)
-) STRICT;
-
-CREATE TABLE federation_imports (
-	id             INTEGER PRIMARY KEY AUTOINCREMENT,
-	local_group_id INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
-	peer           TEXT NOT NULL,
-	remote_group   TEXT NOT NULL,
-	created_at     INTEGER NOT NULL,
-	UNIQUE (local_group_id, peer, remote_group)
-) STRICT;
-
 CREATE TABLE federation_catalogs (
 	peer        TEXT PRIMARY KEY,
 	payload     TEXT NOT NULL,
@@ -1594,3 +1576,18 @@ CREATE TABLE federation_route_proxies (
 	route_id      TEXT NOT NULL,
 	created_at    INTEGER NOT NULL
 ) STRICT;
+
+CREATE TABLE federation_peer_grants (
+ peer TEXT NOT NULL REFERENCES federation_peers(instance_id) ON DELETE CASCADE,
+ slug TEXT NOT NULL,
+ scope TEXT NOT NULL DEFAULT '',
+ spawn_policy TEXT NOT NULL DEFAULT '{}',
+ created_at INTEGER NOT NULL,
+ PRIMARY KEY(peer, slug, scope)
+ ) STRICT;
+
+CREATE TABLE federation_auto_workers (
+ request_id INTEGER PRIMARY KEY REFERENCES federation_spawn_requests(id) ON DELETE CASCADE,
+ peer TEXT NOT NULL,
+ agent_id TEXT NOT NULL
+ ) STRICT;

@@ -877,7 +877,7 @@ func fedProxyAuthorized(peer, routeID string) (*db.AgentRoute, error) {
 		return nil, errors.New("no such ready route") // no transit through mirrors
 	}
 	g, _ := db.GetAgentGroupByID(route.GroupID)
-	if g == nil || g.IsArchived() || !fedGroupExportsCap(peer, g.ID, proto.CapRoutes) {
+	if g == nil || g.IsArchived() || !fedPeerAllows(peer, g.ID, PermRoutesConsume) {
 		return nil, errors.New("no such ready route")
 	}
 	return route, nil

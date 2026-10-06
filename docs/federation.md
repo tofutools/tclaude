@@ -122,7 +122,7 @@ Connection settings live under `federation` in
 `~/.tclaude/data/config.json` (`enabled`, `hub_url`, `name`, `invite`,
 `hub_ca_file`). Use `--ca-file` when the hub's certificate is signed by a
 private CA. `tclaude federation disconnect` turns the connection off but
-keeps peers and exports.
+keeps peers, exports and imports.
 
 ## Pairing
 
@@ -139,27 +139,38 @@ The label is the short name you use in addresses (`member@bob`). Envelopes
 from untrusted instances are dropped unanswered. Untrusting a peer also
 removes your exports to it, its cached catalog.
 
-## Exports: what a peer may see and mail
+## Peer grants: what a peer may see and do
+
+Trusted peers are permission principals. The receiving operator grants a
+peer regular permission slugs on local groups:
 
 ```bash
-tclaude federation export builders --to bob --cap roster,presence,mail
-tclaude federation export builders --to '*' --cap mail   # every trusted peer
-tclaude federation unexport builders --to bob
+tclaude federation grant bob message.direct --scope group=builders
+tclaude federation grant bob groups.roster.read --scope group=builders
+tclaude federation grant bob groups.presence.read --scope group=builders
+tclaude federation grants bob
+tclaude federation revoke bob message.direct --scope group=builders
 ```
 
-| Capability | Grants |
+| Peer slug | Allows |
 |---|---|
-| `roster` | member names and roles |
-| `presence` | online/offline per member |
-| `mail` | members may receive mail from the peer (names and ids are shared so they are addressable) |
-| `attachments` | with `mail`: that mail may carry files |
-| `spawn` | the peer may *ask* for a worker to be spawned into the group; you approve or deny each request |
-| `routes` | the group's ready [group routes](group-routes.md) are listed, and the peer's agents may open them |
+| `groups.roster.read` | member names and roles |
+| `groups.presence.read` | online/offline per member |
+| `message.direct` | mail to members; shares their names and ids so they are addressable |
+| `message.attachments` | attachments, together with `message.direct` on the same group |
+| `groups.members.spawn` | automatic worker spawning with receiving operator launch settings and caps |
+| `routes.consume` | lists ready group routes and permits opening them |
 
-Nothing is exported by default. A peer receives a signed **catalog** listing
-exactly what you export to it. Catalogs go straight to the peer and are never
-published to the hub. They are re-sent when exports change, when the peer
-comes online, and every couple of minutes so presence stays fresh.
+Nothing is granted by default; agent defaults and group ownership never grant
+peer authority. Any grant covering a live group makes it visible in the peer's
+signed **catalog**. Archived groups are hidden. Group scopes follow the group's
+identity through renames; deleting the group does not authorize a replacement.
+Omitting `--scope` grants authority on **every active group, including future
+groups**; the CLI warns explicitly. There is no grant to all peers at once.
+
+Catalogs go directly to each trusted peer and are never published to the hub.
+They refresh when grants change, when the peer connects, and every few minutes
+for presence. Untrusting a peer deletes its grants.
 
 ## Discovery: what your agents may address
 
@@ -296,38 +307,40 @@ mail yet, and replying from the dashboard is not wired up: answer with
 
 ## Remote spawn requests
 
-An agent can ask a peer for a worker in one of the peer's groups. It is
-always a request; nothing runs until that instance's operator approves it.
+An agent can request a worker in any group visible to its peer. The receiving
+operator controls whether the request runs automatically:
 
 ```bash
-# requester side (agent-callable)
-tclaude agent permissions grant lead groups.members.spawn --scope peer=bob/builders
-# alternatively: agent.spawn --scope peer=bob covers all groups offered by bob
+# receiver side: automatic approval, operator-owned launch settings
+tclaude federation grant bob groups.members.spawn --scope group=builders --profile worker --cwd /work/builders --max-live 2
+
+# requester side
 tclaude federation spawn-request builders@bob --brief "port the parser to Go" --name parser-port --role worker
 ```
 
-The remote group must appear in the peer's catalog. The requester needs
-`groups.members.spawn` scoped to that peer/group, or `agent.spawn` scoped to
-the peer without a group suffix. On the receiving side:
+The peer sends only the name, role and brief. Launch profile, directory,
+harness and model come from the receiving peer grant; unset fields inherit
+the group's normal operator spawn defaults. The positive live auto-worker
+cap defaults to two and counts that peer's live automatically spawned workers
+across groups. The receiving spawn rate limit also applies, keyed by peer.
+Ordinary group member caps and launch guardrails remain in force.
+
+A visible group without a spawn grant queues the request for human approval.
+An automatic spawn that fails, including a worker cap or rate limit, also
+leaves the request pending and notifies the operator; it is not retried
+without a human decision. Every automatic spawn notifies the operator inbox.
 
 ```bash
-tclaude federation requests [--all]           # pending requests, with their briefs
+tclaude federation requests [--all]
 tclaude federation requests approve 7 [--profile p] [--cwd dir] [--harness h] [--model m] [--name n]
 tclaude federation requests deny 7 --reason "no capacity this week"
 ```
 
-You choose how the worker launches. Approval goes through the ordinary
-group spawn path, so group guardrails, member caps and spawn rate limits
-apply. The worker joins the exported group with the brief as its first
-message, bannered as an outside request, so it becomes reachable to the
-requester through the existing export. If the spawn fails, the request stays
-pending and you can retry with other options. The decision travels back
-and lands in the requester's inbox (the operator's inbox when the operator
-asked).
-
-You are notified of each new request in your inbox. A peer may have at most
-10 undecided requests here, and requests expire after 72 hours. Untrusting
-the peer makes its pending requests unapprovable.
+The worker joins the requested group with the remote brief bannered as an
+outside request. The decision travels back to the requester's inbox. A peer
+may have at most ten undecided requests, expiring after 72 hours. Hidden groups
+are refused like missing groups. Untrusting the peer makes pending requests
+unapprovable.
 
 ## Remote group routes
 
@@ -338,7 +351,7 @@ by naming the peer:
 
 ```bash
 # publisher side (operator)
-tclaude federation export svc --to bob --cap roster,routes
+tclaude federation grant bob routes.consume --scope group=svc
 
 # consumer side (operator, then agent)
 tclaude federation import alice/svc --into team
@@ -371,12 +384,12 @@ Authority is checked on both sides, continuously. Within a few seconds of
 any of these changes, open connections close and the consumer's lease ends:
 
 - the route is withdrawn or its publisher exits;
-- the export loses `routes`;
+- the peer loses its `routes.consume` grant;
 - the import is removed;
 - the peer is untrusted;
 - the group's membership changes.
 
-A route that is not exported is refused with the same answer as one that
+A route the peer cannot consume is refused with the same answer as one that
 does not exist.
 
 ## Delivery

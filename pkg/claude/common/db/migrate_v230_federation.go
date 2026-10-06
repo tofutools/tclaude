@@ -48,24 +48,6 @@ CREATE TABLE IF NOT EXISTS federation_peers (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_federation_peers_label
 	ON federation_peers(label) WHERE label != '';
 
-CREATE TABLE IF NOT EXISTS federation_exports (
-	id         INTEGER PRIMARY KEY AUTOINCREMENT,
-	group_id   INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
-	peer       TEXT NOT NULL,
-	caps       TEXT NOT NULL,
-	created_at INTEGER NOT NULL,
-	UNIQUE (group_id, peer)
-) STRICT;
-
-CREATE TABLE IF NOT EXISTS federation_imports (
-	id             INTEGER PRIMARY KEY AUTOINCREMENT,
-	local_group_id INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
-	peer           TEXT NOT NULL,
-	remote_group   TEXT NOT NULL,
-	created_at     INTEGER NOT NULL,
-	UNIQUE (local_group_id, peer, remote_group)
-) STRICT;
-
 CREATE TABLE IF NOT EXISTS federation_catalogs (
 	peer        TEXT PRIMARY KEY,
 	payload     TEXT NOT NULL,

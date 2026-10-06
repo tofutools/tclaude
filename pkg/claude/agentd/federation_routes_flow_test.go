@@ -106,7 +106,7 @@ func TestFederation_RoutesServeRemoteConsumer(t *testing.T) {
 	}()
 
 	// Exporting with routes lists the ready route in the catalog.
-	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/exports", map[string]any{"group": "svc", "peer": "bob", "caps": []string{"roster", "routes"}})
+	rec = fedGrantCaps(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"group": "svc", "peer": "bob", "caps": []string{"roster", "routes"}})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	fedEventually(t, "catalog with the route", func() bool {
 		cats := p.envelopes(proto.KindCatalog)
@@ -210,7 +210,7 @@ func TestFederation_RoutesServeRemoteConsumer(t *testing.T) {
 	require.Error(t, err, "the peer must see the abort")
 
 	// Unexporting withdraws authority: the proxy lease closes.
-	rec = fedHuman(t, f, http.MethodDelete, "/v1/federation/exports", map[string]any{"group": "svc", "peer": "bob"})
+	rec = fedGrantCaps(t, f, http.MethodDelete, "/v1/federation/grants", map[string]any{"group": "svc", "peer": "bob"})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	fedEventually(t, "proxy lease closed", func() bool {
 		var open int

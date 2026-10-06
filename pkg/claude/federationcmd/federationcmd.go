@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,16 +31,16 @@ Flow:
   2. tclaude federation connect <hub-url>   [--invite <token>]
   3. tclaude federation peers               see visible instances
      tclaude federation trust <instance> --label bob
-  4. tclaude federation export <group> --to bob --cap roster,mail
+  4. tclaude federation grant bob message.direct --scope group=<group>
                                              let bob see / mail a local group
   5. tclaude federation remote              see what peers export to you
-     tclaude agent permissions grant <agent> message.direct --scope peer=bob/<group>
-                                             let that agent address bob's group
+     tclaude federation import bob/<group> --into <local-group>
+                                             let a local group address bob's group
   6. agents: tclaude agent message <member>@bob "..." (needs the
-     message.direct slug scoped with peer=bob[/group]); replies need nothing extra.
+     federation.message slug); replies need nothing extra.
 
   7. agents: tclaude federation spawn-request <group>@bob --brief "..."
-     (needs the groups.members.spawn scoped with peer=bob/group, or agent.spawn scoped with peer=bob; bob's operator approves or denies)
+     (needs the federation.spawn slug; bob's operator approves or denies)
 
 Every federation command is human-only except spawn-request.`
 
@@ -53,7 +54,7 @@ func Cmd() *cobra.Command {
 		SubCmds: []*cobra.Command{
 			statusCmd(), identityCmd(), connectCmd(), disconnectCmd(),
 			peersCmd(), trustCmd(), untrustCmd(),
-			exportCmd(), unexportCmd(), remoteCmd(),
+			grantCmd(), revokeCmd(), grantsCmd(), remoteCmd(),
 			sendCmd(), outboxCmd(), notifyCmd(), inboxCmd(),
 			spawnRequestCmd(), requestsCmd(),
 		},
@@ -85,14 +86,9 @@ type status struct {
 		LastSeen    time.Time `json:"last_seen"`
 		Version     string    `json:"version"`
 	} `json:"peers"`
-	Exports []struct {
-		Group string   `json:"group"`
-		Peer  string   `json:"peer"`
-		Label string   `json:"peer_label"`
-		Caps  []string `json:"caps"`
-	} `json:"exports"`
-	Outbox map[string]int `json:"outbox"`
-	Remote []struct {
+	PeerGrants []peerGrant    `json:"peer_grants"`
+	Outbox     map[string]int `json:"outbox"`
+	Remote     []struct {
 		Peer       string    `json:"peer"`
 		Label      string    `json:"label"`
 		Online     bool      `json:"online"`
@@ -183,7 +179,7 @@ type jsonParam struct {
 func statusCmd() *cobra.Command {
 	return boa.CmdT[jsonParam]{
 		Use:         "status",
-		Short:       "Show identity, hub connection, peers, exports",
+		Short:       "Show identity, hub connection, peers, peer grants",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *jsonParam, _ *cobra.Command, _ []string) {
 			os.Exit(runStatus(p, os.Stdout, os.Stderr))
@@ -225,7 +221,7 @@ func runStatus(p *jsonParam, stdout, stderr io.Writer) int {
 		}
 	}
 	fmt.Fprintf(stdout, "Peers:       %d trusted, %d visible untrusted\n", trusted, visible)
-	fmt.Fprintf(stdout, "Exports:     %d\n", len(st.Exports))
+	fmt.Fprintf(stdout, "Peer grants: %d\n", len(st.PeerGrants))
 	if len(st.Outbox) > 0 {
 		var parts []string
 		for _, k := range []string{"queued", "sent", "accepted", "refused", "expired"} {
@@ -301,7 +297,7 @@ func connectCmd() *cobra.Command {
 func disconnectCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:         "disconnect",
-		Short:       "Disable the hub connection (keeps peers, exports)",
+		Short:       "Disable the hub connection (keeps peers, peer grants)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
 			if rc := post(os.Stderr, "/v1/federation/config", map[string]any{"enabled": false}, nil); rc != 0 {
@@ -382,7 +378,7 @@ type peerParam struct {
 func untrustCmd() *cobra.Command {
 	return boa.CmdT[peerParam]{
 		Use:         "untrust",
-		Short:       "Stop trusting a peer; its exports to it and cached catalog are removed",
+		Short:       "Stop trusting a peer; its grants and cached catalog are removed",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *peerParam, _ *cobra.Command, _ []string) {
 			if rc := post(os.Stderr, "/v1/federation/peers/untrust", map[string]any{"instance": p.Peer}, nil); rc != 0 {
@@ -393,53 +389,95 @@ func untrustCmd() *cobra.Command {
 	}.ToCobra()
 }
 
-// --- exports ---
-
-type exportParams struct {
-	Group string `pos:"true" help:"Local group to export"`
-	To    string `long:"to" help:"Peer label/id, or '*' for every trusted peer"`
-	Cap   string `long:"cap" default:"roster,presence,mail" help:"Capabilities: roster, presence, mail (comma-separated)"`
+// --- peer grants ---
+type peerGrant struct {
+	Peer        string `json:"peer"`
+	Slug        string `json:"slug"`
+	Scope       string `json:"scope"`
+	SpawnPolicy struct {
+		Profile string `json:"profile,omitempty"`
+		Cwd     string `json:"cwd,omitempty"`
+		Harness string `json:"harness,omitempty"`
+		Model   string `json:"model,omitempty"`
+		MaxLive int    `json:"max_live,omitempty"`
+	} `json:"spawn_policy,omitempty"`
+}
+type grantParams struct {
+	Peer    string `pos:"true" help:"Trusted peer label or instance id"`
+	Slug    string `pos:"true" help:"Permission slug to grant"`
+	Scope   string `long:"scope" optional:"true" help:"group=<local group>; omitted covers all current and future groups"`
+	Profile string `long:"profile" optional:"true" help:"Receiver launch profile for groups.members.spawn"`
+	Cwd     string `long:"cwd" optional:"true" help:"Receiver worker directory"`
+	Harness string `long:"harness" optional:"true" help:"Receiver worker harness"`
+	Model   string `long:"model" optional:"true" help:"Receiver worker model"`
+	MaxLive int    `long:"max-live" optional:"true" help:"Positive live auto-worker cap (default 2)"`
 }
 
-func exportCmd() *cobra.Command {
-	return boa.CmdT[exportParams]{
-		Use:         "export",
-		Short:       "Export a local group to a peer (or update its capabilities); 'export' with no args lists exports",
-		ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *exportParams, _ *cobra.Command, _ []string) {
-			if rc := post(os.Stderr, "/v1/federation/exports", map[string]any{"group": p.Group, "peer": p.To, "caps": []string{p.Cap}}, nil); rc != 0 {
+func grantCmd() *cobra.Command {
+	return boa.CmdT[grantParams]{Use: "grant", Short: "Grant a trusted peer permission on local groups (human only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *grantParams, _ *cobra.Command, _ []string) {
+		grant := peerGrant{Peer: p.Peer, Slug: p.Slug, Scope: p.Scope}
+		grant.SpawnPolicy.Profile = p.Profile
+		grant.SpawnPolicy.Cwd = p.Cwd
+		grant.SpawnPolicy.Harness = p.Harness
+		grant.SpawnPolicy.Model = p.Model
+		grant.SpawnPolicy.MaxLive = p.MaxLive
+		var resp struct {
+			Warnings []string `json:"warnings"`
+		}
+		if rc := post(os.Stderr, "/v1/federation/grants", grant, &resp); rc != 0 {
+			os.Exit(rc)
+		}
+		for _, warning := range resp.Warnings {
+			fmt.Fprintln(os.Stderr, warning)
+		}
+		fmt.Printf("granted %s to %s (%s)\n", p.Slug, p.Peer, p.Scope)
+	}}.ToCobra()
+}
+
+type revokeParams struct {
+	Peer  string `pos:"true" help:"Trusted peer label or instance id"`
+	Slug  string `pos:"true" help:"Permission slug to revoke"`
+	Scope string `long:"scope" optional:"true" help:"group=<local group>; omitted revokes the unscoped grant"`
+}
+
+func revokeCmd() *cobra.Command {
+	return boa.CmdT[revokeParams]{Use: "revoke", Short: "Revoke a peer grant (human only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *revokeParams, _ *cobra.Command, _ []string) {
+		if rc := del(os.Stderr, "/v1/federation/grants", map[string]any{"peer": p.Peer, "slug": p.Slug, "scope": p.Scope}); rc != 0 {
+			os.Exit(rc)
+		}
+		fmt.Printf("revoked %s from %s\n", p.Slug, p.Peer)
+	}}.ToCobra()
+}
+
+type grantsParams struct {
+	Peer string `pos:"true" help:"Trusted peer label or instance id"`
+	JSON bool   `long:"json" optional:"true" help:"Print JSON"`
+}
+
+func grantsCmd() *cobra.Command {
+	return boa.CmdT[grantsParams]{Use: "grants", Short: "List a peer's grants (human only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *grantsParams, _ *cobra.Command, _ []string) {
+		var resp struct {
+			Grants []peerGrant `json:"grants"`
+		}
+		if err := agent.DaemonGet("/v1/federation/grants?peer="+url.QueryEscape(p.Peer), &resp); err != nil {
+			os.Exit(fail(os.Stderr, err))
+		}
+		if p.JSON {
+			if rc := printJSON(os.Stdout, resp); rc != 0 {
 				os.Exit(rc)
 			}
-			fmt.Printf("exported %s to %s (%s)\n", p.Group, p.To, p.Cap)
-		},
-	}.ToCobra()
+			return
+		}
+		for _, g := range resp.Grants {
+			fmt.Printf("%s %s %s\n", g.Peer, g.Slug, g.Scope)
+		}
+	}}.ToCobra()
 }
-
-type unexportParams struct {
-	Group string `pos:"true" help:"Local group"`
-	To    string `long:"to" help:"Peer label/id, or '*'"`
-}
-
-func unexportCmd() *cobra.Command {
-	return boa.CmdT[unexportParams]{
-		Use:         "unexport",
-		Short:       "Remove an export",
-		ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *unexportParams, _ *cobra.Command, _ []string) {
-			if rc := del(os.Stderr, "/v1/federation/exports", map[string]any{"group": p.Group, "peer": p.To}); rc != 0 {
-				os.Exit(rc)
-			}
-			fmt.Printf("removed export of %s to %s\n", p.Group, p.To)
-		},
-	}.ToCobra()
-}
-
-// --- discovery ---
 
 func remoteCmd() *cobra.Command {
 	return boa.CmdT[jsonParam]{
 		Use:         "remote",
-		Short:       "Show what each trusted peer exports to you, plus your exports",
+		Short:       "Show what each trusted peer exports to you, plus your peer grants",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *jsonParam, _ *cobra.Command, _ []string) {
 			os.Exit(runRemote(p, os.Stdout, os.Stderr))
@@ -453,9 +491,8 @@ func runRemote(p *jsonParam, stdout, stderr io.Writer) int {
 		return rc
 	}
 	if p.JSON {
-		return printJSON(stdout, map[string]any{"remote": st.Remote, "exports": st.Exports})
+		return printJSON(stdout, map[string]any{"remote": st.Remote, "peer_grants": st.PeerGrants})
 	}
-
 	if len(st.Remote) == 0 {
 		fmt.Fprintln(stdout, "No trusted peers. See: tclaude federation peers / trust")
 	}
@@ -470,7 +507,6 @@ func runRemote(p *jsonParam, stdout, stderr io.Writer) int {
 		}
 		for _, g := range r.Groups {
 			line := fmt.Sprintf("  %s/%s  [%s]", r.Label, g.Name, strings.Join(g.Caps, ","))
-
 			fmt.Fprintln(stdout, line)
 			for _, m := range g.Members {
 				extra := ""
@@ -487,14 +523,10 @@ func runRemote(p *jsonParam, stdout, stderr io.Writer) int {
 			}
 		}
 	}
-	if len(st.Exports) > 0 {
-		fmt.Fprintln(stdout, "\nYour exports:")
-		for _, e := range st.Exports {
-			to := e.Peer
-			if e.Label != "" {
-				to = e.Label
-			}
-			fmt.Fprintf(stdout, "  %s → %s [%s]\n", e.Group, to, strings.Join(e.Caps, ","))
+	if len(st.PeerGrants) > 0 {
+		fmt.Fprintln(stdout, "\nPeer grants:")
+		for _, g := range st.PeerGrants {
+			fmt.Fprintf(stdout, "  %s %s %s\n", g.Peer, g.Slug, g.Scope)
 		}
 	}
 	return 0
@@ -506,7 +538,7 @@ type sendParams struct {
 	To      string   `pos:"true" help:"member@peer, or group:<group>@peer for every member of a remote group"`
 	Body    string   `pos:"true" help:"Message body"`
 	Subject string   `long:"subject" optional:"true" help:"Subject"`
-	Role    string   `long:"role" optional:"true" help:"With group:<group>@peer, only members holding this role (needs the group's roster export)"`
+	Role    string   `long:"role" optional:"true" help:"With group:<group>@peer, only members holding this role (needs the group's roster grant)"`
 	Attach  []string `long:"attach" short:"a" optional:"true" help:"Attach a file (repeatable; the remote group must accept attachments)"`
 }
 
@@ -728,7 +760,7 @@ type requestsParams struct {
 func requestsCmd() *cobra.Command {
 	cmd := boa.CmdT[requestsParams]{
 		Use:         "requests",
-		Short:       "List spawn requests remote peers sent to your exported groups",
+		Short:       "List spawn requests remote peers sent to your visible groups",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *requestsParams, _ *cobra.Command, _ []string) {
 			if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
@@ -782,7 +814,7 @@ type approveParams struct {
 func approveCmd() *cobra.Command {
 	return boa.CmdT[approveParams]{
 		Use:         "approve",
-		Short:       "Approve a spawn request: spawn the worker into the exported group",
+		Short:       "Approve a spawn request: spawn the worker into the requested group",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *approveParams, _ *cobra.Command, _ []string) {
 			var out struct {

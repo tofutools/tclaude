@@ -96,7 +96,7 @@ func TestFederation_RouteFlowControlServesBulkToSlowPeer(t *testing.T) {
 		_ = routeadapter.RunPublisher(ctx, fedFlowChannel{helper, routebroker.InitialWindow}, "tcp://"+target.Addr().String())
 	}()
 
-	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/exports", map[string]any{"group": "svc", "peer": "bob", "caps": []string{"routes"}})
+	rec = fedGrantCaps(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"group": "svc", "peer": "bob", "caps": []string{"routes"}})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	fedEventually(t, "catalog with the route", func() bool {
 		cats := p.envelopes(proto.KindCatalog)

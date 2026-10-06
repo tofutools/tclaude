@@ -198,7 +198,7 @@ func TestFederation_ExportCatalogAndInboundMail(t *testing.T) {
 	f.HaveMember("private", hidden)
 	f.HaveAliveSession(alice, "spwn-fed1-a", "tclaude-spwn-fed1-a", f.TestCwd("work"))
 
-	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/exports", map[string]any{"group": "team", "peer": "bob", "caps": []string{"roster", "mail"}})
+	rec := fedGrantCaps(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"group": "team", "peer": "bob", "caps": []string{"roster", "mail"}})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	// The peer receives a signed catalog listing only the exported group.
@@ -443,7 +443,7 @@ func TestFederation_ReplayAfterDeleteAndHostileNames(t *testing.T) {
 	f.HaveConvWithTitle(alice, "alice-agent")
 	f.HaveMember("team", alice)
 	f.HaveAliveSession(alice, "spwn-fed4-a", "tclaude-spwn-fed4-a", f.TestCwd("work"))
-	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/exports", map[string]any{"group": "team", "peer": "bob", "caps": []string{"mail"}})
+	rec := fedGrantCaps(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"group": "team", "peer": "bob", "caps": []string{"mail"}})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	aliceAgent, err := db.AgentIDForConv(alice)
 	require.NoError(t, err)
@@ -693,7 +693,7 @@ func TestFederation_Attachments(t *testing.T) {
 	require.NoError(t, err)
 
 	export := func(caps ...string) {
-		rec := fedHuman(t, f, http.MethodPost, "/v1/federation/exports", map[string]any{"group": "team", "peer": "bob", "caps": caps})
+		rec := fedGrantCaps(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"group": "team", "peer": "bob", "caps": caps})
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	}
 	mailWith := func(atts ...proto.AttachmentPayload) *proto.Envelope {
@@ -778,18 +778,12 @@ func TestFederation_InboundSpawnRequest(t *testing.T) {
 		return env
 	}
 
-	// Only a group exported with `spawn` takes requests, and the refusal
-	// does not reveal whether the group exists.
-	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/exports", map[string]any{"group": "team", "peer": "bob", "caps": []string{"mail"}})
+	// A hidden group is refused; a visible group without spawn authority
+	// queues the request for the receiving operator.
+	rec := fedGrantCaps(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"group": "team", "peer": "bob", "caps": []string{"mail"}})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	r1 := request("team", "helper")
-	r2 := request("private", "helper")
-	a1, a2 := fedAckFor(t, p, r1.ID), fedAckFor(t, p, r2.ID)
-	require.Equal(t, proto.AckRefused, a1.Status)
-	require.Equal(t, a1.Reason, a2.Reason)
-
-	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/exports", map[string]any{"group": "team", "peer": "bob", "caps": []string{"mail", "spawn"}})
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	hidden := request("private", "helper")
+	require.Equal(t, proto.AckRefused, fedAckFor(t, p, hidden.ID).Status)
 	ok1 := request("team", "helper")
 	require.Equal(t, proto.AckAccepted, fedAckFor(t, p, ok1.ID).Status)
 	ok2 := request("team", "other")
@@ -975,4 +969,34 @@ func TestFederation_GrantedNameWins(t *testing.T) {
 	require.Equal(t, http.StatusOK, grant.Code, grant.Body)
 	rec = postMessage(t, f, caller, map[string]any{"to": "worker@bob", "body": "hello"})
 	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+}
+
+// fedGrantCaps installs independent peer slugs through the production API.
+// Replacing the fixture's set exercises revocation as well as grant writes.
+func fedGrantCaps(t *testing.T, f *testharness.Flow, method, path string, in map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	peer := in["peer"].(string)
+	scope := "group=" + in["group"].(string)
+	list := fedHuman(t, f, http.MethodGet, path+"?peer="+peer, nil)
+	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+	var existing struct {
+		Grants []db.FederationPeerGrant `json:"grants"`
+	}
+	testharness.DecodeJSON(t, list, &existing)
+	for _, grant := range existing.Grants {
+		if grant.Scope == scope {
+			rec := fedHuman(t, f, http.MethodDelete, path, map[string]any{"peer": peer, "slug": grant.Slug, "scope": scope})
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		}
+	}
+	if method == http.MethodDelete {
+		return list
+	}
+	mapping := map[string]string{"roster": agentd.PermGroupsRosterRead, "presence": agentd.PermGroupsPresenceRead, "mail": agentd.PermMessageDirect, "attachments": agentd.PermMessageAttachments, "spawn": agentd.PermGroupsMembersSpawn, "routes": agentd.PermRoutesConsume}
+	for _, cap := range in["caps"].([]string) {
+		rec := fedHuman(t, f, http.MethodPost, path, map[string]any{"peer": peer, "slug": mapping[cap], "scope": scope})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		list = rec
+	}
+	return list
 }

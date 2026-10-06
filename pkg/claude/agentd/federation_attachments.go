@@ -85,23 +85,12 @@ func validateFedAttachments(atts []proto.AttachmentPayload) error {
 // fedAttachmentsAllowed reports whether conv is in a live group exported to
 // peer with both mail and attachments.
 func fedAttachmentsAllowed(peer, conv string) bool {
-	exports, err := db.ListFederationExports()
-	if err != nil {
-		return false
-	}
-	ok := map[int64]bool{}
-	for _, e := range exports {
-		if (e.Peer == peer || e.Peer == db.FederationExportAllPeers) &&
-			containsString(e.Caps, proto.CapMail) && containsString(e.Caps, proto.CapAttachments) {
-			ok[e.GroupID] = true
-		}
-	}
 	groups, err := db.ListGroupsForConv(conv)
 	if err != nil {
 		return false
 	}
 	for _, g := range groups {
-		if ok[g.ID] && !g.IsArchived() {
+		if fedPeerAllows(peer, g.ID, PermMessageDirect) && fedPeerAllows(peer, g.ID, PermMessageAttachments) {
 			return true
 		}
 	}

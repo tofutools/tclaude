@@ -96,11 +96,13 @@ the other machine. The label is the short name used in addresses
 
 ## 7. Share a group
 
-Nothing is shared until you export it. On the **desktop**, export a group to
+Nothing is shared until you grant it. On the **desktop**, grant access to a group to
 the laptop:
 
 ```bash
-tclaude federation export builders --to laptop --cap roster,presence,mail
+tclaude federation grant laptop message.direct --scope group=builders
+tclaude federation grant laptop groups.roster.read --scope group=builders
+tclaude federation grant laptop groups.presence.read --scope group=builders
 ```
 
 On the **laptop**, see what the desktop offers and import it into a local
@@ -138,7 +140,7 @@ tclaude agent message some-agent@desktop "can you review PR 42?"
 
 - More capabilities to export: `attachments`, `spawn` (ask for a worker on
   the other side) and `routes` (open a TCP service across instances). See
-  [Exports](federation.md#exports-what-a-peer-may-see-and-mail).
+  [Peer grants](federation.md#peer-grants-what-a-peer-may-see-and-do).
 - Mailing a whole remote group, `--cc` to remote members, operator to
   operator: [Sending](federation.md#sending).
 - Trying it on one machine first: `scripts/federation-smoke.sh` starts a hub

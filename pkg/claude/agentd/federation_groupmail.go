@@ -109,32 +109,13 @@ func handleFederatedGroupSend(w http.ResponseWriter, r *http.Request, fromConv s
 	writeJSON(w, http.StatusOK, fedSendResp{EnvelopeID: row.EnvelopeID, To: label, State: row.State, ViaGroup: via, Connected: fedConnected()})
 }
 
-// fedExportedMailGroup returns the live local group named name if it is
-// exported to peer with mail, and whether its roster is shared too.
-func fedExportedMailGroup(peer, name string) (*db.AgentGroup, bool) {
-	exports, err := db.ListFederationExports()
-	if err != nil {
+// fedPeerMailGroup requires mail authority on a live local group.
+func fedPeerMailGroup(peer, name string) (*db.AgentGroup, bool) {
+	g, _ := db.GetAgentGroupByName(name)
+	if g == nil || !fedPeerAllows(peer, g.ID, PermMessageDirect) {
 		return nil, false
 	}
-	caps := map[string]bool{}
-	var groupID int64
-	for _, e := range exports {
-		if (e.Peer != peer && e.Peer != db.FederationExportAllPeers) || e.GroupName != name {
-			continue
-		}
-		groupID = e.GroupID
-		for _, c := range e.Caps {
-			caps[c] = true
-		}
-	}
-	if !caps[proto.CapMail] {
-		return nil, false
-	}
-	g, _ := db.GetAgentGroupByID(groupID)
-	if g == nil || g.IsArchived() {
-		return nil, false
-	}
-	return g, caps[proto.CapRoster]
+	return g, fedPeerAllows(peer, g.ID, PermGroupsRosterRead)
 }
 
 // acceptGroupMail delivers a peer's group_mail to the current members of
@@ -172,7 +153,7 @@ func (rt *fedRuntime) acceptGroupMail(peer *db.FederationPeer, env *proto.Envelo
 		ack(proto.AckPayload{Status: proto.AckAccepted})
 		return
 	}
-	g, roster := fedExportedMailGroup(peer.InstanceID, gp.Group)
+	g, roster := fedPeerMailGroup(peer.InstanceID, gp.Group)
 	if g == nil {
 		// Same answer for "not exported" and "no such group".
 		refuse(fedCodeNotExported, "no group by that name is exported to this instance with mail")

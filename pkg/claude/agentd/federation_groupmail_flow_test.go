@@ -60,9 +60,9 @@ func TestFederation_InboundGroupMail(t *testing.T) {
 	f.HaveGroup("quiet")
 	f.HaveMemberWithRole("quiet", out, "lead")
 
-	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/exports", map[string]any{"group": "builders", "peer": "bob", "caps": []string{"roster", "mail"}})
+	rec := fedGrantCaps(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"group": "builders", "peer": "bob", "caps": []string{"roster", "mail"}})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/exports", map[string]any{"group": "quiet", "peer": "bob", "caps": []string{"mail"}})
+	rec = fedGrantCaps(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"group": "quiet", "peer": "bob", "caps": []string{"mail"}})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	all := p.envelope(proto.KindGroupMail, proto.Endpoint{}, proto.GroupMailPayload{Group: "builders", Subject: "standup", Body: "status please"})

@@ -373,23 +373,26 @@ func (rt *fedRuntime) sendCatalog(peer string) {
 // exported to the peer or to every peer, with members when the export
 // grants roster, and presence when it grants presence.
 func buildFederationCatalog(peer string) (*proto.CatalogPayload, error) {
-	exports, err := db.ListFederationExports()
+	groups, err := db.ListAgentGroups()
 	if err != nil {
 		return nil, err
 	}
 	caps := map[int64]map[string]bool{}
 	names := map[int64]string{}
-	for _, e := range exports {
-		if e.Peer != peer && e.Peer != db.FederationExportAllPeers {
+	for _, group := range groups {
+		if group.IsArchived() || !fedPeerGroupVisible(peer, group.ID) {
 			continue
 		}
-		if caps[e.GroupID] == nil {
-			caps[e.GroupID] = map[string]bool{}
+		caps[group.ID] = map[string]bool{}
+		names[group.ID] = group.Name
+		for slug, cap := range federationPeerSlugs {
+			if fedPeerAllows(peer, group.ID, slug) {
+				caps[group.ID][cap] = true
+			}
 		}
-		for _, c := range e.Caps {
-			caps[e.GroupID][c] = true
+		if !caps[group.ID][proto.CapMail] {
+			delete(caps[group.ID], proto.CapAttachments)
 		}
-		names[e.GroupID] = e.GroupName
 	}
 	cat := &proto.CatalogPayload{Groups: []proto.CatalogGroup{}}
 	for gid, cs := range caps {
@@ -722,24 +725,10 @@ func (rt *fedRuntime) acceptOperatorMail(peer *db.FederationPeer, env *proto.Env
 // very agent to that peer. Returns the group to file the message under (0
 // for a reply).
 func federationInboundAuthorized(peer string, env *proto.Envelope, conv string) (int64, bool) {
-	exports, err := db.ListFederationExports()
-	if err == nil {
-		mailGroups := map[int64]bool{}
-		for _, e := range exports {
-			if e.Peer != peer && e.Peer != db.FederationExportAllPeers {
-				continue
-			}
-			for _, c := range e.Caps {
-				if c == proto.CapMail {
-					mailGroups[e.GroupID] = true
-				}
-			}
-		}
-		if groups, err := db.ListGroupsForConv(conv); err == nil {
-			for _, g := range groups {
-				if mailGroups[g.ID] && !g.IsArchived() {
-					return g.ID, true
-				}
+	if groups, err := db.ListGroupsForConv(conv); err == nil {
+		for _, g := range groups {
+			if fedPeerAllows(peer, g.ID, PermMessageDirect) {
+				return g.ID, true
 			}
 		}
 	}

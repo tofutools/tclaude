@@ -55,7 +55,7 @@ func UntrustFederationPeer(instanceID string) (bool, error) {
 	}
 	n, _ := res.RowsAffected()
 	for _, q := range []string{
-		`DELETE FROM federation_exports WHERE peer=?`,
+		`DELETE FROM federation_peer_grants WHERE peer=?`,
 		`DELETE FROM federation_catalogs WHERE peer=?`,
 	} {
 		if _, err := tx.Exec(q, instanceID); err != nil {
@@ -107,75 +107,6 @@ func GetFederationPeer(instanceID string) (*FederationPeer, error) {
 		}
 	}
 	return nil, nil
-}
-
-// FederationExport is one group exported to one peer (or "*" = every
-// trusted peer).
-type FederationExport struct {
-	ID        int64
-	GroupID   int64
-	GroupName string
-	Peer      string
-	Caps      []string
-	CreatedAt time.Time
-}
-
-// FederationExportAllPeers is the Peer value of an export to every trusted peer.
-const FederationExportAllPeers = "*"
-
-// UpsertFederationExport creates or replaces the caps of (group, peer).
-func UpsertFederationExport(groupID int64, peer string, caps []string) error {
-	d, err := Open()
-	if err != nil {
-		return err
-	}
-	_, err = d.Exec(`INSERT INTO federation_exports(group_id, peer, caps, created_at) VALUES(?,?,?,?)
-		ON CONFLICT(group_id, peer) DO UPDATE SET caps=excluded.caps`,
-		groupID, peer, strings.Join(caps, ","), dbTime(time.Now()))
-	return err
-}
-
-// DeleteFederationExport removes (group, peer). Returns false when absent.
-func DeleteFederationExport(groupID int64, peer string) (bool, error) {
-	d, err := Open()
-	if err != nil {
-		return false, err
-	}
-	res, err := d.Exec(`DELETE FROM federation_exports WHERE group_id=? AND peer=?`, groupID, peer)
-	if err != nil {
-		return false, err
-	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
-}
-
-// ListFederationExports returns every export with its group name.
-func ListFederationExports() ([]FederationExport, error) {
-	d, err := Open()
-	if err != nil {
-		return nil, err
-	}
-	rows, err := d.Query(`SELECT e.id, e.group_id, g.name, e.peer, e.caps, e.created_at
-		FROM federation_exports e JOIN agent_groups g ON g.id = e.group_id ORDER BY g.name, e.peer`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []FederationExport
-	for rows.Next() {
-		var e FederationExport
-		var caps string
-		var at dbTimestamp
-		if err := rows.Scan(&e.ID, &e.GroupID, &e.GroupName, &e.Peer, &caps, &at); err != nil {
-			return nil, err
-		}
-		if caps != "" {
-			e.Caps = strings.Split(caps, ",")
-		}
-		e.CreatedAt = at.Time()
-		out = append(out, e)
-	}
-	return out, rows.Err()
 }
 
 // PutFederationCatalog caches the latest catalog a peer sent us.

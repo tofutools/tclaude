@@ -362,7 +362,7 @@ func authorizeFederatedTarget(w http.ResponseWriter, r *http.Request, fromConv s
 }
 
 // handleFederatedReply answers an inbound remote message. Reply authority
-// comes from having received the message: no standing grant is needed, and
+// comes from having received the message: no import or slug is needed, and
 // the remote side accepts it because it matches mail it sent.
 func handleFederatedReply(w http.ResponseWriter, r *http.Request, fromConv string, in *db.FederationInbound, subject, body string) {
 	peer, err := db.GetFederationPeer(in.FromInstance)
@@ -392,16 +392,16 @@ func handleFederatedReply(w http.ResponseWriter, r *http.Request, fromConv strin
 // --- human operator API: /v1/federation/* ---
 
 type fedStatusResp struct {
-	Enabled     bool              `json:"enabled"`
-	InstanceID  string            `json:"instance_id"`
-	Fingerprint string            `json:"fingerprint"`
-	Name        string            `json:"name"`
-	HubURL      string            `json:"hub_url,omitempty"`
-	Hub         *fedHubStatus     `json:"hub,omitempty"`
-	Peers       []fedPeerJSON     `json:"peers"`
-	Exports     []fedExportJSON   `json:"exports"`
-	Outbox      map[string]int    `json:"outbox"`
-	Remote      []fedRemoteSystem `json:"remote"`
+	Enabled     bool                     `json:"enabled"`
+	InstanceID  string                   `json:"instance_id"`
+	Fingerprint string                   `json:"fingerprint"`
+	Name        string                   `json:"name"`
+	HubURL      string                   `json:"hub_url,omitempty"`
+	Hub         *fedHubStatus            `json:"hub,omitempty"`
+	Peers       []fedPeerJSON            `json:"peers"`
+	PeerGrants  []db.FederationPeerGrant `json:"peer_grants"`
+	Outbox      map[string]int           `json:"outbox"`
+	Remote      []fedRemoteSystem        `json:"remote"`
 }
 
 type fedHubStatus struct {
@@ -422,13 +422,6 @@ type fedPeerJSON struct {
 	LastSeen    time.Time `json:"last_seen,omitempty"`
 	Version     string    `json:"version,omitempty"`
 	TrustedAt   time.Time `json:"trusted_at,omitempty"`
-}
-
-type fedExportJSON struct {
-	Group string   `json:"group"`
-	Peer  string   `json:"peer"`
-	Label string   `json:"peer_label,omitempty"`
-	Caps  []string `json:"caps"`
 }
 
 // fedRemoteSystem is what one trusted peer exports to us (discovery).
@@ -501,11 +494,10 @@ func handleFederationStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		return resp.Peers[i].InstanceID < resp.Peers[j].InstanceID
 	})
-	exports, _ := db.ListFederationExports()
-	for _, e := range exports {
-		resp.Exports = append(resp.Exports, fedExportJSON{Group: e.GroupName, Peer: e.Peer, Label: labels[e.Peer], Caps: e.Caps})
+	grants, _ := db.ListFederationPeerGrants("")
+	for _, grant := range grants {
+		resp.PeerGrants = append(resp.PeerGrants, fedDisplayPeerGrant(grant))
 	}
-
 	if rows, err := db.ListFederationOutbox(500); err == nil {
 		for _, row := range rows {
 			resp.Outbox[row.State]++
@@ -698,93 +690,6 @@ func handleFederationUntrust(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "instance_id": p.InstanceID})
 }
 
-type fedExportReq struct {
-	Group string   `json:"group"`
-	Peer  string   `json:"peer"`
-	Caps  []string `json:"caps,omitempty"`
-}
-
-func normalizeCaps(in []string) ([]string, error) {
-	set := map[string]bool{}
-	for _, c := range in {
-		for _, part := range strings.Split(c, ",") {
-			part = strings.TrimSpace(part)
-			if part == "" {
-				continue
-			}
-			if !containsString(proto.AllCaps, part) {
-				return nil, fmt.Errorf("unknown capability %q (known: %s)", part, strings.Join(proto.AllCaps, ", "))
-			}
-			set[part] = true
-		}
-	}
-	var out []string
-	for _, c := range proto.AllCaps {
-		if set[c] {
-			out = append(out, c)
-		}
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("at least one capability is required (%s)", strings.Join(proto.AllCaps, ", "))
-	}
-	return out, nil
-}
-
-// handleFederationExports: POST upserts, DELETE removes (group, peer).
-func handleFederationExports(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
-		writeError(w, http.StatusMethodNotAllowed, "method", "POST or DELETE")
-		return
-	}
-	if !requireHuman(w, r, "change federation exports") {
-		return
-	}
-	var req fedExportReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
-		return
-	}
-	g, err := db.GetAgentGroupByName(req.Group)
-	if err != nil || g == nil {
-		writeError(w, http.StatusNotFound, "not_found", "no such group "+req.Group)
-		return
-	}
-	peer := strings.TrimSpace(req.Peer)
-	if peer != db.FederationExportAllPeers {
-		p, err := resolveFederationPeer(peer)
-		if err != nil {
-			writeFedErr(w, err)
-			return
-		}
-		peer = p.InstanceID
-	}
-	setAuditTargetLabel(r, req.Group+" → "+peer)
-	if r.Method == http.MethodDelete {
-		ok, err := db.DeleteFederationExport(g.ID, peer)
-		if err != nil {
-			writeFedErr(w, err)
-			return
-		}
-		if !ok {
-			writeError(w, http.StatusNotFound, "not_found", "no such export")
-			return
-		}
-	} else {
-		caps, err := normalizeCaps(req.Caps)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
-			return
-		}
-		if err := db.UpsertFederationExport(g.ID, peer, caps); err != nil {
-			writeFedErr(w, err)
-			return
-		}
-		setAuditDetail(r, strings.Join(caps, ","))
-	}
-	broadcastFederationCatalogs()
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
-
 type fedOutboxJSON struct {
 	EnvelopeID string    `json:"envelope_id"`
 	To         string    `json:"to"`
@@ -953,7 +858,7 @@ func handleFederationInbox(w http.ResponseWriter, r *http.Request) {
 // is online.
 const fedStaleAfter = 3 * fedCatalogRefresh
 
-// fedRemoteMember is one remote member visible through peer-scoped grants.
+// fedRemoteMember is one remote member reachable through an import.
 type fedRemoteMember struct {
 	// Address is what `tclaude agent message` accepts: name@label, or
 	// name@instance-id for a peer without a label.
@@ -1100,7 +1005,7 @@ func registerFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/federation/config", handleFederationConfig)
 	mux.HandleFunc("/v1/federation/peers/trust", handleFederationTrust)
 	mux.HandleFunc("/v1/federation/peers/untrust", handleFederationUntrust)
-	mux.HandleFunc("/v1/federation/exports", handleFederationExports)
+	mux.HandleFunc("/v1/federation/grants", handleFederationPeerGrants)
 	mux.HandleFunc("GET /v1/federation/outbox", handleFederationOutbox)
 	mux.HandleFunc("/v1/federation/send", handleFederationSend)
 	mux.HandleFunc("POST /v1/federation/routes/open", handleFederatedRouteOpen)

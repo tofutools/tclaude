@@ -4777,7 +4777,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// write-proof / its challenge round-trip) costs no slot, while anything
 	// past this point counts even if the spawn itself then fails — the
 	// intended runaway-prevention behaviour.
-	if !claimSpawnRateSlot(w, spawnerConvID) {
+	// Grant-authorized federation auto-spawns resolve launch settings as the
+	// operator but retain the spawn rate limit under a durable daemon principal.
+	if remotePrincipal, _ := r.Context().Value(federationSpawnRateKey{}).(string); remotePrincipal != "" {
+		if !claimDaemonSpawnRateSlot(w, remotePrincipal) {
+			return
+		}
+	} else if !claimSpawnRateSlot(w, spawnerConvID) {
 		return
 	}
 
@@ -5014,8 +5020,8 @@ type spawnParams struct {
 	// OneShotName is the caller's explicit name for a non-interactive spawn,
 	// used as its tmux session name. Empty picks a generated one-shot-<id>.
 	OneShotName string
-	Role             string
-	Descr            string
+	Role        string
+	Descr       string
 	// TaskURL / TaskLabel are the optional per-agent task-reference link
 	// (the dashboard Task column). Validated at the spawn boundary
 	// (handleGroupSpawn) and persisted onto the new actor in
