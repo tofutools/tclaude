@@ -14,7 +14,7 @@ laptops behind NAT or a corporate network work as-is.
 
 !!! note "Status"
     CLI only. Built: discovery, mail with attachments, mail to remote
-    groups, operator mail, request-and-approve remote spawn, and
+    groups, operator mail, automatic or operator-approved remote spawn, and
     cross-instance group routes. Stopping or reading a colleague's agents
     and a dashboard view are not built yet.
 
@@ -41,7 +41,7 @@ The hub routes; it is never the authority over what an agent may do.
   peer's fingerprint covers both. The hub still sees routing metadata: who
   talks to whom, when, envelope kinds and sizes.
 - **A remote instance speaks only for its own agents**, and only reaches
-  what you exported to it.
+  what your operator granted it.
 - **Remote content is untrusted.** Every inbound remote body starts with a
   banner naming its origin, and the sender shows as `name@peer (remote)`.
 - **Approvals stay local.** Permission prompts, `--ask-human`, sudo and
@@ -52,8 +52,13 @@ Three layers decide what is allowed, and each one can only narrow:
 | Layer | Decides |
 |---|---|
 | Hub | which instances may connect, who can see whom (spaces), rate limits |
-| Your peer grants | which local groups a peer can see and mail, with which capabilities |
-| Your peer-scoped grants | which agents and local group members may act on which peer groups |
+| Receiving operator’s peer grants | what your instance may see and do on that peer’s local groups |
+| Sending operator’s agent grants | which of your agents may act remotely, scoped to that peer and its groups |
+
+For example, Bob’s operator grants Alice’s **instance** mail access to
+`builders`. Alice’s operator separately grants her **agent** `lead`
+`message.direct` with `peer=bob/builders`. Both grants are needed for a
+spontaneous agent send. Trust alone grants no group access.
 
 ## Running a hub
 
@@ -110,7 +115,8 @@ refresh (`--policy-refresh`, default 15s). Per-instance send limits are
 
 ## Joining
 
-All `tclaude federation` commands are human-only.
+Connection, trust and peer-grant commands are human-only.
+`spawn-request` is also callable by agents with a peer-scoped spawn grant.
 
 ```bash
 tclaude federation identity                  # your instance id: give it to the hub admin
@@ -137,7 +143,7 @@ tclaude federation untrust bob
 
 The label is the short name you use in addresses (`member@bob`). Envelopes
 from untrusted instances are dropped unanswered. Untrusting a peer also
-removes your exports to it, its cached catalog.
+removes its peer grants and cached catalog.
 
 ## Peer grants: what a peer may see and do
 
@@ -161,6 +167,11 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `groups.members.spawn` | automatic worker spawning with receiving operator launch settings and caps |
 | `routes.consume` | lists ready group routes and permits opening them |
 
+Prefer `--scope group=<local group>` to limit access. For the same slug, a
+group-scoped peer grant takes precedence over an unscoped grant, including
+its spawn launch policy. Revoking the scoped row leaves any unscoped grant
+in force.
+
 Nothing is granted by default; agent defaults and group ownership never grant
 peer authority. Any grant covering a live group makes it visible in the peer's
 signed **catalog**. Archived groups are hidden. Group scopes follow the group's
@@ -172,6 +183,21 @@ Catalogs go directly to each trusted peer and are never published to the hub.
 They refresh when grants change, when the peer connects, and every few minutes
 for presence. Untrusting a peer deletes its grants.
 
+## Agent grants: what your agents may do remotely
+
+Your operator grants agents ordinary slugs with a required `peer=` scope:
+
+| Agent slug | Remote action |
+|---|---|
+| `message.direct` | send to a member or group |
+| `groups.members.spawn` | request a worker in a peer’s group |
+| `agent.spawn` | request workers in any visible group on a peer; peer-only scope |
+| `routes.consume` | open a route in a peer’s group |
+
+Peer grants for roster, presence and attachments control what the receiving
+instance shares. Agents do not need separate roster, presence or attachment
+grants for these remote operations.
+
 ## Discovery: what your agents may address
 
 ```bash
@@ -182,8 +208,9 @@ tclaude agent permissions grant lead message.direct --scope peer=bob/builders
 Agents see remote members next to local ones with `tclaude agent ls --remote`.
 The remote section shows each member's address, harness, role, presence and
 remote group. An agent sees catalog groups covered by its effective peer-scoped
-mail, spawn or route grants; the operator sees all received catalogs. Grants on
-local groups give their current members the same reach. Presence is marked
+mail, spawn or route grants; the operator sees all received catalogs.
+Peer-scoped grants assigned to a local group give its current members that
+remote reach. Presence is marked
 stale when the peer is offline or its catalog has not refreshed for several
 minutes. With `--json` the output is `{"local": [...], "remote": [...]}`.
 
@@ -192,10 +219,15 @@ The daemon resolves labels at grant time and stores the full trusted instance
 id, so renaming or reassigning a label cannot redirect the grant. Unknown peers
 are refused. Remote group names need not appear in the current catalog when
 granting: a catalog may be stale. A peer-only scope covers all that peer's
-groups, including future groups. Git and GitHub scopes continue to use `remote=`.
+groups, including future groups. `peer=` cannot be combined with another
+scope dimension; put the remote group after `/`, not in a separate `group=`
+scope. Git and GitHub scopes continue to use `remote=`.
 
 Unscoped grants, local `group=` scopes, defaults and group ownership never
 authorize remote actions. Peer-scoped grants never authorize local actions.
+Denies are unscoped and block the slug on both local and remote actions.
+Operator actions and replies keep their own authority, and one-shot
+`--ask-human` approval remains available.
 
 ## Sending
 
@@ -211,9 +243,18 @@ A spontaneous remote send requires the peer to share the target group with
 and group (or to the whole peer):
 
 ```bash
+# Bob’s operator: let Alice’s instance mail builders
+tclaude federation grant alice message.direct --scope group=builders
+
+# Alice’s operator: let lead mail Bob’s builders
 tclaude agent permissions grant lead message.direct --scope peer=bob/builders
-tclaude agent permissions grant lead message.direct --scope peer=bob
+
+# Alice’s lead agent
+tclaude agent message bob-agent@bob "can you review PR 42?"
 ```
+
+Use `--scope peer=bob` instead to authorize that agent on all Bob’s
+mail-capable groups, including future groups.
 
 A missing standing grant can use the usual `--ask-human` approval for one send.
 Replies to received remote mail need no standing grant. The other side accepts
@@ -226,8 +267,9 @@ tclaude federation send bob-agent@bob "hello" --subject intro
 ```
 
 `member` may be the member's name, its agent id, or an 8+ character id
-prefix. `peer` may be the label, the hub-reported name, or an instance-id
-prefix. An address whose `@…` part does not name a trusted peer is resolved
+prefix. `peer` may be the operator-chosen label, the full instance id, or
+an 8+ character instance-id prefix. Hub-reported names are not accepted in
+mail addresses. An address whose `@…` part does not name a trusted peer is resolved
 locally as before, so local titles containing `@` keep working.
 
 `--cc` may name remote members too:
@@ -252,11 +294,12 @@ tclaude federation send group:builders@bob "maintenance at 6" # as the operator
 ```
 
 The same rules apply as for a single member: the peer must share the group
-with mail capability, and you need `message.direct` scoped to its peer/group. One envelope crosses the hub. The receiving instance
+with `message.direct`, and you need `message.direct` scoped to its
+peer/group. One envelope crosses the hub. The receiving instance
 delivers it to the group's members as of arrival, not to the roster in your
 catalog. `--role` narrows the recipients there, case-insensitively. It needs
-the group's `roster` export, since otherwise it would reveal roles that the
-export hides. Members can reply, and their replies come back to you.
+a peer grant of `groups.roster.read` on the group, since the catalog
+otherwise hides roles. Members can reply, and their replies come back to you.
 
 Group mail is text only: no `--cc`, `--attach` or member subsets. Each
 recipient counts against the peer's inbound mail budget. Delivery is
@@ -270,14 +313,21 @@ reported like this:
 ### Attachments
 
 ```bash
+# Bob’s operator (in addition to the mail grant)
+tclaude federation grant alice message.attachments --scope group=builders
+
+# Alice’s lead agent (with its peer-scoped message.direct grant)
 tclaude agent message bob-agent@bob "build log attached" --attach build.log --attach shot.png
+
+# Alice’s operator can also attach files when mailing an agent
 tclaude federation send bob-agent@bob "see attached" --attach diff.patch
 ```
 
 The CLI reads the files as the caller, so an agent can attach only what it
 can read itself. Files travel inside the encrypted envelope: at most 4 per
 message and 512 KiB in total. The receiver accepts them only for a recipient
-in a group exported to the sender with both `mail` and `attachments`. It
+in a group granting the sending peer both `message.direct` and
+`message.attachments`. No separate agent attachment grant is required. It
 re-derives each file's name and type itself and accepts only images, text,
 Markdown, CSV, JSON, YAML, diffs/patches and PDF; HTML, SVG, archives and
 executables are refused. Each peer may keep at most 64 MiB of files on the
@@ -286,8 +336,8 @@ attachment. Local recipients do not take attachments: send them a path.
 
 ## Operator to operator
 
-Operators of two trusted instances can message each other directly, with no
-export or import involved; trusting a peer is the consent.
+Operators of two trusted instances can message each other directly; trusting
+a peer is the consent. No group peer grant or agent grant is required.
 
 ```bash
 tclaude federation notify bob "are your agents done with the release?" --subject release
@@ -311,12 +361,14 @@ An agent can request a worker in any group visible to its peer. The receiving
 operator controls whether the request runs automatically:
 
 ```bash
-# receiver side: automatic approval, operator-owned launch settings
-tclaude federation grant bob groups.members.spawn --scope group=builders --profile worker --cwd /work/builders --max-live 2
+# Bob’s operator: auto-approve Alice’s requests under a local worker profile
+tclaude federation grant alice groups.members.spawn --scope group=builders --profile worker --cwd /work/builders --max-live 2
 
-# requester side
+# Alice’s operator: let lead request workers in Bob’s builders
 tclaude agent permissions grant lead groups.members.spawn --scope peer=bob/builders
-# alternatively, grant agent.spawn --scope peer=bob to cover all offered groups
+# Alternatively: tclaude agent permissions grant lead agent.spawn --scope peer=bob
+
+# Alice’s lead agent
 tclaude federation spawn-request builders@bob --brief "port the parser to Go" --name parser-port --role worker
 ```
 
@@ -348,8 +400,12 @@ tclaude federation requests abandon 7 --acknowledge-late-worker
 Abandonment requires acknowledging that a late worker may still appear.
 Inspect the original launch before approving another attempt.
 
+Request states are `pending`, `launching`, `approved`, `denied` and
+`expired`. The default list shows only pending requests; use `--all` to see
+launching and decided requests.
+
 ```bash
-tclaude federation requests [--all]
+tclaude federation requests --all
 tclaude federation requests approve 7 [--profile p] [--cwd dir] [--harness h] [--model m] [--name n]
 tclaude federation requests deny 7 --reason "no capacity this week"
 ```
@@ -368,20 +424,22 @@ instance, an agent needs `routes.consume` scoped to the publisher peer/group
 and membership in the local group used for its private mirror:
 
 ```bash
-# publisher side (operator)
-tclaude federation grant bob routes.consume --scope group=svc
+# Bob’s operator: let Alice’s instance consume routes in svc
+tclaude federation grant alice routes.consume --scope group=svc
 
-# consumer side (operator, then agent)
-tclaude agent permissions grant consumer routes.consume --scope peer=alice/svc
-tclaude agent routes open api-server/api@alice -g team
+# Alice’s operator: let consumer open Bob’s routes
+tclaude agent permissions grant consumer routes.consume --scope peer=bob/svc
+
+# Alice’s consumer agent, a member of local group team
+tclaude agent routes open api-server/api@bob -g team
 ```
 
 The consumer gets an ordinary lease and local endpoint, exactly as for a
 local route. Neither sandbox changes. On the consumer's side, `agentd`
 creates a private mirror route that only the opening agent can see or use,
 and serves it itself. On the publisher's side, `agentd` connects to the real
-route like any other consumer. `tclaude federation status` lists each
-exported route as `route <publisher>/<name>@<peer>`.
+route like any other consumer. `tclaude federation remote` lists each
+shared route as `route <publisher>/<name>@<peer>`.
 
 Each TCP connection becomes one **hub stream**. The route id, stream id and
 an ephemeral X25519 key travel in sealed control envelopes. The two
@@ -426,8 +484,11 @@ tclaude federation outbox     # queued → sent → accepted | refused | expired
 | `queued` | waiting for the hub or the peer to come online, or retrying |
 | `sent` | the hub handed it to the peer; waiting for its acknowledgement |
 | `accepted` | stored in the recipient's inbox |
-| `refused` | rejected by the peer (for example `not_exported`); final |
+| `refused` | rejected by the peer (for example, a required peer grant is missing); final |
 | `expired` | never acknowledged in time |
+
+The wire refusal code `not_exported` means the peer has not granted your
+instance that capability for the target group.
 
 Bodies are text, up to 16 KiB; control characters are stripped on receipt. The receiver applies a per-peer rate
 limit (30 mails a minute) and the usual unprocessed-message cap per recipient.
@@ -466,11 +527,11 @@ is by inspecting the caller's process tree.
 - Each remote route connection costs one sealed control frame from each
   instance against the hub's per-instance frame budget (120 a minute by
   default, shared with mail). A peer accepts at most 240 opens a minute.
-- Routes are not re-exported: a mirror cannot be exported onward.
+- Mirror routes cannot be shared onward to another peer.
 - Attachments ride inline and are capped at 512 KiB per message; operator
   mail and replies cannot carry them.
-- No remote stop, restart, or transcript access; remote spawn is
-  request-and-approve only.
+- No remote stop, restart, or transcript access. Remote spawn runs under
+  a receiving peer grant or waits for that operator’s approval.
 - Operator mail is sent from the CLI only; agents cannot reach a remote
   operator.
 - One hub per instance. Hub-to-hub federation is a later step.

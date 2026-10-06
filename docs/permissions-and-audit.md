@@ -108,8 +108,9 @@ evaluation rules:
 - Within a dimension, matchers **OR** (`group=dev,staging` matches either).
 - Across dimensions, scopes **AND** (every mentioned dimension must match).
 - An unmentioned dimension is unconstrained.
-- Scopes union within a tier, and one unscoped row **absorbs the tier** — an
-  unscoped grant of the same slug makes the scoped ones redundant.
+- For local actions, scopes union within a tier, and one unscoped row
+  **absorbs the tier** — an unscoped grant of the same slug makes the local
+  scoped ones redundant.
 - A non-matching scope decides nothing: the check falls through to the other
   sources, and if none passes, the request gets a 403.
 
@@ -148,6 +149,21 @@ against the launch the spawn profile resolves.
 
 An unscoped spawn grant may select any saved sandbox profile, subject to
 sandbox lineage. Omitting all inherited profiles remains human-only.
+
+### Federation scopes
+
+Remote actions use ordinary slugs with `--scope peer=<trusted-peer>[/<group>]`:
+`message.direct`, `groups.members.spawn`, `agent.spawn` and `routes.consume`.
+`agent.spawn` accepts only the peer, without a group suffix. Labels resolve
+to trusted instance ids at grant time; `peer=` cannot be combined with any
+other scope dimension.
+
+Local and remote grants are disjoint: unscoped grants, local scopes, defaults
+and group ownership never authorize remote actions, and peer-scoped grants
+never authorize local actions. A deny blocks the slug in both cases. The
+receiving operator must also grant the sending instance access to its local
+groups. See [Federation](federation.md#peer-grants-what-a-peer-may-see-and-do)
+for the two grant sets and worked examples.
 
 ### Denies are never scoped
 
