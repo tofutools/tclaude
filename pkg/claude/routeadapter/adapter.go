@@ -571,7 +571,7 @@ func (a *Adapter) consumerStream(ctx context.Context, raw net.Conn, consumer Con
 	opened := make(chan *helperPublisherStream, 1)
 	results := make(chan directionResult, 2)
 	go func() { results <- directionResult{rawToBroker: true, err: copyRawToBroker(raw, w, opened)} }()
-	go func() { results <- directionResult{err: copyBrokerToRaw(adapterConn, raw, w, window, opened)} }()
+	go func() { results <- directionResult{err: copyBrokerToRaw(streamCtx, adapterConn, raw, w, window, opened)} }()
 	first := <-results
 	// A local client CloseWrite is only a read-side EOF. Keep the broker
 	// channel and accepted listener alive for the publisher's reverse data.
@@ -619,7 +619,7 @@ func copyRawToBroker(raw net.Conn, w *connWriter, opened <-chan *helperPublisher
 // flow-controlled stream the local socket is written by a pump, never by
 // this loop, so the broker's writes to the channel are never held up by a
 // slow local reader; the pump grants credit back as the reader takes bytes.
-func copyBrokerToRaw(broker net.Conn, raw net.Conn, w *connWriter, window int, opened chan<- *helperPublisherStream) (err error) {
+func copyBrokerToRaw(ctx context.Context, broker net.Conn, raw net.Conn, w *connWriter, window int, opened chan<- *helperPublisherStream) (err error) {
 	var out *helperPublisherStream
 	answered := false
 	defer func() {
@@ -641,7 +641,15 @@ func copyBrokerToRaw(broker net.Conn, raw net.Conn, w *connWriter, window int, o
 				continue
 			}
 			if window > 0 && routebroker.IsFlowOpen(frame.Payload) {
-				out = newHelperPublisherStream(func() { _ = w.write(routebroker.Frame{Kind: routebroker.KindClose, Stream: 1}) })
+				// A failed local write ends the whole connection: this
+				// channel carries only this one stream.
+				var pump *helperPublisherStream
+				pump = newHelperPublisherStream(func() {
+					_ = w.write(routebroker.Frame{Kind: routebroker.KindClose, Stream: 1})
+					pump.close()
+					_ = broker.Close()
+				})
+				out = pump
 				grant := out.enableFlow(window, 1, w)
 				_ = out.attach(raw)
 				if grant > 0 {
@@ -674,7 +682,11 @@ func copyBrokerToRaw(broker net.Conn, raw net.Conn, w *connWriter, window int, o
 			if out != nil {
 				// An orderly end lets the pump deliver the tail first.
 				out.finishOrClose()
-				<-out.done
+				select {
+				case <-out.done:
+				case <-ctx.Done(): // the lease or route closed meanwhile
+					out.close()
+				}
 			}
 			return io.EOF
 		case routebroker.KindPong:

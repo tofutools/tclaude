@@ -85,3 +85,60 @@ func TestAdapterFlowControlCarriesBulkPastSlowReaders(t *testing.T) {
 		t.Fatal("upload did not complete")
 	}
 }
+
+// TestAdapterFlowControlReleasesAClientThatLeavesEarly: the publisher has
+// finished a large reply and the stream ended in order, but the local
+// client goes away before reading its tail. The pump's failed write must
+// end the connection, not leave it waiting for a drain that cannot finish.
+func TestAdapterFlowControlReleasesAClientThatLeavesEarly(t *testing.T) {
+	targetPort, consumerPort := freePort(t), freePort(t)
+	target, err := net.Listen("tcp4", "127.0.0.1:"+strconv.Itoa(targetPort))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = target.Close() })
+	go func() {
+		conn, err := target.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = io.ReadAll(conn) // the request, up to the client's half-close
+		_, _ = conn.Write(make([]byte, 8<<20))
+		_ = conn.(*net.TCPConn).CloseWrite()
+		time.Sleep(time.Second)
+	}()
+
+	broker, err := routebroker.New(routebroker.Config{Authorizer: allowAll{}})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = broker.Close() })
+	adapter, err := New(broker, []int{targetPort, consumerPort})
+	require.NoError(t, err)
+	t.Cleanup(adapter.Close)
+	adapter.SetFlowWindow(func() int { return routebroker.InitialWindow })
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	_, err = adapter.Publish(ctx, Publisher{
+		RouteID: "route-a", AgentID: "publisher", ConvID: "publisher-conv",
+		LaunchGeneration: "publisher-launch", GroupGeneration: 1,
+		Target: "tcp://127.0.0.1:" + strconv.Itoa(targetPort),
+	})
+	require.NoError(t, err)
+	endpoint, err := adapter.Open(ctx, Consumer{
+		LeaseID: "lease-a", RouteID: "route-a", AgentID: "consumer", ConvID: "consumer-conv",
+		LaunchGeneration: "consumer-launch", GroupGeneration: 1,
+	})
+	require.NoError(t, err)
+
+	client, err := net.DialTimeout("tcp4", endpoint, time.Second)
+	require.NoError(t, err)
+	_, err = client.Write([]byte("GET"))
+	require.NoError(t, err)
+	require.NoError(t, client.(*net.TCPConn).CloseWrite())
+	_, err = io.ReadFull(client, make([]byte, 1024)) // the reply has started
+	require.NoError(t, err)
+	time.Sleep(200 * time.Millisecond) // let the reply finish and the stream end
+	require.NoError(t, client.(*net.TCPConn).SetLinger(0))
+	require.NoError(t, client.Close()) // reset: the tail can never be delivered
+
+	require.Eventually(t, func() bool { return broker.Metrics().ConsumerChannels == 0 },
+		10*time.Second, 20*time.Millisecond, "the consumer connection was never released")
+}
