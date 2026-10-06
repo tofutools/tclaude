@@ -69,7 +69,7 @@ func renderHTTPProxyCommand(sessionID, command string, runtime bool, markerOffse
 	for lines[delimiter] {
 		delimiter += "_"
 	}
-	return clcommon.ShellQuoteArg(executable) + " session http-proxy-exec" + runtimeArg + " --session-id " + clcommon.ShellQuoteArg(sessionID) + " --command-fd 99 99<<" + clcommon.ShellQuoteArg(delimiter) + "\n" + command + "\n" + delimiter + "\ntclaude_http_proxy_exit=$?; (exit \"$tclaude_http_proxy_exit\")"
+	return httpProxyCLICommand(executable, tclaudeLayerConstructedRootTclaudePath) + " session http-proxy-exec" + runtimeArg + " --session-id " + clcommon.ShellQuoteArg(sessionID) + " --command-fd 99 99<<" + clcommon.ShellQuoteArg(delimiter) + "\n" + command + "\n" + delimiter + "\ntclaude_http_proxy_exit=$?; (exit \"$tclaude_http_proxy_exit\")"
 }
 
 func httpProxyExecCmd() *cobra.Command {
@@ -322,7 +322,7 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 		select {
 		case sig := <-signals:
 			// Terminal interrupts already reach the workload's shared process group.
-			if sig != syscall.SIGINT {
+			if runtime || sig != syscall.SIGINT {
 				_ = child.Process.Signal(sig)
 			}
 		case err := <-done:
@@ -470,4 +470,10 @@ func httpProxyReservedEnvironment(name string) bool {
 		}
 	}
 	return false
+}
+
+// httpProxyCLICommand resolves the CLI inside the final namespace. A
+// constructed root projects the host CLI at a fixed guest-only path.
+func httpProxyCLICommand(hostPath, projectedPath string) string {
+	return `"$(if [ -x ` + clcommon.ShellQuoteArg(hostPath) + ` ]; then printf %s ` + clcommon.ShellQuoteArg(hostPath) + `; else printf %s ` + clcommon.ShellQuoteArg(projectedPath) + `; fi)"`
 }

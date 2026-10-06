@@ -256,3 +256,15 @@ func TestHTTPProxyCustomEnvironmentVariable(t *testing.T) {
 	assert.True(t, httpProxyReservedEnvironment("INVENTORY_API_URL"))
 	assert.False(t, httpProxyReservedEnvironment("OTHER_URL"))
 }
+
+func TestHTTPProxyCLISelectionInFinalNamespace(t *testing.T) {
+	for _, test := range []struct{ host, projected, expected string }{
+		{os.Args[0], "/nonexistent/projected-cli", os.Args[0]},
+		{"/nonexistent/host-cli", os.Args[0], os.Args[0]},
+	} {
+		child := exec.Command(clcommon.BootstrapShellPath(), "-c", "printf '%s' "+httpProxyCLICommand(test.host, test.projected))
+		output, err := child.Output()
+		require.NoError(t, err)
+		assert.Equal(t, test.expected, string(output))
+	}
+}

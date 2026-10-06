@@ -858,6 +858,7 @@ func startOpenCodeProcessWithAuthority(
 			runtime, command, args, serverEnvironment, unixHandshake != nil)
 	}
 	cmd := exec.Command(command, args...)
+	configureOpenCodeProcessGroup(cmd)
 	cmd.Dir = runtime.Cwd
 	cmd.Env = serverEnvironment
 	cmd.Stdout = io.Discard
@@ -2882,18 +2883,23 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 			return
 		}
 		if process.cmd != nil && process.cmd.Process != nil {
+			// Capture descendants before interrupting the bridge: its shell and
+			// server can otherwise be reparented when the bridge exits.
+			recordedTree := opencodeapi.RecordedProcessSubtree(process.cmd.Process.Pid)
 			_ = process.cmd.Process.Signal(os.Interrupt)
 			select {
 			case <-process.done:
-				return
 			case <-time.After(openCodeProcessStopWait):
-				_ = process.cmd.Process.Kill()
-				select {
-				case <-process.done:
-				case <-time.After(openCodeProcessStopWait):
-				}
-				return
+				// Kill the launch-owned group while its leader remains alive.
+				killOpenCodeProcessGroup(process.cmd)
 			}
+			killOpenCodePIDs(recordedTree)
+			if !waitForOpenCodePIDsExit(recordedTree, openCodeProcessStopWait) {
+				removeControlSocket = false
+				slog.Warn("OpenCode process tree did not exit; control authority retained",
+					"session", runtime.SessionID, "pid", runtime.PID)
+			}
+			return
 		}
 	}
 	// No in-memory handle: this is a recovered PID (e.g. after an agentd

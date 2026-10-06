@@ -39,12 +39,12 @@ change your authorization.
 ## Ordinary HTTP clients
 
 For a tclaude launch or resume, permitted instances also appear as
-`TCLAUDE_HTTP_PROXY_inventory` (replace `inventory` with the exact name).
+`TCLAUDE_HTTP_PROXY_inventory` by default (replace `inventory` with the exact name). A proxy configured with `environment_variable` uses that name instead; use the configured variable when present.
 Append a relative path to its trailing slash and use curl or a normal HTTP
 library directly:
 
 ```bash
-curl "${TCLAUDE_HTTP_PROXY_inventory}items?limit=10"
+curl --noproxy 127.0.0.1 "${TCLAUDE_HTTP_PROXY_inventory}items?limit=10"
 ```
 
 The daemon adds the credential and enforces the same permission and request

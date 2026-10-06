@@ -68,7 +68,7 @@ func idempotencyRequestsWithOwner(h http.Handler, ownerID string) http.Handler {
 func idempotencyRequestsWithOwnerAndWaitHook(h http.Handler, ownerID string, waitHook func()) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := strings.TrimSpace(r.Header.Get(agent.IdempotencyKeyHeader))
-		if key == "" || !isMutatingMethod(r.Method) || isBulkReadRoute(r.URL.Path) {
+		if key == "" || !isMutatingMethod(r.Method) || isBulkReadRoute(r.URL.Path) || strings.HasPrefix(r.URL.Path, "/v1/http/proxy/") {
 			h.ServeHTTP(w, r)
 			return
 		}
