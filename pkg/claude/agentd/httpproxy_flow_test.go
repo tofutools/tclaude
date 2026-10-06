@@ -72,6 +72,12 @@ func TestHTTPProxyFlow(t *testing.T) {
 	assert.Equal(t, "yes", result.Headers.Get("X-Result"))
 	assert.Equal(t, []byte{0, 255, 10}, result.Body)
 	assert.Equal(t, 1, calls)
+	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "http.request", Outcome: "success"})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "service", rows[0].TargetLabel)
+	assert.Contains(t, rows[0].Detail, "http_proxy=service")
+	assert.NotContains(t, rows[0].Detail, "secret")
 }
 
 func TestHTTPProxyReturnsRedirectAndUpstreamErrors(t *testing.T) {
@@ -84,7 +90,7 @@ func TestHTTPProxyReturnsRedirectAndUpstreamErrors(t *testing.T) {
 	defer destination.Close()
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/redirect" {
-			http.Redirect(w, r, destination.URL, 302)
+			http.Redirect(w, r, destination.URL, http.StatusFound)
 			return
 		}
 		w.WriteHeader(429)

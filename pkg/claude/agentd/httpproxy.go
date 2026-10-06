@@ -103,9 +103,13 @@ func handleHTTPProxyRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setAuditTargetLabel(r, body.Name)
+	if _, err := httpProxyURL(policy.URL, ""); err != nil || !httpProxyHeaderAllowed(policy.Header) {
+		writeError(w, http.StatusServiceUnavailable, "http_proxy_config", "operator must fix the configured proxy URL or header name")
+		return
+	}
 	target, err := httpProxyURL(policy.URL, body.Path)
-	if err != nil || !httpProxyHeaderAllowed(policy.Header) {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid proxy URL, relative path or configured header")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid relative path")
 		return
 	}
 	if body.Method == "" {
@@ -164,8 +168,11 @@ func handleHTTPProxyRequest(w http.ResponseWriter, r *http.Request) {
 	req.Header.Set(policy.Header, value)
 	// Dedicated transport: do not send service credentials through an ambient
 	// HTTP_PROXY or use cookies carried over from another request.
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = nil
+	transport := &http.Transport{
+		ForceAttemptHTTP2:     true,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: time.Second,
+	}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Do(req)

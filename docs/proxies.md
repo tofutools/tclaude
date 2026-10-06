@@ -541,7 +541,9 @@ Leading and trailing whitespace is trimmed. `header_value` can instead set the
 value directly in private config; a file takes precedence when both are set.
 HTTP and HTTPS base URLs are supported, without URL credentials, queries or
 fragments. Prefer HTTPS for remote services. Separate instances can use
-separate services, API prefixes and credentials.
+separate services, API prefixes and credentials. Run
+`tclaude setup --install-proxy-skills` to install the optional `proxy-http`
+skill when this family is configured.
 
 Grant access to one instance by its exact, case-sensitive name:
 

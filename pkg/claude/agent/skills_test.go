@@ -37,19 +37,21 @@ func TestInstallCodexProxySkillsInstallsOnlyProxySkillsInBothUserRoots(t *testin
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("CODEX_HOME", codexHome)
 
-	installed, err := InstallCodexProxySkills(true, ProxySkills{Git: true, Linear: true, AWB: true})
+	installed, err := InstallCodexProxySkills(true, ProxySkills{Git: true, Linear: true, AWB: true, HTTP: true})
 
 	require.NoError(t, err)
 	assert.Len(t, installed, len(bundledProxySkills)*2)
 	for _, root := range []string{filepath.Join(home, ".agents", "skills"), filepath.Join(codexHome, "skills")} {
 		assert.DirExists(t, filepath.Join(root, "proxy-git"))
 		assert.DirExists(t, filepath.Join(root, "proxy-linear"))
+		assert.DirExists(t, filepath.Join(root, "proxy-http"))
 		assert.NoDirExists(t, filepath.Join(root, "agent-coord"))
 	}
 }
 
 func TestProxySkillsNamesSelectsEnabledFamilies(t *testing.T) {
 	assert.Equal(t, []string{"proxy-git", "proxy-awb"}, (ProxySkills{Git: true, AWB: true}).names())
+	assert.Equal(t, []string{"proxy-http"}, (ProxySkills{HTTP: true}).names())
 	assert.Empty(t, (ProxySkills{}).names())
 }
 
