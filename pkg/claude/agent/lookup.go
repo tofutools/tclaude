@@ -915,9 +915,9 @@ type lsParams struct {
 	Group string `long:"group" optional:"true" help:"Only show agents in this group (name or numeric ID). Groups you cannot reach are never matchable, even when named explicitly."`
 	State string `long:"state" optional:"true" help:"Filter: online | offline"`
 	JSON  bool   `long:"json" help:"Output JSON"`
-	// Remote adds members of remote (federated) groups imported into the
+	// Remote adds members of remote (federated) groups covered by the
 	// listed groups. With --json the output becomes {"local":[…],"remote":[…]}.
-	Remote bool `long:"remote" help:"Also list remote members imported into your groups (federation). With --json, output becomes {local, remote}"`
+	Remote bool `long:"remote" help:"Also list remote members covered by your peer-scoped grants (federation). With --json, output becomes {local, remote}"`
 }
 
 func lsCmd() *cobra.Command {
@@ -1049,7 +1049,6 @@ type remotePeerEntry struct {
 	Peer        string    `json:"peer"`
 	Instance    string    `json:"instance"`
 	RemoteGroup string    `json:"remote_group"`
-	LocalGroups []string  `json:"local_groups"`
 	Mail        bool      `json:"mail"`
 	PeerOnline  bool      `json:"peer_online"`
 	CatalogAt   time.Time `json:"catalog_received_at"`
@@ -1060,7 +1059,7 @@ type remotePeerEntry struct {
 func renderRemotePeers(remote []*remotePeerEntry, stdout io.Writer, terminalWidth int) {
 	fmt.Fprintln(stdout)
 	if len(remote) == 0 {
-		fmt.Fprintln(stdout, "Remote: (none — no remote groups are imported into your groups, or no catalog has arrived yet)")
+		fmt.Fprintln(stdout, "Remote: (none — no peer-scoped grants cover a received catalog)")
 		return
 	}
 	fmt.Fprintln(stdout, "Remote (federation):")
@@ -1071,7 +1070,6 @@ func renderRemotePeers(remote []*remotePeerEntry, stdout io.Writer, terminalWidt
 		table.Column{Header: "PRESENCE", MinWidth: 8, Truncate: true},
 		table.Column{Header: "ROLE", MinWidth: 6, Truncate: true},
 		table.Column{Header: "REMOTE GROUP", MinWidth: 8, Truncate: true},
-		table.Column{Header: "VIA", MinWidth: 6, Truncate: true},
 		table.Column{Header: "MAIL", Width: 4},
 	)
 	tbl.SetTerminalWidth(terminalWidth)
@@ -1093,7 +1091,7 @@ func renderRemotePeers(remote []*remotePeerEntry, stdout io.Writer, terminalWidt
 		}
 		tbl.AddRow(table.Row{Cells: []string{
 			onlineMark(re.Presence == "online" && !re.Stale),
-			re.Address, re.Harness, presence, re.Role, re.RemoteGroup, strings.Join(re.LocalGroups, ","), mail,
+			re.Address, re.Harness, presence, re.Role, re.RemoteGroup, mail,
 		}})
 	}
 	fmt.Fprintln(stdout, tbl.Render())

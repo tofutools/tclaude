@@ -56,3 +56,11 @@ func TestRemotePermissionIgnoresLocalSourcesAndStructuralAuthority(t *testing.T)
 func TestRemotePermissionUnresolvableFailsClosed(t *testing.T) {
 	require.Equal(t, permUndecided, resolveRemotePermissionVerdictFrom(permSources{}, PermMessageDirect).Resolution)
 }
+
+func TestPeerScopeAttenuation(t *testing.T) {
+	wholePeer := PermissionScope{ScopeDimPeer: {"inst_peer"}}
+	group := PermissionScope{ScopeDimPeer: {"inst_peer/builders"}}
+	require.True(t, permissionScopeCovers(wholePeer, group))
+	require.False(t, permissionScopeCovers(group, wholePeer))
+	require.False(t, permissionScopeCovers(wholePeer, PermissionScope{ScopeDimPeer: {"inst_other/builders"}}))
+}

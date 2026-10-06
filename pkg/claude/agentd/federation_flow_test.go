@@ -644,13 +644,12 @@ func TestFederation_ReachableRemoteMembers(t *testing.T) {
 	require.NoError(t, db.GrantAgentPermissionWithScope(alice, agentd.PermMessageDirect, `{"peer":["`+p.id.ID()+`/builders"]}`, "test"))
 
 	type member struct {
-		Address     string   `json:"address"`
-		Role        string   `json:"role"`
-		Harness     string   `json:"harness"`
-		Presence    string   `json:"presence"`
-		LocalGroups []string `json:"local_groups"`
-		Mail        bool     `json:"mail"`
-		Stale       bool     `json:"stale"`
+		Address  string `json:"address"`
+		Role     string `json:"role"`
+		Harness  string `json:"harness"`
+		Presence string `json:"presence"`
+		Mail     bool   `json:"mail"`
+		Stale    bool   `json:"stale"`
 	}
 	list := func(req *http.Request) []member {
 		rec := testharness.Serve(f.Mux, req)
@@ -667,7 +666,7 @@ func TestFederation_ReachableRemoteMembers(t *testing.T) {
 	got := list(agentd.AsAgentPeer(get(), alice))
 	require.Len(t, got, 1)
 	require.Equal(t, member{Address: "bob-agent@bob", Role: "reviewer", Harness: "codex", Presence: "online",
-		LocalGroups: []string{}, Mail: true}, got[0])
+		Mail: true}, got[0])
 
 	// An agent without a covering grant sees nothing; the operator sees all.
 	require.Empty(t, list(agentd.AsAgentPeer(get(), outsider)))

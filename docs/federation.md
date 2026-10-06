@@ -315,8 +315,14 @@ operator controls whether the request runs automatically:
 tclaude federation grant bob groups.members.spawn --scope group=builders --profile worker --cwd /work/builders --max-live 2
 
 # requester side
+tclaude agent permissions grant lead groups.members.spawn --scope peer=bob/builders
+# alternatively, grant agent.spawn --scope peer=bob to cover all offered groups
 tclaude federation spawn-request builders@bob --brief "port the parser to Go" --name parser-port --role worker
 ```
+
+The requester needs groups.members.spawn scoped to the peer/group, or
+agent.spawn scoped to the peer without a group suffix. The group must be
+visible in the peer's catalog.
 
 The peer sends only the name, role and brief. Launch profile, directory,
 harness and model come from the receiving peer grant; unset fields inherit

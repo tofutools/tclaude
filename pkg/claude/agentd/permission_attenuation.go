@@ -118,7 +118,16 @@ func permissionScopeCovers(granter, conferred PermissionScope) bool {
 			allowed[matcher] = true
 		}
 		for _, matcher := range conferredMatchers {
-			if !allowed[matcher] {
+			covered := allowed[matcher]
+			if dim == ScopeDimPeer && !covered {
+				for _, parent := range granterMatchers {
+					if permissionScopeLiteralMatches(dim, parent, matcher) {
+						covered = true
+						break
+					}
+				}
+			}
+			if !covered {
 				return false
 			}
 		}

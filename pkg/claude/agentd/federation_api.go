@@ -871,7 +871,6 @@ type fedRemoteMember struct {
 	Peer        string    `json:"peer"`
 	Instance    string    `json:"instance"`
 	RemoteGroup string    `json:"remote_group"`
-	LocalGroups []string  `json:"local_groups"`
 	Mail        bool      `json:"mail"`
 	PeerOnline  bool      `json:"peer_online"`
 	CatalogAt   time.Time `json:"catalog_received_at"`
@@ -950,7 +949,7 @@ func handleFederationReachable(w http.ResponseWriter, r *http.Request) {
 				out = append(out, &fedRemoteMember{
 					Address: m.Name + "@" + addrPeer, Agent: m.Agent, Name: m.Name, Role: m.Role, Harness: m.Harness,
 					Presence: m.Presence, Peer: peerDisplay(&peer), Instance: peer.InstanceID, RemoteGroup: g.Name,
-					LocalGroups: []string{}, Mail: mail, PeerOnline: online, CatalogAt: at, Stale: !online || now.Sub(at) > fedStaleAfter,
+					Mail: mail, PeerOnline: online, CatalogAt: at, Stale: !online || now.Sub(at) > fedStaleAfter,
 				})
 			}
 		}
