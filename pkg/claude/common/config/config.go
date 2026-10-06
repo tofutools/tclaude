@@ -792,6 +792,8 @@ func (c *Config) ResolvedAuditRetentionDays() (days int, prune bool) {
 
 // FederationConfig configures the outbound hub connection.
 type FederationConfig struct {
+	// UnrestrictedMaxLive caps automatic workers per unrestricted peer. Default 8.
+	UnrestrictedMaxLive int `json:"unrestricted_max_live,omitempty"`
 	// Enabled starts the hub client. Default false.
 	Enabled bool `json:"enabled,omitempty"`
 	// HubURL is the hub's WebSocket URL: wss://host[:port], or ws:// to a

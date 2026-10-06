@@ -77,6 +77,7 @@ type status struct {
 		Since     time.Time `json:"since"`
 	} `json:"hub"`
 	Peers []struct {
+		Level       string    `json:"level"`
 		InstanceID  string    `json:"instance_id"`
 		Fingerprint string    `json:"fingerprint"`
 		Label       string    `json:"label"`
@@ -221,6 +222,11 @@ func runStatus(p *jsonParam, stdout, stderr io.Writer) int {
 		}
 	}
 	fmt.Fprintf(stdout, "Peers:       %d trusted, %d visible untrusted\n", trusted, visible)
+	for _, pe := range st.Peers {
+		if pe.Trusted {
+			fmt.Fprintf(stdout, "  %s: %s\n", pe.InstanceID, pe.Level)
+		}
+	}
 	fmt.Fprintf(stdout, "Peer grants: %d\n", len(st.PeerGrants))
 	if len(st.Outbox) > 0 {
 		var parts []string
@@ -324,7 +330,7 @@ func peersCmd() *cobra.Command {
 				os.Exit(printJSON(os.Stdout, st.Peers))
 			}
 			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-			_, _ = fmt.Fprintln(tw, "INSTANCE\tLABEL\tNAME\tTRUSTED\tONLINE\tLAST SEEN\tFINGERPRINT")
+			_, _ = fmt.Fprintln(tw, "INSTANCE\tLABEL\tNAME\tTRUSTED\tLEVEL\tONLINE\tLAST SEEN\tFINGERPRINT")
 			for _, pe := range st.Peers {
 				online := "no"
 				if pe.Online {
@@ -334,7 +340,7 @@ func peersCmd() *cobra.Command {
 				if pe.Trusted {
 					trusted = "yes"
 				}
-				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", pe.InstanceID, dash(pe.Label), dash(pe.Name), trusted, online, ago(pe.LastSeen), pe.Fingerprint)
+				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", pe.InstanceID, dash(pe.Label), dash(pe.Name), trusted, dash(pe.Level), online, ago(pe.LastSeen), pe.Fingerprint)
 			}
 			_ = tw.Flush()
 		},
@@ -349,6 +355,8 @@ func dash(s string) string {
 }
 
 type trustParams struct {
+	Level    string `long:"level" default:"restricted" help:"Local trust level: restricted or unrestricted (own machines only)"`
+	Yes      bool   `long:"yes" help:"Confirm unrestricted access without prompting"`
 	Instance string `pos:"true" help:"Instance id (or 8+ char prefix) from 'tclaude federation peers'"`
 	Label    string `long:"label" optional:"true" help:"Short local name for the peer, used in addresses (member@label)"`
 }
@@ -359,11 +367,42 @@ func trustCmd() *cobra.Command {
 		Short:       "Trust a visible instance (compare its fingerprint out of band first)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *trustParams, _ *cobra.Command, _ []string) {
+			if p.Level != "restricted" && p.Level != "unrestricted" {
+				fmt.Fprintln(os.Stderr, "level must be restricted or unrestricted")
+				os.Exit(1)
+			}
+			fingerprint := ""
+			if p.Level == "unrestricted" {
+				st, rc := loadStatus(os.Stderr)
+				if st == nil {
+					os.Exit(rc)
+				}
+				matches := 0
+				for _, pe := range st.Peers {
+					if pe.InstanceID == p.Instance || pe.Label == p.Instance || (len(p.Instance) >= 8 && (strings.HasPrefix(pe.InstanceID, p.Instance) || strings.HasPrefix(pe.InstanceID, "inst_"+p.Instance))) {
+						matches++
+						fingerprint = pe.Fingerprint
+					}
+				}
+				if matches != 1 {
+					fmt.Fprintln(os.Stderr, "peer must identify exactly one visible or trusted instance")
+					os.Exit(1)
+				}
+				fmt.Fprintf(os.Stderr, "Fingerprint %s: unrestricted grants all peer permissions on all live groups, automatic spawn, and local unscoped grants towards this peer. Approvals remain local. Intended for your own machines.\n", fingerprint)
+				if !p.Yes {
+					fmt.Fprint(os.Stderr, "Type yes to confirm: ")
+					var answer string
+					if _, err := fmt.Fscanln(os.Stdin, &answer); err != nil || answer != "yes" {
+						fmt.Fprintln(os.Stderr, "not confirmed")
+						os.Exit(1)
+					}
+				}
+			}
 			var out struct {
 				InstanceID  string `json:"instance_id"`
 				Fingerprint string `json:"fingerprint"`
 			}
-			if rc := post(os.Stderr, "/v1/federation/peers/trust", map[string]any{"instance": p.Instance, "label": p.Label}, &out); rc != 0 {
+			if rc := post(os.Stderr, "/v1/federation/peers/trust", map[string]any{"instance": p.Instance, "label": p.Label, "level": p.Level, "confirm_fingerprint": fingerprint}, &out); rc != 0 {
 				os.Exit(rc)
 			}
 			fmt.Printf("trusted %s (fingerprint %s)\n", out.InstanceID, out.Fingerprint)
@@ -482,7 +521,7 @@ func grantsCmd() *cobra.Command {
 func remoteCmd() *cobra.Command {
 	return boa.CmdT[jsonParam]{
 		Use:         "remote",
-		Short:       "Show what each trusted peer exports to you, plus your peer grants",
+		Short:       "Show what each trusted peer grants you, plus your peer grants",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *jsonParam, _ *cobra.Command, _ []string) {
 			os.Exit(runRemote(p, os.Stdout, os.Stderr))
@@ -508,7 +547,7 @@ func runRemote(p *jsonParam, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintf(stdout, "%s (%s, %s, catalog %s)\n", r.Label, r.Peer, state, ago(r.ReceivedAt))
 		if len(r.Groups) == 0 {
-			fmt.Fprintln(stdout, "  exports nothing to you")
+			fmt.Fprintln(stdout, "  grants you nothing")
 		}
 		for _, g := range r.Groups {
 			line := fmt.Sprintf("  %s/%s  [%s]", r.Label, g.Name, strings.Join(g.Caps, ","))

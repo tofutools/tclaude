@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -58,11 +59,27 @@ func TestFederation_PeerGrantScopes(t *testing.T) {
 }
 
 func TestFederation_AutoSpawnGrantAndCap(t *testing.T) {
+	testFederationAutoSpawnAndCap(t, false)
+}
+
+func TestFederation_UnrestrictedAutoSpawnAndCap(t *testing.T) {
+	testFederationAutoSpawnAndCap(t, true)
+}
+
+func testFederationAutoSpawnAndCap(t *testing.T, unrestricted bool) {
 	fh := newFedHarness(t)
 	f, p := fh.f, fh.peer
 	f.HaveGroup("team")
-	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsMembersSpawn, "scope": "group=team", "spawn_policy": map[string]any{"max_live": 1}})
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	if unrestricted {
+		cfg, err := config.Load()
+		require.NoError(t, err)
+		cfg.Federation.UnrestrictedMaxLive = 1
+		require.NoError(t, config.Save(cfg))
+		setFedTrustLevel(t, fh, "unrestricted")
+	} else {
+		rec := fedHuman(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsMembersSpawn, "scope": "group=team", "spawn_policy": map[string]any{"max_live": 1}})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	}
 	request := func(name string) *proto.Envelope {
 		env := p.envelope(proto.KindSpawnReq, proto.Endpoint{}, proto.SpawnRequestPayload{Group: "team", Name: name, Brief: "review the change"})
 		p.send(env)

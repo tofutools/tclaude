@@ -145,6 +145,31 @@ The label is the short name you use in addresses (`member@bob`). Envelopes
 from untrusted instances are dropped unanswered. Untrusting a peer also
 removes its peer grants and cached catalog.
 
+Trust defaults to **restricted**, including for existing peers: receiving peer
+grants and requesting agents' `peer=` grants control access. For your own
+machines, opt in locally to **unrestricted**:
+
+```bash
+tclaude federation trust bob --level unrestricted
+# Later, downgrade immediately:
+tclaude federation trust bob --level restricted
+```
+
+Upgrading asks for confirmation and repeats the fingerprint and permissions;
+`--yes` confirms for scripts. `peers` and `status` show the level. Re-running
+`trust` updates the existing peer, including while disconnected.
+
+An unrestricted peer holds every peer-grantable permission across all live
+groups, including future groups. Spawn auto-approves using each group's default
+launch settings. The live automatic worker cap defaults to 8 per peer; set
+`federation.unrestricted_max_live` in `~/.tclaude/data/config.json` to change it.
+Towards that peer, local agents' unscoped grants (including group grants and
+config defaults) also count. `group=` scopes and group ownership never confer
+remote authority; denies still apply. **Approvals and `--ask-human` remain
+local and cannot be answered remotely.** Each side chooses its own level;
+the hub cannot set it. Downgrading or untrusting affects subsequent authorization
+reads immediately, including reads by in-flight operations.
+
 ## Peer grants: what a peer may see and do
 
 Trusted peers are permission principals. The receiving operator grants a
@@ -207,7 +232,7 @@ tclaude agent permissions grant lead message.direct --scope peer=bob/builders
 
 Agents see remote members next to local ones with `tclaude agent ls --remote`.
 The remote section shows each member's address, harness, role, presence and
-remote group. An agent sees catalog groups covered by its effective peer-scoped
+remote group. An agent sees catalog groups covered by its effective remote
 mail, spawn or route grants; the operator sees all received catalogs.
 Peer-scoped grants assigned to a local group give its current members that
 remote reach. Presence is marked

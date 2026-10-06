@@ -940,7 +940,58 @@ func resolvePermissionVerdictForAction(r *http.Request, convID, slug string, act
 		return resolvePermissionVerdictForRequest(r, convID, slug)
 	}
 	src := loadPermSources(convID)
-	return resolveRemotePermissionVerdictFrom(src, slug)
+	if !db.FederationPeerUnrestricted(actx.RemotePeer) {
+		return resolveRemotePermissionVerdictFrom(src, slug)
+	}
+	// Unrestricted peers also admit truly unscoped standing grants. Bind those
+	// grants to this peer before the ordinary scope evaluator sees them.
+	remote := src
+	remote.sudo = map[string]sudoPermSource{}
+	for key, grant := range src.sudo {
+		if scope, err := permissionScopeForEval(grant.ScopeJSON); err == nil && len(scope[ScopeDimPeer]) != 0 {
+			remote.sudo[key] = grant
+		}
+	}
+	remote.override = map[string]overridePermSource{}
+	remote.group = map[string][]string{}
+	bound, _ := json.Marshal(PermissionScope{ScopeDimPeer: []string{actx.RemotePeer}})
+	bind := func(raw string) (string, bool) {
+		scope, err := permissionScopeForEval(raw)
+		if err != nil {
+			return "", false
+		}
+		if len(scope) == 0 {
+			return string(bound), true
+		}
+		return raw, len(scope[ScopeDimPeer]) != 0 && len(scope[ScopeDimGroup]) == 0
+	}
+	for key, grant := range src.override {
+		if grant.Effect == db.PermEffectDeny {
+			remote.override[key] = grant
+		} else if raw, ok := bind(grant.ScopeJSON); ok {
+			grant.ScopeJSON = raw
+			remote.override[key] = grant
+		}
+	}
+	for key, scopes := range src.group {
+		for _, raw := range scopes {
+			if scoped, ok := bind(raw); ok {
+				remote.group[key] = append(remote.group[key], scoped)
+			}
+		}
+	}
+	cfg, _ := config.Load()
+	defaultAllowed := cfg.HasDefaultPermission(slug)
+	if r != nil {
+		if defaults, ok := r.Context().Value(permissionDefaultsKey{}).(map[string]bool); ok {
+			defaultAllowed = defaults[slug]
+		}
+	}
+	v := resolvePermissionVerdictFrom(remote, slug, defaultAllowed)
+	if v.Source == permSourceDefault {
+		v.ScopeJSON = []string{string(bound)}
+	}
+	return v
 }
 
 // localPermissionSources excludes positive peer rows before local precedence.

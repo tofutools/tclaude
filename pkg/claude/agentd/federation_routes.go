@@ -840,7 +840,7 @@ func fedMirrorAuthorized(mirrorID string, localID int64, peer, remoteGroup, remo
 	if p, _ := db.GetFederationPeer(peer); p == nil {
 		return errors.New("peer no longer trusted")
 	}
-	verdict := resolveRemotePermissionVerdictFrom(loadPermSources(route.PublisherConvID), PermRoutesConsume)
+	verdict := resolvePermissionVerdictForAction(nil, route.PublisherConvID, PermRoutesConsume, ActionContext{RemotePeer: peer, RemoteGroup: remoteGroup})
 	if !evalPermissionScope(verdict, route.PublisherConvID, ActionContext{RemotePeer: peer, RemoteGroup: remoteGroup}).Satisfied || verdict.Resolution != permAllow {
 		return errors.New("remote route permission removed")
 	}
