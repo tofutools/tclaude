@@ -55,7 +55,7 @@ window ahead of what its reader has actually taken, so a slow reader slows
 the sender down instead of overflowing a buffer and resetting the
 connection. Bulk transfers to a reader that pauses work the way they do
 over plain TCP. The window is per connection and direction; tune it, or
-turn flow control off, in `~/.tclaude/config.json`:
+turn flow control off, in `~/.tclaude/data/config.json`:
 
 ```json
 { "routes": { "flow_control": true, "window_kib": 256 } }
