@@ -18,11 +18,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
-// PermFederationMessage lets an agent mail members of a remote group that
-// is imported into one of its groups. Scope dim group = the importing local
-// group. Not default-granted, not ownership-contributed.
-const PermFederationMessage = "federation.message"
-
 // fedErr is a client-facing error with an HTTP status and code.
 type fedErr struct {
 	status int
@@ -122,15 +117,12 @@ type fedTarget struct {
 	// operator addresses the peer's human operator instead of an agent.
 	operator    bool
 	remoteGroup []string
-	// localGroups are the importing local groups the sender may use, in
-	// name order. Empty for the human sender without membership.
-	localGroups []string
 }
 
 func (t *fedTarget) label() string { return t.name + "@" + peerDisplay(t.peer) }
 
 // resolveFederatedTarget resolves member@peer for a sender. fromConv is ""
-// for the human operator. Authority (beyond import reachability) is checked
+// for the human operator. Authority is checked
 // by the caller.
 func resolveFederatedTarget(fromConv, addr string) (*fedTarget, error) {
 	member, peerRef, ok := splitFederatedAddress(addr)
@@ -148,13 +140,33 @@ func resolveFederatedTarget(fromConv, addr string) (*fedTarget, error) {
 	if cat == nil {
 		return nil, newFedErr(http.StatusNotFound, "no_catalog", "no catalog received from %s yet; is it online and does it export anything to you?", peerDisplay(peer))
 	}
+	// Prefer candidates covered by standing grants before resolving ambiguous
+	// names. When none is covered, retain catalog resolution for ask-human.
+	grantedGroups := map[string]bool{}
+	if fromConv != "" {
+		verdict := resolveRemotePermissionVerdictFrom(loadPermSources(fromConv), PermMessageDirect)
+		for _, g := range cat.Groups {
+			if !g.HasCap(proto.CapMail) {
+				continue
+			}
+			allowed, _ := permissionVerdictAllowsAction(verdict, fromConv, PermMessageDirect, ActionContext{RemotePeer: peer.InstanceID, RemoteGroup: g.Name})
+			if !allowed {
+				continue
+			}
+			for _, m := range g.Members {
+				if fedMemberMatches(m, member) {
+					grantedGroups[g.Name] = true
+				}
+			}
+		}
+	}
 	t := &fedTarget{peer: peer}
 	for _, g := range cat.Groups {
-		if !g.HasCap(proto.CapMail) {
+		if !g.HasCap(proto.CapMail) || (len(grantedGroups) != 0 && !grantedGroups[g.Name]) {
 			continue
 		}
 		for _, m := range g.Members {
-			if m.Agent == member || strings.EqualFold(m.Name, member) || (len(member) >= 8 && strings.HasPrefix(m.Agent, member)) {
+			if fedMemberMatches(m, member) {
 				if t.agentID != "" && t.agentID != m.Agent {
 					return nil, newFedErr(http.StatusConflict, "ambiguous", "%q matches several members of %s; use the agent id", member, peerDisplay(peer))
 				}
@@ -167,52 +179,11 @@ func resolveFederatedTarget(fromConv, addr string) (*fedTarget, error) {
 	if t.agentID == "" {
 		return nil, newFedErr(http.StatusNotFound, "not_found", "%s exports no mail-capable member matching %q", peerDisplay(peer), member)
 	}
-	imports, err := db.ListFederationImports()
-	if err != nil {
-		return nil, err
-	}
-	var senderGroups map[int64]bool
-	if fromConv != "" {
-		senderGroups = map[int64]bool{}
-		groups, err := db.ListGroupsForConv(fromConv)
-		if err != nil {
-			return nil, err
-		}
-		for _, g := range groups {
-			if !g.IsArchived() {
-				senderGroups[g.ID] = true
-			}
-		}
-	}
-	seen := map[string]bool{}
-	imported := false
-	for _, im := range imports {
-		if im.Peer != peer.InstanceID || !containsString(t.remoteGroup, im.RemoteGroup) {
-			continue
-		}
-		if g, _ := db.GetAgentGroupByID(im.LocalGroupID); g == nil || g.IsArchived() {
-			continue
-		}
-		imported = true
-		if senderGroups != nil && !senderGroups[im.LocalGroupID] {
-			continue
-		}
-		if !seen[im.LocalGroupName] {
-			seen[im.LocalGroupName] = true
-			t.localGroups = append(t.localGroups, im.LocalGroupName)
-		}
-	}
-	sort.Strings(t.localGroups)
-	if !imported {
-		return nil, newFedErr(http.StatusForbidden, "not_imported",
-			"%s's groups %v are not imported into any local group (tclaude federation import %s/<group> --into <local-group>)",
-			t.label(), t.remoteGroup, peerDisplay(peer))
-	}
-	if fromConv != "" && len(t.localGroups) == 0 {
-		return nil, newFedErr(http.StatusForbidden, "not_member",
-			"you are not a member of any local group that imports %s's group", t.label())
-	}
 	return t, nil
+}
+
+func fedMemberMatches(m proto.CatalogMember, member string) bool {
+	return m.Agent == member || strings.EqualFold(m.Name, member) || (len(member) >= 8 && strings.HasPrefix(m.Agent, member))
 }
 
 func containsString(xs []string, x string) bool {
@@ -376,24 +347,22 @@ func handleFederatedAgentSend(w http.ResponseWriter, r *http.Request, fromConv s
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// authorizeFederatedTarget checks that fromConv holds federation.message
-// for at least one importing group it belongs to and returns that group.
-// It tries each silently and falls back to the full gate (which handles
-// --ask-human and writes the 403) on the first.
+// authorizeFederatedTarget requires mail authority for a catalog group
+// containing the recipient. One-shot approval describes one concrete group.
 func authorizeFederatedTarget(w http.ResponseWriter, r *http.Request, fromConv string, t *fedTarget) (string, bool) {
-	for _, g := range t.localGroups {
-		if ok, _, err := permissionAllowsAction(r, fromConv, PermFederationMessage, ActionContext{Group: g, Peer: t.peer.InstanceID}); err == nil && ok {
-			return g, true
+	for _, group := range t.remoteGroup {
+		if allowed, _, err := permissionAllowsAction(r, fromConv, PermMessageDirect, ActionContext{RemotePeer: t.peer.InstanceID, RemoteGroup: group}); err == nil && allowed {
+			return group, true
 		}
 	}
-	if _, ok := requirePermission(w, r, PermFederationMessage, ActionContext{Group: t.localGroups[0], Peer: t.peer.InstanceID}); !ok {
+	if _, ok := requirePermission(w, r, PermMessageDirect, ActionContext{RemotePeer: t.peer.InstanceID, RemoteGroup: t.remoteGroup[0]}); !ok {
 		return "", false
 	}
-	return t.localGroups[0], true
+	return t.remoteGroup[0], true
 }
 
 // handleFederatedReply answers an inbound remote message. Reply authority
-// comes from having received the message: no import or slug is needed, and
+// comes from having received the message: no standing grant is needed, and
 // the remote side accepts it because it matches mail it sent.
 func handleFederatedReply(w http.ResponseWriter, r *http.Request, fromConv string, in *db.FederationInbound, subject, body string) {
 	peer, err := db.GetFederationPeer(in.FromInstance)
@@ -431,7 +400,6 @@ type fedStatusResp struct {
 	Hub         *fedHubStatus     `json:"hub,omitempty"`
 	Peers       []fedPeerJSON     `json:"peers"`
 	Exports     []fedExportJSON   `json:"exports"`
-	Imports     []fedImportJSON   `json:"imports"`
 	Outbox      map[string]int    `json:"outbox"`
 	Remote      []fedRemoteSystem `json:"remote"`
 }
@@ -461,13 +429,6 @@ type fedExportJSON struct {
 	Peer  string   `json:"peer"`
 	Label string   `json:"peer_label,omitempty"`
 	Caps  []string `json:"caps"`
-}
-
-type fedImportJSON struct {
-	LocalGroup  string `json:"local_group"`
-	Peer        string `json:"peer"`
-	Label       string `json:"peer_label,omitempty"`
-	RemoteGroup string `json:"remote_group"`
 }
 
 // fedRemoteSystem is what one trusted peer exports to us (discovery).
@@ -544,10 +505,7 @@ func handleFederationStatus(w http.ResponseWriter, r *http.Request) {
 	for _, e := range exports {
 		resp.Exports = append(resp.Exports, fedExportJSON{Group: e.GroupName, Peer: e.Peer, Label: labels[e.Peer], Caps: e.Caps})
 	}
-	imports, _ := db.ListFederationImports()
-	for _, im := range imports {
-		resp.Imports = append(resp.Imports, fedImportJSON{LocalGroup: im.LocalGroupName, Peer: im.Peer, Label: labels[im.Peer], RemoteGroup: im.RemoteGroup})
-	}
+
 	if rows, err := db.ListFederationOutbox(500); err == nil {
 		for _, row := range rows {
 			resp.Outbox[row.State]++
@@ -827,75 +785,6 @@ func handleFederationExports(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-type fedImportReq struct {
-	LocalGroup  string `json:"local_group"`
-	Peer        string `json:"peer"`
-	RemoteGroup string `json:"remote_group"`
-}
-
-// handleFederationImports: POST adds, DELETE removes an import.
-func handleFederationImports(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
-		writeError(w, http.StatusMethodNotAllowed, "method", "POST or DELETE")
-		return
-	}
-	if !requireHuman(w, r, "change federation imports") {
-		return
-	}
-	var req fedImportReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
-		return
-	}
-	g, err := db.GetAgentGroupByName(req.LocalGroup)
-	if err != nil || g == nil {
-		writeError(w, http.StatusNotFound, "not_found", "no such local group "+req.LocalGroup)
-		return
-	}
-	p, err := resolveFederationPeer(req.Peer)
-	if err != nil {
-		writeFedErr(w, err)
-		return
-	}
-	if strings.TrimSpace(req.RemoteGroup) == "" {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "remote_group is required")
-		return
-	}
-	setAuditTargetLabel(r, peerDisplay(p)+"/"+req.RemoteGroup+" → "+req.LocalGroup)
-	if r.Method == http.MethodDelete {
-		ok, err := db.DeleteFederationImport(g.ID, p.InstanceID, req.RemoteGroup)
-		if err != nil {
-			writeFedErr(w, err)
-			return
-		}
-		if !ok {
-			writeError(w, http.StatusNotFound, "not_found", "no such import")
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-		return
-	}
-	warning := ""
-	if cat, _, _ := fedCatalogFor(p.InstanceID); cat == nil {
-		warning = "no catalog from this peer yet; the import takes effect once it exports the group to you"
-	} else {
-		found := false
-		for _, cg := range cat.Groups {
-			if cg.Name == req.RemoteGroup {
-				found = true
-			}
-		}
-		if !found {
-			warning = "the peer does not currently export " + req.RemoteGroup + " to you"
-		}
-	}
-	if err := db.AddFederationImport(g.ID, p.InstanceID, req.RemoteGroup); err != nil {
-		writeFedErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "warning": warning})
-}
-
 type fedOutboxJSON struct {
 	EnvelopeID string    `json:"envelope_id"`
 	To         string    `json:"to"`
@@ -1064,7 +953,7 @@ func handleFederationInbox(w http.ResponseWriter, r *http.Request) {
 // is online.
 const fedStaleAfter = 3 * fedCatalogRefresh
 
-// fedRemoteMember is one remote member reachable through an import.
+// fedRemoteMember is one remote member visible through peer-scoped grants.
 type fedRemoteMember struct {
 	// Address is what `tclaude agent message` accepts: name@label, or
 	// name@instance-id for a peer without a label.
@@ -1086,87 +975,80 @@ type fedRemoteMember struct {
 	Stale bool `json:"stale"`
 }
 
-// handleFederationReachable lists the remote members imported into the
-// caller's groups (every import for the operator): the remote half of
-// `tclaude agent ls --remote`. It mirrors /v1/peers' visibility: an agent
-// sees only what its own groups import.
+// handleFederationReachable intersects the peer catalog with the caller's
+// peer-scoped mail, spawn and route grants. The operator sees every catalog.
 func handleFederationReachable(w http.ResponseWriter, r *http.Request) {
 	myID, isHuman, ok := authedCaller(w, r)
 	if !ok {
 		return
 	}
-	visible := map[int64]bool{}
-	var groups []*db.AgentGroup
-	var err error
-	if isHuman {
-		groups, err = db.ListAgentGroups()
-	} else {
-		groups, err = db.ListGroupsForConv(myID)
-	}
+	peers, err := db.ListFederationPeers()
 	if err != nil {
 		writeFedErr(w, err)
 		return
 	}
 	filter := strings.TrimSpace(r.URL.Query().Get("group"))
-	for _, g := range groups {
-		if g.IsArchived() || (filter != "" && g.Name != filter && strconv.FormatInt(g.ID, 10) != filter) {
-			continue
+	if filter != "" && !isHuman {
+		groups, err := db.ListGroupsForConv(myID)
+		if err != nil {
+			writeFedErr(w, err)
+			return
 		}
-		visible[g.ID] = true
+		member := false
+		for _, g := range groups {
+			if !g.IsArchived() && (g.Name == filter || strconv.FormatInt(g.ID, 10) == filter) {
+				member = true
+			}
+		}
+		if !member {
+			writeJSON(w, http.StatusOK, []*fedRemoteMember{})
+			return
+		}
 	}
-	imports, err := db.ListFederationImports()
-	if err != nil {
-		writeFedErr(w, err)
-		return
-	}
-	rt := currentFederation()
-	now := time.Now()
-	byKey := map[string]*fedRemoteMember{}
-	var order []string
-	for _, im := range imports {
-		if !visible[im.LocalGroupID] {
-			continue
-		}
-		peer, _ := db.GetFederationPeer(im.Peer)
-		if peer == nil {
-			continue
-		}
+	rt, now := currentFederation(), time.Now()
+	out := []*fedRemoteMember{}
+	for _, peer := range peers {
 		cat, at, err := fedCatalogFor(peer.InstanceID)
 		if err != nil || cat == nil {
 			continue
 		}
 		online := rt != nil && rt.isOnline(peer.InstanceID)
-		addrPeer := peer.Label
-		if addrPeer == "" {
-			addrPeer = peer.InstanceID
-		}
+		addrPeer := fedFirst(peer.Label, peer.InstanceID)
 		for _, g := range cat.Groups {
-			if g.Name != im.RemoteGroup {
+			actx := ActionContext{RemotePeer: peer.InstanceID, RemoteGroup: g.Name}
+			mail := isHuman && g.HasCap(proto.CapMail)
+			visible := isHuman
+			if !isHuman {
+				for _, slug := range []string{PermMessageDirect, PermGroupsMembersSpawn, PermAgentSpawn, PermRoutesConsume} {
+					allowed, _, err := permissionAllowsAction(r, myID, slug, actx)
+					if err != nil || !allowed {
+						continue
+					}
+					// Spawn requests can target any visible catalog group; lack of a spawn
+					// capability means approval is required on the receiving instance.
+					if slug == PermMessageDirect && !g.HasCap(proto.CapMail) {
+						continue
+					}
+					if slug == PermRoutesConsume && !g.HasCap(proto.CapRoutes) {
+						continue
+					}
+					visible = true
+					if slug == PermMessageDirect {
+						mail = true
+					}
+				}
+			}
+			if !visible {
 				continue
 			}
 			for _, m := range g.Members {
-				key := peer.InstanceID + "/" + m.Agent + "/" + g.Name
-				rm := byKey[key]
-				if rm == nil {
-					rm = &fedRemoteMember{
-						Address: m.Name + "@" + addrPeer, Agent: m.Agent, Name: m.Name, Role: m.Role, Harness: m.Harness,
-						Presence: m.Presence, Peer: peerDisplay(peer), Instance: peer.InstanceID, RemoteGroup: g.Name,
-						Mail: g.HasCap(proto.CapMail), PeerOnline: online, CatalogAt: at,
-						Stale: !online || now.Sub(at) > fedStaleAfter,
-					}
-					byKey[key] = rm
-					order = append(order, key)
-				}
-				if !containsString(rm.LocalGroups, im.LocalGroupName) {
-					rm.LocalGroups = append(rm.LocalGroups, im.LocalGroupName)
-				}
+				out = append(out, &fedRemoteMember{
+					Address: m.Name + "@" + addrPeer, Agent: m.Agent, Name: m.Name, Role: m.Role, Harness: m.Harness,
+					Presence: m.Presence, Peer: peerDisplay(&peer), Instance: peer.InstanceID, RemoteGroup: g.Name,
+					LocalGroups: []string{}, Mail: mail, PeerOnline: online, CatalogAt: at, Stale: !online || now.Sub(at) > fedStaleAfter,
+				})
 			}
 		}
-	}
-	out := make([]*fedRemoteMember, 0, len(order))
-	for _, k := range order {
-		sort.Strings(byKey[k].LocalGroups)
-		out = append(out, byKey[k])
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Peer != out[j].Peer {
@@ -1219,7 +1101,6 @@ func registerFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/federation/peers/trust", handleFederationTrust)
 	mux.HandleFunc("/v1/federation/peers/untrust", handleFederationUntrust)
 	mux.HandleFunc("/v1/federation/exports", handleFederationExports)
-	mux.HandleFunc("/v1/federation/imports", handleFederationImports)
 	mux.HandleFunc("GET /v1/federation/outbox", handleFederationOutbox)
 	mux.HandleFunc("/v1/federation/send", handleFederationSend)
 	mux.HandleFunc("POST /v1/federation/routes/open", handleFederatedRouteOpen)

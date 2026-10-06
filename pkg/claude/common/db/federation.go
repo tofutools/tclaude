@@ -55,7 +55,6 @@ func UntrustFederationPeer(instanceID string) (bool, error) {
 	}
 	n, _ := res.RowsAffected()
 	for _, q := range []string{
-		`DELETE FROM federation_imports WHERE peer=?`,
 		`DELETE FROM federation_exports WHERE peer=?`,
 		`DELETE FROM federation_catalogs WHERE peer=?`,
 	} {
@@ -175,66 +174,6 @@ func ListFederationExports() ([]FederationExport, error) {
 		}
 		e.CreatedAt = at.Time()
 		out = append(out, e)
-	}
-	return out, rows.Err()
-}
-
-// FederationImport links a remote exported group onto a local group.
-type FederationImport struct {
-	ID             int64
-	LocalGroupID   int64
-	LocalGroupName string
-	Peer           string
-	RemoteGroup    string
-	CreatedAt      time.Time
-}
-
-// AddFederationImport records an import; duplicates are a no-op.
-func AddFederationImport(localGroupID int64, peer, remoteGroup string) error {
-	d, err := Open()
-	if err != nil {
-		return err
-	}
-	_, err = d.Exec(`INSERT OR IGNORE INTO federation_imports(local_group_id, peer, remote_group, created_at) VALUES(?,?,?,?)`,
-		localGroupID, peer, remoteGroup, dbTime(time.Now()))
-	return err
-}
-
-// DeleteFederationImport removes an import. Returns false when absent.
-func DeleteFederationImport(localGroupID int64, peer, remoteGroup string) (bool, error) {
-	d, err := Open()
-	if err != nil {
-		return false, err
-	}
-	res, err := d.Exec(`DELETE FROM federation_imports WHERE local_group_id=? AND peer=? AND remote_group=?`, localGroupID, peer, remoteGroup)
-	if err != nil {
-		return false, err
-	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
-}
-
-// ListFederationImports returns every import with its local group name.
-func ListFederationImports() ([]FederationImport, error) {
-	d, err := Open()
-	if err != nil {
-		return nil, err
-	}
-	rows, err := d.Query(`SELECT i.id, i.local_group_id, g.name, i.peer, i.remote_group, i.created_at
-		FROM federation_imports i JOIN agent_groups g ON g.id = i.local_group_id ORDER BY g.name, i.peer, i.remote_group`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []FederationImport
-	for rows.Next() {
-		var im FederationImport
-		var at dbTimestamp
-		if err := rows.Scan(&im.ID, &im.LocalGroupID, &im.LocalGroupName, &im.Peer, &im.RemoteGroup, &at); err != nil {
-			return nil, err
-		}
-		im.CreatedAt = at.Time()
-		out = append(out, im)
 	}
 	return out, rows.Err()
 }

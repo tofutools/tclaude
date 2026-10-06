@@ -259,10 +259,9 @@ func TestFederation_RoutesOpenRemoteRoute(t *testing.T) {
 	}
 	res, body := openRemote(alice)
 	require.Equal(t, http.StatusForbidden, res.StatusCode, body)
-	require.Equal(t, "not_imported", body["code"])
+	require.Equal(t, "route_permission", body["code"])
 
-	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/imports", map[string]any{"local_group": "team", "peer": "bob", "remote_group": "builders"})
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NoError(t, db.GrantAgentPermissionWithScope(alice, agentd.PermRoutesConsume, `{"peer":["`+p.id.ID()+`/builders"]}`, "test"))
 	res, lease := openRemote(alice)
 	require.Equal(t, http.StatusCreated, res.StatusCode, lease)
 	mirrorID := lease["route_id"].(string)
@@ -330,16 +329,15 @@ func TestFederation_RoutesOpenRemoteRoute(t *testing.T) {
 	require.Equal(t, uint64(2), fr.Stream)
 
 	// Removing the import withdraws the mirror and closes alice's lease.
-	rec = fedHuman(t, f, http.MethodDelete, "/v1/federation/imports", map[string]any{"local_group": "team", "peer": "bob", "remote_group": "builders"})
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	_, err = db.RevokeAgentPermission(alice, agentd.PermRoutesConsume)
+	require.NoError(t, err)
 	fedEventually(t, "mirror withdrawn", func() bool {
 		r, _ := db.GetAgentRoute(mirrorID)
 		return r == nil || r.State != db.RouteStateReady
 	})
 
 	// Re-importing lets alice open the route again with a fresh mirror.
-	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/imports", map[string]any{"local_group": "team", "peer": "bob", "remote_group": "builders"})
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NoError(t, db.GrantAgentPermissionWithScope(alice, agentd.PermRoutesConsume, `{"peer":["`+p.id.ID()+`/builders"]}`, "test"))
 	res, lease = openRemote(alice)
 	require.Equal(t, http.StatusCreated, res.StatusCode, lease)
 	require.NotEqual(t, mirrorID, lease["route_id"])

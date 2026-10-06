@@ -24,7 +24,7 @@ func TestActionContextCoversEveryScopeDimension(t *testing.T) {
 		Remote:          "github.com/acme/repo",
 		LinearTeam:      "TCL",
 		AWBWorkspace:    "awb",
-		Peer:            "inst_x",
+		RemotePeer:      "inst_x",
 	}
 	for dim := range permissionScopeDimensions {
 		if full.value(dim) == "" {
@@ -355,9 +355,8 @@ func TestContextFreeResolutionFailsClosedOnScopedAllow(t *testing.T) {
 // gap it closes is the one that shipped routes.publish/routes.consume with a
 // bespoke, scope-blind gate for the better part of a phase.
 var scopedSlugEnforcementPaths = map[string]string{
+	PermMessageDirect:                     "Federation outgoing mail supplies RemotePeer/RemoteGroup",
 	PermAgentSpawn:                        "requireSpawnPermission — evaluates group, spawn_profile, and sandbox_profile",
-	PermFederationSpawn:                   "handleFederationSpawnRequestSend — evaluates group (the importing local group) and peer (the target instance id)",
-	PermFederationMessage:                 "handleFederatedAgentSend — evaluates group (the importing local group) and peer (the target instance id)",
 	PermGroupsMembersSpawn:                "requireSpawnPermission — evaluates group, spawn_profile, and sandbox_profile",
 	PermGroupsMembersReincarnate:          "requireCrossAgentPermission — checks every current active group",
 	PermGroupsMembersCompact:              "requireCrossAgentPermission — checks every current active group",

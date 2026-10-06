@@ -230,7 +230,7 @@ func routeCallerAgent(w http.ResponseWriter, r *http.Request) (string, string, b
 	return convID, agentID, true
 }
 
-func requireRouteConsumeCapability(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) (string, string, bool) {
+func requireRouteConsumeCapability(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, context ...ActionContext) (string, string, bool) {
 	if capability, present, valid := routeHelperCredentialForRequest(r); present {
 		if !valid {
 			writeRouteError(w, http.StatusUnauthorized, "route_helper_auth", "route helper credential is missing, stale, or invalid")
@@ -245,9 +245,9 @@ func requireRouteConsumeCapability(w http.ResponseWriter, r *http.Request, g *db
 			writeRouteError(w, http.StatusForbidden, "route_not_member", "caller is not a member of the target group")
 			return "", "", false
 		}
-		return requireRoutePermissionForIdentity(w, r, g, capability.convID, capability.agentID, PermRoutesConsume)
+		return requireRoutePermissionForIdentity(w, r, g, capability.convID, capability.agentID, PermRoutesConsume, context...)
 	}
-	return requireRouteCapability(w, r, g, PermRoutesConsume)
+	return requireRouteCapability(w, r, g, PermRoutesConsume, context...)
 }
 
 func requireRouteMembership(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) (string, string, bool) {
@@ -271,18 +271,29 @@ func requireRouteMembership(w http.ResponseWriter, r *http.Request, g *db.AgentG
 // then delegates permission precedence and scope evaluation to the central
 // resolver. Group-tier grants are restricted to this exact target group by
 // resolveGroupBoundPermissionVerdictForRequest.
-func requireRouteCapability(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, slug string) (string, string, bool) {
+func requireRouteCapability(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, slug string, context ...ActionContext) (string, string, bool) {
 	convID, agentID, ok := requireRouteMembership(w, r, g)
 	if !ok {
 		return "", "", false
 	}
 
-	return requireRoutePermissionForIdentity(w, r, g, convID, agentID, slug)
+	return requireRoutePermissionForIdentity(w, r, g, convID, agentID, slug, context...)
 }
 
-func requireRoutePermissionForIdentity(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convID, agentID, slug string) (string, string, bool) {
+func requireRoutePermissionForIdentity(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convID, agentID, slug string, context ...ActionContext) (string, string, bool) {
 	actx := ActionContext{Group: g.Name}
-	verdict, err := resolveGroupBoundPermissionVerdictForRequest(r, convID, slug, g.ID)
+	if len(context) != 0 {
+		actx = context[0]
+	}
+	var verdict permVerdict
+	var err error
+	if actx.RemotePeer != "" {
+		src, readErr := loadPermSourcesWithReadPolicy(convID, true)
+		err = readErr
+		verdict = resolveRemotePermissionVerdictFrom(src, slug)
+	} else {
+		verdict, err = resolveGroupBoundPermissionVerdictForRequest(r, convID, slug, g.ID)
+	}
 	if err != nil {
 		writeRouteError(w, http.StatusInternalServerError, "route_authority", "could not resolve permission")
 		return "", "", false

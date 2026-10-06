@@ -931,12 +931,43 @@ func isBulkGroupMemberPermission(slug string) bool {
 	}
 }
 
+// resolvePermissionVerdictForAction keeps federation authority separate from
+// local grants before precedence is applied. Explicit denies still apply.
+func resolvePermissionVerdictForAction(r *http.Request, convID, slug string, actx ActionContext) permVerdict {
+	if actx.RemotePeer == "" {
+		return resolvePermissionVerdictForRequest(r, convID, slug)
+	}
+	src := loadPermSources(convID)
+	return resolveRemotePermissionVerdictFrom(src, slug)
+}
+
+func resolveRemotePermissionVerdictFrom(src permSources, slug string) permVerdict {
+	hasPeer := func(raw string) bool {
+		scope, err := permissionScopeForEval(raw)
+		return err == nil && len(scope[ScopeDimPeer]) != 0
+	}
+	if sudo, ok := src.sudo[slug]; ok && !hasPeer(sudo.ScopeJSON) {
+		delete(src.sudo, slug)
+	}
+	if override, ok := src.override[slug]; ok && override.Effect != db.PermEffectDeny && !hasPeer(override.ScopeJSON) {
+		delete(src.override, slug)
+	}
+	var scopes []string
+	for _, raw := range src.group[slug] {
+		if hasPeer(raw) {
+			scopes = append(scopes, raw)
+		}
+	}
+	src.group[slug] = scopes
+	return resolvePermissionVerdictFrom(src, slug, false)
+}
+
 // permissionAllowsAction evaluates all standing sources for one slug and one
 // concrete action. A scoped positive source that misses the action does not
 // revoke lower positive authority: the owner/member tier may still cover it.
 // An explicit deny remains authoritative and suppresses structural grants.
 func permissionAllowsAction(r *http.Request, convID, perm string, actx ActionContext) (bool, string, error) {
-	v := resolvePermissionVerdictForRequest(r, convID, perm)
+	v := resolvePermissionVerdictForAction(r, convID, perm, actx)
 	if !actx.bulkGroupMemberCoverage {
 		allowed, matched := permissionVerdictAllowsAction(v, convID, perm, actx)
 		return allowed, matched, nil
@@ -1016,6 +1047,13 @@ func permissionVerdictAllowsBulkGroupAction(v permVerdict, convID, perm string, 
 }
 
 func permissionVerdictAllowsAction(v permVerdict, convID, perm string, actx ActionContext) (bool, string) {
+	if actx.RemotePeer != "" {
+		if v.Resolution != permAllow {
+			return false, ""
+		}
+		eval := evalPermissionScope(v, convID, actx)
+		return eval.Satisfied, eval.Matched
+	}
 	switch v.Resolution {
 	case permAllow:
 		eval := evalPermissionScope(v, convID, actx)

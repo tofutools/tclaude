@@ -62,8 +62,10 @@ type ActionContext struct {
 	// several workspaces describes each of them in turn rather than passing a
 	// set, so every check is one workspace against one grant.
 	AWBWorkspace string
-	// Peer is the federation peer's instance id a remote send targets.
-	Peer string
+	// RemotePeer is the trusted instance ID targeted by a federation action.
+	RemotePeer string
+	// RemoteGroup is the target group name from that peer's catalog.
+	RemoteGroup string
 
 	// structuralGroup is the group whose ownership or membership may confer the requested slug.
 	// It is deliberately distinct from Group: Group evaluates an explicit
@@ -115,7 +117,10 @@ func (a ActionContext) value(dim ScopeDim) string {
 	case ScopeDimAWBWorkspace:
 		return a.AWBWorkspace
 	case ScopeDimPeer:
-		return a.Peer
+		if a.RemotePeer != "" && a.RemoteGroup != "" {
+			return a.RemotePeer + "/" + a.RemoteGroup
+		}
+		return a.RemotePeer
 	}
 	return ""
 }
@@ -164,6 +169,9 @@ type permScopeEval struct {
 //
 // callerConvID is the acting agent, needed by relational @selectors.
 func evalPermissionScope(v permVerdict, callerConvID string, actx ActionContext) permScopeEval {
+	if actx.RemotePeer != "" && len(v.ScopeJSON) == 0 {
+		return permScopeEval{}
+	}
 	if len(v.ScopeJSON) == 0 {
 		return permScopeEval{Unscoped: true, Satisfied: true}
 	}
@@ -181,6 +189,9 @@ func evalPermissionScope(v permVerdict, callerConvID string, actx ActionContext)
 			// which is the exact inversion of what the operator wrote.
 			slog.Warn("permissions: undecodable grant scope ignored (fails closed)",
 				"source", string(v.Source), "error", err)
+			continue
+		}
+		if actx.RemotePeer != "" && len(scope[ScopeDimPeer]) == 0 {
 			continue
 		}
 		if len(scope) == 0 {
@@ -206,6 +217,12 @@ func evalPermissionScope(v permVerdict, callerConvID string, actx ActionContext)
 // an un-migrated gate site therefore degrades to "not decided here" — the
 // ask-human popup, then 403 — never to a silent allow.
 func permissionScopeSatisfied(callerConvID string, scope PermissionScope, actx ActionContext) bool {
+	if actx.RemotePeer == "" && len(scope[ScopeDimPeer]) != 0 {
+		return false
+	}
+	if actx.RemotePeer != "" && len(scope[ScopeDimPeer]) == 0 {
+		return false
+	}
 	for dim, matchers := range scope {
 		value := actx.value(dim)
 		if value == "" {
@@ -238,7 +255,10 @@ func permissionScopeLiteralMatches(dim ScopeDim, matcher, value string) bool {
 		return false
 	}
 	switch spec.matcher {
-	case permissionScopeMatchExact, permissionScopeMatchInstanceID:
+	case permissionScopeMatchInstanceID:
+		peer, _, grouped := strings.Cut(matcher, "/")
+		return matcher == value || (!grouped && strings.HasPrefix(value, peer+"/"))
+	case permissionScopeMatchExact:
 		return matcher == value
 	case permissionScopeMatchRemotePattern:
 		pattern := strings.Split(strings.ToLower(strings.Trim(matcher, "/")), "/")

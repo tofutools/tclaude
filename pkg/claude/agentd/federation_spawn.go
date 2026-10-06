@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -28,10 +27,6 @@ import (
 // themselves). The decision travels back as a spawn_res envelope and lands
 // in the requester's inbox. The worker joins the remote group, so it is
 // reachable through the existing export/import path like any other member.
-
-// PermFederationSpawn lets an agent send spawn requests to a remote group
-// imported into one of its groups.
-const PermFederationSpawn = "federation.spawn"
 
 const (
 	// fedSpawnTTL bounds how long a request waits for the remote operator.
@@ -55,48 +50,6 @@ func fedGroupExportsCap(peer string, groupID int64, c string) bool {
 	return false
 }
 
-// fedImportingGroups returns the live local groups that import peer's
-// remoteGroup, narrowed to fromConv's groups unless fromConv is the human
-// (""). imported reports whether any import exists at all.
-func fedImportingGroups(fromConv, peer, remoteGroup string) (groups []string, imported bool, err error) {
-	imports, err := db.ListFederationImports()
-	if err != nil {
-		return nil, false, err
-	}
-	var mine map[int64]bool
-	if fromConv != "" {
-		mine = map[int64]bool{}
-		gs, err := db.ListGroupsForConv(fromConv)
-		if err != nil {
-			return nil, false, err
-		}
-		for _, g := range gs {
-			if !g.IsArchived() {
-				mine[g.ID] = true
-			}
-		}
-	}
-	seen := map[string]bool{}
-	for _, im := range imports {
-		if im.Peer != peer || im.RemoteGroup != remoteGroup {
-			continue
-		}
-		if g, _ := db.GetAgentGroupByID(im.LocalGroupID); g == nil || g.IsArchived() {
-			continue
-		}
-		imported = true
-		if mine != nil && !mine[im.LocalGroupID] {
-			continue
-		}
-		if !seen[im.LocalGroupName] {
-			seen[im.LocalGroupName] = true
-			groups = append(groups, im.LocalGroupName)
-		}
-	}
-	sort.Strings(groups)
-	return groups, imported, nil
-}
-
 type fedSpawnSendReq struct {
 	Peer  string `json:"peer"`
 	Group string `json:"group"`
@@ -106,8 +59,8 @@ type fedSpawnSendReq struct {
 }
 
 // handleFederationSpawnRequestSend queues a spawn request to a peer. Agents
-// need federation.message's sibling federation.spawn for an importing group;
-// the operator needs nothing beyond the import.
+// need groups.members.spawn scoped to the remote peer/group or agent.spawn
+// scoped to the peer. The operator needs no agent grant.
 func handleFederationSpawnRequestSend(w http.ResponseWriter, r *http.Request) {
 	myID, isHuman, ok := authedCaller(w, r)
 	if !ok {
@@ -140,7 +93,7 @@ func handleFederationSpawnRequestSend(w http.ResponseWriter, r *http.Request) {
 	exported := false
 	if cat != nil {
 		for _, g := range cat.Groups {
-			if g.Name == req.Group && g.HasCap(proto.CapSpawn) {
+			if g.Name == req.Group {
 				exported = true
 			}
 		}
@@ -149,33 +102,16 @@ func handleFederationSpawnRequestSend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "not_exported", fmt.Sprintf("%s does not export a group %q that accepts spawn requests", peerDisplay(peer), req.Group))
 		return
 	}
-	local, imported, err := fedImportingGroups(fromConv, peer.InstanceID, req.Group)
-	if err != nil {
-		writeFedErr(w, err)
-		return
-	}
-	if !imported {
-		writeError(w, http.StatusForbidden, "not_imported", fmt.Sprintf("%s/%s is not imported into any local group", peerDisplay(peer), req.Group))
-		return
-	}
 	via := ""
 	if fromConv != "" {
-		if len(local) == 0 {
-			writeError(w, http.StatusForbidden, "not_member", "you are not a member of any local group that imports "+peerDisplay(peer)+"/"+req.Group)
-			return
-		}
-		for _, g := range local {
-			if ok, _, err := permissionAllowsAction(r, fromConv, PermFederationSpawn, ActionContext{Group: g, Peer: peer.InstanceID}); err == nil && ok {
-				via = g
-				break
-			}
-		}
-		if via == "" {
-			if _, ok := requirePermission(w, r, PermFederationSpawn, ActionContext{Group: local[0], Peer: peer.InstanceID}); !ok {
+		actx := ActionContext{RemotePeer: peer.InstanceID, RemoteGroup: req.Group}
+		global, _, _ := permissionAllowsAction(r, fromConv, PermAgentSpawn, actx)
+		if !global {
+			if _, ok := requirePermission(w, r, PermGroupsMembersSpawn, actx); !ok {
 				return
 			}
-			via = local[0]
 		}
+		via = req.Group
 	}
 	label := req.Group + "@" + peerDisplay(peer)
 	row, err := queueFederatedEnvelope(fedOutgoing{

@@ -9,7 +9,6 @@ import (
 	"unicode"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 // permissionScopeMaxJSONBytes is shared conceptually with the v195 column
@@ -30,7 +29,7 @@ const (
 	ScopeDimLinearTeam      ScopeDim = "linear_team"
 	ScopeDimAWBWorkspace    ScopeDim = "awb_workspace"
 	ScopeDimTargetAgent     ScopeDim = "target_agent"
-	// ScopeDimPeer is a trusted federation peer's instance id (inst_…).
+	// ScopeDimPeer identifies a trusted federation peer, optionally followed by /group.
 	ScopeDimPeer ScopeDim = "peer"
 	// legacyScopeDimAWBProject is accepted only while parsing persisted grants
 	// written before AWB renamed projects to workspaces. Canonical output always
@@ -211,9 +210,10 @@ func permissionScopeMatcherShape(dim ScopeDim, spec permissionScopeDimension, ma
 				"is matched whole, case-insensitively)", dim, err)
 		}
 	case permissionScopeMatchInstanceID:
-		if !proto.ValidInstanceID(matcher) {
+		ref, group, grouped := strings.Cut(matcher, "/")
+		if strings.TrimSpace(ref) == "" || (grouped && strings.TrimSpace(group) == "") {
 			return fmt.Errorf("permission scope dimension %q: %q is not an instance id (inst_…); "+
-				"labels are not accepted, see tclaude federation peers", dim, matcher)
+				"use peer=<label-or-instance-id>[/group]", dim, matcher)
 		}
 	case permissionScopeMatchWorkspaceKey:
 		// Same reasoning one vocabulary over: an AWB workspace key is what the AWB
@@ -228,14 +228,45 @@ func permissionScopeMatcherShape(dim ScopeDim, spec permissionScopeDimension, ma
 }
 
 func canonicalPermissionScopeForSlug(slug, raw string) (string, error) {
-	scope, canonical, err := parsePermissionScope(json.RawMessage(raw))
+	scope, _, err := parsePermissionScope(json.RawMessage(raw))
 	if err != nil {
 		return "", err
 	}
 	if err := validatePermissionScopeForSlug(slug, scope); err != nil {
 		return "", err
 	}
-	return canonical, nil
+	return normalizePeerScopeForSlug(slug, scope)
+}
+
+// normalizePeerScopeForSlug binds operator labels to immutable trusted IDs.
+// Catalog group names are intentionally not checked: catalogs can be stale.
+func normalizePeerScopeForSlug(slug string, scope PermissionScope) (string, error) {
+	if len(scope[ScopeDimPeer]) != 0 {
+		for i, matcher := range scope[ScopeDimPeer] {
+			ref, group, grouped := strings.Cut(matcher, "/")
+			if slug == PermAgentSpawn && grouped {
+				return "", fmt.Errorf("agent.spawn peer scope must name only a peer, without a group")
+			}
+			peer, err := resolveFederationPeerOpt(ref, false)
+			if err != nil {
+				return "", err
+			}
+			value := peer.InstanceID
+			if grouped {
+				value += "/" + group
+			}
+			scope[ScopeDimPeer][i] = value
+		}
+	}
+	if len(scope) == 0 {
+		return "", nil
+	}
+	raw, err := json.Marshal(scope)
+	if err != nil {
+		return "", err
+	}
+	_, canonical, err := parsePermissionScope(raw)
+	return canonical, err
 }
 
 // permissionScopeDimsForSlug returns the dimensions slug's grants may

@@ -53,7 +53,7 @@ func resolveFederatedCC(fromConv string, addrs []string, seen map[string]bool) (
 }
 
 // authorizeFederatedTargets authorizes a send to several remote targets.
-// Each must be covered by the sender's own federation.message grants; at
+// Each must be covered by the sender's own message.direct grants; at
 // most one may fall through to the full gate, because a one-shot
 // --ask-human approval is scoped to the single target it showed the human
 // and must not carry over to other peers or groups.
@@ -62,8 +62,8 @@ func authorizeFederatedTargets(w http.ResponseWriter, r *http.Request, fromConv 
 	var uncovered []int
 	for i, t := range targets {
 		out[i].target = t
-		for _, g := range t.localGroups {
-			if ok, _, err := permissionAllowsAction(r, fromConv, PermFederationMessage, ActionContext{Group: g, Peer: t.peer.InstanceID}); err == nil && ok {
+		for _, g := range t.remoteGroup {
+			if ok, _, err := permissionAllowsAction(r, fromConv, PermMessageDirect, ActionContext{RemoteGroup: g, RemotePeer: t.peer.InstanceID}); err == nil && ok {
 				out[i].via = g
 				break
 			}
@@ -89,7 +89,7 @@ func authorizeFederatedTargets(w http.ResponseWriter, r *http.Request, fromConv 
 		}
 		writeError(w, http.StatusForbidden, "permission",
 			fmt.Sprintf("%q does not cover %s; an approval covers one remote recipient, so get a grant scoped to these peers or send separately",
-				PermFederationMessage, strings.Join(labels, ", ")))
+				PermMessageDirect, strings.Join(labels, ", ")))
 		return nil, false
 	}
 }

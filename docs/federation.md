@@ -53,7 +53,7 @@ Three layers decide what is allowed, and each one can only narrow:
 |---|---|
 | Hub | which instances may connect, who can see whom (spaces), rate limits |
 | Your exports | which local groups a peer can see and mail, with which capabilities |
-| Your imports + slugs | which local groups may address which remote groups, and which agents may send |
+| Your peer-scoped grants | which agents and local group members may act on which peer groups |
 
 ## Running a hub
 
@@ -122,7 +122,7 @@ Connection settings live under `federation` in
 `~/.tclaude/data/config.json` (`enabled`, `hub_url`, `name`, `invite`,
 `hub_ca_file`). Use `--ca-file` when the hub's certificate is signed by a
 private CA. `tclaude federation disconnect` turns the connection off but
-keeps peers, exports and imports.
+keeps peers and exports.
 
 ## Pairing
 
@@ -137,7 +137,7 @@ tclaude federation untrust bob
 
 The label is the short name you use in addresses (`member@bob`). Envelopes
 from untrusted instances are dropped unanswered. Untrusting a peer also
-removes your exports to it, your imports from it, and its cached catalog.
+removes your exports to it, its cached catalog.
 
 ## Exports: what a peer may see and mail
 
@@ -161,24 +161,30 @@ exactly what you export to it. Catalogs go straight to the peer and are never
 published to the hub. They are re-sent when exports change, when the peer
 comes online, and every couple of minutes so presence stays fresh.
 
-## Discovery and imports: what your agents may address
+## Discovery: what your agents may address
 
 ```bash
-tclaude federation remote                         # what each peer exports to you
-tclaude federation import bob/builders --into team
-tclaude federation unimport bob/builders --into team
+tclaude federation remote                         # what peers share with you
+tclaude agent permissions grant lead message.direct --scope peer=bob/builders
 ```
 
-An import is a directed link, like
-[`groups link add`](agents-and-groups.md#inter-group-links): members of the
-local group may address members of the remote group.
+Agents see remote members next to local ones with `tclaude agent ls --remote`.
+The remote section shows each member's address, harness, role, presence and
+remote group. An agent sees catalog groups covered by its effective peer-scoped
+mail, spawn or route grants; the operator sees all received catalogs. Grants on
+local groups give their current members the same reach. Presence is marked
+stale when the peer is offline or its catalog has not refreshed for several
+minutes. With `--json` the output is `{"local": [...], "remote": [...]}`.
 
-Agents (and you) see the imported members next to local ones with
-`tclaude agent ls --remote`. The remote section shows each member's address,
-harness, role, presence, remote group and the importing local group. An agent
-sees only what its own groups import. Presence is marked stale when the peer
-is offline or its catalog has not been refreshed for several minutes. With
-`--json` the output becomes `{"local": [...], "remote": [...]}`.
+Federation scopes use `peer=<label-or-instance-id>[/<remote-group>]`.
+The daemon resolves labels at grant time and stores the full trusted instance
+id, so renaming or reassigning a label cannot redirect the grant. Unknown peers
+are refused. Remote group names need not appear in the current catalog when
+granting: a catalog may be stale. A peer-only scope covers all that peer's
+groups, including future groups. Git and GitHub scopes continue to use `remote=`.
+
+Unscoped grants, local `group=` scopes, defaults and group ownership never
+authorize remote actions. Peer-scoped grants never authorize local actions.
 
 ## Sending
 
@@ -189,26 +195,18 @@ tclaude agent message bob-agent@bob "can you review PR 42?"
 tclaude agent reply <id> "done"     # replies to remote mail go back over federation
 ```
 
-A spontaneous remote send requires all of the following:
-
-- the remote group exports `mail` to you;
-- it is imported into a local group the sender belongs to;
-- the sender holds **`federation.message`**, which is not default-granted and
-  not conferred by group ownership. Narrow it to the importing group with
-  `--scope group=<local-group>`, and to one remote instance with
-  `--scope peer=<instance id>`:
+A spontaneous remote send requires the peer to share the target group with
+`message.direct` and the sender to hold `message.direct` scoped to that peer
+and group (or to the whole peer):
 
 ```bash
-tclaude agent permissions grant lead federation.message --scope group=team
-tclaude agent permissions grant lead federation.message --scope group=team --scope peer=inst_…
+tclaude agent permissions grant lead message.direct --scope peer=bob/builders
+tclaude agent permissions grant lead message.direct --scope peer=bob
 ```
 
-The `peer` scope takes the full instance id from `tclaude federation peers`,
-not a label: labels are local nicknames you can move, and a grant must not
-follow one to a different instance.
-
-Replies to received remote mail need neither an import nor the slug. The
-other side accepts them because they answer mail it sent from that agent.
+A missing standing grant can use the usual `--ask-human` approval for one send.
+Replies to received remote mail need no standing grant. The other side accepts
+them because they answer mail it sent from that agent.
 
 The operator can send as the human:
 
@@ -227,8 +225,8 @@ locally as before, so local titles containing `@` keep working.
 tclaude agent message carol "release notes attached below" --cc bob-agent@bob --cc dan@bob
 ```
 
-Each remote cc gets its own copy. It needs the same import and
-`federation.message` as a direct send, and all of them are checked before
+Each remote cc gets its own copy. It needs the same peer-scoped
+`message.direct` grant as a direct send, and all of them are checked before
 anything is sent: one refused cc aborts the whole send. A remote message
 can cc other remote members, but not local agents. Recipients on another
 instance do not see who else received the message.
@@ -242,9 +240,8 @@ tclaude agent message group:builders@bob "release at 5" --role reviewer
 tclaude federation send group:builders@bob "maintenance at 6" # as the operator
 ```
 
-The same rules apply as for a single member: the group must export `mail`
-to you and be imported into one of your groups, and you need
-`federation.message`. One envelope crosses the hub. The receiving instance
+The same rules apply as for a single member: the peer must share the group
+with mail capability, and you need `message.direct` scoped to its peer/group. One envelope crosses the hub. The receiving instance
 delivers it to the group's members as of arrival, not to the roster in your
 catalog. `--role` narrows the recipients there, case-insensitively. It needs
 the group's `roster` export, since otherwise it would reveal roles that the
@@ -303,13 +300,15 @@ An agent can ask a peer for a worker in one of the peer's groups. It is
 always a request; nothing runs until that instance's operator approves it.
 
 ```bash
-# requester side (agent-callable; needs federation.spawn)
-tclaude agent permissions grant lead federation.spawn --scope group=team --scope peer=inst_…
+# requester side (agent-callable)
+tclaude agent permissions grant lead groups.members.spawn --scope peer=bob/builders
+# alternatively: agent.spawn --scope peer=bob covers all groups offered by bob
 tclaude federation spawn-request builders@bob --brief "port the parser to Go" --name parser-port --role worker
 ```
 
-The remote group must export `spawn` to you and be imported into one of
-the requester's groups. On the receiving side:
+The remote group must appear in the peer's catalog. The requester needs
+`groups.members.spawn` scoped to that peer/group, or `agent.spawn` scoped to
+the peer without a group suffix. On the receiving side:
 
 ```bash
 tclaude federation requests [--all]           # pending requests, with their briefs

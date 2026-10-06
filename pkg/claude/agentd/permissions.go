@@ -204,7 +204,7 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug: PermAgentSpawn, GroupSibling: PermGroupsMembersSpawn,
-		ScopeDims:   []ScopeDim{ScopeDimGroup, ScopeDimSpawnProfile, ScopeDimSandboxProfile},
+		ScopeDims:   []ScopeDim{ScopeDimGroup, ScopeDimSpawnProfile, ScopeDimSandboxProfile, ScopeDimPeer},
 		Description: "Spawn a fresh agent into any group globally. Group-scoped authority uses groups.members.spawn.",
 	},
 	{
@@ -280,7 +280,7 @@ var permissionRegistry = []PermSlug{
 	{
 		Slug:         PermGroupsMembersSpawn,
 		OwnerImplied: true,
-		ScopeDims:    []ScopeDim{ScopeDimGroup, ScopeDimSpawnProfile, ScopeDimSandboxProfile},
+		ScopeDims:    []ScopeDim{ScopeDimGroup, ScopeDimSpawnProfile, ScopeDimSandboxProfile, ScopeDimPeer},
 		Description:  "Spawn a fresh session and add it to a group (tclaude agent spawn). Ownership contributes this slug scoped to each owned group; spawn guardrails still apply.",
 	},
 	{
@@ -496,18 +496,8 @@ var permissionRegistry = []PermSlug{
 		Description: "Watch another member's inbox when its current active groups are covered.",
 	},
 	{
-		Slug: PermFederationMessage, ScopeDims: []ScopeDim{ScopeDimGroup, ScopeDimPeer},
-		Description: "Send mail to members of a remote instance's group that is imported into one of the sender's groups (tclaude agent message member@peer). " +
-			"Scope group = the importing local group, peer = the remote instance id. Replies to received remote mail need no slug. Not default-granted, not conferred by ownership.",
-	},
-	{
-		Slug: PermFederationSpawn, ScopeDims: []ScopeDim{ScopeDimGroup, ScopeDimPeer},
-		Description: "Ask a remote instance to spawn a worker into one of its groups that exports `spawn` and is imported into one of the sender's groups. " +
-			"Only a request: the remote operator approves or denies it. Scope group = the importing local group, peer = the remote instance id. " +
-			"Not default-granted, not conferred by ownership.",
-	},
-	{
 		Slug:        PermMessageDirect,
+		ScopeDims:   []ScopeDim{ScopeDimPeer},
 		Description: "Send a 1:1 message to ANY agent regardless of shared-group membership — the off-group escape hatch (tclaude agent message). Intra-group messaging, owner-of-group, and via-link reach need no slug; this covers everything else. Not default-granted.",
 	},
 	{
@@ -616,7 +606,7 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug:        PermRoutesConsume,
-		ScopeDims:   []ScopeDim{ScopeDimGroup},
+		ScopeDims:   []ScopeDim{ScopeDimGroup, ScopeDimPeer},
 		Description: "Open/lease a published route and close the caller's own lease. Requires current membership in the explicitly selected target group; not globally default-granted.",
 	},
 	{
@@ -1643,12 +1633,17 @@ func handlePermissionsGrant(w http.ResponseWriter, r *http.Request) {
 				body.Slug, strings.Join(knownSlugs(), ", ")))
 		return
 	}
-	scope, scopeJSON, err := parsePermissionScope(body.Scope)
+	scope, _, err := parsePermissionScope(body.Scope)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_scope", err.Error())
 		return
 	}
 	if err := validatePermissionScopeForSlug(body.Slug, scope); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_scope", err.Error())
+		return
+	}
+	scopeJSON, err := normalizePeerScopeForSlug(body.Slug, scope)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_scope", err.Error())
 		return
 	}

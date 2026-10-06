@@ -33,13 +33,13 @@ Flow:
   4. tclaude federation export <group> --to bob --cap roster,mail
                                              let bob see / mail a local group
   5. tclaude federation remote              see what peers export to you
-     tclaude federation import bob/<group> --into <local-group>
-                                             let a local group address bob's group
+     tclaude agent permissions grant <agent> message.direct --scope peer=bob/<group>
+                                             let that agent address bob's group
   6. agents: tclaude agent message <member>@bob "..." (needs the
-     federation.message slug); replies need nothing extra.
+     message.direct slug scoped with peer=bob[/group]); replies need nothing extra.
 
   7. agents: tclaude federation spawn-request <group>@bob --brief "..."
-     (needs the federation.spawn slug; bob's operator approves or denies)
+     (needs the groups.members.spawn scoped with peer=bob/group, or agent.spawn scoped with peer=bob; bob's operator approves or denies)
 
 Every federation command is human-only except spawn-request.`
 
@@ -53,7 +53,7 @@ func Cmd() *cobra.Command {
 		SubCmds: []*cobra.Command{
 			statusCmd(), identityCmd(), connectCmd(), disconnectCmd(),
 			peersCmd(), trustCmd(), untrustCmd(),
-			exportCmd(), unexportCmd(), remoteCmd(), importCmd(), unimportCmd(),
+			exportCmd(), unexportCmd(), remoteCmd(),
 			sendCmd(), outboxCmd(), notifyCmd(), inboxCmd(),
 			spawnRequestCmd(), requestsCmd(),
 		},
@@ -91,12 +91,6 @@ type status struct {
 		Label string   `json:"peer_label"`
 		Caps  []string `json:"caps"`
 	} `json:"exports"`
-	Imports []struct {
-		LocalGroup  string `json:"local_group"`
-		Peer        string `json:"peer"`
-		Label       string `json:"peer_label"`
-		RemoteGroup string `json:"remote_group"`
-	} `json:"imports"`
 	Outbox map[string]int `json:"outbox"`
 	Remote []struct {
 		Peer       string    `json:"peer"`
@@ -189,7 +183,7 @@ type jsonParam struct {
 func statusCmd() *cobra.Command {
 	return boa.CmdT[jsonParam]{
 		Use:         "status",
-		Short:       "Show identity, hub connection, peers, exports and imports",
+		Short:       "Show identity, hub connection, peers, exports",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *jsonParam, _ *cobra.Command, _ []string) {
 			os.Exit(runStatus(p, os.Stdout, os.Stderr))
@@ -231,7 +225,7 @@ func runStatus(p *jsonParam, stdout, stderr io.Writer) int {
 		}
 	}
 	fmt.Fprintf(stdout, "Peers:       %d trusted, %d visible untrusted\n", trusted, visible)
-	fmt.Fprintf(stdout, "Exports:     %d   Imports: %d\n", len(st.Exports), len(st.Imports))
+	fmt.Fprintf(stdout, "Exports:     %d\n", len(st.Exports))
 	if len(st.Outbox) > 0 {
 		var parts []string
 		for _, k := range []string{"queued", "sent", "accepted", "refused", "expired"} {
@@ -307,7 +301,7 @@ func connectCmd() *cobra.Command {
 func disconnectCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:         "disconnect",
-		Short:       "Disable the hub connection (keeps peers, exports and imports)",
+		Short:       "Disable the hub connection (keeps peers, exports)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
 			if rc := post(os.Stderr, "/v1/federation/config", map[string]any{"enabled": false}, nil); rc != 0 {
@@ -388,7 +382,7 @@ type peerParam struct {
 func untrustCmd() *cobra.Command {
 	return boa.CmdT[peerParam]{
 		Use:         "untrust",
-		Short:       "Stop trusting a peer; its exports to it, imports from it and cached catalog are removed",
+		Short:       "Stop trusting a peer; its exports to it and cached catalog are removed",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *peerParam, _ *cobra.Command, _ []string) {
 			if rc := post(os.Stderr, "/v1/federation/peers/untrust", map[string]any{"instance": p.Peer}, nil); rc != 0 {
@@ -440,12 +434,12 @@ func unexportCmd() *cobra.Command {
 	}.ToCobra()
 }
 
-// --- discovery / imports ---
+// --- discovery ---
 
 func remoteCmd() *cobra.Command {
 	return boa.CmdT[jsonParam]{
 		Use:         "remote",
-		Short:       "Show what each trusted peer exports to you, plus your exports and imports",
+		Short:       "Show what each trusted peer exports to you, plus your exports",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *jsonParam, _ *cobra.Command, _ []string) {
 			os.Exit(runRemote(p, os.Stdout, os.Stderr))
@@ -459,13 +453,9 @@ func runRemote(p *jsonParam, stdout, stderr io.Writer) int {
 		return rc
 	}
 	if p.JSON {
-		return printJSON(stdout, map[string]any{"remote": st.Remote, "exports": st.Exports, "imports": st.Imports})
+		return printJSON(stdout, map[string]any{"remote": st.Remote, "exports": st.Exports})
 	}
-	imported := map[string][]string{}
-	for _, im := range st.Imports {
-		k := im.Peer + "/" + im.RemoteGroup
-		imported[k] = append(imported[k], im.LocalGroup)
-	}
+
 	if len(st.Remote) == 0 {
 		fmt.Fprintln(stdout, "No trusted peers. See: tclaude federation peers / trust")
 	}
@@ -480,9 +470,7 @@ func runRemote(p *jsonParam, stdout, stderr io.Writer) int {
 		}
 		for _, g := range r.Groups {
 			line := fmt.Sprintf("  %s/%s  [%s]", r.Label, g.Name, strings.Join(g.Caps, ","))
-			if locals := imported[r.Peer+"/"+g.Name]; len(locals) > 0 {
-				line += "  imported into " + strings.Join(locals, ", ")
-			}
+
 			fmt.Fprintln(stdout, line)
 			for _, m := range g.Members {
 				extra := ""
@@ -512,62 +500,6 @@ func runRemote(p *jsonParam, stdout, stderr io.Writer) int {
 	return 0
 }
 
-type importParams struct {
-	Remote string `pos:"true" help:"<peer>/<remote-group>"`
-	Into   string `long:"into" help:"Local group whose members may address the remote group"`
-}
-
-func splitRemote(s string) (string, string, error) {
-	i := strings.Index(s, "/")
-	if i <= 0 || i == len(s)-1 {
-		return "", "", fmt.Errorf("expected <peer>/<remote-group>, got %q", s)
-	}
-	return s[:i], s[i+1:], nil
-}
-
-func importCmd() *cobra.Command {
-	return boa.CmdT[importParams]{
-		Use:         "import",
-		Short:       "Let a local group address members of a peer's exported group",
-		ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *importParams, _ *cobra.Command, _ []string) {
-			peer, group, err := splitRemote(p.Remote)
-			if err != nil {
-				os.Exit(fail(os.Stderr, err))
-			}
-			var out struct {
-				Warning string `json:"warning"`
-			}
-			if rc := post(os.Stderr, "/v1/federation/imports", map[string]any{"local_group": p.Into, "peer": peer, "remote_group": group}, &out); rc != 0 {
-				os.Exit(rc)
-			}
-			fmt.Printf("imported %s/%s into %s\n", peer, group, p.Into)
-			if out.Warning != "" {
-				fmt.Fprintln(os.Stderr, "warning:", out.Warning)
-			}
-			fmt.Fprintf(os.Stderr, "members of %s also need the federation.message permission to send (tclaude agent permissions grant <agent> federation.message --scope group=%s)\n", p.Into, p.Into)
-		},
-	}.ToCobra()
-}
-
-func unimportCmd() *cobra.Command {
-	return boa.CmdT[importParams]{
-		Use:         "unimport",
-		Short:       "Remove an import",
-		ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *importParams, _ *cobra.Command, _ []string) {
-			peer, group, err := splitRemote(p.Remote)
-			if err != nil {
-				os.Exit(fail(os.Stderr, err))
-			}
-			if rc := del(os.Stderr, "/v1/federation/imports", map[string]any{"local_group": p.Into, "peer": peer, "remote_group": group}); rc != 0 {
-				os.Exit(rc)
-			}
-			fmt.Printf("removed import of %s/%s into %s\n", peer, group, p.Into)
-		},
-	}.ToCobra()
-}
-
 // --- mail ---
 
 type sendParams struct {
@@ -581,7 +513,7 @@ type sendParams struct {
 func sendCmd() *cobra.Command {
 	return boa.CmdT[sendParams]{
 		Use:         "send",
-		Short:       "Send remote mail as the human operator (the remote group must be imported)",
+		Short:       "Send remote mail as the human operator",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *sendParams, _ *cobra.Command, _ []string) {
 			var out struct {
@@ -739,7 +671,7 @@ func outboxCmd() *cobra.Command {
 // --- remote spawn requests ---
 
 type spawnRequestParams struct {
-	Target string `pos:"true" help:"<group>@<peer>: a remote group that exports spawn and is imported here"`
+	Target string `pos:"true" help:"<group>@<peer>: a remote group visible in the peer catalog"`
 	Brief  string `long:"brief" help:"What the worker should do (sent to the remote operator and, if approved, to the worker)"`
 	Name   string `long:"name" optional:"true" help:"Requested worker name"`
 	Role   string `long:"role" optional:"true" help:"Requested worker role"`
@@ -749,8 +681,8 @@ func spawnRequestCmd() *cobra.Command {
 	return boa.CmdT[spawnRequestParams]{
 		Use:   "spawn-request",
 		Short: "Ask a remote instance to spawn a worker into one of its groups (its operator decides)",
-		Long: "Agent-callable (needs the federation.spawn slug) as well as usable by the operator. The remote group must export `spawn` and be imported " +
-			"into one of your groups. The request waits for the remote operator; the decision arrives in your inbox.",
+		Long: "Agent-callable (needs the groups.members.spawn scoped with peer=bob/group, or agent.spawn scoped with peer=bob) as well as usable by the operator. The remote group must be visible in its catalog. " +
+			"The peer either spawns under its granted policy or asks its operator; the decision arrives in your inbox.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *spawnRequestParams, _ *cobra.Command, _ []string) {
 			i := strings.LastIndex(p.Target, "@")

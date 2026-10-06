@@ -154,8 +154,7 @@ func TestFederation_RouteFlowControlOpensRemoteRouteInBulk(t *testing.T) {
 		Name: "builders", Caps: []string{proto.CapRoutes},
 		Routes: []proto.CatalogRoute{{ID: remoteRoute, Publisher: "srv", Name: "bulk"}},
 	}}}))
-	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/imports", map[string]any{"local_group": "team", "peer": "bob", "remote_group": "builders"})
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NoError(t, db.GrantAgentPermissionWithScope(alice, agentd.PermRoutesConsume, `{"peer":["`+p.id.ID()+`/builders"]}`, "test"))
 	var lease map[string]any
 	fedEventually(t, "remote route opens", func() bool {
 		r, body := serveRouteAgent(t, f, http.MethodPost, "/v1/federation/routes/open", alice, map[string]any{"group": "team", "peer": "bob", "route": "srv/bulk"})

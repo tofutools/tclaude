@@ -730,10 +730,6 @@ func handleFederatedRouteOpen(w http.ResponseWriter, r *http.Request) {
 		writeRouteError(w, http.StatusBadRequest, "route_group", "explicit group selection is required")
 		return
 	}
-	convID, agentID, ok := requireRouteConsumeCapability(w, r, g)
-	if !ok {
-		return
-	}
 	peer, err := resolveFederationPeerOpt(req.Peer, false)
 	if err != nil {
 		writeFedErr(w, err)
@@ -744,9 +740,8 @@ func handleFederatedRouteOpen(w http.ResponseWriter, r *http.Request) {
 		writeFedErr(w, err)
 		return
 	}
-	if !fedGroupImports(g.ID, peer.InstanceID, remoteGroup) {
-		writeRouteError(w, http.StatusForbidden, "not_imported",
-			fmt.Sprintf("%s/%s is not imported into %s", peerDisplay(peer), remoteGroup, g.Name))
+	convID, agentID, ok := requireRouteConsumeCapability(w, r, g, ActionContext{RemotePeer: peer.InstanceID, RemoteGroup: remoteGroup})
+	if !ok {
 		return
 	}
 	launchGeneration, err := routeLaunchGeneration(convID, "")
@@ -835,31 +830,19 @@ func fedResolveRemoteRoute(peer *db.FederationPeer, ref string) (routeID, group,
 	return routeID, group, label, nil
 }
 
-// fedGroupImports reports whether local group localID imports peer's group.
-func fedGroupImports(localID int64, peer, remoteGroup string) bool {
-	imports, err := db.ListFederationImports()
-	if err != nil {
-		return false
-	}
-	for _, im := range imports {
-		if im.LocalGroupID == localID && im.Peer == peer && im.RemoteGroup == remoteGroup {
-			return true
-		}
-	}
-	return false
-}
-
 // fedMirrorAuthorized re-checks a mirror's federation authority: peer
-// trusted, import present, route still in the peer's catalog.
+// trusted, peer-scoped grant present, route still in the peer's catalog.
 func fedMirrorAuthorized(mirrorID string, localID int64, peer, remoteGroup, remote string) error {
-	if route, _ := db.GetAgentRoute(mirrorID); route == nil || route.State != db.RouteStateReady {
+	route, _ := db.GetAgentRoute(mirrorID)
+	if route == nil || route.State != db.RouteStateReady {
 		return errors.New("mirror withdrawn")
 	}
 	if p, _ := db.GetFederationPeer(peer); p == nil {
 		return errors.New("peer no longer trusted")
 	}
-	if !fedGroupImports(localID, peer, remoteGroup) {
-		return errors.New("import removed")
+	verdict := resolveRemotePermissionVerdictFrom(loadPermSources(route.PublisherConvID), PermRoutesConsume)
+	if !evalPermissionScope(verdict, route.PublisherConvID, ActionContext{RemotePeer: peer, RemoteGroup: remoteGroup}).Satisfied || verdict.Resolution != permAllow {
+		return errors.New("remote route permission removed")
 	}
 	cat, _, err := fedCatalogFor(peer)
 	if err != nil || cat == nil {

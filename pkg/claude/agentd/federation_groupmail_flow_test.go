@@ -177,16 +177,14 @@ func TestFederation_OutboundGroupMail(t *testing.T) {
 
 	code, out := send("group:builders@bob", nil)
 	require.Equal(t, http.StatusForbidden, code, out)
-	require.Equal(t, "not_imported", out["code"])
+	require.Equal(t, "permission", out["code"])
 
-	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/imports", map[string]any{"local_group": "team", "peer": "bob", "remote_group": "builders"})
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	code, out = send("group:builders@bob", nil)
 	require.Equal(t, http.StatusForbidden, code, out)
-	require.Contains(t, fmt.Sprint(out), agentd.PermFederationMessage)
+	require.Contains(t, fmt.Sprint(out), agentd.PermMessageDirect)
 
 	// The operator needs only the import.
-	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/send", map[string]any{"to": "group:builders@bob", "body": "operator says hi"})
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/send", map[string]any{"to": "group:builders@bob", "body": "operator says hi"})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var opResp struct {
 		EnvelopeID string `json:"envelope_id"`
@@ -202,7 +200,7 @@ func TestFederation_OutboundGroupMail(t *testing.T) {
 		return false
 	})
 
-	g := postPermissionScope(t, f, "grant", map[string]any{"target": alice, "slug": agentd.PermFederationMessage, "scope": map[string]any{"group": []string{"team"}, "peer": []string{p.id.ID()}}})
+	g := postPermissionScope(t, f, "grant", map[string]any{"target": alice, "slug": agentd.PermMessageDirect, "scope": map[string]any{"peer": []string{p.id.ID() + "/builders"}}})
 	require.Equal(t, http.StatusOK, g.Code, g.Body)
 
 	// A group without mail is not addressable; cc is refused.
@@ -217,7 +215,7 @@ func TestFederation_OutboundGroupMail(t *testing.T) {
 	code, out = send("group:builders@bob", map[string]any{"role": "reviewer"})
 	require.Equal(t, http.StatusOK, code, out)
 	require.Equal(t, "group:builders@bob", out["to"])
-	require.Equal(t, "team", out["via_group"])
+	require.Equal(t, "builders", out["via_group"])
 	envID := out["envelope_id"].(string)
 	var got *proto.Envelope
 	fedEventually(t, "group mail at peer", func() bool {
@@ -278,8 +276,6 @@ func TestFederation_RemoteCC(t *testing.T) {
 		}
 		return false
 	})
-	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/imports", map[string]any{"local_group": "team", "peer": "bob", "remote_group": "builders"})
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	send := func(body map[string]any) (int, map[string]any) {
 		body["body"] = "ship it"
 		rec := postMessage(t, f, alice, body)
@@ -300,7 +296,7 @@ func TestFederation_RemoteCC(t *testing.T) {
 	require.Contains(t, out["error"], "dan-agent@bob")
 	require.Empty(t, fedRemoteBodies(t, carol))
 
-	g := postPermissionScope(t, f, "grant", map[string]any{"target": alice, "slug": agentd.PermFederationMessage, "scope": map[string]any{"group": []string{"team"}}})
+	g := postPermissionScope(t, f, "grant", map[string]any{"target": alice, "slug": agentd.PermMessageDirect, "scope": map[string]any{"peer": []string{p.id.ID() + "/builders"}}})
 	require.Equal(t, http.StatusOK, g.Code, g.Body)
 
 	code, out = send(map[string]any{"to": "carol-agent", "cc": []string{"bob-agent@bob"}})

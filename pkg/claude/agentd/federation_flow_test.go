@@ -318,7 +318,7 @@ func TestFederation_ExportCatalogAndInboundMail(t *testing.T) {
 	})
 }
 
-func TestFederation_OutboundMailRequiresImportAndSlug(t *testing.T) {
+func TestFederation_OutboundMailRequiresPeerScopedGrant(t *testing.T) {
 	fh := newFedHarness(t)
 	f, p := fh.f, fh.peer
 
@@ -348,32 +348,39 @@ func TestFederation_OutboundMailRequiresImportAndSlug(t *testing.T) {
 	// Not imported yet.
 	rec := send()
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
-	require.Contains(t, rec.Body.String(), "not imported")
-
-	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/imports", map[string]any{"local_group": "team", "peer": "bob", "remote_group": "builders"})
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), agentd.PermMessageDirect)
 
 	// Imported, but alice lacks federation.message.
 	rec = send()
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
-	require.Contains(t, rec.Body.String(), agentd.PermFederationMessage)
+	require.Contains(t, rec.Body.String(), agentd.PermMessageDirect)
+
+	// A local unscoped grant does not authorize federation mail.
+	require.NoError(t, db.GrantAgentPermission(alice, agentd.PermMessageDirect, "test"))
+	rec = send()
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	require.Equal(t, http.StatusBadRequest, postPermissionScope(t, f, "grant", map[string]any{"target": alice, "slug": agentd.PermAgentSpawn, "scope": map[string]any{"peer": []string{"bob/builders"}}}).Code)
+	require.Equal(t, http.StatusBadRequest, postPermissionScope(t, f, "grant", map[string]any{"target": alice, "slug": agentd.PermRoutesPublish, "scope": map[string]any{"peer": []string{"bob"}}}).Code)
 
 	// The peer scope takes instance ids only, never a movable label.
 	grant := func(scope map[string]any) *httpResult {
-		return postPermissionScope(t, f, "grant", map[string]any{"target": alice, "slug": agentd.PermFederationMessage, "scope": scope})
+		return postPermissionScope(t, f, "grant", map[string]any{"target": alice, "slug": agentd.PermMessageDirect, "scope": scope})
 	}
-	require.Equal(t, http.StatusBadRequest, grant(map[string]any{"peer": []string{"bob"}}).Code)
+	require.Equal(t, http.StatusBadRequest, grant(map[string]any{"peer": []string{"unknown"}}).Code)
 
 	// A grant scoped to another peer does not reach bob.
 	other, err := proto.NewIdentity()
 	require.NoError(t, err)
+	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: other.ID(), PubKey: other.Pub, Label: "other"}))
 	g := grant(map[string]any{"peer": []string{other.ID()}})
 	require.Equal(t, http.StatusOK, g.Code, g.Body)
 	rec = send()
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 
-	g = grant(map[string]any{"group": []string{"team"}, "peer": []string{p.id.ID()}})
+	g = grant(map[string]any{"peer": []string{"bob/builders"}})
 	require.Equal(t, http.StatusOK, g.Code, g.Body)
+	require.Contains(t, g.Body, p.id.ID()+"/builders")
+	require.NotContains(t, g.Body, "bob/builders")
 	rec = send()
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var resp struct {
@@ -381,7 +388,7 @@ func TestFederation_OutboundMailRequiresImportAndSlug(t *testing.T) {
 		ViaGroup   string `json:"via_group"`
 	}
 	testharness.DecodeJSON(t, rec, &resp)
-	require.Equal(t, "team", resp.ViaGroup)
+	require.Equal(t, "builders", resp.ViaGroup)
 
 	var got *proto.Envelope
 	fedEventually(t, "mail at peer", func() bool {
@@ -632,8 +639,8 @@ func TestFederation_ReachableRemoteMembers(t *testing.T) {
 		raw, _, _ := db.GetFederationCatalog(p.id.ID())
 		return raw != ""
 	})
-	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/imports", map[string]any{"local_group": "team", "peer": "bob", "remote_group": "builders"})
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	require.NoError(t, db.GrantAgentPermissionWithScope(alice, agentd.PermMessageDirect, `{"peer":["`+p.id.ID()+`/builders"]}`, "test"))
 
 	type member struct {
 		Address     string   `json:"address"`
@@ -659,7 +666,7 @@ func TestFederation_ReachableRemoteMembers(t *testing.T) {
 	got := list(agentd.AsAgentPeer(get(), alice))
 	require.Len(t, got, 1)
 	require.Equal(t, member{Address: "bob-agent@bob", Role: "reviewer", Harness: "codex", Presence: "online",
-		LocalGroups: []string{"team"}, Mail: true}, got[0])
+		LocalGroups: []string{}, Mail: true}, got[0])
 
 	// An agent outside every importing group sees nothing; the operator sees all.
 	require.Empty(t, list(agentd.AsAgentPeer(get(), outsider)))
@@ -729,10 +736,8 @@ func TestFederation_Attachments(t *testing.T) {
 		Members: []proto.CatalogMember{{Agent: "agt_bobremote0000000000000000", Name: "bob-agent"}},
 	}}}))
 	fedEventually(t, "catalog stored", func() bool { raw, _, _ := db.GetFederationCatalog(p.id.ID()); return raw != "" })
-	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/imports", map[string]any{"local_group": "team", "peer": "bob", "remote_group": "builders"})
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	require.NoError(t, db.GrantAgentPermission(alice, agentd.PermFederationMessage, "test"))
-	rec = postMessage(t, f, alice, map[string]any{"to": "bob-agent@bob", "body": "log attached",
+	require.NoError(t, db.GrantAgentPermissionWithScope(alice, agentd.PermMessageDirect, `{"peer":["`+p.id.ID()+`/builders"]}`, "test"))
+	rec := postMessage(t, f, alice, map[string]any{"to": "bob-agent@bob", "body": "log attached",
 		"attachments": []proto.AttachmentPayload{{Name: "build.log", Data: []byte("ok\n")}}})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var resp struct {
@@ -878,10 +883,6 @@ func TestFederation_OutboundSpawnRequest(t *testing.T) {
 		{Name: "closed", Caps: []string{proto.CapMail}},
 	}}))
 	fedEventually(t, "catalog stored", func() bool { raw, _, _ := db.GetFederationCatalog(p.id.ID()); return raw != "" })
-	for _, g := range []string{"builders", "closed"} {
-		rec := fedHuman(t, f, http.MethodPost, "/v1/federation/imports", map[string]any{"local_group": "team", "peer": "bob", "remote_group": g})
-		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	}
 	send := func(group string) *httptest.ResponseRecorder {
 		return testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/federation/spawn-requests",
 			map[string]any{"peer": "bob", "group": group, "name": "helper", "brief": "build the thing"}), alice))
@@ -889,12 +890,12 @@ func TestFederation_OutboundSpawnRequest(t *testing.T) {
 
 	rec := send("closed")
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
-	require.Contains(t, rec.Body.String(), "not_exported")
+	require.Contains(t, rec.Body.String(), agentd.PermGroupsMembersSpawn)
 	rec = send("builders")
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
-	require.Contains(t, rec.Body.String(), agentd.PermFederationSpawn)
+	require.Contains(t, rec.Body.String(), agentd.PermGroupsMembersSpawn)
 
-	require.NoError(t, db.GrantAgentPermission(alice, agentd.PermFederationSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermissionWithScope(alice, agentd.PermGroupsMembersSpawn, `{"peer":["`+p.id.ID()+`/builders"]}`, "test"))
 	rec = send("builders")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var resp struct {
@@ -946,4 +947,32 @@ func TestFederation_OutboundSpawnRequest(t *testing.T) {
 	bogus.InReplyTo = "ffffffffffffffffffffffffffffffff"
 	p.send(bogus)
 	require.Equal(t, proto.AckRefused, fedAckFor(t, p, bogus.ID).Status)
+}
+
+func TestFederation_GrantedNameWins(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	const caller = "fed-granted-name-000000000001"
+	f.HaveConvWithTitle(caller, "caller")
+	cat := proto.CatalogPayload{Groups: []proto.CatalogGroup{
+		{Name: "builders", Caps: []string{proto.CapMail}, Members: []proto.CatalogMember{{Agent: "agt_firstremote00000000000000", Name: "worker"}}},
+		{Name: "other", Caps: []string{proto.CapMail}, Members: []proto.CatalogMember{{Agent: "agt_secondremote0000000000000", Name: "worker"}}},
+	}}
+	raw, err := json.Marshal(cat)
+	require.NoError(t, err)
+	require.NoError(t, db.PutFederationCatalog(p.id.ID(), string(raw), time.Now()))
+	grant := postPermissionScope(t, f, "grant", map[string]any{"target": caller, "slug": agentd.PermMessageDirect, "scope": map[string]any{"peer": []string{"bob/builders"}}})
+	require.Equal(t, http.StatusOK, grant.Code, grant.Body)
+	rec := postMessage(t, f, caller, map[string]any{"to": "worker@bob", "body": "hello"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var result struct {
+		ToAgent string `json:"to_agent"`
+	}
+	testharness.DecodeJSON(t, rec, &result)
+	require.Equal(t, "agt_firstremote00000000000000@"+p.id.ID(), result.ToAgent)
+	// Peer-wide scope covers both names, so ambiguity must be reported again.
+	grant = postPermissionScope(t, f, "grant", map[string]any{"target": caller, "slug": agentd.PermMessageDirect, "scope": map[string]any{"peer": []string{"bob"}}})
+	require.Equal(t, http.StatusOK, grant.Code, grant.Body)
+	rec = postMessage(t, f, caller, map[string]any{"to": "worker@bob", "body": "hello"})
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 }
