@@ -1000,3 +1000,43 @@ func fedGrantCaps(t *testing.T, f *testharness.Flow, method, path string, in map
 	}
 	return list
 }
+
+func TestFederation_GroupPeerGrantDiscoveryAndMail(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	const caller = "fed-group-grant-000000000001"
+	f.HaveGroup("team")
+	f.HaveConvWithTitle(caller, "caller")
+	f.HaveMember("team", caller)
+	group, err := db.GetAgentGroupByName("team")
+	require.NoError(t, err)
+	require.NoError(t, db.ReplaceAgentGroupPermissions(group.ID, []string{agentd.PermMessageDirect}, "test"))
+	setGroupGrantScope(t, group.ID, agentd.PermMessageDirect, `{"peer":["`+p.id.ID()+`/builders"]}`)
+	// A local agent-level grant must not mask peer authority from its group.
+	require.NoError(t, db.GrantAgentPermission(caller, agentd.PermMessageDirect, "test"))
+	cat := proto.CatalogPayload{Groups: []proto.CatalogGroup{
+		{Name: "builders", Caps: []string{proto.CapMail}, Members: []proto.CatalogMember{{Agent: "agt_bobremote0000000000000000", Name: "bob-agent"}}},
+		{Name: "other", Caps: []string{proto.CapMail}, Members: []proto.CatalogMember{{Agent: "agt_otherremote00000000000000", Name: "other-agent"}}},
+	}}
+	raw, err := json.Marshal(cat)
+	require.NoError(t, err)
+	require.NoError(t, db.PutFederationCatalog(p.id.ID(), string(raw), time.Now()))
+	list := func() []map[string]any {
+		rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/federation/reachable", nil), caller))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var members []map[string]any
+		testharness.DecodeJSON(t, rec, &members)
+		return members
+	}
+	members := list()
+	require.Len(t, members, 1)
+	require.Equal(t, "builders", members[0]["remote_group"])
+	rec := postMessage(t, f, caller, map[string]any{"to": "bob-agent@bob", "body": "hello"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec = postMessage(t, f, caller, map[string]any{"to": "other-agent@bob", "body": "hello"})
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	require.NoError(t, db.SetAgentPermissionOverride(caller, agentd.PermMessageDirect, db.PermEffectDeny, "test"))
+	require.Empty(t, list())
+	rec = postMessage(t, f, caller, map[string]any{"to": "bob-agent@bob", "body": "hello"})
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+}
