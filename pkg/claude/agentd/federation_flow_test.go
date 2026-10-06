@@ -76,7 +76,12 @@ type fedHarness struct {
 
 func fedEventually(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+	fedEventuallyWithin(t, what, 10*time.Second, cond)
+}
+
+func fedEventuallyWithin(t *testing.T, what string, d time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return
@@ -239,7 +244,10 @@ func TestFederation_ExportCatalogAndInboundMail(t *testing.T) {
 	require.Contains(t, msg["body"], "ping from bob")
 	// The nudge names the remote sender. Re-arm the drain while polling: one
 	// delivery attempt can be skipped as indeterminate on a loaded runner.
-	fedEventually(t, "remote nudge in pane", func() bool {
+	// Settle the async delivery worker first (as the other nudge flows do),
+	// so the forced drain does not race it; macOS runners are slow.
+	fedEventuallyWithin(t, "remote nudge in pane", 30*time.Second, func() bool {
+		agentd.WaitForBackgroundForTest()
 		agentd.FlushUndeliveredForTest(alice)
 		return f.World.Tmux.WaitForSendKeys("tclaude-spwn-fed1-a:0.0", "bob-agent@bob (remote)", 200*time.Millisecond)
 	})
