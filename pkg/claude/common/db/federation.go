@@ -668,29 +668,3 @@ func MarkFederationEnvelopeSeen(fromInstance, envelopeID string, expiresAt time.
 	n, _ := res.RowsAffected()
 	return n == 1, nil
 }
-
-// ClaimFederationSpawnRequest moves a pending request to approving and
-// reports whether this caller won it.
-func ClaimFederationSpawnRequest(id int64) (bool, error) {
-	d, err := Open()
-	if err != nil {
-		return false, err
-	}
-	res, err := d.Exec(`UPDATE federation_spawn_requests SET status=? WHERE id=? AND status=?`, FedSpawnLaunching, id, FedSpawnPending)
-	if err != nil {
-		return false, err
-	}
-	n, _ := res.RowsAffected()
-	return n == 1, nil
-}
-
-// ReleaseFederationSpawnRequest returns an approving request to pending
-// after a failed spawn.
-func ReleaseFederationSpawnRequest(id int64) error {
-	d, err := Open()
-	if err != nil {
-		return err
-	}
-	_, err = d.Exec(`UPDATE federation_spawn_requests SET status=? WHERE id=? AND status=?`, FedSpawnPending, id, FedSpawnLaunching)
-	return err
-}

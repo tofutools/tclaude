@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
@@ -68,7 +69,7 @@ func reconcileFederationSpawns() {
 				}
 			}
 			if ready {
-				won, err := db.DecideFederationSpawnRequest(req.ID, db.FedSpawnLaunching, db.FedSpawnApproved, req.ResultAgent, "")
+				won, err := db.CompleteFederationSpawnAttempt(req.ID, req.ResultAgent)
 				if err != nil || !won {
 					continue
 				}
@@ -87,7 +88,11 @@ func reconcileFederationSpawns() {
 		}
 		if req.Status == db.FedSpawnApproved {
 			if !req.ResultSent {
-				if err := queueSpawnResult(req, p, proto.SpawnResultPayload{Status: proto.SpawnApproved, Agent: req.ResultAgent, Name: req.Name}); err == nil {
+				name := req.Name
+				if actor, _ := db.GetAgent(req.ResultAgent); actor != nil && actor.CurrentConvID != "" {
+					name = agent.TitleFor(actor.CurrentConvID)
+				}
+				if err := queueSpawnResult(req, p, proto.SpawnResultPayload{Status: proto.SpawnApproved, Agent: req.ResultAgent, Name: name}); err == nil {
 					_ = db.MarkFederationSpawnResultSent(req.ID)
 				}
 			}
@@ -112,7 +117,7 @@ func markFederationSpawnUnconfirmed(agentID, reason string) {
 	if err != nil || req == nil {
 		return
 	}
-	_ = db.SetFederationSpawnUnconfirmed(req.ID, reason)
+	_ = db.SetFederationSpawnUnconfirmed(req.ID, agentID, reason)
 }
 
 // This hook is called only where the lifecycle has identified a definite
@@ -126,7 +131,7 @@ func federationSpawnFailed(agentID, kind, reason string) {
 	if err != nil || req == nil {
 		return
 	}
-	_, _ = db.ReturnFederationSpawnToPending(req.ID, reason)
+	_, _ = db.ReturnFederationSpawnAttemptToPending(req.ID, agentID, reason)
 	reconcileFederationSpawns()
 }
 

@@ -83,14 +83,6 @@ func ListFederationPeerGrants(peer string) ([]FederationPeerGrant, error) {
 }
 
 // Auto workers survive daemon restarts; callers count only workers still live.
-func RecordFederationAutoWorker(requestID int64, peer, agentID string) error {
-	d, err := Open()
-	if err != nil {
-		return err
-	}
-	_, err = d.Exec(`INSERT INTO federation_auto_workers(request_id,peer,agent_id) VALUES(?,?,?)`, requestID, peer, agentID)
-	return err
-}
 func ListFederationAutoWorkers(peer string) ([]string, error) {
 	d, err := Open()
 	if err != nil {
@@ -166,6 +158,10 @@ func FederationSpawnRequestForAgent(agentID string) (*FederationSpawnRequest, er
 // ReturnFederationSpawnToPending is used only for a definite failure, or an
 // explicit human abandonment acknowledging that a late worker may appear.
 func ReturnFederationSpawnToPending(id int64, reason string) (bool, error) {
+	return ReturnFederationSpawnAttemptToPending(id, "", reason)
+}
+
+func ReturnFederationSpawnAttemptToPending(id int64, agentID, reason string) (bool, error) {
 	d, err := Open()
 	if err != nil {
 		return false, err
@@ -175,7 +171,7 @@ func ReturnFederationSpawnToPending(id int64, reason string) (bool, error) {
 		return false, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	res, err := tx.Exec(`UPDATE federation_spawn_requests SET status=?,reason=?,result_agent='',launch_label='',launch_started_at=NULL,notice_sent=0 WHERE id=? AND status=?`, FedSpawnPending, reason, id, FedSpawnLaunching)
+	res, err := tx.Exec(`UPDATE federation_spawn_requests SET status=?,reason=?,result_agent='',launch_label='',launch_started_at=NULL,notice_sent=0 WHERE id=? AND status=? AND (?='' OR result_agent=?)`, FedSpawnPending, reason, id, FedSpawnLaunching, agentID, agentID)
 	if err != nil {
 		return false, err
 	}
@@ -227,12 +223,12 @@ func MarkFederationSpawnResultSent(id int64) error {
 	return err
 }
 
-func SetFederationSpawnUnconfirmed(id int64, reason string) error {
+func SetFederationSpawnUnconfirmed(id int64, agentID, reason string) error {
 	d, err := Open()
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`UPDATE federation_spawn_requests SET reason=? WHERE id=? AND status=?`, reason, id, FedSpawnLaunching)
+	_, err = d.Exec(`UPDATE federation_spawn_requests SET reason=? WHERE id=? AND status=? AND result_agent=?`, reason, id, FedSpawnLaunching, agentID)
 	return err
 }
 
@@ -243,4 +239,17 @@ func SetPendingFederationSpawnReason(id int64, reason string) error {
 	}
 	_, err = d.Exec(`UPDATE federation_spawn_requests SET reason=?,notice_sent=0 WHERE id=? AND status=?`, reason, id, FedSpawnPending)
 	return err
+}
+
+func CompleteFederationSpawnAttempt(id int64, agentID string) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`UPDATE federation_spawn_requests SET status=?,reason='',decided_at=?,notice_sent=0 WHERE id=? AND status=? AND result_agent=?`, FedSpawnApproved, dbTime(time.Now()), id, FedSpawnLaunching, agentID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
 }

@@ -819,7 +819,7 @@ func TestFederation_InboundSpawnRequest(t *testing.T) {
 
 	// Approve: the worker is spawned into the exported group and the
 	// requester hears back.
-	rec = fedHuman(t, f, http.MethodPost, fmt.Sprintf("/v1/federation/spawn-requests/%d/approve", byName["helper"].ID), map[string]any{})
+	rec = fedHuman(t, f, http.MethodPost, fmt.Sprintf("/v1/federation/spawn-requests/%d/approve", byName["helper"].ID), map[string]any{"name": "approved-helper"})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var approved struct {
 		AgentID string `json:"agent_id"`
@@ -827,7 +827,7 @@ func TestFederation_InboundSpawnRequest(t *testing.T) {
 	}
 	testharness.DecodeJSON(t, rec, &approved)
 	require.NotEmpty(t, approved.AgentID)
-	f.AssertGroupMember("team", approved.ConvID, "helper", 5*time.Second)
+	f.AssertGroupMember("team", approved.ConvID, "approved-helper", 5*time.Second)
 
 	result := func(reqID string) proto.SpawnResultPayload {
 		var out proto.SpawnResultPayload
@@ -845,6 +845,7 @@ func TestFederation_InboundSpawnRequest(t *testing.T) {
 	res := result(ok1.ID)
 	require.Equal(t, proto.SpawnApproved, res.Status)
 	require.Equal(t, approved.AgentID, res.Agent)
+	require.Equal(t, "approved-helper", res.Name)
 
 	// A decided request cannot be decided again.
 	rec = fedHuman(t, f, http.MethodPost, fmt.Sprintf("/v1/federation/spawn-requests/%d/deny", byName["helper"].ID), map[string]any{})

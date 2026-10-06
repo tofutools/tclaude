@@ -311,3 +311,38 @@ func TestFederation_UnconfirmedLaunchRequiresAbandon(t *testing.T) {
 	once.Do(func() { close(release) })
 	agentd.WaitForBackgroundForTest()
 }
+
+func TestFederation_AbandonedAttemptCannotResolveReplacement(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	g := f.HaveGroup("team")
+	req := &db.FederationSpawnRequest{FromInstance: p.id.ID(), EnvelopeID: proto.NewEnvelopeID(), GroupID: g.ID, GroupName: g.Name, Brief: "review", ExpiresAt: time.Now().Add(time.Hour)}
+	id, err := db.InsertFederationSpawnRequest(req, 10)
+	require.NoError(t, err)
+	oldID, newID := db.NewAgentID(), db.NewAgentID()
+	won, err := db.BeginFederationSpawnRequest(id, oldID, true)
+	require.NoError(t, err)
+	require.True(t, won)
+	rec := fedHuman(t, f, http.MethodPost, fmt.Sprintf("/v1/federation/spawn-requests/%d/abandon", id), map[string]any{"acknowledge_late_worker": true})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	won, err = db.BeginFederationSpawnRequest(id, newID, true)
+	require.NoError(t, err)
+	require.True(t, won)
+	// Old lifecycle/reconciliation work can finish after abandonment and a new
+	// approval. Both kinds of old result must leave the replacement untouched.
+	won, err = db.CompleteFederationSpawnAttempt(id, oldID)
+	require.NoError(t, err)
+	require.False(t, won)
+	won, err = db.ReturnFederationSpawnAttemptToPending(id, oldID, "old launch failed")
+	require.NoError(t, err)
+	require.False(t, won)
+	state, err := db.GetFederationSpawnRequest(id)
+	require.NoError(t, err)
+	require.Equal(t, db.FedSpawnLaunching, state.Status)
+	require.Equal(t, newID, state.ResultAgent)
+	rec = fedHuman(t, f, http.MethodPost, fmt.Sprintf("/v1/federation/spawn-requests/%d/approve", id), map[string]any{})
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	workers, err := db.ListFederationAutoWorkers(p.id.ID())
+	require.NoError(t, err)
+	require.Equal(t, []string{newID}, workers)
+}
