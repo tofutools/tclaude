@@ -123,7 +123,7 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		g, err := db.GetAgentGroupByName(strings.TrimPrefix(scope, "group="))
-		if err != nil || g == nil || g.IsArchived() {
+		if err != nil || g == nil || (r.Method != http.MethodDelete && g.IsArchived()) {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "no active local group by that name")
 			return
 		}
@@ -157,7 +157,7 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "launch settings apply only to groups.members.spawn")
 			return
 		}
-		if in.Slug == PermMessageAttachments && (gid == 0 || !fedPeerAllows(p.InstanceID, gid, PermMessageDirect)) {
+		if in.Slug == PermMessageAttachments && !fedPeerMailCoversScope(p.InstanceID, gid) {
 			warnings = append(warnings, "attachments require message.direct on the same group")
 		}
 		if err := db.UpsertFederationPeerGrant(db.FederationPeerGrant{Peer: p.InstanceID, Slug: in.Slug, Scope: scope, SpawnPolicy: in.SpawnPolicy}); err != nil {
@@ -168,4 +168,20 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 	setAuditTargetLabel(r, fmt.Sprintf("%s %s %s", p.InstanceID, in.Slug, scope))
 	broadcastFederationCatalogs()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "warnings": warnings})
+}
+
+func fedPeerMailCoversScope(peer string, groupID int64) bool {
+	if groupID != 0 {
+		return fedPeerAllows(peer, groupID, PermMessageDirect)
+	}
+	grants, err := db.ListFederationPeerGrants(peer)
+	if err != nil {
+		return false
+	}
+	for _, grant := range grants {
+		if grant.Slug == PermMessageDirect && grant.Scope == "" {
+			return true
+		}
+	}
+	return false
 }

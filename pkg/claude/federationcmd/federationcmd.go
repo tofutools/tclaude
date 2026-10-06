@@ -469,7 +469,12 @@ func grantsCmd() *cobra.Command {
 			return
 		}
 		for _, g := range resp.Grants {
-			fmt.Printf("%s %s %s\n", g.Peer, g.Slug, g.Scope)
+			fmt.Printf("%s %s %s", g.Peer, g.Slug, g.Scope)
+			if g.Slug == "groups.members.spawn" {
+				policy, _ := json.Marshal(g.SpawnPolicy)
+				fmt.Printf(" %s", policy)
+			}
+			fmt.Println()
 		}
 	}}.ToCobra()
 }
