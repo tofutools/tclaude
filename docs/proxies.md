@@ -423,7 +423,10 @@ Note that a chain is only a usage fallback. The harness a spawn lands on
 changes the vendor, model catalogue and sandbox posture of the agent that does
 the work, so every entry should be one the process's issues can actually be
 worked on; `profile` and `sandbox_profile` still apply to whichever entry is
-chosen.
+chosen. Explicit pickup `model` and `effort` defaults also apply to every
+chosen vendor, including a metadata harness override. Set compatible values,
+omit them to use per-harness profile defaults, or override them together in
+issue metadata; incompatible explicit values fail spawn validation.
 
 While a process is held it reads the next ready issue and its metadata without
 claiming it, and it resumes within one
