@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
@@ -31,6 +32,17 @@ func fedPeerGroupGrant(peer string, groupID int64, slug string) *db.FederationPe
 	g, err := db.GetAgentGroupByID(groupID)
 	if err != nil || g == nil || g.IsArchived() {
 		return nil
+	}
+	if db.FederationPeerUnrestricted(peer) {
+		if _, known := federationPeerSlugs[slug]; slug != "" && !known {
+			return nil
+		}
+		cap := 8
+		cfg, _ := config.Load()
+		if cfg != nil && cfg.Federation != nil && cfg.Federation.UnrestrictedMaxLive > 0 {
+			cap = cfg.Federation.UnrestrictedMaxLive
+		}
+		return &db.FederationPeerGrant{Peer: peer, Slug: slug, SpawnPolicy: db.FederationSpawnPolicy{MaxLive: cap}}
 	}
 	grants, err := db.ListFederationPeerGrants(peer)
 	if err != nil {
@@ -173,6 +185,9 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 func fedPeerMailCoversScope(peer string, groupID int64) bool {
 	if groupID != 0 {
 		return fedPeerAllows(peer, groupID, PermMessageDirect)
+	}
+	if db.FederationPeerUnrestricted(peer) {
+		return true
 	}
 	grants, err := db.ListFederationPeerGrants(peer)
 	if err != nil {

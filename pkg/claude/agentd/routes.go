@@ -290,7 +290,7 @@ func requireRoutePermissionForIdentity(w http.ResponseWriter, r *http.Request, g
 	if actx.RemotePeer != "" {
 		src, readErr := loadPermSourcesWithReadPolicy(convID, true)
 		err = readErr
-		verdict = resolveRemotePermissionVerdictFrom(src, slug)
+		verdict = resolveRemotePermissionVerdictForActionFrom(r, src, slug, actx)
 	} else {
 		verdict, err = resolveGroupBoundPermissionVerdictForRequest(r, convID, slug, g.ID)
 	}

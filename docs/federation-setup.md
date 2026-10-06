@@ -94,11 +94,23 @@ Compare the fingerprint with what `tclaude federation identity` prints on
 the other machine. The label is the short name used in addresses
 (`agent@desktop`).
 
+For your own machines, you can instead opt into unrestricted trust on each
+side with `tclaude federation trust <label> --level unrestricted`. Confirm the
+fingerprint and permissions when prompted (`--yes` for scripts). This grants
+all peer permissions on all live groups and auto-approves spawns using group
+defaults, with a default cap of 8 automatic workers per peer (configure
+`federation.unrestricted_max_live`). Local unscoped agent grants and defaults
+then work towards that peer. Group scopes and ownership still do not, and
+**approvals remain local and cannot be answered remotely**. The hub cannot
+change this level. `peers` and `status` show it; `trust <label> --level restricted`
+downgrades immediately. The remaining steps use restricted trust.
+
 ## 7. Share a group
 
 These are two separate grants: the desktop’s operator grants the laptop
 **instance** access; the laptop’s operator grants a local **agent** permission
-to use it. Local defaults and group ownership do not authorize remote actions.
+to use it. With the default restricted level, local defaults do not authorize remote
+actions. Group ownership never does.
 
 On the **desktop**, where the laptop is trusted with label `laptop`, grant
 mail access to the local group `builders`. Roster and presence grants also

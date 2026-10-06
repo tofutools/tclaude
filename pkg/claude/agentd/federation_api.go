@@ -144,7 +144,7 @@ func resolveFederatedTarget(fromConv, addr string) (*fedTarget, error) {
 	// names. When none is covered, retain catalog resolution for ask-human.
 	grantedGroups := map[string]bool{}
 	if fromConv != "" {
-		verdict := resolveRemotePermissionVerdictFrom(loadPermSources(fromConv), PermMessageDirect)
+		verdict := resolvePermissionVerdictForAction(nil, fromConv, PermMessageDirect, ActionContext{RemotePeer: peer.InstanceID})
 		for _, g := range cat.Groups {
 			if !g.HasCap(proto.CapMail) {
 				continue
@@ -404,6 +404,7 @@ type fedHubStatus struct {
 }
 
 type fedPeerJSON struct {
+	Level       string    `json:"level,omitempty"`
 	InstanceID  string    `json:"instance_id"`
 	Fingerprint string    `json:"fingerprint"`
 	Label       string    `json:"label,omitempty"`
@@ -466,7 +467,7 @@ func handleFederationStatus(w http.ResponseWriter, r *http.Request) {
 		e := dir[p.InstanceID]
 		resp.Peers = append(resp.Peers, fedPeerJSON{
 			InstanceID: p.InstanceID, Fingerprint: proto.Fingerprint(p.PubKey), Label: p.Label, Name: fedFirst(e.Name, p.Name),
-			Trusted: true, Online: e.Online, LastSeen: e.LastSeen, Version: e.Version, TrustedAt: p.TrustedAt,
+			Level: p.TrustLevel, Trusted: true, Online: e.Online, LastSeen: e.LastSeen, Version: e.Version, TrustedAt: p.TrustedAt,
 		})
 		seen[p.InstanceID] = true
 	}
@@ -577,8 +578,10 @@ func handleFederationConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 type fedTrustReq struct {
-	Instance string `json:"instance"`
-	Label    string `json:"label,omitempty"`
+	Level              string `json:"level,omitempty"`
+	ConfirmFingerprint string `json:"confirm_fingerprint,omitempty"`
+	Instance           string `json:"instance"`
+	Label              string `json:"label,omitempty"`
 }
 
 // handleFederationTrust trusts a peer the hub directory lists, pinning the
@@ -601,14 +604,30 @@ func handleFederationTrust(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "label must be 1-32 chars of [a-z0-9-_.]")
 		return
 	}
-	rt := currentFederation()
-	if rt == nil {
-		writeError(w, http.StatusConflict, "not_connected", "federation is not running; configure and enable it first")
+	if req.Level == "" {
+		req.Level = db.FederationTrustRestricted
+	}
+	if req.Level != db.FederationTrustRestricted && req.Level != db.FederationTrustUnrestricted {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "level must be restricted or unrestricted")
 		return
 	}
+	rt := currentFederation()
 	var entry *proto.DirectoryEntry
 	var matches []proto.DirectoryEntry
-	for _, e := range rt.cl.Directory() {
+	var directory []proto.DirectoryEntry
+	if rt != nil {
+		directory = rt.cl.Directory()
+	}
+	// A pinned peer can have its local level changed while disconnected.
+	existing, _ := resolveFederationPeer(req.Instance)
+	if existing != nil {
+		directory = []proto.DirectoryEntry{{InstanceID: existing.InstanceID, PubKey: existing.PubKey, Name: existing.Name}}
+		req.Instance = existing.InstanceID
+		if req.Label == "" {
+			req.Label = existing.Label
+		}
+	}
+	for _, e := range directory {
 		if e.InstanceID == req.Instance {
 			matches = []proto.DirectoryEntry{e}
 			break
@@ -631,16 +650,22 @@ func handleFederationTrust(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "bad_directory", "hub directory key does not match the instance id; refusing to trust")
 		return
 	}
-	if err := db.TrustFederationPeer(db.FederationPeer{InstanceID: entry.InstanceID, PubKey: entry.PubKey, Label: req.Label, Name: proto.SafeName(entry.Name, true)}); err != nil {
+	if req.Level == db.FederationTrustUnrestricted && (existing == nil || existing.TrustLevel != db.FederationTrustUnrestricted) && req.ConfirmFingerprint != proto.Fingerprint(entry.PubKey) {
+		writeError(w, http.StatusBadRequest, "confirmation_required", "confirm fingerprint "+proto.Fingerprint(entry.PubKey)+": unrestricted grants all peer permissions on all live groups, automatic spawn, and local unscoped grants towards this peer; approvals remain local")
+		return
+	}
+	if err := db.TrustFederationPeer(db.FederationPeer{TrustLevel: req.Level, InstanceID: entry.InstanceID, PubKey: entry.PubKey, Label: req.Label, Name: proto.SafeName(entry.Name, true)}); err != nil {
 		writeError(w, http.StatusConflict, "conflict", err.Error())
 		return
 	}
 	setAuditTargetLabel(r, entry.InstanceID)
-	go func() {
-		rt.sendCatalog(entry.InstanceID)
-		rt.sendControl(entry.InstanceID, proto.KindCatalogReq, "", struct{}{})
-	}()
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "instance_id": entry.InstanceID, "fingerprint": proto.Fingerprint(entry.PubKey)})
+	if rt != nil {
+		go func() {
+			rt.sendCatalog(entry.InstanceID)
+			rt.sendControl(entry.InstanceID, proto.KindCatalogReq, "", struct{}{})
+		}()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "instance_id": entry.InstanceID, "fingerprint": proto.Fingerprint(entry.PubKey), "level": req.Level})
 }
 
 func validFedLabel(s string) bool {

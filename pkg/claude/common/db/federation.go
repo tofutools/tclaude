@@ -12,7 +12,13 @@ import (
 // pkg/claude/agentd/federation*.go.
 
 // FederationPeer is a remote instance the operator trusts.
+const (
+	FederationTrustRestricted   = "restricted"
+	FederationTrustUnrestricted = "unrestricted"
+)
+
 type FederationPeer struct {
+	TrustLevel string
 	InstanceID string
 	PubKey     []byte
 	Label      string
@@ -24,13 +30,19 @@ type FederationPeer struct {
 // different key for the same id is impossible by construction (ids derive
 // from keys), so an upsert only refreshes label and name.
 func TrustFederationPeer(p FederationPeer) error {
+	if p.TrustLevel == "" {
+		p.TrustLevel = FederationTrustRestricted
+	}
+	if p.TrustLevel != FederationTrustRestricted && p.TrustLevel != FederationTrustUnrestricted {
+		return fmt.Errorf("invalid trust level %q", p.TrustLevel)
+	}
 	d, err := Open()
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`INSERT INTO federation_peers(instance_id, pubkey, label, name, trusted_at) VALUES(?,?,?,?,?)
-		ON CONFLICT(instance_id) DO UPDATE SET label=excluded.label, name=excluded.name`,
-		p.InstanceID, p.PubKey, p.Label, p.Name, dbTime(time.Now()))
+	_, err = d.Exec(`INSERT INTO federation_peers(instance_id, pubkey, label, name, trusted_at, trust_level) VALUES(?,?,?,?,?,?)
+ ON CONFLICT(instance_id) DO UPDATE SET label=excluded.label, name=excluded.name, trust_level=excluded.trust_level`,
+		p.InstanceID, p.PubKey, p.Label, p.Name, dbTime(time.Now()), p.TrustLevel)
 	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
 		return fmt.Errorf("label %q is already used by another peer", p.Label)
 	}
@@ -76,7 +88,7 @@ func ListFederationPeers() ([]FederationPeer, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT instance_id, pubkey, label, name, trusted_at FROM federation_peers ORDER BY label, instance_id`)
+	rows, err := d.Query(`SELECT instance_id, pubkey, label, name, trusted_at, trust_level FROM federation_peers ORDER BY label, instance_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +97,7 @@ func ListFederationPeers() ([]FederationPeer, error) {
 	for rows.Next() {
 		var p FederationPeer
 		var at dbTimestamp
-		if err := rows.Scan(&p.InstanceID, &p.PubKey, &p.Label, &p.Name, &at); err != nil {
+		if err := rows.Scan(&p.InstanceID, &p.PubKey, &p.Label, &p.Name, &at, &p.TrustLevel); err != nil {
 			return nil, err
 		}
 		p.TrustedAt = at.Time()
@@ -106,6 +118,12 @@ func GetFederationPeer(instanceID string) (*FederationPeer, error) {
 		}
 	}
 	return nil, nil
+}
+
+// FederationPeerUnrestricted reads local authority afresh at every gate.
+func FederationPeerUnrestricted(id string) bool {
+	p, err := GetFederationPeer(id)
+	return err == nil && p != nil && p.TrustLevel == FederationTrustUnrestricted
 }
 
 // PutFederationCatalog caches the latest catalog a peer sent us.
