@@ -581,6 +581,8 @@ transport response wraps the upstream status, headers and base64 body; an
 upstream error status still returns this wrapper. Calls are audited as proxy
 operations with the caller's instance-name permission scope.
 
+The dashboard permission editor can grant `proxy.http`. To limit access, choose configured instance names in its `http_proxy` scope picker. The permission appears when `agent.http_proxies` contains at least one instance.
+
 ### Ordinary HTTP clients
 
 Agents launched or resumed by tclaude receive one environment variable for
