@@ -142,7 +142,7 @@ func TestFederation_InboundGroupMail(t *testing.T) {
 	})
 }
 
-// TestFederation_OutboundGroupMail: an agent mails a remote group it imports.
+// TestFederation_OutboundGroupMail: an agent mails a remote group covered by its peer grant.
 func TestFederation_OutboundGroupMail(t *testing.T) {
 	fh := newFedHarness(t)
 	f, p := fh.f, fh.peer
@@ -183,7 +183,7 @@ func TestFederation_OutboundGroupMail(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, code, out)
 	require.Contains(t, fmt.Sprint(out), agentd.PermMessageDirect)
 
-	// The operator needs only the import.
+	// The operator needs no requester grant.
 	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/send", map[string]any{"to": "group:builders@bob", "body": "operator says hi"})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var opResp struct {
@@ -284,7 +284,7 @@ func TestFederation_RemoteCC(t *testing.T) {
 		return rec.Code, out
 	}
 
-	// Without federation.message the whole send is refused: carol gets
+	// Without peer-scoped message.direct the whole send is refused: carol gets
 	// nothing either.
 	code, out := send(map[string]any{"to": "carol-agent", "cc": []string{"bob-agent@bob"}})
 	require.Equal(t, http.StatusForbidden, code, out)

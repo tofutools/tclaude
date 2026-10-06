@@ -22,8 +22,8 @@ import (
 
 // Group routes across instances.
 //
-// A group exported with `routes` lists its ready routes in the peer's
-// catalog. A member of a local group that imports that remote group opens
+// A group granting routes.consume to a peer lists ready routes in its
+// catalog. A local agent with peer-scoped routes.consume opens
 // one with `tclaude agent routes open <publisher>/<route>@<peer>`; both
 // sandbox floors stay as they are, because neither sandbox helper ever sees
 // the other instance:
@@ -38,8 +38,8 @@ import (
 // Each TCP connection the consumer makes becomes one broker stream on each
 // side, joined by one end-to-end encrypted hub stream. The stream id and
 // both ephemeral keys travel in sealed route_open/route_answer envelopes.
-// Mirrors and proxies are re-authorized continuously (import/export still
-// grant routes, peer still trusted, route still ready) on top of the
+// Mirrors and proxies are re-authorized continuously (both sides still
+// grant route authority, peer still trusted, route still ready) on top of the
 // broker's own generation checks, and torn down when that fails.
 //
 // Streams are flow-controlled end to end when the local helpers support it

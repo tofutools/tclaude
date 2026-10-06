@@ -946,20 +946,22 @@ func resolveRemotePermissionVerdictFrom(src permSources, slug string) permVerdic
 		scope, err := permissionScopeForEval(raw)
 		return err == nil && len(scope[ScopeDimPeer]) != 0
 	}
-	if sudo, ok := src.sudo[slug]; ok && !hasPeer(sudo.ScopeJSON) {
-		delete(src.sudo, slug)
+	// Copy only the requested slug. Do not mutate shared source maps: discovery
+	// and audit readers may evaluate local and remote actions from one snapshot.
+	remote := permSources{resolvable: src.resolvable,
+		sudo: map[string]sudoPermSource{}, override: map[string]overridePermSource{}, group: map[string][]string{}}
+	if sudo, ok := src.sudo[slug]; ok && hasPeer(sudo.ScopeJSON) {
+		remote.sudo[slug] = sudo
 	}
-	if override, ok := src.override[slug]; ok && override.Effect != db.PermEffectDeny && !hasPeer(override.ScopeJSON) {
-		delete(src.override, slug)
+	if override, ok := src.override[slug]; ok && (override.Effect == db.PermEffectDeny || hasPeer(override.ScopeJSON)) {
+		remote.override[slug] = override
 	}
-	var scopes []string
 	for _, raw := range src.group[slug] {
 		if hasPeer(raw) {
-			scopes = append(scopes, raw)
+			remote.group[slug] = append(remote.group[slug], raw)
 		}
 	}
-	src.group[slug] = scopes
-	return resolvePermissionVerdictFrom(src, slug, false)
+	return resolvePermissionVerdictFrom(remote, slug, false)
 }
 
 // permissionAllowsAction evaluates all standing sources for one slug and one

@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -345,12 +346,12 @@ func TestFederation_OutboundMailRequiresPeerScopedGrant(t *testing.T) {
 		return postMessage(t, f, alice, map[string]any{"to": "bob-agent@bob", "body": "need a review"})
 	}
 
-	// Not imported yet.
+	// No peer-scoped grant yet.
 	rec := send()
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), agentd.PermMessageDirect)
 
-	// Imported, but alice lacks federation.message.
+	// Alice still lacks message.direct scoped to the peer.
 	rec = send()
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), agentd.PermMessageDirect)
@@ -362,7 +363,7 @@ func TestFederation_OutboundMailRequiresPeerScopedGrant(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, postPermissionScope(t, f, "grant", map[string]any{"target": alice, "slug": agentd.PermAgentSpawn, "scope": map[string]any{"peer": []string{"bob/builders"}}}).Code)
 	require.Equal(t, http.StatusBadRequest, postPermissionScope(t, f, "grant", map[string]any{"target": alice, "slug": agentd.PermRoutesPublish, "scope": map[string]any{"peer": []string{"bob"}}}).Code)
 
-	// The peer scope takes instance ids only, never a movable label.
+	// Unknown peers are rejected at grant time.
 	grant := func(scope map[string]any) *httpResult {
 		return postPermissionScope(t, f, "grant", map[string]any{"target": alice, "slug": agentd.PermMessageDirect, "scope": scope})
 	}
@@ -416,7 +417,7 @@ func TestFederation_OutboundMailRequiresPeerScopedGrant(t *testing.T) {
 	})
 
 	// A second mail stays pending (no ack); untrusting the peer settles it
-	// and drops the imports, so sending is refused again.
+	// and drops the catalog, so sending is refused again.
 	rec = send()
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var pending struct {
@@ -662,13 +663,13 @@ func TestFederation_ReachableRemoteMembers(t *testing.T) {
 		return testharness.JSONRequest(t, http.MethodGet, "/v1/federation/reachable", nil)
 	}
 
-	// A member of the importing group sees the remote member.
+	// An agent with a covering peer grant sees the remote member.
 	got := list(agentd.AsAgentPeer(get(), alice))
 	require.Len(t, got, 1)
 	require.Equal(t, member{Address: "bob-agent@bob", Role: "reviewer", Harness: "codex", Presence: "online",
 		LocalGroups: []string{}, Mail: true}, got[0])
 
-	// An agent outside every importing group sees nothing; the operator sees all.
+	// An agent without a covering grant sees nothing; the operator sees all.
 	require.Empty(t, list(agentd.AsAgentPeer(get(), outsider)))
 	require.Len(t, list(agentd.AsHumanPeer(get())), 1)
 

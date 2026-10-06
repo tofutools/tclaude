@@ -52,3 +52,7 @@ func TestRemotePermissionIgnoresLocalSourcesAndStructuralAuthority(t *testing.T)
 	allowed, _ = permissionVerdictAllowsAction(permVerdict{Resolution: permUndecided}, "caller", slug, ActionContext{RemotePeer: "inst_peer", structuralGroup: "builders"})
 	require.False(t, allowed)
 }
+
+func TestRemotePermissionUnresolvableFailsClosed(t *testing.T) {
+	require.Equal(t, permUndecided, resolveRemotePermissionVerdictFrom(permSources{}, PermMessageDirect).Resolution)
+}

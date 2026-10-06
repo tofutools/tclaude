@@ -328,7 +328,7 @@ func TestFederation_RoutesOpenRemoteRoute(t *testing.T) {
 	require.Equal(t, routebroker.KindOpenError, fr.Kind)
 	require.Equal(t, uint64(2), fr.Stream)
 
-	// Removing the import withdraws the mirror and closes alice's lease.
+	// Revoking the remote grant withdraws the mirror and closes alice's lease.
 	_, err = db.RevokeAgentPermission(alice, agentd.PermRoutesConsume)
 	require.NoError(t, err)
 	fedEventually(t, "mirror withdrawn", func() bool {
@@ -336,7 +336,7 @@ func TestFederation_RoutesOpenRemoteRoute(t *testing.T) {
 		return r == nil || r.State != db.RouteStateReady
 	})
 
-	// Re-importing lets alice open the route again with a fresh mirror.
+	// Regranting remote authority lets alice open the route again with a fresh mirror.
 	require.NoError(t, db.GrantAgentPermissionWithScope(alice, agentd.PermRoutesConsume, `{"peer":["`+p.id.ID()+`/builders"]}`, "test"))
 	res, lease = openRemote(alice)
 	require.Equal(t, http.StatusCreated, res.StatusCode, lease)

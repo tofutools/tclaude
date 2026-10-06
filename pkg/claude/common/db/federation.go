@@ -37,8 +37,7 @@ func TrustFederationPeer(p FederationPeer) error {
 	return err
 }
 
-// UntrustFederationPeer removes a peer. Its imports go with it; its cached
-// catalog too. Returns false when the peer was not trusted.
+// UntrustFederationPeer removes a peer, its grants and cached catalog. Returns false when the peer was not trusted.
 func UntrustFederationPeer(instanceID string) (bool, error) {
 	d, err := Open()
 	if err != nil {

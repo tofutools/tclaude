@@ -33,14 +33,14 @@ Flow:
      tclaude federation trust <instance> --label bob
   4. tclaude federation grant bob message.direct --scope group=<group>
                                              let bob see / mail a local group
-  5. tclaude federation remote              see what peers export to you
-     tclaude federation import bob/<group> --into <local-group>
-                                             let a local group address bob's group
+  5. tclaude federation remote              see what peers share with you
+     tclaude agent permissions grant <agent> message.direct --scope peer=bob/<group>
+                                             let that agent address bob's group
   6. agents: tclaude agent message <member>@bob "..." (needs the
-     federation.message slug); replies need nothing extra.
+     message.direct slug scoped with peer=bob[/group]); replies need nothing extra.
 
   7. agents: tclaude federation spawn-request <group>@bob --brief "..."
-     (needs the federation.spawn slug; bob's operator approves or denies)
+     (needs the groups.members.spawn scoped with peer=bob/group, or agent.spawn scoped with peer=bob; bob's operator approves or denies)
 
 Every federation command is human-only except spawn-request.`
 

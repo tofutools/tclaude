@@ -122,7 +122,7 @@ Connection settings live under `federation` in
 `~/.tclaude/data/config.json` (`enabled`, `hub_url`, `name`, `invite`,
 `hub_ca_file`). Use `--ca-file` when the hub's certificate is signed by a
 private CA. `tclaude federation disconnect` turns the connection off but
-keeps peers, exports and imports.
+keeps peers and grants.
 
 ## Pairing
 
@@ -344,17 +344,17 @@ unapprovable.
 
 ## Remote group routes
 
-A [group route](group-routes.md) can be opened from another instance. Export
-the publisher's group with `routes`. The peer then imports it into a local
-group whose members hold `routes.consume`, and those members open the route
-by naming the peer:
+A [group route](group-routes.md) can be opened from another instance. Grant
+the consumer peer `routes.consume` on the publisher's group. On the consumer
+instance, an agent needs `routes.consume` scoped to the publisher peer/group
+and membership in the local group used for its private mirror:
 
 ```bash
 # publisher side (operator)
 tclaude federation grant bob routes.consume --scope group=svc
 
 # consumer side (operator, then agent)
-tclaude federation import alice/svc --into team
+tclaude agent permissions grant consumer routes.consume --scope peer=alice/svc
 tclaude agent routes open api-server/api@alice -g team
 ```
 
@@ -385,7 +385,7 @@ any of these changes, open connections close and the consumer's lease ends:
 
 - the route is withdrawn or its publisher exits;
 - the peer loses its `routes.consume` grant;
-- the import is removed;
+- the consumer agent loses its peer-scoped `routes.consume` grant;
 - the peer is untrusted;
 - the group's membership changes.
 
@@ -427,7 +427,7 @@ expire), so upgrade linked instances together. This branch uses version 2.
 
 `scripts/federation-smoke.sh` builds the binaries and starts a hub plus two
 real `agentd` instances, each in its own temporary HOME and tmux directory.
-It pairs them, exports a group holding a model-free `shell` agent, imports it
+It pairs them, grants access to a group holding a model-free `shell` agent, grants requester reach
 on the other side, and checks that a remote mail is accepted. Run it from a
 plain terminal, not from inside an agent: `agentd` decides who the operator
 is by inspecting the caller's process tree.
