@@ -256,14 +256,14 @@ func withIdentity(h http.Handler) http.Handler {
 				}
 				if httpGatewayRoute && runtimeClaim != "" {
 					row, conv := httpProxyRuntimeCaller(pid, runtimeClaim)
-					p.ConvID, p.HasClaudeAncestor = conv, true
+					p.ConvID, p.HasClaudeAncestor = conv, row != nil
 					if row != nil {
 						rememberHTTPProxyProofSubject(r, proofClaim, row.ID)
 						r = r.WithContext(context.WithValue(r.Context(), httpProxyLaunchRowKey{}, row))
 					}
 				} else if claimedID != "" && httpGatewayRoute {
 					proof := proveLaunchPaneCallerIn(newBrokerProcTable(), pid, claimedID, false)
-					p.ConvID, p.HasClaudeAncestor = "", true
+					p.ConvID, p.HasClaudeAncestor = "", proof.row != nil
 					if proof.row != nil {
 						rememberHTTPProxyProofSubject(r, proofClaim, proof.row.ID)
 						p.ConvID = proof.row.ConvID

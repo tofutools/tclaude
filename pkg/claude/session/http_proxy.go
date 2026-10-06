@@ -130,31 +130,32 @@ func httpProxyDaemonClient() *http.Client {
 	}, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
-func httpProxyNames(ctx context.Context, client *http.Client, sessionID string) ([]string, error) {
+func httpProxyNames(ctx context.Context, client *http.Client, sessionID string) ([]string, map[string]string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://tclaude/v1/http/environment", nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	req.Header.Set(agentipc.SessionClaimHeader, sessionID)
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("daemon refused HTTP proxy discovery (status %d)", resp.StatusCode)
+		return nil, nil, fmt.Errorf("daemon refused HTTP proxy discovery (status %d)", resp.StatusCode)
 	}
 	var data struct {
-		Names []string `json:"names"`
+		Names       []string          `json:"names"`
+		Environment map[string]string `json:"environment_variables"`
 	}
 	err = json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&data)
-	return data.Names, err
+	return data.Names, data.Environment, err
 }
 
 // newHTTPProxyBridge binds each unguessable local URL to one instance. Requests
 // cross the Unix socket with the bridge's kernel identity and a verified pane
 // claim; neither a caller's name nor HTTP headers can select another agent.
-func newHTTPProxyBridge(client *http.Client, sessionID string, names []string) (http.Handler, map[string]string, error) {
+func newHTTPProxyBridge(client *http.Client, sessionID string, names []string, aliases ...map[string]string) (http.Handler, map[string]string, error) {
 	instances := map[string]string{}
 	suffixes := map[string]string{}
 	for _, name := range names {
@@ -167,7 +168,17 @@ func newHTTPProxyBridge(client *http.Client, sessionID string, names []string) (
 		}
 		capability := hex.EncodeToString(secret[:])
 		instances[capability] = name
-		suffixes[HTTPProxyEnvPrefix+name] = "/" + capability + "/"
+		variable := HTTPProxyEnvPrefix + name
+		if len(aliases) > 0 && aliases[0][name] != "" {
+			variable = aliases[0][name]
+		}
+		if strings.ContainsAny(variable, "=\x00") {
+			return nil, nil, errors.New("invalid HTTP proxy environment variable")
+		}
+		if _, duplicate := suffixes[variable]; duplicate {
+			return nil, nil, errors.New("duplicate HTTP proxy environment variable")
+		}
+		suffixes[variable] = "/" + capability + "/"
 	}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Use EscapedPath so encoded separators/traversal survive to the daemon's
@@ -188,6 +199,7 @@ func newHTTPProxyBridge(client *http.Client, sessionID string, names []string) (
 			return
 		}
 		req.Header = r.Header.Clone()
+		req.Header.Del(HTTPProxyRuntimeClaimHeader)
 		req.Header.Set(agentipc.SessionClaimHeader, sessionID)
 		// Never disclose the local capability through a browser Referer.
 		req.Header.Del("Referer")
@@ -218,7 +230,7 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 	}
 	defer client.CloseIdleConnections()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	names, err := httpProxyNames(ctx, client, sessionID)
+	names, aliases, err := httpProxyNames(ctx, client, sessionID)
 	// A managed server publishes its recorded root immediately after fork.
 	// Retry this read-only bootstrap while that publication races the child.
 	if runtime {
@@ -228,7 +240,7 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 			case <-time.After(25 * time.Millisecond):
 			}
 			if ctx.Err() == nil {
-				names, err = httpProxyNames(ctx, client, sessionID)
+				names, aliases, err = httpProxyNames(ctx, client, sessionID)
 			}
 		}
 	}
@@ -237,7 +249,7 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 		fmt.Fprintln(os.Stderr, "Warning: HTTP proxy URLs unavailable; continuing without them")
 		names = nil
 	}
-	handler, entries, err := newHTTPProxyBridge(client, sessionID, names)
+	handler, entries, err := newHTTPProxyBridge(client, sessionID, names, aliases)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Warning: HTTP proxy URLs unavailable; continuing without them")
 		handler = http.NotFoundHandler()
@@ -245,7 +257,8 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 	}
 	environ := []string{}
 	for _, pair := range os.Environ() {
-		if !strings.HasPrefix(pair, HTTPProxyEnvPrefix) {
+		name, _, _ := strings.Cut(pair, "=")
+		if !httpProxyReservedEnvironment(name) {
 			environ = append(environ, pair)
 		}
 	}
@@ -328,7 +341,7 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 // LaunchResumedTmuxSession establishes a fresh pane generation before a
 // resumed HTTP gateway bootstrap discovers its permissions. Without a gate,
 // the resumed command could race its parent writing the new session row.
-func LaunchResumedTmuxSession(sessionID, tmuxSession, cwd, command string, markers ...string) error {
+func LaunchResumedTmuxSession(sessionID, tmuxSession, cwd, command, harnessName string, markers ...string) error {
 	cfg, err := config.Load()
 	if err != nil || !cfg.HTTPProxyConfigured() {
 		return LaunchDetachedTmuxSession(tmuxSession, cwd, command, markers...)
@@ -345,7 +358,11 @@ func LaunchResumedTmuxSession(sessionID, tmuxSession, cwd, command string, marke
 	state.Subagents, state.BgShells, state.Monitors = nil, nil, nil
 	state.ID, state.ConvID, state.TmuxSession, state.Cwd = sessionID, sessionID, tmuxSession, cwd
 	state.PID, state.Status = 0, StatusIdle
-	state.Created, state.Updated = time.Now(), time.Now()
+	if state.Created.IsZero() {
+		state.Created = time.Now()
+	}
+	state.Updated = time.Now()
+	state.Harness = harnessName
 	generation := newExitLaunchGeneration(sessionID, tmuxSession)
 	guard, err := newExitLaunchGuard(sessionID, tmuxSession, generation)
 	if err != nil {
@@ -399,7 +416,7 @@ func (t *httpProxyRuntimeTransport) CloseIdleConnections() {
 func HTTPProxySpawnCommand(sessionID string, h *harness.Harness, spec harness.SpawnSpec) string {
 	filteredEnvironment := map[string]string{}
 	for name, value := range spec.ShellEnvironment {
-		if !strings.HasPrefix(name, HTTPProxyEnvPrefix) {
+		if !httpProxyReservedEnvironment(name) {
 			filteredEnvironment[name] = value
 		}
 	}
@@ -435,4 +452,19 @@ func HTTPProxySpawnCommand(sessionID string, h *harness.Harness, spec harness.Sp
 		start = offset + len(marker)
 	}
 	return renderHTTPProxyCommand(sessionID, command, false, offsets)
+}
+
+func httpProxyReservedEnvironment(name string) bool {
+	if strings.HasPrefix(name, HTTPProxyEnvPrefix) {
+		return true
+	}
+	cfg, err := config.Load()
+	if err == nil && cfg.Agent != nil {
+		for _, instance := range cfg.Agent.HTTPProxies {
+			if instance.EnvironmentVariable != "" && instance.EnvironmentVariable == name {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -593,7 +593,7 @@ curl --noproxy 127.0.0.1 -X POST -H 'Content-Type: application/json' \
 ```
 
 The variable name is `TCLAUDE_HTTP_PROXY_` followed by the exact configured
-instance name. Each value is a base URL with a trailing slash. Use shell-safe
+instance name by default. Set `environment_variable` on an `agent.http_proxies` entry to override it, for example `"environment_variable": "INVENTORY_API_URL"`. Names must be unique among the proxies granted to an agent and compatible with environment variables (no `=` or NUL). Custom names replace the default variable. Each value is a base URL with a trailing slash. Use shell-safe
 instance names such as `inventory` or `my_service` when accessing variables
 from a shell. Other environment-compatible names can be read with `printenv`
 or a language's environment map.

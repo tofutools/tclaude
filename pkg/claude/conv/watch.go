@@ -3478,7 +3478,7 @@ func createSessionForConv(conv *SessionEntry) error {
 			return session.StackedEngineBindingRefusal(h, err)
 		}
 	}
-	if err := session.LaunchResumedTmuxSession(sessionID, tmuxSession, cwd, launchCmd,
+	if err := session.LaunchResumedTmuxSession(sessionID, tmuxSession, cwd, launchCmd, h.Name,
 		session.CodexProfileMarkerArgs(profilePath)...); err != nil {
 		return err
 	}

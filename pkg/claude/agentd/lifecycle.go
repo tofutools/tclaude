@@ -5014,8 +5014,8 @@ type spawnParams struct {
 	// OneShotName is the caller's explicit name for a non-interactive spawn,
 	// used as its tmux session name. Empty picks a generated one-shot-<id>.
 	OneShotName string
-	Role             string
-	Descr            string
+	Role        string
+	Descr       string
 	// TaskURL / TaskLabel are the optional per-agent task-reference link
 	// (the dashboard Task column). Validated at the spawn boundary
 	// (handleGroupSpawn) and persisted onto the new actor in
@@ -6830,8 +6830,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	}()
 
 	var openCodeLaunch *openCodeLaunch
- if spawnHarness.UsesAuthoritativeServer() {
-  rememberHTTPProxyLaunchGroup(label,g)
+	if spawnHarness.UsesAuthoritativeServer() {
+		rememberHTTPProxyLaunchGroup(label, g, p.PermissionOverrides)
 		resolvedCwd, err := resolveOpenCodeLaunchCwd(p.Cwd)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}

@@ -3887,10 +3887,12 @@ func (c *NotificationConfig) HumanMessagesIntent() bool {
 // HTTPProxyConfig pins a generic proxy to an operator-controlled base URL.
 // HeaderValueFile is preferred for secrets; when set it overrides HeaderValue.
 type HTTPProxyConfig struct {
-	URL             string `json:"url"`
-	Header          string `json:"header"`
-	HeaderValue     string `json:"header_value,omitempty"`
-	HeaderValueFile string `json:"header_value_file,omitempty"`
+	// EnvironmentVariable overrides the default TCLAUDE_HTTP_PROXY_name gateway variable.
+	EnvironmentVariable string `json:"environment_variable,omitempty"`
+	URL                 string `json:"url"`
+	Header              string `json:"header"`
+	HeaderValue         string `json:"header_value,omitempty"`
+	HeaderValueFile     string `json:"header_value_file,omitempty"`
 }
 
 // HTTPProxyConfigured reports whether any named HTTP instance is configured.

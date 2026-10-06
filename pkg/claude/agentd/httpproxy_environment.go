@@ -82,15 +82,23 @@ func handleHTTPProxyEnvironment(w http.ResponseWriter, r *http.Request) {
 		verdict = resolvePermissionVerdictForRequest(r, conv, PermHTTP)
 	}
 	names := []string{}
+	environment := map[string]string{}
 	if verdict.Resolution == permAllow && cfg.Agent != nil {
-		for name := range cfg.Agent.HTTPProxies {
+		for name, instance := range cfg.Agent.HTTPProxies {
 			if evalPermissionScope(verdict, conv, ActionContext{HTTPProxy: name}).Satisfied {
 				names = append(names, name)
+				if instance.EnvironmentVariable != "" {
+					environment[name] = instance.EnvironmentVariable
+				}
 			}
 		}
 	}
 	sort.Strings(names)
-	writeJSON(w, http.StatusOK, map[string]any{"names": names})
+	response := map[string]any{"names": names}
+	if len(environment) > 0 {
+		response["environment_variables"] = environment
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // httpProxyRuntimeCaller verifies the socket peer is in the managed server's

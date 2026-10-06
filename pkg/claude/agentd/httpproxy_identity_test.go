@@ -45,7 +45,7 @@ func TestHTTPProxySeedLaunchProjectsScopedGroupPermissions(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.ReplaceAgentGroupPermissionGrants(group.ID, []db.PermissionGrant{{Slug: PermHTTP, ScopeSpecified: true, Scope: `{"http_proxy":["inventory"]}`}}, "test"))
 	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{HTTPProxies: map[string]config.HTTPProxyConfig{
-		"inventory": {URL: "https://inventory.example", Header: "Authorization", HeaderValue: "secret"},
+		"inventory": {URL: "https://inventory.example", Header: "Authorization", HeaderValue: "secret", EnvironmentVariable: "INVENTORY_API_URL"},
 		"billing":   {URL: "https://billing.example", Header: "Authorization", HeaderValue: "private"},
 	}}}))
 	rememberHTTPProxyLaunchGroup("http-seed-launch", group)
@@ -55,7 +55,7 @@ func TestHTTPProxySeedLaunchProjectsScopedGroupPermissions(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handleHTTPProxyEnvironment(rec, req)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
-	assert.JSONEq(t, `{"names":["inventory"]}`, rec.Body.String())
+	assert.JSONEq(t, `{"names":["inventory"],"environment_variables":{"inventory":"INVENTORY_API_URL"}}`, rec.Body.String())
 	assert.NotContains(t, rec.Body.String(), "secret")
 }
 

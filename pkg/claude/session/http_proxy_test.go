@@ -127,6 +127,7 @@ func TestHTTPProxyBridgeRejectsForeignCapabilitiesAndPreservesEscaping(t *testin
 		assert.Equal(t, "/v1/http/proxy/inventory/foo%2fbar", r.URL.EscapedPath())
 		assert.Equal(t, "launch-row", r.Header.Get(agentipc.SessionClaimHeader))
 		assert.Empty(t, r.Header.Get("Referer"))
+		assert.Empty(t, r.Header.Get(HTTPProxyRuntimeClaimHeader))
 		return &http.Response{StatusCode: 400, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("invalid path"))}, nil
 	})}
 	handler, entries, err := newHTTPProxyBridge(client, "launch-row", []string{"inventory"})
@@ -137,11 +138,12 @@ func TestHTTPProxyBridgeRejectsForeignCapabilitiesAndPreservesEscaping(t *testin
 	req := httptest.NewRequest("GET", entries[HTTPProxyEnvPrefix+"inventory"]+"foo%2fbar", nil)
 	req.Header.Set("Referer", "http://localhost/secret/")
 	req.Header.Set(agentipc.SessionClaimHeader, "foreign")
+	req.Header.Set(HTTPProxyRuntimeClaimHeader, "foreign-runtime")
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	assert.Equal(t, 400, rec.Code)
 	// Discovery returns only names and does not follow HTTP redirects.
-	_, err = httpProxyNames(context.Background(), &http.Client{Transport: httpProxyTestTransport(func(r *http.Request) (*http.Response, error) {
+	_, _, err = httpProxyNames(context.Background(), &http.Client{Transport: httpProxyTestTransport(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 403, Body: io.NopCloser(strings.NewReader("denied"))}, nil
 	})}, "launch-row")
 	assert.Error(t, err)
@@ -237,4 +239,18 @@ func TestHTTPProxyPrivateHandoffShellExecution(t *testing.T) {
 	require.ErrorAs(t, err, &exit, string(output))
 	assert.Equal(t, 7, exit.ExitCode(), string(output))
 	assert.Contains(t, string(output), "private-handoff")
+}
+
+func TestHTTPProxyCustomEnvironmentVariable(t *testing.T) {
+	_, environment, err := newHTTPProxyBridge(&http.Client{}, "launch", []string{"inventory", "billing"}, map[string]string{"inventory": "INVENTORY_API_URL"})
+	require.NoError(t, err)
+	assert.Contains(t, environment, "INVENTORY_API_URL")
+	assert.Contains(t, environment, HTTPProxyEnvPrefix+"billing")
+	assert.NotContains(t, environment, HTTPProxyEnvPrefix+"inventory")
+	_, _, err = newHTTPProxyBridge(&http.Client{}, "launch", []string{"inventory", "billing"}, map[string]string{"inventory": "API_URL", "billing": "API_URL"})
+	require.Error(t, err)
+	t.Setenv("HOME", testutil.CanonicalTempDir(t))
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{HTTPProxies: map[string]config.HTTPProxyConfig{"inventory": {EnvironmentVariable: "INVENTORY_API_URL"}}}}))
+	assert.True(t, httpProxyReservedEnvironment("INVENTORY_API_URL"))
+	assert.False(t, httpProxyReservedEnvironment("OTHER_URL"))
 }
