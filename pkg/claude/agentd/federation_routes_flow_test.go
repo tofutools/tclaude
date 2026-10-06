@@ -226,6 +226,14 @@ func TestFederation_RoutesServeRemoteConsumer(t *testing.T) {
 // TestFederation_RoutesOpenRemoteRoute: a local agent opens a route a peer
 // exports, through a private mirror its own helper consumes.
 func TestFederation_RoutesOpenRemoteRoute(t *testing.T) {
+	testFederationRoutesOpenRemoteRoute(t, false)
+}
+
+func TestFederation_UnrestrictedRoutesOpenRemoteRoute(t *testing.T) {
+	testFederationRoutesOpenRemoteRoute(t, true)
+}
+
+func testFederationRoutesOpenRemoteRoute(t *testing.T, unrestricted bool) {
 	skipFedRoutes(t)
 	fh := newFedHarness(t)
 	f, p := fh.f, fh.peer
@@ -263,7 +271,12 @@ func TestFederation_RoutesOpenRemoteRoute(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, res.StatusCode, body)
 	require.Equal(t, "route_permission", body["code"])
 
-	require.NoError(t, db.GrantAgentPermissionWithScope(alice, agentd.PermRoutesConsume, `{"peer":["`+p.id.ID()+`/builders"]}`, "test"))
+	if unrestricted {
+		// The existing unscoped group grant becomes usable towards this peer.
+		setFedTrustLevel(t, fh, "unrestricted")
+	} else {
+		require.NoError(t, db.GrantAgentPermissionWithScope(alice, agentd.PermRoutesConsume, `{"peer":["`+p.id.ID()+`/builders"]}`, "test"))
+	}
 	res, lease := openRemote(alice)
 	require.Equal(t, http.StatusCreated, res.StatusCode, lease)
 	mirrorID := lease["route_id"].(string)
@@ -331,15 +344,24 @@ func TestFederation_RoutesOpenRemoteRoute(t *testing.T) {
 	require.Equal(t, uint64(2), fr.Stream)
 
 	// Revoking the remote grant withdraws the mirror and closes alice's lease.
-	_, err = db.RevokeAgentPermission(alice, agentd.PermRoutesConsume)
-	require.NoError(t, err)
+	if unrestricted {
+		setFedTrustLevel(t, fh, "restricted")
+	} else {
+		_, err = db.RevokeAgentPermission(alice, agentd.PermRoutesConsume)
+		require.NoError(t, err)
+	}
 	fedEventually(t, "mirror withdrawn", func() bool {
 		r, _ := db.GetAgentRoute(mirrorID)
 		return r == nil || r.State != db.RouteStateReady
 	})
 
 	// Regranting remote authority lets alice open the route again with a fresh mirror.
-	require.NoError(t, db.GrantAgentPermissionWithScope(alice, agentd.PermRoutesConsume, `{"peer":["`+p.id.ID()+`/builders"]}`, "test"))
+	if unrestricted {
+		// The existing unscoped group grant becomes usable towards this peer.
+		setFedTrustLevel(t, fh, "unrestricted")
+	} else {
+		require.NoError(t, db.GrantAgentPermissionWithScope(alice, agentd.PermRoutesConsume, `{"peer":["`+p.id.ID()+`/builders"]}`, "test"))
+	}
 	res, lease = openRemote(alice)
 	require.Equal(t, http.StatusCreated, res.StatusCode, lease)
 	require.NotEqual(t, mirrorID, lease["route_id"])
