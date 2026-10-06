@@ -267,8 +267,9 @@ tclaude federation send bob-agent@bob "hello" --subject intro
 ```
 
 `member` may be the member's name, its agent id, or an 8+ character id
-prefix. `peer` may be the label, the hub-reported name, or an instance-id
-prefix. An address whose `@…` part does not name a trusted peer is resolved
+prefix. `peer` may be the operator-chosen label, the full instance id, or
+an 8+ character instance-id prefix. Hub-reported names are not accepted in
+mail addresses. An address whose `@…` part does not name a trusted peer is resolved
 locally as before, so local titles containing `@` keep working.
 
 `--cc` may name remote members too:
