@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -112,4 +113,68 @@ func TestHTTPProxyReturnsRedirectAndUpstreamErrors(t *testing.T) {
 		assert.Equal(t, tc.status, result.Status)
 	}
 	assert.False(t, leaked)
+}
+
+func TestHTTPProxyRawGatewayAndEnvironment(t *testing.T) {
+	f := newFlow(t)
+	const conv = "conv-http-gateway"
+	f.HaveConvWithTitle(conv, "gateway-worker")
+	f.HaveEnrolledAgent(conv)
+	calls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		assert.Equal(t, "Bearer secret", r.Header.Get("Authorization"))
+		assert.Empty(t, r.Header.Get("X-Tclaude-Session-Id"))
+		assert.Equal(t, "/api/items", r.URL.Path)
+		assert.Equal(t, "key=one", r.URL.RawQuery)
+		data, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.Equal(t, []byte{0, 255, 10}, data)
+		w.Header().Add("X-Result", "one")
+		w.Header().Add("X-Result", "two")
+		w.Header().Set("Connection", "X-Hop")
+		w.Header().Set("X-Hop", "private")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write(data)
+	}))
+	defer upstream.Close()
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{HTTPProxies: map[string]config.HTTPProxyConfig{
+		"inventory": {URL: upstream.URL + "/api", Header: "Authorization", HeaderValue: "Bearer secret"},
+		"billing":   {URL: upstream.URL, Header: "Authorization", HeaderValue: "private"},
+	}}}))
+	require.NoError(t, db.GrantAgentPermissionWithScope(conv, agentd.PermHTTP, `{"http_proxy":["inventory"]}`, "test"))
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(httptest.NewRequest("GET", "/v1/http/environment", nil), conv))
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var env struct{ Names []string }
+	testharness.DecodeJSON(t, rec, &env)
+	assert.Equal(t, []string{"inventory"}, env.Names)
+	assert.NotContains(t, rec.Body.String(), "secret")
+	req := httptest.NewRequest("POST", "/v1/http/proxy/inventory/items?key=one", bytes.NewReader([]byte{0, 255, 10}))
+	req.Header.Set("Authorization", "caller")
+	req.Header.Set("Connection", "X-Hop")
+	req.Header.Set("X-Hop", "incoming")
+	req.Header.Set("X-Tclaude-Session-Id", "forged")
+	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(req, conv))
+	require.Equal(t, 422, rec.Code, rec.Body.String())
+	assert.Equal(t, []byte{0, 255, 10}, rec.Body.Bytes())
+	assert.Equal(t, []string{"one", "two"}, rec.Header().Values("X-Result"))
+	assert.Empty(t, rec.Header().Get("Connection"))
+	assert.Empty(t, rec.Header().Get("X-Hop"))
+	assert.Equal(t, 1, calls)
+	for _, path := range []string{"%2e%2e/items", "foo%2fbar", "%252e%252e/items"} {
+		rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(httptest.NewRequest("GET", "/v1/http/proxy/inventory/"+path, nil), conv))
+		assert.Equal(t, 400, rec.Code, path)
+	}
+	assert.Equal(t, 1, calls)
+	require.NoError(t, db.SetAgentPermissionOverride(conv, agentd.PermHTTP, db.PermEffectDeny, "test"))
+	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(httptest.NewRequest("GET", "/v1/http/proxy/inventory/items", nil), conv))
+	assert.Equal(t, 403, rec.Code)
+	assert.Equal(t, 1, calls)
+	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "http.gateway"})
+	require.NoError(t, err)
+	require.NotEmpty(t, rows)
+	for _, row := range rows {
+		assert.Equal(t, "/v1/http/proxy/", row.Path)
+		assert.NotContains(t, row.Detail, "secret")
+	}
 }

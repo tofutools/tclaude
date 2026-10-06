@@ -205,3 +205,11 @@ func TestIsValidUUID(t *testing.T) {
 		assert.Falsef(t, IsValidUUID(s), "expected %q to be rejected", s)
 	}
 }
+
+func TestBuildEnvExportsDoesNotPropagateHTTPProxyCapabilities(t *testing.T) {
+	t.Setenv("TCLAUDE_HTTP_PROXY_inventory", "http://localhost/private-capability/")
+	got := BuildEnvExports(map[string]string{"TCLAUDE_HTTP_PROXY_billing": "http://localhost/foreign-capability/"})
+	if strings.Contains(got, "TCLAUDE_HTTP_PROXY_") || strings.Contains(got, "private-capability") || strings.Contains(got, "foreign-capability") {
+		t.Fatal("proxy capability propagated into a new launch")
+	}
+}

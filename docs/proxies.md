@@ -580,3 +580,48 @@ optional `headers` (a string map), and optional `body` (base64). Its successful
 transport response wraps the upstream status, headers and base64 body; an
 upstream error status still returns this wrapper. Calls are audited as proxy
 operations with the caller's instance-name permission scope.
+
+### Ordinary HTTP clients
+
+Agents launched or resumed by tclaude receive one environment variable for
+each instance their effective `proxy.http` grant permits:
+
+```bash
+curl "${TCLAUDE_HTTP_PROXY_inventory}items?limit=10"
+curl -X POST -H 'Content-Type: application/json' \
+  --data-binary @item.json "${TCLAUDE_HTTP_PROXY_inventory}items"
+```
+
+The variable name is `TCLAUDE_HTTP_PROXY_` followed by the exact configured
+instance name. Each value is a base URL with a trailing slash. Use shell-safe
+instance names such as `inventory` or `my_service` when accessing variables
+from a shell. Other environment-compatible names can be read with `printenv`
+or a language's environment map.
+
+These URLs accept ordinary HTTP methods, headers and raw bodies, and return
+the upstream status, headers and raw body. The launch creates a loopback bridge
+inside the agent's network namespace; the bridge carries requests to agentd
+through its authenticated Unix socket. This keeps the URLs usable with isolated
+networking. The daemon performs the upstream request and adds the configured
+credential header. The CLI command remains available independently.
+
+URLs include an unguessable local capability for one instance. Treat them as
+private to the agent. They are not service credentials and are never sent to
+the upstream service. The daemon also verifies the bridge's live launch pane
+and generation and rechecks the agent's instance-scoped permission on every
+request. Revoked permissions immediately stop further upstream requests.
+The gateway applies the same path, redirect and body limits as the CLI and
+strips hop-by-hop headers. It does not follow upstream redirects.
+
+Permission and configuration changes take effect in the injected environment
+on the next launch or resume; existing gateways still enforce current grants.
+A daemon restart requires the agent's Unix socket to be reachable again, but
+does not invalidate the bridge's local URL. Gateway request URLs and bodies
+are excluded from audit and request logs; audit rows record the instance and
+permission scope. Proxy URL variables are stripped when building another
+agent's launch so capabilities cannot be inherited by accident.
+
+The raw daemon route is `/v1/http/proxy/NAME/PATH`, over the existing Unix
+socket. `GET /v1/http/environment` returns only the allowed instance names to
+a verified agent or launch bootstrap; it never returns service credentials or
+upstream URLs.

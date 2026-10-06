@@ -1437,6 +1437,8 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/github/issue/view", handleGHProxyIssueView)
 	mux.HandleFunc("POST /v1/github/issue/comment", handleGHProxyIssueComment)
 	mux.HandleFunc("POST /v1/http/request", handleHTTPProxyRequest)
+	mux.HandleFunc("/v1/http/proxy/{name}/{path...}", handleHTTPProxyGateway)
+	mux.HandleFunc("GET /v1/http/environment", handleHTTPProxyEnvironment)
 	mux.HandleFunc("POST /v1/linear/whoami", handleLinearProxyWhoami)
 	mux.HandleFunc("POST /v1/linear/issue/view", handleLinearProxyIssueView)
 	mux.HandleFunc("POST /v1/linear/issue/list", handleLinearProxyIssueList)
@@ -1525,6 +1527,9 @@ func safeHTTPLogPath(path string) string {
 }
 
 func projectSafeHTTPLogPath(path string) (string, bool) {
+	if strings.HasPrefix(path, "/v1/http/proxy/") {
+		return "/v1/http/proxy/", true
+	}
 	return path, false
 }
 

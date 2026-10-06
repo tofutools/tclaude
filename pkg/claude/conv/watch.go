@@ -2916,6 +2916,7 @@ func resumeLaunchCmdWithStackedProof(
 		return "", "", nil, fmt.Errorf("prepare %s host-control sandbox: %w", h.DisplayName, err)
 	}
 	cmd := h.Spawn.BuildCommand(spec)
+	cmd = session.WrapHTTPProxyCommand(sessionID, cmd)
 	if cleanupPath != "" {
 		cmd = resumeCommandWithFileCleanup(cmd, cleanupPath)
 	}
@@ -3478,7 +3479,7 @@ func createSessionForConv(conv *SessionEntry) error {
 			return session.StackedEngineBindingRefusal(h, err)
 		}
 	}
-	if err := session.LaunchDetachedTmuxSession(tmuxSession, cwd, launchCmd,
+	if err := session.LaunchResumedTmuxSession(sessionID, tmuxSession, cwd, launchCmd,
 		session.CodexProfileMarkerArgs(profilePath)...); err != nil {
 		return err
 	}

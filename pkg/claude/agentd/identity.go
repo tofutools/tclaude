@@ -246,7 +246,16 @@ func withIdentity(h http.Handler) http.Handler {
 					writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
 					return
 				}
-				p.ConvID, p.HasClaudeAncestor = agentIdentityForPID(pid, claimedID)
+				if claimedID != "" && (r.URL.Path == "/v1/http/environment" || strings.HasPrefix(r.URL.Path, "/v1/http/proxy/")) {
+					proof := proveLaunchPaneCallerIn(newBrokerProcTable(), pid, claimedID, false)
+					p.ConvID, p.HasClaudeAncestor = "", true
+					if proof.row != nil {
+						p.ConvID = proof.row.ConvID
+						r = r.WithContext(context.WithValue(r.Context(), httpProxyLaunchRowKey{}, proof.row))
+					}
+				} else {
+					p.ConvID, p.HasClaudeAncestor = agentIdentityForPID(pid, claimedID)
+				}
 			}
 		}
 		p.HumanTokenValid = verifyHumanToken(r)
@@ -1571,6 +1580,13 @@ type layerProof struct {
 // what was observed. Nothing here is caller-asserted beyond the claimed id,
 // which the log labels as such.
 func proveTclaudeLayerCallerIn(t *brokerProcTable, callerPID int, claimedID string) layerProof {
+	return proveLaunchPaneCallerIn(t, callerPID, claimedID, true)
+}
+
+// proveLaunchPaneCallerIn also supports the HTTP gateway's pre-harness
+// bootstrap. The same live-pane/generation/ancestry proof is required for
+// ordinary launches; only the requirement for an outer sandbox is optional.
+func proveLaunchPaneCallerIn(t *brokerProcTable, callerPID int, claimedID string, layerOnly bool) layerProof {
 	claimedID = strings.TrimSpace(claimedID)
 	if callerPID <= 1 || claimedID == "" {
 		return layerProof{}
@@ -1584,7 +1600,7 @@ func proveTclaudeLayerCallerIn(t *brokerProcTable, callerPID int, claimedID stri
 	}
 	row, err := db.LoadSession(claimedID)
 	lap(&timing.dbDur)
-	if err != nil || row == nil || !isTclaudeLayerRow(row) {
+	if err != nil || row == nil || (layerOnly && !isTclaudeLayerRow(row)) {
 		// Not a layer claim as far as the proof is concerned, but a LoadSession
 		// error is worth distinguishing at the call site from "no such row":
 		// a busy database turns a valid claim into a missing one, and the

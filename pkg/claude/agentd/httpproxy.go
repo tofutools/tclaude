@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"golang.org/x/net/http/httpguts"
 )
@@ -21,11 +22,12 @@ const maxHTTPProxyBytes = 4 * 1024 * 1024
 
 // Bodies use JSON's base64 encoding for []byte, preserving arbitrary binary data.
 type httpProxyRequest struct {
-	Name    string            `json:"name"`
-	Method  string            `json:"method"`
-	Path    string            `json:"path"`
-	Headers map[string]string `json:"headers,omitempty"`
-	Body    []byte            `json:"body,omitempty"`
+	Name           string            `json:"name"`
+	Method         string            `json:"method"`
+	Path           string            `json:"path"`
+	Headers        map[string]string `json:"headers,omitempty"`
+	Body           []byte            `json:"body,omitempty"`
+	requestHeaders http.Header
 }
 type httpProxyResponse struct {
 	Status  int         `json:"status"`
@@ -85,6 +87,45 @@ func handleHTTPProxyRequest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "expected one HTTP proxy request")
 		return
 	}
+	performHTTPProxyRequest(w, r, body, false)
+}
+
+// handleHTTPProxyGateway accepts an ordinary HTTP request over the daemon's
+// authenticated Unix transport. No JSON envelope is used in either direction.
+func handleHTTPProxyGateway(w http.ResponseWriter, r *http.Request) {
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxHTTPProxyBytes))
+	if err != nil {
+		writeError(w, http.StatusRequestEntityTooLarge, "invalid_arg", "request body exceeds 4 MiB or is unreadable")
+		return
+	}
+	parts := strings.SplitN(r.URL.EscapedPath(), "/", 6)
+	path := ""
+	if len(parts) == 6 {
+		path = parts[5]
+	}
+	if r.URL.RawQuery != "" {
+		path += "?" + r.URL.RawQuery
+	}
+	headers := r.Header.Clone()
+	stripHTTPProxyTransportHeaders(headers)
+	headers.Del(agentipc.SessionClaimHeader)
+	performHTTPProxyRequest(w, r, httpProxyRequest{Name: r.PathValue("name"), Path: path, Method: r.Method, Body: data, requestHeaders: headers}, true)
+}
+
+func stripHTTPProxyTransportHeaders(headers http.Header) {
+	for _, value := range headers.Values("Connection") {
+		for _, name := range strings.Split(value, ",") {
+			headers.Del(strings.TrimSpace(name))
+		}
+	}
+	for name := range headers {
+		if !httpProxyHeaderAllowed(name) {
+			headers.Del(name)
+		}
+	}
+}
+
+func performHTTPProxyRequest(w http.ResponseWriter, r *http.Request, body httpProxyRequest, raw bool) {
 	if _, ok := requirePermission(w, r, PermHTTP, ActionContext{HTTPProxy: body.Name}); !ok {
 		return
 	}
@@ -162,6 +203,9 @@ func handleHTTPProxyRequest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_arg", "could not construct request")
 		return
 	}
+	if body.requestHeaders != nil {
+		req.Header = body.requestHeaders.Clone()
+	}
 	for name, value := range body.Headers {
 		req.Header.Set(name, value)
 	}
@@ -185,6 +229,16 @@ func handleHTTPProxyRequest(w http.ResponseWriter, r *http.Request) {
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxHTTPProxyBytes+1))
 	if err != nil || len(data) > maxHTTPProxyBytes {
 		writeError(w, 502, "http_proxy_response", "upstream response unreadable or exceeds 4 MiB; request may have succeeded")
+		return
+	}
+	if raw {
+		headers := resp.Header.Clone()
+		stripHTTPProxyTransportHeaders(headers)
+		for name, values := range headers {
+			w.Header()[name] = values
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(data)
 		return
 	}
 	writeJSON(w, http.StatusOK, httpProxyResponse{Status: resp.StatusCode, Headers: resp.Header, Body: data})

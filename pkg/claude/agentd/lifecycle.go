@@ -7177,6 +7177,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// reject such a row, while launch enrollment has the stronger conv-id proof.
 	timing("launch_prepared", "label", label)
 	launchedAt := time.Now()
+	rememberHTTPProxyLaunchGroup(label, g)
 	if err := SpawnDetachedTclaudeNew(spawnArgs); err != nil {
 		return launchFailed(err)
 	}

@@ -573,7 +573,12 @@ func isMutatingMethod(m string) bool {
 // the surface prefix (/v1 → cli, /api → dashboard), normalises the two
 // divergent dashboard spellings, then matches the canonical segments
 // against auditRoutes. ok=false means "not audited".
+var httpGatewayAuditRoute = auditRoute{verb: "http.gateway", pathOnly: true}
+
 func matchAuditRoute(method, path string) (route *auditRoute, vars map[string]string, source string, ok bool) {
+	if strings.HasPrefix(path, "/v1/http/proxy/") {
+		return &httpGatewayAuditRoute, nil, db.AuditSourceCLI, true
+	}
 	if !isMutatingMethod(method) {
 		return nil, nil, "", false
 	}
