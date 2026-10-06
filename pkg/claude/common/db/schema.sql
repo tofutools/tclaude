@@ -1484,9 +1484,8 @@ CREATE TABLE federation_peers (
 	pubkey      BLOB NOT NULL,
 	label       TEXT NOT NULL DEFAULT '',
 	name        TEXT NOT NULL DEFAULT '',
-	trusted_at  INTEGER NOT NULL,
-	trust_level TEXT NOT NULL DEFAULT 'restricted' CHECK(trust_level IN ('restricted', 'unrestricted'))
-) STRICT;
+	trusted_at  INTEGER NOT NULL
+, trust_level TEXT NOT NULL DEFAULT 'restricted' CHECK(trust_level IN ('restricted', 'unrestricted'))) STRICT;
 
 CREATE UNIQUE INDEX idx_federation_peers_label
 	ON federation_peers(label) WHERE label != '';
