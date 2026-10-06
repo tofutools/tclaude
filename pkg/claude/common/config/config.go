@@ -2131,6 +2131,8 @@ type AWBReadyPollingConfig struct {
 	Profile        string      `json:"profile,omitempty"`
 	SandboxProfile string      `json:"sandbox_profile,omitempty"`
 	Harness        HarnessList `json:"harness,omitempty"`
+	Model          string      `json:"model,omitempty"`
+	Effort         string      `json:"effort,omitempty"`
 	Worktree       bool        `json:"worktree,omitempty"`
 	MonitorPR      bool        `json:"monitor_pr,omitempty"`
 	MonitorCommit  bool        `json:"monitor_commit,omitempty"`
@@ -2502,6 +2504,8 @@ func (c *Config) ResolvedAWBProxy() AWBProxyConfig {
 				polling.Profile = strings.TrimSpace(polling.Profile)
 				polling.SandboxProfile = strings.TrimSpace(polling.SandboxProfile)
 				polling.Harness = normalizeHarnessList(polling.Harness)
+				polling.Model = strings.TrimSpace(polling.Model)
+				polling.Effort = strings.TrimSpace(polling.Effort)
 				out.ReadyPolling[strings.ToLower(strings.TrimSpace(key))] = polling
 			}
 		}

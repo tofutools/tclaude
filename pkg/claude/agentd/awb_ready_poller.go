@@ -219,22 +219,27 @@ func (w awbReadyWorker) tickDispatch(ctx context.Context, dispatch *db.AWBReadyD
 	// The harness this tick would launch, decided once and reused by the
 	// spawn below so the gate's verdict and the launch cannot disagree.
 	var spawnHarness string
+	var issue *awbIssue
 	if dispatch == nil {
-		// Nothing is in flight, so this is the point where the process would
-		// start burning the subscription on a new issue — and therefore the
-		// point the configured usage ceilings govern. A dispatch already
-		// selected is deliberately NOT gated: abandoning a claimed issue
-		// half-way would leave it assigned to the operator's account with
-		// nobody working it.
+		issue, err = w.ready(ctx)
+		if err != nil || issue == nil {
+			return err
+		}
+		// Read the full issue before selecting it: metadata may pin a vendor
+		// even when the configured fallback chain is entirely spent.
+		issue, err = w.show(ctx, issue.ID)
+		if err != nil {
+			return err
+		}
+		w, err = w.withIssueAgent(issue.Metadata)
+		if err != nil {
+			return err
+		}
 		chosen, hold := w.chooseSpawnHarness(time.Now())
 		if w.reportRateLimitHold(hold) != nil {
 			return nil
 		}
 		spawnHarness = chosen
-		issue, err := w.ready(ctx)
-		if err != nil || issue == nil {
-			return err
-		}
 		selected, err := db.SelectAWBReadyDispatch(w.process, w.workspace, issue.ID, db.NewAgentID())
 		if err != nil || !selected {
 			return err
@@ -260,9 +265,11 @@ func (w awbReadyWorker) tickDispatch(ctx context.Context, dispatch *db.AWBReadyD
 			}
 		}
 	}
-	issue, err := w.show(ctx, dispatch.IssueID)
-	if err != nil {
-		return err
+	if issue == nil {
+		issue, err = w.show(ctx, dispatch.IssueID)
+		if err != nil {
+			return err
+		}
 	}
 	// Closure is the only condition that releases a workspace, regardless of
 	// how far dispatch progressed. In particular, do not claim or spawn an
@@ -365,6 +372,10 @@ func (w awbReadyWorker) tickDispatch(ctx context.Context, dispatch *db.AWBReadyD
 		return pendingErr
 	} else if pending != nil {
 		_, err = db.UpdateAWBReadyDispatch(w.process, dispatch.IssueID, "spawned", "")
+		return err
+	}
+	w, err = w.withIssueAgent(issue.Metadata)
+	if err != nil {
 		return err
 	}
 	if !containsFold(issue.Assignees, w.session.policy.Username) {
@@ -685,6 +696,38 @@ func liveAWBReadyAgentSettled(agentID string) (bool, error) {
 	return row == nil || row.Status == session.StatusIdle || row.Status == session.StatusExited, nil
 }
 
+// withIssueAgent applies non-empty issue overrides to a copy of the worker.
+// Other metadata is opaque; malformed agent settings stop pickup rather than
+// silently launching with a different configuration.
+func (w awbReadyWorker) withIssueAgent(metadata json.RawMessage) (awbReadyWorker, error) {
+	if len(metadata) == 0 {
+		return w, nil
+	}
+	var fields struct {
+		Agent struct {
+			Harness string `json:"harness"`
+			Model   string `json:"model"`
+			Effort  string `json:"effort"`
+		} `json:"agent"`
+	}
+	if err := json.Unmarshal(metadata, &fields); err != nil {
+		return w, fmt.Errorf("invalid AWB agent metadata: %w", err)
+	}
+	if name := strings.TrimSpace(fields.Agent.Harness); name != "" {
+		if _, ok := harness.Get(name); !ok {
+			return w, fmt.Errorf("invalid AWB agent metadata: harness %q does not exist", name)
+		}
+		w.config.Harness = config.HarnessList{name}
+	}
+	if model := strings.TrimSpace(fields.Agent.Model); model != "" {
+		w.config.Model = model
+	}
+	if effort := strings.TrimSpace(fields.Agent.Effort); effort != "" {
+		w.config.Effort = effort
+	}
+	return w, nil
+}
+
 // spawnRequest builds the launch this process would submit for one issue.
 // harnessName is the harness the usage gate settled on, which is why it is a
 // parameter rather than read back off the configuration: a fallback chain's
@@ -693,6 +736,7 @@ func (w awbReadyWorker) spawnRequest(issueID, cwd, wtPath, wtBranch, harnessName
 	scope := fmt.Sprintf(`{"awb_workspace":[%q]}`, w.workspace)
 	return agent.SpawnRequest{Name: issueID, Cwd: cwd, WorktreePath: wtPath, WorktreeBranch: wtBranch,
 		Profile: w.config.Profile, SandboxProfile: w.config.SandboxProfile, Harness: harnessName,
+		Model: w.config.Model, Effort: w.config.Effort,
 		TaskURL: strings.TrimRight(w.session.base, "/") + "/#/issues/" + issueID, TaskLabel: issueID,
 		InitialMessage: awbReadyInitialMessage(issueID, w.config.MonitorPR, w.config.MonitorCommit, w.config.MonitorClose),
 		PermissionOverrides: map[string]db.PermissionOverride{
@@ -849,8 +893,8 @@ func (w awbReadyWorker) chooseSpawnHarness(now time.Time) (string, *rateLimitHol
 // sleeping the worker: every tick re-reads the cached usage, so the process
 // resumes within one interval of the window resetting, and an operator who
 // edits a ceiling or whose limit lifts early is picked up just as quickly.
-// Each check is local, so polling through a five-hour hold costs less than the
-// AWB call it replaces.
+// Issue metadata is read before this check so the hold covers the vendor
+// that this particular issue would use.
 func (w awbReadyWorker) reportRateLimitHold(hold *rateLimitHold) *rateLimitHold {
 	w.runtime.recordHold(hold)
 	if hold == nil {
