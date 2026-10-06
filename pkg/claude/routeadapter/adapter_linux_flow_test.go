@@ -40,18 +40,36 @@ func TestFlowControlCarriesBulkPastSlowReaders(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = targetLn.Close() })
 	uploaded := make(chan []byte, 1)
+	downloaded := make(chan error, 1)
 	go func() {
 		conn, err := targetLn.Accept()
 		if err != nil {
 			return
 		}
 		defer conn.Close()
+		_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+		downloadDone := make(chan struct{})
+		uploadDone := make(chan struct{})
 		go func() {
-			_, _ = conn.Write(download)
-			_ = conn.(*net.TCPConn).CloseWrite()
+			defer close(downloadDone)
+			_, err := conn.Write(download[:size/2])
+			// Make the directions finish independently: the upload reaches
+			// EOF while the download still has a tail left to send.
+			<-uploadDone
+			if err == nil {
+				_, err = conn.Write(download[size/2:])
+			}
+			if err == nil {
+				err = conn.(*net.TCPConn).CloseWrite()
+			}
+			downloaded <- err
 		}()
 		time.Sleep(400 * time.Millisecond) // a target slow to start reading
 		got, _ := io.ReadAll(conn)
+		close(uploadDone)
+		// Upload EOF only ends the client's direction. Keep the socket open
+		// until the concurrent download writer has sent its entire reply.
+		<-downloadDone
 		uploaded <- got
 	}()
 
@@ -90,6 +108,7 @@ func TestFlowControlCarriesBulkPastSlowReaders(t *testing.T) {
 	_ = client.SetReadDeadline(time.Now().Add(30 * time.Second))
 	got, err := io.ReadAll(client)
 	require.NoError(t, err)
+	require.NoError(t, <-downloaded, "target download failed")
 	require.True(t, bytes.Equal(download, got), "download corrupted: got %d of %d bytes", len(got), size)
 	select {
 	case up := <-uploaded:
