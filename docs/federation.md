@@ -332,9 +332,21 @@ across groups. The receiving spawn rate limit also applies, keyed by peer.
 Ordinary group member caps and launch guardrails remain in force.
 
 A visible group without a spawn grant queues the request for human approval.
-An automatic spawn that fails, including a worker cap or rate limit, also
+An automatic spawn with a definite failure, including a worker cap or rate limit, also
 leaves the request pending and notifies the operator; it is not retried
 without a human decision. Every automatic spawn notifies the operator inbox.
+
+Slow launches remain durably `launching` until their reserved worker identity
+has enrolled and its pane is ready. They occupy a cap slot across daemon
+restarts, and cannot be approved again. If startup stays unconfirmed, the
+operator gets a notice. Explicit abandonment returns it to pending:
+
+```bash
+tclaude federation requests abandon 7 --acknowledge-late-worker
+```
+
+Abandonment requires acknowledging that a late worker may still appear.
+Inspect the original launch before approving another attempt.
 
 ```bash
 tclaude federation requests [--all]

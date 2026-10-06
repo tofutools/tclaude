@@ -365,13 +365,15 @@ func fedSpawnRequestFromPath(w http.ResponseWriter, r *http.Request) (*db.Federa
 
 // queueSpawnResult sends the decision back to the requester through the
 // outbox (it is acknowledged like mail, so it survives disconnects).
-func queueSpawnResult(req *db.FederationSpawnRequest, peer *db.FederationPeer, res proto.SpawnResultPayload) {
+func queueSpawnResult(req *db.FederationSpawnRequest, peer *db.FederationPeer, res proto.SpawnResultPayload) error {
 	if _, err := queueFederatedEnvelope(fedOutgoing{
 		peer: peer, kind: proto.KindSpawnRes, toAgent: req.FromAgent, toLabel: req.FromName + "@" + peerDisplay(peer),
 		subject: "spawn request " + res.Status, preview: res.Reason, inReplyTo: req.EnvelopeID, ttl: fedMailTTL, payload: res,
 	}); err != nil {
 		slog.Warn("federation: queueing spawn result failed", "request", req.ID, "error", err)
+		return err
 	}
+	return nil
 }
 
 type fedSpawnApproveReq struct {
@@ -413,7 +415,8 @@ func handleFederationSpawnRequestApprove(w http.ResponseWriter, r *http.Request)
 func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.FederationSpawnRequest, peer *db.FederationPeer, g *db.AgentGroup, in fedSpawnApproveReq, automatic bool) {
 	// Claim the request before spawning: a concurrent approve or deny now
 	// sees it as taken.
-	if won, err := db.ClaimFederationSpawnRequest(req.ID); err != nil || !won {
+	reservedID := db.NewAgentID()
+	if won, err := db.BeginFederationSpawnRequest(req.ID, reservedID, automatic); err != nil || !won {
 		writeError(w, http.StatusConflict, "decided", fmt.Sprintf("spawn request #%d is being decided by another call", req.ID))
 		return
 	}
@@ -421,7 +424,7 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 	release := func() {
 		if !released {
 			released = true
-			if err := db.ReleaseFederationSpawnRequest(req.ID); err != nil {
+			if _, err := db.ReturnFederationSpawnToPending(req.ID, "automatic launch failed"); err != nil {
 				slog.Warn("federation: releasing spawn request failed", "request", req.ID, "error", err)
 			}
 		}
@@ -442,16 +445,27 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 		writeFedErr(w, err)
 		return
 	}
-	inner := r.Clone(r.Context())
+	inner := r.Clone(context.WithValue(r.Context(), reservedAgentIDContextKey{}, reservedID))
 	inner.Method = http.MethodPost
 	inner.Body = io.NopCloser(bytes.NewReader(raw))
 	inner.ContentLength = int64(len(raw))
 	rec := httptest.NewRecorder()
 	handleGroupSpawn(rec, inner, g)
 	if rec.Code != http.StatusOK {
-		// The request goes back to pending so the operator can retry with
-		// other launch options.
-		release()
+		var failure struct {
+			Code  string `json:"code"`
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &failure)
+		current, _ := db.GetFederationSpawnRequest(req.ID)
+		if current != nil && current.Status == db.FedSpawnLaunching {
+			if current.LaunchLabel != "" {
+				markFederationSpawnUnconfirmed(reservedID, failure.Error)
+			} else {
+				_, _ = db.ReturnFederationSpawnToPending(req.ID, failure.Error)
+			}
+		}
+		reconcileFederationSpawns()
 		for k, v := range rec.Header() {
 			w.Header()[k] = v
 		}
@@ -461,16 +475,9 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 	}
 	var sr agent.SpawnResponse
 	_ = json.Unmarshal(rec.Body.Bytes(), &sr)
-	if automatic {
-		if err := db.RecordFederationAutoWorker(req.ID, peer.InstanceID, sr.AgentID); err != nil {
-			slog.Error("federation: recording auto worker failed", "request", req.ID, "error", err)
-		}
-	}
-	if _, err := db.DecideFederationSpawnRequest(req.ID, db.FedSpawnApproving, db.FedSpawnApproved, sr.AgentID, ""); err != nil {
-		slog.Warn("federation: recording spawn approval failed", "request", req.ID, "error", err)
-	}
-	queueSpawnResult(req, peer, proto.SpawnResultPayload{Status: proto.SpawnApproved, Agent: sr.AgentID, Name: fedFirst(spawn.Name, sr.Label)})
-	broadcastFederationCatalogs()
+	// HTTP 200 can mean pending startup. Keep durable launching state until
+	// exact reserved identity, membership and pane readiness prove completion.
+	reconcileFederationSpawns()
 	setAuditTargetLabel(r, fmt.Sprintf("#%d %s", req.ID, from))
 	writeJSON(w, http.StatusOK, map[string]any{"id": req.ID, "group": g.Name, "agent_id": sr.AgentID, "conv_id": sr.ConvID, "label": sr.Label})
 }
@@ -506,20 +513,22 @@ func handleFederationSpawnRequestDeny(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "decided", "request was decided concurrently")
 		return
 	}
-	queueSpawnResult(req, peer, proto.SpawnResultPayload{Status: proto.SpawnDenied, Reason: reason})
+	_ = queueSpawnResult(req, peer, proto.SpawnResultPayload{Status: proto.SpawnDenied, Reason: reason})
 	setAuditTargetLabel(r, fmt.Sprintf("#%d", req.ID))
 	writeJSON(w, http.StatusOK, map[string]any{"id": req.ID, "status": db.FedSpawnDenied})
 }
 
 // Serializing attempts also bounds in-flight workers before their agent ids
 // exist. Durable accounting handles daemon restarts and grants across groups.
-var federationAutoSpawnMu sync.Mutex
+var federationAutoSpawnLocks sync.Map // trusted peer id -> *sync.Mutex
 
 type federationSpawnRateKey struct{}
 
 func autoApproveFederationSpawn(req *db.FederationSpawnRequest, p *db.FederationPeer) {
-	federationAutoSpawnMu.Lock()
-	defer federationAutoSpawnMu.Unlock()
+	lock, _ := federationAutoSpawnLocks.LoadOrStore(p.InstanceID, &sync.Mutex{})
+	peerLock := lock.(*sync.Mutex)
+	peerLock.Lock()
+	defer peerLock.Unlock()
 	current, err := db.GetFederationSpawnRequest(req.ID)
 	if err != nil || current == nil || current.Status != db.FedSpawnPending || current.Expired(time.Now()) {
 		return
@@ -542,7 +551,20 @@ func autoApproveFederationSpawn(req *db.FederationSpawnRequest, p *db.Federation
 		} else {
 			live := 0
 			for _, id := range ids {
-				a, _ := db.GetAgent(id)
+				attempt, err := db.FederationSpawnRequestForAgent(id)
+				if err != nil {
+					reason = "could not count automatic workers"
+					break
+				}
+				if attempt != nil {
+					live++
+					continue
+				}
+				a, err := db.GetAgent(id)
+				if err != nil {
+					reason = "could not count automatic workers"
+					break
+				}
 				if a != nil && a.Active() && isConvOnline(a.CurrentConvID) {
 					live++
 				}
@@ -552,7 +574,9 @@ func autoApproveFederationSpawn(req *db.FederationSpawnRequest, p *db.Federation
 			}
 		}
 	}
+	attempted := false
 	if reason == "" {
+		attempted = true
 		// This synthetic identity exists only inside the grant-authorized daemon
 		// path. No remote request can supply an operator token or launch settings.
 		r := httptest.NewRequest(http.MethodPost, "/internal/federation-auto-spawn", nil)
@@ -564,17 +588,10 @@ func autoApproveFederationSpawn(req *db.FederationSpawnRequest, p *db.Federation
 			reason = strings.TrimSpace(rec.Body.String())
 		}
 	}
-	subject := fmt.Sprintf("remote spawn request #%d auto-approved", req.ID)
-	body := fmt.Sprintf("Peer %s spawned a worker in group %q under its groups.members.spawn grant.\n\nBrief (remote, untrusted):\n%s", peerDisplay(p), req.GroupName, req.Brief)
-	if reason != "" {
-		subject = fmt.Sprintf("remote spawn request #%d needs approval", req.ID)
-		body = fmt.Sprintf("Automatic spawn for %s in group %q failed: %s\n\nRequest remains pending. Decide with tclaude federation requests approve %d or deny %d.\n\nBrief (remote, untrusted):\n%s", peerDisplay(p), req.GroupName, reason, req.ID, req.ID, req.Brief)
-	}
-	group := db.FederationHumanGroup(p.InstanceID)
-	from := "operator@" + proto.SafeName(peerDisplay(p), true) + " (remote)"
-	if _, err := db.InsertHumanMessage(&db.HumanMessage{FromTitle: from, GroupName: group, Subject: subject, Body: body}); err != nil {
-		slog.Warn("federation: auto-spawn notice failed", "error", err)
+	if reason != "" && !attempted {
+		_ = db.SetPendingFederationSpawnReason(req.ID, reason)
+		reconcileFederationSpawns()
 	} else {
-		dispatchHumanMessageNotification("", from, group, subject, body)
+		reconcileFederationSpawns()
 	}
 }

@@ -7171,6 +7171,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		if openCodeLaunch != nil {
 			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
 		}
+		federationSpawnFailed(p.AgentID, "spawn", err.Error())
 		return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: " + err.Error()}
 	}
@@ -7181,6 +7182,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// is deliberately short and can collide with durable predecessor state;
 	// recording the boundary before the child starts lets non-preset harnesses
 	// reject such a row, while launch enrollment has the stronger conv-id proof.
+	if err := db.SetFederationSpawnLaunchLabel(p.AgentID, label); err != nil {
+		return launchFailed(err)
+	}
 	timing("launch_prepared", "label", label)
 	launchedAt := time.Now()
 	if err := SpawnDetachedTclaudeNew(spawnArgs); err != nil {
@@ -7700,6 +7704,9 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 	} else {
 		label = nextLabel()
 	}
+	if err := db.SetFederationSpawnLaunchLabel(p.AgentID, label); err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+	}
 	if err := db.InsertPendingSpawn(pendingSpawnFromParams(g, p, label)); err != nil {
 		privateRootCleanup()
 		return nil, &spawnFailure{http.StatusInternalServerError, "io",
@@ -7791,6 +7798,7 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 // indistinguishable from a spawn that silently vanished. FromConv is empty:
 // the sender is the daemon, not an agent.
 func surfaceDeferredSpawnFailure(g *db.AgentGroup, p spawnParams, label string, fail *spawnFailure) {
+	federationSpawnFailed(p.AgentID, fail.Kind, fail.Msg)
 	name := p.Name
 	if name == "" {
 		name = p.Role

@@ -992,6 +992,7 @@ func registerFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/federation/spawn-requests", handleFederationSpawnRequestList)
 	mux.HandleFunc("POST /v1/federation/spawn-requests/{id}/approve", handleFederationSpawnRequestApprove)
 	mux.HandleFunc("POST /v1/federation/spawn-requests/{id}/deny", handleFederationSpawnRequestDeny)
+	mux.HandleFunc("POST /v1/federation/spawn-requests/{id}/abandon", handleFederationSpawnRequestAbandon)
 	mux.HandleFunc("/v1/federation/config", handleFederationConfig)
 	mux.HandleFunc("/v1/federation/peers/trust", handleFederationTrust)
 	mux.HandleFunc("/v1/federation/peers/untrust", handleFederationUntrust)

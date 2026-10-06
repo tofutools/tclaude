@@ -26,6 +26,11 @@ func migrateV232toV233(d *sql.DB) error {
  peer TEXT NOT NULL,
  agent_id TEXT NOT NULL
  ) STRICT;
+ ALTER TABLE federation_spawn_requests ADD COLUMN launch_label TEXT NOT NULL DEFAULT '';
+ ALTER TABLE federation_spawn_requests ADD COLUMN launch_started_at INTEGER;
+ ALTER TABLE federation_spawn_requests ADD COLUMN automatic INTEGER NOT NULL DEFAULT 0;
+ ALTER TABLE federation_spawn_requests ADD COLUMN notice_sent INTEGER NOT NULL DEFAULT 0;
+ ALTER TABLE federation_spawn_requests ADD COLUMN result_sent INTEGER NOT NULL DEFAULT 0;
  UPDATE schema_version SET version=233;
  `)
 	if err != nil {

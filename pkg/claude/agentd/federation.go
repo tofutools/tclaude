@@ -448,12 +448,17 @@ func buildFederationCatalog(peer string) (*proto.CatalogPayload, error) {
 func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 	refresh := time.NewTicker(fedCatalogRefresh)
 	defer refresh.Stop()
+	completion := time.NewTicker(time.Second)
+	defer completion.Stop()
+	reconcileFederationSpawns()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case in := <-rt.inbound:
 			rt.handleInbound(in.from, in.sealed)
+		case <-completion.C:
+			reconcileFederationSpawns()
 		case <-refresh.C:
 			rt.broadcastCatalogs()
 			if err := db.PruneFederationSeen(time.Now()); err != nil {

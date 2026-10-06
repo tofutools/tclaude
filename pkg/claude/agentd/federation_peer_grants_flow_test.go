@@ -1,8 +1,10 @@
 package agentd_test
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -178,4 +180,134 @@ func TestFederation_AutoSpawnRateLimit(t *testing.T) {
 	workers, err := db.ListFederationAutoWorkers(p.id.ID())
 	require.NoError(t, err)
 	require.Len(t, workers, 1)
+}
+
+func TestFederation_AutoSpawnSlowLaunchFailure(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	f.HaveGroup("team")
+	t.Cleanup(agentd.SetOpenCodeAsyncSpawnResponseGraceForTest(20 * time.Millisecond))
+	release := make(chan struct{})
+	var once sync.Once
+	t.Cleanup(func() { once.Do(func() { close(release) }) })
+	blockedOpenCodeRuntime(t, release, errors.New("runtime startup failed"))
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsMembersSpawn, "scope": "group=team", "spawn_policy": map[string]any{"harness": "opencode", "max_live": 1}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	env := p.envelope(proto.KindSpawnReq, proto.Endpoint{}, proto.SpawnRequestPayload{Group: "team", Name: "slow-failure", Brief: "review changes"})
+	p.send(env)
+	require.Equal(t, proto.AckAccepted, fedAckFor(t, p, env.ID).Status)
+	// The inbound envelope is acknowledged while the launch still runs; this
+	// acknowledgement must not be confused with a completed spawn approval.
+	time.Sleep(100 * time.Millisecond)
+	for _, e := range p.envelopes(proto.KindSpawnRes) {
+		require.NotEqual(t, env.ID, e.InReplyTo, "no successful result before enrollment")
+	}
+	once.Do(func() { close(release) })
+	fedEventually(t, "slow launch failure notice", func() bool {
+		for _, m := range fedInbox(t, f) {
+			if m.Subject == "remote spawn request #1 needs approval" {
+				return true
+			}
+		}
+		return false
+	})
+	rows, err := db.ListFederationSpawnRequests(100)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, db.FedSpawnPending, rows[0].Status)
+	workers, err := db.ListFederationAutoWorkers(p.id.ID())
+	require.NoError(t, err)
+	require.Empty(t, workers)
+	require.Empty(t, f.ListGroupMembers("team"))
+}
+
+func TestFederation_AutoSpawnSlowLaunchOccupiesCap(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	f.HaveGroup("team")
+	t.Cleanup(agentd.SetOpenCodeAsyncSpawnResponseGraceForTest(20 * time.Millisecond))
+	release := make(chan struct{})
+	var once sync.Once
+	t.Cleanup(func() { once.Do(func() { close(release) }) })
+	blockedOpenCodeRuntime(t, release, nil)
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsMembersSpawn, "scope": "group=team", "spawn_policy": map[string]any{"harness": "opencode", "max_live": 1}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	for _, name := range []string{"slow-one", "slow-two"} {
+		env := p.envelope(proto.KindSpawnReq, proto.Endpoint{}, proto.SpawnRequestPayload{Group: "team", Name: name, Brief: "review changes"})
+		p.send(env)
+		require.Equal(t, proto.AckAccepted, fedAckFor(t, p, env.ID).Status)
+	}
+	time.Sleep(100 * time.Millisecond)
+	once.Do(func() { close(release) })
+	fedEventually(t, "one slow worker and cap failure", func() bool {
+		rows, _ := db.ListFederationSpawnRequests(100)
+		approved, pending := 0, 0
+		for _, row := range rows {
+			if row.Status == db.FedSpawnApproved {
+				approved++
+			}
+			if row.Status == db.FedSpawnPending {
+				pending++
+			}
+		}
+		return approved == 1 && pending == 1 && len(f.ListGroupMembers("team")) == 1
+	})
+}
+
+func TestFederation_UnconfirmedLaunchRequiresAbandon(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	f.HaveGroup("team")
+	t.Cleanup(agentd.SetOpenCodeAsyncSpawnResponseGraceForTest(20 * time.Millisecond))
+	release := make(chan struct{})
+	var once sync.Once
+	t.Cleanup(func() { once.Do(func() { close(release) }) })
+	blockedOpenCodeRuntime(t, release, errors.New("abandoned startup failed"))
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsMembersSpawn, "scope": "group=team", "spawn_policy": map[string]any{"harness": "opencode", "max_live": 1}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	env := p.envelope(proto.KindSpawnReq, proto.Endpoint{}, proto.SpawnRequestPayload{Group: "team", Name: "unconfirmed", Brief: "review changes"})
+	p.send(env)
+	require.Equal(t, proto.AckAccepted, fedAckFor(t, p, env.ID).Status)
+	var req *db.FederationSpawnRequest
+	fedEventually(t, "durable launching identity", func() bool {
+		rows, _ := db.ListFederationSpawnRequests(100)
+		if len(rows) != 1 {
+			return false
+		}
+		req = rows[0]
+		return req.Status == db.FedSpawnLaunching && req.ResultAgent != "" && req.LaunchLabel != ""
+	})
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`UPDATE federation_spawn_requests SET launch_started_at=? WHERE id=?`, time.Now().Add(-time.Minute).UnixNano(), req.ID)
+	require.NoError(t, err)
+	// Startup and periodic paths invoke this same durable reconciler.
+	agentd.ReconcileFederationSpawnsForTest()
+	persisted, err := db.GetFederationSpawnRequest(req.ID)
+	require.NoError(t, err)
+	require.Equal(t, db.FedSpawnLaunching, persisted.Status)
+	notice := false
+	for _, m := range fedInbox(t, f) {
+		if m.Subject == fmt.Sprintf("remote spawn request #%d still launching", req.ID) {
+			notice = true
+		}
+	}
+	require.True(t, notice)
+	approve := fmt.Sprintf("/v1/federation/spawn-requests/%d/approve", req.ID)
+	rec = fedHuman(t, f, http.MethodPost, approve, map[string]any{})
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	abandon := fmt.Sprintf("/v1/federation/spawn-requests/%d/abandon", req.ID)
+	rec = fedHuman(t, f, http.MethodPost, abandon, map[string]any{})
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	rec = fedHuman(t, f, http.MethodPost, abandon, map[string]any{"acknowledge_late_worker": true})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "late worker")
+	persisted, err = db.GetFederationSpawnRequest(req.ID)
+	require.NoError(t, err)
+	require.Equal(t, db.FedSpawnPending, persisted.Status)
+	workers, err := db.ListFederationAutoWorkers(p.id.ID())
+	require.NoError(t, err)
+	require.Empty(t, workers)
+	once.Do(func() { close(release) })
+	agentd.WaitForBackgroundForTest()
 }

@@ -501,9 +501,9 @@ func FederationInboundForMessage(messageID int64) (*FederationInbound, error) {
 // Federation spawn request statuses.
 const (
 	FedSpawnPending = "pending"
-	// FedSpawnApproving is held by one approve call while it spawns, so a
+	// FedSpawnLaunching is held by one approve call while it spawns, so a
 	// concurrent approve or deny cannot also act on the request.
-	FedSpawnApproving = "approving"
+	FedSpawnLaunching = "launching"
 	FedSpawnApproved  = "approved"
 	FedSpawnDenied    = "denied"
 )
@@ -511,22 +511,27 @@ const (
 // FederationSpawnRequest is a spawn request a peer sent into an exported
 // group, waiting for (or decided by) the local operator.
 type FederationSpawnRequest struct {
-	ID           int64
-	FromInstance string
-	EnvelopeID   string
-	FromAgent    string
-	FromName     string
-	GroupID      int64
-	GroupName    string
-	Name         string
-	Role         string
-	Brief        string
-	Status       string
-	ResultAgent  string
-	Reason       string
-	CreatedAt    time.Time
-	ExpiresAt    time.Time
-	DecidedAt    time.Time
+	ID              int64
+	FromInstance    string
+	EnvelopeID      string
+	FromAgent       string
+	FromName        string
+	GroupID         int64
+	GroupName       string
+	Name            string
+	Role            string
+	Brief           string
+	Status          string
+	ResultAgent     string
+	Reason          string
+	CreatedAt       time.Time
+	ExpiresAt       time.Time
+	DecidedAt       time.Time
+	LaunchLabel     string
+	LaunchStartedAt time.Time
+	Automatic       bool
+	NoticeSent      bool
+	ResultSent      bool
 }
 
 // Expired reports whether a pending request has passed its expiry.
@@ -582,16 +587,17 @@ func InsertFederationSpawnRequest(r *FederationSpawnRequest, pendingLimit int) (
 }
 
 const fedSpawnColumns = `id, from_instance, envelope_id, from_agent, from_name, group_id, group_name, name, role, brief,
-	status, result_agent, reason, created_at, expires_at, decided_at`
+	status, result_agent, reason, created_at, expires_at, decided_at, launch_label, launch_started_at, automatic, notice_sent, result_sent`
 
 func scanFedSpawn(scan func(...any) error) (*FederationSpawnRequest, error) {
 	var r FederationSpawnRequest
-	var created, expires, decided dbTimestamp
+	var created, expires, decided, started dbTimestamp
 	if err := scan(&r.ID, &r.FromInstance, &r.EnvelopeID, &r.FromAgent, &r.FromName, &r.GroupID, &r.GroupName,
-		&r.Name, &r.Role, &r.Brief, &r.Status, &r.ResultAgent, &r.Reason, &created, &expires, &decided); err != nil {
+		&r.Name, &r.Role, &r.Brief, &r.Status, &r.ResultAgent, &r.Reason, &created, &expires, &decided, &r.LaunchLabel, &started, &r.Automatic, &r.NoticeSent, &r.ResultSent); err != nil {
 		return nil, err
 	}
 	r.CreatedAt, r.ExpiresAt, r.DecidedAt = created.Time(), expires.Time(), decided.Time()
+	r.LaunchStartedAt = started.Time()
 	return &r, nil
 }
 
@@ -638,7 +644,7 @@ func DecideFederationSpawnRequest(id int64, from, status, resultAgent, reason st
 	if err != nil {
 		return false, err
 	}
-	res, err := d.Exec(`UPDATE federation_spawn_requests SET status=?, result_agent=?, reason=?, decided_at=?
+	res, err := d.Exec(`UPDATE federation_spawn_requests SET status=?, result_agent=?, reason=?, decided_at=?, notice_sent=0
 		WHERE id=? AND status=?`, status, resultAgent, reason, dbTime(time.Now()), id, from)
 	if err != nil {
 		return false, err
@@ -670,7 +676,7 @@ func ClaimFederationSpawnRequest(id int64) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	res, err := d.Exec(`UPDATE federation_spawn_requests SET status=? WHERE id=? AND status=?`, FedSpawnApproving, id, FedSpawnPending)
+	res, err := d.Exec(`UPDATE federation_spawn_requests SET status=? WHERE id=? AND status=?`, FedSpawnLaunching, id, FedSpawnPending)
 	if err != nil {
 		return false, err
 	}
@@ -685,6 +691,6 @@ func ReleaseFederationSpawnRequest(id int64) error {
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`UPDATE federation_spawn_requests SET status=? WHERE id=? AND status=?`, FedSpawnPending, id, FedSpawnApproving)
+	_, err = d.Exec(`UPDATE federation_spawn_requests SET status=? WHERE id=? AND status=?`, FedSpawnPending, id, FedSpawnLaunching)
 	return err
 }

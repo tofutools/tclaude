@@ -803,7 +803,7 @@ func requestsCmd() *cobra.Command {
 			}
 		},
 	}.ToCobra()
-	cmd.AddCommand(approveCmd(), denyCmd())
+	cmd.AddCommand(approveCmd(), denyCmd(), abandonCmd())
 	return cmd
 }
 
@@ -831,7 +831,7 @@ func approveCmd() *cobra.Command {
 			if rc := post(os.Stderr, fmt.Sprintf("/v1/federation/spawn-requests/%d/approve", p.ID), body, &out); rc != 0 {
 				os.Exit(rc)
 			}
-			fmt.Printf("spawned %s (%s) into %s; the requester is being told\n", out.Label, out.AgentID, out.Group)
+			fmt.Printf("launch started for %s (%s) into %s; the requester is told after enrollment\n", out.Label, out.AgentID, out.Group)
 		},
 	}.ToCobra()
 }
@@ -853,4 +853,19 @@ func denyCmd() *cobra.Command {
 			fmt.Printf("denied request #%d\n", p.ID)
 		},
 	}.ToCobra()
+}
+
+type abandonParams struct {
+	ID          int64 `pos:"true" help:"Launching request id"`
+	Acknowledge bool  `long:"acknowledge-late-worker" optional:"true" help:"Acknowledge that a late worker may still appear after abandonment"`
+}
+
+func abandonCmd() *cobra.Command {
+	return boa.CmdT[abandonParams]{Use: "abandon", Short: "Return an unconfirmed launch to pending; WARNING a late worker may still appear", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *abandonParams, _ *cobra.Command, _ []string) {
+		fmt.Fprintln(os.Stderr, "WARNING: abandoning a launch permits another approval; a late worker may still appear")
+		if rc := post(os.Stderr, fmt.Sprintf("/v1/federation/spawn-requests/%d/abandon", p.ID), map[string]any{"acknowledge_late_worker": p.Acknowledge}, nil); rc != 0 {
+			os.Exit(rc)
+		}
+		fmt.Printf("request #%d returned to pending\n", p.ID)
+	}}.ToCobra()
 }
