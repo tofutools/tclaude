@@ -316,6 +316,7 @@ var auditRoutes = []auditRoute{
 	// records mutating methods only). The handlers add the safe detail after
 	// the fact via setAuditDetail: remote, ref, and exit code. No describer
 	// reads the body, so a PR title or comment never enters the trail.
+	{method: http.MethodPost, segs: []string{"http", "request"}, verb: "http.request", pathOnly: true},
 	{method: http.MethodPost, segs: []string{"git", "{verb}"}, describe: describeGitProxy},
 	{method: http.MethodPost, segs: []string{"github", "{resource}", "{action}"}, describe: describeGitHubProxy},
 	// Two shapes, because `whoami` has no resource to name. The one-segment

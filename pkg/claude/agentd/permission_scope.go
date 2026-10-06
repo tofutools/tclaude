@@ -21,6 +21,7 @@ const permissionScopeMaxJSONBytes = 262144
 type ScopeDim string
 
 const (
+	ScopeDimHTTPProxy       ScopeDim = "http_proxy"
 	ScopeDimGroup           ScopeDim = "group"
 	ScopeDimSpawnProfile    ScopeDim = "spawn_profile"
 	ScopeDimSandboxProfile  ScopeDim = "sandbox_profile"
@@ -93,6 +94,7 @@ type permissionScopeDimension struct {
 // proxy's slash-segmented pattern language, and linear_team the Linear proxy's
 // whole-key case-insensitive one.
 var permissionScopeDimensions = map[ScopeDim]permissionScopeDimension{
+	ScopeDimHTTPProxy:       {},
 	ScopeDimGroup:           {},
 	ScopeDimSpawnProfile:    {},
 	ScopeDimSandboxProfile:  {},

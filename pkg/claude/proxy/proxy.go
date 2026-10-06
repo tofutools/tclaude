@@ -57,7 +57,7 @@ func Configured() bool {
 	// through the /v1/info projection below.
 	cfg, err := config.Load()
 	if err == nil &&
-		(cfg.GitProxyEnabled() || cfg.LinearProxyConfigured() || cfg.AWBProxyEnabled()) {
+		(cfg.GitProxyEnabled() || cfg.LinearProxyConfigured() || cfg.AWBProxyEnabled() || cfg.HTTPProxyConfigured()) {
 		return true
 	}
 	// Do not turn every ordinary host-side command construction into a daemon
@@ -99,16 +99,16 @@ func Cmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:   "proxy",
 		Short: "Operations the daemon performs for you with credentials you do not hold",
-		Long: "Perform Git-remote, GitHub, Linear and AWB operations WITHOUT holding the credentials yourself.\n\n" +
+		Long: "Perform Git-remote, GitHub, Linear, AWB and named HTTP operations WITHOUT holding the credentials yourself.\n\n" +
 			"`tclaude agentd` runs git and gh on the host, where the SSH key and GitHub token live, and " +
 			"calls Linear's and AWB's APIs with the operator's credentials. Your sandbox can deny ~/.ssh " +
 			"and ~/.config/gh outright, and hold no tracker credentials at all, and you can still fetch, " +
 			"push, open a pull request, and update your ticket.\n\n" +
 			"You describe the operation (\"push my branch\"); the daemon builds the command. There is no " +
-			"passthrough flag, no way to influence the argv it runs, and no raw-query escape hatch.\n\n" +
+			"passthrough flag, no way to influence the argv it runs, and no raw-query escape hatch for semantic proxies. Named HTTP proxies allow arbitrary requests within their configured base URL.\n\n" +
 			"Every verb needs a permission slug the operator grants: `proxy.git.read`, `proxy.git.push`, " +
 			"`proxy.github.read`, `proxy.github.write`, `proxy.github.merge`, `proxy.linear.read`, " +
-			"`proxy.linear.write`, `proxy.awb.read`, `proxy.awb.write`. None is granted by default — " +
+			"`proxy.linear.write`, `proxy.awb.read`, `proxy.awb.write`, `proxy.http`. None is granted by default — " +
 			"ask the operator, or pass --ask-human for a one-off approval.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
@@ -116,6 +116,7 @@ func Cmd() *cobra.Command {
 			githubCmd(),
 			linearCmd(),
 			awbCmd(),
+			httpCmd(),
 		},
 	}.ToCobra()
 }

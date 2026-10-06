@@ -2035,6 +2035,10 @@ type AgentConfig struct {
 	// sandboxed agent, so it must never come up enabled on an operator who has
 	// not configured it. See AWBProxyConfig.
 	AWBProxy *AWBProxyConfig `json:"awb_proxy,omitempty"`
+
+	// HTTPProxies are named credential-bearing HTTP services, available only
+	// through proxy.http grants (optionally scoped by http_proxy name).
+	HTTPProxies map[string]HTTPProxyConfig `json:"http_proxies,omitempty"`
 }
 
 // AWBProxyConfig is the operator's policy for the daemon-mediated AWB proxy —
@@ -3878,4 +3882,18 @@ func (c *NotificationConfig) HumanMessagesIntent() bool {
 		return true
 	}
 	return c.HumanMessages == nil || *c.HumanMessages
+}
+
+// HTTPProxyConfig pins a generic proxy to an operator-controlled base URL.
+// HeaderValueFile is preferred for secrets; when set it overrides HeaderValue.
+type HTTPProxyConfig struct {
+	URL             string `json:"url"`
+	Header          string `json:"header"`
+	HeaderValue     string `json:"header_value,omitempty"`
+	HeaderValueFile string `json:"header_value_file,omitempty"`
+}
+
+// HTTPProxyConfigured reports whether any named HTTP instance is configured.
+func (c *Config) HTTPProxyConfigured() bool {
+	return c != nil && c.Agent != nil && len(c.Agent.HTTPProxies) > 0
 }

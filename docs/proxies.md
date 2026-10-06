@@ -6,16 +6,18 @@ issue tracker. The credential proxies give those workflows back without
 putting a secret inside the wall: the agent describes a *semantic* operation
 ("push my branch", "comment on this PR"), and the `agentd` daemon builds the
 actual git invocation or API call on the host, where the credentials live.
-There is no passthrough flag and no raw-query escape hatch; every gate is
-enforced daemon-side.
+Semantic proxies have no passthrough flag or raw-query escape hatch. A named
+HTTP proxy additionally supports arbitrary requests within an operator-pinned
+base URL. Every gate is enforced daemon-side.
 
-Four proxies exist, as subcommands of a top-level command:
+Five proxy families exist, as subcommands of a top-level command:
 
 ```bash
 tclaude proxy git     # fetch, pull, push through the daemon
 tclaude proxy github  # PRs, issues, and Actions runs (alias: gh)
 tclaude proxy linear  # Linear issues, bounded by a team allow-list
 tclaude proxy awb     # AWB issues, bounded by a workspace allow-list
+tclaude proxy http    # HTTP(S) requests through a named service instance
 ```
 
 None of their permissions are granted by default, and none are implied by
@@ -33,6 +35,7 @@ agents cannot use. The command registers when any proxy family is configured:
 - `agent.git_proxy.allowed_remotes` is non-empty (Git and GitHub), or
 - `agent.linear_proxy` names an allow-list, a key file or a workspace route, or
 - `agent.awb_proxy.url` is set, or
+- `agent.http_proxies` has at least one named instance, or
 - the caller is a managed agent and a capability probe of agentd's
   `GET /v1/info` reports proxy support (daemons predating that projection keep
   the command visible).
@@ -512,3 +515,66 @@ agents.
   and `--ask-human`.
 - [Network filtering](network-filtering.md) — reaching hosts directly when a
   proxy is the wrong shape.
+
+## Named HTTP(S) proxies
+
+Use a generic proxy for services without a semantic integration. Configure
+instances in the operator's private config; the daemon reads the credential,
+so the agent does not need access to its file:
+
+```json
+{
+  "agent": {
+    "http_proxies": {
+      "inventory": {
+        "url": "https://inventory.example/api/v1",
+        "header": "Authorization",
+        "header_value_file": "~/.config/inventory/authorization"
+      }
+    }
+  }
+}
+```
+
+The file contains the complete header value, such as `Bearer secret-token`.
+Leading and trailing whitespace is trimmed. `header_value` can instead set the
+value directly in private config; a file takes precedence when both are set.
+HTTP and HTTPS base URLs are supported, without URL credentials, queries or
+fragments. Prefer HTTPS for remote services. Separate instances can use
+separate services, API prefixes and credentials.
+
+Grant access to one instance by its exact, case-sensitive name:
+
+```bash
+tclaude agent permissions grant worker proxy.http --scope http_proxy=inventory
+tclaude proxy http inventory 'items?limit=10'
+tclaude proxy http inventory items -X POST -H 'Content-Type: application/json' --body-file item.json
+tclaude proxy http inventory items --json
+```
+
+An unscoped `proxy.http` grant permits all configured instances. There are no
+method or endpoint permissions: this grants full access within the service's
+base URL, including writes. It is neither default-granted nor implied by group
+ownership. `--ask-human 60s` requests one-shot approval through the ordinary
+permission gate.
+
+Paths are appended to the configured base path; a leading slash has the same
+meaning as a relative path. Absolute URLs, traversal segments, encoded
+separators and ambiguous double-encoded paths are refused. The daemon adds the
+configured header after caller headers, so callers cannot replace it. Host and
+transport headers are reserved. CONNECT and TRACE are refused. Redirects are
+returned without following them, and ambient HTTP proxy settings are ignored.
+
+By default the CLI prints the raw response body. `--json` prints `status`,
+`headers` and a base64 `body`, preserving binary data. HTTP 4xx/5xx responses
+retain their body and produce a nonzero CLI exit status. `--body-file -` reads
+stdin. Request and response bodies are limited to 4 MiB; credential files are
+limited to 16 KiB. Calls have a 60-second daemon deadline and are never
+retried automatically. A timeout or unreadable/oversized response can occur
+after an upstream write succeeded; check the service before retrying.
+
+The daemon endpoint is `POST /v1/http/request`, with `name`, `method`, `path`,
+optional `headers` (a string map), and optional `body` (base64). Its successful
+transport response wraps the upstream status, headers and base64 body; an
+upstream error status still returns this wrapper. Calls are audited as proxy
+operations with the caller's instance-name permission scope.

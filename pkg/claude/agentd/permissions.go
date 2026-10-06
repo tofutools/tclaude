@@ -654,6 +654,8 @@ var permissionRegistry = []PermSlug{
 			"would make honouring it here a no-op for most of the merges a grant is given for. Not default-granted and " +
 			"not owner-implied.",
 	},
+	{Slug: PermHTTP, Description: "Send HTTP requests through a named daemon proxy with its configured credential header. Grants full service access; scope with http_proxy=name.", ScopeDims: []ScopeDim{ScopeDimHTTPProxy}},
+
 	{
 		Slug:      PermLinearRead,
 		ScopeDims: []ScopeDim{ScopeDimLinearTeam},
@@ -712,6 +714,7 @@ type proxyVisibility struct {
 	git    bool
 	linear bool
 	awb    bool
+	http   bool
 }
 
 // visiblePermissionRegistry returns the permission catalog exposed to humans
@@ -742,6 +745,8 @@ func proxyPermissionVisible(slug string, vis proxyVisibility) bool {
 		return vis.linear
 	case PermAWBRead, PermAWBWrite:
 		return vis.awb
+	case PermHTTP:
+		return vis.http
 	default:
 		return true
 	}
@@ -750,7 +755,7 @@ func proxyPermissionVisible(slug string, vis proxyVisibility) bool {
 func isSemanticProxyPermission(slug string) bool {
 	switch slug {
 	case PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge,
-		PermLinearRead, PermLinearWrite, PermAWBRead, PermAWBWrite:
+		PermLinearRead, PermLinearWrite, PermAWBRead, PermAWBWrite, PermHTTP:
 		return true
 	default:
 		return false

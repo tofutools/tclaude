@@ -473,6 +473,7 @@ const (
 	PermGitHubRead  = "proxy.github.read"
 	PermGitHubWrite = "proxy.github.write"
 	PermGitHubMerge = "proxy.github.merge"
+	PermHTTP        = "proxy.http"
 	PermLinearRead  = "proxy.linear.read"
 	PermLinearWrite = "proxy.linear.write"
 	PermAWBRead     = "proxy.awb.read"

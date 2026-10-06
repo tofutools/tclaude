@@ -17,6 +17,7 @@ import (
 func TestActionContextCoversEveryScopeDimension(t *testing.T) {
 	full := ActionContext{
 		Group:           "g",
+		HTTPProxy:       "service",
 		TargetAgent:     "a",
 		SpawnProfile:    "p",
 		SandboxProfile:  "s",
@@ -354,6 +355,7 @@ func TestContextFreeResolutionFailsClosedOnScopedAllow(t *testing.T) {
 // gap it closes is the one that shipped routes.publish/routes.consume with a
 // bespoke, scope-blind gate for the better part of a phase.
 var scopedSlugEnforcementPaths = map[string]string{
+	PermHTTP:                              "requirePermission with HTTPProxy instance name",
 	PermAgentSpawn:                        "requireSpawnPermission — evaluates group, spawn_profile, and sandbox_profile",
 	PermGroupsMembersSpawn:                "requireSpawnPermission — evaluates group, spawn_profile, and sandbox_profile",
 	PermGroupsMembersReincarnate:          "requireCrossAgentPermission — checks every current active group",

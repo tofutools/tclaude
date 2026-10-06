@@ -181,7 +181,7 @@ func gitProxyRoutesEnabled(r *http.Request) bool {
 	// command those slugs authorize, or an operator can grant a capability that
 	// has no way to be exercised.
 	vis := proxyVisibilityForRequest(r)
-	return vis.git || vis.linear || vis.awb
+	return vis.git || vis.linear || vis.awb || vis.http
 }
 
 // proxyVisibilityForRequest answers, per proxy family, whether this caller has
@@ -198,7 +198,7 @@ func gitProxyRoutesEnabled(r *http.Request) bool {
 // legitimately be empty.
 func proxyVisibilityForRequest(r *http.Request) proxyVisibility {
 	vis := configuredProxyVisibility()
-	if vis.git && vis.linear && vis.awb {
+	if vis.git && vis.linear && vis.awb && vis.http {
 		return vis
 	}
 	p := peerFromContext(r.Context())
@@ -253,6 +253,7 @@ func configuredProxyVisibility() proxyVisibility {
 		// proxyVisibilityForRequest adds, for the scope-only posture.
 		linear: cfg.LinearProxyConfigured() || os.Getenv("LINEAR_API_KEY") != "",
 		awb:    cfg.AWBProxyEnabled(),
+		http:   cfg.HTTPProxyConfigured(),
 	}
 }
 
