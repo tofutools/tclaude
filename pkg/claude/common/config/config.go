@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -3898,4 +3899,23 @@ type HTTPProxyConfig struct {
 // HTTPProxyConfigured reports whether any named HTTP instance is configured.
 func (c *Config) HTTPProxyConfigured() bool {
 	return c != nil && c.Agent != nil && len(c.Agent.HTTPProxies) > 0
+}
+
+// IsHTTPProxyGatewayURL recognizes private loopback capability URLs so a
+// renamed or removed custom variable cannot leak into another launch.
+func IsHTTPProxyGatewayURL(value string) bool {
+	u, err := url.Parse(value)
+	if err != nil || u.Scheme != "http" || u.Hostname() != "127.0.0.1" || u.Port() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+	path := strings.Trim(u.Path, "/")
+	if len(path) != 64 {
+		return false
+	}
+	for _, c := range path {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }

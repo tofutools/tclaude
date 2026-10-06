@@ -200,6 +200,9 @@ func newHTTPProxyBridge(client *http.Client, sessionID string, names []string, a
 		}
 		req.Header = r.Header.Clone()
 		req.Header.Del(HTTPProxyRuntimeClaimHeader)
+		req.Header.Del("X-Tclaude-Human-Token")
+		req.Header.Del("X-Tclaude-Route-Helper-Credential")
+		req.Header.Del(agentipc.AgentHintHeader)
 		req.Header.Set(agentipc.SessionClaimHeader, sessionID)
 		// Never disclose the local capability through a browser Referer.
 		req.Header.Del("Referer")
@@ -257,8 +260,8 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 	}
 	environ := []string{}
 	for _, pair := range os.Environ() {
-		name, _, _ := strings.Cut(pair, "=")
-		if !httpProxyReservedEnvironment(name) {
+		name, value, _ := strings.Cut(pair, "=")
+		if !httpProxyReservedEnvironment(name) && !config.IsHTTPProxyGatewayURL(value) {
 			environ = append(environ, pair)
 		}
 	}
@@ -416,7 +419,7 @@ func (t *httpProxyRuntimeTransport) CloseIdleConnections() {
 func HTTPProxySpawnCommand(sessionID string, h *harness.Harness, spec harness.SpawnSpec) string {
 	filteredEnvironment := map[string]string{}
 	for name, value := range spec.ShellEnvironment {
-		if !httpProxyReservedEnvironment(name) {
+		if !httpProxyReservedEnvironment(name) && !config.IsHTTPProxyGatewayURL(value) {
 			filteredEnvironment[name] = value
 		}
 	}

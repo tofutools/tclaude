@@ -305,7 +305,7 @@ func BuildEnvExports(additional map[string]string) string {
 		key := parts[0]
 		value := parts[1]
 
-		if skipVars[key] || strings.HasPrefix(key, "TCLAUDE_HTTP_PROXY_") {
+		if skipVars[key] || strings.HasPrefix(key, "TCLAUDE_HTTP_PROXY_") || config.IsHTTPProxyGatewayURL(value) {
 			continue
 		}
 
@@ -319,7 +319,7 @@ func BuildEnvExports(additional map[string]string) string {
 
 	// Add additional/override variables
 	for key, value := range additional {
-		if skipVars[key] || strings.HasPrefix(key, "TCLAUDE_HTTP_PROXY_") {
+		if skipVars[key] || strings.HasPrefix(key, "TCLAUDE_HTTP_PROXY_") || config.IsHTTPProxyGatewayURL(value) {
 			continue
 		}
 		exports = append(exports, "export "+key+"="+ShellQuoteArg(value))

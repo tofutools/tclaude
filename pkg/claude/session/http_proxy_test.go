@@ -128,6 +128,7 @@ func TestHTTPProxyBridgeRejectsForeignCapabilitiesAndPreservesEscaping(t *testin
 		assert.Equal(t, "launch-row", r.Header.Get(agentipc.SessionClaimHeader))
 		assert.Empty(t, r.Header.Get("Referer"))
 		assert.Empty(t, r.Header.Get(HTTPProxyRuntimeClaimHeader))
+		assert.Empty(t, r.Header.Get("X-Tclaude-Human-Token"))
 		return &http.Response{StatusCode: 400, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("invalid path"))}, nil
 	})}
 	handler, entries, err := newHTTPProxyBridge(client, "launch-row", []string{"inventory"})
@@ -139,6 +140,7 @@ func TestHTTPProxyBridgeRejectsForeignCapabilitiesAndPreservesEscaping(t *testin
 	req.Header.Set("Referer", "http://localhost/secret/")
 	req.Header.Set(agentipc.SessionClaimHeader, "foreign")
 	req.Header.Set(HTTPProxyRuntimeClaimHeader, "foreign-runtime")
+	req.Header.Set("X-Tclaude-Human-Token", "foreign-human")
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	assert.Equal(t, 400, rec.Code)

@@ -256,14 +256,16 @@ func withIdentity(h http.Handler) http.Handler {
 				}
 				if httpGatewayRoute && runtimeClaim != "" {
 					row, conv := httpProxyRuntimeCaller(pid, runtimeClaim)
-					p.ConvID, p.HasClaudeAncestor = conv, row != nil
+					// A failed gateway claim must not fall back to operator-token authority.
+					p.ConvID, p.HasClaudeAncestor = conv, true
 					if row != nil {
 						rememberHTTPProxyProofSubject(r, proofClaim, row.ID)
 						r = r.WithContext(context.WithValue(r.Context(), httpProxyLaunchRowKey{}, row))
 					}
 				} else if claimedID != "" && httpGatewayRoute {
 					proof := proveLaunchPaneCallerIn(newBrokerProcTable(), pid, claimedID, false)
-					p.ConvID, p.HasClaudeAncestor = "", proof.row != nil
+					// The claim is agent-shaped even when its kernel proof fails.
+					p.ConvID, p.HasClaudeAncestor = "", true
 					if proof.row != nil {
 						rememberHTTPProxyProofSubject(r, proofClaim, proof.row.ID)
 						p.ConvID = proof.row.ConvID
