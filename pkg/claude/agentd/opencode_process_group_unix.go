@@ -20,8 +20,8 @@ func killOpenCodeProcessGroup(cmd *exec.Cmd) {
 	if cmd.Process == nil || cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setpgid {
 		return
 	}
-	// Never signal the daemon's group or a group whose leader already exited.
-	if group, err := syscall.Getpgid(cmd.Process.Pid); err == nil && group == cmd.Process.Pid {
-		_ = syscall.Kill(-group, syscall.SIGKILL)
-	}
+	// Setpgid assigned this launch its own group with the recorded leader PID.
+	// Descendants retain that group after the leader exits, so Getpgid(leader)
+	// cannot be used here. ESRCH simply means the group is already empty.
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 }

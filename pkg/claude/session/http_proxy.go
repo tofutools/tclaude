@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -38,20 +40,23 @@ func WrapHTTPProxyCommand(sessionID, command string) string {
 
 // WrapHTTPProxyRuntimeCommand wraps a managed tool-executing server rather
 // than its attach-only pane. Its daemon-recorded process root is the authority.
-func WrapHTTPProxyRuntimeCommand(sessionID, command string) string {
-	return wrapHTTPProxyCommand(sessionID, command, true)
+func WrapHTTPProxyRuntimeCommand(sessionID, command string, cliPath ...string) string {
+	return wrapHTTPProxyCommand(sessionID, command, true, cliPath...)
 }
 
-func wrapHTTPProxyCommand(sessionID, command string, runtime bool) string {
+func wrapHTTPProxyCommand(sessionID, command string, runtime bool, cliPath ...string) string {
 	cfg, err := config.Load()
 	if err != nil || !cfg.HTTPProxyConfigured() {
 		return command
 	}
-	return renderHTTPProxyCommand(sessionID, command, runtime, nil)
+	return renderHTTPProxyCommand(sessionID, command, runtime, nil, cliPath...)
 }
 
-func renderHTTPProxyCommand(sessionID, command string, runtime bool, markerOffsets []int) string {
+func renderHTTPProxyCommand(sessionID, command string, runtime bool, markerOffsets []int, cliPath ...string) string {
 	executable := clcommon.SelfTclaudePath()
+	if len(cliPath) > 0 && cliPath[0] != "" {
+		executable = cliPath[0]
+	}
 	runtimeArg := ""
 	if runtime {
 		runtimeArg = " --runtime"
@@ -69,7 +74,7 @@ func renderHTTPProxyCommand(sessionID, command string, runtime bool, markerOffse
 	for lines[delimiter] {
 		delimiter += "_"
 	}
-	return httpProxyCLICommand(executable, tclaudeLayerConstructedRootTclaudePath) + " session http-proxy-exec" + runtimeArg + " --session-id " + clcommon.ShellQuoteArg(sessionID) + " --command-fd 99 99<<" + clcommon.ShellQuoteArg(delimiter) + "\n" + command + "\n" + delimiter + "\ntclaude_http_proxy_exit=$?; (exit \"$tclaude_http_proxy_exit\")"
+	return clcommon.ShellQuoteArg(executable) + " session http-proxy-exec" + runtimeArg + " --session-id " + clcommon.ShellQuoteArg(sessionID) + " --command-fd 99 99<<" + clcommon.ShellQuoteArg(delimiter) + "\n" + command + "\n" + delimiter + "\ntclaude_http_proxy_exit=$?; (exit \"$tclaude_http_proxy_exit\")"
 }
 
 func httpProxyExecCmd() *cobra.Command {
@@ -416,7 +421,7 @@ func (t *httpProxyRuntimeTransport) CloseIdleConnections() {
 // HTTPProxySpawnCommand builds the ordinary harness launch plus its optional
 // gateway. Codex receives a compile-time argument marker at a known offset;
 // only that marker is replaced at runtime, never user prompt or command text.
-func HTTPProxySpawnCommand(sessionID string, h *harness.Harness, spec harness.SpawnSpec) string {
+func HTTPProxySpawnCommand(sessionID string, h *harness.Harness, spec harness.SpawnSpec, cliPath ...string) string {
 	filteredEnvironment := map[string]string{}
 	for name, value := range spec.ShellEnvironment {
 		if !httpProxyReservedEnvironment(name) && !config.IsHTTPProxyGatewayURL(value) {
@@ -429,7 +434,7 @@ func HTTPProxySpawnCommand(sessionID string, h *harness.Harness, spec harness.Sp
 		return h.Spawn.BuildCommand(spec)
 	}
 	if h.Name != harness.CodexName {
-		return renderHTTPProxyCommand(sessionID, h.Spawn.BuildCommand(spec), false, nil)
+		return renderHTTPProxyCommand(sessionID, h.Spawn.BuildCommand(spec), false, nil, cliPath...)
 	}
 	original := spec
 	spec.RuntimeHTTPProxyEnvironment = true
@@ -454,7 +459,7 @@ func HTTPProxySpawnCommand(sessionID string, h *harness.Harness, spec harness.Sp
 		offsets = append(offsets, offset)
 		start = offset + len(marker)
 	}
-	return renderHTTPProxyCommand(sessionID, command, false, offsets)
+	return renderHTTPProxyCommand(sessionID, command, false, offsets, cliPath...)
 }
 
 func httpProxyReservedEnvironment(name string) bool {
@@ -472,8 +477,23 @@ func httpProxyReservedEnvironment(name string) bool {
 	return false
 }
 
-// httpProxyCLICommand resolves the CLI inside the final namespace. A
-// constructed root projects the host CLI at a fixed guest-only path.
-func httpProxyCLICommand(hostPath, projectedPath string) string {
-	return `"$(if [ -x ` + clcommon.ShellQuoteArg(hostPath) + ` ]; then printf %s ` + clcommon.ShellQuoteArg(hostPath) + `; else printf %s ` + clcommon.ShellQuoteArg(projectedPath) + `; fi)"`
+// HTTPProxyCLIForLayerSpec selects the CLI from the same mount plan the
+// sandbox renderer uses, rather than guessing from files visible at launch.
+func HTTPProxyCLIForLayerSpec(spec *TclaudeLayerLaunchSpec) (string, error) {
+	cfg, loadErr := config.Load()
+	if spec == nil || runtime.GOOS != "linux" || loadErr != nil || !cfg.HTTPProxyConfigured() {
+		return clcommon.SelfTclaudePath(), nil
+	}
+	_, _, _, _, _, plan, err := tclaudeLayerSpecRenderInput(*spec)
+	if err != nil {
+		return "", err
+	}
+	return httpProxyCLIForPlan(plan), nil
+}
+
+func httpProxyCLIForPlan(plan sandboxpolicy.MountPlan) string {
+	if tclaudeLayerPlanUsesConstructedRoot(plan) {
+		return tclaudeLayerConstructedRootTclaudePath
+	}
+	return clcommon.SelfTclaudePath()
 }

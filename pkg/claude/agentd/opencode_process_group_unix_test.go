@@ -15,19 +15,33 @@ import (
 )
 
 func TestStopOpenCodeProcessTerminatesWorkloadGroup(t *testing.T) {
+	for _, trap := range []string{"trap '' INT", "trap 'exit 0' INT"} {
+		t.Run(trap, func(t *testing.T) { testStopOpenCodeWorkloadGroup(t, trap) })
+	}
+}
+
+func testStopOpenCodeWorkloadGroup(t *testing.T, trap string) {
 	reader, writer, err := os.Pipe()
 	require.NoError(t, err)
 	defer reader.Close()
 	defer writer.Close()
-	// Both the bridge-shaped shell and its workload ignore interrupt, forcing
-	// the production timeout path. The inherited fd proves the workload exits.
-	cmd := exec.Command(clcommon.BootstrapShellPath(), "-c", "trap '' INT; sleep 60 & printf ready >&3; wait")
+	// Exercise both a stuck bridge and a prompt exit that reparents the workload.
+	// The inherited descriptor proves the background workload exits too.
+	cmd := exec.Command(clcommon.BootstrapShellPath(), "-c", trap+"; sleep 60 & printf ready >&3; wait")
 	configureOpenCodeProcessGroup(cmd)
 	cmd.ExtraFiles = []*os.File{writer}
 	require.NoError(t, cmd.Start())
 	process := &openCodeProcess{cmd: cmd, done: make(chan error, 1)}
-	go func() { process.finish(cmd.Wait()) }()
-	t.Cleanup(func() { killOpenCodeProcessGroup(cmd); _ = cmd.Process.Kill() })
+	go func() { err := cmd.Wait(); process.killWorkloadGroup(); process.finish(err) }()
+	t.Cleanup(func() {
+		select {
+		case <-process.done:
+			return
+		default:
+			killOpenCodeProcessGroup(cmd)
+			_ = cmd.Process.Kill()
+		}
+	})
 	require.NoError(t, writer.Close())
 	ready := make([]byte, 5)
 	_, err = io.ReadFull(reader, ready)

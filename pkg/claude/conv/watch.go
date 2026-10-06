@@ -2915,7 +2915,14 @@ func resumeLaunchCmdWithStackedProof(
 	if err != nil {
 		return "", "", nil, fmt.Errorf("prepare %s host-control sandbox: %w", h.DisplayName, err)
 	}
-	cmd := session.HTTPProxySpawnCommand(sessionID, h, spec)
+	gatewayCLIPath := clcommon.SelfTclaudePath()
+	if outerLayer {
+		gatewayCLIPath, err = session.HTTPProxyCLIForLayerSpec(&layerSpec)
+		if err != nil {
+			return "", "", nil, fmt.Errorf("resolve HTTP proxy resume CLI: %w", err)
+		}
+	}
+	cmd := session.HTTPProxySpawnCommand(sessionID, h, spec, gatewayCLIPath)
 	if cleanupPath != "" {
 		cmd = resumeCommandWithFileCleanup(cmd, cleanupPath)
 	}
