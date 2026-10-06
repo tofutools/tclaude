@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/routebroker"
 )
@@ -30,6 +31,18 @@ func newGroupRouteBroker() *routebroker.Broker {
 
 // GroupRouteBroker returns the in-process broker supervised by agentd.
 func GroupRouteBroker() *routebroker.Broker { return groupRouteBroker }
+
+// routeFlowWindow is the flow-control receive window agentd's route
+// endpoints and helpers use, or 0 when the operator disabled flow control.
+// It is read per channel attach, so a config change applies to channels
+// attached after it.
+func routeFlowWindow() int {
+	cfg, err := config.Load()
+	if err != nil {
+		return (*config.Config)(nil).RouteFlowWindow()
+	}
+	return cfg.RouteFlowWindow()
+}
 
 // NewGroupRouteBrokerForTest returns an isolated broker wired to the same M1
 // database authority as the daemon-owned instance. It keeps lifecycle tests

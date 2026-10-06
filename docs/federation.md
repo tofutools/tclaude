@@ -358,6 +358,13 @@ for a clean end. The hub limits each instance to 16 concurrent streams and
 1 MiB/s by default (`tclaude-hub serve --max-streams`,
 `--stream-bytes-per-second`).
 
+Remote route connections are [flow-controlled](group-routes.md#flow-control)
+end to end: `agentd` reads a hub stream only as fast as the local reader
+takes the bytes, so a slow reader on either instance holds back the sender
+on the other, through the hub, instead of overflowing a buffer. A stream
+whose receiver accepts nothing for 90 seconds is closed; adjust that with
+`tclaude-hub serve --stream-idle`.
+
 Authority is checked on both sides, continuously. Within a few seconds of
 any of these changes, open connections close and the consumer's lease ends:
 
@@ -417,10 +424,11 @@ is by inspecting the caller's process tree.
 - Remote group mail carries no attachments, and remote cc recipients do
   not see each other.
 - Remote routes relay through the hub, so their throughput is bounded by
-  the hub's stream limits. There is no end-to-end flow control yet: about
-  4 MiB is buffered per connection, and a sender that outruns the hub's
-  bandwidth for longer resets its connection. Remote routes suit
-  interactive traffic and moderate transfers, not bulk copies.
+  the hub's stream limits, and each connection moves at most one window
+  (`routes.window_kib`) per round trip through the hub. Connections whose
+  local end runs without flow control (an older helper, or the macOS
+  adapter) fall back to about 4 MiB of buffering, and a sender that
+  outruns the hub's bandwidth for longer resets its connection.
 - Each remote route connection costs one sealed control frame from each
   instance against the hub's per-instance frame budget (120 a minute by
   default, shared with mail). A peer accepts at most 240 opens a minute.

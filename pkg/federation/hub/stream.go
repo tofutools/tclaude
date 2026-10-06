@@ -36,6 +36,10 @@ type streamSession struct {
 	// side's forwarder holds binary data until then, so a dialer never
 	// reads data where it expects the ready frame.
 	ready chan struct{}
+	// idle bounds one forwarded write: a receiver that stops reading for
+	// this long (its route flow control holding it, or a dead peer) ends
+	// the stream, just as silence on the read side does.
+	idle time.Duration
 }
 
 func (s *streamSession) writeJSON(f *proto.Frame) error {
@@ -48,7 +52,7 @@ func (s *streamSession) writeJSON(f *proto.Frame) error {
 func (s *streamSession) writeBinary(p []byte) error {
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
-	_ = s.ws.SetWriteDeadline(time.Now().Add(30 * time.Second))
+	_ = s.ws.SetWriteDeadline(time.Now().Add(s.idle))
 	return s.ws.WriteMessage(websocket.BinaryMessage, p)
 }
 
@@ -171,6 +175,8 @@ func (h *Hub) forwardStream(src, dst *streamSession) {
 		if err := dst.writeBinary(p); err != nil {
 			return
 		}
+		// A write the receiver held up is not idleness on this side.
+		_ = src.ws.SetReadDeadline(time.Now().Add(h.cfg.StreamIdle))
 	}
 }
 
@@ -216,7 +222,7 @@ func (h *Hub) streamHandshake(ws *websocket.Conn) (*streamSession, error) {
 	if len(st.sessions[id]) >= h.cfg.MaxStreams {
 		return refuse(proto.CodeStreamLimit, "too many concurrent streams for this instance")
 	}
-	s := &streamSession{ws: ws, id: id, peer: hello.Peer, sid: hello.Stream, done: make(chan struct{}), paired: make(chan *streamSession, 1), ready: make(chan struct{})}
+	s := &streamSession{ws: ws, id: id, peer: hello.Peer, sid: hello.Stream, done: make(chan struct{}), paired: make(chan *streamSession, 1), ready: make(chan struct{}), idle: h.cfg.StreamIdle}
 	if st.sessions[id] == nil {
 		st.sessions[id] = map[*streamSession]bool{}
 	}

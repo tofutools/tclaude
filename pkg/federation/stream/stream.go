@@ -85,8 +85,11 @@ const (
 	recData  byte = 0
 	recFin   byte = 1
 	recReset byte = 2
-	// writeTimeout bounds one record's write through the relay.
-	writeTimeout = 30 * time.Second
+	// writeTimeout bounds one record's write through the relay. A write
+	// blocks while the far end's route flow control holds the stream, and
+	// the hub's own stream-idle bound decides when that is too long; this
+	// only catches a hub that stopped reading altogether.
+	writeTimeout = 10 * time.Minute
 	// maxChunk leaves room for the record header and AEAD tag.
 	maxChunk = proto.MaxStreamMessage - 64
 )

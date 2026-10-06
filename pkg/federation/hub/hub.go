@@ -39,7 +39,8 @@ type Config struct {
 	MaxStreams           int
 	StreamBytesPerSecond int
 	// StreamWait bounds how long a stream dialer waits for its peer, and
-	// StreamIdle how long a stream may go without traffic or pongs.
+	// StreamIdle how long a stream may go without traffic or pongs, or
+	// with a receiver that does not accept what is forwarded to it.
 	StreamWait time.Duration
 	StreamIdle time.Duration
 	Logger     *slog.Logger

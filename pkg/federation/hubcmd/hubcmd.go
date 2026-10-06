@@ -85,6 +85,7 @@ type serveParams struct {
 	PolicyRefresh   time.Duration `long:"policy-refresh" default:"15s" help:"How often admin edits are re-read"`
 	MaxStreams      int           `long:"max-streams" default:"16" help:"Per-instance limit on concurrent relayed route streams"`
 	StreamBytes     int           `long:"stream-bytes-per-second" default:"1048576" help:"Per-instance relayed stream bandwidth (bytes/second)"`
+	StreamIdle      time.Duration `long:"stream-idle" default:"90s" help:"How long a relayed route stream may sit idle, or blocked on a receiver that is not reading, before it is closed"`
 }
 
 func serveCmd() *cobra.Command {
@@ -104,7 +105,7 @@ func serveCmd() *cobra.Command {
 			h, err := hub.New(st, hub.Config{
 				Open: p.Open, FramesPerMinute: p.FramesPerMinute, BytesPerMinute: p.BytesPerMinute,
 				PolicyRefresh: p.PolicyRefresh, Version: buildversion.AppVersion(),
-				MaxStreams: p.MaxStreams, StreamBytesPerSecond: p.StreamBytes,
+				MaxStreams: p.MaxStreams, StreamBytesPerSecond: p.StreamBytes, StreamIdle: p.StreamIdle,
 			})
 			if err != nil {
 				fail(err)

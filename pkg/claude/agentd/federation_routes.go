@@ -41,13 +41,20 @@ import (
 // Mirrors and proxies are re-authorized continuously (import/export still
 // grant routes, peer still trusted, route still ready) on top of the
 // broker's own generation checks, and torn down when that fails.
+//
+// Streams are flow-controlled end to end when the local helpers support it
+// (routebroker flow.go): agentd grants the broker credit toward the hub only
+// as it writes to the hub stream, and reads the hub stream only while it
+// holds broker credit. A slow reader on either instance therefore stalls the
+// hub stream, and through it the sender on the other instance, instead of
+// filling a buffer.
 
 const (
 	fedRouteOpenTimeout   = 20 * time.Second
 	fedRouteCheckInterval = 5 * time.Second
-	// fedRouteStreamBuffer bounds bytes buffered toward one remote stream.
-	// The broker has no flow control, so a local sender faster than the
-	// hub's per-instance bandwidth fills this and the connection is reset.
+	// fedRouteStreamBuffer bounds bytes buffered toward one remote stream
+	// that is not flow-controlled: a local sender faster than the hub's
+	// per-instance bandwidth fills this and the connection is reset.
 	fedRouteStreamBuffer = 4 << 20
 	// fedRouteOpensPerMinute bounds route opens accepted from one peer,
 	// separately from its mail budget.
@@ -120,6 +127,9 @@ type fedRouteEnd struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	conn   net.Conn
+	// window is this end's flow-control receive window; 0 when flow
+	// control is disabled and no stream on it negotiates it.
+	window int
 
 	wmu sync.Mutex
 
@@ -133,7 +143,7 @@ type fedRouteEnd struct {
 func newFedRouteEnd(rt *fedRuntime, key, role, peer string, route *db.AgentRoute, conn net.Conn) *fedRouteEnd {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &fedRouteEnd{
-		rt: rt, key: key, role: role, peer: peer, route: route, ctx: ctx, cancel: cancel, conn: conn,
+		rt: rt, key: key, role: role, peer: peer, route: route, ctx: ctx, cancel: cancel, conn: conn, window: routeFlowWindow(),
 		opening: map[uint64]chan routebroker.Frame{}, streams: map[uint64]*fedRouteStream{}, done: make(chan struct{}),
 	}
 }
@@ -169,13 +179,38 @@ type fedRouteStream struct {
 	// sentHalfClose is set before our HalfClose is written, so it is set
 	// whenever the broker's orderly CLOSE can arrive.
 	sentHalfClose bool
+
+	// flow is set by serve, before any DATA for the stream is read, when
+	// the broker marks the stream flow-controlled; the bridge starts after.
+	flow *fedStreamFlow
+}
+
+// fedStreamFlow is a flow-controlled stream's credit: send toward the
+// broker, recv for what the broker sends us.
+type fedStreamFlow struct {
+	send *routebroker.SendWindow
+	recv *routebroker.RecvWindow
+}
+
+// enableFlow makes s flow-controlled and returns the credit to grant once
+// the stream is open.
+func (s *fedRouteStream) enableFlow(window int) int {
+	recv, grant := routebroker.NewRecvWindow(window)
+	s.flow = &fedStreamFlow{send: routebroker.NewSendWindow(), recv: recv}
+	return grant
 }
 
 // push buffers a broker frame for the remote side; false when over budget.
 func (s *fedRouteStream) push(f routebroker.Frame) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.bytes+len(f.Payload) > fedRouteStreamBuffer {
+	if s.flow != nil {
+		// Credit bounds the buffer: the broker only lets the local sender
+		// run a window ahead of what the bridge has written to the hub.
+		if s.flow.recv.Received(len(f.Payload)) != nil {
+			return false
+		}
+	} else if s.bytes+len(f.Payload) > fedRouteStreamBuffer {
 		return false
 	}
 	s.frames = append(s.frames, f)
@@ -280,14 +315,40 @@ func (e *fedRouteEnd) serve() {
 			if dup {
 				return
 			}
-			go e.openRemote(e.newStream(f.Stream))
+			s := e.newStream(f.Stream)
+			grant := 0
+			if e.window > 0 && routebroker.IsFlowOpen(f.Payload) {
+				grant = s.enableFlow(e.window)
+			}
+			go e.openRemote(s, grant)
 		case routebroker.KindOpenOK, routebroker.KindOpenError:
 			e.mu.Lock()
 			ch := e.opening[f.Stream]
 			delete(e.opening, f.Stream)
+			s := e.streams[f.Stream]
 			e.mu.Unlock()
-			if ch != nil {
-				ch <- f
+			if ch == nil {
+				continue
+			}
+			if f.Kind == routebroker.KindOpenOK && s != nil && e.window > 0 && routebroker.IsFlowOpen(f.Payload) {
+				if grant := s.enableFlow(e.window); grant > 0 {
+					_ = e.write(routebroker.WindowFrame(s.id, grant))
+				}
+			}
+			ch <- f
+		case routebroker.KindWindow:
+			e.mu.Lock()
+			s := e.streams[f.Stream]
+			e.mu.Unlock()
+			if s == nil || s.flow == nil {
+				continue
+			}
+			n, err := routebroker.ParseWindow(f.Payload)
+			if err == nil {
+				err = s.flow.send.Grant(n)
+			}
+			if err != nil {
+				e.endStream(s, true)
 			}
 		case routebroker.KindData, routebroker.KindHalfClose, routebroker.KindClose:
 			e.mu.Lock()
@@ -384,6 +445,13 @@ func (e *fedRouteEnd) bridge(s *fedRouteStream) {
 					e.endStream(s, true)
 					return
 				}
+				if s.flow != nil {
+					if g := s.flow.recv.Consumed(len(f.Payload)); g > 0 {
+						if err := e.write(routebroker.WindowFrame(s.id, g)); err != nil {
+							return // the channel is gone; teardown ends the stream
+						}
+					}
+				}
 			case routebroker.KindHalfClose:
 				if err := conn.CloseWrite(); err != nil {
 					e.endStream(s, true)
@@ -396,10 +464,21 @@ func (e *fedRouteEnd) bridge(s *fedRouteStream) {
 			}
 		}
 	}()
-	// remote → broker
+	// remote → broker. With flow control the hub stream is read only as far
+	// as the broker granted, so a slow local reader holds the remote sender.
 	buf := make([]byte, routebroker.MaxFramePayload)
 	for {
-		n, err := conn.Read(buf)
+		limit := len(buf)
+		if s.flow != nil {
+			var werr error
+			if limit, werr = s.flow.send.Wait(limit); werr != nil {
+				return // the stream ended
+			}
+		}
+		n, err := conn.Read(buf[:limit])
+		if s.flow != nil {
+			s.flow.send.Spend(n)
+		}
 		if n > 0 {
 			if werr := e.write(routebroker.Frame{Kind: routebroker.KindData, Stream: s.id, Payload: append([]byte(nil), buf[:n]...)}); werr != nil {
 				e.endStream(s, false)
@@ -445,6 +524,9 @@ func (e *fedRouteEnd) endStream(s *fedRouteStream, notify bool) {
 		s.cancel()
 		conn := s.conn
 		s.mu.Unlock()
+		if s.flow != nil {
+			s.flow.send.Close()
+		}
 		if conn != nil {
 			go func() { _ = conn.Close() }()
 		}
@@ -458,7 +540,7 @@ func (e *fedRouteEnd) endStream(s *fedRouteStream, notify bool) {
 
 // openRemote handles one consumer connection on a mirror: ask the peer to
 // open the real route, then join the hub stream.
-func (e *fedRouteEnd) openRemote(s *fedRouteStream) {
+func (e *fedRouteEnd) openRemote(s *fedRouteStream, grant int) {
 	fail := func(reason string) {
 		if s.ctx.Err() != nil {
 			return // the consumer already gave up
@@ -489,6 +571,12 @@ func (e *fedRouteEnd) openRemote(s *fedRouteStream) {
 	if err := e.write(routebroker.Frame{Kind: routebroker.KindOpenOK, Stream: s.id}); err != nil {
 		e.endStream(s, false)
 		return
+	}
+	if grant > 0 {
+		if err := e.write(routebroker.WindowFrame(s.id, grant)); err != nil {
+			e.endStream(s, false)
+			return
+		}
 	}
 	e.bridge(s)
 }
@@ -589,6 +677,7 @@ func (rt *fedRuntime) startMirror(route *db.AgentRoute, peer, remote string, che
 	auth := routebroker.PublisherAuth{
 		RouteID: route.ID, AgentID: route.PublisherAgentID, ConvID: route.PublisherConvID,
 		LaunchGeneration: route.PublisherLaunchGeneration, GroupGeneration: route.GroupGeneration,
+		FlowControl: e.window > 0,
 	}
 	err := attachEnd(e, theirs, func(ready func(error)) error {
 		return GroupRouteBroker().AttachPublisherReady(context.Background(), auth, theirs, ready)
@@ -946,6 +1035,7 @@ func (rt *fedRuntime) startProxy(key, peer string, route *db.AgentRoute) (*fedRo
 	auth := routebroker.ConsumerAuth{
 		LeaseID: lease.ID, RouteID: route.ID, AgentID: lease.ConsumerAgentID, ConvID: lease.ConsumerConvID,
 		LaunchGeneration: lease.ConsumerLaunchGeneration, GroupGeneration: lease.GroupGeneration,
+		FlowControl: e.window > 0,
 	}
 	err = attachEnd(e, theirs, func(ready func(error)) error {
 		return GroupRouteBroker().AttachConsumerWithReady(context.Background(), auth, theirs, func() error { ready(nil); return nil })

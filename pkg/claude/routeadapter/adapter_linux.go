@@ -39,6 +39,12 @@ const (
 	channelHeaderLaunch          = "X-Tclaude-Route-Launch-Generation"
 	channelHeaderGroupGeneration = "X-Tclaude-Route-Group-Generation"
 	channelHeaderEndpoint        = "X-Tclaude-Route-Consumer-Endpoint"
+	// ChannelHeaderFlow is sent by a helper that implements flow control;
+	// ChannelHeaderFlowWindow is agentd's answer on the upgrade, naming the
+	// receive window the helper should use. Without the answer the helper
+	// runs every stream without flow control.
+	ChannelHeaderFlow       = "X-Tclaude-Route-Flow"
+	ChannelHeaderFlowWindow = "X-Tclaude-Route-Flow-Window"
 )
 
 // Bounds on reopening a stream whose publisher channel is absent. The window
@@ -138,6 +144,7 @@ func RunPublisher(ctx context.Context, channel net.Conn, rawTarget string) error
 	}
 	stopOnContext(ctx, channel)
 	w := &connWriter{conn: channel}
+	window := channelFlowWindow(channel)
 	streams := &publisherStreams{items: make(map[uint64]*helperPublisherStream)}
 	defer streams.closeAll()
 	defer channel.Close()
@@ -167,11 +174,15 @@ func RunPublisher(ctx context.Context, channel net.Conn, rawTarget string) error
 				streams.removeAndClose(streamID)
 				_ = w.write(routebroker.Frame{Kind: routebroker.KindClose, Stream: streamID})
 			})
+			grant := 0
+			if window > 0 && routebroker.IsFlowOpen(frame.Payload) {
+				grant = stream.enableFlow(window, streamID, w)
+			}
 			if !streams.add(streamID, stream) {
 				_ = w.write(routebroker.Frame{Kind: routebroker.KindOpenError, Stream: streamID, Payload: []byte(routebroker.OpenErrorDuplicatePublisherStream)})
 				continue
 			}
-			go openPublisherStream(ctx, target, streamID, stream, streams, w)
+			go openPublisherStream(ctx, target, streamID, stream, streams, w, grant)
 		case routebroker.KindData:
 			stream, ok := streams.get(frame.Stream)
 			if !ok {
@@ -192,14 +203,23 @@ func RunPublisher(ctx context.Context, channel net.Conn, rawTarget string) error
 			}
 			stream.closeWrite()
 		case routebroker.KindClose:
-			streams.removeAndClose(frame.Stream)
+			if stream, ok := streams.remove(frame.Stream); ok {
+				stream.finishOrClose()
+			}
+		case routebroker.KindWindow:
+			if stream, ok := streams.get(frame.Stream); ok && stream.flow != nil {
+				if err := stream.flow.grant(frame.Payload); err != nil {
+					_ = w.write(routebroker.Frame{Kind: routebroker.KindClose, Stream: frame.Stream})
+					streams.removeAndClose(frame.Stream)
+				}
+			}
 		default:
 			return fmt.Errorf("publisher received invalid frame kind %d", frame.Kind)
 		}
 	}
 }
 
-func openPublisherStream(ctx context.Context, target string, streamID uint64, stream *helperPublisherStream, streams *publisherStreams, w *connWriter) {
+func openPublisherStream(ctx context.Context, target string, streamID uint64, stream *helperPublisherStream, streams *publisherStreams, w *connWriter, grant int) {
 	dialer := net.Dialer{Timeout: publisherDialTimeout}
 	conn, err := dialer.DialContext(ctx, "tcp", target)
 	if err != nil {
@@ -223,10 +243,16 @@ func openPublisherStream(ctx context.Context, target string, streamID uint64, st
 		streams.removeAndClose(streamID)
 		return
 	}
+	if grant > 0 {
+		if err := w.write(routebroker.WindowFrame(streamID, grant)); err != nil {
+			streams.removeAndClose(streamID)
+			return
+		}
+	}
 	go func() {
 		buf := make([]byte, 32<<10)
 		for {
-			n, readErr := conn.Read(buf)
+			n, readErr := stream.flow.read(conn, buf)
 			if n > 0 {
 				if writeErr := w.write(routebroker.Frame{Kind: routebroker.KindData, Stream: streamID, Payload: append([]byte(nil), buf[:n]...)}); writeErr != nil {
 					return
@@ -258,6 +284,7 @@ func RunConsumer(ctx context.Context, channel net.Conn, listener net.Listener) e
 	stopOnContext(ctx, channel)
 	stopOnContext(ctx, listener)
 	w := &connWriter{conn: channel}
+	window := channelFlowWindow(channel)
 	streams := &consumerStreams{items: make(map[uint64]net.Conn), nextID: 1}
 	defer streams.closeAll()
 	defer channel.Close()
@@ -301,6 +328,14 @@ func RunConsumer(ctx context.Context, channel net.Conn, listener net.Listener) e
 			// publisher side has connected to its target. It also releases the
 			// local reader, which must not forward bytes the publisher has no
 			// stream for yet.
+			//
+			// A flow-controlled stream gets its pump and credit here, on the
+			// read loop, so they exist before any DATA for it can arrive.
+			if window > 0 && routebroker.IsFlowOpen(frame.Payload) {
+				if grant, ok := streams.enableFlow(frame.Stream, window, w); ok && grant > 0 {
+					_ = w.write(routebroker.WindowFrame(frame.Stream, grant))
+				}
+			}
 			streams.resolveOpen(frame.Stream, nil)
 		case routebroker.KindOpenError:
 			// Hand the refusal to the opener, which decides whether reopening
@@ -311,22 +346,37 @@ func RunConsumer(ctx context.Context, channel net.Conn, listener net.Listener) e
 				}
 			}
 		case routebroker.KindClose:
-			if conn, ok := streams.remove(frame.Stream); ok {
-				_ = conn.Close()
-			}
+			streams.finish(frame.Stream)
 		case routebroker.KindData:
 			conn, ok := streams.get(frame.Stream)
 			if !ok {
 				continue
 			}
-			if _, err := conn.Write(frame.Payload); err != nil {
+			var err error
+			if out := streams.flowOut(frame.Stream); out != nil {
+				// Never write the local socket on this loop: a client that
+				// reads slowly would stall every stream on the channel.
+				err = out.write(frame.Payload)
+			} else {
+				_, err = conn.Write(frame.Payload)
+			}
+			if err != nil {
 				_ = w.write(routebroker.Frame{Kind: routebroker.KindClose, Stream: frame.Stream})
 				streams.removeAndClose(frame.Stream)
 			}
 		case routebroker.KindHalfClose:
-			if conn, ok := streams.get(frame.Stream); ok {
+			if out := streams.flowOut(frame.Stream); out != nil {
+				out.closeWrite() // after what the pump still holds
+			} else if conn, ok := streams.get(frame.Stream); ok {
 				if tcp, ok := conn.(*net.TCPConn); ok {
 					_ = tcp.CloseWrite()
+				}
+			}
+		case routebroker.KindWindow:
+			if out := streams.flowOut(frame.Stream); out != nil {
+				if err := out.flow.grant(frame.Payload); err != nil {
+					_ = w.write(routebroker.Frame{Kind: routebroker.KindClose, Stream: frame.Stream})
+					streams.removeAndClose(frame.Stream)
 				}
 			}
 		default:
@@ -405,9 +455,13 @@ func openConsumerStream(ctx context.Context, conn net.Conn, streams *consumerStr
 }
 
 func readConsumerStream(ctx context.Context, id uint64, conn net.Conn, streams *consumerStreams, w *connWriter) {
+	var flow *streamFlow
+	if out := streams.flowOut(id); out != nil {
+		flow = out.flow
+	}
 	buf := make([]byte, 32<<10)
 	for {
-		n, err := conn.Read(buf)
+		n, err := flow.read(conn, buf)
 		if n > 0 {
 			if writeErr := w.write(routebroker.Frame{Kind: routebroker.KindData, Stream: id, Payload: append([]byte(nil), buf[:n]...)}); writeErr != nil {
 				return
@@ -462,6 +516,7 @@ func DialUnixChannel(ctx context.Context, socketPath string, auth ChannelAuth) (
 	req.Header.Set(channelHeaderConv, auth.ConvID)
 	req.Header.Set(channelHeaderLaunch, auth.LaunchGeneration)
 	req.Header.Set(channelHeaderGroupGeneration, strconv.FormatInt(auth.GroupGeneration, 10))
+	req.Header.Set(ChannelHeaderFlow, "1")
 	if auth.Credential != "" {
 		req.Header.Set("X-Tclaude-Route-Helper-Credential", auth.Credential)
 	}
@@ -484,15 +539,60 @@ func DialUnixChannel(ctx context.Context, socketPath string, auth ChannelAuth) (
 		_ = conn.Close()
 		return nil, fmt.Errorf("%w: status=%s detail=%s", ErrChannelRefused, resp.Status, strings.TrimSpace(string(body)))
 	}
-	return &bufferedConn{Conn: conn, reader: reader}, nil
+	window, _ := strconv.Atoi(resp.Header.Get(ChannelHeaderFlowWindow))
+	return &bufferedConn{Conn: conn, reader: reader, flowWindow: window}, nil
 }
 
 type bufferedConn struct {
 	net.Conn
-	reader *bufio.Reader
+	reader     *bufio.Reader
+	flowWindow int
 }
 
 func (c *bufferedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
+
+// FlowWindow is the receive window agentd assigned this channel, or zero
+// when it did not enable flow control.
+func (c *bufferedConn) FlowWindow() int { return c.flowWindow }
+
+// channelFlowWindow is the channel's negotiated receive window; zero means
+// no stream on it is flow-controlled.
+func channelFlowWindow(channel net.Conn) int {
+	if fw, ok := channel.(interface{ FlowWindow() int }); ok && fw.FlowWindow() > 0 {
+		return routebroker.ClampWindow(fw.FlowWindow())
+	}
+	return 0
+}
+
+// streamFlow is one flow-controlled stream's credit in both directions. A
+// nil *streamFlow is a stream without flow control.
+type streamFlow struct {
+	send *routebroker.SendWindow
+	recv *routebroker.RecvWindow
+}
+
+// read reads the stream's source, but only as much as the peer has granted:
+// out of credit, the source is simply not read, and TCP holds its sender.
+func (f *streamFlow) read(conn net.Conn, buf []byte) (int, error) {
+	if f == nil {
+		return conn.Read(buf)
+	}
+	limit, err := f.send.Wait(len(buf))
+	if err != nil {
+		return 0, net.ErrClosed
+	}
+	n, err := conn.Read(buf[:limit])
+	f.send.Spend(n)
+	return n, err
+}
+
+func (f *streamFlow) grant(payload []byte) error {
+	n, err := routebroker.ParseWindow(payload)
+	if err != nil {
+		return err
+	}
+	return f.send.Grant(n)
+}
 
 type connWriter struct {
 	conn net.Conn
@@ -550,6 +650,30 @@ type helperPublisherStream struct {
 	// fail retires this one stream when its target write fails. It runs off the
 	// read loop, so it must not assume the read loop is still running.
 	fail func()
+	// flow is set on a flow-controlled stream. Credit then bounds pending in
+	// place of publisherPendingLimit, the pump grants credit back as the
+	// target accepts bytes, and a target that reads slowly parks its sender
+	// rather than failing the stream. The consumer helper uses the same type
+	// for its local sockets on such streams.
+	flow    *streamFlow
+	granted func(n int)
+	// sawHalfClose records that the peer finished its direction; finishing
+	// asks the pump to close the stream once it has delivered everything.
+	sawHalfClose, finishing bool
+}
+
+// enableFlow makes the stream flow-controlled with a receive window of
+// window bytes, granting credit back over w. It returns the credit to grant
+// once the stream is open. Call it before the stream is shared.
+func (s *helperPublisherStream) enableFlow(window int, id uint64, w *connWriter) int {
+	recv, grant := routebroker.NewRecvWindow(window)
+	s.flow = &streamFlow{send: routebroker.NewSendWindow(), recv: recv}
+	s.granted = func(n int) {
+		if g := recv.Consumed(n); g > 0 {
+			_ = w.write(routebroker.WindowFrame(id, g))
+		}
+	}
+	return grant
 }
 
 func newHelperPublisherStream(fail func()) *helperPublisherStream {
@@ -567,7 +691,11 @@ func (s *helperPublisherStream) write(payload []byte) error {
 	if s.closed {
 		return errPublisherStreamClosed
 	}
-	if s.pendingBytes+len(payload) > publisherPendingLimit {
+	if s.flow != nil {
+		if err := s.flow.recv.Received(len(payload)); err != nil {
+			return err
+		}
+	} else if s.pendingBytes+len(payload) > publisherPendingLimit {
 		return errPublisherStreamBacklog
 	}
 	s.pending = append(s.pending, payload)
@@ -598,18 +726,41 @@ func (s *helperPublisherStream) closeWrite() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.halfClosed = true
+	s.sawHalfClose = true
 	s.wake.Signal()
+}
+
+// finishOrClose handles the broker's CLOSE. On a flow-controlled stream
+// whose peer already half-closed it is the orderly end that follows both
+// half-closes, and the pump may still hold the tail of what the peer sent:
+// it delivers that, under the write deadline, before closing. Otherwise
+// CLOSE is an abort and the stream closes at once.
+func (s *helperPublisherStream) finishOrClose() {
+	s.mu.Lock()
+	if s.flow != nil && s.sawHalfClose && s.conn != nil && !s.closed {
+		s.finishing = true
+		s.wake.Signal()
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+	s.close()
 }
 
 // pump is the only writer to the target.
 func (s *helperPublisherStream) pump() {
 	for {
 		s.mu.Lock()
-		for len(s.pending) == 0 && !s.halfClosed && !s.closed {
+		for len(s.pending) == 0 && !s.halfClosed && !s.closed && !s.finishing {
 			s.wake.Wait()
 		}
 		if s.closed {
 			s.mu.Unlock()
+			return
+		}
+		if len(s.pending) == 0 && !s.halfClosed && s.finishing {
+			s.mu.Unlock()
+			s.close()
 			return
 		}
 		if len(s.pending) > 0 {
@@ -617,14 +768,22 @@ func (s *helperPublisherStream) pump() {
 			s.pending = s.pending[1:]
 			s.pendingBytes -= len(payload)
 			conn := s.conn
+			deadline := s.flow == nil || s.finishing
 			s.mu.Unlock()
 			// The deadline bounds the write, and because close() closes the
 			// connection outside the mutex, a close interrupts a write already
-			// in flight instead of waiting it out.
-			_ = conn.SetWriteDeadline(time.Now().Add(publisherTargetWriteTimeout))
+			// in flight instead of waiting it out. A flow-controlled stream
+			// has no deadline while it is live: its slow reader holds only
+			// its own window.
+			if deadline {
+				_ = conn.SetWriteDeadline(time.Now().Add(publisherTargetWriteTimeout))
+			}
 			if _, err := conn.Write(payload); err != nil {
 				s.failStream()
 				return
+			}
+			if s.granted != nil {
+				s.granted(len(payload))
 			}
 			continue
 		}
@@ -660,6 +819,9 @@ func (s *helperPublisherStream) close() {
 	conn := s.conn
 	s.wake.Broadcast()
 	s.mu.Unlock()
+	if s.flow != nil {
+		s.flow.send.Close()
+	}
 	// Closing outside the mutex is what lets a close interrupt an in-flight
 	// write to a target that stopped reading, rather than queueing behind it.
 	if conn != nil {
@@ -720,6 +882,62 @@ type consumerStreams struct {
 	items  map[uint64]net.Conn
 	opens  map[uint64]chan []byte
 	nextID uint64
+	// outs holds the local-socket pump of each flow-controlled stream.
+	outs map[uint64]*helperPublisherStream
+}
+
+// enableFlow gives an opened stream its pump and credit, and returns the
+// credit to grant up front. False if the stream is already gone.
+func (s *consumerStreams) enableFlow(id uint64, window int, w *connWriter) (int, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	conn, ok := s.items[id]
+	if !ok {
+		return 0, false
+	}
+	out := newHelperPublisherStream(func() {
+		s.removeAndClose(id)
+		_ = w.write(routebroker.Frame{Kind: routebroker.KindClose, Stream: id})
+	})
+	grant := out.enableFlow(window, id, w)
+	_ = out.attach(conn)
+	if s.outs == nil {
+		s.outs = make(map[uint64]*helperPublisherStream)
+	}
+	s.outs[id] = out
+	return grant, true
+}
+
+// finish retires a stream on the broker's CLOSE, letting a flow-controlled
+// stream's pump deliver what it holds when the end is orderly.
+func (s *consumerStreams) finish(id uint64) {
+	s.mu.Lock()
+	out := s.outs[id]
+	delete(s.outs, id)
+	s.mu.Unlock()
+	if out == nil {
+		s.removeAndClose(id)
+		return
+	}
+	// The pump owns the socket from here, so the registry forgets it
+	// without closing it.
+	s.remove(id)
+	out.finishOrClose()
+}
+
+// flowOut is a flow-controlled stream's pump, or nil.
+func (s *consumerStreams) flowOut(id uint64) *helperPublisherStream {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.outs[id]
+}
+
+// dropOutLocked retires a stream's pump; it closes the socket as well.
+func (s *consumerStreams) dropOutLocked(id uint64) {
+	if out, ok := s.outs[id]; ok {
+		delete(s.outs, id)
+		out.close()
+	}
 }
 
 // addPending registers a stream whose OPEN has not been answered yet. The
@@ -767,6 +985,7 @@ func (s *consumerStreams) dropPending(id uint64) {
 	s.mu.Lock()
 	delete(s.opens, id)
 	delete(s.items, id)
+	s.dropOutLocked(id)
 	s.mu.Unlock()
 }
 func (s *consumerStreams) get(id uint64) (net.Conn, bool) {
@@ -782,6 +1001,7 @@ func (s *consumerStreams) remove(id uint64) (net.Conn, bool) {
 	// opener cannot be left parked on an answer that will never arrive while
 	// holding a socket that was just closed under it.
 	s.resolvePendingLocked(id, []byte(openAnswerChannelGone))
+	s.dropOutLocked(id)
 	c, ok := s.items[id]
 	if ok {
 		delete(s.items, id)
@@ -803,6 +1023,7 @@ func (s *consumerStreams) closeAll() {
 		s.resolvePendingLocked(id, []byte(openAnswerChannelGone))
 	}
 	for id, c := range s.items {
+		s.dropOutLocked(id)
 		_ = c.Close()
 		delete(s.items, id)
 	}

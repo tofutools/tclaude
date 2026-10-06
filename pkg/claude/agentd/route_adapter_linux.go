@@ -65,6 +65,18 @@ func handleRouteChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	launchGeneration = capability.launchGeneration
 
+	// A helper that implements flow control says so; agentd answers with
+	// the window to use, or leaves the header off when it is disabled.
+	flowWindow := 0
+	if r.Header.Get(routeadapter.ChannelHeaderFlow) == "1" {
+		flowWindow = routeFlowWindow()
+	}
+	upgrade := "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: tclaude-route-v1\r\n"
+	if flowWindow > 0 {
+		upgrade += routeadapter.ChannelHeaderFlowWindow + ": " + strconv.Itoa(flowWindow) + "\r\n"
+	}
+	upgrade += "\r\n"
+
 	var attach func(context.Context, net.Conn) error
 	var consumerAuth routebroker.ConsumerAuth
 	consumerEndpoint := ""
@@ -91,6 +103,7 @@ func handleRouteChannel(w http.ResponseWriter, r *http.Request) {
 		auth := routebroker.PublisherAuth{
 			RouteID: routeID, AgentID: agentID, ConvID: convID,
 			LaunchGeneration: launchGeneration, GroupGeneration: groupGeneration,
+			FlowControl: flowWindow > 0,
 		}
 		if authErr := (databaseRouteAuthority{}).AuthorizePublisher(r.Context(), auth); authErr != nil {
 			writeRouteError(w, http.StatusForbidden, "route_authority", authErr.Error())
@@ -123,6 +136,7 @@ func handleRouteChannel(w http.ResponseWriter, r *http.Request) {
 		consumerAuth = routebroker.ConsumerAuth{
 			LeaseID: leaseID, RouteID: routeID, AgentID: agentID, ConvID: convID,
 			LaunchGeneration: launchGeneration, GroupGeneration: groupGeneration,
+			FlowControl: flowWindow > 0,
 		}
 		if authErr := (databaseRouteAuthority{}).AuthorizeConsumer(r.Context(), consumerAuth); authErr != nil {
 			writeRouteError(w, http.StatusForbidden, "route_authority", authErr.Error())
@@ -150,7 +164,7 @@ func handleRouteChannel(w http.ResponseWriter, r *http.Request) {
 			if err != nil || lease == nil || lease.State != db.RouteLeaseOpen {
 				return errors.New("route lease reached a terminal state before readiness")
 			}
-			if _, err := rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: tclaude-route-v1\r\n\r\n"); err != nil {
+			if _, err := rw.WriteString(upgrade); err != nil {
 				return err
 			}
 			if err := rw.Flush(); err != nil {
@@ -174,7 +188,7 @@ func handleRouteChannel(w http.ResponseWriter, r *http.Request) {
 		clearRouteConsumerEndpoint(leaseID)
 		return
 	}
-	if _, err := rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: tclaude-route-v1\r\n\r\n"); err != nil {
+	if _, err := rw.WriteString(upgrade); err != nil {
 		_ = conn.Close()
 		return
 	}

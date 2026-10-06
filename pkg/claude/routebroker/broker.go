@@ -21,6 +21,10 @@ type PublisherAuth struct {
 	ConvID           string
 	LaunchGeneration string
 	GroupGeneration  int64
+	// FlowControl advertises that the endpoint implements WINDOW credit
+	// (see flow.go). It is a channel capability, not identity: authorizers
+	// ignore it.
+	FlowControl bool
 }
 
 // ConsumerAuth is the M1 lease identity presented by a consumer-side helper.
@@ -32,6 +36,8 @@ type ConsumerAuth struct {
 	ConvID           string
 	LaunchGeneration string
 	GroupGeneration  int64
+	// FlowControl: see PublisherAuth.
+	FlowControl bool
 }
 
 // Authorizer is the narrow seam to M1's route/lease authority. Authorize is
@@ -69,6 +75,11 @@ const (
 	defaultMaxConnectionsPerAgent = 128
 	defaultMaxConsumersPerRoute   = 32
 	defaultQueuedFramesPerStream  = 4
+	// flowQueuedFramesPerStream bounds a flow-controlled stream's queue in
+	// frames. Its bytes are already bounded by credit, and both endpoints
+	// read their channels promptly, so this only has to absorb a burst of
+	// small frames between the broker's read and its write.
+	flowQueuedFramesPerStream     = 256
 	defaultWriteTimeout           = 5 * time.Second
 	defaultAuthorityCheckInterval = 250 * time.Millisecond
 	tombstoneTTL                  = 30 * time.Second
@@ -196,6 +207,20 @@ type stream struct {
 	// reclaimed marks the stream as already retired by a dual half-close, so
 	// the two session loops cannot both act on the same second half-close.
 	reclaimed bool
+	// flow is set when both channels negotiated flow control. toPublisher
+	// and toConsumer are each direction's outstanding credit, so a sender
+	// that exceeds what its receiver granted is caught here, at its own
+	// channel, before it can fill the receiver's queue.
+	flow                    bool
+	toPublisher, toConsumer credit
+}
+
+// queueCap is the writer queue bound for this stream's frames.
+func (b *Broker) queueCap(s *stream) int {
+	if s.flow {
+		return max(flowQueuedFramesPerStream, b.maxQueuedFramesPerStream)
+	}
+	return b.maxQueuedFramesPerStream
 }
 
 type streamTombstone struct {
@@ -555,7 +580,7 @@ func (b *Broker) handleConsumerFrame(s *session, frame Frame) error {
 		return s.enqueue(0, Frame{Kind: KindPong}, false)
 	case KindPong:
 		return nil
-	case KindData, KindHalfClose, KindClose:
+	case KindData, KindHalfClose, KindClose, KindWindow:
 		return b.forwardFromConsumer(s, frame)
 	default:
 		return fmt.Errorf("%w: consumer sent frame kind %d", ErrProtocol, frame.Kind)
@@ -568,7 +593,7 @@ func (b *Broker) handlePublisherFrame(s *session, frame Frame) error {
 		return s.enqueue(0, Frame{Kind: KindPong}, false)
 	case KindPong:
 		return nil
-	case KindOpenOK, KindOpenError, KindData, KindHalfClose, KindClose:
+	case KindOpenOK, KindOpenError, KindData, KindHalfClose, KindClose, KindWindow:
 		return b.forwardFromPublisher(s, frame)
 	default:
 		return fmt.Errorf("%w: publisher sent frame kind %d", ErrProtocol, frame.Kind)
@@ -630,6 +655,10 @@ func (b *Broker) openStream(consumer *session, localID uint64) error {
 	globalID := r.nextStreamID
 	r.nextStreamID++
 	stream := &stream{globalID: globalID, localID: localID, consumer: consumer, agentID: agentID}
+	if r.publisher.publisherAuth.FlowControl && consumer.consumerAuth.FlowControl {
+		stream.flow = true
+		stream.toPublisher.n, stream.toConsumer.n = InitialWindow, InitialWindow
+	}
 	r.streams[globalID] = stream
 	b.agentStreams[agentID]++
 	publisher := r.publisher
@@ -637,7 +666,11 @@ func (b *Broker) openStream(consumer *session, localID uint64) error {
 	b.streamsMetric.Add(1)
 	b.mu.Unlock()
 	b.emit(Event{Kind: "stream-open", Role: roleConsumer.string(), RouteID: r.id, AgentID: agentID, LeaseID: consumer.consumerAuth.LeaseID, StreamID: globalID, Connections: streamCount})
-	if err := publisher.enqueue(globalID, Frame{Kind: KindOpen, Stream: globalID}, false); err != nil {
+	open := Frame{Kind: KindOpen, Stream: globalID}
+	if stream.flow {
+		open.Payload = []byte(OpenFlowControl)
+	}
+	if err := publisher.enqueueCap(globalID, open, false, b.queueCap(stream)); err != nil {
 		if errors.Is(err, ErrBackpressure) {
 			b.rejectedStreamsMetric.Add(1)
 			publisher.close()
@@ -660,17 +693,22 @@ func (b *Broker) forwardFromConsumer(consumer *session, frame Frame) error {
 		return fmt.Errorf("%w: unknown consumer stream", ErrProtocol)
 	}
 	publisher := stream.consumer.route.publisher
+	if forward, err := b.flowLocked(stream, frame, &stream.toPublisher, &stream.toConsumer); !forward {
+		b.mu.Unlock()
+		return err
+	}
 	reclaim := false
 	if frame.Kind == KindHalfClose {
 		stream.consumerHalfClosed = true
 		reclaim = b.claimStreamReclaimLocked(stream)
 	}
+	queueCap := b.queueCap(stream)
 	b.mu.Unlock()
 	if publisher == nil {
 		return ErrClosed
 	}
 	terminal := frame.Kind == KindClose
-	if err := publisher.enqueue(stream.globalID, Frame{Kind: frame.Kind, Stream: stream.globalID, Payload: frame.Payload}, terminal); err != nil {
+	if err := publisher.enqueueCap(stream.globalID, Frame{Kind: frame.Kind, Stream: stream.globalID, Payload: frame.Payload}, terminal, queueCap); err != nil {
 		if errors.Is(err, ErrBackpressure) {
 			b.rejectedStreamsMetric.Add(1)
 			publisher.close()
@@ -702,6 +740,19 @@ func (b *Broker) forwardFromPublisher(publisher *session, frame Frame) error {
 		}
 		return fmt.Errorf("%w: unknown publisher stream", ErrProtocol)
 	}
+	if forward, err := b.flowLocked(stream, frame, &stream.toConsumer, &stream.toPublisher); !forward {
+		b.mu.Unlock()
+		return err
+	}
+	payload := frame.Payload
+	if frame.Kind == KindOpenOK {
+		// The broker, not the publisher, tells the consumer whether the
+		// stream is flow-controlled: only it knows both channels.
+		payload = nil
+		if stream.flow {
+			payload = []byte(OpenFlowControl)
+		}
+	}
 	reclaim := false
 	if frame.Kind == KindHalfClose {
 		stream.publisherHalfClosed = true
@@ -709,9 +760,10 @@ func (b *Broker) forwardFromPublisher(publisher *session, frame Frame) error {
 	}
 	consumer := stream.consumer
 	localID := stream.localID
+	queueCap := b.queueCap(stream)
 	b.mu.Unlock()
 	terminal := frame.Kind == KindClose || frame.Kind == KindOpenError
-	if err := consumer.enqueue(localID, Frame{Kind: frame.Kind, Stream: localID, Payload: frame.Payload}, terminal); err != nil {
+	if err := consumer.enqueueCap(localID, Frame{Kind: frame.Kind, Stream: localID, Payload: payload}, terminal, queueCap); err != nil {
 		if errors.Is(err, ErrBackpressure) {
 			b.rejectedStreamsMetric.Add(1)
 			consumer.close()
@@ -725,6 +777,31 @@ func (b *Broker) forwardFromPublisher(publisher *session, frame Frame) error {
 		b.reclaimHalfClosedStream(stream, publisher)
 	}
 	return nil
+}
+
+// flowLocked applies a sender's frame to the stream's credit: DATA spends
+// the sender's own credit (out), WINDOW grants the opposite direction's
+// (in). It reports whether the frame should be forwarded; a false with a
+// nil error drops it, and an error fails the sender's channel.
+func (b *Broker) flowLocked(s *stream, frame Frame, out, in *credit) (bool, error) {
+	switch {
+	case frame.Kind == KindWindow:
+		if !s.flow {
+			return false, nil // nobody on this stream understands it
+		}
+		n, err := ParseWindow(frame.Payload)
+		if err != nil {
+			return false, err
+		}
+		if err := in.grant(n); err != nil {
+			return false, err
+		}
+	case frame.Kind == KindData && s.flow:
+		if err := out.spend(len(frame.Payload)); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // claimStreamReclaimLocked reports whether this caller is the one that must
@@ -939,6 +1016,12 @@ func (s *session) removeWriter(id uint64) {
 }
 
 func (s *session) enqueue(id uint64, frame Frame, terminal bool) error {
+	return s.enqueueCap(id, frame, terminal, s.broker.maxQueuedFramesPerStream)
+}
+
+// enqueueCap is enqueue with the queue bound used if this call creates the
+// stream's writer.
+func (s *session) enqueueCap(id uint64, frame Frame, terminal bool, queueCap int) error {
 	s.writersMu.Lock()
 	if s.ctx.Err() != nil {
 		s.writersMu.Unlock()
@@ -947,7 +1030,7 @@ func (s *session) enqueue(id uint64, frame Frame, terminal bool) error {
 	writer := s.writers[id]
 	if writer == nil {
 		ctx, cancel := context.WithCancel(s.ctx)
-		writer = &streamWriter{session: s, id: id, ctx: ctx, cancel: cancel, queue: make(chan outbound, s.broker.maxQueuedFramesPerStream)}
+		writer = &streamWriter{session: s, id: id, ctx: ctx, cancel: cancel, queue: make(chan outbound, queueCap)}
 		s.writers[id] = writer
 		go writer.run()
 	}

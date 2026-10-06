@@ -48,6 +48,27 @@ credential sharing. Ordinary agent messaging remains a separate
 control-plane path and keeps working while route traffic flows. A route
 carries exactly one thing: the named target's opaque TCP stream.
 
+## Flow control
+
+Each route connection is flow-controlled: a sender may run only a fixed
+window ahead of what its reader has actually taken, so a slow reader slows
+the sender down instead of overflowing a buffer and resetting the
+connection. Bulk transfers to a reader that pauses work the way they do
+over plain TCP. The window is per connection and direction; tune it, or
+turn flow control off, in `~/.tclaude/config.json`:
+
+```json
+{ "routes": { "flow_control": true, "window_kib": 256 } }
+```
+
+`window_kib` (default 256, range 256–16384) trades memory per connection
+for throughput over slow or distant links such as a
+[federation](federation.md) hub. Changes apply to route channels attached
+afterwards. Flow control is negotiated, so helpers from an older release
+keep working without it. The macOS adapter does not implement it yet: its
+connections keep the older fixed buffers, and a reader that falls far
+behind still resets its connection.
+
 ## Fail-closed by generation
 
 Routes fail closed. Every membership or permission change in a group
