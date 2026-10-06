@@ -3,12 +3,15 @@ package session
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -16,7 +19,12 @@ import (
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
+
+var httpProxyTestCodexConfig = flag.String("c", "", "fake Codex config override")
 
 type httpProxyTestTransport func(*http.Request) (*http.Response, error)
 
@@ -33,6 +41,17 @@ func TestHTTPProxyLaunchChild(t *testing.T) {
 		os.Exit(1)
 	}
 	base := os.Getenv(HTTPProxyEnvPrefix + "inventory")
+	if os.Getenv("TCLAUDE_GATEWAY_TEST_CODEX_PIN") == "1" {
+		key, value, ok := strings.Cut(*httpProxyTestCodexConfig, "=")
+		var pinned string
+		if !ok || key != harness.CodexShellEnvironmentOverridePrefix+HTTPProxyEnvPrefix+"inventory" || json.Unmarshal([]byte(value), &pinned) != nil || pinned != base {
+			os.Exit(1)
+		}
+		// Simulate the SDK's restrictive snapshot dropping the ambient variable.
+		_ = os.Unsetenv(HTTPProxyEnvPrefix + "inventory")
+		_ = os.Setenv(HTTPProxyEnvPrefix+"inventory", pinned)
+		base = os.Getenv(HTTPProxyEnvPrefix + "inventory")
+	}
 	if base == "" {
 		fmt.Fprintln(os.Stderr, "missing injected URL")
 		os.Exit(1)
@@ -86,6 +105,21 @@ func TestHTTPProxyBootstrapInjectsWorkingURLs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, code)
 	assert.Equal(t, 1, calls)
+	t.Setenv("HOME", testutil.CanonicalTempDir(t))
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{HTTPProxies: map[string]config.HTTPProxyConfig{"inventory": {URL: "https://inventory.example", Header: "Authorization"}}}}))
+	t.Setenv("TCLAUDE_GATEWAY_TEST_CODEX_PIN", "1")
+	wrapped := HTTPProxySpawnCommand("launch-row", harness.MustGet(harness.CodexName), harness.SpawnSpec{ExecutablePath: os.Args[0], ExtraArgs: []string{"-test.run", "^TestHTTPProxyLaunchChild$"}})
+	args := httpProxyWrappedArgs(t, wrapped)
+	cmd := httpProxyExecCmd()
+	require.NoError(t, cmd.ParseFlags(args[3:]))
+	workload := httpProxyWrappedWorkload(t, wrapped)
+	offsets, err := cmd.Flags().GetIntSlice("codex-env-marker-offset")
+	require.NoError(t, err)
+	require.Len(t, offsets, 1)
+	code, err = runHTTPProxyExecWithOptions("launch-row", workload, false, offsets)
+	require.NoError(t, err)
+	assert.Zero(t, code)
+	assert.Equal(t, 2, calls)
 }
 
 func TestHTTPProxyBridgeRejectsForeignCapabilitiesAndPreservesEscaping(t *testing.T) {
@@ -111,4 +145,96 @@ func TestHTTPProxyBridgeRejectsForeignCapabilitiesAndPreservesEscaping(t *testin
 		return &http.Response{StatusCode: 403, Body: io.NopCloser(strings.NewReader("denied"))}, nil
 	})}, "launch-row")
 	assert.Error(t, err)
+}
+
+func httpProxyWrappedArgs(t *testing.T, command string) []string {
+	t.Helper()
+	intro, _, ok := strings.Cut(command, "\n")
+	require.True(t, ok)
+	command = intro
+	out, err := exec.Command(clcommon.BootstrapShellPath(), "-c", "set -- "+command+"; printf '%s\\0' \"$@\"").Output()
+	require.NoError(t, err)
+	return strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
+}
+
+func TestHTTPProxyDiscoveryFailureStillStartsWorkload(t *testing.T) {
+	previous := newHTTPProxyDaemonClient
+	t.Cleanup(func() { newHTTPProxyDaemonClient = previous })
+	newHTTPProxyDaemonClient = func() *http.Client {
+		return &http.Client{Transport: httpProxyTestTransport(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 403, Body: io.NopCloser(strings.NewReader("denied"))}, nil
+		})}
+	}
+	t.Setenv(HTTPProxyEnvPrefix+"inventory", "http://foreign/")
+	code, err := runHTTPProxyExec("unknown-launch", "test -z \"${TCLAUDE_HTTP_PROXY_inventory+x}\"; exit 7")
+	require.NoError(t, err)
+	assert.Equal(t, 7, code)
+}
+
+func TestHTTPProxyCodexPinsBothExecutionOwnersAndPreservesPrompt(t *testing.T) {
+	t.Setenv("HOME", testutil.CanonicalTempDir(t))
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{HTTPProxies: map[string]config.HTTPProxyConfig{"inventory": {URL: "https://inventory.example", Header: "Authorization"}}}}))
+	prompt := harness.CodexHTTPProxyEnvironmentMarker
+	wrapped := HTTPProxySpawnCommand("launch", harness.MustGet(harness.CodexName), harness.SpawnSpec{
+		InitialPrompt: prompt, CodexAppServerSocket: "/tmp/app.sock", CodexAppServerURL: "ws://127.0.0.1:34567", TclaudeExecutable: "/usr/bin/tclaude",
+	})
+	args := httpProxyWrappedArgs(t, wrapped)
+	cmd := httpProxyExecCmd()
+	require.NoError(t, cmd.ParseFlags(args[3:]))
+	workload := httpProxyWrappedWorkload(t, wrapped)
+	offsets, err := cmd.Flags().GetIntSlice("codex-env-marker-offset")
+	require.NoError(t, err)
+	require.Len(t, offsets, 2)
+	marker := clcommon.ShellQuoteArg(harness.CodexHTTPProxyEnvironmentMarkerArg(map[string]string{}))
+	for _, offset := range offsets {
+		assert.True(t, strings.HasPrefix(workload[offset:], marker))
+	}
+	assert.Equal(t, 2, strings.Count(workload, marker))
+	assert.Contains(t, workload, clcommon.ShellQuoteArg(prompt), "prompt text is not an argument slot")
+}
+
+func httpProxyWrappedWorkload(t *testing.T, wrapped string) string {
+	t.Helper()
+	intro, body, ok := strings.Cut(wrapped, "\n")
+	require.True(t, ok)
+	_, delim, ok := strings.Cut(intro, "99<<")
+	require.True(t, ok)
+	delim = strings.Trim(delim, "'")
+	workload, _, ok := strings.Cut(body, "\n"+delim+"\n")
+	require.True(t, ok)
+	return workload
+}
+
+func TestHTTPProxyPrivateWorkloadHandoffCannotBeClosedByPrompt(t *testing.T) {
+	command := "printf '%s\\n' 'secret-value'\nTCLAUDE_HTTP_PROXY_COMMAND_EOF\nTCLAUDE_HTTP_PROXY_COMMAND_EOF_"
+	wrapped := renderHTTPProxyCommand("launch", command, false, nil)
+	args := httpProxyWrappedArgs(t, wrapped)
+	assert.NotContains(t, strings.Join(args, " "), "secret-value")
+	assert.Contains(t, args, "--command-fd")
+	assert.Equal(t, command, httpProxyWrappedWorkload(t, wrapped))
+}
+
+// The test executable dispatches the hidden wrapper in a subprocess so the
+// real shell redirection and descriptor handoff are exercised end to end.
+func init() {
+	if os.Getenv("TCLAUDE_GATEWAY_TEST_DISPATCH") == "1" && len(os.Args) > 3 && os.Args[1] == "session" && os.Args[2] == "http-proxy-exec" {
+		cmd := httpProxyExecCmd()
+		cmd.SetArgs(os.Args[3:])
+		if err := cmd.Execute(); err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+}
+
+func TestHTTPProxyPrivateHandoffShellExecution(t *testing.T) {
+	t.Setenv("TCLAUDE_GATEWAY_TEST_DISPATCH", "1")
+	t.Setenv(agentipc.SocketEnv, "/nonexistent/tclaude-gateway-test.sock")
+	command := renderHTTPProxyCommand("test-launch", "printf private-handoff; exit 7", false, nil)
+	child := exec.Command(clcommon.BootstrapShellPath(), "-c", "if true; then "+command+"; else exit 8; fi")
+	output, err := child.CombinedOutput()
+	var exit *exec.ExitError
+	require.ErrorAs(t, err, &exit, string(output))
+	assert.Equal(t, 7, exit.ExitCode(), string(output))
+	assert.Contains(t, string(output), "private-handoff")
 }

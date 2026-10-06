@@ -2356,8 +2356,7 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	timing("codex_version_checked")
-	harnessCmd := h.Spawn.BuildCommand(spawnSpec)
-	harnessCmd = WrapHTTPProxyCommand(sessionID, harnessCmd)
+	harnessCmd := HTTPProxySpawnCommand(sessionID, h, spawnSpec)
 	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
 		if stacked {
 			harnessCmd, err = WrapTclaudeLayerStackedSpec(

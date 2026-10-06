@@ -161,7 +161,7 @@ func TestHTTPProxyRawGatewayAndEnvironment(t *testing.T) {
 	assert.Empty(t, rec.Header().Get("Connection"))
 	assert.Empty(t, rec.Header().Get("X-Hop"))
 	assert.Equal(t, 1, calls)
-	for _, path := range []string{"%2e%2e/items", "foo%2fbar", "%252e%252e/items"} {
+	for _, path := range []string{"../items", "%2e%2e/items", "foo%2fbar", "%252e%252e/items"} {
 		rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(httptest.NewRequest("GET", "/v1/http/proxy/inventory/"+path, nil), conv))
 		assert.Equal(t, 400, rec.Code, path)
 	}

@@ -625,3 +625,5 @@ The raw daemon route is `/v1/http/proxy/NAME/PATH`, over the existing Unix
 socket. `GET /v1/http/environment` returns only the allowed instance names to
 a verified agent or launch bootstrap; it never returns service credentials or
 upstream URLs.
+
+Gateway clients must be able to reach loopback in the agent launch namespace. Use `--noproxy 127.0.0.1` with curl when ambient proxy settings would redirect local requests. A harness tool running in a separate network namespace may need the Unix-socket `tclaude proxy http` command instead. Redirect locations and cookie attributes are returned unchanged; the gateway does not rewrite them or follow redirects. If gateway discovery is temporarily unavailable at launch, the agent starts with a warning and without gateway URLs.

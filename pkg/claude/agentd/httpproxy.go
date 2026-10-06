@@ -15,6 +15,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"golang.org/x/net/http/httpguts"
 )
 
@@ -93,6 +94,9 @@ func handleHTTPProxyRequest(w http.ResponseWriter, r *http.Request) {
 // handleHTTPProxyGateway accepts an ordinary HTTP request over the daemon's
 // authenticated Unix transport. No JSON envelope is used in either direction.
 func handleHTTPProxyGateway(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requirePermission(w, r, PermHTTP, ActionContext{HTTPProxy: r.PathValue("name")}); !ok {
+		return
+	}
 	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxHTTPProxyBytes))
 	if err != nil {
 		writeError(w, http.StatusRequestEntityTooLarge, "invalid_arg", "request body exceeds 4 MiB or is unreadable")
@@ -109,6 +113,10 @@ func handleHTTPProxyGateway(w http.ResponseWriter, r *http.Request) {
 	headers := r.Header.Clone()
 	stripHTTPProxyTransportHeaders(headers)
 	headers.Del(agentipc.SessionClaimHeader)
+	headers.Del(session.HTTPProxyRuntimeClaimHeader)
+	headers.Del(humanTokenHeader)
+	headers.Del(routeHelperCredentialHeader)
+	headers.Del(agentipc.AgentHintHeader)
 	performHTTPProxyRequest(w, r, httpProxyRequest{Name: r.PathValue("name"), Path: path, Method: r.Method, Body: data, requestHeaders: headers}, true)
 }
 
@@ -126,8 +134,10 @@ func stripHTTPProxyTransportHeaders(headers http.Header) {
 }
 
 func performHTTPProxyRequest(w http.ResponseWriter, r *http.Request, body httpProxyRequest, raw bool) {
-	if _, ok := requirePermission(w, r, PermHTTP, ActionContext{HTTPProxy: body.Name}); !ok {
-		return
+	if !raw {
+		if _, ok := requirePermission(w, r, PermHTTP, ActionContext{HTTPProxy: body.Name}); !ok {
+			return
+		}
 	}
 	cfg, err := config.Load()
 	if err != nil {
@@ -242,4 +252,27 @@ func performHTTPProxyRequest(w http.ResponseWriter, r *http.Request, body httpPr
 		return
 	}
 	writeJSON(w, http.StatusOK, httpProxyResponse{Status: resp.StatusCode, Headers: resp.Header, Body: data})
+}
+
+// dispatchHTTPProxyGateway runs before ServeMux's path cleaning. A raw API
+// path must retain empty segments and encoded traversal for validation, rather
+// than generating a redirect that changes or discloses the daemon route.
+func dispatchHTTPProxyGateway(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		const prefix = "/v1/http/proxy/"
+		if !strings.HasPrefix(r.URL.EscapedPath(), prefix) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		rest := strings.TrimPrefix(r.URL.EscapedPath(), prefix)
+		name, path, _ := strings.Cut(rest, "/")
+		decodedName, err := url.PathUnescape(name)
+		if err != nil || decodedName == "" {
+			writeError(w, 400, "invalid_arg", "invalid proxy name")
+			return
+		}
+		r.SetPathValue("name", decodedName)
+		r.SetPathValue("path", path)
+		handleHTTPProxyGateway(w, r)
+	})
 }

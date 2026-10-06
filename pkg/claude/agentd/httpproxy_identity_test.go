@@ -58,3 +58,74 @@ func TestHTTPProxySeedLaunchProjectsScopedGroupPermissions(t *testing.T) {
 	assert.JSONEq(t, `{"names":["inventory"]}`, rec.Body.String())
 	assert.NotContains(t, rec.Body.String(), "secret")
 }
+
+func TestHTTPProxyRuntimeIdentityRequiresItsOwnProcessAndEndpoint(t *testing.T) {
+	setupTestDB(t)
+	const label = "http-opencode-runtime"
+	const conv = "ses_http_proxy"
+	fakeProcTree{name: map[int]string{9101: "tclaude", 9100: "bwrap"}, parent: map[int]int{9101: 9100, 9100: 1}}.install(t)
+	openCodeProcesses.Lock()
+	openCodeProcesses.bySession[label] = &openCodeProcess{pid: 9100}
+	openCodeProcesses.Unlock()
+	t.Cleanup(func() {
+		openCodeProcesses.Lock()
+		delete(openCodeProcesses.bySession, label)
+		openCodeProcesses.Unlock()
+	})
+	row, identity := httpProxyRuntimeCaller(9101, label)
+	require.NotNil(t, row)
+	assert.Empty(t, identity, "bootstrap can only discover names")
+	row, identity = httpProxyRuntimeCaller(9200, label)
+	assert.Nil(t, row)
+	assert.Empty(t, identity)
+	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{SessionID: label, ConvID: conv, ServerURL: "http://127.0.0.1:43210", Password: "private", PID: 9100, Cwd: "/tmp/project"}))
+	verified := openCodeRuntimeVerified
+	t.Cleanup(func() { openCodeRuntimeVerified = verified })
+	openCodeRuntimeVerified = func(db.OpenCodeRuntime) bool { return false }
+	row, identity = httpProxyRuntimeCaller(9101, label)
+	require.NotNil(t, row)
+	assert.Empty(t, identity)
+	openCodeRuntimeVerified = func(db.OpenCodeRuntime) bool { return true }
+	_, identity = httpProxyRuntimeCaller(9101, label)
+	assert.Equal(t, conv, identity)
+	openCodeProcesses.Lock()
+	openCodeProcesses.bySession[label].stopping = true
+	openCodeProcesses.Unlock()
+	row, identity = httpProxyRuntimeCaller(9101, label)
+	assert.Nil(t, row)
+	assert.Empty(t, identity)
+}
+
+func TestHTTPProxySeedProjectionIncludesBirthOverrides(t *testing.T) {
+	setupTestDB(t)
+	groupID, err := db.CreateAgentGroup("http-birth", "")
+	require.NoError(t, err)
+	group, err := db.GetAgentGroupByID(groupID)
+	require.NoError(t, err)
+	require.NoError(t, db.ReplaceAgentGroupPermissionGrants(group.ID, []db.PermissionGrant{{Slug: PermHTTP, Scope: `{"http_proxy":["inventory"]}`, ScopeSpecified: true}}, "test"))
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{HTTPProxies: map[string]config.HTTPProxyConfig{"inventory": {}, "billing": {}}}}))
+	for _, tc := range []struct{ effect, scope, expected string }{
+		{db.PermEffectGrant, `{"http_proxy":["billing"]}`, `{"names":["billing"]}`},
+		{db.PermEffectDeny, "", `{"names":[]}`},
+	} {
+		rememberHTTPProxyLaunchGroup("birth-launch", group, map[string]db.PermissionOverride{PermHTTP: {Effect: tc.effect, Scope: tc.scope}})
+		req := httptest.NewRequest(http.MethodGet, "/v1/http/environment", nil)
+		req = req.WithContext(context.WithValue(req.Context(), httpProxyLaunchRowKey{}, &db.SessionRow{ID: "birth-launch"}))
+		rec := httptest.NewRecorder()
+		handleHTTPProxyEnvironment(rec, req)
+		require.Equal(t, 200, rec.Code)
+		assert.JSONEq(t, tc.expected, rec.Body.String())
+	}
+	httpProxyLaunchGroups.Delete("birth-launch")
+}
+
+func TestHTTPProxyProofRateRoutingRequiresAVerifiedConnectionSubject(t *testing.T) {
+	req := httptest.NewRequest("GET", "/v1/http/environment", nil)
+	cache := &httpProxyProofSubject{}
+	req = req.WithContext(context.WithValue(req.Context(), httpProxyProofSubjectKey{}, cache))
+	assert.Equal(t, brokerProofKey, httpProxyRateKey(req, "pane:worker"))
+	rememberHTTPProxyProofSubject(req, "pane:worker", "worker")
+	assert.Equal(t, brokerProofKeyForRow("worker"), httpProxyRateKey(req, "pane:worker"))
+	assert.Equal(t, brokerProofKey, httpProxyRateKey(req, "pane:victim"))
+	assert.Equal(t, brokerProofKey, httpProxyRateKey(req, "runtime:worker"))
+}

@@ -241,15 +241,31 @@ func withIdentity(h http.Handler) http.Handler {
 			if pid, err := peerPID(uconn); err == nil {
 				p.PID = pid
 				claimedID := strings.TrimSpace(r.Header.Get(agentipc.SessionClaimHeader))
-				if claimedID != "" &&
-					checkBrokerProofRate(r.URL.Path, brokerProofKey).Reject {
+				runtimeClaim := strings.TrimSpace(r.Header.Get(session.HTTPProxyRuntimeClaimHeader))
+				httpGatewayRoute := r.URL.Path == "/v1/http/environment" || strings.HasPrefix(r.URL.Path, "/v1/http/proxy/")
+				proofClaim, proofKey := "pane:"+claimedID, brokerProofKey
+				if httpGatewayRoute && runtimeClaim != "" {
+					proofClaim = "runtime:" + runtimeClaim
+				}
+				if httpGatewayRoute {
+					proofKey = httpProxyRateKey(r, proofClaim)
+				}
+				if (claimedID != "" || (httpGatewayRoute && runtimeClaim != "")) && checkBrokerProofRate(r.URL.Path, proofKey).Reject {
 					writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
 					return
 				}
-				if claimedID != "" && (r.URL.Path == "/v1/http/environment" || strings.HasPrefix(r.URL.Path, "/v1/http/proxy/")) {
+				if httpGatewayRoute && runtimeClaim != "" {
+					row, conv := httpProxyRuntimeCaller(pid, runtimeClaim)
+					p.ConvID, p.HasClaudeAncestor = conv, true
+					if row != nil {
+						rememberHTTPProxyProofSubject(r, proofClaim, row.ID)
+						r = r.WithContext(context.WithValue(r.Context(), httpProxyLaunchRowKey{}, row))
+					}
+				} else if claimedID != "" && httpGatewayRoute {
 					proof := proveLaunchPaneCallerIn(newBrokerProcTable(), pid, claimedID, false)
 					p.ConvID, p.HasClaudeAncestor = "", true
 					if proof.row != nil {
+						rememberHTTPProxyProofSubject(r, proofClaim, proof.row.ID)
 						p.ConvID = proof.row.ConvID
 						r = r.WithContext(context.WithValue(r.Context(), httpProxyLaunchRowKey{}, proof.row))
 					}

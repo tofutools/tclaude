@@ -437,7 +437,8 @@ func runServe(p *serveParams) error {
 		// can read peer credentials from it.
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
 			if uc, ok := c.(*net.UnixConn); ok {
-				return context.WithValue(ctx, unixConnKey{}, uc)
+				ctx = context.WithValue(ctx, unixConnKey{}, uc)
+				return context.WithValue(ctx, httpProxyProofSubjectKey{}, &httpProxyProofSubject{})
 			}
 			return ctx
 		},
@@ -1502,7 +1503,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/process/runs/{id}/record-outcome", processRoute(handleProcessRunRecordOutcome))
 	mux.HandleFunc("POST /v1/process/runs/{id}/decide", processRoute(handleProcessRunDecide))
 	mux.HandleFunc("POST /v1/process/runs/{id}/resolve-blocked", processRoute(handleProcessRunResolveBlocked))
-	return idempotencyRequests(logRequest(auditRequests(mux)))
+	return idempotencyRequests(logRequest(auditRequests(dispatchHTTPProxyGateway(mux))))
 }
 
 func logRequest(h http.Handler) http.Handler {

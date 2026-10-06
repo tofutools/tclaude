@@ -1,6 +1,8 @@
 package harness
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -46,6 +48,9 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 	approvalArgs := codexApprovalArgs(spec)
 	fastModeArgs := codexFastModeArgs(spec)
 	shellEnvironmentArgs := codexShellEnvironmentArgs(spec.ShellEnvironment)
+	if spec.RuntimeHTTPProxyEnvironment {
+		shellEnvironmentArgs += " " + clcommon.ShellQuoteArg(CodexHTTPProxyEnvironmentMarkerArg(spec.ShellEnvironment))
+	}
 	cmd := binary
 	if spec.ResumeID != "" {
 		// `codex resume <id>` — resume is a subcommand; the id is a
@@ -379,4 +384,59 @@ func codexReasoningEffort(model, effort string) string {
 		return "xhigh"
 	}
 	return effort // low / medium / high / xhigh (and GPT-5.6 max) map 1:1
+}
+
+// CodexShellEnvironmentArgs pins per-launch gateway variables just as authored
+// shell environment values are pinned. These settings survive shell snapshots
+// and restrictive inheritance without widening any other environment policy.
+func CodexShellEnvironmentArgs(environment map[string]string) string {
+	return codexShellEnvironmentArgs(environment)
+}
+
+// CodexHTTPProxyEnvironmentMarker is a compile-time argument slot, replaced by
+// the launch gateway only at offsets recorded by the trusted command builder.
+const CodexHTTPProxyEnvironmentMarker = "__tclaude_http_proxy_codex_environment__"
+
+// CodexHTTPProxyEnvironmentMarkerArg carries the authored set-map as data in
+// the private workload handoff, so dotted proxy names can use a TOML table
+// without replacing other authored CLI environment settings.
+func CodexHTTPProxyEnvironmentMarkerArg(base map[string]string) string {
+	encoded, _ := json.Marshal(base)
+	return CodexHTTPProxyEnvironmentMarker + "_" + base64.StdEncoding.EncodeToString(encoded)
+}
+
+// CodexHTTPProxyEnvironmentArgs uses individual keys for ordinary names. A
+// dotted variable name must be a quoted inline-table key: Codex's CLI override
+// parser splits dotted paths literally, even when their segments are quoted.
+func CodexHTTPProxyEnvironmentArgs(base, gateways map[string]string) string {
+	if len(gateways) == 0 {
+		return ""
+	}
+	dotted := false
+	for name := range gateways {
+		if strings.Contains(name, ".") {
+			dotted = true
+		}
+	}
+	if !dotted {
+		return codexShellEnvironmentArgs(gateways)
+	}
+	merged := map[string]string{}
+	for name, value := range base {
+		merged[name] = value
+	}
+	for name, value := range gateways {
+		merged[name] = value
+	}
+	names := make([]string, 0, len(merged))
+	for name := range merged {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	fields := make([]string, 0, len(names))
+	for _, name := range names {
+		fields = append(fields, codexTOMLString(name)+" = "+codexTOMLString(merged[name]))
+	}
+	override := "shell_environment_policy.set={" + strings.Join(fields, ", ") + "}"
+	return " -c " + clcommon.ShellQuoteArg(override)
 }

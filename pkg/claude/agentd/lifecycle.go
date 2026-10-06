@@ -6830,7 +6830,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	}()
 
 	var openCodeLaunch *openCodeLaunch
-	if spawnHarness.UsesAuthoritativeServer() {
+ if spawnHarness.UsesAuthoritativeServer() {
+  rememberHTTPProxyLaunchGroup(label,g)
 		resolvedCwd, err := resolveOpenCodeLaunchCwd(p.Cwd)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
@@ -7177,7 +7178,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// reject such a row, while launch enrollment has the stronger conv-id proof.
 	timing("launch_prepared", "label", label)
 	launchedAt := time.Now()
-	rememberHTTPProxyLaunchGroup(label, g)
+	rememberHTTPProxyLaunchGroup(label, g, p.PermissionOverrides)
 	if err := SpawnDetachedTclaudeNew(spawnArgs); err != nil {
 		return launchFailed(err)
 	}

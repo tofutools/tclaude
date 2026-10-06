@@ -27,6 +27,7 @@ import (
 	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -1410,7 +1411,7 @@ func openCodeServeProcessExecWithAuthority(
 ) (string, []string, []*os.File, *openCodeUnixLaunchHandshake, func(), error) {
 	noCleanup := func() {}
 	if runtime.Transport != db.OpenCodeTransportUnixRelay {
-		command, args, err := openCodeServeExecWithAuthority(executable, port, sandboxSpec, launcher)
+		command, args, err := openCodeServeExecWithAuthority(executable, port, sandboxSpec, launcher, runtime.SessionID)
 		return command, args, nil, nil, noCleanup, err
 	}
 	if sandboxSpec == nil || sandboxSpec.Version != session.TclaudeLayerUnixRelaySpecVersion {
@@ -1431,12 +1432,18 @@ func openCodeServeProcessExecWithAuthority(
 	if err != nil {
 		return "", nil, nil, nil, noCleanup, err
 	}
+	relayWorkload := []string{executable}
+	relayWorkload = append(relayWorkload, serveArgs...)
+	wrappedWorkload := session.WrapHTTPProxyRuntimeCommand(runtime.SessionID, shellJoinOpenCodeCommand(relayWorkload[0], relayWorkload[1:]))
+	if cfg, err := config.Load(); err == nil && cfg.HTTPProxyConfigured() {
+		relayWorkload = []string{clcommon.BootstrapShellPath(), "-c", wrappedWorkload}
+	}
 	relayArgv := []string{
 		"/proc/self/fd/" + strconv.Itoa(relayExecutableFD),
 		opencodeapi.InheritedUnixRelayMode,
-		strconv.Itoa(listenerFD), "127.0.0.1:" + port, "--", executable,
+		strconv.Itoa(listenerFD), "127.0.0.1:" + port, "--",
 	}
-	relayArgv = append(relayArgv, serveArgs...)
+	relayArgv = append(relayArgv, relayWorkload...)
 	argv, err := session.TclaudeLayerUnixRelayServerExecArgs(
 		launcher, *sandboxSpec, 2, relayArgv)
 	if err != nil {
@@ -1755,12 +1762,23 @@ func openCodeServeExecWithAuthority(
 	executable, port string,
 	sandboxSpec *session.TclaudeLayerLaunchSpec,
 	launcher string,
+	httpProxySessionIDs ...string,
 ) (string, []string, error) {
 	serveArgs := []string{
 		"serve", "--hostname", "127.0.0.1",
 		"--port", port, "--log-level", "ERROR",
 	}
+	serveCommand := shellJoinOpenCodeCommand(executable, serveArgs)
+	httpBridge := false
+	if len(httpProxySessionIDs) > 0 {
+		wrapped := session.WrapHTTPProxyRuntimeCommand(httpProxySessionIDs[0], serveCommand)
+		httpBridge = wrapped != serveCommand
+		serveCommand = wrapped
+	}
 	if sandboxSpec == nil {
+		if httpBridge {
+			return clcommon.BootstrapShellPath(), []string{"-c", "exec " + serveCommand}, nil
+		}
 		return executable, serveArgs, nil
 	}
 	filteredDarwinProxy := false
@@ -1777,10 +1795,6 @@ func openCodeServeExecWithAuthority(
 		return "", nil, fmt.Errorf(
 			"unsupported_sandbox_profile_network: OpenCode with tclaude’s sandbox requires the host-open loopback control plane and endpoint-ownership proof",
 		)
-	}
-	serveCommand := clcommon.ShellQuoteArg(executable)
-	for _, arg := range serveArgs {
-		serveCommand += " " + clcommon.ShellQuoteArg(arg)
 	}
 	wrapped := ""
 	var err error

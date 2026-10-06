@@ -2915,8 +2915,7 @@ func resumeLaunchCmdWithStackedProof(
 	if err != nil {
 		return "", "", nil, fmt.Errorf("prepare %s host-control sandbox: %w", h.DisplayName, err)
 	}
-	cmd := h.Spawn.BuildCommand(spec)
-	cmd = session.WrapHTTPProxyCommand(sessionID, cmd)
+	cmd := session.HTTPProxySpawnCommand(sessionID, h, spec)
 	if cleanupPath != "" {
 		cmd = resumeCommandWithFileCleanup(cmd, cleanupPath)
 	}
