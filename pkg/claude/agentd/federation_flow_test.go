@@ -362,6 +362,23 @@ func TestFederation_OutboundMailRequiresPeerScopedGrant(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 	require.Equal(t, http.StatusBadRequest, postPermissionScope(t, f, "grant", map[string]any{"target": alice, "slug": agentd.PermAgentSpawn, "scope": map[string]any{"peer": []string{"bob/builders"}}}).Code)
 	require.Equal(t, http.StatusBadRequest, postPermissionScope(t, f, "grant", map[string]any{"target": alice, "slug": agentd.PermRoutesPublish, "scope": map[string]any{"peer": []string{"bob"}}}).Code)
+	for _, tc := range []struct{ slug, dimension string }{
+		{agentd.PermRoutesConsume, "group"},
+		{agentd.PermGroupsMembersSpawn, "group"},
+		{agentd.PermGroupsMembersSpawn, "spawn_profile"},
+		{agentd.PermGroupsMembersSpawn, "sandbox_profile"},
+	} {
+		mixed := postPermissionScope(t, f, "grant", map[string]any{
+			"target": alice, "slug": tc.slug,
+			"scope": map[string]any{"peer": []string{"bob"}, tc.dimension: []string{"team"}},
+		})
+		require.Equal(t, http.StatusBadRequest, mixed.Code, mixed.Body)
+		var rejection struct {
+			Error string `json:"error"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(mixed.Body), &rejection))
+		require.Equal(t, "a peer= scope cannot be combined with other dimensions; name the remote group as peer=<peer>/<group>", rejection.Error)
+	}
 
 	// Unknown peers are rejected at grant time.
 	grant := func(scope map[string]any) *httpResult {

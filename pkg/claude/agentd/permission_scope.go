@@ -242,6 +242,9 @@ func canonicalPermissionScopeForSlug(slug, raw string) (string, error) {
 // Catalog group names are intentionally not checked: catalogs can be stale.
 func normalizePeerScopeForSlug(slug string, scope PermissionScope) (string, error) {
 	if len(scope[ScopeDimPeer]) != 0 {
+		if len(scope) != 1 {
+			return "", fmt.Errorf("a peer= scope cannot be combined with other dimensions; name the remote group as peer=<peer>/<group>")
+		}
 		for i, matcher := range scope[ScopeDimPeer] {
 			ref, group, grouped := strings.Cut(matcher, "/")
 			if slug == PermAgentSpawn && grouped {
