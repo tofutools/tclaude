@@ -735,14 +735,6 @@ func visiblePermissionRegistry(vis proxyVisibility) []PermSlug {
 	return out
 }
 
-// dashboardPermissionRegistry allows the operator to prepare HTTP grants
-// before configuring instances. Tool availability remains configuration-gated.
-func dashboardPermissionRegistry() []PermSlug {
-	visibility := configuredProxyVisibility()
-	visibility.http = true
-	return visiblePermissionRegistry(visibility)
-}
-
 // proxyPermissionVisible answers for one slug. Anything that is not a semantic
 // proxy permission is always visible.
 func proxyPermissionVisible(slug string, vis proxyVisibility) bool {
