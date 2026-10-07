@@ -66,6 +66,8 @@ func renderHTTPProxyCommand(sessionID, command string, runtime bool, markerOffse
 	}
 	// A quoted here-document carries the opaque workload on a private fd.
 	// Keeping it out of argv preserves the launch script's credential privacy.
+	// Quote the delimiter unconditionally: argument quoting may leave a safe
+	// word bare, which enables heredoc expansion and corrupts marker offsets.
 	lines := map[string]bool{}
 	for _, line := range strings.Split(command, "\n") {
 		lines[line] = true
@@ -74,7 +76,7 @@ func renderHTTPProxyCommand(sessionID, command string, runtime bool, markerOffse
 	for lines[delimiter] {
 		delimiter += "_"
 	}
-	return clcommon.ShellQuoteArg(executable) + " session http-proxy-exec" + runtimeArg + " --session-id " + clcommon.ShellQuoteArg(sessionID) + " --command-fd 99 99<<" + clcommon.ShellQuoteArg(delimiter) + "\n" + command + "\n" + delimiter + "\ntclaude_http_proxy_exit=$?; (exit \"$tclaude_http_proxy_exit\")"
+	return clcommon.ShellQuoteArg(executable) + " session http-proxy-exec" + runtimeArg + " --session-id " + clcommon.ShellQuoteArg(sessionID) + " --command-fd 99 99<<'" + delimiter + "'\n" + command + "\n" + delimiter + "\ntclaude_http_proxy_exit=$?; (exit \"$tclaude_http_proxy_exit\")"
 }
 
 func httpProxyExecCmd() *cobra.Command {

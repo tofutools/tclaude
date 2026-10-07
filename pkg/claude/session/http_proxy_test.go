@@ -266,3 +266,27 @@ func TestHTTPProxyCLISelectionInFinalNamespace(t *testing.T) {
 	args := httpProxyWrappedArgs(t, command)
 	assert.Equal(t, guest, args[0])
 }
+
+func TestHTTPProxyCodexPrivateHandoffPreservesShellExpansions(t *testing.T) {
+	t.Setenv("HOME", testutil.CanonicalTempDir(t))
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{HTTPProxies: map[string]config.HTTPProxyConfig{"inventory": {URL: "https://inventory.example", Header: "Authorization"}}}}))
+	t.Setenv("TCLAUDE_GATEWAY_TEST_DISPATCH", "1")
+	t.Setenv(agentipc.SocketEnv, "/nonexistent/tclaude-gateway-test.sock")
+	sentinel := testutil.CanonicalTempDir(t) + "/unexpected-expansion"
+	literal := "$UNDEFINED_GATEWAY_TEST_VAR $(touch " + clcommon.ShellQuoteArg(sentinel) + ") `touch " + clcommon.ShellQuoteArg(sentinel) + "`"
+	spec := harness.SpawnSpec{
+		ExecutablePath: clcommon.BootstrapShellPath(),
+		EnvExports:     "export GATEWAY_LITERAL=" + clcommon.ShellQuoteArg(literal) + "; ",
+		ExtraArgs:      []string{"-c", "printf '%s' \"$GATEWAY_LITERAL\"; exit 7"},
+		InitialPrompt:  literal,
+	}
+	wrapped := HTTPProxySpawnCommand("test-launch", harness.MustGet(harness.CodexName), spec)
+	child := exec.Command(clcommon.BootstrapShellPath(), "-c", wrapped)
+	output, err := child.CombinedOutput()
+	var exit *exec.ExitError
+	require.ErrorAs(t, err, &exit, string(output))
+	assert.Equal(t, 7, exit.ExitCode(), string(output))
+	assert.Contains(t, string(output), literal)
+	assert.NotContains(t, string(output), "invalid Codex gateway environment marker")
+	assert.NoFileExists(t, sentinel, "handoff must not execute prompt or environment substitutions")
+}
