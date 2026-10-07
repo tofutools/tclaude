@@ -543,6 +543,8 @@ implicit separator. The example sends `Authorization: Bearer secret-token`.
 Leading and trailing file whitespace is trimmed; whitespace in `header_value`
 is preserved, including the space after `Bearer`. Either field can also be used
 alone: a file-only configuration should contain the complete header value.
+An empty file contributes an empty string; the combined header value must still
+be nonempty and valid.
 HTTP and HTTPS base URLs are supported, without URL credentials, queries or
 fragments. Prefer HTTPS for remote services. Separate instances can use
 separate services, API prefixes and credentials. Run

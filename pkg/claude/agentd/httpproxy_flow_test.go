@@ -202,6 +202,8 @@ func TestHTTPProxyHeaderValueComposition(t *testing.T) {
 		{name: "file", contents: "Bearer file-token\n", expected: "Bearer file-token", file: true},
 		{name: "prefix and file", prefix: "Bearer ", contents: "  file-token\r\n", expected: "Bearer file-token", file: true},
 		{name: "no implicit separator", prefix: "prefix-", contents: "token\n", expected: "prefix-token", file: true},
+		{name: "empty file", prefix: "Bearer literal", expected: "Bearer literal", file: true},
+		{name: "whitespace file", prefix: "Bearer literal", contents: " \r\n", expected: "Bearer literal", file: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			policy := config.HTTPProxyConfig{URL: upstream.URL, Header: "Authorization", HeaderValue: test.prefix}
@@ -217,4 +219,11 @@ func TestHTTPProxyHeaderValueComposition(t *testing.T) {
 			assert.Equal(t, test.expected, received)
 		})
 	}
+	require.NoError(t, os.WriteFile(token, []byte("\n"), 0600))
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{HTTPProxies: map[string]config.HTTPProxyConfig{"service": {URL: upstream.URL, Header: "Authorization", HeaderValueFile: token}}}}))
+	before := calls
+	response := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, "POST", "/v1/http/request", map[string]any{"name": "service", "path": "items"}), conv))
+	require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+	assert.Equal(t, before, calls, "an entirely empty header must not reach upstream")
+
 }
