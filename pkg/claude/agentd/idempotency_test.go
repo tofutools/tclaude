@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -323,4 +324,26 @@ func TestIdempotencyRejectsRequestIDReuseWithDifferentPayload(t *testing.T) {
 
 	assert.Equal(t, http.StatusConflict, conflict.Code)
 	assert.Equal(t, int32(1), calls.Load())
+}
+
+func TestIdempotencyHTTPGatewayKeysBelongToUpstream(t *testing.T) {
+	setupTestDB(t)
+	key := uuid.NewString()
+	calls := 0
+	handler := idempotencyRequestsWithOwner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		assert.Equal(t, key, r.Header.Get(agent.IdempotencyKeyHeader))
+		w.WriteHeader(http.StatusCreated)
+	}), "daemon-test")
+	for range 2 {
+		req := idempotencyRequest(t, key, "binary payload")
+		req.URL.Path = "/v1/http/proxy/inventory/items"
+		req.Header.Del(agent.RequestDigestHeader)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusCreated, rec.Code)
+	}
+	assert.Equal(t, 2, calls)
+	_, err := db.GetAgentdRequest(key)
+	require.ErrorIs(t, err, sql.ErrNoRows)
 }

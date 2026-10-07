@@ -551,3 +551,24 @@ test('a scope value cannot smuggle markup into the row chips', async (t) => {
   assert.equal(globalThis.__pwned, undefined);
   await mounted.unmount();
 });
+
+test('HTTP proxy permission can be granted and scoped to a configured instance', async (t) => {
+  const harness = await createPreactHarness(t);
+  const snapshot = scopeSnapshot({
+    slugs: [{ slug: 'proxy.http', description: 'HTTP proxy', scope_dims: ['http_proxy'] }],
+    dimOptions: { http_proxy: { values: ['billing', 'inventory'] } },
+  });
+  snapshot.permissions.overrides['conv-s'] = {};
+  const saved = [];
+  const { host } = await openEditor(harness, snapshot, {
+    ...noopActions,
+    savePermissions: async (descriptor, selection, scopes) => saved.push({ selection, scopes }),
+  });
+  await harness.act(() => host.querySelector('[data-slug="proxy.http"] [data-effect="grant"]').click());
+  await harness.act(() => host.querySelector('[data-slug="proxy.http"] button.perm-scope-twisty').click());
+  await harness.act(() => pickOption(harness,
+    host.querySelector('.perm-scope-dim[data-dim="http_proxy"] .perm-scope-add'), 'inventory'));
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.equal(saved[0].selection['proxy.http'], 'grant');
+  assert.deepEqual(saved[0].scopes, { 'proxy.http': { http_proxy: ['inventory'] } });
+});

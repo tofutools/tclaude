@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -17,6 +18,10 @@ import (
 // controls are driven by: what each grant is narrowed to, and what the pickers
 // may offer.
 type scopeSnapshotView struct {
+	Slugs []struct {
+		Slug      string   `json:"slug"`
+		ScopeDims []string `json:"scope_dims"`
+	} `json:"slugs"`
 	Permissions struct {
 		Overrides  map[string]map[string]string              `json:"overrides"`
 		Scopes     map[string]map[string]map[string][]string `json:"scopes"`
@@ -210,4 +215,35 @@ func TestPermEditorScope_RefusesScopesTheGateCouldNotHonour(t *testing.T) {
 	view := fetchScopeView(t, mux)
 	assert.Empty(t, view.Permissions.Overrides[conv],
 		"a rejected batch must not have written any part of itself")
+}
+
+func TestPermEditorHTTPProxyScope(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	const conv = "http-dashboard-agent"
+	f.HaveConvWithTitle(conv, "http-dashboard")
+	f.HaveEnrolledAgent(conv)
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{HTTPProxies: map[string]config.HTTPProxyConfig{
+		"inventory": {URL: "https://inventory.example", Header: "Authorization"},
+		"billing":   {URL: "https://billing.example", Header: "Authorization"},
+	}}}))
+	mux := agentd.BuildDashboardHandlerForTest()
+	view := fetchScopeView(t, mux)
+	found := false
+	for _, slug := range view.Slugs {
+		if slug.Slug == agentd.PermHTTP {
+			found = true
+			assert.Equal(t, []string{"http_proxy"}, slug.ScopeDims)
+		}
+	}
+	require.True(t, found, "HTTP permission must be available in the dashboard editor")
+	assert.Equal(t, []string{"billing", "inventory"}, view.Permissions.DimOpts["http_proxy"].Values)
+	code, body := postScopedPerms(t, mux, map[string]any{
+		"conv": conv, "overrides": map[string]string{agentd.PermHTTP: "grant"},
+		"scopes": map[string]any{agentd.PermHTTP: map[string][]string{"http_proxy": {"inventory"}}},
+	})
+	require.Equal(t, http.StatusOK, code, body)
+	view = fetchScopeView(t, mux)
+	assert.Equal(t, "grant", view.Permissions.Overrides[conv][agentd.PermHTTP])
+	assert.Equal(t, map[string][]string{"http_proxy": {"inventory"}}, view.Permissions.Scopes[conv][agentd.PermHTTP])
 }

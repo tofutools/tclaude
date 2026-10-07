@@ -27,6 +27,7 @@ import (
 	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -79,14 +80,15 @@ const (
 )
 
 type openCodeProcess struct {
-	cmd         *exec.Cmd
-	pid         int
-	tmuxSession string
-	done        chan error
-	doneOnce    sync.Once
-	cancel      context.CancelFunc
-	sseDone     chan struct{}
-	convID      string
+	cmd           *exec.Cmd
+	pid           int
+	tmuxSession   string
+	done          chan error
+	doneOnce      sync.Once
+	groupKillOnce sync.Once
+	cancel        context.CancelFunc
+	sseDone       chan struct{}
+	convID        string
 	// exited is set (under openCodeProcesses' lock) once cmd.Wait returns, so a
 	// consumer that had not yet registered its cancel at death time is never
 	// started against an already-dead server. Only processes with a cmd.Wait
@@ -857,6 +859,7 @@ func startOpenCodeProcessWithAuthority(
 			runtime, command, args, serverEnvironment, unixHandshake != nil)
 	}
 	cmd := exec.Command(command, args...)
+	configureOpenCodeProcessGroup(cmd)
 	cmd.Dir = runtime.Cwd
 	cmd.Env = serverEnvironment
 	cmd.Stdout = io.Discard
@@ -887,6 +890,7 @@ func startOpenCodeProcessWithAuthority(
 	openCodeProcesses.Unlock()
 	go func() {
 		err := cmd.Wait()
+		process.killWorkloadGroup()
 		if runtime.ResourceCgroupDir != "" && session.ResourceCgroupOOMDeath(runtime.ResourceCgroupDir, oomBaseline, err) {
 			if recordErr := db.SetSessionExitReason(runtime.SessionID, session.ResourceLimitOOMExitReason); recordErr != nil {
 				slog.Warn("OpenCode resource limit: record OOM outcome", "session_id", runtime.SessionID, "error", recordErr)
@@ -1410,7 +1414,7 @@ func openCodeServeProcessExecWithAuthority(
 ) (string, []string, []*os.File, *openCodeUnixLaunchHandshake, func(), error) {
 	noCleanup := func() {}
 	if runtime.Transport != db.OpenCodeTransportUnixRelay {
-		command, args, err := openCodeServeExecWithAuthority(executable, port, sandboxSpec, launcher)
+		command, args, err := openCodeServeExecWithAuthority(executable, port, sandboxSpec, launcher, runtime.SessionID)
 		return command, args, nil, nil, noCleanup, err
 	}
 	if sandboxSpec == nil || sandboxSpec.Version != session.TclaudeLayerUnixRelaySpecVersion {
@@ -1431,12 +1435,22 @@ func openCodeServeProcessExecWithAuthority(
 	if err != nil {
 		return "", nil, nil, nil, noCleanup, err
 	}
+	relayWorkload := []string{executable}
+	relayWorkload = append(relayWorkload, serveArgs...)
+	gatewayCLIPath, err := session.HTTPProxyCLIForLayerSpec(sandboxSpec)
+	if err != nil {
+		return "", nil, nil, nil, noCleanup, err
+	}
+	wrappedWorkload := session.WrapHTTPProxyRuntimeCommand(runtime.SessionID, shellJoinOpenCodeCommand(relayWorkload[0], relayWorkload[1:]), gatewayCLIPath)
+	if cfg, err := config.Load(); err == nil && cfg.HTTPProxyConfigured() {
+		relayWorkload = []string{clcommon.BootstrapShellPath(), "-c", wrappedWorkload}
+	}
 	relayArgv := []string{
 		"/proc/self/fd/" + strconv.Itoa(relayExecutableFD),
 		opencodeapi.InheritedUnixRelayMode,
-		strconv.Itoa(listenerFD), "127.0.0.1:" + port, "--", executable,
+		strconv.Itoa(listenerFD), "127.0.0.1:" + port, "--",
 	}
-	relayArgv = append(relayArgv, serveArgs...)
+	relayArgv = append(relayArgv, relayWorkload...)
 	argv, err := session.TclaudeLayerUnixRelayServerExecArgs(
 		launcher, *sandboxSpec, 2, relayArgv)
 	if err != nil {
@@ -1755,12 +1769,27 @@ func openCodeServeExecWithAuthority(
 	executable, port string,
 	sandboxSpec *session.TclaudeLayerLaunchSpec,
 	launcher string,
+	httpProxySessionIDs ...string,
 ) (string, []string, error) {
 	serveArgs := []string{
 		"serve", "--hostname", "127.0.0.1",
 		"--port", port, "--log-level", "ERROR",
 	}
+	serveCommand := shellJoinOpenCodeCommand(executable, serveArgs)
+	httpBridge := false
+	if len(httpProxySessionIDs) > 0 {
+		gatewayCLIPath, err := session.HTTPProxyCLIForLayerSpec(sandboxSpec)
+		if err != nil {
+			return "", nil, err
+		}
+		wrapped := session.WrapHTTPProxyRuntimeCommand(httpProxySessionIDs[0], serveCommand, gatewayCLIPath)
+		httpBridge = wrapped != serveCommand
+		serveCommand = wrapped
+	}
 	if sandboxSpec == nil {
+		if httpBridge {
+			return clcommon.BootstrapShellPath(), []string{"-c", "exec " + serveCommand}, nil
+		}
 		return executable, serveArgs, nil
 	}
 	filteredDarwinProxy := false
@@ -1777,10 +1806,6 @@ func openCodeServeExecWithAuthority(
 		return "", nil, fmt.Errorf(
 			"unsupported_sandbox_profile_network: OpenCode with tclaude’s sandbox requires the host-open loopback control plane and endpoint-ownership proof",
 		)
-	}
-	serveCommand := clcommon.ShellQuoteArg(executable)
-	for _, arg := range serveArgs {
-		serveCommand += " " + clcommon.ShellQuoteArg(arg)
 	}
 	wrapped := ""
 	var err error
@@ -2868,18 +2893,30 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 			return
 		}
 		if process.cmd != nil && process.cmd.Process != nil {
+			// Capture descendants before interrupting the bridge: its shell and
+			// server can otherwise be reparented when the bridge exits.
+			select {
+			case <-process.done:
+				process.killWorkloadGroup()
+				return
+			default:
+			}
+			recordedTree := opencodeapi.RecordedProcessSubtree(process.cmd.Process.Pid)
 			_ = process.cmd.Process.Signal(os.Interrupt)
 			select {
 			case <-process.done:
-				return
 			case <-time.After(openCodeProcessStopWait):
-				_ = process.cmd.Process.Kill()
-				select {
-				case <-process.done:
-				case <-time.After(openCodeProcessStopWait):
-				}
-				return
 			}
+			// The group outlives a promptly exiting bridge while its workload
+			// remains. Always retire it, including after a graceful leader exit.
+			process.killWorkloadGroup()
+			killOpenCodePIDs(recordedTree)
+			if !waitForOpenCodePIDsExit(recordedTree, openCodeProcessStopWait) {
+				removeControlSocket = false
+				slog.Warn("OpenCode process tree did not exit; control authority retained",
+					"session", runtime.SessionID, "pid", runtime.PID)
+			}
+			return
 		}
 	}
 	// No in-memory handle: this is a recovered PID (e.g. after an agentd
@@ -3641,4 +3678,15 @@ func reapOrphanedOpenCodeRuntimes(states []*session.SessionState) {
 			}
 		}
 	}
+}
+
+// killWorkloadGroup retires the launch-owned group once. The waiter calls it
+// immediately at leader exit, before publishing done; later teardown must not
+// signal a cached group ID after a long-dead leader could have been reused.
+func (process *openCodeProcess) killWorkloadGroup() {
+	process.groupKillOnce.Do(func() {
+		if process.cmd != nil {
+			killOpenCodeProcessGroup(process.cmd)
+		}
+	})
 }

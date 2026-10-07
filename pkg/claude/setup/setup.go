@@ -716,8 +716,9 @@ func installProxySkills() error {
 		Git:    cfg.GitProxyEnabled(),
 		Linear: cfg.LinearProxyConfigured(),
 		AWB:    cfg.AWBProxyEnabled(),
+		HTTP:   cfg.HTTPProxyConfigured(),
 	}
-	if !selection.Git && !selection.Linear && !selection.AWB {
+	if !selection.Git && !selection.Linear && !selection.AWB && !selection.HTTP {
 		fmt.Println("⚠ No proxy skills installed: setup found no agent.git_proxy.allowed_remotes, " +
 			"agent.linear_proxy key file/allow-list/workspace route, or agent.awb_proxy.url")
 		fmt.Println("  Host-side setup deliberately does not consult scoped grants or agentd's LINEAR_API_KEY; " +

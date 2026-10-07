@@ -241,12 +241,39 @@ func withIdentity(h http.Handler) http.Handler {
 			if pid, err := peerPID(uconn); err == nil {
 				p.PID = pid
 				claimedID := strings.TrimSpace(r.Header.Get(agentipc.SessionClaimHeader))
-				if claimedID != "" &&
-					checkBrokerProofRate(r.URL.Path, brokerProofKey).Reject {
+				runtimeClaim := strings.TrimSpace(r.Header.Get(session.HTTPProxyRuntimeClaimHeader))
+				httpGatewayRoute := r.URL.Path == "/v1/http/environment" || strings.HasPrefix(r.URL.Path, "/v1/http/proxy/")
+				proofClaim, proofKey := "pane:"+claimedID, brokerProofKey
+				if httpGatewayRoute && runtimeClaim != "" {
+					proofClaim = "runtime:" + runtimeClaim
+				}
+				if httpGatewayRoute {
+					proofKey = httpProxyRateKey(r, proofClaim)
+				}
+				if (claimedID != "" || (httpGatewayRoute && runtimeClaim != "")) && checkBrokerProofRate(r.URL.Path, proofKey).Reject {
 					writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
 					return
 				}
-				p.ConvID, p.HasClaudeAncestor = agentIdentityForPID(pid, claimedID)
+				if httpGatewayRoute && runtimeClaim != "" {
+					row, conv := httpProxyRuntimeCaller(pid, runtimeClaim)
+					// A failed gateway claim must not fall back to operator-token authority.
+					p.ConvID, p.HasClaudeAncestor = conv, true
+					if row != nil {
+						rememberHTTPProxyProofSubject(r, proofClaim, row.ID)
+						r = r.WithContext(context.WithValue(r.Context(), httpProxyLaunchRowKey{}, row))
+					}
+				} else if claimedID != "" && httpGatewayRoute {
+					proof := proveLaunchPaneCallerIn(newBrokerProcTable(), pid, claimedID, false)
+					// The claim is agent-shaped even when its kernel proof fails.
+					p.ConvID, p.HasClaudeAncestor = "", true
+					if proof.row != nil {
+						rememberHTTPProxyProofSubject(r, proofClaim, proof.row.ID)
+						p.ConvID = proof.row.ConvID
+						r = r.WithContext(context.WithValue(r.Context(), httpProxyLaunchRowKey{}, proof.row))
+					}
+				} else {
+					p.ConvID, p.HasClaudeAncestor = agentIdentityForPID(pid, claimedID)
+				}
 			}
 		}
 		p.HumanTokenValid = verifyHumanToken(r)
@@ -473,6 +500,7 @@ const (
 	PermGitHubRead  = "proxy.github.read"
 	PermGitHubWrite = "proxy.github.write"
 	PermGitHubMerge = "proxy.github.merge"
+	PermHTTP        = "proxy.http"
 	PermLinearRead  = "proxy.linear.read"
 	PermLinearWrite = "proxy.linear.write"
 	PermAWBRead     = "proxy.awb.read"
@@ -1570,6 +1598,13 @@ type layerProof struct {
 // what was observed. Nothing here is caller-asserted beyond the claimed id,
 // which the log labels as such.
 func proveTclaudeLayerCallerIn(t *brokerProcTable, callerPID int, claimedID string) layerProof {
+	return proveLaunchPaneCallerIn(t, callerPID, claimedID, true)
+}
+
+// proveLaunchPaneCallerIn also supports the HTTP gateway's pre-harness
+// bootstrap. The same live-pane/generation/ancestry proof is required for
+// ordinary launches; only the requirement for an outer sandbox is optional.
+func proveLaunchPaneCallerIn(t *brokerProcTable, callerPID int, claimedID string, layerOnly bool) layerProof {
 	claimedID = strings.TrimSpace(claimedID)
 	if callerPID <= 1 || claimedID == "" {
 		return layerProof{}
@@ -1583,7 +1618,7 @@ func proveTclaudeLayerCallerIn(t *brokerProcTable, callerPID int, claimedID stri
 	}
 	row, err := db.LoadSession(claimedID)
 	lap(&timing.dbDur)
-	if err != nil || row == nil || !isTclaudeLayerRow(row) {
+	if err != nil || row == nil || (layerOnly && !isTclaudeLayerRow(row)) {
 		// Not a layer claim as far as the proof is concerned, but a LoadSession
 		// error is worth distinguishing at the call site from "no such row":
 		// a busy database turns a valid claim into a missing one, and the

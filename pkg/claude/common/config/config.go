@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -2035,6 +2036,10 @@ type AgentConfig struct {
 	// sandboxed agent, so it must never come up enabled on an operator who has
 	// not configured it. See AWBProxyConfig.
 	AWBProxy *AWBProxyConfig `json:"awb_proxy,omitempty"`
+
+	// HTTPProxies are named credential-bearing HTTP services, available only
+	// through proxy.http grants (optionally scoped by http_proxy name).
+	HTTPProxies map[string]HTTPProxyConfig `json:"http_proxies,omitempty"`
 }
 
 // AWBProxyConfig is the operator's policy for the daemon-mediated AWB proxy —
@@ -3878,4 +3883,40 @@ func (c *NotificationConfig) HumanMessagesIntent() bool {
 		return true
 	}
 	return c.HumanMessages == nil || *c.HumanMessages
+}
+
+// HTTPProxyConfig pins a generic proxy to an operator-controlled base URL.
+// HeaderValueFile is preferred for secrets; its trimmed contents are appended
+// to HeaderValue, which can supply a prefix such as "Bearer ".
+type HTTPProxyConfig struct {
+	// EnvironmentVariable overrides the default TCLAUDE_HTTP_PROXY_name gateway variable.
+	EnvironmentVariable string `json:"environment_variable,omitempty"`
+	URL                 string `json:"url"`
+	Header              string `json:"header"`
+	HeaderValue         string `json:"header_value,omitempty"`
+	HeaderValueFile     string `json:"header_value_file,omitempty"`
+}
+
+// HTTPProxyConfigured reports whether any named HTTP instance is configured.
+func (c *Config) HTTPProxyConfigured() bool {
+	return c != nil && c.Agent != nil && len(c.Agent.HTTPProxies) > 0
+}
+
+// IsHTTPProxyGatewayURL recognizes private loopback capability URLs so a
+// renamed or removed custom variable cannot leak into another launch.
+func IsHTTPProxyGatewayURL(value string) bool {
+	u, err := url.Parse(value)
+	if err != nil || u.Scheme != "http" || u.Hostname() != "127.0.0.1" || u.Port() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+	path := strings.Trim(u.Path, "/")
+	if len(path) != 64 {
+		return false
+	}
+	for _, c := range path {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }

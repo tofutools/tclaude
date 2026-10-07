@@ -25,7 +25,8 @@ import (
 type ActionContext struct {
 	// Group is the target group NAME (the identifier group grants and the
 	// dashboard use), not the numeric group id.
-	Group string
+	Group     string
+	HTTPProxy string
 	// TargetAgent is the agent the action acts upon. Phase 2 has no
 	// production caller for this dimension; Phase 5 defines the identifier
 	// form alongside the lineage table and the @descendants selector.
@@ -96,6 +97,8 @@ type ActionContext struct {
 // dimension cannot claim to satisfy it either.
 func (a ActionContext) value(dim ScopeDim) string {
 	switch dim {
+	case ScopeDimHTTPProxy:
+		return a.HTTPProxy
 	case ScopeDimGroup:
 		return a.Group
 	case ScopeDimTargetAgent:

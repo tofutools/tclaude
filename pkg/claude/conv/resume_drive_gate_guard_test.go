@@ -15,7 +15,7 @@ import (
 // The helper every plain-CLI resume in this package launches through, and the
 // gate every one of them must consult first.
 const (
-	convResumeLauncher  = "LaunchDetachedTmuxSession"
+	convResumeLauncher  = "LaunchResumedTmuxSession"
 	convResumeDriveGate = "resumeCopilotDriveGate"
 )
 
@@ -144,7 +144,7 @@ func inspectGateUse(body *ast.BlockStmt) gateUse {
 			return true
 		}
 		switch calleeName(call) {
-		case convResumeLauncher:
+		case convResumeLauncher, "LaunchDetachedTmuxSession":
 			use.launches = true
 			if !launchPos.IsValid() || call.Pos() < launchPos {
 				launchPos = call.Pos()

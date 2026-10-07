@@ -3835,9 +3835,15 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.UsageTabVisible = usage.historyAvailable || openCodeActivity
 	out.Templates = templates
 	out.Profiles = profiles
+	var httpProxyNames []string
+	if cfg != nil && cfg.Agent != nil {
+		for name := range cfg.Agent.HTTPProxies {
+			httpProxyNames = append(httpProxyNames, name)
+		}
+	}
 	out.Permissions.ScopeDimOptions = scopeDimOptionsSnapshot(
 		groups, profiles, sandboxProfiles,
-		cfg.ResolvedLinearProxy().AllowedTeams, cfg.ResolvedAWBProxy().AllowedWorkspaces)
+		cfg.ResolvedLinearProxy().AllowedTeams, cfg.ResolvedAWBProxy().AllowedWorkspaces, httpProxyNames)
 	if defaultProfile != nil {
 		out.SpawnProfileDefault = defaultProfile.Name
 	}

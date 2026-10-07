@@ -294,7 +294,7 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 			return 1
 		}
 	}
-	if err := session.LaunchDetachedTmuxSession(tmuxSession, rc.ProjectPath, launchCmd,
+	if err := session.LaunchResumedTmuxSession(sessionID, tmuxSession, rc.ProjectPath, launchCmd, h.Name,
 		session.CodexProfileMarkerArgs(profilePath)...); err != nil {
 		fmt.Fprintf(stderr, "Failed to create tmux session: %v\n", err)
 		return 1
