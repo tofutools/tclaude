@@ -529,16 +529,20 @@ so the agent does not need access to its file:
       "inventory": {
         "url": "https://inventory.example/api/v1",
         "header": "Authorization",
-        "header_value_file": "~/.config/inventory/authorization"
+        "header_value": "Bearer ",
+        "header_value_file": "~/service-token.txt"
       }
     }
   }
 }
 ```
 
-The file contains the complete header value, such as `Bearer secret-token`.
-Leading and trailing whitespace is trimmed. `header_value` can instead set the
-value directly in private config; a file takes precedence when both are set.
+The file can contain just the token, such as `secret-token`. When both fields
+are set, the header is `header_value` followed by the file contents, with no
+implicit separator. The example sends `Authorization: Bearer secret-token`.
+Leading and trailing file whitespace is trimmed; whitespace in `header_value`
+is preserved, including the space after `Bearer`. Either field can also be used
+alone: a file-only configuration should contain the complete header value.
 HTTP and HTTPS base URLs are supported, without URL credentials, queries or
 fragments. Prefer HTTPS for remote services. Separate instances can use
 separate services, API prefixes and credentials. Run

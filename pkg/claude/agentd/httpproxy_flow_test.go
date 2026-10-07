@@ -40,9 +40,9 @@ func TestHTTPProxyFlow(t *testing.T) {
 	}))
 	defer upstream.Close()
 	token := filepath.Join(testutil.CanonicalTempDir(t), "token")
-	require.NoError(t, os.WriteFile(token, []byte("Bearer secret\n"), 0600))
+	require.NoError(t, os.WriteFile(token, []byte("secret\n"), 0600))
 	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{HTTPProxies: map[string]config.HTTPProxyConfig{
-		"service": {URL: upstream.URL + "/api", Header: "Authorization", HeaderValue: "wrong", HeaderValueFile: token},
+		"service": {URL: upstream.URL + "/api", Header: "Authorization", HeaderValue: "Bearer ", HeaderValueFile: token},
 		"other":   {URL: upstream.URL, Header: "Authorization", HeaderValue: "other"},
 	}}}))
 	post := func(name, path string, headers map[string]string) *httptest.ResponseRecorder {
@@ -176,5 +176,45 @@ func TestHTTPProxyRawGatewayAndEnvironment(t *testing.T) {
 	for _, row := range rows {
 		assert.Equal(t, "/v1/http/proxy/", row.Path)
 		assert.NotContains(t, row.Detail, "secret")
+	}
+}
+
+func TestHTTPProxyHeaderValueComposition(t *testing.T) {
+	f := newFlow(t)
+	const conv = "http-header-composition"
+	f.HaveConvWithTitle(conv, "header-worker")
+	f.HaveEnrolledAgent(conv)
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermHTTP, "test"))
+	received := ""
+	calls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		received = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	token := filepath.Join(testutil.CanonicalTempDir(t), "token")
+	for _, test := range []struct {
+		name, prefix, contents, expected string
+		file                             bool
+	}{
+		{name: "literal", prefix: "Bearer literal", expected: "Bearer literal"},
+		{name: "file", contents: "Bearer file-token\n", expected: "Bearer file-token", file: true},
+		{name: "prefix and file", prefix: "Bearer ", contents: "  file-token\r\n", expected: "Bearer file-token", file: true},
+		{name: "no implicit separator", prefix: "prefix-", contents: "token\n", expected: "prefix-token", file: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			policy := config.HTTPProxyConfig{URL: upstream.URL, Header: "Authorization", HeaderValue: test.prefix}
+			if test.file {
+				require.NoError(t, os.WriteFile(token, []byte(test.contents), 0600))
+				policy.HeaderValueFile = token
+			}
+			require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{HTTPProxies: map[string]config.HTTPProxyConfig{"service": policy}}}))
+			before := calls
+			response := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, "POST", "/v1/http/request", map[string]any{"name": "service", "path": "items"}), conv))
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			assert.Equal(t, before+1, calls)
+			assert.Equal(t, test.expected, received)
+		})
 	}
 }

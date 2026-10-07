@@ -200,7 +200,7 @@ func performHTTPProxyRequest(w http.ResponseWriter, r *http.Request, body httpPr
 			writeError(w, 503, "http_proxy_credential", "could not read configured header file")
 			return
 		}
-		value = strings.TrimSpace(string(data))
+		value += strings.TrimSpace(string(data))
 	}
 	if value == "" || !httpguts.ValidHeaderFieldValue(value) {
 		writeError(w, 503, "http_proxy_credential", "configured header value is empty or invalid")
