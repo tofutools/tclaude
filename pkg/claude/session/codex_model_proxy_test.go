@@ -13,9 +13,10 @@ import (
 func TestCodexModelProxyProviderRefusesCompetingAuthentication(t *testing.T) {
 	valid := codexEffectiveProvider{BaseURL: "http://127.0.0.1:1234/model/v1", EnvKey: "TCLAUDE_MODEL_PROXY_TOKEN", WireAPI: "responses"}
 	check := func(p codexEffectiveProvider) error {
-		return verifyCodexModelProxyProvider(codexEffectiveConfig{ModelProvider: "launch", ModelProviders: map[string]codexEffectiveProvider{"launch": p}}, "launch", valid.BaseURL)
+		return verifyCodexModelProxyProvider(codexEffectiveConfig{AuthStore: "ephemeral", ModelProvider: "launch", ModelProviders: map[string]codexEffectiveProvider{"launch": p}}, "launch", valid.BaseURL)
 	}
 	require.NoError(t, check(valid))
+	require.Error(t, verifyCodexModelProxyProvider(codexEffectiveConfig{AuthStore: "file", ModelProvider: "launch", ModelProviders: map[string]codexEffectiveProvider{"launch": valid}}, "launch", valid.BaseURL))
 	for _, mutate := range []func(*codexEffectiveProvider){
 		func(p *codexEffectiveProvider) { p.RequiresOpenAIAuth = true },
 		func(p *codexEffectiveProvider) { p.Auth = json.RawMessage(`{"command":"helper"}`) },
@@ -67,7 +68,7 @@ func TestCodexModelProxyFilteredPreflightUsesSameOverrides(t *testing.T) {
 			require.NotEqual(t, "OPENAI_API_KEY", e.Name)
 			require.NotEqual(t, "HTTP_PROXY", e.Name)
 		}
-		return codexEffectiveConfig{ModelProvider: "tclaude_gateway_preflight", ModelProviders: map[string]codexEffectiveProvider{"tclaude_gateway_preflight": {BaseURL: "http://127.0.0.1:1/model/v1", WireAPI: "responses", EnvKey: "TCLAUDE_MODEL_PROXY_TOKEN"}}}, nil
+		return codexEffectiveConfig{AuthStore: "ephemeral", ModelProvider: "tclaude_gateway_preflight", ModelProviders: map[string]codexEffectiveProvider{"tclaude_gateway_preflight": {BaseURL: "http://127.0.0.1:1/model/v1", WireAPI: "responses", EnvKey: "TCLAUDE_MODEL_PROXY_TOKEN"}}}, nil
 	}
 	h, err := harness.Resolve("codex")
 	require.NoError(t, err)

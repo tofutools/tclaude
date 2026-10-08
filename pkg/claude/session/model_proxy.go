@@ -235,7 +235,7 @@ func validateCodexModelProxyEffective(environment []string, profile, provider, b
 }
 func verifyCodexModelProxyProvider(effective codexEffectiveConfig, provider, base string) error {
 	p, ok := effective.ModelProviders[provider]
-	if !ok || effective.ModelProvider != provider || p.BaseURL != base || p.EnvKey != "TCLAUDE_MODEL_PROXY_TOKEN" || p.RequiresOpenAIAuth || p.WireAPI != "responses" || p.SupportsWebsockets || (len(p.Auth) > 0 && string(p.Auth) != "null") || len(p.HTTPHeaders) > 0 || len(p.EnvHTTPHeaders) > 0 || len(p.QueryParams) > 0 || p.ExperimentalBearer != "" {
+	if !ok || effective.AuthStore != "ephemeral" || effective.ModelProvider != provider || p.BaseURL != base || p.EnvKey != "TCLAUDE_MODEL_PROXY_TOKEN" || p.RequiresOpenAIAuth || p.WireAPI != "responses" || p.SupportsWebsockets || (len(p.Auth) > 0 && string(p.Auth) != "null") || len(p.HTTPHeaders) > 0 || len(p.EnvHTTPHeaders) > 0 || len(p.QueryParams) > 0 || p.ExperimentalBearer != "" {
 		return errors.New("codex model gateway effective provider differs from the pinned launch provider; launch refused without credential fallback")
 	}
 	return nil

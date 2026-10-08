@@ -3,6 +3,7 @@ package session
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -33,8 +34,26 @@ func TestNativeCodexModelProxySavedLoginPrecedence(t *testing.T) {
 	home := testutil.CanonicalTempDir(t)
 	codexHome := filepath.Join(home, ".codex")
 	require.NoError(t, os.MkdirAll(codexHome, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "auth.json"), []byte(`{"auth_mode":"chatgpt","OPENAI_API_KEY":null,"tokens":{"id_token":"saved-login-canary","access_token":"saved-chatgpt-canary","refresh_token":"saved-refresh-canary","account_id":"test"},"last_refresh":"2099-01-01T00:00:00Z"}`), 0600))
+	// Codex parses ID-token claims when loading a saved ChatGPT login. These
+	// synthetic claims are recognized locally; no real account or OAuth call is used.
+	claims := base64.RawURLEncoding.EncodeToString([]byte(`{"email":"smoke@example.invalid","https://api.openai.com/auth":{"chatgpt_account_id":"test","chatgpt_plan_type":"plus"}}`))
+	idToken := "eyJhbGciOiJub25lIn0." + claims + ".canary"
+	auth, err := json.Marshal(map[string]any{
+		"auth_mode": "chatgpt", "OPENAI_API_KEY": nil,
+		"tokens":       map[string]string{"id_token": idToken, "access_token": "saved-chatgpt-canary", "refresh_token": "saved-refresh-canary", "account_id": "test"},
+		"last_refresh": "2099-01-01T00:00:00Z",
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "auth.json"), auth, 0600))
 	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte("cli_auth_credentials_store=\"file\"\n"), 0600))
+	statusCtx, statusCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer statusCancel()
+	status := exec.CommandContext(statusCtx, binary, "login", "status")
+	status.Env = []string{"HOME=" + home, "CODEX_HOME=" + codexHome, "PATH=" + os.Getenv("PATH")}
+	status.Dir = home
+	loginStatus, err := status.CombinedOutput()
+	require.NoError(t, err, "saved-login fixture must be recognized: %s", loginStatus)
+	require.Contains(t, string(loginStatus), "ChatGPT", "saved-login fixture must be recognized")
 	var mu sync.Mutex
 	requests := 0
 	badAuth := false

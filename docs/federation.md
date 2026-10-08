@@ -1683,7 +1683,9 @@ as command overrides to both TUI and app-server; it never edits the user's
 The effective-config probe uses the same overrides and refuses a differing or
 uninspectable route. Provider-changing pass-through config/profile arguments
 are refused, and inherited routing/auth/proxy environment variables are cleared.
-A saved ChatGPT login or `OPENAI_API_KEY` is not used for gateway model requests;
+The launch selects Codex's ephemeral credential store and verifies that setting,
+so a gateway 401 cannot trigger refresh of a saved ChatGPT login. A saved login
+or `OPENAI_API_KEY` is not used for gateway model requests;
 the upstream is an API/provider-credential endpoint, not subscription billing.
 This also applies to remote spawn and teleport `--credentials proxy:<name>@<peer>`.
 There is no automatic fallback to local credentials on refusal or disconnect.
