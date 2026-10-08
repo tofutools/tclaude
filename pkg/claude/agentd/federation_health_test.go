@@ -130,3 +130,56 @@ func TestFleetHealthSpawnTelemetryCorrelatesAndNeverSettles(t *testing.T) {
 	require.NoError(t, e)
 	require.Equal(t, db.FedOutboxQueued, row.State)
 }
+
+func TestFleetHealthMemoryFlapCancelsRecovery(t *testing.T) {
+	rt, peer := healthFixture(t)
+	now := time.Now()
+	sample := func(at time.Time, free uint64) {
+		rt.observeFleetNode(peer, &proto.CatalogPayload{Node: &proto.NodeMetadata{Resources: proto.NodeResources{Status: "current", ObservedAt: &at, RAM: &proto.NodeRAM{TotalBytes: 100, AvailableBytes: free}}}}, at)
+	}
+	sample(now, 5)
+	sample(now.Add(2*time.Second), 5)
+	rt.flushFleetHealth(now.Add(4 * time.Second))
+	require.Len(t, healthMessages(t), 1)
+	sample(now.Add(5*time.Second), 50)
+	sample(now.Add(5500*time.Millisecond), 5)
+	rt.flushFleetHealth(now.Add(7 * time.Second))
+	require.Len(t, healthMessages(t), 1, "no false recovery when latest reading is low")
+}
+func TestFleetHealthStaleGapCancelsPendingMemory(t *testing.T) {
+	rt, peer := healthFixture(t)
+	now := time.Now()
+	_, err := config.Update(func(c *config.Config, e error) error {
+		if e != nil {
+			return e
+		}
+		c.Federation.Health.Defaults.DebounceSeconds = 120
+		return nil
+	})
+	require.NoError(t, err)
+	sample := func(at time.Time) {
+		rt.observeFleetNode(peer, &proto.CatalogPayload{Node: &proto.NodeMetadata{Resources: proto.NodeResources{Status: "current", ObservedAt: &at, RAM: &proto.NodeRAM{TotalBytes: 100, AvailableBytes: 5}}}}, at)
+	}
+	sample(now)
+	sample(now.Add(2 * time.Second))
+	rt.flushFleetHealth(now.Add(100 * time.Second))
+	require.Empty(t, healthMessages(t))
+	sample(now.Add(125 * time.Second))
+	rt.flushFleetHealth(now.Add(126 * time.Second))
+	require.Empty(t, healthMessages(t), "fresh low observation must start a new sustained interval")
+}
+func TestFleetHealthUnknownWorkDiskCannotRecover(t *testing.T) {
+	rt, peer := healthFixture(t)
+	now := time.Now()
+	work := 5.0
+	cat := &proto.CatalogPayload{Node: &proto.NodeMetadata{Resources: proto.NodeResources{Status: "current", ObservedAt: &now, DataDisk: &proto.NodeDisk{TotalBytes: 100, AvailableBytes: 50}, WorkDiskMinAvailablePercent: &work}}}
+	rt.observeFleetNode(peer, cat, now)
+	rt.flushFleetHealth(now.Add(2 * time.Second))
+	require.Len(t, healthMessages(t), 1)
+	later := now.Add(3 * time.Second)
+	cat.Node.Resources.ObservedAt = &later
+	cat.Node.Resources.WorkDiskMinAvailablePercent = nil
+	rt.observeFleetNode(peer, cat, later)
+	rt.flushFleetHealth(later.Add(2 * time.Second))
+	require.Len(t, healthMessages(t), 1)
+}

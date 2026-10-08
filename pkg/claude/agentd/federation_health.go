@@ -118,6 +118,7 @@ type fleetHealthState struct {
 	signals           map[string]*fleetSignal
 	memory            map[string]time.Time
 	observed          map[string]time.Time
+	disks             map[string]uint8
 	failures          map[string][]fleetFailure
 	lastFailureNotice map[string]time.Time
 }
@@ -133,7 +134,7 @@ type fleetFailure struct {
 
 func (rt *fedRuntime) fleetState() *fleetHealthState {
 	if rt.health == nil {
-		rt.health = &fleetHealthState{signals: map[string]*fleetSignal{}, memory: map[string]time.Time{}, observed: map[string]time.Time{}, failures: map[string][]fleetFailure{}, lastFailureNotice: map[string]time.Time{}}
+		rt.health = &fleetHealthState{disks: map[string]uint8{}, signals: map[string]*fleetSignal{}, memory: map[string]time.Time{}, observed: map[string]time.Time{}, failures: map[string][]fleetFailure{}, lastFailureNotice: map[string]time.Time{}}
 	}
 	return rt.health
 }
@@ -264,23 +265,31 @@ func (rt *fedRuntime) observeFleetNode(peer string, cat *proto.CatalogPayload, n
 		return
 	}
 	if old := s.observed[peer]; !old.IsZero() && r.ObservedAt.Sub(old) > fedNodeStaleAfter {
-		delete(s.memory, peer)
+		s.unknownResources(peer)
 	}
 	s.observed[peer] = *r.ObservedAt
 	disk := 101.0
+	var disks uint8
 	if r.DataDisk != nil && r.DataDisk.TotalBytes > 0 {
+		disks |= 1
 		disk = 100 * float64(r.DataDisk.AvailableBytes) / float64(r.DataDisk.TotalBytes)
 	}
 	if r.WorkDiskMinAvailablePercent != nil {
+		disks |= 2
 		disk = min(disk, *r.WorkDiskMinAvailablePercent)
 	}
+	s.disks[peer] |= disks
 	if disk > 100 {
 		s.cancelPending(peer, "disk")
 	}
 	if disk <= 100 {
 		low := disk < p.DiskFreePercent
 		msg := fmt.Sprintf("Disk free %.1f%% (threshold %.1f%%)", disk, p.DiskFreePercent)
-		s.signal(peer, "disk", msg, low, now)
+		if low || disks == s.disks[peer] {
+			s.signal(peer, "disk", msg, low, now)
+		} else {
+			s.cancelPending(peer, "disk")
+		}
 	}
 	if r.RAM == nil || r.RAM.TotalBytes == 0 {
 		delete(s.memory, peer)
@@ -289,6 +298,10 @@ func (rt *fedRuntime) observeFleetNode(peer string, cat *proto.CatalogPayload, n
 	}
 	free := 100 * float64(r.RAM.AvailableBytes) / float64(r.RAM.TotalBytes)
 	if free < p.RAMFreePercent {
+		// A return to low RAM immediately cancels an unannounced recovery.
+		if signal := s.signals[peer+"/memory"]; signal != nil && !signal.value && signal.emitted {
+			signal.value = true
+		}
 		since := s.memory[peer]
 		if since.IsZero() {
 			since = *r.ObservedAt
@@ -355,6 +368,7 @@ func (rt *fedRuntime) flushFleetHealth(now time.Time) {
 			continue
 		}
 		if (kind == "disk" || kind == "memory") && (!rt.isOnline(peer) || now.Sub(s.observed[peer]) > fedNodeStaleAfter) {
+			s.unknownResources(peer)
 			continue
 		}
 		if signal.value == signal.emitted || now.Sub(signal.since) < time.Duration(p.DebounceSeconds)*time.Second {

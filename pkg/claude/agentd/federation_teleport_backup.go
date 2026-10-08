@@ -316,6 +316,7 @@ func teleportLeaseLostBriefing(l db.FederationTeleportLease) string {
 	return fmt.Sprintf("Teleport lease lost for %s/%s (offer %s). Resuming this backup. The remote copy may still be alive in a network partition. Do not redo destructive or one-time work without checking the remote and current state first.", l.Peer, l.TargetAgent, l.Offer)
 }
 func (rt *fedRuntime) beginTeleportRecovery(l *db.FederationTeleportLease, briefing string) {
+	wasPaused := l.State == "paused"
 	l.State = "recovering"
 	l.Epoch++
 	l.LastError = ""
@@ -324,7 +325,7 @@ func (rt *fedRuntime) beginTeleportRecovery(l *db.FederationTeleportLease, brief
 		return
 	}
 	l.Revision++
-	if briefing == teleportLeaseLostBriefing(*l) {
+	if wasPaused && briefing == teleportLeaseLostBriefing(*l) {
 		publishFleetEvent(l.Peer, "teleport_lease_lost", "Teleport backup "+l.SourceAgent+" lost its lease; starting recovery", true)
 	}
 	recordFederationAudit("teleport.recover", l.Peer, l.SourceAgent, "", fmt.Sprintf("offer=%s epoch=%d", l.Offer, l.Epoch), 200)
