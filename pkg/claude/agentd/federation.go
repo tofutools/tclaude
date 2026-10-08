@@ -161,6 +161,7 @@ type fedRuntime struct {
 	sessionSent         map[string]string
 	terminalsMu         sync.Mutex
 	terminals           *fedTerminalState
+	teleportLeases      teleportLeaseObservations
 }
 
 type fedInbound struct {
@@ -448,7 +449,7 @@ func buildFederationCatalog(peer string, status ...*statusSnapshot) (*proto.Cata
 			delete(caps[group.ID], proto.CapAttachments)
 		}
 	}
-	cat := &proto.CatalogPayload{AgentTeleports: 1, AgentMoves: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
+	cat := &proto.CatalogPayload{TeleportBackups: true, AgentTeleports: 1, AgentMoves: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
 	if fedPeerReadsNode(peer) {
 		cat.Node = localNodeMetadata()
 	}
@@ -645,6 +646,8 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		go func() { defer rt.wg.Done(); rt.serveBundleFetch(peer, env) }()
 	case proto.KindBundleAnswer:
 		rt.acceptBundleAnswer(peer, env)
+	case teleportLeaseKind:
+		rt.acceptTeleportLease(peer, env)
 	case proto.KindAgentMoveConfirm:
 		rt.acceptAgentMoveConfirmation(peer, env)
 	case proto.KindBundleResult:

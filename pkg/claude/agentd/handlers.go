@@ -158,7 +158,8 @@ func handleLookup(w http.ResponseWriter, r *http.Request) {
 // --- /v1/peers ---
 
 type peerEntry struct {
-	Predecessor *db.FederationMoveLink `json:"predecessor,omitempty"`
+	TeleportPaused string                 `json:"teleport_paused,omitempty"`
+	Predecessor    *db.FederationMoveLink `json:"predecessor,omitempty"`
 	// AgentID is the stable, rotation-immune actor key — the canonical
 	// way to reference an agent. The agent CLI leads with it; ConvID is
 	// the live generation behind it (which rotates on reincarnate/clone).
@@ -346,6 +347,7 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 		state, _ := shared.stateFor(conv)
 		pe.State = peerStateFromAgentState(state)
 		pe.Predecessor = teleportPredecessor(pe.AgentID)
+		pe.TeleportPaused = pausedTeleportDescription(pe.AgentID)
 	}
 	out := make([]*peerEntry, 0, len(byConv))
 	for _, pe := range byConv {

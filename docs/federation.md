@@ -1549,8 +1549,71 @@ are explanatory, not authority to act as another principal.
 An operator can run `tclaude federation teleport off` (and `on` to restore it).
 This freezes new incoming/outgoing teleports and prevents uncommitted launch or
 retirement on that instance. Apply it on each node to freeze a fleet; disconnected
-nodes cannot be changed by a local switch. Existing agents keep running. Paused
-backups and automatic failover are reserved for the next teleport phase.
+nodes cannot be changed by a local switch. Existing agents and backup leases keep running.
+
+#### Keep a paused backup
+
+```bash
+tclaude agent teleport server --group helpers --keep-paused-backup
+tclaude agent teleport report "Fixed the index; committed abc123 and ran the tests"
+tclaude agent teleport --home --note "Findings and next steps"
+# On the origin, the operator or an agent with covering agent.resume authority:
+tclaude agent teleport recover agt_<source-id>
+```
+
+`--keep-paused-backup` stops the source after confirmed landing, retaining its
+identity, inbox, permissions, native history and working directory. It is not
+retired. `agent ls` shows `paused (teleported to <instance>/<agent>)`, and
+`teleport status` includes its lease, epoch and any recovery error. Humans can
+inspect all teleport records; an agent sees only its own records. Mail to the
+paused identity remains in its inbox. Dormant slots include pending landings
+and recovering backups, separately from live node capacity. Clone plus backup
+is refused; a leased roaming copy must report or return home before another
+teleport. Ordinary resume/power-on cannot bypass the lease.
+
+The origin owns the durable lease epoch. Renewals use the existing federation
+channel, every 30 seconds by default. After five minutes without renewal plus
+two minutes of grace **while the origin is online**, auto recovery advances the
+epoch and resumes the original backup. Disconnects, daemon runtime restarts and
+laptop suspend restart the origin's full observation window; offline time does
+not count. Manual recovery uses the same wait, with no force bypass.
+
+Availability takes precedence during an origin outage: the remote keeps working
+when the origin sleeps, disconnects, or restarts, and a remote daemon restart
+resumes renewals without stopping its agent. A true partition may leave both
+copies running temporarily. The recovery inbox briefing and operator notification
+explicitly warn that the remote may still be alive: check current state before
+repeating destructive or one-time work. On reconnect the origin's newer epoch
+supersedes the remote, which stops by default. The optional `clone` policy keeps
+it as an independent clone and queues a coordination briefing instead.
+
+Configure these defaults under `federation.teleport.backup` in local config:
+
+```json
+{
+  "renew_seconds": 30,
+  "lease_seconds": 300,
+  "grace_seconds": 120,
+  "dormant_max": 4,
+  "recovery": "auto",
+  "superseded": "stop"
+}
+```
+
+`recovery` accepts `auto|manual`; `superseded` accepts `stop|clone`. Lease duration
+must cover at least two renewal intervals. Policies are local and re-read live.
+Retiring the backup or replacing its generation releases its dormant slot and
+supersedes the old remote on its next contact. Revoking `self.teleport` prevents
+further accepted renewals; recovery still observes the full online wait.
+
+`report` and a leased copy's `--home` commit bounded findings (up to 16 KiB for
+report), then stop the roaming copy. Only after its node verifies the stop does
+the origin deliver the findings and resume the original identity. Retries use
+the same durable return ID and never launch a second identity. Lost connectivity
+leaves a return pending; use `teleport status` to inspect it. An operator can
+retire the stopped roaming identity after the origin acknowledges recovery.
+An ordinary `--home` without a paused backup still uses the normal teleport
+policy, group selection and revisit limits above.
 
 ### Model gateways (Claude Code)
 

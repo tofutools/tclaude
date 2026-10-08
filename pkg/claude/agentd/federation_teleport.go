@@ -22,16 +22,17 @@ const PermAgentsTeleportReceive = "agents.teleport.receive"
 
 type teleportSourceContextKey struct{}
 type teleportRequest struct {
-	Peer        string `json:"peer,omitempty"`
-	Node        string `json:"node,omitempty"`
-	Group       string `json:"group,omitempty"`
-	Require     string `json:"require,omitempty"`
-	Prefer      string `json:"prefer,omitempty"`
-	Clone       bool   `json:"clone,omitempty"`
-	Home        bool   `json:"home,omitempty"`
-	Note        string `json:"note,omitempty"`
-	Credentials string `json:"credentials,omitempty"`
-	GitRef      string `json:"git_ref,omitempty"`
+	Peer             string `json:"peer,omitempty"`
+	Node             string `json:"node,omitempty"`
+	Group            string `json:"group,omitempty"`
+	Require          string `json:"require,omitempty"`
+	Prefer           string `json:"prefer,omitempty"`
+	KeepPausedBackup bool   `json:"keep_paused_backup,omitempty"`
+	Clone            bool   `json:"clone,omitempty"`
+	Home             bool   `json:"home,omitempty"`
+	Note             string `json:"note,omitempty"`
+	Credentials      string `json:"credentials,omitempty"`
+	GitRef           string `json:"git_ref,omitempty"`
 }
 
 func teleportFrozen() bool {
@@ -109,6 +110,10 @@ func handleFederationTeleport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "json", "invalid teleport request")
 		return
 	}
+	if in.Clone && in.KeepPausedBackup {
+		writeError(w, 400, "invalid_arg", "clone and paused backup are mutually exclusive")
+		return
+	}
 	if len(in.Note) > 4096 || !bundletransfer.ValidCredentials(in.Credentials) {
 		writeError(w, 400, "invalid_arg", "invalid note or credentials; use local or proxy:<name>@<peer>")
 		return
@@ -127,11 +132,40 @@ func handleFederationTeleport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "offline", "federation is disconnected")
 		return
 	}
-	intent := bundletransfer.TeleportIntent{Version: 1, Chain: proto.NewEnvelopeID(), OriginInstance: rt.id.ID(), OriginAgent: actor.AgentID, SourceAgent: actor.AgentID, SourceConv: caller, Clone: in.Clone, Home: in.Home, Note: in.Note, Credentials: in.Credentials, Require: in.Require, GitRef: in.GitRef}
+	intent := bundletransfer.TeleportIntent{Version: 1, Chain: proto.NewEnvelopeID(), OriginInstance: rt.id.ID(), OriginAgent: actor.AgentID, SourceAgent: actor.AgentID, SourceConv: caller, KeepPausedBackup: in.KeepPausedBackup, Clone: in.Clone, Home: in.Home, Note: in.Note, Credentials: in.Credentials, Require: in.Require, GitRef: in.GitRef}
 	previous, err := db.FederationTeleportForAgent(actor.AgentID)
 	if err != nil {
 		writeError(w, 503, "provenance", "could not read teleport provenance")
 		return
+	}
+	if previous != nil && previous.Intent.KeepPausedBackup {
+		lease, e := db.GetFederationTeleportLease("in", previous.Peer, previous.Offer)
+		if e != nil {
+			writeError(w, 503, "lease", "lease lookup failed")
+			return
+		}
+		if lease == nil {
+			writeError(w, 409, "lease", "paused-backup lease is not ready")
+			return
+		}
+		if lease.State != "clone" {
+			if in.Home && !in.KeepPausedBackup && !in.Clone {
+				if in.Peer != "" || in.Node != "" || in.Group != "" || in.Require != "" || in.Prefer != "" || in.Credentials != "" || in.GitRef != "" {
+					writeError(w, 400, "invalid_arg", "return to a paused backup accepts only --home and --note")
+					return
+				}
+				beginTeleportReport(w, r, caller, in.Note)
+				return
+			}
+			writeError(w, 409, "leased", "a leased roaming copy must report or return --home before teleporting onward")
+			return
+		}
+	}
+	if in.KeepPausedBackup {
+		if _, err := teleportBackupPolicy(); err != nil {
+			writeError(w, 409, "backup_policy", err.Error())
+			return
+		}
 	}
 	if previous != nil {
 		intent.Chain = previous.Intent.Chain
@@ -175,7 +209,9 @@ func handleFederationTeleport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req := fedSpawnSendReq{Group: in.Group, Require: in.Require, Prefer: in.Prefer}
-		authority := placementAuthority{Supported: func(cat *proto.CatalogPayload) bool { return cat.AgentTeleports == 1 }, GroupAllowed: teleportGroupAllowed}
+		authority := placementAuthority{Supported: func(cat *proto.CatalogPayload) bool {
+			return cat.AgentTeleports == 1 && (!in.KeepPausedBackup || cat.TeleportBackups)
+		}, GroupAllowed: teleportGroupAllowed}
 		for _, p := range peers {
 			row, visible := placementCandidateWithAuthority(r, p, req, caller, match, authority)
 			if visible {
@@ -218,7 +254,7 @@ func handleFederationTeleport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cat, _, err := fedCatalogFor(p.InstanceID)
-	if err != nil || cat == nil || cat.AgentTeleports != 1 {
+	if err != nil || cat == nil || cat.AgentTeleports != 1 || in.KeepPausedBackup && !cat.TeleportBackups {
 		writeError(w, 409, "unsupported_peer", "peer has not advertised teleport support")
 		return
 	}
@@ -310,7 +346,7 @@ func teleportPredecessor(agent string) *db.FederationMoveLink {
 	return &db.FederationMoveLink{Instance: t.Peer, Agent: t.Intent.SourceAgent, Offer: t.Offer}
 }
 func handleSelfTeleports(w http.ResponseWriter, r *http.Request) {
-	conv, ok := requireAgent(w, r)
+	conv, human, ok := authedCaller(w, r)
 	if !ok {
 		return
 	}
@@ -326,7 +362,7 @@ func handleSelfTeleports(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []map[string]any{}
 	for _, t := range rows {
-		if t.Intent.SourceAgent == id || t.TargetAgent == id {
+		if human || t.Intent.SourceAgent == id || t.TargetAgent == id {
 			if t.Direction == "out" {
 				if m, err := db.GetFederationAgentMove("out", t.Peer, t.Offer); err == nil && m != nil {
 					t.State = m.State
@@ -337,7 +373,8 @@ func handleSelfTeleports(w http.ResponseWriter, r *http.Request) {
 					t.State = o.State
 				}
 			}
-			out = append(out, map[string]any{"offer": t.Offer, "peer": t.Peer, "direction": t.Direction, "state": t.State, "target_agent": t.TargetAgent, "intent": t.Intent, "credentials": t.Credentials})
+			lease, _ := db.GetFederationTeleportLease(t.Direction, t.Peer, t.Offer)
+			out = append(out, map[string]any{"lease": lease, "offer": t.Offer, "peer": t.Peer, "direction": t.Direction, "state": t.State, "target_agent": t.TargetAgent, "intent": t.Intent, "credentials": t.Credentials})
 		}
 	}
 	writeJSON(w, 200, out)

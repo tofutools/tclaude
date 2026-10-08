@@ -114,6 +114,9 @@ func confirmIncomingAgentMove(m db.FederationAgentMove) {
 	if err != nil || p == nil {
 		return
 	}
+	if err := ensureIncomingTeleportLease(m); err != nil {
+		return
+	}
 	confirm := bundletransfer.MoveConfirmation{ObservedAt: time.Now().UTC(), Offer: m.ID, SHA256: m.SHA256, SourceAgent: m.SourceAgent, SourceConv: m.SourceConv, TargetAgent: m.TargetAgent, TargetConv: a.CurrentConvID}
 	hash := sha256.Sum256([]byte("agent-move-confirm/" + m.Peer + "/" + m.ID))
 	id := hex.EncodeToString(hash[:16])
@@ -188,6 +191,9 @@ func moveAuthority(m db.FederationAgentMove) error {
 	return nil
 }
 func retireConfirmedAgentMove(m db.FederationAgentMove) {
+	if m.Teleport && pauseConfirmedTeleport(m) {
+		return
+	}
 	if m.State == "confirmed" {
 		if err := moveAuthority(m); err != nil {
 			m.State = "blocked"
@@ -280,6 +286,9 @@ func moveShutdownProcessAlive(m db.FederationAgentMove) bool {
 }
 
 func reconcileFederationMoves() {
+	if rt := currentFederation(); rt != nil {
+		rt.reconcileTeleportLeases()
+	}
 	reconcileFederationTeleports()
 	if !fedMoveMu.TryLock() {
 		return

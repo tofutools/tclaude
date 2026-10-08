@@ -943,7 +943,8 @@ func lsCmd() *cobra.Command {
 }
 
 type peerEntry struct {
-	Predecessor *db.FederationMoveLink `json:"predecessor,omitempty"`
+	TeleportPaused string                 `json:"teleport_paused,omitempty"`
+	Predecessor    *db.FederationMoveLink `json:"predecessor,omitempty"`
 	// AgentID is the stable, rotation-immune actor key — what `agent ls`
 	// shows as the canonical ID. ConvID is the live generation behind it.
 	AgentID string `json:"agent_id,omitempty"`
@@ -1242,6 +1243,9 @@ func renderPeersAtWidth(p *lsParams, peers []*peerEntry, stdout io.Writer, termi
 	}
 	fmt.Fprintln(stdout, tbl.Render())
 	for _, pe := range peers {
+		if pe.TeleportPaused != "" {
+			fmt.Fprintf(stdout, "  %s %s\n", shortAgentID(pe.AgentID, pe.ConvID), pe.TeleportPaused)
+		}
 		if pe.Predecessor != nil {
 			fmt.Fprintf(stdout, "  %s predecessor: %s@%s\n", shortAgentID(pe.AgentID, pe.ConvID), pe.Predecessor.Agent, pe.Predecessor.Instance)
 		}
@@ -1260,6 +1264,9 @@ func peerModel(state peerState) string {
 // an offline pane is offline even if its last persisted hook said "idle", and
 // a live pre-first-hook session is simply online.
 func peerStatus(pe *peerEntry) string {
+	if pe.TeleportPaused != "" {
+		return pe.TeleportPaused
+	}
 	if recovery := pe.State.RecoveryStatus; recovery != "" {
 		switch recovery {
 		case "backoff":

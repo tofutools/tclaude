@@ -1586,6 +1586,15 @@ func errorString(err error) string {
 // directly so it does not cancel its own durable lease; every manual wrapper
 // above cancels a pending automatic attempt first under the same mutex.
 func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir bool, recoveryClaim *db.AgentRecovery) memberOpResult {
+	return resumeOneConvUnderLaunchLockForTeleport(convID, recreateMissingDir, recoveryClaim, false)
+}
+func resumeOneConvUnderLaunchLockForTeleport(convID string, recreateMissingDir bool, recoveryClaim *db.AgentRecovery, teleportRecovery bool) memberOpResult {
+	if !teleportRecovery {
+		if err := teleportResumeBlocked(convID); err != nil {
+			return memberOpResult{ConvID: convID, Action: "error", Detail: err.Error()}
+		}
+	}
+
 	defer db.NotifyStatusChanged()
 	res := memberOpResult{ConvID: convID}
 	if isConvOnline(convID) {

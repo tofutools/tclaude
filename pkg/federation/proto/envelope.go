@@ -38,6 +38,7 @@ const (
 	KindBundleAnswer     = "bundle_answer"
 	KindBundleResult     = "bundle_result"
 	KindAgentMoveConfirm = "agent_move_confirm"
+	KindTeleportLease    = "teleport_lease"
 	// KindRouteOpen asks the recipient to open one TCP connection to one of
 	// its exported routes; KindRouteAnswer accepts (then both dial the hub
 	// stream relay) or refuses it. These are real-time control envelopes,
@@ -205,12 +206,13 @@ type GroupMailPayload struct {
 
 // CatalogPayload lists what an instance exports to the receiving peer.
 type CatalogPayload struct {
-	AgentTeleports int            `json:"agent_teleports,omitempty"`
-	AgentMoves     bool           `json:"agent_moves,omitempty"`
-	Node           *NodeMetadata  `json:"node,omitempty"`
-	NodeAt         time.Time      `json:"node_at,omitempty"`
-	NodeReceivedAt time.Time      `json:"node_received_at,omitempty"` // receiver-owned; overwritten on receipt
-	Groups         []CatalogGroup `json:"groups"`
+	TeleportBackups bool           `json:"teleport_backups,omitempty"`
+	AgentTeleports  int            `json:"agent_teleports,omitempty"`
+	AgentMoves      bool           `json:"agent_moves,omitempty"`
+	Node            *NodeMetadata  `json:"node,omitempty"`
+	NodeAt          time.Time      `json:"node_at,omitempty"`
+	NodeReceivedAt  time.Time      `json:"node_received_at,omitempty"` // receiver-owned; overwritten on receipt
+	Groups          []CatalogGroup `json:"groups"`
 }
 
 // CatalogGroup is one exported group as seen by one peer.
