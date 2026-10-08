@@ -22,6 +22,7 @@ import (
 
 // Config represents the tclaude configuration file structure.
 type Config struct {
+	Host            *HostConfig            `json:"host,omitempty"`
 	Notifications   *NotificationConfig    `json:"notifications,omitempty"`
 	PreCompactGuard *PreCompactGuardConfig `json:"pre_compact_guard,omitempty"`
 	LogLevel        string                 `json:"log_level,omitempty"`
@@ -3489,6 +3490,26 @@ func Validate(c *Config) []string {
 		return []string{"config is nil"}
 	}
 	var errs []string
+	if h := c.Host; h != nil {
+		for _, entry := range []struct {
+			name  string
+			value *float64
+			max   float64
+		}{
+			{"warn_load_per_core", h.WarnLoadPerCore, 0},
+			{"warn_ram_available_percent", h.WarnRAMAvailablePercent, 100},
+			{"warn_disk_available_percent", h.WarnDiskAvailablePercent, 100},
+		} {
+			if entry.value != nil && (math.IsNaN(*entry.value) || math.IsInf(*entry.value, 0) || *entry.value < 0 || (entry.max > 0 && *entry.value > entry.max)) {
+				errs = append(errs, "host."+entry.name+" must be finite and nonnegative (percent thresholds must be at most 100)")
+			}
+		}
+		for _, dir := range h.WorkDirs {
+			if !filepath.IsAbs(dir) {
+				errs = append(errs, "host.work_dirs must contain absolute paths")
+			}
+		}
+	}
 
 	switch c.LogLevel {
 	case "", "debug", "info", "warn", "error":

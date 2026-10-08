@@ -751,6 +751,7 @@ func runServe(p *serveParams) error {
 	// statusbar is running to populate it. Shares the daemon-wide stop
 	// channel.
 	startUsagePoller(cronStop)
+	startHostMetricsPoller(cronStop)
 
 	// Codex subscription-usage poller. Codex has no usage API wired into
 	// tclaude, so this lifts the 5h/weekly rate limits off Codex's local
@@ -1292,6 +1293,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/lookup", handleLookup)
 	mux.HandleFunc("GET /v1/usage", handleUsage)
 	mux.HandleFunc("GET /v1/usage/summary", handleAccountUsage)
+	mux.HandleFunc("GET /v1/host/status", handleHostStatus)
 	mux.HandleFunc("GET /v1/costs", handleAccountCosts)
 	mux.HandleFunc("/v1/peers", handlePeers)
 	registerFederationRoutes(mux)
