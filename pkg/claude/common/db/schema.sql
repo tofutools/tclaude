@@ -1617,8 +1617,8 @@ CREATE TABLE federation_agent_moves (
 CREATE UNIQUE INDEX federation_agent_moves_active_source ON federation_agent_moves(source_agent)
  WHERE direction='out' AND state IN ('awaiting_confirmation','confirmed','retiring','blocked');
 
-CREATE TABLE federation_node_groups(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,created_at INTEGER NOT NULL);
+CREATE TABLE federation_node_groups(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,created_at INTEGER NOT NULL) STRICT;
 
-CREATE TABLE federation_node_group_members(group_id TEXT NOT NULL REFERENCES federation_node_groups(id) ON DELETE CASCADE,peer TEXT NOT NULL REFERENCES federation_peers(instance_id) ON DELETE CASCADE,PRIMARY KEY(group_id,peer));
+CREATE TABLE federation_node_group_members(group_id TEXT NOT NULL REFERENCES federation_node_groups(id) ON DELETE CASCADE,peer TEXT NOT NULL REFERENCES federation_peers(instance_id) ON DELETE CASCADE,PRIMARY KEY(group_id,peer)) STRICT;
 
-CREATE TABLE federation_node_group_grants(group_id TEXT NOT NULL REFERENCES federation_node_groups(id) ON DELETE CASCADE,slug TEXT NOT NULL,scope TEXT NOT NULL DEFAULT '',spawn_policy TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,PRIMARY KEY(group_id,slug,scope));
+CREATE TABLE federation_node_group_grants(group_id TEXT NOT NULL REFERENCES federation_node_groups(id) ON DELETE CASCADE,slug TEXT NOT NULL,scope TEXT NOT NULL DEFAULT '',spawn_policy TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,PRIMARY KEY(group_id,slug,scope)) STRICT;
