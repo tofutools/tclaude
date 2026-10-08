@@ -124,6 +124,7 @@ func init() { initPermissionRegistry() }
 // build registers it; all mutation and authorization boundaries accept only
 // this vocabulary.
 var permissionRegistry = []PermSlug{
+	{Slug: PermApprovalsAnswer, Description: "Peer-only one-shot access-request answers while selected as away cover. Configure as an unscoped federation peer grant; ordinary agent grants do not authorize answers."},
 	{Slug: PermGroupsRosterRead, Description: "Read group member names and roles.", ScopeDims: []ScopeDim{ScopeDimGroup}},
 	{Slug: PermGroupsPresenceRead, Description: "Read group member presence.", ScopeDims: []ScopeDim{ScopeDimGroup}},
 	{Slug: PermMessageAttachments, Description: "Send message attachments.", ScopeDims: []ScopeDim{ScopeDimGroup}},
