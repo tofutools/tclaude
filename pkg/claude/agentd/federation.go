@@ -989,6 +989,11 @@ func (rt *fedRuntime) flushOutbox(ctx context.Context) {
 			_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxRefused, "peer untrusted locally")
 			continue
 		}
+		// Persisted rows may be corrupt; reject them before splitting env||sig.
+		if len(row.Sealed) <= ed25519.SignatureSize {
+			_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxRefused, "corrupt outbox row: truncated sealed envelope")
+			continue
+		}
 		sctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		res, err := rt.cl.Send(sctx, row.ToInstance, &proto.Sealed{Env: row.Sealed[:len(row.Sealed)-ed25519.SignatureSize], Sig: row.Sealed[len(row.Sealed)-ed25519.SignatureSize:]})
 		cancel()
