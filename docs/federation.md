@@ -15,8 +15,8 @@ laptops behind NAT or a corporate network work as-is.
 !!! note "Status"
     CLI only. Built: discovery, mail with attachments, mail to remote
     groups, operator mail, automatic or operator-approved remote spawn, and
-    cross-instance group routes. Stopping or reading a colleague's agents
-    and a dashboard view are not built yet.
+    cross-instance group routes, and remote session state. Remote terminal
+    attach and a dashboard view are not built yet.
 
 For a step-by-step first setup, including the hub's TLS certificate, see
 the [setup walkthrough](federation-setup.md).
@@ -191,6 +191,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `message.attachments` | attachments, together with `message.direct` on the same group |
 | `groups.members.spawn` | automatic worker spawning with receiving operator launch settings and caps |
 | `routes.consume` | lists ready group routes and permits opening them |
+| `sessions.read` | live agent sessions, harness, state and waiting reason |
 
 Prefer `--scope group=<local group>` to limit access. For the same slug, a
 group-scoped peer grant takes precedence over an unscoped grant, including
@@ -218,6 +219,7 @@ Your operator grants agents ordinary slugs with a required `peer=` scope:
 | `groups.members.spawn` | request a worker in a peer’s group |
 | `agent.spawn` | request workers in any visible group on a peer; peer-only scope |
 | `routes.consume` | open a route in a peer’s group |
+| `sessions.read` | list live sessions in a peer’s shared groups |
 
 Peer grants for roster, presence and attachments control what the receiving
 instance shares. Agents do not need separate roster, presence or attachment
@@ -253,6 +255,44 @@ authorize remote actions. Peer-scoped grants never authorize local actions.
 Denies are unscoped and block the slug on both local and remote actions.
 Operator actions and replies keep their own authority, and one-shot
 `--ask-human` approval remains available.
+
+## Remote sessions
+
+```bash
+# Bob shares sessions of agents belonging to builders:
+tclaude federation grant alice sessions.read --scope group=builders
+# Alice lists them as the operator:
+tclaude federation sessions bob
+tclaude federation sessions                 # all trusted peers
+tclaude federation sessions bob --notify    # print/bell on new waits until Ctrl-C
+# To let Alice's lead agent list them too:
+tclaude agent permissions grant lead sessions.read --scope peer=bob/builders
+```
+
+The listing shows stable `agt_…@peer` session targets, names, shared groups,
+harness, state, waiting reason and an observed waiting duration. `--json`
+also includes the current runtime session ID. Only group-member agents with
+live panes are shared; prompt text, working directories and pane handles are
+not. Session access is independent of roster and presence grants. Agents
+need `sessions.read` with a covering `peer=` scope.
+
+Waiting reasons are `permission` (permission prompt), `question` (harness
+question, such as AskUserQuestion), and `prompt` (idle). Detection follows the
+harness's reported state; an unobservable wait is not inferred from terminal
+text. `waiting ≥3m` means the observer has continuously seen that state for
+at least three minutes, not the precise prompt start time. Observation resets
+when the daemon restarts or observation stops during disconnection. Brief
+transitions between observations can be missed.
+
+The full session list travels in regular catalogs. While connected, a local
+observer checks shared sessions every two seconds and pushes only changed
+session snapshots to authorized peers. Instances with no online peer holding
+`sessions.read` do no session observation. `--notify` polls the local cache
+and reports new waits after its initial listing; it never alerts from stale
+data. Disconnected peers and old snapshots are marked **stale**, and stale
+waiting durations stop at the last snapshot. Unrestricted peers include
+`sessions.read` automatically. This grant shares state only; terminal access
+requires its own capability.
 
 ## Sending
 

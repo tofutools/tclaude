@@ -1013,6 +1013,7 @@ func registerFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/federation/notify", handleFederationNotify)
 	mux.HandleFunc("GET /v1/federation/inbox", handleFederationInbox)
 	mux.HandleFunc("GET /v1/federation/reachable", handleFederationReachable)
+	mux.HandleFunc("GET /v1/federation/sessions", handleFederationSessions)
 	mux.HandleFunc("POST /v1/federation/spawn-requests", handleFederationSpawnRequestSend)
 	mux.HandleFunc("GET /v1/federation/spawn-requests", handleFederationSpawnRequestList)
 	mux.HandleFunc("POST /v1/federation/spawn-requests/{id}/approve", handleFederationSpawnRequestApprove)

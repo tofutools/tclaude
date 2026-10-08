@@ -42,7 +42,7 @@ Flow:
   7. agents: tclaude federation spawn-request <group>@bob --brief "..."
      (needs the groups.members.spawn scoped with peer=bob/group, or agent.spawn scoped with peer=bob; bob's operator approves or denies)
 
-Every federation command is human-only except spawn-request.`
+Every federation command is human-only except spawn-request and sessions (requires sessions.read scoped to peer=).`
 
 // Cmd returns `tclaude federation`.
 func Cmd() *cobra.Command {
@@ -54,7 +54,7 @@ func Cmd() *cobra.Command {
 		SubCmds: []*cobra.Command{
 			statusCmd(), identityCmd(), connectCmd(), disconnectCmd(),
 			peersCmd(), trustCmd(), untrustCmd(),
-			grantCmd(), revokeCmd(), grantsCmd(), remoteCmd(),
+			grantCmd(), revokeCmd(), grantsCmd(), remoteCmd(), sessionsCmd(),
 			sendCmd(), outboxCmd(), notifyCmd(), inboxCmd(),
 			spawnRequestCmd(), requestsCmd(),
 		},

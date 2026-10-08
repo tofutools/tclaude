@@ -134,10 +134,13 @@ type fedRuntime struct {
 	inbound chan fedInbound
 	kick    chan struct{}
 
-	mu        sync.Mutex
-	online    map[string]bool
-	inLimiter map[string][]time.Time
-	routes    *fedRouteState
+	mu                  sync.Mutex
+	online              map[string]bool
+	inLimiter           map[string][]time.Time
+	routes              *fedRouteState
+	sessionsMu          sync.Mutex
+	sessionObservations map[string]fedSessionObservation
+	sessionSent         map[string]string
 }
 
 type fedInbound struct {
@@ -333,31 +336,33 @@ func broadcastFederationCatalogs() {
 // sendControl seals and sends a best-effort control envelope. Only trusted
 // peers are ever addressed: the payload is encrypted to the key pinned at
 // trust time.
-func (rt *fedRuntime) sendControl(to, kind, inReplyTo string, payload any) {
+func (rt *fedRuntime) sendControl(to, kind, inReplyTo string, payload any) bool {
 	peer, err := db.GetFederationPeer(to)
 	if err != nil || peer == nil {
-		return
+		return false
 	}
 	env, err := proto.NewEnvelope(rt.id, kind, proto.Endpoint{Name: rt.name}, proto.Endpoint{Instance: to}, fedControlTTL, payload)
 	if err != nil {
-		return
+		return false
 	}
 	env.InReplyTo = inReplyTo
 	sealed, err := proto.Seal(rt.id, env, ed25519.PublicKey(peer.PubKey))
 	if err != nil {
 		slog.Warn("federation: seal failed", "kind", kind, "error", err)
-		return
+		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	res, err := rt.cl.Send(ctx, to, sealed)
 	if err != nil {
 		slog.Debug("federation: control send failed", "kind", kind, "to", to, "error", err)
-		return
+		return false
 	}
 	if res.Status != proto.SendDelivered {
 		slog.Debug("federation: control not delivered", "kind", kind, "to", to, "status", res.Status, "code", res.Code)
+		return false
 	}
+	return true
 }
 
 func (rt *fedRuntime) sendCatalog(peer string) {
@@ -436,6 +441,10 @@ func buildFederationCatalog(peer string) (*proto.CatalogPayload, error) {
 				}
 			}
 		}
+		if g.HasCap(proto.CapSessions) {
+			g.Sessions = fedCatalogSessions(gid)
+			g.SessionsAt = time.Now().UTC()
+		}
 		if g.HasCap(proto.CapRoutes) {
 			g.Routes = fedCatalogRoutes(gid)
 		}
@@ -448,6 +457,8 @@ func buildFederationCatalog(peer string) (*proto.CatalogPayload, error) {
 func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 	refresh := time.NewTicker(fedCatalogRefresh)
 	defer refresh.Stop()
+	sessions := time.NewTicker(2 * time.Second)
+	defer sessions.Stop()
 	completion := time.NewTicker(time.Second)
 	defer completion.Stop()
 	reconcileFederationSpawns()
@@ -457,6 +468,8 @@ func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 			return
 		case in := <-rt.inbound:
 			rt.handleInbound(in.from, in.sealed)
+		case <-sessions.C:
+			rt.pushSessionTransitions()
 		case <-completion.C:
 			reconcileFederationSpawns()
 		case <-refresh.C:
@@ -487,6 +500,20 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 			return
 		}
 		proto.SanitizeCatalog(&cat)
+		// A slow full catalog must not roll back a newer transition push.
+		if previous, _, err := fedCatalogFor(from); err == nil && previous != nil {
+			for i := range cat.Groups {
+				g := &cat.Groups[i]
+				if !g.HasCap(proto.CapSessions) {
+					continue
+				}
+				for _, old := range previous.Groups {
+					if old.Name == g.Name && old.SessionsAt.After(g.SessionsAt) {
+						g.Sessions, g.SessionsAt = old.Sessions, old.SessionsAt
+					}
+				}
+			}
+		}
 		clean, err := json.Marshal(cat)
 		if err != nil {
 			return
@@ -494,6 +521,8 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		if err := db.PutFederationCatalog(from, string(clean), time.Now()); err != nil {
 			slog.Warn("federation: store catalog failed", "from", from, "error", err)
 		}
+	case proto.KindSessionsUpdate:
+		rt.acceptSessionUpdate(from, env)
 	case proto.KindCatalogReq:
 		rt.sendCatalog(from)
 	case proto.KindMail, proto.KindOperatorMail:

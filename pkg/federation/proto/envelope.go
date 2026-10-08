@@ -36,7 +36,8 @@ const (
 	// KindGroupMail is mail to every current member of an exported group
 	// (optionally narrowed by role). The receiver resolves the members:
 	// it, not the sender's catalog, is the authority on its roster.
-	KindGroupMail = "group_mail"
+	KindGroupMail      = "group_mail"
+	KindSessionsUpdate = "sessions_update"
 )
 
 // Export capabilities a catalog group can grant.
@@ -52,11 +53,12 @@ const (
 	CapSpawn = "spawn"
 	// CapRoutes lists the group's ready routes in the catalog and lets the
 	// peer open connections to them through the hub stream relay.
-	CapRoutes = "routes"
+	CapRoutes   = "routes"
+	CapSessions = "sessions"
 )
 
 // AllCaps lists every known capability in canonical order.
-var AllCaps = []string{CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes}
+var AllCaps = []string{CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes, CapSessions}
 
 // MaxMailBody caps a mail envelope's body in bytes.
 const MaxMailBody = 16 * 1024
@@ -184,11 +186,37 @@ type CatalogPayload struct {
 
 // CatalogGroup is one exported group as seen by one peer.
 type CatalogGroup struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	Caps        []string        `json:"caps"`
-	Members     []CatalogMember `json:"members,omitempty"`
-	Routes      []CatalogRoute  `json:"routes,omitempty"`
+	Name        string           `json:"name"`
+	Description string           `json:"description,omitempty"`
+	Caps        []string         `json:"caps"`
+	Members     []CatalogMember  `json:"members,omitempty"`
+	Routes      []CatalogRoute   `json:"routes,omitempty"`
+	Sessions    []CatalogSession `json:"sessions,omitempty"`
+	SessionsAt  time.Time        `json:"sessions_at,omitempty"`
+}
+
+// CatalogSession describes a group member's current live pane. Agent is the
+// stable attach target; Session identifies its current runtime incarnation.
+// WaitingObservedSince is a lower bound, reset when the observer restarts.
+type CatalogSession struct {
+	Agent                string     `json:"agent"`
+	Session              string     `json:"session"`
+	Name                 string     `json:"name"`
+	Harness              string     `json:"harness,omitempty"`
+	State                string     `json:"state"`
+	WaitingReason        string     `json:"waiting_reason,omitempty"`
+	WaitingObservedSince *time.Time `json:"waiting_observed_since,omitempty"`
+}
+
+// SessionsUpdatePayload replaces session snapshots only, leaving catalog
+// capabilities and roster/presence freshness untouched.
+type SessionsUpdatePayload struct {
+	Groups []SessionGroupUpdate `json:"groups"`
+}
+type SessionGroupUpdate struct {
+	Name     string           `json:"name"`
+	Sessions []CatalogSession `json:"sessions"`
+	At       time.Time        `json:"at"`
 }
 
 // CatalogRoute is one ready route of an exported group (CapRoutes).
