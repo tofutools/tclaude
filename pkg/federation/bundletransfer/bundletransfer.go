@@ -36,15 +36,30 @@ var Agent = Type{Name: "agent", MaxBytes: 256 << 20, AdmissionSlug: "agents.rece
 
 var Config = Type{Name: "config", MaxBytes: 16 << 20, AdmissionSlug: "config.offer", PendingLimit: PendingLimit, PendingBytes: PendingBytes}
 
+type MoveIntent struct {
+	SourceAgent string `json:"source_agent"`
+	SourceConv  string `json:"source_conv"`
+}
+type MoveConfirmation struct {
+	ObservedAt  time.Time `json:"observed_at"`
+	Offer       string    `json:"offer"`
+	SHA256      string    `json:"sha256"`
+	SourceAgent string    `json:"source_agent"`
+	SourceConv  string    `json:"source_conv"`
+	TargetAgent string    `json:"target_agent"`
+	TargetConv  string    `json:"target_conv"`
+}
+
 type Descriptor struct {
-	ID        string    `json:"id"`
-	Type      string    `json:"type"`
-	Bytes     int64     `json:"bytes"`
-	SHA256    string    `json:"sha256"`
-	ExpiresAt time.Time `json:"expires_at"`
-	Summary   string    `json:"summary"`
-	Group     string    `json:"group,omitempty"`
-	Inline    []byte    `json:"inline,omitempty"`
+	Move      *MoveIntent `json:"move,omitempty"`
+	ID        string      `json:"id"`
+	Type      string      `json:"type"`
+	Bytes     int64       `json:"bytes"`
+	SHA256    string      `json:"sha256"`
+	ExpiresAt time.Time   `json:"expires_at"`
+	Summary   string      `json:"summary"`
+	Group     string      `json:"group,omitempty"`
+	Inline    []byte      `json:"inline,omitempty"`
 }
 
 func New(kind Type, raw []byte, summary string, expiry time.Time) Descriptor {
@@ -56,6 +71,9 @@ func New(kind Type, raw []byte, summary string, expiry time.Time) Descriptor {
 	return d
 }
 func (d Descriptor) Validate(kind Type, now time.Time) error {
+	if d.Move != nil && (kind.Name != Agent.Name || !proto.ValidAgentRef(d.Move.SourceAgent) || len(d.Move.SourceConv) != 36) {
+		return errors.New("invalid agent move identity")
+	}
 	if !proto.ValidStreamID(d.ID) || d.Type != kind.Name || d.Bytes <= 0 || d.Bytes > kind.MaxBytes {
 		return errors.New("invalid bundle offer identity, type or size")
 	}

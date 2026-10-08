@@ -108,7 +108,7 @@ func (rt *fedRuntime) acceptBundleOffer(peer *db.FederationPeer, env *proto.Enve
 		return
 	}
 	if existing != nil {
-		if existing.Descriptor.SHA256 != d.SHA256 || existing.Descriptor.Bytes != d.Bytes || existing.Descriptor.Type != d.Type || existing.Descriptor.Group != d.Group || existing.SenderAgent != env.From.Agent || !existing.Descriptor.ExpiresAt.Equal(d.ExpiresAt) {
+		if !sameMoveIntent(existing.Descriptor.Move, d.Move) || existing.Descriptor.SHA256 != d.SHA256 || existing.Descriptor.Bytes != d.Bytes || existing.Descriptor.Type != d.Type || existing.Descriptor.Group != d.Group || existing.SenderAgent != env.From.Agent || !existing.Descriptor.ExpiresAt.Equal(d.ExpiresAt) {
 			refuse(fedCodeMalformed, "offer identity reused with different content")
 			return
 		}
