@@ -124,6 +124,11 @@ func defaultFederationName() string {
 
 // fedRuntime is one live hub connection plus its workers.
 type fedRuntime struct {
+	enrollmentMu      sync.Mutex
+	enrollmentPending map[string]fedEnrollmentPending
+	enrollmentRates   map[string][]time.Time
+	enrollmentGlobal  []time.Time
+
 	nodeMu        sync.RWMutex
 	nodeStatic    proto.NodeMetadata
 	nodeWake      chan struct{}
@@ -518,6 +523,10 @@ func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 }
 
 func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
+	if rt.handleEnrollmentInbound(from, sealed) {
+		return
+	}
+
 	peer, err := db.GetFederationPeer(from)
 	if err != nil || peer == nil {
 		slog.Debug("federation: dropping envelope from untrusted instance", "from", from)

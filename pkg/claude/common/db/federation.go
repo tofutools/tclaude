@@ -73,6 +73,9 @@ func UntrustFederationPeer(instanceID string) (bool, error) {
 			return false, err
 		}
 	}
+	if _, err := tx.Exec(`UPDATE federation_enrollments SET retired=1 WHERE peer=?`, instanceID); err != nil {
+		return false, err
+	}
 	// Nothing more goes to an untrusted instance.
 	if _, err := tx.Exec(`UPDATE federation_outbox SET state=?, last_error=?, updated_at=?
 		WHERE to_instance=? AND state IN (?, ?)`,
