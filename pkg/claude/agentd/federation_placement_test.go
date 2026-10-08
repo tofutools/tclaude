@@ -1,8 +1,11 @@
 package agentd
 
 import (
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 func TestPlacementOrderUsesStableInstanceTies(t *testing.T) {
@@ -11,4 +14,31 @@ func TestPlacementOrderUsesStableInstanceTies(t *testing.T) {
 	rows := []fedPlacementCandidate{{Instance: "inst-b", Eligible: true, LoadPerCore: &b, RAMAvailable: &ramB}, {Instance: "inst-a", Eligible: true, LoadPerCore: &a, RAMAvailable: &ramA}, {Instance: "inst-c", Eligible: false}}
 	require.Equal(t, []int{1, 0}, placementOrder(rows, "least-loaded"))
 	require.Equal(t, []int{0, 1}, placementOrder(rows, "most-free-ram"))
+}
+
+type enrollingCapacityTmux struct {
+	clcommon.Tmux
+	enroll func()
+}
+
+func (t enrollingCapacityTmux) ListSessions() (map[string]struct{}, error) {
+	t.enroll()
+	return map[string]struct{}{}, nil // snapshot preceded the late pane
+}
+func TestNodeCapacityCountsEnrollmentDuringObservation(t *testing.T) {
+	setupTestDB(t)
+	id := db.NewAgentID()
+	require.NoError(t, db.InsertPendingSpawn(&db.PendingSpawn{Label: "spwn-cap-transition", AgentID: id, GroupID: 1}))
+	prior := clcommon.Default
+	clcommon.Default = enrollingCapacityTmux{Tmux: prior, enroll: func() {
+		claimed, err := db.ClaimPendingSpawnAndBindAgent("spwn-cap-transition", "cap-conv", id, "spawn")
+		require.NoError(t, err)
+		require.True(t, claimed)
+	}}
+	t.Cleanup(func() { clcommon.Default = prior })
+	nodeAdmission.Lock()
+	used, err := nodeCapacityUsed("")
+	nodeAdmission.Unlock()
+	require.NoError(t, err)
+	require.Equal(t, 1, used, "a reservation becoming an actor cannot disappear between snapshots")
 }

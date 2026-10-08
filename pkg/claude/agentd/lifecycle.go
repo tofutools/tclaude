@@ -5369,6 +5369,8 @@ type spawnParams struct {
 	// Empty everywhere else. Unexported on purpose: only
 	// executeServerSpawnDeferred sets it.
 	pendingSpawnLabel string
+	// Set only by node admission: uncertain launches need durable reservations.
+	nodeCapacityReserved bool
 	// privateAttachmentRootReserved says the deferred pass atomically claimed
 	// pendingSpawnLabel's private root before publishing the Pending row. The
 	// continuation may reuse that exact root; every fresh inline spawn must
@@ -7177,7 +7179,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		return nil, fail
 	}
 
-	// Async harnesses without launch enrollment may return before their conv-id
+	// Capacity-limited launches and async harnesses without launch enrollment
+	// may return before their pane or conv-id
 	// materialises. Reserve and persist the stable actor identity BEFORE the
 	// process starts, so an immediate hook/reaper enrollment can only bind this
 	// exact id. The row is atomically replaced by the actor binding once the conv
@@ -7190,7 +7193,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// the first was already returned to the caller. pendingHeld is the "some
 	// reservation exists for this label" predicate the shared claim/requeue/
 	// launch-marker sites key on.
-	reservedPending := p.Async && !launchEnroll && p.pendingSpawnLabel == ""
+	reservedPending := (p.Async && !launchEnroll || p.nodeCapacityReserved) && p.pendingSpawnLabel == ""
 	pendingHeld := reservedPending || p.pendingSpawnLabel != ""
 	if reservedPending {
 		if g == nil {
@@ -7568,7 +7571,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		// miss is benign — the sweeper saw the session row first and cleared
 		// the reservation against the same enrollment; a claim error leaves
 		// the row for the sweeper's idempotent already-enrolled path.
-		if p.pendingSpawnLabel != "" {
+		if pendingHeld {
 			if _, err := db.ClaimPendingSpawnAndBindAgent(label, preConvID, p.AgentID, "spawn"); err != nil {
 				slog.Warn("spawn: failed to claim deferred pending reservation; leaving it for the sweeper",
 					"label", label, "conv", preConvID, "error", err)

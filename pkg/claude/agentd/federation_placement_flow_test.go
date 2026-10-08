@@ -446,3 +446,31 @@ func TestFederation_PlacementRechecksWithdrawnAuthority(t *testing.T) {
 	require.Empty(t, out.Placement.Candidates, "withdrawn metadata must not appear in the final explanation")
 	require.Empty(t, q.envelopes(proto.KindSpawnReq), "withdrawn authority prevents another send")
 }
+
+func TestFederation_NodeCapacityKeepsUnconfirmedLocalLaunch(t *testing.T) {
+	fh := newFedHarness(t)
+	f := fh.f
+	f.HaveGroup("team")
+	t.Cleanup(agentd.SetAsyncSpawnInlineGraceForTest(50 * time.Millisecond))
+	f.World.SkipSpawnRow = true
+	_, err := config.Update(func(c *config.Config, e error) error {
+		if e != nil {
+			return e
+		}
+		c.Federation.MaxLiveAgents = 1
+		return nil
+	})
+	require.NoError(t, err)
+	cwd := f.TestCwd("local")
+	require.NoError(t, os.MkdirAll(cwd, 0700))
+	first := f.AsHuman().SpawnWith("team", map[string]any{"name": "slow", "cwd": cwd, "harness": "claude"})
+	require.Equal(t, http.StatusGatewayTimeout, first.Code, string(first.Raw))
+	require.Contains(t, string(first.Raw), "spawn_unconfirmed")
+	pending, err := db.ListPendingSpawns()
+	require.NoError(t, err)
+	require.Len(t, pending, 1, "uncertain local process retains a durable capacity reservation")
+	// executeSpawn has returned and released its volatile admission reservation.
+	second := f.AsHuman().SpawnWith("team", map[string]any{"name": "second", "cwd": cwd, "harness": "claude"})
+	require.Equal(t, http.StatusConflict, second.Code, string(second.Raw))
+	require.Contains(t, string(second.Raw), "node_busy")
+}

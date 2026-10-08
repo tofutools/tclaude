@@ -31,9 +31,16 @@ func nodeCapacityLimit() (int, error) {
 	return cfg.Federation.MaxLiveAgents, nil
 }
 func nodeCapacityUsed(exclude string) (int, error) {
-	alive, err := session.LiveTmuxSessions()
+	// Read durable reservations before live bindings. Enrollment atomically
+	// replaces a reservation with an actor; the opposite order could miss
+	// both sides of that transition. Sample tmux last, after those bindings.
+	pending, err := db.ListPendingSpawns()
 	if err != nil {
-		return 0, fmt.Errorf("cannot observe live panes: %w", err)
+		return 0, err
+	}
+	requests, err := db.ListFederationSpawnReservations()
+	if err != nil {
+		return 0, err
 	}
 	active, _, err := db.ListAgentRosterState()
 	if err != nil {
@@ -42,6 +49,10 @@ func nodeCapacityUsed(exclude string) (int, error) {
 	refs, err := db.HostSessionRefs()
 	if err != nil {
 		return 0, err
+	}
+	alive, err := session.LiveTmuxSessions()
+	if err != nil {
+		return 0, fmt.Errorf("cannot observe live panes: %w", err)
 	}
 	liveConv := map[string]bool{}
 	for _, ref := range refs {
@@ -61,20 +72,12 @@ func nodeCapacityUsed(exclude string) (int, error) {
 			}
 		}
 	}
-	pending, err := db.ListPendingSpawns()
-	if err != nil {
-		return 0, err
-	}
 	for _, row := range pending {
 		id := row.AgentID
 		if id == "" {
 			id = "pending:" + row.Label
 		}
 		used[id] = true
-	}
-	requests, err := db.ListFederationSpawnReservations()
-	if err != nil {
-		return 0, err
 	}
 	for _, req := range requests {
 		if req.Status == db.FedSpawnPending && req.Expired(time.Now()) {
@@ -114,6 +117,7 @@ func acquireNodeLaunch(p *spawnParams) (func(), *spawnFailure) {
 	if used >= limit {
 		return nil, &spawnFailure{Status: 409, Kind: fedCodeNodeBusy, Msg: "node live and reserved agent capacity reached"}
 	}
+	p.nodeCapacityReserved = true
 	launchID := p.AgentID
 	nodeAdmission.launches[launchID] = config.DataDir()
 	return func() { nodeAdmission.Lock(); delete(nodeAdmission.launches, launchID); nodeAdmission.Unlock() }, nil
