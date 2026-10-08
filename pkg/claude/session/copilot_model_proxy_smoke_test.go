@@ -133,15 +133,28 @@ func TestNativeCopilotModelProxyNoFallback(t *testing.T) {
 		client, e := copilotapi.DialRetry(ctx, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), nil)
 		require.NoError(t, e)
 		defer client.Close()
-		info, e := client.CreateSession(ctx, copilotapi.CreateSessionParams{SessionID: copilotapi.NewSessionID(), WorkingDirectory: home, ClientName: "tclaude", Streaming: true, Model: "gpt-5.4"})
+		info, e := client.CreateSession(ctx, copilotapi.CreateSessionParams{SessionID: copilotapi.NewSessionID(), WorkingDirectory: home, ClientName: "tclaude", Streaming: true})
 		require.NoError(t, e)
-		require.NoError(t, client.SetForegroundSession(ctx, info.SessionID))
-		_, e = client.Send(ctx, copilotapi.SendParams{SessionID: info.SessionID, Prompt: "Reply gateway-ok"})
-		require.NoError(t, e)
-		require.Eventually(t, func() bool {
-			metrics, e := client.UsageMetrics(ctx, info.SessionID)
-			return e == nil && metrics.LastCallOutputTokens > 0
-		}, 15*time.Second, 100*time.Millisecond)
+		for _, apiSession := range []string{info.SessionID, sessionID} {
+			if apiSession == sessionID {
+				resumed, e := client.ResumeSession(ctx, copilotapi.ResumeSessionParams{SessionID: sessionID, WorkingDirectory: home, ClientName: "tclaude", Streaming: true})
+				require.NoError(t, e)
+				require.Equal(t, sessionID, resumed.SessionID)
+			}
+			require.NoError(t, client.SetForegroundSession(ctx, apiSession))
+			mu.Lock()
+			before := requests
+			mu.Unlock()
+			_, e = client.Send(ctx, copilotapi.SendParams{SessionID: apiSession, Prompt: "Reply gateway-ok"})
+			require.NoError(t, e)
+			require.Eventually(t, func() bool {
+				mu.Lock()
+				advanced := requests > before
+				mu.Unlock()
+				metrics, e := client.UsageMetrics(ctx, apiSession)
+				return advanced && e == nil && metrics.LastCallOutputTokens > 0
+			}, 15*time.Second, 100*time.Millisecond)
+		}
 	})
 	mu.Lock()
 	denied = true

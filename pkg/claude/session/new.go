@@ -603,7 +603,7 @@ func runNew(params *NewParams) error {
 			return errors.New(h.ModelProxyRefusal())
 		}
 		if h.Name == harness.CopilotName && (strings.TrimSpace(params.Model) == "" || params.Model == "auto") {
-			return errors.New("Copilot model gateway requires an explicit --model; automatic model selection is unavailable offline")
+			return errors.New("copilot model gateway requires an explicit --model; automatic model selection is unavailable offline")
 		}
 		if !strings.Contains(params.ModelProxy, "@") {
 			return fmt.Errorf("--model-proxy must be <name>@<trusted peer>")

@@ -332,7 +332,8 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 			gatewayEnvironment[name] = base + path
 		}
 		if modelBridge != nil {
-			if modelHarness == "codex" {
+			switch modelHarness {
+			case "codex":
 				environ = append(environ, "TCLAUDE_MODEL_PROXY_TOKEN="+modelBridge.bearer)
 				profile := ""
 				if len(modelRefs) > 2 {
@@ -341,9 +342,9 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 				if err := validateCodexModelProxyEffective(environ, profile, modelBridge.provider, base+"/model/v1"); err != nil {
 					return 0, err
 				}
-			} else if modelHarness == "copilot" {
+			case "copilot":
 				environ = append(environ, harness.CopilotModelProxyEnvironment(base+"/model/v1", modelBridge.bearer)...)
-			} else {
+			default:
 				environ = append(environ, "ANTHROPIC_BASE_URL="+base+"/model", "ANTHROPIC_AUTH_TOKEN="+modelBridge.bearer, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
 			}
 		}

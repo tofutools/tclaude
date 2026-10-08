@@ -60,7 +60,7 @@ func ResolveTclaudeLayerModelTransport(
 	}
 	if h.Name == harness.CopilotName && context.ModelProxy != "" && context.ModelProxy != "off" {
 		if strings.TrimSpace(context.Model) == "" || context.Model == "auto" {
-			return harness.ResolvedModelTransport{}, fmt.Errorf("Copilot model gateway requires an explicit model; automatic GitHub model selection is unavailable offline")
+			return harness.ResolvedModelTransport{}, fmt.Errorf("copilot model gateway requires an explicit model; automatic GitHub model selection is unavailable offline")
 		}
 		return harness.ResolvedModelTransport{Model: context.Model, Provider: "tclaude_gateway", ProviderResolved: true, SessionGateway: true}, nil
 	}
