@@ -235,7 +235,7 @@ func handleFederationPlacement(w http.ResponseWriter, r *http.Request, req fedSp
 		}
 		row.Group = checked.Group
 		label := row.Group + "@" + peerDisplay(p)
-		queued, err := queueFederatedEnvelope(fedOutgoing{fromConv: caller, peer: p, kind: proto.KindSpawnReq, toLabel: label, subject: "spawn request", preview: req.Brief, ttl: fedSpawnTTL, payload: proto.SpawnRequestPayload{Group: row.Group, Name: req.Name, Role: req.Role, Brief: req.Brief, Require: req.Require, PlacementVersion: fedPlacementVersion}})
+		queued, err := queueRequesterSpawn(r, caller, p, row.Group, req, fedPlacementVersion)
 		if err != nil {
 			writeFedErr(w, err)
 			return

@@ -20,14 +20,16 @@ type fedModelAnswer struct {
 	payload       proto.ModelAnswerPayload
 }
 type fedModelState struct {
-	waiters  map[string]chan fedModelAnswer
-	incoming map[string]string
-	rates    map[string][]time.Time
+	leaseWaiters map[string]chan bool
+	leasePeers   map[string]string
+	waiters      map[string]chan fedModelAnswer
+	incoming     map[string]string
+	rates        map[string][]time.Time
 }
 
 func (rt *fedRuntime) modelsLocked() *fedModelState {
 	if rt.models == nil {
-		rt.models = &fedModelState{waiters: map[string]chan fedModelAnswer{}, incoming: map[string]string{}, rates: map[string][]time.Time{}}
+		rt.models = &fedModelState{leaseWaiters: map[string]chan bool{}, leasePeers: map[string]string{}, waiters: map[string]chan fedModelAnswer{}, incoming: map[string]string{}, rates: map[string][]time.Time{}}
 	}
 	return rt.models
 }
@@ -46,12 +48,16 @@ func (rt *fedRuntime) handleModelAnswer(peer *db.FederationPeer, env *proto.Enve
 		}
 	}
 }
-func (rt *fedRuntime) openModelStream(ctx context.Context, peer *db.FederationPeer, session, name string) (*routebroker.FlowStream, error) {
+func (rt *fedRuntime) openModelStream(ctx context.Context, peer *db.FederationPeer, session, name string, lease ...*db.ModelProxyLease) (*routebroker.FlowStream, error) {
 	kp, err := stream.NewKeyPair()
 	if err != nil {
 		return nil, err
 	}
 	p := proto.ModelOpenPayload{Version: 1, Stream: proto.NewEnvelopeID(), Proxy: name, Session: session, Key: kp.Pub}
+	if len(lease) > 0 && lease[0] != nil {
+		p.Lease = lease[0].ID
+		p.Generation = lease[0].Generation
+	}
 	ch := make(chan fedModelAnswer, 1)
 	rt.modelsMu.Lock()
 	st := rt.modelsLocked()
@@ -115,7 +121,7 @@ func (rt *fedRuntime) acceptModelOpen(peer *db.FederationPeer, env *proto.Envelo
 	answer := func(ok bool, key []byte, reason string) {
 		rt.sendControl(peer.InstanceID, proto.KindModelAnswer, env.ID, proto.ModelAnswerPayload{Stream: p.Stream, OK: ok, Key: key, Reason: reason})
 	}
-	if !fedPeerModelAllows(peer.InstanceID, p.Proxy) {
+	if !modelOpenAllowed(peer.InstanceID, p, false) {
 		answer(false, nil, "models.proxy is not granted for this named gateway")
 		return
 	}
@@ -178,7 +184,7 @@ func (rt *fedRuntime) acceptModelOpen(peer *db.FederationPeer, env *proto.Envelo
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					if !fedPeerModelAllows(peer.InstanceID, p.Proxy) {
+					if !modelOpenAllowed(peer.InstanceID, p, false) {
 						cancel()
 						return
 					}
@@ -196,7 +202,7 @@ func (rt *fedRuntime) acceptModelOpen(peer *db.FederationPeer, env *proto.Envelo
 		defer req.Body.Close()
 		req = req.WithContext(ctx)
 		writer := newModelWireResponse(flow)
-		serveModelUpstream(writer, req, peer.InstanceID, p.Session, p.Proxy, p.Stream)
+		serveModelUpstream(writer, req, peer.InstanceID, p.Session, p.Proxy, p.Stream, p)
 		_ = writer.finish()
 		_ = flow.CloseWrite()
 	}()

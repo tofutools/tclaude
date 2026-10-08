@@ -186,7 +186,7 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 	}
 	_, groupSlug := federationPeerSlugs[in.Slug]
 	instanceSlug := in.Slug == "config.offer" || in.Slug == PermApprovalsAnswer || in.Slug == PermNodeRead
-	if !groupSlug && !instanceSlug && in.Slug != PermModelsProxy {
+	if !groupSlug && !instanceSlug && (in.Slug != PermModelsProxy && in.Slug != PermModelsProxyLeased) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "slug is not supported for peers: "+in.Slug)
 		return
 	}
@@ -200,7 +200,7 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var gid int64
-	if scope != "" && in.Slug == PermModelsProxy {
+	if scope != "" && (in.Slug == PermModelsProxy || in.Slug == PermModelsProxyLeased) {
 		if !validModelProxyScope(scope) {
 			writeError(w, 400, "invalid_arg", "models.proxy scope must be http_proxy=<name>")
 			return
@@ -219,7 +219,7 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 		scope = db.FederationGroupScope(g.ID)
 	}
 	warnings := []string{}
-	if scope == "" && !instanceSlug && in.Slug != PermModelsProxy {
+	if scope == "" && !instanceSlug && (in.Slug != PermModelsProxy && in.Slug != PermModelsProxyLeased) {
 		warnings = append(warnings, "WARNING: unscoped peer grant covers every active group, including future groups")
 	}
 	if r.Method == http.MethodDelete {
@@ -242,6 +242,10 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
+		if !validRequesterPaysPolicy(in.SpawnPolicy.RequesterPays) || in.SpawnPolicy.RequesterPays != "" && in.Slug != PermGroupsMembersSpawn {
+			writeError(w, 400, "invalid_arg", "requester_pays requires groups.members.spawn and must be required, allowed or off")
+			return
+		}
 		if in.SpawnPolicy.JobApproval != "" && (in.Slug != PermJobsRun || (in.SpawnPolicy.JobApproval != "manual" && in.SpawnPolicy.JobApproval != "auto")) {
 			writeError(w, 400, "invalid_arg", "job_approval must be auto or manual and requires jobs.run")
 			return

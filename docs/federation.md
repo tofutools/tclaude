@@ -1732,3 +1732,54 @@ Use provider credentials authorized for the machines, people and locations in
 your fleet. A gateway does not turn a Claude subscription into API credentials
 or change the provider's account and service terms; cross-organization or
 cross-location sharing needs the gateway operator's separate authorization.
+
+### Requester-paid workers
+
+A requesting machine can pay for its remote Claude Code worker through its own
+named gateway. On the requester, grant the receiving peer lease-only access:
+
+```bash
+tclaude federation grant colleague models.proxy.leased --scope http_proxy=anthropic
+tclaude federation spawn-request builders@colleague --credentials proxy:anthropic@self --brief 'Check the change'
+# Teleport uses the same credential choice:
+tclaude agent teleport builders@colleague --credentials proxy:anthropic@self
+```
+
+The receiver must consent through `requester_pays` in its applied node profile,
+or `--requester-pays` on a `groups.members.spawn` peer grant:
+
+- `off` (default) rejects requester-issued leases and keeps existing launch behavior.
+- `allowed` accepts an explicit requester-paid offer; it does not choose one implicitly.
+- `required` refuses requests without a requester gateway lease before launch.
+
+A concrete spawn grant's policy overrides the node profile default, using the
+existing group-scope and direct-peer precedence. Conflicting equal-priority pool
+policies refuse. Teleport uses the node profile default, with an optional
+`teleport_landing.requester_pays` override, and still requires its ordinary
+`credentials_allowed` entry. Allowed credential references may name the requesting
+peer's alias or its pinned instance ID. Manual acceptance rechecks the current
+policy and preserves the offered account. Missing gateway support, permission,
+connectivity or harness support refuses; it never falls back to receiver credentials.
+
+Agent callers creating a paid request need ordinary `models.proxy` covering the
+receiving peer and their own named proxy. Receiving workers also need ordinary
+`models.proxy` covering the requesting gateway and proxy name, through receiving
+group permissions or node-profile worker defaults. The lease-only peer grant
+allows only requests issued by that gateway for an exact remote worker; it does
+not allow arbitrary sessions to use the provider account. Existing ordinary
+`models.proxy` peer grants remain available for broader fleet gateway access.
+
+Leases bind the signed request or teleport offer, receiving instance, reserved
+worker, session and launch generation before the harness starts. They survive
+daemon restart and end on worker exit, retirement, generation replacement,
+revocation or a gateway kill switch. Disconnected close notices retry after
+reconnect. There is no fixed lifetime: requests slide the idle timeout, configured
+as `model_policy.lease_idle_hours` (default 24). An idle-expired or revoked lease
+cannot be reactivated; submit a new request. A failed launch that already bound its
+lease likewise requires a new request before changing worker identity.
+
+`tclaude federation models leases` shows the paying proxy, receiving peer,
+request, worker, generation and last activity. Use `--revoke <id>` to stop one.
+Both instances audit account attribution; prompts, responses and bearer values
+remain outside audit records. The existing budgets and switches apply to leased
+traffic. Remote argv jobs and other harness bindings are outside this release.

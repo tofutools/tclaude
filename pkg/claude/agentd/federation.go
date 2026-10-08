@@ -449,7 +449,7 @@ func buildFederationCatalog(peer string, status ...*statusSnapshot) (*proto.Cata
 			delete(caps[group.ID], proto.CapAttachments)
 		}
 	}
-	cat := &proto.CatalogPayload{TeleportBackups: true, AgentTeleports: 1, AgentMoves: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
+	cat := &proto.CatalogPayload{RequesterPays: 1, TeleportBackups: true, AgentTeleports: 1, AgentMoves: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
 	if fedPeerReadsNode(peer) {
 		cat.Node = localNodeMetadata()
 	}
@@ -533,6 +533,7 @@ func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 		case in := <-rt.inbound:
 			rt.handleInbound(in.from, in.sealed)
 		case <-sessions.C:
+			rt.revokeStaleModelLeases()
 			rt.pushSessionTransitions()
 			rt.pushAgentStatuses()
 			rt.observeAwayWaiting()
@@ -602,6 +603,10 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		rt.acceptAwayNotice(peer, env)
 	case proto.KindAwayAnswer:
 		rt.acceptAwayAnswer(peer, env)
+	case proto.KindModelLease:
+		rt.acceptModelLease(peer, env)
+	case proto.KindModelLeaseAnswer:
+		rt.acceptModelLeaseAnswer(peer, env)
 	case proto.KindModelOpen:
 		rt.acceptModelOpen(peer, env)
 	case proto.KindModelAnswer:

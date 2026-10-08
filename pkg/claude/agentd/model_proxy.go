@@ -101,7 +101,7 @@ func modelLaunchAllowed(r *http.Request, row *db.SessionRow, peer, name string) 
 	}
 	if row.ConvID != "" {
 		actor, err := db.GetAgentByConv(row.ConvID)
-		if err != nil || actor != nil && !actor.Active() {
+		if err != nil || actor != nil && (!actor.Active() || actor.CurrentConvID != row.ConvID) {
 			return false
 		}
 		allowed, _, err := permissionAllowsAction(r, row.ConvID, PermModelsProxy, ActionContext{RemotePeer: peer, HTTPProxy: name})
@@ -161,6 +161,29 @@ func handleModelProxyBind(w http.ResponseWriter, r *http.Request) {
 		modelError(w, 403, "model gateway registration refused: generation already bound, revoked or absent")
 		return
 	}
+	if worker := modelLeaseWorker(row); worker != "" {
+		l, e := db.GetModelProxyWorkerLease(worker)
+		if e != nil {
+			modelError(w, 503, "requester gateway lease state unavailable")
+			return
+		}
+		if l != nil {
+			rt := currentFederation()
+			if rt == nil || l.Gateway != peer.InstanceID || l.Proxy != name {
+				modelError(w, 403, "requester gateway launch does not match its issued lease")
+				return
+			}
+			if e = rt.activateModelLease(r.Context(), peer, *l, row); e != nil {
+				modelError(w, 503, e.Error())
+				return
+			}
+			if e = db.SetModelProxyLaunchLease(row.ID, row.ExitLaunchGeneration, l.Lease); e != nil {
+				modelError(w, 403, "requester gateway lease binding refused")
+				return
+			}
+			recordFederationAudit("models.lease.worker", peer.InstanceID, worker, name, "request="+l.Request+" lease="+l.Lease+" payer="+peer.InstanceID+" generation="+row.ExitLaunchGeneration, 200)
+		}
+	}
 	writeJSON(w, 200, map[string]any{"reference": reference})
 }
 func peerID(p *db.FederationPeer) string {
@@ -213,7 +236,7 @@ func handleModelProxyRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), time.Hour)
 	defer cancel()
-	conn, err := rt.openModelStream(ctx, peer, launch.Session, name)
+	conn, err := rt.openModelStream(ctx, peer, launch.Session, name, &db.ModelProxyLease{ID: launch.Lease, Generation: launch.Generation})
 	if err != nil {
 		modelError(w, 503, "model gateway unavailable or refused by peer")
 		return
@@ -308,6 +331,12 @@ func handleModelProxyControl(w http.ResponseWriter, r *http.Request) {
 		in.Peer = peer.InstanceID
 		if in.Name == "" {
 			modelError(w, 400, "a peer switch requires a named gateway")
+			return
+		}
+	}
+	if in.Disabled {
+		if err := db.RevokeModelProxyLeaseSelection(in.Name, in.Peer); err != nil {
+			modelError(w, 503, "model gateway lease revocation unavailable")
 			return
 		}
 	}

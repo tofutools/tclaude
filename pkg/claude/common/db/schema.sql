@@ -1555,7 +1555,7 @@ CREATE TABLE federation_spawn_requests (
 	reason        TEXT NOT NULL DEFAULT '',
 	created_at    INTEGER NOT NULL,
 	expires_at    INTEGER NOT NULL,
-	decided_at    INTEGER, launch_label TEXT NOT NULL DEFAULT '', launch_started_at INTEGER, automatic INTEGER NOT NULL DEFAULT 0, notice_sent INTEGER NOT NULL DEFAULT 0, result_sent INTEGER NOT NULL DEFAULT 0, placement_version INTEGER NOT NULL DEFAULT 0, requirements TEXT NOT NULL DEFAULT '',
+	decided_at    INTEGER, launch_label TEXT NOT NULL DEFAULT '', launch_started_at INTEGER, automatic INTEGER NOT NULL DEFAULT 0, notice_sent INTEGER NOT NULL DEFAULT 0, result_sent INTEGER NOT NULL DEFAULT 0, placement_version INTEGER NOT NULL DEFAULT 0, requirements TEXT NOT NULL DEFAULT '', credentials TEXT NOT NULL DEFAULT '', model_lease TEXT NOT NULL DEFAULT '',
 	UNIQUE (from_instance, envelope_id)
 ) STRICT;
 
@@ -1662,7 +1662,7 @@ CREATE INDEX federation_teleports_target ON federation_teleports(target_agent);
 
 CREATE TABLE model_proxy_launches (
  session TEXT NOT NULL, generation TEXT NOT NULL, reference TEXT NOT NULL,
- bearer_hash TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0,
+ bearer_hash TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0, lease TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(session,generation)) STRICT;
 
 CREATE TABLE model_proxy_requests (
@@ -1686,3 +1686,14 @@ CREATE UNIQUE INDEX federation_teleport_backup_source ON federation_teleport_lea
  WHERE direction='out' AND state NOT IN ('recovered','released');
 
 CREATE INDEX federation_teleport_leases_target ON federation_teleport_leases(target_agent);
+
+CREATE TABLE model_proxy_leases (
+ id TEXT PRIMARY KEY, peer TEXT NOT NULL, request TEXT NOT NULL, kind TEXT NOT NULL,
+ proxy TEXT NOT NULL, worker TEXT NOT NULL DEFAULT '', session TEXT NOT NULL DEFAULT '',
+ generation TEXT NOT NULL DEFAULT '', revoked INTEGER NOT NULL DEFAULT 0,
+ idle_seconds INTEGER NOT NULL, touched_at INTEGER NOT NULL,
+ UNIQUE(peer,request,kind)) STRICT;
+
+CREATE TABLE model_proxy_worker_leases (
+ worker TEXT PRIMARY KEY, gateway TEXT NOT NULL, lease TEXT NOT NULL,
+ request TEXT NOT NULL, kind TEXT NOT NULL, proxy TEXT NOT NULL) STRICT;

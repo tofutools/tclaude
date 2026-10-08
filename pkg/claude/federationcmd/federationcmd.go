@@ -440,24 +440,26 @@ type peerGrant struct {
 	Slug        string `json:"slug"`
 	Scope       string `json:"scope"`
 	SpawnPolicy struct {
-		JobApproval string `json:"job_approval,omitempty"`
-		Profile     string `json:"profile,omitempty"`
-		Cwd         string `json:"cwd,omitempty"`
-		Harness     string `json:"harness,omitempty"`
-		Model       string `json:"model,omitempty"`
-		MaxLive     int    `json:"max_live,omitempty"`
+		RequesterPays string `json:"requester_pays,omitempty"`
+		JobApproval   string `json:"job_approval,omitempty"`
+		Profile       string `json:"profile,omitempty"`
+		Cwd           string `json:"cwd,omitempty"`
+		Harness       string `json:"harness,omitempty"`
+		Model         string `json:"model,omitempty"`
+		MaxLive       int    `json:"max_live,omitempty"`
 	} `json:"spawn_policy,omitempty"`
 }
 type grantParams struct {
-	JobApproval string `long:"job-approval" optional:"true" help:"jobs.run only: auto (default) or manual"`
-	Peer        string `pos:"true" help:"Trusted peer label or instance id"`
-	Slug        string `pos:"true" help:"Permission slug to grant"`
-	Scope       string `long:"scope" optional:"true" help:"group=<local group>; omitted covers all current and future groups"`
-	Profile     string `long:"profile" optional:"true" help:"Receiver launch profile for groups.members.spawn"`
-	Cwd         string `long:"cwd" optional:"true" help:"Receiver worker directory"`
-	Harness     string `long:"harness" optional:"true" help:"Receiver worker harness"`
-	Model       string `long:"model" optional:"true" help:"Receiver worker model"`
-	MaxLive     int    `long:"max-live" optional:"true" help:"Positive live auto-worker cap (default 2)"`
+	RequesterPays string `long:"requester-pays" optional:"true" help:"Receiving spawn policy: required, allowed or off"`
+	JobApproval   string `long:"job-approval" optional:"true" help:"jobs.run only: auto (default) or manual"`
+	Peer          string `pos:"true" help:"Trusted peer label or instance id"`
+	Slug          string `pos:"true" help:"Permission slug to grant"`
+	Scope         string `long:"scope" optional:"true" help:"group=<local group>; omitted covers all current and future groups"`
+	Profile       string `long:"profile" optional:"true" help:"Receiver launch profile for groups.members.spawn"`
+	Cwd           string `long:"cwd" optional:"true" help:"Receiver worker directory"`
+	Harness       string `long:"harness" optional:"true" help:"Receiver worker harness"`
+	Model         string `long:"model" optional:"true" help:"Receiver worker model"`
+	MaxLive       int    `long:"max-live" optional:"true" help:"Positive live auto-worker cap (default 2)"`
 }
 
 func grantCmd() *cobra.Command {
@@ -469,6 +471,7 @@ func grantCmd() *cobra.Command {
 		grant.SpawnPolicy.Model = p.Model
 		grant.SpawnPolicy.MaxLive = p.MaxLive
 		grant.SpawnPolicy.JobApproval = p.JobApproval
+		grant.SpawnPolicy.RequesterPays = p.RequesterPays
 		var resp struct {
 			Warnings []string `json:"warnings"`
 		}
@@ -765,15 +768,16 @@ func outboxCmd() *cobra.Command {
 // --- remote spawn requests ---
 
 type spawnRequestParams struct {
-	Target  string `pos:"true" optional:"true" help:"<group>@<peer>: a remote group visible in the peer catalog (omit with --node)"`
-	Node    string `long:"node" optional:"true" help:"Automatically select a node: auto or group:<pool>"`
-	Group   string `long:"group" optional:"true" help:"Remote group for automatic placement; may be omitted only with one authorized group"`
-	Require string `long:"require" optional:"true" help:"Required node metadata: comma-separated os=, arch=, harness=, label="`
-	Prefer  string `long:"prefer" optional:"true" help:"Placement ranking: least-loaded (default) or most-free-ram"`
-	JSON    bool   `long:"json" help:"Output the request and placement explanation as JSON"`
-	Brief   string `long:"brief" help:"What the worker should do (sent to the remote operator and, if approved, to the worker)"`
-	Name    string `long:"name" optional:"true" help:"Requested worker name"`
-	Role    string `long:"role" optional:"true" help:"Requested worker role"`
+	Credentials string `long:"credentials" optional:"true" help:"local or proxy:<name>@self for requester-paid Claude workers"`
+	Target      string `pos:"true" optional:"true" help:"<group>@<peer>: a remote group visible in the peer catalog (omit with --node)"`
+	Node        string `long:"node" optional:"true" help:"Automatically select a node: auto or group:<pool>"`
+	Group       string `long:"group" optional:"true" help:"Remote group for automatic placement; may be omitted only with one authorized group"`
+	Require     string `long:"require" optional:"true" help:"Required node metadata: comma-separated os=, arch=, harness=, label="`
+	Prefer      string `long:"prefer" optional:"true" help:"Placement ranking: least-loaded (default) or most-free-ram"`
+	JSON        bool   `long:"json" help:"Output the request and placement explanation as JSON"`
+	Brief       string `long:"brief" help:"What the worker should do (sent to the remote operator and, if approved, to the worker)"`
+	Name        string `long:"name" optional:"true" help:"Requested worker name"`
+	Role        string `long:"role" optional:"true" help:"Requested worker role"`
 }
 
 func spawnRequestCmd() *cobra.Command {
@@ -790,6 +794,8 @@ func spawnRequestCmd() *cobra.Command {
 }
 
 type spawnRequestRow struct {
+	Credentials      string    `json:"credentials,omitempty"`
+	ModelLease       string    `json:"model_lease,omitempty"`
 	Require          string    `json:"require,omitempty"`
 	PlacementVersion int       `json:"placement_version,omitempty"`
 	ID               int64     `json:"id"`
@@ -839,6 +845,9 @@ func requestsCmd() *cobra.Command {
 				fmt.Printf("#%d  %s  from %s  into %s  %s\n", r.ID, r.Status, r.From, r.Group, ago(r.CreatedAt))
 				if r.Name != "" || r.Role != "" {
 					fmt.Printf("    name %q  role %q\n", r.Name, r.Role)
+				}
+				if r.Credentials != "" {
+					fmt.Printf("    credentials: %s  requester lease: %s\n", r.Credentials, r.ModelLease)
 				}
 				if r.PlacementVersion != 0 {
 					fmt.Printf("    requires: %s (choose a compatible harness)\n", r.Require)

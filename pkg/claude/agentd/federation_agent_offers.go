@@ -136,6 +136,12 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 503, "offline", "federation disconnected")
 			return
 		}
+		mode, lease, err := prepareRequesterLease(r, caller, peer, d.ID, "teleport", teleport.Credentials)
+		if err != nil {
+			writeError(w, 403, "requester_pays", err.Error())
+			return
+		}
+		teleport.Credentials, teleport.ModelLease = mode, lease
 		teleport.Hops = append(teleport.Hops, bundletransfer.TeleportHop{Offer: d.ID, FromInstance: rt.id.ID(), FromAgent: teleport.SourceAgent, ToInstance: peer.InstanceID, ToGroup: in.Group, At: time.Now().UTC()})
 		if err := validateTeleportLimits(teleport, peer.InstanceID, teleportLocalLimits()); err != nil {
 			writeError(w, 409, "teleport_limit", err.Error())
@@ -302,6 +308,12 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 			in.Worktree = ""
 		}
 	}
+	if teleportRow != nil {
+		if err := checkRequesterPays(o.Peer, g.ID, teleportRow.Credentials, teleportRow.Intent.ModelLease, true); err != nil {
+			writeError(w, 409, "requester_pays", err.Error())
+			return
+		}
+	}
 	q := url.Values{"group": {g.Name}, "cwd": {in.Cwd}, "worktree": {in.Worktree}, "name": {in.Name}}
 	if in.KeepPaths {
 		q.Set("keep_paths", "true")
@@ -354,6 +366,13 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 			}
 			if err := db.RecordFederationWorkerDefaults(reserved, authority.record.WorkerDefaults); err != nil {
 				writeError(w, 503, "worker_defaults", err.Error())
+				return
+			}
+		}
+		if teleportRow != nil && teleportRow.Intent.ModelLease != "" {
+			proxy := strings.Split(strings.TrimPrefix(teleportRow.Credentials, "proxy:"), "@")[0]
+			if err := db.RecordModelProxyWorkerLease(db.ModelProxyWorkerLease{Worker: reserved, Gateway: o.Peer, Lease: teleportRow.Intent.ModelLease, Request: o.Descriptor.ID, Kind: "teleport", Proxy: proxy}); err != nil {
+				writeError(w, 503, "requester_pays", err.Error())
 				return
 			}
 		}
