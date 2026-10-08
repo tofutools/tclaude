@@ -195,12 +195,10 @@ func handleModelProxyBind(w http.ResponseWriter, r *http.Request) {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
-		conn, e := rt.openModelStream(ctx, peer, row.ID, name, "openai")
-		if e != nil {
+		if e := rt.checkModelDialect(ctx, peer, row.ID, name, "openai"); e != nil {
 			modelError(w, 503, "Codex model gateway requires an available OpenAI Responses dialect")
 			return
 		}
-		_ = conn.Close()
 	}
 	// Pin the instance ID rather than a mutable operator alias.
 	reference := name + "@" + peer.InstanceID

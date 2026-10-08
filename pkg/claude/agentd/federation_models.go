@@ -47,13 +47,29 @@ func (rt *fedRuntime) handleModelAnswer(peer *db.FederationPeer, env *proto.Enve
 	}
 }
 func (rt *fedRuntime) openModelStream(ctx context.Context, peer *db.FederationPeer, session, name string, dialects ...string) (*routebroker.FlowStream, error) {
+	dialect := ""
+	if len(dialects) > 0 {
+		dialect = dialects[0]
+	}
+	return rt.openModelStreamRequest(ctx, peer, session, name, dialect, false)
+}
+
+// Dialect discovery shares authenticated federation control but opens no data
+// stream and consumes no generation concurrency or request-rate reservation.
+func (rt *fedRuntime) checkModelDialect(ctx context.Context, peer *db.FederationPeer, session, name, dialect string) error {
+	_, err := rt.openModelStreamRequest(ctx, peer, session, name, dialect, true)
+	return err
+}
+func (rt *fedRuntime) openModelStreamRequest(ctx context.Context, peer *db.FederationPeer, session, name, dialect string, probe bool) (*routebroker.FlowStream, error) {
 	kp, err := stream.NewKeyPair()
 	if err != nil {
 		return nil, err
 	}
 	p := proto.ModelOpenPayload{Version: 1, Stream: proto.NewEnvelopeID(), Proxy: name, Session: session, Key: kp.Pub}
-	if len(dialects) > 0 {
-		p.Dialect = dialects[0]
+	p.Dialect = dialect
+	p.Probe = probe
+	if dialect == "openai" || probe {
+		p.Version = 2
 	}
 	ch := make(chan fedModelAnswer, 1)
 	rt.modelsMu.Lock()
@@ -95,6 +111,9 @@ func (rt *fedRuntime) openModelStream(ctx context.Context, peer *db.FederationPe
 			if !a.payload.OK {
 				return nil, errors.New("model gateway refused")
 			}
+			if probe {
+				return nil, nil
+			}
 			raw, err := rt.joinStream(opening, peer.InstanceID, p.Stream, kp, a.payload.Key, true)
 			if err != nil {
 				return nil, err
@@ -109,7 +128,7 @@ func (rt *fedRuntime) openModelStream(ctx context.Context, peer *db.FederationPe
 }
 func (rt *fedRuntime) acceptModelOpen(peer *db.FederationPeer, env *proto.Envelope) {
 	var p proto.ModelOpenPayload
-	if env.From.Agent != "" || env.To.Agent != "" || env.DecodePayload(&p) != nil || p.Version != 1 || !proto.ValidStreamID(p.Stream) || len(p.Key) != 32 || !validModelProxyName(p.Proxy) || p.Session == "" || len(p.Session) > 128 {
+	if env.From.Agent != "" || env.To.Agent != "" || env.DecodePayload(&p) != nil || (p.Version != 1 && p.Version != 2) || (p.Probe && p.Version != 2) || !proto.ValidStreamID(p.Stream) || len(p.Key) != 32 || !validModelProxyName(p.Proxy) || p.Session == "" || len(p.Session) > 128 {
 		return
 	}
 	if fresh, err := db.MarkFederationEnvelopeSeen(peer.InstanceID, "modelopen:"+env.ID, time.Now().Add(2*time.Minute)); err != nil || !fresh {
@@ -137,6 +156,10 @@ func (rt *fedRuntime) acceptModelOpen(peer *db.FederationPeer, env *proto.Envelo
 	}
 	if requested != dialect {
 		answer(false, nil, "gateway dialect does not match the launch harness")
+		return
+	}
+	if p.Probe {
+		answer(true, nil, "")
 		return
 	}
 	rt.modelsMu.Lock()

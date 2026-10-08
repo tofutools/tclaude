@@ -14,6 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
+	"github.com/tofutools/tclaude/pkg/federation/stream"
 )
 
 func TestFederation_ModelGatewayOpenAIResponsesBudgetsAndErrors(t *testing.T) {
@@ -104,4 +106,67 @@ func TestFederation_ModelGatewayOpenAIResponsesBudgetsAndErrors(t *testing.T) {
 	}
 	status, body = call("/v1/messages", `{"model":"test-model","max_tokens":5}`)
 	require.Equal(t, 400, status, body)
+}
+
+func TestFederation_ModelGatewayDialectProbeDoesNotConsumeRequestCapacity(t *testing.T) {
+	fh := newFedHarness(t)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"object":"response","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer upstream.Close()
+	fedModelPolicy(t, fh, upstream.URL)
+	_, err := config.Update(func(cfg *config.Config, err error) error {
+		if err != nil {
+			return err
+		}
+		p := cfg.Agent.HTTPProxies["model"].ModelPolicy
+		p.Dialect = "openai"
+		p.PrecountInput = false
+		p.RequestsPerMinute = 1
+		p.MaxConcurrent = 1
+		return nil
+	})
+	require.NoError(t, err)
+	control := func(probe bool, dialect string) proto.ModelAnswerPayload {
+		kp, e := stream.NewKeyPair()
+		require.NoError(t, e)
+		sid := proto.NewEnvelopeID()
+		env := fh.peer.envelope(proto.KindModelOpen, proto.Endpoint{}, proto.ModelOpenPayload{Version: 2, Stream: sid, Proxy: "model", Session: "launch", Key: kp.Pub, Dialect: dialect, Probe: probe})
+		env.From.Agent = ""
+		fh.peer.send(env)
+		var answer proto.ModelAnswerPayload
+		fedEventually(t, "dialect control answer", func() bool {
+			for _, env := range fh.peer.envelopes(proto.KindModelAnswer) {
+				var a proto.ModelAnswerPayload
+				if env.DecodePayload(&a) == nil && a.Stream == sid {
+					answer = a
+					return true
+				}
+			}
+			return false
+		})
+		return answer
+	}
+	for range 3 {
+		answer := control(true, "openai")
+		require.True(t, answer.OK, answer.Reason)
+		require.Empty(t, answer.Key)
+	}
+	require.False(t, control(true, "anthropic").OK, "dialect probe still applies policy")
+	flow := fedModelFlow(t, fh, "openai")
+	req, err := http.NewRequest(http.MethodPost, "http://model/v1/responses", strings.NewReader(`{"model":"test-model","input":"hello"}`))
+	require.NoError(t, err)
+	req.Host = ""
+	require.NoError(t, req.Write(flow))
+	require.NoError(t, flow.CloseWrite())
+	resp, err := http.ReadResponse(bufio.NewReader(flow), req)
+	require.NoError(t, err)
+	_, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	_ = flow.Close()
+	require.Equal(t, 200, resp.StatusCode)
+	answer := control(false, "openai")
+	require.False(t, answer.OK)
+	require.Contains(t, answer.Reason, "limit", "actual generation still consumes the single request slot")
 }

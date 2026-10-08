@@ -51,7 +51,11 @@ func fedModelFlow(t *testing.T, fh *fedHarness, dialects ...string) *routebroker
 	if len(dialects) > 0 {
 		dialect = dialects[0]
 	}
-	env := fh.peer.envelope(proto.KindModelOpen, proto.Endpoint{}, proto.ModelOpenPayload{Version: 1, Stream: sid, Proxy: "model", Session: "immutable-launch", Key: kp.Pub, Dialect: dialect})
+	version := 1
+	if dialect == "openai" {
+		version = 2
+	}
+	env := fh.peer.envelope(proto.KindModelOpen, proto.Endpoint{}, proto.ModelOpenPayload{Version: version, Stream: sid, Proxy: "model", Session: "immutable-launch", Key: kp.Pub, Dialect: dialect})
 	env.From.Agent = ""
 	fh.peer.send(env)
 	var answer proto.ModelAnswerPayload

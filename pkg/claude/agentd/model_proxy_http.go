@@ -181,7 +181,7 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 		modelError(w, 503, err.Error())
 		return
 	}
-	w = modelDialectWriter{w, instance.ModelPolicy.Dialect == "openai"}
+	w = modelDialectWriter{w, instance.ModelPolicy.Dialect == "openai" || r.URL.Path == "/v1/responses"}
 	if !fedPeerModelAllows(peer, name) {
 		modelError(w, 403, "models.proxy grant was revoked for this named gateway")
 		return

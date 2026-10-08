@@ -119,7 +119,7 @@ func TestNativeCodexModelProxySavedLoginPrecedence(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, transport.SessionGateway)
 	require.NoError(t, validateCodexModelProxyEffective(env, "", "tclaude_gateway_smoke", upstream.URL+"/v1"))
-	args := []string{"exec", "--skip-git-repo-check", "--json", "-m", "gpt-5.4", "-c", `approval_policy="never"`, "-c", `sandbox_mode="danger-full-access"`}
+	args := []string{"--disable", "plugins", "--disable", "remote_plugin", "--disable", "plugin_sharing", "exec", "--skip-git-repo-check", "--json", "-m", "gpt-5.4", "-c", `approval_policy="never"`, "-c", `sandbox_mode="danger-full-access"`}
 	for _, v := range harness.CodexModelProxyOverrides("tclaude_gateway_smoke", upstream.URL+"/v1") {
 		args = append(args, "-c", v)
 	}
@@ -143,8 +143,8 @@ func TestNativeCodexModelProxySavedLoginPrecedence(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, threadID)
-	resumeArgs := []string{"exec", "resume", "--skip-git-repo-check", "--json", "-m", "gpt-5.4"}
-	for _, v := range harness.CodexModelProxyOverrides("tclaude_gateway_smoke", upstream.URL+"/v1") {
+	resumeArgs := []string{"--disable", "plugins", "--disable", "remote_plugin", "--disable", "plugin_sharing", "exec", "resume", "--skip-git-repo-check", "--json", "-m", "gpt-5.4"}
+	for _, v := range harness.CodexModelProxyOverrides("tclaude_gateway_resume", upstream.URL+"/v1") {
 		resumeArgs = append(resumeArgs, "-c", v)
 	}
 	resumeArgs = append(resumeArgs, threadID, "Reply gateway-ok again")
@@ -155,7 +155,7 @@ func TestNativeCodexModelProxySavedLoginPrecedence(t *testing.T) {
 	require.NoError(t, e, "%s", resumed)
 	require.Contains(t, string(resumed), "gateway-ok")
 	// app-server owns model execution for both API drive and its remote TUI.
-	serverArgs := []string{}
+	serverArgs := []string{"--disable", "plugins", "--disable", "remote_plugin", "--disable", "plugin_sharing"}
 	for _, v := range harness.CodexModelProxyOverrides("tclaude_gateway_smoke", upstream.URL+"/v1") {
 		serverArgs = append(serverArgs, "-c", v)
 	}
