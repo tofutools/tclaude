@@ -58,7 +58,9 @@ type Warning struct {
 }
 
 func Read(paths []Path) Snapshot {
-	s := Snapshot{OS: runtime.GOOS, Arch: runtime.GOARCH, CPU: CPU{LogicalCores: runtime.NumCPU()}, Disks: []Disk{}}
+	// Stamp before collection: a slow filesystem probe must not make CPU/RAM
+	// observed earlier in this sample appear fresh when collection completes.
+	s := Snapshot{ObservedAt: time.Now().UTC(), OS: runtime.GOOS, Arch: runtime.GOARCH, CPU: CPU{LogicalCores: runtime.NumCPU()}, Disks: []Disk{}}
 	load, err := readLoad()
 	if err != nil {
 		s.Errors = append(s.Errors, "CPU load: "+err.Error())
@@ -115,7 +117,6 @@ func Read(paths []Path) Snapshot {
 		}
 		s.Disks = append(s.Disks, d)
 	}
-	s.ObservedAt = time.Now().UTC()
 	return s
 }
 

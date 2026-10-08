@@ -50,7 +50,7 @@ filesystem statistics, without cgo or additional dependencies.
 
 ## Warning thresholds
 
-Configure `host` in `~/.tclaude/config.json`:
+Configure `host` in `~/.tclaude/data/config.json`:
 
 ```json
 {
