@@ -20,8 +20,11 @@ func validModelProxyName(name string) bool {
 		return false
 	}
 	for _, c := range name {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.') {
-			return false
+		if c < 'a' || c > 'z' {
+			if (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '_' && c != '-' && c != '.' {
+				return false
+			}
+			continue
 		}
 	}
 	return name != "." && name != ".."
@@ -215,7 +218,7 @@ func handleModelProxyRequest(w http.ResponseWriter, r *http.Request) {
 		modelError(w, 503, "model gateway unavailable or refused by peer")
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 	// Revocation, retirement and generation replacement also interrupt a quiet

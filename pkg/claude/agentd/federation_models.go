@@ -160,7 +160,7 @@ func (rt *fedRuntime) acceptModelOpen(peer *db.FederationPeer, env *proto.Envelo
 			return
 		}
 		flow := routebroker.NewFlowStream(raw)
-		defer flow.Close()
+		defer func() { _ = flow.Close() }()
 		stop := context.AfterFunc(ctx, func() { _ = flow.Close() })
 		defer stop()
 		done := make(chan struct{})
