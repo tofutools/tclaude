@@ -654,6 +654,13 @@ func handleFederationTrust(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "bad_directory", "hub directory key does not match the instance id; refusing to trust")
 		return
 	}
+	finish := lockAwayMutation(entry.InstanceID, true)
+	defer finish()
+	existing, err := db.GetFederationPeer(entry.InstanceID)
+	if err != nil {
+		writeFedErr(w, err)
+		return
+	}
 	if req.Level == db.FederationTrustUnrestricted && (existing == nil || existing.TrustLevel != db.FederationTrustUnrestricted) && req.ConfirmFingerprint != proto.Fingerprint(entry.PubKey) {
 		writeError(w, http.StatusBadRequest, "confirmation_required", "confirm fingerprint "+proto.Fingerprint(entry.PubKey)+": unrestricted grants all peer permissions on all live groups, automatic spawn, and local unscoped grants towards this peer; interactive terminal attach includes harness approval answers")
 		return
@@ -702,6 +709,8 @@ func handleFederationUntrust(w http.ResponseWriter, r *http.Request) {
 		writeFedErr(w, err)
 		return
 	}
+	finish := lockAwayAuthorityMutation(p.InstanceID)
+	defer finish()
 	if _, err := db.UntrustFederationPeer(p.InstanceID); err != nil {
 		writeFedErr(w, err)
 		return
@@ -1029,6 +1038,10 @@ func fedFirst(a, b string) string {
 
 func registerFederationRoutes(mux *http.ServeMux) {
 	registerFederationBundleRoutes(mux)
+	mux.HandleFunc("GET /v1/federation/away", handleFederationAway)
+	mux.HandleFunc("POST /v1/federation/away", handleFederationAway)
+	mux.HandleFunc("POST /v1/federation/return", handleFederationReturn)
+	mux.HandleFunc("POST /v1/federation/answer", handleFederationAwayAnswer)
 	mux.HandleFunc("GET /v1/federation/status", handleFederationStatus)
 	mux.HandleFunc("/v1/federation/notify", handleFederationNotify)
 	mux.HandleFunc("GET /v1/federation/inbox", handleFederationInbox)

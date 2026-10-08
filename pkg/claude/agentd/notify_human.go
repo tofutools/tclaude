@@ -640,6 +640,9 @@ func newHumanMessageRow(fromConv, subject, body, runID, nodeID, commandID string
 }
 
 func dispatchHumanMessageNotification(fromConv, fromTitle, groupName, subject, body string) {
+	if fromConv != "" {
+		forwardAwayHumanMessage(fromConv, fromTitle, subject, body)
+	}
 	// Also raise a desktop notification (off the request goroutine — a
 	// platform send can spawn a subprocess). Self-gates on config, so this
 	// is a no-op unless the human opted in. The per-agent / per-group

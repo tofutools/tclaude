@@ -36,6 +36,9 @@ import (
 func (req *approvalRequest) setDeadline(t time.Time) {
 	req.mu.Lock()
 	req.deadline = t
+	if req.originalDeadline.IsZero() {
+		req.originalDeadline = t
+	}
 	req.mu.Unlock()
 }
 

@@ -41,6 +41,8 @@ const (
 	// (optionally narrowed by role). The receiver resolves the members:
 	// it, not the sender's catalog, is the authority on its roster.
 	KindGroupMail      = "group_mail"
+	KindAwayNotice     = "away_notice"
+	KindAwayAnswer     = "away_answer"
 	KindSessionsUpdate = "sessions_update"
 	KindSessionOpen    = "session_open"
 	KindSessionAnswer  = "session_answer"

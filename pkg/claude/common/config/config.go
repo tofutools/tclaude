@@ -792,7 +792,16 @@ func (c *Config) ResolvedAuditRetentionDays() (days int, prune bool) {
 }
 
 // FederationConfig configures the outbound hub connection.
+// FederationAwayConfig is the operator's selected covering instance. Live
+// approval authority is deliberately not persisted across daemon restarts.
+type FederationAwayConfig struct {
+	Cover string    `json:"cover"`
+	Since time.Time `json:"since"`
+	Until time.Time `json:"until,omitempty"`
+}
+
 type FederationConfig struct {
+	Away *FederationAwayConfig `json:"away,omitempty"`
 	// UnrestrictedMaxLive caps automatic workers per unrestricted peer. Default 8.
 	UnrestrictedMaxLive int `json:"unrestricted_max_live,omitempty"`
 	// Enabled starts the hub client. Default false.

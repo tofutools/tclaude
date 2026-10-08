@@ -195,6 +195,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `sessions.read` | live agent sessions, harness, state and waiting reason |
 | `sessions.watch` | read-only terminal view of a group member agent |
 | `sessions.attach` | terminal view and full keyboard input, including harness approvals |
+| `approvals.answer` | one-shot access-request answer while selected as away cover (unscoped only) |
 
 Prefer `--scope group=<local group>` to limit access. For the same slug, a
 group-scoped peer grant takes precedence over an unscoped grant, including
@@ -809,6 +810,65 @@ SHA-256 and authenticated stream completion are checked before a private
 spool file becomes ready. Failed transfers remain retryable. Expiry and
 decline remove payload files, including after daemon restart; terminal receipt
 metadata remains visible. No remote bundle becomes an agent prompt.
+
+## Away mode and a covering operator
+
+Choose a trusted peer operator to cover while you are away:
+
+```bash
+tclaude federation grant bob sessions.read --scope group=builders
+tclaude federation grant bob sessions.attach --scope group=builders
+tclaude federation grant bob approvals.answer
+tclaude federation away --cover bob --until 2h
+tclaude federation away                    # show current coverage
+tclaude federation return                  # stop forwarding and delegation
+```
+
+`--until` accepts a positive duration or a future RFC3339 timestamp. Omit it
+for coverage until you return. Away configuration survives a daemon restart;
+live delegated approval tickets do not. These commands are human-only.
+Setting away warns if the cover is offline or lacks answering grants, but
+still enables notification forwarding.
+
+Choosing a cover shares local agents' `notify-human` text and daemon access
+request previews with that peer's operator, through signed, encrypted away
+notices in their Messages inbox. Group-member sessions entering a question
+or permission wait also produce a notice. Notices include the stable
+`agt_…@instance` address and a `tclaude federation attach` command to go answer
+harness prompts. Session listing and attach enforce their existing grants;
+away mode does not grant terminal access. For a notification reply, send mail
+to the agent using the usual `message.direct` grant. Attachments stay on the
+originating instance; previews are bounded and mark truncation.
+
+Daemon `--ask-human` access requests also carry an exact request ticket:
+
+```bash
+tclaude federation answer <request>.<epoch>@<origin-instance> --decision approve
+tclaude federation answer <request>.<epoch>@<origin-instance> --decision deny
+```
+
+The peer-only `approvals.answer` slug is an **unscoped instance grant**;
+`--scope group=…` is rejected because an access request can affect instance
+permissions or several groups. It authorizes one-shot approve/deny only, for
+an exact live ticket, while that peer is the currently selected cover. It
+cannot create an always-allow grant or extend a deadline. The original
+request deadline remains binding even if the local operator extends the
+local countdown. Return, expiry, revoke, changing cover, untrust, trust-level
+changes, and federation/daemon restart invalidate previously issued tickets.
+An unrestricted peer holds `approvals.answer` implicitly, like other peer
+slugs; choosing it as cover while away is the additional authority gate.
+
+Both instances audit delegated answers, naming the covering operator's
+instance as the decider. Submission queues an answer; inspect
+`tclaude federation outbox` for the receiving instance's accepted/refused
+receipt. The origin also attributes its ordinary approval audit to that
+remote operator. Queued notices retry while offline, for at most 24 hours
+and never past the request deadline or away expiry. Return or changing
+coverage cancels unsent notices from the earlier coverage. Already delivered
+notices remain in the covering operator's inbox, but their old tickets lose
+authority. Wait observation reuses the session observer only while federation
+is connected and away coverage is active; idle instances do no extra session
+polling for this feature.
 
 ## Sharing an agent with a peer
 

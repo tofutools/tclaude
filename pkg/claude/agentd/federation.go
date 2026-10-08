@@ -124,6 +124,9 @@ func defaultFederationName() string {
 
 // fedRuntime is one live hub connection plus its workers.
 type fedRuntime struct {
+	awayMu        sync.Mutex
+	away          *fedAwayState
+	awayWaiting   map[string]string
 	bundleMu      sync.Mutex
 	bundleWaiters map[string]fedBundleWaiter
 	bundleActive  map[string]bool
@@ -245,6 +248,9 @@ func startFederationWith(fc *config.FederationConfig) error {
 		id: id, name: name,
 		inbound: make(chan fedInbound, 256), kick: make(chan struct{}, 1),
 		online: map[string]bool{}, inLimiter: map[string][]time.Time{},
+	}
+	if fc.Away != nil {
+		rt.away = &fedAwayState{FederationAwayConfig: *fc.Away, Epoch: newApprovalID()}
 	}
 	cl, err := client.New(client.Options{
 		URL: fc.HubURL, Identity: id, Name: name, Version: buildversion.AppVersion(),
@@ -480,6 +486,7 @@ func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 			rt.handleInbound(in.from, in.sealed)
 		case <-sessions.C:
 			rt.pushSessionTransitions()
+			rt.observeAwayWaiting()
 		case <-completion.C:
 			reconcileFederationSpawns()
 			reconcileFederationBundleOffers()
@@ -532,6 +539,10 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		if err := db.PutFederationCatalog(from, string(clean), time.Now()); err != nil {
 			slog.Warn("federation: store catalog failed", "from", from, "error", err)
 		}
+	case proto.KindAwayNotice:
+		rt.acceptAwayNotice(peer, env)
+	case proto.KindAwayAnswer:
+		rt.acceptAwayAnswer(peer, env)
 	case proto.KindSessionOpen:
 		rt.acceptSessionOpen(peer, env)
 	case proto.KindSessionAnswer:
@@ -812,6 +823,9 @@ func (rt *fedRuntime) handleAck(env *proto.Envelope) {
 	if err != nil || row == nil || row.ToInstance != env.From.Instance {
 		return
 	}
+	if row.Kind == proto.KindAwayAnswer && row.State != db.FedOutboxAccepted && row.State != db.FedOutboxRefused {
+		recordFederationAudit("federation.away.answer.result", rt.id.ID(), "", "", "decider="+rt.id.ID()+" origin="+env.From.Instance+" request="+row.BodyPreview+" status="+ack.Status+" "+ack.Reason, 200)
+	}
 	switch {
 	case ack.Status == proto.AckAccepted:
 		note := ""
@@ -864,6 +878,10 @@ func (rt *fedRuntime) flushOutbox(ctx context.Context) {
 	for _, row := range rows {
 		if ctx.Err() != nil {
 			return
+		}
+		if row.Kind == proto.KindAwayNotice && !rt.awayNoticeCurrent(row.ToInstance, row.InReplyTo) {
+			_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxExpired, "away coverage ended")
+			continue
 		}
 		if now.After(row.ExpiresAt) {
 			_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxExpired, "not acknowledged before expiry")

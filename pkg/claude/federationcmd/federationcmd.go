@@ -56,7 +56,7 @@ func Cmd() *cobra.Command {
 			statusCmd(), identityCmd(), connectCmd(), disconnectCmd(),
 			peersCmd(), trustCmd(), untrustCmd(),
 			grantCmd(), revokeCmd(), grantsCmd(), remoteCmd(), sessionsCmd(), attachCmd(), viewersCmd(), kickCmd(),
-			sendCmd(), outboxCmd(), notifyCmd(), inboxCmd(),
+			sendCmd(), outboxCmd(), notifyCmd(), inboxCmd(), awayCmd(), returnCmd(), answerCmd(),
 			spawnRequestCmd(), requestsCmd(), offerConfigCmd(), offersCmd(), shareAgentCmd(),
 		},
 	}.ToCobra()
@@ -389,7 +389,7 @@ func trustCmd() *cobra.Command {
 					fmt.Fprintln(os.Stderr, "peer must identify exactly one visible or trusted instance")
 					os.Exit(1)
 				}
-				fmt.Fprintf(os.Stderr, "Fingerprint %s: unrestricted grants all peer permissions on all live groups, automatic spawn, and local unscoped grants towards this peer. Approvals remain local. Intended for your own machines.\n", fingerprint)
+				fmt.Fprintf(os.Stderr, "Fingerprint %s: unrestricted grants all peer permissions on all live groups, automatic spawn, and local unscoped grants towards this peer. Choosing this peer as away cover also permits one-shot access-request answers. Intended for your own machines.\n", fingerprint)
 				if !p.Yes {
 					fmt.Fprint(os.Stderr, "Type yes to confirm: ")
 					var answer string
@@ -454,7 +454,7 @@ type grantParams struct {
 }
 
 func grantCmd() *cobra.Command {
-	return boa.CmdT[grantParams]{Use: "grant", Short: "Grant a trusted peer group or config.offer permission (human only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *grantParams, _ *cobra.Command, _ []string) {
+	return boa.CmdT[grantParams]{Use: "grant", Short: "Grant a trusted peer group or instance permission (human only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *grantParams, _ *cobra.Command, _ []string) {
 		grant := peerGrant{Peer: p.Peer, Slug: p.Slug, Scope: p.Scope}
 		grant.SpawnPolicy.Profile = p.Profile
 		grant.SpawnPolicy.Cwd = p.Cwd
