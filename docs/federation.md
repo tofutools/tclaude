@@ -1395,8 +1395,32 @@ tclaude federation job run --node linux-box --repo project --ref main \
 
 The command prints the immutable job ID, waits for verified completed output,
 and returns the worker's exit status. A task prompt can select a supported
-coding harness instead of `shell`. This first increment selects one explicit
-peer; automatic placement, fan-out and live follow arrive separately.
+coding harness instead of `shell`. Add `--follow` to print live stdout and
+stderr while it runs. A disconnected follower reconnects by per-channel offset;
+it never resubmits or cancels execution. The final verified artifact supplies
+any missing tail. `--follow` and `--json` are separate display modes.
+
+For one automatically chosen node, use `--node auto` or `--node group:<pool>`,
+optionally with `--require os=darwin,harness=codex` and `--prefer least-loaded`
+or `--prefer most-free-ram`. This reuses normal placement freshness and ranking.
+It selects one node and makes one admission attempt: a busy receiver fails the
+job clearly, without queueing or retrying elsewhere. Agent placement also needs
+`node.read` for each visible candidate.
+
+For explicit fan-out, repeat `--node`. Multi-node runs require a full commit SHA
+in `--ref` so every node checks out the same content. Resolve branches locally
+first, for example:
+
+```sh
+commit=$(git rev-parse origin/main)
+tclaude federation job run --node linux-box --node mac-box --repo project \
+  --ref "$commit" --group builders --harness shell --command 'go test ./...' --follow
+```
+
+Each node has an independent job ID. The command waits for all nodes and prints
+a per-node summary including commit, state and exit status; any failed node
+makes the fan-out return nonzero. It does not provide an atomic transaction
+across nodes. Live fan-out chunks carry node/channel labels.
 Agent callers need `jobs.run` scoped to the concrete peer (including a live
 `peer=group:<pool>` scope). An agent can inspect, retry, cancel or read output
 only for its own submitted jobs and while that permission still covers the peer.

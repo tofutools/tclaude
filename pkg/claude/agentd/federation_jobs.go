@@ -33,6 +33,7 @@ func registerFederationJobRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/federation/jobs", handleFederationJobSend)
 	mux.HandleFunc("GET /v1/federation/jobs", handleFederationJobs)
 	mux.HandleFunc("GET /v1/federation/jobs/{id}", handleFederationJobs)
+	mux.HandleFunc("GET /v1/federation/jobs/{id}/follow", handleFederationJobFollow)
 	mux.HandleFunc("GET /v1/federation/jobs/{id}/logs", handleFederationJobLogs)
 	mux.HandleFunc("POST /v1/federation/jobs/{id}/cancel", handleFederationJobCancel)
 	mux.HandleFunc("POST /v1/federation/jobs/{id}/approve", handleFederationJobApprove)
@@ -81,11 +82,17 @@ func jobCallerAllowed(w http.ResponseWriter, r *http.Request, peer, group string
 func handleFederationJobSend(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		proto.JobRequest
-		Node string `json:"node"`
-		Peer string `json:"peer"`
+		Node   string   `json:"node"`
+		Nodes  []string `json:"nodes"`
+		Peer   string   `json:"peer"`
+		Prefer string   `json:"prefer"`
 	}
 	if e := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); e != nil {
 		writeError(w, 400, "json", e.Error())
+		return
+	}
+	if len(in.Nodes) > 0 {
+		handleFederationJobFanout(w, r, in.JobRequest, in.Nodes)
 		return
 	}
 	in.ID = proto.NewEnvelopeID()
@@ -97,8 +104,12 @@ func handleFederationJobSend(w http.ResponseWriter, r *http.Request) {
 		in.Peer = in.Node
 	}
 	if in.Peer == "auto" || strings.HasPrefix(in.Peer, "group:") {
-		writeError(w, 400, "placement", "automatic job placement is available with the follow/fan-out increment; select one explicit peer")
-		return
+		selected, err := selectJobPeer(r, in.Peer, in.JobRequest, in.Prefer)
+		if err != nil {
+			writeError(w, 409, "placement", err.Error())
+			return
+		}
+		in.Peer = selected
 	}
 	peer, e := resolveFederationPeerOpt(in.Peer, false)
 	if e != nil {
@@ -452,6 +463,16 @@ func (rt *fedRuntime) runJob(parent context.Context, j *db.FederationJob) {
 		rt.sendJobState(current)
 	}
 	defer finish()
+	livePath, e := createFederationJobLiveFile(j.ID)
+	if e != nil {
+		result.Code = "live_output"
+		return
+	}
+	defer func() {
+		if result.State != "unknown" {
+			_ = os.Remove(livePath)
+		}
+	}()
 	trusted, e := db.GetFederationPeer(j.Peer)
 	if e != nil || trusted == nil {
 		result.Code = "untrusted"
@@ -508,7 +529,7 @@ func (rt *fedRuntime) runJob(parent context.Context, j *db.FederationJob) {
 	if e = db.TransitionFederationJob(j.ID, "preparing", "running", nil); e != nil {
 		return
 	}
-	launch := &federationJobLaunch{Peer: j.Peer, RepoID: j.RepoID, RepoRevision: j.RepoRevision, ID: j.ID, WorkerID: j.WorkerID, GroupID: g.ID, Cwd: checkout.Path, Harness: q.Harness, Defaults: defaults}
+	launch := &federationJobLaunch{LivePath: livePath, Peer: j.Peer, RepoID: j.RepoID, RepoRevision: j.RepoRevision, ID: j.ID, WorkerID: j.WorkerID, GroupID: g.ID, Cwd: checkout.Path, Harness: q.Harness, Defaults: defaults}
 	grant := fedPeerGroupGrant(j.Peer, g.ID, PermJobsRun)
 	if grant == nil {
 		result.Code = "authority_changed"

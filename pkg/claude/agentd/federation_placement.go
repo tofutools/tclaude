@@ -70,6 +70,9 @@ func placementSpawnAllowed(r *http.Request, caller, peer, group string) bool {
 	return false
 }
 func placementCandidate(r *http.Request, p db.FederationPeer, req fedSpawnSendReq, caller string, match proto.NodeMatch) (fedPlacementCandidate, bool) {
+	return placementCandidateWithPermission(r, p, req, caller, match, placementSpawnAllowed, "")
+}
+func placementCandidateWithPermission(r *http.Request, p db.FederationPeer, req fedSpawnSendReq, caller string, match proto.NodeMatch, allowedGroup func(*http.Request, string, string, string) bool, cap string) (fedPlacementCandidate, bool) {
 	row := fedPlacementCandidate{Peer: peerDisplay(&p), Instance: p.InstanceID}
 	if caller != "" {
 		allowed, _, err := permissionAllowsAction(r, caller, PermNodeRead, ActionContext{RemotePeer: p.InstanceID})
@@ -100,7 +103,7 @@ func placementCandidate(r *http.Request, p db.FederationPeer, req fedSpawnSendRe
 	}
 	groups := []string{}
 	for _, g := range cat.Groups {
-		if (req.Group == "" || req.Group == g.Name) && placementSpawnAllowed(r, caller, p.InstanceID, g.Name) {
+		if (req.Group == "" || req.Group == g.Name) && (cap == "" || g.HasCap(cap)) && allowedGroup(r, caller, p.InstanceID, g.Name) {
 			groups = append(groups, g.Name)
 		}
 	}

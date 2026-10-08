@@ -10,6 +10,7 @@ import (
 
 type federationJobContextKey struct{}
 type federationJobLaunch struct {
+	LivePath     string
 	Peer         string
 	RepoID       string
 	RepoRevision int64

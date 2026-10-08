@@ -617,6 +617,11 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		rt.acceptGroupMail(peer, env)
 	case proto.KindAck:
 		rt.handleAck(env)
+	case proto.KindJobFollow:
+		rt.wg.Add(1)
+		go func() { defer rt.wg.Done(); rt.serveJobFollow(peer, env) }()
+	case proto.KindJobFollowAnswer:
+		rt.acceptBundleAnswer(peer, env)
 	case proto.KindJobRequest:
 		rt.acceptJobRequest(peer, env)
 	case proto.KindJobStatus, proto.KindJobCancel:
