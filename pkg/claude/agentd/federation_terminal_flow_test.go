@@ -246,7 +246,7 @@ func TestFederation_TerminalInputWatchKickAndPin(t *testing.T) {
 	_, _, ans = open(false)
 	require.False(t, ans.OK)
 	require.Contains(t, ans.Reason, "3.2 or newer")
-	require.NoError(t, db.SetSessionExitLaunchGeneration("terminal-runtime", strings.Repeat("a", 64)))
+	require.NoError(t, db.SetSessionExitLaunchGeneration("terminal-runtime", strings.Repeat("a", 32)))
 	_, _, ans = open(false)
 	require.False(t, ans.OK)
 	require.Contains(t, ans.Reason, "incarnation changed")
