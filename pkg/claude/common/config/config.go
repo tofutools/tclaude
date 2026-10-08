@@ -3504,7 +3504,8 @@ func Validate(c *Config) []string {
 		for _, label := range f.NodeLabels {
 			valid := len(label) > 0 && len(label) <= 64
 			for _, r := range label {
-				if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.') {
+				allowed := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.'
+				if !allowed {
 					valid = false
 				}
 			}
