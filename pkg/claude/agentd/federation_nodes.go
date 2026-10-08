@@ -25,7 +25,7 @@ func fedPeerReadsNode(peer string) bool {
 	if db.FederationPeerUnrestricted(peer) {
 		return true
 	}
-	grants, err := db.ListFederationPeerGrants(peer)
+	grants, err := db.ListEffectiveFederationPeerGrants(peer)
 	if err != nil {
 		return false
 	}
