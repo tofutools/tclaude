@@ -46,7 +46,7 @@ func fedBundleAdmitted(peer string, kind bundletransfer.Type, d bundletransfer.D
 	}
 	if kind.GroupScoped {
 		g, err := db.GetAgentGroupByName(d.Group)
-		return err == nil && g != nil && fedPeerAllows(peer, g.ID, kind.AdmissionSlug)
+		return err == nil && g != nil && (fedPeerAllows(peer, g.ID, kind.AdmissionSlug) || d.Teleport != nil && fedPeerAllows(peer, g.ID, PermAgentsTeleportReceive))
 	}
 	if db.FederationPeerUnrestricted(peer) {
 		return true
@@ -72,7 +72,7 @@ func fedBundleOfferAdmitted(o *db.FederationBundleOffer, kind bundletransfer.Typ
 	if p, err := db.GetFederationPeer(o.Peer); err != nil || p == nil {
 		return false
 	}
-	return o.GroupID != 0 && fedPeerAllows(o.Peer, o.GroupID, kind.AdmissionSlug)
+	return o.GroupID != 0 && (fedPeerAllows(o.Peer, o.GroupID, kind.AdmissionSlug) || o.Descriptor.Teleport != nil && fedPeerAllows(o.Peer, o.GroupID, PermAgentsTeleportReceive))
 }
 func (rt *fedRuntime) acceptBundleOffer(peer *db.FederationPeer, env *proto.Envelope) {
 	refuse := func(code, msg string) {
@@ -108,7 +108,7 @@ func (rt *fedRuntime) acceptBundleOffer(peer *db.FederationPeer, env *proto.Enve
 		return
 	}
 	if existing != nil {
-		if !sameMoveIntent(existing.Descriptor.Move, d.Move) || existing.Descriptor.SHA256 != d.SHA256 || existing.Descriptor.Bytes != d.Bytes || existing.Descriptor.Type != d.Type || existing.Descriptor.Group != d.Group || existing.SenderAgent != env.From.Agent || !existing.Descriptor.ExpiresAt.Equal(d.ExpiresAt) {
+		if !sameTeleportIntent(existing.Descriptor.Teleport, d.Teleport) || !sameMoveIntent(existing.Descriptor.Move, d.Move) || existing.Descriptor.SHA256 != d.SHA256 || existing.Descriptor.Bytes != d.Bytes || existing.Descriptor.Type != d.Type || existing.Descriptor.Group != d.Group || existing.SenderAgent != env.From.Agent || !existing.Descriptor.ExpiresAt.Equal(d.ExpiresAt) {
 			refuse(fedCodeMalformed, "offer identity reused with different content")
 			return
 		}
@@ -131,6 +131,22 @@ func (rt *fedRuntime) acceptBundleOffer(peer *db.FederationPeer, env *proto.Enve
 			return
 		}
 		groupID = g.ID
+	}
+	teleport, err := incomingTeleportRecord(peer.InstanceID, env.From.Agent, d, groupID)
+	if err != nil {
+		refuse("teleport_refused", err.Error())
+		return
+	}
+	if teleport != nil {
+		limits := teleportLocalLimits()
+		if teleport.Landing != nil {
+			limits.Hour = min(limits.Hour, teleport.Landing.Limits.Hour)
+			limits.Day = min(limits.Day, teleport.Landing.Limits.Day)
+		}
+		if err = db.RecordFederationTeleport(*teleport, limits); err != nil {
+			refuse(fedCodeRateLimited, err.Error())
+			return
+		}
 	}
 	if len(d.Inline) > 0 {
 		if err := kind.Validate(d.Inline); err != nil {
@@ -158,6 +174,9 @@ func (rt *fedRuntime) acceptBundleOffer(peer *db.FederationPeer, env *proto.Enve
 	// The durable offer itself appears in federation inbox and offers listings;
 	// no prompt/content from it is delivered to an agent.
 	recordFederationAudit("federation.bundle.in", peerDisplay(peer), "", "", d.Type+" offer "+d.ID, 200)
+	if teleport != nil {
+		recordFederationAudit("teleport.receive", peer.InstanceID, teleport.Intent.SourceAgent, d.Group, fmt.Sprintf("offer=%s chain=%s hop=%d credentials=%s state=%s", d.ID, teleport.Intent.Chain, len(teleport.Intent.Hops), teleport.Credentials, teleport.State), 200)
+	}
 	rt.sendControl(peer.InstanceID, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckAccepted})
 }
 

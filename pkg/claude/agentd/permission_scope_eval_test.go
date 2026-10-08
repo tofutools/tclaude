@@ -359,6 +359,8 @@ var scopedSlugEnforcementPaths = map[string]string{
 	PermJobsRun:                           "jobCallerAllowed / authorizeJobAccess evaluate concrete RemotePeer and RemoteGroup; list projects only authorized owned jobs",
 	PermAgentsStatusRead:                  "handleFederationReachable evaluates peer/group scope before projecting status",
 	PermNodeRead:                          "handleFederationNodes evaluates permissionAllowsAction with RemotePeer",
+	PermSelfTeleport:                      "self teleport selection and delayed retirement recheck",
+	PermAgentsTeleportReceive:             "receiver landing group grant and pre-dispatch recheck",
 	PermAgentMove:                         "federation move-agent and delayed move retirement",
 	PermAgentShare:                        "handleFederationShareAgent supplies RemotePeer/RemoteGroup",
 	PermSessionsWatch:                     "handleFederationAttach — permissionAllowsAction with RemotePeer/RemoteGroup",

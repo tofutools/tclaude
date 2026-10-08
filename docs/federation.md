@@ -1466,3 +1466,89 @@ For a peer whose individual jobs need operator consent, add
 `--job-approval manual` to its `jobs.run` grant. Requests remain `pending` until
 `job approve ID`; approval rechecks trust, the repository revision and the
 receiving group's current job grant. The default approval policy is `auto`.
+
+### Teleport yourself to another node
+
+An agent with `self.teleport` scoped to a trusted peer can run:
+
+```bash
+tclaude agent teleport laptop --group helpers --note "Continue investigating the failing test"
+tclaude agent teleport group:debuggers --group helpers --clone --credentials local
+tclaude agent teleport --node auto --require 'os=linux' --group helpers
+tclaude agent teleport status
+tclaude agent teleport --home --group helpers
+```
+
+Teleport transfers native Claude Code or Codex conversation history using the
+existing agent-offer transport. Move mode keeps the source running until the
+receiver confirms that the imported generation is running. `--clone` keeps the
+source running. There is no destination retry after an offer might have been
+delivered. Selection failures include candidate reasons; missing or stale node
+metrics exclude a candidate. Automatic selection also needs peer-scoped
+`node.read` authority. Agent-visible candidate information follows that scope.
+
+The destination gets a fresh agent identity and inbox. Its continuation briefing
+includes the origin, predecessor, current instance, hop count and note. `agent ls`
+and `agent whoami` show its predecessor. The old inbox remains at the source;
+after a completed teleport, mail to the old address bounces with the destination
+address. Teleport does not forward mail or transfer permissions, credentials or
+uncommitted working-tree changes.
+
+Automatic landing requires a group-scoped peer grant `agents.teleport.receive`
+and an applied node profile with `teleport_landing`. Its `group` and
+`spawn_profile` resolve to immutable local IDs; `cwd` is an existing receiver
+path and `max_live` bounds live plus reserved teleport workers from that peer.
+The profile's existing `worker_permissions` are installed before launch.
+Receiver-owned launch settings must match the history's harness. Changes or
+revocation before dispatch stop automatic launch. Without automatic landing,
+`agents.receive` can admit the usual pending offer for an operator to preview and
+accept. Neither permission is granted by default. Unrestricted peers hold peer
+slugs implicitly, but still need a landing policy for automatic teleport.
+
+An example landing block in the receiver's node profile is:
+
+```json
+{
+  "teleport_landing": {
+    "group": "helpers",
+    "cwd": "/work/project",
+    "spawn_profile": "claude-worker",
+    "max_live": 2,
+    "repo": "project",
+    "credentials_default": "local",
+    "credentials_allowed": ["local"]
+  }
+}
+```
+
+`--git-ref main` uses this policy's optional `repo`, an entry in
+`federation repos`, to prepare a private, detached checkout through the same
+allowlist and Git isolation as remote jobs. Its immutable ID, revision, enabled
+state, clone identity and receiving groups are rechecked before launch. The
+preview names the repo/ref and the result records the resolved commit. A pinned
+full SHA can use the shared checkout's verified local-object fallback; branch
+refs never fall back to stale objects. The operator clone is not modified.
+Successful checkouts are retained because an agent's native history can resume
+there; clean them only after confirming that no running or resumable agent needs
+the directory. Without `--git-ref`, landing uses the policy's `cwd`.
+
+`--credentials local|proxy:<name>@<peer>` chooses a credential mode. Resolution
+uses an explicit flag, then `teleport_landing.credentials_default`, then `local`.
+`credentials_allowed` is a simple exact allowed list (default `["local"]`). Local
+mode uses provider credentials already on the receiver. Proxy mode is parsed and
+carried but currently refuses with **model proxy not available yet**. Modes never
+silently fall back to each other. The chosen mode appears in the import preview,
+continuation briefing and audit.
+
+Both sides durably charge attempts, including clones and failed launches. Under
+`federation.teleport.limits`, `per_hour`, `per_day`, `per_chain` and
+`revisit_minutes` default to 4, 12, 16 and 10. Landing policies can tighten these
+limits. `allow_return` on both the node and landing policy permits an explicit
+`--home` return within the revisit window; all other current grants and limits still apply. Older provenance hops
+are explanatory, not authority to act as another principal.
+
+An operator can run `tclaude federation teleport off` (and `on` to restore it).
+This freezes new incoming/outgoing teleports and prevents uncommitted launch or
+retirement on that instance. Apply it on each node to freeze a fleet; disconnected
+nodes cannot be changed by a local switch. Existing agents keep running. Paused
+backups and automatic failover are reserved for the next teleport phase.

@@ -446,7 +446,7 @@ func buildFederationCatalog(peer string, status ...*statusSnapshot) (*proto.Cata
 			delete(caps[group.ID], proto.CapAttachments)
 		}
 	}
-	cat := &proto.CatalogPayload{AgentMoves: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
+	cat := &proto.CatalogPayload{AgentTeleports: 1, AgentMoves: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
 	if fedPeerReadsNode(peer) {
 		cat.Node = localNodeMetadata()
 	}
@@ -768,7 +768,11 @@ func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
 		return
 	}
 	if movedAgentMailRefusal(peer.InstanceID, env.To.Agent) {
-		refuse("agent_moved", "agent moved to another instance; contact the operator for its new address")
+		message := "agent moved to another instance; contact the operator for its new address"
+		if address := movedAgentDestination(peer.InstanceID, env.To.Agent); address != "" {
+			message = "agent moved to " + address
+		}
+		refuse("agent_moved", message)
 		return
 	}
 	conv, err := db.CurrentConvForAgent(env.To.Agent)

@@ -26,18 +26,19 @@ const (
 
 // Wire capabilities stay stable while authority lives in regular peer slugs.
 var federationPeerSlugs = map[string]string{
-	PermAgentsStatusRead:   proto.CapAgentStatus,
-	PermGroupsRosterRead:   proto.CapRoster,
-	PermSessionsRead:       proto.CapSessions,
-	PermSessionsWatch:      proto.CapSessionsWatch,
-	PermSessionsAttach:     proto.CapSessionsAttach,
-	PermGroupsPresenceRead: proto.CapPresence,
-	PermMessageDirect:      proto.CapMail,
-	PermMessageAttachments: proto.CapAttachments,
-	PermAgentsReceive:      proto.CapAgentsReceive,
-	PermJobsRun:            proto.CapJobs,
-	PermGroupsMembersSpawn: proto.CapSpawn,
-	PermRoutesConsume:      proto.CapRoutes,
+	PermAgentsStatusRead:      proto.CapAgentStatus,
+	PermGroupsRosterRead:      proto.CapRoster,
+	PermSessionsRead:          proto.CapSessions,
+	PermSessionsWatch:         proto.CapSessionsWatch,
+	PermSessionsAttach:        proto.CapSessionsAttach,
+	PermGroupsPresenceRead:    proto.CapPresence,
+	PermMessageDirect:         proto.CapMail,
+	PermMessageAttachments:    proto.CapAttachments,
+	PermAgentsReceive:         proto.CapAgentsReceive,
+	PermAgentsTeleportReceive: proto.CapTeleportReceive,
+	PermGroupsMembersSpawn:    proto.CapSpawn,
+	PermRoutesConsume:         proto.CapRoutes,
+	PermJobsRun:               proto.CapJobs,
 }
 
 func fedPeerGroupGrant(peer string, groupID int64, slug string) *db.FederationPeerGrant {
@@ -190,8 +191,8 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scope := strings.TrimSpace(in.Scope)
-	if in.Slug == PermAgentsReceive && scope == "" {
-		writeError(w, 400, "invalid_arg", "agents.receive requires scope group=<local group>")
+	if (in.Slug == PermAgentsReceive || in.Slug == PermAgentsTeleportReceive) && scope == "" {
+		writeError(w, 400, "invalid_arg", in.Slug+" requires scope group=<local group>")
 		return
 	}
 	if instanceSlug && scope != "" {

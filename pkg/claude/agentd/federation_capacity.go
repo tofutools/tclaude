@@ -46,6 +46,10 @@ func nodeCapacityUsed(exclude string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	teleports, err := db.ListFederationTeleports()
+	if err != nil {
+		return 0, err
+	}
 	actors, err := db.FederationCapacityActorSessions()
 	if err != nil {
 		return 0, err
@@ -87,6 +91,11 @@ func nodeCapacityUsed(exclude string) (int, error) {
 	for id, dir := range nodeAdmission.launches {
 		if dir == config.DataDir() {
 			used[id] = true
+		}
+	}
+	for _, t := range teleports {
+		if t.Direction == "in" && (t.State == "admitting" || t.State == "uncertain") && t.TargetAgent != "" {
+			used[t.TargetAgent] = true
 		}
 	}
 	delete(used, exclude)

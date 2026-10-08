@@ -43,7 +43,7 @@ func selectJobPeer(r *http.Request, selector string, q proto.JobRequest, prefer 
 	}
 	rows := []fedPlacementCandidate{}
 	for _, p := range peers {
-		row, visible := placementCandidateWithPermission(r, p, fedSpawnSendReq{Group: q.Group, Prefer: prefer}, caller, match, placementJobAllowed, proto.CapJobs)
+		row, visible := placementCandidateWithAuthority(r, p, fedSpawnSendReq{Group: q.Group, Prefer: prefer}, caller, match, jobPlacementAuthority)
 		if visible {
 			rows = append(rows, row)
 		}
@@ -65,4 +65,13 @@ func selectJobPeer(r *http.Request, selector string, q proto.JobRequest, prefer 
 		return "", fmt.Errorf("selected node left the pool")
 	}
 	return chosen, nil
+}
+
+// jobPlacementAuthority keeps spawn's admission-version check and admits only
+// exported groups advertising job support that the caller may run jobs on.
+var jobPlacementAuthority = placementAuthority{
+	Supported: func(cat *proto.CatalogPayload) bool { return cat.Node.SpawnPlacementVersion == fedPlacementVersion },
+	GroupAllowed: func(r *http.Request, caller, peer string, g proto.CatalogGroup) bool {
+		return g.HasCap(proto.CapJobs) && placementJobAllowed(r, caller, peer, g.Name)
+	},
 }

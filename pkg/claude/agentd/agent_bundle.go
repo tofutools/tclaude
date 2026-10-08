@@ -402,7 +402,13 @@ type agentBundlePreview struct {
 }
 
 func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requirePermission(w, r, PermAgentBundleImport); !ok {
+	authority := teleportLandingFromRequest(r)
+	if authority != nil {
+		if err := authority.check(); err != nil {
+			writeError(w, 403, "teleport_revoked", err.Error())
+			return
+		}
+	} else if _, ok := requirePermission(w, r, PermAgentBundleImport); !ok {
 		return
 	}
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, agentbundle.MaxBytes+1))
@@ -413,6 +419,10 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	b, err := agentbundle.Decode(raw)
 	if err != nil {
 		writeError(w, 400, "archive", err.Error())
+		return
+	}
+	if err := teleportImportBundle(r, b); err != nil {
+		writeError(w, 409, "teleport_landing", err.Error())
 		return
 	}
 	q := r.URL.Query()
@@ -548,6 +558,15 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, 400, "spawn", err.Error())
 		return
+	}
+	if authority != nil {
+		var shape map[string]any
+		_ = json.Unmarshal(wire, &shape)
+		shape["profile"] = authority.record.Profile.Name
+		if authority.record.WorkerDefaults != nil {
+			shape["permission_overrides"] = authority.record.WorkerDefaults.Permissions
+		}
+		wire, _ = json.Marshal(shape)
 	}
 	inner := r.Clone(r.Context())
 	inner.Method = http.MethodPost

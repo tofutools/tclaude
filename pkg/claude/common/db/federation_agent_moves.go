@@ -16,6 +16,7 @@ type FederationMoveLink struct {
 }
 
 type FederationAgentMove struct {
+	Teleport             bool                `json:"teleport,omitempty"`
 	ShutdownPID          int                 `json:"shutdown_pid,omitempty"`
 	ShutdownProcessStart string              `json:"shutdown_process_start,omitempty"`
 	ConfirmedAt          time.Time           `json:"confirmed_at,omitempty"`

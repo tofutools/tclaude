@@ -803,6 +803,7 @@ type FederationAwayConfig struct {
 }
 
 type FederationConfig struct {
+	Teleport *FederationTeleportConfig `json:"teleport,omitempty"`
 	// NodeLabels is a local set, shared by operator and future node-profile writers.
 	NodeLabels []string `json:"node_labels,omitempty"`
 	// MaxLiveAgents advertises node capacity; zero is unlimited.
@@ -3499,6 +3500,12 @@ func Validate(c *Config) []string {
 		errs = append(errs, "status_snapshot.freshness_ms must be 0 (default) or 1..60000")
 	}
 	if f := c.Federation; f != nil {
+		if f.Teleport != nil {
+			l := f.Teleport.Limits.Effective()
+			if l.Hour < 1 || l.Day < 1 || l.Chain < 1 || l.Chain > 128 || l.RevisitMinutes < 0 || l.RevisitMinutes > 525600 {
+				errs = append(errs, "federation.teleport.limits must have positive rates, per_chain 1..128, and revisit_minutes 0..525600")
+			}
+		}
 		if f.MaxLiveAgents < 0 {
 			errs = append(errs, "federation.max_live_agents must be nonnegative (zero is unlimited)")
 		}
@@ -4041,4 +4048,34 @@ func IsHTTPProxyGatewayURL(value string) bool {
 type StatusSnapshotConfig struct {
 	Disabled    bool `json:"disabled,omitempty"`
 	FreshnessMS int  `json:"freshness_ms,omitempty"`
+}
+
+// FederationTeleportConfig is local policy. Freeze every instance to freeze a
+// disconnected fleet; this switch does not claim distributed consensus.
+type FederationTeleportConfig struct {
+	Disabled bool           `json:"disabled,omitempty"`
+	Limits   TeleportLimits `json:"limits,omitempty"`
+}
+type TeleportLimits struct {
+	Hour           int  `json:"per_hour,omitempty"`
+	Day            int  `json:"per_day,omitempty"`
+	Chain          int  `json:"per_chain,omitempty"`
+	RevisitMinutes int  `json:"revisit_minutes,omitempty"`
+	AllowReturn    bool `json:"allow_return,omitempty"`
+}
+
+func (l TeleportLimits) Effective() TeleportLimits {
+	if l.Hour == 0 {
+		l.Hour = 4
+	}
+	if l.Day == 0 {
+		l.Day = 12
+	}
+	if l.Chain == 0 {
+		l.Chain = 16
+	}
+	if l.RevisitMinutes == 0 {
+		l.RevisitMinutes = 10
+	}
+	return l
 }
