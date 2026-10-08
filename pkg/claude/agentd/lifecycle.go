@@ -2490,9 +2490,10 @@ func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool,
 // when ?delete_worktree was off) and the human-readable notes each step
 // produced, in order.
 type retireTeardown struct {
-	Stop     memberOpResult
-	Worktree *retireWorktreePlan
-	Notes    []string
+	StopOutcome softExitOutcome
+	Stop        memberOpResult
+	Worktree    *retireWorktreePlan
+	Notes       []string
 }
 
 // finishRetiredConv is THE post-demotion half of a retire, shared by all three
@@ -2528,7 +2529,7 @@ type retireTeardown struct {
 func finishRetiredConv(convID string, shutdown, deleteWorktree bool, wt agentWorktreeView, relatedEventID string) retireTeardown {
 	var td retireTeardown
 	if shutdown {
-		td.Stop, _ = stopOneConvAndWait(convID, false /* soft exit */, db.AgentExitActionRetire, relatedEventID, 0)
+		td.Stop, td.StopOutcome = stopOneConvAndWait(convID, false /* soft exit */, db.AgentExitActionRetire, relatedEventID, 0)
 		switch td.Stop.Action {
 		case "soft_stopped":
 			// Harness-agnostic wording on purpose: the group-retire copy of this

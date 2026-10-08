@@ -934,3 +934,56 @@ interrupted after dispatching a launch, its reserved agent ID stays visible;
 inspect that identity before requesting another offer. Pre-launch failures can
 be corrected and retried. Declining or expiring an offer discards transfer data;
 it does not stop an already dispatched agent.
+
+### Moving an agent
+
+A move clones native conversation history to a new destination agent, then
+retires the source after the destination confirms that its reserved launch is
+running. Claude and Codex history are supported. A peer must advertise move
+support; an older peer cannot complete a move with an ordinary import receipt.
+
+```bash
+tclaude federation move-agent worker peer-name --group receiving-group
+# On the receiving instance, preview and explicitly import as usual:
+tclaude federation offers import OFFER_ID --cwd /local/project
+tclaude federation offers import OFFER_ID --cwd /local/project --apply
+# On the source instance:
+tclaude federation moves ls
+tclaude federation moves show OFFER_ID
+tclaude federation moves abandon OFFER_ID
+```
+
+Moves require history; `--skip-history` is refused. Paths, group membership and
+permissions follow the agent-offer import rules. The receiving agent has a new
+agent ID and conversation ID, with a durable `moved_from` link containing the
+source instance, agent and offer. The source retains a `moved_to` tombstone.
+Both links are visible in operator-only move status.
+
+An offer captures the history at the time it is sent. The source remains active
+while the receiver reviews and launches the clone; later source history and
+pending mail are retained locally. No continuous synchronization takes place.
+Agent callers need `agent.move` scoped to the destination peer and ordinary
+retire authority for the source. Exporting another agent also needs
+`agent.bundle.export`. Move and retire authority are checked again before
+retirement; a revoked grant leaves the move blocked and the source intact.
+
+Outgoing state advances from `awaiting_confirmation` to `confirmed`, `retiring`
+and `moved`. An import's ordinary `applied` receipt does not retire the source.
+The dedicated confirmation binds the archive digest and both identities to a
+verified live destination launch; selected Codex app-server launches must also
+be ready. A confirmation older than five minutes cannot authorize retirement.
+Restart recovery retains launch and retirement progress without creating another
+clone. If the source rotates to a new conversation while waiting, retirement is
+blocked; abandon the old move and offer the current generation.
+
+Declined, expired and abandoned moves leave the source intact. Abandon is
+idempotent and ignores later confirmations. Once retirement starts it cannot be
+abandoned. An independently created destination clone remains running after
+abandon. Successful retirement stops the source and removes its normal agent
+authority while retaining its conversation and worktree.
+
+Mail to the retired source's old stable address is refused with `agent_moved`
+for senders still authorized through its former group's current peer mail grant.
+The refusal does not disclose the new address. Other senders receive the usual
+unknown-agent or authorization refusal. Mail is never forwarded automatically;
+an operator can share the new destination address and configure its mail grants.

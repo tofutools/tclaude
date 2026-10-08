@@ -108,7 +108,7 @@ func (rt *fedRuntime) acceptBundleOffer(peer *db.FederationPeer, env *proto.Enve
 		return
 	}
 	if existing != nil {
-		if existing.Descriptor.SHA256 != d.SHA256 || existing.Descriptor.Bytes != d.Bytes || existing.Descriptor.Type != d.Type || existing.Descriptor.Group != d.Group || existing.SenderAgent != env.From.Agent || !existing.Descriptor.ExpiresAt.Equal(d.ExpiresAt) {
+		if !sameMoveIntent(existing.Descriptor.Move, d.Move) || existing.Descriptor.SHA256 != d.SHA256 || existing.Descriptor.Bytes != d.Bytes || existing.Descriptor.Type != d.Type || existing.Descriptor.Group != d.Group || existing.SenderAgent != env.From.Agent || !existing.Descriptor.ExpiresAt.Equal(d.ExpiresAt) {
 			refuse(fedCodeMalformed, "offer identity reused with different content")
 			return
 		}
@@ -357,7 +357,9 @@ func reconcileFederationBundleOffers() {
 		if o.Direction == "in" && o.State == "ready" && o.ImportAgent != "" {
 			if o.ImportLabel == "" {
 				// No subprocess boundary was reached, including across a daemon restart.
-				_, _ = db.ReleaseUnlaunchedFederationBundleImport(o.Peer, o.Descriptor.ID, o.ImportAgent)
+				if released, err := db.ReleaseUnlaunchedFederationBundleImport(o.Peer, o.Descriptor.ID, o.ImportAgent); err == nil && released {
+					_ = db.DeleteFederationAgentMove("in", o.Peer, o.Descriptor.ID)
+				}
 			} else if a, err := db.GetAgent(o.ImportAgent); err == nil && a != nil && a.Active() && a.CurrentConvID != "" {
 				if s, err := db.LoadSession(o.ImportLabel); err == nil && s != nil && s.ConvID == a.CurrentConvID && s.TmuxSession != "" && session.IsTmuxSessionAlive(s.TmuxSession) {
 					if err := db.SetFederationBundleOfferState("in", o.Peer, o.Descriptor.ID, "applied", ""); err == nil {
