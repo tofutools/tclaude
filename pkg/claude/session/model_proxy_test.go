@@ -86,3 +86,18 @@ func TestModelProxyPassThroughSettingsRefused(t *testing.T) {
 	}
 	require.NoError(t, validateModelProxyExtraArgs([]string{"--debug"}))
 }
+
+func TestModelProxyOpenAIBridgeErrorsUseOpenAIShape(t *testing.T) {
+	bridge := &modelProxyBridge{bearer: "launch-only", openai: true}
+	for _, path := range []string{"v1/responses", "v1/messages"} {
+		req := httptest.NewRequest("POST", "http://local/model/"+path, nil)
+		if path == "v1/messages" {
+			req.Header.Set("Authorization", "Bearer launch-only")
+		}
+		rec := httptest.NewRecorder()
+		bridge.ServeHTTP(rec, req)
+		require.GreaterOrEqual(t, rec.Code, 400)
+		require.Contains(t, rec.Body.String(), `"error":`)
+		require.NotContains(t, rec.Body.String(), `"type":"error"`)
+	}
+}

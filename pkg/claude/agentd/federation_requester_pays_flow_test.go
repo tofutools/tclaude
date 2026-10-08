@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
@@ -54,6 +55,10 @@ func TestFederation_RequesterPaysLeaseAdmissionAndStream(t *testing.T) {
 	fh := newFedHarness(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "provider-secret-test", r.Header.Get("X-Api-Key"))
+		if r.URL.Path == "/v1/responses" {
+			_, _ = io.WriteString(w, `{"object":"response","status":"completed","usage":{"input_tokens":10,"output_tokens":3}}`)
+			return
+		}
 		if r.URL.Path == "/v1/messages/count_tokens" {
 			_, _ = io.WriteString(w, `{"input_tokens":10}`)
 			return
@@ -114,6 +119,40 @@ func TestFederation_RequesterPaysLeaseAdmissionAndStream(t *testing.T) {
 	resp, err := http.ReadResponse(bufio.NewReader(flow), req)
 	require.NoError(t, err)
 	result, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	_ = flow.Close()
+	require.Equal(t, 200, resp.StatusCode, string(result))
+	_, err = config.Update(func(cfg *config.Config, err error) error {
+		if err != nil {
+			return err
+		}
+		p := cfg.Agent.HTTPProxies["model"].ModelPolicy
+		p.Dialect = "openai"
+		p.PrecountInput = false
+		return nil
+	})
+	require.NoError(t, err)
+	opening := proto.ModelOpenPayload{Proxy: "model", Session: control.Session, Lease: l.ID, Generation: control.Generation, Dialect: "openai", Probe: true}
+	answer := fedModelControlAnswer(t, fh, opening)
+	require.True(t, answer.OK, answer.Reason)
+	require.Empty(t, answer.Key)
+	wrongOpen := opening
+	wrongOpen.Generation = "wrong-generation"
+	require.False(t, fedModelControlAnswer(t, fh, wrongOpen).OK)
+	wrongOpen = opening
+	wrongOpen.Lease = ""
+	require.False(t, fedModelControlAnswer(t, fh, wrongOpen).OK, "lease-only authority cannot probe an ordinary gateway")
+	opening.Probe = false
+	flow = fedModelFlow(t, fh, opening)
+	req, err = http.NewRequest(http.MethodPost, "http://model/v1/responses", strings.NewReader(`{"model":"test-model","input":"hello"}`))
+	require.NoError(t, err)
+	req.Host = ""
+	require.NoError(t, req.Write(flow))
+	require.NoError(t, flow.CloseWrite())
+	resp, err = http.ReadResponse(bufio.NewReader(flow), req)
+	require.NoError(t, err)
+	result, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	_ = resp.Body.Close()
 	_ = flow.Close()

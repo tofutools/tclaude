@@ -1680,12 +1680,13 @@ policy, group selection and revisit limits above.
 
 ### Model gateways (Claude Code)
 
-A trusted machine can provide a named Anthropic Messages gateway to Claude
-Code workers on another machine. The provider key stays on the gateway machine;
+A trusted machine can provide a named gateway to Claude Code or Codex workers
+on another machine. Claude Code uses Anthropic Messages; Codex uses OpenAI Responses. The provider key stays on the gateway machine;
 the worker receives a random, per-launch loopback bearer. Gateway traffic uses
 sealed federation control messages and an encrypted, flow-controlled hub stream.
-The relay cannot read prompts or responses. This first binding supports ordinary Claude
-Code workers only; non-interactive one-shot runs refuse a proxy choice; it does not transfer subscriptions or implement requester billing.
+The relay cannot read prompts or responses. Ordinary Claude Code workers and Codex
+workers (TUI or app-server drive) are supported; non-interactive one-shot runs
+refuse a proxy choice. This does not relay ChatGPT or Claude subscription tokens.
 
 Configure a named entry under `agent.http_proxies` on the gateway machine:
 
@@ -1718,6 +1719,44 @@ Configure a named entry under `agent.http_proxies` on the gateway machine:
 }
 ```
 
+Set `model_policy.dialect` to `anthropic` (the default when omitted) or `openai`.
+An OpenAI gateway uses a URL such as `https://api.openai.com`, `header` set to
+`Authorization`, and a credential file containing `Bearer <provider API key>`.
+Configure its model allowlist for the exact Responses model IDs or prefixes.
+Its accepted endpoints are `POST /v1/responses` and filtered `GET /v1/models`;
+Messages, WebSockets, standalone search and `/responses/compact` are refused.
+OpenAI `precount_input: true` is unsupported and refuses configuration. Omitted
+`max_output_tokens` is filled with the configured output maximum; an explicit
+larger or invalid bound is refused. Terminal `response.completed` usage settles
+stream reservations; cached input is already included in `input_tokens` and is
+not charged twice. Nonstream completed Responses objects are also accounted.
+
+Codex uses a launch-unique custom provider, `wire_api=responses`, a loopback
+`base_url`, and `env_key=TCLAUDE_MODEL_PROXY_TOKEN`. tclaude passes provider config
+as command overrides to both TUI and app-server; it never edits the user's
+`config.toml`. OpenAI authentication and WebSockets are disabled on this provider.
+The effective-config probe uses the same overrides and refuses a differing or
+uninspectable route. Provider-changing pass-through config/profile arguments
+are refused, and inherited routing/auth/proxy environment variables are cleared.
+The launch selects Codex's ephemeral credential store and verifies that setting,
+so a gateway 401 cannot trigger refresh of a saved ChatGPT login. A saved login
+or `OPENAI_API_KEY` is not used for gateway model requests;
+the upstream is an API/provider-credential endpoint, not subscription billing.
+This also applies to remote spawn and teleport `--credentials proxy:<name>@<peer>`.
+There is no automatic fallback to local credentials on refusal or disconnect.
+Filtered sandbox IP rules still govern tools; the separately authorized model
+bridge runs inside the workload's namespace and reaches agentd through its socket.
+
+This follows the [Codex gateway contract](https://learn.chatgpt.com/docs/enterprise/connect-to-a-gateway)
+and [provider configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
+The opt-in native smoke uses an isolated saved login and conflicting ambient key,
+then verifies the launch bearer at a fake Responses endpoint, tool execution,
+follow-up turns, and app-server drive:
+
+```bash
+TCLAUDE_CODEX_PROXY_SMOKE=1 scripts/test.sh ./pkg/claude/session -run TestNativeCodexModelProxySavedLoginPrecedence -v -count=1
+```
+
 All six daily limits and both token bounds must be positive. Model entries match
 exact IDs or a trailing `*` prefix pattern, such as `claude-sonnet-*`.
 `precount_input` defaults to false: input bounds are checked from provider usage,
@@ -1725,7 +1764,7 @@ with the request byte cap providing the hard pre-flight bound. Set it to true to
 count input through the provider before generation; this adds a round trip and
 requires the provider token-counting endpoint. Every request reserves the maximum input plus
 requested output tokens atomically against gateway, peer, and session budgets.
-Complete terminal usage replaces that reservation, including cache tokens.
+Complete terminal usage replaces that reservation, including Anthropic cache tokens (OpenAI cached input is included in input tokens).
 Interrupted requests retain their reservation until the next UTC day, including
 across daemon restarts. Provider usage is checked against the token bounds.
 Independent defaults cap requests at 4 MiB, responses at 64 MiB, individual SSE

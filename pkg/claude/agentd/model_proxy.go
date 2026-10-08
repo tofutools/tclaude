@@ -70,6 +70,9 @@ func modelProxyPolicy(name string) (config.HTTPProxyConfig, error) {
 	if !ok || p == nil || !p.Enabled {
 		return instance, errors.New("named model gateway is disabled or absent")
 	}
+	if (p.Dialect != "" && p.Dialect != "anthropic" && p.Dialect != "openai") || (p.Dialect == "openai" && p.PrecountInput) {
+		return instance, errors.New("model gateway dialect must be anthropic or openai; OpenAI token precounting is not supported")
+	}
 	if len(p.Models) == 0 || p.DailyRequests <= 0 || p.DailyTokens <= 0 || p.PeerDailyRequests <= 0 || p.PeerDailyTokens <= 0 || p.SessionDailyRequests <= 0 || p.SessionDailyTokens <= 0 || p.MaxInputTokens <= 0 || p.MaxInputTokens > 100000000 || p.MaxOutputTokens <= 0 || p.MaxOutputTokens > 10000000 || p.MaxConcurrent < 1 || p.MaxConcurrent > 128 || p.RequestsPerMinute < 1 || p.MaxRequestBytes < 0 || p.MaxRequestBytes > 16<<20 || p.MaxResponseBytes < 0 || p.MaxResponseBytes > 256<<20 || p.MaxEventBytes < 0 || p.MaxEventBytes > 4<<20 || p.MaxDurationSeconds < 0 || p.MaxDurationSeconds > 3600 {
 		return instance, errors.New("operator must configure model allowlist, positive daily budgets, token bounds and concurrency/rate limits")
 	}
@@ -77,6 +80,21 @@ func modelProxyPolicy(name string) (config.HTTPProxyConfig, error) {
 		return instance, errors.New("operator must fix the named model gateway URL or credential header")
 	}
 	return instance, nil
+}
+
+type modelDialectWriter struct {
+	http.ResponseWriter
+	openai bool
+}
+
+func (w modelDialectWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+func modelWriterOpenAI(w http.ResponseWriter) bool {
+	d, ok := w.(modelDialectWriter)
+	return ok && d.openai
 }
 func modelError(w http.ResponseWriter, status int, message string) {
 	kind := "invalid_request_error"
@@ -93,7 +111,11 @@ func modelError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{"type": "error", "error": map[string]string{"type": kind, "message": message}})
+	body := map[string]any{"type": "error", "error": map[string]string{"type": kind, "message": message}}
+	if d, ok := w.(modelDialectWriter); ok && d.openai {
+		body = map[string]any{"error": map[string]any{"type": kind, "message": message, "param": nil, "code": nil}}
+	}
+	_ = json.NewEncoder(w).Encode(body)
 }
 func modelLaunchAllowed(r *http.Request, row *db.SessionRow, peer, name string) bool {
 	if row == nil {
@@ -143,6 +165,7 @@ func handleModelProxyBind(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
+		Harness   string `json:"harness"`
 		Reference string `json:"reference"`
 		Hash      string `json:"bearer_hash"`
 	}
@@ -153,6 +176,15 @@ func handleModelProxyBind(w http.ResponseWriter, r *http.Request) {
 	peer, name, err := resolveModelProxyReference(in.Reference)
 	if err != nil || !modelLaunchAllowed(r, row, peerID(peer), name) {
 		modelError(w, 403, "model gateway requires models.proxy covering the selected peer and named proxy")
+		return
+	}
+	launchHarness := row.Harness
+	if launchHarness == "" {
+		launchHarness = harness.DefaultName
+	}
+	h, _ := harness.Get(launchHarness)
+	if h == nil || !h.SupportsModelProxy() || (in.Harness != "" && in.Harness != h.Name) {
+		modelError(w, 400, "model gateway harness protocol does not match the live launch")
 		return
 	}
 	// Pin the instance ID rather than a mutable operator alias.
@@ -183,6 +215,21 @@ func handleModelProxyBind(w http.ResponseWriter, r *http.Request) {
 			modelError(w, 503, err.Error())
 			return
 		}
+	}
+	if h.Name == harness.CodexName {
+		if rt == nil {
+			modelError(w, 503, "model gateway federation disconnected")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		if err := rt.checkModelDialect(ctx, peer, row.ID, name, "openai", &db.ModelProxyLease{ID: leaseID, Generation: row.ExitLaunchGeneration}); err != nil {
+			_ = db.RevokeModelProxyLaunch(row.ID, row.ExitLaunchGeneration)
+			modelError(w, 503, "Codex model gateway requires an available OpenAI Responses dialect")
+			return
+		}
+	}
+	if lease != nil {
 		if err = db.SetModelProxyLaunchLease(row.ID, row.ExitLaunchGeneration, leaseID); err != nil {
 			modelError(w, 403, "requester gateway lease binding refused")
 			return
@@ -229,6 +276,7 @@ func handleModelProxyRevoke(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 func handleModelProxyRequest(w http.ResponseWriter, r *http.Request) {
+	w = modelDialectWriter{w, strings.HasSuffix(r.URL.Path, "/responses")}
 	row, launch, peer, name, err := modelBoundCaller(r)
 	if err != nil {
 		modelError(w, 403, "model gateway launch is absent, revoked, replaced or lacks models.proxy")
@@ -241,7 +289,19 @@ func handleModelProxyRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), time.Hour)
 	defer cancel()
-	conn, err := rt.openModelStream(ctx, peer, launch.Session, name, &db.ModelProxyLease{ID: launch.Lease, Generation: launch.Generation})
+	dialect := "anthropic"
+	if row.Harness == harness.CodexName {
+		dialect = "openai"
+	}
+	path := r.PathValue("path")
+	if path == "" {
+		path = strings.TrimPrefix(r.URL.Path, "/v1/models/request/")
+	}
+	if path != "v1/models" && ((dialect == "openai") != (path == "v1/responses")) {
+		modelError(w, 400, "endpoint does not match this launch's harness protocol")
+		return
+	}
+	conn, err := rt.openModelStream(ctx, peer, launch.Session, name, dialect, &db.ModelProxyLease{ID: launch.Lease, Generation: launch.Generation})
 	if err != nil {
 		modelError(w, 503, "model gateway unavailable or refused by peer")
 		return

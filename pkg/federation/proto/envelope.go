@@ -448,9 +448,12 @@ type SessionAnswerPayload struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// ModelOpenPayload binds one Messages HTTP exchange to a named gateway.
-// Version 1 mandates the routebroker credit protocol; no raw TCP fallback.
+// ModelOpenPayload binds one model HTTP exchange to a named gateway.
+// Version 1 mandates routebroker credits. Version 2 adds dialect negotiation
+// and authenticated control-only probes. There is no raw TCP fallback.
 type ModelOpenPayload struct {
+	Probe      bool   `json:"probe,omitempty"`
+	Dialect    string `json:"dialect,omitempty"`
 	Lease      string `json:"lease,omitempty"`
 	Generation string `json:"generation,omitempty"`
 	Version    int    `json:"version"`

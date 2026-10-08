@@ -52,6 +52,9 @@ func fedModelFlow(t *testing.T, fh *fedHarness, opening ...proto.ModelOpenPayloa
 		p = opening[0]
 	}
 	p.Version, p.Stream, p.Key = 1, sid, kp.Pub
+	if p.Dialect == "openai" {
+		p.Version = 2
+	}
 	env := fh.peer.envelope(proto.KindModelOpen, proto.Endpoint{}, p)
 	env.From.Agent = ""
 	fh.peer.send(env)

@@ -103,7 +103,7 @@ func TestCodexEffectiveFastModeUsesMergedConfig(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			previous := codexEffectiveConfigReader
-			codexEffectiveConfigReader = func(string, []sandboxpolicy.EnvironmentEntry, string) (codexEffectiveConfig, error) {
+			codexEffectiveConfigReader = func(string, []sandboxpolicy.EnvironmentEntry, string, ...string) (codexEffectiveConfig, error) {
 				return codexEffectiveConfig{ServiceTier: tc.tier}, nil
 			}
 			t.Cleanup(func() { codexEffectiveConfigReader = previous })

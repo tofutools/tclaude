@@ -37,6 +37,9 @@ type ModelTransportRequirement struct {
 // an operator who never wrote the endpoint in the allow list deserves to be
 // told which remote layer chose it.
 type ResolvedModelTransport struct {
+	// SessionGateway means model traffic uses the launch-bound daemon bridge,
+	// independently authorized by models.proxy rather than raw IP access.
+	SessionGateway    bool     `json:"session_gateway,omitempty"`
 	Model             string   `json:"model,omitempty"`
 	Provider          string   `json:"provider,omitempty"`
 	BaseURL           string   `json:"base_url,omitempty"`
