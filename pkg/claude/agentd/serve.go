@@ -1349,6 +1349,8 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/templates/{name}/deploy", handleTemplateDeploy)
 	mux.HandleFunc("POST /v1/templates/{name}/reinforce", handleTemplateReinforce)
 	mux.HandleFunc("GET /v1/templates/{name}/export", handleTemplateExport)
+	mux.HandleFunc("GET /v1/config-bundle/export", handleConfigBundleExport)
+	mux.HandleFunc("POST /v1/config-bundle/import", handleConfigBundleImport)
 	mux.HandleFunc("/v1/templates/{name}", handleTemplateByName)
 	// Bundled starter task forces (JOH-246). Their own /v1/starters prefix
 	// (not under /v1/templates/) sidesteps a ServeMux pattern conflict with the

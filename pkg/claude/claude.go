@@ -47,6 +47,7 @@ func Cmd() *cobra.Command {
 		selftest.Cmd(),
 		task.Cmd(),
 		agentCmd,
+		agent.ConfigCmd(),
 	}
 	// The proxy lends the daemon's credentials to an agent, so keep the
 	// entire surface absent unless the operator has opted into it. Besides
