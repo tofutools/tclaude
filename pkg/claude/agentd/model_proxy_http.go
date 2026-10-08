@@ -237,6 +237,7 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 	}
 	started := time.Now()
 	defer func() {
+		u.ChargedTokens = max(u.ChargedTokens, u.InputTokens+u.OutputTokens+u.CacheReadTokens+u.CacheWriteTokens)
 		u.DurationMS = time.Since(started).Milliseconds()
 		_ = db.FinishModelProxyRequest(u)
 		recordFederationAudit("models.proxy.request", peer, "", name, fmt.Sprintf("request=%s session=%s model=%s status=%d complete=%t charged_tokens=%d", id, session, data.Model, u.Status, u.Complete, u.ChargedTokens), u.Status)

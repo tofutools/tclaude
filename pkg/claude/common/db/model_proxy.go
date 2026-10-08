@@ -133,9 +133,9 @@ func FinishModelProxyRequest(u ModelProxyUsage) error {
 	actual := u.InputTokens + u.OutputTokens + u.CacheReadTokens + u.CacheWriteTokens
 	// A successful terminal usage replaces the reservation once. Incomplete
 	// requests keep their charge; usage metadata can still aid the operator.
-	_, err = d.Exec(`UPDATE model_proxy_requests SET charged_tokens=CASE WHEN ? THEN ? ELSE charged_tokens END,
+	_, err = d.Exec(`UPDATE model_proxy_requests SET charged_tokens=CASE WHEN ? THEN ? ELSE MAX(charged_tokens,?) END,
  input_tokens=?,output_tokens=?,cache_read_tokens=?,cache_write_tokens=?,status=?,complete=?,response_bytes=?,duration_ms=?
- WHERE id=? AND complete=0`, u.Complete, actual, u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens, u.Status, u.Complete, u.ResponseBytes, u.DurationMS, u.ID)
+ WHERE id=? AND complete=0`, u.Complete, actual, actual, u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens, u.Status, u.Complete, u.ResponseBytes, u.DurationMS, u.ID)
 	return err
 }
 func ListModelProxyUsage(day string) ([]ModelProxyUsage, error) {

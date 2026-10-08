@@ -99,3 +99,21 @@ func TestModelGatewaySharedDefaultResolutionAndExplicitOff(t *testing.T) {
 	require.NotNil(t, fail)
 	require.Equal(t, "unsupported_model_proxy", fail.Kind)
 }
+
+func TestModelGatewaySnapshotTraceKeepsRecordedCredentialMode(t *testing.T) {
+	setupTestDB(t)
+	require.NoError(t, db.SaveSession(&db.SessionRow{ID: "snapshot", ConvID: "snapshot-conv", Harness: "claude", Status: "idle"}))
+	for _, ref := range []string{"allowed@peer", ""} {
+		require.NoError(t, db.RecordSessionModelProxy("snapshot", ref))
+		trace := traceMemberLaunch("snapshot-conv")
+		require.True(t, trace.Traced)
+		want := ref
+		if want == "" {
+			want = "off"
+		}
+		require.Equal(t, want, trace.ModelProxy)
+		merged, _ := mergeSnapshotInlineProfile(&db.SpawnProfile{ModelProxy: "previous@peer"}, &db.SpawnProfile{ModelProxy: trace.ModelProxy}, true)
+		require.NotNil(t, merged)
+		require.Equal(t, want, merged.ModelProxy)
+	}
+}
