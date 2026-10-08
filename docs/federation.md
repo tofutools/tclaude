@@ -1610,7 +1610,9 @@ supersedes the old remote on its next contact. Revoking `self.teleport` prevents
 further accepted renewals; recovery still observes the full online wait.
 
 `report` and a leased copy's `--home` commit bounded findings (up to 16 KiB for
-report), then stop the roaming copy. Only after its node verifies the stop does
+report). Without explicit findings, `--home` captures a bounded native transcript
+tail; if it cannot read history it refuses with guidance to supply `--note`.
+The roaming copy then stops. Only after its node verifies the stop does
 the origin deliver the findings and resume the original identity. Retries use
 the same durable return ID and never launch a second identity. Findings arriving
 after lease-loss recovery still reach the original inbox once, without another

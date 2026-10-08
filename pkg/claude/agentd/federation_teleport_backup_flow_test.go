@@ -168,6 +168,15 @@ func TestFederation_TeleportBackupOriginRestartWaitsFullOnlineWindow(t *testing.
 	fh := newFedHarness(t)
 	fedBackupPolicy(t, "auto")
 	_, d := fedPausedBackup(t, fh)
+	// A later default change must not invalidate timings negotiated by this lease.
+	_, err := config.Update(func(c *config.Config, e error) error {
+		if e != nil {
+			return e
+		}
+		c.Federation.Teleport.Backup = config.TeleportBackupConfig{}
+		return nil
+	})
+	require.NoError(t, err)
 	rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/config", map[string]any{"enabled": false})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	time.Sleep(3500 * time.Millisecond) // offline time exceeds the configured lease + grace
@@ -405,4 +414,18 @@ func TestFederation_TeleportBackupUsesOriginCadenceWithDifferentReceiverDefaults
 		l, _ := db.GetFederationTeleportLease("in", fh.peer.id.ID(), d.ID)
 		return l != nil && l.RenewSeconds == 1 && l.Sequence >= 2
 	})
+}
+
+func TestFederation_TeleportBackupHomeWithoutNoteIncludesTranscriptTail(t *testing.T) {
+	fh := newFedHarness(t)
+	d, a := fedLandedBackup(t, fh)
+	rec := testharness.Serve(fh.f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/teleport", map[string]any{"home": true}), a.CurrentConvID))
+	require.Equal(t, 202, rec.Code, rec.Body.String())
+	fedEventually(t, "default home findings", func() bool {
+		l, _ := db.GetFederationTeleportLease("in", fh.peer.id.ID(), d.ID)
+		return l != nil && l.State == "stopped" && strings.Contains(l.Findings, "Continue the test task.")
+	})
+	l, err := db.GetFederationTeleportLease("in", fh.peer.id.ID(), d.ID)
+	require.NoError(t, err)
+	require.Contains(t, l.Findings, "Transcript tail")
 }

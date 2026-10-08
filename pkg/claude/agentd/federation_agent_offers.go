@@ -143,7 +143,7 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 		}
 		d.Teleport = teleport
 		if teleport.KeepPausedBackup {
-			if err := reserveTeleportBackup(peer.InstanceID, d.ID, teleport.SourceAgent, source, d.ExpiresAt); err != nil {
+			if err := reserveTeleportBackup(peer.InstanceID, d.ID, teleport.SourceAgent, source, d.ExpiresAt, teleport.BackupRenewSeconds); err != nil {
 				writeError(w, 409, "dormant_quota", err.Error())
 				return
 			}

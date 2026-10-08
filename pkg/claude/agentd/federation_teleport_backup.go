@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -49,10 +51,13 @@ func teleportBackupPolicy() (config.TeleportBackupConfig, error) {
 	p = p.Effective()
 	return p, p.Validate()
 }
-func reserveTeleportBackup(peer, offer, agent, conv string, expires time.Time) error {
+func reserveTeleportBackup(peer, offer, agent, conv string, expires time.Time, requiredRenew int) error {
 	p, err := teleportBackupPolicy()
 	if err != nil {
 		return err
+	}
+	if p.RenewSeconds != requiredRenew {
+		return errors.New("teleport backup timing policy changed during export; retry")
 	}
 	return db.ReserveFederationTeleportLease(db.FederationTeleportLease{Direction: "out", Peer: peer, Offer: offer, SourceAgent: agent, SourceConv: conv, Epoch: 1, State: "reserved", ExpiresAt: expires, RenewSeconds: p.RenewSeconds, LeaseSeconds: p.LeaseSeconds, GraceSeconds: p.GraceSeconds}, p.DormantMax)
 }
@@ -547,6 +552,23 @@ func beginTeleportReport(w http.ResponseWriter, r *http.Request, caller, finding
 		writeError(w, 409, "lease", "lease is not active")
 		return
 	}
+	if findings == "" {
+		if l.State == "active" {
+			h := harnessForConv(caller)
+			if !h.SupportsHistoryTransfer() {
+				writeError(w, 409, "history", "provide findings explicitly with report or --note")
+				return
+			}
+			raw, e := h.History.Export(caller, "")
+			if e != nil {
+				writeError(w, 409, "history", "could not capture transcript tail; retry or provide explicit findings with report or --note: "+e.Error())
+				return
+			}
+			findings = teleportTranscriptTail(raw)
+		} else {
+			findings = l.Findings
+		}
+	}
 	if l.State == "active" {
 		l.ReturnID = proto.NewEnvelopeID()
 		l.Findings = findings
@@ -647,4 +669,20 @@ func teleportShutdownAlive(l db.FederationTeleportLease) bool {
 
 func teleportObservationKey(l db.FederationTeleportLease) string {
 	return l.Direction + "/" + l.Peer + "/" + l.Offer
+}
+
+func teleportTranscriptTail(raw []byte) string {
+	const prefix = "Transcript tail (native JSONL; may start mid-record):\n"
+	const budget = (16 << 10) - len(prefix)
+	if len(raw) > budget {
+		raw = raw[len(raw)-budget:]
+	}
+	tail := strings.ToValidUTF8(string(raw), "�")
+	if len(tail) > budget {
+		tail = tail[len(tail)-budget:]
+		for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+			tail = tail[1:]
+		}
+	}
+	return prefix + tail
 }
