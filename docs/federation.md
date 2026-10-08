@@ -1155,7 +1155,8 @@ tclaude federation profile offer rigs bob
 
 Applying a profile never imports settings remotely. The receiver uses the
 existing config-offer preview/import path and decides whether to accept it.
-An unchanged queued offer is not resent by re-apply or another `offer` command.
+An unchanged live or applied offer is not resent by re-apply or another `offer`
+command. Expired, declined or removed offers can be retried with `offer`.
 `labels: null` leaves labels unspecified; `labels: []` requests clearing them.
 Only `federation.node_labels` is portable here; federation credentials, trust
 and other authority settings remain excluded from config bundles. Optional

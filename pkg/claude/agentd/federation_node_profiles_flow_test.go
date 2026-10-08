@@ -269,6 +269,18 @@ func TestFederation_NodeProfileConfigOfferIsSeparateIdempotentAndLabelsOnly(t *t
 	rec = fedHuman(t, fh.f, http.MethodPost, "/v1/federation/profiles/rig/offer", map[string]any{"peer": "bob"})
 	require.Equal(t, 200, rec.Code)
 	require.Contains(t, rec.Body.String(), "unchanged")
+	for _, state := range []string{"declined", "expired", "removed"} {
+		priorID := out.Offer.Descriptor.ID
+		if state == "removed" {
+			require.NoError(t, db.DeleteFederationBundleOffer("out", fh.peer.id.ID(), priorID))
+		} else {
+			require.NoError(t, db.SetFederationBundleOfferState("out", fh.peer.id.ID(), priorID, state, ""))
+		}
+		rec = fedHuman(t, fh.f, http.MethodPost, "/v1/federation/profiles/rig/offer", map[string]any{"peer": "bob"})
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+		testharness.DecodeJSON(t, rec, &out)
+		require.NotEqual(t, priorID, out.Offer.Descriptor.ID, "terminal/missing offers must be retryable")
+	}
 	// Import only this narrow portable setting; federation credentials stay excluded.
 	rec = fedHuman(t, fh.f, http.MethodPost, "/v1/config-bundle/import", map[string]any{"bundle": map[string]any{"format": "tclaude-config-bundle", "format_version": 1, "sections": map[string]any{"config": []any{map[string]any{"name": "federation.node_labels", "value": []string{"gpu"}}}}}, "apply": true, "replace": true})
 	require.Equal(t, 200, rec.Code, rec.Body.String())

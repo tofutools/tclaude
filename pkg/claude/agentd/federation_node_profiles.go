@@ -315,6 +315,7 @@ func handleFederationNodeProfileOffer(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "offer node profile config") {
 		return
 	}
+	reconcileFederationBundleOffers()
 	var in struct {
 		Peer string `json:"peer"`
 	}
@@ -374,8 +375,15 @@ func handleFederationNodeProfileOffer(w http.ResponseWriter, r *http.Request) {
 	sum := sha256.Sum256(raw)
 	digest := hex.EncodeToString(sum[:])
 	if a.OfferDigest == digest {
-		writeJSON(w, 200, map[string]any{"unchanged": true, "offer_id": a.OfferID})
-		return
+		previous, err := db.GetFederationBundleOffer("out", peer.InstanceID, a.OfferID)
+		if err != nil {
+			writeFedErr(w, err)
+			return
+		}
+		if previous != nil && (previous.State == "applied" || ((previous.State == "pending" || previous.State == "ready") && previous.Descriptor.ExpiresAt.After(time.Now()))) {
+			writeJSON(w, 200, map[string]any{"unchanged": true, "offer_id": a.OfferID})
+			return
+		}
 	}
 	if b.CreatedAt == "" {
 		b.CreatedAt = time.Now().UTC().Format(time.RFC3339)
