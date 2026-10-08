@@ -1662,7 +1662,7 @@ CREATE INDEX federation_teleports_target ON federation_teleports(target_agent);
 
 CREATE TABLE model_proxy_launches (
  session TEXT NOT NULL, generation TEXT NOT NULL, reference TEXT NOT NULL,
- bearer_hash TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0, lease TEXT NOT NULL DEFAULT '',
+ bearer_hash TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0, lease TEXT NOT NULL DEFAULT '', lease_ready INTEGER NOT NULL DEFAULT 1,
  PRIMARY KEY(session,generation)) STRICT;
 
 CREATE TABLE model_proxy_requests (

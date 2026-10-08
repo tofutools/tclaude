@@ -1,6 +1,8 @@
 package db
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
@@ -58,8 +60,11 @@ func TestModelProxyWorkerLeaseCloseSurvivesUntilAcknowledged(t *testing.T) {
 	l := ModelProxyWorkerLease{Worker: "worker", Gateway: "payer", Lease: "lease", Request: "request", Kind: "spawn", Proxy: "main"}
 	require.NoError(t, RecordModelProxyWorkerLease(l))
 	require.NoError(t, SaveSession(&SessionRow{ID: "launch", Status: "idle", ExitLaunchGeneration: "one"}))
-	require.NoError(t, BindModelProxyLaunch("launch", "main@payer", strings.Repeat("a", 64)))
-	require.NoError(t, SetModelProxyLaunchLease("launch", "one", l.Lease))
+	bearer := strings.Repeat("a", 64)
+	hash := sha256.Sum256([]byte(bearer))
+	require.NoError(t, BindModelProxyLaunchPendingLease("launch", "main@payer", hex.EncodeToString(hash[:]), l.Lease))
+	_, err := VerifyModelProxyLaunch("launch", bearer)
+	require.ErrorIs(t, err, ErrModelProxyRefused, "lost activation ACK must leave the bearer unusable")
 	stale, err := StaleModelProxyWorkerLeases()
 	require.NoError(t, err)
 	require.Empty(t, stale)

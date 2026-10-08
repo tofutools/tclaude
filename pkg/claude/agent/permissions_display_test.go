@@ -179,3 +179,13 @@ func TestRenderPermissionsStateShowsScopes(t *testing.T) {
 		t.Errorf("scope missing from roster; want %q in:\n%s", want, out.String())
 	}
 }
+
+func TestPermissionScopeModelProxyDocumentedFlags(t *testing.T) {
+	scope, err := parsePermissionScopeFlags([]string{"peer=bob", "http_proxy=model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := renderPermissionScope(scope); got != "http_proxy=model peer=bob" {
+		t.Fatalf("scope = %q", got)
+	}
+}

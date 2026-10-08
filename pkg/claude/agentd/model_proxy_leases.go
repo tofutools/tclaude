@@ -154,13 +154,14 @@ func (rt *fedRuntime) acceptModelLease(peer *db.FederationPeer, env *proto.Envel
 	l, err := db.GetModelProxyLease(p.Lease)
 	ok := err == nil && l != nil && l.Peer == peer.InstanceID && l.Request == p.Request && l.Kind == p.Kind && l.Proxy == p.Proxy
 	if ok && !p.Revoke && l.Worker == "" {
-		if l.Kind == "spawn" {
+		switch l.Kind {
+		case "spawn":
 			o, e := db.GetFederationOutbox(l.Request)
 			ok = e == nil && o != nil && o.ToInstance == peer.InstanceID && o.Kind == proto.KindSpawnReq && o.State != db.FedOutboxRefused && o.ExpiresAt.After(time.Now())
-		} else if l.Kind == "teleport" {
+		case "teleport":
 			o, e := db.GetFederationBundleOffer("out", peer.InstanceID, l.Request)
 			ok = e == nil && o != nil && o.Descriptor.Teleport != nil && o.Descriptor.ExpiresAt.After(time.Now()) && o.State != "abandoned"
-		} else {
+		default:
 			ok = false
 		}
 	}

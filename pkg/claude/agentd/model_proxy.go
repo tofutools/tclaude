@@ -157,32 +157,37 @@ func handleModelProxyBind(w http.ResponseWriter, r *http.Request) {
 	}
 	// Pin the instance ID rather than a mutable operator alias.
 	reference := name + "@" + peer.InstanceID
-	if err = db.BindModelProxyLaunch(row.ID, reference, in.Hash); err != nil {
-		modelError(w, 403, "model gateway registration refused: generation already bound, revoked or absent")
-		return
-	}
+	var lease *db.ModelProxyWorkerLease
 	if worker := modelLeaseWorker(row); worker != "" {
-		l, e := db.GetModelProxyWorkerLease(worker)
-		if e != nil {
+		lease, err = db.GetModelProxyWorkerLease(worker)
+		if err != nil {
 			modelError(w, 503, "requester gateway lease state unavailable")
 			return
 		}
-		if l != nil {
-			rt := currentFederation()
-			if rt == nil || l.Gateway != peer.InstanceID || l.Proxy != name {
-				modelError(w, 403, "requester gateway launch does not match its issued lease")
-				return
-			}
-			if e = rt.activateModelLease(r.Context(), peer, *l, row); e != nil {
-				modelError(w, 503, e.Error())
-				return
-			}
-			if e = db.SetModelProxyLaunchLease(row.ID, row.ExitLaunchGeneration, l.Lease); e != nil {
-				modelError(w, 403, "requester gateway lease binding refused")
-				return
-			}
-			recordFederationAudit("models.lease.worker", peer.InstanceID, worker, name, "request="+l.Request+" lease="+l.Lease+" payer="+peer.InstanceID+" generation="+row.ExitLaunchGeneration, 200)
+	}
+	leaseID := ""
+	rt := currentFederation()
+	if lease != nil {
+		if lease.Gateway != peer.InstanceID || lease.Proxy != name || rt == nil {
+			modelError(w, 403, "requester gateway launch does not match its issued lease")
+			return
 		}
+		leaseID = lease.Lease
+	}
+	if err = db.BindModelProxyLaunchPendingLease(row.ID, reference, in.Hash, leaseID); err != nil {
+		modelError(w, 403, "model gateway registration refused: generation already bound, revoked or absent")
+		return
+	}
+	if lease != nil {
+		if err = rt.activateModelLease(r.Context(), peer, *lease, row); err != nil {
+			modelError(w, 503, err.Error())
+			return
+		}
+		if err = db.SetModelProxyLaunchLease(row.ID, row.ExitLaunchGeneration, leaseID); err != nil {
+			modelError(w, 403, "requester gateway lease binding refused")
+			return
+		}
+		recordFederationAudit("models.lease.worker", peer.InstanceID, lease.Worker, name, "request="+lease.Request+" lease="+leaseID+" payer="+peer.InstanceID+" generation="+row.ExitLaunchGeneration, 200)
 	}
 	writeJSON(w, 200, map[string]any{"reference": reference})
 }

@@ -18,6 +18,7 @@ func migrateV245toV246(d *sql.DB) error {
  worker TEXT PRIMARY KEY, gateway TEXT NOT NULL, lease TEXT NOT NULL,
  request TEXT NOT NULL, kind TEXT NOT NULL, proxy TEXT NOT NULL) STRICT;
  ALTER TABLE model_proxy_launches ADD COLUMN lease TEXT NOT NULL DEFAULT '';
+ ALTER TABLE model_proxy_launches ADD COLUMN lease_ready INTEGER NOT NULL DEFAULT 1;
  ALTER TABLE federation_spawn_requests ADD COLUMN credentials TEXT NOT NULL DEFAULT '';
  ALTER TABLE federation_spawn_requests ADD COLUMN model_lease TEXT NOT NULL DEFAULT '';
  UPDATE schema_version SET version=246;`)
