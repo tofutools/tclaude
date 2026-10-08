@@ -69,6 +69,9 @@ var nonInteractiveHelperShellCommand = func(requestPath, resultPath string) stri
 // sandbox probe runs under tmux, so launch the matching one-shot boundary in a
 // detached pane using the same launcher as ordinary sessions. The pane is
 // transient and has no agent or group membership.
+// Two escaped text channels plus their base64 byte representations fit here.
+const maxNonInteractiveResultBytes = 16*maxNonInteractiveOutputBytes + 8192
+
 func runNonInteractiveThroughTmux(ctx context.Context, command nonInteractiveCommand) (nonInteractiveSpawnResult, *spawnFailure) {
 	launchAttempted := false
 	fail := func(message string) (nonInteractiveSpawnResult, *spawnFailure) {
@@ -174,8 +177,8 @@ func runNonInteractiveThroughTmux(ctx context.Context, command nonInteractiveCom
 			return nonInteractiveSpawnResult{Stderr: "run timed out\n", ExitCode: 124}, nil
 		}
 	}
-	// JSON may expand a control byte to a six-byte Unicode escape.
-	if len(data) > 12*maxNonInteractiveOutputBytes+8192 {
+	// JSON expands control bytes and remote jobs also retain base64 byte fields.
+	if len(data) > maxNonInteractiveResultBytes {
 		return fail("one-shot tmux result exceeded the output limit")
 	}
 	var reply nonInteractiveBrokerReply

@@ -222,3 +222,16 @@ func TestPreparePinnedShallowCloneWithoutRemote(t *testing.T) {
 	}
 	runGit(t, c.Path, "fsck", "--full")
 }
+
+func TestFullCommitFanoutPins(t *testing.T) {
+	for _, ref := range []string{strings.Repeat("a", 40), strings.Repeat("F", 64)} {
+		if !FullCommit(ref) {
+			t.Fatalf("full commit rejected: %q", ref)
+		}
+	}
+	for _, ref := range []string{"main", "origin/main", strings.Repeat("a", 39), strings.Repeat("g", 40)} {
+		if FullCommit(ref) {
+			t.Fatalf("non-commit accepted: %q", ref)
+		}
+	}
+}

@@ -4,6 +4,7 @@ package jobrepo
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -328,4 +329,13 @@ func Prepare(ctx context.Context, d Definition, root, ref string) (*Checkout, er
 	}
 	ok = true
 	return &Checkout{Root: root, Path: path, Commit: strings.ToLower(commit), Resolution: resolution}, nil
+}
+
+// FullCommit reports whether ref pins a complete SHA-1 or SHA-256 object ID.
+func FullCommit(ref string) bool {
+	if len(ref) != 40 && len(ref) != 64 {
+		return false
+	}
+	_, e := hex.DecodeString(ref)
+	return e == nil
 }

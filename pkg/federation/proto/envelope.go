@@ -25,6 +25,8 @@ const (
 	// KindSpawnReq asks the recipient to spawn a worker into one of its
 	// exported groups. The recipient's operator decides; KindSpawnRes
 	// (InReplyTo = the request) reports the decision.
+	KindJobFollow        = "job_follow"
+	KindJobFollowAnswer  = "job_follow_answer"
 	KindJobRequest       = "job_request"
 	KindJobStatus        = "job_status"
 	KindJobCancel        = "job_cancel"
