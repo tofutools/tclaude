@@ -132,7 +132,7 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, groupSlug := federationPeerSlugs[in.Slug]
-	instanceSlug := in.Slug == "config.offer" || in.Slug == PermApprovalsAnswer
+	instanceSlug := in.Slug == "config.offer" || in.Slug == PermApprovalsAnswer || in.Slug == PermNodeRead
 	if !groupSlug && !instanceSlug {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "slug is not supported for peers: "+in.Slug)
 		return

@@ -65,6 +65,7 @@ func ValidAgentRef(s string) bool {
 // SanitizeCatalog applies SafeName to every name in a received catalog and
 // drops members whose agent ref is malformed.
 func SanitizeCatalog(c *CatalogPayload) {
+	c.Node = SanitizeNode(c.Node)
 	for gi := range c.Groups {
 		g := &c.Groups[gi]
 		g.Name = SafeName(g.Name, false)
