@@ -92,7 +92,11 @@ func localNodeMetadata() *proto.NodeMetadata {
 		rt.nodeMu.RUnlock()
 	}
 	cfg, err := config.Load()
-	if err == nil && cfg != nil && cfg.Federation != nil {
+	// Unknown configuration must not advertise zero as unlimited capacity.
+	if err != nil || cfg == nil {
+		return nil
+	}
+	if cfg.Federation != nil {
 		n.Labels = append([]string{}, cfg.Federation.NodeLabels...)
 		n.MaxLiveAgents = cfg.Federation.MaxLiveAgents
 	}
@@ -275,9 +279,11 @@ func handleFederationNodeLabels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_arg", "expected add/remove label arrays")
 		return
 	}
-	if _, err := proto.NormalizeNodeLabels(append(append([]string{}, in.Add...), in.Remove...)); err != nil {
-		writeError(w, 400, "invalid_arg", err.Error())
-		return
+	for _, label := range append(append([]string{}, in.Add...), in.Remove...) {
+		if !proto.ValidNodeLabel(label) {
+			writeError(w, 400, "invalid_arg", "invalid node label: use 1..64 letters, digits, dot, dash or underscore")
+			return
+		}
 	}
 	_, err := config.Update(func(cfg *config.Config, loadErr error) error {
 		if loadErr != nil {

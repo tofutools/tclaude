@@ -2,7 +2,9 @@ package agentd_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
@@ -29,7 +31,17 @@ func TestFederation_NodeExportLabelsAndWithdrawal(t *testing.T) {
 	require.Nil(t, latest().Node)
 	r := fedHuman(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermNodeRead, "scope": "group=private"})
 	require.Equal(t, 400, r.Code)
-	r = fedHuman(t, f, http.MethodPost, "/v1/federation/node-labels", map[string]any{"add": []string{"gpu", "test-rig"}})
+	labels := []string{}
+	for i := 0; i < 64; i++ {
+		labels = append(labels, fmt.Sprintf("label-%d", i))
+	}
+	r = fedHuman(t, f, http.MethodPost, "/v1/federation/node-labels", map[string]any{"add": labels})
+	require.Equal(t, 200, r.Code)
+	r = fedHuman(t, f, http.MethodPost, "/v1/federation/node-labels", map[string]any{"remove": labels, "add": []string{"replacement"}})
+	require.Equal(t, 200, r.Code, r.Body.String())
+	r = fedHuman(t, f, http.MethodGet, "/v1/federation/node-labels", nil)
+	require.Contains(t, r.Body.String(), `["replacement"]`)
+	r = fedHuman(t, f, http.MethodPost, "/v1/federation/node-labels", map[string]any{"remove": []string{"replacement"}, "add": []string{"gpu", "test-rig"}})
 	require.Equal(t, 200, r.Code, r.Body.String())
 	r = fedHuman(t, f, http.MethodPost, "/v1/federation/node-labels", map[string]any{"add": []string{"mac", "gpu"}, "remove": []string{"test-rig"}})
 	require.Equal(t, 200, r.Code)
@@ -70,6 +82,14 @@ func TestFederation_NodeExportLabelsAndWithdrawal(t *testing.T) {
 	require.Equal(t, 403, r.Code)
 	r = fedHuman(t, f, http.MethodPost, "/v1/federation/node-labels", map[string]any{"add": []string{"bad\nlabel"}})
 	require.Equal(t, 400, r.Code)
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte("{"), 0600))
+	p.send(p.envelope(proto.KindCatalogReq, proto.Endpoint{}, struct{}{}))
+	fedEventually(t, "unknown capacity withheld", func() bool { return latest().Node == nil })
+	require.NoError(t, config.Save(cfg))
+	p.send(p.envelope(proto.KindCatalogReq, proto.Endpoint{}, struct{}{}))
+	fedEventually(t, "capacity restored", func() bool { return latest().Node != nil })
 }
 func TestFederation_NodeReadScopeFreshnessAndOrdering(t *testing.T) {
 	fh := newFedHarness(t)

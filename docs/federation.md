@@ -195,6 +195,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `sessions.read` | live agent sessions, harness, state and waiting reason |
 | `sessions.watch` | read-only terminal view of a group member agent |
 | `sessions.attach` | terminal view and full keyboard input, including harness approvals |
+| `node.read` | platform, harness versions, labels and numeric node resources (unscoped only) |
 | `approvals.answer` | one-shot access-request answer while selected as away cover (unscoped only) |
 
 Prefer `--scope group=<local group>` to limit access. For the same slug, a
@@ -224,6 +225,7 @@ Your operator grants agents ordinary slugs with a required `peer=` scope:
 | `agent.spawn` | request workers in any visible group on a peer; peer-only scope |
 | `routes.consume` | open a route in a peer’s group |
 | `sessions.read` | list live sessions in a peer’s shared groups |
+| `node.read` | read a peer’s shared instance-wide node metadata (peer-only scope) |
 
 Peer grants for roster, presence and attachments control what the receiving
 instance shares. Agents do not need separate roster, presence or attachment
@@ -975,7 +977,8 @@ The regular catalog includes the advertisement; a separate `node_update`
 refreshes it every 30 seconds while connected with an online peer holding
 `node.read`. Updates reuse the local host cache. Installed harnesses and OS
 version are probed at most once every five minutes while sharing is active;
-API reads never run probes. Missing resource readings are JSON null, not zero.
+API reads never run probes. An unreadable local config withholds the node
+advertisement rather than publishing an unknown maximum as unlimited. Missing resource readings are JSON null, not zero.
 Work-disk byte and percentage minima are independent summaries across required
 work roots, unavailable if a required root could not be measured. Available
 macOS RAM is explicitly marked as an estimate. Source observation time and a
