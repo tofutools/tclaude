@@ -249,6 +249,25 @@ observer, debounce changes for at least two seconds (or the configured freshness
 window, whichever is greater), and gather once for all authorized peers. They
 add no independent polling loop. Regular catalogs carry the full status set.
 
+For debugging, `agent ls --no-cache`, `agent context-info --no-cache` (including
+`--target` and `--group`) and `agent task-force status --no-cache` force a fresh
+local gather and populate the shared cache for subsequent readers. Dashboard
+`GET /api/snapshot?fresh=1` and `/api/conversations?fresh=1` do the same; normal
+UI polling stays cached. Forced reads share a per-caller limit across status and
+host APIs: one in flight and at most one every 1.5 seconds; excess requests
+return HTTP 429 with `Retry-After`. Debug logs and forced perf phases identify
+these reads. An older in-flight gather is never returned to a forced read.
+
+If the shared cache itself misbehaves, set `status_snapshot.disabled: true` in
+`~/.tclaude/data/config.json` to bypass reuse globally. Remove it or set it to
+false to restore normal behavior. `freshness_ms: 0` still means the default
+1500ms window. These are escape hatches, not recommended polling settings.
+
+Remote observations cannot be refreshed by bypassing a local cache.
+`federation nodes` and `federation sessions` do not support `--no-cache`; they
+show the latest received peer updates and their freshness. Likewise,
+`agent ls --remote --no-cache` refreshes its local portion only.
+
 Remote JSON includes source observation and local receipt timestamps. Status is
 marked stale when the peer is offline or either timestamp is over six minutes
 old. Idle time is derived from last activity; stale observations freeze it at

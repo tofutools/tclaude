@@ -82,3 +82,16 @@ func TestHostMetricsReadPermissionAndCache(t *testing.T) {
 	r = testharness.Serve(f.Mux, agentd.AsUnconfirmedPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/host/status", nil)))
 	require.Equal(t, 403, r.Code)
 }
+
+func TestHostMetricsFreshRead(t *testing.T) {
+	f := newFlow(t)
+	f.HaveConvWithTitle("host-fresh-reader", "host reader")
+	r := accountQuery(t, f, "host-fresh-reader", "/v1/host/status?fresh=1")
+	require.Equal(t, 403, r.Code, "fresh does not bypass host.read")
+	require.NoError(t, db.GrantAgentPermission("host-fresh-reader", agentd.PermHostRead, "test"))
+	r = accountQuery(t, f, "host-fresh-reader", "/v1/host/status?fresh=1")
+	require.Equal(t, 200, r.Code, r.Body.String())
+	require.Contains(t, r.Body.String(), `"status":"current"`)
+	r = accountQuery(t, f, "host-fresh-reader", "/v1/host/status?fresh=1")
+	require.Equal(t, 429, r.Code)
+}

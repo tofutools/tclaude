@@ -157,3 +157,63 @@ func TestSharedStatusSnapshotExternalProcessWrite(t *testing.T) {
 	require.NotNil(t, got)
 	require.Equal(t, "awaiting_input", got.State.Status, "a separate callback process invalidates the daemon's warm snapshot")
 }
+
+func TestSharedStatusSnapshotFreshReadAndBudget(t *testing.T) {
+	f := newFlow(t)
+	f.HaveConvWithTitle("fresh-reader", "fresh reader")
+	f.HaveGroup("fresh-team")
+	f.HaveMember("fresh-team", "fresh-reader")
+	_, err := config.Update(func(c *config.Config, e error) error {
+		if e != nil {
+			return e
+		}
+		c.StatusSnapshot = &config.StatusSnapshotConfig{FreshnessMS: 60000}
+		return nil
+	})
+	require.NoError(t, err)
+	var count atomic.Int32
+	restore := agentd.SetStatusGatherHookForTest(func() { count.Add(1) })
+	defer restore()
+	query := func(path string) int { return accountQuery(t, f, "fresh-reader", path).Code }
+	require.Equal(t, 200, query("/v1/peers"))
+	require.Equal(t, 200, query("/v1/peers"))
+	require.EqualValues(t, 1, count.Load())
+	require.Equal(t, 200, query("/v1/peers?fresh=1"))
+	require.EqualValues(t, 2, count.Load())
+	require.Equal(t, 200, query("/v1/peers"))
+	require.EqualValues(t, 2, count.Load())
+	require.Equal(t, 429, query("/v1/whoami/context?fresh=1"), "one budget across context and peer reads")
+	require.EqualValues(t, 2, count.Load())
+	require.NoError(t, db.GrantAgentPermission("fresh-reader", agentd.PermHostRead, "test"))
+	require.Equal(t, 429, query("/v1/host/status?fresh=1"), "host reads share the same abuse guard")
+}
+
+func TestSharedStatusSnapshotDisabledAndDashboardFresh(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveConvWithTitle("cache-disabled-reader", "worker")
+	f.HaveGroup("team")
+	f.HaveMember("team", "cache-disabled-reader")
+	var count atomic.Int32
+	restore := agentd.SetStatusGatherHookForTest(func() { count.Add(1) })
+	defer restore()
+	dash := agentd.BuildDashboardHandlerForTest()
+	r := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet, "/api/snapshot?fresh=1", nil))
+	require.Equal(t, 200, r.Code, r.Body.String())
+	require.EqualValues(t, 1, count.Load())
+	r = testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet, "/api/snapshot?fresh=1", nil))
+	require.Equal(t, 429, r.Code)
+	_, err := config.Update(func(c *config.Config, e error) error {
+		if e != nil {
+			return e
+		}
+		c.StatusSnapshot = &config.StatusSnapshotConfig{Disabled: true}
+		return nil
+	})
+	require.NoError(t, err)
+	for range 2 {
+		r := accountQuery(t, f, "cache-disabled-reader", "/v1/peers")
+		require.Equal(t, 200, r.Code, r.Body.String())
+	}
+	require.EqualValues(t, 3, count.Load(), "global off bypasses reuse on ordinary reads")
+}

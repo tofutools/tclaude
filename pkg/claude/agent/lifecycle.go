@@ -92,9 +92,10 @@ func interruptCmd() *cobra.Command {
 // --- agent context-info ---
 
 type contextInfoParams struct {
-	Target string `long:"target" optional:"true" help:"Show ANOTHER agent's context-window state instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.context-info permission, or being an owner of a group containing the target."`
-	Group  string `long:"group" optional:"true" help:"Show the context-window state of EVERY member of a group at a glance (name or id). Read-only; requires the agent.context-info permission, or being an owner of the group."`
-	JSON   bool   `long:"json" help:"Output JSON"`
+	NoCache bool   `long:"no-cache" help:"Force a fresh local status gather (debugging escape hatch; rate limited)"`
+	Target  string `long:"target" optional:"true" help:"Show ANOTHER agent's context-window state instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.context-info permission, or being an owner of a group containing the target."`
+	Group   string `long:"group" optional:"true" help:"Show the context-window state of EVERY member of a group at a glance (name or id). Read-only; requires the agent.context-info permission, or being an owner of the group."`
+	JSON    bool   `long:"json" help:"Output JSON"`
 }
 
 func contextInfoCmd() *cobra.Command {
@@ -407,7 +408,7 @@ func runContextInfo(p *contextInfoParams, stdout, stderr io.Writer) int {
 		path = "/v1/agent/" + url.PathEscape(target) + "/context"
 	}
 	var resp contextInfoResp
-	if err := DaemonGet(path, &resp); err != nil {
+	if err := DaemonGet(FreshReadPath(path, p.NoCache), &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -456,7 +457,7 @@ func runContextInfo(p *contextInfoParams, stdout, stderr io.Writer) int {
 // every member of a group — the lead-watching-workers view. Read-only.
 func runGroupContextInfo(p *contextInfoParams, group string, stdout, stderr io.Writer) int {
 	var entries []groupContextEntry
-	if err := DaemonGet("/v1/groups/"+url.PathEscape(group)+"/context", &entries); err != nil {
+	if err := DaemonGet(FreshReadPath("/v1/groups/"+url.PathEscape(group)+"/context", p.NoCache), &entries); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}

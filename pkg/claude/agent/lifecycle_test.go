@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -230,5 +231,14 @@ func TestNormalizeSpawnName(t *testing.T) {
 			assert.Equalf(t, got, NormalizeSpawnName(got),
 				"NormalizeSpawnName not idempotent on %q", tt.in)
 		})
+	}
+}
+
+func TestFreshReadPathsAndFlags(t *testing.T) {
+	assert.Equal(t, "/v1/peers?group=team", FreshReadPath("/v1/peers?group=team", false))
+	assert.Equal(t, "/v1/peers?group=team&fresh=1", FreshReadPath("/v1/peers?group=team", true))
+	assert.Equal(t, "/v1/whoami/context?fresh=1", FreshReadPath("/v1/whoami/context", true))
+	for _, cmd := range []*cobra.Command{lsCmd(), contextInfoCmd(), taskForceStatusCmd()} {
+		assert.NotNil(t, cmd.Flags().Lookup("no-cache"), cmd.Name())
 	}
 }

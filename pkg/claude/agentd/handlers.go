@@ -268,7 +268,10 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 	}
 	// One tmux ls for the whole listing — every isConvOnlineIn below
 	// is a map lookup against this snapshot, not a per-row subprocess.
-	shared := gatheredStatusSnapshot()
+	shared, ok := requestStatusSnapshot(w, r, nil)
+	if !ok {
+		return
+	}
 	aliveSessions := shared.alive
 
 	byConv := map[string]*peerEntry{}
@@ -2653,7 +2656,7 @@ func handleWhoamiContext(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeContextInfo(w, convID, "")
+	writeContextInfo(w, r, convID, "")
 }
 
 // handleAgentContext returns ANOTHER agent's context-window state — the
@@ -2677,15 +2680,18 @@ func handleAgentContext(w http.ResponseWriter, r *http.Request, targetConv strin
 	if !ok {
 		return
 	}
-	writeContextInfo(w, targetConv, caller)
+	writeContextInfo(w, r, targetConv, caller)
 }
 
 // writeContextInfo resolves convID to its most-relevant session row and
 // writes that row's context snapshot. caller is the requesting agent's
 // conv-id on the cross-agent path (echoed for the audit trail) and ""
 // for self / human reads. Shared by the self and cross-agent handlers.
-func writeContextInfo(w http.ResponseWriter, convID, caller string) {
-	shared := gatheredStatusSnapshot()
+func writeContextInfo(w http.ResponseWriter, r *http.Request, convID, caller string) {
+	shared, ok := requestStatusSnapshot(w, r, nil)
+	if !ok {
+		return
+	}
 	snap, sessionID, _ := shared.contextFor(convID)
 	state, _ := shared.stateFor(convID)
 	resp := map[string]any{
@@ -4525,7 +4531,10 @@ func handleGroupContext(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 	}
 	// One tmux ls for the whole listing; the per-member snapshot read
 	// resolves liveness against this set, not a per-row subprocess.
-	shared := gatheredStatusSnapshot()
+	shared, ok := requestStatusSnapshot(w, r, nil)
+	if !ok {
+		return
+	}
 	aliveSessions := shared.alive
 	out := make([]groupContextEntry, 0, len(members))
 	for _, m := range members {

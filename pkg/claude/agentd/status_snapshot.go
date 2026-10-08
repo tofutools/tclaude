@@ -32,6 +32,8 @@ type historicalStatusFlight struct {
 
 type statusFlight struct {
 	generation uint64
+	started    time.Time
+	fresh      bool
 	done       chan struct{}
 	value      *statusSnapshot
 }
@@ -40,6 +42,8 @@ type statusSnapshotCache struct {
 	key        string
 	value      *statusSnapshot
 	cachedAt   time.Time
+	started    time.Time
+	fresh      bool
 	flight     *statusFlight
 	generation uint64
 	revision   func() uint64
@@ -50,6 +54,10 @@ var sharedStatusCache = statusSnapshotCache{revision: db.StatusSnapshotGeneratio
 // A joining consumer returns this flight's result even if gathering exceeded
 // the TTL. Otherwise a slow gather could trap every waiter in a refresh loop.
 func (c *statusSnapshotCache) get(key string, ttl time.Duration, gather func() *statusSnapshot) *statusSnapshot {
+	return c.getAfter(key, ttl, time.Time{}, gather)
+}
+
+func (c *statusSnapshotCache) getAfter(key string, ttl time.Duration, after time.Time, gather func() *statusSnapshot) *statusSnapshot {
 	c.mu.Lock()
 	generation := uint64(0)
 	if c.revision != nil {
@@ -60,7 +68,7 @@ func (c *statusSnapshotCache) get(key string, ttl time.Duration, gather func() *
 		c.value = nil
 		c.flight = nil
 	}
-	if c.value != nil && c.generation == generation && time.Since(c.cachedAt) < ttl {
+	if (after.IsZero() || (c.fresh && c.started.After(after))) && c.value != nil && c.generation == generation && time.Since(c.cachedAt) < ttl {
 		v := c.value
 		c.mu.Unlock()
 		return v
@@ -69,13 +77,16 @@ func (c *statusSnapshotCache) get(key string, ttl time.Duration, gather func() *
 		f := c.flight
 		c.mu.Unlock()
 		<-f.done
+		if !after.IsZero() && (!f.started.After(after) || !f.fresh) {
+			return c.getAfter(key, ttl, after, gather)
+		}
 		// A request arriving after a known mutation must not join an older gather.
 		if c.revision != nil && f.generation != c.revision() {
-			return c.get(key, ttl, gather)
+			return c.getAfter(key, ttl, after, gather)
 		}
 		return f.value
 	}
-	f := &statusFlight{done: make(chan struct{}), generation: generation}
+	f := &statusFlight{done: make(chan struct{}), generation: generation, started: time.Now(), fresh: !after.IsZero()}
 	c.flight = f
 	c.mu.Unlock()
 	value := gather()
@@ -84,6 +95,8 @@ func (c *statusSnapshotCache) get(key string, ttl time.Duration, gather func() *
 	if c.key == key && c.flight == f {
 		c.value = value
 		c.cachedAt = time.Now()
+		c.started = f.started
+		c.fresh = f.fresh
 		c.generation = generation
 		c.flight = nil
 	}
@@ -102,8 +115,14 @@ func gatheredStatusSnapshot() *statusSnapshot {
 	return gatheredStatusSnapshotWithTimings(nil)
 }
 func gatheredStatusSnapshotWithTimings(record func([]perfPhase)) *statusSnapshot {
-	return sharedStatusCache.get(config.DataDir(), statusSnapshotWindow(), func() *statusSnapshot {
-		s := gatherStatusSnapshot()
+	return gatheredStatusSnapshotAfter(time.Time{}, record)
+}
+func gatheredStatusSnapshotAfter(after time.Time, record func([]perfPhase)) *statusSnapshot {
+	if statusSnapshotDisabled() && after.IsZero() {
+		after = time.Now()
+	}
+	return sharedStatusCache.getAfter(config.DataDir(), statusSnapshotWindow(), after, func() *statusSnapshot {
+		s := gatherStatusSnapshotFresh(!after.IsZero())
 		if record != nil {
 			phases := []perfPhase{}
 			for _, name := range rowWorkPhaseOrder {
@@ -115,10 +134,10 @@ func gatheredStatusSnapshotWithTimings(record func([]perfPhase)) *statusSnapshot
 	})
 }
 
-func gatherStatusSnapshot() *statusSnapshot {
+func gatherStatusSnapshotFresh(fresh bool) *statusSnapshot {
 	statusGatherTestHook()
 	s := &statusSnapshot{observedAt: time.Now().UTC(), states: map[string]agentState{}, activity: map[string]*time.Time{}, tasks: map[string]db.AgentTaskRef{}, names: map[string]string{}, rowWork: map[string]time.Duration{}}
-	s.alive, _ = cachedLiveTmuxSessions()
+	s.alive, _ = liveTmuxCache.getFresh(fresh)
 	// The common set covers every managed row the dashboard or CLI can render,
 	// plus live plain wrapper sessions. It is gathered once, not per caller/peer.
 	set := map[string]bool{}
@@ -252,4 +271,9 @@ func (s *statusSnapshot) contextFor(conv string) (db.ContextSnapshot, string, bo
 		return db.ContextSnapshot{}, "", false
 	}
 	return db.ContextSnapshot{ContextPct: state.ContextPct, TokensInput: state.TokensInput, TokensOutput: state.TokensOutput, ContextWindowSize: state.ContextWindowSize, Model: state.Model}, row.ID, true
+}
+
+func statusSnapshotDisabled() bool {
+	cfg, err := config.Load()
+	return err == nil && cfg != nil && cfg.StatusSnapshot != nil && cfg.StatusSnapshot.Disabled
 }

@@ -21,12 +21,13 @@ func Cmd() *cobra.Command {
 }
 
 type statusParams struct {
-	JSON bool `long:"json" help:"Output cached resource observations as JSON"`
+	NoCache bool `long:"no-cache" help:"Sample current host metrics (debugging escape hatch; rate limited)"`
+	JSON    bool `long:"json" help:"Output cached resource observations as JSON"`
 }
 
 func statusCmd() *cobra.Command {
-	return boa.CmdT[statusParams]{Use: "status", Short: "Show cached CPU, RAM, disk and live agent load", Long: "Read agentd's local host snapshot. No host sampling runs on this command.\nAgents require host.read, which is explicitly granted because configured local paths are included.", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *statusParams, cmd *cobra.Command, _ []string) {
-		if err := runStatus(p.JSON, cmd.OutOrStdout()); err != nil {
+	return boa.CmdT[statusParams]{Use: "status", Short: "Show cached CPU, RAM, disk and live agent load", Long: "Read agentd's local host snapshot. Sampling runs only with --no-cache.\nAgents require host.read, which is explicitly granted because configured local paths are included.", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *statusParams, cmd *cobra.Command, _ []string) {
+		if err := runStatus(p.JSON, p.NoCache, cmd.OutOrStdout()); err != nil {
 			fmt.Fprintln(cmd.ErrOrStderr(), "Error:", err)
 			os.Exit(1)
 		}
@@ -40,9 +41,9 @@ type statusReadout struct {
 	Warnings   []hostmetrics.Warning `json:"warnings"`
 }
 
-func runStatus(asJSON bool, out io.Writer) error {
+func runStatus(asJSON, fresh bool, out io.Writer) error {
 	var raw json.RawMessage
-	if err := agent.DaemonGet("/v1/host/status", &raw); err != nil {
+	if err := agent.DaemonGet(agent.FreshReadPath("/v1/host/status", fresh), &raw); err != nil {
 		return err
 	}
 	if asJSON {

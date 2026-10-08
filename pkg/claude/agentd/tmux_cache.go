@@ -65,13 +65,16 @@ func newTmuxSessionCache(ttl time.Duration, now func() time.Time, probe func() (
 // the held lock provides. A ttl of 0 makes every call re-probe (cache
 // transparent) — used by tests to keep production freshness semantics.
 func (c *tmuxSessionCache) get() (map[string]struct{}, error) {
+	return c.getFresh(false)
+}
+func (c *tmuxSessionCache) getFresh(fresh bool) (map[string]struct{}, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	generation := uint64(0)
 	if c.revision != nil {
 		generation = c.revision()
 	}
-	if c.valid && c.generation == generation && c.now().Before(c.expires) {
+	if !fresh && c.valid && c.generation == generation && c.now().Before(c.expires) {
 		return c.sessions, c.err
 	}
 	c.sessions, c.err = c.probe()

@@ -838,3 +838,14 @@ func MapDaemonErrorToRC(err error) int {
 		return rcIOFailure
 	}
 }
+
+// FreshReadPath opts into an authorized local endpoint's rate-limited cache escape hatch.
+func FreshReadPath(path string, fresh bool) string {
+	if !fresh {
+		return path
+	}
+	if strings.Contains(path, "?") {
+		return path + "&fresh=1"
+	}
+	return path + "?fresh=1"
+}
