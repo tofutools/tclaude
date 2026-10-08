@@ -31,7 +31,9 @@ only external part.
 - **Fleet observability** — a browser dashboard answers "what is my fleet
   doing" at a glance: per-agent status, cost, context left, branch/PR/CI,
   linked tickets, quota forecasts — with zoom from fleet to group to one
-  agent's live terminal and back out.
+  agent's live terminal and back out. Hover a CI pill for every check's live
+  state, or open the footer's Open PRs popover for all your PRs and the agents
+  working on them.
 - **Agent mail and teams** — every agent and the operator have a mailbox.
   Groups are allow-listed teams — flat or hierarchical, mixed-vendor by
   design — deployable from reusable templates with one mission statement.
