@@ -455,6 +455,25 @@ func planConfigBundleItem(r *http.Request, section string, item configbundle.Ite
 		}
 		check := env.Template
 		check.Agents = append([]templateAgentJSON{}, env.Template.Agents...)
+		resolveProfile := func(name string) (*spawnProfileJSON, error) {
+			for _, i := range selected.Sections["profiles"] {
+				var e profileExportEnvelope
+				if err := json.Unmarshal(i.Value, &e); err != nil {
+					return nil, err
+				}
+				for _, p := range e.Profiles {
+					if p.Name == name || slices.Contains(p.Aliases, name) {
+						return &p, nil
+					}
+				}
+			}
+			p, err := db.ResolveSpawnProfile(name)
+			if err != nil || p == nil {
+				return nil, err
+			}
+			v := profileToJSON(p)
+			return &v, nil
+		}
 		requireRef := func(section, name string) error {
 			if name == "" {
 				return nil
@@ -471,7 +490,7 @@ func planConfigBundleItem(r *http.Request, section string, item configbundle.Ite
 					return nil
 				}
 			} else {
-				p, err := db.GetSpawnProfile(name)
+				p, err := resolveProfile(name)
 				if err != nil {
 					return err
 				}
@@ -490,6 +509,15 @@ func planConfigBundleItem(r *http.Request, section string, item configbundle.Ite
 			}
 			check.Agents[n].SpawnProfile = ""
 			check.Agents[n].RoleRef = ""
+			if a.SpawnProfile != "" && a.Harness == "" && (a.ProfileInline == nil || a.ProfileInline.Harness == "") {
+				p, err := resolveProfile(a.SpawnProfile)
+				if err != nil {
+					return nil, err
+				}
+				if p != nil {
+					check.Agents[n].Harness = p.Harness
+				}
+			}
 			if a.ProfileInline != nil {
 				inline := *a.ProfileInline
 				for _, ref := range append(append([]string{}, inline.RoleRefs...), inline.RoleRef) {

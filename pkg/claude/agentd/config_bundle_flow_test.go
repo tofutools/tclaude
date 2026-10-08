@@ -219,3 +219,26 @@ func TestConfigBundleNestedConfigReplacementMatchesPreview(t *testing.T) {
 	assert.Equal(t, 60, *cfg.ClaudeResume.ThresholdMinutes)
 	assert.Nil(t, cfg.ClaudeResume.TokenThreshold)
 }
+
+func TestConfigBundleTemplateProfileAliasAndHarness(t *testing.T) {
+	f := newFlow(t)
+	require.Equal(t, 201, profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", map[string]any{"name": "portable-codex", "aliases": []string{"codex-alias"}, "harness": "codex"}).Code)
+	raw := json.RawMessage(`{"format":"tclaude-task-force","format_version":3,"template":{"name":"codex-team","agents":[{"name":"worker","spawn_profile":"codex-alias","sandbox":"workspace-write"}]}}`)
+	b := configbundle.Bundle{Format: configbundle.Format, FormatVersion: 1, Sections: map[string][]configbundle.Item{"templates": {{Name: "codex-team", Value: raw}}}}
+	rec := profileReq(t, f, http.MethodPost, "/v1/config-bundle/import", map[string]any{"bundle": b})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	rec = profileReq(t, f, http.MethodGet, "/v1/config-bundle/export?only=profiles/portable-codex", nil)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var profiles configbundle.Bundle
+	testharness.DecodeJSON(t, rec, &profiles)
+	b.Sections["profiles"] = profiles.Sections["profiles"]
+	_, err := db.DeleteSpawnProfile("portable-codex")
+	require.NoError(t, err)
+	rec = profileReq(t, f, http.MethodPost, "/v1/config-bundle/import", map[string]any{"bundle": b, "apply": true})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	team, err := db.GetGroupTemplate("codex-team")
+	require.NoError(t, err)
+	require.NotNil(t, team)
+	require.Len(t, team.Agents, 1)
+	assert.Equal(t, "portable-codex", team.Agents[0].SpawnProfile)
+}
