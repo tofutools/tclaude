@@ -161,7 +161,12 @@ func handleFederationJobs(w http.ResponseWriter, r *http.Request) {
 			filtered := []db.FederationJob{}
 			for _, j := range rows {
 				if j.Direction == "out" && j.CallerAgent == actor {
-					filtered = append(filtered, j)
+					var q proto.JobRequest
+					_ = json.Unmarshal(j.Request, &q)
+					allowed, _, err := permissionAllowsAction(r, caller, PermJobsRun, ActionContext{RemotePeer: j.Peer, RemoteGroup: q.Group})
+					if err == nil && allowed {
+						filtered = append(filtered, j)
+					}
 				}
 			}
 			rows = filtered

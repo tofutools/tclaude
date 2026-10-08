@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
@@ -143,7 +144,7 @@ func TestFederation_JobsWorkerDefaultsInstalledBeforeExec(t *testing.T) {
 func TestFederation_JobsShareNodeAdmissionAndCancel(t *testing.T) {
 	fh := newFedHarness(t)
 	fh.f.HaveGroup("team")
-	fedJobRepo(t, fh)
+	cwd := fedJobRepo(t, fh)
 	fedAllowJobs(t, fh)
 	t.Cleanup(agentd.SetRemoteJobDirectRunnerForTest())
 	cfg, e := config.Load()
@@ -158,6 +159,9 @@ func TestFederation_JobsShareNodeAdmissionAndCancel(t *testing.T) {
 	}
 	send(q)
 	fedEventually(t, "job running", func() bool { j, e := db.GetFederationJob(q.ID); return e == nil && j.State == "running" })
+	local := fh.f.AsHuman().SpawnWith("team", map[string]any{"name": "interactive", "cwd": cwd, "harness": "claude"})
+	require.Equal(t, http.StatusConflict, local.Code, string(local.Raw))
+	require.Contains(t, string(local.Raw), "node_busy")
 	next := q
 	next.ID = proto.NewEnvelopeID()
 	send(next)
@@ -360,4 +364,52 @@ func TestFederation_JobsInterruptedLogReceiptResumesOnRetry(t *testing.T) {
 	rec := fedHuman(t, fh.f, http.MethodGet, "/v1/federation/jobs/"+job.ID+"/logs", nil)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), "recovered")
+}
+
+func TestFederation_JobsAgentPeerScopeAndOwnership(t *testing.T) {
+	fh := newFedHarness(t)
+	p := fh.peer
+	other := addPlacementPeer(t, fh, "carol")
+	publish := func(peer *fedPeer) {
+		peer.send(peer.envelope(proto.KindCatalog, proto.Endpoint{}, proto.CatalogPayload{Groups: []proto.CatalogGroup{{Name: "team", Caps: []string{proto.CapJobs}}}}))
+		fedEventually(t, "job catalog received", func() bool {
+			raw, _, e := db.GetFederationCatalog(peer.id.ID())
+			return e == nil && strings.Contains(raw, `"jobs"`)
+		})
+	}
+	publish(p)
+	publish(other)
+	const caller = "job-caller"
+	fh.f.HaveConvWithTitle(caller, "job caller")
+	require.NoError(t, db.GrantAgentPermissionWithScope(caller, agentd.PermJobsRun, `{"peer":["`+p.id.ID()+`"]}`, "test"))
+	call := func(who, method, path string, body any) *httptest.ResponseRecorder {
+		return testharness.Serve(fh.f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, method, path, body), who))
+	}
+	body := map[string]any{"node": "carol", "repo": "project", "ref": "main", "group": "team", "harness": "shell", "command": "echo result", "timeout_seconds": 10}
+	rec := call(caller, http.MethodPost, "/v1/federation/jobs", body)
+	require.Equal(t, 403, rec.Code, rec.Body.String())
+	body["node"] = "bob"
+	rec = call(caller, http.MethodPost, "/v1/federation/jobs", body)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var sent struct {
+		Job db.FederationJob `json:"job"`
+	}
+	testharness.DecodeJSON(t, rec, &sent)
+	rec = call(caller, http.MethodGet, "/v1/federation/jobs/"+sent.Job.ID, nil)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	const stranger = "job-stranger"
+	fh.f.HaveConvWithTitle(stranger, "stranger")
+	require.NoError(t, db.GrantAgentPermissionWithScope(stranger, agentd.PermJobsRun, `{"peer":["`+p.id.ID()+`"]}`, "test"))
+	rec = call(stranger, http.MethodPost, "/v1/federation/jobs/"+sent.Job.ID+"/cancel", nil)
+	require.Equal(t, 403, rec.Code)
+	require.NoError(t, db.SetAgentPermissionOverride(caller, agentd.PermJobsRun, db.PermEffectDeny, "test"))
+	rec = call(caller, http.MethodGet, "/v1/federation/jobs/"+sent.Job.ID, nil)
+	require.Equal(t, 403, rec.Code)
+	rec = call(caller, http.MethodGet, "/v1/federation/jobs", nil)
+	require.Equal(t, 200, rec.Code)
+	var listed struct {
+		Jobs []db.FederationJob `json:"jobs"`
+	}
+	testharness.DecodeJSON(t, rec, &listed)
+	require.Empty(t, listed.Jobs)
 }

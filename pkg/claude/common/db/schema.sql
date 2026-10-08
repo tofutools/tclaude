@@ -1634,3 +1634,16 @@ CREATE TABLE federation_worker_defaults(agent_id TEXT PRIMARY KEY,snapshot TEXT 
 CREATE TABLE federation_enroll_tokens(id TEXT PRIMARY KEY,public_token TEXT NOT NULL,secret_hash BLOB NOT NULL,profile_id TEXT NOT NULL,profile_revision INTEGER NOT NULL,max_uses INTEGER NOT NULL,used_count INTEGER NOT NULL DEFAULT 0,revoked INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL) STRICT;
 
 CREATE TABLE federation_enrollments(direction TEXT NOT NULL,token_id TEXT NOT NULL,peer TEXT NOT NULL,peer_key BLOB NOT NULL,local_key BLOB NOT NULL,public_token TEXT NOT NULL,retired INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,PRIMARY KEY(direction,token_id,peer)) STRICT;
+
+CREATE TABLE federation_repos (
+ id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, revision INTEGER NOT NULL,
+ definition TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1);
+
+CREATE TABLE federation_jobs (
+ id TEXT PRIMARY KEY, direction TEXT NOT NULL, peer TEXT NOT NULL,
+ fingerprint TEXT NOT NULL, state TEXT NOT NULL, request TEXT NOT NULL,
+ repo_id TEXT NOT NULL DEFAULT '', repo_revision INTEGER NOT NULL DEFAULT 0,
+ worker_id TEXT NOT NULL DEFAULT '', caller_agent TEXT NOT NULL DEFAULT '', result TEXT NOT NULL DEFAULT '{}',
+ created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL) STRICT;
+
+CREATE INDEX federation_jobs_reservations ON federation_jobs(direction,state);
