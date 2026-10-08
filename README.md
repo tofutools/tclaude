@@ -10,10 +10,11 @@ you need to run many agents seriously. Durable sessions, searchable history,
 a fleet dashboard, agent-to-agent mail, teams with identity and permissions,
 sandboxing, and automation, all running on your own machine.
 
-It wraps four harnesses — [Claude Code](https://claude.ai/code),
+It wraps five harnesses — [Claude Code](https://claude.ai/code),
 [OpenAI Codex CLI](https://developers.openai.com/codex/cli),
-[OpenCode](https://opencode.ai), and
-[GitHub Copilot CLI](https://github.com/features/copilot/cli) — behind one
+[OpenCode](https://opencode.ai),
+[GitHub Copilot CLI](https://github.com/features/copilot/cli), and
+[Google Gemini CLI](https://github.com/google-gemini/gemini-cli) (beta) — behind one
 workflow, so a team can mix vendors and switch as models improve. Everything
 routes through one daemon, `agentd`, which owns identity, permissions, audit,
 spawning, and mail — fail-closed. tclaude is MIT-licensed; the models are the
@@ -109,8 +110,8 @@ tclaude setup --install-agent-skills --install-default-agent-permissions
 tclaude setup --check
 ```
 
-Plain `tclaude setup` configures Claude Code, and auto-detects Codex and
-Copilot on `PATH` to offer their integrations too. Setup is idempotent. The
+Plain `tclaude setup` configures Claude Code, and auto-detects Codex,
+Copilot, and Gemini CLI on `PATH` to offer their integrations too. Setup is idempotent. The
 optional `--install-all` flag also installs Claude Code sandbox hardening and
 the scripted-resume threshold override; review those policies before enabling
 them. Credential-proxy skills are a separate opt-in, excluded even from
@@ -123,7 +124,7 @@ tclaude setup --install-proxy-skills
 
 To prepare hooks before installing the harness CLIs, explicitly add
 `--all-harnesses`. This creates missing configuration directories for every
-supported hook installer (Claude Code, Codex, and Copilot); `--install-all`
+supported hook installer (Claude Code, Codex, Copilot, and Gemini CLI); `--install-all`
 alone keeps the usual harness detection.
 
 ```bash
@@ -143,7 +144,7 @@ current directory:
 ```bash
 tclaude                              # default harness (Claude Code unless
                                      # your default profile says otherwise)
-tclaude session new --harness codex  # or opencode, or copilot
+tclaude session new --harness codex  # or opencode, copilot, gemini
 
 # Detach with Ctrl+B D, then browse or reattach later
 tclaude session watch
@@ -169,7 +170,7 @@ tclaude agent dashboard
 
 From there, `tclaude agent` (and the dashboard) create groups, spawn agents
 into them, message peers, and manage permissions. Groups freely mix agents
-from all four harnesses.
+from all five harnesses.
 
 ## Documentation
 
@@ -180,7 +181,7 @@ Full documentation lives at
   first session, and an orientation map.
 - [Architecture](https://tofutools.github.io/tclaude/architecture/) — the
   mental model: sessions, conversations, agents, and the daemon.
-- [Harnesses](https://tofutools.github.io/tclaude/harnesses/) — the four
+- [Harnesses](https://tofutools.github.io/tclaude/harnesses/) — the five
   harnesses, per-harness setup, and the capability matrix.
 - [Sessions](https://tofutools.github.io/tclaude/sessions/),
   [conversations](https://tofutools.github.io/tclaude/conversations/),
