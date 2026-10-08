@@ -14,6 +14,8 @@ import (
 
 const (
 	PermSessionsRead       = "sessions.read"
+	PermSessionsWatch      = "sessions.watch"
+	PermSessionsAttach     = "sessions.attach"
 	PermGroupsRosterRead   = "groups.roster.read"
 	PermGroupsPresenceRead = "groups.presence.read"
 	PermMessageAttachments = "message.attachments"
@@ -23,6 +25,8 @@ const (
 var federationPeerSlugs = map[string]string{
 	PermGroupsRosterRead:   proto.CapRoster,
 	PermSessionsRead:       proto.CapSessions,
+	PermSessionsWatch:      proto.CapSessionsWatch,
+	PermSessionsAttach:     proto.CapSessionsAttach,
 	PermGroupsPresenceRead: proto.CapPresence,
 	PermMessageDirect:      proto.CapMail,
 	PermMessageAttachments: proto.CapAttachments,

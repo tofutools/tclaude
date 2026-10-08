@@ -1,6 +1,8 @@
 package agentd
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -31,6 +33,17 @@ func fedWaitingReason(state string) string {
 	return ""
 }
 
+// An opaque token binds discovery to a launch without exporting local pane
+// handles or lifecycle callback authority. Session IDs alone are reusable.
+func fedSessionIncarnation(row *db.SessionRow) string {
+	identity, err := db.GetSessionExitLaunchIdentity(row.ID)
+	if err != nil {
+		return ""
+	}
+	h := sha256.Sum256([]byte(row.ID + "\x00" + row.CreatedAt.UTC().Format(time.RFC3339Nano) + "\x00" + row.TmuxSession + "\x00" + identity.Generation))
+	return hex.EncodeToString(h[:])
+}
+
 // fedCatalogSessions shares only active agents in this group with live panes.
 // Neither paths, prompt text nor tmux pane handles leave the instance.
 func fedCatalogSessions(gid int64) []proto.CatalogSession {
@@ -55,7 +68,7 @@ func fedCatalogSessions(gid int64) []proto.CatalogSession {
 			if _, ok := alive[row.TmuxSession]; !ok || row.Status == session.StatusExited {
 				continue
 			}
-			s := proto.CatalogSession{Agent: aid, Session: row.ID, Name: agent.TitleFor(m.ConvID), Harness: row.Harness, State: row.Status, WaitingReason: fedWaitingReason(row.Status)}
+			s := proto.CatalogSession{Agent: aid, Session: row.ID, Incarnation: fedSessionIncarnation(row), Name: agent.TitleFor(m.ConvID), Harness: row.Harness, State: row.Status, WaitingReason: fedWaitingReason(row.Status)}
 			if rt != nil {
 				rt.sessionsMu.Lock()
 				if rt.sessionObservations == nil {

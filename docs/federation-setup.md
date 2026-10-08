@@ -101,7 +101,8 @@ all peer permissions on all live groups and auto-approves spawns using group
 defaults, with a default cap of 8 automatic workers per peer (configure
 `federation.unrestricted_max_live`). Local unscoped agent grants and defaults
 then work towards that peer. Group scopes and ownership still do not, and
-**approvals remain local and cannot be answered remotely**. The hub cannot
+**interactive attach permits answering harness approvals and prompts**;
+`--ask-human` still uses the local operator workflow. The hub cannot
 change this level. `peers` and `status` show it; `trust <label> --level restricted`
 downgrades immediately. The remaining steps use restricted trust.
 
@@ -182,3 +183,31 @@ received remote agent mail needs no standing grant in the reverse direction.
 | a local grant does not permit a remote send | remote actions require `peer=desktop/builders`; unscoped and local grants never authorize them |
 | a spawn request stays `pending` | the receiving peer has no `groups.members.spawn` grant, or an automatic launch failed or hit a worker/rate cap; its operator can inspect and approve it |
 | a worker stays `launching` | startup is unconfirmed; inspect `tclaude federation requests --all` before explicitly abandoning the launch |
+
+## Watch or attach to a remote agent
+
+The target operator grants `sessions.read` for discovery and `sessions.watch`
+for viewing, or `sessions.attach` for viewing and full keyboard input:
+
+```bash
+tclaude federation grant laptop sessions.read --scope group=builders
+tclaude federation grant laptop sessions.watch --scope group=builders
+# Optional full keyboard authority, including harness approval answers:
+tclaude federation grant laptop sessions.attach --scope group=builders
+
+# On the laptop, use the stable address returned by sessions:
+tclaude federation sessions desktop
+tclaude federation attach agt_…@desktop --read-only
+# Omit --read-only for interactive access. Ctrl-] detaches.
+```
+
+A local agent needs the corresponding `sessions.watch` or `sessions.attach`
+grant scoped to `peer=desktop/builders`, plus `sessions.read` to discover the
+address. Unrestricted trust includes these permissions.
+
+The target requires tmux 3.2+, one window and one pane. A visible pane border
+indicator identifies remote viewers; viewer resizing never resizes the target.
+Its operator can run `tclaude federation viewers` and
+`tclaude federation kick <viewer-id>` to remove a viewer immediately.
+See [remote terminals](federation.md#remote-terminals) for revocation and audit
+behavior.
