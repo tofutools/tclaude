@@ -137,6 +137,7 @@ func TestFederation_NodeGroupSpawnPolicyPrecedence(t *testing.T) {
 		})
 	}
 	grant("group:one", "group=team", 1)
+	spawn(true)
 	grant("group:two", "group=team", 2)
 	spawn(false) // Unequal equally specific pool policies fail closed.
 	grant("bob", "", 3)
@@ -150,4 +151,37 @@ func TestFederation_NodeGroupSpawnPolicyPrecedence(t *testing.T) {
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	grant("group:two", "", 5)
 	spawn(true) // A unique specific pool policy beats broader matches.
+}
+
+func TestFederation_NodeGroupDelegationPreservesLivePredicate(t *testing.T) {
+	fh := newFedHarness(t)
+	fedPool(t, fh, "rigs", true)
+	fedPool(t, fh, "other", true)
+	const lead = "019fe740-43a4-7023-b8ae-1ee64459f2a1"
+	const worker = "019fe740-43a4-7023-b8ae-1ee64459f2a2"
+	fh.f.HaveGroup("source")
+	fh.f.HaveMember("source", lead)
+	fh.f.HaveAliveSession(worker, "pool-worker", "pool-worker-pane", testutil.CanonicalTempDir(t))
+	fh.f.HaveMember("source", worker)
+	grantScoped(t, fh.f, lead, agentd.PermPermissionsGrant, nil)
+	grantScoped(t, fh.f, lead, agentd.PermAgentShare, map[string]any{"peer": []string{"group:rigs"}})
+	grant := func(target, scope string) *httptest.ResponseRecorder {
+		return agentReq(t, fh.f, lead, http.MethodPost, "/v1/permissions/grant", map[string]any{"target": target, "slug": agentd.PermAgentShare, "scope": map[string]any{"peer": []string{scope}}})
+	}
+	for _, target := range []string{lead, worker} {
+		rec := grant(target, fh.peer.id.ID())
+		require.Equal(t, 403, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), "scope_not_attenuated")
+	}
+	rec := grant(worker, "group:other")
+	require.Equal(t, 403, rec.Code, rec.Body.String())
+	rec = grant(worker, "group:rigs/builders")
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	share := func() *httptest.ResponseRecorder {
+		return agentReq(t, fh.f, worker, http.MethodPost, "/v1/federation/share-agent", map[string]any{"peer": "bob", "agent": "self", "group": "builders"})
+	}
+	require.Equal(t, 200, share().Code)
+	rec = fedHuman(t, fh.f, http.MethodDelete, "/v1/federation/nodes/groups/rigs/members", map[string]any{"peer": "bob"})
+	require.Equal(t, 200, rec.Code)
+	require.Equal(t, 403, share().Code, "delegated scope must keep tracking membership")
 }
