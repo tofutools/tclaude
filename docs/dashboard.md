@@ -11,9 +11,9 @@ It is served by the `agentd` daemon and is human-only: agents talk to `agentd`
 over its API, not through this UI. For the daemon itself and how agents relate
 to it, see [Agents and groups](agents-and-groups.md).
 
-![The Groups home view: a nested group with per-agent state, cost, context, roles, task links — and the profile/template/role libraries on the right rail](assets/dashboard-groups.png)
+![The Groups home view: a mixed-harness group with per-agent state, cost, branches with PR and CI status, roles, task links — and the profile/template/role libraries on the right rail](assets/dashboard-groups.png)
 
-*The Groups home view: a nested group with per-agent state, cost, context, roles, task links — and the profile/template/role libraries on the right rail*
+*The Groups home view: a mixed-harness group with per-agent state, cost, branches with PR and CI status, roles, task links — and the profile/template/role libraries on the right rail*
 
 ## Opening it
 
@@ -618,6 +618,11 @@ dialog markup, or a blanket filename exception.
 with the host's Chrome/Chromium and writes screenshots for manual review; run
 shards 1/4 through 4/4 (a few minutes each; an unsharded run needs
 `-timeout 1800s`). Optional, environment-dependent, and not wired into CI.
+
+The Groups screenshot at the top of this page and in the README comes from a
+separate, realistic mixed-harness fleet: `TCLAUDE_DOCSHOTS=1 go test
+./pkg/claude/agentd/ -run TestDocShots -v -count=1` writes it under
+`dashsnap-out/docshots-*/`; copy it into `docs/assets/` to refresh the docs.
 
 ### Pull or sync group repositories
 
