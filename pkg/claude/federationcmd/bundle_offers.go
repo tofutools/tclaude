@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -186,7 +187,7 @@ func offerPost(stderr io.Writer, path string, in, out any) int {
 	if rc := agent.RequireDaemonOrExit(stderr); rc != 0 {
 		return rc
 	}
-	if err := agent.DaemonRequest(http.MethodPost, path, in, out, agent.DaemonOpts{}); err != nil {
+	if err := agent.DaemonRequest(http.MethodPost, path, in, out, agent.DaemonOpts{Timeout: 6 * time.Minute}); err != nil {
 		var de *agent.DaemonError
 		if errors.As(err, &de) {
 			var detail map[string]any
