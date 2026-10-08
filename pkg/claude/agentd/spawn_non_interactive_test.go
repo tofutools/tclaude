@@ -315,6 +315,8 @@ func TestRunNonInteractiveSpawnCancellationKillsResourceCgroup(t *testing.T) {
 }
 
 func TestRunNonInteractiveSpawnBoundsEscapedOutputPipe(t *testing.T) {
+	// These smoke commands use POSIX $! syntax, regardless of login shell.
+	t.Setenv("SHELL", "/bin/sh")
 	useDirectNonInteractiveRunner(t)
 	if runtime.GOOS != "linux" {
 		t.Skip("setsid smoke requires Linux")
@@ -345,6 +347,8 @@ func TestRunNonInteractiveSpawnBoundsEscapedOutputPipe(t *testing.T) {
 }
 
 func TestRunNonInteractiveSpawnReapsBackgroundProcessGroup(t *testing.T) {
+	// These smoke commands use POSIX $! syntax, regardless of login shell.
+	t.Setenv("SHELL", "/bin/sh")
 	useDirectNonInteractiveRunner(t)
 	if runtime.GOOS != "linux" {
 		t.Skip("process-state smoke requires Linux")

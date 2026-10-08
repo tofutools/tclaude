@@ -54,6 +54,9 @@ func TestOpenShellCmdFor_NonAppleScriptCarriesKeepalive(t *testing.T) {
 }
 
 func TestOpenShellCmdWithEnvironmentUsesPrivateLiteralBootstrap(t *testing.T) {
+	// Launch scripts belong to private daemon state; never use the operator's
+	// actual directory (which is intentionally read-only to agent test runs).
+	setupTestDB(t)
 	t.Setenv("SHELL", "/bin/zsh")
 	cmd, cleanup, err := openShellCmdWithEnvironment("/work/it's here", []sandboxpolicy.EnvironmentEntry{
 		{Name: "PLAIN", Value: "yes"},
