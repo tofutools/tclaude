@@ -73,3 +73,10 @@ func TestModelProxyRefusesCompetingClaudeSettings(t *testing.T) {
 	require.NoError(t, os.WriteFile(settings, []byte(`{"permissions":{"defaultMode":"default"}}`), 0600))
 	require.NoError(t, validateModelProxySettings(cwd, env))
 }
+
+func TestModelProxyPassThroughSettingsRefused(t *testing.T) {
+	for _, args := range [][]string{{"--settings", "private.json"}, {"--settings={}"}} {
+		require.Error(t, validateModelProxyExtraArgs(args))
+	}
+	require.NoError(t, validateModelProxyExtraArgs([]string{"--debug"}))
+}

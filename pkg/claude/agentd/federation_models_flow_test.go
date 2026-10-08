@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
@@ -138,3 +139,46 @@ func TestFederation_ModelGatewayTokensSSECredentialsAndSwitch(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), upstream.URL)
 }
 func jsonNumber(n int64) string { b, _ := json.Marshal(n); return string(b) }
+
+func TestFederation_ModelGatewayDisconnectAndRevocationCancelProvider(t *testing.T) {
+	for _, revoke := range []bool{false, true} {
+		t.Run(map[bool]string{false: "disconnect", true: "revoke"}[revoke], func(t *testing.T) {
+			fh := newFedHarness(t)
+			started := make(chan struct{}, 1)
+			canceled := make(chan struct{}, 1)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.Path, "count_tokens") {
+					_, _ = io.WriteString(w, `{"input_tokens":1}`)
+					return
+				}
+				_, _ = io.Copy(io.Discard, r.Body)
+				started <- struct{}{}
+				<-r.Context().Done()
+				canceled <- struct{}{}
+			}))
+			defer upstream.Close()
+			fedModelPolicy(t, fh, upstream.URL)
+			flow := fedModelFlow(t, fh)
+			req, err := http.NewRequest(http.MethodPost, "http://model/v1/messages", strings.NewReader(`{"model":"test-model","max_tokens":5,"messages":[]}`))
+			require.NoError(t, err)
+			require.NoError(t, req.Write(flow))
+			require.NoError(t, flow.CloseWrite())
+			select {
+			case <-started:
+			case <-time.After(5 * time.Second):
+				t.Fatal("provider did not receive request")
+			}
+			if revoke {
+				rec := fedHuman(t, fh.f, http.MethodPost, "/v1/models/control", map[string]any{"name": "model", "disabled": true})
+				require.Equal(t, 200, rec.Code)
+			} else {
+				require.NoError(t, flow.Close())
+			}
+			select {
+			case <-canceled:
+			case <-time.After(5 * time.Second):
+				t.Fatal("provider request was not canceled")
+			}
+		})
+	}
+}
