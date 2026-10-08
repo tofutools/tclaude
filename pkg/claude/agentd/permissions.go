@@ -602,6 +602,7 @@ var permissionRegistry = []PermSlug{
 		Slug:        PermSettingsDefaultModel,
 		Description: "Set or clear the user-level default Claude model — the \"model\" key in ~/.claude/settings.json, which every claude launched without --model falls back to. Rewrites a config file in the human's home, so not default-granted (effectively human-only).",
 	},
+	{Slug: PermSessionsRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Read a peer's shared live agent sessions and waiting states. Requires peer= scope; no local session authority."},
 	{
 		Slug:        PermRoutesPublish,
 		ScopeDims:   []ScopeDim{ScopeDimGroup},

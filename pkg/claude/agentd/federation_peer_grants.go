@@ -13,6 +13,7 @@ import (
 )
 
 const (
+	PermSessionsRead       = "sessions.read"
 	PermGroupsRosterRead   = "groups.roster.read"
 	PermGroupsPresenceRead = "groups.presence.read"
 	PermMessageAttachments = "message.attachments"
@@ -21,6 +22,7 @@ const (
 // Wire capabilities stay stable while authority lives in regular peer slugs.
 var federationPeerSlugs = map[string]string{
 	PermGroupsRosterRead:   proto.CapRoster,
+	PermSessionsRead:       proto.CapSessions,
 	PermGroupsPresenceRead: proto.CapPresence,
 	PermMessageDirect:      proto.CapMail,
 	PermMessageAttachments: proto.CapAttachments,
