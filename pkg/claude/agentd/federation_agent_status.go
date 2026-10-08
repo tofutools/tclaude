@@ -7,7 +7,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
@@ -44,7 +43,7 @@ func fedGroupAgentStatuses(gid int64, s *statusSnapshot) []proto.AgentStatus {
 		if !known {
 			continue
 		}
-		row := proto.AgentStatus{Agent: aid, Name: agent.TitleFor(m.ConvID), Role: m.Role, Online: isConvOnlineInSessions(s.sessions[m.ConvID], s.alive), Status: st.Status, WaitingReason: fedWaitingReason(st.Status), Harness: st.Harness, Model: st.Model, Effort: st.EffortLevel, Subagents: st.SubagentCount, BackgroundShells: st.BgShellCount, Monitors: st.MonitorCount, LastActivity: s.activity[m.ConvID], ExitReason: st.ExitReason, RecoveryStatus: st.RecoveryStatus}
+		row := proto.AgentStatus{Agent: aid, Name: s.names[m.ConvID], Role: m.Role, Online: isConvOnlineInSessions(s.sessions[m.ConvID], s.alive), Status: st.Status, WaitingReason: fedWaitingReason(st.Status), Harness: st.Harness, Model: st.Model, Effort: st.EffortLevel, Subagents: st.SubagentCount, BackgroundShells: st.BgShellCount, Monitors: st.MonitorCount, LastActivity: s.activity[m.ConvID], ExitReason: coarseStatusExitReason(st.ExitReason), RecoveryStatus: st.RecoveryStatus}
 		task := taskRefViewFor(s.tasks[m.ConvID])
 		row.TaskURL = task.TaskURL
 		row.TaskLabel = task.TaskLabel
@@ -189,4 +188,19 @@ func (rt *fedRuntime) acceptAgentStatusUpdate(from string, e *proto.Envelope) {
 }
 func remoteAgentStatusStale(rt *fedRuntime, peer string, g proto.CatalogGroup) bool {
 	return rt == nil || !rt.sessionPeerOnline(peer) || g.AgentStatusesAt.IsZero() || g.AgentStatusesReceivedAt.IsZero() || time.Since(g.AgentStatusesAt) > fedStaleAfter || time.Since(g.AgentStatusesReceivedAt) > fedStaleAfter || g.AgentStatusesAt.After(time.Now().Add(2*time.Minute))
+}
+
+func coarseStatusExitReason(reason string) string {
+	switch reason {
+	case "":
+		return ""
+	case "unexpected", "resource_limit_oom":
+		return "crashed"
+	case "soft_exit", "daemon_kill":
+		return "stopped"
+	case "logout", "prompt_input_exit", "bypass_permissions_disabled":
+		return "clean"
+	default:
+		return "unknown"
+	}
 }

@@ -825,6 +825,14 @@ func TestRenderRemotePeersStatusOnly(t *testing.T) {
 		assert.Contains(t, out.String(), expected)
 	}
 	assert.True(t, remotePeerOnline(row), "status-only access reports liveness independently of presence")
+
+	out.Reset()
+	renderRemotePeers([]*remotePeerEntry{row}, &out, 80)
+	for _, line := range strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n") {
+		assert.LessOrEqual(t, commonTable.StringWidth(line), 80)
+	}
+	assert.Contains(t, out.String(), "STATE")
+	assert.Contains(t, out.String(), "MODEL")
 	row.StatusStale = true
 	out.Reset()
 	renderRemotePeers([]*remotePeerEntry{row}, &out, 220)

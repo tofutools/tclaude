@@ -149,3 +149,34 @@ func TestFederation_AgentStatusReadScopesOrderingAndStaleness(t *testing.T) {
 	fedEventually(t, "status stale on disconnect", func() bool { return list(false)[0].StatusStale })
 	require.Equal(t, int64(60), *list(false)[0].IdleSeconds, "stale idle age freezes at observation")
 }
+
+func TestFederation_AgentStatusExplicitNameAndCoarseExit(t *testing.T) {
+	fh := newFedHarness(t)
+	f := fh.f
+	const conv = "status-unnamed"
+	f.HaveGroup("team")
+	f.HaveConvWithPrompt(conv, "private prompt content")
+	f.HaveMember("team", conv)
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: conv, Summary: "private summary content", FirstPrompt: "private prompt content"}))
+	f.HaveAliveSession(conv, "status-unnamed-session", "tclaude-unnamed", f.TestCwd("unnamed"))
+	f.MarkOffline("tclaude-unnamed")
+	f.SetSessionStatus(conv, "exited")
+	require.NoError(t, db.SetSessionExitReason("status-unnamed-session", "resource_limit_oom"))
+	aid, err := db.AgentIDForConv(conv)
+	require.NoError(t, err)
+	g, err := db.GetAgentGroupByName("team")
+	require.NoError(t, err)
+	require.NoError(t, db.UpsertFederationPeerGrant(db.FederationPeerGrant{Peer: fh.peer.id.ID(), Slug: agentd.PermAgentsStatusRead, Scope: db.FederationGroupScope(g.ID)}))
+	agentd.ResetStatusSnapshotForTest()
+	c, err := agentd.FederationCatalogForStatusTest(fh.peer.id.ID())
+	require.NoError(t, err)
+	require.Len(t, c.Groups, 1)
+	require.Len(t, c.Groups[0].AgentStatuses, 1)
+	row := c.Groups[0].AgentStatuses[0]
+	require.Equal(t, aid, row.Name)
+	require.Equal(t, "crashed", row.ExitReason)
+	raw, err := json.Marshal(c)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "private prompt")
+	require.NotContains(t, string(raw), "private summary")
+}

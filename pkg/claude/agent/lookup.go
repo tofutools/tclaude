@@ -1069,7 +1069,7 @@ func renderRemotePeers(remote []*remotePeerEntry, stdout io.Writer, terminalWidt
 		return
 	}
 	fmt.Fprintln(stdout, "Remote (federation):")
-	tbl := table.New(
+	columns := []table.Column{
 		table.Column{Header: "", Width: 1},
 		table.Column{Header: "ADDRESS", MinWidth: 12, Weight: 2, Truncate: true},
 		table.Column{Header: "HARNESS", MinWidth: 7, MaxWidth: 8, Truncate: true},
@@ -1082,7 +1082,24 @@ func renderRemotePeers(remote []*remotePeerEntry, stdout io.Writer, terminalWidt
 		table.Column{Header: "SUB", Width: 3},
 		table.Column{Header: "TASK", MinWidth: 8, Truncate: true},
 		table.Column{Header: "CONTEXT", MinWidth: 7, Truncate: true},
-	)
+	}
+	// Keep identity and activity usable at normal terminal widths; JSON retains
+	// every authorized field regardless of the display width.
+	chosen := []int{0, 1, 2, 5, 7, 8, 9}
+	if terminalWidth >= 90 {
+		chosen = append(chosen, 11)
+	}
+	if terminalWidth >= 105 {
+		chosen = append(chosen, 10)
+	}
+	if terminalWidth >= 125 {
+		chosen = append(chosen, 3, 4, 6)
+	}
+	visible := make([]table.Column, 0, len(chosen))
+	for _, i := range chosen {
+		visible = append(visible, columns[i])
+	}
+	tbl := table.New(visible...)
 	tbl.SetTerminalWidth(terminalWidth)
 	for _, re := range remote {
 		presence := re.Presence
@@ -1122,10 +1139,15 @@ func renderRemotePeers(remote []*remotePeerEntry, stdout io.Writer, terminalWidt
 				context = fmt.Sprintf("%.0f%%", st.Context.Percent)
 			}
 		}
-		tbl.AddRow(table.Row{Cells: []string{
+		cells := []string{
 			onlineMark(remotePeerOnline(re)),
 			re.Address, re.Harness, presence, re.Role, re.RemoteGroup, mail, state, model, sub, task, context,
-		}})
+		}
+		visibleCells := make([]string, 0, len(chosen))
+		for _, i := range chosen {
+			visibleCells = append(visibleCells, cells[i])
+		}
+		tbl.AddRow(table.Row{Cells: visibleCells})
 	}
 	fmt.Fprintln(stdout, tbl.Render())
 }

@@ -58,15 +58,6 @@ const (
 
 var rowWorkPhaseOrder = []string{rowWorkBgReconcile, rowWorkContextSnapshot}
 
-// addRowWork is the recordRowWork sink for this request's rows. Single
-// goroutine, like the rest of the cache — no locking.
-func (rc *snapshotRowCache) addRowWork(name string, d time.Duration) {
-	if rc.rowWork == nil {
-		rc.rowWork = map[string]time.Duration{}
-	}
-	rc.rowWork[name] += d
-}
-
 // rowWorkSnapshot copies the accumulator so a later caller can report only the
 // row work that accrued after this point. A conv is resolved (and its side
 // reads paid) by whichever phase reaches it FIRST — in practice the preload

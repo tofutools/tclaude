@@ -2686,7 +2686,7 @@ func handleAgentContext(w http.ResponseWriter, r *http.Request, targetConv strin
 func writeContextInfo(w http.ResponseWriter, convID, caller string) {
 	shared := gatheredStatusSnapshot()
 	snap, sessionID, _ := shared.contextFor(convID)
-	state := shared.states[convID]
+	state, _ := shared.stateFor(convID)
 	resp := map[string]any{
 		"conv_id":               convID,
 		"session_id":            sessionID,

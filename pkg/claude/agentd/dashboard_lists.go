@@ -228,11 +228,7 @@ func handleDashboardConversations(w http.ResponseWriter, r *http.Request) {
 		// (the same formatter `conv ls` uses) so the dashboard stops leaking
 		// uncleaned first-prompt text (system tags, newlines). The fsnotify monitor
 		// keeps these cached rows fresh, so no per-row .jsonl rescan is needed.
-		state, known := shared.states[row.ConvID]
-		if !known {
-			// Historical plain conversations are outside the managed/live snapshot.
-			state = stateForConvIn(row.ConvID, alive)
-		}
+		state, _ := shared.stateFor(row.ConvID)
 		rows = append(rows, dashboardConversation{
 			ConvID:   row.ConvID,
 			Title:    convindex.FormatConvTitle(row.CustomTitle, row.Summary, row.FirstPrompt),

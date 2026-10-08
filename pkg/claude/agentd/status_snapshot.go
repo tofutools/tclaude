@@ -9,25 +9,36 @@ import (
 )
 
 // statusSnapshot is private gathered data, never a cached authorization result.
-// All maps and values are immutable after publication. Consumers project their
+// Gathered maps and values are immutable; historical lookups use a separate
+// synchronized memo. Consumers project their
 // own current authority onto it; local private fields never become peer wire.
 type statusSnapshot struct {
-	observedAt time.Time
-	alive      map[string]struct{}
-	sessions   map[string][]*db.SessionRow
-	states     map[string]agentState
-	activity   map[string]*time.Time
-	tasks      map[string]db.AgentTaskRef
+	observedAt   time.Time
+	alive        map[string]struct{}
+	sessions     map[string][]*db.SessionRow
+	states       map[string]agentState
+	activity     map[string]*time.Time
+	tasks        map[string]db.AgentTaskRef
+	names        map[string]string
+	historicalMu sync.Mutex
+	historical   map[string]*historicalStatusFlight
 }
+type historicalStatusFlight struct {
+	done     chan struct{}
+	state    agentState
+	sessions []*db.SessionRow
+}
+
 type statusFlight struct {
 	done  chan struct{}
 	value *statusSnapshot
 }
 type statusSnapshotCache struct {
-	mu     sync.Mutex
-	key    string
-	value  *statusSnapshot
-	flight *statusFlight
+	mu       sync.Mutex
+	key      string
+	value    *statusSnapshot
+	cachedAt time.Time
+	flight   *statusFlight
 }
 
 var sharedStatusCache statusSnapshotCache
@@ -41,7 +52,7 @@ func (c *statusSnapshotCache) get(key string, ttl time.Duration, gather func() *
 		c.value = nil
 		c.flight = nil
 	}
-	if c.value != nil && time.Since(c.value.observedAt) < ttl {
+	if c.value != nil && time.Since(c.cachedAt) < ttl {
 		v := c.value
 		c.mu.Unlock()
 		return v
@@ -60,6 +71,7 @@ func (c *statusSnapshotCache) get(key string, ttl time.Duration, gather func() *
 	f.value = value
 	if c.key == key && c.flight == f {
 		c.value = value
+		c.cachedAt = time.Now()
 		c.flight = nil
 	}
 	close(f.done)
@@ -79,7 +91,7 @@ func gatheredStatusSnapshot() *statusSnapshot {
 
 func gatherStatusSnapshot() *statusSnapshot {
 	statusGatherTestHook()
-	s := &statusSnapshot{observedAt: time.Now().UTC(), states: map[string]agentState{}, activity: map[string]*time.Time{}, tasks: map[string]db.AgentTaskRef{}}
+	s := &statusSnapshot{observedAt: time.Now().UTC(), states: map[string]agentState{}, activity: map[string]*time.Time{}, tasks: map[string]db.AgentTaskRef{}, names: map[string]string{}}
 	s.alive, _ = cachedLiveTmuxSessions()
 	// The common set covers every managed row the dashboard or CLI can render,
 	// plus live plain wrapper sessions. It is gathered once, not per caller/peer.
@@ -139,6 +151,15 @@ func gatherStatusSnapshot() *statusSnapshot {
 		state.TemporaryHarnessBuiltinMode = actors[id].TemporaryHarnessBuiltinMode
 		s.states[id] = state
 		s.tasks[id] = tasks[actors[id].AgentID]
+		// Explicit names only: summaries and first prompts are private content.
+		name := actors[id].PendingName
+		if row := index[id]; row != nil && row.CustomTitle != "" {
+			name = row.CustomTitle
+		}
+		if name == "" {
+			name = actors[id].AgentID
+		}
+		s.names[id] = name
 		var at time.Time
 		if row := index[id]; row != nil {
 			at, _ = time.Parse(time.RFC3339Nano, row.Modified)
@@ -173,9 +194,34 @@ func statusGatherTestHook() {
 	}
 }
 
+// Historical, non-enrolled conversations are outside the common live roster.
+// Resolve one only when explicitly requested and memoize it for this snapshot's
+// lifetime, including concurrent readers. This avoids scanning all history on
+// every dashboard poll while preserving stored context for human reads.
+func (s *statusSnapshot) stateFor(conv string) (agentState, []*db.SessionRow) {
+	if state, ok := s.states[conv]; ok {
+		return state, s.sessions[conv]
+	}
+	s.historicalMu.Lock()
+	if f := s.historical[conv]; f != nil {
+		s.historicalMu.Unlock()
+		<-f.done
+		return f.state, f.sessions
+	}
+	if s.historical == nil {
+		s.historical = map[string]*historicalStatusFlight{}
+	}
+	f := &historicalStatusFlight{done: make(chan struct{})}
+	s.historical[conv] = f
+	s.historicalMu.Unlock()
+	f.sessions, _ = db.FindSessionsByConvID(conv)
+	f.state = stateForConvInSessions(f.sessions, s.alive)
+	close(f.done)
+	return f.state, f.sessions
+}
 func (s *statusSnapshot) contextFor(conv string) (db.ContextSnapshot, string, bool) {
-	state := s.states[conv]
-	row := pickWithLiveness(s.sessions[conv], func(tmux string) bool { _, ok := s.alive[tmux]; return ok })
+	state, rows := s.stateFor(conv)
+	row := pickWithLiveness(rows, func(tmux string) bool { _, ok := s.alive[tmux]; return ok })
 	if row == nil {
 		return db.ContextSnapshot{}, "", false
 	}

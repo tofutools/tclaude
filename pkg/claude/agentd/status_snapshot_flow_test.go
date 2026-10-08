@@ -82,3 +82,23 @@ func TestSharedStatusSnapshotConcurrentConsumers(t *testing.T) {
 	require.Equal(t, 200, r.Code)
 	require.EqualValues(t, 1, gathers.Load(), "warm reads reuse the common snapshot")
 }
+
+func TestSharedStatusSnapshotHistoricalContext(t *testing.T) {
+	f := newFlow(t)
+	const conv = "historical-plain-status"
+	f.HaveConvWithTitle(conv, "Historical conversation")
+	f.HaveAliveSession(conv, "historical-context-session", "tclaude-historical", f.TestCwd("historical"))
+	f.MarkOffline("tclaude-historical")
+	f.SetSessionStatus(conv, "exited")
+	require.NoError(t, db.UpdateContextSnapshot("historical-context-session", 25, 100, 20, 1000))
+	agentd.ResetStatusSnapshotForTest()
+	for i := 0; i < 2; i++ {
+		r := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/agent/"+conv+"/context", nil)))
+		require.Equal(t, 200, r.Code, r.Body.String())
+		var got ctxInfo
+		testharness.DecodeJSON(t, r, &got)
+		require.Equal(t, "historical-context-session", got.SessionID)
+		require.EqualValues(t, 100, got.TokensInput)
+		require.EqualValues(t, 1000, got.ContextWindowSize)
+	}
+}

@@ -97,7 +97,7 @@ func TestDashboardPerf_RecordsPollTimings(t *testing.T) {
 	require.Len(t, snap.Samples, 2)
 	// The handler's named phases arrive in execution order, with the
 	// wrapper's synthetic "write" (JSON encode + socket write) last.
-	wantPhases := []string{"tmux_ls", "preload", "payload", "groups", "codex_telemetry", "roster", "assemble", "collectors", "write"}
+	wantPhases := []string{"status_snapshot", "preload", "payload", "groups", "codex_telemetry", "roster", "assemble", "collectors", "write"}
 	var gotPhases []string
 	for _, p := range snap.Samples[0].Phases {
 		gotPhases = append(gotPhases, p.Name)

@@ -39,7 +39,7 @@ func TestStatusSnapshotSingleFlightAndWindow(t *testing.T) {
 	next := c.get("data-b", time.Minute, gather)
 	require.NotSame(t, first, next)
 	require.EqualValues(t, 2, count.Load())
-	next.observedAt = time.Now().Add(-2 * time.Minute) // test-owned cache, no concurrent readers
+	c.cachedAt = time.Now().Add(-2 * time.Minute) // test-owned cache, no concurrent readers
 	require.NotSame(t, next, c.get("data-b", time.Minute, gather))
 	require.EqualValues(t, 3, count.Load())
 }
