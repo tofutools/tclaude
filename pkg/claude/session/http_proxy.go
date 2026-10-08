@@ -276,7 +276,7 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 	if len(modelRefs) > 1 && modelRefs[1] != "" {
 		modelHarness = modelRefs[1]
 	}
-	if modelHarness != "claude" && modelHarness != "codex" {
+	if modelHarness != "claude" && modelHarness != "codex" && modelHarness != "copilot" {
 		return 0, errors.New("unsupported model gateway harness")
 	}
 	var modelBridge *modelProxyBridge
@@ -308,7 +308,7 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 	environ := []string{}
 	for _, pair := range os.Environ() {
 		name, value, _ := strings.Cut(pair, "=")
-		if !httpProxyReservedEnvironment(name) && !config.IsHTTPProxyGatewayURL(value) && (modelBridge == nil || !modelProxyCompetingEnvironment(name)) {
+		if !httpProxyReservedEnvironment(name) && !config.IsHTTPProxyGatewayURL(value) && (modelBridge == nil || !modelProxyCompetingEnvironmentForHarness(name, modelHarness)) {
 			environ = append(environ, pair)
 		}
 	}
@@ -332,7 +332,8 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 			gatewayEnvironment[name] = base + path
 		}
 		if modelBridge != nil {
-			if modelHarness == "codex" {
+			switch modelHarness {
+			case "codex":
 				environ = append(environ, "TCLAUDE_MODEL_PROXY_TOKEN="+modelBridge.bearer)
 				profile := ""
 				if len(modelRefs) > 2 {
@@ -341,7 +342,9 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 				if err := validateCodexModelProxyEffective(environ, profile, modelBridge.provider, base+"/model/v1"); err != nil {
 					return 0, err
 				}
-			} else {
+			case "copilot":
+				environ = append(environ, harness.CopilotModelProxyEnvironment(base+"/model/v1", modelBridge.bearer)...)
+			default:
 				environ = append(environ, "ANTHROPIC_BASE_URL="+base+"/model", "ANTHROPIC_AUTH_TOKEN="+modelBridge.bearer, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
 			}
 		}
@@ -491,7 +494,7 @@ func (t *httpProxyRuntimeTransport) CloseIdleConnections() {
 func HTTPProxySpawnCommand(sessionID string, h *harness.Harness, spec harness.SpawnSpec, cliPath ...string) string {
 	filteredEnvironment := map[string]string{}
 	for name, value := range spec.ShellEnvironment {
-		if !httpProxyReservedEnvironment(name) && !config.IsHTTPProxyGatewayURL(value) && (spec.ModelProxy == "" || !modelProxyCompetingEnvironment(name)) {
+		if !httpProxyReservedEnvironment(name) && !config.IsHTTPProxyGatewayURL(value) && (spec.ModelProxy == "" || !modelProxyCompetingEnvironmentForHarness(name, h.Name)) {
 			filteredEnvironment[name] = value
 		}
 	}

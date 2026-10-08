@@ -819,3 +819,26 @@ func Names() []string {
 func (h *Harness) SupportsModelProxy() bool {
 	return h != nil && (h.ModelProxyProtocol == "anthropic-messages-v1" || h.ModelProxyProtocol == "openai-responses-v1")
 }
+
+// ModelProxyDialect is the wire dialect owned by the declared binding.
+func (h *Harness) ModelProxyDialect() string {
+	if h != nil && h.ModelProxyProtocol == "openai-responses-v1" {
+		return "openai"
+	}
+	return "anthropic"
+}
+
+// ModelProxyRefusal explains the missing security or protocol contract.
+func (h *Harness) ModelProxyRefusal() string {
+	if h == nil {
+		return "selected harness does not support model gateways"
+	}
+	switch h.Name {
+	case OpenCodeName:
+		return "OpenCode model gateways are unsupported: persistent account/org and managed configuration can override the launch provider; credential isolation is not established"
+	case GeminiName:
+		return "Gemini CLI model gateways are unsupported: its native GenerateContent dialect and forced API-key authentication are not implemented"
+	default:
+		return h.DisplayName + " does not support model gateways"
+	}
+}

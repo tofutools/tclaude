@@ -66,8 +66,12 @@ func TestTeleportCredentialsReplaceProfileGateway(t *testing.T) {
 	require.Equal(t, "off", p.ModelProxy)
 	b.Manifest.Agent.Harness = "codex"
 	require.NoError(t, applyTeleportModelCredentials(b, "proxy:allowed@gateway"))
+	b.Manifest.Agent.Harness = "copilot"
+	require.NoError(t, applyTeleportModelCredentials(b, "proxy:allowed@gateway"))
 	b.Manifest.Agent.Harness = "gemini"
-	require.ErrorContains(t, applyTeleportModelCredentials(b, "proxy:allowed@gateway"), "capable")
+	require.ErrorContains(t, applyTeleportModelCredentials(b, "proxy:allowed@gateway"), "GenerateContent")
+	b.Manifest.Agent.Harness = "opencode"
+	require.ErrorContains(t, applyTeleportModelCredentials(b, "proxy:allowed@gateway"), "persistent account")
 }
 func TestModelUsageBoundsBeforeForwardingEvents(t *testing.T) {
 	for _, raw := range []string{`data: {"type":"message_delta","usage":{"output_tokens":21}}` + "\n\n", `data: {"type":"content_block_delta","delta":{"text":"provider-secret-test"}}` + "\n\n"} {

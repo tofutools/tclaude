@@ -598,8 +598,11 @@ func teleportModelReference(mode, launchHarness string) (string, error) {
 		return "", errors.New("invalid teleport credential mode")
 	}
 	h, err := harness.Resolve(launchHarness)
-	if err != nil || !h.SupportsModelProxy() {
-		return "", errors.New("proxy credentials require a model-proxy capable harness")
+	if err != nil {
+		return "", err
+	}
+	if !h.SupportsModelProxy() {
+		return "", errors.New(h.ModelProxyRefusal())
 	}
 	peer, name, err := resolveModelProxyReference(ref)
 	if err != nil {

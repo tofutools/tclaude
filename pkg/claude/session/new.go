@@ -600,7 +600,10 @@ func runNew(params *NewParams) error {
 	}
 	if params.ModelProxy != "" {
 		if !h.SupportsModelProxy() {
-			return fmt.Errorf("%s does not support --model-proxy", h.DisplayName)
+			return errors.New(h.ModelProxyRefusal())
+		}
+		if h.Name == harness.CopilotName && (strings.TrimSpace(params.Model) == "" || params.Model == "auto") {
+			return errors.New("copilot model gateway requires an explicit --model; automatic model selection is unavailable offline")
 		}
 		if !strings.Contains(params.ModelProxy, "@") {
 			return fmt.Errorf("--model-proxy must be <name>@<trusted peer>")
@@ -2162,6 +2165,15 @@ func runNew(params *NewParams) error {
 		executablePath, err = harness.OpenCodeExecutable()
 		if err != nil {
 			return fmt.Errorf("find OpenCode executable: %w", err)
+		}
+	}
+	if h.Name == harness.CopilotName && params.ModelProxy != "" {
+		executablePath, err = exec.LookPath("copilot")
+		if err != nil {
+			return fmt.Errorf("find Copilot gateway executable: %w", err)
+		}
+		if err = validateCopilotModelProxyVersion(executablePath); err != nil {
+			return err
 		}
 	}
 	codexRuntimeDir, err := codexAppServerPrivateWriteDir(params)

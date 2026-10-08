@@ -284,7 +284,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 
 	if body.ModelProxy != "" && body.ModelProxy != "off" {
 		if !h.SupportsModelProxy() {
-			return nil, &spawnFailure{http.StatusBadRequest, "invalid_model_proxy", "selected harness does not support model gateways"}
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_model_proxy", h.ModelProxyRefusal()}
 		}
 		if _, _, err := resolveModelProxyReference(body.ModelProxy); err != nil {
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_model_proxy", err.Error()}

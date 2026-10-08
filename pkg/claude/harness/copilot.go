@@ -32,11 +32,12 @@ const CopilotName = "copilot"
 // left nil for a later, fixture-backed wave (TCL-965 phases 2-5).
 func init() {
 	Register(&Harness{
-		Name:        CopilotName,
-		DisplayName: "GitHub Copilot CLI",
-		Spawn:       copilotSpawner{},
-		Models:      copilotModels{},
-		Life:        copilotLifecycle{},
+		Name:               CopilotName,
+		DisplayName:        "GitHub Copilot CLI",
+		ModelProxyProtocol: "openai-responses-v1",
+		Spawn:              copilotSpawner{},
+		Models:             copilotModels{},
+		Life:               copilotLifecycle{},
 
 		// TCL-994: the one-shot `tclaude ask` surface, buffered only. The
 		// headless `-p` form was measured to put the answer ALONE on stdout, to
