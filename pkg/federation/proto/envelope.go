@@ -67,15 +67,16 @@ const (
 	CapJobs  = "jobs"
 	// CapRoutes lists the group's ready routes in the catalog and lets the
 	// peer open connections to them through the hub stream relay.
-	CapRoutes         = "routes"
-	CapSessions       = "sessions"
-	CapSessionsWatch  = "sessions_watch"
-	CapSessionsAttach = "sessions_attach"
-	CapAgentsReceive  = "agents_receive"
+	CapRoutes          = "routes"
+	CapSessions        = "sessions"
+	CapSessionsWatch   = "sessions_watch"
+	CapSessionsAttach  = "sessions_attach"
+	CapAgentsReceive   = "agents_receive"
+	CapTeleportReceive = "teleport_receive"
 )
 
 // AllCaps lists every known capability in canonical order.
-var AllCaps = []string{CapJobs, CapAgentStatus, CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes, CapSessions, CapSessionsWatch, CapSessionsAttach, CapAgentsReceive}
+var AllCaps = []string{CapJobs, CapAgentStatus, CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes, CapSessions, CapSessionsWatch, CapSessionsAttach, CapAgentsReceive, CapTeleportReceive}
 
 // MaxMailBody caps a mail envelope's body in bytes.
 const MaxMailBody = 16 * 1024
@@ -200,6 +201,7 @@ type GroupMailPayload struct {
 
 // CatalogPayload lists what an instance exports to the receiving peer.
 type CatalogPayload struct {
+	AgentTeleports int            `json:"agent_teleports,omitempty"`
 	AgentMoves     bool           `json:"agent_moves,omitempty"`
 	Node           *NodeMetadata  `json:"node,omitempty"`
 	NodeAt         time.Time      `json:"node_at,omitempty"`

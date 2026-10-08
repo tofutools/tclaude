@@ -10,10 +10,12 @@ import (
 	"sort"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 type FederationNodeProfileSpec struct {
+	TeleportLanding   *FederationTeleportLanding    `json:"teleport_landing,omitempty"`
 	TrustLevel        string                        `json:"trust_level"`
 	Pools             []string                      `json:"pools,omitempty"`
 	PeerGrants        []FederationPeerGrant         `json:"peer_grants,omitempty"`
@@ -501,6 +503,13 @@ func planFederationNodeProfileTx(tx *sql.Tx, profileID, peer, token string, newP
 		}
 		change("future_worker_permissions", before, p.Definition.WorkerPermissions)
 	}
+	var oldLanding *FederationTeleportLanding
+	if old != nil {
+		oldLanding = old.Profile.Definition.TeleportLanding
+	}
+	if !nodeProfileJSONEqual(oldLanding, p.Definition.TeleportLanding) {
+		change("future_teleport_landing", oldLanding, p.Definition.TeleportLanding)
+	}
 	var oldLabels []string
 	var oldBundle json.RawMessage
 	if old != nil {
@@ -568,4 +577,20 @@ func nodeProfileJSONEqual(a, b any) bool {
 	aa, _ := json.Marshal(a)
 	bb, _ := json.Marshal(b)
 	return string(aa) == string(bb)
+}
+
+// FederationTeleportLanding pins local registry identities, never source
+// paths, permissions or profile handles. Names are operator input/display.
+type FederationTeleportLanding struct {
+	Repo               string                `json:"repo,omitempty"`
+	RepoID             string                `json:"repo_id,omitempty"`
+	Group              string                `json:"group"`
+	GroupID            int64                 `json:"group_id,omitempty"`
+	Cwd                string                `json:"cwd"`
+	SpawnProfile       string                `json:"spawn_profile"`
+	SpawnProfileID     int64                 `json:"spawn_profile_id,omitempty"`
+	MaxLive            int                   `json:"max_live"`
+	CredentialsDefault string                `json:"credentials_default,omitempty"`
+	CredentialsAllowed []string              `json:"credentials_allowed,omitempty"`
+	Limits             config.TeleportLimits `json:"limits,omitempty"`
 }

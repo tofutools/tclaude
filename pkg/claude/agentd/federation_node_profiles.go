@@ -36,6 +36,9 @@ func normalizeFederationNodeProfile(p *db.FederationNodeProfile) error {
 		return errors.New("invalid profile name: use 1-64 lowercase letters, digits, dots, hyphens or underscores")
 	}
 	s := &p.Definition
+	if err := normalizeTeleportLanding(s.TeleportLanding); err != nil {
+		return err
+	}
 	if s.TrustLevel == "" {
 		s.TrustLevel = db.FederationTrustRestricted
 	}
@@ -69,8 +72,8 @@ func normalizeFederationNodeProfile(p *db.FederationNodeProfile) error {
 		if instanceSlug && g.Scope != "" {
 			return fmt.Errorf("%s must be unscoped", g.Slug)
 		}
-		if g.Slug == PermAgentsReceive && g.Scope == "" {
-			return errors.New("agents.receive requires a local group scope")
+		if (g.Slug == PermAgentsReceive || g.Slug == PermAgentsTeleportReceive) && g.Scope == "" {
+			return fmt.Errorf("%s requires a local group scope", g.Slug)
 		}
 		if g.Scope != "" {
 			if !strings.HasPrefix(g.Scope, "group=") {

@@ -1647,3 +1647,15 @@ CREATE TABLE federation_jobs (
  created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL) STRICT;
 
 CREATE INDEX federation_jobs_reservations ON federation_jobs(direction,state);
+
+CREATE TABLE federation_teleports (
+ direction TEXT NOT NULL, peer TEXT NOT NULL, offer TEXT NOT NULL,
+ chain TEXT NOT NULL, source_agent TEXT NOT NULL, target_agent TEXT NOT NULL DEFAULT '',
+ created_at INTEGER NOT NULL, state TEXT NOT NULL, snapshot TEXT NOT NULL,
+ PRIMARY KEY(direction,peer,offer)) STRICT;
+
+CREATE INDEX federation_teleports_rates ON federation_teleports(direction,source_agent,created_at);
+
+CREATE INDEX federation_teleports_peer_rates ON federation_teleports(direction,peer,created_at);
+
+CREATE INDEX federation_teleports_target ON federation_teleports(target_agent);

@@ -165,6 +165,9 @@ func moveAuthority(m db.FederationAgentMove) error {
 	if err != nil || a == nil || a.CurrentConvID != m.SourceConv {
 		return errors.New("source generation changed; abandon this move and offer the current generation")
 	}
+	if m.Teleport {
+		return teleportMoveAuthority(m)
+	}
 	if m.Human {
 		return nil
 	}
@@ -277,6 +280,7 @@ func moveShutdownProcessAlive(m db.FederationAgentMove) bool {
 }
 
 func reconcileFederationMoves() {
+	reconcileFederationTeleports()
 	if !fedMoveMu.TryLock() {
 		return
 	}
@@ -390,4 +394,20 @@ func movedAgentMailRefusal(peerID, agentID string) bool {
 		}
 	}
 	return false
+}
+
+func movedAgentDestination(peerID, agentID string) string {
+	if !movedAgentMailRefusal(peerID, agentID) {
+		return ""
+	}
+	moves, err := db.ListFederationAgentMoves()
+	if err != nil {
+		return ""
+	}
+	for _, m := range moves {
+		if m.Teleport && m.Direction == "out" && m.SourceAgent == agentID && (m.State == "moved" || m.State == "retiring") && m.MovedTo != nil && m.MovedTo.Agent != "" {
+			return m.MovedTo.Agent + "@" + m.MovedTo.Instance
+		}
+	}
+	return ""
 }

@@ -69,7 +69,18 @@ func placementSpawnAllowed(r *http.Request, caller, peer, group string) bool {
 	}
 	return false
 }
+
+type placementAuthority struct {
+	Supported    func(*proto.CatalogPayload) bool
+	GroupAllowed func(*http.Request, string, string, proto.CatalogGroup) bool
+}
+
 func placementCandidate(r *http.Request, p db.FederationPeer, req fedSpawnSendReq, caller string, match proto.NodeMatch) (fedPlacementCandidate, bool) {
+	return placementCandidateWithAuthority(r, p, req, caller, match, placementAuthority{Supported: func(cat *proto.CatalogPayload) bool { return cat.Node.SpawnPlacementVersion == fedPlacementVersion }, GroupAllowed: func(r *http.Request, caller, peer string, g proto.CatalogGroup) bool {
+		return placementSpawnAllowed(r, caller, peer, g.Name)
+	}})
+}
+func placementCandidateWithAuthority(r *http.Request, p db.FederationPeer, req fedSpawnSendReq, caller string, match proto.NodeMatch, authority placementAuthority) (fedPlacementCandidate, bool) {
 	row := fedPlacementCandidate{Peer: peerDisplay(&p), Instance: p.InstanceID}
 	if caller != "" {
 		allowed, _, err := permissionAllowsAction(r, caller, PermNodeRead, ActionContext{RemotePeer: p.InstanceID})
@@ -92,7 +103,7 @@ func placementCandidate(r *http.Request, p db.FederationPeer, req fedSpawnSendRe
 	if cat.NodeReceivedAt.IsZero() || now.Sub(cat.NodeReceivedAt) > fedNodeStaleAfter || cat.NodeReceivedAt.After(now.Add(2*time.Minute)) || at == nil || now.Sub(*at) > fedNodeStaleAfter || at.After(now.Add(2*time.Minute)) || n.Resources.Status != "current" {
 		return reject("node metadata stale or warming")
 	}
-	if n.SpawnPlacementVersion != fedPlacementVersion {
+	if !authority.Supported(cat) {
 		return reject("receiver does not advertise placement admission support")
 	}
 	if !match.Matches(n) {
@@ -100,7 +111,7 @@ func placementCandidate(r *http.Request, p db.FederationPeer, req fedSpawnSendRe
 	}
 	groups := []string{}
 	for _, g := range cat.Groups {
-		if (req.Group == "" || req.Group == g.Name) && placementSpawnAllowed(r, caller, p.InstanceID, g.Name) {
+		if (req.Group == "" || req.Group == g.Name) && authority.GroupAllowed(r, caller, p.InstanceID, g) {
 			groups = append(groups, g.Name)
 		}
 	}

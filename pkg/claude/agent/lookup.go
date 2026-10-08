@@ -776,11 +776,12 @@ func runWhoami(stdout, stderr io.Writer) int {
 
 func runWhoamiDaemon(stdout, stderr io.Writer) int {
 	var resp struct {
-		IsHuman bool     `json:"is_human"`
-		AgentID string   `json:"agent_id"`
-		ConvID  string   `json:"conv_id"`
-		Title   string   `json:"title"`
-		Phases  []string `json:"phases"`
+		Predecessor *db.FederationMoveLink `json:"predecessor,omitempty"`
+		IsHuman     bool                   `json:"is_human"`
+		AgentID     string                 `json:"agent_id"`
+		ConvID      string                 `json:"conv_id"`
+		Title       string                 `json:"title"`
+		Phases      []string               `json:"phases"`
 	}
 	if err := DaemonGet("/v1/whoami", &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -801,6 +802,9 @@ func runWhoamiDaemon(stdout, stderr io.Writer) int {
 		id = resp.ConvID
 	}
 	fmt.Fprintf(stdout, "%s\t%s\n", id, title)
+	if resp.Predecessor != nil {
+		fmt.Fprintf(stdout, "  Predecessor: %s@%s\n", resp.Predecessor.Agent, resp.Predecessor.Instance)
+	}
 	// Advisory process (JOH-242): one line per group with a process, showing
 	// its current phase.
 	for _, ph := range resp.Phases {
@@ -939,6 +943,7 @@ func lsCmd() *cobra.Command {
 }
 
 type peerEntry struct {
+	Predecessor *db.FederationMoveLink `json:"predecessor,omitempty"`
 	// AgentID is the stable, rotation-immune actor key — what `agent ls`
 	// shows as the canonical ID. ConvID is the live generation behind it.
 	AgentID string `json:"agent_id,omitempty"`
@@ -1236,6 +1241,11 @@ func renderPeersAtWidth(p *lsParams, peers []*peerEntry, stdout io.Writer, termi
 		tbl.AddRow(table.Row{Cells: cells})
 	}
 	fmt.Fprintln(stdout, tbl.Render())
+	for _, pe := range peers {
+		if pe.Predecessor != nil {
+			fmt.Fprintf(stdout, "  %s predecessor: %s@%s\n", shortAgentID(pe.AgentID, pe.ConvID), pe.Predecessor.Agent, pe.Predecessor.Instance)
+		}
+	}
 	return rcOK
 }
 

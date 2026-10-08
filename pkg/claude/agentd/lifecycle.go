@@ -3466,9 +3466,23 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Group: g.Name, SpawnProfile: resolvedSpawnProfileNameForScope(g, body.Profile),
 		SandboxProfile: sandboxProfileForScope,
 	}
-	spawnerConvID, ok := requireSpawnPermission(w, r, g, spawnActionContext)
-	if !ok {
-		return
+	spawnerConvID := ""
+	teleportAuthority := teleportLandingFromRequest(r)
+	if teleportAuthority != nil {
+		if teleportAuthority.record.Landing.GroupID != g.ID {
+			writeError(w, 403, "teleport_group", "teleport landing group changed")
+			return
+		}
+		if err := teleportAuthority.check(); err != nil {
+			writeError(w, 403, "teleport_revoked", err.Error())
+			return
+		}
+	} else {
+		var ok bool
+		spawnerConvID, ok = requireSpawnPermission(w, r, g, spawnActionContext)
+		if !ok {
+			return
+		}
 	}
 	// Whether the grant that admitted this spawn was CONDITIONED on the sandbox
 	// profile, as opposed to merely being evaluated alongside it. Only that
@@ -4906,6 +4920,28 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Async: true,
 	}
 	p.BundleHistory, _ = r.Context().Value(bundleHistoryContextKey{}).(*bundleHistoryLaunch)
+	if teleportAuthority != nil {
+		p.launchAuthority = teleportAuthority.check
+		p.nodeCapacityReserved = true
+	} else if offer, _ := r.Context().Value(teleportOfferContextKey{}).(*db.FederationBundleOffer); offer != nil && offer.Descriptor.Teleport != nil {
+		row, err := db.GetFederationTeleport("in", offer.Peer, offer.Descriptor.ID)
+		if err != nil || row == nil {
+			writeError(w, 503, "teleport_provenance", "teleport provenance unavailable")
+			return
+		}
+		p.launchAuthority = func() error {
+			if teleportFrozen() {
+				return errors.New("teleports are frozen by the operator")
+			}
+			if !fedPeerAllows(offer.Peer, g.ID, PermAgentsReceive) && !fedPeerAllows(offer.Peer, g.ID, PermAgentsTeleportReceive) {
+				return errors.New("teleport receive authority revoked")
+			}
+			if _, err := pendingTeleportCredentials(offer.Peer, offer.Descriptor.Teleport.Credentials); err != nil {
+				return err
+			}
+			return checkTeleportRepo(row, g.ID)
+		}
+	}
 	// An omitted include_group_context flag means opt-in — every spawn
 	// path inherits the group context by default, the same way it
 	// inherits default_cwd; the dashboard sends false explicitly to opt
@@ -5045,9 +5081,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 // length/charset-checked, reply-to resolved to a conv-id — so the
 // shared core does no HTTP-shaped validation of its own.
 type spawnParams struct {
-	RemoteJob *federationJobLaunch // trusted internal remote job boundary
-
-	BundleHistory *bundleHistoryLaunch // trusted internal bundle route only
+	RemoteJob       *federationJobLaunch // trusted internal remote job boundary
+	launchAuthority func() error
+	BundleHistory   *bundleHistoryLaunch // trusted internal bundle route only
 	// AgentID is a stable identity reserved before a pending harness conv-id
 	// materialises. Empty on ordinary inline spawns, whose actor is allocated
 	// together with the conv-id.
@@ -6487,6 +6523,11 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 // an Async PENDING success the outcome carries an empty conv-id and the agent
 // is enrolled later by the sweeper.
 func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failure *spawnFailure) {
+	if p.launchAuthority != nil {
+		if err := p.launchAuthority(); err != nil {
+			return nil, &spawnFailure{Status: 403, Kind: "teleport_revoked", Msg: err.Error()}
+		}
+	}
 	defer db.NotifyStatusChanged()
 	releaseCapacity, capacityFailure := acquireNodeLaunch(&p)
 	if capacityFailure != nil {
@@ -7281,6 +7322,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		spawnArgs.ConvID = importedID
 		spawnArgs.SessionID = ""
 		launch = SpawnDetachedTclaudeResume
+	}
+	if p.launchAuthority != nil {
+		if err := p.launchAuthority(); err != nil {
+			return launchFailed(err)
+		}
 	}
 	if err := launch(spawnArgs); err != nil {
 		return launchFailed(err)

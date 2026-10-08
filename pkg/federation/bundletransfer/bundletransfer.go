@@ -51,15 +51,16 @@ type MoveConfirmation struct {
 }
 
 type Descriptor struct {
-	Move      *MoveIntent `json:"move,omitempty"`
-	ID        string      `json:"id"`
-	Type      string      `json:"type"`
-	Bytes     int64       `json:"bytes"`
-	SHA256    string      `json:"sha256"`
-	ExpiresAt time.Time   `json:"expires_at"`
-	Summary   string      `json:"summary"`
-	Group     string      `json:"group,omitempty"`
-	Inline    []byte      `json:"inline,omitempty"`
+	Teleport  *TeleportIntent `json:"teleport,omitempty"`
+	Move      *MoveIntent     `json:"move,omitempty"`
+	ID        string          `json:"id"`
+	Type      string          `json:"type"`
+	Bytes     int64           `json:"bytes"`
+	SHA256    string          `json:"sha256"`
+	ExpiresAt time.Time       `json:"expires_at"`
+	Summary   string          `json:"summary"`
+	Group     string          `json:"group,omitempty"`
+	Inline    []byte          `json:"inline,omitempty"`
 }
 
 func New(kind Type, raw []byte, summary string, expiry time.Time) Descriptor {
@@ -71,6 +72,14 @@ func New(kind Type, raw []byte, summary string, expiry time.Time) Descriptor {
 	return d
 }
 func (d Descriptor) Validate(kind Type, now time.Time) error {
+	if d.Teleport != nil {
+		if kind.Name != Agent.Name {
+			return errors.New("teleport requires an agent bundle")
+		}
+		if err := d.Teleport.Validate(); err != nil {
+			return err
+		}
+	}
 	if d.Move != nil && (kind.Name != Agent.Name || !proto.ValidAgentRef(d.Move.SourceAgent) || len(d.Move.SourceConv) != 36) {
 		return errors.New("invalid agent move identity")
 	}
