@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -260,6 +261,33 @@ func Prepare(ctx context.Context, d Definition, root, ref string) (*Checkout, er
 	}
 	alternate := filepath.Join(path, ".git", "objects", "info", "alternates")
 	if e = os.WriteFile(alternate, []byte(objects+"\n"), 0600); e != nil {
+		return nil, e
+	}
+	// Borrow the clone's shallow boundary as object metadata, so repack does
+	// not traverse parents that a deliberately shallow clone does not contain.
+	shallow, e := git(ctx, d.Clone, "rev-parse", "--git-path", "shallow")
+	if e != nil {
+		return nil, e
+	}
+	if !filepath.IsAbs(shallow) {
+		shallow = filepath.Join(d.Clone, shallow)
+	}
+	f, e := os.Open(shallow)
+	if e == nil {
+		raw, readErr := io.ReadAll(io.LimitReader(f, (1<<20)+1))
+		_ = f.Close()
+		if readErr != nil || len(raw) > 1<<20 {
+			return nil, errors.New("invalid clone shallow boundary")
+		}
+		for _, line := range strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n") {
+			if !objectID.MatchString(line) {
+				return nil, errors.New("invalid clone shallow boundary")
+			}
+		}
+		if e = os.WriteFile(filepath.Join(path, ".git", "shallow"), raw, 0600); e != nil {
+			return nil, e
+		}
+	} else if !os.IsNotExist(e) {
 		return nil, e
 	}
 	// A new Git directory has no configured filters, include files, hooks or

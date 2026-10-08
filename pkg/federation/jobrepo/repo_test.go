@@ -192,3 +192,33 @@ func TestPrepareReusesLinkedWorktreeCommonObjects(t *testing.T) {
 		t.Fatal("wrong linked-worktree commit")
 	}
 }
+
+func TestPreparePinnedShallowCloneWithoutRemote(t *testing.T) {
+	d, root, _ := fixture(t)
+	if e := os.WriteFile(filepath.Join(d.Clone, "second"), []byte("next\n"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	runGit(t, d.Clone, "add", "second")
+	runGit(t, d.Clone, "commit", "-m", "second")
+	commit := runGit(t, d.Clone, "rev-parse", "HEAD")
+	shallow := filepath.Join(root, "shallow")
+	runGit(t, root, "clone", "--depth=1", d.URL, shallow)
+	d, e := Inspect(context.Background(), (&url.URL{Scheme: "file", Path: filepath.Join(root, "unreachable")}).String(), shallow, []int64{1})
+	if e != nil {
+		t.Fatal(e)
+	}
+	c, e := Prepare(context.Background(), d, filepath.Join(root, "job"), commit)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = os.RemoveAll(shallow); e != nil {
+		t.Fatal(e)
+	}
+	if runGit(t, c.Path, "rev-parse", "HEAD") != commit {
+		t.Fatal("wrong shallow checkout")
+	}
+	if runGit(t, c.Path, "rev-parse", "--is-shallow-repository") != "true" {
+		t.Fatal("lost shallow boundary")
+	}
+	runGit(t, c.Path, "fsck", "--full")
+}
