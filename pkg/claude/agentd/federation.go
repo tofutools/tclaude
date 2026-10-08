@@ -391,7 +391,14 @@ func (rt *fedRuntime) sendCatalog(peer string) {
 		return
 	}
 	rt.sendControl(peer, proto.KindCatalog, "", cat)
-	rt.wakeNodes()
+	// Catalog requests must not turn a 30s node heartbeat into fanout traffic.
+	// Wake only to populate the initial static probe; later catalogs read cache.
+	rt.nodeMu.RLock()
+	needsProbe := rt.nodeStatic.Schema != 1
+	rt.nodeMu.RUnlock()
+	if needsProbe {
+		rt.wakeNodes()
+	}
 }
 
 // buildFederationCatalog lists what this instance exports to peer: groups
