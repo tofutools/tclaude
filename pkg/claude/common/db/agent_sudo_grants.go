@@ -44,7 +44,6 @@ func (g *SudoGrant) IsActive(now time.Time) bool {
 // multi-slug bundle from a single popup approval ends up with
 // matching timestamps.
 func InsertSudoGrant(g *SudoGrant) (int64, error) {
-	defer NotifyStatusChanged()
 	if g == nil {
 		return 0, errors.New("InsertSudoGrant: nil grant")
 	}
@@ -80,7 +79,6 @@ func InsertSudoGrant(g *SudoGrant) (int64, error) {
 // actor identity. Use this when the caller already selected an agent rather
 // than a conversation generation (for example, the dashboard grant dialog).
 func InsertSudoGrantForAgent(g *SudoGrant) (int64, error) {
-	defer NotifyStatusChanged()
 	if g == nil {
 		return 0, errors.New("InsertSudoGrantForAgent: nil grant")
 	}
@@ -289,7 +287,6 @@ func ListAllActiveSudoGrants() ([]*SudoGrant, error) {
 // of rows updated (0 when the id doesn't exist or was already
 // revoked).
 func RevokeSudoGrant(id int64) (int64, error) {
-	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return 0, err
@@ -308,7 +305,6 @@ func RevokeSudoGrant(id int64) (int64, error) {
 // for convID. Idempotent — already-revoked rows are skipped. Returns
 // the number of newly-revoked rows.
 func RevokeSudoGrantsByConv(convID string) (int64, error) {
-	defer NotifyStatusChanged()
 	if convID == "" {
 		return 0, errors.New("RevokeSudoGrantsByConv: conv_id required")
 	}
@@ -324,7 +320,6 @@ func RevokeSudoGrantsByConv(convID string) (int64, error) {
 
 // RevokeSudoGrantsByAgent revokes every active grant for a stable actor.
 func RevokeSudoGrantsByAgent(agentID string) (int64, error) {
-	defer NotifyStatusChanged()
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return 0, errors.New("RevokeSudoGrantsByAgent: agent_id required")
@@ -347,7 +342,6 @@ func RevokeSudoGrantsByAgent(agentID string) (int64, error) {
 // still-active row revoked-now. Returns the row count for the human
 // to verify before they nuke prod.
 func RevokeAllActiveSudoGrants() (int64, error) {
-	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return 0, err

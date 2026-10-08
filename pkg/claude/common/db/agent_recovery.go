@@ -189,7 +189,6 @@ func ActiveAgentRecoveries() ([]AgentRecovery, error) {
 // MarkAgentRecoveryNotified is a durable one-shot used before dispatching the
 // crash or crash-loop transition notification.
 func MarkAgentRecoveryNotified(r AgentRecovery, backoff bool) (bool, error) {
-	defer NotifyStatusChanged()
 	column := "notified_crash"
 	if backoff {
 		column = "notified_backoff"
@@ -218,7 +217,6 @@ func newRecoveryLeaseToken() string {
 // ClaimAgentRecovery is the durable exactly-one launch CAS. The caller must
 // retain the returned token for every outcome mutation.
 func ClaimAgentRecovery(agentID, generation string, now time.Time) (*AgentRecovery, error) {
-	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return nil, err
@@ -275,7 +273,6 @@ func FailAgentRecoveryLaunch(r AgentRecovery, now time.Time, reason string) (boo
 }
 
 func SuppressAgentRecovery(r AgentRecovery, now time.Time, reason string) (bool, error) {
-	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return false, err
@@ -296,7 +293,6 @@ func SuppressAgentRecovery(r AgentRecovery, now time.Time, reason string) (bool,
 // ExpireAgentRecoveryLease advances a launch whose daemon disappeared before
 // it could prove a live successor. A live successor must be checked first.
 func ExpireAgentRecoveryLease(r AgentRecovery, now time.Time) (bool, error) {
-	defer NotifyStatusChanged()
 	if r.LeaseToken == "" || r.LeaseExpiresAt.After(now) {
 		return false, nil
 	}
@@ -304,7 +300,6 @@ func ExpireAgentRecoveryLease(r AgentRecovery, now time.Time) (bool, error) {
 }
 
 func ConfirmAgentRecovery(r AgentRecovery, successorSession, successorGeneration string, now time.Time) (bool, error) {
-	defer NotifyStatusChanged()
 	if successorSession == "" || successorGeneration == "" {
 		return false, nil
 	}
@@ -334,7 +329,6 @@ func ConfirmAgentRecovery(r AgentRecovery, successorSession, successorGeneration
 // operational warning just like it clears a pending attempt. A later genuine
 // crash writes a new generation and may create a fresh episode.
 func CancelAgentRecoveryForConv(convID, reason string, now time.Time) (bool, error) {
-	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return false, err
@@ -368,7 +362,6 @@ func CancelAgentRecoveryForConv(convID, reason string, now time.Time) (bool, err
 // CancelAgentRecoveryGeneration is the scheduler-facing cancellation CAS. It
 // cannot let a stale sweep for one predecessor cancel a newer crash episode.
 func CancelAgentRecoveryGeneration(r AgentRecovery, reason string, now time.Time) (bool, error) {
-	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return false, err
@@ -390,7 +383,6 @@ func CancelAgentRecoveryGeneration(r AgentRecovery, reason string, now time.Time
 // an operator-triggered attempt. The durable restarting row lets the normal
 // successor confirmation establish healthy_since after the manual launch.
 func BeginManualAgentRecovery(convID string, now time.Time) (*AgentRecovery, error) {
-	defer NotifyStatusChanged()
 	r, err := AgentRecoveryForConv(convID)
 	if err != nil || r == nil {
 		return nil, err
@@ -441,7 +433,6 @@ func AgentRecoveryClaimCurrent(r AgentRecovery) (bool, error) {
 }
 
 func ResetHealthyAgentRecovery(r AgentRecovery, now time.Time) (bool, error) {
-	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return false, err
@@ -507,7 +498,6 @@ func recoveryAuditDetail(r AgentRecovery, reason string, now time.Time) string {
 }
 
 func RecordAgentRecoveryAudit(r AgentRecovery, verb, reason string, now time.Time) error {
-	defer NotifyStatusChanged()
 	_, err := InsertAuditLog(AuditLogEntry{At: now, ActorKind: AuditActorSystem,
 		ActorLabel: "tclaude", Verb: verb, TargetConv: r.ConvID, TargetAgent: r.AgentID,
 		TargetLabel: r.ConvID, Detail: recoveryAuditDetail(r, reason, now), Status: 200,

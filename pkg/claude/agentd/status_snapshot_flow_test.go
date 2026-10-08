@@ -1,7 +1,10 @@
 package agentd_test
 
 import (
+	"database/sql"
 	"net/http"
+	"os"
+	"os/exec"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -126,4 +129,31 @@ func TestSharedStatusSnapshotKnownWritesAreImmediatelyVisible(t *testing.T) {
 	require.EqualValues(t, 100, read().State.TokensInput)
 	f.MarkOffline("tmux-status-write")
 	require.False(t, read().Online)
+}
+
+func TestSharedStatusSnapshotExternalProcessWrite(t *testing.T) {
+	if path := os.Getenv("TCLAUDE_TEST_STATUS_WRITE_DB"); path != "" {
+		d, err := sql.Open("sqlite", path)
+		require.NoError(t, err)
+		defer d.Close()
+		_, err = d.Exec("UPDATE sessions SET status='awaiting_input' WHERE id='external-status-session'")
+		require.NoError(t, err)
+		return
+	}
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	const conv = "external-status-agent"
+	f.HaveConvWithTitle(conv, "external worker")
+	f.HaveGroup("team")
+	f.HaveMember("team", conv)
+	f.HaveAliveSession(conv, "external-status-session", "tmux-external-status", f.TestCwd("work"))
+	dash := agentd.BuildDashboardHandlerForTest()
+	require.NotEqual(t, "awaiting_input", findDashMember(fetchDashSnapshot(t, dash), "team", conv).State.Status)
+	cmd := exec.Command(os.Args[0], "-test.run=^TestSharedStatusSnapshotExternalProcessWrite$")
+	cmd.Env = append(os.Environ(), "TCLAUDE_TEST_STATUS_WRITE_DB="+db.DBPath())
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	got := findDashMember(fetchDashSnapshot(t, dash), "team", conv)
+	require.NotNil(t, got)
+	require.Equal(t, "awaiting_input", got.State.Status, "a separate callback process invalidates the daemon's warm snapshot")
 }

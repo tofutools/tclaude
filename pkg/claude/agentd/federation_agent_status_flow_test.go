@@ -10,6 +10,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -179,4 +180,30 @@ func TestFederation_AgentStatusExplicitNameAndCoarseExit(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), "private prompt")
 	require.NotContains(t, string(raw), "private summary")
+}
+
+func TestFederation_AgentStatusWarmCacheIncludesTransactionalImport(t *testing.T) {
+	fh := newFedHarness(t)
+	f := fh.f
+	f.HaveGroup("existing")
+	require.NoError(t, db.UpsertFederationPeerGrant(db.FederationPeerGrant{Peer: fh.peer.id.ID(), Slug: agentd.PermAgentsStatusRead}))
+	before, err := agentd.FederationCatalogForStatusTest(fh.peer.id.ID())
+	require.NoError(t, err)
+	require.Len(t, before.Groups, 1)
+	const conv = "imported-status-member"
+	_, err = db.ImportGroup(db.GroupImportPlan{
+		Export:     &groupexport.Export{FormatVersion: groupexport.FormatVersion, SourceGroup: "imported", Group: groupexport.Group{}, Members: []groupexport.Member{{ConvID: conv, Role: "builder"}}},
+		TargetName: "imported", TargetCwd: f.TestCwd("imported"), ConvRemap: map[string]string{conv: conv},
+	})
+	require.NoError(t, err)
+	after, err := agentd.FederationCatalogForStatusTest(fh.peer.id.ID())
+	require.NoError(t, err)
+	for _, g := range after.Groups {
+		if g.Name == "imported" {
+			require.Len(t, g.AgentStatuses, 1)
+			require.Equal(t, "builder", g.AgentStatuses[0].Role)
+			return
+		}
+	}
+	t.Fatal("committed imported group missing from refreshed status catalog")
 }
