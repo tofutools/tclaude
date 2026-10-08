@@ -13,6 +13,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/dbcmd"
 	"github.com/tofutools/tclaude/pkg/claude/federationcmd"
+	"github.com/tofutools/tclaude/pkg/claude/host"
 	"github.com/tofutools/tclaude/pkg/claude/memoryfiles"
 	"github.com/tofutools/tclaude/pkg/claude/pickup"
 	"github.com/tofutools/tclaude/pkg/claude/processcmd"
@@ -41,6 +42,7 @@ func Cmd() *cobra.Command {
 		worktree.Cmd(),
 		stats.Cmd(),
 		usage.Cmd(),
+		host.Cmd(),
 		usage.CostsCmd(),
 		setup.Cmd(),
 		statusbar.Cmd(),

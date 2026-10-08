@@ -2013,3 +2013,7 @@ func StartFederationAwayApprovalForTest(id, conv string, timeout time.Duration) 
 		<-finished
 	}
 }
+
+// RefreshHostMetricsForTest runs the production sampler against the real host
+// and the flow's normal tmux subprocess simulator and SQLite state.
+func RefreshHostMetricsForTest() { refreshHostMetrics() }
