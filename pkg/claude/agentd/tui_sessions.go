@@ -261,6 +261,7 @@ var tuiKillSession = killLocalSessionPane
 // one that ended on its own. Nothing is lost by that either — the listing is
 // live sessions only, so the row leaves the console the moment the pane does.
 func killLocalSessionPane(tmuxSession string) error {
+	defer db.NotifyStatusChanged()
 	if strings.TrimSpace(tmuxSession) == "" {
 		return fmt.Errorf("no tmux session to kill")
 	}

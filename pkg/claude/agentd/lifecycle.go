@@ -287,6 +287,7 @@ func stopBeforePurge(convID, relatedEventID string) (memberOpResult, error) {
 // waitPolicy.wait is set (it is softExitClosed otherwise — nothing was
 // waited for, so nothing is known).
 func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, relatedEventID string, waitPolicy stopWaitPolicy) (memberOpResult, softExitOutcome) {
+	defer db.NotifyStatusChanged()
 	recoveryReason := lifecycleAction
 	if recoveryReason == "" {
 		recoveryReason = db.AgentExitActionStop
@@ -1585,6 +1586,7 @@ func errorString(err error) string {
 // directly so it does not cancel its own durable lease; every manual wrapper
 // above cancels a pending automatic attempt first under the same mutex.
 func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir bool, recoveryClaim *db.AgentRecovery) memberOpResult {
+	defer db.NotifyStatusChanged()
 	res := memberOpResult{ConvID: convID}
 	if isConvOnline(convID) {
 		res.Action = "skipped:already_online"

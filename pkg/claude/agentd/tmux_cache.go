@@ -48,6 +48,7 @@ type tmuxSessionCache struct {
 	mu         sync.Mutex
 	valid      bool
 	generation uint64
+	revision   func() uint64
 	expires    time.Time
 	sessions   map[string]struct{}
 	err        error
@@ -66,7 +67,10 @@ func newTmuxSessionCache(ttl time.Duration, now func() time.Time, probe func() (
 func (c *tmuxSessionCache) get() (map[string]struct{}, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	generation := db.StatusSnapshotGeneration()
+	generation := uint64(0)
+	if c.revision != nil {
+		generation = c.revision()
+	}
 	if c.valid && c.generation == generation && c.now().Before(c.expires) {
 		return c.sessions, c.err
 	}
@@ -78,7 +82,11 @@ func (c *tmuxSessionCache) get() (map[string]struct{}, error) {
 }
 
 // liveTmuxCache is the daemon-wide cache backing cachedLiveTmuxSessions.
-var liveTmuxCache = newTmuxSessionCache(liveTmuxCacheTTL, time.Now, session.LiveTmuxSessions)
+var liveTmuxCache = func() *tmuxSessionCache {
+	c := newTmuxSessionCache(liveTmuxCacheTTL, time.Now, session.LiveTmuxSessions)
+	c.revision = db.StatusSnapshotGeneration
+	return c
+}()
 
 // cachedLiveTmuxSessions returns the live tmux session set through the
 // short-TTL coalescing cache. The dashboard poll handlers use this instead of
