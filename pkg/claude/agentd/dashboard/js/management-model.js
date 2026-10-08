@@ -136,7 +136,7 @@ export function profileDraft(seed = null, { editExisting = true, local = null, c
     name: !local && (editExisting || cloneSourceName) ? seed?.name || '' : '', aliases_text: (seed?.aliases || []).join(', '), harness,
     disabled: !!seed?.disabled, disabled_reason: seed?.disabled_reason || '',
     operator_only: !!seed?.operator_only,
-    model: seed?.model || '', effort: seed?.effort || '', sandbox,
+    model: seed?.model || '', model_proxy: seed?.model_proxy || '', effort: seed?.effort || '', sandbox,
     approval: seed?.approval || defaults.approval, tools: seed?.tools || defaults.tools,
     ask_user_question_timeout: seed?.ask_user_question_timeout || defaults.ask_user_question_timeout,
     auto_compact_window: seed?.auto_compact_window || '',
@@ -235,6 +235,11 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
     if (!surfacesApproval && original.approval) body.approval = original.approval;
     if (!surfacesTools && original.tools) body.tools = original.tools;
     if (!h?.can_auto_review && original.auto_review != null) body.auto_review = original.auto_review;
+  }
+  // The gateway is currently configured through profile JSON. Preserve it
+  // through ordinary dashboard edits; a harness switch clears incompatible routes.
+  if (draft.model_proxy && (norm(draft.harness) === 'claude' || draft.model_proxy === 'off')) {
+    body.model_proxy = draft.model_proxy;
   }
   if (local) {
     for (const key of ['name', 'aliases', 'disabled', 'disabled_reason', 'agent_name', 'role', 'role_ref', 'role_refs', 'descr', 'initial_message', 'sync_worktree', 'fetch_latest_worktree', 'auto_focus', 'include_group_default_context']) delete body[key];

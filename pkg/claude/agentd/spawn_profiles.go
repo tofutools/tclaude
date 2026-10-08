@@ -1268,11 +1268,12 @@ func profileHandleConflict(p *db.SpawnProfile, allowedProfileID int64) (string, 
 func seedProfileFromConv(convID string) (spawnProfileJSON, error) {
 	launch := traceMemberLaunch(convID)
 	seed := spawnProfileJSON{
-		Harness:  launch.Harness,
-		Model:    launch.Model,
-		Effort:   launch.Effort,
-		Sandbox:  launch.Sandbox,
-		Approval: launch.Approval,
+		Harness:    launch.Harness,
+		Model:      launch.Model,
+		ModelProxy: launch.ModelProxy,
+		Effort:     launch.Effort,
+		Sandbox:    launch.Sandbox,
+		Approval:   launch.Approval,
 	}
 	if launch.AutoReviewSet {
 		autoReview := launch.AutoReview

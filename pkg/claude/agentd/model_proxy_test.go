@@ -112,6 +112,9 @@ func TestModelGatewaySnapshotTraceKeepsRecordedCredentialMode(t *testing.T) {
 			want = "off"
 		}
 		require.Equal(t, want, trace.ModelProxy)
+		seed, err := seedProfileFromConv("snapshot-conv")
+		require.NoError(t, err)
+		require.Equal(t, want, seed.ModelProxy)
 		merged, _ := mergeSnapshotInlineProfile(&db.SpawnProfile{ModelProxy: "previous@peer"}, &db.SpawnProfile{ModelProxy: trace.ModelProxy}, true)
 		require.NotNil(t, merged)
 		require.Equal(t, want, merged.ModelProxy)
