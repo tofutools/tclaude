@@ -1631,6 +1631,6 @@ CREATE TABLE federation_node_profile_assignments(peer TEXT PRIMARY KEY REFERENCE
 
 CREATE TABLE federation_worker_defaults(agent_id TEXT PRIMARY KEY,snapshot TEXT NOT NULL) STRICT;
 
-CREATE TABLE federation_enroll_tokens(id TEXT PRIMARY KEY,public_token TEXT NOT NULL,secret_hash BLOB NOT NULL,profile_id TEXT NOT NULL REFERENCES federation_node_profiles(id),profile_revision INTEGER NOT NULL,max_uses INTEGER NOT NULL,used_count INTEGER NOT NULL DEFAULT 0,revoked INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL) STRICT;
+CREATE TABLE federation_enroll_tokens(id TEXT PRIMARY KEY,public_token TEXT NOT NULL,secret_hash BLOB NOT NULL,profile_id TEXT NOT NULL,profile_revision INTEGER NOT NULL,max_uses INTEGER NOT NULL,used_count INTEGER NOT NULL DEFAULT 0,revoked INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL) STRICT;
 
 CREATE TABLE federation_enrollments(direction TEXT NOT NULL,token_id TEXT NOT NULL,peer TEXT NOT NULL,peer_key BLOB NOT NULL,local_key BLOB NOT NULL,public_token TEXT NOT NULL,retired INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,PRIMARY KEY(direction,token_id,peer)) STRICT;

@@ -381,6 +381,8 @@ func handleFederationEnroll(w http.ResponseWriter, r *http.Request) {
 		}
 		recordFederationAudit("federation.enroll.complete", t.Claims.Master, "", "", t.Claims.TokenID, 200)
 		broadcastFederationCatalogs()
+		// The master's first catalog may have arrived before its key was trusted.
+		go rt.sendControl(t.Claims.Master, proto.KindCatalogReq, "", nil)
 		writeJSON(w, 200, result)
 	case <-ctx.Done():
 		writeError(w, 504, "enrollment_timeout", "no confirmation; retry with the same token")

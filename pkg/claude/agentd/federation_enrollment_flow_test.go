@@ -146,6 +146,7 @@ func TestFederation_EnrollmentNodeRequiresPinnedPendingResult(t *testing.T) {
 	peer, e = db.GetFederationPeer(p.id.ID())
 	require.NoError(t, e)
 	require.Equal(t, "unrestricted", peer.TrustLevel)
+	fedEventually(t, "post-trust master catalog refresh", func() bool { return len(p.envelopes(proto.KindCatalogReq)) > 0 })
 	assignment, e := db.GetFederationNodeProfileAssignment(p.id.ID())
 	require.NoError(t, e)
 	require.Nil(t, assignment, "node never implicitly applies its default profile")

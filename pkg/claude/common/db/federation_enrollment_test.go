@@ -139,3 +139,18 @@ func TestFederationEnrollmentNodeConsentAndRetry(t *testing.T) {
 	_, e = FederationEnrollmentNodePreview(tok)
 	require.ErrorIs(t, e, ErrEnrollmentRefused)
 }
+
+func TestFederationEnrollmentTokensDoNotRetainDeletedProfiles(t *testing.T) {
+	setupTestDB(t)
+	master, p, tok, _ := enrollmentFixture(t, 1)
+	require.NoError(t, RevokeFederationEnrollmentToken(tok.Claims.TokenID))
+	require.NoError(t, DeleteFederationNodeProfile(p.ID))
+	node, e := proto.NewIdentity()
+	require.NoError(t, e)
+	_, e = RedeemFederationEnrollment(tok, node.Pub, master.Pub)
+	require.ErrorIs(t, e, ErrEnrollmentRefused)
+	tokens, e := ListFederationEnrollmentTokens()
+	require.NoError(t, e)
+	require.Len(t, tokens, 1)
+	require.Equal(t, tok.Public, tokens[0].Public)
+}
