@@ -26,13 +26,14 @@ type jobOutput struct {
 	ExitCode    int    `json:"exit_code"`
 }
 type jobSummary struct {
-	Peer   string    `json:"peer"`
-	ID     string    `json:"id"`
-	Commit string    `json:"commit"`
-	State  string    `json:"state"`
-	Code   int       `json:"exit_code"`
-	Error  string    `json:"error,omitempty"`
-	Output jobOutput `json:"output"`
+	Resolution string    `json:"resolution,omitempty"`
+	Peer       string    `json:"peer"`
+	ID         string    `json:"id"`
+	Commit     string    `json:"commit"`
+	State      string    `json:"state"`
+	Code       int       `json:"exit_code"`
+	Error      string    `json:"error,omitempty"`
+	Output     jobOutput `json:"output"`
 }
 
 func runFederationJobs(p *jobRunParams) int {
@@ -151,6 +152,7 @@ func waitFederationJob(p *jobRunParams, initial db.FederationJob, mu *sync.Mutex
 			var receipt proto.JobResult
 			_ = json.Unmarshal(j.Result, &receipt)
 			result.Commit = receipt.Commit
+			result.Resolution = receipt.Resolution
 			result.Code = receipt.ExitCode
 			result.Error = receipt.Code
 			if len(receipt.Logs) > 0 {
@@ -257,7 +259,10 @@ func (w *safeJobWriter) Flush() { w.emit(w.pending); w.pending = nil }
 func printJobSummaries(w io.Writer, summaries []jobSummary) {
 	for _, s := range summaries {
 		if len(summaries) > 1 {
-			fmt.Fprintf(w, "%s: %s commit=%s exit=%d job=%s\n", s.Peer, s.State, proto.StripControls(s.Commit), s.Code, s.ID)
+			fmt.Fprintf(w, "%s: %s commit=%s exit=%d job=%s checkout=%q\n", s.Peer, s.State, proto.StripControls(s.Commit), s.Code, s.ID, proto.StripControls(s.Resolution))
+		}
+		if len(summaries) == 1 && s.Resolution == "resolved from local clone (fetch failed)" {
+			fmt.Fprintln(w, s.Resolution)
 		}
 		if s.Error != "" {
 			fmt.Fprintln(w, proto.StripControls(s.Error))
