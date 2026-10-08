@@ -77,7 +77,7 @@ func (rt *fedRuntime) serveJobFollow(peer *db.FederationPeer, env *proto.Envelop
 	if e != nil {
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 	_ = conn.SetDeadline(time.Now().Add(25 * time.Hour))
@@ -211,7 +211,7 @@ func handleFederationJobFollow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, "follow", e.Error())
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	go func() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
