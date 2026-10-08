@@ -216,7 +216,7 @@ func handleModelProxyBind(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if h.Name == harness.CodexName {
+	if h.ModelProxyDialect() == "openai" {
 		if rt == nil {
 			modelError(w, 503, "model gateway federation disconnected")
 			return
@@ -225,7 +225,7 @@ func handleModelProxyBind(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		if err := rt.checkModelDialect(ctx, peer, row.ID, name, "openai", &db.ModelProxyLease{ID: leaseID, Generation: row.ExitLaunchGeneration}); err != nil {
 			_ = db.RevokeModelProxyLaunch(row.ID, row.ExitLaunchGeneration)
-			modelError(w, 503, "Codex model gateway requires an available OpenAI Responses dialect")
+			modelError(w, 503, h.DisplayName+" model gateway requires an available OpenAI Responses dialect")
 			return
 		}
 	}
@@ -290,7 +290,7 @@ func handleModelProxyRequest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), time.Hour)
 	defer cancel()
 	dialect := "anthropic"
-	if row.Harness == harness.CodexName {
+	if h, _ := harness.Get(row.Harness); h != nil && h.ModelProxyDialect() == "openai" {
 		dialect = "openai"
 	}
 	path := r.PathValue("path")
@@ -450,7 +450,7 @@ func validateLaunchModelProxy(h *harness.Harness) func(string) (string, error) {
 			return ref, nil
 		}
 		if !h.SupportsModelProxy() {
-			return "", errors.New("selected harness does not support model gateways")
+			return "", errors.New(h.ModelProxyRefusal())
 		}
 		peer, name, err := resolveModelProxyReference(ref)
 		if err != nil {

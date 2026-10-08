@@ -67,7 +67,7 @@ func newModelProxyBridge(client *http.Client, session, reference string, harness
 	// Streaming requests must outlive the ordinary named HTTP client's timeout.
 	streaming := *client
 	streaming.Timeout = 0
-	return &modelProxyBridge{client: &streaming, session: session, bearer: bearer, openai: harnessName == "codex", provider: "tclaude_gateway_" + hex.EncodeToString(hash[:8])}, nil
+	return &modelProxyBridge{client: &streaming, session: session, bearer: bearer, openai: harnessName == "codex" || harnessName == "copilot", provider: "tclaude_gateway_" + hex.EncodeToString(hash[:8])}, nil
 }
 func (b *modelProxyBridge) revoke() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -239,4 +239,21 @@ func verifyCodexModelProxyProvider(effective codexEffectiveConfig, provider, bas
 		return errors.New("codex model gateway effective provider differs from the pinned launch provider; launch refused without credential fallback")
 	}
 	return nil
+}
+
+func modelProxyCompetingEnvironmentForHarness(name, harnessName string) bool {
+	if modelProxyCompetingEnvironment(name) {
+		return true
+	}
+	if harnessName != harness.CopilotName {
+		return false
+	}
+	if strings.HasPrefix(name, "COPILOT_PROVIDER_") {
+		return true
+	}
+	switch name {
+	case "COPILOT_PROVIDERS_CONFIG", "COPILOT_OFFLINE", "COPILOT_API_URL", "COPILOT_GH_HOST", "COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "COPILOT_MODEL", "COPILOT_AUTO_MODEL", "COPILOT_DEFAULT_MODEL":
+		return true
+	}
+	return false
 }

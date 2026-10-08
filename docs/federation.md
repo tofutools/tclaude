@@ -1742,6 +1742,16 @@ The launch selects Codex's ephemeral credential store and verifies that setting,
 so a gateway 401 cannot trigger refresh of a saved ChatGPT login. A saved login
 or `OPENAI_API_KEY` is not used for gateway model requests;
 the upstream is an API/provider-credential endpoint, not subscription billing.
+Copilot CLI 1.0.91 or newer can use an `openai` gateway too. The binding sets
+`COPILOT_PROVIDER_BASE_URL` to the session bridge, selects Responses over HTTP,
+and supplies only the launch bearer. `COPILOT_OFFLINE=true` disables GitHub
+login/routing and telemetry, as well as GitHub MCP and web tools. Pass an explicit
+Copilot model (for example `--model gpt-5.4`); `auto` and an absent model are
+refused. Both the TUI and embedded API drive run with the same binding.
+Competing provider key commands, headers, registry files and credential/routing
+variables are stripped before applying the binding. This follows the native
+[Copilot BYOK contract](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/use-byok-models).
+
 This also applies to remote spawn and teleport `--credentials proxy:<name>@<peer>`.
 There is no automatic fallback to local credentials on refusal or disconnect.
 Filtered sandbox IP rules still govern tools; the separately authorized model
@@ -1755,6 +1765,7 @@ follow-up turns, and app-server drive:
 
 ```bash
 TCLAUDE_CODEX_PROXY_SMOKE=1 scripts/test.sh ./pkg/claude/session -run TestNativeCodexModelProxySavedLoginPrecedence -v -count=1
+TCLAUDE_COPILOT_PROXY_SMOKE=1 scripts/test.sh ./pkg/claude/session -run TestNativeCopilotModelProxyNoFallback -v -count=1
 ```
 
 All six daily limits and both token bounds must be positive. Model entries match

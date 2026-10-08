@@ -58,6 +58,12 @@ func ResolveTclaudeLayerModelTransport(
 	if h.Name == harness.OpenCodeName && strings.TrimSpace(context.Model) == "" {
 		return harness.ResolvedModelTransport{}, nil
 	}
+	if h.Name == harness.CopilotName && context.ModelProxy != "" && context.ModelProxy != "off" {
+		if strings.TrimSpace(context.Model) == "" || context.Model == "auto" {
+			return harness.ResolvedModelTransport{}, fmt.Errorf("Copilot model gateway requires an explicit model; automatic GitHub model selection is unavailable offline")
+		}
+		return harness.ResolvedModelTransport{Model: context.Model, Provider: "tclaude_gateway", ProviderResolved: true, SessionGateway: true}, nil
+	}
 	if h.Name == harness.CodexName && context.ModelProxy != "" && context.ModelProxy != "off" {
 		if flag, ok := providerChangingArg(context.ExtraArgs, map[string]bool{"-c": true, "--config": true, "-p": true, "--profile": true, "--oss": false, "--local-provider": true, "--remote": false}); ok {
 			return harness.ResolvedModelTransport{}, fmt.Errorf("model gateway cannot combine with Codex provider override %s", flag)

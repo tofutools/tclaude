@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -328,7 +329,7 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		}
 	}
 	if modelProxy != "" && modelProxy != "off" && !h.SupportsModelProxy() {
-		return nil, fmt.Errorf("recorded model gateway is unsupported by %s", h.Name)
+		return nil, errors.New(h.ModelProxyRefusal())
 	}
 	model := ""
 	if agentProfile.ModelID != nil {
