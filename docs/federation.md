@@ -1601,7 +1601,10 @@ Configure these defaults under `federation.teleport.backup` in local config:
 ```
 
 `recovery` accepts `auto|manual`; `superseded` accepts `stop|clone`. Lease duration
-must cover at least two renewal intervals. Policies are local and re-read live.
+must cover at least two renewal intervals. Timings are pinned when the backup is
+reserved, and the origin's required cadence travels with the offer so different
+receiver defaults cannot trigger false failover. Recovery mode and superseded
+policy are local and re-read live.
 Retiring the backup or replacing its generation releases its dormant slot and
 supersedes the old remote on its next contact. Revoking `self.teleport` prevents
 further accepted renewals; recovery still observes the full online wait.
@@ -1609,7 +1612,10 @@ further accepted renewals; recovery still observes the full online wait.
 `report` and a leased copy's `--home` commit bounded findings (up to 16 KiB for
 report), then stop the roaming copy. Only after its node verifies the stop does
 the origin deliver the findings and resume the original identity. Retries use
-the same durable return ID and never launch a second identity. Lost connectivity
+the same durable return ID and never launch a second identity. Findings arriving
+after lease-loss recovery still reach the original inbox once, without another
+resume. Shutdown process identity survives daemon restarts, so a missing tmux
+pane alone cannot certify exit. Lost connectivity
 leaves a return pending; use `teleport status` to inspect it. An operator can
 retire the stopped roaming identity after the origin acknowledges recovery.
 An ordinary `--home` without a paused backup still uses the normal teleport

@@ -9,21 +9,27 @@ import (
 var ErrTeleportDormantQuota = errors.New("teleport dormant quota reached or source already has a backup")
 
 type FederationTeleportLease struct {
-	Direction   string    `json:"direction"`
-	Peer        string    `json:"peer"`
-	Offer       string    `json:"offer"`
-	SourceAgent string    `json:"source_agent"`
-	SourceConv  string    `json:"source_conv"`
-	TargetAgent string    `json:"target_agent,omitempty"`
-	Epoch       int64     `json:"epoch"`
-	State       string    `json:"state"`
-	Revision    int64     `json:"revision"`
-	ExpiresAt   time.Time `json:"expires_at"`
-	LastRenewed time.Time `json:"last_renewed,omitempty"`
-	Sequence    int64     `json:"sequence,omitempty"`
-	ReturnID    string    `json:"return_id,omitempty"`
-	Findings    string    `json:"findings,omitempty"`
-	LastError   string    `json:"last_error,omitempty"`
+	RenewSeconds         int       `json:"renew_seconds"`
+	LeaseSeconds         int       `json:"lease_seconds,omitempty"`
+	GraceSeconds         int       `json:"grace_seconds,omitempty"`
+	ShutdownPID          int       `json:"shutdown_pid,omitempty"`
+	ShutdownProcessStart string    `json:"shutdown_process_start,omitempty"`
+	ShutdownConv         string    `json:"shutdown_conv,omitempty"`
+	Direction            string    `json:"direction"`
+	Peer                 string    `json:"peer"`
+	Offer                string    `json:"offer"`
+	SourceAgent          string    `json:"source_agent"`
+	SourceConv           string    `json:"source_conv"`
+	TargetAgent          string    `json:"target_agent,omitempty"`
+	Epoch                int64     `json:"epoch"`
+	State                string    `json:"state"`
+	Revision             int64     `json:"revision"`
+	ExpiresAt            time.Time `json:"expires_at"`
+	LastRenewed          time.Time `json:"last_renewed,omitempty"`
+	Sequence             int64     `json:"sequence,omitempty"`
+	ReturnID             string    `json:"return_id,omitempty"`
+	Findings             string    `json:"findings,omitempty"`
+	LastError            string    `json:"last_error,omitempty"`
 }
 
 // ReserveFederationTeleportLease charges dormant slots atomically, including

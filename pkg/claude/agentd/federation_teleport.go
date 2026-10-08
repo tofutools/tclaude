@@ -162,9 +162,11 @@ func handleFederationTeleport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if in.KeepPausedBackup {
-		if _, err := teleportBackupPolicy(); err != nil {
+		if p, err := teleportBackupPolicy(); err != nil {
 			writeError(w, 409, "backup_policy", err.Error())
 			return
+		} else {
+			intent.BackupRenewSeconds = p.RenewSeconds
 		}
 	}
 	if previous != nil {
@@ -374,6 +376,10 @@ func handleSelfTeleports(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			lease, _ := db.GetFederationTeleportLease(t.Direction, t.Peer, t.Offer)
+			if lease != nil {
+				t.State = lease.State
+				t.TargetAgent = lease.TargetAgent
+			}
 			out = append(out, map[string]any{"lease": lease, "offer": t.Offer, "peer": t.Peer, "direction": t.Direction, "state": t.State, "target_agent": t.TargetAgent, "intent": t.Intent, "credentials": t.Credentials})
 		}
 	}

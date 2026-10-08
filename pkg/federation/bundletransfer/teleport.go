@@ -20,20 +20,21 @@ type TeleportHop struct {
 // The signed immediate peer attests this bounded provenance. Older hops are
 // explanatory history, never permission or proof of a remote principal.
 type TeleportIntent struct {
-	Version          int           `json:"version"`
-	Chain            string        `json:"chain"`
-	OriginInstance   string        `json:"origin_instance"`
-	OriginAgent      string        `json:"origin_agent"`
-	SourceAgent      string        `json:"source_agent"`
-	SourceConv       string        `json:"source_conv"`
-	KeepPausedBackup bool          `json:"keep_paused_backup,omitempty"`
-	Clone            bool          `json:"clone,omitempty"`
-	Home             bool          `json:"home,omitempty"`
-	Note             string        `json:"note,omitempty"`
-	Credentials      string        `json:"credentials,omitempty"`
-	Require          string        `json:"require,omitempty"`
-	GitRef           string        `json:"git_ref,omitempty"`
-	Hops             []TeleportHop `json:"hops"`
+	Version            int           `json:"version"`
+	Chain              string        `json:"chain"`
+	OriginInstance     string        `json:"origin_instance"`
+	OriginAgent        string        `json:"origin_agent"`
+	SourceAgent        string        `json:"source_agent"`
+	SourceConv         string        `json:"source_conv"`
+	BackupRenewSeconds int           `json:"backup_renew_seconds,omitempty"`
+	KeepPausedBackup   bool          `json:"keep_paused_backup,omitempty"`
+	Clone              bool          `json:"clone,omitempty"`
+	Home               bool          `json:"home,omitempty"`
+	Note               string        `json:"note,omitempty"`
+	Credentials        string        `json:"credentials,omitempty"`
+	Require            string        `json:"require,omitempty"`
+	GitRef             string        `json:"git_ref,omitempty"`
+	Hops               []TeleportHop `json:"hops"`
 }
 
 func ValidCredentials(mode string) bool {
@@ -57,6 +58,9 @@ func ValidCredentials(mode string) bool {
 	return true
 }
 func (t *TeleportIntent) Validate() error {
+	if t.KeepPausedBackup && (t.BackupRenewSeconds < 1 || t.BackupRenewSeconds > 43200) {
+		return errors.New("invalid teleport backup renewal cadence")
+	}
 	if t.KeepPausedBackup && t.Clone {
 		return errors.New("clone and paused backup are mutually exclusive")
 	}

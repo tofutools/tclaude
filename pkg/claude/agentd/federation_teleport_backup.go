@@ -54,7 +54,7 @@ func reserveTeleportBackup(peer, offer, agent, conv string, expires time.Time) e
 	if err != nil {
 		return err
 	}
-	return db.ReserveFederationTeleportLease(db.FederationTeleportLease{Direction: "out", Peer: peer, Offer: offer, SourceAgent: agent, SourceConv: conv, Epoch: 1, State: "reserved", ExpiresAt: expires}, p.DormantMax)
+	return db.ReserveFederationTeleportLease(db.FederationTeleportLease{Direction: "out", Peer: peer, Offer: offer, SourceAgent: agent, SourceConv: conv, Epoch: 1, State: "reserved", ExpiresAt: expires, RenewSeconds: p.RenewSeconds, LeaseSeconds: p.LeaseSeconds, GraceSeconds: p.GraceSeconds}, p.DormantMax)
 }
 func pausedTeleportDescription(agent string) string {
 	l, err := db.TeleportBackupForAgent(agent)
@@ -120,18 +120,22 @@ func pauseConfirmedTeleport(m db.FederationAgentMove) bool {
 		return true
 	}
 	if l.State == "pausing" {
+		if !prepareTeleportShutdown(l, m.SourceConv) {
+			return true
+		}
 		res, outcome := stopOneConvAndWait(m.SourceConv, false, db.AgentExitActionStop, "", 0)
-		if res.Action == "error" || outcome == softExitStuck || outcome == softExitUnattempted {
+		if res.Action == "error" || outcome == softExitStuck || outcome == softExitUnattempted || teleportShutdownAlive(*l) {
 			l.LastError = res.Detail
+			if l.LastError == "" {
+				l.LastError = "pinned pane process still alive; waiting for verified exit"
+			}
 			_, _ = db.TransitionFederationTeleportLease(*l, "")
 			return true
 		}
 		l.State = "paused"
 		l.LastError = ""
 		l.LastRenewed = time.Now()
-		if p, e := teleportBackupPolicy(); e == nil {
-			l.ExpiresAt = l.LastRenewed.Add(time.Duration(p.LeaseSeconds) * time.Second)
-		}
+		l.ExpiresAt = l.LastRenewed.Add(time.Duration(l.LeaseSeconds) * time.Second)
 		if won, e := db.TransitionFederationTeleportLease(*l, ""); e != nil || !won {
 			return true
 		}
@@ -160,7 +164,7 @@ func ensureIncomingTeleportLease(m db.FederationAgentMove) error {
 		}
 		return nil
 	}
-	return db.ReserveFederationTeleportLease(db.FederationTeleportLease{Direction: "in", Peer: m.Peer, Offer: m.ID, SourceAgent: m.SourceAgent, SourceConv: m.SourceConv, TargetAgent: m.TargetAgent, Epoch: 1, State: "active"}, 1)
+	return db.ReserveFederationTeleportLease(db.FederationTeleportLease{Direction: "in", Peer: m.Peer, Offer: m.ID, SourceAgent: m.SourceAgent, SourceConv: m.SourceConv, TargetAgent: m.TargetAgent, Epoch: 1, State: "active", RenewSeconds: t.Intent.BackupRenewSeconds}, 1)
 }
 func (rt *fedRuntime) sendTeleportLease(l db.FederationTeleportLease, f teleportLeaseFrame) {
 	f.Offer = l.Offer
@@ -195,8 +199,8 @@ func (rt *fedRuntime) teleportObservation(l db.FederationTeleportLease, now time
 	}
 	return o
 }
-func teleportLeaseWait(p config.TeleportBackupConfig) time.Duration {
-	return time.Duration(p.LeaseSeconds+p.GraceSeconds) * time.Second
+func teleportLeaseWait(l db.FederationTeleportLease) time.Duration {
+	return time.Duration(l.LeaseSeconds+l.GraceSeconds) * time.Second
 }
 func (rt *fedRuntime) reconcileTeleportLeases() {
 	if !teleportLeaseMu.TryLock() {
@@ -250,7 +254,7 @@ func (rt *fedRuntime) reconcileTeleportLeases() {
 			}
 			o := rt.teleportObservation(l, now)
 			rt.teleportLeases.Rows[l.Offer] = o
-			if now.Sub(o.LastLive) < teleportLeaseWait(p) {
+			if now.Sub(o.LastLive) < teleportLeaseWait(l) {
 				continue
 			}
 			if p.Recovery == "manual" {
@@ -275,7 +279,7 @@ func (rt *fedRuntime) reconcileTeleportLeases() {
 			continue
 		}
 		o := rt.teleportObservation(l, now)
-		if !o.Sent.IsZero() && now.Sub(o.Sent) < time.Duration(p.RenewSeconds)*time.Second {
+		if !o.Sent.IsZero() && now.Sub(o.Sent) < time.Duration(l.RenewSeconds)*time.Second {
 			continue
 		}
 		o.Sent = now
@@ -368,7 +372,7 @@ func (rt *fedRuntime) acceptTeleportLease(peer *db.FederationPeer, env *proto.En
 	switch f.Op {
 	case "renew", "gone", "return":
 		l, e := db.GetFederationTeleportLease("out", peer.InstanceID, f.Offer)
-		if e != nil || l == nil || l.TargetAgent != f.Agent && !(l.TargetAgent == "" && l.State == "released") {
+		if e != nil || l == nil || l.TargetAgent != f.Agent && (l.TargetAgent != "" || l.State != "released") {
 			return
 		}
 		if l.TargetAgent == "" && l.State == "released" {
@@ -377,6 +381,20 @@ func (rt *fedRuntime) acceptTeleportLease(peer *db.FederationPeer, env *proto.En
 				return
 			}
 			l.Revision++
+		}
+		if f.Op == "return" && f.Epoch <= l.Epoch && (l.State == "recovered" || l.State == "recovering") && proto.ValidStreamID(f.ReturnID) {
+			if l.ReturnID == "" {
+				l.ReturnID = f.ReturnID
+				l.Findings = f.Findings
+				won, e := db.TransitionFederationTeleportLease(*l, "Late teleport findings from "+l.Peer+"/"+l.TargetAgent+" (backup already recovering or recovered; no second resume):\n\n"+f.Findings)
+				if e != nil || !won {
+					return
+				}
+				l.Revision++
+				recordFederationAudit("teleport.report.late", l.Peer, l.TargetAgent, "", "offer="+l.Offer+" return="+f.ReturnID, 200)
+			}
+			rt.sendTeleportLease(*l, teleportLeaseFrame{Op: "superseded", Epoch: l.Epoch, Policy: teleportSupersededPolicy()})
+			return
 		}
 		if l.Epoch != f.Epoch || l.State == "recovered" || l.State == "recovering" || l.State == "released" {
 			rt.sendTeleportLease(*l, teleportLeaseFrame{Op: "superseded", Epoch: l.Epoch, Policy: teleportSupersededPolicy()})
@@ -411,7 +429,7 @@ func (rt *fedRuntime) acceptTeleportLease(peer *db.FederationPeer, env *proto.En
 		l.Sequence = f.Sequence
 		if f.Op == "renew" {
 			l.LastRenewed = time.Now()
-			l.ExpiresAt = l.LastRenewed.Add(time.Duration(p.LeaseSeconds) * time.Second)
+			l.ExpiresAt = l.LastRenewed.Add(time.Duration(l.LeaseSeconds) * time.Second)
 			l.State = "paused"
 			if rt.observeTeleportOnline(time.Now()) {
 				o := rt.teleportObservation(*l, time.Now())
@@ -454,9 +472,15 @@ func (rt *fedRuntime) stopSupersededTeleport(l *db.FederationTeleportLease) {
 		return
 	}
 	if a != nil && a.Active() {
+		if !prepareTeleportShutdown(l, a.CurrentConvID) {
+			return
+		}
 		res, out := stopOneConvAndWait(a.CurrentConvID, false, db.AgentExitActionStop, "", 0)
-		if res.Action == "error" || out == softExitStuck || out == softExitUnattempted {
+		if res.Action == "error" || out == softExitStuck || out == softExitUnattempted || teleportShutdownAlive(*l) {
 			l.LastError = res.Detail
+			if l.LastError == "" {
+				l.LastError = "pinned pane process still alive; waiting for verified exit"
+			}
 			_, _ = db.TransitionFederationTeleportLease(*l, "")
 			return
 		}
@@ -471,9 +495,15 @@ func (rt *fedRuntime) stopReturningTeleport(l *db.FederationTeleportLease) {
 	if err != nil || a == nil {
 		return
 	}
+	if !prepareTeleportShutdown(l, a.CurrentConvID) {
+		return
+	}
 	res, out := stopOneConvAndWait(a.CurrentConvID, false, db.AgentExitActionStop, "", 0)
-	if res.Action == "error" || out == softExitStuck || out == softExitUnattempted {
+	if res.Action == "error" || out == softExitStuck || out == softExitUnattempted || teleportShutdownAlive(*l) {
 		l.LastError = res.Detail
+		if l.LastError == "" {
+			l.LastError = "pinned pane process still alive; waiting for verified exit"
+		}
 		_, _ = db.TransitionFederationTeleportLease(*l, "")
 		return
 	}
@@ -561,14 +591,14 @@ func handleTeleportRecover(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, "no_backup", "no paused backup")
 		return
 	}
-	p, err := teleportBackupPolicy()
+	_, err = teleportBackupPolicy()
 	if err != nil || !rt.observeTeleportOnline(time.Now()) {
 		writeError(w, 409, "offline", "origin must be online")
 		return
 	}
 	o := rt.teleportObservation(*l, time.Now())
 	rt.teleportLeases.Rows[l.Offer] = o
-	if l.State != "recovering" && (l.State != "paused" && l.State != "recovery_needed" || time.Since(o.LastLive) < teleportLeaseWait(p)) {
+	if l.State != "recovering" && (l.State != "paused" && l.State != "recovery_needed" || time.Since(o.LastLive) < teleportLeaseWait(*l)) {
 		writeError(w, 409, "lease_active", "wait for a full online lease plus grace without renewal; no force bypass")
 		return
 	}
@@ -578,4 +608,39 @@ func handleTeleportRecover(w http.ResponseWriter, r *http.Request) {
 		rt.beginTeleportRecovery(l, teleportLeaseLostBriefing(*l))
 	}
 	writeJSON(w, 202, map[string]any{"state": l.State, "offer": l.Offer, "epoch": l.Epoch, "error": l.LastError})
+}
+
+// Persist process incarnation before teardown. A crash after tmux removes the
+// pane must not turn "no session" into proof that its harness process exited.
+func prepareTeleportShutdown(l *db.FederationTeleportLease, conv string) bool {
+	if l.ShutdownConv != "" && l.ShutdownConv != conv {
+		l.LastError = "generation changed during teleport shutdown; inspect before proceeding"
+		_, _ = db.TransitionFederationTeleportLease(*l, "")
+		return false
+	}
+	if l.ShutdownPID != 0 {
+		return true
+	}
+	sess := pickAliveSession(conv)
+	if sess == nil {
+		return true
+	}
+	target, err := captureLifecycleTarget(sess)
+	if err != nil {
+		l.LastError = err.Error()
+		_, _ = db.TransitionFederationTeleportLease(*l, "")
+		return false
+	}
+	l.ShutdownPID = target.panePID
+	l.ShutdownProcessStart = moveProcessStart(target.panePID)
+	l.ShutdownConv = conv
+	won, err := db.TransitionFederationTeleportLease(*l, "")
+	if err != nil || !won {
+		return false
+	}
+	l.Revision++
+	return true
+}
+func teleportShutdownAlive(l db.FederationTeleportLease) bool {
+	return moveShutdownProcessAlive(db.FederationAgentMove{ShutdownPID: l.ShutdownPID, ShutdownProcessStart: l.ShutdownProcessStart})
 }

@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +50,7 @@ func fedPausedBackup(t *testing.T, fh *fedHarness) (string, bundletransfer.Descr
 	testharness.DecodeJSON(t, rec, &out)
 	d := out.Offer.D
 	require.True(t, d.Teleport.KeepPausedBackup)
+	require.Greater(t, d.Teleport.BackupRenewSeconds, 0)
 	fedMoveConfirm(t, fh, d, d.SHA256)
 	fedEventually(t, "source paused", func() bool {
 		m, _ := db.GetFederationAgentMove("out", fh.peer.id.ID(), d.ID)
@@ -185,7 +189,11 @@ func fedLandedBackup(t *testing.T, fh *fedHarness) (bundletransfer.Descriptor, *
 	t.Helper()
 	fh.f.HaveGroup("receiver")
 	fedReceiveAgents(t, fh, "receiver")
-	d := fedIncomingTeleport(t, fh, "local", func(in *bundletransfer.TeleportIntent) { in.Clone = false; in.KeepPausedBackup = true })
+	d := fedIncomingTeleport(t, fh, "local", func(in *bundletransfer.TeleportIntent) {
+		in.Clone = false
+		in.KeepPausedBackup = true
+		in.BackupRenewSeconds = 1
+	})
 	require.Equal(t, proto.AckAccepted, fedAckFor(t, fh.peer, d.ID).Status)
 	rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/bundle-offers/"+d.ID+"/import", map[string]any{"cwd": testutil.CanonicalTempDir(t), "apply": true})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
@@ -248,6 +256,7 @@ func TestFederation_TeleportBackupHomeUsesDurableReportReturn(t *testing.T) {
 	fh := newFedHarness(t)
 	fedBackupPolicy(t, "auto")
 	d, a := fedLandedBackup(t, fh)
+	require.NoError(t, db.SetAgentPermissionOverride(a.CurrentConvID, agentd.PermSelfTeleport, db.PermEffectDeny, "test"))
 	req := func(input map[string]any) *httptest.ResponseRecorder {
 		return testharness.Serve(fh.f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/teleport", input), a.CurrentConvID))
 	}
@@ -310,4 +319,85 @@ func TestFederation_TeleportBackupSupersededCloneStaysOnline(t *testing.T) {
 		}
 	}
 	require.True(t, warned)
+}
+
+func TestFederation_TeleportBackupLateReportAfterRecoveryDeliveredOnce(t *testing.T) {
+	fh := newFedHarness(t)
+	fedBackupPolicy(t, "auto")
+	_, d := fedPausedBackup(t, fh)
+	fedEventuallyWithin(t, "lease recovery before partitioned return", 6*time.Second, func() bool {
+		l, _ := db.GetFederationTeleportLease("out", fh.peer.id.ID(), d.ID)
+		return l != nil && l.State == "recovered"
+	})
+	id := proto.NewEnvelopeID()
+	for i := 0; i < 2; i++ {
+		fedLeaseControl(t, fh, d, "return", 0, map[string]any{"return_id": id, "findings": "Late findings: deployed build 123."})
+	}
+	fedEventually(t, "late findings recorded", func() bool {
+		l, _ := db.GetFederationTeleportLease("out", fh.peer.id.ID(), d.ID)
+		return l != nil && l.ReturnID == id
+	})
+	msgs, err := db.ListAgentMessagesForConv(moveSourceConv, 100)
+	require.NoError(t, err)
+	var reports int
+	for _, m := range msgs {
+		if strings.Contains(m.Body, "Late findings: deployed build 123.") {
+			reports++
+		}
+	}
+	require.Equal(t, 1, reports)
+	l, err := db.GetFederationTeleportLease("out", fh.peer.id.ID(), d.ID)
+	require.NoError(t, err)
+	require.Equal(t, "recovered", l.State)
+	require.Equal(t, int64(2), l.Epoch)
+}
+func TestFederation_TeleportBackupReturnWaitsForPersistedProcessAfterPaneLoss(t *testing.T) {
+	fh := newFedHarness(t)
+	d, a := fedLandedBackup(t, fh)
+	child := exec.Command("sleep", "60")
+	require.NoError(t, child.Start())
+	t.Cleanup(func() { _ = child.Process.Kill(); _ = child.Wait() })
+	probe := exec.Command("ps", "-p", strconv.Itoa(child.Process.Pid), "-o", "lstart=")
+	probe.Env = append(os.Environ(), "TZ=UTC", "LC_ALL=C")
+	started, err := probe.Output()
+	require.NoError(t, err)
+	// Model restart after tmux lost the pane, with the old harness PID still
+	// alive. The shutdown evidence was committed before the previous teardown.
+	fh.f.Stop(a.CurrentConvID, true)
+	l, err := db.GetFederationTeleportLease("in", fh.peer.id.ID(), d.ID)
+	require.NoError(t, err)
+	l.State = "returning"
+	l.ReturnID = proto.NewEnvelopeID()
+	l.Findings = "Stopped after repair"
+	l.ShutdownPID = child.Process.Pid
+	l.ShutdownProcessStart = strings.TrimSpace(string(started))
+	l.ShutdownConv = a.CurrentConvID
+	won, err := db.TransitionFederationTeleportLease(*l, "")
+	require.NoError(t, err)
+	require.True(t, won)
+	time.Sleep(2200 * time.Millisecond)
+	l, err = db.GetFederationTeleportLease("in", fh.peer.id.ID(), d.ID)
+	require.NoError(t, err)
+	require.Equal(t, "returning", l.State, "missing pane is not proof of process exit")
+	for _, env := range fh.peer.envelopes(proto.KindTeleportLease) {
+		var f struct{ Op string }
+		require.NoError(t, env.DecodePayload(&f))
+		require.NotEqual(t, "return", f.Op)
+	}
+	require.NoError(t, child.Process.Kill())
+	_ = child.Wait()
+	fedEventually(t, "return after persisted PID really exits", func() bool {
+		l, _ := db.GetFederationTeleportLease("in", fh.peer.id.ID(), d.ID)
+		return l != nil && l.State == "stopped"
+	})
+}
+
+func TestFederation_TeleportBackupUsesOriginCadenceWithDifferentReceiverDefaults(t *testing.T) {
+	fh := newFedHarness(t)
+	d, _ := fedLandedBackup(t, fh)
+	// Local default is 30s; this origin requested 1s in the signed offer.
+	fedEventuallyWithin(t, "origin cadence respected", 4*time.Second, func() bool {
+		l, _ := db.GetFederationTeleportLease("in", fh.peer.id.ID(), d.ID)
+		return l != nil && l.RenewSeconds == 1 && l.Sequence >= 2
+	})
 }
