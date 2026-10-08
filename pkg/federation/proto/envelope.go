@@ -160,6 +160,7 @@ const MaxSpawnBrief = 8 * 1024
 
 // SpawnRequestPayload is the payload of a KindSpawnReq envelope.
 type SpawnRequestPayload struct {
+	Profile          string `json:"profile,omitempty"`
 	Credentials      string `json:"credentials,omitempty"`
 	ModelLease       string `json:"model_lease,omitempty"`
 	PlacementVersion int    `json:"placement_version,omitempty"`
@@ -222,17 +223,26 @@ type CatalogPayload struct {
 
 // CatalogGroup is one exported group as seen by one peer.
 type CatalogGroup struct {
-	AgentStatuses           []AgentStatus    `json:"agent_statuses,omitempty"`
-	AgentStatusesUpdatedAt  time.Time        `json:"agent_statuses_updated_at,omitempty"`
-	AgentStatusesAt         time.Time        `json:"agent_statuses_at,omitempty"`
-	AgentStatusesReceivedAt time.Time        `json:"agent_statuses_received_at,omitempty"` // overwritten by receiver
-	Name                    string           `json:"name"`
-	Description             string           `json:"description,omitempty"`
-	Caps                    []string         `json:"caps"`
-	Members                 []CatalogMember  `json:"members,omitempty"`
-	Routes                  []CatalogRoute   `json:"routes,omitempty"`
-	Sessions                []CatalogSession `json:"sessions,omitempty"`
-	SessionsAt              time.Time        `json:"sessions_at,omitempty"`
+	SpawnProfiles           []CatalogSpawnProfile `json:"spawn_profiles,omitempty"`
+	AgentStatuses           []AgentStatus         `json:"agent_statuses,omitempty"`
+	AgentStatusesUpdatedAt  time.Time             `json:"agent_statuses_updated_at,omitempty"`
+	AgentStatusesAt         time.Time             `json:"agent_statuses_at,omitempty"`
+	AgentStatusesReceivedAt time.Time             `json:"agent_statuses_received_at,omitempty"` // overwritten by receiver
+	Name                    string                `json:"name"`
+	Description             string                `json:"description,omitempty"`
+	Caps                    []string              `json:"caps"`
+	Members                 []CatalogMember       `json:"members,omitempty"`
+	Routes                  []CatalogRoute        `json:"routes,omitempty"`
+	Sessions                []CatalogSession      `json:"sessions,omitempty"`
+	SessionsAt              time.Time             `json:"sessions_at,omitempty"`
+}
+
+// CatalogSpawnProfile is the safe, selectable projection of a local profile.
+type CatalogSpawnProfile struct {
+	Name    string `json:"name"`
+	Harness string `json:"harness"`
+	Model   string `json:"model,omitempty"`
+	Effort  string `json:"effort,omitempty"`
 }
 
 // CatalogSession describes a group member's current live pane. Agent is the

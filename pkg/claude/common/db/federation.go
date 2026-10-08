@@ -536,6 +536,7 @@ const (
 // FederationSpawnRequest is a spawn request a peer sent into an exported
 // group, waiting for (or decided by) the local operator.
 type FederationSpawnRequest struct {
+	Profile          string
 	Credentials      string
 	ModelLease       string
 	PlacementVersion int
@@ -601,10 +602,10 @@ func InsertFederationSpawnRequest(r *FederationSpawnRequest, pendingLimit int) (
 	}
 	now := time.Now()
 	res, err := tx.Exec(`INSERT INTO federation_spawn_requests
-		(from_instance, envelope_id, from_agent, from_name, group_id, group_name, name, role, brief, status, created_at, expires_at, placement_version, requirements, credentials, model_lease)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		(from_instance, envelope_id, from_agent, from_name, group_id, group_name, name, role, brief, status, created_at, expires_at, placement_version, requirements, credentials, model_lease, requested_profile)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		r.FromInstance, r.EnvelopeID, r.FromAgent, r.FromName, r.GroupID, r.GroupName, r.Name, r.Role, r.Brief,
-		FedSpawnPending, dbTime(now), dbTime(r.ExpiresAt), r.PlacementVersion, r.Requirements, r.Credentials, r.ModelLease)
+		FedSpawnPending, dbTime(now), dbTime(r.ExpiresAt), r.PlacementVersion, r.Requirements, r.Credentials, r.ModelLease, r.Profile)
 	if err != nil {
 		return 0, err
 	}
@@ -616,13 +617,13 @@ func InsertFederationSpawnRequest(r *FederationSpawnRequest, pendingLimit int) (
 }
 
 const fedSpawnColumns = `id, from_instance, envelope_id, from_agent, from_name, group_id, group_name, name, role, brief,
-	status, result_agent, reason, created_at, expires_at, decided_at, launch_label, launch_started_at, automatic, notice_sent, result_sent, placement_version, requirements, credentials, model_lease`
+	status, result_agent, reason, created_at, expires_at, decided_at, launch_label, launch_started_at, automatic, notice_sent, result_sent, placement_version, requirements, credentials, model_lease, requested_profile`
 
 func scanFedSpawn(scan func(...any) error) (*FederationSpawnRequest, error) {
 	var r FederationSpawnRequest
 	var created, expires, decided, started dbTimestamp
 	if err := scan(&r.ID, &r.FromInstance, &r.EnvelopeID, &r.FromAgent, &r.FromName, &r.GroupID, &r.GroupName,
-		&r.Name, &r.Role, &r.Brief, &r.Status, &r.ResultAgent, &r.Reason, &created, &expires, &decided, &r.LaunchLabel, &started, &r.Automatic, &r.NoticeSent, &r.ResultSent, &r.PlacementVersion, &r.Requirements, &r.Credentials, &r.ModelLease); err != nil {
+		&r.Name, &r.Role, &r.Brief, &r.Status, &r.ResultAgent, &r.Reason, &created, &expires, &decided, &r.LaunchLabel, &started, &r.Automatic, &r.NoticeSent, &r.ResultSent, &r.PlacementVersion, &r.Requirements, &r.Credentials, &r.ModelLease, &r.Profile); err != nil {
 		return nil, err
 	}
 	r.CreatedAt, r.ExpiresAt, r.DecidedAt = created.Time(), expires.Time(), decided.Time()

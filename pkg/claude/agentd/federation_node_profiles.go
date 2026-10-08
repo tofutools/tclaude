@@ -98,6 +98,9 @@ func normalizeFederationNodeProfile(p *db.FederationNodeProfile) error {
 			}
 			g.Scope = db.FederationGroupScope(group.ID)
 		}
+		if err := normalizeSelectableProfiles(g.Slug, &g.SpawnPolicy); err != nil {
+			return err
+		}
 		if !validRequesterPaysPolicy(g.SpawnPolicy.RequesterPays) || g.SpawnPolicy.RequesterPays != "" && g.Slug != PermGroupsMembersSpawn {
 			return errors.New("requester_pays requires groups.members.spawn and must be required, allowed or off")
 		}
@@ -111,7 +114,7 @@ func normalizeFederationNodeProfile(p *db.FederationNodeProfile) error {
 			if g.SpawnPolicy.MaxLive < 1 {
 				return errors.New("max_live must be positive")
 			}
-		} else if g.SpawnPolicy != (db.FederationSpawnPolicy{}) {
+		} else if !g.SpawnPolicy.Equal(db.FederationSpawnPolicy{}) {
 			return errors.New("spawn_policy requires groups.members.spawn")
 		}
 		key := g.Slug + "\n" + g.Scope

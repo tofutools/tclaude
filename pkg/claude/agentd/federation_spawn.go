@@ -38,6 +38,7 @@ const (
 )
 
 type fedSpawnSendReq struct {
+	Profile     string `json:"profile,omitempty"`
 	Credentials string `json:"credentials,omitempty"`
 	Node        string `json:"node,omitempty"`
 	Require     string `json:"require,omitempty"`
@@ -71,6 +72,10 @@ func handleFederationSpawnRequestSend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("brief must be 1..%d bytes", proto.MaxSpawnBrief))
 		return
 	}
+	if req.Profile != "" && (len(req.Profile) > 128 || validateGroupName(req.Profile) != nil || proto.StripControls(req.Profile) != req.Profile) {
+		writeError(w, 400, "invalid_arg", "invalid requested profile")
+		return
+	}
 	if req.Node != "" {
 		handleFederationPlacement(w, r, req, fromConv, isHuman)
 		return
@@ -93,6 +98,10 @@ func handleFederationSpawnRequestSend(w http.ResponseWriter, r *http.Request) {
 	if cat != nil {
 		for _, g := range cat.Groups {
 			if g.Name == req.Group {
+				if req.Profile != "" && !catalogAllowsSpawnProfile(g, req.Profile) {
+					writeError(w, 403, "profile_not_allowed", "peer does not advertise the requested profile for this group; refresh its catalog or omit --profile")
+					return
+				}
 				exported = true
 			}
 		}
@@ -171,6 +180,10 @@ func (rt *fedRuntime) acceptSpawnRequest(peer *db.FederationPeer, env *proto.Env
 		refuse(fedCodeNotExported, "no group by that name accepts spawn requests from this instance")
 		return
 	}
+	if err := checkSelectableProfile(peer.InstanceID, g.ID, sp.Profile); err != nil {
+		refuse("profile_not_allowed", err.Error())
+		return
+	}
 	if sp.PlacementVersion != 0 || sp.Require != "" {
 		if sp.PlacementVersion != fedPlacementVersion {
 			refuse(fedCodeMalformed, "unsupported placement version")
@@ -181,7 +194,9 @@ func (rt *fedRuntime) acceptSpawnRequest(peer *db.FederationPeer, env *proto.Env
 			return
 		}
 		if grant := fedPeerGroupGrant(peer.InstanceID, g.ID, PermGroupsMembersSpawn); grant != nil {
-			effective, err := federationPolicyHarness(g, grant.SpawnPolicy)
+			policy := grant.SpawnPolicy
+			policy.Profile = fedFirst(sp.Profile, policy.Profile)
+			effective, err := federationPolicyHarness(g, policy)
 			if err != nil {
 				refuse("node_incompatible", "automatic launch policy unavailable")
 				return
@@ -200,7 +215,7 @@ func (rt *fedRuntime) acceptSpawnRequest(peer *db.FederationPeer, env *proto.Env
 		refuse(fedCodeMalformed, "invalid requester lease")
 		return
 	}
-	req := &db.FederationSpawnRequest{Credentials: sp.Credentials, ModelLease: sp.ModelLease,
+	req := &db.FederationSpawnRequest{Profile: sp.Profile, Credentials: sp.Credentials, ModelLease: sp.ModelLease,
 		PlacementVersion: sp.PlacementVersion, Requirements: sp.Require,
 		FromInstance: peer.InstanceID, EnvelopeID: env.ID, FromAgent: senderAgent, FromName: senderName,
 		GroupID: g.ID, GroupName: g.Name, Brief: sp.Brief, ExpiresAt: env.ExpiresAt,
@@ -242,6 +257,9 @@ func (rt *fedRuntime) acceptSpawnRequest(peer *db.FederationPeer, env *proto.Env
 		fmt.Sprintf("%s asks for a worker in group %q", from, g.Name)
 	if req.Name != "" {
 		body += fmt.Sprintf(" named %q", req.Name)
+	}
+	if req.Profile != "" {
+		body += fmt.Sprintf(" using profile %q", req.Profile)
 	}
 	if req.Role != "" {
 		body += fmt.Sprintf(" with role %q", req.Role)
@@ -332,6 +350,7 @@ func (rt *fedRuntime) handleSpawnResult(peer *db.FederationPeer, env *proto.Enve
 }
 
 type fedSpawnRequestJSON struct {
+	Profile          string    `json:"profile,omitempty"`
 	Credentials      string    `json:"credentials,omitempty"`
 	ModelLease       string    `json:"model_lease,omitempty"`
 	Require          string    `json:"require,omitempty"`
@@ -360,7 +379,7 @@ func fedSpawnRequestView(req *db.FederationSpawnRequest, now time.Time) fedSpawn
 		status = "expired"
 	}
 	return fedSpawnRequestJSON{
-		Credentials: req.Credentials, ModelLease: req.ModelLease, Require: req.Requirements, PlacementVersion: req.PlacementVersion,
+		Profile: req.Profile, Credentials: req.Credentials, ModelLease: req.ModelLease, Require: req.Requirements, PlacementVersion: req.PlacementVersion,
 		ID: req.ID, From: req.FromName + "@" + proto.SafeName(peer, true), Instance: req.FromInstance, Group: req.GroupName,
 		Name: req.Name, Role: req.Role, Brief: req.Brief, Status: status, ResultAgent: req.ResultAgent, Reason: req.Reason,
 		CreatedAt: req.CreatedAt, ExpiresAt: req.ExpiresAt,
@@ -466,6 +485,11 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 		writeError(w, 409, "requester_pays", err.Error())
 		return
 	}
+	if err := checkSelectableProfile(peer.InstanceID, g.ID, req.Profile); err != nil {
+		writeError(w, 409, "profile_not_allowed", err.Error())
+		return
+	}
+	in.Profile = fedFirst(in.Profile, req.Profile)
 	// Claim the request before spawning: a concurrent approve or deny now
 	// sees it as taken.
 	reservedID := db.NewAgentID()
@@ -674,12 +698,13 @@ func autoApproveFederationSpawn(req *db.FederationSpawnRequest, p *db.Federation
 	if reason == "" {
 		attempted = true
 		// This synthetic identity exists only inside the grant-authorized daemon
-		// path. No remote request can supply an operator token or launch settings.
+		// path. A remote request can select only an allowlisted profile, never
+		// supply an operator token or arbitrary launch settings.
 		r := httptest.NewRequest(http.MethodPost, "/internal/federation-auto-spawn", nil)
 		r = r.WithContext(context.WithValue(r.Context(), peerKey{}, &peer{PID: 1, HumanTokenValid: true}))
 		r = r.WithContext(context.WithValue(r.Context(), federationSpawnRateKey{}, "federation:"+p.InstanceID))
 		rec := httptest.NewRecorder()
-		executeFederationSpawn(rec, r, req, p, g, fedSpawnApproveReq{Profile: policy.Profile, Cwd: policy.Cwd, Harness: policy.Harness, Model: policy.Model}, true)
+		executeFederationSpawn(rec, r, req, p, g, fedSpawnApproveReq{Profile: fedFirst(req.Profile, policy.Profile), Cwd: policy.Cwd, Harness: policy.Harness, Model: policy.Model}, true)
 		if rec.Code != http.StatusOK {
 			reason = strings.TrimSpace(rec.Body.String())
 		}

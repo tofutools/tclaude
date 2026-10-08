@@ -250,3 +250,17 @@ func TestSessionCatalogSanitization(t *testing.T) {
 		t.Fatal("sessions survived without capability")
 	}
 }
+
+func TestCatalogSelectableProfilesAreBoundedAndCapabilityGated(t *testing.T) {
+	cat := CatalogPayload{Groups: []CatalogGroup{{Name: "builders", Caps: []string{CapSpawn}, SpawnProfiles: []CatalogSpawnProfile{
+		{Name: "reviewer", Harness: "claude", Model: "vendor/model", Effort: "high"},
+		{Name: "bad\nname", Harness: "claude"},
+	}}, {Name: "hidden", Caps: []string{CapRoster}, SpawnProfiles: []CatalogSpawnProfile{{Name: "private", Harness: "claude"}}}}}
+	SanitizeCatalog(&cat)
+	if len(cat.Groups[0].SpawnProfiles) != 1 || cat.Groups[0].SpawnProfiles[0].Model != "vendor/model" {
+		t.Fatalf("selectable profiles = %#v", cat.Groups[0].SpawnProfiles)
+	}
+	if len(cat.Groups[1].SpawnProfiles) != 0 {
+		t.Fatal("profiles exposed without spawn capability")
+	}
+}

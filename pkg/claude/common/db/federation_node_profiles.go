@@ -264,7 +264,7 @@ type nodeProfileState struct {
 
 func nodeProfileGrantKey(g FederationPeerGrant) string { return g.Slug + "\n" + g.Scope }
 func nodeProfileGrantSame(a, b FederationPeerGrant) bool {
-	return a.Slug == b.Slug && a.Scope == b.Scope && a.SpawnPolicy == b.SpawnPolicy
+	return a.Slug == b.Slug && a.Scope == b.Scope && a.SpawnPolicy.Equal(b.SpawnPolicy)
 }
 func nodeProfileReadState(tx *sql.Tx, peer string) (nodeProfileState, error) {
 	s := nodeProfileState{Pools: map[string]bool{}, Grants: map[string]FederationPeerGrant{}}

@@ -79,6 +79,10 @@ func SanitizeCatalog(c *CatalogPayload) {
 			}
 		}
 		g.Caps = caps
+		g.SpawnProfiles = sanitizeSpawnProfiles(g.SpawnProfiles)
+		if !g.HasCap(CapSpawn) {
+			g.SpawnProfiles = nil
+		}
 		members := g.Members[:0]
 		for _, m := range g.Members {
 			if !ValidAgentRef(m.Agent) {
@@ -177,6 +181,27 @@ func SanitizeSessions(in []CatalogSession) []CatalogSession {
 			s.WaitingObservedSince = nil
 		}
 		out = append(out, s)
+	}
+	return out
+}
+
+// Profile identifiers are kept verbatim; rewriting would select another name.
+func sanitizeSpawnProfiles(profiles []CatalogSpawnProfile) []CatalogSpawnProfile {
+	out := profiles[:0]
+	for _, p := range profiles {
+		if len(out) == 64 {
+			break
+		}
+		if p.Name == "" || len(p.Name) > 128 || strings.TrimSpace(p.Name) != p.Name || strings.ContainsAny(p.Name, "\r\n\t/\\") || StripControls(p.Name) != p.Name {
+			continue
+		}
+		p.Harness = SafeName(p.Harness, false)
+		p.Model = strings.Join(strings.Fields(StripControls(p.Model)), " ")
+		p.Effort = strings.Join(strings.Fields(StripControls(p.Effort)), " ")
+		if len(p.Model) > 256 || len(p.Effort) > 64 {
+			continue
+		}
+		out = append(out, p)
 	}
 	return out
 }

@@ -57,6 +57,10 @@ func fedPeerGroupGrant(peer string, groupID int64, slug string) *db.FederationPe
 		}
 		return &db.FederationPeerGrant{Peer: peer, Slug: slug, SpawnPolicy: db.FederationSpawnPolicy{MaxLive: cap}}
 	}
+	return fedPeerExplicitGroupGrant(peer, groupID, slug)
+}
+
+func fedPeerExplicitGroupGrant(peer string, groupID int64, slug string) *db.FederationPeerGrant {
 	grants, err := db.ListEffectiveFederationPeerGrants(peer)
 	if err != nil {
 		return nil
@@ -96,7 +100,7 @@ func fedPeerGroupGrant(peer string, groupID int64, slug string) *db.FederationPe
 	}
 	if slug == PermGroupsMembersSpawn || slug == PermJobsRun {
 		for _, g := range candidates {
-			if rank(g) == rank(best) && g.SpawnPolicy != best.SpawnPolicy {
+			if rank(g) == rank(best) && !g.SpawnPolicy.Equal(best.SpawnPolicy) {
 				return nil
 			}
 		}
@@ -242,6 +246,10 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
+		if err := normalizeSelectableProfiles(in.Slug, &in.SpawnPolicy); err != nil {
+			writeError(w, 400, "invalid_arg", err.Error())
+			return
+		}
 		if !validRequesterPaysPolicy(in.SpawnPolicy.RequesterPays) || in.SpawnPolicy.RequesterPays != "" && in.Slug != PermGroupsMembersSpawn {
 			writeError(w, 400, "invalid_arg", "requester_pays requires groups.members.spawn and must be required, allowed or off")
 			return
@@ -258,7 +266,7 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, "invalid_arg", "max-live must be positive")
 				return
 			}
-		} else if in.SpawnPolicy != (db.FederationSpawnPolicy{}) {
+		} else if !in.SpawnPolicy.Equal(db.FederationSpawnPolicy{}) {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "launch settings apply only to groups.members.spawn or jobs.run")
 			return
 		}

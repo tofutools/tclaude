@@ -455,6 +455,9 @@ func buildFederationCatalog(peer string, status ...*statusSnapshot) (*proto.Cata
 	}
 	for gid, cs := range caps {
 		g := proto.CatalogGroup{Name: names[gid]}
+		if cs[proto.CapSpawn] {
+			g.SpawnProfiles = selectableSpawnProfiles(peer, gid)
+		}
 		for _, c := range proto.AllCaps {
 			if cs[c] {
 				g.Caps = append(g.Caps, c)
