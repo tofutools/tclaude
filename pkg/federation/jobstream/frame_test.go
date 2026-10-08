@@ -91,3 +91,17 @@ func TestEncoderBoundsEachChannelWithoutBlockingPipeDrain(t *testing.T) {
 		t.Fatal("output cap or raw bytes changed")
 	}
 }
+
+func TestSmallWritesFitEncodedBound(t *testing.T) {
+	var out bytes.Buffer
+	enc := NewEncoder(&out)
+	for i := 0; i < 1<<20; i++ {
+		_, e := enc.Write(Stdout, []byte{'x'})
+		if e != nil {
+			t.Fatal(e)
+		}
+	}
+	if out.Len() != 14*(1<<20) || out.Len() > MaxEncodedBytes {
+		t.Fatalf("small write encoding size=%d bound=%d", out.Len(), MaxEncodedBytes)
+	}
+}

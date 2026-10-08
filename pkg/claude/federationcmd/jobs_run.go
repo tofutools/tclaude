@@ -101,14 +101,10 @@ func runFederationJobs(p *jobRunParams) int {
 			_ = printJSON(os.Stdout, map[string]any{"nodes": summaries})
 		}
 	}
-	if len(summaries) > 1 && !p.JSON {
-		for _, s := range summaries {
-			fmt.Fprintf(os.Stderr, "%s: %s commit=%s exit=%d job=%s\n", s.Peer, s.State, proto.StripControls(s.Commit), s.Code, s.ID)
-			if s.Error != "" {
-				fmt.Fprintln(os.Stderr, proto.StripControls(s.Error))
-			}
-		}
+	if !p.JSON {
+		printJobSummaries(os.Stderr, summaries)
 	}
+
 	if len(summaries) == 1 {
 		return summaries[0].Code
 	}
@@ -183,11 +179,6 @@ func waitFederationJob(p *jobRunParams, initial db.FederationJob, mu *sync.Mutex
 				}
 				_, _ = stdout.Write([]byte(result.Output.Stdout[cursor.Stdout:]))
 				_, _ = stderr.Write([]byte(result.Output.Stderr[cursor.Stderr:]))
-				if receipt.Code != "" {
-					mu.Lock()
-					fmt.Fprintln(os.Stderr, proto.StripControls(receipt.Code))
-					mu.Unlock()
-				}
 			}
 			return result
 		}
@@ -262,3 +253,14 @@ func (w *safeJobWriter) emit(b []byte) {
 	_, _ = fmt.Fprint(w.out, text)
 }
 func (w *safeJobWriter) Flush() { w.emit(w.pending); w.pending = nil }
+
+func printJobSummaries(w io.Writer, summaries []jobSummary) {
+	for _, s := range summaries {
+		if len(summaries) > 1 {
+			fmt.Fprintf(w, "%s: %s commit=%s exit=%d job=%s\n", s.Peer, s.State, proto.StripControls(s.Commit), s.Code, s.ID)
+		}
+		if s.Error != "" {
+			fmt.Fprintln(w, proto.StripControls(s.Error))
+		}
+	}
+}

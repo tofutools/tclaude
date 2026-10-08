@@ -58,7 +58,7 @@ func (rt *fedRuntime) serveJobFollow(peer *db.FederationPeer, env *proto.Envelop
 	}
 	defer f.Close()
 	info, e := f.Stat()
-	if e != nil || !info.Mode().IsRegular() || info.Size() > 10<<20 {
+	if e != nil || !info.Mode().IsRegular() || info.Size() > jobstream.MaxEncodedBytes {
 		refuse("invalid live output")
 		return
 	}
@@ -97,7 +97,7 @@ func tailJobFrames(ctx context.Context, f *os.File, j *db.FederationJob, out io.
 		n, e := f.Read(buf)
 		if n > 0 {
 			total += n
-			if total > 10<<20 {
+			if total > jobstream.MaxEncodedBytes {
 				return errors.New("live output limit")
 			}
 			if _, err := out.Write(buf[:n]); err != nil {
@@ -230,7 +230,7 @@ func handleFederationJobFollow(w http.ResponseWriter, r *http.Request) {
 	}()
 	w.Header().Set("Content-Type", "application/vnd.tclaude.job-frames")
 	// Validate each complete frame before exposing bytes to a local client.
-	bounded := io.LimitReader(conn, (10<<20)+1)
+	bounded := io.LimitReader(conn, jobstream.MaxEncodedBytes+1)
 	enc := jobstream.NewEncoder(w)
 	cursor := jobstream.Cursor{}
 	for {

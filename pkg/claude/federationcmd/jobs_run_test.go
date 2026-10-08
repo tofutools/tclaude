@@ -18,3 +18,11 @@ func TestJobLiveWriterPreservesSplitUnicodeAndStripsControls(t *testing.T) {
 	w.Flush()
 	require.Equal(t, "€[31mx�", out.String())
 }
+
+func TestSingleJobPrintsUncertaintyAndFailureGuidance(t *testing.T) {
+	for _, message := range []string{"execution uncertain; inspect or cancel this job", "job status uncertain; inspect or cancel this job", "log fetch failed"} {
+		var out bytes.Buffer
+		printJobSummaries(&out, []jobSummary{{Error: message, Code: 1}})
+		require.Contains(t, out.String(), message)
+	}
+}

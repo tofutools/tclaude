@@ -16,6 +16,8 @@ const (
 	MaxChunk        = 32 << 10
 	MaxChannel      = 4 << 20
 	headerSize      = 13
+	// One-byte writes are valid: account for their worst-case header overhead.
+	MaxEncodedBytes = 2 * MaxChannel * (headerSize + 1)
 )
 
 var ErrFrame = errors.New("invalid job output frame")
