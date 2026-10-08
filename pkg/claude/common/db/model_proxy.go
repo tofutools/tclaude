@@ -11,11 +11,17 @@ import (
 var ErrModelProxyRefused = errors.New("model gateway launch is absent, revoked or replaced")
 var ErrModelProxyBudget = errors.New("model gateway daily request or token budget exhausted")
 
-type ModelProxyLaunch struct{ Session, Generation, Reference, BearerHash string }
+type ModelProxyLaunch struct{ Session, Generation, Reference, BearerHash, Lease string }
 
 // BindModelProxyLaunch never stores the bearer. A generation cannot replace
 // its first credential, even after revocation; a new launch needs a new gate.
 func BindModelProxyLaunch(session, reference, hash string) error {
+	return BindModelProxyLaunchPendingLease(session, reference, hash, "")
+}
+
+// BindModelProxyLaunchPendingLease pins a lease before remote activation.
+// Pending lease credentials cannot authorize requests until acknowledged.
+func BindModelProxyLaunchPendingLease(session, reference, hash, lease string) error {
 	decoded, err := hex.DecodeString(hash)
 	if err != nil || len(decoded) != sha256.Size || reference == "" {
 		return ErrModelProxyRefused
@@ -24,17 +30,17 @@ func BindModelProxyLaunch(session, reference, hash string) error {
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`INSERT INTO model_proxy_launches(session,generation,reference,bearer_hash)
- SELECT id,exit_callback_generation,?,? FROM sessions WHERE id=? AND exit_callback_generation<>'' AND status<>'exited'
- ON CONFLICT(session,generation) DO NOTHING`, reference, hash, session)
+	_, err = d.Exec(`INSERT INTO model_proxy_launches(session,generation,reference,bearer_hash,lease,lease_ready)
+ SELECT id,exit_callback_generation,?,?,?,? FROM sessions WHERE id=? AND exit_callback_generation<>'' AND status<>'exited'
+ ON CONFLICT(session,generation) DO NOTHING`, reference, hash, lease, lease == "", session)
 	if err != nil {
 		return err
 	}
-	var gotRef, gotHash string
+	var gotRef, gotHash, gotLease string
 	var revoked bool
-	err = d.QueryRow(`SELECT l.reference,l.bearer_hash,l.revoked FROM model_proxy_launches l
- JOIN sessions s ON s.id=l.session AND s.exit_callback_generation=l.generation WHERE s.id=?`, session).Scan(&gotRef, &gotHash, &revoked)
-	if err != nil || revoked || gotRef != reference || subtle.ConstantTimeCompare([]byte(gotHash), []byte(hash)) != 1 {
+	err = d.QueryRow(`SELECT l.reference,l.bearer_hash,l.revoked,l.lease FROM model_proxy_launches l
+ JOIN sessions s ON s.id=l.session AND s.exit_callback_generation=l.generation WHERE s.id=?`, session).Scan(&gotRef, &gotHash, &revoked, &gotLease)
+	if err != nil || revoked || gotLease != lease || gotRef != reference || subtle.ConstantTimeCompare([]byte(gotHash), []byte(hash)) != 1 {
 		return ErrModelProxyRefused
 	}
 	return nil
@@ -48,9 +54,9 @@ func VerifyModelProxyLaunch(session, bearer string) (*ModelProxyLaunch, error) {
 		return nil, err
 	}
 	var l ModelProxyLaunch
-	err = d.QueryRow(`SELECT l.session,l.generation,l.reference,l.bearer_hash FROM model_proxy_launches l
+	err = d.QueryRow(`SELECT l.session,l.generation,l.reference,l.bearer_hash,l.lease FROM model_proxy_launches l
  JOIN sessions s ON s.id=l.session AND s.exit_callback_generation=l.generation
- WHERE l.session=? AND l.revoked=0 AND s.status<>'exited'`, session).Scan(&l.Session, &l.Generation, &l.Reference, &l.BearerHash)
+ WHERE l.session=? AND l.revoked=0 AND l.lease_ready=1 AND s.status<>'exited'`, session).Scan(&l.Session, &l.Generation, &l.Reference, &l.BearerHash, &l.Lease)
 	if err != nil {
 		return nil, ErrModelProxyRefused
 	}
@@ -158,4 +164,23 @@ func ListModelProxyUsage(day string) ([]ModelProxyUsage, error) {
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+func SetModelProxyLaunchLease(session, generation, lease string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	result, err := d.Exec(`UPDATE model_proxy_launches SET lease_ready=1 WHERE session=? AND generation=? AND revoked=0 AND lease=?`, session, generation, lease)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrModelProxyRefused
+	}
+	return nil
 }

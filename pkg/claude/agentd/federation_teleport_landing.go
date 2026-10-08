@@ -121,7 +121,7 @@ func resolveTeleportLanding(peer string, group int64, credentials string) (*db.F
 	}
 	allowed := false
 	for _, value := range landing.CredentialsAllowed {
-		if value == mode {
+		if sameTeleportCredentialMode(value, mode) {
 			allowed = true
 		}
 	}
@@ -150,6 +150,9 @@ func (a *teleportLandingAuthority) check() error {
 	}
 	landing, profile, worker, mode, err := resolveTeleportLanding(t.Peer, t.Landing.GroupID, t.Intent.Credentials)
 	if err != nil {
+		return err
+	}
+	if err := checkRequesterPays(t.Peer, t.Landing.GroupID, mode, t.Intent.ModelLease, true); err != nil {
 		return err
 	}
 	if err := checkTeleportRepo(t, t.Landing.GroupID); err != nil {
@@ -187,6 +190,9 @@ func incomingTeleportRecord(peer string, sender string, d bundletransfer.Descrip
 	}
 	mode, err := pendingTeleportCredentials(peer, t.Credentials)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkRequesterPays(peer, groupID, mode, t.ModelLease, true); err != nil {
 		return nil, err
 	}
 	record := &db.FederationTeleport{Credentials: mode, Direction: "in", Peer: peer, Offer: d.ID, State: "pending", Intent: *t}
@@ -473,7 +479,7 @@ func pendingTeleportCredentials(peer, requested string) (string, error) {
 	if landing != nil && len(landing.CredentialsAllowed) > 0 {
 		allowed = false
 		for _, candidate := range landing.CredentialsAllowed {
-			if candidate == mode {
+			if sameTeleportCredentialMode(candidate, mode) {
 				allowed = true
 			}
 		}
@@ -609,4 +615,18 @@ func applyTeleportModelCredentials(b *agentbundle.Bundle, mode string) error {
 	profile.ModelProxy = ref
 	b.Manifest.Agent.Profile, err = json.Marshal(profile)
 	return err
+}
+
+// Operator aliases and sender-pinned instance IDs describe the same account
+// only while both resolve to the same current trusted identity.
+func sameTeleportCredentialMode(a, b string) bool {
+	if a == b {
+		return true
+	}
+	if !strings.HasPrefix(a, "proxy:") || !strings.HasPrefix(b, "proxy:") {
+		return false
+	}
+	ar, ae := teleportModelReference(a, "")
+	br, be := teleportModelReference(b, "")
+	return ae == nil && be == nil && ar == br
 }

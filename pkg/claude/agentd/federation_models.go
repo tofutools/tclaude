@@ -20,14 +20,16 @@ type fedModelAnswer struct {
 	payload       proto.ModelAnswerPayload
 }
 type fedModelState struct {
-	waiters  map[string]chan fedModelAnswer
-	incoming map[string]string
-	rates    map[string][]time.Time
+	leaseWaiters map[string]chan bool
+	leasePeers   map[string]string
+	waiters      map[string]chan fedModelAnswer
+	incoming     map[string]string
+	rates        map[string][]time.Time
 }
 
 func (rt *fedRuntime) modelsLocked() *fedModelState {
 	if rt.models == nil {
-		rt.models = &fedModelState{waiters: map[string]chan fedModelAnswer{}, incoming: map[string]string{}, rates: map[string][]time.Time{}}
+		rt.models = &fedModelState{leaseWaiters: map[string]chan bool{}, leasePeers: map[string]string{}, waiters: map[string]chan fedModelAnswer{}, incoming: map[string]string{}, rates: map[string][]time.Time{}}
 	}
 	return rt.models
 }
@@ -46,21 +48,21 @@ func (rt *fedRuntime) handleModelAnswer(peer *db.FederationPeer, env *proto.Enve
 		}
 	}
 }
-func (rt *fedRuntime) openModelStream(ctx context.Context, peer *db.FederationPeer, session, name string, dialects ...string) (*routebroker.FlowStream, error) {
-	dialect := ""
-	if len(dialects) > 0 {
-		dialect = dialects[0]
+func (rt *fedRuntime) openModelStream(ctx context.Context, peer *db.FederationPeer, session, name, dialect string, leases ...*db.ModelProxyLease) (*routebroker.FlowStream, error) {
+	var lease *db.ModelProxyLease
+	if len(leases) > 0 {
+		lease = leases[0]
 	}
-	return rt.openModelStreamRequest(ctx, peer, session, name, dialect, false)
+	return rt.openModelStreamRequest(ctx, peer, session, name, dialect, false, lease)
 }
 
 // Dialect discovery shares authenticated federation control but opens no data
 // stream and consumes no generation concurrency or request-rate reservation.
-func (rt *fedRuntime) checkModelDialect(ctx context.Context, peer *db.FederationPeer, session, name, dialect string) error {
-	_, err := rt.openModelStreamRequest(ctx, peer, session, name, dialect, true)
+func (rt *fedRuntime) checkModelDialect(ctx context.Context, peer *db.FederationPeer, session, name, dialect string, lease *db.ModelProxyLease) error {
+	_, err := rt.openModelStreamRequest(ctx, peer, session, name, dialect, true, lease)
 	return err
 }
-func (rt *fedRuntime) openModelStreamRequest(ctx context.Context, peer *db.FederationPeer, session, name, dialect string, probe bool) (*routebroker.FlowStream, error) {
+func (rt *fedRuntime) openModelStreamRequest(ctx context.Context, peer *db.FederationPeer, session, name, dialect string, probe bool, lease *db.ModelProxyLease) (*routebroker.FlowStream, error) {
 	kp, err := stream.NewKeyPair()
 	if err != nil {
 		return nil, err
@@ -70,6 +72,10 @@ func (rt *fedRuntime) openModelStreamRequest(ctx context.Context, peer *db.Feder
 	p.Probe = probe
 	if dialect == "openai" || probe {
 		p.Version = 2
+	}
+	if lease != nil && lease.ID != "" {
+		p.Lease = lease.ID
+		p.Generation = lease.Generation
 	}
 	ch := make(chan fedModelAnswer, 1)
 	rt.modelsMu.Lock()
@@ -137,7 +143,7 @@ func (rt *fedRuntime) acceptModelOpen(peer *db.FederationPeer, env *proto.Envelo
 	answer := func(ok bool, key []byte, reason string) {
 		rt.sendControl(peer.InstanceID, proto.KindModelAnswer, env.ID, proto.ModelAnswerPayload{Stream: p.Stream, OK: ok, Key: key, Reason: reason})
 	}
-	if !fedPeerModelAllows(peer.InstanceID, p.Proxy) {
+	if !modelOpenAllowed(peer.InstanceID, p, false) {
 		answer(false, nil, "models.proxy is not granted for this named gateway")
 		return
 	}
@@ -216,7 +222,7 @@ func (rt *fedRuntime) acceptModelOpen(peer *db.FederationPeer, env *proto.Envelo
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					if !fedPeerModelAllows(peer.InstanceID, p.Proxy) {
+					if !modelOpenAllowed(peer.InstanceID, p, false) {
 						cancel()
 						return
 					}
@@ -234,7 +240,7 @@ func (rt *fedRuntime) acceptModelOpen(peer *db.FederationPeer, env *proto.Envelo
 		defer req.Body.Close()
 		req = req.WithContext(ctx)
 		writer := newModelWireResponse(flow)
-		serveModelUpstream(writer, req, peer.InstanceID, p.Session, p.Proxy, p.Stream)
+		serveModelUpstream(writer, req, peer.InstanceID, p.Session, p.Proxy, p.Stream, p)
 		_ = writer.finish()
 		_ = flow.CloseWrite()
 	}()

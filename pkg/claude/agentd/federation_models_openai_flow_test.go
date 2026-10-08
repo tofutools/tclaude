@@ -54,7 +54,7 @@ func TestFederation_ModelGatewayOpenAIResponsesBudgetsAndErrors(t *testing.T) {
 	})
 	require.NoError(t, err)
 	call := func(path, body string) (int, string) {
-		flow := fedModelFlow(t, fh, "openai")
+		flow := fedModelFlow(t, fh, proto.ModelOpenPayload{Proxy: "model", Session: "immutable-launch", Dialect: "openai"})
 		req, e := http.NewRequest(http.MethodPost, "http://model"+path, strings.NewReader(body))
 		require.NoError(t, e)
 		req.Host = ""
@@ -128,24 +128,7 @@ func TestFederation_ModelGatewayDialectProbeDoesNotConsumeRequestCapacity(t *tes
 	})
 	require.NoError(t, err)
 	control := func(probe bool, dialect string) proto.ModelAnswerPayload {
-		kp, e := stream.NewKeyPair()
-		require.NoError(t, e)
-		sid := proto.NewEnvelopeID()
-		env := fh.peer.envelope(proto.KindModelOpen, proto.Endpoint{}, proto.ModelOpenPayload{Version: 2, Stream: sid, Proxy: "model", Session: "launch", Key: kp.Pub, Dialect: dialect, Probe: probe})
-		env.From.Agent = ""
-		fh.peer.send(env)
-		var answer proto.ModelAnswerPayload
-		fedEventually(t, "dialect control answer", func() bool {
-			for _, env := range fh.peer.envelopes(proto.KindModelAnswer) {
-				var a proto.ModelAnswerPayload
-				if env.DecodePayload(&a) == nil && a.Stream == sid {
-					answer = a
-					return true
-				}
-			}
-			return false
-		})
-		return answer
+		return fedModelControlAnswer(t, fh, proto.ModelOpenPayload{Proxy: "model", Session: "launch", Dialect: dialect, Probe: probe})
 	}
 	for range 3 {
 		answer := control(true, "openai")
@@ -153,7 +136,7 @@ func TestFederation_ModelGatewayDialectProbeDoesNotConsumeRequestCapacity(t *tes
 		require.Empty(t, answer.Key)
 	}
 	require.False(t, control(true, "anthropic").OK, "dialect probe still applies policy")
-	flow := fedModelFlow(t, fh, "openai")
+	flow := fedModelFlow(t, fh, proto.ModelOpenPayload{Proxy: "model", Session: "immutable-launch", Dialect: "openai"})
 	req, err := http.NewRequest(http.MethodPost, "http://model/v1/responses", strings.NewReader(`{"model":"test-model","input":"hello"}`))
 	require.NoError(t, err)
 	req.Host = ""
@@ -169,4 +152,28 @@ func TestFederation_ModelGatewayDialectProbeDoesNotConsumeRequestCapacity(t *tes
 	answer := control(false, "openai")
 	require.False(t, answer.OK)
 	require.Contains(t, answer.Reason, "limit", "actual generation still consumes the single request slot")
+}
+
+func fedModelControlAnswer(t *testing.T, fh *fedHarness, p proto.ModelOpenPayload) proto.ModelAnswerPayload {
+	t.Helper()
+	kp, err := stream.NewKeyPair()
+	require.NoError(t, err)
+	p.Version = 2
+	p.Stream = proto.NewEnvelopeID()
+	p.Key = kp.Pub
+	env := fh.peer.envelope(proto.KindModelOpen, proto.Endpoint{}, p)
+	env.From.Agent = ""
+	fh.peer.send(env)
+	var answer proto.ModelAnswerPayload
+	fedEventually(t, "model control answer", func() bool {
+		for _, env := range fh.peer.envelopes(proto.KindModelAnswer) {
+			var a proto.ModelAnswerPayload
+			if env.DecodePayload(&a) == nil && a.Stream == p.Stream {
+				answer = a
+				return true
+			}
+		}
+		return false
+	})
+	return answer
 }

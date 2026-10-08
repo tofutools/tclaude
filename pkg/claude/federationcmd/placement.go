@@ -35,7 +35,7 @@ type spawnPlacementReadout struct {
 }
 
 func runSpawnRequest(p *spawnRequestParams, stdout, stderr io.Writer) int {
-	req := map[string]any{"brief": p.Brief, "name": p.Name, "role": p.Role}
+	req := map[string]any{"credentials": p.Credentials, "brief": p.Brief, "name": p.Name, "role": p.Role}
 	if p.Node != "" {
 		if p.Target != "" {
 			return fail(stderr, fmt.Errorf("target and --node are mutually exclusive"))
@@ -69,6 +69,9 @@ func runSpawnRequest(p *spawnRequestParams, stdout, stderr io.Writer) int {
 	} else {
 		renderPlacement(out, stdout)
 		if out.EnvelopeID != "" {
+			if p.Credentials != "" {
+				fmt.Fprintf(stdout, "credentials: %s\n", p.Credentials)
+			}
 			fmt.Fprintf(stdout, "spawn request %s to %s (envelope %.12s); the decision will arrive in your inbox\n", out.State, out.To, out.EnvelopeID)
 			if !out.Connected {
 				fmt.Fprintln(stderr, "hub not connected; the request will be sent when it is")

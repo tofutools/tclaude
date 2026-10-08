@@ -123,7 +123,7 @@ func modelLaunchAllowed(r *http.Request, row *db.SessionRow, peer, name string) 
 	}
 	if row.ConvID != "" {
 		actor, err := db.GetAgentByConv(row.ConvID)
-		if err != nil || actor != nil && !actor.Active() {
+		if err != nil || actor != nil && (!actor.Active() || actor.CurrentConvID != row.ConvID) {
 			return false
 		}
 		allowed, _, err := permissionAllowsAction(r, row.ConvID, PermModelsProxy, ActionContext{RemotePeer: peer, HTTPProxy: name})
@@ -187,24 +187,54 @@ func handleModelProxyBind(w http.ResponseWriter, r *http.Request) {
 		modelError(w, 400, "model gateway harness protocol does not match the live launch")
 		return
 	}
+	// Pin the instance ID rather than a mutable operator alias.
+	reference := name + "@" + peer.InstanceID
+	var lease *db.ModelProxyWorkerLease
+	if worker := modelLeaseWorker(row); worker != "" {
+		lease, err = db.GetModelProxyWorkerLease(worker)
+		if err != nil {
+			modelError(w, 503, "requester gateway lease state unavailable")
+			return
+		}
+	}
+	leaseID := ""
+	rt := currentFederation()
+	if lease != nil {
+		if lease.Gateway != peer.InstanceID || lease.Proxy != name || rt == nil {
+			modelError(w, 403, "requester gateway launch does not match its issued lease")
+			return
+		}
+		leaseID = lease.Lease
+	}
+	if err = db.BindModelProxyLaunchPendingLease(row.ID, reference, in.Hash, leaseID); err != nil {
+		modelError(w, 403, "model gateway registration refused: generation already bound, revoked or absent")
+		return
+	}
+	if lease != nil {
+		if err = rt.activateModelLease(r.Context(), peer, *lease, row); err != nil {
+			modelError(w, 503, err.Error())
+			return
+		}
+	}
 	if h.Name == harness.CodexName {
-		rt := currentFederation()
 		if rt == nil {
 			modelError(w, 503, "model gateway federation disconnected")
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
-		if e := rt.checkModelDialect(ctx, peer, row.ID, name, "openai"); e != nil {
+		if err := rt.checkModelDialect(ctx, peer, row.ID, name, "openai", &db.ModelProxyLease{ID: leaseID, Generation: row.ExitLaunchGeneration}); err != nil {
+			_ = db.RevokeModelProxyLaunch(row.ID, row.ExitLaunchGeneration)
 			modelError(w, 503, "Codex model gateway requires an available OpenAI Responses dialect")
 			return
 		}
 	}
-	// Pin the instance ID rather than a mutable operator alias.
-	reference := name + "@" + peer.InstanceID
-	if err = db.BindModelProxyLaunch(row.ID, reference, in.Hash); err != nil {
-		modelError(w, 403, "model gateway registration refused: generation already bound, revoked or absent")
-		return
+	if lease != nil {
+		if err = db.SetModelProxyLaunchLease(row.ID, row.ExitLaunchGeneration, leaseID); err != nil {
+			modelError(w, 403, "requester gateway lease binding refused")
+			return
+		}
+		recordFederationAudit("models.lease.worker", peer.InstanceID, lease.Worker, name, "request="+lease.Request+" lease="+leaseID+" payer="+peer.InstanceID+" generation="+row.ExitLaunchGeneration, 200)
 	}
 	writeJSON(w, 200, map[string]any{"reference": reference})
 }
@@ -271,7 +301,7 @@ func handleModelProxyRequest(w http.ResponseWriter, r *http.Request) {
 		modelError(w, 400, "endpoint does not match this launch's harness protocol")
 		return
 	}
-	conn, err := rt.openModelStream(ctx, peer, launch.Session, name, dialect)
+	conn, err := rt.openModelStream(ctx, peer, launch.Session, name, dialect, &db.ModelProxyLease{ID: launch.Lease, Generation: launch.Generation})
 	if err != nil {
 		modelError(w, 503, "model gateway unavailable or refused by peer")
 		return
@@ -366,6 +396,12 @@ func handleModelProxyControl(w http.ResponseWriter, r *http.Request) {
 		in.Peer = peer.InstanceID
 		if in.Name == "" {
 			modelError(w, 400, "a peer switch requires a named gateway")
+			return
+		}
+	}
+	if in.Disabled {
+		if err := db.RevokeModelProxyLeaseSelection(in.Name, in.Peer); err != nil {
+			modelError(w, 503, "model gateway lease revocation unavailable")
 			return
 		}
 	}

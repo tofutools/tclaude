@@ -20,6 +20,7 @@ type TeleportHop struct {
 // The signed immediate peer attests this bounded provenance. Older hops are
 // explanatory history, never permission or proof of a remote principal.
 type TeleportIntent struct {
+	ModelLease         string        `json:"model_lease,omitempty"`
 	Version            int           `json:"version"`
 	Chain              string        `json:"chain"`
 	OriginInstance     string        `json:"origin_instance"`
@@ -58,6 +59,9 @@ func ValidCredentials(mode string) bool {
 	return true
 }
 func (t *TeleportIntent) Validate() error {
+	if t.ModelLease != "" && !proto.ValidStreamID(t.ModelLease) {
+		return errors.New("invalid requester model lease")
+	}
 	if t.KeepPausedBackup && (t.BackupRenewSeconds < 1 || t.BackupRenewSeconds > 43200) {
 		return errors.New("invalid teleport backup renewal cadence")
 	}

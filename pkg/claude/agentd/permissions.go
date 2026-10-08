@@ -127,6 +127,7 @@ var permissionRegistry = []PermSlug{
 	{Slug: PermJobsRun, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Request and inspect remote one-shot jobs in an allowed repository. Requires peer= scope. Peer grants independently require a receiving group and launch policy."},
 	{Slug: PermHostRead, Description: "Read cached host CPU, RAM, disk and live agent/session load, including configured local work-directory paths. Not default-granted."},
 	{Slug: PermApprovalsAnswer, Description: "Peer-only one-shot access-request answers while selected as away cover. Configure as an unscoped federation peer grant; ordinary agent grants do not authorize answers."},
+	{Slug: PermModelsProxyLeased, Description: "Peer-only access to requester-issued model gateway leases. Configure through federation peer grants."},
 	{Slug: PermAgentsReceive, Description: "Peer-only admission for agent bundle offers into an explicitly granted receiving group. Configure through federation peer grants; ordinary agent grants do not authorize receipt."},
 	{Slug: PermGroupsRosterRead, Description: "Read group member names and roles.", ScopeDims: []ScopeDim{ScopeDimGroup}},
 	{Slug: PermGroupsPresenceRead, Description: "Read group member presence.", ScopeDims: []ScopeDim{ScopeDimGroup}},

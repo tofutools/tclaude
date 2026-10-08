@@ -11,12 +11,13 @@ import (
 // FederationSpawnPolicy contains receiver-owned launch settings. Empty fields
 // inherit ordinary operator group-spawn defaults.
 type FederationSpawnPolicy struct {
-	JobApproval string `json:"job_approval,omitempty"` // jobs.run only: auto (default) or manual
-	Profile     string `json:"profile,omitempty"`
-	Cwd         string `json:"cwd,omitempty"`
-	Harness     string `json:"harness,omitempty"`
-	Model       string `json:"model,omitempty"`
-	MaxLive     int    `json:"max_live,omitempty"`
+	RequesterPays string `json:"requester_pays,omitempty"`
+	JobApproval   string `json:"job_approval,omitempty"` // jobs.run only: auto (default) or manual
+	Profile       string `json:"profile,omitempty"`
+	Cwd           string `json:"cwd,omitempty"`
+	Harness       string `json:"harness,omitempty"`
+	Model         string `json:"model,omitempty"`
+	MaxLive       int    `json:"max_live,omitempty"`
 }
 
 type FederationPeerGrant struct {

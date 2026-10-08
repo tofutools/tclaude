@@ -67,3 +67,20 @@ func TestModelProxyBudgetsConcurrentIncompleteAndRollover(t *testing.T) {
 	require.EqualValues(t, 1, usage[0].ChargedTokens)
 	require.NoError(t, ReserveModelProxyRequest(ModelProxyUsage{ID: "tomorrow", Day: "2026-10-09", Proxy: "main", Peer: "peer", Session: "s", ChargedTokens: 100}, budget))
 }
+
+func TestModelProxyPendingLeaseCannotAuthorizeOrDowngrade(t *testing.T) {
+	setupTestDB(t)
+	bearer := strings.Repeat("a", 64)
+	hash := sha256.Sum256([]byte(bearer))
+	require.NoError(t, SaveSession(&SessionRow{ID: "launch", Status: "idle", ExitLaunchGeneration: "generation"}))
+	require.NoError(t, BindModelProxyLaunchPendingLease("launch", "main@peer", hex.EncodeToString(hash[:]), "lease"))
+	ResetForTest()
+	_, err := VerifyModelProxyLaunch("launch", bearer)
+	require.ErrorIs(t, err, ErrModelProxyRefused)
+	require.ErrorIs(t, BindModelProxyLaunch("launch", "main@peer", hex.EncodeToString(hash[:])), ErrModelProxyRefused)
+	require.ErrorIs(t, SetModelProxyLaunchLease("launch", "generation", "other"), ErrModelProxyRefused)
+	require.NoError(t, SetModelProxyLaunchLease("launch", "generation", "lease"))
+	launch, err := VerifyModelProxyLaunch("launch", bearer)
+	require.NoError(t, err)
+	require.Equal(t, "lease", launch.Lease)
+}
