@@ -592,3 +592,16 @@ func SetRemoteJobDirectRunnerForTest(before ...func(string)) func() {
 	}
 	return func() { runNonInteractiveTmuxCommand = previous }
 }
+
+func SetRemoteJobUnknownRunnerForTest() func() {
+	previous := runNonInteractiveTmuxCommand
+	runNonInteractiveTmuxCommand = func(ctx context.Context, c nonInteractiveCommand) (nonInteractiveSpawnResult, *spawnFailure) {
+		if c.RemoteJob != nil {
+			if e := c.RemoteJob.Enroll("uncertain-job-" + c.RemoteJob.ID); e != nil {
+				return nonInteractiveSpawnResult{}, &spawnFailure{Status: 500, Kind: "enroll", Msg: e.Error()}
+			}
+		}
+		return nonInteractiveSpawnResult{}, &spawnFailure{Status: 502, Kind: "remote_job_unknown", Msg: "simulated uncertain launch"}
+	}
+	return func() { runNonInteractiveTmuxCommand = previous }
+}

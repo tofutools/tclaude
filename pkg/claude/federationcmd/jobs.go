@@ -58,7 +58,7 @@ func jobsCmd() *cobra.Command {
 				case "unknown":
 					fmt.Fprintln(os.Stderr, "Execution uncertain; inspect job", j.ID)
 					os.Exit(1)
-				case "completed", "failed", "canceled", "timeout", "refused", "interrupted":
+				case "completed", "failed", "canceled", "timeout", "refused", "interrupted", "output_unavailable":
 					var res proto.JobResult
 					_ = json.Unmarshal(j.Result, &res)
 					var logs struct {

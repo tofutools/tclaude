@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
@@ -30,6 +31,7 @@ func (rt *fedRuntime) persistJobLogs(j *db.FederationJob, res *proto.JobResult, 
 	}
 	_, e = db.InsertFederationBundleOffer(db.FederationBundleOffer{Descriptor: d, Direction: "out", Peer: j.Peer, State: "ready"}, jobLogType)
 	if e != nil {
+		_ = fedBundleSpool().Remove("out", j.Peer, d.ID)
 		return e
 	}
 	res.Logs, e = json.Marshal(d)
@@ -41,8 +43,21 @@ func (rt *fedRuntime) acceptJobResult(peer *db.FederationPeer, env *proto.Envelo
 		return
 	}
 	j, e := db.GetFederationJob(res.ID)
-	if e != nil || j.Direction != "out" || j.Peer != peer.InstanceID || (jobTerminal(j.State) || j.State == "receiving_logs") {
+	if e != nil || j.Direction != "out" || j.Peer != peer.InstanceID || jobTerminal(j.State) {
 		return
+	}
+	logKey := config.DataDir() + "/" + j.ID
+	federationJobs.Lock()
+	active := federationJobs.logs[logKey]
+	federationJobs.Unlock()
+	if j.State == "receiving_logs" {
+		if active {
+			return
+		}
+		if db.TransitionFederationJob(j.ID, "receiving_logs", "logs_pending", j.Result) != nil {
+			return
+		}
+		j.State = "logs_pending"
 	}
 	// Never publish a terminal exit until all output has passed length/digest
 	// validation and, for stream transfers, authenticated EOF verification.
@@ -55,7 +70,7 @@ func (rt *fedRuntime) acceptJobResult(peer *db.FederationPeer, env *proto.Envelo
 	}
 	raw, _ := json.Marshal(res)
 	if len(res.Logs) == 0 {
-		if res.State == "refused" || res.State == "canceled" || res.State == "interrupted" {
+		if res.State == "refused" || res.State == "canceled" || res.State == "interrupted" || res.State == "output_unavailable" {
 			_ = db.TransitionFederationJob(j.ID, j.State, res.State, raw)
 		}
 		return
@@ -64,12 +79,21 @@ func (rt *fedRuntime) acceptJobResult(peer *db.FederationPeer, env *proto.Envelo
 	if json.Unmarshal(res.Logs, &d) != nil || d.Validate(jobLogType, time.Now()) != nil {
 		return
 	}
-	if db.TransitionFederationJob(j.ID, j.State, "receiving_logs", raw) != nil {
+	federationJobs.Lock()
+	if federationJobs.logs[logKey] {
+		federationJobs.Unlock()
 		return
 	}
+	if db.TransitionFederationJob(j.ID, j.State, "receiving_logs", raw) != nil {
+		federationJobs.Unlock()
+		return
+	}
+	federationJobs.logs[logKey] = true
+	federationJobs.Unlock()
 	rt.wg.Add(1)
 	go func() {
 		defer rt.wg.Done()
+		defer func() { federationJobs.Lock(); delete(federationJobs.logs, logKey); federationJobs.Unlock() }()
 		if rt.fetchJobLogs(rt.ctx, j.Peer, d) != nil {
 			_ = db.TransitionFederationJob(j.ID, "receiving_logs", "logs_pending", raw)
 			return

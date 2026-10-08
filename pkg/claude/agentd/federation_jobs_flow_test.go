@@ -311,3 +311,53 @@ func TestFederation_JobsManualApprovalRechecksRepositoryRevision(t *testing.T) {
 	require.NoError(t, json.Unmarshal(j.Result, &result))
 	require.Equal(t, "repository_changed", result.Code)
 }
+
+func TestFederation_JobsLogQuotaFailurePreservesUnknownReservation(t *testing.T) {
+	fh := newFedHarness(t)
+	fh.f.HaveGroup("team")
+	fedJobRepo(t, fh)
+	fedAllowJobs(t, fh)
+	t.Cleanup(agentd.SetRemoteJobUnknownRunnerForTest())
+	kind := bundletransfer.Type{Name: "job-log", PendingLimit: 10, PendingBytes: 256 << 20}
+	for i := 0; i < 10; i++ {
+		d := bundletransfer.New(kind, []byte("quota"), "prior job", time.Now().Add(time.Hour))
+		_, e := db.InsertFederationBundleOffer(db.FederationBundleOffer{Descriptor: d, Peer: fh.peer.id.ID(), Direction: "out", State: "ready"}, kind)
+		require.NoError(t, e)
+	}
+	q := proto.JobRequest{ID: proto.NewEnvelopeID(), Repo: "project", Ref: "main", Group: "team", Harness: "shell", Command: "echo uncertain", Timeout: 10}
+	env := fh.peer.envelope(proto.KindJobRequest, proto.Endpoint{}, q)
+	env.From.Agent = ""
+	fh.peer.send(env)
+	var job *db.FederationJob
+	fedEventually(t, "uncertain launch retained despite quota failure", func() bool { job, _ = db.GetFederationJob(q.ID); return job != nil && job.State == "unknown" })
+	var res proto.JobResult
+	require.NoError(t, json.Unmarshal(job.Result, &res))
+	require.Equal(t, "log_storage", res.Code)
+	actor, e := db.GetAgent(job.WorkerID)
+	require.NoError(t, e)
+	require.NotNil(t, actor)
+	require.True(t, actor.Active(), "uncertain worker must not be retired")
+	rows, e := db.ListFederationJobs(true)
+	require.NoError(t, e)
+	require.Len(t, rows, 1)
+	require.Equal(t, job.ID, rows[0].ID)
+}
+func TestFederation_JobsInterruptedLogReceiptResumesOnRetry(t *testing.T) {
+	fh := newFedHarness(t)
+	raw, e := json.Marshal(map[string]any{"stdout": "recovered", "stderr": "", "exit_code": 0})
+	require.NoError(t, e)
+	kind := bundletransfer.Type{Name: "job-log", MaxBytes: 50 << 20}
+	d := bundletransfer.New(kind, raw, "completed logs", time.Now().Add(time.Hour))
+	descriptor, e := json.Marshal(d)
+	require.NoError(t, e)
+	job := db.FederationJob{ID: proto.NewEnvelopeID(), Direction: "out", Peer: fh.peer.id.ID(), Fingerprint: "original", State: "receiving_logs", Request: json.RawMessage(`{}`), ExpiresAt: time.Now().Add(time.Hour)}
+	require.NoError(t, db.InsertFederationJob(&job))
+	result := proto.JobResult{ID: job.ID, State: "completed", ExitCode: 0, Logs: descriptor}
+	env := fh.peer.envelope(proto.KindJobResult, proto.Endpoint{}, result)
+	env.From.Agent = ""
+	fh.peer.send(env)
+	require.Equal(t, "completed", fedWaitJob(t, fh, job.ID).State)
+	rec := fedHuman(t, fh.f, http.MethodGet, "/v1/federation/jobs/"+job.ID+"/logs", nil)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "recovered")
+}

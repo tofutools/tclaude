@@ -16,7 +16,7 @@ func migrateV241toV242(d *sql.DB) error {
  fingerprint TEXT NOT NULL, state TEXT NOT NULL, request TEXT NOT NULL,
  repo_id TEXT NOT NULL DEFAULT '', repo_revision INTEGER NOT NULL DEFAULT 0,
  worker_id TEXT NOT NULL DEFAULT '', caller_agent TEXT NOT NULL DEFAULT '', result TEXT NOT NULL DEFAULT '{}',
- created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
+ created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL) STRICT;
  CREATE INDEX federation_jobs_reservations ON federation_jobs(direction,state);
  UPDATE schema_version SET version=242;`)
 	if e != nil {

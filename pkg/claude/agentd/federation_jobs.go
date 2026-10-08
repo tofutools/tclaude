@@ -26,7 +26,8 @@ import (
 var federationJobs = struct {
 	sync.Mutex
 	cancels map[string]context.CancelFunc
-}{cancels: map[string]context.CancelFunc{}}
+	logs    map[string]bool
+}{cancels: map[string]context.CancelFunc{}, logs: map[string]bool{}}
 
 func registerFederationJobRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/federation/jobs", handleFederationJobSend)
@@ -64,7 +65,7 @@ func jobFingerprint(q proto.JobRequest) string {
 	return hex.EncodeToString(sum[:])
 }
 func jobTerminal(state string) bool {
-	return state == "completed" || state == "failed" || state == "canceled" || state == "timeout" || state == "refused" || state == "interrupted"
+	return state == "completed" || state == "failed" || state == "canceled" || state == "timeout" || state == "refused" || state == "interrupted" || state == "output_unavailable"
 }
 func jobCallerAllowed(w http.ResponseWriter, r *http.Request, peer, group string) bool {
 	_, human, ok := authedCaller(w, r)
@@ -428,7 +429,10 @@ func (rt *fedRuntime) runJob(parent context.Context, j *db.FederationJob) {
 			}
 		}
 		if e := rt.persistJobLogs(j, &result, out); e != nil {
-			result.State = "failed"
+			if result.State != "unknown" {
+				result.ExitCode = 1
+				result.State = "output_unavailable"
+			}
 			result.Code = "log_storage"
 		}
 		raw, _ := json.Marshal(result)
@@ -499,7 +503,12 @@ func (rt *fedRuntime) runJob(parent context.Context, j *db.FederationJob) {
 		return
 	}
 	launch := &federationJobLaunch{Peer: j.Peer, RepoID: j.RepoID, RepoRevision: j.RepoRevision, ID: j.ID, WorkerID: j.WorkerID, GroupID: g.ID, Cwd: checkout.Path, Harness: q.Harness, Defaults: defaults}
-	policy := fedPeerGroupGrant(j.Peer, g.ID, PermJobsRun).SpawnPolicy
+	grant := fedPeerGroupGrant(j.Peer, g.ID, PermJobsRun)
+	if grant == nil {
+		result.Code = "authority_changed"
+		return
+	}
+	policy := grant.SpawnPolicy
 	if policy.Harness != "" && q.Harness != "" && policy.Harness != q.Harness {
 		result.Code = "harness_policy"
 		return
