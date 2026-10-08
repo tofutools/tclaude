@@ -1555,7 +1555,7 @@ CREATE TABLE federation_spawn_requests (
 	reason        TEXT NOT NULL DEFAULT '',
 	created_at    INTEGER NOT NULL,
 	expires_at    INTEGER NOT NULL,
-	decided_at    INTEGER, launch_label TEXT NOT NULL DEFAULT '', launch_started_at INTEGER, automatic INTEGER NOT NULL DEFAULT 0, notice_sent INTEGER NOT NULL DEFAULT 0, result_sent INTEGER NOT NULL DEFAULT 0,
+	decided_at    INTEGER, launch_label TEXT NOT NULL DEFAULT '', launch_started_at INTEGER, automatic INTEGER NOT NULL DEFAULT 0, notice_sent INTEGER NOT NULL DEFAULT 0, result_sent INTEGER NOT NULL DEFAULT 0, placement_version INTEGER NOT NULL DEFAULT 0, requirements TEXT NOT NULL DEFAULT '',
 	UNIQUE (from_instance, envelope_id)
 ) STRICT;
 

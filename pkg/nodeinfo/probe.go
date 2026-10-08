@@ -15,7 +15,7 @@ import (
 )
 
 func Base() proto.NodeMetadata {
-	return proto.NodeMetadata{Schema: 1, OS: runtime.GOOS, Arch: runtime.GOARCH, TclaudeVersion: buildversion.AppVersion(), Labels: []string{}, Harnesses: []proto.NodeHarness{}}
+	return proto.NodeMetadata{Schema: 1, SpawnPlacementVersion: 1, OS: runtime.GOOS, Arch: runtime.GOARCH, TclaudeVersion: buildversion.AppVersion(), Labels: []string{}, Harnesses: []proto.NodeHarness{}}
 }
 
 // Probe runs only fixed --version argv for registered harness binaries. Failures

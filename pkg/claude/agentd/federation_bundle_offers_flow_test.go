@@ -69,8 +69,11 @@ func TestFederation_ConfigOfferAdmissionPreviewAndSelectiveApply(t *testing.T) {
 	// An instance receive grant must not accidentally expose private groups.
 	rec := fedHuman(t, f, http.MethodGet, "/v1/federation/status", nil)
 	require.Equal(t, 200, rec.Code)
-	cats := p.envelopes(proto.KindCatalog)
-	require.NotEmpty(t, cats)
+	var cats []*proto.Envelope
+	fedEventually(t, "config grant catalog publication", func() bool {
+		cats = p.envelopes(proto.KindCatalog)
+		return len(cats) > 0
+	})
 	var cat proto.CatalogPayload
 	require.NoError(t, cats[len(cats)-1].DecodePayload(&cat))
 	require.Empty(t, cat.Groups)

@@ -3737,6 +3737,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, http.StatusBadRequest, "invalid_harness", harnessErr.Error())
 		return
 	}
+	if constraints, ok := r.Context().Value(federationPlacementConstraintsKey{}).(string); ok {
+		if err := validateLocalPlacementRequirements(constraints, h.Name); err != nil {
+			writeError(w, 409, "node_incompatible", err.Error())
+			return
+		}
+	}
 	if body.NonInteractive && h.Name == harness.ShellName && body.IncludeGroupContext != nil && *body.IncludeGroupContext {
 		writeError(w, http.StatusBadRequest, "invalid_group_context",
 			"--group-context is not meaningful for a shell command")
@@ -6473,6 +6479,11 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 // is enrolled later by the sweeper.
 func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failure *spawnFailure) {
 	defer db.NotifyStatusChanged()
+	releaseCapacity, capacityFailure := acquireNodeLaunch(&p)
+	if capacityFailure != nil {
+		return nil, capacityFailure
+	}
+	defer releaseCapacity()
 	timing := config.StartupTiming("spawn", "name", p.Name, "harness", p.Harness, "async", p.Async)
 	defer func() {
 		timing("return", "failed", failure != nil)

@@ -762,10 +762,15 @@ func outboxCmd() *cobra.Command {
 // --- remote spawn requests ---
 
 type spawnRequestParams struct {
-	Target string `pos:"true" help:"<group>@<peer>: a remote group visible in the peer catalog"`
-	Brief  string `long:"brief" help:"What the worker should do (sent to the remote operator and, if approved, to the worker)"`
-	Name   string `long:"name" optional:"true" help:"Requested worker name"`
-	Role   string `long:"role" optional:"true" help:"Requested worker role"`
+	Target  string `pos:"true" optional:"true" help:"<group>@<peer>: a remote group visible in the peer catalog (omit with --node)"`
+	Node    string `long:"node" optional:"true" help:"Automatically select a node: auto or group:<pool>"`
+	Group   string `long:"group" optional:"true" help:"Remote group for automatic placement; may be omitted only with one authorized group"`
+	Require string `long:"require" optional:"true" help:"Required node metadata: comma-separated os=, arch=, harness=, label="`
+	Prefer  string `long:"prefer" optional:"true" help:"Placement ranking: least-loaded (default) or most-free-ram"`
+	JSON    bool   `long:"json" help:"Output the request and placement explanation as JSON"`
+	Brief   string `long:"brief" help:"What the worker should do (sent to the remote operator and, if approved, to the worker)"`
+	Name    string `long:"name" optional:"true" help:"Requested worker name"`
+	Role    string `long:"role" optional:"true" help:"Requested worker role"`
 }
 
 func spawnRequestCmd() *cobra.Command {
@@ -776,39 +781,24 @@ func spawnRequestCmd() *cobra.Command {
 			"The peer either spawns under its granted policy or asks its operator; the decision arrives in your inbox.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *spawnRequestParams, _ *cobra.Command, _ []string) {
-			i := strings.LastIndex(p.Target, "@")
-			if i <= 0 || i == len(p.Target)-1 {
-				os.Exit(fail(os.Stderr, fmt.Errorf("target must be <group>@<peer>")))
-			}
-			var out struct {
-				EnvelopeID string `json:"envelope_id"`
-				To         string `json:"to"`
-				State      string `json:"state"`
-				Connected  bool   `json:"hub_connected"`
-			}
-			req := map[string]any{"group": p.Target[:i], "peer": p.Target[i+1:], "brief": p.Brief, "name": p.Name, "role": p.Role}
-			if rc := post(os.Stderr, "/v1/federation/spawn-requests", req, &out); rc != 0 {
-				os.Exit(rc)
-			}
-			fmt.Printf("spawn request %s to %s (envelope %s); the decision will arrive in your inbox\n", out.State, out.To, out.EnvelopeID[:12])
-			if !out.Connected {
-				fmt.Fprintln(os.Stderr, "hub not connected; the request will be sent when it is")
-			}
+			os.Exit(runSpawnRequest(p, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
 }
 
 type spawnRequestRow struct {
-	ID          int64     `json:"id"`
-	From        string    `json:"from"`
-	Group       string    `json:"group"`
-	Name        string    `json:"name"`
-	Role        string    `json:"role"`
-	Brief       string    `json:"brief"`
-	Status      string    `json:"status"`
-	ResultAgent string    `json:"result_agent"`
-	Reason      string    `json:"reason"`
-	CreatedAt   time.Time `json:"created_at"`
+	Require          string    `json:"require,omitempty"`
+	PlacementVersion int       `json:"placement_version,omitempty"`
+	ID               int64     `json:"id"`
+	From             string    `json:"from"`
+	Group            string    `json:"group"`
+	Name             string    `json:"name"`
+	Role             string    `json:"role"`
+	Brief            string    `json:"brief"`
+	Status           string    `json:"status"`
+	ResultAgent      string    `json:"result_agent"`
+	Reason           string    `json:"reason"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 type requestsParams struct {
@@ -846,6 +836,9 @@ func requestsCmd() *cobra.Command {
 				fmt.Printf("#%d  %s  from %s  into %s  %s\n", r.ID, r.Status, r.From, r.Group, ago(r.CreatedAt))
 				if r.Name != "" || r.Role != "" {
 					fmt.Printf("    name %q  role %q\n", r.Name, r.Role)
+				}
+				if r.PlacementVersion != 0 {
+					fmt.Printf("    requires: %s (choose a compatible harness)\n", r.Require)
 				}
 				if r.ResultAgent != "" {
 					fmt.Printf("    spawned %s\n", r.ResultAgent)
