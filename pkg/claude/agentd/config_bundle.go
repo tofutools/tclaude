@@ -17,6 +17,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/common/buildversion"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 const PermConfigExport = "config.export"
@@ -136,6 +137,11 @@ func collectConfigBundle(r *http.Request) (*configbundle.Bundle, error) {
 			if err := bundleAdd(b, "config", key, value); err != nil {
 				return nil, err
 			}
+		}
+	}
+	if cfg.Federation != nil {
+		if err := bundleAdd(b, "config", "federation.node_labels", cfg.Federation.NodeLabels); err != nil {
+			return nil, err
 		}
 	}
 	for section := range b.Sections {
@@ -610,6 +616,31 @@ func planConfigBundleItem(r *http.Request, section string, item configbundle.Ite
 			return config.Save(cfg)
 		}, nil
 	case "config":
+		if item.Name == "federation.node_labels" {
+			var labels []string
+			if err := json.Unmarshal(item.Value, &labels); err != nil {
+				return nil, err
+			}
+			labels, err := proto.NormalizeNodeLabels(labels)
+			if err != nil {
+				return nil, err
+			}
+			return func() error {
+				cfg, err := config.Load()
+				if err != nil {
+					return err
+				}
+				if cfg.Federation == nil {
+					cfg.Federation = &config.FederationConfig{}
+				}
+				cfg.Federation.NodeLabels = labels
+				if err = config.Save(cfg); err != nil {
+					return err
+				}
+				broadcastFederationCatalogs()
+				return nil
+			}, nil
+		}
 		if !slices.Contains(bundleConfigKeys, item.Name) {
 			return nil, errors.New("config field is not portable")
 		}

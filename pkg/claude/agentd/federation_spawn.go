@@ -429,6 +429,17 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 			}
 		}
 	}
+	workerDefaults, err := db.ResolveFederationWorkerDefaults(peer.InstanceID)
+	if err != nil {
+		release()
+		writeFedErr(w, err)
+		return
+	}
+	if err = db.RecordFederationWorkerDefaults(reservedID, workerDefaults); err != nil {
+		release()
+		writeFedErr(w, err)
+		return
+	}
 	from := req.FromName + "@" + proto.SafeName(peerDisplay(peer), true)
 	spawn := agent.SpawnRequest{
 		Name:    fedFirst(strings.TrimSpace(in.Name), req.Name),

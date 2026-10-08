@@ -582,6 +582,10 @@ func handleFederationConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 type fedTrustReq struct {
+	Profile            string `json:"profile,omitempty"`
+	NoDefaultProfile   bool   `json:"no_default_profile,omitempty"`
+	Preview            bool   `json:"preview,omitempty"`
+	PreviewToken       string `json:"preview_token,omitempty"`
 	Level              string `json:"level,omitempty"`
 	ConfirmFingerprint string `json:"confirm_fingerprint,omitempty"`
 	Instance           string `json:"instance"`
@@ -608,10 +612,7 @@ func handleFederationTrust(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "label must be 1-32 chars of [a-z0-9-_.]")
 		return
 	}
-	if req.Level == "" {
-		req.Level = db.FederationTrustRestricted
-	}
-	if req.Level != db.FederationTrustRestricted && req.Level != db.FederationTrustUnrestricted {
+	if req.Level != "" && req.Level != db.FederationTrustRestricted && req.Level != db.FederationTrustUnrestricted {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "level must be restricted or unrestricted")
 		return
 	}
@@ -654,19 +655,74 @@ func handleFederationTrust(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "bad_directory", "hub directory key does not match the instance id; refusing to trust")
 		return
 	}
-	finish := lockAwayMutation(entry.InstanceID, true)
+	if req.Profile != "" && req.NoDefaultProfile {
+		writeError(w, 400, "profile", "--profile and --no-default-profile are mutually exclusive")
+		return
+	}
+	fedNodeGroupsMu.Lock()
+	defer fedNodeGroupsMu.Unlock()
+	finish := func() {}
+	if !req.Preview {
+		finish = lockAwayMutation(entry.InstanceID, true)
+	}
 	defer finish()
 	existing, err := db.GetFederationPeer(entry.InstanceID)
 	if err != nil {
 		writeFedErr(w, err)
 		return
 	}
+	var profile *db.FederationNodeProfile
+	if req.Profile != "" {
+		profile, err = db.GetFederationNodeProfile(req.Profile)
+	} else if existing == nil && !req.NoDefaultProfile {
+		profile, err = db.DefaultFederationNodeProfile()
+	}
+	if err != nil {
+		writeError(w, 400, "profile", err.Error())
+		return
+	}
+	if profile != nil {
+		if req.Level != "" && req.Level != profile.Definition.TrustLevel {
+			writeError(w, 400, "profile", "explicit trust level conflicts with selected profile")
+			return
+		}
+		req.Level = profile.Definition.TrustLevel
+	}
+	if req.Level == "" {
+		req.Level = db.FederationTrustRestricted
+	}
+	var plan *db.FederationNodeProfilePlan
+	newPeer := &db.FederationPeer{InstanceID: entry.InstanceID, PubKey: entry.PubKey, Label: req.Label, Name: proto.SafeName(entry.Name, true)}
+	if profile != nil {
+		plan, err = db.PlanFederationNodeProfile(profile.ID, entry.InstanceID, "", newPeer)
+		if err != nil {
+			writeError(w, 409, "profile", err.Error())
+			return
+		}
+	}
+	if req.Preview {
+		writeJSON(w, 200, map[string]any{"instance_id": entry.InstanceID, "fingerprint": proto.Fingerprint(entry.PubKey), "level": req.Level, "profile": profile, "plan": plan, "applied": false})
+		return
+	}
+	if profile == nil && req.PreviewToken != "" {
+		writeError(w, 409, "stale_preview", "selected default profile changed; preview trust again")
+		return
+	}
+	if profile != nil && req.PreviewToken == "" {
+		writeError(w, 400, "preview_required", "preview the selected peer profile before trusting")
+		return
+	}
 	if req.Level == db.FederationTrustUnrestricted && (existing == nil || existing.TrustLevel != db.FederationTrustUnrestricted) && req.ConfirmFingerprint != proto.Fingerprint(entry.PubKey) {
 		writeError(w, http.StatusBadRequest, "confirmation_required", "confirm fingerprint "+proto.Fingerprint(entry.PubKey)+": unrestricted grants all peer permissions on all live groups, automatic spawn, and local unscoped grants towards this peer; interactive terminal attach includes harness approval answers")
 		return
 	}
-	if err := db.TrustFederationPeer(db.FederationPeer{TrustLevel: req.Level, InstanceID: entry.InstanceID, PubKey: entry.PubKey, Label: req.Label, Name: proto.SafeName(entry.Name, true)}); err != nil {
-		writeError(w, http.StatusConflict, "conflict", err.Error())
+	if profile != nil {
+		plan, err = db.PlanFederationNodeProfile(profile.ID, entry.InstanceID, req.PreviewToken, newPeer)
+	} else {
+		err = db.TrustFederationPeer(db.FederationPeer{TrustLevel: req.Level, InstanceID: entry.InstanceID, PubKey: entry.PubKey, Label: req.Label, Name: proto.SafeName(entry.Name, true)})
+	}
+	if err != nil {
+		writeError(w, 409, "conflict", err.Error())
 		return
 	}
 	setAuditTargetLabel(r, entry.InstanceID)
@@ -676,7 +732,7 @@ func handleFederationTrust(w http.ResponseWriter, r *http.Request) {
 			rt.sendControl(entry.InstanceID, proto.KindCatalogReq, "", struct{}{})
 		}()
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "instance_id": entry.InstanceID, "fingerprint": proto.Fingerprint(entry.PubKey), "level": req.Level})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "instance_id": entry.InstanceID, "fingerprint": proto.Fingerprint(entry.PubKey), "level": req.Level, "profile": profile, "plan": plan})
 }
 
 func validFedLabel(s string) bool {
@@ -1075,6 +1131,7 @@ func fedFirst(a, b string) string {
 
 func registerFederationRoutes(mux *http.ServeMux) {
 	registerFederationNodeGroupRoutes(mux)
+	registerFederationNodeProfileRoutes(mux)
 	registerFederationBundleRoutes(mux)
 	mux.HandleFunc("GET /v1/federation/away", handleFederationAway)
 	mux.HandleFunc("POST /v1/federation/away", handleFederationAway)

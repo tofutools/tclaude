@@ -4158,6 +4158,27 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		}
 		permOverrides = merged
 	}
+	// Receiver-owned worker defaults override role and launch-profile grants.
+	// This server-side snapshot cannot be supplied by a remote requester.
+	if reservedID, ok := r.Context().Value(reservedAgentIDContextKey{}).(string); ok {
+		workerDefaults, err := db.GetFederationWorkerDefaults(reservedID)
+		if err != nil {
+			writeError(w, 500, "worker_defaults", err.Error())
+			return
+		}
+		if workerDefaults != nil && len(workerDefaults.Permissions) > 0 {
+			if body.NonInteractive {
+				writeError(w, 400, "worker_defaults", "profile worker defaults require an enrolled agent")
+				return
+			}
+			if permOverrides == nil {
+				permOverrides = map[string]db.PermissionOverride{}
+			}
+			for slug, override := range workerDefaults.Permissions {
+				permOverrides[slug] = override
+			}
+		}
+	}
 	if body.NonInteractive {
 		// A one-shot has no identity to receive role or birth-time grants.
 		isOwner = false
@@ -6936,6 +6957,16 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// an unknown name (returns nil), and SupportsLaunchEnrollment is nil-safe,
 	// so a bad harness degrades to the legacy path rather than panicking.
 	launchEnroll := spawnHarness.SupportsLaunchEnrollment() && !spawnUsesLegacyInjection()
+	if p.AgentID != "" {
+		workerDefaults, err := db.GetFederationWorkerDefaults(p.AgentID)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "worker_defaults", err.Error()}
+		}
+		if workerDefaults != nil && len(workerDefaults.Permissions) > 0 && !launchEnroll {
+			return nil, &spawnFailure{http.StatusBadRequest, "worker_defaults", "node-profile workers require a harness with enrollment before launch"}
+		}
+	}
+
 	var importedID string
 	importedCleanup := func() {}
 	importedLaunched := false
@@ -8415,6 +8446,22 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 		if err := db.SetAgentPermissionOverrideWithScope(convID, slug, override.Effect, override.Scope, permissionGranter); err != nil {
 			slog.Warn("spawn: failed to apply birth permission override",
 				"conv", convID, "slug", slug, "effect", override.Effect, "scope", override.Scope, "error", err)
+		}
+	}
+
+	// Node-profile defaults are mandatory, unlike ordinary best-effort birth
+	// overrides. Persist them before the launch path can start the first turn.
+	workerDefaults, workerErr := db.GetFederationWorkerDefaults(agentID)
+	if workerErr != nil {
+		return 0, actorCreated, &spawnFailure{http.StatusInternalServerError, "worker_defaults", workerErr.Error()}
+	}
+	if workerDefaults != nil && len(workerDefaults.Permissions) > 0 {
+		provenance := fmt.Sprintf("peer:%s node-profile:%s id:%s revision:%d", workerDefaults.Peer, workerDefaults.ProfileName, workerDefaults.ProfileID, workerDefaults.Revision)
+		for _, slug := range db.SortedOverrideSlugs(workerDefaults.Permissions) {
+			override := workerDefaults.Permissions[slug]
+			if err := db.SetAgentPermissionOverrideWithScope(convID, slug, override.Effect, override.Scope, provenance); err != nil {
+				return 0, actorCreated, &spawnFailure{http.StatusInternalServerError, "worker_defaults", err.Error()}
+			}
 		}
 	}
 

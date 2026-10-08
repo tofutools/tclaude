@@ -152,6 +152,7 @@ func TestMigrateV180toV181_ConvertsEveryTimestampAndPreservesSchemaGraph(t *test
 	require.NoError(t, migrateV235toV236(d))
 	require.NoError(t, migrateV236toV237(d))
 	require.NoError(t, migrateV237toV238(d))
+	require.NoError(t, migrateV238toV239(d))
 	upgradedSchema, err := SchemaSQL(d)
 	require.NoError(t, err)
 	freshSchema, err := SchemaSQL(fresh)
