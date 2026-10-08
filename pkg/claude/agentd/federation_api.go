@@ -658,6 +658,10 @@ func handleFederationTrust(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "confirmation_required", "confirm fingerprint "+proto.Fingerprint(entry.PubKey)+": unrestricted grants all peer permissions on all live groups, automatic spawn, and local unscoped grants towards this peer; interactive terminal attach includes harness approval answers")
 		return
 	}
+	if existing != nil && existing.TrustLevel != req.Level {
+		finish := lockAwayAuthorityMutation(entry.InstanceID)
+		defer finish()
+	}
 	if err := db.TrustFederationPeer(db.FederationPeer{TrustLevel: req.Level, InstanceID: entry.InstanceID, PubKey: entry.PubKey, Label: req.Label, Name: proto.SafeName(entry.Name, true)}); err != nil {
 		writeError(w, http.StatusConflict, "conflict", err.Error())
 		return
@@ -702,6 +706,8 @@ func handleFederationUntrust(w http.ResponseWriter, r *http.Request) {
 		writeFedErr(w, err)
 		return
 	}
+	finish := lockAwayAuthorityMutation(p.InstanceID)
+	defer finish()
 	if _, err := db.UntrustFederationPeer(p.InstanceID); err != nil {
 		writeFedErr(w, err)
 		return
@@ -1029,6 +1035,10 @@ func fedFirst(a, b string) string {
 
 func registerFederationRoutes(mux *http.ServeMux) {
 	registerFederationBundleRoutes(mux)
+	mux.HandleFunc("GET /v1/federation/away", handleFederationAway)
+	mux.HandleFunc("POST /v1/federation/away", handleFederationAway)
+	mux.HandleFunc("POST /v1/federation/return", handleFederationReturn)
+	mux.HandleFunc("POST /v1/federation/answer", handleFederationAwayAnswer)
 	mux.HandleFunc("GET /v1/federation/status", handleFederationStatus)
 	mux.HandleFunc("/v1/federation/notify", handleFederationNotify)
 	mux.HandleFunc("GET /v1/federation/inbox", handleFederationInbox)

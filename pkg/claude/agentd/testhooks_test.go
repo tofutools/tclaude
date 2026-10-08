@@ -1997,3 +1997,17 @@ func FlushFederationOutboxForTest() {
 		rt.flushOutbox(context.Background())
 	}
 }
+
+// StartFederationAwayApprovalForTest exercises the production waiter, including
+// its original deadline, forwarding and consumption-time authority checks.
+func StartFederationAwayApprovalForTest(id, conv string, timeout time.Duration) (<-chan bool, func()) {
+	req := &approvalRequest{id: id, perm: "self.rename", convID: conv, agentID: peerAgentID(conv), convTitle: "away requester", method: http.MethodPost, path: "/v1/agent/rename", decision: make(chan approvalOutcome, 1), extend: make(chan time.Duration, 1), createdAt: time.Now(), timeout: timeout}
+	done := make(chan bool, 1)
+	go func() { done <- realRequestHumanApproval(req, "") }()
+	return done, func() {
+		select {
+		case req.decision <- outcomeDeny:
+		default:
+		}
+	}
+}

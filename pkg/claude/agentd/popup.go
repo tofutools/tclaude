@@ -182,7 +182,13 @@ type approvalRequest struct {
 	// clicks. Set by the waiter (realRequestHumanApproval) at start and on
 	// each extend; read by the snapshot under mu. Zero until the waiter
 	// runs — the snapshot then falls back to createdAt+timeout.
-	deadline time.Time
+	deadline          time.Time
+	delegated         chan fedAwayDecision
+	delegatedEpoch    string
+	delegatedDeadline time.Time
+	originalDeadline  time.Time
+	delegatedDecider  string
+	delegatedEnvelope string
 }
 
 // approvalRegistry holds pending approvals keyed by ID. Browser
@@ -396,6 +402,7 @@ func requestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 }
 
 func realRequestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
+	req.delegated = make(chan fedAwayDecision, 1)
 	approvals.mu.Lock()
 	approvals.pending[req.id] = req
 	approvals.mu.Unlock()
@@ -453,8 +460,17 @@ func realRequestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 		slog.Warn("access request: failed to persist pending request",
 			"id", req.id, "perm", req.perm, "conv", req.convID, "err", err)
 	}
+	forwardAwayApproval(req)
 	for {
 		select {
+		case remote := <-req.delegated:
+			// Authority is checked when consumed, not only when the envelope arrives:
+			// return/revoke/expiry cannot leave a queued decision authorized.
+			approved, applied := remote.runtime.applyAwayDecision(req, remote)
+			if applied {
+				approvals.recordResolved(req, outcomeLabel(remote.outcome))
+				return approved
+			}
 		case d := <-req.decision:
 			approved := applyApprovalOutcome(req, d)
 			approvals.recordResolved(req, outcomeLabel(d))
@@ -704,9 +720,15 @@ func recordApprovalDecision(req *approvalRequest, outcome approvalOutcome) {
 			detail = action
 		}
 	}
+	label := "operator"
+	req.mu.Lock()
+	if req.delegatedDecider != "" {
+		label = "operator@" + req.delegatedDecider
+	}
+	req.mu.Unlock()
 	if _, err := db.InsertAuditLog(db.AuditLogEntry{
 		ActorKind:   db.AuditActorHuman,
-		ActorLabel:  "operator",
+		ActorLabel:  label,
 		Verb:        verb,
 		TargetConv:  req.convID,
 		TargetAgent: req.agentID,

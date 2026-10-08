@@ -130,14 +130,14 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, groupSlug := federationPeerSlugs[in.Slug]
-	instanceSlug := in.Slug == "config.offer"
+	instanceSlug := in.Slug == "config.offer" || in.Slug == PermApprovalsAnswer
 	if !groupSlug && !instanceSlug {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "slug is not supported for peers: "+in.Slug)
 		return
 	}
 	scope := strings.TrimSpace(in.Scope)
 	if instanceSlug && scope != "" {
-		writeError(w, 400, "invalid_arg", "config.offer is an unscoped instance grant")
+		writeError(w, 400, "invalid_arg", in.Slug+" is an unscoped instance grant")
 		return
 	}
 	var gid int64
@@ -159,6 +159,10 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 		warnings = append(warnings, "WARNING: unscoped peer grant covers every active group, including future groups")
 	}
 	if r.Method == http.MethodDelete {
+		if in.Slug == PermApprovalsAnswer {
+			finish := lockAwayAuthorityMutation(p.InstanceID)
+			defer finish()
+		}
 		ok, err := db.DeleteFederationPeerGrant(p.InstanceID, in.Slug, scope)
 		if err != nil {
 			writeFedErr(w, err)
