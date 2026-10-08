@@ -356,6 +356,7 @@ func TestContextFreeResolutionFailsClosedOnScopedAllow(t *testing.T) {
 // gap it closes is the one that shipped routes.publish/routes.consume with a
 // bespoke, scope-blind gate for the better part of a phase.
 var scopedSlugEnforcementPaths = map[string]string{
+	PermJobsRun:                           "jobCallerAllowed / authorizeJobAccess evaluate concrete RemotePeer and RemoteGroup; list projects only authorized owned jobs",
 	PermAgentsStatusRead:                  "handleFederationReachable evaluates peer/group scope before projecting status",
 	PermNodeRead:                          "handleFederationNodes evaluates permissionAllowsAction with RemotePeer",
 	PermAgentMove:                         "federation move-agent and delayed move retirement",

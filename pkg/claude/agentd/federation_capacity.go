@@ -42,6 +42,10 @@ func nodeCapacityUsed(exclude string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	jobs, err := db.ListFederationJobs(true)
+	if err != nil {
+		return 0, err
+	}
 	actors, err := db.FederationCapacityActorSessions()
 	if err != nil {
 		return 0, err
@@ -70,6 +74,13 @@ func nodeCapacityUsed(exclude string) (int, error) {
 		id := req.ResultAgent
 		if id == "" {
 			id = "request:" + strconv.FormatInt(req.ID, 10)
+		}
+		used[id] = true
+	}
+	for _, job := range jobs {
+		id := job.WorkerID
+		if id == "" {
+			id = "job:" + job.ID
 		}
 		used[id] = true
 	}

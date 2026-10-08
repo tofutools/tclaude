@@ -25,6 +25,10 @@ const (
 	// KindSpawnReq asks the recipient to spawn a worker into one of its
 	// exported groups. The recipient's operator decides; KindSpawnRes
 	// (InReplyTo = the request) reports the decision.
+	KindJobRequest       = "job_request"
+	KindJobStatus        = "job_status"
+	KindJobCancel        = "job_cancel"
+	KindJobResult        = "job_result"
 	KindSpawnReq         = "spawn_req"
 	KindSpawnRes         = "spawn_res"
 	KindBundleOffer      = "bundle_offer"
@@ -60,6 +64,7 @@ const (
 	// CapSpawn lets the peer ask for a worker to be spawned into the group.
 	// Every request still waits for the local operator's approval.
 	CapSpawn = "spawn"
+	CapJobs  = "jobs"
 	// CapRoutes lists the group's ready routes in the catalog and lets the
 	// peer open connections to them through the hub stream relay.
 	CapRoutes         = "routes"
@@ -70,7 +75,7 @@ const (
 )
 
 // AllCaps lists every known capability in canonical order.
-var AllCaps = []string{CapAgentStatus, CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes, CapSessions, CapSessionsWatch, CapSessionsAttach, CapAgentsReceive}
+var AllCaps = []string{CapJobs, CapAgentStatus, CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes, CapSessions, CapSessionsWatch, CapSessionsAttach, CapAgentsReceive}
 
 // MaxMailBody caps a mail envelope's body in bytes.
 const MaxMailBody = 16 * 1024

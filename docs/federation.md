@@ -1353,3 +1353,92 @@ master-side retries can recover receipts after revocation or expiry; a node
 must present an unexpired bearer to initiate the command. A new enrollment
 requires a new token after untrust. Identity rotation changes the pinned key
 and therefore requires a newly issued token.
+
+### Remote one-shot jobs
+
+A peer can run a shell command or a supported coding harness against a Git ref
+only after the receiving operator allows both the repository and the receiving
+group. The requester supplies a repository alias and ref, never a filesystem
+path, Git configuration, environment or launch profile.
+
+On the receiving machine:
+
+```sh
+tclaude federation repos add project --url ssh://git@example.com/team/project.git \
+  --clone /work/project --group builders
+tclaude federation grant master jobs.run --scope group=builders --max-live 2
+```
+
+The repo registry records an immutable ID, revision, canonical clone and Git
+filesystem identity, and active receiving group IDs. `repos ls` displays them;
+`repos update ... --revision N` replaces an entry after an explicit revision
+check, and `repos remove project` disables it. A change invalidates queued jobs.
+The registry is also the authority seam for future repository transfers.
+
+Each job fetches only the configured URL into a new private Git directory and
+checks out the exact resolved commit, detached from the operator's clone.
+Hooks, submodules, templates, global Git configuration and executable filters
+are disabled. SSH agent authentication can be used; inline HTTPS credentials
+and arbitrary Git transport helpers are refused. Private HTTPS repositories
+require SSH or a pre-fetched operator clone with a pinned full SHA; credential
+helpers are intentionally disabled. Jobs borrow verified clone objects during
+fetch, then repack to make the worker checkout independent of that clone. A
+failed fetch can use a locally available full SHA, reported as "resolved from
+local clone (fetch failed)"; branches never silently fall back to stale refs.
+
+On the requesting machine:
+
+```sh
+tclaude federation job run --node linux-box --repo project --ref main \
+  --group builders --harness shell --command 'go test ./...' --timeout 1800
+```
+
+The command prints the immutable job ID, waits for verified completed output,
+and returns the worker's exit status. A task prompt can select a supported
+coding harness instead of `shell`. This first increment selects one explicit
+peer; automatic placement, fan-out and live follow arrive separately.
+Agent callers need `jobs.run` scoped to the concrete peer (including a live
+`peer=group:<pool>` scope). An agent can inspect, retry, cancel or read output
+only for its own submitted jobs and while that permission still covers the peer.
+
+The receiver applies its grant's profile, harness and model plus the ordinary
+receiving-group launch policy. A requested harness cannot override a harness
+pinned by the grant. The checkout supplies cwd; a grant's interactive-spawn cwd
+is never used to redirect a job. Worker permission defaults are resolved through
+the node profile, frozen and installed on a temporary registered worker before
+the broker permits execution. A scoped per-agent worker grant narrows a broader
+receiving-group grant because the existing per-agent permission tier takes
+precedence. Explicit worker denies also retain their normal precedence.
+
+`job ls`, `job status ID`, `job retry ID`, and `job cancel ID` provide recovery
+and control. Retrying resends the same immutable request and cannot execute it
+twice. A delivery failure never silently chooses another peer. Jobs reserve the
+same node-wide admission slots as interactive workers, including preparation,
+and count against peer limits. Timeout covers checkout and execution.
+
+Completed logs use a digest and length descriptor, inline for small results and
+the encrypted hub stream for larger results. A terminal worker exit is exposed
+only after complete matching logs and authenticated stream FIN are verified.
+Raw logs stay in private spool storage; CLI text output strips terminal controls.
+Output is bounded to 4 MiB per channel; hitting the bound returns exit 125.
+Artifacts expire after 72 hours, and the sender can discard its copy once the
+requester confirms receipt. Durable job receipts prevent later retries from
+executing completed jobs again.
+
+A daemon interruption or unconfirmed broker teardown leaves the job `unknown`
+and retains its capacity reservation and checkout. It is never automatically
+rerun. After checking that the workload has stopped, the receiving operator can
+release that reservation explicitly:
+
+```sh
+tclaude federation job acknowledge-stopped ID --acknowledge-stopped
+```
+
+This refuses while a recorded worker pane is still live. Untrust cancels
+unfinished jobs and prevents further delivery. An uncertain checkout is retained
+for inspection after acknowledgement.
+
+For a peer whose individual jobs need operator consent, add
+`--job-approval manual` to its `jobs.run` grant. Requests remain `pending` until
+`job approve ID`; approval rechecks trust, the repository revision and the
+receiving group's current job grant. The default approval policy is `auto`.

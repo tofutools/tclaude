@@ -625,6 +625,16 @@ func autoApproveFederationSpawn(req *db.FederationSpawnRequest, p *db.Federation
 					live++
 				}
 			}
+			jobs, jobErr := db.ListFederationJobs(true)
+			if jobErr != nil {
+				reason = "could not count remote jobs"
+			} else {
+				for _, job := range jobs {
+					if job.Peer == p.InstanceID {
+						live++
+					}
+				}
+			}
 			if live >= policy.MaxLive {
 				reason = "peer live automatic worker cap reached"
 			}

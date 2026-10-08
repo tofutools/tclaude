@@ -55,7 +55,7 @@ func Cmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			statusCmd(), identityCmd(), connectCmd(), disconnectCmd(),
-			peersCmd(), trustCmd(), untrustCmd(), nodeProfilesCmd(), enrollTokenCmd(), enrollCmd(), enrollmentsCmd(),
+			jobsCmd(), reposCmd(), peersCmd(), trustCmd(), untrustCmd(), nodeProfilesCmd(), enrollTokenCmd(), enrollCmd(), enrollmentsCmd(),
 			grantCmd(), revokeCmd(), grantsCmd(), remoteCmd(), nodesCmd(), nodeLabelsCmd(), sessionsCmd(), attachCmd(), viewersCmd(), kickCmd(),
 			sendCmd(), outboxCmd(), notifyCmd(), inboxCmd(), awayCmd(), returnCmd(), answerCmd(),
 			spawnRequestCmd(), requestsCmd(), offerConfigCmd(), offersCmd(), shareAgentCmd(), moveAgentCmd(), movesCmd(),
@@ -440,22 +440,24 @@ type peerGrant struct {
 	Slug        string `json:"slug"`
 	Scope       string `json:"scope"`
 	SpawnPolicy struct {
-		Profile string `json:"profile,omitempty"`
-		Cwd     string `json:"cwd,omitempty"`
-		Harness string `json:"harness,omitempty"`
-		Model   string `json:"model,omitempty"`
-		MaxLive int    `json:"max_live,omitempty"`
+		JobApproval string `json:"job_approval,omitempty"`
+		Profile     string `json:"profile,omitempty"`
+		Cwd         string `json:"cwd,omitempty"`
+		Harness     string `json:"harness,omitempty"`
+		Model       string `json:"model,omitempty"`
+		MaxLive     int    `json:"max_live,omitempty"`
 	} `json:"spawn_policy,omitempty"`
 }
 type grantParams struct {
-	Peer    string `pos:"true" help:"Trusted peer label or instance id"`
-	Slug    string `pos:"true" help:"Permission slug to grant"`
-	Scope   string `long:"scope" optional:"true" help:"group=<local group>; omitted covers all current and future groups"`
-	Profile string `long:"profile" optional:"true" help:"Receiver launch profile for groups.members.spawn"`
-	Cwd     string `long:"cwd" optional:"true" help:"Receiver worker directory"`
-	Harness string `long:"harness" optional:"true" help:"Receiver worker harness"`
-	Model   string `long:"model" optional:"true" help:"Receiver worker model"`
-	MaxLive int    `long:"max-live" optional:"true" help:"Positive live auto-worker cap (default 2)"`
+	JobApproval string `long:"job-approval" optional:"true" help:"jobs.run only: auto (default) or manual"`
+	Peer        string `pos:"true" help:"Trusted peer label or instance id"`
+	Slug        string `pos:"true" help:"Permission slug to grant"`
+	Scope       string `long:"scope" optional:"true" help:"group=<local group>; omitted covers all current and future groups"`
+	Profile     string `long:"profile" optional:"true" help:"Receiver launch profile for groups.members.spawn"`
+	Cwd         string `long:"cwd" optional:"true" help:"Receiver worker directory"`
+	Harness     string `long:"harness" optional:"true" help:"Receiver worker harness"`
+	Model       string `long:"model" optional:"true" help:"Receiver worker model"`
+	MaxLive     int    `long:"max-live" optional:"true" help:"Positive live auto-worker cap (default 2)"`
 }
 
 func grantCmd() *cobra.Command {
@@ -466,6 +468,7 @@ func grantCmd() *cobra.Command {
 		grant.SpawnPolicy.Harness = p.Harness
 		grant.SpawnPolicy.Model = p.Model
 		grant.SpawnPolicy.MaxLive = p.MaxLive
+		grant.SpawnPolicy.JobApproval = p.JobApproval
 		var resp struct {
 			Warnings []string `json:"warnings"`
 		}
