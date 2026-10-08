@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -140,4 +141,47 @@ func TestFederation_JobsLiveFollowEncryptedReconnectDoesNotRerun(t *testing.T) {
 	finished := fedWaitJob(t, fh, q.ID)
 	require.Equal(t, j.WorkerID, finished.WorkerID)
 	require.Equal(t, "completed", finished.State)
+}
+
+func TestFederation_JobsFollowAPIRequiresFramesAndLeavesExitPending(t *testing.T) {
+	fh := newFedHarness(t)
+	publishJobNode(t, fh.peer, 1)
+	rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/jobs", map[string]any{"node": "bob", "repo": "project", "ref": "main", "group": "team", "command": "make test", "timeout_seconds": 10})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var sent struct {
+		Job db.FederationJob `json:"job"`
+	}
+	testharness.DecodeJSON(t, rec, &sent)
+	result := make(chan *httptest.ResponseRecorder, 1)
+	go func() { result <- fedHuman(t, fh.f, http.MethodGet, "/v1/federation/jobs/"+sent.Job.ID+"/follow", nil) }()
+	fedEventually(t, "follow request", func() bool { return len(fh.peer.envelopes(proto.KindJobFollow)) > 0 })
+	var req bundletransfer.Request
+	require.NoError(t, fh.peer.envelopes(proto.KindJobFollow)[0].DecodePayload(&req))
+	require.Equal(t, sent.Job.ID, req.Offer)
+	require.Equal(t, sent.Job.Fingerprint, req.SHA256)
+	kp, e := stream.NewKeyPair()
+	require.NoError(t, e)
+	a := fh.peer.envelope(proto.KindJobFollowAnswer, proto.Endpoint{}, bundletransfer.Answer{Request: bundletransfer.Request{Offer: req.Offer, Stream: req.Stream, SHA256: req.SHA256, Key: kp.Pub}, OK: true})
+	a.From.Agent = ""
+	fh.peer.send(a)
+	conn := fedPeerStream(t, fh.peer, req.Stream, kp, req.Key, false)
+	defer conn.Close()
+	enc := jobstream.NewEncoder(conn)
+	_, e = enc.Write(jobstream.Stdout, []byte("live"))
+	require.NoError(t, e)
+	require.NoError(t, conn.CloseWrite())
+	select {
+	case rec = <-result:
+	case <-time.After(5 * time.Second):
+		t.Fatal("follow API did not finish on authenticated FIN")
+	}
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	frame, e := jobstream.Read(rec.Body)
+	require.NoError(t, e)
+	require.Equal(t, "live", string(frame.Data))
+	_, e = jobstream.Read(rec.Body)
+	require.ErrorIs(t, e, io.EOF)
+	j, e := db.GetFederationJob(sent.Job.ID)
+	require.NoError(t, e)
+	require.Equal(t, "submitted", j.State, "stream FIN cannot publish a terminal worker exit")
 }
