@@ -50,6 +50,25 @@ func reserveIncomingAgentMove(o *db.FederationBundleOffer, raw []byte, agentID s
 	}
 	m := db.FederationAgentMove{Direction: "in", Peer: o.Peer, ID: o.Descriptor.ID, State: "awaiting_running", SourceAgent: o.Descriptor.Move.SourceAgent, SourceConv: o.Descriptor.Move.SourceConv, TargetAgent: agentID, SHA256: o.Descriptor.SHA256, Group: o.Descriptor.Group, ExpiresAt: o.Descriptor.ExpiresAt, CodexAppServer: profile.CodexAppServer}
 	m.MovedFrom = &db.FederationMoveLink{Instance: o.Peer, Agent: m.SourceAgent, Offer: m.ID}
+	old, err := db.GetFederationAgentMove("in", m.Peer, m.ID)
+	if err != nil {
+		return err
+	}
+	if old != nil {
+		if old.State != "awaiting_running" || old.SHA256 != m.SHA256 || old.SourceAgent != m.SourceAgent || old.SourceConv != m.SourceConv {
+			return errors.New("move already has a settled launch")
+		}
+		// The offer's import claim has already been re-reserved under fedBundleMu.
+		// A pre-dispatch crash may have left this provenance row behind.
+		won, err := db.TransitionFederationAgentMove(m, "awaiting_running")
+		if err != nil {
+			return err
+		}
+		if !won {
+			return errors.New("move launch state changed")
+		}
+		return nil
+	}
 	return db.InsertFederationAgentMove(m)
 }
 
@@ -180,7 +199,7 @@ func retireConfirmedAgentMove(m db.FederationAgentMove) {
 	// A restart after the retire commit resumes teardown, rather than demoting
 	// twice or losing the moved-address tombstone.
 	if a.Active() {
-		_, _, err = retireAgentConvGuarded(m.SourceConv, "system:federation-move", "moved to "+m.Peer+"/"+m.TargetAgent, false, func() error { return moveAuthority(m) })
+		_, _, err = retireAgentConvGuardedWithGeneration(m.SourceConv, "system:federation-move", "moved to "+m.Peer+"/"+m.TargetAgent, false, func() error { return moveAuthority(m) }, true)
 		if err != nil {
 			m.LastError = err.Error()
 			m.State = "blocked"
@@ -191,7 +210,7 @@ func retireConfirmedAgentMove(m db.FederationAgentMove) {
 	// Keep source history and worktree. Normal retirement removes membership,
 	// grants and owned runtime directories, and shuts down the source pane.
 	td := finishRetiredConv(m.SourceConv, true, false, agentWorktreeView{}, "")
-	if td.Stop.Action == "error" {
+	if td.Stop.Action == "error" || td.StopOutcome == softExitStuck || td.StopOutcome == softExitUnattempted {
 		m.LastError = td.Stop.Detail
 		_, _ = db.TransitionFederationAgentMove(m, "retiring")
 		return

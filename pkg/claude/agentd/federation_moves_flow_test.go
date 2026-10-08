@@ -289,3 +289,63 @@ func TestFederation_MoveRestartFinishesCommittedRetirement(t *testing.T) {
 	require.False(t, a.Active())
 	require.Equal(t, moveSourceConv, a.CurrentConvID)
 }
+
+func TestFederation_MoveSurvivingSourcePaneRemainsRetiring(t *testing.T) {
+	fh := newFedHarness(t)
+	fedMoveSource(t, fh)
+	d := fedStartMove(t, fh)
+	cc := fh.f.World.CCs.GetByConvID(moveSourceConv)
+	exitPane := holdRetiringPane(t, fh.f, cc, "moving-source-pane")
+	defer exitPane()
+	fedMoveConfirm(t, fh, d, d.SHA256)
+	fedEventually(t, "failed shutdown retained for retry", func() bool {
+		m, _ := db.GetFederationAgentMove("out", fh.peer.id.ID(), d.ID)
+		return m != nil && m.State == "retiring" && m.LastError != ""
+	})
+	m, err := db.GetFederationAgentMove("out", fh.peer.id.ID(), d.ID)
+	require.NoError(t, err)
+	require.Contains(t, m.LastError, "still alive")
+	exitPane()
+	fedEventually(t, "move completes after source exits", func() bool {
+		m, _ := db.GetFederationAgentMove("out", fh.peer.id.ID(), d.ID)
+		return m != nil && m.State == "moved"
+	})
+}
+func TestFederation_MovePreLaunchCrashCanImportAgain(t *testing.T) {
+	fh := newFedHarness(t)
+	fh.f.HaveGroup("receiver")
+	fedReceiveAgents(t, fh, "receiver")
+	b := fedAgentBundle(t)
+	b.SetHistory("claude-jsonl", moveSourceConv, []byte(`{"type":"user","sessionId":"`+moveSourceConv+`","cwd":"/source","message":{"content":"move history"}}`+"\n"))
+	raw, err := b.Encode()
+	require.NoError(t, err)
+	d := bundletransfer.New(bundletransfer.Agent, raw, "Move worker", time.Now().Add(time.Hour))
+	d.Group = "receiver"
+	d.Move = &bundletransfer.MoveIntent{SourceAgent: "agt_bobremote0000000000000000", SourceConv: moveSourceConv}
+	env := fh.peer.envelope(proto.KindBundleOffer, proto.Endpoint{}, d)
+	env.ID = d.ID
+	fh.peer.send(env)
+	require.Equal(t, proto.AckAccepted, fedAckFor(t, fh.peer, d.ID).Status)
+	agentd.ResetFederationForTest()
+	const reserved = "agt_crashedreservation000000000"
+	require.NoError(t, db.ReserveFederationBundleImport(fh.peer.id.ID(), d.ID, reserved))
+	require.NoError(t, db.InsertFederationAgentMove(db.FederationAgentMove{Direction: "in", Peer: fh.peer.id.ID(), ID: d.ID, State: "awaiting_running", TargetAgent: reserved, SourceAgent: d.Move.SourceAgent, SourceConv: moveSourceConv, SHA256: d.SHA256, ExpiresAt: d.ExpiresAt}))
+	rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/config", map[string]any{"enabled": true, "hub_url": fh.url, "name": "alice-box"})
+	require.Equal(t, 200, rec.Code)
+	fedEventually(t, "unlaunched reservation released", func() bool {
+		o, _ := db.GetFederationBundleOffer("in", fh.peer.id.ID(), d.ID)
+		return o != nil && o.ImportAgent == ""
+	})
+	// Also exercise the interrupted-cleanup case: the release committed but
+	// deleting provenance did not. Retry replaces this unlaunched record safely.
+	m, _ := db.GetFederationAgentMove("in", fh.peer.id.ID(), d.ID)
+	if m == nil {
+		require.NoError(t, db.InsertFederationAgentMove(db.FederationAgentMove{Direction: "in", Peer: fh.peer.id.ID(), ID: d.ID, State: "awaiting_running", TargetAgent: reserved, SourceAgent: d.Move.SourceAgent, SourceConv: moveSourceConv, SHA256: d.SHA256, ExpiresAt: d.ExpiresAt}))
+	}
+	rec = fedHuman(t, fh.f, http.MethodPost, "/v1/federation/bundle-offers/"+d.ID+"/import", map[string]any{"cwd": testutil.CanonicalTempDir(t), "apply": true})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	fedEventually(t, "recovered move running", func() bool {
+		m, _ := db.GetFederationAgentMove("in", fh.peer.id.ID(), d.ID)
+		return m != nil && m.State == "running" && m.TargetAgent != reserved
+	})
+}

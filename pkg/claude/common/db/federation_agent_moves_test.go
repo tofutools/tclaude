@@ -29,3 +29,27 @@ func TestFederationMoveAbandonWinsAgainstDelayedConfirmation(t *testing.T) {
 	m.ID = "duplicate"
 	require.Error(t, InsertFederationAgentMove(m))
 }
+
+func TestFederationMoveRetirementRejectsRotatedGenerationAtomically(t *testing.T) {
+	setupTestDB(t)
+	aid, _, err := EnsureAgentForConv("old-generation", "test")
+	require.NoError(t, err)
+	require.NoError(t, GrantAgentPermission("old-generation", "self.rename", "test"))
+	_, err = RotateAgentConv("old-generation", "new-generation", "clear")
+	require.NoError(t, err)
+	// The stable actor is still resolved by the old handle, but this transaction
+	// must refuse to revoke its successor's authority.
+	_, err = RetireAgentAuthorizationAtGeneration("old-generation", "human", "move")
+	require.ErrorContains(t, err, "generation changed")
+	a, err := GetAgent(aid)
+	require.NoError(t, err)
+	require.True(t, a.Active())
+	require.Equal(t, "new-generation", a.CurrentConvID)
+	permissions, err := ListAgentPermissionOverrideRowsForConv("new-generation")
+	require.NoError(t, err)
+	require.Len(t, permissions, 1)
+	out, err := RetireAgentAuthorizationAtGeneration("new-generation", "human", "move")
+	require.NoError(t, err)
+	require.True(t, out.Retired)
+	require.Equal(t, int64(1), out.PermsRevoked)
+}
