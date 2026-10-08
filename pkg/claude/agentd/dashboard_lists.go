@@ -216,7 +216,10 @@ func handleDashboardConversations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Shared short-TTL probe (TCL-370) — see handleDashboardRetired.
-	shared := gatheredStatusSnapshot()
+	shared, ok := requestStatusSnapshot(w, asDashboardHumanPeer(r), nil)
+	if !ok {
+		return
+	}
 	alive := shared.alive
 	rows := make([]dashboardConversation, 0, len(convs))
 	for _, row := range convs {

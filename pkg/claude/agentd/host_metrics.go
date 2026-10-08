@@ -49,7 +49,12 @@ func startHostMetricsPoller(stop <-chan struct{}) {
 		}
 	}()
 }
+
+var hostRefreshMu sync.Mutex
+
 func refreshHostMetrics() {
+	hostRefreshMu.Lock()
+	defer hostRefreshMu.Unlock()
 	key := config.DataDir()
 	cfg, err := config.Load()
 	paths := []hostmetrics.Path{{Kind: "data", Path: key}}
@@ -135,6 +140,15 @@ func cachedHostStatus() hostStatus {
 func handleHostStatus(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePermission(w, r, PermHostRead); !ok {
 		return
+	}
+	after, done, ok := beginForcedRead(w, r)
+	if !ok {
+		return
+	}
+	defer done()
+	if !after.IsZero() {
+		refreshHostMetrics()
+		perfSpanFrom(r).mark("host_snapshot_forced")
 	}
 	writeJSON(w, http.StatusOK, cachedHostStatus())
 }

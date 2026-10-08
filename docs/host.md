@@ -16,8 +16,12 @@ This permission is not default-granted: the snapshot includes local configured
 work-directory paths. Human operators can read it directly. It does not grant
 filesystem access, modify resources, or publish metrics to federation peers.
 
-Agentd samples once at startup and every 15 seconds. Status reads never probe
-the host or run subprocesses. JSON includes `observed_at`, `age_seconds`,
+Agentd samples once at startup and every 15 seconds. Ordinary status reads
+never probe the host or run subprocesses. For debugging, `host status --no-cache`
+(or `GET /v1/host/status?fresh=1`) forces a new sample and updates the cache.
+It uses the same permission checks and per-caller rate limit as fresh agent
+status reads: one in flight and at most one every 1.5 seconds; excess requests
+return HTTP 429 with `Retry-After`. Normal reads remain cached. JSON includes `observed_at`, `age_seconds`,
 `sample_interval_seconds` and a `status` of `warming`, `current` or `stale`.
 Before the first sample, status is `warming`; samples older than 45 seconds
 are `stale`. Missing readings remain unavailable, with errors, rather than

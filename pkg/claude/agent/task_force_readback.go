@@ -301,8 +301,9 @@ func runTaskForceLs(p *taskForceLsParams, stdout, stderr io.Writer) int {
 // ---- status ----
 
 type taskForceStatusParams struct {
-	Name string `pos:"true" optional:"true" help:"The task force (group) to inspect. Inferred when you are in exactly one group."`
-	JSON bool   `long:"json" help:"Output the composed force status as JSON."`
+	NoCache bool   `long:"no-cache" help:"Force a fresh local status gather (debugging escape hatch; rate limited)"`
+	Name    string `pos:"true" optional:"true" help:"The task force (group) to inspect. Inferred when you are in exactly one group."`
+	JSON    bool   `long:"json" help:"Output the composed force status as JSON."`
 }
 
 func taskForceStatusCmd() *cobra.Command {
@@ -412,7 +413,7 @@ func runTaskForceStatus(p *taskForceStatusParams, stdout, stderr io.Writer) int 
 	// gracefully (MembersAccessible=false), still seeing mission / phase / waves
 	// / rhythms.
 	var members []forceMemberView
-	cerr := DaemonRequest(http.MethodGet, "/v1/groups/"+url.PathEscape(group)+"/context", nil, &members, DaemonOpts{})
+	cerr := DaemonRequest(http.MethodGet, FreshReadPath("/v1/groups/"+url.PathEscape(group)+"/context", p.NoCache), nil, &members, DaemonOpts{})
 	switch {
 	case cerr == nil:
 		view.MembersAccessible = true

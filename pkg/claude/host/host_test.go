@@ -25,4 +25,5 @@ func TestHostStatusRendering(t *testing.T) {
 	cmd, _, err := Cmd().Find([]string{"status"})
 	require.NoError(t, err)
 	require.NotNil(t, cmd.Flags().Lookup("json"))
+	require.NotNil(t, cmd.Flags().Lookup("no-cache"))
 }

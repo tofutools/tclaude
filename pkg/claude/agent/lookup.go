@@ -913,12 +913,13 @@ func lookupID(agentID, convID string) string {
 // --- ls (peers in my groups) ---
 
 type lsParams struct {
-	Group string `long:"group" optional:"true" help:"Only show agents in this group (name or numeric ID). Groups you cannot reach are never matchable, even when named explicitly."`
-	State string `long:"state" optional:"true" help:"Filter: online | offline"`
-	JSON  bool   `long:"json" help:"Output JSON"`
+	NoCache bool   `long:"no-cache" help:"Force a fresh local status gather (debugging escape hatch; rate limited)"`
+	Group   string `long:"group" optional:"true" help:"Only show agents in this group (name or numeric ID). Groups you cannot reach are never matchable, even when named explicitly."`
+	State   string `long:"state" optional:"true" help:"Filter: online | offline"`
+	JSON    bool   `long:"json" help:"Output JSON"`
 	// Remote adds members of remote (federated) groups covered by the
 	// listed groups. With --json the output becomes {"local":[…],"remote":[…]}.
-	Remote bool `long:"remote" help:"Also list remote members covered by your peer-scoped grants (federation). With --json, output becomes {local, remote}"`
+	Remote bool `long:"remote" help:"Also list cached remote members (unaffected by --no-cache) covered by your peer-scoped grants (federation). With --json, output becomes {local, remote}"`
 }
 
 func lsCmd() *cobra.Command {
@@ -989,7 +990,7 @@ func runLsDaemon(p *lsParams, stdout, stderr io.Writer) int {
 		path += "?group=" + url.QueryEscape(g)
 	}
 	var peers []*peerEntry
-	if err := DaemonGet(path, &peers); err != nil {
+	if err := DaemonGet(FreshReadPath(path, p.NoCache), &peers); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}

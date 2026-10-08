@@ -86,3 +86,57 @@ func TestStatusSnapshotReaderAfterInflightWriteGetsNewGather(t *testing.T) {
 	require.NotSame(t, a, b, "a reader after a known write cannot reuse the older gather")
 	require.EqualValues(t, 2, count.Load())
 }
+
+func TestStatusSnapshotForcedReadWaitsForOlderFlightAndPopulates(t *testing.T) {
+	var c statusSnapshotCache
+	var count atomic.Int32
+	entered, release := make(chan struct{}), make(chan struct{})
+	gather := func() *statusSnapshot {
+		if count.Add(1) == 1 {
+			close(entered)
+			<-release
+		}
+		return &statusSnapshot{observedAt: time.Now()}
+	}
+	old := make(chan *statusSnapshot, 1)
+	go func() { old <- c.get("data", time.Minute, gather) }()
+	<-entered
+	after := time.Now()
+	fresh := make(chan *statusSnapshot, 1)
+	go func() { fresh <- c.getAfter("data", time.Minute, after, gather) }()
+	close(release)
+	a, b := <-old, <-fresh
+	require.NotSame(t, a, b)
+	require.True(t, b.observedAt.After(after))
+	require.EqualValues(t, 2, count.Load())
+	require.Same(t, b, c.get("data", time.Minute, gather), "fresh result benefits normal readers")
+}
+
+func TestStatusSnapshotForcedReadMayJoinNewerForcedFlight(t *testing.T) {
+	var c statusSnapshotCache
+	after := time.Now()
+	entered, release := make(chan struct{}), make(chan struct{})
+	var count atomic.Int32
+	gather := func() *statusSnapshot {
+		count.Add(1)
+		close(entered)
+		<-release
+		return &statusSnapshot{observedAt: time.Now()}
+	}
+	first := make(chan *statusSnapshot, 1)
+	go func() { first <- c.getAfter("data", time.Minute, after, gather) }()
+	<-entered
+	second := make(chan *statusSnapshot, 1)
+	go func() { second <- c.getAfter("data", time.Minute, after, gather) }()
+	// Keep the newer flight visible until the joining read has acquired it.
+	c.mu.Lock()
+	f := c.flight
+	c.mu.Unlock()
+	require.True(t, f.started.After(after))
+	// A completed newer snapshot also qualifies; avoid depending on scheduling.
+	close(release)
+	a := <-first
+	b := <-second
+	require.Same(t, a, b)
+	require.EqualValues(t, 1, count.Load())
+}

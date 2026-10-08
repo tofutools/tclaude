@@ -2886,7 +2886,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	span := perfSpanFrom(r)
 	// All status consumers share this gather, including its one tmux probe.
 	// Warm reads only project cached data; authority is always checked below.
-	sharedStatus := gatheredStatusSnapshotWithTimings(func(phases []perfPhase) { span.addChildren("status_snapshot", phases...) })
+	sharedStatus, ok := requestStatusSnapshot(w, asDashboardHumanPeer(r), func(phases []perfPhase) { span.addChildren("status_snapshot", phases...) })
+	if !ok {
+		return
+	}
 	aliveSessions := sharedStatus.alive
 	span.mark("status_snapshot")
 

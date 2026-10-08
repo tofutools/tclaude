@@ -4039,5 +4039,6 @@ func IsHTTPProxyGatewayURL(value string) bool {
 
 // StatusSnapshotConfig controls the shared runtime gathering window for every consumer.
 type StatusSnapshotConfig struct {
-	FreshnessMS int `json:"freshness_ms,omitempty"`
+	Disabled    bool `json:"disabled,omitempty"`
+	FreshnessMS int  `json:"freshness_ms,omitempty"`
 }
