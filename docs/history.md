@@ -4,7 +4,7 @@ tclaude began in March 2026 as a set of Claude Code utilities — tmux session
 wrapping, conversation search, worktree helpers — carved out of a larger
 personal toolbox. It grew from that single-harness utility belt into a
 harness-agnostic agentic dev environment: today Claude Code, OpenAI Codex
-CLI, OpenCode, and GitHub Copilot CLI all run behind the same workflow, and
+CLI, OpenCode, GitHub Copilot CLI, and Google Gemini CLI all run behind the same workflow, and
 the multi-agent machinery (the `agentd` daemon, groups, permissions, audit)
 is the center of the project rather than an add-on.
 

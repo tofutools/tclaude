@@ -97,8 +97,8 @@ pinged while a subagent is still running.
 
 !!! note "Harness labeling caveat"
     Notification titles are `<Harness>: <Status>` — but only Codex and
-    shell sessions get their own label (`Codex: …`, `Shell: …`). OpenCode
-    and Copilot sessions are currently titled `Claude: …` as well. This is
+    shell sessions get their own label (`Codex: …`, `Shell: …`). OpenCode,
+    Copilot, and Gemini sessions are currently titled `Claude: …` as well. This is
     a known cosmetic quirk of the title mapping; the notification itself
     fires and focuses correctly regardless of harness.
 

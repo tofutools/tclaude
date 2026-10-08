@@ -13,7 +13,7 @@ Five coding harnesses and one shell pseudo-harness are supported:
 | `codex` | OpenAI Codex CLI | `codex` |
 | `opencode` | OpenCode | managed `opencode serve` + an `attach` client |
 | `copilot` | GitHub Copilot CLI | `copilot` |
-| `gemini` | Google Gemini CLI | `gemini` |
+| `gemini` | Google Gemini CLI (beta) | `gemini` |
 | `shell` | ordinary shell (no model) | `$SHELL` or `/bin/sh` |
 
 tclaude owns everything around the pane — the tmux session, status tracking,
@@ -410,6 +410,11 @@ never reaches its first turn. `--trust-dir` seeds the entry in
   `ask`** — each an honest absence, refused or degraded with a message.
 
 ## Gemini CLI
+
+!!! warning "Beta"
+    Gemini CLI support is new and has seen far less real-world use than the
+    other harnesses. Expect rough edges, especially in the interactive pane,
+    and please report problems you hit.
 
 The Gemini CLI adapter, pinned to 0.62.0, covers:
 

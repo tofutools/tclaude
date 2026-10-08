@@ -10,8 +10,10 @@ permissions with audit, sandboxing, and automation.
 
 *The operations dashboard watching a mixed-harness fleet*
 
-Four harnesses are supported behind one workflow: Claude Code, OpenAI Codex
-CLI, OpenCode, and GitHub Copilot CLI. tclaude records the harness on every
+Five harnesses are supported behind one workflow: Claude Code, OpenAI Codex
+CLI, OpenCode, GitHub Copilot CLI, and Google Gemini CLI. Gemini CLI support
+is **beta**: it is new and less battle-tested than the others (see
+[Harnesses](harnesses.md#gemini-cli)). tclaude records the harness on every
 conversation, so listings, resume, lifecycle operations, and the dashboard
 route through the correct CLI automatically. Where harnesses expose different
 primitives, tclaude reports the difference instead of pretending the
@@ -55,8 +57,8 @@ agents, and the daemon, read [Architecture](architecture.md).
 | Native Windows | Not supported |
 
 tmux is required for session management. You also need at least one harness
-CLI installed and authenticated: Claude Code, Codex CLI, OpenCode, or Copilot
-CLI.
+CLI installed and authenticated: Claude Code, Codex CLI, OpenCode, Copilot
+CLI, or Gemini CLI (beta).
 
 ## Installation
 
@@ -127,6 +129,8 @@ The baseline setup (always runs):
   line — no flag needed on a machine that has Codex;
 - when Copilot CLI is present, offers enabling its copy-on-select clipboard
   bridging;
+- when Gemini CLI is on `PATH`, installs its hooks in `~/.gemini/settings.json`
+  and offers its alternate-screen renderer so the mouse wheel scrolls;
 - registers the `tclaude://` protocol handler on WSL for clickable
   notifications; and
 - asks once, on first run only, whether desktop notifications should be
@@ -134,8 +138,8 @@ The baseline setup (always runs):
 
 `tclaude setup --harness codex` installs or repairs Codex hooks explicitly
 (useful for scripted installs); the flag accepts `claude` and `codex` only —
-OpenCode has no hook installer, and Copilot's hook drop-in is handled by the
-baseline. See [Harnesses](harnesses.md) for per-harness setup details.
+OpenCode has no hook installer, and Copilot's and Gemini CLI's hooks are
+handled by the baseline. See [Harnesses](harnesses.md) for per-harness setup details.
 
 Optional extras are additive and idempotent:
 
@@ -170,7 +174,7 @@ tclaude setup --check --harness codex
 tclaude
 
 # Pick a harness explicitly
-tclaude session new --harness codex      # claude | codex | opencode | copilot
+tclaude session new --harness codex      # claude | codex | opencode | copilot | gemini
 
 # Start detached instead of attaching immediately
 tclaude session new --harness copilot --detached

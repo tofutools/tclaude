@@ -43,8 +43,8 @@ durable rollout `token_count` events rather than from the footer, so the
 dashboard's Codex context figures work whether or not the curated items are
 installed.
 
-OpenCode shows only its own TUI status, and Copilot CLI has no status line at
-all; see the [capability matrix](harnesses.md#capability-matrix).
+OpenCode shows only its own TUI status, and Copilot CLI and Gemini CLI have
+no tclaude status line; see the [capability matrix](harnesses.md#capability-matrix).
 
 ## tclaude stats
 
@@ -59,8 +59,8 @@ tclaude stats -t         # token detail
 tclaude stats -j         # raw cache as JSON
 ```
 
-The data source is Claude Code's; Codex, OpenCode, and Copilot activity is
-not included here — the [dashboard](dashboard.md) is where cross-harness
+The data source is Claude Code's; Codex, OpenCode, Copilot, and Gemini
+activity is not included here — the [dashboard](dashboard.md) is where cross-harness
 usage lives.
 
 ## tclaude usage

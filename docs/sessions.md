@@ -27,7 +27,8 @@ tclaude session new -C /path/to/project --label review
 tclaude -d
 ```
 
-`--harness` accepts `claude`, `codex`, `opencode`, `copilot`, and `shell`.
+`--harness` accepts `claude`, `codex`, `opencode`, `copilot`, `gemini`, and
+`shell`.
 When unset, the harness (and model/effort) come from the global default spawn
 profile (dashboard, or `tclaude agent profiles default set`); explicit
 `--harness`, `--model`, or `--effort` flags win per field. Without a global
