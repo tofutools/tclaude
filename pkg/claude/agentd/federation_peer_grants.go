@@ -19,6 +19,7 @@ const (
 	PermGroupsRosterRead   = "groups.roster.read"
 	PermGroupsPresenceRead = "groups.presence.read"
 	PermMessageAttachments = "message.attachments"
+	PermAgentsReceive      = "agents.receive"
 )
 
 // Wire capabilities stay stable while authority lives in regular peer slugs.
@@ -30,6 +31,7 @@ var federationPeerSlugs = map[string]string{
 	PermGroupsPresenceRead: proto.CapPresence,
 	PermMessageDirect:      proto.CapMail,
 	PermMessageAttachments: proto.CapAttachments,
+	PermAgentsReceive:      proto.CapAgentsReceive,
 	PermGroupsMembersSpawn: proto.CapSpawn,
 	PermRoutesConsume:      proto.CapRoutes,
 }
@@ -136,6 +138,10 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scope := strings.TrimSpace(in.Scope)
+	if in.Slug == PermAgentsReceive && scope == "" {
+		writeError(w, 400, "invalid_arg", "agents.receive requires scope group=<local group>")
+		return
+	}
 	if instanceSlug && scope != "" {
 		writeError(w, 400, "invalid_arg", in.Slug+" is an unscoped instance grant")
 		return

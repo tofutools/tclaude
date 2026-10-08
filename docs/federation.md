@@ -869,3 +869,68 @@ notices remain in the covering operator's inbox, but their old tickets lose
 authority. Wait observation reuses the session observer only while federation
 is connected and away coverage is active; idle instances do no extra session
 polling for this feature.
+
+## Sharing an agent with a peer
+
+Agent offers use the same inbox, spool and transfer protocol as config offers.
+On the receiving machine, allow a peer to offer agents into a particular group:
+
+```bash
+tclaude federation grant alice agents.receive --scope group=reviewers
+```
+
+`agents.receive` requires an existing group scope. It advertises that receiving
+group without exposing its members or transcripts. An offer is pinned to the
+group's identity: renaming preserves it, while deleting and recreating the same
+name does not retarget it. Unrestricted peers may offer into active groups, but
+receipt never launches an agent automatically.
+
+On the sending machine:
+
+```bash
+tclaude federation share-agent reviewer bob --group reviewers
+tclaude federation share-agent reviewer bob --group reviewers --history
+```
+
+The default shares configuration only. `--history` includes the native
+conversation when the harness supports `HistoryTransfer` (currently Claude
+Code and Codex); other harnesses warn and share configuration only. The original
+agent and transcript remain in place. Credential findings report counts and at
+most three locations per kind; sharing refuses unless `--allow-flagged` is
+explicit. Structured credential fields are omitted and history stays verbatim.
+
+Agent callers need `agent.share` with `peer=bob` or
+`peer=bob/reviewers` scope. They may share themselves using `self`; sharing
+another agent additionally requires `agent.bundle.export`. An unscoped grant
+confers no remote authority. Receiving, previewing and applying offers remain
+operator actions.
+
+On the receiver:
+
+```bash
+tclaude federation offers
+tclaude federation offers import <id> --cwd "$PWD"
+tclaude federation offers import <id> --cwd "$PWD" --name received-reviewer --apply
+```
+
+Import goes through `agent bundle import` and normal spawn checks, creating a
+fresh local agent. The offered group is the default; `--group` can choose
+another active group that grants this sender `agents.receive`. Trust and the
+original receiving grant must remain valid. Preview shows provenance, the
+chosen group, paths, history capability, credential findings and launch
+security posture. Source permissions, ownership, roles and profile names are
+advisory and never become grants on the receiver.
+
+Use `--skip-history` for configuration only. `--cwd`, `--worktree`, `--keep-paths`
+and repeatable `--set name=value` retain the local agent-bundle import meanings.
+Configuration selectors (`--only`, `--skip`, `--replace`) do not apply to agent
+offers. Missing paths or unresolved placeholders refuse apply. Group identity
+and admission are rechecked after transfer and immediately before import.
+
+Agent archives are limited to 256 MiB, with ten active offers and at most
+512 MiB of archived payload per peer per direction. The shared 72-hour expiry,
+inline threshold, verification and decline behavior apply. If an apply is
+interrupted after dispatching a launch, its reserved agent ID stays visible;
+inspect that identity before requesting another offer. Pre-launch failures can
+be corrected and retried. Declining or expiring an offer discards transfer data;
+it does not stop an already dispatched agent.

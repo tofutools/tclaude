@@ -179,7 +179,7 @@ func receivingBundleOffer(w http.ResponseWriter, r *http.Request, requireAdmissi
 	}
 	kind, ok := federationBundleKind(found.Descriptor.Type)
 	peer, err := db.GetFederationPeer(found.Peer)
-	if requireAdmission && (err != nil || peer == nil || !ok || !fedBundleAdmitted(found.Peer, kind.Type, found.Descriptor)) {
+	if requireAdmission && (err != nil || peer == nil || !ok || !fedBundleOfferAdmitted(found, kind.Type)) {
 		writeError(w, 403, "admission", "peer trust or bundle receive grant revoked")
 		return nil
 	}
@@ -213,10 +213,10 @@ func handleFederationBundleFetch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, o)
 }
 func handleFederationBundleImport(w http.ResponseWriter, r *http.Request) {
-	if !requireHuman(w, r, "preview or apply a config offer") {
+	if !requireHuman(w, r, "preview or apply a bundle offer") {
 		return
 	}
-	var in configBundleRequest
+	var in fedBundleImportRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil && !errors.Is(err, io.EOF) {
 		writeError(w, 400, "json", err.Error())
 		return
@@ -225,18 +225,20 @@ func handleFederationBundleImport(w http.ResponseWriter, r *http.Request) {
 	if o == nil {
 		return
 	}
-	if o.Descriptor.Type != bundletransfer.Config.Name {
-		writeError(w, 400, "bundle_type", "not a config offer")
-		return
-	}
+
 	if !ensureFederationBundleReady(w, r, o) {
 		return
 	}
 	fedBundleMu.Lock()
 	defer fedBundleMu.Unlock()
+	kind, _ := federationBundleKind(o.Descriptor.Type)
 	current, err := db.GetFederationBundleOffer("in", o.Peer, o.Descriptor.ID)
-	if err != nil || current == nil || current.State != "ready" || !current.Descriptor.ExpiresAt.After(time.Now()) || !fedBundleAdmitted(o.Peer, bundletransfer.Config, current.Descriptor) {
+	if err != nil || current == nil || current.State != "ready" || !current.Descriptor.ExpiresAt.After(time.Now()) || !fedBundleOfferAdmitted(current, kind.Type) {
 		writeError(w, 409, "offer_state", "offer changed before import; preview again")
+		return
+	}
+	if o.Descriptor.Type == bundletransfer.Agent.Name {
+		importFederationAgentOffer(w, r, current, &in)
 		return
 	}
 	raw, err := fedBundleSpool().Read("in", o.Peer, o.Descriptor)
@@ -248,7 +250,7 @@ func handleFederationBundleImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "bundle", err.Error())
 		return
 	}
-	request, err := json.Marshal(in)
+	request, err := json.Marshal(in.configBundleRequest)
 	if err != nil {
 		writeError(w, 400, "json", err.Error())
 		return
@@ -274,7 +276,7 @@ func handleFederationBundleImport(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(rec.Code)
 	var response map[string]any
 	if json.Unmarshal(rec.Body.Bytes(), &response) == nil {
-		response["offer"] = map[string]any{"id": o.Descriptor.ID, "peer": o.Peer, "sha256": o.Descriptor.SHA256, "expires_at": o.Descriptor.ExpiresAt}
+		response["offer"] = federationOfferProvenance(o)
 		_ = json.NewEncoder(w).Encode(response)
 	} else {
 		_, _ = w.Write(rec.Body.Bytes())
@@ -325,6 +327,7 @@ func handleFederationBundleDecline(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]string{"state": "declined", "id": o.Descriptor.ID})
 }
 func registerFederationBundleRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /v1/federation/share-agent", handleFederationShareAgent)
 	mux.HandleFunc("POST /v1/federation/offer-config", handleFederationOfferConfig)
 	mux.HandleFunc("GET /v1/federation/bundle-offers", handleFederationBundleOffers)
 	mux.HandleFunc("POST /v1/federation/bundle-offers/{id}/fetch", handleFederationBundleFetch)

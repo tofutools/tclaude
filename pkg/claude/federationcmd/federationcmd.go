@@ -57,7 +57,7 @@ func Cmd() *cobra.Command {
 			peersCmd(), trustCmd(), untrustCmd(),
 			grantCmd(), revokeCmd(), grantsCmd(), remoteCmd(), sessionsCmd(), attachCmd(), viewersCmd(), kickCmd(),
 			sendCmd(), outboxCmd(), notifyCmd(), inboxCmd(), awayCmd(), returnCmd(), answerCmd(),
-			spawnRequestCmd(), requestsCmd(), offerConfigCmd(), offersCmd(),
+			spawnRequestCmd(), requestsCmd(), offerConfigCmd(), offersCmd(), shareAgentCmd(),
 		},
 	}.ToCobra()
 }
