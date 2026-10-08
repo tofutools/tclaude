@@ -255,6 +255,7 @@ func ConversationResumeProfileForConv(convID string) (*ConversationResumeProfile
 }
 
 func SetAgentRelaunchProfile(agentID string, profile AgentRelaunchProfile) error {
+	defer NotifyStatusChanged()
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return errors.New("SetAgentRelaunchProfile: agent_id required")
@@ -289,6 +290,7 @@ func SetAgentRelaunchProfile(agentID string, profile AgentRelaunchProfile) error
 // callers. The read/modify/write is transactional so unrelated durable launch
 // intent is preserved.
 func SetAgentCodexAppServerSelectionForConv(convID string, selected bool, source string) error {
+	defer NotifyStatusChanged()
 	convID = strings.TrimSpace(convID)
 	source = strings.TrimSpace(source)
 	if convID == "" || source == "" {
@@ -339,6 +341,7 @@ func SetAgentCodexAppServerSelectionForConv(convID string, selected bool, source
 // A nil observation clears stale evidence when the new launch could not be
 // inspected.
 func SetAgentFastModeAtLaunchForConv(convID string, observed *bool) error {
+	defer NotifyStatusChanged()
 	convID = strings.TrimSpace(convID)
 	if convID == "" {
 		return errors.New("SetAgentFastModeAtLaunchForConv: conversation required")
@@ -398,6 +401,7 @@ func SetTemporaryHarnessBuiltinMode(
 	normalSource string,
 	override *string,
 ) error {
+	defer NotifyStatusChanged()
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return errors.New("SetTemporaryHarnessBuiltinMode: agent_id required")
@@ -476,6 +480,7 @@ func SetTemporaryHarnessBuiltinModeForConv(
 	normalSource string,
 	override *string,
 ) error {
+	defer NotifyStatusChanged()
 	agentID, err := AgentIDForConv(convID)
 	if err != nil {
 		return err
@@ -609,6 +614,7 @@ func AssignAgentSandboxImplementation(
 }
 
 func SetConversationResumeProfile(convID string, profile ConversationResumeProfile) error {
+	defer NotifyStatusChanged()
 	convID = strings.TrimSpace(convID)
 	if convID == "" {
 		return errors.New("SetConversationResumeProfile: conv_id required")
@@ -638,6 +644,7 @@ func SetConversationResumeProfile(convID string, profile ConversationResumeProfi
 // Managed agents also keep the stable agent profile; this fallback write makes
 // a direct `session new --context-window-max` survive the next resume.
 func SetSessionConfiguredContextWindowMax(sessionID string, value int64) error {
+	defer NotifyStatusChanged()
 	return updateSessionFallbackRelaunch(sessionID, func(fallback *AgentRelaunchProfile) {
 		max := value
 		fallback.ConfiguredContextWindowMax = &max
@@ -650,6 +657,7 @@ func SetSessionConfiguredContextWindowMax(sessionID string, value int64) error {
 // tclaude launch intent with no sessions column of its own, and a direct
 // `session new --copilot-api` must survive the next resume.
 func SetSessionCopilotAPI(sessionID string, value bool) error {
+	defer NotifyStatusChanged()
 	return updateSessionFallbackRelaunch(sessionID, func(fallback *AgentRelaunchProfile) {
 		api := value
 		fallback.CopilotAPI = &api
@@ -657,6 +665,7 @@ func SetSessionCopilotAPI(sessionID string, value bool) error {
 }
 
 func SetSessionCodexAppServer(sessionID string, value bool) error {
+	defer NotifyStatusChanged()
 	return updateSessionFallbackRelaunch(sessionID, func(fallback *AgentRelaunchProfile) {
 		selected := value
 		fallback.CodexAppServer = &selected
@@ -664,6 +673,7 @@ func SetSessionCodexAppServer(sessionID string, value bool) error {
 }
 
 func SetConversationCodexAppServer(convID, harnessName, cwd string, value bool) error {
+	defer NotifyStatusChanged()
 	return updateConversationFallbackRelaunch(convID, harnessName, cwd,
 		func(fallback *AgentRelaunchProfile) {
 			selected := value
@@ -674,6 +684,7 @@ func SetConversationCodexAppServer(convID, harnessName, cwd string, value bool) 
 // SetSessionFastMode records explicit Codex service-tier intent. An empty mode
 // clears the field back to inherit; on/off become true/false.
 func SetSessionFastMode(sessionID, mode string) error {
+	defer NotifyStatusChanged()
 	return updateSessionFallbackRelaunch(sessionID, func(fallback *AgentRelaunchProfile) {
 		switch strings.TrimSpace(mode) {
 		case "on":
@@ -718,6 +729,7 @@ func SetSessionFastMode(sessionID, mode string) error {
 // is on send-keys" is a different fact from an unknown one, and only the first
 // may be acted on.
 func SetConversationCopilotAPI(convID, harnessName, cwd string, value bool) error {
+	defer NotifyStatusChanged()
 	return updateConversationFallbackRelaunch(convID, harnessName, cwd,
 		func(fallback *AgentRelaunchProfile) {
 			api := value
@@ -729,6 +741,7 @@ func SetConversationCopilotAPI(convID, harnessName, cwd string, value bool) erro
 // conversation whose stable clone actor may not exist yet. Managed agents also
 // freeze the same values in AgentRelaunchProfile at birth.
 func SetConversationCodexStateRoot(convID, harnessName, cwd, root, source string) error {
+	defer NotifyStatusChanged()
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return errors.New("SetConversationCodexStateRoot: root required")
@@ -744,6 +757,7 @@ func SetConversationCodexStateRoot(convID, harnessName, cwd, root, source string
 // whose stable actor may not exist yet (notably clones). It remains runtime
 // evidence and never fills the explicit FastMode intent field.
 func SetConversationFastModeAtLaunch(convID, harnessName, cwd string, observed *bool) error {
+	defer NotifyStatusChanged()
 	return updateConversationFallbackRelaunch(convID, harnessName, cwd,
 		func(fallback *AgentRelaunchProfile) {
 			fallback.FastModeAtLaunch = observed
@@ -849,6 +863,7 @@ func BackfillDurableRelaunchProfilesFromLatestSession(convID string) error {
 // identity. Empty is meaningful: a failed controlled-stop capture invalidates
 // unattended resume without discarding the remaining conversation facts.
 func SetConversationResumeProvenance(convID, provenance string) error {
+	defer NotifyStatusChanged()
 	p, err := ConversationResumeProfileForConv(convID)
 	if err != nil {
 		return err

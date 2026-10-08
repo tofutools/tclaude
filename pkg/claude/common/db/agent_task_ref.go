@@ -24,6 +24,7 @@ type AgentTaskRef struct {
 // it belonged to. Returns the number of rows updated so a caller can
 // distinguish "set" from "no such agent".
 func SetAgentTaskRef(agentID, url, label string) (int64, error) {
+	defer NotifyStatusChanged()
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return 0, errors.New("SetAgentTaskRef: agent_id required")
@@ -54,6 +55,7 @@ func SetAgentTaskRef(agentID, url, label string) (int64, error) {
 // caller's value must not win) or no such agent exists — GetAgentTaskRef
 // distinguishes the two when a caller needs to.
 func SetAgentTaskRefIfEmpty(agentID, url, label string) (int64, error) {
+	defer NotifyStatusChanged()
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return 0, errors.New("SetAgentTaskRefIfEmpty: agent_id required")

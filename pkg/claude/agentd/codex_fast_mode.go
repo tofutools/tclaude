@@ -265,6 +265,7 @@ func dashboardSetCodexFastModeAgent(w http.ResponseWriter, _ *http.Request, conv
 	cached.at = time.Time{}
 	codexContextRefreshMu.last[sess.ID] = cached
 	codexContextRefreshMu.Unlock()
+	db.NotifyStatusChanged()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"conv_id":   resolved.ConvID,
 		"requested": map[bool]string{true: "fast_on", false: "fast_off"}[desired],

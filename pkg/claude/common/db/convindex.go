@@ -46,6 +46,7 @@ func (r *ConvIndexRow) IsArchived() bool {
 
 // UpsertConvIndex inserts or updates a conversation index entry.
 func UpsertConvIndex(row *ConvIndexRow) error {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return err
@@ -106,6 +107,7 @@ func UpsertConvIndex(row *ConvIndexRow) error {
 // read-then-upsert of those columns would race a concurrent rename and lose
 // it for good. On INSERT the row's values are written as given.
 func UpsertConvIndexColdScan(row *ConvIndexRow) error {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return err
@@ -148,6 +150,7 @@ func UpsertConvIndexColdScan(row *ConvIndexRow) error {
 // successful native rename so cache-only readers such as the dashboard
 // snapshot show the new title immediately.
 func SetConvIndexCustomTitle(convID, title, harness string) error {
+	defer NotifyStatusChanged()
 	if convID == "" {
 		return nil
 	}
@@ -178,6 +181,7 @@ func SetConvIndexCustomTitle(convID, title, harness string) error {
 // observation (empty GitBranch) is still useful: it can seed created/full_path
 // for a conv whose first indexing pass was missed.
 func UpsertConvIndexBranchSnapshot(row *ConvIndexRow) error {
+	defer NotifyStatusChanged()
 	if row == nil || row.ConvID == "" {
 		return nil
 	}
@@ -365,6 +369,7 @@ func FindConvIndexByPrefix(prefix string) (*ConvIndexRow, error) {
 
 // DeleteConvIndex removes a conversation index entry.
 func DeleteConvIndex(convID string) error {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return err
@@ -407,6 +412,7 @@ func MaxConvIndexUpdatedAtForProject(projectDir string) (time.Time, error) {
 
 // DeleteConvIndexByProjectDir removes all entries for a project directory.
 func DeleteConvIndexByProjectDir(projectDir string) error {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return err
@@ -468,6 +474,7 @@ func nullableFileMtime(value time.Time) any {
 //
 // Returns sql.ErrNoRows if no row matches convID.
 func SetConvIndexArchived(convID string, archived bool) error {
+	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return err
@@ -500,6 +507,7 @@ func SetConvIndexArchived(convID string, archived bool) error {
 // or one that already has a cwd, is a no-op and not an error — this is
 // a best-effort setter.
 func SetConvIndexProjectPath(convID, projectPath string) error {
+	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return err

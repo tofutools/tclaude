@@ -338,7 +338,8 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 	// Reuse the same gathered runtime state as dashboard, tools and peers.
 	// Group membership and permissions above are fresh projection decisions.
 	for conv, pe := range byConv {
-		pe.State = peerStateFromAgentState(shared.states[conv])
+		state, _ := shared.stateFor(conv)
+		pe.State = peerStateFromAgentState(state)
 	}
 	out := make([]*peerEntry, 0, len(byConv))
 	for _, pe := range byConv {

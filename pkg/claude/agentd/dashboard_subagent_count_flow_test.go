@@ -69,7 +69,6 @@ func TestDashboardSnapshot_SubagentCountSurvivesMainAgentStop(t *testing.T) {
 	//    This is the crux: an idle-looking parent must still report the
 	//    live sub-agent so the "+1" badge renders.
 	apply("Stop", "")
-	agentd.ResetStatusSnapshotForTest() // Simulate the next UI poll after cache expiry.
 	member = findDashMember(fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "squad", conv)
 	require.NotNil(t, member, "agent %s missing after Stop", conv)
 	assert.Equal(t, 1, member.State.SubagentCount, "subagent_count must survive the parent's Stop")
@@ -78,7 +77,6 @@ func TestDashboardSnapshot_SubagentCountSurvivesMainAgentStop(t *testing.T) {
 
 	// 3) The sub-agent finishes — count clears, status settles to idle.
 	apply("SubagentStop", "ag-1")
-	agentd.ResetStatusSnapshotForTest() // Simulate the next UI poll after cache expiry.
 	member = findDashMember(fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "squad", conv)
 	require.NotNil(t, member, "agent %s missing after SubagentStop", conv)
 	assert.Equal(t, 0, member.State.SubagentCount, "subagent_count cleared after SubagentStop")
@@ -157,7 +155,6 @@ func TestDashboardSnapshot_SubagentPhantomClearedOnSessionStart(t *testing.T) {
 		ConvID:        conv,
 		Cwd:           f.TestCwd("subb"),
 	}, label), "ApplyHook(SessionStart)")
-	agentd.ResetStatusSnapshotForTest() // Simulate the next UI poll after cache expiry.
 	member = findDashMember(fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "squad", conv)
 	require.NotNil(t, member, "agent %s missing after SessionStart", conv)
 	assert.Equal(t, 0, member.State.SubagentCount,
@@ -192,7 +189,6 @@ func TestDashboardSnapshot_OfflineAgentReportsZeroSubagents(t *testing.T) {
 
 	// The process dies without any farewell hooks.
 	f.MarkOffline("tmux-subc")
-	agentd.ResetStatusSnapshotForTest() // Simulate the next UI poll after cache expiry.
 	member = findDashMember(fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "squad", conv)
 	require.NotNil(t, member, "agent %s missing after going offline", conv)
 	assert.Equal(t, 0, member.State.SubagentCount,

@@ -102,3 +102,28 @@ func TestSharedStatusSnapshotHistoricalContext(t *testing.T) {
 		require.EqualValues(t, 1000, got.ContextWindowSize)
 	}
 }
+
+func TestSharedStatusSnapshotKnownWritesAreImmediatelyVisible(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	const conv = "status-write-agent"
+	f.HaveConvWithTitle(conv, "worker")
+	f.HaveGroup("team")
+	f.HaveMember("team", conv)
+	f.HaveAliveSession(conv, "status-write-session", "tmux-status-write", f.TestCwd("work"))
+	dash := agentd.BuildDashboardHandlerForTest()
+	read := func() *dashMember {
+		m := findDashMember(fetchDashSnapshot(t, dash), "team", conv)
+		require.NotNil(t, m)
+		return m
+	}
+	require.True(t, read().Online)
+	f.SetSessionStatus(conv, "awaiting_input")
+	require.Equal(t, "awaiting_input", read().State.Status)
+	require.NoError(t, db.UpdateSessionModel("status-write-session", "model-after-write"))
+	require.Equal(t, "model-after-write", read().State.Model)
+	require.NoError(t, db.UpdateContextSnapshot("status-write-session", 25, 100, 20, 1000))
+	require.EqualValues(t, 100, read().State.TokensInput)
+	f.MarkOffline("tmux-status-write")
+	require.False(t, read().Online)
+}

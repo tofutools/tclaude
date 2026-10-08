@@ -441,6 +441,7 @@ func SetCodexAppServerRuntimeVersion(generation, version string) error {
 }
 
 func MarkCodexAppServerRuntimeUnavailable(generation, detail string) error {
+	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return err
@@ -456,6 +457,7 @@ func MarkCodexAppServerRuntimeUnavailable(generation, detail string) error {
 // A late watcher from an obsolete connection must not become the newest
 // durable row and obscure its live replacement.
 func MarkCodexAppServerRuntimeTerminalIfUnreplaced(generation, state, detail string) (bool, error) {
+	defer NotifyStatusChanged()
 	if state != CodexAppServerUnavailable && state != CodexAppServerDead {
 		return false, fmt.Errorf("codex app-server terminal state must be unavailable or dead, got %q", state)
 	}
@@ -491,6 +493,7 @@ func SetSessionStatusForCodexAppServerGeneration(
 	status, detail string,
 	at time.Time,
 ) (bool, error) {
+	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return false, err

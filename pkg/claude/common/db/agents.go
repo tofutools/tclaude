@@ -121,6 +121,7 @@ func newAgentID() string { return NewAgentID() }
 // Errors if convID is already linked to an agent — callers that want
 // idempotency should use EnsureAgentForConv.
 func AllocateAgent(convID, via string) (string, error) {
+	defer NotifyStatusChanged()
 	convID = strings.TrimSpace(convID)
 	if convID == "" {
 		return "", errors.New("AllocateAgent: conv_id required")
@@ -163,6 +164,11 @@ func AllocateAgent(convID, via string) (string, error) {
 // mapped and this is a no-op — it never splits a replacement generation off
 // into its own actor.
 func EnsureAgentForConv(convID, via string) (agentID string, created bool, err error) {
+	defer func() {
+		if created {
+			NotifyStatusChanged()
+		}
+	}()
 	convID = strings.TrimSpace(convID)
 	if convID == "" {
 		return "", false, errors.New("EnsureAgentForConv: conv_id required")
@@ -199,6 +205,11 @@ func EnsureAgentForConv(convID, via string) (agentID string, created bool, err e
 // requestedAgentID as the canonical handle, so changing it would break stable
 // identity.
 func EnsureAgentForConvWithID(convID, requestedAgentID, via string) (agentID string, created bool, err error) {
+	defer func() {
+		if created {
+			NotifyStatusChanged()
+		}
+	}()
 	convID = strings.TrimSpace(convID)
 	requestedAgentID = strings.TrimSpace(requestedAgentID)
 	if convID == "" || requestedAgentID == "" {
@@ -265,6 +276,7 @@ func EnsureAgentForConvWithID(convID, requestedAgentID, via string) (agentID str
 // re-linking the same conv is a no-op, and a conv can never belong to two
 // actors.
 func LinkConvToAgent(convID, agentID, role, reason string) error {
+	defer NotifyStatusChanged()
 	convID = strings.TrimSpace(convID)
 	agentID = strings.TrimSpace(agentID)
 	if convID == "" || agentID == "" {
@@ -465,6 +477,7 @@ func GenerationsForAgent(agentID string) ([]AgentConversation, error) {
 // that is not linked to agentID is rejected (false, error). Pass
 // expectedOldConv == "" to set the pointer unconditionally.
 func SetAgentCurrentConv(agentID, expectedOldConv, newConv string) (bool, error) {
+	defer NotifyStatusChanged()
 	agentID = strings.TrimSpace(agentID)
 	newConv = strings.TrimSpace(newConv)
 	if agentID == "" || newConv == "" {
@@ -501,6 +514,7 @@ func SetAgentCurrentConv(agentID, expectedOldConv, newConv string) (bool, error)
 // SetAgentPendingName records the actor's intended display name. A plain
 // UPDATE — a no-op when the agent is unknown.
 func SetAgentPendingName(agentID, name string) error {
+	defer NotifyStatusChanged()
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return errors.New("SetAgentPendingName: agent_id required")
@@ -518,6 +532,7 @@ func SetAgentPendingName(agentID, name string) error {
 // only when it still has expected. It lets background naming work refine a
 // generated fallback without clobbering a concurrent explicit rename.
 func ReplaceAgentPendingName(agentID, expected, name string) (bool, error) {
+	defer NotifyStatusChanged()
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return false, errors.New("ReplaceAgentPendingName: agent_id required")
@@ -544,6 +559,7 @@ func ReplaceAgentPendingName(agentID, expected, name string) (bool, error) {
 // Lifecycle resume does not read this record; debug export uses it only for the
 // requested-versus-resolved comparison.
 func SetAgentInitialSpawnConfig(agentID, cfg string) error {
+	defer NotifyStatusChanged()
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return errors.New("SetAgentInitialSpawnConfig: agent_id required")
@@ -582,6 +598,7 @@ func AgentInitialSpawnConfigForConv(convID string) (string, error) {
 // an actor's launch. Unlike initial_spawn_config, this snapshot is read by
 // lifecycle paths; registry names and IDs inside it are provenance only.
 func SetAgentEffectiveSandboxConfig(agentID string, snapshot *sandboxpolicy.Snapshot) error {
+	defer NotifyStatusChanged()
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return errors.New("SetAgentEffectiveSandboxConfig: agent_id required")
@@ -629,6 +646,7 @@ func AgentEffectiveSandboxConfigForConv(convID string) (*sandboxpolicy.Snapshot,
 // command that created it. The database's partial unique index rejects a
 // second actor for the same non-empty command id.
 func SetAgentProcessCommand(agentID, commandID string) error {
+	defer NotifyStatusChanged()
 	agentID = strings.TrimSpace(agentID)
 	commandID = strings.TrimSpace(commandID)
 	if agentID == "" || commandID == "" {
@@ -663,6 +681,7 @@ func AgentForProcessCommand(commandID string) (*Agent, error) {
 }
 
 func ClearAgentProcessCommandForConv(convID string) error {
+	defer NotifyStatusChanged()
 	convID = strings.TrimSpace(convID)
 	if convID == "" {
 		return nil
@@ -682,6 +701,7 @@ func ClearAgentProcessCommandForConv(convID string) error {
 // Returns false (no error) when the agent was not active, so a repeated
 // cleanup is idempotent.
 func RetireAgentByID(agentID, by, reason string) (bool, error) {
+	defer NotifyStatusChanged()
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return false, errors.New("RetireAgentByID: agent_id required")
@@ -742,6 +762,7 @@ func RetireAgentByID(agentID, by, reason string) (bool, error) {
 // transaction so a reinstated agent can never be observed with a
 // still-cancelled queue.
 func ReinstateAgentByID(agentID string) (bool, error) {
+	defer NotifyStatusChanged()
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return false, errors.New("ReinstateAgentByID: agent_id required")
@@ -926,6 +947,7 @@ func IsLiveAgentConv(convID string) (bool, error) {
 // report a no-op ("active") honestly. Single source as of JOH-26 PR3c — the
 // agents table is the only roster, so there is no second write to diverge from.
 func PromoteAgent(convID, via string) (prior string, err error) {
+	defer NotifyStatusChanged()
 	convID = strings.TrimSpace(convID)
 	if convID == "" {
 		return "", errors.New("PromoteAgent: conv_id required")
@@ -959,6 +981,7 @@ func PromoteAgent(convID, via string) (prior string, err error) {
 // generation (the resolved selector), so this retires exactly the intended
 // actor.
 func RetireAgent(convID, by, reason string) (bool, error) {
+	defer NotifyStatusChanged()
 	convID = strings.TrimSpace(convID)
 	if convID == "" {
 		return false, errors.New("RetireAgent: conv_id required")
@@ -979,6 +1002,7 @@ func RetireAgent(convID, by, reason string) (bool, error) {
 // when convID's actor was not retired. Conv-keyed convenience over
 // ReinstateAgentByID.
 func ReinstateAgent(convID string) (bool, error) {
+	defer NotifyStatusChanged()
 	convID = strings.TrimSpace(convID)
 	if convID == "" {
 		return false, errors.New("ReinstateAgent: conv_id required")

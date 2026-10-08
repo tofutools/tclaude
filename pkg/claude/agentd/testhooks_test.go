@@ -261,6 +261,8 @@ func ResetDeliveryDebounceForTest() {
 // incremental Codex telemetry follower immediately. Flow tests use stable
 // session IDs across -count iterations, unlike production daemon sessions.
 func ResetCodexRefreshThrottleForTest(sessionID string) {
+	db.NotifyStatusChanged() // Expire dependent snapshots together with the reader.
+
 	resetCodexRefreshThrottleForTest(sessionID)
 }
 
@@ -546,6 +548,8 @@ func SetRemoteControlConfirmDelayForTest(d time.Duration) func() {
 // refresh throttle. Flow tests reset the DB between scenarios; clearing this
 // cache keeps repeated runs of the same session label deterministic.
 func ResetCodexContextRefreshForTest() {
+	db.NotifyStatusChanged() // Expire dependent snapshots together with the reader.
+
 	codexContextRefreshMu.Lock()
 	defer codexContextRefreshMu.Unlock()
 	codexContextRefreshMu.last = nil
@@ -703,6 +707,8 @@ func SetPopupBaseURLForTest(url string) func() {
 // ledger states through one session id far faster than that, and would
 // otherwise read a stale count.
 func ResetBgShellReconcileCacheForTest() {
+	db.NotifyStatusChanged() // Expire dependent snapshots together with the reader.
+
 	bgShellReconcileMu.Lock()
 	defer bgShellReconcileMu.Unlock()
 	bgShellReconcileMu.last = nil

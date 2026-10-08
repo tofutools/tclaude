@@ -99,12 +99,8 @@ func TestDashboardSnapshot_SurfacesCodexRecoveryStatesEverywhere(t *testing.T) {
 
 	// The durable recovered row remains for crash-loop reset/audit purposes,
 	// while the operational badge clears on the first later hook.
-	database, err := db.Open()
-	require.NoError(t, err)
-	_, err = database.Exec(`UPDATE sessions SET last_hook=? WHERE conv_id=?`,
-		recoveredAt.Add(time.Second).UnixNano(), convs[db.AgentRecoveryStatusRecovered])
-	require.NoError(t, err)
-	agentd.ResetStatusSnapshotForTest() // Simulate the next UI poll after cache expiry.
+	require.NoError(t, db.UpdateSessionLastHook("recovery-session-"+db.AgentRecoveryStatusRecovered,
+		recoveredAt.Add(time.Second)))
 	snap = fetchSnapshotOnly(t, agentd.BuildDashboardHandlerForTest())
 	for _, group := range snap.Groups {
 		for _, member := range group.Members {

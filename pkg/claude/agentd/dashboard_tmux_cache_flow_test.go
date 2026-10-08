@@ -48,8 +48,8 @@ func TestDashboardPoll_ThreeHandlersShareOneTmuxProbe(t *testing.T) {
 		"snapshot + retired + conversations within the TTL must share ONE tmux list-sessions probe")
 
 	// Sanity: with the cache neutralized (as every other flow scenario runs),
-	// the same three handlers each probe — proving the assertion above is the
-	// cache's doing, not an unrelated collapse of the probes.
+	// a warm status snapshot still serves snapshot/conversations, while the
+	// independent retired listing performs its own fresh probe.
 	restore := agentd.SetTmuxCacheTTLForTest(0)
 	defer restore()
 	lsBefore = f.World.Tmux.CommandCount("list-sessions")
@@ -57,6 +57,6 @@ func TestDashboardPoll_ThreeHandlersShareOneTmuxProbe(t *testing.T) {
 	_ = fetchListRows[dashRetired](t, mux, "/api/retired?limit=0")
 	_ = fetchListRows[dashConversation](t, mux, "/api/conversations?limit=0")
 	lsAfter = f.World.Tmux.CommandCount("list-sessions")
-	assert.Equal(t, 3, lsAfter-lsBefore,
-		"with the cache neutralized each of the three handlers probes tmux independently")
+	assert.Equal(t, 1, lsAfter-lsBefore,
+		"warm status snapshots need no probe; only retired uses the neutralized tmux cache")
 }

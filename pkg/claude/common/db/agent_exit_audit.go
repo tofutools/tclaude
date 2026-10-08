@@ -441,6 +441,7 @@ func ClearSessionExitIntentByConv(convID string) error {
 }
 
 func RecordAgentExitObservation(o AgentExitObservation) (AgentExitRecordResult, error) {
+	defer NotifyStatusChanged()
 	if o.Observer == AgentExitObserverTmux {
 		return AgentExitRecordResult{}, fmt.Errorf("%w: tmux observation requires callback authentication", ErrExitCallbackRejected)
 	}
@@ -452,6 +453,7 @@ func RecordAgentExitObservation(o AgentExitObservation) (AgentExitRecordResult, 
 // forged attribution, or a stale predecessor credential changes neither the
 // session nor the audit row.
 func RecordAuthenticatedAgentExitObservation(o AgentExitObservation, auth ExitCallbackAuth) (AgentExitRecordResult, error) {
+	defer NotifyStatusChanged()
 	if o.Observer != AgentExitObserverTmux || o.PaneID != auth.PaneID {
 		return AgentExitRecordResult{}, fmt.Errorf("%w: callback observer or pane mismatch", ErrExitCallbackRejected)
 	}
@@ -663,6 +665,7 @@ func MarkSessionExitedAndRecordObservationIfUnchanged(
 	fallbackExitReason string,
 	o AgentExitObservation,
 ) (bool, AgentExitRecordResult, error) {
+	defer NotifyStatusChanged()
 	if o.SessionID != id {
 		return false, AgentExitRecordResult{}, fmt.Errorf("exit observation session mismatch")
 	}
@@ -748,6 +751,7 @@ func markSessionExitedAndRecordObservationOnce(
 // transition and its exit audit row to the generation supplied by the hook.
 // A delayed predecessor hook therefore cannot mutate or attribute a relaunch.
 func RecordSessionEndExitObservation(o AgentExitObservation) (bool, AgentExitRecordResult, error) {
+	defer NotifyStatusChanged()
 	if o.Observer != AgentExitObserverHook {
 		return false, AgentExitRecordResult{}, fmt.Errorf("SessionEnd observation requires hook observer")
 	}

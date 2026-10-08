@@ -359,6 +359,7 @@ func Close() {
 // from a prior test is concurrently in Open(): stateMu serializes the two so
 // the reset never races the init (see the stateMu comment above).
 func ResetForTest() {
+	NotifyStatusChanged()
 	stateMu.Lock()
 	defer stateMu.Unlock()
 	if globalDB != nil {

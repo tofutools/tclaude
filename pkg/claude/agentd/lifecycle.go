@@ -448,6 +448,7 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 // exit command, and a "still alive" member is one whose directories and
 // worktree were deliberately left in place.
 func finishStopWait(target *lifecycleTarget, waitPolicy stopWaitPolicy, lifecycleAction, relatedEventID, reason, fallbackExitReason string, res *memberOpResult) softExitOutcome {
+	defer db.NotifyStatusChanged()
 	if !waitPolicy.wait {
 		return softExitClosed
 	}
@@ -6448,6 +6449,7 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 // an Async PENDING success the outcome carries an empty conv-id and the agent
 // is enrolled later by the sweeper.
 func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failure *spawnFailure) {
+	defer db.NotifyStatusChanged()
 	timing := config.StartupTiming("spawn", "name", p.Name, "harness", p.Harness, "async", p.Async)
 	defer func() {
 		timing("return", "failed", failure != nil)

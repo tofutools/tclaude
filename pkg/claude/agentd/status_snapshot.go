@@ -14,6 +14,7 @@ import (
 // own current authority onto it; local private fields never become peer wire.
 type statusSnapshot struct {
 	observedAt   time.Time
+	rowWork      map[string]time.Duration
 	alive        map[string]struct{}
 	sessions     map[string][]*db.SessionRow
 	states       map[string]agentState
@@ -30,29 +31,36 @@ type historicalStatusFlight struct {
 }
 
 type statusFlight struct {
-	done  chan struct{}
-	value *statusSnapshot
+	generation uint64
+	done       chan struct{}
+	value      *statusSnapshot
 }
 type statusSnapshotCache struct {
-	mu       sync.Mutex
-	key      string
-	value    *statusSnapshot
-	cachedAt time.Time
-	flight   *statusFlight
+	mu         sync.Mutex
+	key        string
+	value      *statusSnapshot
+	cachedAt   time.Time
+	flight     *statusFlight
+	generation uint64
+	revision   func() uint64
 }
 
-var sharedStatusCache statusSnapshotCache
+var sharedStatusCache = statusSnapshotCache{revision: db.StatusSnapshotGeneration}
 
 // A joining consumer returns this flight's result even if gathering exceeded
 // the TTL. Otherwise a slow gather could trap every waiter in a refresh loop.
 func (c *statusSnapshotCache) get(key string, ttl time.Duration, gather func() *statusSnapshot) *statusSnapshot {
 	c.mu.Lock()
+	generation := uint64(0)
+	if c.revision != nil {
+		generation = c.revision()
+	}
 	if c.key != key {
 		c.key = key
 		c.value = nil
 		c.flight = nil
 	}
-	if c.value != nil && time.Since(c.cachedAt) < ttl {
+	if c.value != nil && c.generation == generation && time.Since(c.cachedAt) < ttl {
 		v := c.value
 		c.mu.Unlock()
 		return v
@@ -61,9 +69,13 @@ func (c *statusSnapshotCache) get(key string, ttl time.Duration, gather func() *
 		f := c.flight
 		c.mu.Unlock()
 		<-f.done
+		// A request arriving after a known mutation must not join an older gather.
+		if c.revision != nil && f.generation != c.revision() {
+			return c.get(key, ttl, gather)
+		}
 		return f.value
 	}
-	f := &statusFlight{done: make(chan struct{})}
+	f := &statusFlight{done: make(chan struct{}), generation: generation}
 	c.flight = f
 	c.mu.Unlock()
 	value := gather()
@@ -72,6 +84,7 @@ func (c *statusSnapshotCache) get(key string, ttl time.Duration, gather func() *
 	if c.key == key && c.flight == f {
 		c.value = value
 		c.cachedAt = time.Now()
+		c.generation = generation
 		c.flight = nil
 	}
 	close(f.done)
@@ -86,12 +99,25 @@ func statusSnapshotWindow() time.Duration {
 	return 1500 * time.Millisecond
 }
 func gatheredStatusSnapshot() *statusSnapshot {
-	return sharedStatusCache.get(config.DataDir(), statusSnapshotWindow(), gatherStatusSnapshot)
+	return gatheredStatusSnapshotWithTimings(nil)
+}
+func gatheredStatusSnapshotWithTimings(record func([]perfPhase)) *statusSnapshot {
+	return sharedStatusCache.get(config.DataDir(), statusSnapshotWindow(), func() *statusSnapshot {
+		s := gatherStatusSnapshot()
+		if record != nil {
+			phases := []perfPhase{}
+			for _, name := range rowWorkPhaseOrder {
+				phases = append(phases, perfPhase{Name: name, Ms: durMs(s.rowWork[name])})
+			}
+			record(phases)
+		}
+		return s
+	})
 }
 
 func gatherStatusSnapshot() *statusSnapshot {
 	statusGatherTestHook()
-	s := &statusSnapshot{observedAt: time.Now().UTC(), states: map[string]agentState{}, activity: map[string]*time.Time{}, tasks: map[string]db.AgentTaskRef{}, names: map[string]string{}}
+	s := &statusSnapshot{observedAt: time.Now().UTC(), states: map[string]agentState{}, activity: map[string]*time.Time{}, tasks: map[string]db.AgentTaskRef{}, names: map[string]string{}, rowWork: map[string]time.Duration{}}
 	s.alive, _ = cachedLiveTmuxSessions()
 	// The common set covers every managed row the dashboard or CLI can render,
 	// plus live plain wrapper sessions. It is gathered once, not per caller/peer.
@@ -147,7 +173,7 @@ func gatherStatusSnapshot() *statusSnapshot {
 	tasks, _ := db.ListAgentTaskRefsByAgentIDs(actorIDs)
 	var batch codexContextWriteBatch
 	for _, id := range ids {
-		state := stateForConvInSessionsBatched(s.sessions[id], s.alive, &batch, nil, nil)
+		state := stateForConvInSessionsBatched(s.sessions[id], s.alive, &batch, nil, func(name string, d time.Duration) { s.rowWork[name] += d })
 		state.TemporaryHarnessBuiltinMode = actors[id].TemporaryHarnessBuiltinMode
 		s.states[id] = state
 		s.tasks[id] = tasks[actors[id].AgentID]

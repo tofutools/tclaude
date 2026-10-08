@@ -253,6 +253,7 @@ func AppendSessionSandboxAccessNotice(sessionID string, notice sandboxpolicy.Acc
 // (migrateV25toV26 already documents this exact hazard — agent_workdir
 // was made its own table specifically to dodge INSERT OR REPLACE.)
 func SaveSession(s *SessionRow) error {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return err
@@ -363,6 +364,7 @@ func SaveSession(s *SessionRow) error {
 // New recovery writes ConversationResumeProfile directly and must not create
 // synthetic process history.
 func InsertSessionResumeAnchor(convID, cwd, harness, provenance string, now time.Time) (bool, error) {
+	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return false, err
@@ -402,6 +404,7 @@ func LoadSession(id string) (*SessionRow, error) {
 // loser's failure cleanup must not take the winner's row with it. The
 // conditional DELETE closes that race without a read-then-delete window.
 func DeleteSessionForLaunchGeneration(id, generation string) error {
+	defer NotifyStatusChanged()
 	if generation == "" {
 		return fmt.Errorf("launch generation is required")
 	}
@@ -415,6 +418,7 @@ func DeleteSessionForLaunchGeneration(id, generation string) error {
 
 // DeleteSession removes a session by ID.
 func DeleteSession(id string) error {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return err
@@ -778,6 +782,7 @@ func SessionExists(id string) (bool, error) {
 
 // CleanupOldExited deletes exited sessions older than maxAge and returns the count deleted.
 func CleanupOldExited(maxAge time.Duration) (int64, error) {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return 0, err
@@ -859,6 +864,7 @@ func scanSessions(rows *sql.Rows) ([]*SessionRow, error) {
 // UpdateSessionLastHook writes only the last_hook column for a session,
 // leaving updated_at unchanged so watch-mode polling is not perturbed.
 func UpdateSessionLastHook(id string, t time.Time) error {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return err
@@ -871,6 +877,7 @@ func UpdateSessionLastHook(id string, t time.Time) error {
 // session. Unlike SaveSession's hook-safe UPSERT, this explicit write belongs
 // to the managed launch boundary that captured the metadata.
 func SetSessionResumeProvenance(id, provenance string) error {
+	defer NotifyStatusChanged()
 	return execSessionUpdateAndProject(id, relaunchProjectionOptions{},
 		`UPDATE sessions SET resume_provenance = ? WHERE id = ?`, provenance, id)
 }
@@ -893,6 +900,7 @@ func SetSessionResumeProvenance(id, provenance string) error {
 // where a real SessionEnd or daemon soft-stop landed first — is
 // preserved.
 func MarkSessionExitedIfUnchanged(id, observedStatus string, observedUpdatedAt time.Time, fallbackExitReason string) (bool, error) {
+	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return false, err
@@ -925,6 +933,7 @@ func SetSessionStatusIfUnchanged(
 	status, detail string,
 	at time.Time,
 ) (bool, error) {
+	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return false, err
@@ -971,6 +980,7 @@ func SetSessionStatusIfUnchanged(
 //
 // Returns the number of rows flipped.
 func MarkSessionsIdleAfterInterrupt(convID string) (int64, error) {
+	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return 0, err
@@ -1016,6 +1026,7 @@ func MarkSessionsIdleAfterInterrupt(convID string) (int64, error) {
 // reaper sweep stamped in a narrow race. Cleared by
 // ClearSessionExitReasonByConv when the conversation comes back alive.
 func SetSessionExitReason(id, reason string) error {
+	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return err
@@ -1034,6 +1045,7 @@ func SetSessionExitReason(id, reason string) error {
 // hook resolved to would strand a stale 'unexpected' on a sibling row
 // that a later dashboard read could pick up and misreport as a crash.
 func ClearSessionExitReasonByConv(convID string) error {
+	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return err
@@ -1071,6 +1083,7 @@ func GetSessionExitReason(id string) (string, error) {
 // never cleared (a stale UUID can't collide with a future foreign
 // conv-id).
 func SetSessionPendingConv(id, convID string) error {
+	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return err
@@ -1088,6 +1101,7 @@ func SetSessionPendingConv(id, convID string) error {
 // with the hook path. Mirrors SetSessionPendingConv: conv_id only, no other
 // columns touched.
 func SetSessionConvID(id, convID string) error {
+	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return err
@@ -1155,6 +1169,7 @@ func GetSessionConvAttribution(id string) (convID, pendingConv string, err error
 
 // UpdateContextPct stores the latest context window usage percentage for a session.
 func UpdateContextPct(sessionID string, pct float64) error {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return err
@@ -1281,6 +1296,7 @@ func (b *ContextSnapshotWriteBatch) ResetCompact(
 
 // Commit executes every queued operation and makes them durable together.
 func (b *ContextSnapshotWriteBatch) Commit() (result ContextSnapshotWriteBatchResult, err error) {
+	defer NotifyStatusChanged()
 	if b == nil || b.closed {
 		return result, errors.New("context snapshot write batch is already closed")
 	}
@@ -1420,6 +1436,7 @@ func (b *ContextSnapshotWriteBatch) Commit() (result ContextSnapshotWriteBatchRe
 // at the DB chokepoint so no caller — present or future — can
 // reintroduce the clobber.
 func UpdateContextSnapshot(sessionID string, pct float64, tokensInput, tokensOutput, windowSize int64) error {
+	defer NotifyStatusChanged()
 	return UpdateContextSnapshotTimed(sessionID, pct, tokensInput, tokensOutput, windowSize, nil)
 }
 
@@ -1431,6 +1448,7 @@ func UpdateContextSnapshotTimed(
 	tokensInput, tokensOutput, windowSize int64,
 	record func(ContextSnapshotWriteTiming),
 ) error {
+	defer NotifyStatusChanged()
 	if pct == 0 && tokensInput == 0 && tokensOutput == 0 && windowSize == 0 {
 		return nil
 	}
@@ -1458,6 +1476,7 @@ func UpdateContextSnapshotForGeneration(
 	pct float64,
 	tokensInput, tokensOutput, windowSize int64,
 ) (bool, error) {
+	defer NotifyStatusChanged()
 	if pct == 0 && tokensInput == 0 && tokensOutput == 0 && windowSize == 0 {
 		return false, nil
 	}
@@ -1532,6 +1551,7 @@ func UpdateContextSnapshotAndModelEffortForGeneration(
 	tokensInput, tokensOutput, windowSize int64,
 	model, effort string,
 ) (bool, error) {
+	defer NotifyStatusChanged()
 	if pct == 0 && tokensInput == 0 && tokensOutput == 0 && windowSize == 0 &&
 		model == "" && effort == "" {
 		return false, nil
@@ -1591,6 +1611,7 @@ func UpdateModelEffortForGeneration(
 	createdAt time.Time,
 	model, effort string,
 ) (bool, error) {
+	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return false, err
@@ -1634,6 +1655,7 @@ func UpdateContextSnapshotIfWindowUnchanged(
 	pct float64,
 	tokensInput, tokensOutput, windowSize int64,
 ) (bool, error) {
+	defer NotifyStatusChanged()
 	return UpdateContextSnapshotIfWindowUnchangedTimed(
 		sessionID, convID, createdAt, pct, tokensInput, tokensOutput, windowSize, nil,
 	)
@@ -1649,6 +1671,7 @@ func UpdateContextSnapshotIfWindowUnchangedTimed(
 	tokensInput, tokensOutput, windowSize int64,
 	record func(ContextSnapshotWriteTiming),
 ) (updated bool, err error) {
+	defer NotifyStatusChanged()
 	started := time.Now()
 	timing := ContextSnapshotWriteTiming{}
 	defer func() {
@@ -1695,6 +1718,7 @@ func UpdateContextSnapshotIfWindowUnchangedTimed(
 // a stray render with nothing to store can't blank a good snapshot. The column
 // is write-only by design: it is read by hand off the DB, so there is no getter.
 func UpdateStatuslineSnapshot(sessionID, rawJSON string) error {
+	defer NotifyStatusChanged()
 	if rawJSON == "" {
 		return nil
 	}
@@ -1721,6 +1745,7 @@ func UpdateStatuslineSnapshot(sessionID, rawJSON string) error {
 // Reports whether the write landed. A false return is normal contention,
 // not an error.
 func SetSessionBgShellsIfUnchanged(sessionID, prev, next string) (bool, error) {
+	defer NotifyStatusChanged()
 	if sessionID == "" || prev == next {
 		return false, nil
 	}
@@ -1751,6 +1776,7 @@ func SetSessionBgShellsIfUnchanged(sessionID, prev, next string) (bool, error) {
 // Reports whether the write landed. A false return is normal contention,
 // not an error.
 func SetSessionMonitorsIfUnchanged(sessionID, prev, next string) (bool, error) {
+	defer NotifyStatusChanged()
 	if sessionID == "" || prev == next {
 		return false, nil
 	}
@@ -1779,6 +1805,7 @@ func SetSessionMonitorsIfUnchanged(sessionID, prev, next string) (bool, error) {
 // injection, so the recorded flag stays in step with what was actually typed
 // into the pane. See JOH-256 / JOH-257.
 func SetSessionRemoteControl(sessionID string, on bool) error {
+	defer NotifyStatusChanged()
 	return execSessionUpdateAndProject(sessionID, relaunchProjectionOptions{RemoteControl: true},
 		`UPDATE sessions SET remote_control = ? WHERE id = ?`, boolToInt(on), sessionID)
 }
@@ -1800,6 +1827,7 @@ func RemoteControlForConv(convID string) (bool, error) {
 // row is written, so a later relaunch reproduces the same lean context instead
 // of quietly restoring every trimmed capability.
 func SetSessionContextFeatures(sessionID string, features map[string]string) error {
+	defer NotifyStatusChanged()
 	return execSessionUpdateAndProject(sessionID, relaunchProjectionOptions{ContextFeatures: true},
 		`UPDATE sessions SET context_features = ? WHERE id = ?`,
 		marshalStringMapColumn(features, "sessions.context_features"), sessionID)
@@ -1823,6 +1851,7 @@ func ContextFeaturesForConv(convID string) (map[string]string, error) {
 // The launch path sets this once, right after the session row is written, so a
 // later relaunch can reproduce the posture the agent was actually started with.
 func SetSessionAutoMemory(sessionID string, on bool) error {
+	defer NotifyStatusChanged()
 	return execSessionUpdateAndProject(sessionID, relaunchProjectionOptions{AutoMemory: true},
 		`UPDATE sessions SET auto_memory = ? WHERE id = ?`, boolToInt(on), sessionID)
 }
@@ -1845,6 +1874,7 @@ func AutoMemoryForConv(convID string) (bool, error) {
 // actually started with instead of quietly reopening (or reclosing) Claude
 // Code's own messaging mesh.
 func SetSessionPeerMessaging(sessionID string, on bool) error {
+	defer NotifyStatusChanged()
 	return execSessionUpdateAndProject(sessionID, relaunchProjectionOptions{PeerMessaging: true},
 		`UPDATE sessions SET peer_messaging = ? WHERE id = ?`, boolToInt(on), sessionID)
 }
@@ -1866,6 +1896,7 @@ func PeerMessagingForConv(convID string) (bool, error) {
 // row is written, so a later relaunch keeps compacting at the same point instead
 // of quietly handing the successor the model's full window back.
 func SetSessionAutoCompactWindow(sessionID, window string) error {
+	defer NotifyStatusChanged()
 	return execSessionUpdateAndProject(sessionID, relaunchProjectionOptions{AutoCompactWindow: true},
 		`UPDATE sessions SET auto_compact_window = ? WHERE id = ?`, strings.TrimSpace(window), sessionID)
 }
@@ -1883,6 +1914,7 @@ func SetSessionAutoCompactWindow(sessionID, window string) error {
 // recorded. That asymmetry is the whole reason the two writers can share a
 // column.
 func UpdateSessionAutoCompactWindow(sessionID, window string) error {
+	defer NotifyStatusChanged()
 	window = strings.TrimSpace(window)
 	if strings.TrimSpace(sessionID) == "" || window == "" {
 		return nil
@@ -1992,6 +2024,7 @@ func AskTimeoutForConv(convID string) (string, error) {
 // until its first response. An empty model is a no-op so a stray
 // render without one can never blank a good value.
 func UpdateSessionModel(sessionID, model string) error {
+	defer NotifyStatusChanged()
 	if model == "" {
 		return nil
 	}
@@ -2016,6 +2049,7 @@ func UpdateSessionModel(sessionID, model string) error {
 // empty ID is a no-op so a stray render without one — e.g. an older
 // Claude Code that doesn't emit model.id — can never blank a good value.
 func UpdateSessionModelID(sessionID, modelID string) error {
+	defer NotifyStatusChanged()
 	if modelID == "" {
 		return nil
 	}
@@ -2033,6 +2067,7 @@ func UpdateSessionModelID(sessionID, modelID string) error {
 // independent setters above because its statusline reports distinct display
 // and ID fields. An empty slug is a no-op, matching those setters.
 func UpdateSessionModelSlug(sessionID, model string) error {
+	defer NotifyStatusChanged()
 	if model == "" {
 		return nil
 	}
@@ -2107,6 +2142,7 @@ func SessionHarnesses() (map[string]string, error) {
 // therefore leaves the last level stale, which is benign for a
 // display-only field.
 func UpdateSessionEffort(sessionID, level string) error {
+	defer NotifyStatusChanged()
 	if level == "" {
 		return nil
 	}
@@ -2122,6 +2158,7 @@ func UpdateSessionEffortForGeneration(
 	createdAt time.Time,
 	level string,
 ) (bool, error) {
+	defer NotifyStatusChanged()
 	if level == "" {
 		return false, nil
 	}
@@ -2170,6 +2207,7 @@ func UpdateSessionEffortForGeneration(
 // accrues its first nonzero cost, which is benign for a display-only
 // field (and arguably right: the money was still spent).
 func UpdateSessionCost(sessionID string, costUSD float64) error {
+	defer NotifyStatusChanged()
 	if costUSD <= 0 {
 		return nil
 	}
@@ -2306,6 +2344,7 @@ func MaxRealCostForConv(convID string) (float64, error) {
 // tx; INSERT…SELECT keyed to an existing row so an unknown id mints no orphan);
 // only the target column differs.
 func UpdateSessionVirtualCost(sessionID string, costUSD float64) error {
+	defer NotifyStatusChanged()
 	if costUSD <= 0 {
 		return nil
 	}
@@ -2361,6 +2400,7 @@ func UpdateSessionVirtualCostForGeneration(
 	expectedCreatedAt time.Time,
 	costUSD float64,
 ) (bool, error) {
+	defer NotifyStatusChanged()
 	if costUSD <= 0 {
 		return false, nil
 	}
@@ -2433,6 +2473,7 @@ func ReplaceSessionVirtualCostHistory(
 	totalUSD float64,
 	snapshots []VirtualCostDailySnapshot,
 ) error {
+	defer NotifyStatusChanged()
 	if totalUSD < 0 {
 		return nil
 	}
@@ -2526,6 +2567,7 @@ func ReplaceSessionVirtualCostHistoryForGeneration(
 	totalUSD float64,
 	snapshots []VirtualCostDailySnapshot,
 ) (bool, error) {
+	defer NotifyStatusChanged()
 	if totalUSD < 0 {
 		return false, nil
 	}
@@ -2985,11 +3027,13 @@ func GetConvContextSnapshot(convID string) (ContextSnapshot, error) {
 // telemetry snapshot. Zeroing nudged_pct lets a compacted session be re-nudged
 // from scratch as its context climbs again.
 func ResetCompact(sessionID string) error {
+	defer NotifyStatusChanged()
 	return ResetCompactTimed(sessionID, nil)
 }
 
 // ResetCompactTimed is ResetCompact with optional DB-stage timing.
 func ResetCompactTimed(sessionID string, record func(ContextSnapshotWriteTiming)) (err error) {
+	defer NotifyStatusChanged()
 	started := time.Now()
 	timing := ContextSnapshotWriteTiming{}
 	defer func() {
@@ -3041,6 +3085,7 @@ func GetNudgedPct(sessionID string) (float64, error) {
 // after a successful nudge. Subsequent ticks at the same threshold
 // no-op; the next climb beyond this value re-arms the nudge.
 func SetNudgedPct(sessionID string, pct float64) error {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return err

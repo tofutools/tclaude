@@ -315,7 +315,8 @@ func perfPhaseNamed(t *testing.T, phases []perfPhaseJSON, name string) perfPhase
 // reconcile and the per-session context query) are paid by whichever phase
 // resolves a conv FIRST. That is the preload warm loop, whose conv set is a
 // superset of every later surface's — so by the time the group loop runs, its
-// members are memo hits that pay nothing. Charging them to "groups" would send
+// members are memo hits that pay nothing. The shared status gather now owns these
+// costs instead of preload. Charging them to "groups" would send
 // an operator chasing a spike into code that never issues the query.
 func TestDashboardPerf_GroupsPhaseAttribution(t *testing.T) {
 	f := newFlow(t)
@@ -343,9 +344,9 @@ func TestDashboardPerf_GroupsPhaseAttribution(t *testing.T) {
 	assert.GreaterOrEqual(t, slowest.MaxMs, perms.MaxMs,
 		"the worst group iteration must cover the queries made inside it")
 
-	preload := perfPhaseNamed(t, snap.Phases, "preload")
-	assert.Positive(t, perfPhaseNamed(t, preload.Children, "context_snapshot").MaxMs,
-		"preload resolves every conv, so it pays the per-session context query")
+	status := perfPhaseNamed(t, snap.Phases, "status_snapshot")
+	assert.Positive(t, perfPhaseNamed(t, status.Children, "context_snapshot").MaxMs,
+		"the shared status gather pays the per-session context query")
 	assert.Zero(t, perfPhaseNamed(t, groups.Children, "context_snapshot").MaxMs,
 		"the group loop's row lookups are memo hits and must not re-report preload's cost")
 	assert.Zero(t, perfPhaseNamed(t, groups.Children, "bg_reconcile").MaxMs,

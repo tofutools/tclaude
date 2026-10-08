@@ -164,6 +164,7 @@ func ListAgentGroupPermissionRows(groupID int64) ([]AgentGroupPermission, error)
 
 // ReplaceAgentGroupPermissions atomically replaces a group's additive grants.
 func ReplaceAgentGroupPermissions(groupID int64, slugs []string, grantedBy string) error {
+	defer NotifyStatusChanged()
 	return replaceAgentGroupPermissionGrants(groupID, UnscopedGrants(slugs), grantedBy, true)
 }
 
@@ -172,6 +173,7 @@ func ReplaceAgentGroupPermissions(groupID int64, slugs []string, grantedBy strin
 // authoritative; a legacy bare slug preserves an existing narrowing, while
 // an explicitly supplied empty scope deliberately clears it.
 func ReplaceAgentGroupPermissionGrants(groupID int64, grants []PermissionGrant, grantedBy string) error {
+	defer NotifyStatusChanged()
 	return replaceAgentGroupPermissionGrants(groupID, grants, grantedBy, false)
 }
 
@@ -662,12 +664,14 @@ func ListAllAgentPermissionScopes() (map[string]map[string]string, error) {
 // deny override flips it back to grant. grantedBy is informational
 // ("<human>" or a granter's conv-id); empty is fine.
 func GrantAgentPermission(convID, slug, grantedBy string) error {
+	defer NotifyStatusChanged()
 	return SetAgentPermissionOverride(convID, slug, PermEffectGrant, grantedBy)
 }
 
 // GrantAgentPermissionWithScope writes a grant-effect override with its
 // already-validated canonical scope JSON. Empty remains the unscoped form.
 func GrantAgentPermissionWithScope(convID, slug, scopeJSON, grantedBy string) error {
+	defer NotifyStatusChanged()
 	return SetAgentPermissionOverrideWithScope(convID, slug, PermEffectGrant, scopeJSON, grantedBy)
 }
 
@@ -676,12 +680,14 @@ func GrantAgentPermissionWithScope(convID, slug, scopeJSON, grantedBy string) er
 // re-running with a different effect flips the row. To return the slug
 // to its default, use RevokeAgentPermission (which deletes the row).
 func SetAgentPermissionOverride(convID, slug, effect, grantedBy string) error {
+	defer NotifyStatusChanged()
 	return SetAgentPermissionOverrideWithScope(convID, slug, effect, "", grantedBy)
 }
 
 // SetAgentPermissionOverrideWithScope is the scoped storage twin. Callers are
 // responsible for validating and canonicalizing scopeJSON before this layer.
 func SetAgentPermissionOverrideWithScope(convID, slug, effect, scopeJSON, grantedBy string) error {
+	defer NotifyStatusChanged()
 	if effect != PermEffectGrant && effect != PermEffectDeny {
 		return fmt.Errorf("invalid permission effect %q (want %q or %q)", effect, PermEffectGrant, PermEffectDeny)
 	}
@@ -708,10 +714,12 @@ func SetAgentPermissionOverrideWithScope(convID, slug, effect, scopeJSON, grante
 // an earlier security boundary use this form so a stale generation cannot be
 // resurrected as a different actor while a decision is pending.
 func SetAgentPermissionOverrideByAgentID(agentID, slug, effect, grantedBy string) error {
+	defer NotifyStatusChanged()
 	return SetAgentPermissionOverrideByAgentIDWithScope(agentID, slug, effect, "", grantedBy)
 }
 
 func SetAgentPermissionOverrideByAgentIDWithScope(agentID, slug, effect, scopeJSON, grantedBy string) error {
+	defer NotifyStatusChanged()
 	if effect != PermEffectGrant && effect != PermEffectDeny {
 		return fmt.Errorf("invalid permission effect %q (want %q or %q)", effect, PermEffectGrant, PermEffectDeny)
 	}
@@ -757,6 +765,7 @@ func SetAgentPermissionOverrideByAgentIDWithScope(agentID, slug, effect, scopeJS
 // RevokeAgentPermission removes a single (convID, slug). Idempotent.
 // Returns the number of rows deleted (0 if there was nothing to remove).
 func RevokeAgentPermission(convID, slug string) (int64, error) {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return 0, err
@@ -789,6 +798,7 @@ func RevokeAgentPermission(convID, slug string) (int64, error) {
 // generator-scoped cleanup cannot erase operator policy. Fresh-agent callers
 // can pass false to replace birth-time provenance with their own audit label.
 func ApplyAgentPermissionOverrides(convID string, overrides map[string]PermissionOverride, grantedBy string, clearGranterDenies, preserveSameEffectProvenance bool) error {
+	defer NotifyStatusChanged()
 	for slug, override := range overrides {
 		if override.Effect != PermEffectGrant && override.Effect != PermEffectDeny {
 			return fmt.Errorf("invalid permission effect %q for %s (want %q or %q)", override.Effect, slug, PermEffectGrant, PermEffectDeny)
@@ -868,6 +878,7 @@ func ApplyAgentPermissionOverrides(convID string, overrides map[string]Permissio
 // row for convID. Bulk cleanup variant for the conv-delete path.
 // Idempotent — returns the number of rows removed.
 func RevokeAllAgentPermissionsForConv(convID string) (int64, error) {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return 0, err
@@ -999,12 +1010,14 @@ type AgentMessage struct {
 
 // CreateAgentGroup inserts a new group. Returns the new group's ID.
 func CreateAgentGroup(name, descr string) (int64, error) {
+	defer NotifyStatusChanged()
 	return CreateAgentGroupWithParent(name, descr, "")
 }
 
 // CreateAgentGroupWithParent inserts a new group, optionally nested under an
 // existing parent group. parentName == "" creates a top-level group.
 func CreateAgentGroupWithParent(name, descr, parentName string) (int64, error) {
+	defer NotifyStatusChanged()
 	return CreateAgentGroupWithParentAndAttachment(name, descr, parentName, "", "")
 }
 
@@ -1012,6 +1025,7 @@ func CreateAgentGroupWithParent(name, descr, parentName string) (int64, error) {
 // persistent reference in the same transaction, so callers never expose a
 // successfully created group that is missing requested attachment metadata.
 func CreateAgentGroupWithParentAndAttachment(name, descr, parentName, attachmentURL, attachmentLabel string) (int64, error) {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return 0, err
@@ -1061,6 +1075,7 @@ func CreateAgentGroupWithParentAndAttachment(name, descr, parentName, attachment
 // name + descr): group-clone needs every column copied, not just descr,
 // so a cloned group is configured identically to its source.
 func CreateAgentGroupFrom(name string, src AgentGroup) (int64, error) {
+	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return 0, err
@@ -1146,6 +1161,7 @@ func CreateAgentGroupFrom(name string, src AgentGroup) (int64, error) {
 // number of rows affected — 0 means no group by that name, so the
 // caller can answer 404.
 func SetAgentGroupDescr(name, descr string) (int64, error) {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return 0, err
@@ -1164,6 +1180,7 @@ func SetAgentGroupDescr(name, descr string) (int64, error) {
 // that name. Called best-effort right after CreateAgentGroup on the
 // deploy / instantiate path, mirroring SetAgentGroupDefaultCwd.
 func SetAgentGroupDeployMeta(name, mission, sourceTemplate string) (int64, error) {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return 0, err
@@ -1185,6 +1202,7 @@ func SetAgentGroupDeployMeta(name, mission, sourceTemplate string) (int64, error
 // named group. Returns the number of rows affected — 0 means no
 // group by that name, so the caller can answer 404.
 func SetAgentGroupDefaultCwd(name, cwd string) (int64, error) {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return 0, err
@@ -1203,6 +1221,7 @@ func SetAgentGroupDefaultCwd(name, cwd string) (int64, error) {
 // the database's partial unique index independently enforces the single-row
 // invariant.
 func SetAgentGroupDefaultSpawn(name string, enabled bool) (int64, error) {
+	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return 0, err
@@ -1243,6 +1262,7 @@ func SetAgentGroupDefaultSpawn(name string, enabled bool) (int64, error) {
 // of rows affected — 0 means no group by that name, so the caller can
 // answer 404.
 func SetAgentGroupDefaultContext(name, context string) (int64, error) {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return 0, err
@@ -1258,6 +1278,7 @@ func SetAgentGroupDefaultContext(name, context string) (int64, error) {
 // by new agents spawned into the group. Existing agents keep their frozen
 // launch snapshot across lifecycle operations.
 func SetAgentGroupEnvironment(name string, environment []sandboxpolicy.EnvironmentEntry) (int64, error) {
+	defer NotifyStatusChanged()
 	raw, err := marshalEnvironmentColumn(environment)
 	if err != nil {
 		return 0, err
@@ -1281,6 +1302,7 @@ func SetAgentGroupEnvironment(name string, environment []sandboxpolicy.Environme
 // Returns the number of rows affected — 0 means no group by that name, so the
 // caller can answer 404.
 func SetAgentGroupOwnerScopes(name, scopes string) (int64, error) {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return 0, err
@@ -1303,6 +1325,7 @@ func SetAgentGroupOwnerScopes(name, scopes string) (int64, error) {
 // number of rows affected — 0 means no group by that name, so the caller
 // can answer 404.
 func SetAgentGroupDefaultProfile(name, profile string) (int64, error) {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return 0, err
@@ -1326,6 +1349,7 @@ func SetAgentGroupDefaultProfile(name, profile string) (int64, error) {
 // is clamped to 0 (unlimited) rather than rejected, so a careless CLI
 // value never wedges a group.
 func SetAgentGroupMaxMembers(name string, max int) (int64, error) {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return 0, err
@@ -1346,6 +1370,7 @@ func SetAgentGroupMaxMembers(name string, max int) (int64, error) {
 // mute). Returns the number of rows affected — 0 means no group by
 // that name, so the caller can answer 404.
 func SetAgentGroupNotifyEnabled(name string, enabled bool) (int64, error) {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return 0, err
@@ -1365,6 +1390,7 @@ func SetAgentGroupNotifyEnabled(name string, enabled bool) (int64, error) {
 // real state distinct from "off". Returns the number of rows affected — 0 means
 // no group by that name, so the caller can answer 404.
 func SetAgentGroupRemoteControl(name string, policy *bool) (int64, error) {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return 0, err
@@ -1381,6 +1407,7 @@ func SetAgentGroupRemoteControl(name string, policy *bool) (int64, error) {
 // persistent reference. Clearing the URL also clears the optional label so a
 // stale label cannot outlive the attachment it described.
 func SetAgentGroupAttachment(name, url, label string) (int64, error) {
+	defer NotifyStatusChanged()
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return 0, errors.New("SetAgentGroupAttachment: group name required")
@@ -1414,6 +1441,7 @@ func SetAgentGroupAttachment(name, url, label string) (int64, error) {
 //
 // No-op if the group doesn't exist.
 func DeleteAgentGroup(name string) error {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return err
@@ -1651,6 +1679,7 @@ var ErrGroupNameTaken = errors.New("group name already exists")
 // foreign keys (group_id), so renaming is a single-row UPDATE — no
 // cascades required.
 func RenameAgentGroup(oldName, newName, byConv string) (*AgentGroup, error) {
+	defer NotifyStatusChanged()
 	if newName == "" {
 		return nil, fmt.Errorf("newName required")
 	}
@@ -1765,6 +1794,7 @@ type AgentGroupAudit struct {
 // the timestamp without erroring. Returns sql.ErrNoRows if the group
 // doesn't exist (callers should treat as a clean miss).
 func ArchiveAgentGroup(name string) error {
+	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return err
@@ -1784,6 +1814,7 @@ func ArchiveAgentGroup(name string) error {
 // UnarchiveAgentGroup reverses ArchiveAgentGroup: clears archived_at so
 // the group is active again. Idempotent on already-active groups.
 func UnarchiveAgentGroup(name string) error {
+	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return err
@@ -1825,6 +1856,7 @@ var ErrGroupParentCycle = errors.New("cannot nest a group under itself or one of
 // (Deleting a parent needs no code here — the column's ON DELETE SET NULL
 // FK auto-orphans children back to top-level; see migrateV98toV99.)
 func SetAgentGroupParent(childID int64, parentName string) (*AgentGroup, error) {
+	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return nil, err
@@ -1886,6 +1918,7 @@ func SetAgentGroupParent(childID int64, parentName string) (*AgentGroup, error) 
 
 // AddAgentGroupMember inserts (or replaces) a member in a group.
 func AddAgentGroupMember(m *AgentGroupMember) error {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return err
@@ -1930,6 +1963,7 @@ func AddAgentGroupMember(m *AgentGroupMember) error {
 // Pass a nil pointer for any field you don't want to change. Returns
 // (rowsAffected, error); 0 rows means no such (group, conv) pair.
 func UpdateAgentGroupMember(groupID int64, convID string, role, descr *string) (int64, error) {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return 0, err
@@ -1970,6 +2004,7 @@ func UpdateAgentGroupMember(groupID int64, convID string, role, descr *string) (
 
 // RemoveAgentGroupMember removes a (group, conv) pair. Idempotent.
 func RemoveAgentGroupMember(groupID int64, convID string) error {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return err
@@ -2083,6 +2118,7 @@ func (c *AgentDeletionCounts) Add(o AgentDeletionCounts) {
 // Idempotent: calling on a conv-id that doesn't exist returns
 // AgentDeletionCounts{} with no error.
 func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
+	defer NotifyStatusChanged()
 	var c AgentDeletionCounts
 	if convID == "" {
 		return c, fmt.Errorf("convID is required")
@@ -2276,6 +2312,7 @@ func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
 // orphaned (unknown) entries after the underlying conversation is
 // wiped. Idempotent — returns the number of rows removed.
 func RemoveAllAgentGroupMembershipsForConv(convID string) (int64, error) {
+	defer NotifyStatusChanged()
 	db, err := Open()
 	if err != nil {
 		return 0, err
@@ -2673,6 +2710,7 @@ type AgentGroupOwner struct {
 // (INSERT OR IGNORE). grantedBy is "" for human-issued grants, a
 // conv-id when an agent with permissions.grant did it.
 func AddAgentGroupOwner(groupID int64, convID, grantedBy string) error {
+	defer NotifyStatusChanged()
 	if convID == "" {
 		return fmt.Errorf("conv_id required")
 	}
@@ -2715,6 +2753,7 @@ func AddAgentGroupOwner(groupID int64, convID, grantedBy string) error {
 // RemoveAgentGroupOwner clears an ownership row. Returns the number
 // of rows removed (0 when convID wasn't an owner).
 func RemoveAgentGroupOwner(groupID int64, convID string) (int64, error) {
+	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return 0, err
@@ -2741,6 +2780,7 @@ func RemoveAgentGroupOwner(groupID int64, convID string) (int64, error) {
 // the conv-delete path. Idempotent — returns the number of rows
 // removed.
 func RemoveAllAgentGroupOwnershipsForConv(convID string) (int64, error) {
+	defer NotifyStatusChanged()
 	d, err := Open()
 	if err != nil {
 		return 0, err

@@ -56,7 +56,6 @@ func TestDashboardSnapshot_HidesAppServerStatusProvenance(t *testing.T) {
 	// A real operational detail remains part of the regular projection.
 	working.StatusDetail = "Bash"
 	require.NoError(t, db.SaveSession(working))
-	agentd.ResetStatusSnapshotForTest() // Simulate the next UI poll after cache expiry.
 	snap = fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 	workingMember = findDashMember(snap, "squad", workingConv)
 	require.NotNil(t, workingMember)

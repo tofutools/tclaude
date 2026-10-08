@@ -241,7 +241,10 @@ Dashboard, agent listing, context tools and peer publication share one gathered
 status cache. Concurrent consumers join an in-progress gather. Its default
 freshness is 1500 milliseconds; set `status_snapshot.freshness_ms` in the local
 config to a value from 1 to 60000 to change it. Authorization is checked again
-when each consumer projects the data. Peer updates reuse the existing session
+when each consumer projects the data. Known local state writes invalidate the
+cache immediately, including hooks, session/agent lifecycle, group membership,
+task changes and daemon-owned pane actions. The window coalesces repeated polls;
+it does not hide a change the daemon has observed. Peer updates reuse the existing session
 observer, debounce changes for at least two seconds (or the configured freshness
 window, whichever is greater), and gather once for all authorized peers. They
 add no independent polling loop. Regular catalogs carry the full status set.
