@@ -1535,8 +1535,7 @@ the directory. Without `--git-ref`, landing uses the policy's `cwd`.
 `--credentials local|proxy:<name>@<peer>` chooses a credential mode. Resolution
 uses an explicit flag, then `teleport_landing.credentials_default`, then `local`.
 `credentials_allowed` is a simple exact allowed list (default `["local"]`). Local
-mode uses provider credentials already on the receiver. Proxy mode is parsed and
-carried but currently refuses with **model proxy not available yet**. Modes never
+mode uses provider credentials already on the receiver. Proxy mode uses the named gateway through the Claude Code binding described below. Modes never
 silently fall back to each other. The chosen mode appears in the import preview,
 continuation briefing and audit.
 
@@ -1574,7 +1573,8 @@ Configure a named entry under `agent.http_proxies` on the gateway machine:
         "header_value_file": "/private/path/anthropic-key",
         "model_policy": {
           "enabled": true,
-          "models": ["claude-sonnet-4-6"],
+          "models": ["claude-sonnet-*", "claude-haiku-*"],
+          "precount_input": false,
           "daily_requests": 1000,
           "daily_tokens": 10000000,
           "peer_daily_requests": 300,
@@ -1592,9 +1592,12 @@ Configure a named entry under `agent.http_proxies` on the gateway machine:
 }
 ```
 
-All six daily limits and both token bounds must be positive. The gateway counts
-input tokens through the provider before generation; providers without the token
-counting endpoint are refused. Every request reserves the maximum input plus
+All six daily limits and both token bounds must be positive. Model entries match
+exact IDs or a trailing `*` prefix pattern, such as `claude-sonnet-*`.
+`precount_input` defaults to false: input bounds are checked from provider usage,
+with the request byte cap providing the hard pre-flight bound. Set it to true to
+count input through the provider before generation; this adds a round trip and
+requires the provider token-counting endpoint. Every request reserves the maximum input plus
 requested output tokens atomically against gateway, peer, and session budgets.
 Complete terminal usage replaces that reservation, including cache tokens.
 Interrupted requests retain their reservation until the next UTC day, including

@@ -35,7 +35,7 @@ func fedModelPolicy(t *testing.T, fh *fedHarness, upstream string) {
 		if cfg.Agent == nil {
 			cfg.Agent = &config.AgentConfig{}
 		}
-		cfg.Agent.HTTPProxies = map[string]config.HTTPProxyConfig{"model": {URL: upstream, Header: "X-Api-Key", HeaderValueFile: token, ModelPolicy: &config.ModelProxyPolicy{Enabled: true, Models: []string{"test-model"}, DailyRequests: 30, DailyTokens: 3000, PeerDailyRequests: 30, PeerDailyTokens: 3000, SessionDailyRequests: 30, SessionDailyTokens: 3000, MaxInputTokens: 50, MaxOutputTokens: 20, MaxConcurrent: 3, RequestsPerMinute: 30}}}
+		cfg.Agent.HTTPProxies = map[string]config.HTTPProxyConfig{"model": {URL: upstream, Header: "X-Api-Key", HeaderValueFile: token, ModelPolicy: &config.ModelProxyPolicy{Enabled: true, PrecountInput: true, Models: []string{"test-model"}, DailyRequests: 30, DailyTokens: 3000, PeerDailyRequests: 30, PeerDailyTokens: 3000, SessionDailyRequests: 30, SessionDailyTokens: 3000, MaxInputTokens: 50, MaxOutputTokens: 20, MaxConcurrent: 3, RequestsPerMinute: 30}}}
 		return nil
 	})
 	require.NoError(t, err)
@@ -181,4 +181,58 @@ func TestFederation_ModelGatewayDisconnectAndRevocationCancelProvider(t *testing
 			}
 		})
 	}
+}
+
+func TestFederation_ModelGatewayOptionalPrecountAndProviderErrors(t *testing.T) {
+	fh := newFedHarness(t)
+	var countCalls atomic.Int32
+	var refused atomic.Bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/messages/count_tokens" {
+			countCalls.Add(1)
+			_, _ = io.WriteString(w, `{"input_tokens":10}`)
+			return
+		}
+		if refused.Load() {
+			w.Header().Set("Retry-After", "17")
+			w.Header().Set("Anthropic-Ratelimit-Requests-Remaining", "0")
+			w.Header().Set("X-Should-Retry", "true")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"type":"error","error":{"type":"rate_limit_error","message":"Please retry after the rate limit resets","private":"discard"},"private":"discard"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"type":"message","content":[],"usage":{"input_tokens":10,"output_tokens":3}}`)
+	}))
+	defer upstream.Close()
+	fedModelPolicy(t, fh, upstream.URL)
+	_, err := config.Update(func(cfg *config.Config, err error) error {
+		if err != nil {
+			return err
+		}
+		cfg.Agent.HTTPProxies["model"].ModelPolicy.PrecountInput = false
+		cfg.Agent.HTTPProxies["model"].ModelPolicy.Models = []string{"test-*"}
+		return nil
+	})
+	require.NoError(t, err)
+	body := `{"model":"test-model-dated","max_tokens":5,"messages":[{"role":"user","content":"hello"}]}`
+	status, result := fedModelCall(t, fh, body)
+	require.Equal(t, 200, status, result)
+	require.Zero(t, countCalls.Load(), "precount is disabled by default")
+	refused.Store(true)
+	flow := fedModelFlow(t, fh)
+	req, err := http.NewRequest(http.MethodPost, "http://model/v1/messages", strings.NewReader(body))
+	require.NoError(t, err)
+	require.NoError(t, req.Write(flow))
+	require.NoError(t, flow.CloseWrite())
+	resp, err := http.ReadResponse(bufio.NewReader(flow), req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
+	require.Equal(t, "17", resp.Header.Get("Retry-After"))
+	require.Equal(t, "0", resp.Header.Get("Anthropic-Ratelimit-Requests-Remaining"))
+	require.Equal(t, "true", resp.Header.Get("X-Should-Retry"))
+	require.JSONEq(t, `{"type":"error","error":{"type":"rate_limit_error","message":"Please retry after the rate limit resets"}}`, string(data))
+	require.Zero(t, countCalls.Load())
 }

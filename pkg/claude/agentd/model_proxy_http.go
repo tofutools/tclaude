@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -150,8 +151,9 @@ func copyModelRequestHeaders(dst, src http.Header) {
 	}
 }
 func copyModelResponseHeaders(dst, src http.Header) {
-	for _, name := range []string{"Content-Type", "Request-Id", "Retry-After"} {
-		if values := src.Values(name); len(values) > 0 {
+	for name, values := range src {
+		lower := strings.ToLower(name)
+		if lower == "content-type" || lower == "request-id" || lower == "retry-after" || lower == "x-should-retry" || strings.HasPrefix(lower, "anthropic-ratelimit-") {
 			dst[name] = append([]string(nil), values...)
 		}
 	}
@@ -190,9 +192,16 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 	if r.Method == http.MethodGet {
 		data := []map[string]string{}
 		for _, model := range p.Models {
+			if strings.HasSuffix(model, "*") {
+				continue // Patterns authorize requests, but are not concrete model IDs.
+			}
 			data = append(data, map[string]string{"type": "model", "id": model, "display_name": model, "created_at": "1970-01-01T00:00:00Z"})
 		}
-		writeJSON(w, 200, map[string]any{"data": data, "has_more": false, "first_id": p.Models[0], "last_id": p.Models[len(p.Models)-1]})
+		first, last := "", ""
+		if len(data) > 0 {
+			first, last = data[0]["id"], data[len(data)-1]["id"]
+		}
+		writeJSON(w, 200, map[string]any{"data": data, "has_more": false, "first_id": first, "last_id": last})
 		return
 	}
 	requestCap, responseCap, eventCap := modelByteBounds(p)
@@ -212,7 +221,7 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 	}
 	allowed := false
 	for _, m := range p.Models {
-		if m == data.Model {
+		if m == data.Model || strings.HasSuffix(m, "*") && strings.HasPrefix(data.Model, strings.TrimSuffix(m, "*")) {
 			allowed = true
 		}
 	}
@@ -262,10 +271,8 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 	}
 	copyModelRequestHeaders(req.Header, r.Header)
 	req.Header.Set(instance.Header, credential)
-	transport := &http.Transport{ResponseHeaderTimeout: 30 * time.Second, MaxResponseHeaderBytes: 32 << 10, DisableCompression: true}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	if !counting {
+	client := modelUpstreamClient(name, instance.URL)
+	if !counting && p.PrecountInput {
 		countBody, e := modelCountBody(body)
 		if e != nil {
 			u.Status = 400
@@ -292,6 +299,12 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 			modelError(w, 502, "model gateway requires provider token counting before generation")
 			return
 		}
+		if countResp.StatusCode < 200 || countResp.StatusCode >= 300 {
+			u.Status = countResp.StatusCode
+			writeModelProviderError(w, countResp, credential)
+			_ = countResp.Body.Close()
+			return
+		}
 		countResult, e := io.ReadAll(io.LimitReader(countResp.Body, 32<<10))
 		_ = countResp.Body.Close()
 		var count struct {
@@ -316,10 +329,10 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 	}
 	defer resp.Body.Close()
 	u.Status = resp.StatusCode
-	// Provider errors can reflect headers or private URLs. Return a readable
-	// fixed Anthropic-shaped refusal without exposing arbitrary provider bodies.
+	// Preserve the provider signals Claude uses for retry and compaction, while
+	// discarding unrecognized fields and credential reflections.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		modelError(w, resp.StatusCode, "model gateway provider refused the request")
+		writeModelProviderError(w, resp, credential)
 		return
 	}
 	copyModelResponseHeaders(w.Header(), resp.Header)
@@ -506,4 +519,52 @@ func reflectsModelCredential(body []byte, credential string) bool {
 		}
 	}
 	return false
+}
+
+var modelUpstreamClients = struct {
+	sync.Mutex
+	entries map[string]modelUpstreamEntry
+}{entries: make(map[string]modelUpstreamEntry)}
+
+type modelUpstreamEntry struct {
+	url    string
+	client *http.Client
+}
+
+func modelUpstreamClient(name, url string) *http.Client {
+	modelUpstreamClients.Lock()
+	defer modelUpstreamClients.Unlock()
+	if entry, ok := modelUpstreamClients.entries[name]; ok {
+		if entry.url == url {
+			return entry.client
+		}
+		entry.client.CloseIdleConnections()
+	}
+	transport := &http.Transport{ResponseHeaderTimeout: 30 * time.Second, MaxResponseHeaderBytes: 32 << 10, DisableCompression: true, IdleConnTimeout: 90 * time.Second, MaxIdleConns: 32, MaxIdleConnsPerHost: 16}
+	client := &http.Client{Transport: transport, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	modelUpstreamClients.entries[name] = modelUpstreamEntry{url: url, client: client}
+	return client
+}
+
+func writeModelProviderError(w http.ResponseWriter, resp *http.Response, credential string) {
+	const bound = 32 << 10
+	body, err := io.ReadAll(io.LimitReader(resp.Body, bound+1))
+	var result struct {
+		Type  string `json:"type"`
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err != nil || len(body) > bound || json.Unmarshal(body, &result) != nil || result.Type != "error" || result.Error.Type == "" || len(result.Error.Type) > 128 || result.Error.Message == "" || reflectsModelCredential(body, credential) {
+		modelError(w, resp.StatusCode, "model gateway provider refused the request")
+		return
+	}
+	if len(result.Error.Message) > 2048 {
+		result.Error.Message = result.Error.Message[:2048]
+	}
+	copyModelResponseHeaders(w.Header(), resp.Header)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_ = json.NewEncoder(w).Encode(result)
 }

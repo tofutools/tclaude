@@ -4087,6 +4087,7 @@ func (l TeleportLimits) Effective() TeleportLimits {
 // and both token bounds must be positive. Incomplete requests retain their
 // conservative input+output reservation until the UTC day rolls over.
 type ModelProxyPolicy struct {
+	PrecountInput        bool     `json:"precount_input,omitempty"`
 	BlockedPeers         []string `json:"blocked_peers,omitempty"`
 	Enabled              bool     `json:"enabled"`
 	Models               []string `json:"models"`
