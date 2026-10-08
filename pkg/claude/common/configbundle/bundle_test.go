@@ -67,3 +67,16 @@ func TestConfigBundlePreservesAllTemplateProseAndThreshold(t *testing.T) {
 		assert.JSONEq(t, originals[section], string(items[0].Value))
 	}
 }
+
+func TestConfigBundleKeepPathsWithExplicitOverride(t *testing.T) {
+	b := Bundle{Sections: map[string][]Item{"sandbox-profiles": {{Name: "host", Value: json.RawMessage(`{"path":"/usr/bin","mount_path":"/etc/ssl"}`)}}}}
+	require.NoError(t, b.Prepare())
+	require.Len(t, b.Placeholders, 2)
+	explicit := map[string]string{b.Placeholders[0].Name: "/opt/override"}
+	values := b.KeepPaths(explicit)
+	assert.Equal(t, "/opt/override", values[b.Placeholders[0].Name])
+	assert.Equal(t, b.Placeholders[1].Original, values[b.Placeholders[1].Name])
+	missing, err := b.Resolve(values)
+	require.NoError(t, err)
+	assert.Empty(t, missing)
+}

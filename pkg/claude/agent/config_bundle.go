@@ -23,13 +23,14 @@ type configExportParams struct {
 	AllowFlagged bool     `long:"allow-flagged" help:"Explicitly allow suspected credentials in free text. Inspect the file before sharing."`
 }
 type configImportParams struct {
-	File    string   `long:"file" short:"f" help:"Bundle file; '-' reads stdin."`
-	Only    []string `long:"only" optional:"true" help:"Include section or section/name (repeatable)."`
-	Skip    []string `long:"skip" optional:"true" help:"Exclude section or section/name (repeatable)."`
-	Set     []string `long:"set" optional:"true" help:"Resolve a placeholder with name=value (repeatable)."`
-	Apply   bool     `long:"apply" help:"Apply the previewed changes."`
-	Replace bool     `long:"replace" help:"Explicitly overwrite conflicting items."`
-	JSON    bool     `long:"json" help:"Print machine-readable preview with before/after values."`
+	KeepPaths bool     `long:"keep-paths" help:"Keep original exported absolute paths; --set overrides individual values."`
+	File      string   `long:"file" short:"f" help:"Bundle file; '-' reads stdin."`
+	Only      []string `long:"only" optional:"true" help:"Include section or section/name (repeatable)."`
+	Skip      []string `long:"skip" optional:"true" help:"Exclude section or section/name (repeatable)."`
+	Set       []string `long:"set" optional:"true" help:"Resolve a placeholder with name=value (repeatable)."`
+	Apply     bool     `long:"apply" help:"Apply the previewed changes."`
+	Replace   bool     `long:"replace" help:"Explicitly overwrite conflicting items."`
+	JSON      bool     `long:"json" help:"Print machine-readable preview with before/after values."`
 }
 
 // ConfigCmd exposes operator setup transfer independently of federation.
@@ -127,7 +128,7 @@ func runConfigImport(p *configImportParams, stdin io.Reader, out, stderr io.Writ
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	in := map[string]any{"bundle": b, "only": p.Only, "skip": p.Skip, "values": values, "apply": p.Apply, "replace": p.Replace}
+	in := map[string]any{"bundle": b, "only": p.Only, "skip": p.Skip, "values": values, "apply": p.Apply, "replace": p.Replace, "keep_paths": p.KeepPaths}
 	var response struct {
 		Changes []struct {
 			Item     string          `json:"item"`
@@ -162,7 +163,7 @@ func runConfigImport(p *configImportParams, stdin io.Reader, out, stderr io.Writ
 	}
 	fmt.Fprintf(out, "Security changes: %d (permissions, sandbox policy, or launch authority).\n", response.SecurityChanges)
 	for _, u := range response.Unresolved {
-		fmt.Fprintf(out, "Unresolved %s %s: --set %s=value\n", u.Item, u.Field, u.Name)
+		fmt.Fprintf(out, "Unresolved %s %s (original: %q): --set %s=value or --keep-paths\n", u.Item, u.Field, u.Original, u.Name)
 	}
 	for _, warning := range response.Warnings {
 		fmt.Fprintf(out, "Warning: %s\n", warning)
@@ -191,7 +192,7 @@ func printConfigBundleError(out io.Writer, err error) {
 				fmt.Fprintf(out, "Flag: %s %s: %s\n", f.Item, f.Field, f.Hint)
 			}
 			for _, u := range detail.Preview.Unresolved {
-				fmt.Fprintf(out, "Unresolved %s %s: --set %s=value\n", u.Item, u.Field, u.Name)
+				fmt.Fprintf(out, "Unresolved %s %s (original: %q): --set %s=value or --keep-paths\n", u.Item, u.Field, u.Original, u.Name)
 			}
 			for _, item := range detail.Preview.Applied {
 				fmt.Fprintf(out, "Already applied: %s\n", item)

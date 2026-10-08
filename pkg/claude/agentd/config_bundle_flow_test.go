@@ -98,7 +98,7 @@ func TestConfigBundlePlaceholdersAndSandboxIncludes(t *testing.T) {
 	}
 	rec := profileReq(t, f, http.MethodGet, "/v1/config-bundle/export?only=sandbox-profiles/z-base&only=sandbox-profiles/a-child", nil)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
-	assert.NotContains(t, rec.Body.String(), "/opt/bundle-example")
+	assert.Contains(t, rec.Body.String(), `"original":"/opt/bundle-example"`)
 	var b configbundle.Bundle
 	testharness.DecodeJSON(t, rec, &b)
 	require.NotEmpty(t, b.Placeholders)
@@ -118,10 +118,23 @@ func TestConfigBundlePlaceholdersAndSandboxIncludes(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, "/opt/rebound", got.Filesystem[0].Path)
-	// External paths never appear in the exported bytes, even in nested arrays.
+	// Path values are replaced, and their originals remain explicit metadata.
 	raw, err := json.Marshal(b)
 	require.NoError(t, err)
-	assert.NotContains(t, string(raw), "/opt/bundle-example")
+	assert.Contains(t, string(raw), `"original":"/opt/bundle-example"`)
+	for _, item := range b.Sections["sandbox-profiles"] {
+		assert.NotContains(t, string(item.Value), "/opt/bundle-example")
+	}
+	rec = profileReq(t, f, http.MethodPost, "/v1/config-bundle/import", map[string]any{"bundle": b, "keep_paths": true, "apply": true, "replace": true})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	got, err = db.GetSandboxProfile("z-base")
+	require.NoError(t, err)
+	assert.Equal(t, "/opt/bundle-example", got.Filesystem[0].Path)
+	rec = profileReq(t, f, http.MethodPost, "/v1/config-bundle/import", map[string]any{"bundle": b, "keep_paths": true, "values": values, "apply": true, "replace": true})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	got, err = db.GetSandboxProfile("z-base")
+	require.NoError(t, err)
+	assert.Equal(t, "/opt/rebound", got.Filesystem[0].Path)
 }
 
 func TestConfigBundleTemplatesProcessesAndConfig(t *testing.T) {

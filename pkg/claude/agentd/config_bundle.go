@@ -145,12 +145,13 @@ func collectConfigBundle(r *http.Request) (*configbundle.Bundle, error) {
 }
 
 type configBundleRequest struct {
-	Bundle  configbundle.Bundle `json:"bundle"`
-	Only    []string            `json:"only,omitempty"`
-	Skip    []string            `json:"skip,omitempty"`
-	Values  map[string]string   `json:"values,omitempty"`
-	Apply   bool                `json:"apply,omitempty"`
-	Replace bool                `json:"replace,omitempty"`
+	KeepPaths bool                `json:"keep_paths,omitempty"`
+	Bundle    configbundle.Bundle `json:"bundle"`
+	Only      []string            `json:"only,omitempty"`
+	Skip      []string            `json:"skip,omitempty"`
+	Values    map[string]string   `json:"values,omitempty"`
+	Apply     bool                `json:"apply,omitempty"`
+	Replace   bool                `json:"replace,omitempty"`
 }
 type configBundleChange struct {
 	Item     string          `json:"item"`
@@ -210,6 +211,9 @@ func handleConfigBundleImport(w http.ResponseWriter, r *http.Request) {
 	if err := in.Bundle.Select(in.Only, in.Skip); err != nil {
 		writeError(w, 400, "selector", err.Error())
 		return
+	}
+	if in.KeepPaths {
+		in.Values = in.Bundle.KeepPaths(in.Values)
 	}
 	unresolved, err := in.Bundle.Resolve(in.Values)
 	if err != nil {

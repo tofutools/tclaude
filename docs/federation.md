@@ -591,8 +591,11 @@ in dependency order; an apply failure reports items already written, and does
 not roll back earlier components. Sandbox include graphs are imported together.
 
 Structured paths under the exporting user's home use `${HOME}`. Other absolute
-paths become named placeholders. Preview lists missing bindings and the exact
-`--set name=value` flag to resolve each one (repeatable). Applying with unresolved
+paths become named placeholders with their original values in metadata. Preview
+shows those originals and lists missing bindings and the exact
+`--set name=value` flag to resolve each one (repeatable). Use `--keep-paths` to
+retain all exported original paths; explicit `--set` values override individual
+originals. Applying with unresolved
 placeholders is refused. Prompts, scripts and process sources remain verbatim;
 review their machine assumptions before using them on another host.
 

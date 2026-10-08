@@ -21,9 +21,10 @@ type Item struct {
 	Value json.RawMessage `json:"value"`
 }
 type Placeholder struct {
-	Name  string `json:"name"`
-	Item  string `json:"item"`
-	Field string `json:"field"`
+	Name     string `json:"name"`
+	Item     string `json:"item"`
+	Field    string `json:"field"`
+	Original string `json:"original,omitempty"`
 }
 type Flag struct {
 	Item  string `json:"item"`
@@ -160,7 +161,7 @@ func (b *Bundle) Prepare() error {
 							return "${HOME}" + strings.TrimPrefix(x, home)
 						}
 						name := fmt.Sprintf("path_%d", len(b.Placeholders)+1)
-						b.Placeholders = append(b.Placeholders, Placeholder{name, label, field})
+						b.Placeholders = append(b.Placeholders, Placeholder{Name: name, Item: label, Field: field, Original: x})
 						return "${" + name + "}"
 					}
 				}
@@ -218,7 +219,7 @@ func (b *Bundle) Resolve(values map[string]string) ([]Placeholder, error) {
 						if val, ok := values[name]; ok {
 							return val
 						}
-						missing = append(missing, Placeholder{name, section + "/" + item.Name, field})
+						missing = append(missing, Placeholder{Name: name, Item: section + "/" + item.Name, Field: field, Original: b.originalPath(name, section+"/"+item.Name, field)})
 						return token
 					})
 				}
@@ -232,4 +233,27 @@ func (b *Bundle) Resolve(values map[string]string) ([]Placeholder, error) {
 		}
 	}
 	return missing, nil
+}
+
+func (b *Bundle) originalPath(name, item, field string) string {
+	for _, p := range b.Placeholders {
+		if p.Name == name && p.Item == item && p.Field == field {
+			return p.Original
+		}
+	}
+	return ""
+}
+
+// KeepPaths supplies the exported originals, without overriding explicit values.
+func (b *Bundle) KeepPaths(values map[string]string) map[string]string {
+	out := map[string]string{}
+	for _, p := range b.Placeholders {
+		if p.Original != "" {
+			out[p.Name] = p.Original
+		}
+	}
+	for name, value := range values {
+		out[name] = value
+	}
+	return out
 }
