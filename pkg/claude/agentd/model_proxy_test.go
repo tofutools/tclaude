@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -118,5 +119,18 @@ func TestModelGatewaySnapshotTraceKeepsRecordedCredentialMode(t *testing.T) {
 		merged, _ := mergeSnapshotInlineProfile(&db.SpawnProfile{ModelProxy: "previous@peer"}, &db.SpawnProfile{ModelProxy: trace.ModelProxy}, true)
 		require.NotNil(t, merged)
 		require.Equal(t, want, merged.ModelProxy)
+	}
+}
+
+func TestModelProxyMalformedProviderErrorRetainsRetryHeaders(t *testing.T) {
+	for _, body := range []string{"", "not JSON", strings.Repeat("x", 33<<10), `{"type":"error","error":{"type":"api_error","message":"provider-secret"}}`} {
+		resp := &http.Response{StatusCode: 503, Header: http.Header{"Retry-After": {"17"}, "X-Should-Retry": {"false"}}, Body: io.NopCloser(strings.NewReader(body))}
+		rec := httptest.NewRecorder()
+		writeModelProviderError(rec, resp, "provider-secret")
+		require.Equal(t, 503, rec.Code)
+		require.Equal(t, "17", rec.Header().Get("Retry-After"))
+		require.Equal(t, "false", rec.Header().Get("X-Should-Retry"))
+		require.NotContains(t, rec.Body.String(), "provider-secret")
+		require.Contains(t, rec.Body.String(), "provider refused the request")
 	}
 }

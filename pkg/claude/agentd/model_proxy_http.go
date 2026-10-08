@@ -547,6 +547,7 @@ func modelUpstreamClient(name, url string) *http.Client {
 }
 
 func writeModelProviderError(w http.ResponseWriter, resp *http.Response, credential string) {
+	copyModelResponseHeaders(w.Header(), resp.Header)
 	const bound = 32 << 10
 	body, err := io.ReadAll(io.LimitReader(resp.Body, bound+1))
 	var result struct {
