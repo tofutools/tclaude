@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 func TestTeleportBackupObservationRestartsAfterOriginOutage(t *testing.T) {
@@ -24,4 +25,14 @@ func TestTeleportBackupObservationRestartsAfterOriginOutage(t *testing.T) {
 	o.Rows["offer"] = teleportLeaseObservation{LastLive: now}
 	require.True(t, o.observe(now, true))
 	require.Empty(t, o.Rows, "wall clock rollback fails closed")
+}
+
+func TestTeleportBackupObservationSeparatesPeersAndDirections(t *testing.T) {
+	now := time.Now()
+	rt := fedRuntime{teleportLeases: teleportLeaseObservations{Rows: map[string]teleportLeaseObservation{}}}
+	first := db.FederationTeleportLease{Direction: "out", Peer: "one", Offer: "same"}
+	rt.teleportLeases.Rows[teleportObservationKey(first)] = teleportLeaseObservation{LastLive: now.Add(-time.Hour)}
+	for _, other := range []db.FederationTeleportLease{{Direction: "out", Peer: "two", Offer: "same"}, {Direction: "in", Peer: "one", Offer: "same"}} {
+		require.Equal(t, now, rt.teleportObservation(other, now).LastLive, "one peer or direction must not inherit another lease's clock")
+	}
 }

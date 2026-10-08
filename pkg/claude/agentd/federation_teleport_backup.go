@@ -193,7 +193,7 @@ func (o *teleportLeaseObservations) observe(now time.Time, connected bool) bool 
 	return true
 }
 func (rt *fedRuntime) teleportObservation(l db.FederationTeleportLease, now time.Time) teleportLeaseObservation {
-	o := rt.teleportLeases.Rows[l.Offer]
+	o := rt.teleportLeases.Rows[teleportObservationKey(l)]
 	if o.LastLive.IsZero() {
 		o.LastLive = now
 	}
@@ -253,7 +253,7 @@ func (rt *fedRuntime) reconcileTeleportLeases() {
 				continue
 			}
 			o := rt.teleportObservation(l, now)
-			rt.teleportLeases.Rows[l.Offer] = o
+			rt.teleportLeases.Rows[teleportObservationKey(l)] = o
 			if now.Sub(o.LastLive) < teleportLeaseWait(l) {
 				continue
 			}
@@ -283,7 +283,7 @@ func (rt *fedRuntime) reconcileTeleportLeases() {
 			continue
 		}
 		o.Sent = now
-		rt.teleportLeases.Rows[l.Offer] = o
+		rt.teleportLeases.Rows[teleportObservationKey(l)] = o
 		if l.State == "stopped" {
 			rt.sendTeleportLease(l, teleportLeaseFrame{Op: "return", Epoch: l.Epoch, ReturnID: l.ReturnID, Findings: l.Findings})
 			continue
@@ -434,7 +434,7 @@ func (rt *fedRuntime) acceptTeleportLease(peer *db.FederationPeer, env *proto.En
 			if rt.observeTeleportOnline(time.Now()) {
 				o := rt.teleportObservation(*l, time.Now())
 				o.LastLive = time.Now()
-				rt.teleportLeases.Rows[l.Offer] = o
+				rt.teleportLeases.Rows[teleportObservationKey(*l)] = o
 			}
 		}
 		if won, e := db.TransitionFederationTeleportLease(*l, ""); e == nil && won {
@@ -597,7 +597,7 @@ func handleTeleportRecover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	o := rt.teleportObservation(*l, time.Now())
-	rt.teleportLeases.Rows[l.Offer] = o
+	rt.teleportLeases.Rows[teleportObservationKey(*l)] = o
 	if l.State != "recovering" && (l.State != "paused" && l.State != "recovery_needed" || time.Since(o.LastLive) < teleportLeaseWait(*l)) {
 		writeError(w, 409, "lease_active", "wait for a full online lease plus grace without renewal; no force bypass")
 		return
@@ -643,4 +643,8 @@ func prepareTeleportShutdown(l *db.FederationTeleportLease, conv string) bool {
 }
 func teleportShutdownAlive(l db.FederationTeleportLease) bool {
 	return moveShutdownProcessAlive(db.FederationAgentMove{ShutdownPID: l.ShutdownPID, ShutdownProcessStart: l.ShutdownProcessStart})
+}
+
+func teleportObservationKey(l db.FederationTeleportLease) string {
+	return l.Direction + "/" + l.Peer + "/" + l.Offer
 }

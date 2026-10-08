@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -364,6 +365,10 @@ func TestFederation_TeleportBackupReturnWaitsForPersistedProcessAfterPaneLoss(t 
 	// Model restart after tmux lost the pane, with the old harness PID still
 	// alive. The shutdown evidence was committed before the previous teardown.
 	fh.f.Stop(a.CurrentConvID, true)
+	// Flow deliberately neutralizes all host process probes. Restore a real
+	// probe only for this test-owned child, keeping every other PID inert.
+	restore := agentd.SetSoftExitEscalationProcessForTest(func(pid int) bool { return pid == child.Process.Pid && syscall.Kill(pid, 0) == nil }, nil)
+	t.Cleanup(func() { agentd.ResetFederationForTest(); restore() })
 	l, err := db.GetFederationTeleportLease("in", fh.peer.id.ID(), d.ID)
 	require.NoError(t, err)
 	l.State = "returning"
