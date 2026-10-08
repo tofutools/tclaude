@@ -610,3 +610,51 @@ by default or through group ownership. `config.import` permits changes to
 agent authority, including default permissions and sandbox access. Human CLI
 callers use the same daemon APIs without those agent grants. Bundles currently
 transfer as local files; these commands do not send anything to a peer.
+
+## Portable local agent bundles
+
+Agent transfer uses a ZIP archive, separate from the existing export jobs:
+
+```bash
+tclaude agent bundle export reviewer --file reviewer.zip --history
+tclaude agent bundle import --file reviewer.zip --cwd "$PWD" --group team
+tclaude agent bundle import --file reviewer.zip --cwd "$PWD" --group team --apply
+```
+
+Preview is the default. `--apply` creates a fresh local agent through the normal
+spawn permission checks and launch path; it requires an existing receiving
+`--group`. `--name` overrides the source name. Source group names, roles and
+permission provenance are advisory: ownership, permission overrides and role
+references never become grants on the receiver. The inline profile includes
+launch posture (including sandbox and approval settings), shown in the preview
+alongside an explicit security summary and checked by normal receiver policy.
+Role guidance, startup context, initial task text and task-reference links travel
+as configuration. Source profile names are informational; no receiver profile is
+looked up by that name.
+
+`--cwd` remaps the working directory. `--keep-paths` reuses recorded originals
+that exist locally; missing directories refuse apply with a remapping hint.
+Optional worktree hints can be remapped with `--worktree`. Profile path
+placeholders use the same `--set name=value` and `--keep-paths` conventions as
+setup bundles. Working directories, branches and paths inside prompts or tool
+output are hints, not filesystem contents; no repository or worktree is copied.
+
+`--history` includes Claude Code JSONL or a Codex rollout through the harness's
+`HistoryTransfer` capability. Import remints native conversation identity and
+remaps known cwd metadata before resuming it as a new local agent. Message and
+tool-output text is preserved. OpenCode, Copilot and Gemini currently export
+configuration only with a warning; `--skip-history` also requests configuration
+only on import. Sidecar databases, credentials, hooks and artifacts are excluded.
+Credential detection uses the setup-bundle boundary, reporting counts per kind
+and the first three locations. Export refuses flagged text unless
+`--allow-flagged` is explicit; history is never sanitized or silently rewritten.
+Inspect archives before sharing them.
+
+The version 1 `manifest.json` records format/version, creation time, tclaude
+version, configuration and optional transcript length/checksum. Unknown fields
+within version 1 are ignored; unknown versions refuse. Archives accept only
+`manifest.json` and optional `history/transcript.jsonl`, with bounded compressed
+and uncompressed sizes, no symlinks, duplicate entries or arbitrary extraction.
+Agents need explicit `agent.bundle.export` / `agent.bundle.import` grants;
+neither is default-granted or implied by ownership. Import also requires normal
+spawn authority. These commands operate on local files and do not contact peers.
