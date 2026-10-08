@@ -46,12 +46,15 @@ func (rt *fedRuntime) handleModelAnswer(peer *db.FederationPeer, env *proto.Enve
 		}
 	}
 }
-func (rt *fedRuntime) openModelStream(ctx context.Context, peer *db.FederationPeer, session, name string) (*routebroker.FlowStream, error) {
+func (rt *fedRuntime) openModelStream(ctx context.Context, peer *db.FederationPeer, session, name string, dialects ...string) (*routebroker.FlowStream, error) {
 	kp, err := stream.NewKeyPair()
 	if err != nil {
 		return nil, err
 	}
 	p := proto.ModelOpenPayload{Version: 1, Stream: proto.NewEnvelopeID(), Proxy: name, Session: session, Key: kp.Pub}
+	if len(dialects) > 0 {
+		p.Dialect = dialects[0]
+	}
 	ch := make(chan fedModelAnswer, 1)
 	rt.modelsMu.Lock()
 	st := rt.modelsLocked()
@@ -122,6 +125,18 @@ func (rt *fedRuntime) acceptModelOpen(peer *db.FederationPeer, env *proto.Envelo
 	instance, err := modelProxyPolicy(p.Proxy)
 	if err != nil {
 		answer(false, nil, err.Error())
+		return
+	}
+	dialect := instance.ModelPolicy.Dialect
+	if dialect == "" {
+		dialect = "anthropic"
+	}
+	requested := p.Dialect
+	if requested == "" {
+		requested = "anthropic"
+	}
+	if requested != dialect {
+		answer(false, nil, "gateway dialect does not match the launch harness")
 		return
 	}
 	rt.modelsMu.Lock()

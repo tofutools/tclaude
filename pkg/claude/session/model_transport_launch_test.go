@@ -277,7 +277,8 @@ func TestResolveTclaudeLayerCodexRefusesUnresolvableEffectiveConfig(t *testing.T
 	}
 	previous := codexEffectiveConfigReader
 	codexEffectiveConfigReader = func(
-		string, []sandboxpolicy.EnvironmentEntry, string,
+		_ string, _ []sandboxpolicy.EnvironmentEntry, _ string,
+		_ ...string,
 	) (codexEffectiveConfig, error) {
 		return codexEffectiveConfig{}, errors.New(
 			"the Codex app-server effective-config read did not answer within 45s")
@@ -535,7 +536,8 @@ func stubCodexEffectiveConfig(
 	stub := &config
 	previous := codexEffectiveConfigReader
 	codexEffectiveConfigReader = func(
-		string, []sandboxpolicy.EnvironmentEntry, string,
+		_ string, _ []sandboxpolicy.EnvironmentEntry, _ string,
+		_ ...string,
 	) (codexEffectiveConfig, error) {
 		return *stub, nil
 	}

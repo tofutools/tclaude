@@ -80,7 +80,7 @@ func renderHTTPProxyCommand(sessionID, command string, runtime bool, markerOffse
 }
 
 func httpProxyExecCmd() *cobra.Command {
-	var sessionID, command, modelProxy string
+	var sessionID, command, modelProxy, modelHarness, modelProfile string
 	var runtime bool
 	var commandFD int
 	var markerOffsets []int
@@ -95,7 +95,7 @@ func httpProxyExecCmd() *cobra.Command {
 				}
 				command = strings.TrimSuffix(string(data), "\n")
 			}
-			code, err := runHTTPProxyExecWithOptions(sessionID, command, runtime, markerOffsets, modelProxy)
+			code, err := runHTTPProxyExecWithOptions(sessionID, command, runtime, markerOffsets, modelProxy, modelHarness, modelProfile)
 			if err != nil {
 				return err
 			}
@@ -108,6 +108,8 @@ func httpProxyExecCmd() *cobra.Command {
 	cmd.Flags().IntVar(&commandFD, "command-fd", -1, "private workload descriptor")
 	cmd.Flags().IntSliceVar(&markerOffsets, "codex-env-marker-offset", nil, "position of the compile-time Codex environment marker")
 	cmd.Flags().BoolVar(&runtime, "runtime", false, "managed server process boundary")
+	cmd.Flags().StringVar(&modelProfile, "model-proxy-profile", "", "Codex launch permission profile")
+	cmd.Flags().StringVar(&modelHarness, "model-proxy-harness", "claude", "model gateway harness")
 	cmd.Flags().StringVar(&modelProxy, "model-proxy", "", "named model gateway reference")
 	cmd.Flags().StringVar(&sessionID, "session-id", "", "generation-bound launch row")
 	cmd.Flags().StringVar(&command, "command", "", "workload shell command")
@@ -270,16 +272,26 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 	if len(modelRefs) > 0 {
 		modelRef = modelRefs[0]
 	}
+	modelHarness := "claude"
+	if len(modelRefs) > 1 && modelRefs[1] != "" {
+		modelHarness = modelRefs[1]
+	}
+	if modelHarness != "claude" && modelHarness != "codex" {
+		return 0, errors.New("unsupported model gateway harness")
+	}
 	var modelBridge *modelProxyBridge
 	if modelRef != "" {
 		cwd, e := os.Getwd()
 		if e != nil {
 			return 0, e
 		}
-		if e = validateModelProxySettings(cwd, os.Environ()); e != nil {
+		if modelHarness == "claude" {
+			e = validateModelProxySettings(cwd, os.Environ())
+		}
+		if e != nil {
 			return 0, e
 		}
-		modelBridge, err = newModelProxyBridge(client, sessionID, modelRef)
+		modelBridge, err = newModelProxyBridge(client, sessionID, modelRef, modelHarness)
 		if err != nil {
 			return 0, fmt.Errorf("model gateway binding failed; launch refused: %w", err)
 		}
@@ -320,7 +332,18 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 			gatewayEnvironment[name] = base + path
 		}
 		if modelBridge != nil {
-			environ = append(environ, "ANTHROPIC_BASE_URL="+base+"/model", "ANTHROPIC_AUTH_TOKEN="+modelBridge.bearer, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
+			if modelHarness == "codex" {
+				environ = append(environ, "TCLAUDE_MODEL_PROXY_TOKEN="+modelBridge.bearer)
+				profile := ""
+				if len(modelRefs) > 2 {
+					profile = modelRefs[2]
+				}
+				if err := validateCodexModelProxyEffective(environ, profile, modelBridge.provider, base+"/model/v1"); err != nil {
+					return 0, err
+				}
+			} else {
+				environ = append(environ, "ANTHROPIC_BASE_URL="+base+"/model", "ANTHROPIC_AUTH_TOKEN="+modelBridge.bearer, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
+			}
 		}
 		server = &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 65 * time.Second, WriteTimeout: 65 * time.Second, IdleTimeout: 30 * time.Second}
 		if modelBridge != nil {
@@ -348,6 +371,9 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 			return 0, errors.New("invalid Codex gateway environment data")
 		}
 		args := harness.CodexHTTPProxyEnvironmentArgs(base, gatewayEnvironment)
+		if modelBridge != nil && modelHarness == "codex" {
+			args += harness.CodexModelProxyArgs(modelBridge.provider, "http://"+listener.Addr().String()+"/model/v1")
+		}
 		markerLength := len(prefix) + len(payload)
 		command = command[:offset] + args + command[offset+markerLength:]
 	}
@@ -471,12 +497,32 @@ func HTTPProxySpawnCommand(sessionID string, h *harness.Harness, spec harness.Sp
 	}
 	spec.ShellEnvironment = filteredEnvironment
 	if spec.ModelProxy != "" {
-		// Compose operator environment before the bridge so its preflight and
-		// credential filtering see the environment the harness would inherit.
 		prefix := spec.EnvExports + spec.PreLaunchScript
 		spec.EnvExports, spec.PreLaunchScript = "", ""
-		command := renderHTTPProxyCommand(sessionID, h.Spawn.BuildCommand(spec), false, nil, cliPath...)
-		return prefix + strings.Replace(command, " session http-proxy-exec", " session http-proxy-exec --model-proxy "+clcommon.ShellQuoteArg(spec.ModelProxy), 1)
+		offsets := []int{}
+		if h.Name == harness.CodexName {
+			spec.RuntimeHTTPProxyEnvironment = true
+		}
+		command := h.Spawn.BuildCommand(spec)
+		if h.Name == harness.CodexName {
+			marker := clcommon.ShellQuoteArg(harness.CodexHTTPProxyEnvironmentMarkerArg(spec.ShellEnvironment))
+			count := 1
+			if spec.CodexAppServerSocket != "" {
+				count = 2
+			}
+			start := 0
+			for range count {
+				at := strings.Index(command[start:], marker)
+				if at < 0 {
+					panic("Codex model gateway marker absent")
+				}
+				at += start
+				offsets = append(offsets, at)
+				start = at + len(marker)
+			}
+		}
+		command = renderHTTPProxyCommand(sessionID, command, false, offsets, cliPath...)
+		return prefix + strings.Replace(command, " session http-proxy-exec", " session http-proxy-exec --model-proxy "+clcommon.ShellQuoteArg(spec.ModelProxy)+" --model-proxy-harness "+clcommon.ShellQuoteArg(h.Name)+" --model-proxy-profile "+clcommon.ShellQuoteArg(spec.PermissionProfile), 1)
 	}
 	cfg, err := config.Load()
 	if err != nil || !cfg.HTTPProxyConfigured() || h.UsesAuthoritativeServer() {

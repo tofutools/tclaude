@@ -1783,8 +1783,9 @@ func resumeOneConvUnderLaunchLockForTeleport(convID string, recreateMissingDir b
 	if _, fail := planSandboxProfileAccessForLaunch(
 		harnessName, relaunchSandbox, effectiveSandbox, relaunchSandboxImplementation,
 		session.ModelTransportLaunchContext{
-			Model: launchConfig.Model,
-			Cwd:   cwd,
+			Model:      launchConfig.Model,
+			ModelProxy: launchConfig.ModelProxy,
+			Cwd:        cwd,
 		},
 		false,
 	); fail != nil {
@@ -4596,8 +4597,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if _, fail := planSandboxProfileAccessForLaunch(
 		h.Name, harnessBuiltinMode, &effectiveSandbox, body.SandboxImplementation,
 		session.ModelTransportLaunchContext{
-			Model: body.Model,
-			Cwd:   cwd,
+			Model:      body.Model,
+			ModelProxy: body.ModelProxy,
+			Cwd:        cwd,
 		},
 		body.AllowUnenforcedSandbox,
 	); fail != nil {
@@ -6731,8 +6733,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	if _, fail := planSandboxProfileAccessForLaunch(
 		p.Harness, p.HarnessBuiltinMode, p.EffectiveSandbox, p.SandboxImplementation,
 		session.ModelTransportLaunchContext{
-			Model: p.Model,
-			Cwd:   p.Cwd,
+			Model:      p.Model,
+			ModelProxy: p.ModelProxy,
+			Cwd:        p.Cwd,
 		},
 		p.AllowUnenforcedSandbox,
 	); fail != nil {

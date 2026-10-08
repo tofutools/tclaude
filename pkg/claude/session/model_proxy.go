@@ -10,27 +10,36 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 type modelProxyBridge struct {
 	client          *http.Client
 	session, bearer string
+	provider        string
+	openai          bool
 }
 
-func newModelProxyBridge(client *http.Client, session, reference string) (*modelProxyBridge, error) {
+func newModelProxyBridge(client *http.Client, session, reference string, harnesses ...string) (*modelProxyBridge, error) {
 	secret := make([]byte, 32)
 	if _, err := rand.Read(secret); err != nil {
 		return nil, err
 	}
 	bearer := hex.EncodeToString(secret)
 	hash := sha256.Sum256([]byte(bearer))
-	body, _ := json.Marshal(map[string]string{"reference": reference, "bearer_hash": hex.EncodeToString(hash[:])})
+	harnessName := "claude"
+	if len(harnesses) > 0 {
+		harnessName = harnesses[0]
+	}
+	body, _ := json.Marshal(map[string]string{"reference": reference, "bearer_hash": hex.EncodeToString(hash[:]), "harness": harnessName})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://tclaude/v1/models/bind", bytes.NewReader(body))
@@ -45,12 +54,20 @@ func newModelProxyBridge(client *http.Client, session, reference string) (*model
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
+		var refusal struct {
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&refusal) == nil && refusal.Error.Message != "" {
+			return nil, fmt.Errorf("daemon refused model gateway registration: %s", refusal.Error.Message)
+		}
 		return nil, errors.New("daemon refused model gateway registration")
 	}
 	// Streaming requests must outlive the ordinary named HTTP client's timeout.
 	streaming := *client
 	streaming.Timeout = 0
-	return &modelProxyBridge{client: &streaming, session: session, bearer: bearer}, nil
+	return &modelProxyBridge{client: &streaming, session: session, bearer: bearer, openai: harnessName == "codex", provider: "tclaude_gateway_" + hex.EncodeToString(hash[:8])}, nil
 }
 func (b *modelProxyBridge) revoke() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -65,12 +82,12 @@ func (b *modelProxyBridge) revoke() {
 func (b *modelProxyBridge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	auth, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !ok || subtle.ConstantTimeCompare([]byte(auth), []byte(b.bearer)) != 1 || r.Header.Get("Origin") != "" {
-		modelBridgeError(w, 403, "model gateway requires this launch's bearer")
+		b.bridgeError(w, 403, "model gateway requires this launch's bearer")
 		return
 	}
 	path := strings.TrimPrefix(r.URL.EscapedPath(), "/model/")
-	if path != "v1/messages" && path != "v1/messages/count_tokens" && path != "v1/models" {
-		modelBridgeError(w, 404, "model gateway endpoint is not supported")
+	if path != "v1/models" && ((!b.openai && path != "v1/messages" && path != "v1/messages/count_tokens") || (b.openai && path != "v1/responses")) {
+		b.bridgeError(w, 404, "model gateway endpoint is not supported")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), time.Hour)
@@ -81,7 +98,7 @@ func (b *modelProxyBridge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	req, err := http.NewRequestWithContext(ctx, r.Method, target, http.MaxBytesReader(w, r.Body, 16<<20))
 	if err != nil {
-		modelBridgeError(w, 400, "invalid model gateway request")
+		b.bridgeError(w, 400, "invalid model gateway request")
 		return
 	}
 	for _, name := range []string{"Content-Type", "Accept", "Anthropic-Version", "Anthropic-Beta"} {
@@ -93,13 +110,13 @@ func (b *modelProxyBridge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+b.bearer)
 	resp, err := b.client.Do(req)
 	if err != nil {
-		modelBridgeError(w, 503, "model gateway is unavailable; no fallback to local credentials")
+		b.bridgeError(w, 503, "model gateway is unavailable; no fallback to local credentials")
 		return
 	}
 	defer resp.Body.Close()
 	for name, values := range resp.Header {
 		lower := strings.ToLower(name)
-		if lower == "content-type" || lower == "request-id" || lower == "retry-after" || lower == "x-should-retry" || strings.HasPrefix(lower, "anthropic-ratelimit-") {
+		if lower == "content-type" || lower == "request-id" || lower == "x-request-id" || strings.HasPrefix(lower, "x-ratelimit-") || lower == "retry-after" || lower == "x-should-retry" || strings.HasPrefix(lower, "anthropic-ratelimit-") {
 			w.Header()[name] = append([]string(nil), values...)
 		}
 	}
@@ -121,6 +138,15 @@ func (b *modelProxyBridge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
+func (b *modelProxyBridge) bridgeError(w http.ResponseWriter, status int, message string) {
+	if b.openai {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"type": "api_error", "message": message, "param": nil, "code": nil}})
+		return
+	}
+	modelBridgeError(w, status, message)
+}
 func modelBridgeError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -131,6 +157,10 @@ func modelProxyCompetingEnvironment(name string) bool {
 		return true
 	}
 	switch name {
+	case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy":
+		return true
+	case "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_ORGANIZATION", "OPENAI_ORG_ID", "OPENAI_PROJECT", "TCLAUDE_MODEL_PROXY_TOKEN", "TCLAUDE_CODEX_MODEL_PROXY_BASE_URL", "TCLAUDE_CODEX_MODEL_PROXY_PROVIDER":
+		return true
 	case "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_CUSTOM_HEADERS", "ANTHROPIC_API_KEY_HELPER", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC":
 		return true
 	}
@@ -181,6 +211,32 @@ func validateModelProxyExtraArgs(args []string) error {
 		if flag == "--settings" {
 			return errors.New("--model-proxy cannot combine with pass-through --settings; remove the override so the gateway can verify provider settings")
 		}
+	}
+	return nil
+}
+
+func validateCodexModelProxyEffective(environment []string, profile, provider, base string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	entries := []sandboxpolicy.EnvironmentEntry{}
+	for _, pair := range environment {
+		k, v, ok := strings.Cut(pair, "=")
+		if ok {
+			entries = append(entries, sandboxpolicy.EnvironmentEntry{Name: k, Value: v})
+		}
+	}
+	effective, err := codexEffectiveConfigReader(cwd, entries, profile, harness.CodexModelProxyOverrides(provider, base)...)
+	if err != nil {
+		return fmt.Errorf("codex model gateway effective-config verification failed; launch refused: %w", err)
+	}
+	return verifyCodexModelProxyProvider(effective, provider, base)
+}
+func verifyCodexModelProxyProvider(effective codexEffectiveConfig, provider, base string) error {
+	p, ok := effective.ModelProviders[provider]
+	if !ok || effective.ModelProvider != provider || p.BaseURL != base || p.EnvKey != "TCLAUDE_MODEL_PROXY_TOKEN" || p.RequiresOpenAIAuth || p.WireAPI != "responses" || p.SupportsWebsockets || (len(p.Auth) > 0 && string(p.Auth) != "null") || len(p.HTTPHeaders) > 0 || len(p.EnvHTTPHeaders) > 0 || len(p.QueryParams) > 0 || p.ExperimentalBearer != "" {
+		return errors.New("codex model gateway effective provider differs from the pinned launch provider; launch refused without credential fallback")
 	}
 	return nil
 }

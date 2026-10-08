@@ -436,6 +436,7 @@ type SessionAnswerPayload struct {
 // ModelOpenPayload binds one Messages HTTP exchange to a named gateway.
 // Version 1 mandates the routebroker credit protocol; no raw TCP fallback.
 type ModelOpenPayload struct {
+	Dialect string `json:"dialect,omitempty"`
 	Version int    `json:"version"`
 	Stream  string `json:"stream"`
 	Key     []byte `json:"key"`

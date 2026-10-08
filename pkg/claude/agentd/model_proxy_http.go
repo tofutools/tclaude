@@ -139,7 +139,7 @@ func modelEndpointAllowed(method, path, query string) bool {
 	if query != "" && query != "beta=true" {
 		return false
 	}
-	return method == http.MethodPost && (path == "/v1/messages" || path == "/v1/messages/count_tokens") || method == http.MethodGet && path == "/v1/models"
+	return method == http.MethodPost && (path == "/v1/messages" || path == "/v1/messages/count_tokens" || path == "/v1/responses") || method == http.MethodGet && path == "/v1/models"
 }
 func copyModelRequestHeaders(dst, src http.Header) {
 	// The launch bearer, user cookies, OAuth credentials and arbitrary routing
@@ -153,7 +153,7 @@ func copyModelRequestHeaders(dst, src http.Header) {
 func copyModelResponseHeaders(dst, src http.Header) {
 	for name, values := range src {
 		lower := strings.ToLower(name)
-		if lower == "content-type" || lower == "request-id" || lower == "retry-after" || lower == "x-should-retry" || strings.HasPrefix(lower, "anthropic-ratelimit-") {
+		if lower == "content-type" || lower == "request-id" || lower == "x-request-id" || strings.HasPrefix(lower, "x-ratelimit-") || lower == "retry-after" || lower == "x-should-retry" || strings.HasPrefix(lower, "anthropic-ratelimit-") {
 			dst[name] = append([]string(nil), values...)
 		}
 	}
@@ -175,11 +175,13 @@ func modelByteBounds(p *config.ModelProxyPolicy) (request, response int64, event
 	return
 }
 func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, name, id string) {
+	w = modelDialectWriter{w, r.URL.Path == "/v1/responses"}
 	instance, err := modelProxyPolicy(name)
 	if err != nil {
 		modelError(w, 503, err.Error())
 		return
 	}
+	w = modelDialectWriter{w, instance.ModelPolicy.Dialect == "openai"}
 	if !fedPeerModelAllows(peer, name) {
 		modelError(w, 403, "models.proxy grant was revoked for this named gateway")
 		return
@@ -189,6 +191,11 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 		return
 	}
 	p := instance.ModelPolicy
+	openai := p.Dialect == "openai"
+	if (openai && r.URL.RawQuery != "") || (r.Method == http.MethodPost && (openai != (r.URL.Path == "/v1/responses"))) {
+		modelError(w, 400, "endpoint does not match this gateway's configured dialect")
+		return
+	}
 	if r.Method == http.MethodGet {
 		data := []map[string]string{}
 		for _, model := range p.Models {
@@ -196,6 +203,16 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 				continue // Patterns authorize requests, but are not concrete model IDs.
 			}
 			data = append(data, map[string]string{"type": "model", "id": model, "display_name": model, "created_at": "1970-01-01T00:00:00Z"})
+		}
+		if openai {
+			models := []map[string]any{}
+			for _, model := range p.Models {
+				if !strings.HasSuffix(model, "*") {
+					models = append(models, map[string]any{"id": model, "object": "model", "created": 0, "owned_by": "gateway"})
+				}
+			}
+			writeJSON(w, 200, map[string]any{"object": "list", "data": models})
+			return
 		}
 		first, last := "", ""
 		if len(data) > 0 {
@@ -227,6 +244,27 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 	}
 	if !allowed {
 		modelError(w, 403, "model is not in this gateway's allowlist")
+		return
+	}
+	if openai {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(body, &fields) != nil || fields == nil {
+			modelError(w, 400, "Responses request must be an object")
+			return
+		}
+		if raw, exists := fields["max_output_tokens"]; exists {
+			if string(raw) == "null" || json.Unmarshal(raw, &data.MaxTokens) != nil {
+				modelError(w, 400, "max_output_tokens must be a positive integer")
+				return
+			}
+		} else {
+			data.MaxTokens = p.MaxOutputTokens
+			fields["max_output_tokens"], _ = json.Marshal(data.MaxTokens)
+			body, _ = json.Marshal(fields)
+		}
+	}
+	if int64(len(body)) > requestCap {
+		modelError(w, 413, "model gateway bounded request exceeds byte limit")
 		return
 	}
 	counting := r.URL.Path == "/v1/messages/count_tokens"
@@ -342,12 +380,16 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 			modelError(w, 502, "model gateway provider did not return an event stream")
 			return
 		}
-		observer := modelUsageObserver{usage: &u, maxInput: p.MaxInputTokens, maxOutput: data.MaxTokens, credential: credential}
+		observer := modelUsageObserver{usage: &u, maxInput: p.MaxInputTokens, maxOutput: data.MaxTokens, credential: credential, openai: openai}
 		w.WriteHeader(resp.StatusCode)
 		err = relayModelEvents(w, resp.Body, responseCap, eventCap, &observer)
 		if err != nil {
 			u.Status = 502
-			_, _ = io.WriteString(w, "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"model gateway stream interrupted or exceeded its bounds\"}}\n\n")
+			if openai {
+				_, _ = io.WriteString(w, "event: error\ndata: {\"type\":\"error\",\"code\":\"gateway_error\",\"message\":\"model gateway stream interrupted or exceeded its bounds\"}\n\n")
+			} else {
+				_, _ = io.WriteString(w, "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"model gateway stream interrupted or exceeded its bounds\"}}\n\n")
+			}
 		}
 		u.Complete = err == nil && observer.stopped && observer.sawInput && observer.sawOutput && !observer.invalid
 	} else {
@@ -362,15 +404,17 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 			Usage       json.RawMessage `json:"usage"`
 			InputTokens *int64          `json:"input_tokens"`
 			Type        string          `json:"type"`
+			Object      string          `json:"object"`
+			Status      string          `json:"status"`
 		}
-		observer := modelUsageObserver{usage: &u, maxInput: p.MaxInputTokens, maxOutput: data.MaxTokens, credential: credential}
+		observer := modelUsageObserver{usage: &u, maxInput: p.MaxInputTokens, maxOutput: data.MaxTokens, credential: credential, openai: openai}
 		if json.Unmarshal(result, &resultData) == nil {
 			if counting && resultData.InputTokens != nil {
 				observer.apply(map[string]*int64{"input_tokens": resultData.InputTokens})
 				observer.sawOutput = true
 				u.Complete = !observer.invalid
 			}
-			if !counting && resultData.Type == "message" {
+			if !counting && ((!openai && resultData.Type == "message") || (openai && resultData.Object == "response" && resultData.Status == "completed")) {
 				observer.parse(resultData.Usage)
 				u.Complete = observer.sawInput && observer.sawOutput && !observer.invalid
 			}
@@ -390,6 +434,7 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 }
 
 type modelUsageObserver struct {
+	openai                                bool
 	usage                                 *db.ModelProxyUsage
 	maxInput, maxOutput                   int64
 	credential                            string
@@ -416,6 +461,16 @@ func (o *modelUsageObserver) apply(values map[string]*int64) {
 }
 func (o *modelUsageObserver) parse(data json.RawMessage) {
 	var values map[string]*int64
+	if o.openai {
+		var v struct {
+			Input  *int64 `json:"input_tokens"`
+			Output *int64 `json:"output_tokens"`
+		}
+		if json.Unmarshal(data, &v) == nil {
+			o.apply(map[string]*int64{"input_tokens": v.Input, "output_tokens": v.Output})
+		}
+		return
+	}
 	if json.Unmarshal(data, &values) == nil {
 		o.apply(values)
 	}
@@ -432,13 +487,31 @@ func (o *modelUsageObserver) event(raw []byte) {
 		}
 	}
 	var event struct {
-		Type    string          `json:"type"`
-		Usage   json.RawMessage `json:"usage"`
+		Type     string          `json:"type"`
+		Usage    json.RawMessage `json:"usage"`
+		Response struct {
+			Usage  json.RawMessage `json:"usage"`
+			Status string          `json:"status"`
+		} `json:"response"`
 		Message struct {
 			Usage json.RawMessage `json:"usage"`
 		} `json:"message"`
 	}
 	if json.Unmarshal(data, &event) != nil {
+		return
+	}
+	if o.openai {
+		switch event.Type {
+		case "response.completed":
+			if o.stopped || event.Response.Status != "completed" {
+				o.invalid = true
+				return
+			}
+			o.parse(event.Response.Usage)
+			o.stopped = true
+		case "error", "response.failed", "response.incomplete":
+			o.invalid = true
+		}
 		return
 	}
 	switch event.Type {
@@ -557,7 +630,7 @@ func writeModelProviderError(w http.ResponseWriter, resp *http.Response, credent
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if err != nil || len(body) > bound || json.Unmarshal(body, &result) != nil || result.Type != "error" || result.Error.Type == "" || len(result.Error.Type) > 128 || result.Error.Message == "" || reflectsModelCredential(body, credential) {
+	if err != nil || len(body) > bound || json.Unmarshal(body, &result) != nil || (result.Type != "error" && !modelWriterOpenAI(w)) || result.Error.Type == "" || len(result.Error.Type) > 128 || result.Error.Message == "" || reflectsModelCredential(body, credential) {
 		modelError(w, resp.StatusCode, "model gateway provider refused the request")
 		return
 	}
@@ -567,5 +640,9 @@ func writeModelProviderError(w http.ResponseWriter, resp *http.Response, credent
 	copyModelResponseHeaders(w.Header(), resp.Header)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
-	_ = json.NewEncoder(w).Encode(result)
+	if modelWriterOpenAI(w) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"type": result.Error.Type, "message": result.Error.Message, "param": nil, "code": nil}})
+	} else {
+		_ = json.NewEncoder(w).Encode(result)
+	}
 }

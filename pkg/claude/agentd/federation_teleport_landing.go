@@ -17,6 +17,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
 	"github.com/tofutools/tclaude/pkg/federation/jobrepo"
@@ -586,8 +587,9 @@ func teleportModelReference(mode, launchHarness string) (string, error) {
 	if !ok {
 		return "", errors.New("invalid teleport credential mode")
 	}
-	if launchHarness != "" && launchHarness != "claude" {
-		return "", errors.New("proxy credentials currently require the Claude Code harness")
+	h, err := harness.Resolve(launchHarness)
+	if err != nil || !h.SupportsModelProxy() {
+		return "", errors.New("proxy credentials require a model-proxy capable harness")
 	}
 	peer, name, err := resolveModelProxyReference(ref)
 	if err != nil {

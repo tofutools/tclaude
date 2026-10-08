@@ -88,7 +88,7 @@ type NewParams struct {
 	// an omitted value from the global default spawn profile; if that is also
 	// blank the harness receives no override. A non-empty value is normalized
 	// and validated by the harness catalog in runNew.
-	ModelProxy string `long:"model-proxy" optional:"true" help:"Claude Code model gateway <name>@<trusted peer>"`
+	ModelProxy string `long:"model-proxy" optional:"true" help:"Model gateway <name>@<trusted peer>"`
 	Model      string `long:"model" optional:"true" help:"Harness model or alias. Unset = global profile, then the harness default"`
 
 	// Harness selects the coding tool this session runs. A fresh human launch
@@ -1134,6 +1134,11 @@ func runNew(params *NewParams) error {
 	// Placed after the pass-through branch above, which starts no session and
 	// therefore has no recorded posture to contradict.
 	if params.ModelProxy != "" {
+		if h.Name == harness.CodexName {
+			if flag, ok := providerChangingArg(extraArgs, map[string]bool{"-c": true, "--config": true, "-p": true, "--profile": true, "--oss": false, "--local-provider": true, "--remote": false}); ok {
+				return fmt.Errorf("model gateway cannot combine with Codex provider override %s", flag)
+			}
+		}
 		if err := validateModelProxyExtraArgs(extraArgs); err != nil {
 			return err
 		}
@@ -1794,6 +1799,7 @@ func runNew(params *NewParams) error {
 					h,
 					ModelTransportLaunchContext{
 						Model:       model,
+						ModelProxy:  params.ModelProxy,
 						Cwd:         cwd,
 						Environment: plannedEffective.Environment,
 						ExtraArgs:   extraArgs,

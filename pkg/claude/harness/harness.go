@@ -817,5 +817,5 @@ func Names() []string {
 
 // SupportsModelProxy gates per-launch credential bridging on the descriptor.
 func (h *Harness) SupportsModelProxy() bool {
-	return h != nil && h.ModelProxyProtocol == "anthropic-messages-v1"
+	return h != nil && (h.ModelProxyProtocol == "anthropic-messages-v1" || h.ModelProxyProtocol == "openai-responses-v1")
 }

@@ -97,7 +97,7 @@ warning. Model and effort are remembered by the harness itself.
 
 | Capability | Claude Code | Codex CLI | OpenCode | Copilot CLI | Gemini CLI | Shell |
 | --- | --- | --- | --- | --- | --- | --- |
-| Federated model gateway (`--model-proxy`) | Yes, ordinary workers | No | No | No | No | No |
+| Federated model gateway (`--model-proxy`) | Yes, ordinary workers | Yes, TUI and app-server | No | No | No | No |
 | Sessions: spawn / resume | ✅ | ✅ | ✅ managed server + attach | ✅ | ✅ | ✅ spawn only |
 | One-shot [`ask`](ask.md) | ✅ live-streamed | ✅ buffered | ✅ buffered | ✅ buffered | ✅ buffered | ❌ |
 | Portable agent-bundle history | ✅ JSONL | ✅ rollout JSONL | ⚠️ config only | ⚠️ config only | ⚠️ config only | ❌ |
@@ -649,10 +649,11 @@ status line, or tclaude's task runner.
 
 ### Federated model gateway
 
-Claude Code workers support `--model-proxy <name>@<peer>` through a session-bound
-loopback Anthropic Messages gateway. Explicit `off` overrides profile defaults.
-The binding follows the documented `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`
-contract and overrides saved OAuth login; conflicting provider settings refuse.
-Other harnesses and non-interactive one-shot runs currently refuse a proxy
-choice. See [Model gateways](federation.md#model-gateways-claude-code) for setup,
+Claude Code and Codex workers support `--model-proxy <name>@<peer>` through a
+session-bound loopback gateway. Claude Code uses Anthropic Messages; Codex uses
+OpenAI Responses through a launch-only custom provider, covering both the TUI
+and its app-server drive. Explicit `off` overrides profile defaults. Saved
+provider logins cannot replace the pinned gateway route; conflicting overrides
+refuse the launch. Other harnesses and non-interactive one-shot runs refuse a
+proxy choice. See [Model gateways](federation.md#model-gateways-claude-code) for
 permissions, limits, usage and shutdown controls.

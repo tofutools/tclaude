@@ -42,12 +42,16 @@ func fedModelPolicy(t *testing.T, fh *fedHarness, upstream string) {
 	rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermModelsProxy, "scope": "http_proxy=model"})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 }
-func fedModelFlow(t *testing.T, fh *fedHarness) *routebroker.FlowStream {
+func fedModelFlow(t *testing.T, fh *fedHarness, dialects ...string) *routebroker.FlowStream {
 	t.Helper()
 	kp, err := stream.NewKeyPair()
 	require.NoError(t, err)
 	sid := proto.NewEnvelopeID()
-	env := fh.peer.envelope(proto.KindModelOpen, proto.Endpoint{}, proto.ModelOpenPayload{Version: 1, Stream: sid, Proxy: "model", Session: "immutable-launch", Key: kp.Pub})
+	dialect := ""
+	if len(dialects) > 0 {
+		dialect = dialects[0]
+	}
+	env := fh.peer.envelope(proto.KindModelOpen, proto.Endpoint{}, proto.ModelOpenPayload{Version: 1, Stream: sid, Proxy: "model", Session: "immutable-launch", Key: kp.Pub, Dialect: dialect})
 	env.From.Agent = ""
 	fh.peer.send(env)
 	var answer proto.ModelAnswerPayload

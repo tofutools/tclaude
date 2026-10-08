@@ -65,7 +65,9 @@ func TestTeleportCredentialsReplaceProfileGateway(t *testing.T) {
 	require.NoError(t, json.Unmarshal(b.Manifest.Agent.Profile, &p))
 	require.Equal(t, "off", p.ModelProxy)
 	b.Manifest.Agent.Harness = "codex"
-	require.ErrorContains(t, applyTeleportModelCredentials(b, "proxy:allowed@gateway"), "Claude")
+	require.NoError(t, applyTeleportModelCredentials(b, "proxy:allowed@gateway"))
+	b.Manifest.Agent.Harness = "gemini"
+	require.ErrorContains(t, applyTeleportModelCredentials(b, "proxy:allowed@gateway"), "capable")
 }
 func TestModelUsageBoundsBeforeForwardingEvents(t *testing.T) {
 	for _, raw := range []string{`data: {"type":"message_delta","usage":{"output_tokens":21}}` + "\n\n", `data: {"type":"content_block_delta","delta":{"text":"provider-secret-test"}}` + "\n\n"} {
@@ -132,5 +134,25 @@ func TestModelProxyMalformedProviderErrorRetainsRetryHeaders(t *testing.T) {
 		require.Equal(t, "false", rec.Header().Get("X-Should-Retry"))
 		require.NotContains(t, rec.Body.String(), "provider-secret")
 		require.Contains(t, rec.Body.String(), "provider refused the request")
+	}
+}
+
+func TestModelOpenAIUsageRequiresValidTerminalCounts(t *testing.T) {
+	for _, data := range []string{
+		`{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":10,"output_tokens":3,"input_tokens_details":{"cached_tokens":7}}}}`,
+		`{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":10}}}`,
+		`{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":-1,"output_tokens":3}}}`,
+		`{"type":"response.incomplete","response":{"usage":{"input_tokens":10,"output_tokens":3}}}`,
+	} {
+		u := &db.ModelProxyUsage{}
+		o := modelUsageObserver{usage: u, maxInput: 50, maxOutput: 20, openai: true}
+		o.event([]byte("data: " + data + "\n\n"))
+		complete := o.stopped && o.sawInput && o.sawOutput && !o.invalid
+		require.Equal(t, strings.Contains(data, "cached_tokens"), complete, data)
+		if complete {
+			require.EqualValues(t, 13, u.InputTokens+u.OutputTokens+u.CacheReadTokens)
+			o.event([]byte("data: " + data + "\n\n"))
+			require.True(t, o.invalid, "duplicate terminal accounting must not settle")
+		}
 	}
 }
