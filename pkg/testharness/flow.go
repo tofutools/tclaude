@@ -965,6 +965,7 @@ func (f *Flow) materializeTestCwd(cwd string) {
 // down). Useful between an action that left the conv online and an
 // action that requires it offline (resume).
 func (f *Flow) MarkOffline(tmuxSession string) {
+	defer db.NotifyStatusChanged()
 	f.World.Tmux.MarkOffline(tmuxSession)
 }
 

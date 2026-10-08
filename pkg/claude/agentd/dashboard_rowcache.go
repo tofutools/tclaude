@@ -27,6 +27,7 @@ import (
 // then assembles a conv's full row bundle from memory and memoizes it, so the
 // member loop, addAgent and the owners pass share a single computation.
 type snapshotRowCache struct {
+	status     *statusSnapshot
 	alive      map[string]struct{}
 	convIndex  map[string]*db.ConvIndexRow
 	sessions   map[string][]*db.SessionRow
@@ -56,15 +57,6 @@ const (
 )
 
 var rowWorkPhaseOrder = []string{rowWorkBgReconcile, rowWorkContextSnapshot}
-
-// addRowWork is the recordRowWork sink for this request's rows. Single
-// goroutine, like the rest of the cache — no locking.
-func (rc *snapshotRowCache) addRowWork(name string, d time.Duration) {
-	if rc.rowWork == nil {
-		rc.rowWork = map[string]time.Duration{}
-	}
-	rc.rowWork[name] += d
-}
 
 // rowWorkSnapshot copies the accumulator so a later caller can report only the
 // row work that accrued after this point. A conv is resolved (and its side
@@ -122,20 +114,21 @@ type convRowBundle struct {
 // publication while retaining the same load path.
 func newSnapshotRowCache(
 	convIDs []string,
-	alive map[string]struct{},
+	shared *statusSnapshot,
 	record func([]perfPhase),
 ) *snapshotRowCache {
 	rc := &snapshotRowCache{
-		alive: alive,
-		memo:  make(map[string]*convRowBundle, len(convIDs)),
-		locs:  make(map[string]agentLocationView, len(convIDs)),
+		status: shared,
+		alive:  shared.alive,
+		memo:   make(map[string]*convRowBundle, len(convIDs)),
+		locs:   make(map[string]agentLocationView, len(convIDs)),
 	}
 	// These tables are independent WAL reads. Running them concurrently keeps
 	// preload wall-clock bounded by the slowest batch instead of summing six
 	// SQLite round trips on every 2-second dashboard poll.
 	phases := runSnapshotNamedLoads(
 		snapshotNamedLoad{"conv_index", func() { rc.convIndex, _ = db.GetConvIndexBatch(convIDs) }},
-		snapshotNamedLoad{"sessions", func() { rc.sessions, _ = db.FindSessionsByConvIDs(convIDs) }},
+		snapshotNamedLoad{"sessions", func() { rc.sessions = shared.sessions }},
 		snapshotNamedLoad{"workdirs", func() { rc.workdirs, _ = db.ListAgentWorkdirsByConv(convIDs) }},
 		snapshotNamedLoad{"workspaces", func() { rc.workspaces, _ = db.ListAgentWorkspacesByConv(convIDs) }},
 		snapshotNamedLoad{"agents", func() { rc.agents, _ = db.AgentsByConv(convIDs) }},
@@ -237,9 +230,7 @@ func (rc *snapshotRowCache) viewFor(convID string) *convRowBundle {
 		Links:            branchLinksForRow(convID, loc, rc.workspaces[convID], rc.gitCache),
 		Online:           isConvOnlineInSessions(rc.sessions[convID], rc.alive),
 		LaunchGeneration: currentLaunchGeneration(rc.sessions[convID]),
-		State: stateForConvInSessionsBatched(rc.sessions[convID], rc.alive, &rc.codexContextBatch, func(timing codexTelemetryTiming) {
-			rc.codexTelemetryTiming = rc.codexTelemetryTiming.add(timing)
-		}, rc.addRowWork),
+		State:            rc.status.states[convID],
 	}
 	b.State.TemporaryHarnessBuiltinMode = rc.agents[convID].TemporaryHarnessBuiltinMode
 	// Codex does not currently append thread_settings_applied merely because an

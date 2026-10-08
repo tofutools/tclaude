@@ -124,21 +124,23 @@ func defaultFederationName() string {
 
 // fedRuntime is one live hub connection plus its workers.
 type fedRuntime struct {
-	nodeMu        sync.RWMutex
-	nodeStatic    proto.NodeMetadata
-	nodeWake      chan struct{}
-	awayMu        sync.Mutex
-	away          *fedAwayState
-	awayWaiting   map[string]string
-	bundleMu      sync.Mutex
-	bundleWaiters map[string]fedBundleWaiter
-	bundleActive  map[string]bool
-	id            *proto.Identity
-	name          string
-	cl            *client.Client
-	ctx           context.Context
-	cancel        context.CancelFunc
-	wg            sync.WaitGroup
+	agentStatusMu   sync.Mutex
+	agentStatusSent map[string]fedStatusSent
+	nodeMu          sync.RWMutex
+	nodeStatic      proto.NodeMetadata
+	nodeWake        chan struct{}
+	awayMu          sync.Mutex
+	away            *fedAwayState
+	awayWaiting     map[string]string
+	bundleMu        sync.Mutex
+	bundleWaiters   map[string]fedBundleWaiter
+	bundleActive    map[string]bool
+	id              *proto.Identity
+	name            string
+	cl              *client.Client
+	ctx             context.Context
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
 
 	inbound chan fedInbound
 	kick    chan struct{}
@@ -317,9 +319,16 @@ func (rt *fedRuntime) onDirectory(entries []proto.DirectoryEntry) {
 		return
 	}
 	go func() {
+		peers := []db.FederationPeer{}
 		for _, id := range cameOnline {
 			if p, _ := db.GetFederationPeer(id); p != nil {
-				rt.sendCatalog(id)
+				peers = append(peers, *p)
+			}
+		}
+		sharedStatus := rt.sharedStatusForPeers(peers)
+		for _, id := range cameOnline {
+			if p, _ := db.GetFederationPeer(id); p != nil {
+				rt.sendCatalog(id, sharedStatus)
 				rt.sendControl(id, proto.KindCatalogReq, "", struct{}{})
 			}
 		}
@@ -339,9 +348,10 @@ func (rt *fedRuntime) broadcastCatalogs() {
 	if err != nil {
 		return
 	}
+	sharedStatus := rt.sharedStatusForPeers(peers)
 	for _, p := range peers {
 		if rt.isOnline(p.InstanceID) {
-			rt.sendCatalog(p.InstanceID)
+			rt.sendCatalog(p.InstanceID, sharedStatus)
 		}
 	}
 }
@@ -385,8 +395,8 @@ func (rt *fedRuntime) sendControl(to, kind, inReplyTo string, payload any) bool 
 	return true
 }
 
-func (rt *fedRuntime) sendCatalog(peer string) {
-	cat, err := buildFederationCatalog(peer)
+func (rt *fedRuntime) sendCatalog(peer string, status ...*statusSnapshot) {
+	cat, err := buildFederationCatalog(peer, status...)
 	if err != nil {
 		slog.Warn("federation: build catalog failed", "peer", peer, "error", err)
 		return
@@ -405,7 +415,11 @@ func (rt *fedRuntime) sendCatalog(peer string) {
 // buildFederationCatalog lists what this instance exports to peer: groups
 // exported to the peer or to every peer, with members when the export
 // grants roster, and presence when it grants presence.
-func buildFederationCatalog(peer string) (*proto.CatalogPayload, error) {
+func buildFederationCatalog(peer string, status ...*statusSnapshot) (*proto.CatalogPayload, error) {
+	var sharedStatus *statusSnapshot
+	if len(status) > 0 {
+		sharedStatus = status[0]
+	}
 	groups, err := db.ListAgentGroups()
 	if err != nil {
 		return nil, err
@@ -472,6 +486,14 @@ func buildFederationCatalog(peer string) (*proto.CatalogPayload, error) {
 				}
 			}
 		}
+		if g.HasCap(proto.CapAgentStatus) {
+			if sharedStatus == nil {
+				sharedStatus = gatheredStatusSnapshot()
+			}
+			g.AgentStatuses = fedGroupAgentStatuses(gid, sharedStatus)
+			g.AgentStatusesAt = sharedStatus.observedAt
+			g.AgentStatusesUpdatedAt = cat.NodeAt
+		}
 		if g.HasCap(proto.CapSessions) {
 			g.Sessions = fedCatalogSessions(gid)
 			g.SessionsAt = time.Now().UTC()
@@ -503,6 +525,7 @@ func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 			rt.handleInbound(in.from, in.sealed)
 		case <-sessions.C:
 			rt.pushSessionTransitions()
+			rt.pushAgentStatuses()
 			rt.observeAwayWaiting()
 		case <-completion.C:
 			reconcileFederationSpawns()
@@ -538,6 +561,7 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		proto.SanitizeCatalog(&cat)
 		previous, _, _ := fedCatalogFor(from)
 		mergeNodePublication(&cat, previous, cat.NodeAt, env.CreatedAt)
+		mergeCatalogAgentStatuses(&cat, previous, env.CreatedAt)
 		// A slow full catalog must not roll back a newer transition push.
 		if previous, _, err := fedCatalogFor(from); err == nil && previous != nil {
 			for i := range cat.Groups {
@@ -567,6 +591,8 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		rt.acceptSessionOpen(peer, env)
 	case proto.KindSessionAnswer:
 		rt.handleSessionAnswer(peer, env)
+	case proto.KindAgentStatusUpdate:
+		rt.acceptAgentStatusUpdate(from, env)
 	case proto.KindNodeUpdate:
 		rt.acceptNodeUpdate(from, env)
 	case proto.KindSessionsUpdate:

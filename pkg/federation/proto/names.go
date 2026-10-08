@@ -92,6 +92,13 @@ func SanitizeCatalog(c *CatalogPayload) {
 			members = append(members, m)
 		}
 		g.Members = members
+		g.AgentStatuses = SanitizeAgentStatuses(g.AgentStatuses)
+		if !g.HasCap(CapAgentStatus) {
+			g.AgentStatuses = nil
+			g.AgentStatusesAt = time.Time{}
+			g.AgentStatusesUpdatedAt = time.Time{}
+			g.AgentStatusesReceivedAt = time.Time{}
+		}
 		g.Sessions = SanitizeSessions(g.Sessions)
 		if !g.HasCap(CapSessions) {
 			g.Sessions = nil

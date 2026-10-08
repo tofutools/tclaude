@@ -193,6 +193,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `groups.members.spawn` | automatic worker spawning with receiving operator launch settings and caps |
 | `routes.consume` | lists ready group routes and permits opening them |
 | `sessions.read` | live agent sessions, harness, state and waiting reason |
+| `agents.status.read` | dashboard-aligned agent activity, model, task and numeric context summaries |
 | `sessions.watch` | read-only terminal view of a group member agent |
 | `sessions.attach` | terminal view and full keyboard input, including harness approvals |
 | `node.read` | platform, harness versions, labels and numeric node resources (unscoped only) |
@@ -214,6 +215,46 @@ Catalogs go directly to each trusted peer and are never published to the hub.
 They refresh when grants change, when the peer connects, and every few minutes
 for presence. Untrusting a peer deletes its grants.
 
+## Shared agent status
+
+```bash
+tclaude federation grant bob agents.status.read --scope group=builders
+tclaude agent permissions grant lead agents.status.read --scope peer=bob/builders
+tclaude agent ls --remote
+tclaude agent ls --remote --json
+```
+
+The peer grant shares only current enrolled members of that group. Unrestricted
+peers hold it implicitly. The separate agent grant limits which received groups
+an agent may inspect; the local operator can inspect every received status.
+Status access does not grant mail, session discovery or terminal access.
+
+Summaries include stable agent addresses, names, group-local roles, liveness,
+activity and coarse waiting state, harness/model/effort, live subagent,
+background-shell and monitor counts, task links/labels, numeric context usage,
+last activity and coarse exit/recovery state. Unknown context is `null`. Task
+links must be HTTP(S), contain no credentials, and exclude session links;
+query strings and fragments are removed. Paths, pane handles, prompts, tool
+contents, raw errors, costs, permissions and launch configuration are excluded.
+
+Dashboard, agent listing, context tools and peer publication share one gathered
+status cache. Concurrent consumers join an in-progress gather. Its default
+freshness is 1500 milliseconds; set `status_snapshot.freshness_ms` in the local
+config to a value from 1 to 60000 to change it. Authorization is checked again
+when each consumer projects the data. Known local state writes invalidate the
+cache immediately, including hooks, session/agent lifecycle, group membership,
+task changes and daemon-owned pane actions. The window coalesces repeated polls;
+it does not hide a change the daemon has observed. Peer updates reuse the existing session
+observer, debounce changes for at least two seconds (or the configured freshness
+window, whichever is greater), and gather once for all authorized peers. They
+add no independent polling loop. Regular catalogs carry the full status set.
+
+Remote JSON includes source observation and local receipt timestamps. Status is
+marked stale when the peer is offline or either timestamp is over six minutes
+old. Idle time is derived from last activity; stale observations freeze it at
+the source observation time. A late full catalog cannot replace newer status
+updates. Revoking status access removes status independently of other grants.
+
 ## Agent grants: what your agents may do remotely
 
 Your operator grants agents ordinary slugs with a required `peer=` scope:
@@ -225,6 +266,7 @@ Your operator grants agents ordinary slugs with a required `peer=` scope:
 | `agent.spawn` | request workers in any visible group on a peer; peer-only scope |
 | `routes.consume` | open a route in a peer’s group |
 | `sessions.read` | list live sessions in a peer’s shared groups |
+| `agents.status.read` | read shared agent status summaries in authorized peer groups |
 | `node.read` | read a peer’s shared instance-wide node metadata (peer-only scope) |
 
 Peer grants for roster, presence and attachments control what the receiving

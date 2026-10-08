@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"io"
 	"net/http"
 	"net/url"
@@ -1017,7 +1018,7 @@ func runLsDaemon(p *lsParams, stdout, stderr io.Writer) int {
 	if applyState {
 		filtered := make([]*remotePeerEntry, 0, len(remote))
 		for _, re := range remote {
-			if (re.Presence == "online" && !re.Stale) == wantOnline {
+			if remotePeerOnline(re) == wantOnline {
 				filtered = append(filtered, re)
 			}
 		}
@@ -1040,19 +1041,24 @@ func runLsDaemon(p *lsParams, stdout, stderr io.Writer) int {
 
 // remotePeerEntry mirrors agentd's /v1/federation/reachable rows.
 type remotePeerEntry struct {
-	Address     string    `json:"address"`
-	Agent       string    `json:"agent"`
-	Name        string    `json:"name"`
-	Role        string    `json:"role,omitempty"`
-	Harness     string    `json:"harness,omitempty"`
-	Presence    string    `json:"presence,omitempty"`
-	Peer        string    `json:"peer"`
-	Instance    string    `json:"instance"`
-	RemoteGroup string    `json:"remote_group"`
-	Mail        bool      `json:"mail"`
-	PeerOnline  bool      `json:"peer_online"`
-	CatalogAt   time.Time `json:"catalog_received_at"`
-	Stale       bool      `json:"stale"`
+	State            *proto.AgentStatus `json:"state,omitempty"`
+	StatusObservedAt time.Time          `json:"status_observed_at,omitempty"`
+	StatusReceivedAt time.Time          `json:"status_received_at,omitempty"`
+	StatusStale      bool               `json:"status_stale,omitempty"`
+	IdleSeconds      *int64             `json:"idle_seconds,omitempty"`
+	Address          string             `json:"address"`
+	Agent            string             `json:"agent"`
+	Name             string             `json:"name"`
+	Role             string             `json:"role,omitempty"`
+	Harness          string             `json:"harness,omitempty"`
+	Presence         string             `json:"presence,omitempty"`
+	Peer             string             `json:"peer"`
+	Instance         string             `json:"instance"`
+	RemoteGroup      string             `json:"remote_group"`
+	Mail             bool               `json:"mail"`
+	PeerOnline       bool               `json:"peer_online"`
+	CatalogAt        time.Time          `json:"catalog_received_at"`
+	Stale            bool               `json:"stale"`
 }
 
 // renderRemotePeers prints the federation section of `agent ls --remote`.
@@ -1063,7 +1069,7 @@ func renderRemotePeers(remote []*remotePeerEntry, stdout io.Writer, terminalWidt
 		return
 	}
 	fmt.Fprintln(stdout, "Remote (federation):")
-	tbl := table.New(
+	columns := []table.Column{
 		table.Column{Header: "", Width: 1},
 		table.Column{Header: "ADDRESS", MinWidth: 12, Weight: 2, Truncate: true},
 		table.Column{Header: "HARNESS", MinWidth: 7, MaxWidth: 8, Truncate: true},
@@ -1071,7 +1077,29 @@ func renderRemotePeers(remote []*remotePeerEntry, stdout io.Writer, terminalWidt
 		table.Column{Header: "ROLE", MinWidth: 6, Truncate: true},
 		table.Column{Header: "REMOTE GROUP", MinWidth: 8, Truncate: true},
 		table.Column{Header: "MAIL", Width: 4},
-	)
+		table.Column{Header: "STATE", MinWidth: 8, Truncate: true},
+		table.Column{Header: "MODEL", MinWidth: 8, Truncate: true},
+		table.Column{Header: "SUB", Width: 3},
+		table.Column{Header: "TASK", MinWidth: 8, Truncate: true},
+		table.Column{Header: "CONTEXT", MinWidth: 7, Truncate: true},
+	}
+	// Keep identity and activity usable at normal terminal widths; JSON retains
+	// every authorized field regardless of the display width.
+	chosen := []int{0, 1, 2, 5, 7, 8, 9}
+	if terminalWidth >= 90 {
+		chosen = append(chosen, 11)
+	}
+	if terminalWidth >= 105 {
+		chosen = append(chosen, 10)
+	}
+	if terminalWidth >= 125 {
+		chosen = append(chosen, 3, 4, 6)
+	}
+	visible := make([]table.Column, 0, len(chosen))
+	for _, i := range chosen {
+		visible = append(visible, columns[i])
+	}
+	tbl := table.New(visible...)
 	tbl.SetTerminalWidth(terminalWidth)
 	for _, re := range remote {
 		presence := re.Presence
@@ -1089,12 +1117,47 @@ func renderRemotePeers(remote []*remotePeerEntry, stdout io.Writer, terminalWidt
 		if re.Mail {
 			mail = "yes"
 		}
-		tbl.AddRow(table.Row{Cells: []string{
-			onlineMark(re.Presence == "online" && !re.Stale),
-			re.Address, re.Harness, presence, re.Role, re.RemoteGroup, mail,
-		}})
+		state, model, sub, task, context := "-", "-", "-", "-", "-"
+		if st := re.State; st != nil {
+			state = st.Status
+			if re.StatusStale {
+				state += " (stale)"
+			}
+			model = st.Model
+			if st.Effort != "" {
+				model += " " + st.Effort
+			}
+			sub = fmt.Sprint(st.Subagents)
+			task = st.TaskLabel
+			if task == "" {
+				task = st.TaskURL
+			}
+			if task == "" {
+				task = "-"
+			}
+			if st.Context != nil {
+				context = fmt.Sprintf("%.0f%%", st.Context.Percent)
+			}
+		}
+		cells := []string{
+			onlineMark(remotePeerOnline(re)),
+			re.Address, re.Harness, presence, re.Role, re.RemoteGroup, mail, state, model, sub, task, context,
+		}
+		visibleCells := make([]string, 0, len(chosen))
+		for _, i := range chosen {
+			visibleCells = append(visibleCells, cells[i])
+		}
+		tbl.AddRow(table.Row{Cells: visibleCells})
 	}
 	fmt.Fprintln(stdout, tbl.Render())
+}
+
+// Status is independently authorized from presence; either can describe liveness.
+func remotePeerOnline(re *remotePeerEntry) bool {
+	if re.State != nil {
+		return re.State.Online && !re.StatusStale
+	}
+	return re.Presence == "online" && !re.Stale
 }
 
 func renderPeers(p *lsParams, peers []*peerEntry, stdout io.Writer) int {
