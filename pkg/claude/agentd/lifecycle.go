@@ -7925,6 +7925,7 @@ func pendingSpawnFromParams(g *db.AgentGroup, p spawnParams, label string) *db.P
 		Label:               label,
 		AgentID:             p.AgentID,
 		Launching:           true,
+		CapacityReserved:    p.nodeCapacityReserved,
 		GroupID:             g.ID,
 		Role:                p.Role,
 		Descr:               p.Descr,

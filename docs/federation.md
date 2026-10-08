@@ -585,7 +585,11 @@ The receiver authoritatively enforces `federation.max_live_agents` across live
 agents and reserved launches, including pending remote requests, all peers and
 both manual and automatic approvals. Local managed launches use the same gate.
 Zero means unlimited. Pending requests hold capacity until decided or expired;
-launching reservations survive restart. Direct peer requests also obey this
+launching reservations survive restart. Unconfirmed capped local launches stay
+in the Pending list until their pane is ready or termination is confirmed.
+Deleting one whose pane is unconfirmed requires inspecting the launch and
+explicitly acknowledging a possible late worker through the dashboard API
+(`POST /api/pending/delete/<label>?acknowledge_late_worker=1`). Direct peer requests also obey this
 node cap.
 
 Only a definitive `node_busy` refusal, before the receiver creates a request or

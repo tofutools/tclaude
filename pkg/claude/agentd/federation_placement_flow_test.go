@@ -469,8 +469,57 @@ func TestFederation_NodeCapacityKeepsUnconfirmedLocalLaunch(t *testing.T) {
 	pending, err := db.ListPendingSpawns()
 	require.NoError(t, err)
 	require.Len(t, pending, 1, "uncertain local process retains a durable capacity reservation")
+	require.True(t, pending[0].CapacityReserved)
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec("UPDATE pending_spawns SET created_at=? WHERE label=?", time.Now().Add(-time.Hour).UnixNano(), pending[0].Label)
+	require.NoError(t, err)
+	agentd.RunPendingSpawnSweepForTest()
+	stillPending, err := db.GetPendingSpawn(pending[0].Label)
+	require.NoError(t, err)
+	require.NotNil(t, stillPending, "elapsed grace and a missing session do not prove termination")
 	// executeSpawn has returned and released its volatile admission reservation.
 	second := f.AsHuman().SpawnWith("team", map[string]any{"name": "second", "cwd": cwd, "harness": "claude"})
 	require.Equal(t, http.StatusConflict, second.Code, string(second.Raw))
 	require.Contains(t, string(second.Raw), "node_busy")
+}
+
+func TestFederation_NodeCapacitySweepWaitsForPresetPane(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	fh := newFedHarness(t)
+	f := fh.f
+	f.HaveGroup("team")
+	g, err := db.GetAgentGroupByName("team")
+	require.NoError(t, err)
+	id, _, err := db.EnsureAgentForConv("cap-preset-conv", "spawn")
+	require.NoError(t, err)
+	const label = "spwn-cap-preset"
+	require.NoError(t, db.InsertPendingSpawn(&db.PendingSpawn{Label: label, AgentID: id, GroupID: g.ID, Launching: true, CapacityReserved: true}))
+	require.NoError(t, db.SaveSession(&db.SessionRow{ID: label, TmuxSession: label, ConvID: "cap-preset-conv", Status: "working", CreatedAt: time.Now()}))
+	agentd.RunPendingSpawnSweepForTest()
+	pending, err := db.GetPendingSpawn(label)
+	require.NoError(t, err)
+	require.NotNil(t, pending, "preset conversation alone cannot release the capacity reservation")
+	require.True(t, pending.Launching)
+	_, err = config.Update(func(c *config.Config, e error) error {
+		if e != nil {
+			return e
+		}
+		c.Federation.MaxLiveAgents = 1
+		return nil
+	})
+	require.NoError(t, err)
+	cwd := f.TestCwd("local")
+	require.NoError(t, os.MkdirAll(cwd, 0700))
+	second := f.AsHuman().SpawnWith("team", map[string]any{"name": "second", "cwd": cwd, "harness": "claude"})
+	require.Equal(t, http.StatusConflict, second.Code, string(second.Raw))
+	require.Contains(t, string(second.Raw), "node_busy")
+	mux := agentd.BuildDashboardHandlerForTest()
+	rec := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost, "/api/pending/delete/"+label, nil))
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	rec = testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost, "/api/pending/delete/"+label+"?acknowledge_late_worker=1", nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	pending, err = db.GetPendingSpawn(label)
+	require.NoError(t, err)
+	require.Nil(t, pending)
 }
