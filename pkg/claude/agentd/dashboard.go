@@ -2336,41 +2336,11 @@ type agentState struct {
 
 const recoveredStatusMaxAge = time.Minute
 
-// stateForConvIn looks up the most-recent live tmux session row for
-// this conv-id and returns its hook-tracked state. When no tmux session
-// is alive the agent has exited: the hook-recorded Status is frozen at
-// whatever it was when the process died (usually "idle" from the final
-// Stop hook, since no SessionEnd-style hook fires on exit), so we
-// report StatusExited rather than passing the stale value through —
-// otherwise a dead agent masquerades as "idle" on the dashboard.
-// LastHook is preserved either way so the UI can show when the agent
-// was last active.
-//
-// For a LIVE agent the hook status flows through verbatim — including
-// StatusError from a StopFailure hook. The exited override below is
-// keyed on tmux liveness, not on the status string, so an errored but
-// still-running agent keeps its "error" status (its CC process is
-// alive; only its last turn failed).
-//
-// Snapshot-shaped: takes a pre-fetched alive set (the SAME map across
-// every call in one HTTP request). Callers MUST fetch the set once via
-// clcommon.Default.ListSessions at the top of the handler and reuse
-// it; per-call fetching defeats the purpose.
-func stateForConvIn(convID string, aliveSet map[string]struct{}) agentState {
-	rows, err := db.FindSessionsByConvID(convID)
-	if err != nil {
-		return agentState{}
-	}
-	return stateForConvInSessions(rows, aliveSet)
-}
-
-// stateForConvInSessions is stateForConvIn over an already-fetched session
-// slice (most-recent-first, as FindSessionsByConvID returns). The dashboard
-// snapshot's per-request batch loader (TCL-368) resolves each conv's state
-// through it so the conv's rows are read once per poll rather than per surface.
-// Behaviour is identical to stateForConvIn — including the codex read-through
-// (refreshCodexContextSnapshotOnRead) and the per-pick context / exit-reason
-// point reads, which stay per-conv.
+// stateForConvInSessions chooses the most-recent live session, otherwise the
+// most-recent historical row. Live hook state flows through unchanged; offline
+// rows report exited rather than showing a frozen idle/working hook state.
+// The gathered snapshot supplies the same liveness set and batched rows to
+// every consumer, including context read-through and live reconciliation.
 func stateForConvInSessions(rows []*db.SessionRow, aliveSet map[string]struct{}) agentState {
 	return stateForConvInSessionsTimed(rows, aliveSet, nil)
 }
