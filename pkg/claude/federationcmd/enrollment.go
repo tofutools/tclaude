@@ -55,7 +55,7 @@ func enrollTokenCmd() *cobra.Command {
 				Claims      proto.EnrollmentClaims `json:"claims"`
 				Fingerprint string                 `json:"master_fingerprint"`
 			}
-			if e := agent.DaemonRequest(http.MethodPost, "/v1/federation/enroll-tokens", map[string]any{"profile": p.Profile, "uses": p.Uses, "ttl_seconds": int64(p.TTL / time.Second), "trust_level": p.TrustLevel}, &out, agent.DaemonOpts{}); e != nil {
+			if e := agent.DaemonRequest(http.MethodPost, "/v1/federation/enroll-tokens", map[string]any{"profile": p.Profile, "uses": p.Uses, "ttl_seconds": int64(p.TTL / time.Second), "trust_level": p.TrustLevel}, &out, agent.DaemonOpts{NoRetry: true}); e != nil {
 				os.Exit(fail(os.Stderr, e))
 			}
 			fmt.Fprintf(os.Stderr, "Master %s\nProfile %s (%s), revision %d; node trusts master at %s; expires %s; %d distinct keys\n", out.Fingerprint, out.Claims.ProfileName, out.Claims.ProfileID, out.Claims.ProfileRevision, out.Claims.TrustLevel, out.Claims.ExpiresAt.Format(time.RFC3339), p.Uses)
@@ -127,7 +127,7 @@ func runEnroll(p *enrollmentParams) int {
 		Node    string                 `json:"node_fingerprint"`
 		Consent string                 `json:"consent"`
 	}
-	if e = agent.DaemonRequest(http.MethodPost, "/v1/federation/enroll/preview", in, &preview, agent.DaemonOpts{}); e != nil {
+	if e = agent.DaemonRequest(http.MethodPost, "/v1/federation/enroll/preview", in, &preview, agent.DaemonOpts{NoRetry: true}); e != nil {
 		return fail(os.Stderr, e)
 	}
 	fmt.Fprintf(os.Stderr, "Node fingerprint: %s\nMaster fingerprint: %s\nProfile: %s (%s), revision %d\nMaster trust on this node: %s\nExpires: %s\n%s\n", preview.Node, preview.Master, preview.Claims.ProfileName, preview.Claims.ProfileID, preview.Claims.ProfileRevision, preview.Claims.TrustLevel, preview.Claims.ExpiresAt.Format(time.RFC3339), preview.Consent)
@@ -141,7 +141,7 @@ func runEnroll(p *enrollmentParams) int {
 	}
 	in["preview_token"] = preview.Preview
 	var out json.RawMessage
-	if e = agent.DaemonRequest(http.MethodPost, "/v1/federation/enroll", in, &out, agent.DaemonOpts{Timeout: 45 * time.Second}); e != nil {
+	if e = agent.DaemonRequest(http.MethodPost, "/v1/federation/enroll", in, &out, agent.DaemonOpts{Timeout: 45 * time.Second, NoRetry: true}); e != nil {
 		return fail(os.Stderr, e)
 	}
 	return printJSON(os.Stdout, out)
