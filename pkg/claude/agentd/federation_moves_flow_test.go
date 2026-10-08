@@ -306,6 +306,8 @@ func TestFederation_MoveSurvivingSourcePaneRemainsRetiring(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, m.LastError, "still alive")
 	exitPane()
+	restore := agentd.SetSoftExitEscalationProcessForTest(func(int) bool { return false }, nil)
+	defer restore()
 	fedEventually(t, "move completes after source exits", func() bool {
 		m, _ := db.GetFederationAgentMove("out", fh.peer.id.ID(), d.ID)
 		return m != nil && m.State == "moved"
@@ -347,5 +349,35 @@ func TestFederation_MovePreLaunchCrashCanImportAgain(t *testing.T) {
 	fedEventually(t, "recovered move running", func() bool {
 		m, _ := db.GetFederationAgentMove("in", fh.peer.id.ID(), d.ID)
 		return m != nil && m.State == "running" && m.TargetAgent != reserved
+	})
+}
+
+func TestFederation_MoveRestartWaitsForProcessAfterTmuxDisappears(t *testing.T) {
+	fh := newFedHarness(t)
+	fedMoveSource(t, fh)
+	d := fedStartMove(t, fh)
+	cc := fh.f.World.CCs.GetByConvID(moveSourceConv)
+	exitPane := holdRetiringPane(t, fh.f, cc, "moving-source-pane")
+	defer exitPane()
+	fedMoveConfirm(t, fh, d, d.SHA256)
+	fedEventually(t, "stuck source process persisted", func() bool {
+		m, _ := db.GetFederationAgentMove("out", fh.peer.id.ID(), d.ID)
+		return m != nil && m.State == "retiring" && m.LastError != "" && m.ShutdownPID > 0
+	})
+	agentd.ResetFederationForTest()
+	// The pane disappears, but the frozen process probe continues to report
+	// alive. Restart must retain the process evidence rather than infer exit.
+	exitPane()
+	rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/config", map[string]any{"enabled": true, "hub_url": fh.url, "name": "alice-box"})
+	require.Equal(t, 200, rec.Code)
+	fedEventually(t, "detached surviving process holds retirement", func() bool {
+		m, _ := db.GetFederationAgentMove("out", fh.peer.id.ID(), d.ID)
+		return m != nil && m.State == "retiring" && m.LastError == "source pane process still alive; waiting for verified exit"
+	})
+	restore := agentd.SetSoftExitEscalationProcessForTest(func(int) bool { return false }, nil)
+	defer restore()
+	fedEventually(t, "move completes when frozen process exits", func() bool {
+		m, _ := db.GetFederationAgentMove("out", fh.peer.id.ID(), d.ID)
+		return m != nil && m.State == "moved"
 	})
 }

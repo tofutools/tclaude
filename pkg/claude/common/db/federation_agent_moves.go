@@ -16,25 +16,27 @@ type FederationMoveLink struct {
 }
 
 type FederationAgentMove struct {
-	ConfirmedAt    time.Time           `json:"confirmed_at,omitempty"`
-	MovedFrom      *FederationMoveLink `json:"moved_from,omitempty"`
-	MovedTo        *FederationMoveLink `json:"moved_to,omitempty"`
-	Direction      string              `json:"direction"`
-	Peer           string              `json:"peer"`
-	ID             string              `json:"id"`
-	State          string              `json:"state"`
-	SourceAgent    string              `json:"source_agent"`
-	SourceConv     string              `json:"source_conv"`
-	TargetAgent    string              `json:"target_agent,omitempty"`
-	TargetConv     string              `json:"target_conv,omitempty"`
-	SHA256         string              `json:"sha256"`
-	Initiator      string              `json:"initiator,omitempty"`
-	CodexAppServer bool                `json:"codex_app_server,omitempty"`
-	Human          bool                `json:"human"`
-	Group          string              `json:"group"`
-	SourceGroups   []int64             `json:"-"`
-	ExpiresAt      time.Time           `json:"expires_at"`
-	LastError      string              `json:"last_error,omitempty"`
+	ShutdownPID          int                 `json:"shutdown_pid,omitempty"`
+	ShutdownProcessStart string              `json:"shutdown_process_start,omitempty"`
+	ConfirmedAt          time.Time           `json:"confirmed_at,omitempty"`
+	MovedFrom            *FederationMoveLink `json:"moved_from,omitempty"`
+	MovedTo              *FederationMoveLink `json:"moved_to,omitempty"`
+	Direction            string              `json:"direction"`
+	Peer                 string              `json:"peer"`
+	ID                   string              `json:"id"`
+	State                string              `json:"state"`
+	SourceAgent          string              `json:"source_agent"`
+	SourceConv           string              `json:"source_conv"`
+	TargetAgent          string              `json:"target_agent,omitempty"`
+	TargetConv           string              `json:"target_conv,omitempty"`
+	SHA256               string              `json:"sha256"`
+	Initiator            string              `json:"initiator,omitempty"`
+	CodexAppServer       bool                `json:"codex_app_server,omitempty"`
+	Human                bool                `json:"human"`
+	Group                string              `json:"group"`
+	SourceGroups         []int64             `json:"-"`
+	ExpiresAt            time.Time           `json:"expires_at"`
+	LastError            string              `json:"last_error,omitempty"`
 }
 
 func InsertFederationAgentMove(m FederationAgentMove) error {

@@ -8,6 +8,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -92,7 +96,15 @@ func confirmIncomingAgentMove(m db.FederationAgentMove) {
 	if err != nil || s == nil || s.ConvID != a.CurrentConvID || s.TmuxSession == "" || !session.IsTmuxSessionAlive(s.TmuxSession) {
 		return
 	}
-	if m.CodexAppServer {
+	selectedAPI := m.CodexAppServer
+	profile, e := db.AgentRelaunchProfileForConv(a.CurrentConvID)
+	if e != nil {
+		return
+	}
+	if profile != nil && profile.CodexAppServer != nil {
+		selectedAPI = *profile.CodexAppServer
+	}
+	if selectedAPI {
 		runtime, e := db.GetCodexAppServerRuntimeByLaunchID(o.ImportLabel)
 		if e != nil || runtime == nil || runtime.ConvID != a.CurrentConvID || runtime.State != db.CodexAppServerReady {
 			return
@@ -207,6 +219,23 @@ func retireConfirmedAgentMove(m db.FederationAgentMove) {
 			return
 		}
 	}
+	// Freeze the process before teardown, since a stuck process can outlive its
+	// tmux pane. Persist before signalling so restart recovery retains the proof.
+	if m.ShutdownPID == 0 {
+		if s := pickAliveSession(m.SourceConv); s != nil {
+			target, e := captureLifecycleTarget(s)
+			if e != nil {
+				m.LastError = e.Error()
+				_, _ = db.TransitionFederationAgentMove(m, "retiring")
+				return
+			}
+			m.ShutdownPID = target.panePID
+			m.ShutdownProcessStart = moveProcessStart(target.panePID)
+			if won, e := db.TransitionFederationAgentMove(m, "retiring"); e != nil || !won {
+				return
+			}
+		}
+	}
 	// Keep source history and worktree. Normal retirement removes membership,
 	// grants and owned runtime directories, and shuts down the source pane.
 	td := finishRetiredConv(m.SourceConv, true, false, agentWorktreeView{}, "")
@@ -215,10 +244,38 @@ func retireConfirmedAgentMove(m db.FederationAgentMove) {
 		_, _ = db.TransitionFederationAgentMove(m, "retiring")
 		return
 	}
+	if moveShutdownProcessAlive(m) {
+		m.LastError = "source pane process still alive; waiting for verified exit"
+		_, _ = db.TransitionFederationAgentMove(m, "retiring")
+		return
+	}
 	m.State = "moved"
 	m.LastError = ""
 	_, _ = db.TransitionFederationAgentMove(m, "retiring")
 }
+
+// ps start time is available on Linux and macOS. If it cannot be read, stay
+// conservative while the PID exists. This evidence never authorizes signalling
+// a detached/recycled PID; ordinary lifecycle teardown owns all signals.
+func moveProcessStart(pid int) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ps", "-p", strconv.Itoa(pid), "-o", "lstart=")
+	cmd.Env = append(os.Environ(), "TZ=UTC", "LC_ALL=C")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+func moveShutdownProcessAlive(m db.FederationAgentMove) bool {
+	if m.ShutdownPID <= 0 || !lifecycleProcessAlive(m.ShutdownPID) {
+		return false
+	}
+	current := moveProcessStart(m.ShutdownPID)
+	return m.ShutdownProcessStart == "" || current == "" || current == m.ShutdownProcessStart
+}
+
 func reconcileFederationMoves() {
 	if !fedMoveMu.TryLock() {
 		return
