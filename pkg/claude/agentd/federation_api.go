@@ -651,7 +651,7 @@ func handleFederationTrust(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Level == db.FederationTrustUnrestricted && (existing == nil || existing.TrustLevel != db.FederationTrustUnrestricted) && req.ConfirmFingerprint != proto.Fingerprint(entry.PubKey) {
-		writeError(w, http.StatusBadRequest, "confirmation_required", "confirm fingerprint "+proto.Fingerprint(entry.PubKey)+": unrestricted grants all peer permissions on all live groups, automatic spawn, and local unscoped grants towards this peer; approvals remain local")
+		writeError(w, http.StatusBadRequest, "confirmation_required", "confirm fingerprint "+proto.Fingerprint(entry.PubKey)+": unrestricted grants all peer permissions on all live groups, automatic spawn, and local unscoped grants towards this peer; interactive terminal attach includes harness approval answers")
 		return
 	}
 	if err := db.TrustFederationPeer(db.FederationPeer{TrustLevel: req.Level, InstanceID: entry.InstanceID, PubKey: entry.PubKey, Label: req.Label, Name: proto.SafeName(entry.Name, true)}); err != nil {
@@ -1014,6 +1014,9 @@ func registerFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/federation/inbox", handleFederationInbox)
 	mux.HandleFunc("GET /v1/federation/reachable", handleFederationReachable)
 	mux.HandleFunc("GET /v1/federation/sessions", handleFederationSessions)
+	mux.HandleFunc("GET /v1/federation/attach", handleFederationAttach)
+	mux.HandleFunc("GET /v1/federation/viewers", handleFederationViewers)
+	mux.HandleFunc("POST /v1/federation/viewers/{id}/kick", handleFederationKick)
 	mux.HandleFunc("POST /v1/federation/spawn-requests", handleFederationSpawnRequestSend)
 	mux.HandleFunc("GET /v1/federation/spawn-requests", handleFederationSpawnRequestList)
 	mux.HandleFunc("POST /v1/federation/spawn-requests/{id}/approve", handleFederationSpawnRequestApprove)

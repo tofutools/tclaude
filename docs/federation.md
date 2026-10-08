@@ -15,8 +15,8 @@ laptops behind NAT or a corporate network work as-is.
 !!! note "Status"
     CLI only. Built: discovery, mail with attachments, mail to remote
     groups, operator mail, automatic or operator-approved remote spawn, and
-    cross-instance group routes, and remote session state. Remote terminal
-    attach and a dashboard view are not built yet.
+    cross-instance group routes, remote session state, and remote terminal
+    watch and interactive attach. A federation dashboard view is not built yet.
 
 For a step-by-step first setup, including the hub's TLS certificate, see
 the [setup walkthrough](federation-setup.md).
@@ -165,8 +165,9 @@ launch settings. The live automatic worker cap defaults to 8 per peer; set
 `federation.unrestricted_max_live` in `~/.tclaude/data/config.json` to change it.
 Towards that peer, local agents' unscoped grants (including group grants and
 config defaults) also count. `group=` scopes and group ownership never confer
-remote authority; denies still apply. **Approvals and `--ask-human` remain
-local and cannot be answered remotely.** Each side chooses its own level;
+remote authority; denies still apply. **Interactive attach permits answering harness approvals and prompts, just
+as a keyboard at the target pane does.** `--ask-human` remains a local
+operator workflow; remote keyboard access does not grant its daemon API. Each side chooses its own level;
 the hub cannot set it. Downgrading or untrusting affects subsequent authorization
 reads immediately, including reads by in-flight operations.
 
@@ -192,6 +193,8 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `groups.members.spawn` | automatic worker spawning with receiving operator launch settings and caps |
 | `routes.consume` | lists ready group routes and permits opening them |
 | `sessions.read` | live agent sessions, harness, state and waiting reason |
+| `sessions.watch` | read-only terminal view of a group member agent |
+| `sessions.attach` | terminal view and full keyboard input, including harness approvals |
 
 Prefer `--scope group=<local group>` to limit access. For the same slug, a
 group-scoped peer grant takes precedence over an unscoped grant, including
@@ -532,6 +535,60 @@ any of these changes, open connections close and the consumer's lease ends:
 
 A route the peer cannot consume is refused with the same answer as one that
 does not exist.
+
+## Remote terminals
+
+Use the stable `agt_…@peer` address from `federation sessions`:
+
+```bash
+# Target operator: share discovery and the chosen terminal mode.
+tclaude federation grant bob sessions.read --scope group=builders
+tclaude federation grant bob sessions.watch --scope group=builders
+# Interactive mode permits all keyboard input, including approval answers.
+tclaude federation grant bob sessions.attach --scope group=builders
+
+# Viewer operator, or a local agent with the matching peer-scoped grant:
+tclaude federation sessions alice
+tclaude federation attach agt_…@alice --read-only
+tclaude federation attach agt_…@alice
+# Ctrl-] detaches this viewer without stopping the agent.
+
+# Target operator: inspect viewers and disconnect one immediately.
+tclaude federation viewers
+tclaude federation viewers agt_…
+tclaude federation kick <viewer-id>
+```
+
+For restricted peers, a local agent also needs `sessions.watch` or
+`sessions.attach` with `--scope peer=alice/builders`; `sessions.read` is
+separate discovery permission. Watch never authorizes typing. Unrestricted
+trust includes both modes on all live groups, including future groups.
+
+A target pane displays `REMOTE WATCH` or `REMOTE INPUT` with the peer label
+while viewers are attached. The original pane border options are restored
+when the last viewer leaves, or after a daemon restart. Local option edits
+are preserved; hiding the indicator disconnects viewers. The target operator's
+`viewers` and `kick` commands are human-only. Opening and closing an attachment
+are audited on both instances; kicks are audited at the target.
+
+The renderer requires tmux 3.2 or newer and a session with exactly one window
+and one pane. The renderer has `ignore-size`, and its PTY has no input path. The window
+size stays pinned while viewers are attached, then its original sizing policy
+is restored. Resizing a viewer never resizes the target. Interactive input is
+delivered separately to the resolved pane: special keys use a fixed tmux key
+table, text is literal, and unknown escape sequences are discarded. It can answer prompts, send
+Ctrl-C, or perform any other action available at that keyboard.
+
+The attachment pins the live session and pane incarnation. Exit, pane
+replacement, reincarnation, loss of group membership, peer untrust, permission
+revocation or disconnect closes it; it never follows a new pane automatically.
+Permission checks run before input/output and once a second while idle.
+
+Terminal traffic uses the same encrypted hub stream transport as routes.
+Explicit credits bound outstanding terminal data to 256 KiB in each direction;
+credits return after terminal output or keyboard input is delivered. Each daemon
+limits attachments to 32 total, 8 per peer, and 30 opens per peer per minute.
+The hub's stream limits and idle timeout also apply.
 
 ## Delivery
 

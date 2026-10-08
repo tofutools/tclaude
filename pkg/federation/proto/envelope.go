@@ -38,6 +38,8 @@ const (
 	// it, not the sender's catalog, is the authority on its roster.
 	KindGroupMail      = "group_mail"
 	KindSessionsUpdate = "sessions_update"
+	KindSessionOpen    = "session_open"
+	KindSessionAnswer  = "session_answer"
 )
 
 // Export capabilities a catalog group can grant.
@@ -53,12 +55,14 @@ const (
 	CapSpawn = "spawn"
 	// CapRoutes lists the group's ready routes in the catalog and lets the
 	// peer open connections to them through the hub stream relay.
-	CapRoutes   = "routes"
-	CapSessions = "sessions"
+	CapRoutes         = "routes"
+	CapSessions       = "sessions"
+	CapSessionsWatch  = "sessions_watch"
+	CapSessionsAttach = "sessions_attach"
 )
 
 // AllCaps lists every known capability in canonical order.
-var AllCaps = []string{CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes, CapSessions}
+var AllCaps = []string{CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes, CapSessions, CapSessionsWatch, CapSessionsAttach}
 
 // MaxMailBody caps a mail envelope's body in bytes.
 const MaxMailBody = 16 * 1024
@@ -375,4 +379,23 @@ func (e *Envelope) DecodePayload(v any) error {
 		return fmt.Errorf("%w: payload: %v", ErrMalformed, err)
 	}
 	return nil
+}
+
+// SessionOpenPayload requests access to one stable agent's current pane.
+// Session pins the runtime advertised in discovery; it cannot follow a restart.
+type SessionOpenPayload struct {
+	Agent    string `json:"agent"`
+	Session  string `json:"session"`
+	Group    string `json:"group"`
+	Stream   string `json:"stream"`
+	Key      []byte `json:"key"`
+	ReadOnly bool   `json:"read_only"`
+	Cols     int    `json:"cols"`
+	Rows     int    `json:"rows"`
+}
+type SessionAnswerPayload struct {
+	Stream string `json:"stream"`
+	OK     bool   `json:"ok"`
+	Key    []byte `json:"key,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }

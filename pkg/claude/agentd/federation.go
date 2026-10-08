@@ -141,6 +141,8 @@ type fedRuntime struct {
 	sessionsMu          sync.Mutex
 	sessionObservations map[string]fedSessionObservation
 	sessionSent         map[string]string
+	terminalsMu         sync.Mutex
+	terminals           *fedTerminalState
 }
 
 type fedInbound struct {
@@ -168,6 +170,7 @@ func currentFederation() *fedRuntime {
 func startFederation() {
 	fedLifecycleMu.Lock()
 	defer fedLifecycleMu.Unlock()
+	cleanupFedTerminalIndicators()
 	cfg, err := config.Load()
 	if err != nil || cfg == nil || cfg.Federation == nil || !cfg.Federation.Enabled || cfg.Federation.HubURL == "" {
 		return
@@ -205,6 +208,7 @@ func stopFederationLocked() {
 	fedMu.Unlock()
 	if rt != nil {
 		rt.cancel()
+		rt.stopTerminals()
 		rt.wg.Wait()
 		rt.stopRoutes()
 		withdrawStaleFederationMirrors()
@@ -521,6 +525,11 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		if err := db.PutFederationCatalog(from, string(clean), time.Now()); err != nil {
 			slog.Warn("federation: store catalog failed", "from", from, "error", err)
 		}
+	case proto.KindSessionOpen:
+		rt.wg.Add(1)
+		go func() { defer rt.wg.Done(); rt.handleSessionOpen(peer, env) }()
+	case proto.KindSessionAnswer:
+		rt.handleSessionAnswer(peer, env)
 	case proto.KindSessionsUpdate:
 		rt.acceptSessionUpdate(from, env)
 	case proto.KindCatalogReq:
