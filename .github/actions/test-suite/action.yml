@@ -72,9 +72,16 @@ runs:
             export TCLAUDE_NODE_TEST_CACHE_KEY="$(node -p 'process.execPath + ":" + process.version')"
             ;;
         esac
+        timeout=""
         case "${{ inputs.shard }}" in
           all) pkgs="./..." ;;
-          agentd)  pkgs="./pkg/claude/agentd" ;;
+          agentd)
+            pkgs="./pkg/claude/agentd"
+            # One test binary holding every daemon flow test. On the 3-core
+            # macOS runner it already runs close to go test's default 10m
+            # per-binary limit, so a slow runner panics the whole package.
+            timeout="-timeout=20m"
+            ;;
           jstest)
             pkgs="./pkg/claude/agentd/jstest"
             # This shard owns its runner, so let Node use every core; the
@@ -126,7 +133,7 @@ runs:
         # Exercise macOS-style temp path aliases on Linux as well. Keep the
         # native macOS temp layout so both sources of aliases remain covered.
         if [ "$RUNNER_OS" = Linux ]; then
-          scripts/test.sh $race $pkgs
+          scripts/test.sh $race $timeout $pkgs
         else
-          go test $race $pkgs
+          go test $race $timeout $pkgs
         fi

@@ -246,7 +246,10 @@ func TestFederation_ExportCatalogAndInboundMail(t *testing.T) {
 	// The nudge names the remote sender. Re-arm the drain while polling: one
 	// delivery attempt can be skipped as indeterminate on a loaded runner.
 	// Settle the async delivery worker first (as the other nudge flows do),
-	// so the forced drain does not race it; macOS runners are slow.
+	// so the forced drain does not race it; macOS runners are slow. A failed
+	// attempt would otherwise back off for the production 30s retry delay —
+	// the whole polling window — so retry immediately here.
+	t.Cleanup(agentd.SetNudgeRetryTimingForTest(0, 0))
 	fedEventuallyWithin(t, "remote nudge in pane", 30*time.Second, func() bool {
 		agentd.WaitForBackgroundForTest()
 		agentd.FlushUndeliveredForTest(alice)
