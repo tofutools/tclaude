@@ -121,3 +121,74 @@ func TestRejectUnsafeURLAndRef(t *testing.T) {
 		}
 	}
 }
+
+func TestPreparePinnedLocalCommitWhenFetchFails(t *testing.T) {
+	d, root, commit := fixture(t)
+	d.URL = (&url.URL{Scheme: "file", Path: filepath.Join(root, "unreachable")}).String()
+	c, e := Prepare(context.Background(), d, filepath.Join(root, "job"), commit)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if c.Commit != commit {
+		t.Fatalf("unexpected checkout: %+v", c)
+	}
+	if _, e = os.Stat(filepath.Join(c.Path, ".git", "objects", "info", "alternates")); !os.IsNotExist(e) {
+		t.Fatalf("checkout retains an alternate: %v", e)
+	}
+	// The checkout remains valid after its operator clone disappears.
+	if e = os.RemoveAll(d.Clone); e != nil {
+		t.Fatal(e)
+	}
+	if runGit(t, c.Path, "rev-parse", "HEAD") != commit {
+		t.Fatal("wrong pinned checkout")
+	}
+	runGit(t, c.Path, "fsck", "--full")
+}
+func TestPrepareNeverFallsBackToLocalBranch(t *testing.T) {
+	d, root, _ := fixture(t)
+	d.URL = (&url.URL{Scheme: "file", Path: filepath.Join(root, "unreachable")}).String()
+	if _, e := Prepare(context.Background(), d, filepath.Join(root, "job"), "main"); e == nil {
+		t.Fatal("silently used stale local branch")
+	}
+}
+
+func TestPrepareReportsLocalResolutionAfterFetchFailure(t *testing.T) {
+	d, root, commit := fixture(t)
+	real, e := exec.LookPath("git")
+	if e != nil {
+		t.Fatal(e)
+	}
+	bin := filepath.Join(root, "bin")
+	if e = os.Mkdir(bin, 0700); e != nil {
+		t.Fatal(e)
+	}
+	script := "#!/bin/sh\nfor arg do [ \"$arg\" != fetch ] || exit 1; done\nexec '" + strings.ReplaceAll(real, "'", "'\\''") + "' \"$@\"\n"
+	if e = os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0700); e != nil {
+		t.Fatal(e)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	d.URL = (&url.URL{Scheme: "file", Path: filepath.Join(root, "unreachable")}).String()
+	c, e := Prepare(context.Background(), d, filepath.Join(root, "job"), commit)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if c.Resolution != "resolved from local clone (fetch failed)" {
+		t.Fatalf("missing fallback provenance: %+v", c)
+	}
+}
+func TestPrepareReusesLinkedWorktreeCommonObjects(t *testing.T) {
+	d, root, commit := fixture(t)
+	linked := filepath.Join(root, "linked")
+	runGit(t, d.Clone, "worktree", "add", "--detach", linked, commit)
+	d, e := Inspect(context.Background(), d.URL, linked, []int64{1})
+	if e != nil {
+		t.Fatal(e)
+	}
+	c, e := Prepare(context.Background(), d, filepath.Join(root, "job"), commit)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if c.Commit != commit {
+		t.Fatal("wrong linked-worktree commit")
+	}
+}

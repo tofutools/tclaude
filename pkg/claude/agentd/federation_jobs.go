@@ -488,6 +488,7 @@ func (rt *fedRuntime) runJob(parent context.Context, j *db.FederationJob) {
 		}
 	}()
 	result.Commit = checkout.Commit
+	result.Resolution = checkout.Resolution
 	defaults, e := db.ResolveFederationWorkerDefaults(j.Peer)
 	if e != nil {
 		result.Code = "worker_defaults"

@@ -18,10 +18,11 @@ type JobControl struct {
 	ID string `json:"id"`
 }
 type JobResult struct {
-	ID       string          `json:"id"`
-	State    string          `json:"state"`
-	Code     string          `json:"code,omitempty"`
-	Commit   string          `json:"commit,omitempty"`
-	ExitCode int             `json:"exit_code"`
-	Logs     json.RawMessage `json:"logs,omitempty"`
+	Resolution string          `json:"resolution,omitempty"`
+	ID         string          `json:"id"`
+	State      string          `json:"state"`
+	Code       string          `json:"code,omitempty"`
+	Commit     string          `json:"commit,omitempty"`
+	ExitCode   int             `json:"exit_code"`
+	Logs       json.RawMessage `json:"logs,omitempty"`
 }

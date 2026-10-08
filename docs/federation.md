@@ -1379,7 +1379,12 @@ Each job fetches only the configured URL into a new private Git directory and
 checks out the exact resolved commit, detached from the operator's clone.
 Hooks, submodules, templates, global Git configuration and executable filters
 are disabled. SSH agent authentication can be used; inline HTTPS credentials
-and arbitrary Git transport helpers are refused.
+and arbitrary Git transport helpers are refused. Private HTTPS repositories
+require SSH or a pre-fetched operator clone with a pinned full SHA; credential
+helpers are intentionally disabled. Jobs borrow verified clone objects during
+fetch, then repack to make the worker checkout independent of that clone. A
+failed fetch can use a locally available full SHA, reported as "resolved from
+local clone (fetch failed)"; branches never silently fall back to stale refs.
 
 On the requesting machine:
 

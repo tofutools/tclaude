@@ -76,6 +76,9 @@ func jobsCmd() *cobra.Command {
 					} else {
 						fmt.Fprint(os.Stdout, proto.StripControls(logs.Stdout))
 						fmt.Fprint(os.Stderr, proto.StripControls(logs.Stderr))
+						if res.Resolution != "" {
+							fmt.Fprintln(os.Stderr, res.Resolution)
+						}
 						if res.Code != "" {
 							fmt.Fprintln(os.Stderr, res.Code)
 						}

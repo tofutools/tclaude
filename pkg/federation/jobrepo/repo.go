@@ -35,9 +35,10 @@ type Definition struct {
 	Groups   []int64  `json:"groups"`
 }
 type Checkout struct {
-	Root   string
-	Path   string
-	Commit string
+	Root       string
+	Path       string
+	Commit     string
+	Resolution string
 }
 
 func ValidName(name string) bool { return repoName.MatchString(name) }
@@ -244,10 +245,40 @@ func Prepare(ctx context.Context, d Definition, root, ref string) (*Checkout, er
 	if _, e = git(ctx, path, "init", "--template="+templates, "."); e != nil {
 		return nil, e
 	}
-	// A new Git directory has no configured filters, include files, hooks or
-	// remotes. No submodule or LFS process is launched while checking out refs.
-	if _, e = git(ctx, path, "fetch", "--no-tags", "--no-recurse-submodules", "--", d.URL, safe+":refs/tclaude/job"); e != nil {
+	// Read only object data from the verified clone, including common objects
+	// for a linked Git worktree. Never copy its configuration, hooks or refs.
+	objects, e := git(ctx, d.Clone, "rev-parse", "--git-path", "objects")
+	if e != nil {
 		return nil, e
+	}
+	if !filepath.IsAbs(objects) {
+		objects = filepath.Join(d.Clone, objects)
+	}
+	objects, e = filepath.EvalSymlinks(objects)
+	if e != nil || strings.ContainsAny(objects, "\r\n") {
+		return nil, errors.New("configured clone object directory unavailable")
+	}
+	alternate := filepath.Join(path, ".git", "objects", "info", "alternates")
+	if e = os.WriteFile(alternate, []byte(objects+"\n"), 0600); e != nil {
+		return nil, e
+	}
+	// A new Git directory has no configured filters, include files, hooks or
+	// remotes. Fetch transfers only objects not already available in the clone.
+	resolution := "fetched"
+	if _, e = git(ctx, path, "fetch", "--no-tags", "--no-recurse-submodules", "--", d.URL, safe+":refs/tclaude/job"); e != nil {
+		// A branch must be freshly fetched; only a content-pinned SHA can safely
+		// use local objects after a transport/authentication failure.
+		if !objectID.MatchString(safe) {
+			return nil, e
+		}
+		commit, localErr := git(ctx, path, "rev-parse", "--verify", safe+"^{commit}")
+		if localErr != nil || commit != safe {
+			return nil, errors.New("pinned commit unavailable in local clone after fetch failed")
+		}
+		if _, e = git(ctx, path, "update-ref", "refs/tclaude/job", commit); e != nil {
+			return nil, e
+		}
+		resolution = "resolved from local clone (fetch failed)"
 	}
 	commit, e := git(ctx, path, "rev-parse", "--verify", "refs/tclaude/job^{commit}")
 	if e != nil || !objectID.MatchString(commit) {
@@ -256,9 +287,17 @@ func Prepare(ctx context.Context, d Definition, root, ref string) (*Checkout, er
 	if _, e = git(ctx, path, "checkout", "--detach", commit, "--"); e != nil {
 		return nil, e
 	}
+	// Materialize borrowed objects so the worker needs no access to the clone
+	// and later clone maintenance cannot invalidate the running checkout.
+	if _, e = git(ctx, path, "repack", "-a", "-d"); e != nil {
+		return nil, e
+	}
+	if e = os.Remove(alternate); e != nil {
+		return nil, e
+	}
 	if e = Revalidate(ctx, d); e != nil {
 		return nil, e
 	}
 	ok = true
-	return &Checkout{Root: root, Path: path, Commit: strings.ToLower(commit)}, nil
+	return &Checkout{Root: root, Path: path, Commit: strings.ToLower(commit), Resolution: resolution}, nil
 }
