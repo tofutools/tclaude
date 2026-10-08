@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -19,11 +20,12 @@ func TestPlacementOrderUsesStableInstanceTies(t *testing.T) {
 type enrollingCapacityTmux struct {
 	clcommon.Tmux
 	enroll func()
+	alive  map[string]struct{}
 }
 
 func (t enrollingCapacityTmux) ListSessions() (map[string]struct{}, error) {
 	t.enroll()
-	return map[string]struct{}{}, nil // snapshot preceded the late pane
+	return t.alive, nil // snapshot may precede the late pane
 }
 func TestNodeCapacityCountsEnrollmentDuringObservation(t *testing.T) {
 	setupTestDB(t)
@@ -41,4 +43,19 @@ func TestNodeCapacityCountsEnrollmentDuringObservation(t *testing.T) {
 	nodeAdmission.Unlock()
 	require.NoError(t, err)
 	require.Equal(t, 1, used, "a reservation becoming an actor cannot disappear between snapshots")
+}
+
+func TestNodeCapacityUsesPaneLivenessDespiteCachedExit(t *testing.T) {
+	setupTestDB(t)
+	_, _, err := db.EnsureAgentForConv("cap-exited-conv", "spawn")
+	require.NoError(t, err)
+	require.NoError(t, db.SaveSession(&db.SessionRow{ID: "cap-exited", TmuxSession: "cap-exited-pane", ConvID: "cap-exited-conv", Status: "exited", CreatedAt: time.Now()}))
+	prior := clcommon.Default
+	clcommon.Default = enrollingCapacityTmux{Tmux: prior, enroll: func() {}, alive: map[string]struct{}{"cap-exited-pane": {}}}
+	t.Cleanup(func() { clcommon.Default = prior })
+	nodeAdmission.Lock()
+	used, err := nodeCapacityUsed("")
+	nodeAdmission.Unlock()
+	require.NoError(t, err)
+	require.Equal(t, 1, used, "a late pane still counts after premature attach cached an exited state")
 }

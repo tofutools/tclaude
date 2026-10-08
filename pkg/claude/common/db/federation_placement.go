@@ -39,3 +39,32 @@ func ListFederationSpawnReservations() ([]*FederationSpawnRequest, error) {
 	}
 	return out, rows.Err()
 }
+
+// Session status can say exited after a premature attach while a delayed pane
+// is still starting. The caller intersects these actor bindings with actual
+// tmux liveness, rather than trusting that cached status as termination proof.
+type FederationCapacityActorSession struct {
+	AgentID     string
+	TmuxSession string
+}
+
+func FederationCapacityActorSessions() ([]FederationCapacityActorSession, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT a.agent_id,s.tmux_session FROM agents a JOIN sessions s ON s.conv_id=a.current_conv_id WHERE a.retired_at IS NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []FederationCapacityActorSession{}
+	for rows.Next() {
+		var r FederationCapacityActorSession
+		if err := rows.Scan(&r.AgentID, &r.TmuxSession); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}

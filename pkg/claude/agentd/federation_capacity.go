@@ -42,11 +42,7 @@ func nodeCapacityUsed(exclude string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	active, _, err := db.ListAgentRosterState()
-	if err != nil {
-		return 0, err
-	}
-	refs, err := db.HostSessionRefs()
+	actors, err := db.FederationCapacityActorSessions()
 	if err != nil {
 		return 0, err
 	}
@@ -54,22 +50,10 @@ func nodeCapacityUsed(exclude string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("cannot observe live panes: %w", err)
 	}
-	liveConv := map[string]bool{}
-	for _, ref := range refs {
-		if _, ok := alive[ref.TmuxSession]; ok {
-			liveConv[ref.ConvID] = true
-		}
-	}
 	used := map[string]bool{}
-	for _, conv := range active {
-		if liveConv[conv] {
-			id, err := db.AgentIDForConv(conv)
-			if err != nil {
-				return 0, err
-			}
-			if id != "" {
-				used[id] = true
-			}
+	for _, actor := range actors {
+		if _, ok := alive[actor.TmuxSession]; ok {
+			used[actor.AgentID] = true
 		}
 	}
 	for _, row := range pending {

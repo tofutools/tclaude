@@ -501,6 +501,16 @@ func TestFederation_NodeCapacitySweepWaitsForPresetPane(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, pending, "preset conversation alone cannot release the capacity reservation")
 	require.True(t, pending.Launching)
+	// A premature attach can mark this row exited without proving wrapper exit.
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec("UPDATE sessions SET status='exited' WHERE id=?", label)
+	require.NoError(t, err)
+	agentd.RunPendingSpawnSweepForTest()
+	pending, err = db.GetPendingSpawn(label)
+	require.NoError(t, err)
+	require.NotNil(t, pending, "an exited cache flag is not evidence that a delayed wrapper terminated")
+	require.NoError(t, db.MarkPendingSpawnLaunched(label))
 	_, err = config.Update(func(c *config.Config, e error) error {
 		if e != nil {
 			return e

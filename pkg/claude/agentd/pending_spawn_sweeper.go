@@ -89,9 +89,9 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		return // transient — retry next tick
 	}
 	// A preset conversation/session row precedes pane creation. Capacity
-	// reservations may only promote once the pane is live, or disappear after
-	// confirmed termination; a missing row or elapsed grace proves neither.
-	if ps.CapacityReserved && (sess == nil || sess.Status != session.StatusExited) {
+	// reservations may only promote once the pane is live. Even "exited" can
+	// be a premature attach observation; wrapper failures clean up explicitly.
+	if ps.CapacityReserved {
 		if sess == nil || sess.TmuxSession == "" || !session.IsTmuxSessionAlive(sess.TmuxSession) {
 			return
 		}

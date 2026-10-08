@@ -586,7 +586,7 @@ agents and reserved launches, including pending remote requests, all peers and
 both manual and automatic approvals. Local managed launches use the same gate.
 Zero means unlimited. Pending requests hold capacity until decided or expired;
 launching reservations survive restart. Unconfirmed capped local launches stay
-in the Pending list until their pane is ready or termination is confirmed.
+in the Pending list until their pane is ready or the launch wrapper reports failure.
 Deleting one whose pane is unconfirmed requires inspecting the launch and
 explicitly acknowledging a possible late worker through the dashboard API
 (`POST /api/pending/delete/<label>?acknowledge_late_worker=1`). Direct peer requests also obey this
