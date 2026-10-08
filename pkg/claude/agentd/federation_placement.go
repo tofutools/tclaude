@@ -77,7 +77,7 @@ type placementAuthority struct {
 
 func placementCandidate(r *http.Request, p db.FederationPeer, req fedSpawnSendReq, caller string, match proto.NodeMatch) (fedPlacementCandidate, bool) {
 	return placementCandidateWithAuthority(r, p, req, caller, match, placementAuthority{Supported: func(cat *proto.CatalogPayload) bool { return cat.Node.SpawnPlacementVersion == fedPlacementVersion }, GroupAllowed: func(r *http.Request, caller, peer string, g proto.CatalogGroup) bool {
-		return placementSpawnAllowed(r, caller, peer, g.Name)
+		return placementSpawnAllowed(r, caller, peer, g.Name) && (req.Profile == "" || catalogAllowsSpawnProfile(g, req.Profile))
 	}})
 }
 func placementCandidateWithAuthority(r *http.Request, p db.FederationPeer, req fedSpawnSendReq, caller string, match proto.NodeMatch, authority placementAuthority) (fedPlacementCandidate, bool) {

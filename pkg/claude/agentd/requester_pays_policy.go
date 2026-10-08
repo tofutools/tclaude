@@ -50,7 +50,7 @@ func requesterPaysPolicy(peer string, group int64, teleport bool) (string, error
 		}
 		if best != nil {
 			for _, g := range grants {
-				if g.Slug == PermGroupsMembersSpawn && (g.Scope == "" || g.Scope == db.FederationGroupScope(group)) && rank(g) == rank(*best) && g.SpawnPolicy != best.SpawnPolicy {
+				if g.Slug == PermGroupsMembersSpawn && (g.Scope == "" || g.Scope == db.FederationGroupScope(group)) && rank(g) == rank(*best) && !g.SpawnPolicy.Equal(best.SpawnPolicy) {
 					return "", errors.New("conflicting receiving spawn policies; set an explicit peer policy")
 				}
 			}

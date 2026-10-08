@@ -23,10 +23,11 @@ func TestSpawnPlacementCLIRequestAndExplanation(t *testing.T) {
 		return nil
 	}
 	var stdout, stderr bytes.Buffer
-	rc := runSpawnRequest(&spawnRequestParams{Node: "group:rigs", Group: "builders", Require: "harness=codex", Brief: "work"}, &stdout, &stderr)
+	rc := runSpawnRequest(&spawnRequestParams{Node: "group:rigs", Group: "builders", Require: "harness=codex", Profile: "reviewer", Brief: "work"}, &stdout, &stderr)
 	require.Zero(t, rc, stderr.String())
 	require.Equal(t, "group:rigs", sent["node"])
 	require.Equal(t, "harness=codex", sent["require"])
+	require.Equal(t, "reviewer", sent["profile"])
 	require.Contains(t, stdout.String(), "builders@bob: selected")
 	require.Contains(t, stdout.String(), "carol: node metadata stale or warming")
 	stdout.Reset()
@@ -38,7 +39,7 @@ func TestSpawnPlacementCLIRequestAndExplanation(t *testing.T) {
 	require.Contains(t, stdout.String(), "CPU load unavailable")
 	require.Contains(t, stderr.String(), "no node")
 	cmd := spawnRequestCmd()
-	for _, name := range []string{"node", "group", "require", "prefer", "json"} {
+	for _, name := range []string{"node", "group", "require", "prefer", "json", "profile"} {
 		require.NotNil(t, cmd.Flags().Lookup(name))
 	}
 }

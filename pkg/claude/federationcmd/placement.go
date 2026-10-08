@@ -35,7 +35,7 @@ type spawnPlacementReadout struct {
 }
 
 func runSpawnRequest(p *spawnRequestParams, stdout, stderr io.Writer) int {
-	req := map[string]any{"credentials": p.Credentials, "brief": p.Brief, "name": p.Name, "role": p.Role}
+	req := map[string]any{"profile": p.Profile, "credentials": p.Credentials, "brief": p.Brief, "name": p.Name, "role": p.Role}
 	if p.Node != "" {
 		if p.Target != "" {
 			return fail(stderr, fmt.Errorf("target and --node are mutually exclusive"))

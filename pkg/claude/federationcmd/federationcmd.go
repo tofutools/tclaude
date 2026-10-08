@@ -22,6 +22,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 const long = `Link this tclaude instance to others through a tclaude-hub.
@@ -97,10 +98,11 @@ type status struct {
 		Online     bool      `json:"online"`
 		ReceivedAt time.Time `json:"catalog_received_at"`
 		Groups     []struct {
-			Name        string   `json:"name"`
-			Description string   `json:"description"`
-			Caps        []string `json:"caps"`
-			Members     []struct {
+			SpawnProfiles []proto.CatalogSpawnProfile `json:"spawn_profiles,omitempty"`
+			Name          string                      `json:"name"`
+			Description   string                      `json:"description"`
+			Caps          []string                    `json:"caps"`
+			Members       []struct {
 				Agent    string `json:"agent"`
 				Name     string `json:"name"`
 				Role     string `json:"role"`
@@ -440,31 +442,34 @@ type peerGrant struct {
 	Slug        string `json:"slug"`
 	Scope       string `json:"scope"`
 	SpawnPolicy struct {
-		RequesterPays string `json:"requester_pays,omitempty"`
-		JobApproval   string `json:"job_approval,omitempty"`
-		Profile       string `json:"profile,omitempty"`
-		Cwd           string `json:"cwd,omitempty"`
-		Harness       string `json:"harness,omitempty"`
-		Model         string `json:"model,omitempty"`
-		MaxLive       int    `json:"max_live,omitempty"`
+		AllowedProfiles []string `json:"allowed_profiles,omitempty"`
+		RequesterPays   string   `json:"requester_pays,omitempty"`
+		JobApproval     string   `json:"job_approval,omitempty"`
+		Profile         string   `json:"profile,omitempty"`
+		Cwd             string   `json:"cwd,omitempty"`
+		Harness         string   `json:"harness,omitempty"`
+		Model           string   `json:"model,omitempty"`
+		MaxLive         int      `json:"max_live,omitempty"`
 	} `json:"spawn_policy,omitempty"`
 }
 type grantParams struct {
-	RequesterPays string `long:"requester-pays" optional:"true" help:"Receiving spawn policy: required, allowed or off"`
-	JobApproval   string `long:"job-approval" optional:"true" help:"jobs.run only: auto (default) or manual"`
-	Peer          string `pos:"true" help:"Trusted peer label or instance id"`
-	Slug          string `pos:"true" help:"Permission slug to grant"`
-	Scope         string `long:"scope" optional:"true" help:"group=<local group>; omitted covers all current and future groups"`
-	Profile       string `long:"profile" optional:"true" help:"Receiver launch profile for groups.members.spawn"`
-	Cwd           string `long:"cwd" optional:"true" help:"Receiver worker directory"`
-	Harness       string `long:"harness" optional:"true" help:"Receiver worker harness"`
-	Model         string `long:"model" optional:"true" help:"Receiver worker model"`
-	MaxLive       int    `long:"max-live" optional:"true" help:"Positive live auto-worker cap (default 2)"`
+	AllowedProfiles []string `long:"allow-profile" optional:"true" help:"Selectable receiver profile (repeatable); groups.members.spawn only"`
+	RequesterPays   string   `long:"requester-pays" optional:"true" help:"Receiving spawn policy: required, allowed or off"`
+	JobApproval     string   `long:"job-approval" optional:"true" help:"jobs.run only: auto (default) or manual"`
+	Peer            string   `pos:"true" help:"Trusted peer label or instance id"`
+	Slug            string   `pos:"true" help:"Permission slug to grant"`
+	Scope           string   `long:"scope" optional:"true" help:"group=<local group>; omitted covers all current and future groups"`
+	Profile         string   `long:"profile" optional:"true" help:"Receiver launch profile for groups.members.spawn"`
+	Cwd             string   `long:"cwd" optional:"true" help:"Receiver worker directory"`
+	Harness         string   `long:"harness" optional:"true" help:"Receiver worker harness"`
+	Model           string   `long:"model" optional:"true" help:"Receiver worker model"`
+	MaxLive         int      `long:"max-live" optional:"true" help:"Positive live auto-worker cap (default 2)"`
 }
 
 func grantCmd() *cobra.Command {
 	return boa.CmdT[grantParams]{Use: "grant", Short: "Grant a trusted peer group or instance permission (human only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *grantParams, _ *cobra.Command, _ []string) {
 		grant := peerGrant{Peer: p.Peer, Slug: p.Slug, Scope: p.Scope}
+		grant.SpawnPolicy.AllowedProfiles = p.AllowedProfiles
 		grant.SpawnPolicy.Profile = p.Profile
 		grant.SpawnPolicy.Cwd = p.Cwd
 		grant.SpawnPolicy.Harness = p.Harness
@@ -567,6 +572,9 @@ func runRemote(p *jsonParam, stdout, stderr io.Writer) int {
 		for _, g := range r.Groups {
 			line := fmt.Sprintf("  %s/%s  [%s]", r.Label, g.Name, strings.Join(g.Caps, ","))
 			fmt.Fprintln(stdout, line)
+			for _, profile := range g.SpawnProfiles {
+				fmt.Fprintf(stdout, "    profile %s  harness=%s model=%s effort=%s\n", profile.Name, profile.Harness, profile.Model, profile.Effort)
+			}
 			for _, m := range g.Members {
 				extra := ""
 				if m.Role != "" {
@@ -768,6 +776,7 @@ func outboxCmd() *cobra.Command {
 // --- remote spawn requests ---
 
 type spawnRequestParams struct {
+	Profile     string `long:"profile" optional:"true" help:"Select an advertised receiver profile; omitted uses its default"`
 	Credentials string `long:"credentials" optional:"true" help:"local or proxy:<name>@self for requester-paid Claude workers"`
 	Target      string `pos:"true" optional:"true" help:"<group>@<peer>: a remote group visible in the peer catalog (omit with --node)"`
 	Node        string `long:"node" optional:"true" help:"Automatically select a node: auto or group:<pool>"`
@@ -794,6 +803,7 @@ func spawnRequestCmd() *cobra.Command {
 }
 
 type spawnRequestRow struct {
+	Profile          string    `json:"profile,omitempty"`
 	Credentials      string    `json:"credentials,omitempty"`
 	ModelLease       string    `json:"model_lease,omitempty"`
 	Require          string    `json:"require,omitempty"`
@@ -845,6 +855,9 @@ func requestsCmd() *cobra.Command {
 				fmt.Printf("#%d  %s  from %s  into %s  %s\n", r.ID, r.Status, r.From, r.Group, ago(r.CreatedAt))
 				if r.Name != "" || r.Role != "" {
 					fmt.Printf("    name %q  role %q\n", r.Name, r.Role)
+				}
+				if r.Profile != "" {
+					fmt.Printf("    requested profile: %s\n", r.Profile)
 				}
 				if r.Credentials != "" {
 					fmt.Printf("    credentials: %s  requester lease: %s\n", r.Credentials, r.ModelLease)

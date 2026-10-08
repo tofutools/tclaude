@@ -207,7 +207,7 @@ func queueRequesterSpawn(r *http.Request, caller string, peer *db.FederationPeer
 	if strings.HasPrefix(mode, "proxy:") && lease == "" {
 		return nil, errors.New("remote spawn requester gateway must use proxy:<name>@self")
 	}
-	return queueFederatedEnvelope(fedOutgoing{envelopeID: id, fromConv: caller, peer: peer, kind: proto.KindSpawnReq, toLabel: group + "@" + peerDisplay(peer), subject: "spawn request", preview: req.Brief, ttl: fedSpawnTTL, payload: proto.SpawnRequestPayload{Credentials: mode, ModelLease: lease, Group: group, Name: req.Name, Role: req.Role, Brief: req.Brief, Require: req.Require, PlacementVersion: placement}})
+	return queueFederatedEnvelope(fedOutgoing{envelopeID: id, fromConv: caller, peer: peer, kind: proto.KindSpawnReq, toLabel: group + "@" + peerDisplay(peer), subject: "spawn request", preview: req.Brief, ttl: fedSpawnTTL, payload: proto.SpawnRequestPayload{Profile: req.Profile, Credentials: mode, ModelLease: lease, Group: group, Name: req.Name, Role: req.Role, Brief: req.Brief, Require: req.Require, PlacementVersion: placement}})
 }
 
 func (rt *fedRuntime) revokeStaleModelLeases() {

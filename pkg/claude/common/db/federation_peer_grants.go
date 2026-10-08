@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strconv"
 	"time"
 )
@@ -11,13 +12,22 @@ import (
 // FederationSpawnPolicy contains receiver-owned launch settings. Empty fields
 // inherit ordinary operator group-spawn defaults.
 type FederationSpawnPolicy struct {
-	RequesterPays string `json:"requester_pays,omitempty"`
-	JobApproval   string `json:"job_approval,omitempty"` // jobs.run only: auto (default) or manual
-	Profile       string `json:"profile,omitempty"`
-	Cwd           string `json:"cwd,omitempty"`
-	Harness       string `json:"harness,omitempty"`
-	Model         string `json:"model,omitempty"`
-	MaxLive       int    `json:"max_live,omitempty"`
+	AllowedProfiles []string `json:"allowed_profiles,omitempty"`
+	RequesterPays   string   `json:"requester_pays,omitempty"`
+	JobApproval     string   `json:"job_approval,omitempty"` // jobs.run only: auto (default) or manual
+	Profile         string   `json:"profile,omitempty"`
+	Cwd             string   `json:"cwd,omitempty"`
+	Harness         string   `json:"harness,omitempty"`
+	Model           string   `json:"model,omitempty"`
+	MaxLive         int      `json:"max_live,omitempty"`
+}
+
+// Equal includes selectable profiles in inherited-policy conflict checks.
+func (p FederationSpawnPolicy) Equal(other FederationSpawnPolicy) bool {
+	return slices.Equal(p.AllowedProfiles, other.AllowedProfiles) &&
+		p.RequesterPays == other.RequesterPays && p.JobApproval == other.JobApproval &&
+		p.Profile == other.Profile && p.Cwd == other.Cwd && p.Harness == other.Harness &&
+		p.Model == other.Model && p.MaxLive == other.MaxLive
 }
 
 type FederationPeerGrant struct {

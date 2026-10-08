@@ -508,12 +508,35 @@ The requester needs groups.members.spawn scoped to the peer/group, or
 agent.spawn scoped to the peer without a group suffix. The group must be
 visible in the peer's catalog.
 
-The peer sends only the name, role and brief. Launch profile, directory,
-harness and model come from the receiving peer grant; unset fields inherit
+The peer sends a name, role, brief and optional profile choice. Directory,
+harness and model overrides come from the receiving peer grant; unset fields inherit
 the group's normal operator spawn defaults. The positive live auto-worker
 cap defaults to two and counts that peer's live automatically spawned workers
 across groups. The receiving spawn rate limit also applies, keyed by peer.
 Ordinary group member caps and launch guardrails remain in force.
+
+The receiving operator can expose selected profiles separately from its default:
+
+```bash
+# Bob: allow Alice to select these local profiles
+tclaude federation grant alice groups.members.spawn --scope group=builders --allow-profile reviewer --allow-profile builder --max-live 2
+# Alice: inspect the advertised name, harness, model and effort
+tclaude federation remote
+# Alice: select one for this request
+tclaude federation spawn-request builders@bob --profile reviewer --brief "review the parser"
+```
+
+Only allowlisted profiles are advertised, per group; profile prompts, permissions,
+environment and gateway settings are omitted. Disabled profiles disappear.
+The receiver checks the live allowlist when receiving the request and again
+before launch, including manual approval after a failed automatic launch.
+Without `--profile`, the existing receiver/group default applies. A grant's
+`--profile` pins that default; `--allow-profile` permits named alternatives.
+Pinned grant harness/model overrides still apply to those alternatives.
+Even unrestricted peers need an explicit selectable-profile allowlist.
+`--credentials local|proxy:<name>@self` overrides the chosen profile's gateway,
+as it does for the receiving teleport landing profile. Placement considers
+only groups advertising the selected profile.
 
 A visible group without a spawn grant queues the request for human approval.
 An automatic spawn with a definite failure, including a worker cap or rate limit, also
