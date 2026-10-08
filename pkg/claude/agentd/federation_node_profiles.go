@@ -145,6 +145,13 @@ func handleFederationNodeProfiles(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "manage node profiles") {
 		return
 	}
+	// Serialize definition changes with preview/apply, trust-time selection and
+	// offer publication so their security checks use one profile revision.
+	if r.Method != http.MethodGet {
+		fedNodeGroupsMu.Lock()
+		defer fedNodeGroupsMu.Unlock()
+	}
+
 	ref := r.PathValue("name")
 	if r.Method == http.MethodGet {
 		if ref == "" {
@@ -221,6 +228,8 @@ func handleFederationDefaultPeerProfile(w http.ResponseWriter, r *http.Request) 
 	if !requireHuman(w, r, "set default peer profile") {
 		return
 	}
+	fedNodeGroupsMu.Lock()
+	defer fedNodeGroupsMu.Unlock()
 	var in struct {
 		Profile string `json:"profile"`
 	}
@@ -255,6 +264,8 @@ func handleFederationNodeProfileApply(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "apply node profile") {
 		return
 	}
+	fedNodeGroupsMu.Lock()
+	defer fedNodeGroupsMu.Unlock()
 	var in fedNodeProfileApplyReq
 	if e := json.NewDecoder(r.Body).Decode(&in); e != nil {
 		writeError(w, 400, "json", e.Error())
@@ -280,7 +291,6 @@ func handleFederationNodeProfileApply(w http.ResponseWriter, r *http.Request) {
 	}
 	// Match pool mutation's lock order, and revoke delegated approval epochs before
 	// the writer commits a different trust level, membership or peer grant policy.
-	fedNodeGroupsMu.Lock()
 	finish := func() {}
 	if in.Apply {
 		finish = lockAwayMutation(peer.InstanceID, true)
@@ -291,7 +301,6 @@ func handleFederationNodeProfileApply(w http.ResponseWriter, r *http.Request) {
 	}
 	plan, e := db.PlanFederationNodeProfile(p.ID, peer.InstanceID, token, nil)
 	finish()
-	fedNodeGroupsMu.Unlock()
 	if e != nil {
 		if plan != nil {
 			writeJSON(w, 409, map[string]any{"error": e.Error(), "plan": plan})
