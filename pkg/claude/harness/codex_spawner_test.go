@@ -134,8 +134,8 @@ func TestCodexSpawner_PinsSandboxEnvironmentForToolCommands(t *testing.T) {
 // TestCodexSpawner_InitialPrompt covers the JOH-205 first-turn seed: a fresh
 // launch appends InitialPrompt as the trailing positional [PROMPT], shell-
 // quoted as a single arg, so Codex self-submits its first turn (materialising
-// the conv-id without a human keystroke). A resume never emits it — the
-// conv-id is already known — and an empty prompt is omitted entirely.
+// the conv-id without a human keystroke). Imported-history resumes carry an
+// explicit receiving briefing; ordinary empty resumes stay prompt-free.
 func TestCodexSpawner_InitialPrompt(t *testing.T) {
 	// Empty: a bare fresh launch stays exactly "codex" — no dangling positional.
 	empty := codexSpawner{}.BuildCommand(SpawnSpec{InitialPrompt: ""})
@@ -153,10 +153,14 @@ func TestCodexSpawner_InitialPrompt(t *testing.T) {
 		t.Fatalf("seed prompt must coexist with flags, got %q", got)
 	}
 
-	// Resume: the conv-id is already known, so no first-turn kick is emitted.
+	// Resume: an explicit imported-agent briefing must reach the new agent.
 	got = codexSpawner{}.BuildCommand(SpawnSpec{ResumeID: "sess-1", InitialPrompt: "read your inbox"})
-	if strings.Contains(got, "read your inbox") {
-		t.Fatalf("resume must NOT emit an initial-prompt seed, got %q", got)
+	if !strings.HasSuffix(got, " 'read your inbox'") {
+		t.Fatalf("resume must emit an explicit launch briefing, got %q", got)
+	}
+	got = codexSpawner{}.BuildCommand(SpawnSpec{ResumeID: "sess-1"})
+	if got != "codex resume sess-1" {
+		t.Fatalf("ordinary resume must stay prompt-free, got %q", got)
 	}
 }
 

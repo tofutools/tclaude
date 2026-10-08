@@ -257,3 +257,25 @@ func (b *Bundle) KeepPaths(values map[string]string) map[string]string {
 	}
 	return out
 }
+
+// CredentialKinds reports detection counts without returning credential values.
+// Both bundle types use the same deliberately limited detection boundary.
+func CredentialKinds(text string) map[string]int {
+	kinds := map[string]int{}
+	for _, match := range credential.FindAllString(text, -1) {
+		key := "credential-assignment"
+		lower := strings.ToLower(match)
+		switch {
+		case strings.HasPrefix(lower, "sk-"):
+			key = "api-token"
+		case strings.HasPrefix(lower, "gh") || strings.HasPrefix(lower, "github_pat_"):
+			key = "github-token"
+		case strings.Contains(lower, "private key"):
+			key = "private-key"
+		case strings.HasPrefix(lower, "keychain://"):
+			key = "keychain-reference"
+		}
+		kinds[key]++
+	}
+	return kinds
+}

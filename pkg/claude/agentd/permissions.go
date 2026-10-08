@@ -521,6 +521,8 @@ var permissionRegistry = []PermSlug{
 		ScopeDims:    []ScopeDim{ScopeDimGroup},
 		Description:  "Instantiate a working group from a template, or rebrief/reinforce an existing group. Ownership contributes this slug scoped to each owned group; instantiating a new group still needs another positive source.",
 	},
+	{Slug: PermAgentBundleExport, Description: "Export portable agents and optional private transcripts. Not default-granted."},
+	{Slug: PermAgentBundleImport, Description: "Preview or import portable agents through normal spawn checks. Not default-granted."},
 	{Slug: PermConfigExport, Description: "Export portable setup bundles; may read private setup text. Not default-granted."},
 	{Slug: PermConfigImport, Description: "Import setup bundles, including default permissions and sandbox policy. Grants authority to change agent access. Not default-granted."},
 	{

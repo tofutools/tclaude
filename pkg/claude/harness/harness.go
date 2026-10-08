@@ -100,6 +100,8 @@ type Harness struct {
 	// model (list / resolve / read title). Read-only for now; the write
 	// counterpart (SetTitle) rides the Lifecycle/send-keys PR.
 	Convs ConvStore
+	// History installs a reviewed portable transcript for native resume.
+	History HistoryTransfer
 	// Hooks installs/checks/repairs the tclaude callback in the harness's
 	// config target (+ any trust step). nil = this build can't install
 	// hooks for the harness; `tclaude setup` skips it with a message.

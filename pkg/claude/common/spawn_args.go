@@ -46,10 +46,10 @@ type SpawnArgs struct {
 	// ResourceCgroupDir is a prepared Linux workload boundary shared with an
 	// agentd-owned authoritative server. Empty lets session new prepare one.
 	ResourceCgroupDir string
-	// Label is the tclaude-side session ID for a fresh spawn (SpawnNew): the
+	// Label is an optional pinned tclaude-side session ID for spawn or resume: the
 	// stable key the hook callback tracks conv-id rotations against, and the
-	// row key in SQLite. It must be unique in the sessions table. Unused by
-	// SpawnResume (a resume mints its own fresh label).
+	// row key in SQLite. It must be unique in the sessions table. A resume
+	// without a label chooses its normal session identity.
 	Label string
 	// AgentID is the stable actor identity reserved by agentd. Runtime-owning
 	// launch modes use it to allocate a private per-agent generation directory.
@@ -246,13 +246,13 @@ type SpawnArgs struct {
 	// (JOH-200 part 2).
 	AutoReview bool
 
-	// TrustDir pre-trusts the launch dir (SpawnNew only): the forked
+	// TrustDir pre-trusts the launch dir: the forked
 	// `tclaude session new --trust-dir` writes the trust entry into the
 	// harness's own store (~/.codex/config.toml, ~/.claude.json) before launch
 	// so a detached pane doesn't freeze on the trust-folder dialog (JOH-205,
 	// JOH-369). false (the default) leaves the dialog in place.
-	// Fresh-spawn-only — resume paths leave it false (a resumed conv's dir was
-	// already its own at first launch), so SpawnResume ignores it.
+	// Ordinary resumes leave it false. Imported-history launches may use it
+	// after the fresh-spawn authorization checks.
 	TrustDir bool
 
 	// RemoteControl arms the harness's built-in Remote Access at launch

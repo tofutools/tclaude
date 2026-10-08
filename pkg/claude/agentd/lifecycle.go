@@ -4874,6 +4874,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		// (it needs the conv-id for owner/permission grants).
 		Async: true,
 	}
+	p.BundleHistory, _ = r.Context().Value(bundleHistoryContextKey{}).(*bundleHistoryLaunch)
 	// An omitted include_group_context flag means opt-in — every spawn
 	// path inherits the group context by default, the same way it
 	// inherits default_cwd; the dashboard sends false explicitly to opt
@@ -5008,6 +5009,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 // length/charset-checked, reply-to resolved to a conv-id — so the
 // shared core does no HTTP-shaped validation of its own.
 type spawnParams struct {
+	BundleHistory *bundleHistoryLaunch // trusted internal bundle route only
 	// AgentID is a stable identity reserved before a pending harness conv-id
 	// materialises. Empty on ordinary inline spawns, whose actor is allocated
 	// together with the conv-id.
@@ -6931,6 +6933,27 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// an unknown name (returns nil), and SupportsLaunchEnrollment is nil-safe,
 	// so a bad harness degrades to the legacy path rather than panicking.
 	launchEnroll := spawnHarness.SupportsLaunchEnrollment() && !spawnUsesLegacyInjection()
+	var importedID string
+	importedCleanup := func() {}
+	importedLaunched := false
+	if p.BundleHistory != nil {
+		if !spawnHarness.SupportsHistoryTransfer() || spawnHarness.History.Format() != p.BundleHistory.Format {
+			return nil, &spawnFailure{http.StatusBadRequest, "history", "resolved harness cannot resume this history format"}
+		}
+		var cleanup func()
+		var err error
+		importedID, cleanup, err = spawnHarness.History.Import(p.BundleHistory.Raw, p.BundleHistory.SourceID, p.Cwd)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusBadRequest, "history", "install imported history: " + err.Error()}
+		}
+		importedCleanup = cleanup
+		defer func() {
+			if failure != nil && !importedLaunched {
+				importedCleanup()
+			}
+		}()
+		launchEnroll = true
+	}
 	if p.DarwinRouteCapable && !launchEnroll {
 		return nil, &spawnFailure{http.StatusUnprocessableEntity, "darwin_route_launch",
 			"Darwin route-capable launches require the preset-conversation launch seam"}
@@ -6955,7 +6978,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// read — the agent has the text, so it must never enter the nudge queue.
 	var briefingInlined bool
 	if launchEnroll {
-		if openCodeLaunch != nil {
+		if importedID != "" {
+			preConvID = importedID
+		} else if openCodeLaunch != nil {
 			preConvID = openCodeLaunch.ConvID
 		} else {
 			preConvID = convops.GenerateUUID()
@@ -7156,6 +7181,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// (runNew's liveOwnerConflict guard) whose row a label-keyed delete
 	// would then destroy.
 	launchFailed := func(err error) (*spawnOutcome, *spawnFailure) {
+		importedCleanup()
+		importedCleanup = func() {}
 		privateAttachmentCleanup()
 		privateAttachmentCleanup = func() {}
 		if pendingHeld {
@@ -7189,9 +7216,16 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	timing("launch_prepared", "label", label)
 	launchedAt := time.Now()
 	rememberHTTPProxyLaunchGroup(label, g, p.PermissionOverrides)
-	if err := SpawnDetachedTclaudeNew(spawnArgs); err != nil {
+	launch := SpawnDetachedTclaudeNew
+	if importedID != "" {
+		spawnArgs.ConvID = importedID
+		spawnArgs.SessionID = ""
+		launch = SpawnDetachedTclaudeResume
+	}
+	if err := launch(spawnArgs); err != nil {
 		return launchFailed(err)
 	}
+	importedLaunched = true
 	timing("session_wrapper_dispatched", "label", label)
 	agentDirectoriesLaunched = true
 	privateAttachmentsLaunched = true
@@ -9510,6 +9544,10 @@ func appendRemoteControlFlag(args []string, remoteControl bool) []string {
 // can be unit-tested without forking a subprocess.
 func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	args := []string{"session", "new", "--managed-launch", "-r", a.ConvID, "-d", "--global"}
+	if a.Label != "" {
+		args = append(args, "--label", a.Label)
+	}
+	args = appendTrustDirFlag(args, a.TrustDir)
 	if a.Cwd != "" {
 		args = append(args, "-C", a.Cwd)
 	}
