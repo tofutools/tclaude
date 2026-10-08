@@ -44,7 +44,7 @@ Flow:
      (needs the groups.members.spawn scoped with peer=bob/group, or agent.spawn scoped with peer=bob; bob's operator approves or denies)
 
 Every federation command is human-only except nodes (node.read), spawn-request, sessions (sessions.read),
-and attach (sessions.watch or sessions.attach). Agents need the matching peer= scope.`
+and attach (sessions.watch or sessions.attach). Remote action permissions need the matching peer= scope; audit is an unscoped local read permission.`
 
 // Cmd returns `tclaude federation`.
 func Cmd() *cobra.Command {
@@ -54,7 +54,7 @@ func Cmd() *cobra.Command {
 		Long:        long,
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
-			statusCmd(), identityCmd(), connectCmd(), disconnectCmd(),
+			statusCmd(), identityCmd(), connectCmd(), disconnectCmd(), auditCmd(),
 			jobsCmd(), reposCmd(), modelsCmd(), peersCmd(), trustCmd(), untrustCmd(), nodeProfilesCmd(), enrollTokenCmd(), enrollCmd(), enrollmentsCmd(),
 			grantCmd(), revokeCmd(), grantsCmd(), remoteCmd(), nodesCmd(), nodeLabelsCmd(), sessionsCmd(), attachCmd(), viewersCmd(), kickCmd(),
 			sendCmd(), outboxCmd(), notifyCmd(), inboxCmd(), awayCmd(), returnCmd(), answerCmd(),
