@@ -579,7 +579,9 @@ delivered separately to the resolved pane: special keys use a fixed tmux key
 table, text is literal, and unknown escape sequences are discarded. It can answer prompts, send
 Ctrl-C, or perform any other action available at that keyboard.
 
-The attachment pins the live session and pane incarnation. Exit, pane
+Discovery includes an opaque launch incarnation token, so a reused session ID
+cannot turn stale discovery into access to a resumed launch. The attachment
+pins the live session and pane incarnation. Exit, pane
 replacement, reincarnation, loss of group membership, peer untrust, permission
 revocation or disconnect closes it; it never follows a new pane automatically.
 Permission checks run before input/output and once a second while idle.

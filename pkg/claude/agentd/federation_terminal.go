@@ -215,7 +215,7 @@ func resolveFedTerminalTarget(address string, readOnly bool) (*db.FederationPeer
 		}
 		for _, s := range g.Sessions {
 			if s.Agent == ref {
-				matches = append(matches, proto.SessionOpenPayload{Agent: s.Agent, Session: s.Session, Group: g.Name, Stream: proto.NewEnvelopeID(), ReadOnly: readOnly, Cols: 80, Rows: 24})
+				matches = append(matches, proto.SessionOpenPayload{Agent: s.Agent, Session: s.Session, Incarnation: s.Incarnation, Group: g.Name, Stream: proto.NewEnvelopeID(), ReadOnly: readOnly, Cols: 80, Rows: 24})
 			}
 		}
 	}
@@ -263,6 +263,7 @@ func handleFederationAttach(w http.ResponseWriter, r *http.Request) {
 				yes, _, err := permissionAllowsAction(r, caller, fedTerminalSlug(readOnly), ActionContext{RemotePeer: peer.InstanceID, RemoteGroup: g.Name})
 				if err == nil && yes {
 					p.Group = g.Name
+					p.Incarnation = s.Incarnation
 					allowed = true
 					break
 				}
@@ -337,7 +338,7 @@ func handleFederationAttach(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			for _, s := range g.Sessions {
-				if s.Agent == p.Agent && s.Session == p.Session {
+				if s.Agent == p.Agent && s.Session == p.Session && s.Incarnation == p.Incarnation {
 					return true
 				}
 			}
@@ -350,6 +351,10 @@ func handleFederationAttach(w http.ResponseWriter, r *http.Request) {
 			f, err := terminal.Read(conn)
 			if err != nil {
 				errors <- err
+				return
+			}
+			if !authorized() {
+				errors <- terminal.ErrProtocol
 				return
 			}
 			raw, _ := terminal.Encode(f)
@@ -423,7 +428,7 @@ func queryInt(r *http.Request, name string, fallback int) int {
 	return n
 }
 
-func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, env *proto.Envelope) {
+func (rt *fedRuntime) acceptSessionOpen(peer *db.FederationPeer, env *proto.Envelope) {
 	var p proto.SessionOpenPayload
 	if env.DecodePayload(&p) != nil || !proto.ValidStreamID(p.Stream) || !proto.ValidAgentRef(p.Agent) || len(p.Key) != 32 {
 		return
@@ -435,18 +440,23 @@ func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, env *proto.Enve
 		answer(false, nil, "invalid terminal dimensions")
 		return
 	}
+	// Reserve admission before spawning or performing database/tmux probes.
+	v, err := rt.addTerminal(peer.InstanceID, p, true)
+	if err != nil {
+		answer(false, nil, err.Error())
+		return
+	}
+	rt.wg.Add(1)
+	go func() { defer rt.wg.Done(); rt.handleSessionOpen(peer, p, v, answer) }()
+}
+func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, p proto.SessionOpenPayload, v *fedTerminalView, answer func(bool, []byte, string)) {
+	defer v.close()
 	pin, err := resolveFedPane(peer.InstanceID, p)
 	if err != nil {
 		answer(false, nil, err.Error())
 		recordFederationAudit("sessions.attach.open", peerDisplay(peer), "", p.Group, "refused: "+err.Error(), 403)
 		return
 	}
-	v, err := rt.addTerminal(peer.InstanceID, p, true)
-	if err != nil {
-		answer(false, nil, err.Error())
-		return
-	}
-	defer v.close()
 	restore, err := setFedIndicator(pin, v.ID, peerDisplay(peer), p.ReadOnly)
 	if err != nil {
 		answer(false, nil, "could not install remote viewer indicator")

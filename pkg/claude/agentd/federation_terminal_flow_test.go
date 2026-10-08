@@ -32,6 +32,7 @@ type terminalTmux struct {
 	windows string
 	version string
 	attach  []string
+	probes  int
 }
 
 func terminalEcho(s string) *exec.Cmd { return exec.Command("printf", "%s", s) }
@@ -43,6 +44,7 @@ func (m *terminalTmux) Command(args ...string) *exec.Cmd {
 		return terminalEcho(m.version)
 	case "display-message":
 		if strings.Contains(args[len(args)-1], "#{window_panes}") {
+			m.probes++
 			return terminalEcho(m.pane + "\t@1\t$1\t" + m.windows + "\t1\n")
 		}
 	case "resize-window":
@@ -126,6 +128,30 @@ func terminalRead(t *testing.T, c *stream.Conn) terminal.Frame {
 		return terminal.Frame{}
 	}
 }
+func terminalCatalogIncarnation(t *testing.T, fh *fedHarness, aid string) string {
+	t.Helper()
+	rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermSessionsRead, "scope": "group=team"})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	incarnation := ""
+	fedEventually(t, "session incarnation advertised", func() bool {
+		for _, e := range fh.peer.envelopes(proto.KindCatalog) {
+			var c proto.CatalogPayload
+			if e.DecodePayload(&c) != nil {
+				continue
+			}
+			for _, g := range c.Groups {
+				for _, s := range g.Sessions {
+					if s.Agent == aid && s.Incarnation != "" {
+						incarnation = s.Incarnation
+					}
+				}
+			}
+		}
+		return incarnation != ""
+	})
+	return incarnation
+}
+
 func TestFederation_TerminalInputWatchKickAndPin(t *testing.T) {
 	fh := newFedHarness(t)
 	f, p := fh.f, fh.peer
@@ -140,6 +166,7 @@ func TestFederation_TerminalInputWatchKickAndPin(t *testing.T) {
 	mock := &terminalTmux{Tmux: original, options: map[string]string{"pane-border-format": "original"}, pane: "%1", windows: "1", version: "tmux 3.4"}
 	clcommon.Default = mock
 	t.Cleanup(func() { agentd.ResetFederationForTest(); clcommon.Default = original })
+	incarnation := terminalCatalogIncarnation(t, fh, aid)
 	grant := func(slug string) {
 		rec := fedHuman(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": slug, "scope": "group=team"})
 		require.Equal(t, 200, rec.Code, rec.Body.String())
@@ -147,7 +174,7 @@ func TestFederation_TerminalInputWatchKickAndPin(t *testing.T) {
 	open := func(readonly bool) (proto.SessionOpenPayload, *stream.KeyPair, proto.SessionAnswerPayload) {
 		kp, err := stream.NewKeyPair()
 		require.NoError(t, err)
-		o := proto.SessionOpenPayload{Agent: aid, Session: "terminal-runtime", Group: "team", Stream: proto.NewEnvelopeID(), Key: kp.Pub, ReadOnly: readonly, Cols: 80, Rows: 24}
+		o := proto.SessionOpenPayload{Agent: aid, Session: "terminal-runtime", Incarnation: incarnation, Group: "team", Stream: proto.NewEnvelopeID(), Key: kp.Pub, ReadOnly: readonly, Cols: 80, Rows: 24}
 		p.send(p.envelope(proto.KindSessionOpen, proto.Endpoint{}, o))
 		return o, kp, terminalAnswer(t, p, o.Stream)
 	}
@@ -197,6 +224,15 @@ func TestFederation_TerminalInputWatchKickAndPin(t *testing.T) {
 	fedEventually(t, "viewer closed after pane replacement", func() bool {
 		return !strings.Contains(fedHuman(t, f, http.MethodGet, "/v1/federation/viewers", nil).Body.String(), o.Stream)
 	})
+	row, err := db.LoadSession("terminal-runtime")
+	require.NoError(t, err)
+	row.CreatedAt = row.CreatedAt.Add(time.Second)
+	require.NoError(t, db.SaveSession(row))
+	_, _, ans = open(false)
+	require.False(t, ans.OK)
+	require.Contains(t, ans.Reason, "incarnation changed")
+	row.CreatedAt = row.CreatedAt.Add(-time.Second)
+	require.NoError(t, db.SaveSession(row))
 	mock.mu.Lock()
 	mock.windows = "2"
 	mock.mu.Unlock()
@@ -210,6 +246,10 @@ func TestFederation_TerminalInputWatchKickAndPin(t *testing.T) {
 	_, _, ans = open(false)
 	require.False(t, ans.OK)
 	require.Contains(t, ans.Reason, "3.2 or newer")
+	require.NoError(t, db.SetSessionExitLaunchGeneration("terminal-runtime", strings.Repeat("a", 64)))
+	_, _, ans = open(false)
+	require.False(t, ans.OK)
+	require.Contains(t, ans.Reason, "incarnation changed")
 }
 
 func TestFederation_TerminalWatchRejectsInputAndRevocation(t *testing.T) {
@@ -226,13 +266,14 @@ func TestFederation_TerminalWatchRejectsInputAndRevocation(t *testing.T) {
 	mock := &terminalTmux{Tmux: original, options: map[string]string{}, pane: "%1", windows: "1", version: "tmux 3.4"}
 	clcommon.Default = mock
 	t.Cleanup(func() { agentd.ResetFederationForTest(); clcommon.Default = original })
+	incarnation := terminalCatalogIncarnation(t, fh, aid)
 	grant := map[string]any{"peer": "bob", "slug": agentd.PermSessionsWatch, "scope": "group=team"}
 	require.Equal(t, 200, fedHuman(t, f, http.MethodPost, "/v1/federation/grants", grant).Code)
 	for _, revoke := range []bool{false, true} {
 		kp, err := stream.NewKeyPair()
 		require.NoError(t, err)
 		sid := proto.NewEnvelopeID()
-		o := proto.SessionOpenPayload{Agent: aid, Session: "watch-runtime", Group: "team", Stream: sid, Key: kp.Pub, ReadOnly: true, Cols: 80, Rows: 24}
+		o := proto.SessionOpenPayload{Agent: aid, Session: "watch-runtime", Incarnation: incarnation, Group: "team", Stream: sid, Key: kp.Pub, ReadOnly: true, Cols: 80, Rows: 24}
 		p.send(p.envelope(proto.KindSessionOpen, proto.Endpoint{}, o))
 		ans := terminalAnswer(t, p, sid)
 		require.True(t, ans.OK, ans.Reason)
@@ -256,7 +297,7 @@ func TestFederation_TerminalOutgoingScopeAndOrigin(t *testing.T) {
 	f, p := fh.f, fh.peer
 	const caller = "fed-terminal-reader"
 	f.HaveConvWithTitle(caller, "viewer")
-	row := proto.CatalogSession{Agent: "agt_remote00001", Session: "runtime", Name: "remote"}
+	row := proto.CatalogSession{Agent: "agt_remote00001", Session: "runtime", Incarnation: "remote-incarnation", Name: "remote"}
 	p.send(p.envelope(proto.KindCatalog, proto.Endpoint{}, proto.CatalogPayload{Groups: []proto.CatalogGroup{{Name: "builders", Caps: []string{proto.CapSessions, proto.CapSessionsWatch, proto.CapSessionsAttach}, Sessions: []proto.CatalogSession{row}, SessionsAt: time.Now()}}}))
 	fedEventually(t, "terminal catalog received", func() bool {
 		return strings.Contains(fedHuman(t, f, http.MethodGet, "/v1/federation/sessions", nil).Body.String(), row.Agent)
@@ -326,13 +367,51 @@ func TestFederation_TerminalOutgoingScopeAndOrigin(t *testing.T) {
 	require.NoError(t, ws.WriteMessage(websocket.BinaryMessage, raw))
 	frame = terminalRead(t, conn)
 	require.Equal(t, terminal.Resize, frame.Kind)
-	// Even a compromised watch client cannot forward keyboard input.
-	raw, _ = terminal.Encode(terminal.Frame{Kind: terminal.Input, Data: []byte("yes\r")})
-	require.NoError(t, ws.WriteMessage(websocket.BinaryMessage, raw))
+	// Local revocation blocks the very next output frame, without waiting for
+	// the idle ticker or exhausting the peer's outstanding output credit.
+	_, err = db.RevokeAgentPermission(caller, agentd.PermSessionsWatch)
+	require.NoError(t, err)
+	require.NoError(t, terminal.Write(conn, terminal.Frame{Kind: terminal.Output, Data: []byte("must not escape after revoke")}))
 	_ = ws.SetReadDeadline(time.Now().Add(5 * time.Second))
 	_, _, err = ws.ReadMessage()
 	require.Error(t, err)
 	entries, err := db.ListAuditLog(db.AuditLogFilter{Verb: "sessions.attach.open"})
 	require.NoError(t, err)
 	require.NotEmpty(t, entries)
+}
+
+func TestFederation_TerminalAdmissionBeforePaneProbes(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	const conv = "fed-terminal-limits"
+	f.HaveGroup("team")
+	f.HaveConvWithTitle(conv, "limited")
+	f.HaveMember("team", conv)
+	f.HaveAliveSession(conv, "limits-runtime", "tclaude-limits-runtime", f.TestCwd("work"))
+	aid, err := db.AgentIDForConv(conv)
+	require.NoError(t, err)
+	original := clcommon.Default
+	mock := &terminalTmux{Tmux: original, options: map[string]string{}, pane: "%1", windows: "1", version: "tmux 3.1"}
+	clcommon.Default = mock
+	t.Cleanup(func() { agentd.ResetFederationForTest(); clcommon.Default = original })
+	incarnation := terminalCatalogIncarnation(t, fh, aid)
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermSessionsAttach, "scope": "group=team"})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	kp, err := stream.NewKeyPair()
+	require.NoError(t, err)
+	for i := 0; i < 31; i++ {
+		o := proto.SessionOpenPayload{Agent: aid, Session: "limits-runtime", Incarnation: incarnation, Group: "team", Stream: proto.NewEnvelopeID(), Key: kp.Pub, Cols: 80, Rows: 24}
+		p.send(p.envelope(proto.KindSessionOpen, proto.Endpoint{}, o))
+		ans := terminalAnswer(t, p, o.Stream)
+		require.False(t, ans.OK)
+		if i == 30 {
+			require.Contains(t, ans.Reason, "rate limited")
+		} else {
+			require.Contains(t, ans.Reason, "3.2 or newer")
+		}
+	}
+	mock.mu.Lock()
+	probes := mock.probes
+	mock.mu.Unlock()
+	require.Equal(t, 30, probes, "rate-limited opens must not spawn a pane probe")
 }

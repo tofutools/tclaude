@@ -526,8 +526,7 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 			slog.Warn("federation: store catalog failed", "from", from, "error", err)
 		}
 	case proto.KindSessionOpen:
-		rt.wg.Add(1)
-		go func() { defer rt.wg.Done(); rt.handleSessionOpen(peer, env) }()
+		rt.acceptSessionOpen(peer, env)
 	case proto.KindSessionAnswer:
 		rt.handleSessionAnswer(peer, env)
 	case proto.KindSessionsUpdate:

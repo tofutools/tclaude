@@ -200,11 +200,12 @@ type CatalogGroup struct {
 }
 
 // CatalogSession describes a group member's current live pane. Agent is the
-// stable attach target; Session identifies its current runtime incarnation.
+// stable attach target; Incarnation distinguishes reused runtime session IDs.
 // WaitingObservedSince is a lower bound, reset when the observer restarts.
 type CatalogSession struct {
 	Agent                string     `json:"agent"`
 	Session              string     `json:"session"`
+	Incarnation          string     `json:"incarnation,omitempty"`
 	Name                 string     `json:"name"`
 	Harness              string     `json:"harness,omitempty"`
 	State                string     `json:"state"`
@@ -382,16 +383,17 @@ func (e *Envelope) DecodePayload(v any) error {
 }
 
 // SessionOpenPayload requests access to one stable agent's current pane.
-// Session pins the runtime advertised in discovery; it cannot follow a restart.
+// Session and Incarnation pin discovery to one launch; it cannot follow a restart.
 type SessionOpenPayload struct {
-	Agent    string `json:"agent"`
-	Session  string `json:"session"`
-	Group    string `json:"group"`
-	Stream   string `json:"stream"`
-	Key      []byte `json:"key"`
-	ReadOnly bool   `json:"read_only"`
-	Cols     int    `json:"cols"`
-	Rows     int    `json:"rows"`
+	Agent       string `json:"agent"`
+	Session     string `json:"session"`
+	Incarnation string `json:"incarnation"`
+	Group       string `json:"group"`
+	Stream      string `json:"stream"`
+	Key         []byte `json:"key"`
+	ReadOnly    bool   `json:"read_only"`
+	Cols        int    `json:"cols"`
+	Rows        int    `json:"rows"`
 }
 type SessionAnswerPayload struct {
 	Stream string `json:"stream"`

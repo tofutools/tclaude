@@ -22,9 +22,9 @@ import (
 )
 
 type fedPanePin struct {
-	agent, conv, session, tmux, pane, window, serverSession, generation string
-	group                                                               int64
-	created                                                             time.Time
+	agent, conv, session, tmux, pane, window, serverSession, incarnation string
+	group                                                                int64
+	created                                                              time.Time
 }
 
 func fedTerminalSlug(readOnly bool) string {
@@ -74,11 +74,15 @@ func resolveFedPane(peer string, p proto.SessionOpenPayload) (*fedPanePin, error
 		if r.ID != p.Session || r.Status == session.StatusExited || r.TmuxSession == "" || !session.IsTmuxSessionAlive(r.TmuxSession) {
 			continue
 		}
+		incarnation := fedSessionIncarnation(r)
+		if p.Incarnation == "" || incarnation != p.Incarnation {
+			return nil, errors.New("session incarnation changed; list sessions again")
+		}
 		pin, err := fedPaneIdentity(r.TmuxSession)
 		if err != nil {
 			return nil, err
 		}
-		pin.agent, pin.conv, pin.session, pin.tmux, pin.group, pin.created, pin.generation = p.Agent, a.CurrentConvID, r.ID, r.TmuxSession, g.ID, r.CreatedAt, r.ExitLaunchGeneration
+		pin.agent, pin.conv, pin.session, pin.tmux, pin.group, pin.created, pin.incarnation = p.Agent, a.CurrentConvID, r.ID, r.TmuxSession, g.ID, r.CreatedAt, incarnation
 		return pin, nil
 	}
 	return nil, errors.New("advertised session is no longer live; list sessions again")
