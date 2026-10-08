@@ -224,3 +224,29 @@ func TestStripControls(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestSessionCatalogSanitization(t *testing.T) {
+	since := time.Now()
+	cat := CatalogPayload{Groups: []CatalogGroup{{Name: "team", Caps: []string{CapSessions}, Sessions: []CatalogSession{
+		{Agent: "agt_valid", Session: "runtime-1", Name: "bad\x1b[2Kname", State: "idle", WaitingReason: "prompt", WaitingObservedSince: &since},
+		{Agent: "../bad", Session: "runtime-2"},
+		{Agent: "agt_valid", Session: "unsafe\nidentity"},
+		{Agent: "agt_other", Session: "runtime-3", WaitingReason: "\x1bpermission", WaitingObservedSince: &since},
+	}}}}
+	SanitizeCatalog(&cat)
+	got := cat.Groups[0].Sessions
+	if len(got) != 2 {
+		t.Fatalf("invalid identities not removed: %+v", got)
+	}
+	if strings.ContainsAny(got[0].Name, "\x1b\n\t") {
+		t.Fatalf("unsafe name: %q", got[0].Name)
+	}
+	if got[1].WaitingReason != "" || got[1].WaitingObservedSince != nil {
+		t.Fatalf("unknown wait accepted: %+v", got[1])
+	}
+	cat.Groups[0].Caps = nil
+	SanitizeCatalog(&cat)
+	if len(cat.Groups[0].Sessions) != 0 {
+		t.Fatal("sessions survived without capability")
+	}
+}

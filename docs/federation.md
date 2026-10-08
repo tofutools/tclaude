@@ -281,7 +281,8 @@ question, such as AskUserQuestion), and `prompt` (idle). Detection follows the
 harness's reported state; an unobservable wait is not inferred from terminal
 text. `waiting ≥3m` means the observer has continuously seen that state for
 at least three minutes, not the precise prompt start time. Observation resets
-when the daemon restarts. Brief transitions between observations can be missed.
+when the daemon restarts or observation stops during disconnection. Brief
+transitions between observations can be missed.
 
 The full session list travels in regular catalogs. While connected, a local
 observer checks shared sessions every two seconds and pushes only changed

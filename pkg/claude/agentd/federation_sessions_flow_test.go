@@ -70,6 +70,7 @@ func TestFederation_SessionsExportAndTransitions(t *testing.T) {
 	require.Equal(t, "permission", waiting.WaitingReason)
 	require.NotNil(t, waiting.WaitingObservedSince)
 	require.WithinDuration(t, time.Now(), *waiting.WaitingObservedSince, 10*time.Second)
+
 	// Unrestricted trust includes the new slug and all live groups automatically.
 	setFedTrustLevel(t, fh, "unrestricted")
 	fedEventually(t, "unrestricted session catalogs", func() bool {

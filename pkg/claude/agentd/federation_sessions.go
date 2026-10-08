@@ -94,6 +94,7 @@ func (rt *fedRuntime) pushSessionTransitions() {
 	if rt.cl == nil || rt.cl.Status().State != client.StateConnected {
 		rt.sessionsMu.Lock()
 		rt.sessionSent = nil
+		rt.sessionObservations = nil // No lower bound can span an unobserved outage.
 		rt.sessionsMu.Unlock()
 		return
 	}
