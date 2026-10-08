@@ -548,6 +548,55 @@ may have at most ten undecided requests, expiring after 72 hours. Hidden groups
 are refused like missing groups. Untrusting the peer makes pending requests
 unapprovable.
 
+## Automatic worker placement
+
+Use node metadata to choose a suitable trusted peer before requesting a worker:
+
+```bash
+tclaude federation spawn-request --node auto --group builders --require 'os=darwin,harness=codex,label=test-rig' --prefer least-loaded --brief "run the native tests"
+tclaude federation spawn-request --node group:gpu-pool --prefer most-free-ram --brief "build the model" --json
+```
+
+`--node auto` considers trusted peers; `group:<pool>` considers the current
+members of a local node pool. `--require` accepts comma-separated `os`, `arch`,
+`harness` and `label` matches. `--prefer` defaults to `least-loaded` (one-minute
+load divided by logical cores); `most-free-ram` ranks available RAM. Instance
+IDs break ties consistently. Omit `--group` only when a candidate exposes
+exactly one group the caller may request workers in.
+
+An agent needs `node.read` scoped to each candidate peer, plus the usual
+`groups.members.spawn` or `agent.spawn` permission. The explanation lists
+visible candidates, ranking readings, rejection reasons and attempted sends;
+`--json` preserves structured rows even when no candidate qualifies. Peers
+outside the caller's `node.read` scope are omitted. Grants and pool membership
+are checked again before each send, and deleting/recreating a pool cannot
+redirect a request already in progress.
+
+Offline peers, missing or warming metadata, observations older than 90 seconds,
+and missing readings needed for the chosen ranking are excluded. Receivers
+must advertise placement admission support. Placement does not grant automatic
+launch: the receiving operator's policy or human approval still decides.
+Requirements travel with the request and are checked against the receiver's
+actual launch harness and node settings. They never override its profile,
+harness, directory or model. An incompatible automatic policy refuses the
+request; a human approval must choose a compatible harness.
+
+The receiver authoritatively enforces `federation.max_live_agents` across live
+agents and reserved launches, including pending remote requests, all peers and
+both manual and automatic approvals. Local managed launches use the same gate.
+Zero means unlimited. Pending requests hold capacity until decided or expired;
+launching reservations survive restart. Unconfirmed capped local launches stay
+in the Pending list until their pane is ready or the launch wrapper reports failure.
+Deleting one whose pane is unconfirmed requires inspecting the launch and
+explicitly acknowledging a possible late worker through the dashboard API
+(`POST /api/pending/delete/<label>?acknowledge_late_worker=1`). Direct peer requests also obey this
+node cap.
+
+Only a definitive `node_busy` refusal, before the receiver creates a request or
+launch, permits trying the next candidate. Other refusals stop selection. A
+missing receipt or timeout leaves delivery uncertain and also stops selection;
+inspect the outgoing request rather than retrying on another node.
+
 ## Remote group routes
 
 A [group route](group-routes.md) can be opened from another instance. Grant

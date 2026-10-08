@@ -38,11 +38,14 @@ const (
 )
 
 type fedSpawnSendReq struct {
-	Peer  string `json:"peer"`
-	Group string `json:"group"`
-	Name  string `json:"name,omitempty"`
-	Role  string `json:"role,omitempty"`
-	Brief string `json:"brief"`
+	Node    string `json:"node,omitempty"`
+	Require string `json:"require,omitempty"`
+	Prefer  string `json:"prefer,omitempty"`
+	Peer    string `json:"peer"`
+	Group   string `json:"group"`
+	Name    string `json:"name,omitempty"`
+	Role    string `json:"role,omitempty"`
+	Brief   string `json:"brief"`
 }
 
 // handleFederationSpawnRequestSend queues a spawn request to a peer. Agents
@@ -65,6 +68,14 @@ func handleFederationSpawnRequestSend(w http.ResponseWriter, r *http.Request) {
 	req.Brief = strings.TrimSpace(req.Brief)
 	if req.Brief == "" || len(req.Brief) > proto.MaxSpawnBrief {
 		writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("brief must be 1..%d bytes", proto.MaxSpawnBrief))
+		return
+	}
+	if req.Node != "" {
+		handleFederationPlacement(w, r, req, fromConv, isHuman)
+		return
+	}
+	if req.Require != "" || req.Prefer != "" {
+		writeError(w, 400, "invalid_arg", "require/prefer need node=auto or node=group:<pool>")
 		return
 	}
 	peer, err := resolveFederationPeerOpt(req.Peer, false)
@@ -163,7 +174,29 @@ func (rt *fedRuntime) acceptSpawnRequest(peer *db.FederationPeer, env *proto.Env
 		refuse(fedCodeNotExported, "no group by that name accepts spawn requests from this instance")
 		return
 	}
+	if sp.PlacementVersion != 0 || sp.Require != "" {
+		if sp.PlacementVersion != fedPlacementVersion {
+			refuse(fedCodeMalformed, "unsupported placement version")
+			return
+		}
+		if err := validateLocalPlacementRequirements(sp.Require, ""); err != nil {
+			refuse("node_incompatible", err.Error())
+			return
+		}
+		if grant := fedPeerGroupGrant(peer.InstanceID, g.ID, PermGroupsMembersSpawn); grant != nil {
+			effective, err := federationPolicyHarness(g, grant.SpawnPolicy)
+			if err != nil {
+				refuse("node_incompatible", "automatic launch policy unavailable")
+				return
+			}
+			if err := validateLocalPlacementRequirements(sp.Require, effective); err != nil {
+				refuse("node_incompatible", err.Error())
+				return
+			}
+		}
+	}
 	req := &db.FederationSpawnRequest{
+		PlacementVersion: sp.PlacementVersion, Requirements: sp.Require,
 		FromInstance: peer.InstanceID, EnvelopeID: env.ID, FromAgent: senderAgent, FromName: senderName,
 		GroupID: g.ID, GroupName: g.Name, Brief: sp.Brief, ExpiresAt: env.ExpiresAt,
 	}
@@ -173,10 +206,13 @@ func (rt *fedRuntime) acceptSpawnRequest(peer *db.FederationPeer, env *proto.Env
 	if strings.TrimSpace(sp.Role) != "" {
 		req.Role = proto.SafeName(sp.Role, false)
 	}
-	id, err := db.InsertFederationSpawnRequest(req, fedSpawnPendingLimit)
+	id, err := insertFederationSpawnWithCapacity(req)
 	switch {
 	case errors.Is(err, db.ErrFederationDuplicate):
 		rt.sendControl(env.From.Instance, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckAccepted})
+		return
+	case errors.Is(err, errNodeBusy):
+		refuse(fedCodeNodeBusy, err.Error())
 		return
 	case err != nil:
 		if _, full := agentMessageQueueFull(err); full {
@@ -204,6 +240,9 @@ func (rt *fedRuntime) acceptSpawnRequest(peer *db.FederationPeer, env *proto.Env
 	}
 	if req.Role != "" {
 		body += fmt.Sprintf(" with role %q", req.Role)
+	}
+	if req.PlacementVersion != 0 {
+		body += "\nPlacement requirements (must match the chosen launch harness): " + req.Requirements
 	}
 	body += fmt.Sprintf(".\n\nBrief:\n%s\n\nDecide with `tclaude federation requests approve %d` (optionally --profile/--cwd/--harness) or `tclaude federation requests deny %d`.",
 		sp.Brief, id, id)
@@ -288,18 +327,20 @@ func (rt *fedRuntime) handleSpawnResult(peer *db.FederationPeer, env *proto.Enve
 }
 
 type fedSpawnRequestJSON struct {
-	ID          int64     `json:"id"`
-	From        string    `json:"from"`
-	Instance    string    `json:"instance"`
-	Group       string    `json:"group"`
-	Name        string    `json:"name,omitempty"`
-	Role        string    `json:"role,omitempty"`
-	Brief       string    `json:"brief"`
-	Status      string    `json:"status"`
-	ResultAgent string    `json:"result_agent,omitempty"`
-	Reason      string    `json:"reason,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	ExpiresAt   time.Time `json:"expires_at"`
+	Require          string    `json:"require,omitempty"`
+	PlacementVersion int       `json:"placement_version,omitempty"`
+	ID               int64     `json:"id"`
+	From             string    `json:"from"`
+	Instance         string    `json:"instance"`
+	Group            string    `json:"group"`
+	Name             string    `json:"name,omitempty"`
+	Role             string    `json:"role,omitempty"`
+	Brief            string    `json:"brief"`
+	Status           string    `json:"status"`
+	ResultAgent      string    `json:"result_agent,omitempty"`
+	Reason           string    `json:"reason,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	ExpiresAt        time.Time `json:"expires_at"`
 }
 
 func fedSpawnRequestView(req *db.FederationSpawnRequest, now time.Time) fedSpawnRequestJSON {
@@ -312,6 +353,7 @@ func fedSpawnRequestView(req *db.FederationSpawnRequest, now time.Time) fedSpawn
 		status = "expired"
 	}
 	return fedSpawnRequestJSON{
+		Require: req.Requirements, PlacementVersion: req.PlacementVersion,
 		ID: req.ID, From: req.FromName + "@" + proto.SafeName(peer, true), Instance: req.FromInstance, Group: req.GroupName,
 		Name: req.Name, Role: req.Role, Brief: req.Brief, Status: status, ResultAgent: req.ResultAgent, Reason: req.Reason,
 		CreatedAt: req.CreatedAt, ExpiresAt: req.ExpiresAt,
@@ -457,6 +499,9 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 		return
 	}
 	inner := r.Clone(context.WithValue(r.Context(), reservedAgentIDContextKey{}, reservedID))
+	if req.PlacementVersion != 0 {
+		inner = inner.WithContext(context.WithValue(inner.Context(), federationPlacementConstraintsKey{}, req.Requirements))
+	}
 	inner.Method = http.MethodPost
 	inner.Body = io.NopCloser(bytes.NewReader(raw))
 	inner.ContentLength = int64(len(raw))

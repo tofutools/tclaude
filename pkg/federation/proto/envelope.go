@@ -147,10 +147,12 @@ const MaxSpawnBrief = 8 * 1024
 
 // SpawnRequestPayload is the payload of a KindSpawnReq envelope.
 type SpawnRequestPayload struct {
-	Group string `json:"group"`
-	Name  string `json:"name,omitempty"`
-	Role  string `json:"role,omitempty"`
-	Brief string `json:"brief"`
+	PlacementVersion int    `json:"placement_version,omitempty"`
+	Require          string `json:"require,omitempty"`
+	Group            string `json:"group"`
+	Name             string `json:"name,omitempty"`
+	Role             string `json:"role,omitempty"`
+	Brief            string `json:"brief"`
 }
 
 // Spawn result statuses.

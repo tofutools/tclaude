@@ -3737,6 +3737,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, http.StatusBadRequest, "invalid_harness", harnessErr.Error())
 		return
 	}
+	if constraints, ok := r.Context().Value(federationPlacementConstraintsKey{}).(string); ok {
+		if err := validateLocalPlacementRequirements(constraints, h.Name); err != nil {
+			writeError(w, 409, "node_incompatible", err.Error())
+			return
+		}
+	}
 	if body.NonInteractive && h.Name == harness.ShellName && body.IncludeGroupContext != nil && *body.IncludeGroupContext {
 		writeError(w, http.StatusBadRequest, "invalid_group_context",
 			"--group-context is not meaningful for a shell command")
@@ -5363,6 +5369,8 @@ type spawnParams struct {
 	// Empty everywhere else. Unexported on purpose: only
 	// executeServerSpawnDeferred sets it.
 	pendingSpawnLabel string
+	// Set only by node admission: uncertain launches need durable reservations.
+	nodeCapacityReserved bool
 	// privateAttachmentRootReserved says the deferred pass atomically claimed
 	// pendingSpawnLabel's private root before publishing the Pending row. The
 	// continuation may reuse that exact root; every fresh inline spawn must
@@ -6473,6 +6481,11 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 // is enrolled later by the sweeper.
 func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failure *spawnFailure) {
 	defer db.NotifyStatusChanged()
+	releaseCapacity, capacityFailure := acquireNodeLaunch(&p)
+	if capacityFailure != nil {
+		return nil, capacityFailure
+	}
+	defer releaseCapacity()
 	timing := config.StartupTiming("spawn", "name", p.Name, "harness", p.Harness, "async", p.Async)
 	defer func() {
 		timing("return", "failed", failure != nil)
@@ -7166,7 +7179,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		return nil, fail
 	}
 
-	// Async harnesses without launch enrollment may return before their conv-id
+	// Capacity-limited launches and async harnesses without launch enrollment
+	// may return before their pane or conv-id
 	// materialises. Reserve and persist the stable actor identity BEFORE the
 	// process starts, so an immediate hook/reaper enrollment can only bind this
 	// exact id. The row is atomically replaced by the actor binding once the conv
@@ -7179,7 +7193,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// the first was already returned to the caller. pendingHeld is the "some
 	// reservation exists for this label" predicate the shared claim/requeue/
 	// launch-marker sites key on.
-	reservedPending := p.Async && !launchEnroll && p.pendingSpawnLabel == ""
+	reservedPending := (p.Async && !launchEnroll || p.nodeCapacityReserved) && p.pendingSpawnLabel == ""
 	pendingHeld := reservedPending || p.pendingSpawnLabel != ""
 	if reservedPending {
 		if g == nil {
@@ -7557,7 +7571,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		// miss is benign — the sweeper saw the session row first and cleared
 		// the reservation against the same enrollment; a claim error leaves
 		// the row for the sweeper's idempotent already-enrolled path.
-		if p.pendingSpawnLabel != "" {
+		if pendingHeld {
 			if _, err := db.ClaimPendingSpawnAndBindAgent(label, preConvID, p.AgentID, "spawn"); err != nil {
 				slog.Warn("spawn: failed to claim deferred pending reservation; leaving it for the sweeper",
 					"label", label, "conv", preConvID, "error", err)
@@ -7911,6 +7925,7 @@ func pendingSpawnFromParams(g *db.AgentGroup, p spawnParams, label string) *db.P
 		Label:               label,
 		AgentID:             p.AgentID,
 		Launching:           true,
+		CapacityReserved:    p.nodeCapacityReserved,
 		GroupID:             g.ID,
 		Role:                p.Role,
 		Descr:               p.Descr,

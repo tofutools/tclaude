@@ -12,15 +12,16 @@ const KindNodeUpdate = "node_update"
 
 // NodeMetadata is an instance-wide, path-free advertisement, not a resource reservation.
 type NodeMetadata struct {
-	Schema         int           `json:"schema"`
-	OS             string        `json:"os"`
-	OSVersion      string        `json:"os_version"`
-	Arch           string        `json:"arch"`
-	TclaudeVersion string        `json:"tclaude_version"`
-	Harnesses      []NodeHarness `json:"harnesses"`
-	Labels         []string      `json:"labels"`
-	MaxLiveAgents  int           `json:"max_live_agents"` // zero is unlimited
-	Resources      NodeResources `json:"resources"`
+	SpawnPlacementVersion int           `json:"spawn_placement_version,omitempty"`
+	Schema                int           `json:"schema"`
+	OS                    string        `json:"os"`
+	OSVersion             string        `json:"os_version"`
+	Arch                  string        `json:"arch"`
+	TclaudeVersion        string        `json:"tclaude_version"`
+	Harnesses             []NodeHarness `json:"harnesses"`
+	Labels                []string      `json:"labels"`
+	MaxLiveAgents         int           `json:"max_live_agents"` // zero is unlimited
+	Resources             NodeResources `json:"resources"`
 }
 type NodeHarness struct {
 	Name    string `json:"name"`
