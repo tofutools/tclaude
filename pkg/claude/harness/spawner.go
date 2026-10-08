@@ -71,6 +71,9 @@ type SpawnSpec struct {
 	// per-launch shell_environment_policy.set overrides. Other harnesses ignore
 	// the field because their command environments inherit EnvExports directly.
 	ShellEnvironment map[string]string
+	// RuntimeHTTPProxyEnvironment emits compile-time Codex argument slots which
+	// the gateway bootstrap fills after binding its per-launch endpoints.
+	RuntimeHTTPProxyEnvironment bool
 	// ResumeID is the full conversation id to resume, or "" to start a
 	// fresh session. The flag/sub-command form is harness-specific
 	// (`claude --resume <id>` vs `codex resume <id>`).

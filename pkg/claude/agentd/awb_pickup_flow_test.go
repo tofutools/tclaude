@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 // awb_pickup_flow_test.go drives `tclaude pickup`'s daemon surface — the
@@ -253,4 +255,71 @@ func TestAWBPickup_ClosedIssueHintFollowsCloseMonitoring(t *testing.T) {
 	alpha := pickupList(t, f)["alpha"]
 	assert.Equal(t, agent.AWBPickupStateReleasing, alpha.State)
 	assert.Contains(t, alpha.Hint, "next poll", "without monitor_close the worker releases a closed issue immediately")
+}
+
+func TestAWBPickup_MetadataReachesLaunch(t *testing.T) {
+	for _, mode := range []string{"fresh", "recovered", "invalid"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newFlow(t)
+			f.HaveGroup("builders")
+			t.Setenv("AWB_PASSWORD", "hunter2")
+			cfg := &config.Config{Agent: &config.AgentConfig{AWBProxy: &config.AWBProxyConfig{
+				URL: "https://awb.example", Username: "worker", AllowWrite: true, AllowedWorkspaces: []string{"tcl"},
+				ReadyPolling: map[string]config.AWBReadyPollingConfig{"builders": {
+					Workspace: "tcl", Group: "builders", Cwd: testutil.CanonicalTempDir(t),
+					Harness: config.HarnessList{"codex"}, Model: "haiku", Effort: "low",
+				}},
+			}}}
+			require.NoError(t, config.Save(cfg))
+			t.Cleanup(agentd.RegisterAWBReadyProcessesForTest(cfg))
+			mutations := 0
+			rec := &awbRecorder{response: func(req agentd.AWBProxyRequest) (int, string) {
+				if strings.Contains(req.URL, "/api/ready") {
+					return http.StatusOK, `[{"id":"tcl-1","workspace":"tcl","status":"open"}]`
+				}
+				if req.Method != http.MethodGet {
+					mutations++
+				}
+				if mode == "invalid" {
+					return http.StatusOK, `{"id":"tcl-1","workspace":"tcl","status":"open","metadata":{"agent":{"model":7}}}`
+				}
+				return http.StatusOK, `{"id":"tcl-1","workspace":"tcl","status":"in_progress","assignees":["worker"],"metadata":{"agent":{"harness":"claude","model":"sonnet","effort":"high"}}}`
+			}}
+			t.Cleanup(agentd.SetAWBTransportForTest(rec.do))
+			if mode == "recovered" {
+				selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-1", db.NewAgentID())
+				require.NoError(t, err)
+				require.True(t, selected)
+				_, err = db.UpdateAWBReadyDispatch("builders", "tcl-1", "claimed", "")
+				require.NoError(t, err)
+			}
+			err := agentd.PollAWBReadyProcessForTest(context.Background(), "builders")
+			if mode == "invalid" {
+				require.ErrorContains(t, err, "invalid AWB agent metadata")
+				dispatch, getErr := db.GetAWBReadyDispatch("builders")
+				require.NoError(t, getErr)
+				assert.Nil(t, dispatch)
+				assert.Zero(t, mutations)
+				return
+			}
+			require.NoError(t, err)
+			dispatch, err := db.GetAWBReadyDispatch("builders")
+			require.NoError(t, err)
+			require.NotNil(t, dispatch)
+			assert.Equal(t, "spawned", dispatch.Phase)
+			a, err := db.GetAgent(dispatch.AgentID)
+			require.NoError(t, err)
+			require.NotNil(t, a)
+			row, err := db.FindSessionByConvID(a.CurrentConvID)
+			require.NoError(t, err)
+			require.NotNil(t, row)
+			assert.Equal(t, "claude", row.Harness)
+			model, ok := f.World.SpawnModel(a.CurrentConvID)
+			require.True(t, ok)
+			assert.Equal(t, "sonnet", model)
+			effort, ok := f.World.SpawnEffort(a.CurrentConvID)
+			require.True(t, ok)
+			assert.Equal(t, "high", effort)
+		})
+	}
 }

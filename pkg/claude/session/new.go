@@ -2356,7 +2356,14 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	timing("codex_version_checked")
-	harnessCmd := h.Spawn.BuildCommand(spawnSpec)
+	gatewayCLIPath := clcommon.SelfTclaudePath()
+	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
+		gatewayCLIPath, err = HTTPProxyCLIForLayerSpec(&layerSpec)
+		if err != nil {
+			return fmt.Errorf("resolve HTTP proxy launch CLI: %w", err)
+		}
+	}
+	harnessCmd := HTTPProxySpawnCommand(sessionID, h, spawnSpec, gatewayCLIPath)
 	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
 		if stacked {
 			harnessCmd, err = WrapTclaudeLayerStackedSpec(

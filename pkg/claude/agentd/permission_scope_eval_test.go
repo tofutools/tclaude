@@ -17,6 +17,7 @@ import (
 func TestActionContextCoversEveryScopeDimension(t *testing.T) {
 	full := ActionContext{
 		Group:           "g",
+		HTTPProxy:       "service",
 		TargetAgent:     "a",
 		SpawnProfile:    "p",
 		SandboxProfile:  "s",
@@ -359,6 +360,7 @@ var scopedSlugEnforcementPaths = map[string]string{
 	PermGroupsPresenceRead:                "federation peer grants — fedPeerAllows evaluates local group scope for catalogs",
 	PermMessageAttachments:                "federation peer grants — fedPeerAllows evaluates local group scope for inbound attachments",
 	PermMessageDirect:                     "Federation outgoing mail supplies RemotePeer/RemoteGroup",
+	PermHTTP:                              "requirePermission with HTTPProxy instance name",
 	PermAgentSpawn:                        "requireSpawnPermission — evaluates group, spawn_profile, and sandbox_profile",
 	PermGroupsMembersSpawn:                "requireSpawnPermission — evaluates group, spawn_profile, and sandbox_profile",
 	PermGroupsMembersReincarnate:          "requireCrossAgentPermission — checks every current active group",

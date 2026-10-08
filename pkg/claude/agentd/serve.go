@@ -437,7 +437,8 @@ func runServe(p *serveParams) error {
 		// can read peer credentials from it.
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
 			if uc, ok := c.(*net.UnixConn); ok {
-				return context.WithValue(ctx, unixConnKey{}, uc)
+				ctx = context.WithValue(ctx, unixConnKey{}, uc)
+				return context.WithValue(ctx, httpProxyProofSubjectKey{}, &httpProxyProofSubject{})
 			}
 			return ctx
 		},
@@ -1438,6 +1439,9 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/github/issue/list", handleGHProxyIssueList)
 	mux.HandleFunc("POST /v1/github/issue/view", handleGHProxyIssueView)
 	mux.HandleFunc("POST /v1/github/issue/comment", handleGHProxyIssueComment)
+	mux.HandleFunc("POST /v1/http/request", handleHTTPProxyRequest)
+	mux.HandleFunc("/v1/http/proxy/{name}/{path...}", handleHTTPProxyGateway)
+	mux.HandleFunc("GET /v1/http/environment", handleHTTPProxyEnvironment)
 	mux.HandleFunc("POST /v1/linear/whoami", handleLinearProxyWhoami)
 	mux.HandleFunc("POST /v1/linear/issue/view", handleLinearProxyIssueView)
 	mux.HandleFunc("POST /v1/linear/issue/list", handleLinearProxyIssueList)
@@ -1501,7 +1505,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/process/runs/{id}/record-outcome", processRoute(handleProcessRunRecordOutcome))
 	mux.HandleFunc("POST /v1/process/runs/{id}/decide", processRoute(handleProcessRunDecide))
 	mux.HandleFunc("POST /v1/process/runs/{id}/resolve-blocked", processRoute(handleProcessRunResolveBlocked))
-	return idempotencyRequests(logRequest(auditRequests(mux)))
+	return idempotencyRequests(logRequest(auditRequests(dispatchHTTPProxyGateway(mux))))
 }
 
 func logRequest(h http.Handler) http.Handler {
@@ -1526,6 +1530,9 @@ func safeHTTPLogPath(path string) string {
 }
 
 func projectSafeHTTPLogPath(path string) (string, bool) {
+	if strings.HasPrefix(path, "/v1/http/proxy/") {
+		return "/v1/http/proxy/", true
+	}
 	return path, false
 }
 

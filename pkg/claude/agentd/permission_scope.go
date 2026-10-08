@@ -21,6 +21,7 @@ const permissionScopeMaxJSONBytes = 262144
 type ScopeDim string
 
 const (
+	ScopeDimHTTPProxy       ScopeDim = "http_proxy"
 	ScopeDimGroup           ScopeDim = "group"
 	ScopeDimSpawnProfile    ScopeDim = "spawn_profile"
 	ScopeDimSandboxProfile  ScopeDim = "sandbox_profile"
@@ -100,6 +101,7 @@ type permissionScopeDimension struct {
 // proxy's slash-segmented pattern language, and linear_team the Linear proxy's
 // whole-key case-insensitive one.
 var permissionScopeDimensions = map[ScopeDim]permissionScopeDimension{
+	ScopeDimHTTPProxy:       {},
 	ScopeDimGroup:           {},
 	ScopeDimSpawnProfile:    {},
 	ScopeDimSandboxProfile:  {},
@@ -361,7 +363,7 @@ func appendUnique(out []string, seen map[string]bool, s string) []string {
 // (no operator list at all) writable.
 func scopeDimOptionsSnapshot(
 	groups []*db.AgentGroup, profiles []spawnProfileJSON, sandboxProfiles []*db.SandboxProfile,
-	linearTeams, awbWorkspaces []string,
+	linearTeams, awbWorkspaces, httpProxies []string,
 ) map[ScopeDim]snapshotScopeDimOptions {
 	out := make(map[ScopeDim]snapshotScopeDimOptions, len(permissionScopeDimensions))
 	for _, dim := range permissionScopeDims() {
@@ -393,6 +395,8 @@ func scopeDimOptionsSnapshot(
 			for _, key := range linearTeams {
 				options.Values = append(options.Values, strings.ToUpper(key))
 			}
+		case ScopeDimHTTPProxy:
+			options.Values = append(options.Values, httpProxies...)
 		case ScopeDimAWBWorkspace:
 			// Offered exactly as stored. Unlike a Linear team key, an AWB
 			// workspace key IS lower-case — its own charset says so — so there is

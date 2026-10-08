@@ -6,16 +6,18 @@ issue tracker. The credential proxies give those workflows back without
 putting a secret inside the wall: the agent describes a *semantic* operation
 ("push my branch", "comment on this PR"), and the `agentd` daemon builds the
 actual git invocation or API call on the host, where the credentials live.
-There is no passthrough flag and no raw-query escape hatch; every gate is
-enforced daemon-side.
+Semantic proxies have no passthrough flag or raw-query escape hatch. A named
+HTTP proxy additionally supports arbitrary requests within an operator-pinned
+base URL. Every gate is enforced daemon-side.
 
-Four proxies exist, as subcommands of a top-level command:
+Five proxy families exist, as subcommands of a top-level command:
 
 ```bash
 tclaude proxy git     # fetch, pull, push through the daemon
 tclaude proxy github  # PRs, issues, and Actions runs (alias: gh)
 tclaude proxy linear  # Linear issues, bounded by a team allow-list
 tclaude proxy awb     # AWB issues, bounded by a workspace allow-list
+tclaude proxy http    # HTTP(S) requests through a named service instance
 ```
 
 None of their permissions are granted by default, and none are implied by
@@ -33,6 +35,7 @@ agents cannot use. The command registers when any proxy family is configured:
 - `agent.git_proxy.allowed_remotes` is non-empty (Git and GitHub), or
 - `agent.linear_proxy` names an allow-list, a key file or a workspace route, or
 - `agent.awb_proxy.url` is set, or
+- `agent.http_proxies` has at least one named instance, or
 - the caller is a managed agent and a capability probe of agentd's
   `GET /v1/info` reports proxy support (daemons predating that projection keep
   the command visible).
@@ -293,7 +296,13 @@ The `agent.awb_proxy` block in `~/.tclaude/data/config.json`:
   `labels` are passed as repeated AWB label filters. `interval` defaults to
   `1m` and paces every poll except one that releases the issue in flight:
   once that issue closes, the worker asks for the next ready issue
-  immediately rather than waiting an interval. `profile`, `sandbox_profile`, `harness`, and `worktree` are optional.
+  immediately rather than waiting an interval. `profile`, `sandbox_profile`, `harness`, `model`, `effort`, and `worktree` are optional.
+  Non-empty fields in issue metadata override the corresponding pickup defaults,
+  for example `"agent": {"harness": "claude", "model": "sonnet", "effort": "high"}`.
+  A metadata harness pins that issue to one vendor, replacing the fallback chain.
+  Omitted or empty fields retain the configured defaults; unset model and effort
+  resolve through the spawn profile chain. Invalid agent settings stop pickup
+  and are reported for correction.
   `harness` takes one name (`"codex"`) or an ordered fallback chain
   (`["codex", "claude"]`) — see "Usage ceilings on pickup" below for what the
   chain does. `skip_epics` defaults to `false`; when true, the worker skips
@@ -388,7 +397,7 @@ premium-request quota. Without the block, nothing is gated; this is the same
 configuration `tclaude task` waits on, so one setting covers both.
 
 The harness checked is the one the spawn would actually use: the process's
-`harness`, or whatever its `profile`, the group default profile, or the global
+issue metadata `agent.harness`, then the process's `harness`, or whatever its `profile`, the group default profile, or the global
 default profile resolves to. OpenCode runs against the operator's own provider
 keys and has no account-wide window to read, so its processes are never held.
 
@@ -417,9 +426,13 @@ Note that a chain is only a usage fallback. The harness a spawn lands on
 changes the vendor, model catalogue and sandbox posture of the agent that does
 the work, so every entry should be one the process's issues can actually be
 worked on; `profile` and `sandbox_profile` still apply to whichever entry is
-chosen.
+chosen. Explicit pickup `model` and `effort` defaults also apply to every
+chosen vendor, including a metadata harness override. Set compatible values,
+omit them to use per-harness profile defaults, or override them together in
+issue metadata; incompatible explicit values fail spawn validation.
 
-While a process is held it asks AWB for nothing, and it resumes within one
+While a process is held it reads the next ready issue and its metadata without
+claiming it, and it resumes within one
 `interval` of the offending window resetting. The hold is written to the daemon
 log at info level and to the audit trail — verb `awb.ready.ratelimited` — once
 per hold rather than once per poll, so a quiet process is explainable without
@@ -502,3 +515,123 @@ agents.
   and `--ask-human`.
 - [Network filtering](network-filtering.md) — reaching hosts directly when a
   proxy is the wrong shape.
+
+## Named HTTP(S) proxies
+
+Use a generic proxy for services without a semantic integration. Configure
+instances in the operator's private config; the daemon reads the credential,
+so the agent does not need access to its file:
+
+```json
+{
+  "agent": {
+    "http_proxies": {
+      "inventory": {
+        "url": "https://inventory.example/api/v1",
+        "header": "Authorization",
+        "header_value": "Bearer ",
+        "header_value_file": "~/service-token.txt"
+      }
+    }
+  }
+}
+```
+
+The file can contain just the token, such as `secret-token`. When both fields
+are set, the header is `header_value` followed by the file contents, with no
+implicit separator. The example sends `Authorization: Bearer secret-token`.
+Leading and trailing file whitespace is trimmed; whitespace in `header_value`
+is preserved, including the space after `Bearer`. Either field can also be used
+alone: a file-only configuration should contain the complete header value.
+An empty file contributes an empty string; the combined header value must still
+be nonempty and valid.
+HTTP and HTTPS base URLs are supported, without URL credentials, queries or
+fragments. Prefer HTTPS for remote services. Separate instances can use
+separate services, API prefixes and credentials. Run
+`tclaude setup --install-proxy-skills` to install the optional `proxy-http`
+skill when this family is configured.
+
+Grant access to one instance by its exact, case-sensitive name:
+
+```bash
+tclaude agent permissions grant worker proxy.http --scope http_proxy=inventory
+tclaude proxy http inventory 'items?limit=10'
+tclaude proxy http inventory items -X POST -H 'Content-Type: application/json' --body-file item.json
+tclaude proxy http inventory items --json
+```
+
+An unscoped `proxy.http` grant permits all configured instances. There are no
+method or endpoint permissions: this grants full access within the service's
+base URL, including writes. It is neither default-granted nor implied by group
+ownership. `--ask-human 60s` requests one-shot approval through the ordinary
+permission gate.
+
+Paths are appended to the configured base path; a leading slash has the same
+meaning as a relative path. Absolute URLs, traversal segments, encoded
+separators and ambiguous double-encoded paths are refused. The daemon adds the
+configured header after caller headers, so callers cannot replace it. Host and
+transport headers are reserved. CONNECT and TRACE are refused. Redirects are
+returned without following them, and ambient HTTP proxy settings are ignored.
+
+By default the CLI prints the raw response body. `--json` prints `status`,
+`headers` and a base64 `body`, preserving binary data. HTTP 4xx/5xx responses
+retain their body and produce a nonzero CLI exit status. `--body-file -` reads
+stdin. Request and response bodies are limited to 4 MiB; credential files are
+limited to 16 KiB. Calls have a 60-second daemon deadline and are never
+retried automatically. A timeout or unreadable/oversized response can occur
+after an upstream write succeeded; check the service before retrying.
+
+The daemon endpoint is `POST /v1/http/request`, with `name`, `method`, `path`,
+optional `headers` (a string map), and optional `body` (base64). Its successful
+transport response wraps the upstream status, headers and base64 body; an
+upstream error status still returns this wrapper. Calls are audited as proxy
+operations with the caller's instance-name permission scope.
+
+The dashboard permission editor can grant `proxy.http`. To limit access, choose configured instance names in its `http_proxy` scope picker. The permission appears when `agent.http_proxies` contains at least one instance.
+
+### Ordinary HTTP clients
+
+Agents launched or resumed by tclaude receive one environment variable for
+each instance their effective `proxy.http` grant permits:
+
+```bash
+curl --noproxy 127.0.0.1 "${TCLAUDE_HTTP_PROXY_inventory}items?limit=10"
+curl --noproxy 127.0.0.1 -X POST -H 'Content-Type: application/json' \
+  --data-binary @item.json "${TCLAUDE_HTTP_PROXY_inventory}items"
+```
+
+The variable name is `TCLAUDE_HTTP_PROXY_` followed by the exact configured
+instance name by default. Set `environment_variable` on an `agent.http_proxies` entry to override it, for example `"environment_variable": "INVENTORY_API_URL"`. Names must be unique among the proxies granted to an agent and compatible with environment variables (no `=` or NUL). Custom names replace the default variable. Each value is a base URL with a trailing slash. Use shell-safe
+instance names such as `inventory` or `my_service` when accessing variables
+from a shell. Other environment-compatible names can be read with `printenv`
+or a language's environment map.
+
+These URLs accept ordinary HTTP methods, headers and raw bodies, and return
+the upstream status, headers and raw body. The launch creates a loopback bridge
+inside the agent's network namespace; the bridge carries requests to agentd
+through its authenticated Unix socket. This keeps the URLs usable with isolated
+networking. The daemon performs the upstream request and adds the configured
+credential header. The CLI command remains available independently.
+
+URLs include an unguessable local capability for one instance. Treat them as
+private to the agent. They are not service credentials and are never sent to
+the upstream service. The daemon also verifies the bridge's live launch pane
+and generation and rechecks the agent's instance-scoped permission on every
+request. Revoked permissions immediately stop further upstream requests.
+The gateway applies the same path, redirect and body limits as the CLI and
+strips hop-by-hop headers. It does not follow upstream redirects.
+
+Permission and configuration changes take effect in the injected environment
+on the next launch or resume; existing gateways still enforce current grants.
+A daemon restart requires the agent's Unix socket to be reachable again, but
+does not invalidate the bridge's local URL. Gateway request URLs and bodies
+are excluded from audit and request logs; audit rows record the instance and
+permission scope. Proxy URL variables are stripped when building another
+agent's launch so capabilities cannot be inherited by accident.
+
+The raw daemon route is `/v1/http/proxy/NAME/PATH`, over the existing Unix
+socket. `GET /v1/http/environment` returns only the allowed instance names to
+a verified agent or launch bootstrap; it never returns service credentials or
+upstream URLs.
+
+Gateway clients must be able to reach loopback in the agent launch namespace. Use `--noproxy 127.0.0.1` with curl when ambient proxy settings would redirect local requests. A harness tool running in a separate network namespace may need the Unix-socket `tclaude proxy http` command instead. Redirect locations and cookie attributes are returned unchanged; the gateway does not rewrite them or follow redirects. If gateway discovery is temporarily unavailable at launch, the agent starts with a warning and without gateway URLs.

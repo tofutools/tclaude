@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -286,6 +287,13 @@ func BuildEnvExports(additional map[string]string) string {
 		"TCLAUDE_HUMAN_TOKEN": true,
 	}
 
+	if cfg, err := config.Load(); err == nil && cfg.Agent != nil {
+		for _, instance := range cfg.Agent.HTTPProxies {
+			if instance.EnvironmentVariable != "" {
+				skipVars[instance.EnvironmentVariable] = true
+			}
+		}
+	}
 	var exports []string
 
 	// Export all current environment variables (except skipped ones)
@@ -297,7 +305,7 @@ func BuildEnvExports(additional map[string]string) string {
 		key := parts[0]
 		value := parts[1]
 
-		if skipVars[key] {
+		if skipVars[key] || strings.HasPrefix(key, "TCLAUDE_HTTP_PROXY_") || config.IsHTTPProxyGatewayURL(value) {
 			continue
 		}
 
@@ -311,6 +319,9 @@ func BuildEnvExports(additional map[string]string) string {
 
 	// Add additional/override variables
 	for key, value := range additional {
+		if skipVars[key] || strings.HasPrefix(key, "TCLAUDE_HTTP_PROXY_") || config.IsHTTPProxyGatewayURL(value) {
+			continue
+		}
 		exports = append(exports, "export "+key+"="+ShellQuoteArg(value))
 	}
 

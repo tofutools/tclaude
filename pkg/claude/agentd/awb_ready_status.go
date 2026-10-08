@@ -109,6 +109,16 @@ func RegisterAWBReadyProcessesForTest(cfg *config.Config) func() {
 	}
 }
 
+// PollAWBReadyProcessForTest drives one registered worker synchronously.
+func PollAWBReadyProcessForTest(ctx context.Context, process string) error {
+	w, ok := registeredAWBReadyWorkers()[process]
+	if !ok {
+		return fmt.Errorf("no AWB pickup process named %s", process)
+	}
+	_, err := w.pollExclusive(ctx)
+	return err
+}
+
 // RecordAWBReadyPollForTest records a poll outcome for a registered process,
 // as its poll loop would.
 func RecordAWBReadyPollForTest(process string, err error) {

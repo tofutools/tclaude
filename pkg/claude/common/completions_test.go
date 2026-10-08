@@ -1,6 +1,9 @@
 package common
 
 import (
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/testutil"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -204,4 +207,22 @@ func TestIsValidUUID(t *testing.T) {
 	for _, s := range invalid {
 		assert.Falsef(t, IsValidUUID(s), "expected %q to be rejected", s)
 	}
+}
+
+func TestBuildEnvExportsDoesNotPropagateHTTPProxyCapabilities(t *testing.T) {
+	t.Setenv("TCLAUDE_HTTP_PROXY_inventory", "http://localhost/private-capability/")
+	got := BuildEnvExports(map[string]string{"TCLAUDE_HTTP_PROXY_billing": "http://localhost/foreign-capability/"})
+	if strings.Contains(got, "TCLAUDE_HTTP_PROXY_") || strings.Contains(got, "private-capability") || strings.Contains(got, "foreign-capability") {
+		t.Fatal("proxy capability propagated into a new launch")
+	}
+}
+
+func TestBuildEnvExportsCustomHTTPProxyVariable(t *testing.T) {
+	t.Setenv("HOME", testutil.CanonicalTempDir(t))
+	t.Setenv("INVENTORY_API_URL", "http://old-capability.invalid/")
+	t.Setenv("RENAMED_OLD_URL", "http://127.0.0.1:12345/"+strings.Repeat("a", 64)+"/")
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{HTTPProxies: map[string]config.HTTPProxyConfig{"inventory": {EnvironmentVariable: "INVENTORY_API_URL"}}}}))
+	exports := BuildEnvExports(map[string]string{"INVENTORY_API_URL": "http://foreign.invalid/"})
+	assert.NotContains(t, exports, "INVENTORY_API_URL")
+	assert.NotContains(t, exports, "RENAMED_OLD_URL")
 }

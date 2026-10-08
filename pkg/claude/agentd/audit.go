@@ -329,6 +329,7 @@ var auditRoutes = []auditRoute{
 	// records mutating methods only). The handlers add the safe detail after
 	// the fact via setAuditDetail: remote, ref, and exit code. No describer
 	// reads the body, so a PR title or comment never enters the trail.
+	{method: http.MethodPost, segs: []string{"http", "request"}, verb: "http.request", pathOnly: true},
 	{method: http.MethodPost, segs: []string{"git", "{verb}"}, describe: describeGitProxy},
 	{method: http.MethodPost, segs: []string{"github", "{resource}", "{action}"}, describe: describeGitHubProxy},
 	// Two shapes, because `whoami` has no resource to name. The one-segment
@@ -585,7 +586,12 @@ func isMutatingMethod(m string) bool {
 // the surface prefix (/v1 → cli, /api → dashboard), normalises the two
 // divergent dashboard spellings, then matches the canonical segments
 // against auditRoutes. ok=false means "not audited".
+var httpGatewayAuditRoute = auditRoute{verb: "http.gateway", pathOnly: true}
+
 func matchAuditRoute(method, path string) (route *auditRoute, vars map[string]string, source string, ok bool) {
+	if strings.HasPrefix(path, "/v1/http/proxy/") {
+		return &httpGatewayAuditRoute, nil, db.AuditSourceCLI, true
+	}
 	if !isMutatingMethod(method) {
 		return nil, nil, "", false
 	}
