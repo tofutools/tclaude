@@ -26,7 +26,7 @@ func queuedState(pending int) string {
 }
 
 type messageParams struct {
-	Target    string   `pos:"true" optional:"true" help:"Target conv (UUID/prefix/title), 'group:<name|id>' to broadcast, or bare 'group:' for your own group (or use --to / --recipient)"`
+	Target    string   `pos:"true" optional:"true" help:"Target conv (UUID/prefix/title), 'group:<name|id>' to broadcast, bare 'group:' for your own group, or member@peer / group:<group>@peer for a federated recipient (or use --to / --recipient)"`
 	Text      string   `pos:"true" optional:"true" help:"Message body (or use --body / --stdin / --file)"`
 	Body      string   `long:"body" optional:"true" help:"Message body as a flag instead of positional text"`
 	Subject   string   `long:"subject" short:"s" optional:"true" help:"Optional subject line"`
@@ -37,6 +37,7 @@ type messageParams struct {
 	Gen       string   `long:"gen" optional:"true" help:"Deliver to a SPECIFIC previous generation of the target agent: a conv-id that must belong to the agent the target resolves to. Normally a message follows the agent to its current generation; --gen pins it to that exact past conv. Direct (non-group, non-cc) sends only."`
 	To        string   `long:"to" optional:"true" help:"Target recipient as a flag instead of the first positional argument"`
 	Recipient string   `long:"recipient" optional:"true" help:"Target recipient as a flag instead of the first positional argument (alias of --to)"`
+	Attach    []string `long:"attach" short:"a" optional:"true" help:"Attach a file (repeatable). Remote member@peer recipients only, and only when the remote group accepts attachments; local agents should be sent a path instead."`
 
 	// Cobra's Changed state distinguishes an omitted recipient flag from an
 	// explicitly empty one. Boa binds values into the public fields above;
@@ -170,7 +171,18 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 		Pending        int    `json:"pending,omitempty"`
 		ViaGroup       string `json:"via_group"`
 		RedirectedFrom string `json:"redirected_from,omitempty"`
-		Recipients     []struct {
+		// Remote (federated) sends answer with the queued envelope.
+		EnvelopeID string `json:"envelope_id,omitempty"`
+		To         string `json:"to,omitempty"`
+		State      string `json:"state,omitempty"`
+		Connected  bool   `json:"hub_connected,omitempty"`
+		Cc         []struct {
+			To         string `json:"to"`
+			EnvelopeID string `json:"envelope_id"`
+			State      string `json:"state"`
+		} `json:"cc,omitempty"`
+		Recipients []struct {
+			EnvelopeID     string `json:"envelope_id,omitempty"`
 			ConvID         string `json:"conv_id"`
 			AgentID        string `json:"agent_id,omitempty"`
 			Title          string `json:"title,omitempty"`
@@ -197,6 +209,14 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 	if p.Gen != "" {
 		payload["gen"] = p.Gen
 	}
+	if len(p.Attach) > 0 {
+		atts, err := ReadRemoteAttachments(p.Attach)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return rcInvalidArg
+		}
+		payload["attachments"] = atts
+	}
 	err := DaemonRequest(http.MethodPost, "/v1/messages", payload, &resp, DaemonOpts{})
 	if de, ok := err.(*DaemonError); ok && de.Code == "ambiguous" {
 		fmt.Fprintf(stderr, "%s\n", de.Msg)
@@ -213,6 +233,28 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 	//
 	// `--cc` also fans out per-recipient (one row per To + each CC),
 	// so we reuse the multicast rendering path in that case too.
+	if resp.EnvelopeID != "" {
+		hub := "hub connected"
+		if !resp.Connected {
+			hub = "hub not connected; it will be sent when the connection returns"
+		}
+		fmt.Fprintf(stdout, "Queued remote message to %s via group %q (envelope %s, %s; %s).\n", resp.To, resp.ViaGroup, resp.EnvelopeID, resp.State, hub)
+		failed := 0
+		for _, c := range resp.Cc {
+			if c.EnvelopeID == "" {
+				failed++
+				fmt.Fprintf(stdout, "  cc %s: %s\n", c.To, c.State)
+				continue
+			}
+			fmt.Fprintf(stdout, "  cc %s: envelope %s, %s\n", c.To, c.EnvelopeID, c.State)
+		}
+		if failed > 0 {
+			fmt.Fprintf(stderr, "Warning: %d cc copy(ies) were not queued; see above.\n", failed)
+			return rcIOFailure
+		}
+		fmt.Fprintln(stdout, "Track delivery with: tclaude federation outbox")
+		return rcOK
+	}
 	isMulticast := strings.HasPrefix(p.Target, "group:")
 	hasCC := len(p.Cc) > 0
 	if isMulticast || hasCC {
@@ -269,6 +311,14 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 				// hop so the sender can update their selector if they
 				// were typing a stale UUID.
 				redirect = fmt.Sprintf("  [redirected from %s, superseded]", short(rcp.RedirectedFrom))
+			}
+			if rcp.EnvelopeID != "" || (rcp.ConvID == "" && strings.Contains(rcp.AgentID, "@")) {
+				// A remote recipient: queued in the federation outbox.
+				if rcp.Queued {
+					state = "queued remotely, envelope " + rcp.EnvelopeID
+				}
+				fmt.Fprintf(stdout, "  remote   %s  (%s)\n", name, state)
+				continue
 			}
 			fmt.Fprintf(stdout, "  #%-6d %s  %s  (%s)%s\n", rcp.MessageID, shortAgentID(rcp.AgentID, rcp.ConvID), name, state, redirect)
 		}

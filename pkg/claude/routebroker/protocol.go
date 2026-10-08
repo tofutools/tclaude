@@ -21,7 +21,8 @@ const (
 // Kind identifies one broker protocol frame. Payload bytes are never decoded
 // by the broker. OPEN/OPEN_OK/OPEN_ERROR carry stream lifecycle metadata;
 // DATA is forwarded byte-for-byte; HALF_CLOSE and CLOSE preserve TCP
-// directionality and orderly shutdown.
+// directionality and orderly shutdown; WINDOW grants flow-control credit
+// (see flow.go).
 type Kind uint8
 
 const (
@@ -33,12 +34,13 @@ const (
 	KindClose     Kind = 6
 	KindPing      Kind = 7
 	KindPong      Kind = 8
+	KindWindow    Kind = 9
 )
 
 func (k Kind) valid() bool {
 	switch k {
 	case KindOpen, KindOpenOK, KindOpenError, KindData, KindHalfClose,
-		KindClose, KindPing, KindPong:
+		KindClose, KindPing, KindPong, KindWindow:
 		return true
 	default:
 		return false

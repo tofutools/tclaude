@@ -30,6 +30,8 @@ const (
 	ScopeDimLinearTeam      ScopeDim = "linear_team"
 	ScopeDimAWBWorkspace    ScopeDim = "awb_workspace"
 	ScopeDimTargetAgent     ScopeDim = "target_agent"
+	// ScopeDimPeer identifies a trusted federation peer, optionally followed by /group.
+	ScopeDimPeer ScopeDim = "peer"
 	// legacyScopeDimAWBProject is accepted only while parsing persisted grants
 	// written before AWB renamed projects to workspaces. Canonical output always
 	// uses ScopeDimAWBWorkspace, so any subsequent write upgrades the row.
@@ -63,6 +65,11 @@ const (
 	// letter. One kind checking two vocabularies would have to accept the union
 	// of both, which is a matcher neither proxy can ever match.
 	permissionScopeMatchWorkspaceKey
+	// permissionScopeMatchInstanceID is an exact comparison whose shape is a
+	// federation instance id. Labels are deliberately not accepted: a label
+	// is a local nickname the operator can move to another instance, and a
+	// grant must not silently follow it there.
+	permissionScopeMatchInstanceID
 )
 
 type permissionScopeDimension struct {
@@ -102,6 +109,7 @@ var permissionScopeDimensions = map[ScopeDim]permissionScopeDimension{
 	ScopeDimRemote:          {matcher: permissionScopeMatchRemotePattern},
 	ScopeDimLinearTeam:      {matcher: permissionScopeMatchTeamKey, enumerable: true},
 	ScopeDimAWBWorkspace:    {matcher: permissionScopeMatchWorkspaceKey, enumerable: true},
+	ScopeDimPeer:            {matcher: permissionScopeMatchInstanceID},
 	ScopeDimTargetAgent: {selectors: map[string]struct{}{
 		"@descendants":  {},
 		"@self-spawned": {},
@@ -203,6 +211,12 @@ func permissionScopeMatcherShape(dim ScopeDim, spec permissionScopeDimension, ma
 			return fmt.Errorf("permission scope dimension %q: %w (there is no wildcard: a team key "+
 				"is matched whole, case-insensitively)", dim, err)
 		}
+	case permissionScopeMatchInstanceID:
+		ref, group, grouped := strings.Cut(matcher, "/")
+		if strings.TrimSpace(ref) == "" || (grouped && strings.TrimSpace(group) == "") {
+			return fmt.Errorf("permission scope dimension %q: %q is not an instance id (inst_…); "+
+				"use peer=<label-or-instance-id>[/group]", dim, matcher)
+		}
 	case permissionScopeMatchWorkspaceKey:
 		// Same reasoning one vocabulary over: an AWB workspace key is what the AWB
 		// proxy compares this matcher against, so a matcher that cannot BE one
@@ -216,14 +230,48 @@ func permissionScopeMatcherShape(dim ScopeDim, spec permissionScopeDimension, ma
 }
 
 func canonicalPermissionScopeForSlug(slug, raw string) (string, error) {
-	scope, canonical, err := parsePermissionScope(json.RawMessage(raw))
+	scope, _, err := parsePermissionScope(json.RawMessage(raw))
 	if err != nil {
 		return "", err
 	}
 	if err := validatePermissionScopeForSlug(slug, scope); err != nil {
 		return "", err
 	}
-	return canonical, nil
+	return normalizePeerScopeForSlug(slug, scope)
+}
+
+// normalizePeerScopeForSlug binds operator labels to immutable trusted IDs.
+// Catalog group names are intentionally not checked: catalogs can be stale.
+func normalizePeerScopeForSlug(slug string, scope PermissionScope) (string, error) {
+	if len(scope[ScopeDimPeer]) != 0 {
+		if len(scope) != 1 {
+			return "", fmt.Errorf("a peer= scope cannot be combined with other dimensions; name the remote group as peer=<peer>/<group>")
+		}
+		for i, matcher := range scope[ScopeDimPeer] {
+			ref, group, grouped := strings.Cut(matcher, "/")
+			if slug == PermAgentSpawn && grouped {
+				return "", fmt.Errorf("agent.spawn peer scope must name only a peer, without a group")
+			}
+			peer, err := resolveFederationPeerOpt(ref, false)
+			if err != nil {
+				return "", err
+			}
+			value := peer.InstanceID
+			if grouped {
+				value += "/" + group
+			}
+			scope[ScopeDimPeer][i] = value
+		}
+	}
+	if len(scope) == 0 {
+		return "", nil
+	}
+	raw, err := json.Marshal(scope)
+	if err != nil {
+		return "", err
+	}
+	_, canonical, err := parsePermissionScope(raw)
+	return canonical, err
 }
 
 // permissionScopeDimsForSlug returns the dimensions slug's grants may

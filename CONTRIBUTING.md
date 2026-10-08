@@ -8,10 +8,11 @@ cd tclaude
 go install . ./cmd/...
 ```
 
-The repo builds two binaries: the `tclaude` CLI at the module root and the
-standalone `tclaude-agentd` daemon under `cmd/`. A bare `go install .` builds
-only the root package, so name both — the `./cmd/...` pattern matches the
-daemon. Do not widen it to `go install ./...`: that would also drop the
+The repo builds three binaries: the `tclaude` CLI at the module root, and
+under `cmd/` the standalone `tclaude-agentd` daemon and the `tclaude-hub`
+federation relay (see `docs/federation.md`). A bare `go install .` builds
+only the root package, so name both patterns — `./cmd/...` matches the
+daemon and the hub. Do not widen it to `go install ./...`: that would also drop the
 non-production probe under `scripts/` into your `GOBIN`.
 
 The daemon is built into the CLI as `tclaude agentd serve`, so the second

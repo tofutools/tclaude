@@ -968,15 +968,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # The repo ships two binaries: the tclaude CLI and the standalone
-      # tclaude-agentd daemon. Both must come out of every platform build.
+      # The repo ships three binaries: the tclaude CLI, the standalone
+      # tclaude-agentd daemon, and the tclaude-hub federation relay. All must
+      # come out of every platform build.
       # Without this assertion, dropping or mis-targeting a .goreleaser.yaml
       # build id would silently publish a release missing one of them.
-      - name: Verify both binaries were built
+      - name: Verify every binary was built
         shell: bash
         run: |
           set -euo pipefail
-          for binary in tclaude tclaude-agentd; do
+          for binary in tclaude tclaude-agentd tclaude-hub; do
             count=$(find dist -type f -name "$binary" -perm -u+x | wc -l)
             if [ "$count" -eq 0 ]; then
               echo "::error::goreleaser produced no $binary binary in dist/"
@@ -1026,11 +1027,11 @@ jobs:
       # The build jobs assert the same thing before upload; this re-checks it
       # on the far side of the artifact round-trip, so a binary lost between
       # upload and repack fails here instead of shipping a short release.
-      - name: Verify both binaries survived the artifact round-trip
+      - name: Verify every binary survived the artifact round-trip
         shell: bash
         run: |
           set -euo pipefail
-          for binary in tclaude tclaude-agentd; do
+          for binary in tclaude tclaude-agentd tclaude-hub; do
             count=$(find dist -type f -name "$binary" | wc -l)
             if [ "$count" -eq 0 ]; then
               echo "::error::no $binary binary in the downloaded artifacts"

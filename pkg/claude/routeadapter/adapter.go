@@ -52,7 +52,30 @@ type Adapter struct {
 	routes          map[string]*publisherState
 	leases          map[string]*consumerState
 	consumerRefused func(Consumer, error)
+	flowWindow      func() int
 	closed          bool
+}
+
+// SetFlowWindow installs the source of the flow-control receive window for
+// channels attached from now on; it returns 0 when flow control is off.
+// Without it the adapter's channels do not use flow control.
+func (a *Adapter) SetFlowWindow(window func() int) {
+	a.mu.Lock()
+	a.flowWindow = window
+	a.mu.Unlock()
+}
+
+func (a *Adapter) window() int {
+	a.mu.Lock()
+	fn := a.flowWindow
+	a.mu.Unlock()
+	if fn == nil {
+		return 0
+	}
+	if w := fn(); w > 0 {
+		return routebroker.ClampWindow(w)
+	}
+	return 0
 }
 
 type publisherState struct {
@@ -249,17 +272,22 @@ func (a *Adapter) publish(ctx context.Context, publisher Publisher, pool []int) 
 	a.routes[publisher.RouteID] = state
 	a.mu.Unlock()
 	ready := make(chan error, 1)
+	window := a.window()
 	go func() {
 		_ = a.broker.AttachPublisherReady(channelCtx, routebroker.PublisherAuth{
 			RouteID: publisher.RouteID, AgentID: publisher.AgentID, ConvID: publisher.ConvID,
 			LaunchGeneration: publisher.LaunchGeneration, GroupGeneration: publisher.GroupGeneration,
+			FlowWindow: window,
 		}, peer, func(err error) { ready <- err })
 		// A publisher channel ending is authoritative for the endpoint
 		// lifetime. Close idle listeners as well as any active streams; no M2
 		// consumer event is required for this cleanup.
 		a.CloseRoute(publisher.RouteID)
 	}()
-	go a.publisherLoop(channelCtx, channel, publisher.Target)
+	// The same publisher endpoint the Linux helper runs, here in agentd:
+	// each stream dials the target off the channel's read loop and writes
+	// it through its own pump, so one slow target stalls only its stream.
+	go func() { _ = RunPublisher(channelCtx, flowChannel{Conn: channel, window: window}, publisher.Target) }()
 	// Publish only reports success once the broker owns the route. Returning
 	// earlier lets a consumer that opens immediately race the attach goroutine
 	// and be refused with "publisher unavailable". The wait is bounded on its
@@ -479,6 +507,7 @@ func (a *Adapter) consumerStream(ctx context.Context, raw net.Conn, consumer Con
 	brokerConn, adapterConn := net.Pipe()
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	window := a.window()
 	admitted := make(chan struct{})
 	refused := make(chan error, 1)
 	go func() {
@@ -486,7 +515,7 @@ func (a *Adapter) consumerStream(ctx context.Context, raw net.Conn, consumer Con
 		err := a.broker.AttachConsumerWithReady(streamCtx, routebroker.ConsumerAuth{
 			LeaseID: consumer.LeaseID, RouteID: consumer.RouteID, AgentID: consumer.AgentID,
 			ConvID: consumer.ConvID, LaunchGeneration: consumer.LaunchGeneration,
-			GroupGeneration: consumer.GroupGeneration,
+			GroupGeneration: consumer.GroupGeneration, FlowWindow: window,
 		}, brokerConn, func() error {
 			accepted = true
 			close(admitted)
@@ -526,7 +555,8 @@ func (a *Adapter) consumerStream(ctx context.Context, raw net.Conn, consumer Con
 		_ = adapterConn.Close()
 		return
 	}
-	if err := routebroker.WriteFrame(adapterConn, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 1}, maxPayload); err != nil {
+	w := &connWriter{conn: adapterConn}
+	if err := w.write(routebroker.Frame{Kind: routebroker.KindOpen, Stream: 1}); err != nil {
 		_ = adapterConn.Close()
 		return
 	}
@@ -534,9 +564,14 @@ func (a *Adapter) consumerStream(ctx context.Context, raw net.Conn, consumer Con
 		rawToBroker bool
 		err         error
 	}
+	// opened carries the stream's flow-controlled pump (nil without flow
+	// control) once OPEN_OK arrives, and is closed without one if the open
+	// fails. Local bytes are not forwarded before it: credit only exists
+	// once the broker has said whether the stream is flow-controlled.
+	opened := make(chan *helperPublisherStream, 1)
 	results := make(chan directionResult, 2)
-	go func() { results <- directionResult{rawToBroker: true, err: copyRawToBroker(raw, adapterConn)} }()
-	go func() { results <- directionResult{err: copyBrokerToRaw(adapterConn, raw)} }()
+	go func() { results <- directionResult{rawToBroker: true, err: copyRawToBroker(raw, w, opened)} }()
+	go func() { results <- directionResult{err: copyBrokerToRaw(streamCtx, adapterConn, raw, w, window, opened)} }()
 	first := <-results
 	// A local client CloseWrite is only a read-side EOF. Keep the broker
 	// channel and accepted listener alive for the publisher's reverse data.
@@ -551,25 +586,50 @@ func (a *Adapter) consumerStream(ctx context.Context, raw net.Conn, consumer Con
 	<-results
 }
 
-func copyRawToBroker(raw net.Conn, broker net.Conn) error {
+func copyRawToBroker(raw net.Conn, w *connWriter, opened <-chan *helperPublisherStream) error {
+	out, ok := <-opened
+	if !ok {
+		return net.ErrClosed
+	}
+	var flow *streamFlow
+	if out != nil {
+		flow = out.flow
+	}
 	buf := make([]byte, maxPayload)
 	for {
-		n, err := raw.Read(buf)
+		n, err := flow.read(raw, buf)
 		if n > 0 {
-			if writeErr := routebroker.WriteFrame(broker, routebroker.Frame{Kind: routebroker.KindData, Stream: 1, Payload: append([]byte(nil), buf[:n]...)}, maxPayload); writeErr != nil {
+			if writeErr := w.write(routebroker.Frame{Kind: routebroker.KindData, Stream: 1, Payload: append([]byte(nil), buf[:n]...)}); writeErr != nil {
 				return writeErr
 			}
 		}
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				_ = routebroker.WriteFrame(broker, routebroker.Frame{Kind: routebroker.KindHalfClose, Stream: 1}, maxPayload)
+				if out != nil {
+					out.markHalfCloseSent()
+				}
+				_ = w.write(routebroker.Frame{Kind: routebroker.KindHalfClose, Stream: 1})
 			}
 			return err
 		}
 	}
 }
 
-func copyBrokerToRaw(broker net.Conn, raw net.Conn) error {
+// copyBrokerToRaw delivers the broker's side of the stream. On a
+// flow-controlled stream the local socket is written by a pump, never by
+// this loop, so the broker's writes to the channel are never held up by a
+// slow local reader; the pump grants credit back as the reader takes bytes.
+func copyBrokerToRaw(ctx context.Context, broker net.Conn, raw net.Conn, w *connWriter, window int, opened chan<- *helperPublisherStream) (err error) {
+	var out *helperPublisherStream
+	answered := false
+	defer func() {
+		if !answered {
+			close(opened)
+		}
+		if out != nil && err != io.EOF {
+			out.close()
+		}
+	}()
 	for {
 		frame, err := routebroker.ReadFrame(broker, maxPayload)
 		if err != nil {
@@ -577,129 +637,61 @@ func copyBrokerToRaw(broker net.Conn, raw net.Conn) error {
 		}
 		switch frame.Kind {
 		case routebroker.KindOpenOK:
+			if answered {
+				continue
+			}
+			if window > 0 && routebroker.IsFlowOpen(frame.Payload) {
+				// A failed local write ends the whole connection: this
+				// channel carries only this one stream.
+				var pump *helperPublisherStream
+				pump = newHelperPublisherStream(func() {
+					_ = w.write(routebroker.Frame{Kind: routebroker.KindClose, Stream: 1})
+					pump.close()
+					_ = broker.Close()
+				})
+				out = pump
+				grant := out.enableFlow(window, 1, w)
+				_ = out.attach(raw)
+				if grant > 0 {
+					_ = w.write(routebroker.WindowFrame(1, grant))
+				}
+			}
+			answered = true
+			opened <- out
 		case routebroker.KindData:
-			if _, err := raw.Write(frame.Payload); err != nil {
+			if out != nil {
+				if err := out.write(frame.Payload); err != nil {
+					return err
+				}
+			} else if _, err := raw.Write(frame.Payload); err != nil {
 				return err
 			}
 		case routebroker.KindHalfClose:
-			if tcp, ok := raw.(*net.TCPConn); ok {
+			if out != nil {
+				out.closeWrite()
+			} else if tcp, ok := raw.(*net.TCPConn); ok {
 				_ = tcp.CloseWrite()
 			}
+		case routebroker.KindWindow:
+			if out != nil {
+				if err := out.flow.grant(frame.Payload); err != nil {
+					return err
+				}
+			}
 		case routebroker.KindClose, routebroker.KindOpenError:
+			if out != nil {
+				// An orderly end lets the pump deliver the tail first.
+				out.finishOrClose()
+				select {
+				case <-out.done:
+				case <-ctx.Done(): // the lease or route closed meanwhile
+					out.close()
+				}
+			}
 			return io.EOF
+		case routebroker.KindPong:
 		default:
 			return fmt.Errorf("consumer adapter received unexpected broker frame %d", frame.Kind)
-		}
-	}
-}
-
-type publisherStream struct {
-	conn net.Conn
-}
-
-func (a *Adapter) publisherLoop(ctx context.Context, brokerConn net.Conn, target string) {
-	defer brokerConn.Close()
-	var writeMu sync.Mutex
-	streams := make(map[uint64]*publisherStream)
-	var streamsMu sync.Mutex
-	closeStreams := func() {
-		streamsMu.Lock()
-		defer streamsMu.Unlock()
-		for id, stream := range streams {
-			_ = stream.conn.Close()
-			delete(streams, id)
-		}
-	}
-	defer closeStreams()
-	for {
-		frame, err := routebroker.ReadFrame(brokerConn, maxPayload)
-		if err != nil {
-			return
-		}
-		switch frame.Kind {
-		case routebroker.KindOpen:
-			dialer := net.Dialer{Timeout: 5 * time.Second}
-			conn, dialErr := dialer.DialContext(ctx, "tcp4", targetAddress(target))
-			if dialErr != nil {
-				writeMu.Lock()
-				_ = routebroker.WriteFrame(brokerConn, routebroker.Frame{Kind: routebroker.KindOpenError, Stream: frame.Stream, Payload: []byte(routebroker.OpenErrorTargetUnavailable)}, maxPayload)
-				writeMu.Unlock()
-				continue
-			}
-			streamsMu.Lock()
-			streams[frame.Stream] = &publisherStream{conn: conn}
-			streamsMu.Unlock()
-			writeMu.Lock()
-			err = routebroker.WriteFrame(brokerConn, routebroker.Frame{Kind: routebroker.KindOpenOK, Stream: frame.Stream}, maxPayload)
-			writeMu.Unlock()
-			if err != nil {
-				return
-			}
-			go a.publisherStreamReader(ctx, brokerConn, &writeMu, &streamsMu, streams, frame.Stream, conn)
-		case routebroker.KindData, routebroker.KindHalfClose, routebroker.KindClose:
-			streamsMu.Lock()
-			stream := streams[frame.Stream]
-			streamsMu.Unlock()
-			if stream == nil {
-				continue
-			}
-			switch frame.Kind {
-			case routebroker.KindData:
-				if _, err := stream.conn.Write(frame.Payload); err != nil {
-					_ = stream.conn.Close()
-				}
-			case routebroker.KindHalfClose:
-				if tcp, ok := stream.conn.(*net.TCPConn); ok {
-					_ = tcp.CloseWrite()
-				}
-			case routebroker.KindClose:
-				_ = stream.conn.Close()
-			}
-		case routebroker.KindPing:
-			writeMu.Lock()
-			err = routebroker.WriteFrame(brokerConn, routebroker.Frame{Kind: routebroker.KindPong}, maxPayload)
-			writeMu.Unlock()
-			if err != nil {
-				return
-			}
-		case routebroker.KindPong:
-			// Keepalive responses carry no stream data.
-		default:
-			return
-		}
-	}
-}
-
-func targetAddress(target string) string {
-	u, _ := url.Parse(target)
-	return u.Host
-}
-
-func (a *Adapter) publisherStreamReader(ctx context.Context, brokerConn net.Conn, writeMu, streamsMu *sync.Mutex, streams map[uint64]*publisherStream, id uint64, conn net.Conn) {
-	buf := make([]byte, maxPayload)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		n, err := conn.Read(buf)
-		if n > 0 {
-			writeMu.Lock()
-			writeErr := routebroker.WriteFrame(brokerConn, routebroker.Frame{Kind: routebroker.KindData, Stream: id, Payload: append([]byte(nil), buf[:n]...)}, maxPayload)
-			writeMu.Unlock()
-			if writeErr != nil {
-				return
-			}
-		}
-		if err != nil {
-			writeMu.Lock()
-			// EOF on the publisher target is a read-side half-close. The
-			// consumer may still send reverse-direction data until M2 closes
-			// the stream explicitly.
-			_ = routebroker.WriteFrame(brokerConn, routebroker.Frame{Kind: routebroker.KindHalfClose, Stream: id}, maxPayload)
-			writeMu.Unlock()
-			return
 		}
 	}
 }

@@ -1972,3 +1972,28 @@ func BrokerPaneCacheReadsForTest() (*int, func()) {
 }
 
 var errDisabledForTest = errors.New("disabled for test")
+
+// ResetFederationForTest stops any running federation runtime and drops the
+// cached instance identity, so the next scenario's HOME gets a fresh key.
+func ResetFederationForTest() {
+	stopFederation()
+	fedIdentityMu.Lock()
+	fedIdentity = nil
+	fedIdentityMu.Unlock()
+}
+
+// FederationInstanceIDForTest returns this daemon's federation instance id.
+func FederationInstanceIDForTest() string {
+	id, err := federationIdentity()
+	if err != nil {
+		panic(err)
+	}
+	return id.ID()
+}
+
+// FlushFederationOutboxForTest runs one outbox pass now.
+func FlushFederationOutboxForTest() {
+	if rt := currentFederation(); rt != nil {
+		rt.flushOutbox(context.Background())
+	}
+}

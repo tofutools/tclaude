@@ -15,6 +15,9 @@ The first watches and operates your whole fleet; the second continues one
 Claude Code conversation from your phone. They are independent — use either
 or both.
 
+Neither links two tclaude instances together; for agents on different
+machines that need to reach each other, see [Federation](federation.md).
+
 ## Remote dashboard access
 
 By default the dashboard listens on loopback only. `tclaude remote-access`

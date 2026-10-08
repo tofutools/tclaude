@@ -100,6 +100,15 @@ type Config struct {
 	// keeps agentd loopback-only.
 	RemoteAccess *RemoteAccessConfig `json:"remote_access,omitempty"`
 
+	// Federation links this agentd to other instances through a
+	// tclaude-hub. Absent / disabled → no hub connection. See
+	// FederationConfig and docs/federation.md.
+	Federation *FederationConfig `json:"federation,omitempty"`
+
+	// Routes tunes the group-route data plane — see RoutesConfig. Absent →
+	// defaults (flow control on).
+	Routes *RoutesConfig `json:"routes,omitempty"`
+
 	// ClaudeResume tunes Claude Code's interactive "Resume from summary"
 	// prompt for tclaude-spawned panes — see ClaudeResumeConfig. Absent /
 	// nil keeps Claude Code's own defaults.
@@ -780,6 +789,54 @@ func (c *Config) ResolvedAuditRetentionDays() (days int, prune bool) {
 		return 0, false // keep forever
 	}
 	return c.Audit.RetentionDays, true
+}
+
+// FederationConfig configures the outbound hub connection.
+type FederationConfig struct {
+	// UnrestrictedMaxLive caps automatic workers per unrestricted peer. Default 8.
+	UnrestrictedMaxLive int `json:"unrestricted_max_live,omitempty"`
+	// Enabled starts the hub client. Default false.
+	Enabled bool `json:"enabled,omitempty"`
+	// HubURL is the hub's WebSocket URL: wss://host[:port], or ws:// to a
+	// loopback hub only.
+	HubURL string `json:"hub_url,omitempty"`
+	// Name is this instance's display name on the hub (default
+	// user@hostname).
+	Name string `json:"name,omitempty"`
+	// Invite is a single-use hub invite token, presented until admitted.
+	Invite string `json:"invite,omitempty"`
+	// HubCAFile is an optional PEM bundle trusted for the hub's TLS
+	// certificate instead of the system roots.
+	HubCAFile string `json:"hub_ca_file,omitempty"`
+}
+
+// RoutesConfig tunes the group-route data plane (docs/group-routes.md).
+type RoutesConfig struct {
+	// FlowControl enables per-stream credit flow control on route streams
+	// whose endpoints both support it, so a slow reader slows its sender
+	// instead of overflowing a buffer and resetting the connection. Absent
+	// = true; false keeps the fixed bounded buffers of older releases.
+	FlowControl *bool `json:"flow_control,omitempty"`
+	// WindowKiB is the receive window, per stream and direction, that
+	// agentd's endpoints and its route helpers use: how far a sender may
+	// run ahead of its reader. Larger windows help bulk transfers over
+	// high-latency paths (a federation hub) at the cost of memory per
+	// stream. Default 256; clamped to 256..16384.
+	WindowKiB int `json:"window_kib,omitempty"`
+}
+
+// RouteFlowWindow returns the route flow-control receive window in bytes,
+// or 0 when flow control is disabled. Nil-safe.
+func (c *Config) RouteFlowWindow() int {
+	if c != nil && c.Routes != nil {
+		if c.Routes.FlowControl != nil && !*c.Routes.FlowControl {
+			return 0
+		}
+		if c.Routes.WindowKiB > 0 {
+			return min(max(c.Routes.WindowKiB, 256), 16384) << 10
+		}
+	}
+	return 256 << 10
 }
 
 // RemoteAccessConfig configures the optional, separately-bound HTTPS listener

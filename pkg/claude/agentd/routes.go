@@ -230,7 +230,7 @@ func routeCallerAgent(w http.ResponseWriter, r *http.Request) (string, string, b
 	return convID, agentID, true
 }
 
-func requireRouteConsumeCapability(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) (string, string, bool) {
+func requireRouteConsumeCapability(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, context ...ActionContext) (string, string, bool) {
 	if capability, present, valid := routeHelperCredentialForRequest(r); present {
 		if !valid {
 			writeRouteError(w, http.StatusUnauthorized, "route_helper_auth", "route helper credential is missing, stale, or invalid")
@@ -245,9 +245,9 @@ func requireRouteConsumeCapability(w http.ResponseWriter, r *http.Request, g *db
 			writeRouteError(w, http.StatusForbidden, "route_not_member", "caller is not a member of the target group")
 			return "", "", false
 		}
-		return requireRoutePermissionForIdentity(w, r, g, capability.convID, capability.agentID, PermRoutesConsume)
+		return requireRoutePermissionForIdentity(w, r, g, capability.convID, capability.agentID, PermRoutesConsume, context...)
 	}
-	return requireRouteCapability(w, r, g, PermRoutesConsume)
+	return requireRouteCapability(w, r, g, PermRoutesConsume, context...)
 }
 
 func requireRouteMembership(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) (string, string, bool) {
@@ -271,18 +271,29 @@ func requireRouteMembership(w http.ResponseWriter, r *http.Request, g *db.AgentG
 // then delegates permission precedence and scope evaluation to the central
 // resolver. Group-tier grants are restricted to this exact target group by
 // resolveGroupBoundPermissionVerdictForRequest.
-func requireRouteCapability(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, slug string) (string, string, bool) {
+func requireRouteCapability(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, slug string, context ...ActionContext) (string, string, bool) {
 	convID, agentID, ok := requireRouteMembership(w, r, g)
 	if !ok {
 		return "", "", false
 	}
 
-	return requireRoutePermissionForIdentity(w, r, g, convID, agentID, slug)
+	return requireRoutePermissionForIdentity(w, r, g, convID, agentID, slug, context...)
 }
 
-func requireRoutePermissionForIdentity(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convID, agentID, slug string) (string, string, bool) {
+func requireRoutePermissionForIdentity(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convID, agentID, slug string, context ...ActionContext) (string, string, bool) {
 	actx := ActionContext{Group: g.Name}
-	verdict, err := resolveGroupBoundPermissionVerdictForRequest(r, convID, slug, g.ID)
+	if len(context) != 0 {
+		actx = context[0]
+	}
+	var verdict permVerdict
+	var err error
+	if actx.RemotePeer != "" {
+		src, readErr := loadPermSourcesWithReadPolicy(convID, true)
+		err = readErr
+		verdict = resolveRemotePermissionVerdictForActionFrom(r, src, slug, actx)
+	} else {
+		verdict, err = resolveGroupBoundPermissionVerdictForRequest(r, convID, slug, g.ID)
+	}
 	if err != nil {
 		writeRouteError(w, http.StatusInternalServerError, "route_authority", "could not resolve permission")
 		return "", "", false
@@ -345,6 +356,7 @@ func refreshRoutePublisher(route *db.AgentRoute) *db.AgentRoute {
 	}
 	if err := db.MarkAgentRoutePublisherLost(route.ID, "publisher generation is no longer current"); err == nil {
 		routeAdapterCloseRoute(route.ID)
+		broadcastFederationCatalogs()
 	}
 	updated, err := db.GetAgentRoute(route.ID)
 	if err == nil && updated != nil {
@@ -627,6 +639,7 @@ func handleRoutePublish(w http.ResponseWriter, r *http.Request) {
 		writeRouteError(w, http.StatusConflict, "route_adapter", err.Error())
 		return
 	}
+	broadcastFederationCatalogs()
 	writeJSON(w, http.StatusCreated, routeViewFor(route))
 }
 
@@ -646,7 +659,12 @@ func handleRouteByID(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		if classify(peerFromContext(r.Context())) == classAgent {
-			if _, _, ok := requireRouteMembership(w, r, g); !ok {
+			_, agentID, ok := requireRouteMembership(w, r, g)
+			if !ok {
+				return
+			}
+			if m, _ := db.GetFederationRouteMirror(route.ID); m != nil && route.PublisherAgentID != agentID {
+				writeRouteError(w, http.StatusNotFound, "route_not_found", "no such route")
 				return
 			}
 		} else if classify(peerFromContext(r.Context())) != classHuman {
@@ -668,6 +686,7 @@ func handleRouteByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		routeAdapterCloseRoute(route.ID)
+		broadcastFederationCatalogs()
 		writeJSON(w, http.StatusOK, routeViewFor(refreshRoutePublisher(mustRoute(route.ID))))
 	case http.MethodPost:
 		handleRouteAction(w, r, route, g)
@@ -712,6 +731,11 @@ func handleRouteAction(w http.ResponseWriter, r *http.Request, route *db.AgentRo
 		if body.GroupGeneration == nil {
 			body.GroupGeneration = &g.RouteGeneration
 		}
+		// A federation mirror is private to the agent that opened it.
+		if m, _ := db.GetFederationRouteMirror(route.ID); m != nil && route.PublisherAgentID != agentID {
+			writeRouteError(w, http.StatusNotFound, "route_not_found", "no such route")
+			return
+		}
 		launchGeneration, err := routeLaunchGeneration(convID, body.LaunchGeneration)
 		if err != nil {
 			if errors.Is(err, errRouteStaleLaunchGeneration) {
@@ -754,6 +778,7 @@ func handleRouteAction(w http.ResponseWriter, r *http.Request, route *db.AgentRo
 			return
 		}
 		routeAdapterCloseRoute(route.ID)
+		broadcastFederationCatalogs()
 		writeJSON(w, http.StatusOK, routeViewFor(mustRoute(route.ID)))
 	default:
 		writeRouteError(w, http.StatusNotFound, "route_action", "unknown route action")

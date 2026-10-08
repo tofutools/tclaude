@@ -915,6 +915,9 @@ type lsParams struct {
 	Group string `long:"group" optional:"true" help:"Only show agents in this group (name or numeric ID). Groups you cannot reach are never matchable, even when named explicitly."`
 	State string `long:"state" optional:"true" help:"Filter: online | offline"`
 	JSON  bool   `long:"json" help:"Output JSON"`
+	// Remote adds members of remote (federated) groups covered by the
+	// listed groups. With --json the output becomes {"local":[…],"remote":[…]}.
+	Remote bool `long:"remote" help:"Also list remote members covered by your peer-scoped grants (federation). With --json, output becomes {local, remote}"`
 }
 
 func lsCmd() *cobra.Command {
@@ -999,7 +1002,99 @@ func runLsDaemon(p *lsParams, stdout, stderr io.Writer) int {
 		}
 		peers = filtered
 	}
-	return renderPeers(p, peers, stdout)
+	if !p.Remote {
+		return renderPeers(p, peers, stdout)
+	}
+	rpath := "/v1/federation/reachable"
+	if g := strings.TrimSpace(p.Group); g != "" {
+		rpath += "?group=" + url.QueryEscape(g)
+	}
+	var remote []*remotePeerEntry
+	if err := DaemonGet(rpath, &remote); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if applyState {
+		filtered := make([]*remotePeerEntry, 0, len(remote))
+		for _, re := range remote {
+			if (re.Presence == "online" && !re.Stale) == wantOnline {
+				filtered = append(filtered, re)
+			}
+		}
+		remote = filtered
+	}
+	if p.JSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(map[string]any{"local": peers, "remote": remote}); err != nil {
+			return rcIOFailure
+		}
+		return rcOK
+	}
+	if rc := renderPeers(p, peers, stdout); rc != rcOK {
+		return rc
+	}
+	renderRemotePeers(remote, stdout, table.GetTerminalWidth())
+	return rcOK
+}
+
+// remotePeerEntry mirrors agentd's /v1/federation/reachable rows.
+type remotePeerEntry struct {
+	Address     string    `json:"address"`
+	Agent       string    `json:"agent"`
+	Name        string    `json:"name"`
+	Role        string    `json:"role,omitempty"`
+	Harness     string    `json:"harness,omitempty"`
+	Presence    string    `json:"presence,omitempty"`
+	Peer        string    `json:"peer"`
+	Instance    string    `json:"instance"`
+	RemoteGroup string    `json:"remote_group"`
+	Mail        bool      `json:"mail"`
+	PeerOnline  bool      `json:"peer_online"`
+	CatalogAt   time.Time `json:"catalog_received_at"`
+	Stale       bool      `json:"stale"`
+}
+
+// renderRemotePeers prints the federation section of `agent ls --remote`.
+func renderRemotePeers(remote []*remotePeerEntry, stdout io.Writer, terminalWidth int) {
+	fmt.Fprintln(stdout)
+	if len(remote) == 0 {
+		fmt.Fprintln(stdout, "Remote: (none — no peer-scoped grants cover a received catalog)")
+		return
+	}
+	fmt.Fprintln(stdout, "Remote (federation):")
+	tbl := table.New(
+		table.Column{Header: "", Width: 1},
+		table.Column{Header: "ADDRESS", MinWidth: 12, Weight: 2, Truncate: true},
+		table.Column{Header: "HARNESS", MinWidth: 7, MaxWidth: 8, Truncate: true},
+		table.Column{Header: "PRESENCE", MinWidth: 8, Truncate: true},
+		table.Column{Header: "ROLE", MinWidth: 6, Truncate: true},
+		table.Column{Header: "REMOTE GROUP", MinWidth: 8, Truncate: true},
+		table.Column{Header: "MAIL", Width: 4},
+	)
+	tbl.SetTerminalWidth(terminalWidth)
+	for _, re := range remote {
+		presence := re.Presence
+		if presence == "" {
+			presence = "-"
+		}
+		if re.Stale {
+			if !re.PeerOnline {
+				presence = "peer offline"
+			} else if re.Presence != "" {
+				presence += " (stale)"
+			}
+		}
+		mail := "no"
+		if re.Mail {
+			mail = "yes"
+		}
+		tbl.AddRow(table.Row{Cells: []string{
+			onlineMark(re.Presence == "online" && !re.Stale),
+			re.Address, re.Harness, presence, re.Role, re.RemoteGroup, mail,
+		}})
+	}
+	fmt.Fprintln(stdout, tbl.Render())
 }
 
 func renderPeers(p *lsParams, peers []*peerEntry, stdout io.Writer) int {

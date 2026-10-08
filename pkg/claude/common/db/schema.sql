@@ -1478,3 +1478,116 @@ CREATE TABLE awb_ready_dispatches (
 		updated_at INTEGER NOT NULL,
 		UNIQUE(workspace, issue_id)
 	) STRICT;
+
+CREATE TABLE federation_peers (
+	instance_id TEXT PRIMARY KEY,
+	pubkey      BLOB NOT NULL,
+	label       TEXT NOT NULL DEFAULT '',
+	name        TEXT NOT NULL DEFAULT '',
+	trusted_at  INTEGER NOT NULL
+, trust_level TEXT NOT NULL DEFAULT 'restricted' CHECK(trust_level IN ('restricted', 'unrestricted'))) STRICT;
+
+CREATE UNIQUE INDEX idx_federation_peers_label
+	ON federation_peers(label) WHERE label != '';
+
+CREATE TABLE federation_catalogs (
+	peer        TEXT PRIMARY KEY,
+	payload     TEXT NOT NULL,
+	received_at INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE federation_outbox (
+	envelope_id     TEXT PRIMARY KEY,
+	kind            TEXT NOT NULL,
+	to_instance     TEXT NOT NULL,
+	to_agent        TEXT NOT NULL DEFAULT '',
+	to_label        TEXT NOT NULL DEFAULT '',
+	from_conv       TEXT NOT NULL DEFAULT '',
+	from_agent      TEXT NOT NULL DEFAULT '',
+	in_reply_to     TEXT NOT NULL DEFAULT '',
+	subject         TEXT NOT NULL DEFAULT '',
+	body_preview    TEXT NOT NULL DEFAULT '',
+	sealed          BLOB NOT NULL,
+	state           TEXT NOT NULL,
+	attempts        INTEGER NOT NULL DEFAULT 0,
+	next_attempt_at INTEGER NOT NULL,
+	last_error      TEXT NOT NULL DEFAULT '',
+	created_at      INTEGER NOT NULL,
+	expires_at      INTEGER NOT NULL,
+	updated_at      INTEGER NOT NULL
+) STRICT;
+
+CREATE INDEX idx_federation_outbox_state
+	ON federation_outbox(state, next_attempt_at);
+
+CREATE TABLE federation_inbound (
+	message_id    INTEGER PRIMARY KEY REFERENCES agent_messages(id) ON DELETE CASCADE,
+	envelope_id   TEXT NOT NULL,
+	from_instance TEXT NOT NULL,
+	from_agent    TEXT NOT NULL DEFAULT '',
+	from_name     TEXT NOT NULL DEFAULT '',
+	received_at   INTEGER NOT NULL
+) STRICT;
+
+CREATE INDEX idx_federation_inbound_envelope
+	ON federation_inbound(from_instance, envelope_id);
+
+CREATE TABLE federation_seen (
+	from_instance TEXT NOT NULL,
+	envelope_id   TEXT NOT NULL,
+	expires_at    INTEGER NOT NULL,
+	PRIMARY KEY (from_instance, envelope_id)
+) STRICT;
+
+CREATE TABLE federation_spawn_requests (
+	id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	from_instance TEXT NOT NULL,
+	envelope_id   TEXT NOT NULL,
+	from_agent    TEXT NOT NULL DEFAULT '',
+	from_name     TEXT NOT NULL DEFAULT '',
+	group_id      INTEGER NOT NULL,
+	group_name    TEXT NOT NULL,
+	name          TEXT NOT NULL DEFAULT '',
+	role          TEXT NOT NULL DEFAULT '',
+	brief         TEXT NOT NULL DEFAULT '',
+	status        TEXT NOT NULL,
+	result_agent  TEXT NOT NULL DEFAULT '',
+	reason        TEXT NOT NULL DEFAULT '',
+	created_at    INTEGER NOT NULL,
+	expires_at    INTEGER NOT NULL,
+	decided_at    INTEGER, launch_label TEXT NOT NULL DEFAULT '', launch_started_at INTEGER, automatic INTEGER NOT NULL DEFAULT 0, notice_sent INTEGER NOT NULL DEFAULT 0, result_sent INTEGER NOT NULL DEFAULT 0,
+	UNIQUE (from_instance, envelope_id)
+) STRICT;
+
+CREATE INDEX idx_federation_spawn_requests_status
+	ON federation_spawn_requests(status, from_instance);
+
+CREATE TABLE federation_route_mirrors (
+	route_id      TEXT PRIMARY KEY REFERENCES agent_routes(id) ON DELETE CASCADE,
+	peer          TEXT NOT NULL,
+	remote_route  TEXT NOT NULL,
+	remote_label  TEXT NOT NULL DEFAULT '',
+	created_at    INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE federation_route_proxies (
+	lease_id      TEXT PRIMARY KEY REFERENCES agent_route_leases(id) ON DELETE CASCADE,
+	peer          TEXT NOT NULL,
+	route_id      TEXT NOT NULL,
+	created_at    INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE federation_peer_grants (
+ peer TEXT NOT NULL REFERENCES federation_peers(instance_id) ON DELETE CASCADE,
+ slug TEXT NOT NULL,
+ scope TEXT NOT NULL DEFAULT '',
+ spawn_policy TEXT NOT NULL DEFAULT '{}',
+ created_at INTEGER NOT NULL,
+ PRIMARY KEY(peer, slug, scope)
+ ) STRICT;
+
+CREATE TABLE federation_auto_workers (
+ request_id INTEGER PRIMARY KEY REFERENCES federation_spawn_requests(id) ON DELETE CASCADE,
+ peer TEXT NOT NULL,
+ agent_id TEXT NOT NULL
+ ) STRICT;

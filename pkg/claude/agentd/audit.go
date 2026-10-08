@@ -243,6 +243,19 @@ var auditRoutes = []auditRoute{
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "owners"}, verb: "owner.add", describe: describeMemberTarget},
 	{method: http.MethodDelete, segs: []string{"groups", "{name}", "owners", "{conv}"}, verb: "owner.remove", describe: describeAgentTarget},
 
+	// Federation (human-only operator surface).
+	{method: http.MethodPost, segs: []string{"federation", "config"}, verb: "federation.config"},
+	{method: http.MethodPost, segs: []string{"federation", "peers", "trust"}, verb: "federation.trust"},
+	{method: http.MethodPost, segs: []string{"federation", "peers", "untrust"}, verb: "federation.untrust"},
+	{method: http.MethodPost, segs: []string{"federation", "exports"}, verb: "federation.export"},
+	{method: http.MethodDelete, segs: []string{"federation", "exports"}, verb: "federation.export.remove"},
+	{method: http.MethodPost, segs: []string{"federation", "imports"}, verb: "federation.import"},
+	{method: http.MethodDelete, segs: []string{"federation", "imports"}, verb: "federation.import.remove"},
+	{method: http.MethodPost, segs: []string{"federation", "send"}, verb: "federation.send"},
+	{method: http.MethodPost, segs: []string{"federation", "notify"}, verb: "federation.notify"},
+	{method: http.MethodPost, segs: []string{"federation", "spawn-requests"}, verb: "federation.spawn.request"},
+	{method: http.MethodPost, segs: []string{"federation", "spawn-requests", "{id}", "approve"}, verb: "federation.spawn.approve"},
+	{method: http.MethodPost, segs: []string{"federation", "spawn-requests", "{id}", "deny"}, verb: "federation.spawn.deny"},
 	// Inter-group links.
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "links"}, verb: "link.add"},
 	{method: http.MethodPatch, segs: []string{"groups", "{name}", "links", "{id}"}, verb: "link.update"},

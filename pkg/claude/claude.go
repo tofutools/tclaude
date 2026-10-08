@@ -12,6 +12,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/cli"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/dbcmd"
+	"github.com/tofutools/tclaude/pkg/claude/federationcmd"
 	"github.com/tofutools/tclaude/pkg/claude/memoryfiles"
 	"github.com/tofutools/tclaude/pkg/claude/pickup"
 	"github.com/tofutools/tclaude/pkg/claude/processcmd"
@@ -66,6 +67,7 @@ func Cmd() *cobra.Command {
 		dbcmd.Cmd(),
 		ask.Cmd(),
 		remoteaccess.Cmd(),
+		federationcmd.Cmd(),
 	)
 	cmd := boa.CmdT[session.NewParams]{
 		Use:         "claude",

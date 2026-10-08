@@ -4777,7 +4777,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// write-proof / its challenge round-trip) costs no slot, while anything
 	// past this point counts even if the spawn itself then fails — the
 	// intended runaway-prevention behaviour.
-	if !claimSpawnRateSlot(w, spawnerConvID) {
+	// Grant-authorized federation auto-spawns resolve launch settings as the
+	// operator but retain the spawn rate limit under a durable daemon principal.
+	if remotePrincipal, _ := r.Context().Value(federationSpawnRateKey{}).(string); remotePrincipal != "" {
+		if !claimDaemonSpawnRateSlot(w, remotePrincipal) {
+			return
+		}
+	} else if !claimSpawnRateSlot(w, spawnerConvID) {
 		return
 	}
 
@@ -7166,6 +7172,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		if openCodeLaunch != nil {
 			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
 		}
+		federationSpawnFailed(p.AgentID, "spawn", err.Error())
 		return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: " + err.Error()}
 	}
@@ -7176,6 +7183,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// is deliberately short and can collide with durable predecessor state;
 	// recording the boundary before the child starts lets non-preset harnesses
 	// reject such a row, while launch enrollment has the stronger conv-id proof.
+	if err := db.SetFederationSpawnLaunchLabel(p.AgentID, label); err != nil {
+		return launchFailed(err)
+	}
 	timing("launch_prepared", "label", label)
 	launchedAt := time.Now()
 	rememberHTTPProxyLaunchGroup(label, g, p.PermissionOverrides)
@@ -7696,6 +7706,9 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 	} else {
 		label = nextLabel()
 	}
+	if err := db.SetFederationSpawnLaunchLabel(p.AgentID, label); err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+	}
 	if err := db.InsertPendingSpawn(pendingSpawnFromParams(g, p, label)); err != nil {
 		privateRootCleanup()
 		return nil, &spawnFailure{http.StatusInternalServerError, "io",
@@ -7787,6 +7800,7 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 // indistinguishable from a spawn that silently vanished. FromConv is empty:
 // the sender is the daemon, not an agent.
 func surfaceDeferredSpawnFailure(g *db.AgentGroup, p spawnParams, label string, fail *spawnFailure) {
+	federationSpawnFailed(p.AgentID, fail.Kind, fail.Msg)
 	name := p.Name
 	if name == "" {
 		name = p.Role

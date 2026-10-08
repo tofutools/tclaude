@@ -10,13 +10,13 @@ import (
 
 func TestPermissionRegistryScopeDeclarations(t *testing.T) {
 	want := map[string][]ScopeDim{
-		PermAgentSpawn:         {ScopeDimGroup, ScopeDimSpawnProfile, ScopeDimSandboxProfile},
-		PermGroupsMembersSpawn: {ScopeDimGroup, ScopeDimSpawnProfile, ScopeDimSandboxProfile},
+		PermAgentSpawn:         {ScopeDimGroup, ScopeDimSpawnProfile, ScopeDimSandboxProfile, ScopeDimPeer},
+		PermGroupsMembersSpawn: {ScopeDimGroup, ScopeDimSpawnProfile, ScopeDimSandboxProfile, ScopeDimPeer},
 		PermProcessRunsManage:  {ScopeDimProcessTemplate},
 		PermAgentRetire:        {ScopeDimGroup, ScopeDimTargetAgent},
 		PermAgentStanddown:     {ScopeDimGroup, ScopeDimTargetAgent},
 		PermRoutesPublish:      {ScopeDimGroup},
-		PermRoutesConsume:      {ScopeDimGroup},
+		PermRoutesConsume:      {ScopeDimGroup, ScopeDimPeer},
 		PermGitRead:            {ScopeDimRemote},
 		PermGitPush:            {ScopeDimRemote},
 		PermGitHubRead:         {ScopeDimRemote},
