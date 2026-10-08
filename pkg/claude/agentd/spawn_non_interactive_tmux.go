@@ -25,6 +25,7 @@ import (
 const nonInteractiveBrokerGrace = 5 * time.Second
 
 type nonInteractiveBrokerRequest struct {
+	AwaitPermit     bool                  `json:"await_permit,omitempty"`
 	Command         nonInteractiveCommand `json:"command"`
 	Deadline        time.Time             `json:"deadline"`
 	DaemonPID       int                   `json:"daemon_pid"`
@@ -69,8 +70,13 @@ var nonInteractiveHelperShellCommand = func(requestPath, resultPath string) stri
 // detached pane using the same launcher as ordinary sessions. The pane is
 // transient and has no agent or group membership.
 func runNonInteractiveThroughTmux(ctx context.Context, command nonInteractiveCommand) (nonInteractiveSpawnResult, *spawnFailure) {
+	launchAttempted := false
 	fail := func(message string) (nonInteractiveSpawnResult, *spawnFailure) {
-		return nonInteractiveSpawnResult{}, &spawnFailure{Status: 502, Kind: "run_failed", Msg: message}
+		kind := "run_failed"
+		if command.RemoteJob != nil && launchAttempted {
+			kind = "remote_job_unknown"
+		}
+		return nonInteractiveSpawnResult{}, &spawnFailure{Status: 502, Kind: kind, Msg: message}
 	}
 	deadline, ok := ctx.Deadline()
 	if !ok {
@@ -92,7 +98,7 @@ func runNonInteractiveThroughTmux(ctx context.Context, command nonInteractiveCom
 		return fail(fmt.Sprintf("identify one-shot daemon: %v", err))
 	}
 	request := nonInteractiveBrokerRequest{
-		Command: command, Deadline: deadline,
+		Command: command, Deadline: deadline, AwaitPermit: command.RemoteJob != nil,
 		DaemonPID: os.Getpid(), DaemonStartTime: startTime,
 	}
 	data, err := json.Marshal(request)
@@ -109,11 +115,20 @@ func runNonInteractiveThroughTmux(ctx context.Context, command nonInteractiveCom
 	}
 	// On failure a pane may still have started; removing the handoff dir
 	// (deferred above) takes away its request file, which cancels it.
+	launchAttempted = true
 	target, err := launchNonInteractiveTmuxSession(name, command.Cwd, "exec "+shellCommand)
 	if err != nil {
 		return fail(fmt.Sprintf("start one-shot tmux session: %v", err))
 	}
 	defer killNonInteractiveTmuxSession(target)
+	if command.RemoteJob != nil {
+		if err := command.RemoteJob.Enroll(target); err != nil {
+			return fail("enroll remote job worker: " + err.Error())
+		}
+		if err := os.WriteFile(filepath.Join(dir, "permit"), []byte("run"), 0600); err != nil {
+			return fail("authorize remote job execution")
+		}
+	}
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	liveness := time.NewTicker(time.Second)
@@ -284,6 +299,20 @@ func runOneShotExecHelper(requestPath, resultPath string) error {
 			}
 		}
 	}()
+	if request.AwaitPermit {
+		ticker := time.NewTicker(25 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			if _, err := os.Stat(filepath.Join(filepath.Dir(requestPath), "permit")); err == nil {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-ticker.C:
+			}
+		}
+	}
 	request.Command.ObservePane = true
 	result, failure := executeNonInteractiveCommand(ctx, request.Command)
 	if request.Command.ResourceCgroupDir != "" {

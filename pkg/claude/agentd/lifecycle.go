@@ -3515,7 +3515,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// is claimed after the validation gates below (claimSpawnRateSlot) so a
 	// refused request — including the dir write-proof challenge round-trip —
 	// never burns a slot. See spawn_guardrails.go.
-	if body.NonInteractive {
+	if body.NonInteractive && r.Context().Value(federationJobContextKey{}) == nil {
 		// A one-shot does not consume a group seat. Keep the caller's group
 		// restriction and the rate limit while leaving max_members for members.
 		if spawnerConvID != "" && authorizedPermissionForRequest(r, "") != PermAgentSpawn &&
@@ -4050,7 +4050,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		identityNotes = append(identityNotes, profileNameNote)
 	}
 	roleRefs, roleRefsSource := resolveRoleRefsLaunchField(body, profileTiers)
-	if body.NonInteractive {
+	if body.NonInteractive && r.Context().Value(federationJobContextKey{}) == nil {
 		roleRefs = nil
 	}
 	selectedRoles := make([]*db.Role, 0, len(roleRefs))
@@ -4175,7 +4175,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			return
 		}
 		if workerDefaults != nil && len(workerDefaults.Permissions) > 0 {
-			if body.NonInteractive {
+			if body.NonInteractive && r.Context().Value(federationJobContextKey{}) == nil {
 				writeError(w, 400, "worker_defaults", "profile worker defaults require an enrolled agent")
 				return
 			}
@@ -4187,7 +4187,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			}
 		}
 	}
-	if body.NonInteractive {
+	if body.NonInteractive && r.Context().Value(federationJobContextKey{}) == nil {
 		// A one-shot has no identity to receive role or birth-time grants.
 		isOwner = false
 		permOverrides = nil
@@ -4920,6 +4920,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}))
 	if body.NonInteractive {
 		p.OneShotName = oneShotName
+		p.RemoteJob, _ = r.Context().Value(federationJobContextKey{}).(*federationJobLaunch)
+		if p.RemoteJob != nil {
+			p.RemoteJob.Harness = p.Harness
+			p.RemoteJob.Permissions = p.PermissionOverrides
+		}
 		result, runErr := runNonInteractiveSpawn(r.Context(), p, body.RunTimeoutSeconds)
 		if runErr != nil {
 			writeError(w, runErr.Status, runErr.Kind, runErr.Msg)
@@ -5040,6 +5045,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 // length/charset-checked, reply-to resolved to a conv-id — so the
 // shared core does no HTTP-shaped validation of its own.
 type spawnParams struct {
+	RemoteJob *federationJobLaunch // trusted internal remote job boundary
+
 	BundleHistory *bundleHistoryLaunch // trusted internal bundle route only
 	// AgentID is a stable identity reserved before a pending harness conv-id
 	// materialises. Empty on ordinary inline spawns, whose actor is allocated

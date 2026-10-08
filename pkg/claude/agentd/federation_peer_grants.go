@@ -21,6 +21,7 @@ const (
 	PermGroupsPresenceRead = "groups.presence.read"
 	PermMessageAttachments = "message.attachments"
 	PermAgentsReceive      = "agents.receive"
+	PermJobsRun            = "jobs.run"
 )
 
 // Wire capabilities stay stable while authority lives in regular peer slugs.
@@ -34,6 +35,7 @@ var federationPeerSlugs = map[string]string{
 	PermMessageDirect:      proto.CapMail,
 	PermMessageAttachments: proto.CapAttachments,
 	PermAgentsReceive:      proto.CapAgentsReceive,
+	PermJobsRun:            proto.CapJobs,
 	PermGroupsMembersSpawn: proto.CapSpawn,
 	PermRoutesConsume:      proto.CapRoutes,
 }
@@ -91,7 +93,7 @@ func fedPeerGroupGrant(peer string, groupID int64, slug string) *db.FederationPe
 			best = g
 		}
 	}
-	if slug == PermGroupsMembersSpawn {
+	if slug == PermGroupsMembersSpawn || slug == PermJobsRun {
 		for _, g := range candidates {
 			if rank(g) == rank(best) && g.SpawnPolicy != best.SpawnPolicy {
 				return nil
@@ -234,7 +236,11 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		if in.Slug == PermGroupsMembersSpawn {
+		if in.SpawnPolicy.JobApproval != "" && (in.Slug != PermJobsRun || (in.SpawnPolicy.JobApproval != "manual" && in.SpawnPolicy.JobApproval != "auto")) {
+			writeError(w, 400, "invalid_arg", "job_approval must be auto or manual and requires jobs.run")
+			return
+		}
+		if in.Slug == PermGroupsMembersSpawn || in.Slug == PermJobsRun {
 			if in.SpawnPolicy.MaxLive == 0 {
 				in.SpawnPolicy.MaxLive = 2
 			}
@@ -243,7 +249,7 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		} else if in.SpawnPolicy != (db.FederationSpawnPolicy{}) {
-			writeError(w, http.StatusBadRequest, "invalid_arg", "launch settings apply only to groups.members.spawn")
+			writeError(w, http.StatusBadRequest, "invalid_arg", "launch settings apply only to groups.members.spawn or jobs.run")
 			return
 		}
 		if in.Slug == PermMessageAttachments && !fedGrantMailCoversScope(p.InstanceID, poolID, gid) {

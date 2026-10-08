@@ -88,7 +88,10 @@ func normalizeFederationNodeProfile(p *db.FederationNodeProfile) error {
 			}
 			g.Scope = db.FederationGroupScope(group.ID)
 		}
-		if g.Slug == PermGroupsMembersSpawn {
+		if g.SpawnPolicy.JobApproval != "" && (g.Slug != PermJobsRun || (g.SpawnPolicy.JobApproval != "manual" && g.SpawnPolicy.JobApproval != "auto")) {
+			return errors.New("job_approval must be auto or manual and requires jobs.run")
+		}
+		if g.Slug == PermGroupsMembersSpawn || g.Slug == PermJobsRun {
 			if g.SpawnPolicy.MaxLive == 0 {
 				g.SpawnPolicy.MaxLive = 2
 			}

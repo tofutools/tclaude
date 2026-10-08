@@ -572,3 +572,23 @@ printf 'answered\n'
 		t.Fatalf("the one-shot left its conversation behind: %v", sessions)
 	}
 }
+
+// Swap the subprocess boundary while retaining the production pre-exec
+// enrollment callback for remote-job HTTP/wire flow tests.
+func SetRemoteJobDirectRunnerForTest(before ...func(string)) func() {
+	previous := runNonInteractiveTmuxCommand
+	runNonInteractiveTmuxCommand = func(ctx context.Context, c nonInteractiveCommand) (nonInteractiveSpawnResult, *spawnFailure) {
+		if c.RemoteJob != nil {
+			if e := c.RemoteJob.Enroll("test-job-" + c.RemoteJob.ID); e != nil {
+				return nonInteractiveSpawnResult{}, &spawnFailure{Status: 500, Kind: "enroll", Msg: e.Error()}
+			}
+		}
+		for _, check := range before {
+			if c.RemoteJob != nil {
+				check(c.RemoteJob.WorkerID)
+			}
+		}
+		return executeNonInteractiveCommand(ctx, c)
+	}
+	return func() { runNonInteractiveTmuxCommand = previous }
+}

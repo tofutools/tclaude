@@ -520,6 +520,7 @@ func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 	completion := time.NewTicker(time.Second)
 	defer completion.Stop()
 	reconcileFederationSpawns()
+	reconcileFederationJobs()
 	reconcileFederationBundleOffers()
 	go reconcileFederationMoves()
 	for {
@@ -534,9 +535,11 @@ func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 			rt.observeAwayWaiting()
 		case <-completion.C:
 			reconcileFederationSpawns()
+			reconcileFederationJobs()
 			reconcileFederationBundleOffers()
 			go reconcileFederationMoves()
 		case <-refresh.C:
+			pruneFederationJobLogs()
 			rt.broadcastCatalogs()
 			if err := db.PruneFederationSeen(time.Now()); err != nil {
 				slog.Debug("federation: prune replay guard failed", "error", err)
@@ -614,6 +617,12 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		rt.acceptGroupMail(peer, env)
 	case proto.KindAck:
 		rt.handleAck(env)
+	case proto.KindJobRequest:
+		rt.acceptJobRequest(peer, env)
+	case proto.KindJobStatus, proto.KindJobCancel:
+		rt.acceptJobControl(peer, env)
+	case proto.KindJobResult:
+		rt.acceptJobResult(peer, env)
 	case proto.KindSpawnReq:
 		rt.acceptSpawnRequest(peer, env)
 	case proto.KindSpawnRes:

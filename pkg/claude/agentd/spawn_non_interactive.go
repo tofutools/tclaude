@@ -171,6 +171,7 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 		SandboxImplementation: p.SandboxImplementation,
 		TimeoutSeconds:        seconds,
 		TmuxSessionName:       p.OneShotName,
+		RemoteJob:             p.RemoteJob,
 	}
 	if p.EffectiveSandbox != nil {
 		command.ResourceLimits = p.EffectiveSandbox.Effective.ResourceLimits
@@ -189,7 +190,7 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 		}
 		return result, failure
 	}
-	if runtime.GOOS == "linux" {
+	if runtime.GOOS == "linux" || p.RemoteJob != nil {
 		if command.ResourceLimits.Enabled() {
 			implementation, implErr := sandboxpolicy.NormalizeImplementation(command.SandboxImplementation)
 			if implErr != nil {
@@ -229,7 +230,8 @@ type nonInteractiveCommand struct {
 	ObservePane           bool                         `json:"-"`
 	// TmuxSessionName names the Linux one-shot pane's tmux session. Empty
 	// picks a generated one-shot-<id>. Daemon-side only.
-	TmuxSessionName string `json:"-"`
+	TmuxSessionName string               `json:"-"`
+	RemoteJob       *federationJobLaunch `json:"-"`
 }
 
 func executeNonInteractiveCommand(ctx context.Context, command nonInteractiveCommand) (nonInteractiveSpawnResult, *spawnFailure) {
