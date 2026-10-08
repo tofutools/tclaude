@@ -3502,6 +3502,9 @@ func Validate(c *Config) []string {
 	}
 	if f := c.Federation; f != nil {
 		if f.Teleport != nil {
+			if err := f.Teleport.Backup.Validate(); err != nil {
+				errs = append(errs, err.Error())
+			}
 			l := f.Teleport.Limits.Effective()
 			if l.Hour < 1 || l.Day < 1 || l.Chain < 1 || l.Chain > 128 || l.RevisitMinutes < 0 || l.RevisitMinutes > 525600 {
 				errs = append(errs, "federation.teleport.limits must have positive rates, per_chain 1..128, and revisit_minutes 0..525600")
@@ -4055,8 +4058,9 @@ type StatusSnapshotConfig struct {
 // FederationTeleportConfig is local policy. Freeze every instance to freeze a
 // disconnected fleet; this switch does not claim distributed consensus.
 type FederationTeleportConfig struct {
-	Disabled bool           `json:"disabled,omitempty"`
-	Limits   TeleportLimits `json:"limits,omitempty"`
+	Disabled bool                 `json:"disabled,omitempty"`
+	Limits   TeleportLimits       `json:"limits,omitempty"`
+	Backup   TeleportBackupConfig `json:"backup,omitempty"`
 }
 type TeleportLimits struct {
 	Hour           int  `json:"per_hour,omitempty"`
@@ -4106,4 +4110,44 @@ type ModelProxyPolicy struct {
 	MaxResponseBytes   int64 `json:"max_response_bytes,omitempty"`
 	MaxEventBytes      int   `json:"max_event_bytes,omitempty"`
 	MaxDurationSeconds int   `json:"max_duration_seconds,omitempty"`
+}
+
+// TeleportBackupConfig deliberately prefers remote availability during an
+// origin outage. Epoch reconciliation resolves overlap after a partition.
+type TeleportBackupConfig struct {
+	RenewSeconds int    `json:"renew_seconds,omitempty"`
+	LeaseSeconds int    `json:"lease_seconds,omitempty"`
+	GraceSeconds int    `json:"grace_seconds,omitempty"`
+	DormantMax   int    `json:"dormant_max,omitempty"`
+	Recovery     string `json:"recovery,omitempty"`
+	Superseded   string `json:"superseded,omitempty"`
+}
+
+func (c TeleportBackupConfig) Effective() TeleportBackupConfig {
+	if c.RenewSeconds == 0 {
+		c.RenewSeconds = 30
+	}
+	if c.LeaseSeconds == 0 {
+		c.LeaseSeconds = 300
+	}
+	if c.GraceSeconds == 0 {
+		c.GraceSeconds = 120
+	}
+	if c.DormantMax == 0 {
+		c.DormantMax = 4
+	}
+	if c.Recovery == "" {
+		c.Recovery = "auto"
+	}
+	if c.Superseded == "" {
+		c.Superseded = "stop"
+	}
+	return c
+}
+func (c TeleportBackupConfig) Validate() error {
+	c = c.Effective()
+	if c.RenewSeconds < 1 || c.RenewSeconds > 43200 || c.LeaseSeconds < c.RenewSeconds*2 || c.LeaseSeconds > 86400 || c.GraceSeconds < 1 || c.GraceSeconds > 86400 || c.DormantMax < 1 || c.DormantMax > 10000 || c.Recovery != "auto" && c.Recovery != "manual" || c.Superseded != "stop" && c.Superseded != "clone" {
+		return fmt.Errorf("invalid teleport backup policy")
+	}
+	return nil
 }

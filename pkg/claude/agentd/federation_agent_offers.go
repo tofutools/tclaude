@@ -119,6 +119,17 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	d := bundletransfer.New(bundletransfer.Agent, raw, summary, time.Now().Add(bundletransfer.DefaultTTL))
 	d.Group = in.Group
+	backupQueued := false
+	defer func() {
+		if teleport != nil && teleport.KeepPausedBackup && !backupQueued {
+			teleportLeaseMu.Lock()
+			defer teleportLeaseMu.Unlock()
+			if l, e := db.GetFederationTeleportLease("out", peer.InstanceID, d.ID); e == nil && l != nil && l.State == "reserved" {
+				l.State = "released"
+				_, _ = db.TransitionFederationTeleportLease(*l, "")
+			}
+		}
+	}()
 	if teleport != nil {
 		rt := currentFederation()
 		if rt == nil {
@@ -131,6 +142,12 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		d.Teleport = teleport
+		if teleport.KeepPausedBackup {
+			if err := reserveTeleportBackup(peer.InstanceID, d.ID, teleport.SourceAgent, source, d.ExpiresAt, teleport.BackupRenewSeconds); err != nil {
+				writeError(w, 409, "dormant_quota", err.Error())
+				return
+			}
+		}
 		if err := db.RecordFederationTeleport(db.FederationTeleport{Direction: "out", Peer: peer.InstanceID, Offer: d.ID, State: "offered", Intent: *teleport}, teleportLocalLimits()); err != nil {
 			writeError(w, 429, "teleport_limit", err.Error())
 			return
@@ -198,6 +215,7 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 		writeFedErr(w, err)
 		return
 	}
+	backupQueued = true
 	o.Descriptor.Inline = nil
 	if teleport != nil {
 		recordFederationAudit("teleport.send", peer.InstanceID, teleport.SourceAgent, in.Group, fmt.Sprintf("offer=%s chain=%s hop=%d credentials=%s clone=%t", d.ID, teleport.Chain, len(teleport.Hops), teleport.Credentials, teleport.Clone), 200)
