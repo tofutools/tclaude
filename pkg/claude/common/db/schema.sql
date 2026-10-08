@@ -527,7 +527,7 @@ CREATE TABLE "spawn_profiles" (
 			include_group_default_context INTEGER,
 			created_at                    INTEGER NOT NULL,
 			updated_at                    INTEGER NOT NULL
-		, remote_control INTEGER, is_owner INTEGER, permission_overrides TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', disabled INTEGER NOT NULL DEFAULT 0, auto_memory INTEGER, tools TEXT NOT NULL DEFAULT '', context_features TEXT NOT NULL DEFAULT '', auto_compact_window TEXT NOT NULL DEFAULT '', ssh_workaround INTEGER, sandbox_implementation TEXT NOT NULL DEFAULT '', operator_only INTEGER NOT NULL DEFAULT 0, startup_context TEXT NOT NULL DEFAULT '', context_window_max INTEGER NOT NULL DEFAULT 0, copilot_api INTEGER, fast_mode INTEGER, codex_app_server INTEGER, role_ref TEXT NOT NULL DEFAULT '', role_refs TEXT NOT NULL DEFAULT '[]', fetch_latest_worktree INTEGER, environment_json TEXT NOT NULL DEFAULT '[]', peer_messaging INTEGER) STRICT;
+		, remote_control INTEGER, is_owner INTEGER, permission_overrides TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', disabled INTEGER NOT NULL DEFAULT 0, auto_memory INTEGER, tools TEXT NOT NULL DEFAULT '', context_features TEXT NOT NULL DEFAULT '', auto_compact_window TEXT NOT NULL DEFAULT '', ssh_workaround INTEGER, sandbox_implementation TEXT NOT NULL DEFAULT '', operator_only INTEGER NOT NULL DEFAULT 0, startup_context TEXT NOT NULL DEFAULT '', context_window_max INTEGER NOT NULL DEFAULT 0, copilot_api INTEGER, fast_mode INTEGER, codex_app_server INTEGER, role_ref TEXT NOT NULL DEFAULT '', role_refs TEXT NOT NULL DEFAULT '[]', fetch_latest_worktree INTEGER, environment_json TEXT NOT NULL DEFAULT '[]', peer_messaging INTEGER, model_proxy TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE TRIGGER spawn_profile_name_not_alias_insert
 		BEFORE INSERT ON spawn_profiles
@@ -1659,3 +1659,19 @@ CREATE INDEX federation_teleports_rates ON federation_teleports(direction,source
 CREATE INDEX federation_teleports_peer_rates ON federation_teleports(direction,peer,created_at);
 
 CREATE INDEX federation_teleports_target ON federation_teleports(target_agent);
+
+CREATE TABLE model_proxy_launches (
+ session TEXT NOT NULL, generation TEXT NOT NULL, reference TEXT NOT NULL,
+ bearer_hash TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0,
+ PRIMARY KEY(session,generation)) STRICT;
+
+CREATE TABLE model_proxy_requests (
+ id TEXT PRIMARY KEY, day TEXT NOT NULL, proxy TEXT NOT NULL, peer TEXT NOT NULL,
+ session TEXT NOT NULL, model TEXT NOT NULL, charged_tokens INTEGER NOT NULL,
+ input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
+ cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+ status INTEGER NOT NULL DEFAULT 0, complete INTEGER NOT NULL DEFAULT 0,
+ request_bytes INTEGER NOT NULL DEFAULT 0, response_bytes INTEGER NOT NULL DEFAULT 0,
+ started_at INTEGER NOT NULL, duration_ms INTEGER NOT NULL DEFAULT 0) STRICT;
+
+CREATE INDEX model_proxy_daily ON model_proxy_requests(day,proxy,peer,session);

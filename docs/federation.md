@@ -1535,8 +1535,7 @@ the directory. Without `--git-ref`, landing uses the policy's `cwd`.
 `--credentials local|proxy:<name>@<peer>` chooses a credential mode. Resolution
 uses an explicit flag, then `teleport_landing.credentials_default`, then `local`.
 `credentials_allowed` is a simple exact allowed list (default `["local"]`). Local
-mode uses provider credentials already on the receiver. Proxy mode is parsed and
-carried but currently refuses with **model proxy not available yet**. Modes never
+mode uses provider credentials already on the receiver. Proxy mode uses the named gateway through the Claude Code binding described below. Modes never
 silently fall back to each other. The chosen mode appears in the import preview,
 continuation briefing and audit.
 
@@ -1552,3 +1551,113 @@ This freezes new incoming/outgoing teleports and prevents uncommitted launch or
 retirement on that instance. Apply it on each node to freeze a fleet; disconnected
 nodes cannot be changed by a local switch. Existing agents keep running. Paused
 backups and automatic failover are reserved for the next teleport phase.
+
+### Model gateways (Claude Code)
+
+A trusted machine can provide a named Anthropic Messages gateway to Claude
+Code workers on another machine. The provider key stays on the gateway machine;
+the worker receives a random, per-launch loopback bearer. Gateway traffic uses
+sealed federation control messages and an encrypted, flow-controlled hub stream.
+The relay cannot read prompts or responses. This first binding supports ordinary Claude
+Code workers only; non-interactive one-shot runs refuse a proxy choice; it does not transfer subscriptions or implement requester billing.
+
+Configure a named entry under `agent.http_proxies` on the gateway machine:
+
+```json
+{
+  "agent": {
+    "http_proxies": {
+      "anthropic": {
+        "url": "https://api.anthropic.com",
+        "header": "x-api-key",
+        "header_value_file": "/private/path/anthropic-key",
+        "model_policy": {
+          "enabled": true,
+          "models": ["claude-sonnet-*", "claude-haiku-*"],
+          "precount_input": false,
+          "daily_requests": 1000,
+          "daily_tokens": 10000000,
+          "peer_daily_requests": 300,
+          "peer_daily_tokens": 3000000,
+          "session_daily_requests": 100,
+          "session_daily_tokens": 1000000,
+          "max_input_tokens": 100000,
+          "max_output_tokens": 16000,
+          "max_concurrent": 4,
+          "requests_per_minute": 30
+        }
+      }
+    }
+  }
+}
+```
+
+All six daily limits and both token bounds must be positive. Model entries match
+exact IDs or a trailing `*` prefix pattern, such as `claude-sonnet-*`.
+`precount_input` defaults to false: input bounds are checked from provider usage,
+with the request byte cap providing the hard pre-flight bound. Set it to true to
+count input through the provider before generation; this adds a round trip and
+requires the provider token-counting endpoint. Every request reserves the maximum input plus
+requested output tokens atomically against gateway, peer, and session budgets.
+Complete terminal usage replaces that reservation, including cache tokens.
+Interrupted requests retain their reservation until the next UTC day, including
+across daemon restarts. Provider usage is checked against the token bounds.
+Independent defaults cap requests at 4 MiB, responses at 64 MiB, individual SSE
+events at 1 MiB and stream duration at 30 minutes; `max_request_bytes`,
+`max_response_bytes`, `max_event_bytes`, and `max_duration_seconds` can narrow or
+raise these within the enforced safety ceilings.
+
+Grant the consumer peer access on the gateway, then grant its worker access on
+the consumer machine. Both grants are needed for restricted peers:
+
+```bash
+# Gateway machine: laptop is a trusted consumer peer.
+tclaude federation grant laptop models.proxy --scope http_proxy=anthropic
+# Consumer machine: master is the trusted gateway peer.
+tclaude agent permissions grant <worker> models.proxy --scope peer=master --scope http_proxy=anthropic
+tclaude agent spawn <group> --harness claude --model-proxy anthropic@master --brief 'Continue the task'
+```
+
+For a new worker, put its `models.proxy` permission in the receiving group or
+worker defaults before launch. Permissions are checked before binding and on
+every request. A deny or revoked grant interrupts active requests. The bearer
+is stored only as a SHA-256 hash, pinned to the launch generation; daemon
+upgrades preserve running bindings, and exit, retirement or replacement makes
+them unusable. `--model-proxy off` explicitly overrides a default profile.
+
+The bridge sets `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`, which takes
+precedence over saved Claude logins according to the
+[Claude Code gateway documentation](https://code.claude.com/docs/en/llm-gateway-connect).
+It clears inherited provider/authentication selectors and refuses conflicting
+Claude settings or `apiKeyHelper` rather than falling back to local billing.
+This is an explicit model route, not an OS sandbox: tools still have the network
+access granted by the worker's sandbox, and operators must avoid changing
+provider settings while it runs.
+
+Inspect metadata and stop access without exposing keys:
+
+```bash
+tclaude federation models status
+tclaude federation models usage --day 2026-10-08
+tclaude federation models disable                         # all gateways
+tclaude federation models disable --name anthropic        # one gateway
+tclaude federation models disable --name anthropic --peer laptop
+# Use enable with the same flags to restore access.
+```
+
+The daily usage view and audit log contain request identifiers, peer/session,
+model, status, token counts, byte counts and duration. They do not store prompts,
+responses, bearer tokens or provider credentials. Provider error bodies are
+replaced by readable Anthropic-shaped errors.
+
+Teleport's frozen `--credentials proxy:anthropic@master` mode selects this
+binding, subject to the receiver landing policy's exact `credentials_allowed`
+list and worker permissions. The gateway peer is pinned to its immutable
+identity before admission. `--credentials local` explicitly overrides any proxy
+in source or receiver profiles. Proxy mode never falls back to a saved local
+login, and requires Claude Code history and an available gateway.
+
+Use provider credentials authorized for the machines, people and locations in
+your fleet. A gateway does not turn a Claude subscription into API credentials
+or change the provider's account and service terms; cross-organization or
+cross-location sharing needs the gateway operator's separate authorization.

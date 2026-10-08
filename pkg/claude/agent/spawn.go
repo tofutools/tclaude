@@ -324,7 +324,8 @@ type SpawnRequest struct {
 	// (and on to `claude`). Empty omits the flag so claude uses its own
 	// default; a non-empty value must be one of clcommon.ValidModels.
 	// Same single-sourced wire contract as Effort above.
-	Model string `json:"model,omitempty"`
+	Model      string `json:"model,omitempty"`
+	ModelProxy string `json:"model_proxy,omitempty"`
 
 	// Harness picks which coding harness the spawned agent runs — ""
 	// (or "claude") = Claude Code, the default; "codex" = OpenAI Codex CLI
@@ -842,8 +843,9 @@ type SpawnParams struct {
 	// (which assigns the first free letter in field order) cannot steal
 	// a short from any existing field. No explicit shorts — `--effort`
 	// and `--model` only.
-	Effort string `long:"effort" optional:"true" help:"Reasoning effort for the new agent (per-harness; Copilot also accepts none|minimal). Unset = filled by the default-profile chain, then the harness's own default. See 'Default resolution' in the command help"`
-	Model  string `long:"model" optional:"true" help:"Model for the new agent. Claude: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku|opusplan or a full model ID. Codex: a codex model name. Unset = filled by the default-profile chain, then the harness's own default. See 'Default resolution' in the command help"`
+	Effort     string `long:"effort" optional:"true" help:"Reasoning effort for the new agent (per-harness; Copilot also accepts none|minimal). Unset = filled by the default-profile chain, then the harness's own default. See 'Default resolution' in the command help"`
+	ModelProxy string `long:"model-proxy" optional:"true" help:"Claude Code model gateway <name>@<trusted peer>; fail closed when unavailable"`
+	Model      string `long:"model" optional:"true" help:"Model for the new agent. Claude: fable|fable[1m]|opus|opus[1m]|sonnet|sonnet[1m]|haiku|opusplan or a full model ID. Codex: a codex model name. Unset = filled by the default-profile chain, then the harness's own default. See 'Default resolution' in the command help"`
 
 	// Harness picks the coding harness the new agent runs. Declared last
 	// (no explicit short) for the same reason as Effort/Model — boa's
@@ -1047,6 +1049,7 @@ func recordSpawnFlagPresence(p *SpawnParams, cmd *cobra.Command) {
 type resolvedSpawnFields struct {
 	Harness                string
 	Model                  string
+	ModelProxy             string
 	Effort                 string
 	Sandbox                string
 	SandboxImpl            string
@@ -1519,7 +1522,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			return nil, rcInvalidArg
 		}
 		validationFields := resolvedSpawnFields{
-			Model: p.Model, Effort: p.Effort, Sandbox: p.Sandbox,
+			ModelProxy: p.ModelProxy, Model: p.Model, Effort: p.Effort, Sandbox: p.Sandbox,
 			Approval: p.Approval, ToolGovernance: p.ToolGovernance,
 			AskUserQuestionTimeout: p.AskUserQuestionTimeout,
 			AutoCompactWindow:      p.AutoCompactWindow,
@@ -1695,6 +1698,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		AutoFocus:              merged.AutoFocus,
 		Effort:                 effort,
 		Model:                  model,
+		ModelProxy:             p.ModelProxy,
 		Harness:                clientHarness,
 		HarnessBuiltinMode:     harnessBuiltinMode,
 		SandboxImplementation:  sandboxImpl,

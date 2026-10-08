@@ -675,6 +675,7 @@ var permissionRegistry = []PermSlug{
 			"would make honouring it here a no-op for most of the merges a grant is given for. Not default-granted and " +
 			"not owner-implied.",
 	},
+	{Slug: PermModelsProxy, Description: "Use a named peer model gateway. Scope with peer= and http_proxy=.", ScopeDims: []ScopeDim{ScopeDimPeer, ScopeDimHTTPProxy}},
 	{Slug: PermHTTP, Description: "Send HTTP requests through a named daemon proxy with its configured credential header. Grants full service access; scope with http_proxy=name.", ScopeDims: []ScopeDim{ScopeDimHTTPProxy}},
 
 	{

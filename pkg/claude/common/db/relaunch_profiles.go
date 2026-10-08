@@ -69,6 +69,7 @@ type AgentRelaunchProfile struct {
 	ApprovalPolicy              *string `json:"approval_policy,omitempty"`
 	ToolGovernance              *string `json:"tools,omitempty"`
 	ApprovalAutoReview          *bool   `json:"approval_auto_review,omitempty"`
+	ModelProxy                  *string `json:"model_proxy,omitempty"`
 	ModelID                     *string `json:"model_id,omitempty"`
 	Effort                      *string `json:"effort,omitempty"`
 	ContextWindowSize           *int64  `json:"context_window_size,omitempty"`
@@ -1061,6 +1062,9 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		previous := existingConversation.FallbackRelaunch
 		sameSourceGeneration := existingConversation.SourceSessionCreatedAt == createdAt &&
 			existingConversation.SourceSessionRowID == rowID
+		if agent.ModelProxy == nil {
+			agent.ModelProxy = previous.ModelProxy
+		}
 		if agent.ModelID == nil {
 			agent.ModelID = previous.ModelID
 		}
@@ -1230,6 +1234,9 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		merged.AskUserQuestionTimeout = agent.AskUserQuestionTimeout
 		if agent.ToolGovernance != nil {
 			merged.ToolGovernance = agent.ToolGovernance
+		}
+		if agent.ModelProxy != nil {
+			merged.ModelProxy = agent.ModelProxy
 		}
 		if agent.ModelID != nil {
 			merged.ModelID = agent.ModelID
@@ -1511,4 +1518,32 @@ func seedAgentRelaunchProfileFromSpawnConfigTx(q dbExecQuerier, agentID, raw str
 	_, err = q.Exec(`UPDATE agents SET relaunch_profile = ?
 		WHERE agent_id = ? AND relaunch_profile = ''`, encoded, agentID)
 	return err
+}
+
+// RecordSessionModelProxy freezes the non-secret gateway choice, including an
+// explicit empty choice, for both managed and ordinary conversation resumes.
+func RecordSessionModelProxy(sessionID, reference string) error {
+	if err := updateSessionFallbackRelaunch(sessionID, func(p *AgentRelaunchProfile) { p.ModelProxy = &reference }); err != nil {
+		return err
+	}
+	row, err := LoadSession(sessionID)
+	if err != nil {
+		return err
+	}
+	if row == nil || row.ConvID == "" {
+		return nil
+	}
+	actor, err := GetAgentByConv(row.ConvID)
+	if err != nil || actor == nil {
+		return err
+	}
+	p, err := AgentRelaunchProfileForConv(row.ConvID)
+	if err != nil {
+		return err
+	}
+	if p == nil {
+		p = &AgentRelaunchProfile{Version: RelaunchProfileVersion}
+	}
+	p.ModelProxy = &reference
+	return SetAgentRelaunchProfile(actor.AgentID, *p)
 }

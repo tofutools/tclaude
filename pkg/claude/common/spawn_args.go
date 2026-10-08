@@ -120,7 +120,8 @@ type SpawnArgs struct {
 	// Model is the model flag; "" omits --model so the harness resolves its own
 	// default. Resume surfaces pass the predecessor's inherited model for the
 	// same reason as Effort.
-	Model string
+	ModelProxy string
+	Model      string
 
 	// Harness is the harness name to launch ("claude", "codex"); "" or "claude"
 	// omits --harness and spawns Claude Code, keeping an untagged spawn's argv

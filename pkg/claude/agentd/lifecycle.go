@@ -1836,6 +1836,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir bool, recove
 		Cwd:                    cwd,
 		Effort:                 launchConfig.Effort,
 		Model:                  launchConfig.Model,
+		ModelProxy:             launchConfig.ModelProxy,
 		Harness:                harnessName,
 		Sandbox:                relaunchSandbox,
 		SandboxImplementation:  relaunchSandboxImplementation,
@@ -3769,6 +3770,25 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
+	var modelProxyNote string
+	var modelProxyFail *spawnFailure
+	body.ModelProxy, _, modelProxyNote, modelProxyFail = resolveStringLaunchField("model_proxy", body.ModelProxy, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.ModelProxy }, validateLaunchModelProxy(h))
+	if modelProxyFail != nil {
+		writeError(w, modelProxyFail.Status, modelProxyFail.Kind, modelProxyFail.Msg)
+		return
+	}
+	if body.ModelProxy != "" && body.ModelProxy != "off" && spawnerConvID != "" {
+		peer, name, err := resolveModelProxyReference(body.ModelProxy)
+		if err != nil {
+			writeError(w, 400, "invalid_model_proxy", err.Error())
+			return
+		}
+		allowed, _, err := permissionAllowsAction(r, spawnerConvID, PermModelsProxy, ActionContext{RemotePeer: peer.InstanceID, HTTPProxy: name})
+		if err != nil || !allowed {
+			writeError(w, 403, "permission_denied", "models.proxy is required for this model gateway")
+			return
+		}
+	}
 	validateModel := func(raw string) (string, error) {
 		value, err := h.Models.ValidateModel(raw)
 		if err == nil {
@@ -4353,7 +4373,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if body.SandboxImplementation == "" && sandboxImplNote != "" {
 		resolvedLaunch.Notes = append(resolvedLaunch.Notes, sandboxImplNote)
 	}
-	for _, note := range append([]string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, copilotAPINote, codexAppServerNote, fastModeNote, autoReviewNote, trustDirNote, autoMemoryNote, peerMessagingNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote, includeGroupContextNote}, identityNotes...) {
+	for _, note := range append([]string{modelProxyNote, sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, copilotAPINote, codexAppServerNote, fastModeNote, autoReviewNote, trustDirNote, autoMemoryNote, peerMessagingNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote, includeGroupContextNote}, identityNotes...) {
 		if note != "" {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes, note)
 		}
@@ -4863,6 +4883,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		AutoFocusWeb:               body.AutoFocusWeb,
 		Effort:                     effort,
 		Model:                      model,
+		ModelProxy:                 body.ModelProxy,
 		Harness:                    h.Name,
 		// This boundary resolves a tier applyDefaultProfile cannot see — the CLI's
 		// named --profile — so seeding its attributions is what keeps the launch's
@@ -5140,7 +5161,8 @@ type spawnParams struct {
 	// session's `tclaude session new --model`. "" falls back to the
 	// group/global default profiles inside executeSpawn (applyDefaultProfile);
 	// if those are unset too, the flag is omitted entirely.
-	Model string
+	Model      string
+	ModelProxy string
 	// Harness is the resolved harness name to launch ("" or "claude" =
 	// Claude Code, the default; "codex" = Codex CLI). It forwards to
 	// `tclaude session new --harness <h>` and is validated at the spawn
@@ -5992,7 +6014,7 @@ func launchTierIsDefault(tiers []launchProfileTier, source string) bool {
 // Copilot CLI. The gate is keyed on the FIELD, inside the resolver, so no
 // current or future resolution path can forget to apply it.
 func harnessPinnedLaunchField(field string) bool {
-	return field == modelField || field == effortField || field == contextWindowMaxField
+	return field == "model_proxy" || field == modelField || field == effortField || field == contextWindowMaxField
 }
 
 // harnessMismatchSkipNote discloses a default tier skipped because the profile
@@ -6314,6 +6336,11 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 		}
 		fieldNote = ""
 	}
+	p.ModelProxy, _, fieldNote, fail = resolveStringLaunchField("model_proxy", p.ModelProxy, h.Name, tiers, func(prof *db.SpawnProfile) string { return prof.ModelProxy }, validateLaunchModelProxy(h))
+	if fail != nil {
+		return fail
+	}
+	noteLaunch()
 	p.Model, fieldSource, fieldNote, fail = resolveStringLaunchField(modelField, p.Model, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.Model }, h.Models.ValidateModel)
 	if fail != nil {
@@ -6892,6 +6919,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		GitWorktreeWriteDirsPinned: p.GitWorktreeWriteDirsPinned,
 		Effort:                     p.Effort,
 		Model:                      p.Model,
+		ModelProxy:                 p.ModelProxy,
 		Harness:                    p.Harness,
 		Sandbox:                    p.HarnessBuiltinMode,
 		SandboxChosenBy:            p.HarnessBuiltinModeSource,
@@ -9424,6 +9452,9 @@ func spawnDetachedTclaudeResumeAs(args clcommon.SpawnArgs, kind copilotAPILaunch
 // subprocess.
 func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	args := []string{"session", "new", "--managed-launch", "-d", "--global", "--label", a.Label}
+	if a.ModelProxy != "" {
+		args = append(args, "--model-proxy", a.ModelProxy)
+	}
 	if a.Cwd != "" {
 		args = append(args, "-C", a.Cwd)
 	}

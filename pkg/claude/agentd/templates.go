@@ -719,6 +719,7 @@ func buildRhythmsFromJSON(in []rhythmJSON) ([]db.Rhythm, *spawnFailure) {
 // + harness secure defaults — the resolved shape the instantiator threads into
 // spawnParams.
 type templateAgentLaunch struct {
+	ModelProxy           string
 	SpawnProfile         string
 	Environment          []sandboxpolicy.EnvironmentEntry
 	EnvironmentOverrides []sandboxpolicy.EnvironmentEntry
@@ -1211,6 +1212,13 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 			Notes:         append([]string(nil), notes...),
 		}, f
 	}
+	modelProxy, _, proxyNote, proxyFail := resolveStringLaunchField("model_proxy", "", h.Name, tiers, func(p *db.SpawnProfile) string { return p.ModelProxy }, validateLaunchModelProxy(h))
+	if proxyFail != nil {
+		return failed(proxyFail)
+	}
+	if proxyNote != "" {
+		notes = append(notes, proxyNote)
+	}
 	model, modelSource, note, fail := resolveStringLaunchField(modelField, a.Model, h.Name, tiers,
 		func(p *db.SpawnProfile) string { return p.Model }, h.Models.ValidateModel)
 	if fail != nil {
@@ -1484,6 +1492,7 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 		EnvironmentOverrides:   environmentOverrides,
 		Harness:                h.Name,
 		Model:                  model,
+		ModelProxy:             modelProxy,
 		Effort:                 effort,
 		Sandbox:                sandbox,
 		SandboxSource:          sandboxSource,
@@ -1609,6 +1618,12 @@ func traceMemberLaunch(convID string) templateAgentLaunch {
 	// still come back blank — that is a finding about the member, not a failure
 	// to look, and Traced is what lets the re-snapshot merge tell those apart.
 	out := templateAgentLaunch{Traced: true}
+	if prof.ModelProxySet {
+		out.ModelProxy = prof.ModelProxy
+		if out.ModelProxy == "" {
+			out.ModelProxy = "off"
+		}
+	}
 	// Store the harness only when it differs from the default, so a plain Claude
 	// member round-trips to a blank (inherit) harness rather than a noisy
 	// explicit "claude" on every agent.
@@ -4350,6 +4365,9 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile, observed bool) (*
 		out.Harness, out.Model = prev.Harness, prev.Model
 		out.Effort, out.Sandbox = prev.Effort, prev.Sandbox
 	}
+	if out.ModelProxy == "" {
+		out.ModelProxy = prev.ModelProxy
+	}
 	if out.Approval == "" {
 		out.Approval = prev.Approval
 	}
@@ -4444,7 +4462,7 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile, observed bool) (*
 	// check, because dropping the only field a profile carried has to be able to
 	// empty it.
 	drop := dropLaunchFieldsForeignToHarness(out)
-	if out.Harness == "" && out.Model == "" && out.Effort == "" && out.Sandbox == "" &&
+	if out.Harness == "" && out.Model == "" && out.ModelProxy == "" && out.Effort == "" && out.Sandbox == "" &&
 		out.Approval == "" && out.ToolGovernance == "" && out.AskUserQuestionTimeout == "" &&
 		out.StartupContext == "" &&
 		out.AutoCompactWindow == "" && out.SandboxImplementation == "" &&
@@ -4507,6 +4525,10 @@ func dropLaunchFieldsForeignToHarness(out *db.SpawnProfile) *snapshotFieldDrop {
 		return nil
 	}
 	dropped := []string{}
+	if out.ModelProxy != "" && out.ModelProxy != "off" && !h.SupportsModelProxy() {
+		out.ModelProxy = ""
+		dropped = append(dropped, "model_proxy")
+	}
 	if out.ContextWindowMax != 0 {
 		if _, err := harness.ResolveCopilotContextWindow(h, out.ContextWindowMax); err != nil {
 			out.ContextWindowMax = 0
@@ -4698,7 +4720,7 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 			})
 		}
 		var inline *db.SpawnProfile
-		if launch.Harness != "" || launch.Model != "" || launch.Effort != "" || launch.Sandbox != "" || launch.Approval != "" || launch.AutoReviewSet || launch.SSHWorkaroundSet || len(launch.ContextFeatures) > 0 || launch.AutoCompactWindow != "" || launch.ContextWindowMax > 0 || launch.CopilotAPISet || launch.CodexAppServerSet || launch.FastModeSet || launch.SandboxImplementation != "" || len(perms) > 0 {
+		if launch.Harness != "" || launch.Model != "" || launch.ModelProxy != "" || launch.Effort != "" || launch.Sandbox != "" || launch.Approval != "" || launch.AutoReviewSet || launch.SSHWorkaroundSet || len(launch.ContextFeatures) > 0 || launch.AutoCompactWindow != "" || launch.ContextWindowMax > 0 || launch.CopilotAPISet || launch.CodexAppServerSet || launch.FastModeSet || launch.SandboxImplementation != "" || len(perms) > 0 {
 			po := make(map[string]db.PermissionOverride, len(perms))
 			for slug, override := range perms {
 				po[slug] = override
@@ -4706,6 +4728,7 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 			inline = &db.SpawnProfile{
 				Harness:               launch.Harness,
 				Model:                 launch.Model,
+				ModelProxy:            launch.ModelProxy,
 				Effort:                launch.Effort,
 				Sandbox:               launch.Sandbox,
 				Approval:              launch.Approval,

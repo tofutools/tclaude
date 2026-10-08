@@ -67,6 +67,8 @@ const (
 // provide that capability"; the Supports* helpers fold those into simple
 // booleans for callers that gate behavior on a capability.
 type Harness struct {
+	// ModelProxyProtocol declares an explicitly supported model gateway contract.
+	ModelProxyProtocol string
 	// Name is the stable identifier persisted in the DB `harness` column
 	// and accepted by `--harness`. Lower-case, no spaces (e.g. "claude").
 	Name string
@@ -811,4 +813,9 @@ func Names() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// SupportsModelProxy gates per-launch credential bridging on the descriptor.
+func (h *Harness) SupportsModelProxy() bool {
+	return h != nil && h.ModelProxyProtocol == "anthropic-messages-v1"
 }

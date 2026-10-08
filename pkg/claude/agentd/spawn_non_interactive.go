@@ -48,6 +48,9 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	bad := func(kind, message string) (nonInteractiveSpawnResult, *spawnFailure) {
 		return nonInteractiveSpawnResult{}, &spawnFailure{Status: 400, Kind: kind, Msg: message}
 	}
+	if p.ModelProxy != "" && p.ModelProxy != "off" {
+		return bad("unsupported_model_proxy", "non-interactive runs do not yet support model gateways; use an ordinary Claude Code worker or --model-proxy off")
+	}
 	hostFailure := func(kind, message string) (nonInteractiveSpawnResult, *spawnFailure) {
 		return nonInteractiveSpawnResult{}, &spawnFailure{Status: 502, Kind: kind, Msg: message}
 	}

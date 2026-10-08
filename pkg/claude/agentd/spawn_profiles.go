@@ -58,10 +58,11 @@ type spawnProfileJSON struct {
 	OperatorOnly bool `json:"operator_only,omitempty"`
 
 	// Launch fields — overlap clcommon.SpawnArgs.
-	Harness string `json:"harness,omitempty"`
-	Model   string `json:"model,omitempty"`
-	Effort  string `json:"effort,omitempty"`
-	Sandbox string `json:"sandbox,omitempty"`
+	Harness    string `json:"harness,omitempty"`
+	Model      string `json:"model,omitempty"`
+	ModelProxy string `json:"model_proxy,omitempty"`
+	Effort     string `json:"effort,omitempty"`
+	Sandbox    string `json:"sandbox,omitempty"`
 	// SandboxImplementation pins who owns OS-level confinement:
 	// "harness-builtin" (the legacy default) or the
 	// "tclaude-layer" OS wrapper. "" = unset, which falls through to the next
@@ -153,6 +154,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		OperatorOnly:               p.OperatorOnly,
 		Harness:                    p.Harness,
 		Model:                      p.Model,
+		ModelProxy:                 p.ModelProxy,
 		Effort:                     p.Effort,
 		Sandbox:                    p.Sandbox,
 		SandboxImplementation:      p.SandboxImplementation,
@@ -280,6 +282,14 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_harness", err.Error()}
 	}
 
+	if body.ModelProxy != "" && body.ModelProxy != "off" {
+		if !h.SupportsModelProxy() {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_model_proxy", "selected harness does not support model gateways"}
+		}
+		if _, _, err := resolveModelProxyReference(body.ModelProxy); err != nil {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_model_proxy", err.Error()}
+		}
+	}
 	model, err := h.Models.ValidateModel(strings.TrimSpace(body.Model))
 	if err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_model", err.Error()}
@@ -474,6 +484,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		OperatorOnly:               body.OperatorOnly,
 		Harness:                    hName,
 		Model:                      model,
+		ModelProxy:                 body.ModelProxy,
 		Effort:                     effort,
 		Sandbox:                    sandbox,
 		SandboxImplementation:      sandboxImplementation,
@@ -1257,11 +1268,12 @@ func profileHandleConflict(p *db.SpawnProfile, allowedProfileID int64) (string, 
 func seedProfileFromConv(convID string) (spawnProfileJSON, error) {
 	launch := traceMemberLaunch(convID)
 	seed := spawnProfileJSON{
-		Harness:  launch.Harness,
-		Model:    launch.Model,
-		Effort:   launch.Effort,
-		Sandbox:  launch.Sandbox,
-		Approval: launch.Approval,
+		Harness:    launch.Harness,
+		Model:      launch.Model,
+		ModelProxy: launch.ModelProxy,
+		Effort:     launch.Effort,
+		Sandbox:    launch.Sandbox,
+		Approval:   launch.Approval,
 	}
 	if launch.AutoReviewSet {
 		autoReview := launch.AutoReview
