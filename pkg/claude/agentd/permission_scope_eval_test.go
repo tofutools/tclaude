@@ -357,6 +357,7 @@ func TestContextFreeResolutionFailsClosedOnScopedAllow(t *testing.T) {
 // bespoke, scope-blind gate for the better part of a phase.
 var scopedSlugEnforcementPaths = map[string]string{
 	PermNodeRead:                          "handleFederationNodes evaluates permissionAllowsAction with RemotePeer",
+	PermAgentMove:                         "federation move-agent and delayed move retirement",
 	PermAgentShare:                        "handleFederationShareAgent supplies RemotePeer/RemoteGroup",
 	PermSessionsWatch:                     "handleFederationAttach — permissionAllowsAction with RemotePeer/RemoteGroup",
 	PermSessionsAttach:                    "handleFederationAttach — permissionAllowsAction with RemotePeer/RemoteGroup",

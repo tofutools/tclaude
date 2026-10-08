@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -19,6 +20,7 @@ import (
 )
 
 const PermAgentShare = "agent.share"
+const PermAgentMove = "agent.move"
 
 type fedShareAgentRequest struct {
 	Agent        string `json:"agent"`
@@ -29,6 +31,7 @@ type fedShareAgentRequest struct {
 }
 
 func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
+	moving := strings.HasSuffix(r.URL.Path, "/move-agent")
 	caller, human, ok := authedCaller(w, r)
 	if !ok {
 		return
@@ -47,8 +50,17 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "group", "--group must name a receiving group on the peer")
 		return
 	}
+	permission := PermAgentShare
+	if moving {
+		permission = PermAgentMove
+		in.History = true
+		if !peerSupportsAgentMoves(peer.InstanceID) {
+			writeError(w, 409, "unsupported_peer", "peer has not advertised agent move support")
+			return
+		}
+	}
 	if !human {
-		if _, ok := requirePermission(w, r, PermAgentShare, ActionContext{RemotePeer: peer.InstanceID, RemoteGroup: in.Group}); !ok {
+		if _, ok := requirePermission(w, r, permission, ActionContext{RemotePeer: peer.InstanceID, RemoteGroup: in.Group}); !ok {
 			return
 		}
 	}
@@ -70,9 +82,18 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if moving {
+		if _, ok := requireCrossAgentPermission(w, r, PermAgentRetire, source); !ok {
+			return
+		}
+	}
 	b, err := collectAgentBundle(source, in.History)
 	if err != nil {
 		writeError(w, 400, "bundle_export", err.Error())
+		return
+	}
+	if moving && b.Manifest.History == nil {
+		writeError(w, 400, "history_required", "moves require native conversation history")
 		return
 	}
 	if len(b.Manifest.Findings) > 0 && !in.AllowFlagged {
@@ -90,6 +111,19 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	d := bundletransfer.New(bundletransfer.Agent, raw, summary, time.Now().Add(bundletransfer.DefaultTTL))
 	d.Group = in.Group
+	if moving {
+		aid, err := db.AgentIDForConv(source)
+		if err != nil || aid == "" {
+			writeError(w, 409, "source", "source must be an active local agent")
+			return
+		}
+		a, err := db.GetAgent(aid)
+		if err != nil || a == nil || !a.Active() || a.CurrentConvID != source {
+			writeError(w, 409, "source", "source generation changed")
+			return
+		}
+		d.Move = &bundletransfer.MoveIntent{SourceAgent: aid, SourceConv: source}
+	}
 	o := db.FederationBundleOffer{Descriptor: d, Peer: peer.InstanceID, Direction: "out", State: "pending"}
 	fromConv := ""
 	if !human {
@@ -105,6 +139,27 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 	cleanup := func() {
 		_ = fedBundleSpool().Remove("out", peer.InstanceID, d.ID)
 		_ = db.DeleteFederationBundleOffer("out", peer.InstanceID, d.ID)
+		_ = db.DeleteFederationAgentMove("out", peer.InstanceID, d.ID)
+	}
+	if moving {
+		m := db.FederationAgentMove{Direction: "out", Peer: peer.InstanceID, ID: d.ID, State: "awaiting_confirmation", SourceAgent: d.Move.SourceAgent, SourceConv: source, SHA256: d.SHA256, Human: human, Group: in.Group, ExpiresAt: d.ExpiresAt}
+		if !human {
+			m.Initiator, _ = db.AgentIDForConv(caller)
+		}
+		groups, e := db.ListGroupsForConv(source)
+		if e != nil {
+			cleanup()
+			writeError(w, 500, "groups", e.Error())
+			return
+		}
+		for _, g := range groups {
+			m.SourceGroups = append(m.SourceGroups, g.ID)
+		}
+		if e = db.InsertFederationAgentMove(m); e != nil {
+			cleanup()
+			writeError(w, 409, "move", e.Error())
+			return
+		}
 	}
 	if err = fedBundleSpool().Receive("out", peer.InstanceID, d, bytes.NewReader(raw)); err != nil {
 		cleanup()
@@ -133,13 +188,17 @@ type fedBundleImportRequest struct {
 }
 
 func federationOfferProvenance(o *db.FederationBundleOffer) map[string]any {
-	return map[string]any{"id": o.Descriptor.ID, "peer": o.Peer, "sender_agent": o.SenderAgent, "type": o.Descriptor.Type, "sha256": o.Descriptor.SHA256, "expires_at": o.Descriptor.ExpiresAt, "requested_group": o.Descriptor.Group, "group_id": o.GroupID}
+	return map[string]any{"id": o.Descriptor.ID, "peer": o.Peer, "sender_agent": o.SenderAgent, "type": o.Descriptor.Type, "sha256": o.Descriptor.SHA256, "expires_at": o.Descriptor.ExpiresAt, "requested_group": o.Descriptor.Group, "group_id": o.GroupID, "move": o.Descriptor.Move}
 }
 
 // Caller holds fedBundleMu across validation, reservation and the normal
 // bundle importer. A durable reserved identity prevents an interrupted apply
 // from silently spawning another agent when the operator retries.
 func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.FederationBundleOffer, in *fedBundleImportRequest) {
+	if o.Descriptor.Move != nil && in.SkipHistory {
+		writeError(w, 400, "history_required", "moves cannot skip history")
+		return
+	}
 	if len(in.Only) > 0 || len(in.Skip) > 0 || in.Replace {
 		writeError(w, 400, "selector", "agent offers use --skip-history; config selectors and --replace do not apply")
 		return
@@ -207,6 +266,13 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 			return
 		}
 		o.ImportAgent = reserved
+		if o.Descriptor.Move != nil {
+			if err = reserveIncomingAgentMove(o, raw, reserved); err != nil {
+				_, _ = db.ReleaseUnlaunchedFederationBundleImport(o.Peer, o.Descriptor.ID, reserved)
+				writeError(w, 400, "move", err.Error())
+				return
+			}
+		}
 		rec = invoke(true, reserved)
 		if rec.Code == 200 {
 			if err = db.SetFederationBundleOfferState("in", o.Peer, o.Descriptor.ID, "applied", ""); err != nil {
@@ -217,6 +283,7 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 			queueBundleResult(o, "applied")
 		} else if released, err := db.ReleaseUnlaunchedFederationBundleImport(o.Peer, o.Descriptor.ID, reserved); err == nil && released {
 			o.ImportAgent = ""
+			_ = db.DeleteFederationAgentMove("in", o.Peer, o.Descriptor.ID)
 		} else {
 			// Keep the reserved ID on uncertain failures. Discarding an offer never
 			// stops a possibly late agent; the operator can inspect it first.

@@ -32,6 +32,16 @@ type RetireAgentAuthorizationOutcome struct {
 // rolls the complete authority and enrollment state back for a truthful,
 // retry-safe response.
 func RetireAgentAuthorizationByConv(convID, by, reason string) (RetireAgentAuthorizationOutcome, error) {
+	return retireAgentAuthorizationByConv(convID, by, reason, false)
+}
+
+// RetireAgentAuthorizationAtGeneration refuses stale generations inside the
+// same SQLite write transaction that revokes authority. /clear hooks can rotate
+// in a separate process, outside the daemon's in-process launch mutex.
+func RetireAgentAuthorizationAtGeneration(convID, by, reason string) (RetireAgentAuthorizationOutcome, error) {
+	return retireAgentAuthorizationByConv(convID, by, reason, true)
+}
+func retireAgentAuthorizationByConv(convID, by, reason string, requireCurrent bool) (RetireAgentAuthorizationOutcome, error) {
 	var out RetireAgentAuthorizationOutcome
 	convID = strings.TrimSpace(convID)
 	if convID == "" {
@@ -54,6 +64,21 @@ func RetireAgentAuthorizationByConv(convID, by, reason string) (RetireAgentAutho
 		return out, fmt.Errorf("revoke permission grants: begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if requireCurrent {
+		// Take the database writer lock before inspecting the live generation; no
+		// hook process can rotate it between this predicate and the retire commit.
+		res, err := tx.Exec(`UPDATE agents SET current_conv_id=current_conv_id WHERE agent_id=? AND current_conv_id=? AND retired_at IS NULL`, agentID, convID)
+		if err != nil {
+			return out, fmt.Errorf("pin retirement generation: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return out, err
+		}
+		if n != 1 {
+			return out, fmt.Errorf("source generation changed or is no longer active")
+		}
+	}
 
 	rows, err := tx.Query(`SELECT g.name FROM agent_groups g
 		JOIN agent_group_members m ON m.group_id = g.id

@@ -524,6 +524,7 @@ var permissionRegistry = []PermSlug{
 		ScopeDims:    []ScopeDim{ScopeDimGroup},
 		Description:  "Instantiate a working group from a template, or rebrief/reinforce an existing group. Ownership contributes this slug scoped to each owned group; instantiating a new group still needs another positive source.",
 	},
+	{Slug: PermAgentMove, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Move an agent to a peer with native history, retiring the source after running confirmation. Requires peer= scope and ordinary source retire authority; not default-granted."},
 	{Slug: PermAgentShare, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Share your portable agent configuration and optional private transcript with a peer. Requires peer= scope; exporting another agent also requires agent.bundle.export."},
 	{Slug: PermAgentBundleExport, Description: "Export portable agents and optional private transcripts. Not default-granted."},
 	{Slug: PermAgentBundleImport, Description: "Preview or import portable agents through normal spawn checks. Not default-granted."},

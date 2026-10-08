@@ -27,6 +27,9 @@ func shareAgentCmd() *cobra.Command {
 	}}.ToCobra()
 }
 func runShareAgent(p *shareAgentParams, out, stderr io.Writer) int {
+	return runAgentOffer(p, "/v1/federation/share-agent", out, stderr)
+}
+func runAgentOffer(p *shareAgentParams, path string, out, stderr io.Writer) int {
 	in := map[string]any{"agent": p.Agent, "peer": p.Peer, "group": p.Group, "history": p.History, "allow_flagged": p.AllowFlagged}
 	var response struct {
 		Offer struct {
@@ -38,13 +41,16 @@ func runShareAgent(p *shareAgentParams, out, stderr io.Writer) int {
 		Findings []agentbundle.Finding `json:"findings"`
 		Warnings []string              `json:"warnings"`
 	}
-	if rc := offerPost(stderr, "/v1/federation/share-agent", in, &response); rc != 0 {
+	if rc := offerPost(stderr, path, in, &response); rc != 0 {
 		return rc
 	}
 	if p.JSON {
 		return printJSON(out, response)
 	}
 	fmt.Fprintf(out, "%s agent offer %s to %s/%s (expires %s). Receiver must explicitly import it.\n", response.State, response.Offer.Descriptor.ID, p.Peer, p.Group, response.Offer.Descriptor.ExpiresAt.Format("2006-01-02 15:04 MST"))
+	if path == "/v1/federation/move-agent" {
+		fmt.Fprintln(out, "Move awaiting running confirmation. The source remains active until confirmation; use federation moves to inspect or abandon.")
+	}
 	for _, f := range response.Findings {
 		fmt.Fprintf(stderr, "Flag: %s: %d matches at %v\n", f.Kind, f.Count, f.Locations)
 	}

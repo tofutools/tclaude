@@ -328,6 +328,10 @@ func handleFederationBundleDecline(w http.ResponseWriter, r *http.Request) {
 }
 func registerFederationBundleRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/federation/share-agent", handleFederationShareAgent)
+	mux.HandleFunc("POST /v1/federation/move-agent", handleFederationShareAgent)
+	mux.HandleFunc("GET /v1/federation/moves", handleFederationMoves)
+	mux.HandleFunc("GET /v1/federation/moves/{id}", handleFederationMoves)
+	mux.HandleFunc("POST /v1/federation/moves/{id}/abandon", handleFederationMoveAbandon)
 	mux.HandleFunc("POST /v1/federation/offer-config", handleFederationOfferConfig)
 	mux.HandleFunc("GET /v1/federation/bundle-offers", handleFederationBundleOffers)
 	mux.HandleFunc("POST /v1/federation/bundle-offers/{id}/fetch", handleFederationBundleFetch)

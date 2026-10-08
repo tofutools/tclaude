@@ -179,6 +179,7 @@ func currentFederation() *fedRuntime {
 func startFederation() {
 	// Expire private payloads on restart even when federation was disabled.
 	reconcileFederationBundleOffers()
+	go reconcileFederationMoves()
 	fedLifecycleMu.Lock()
 	defer fedLifecycleMu.Unlock()
 	cleanupFedTerminalIndicators()
@@ -426,7 +427,7 @@ func buildFederationCatalog(peer string) (*proto.CatalogPayload, error) {
 			delete(caps[group.ID], proto.CapAttachments)
 		}
 	}
-	cat := &proto.CatalogPayload{Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
+	cat := &proto.CatalogPayload{AgentMoves: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
 	if fedPeerReadsNode(peer) {
 		cat.Node = localNodeMetadata()
 	}
@@ -493,6 +494,7 @@ func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 	defer completion.Stop()
 	reconcileFederationSpawns()
 	reconcileFederationBundleOffers()
+	go reconcileFederationMoves()
 	for {
 		select {
 		case <-ctx.Done():
@@ -505,6 +507,7 @@ func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 		case <-completion.C:
 			reconcileFederationSpawns()
 			reconcileFederationBundleOffers()
+			go reconcileFederationMoves()
 		case <-refresh.C:
 			rt.broadcastCatalogs()
 			if err := db.PruneFederationSeen(time.Now()); err != nil {
@@ -587,6 +590,8 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		go func() { defer rt.wg.Done(); rt.serveBundleFetch(peer, env) }()
 	case proto.KindBundleAnswer:
 		rt.acceptBundleAnswer(peer, env)
+	case proto.KindAgentMoveConfirm:
+		rt.acceptAgentMoveConfirmation(peer, env)
 	case proto.KindBundleResult:
 		rt.acceptBundleResult(peer, env)
 	case proto.KindRouteOpen:
@@ -711,6 +716,10 @@ func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
 	}
 	if env.Kind == proto.KindOperatorMail {
 		rt.acceptOperatorMail(peer, env, senderName, mp, refuse)
+		return
+	}
+	if movedAgentMailRefusal(peer.InstanceID, env.To.Agent) {
+		refuse("agent_moved", "agent moved to another instance; contact the operator for its new address")
 		return
 	}
 	conv, err := db.CurrentConvForAgent(env.To.Agent)
