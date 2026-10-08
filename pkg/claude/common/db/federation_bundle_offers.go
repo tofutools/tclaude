@@ -178,6 +178,22 @@ func SetFederationBundleLaunchLabel(agentID, label string) error {
 	_, err = d.Exec(`UPDATE federation_bundle_offers SET import_label=? WHERE direction='in' AND import_agent=? AND state='ready'`, label, agentID)
 	return err
 }
+
+// ClearUnlaunchedFederationBundleLabel permits retry only when preparation
+// proved that the subprocess boundary was never crossed. Match the label so a
+// stale failure cannot clear a later launch attempt.
+func ClearUnlaunchedFederationBundleLabel(agentID, label string) error {
+	if agentID == "" || label == "" {
+		return nil
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE federation_bundle_offers SET import_label='' WHERE direction='in' AND import_agent=? AND import_label=? AND state='ready'`, agentID, label)
+	return err
+}
+
 func ReleaseUnlaunchedFederationBundleImport(peer, id, agentID string) (bool, error) {
 	d, err := Open()
 	if err != nil {

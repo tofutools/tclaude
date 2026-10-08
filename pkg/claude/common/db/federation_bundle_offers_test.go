@@ -83,4 +83,12 @@ func TestFederationAgentOfferLaunchReservation(t *testing.T) {
 	require.Equal(t, "remote-agent", got.SenderAgent)
 	require.Equal(t, "reserved-agent", got.ImportAgent)
 	require.Equal(t, "launch-label", got.ImportLabel)
+	require.NoError(t, ClearUnlaunchedFederationBundleLabel("reserved-agent", "stale-label"))
+	released, err = ReleaseUnlaunchedFederationBundleImport(peer.ID(), d.ID, "reserved-agent")
+	require.NoError(t, err)
+	require.False(t, released, "a stale preparation failure cannot clear a later attempt")
+	require.NoError(t, ClearUnlaunchedFederationBundleLabel("reserved-agent", "launch-label"))
+	released, err = ReleaseUnlaunchedFederationBundleImport(peer.ID(), d.ID, "reserved-agent")
+	require.NoError(t, err)
+	require.True(t, released, "definite pre-dispatch failures can release their reservation")
 }

@@ -9199,17 +9199,26 @@ func reserveUniqueSpawnPrivateAttachmentRootWith(
 	)
 }
 
+// bundleLaunchPreparationFailed clears only the pre-dispatch marker. Failures
+// returned by Spawn itself remain uncertain: a child may already be running.
+func bundleLaunchPreparationFailed(args clcommon.SpawnArgs, launchErr error) error {
+	if err := db.ClearUnlaunchedFederationBundleLabel(args.AgentID, args.Label); err != nil {
+		return errors.Join(launchErr, fmt.Errorf("clear undispatched bundle launch: %w", err))
+	}
+	return launchErr
+}
+
 // SpawnDetachedTclaudeNew is a thin facade over Spawn.SpawnNew.
 // Tests substitute a behavior-accurate fake by assigning Spawn at
 // setup; production keeps the LiveSpawner default. See clcommon.SpawnArgs
 // for the per-field semantics.
 func SpawnDetachedTclaudeNew(args clcommon.SpawnArgs) error {
 	if err := prepareCodexAppServerRuntime(&args); err != nil {
-		return err
+		return bundleLaunchPreparationFailed(args, err)
 	}
 	if err := prepareCopilotAPIPort(&args); err != nil {
 		failPreparedCodexAppServerRuntime(args, err)
-		return err
+		return bundleLaunchPreparationFailed(args, err)
 	}
 	if err := Spawn.SpawnNew(args); err != nil {
 		failPreparedCodexAppServerRuntime(args, err)
@@ -9265,11 +9274,11 @@ func spawnDetachedTclaudeResumeAs(args clcommon.SpawnArgs, kind copilotAPILaunch
 	// for a TUI hook that Codex does not emit on every resume.
 	args.CodexAppServerExistingThread = kind == copilotAPILaunchResume
 	if err := prepareCodexAppServerRuntime(&args); err != nil {
-		return err
+		return bundleLaunchPreparationFailed(args, err)
 	}
 	if err := prepareCopilotAPIPort(&args); err != nil {
 		failPreparedCodexAppServerRuntime(args, err)
-		return err
+		return bundleLaunchPreparationFailed(args, err)
 	}
 	if err := Spawn.SpawnResume(args); err != nil {
 		failPreparedCodexAppServerRuntime(args, err)

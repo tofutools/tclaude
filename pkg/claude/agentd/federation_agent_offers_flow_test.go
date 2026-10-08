@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -326,4 +328,54 @@ func TestFederation_AgentOfferUncertainLaunchCannotDuplicate(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "launch_reserved")
 	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/bundle-offers/"+d.ID+"/decline", nil)
 	require.Equal(t, 200, rec.Code)
+}
+
+func TestFederation_AgentOfferPreparationFailureIsRetryable(t *testing.T) {
+	for _, history := range []bool{false, true} {
+		t.Run(fmt.Sprintf("history=%t", history), func(t *testing.T) {
+			fh := newFedHarness(t)
+			f, p := fh.f, fh.peer
+			t.Setenv("CODEX_HOME", "")
+			f.HaveGroup("receiver")
+			fedReceiveAgents(t, fh, "receiver")
+			b := fedAgentBundle(t)
+			b.Manifest.Agent.Harness = "codex"
+			b.Manifest.Agent.Profile = json.RawMessage(`{"codex_app_server":true,"sandbox":"danger-full-access"}`)
+			if history {
+				f.HaveGroup("source")
+				const source = "019fe740-43a4-7023-b8ae-1ee64459f2a1"
+				cwd := testutil.CanonicalTempDir(t)
+				f.HaveAliveCodexSession(source, "source-session", "source-pane", cwd)
+				f.HaveMember("source", source)
+				rec := profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+source+"&history=true", nil)
+				require.Equal(t, 200, rec.Code, rec.Body.String())
+				exported, err := agentbundle.Decode(rec.Body.Bytes())
+				require.NoError(t, err)
+				b.SetHistory(exported.Manifest.History.Format, source, exported.Transcript)
+			}
+			d := fedAgentOffer(t, p, "receiver", b)
+			require.Equal(t, proto.AckAccepted, fedAckFor(t, p, d.ID).Status)
+			// A regular file prevents app-server directory preparation, before any
+			// external spawn call can have dispatched a child.
+			blocker := filepath.Join(tclcommon.TclaudeAPIDir(), "codex")
+			require.NoError(t, os.MkdirAll(filepath.Dir(blocker), 0700))
+			require.NoError(t, os.WriteFile(blocker, []byte("blocked"), 0600))
+			spawner := &failingBundleSpawner{}
+			previous := agentd.Spawn
+			agentd.Spawn = spawner
+			t.Cleanup(func() { agentd.Spawn = previous })
+			path := "/v1/federation/bundle-offers/" + d.ID + "/import"
+			in := map[string]any{"cwd": testutil.CanonicalTempDir(t), "apply": true}
+			for attempt := 0; attempt < 2; attempt++ {
+				rec := fedHuman(t, f, http.MethodPost, path, in)
+				require.Equal(t, 500, rec.Code, rec.Body.String())
+				require.Contains(t, rec.Body.String(), "create Codex app-server owner directory")
+				offer, err := db.GetFederationBundleOffer("in", p.id.ID(), d.ID)
+				require.NoError(t, err)
+				require.Empty(t, offer.ImportAgent, "definite pre-dispatch failure permits retry")
+				require.Empty(t, offer.ImportLabel)
+				require.Empty(t, spawner.importedID, "resume was never dispatched")
+			}
+		})
+	}
 }
