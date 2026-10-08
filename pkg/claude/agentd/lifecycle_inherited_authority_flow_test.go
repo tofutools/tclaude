@@ -118,12 +118,24 @@ func TestLifecycleInheritedAuthority_AgentOwnedDirectoriesNeedNoCallerProof(t *t
 }
 
 func TestLifecycleInheritedAuthority_ResumePinsTargetOwnedDirectory(t *testing.T) {
-	for _, harnessName := range []string{"claude", "codex"} {
-		t.Run(harnessName, func(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		harness string
+		pending bool
+	}{
+		{name: "claude", harness: "claude"},
+		{name: "codex", harness: "codex"},
+		{name: "codex-pending", harness: "codex", pending: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("XDG_CACHE_HOME", t.TempDir())
 			f := newFlow(t)
-			group := f.HaveGroup("resume-crew-" + harnessName)
-			profileName := "private-resume-cache-" + harnessName
+			if tc.pending {
+				// Force a valid Pending response even when the simulator starts instantly.
+				t.Cleanup(agentd.SetAsyncSpawnInlineGraceForTest(0))
+			}
+			group := f.HaveGroup("resume-crew-" + tc.name)
+			profileName := "private-resume-cache-" + tc.name
 			_, err := db.CreateSandboxProfile(&db.SandboxProfile{
 				Name: profileName, AgentDirectories: []string{"GOCACHE"},
 			})
@@ -132,13 +144,29 @@ func TestLifecycleInheritedAuthority_ResumePinsTargetOwnedDirectory(t *testing.T
 			require.NoError(t, err)
 
 			body := map[string]any{
-				"name": "worker", "harness": harnessName, "cwd": t.TempDir(),
+				"name": "worker", "harness": tc.harness, "cwd": t.TempDir(),
 			}
-			if harnessName == "codex" {
+			if tc.harness == "codex" {
 				body["sandbox"] = "tclaude-agent"
 			}
 			target := f.AsHuman().SpawnWith(group.Name, body)
 			require.Equalf(t, http.StatusOK, target.Code, "spawn target body=%s", target.Raw)
+			if tc.pending {
+				require.Empty(t, target.ConvID, "exercise enrollment after a Pending response")
+			}
+			if target.ConvID == "" {
+				// HTTP 200 can mean Pending when simulator startup exhausts the
+				// inline grace under load. This resume fixture needs enrollment,
+				// so drive the normal sweeper before reading its sandbox snapshot.
+				row, err := db.LoadSession(target.Label)
+				require.NoError(t, err)
+				require.NotEmpty(t, row.ConvID, "simulator has published its first turn")
+				agentd.RunPendingSpawnSweepForTest()
+				target.ConvID, target.TmuxSession = row.ConvID, row.TmuxSession
+			}
+			boundAgent, err := db.AgentIDForConv(target.ConvID)
+			require.NoError(t, err)
+			require.Equal(t, target.AgentID, boundAgent, "resume uses the spawned actor")
 			before, err := db.AgentEffectiveSandboxConfigForConv(target.ConvID)
 			require.NoError(t, err)
 			require.NotNil(t, before)
