@@ -1964,6 +1964,16 @@ Revocation blocks pending rotation and old-key replay. An already accepted
 successor remains current; revocation does not roll it back. If the old signing
 key was stolen, the attacker can also sign a valid rotation. The detection window
 helps expose competing successors; it cannot prove which signer is the owner.
-An undetected winning successor inherits authority. Revoke it and explicitly
-recover to a separately verified key. Identity management commands are
-operator-only.
+An undetected winning successor inherits authority. For immediate containment,
+revoke that accepted successor itself on every trusting peer and on the hub:
+
+```bash
+tclaude federation identity revoke-old SUCCESSOR_ID --apply
+tclaude-hub identity revoke-old SUCCESSOR_ID --db /path/hub.sqlite --apply
+```
+
+Despite the command name, `revoke-old` can revoke the currently trusted successor.
+It removes that identity's trust and closes its remaining capabilities. Pair a
+separately verified replacement and explicitly restore the intended authority;
+revocation does not preserve an authority assignment for later automatic recovery.
+Identity management commands are operator-only.
