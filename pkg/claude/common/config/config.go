@@ -18,6 +18,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/common"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 // Config represents the tclaude configuration file structure.
@@ -802,7 +803,47 @@ type FederationAwayConfig struct {
 	Until time.Time `json:"until,omitempty"`
 }
 
+// FederationHealthPolicy controls operator notices; resource/failure signals are opt-in.
+type FederationHealthPolicy struct {
+	Presence             *bool   `json:"presence,omitempty"`
+	Resources            bool    `json:"resources"`
+	Failures             bool    `json:"failures"`
+	DebounceSeconds      int     `json:"debounce_seconds,omitempty"`
+	DiskFreePercent      float64 `json:"disk_free_percent,omitempty"`
+	RAMFreePercent       float64 `json:"ram_free_percent,omitempty"`
+	MemorySeconds        int     `json:"memory_seconds,omitempty"`
+	FailureCount         int     `json:"failure_count,omitempty"`
+	FailureWindowSeconds int     `json:"failure_window_seconds,omitempty"`
+	CooldownSeconds      int     `json:"cooldown_seconds,omitempty"`
+}
+
+func (p FederationHealthPolicy) Validate() error {
+	for _, n := range []int{p.DebounceSeconds, p.MemorySeconds, p.FailureWindowSeconds, p.CooldownSeconds} {
+		if n < 0 || n > 86400 {
+			return fmt.Errorf("durations must be 0..86400 seconds (zero uses default)")
+		}
+	}
+	if p.FailureCount < 0 || p.FailureCount > 256 {
+		return fmt.Errorf("failure_count must be 0..256")
+	}
+	for _, n := range []float64{p.DiskFreePercent, p.RAMFreePercent} {
+		if math.IsNaN(n) || math.IsInf(n, 0) || n < 0 || n > 100 {
+			return fmt.Errorf("free percentages must be 0..100")
+		}
+	}
+	return nil
+}
+
+type FederationHealthConfig struct {
+	Defaults FederationHealthPolicy `json:"defaults,omitempty"`
+	// Keys are immutable instance IDs. Accepted linked successors inherit an
+	// ancestor's settings unless they have an explicit override.
+	Peers map[string]FederationHealthPolicy `json:"peers,omitempty"`
+}
+
 type FederationConfig struct {
+	Health *FederationHealthConfig `json:"health,omitempty"`
+
 	// IdentityRotationSeconds is the local successor detection window; default 600.
 	IdentityRotationSeconds int                       `json:"identity_rotation_seconds,omitempty"`
 	Teleport                *FederationTeleportConfig `json:"teleport,omitempty"`
@@ -3510,6 +3551,19 @@ func Validate(c *Config) []string {
 			l := f.Teleport.Limits.Effective()
 			if l.Hour < 1 || l.Day < 1 || l.Chain < 1 || l.Chain > 128 || l.RevisitMinutes < 0 || l.RevisitMinutes > 525600 {
 				errs = append(errs, "federation.teleport.limits must have positive rates, per_chain 1..128, and revisit_minutes 0..525600")
+			}
+		}
+		if f.Health != nil {
+			if e := f.Health.Defaults.Validate(); e != nil {
+				errs = append(errs, "federation.health.defaults: "+e.Error())
+			}
+			for id, p := range f.Health.Peers {
+				if !proto.ValidInstanceID(id) {
+					errs = append(errs, "federation.health.peers requires immutable instance IDs")
+				}
+				if e := p.Validate(); e != nil {
+					errs = append(errs, "federation.health.peers: "+e.Error())
+				}
 			}
 		}
 		if f.MaxLiveAgents < 0 {

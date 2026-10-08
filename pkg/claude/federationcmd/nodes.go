@@ -1,11 +1,15 @@
 package federationcmd
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -17,6 +21,7 @@ import (
 )
 
 type nodesParams struct {
+	Watch bool   `long:"watch" help:"Stream fleet health transitions (operator only; noisy signals require nodes health)"`
 	Match string `long:"match" help:"All required matches: os=darwin,arch=arm64,label=gpu,harness=codex"`
 	JSON  bool   `long:"json" help:"Output JSON"`
 }
@@ -30,7 +35,7 @@ type remoteNode struct {
 }
 
 func nodesCmd() *cobra.Command {
-	return boa.CmdT[nodesParams]{Use: "nodes", Short: "List shared peer node capabilities and resource summaries", ParamEnrich: common.DefaultParamEnricher(), SubCmds: []*cobra.Command{NodeGroupsCmd()}, RunFunc: func(p *nodesParams, _ *cobra.Command, _ []string) { os.Exit(runNodes(p, os.Stdout, os.Stderr)) }}.ToCobra()
+	return boa.CmdT[nodesParams]{Use: "nodes", Short: "List shared peer node capabilities and resource summaries", ParamEnrich: common.DefaultParamEnricher(), SubCmds: []*cobra.Command{NodeGroupsCmd(), nodeHealthCmd()}, RunFunc: func(p *nodesParams, _ *cobra.Command, _ []string) { os.Exit(runNodes(p, os.Stdout, os.Stderr)) }}.ToCobra()
 }
 func runNodes(p *nodesParams, stdout, stderr io.Writer) int {
 	if _, err := proto.ParseNodeMatch(p.Match); err != nil {
@@ -38,6 +43,9 @@ func runNodes(p *nodesParams, stdout, stderr io.Writer) int {
 	}
 	if rc := agent.RequireDaemonOrExit(stderr); rc != 0 {
 		return rc
+	}
+	if p.Watch {
+		return watchNodes(p, stdout, stderr)
 	}
 	var rows []remoteNode
 	if err := agent.DaemonGet("/v1/federation/nodes?match="+url.QueryEscape(p.Match), &rows); err != nil {
@@ -128,4 +136,85 @@ func runNodeLabels(p *nodeLabelsParams, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, strings.Join(result.Labels, ","))
 	return 0
+}
+
+func watchNodes(p *nodesParams, stdout, stderr io.Writer) int {
+	if p.Match != "" {
+		return fail(stderr, fmt.Errorf("--watch cannot be combined with --match"))
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	conn, err := agent.DaemonStreamGet(ctx, "/v1/federation/nodes/watch")
+	if err != nil {
+		return fail(stderr, err)
+	}
+	defer func() { _ = conn.Close() }()
+	var rows []remoteNode
+	if err := agent.DaemonGet("/v1/federation/nodes", &rows); err != nil {
+		return fail(stderr, err)
+	}
+	if p.JSON {
+		if err := json.NewEncoder(stdout).Encode(map[string]any{"nodes": rows}); err != nil {
+			return fail(stderr, err)
+		}
+	} else {
+		printNodes(stdout, rows)
+	}
+	dec := json.NewDecoder(conn)
+	for {
+		var e struct {
+			At       time.Time `json:"at"`
+			Instance string    `json:"instance"`
+			Peer     string    `json:"peer"`
+			Kind     string    `json:"kind"`
+			Message  string    `json:"message"`
+		}
+		if err := dec.Decode(&e); err != nil {
+			if ctx.Err() != nil {
+				return 0
+			}
+			return fail(stderr, fmt.Errorf("fleet watch disconnected: %w; run --watch again", err))
+		}
+		if p.JSON {
+			if err := json.NewEncoder(stdout).Encode(e); err != nil {
+				return fail(stderr, err)
+			}
+		} else {
+			if _, err := fmt.Fprintf(stdout, "%s %s %s: %s\n", e.At.Local().Format(time.RFC3339), e.Peer, e.Kind, e.Message); err != nil {
+				return fail(stderr, err)
+			}
+		}
+	}
+}
+
+type nodeHealthParams struct {
+	Peer string `long:"peer" help:"Trusted peer label or instance ID; omit for defaults"`
+	Set  string `long:"set" help:"Replace this policy with a JSON object (operator only)"`
+}
+
+func nodeHealthCmd() *cobra.Command {
+	return boa.CmdT[nodeHealthParams]{Use: "health", Short: "Read or replace fleet notification policy", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *nodeHealthParams, _ *cobra.Command, _ []string) {
+		if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
+			os.Exit(rc)
+		}
+		path := "/v1/federation/nodes/health?peer=" + url.QueryEscape(p.Peer)
+		var result any
+		if p.Set != "" {
+			var policy map[string]any
+			if err := json.Unmarshal([]byte(p.Set), &policy); err != nil {
+				os.Exit(fail(os.Stderr, err))
+			}
+			if policy == nil {
+				os.Exit(fail(os.Stderr, fmt.Errorf("--set requires a JSON object")))
+			}
+			if err := agent.DaemonPost(path, policy, &result); err != nil {
+				os.Exit(fail(os.Stderr, err))
+			}
+		} else {
+			if err := agent.DaemonGet(path, &result); err != nil {
+				os.Exit(fail(os.Stderr, err))
+			}
+		}
+		os.Exit(printJSON(os.Stdout, result))
+	}}.ToCobra()
 }

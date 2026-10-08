@@ -195,7 +195,9 @@ func (rt *fedRuntime) acceptNodeUpdate(from string, e *proto.Envelope) {
 	mergeNodePublication(&next, previous, u.At, e.CreatedAt)
 	clean, err := json.Marshal(next)
 	if err == nil {
-		_ = db.PutFederationCatalog(from, string(clean), catalogAt)
+		if db.PutFederationCatalog(from, string(clean), catalogAt) == nil {
+			rt.observeFleetNode(from, &next, time.Now())
+		}
 	}
 }
 

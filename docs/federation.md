@@ -1977,3 +1977,75 @@ It removes that identity's trust and closes its remaining capabilities. Pair a
 separately verified replacement and explicitly restore the intended authority;
 revocation does not preserve an authority assignment for later automatic recovery.
 Identity management commands are operator-only.
+
+### Fleet health notices and watching
+
+```bash
+tclaude federation nodes --watch
+tclaude federation nodes --watch --json
+tclaude federation nodes health
+tclaude federation nodes health --peer bob --set '{"resources":true,"failures":true}'
+tclaude federation nodes health --peer bob --set '{"presence":false}'
+```
+
+These commands are operator-only. `--watch` prints the current node list, then
+live transitions; `--json` emits one initial `{"nodes":[…]}` object followed by
+one event object per line. Watch cannot be combined with `--match`. It adds no
+polling, resource probes or status-snapshot gathers. Presence comes from hub
+directory changes; resource checks consume the existing shared node snapshots;
+job and spawn outcomes feed failure counters. The existing federation tick
+flushes debounces. A hub connection outage alone is not proof that every peer
+went offline. The initial directory establishes a baseline without notices.
+
+Trusted-peer offline/back notices are enabled by default, with a 15-second
+debounce that suppresses short flaps. Resource and repeated-failure signals are
+off by default. Enabled notices use the same operator Messages inbox and desktop
+notification channel as `agent notify-human`. Identity rotation observations and
+acceptances, teleport lease loss requiring recovery, and successful backup
+resumption also appear in watch. Identity notices retain their existing inbox
+messages; teleport recovery adds a fleet notice.
+
+`nodes health --set` replaces the selected policy; omitted fields use built-in
+defaults, rather than inheriting individual fields from the defaults policy.
+Without `--peer` it replaces the defaults for peers without an override. Policies
+live under `federation.health.defaults` and `federation.health.peers` in the local
+config. Peer keys are immutable instance IDs, resolved from the CLI label.
+Accepted identity successors inherit ancestor settings; a direct successor
+override wins. Deleting/re-pairing an unrelated identity does not inherit them.
+
+Available settings (durations are seconds; zero selects the built-in default):
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `presence` | true | Offline/back notices |
+| `resources` | false | Low disk and sustained high memory |
+| `failures` | false | Repeated confirmed job/spawn failures |
+| `debounce_seconds` | 15 | Delay before a stable transition is emitted |
+| `disk_free_percent` | 10 | Minimum data/work disk free percentage |
+| `ram_free_percent` | 10 | Minimum available RAM percentage |
+| `memory_seconds` | 120 | Continuous fresh high-memory observations required |
+| `failure_count` | 3 | Distinct failed attempts in the window |
+| `failure_window_seconds` | 600 | Rolling failure-count window |
+| `cooldown_seconds` | 600 | Minimum interval between failure notices |
+
+Resource recovery emits a transition too. Missing, warming, stale, replayed or
+withdrawn readings never imply recovery or count toward sustained memory use.
+An offline interval or observation gap over 90 seconds breaks memory continuity.
+Disk checks use the least available percentage across data/work disks; unknown
+disks do not count as zero. Memory readings retain the source platform's available
+RAM estimate. Threshold oscillation is debounced.
+
+Failures include validated job execution failure/timeout, interrupted or missing
+output, terminal spawn capacity refusal, and confirmed failed spawn launch
+attempts. Human denials, cancellations and uncertain startup timeouts do not
+count. The optional `spawn_attempt_failed` frame correlates to a local outgoing
+request and deduplicates the reserved worker attempt; it never changes the final
+spawn decision. Older peers ignore that frame and cannot report launch-attempt
+failures. Failure counters and debounce state reset on daemon/federation restart.
+
+Watch events are live, not a durable history. Slow viewers disconnect rather
+than holding up federation; rerun `--watch` after disconnection or daemon restart.
+Important notices remain in the operator inbox, and identity/teleport audits
+retain their existing durable records. Watch survives an in-process federation
+reload, including an accepted identity rotation. Revoked peers are checked again
+before event delivery.

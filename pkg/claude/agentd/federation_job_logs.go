@@ -71,7 +71,9 @@ func (rt *fedRuntime) acceptJobResult(peer *db.FederationPeer, env *proto.Envelo
 	raw, _ := json.Marshal(res)
 	if len(res.Logs) == 0 {
 		if res.State == "refused" || res.State == "canceled" || res.State == "interrupted" || res.State == "output_unavailable" {
-			_ = db.TransitionFederationJob(j.ID, j.State, res.State, raw)
+			if db.TransitionFederationJob(j.ID, j.State, res.State, raw) == nil && (res.State == "interrupted" || res.State == "output_unavailable") {
+				rt.observeFleetFailure(j.Peer, "job/"+j.ID, time.Now())
+			}
 		}
 		return
 	}
@@ -99,6 +101,9 @@ func (rt *fedRuntime) acceptJobResult(peer *db.FederationPeer, env *proto.Envelo
 			return
 		}
 		if db.TransitionFederationJob(j.ID, "receiving_logs", res.State, raw) == nil {
+			if res.State == "failed" || res.State == "timeout" || res.State == "output_unavailable" || res.State == "interrupted" {
+				rt.observeFleetFailure(j.Peer, "job/"+j.ID, time.Now())
+			}
 			rt.sendControl(j.Peer, proto.KindBundleResult, "", bundletransfer.Result{Offer: d.ID, State: "applied"})
 		}
 	}()

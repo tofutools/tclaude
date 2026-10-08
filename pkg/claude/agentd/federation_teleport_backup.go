@@ -265,8 +265,12 @@ func (rt *fedRuntime) reconcileTeleportLeases() {
 			if p.Recovery == "manual" {
 				if l.State != "recovery_needed" {
 					l.State = "recovery_needed"
-					_, _ = db.TransitionFederationTeleportLease(l, teleportLeaseLostBriefing(l)+"\nManual recovery required: agent teleport recover "+l.SourceAgent)
+					won, err := db.TransitionFederationTeleportLease(l, teleportLeaseLostBriefing(l)+"\nManual recovery required: agent teleport recover "+l.SourceAgent)
+					if err != nil || !won {
+						continue
+					}
 					recordFederationAudit("teleport.recovery_needed", l.Peer, l.SourceAgent, "", "offer="+l.Offer, 200)
+					publishFleetEvent(l.Peer, "teleport_lease_lost", "Teleport backup "+l.SourceAgent+" lost its lease; manual recovery required", true)
 				}
 			} else {
 				rt.beginTeleportRecovery(&l, teleportLeaseLostBriefing(l))
@@ -320,6 +324,9 @@ func (rt *fedRuntime) beginTeleportRecovery(l *db.FederationTeleportLease, brief
 		return
 	}
 	l.Revision++
+	if briefing == teleportLeaseLostBriefing(*l) {
+		publishFleetEvent(l.Peer, "teleport_lease_lost", "Teleport backup "+l.SourceAgent+" lost its lease; starting recovery", true)
+	}
 	recordFederationAudit("teleport.recover", l.Peer, l.SourceAgent, "", fmt.Sprintf("offer=%s epoch=%d", l.Offer, l.Epoch), 200)
 	rt.resumeTeleportBackup(l)
 }
@@ -345,6 +352,7 @@ func (rt *fedRuntime) resumeTeleportBackup(l *db.FederationTeleportLease) {
 	if won, e := db.TransitionFederationTeleportLease(*l, ""); e != nil || !won {
 		return
 	}
+	publishFleetEvent(l.Peer, "teleport_recovered", "Teleport backup "+l.SourceAgent+" resumed", true)
 	rt.sendTeleportLease(*l, teleportLeaseFrame{Op: "superseded", Epoch: l.Epoch, Policy: teleportSupersededPolicy()})
 	db.NotifyStatusChanged()
 }

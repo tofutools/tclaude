@@ -501,7 +501,7 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 	release := func() {
 		if !released {
 			released = true
-			if _, err := db.ReturnFederationSpawnAttemptToPending(req.ID, reservedID, "launch failed"); err != nil {
+			if _, err := returnFederationSpawnFailure(req, reservedID, "launch failed"); err != nil {
 				slog.Warn("federation: releasing spawn request failed", "request", req.ID, "error", err)
 			}
 		}
@@ -572,7 +572,7 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 			if current.LaunchLabel != "" {
 				markFederationSpawnUnconfirmed(reservedID, failure.Error)
 			} else {
-				_, _ = db.ReturnFederationSpawnAttemptToPending(req.ID, reservedID, failure.Error)
+				_, _ = returnFederationSpawnFailure(req, reservedID, failure.Error)
 			}
 		}
 		reconcileFederationSpawns()
