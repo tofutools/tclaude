@@ -108,8 +108,10 @@ func TestSessionEndIsExit(t *testing.T) {
 
 // feedHook runs runHookCallback with the given JSON payload on stdin
 // and TCLAUDE_SESSION_ID set to sessionID, restoring os.Stdin after.
+// These fixtures apply hooks locally rather than through a running agentd.
 func feedHook(t *testing.T, sessionID string, payload map[string]any) {
 	t.Helper()
+	t.Setenv(HookBrokerEnvVar, "")
 	data, err := json.Marshal(payload)
 	require.NoError(t, err)
 

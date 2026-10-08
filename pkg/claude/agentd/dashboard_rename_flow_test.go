@@ -121,6 +121,8 @@ func TestDashboardRename_SetsTitle(t *testing.T) {
 // the native write; otherwise the UI keeps rendering the old cached title
 // until some unrelated full conversation scan happens.
 func TestDashboardRename_CodexUpdatesCachedTitle(t *testing.T) {
+	// CodexSim writes beneath the isolated HOME, not the operator's Codex home.
+	t.Setenv("CODEX_HOME", "")
 	f := newFlow(t)
 
 	const conv = "aaaaaaaa-bbbb-cccc-dddd-000000000004"
