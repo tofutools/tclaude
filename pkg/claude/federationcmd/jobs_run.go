@@ -103,7 +103,7 @@ func runFederationJobs(p *jobRunParams) int {
 	}
 	if len(summaries) > 1 && !p.JSON {
 		for _, s := range summaries {
-			fmt.Fprintf(os.Stderr, "%s: %s commit=%s exit=%d job=%s\n", s.Peer, s.State, s.Commit, s.Code, s.ID)
+			fmt.Fprintf(os.Stderr, "%s: %s commit=%s exit=%d job=%s\n", s.Peer, s.State, proto.StripControls(s.Commit), s.Code, s.ID)
 			if s.Error != "" {
 				fmt.Fprintln(os.Stderr, proto.StripControls(s.Error))
 			}

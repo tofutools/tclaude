@@ -18,7 +18,7 @@ import (
 // Logs use the shared descriptor, private spool and authenticated stream FIN.
 // They are admitted only as a result of a locally submitted, matching job;
 // unsolicited bundle offers never grant authority to receive job output.
-var jobLogType = bundletransfer.Type{Name: "job-log", MaxBytes: 50 << 20, PendingLimit: 10, PendingBytes: 256 << 20}
+var jobLogType = bundletransfer.Type{Name: "job-log", MaxBytes: 64 << 20, PendingLimit: 10, PendingBytes: 256 << 20}
 
 func (rt *fedRuntime) persistJobLogs(j *db.FederationJob, res *proto.JobResult, out nonInteractiveSpawnResult) error {
 	raw, e := json.Marshal(out)
