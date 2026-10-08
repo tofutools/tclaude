@@ -904,6 +904,11 @@ const fedStaleAfter = 3 * fedCatalogRefresh
 
 // fedRemoteMember is one remote member reachable through an import.
 type fedRemoteMember struct {
+	State            *proto.AgentStatus `json:"state,omitempty"`
+	StatusObservedAt time.Time          `json:"status_observed_at,omitempty"`
+	StatusReceivedAt time.Time          `json:"status_received_at,omitempty"`
+	StatusStale      bool               `json:"status_stale,omitempty"`
+	IdleSeconds      *int64             `json:"idle_seconds,omitempty"`
 	// Address is what `tclaude agent message` accepts: name@label, or
 	// name@instance-id for a peer without a label.
 	Address     string    `json:"address"`
@@ -964,6 +969,11 @@ func handleFederationReachable(w http.ResponseWriter, r *http.Request) {
 		addrPeer := fedFirst(peer.Label, peer.InstanceID)
 		for _, g := range cat.Groups {
 			actx := ActionContext{RemotePeer: peer.InstanceID, RemoteGroup: g.Name}
+			statusAllowed := isHuman
+			if !isHuman {
+				statusAllowed, _, _ = permissionAllowsAction(r, myID, PermAgentsStatusRead, actx)
+			}
+			statusAllowed = statusAllowed && g.HasCap(proto.CapAgentStatus)
 			mail := isHuman && g.HasCap(proto.CapMail)
 			visible := isHuman
 			if !isHuman {
@@ -986,15 +996,42 @@ func handleFederationReachable(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
-			if !visible {
+			if !visible && !statusAllowed {
 				continue
 			}
-			for _, m := range g.Members {
-				out = append(out, &fedRemoteMember{
-					Address: m.Name + "@" + addrPeer, Agent: m.Agent, Name: m.Name, Role: m.Role, Harness: m.Harness,
-					Presence: m.Presence, Peer: peerDisplay(&peer), Instance: peer.InstanceID, RemoteGroup: g.Name,
-					Mail: mail, PeerOnline: online, CatalogAt: at, Stale: !online || now.Sub(at) > fedStaleAfter,
-				})
+			indices := map[string]*fedRemoteMember{}
+			if visible {
+				for _, m := range g.Members {
+					row := &fedRemoteMember{
+						Address: m.Name + "@" + addrPeer, Agent: m.Agent, Name: m.Name, Role: m.Role, Harness: m.Harness,
+						Presence: m.Presence, Peer: peerDisplay(&peer), Instance: peer.InstanceID, RemoteGroup: g.Name,
+						Mail: mail, PeerOnline: online, CatalogAt: at, Stale: !online || now.Sub(at) > fedStaleAfter,
+					}
+					out = append(out, row)
+					indices[m.Agent] = row
+				}
+			}
+			if statusAllowed {
+				for _, s := range g.AgentStatuses {
+					row := indices[s.Agent]
+					if row == nil {
+						row = &fedRemoteMember{Address: s.Agent + "@" + addrPeer, Agent: s.Agent, Name: s.Name, Role: s.Role, Harness: s.Harness, Peer: peerDisplay(&peer), Instance: peer.InstanceID, RemoteGroup: g.Name, PeerOnline: online, CatalogAt: at, Stale: !online || now.Sub(at) > fedStaleAfter}
+						out = append(out, row)
+					}
+					status := s
+					row.State = &status
+					row.StatusObservedAt = g.AgentStatusesAt
+					row.StatusReceivedAt = g.AgentStatusesReceivedAt
+					row.StatusStale = remoteAgentStatusStale(rt, peer.InstanceID, g)
+					if s.LastActivity != nil && s.Online && s.Status != "working" && s.Status != "running" && s.Status != "main_agent_idle" {
+						end := now
+						if row.StatusStale {
+							end = g.AgentStatusesAt
+						}
+						idle := max(int64(0), int64(end.Sub(*s.LastActivity)/time.Second))
+						row.IdleSeconds = &idle
+					}
+				}
 			}
 		}
 	}

@@ -138,6 +138,7 @@ func TestDashboardSnapshot_BgShellCountSurvivesMainAgentStop(t *testing.T) {
 	}
 	member := func() *dashMember {
 		t.Helper()
+		agentd.ResetStatusSnapshotForTest() // Simulate the next UI poll after cache expiry.
 		m := findDashMember(fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "squad", conv)
 		require.NotNil(t, m, "agent %s missing from group squad members", conv)
 		return m
@@ -477,6 +478,7 @@ func TestDashboardSnapshot_BgShellCountZeroForOfflineAgent(t *testing.T) {
 	f.MarkOffline("tmux-bgof")
 	agentd.ResetBgShellReconcileCacheForTest()
 
+	agentd.ResetStatusSnapshotForTest() // Simulate the next UI poll after cache expiry.
 	member := findDashMember(fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "squad", conv)
 	require.NotNil(t, member)
 	assert.Zero(t, member.State.BgShellCount,

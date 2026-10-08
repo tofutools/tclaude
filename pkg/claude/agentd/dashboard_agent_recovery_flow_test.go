@@ -104,6 +104,7 @@ func TestDashboardSnapshot_SurfacesCodexRecoveryStatesEverywhere(t *testing.T) {
 	_, err = database.Exec(`UPDATE sessions SET last_hook=? WHERE conv_id=?`,
 		recoveredAt.Add(time.Second).UnixNano(), convs[db.AgentRecoveryStatusRecovered])
 	require.NoError(t, err)
+	agentd.ResetStatusSnapshotForTest() // Simulate the next UI poll after cache expiry.
 	snap = fetchSnapshotOnly(t, agentd.BuildDashboardHandlerForTest())
 	for _, group := range snap.Groups {
 		for _, member := range group.Members {

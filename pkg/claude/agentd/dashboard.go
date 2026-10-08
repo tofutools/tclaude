@@ -2914,18 +2914,11 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// TCL-374). Nil-safe: a direct call outside withPerfTiming (tests)
 	// simply records nothing.
 	span := perfSpanFrom(r)
-	// One tmux ls for the whole snapshot. Every isConvOnlineIn /
-	// stateForConvIn call below tests liveness via map lookup off this
-	// set — replacing ~150 per-poll `has-session` subprocess spawns
-	// with one. Routed through the short-TTL cache (TCL-370) so this
-	// tick's other parallel poll handlers (/api/retired,
-	// /api/conversations) share the same probe instead of each forking
-	// their own `tmux ls`; the span mark below reads ~0 on a cache hit.
-	// Errors / no-server collapse to an empty map (== "all offline"),
-	// matching what per-row probes would have reported when the tmux
-	// server is down.
-	aliveSessions, _ := cachedLiveTmuxSessions()
-	span.mark("tmux_ls")
+	// All status consumers share this gather, including its one tmux probe.
+	// Warm reads only project cached data; authority is always checked below.
+	sharedStatus := gatheredStatusSnapshot()
+	aliveSessions := sharedStatus.alive
+	span.mark("status_snapshot")
 
 	var (
 		groups               []*db.AgentGroup
@@ -3119,7 +3112,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		authoredOpenPRs   dashboardAuthoredOpenPRs
 		branchPRCacheURLs []string
 	)
-	rc := newSnapshotRowCache(convIDs, aliveSessions, func(phases []perfPhase) {
+	rc := newSnapshotRowCache(convIDs, sharedStatus, func(phases []perfPhase) {
 		span.addChildren("preload", phases...)
 	})
 	branchPRCacheURLs = make([]string, 0, len(convIDs)*2)

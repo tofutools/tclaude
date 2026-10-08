@@ -1519,3 +1519,17 @@ func TestAWBReadyPollingModelAndEffort(t *testing.T) {
 	assert.Contains(t, string(raw), `"model":"sonnet"`)
 	assert.Contains(t, string(raw), `"effort":"high"`)
 }
+
+func TestStatusSnapshotWindowValidation(t *testing.T) {
+	for _, ms := range []int{0, 1, 1500, 60000, -1, 60001} {
+		c := DefaultConfig()
+		c.StatusSnapshot = &StatusSnapshotConfig{FreshnessMS: ms}
+		found := false
+		for _, problem := range Validate(c) {
+			if strings.Contains(problem, "status_snapshot") {
+				found = true
+			}
+		}
+		assert.Equal(t, ms < 0 || ms > 60000, found, "freshness %d", ms)
+	}
+}

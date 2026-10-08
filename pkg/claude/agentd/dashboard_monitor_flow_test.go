@@ -86,6 +86,7 @@ func TestDashboardSnapshot_MonitorCountSurvivesMainAgentStop(t *testing.T) {
 	}
 	member := func() *dashMember {
 		t.Helper()
+		agentd.ResetStatusSnapshotForTest() // Simulate the next UI poll after cache expiry.
 		m := findDashMember(fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "squad", conv)
 		require.NotNil(t, m, "agent %s missing from group squad members", conv)
 		return m
@@ -151,6 +152,7 @@ func TestDashboardSnapshot_MonitorAndBgShellBadgesAreIndependent(t *testing.T) {
 	}
 	member := func() *dashMember {
 		t.Helper()
+		agentd.ResetStatusSnapshotForTest() // Simulate the next UI poll after cache expiry.
 		m := findDashMember(fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "squad", conv)
 		require.NotNil(t, m, "agent %s missing from group squad members", conv)
 		return m

@@ -22,6 +22,7 @@ import (
 
 // Config represents the tclaude configuration file structure.
 type Config struct {
+	StatusSnapshot  *StatusSnapshotConfig  `json:"status_snapshot,omitempty"`
 	Host            *HostConfig            `json:"host,omitempty"`
 	Notifications   *NotificationConfig    `json:"notifications,omitempty"`
 	PreCompactGuard *PreCompactGuardConfig `json:"pre_compact_guard,omitempty"`
@@ -3494,6 +3495,9 @@ func Validate(c *Config) []string {
 		return []string{"config is nil"}
 	}
 	var errs []string
+	if c.StatusSnapshot != nil && (c.StatusSnapshot.FreshnessMS < 0 || c.StatusSnapshot.FreshnessMS > 60000) {
+		errs = append(errs, "status_snapshot.freshness_ms must be 0 (default) or 1..60000")
+	}
 	if f := c.Federation; f != nil {
 		if f.MaxLiveAgents < 0 {
 			errs = append(errs, "federation.max_live_agents must be nonnegative (zero is unlimited)")
@@ -4031,4 +4035,9 @@ func IsHTTPProxyGatewayURL(value string) bool {
 		}
 	}
 	return true
+}
+
+// StatusSnapshotConfig controls the shared runtime gathering window for every consumer.
+type StatusSnapshotConfig struct {
+	FreshnessMS int `json:"freshness_ms,omitempty"`
 }

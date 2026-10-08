@@ -163,6 +163,7 @@ func TestDashboardSnapshot_CodexRuntimeModelAndEffortChangesConvergeFromHookAndF
 		TranscriptPath: cx.RolloutPath,
 	}, label))
 
+	agentd.ResetStatusSnapshotForTest() // Simulate the next UI poll after cache expiry.
 	afterCompact := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 	compactAgent := findDashAgent(afterCompact, conv)
 	require.NotNil(t, compactAgent)
@@ -188,6 +189,7 @@ func TestDashboardSnapshot_CodexRuntimeModelAndEffortChangesConvergeFromHookAndF
 	}, label))
 	agentd.ResetCodexRefreshThrottleForTest(label)
 
+	agentd.ResetStatusSnapshotForTest() // Simulate the next UI poll after cache expiry.
 	afterStop := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 	stoppedAgent := findDashAgent(afterStop, conv)
 	require.NotNil(t, stoppedAgent)

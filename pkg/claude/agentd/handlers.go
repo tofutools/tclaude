@@ -268,7 +268,8 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 	}
 	// One tmux ls for the whole listing — every isConvOnlineIn below
 	// is a map lookup against this snapshot, not a per-row subprocess.
-	aliveSessions, _ := session.LiveTmuxSessions()
+	shared := gatheredStatusSnapshot()
+	aliveSessions := shared.alive
 
 	byConv := map[string]*peerEntry{}
 	// Pass 1: group members.
@@ -334,16 +335,10 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	// Resolve every peer's runtime state in one sessions-table read. The
-	// per-peer settlement still goes through the dashboard's canonical helper,
-	// including live sub-agent reconciliation and Codex telemetry read-through.
-	convIDs := make([]string, 0, len(byConv))
-	for conv := range byConv {
-		convIDs = append(convIDs, conv)
-	}
-	sessionsByConv, _ := db.FindSessionsByConvIDs(convIDs)
+	// Reuse the same gathered runtime state as dashboard, tools and peers.
+	// Group membership and permissions above are fresh projection decisions.
 	for conv, pe := range byConv {
-		pe.State = peerStateFromAgentState(stateForConvInSessions(sessionsByConv[conv], aliveSessions))
+		pe.State = peerStateFromAgentState(shared.states[conv])
 	}
 	out := make([]*peerEntry, 0, len(byConv))
 	for _, pe := range byConv {
@@ -2689,9 +2684,9 @@ func handleAgentContext(w http.ResponseWriter, r *http.Request, targetConv strin
 // conv-id on the cross-agent path (echoed for the audit trail) and ""
 // for self / human reads. Shared by the self and cross-agent handlers.
 func writeContextInfo(w http.ResponseWriter, convID, caller string) {
-	aliveSessions, _ := session.LiveTmuxSessions()
-	snap, sessionID, _ := contextSnapshotForConvIn(convID, aliveSessions)
-	state := stateForConvIn(convID, aliveSessions)
+	shared := gatheredStatusSnapshot()
+	snap, sessionID, _ := shared.contextFor(convID)
+	state := shared.states[convID]
 	resp := map[string]any{
 		"conv_id":               convID,
 		"session_id":            sessionID,
@@ -2708,55 +2703,6 @@ func writeContextInfo(w http.ResponseWriter, convID, caller string) {
 		stampCallerAgentID(resp, caller)
 	}
 	writeJSON(w, http.StatusOK, resp)
-}
-
-// contextSnapshotForConvIn resolves convID to the session row whose
-// context snapshot best represents it — a live tmux pane preferred, else
-// the most-recent historical row — and reads that row's snapshot. The
-// alive set is passed in (fetched once per request) so a group-wide
-// listing does one tmux ls, not one per member. hasSession is false when
-// no session row exists for the conv at all (never launched under
-// tclaude); the snapshot is then the zero value.
-func contextSnapshotForConvIn(convID string, aliveSet map[string]struct{}) (snap db.ContextSnapshot, sessionID string, hasSession bool) {
-	candidates, _ := db.FindSessionsByConvID(convID)
-	sess := pickWithLiveness(candidates, func(t string) bool {
-		if t == "" {
-			return false
-		}
-		_, ok := aliveSet[t]
-		return ok
-	})
-	if sess == nil {
-		return db.ContextSnapshot{}, "", false
-	}
-	alive := sessionRowAliveIn(sess, aliveSet)
-	refreshCodexContextSnapshotOnRead(sess, alive)
-	// Copilot's context/usage columns are refreshed by the same
-	// read-through principle: both are no-ops for the other harness.
-	refreshCopilotContextSnapshotOnRead(sess, alive)
-	refreshGeminiContextSnapshotOnRead(sess, alive)
-	if s, err := db.GetContextSnapshot(sess.ID); err == nil {
-		// OpenCode's resumed/offline conv can pick a fresh all-zero row; fall
-		// back to the conv's last-known populated snapshot so `agent
-		// context-info` and group listings keep showing usage before a resume
-		// (no-op for other harnesses and for a picked row that already has data).
-		snap = openCodeContextSnapshotFallback(sess, s)
-	}
-	// Report the window compaction ACTUALLY fires at, so `tclaude agent
-	// context-info` and the group listing agree with the dashboard meter and the
-	// status line. ContextPct already arrives re-based; this makes the token
-	// denominator match it. The stored snapshot keeps the model's real window —
-	// the relaunch layer reads that one to re-derive a 1M model's [1m] suffix.
-	//
-	// Gated on a POPULATED snapshot for the same reason stateForConvInSessionsTimed
-	// is: an all-zero snapshot means the statusline hook has never fired, and
-	// substituting the pin for the absent window would turn that sentinel into a
-	// fabricated "0% of 450k" reading. See snapshotPopulated.
-	if snapshotPopulated(snap) {
-		snap.ContextWindowSize = harness.EffectiveContextWindow(
-			snap.ContextWindowSize, harness.AutoCompactWindowTokens(sess.AutoCompactWindow))
-	}
-	return snap, sess.ID, true
 }
 
 // pickWithLiveness returns the session row whose tmux pane is alive
@@ -4578,17 +4524,18 @@ func handleGroupContext(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 	}
 	// One tmux ls for the whole listing; the per-member snapshot read
 	// resolves liveness against this set, not a per-row subprocess.
-	aliveSessions, _ := session.LiveTmuxSessions()
+	shared := gatheredStatusSnapshot()
+	aliveSessions := shared.alive
 	out := make([]groupContextEntry, 0, len(members))
 	for _, m := range members {
-		// One read per member through stateForConvIn — the SAME reader the
+		// The shared gather uses the SAME canonical reader as the
 		// dashboard snapshot uses, so this endpoint's context figures AND its
 		// settled status (idle / working / awaiting_* / exited, incl. the
 		// subagent-idle settle) agree with the dashboard force block that
 		// classifies liveness on them (JOH-346). A populated snapshot implies
 		// a session row, so has_snapshot collapses to "any real context figure"
 		// — the separate hasSession gate was redundant.
-		st := stateForConvIn(m.ConvID, aliveSessions)
+		st := shared.states[m.ConvID]
 		out = append(out, groupContextEntry{
 			AgentID:             peerAgentID(m.ConvID),
 			ConvID:              m.ConvID,

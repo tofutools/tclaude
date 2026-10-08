@@ -216,7 +216,8 @@ func handleDashboardConversations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Shared short-TTL probe (TCL-370) — see handleDashboardRetired.
-	alive, _ := cachedLiveTmuxSessions()
+	shared := gatheredStatusSnapshot()
+	alive := shared.alive
 	rows := make([]dashboardConversation, 0, len(convs))
 	for _, row := range convs {
 		if row.ConvID == "" {
@@ -227,11 +228,16 @@ func handleDashboardConversations(w http.ResponseWriter, r *http.Request) {
 		// (the same formatter `conv ls` uses) so the dashboard stops leaking
 		// uncleaned first-prompt text (system tags, newlines). The fsnotify monitor
 		// keeps these cached rows fresh, so no per-row .jsonl rescan is needed.
+		state, known := shared.states[row.ConvID]
+		if !known {
+			// Historical plain conversations are outside the managed/live snapshot.
+			state = stateForConvIn(row.ConvID, alive)
+		}
 		rows = append(rows, dashboardConversation{
 			ConvID:   row.ConvID,
 			Title:    convindex.FormatConvTitle(row.CustomTitle, row.Summary, row.FirstPrompt),
 			Online:   isConvOnlineIn(row.ConvID, alive),
-			State:    stateForConvIn(row.ConvID, alive),
+			State:    state,
 			Modified: row.Modified,
 		})
 	}

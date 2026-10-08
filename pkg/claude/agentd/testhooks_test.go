@@ -19,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/remoteaccess"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 // cleanupAgentdTestDB encodes the package-level teardown rule for tests whose
@@ -2017,3 +2018,20 @@ func StartFederationAwayApprovalForTest(id, conv string, timeout time.Duration) 
 // RefreshHostMetricsForTest runs the production sampler against the real host
 // and the flow's normal tmux subprocess simulator and SQLite state.
 func RefreshHostMetricsForTest() { refreshHostMetrics() }
+
+// SetStatusGatherHookForTest blocks/counts the common production gather.
+func SetStatusGatherHookForTest(fn func()) func() {
+	statusHook.Lock()
+	old := statusHook.fn
+	statusHook.fn = fn
+	statusHook.Unlock()
+	return func() { statusHook.Lock(); statusHook.fn = old; statusHook.Unlock() }
+}
+func ResetStatusSnapshotForTest() {
+	sharedStatusCache.mu.Lock()
+	sharedStatusCache.value = nil
+	sharedStatusCache.mu.Unlock()
+}
+func FederationCatalogForStatusTest(peer string) (*proto.CatalogPayload, error) {
+	return buildFederationCatalog(peer)
+}
