@@ -561,3 +561,52 @@ is by inspecting the caller's process tree.
   operator.
 - One hub per instance. Hub-to-hub federation is a later step.
 - CLI only; the dashboard does not show federation yet.
+
+## Portable local setup bundles
+
+Setup transfer also works without federation:
+
+```bash
+tclaude config export --file setup.json
+tclaude config import --file setup.json                 # preview and diff
+tclaude config import --file setup.json --apply --replace
+```
+
+The versioned JSON envelope records creation time and the creating tclaude
+version. Its independently selectable sections are `profiles`, `roles`,
+`templates`, `sandbox-profiles`, `default-permissions`, `process-templates`
+(current YAML source, without runtime history), and `config` (an allowlist of
+portable preferences). Existing component export formats remain embedded in
+the bundle. Local identities, group assignments, federation credentials and
+trust, remote-access settings, keychain references, and credential environment
+entries are excluded. Templates reference the separate roles and profiles
+sections; include those sections when bringing dependencies to a new machine.
+
+Both commands accept repeatable `--only section[/name]` and
+`--skip section[/name]`. Import previews before/after values and marks changes
+to permissions, sandbox policy, roles, templates and launch profiles with a
+`security` tag. Nothing is written without `--apply`; conflicting values need
+`--replace` or exclusion. Identical items are left alone. Components are applied
+in dependency order; an apply failure reports items already written, and does
+not roll back earlier components. Sandbox include graphs are imported together.
+
+Structured paths under the exporting user's home use `${HOME}`. Other absolute
+paths become named placeholders with their original values in metadata. Preview
+shows those originals and lists missing bindings and the exact
+`--set name=value` flag to resolve each one (repeatable). Use `--keep-paths` to
+retain all exported original paths; explicit `--set` values override individual
+originals. Applying with unresolved
+placeholders is refused. Prompts, scripts and process sources remain verbatim;
+review their machine assumptions before using them on another host.
+
+Export detects common credential patterns in free text, reports the item and
+field without printing the suspected value, and refuses unless you exclude
+those items or explicitly pass `--allow-flagged`. This is a detection aid, not a
+guarantee that arbitrary prose or scripts contain no secrets; inspect the file
+before sharing it. Structured credential fields are always omitted.
+
+Agents need explicit `config.export` / `config.import` grants; neither is granted
+by default or through group ownership. `config.import` permits changes to
+agent authority, including default permissions and sandbox access. Human CLI
+callers use the same daemon APIs without those agent grants. Bundles currently
+transfer as local files; these commands do not send anything to a peer.

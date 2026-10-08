@@ -521,6 +521,8 @@ var permissionRegistry = []PermSlug{
 		ScopeDims:    []ScopeDim{ScopeDimGroup},
 		Description:  "Instantiate a working group from a template, or rebrief/reinforce an existing group. Ownership contributes this slug scoped to each owned group; instantiating a new group still needs another positive source.",
 	},
+	{Slug: PermConfigExport, Description: "Export portable setup bundles; may read private setup text. Not default-granted."},
+	{Slug: PermConfigImport, Description: "Import setup bundles, including default permissions and sandbox policy. Grants authority to change agent access. Not default-granted."},
 	{
 		Slug:        PermProfilesManage,
 		Description: "Create, edit and delete reusable spawn profiles — named, saved bundles of the spawn-agent dialog (harness/model/effort/role/… ) that pre-fill spawns and back a group's default spawn settings (JOH-210). Reads are open; writes rewrite shared spawn config, so not default-granted (effectively human-only).",
