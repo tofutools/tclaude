@@ -91,6 +91,12 @@ type offerIDParams struct {
 	Peer string `long:"peer" optional:"true" help:"Select source peer when an offer ID is ambiguous."`
 }
 type offerImportParams struct {
+	Cwd         string `long:"cwd" optional:"true" help:"Remap an agent offer's working directory."`
+	Worktree    string `long:"worktree" optional:"true" help:"Remap an agent offer's worktree hint."`
+	Group       string `long:"group" optional:"true" help:"Choose a receiving group with agents.receive (default offered group)."`
+	Name        string `long:"name" optional:"true" help:"Name the new receiving agent."`
+	SkipHistory bool   `long:"skip-history" help:"Import only configuration from an agent offer."`
+
 	ID        string   `pos:"true" help:"Offer ID from the inbox or offers listing."`
 	Peer      string   `long:"peer" optional:"true" help:"Select source peer when an offer ID is ambiguous."`
 	Only      []string `long:"only" optional:"true" help:"Include section or section/name (repeatable)."`
@@ -103,7 +109,7 @@ type offerImportParams struct {
 }
 
 func offersCmd() *cobra.Command {
-	return boa.CmdT[offersParams]{Use: "offers", Short: "List, preview, apply or decline config bundle offers", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *offersParams, _ *cobra.Command, _ []string) {
+	return boa.CmdT[offersParams]{Use: "offers", Short: "List, preview, apply or decline bundle offers", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *offersParams, _ *cobra.Command, _ []string) {
 		if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
 			os.Exit(rc)
 		}
@@ -112,11 +118,12 @@ func offersCmd() *cobra.Command {
 			direction = "out"
 		}
 		var rows []struct {
-			Offer     bundletransfer.Descriptor `json:"offer"`
-			Peer      string                    `json:"peer"`
-			Direction string                    `json:"direction"`
-			State     string                    `json:"state"`
-			LastError string                    `json:"last_error,omitempty"`
+			Offer       bundletransfer.Descriptor `json:"offer"`
+			Peer        string                    `json:"peer"`
+			Direction   string                    `json:"direction"`
+			State       string                    `json:"state"`
+			LastError   string                    `json:"last_error,omitempty"`
+			ImportAgent string                    `json:"import_agent,omitempty"`
 		}
 		if err := agent.DaemonGet("/v1/federation/bundle-offers?direction="+direction, &rows); err != nil {
 			os.Exit(fail(os.Stderr, err))
@@ -126,6 +133,12 @@ func offersCmd() *cobra.Command {
 		}
 		for _, r := range rows {
 			fmt.Printf("%s  %s  %s  %s  %d bytes  expires %s\n", r.Offer.ID, r.Peer, r.Offer.Type, r.State, r.Offer.Bytes, r.Offer.ExpiresAt.Format("2006-01-02 15:04 MST"))
+			if r.ImportAgent != "" {
+				fmt.Println("  Imported/reserved agent: " + r.ImportAgent)
+			}
+			if r.Offer.Group != "" {
+				fmt.Println("  Receiving group: " + r.Offer.Group)
+			}
 			if r.LastError != "" {
 				fmt.Println("  " + r.LastError)
 			}
@@ -134,7 +147,7 @@ func offersCmd() *cobra.Command {
 			fmt.Println("no bundle offers")
 		}
 	}, SubCmds: []*cobra.Command{
-		boa.CmdT[offerImportParams]{Use: "import", Short: "Preview a received offer; --apply imports selected items", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *offerImportParams, _ *cobra.Command, _ []string) {
+		boa.CmdT[offerImportParams]{Use: "import", Short: "Preview a received config or agent offer; --apply imports it", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *offerImportParams, _ *cobra.Command, _ []string) {
 			os.Exit(runOfferImport(p, os.Stdout, os.Stderr))
 		}}.ToCobra(),
 		boa.CmdT[offerIDParams]{Use: "fetch", Short: "Download and verify a large offer without applying it", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *offerIDParams, _ *cobra.Command, _ []string) {
@@ -160,7 +173,7 @@ func runOfferImport(p *offerImportParams, out, stderr io.Writer) int {
 		}
 		values[name] = value
 	}
-	in := map[string]any{"only": p.Only, "skip": p.Skip, "values": values, "apply": p.Apply, "replace": p.Replace, "keep_paths": p.KeepPaths}
+	in := map[string]any{"only": p.Only, "skip": p.Skip, "values": values, "apply": p.Apply, "replace": p.Replace, "keep_paths": p.KeepPaths, "cwd": p.Cwd, "worktree": p.Worktree, "group": p.Group, "name": p.Name, "skip_history": p.SkipHistory}
 	var response map[string]any
 	if rc := offerPost(stderr, offerPath(p.ID, p.Peer, "import"), in, &response); rc != 0 {
 		return rc

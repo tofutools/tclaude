@@ -63,10 +63,11 @@ const (
 	CapSessions       = "sessions"
 	CapSessionsWatch  = "sessions_watch"
 	CapSessionsAttach = "sessions_attach"
+	CapAgentsReceive  = "agents_receive"
 )
 
 // AllCaps lists every known capability in canonical order.
-var AllCaps = []string{CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes, CapSessions, CapSessionsWatch, CapSessionsAttach}
+var AllCaps = []string{CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes, CapSessions, CapSessionsWatch, CapSessionsAttach, CapAgentsReceive}
 
 // MaxMailBody caps a mail envelope's body in bytes.
 const MaxMailBody = 16 * 1024

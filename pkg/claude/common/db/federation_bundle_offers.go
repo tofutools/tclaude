@@ -15,6 +15,10 @@ type FederationBundleOffer struct {
 	Direction    string                    `json:"direction"`
 	State        string                    `json:"state"`
 	LastError    string                    `json:"last_error,omitempty"`
+	GroupID      int64                     `json:"group_id,omitempty"`
+	ImportLabel  string                    `json:"import_label,omitempty"`
+	ImportAgent  string                    `json:"import_agent,omitempty"`
+	SenderAgent  string                    `json:"sender_agent,omitempty"`
 	ResultQueued bool                      `json:"-"`
 	CreatedAt    time.Time                 `json:"created_at"`
 }
@@ -58,7 +62,7 @@ func InsertFederationBundleOffer(o FederationBundleOffer, kind bundletransfer.Ty
 	if err != nil {
 		return false, err
 	}
-	_, err = tx.Exec(`INSERT INTO federation_bundle_offers(id,peer,direction,kind,descriptor,bytes,state,last_error,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, descriptor.ID, o.Peer, o.Direction, descriptor.Type, string(raw), descriptor.Bytes, o.State, o.LastError, dbTime(time.Now()), dbTime(descriptor.ExpiresAt))
+	_, err = tx.Exec(`INSERT INTO federation_bundle_offers(id,peer,direction,kind,descriptor,bytes,state,last_error,created_at,expires_at,group_id,sender_agent) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, descriptor.ID, o.Peer, o.Direction, descriptor.Type, string(raw), descriptor.Bytes, o.State, o.LastError, dbTime(time.Now()), dbTime(descriptor.ExpiresAt), o.GroupID, o.SenderAgent)
 	if err != nil {
 		return false, err
 	}
@@ -68,7 +72,7 @@ func scanFederationBundleOffer(row rowScanner) (*FederationBundleOffer, error) {
 	var o FederationBundleOffer
 	var raw string
 	var created dbTimestamp
-	err := row.Scan(&raw, &o.Peer, &o.Direction, &o.State, &o.LastError, &o.ResultQueued, &created)
+	err := row.Scan(&raw, &o.Peer, &o.Direction, &o.State, &o.LastError, &o.ResultQueued, &o.GroupID, &o.SenderAgent, &o.ImportAgent, &o.ImportLabel, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -86,14 +90,14 @@ func GetFederationBundleOffer(direction, peer, id string) (*FederationBundleOffe
 	if err != nil {
 		return nil, err
 	}
-	return scanFederationBundleOffer(d.QueryRow(`SELECT descriptor,peer,direction,state,last_error,result_queued,created_at FROM federation_bundle_offers WHERE direction=? AND peer=? AND id=?`, direction, peer, id))
+	return scanFederationBundleOffer(d.QueryRow(`SELECT descriptor,peer,direction,state,last_error,result_queued,group_id,sender_agent,import_agent,import_label,created_at FROM federation_bundle_offers WHERE direction=? AND peer=? AND id=?`, direction, peer, id))
 }
 func ListFederationBundleOffers(direction string) ([]FederationBundleOffer, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT descriptor,peer,direction,state,last_error,result_queued,created_at FROM federation_bundle_offers WHERE (?='' OR direction=?) ORDER BY created_at DESC`, direction, direction)
+	rows, err := d.Query(`SELECT descriptor,peer,direction,state,last_error,result_queued,group_id,sender_agent,import_agent,import_label,created_at FROM federation_bundle_offers WHERE (?='' OR direction=?) ORDER BY created_at DESC`, direction, direction)
 	if err != nil {
 		return nil, err
 	}
@@ -142,4 +146,47 @@ func EraseSettledFederationBundlePayload(id string) error {
 	}
 	_, err = d.Exec(`UPDATE federation_outbox SET sealed=x'' WHERE envelope_id=? AND kind='bundle_offer' AND state NOT IN ('queued','sent')`, id)
 	return err
+}
+
+func ReserveFederationBundleImport(peer, id, agentID string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	res, err := d.Exec(`UPDATE federation_bundle_offers SET import_agent=? WHERE direction='in' AND peer=? AND id=? AND state='ready' AND import_agent=''`, agentID, peer, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return errors.New("offer already has a reserved launch")
+	}
+	return nil
+}
+
+func SetFederationBundleLaunchLabel(agentID, label string) error {
+	if agentID == "" {
+		return nil
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE federation_bundle_offers SET import_label=? WHERE direction='in' AND import_agent=? AND state='ready'`, label, agentID)
+	return err
+}
+func ReleaseUnlaunchedFederationBundleImport(peer, id, agentID string) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`UPDATE federation_bundle_offers SET import_agent='',last_error='' WHERE direction='in' AND peer=? AND id=? AND import_agent=? AND import_label='' AND state='ready'`, peer, id, agentID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }

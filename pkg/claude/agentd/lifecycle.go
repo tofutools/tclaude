@@ -7213,6 +7213,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	if err := db.SetFederationSpawnLaunchLabel(p.AgentID, label); err != nil {
 		return launchFailed(err)
 	}
+	if err := db.SetFederationBundleLaunchLabel(p.AgentID, label); err != nil {
+		return launchFailed(err)
+	}
 	timing("launch_prepared", "label", label)
 	launchedAt := time.Now()
 	rememberHTTPProxyLaunchGroup(label, g, p.PermissionOverrides)
@@ -7741,6 +7744,9 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 		label = nextLabel()
 	}
 	if err := db.SetFederationSpawnLaunchLabel(p.AgentID, label); err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+	}
+	if err := db.SetFederationBundleLaunchLabel(p.AgentID, label); err != nil {
 		return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 	}
 	if err := db.InsertPendingSpawn(pendingSpawnFromParams(g, p, label)); err != nil {
