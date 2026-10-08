@@ -15,6 +15,7 @@ import (
 )
 
 type FederationNodeProfileSpec struct {
+	RequesterPays     string                        `json:"requester_pays,omitempty"`
 	TeleportLanding   *FederationTeleportLanding    `json:"teleport_landing,omitempty"`
 	TrustLevel        string                        `json:"trust_level"`
 	Pools             []string                      `json:"pools,omitempty"`
@@ -496,6 +497,13 @@ func planFederationNodeProfileTx(tx *sql.Tx, profileID, peer, token string, newP
 			change("grant/"+k, b, n)
 		}
 	}
+	oldRequesterPays := ""
+	if old != nil {
+		oldRequesterPays = old.Profile.Definition.RequesterPays
+	}
+	if oldRequesterPays != p.Definition.RequesterPays {
+		change("future_requester_pays", oldRequesterPays, p.Definition.RequesterPays)
+	}
 	if old == nil || !nodeProfileJSONEqual(old.Profile.Definition.WorkerPermissions, p.Definition.WorkerPermissions) {
 		var before any
 		if old != nil {
@@ -582,6 +590,7 @@ func nodeProfileJSONEqual(a, b any) bool {
 // FederationTeleportLanding pins local registry identities, never source
 // paths, permissions or profile handles. Names are operator input/display.
 type FederationTeleportLanding struct {
+	RequesterPays      string                `json:"requester_pays,omitempty"`
 	Repo               string                `json:"repo,omitempty"`
 	RepoID             string                `json:"repo_id,omitempty"`
 	Group              string                `json:"group"`

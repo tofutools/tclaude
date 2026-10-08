@@ -36,6 +36,9 @@ func normalizeFederationNodeProfile(p *db.FederationNodeProfile) error {
 		return errors.New("invalid profile name: use 1-64 lowercase letters, digits, dots, hyphens or underscores")
 	}
 	s := &p.Definition
+	if !validRequesterPaysPolicy(s.RequesterPays) || s.TeleportLanding != nil && !validRequesterPaysPolicy(s.TeleportLanding.RequesterPays) {
+		return errors.New("requester_pays must be required, allowed or off")
+	}
 	if err := normalizeTeleportLanding(s.TeleportLanding); err != nil {
 		return err
 	}
@@ -66,7 +69,7 @@ func normalizeFederationNodeProfile(p *db.FederationNodeProfile) error {
 	for i, g := range s.PeerGrants {
 		_, groupSlug := federationPeerSlugs[g.Slug]
 		instanceSlug := g.Slug == "config.offer" || g.Slug == PermApprovalsAnswer || g.Slug == PermNodeRead
-		if !groupSlug && !instanceSlug && g.Slug != PermModelsProxy {
+		if !groupSlug && !instanceSlug && (g.Slug != PermModelsProxy && g.Slug != PermModelsProxyLeased) {
 			return fmt.Errorf("unsupported peer slug %s", g.Slug)
 		}
 		if instanceSlug && g.Scope != "" {
@@ -75,7 +78,7 @@ func normalizeFederationNodeProfile(p *db.FederationNodeProfile) error {
 		if (g.Slug == PermAgentsReceive || g.Slug == PermAgentsTeleportReceive) && g.Scope == "" {
 			return fmt.Errorf("%s requires a local group scope", g.Slug)
 		}
-		if g.Scope != "" && g.Slug == PermModelsProxy {
+		if g.Scope != "" && (g.Slug == PermModelsProxy || g.Slug == PermModelsProxyLeased) {
 			if !validModelProxyScope(g.Scope) {
 				return errors.New("models.proxy scope must be http_proxy=<name>")
 			}
@@ -94,6 +97,9 @@ func normalizeFederationNodeProfile(p *db.FederationNodeProfile) error {
 				return fmt.Errorf("no active local group %s", name)
 			}
 			g.Scope = db.FederationGroupScope(group.ID)
+		}
+		if !validRequesterPaysPolicy(g.SpawnPolicy.RequesterPays) || g.SpawnPolicy.RequesterPays != "" && g.Slug != PermGroupsMembersSpawn {
+			return errors.New("requester_pays requires groups.members.spawn and must be required, allowed or off")
 		}
 		if g.SpawnPolicy.JobApproval != "" && (g.Slug != PermJobsRun || (g.SpawnPolicy.JobApproval != "manual" && g.SpawnPolicy.JobApproval != "auto")) {
 			return errors.New("job_approval must be auto or manual and requires jobs.run")

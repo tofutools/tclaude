@@ -16,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/routebroker"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 type modelWireResponse struct {
@@ -174,13 +175,17 @@ func modelByteBounds(p *config.ModelProxyPolicy) (request, response int64, event
 	}
 	return
 }
-func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, name, id string) {
+func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, name, id string, opening ...proto.ModelOpenPayload) {
 	instance, err := modelProxyPolicy(name)
 	if err != nil {
 		modelError(w, 503, err.Error())
 		return
 	}
-	if !fedPeerModelAllows(peer, name) {
+	authorized := fedPeerModelAllows(peer, name)
+	if len(opening) > 0 {
+		authorized = modelOpenAllowed(peer, opening[0], true)
+	}
+	if !authorized {
 		modelError(w, 403, "models.proxy grant was revoked for this named gateway")
 		return
 	}

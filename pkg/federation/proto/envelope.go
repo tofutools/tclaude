@@ -48,14 +48,16 @@ const (
 	// KindGroupMail is mail to every current member of an exported group
 	// (optionally narrowed by role). The receiver resolves the members:
 	// it, not the sender's catalog, is the authority on its roster.
-	KindGroupMail      = "group_mail"
-	KindAwayNotice     = "away_notice"
-	KindAwayAnswer     = "away_answer"
-	KindSessionsUpdate = "sessions_update"
-	KindSessionOpen    = "session_open"
-	KindSessionAnswer  = "session_answer"
-	KindModelOpen      = "model_open"
-	KindModelAnswer    = "model_answer"
+	KindGroupMail        = "group_mail"
+	KindAwayNotice       = "away_notice"
+	KindAwayAnswer       = "away_answer"
+	KindSessionsUpdate   = "sessions_update"
+	KindSessionOpen      = "session_open"
+	KindSessionAnswer    = "session_answer"
+	KindModelOpen        = "model_open"
+	KindModelAnswer      = "model_answer"
+	KindModelLease       = "model_lease"
+	KindModelLeaseAnswer = "model_lease_answer"
 )
 
 // Export capabilities a catalog group can grant.
@@ -158,6 +160,8 @@ const MaxSpawnBrief = 8 * 1024
 
 // SpawnRequestPayload is the payload of a KindSpawnReq envelope.
 type SpawnRequestPayload struct {
+	Credentials      string `json:"credentials,omitempty"`
+	ModelLease       string `json:"model_lease,omitempty"`
 	PlacementVersion int    `json:"placement_version,omitempty"`
 	Require          string `json:"require,omitempty"`
 	Group            string `json:"group"`
@@ -206,6 +210,7 @@ type GroupMailPayload struct {
 
 // CatalogPayload lists what an instance exports to the receiving peer.
 type CatalogPayload struct {
+	RequesterPays   int            `json:"requester_pays,omitempty"`
 	TeleportBackups bool           `json:"teleport_backups,omitempty"`
 	AgentTeleports  int            `json:"agent_teleports,omitempty"`
 	AgentMoves      bool           `json:"agent_moves,omitempty"`
@@ -436,15 +441,32 @@ type SessionAnswerPayload struct {
 // ModelOpenPayload binds one Messages HTTP exchange to a named gateway.
 // Version 1 mandates the routebroker credit protocol; no raw TCP fallback.
 type ModelOpenPayload struct {
-	Version int    `json:"version"`
-	Stream  string `json:"stream"`
-	Key     []byte `json:"key"`
-	Proxy   string `json:"proxy"`
-	Session string `json:"session"`
+	Lease      string `json:"lease,omitempty"`
+	Generation string `json:"generation,omitempty"`
+	Version    int    `json:"version"`
+	Stream     string `json:"stream"`
+	Key        []byte `json:"key"`
+	Proxy      string `json:"proxy"`
+	Session    string `json:"session"`
 }
 type ModelAnswerPayload struct {
 	Stream string `json:"stream"`
 	Key    []byte `json:"key,omitempty"`
 	OK     bool   `json:"ok"`
 	Reason string `json:"reason,omitempty"`
+}
+
+// ModelLeasePayload is sealed daemon-to-daemon control, never a worker bearer.
+type ModelLeasePayload struct {
+	Lease      string `json:"lease"`
+	Request    string `json:"request"`
+	Kind       string `json:"kind"`
+	Proxy      string `json:"proxy"`
+	Worker     string `json:"worker"`
+	Session    string `json:"session"`
+	Generation string `json:"generation"`
+	Revoke     bool   `json:"revoke,omitempty"`
+}
+type ModelLeaseAnswerPayload struct {
+	OK bool `json:"ok"`
 }
