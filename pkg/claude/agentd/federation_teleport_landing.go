@@ -325,6 +325,7 @@ func processTeleportLanding(rt *fedRuntime, t *db.FederationTeleport) {
 		if o.ImportAgent == "" {
 			t.State = "pending"
 			t.TargetAgent = ""
+			cleanupUnlaunchedTeleportCheckout(t)
 		}
 	}
 	_, _ = db.TransitionFederationTeleport(*t, "admitting")
@@ -545,4 +546,16 @@ func prepareTeleportCheckout(ctx context.Context, t *db.FederationTeleport, grou
 	// Keep successful checkouts across restart and agent exit: their native
 	// history may still resume here. Never remove a possibly running agent's cwd.
 	return checkout, nil
+}
+
+// Caller has positively released the unlaunched import reservation. Never call
+// this for a dispatched or uncertain launch, whose cwd may still be in use.
+func cleanupUnlaunchedTeleportCheckout(t *db.FederationTeleport) {
+	if t.Checkout == nil {
+		return
+	}
+	root := filepath.Join(config.DataDir(), "federation", "teleport-checkouts", t.Peer, t.Offer)
+	if os.RemoveAll(root) == nil {
+		t.Checkout = nil
+	}
 }

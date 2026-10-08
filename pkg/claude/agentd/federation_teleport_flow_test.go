@@ -65,7 +65,10 @@ func TestFederation_TeleportSelfGrantAndConfirmedRetirement(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, a.Active())
 	fedMoveConfirm(t, fh, d, d.SHA256)
-	fedEventually(t, "teleport source retired", func() bool { a, _ := db.GetAgent(aid); return a != nil && !a.Active() })
+	fedEventually(t, "teleport source retired", func() bool {
+		m, _ := db.GetFederationAgentMove("out", fh.peer.id.ID(), d.ID)
+		return m != nil && m.State == "moved"
+	})
 	// The addressed peer can discover the new teleport address.
 	rec = fedHuman(t, fh.f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": "message.direct", "scope": "group=source"})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
@@ -384,6 +387,18 @@ func TestFederation_TeleportGitRefUsesAllowlistedIsolatedCheckout(t *testing.T) 
 				row, err := db.GetFederationTeleport("in", fh.peer.id.ID(), d.ID)
 				require.NoError(t, err)
 				require.Nil(t, row.Checkout, "preview never prepares a checkout")
+				fh.f.HaveAliveSession("019fe740-43a4-7023-b8ae-1ee64459f2a8", "occupied", "occupied-pane", clone)
+				fh.f.HaveMember("receiver", "019fe740-43a4-7023-b8ae-1ee64459f2a8")
+				_, err = db.SetAgentGroupMaxMembers("receiver", 1)
+				require.NoError(t, err)
+				rec = fedHuman(t, fh.f, http.MethodPost, path, map[string]any{"apply": true})
+				require.Equal(t, 409, rec.Code, rec.Body.String())
+				row, err = db.GetFederationTeleport("in", fh.peer.id.ID(), d.ID)
+				require.NoError(t, err)
+				require.Equal(t, "pending", row.State)
+				require.Nil(t, row.Checkout, "proven unlaunched checkout must be cleared for retry")
+				_, err = db.SetAgentGroupMaxMembers("receiver", 2)
+				require.NoError(t, err)
 				rec = fedHuman(t, fh.f, http.MethodPost, path, map[string]any{"apply": true})
 				require.Equal(t, 200, rec.Code, rec.Body.String())
 			}
@@ -412,4 +427,41 @@ func TestFederation_TeleportGitRefUsesAllowlistedIsolatedCheckout(t *testing.T) 
 			require.Equal(t, "from git\n", string(data))
 		})
 	}
+}
+
+func TestFederation_TeleportFinalAuthorityRefusalReleasesUndispatchedReservation(t *testing.T) {
+	fh := newFedHarness(t)
+	fh.f.HaveGroup("receiver")
+	cwd := testutil.CanonicalTempDir(t)
+	profile := &db.SpawnProfile{Name: "dispatch-boundary", Harness: "claude", Approval: "default"}
+	_, err := db.CreateSpawnProfile(profile)
+	require.NoError(t, err)
+	p := fedNodeProfile(t, fh, "dispatch-node", db.FederationNodeProfileSpec{PeerGrants: []db.FederationPeerGrant{{Slug: agentd.PermAgentsTeleportReceive, Scope: "group=receiver"}}, TeleportLanding: &db.FederationTeleportLanding{Group: "receiver", Cwd: cwd, SpawnProfile: profile.Name, MaxLive: 1}})
+	fedApplyNodeProfile(t, fh, p)
+	database, err := db.Open()
+	require.NoError(t, err)
+	// Change local policy exactly when the importer records its pre-dispatch
+	// marker. This exercises the last authority gate without invoking Spawn.
+	_, err = database.Exec(`CREATE TRIGGER disable_teleport_at_dispatch AFTER UPDATE OF import_label ON federation_bundle_offers WHEN NEW.import_label <> '' BEGIN UPDATE spawn_profiles SET disabled=1 WHERE name='dispatch-boundary'; END`)
+	require.NoError(t, err)
+	d := fedIncomingTeleport(t, fh, "local", nil)
+	require.Equal(t, proto.AckAccepted, fedAckFor(t, fh.peer, d.ID).Status)
+	var row *db.FederationTeleport
+	fedEventually(t, "final authority refusal settled", func() bool {
+		row, _ = db.GetFederationTeleport("in", fh.peer.id.ID(), d.ID)
+		return row != nil && row.State == "pending"
+	})
+	require.Empty(t, row.TargetAgent)
+	offer, err := db.GetFederationBundleOffer("in", fh.peer.id.ID(), d.ID)
+	require.NoError(t, err)
+	require.Empty(t, offer.ImportAgent)
+	require.Empty(t, offer.ImportLabel)
+	require.Empty(t, fh.peer.envelopes(proto.KindAgentMoveConfirm))
+	_, err = database.Exec(`DROP TRIGGER disable_teleport_at_dispatch`)
+	require.NoError(t, err)
+	_, err = database.Exec(`UPDATE spawn_profiles SET disabled=0 WHERE name='dispatch-boundary'`)
+	require.NoError(t, err)
+	// The operator may now retry the same safely unlaunched offer.
+	rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/bundle-offers/"+d.ID+"/import", map[string]any{"apply": true, "cwd": cwd})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
 }

@@ -7325,7 +7325,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	}
 	if p.launchAuthority != nil {
 		if err := p.launchAuthority(); err != nil {
-			return launchFailed(err)
+			return launchFailed(bundleLaunchPreparationFailed(spawnArgs, err))
 		}
 	}
 	if err := launch(spawnArgs); err != nil {

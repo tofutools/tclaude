@@ -368,6 +368,13 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 		}
 		if teleportRow != nil && teleportRow.Intent.GitRef != "" && teleportLandingFromRequest(r) == nil {
 			teleportRow, err = db.GetFederationTeleport("in", o.Peer, o.Descriptor.ID)
+			if err != nil || teleportRow == nil {
+				_, _ = db.ReleaseUnlaunchedFederationBundleImport(o.Peer, o.Descriptor.ID, reserved)
+				o.ImportAgent = ""
+				_ = db.DeleteFederationAgentMove("in", o.Peer, o.Descriptor.ID)
+				writeError(w, 503, "teleport_provenance", "teleport provenance unavailable; launch was not started")
+				return
+			}
 			checkout, checkoutErr := prepareTeleportCheckout(r.Context(), teleportRow, g.ID)
 			if checkoutErr != nil {
 				_, _ = db.ReleaseUnlaunchedFederationBundleImport(o.Peer, o.Descriptor.ID, reserved)
@@ -403,6 +410,7 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 					row.State = "landed"
 				} else if o.ImportAgent == "" {
 					row.State, row.TargetAgent = "pending", ""
+					cleanupUnlaunchedTeleportCheckout(row)
 				}
 				_, _ = db.TransitionFederationTeleport(*row, "admitting")
 				recordFederationAudit("teleport.land", o.Peer, row.TargetAgent, g.Name, fmt.Sprintf("offer=%s predecessor=%s credentials=%s state=%s", o.Descriptor.ID, row.Intent.SourceAgent, row.Credentials, row.State), rec.Code)
