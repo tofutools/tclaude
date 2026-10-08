@@ -102,8 +102,20 @@ func federationIdentity() (*proto.Identity, error) {
 	if fedIdentity != nil {
 		return fedIdentity, nil
 	}
-	id, err := proto.LoadOrCreateIdentity(FederationKeyPath())
+	var id *proto.Identity
+	var err error
+	_, receiptErr := os.Stat(identityReceiptPath())
+	if _, e := os.Stat(identityJournalPath()); e == nil || receiptErr == nil {
+		id, err = proto.LoadIdentity(FederationKeyPath())
+	} else if !errors.Is(e, os.ErrNotExist) {
+		return nil, e
+	} else {
+		id, err = proto.LoadOrCreateIdentity(FederationKeyPath())
+	}
 	if err != nil {
+		return nil, err
+	}
+	if err = saveIdentityPublicFile(identityReceiptPath(), map[string]any{"instance_id": id.ID(), "public_key": id.Pub}); err != nil {
 		return nil, err
 	}
 	fedIdentity = id
@@ -187,6 +199,13 @@ func currentFederation() *fedRuntime {
 // startFederation starts the hub client when config enables it. Errors are
 // logged, never fatal: federation is an optional add-on to a local daemon.
 func startFederation() {
+	if err := activateLocalIdentityRotation(time.Now()); err != nil {
+		slog.Error("federation: rotation recovery failed", "error", err)
+		return
+	}
+	if currentFederation() != nil {
+		return
+	}
 	// Expire private payloads on restart even when federation was disabled.
 	reconcileFederationBundleOffers()
 	go reconcileFederationMoves()
@@ -254,6 +273,10 @@ func startFederationWith(fc *config.FederationConfig) error {
 		}
 		tlsCfg = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	}
+	journal, err := loadIdentityJournal()
+	if err != nil {
+		return err
+	}
 	name := fc.Name
 	if name == "" {
 		name = defaultFederationName()
@@ -267,7 +290,8 @@ func startFederationWith(fc *config.FederationConfig) error {
 		rt.away = &fedAwayState{FederationAwayConfig: *fc.Away, Epoch: newApprovalID()}
 	}
 	cl, err := client.New(client.Options{
-		URL: fc.HubURL, Identity: id, Name: name, Version: buildversion.AppVersion(),
+		RotationChain: journal.Chain,
+		URL:           fc.HubURL, Identity: id, Name: name, Version: buildversion.AppVersion(),
 		Invite: fc.Invite, TLS: tlsCfg, Logger: slog.Default(),
 		OnDeliver: func(from string, s *proto.Sealed) {
 			select {
@@ -308,6 +332,7 @@ func (rt *fedRuntime) kickOutbox() {
 // onDirectory runs on the client's read goroutine: it only records
 // presence and schedules work.
 func (rt *fedRuntime) onDirectory(entries []proto.DirectoryEntry) {
+	go rt.observeIdentityChains(entries)
 	now := map[string]bool{}
 	for _, e := range entries {
 		if e.Online {
@@ -541,6 +566,8 @@ func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 			rt.pushAgentStatuses()
 			rt.observeAwayWaiting()
 		case <-completion.C:
+			rt.reconcileIdentityRotations()
+			go func() { _ = activateLocalIdentityRotation(time.Now()) }()
 			reconcileFederationSpawns()
 			reconcileFederationJobs()
 			reconcileFederationBundleOffers()
@@ -571,6 +598,12 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		return
 	}
 	switch env.Kind {
+	case proto.KindIdentityRotation:
+		var rotation proto.Rotation
+		if err := json.Unmarshal(env.Payload, &rotation); err != nil || rotation.OldID != from {
+			return
+		}
+		rt.observeIdentityChains([]proto.DirectoryEntry{{RotationChain: []proto.Rotation{rotation}}})
 	case proto.KindCatalog:
 		var cat proto.CatalogPayload
 		if err := env.DecodePayload(&cat); err != nil {

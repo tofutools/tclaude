@@ -684,7 +684,12 @@ func autoApproveFederationSpawn(req *db.FederationSpawnRequest, p *db.Federation
 				reason = "could not count remote jobs"
 			} else {
 				for _, job := range jobs {
-					if job.Peer == p.InstanceID {
+					jobPeer, e := db.ResolveFederationIdentitySuccessor(job.Peer)
+					if e != nil {
+						reason = "could not resolve job capacity identity"
+						break
+					}
+					if jobPeer == p.InstanceID {
 						live++
 					}
 				}

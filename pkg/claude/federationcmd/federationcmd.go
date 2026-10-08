@@ -247,6 +247,7 @@ func runStatus(p *jsonParam, stdout, stderr io.Writer) int {
 func identityCmd() *cobra.Command {
 	return boa.CmdT[jsonParam]{
 		Use:         "identity",
+		SubCmds:     identityActionCommands(),
 		Short:       "Print this instance's federation id and fingerprint (give the id to a hub admin)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *jsonParam, _ *cobra.Command, _ []string) {

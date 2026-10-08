@@ -803,7 +803,9 @@ type FederationAwayConfig struct {
 }
 
 type FederationConfig struct {
-	Teleport *FederationTeleportConfig `json:"teleport,omitempty"`
+	// IdentityRotationSeconds is the local successor detection window; default 600.
+	IdentityRotationSeconds int                       `json:"identity_rotation_seconds,omitempty"`
+	Teleport                *FederationTeleportConfig `json:"teleport,omitempty"`
 	// NodeLabels is a local set, shared by operator and future node-profile writers.
 	NodeLabels []string `json:"node_labels,omitempty"`
 	// MaxLiveAgents advertises node capacity; zero is unlimited.

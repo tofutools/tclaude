@@ -34,6 +34,8 @@ type Config struct {
 	PolicyRefresh time.Duration
 	// HelloTimeout bounds the challenge/hello handshake.
 	HelloTimeout time.Duration
+	// IdentityRotationWindow detects competing successors before admission.
+	IdentityRotationWindow time.Duration
 	// MaxStreams caps one instance's concurrent stream dialers (route
 	// relays); StreamBytesPerSecond caps the bandwidth they share.
 	MaxStreams           int
@@ -48,6 +50,9 @@ type Config struct {
 }
 
 func (c *Config) defaults() {
+	if c.IdentityRotationWindow <= 0 {
+		c.IdentityRotationWindow = 10 * time.Minute
+	}
 	if c.FramesPerMinute <= 0 {
 		c.FramesPerMinute = 120
 	}
@@ -348,6 +353,16 @@ func (h *Hub) handshake(ws *websocket.Conn) (*conn, error) {
 	}
 	id := hello.InstanceID
 	now := time.Now()
+	if len(hello.RotationChain) > 0 {
+		if err := h.store.ObserveRotations(hello.RotationChain, id, now, h.cfg.IdentityRotationWindow); err != nil {
+			return refuse(proto.CodeNotAdmitted, err.Error())
+		}
+		h.RefreshPolicy()
+	}
+	retired, err := h.store.IdentityRetired(id)
+	if err != nil || retired {
+		return refuse(proto.CodeNotAdmitted, "identity is retired, revoked or conflicted")
+	}
 	h.mu.Lock()
 	admitted := h.policy.admitted[id]
 	h.mu.Unlock()
@@ -362,6 +377,16 @@ func (h *Hub) handshake(ws *websocket.Conn) (*conn, error) {
 		}
 	}
 	if !admitted {
+		existing, e := h.store.Get(id)
+		if e != nil {
+			return refuse(proto.CodeNotAdmitted, "admission lookup failed")
+		}
+		if existing != nil && existing.Revoked {
+			return refuse(proto.CodeNotAdmitted, "instance was revoked; explicit hub admin recovery required")
+		}
+		if len(hello.RotationChain) > 0 {
+			return refuse(proto.CodeNotAdmitted, "identity rotation pending stabilization or hub admin recovery")
+		}
 		switch {
 		case hello.Invite != "":
 			if err := h.store.RedeemInvite(hello.Invite, id, now); err != nil {
@@ -392,7 +417,7 @@ func (h *Hub) handshake(ws *websocket.Conn) (*conn, error) {
 	h.mu.Unlock()
 	_ = ws.SetReadDeadline(time.Time{})
 	_ = ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	if err := ws.WriteJSON(&proto.Frame{Type: proto.FrameWelcome, HubID: h.hubID, InstanceID: id, Spaces: spaces, Version: h.cfg.Version}); err != nil {
+	if err := ws.WriteJSON(&proto.Frame{Type: proto.FrameWelcome, IdentityRotationVersion: 1, HubID: h.hubID, InstanceID: id, Spaces: spaces, Version: h.cfg.Version}); err != nil {
 		_ = ws.Close()
 		return nil, err
 	}
@@ -515,8 +540,13 @@ func (h *Hub) broadcastDirectories() {
 			if len(in.PubKey) == 0 || !policy.visible(c.id, in.ID) {
 				continue
 			}
+			chain, err := h.store.RotationChain(in.ID)
+			if err != nil {
+				continue
+			}
 			entries = append(entries, proto.DirectoryEntry{
-				InstanceID: in.ID, PubKey: in.PubKey, Name: in.Name,
+				RotationChain: chain,
+				InstanceID:    in.ID, PubKey: in.PubKey, Name: in.Name,
 				Online: online[in.ID], LastSeen: in.LastSeen, Version: in.Version,
 			})
 		}

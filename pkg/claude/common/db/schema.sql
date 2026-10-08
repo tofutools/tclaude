@@ -1697,3 +1697,9 @@ CREATE TABLE model_proxy_leases (
 CREATE TABLE model_proxy_worker_leases (
  worker TEXT PRIMARY KEY, gateway TEXT NOT NULL, lease TEXT NOT NULL,
  request TEXT NOT NULL, kind TEXT NOT NULL, proxy TEXT NOT NULL) STRICT;
+
+CREATE TABLE federation_identity_rotations (
+ old_instance TEXT PRIMARY KEY,new_instance TEXT NOT NULL,statement TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('pending','accepted','conflict','revoked','recovered')),
+ received_at INTEGER NOT NULL,accept_after INTEGER NOT NULL,reason TEXT NOT NULL DEFAULT ''
+) STRICT;

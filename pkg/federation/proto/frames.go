@@ -61,7 +61,8 @@ const (
 // Frame is the single JSON shape of every hub WebSocket message; Type
 // selects which fields are meaningful.
 type Frame struct {
-	Type string `json:"type"`
+	Type                    string `json:"type"`
+	IdentityRotationVersion int    `json:"identity_rotation_version,omitempty"`
 
 	// challenge
 	HubID string `json:"hub_id,omitempty"`
@@ -75,6 +76,9 @@ type Frame struct {
 	Sig        []byte `json:"sig,omitempty"`
 	Invite     string `json:"invite,omitempty"`
 	Version    string `json:"version,omitempty"`
+
+	// RotationChain carries public, dual-signed identity succession evidence.
+	RotationChain []Rotation `json:"rotation_chain,omitempty"`
 
 	// welcome
 	Spaces []string `json:"spaces,omitempty"`
@@ -100,12 +104,13 @@ type Frame struct {
 
 // DirectoryEntry is one visible instance as the hub reports it.
 type DirectoryEntry struct {
-	InstanceID string    `json:"instance_id"`
-	PubKey     []byte    `json:"pubkey"`
-	Name       string    `json:"name,omitempty"`
-	Online     bool      `json:"online"`
-	LastSeen   time.Time `json:"last_seen,omitempty"`
-	Version    string    `json:"version,omitempty"`
+	RotationChain []Rotation `json:"rotation_chain,omitempty"`
+	InstanceID    string     `json:"instance_id"`
+	PubKey        []byte     `json:"pubkey"`
+	Name          string     `json:"name,omitempty"`
+	Online        bool       `json:"online"`
+	LastSeen      time.Time  `json:"last_seen,omitempty"`
+	Version       string     `json:"version,omitempty"`
 }
 
 // HelloMessage is the byte string an instance signs to answer a hub

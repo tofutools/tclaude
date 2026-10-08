@@ -36,19 +36,21 @@ const (
 
 // Status is a snapshot of the connection.
 type Status struct {
-	State     State
-	HubID     string
-	Spaces    []string
-	LastError string
-	Since     time.Time
+	IdentityRotationVersion int
+	State                   State
+	HubID                   string
+	Spaces                  []string
+	LastError               string
+	Since                   time.Time
 }
 
 // Options configure a Client.
 type Options struct {
-	URL      string
-	Identity *proto.Identity
-	Name     string
-	Version  string
+	RotationChain []proto.Rotation
+	URL           string
+	Identity      *proto.Identity
+	Name          string
+	Version       string
 	// Invite is presented on the first connection; once admitted it is
 	// ignored by the hub.
 	Invite string
@@ -141,9 +143,12 @@ func (c *Client) Directory() []proto.DirectoryEntry {
 	return append([]proto.DirectoryEntry(nil), c.directory...)
 }
 
-func (c *Client) setState(st State, hubID string, spaces []string, errMsg string) {
+func (c *Client) setState(st State, hubID string, spaces []string, errMsg string, rotationVersion ...int) {
 	c.mu.Lock()
 	c.status = Status{State: st, HubID: hubID, Spaces: spaces, LastError: errMsg, Since: time.Now()}
+	if len(rotationVersion) > 0 {
+		c.status.IdentityRotationVersion = rotationVersion[0]
+	}
 	if hubID == "" && st != StateConnected {
 		c.status.HubID = ""
 	}
@@ -220,7 +225,7 @@ func (c *Client) runOnce(ctx context.Context) error {
 	hello := &proto.Frame{
 		Type: proto.FrameHello, Proto: proto.ProtocolVersion,
 		InstanceID: id.ID(), PubKey: id.Pub, Name: c.opts.Name, Version: c.opts.Version,
-		Sig: proto.SignHello(id, ch.HubID, ch.Nonce), Invite: c.opts.Invite,
+		Sig: proto.SignHello(id, ch.HubID, ch.Nonce), Invite: c.opts.Invite, RotationChain: c.opts.RotationChain,
 	}
 	_ = ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	if err := ws.WriteJSON(hello); err != nil {
@@ -247,7 +252,7 @@ func (c *Client) runOnce(ctx context.Context) error {
 	c.mu.Lock()
 	c.ws = ws
 	c.mu.Unlock()
-	c.setState(StateConnected, welcome.HubID, welcome.Spaces, "")
+	c.setState(StateConnected, welcome.HubID, welcome.Spaces, "", welcome.IdentityRotationVersion)
 	c.log.Info("connected to hub", "hub", welcome.HubID, "spaces", welcome.Spaces)
 
 	stop := context.AfterFunc(ctx, func() { _ = ws.Close() })

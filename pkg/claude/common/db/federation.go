@@ -40,9 +40,19 @@ func TrustFederationPeer(p FederationPeer) error {
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`INSERT INTO federation_peers(instance_id, pubkey, label, name, trusted_at, trust_level) VALUES(?,?,?,?,?,?)
+	res, err := d.Exec(`INSERT INTO federation_peers(instance_id, pubkey, label, name, trusted_at, trust_level)
+ SELECT ?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM federation_identity_rotations WHERE old_instance=? AND state IN ('accepted','revoked','conflict','recovered'))
  ON CONFLICT(instance_id) DO UPDATE SET label=excluded.label, name=excluded.name, trust_level=excluded.trust_level`,
-		p.InstanceID, p.PubKey, p.Label, p.Name, dbTime(time.Now()), p.TrustLevel)
+		p.InstanceID, p.PubKey, p.Label, p.Name, dbTime(time.Now()), p.TrustLevel, p.InstanceID)
+	if err == nil {
+		count, e := res.RowsAffected()
+		if e != nil {
+			return e
+		}
+		if count == 0 {
+			return fmt.Errorf("identity %s is retired, revoked or conflicted; explicit recovery required", p.InstanceID)
+		}
+	}
 	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
 		return fmt.Errorf("label %q is already used by another peer", p.Label)
 	}
@@ -60,6 +70,9 @@ func UntrustFederationPeer(instanceID string) (bool, error) {
 		return false, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`UPDATE federation_identity_rotations SET state='revoked',reason='peer untrusted during rotation' WHERE old_instance=? AND state IN ('pending','conflict')`, instanceID); err != nil {
+		return false, err
+	}
 	res, err := tx.Exec(`DELETE FROM federation_peers WHERE instance_id=?`, instanceID)
 	if err != nil {
 		return false, err
