@@ -347,3 +347,20 @@ func TestIdempotencyHTTPGatewayKeysBelongToUpstream(t *testing.T) {
 	_, err := db.GetAgentdRequest(key)
 	require.ErrorIs(t, err, sql.ErrNoRows)
 }
+
+func TestIdempotencyEnrollmentBearerResponsesAreNeverPersisted(t *testing.T) {
+	setupTestDB(t)
+	for _, path := range []string{"/v1/federation/enroll-tokens", "/v1/federation/enroll/preview", "/v1/federation/enroll"} {
+		t.Run(path, func(t *testing.T) {
+			key := uuid.NewString()
+			handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"token":"private-bearer"}`)) })
+			req := idempotencyRequest(t, key, `{"token":"private-bearer"}`)
+			req.URL.Path = path
+			rec := httptest.NewRecorder()
+			idempotencyRequestsWithOwner(handler, "daemon-a").ServeHTTP(rec, req)
+			require.Equal(t, 200, rec.Code)
+			record, _ := db.GetAgentdRequest(key)
+			require.Empty(t, record.ResponseBody)
+		})
+	}
+}

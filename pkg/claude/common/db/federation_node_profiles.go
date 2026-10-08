@@ -334,6 +334,20 @@ func PlanFederationNodeProfile(profileID, peer, token string, newPeer *Federatio
 		return nil, e
 	}
 	defer func() { _ = tx.Rollback() }()
+	plan, e := planFederationNodeProfileTx(tx, profileID, peer, token, newPeer)
+	if e != nil {
+		return plan, e
+	}
+	if token != "" {
+		if e = tx.Commit(); e != nil {
+			return nil, e
+		}
+		plan.Applied = true
+	}
+	return plan, nil
+}
+func planFederationNodeProfileTx(tx *sql.Tx, profileID, peer, token string, newPeer *FederationPeer) (*FederationNodeProfilePlan, error) {
+	var e error
 	if token != "" {
 		if _, e = tx.Exec(`UPDATE federation_node_profiles SET revision=revision WHERE id=?`, profileID); e != nil {
 			return nil, e
@@ -548,10 +562,6 @@ func PlanFederationNodeProfile(profileID, peer, token string, newPeer *Federatio
 	if e != nil {
 		return nil, e
 	}
-	if e = tx.Commit(); e != nil {
-		return nil, e
-	}
-	plan.Applied = true
 	return plan, nil
 }
 func nodeProfileJSONEqual(a, b any) bool {

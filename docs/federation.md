@@ -1241,3 +1241,66 @@ global-default and owner grants. Ordinary explicit operator sudo keeps its
 higher precedence, and existing owner-derived scope behavior is unchanged.
 Delegation still uses the normal attenuation rules. Remote requesters cannot
 supply or override this receiver-owned permission map.
+
+### Enroll a node with a token
+
+Enrollment sets up reciprocal trust after both machines have joined the hub.
+Hub admission remains a separate step; an enrollment token is not a hub invite.
+On the master, create a node profile and issue a short-lived bearer:
+
+```bash
+tclaude federation enroll-token create --profile test-rig --uses 1 --ttl 24h
+```
+
+The token is printed once on stdout; its public terms and master fingerprint
+appear on stderr. Deliver it privately to the node. Prefer a private file or
+stdin over `--token` to avoid shell history and process argument exposure:
+
+```bash
+tclaude federation enroll <master-instance-id> --token-file /private/enrollment-token
+# Inspect consent terms without making changes:
+tclaude federation enroll <master-instance-id> --token-stdin --preview
+```
+
+Running `enroll` is consent. Before sending, it displays both fingerprints, the
+profile's name, immutable ID and revision, expiry, and the trust level granted
+to the master on this node. `--trust-level unrestricted` when creating the
+bearer proposes full master authority: every peer permission on every live
+local group, automatic worker spawning, and local unscoped grants towards that
+peer. The default is restricted, which requires explicit local grants.
+
+The named profile controls the node's authority **on the master**, including
+pool memberships, peer grants and defaults for workers that node spawns there.
+The node grants its master only the reciprocal trust level displayed by the
+token. Enrollment does not apply the node's default peer profile and does not
+automatically accept config offers. Offer/import those separately. Profile
+edits invalidate unused tokens; pool grants remain live membership policy.
+
+`tcle1` tokens contain signed public terms, a pinned master public key and a
+random bearer secret. The master stores only the public terms and secret hash.
+Enrollment requests and replies are signed and sealed end to end; they bypass
+the durable outbox and are never logged with bearer content. Only these two
+small, rate-limited message kinds can arrive from an untrusted directory peer.
+A reply must match an active request nonce and the token's pinned master key.
+Trust on the node is written only after authenticated master confirmation.
+
+First use binds a token use to a node key and applies its exact profile revision
+atomically. `--uses N` permits N distinct node keys. Retry with the same bearer
+and node key after an interrupted exchange: the master returns the existing
+receipt without spending another use or reapplying permissions. Manual trust
+changes invalidate an in-flight local preview; completed retries preserve
+manual downgrades. Untrust retires bindings permanently, so replay cannot
+restore trust, even if that peer is subsequently trusted manually.
+
+```bash
+tclaude federation enroll-token ls
+tclaude federation enroll-token revoke <token-id>
+tclaude federation enrollments
+```
+
+Lists expose public token IDs, use counts, expiry, keys and retired bindings.
+Revocation prevents new bindings and does not untrust enrolled nodes. Completed
+master-side retries can recover receipts after revocation or expiry; a node
+must present an unexpired bearer to initiate the command. A new enrollment
+requires a new token after untrust. Identity rotation changes the pinned key
+and therefore requires a newly issued token.

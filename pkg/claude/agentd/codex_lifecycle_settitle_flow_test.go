@@ -40,6 +40,8 @@ func TestCodexAgent_CompactInjectsNativeCommand(t *testing.T) {
 // a Codex conv to that native store, the new title must read back, and
 // NOTHING may be injected into the pane (out-of-band, not a send-keys).
 func TestCodexAgent_RenameViaNativeStore(t *testing.T) {
+	// CodexSim writes beneath the isolated HOME, not the operator's Codex home.
+	t.Setenv("CODEX_HOME", "")
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	const conv = "019ec004-0000-0000-0000-000000000002"
@@ -74,6 +76,8 @@ func TestCodexAgent_RenameViaNativeStore(t *testing.T) {
 // base name (JOH-319), both written through SetTitle. Pins both halves of
 // "identity + title preservation".
 func TestCodexAgent_ReincarnateCarriesIdentityAndTitle(t *testing.T) {
+	// CodexSim writes beneath the isolated HOME, not the operator's Codex home.
+	t.Setenv("CODEX_HOME", "")
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	const conv = "019ec004-0000-0000-0000-000000000003"

@@ -52,6 +52,14 @@ var bulkReadRoutes = map[string]bool{
 
 func isBulkReadRoute(path string) bool { return bulkReadRoutes[path] }
 
+// Enrollment credentials must stay in memory, including the one-time creation
+// response. Its endpoint-specific bindings handle retries; generic durable
+// response replay must never capture the bearer. Enrollment CLI calls disable
+// automatic mutation retries and require operators to retry explicitly.
+func isEnrollmentCredentialRoute(path string) bool {
+	return path == "/v1/federation/enroll-tokens" || path == "/v1/federation/enroll/preview" || path == "/v1/federation/enroll"
+}
+
 func idempotencyRequests(h http.Handler) http.Handler {
 	return idempotencyRequestsWithOwner(h, idempotencyOwnerID)
 }
@@ -68,7 +76,7 @@ func idempotencyRequestsWithOwner(h http.Handler, ownerID string) http.Handler {
 func idempotencyRequestsWithOwnerAndWaitHook(h http.Handler, ownerID string, waitHook func()) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := strings.TrimSpace(r.Header.Get(agent.IdempotencyKeyHeader))
-		if key == "" || !isMutatingMethod(r.Method) || isBulkReadRoute(r.URL.Path) || strings.HasPrefix(r.URL.Path, "/v1/http/proxy/") {
+		if key == "" || !isMutatingMethod(r.Method) || isBulkReadRoute(r.URL.Path) || isEnrollmentCredentialRoute(r.URL.Path) || strings.HasPrefix(r.URL.Path, "/v1/http/proxy/") {
 			h.ServeHTTP(w, r)
 			return
 		}
