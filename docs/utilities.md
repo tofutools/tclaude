@@ -164,7 +164,7 @@ from the two sessions' permission modes, holding a message for approval when
 the sender bypasses permission prompts and the receiver does not. That default
 is more careful than a blunt `accept`, so an operator opting back in gets it.
 
-Claude-Code-only; asking for it on Codex, OpenCode, or Copilot is an error
+Claude-Code-only; asking for it on any other harness is an error
 rather than a silent no-op. The posture is recorded per session, so a resume,
 clone, or reincarnation reproduces what the agent actually launched with.
 

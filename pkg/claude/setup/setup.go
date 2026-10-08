@@ -80,7 +80,7 @@ type Params struct {
 	// (default "claude" → ~/.claude/settings.json; "codex" →
 	// ~/.codex/hooks.json, via the harness HookInstaller seam). Other
 	// setup steps keep their own compatibility gates.
-	Harness string `long:"harness" optional:"true" help:"Coding harness whose hooks to install: claude (default) | codex"`
+	Harness string `long:"harness" optional:"true" help:"Coding harness whose hooks to install: claude (default) | codex | copilot | gemini"`
 }
 
 func Cmd() *cobra.Command {

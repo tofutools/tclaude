@@ -170,7 +170,7 @@ tclaude agent dashboard
 
 From there, `tclaude agent` (and the dashboard) create groups, spawn agents
 into them, message peers, and manage permissions. Groups freely mix agents
-from all four harnesses.
+from all five harnesses.
 
 ## Documentation
 
@@ -181,7 +181,7 @@ Full documentation lives at
   first session, and an orientation map.
 - [Architecture](https://tofutools.github.io/tclaude/architecture/) — the
   mental model: sessions, conversations, agents, and the daemon.
-- [Harnesses](https://tofutools.github.io/tclaude/harnesses/) — the four
+- [Harnesses](https://tofutools.github.io/tclaude/harnesses/) — the five
   harnesses, per-harness setup, and the capability matrix.
 - [Sessions](https://tofutools.github.io/tclaude/sessions/),
   [conversations](https://tofutools.github.io/tclaude/conversations/),

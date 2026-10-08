@@ -137,9 +137,10 @@ The baseline setup (always runs):
   enabled.
 
 `tclaude setup --harness codex` installs or repairs Codex hooks explicitly
-(useful for scripted installs); the flag accepts `claude` and `codex` only —
-OpenCode has no hook installer, and Copilot's and Gemini CLI's hooks are
-handled by the baseline. See [Harnesses](harnesses.md) for per-harness setup details.
+(useful for scripted installs); the flag accepts any harness with a hook
+installer (`claude`, `codex`, `copilot`, `gemini`). OpenCode has no hook
+installer, and the baseline already installs hooks for every hook-capable
+harness found on `PATH`. See [Harnesses](harnesses.md) for per-harness setup details.
 
 Optional extras are additive and idempotent:
 
@@ -208,7 +209,7 @@ tclaude ask --new "start a fresh topic"
 tclaude ask -i "help me refactor this interactively"
 ```
 
-All four harnesses support ask. The [Ask guide](ask.md) covers continuity,
+All five harnesses support ask. The [Ask guide](ask.md) covers continuity,
 capture safety, and how the harness is chosen.
 
 ## Operate a fleet
@@ -229,7 +230,7 @@ tclaude agent dashboard
 
 From the dashboard or `tclaude agent`, you create allow-listed groups, spawn
 agents into them, message peers, manage lifecycle and permissions, and deploy
-whole teams from templates. Groups freely mix agents from all four harnesses.
+whole teams from templates. Groups freely mix agents from all five harnesses.
 Start with [Agents and groups](agents-and-groups.md), then
 [Spawning and lifecycle](spawning-and-lifecycle.md) and the
 [Dashboard](dashboard.md).
