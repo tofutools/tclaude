@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -54,7 +55,7 @@ func Cmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			statusCmd(), identityCmd(), connectCmd(), disconnectCmd(),
-			peersCmd(), trustCmd(), untrustCmd(),
+			peersCmd(), trustCmd(), untrustCmd(), nodeProfilesCmd(),
 			grantCmd(), revokeCmd(), grantsCmd(), remoteCmd(), nodesCmd(), nodeLabelsCmd(), sessionsCmd(), attachCmd(), viewersCmd(), kickCmd(),
 			sendCmd(), outboxCmd(), notifyCmd(), inboxCmd(), awayCmd(), returnCmd(), answerCmd(),
 			spawnRequestCmd(), requestsCmd(), offerConfigCmd(), offersCmd(), shareAgentCmd(), moveAgentCmd(), movesCmd(),
@@ -356,10 +357,12 @@ func dash(s string) string {
 }
 
 type trustParams struct {
-	Level    string `long:"level" default:"restricted" help:"Local trust level: restricted or unrestricted (own machines only)"`
-	Yes      bool   `long:"yes" help:"Confirm unrestricted access without prompting"`
-	Instance string `pos:"true" help:"Instance id (or 8+ char prefix) from 'tclaude federation peers'"`
-	Label    string `long:"label" optional:"true" help:"Short local name for the peer, used in addresses (member@label)"`
+	Profile          string `long:"profile" optional:"true" help:"Apply this local node profile at trust"`
+	NoDefaultProfile bool   `long:"no-default-profile" help:"Skip the default peer profile"`
+	Level            string `long:"level" optional:"true" help:"Local trust level: restricted or unrestricted (own machines only)"`
+	Yes              bool   `long:"yes" help:"Confirm unrestricted access without prompting"`
+	Instance         string `pos:"true" help:"Instance id (or 8+ char prefix) from 'tclaude federation peers'"`
+	Label            string `long:"label" optional:"true" help:"Short local name for the peer, used in addresses (member@label)"`
 }
 
 func trustCmd() *cobra.Command {
@@ -368,42 +371,42 @@ func trustCmd() *cobra.Command {
 		Short:       "Trust a visible instance (compare its fingerprint out of band first)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *trustParams, _ *cobra.Command, _ []string) {
-			if p.Level != "restricted" && p.Level != "unrestricted" {
+			if p.Level != "" && p.Level != "restricted" && p.Level != "unrestricted" {
 				fmt.Fprintln(os.Stderr, "level must be restricted or unrestricted")
 				os.Exit(1)
 			}
-			fingerprint := ""
-			if p.Level == "unrestricted" {
-				st, rc := loadStatus(os.Stderr)
-				if st == nil {
+			in := map[string]any{"instance": p.Instance, "label": p.Label, "level": p.Level, "profile": p.Profile, "no_default_profile": p.NoDefaultProfile, "preview": true}
+			var preview struct {
+				InstanceID  string                        `json:"instance_id"`
+				Fingerprint string                        `json:"fingerprint"`
+				Level       string                        `json:"level"`
+				Plan        *db.FederationNodeProfilePlan `json:"plan"`
+			}
+			if rc := post(os.Stderr, "/v1/federation/peers/trust", in, &preview); rc != 0 {
+				os.Exit(rc)
+			}
+			if preview.Plan != nil {
+				if rc := printJSON(os.Stdout, preview.Plan); rc != 0 {
 					os.Exit(rc)
 				}
-				matches := 0
-				for _, pe := range st.Peers {
-					if pe.InstanceID == p.Instance || pe.Label == p.Instance || (len(p.Instance) >= 8 && (strings.HasPrefix(pe.InstanceID, p.Instance) || strings.HasPrefix(pe.InstanceID, "inst_"+p.Instance))) {
-						matches++
-						fingerprint = pe.Fingerprint
-					}
-				}
-				if matches != 1 {
-					fmt.Fprintln(os.Stderr, "peer must identify exactly one visible or trusted instance")
+				if len(preview.Plan.Conflicts) > 0 {
+					fmt.Fprintln(os.Stderr, "profile has manual-edit conflicts")
 					os.Exit(1)
 				}
-				fmt.Fprintf(os.Stderr, "Fingerprint %s: unrestricted grants all peer permissions on all live groups, automatic spawn, and local unscoped grants towards this peer. Choosing this peer as away cover also permits one-shot access-request answers. Intended for your own machines.\n", fingerprint)
-				if !p.Yes {
-					fmt.Fprint(os.Stderr, "Type yes to confirm: ")
-					var answer string
-					if _, err := fmt.Fscanln(os.Stdin, &answer); err != nil || answer != "yes" {
-						fmt.Fprintln(os.Stderr, "not confirmed")
-						os.Exit(1)
-					}
-				}
+				in["preview_token"] = preview.Plan.Token
 			}
+			if preview.Level == "unrestricted" {
+				if e := confirmNodeProfileUnrestricted(preview.Fingerprint, p.Yes); e != nil {
+					os.Exit(fail(os.Stderr, e))
+				}
+				in["confirm_fingerprint"] = preview.Fingerprint
+			}
+			in["preview"] = false
 			var out struct {
 				InstanceID  string `json:"instance_id"`
 				Fingerprint string `json:"fingerprint"`
 			}
-			if rc := post(os.Stderr, "/v1/federation/peers/trust", map[string]any{"instance": p.Instance, "label": p.Label, "level": p.Level, "confirm_fingerprint": fingerprint}, &out); rc != 0 {
+			if rc := post(os.Stderr, "/v1/federation/peers/trust", in, &out); rc != 0 {
 				os.Exit(rc)
 			}
 			fmt.Printf("trusted %s (fingerprint %s)\n", out.InstanceID, out.Fingerprint)
