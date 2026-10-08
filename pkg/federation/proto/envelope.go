@@ -25,8 +25,12 @@ const (
 	// KindSpawnReq asks the recipient to spawn a worker into one of its
 	// exported groups. The recipient's operator decides; KindSpawnRes
 	// (InReplyTo = the request) reports the decision.
-	KindSpawnReq = "spawn_req"
-	KindSpawnRes = "spawn_res"
+	KindSpawnReq     = "spawn_req"
+	KindSpawnRes     = "spawn_res"
+	KindBundleOffer  = "bundle_offer"
+	KindBundleFetch  = "bundle_fetch"
+	KindBundleAnswer = "bundle_answer"
+	KindBundleResult = "bundle_result"
 	// KindRouteOpen asks the recipient to open one TCP connection to one of
 	// its exported routes; KindRouteAnswer accepts (then both dial the hub
 	// stream relay) or refuses it. These are real-time control envelopes,

@@ -225,16 +225,17 @@ const fedMaxSubject = 512
 
 // fedOutgoing describes one envelope for the outbox.
 type fedOutgoing struct {
-	fromConv  string // "" = the human operator
-	peer      *db.FederationPeer
-	kind      string
-	toAgent   string
-	toLabel   string
-	subject   string
-	preview   string
-	inReplyTo string
-	ttl       time.Duration
-	payload   any
+	envelopeID string
+	fromConv   string // "" = the human operator
+	peer       *db.FederationPeer
+	kind       string
+	toAgent    string
+	toLabel    string
+	subject    string
+	preview    string
+	inReplyTo  string
+	ttl        time.Duration
+	payload    any
 }
 
 // queueFederatedEnvelope seals o for its peer and writes the durable outbox
@@ -253,6 +254,9 @@ func queueFederatedEnvelope(o fedOutgoing) (*db.FederationOutboxRow, error) {
 	env, err := proto.NewEnvelope(id, o.kind, from, proto.Endpoint{Instance: o.peer.InstanceID, Agent: o.toAgent}, o.ttl, o.payload)
 	if err != nil {
 		return nil, err
+	}
+	if o.envelopeID != "" {
+		env.ID = o.envelopeID
 	}
 	env.InReplyTo = o.inReplyTo
 	sealed, err := proto.Seal(id, env, ed25519.PublicKey(o.peer.PubKey))
@@ -835,13 +839,15 @@ func handleFederationNotify(w http.ResponseWriter, r *http.Request) {
 }
 
 type fedInboxJSON struct {
-	ID        int64     `json:"id"`
-	From      string    `json:"from"`
-	Instance  string    `json:"instance"`
-	Subject   string    `json:"subject,omitempty"`
-	Body      string    `json:"body"`
-	CreatedAt time.Time `json:"created_at"`
-	Read      bool      `json:"read"`
+	ID         int64     `json:"id"`
+	OfferID    string    `json:"offer_id,omitempty"`
+	OfferState string    `json:"offer_state,omitempty"`
+	From       string    `json:"from"`
+	Instance   string    `json:"instance"`
+	Subject    string    `json:"subject,omitempty"`
+	Body       string    `json:"body"`
+	CreatedAt  time.Time `json:"created_at"`
+	Read       bool      `json:"read"`
 }
 
 // handleFederationInbox lists messages remote operators sent the local
@@ -865,6 +871,19 @@ func handleFederationInbox(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, fedInboxJSON{ID: m.ID, From: m.FromTitle, Instance: strings.TrimPrefix(m.GroupName, prefix),
 			Subject: m.Subject, Body: m.Body, CreatedAt: m.CreatedAt, Read: m.IsRead()})
+	}
+	reconcileFederationBundleOffers()
+	offers, err := db.ListFederationBundleOffers("in")
+	if err != nil {
+		writeFedErr(w, err)
+		return
+	}
+	for _, o := range offers {
+		label := o.Peer
+		if p, _ := db.GetFederationPeer(o.Peer); p != nil {
+			label = peerDisplay(p)
+		}
+		out = append(out, fedInboxJSON{OfferID: o.Descriptor.ID, OfferState: o.State, From: label, Instance: o.Peer, Subject: o.Descriptor.Type + " bundle offer", Body: proto.StripControls(o.Descriptor.Summary) + "\nPreview: tclaude federation offers import " + o.Descriptor.ID + " --peer " + o.Peer, CreatedAt: o.CreatedAt, Read: o.State != "pending" && o.State != "ready"})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -1009,6 +1028,7 @@ func fedFirst(a, b string) string {
 }
 
 func registerFederationRoutes(mux *http.ServeMux) {
+	registerFederationBundleRoutes(mux)
 	mux.HandleFunc("GET /v1/federation/status", handleFederationStatus)
 	mux.HandleFunc("/v1/federation/notify", handleFederationNotify)
 	mux.HandleFunc("GET /v1/federation/inbox", handleFederationInbox)

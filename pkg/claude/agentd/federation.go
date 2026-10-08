@@ -124,12 +124,15 @@ func defaultFederationName() string {
 
 // fedRuntime is one live hub connection plus its workers.
 type fedRuntime struct {
-	id     *proto.Identity
-	name   string
-	cl     *client.Client
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	bundleMu      sync.Mutex
+	bundleWaiters map[string]fedBundleWaiter
+	bundleActive  map[string]bool
+	id            *proto.Identity
+	name          string
+	cl            *client.Client
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
 
 	inbound chan fedInbound
 	kick    chan struct{}
@@ -166,6 +169,8 @@ func currentFederation() *fedRuntime {
 // startFederation starts the hub client when config enables it. Errors are
 // logged, never fatal: federation is an optional add-on to a local daemon.
 func startFederation() {
+	// Expire private payloads on restart even when federation was disabled.
+	reconcileFederationBundleOffers()
 	fedLifecycleMu.Lock()
 	defer fedLifecycleMu.Unlock()
 	cfg, err := config.Load()
@@ -462,6 +467,7 @@ func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 	completion := time.NewTicker(time.Second)
 	defer completion.Stop()
 	reconcileFederationSpawns()
+	reconcileFederationBundleOffers()
 	for {
 		select {
 		case <-ctx.Done():
@@ -472,6 +478,7 @@ func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 			rt.pushSessionTransitions()
 		case <-completion.C:
 			reconcileFederationSpawns()
+			reconcileFederationBundleOffers()
 		case <-refresh.C:
 			rt.broadcastCatalogs()
 			if err := db.PruneFederationSeen(time.Now()); err != nil {
@@ -535,6 +542,15 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		rt.acceptSpawnRequest(peer, env)
 	case proto.KindSpawnRes:
 		rt.handleSpawnResult(peer, env)
+	case proto.KindBundleOffer:
+		rt.acceptBundleOffer(peer, env)
+	case proto.KindBundleFetch:
+		rt.wg.Add(1)
+		go func() { defer rt.wg.Done(); rt.serveBundleFetch(peer, env) }()
+	case proto.KindBundleAnswer:
+		rt.acceptBundleAnswer(peer, env)
+	case proto.KindBundleResult:
+		rt.acceptBundleResult(peer, env)
 	case proto.KindRouteOpen:
 		// One open per envelope: a replayed route_open must not make the
 		// publisher accept a connection nobody can join.
