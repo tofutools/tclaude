@@ -32,6 +32,8 @@ type Type struct {
 	PendingBytes  int64
 }
 
+var Agent = Type{Name: "agent", MaxBytes: 256 << 20, AdmissionSlug: "agents.receive", GroupScoped: true, PendingLimit: 10, PendingBytes: 512 << 20}
+
 var Config = Type{Name: "config", MaxBytes: 16 << 20, AdmissionSlug: "config.offer", PendingLimit: PendingLimit, PendingBytes: PendingBytes}
 
 type Descriptor struct {
@@ -66,6 +68,9 @@ func (d Descriptor) Validate(kind Type, now time.Time) error {
 	}
 	if len(d.Summary) > 512 {
 		return errors.New("offer summary exceeds 512 bytes")
+	}
+	if kind.GroupScoped && (d.Group == "" || len(d.Group) > 256) {
+		return errors.New("receiving group is required for this bundle type")
 	}
 	if !kind.GroupScoped && d.Group != "" {
 		return errors.New("this bundle type is not group-scoped")

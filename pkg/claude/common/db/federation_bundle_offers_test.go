@@ -57,3 +57,38 @@ func TestFederationBundleOfferQuotaAndReplay(t *testing.T) {
 	_, err = InsertFederationBundleOffer(o, bundletransfer.Config)
 	require.ErrorIs(t, err, ErrOfferQuota)
 }
+
+func TestFederationAgentOfferLaunchReservation(t *testing.T) {
+	setupTestDB(t)
+	peer, err := proto.NewIdentity()
+	require.NoError(t, err)
+	d := bundletransfer.New(bundletransfer.Agent, []byte("archive"), "offer", time.Now().Add(time.Hour))
+	d.Group = "receiver"
+	o := FederationBundleOffer{Descriptor: d, Peer: peer.ID(), Direction: "in", State: "ready", GroupID: 42, SenderAgent: "remote-agent"}
+	_, err = InsertFederationBundleOffer(o, bundletransfer.Agent)
+	require.NoError(t, err)
+	require.NoError(t, ReserveFederationBundleImport(peer.ID(), d.ID, "reserved-agent"))
+	require.Error(t, ReserveFederationBundleImport(peer.ID(), d.ID, "duplicate-agent"))
+	released, err := ReleaseUnlaunchedFederationBundleImport(peer.ID(), d.ID, "reserved-agent")
+	require.NoError(t, err)
+	require.True(t, released)
+	require.NoError(t, ReserveFederationBundleImport(peer.ID(), d.ID, "reserved-agent"))
+	require.NoError(t, SetFederationBundleLaunchLabel("reserved-agent", "launch-label"))
+	released, err = ReleaseUnlaunchedFederationBundleImport(peer.ID(), d.ID, "reserved-agent")
+	require.NoError(t, err)
+	require.False(t, released, "a possibly late subprocess must not be duplicated")
+	got, err := GetFederationBundleOffer("in", peer.ID(), d.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(42), got.GroupID)
+	require.Equal(t, "remote-agent", got.SenderAgent)
+	require.Equal(t, "reserved-agent", got.ImportAgent)
+	require.Equal(t, "launch-label", got.ImportLabel)
+	require.NoError(t, ClearUnlaunchedFederationBundleLabel("reserved-agent", "stale-label"))
+	released, err = ReleaseUnlaunchedFederationBundleImport(peer.ID(), d.ID, "reserved-agent")
+	require.NoError(t, err)
+	require.False(t, released, "a stale preparation failure cannot clear a later attempt")
+	require.NoError(t, ClearUnlaunchedFederationBundleLabel("reserved-agent", "launch-label"))
+	released, err = ReleaseUnlaunchedFederationBundleImport(peer.ID(), d.ID, "reserved-agent")
+	require.NoError(t, err)
+	require.True(t, released, "definite pre-dispatch failures can release their reservation")
+}

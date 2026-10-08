@@ -7213,6 +7213,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	if err := db.SetFederationSpawnLaunchLabel(p.AgentID, label); err != nil {
 		return launchFailed(err)
 	}
+	if err := db.SetFederationBundleLaunchLabel(p.AgentID, label); err != nil {
+		return launchFailed(err)
+	}
 	timing("launch_prepared", "label", label)
 	launchedAt := time.Now()
 	rememberHTTPProxyLaunchGroup(label, g, p.PermissionOverrides)
@@ -7741,6 +7744,9 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 		label = nextLabel()
 	}
 	if err := db.SetFederationSpawnLaunchLabel(p.AgentID, label); err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+	}
+	if err := db.SetFederationBundleLaunchLabel(p.AgentID, label); err != nil {
 		return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 	}
 	if err := db.InsertPendingSpawn(pendingSpawnFromParams(g, p, label)); err != nil {
@@ -9193,17 +9199,26 @@ func reserveUniqueSpawnPrivateAttachmentRootWith(
 	)
 }
 
+// bundleLaunchPreparationFailed clears only the pre-dispatch marker. Failures
+// returned by Spawn itself remain uncertain: a child may already be running.
+func bundleLaunchPreparationFailed(args clcommon.SpawnArgs, launchErr error) error {
+	if err := db.ClearUnlaunchedFederationBundleLabel(args.AgentID, args.Label); err != nil {
+		return errors.Join(launchErr, fmt.Errorf("clear undispatched bundle launch: %w", err))
+	}
+	return launchErr
+}
+
 // SpawnDetachedTclaudeNew is a thin facade over Spawn.SpawnNew.
 // Tests substitute a behavior-accurate fake by assigning Spawn at
 // setup; production keeps the LiveSpawner default. See clcommon.SpawnArgs
 // for the per-field semantics.
 func SpawnDetachedTclaudeNew(args clcommon.SpawnArgs) error {
 	if err := prepareCodexAppServerRuntime(&args); err != nil {
-		return err
+		return bundleLaunchPreparationFailed(args, err)
 	}
 	if err := prepareCopilotAPIPort(&args); err != nil {
 		failPreparedCodexAppServerRuntime(args, err)
-		return err
+		return bundleLaunchPreparationFailed(args, err)
 	}
 	if err := Spawn.SpawnNew(args); err != nil {
 		failPreparedCodexAppServerRuntime(args, err)
@@ -9259,11 +9274,11 @@ func spawnDetachedTclaudeResumeAs(args clcommon.SpawnArgs, kind copilotAPILaunch
 	// for a TUI hook that Codex does not emit on every resume.
 	args.CodexAppServerExistingThread = kind == copilotAPILaunchResume
 	if err := prepareCodexAppServerRuntime(&args); err != nil {
-		return err
+		return bundleLaunchPreparationFailed(args, err)
 	}
 	if err := prepareCopilotAPIPort(&args); err != nil {
 		failPreparedCodexAppServerRuntime(args, err)
-		return err
+		return bundleLaunchPreparationFailed(args, err)
 	}
 	if err := Spawn.SpawnResume(args); err != nil {
 		failPreparedCodexAppServerRuntime(args, err)

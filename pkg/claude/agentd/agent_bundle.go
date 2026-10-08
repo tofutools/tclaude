@@ -326,6 +326,15 @@ func scanAgentBundle(b *agentbundle.Bundle) []agentbundle.Finding {
 	var definition any
 	_ = json.Unmarshal(raw, &definition)
 	walk(definition, "manifest.agent")
+	metadata, _ := json.Marshal(struct {
+		Placeholders []configbundle.Placeholder `json:"placeholders"`
+		CreatedAt    string                     `json:"created_at"`
+		Version      string                     `json:"tclaude_version"`
+		Warnings     []string                   `json:"warnings"`
+	}{b.Manifest.Placeholders, b.Manifest.CreatedAt, b.Manifest.TclaudeVersion, b.Manifest.Warnings})
+	var meta any
+	_ = json.Unmarshal(metadata, &meta)
+	walk(meta, "manifest")
 	scanner := bufio.NewScanner(bytes.NewReader(b.Transcript))
 	scanner.Buffer(make([]byte, 64<<10), 10<<20)
 	line := 0

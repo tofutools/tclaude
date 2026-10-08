@@ -10,8 +10,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/federation/stream"
@@ -27,6 +29,9 @@ type fedBundleKind struct {
 func federationBundleKind(name string) (fedBundleKind, bool) {
 	if name == bundletransfer.Config.Name {
 		return fedBundleKind{Type: bundletransfer.Config, Validate: validateOfferedConfig}, true
+	}
+	if name == bundletransfer.Agent.Name {
+		return fedBundleKind{Type: bundletransfer.Agent, Validate: func(raw []byte) error { _, err := agentbundle.Decode(raw); return err }}, true
 	}
 	return fedBundleKind{}, false
 }
@@ -57,13 +62,25 @@ func fedBundleAdmitted(peer string, kind bundletransfer.Type, d bundletransfer.D
 	}
 	return false
 }
+
+// Persisted group identity, rather than a mutable wire name, governs admission
+// after receipt. The receiver's operator can still choose another granted group.
+func fedBundleOfferAdmitted(o *db.FederationBundleOffer, kind bundletransfer.Type) bool {
+	if !kind.GroupScoped {
+		return fedBundleAdmitted(o.Peer, kind, o.Descriptor)
+	}
+	if p, err := db.GetFederationPeer(o.Peer); err != nil || p == nil {
+		return false
+	}
+	return o.GroupID != 0 && fedPeerAllows(o.Peer, o.GroupID, kind.AdmissionSlug)
+}
 func (rt *fedRuntime) acceptBundleOffer(peer *db.FederationPeer, env *proto.Envelope) {
 	refuse := func(code, msg string) {
 		rt.sendControl(peer.InstanceID, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckRefused, Code: code, Reason: msg})
 	}
 	var d bundletransfer.Descriptor
-	if env.DecodePayload(&d) != nil || env.From.Agent != "" || env.To.Agent != "" {
-		refuse(fedCodeMalformed, "bundle offers must come from the remote operator")
+	if env.DecodePayload(&d) != nil || env.To.Agent != "" {
+		refuse(fedCodeMalformed, "bundle offers must target the remote operator")
 		return
 	}
 	kind, ok := federationBundleKind(d.Type)
@@ -75,8 +92,8 @@ func (rt *fedRuntime) acceptBundleOffer(peer *db.FederationPeer, env *proto.Enve
 		refuse(fedCodeMalformed, "invalid bundle offer descriptor")
 		return
 	}
-	if !fedBundleAdmitted(peer.InstanceID, kind.Type, d) {
-		refuse(fedCodeNotExported, "peer lacks "+kind.Type.AdmissionSlug)
+	if !kind.Type.GroupScoped && env.From.Agent != "" {
+		refuse(fedCodeMalformed, "config offers must come from the remote operator")
 		return
 	}
 	if !rt.allowInbound(peer.InstanceID) {
@@ -91,12 +108,29 @@ func (rt *fedRuntime) acceptBundleOffer(peer *db.FederationPeer, env *proto.Enve
 		return
 	}
 	if existing != nil {
-		if existing.Descriptor.SHA256 != d.SHA256 || existing.Descriptor.Bytes != d.Bytes || existing.Descriptor.Type != d.Type || !existing.Descriptor.ExpiresAt.Equal(d.ExpiresAt) {
+		if existing.Descriptor.SHA256 != d.SHA256 || existing.Descriptor.Bytes != d.Bytes || existing.Descriptor.Type != d.Type || existing.Descriptor.Group != d.Group || existing.SenderAgent != env.From.Agent || !existing.Descriptor.ExpiresAt.Equal(d.ExpiresAt) {
 			refuse(fedCodeMalformed, "offer identity reused with different content")
+			return
+		}
+		if (existing.State == "pending" || existing.State == "ready") && !fedBundleOfferAdmitted(existing, kind.Type) {
+			refuse(fedCodeNotExported, "receive admission revoked")
 			return
 		}
 		rt.sendControl(peer.InstanceID, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckAccepted})
 		return
+	}
+	if !fedBundleAdmitted(peer.InstanceID, kind.Type, d) {
+		refuse(fedCodeNotExported, "peer lacks "+kind.Type.AdmissionSlug)
+		return
+	}
+	groupID := int64(0)
+	if kind.Type.GroupScoped {
+		g, err := db.GetAgentGroupByName(d.Group)
+		if err != nil || g == nil {
+			refuse(fedCodeNotExported, "receiving group unavailable")
+			return
+		}
+		groupID = g.ID
 	}
 	if len(d.Inline) > 0 {
 		if err := kind.Validate(d.Inline); err != nil {
@@ -104,7 +138,7 @@ func (rt *fedRuntime) acceptBundleOffer(peer *db.FederationPeer, env *proto.Enve
 			return
 		}
 	}
-	o := db.FederationBundleOffer{Descriptor: d, Peer: peer.InstanceID, Direction: "in", State: "pending"}
+	o := db.FederationBundleOffer{Descriptor: d, Peer: peer.InstanceID, Direction: "in", State: "pending", GroupID: groupID, SenderAgent: env.From.Agent}
 	if _, err := db.InsertFederationBundleOffer(o, kind.Type); err != nil {
 		code := fedCodeInternal
 		if errors.Is(err, db.ErrOfferQuota) {
@@ -232,7 +266,7 @@ func (rt *fedRuntime) fetchBundle(ctx context.Context, o *db.FederationBundleOff
 	if err != nil {
 		return err
 	}
-	if current == nil || current.State != "pending" || !current.Descriptor.ExpiresAt.After(time.Now()) || !fedBundleAdmitted(o.Peer, kind.Type, current.Descriptor) {
+	if current == nil || current.State != "pending" || !current.Descriptor.ExpiresAt.After(time.Now()) || !fedBundleOfferAdmitted(current, kind.Type) {
 		_ = fedBundleSpool().Remove("in", o.Peer, o.Descriptor.ID)
 		return errors.New("offer expired, declined or admission revoked during transfer")
 	}
@@ -320,6 +354,18 @@ func reconcileFederationBundleOffers() {
 	now := time.Now()
 	fedBundleSpool().PruneTemporary(now)
 	for _, o := range offers {
+		if o.Direction == "in" && o.State == "ready" && o.ImportAgent != "" {
+			if o.ImportLabel == "" {
+				// No subprocess boundary was reached, including across a daemon restart.
+				_, _ = db.ReleaseUnlaunchedFederationBundleImport(o.Peer, o.Descriptor.ID, o.ImportAgent)
+			} else if a, err := db.GetAgent(o.ImportAgent); err == nil && a != nil && a.Active() && a.CurrentConvID != "" {
+				if s, err := db.LoadSession(o.ImportLabel); err == nil && s != nil && s.ConvID == a.CurrentConvID && s.TmuxSession != "" && session.IsTmuxSessionAlive(s.TmuxSession) {
+					if err := db.SetFederationBundleOfferState("in", o.Peer, o.Descriptor.ID, "applied", ""); err == nil {
+						o.State = "applied"
+					}
+				}
+			}
+		}
 		if o.Direction == "out" {
 			if row, _ := db.GetFederationOutbox(o.Descriptor.ID); row != nil {
 				_ = db.EraseSettledFederationBundlePayload(o.Descriptor.ID)

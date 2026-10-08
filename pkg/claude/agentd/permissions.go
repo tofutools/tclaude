@@ -124,6 +124,7 @@ func init() { initPermissionRegistry() }
 // build registers it; all mutation and authorization boundaries accept only
 // this vocabulary.
 var permissionRegistry = []PermSlug{
+	{Slug: PermAgentsReceive, Description: "Peer-only admission for agent bundle offers into an explicitly granted receiving group. Configure through federation peer grants; ordinary agent grants do not authorize receipt."},
 	{Slug: PermGroupsRosterRead, Description: "Read group member names and roles.", ScopeDims: []ScopeDim{ScopeDimGroup}},
 	{Slug: PermGroupsPresenceRead, Description: "Read group member presence.", ScopeDims: []ScopeDim{ScopeDimGroup}},
 	{Slug: PermMessageAttachments, Description: "Send message attachments.", ScopeDims: []ScopeDim{ScopeDimGroup}},
@@ -521,6 +522,7 @@ var permissionRegistry = []PermSlug{
 		ScopeDims:    []ScopeDim{ScopeDimGroup},
 		Description:  "Instantiate a working group from a template, or rebrief/reinforce an existing group. Ownership contributes this slug scoped to each owned group; instantiating a new group still needs another positive source.",
 	},
+	{Slug: PermAgentShare, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Share your portable agent configuration and optional private transcript with a peer. Requires peer= scope; exporting another agent also requires agent.bundle.export."},
 	{Slug: PermAgentBundleExport, Description: "Export portable agents and optional private transcripts. Not default-granted."},
 	{Slug: PermAgentBundleImport, Description: "Preview or import portable agents through normal spawn checks. Not default-granted."},
 	{Slug: PermConfigExport, Description: "Export portable setup bundles; may read private setup text. Not default-granted."},
