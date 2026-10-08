@@ -1,6 +1,8 @@
 package agentd_test
 
 import (
+	"crypto/ed25519"
+	"fmt"
 	"net/http"
 	"net/url"
 	"testing"
@@ -14,6 +16,8 @@ import (
 
 func TestFederationAuditPermissionPeerAndSince(t *testing.T) {
 	fh := newFedHarness(t)
+	// Audit reads do not need a live sender consuming the placeholder below.
+	agentd.ResetFederationForTest()
 	const conv = "federation-audit-reader"
 	fh.f.HaveConvWithTitle(conv, "reader")
 	require.NoError(t, db.InsertFederationOutbox(db.FederationOutboxRow{EnvelopeID: "audit-outbound", Kind: "mail", ToInstance: fh.peer.id.ID(), Subject: "secret-subject", BodyPreview: "secret-body", Sealed: []byte("secret-envelope"), ExpiresAt: time.Now().Add(time.Hour)}))
@@ -39,4 +43,22 @@ func TestFederationAuditPermissionPeerAndSince(t *testing.T) {
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), "audit-outbound", "immutable IDs keep retained activity queryable after untrust")
 
+}
+
+func TestFederationOutboxRejectsTruncatedSealedPayloads(t *testing.T) {
+	fh := newFedHarness(t)
+	for _, size := range []int{0, 15, ed25519.SignatureSize - 1, ed25519.SignatureSize} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			id := fmt.Sprintf("truncated-%d", size)
+			require.NoError(t, db.InsertFederationOutbox(db.FederationOutboxRow{
+				EnvelopeID: id, Kind: "mail", ToInstance: fh.peer.id.ID(),
+				Sealed: make([]byte, size), ExpiresAt: time.Now().Add(time.Hour),
+			}))
+			agentd.FlushFederationOutboxForTest()
+			row, err := db.GetFederationOutbox(id)
+			require.NoError(t, err)
+			require.Equal(t, db.FedOutboxRefused, row.State)
+			require.Equal(t, "corrupt outbox row: truncated sealed envelope", row.LastError)
+		})
+	}
 }
