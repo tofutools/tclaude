@@ -94,3 +94,14 @@ func TestConfigBundleSelectedMetadataAndOriginalCredentialScan(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), "credentialvalue")
 }
+
+func TestConfigBundleReprepareAllocatesDistinctPathNames(t *testing.T) {
+	b := Bundle{Sections: map[string][]Item{"profiles": {{Name: "kept", Value: json.RawMessage(`{"cwd":"${path_2}","mount":"/new/path"}`)}}}, Placeholders: []Placeholder{{Name: "path_2", Item: "profiles/kept", Field: "value.cwd", Original: "/old/path"}}}
+	require.NoError(t, b.Prepare())
+	require.Len(t, b.Placeholders, 2)
+	require.NotEqual(t, b.Placeholders[0].Name, b.Placeholders[1].Name)
+	unresolved, err := b.Resolve(b.KeepPaths(nil))
+	require.NoError(t, err)
+	require.Empty(t, unresolved)
+	assert.JSONEq(t, `{"cwd":"/old/path","mount":"/new/path"}`, string(b.Sections["profiles"][0].Value))
+}

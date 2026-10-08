@@ -130,6 +130,11 @@ func (b *Bundle) Prepare() error {
 	}
 
 	home, _ := os.UserHomeDir()
+	usedNames := map[string]bool{}
+	for _, p := range b.Placeholders {
+		usedNames[p.Name] = true
+	}
+	nextPath := 1
 	for _, section := range Sections {
 		for n, item := range b.Sections[section] {
 			label := section + "/" + item.Name
@@ -182,7 +187,13 @@ func (b *Bundle) Prepare() error {
 						if home != "" && (x == home || strings.HasPrefix(x, home+string(filepath.Separator))) {
 							return "${HOME}" + strings.TrimPrefix(x, home)
 						}
-						name := fmt.Sprintf("path_%d", len(b.Placeholders)+1)
+						name := fmt.Sprintf("path_%d", nextPath)
+						for usedNames[name] {
+							nextPath++
+							name = fmt.Sprintf("path_%d", nextPath)
+						}
+						usedNames[name] = true
+						nextPath++
 						b.Placeholders = append(b.Placeholders, Placeholder{Name: name, Item: label, Field: field, Original: x})
 						return "${" + name + "}"
 					}
