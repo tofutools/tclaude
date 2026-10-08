@@ -1622,3 +1622,11 @@ CREATE TABLE federation_node_groups(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQU
 CREATE TABLE federation_node_group_members(group_id TEXT NOT NULL REFERENCES federation_node_groups(id) ON DELETE CASCADE,peer TEXT NOT NULL REFERENCES federation_peers(instance_id) ON DELETE CASCADE,PRIMARY KEY(group_id,peer)) STRICT;
 
 CREATE TABLE federation_node_group_grants(group_id TEXT NOT NULL REFERENCES federation_node_groups(id) ON DELETE CASCADE,slug TEXT NOT NULL,scope TEXT NOT NULL DEFAULT '',spawn_policy TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,PRIMARY KEY(group_id,slug,scope)) STRICT;
+
+CREATE TABLE federation_node_profiles(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,revision INTEGER NOT NULL,definition TEXT NOT NULL,created_at INTEGER NOT NULL) STRICT;
+
+CREATE TABLE federation_node_profile_default(singleton INTEGER PRIMARY KEY CHECK(singleton=1),profile_id TEXT NOT NULL REFERENCES federation_node_profiles(id)) STRICT;
+
+CREATE TABLE federation_node_profile_assignments(peer TEXT PRIMARY KEY REFERENCES federation_peers(instance_id) ON DELETE CASCADE,profile_id TEXT NOT NULL REFERENCES federation_node_profiles(id),snapshot TEXT NOT NULL) STRICT;
+
+CREATE TABLE federation_worker_defaults(agent_id TEXT PRIMARY KEY,snapshot TEXT NOT NULL) STRICT;

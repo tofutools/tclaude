@@ -1089,3 +1089,91 @@ operator resolves the conflict. `max_live` remains a per-peer limit, rather than
 a shared pool budget. Pool authority changes also invalidate pending delegated
 approval epochs, preventing a removed and re-added member from answering an
 old approval request.
+
+### Node profiles and trust defaults
+
+A local node profile describes a peer's trust level, local pool memberships,
+peer grants and launch policies, requested labels, an optional config bundle,
+and permission overrides for workers that peer spawns here. Profiles and their
+immutable IDs/revisions stay on this instance. Pool references bind to immutable
+pool IDs and use the pool's live policy; deleting and recreating a pool name
+does not retarget a profile.
+
+Create a profile from JSON:
+
+```json
+{
+  "definition": {
+    "trust_level": "restricted",
+    "pools": ["test-rigs"],
+    "peer_grants": [
+      {"slug": "message.direct", "scope": "group=lobby"},
+      {"slug": "groups.members.spawn", "scope": "group=builders",
+       "spawn_policy": {"max_live": 2}}
+    ],
+    "labels": ["test-rig"],
+    "worker_permissions": {
+      "groups.members.stop": {"effect": "grant", "scope": {"group": ["builders"]}},
+      "self.rename": "deny"
+    }
+  }
+}
+```
+
+```bash
+tclaude federation profile create rigs --file rigs.json
+tclaude federation profile show rigs > rigs.json
+tclaude federation profile apply rigs bob                 # preview
+tclaude federation profile apply rigs bob --apply         # commit local policy
+tclaude federation profile default rigs
+tclaude federation trust <instance> --label rig2          # displays default profile
+tclaude federation trust <instance> --profile other
+tclaude federation trust <instance> --no-default-profile
+```
+
+Defaults apply only when first trusting a peer. Updating an existing peer's trust
+does not silently reapply the current default. A profile selecting unrestricted
+trust still requires the peer fingerprint confirmation. `profile default none`
+clears the default; `profile ls` lists profiles and the selected default.
+
+Edit the JSON returned by `show`, preserving its revision, then use
+`profile update rigs --file rigs.json`. `profile apply rigs --all` previews
+changes for assigned peers; add `--apply` to commit each peer's displayed plan.
+The plan highlights security changes, includes live pool grants, and binds the
+profile revision and current peer state. Stale plans are refused. Re-apply
+removes obsolete profile-managed grants and memberships while preserving
+unrelated manual entries. Conflicting manual edits are reported and refused;
+resolve them before applying. Changing a profile alone does not change a peer.
+Deleting a default or assigned profile is refused until it is no longer
+referenced; assign a replacement profile or untrust its peers first.
+
+Labels and config are a separate, retryable offer:
+
+```bash
+tclaude federation profile offer rigs bob
+```
+
+Applying a profile never imports settings remotely. The receiver uses the
+existing config-offer preview/import path and decides whether to accept it.
+An unchanged queued offer is not resent by re-apply or another `offer` command.
+`labels: null` leaves labels unspecified; `labels: []` requests clearing them.
+Only `federation.node_labels` is portable here; federation credentials, trust
+and other authority settings remain excluded from config bundles. Optional
+`config_bundle` content uses the ordinary versioned config-bundle envelope,
+including its credential checks and path placeholders.
+
+Worker defaults apply to both automatically approved and operator-approved
+peer spawn requests. They overlay role and spawn-profile overrides, are
+persisted before the subprocess starts, and record the originating peer and
+profile revision. They are frozen at birth: re-applying a profile affects future
+workers and leaves existing workers' permissions intact. Harnesses without
+enrollment before launch are refused for profile workers.
+
+An omitted worker slug inherits the normal receiving-group and global defaults.
+A scoped worker grant narrows a broader receiving-group grant **because the
+existing per-agent permission tier takes precedence over the group tier**;
+these two scopes are not unioned. A worker deny takes precedence over group,
+global-default and owner grants. Ordinary explicit operator sudo keeps its
+higher precedence, and existing owner-derived scope behavior is unchanged.
+Delegation still uses the normal attenuation rules. Remote requesters cannot
+supply or override this receiver-owned permission map.
