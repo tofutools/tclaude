@@ -1141,6 +1141,7 @@ func registerFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/federation/return", handleFederationReturn)
 	mux.HandleFunc("POST /v1/federation/answer", handleFederationAwayAnswer)
 	mux.HandleFunc("GET /v1/federation/status", handleFederationStatus)
+	mux.HandleFunc("GET /v1/federation/audit", handleFederationAudit)
 	mux.HandleFunc("/v1/federation/notify", handleFederationNotify)
 	mux.HandleFunc("GET /v1/federation/inbox", handleFederationInbox)
 	mux.HandleFunc("GET /v1/federation/reachable", handleFederationReachable)

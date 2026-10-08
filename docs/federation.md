@@ -756,6 +756,38 @@ A full inbox is retried rather than refused. Inbound remote mail is recorded
 in the [audit trail](permissions-and-audit.md) as `federation.mail.in`, and
 every operator change under `/v1/federation/*` is audited too.
 
+## Activity audit
+
+```bash
+tclaude federation audit
+tclaude federation audit --peer bob --since 24h
+tclaude federation audit --since 2026-10-08T12:00:00Z --json
+# Let a local lead read the same metadata:
+tclaude agent permissions grant lead federation.audit.read
+```
+
+This is a local, read-only view across both directions: mail and operator inbox
+notices, spawns, jobs, routes, attaches, config/agent offers, teleports, model
+leases and model requests. Agents need the unscoped `federation.audit.read`
+permission; it does not grant access to payloads or to a peer's audit log.
+`--peer` accepts a current label or immutable instance ID. `--since` accepts an
+RFC3339 timestamp or a positive duration ago. The default is the latest 200
+rows; `--limit` permits 1–1000.
+
+Rows from the existing audit trail are marked `event`. Other sources show their
+current durable state, ordered by creation time (model leases use their last
+activity time). These are status snapshots alongside events, not a new history
+of every state transition. Existing retention and cleanup still apply.
+Only IDs, actors/targets, groups, operation names, states, timestamps and HTTP
+status are returned. Message bodies/subjects, prompts, command arguments,
+logs, error details, endpoint paths and credential material are omitted.
+
+Older audit rows recorded display labels rather than immutable peer IDs.
+The view associates them only when current labels identify one peer; rows
+that cannot be associated remain visible without `--peer`. Durable federation
+tables retain exact peer IDs, including after untrust; use that ID to filter
+those records after a label disappears.
+
 ## Upgrading
 
 The envelope format is versioned. Instances on different envelope versions
