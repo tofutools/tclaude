@@ -157,7 +157,7 @@ func TestFederation_TeleportProxyAndForgedDestinationRefused(t *testing.T) {
 	d := fedIncomingTeleport(t, fh, "proxy:main@bob", nil)
 	ack := fedAckFor(t, fh.peer, d.ID)
 	require.Equal(t, proto.AckRefused, ack.Status)
-	require.Contains(t, ack.Reason, "model proxy not available yet")
+	require.Contains(t, ack.Reason, "not allowed")
 	d = fedIncomingTeleport(t, fh, "local", func(in *bundletransfer.TeleportIntent) { in.Hops[0].ToInstance = fh.peer.id.ID() })
 	require.Equal(t, proto.AckRefused, fedAckFor(t, fh.peer, d.ID).Status)
 }
@@ -302,7 +302,7 @@ func TestFederation_TeleportCredentialPrecedenceNeverFallsBack(t *testing.T) {
 	d := fedIncomingTeleport(t, fh, "", nil)
 	ack := fedAckFor(t, fh.peer, d.ID)
 	require.Equal(t, proto.AckRefused, ack.Status)
-	require.Contains(t, ack.Reason, "model proxy not available yet")
+	require.NotEmpty(t, ack.Reason)
 	d = fedIncomingTeleport(t, fh, "local", nil)
 	require.Equal(t, proto.AckAccepted, fedAckFor(t, fh.peer, d.ID).Status)
 	row, err := db.GetFederationTeleport("in", fh.peer.id.ID(), d.ID)

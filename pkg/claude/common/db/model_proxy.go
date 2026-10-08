@@ -25,7 +25,7 @@ func BindModelProxyLaunch(session, reference, hash string) error {
 		return err
 	}
 	_, err = d.Exec(`INSERT INTO model_proxy_launches(session,generation,reference,bearer_hash)
- SELECT id,exit_callback_generation,?,? FROM sessions WHERE id=? AND exit_callback_generation<>''
+ SELECT id,exit_callback_generation,?,? FROM sessions WHERE id=? AND exit_callback_generation<>'' AND status<>'exited'
  ON CONFLICT(session,generation) DO NOTHING`, reference, hash, session)
 	if err != nil {
 		return err
@@ -50,7 +50,7 @@ func VerifyModelProxyLaunch(session, bearer string) (*ModelProxyLaunch, error) {
 	var l ModelProxyLaunch
 	err = d.QueryRow(`SELECT l.session,l.generation,l.reference,l.bearer_hash FROM model_proxy_launches l
  JOIN sessions s ON s.id=l.session AND s.exit_callback_generation=l.generation
- WHERE l.session=? AND l.revoked=0`, session).Scan(&l.Session, &l.Generation, &l.Reference, &l.BearerHash)
+ WHERE l.session=? AND l.revoked=0 AND s.status<>'exited'`, session).Scan(&l.Session, &l.Generation, &l.Reference, &l.BearerHash)
 	if err != nil {
 		return nil, ErrModelProxyRefused
 	}

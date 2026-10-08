@@ -9,7 +9,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -124,9 +126,50 @@ func modelBridgeError(w http.ResponseWriter, status int, message string) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"type": "error", "error": map[string]string{"type": "api_error", "message": message}})
 }
 func modelProxyCompetingEnvironment(name string) bool {
+	if _, ok := claudeProviderSettingVariables[name]; ok {
+		return true
+	}
 	switch name {
 	case "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_CUSTOM_HEADERS", "ANTHROPIC_API_KEY_HELPER", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC":
 		return true
 	}
 	return false
+}
+
+// Settings env overrides exported shell values and can route around the launch
+// gateway. Refuse competing settings rather than silently spend a saved login.
+func validateModelProxySettings(cwd string, environment []string) error {
+	env := map[string]string{}
+	for _, pair := range environment {
+		k, v, ok := strings.Cut(pair, "=")
+		if ok {
+			env[k] = v
+		}
+	}
+	for _, path := range claudeProviderSettingsPaths(cwd, env) {
+		raw, e := os.ReadFile(path)
+		if os.IsNotExist(e) {
+			continue
+		}
+		if e != nil {
+			return fmt.Errorf("cannot inspect Claude gateway settings: %s", path)
+		}
+		var settings struct {
+			Environment map[string]json.RawMessage `json:"env"`
+			Helper      json.RawMessage            `json:"apiKeyHelper"`
+		}
+		if json.Unmarshal(raw, &settings) != nil {
+			return fmt.Errorf("cannot parse Claude gateway settings: %s", path)
+		}
+		if len(settings.Helper) > 0 && string(settings.Helper) != "null" && string(settings.Helper) != `""` {
+			return fmt.Errorf("model gateway conflicts with apiKeyHelper in %s; remove it for this launch", path)
+		}
+		for key := range settings.Environment {
+			_, provider := claudeProviderSettingVariables[key]
+			if provider || modelProxyCompetingEnvironment(key) {
+				return fmt.Errorf("model gateway conflicts with env.%s in %s; remove it for this launch", key, path)
+			}
+		}
+	}
+	return nil
 }

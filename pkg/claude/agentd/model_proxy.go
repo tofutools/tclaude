@@ -29,6 +29,15 @@ func validModelProxyScope(scope string) bool {
 	return strings.HasPrefix(scope, "http_proxy=") && validModelProxyName(strings.TrimPrefix(scope, "http_proxy="))
 }
 func fedPeerModelAllows(peer, name string) bool {
+	instance, err := modelProxyPolicy(name)
+	if err != nil {
+		return false
+	}
+	for _, blocked := range instance.ModelPolicy.BlockedPeers {
+		if blocked == peer {
+			return false
+		}
+	}
 	p, err := db.GetFederationPeer(peer)
 	if err != nil || p == nil {
 		return false
@@ -251,4 +260,88 @@ func handleModelProxyUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, usage)
+}
+
+// Control is operator-only and exposes no provider URL, headers or credentials.
+func handleModelProxyControl(w http.ResponseWriter, r *http.Request) {
+	if !requireHuman(w, r, "control model gateways") {
+		return
+	}
+	if r.Method == http.MethodGet {
+		cfg, err := config.Load()
+		if err != nil {
+			modelError(w, 503, "model gateway configuration unavailable")
+			return
+		}
+		policies := map[string]*config.ModelProxyPolicy{}
+		disabled := false
+		if cfg.Agent != nil {
+			disabled = cfg.Agent.ModelProxyDisabled
+			for name, instance := range cfg.Agent.HTTPProxies {
+				if instance.ModelPolicy != nil {
+					policies[name] = instance.ModelPolicy
+				}
+			}
+		}
+		writeJSON(w, 200, map[string]any{"disabled": disabled, "gateways": policies})
+		return
+	}
+	var in struct {
+		Name     string `json:"name"`
+		Peer     string `json:"peer"`
+		Disabled bool   `json:"disabled"`
+	}
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in) != nil {
+		modelError(w, 400, "invalid model gateway switch")
+		return
+	}
+	if in.Peer != "" {
+		peer, err := resolveFederationPeer(in.Peer)
+		if err != nil {
+			modelError(w, 400, "select a trusted peer")
+			return
+		}
+		in.Peer = peer.InstanceID
+		if in.Name == "" {
+			modelError(w, 400, "a peer switch requires a named gateway")
+			return
+		}
+	}
+	_, err := config.Update(func(cfg *config.Config, loadErr error) error {
+		if loadErr != nil {
+			return loadErr
+		}
+		if cfg.Agent == nil {
+			return errors.New("agent configuration is absent")
+		}
+		if in.Name == "" {
+			cfg.Agent.ModelProxyDisabled = in.Disabled
+			return nil
+		}
+		instance, ok := cfg.Agent.HTTPProxies[in.Name]
+		if !ok || instance.ModelPolicy == nil {
+			return errors.New("named model gateway is absent")
+		}
+		if in.Peer == "" {
+			instance.ModelPolicy.Enabled = !in.Disabled
+		} else {
+			peers := []string{}
+			for _, peer := range instance.ModelPolicy.BlockedPeers {
+				if peer != in.Peer {
+					peers = append(peers, peer)
+				}
+			}
+			if in.Disabled {
+				peers = append(peers, in.Peer)
+			}
+			instance.ModelPolicy.BlockedPeers = peers
+		}
+		cfg.Agent.HTTPProxies[in.Name] = instance
+		return nil
+	})
+	if err != nil {
+		modelError(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"name": in.Name, "peer": in.Peer, "disabled": in.Disabled})
 }

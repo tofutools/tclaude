@@ -2,7 +2,7 @@ package db
 
 import "database/sql"
 
-func migrateV242toV243(d *sql.DB) error {
+func migrateV243toV244(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -22,7 +22,7 @@ func migrateV242toV243(d *sql.DB) error {
  started_at INTEGER NOT NULL, duration_ms INTEGER NOT NULL DEFAULT 0) STRICT;
  CREATE INDEX model_proxy_daily ON model_proxy_requests(day,proxy,peer,session);
  ALTER TABLE spawn_profiles ADD COLUMN model_proxy TEXT NOT NULL DEFAULT '';
- UPDATE schema_version SET version=243;`)
+ UPDATE schema_version SET version=244;`)
 	if err != nil {
 		return err
 	}

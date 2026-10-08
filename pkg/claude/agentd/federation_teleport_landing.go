@@ -124,15 +124,17 @@ func resolveTeleportLanding(peer string, group int64, credentials string) (*db.F
 			allowed = true
 		}
 	}
-	if strings.HasPrefix(mode, "proxy:") {
-		return nil, nil, nil, "", errors.New("model proxy not available yet")
-	}
 	if !allowed {
 		return nil, nil, nil, "", errors.New("credential mode is not allowed by the receiver landing policy")
 	}
 	profile, err := db.GetSpawnProfileByID(landing.SpawnProfileID)
 	if err != nil {
 		return nil, nil, nil, "", err
+	}
+	if ref, err := teleportModelReference(mode, profile.Harness); err != nil {
+		return nil, nil, nil, "", err
+	} else if mode != "local" {
+		mode = "proxy:" + ref
 	}
 	worker, err := db.ResolveFederationWorkerDefaults(peer)
 	return &landing, profile, worker, mode, err
@@ -411,7 +413,14 @@ func teleportImportBundle(r *http.Request, b *agentbundle.Bundle) error {
 		if err := teleportMatchesRequirements(o.Descriptor.Teleport, b.Manifest.Agent.Harness); err != nil {
 			return err
 		}
+		frozen, err := db.GetFederationTeleport("in", o.Peer, o.Descriptor.ID)
+		if err != nil || frozen == nil || frozen.Credentials != mode {
+			return errors.New("teleport credential policy changed; no launch")
+		}
 		t := &db.FederationTeleport{Peer: o.Peer, Intent: *o.Descriptor.Teleport, Credentials: mode}
+		if err := applyTeleportModelCredentials(b, mode); err != nil {
+			return err
+		}
 		b.Manifest.Agent.StartupContext = teleportBriefing(t) + "\n\n" + b.Manifest.Agent.StartupContext
 		return nil
 	}
@@ -432,6 +441,9 @@ func teleportImportBundle(r *http.Request, b *agentbundle.Bundle) error {
 	// Only local launch settings survive. Source path placeholders and permissions
 	// never select receiver paths, grants, launch hooks or named policy libraries.
 	b.Manifest.Agent.Profile, _ = json.Marshal(profile)
+	if err := applyTeleportModelCredentials(b, t.Credentials); err != nil {
+		return err
+	}
 	b.Manifest.Placeholders = nil
 	b.Manifest.Agent.StartupContext = teleportBriefing(t)
 	b.Manifest.Agent.InitialMessage = ""
@@ -465,11 +477,15 @@ func pendingTeleportCredentials(peer, requested string) (string, error) {
 			}
 		}
 	}
-	if strings.HasPrefix(mode, "proxy:") {
-		return "", errors.New("model proxy not available yet")
-	}
 	if !allowed {
 		return "", errors.New("credential mode is not allowed by the receiver landing policy")
+	}
+	if mode != "local" {
+		ref, err := teleportModelReference(mode, "")
+		if err != nil {
+			return "", err
+		}
+		mode = "proxy:" + ref
 	}
 	return mode, nil
 }
@@ -558,4 +574,37 @@ func cleanupUnlaunchedTeleportCheckout(t *db.FederationTeleport) {
 	if os.RemoveAll(root) == nil {
 		t.Checkout = nil
 	}
+}
+
+// Credential mode replaces source/default profile routing explicitly. "off"
+// also prevents the receiver's ordinary default profile from selecting a proxy.
+func teleportModelReference(mode, launchHarness string) (string, error) {
+	if mode == "local" {
+		return "off", nil
+	}
+	ref, ok := strings.CutPrefix(mode, "proxy:")
+	if !ok {
+		return "", errors.New("invalid teleport credential mode")
+	}
+	if launchHarness != "" && launchHarness != "claude" {
+		return "", errors.New("proxy credentials currently require the Claude Code harness")
+	}
+	peer, name, err := resolveModelProxyReference(ref)
+	if err != nil {
+		return "", err
+	}
+	return name + "@" + peer.InstanceID, nil
+}
+func applyTeleportModelCredentials(b *agentbundle.Bundle, mode string) error {
+	ref, err := teleportModelReference(mode, b.Manifest.Agent.Harness)
+	if err != nil {
+		return err
+	}
+	var profile spawnProfileJSON
+	if err := json.Unmarshal(b.Manifest.Agent.Profile, &profile); err != nil {
+		return err
+	}
+	profile.ModelProxy = ref
+	b.Manifest.Agent.Profile, err = json.Marshal(profile)
+	return err
 }

@@ -3778,6 +3778,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			}
 		}
 	}
+	if body.ModelProxy == "off" {
+		body.ModelProxy = ""
+	}
 	if body.ModelProxy != "" {
 		if !h.SupportsModelProxy() {
 			writeError(w, 400, "invalid_model_proxy", "selected harness does not support model gateways")

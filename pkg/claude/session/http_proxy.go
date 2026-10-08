@@ -272,6 +272,13 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 	}
 	var modelBridge *modelProxyBridge
 	if modelRef != "" {
+		cwd, e := os.Getwd()
+		if e != nil {
+			return 0, e
+		}
+		if e = validateModelProxySettings(cwd, os.Environ()); e != nil {
+			return 0, e
+		}
 		modelBridge, err = newModelProxyBridge(client, sessionID, modelRef)
 		if err != nil {
 			return 0, fmt.Errorf("model gateway binding failed; launch refused: %w", err)

@@ -358,6 +358,7 @@ func TestContextFreeResolutionFailsClosedOnScopedAllow(t *testing.T) {
 var scopedSlugEnforcementPaths = map[string]string{
 	PermJobsRun:                           "jobCallerAllowed / authorizeJobAccess evaluate concrete RemotePeer and RemoteGroup; list projects only authorized owned jobs",
 	PermAgentsStatusRead:                  "handleFederationReachable evaluates peer/group scope before projecting status",
+	PermModelsProxy:                       "modelLaunchAllowed checks peer and HTTPProxy on bind and every request",
 	PermNodeRead:                          "handleFederationNodes evaluates permissionAllowsAction with RemotePeer",
 	PermSelfTeleport:                      "self teleport selection and delayed retirement recheck",
 	PermAgentsTeleportReceive:             "receiver landing group grant and pre-dispatch recheck",

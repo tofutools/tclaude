@@ -57,6 +57,7 @@ func (c *FlowStream) receive() {
 		f, err := ReadFrame(c.raw, MaxFramePayload)
 		if err != nil {
 			c.fail(err)
+			_ = c.Close()
 			return
 		}
 		if f.Stream != 1 {
@@ -198,6 +199,11 @@ func (c *FlowStream) CloseWrite() error {
 	c.writeClosed = true
 	return c.frame(Frame{Kind: KindHalfClose, Stream: 1})
 }
+
+// Done closes on full disconnect, including a failed underlying stream.
+// A negotiated read half-close does not signal disconnect.
+func (c *FlowStream) Done() <-chan struct{} { return c.done }
+
 func (c *FlowStream) Close() error {
 	c.mu.Lock()
 	if c.closed {

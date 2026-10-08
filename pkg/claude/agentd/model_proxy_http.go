@@ -103,7 +103,12 @@ func relayModelRequest(w http.ResponseWriter, r *http.Request, conn *routebroker
 		modelError(w, 502, "model gateway stream interrupted before response")
 		return
 	}
-	response, err := http.ReadResponse(bufio.NewReader(io.LimitReader(conn, 256<<20)), req)
+	header, br, err := readModelHTTPHeader(conn)
+	if err != nil {
+		modelError(w, 502, "model gateway response headers are incomplete or too large")
+		return
+	}
+	response, err := http.ReadResponse(bufio.NewReader(io.MultiReader(bytes.NewReader(header), br)), req)
 	if err != nil {
 		modelError(w, 502, "model gateway did not return a complete HTTP response")
 		return
@@ -259,6 +264,49 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 	transport := &http.Transport{ResponseHeaderTimeout: 30 * time.Second, MaxResponseHeaderBytes: 32 << 10, DisableCompression: true}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	if !counting {
+		countBody, e := modelCountBody(body)
+		if e != nil {
+			u.Status = 400
+			modelError(w, 400, "model gateway could not prepare token counting")
+			return
+		}
+		countURL, e := httpProxyURL(instance.URL, "/v1/messages/count_tokens")
+		if e != nil {
+			u.Status = 502
+			modelError(w, 502, "model gateway token counting unavailable")
+			return
+		}
+		countReq, e := http.NewRequestWithContext(r.Context(), http.MethodPost, countURL.String(), bytes.NewReader(countBody))
+		if e != nil {
+			u.Status = 502
+			modelError(w, 502, "model gateway token counting unavailable")
+			return
+		}
+		copyModelRequestHeaders(countReq.Header, r.Header)
+		countReq.Header.Set(instance.Header, credential)
+		countResp, e := client.Do(countReq)
+		if e != nil {
+			u.Status = 502
+			modelError(w, 502, "model gateway requires provider token counting before generation")
+			return
+		}
+		countResult, e := io.ReadAll(io.LimitReader(countResp.Body, 32<<10))
+		_ = countResp.Body.Close()
+		var count struct {
+			InputTokens *int64 `json:"input_tokens"`
+		}
+		if e != nil || countResp.StatusCode != 200 || json.Unmarshal(countResult, &count) != nil || count.InputTokens == nil || *count.InputTokens < 0 {
+			u.Status = 502
+			modelError(w, 502, "model gateway requires provider token counting before generation")
+			return
+		}
+		if *count.InputTokens > p.MaxInputTokens {
+			u.Status = 413
+			modelError(w, 413, "input tokens exceed this gateway's configured bound")
+			return
+		}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		u.Status = 502
@@ -280,9 +328,13 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 			modelError(w, 502, "model gateway provider did not return an event stream")
 			return
 		}
-		observer := modelUsageObserver{usage: &u}
+		observer := modelUsageObserver{usage: &u, maxInput: p.MaxInputTokens, maxOutput: data.MaxTokens, credential: credential}
 		w.WriteHeader(resp.StatusCode)
 		err = relayModelEvents(w, resp.Body, responseCap, eventCap, &observer)
+		if err != nil {
+			u.Status = 502
+			_, _ = io.WriteString(w, "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"model gateway stream interrupted or exceeded its bounds\"}}\n\n")
+		}
 		u.Complete = err == nil && observer.stopped && observer.sawInput && observer.sawOutput && !observer.invalid
 	} else {
 		result, err := io.ReadAll(io.LimitReader(resp.Body, responseCap+1))
@@ -297,7 +349,7 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 			InputTokens *int64          `json:"input_tokens"`
 			Type        string          `json:"type"`
 		}
-		observer := modelUsageObserver{usage: &u}
+		observer := modelUsageObserver{usage: &u, maxInput: p.MaxInputTokens, maxOutput: data.MaxTokens, credential: credential}
 		if json.Unmarshal(result, &resultData) == nil {
 			if counting && resultData.InputTokens != nil {
 				observer.apply(map[string]*int64{"input_tokens": resultData.InputTokens})
@@ -309,6 +361,12 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 				u.Complete = observer.sawInput && observer.sawOutput && !observer.invalid
 			}
 		}
+		if observer.outOfBounds() || reflectsModelCredential(result, credential) {
+			u.Status = 502
+			u.Complete = false
+			modelError(w, 502, "model gateway provider response violates configured bounds")
+			return
+		}
 		w.WriteHeader(resp.StatusCode)
 		_, _ = w.Write(result)
 	}
@@ -319,6 +377,8 @@ func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, n
 
 type modelUsageObserver struct {
 	usage                                 *db.ModelProxyUsage
+	maxInput, maxOutput                   int64
+	credential                            string
 	sawInput, sawOutput, stopped, invalid bool
 }
 
@@ -396,6 +456,9 @@ func relayModelEvents(w http.ResponseWriter, r io.Reader, limit int64, eventLimi
 				return errors.New("model response byte limit")
 			}
 			observer.event(event)
+			if observer.outOfBounds() || reflectsModelCredential(event, observer.credential) {
+				return errors.New("model response violates bounds")
+			}
 			if _, e := w.Write(event); e != nil {
 				return e
 			}
@@ -411,4 +474,35 @@ func relayModelEvents(w http.ResponseWriter, r io.Reader, limit int64, eventLimi
 			return err
 		}
 	}
+}
+
+// Preserve unknown input fields so new provider features cannot bypass token
+// counting. A provider that cannot count them must refuse before generation.
+func modelCountBody(body []byte) ([]byte, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return nil, err
+	}
+	for _, key := range []string{"max_tokens", "stream", "temperature", "top_p", "top_k", "stop_sequences", "metadata", "service_tier"} {
+		delete(fields, key)
+	}
+	return json.Marshal(fields)
+}
+func (o *modelUsageObserver) outOfBounds() bool {
+	return o.invalid || o.usage.InputTokens+o.usage.CacheReadTokens+o.usage.CacheWriteTokens > o.maxInput || o.usage.OutputTokens > o.maxOutput
+}
+func reflectsModelCredential(body []byte, credential string) bool {
+	if credential == "" {
+		return false
+	}
+	for _, value := range []string{credential, strings.TrimPrefix(credential, "Bearer ")} {
+		if value == "" {
+			continue
+		}
+		encoded, _ := json.Marshal(value)
+		if bytes.Contains(body, []byte(value)) || bytes.Contains(body, encoded[1:len(encoded)-1]) {
+			return true
+		}
+	}
+	return false
 }

@@ -106,7 +106,10 @@ func (rt *fedRuntime) openModelStream(ctx context.Context, peer *db.FederationPe
 }
 func (rt *fedRuntime) acceptModelOpen(peer *db.FederationPeer, env *proto.Envelope) {
 	var p proto.ModelOpenPayload
-	if env.DecodePayload(&p) != nil || p.Version != 1 || !proto.ValidStreamID(p.Stream) || len(p.Key) != 32 || !validModelProxyName(p.Proxy) || p.Session == "" || len(p.Session) > 128 {
+	if env.From.Agent != "" || env.To.Agent != "" || env.DecodePayload(&p) != nil || p.Version != 1 || !proto.ValidStreamID(p.Stream) || len(p.Key) != 32 || !validModelProxyName(p.Proxy) || p.Session == "" || len(p.Session) > 128 {
+		return
+	}
+	if fresh, err := db.MarkFederationEnvelopeSeen(peer.InstanceID, "modelopen:"+env.ID, time.Now().Add(2*time.Minute)); err != nil || !fresh {
 		return
 	}
 	answer := func(ok bool, key []byte, reason string) {
@@ -169,6 +172,9 @@ func (rt *fedRuntime) acceptModelOpen(peer *db.FederationPeer, env *proto.Envelo
 				select {
 				case <-done:
 					return
+				case <-flow.Done():
+					cancel()
+					return
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
@@ -198,21 +204,28 @@ func (rt *fedRuntime) acceptModelOpen(peer *db.FederationPeer, env *proto.Envelo
 
 // Read headers separately so an untrusted peer cannot allocate an unbounded
 // HTTP header map. The body is bounded independently by the gateway policy.
-func readModelHTTPRequest(r io.Reader) (*http.Request, error) {
+func readModelHTTPHeader(r io.Reader) ([]byte, *bufio.Reader, error) {
 	br := bufio.NewReaderSize(r, 4096)
 	header := make([]byte, 0, 4096)
 	for {
 		line, err := br.ReadSlice('\n')
 		if len(header)+len(line) > 32<<10 {
-			return nil, errors.New("model HTTP headers too large")
+			return nil, nil, errors.New("model HTTP headers too large")
 		}
 		header = append(header, line...)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if len(line) == 2 && line[0] == '\r' {
 			break
 		}
+	}
+	return header, br, nil
+}
+func readModelHTTPRequest(r io.Reader) (*http.Request, error) {
+	header, br, err := readModelHTTPHeader(r)
+	if err != nil {
+		return nil, err
 	}
 	return http.ReadRequest(bufio.NewReader(io.MultiReader(bytes.NewReader(header), br)))
 }
