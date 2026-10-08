@@ -1923,6 +1923,11 @@ tclaude federation identity recover-local              # preview
 tclaude federation identity recover-local --apply      # new ID and fingerprint
 ```
 
+Recovery journals its replacement before retiring capabilities or changing the key.
+Startup resumes an interrupted recovery with that same replacement. Explicit
+recovery also abandons a pending signed rotation and archives its public journal,
+so lost staged keys do not block recovery.
+
 Local peer grants and historical records remain. The replacement needs explicit
 hub admission recovery and explicit confirmation at every peer that trusted the
 old identity. Verify the replacement fingerprint out of band, then preview and

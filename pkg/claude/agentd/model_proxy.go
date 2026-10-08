@@ -38,7 +38,8 @@ func fedPeerModelAllows(peer, name string) bool {
 		return false
 	}
 	for _, blocked := range instance.ModelPolicy.BlockedPeers {
-		if blocked == peer {
+		successor, resolveErr := db.ResolveFederationIdentitySuccessor(blocked)
+		if resolveErr != nil || blocked == peer || successor == peer {
 			return false
 		}
 	}

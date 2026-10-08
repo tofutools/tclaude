@@ -359,7 +359,11 @@ func teleportPeerCapacity(peer string, limit int) error {
 	}
 	used := 0
 	for _, t := range rows {
-		if t.Direction != "in" || t.Peer != peer || t.TargetAgent == "" {
+		currentPeer, err := db.ResolveFederationIdentitySuccessor(t.Peer)
+		if err != nil {
+			return err
+		}
+		if t.Direction != "in" || currentPeer != peer || t.TargetAgent == "" {
 			continue
 		}
 		if t.State == "admitting" || t.State == "uncertain" || reserved[t.TargetAgent] || nodeAdmission.launches[t.TargetAgent] == config.DataDir() {

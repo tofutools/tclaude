@@ -210,7 +210,7 @@ func handleFederationIdentityRecoverLocal(w http.ResponseWriter, r *http.Request
 		_ = json.Unmarshal(raw, &previous)
 	}
 	if !req.Apply {
-		writeJSON(w, 200, map[string]any{"previous": previous, "effect": "create a fresh unlinked identity; preserve local peer grants and records; peers and hub must explicitly recover/rebind the old identity; existing model capabilities and queued encrypted mail are retired", "apply": "federation identity recover-local --apply"})
+		writeJSON(w, 200, map[string]any{"previous": previous, "effect": "create a fresh unlinked identity; preserve local peer grants and records; peers and hub must explicitly recover/rebind the old identity; existing model capabilities and queued encrypted mail are retired; any pending signed rotation is abandoned and its public journal archived", "apply": "federation identity recover-local --apply"})
 		return
 	}
 	next, err := recoverLocalIdentity()

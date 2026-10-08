@@ -97,6 +97,21 @@ var (
 
 // federationIdentity loads (creating on first use) this instance's identity.
 func federationIdentity() (*proto.Identity, error) {
+	recovery, recoveryErr := loadIdentityRecovery()
+	if recoveryErr != nil {
+		return nil, recoveryErr
+	}
+	if recovery.Pending {
+		return nil, errors.New("local identity recovery is pending; resume federation identity recover-local --apply")
+	}
+
+	journal, journalErr := loadIdentityJournal()
+	if journalErr != nil {
+		return nil, journalErr
+	}
+	if journal.Pending && !time.Now().Before(journal.Chain[len(journal.Chain)-1].ActivateAt) {
+		return nil, errors.New("identity rotation activation is pending")
+	}
 	fedIdentityMu.Lock()
 	defer fedIdentityMu.Unlock()
 	if fedIdentity != nil {
@@ -105,6 +120,9 @@ func federationIdentity() (*proto.Identity, error) {
 	var id *proto.Identity
 	var err error
 	_, receiptErr := os.Stat(identityReceiptPath())
+	if receiptErr != nil && !errors.Is(receiptErr, os.ErrNotExist) {
+		return nil, receiptErr
+	}
 	if _, e := os.Stat(identityJournalPath()); e == nil || receiptErr == nil {
 		id, err = proto.LoadIdentity(FederationKeyPath())
 	} else if !errors.Is(e, os.ErrNotExist) {
@@ -199,6 +217,11 @@ func currentFederation() *fedRuntime {
 // startFederation starts the hub client when config enables it. Errors are
 // logged, never fatal: federation is an optional add-on to a local daemon.
 func startFederation() {
+	if _, err := completeLocalIdentityRecovery(false); err != nil {
+		slog.Error("federation: local identity recovery failed", "error", err)
+		return
+	}
+
 	if err := activateLocalIdentityRotation(time.Now()); err != nil {
 		slog.Error("federation: rotation recovery failed", "error", err)
 		return

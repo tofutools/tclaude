@@ -169,6 +169,12 @@ func activateLocalIdentityRotation(now time.Time) error {
 	stopFederationLocked()
 	identitySealMu.Lock()
 	defer identitySealMu.Unlock()
+	fedIdentityMu.Lock()
+	fedIdentity = nil
+	fedIdentityMu.Unlock()
+	if err = db.RetireLocalFederationIdentity(now); err != nil {
+		return err
+	}
 	current, err := proto.LoadIdentity(FederationKeyPath())
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -189,9 +195,6 @@ func activateLocalIdentityRotation(now time.Time) error {
 		}
 	} else if current.ID() != r.NewID {
 		return errors.New("active identity disagrees with rotation journal")
-	}
-	if err = db.RetireLocalFederationIdentity(now); err != nil {
-		return err
 	}
 	j.Pending = false
 	if err = saveIdentityJournal(j); err != nil {
@@ -273,45 +276,111 @@ func identityReceiptPath() string {
 	return filepath.Join(filepath.Dir(FederationKeyPath()), "identity.json")
 }
 
+type localIdentityRecovery struct {
+	NewID   string `json:"new_id"`
+	NewKey  []byte `json:"new_key"`
+	Pending bool   `json:"pending"`
+}
+
+func identityRecoveryPath() string {
+	return filepath.Join(filepath.Dir(FederationKeyPath()), "recovery.json")
+}
+func loadIdentityRecovery() (localIdentityRecovery, error) {
+	var r localIdentityRecovery
+	raw, err := os.ReadFile(identityRecoveryPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return r, nil
+	}
+	if err != nil {
+		return r, err
+	}
+	if err = json.Unmarshal(raw, &r); err != nil {
+		return r, err
+	}
+	if len(r.NewKey) != 32 || proto.InstanceID(r.NewKey) != r.NewID {
+		return r, errors.New("invalid local identity recovery journal")
+	}
+	return r, nil
+}
+
 // Recovery generates a fresh unlinked key only by explicit operator action.
-// Every remote trust authority must confirm its own old-to-new rebind.
-func recoverLocalIdentity() (*proto.Identity, error) {
+// A public intent is durable before retiring authority or replacing the key.
+// Startup replays the same intent; it never mints another identity implicitly.
+func recoverLocalIdentity() (*proto.Identity, error) { return completeLocalIdentityRecovery(true) }
+func completeLocalIdentityRecovery(create bool) (*proto.Identity, error) {
 	identityRotationMu.Lock()
 	defer identityRotationMu.Unlock()
-	j, err := loadIdentityJournal()
+	r, err := loadIdentityRecovery()
 	if err != nil {
 		return nil, err
 	}
-	if j.Pending {
-		return nil, errors.New("a signed rotation is already staged; restore its staged key and let activation complete")
+	if !r.Pending && !create {
+		return nil, nil
 	}
 	fedLifecycleMu.Lock()
 	defer fedLifecycleMu.Unlock()
 	stopFederationLocked()
 	identitySealMu.Lock()
 	defer identitySealMu.Unlock()
-	next, err := proto.NewIdentity()
-	if err != nil {
-		return nil, err
-	}
-	if err = proto.SaveIdentity(identityNextKeyPath(), next); err != nil {
-		return nil, err
-	}
-	if err = os.Rename(identityNextKeyPath(), FederationKeyPath()); err != nil {
-		return nil, err
-	}
-	if err = syncIdentityDir(); err != nil {
-		return nil, err
-	}
-	if err = db.RetireLocalFederationIdentity(time.Now()); err != nil {
-		return nil, err
-	}
-	if len(j.Chain) > 0 {
-		if err = os.Rename(identityJournalPath(), identityJournalPath()+".recovered-"+next.ID()); err != nil {
+	if !r.Pending {
+		next, e := proto.NewIdentity()
+		if e != nil {
+			return nil, e
+		}
+		// Explicit unlinked recovery also abandons a pending signed rotation whose
+		// staged private key may have been lost. The public evidence is archived.
+		if err = proto.SaveIdentity(identityNextKeyPath(), next); err != nil {
+			return nil, err
+		}
+		f, e := os.OpenFile(identityNextKeyPath(), os.O_RDWR, 0)
+		if e != nil {
+			return nil, e
+		}
+		e = f.Sync()
+		_ = f.Close()
+		if e != nil {
+			return nil, e
+		}
+		r = localIdentityRecovery{NewID: next.ID(), NewKey: next.Pub, Pending: true}
+		if err = saveIdentityPublicFile(identityRecoveryPath(), r); err != nil {
 			return nil, err
 		}
 	}
+	fedIdentityMu.Lock()
+	fedIdentity = nil
+	fedIdentityMu.Unlock()
+	// Never activate the new identity with predecessor capabilities still live.
+	// This is idempotent when replaying a crash after the database commit.
+	if err = db.RetireLocalFederationIdentity(time.Now()); err != nil {
+		return nil, err
+	}
+	next, err := proto.LoadIdentity(FederationKeyPath())
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	if next == nil || next.ID() != r.NewID {
+		next, err = proto.LoadIdentity(identityNextKeyPath())
+		if err != nil {
+			return nil, err
+		}
+		if next.ID() != r.NewID {
+			return nil, errors.New("staged identity does not match recovery intent")
+		}
+		if err = os.Rename(identityNextKeyPath(), FederationKeyPath()); err != nil {
+			return nil, err
+		}
+		if err = syncIdentityDir(); err != nil {
+			return nil, err
+		}
+	}
+	if err = os.Rename(identityJournalPath(), identityJournalPath()+".recovered-"+next.ID()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	if err = saveIdentityPublicFile(identityReceiptPath(), map[string]any{"instance_id": next.ID(), "public_key": next.Pub}); err != nil {
+		return nil, err
+	}
+	r.Pending = false
+	if err = saveIdentityPublicFile(identityRecoveryPath(), r); err != nil {
 		return nil, err
 	}
 	fedIdentityMu.Lock()

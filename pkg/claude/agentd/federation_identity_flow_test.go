@@ -151,3 +151,27 @@ func TestFederationIdentityRecoveryRequiresReplacementFingerprint(t *testing.T) 
 	require.NoError(t, err)
 	require.NotNil(t, p, "revoking retired predecessor must not roll successor back")
 }
+
+func TestFederationIdentityJobCapacityIncludesPredecessorReservation(t *testing.T) {
+	fh := newFedHarness(t)
+	fh.f.HaveGroup("team")
+	fedJobRepo(t, fh)
+	// Keep the connected peer as the successor; seed a predecessor's uncertain
+	// worker before explicitly recovering its authority into that identity.
+	_, err := db.UntrustFederationPeer(fh.peer.id.ID())
+	require.NoError(t, err)
+	old, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: old.ID(), PubKey: old.Pub, Label: "bob"}))
+	rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermJobsRun, "scope": "group=team", "spawn_policy": map[string]any{"max_live": 1}})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.NoError(t, db.InsertFederationJob(&db.FederationJob{ID: proto.NewEnvelopeID(), Direction: "in", Peer: old.ID(), State: "unknown", Request: json.RawMessage(`{}`), ExpiresAt: time.Now().Add(time.Hour)}))
+	require.NoError(t, db.RebindFederationIdentity(old.ID(), fh.peer.id.ID(), fh.peer.id.Pub, time.Now()))
+	q := proto.JobRequest{ID: proto.NewEnvelopeID(), Repo: "project", Ref: "main", Group: "team", Harness: "shell", Command: "echo should-not-run", Timeout: 10}
+	env := fh.peer.envelope(proto.KindJobRequest, proto.Endpoint{}, q)
+	env.From.Agent = ""
+	fh.peer.send(env)
+	job := fedWaitJob(t, fh, q.ID)
+	require.Equal(t, "refused", job.State, string(job.Result))
+	require.Contains(t, string(job.Result), "peer_capacity")
+}
