@@ -80,3 +80,17 @@ func TestConfigBundleKeepPathsWithExplicitOverride(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, missing)
 }
+
+func TestConfigBundleSelectedMetadataAndOriginalCredentialScan(t *testing.T) {
+	b := Bundle{Sections: map[string][]Item{"roles": {{Name: "worker", Value: json.RawMessage(`{"name":"worker"}`)}}, "profiles": {{Name: "hidden", Value: json.RawMessage(`{"cwd":"${path_1}"}`)}}}, Placeholders: []Placeholder{{Name: "path_1", Item: "profiles/hidden", Field: "value.cwd", Original: "/private/excluded"}, {Name: "path_2", Item: "roles/worker", Field: "value.path", Original: "/tmp/api_key=credentialvalue123456789"}}}
+	require.NoError(t, b.Select([]string{"roles"}, nil))
+	require.Len(t, b.Placeholders, 1)
+	require.Equal(t, "roles/worker", b.Placeholders[0].Item)
+	require.NoError(t, b.Prepare())
+	require.Len(t, b.Flags, 1)
+	assert.Equal(t, "roles/worker", b.Flags[0].Item)
+	assert.Contains(t, b.Flags[0].Field, "original path")
+	raw, err := json.Marshal(b.Flags)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "credentialvalue")
+}

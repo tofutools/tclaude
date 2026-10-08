@@ -141,7 +141,11 @@ func receivingBundleOffer(w http.ResponseWriter, r *http.Request, requireAdmissi
 	}
 	peerRef := r.URL.Query().Get("peer")
 	peerID := ""
-	if peerRef != "" {
+	if proto.ValidInstanceID(peerRef) {
+		// Stable source IDs remain usable to discard local offers after untrust.
+		// Fetch and import still enforce current admission below.
+		peerID = peerRef
+	} else if peerRef != "" {
 		peer, err := resolveFederationPeerOpt(peerRef, false)
 		if err != nil {
 			writeFedErr(w, err)

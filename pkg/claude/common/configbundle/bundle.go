@@ -91,6 +91,15 @@ func (b *Bundle) Select(only, skip []string) error {
 		}
 		b.Sections[section] = kept
 	}
+	// Metadata travels only with retained items. In particular, original paths
+	// from excluded profiles must not leak into a selected offer.
+	retained := map[string]bool{}
+	for section, items := range b.Sections {
+		for _, item := range items {
+			retained[section+"/"+item.Name] = true
+		}
+	}
+	b.Placeholders = slices.DeleteFunc(b.Placeholders, func(p Placeholder) bool { return !retained[p.Item] })
 	return nil
 }
 
@@ -107,6 +116,19 @@ var secretKey = regexp.MustCompile(`(?i)(token|password|secret|api[_-]?key|priva
 // Prepare never edits free text. Structured credentials are omitted; structured
 // absolute paths are portable home references or explicit unresolved values.
 func (b *Bundle) Prepare() error {
+	// Re-exporting an existing bundle must scan recorded originals too: its
+	// structured paths already contain placeholders rather than original text.
+	for _, p := range b.Placeholders {
+		if credential.MatchString(p.Original) {
+			b.Flags = append(b.Flags, Flag{p.Item, p.Field + " (original path)", "suspected credential (value redacted)"})
+		}
+	}
+	for field, value := range map[string]string{"created_at": b.CreatedAt, "tclaude_version": b.TclaudeVersion} {
+		if credential.MatchString(value) {
+			b.Flags = append(b.Flags, Flag{"metadata", field, "suspected credential (value redacted)"})
+		}
+	}
+
 	home, _ := os.UserHomeDir()
 	for _, section := range Sections {
 		for n, item := range b.Sections[section] {

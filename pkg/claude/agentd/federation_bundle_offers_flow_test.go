@@ -273,6 +273,26 @@ func TestFederation_ConfigOfferRevokedAdmissionCanStillDecline(t *testing.T) {
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/bundle-offers/"+d.ID+"/import", nil)
 	require.Equal(t, 403, rec.Code)
-	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/bundle-offers/"+d.ID+"/decline", nil)
+	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/peers/untrust", map[string]any{"instance": "bob"})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
+	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/bundle-offers/"+d.ID+"/decline?peer="+p.id.ID(), nil)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+}
+
+func TestFederation_ConfigOfferSelectionExcludesOriginalPathsAndScansKeptOnes(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	var b configbundle.Bundle
+	require.NoError(t, json.Unmarshal(fedOfferedConfig(t, "Inspect the diff."), &b))
+	b.Placeholders = []configbundle.Placeholder{{Name: "excluded_path", Item: "profiles/offered-profile", Field: "value.cwd", Original: "/private/should-not-be-offered"}}
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/offer-config", map[string]any{"peer": "bob", "bundle": b, "only": []string{"roles"}})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	fedEventually(t, "selected outgoing offer", func() bool { return len(p.envelopes(proto.KindBundleOffer)) > 0 })
+	var d bundletransfer.Descriptor
+	require.NoError(t, p.envelopes(proto.KindBundleOffer)[0].DecodePayload(&d))
+	require.NotContains(t, string(d.Inline), "should-not-be-offered")
+	b.Placeholders = append(b.Placeholders, configbundle.Placeholder{Name: "kept_path", Item: "roles/offered-role", Field: "value.path", Original: "/tmp/api_key=privatevalue123456789"})
+	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/offer-config", map[string]any{"peer": "bob", "bundle": b, "only": []string{"roles"}})
+	require.Equal(t, 422, rec.Code, rec.Body.String())
+	require.NotContains(t, rec.Body.String(), "privatevalue")
 }
