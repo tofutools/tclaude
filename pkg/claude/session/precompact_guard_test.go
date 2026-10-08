@@ -463,6 +463,8 @@ func TestRunHookCallback_PreCompactStatusForAutoRegisteredSession(t *testing.T) 
 // after.
 func captureHookStdout(t *testing.T, sessionID string, payload map[string]any) string {
 	t.Helper()
+	// Exercise the local callback's decision, independent of the runner's launch.
+	t.Setenv(HookBrokerEnvVar, "")
 	data, err := json.Marshal(payload)
 	require.NoError(t, err)
 
