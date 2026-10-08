@@ -654,13 +654,16 @@ func handleFederationTrust(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "bad_directory", "hub directory key does not match the instance id; refusing to trust")
 		return
 	}
+	finish := lockAwayMutation(entry.InstanceID, true)
+	defer finish()
+	existing, err := db.GetFederationPeer(entry.InstanceID)
+	if err != nil {
+		writeFedErr(w, err)
+		return
+	}
 	if req.Level == db.FederationTrustUnrestricted && (existing == nil || existing.TrustLevel != db.FederationTrustUnrestricted) && req.ConfirmFingerprint != proto.Fingerprint(entry.PubKey) {
 		writeError(w, http.StatusBadRequest, "confirmation_required", "confirm fingerprint "+proto.Fingerprint(entry.PubKey)+": unrestricted grants all peer permissions on all live groups, automatic spawn, and local unscoped grants towards this peer; interactive terminal attach includes harness approval answers")
 		return
-	}
-	if existing != nil && existing.TrustLevel != req.Level {
-		finish := lockAwayAuthorityMutation(entry.InstanceID)
-		defer finish()
 	}
 	if err := db.TrustFederationPeer(db.FederationPeer{TrustLevel: req.Level, InstanceID: entry.InstanceID, PubKey: entry.PubKey, Label: req.Label, Name: proto.SafeName(entry.Name, true)}); err != nil {
 		writeError(w, http.StatusConflict, "conflict", err.Error())

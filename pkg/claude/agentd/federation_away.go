@@ -36,6 +36,9 @@ type fedAwayAnswer struct {
 }
 
 func (rt *fedRuntime) activeAwayLocked() *fedAwayState {
+	if currentFederation() != rt {
+		return nil
+	}
 	if rt.away != nil && !rt.away.Until.IsZero() && !time.Now().Before(rt.away.Until) {
 		recordFederationAudit("federation.away.expired", "operator", "", "", "cover="+rt.away.Cover, 200)
 		rt.away = nil
@@ -76,16 +79,30 @@ func fedPeerAnswers(peer string) bool {
 // Serialize revocation with consumption of delegated decisions. Rotating after
 // the mutation also prevents an old ticket from reviving on a later regrant.
 func lockAwayAuthorityMutation(peer string) func() {
+	return lockAwayMutation(peer, false)
+}
+
+func lockAwayMutation(peer string, trustOnly bool) func() {
+	fedLifecycleMu.Lock()
 	rt := currentFederation()
 	if rt == nil {
-		return func() {}
+		return fedLifecycleMu.Unlock
 	}
 	rt.awayMu.Lock()
+	// Read the old trust level only after serializing with other mutations.
+	// A stale snapshot taken by the HTTP handler cannot bypass invalidation.
+	before, beforeErr := db.GetFederationPeer(peer)
 	return func() {
-		if rt.away != nil && rt.away.Cover == peer {
+		rotate := true
+		if trustOnly {
+			after, afterErr := db.GetFederationPeer(peer)
+			rotate = beforeErr != nil || afterErr != nil || before == nil || after == nil || before.TrustLevel != after.TrustLevel
+		}
+		if rotate && rt.away != nil && rt.away.Cover == peer {
 			rt.away.Epoch = newApprovalID()
 		}
 		rt.awayMu.Unlock()
+		fedLifecycleMu.Unlock()
 	}
 }
 
@@ -93,6 +110,8 @@ func handleFederationAway(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "select or inspect away coverage") {
 		return
 	}
+	fedLifecycleMu.Lock()
+	defer fedLifecycleMu.Unlock()
 	rt := currentFederation()
 	if rt == nil {
 		writeError(w, 409, "disabled", "federation must be enabled")
@@ -137,6 +156,7 @@ func handleFederationAway(w http.ResponseWriter, r *http.Request) {
 	}
 	rt.away = a
 	rt.awayWaiting = nil
+	go forwardPendingAwayApprovals()
 	warnings := []string{}
 	if !rt.sessionPeerOnline(peer.InstanceID) {
 		warnings = append(warnings, "covering peer is offline; notices queue until it returns or coverage ends")
@@ -160,6 +180,8 @@ func handleFederationReturn(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "end away coverage") {
 		return
 	}
+	fedLifecycleMu.Lock()
+	defer fedLifecycleMu.Unlock()
 	rt := currentFederation()
 	if rt != nil {
 		rt.awayMu.Lock()
@@ -244,7 +266,12 @@ func forwardAwayApproval(req *approvalRequest) {
 		return
 	}
 	req.mu.Lock()
+	if req.delegatedEpoch == a.Epoch || req.originalDeadline.IsZero() || !time.Now().Before(req.originalDeadline) {
+		req.mu.Unlock()
+		return
+	}
 	req.delegatedEpoch = a.Epoch
+	req.delegatedEnvelope = ""
 	req.delegatedDeadline = req.originalDeadline
 	deadline := req.delegatedDeadline
 	req.mu.Unlock()
@@ -252,6 +279,22 @@ func forwardAwayApproval(req *approvalRequest) {
 	text := fmt.Sprintf("Away access request from %s (%s)\nPermission: %s\nAction: %s %s\nRequest: %s\nOriginal deadline: %s\nOne-shot answer: tclaude federation answer %s --decision approve\nUse --decision deny to refuse. Requires approvals.answer; always/extend are unavailable.\n\n%s", req.convTitle, req.agentID, req.perm, req.method, req.path, ticket, deadline.UTC().Format(time.RFC3339), ticket, req.bodyPreview)
 	_ = rt.queueAwayLocked(a, "Away approval: "+req.perm, text, deadline)
 }
+
+// Selecting or changing cover also surfaces requests already waiting locally.
+// Snapshot the registry before taking awayMu: registration and resolution may
+// continue, and receipt always rechecks that the exact request is still live.
+func forwardPendingAwayApprovals() {
+	approvals.mu.Lock()
+	pending := make([]*approvalRequest, 0, len(approvals.pending))
+	for _, req := range approvals.pending {
+		pending = append(pending, req)
+	}
+	approvals.mu.Unlock()
+	for _, req := range pending {
+		forwardAwayApproval(req)
+	}
+}
+
 func (rt *fedRuntime) observeAwayWaiting() {
 	if rt.cl == nil || rt.cl.Status().State != client.StateConnected {
 		return

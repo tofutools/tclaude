@@ -136,6 +136,18 @@ func TestFederation_AwayInvalidation(t *testing.T) {
 				require.Equal(t, 200, r.Code)
 			case "change-cover":
 				setFedAway(t, fh, time.Time{}) // even reselecting same peer starts a new epoch.
+				fedEventually(t, "pending request reforwarded", func() bool {
+					for _, notice := range fh.peer.envelopes(proto.KindAwayNotice) {
+						if notice.InReplyTo != epoch {
+							var m proto.MailPayload
+							require.NoError(t, notice.DecodePayload(&m))
+							if strings.Contains(m.Body, "Request: "+id+".") {
+								return true
+							}
+						}
+					}
+					return false
+				})
 			case "original-deadline":
 				t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 				h := agentd.BuildDashboardHandlerForTest()
@@ -246,4 +258,71 @@ func TestFederation_AwayNoticesAndHumanOnly(t *testing.T) {
 	require.Equal(t, 200, r.Code)
 	agentd.FlushFederationOutboxForTest()
 	require.Len(t, p.envelopes(proto.KindAwayNotice), before)
+}
+
+func TestFederation_AwayAnswerSubmissionAndReceipt(t *testing.T) {
+	fh := newFedHarness(t)
+	ticket := strings.Repeat("c", 32) + "." + strings.Repeat("d", 32) + "@bob"
+	for _, decision := range []string{"always", "always_scoped", "extend", ""} {
+		r := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/answer", map[string]any{"ticket": ticket, "decision": decision})
+		require.Equal(t, 400, r.Code, r.Body.String())
+	}
+	r := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/answer", map[string]any{"ticket": ticket, "decision": "deny"})
+	require.Equal(t, 200, r.Code, r.Body.String())
+	var submitted *proto.Envelope
+	fedEventually(t, "submitted answer", func() bool {
+		rows := fh.peer.envelopes(proto.KindAwayAnswer)
+		if len(rows) == 0 {
+			return false
+		}
+		submitted = rows[0]
+		return true
+	})
+	require.Empty(t, submitted.From.Agent)
+	var answer struct{ Request, Epoch, Decision string }
+	require.NoError(t, submitted.DecodePayload(&answer))
+	require.Equal(t, "deny", answer.Decision)
+	require.Equal(t, strings.Repeat("c", 32), answer.Request)
+	receipt := fh.peer.envelope(proto.KindAck, proto.Endpoint{}, proto.AckPayload{Status: proto.AckRefused, Code: "denied", Reason: "coverage expired"})
+	receipt.From.Agent = ""
+	receipt.InReplyTo = submitted.ID
+	fh.peer.send(receipt)
+	fedEventually(t, "refused sender outbox", func() bool {
+		row, err := db.GetFederationOutbox(submitted.ID)
+		require.NoError(t, err)
+		return row != nil && row.State == db.FedOutboxRefused
+	})
+	logs, err := db.ListAuditLog(db.AuditLogFilter{Limit: 100})
+	require.NoError(t, err)
+	origin := agentd.FederationInstanceIDForTest()
+	queued, settled := false, false
+	for _, l := range logs {
+		if l.Verb == "federation.away.answer.out" && strings.Contains(l.Detail, "decider="+origin) {
+			queued = true
+		}
+		if l.Verb == "federation.away.answer.result" && strings.Contains(l.Detail, "decider="+origin) && strings.Contains(l.Detail, "refused") {
+			settled = true
+		}
+	}
+	require.True(t, queued)
+	require.True(t, settled)
+}
+
+func TestFederation_AwayUnrestrictedCover(t *testing.T) {
+	fh := newFedHarness(t)
+	fh.f.HaveConvWithTitle("away-requester", "away requester")
+	setFedTrustLevel(t, fh, "unrestricted")
+	setFedAway(t, fh, time.Time{})
+	id := strings.Repeat("e", 32)
+	done, cleanup := agentd.StartFederationAwayApprovalForTest(id, "away-requester", 8*time.Second)
+	t.Cleanup(cleanup)
+	_, epoch := fedAwayTicket(t, fh.peer, id)
+	e := sendFedAwayDecision(t, fh.peer, id, epoch, "approve")
+	select {
+	case approved := <-done:
+		require.True(t, approved)
+	case <-time.After(5 * time.Second):
+		t.Fatal("unrestricted selected cover could not answer")
+	}
+	awaitFedAwayAck(t, fh.peer, e.ID, proto.AckAccepted)
 }
