@@ -47,6 +47,11 @@ func enrollmentGet(path string) {
 func enrollTokenCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{Use: "enroll-token", Short: "Issue, inspect or revoke node enrollment tokens", ParamEnrich: common.DefaultParamEnricher(), SubCmds: []*cobra.Command{
 		boa.CmdT[enrollmentCreateParams]{Use: "create", Short: "Print a signed bearer once; store only its hash", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *enrollmentCreateParams, _ *cobra.Command, _ []string) {
+			// Sub-second values would round to zero, which means the API's
+			// default lifetime. Refuse rather than silently issuing 24 hours.
+			if p.TTL < time.Second || p.TTL > 30*24*time.Hour || p.Uses < 1 || p.Uses > 10000 {
+				os.Exit(fail(os.Stderr, fmt.Errorf("TTL must be 1s-720h and uses must be 1-10000")))
+			}
 			if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
 				os.Exit(rc)
 			}
