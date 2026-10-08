@@ -1653,3 +1653,8 @@ list and worker permissions. The gateway peer is pinned to its immutable
 identity before admission. `--credentials local` explicitly overrides any proxy
 in source or receiver profiles. Proxy mode never falls back to a saved local
 login, and requires Claude Code history and an available gateway.
+
+Use provider credentials authorized for the machines, people and locations in
+your fleet. A gateway does not turn a Claude subscription into API credentials
+or change the provider's account and service terms; cross-organization or
+cross-location sharing needs the gateway operator's separate authorization.

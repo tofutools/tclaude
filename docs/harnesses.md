@@ -97,6 +97,7 @@ warning. Model and effort are remembered by the harness itself.
 
 | Capability | Claude Code | Codex CLI | OpenCode | Copilot CLI | Gemini CLI | Shell |
 | --- | --- | --- | --- | --- | --- | --- |
+| Federated model gateway (`--model-proxy`) | Yes, ordinary workers | No | No | No | No | No |
 | Sessions: spawn / resume | ✅ | ✅ | ✅ managed server + attach | ✅ | ✅ | ✅ spawn only |
 | One-shot [`ask`](ask.md) | ✅ live-streamed | ✅ buffered | ✅ buffered | ✅ buffered | ✅ buffered | ❌ |
 | Portable agent-bundle history | ✅ JSONL | ✅ rollout JSONL | ⚠️ config only | ⚠️ config only | ⚠️ config only | ❌ |
@@ -645,3 +646,13 @@ status line, or tclaude's task runner.
   lifecycle verbs, séance.
 - [Utilities](utilities.md) — status line, context trimming, usage tooling.
 - [Adding a harness](adding-a-harness.md) — the contributor recipe.
+
+### Federated model gateway
+
+Claude Code workers support `--model-proxy <name>@<peer>` through a session-bound
+loopback Anthropic Messages gateway. Explicit `off` overrides profile defaults.
+The binding follows the documented `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`
+contract and overrides saved OAuth login; conflicting provider settings refuse.
+Other harnesses and non-interactive one-shot runs currently refuse a proxy
+choice. See [Model gateways](federation.md#model-gateways-claude-code) for setup,
+permissions, limits, usage and shutdown controls.
