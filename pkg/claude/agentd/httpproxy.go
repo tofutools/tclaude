@@ -178,32 +178,9 @@ func performHTTPProxyRequest(w http.ResponseWriter, r *http.Request, body httpPr
 			return
 		}
 	}
-	value := policy.HeaderValue
-	if policy.HeaderValueFile != "" {
-		path := policy.HeaderValueFile
-		if strings.HasPrefix(path, "~/") {
-			home, homeErr := os.UserHomeDir()
-			if homeErr != nil {
-				writeError(w, 500, "io", "could not resolve header file")
-				return
-			}
-			path = filepath.Join(home, path[2:])
-		}
-		f, openErr := os.Open(path)
-		if openErr != nil {
-			writeError(w, 503, "http_proxy_credential", "could not read configured header file")
-			return
-		}
-		data, readErr := io.ReadAll(io.LimitReader(f, 16385))
-		_ = f.Close()
-		if readErr != nil || len(data) > 16384 {
-			writeError(w, 503, "http_proxy_credential", "could not read configured header file")
-			return
-		}
-		value += strings.TrimSpace(string(data))
-	}
-	if value == "" || !httpguts.ValidHeaderFieldValue(value) {
-		writeError(w, 503, "http_proxy_credential", "configured header value is empty or invalid")
+	value, err := httpProxyCredential(policy)
+	if err != nil {
+		writeError(w, 503, "http_proxy_credential", err.Error())
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
@@ -275,4 +252,34 @@ func dispatchHTTPProxyGateway(next http.Handler) http.Handler {
 		r.SetPathValue("path", path)
 		handleHTTPProxyGateway(w, r)
 	})
+}
+
+// httpProxyCredential is shared by generic HTTP and streaming model gateways.
+// Errors deliberately omit both the credential and its operator-private path.
+func httpProxyCredential(policy config.HTTPProxyConfig) (string, error) {
+	value := policy.HeaderValue
+	if policy.HeaderValueFile != "" {
+		path := policy.HeaderValueFile
+		if strings.HasPrefix(path, "~/") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return "", fmt.Errorf("could not resolve header file")
+			}
+			path = filepath.Join(home, path[2:])
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return "", fmt.Errorf("could not read configured header file")
+		}
+		data, err := io.ReadAll(io.LimitReader(f, 16385))
+		_ = f.Close()
+		if err != nil || len(data) > 16384 {
+			return "", fmt.Errorf("could not read configured header file")
+		}
+		value += strings.TrimSpace(string(data))
+	}
+	if value == "" || !httpguts.ValidHeaderFieldValue(value) {
+		return "", fmt.Errorf("configured header value is empty or invalid")
+	}
+	return value, nil
 }

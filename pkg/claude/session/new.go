@@ -88,7 +88,8 @@ type NewParams struct {
 	// an omitted value from the global default spawn profile; if that is also
 	// blank the harness receives no override. A non-empty value is normalized
 	// and validated by the harness catalog in runNew.
-	Model string `long:"model" optional:"true" help:"Harness model or alias. Unset = global profile, then the harness default"`
+	ModelProxy string `long:"model-proxy" optional:"true" help:"Claude Code model gateway <name>@<trusted peer>"`
+	Model      string `long:"model" optional:"true" help:"Harness model or alias. Unset = global profile, then the harness default"`
 
 	// Harness selects the coding tool this session runs. A fresh human launch
 	// fills an omitted value from the global default spawn profile, or chooses an
@@ -594,6 +595,17 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	params.Model = model
+	if params.ModelProxy == "off" {
+		params.ModelProxy = ""
+	}
+	if params.ModelProxy != "" {
+		if !h.SupportsModelProxy() {
+			return fmt.Errorf("%s does not support --model-proxy", h.DisplayName)
+		}
+		if !strings.Contains(params.ModelProxy, "@") {
+			return fmt.Errorf("--model-proxy must be <name>@<trusted peer>")
+		}
+	}
 
 	// --session-id pins a fresh conversation id for a harness that accepts a
 	// preset one: Claude Code (`claude --session-id`), GitHub Copilot CLI
@@ -2230,6 +2242,7 @@ func runNew(params *NewParams) error {
 		}
 	}
 	spawnSpec := harness.SpawnSpec{
+		ModelProxy:                     params.ModelProxy,
 		ExecutablePath:                 executablePath,
 		ExecutableInterpreter:          executableInterpreter,
 		CodexAppServerSocket:           params.CodexAppServerSocket,
@@ -2362,6 +2375,9 @@ func runNew(params *NewParams) error {
 		if err != nil {
 			return fmt.Errorf("resolve HTTP proxy launch CLI: %w", err)
 		}
+	}
+	if err := db.RecordSessionModelProxy(sessionID, params.ModelProxy); err != nil {
+		return fmt.Errorf("record model gateway launch choice: %w", err)
 	}
 	harnessCmd := HTTPProxySpawnCommand(sessionID, h, spawnSpec, gatewayCLIPath)
 	if outerLayer && tclaudeLayerWrapsPane(h.Name) {

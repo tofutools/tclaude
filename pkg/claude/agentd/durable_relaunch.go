@@ -36,6 +36,7 @@ type durableRelaunchConfig struct {
 	ToolGovernance              string
 	AutoReview                  bool
 	Model                       string
+	ModelProxy                  string
 	Effort                      string
 	AskUserQuestionTimeout      string
 	RemoteControl               bool
@@ -182,6 +183,7 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 		ToolGovernance:             &toolGovernance,
 		ApprovalAutoReview:         &autoReview,
 		ModelID:                    &model,
+		ModelProxy:                 &p.ModelProxy,
 		Effort:                     &effort,
 		ContextWindowSize:          &contextWindowSize,
 		ConfiguredContextWindowMax: configuredContextWindowMax,
@@ -318,6 +320,13 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		return nil, fmt.Errorf("invalid durable tool-governance policy: %w", err)
 	}
 
+	modelProxy := ""
+	if agentProfile.ModelProxy != nil {
+		modelProxy = *agentProfile.ModelProxy
+	}
+	if modelProxy != "" && !h.SupportsModelProxy() {
+		return nil, fmt.Errorf("recorded model gateway is unsupported by %s", h.Name)
+	}
 	model := ""
 	if agentProfile.ModelID != nil {
 		model = strings.TrimSpace(*agentProfile.ModelID)
@@ -470,6 +479,7 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		ToolGovernance:              toolGovernance,
 		AutoReview:                  autoReview,
 		Model:                       model,
+		ModelProxy:                  modelProxy,
 		Effort:                      effort,
 		AskUserQuestionTimeout:      askTimeout,
 		RemoteControl:               remoteControl,

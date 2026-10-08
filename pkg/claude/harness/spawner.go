@@ -7,6 +7,8 @@ package harness
 // command, so "unset" reliably means "let the harness use its own
 // default".
 type SpawnSpec struct {
+	// ModelProxy is a non-secret named gateway reference; only the launch bridge consumes it.
+	ModelProxy string
 	// ExecutablePath pins the exact harness executable selected and verified by
 	// a capability boundary. Empty uses the adapter's ordinary PATH lookup.
 	// Codex strict-Home launches set this to the binary whose split-policy

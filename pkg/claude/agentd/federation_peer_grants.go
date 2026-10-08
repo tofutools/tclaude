@@ -186,7 +186,7 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 	}
 	_, groupSlug := federationPeerSlugs[in.Slug]
 	instanceSlug := in.Slug == "config.offer" || in.Slug == PermApprovalsAnswer || in.Slug == PermNodeRead
-	if !groupSlug && !instanceSlug {
+	if !groupSlug && !instanceSlug && in.Slug != PermModelsProxy {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "slug is not supported for peers: "+in.Slug)
 		return
 	}
@@ -200,7 +200,12 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var gid int64
-	if scope != "" {
+	if scope != "" && in.Slug == PermModelsProxy {
+		if !validModelProxyScope(scope) {
+			writeError(w, 400, "invalid_arg", "models.proxy scope must be http_proxy=<name>")
+			return
+		}
+	} else if scope != "" {
 		if !strings.HasPrefix(scope, "group=") || strings.Contains(scope, ",") {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "peer scope must be group=<local group>")
 			return
@@ -214,7 +219,7 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 		scope = db.FederationGroupScope(g.ID)
 	}
 	warnings := []string{}
-	if scope == "" && !instanceSlug {
+	if scope == "" && !instanceSlug && in.Slug != PermModelsProxy {
 		warnings = append(warnings, "WARNING: unscoped peer grant covers every active group, including future groups")
 	}
 	if r.Method == http.MethodDelete {

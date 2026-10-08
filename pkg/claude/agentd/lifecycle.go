@@ -1836,6 +1836,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir bool, recove
 		Cwd:                    cwd,
 		Effort:                 launchConfig.Effort,
 		Model:                  launchConfig.Model,
+		ModelProxy:             launchConfig.ModelProxy,
 		Harness:                harnessName,
 		Sandbox:                relaunchSandbox,
 		SandboxImplementation:  relaunchSandboxImplementation,
@@ -3769,6 +3770,33 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
+	if body.ModelProxy == "" {
+		for _, tier := range profileTiers {
+			if tier.profile != nil && tier.profile.ModelProxy != "" {
+				body.ModelProxy = tier.profile.ModelProxy
+				break
+			}
+		}
+	}
+	if body.ModelProxy != "" {
+		if !h.SupportsModelProxy() {
+			writeError(w, 400, "invalid_model_proxy", "selected harness does not support model gateways")
+			return
+		}
+		peer, name, err := resolveModelProxyReference(body.ModelProxy)
+		if err != nil {
+			writeError(w, 400, "invalid_model_proxy", err.Error())
+			return
+		}
+		if spawnerConvID != "" {
+			allowed, _, err := permissionAllowsAction(r, spawnerConvID, PermModelsProxy, ActionContext{RemotePeer: peer.InstanceID, HTTPProxy: name})
+			if err != nil || !allowed {
+				writeError(w, 403, "permission_denied", "models.proxy is required for this model gateway")
+				return
+			}
+		}
+		body.ModelProxy = name + "@" + peer.InstanceID
+	}
 	validateModel := func(raw string) (string, error) {
 		value, err := h.Models.ValidateModel(raw)
 		if err == nil {
@@ -4863,6 +4891,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		AutoFocusWeb:               body.AutoFocusWeb,
 		Effort:                     effort,
 		Model:                      model,
+		ModelProxy:                 body.ModelProxy,
 		Harness:                    h.Name,
 		// This boundary resolves a tier applyDefaultProfile cannot see — the CLI's
 		// named --profile — so seeding its attributions is what keeps the launch's
@@ -5140,7 +5169,8 @@ type spawnParams struct {
 	// session's `tclaude session new --model`. "" falls back to the
 	// group/global default profiles inside executeSpawn (applyDefaultProfile);
 	// if those are unset too, the flag is omitted entirely.
-	Model string
+	Model      string
+	ModelProxy string
 	// Harness is the resolved harness name to launch ("" or "claude" =
 	// Claude Code, the default; "codex" = Codex CLI). It forwards to
 	// `tclaude session new --harness <h>` and is validated at the spawn
@@ -6892,6 +6922,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		GitWorktreeWriteDirsPinned: p.GitWorktreeWriteDirsPinned,
 		Effort:                     p.Effort,
 		Model:                      p.Model,
+		ModelProxy:                 p.ModelProxy,
 		Harness:                    p.Harness,
 		Sandbox:                    p.HarnessBuiltinMode,
 		SandboxChosenBy:            p.HarnessBuiltinModeSource,
@@ -9424,6 +9455,9 @@ func spawnDetachedTclaudeResumeAs(args clcommon.SpawnArgs, kind copilotAPILaunch
 // subprocess.
 func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	args := []string{"session", "new", "--managed-launch", "-d", "--global", "--label", a.Label}
+	if a.ModelProxy != "" {
+		args = append(args, "--model-proxy", a.ModelProxy)
+	}
 	if a.Cwd != "" {
 		args = append(args, "-C", a.Cwd)
 	}

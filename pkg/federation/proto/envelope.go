@@ -53,6 +53,8 @@ const (
 	KindSessionsUpdate = "sessions_update"
 	KindSessionOpen    = "session_open"
 	KindSessionAnswer  = "session_answer"
+	KindModelOpen      = "model_open"
+	KindModelAnswer    = "model_answer"
 )
 
 // Export capabilities a catalog group can grant.
@@ -426,5 +428,21 @@ type SessionAnswerPayload struct {
 	Stream string `json:"stream"`
 	OK     bool   `json:"ok"`
 	Key    []byte `json:"key,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// ModelOpenPayload binds one Messages HTTP exchange to a named gateway.
+// Version 1 mandates the routebroker credit protocol; no raw TCP fallback.
+type ModelOpenPayload struct {
+	Version int    `json:"version"`
+	Stream  string `json:"stream"`
+	Key     []byte `json:"key"`
+	Proxy   string `json:"proxy"`
+	Session string `json:"session"`
+}
+type ModelAnswerPayload struct {
+	Stream string `json:"stream"`
+	Key    []byte `json:"key,omitempty"`
+	OK     bool   `json:"ok"`
 	Reason string `json:"reason,omitempty"`
 }

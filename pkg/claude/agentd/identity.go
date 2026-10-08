@@ -242,7 +242,7 @@ func withIdentity(h http.Handler) http.Handler {
 				p.PID = pid
 				claimedID := strings.TrimSpace(r.Header.Get(agentipc.SessionClaimHeader))
 				runtimeClaim := strings.TrimSpace(r.Header.Get(session.HTTPProxyRuntimeClaimHeader))
-				httpGatewayRoute := r.URL.Path == "/v1/http/environment" || strings.HasPrefix(r.URL.Path, "/v1/http/proxy/")
+				httpGatewayRoute := strings.HasPrefix(r.URL.Path, "/v1/models/") || r.URL.Path == "/v1/http/environment" || strings.HasPrefix(r.URL.Path, "/v1/http/proxy/")
 				proofClaim, proofKey := "pane:"+claimedID, brokerProofKey
 				if httpGatewayRoute && runtimeClaim != "" {
 					proofClaim = "runtime:" + runtimeClaim

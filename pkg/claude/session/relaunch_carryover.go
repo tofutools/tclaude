@@ -155,6 +155,13 @@ var launchCarryoverExcused = map[string]string{
 // launch parameters a resume reproduces from the conversation's recorded
 // posture whenever the caller did not pass the flag itself.
 var launchCarryoverFields = []launchCarryoverField{
+	{flag: "model-proxy", recorded: "ModelProxy", supplied: func(p *NewParams) bool { return p.ModelProxy != "" }, carry: func(_ *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) (any, carryOutcome) {
+		if rec.ModelProxy == nil {
+			return nil, carryUnrecorded
+		}
+		p.ModelProxy = *rec.ModelProxy
+		return p.ModelProxy, carryApplied
+	}},
 	{
 		flag:        "sandbox-impl",
 		recorded:    "SandboxImplementation",
