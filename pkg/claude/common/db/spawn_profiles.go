@@ -79,10 +79,11 @@ type SpawnProfile struct {
 	OperatorOnly bool
 
 	// Launch fields — overlap clcommon.SpawnArgs. "" = unset.
-	Harness string
-	Model   string
-	Effort  string
-	Sandbox string
+	Harness    string
+	Model      string
+	ModelProxy string
+	Effort     string
+	Sandbox    string
 	// SandboxImplementation pins which layer owns OS-level confinement for
 	// launches this profile fills in: "harness-builtin" (the legacy default) or
 	// the "tclaude-layer" OS wrapper. "" = unset, which falls
@@ -252,8 +253,8 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 		    agent_name, role, role_ref, role_refs, descr, initial_message, startup_context,
 		    sync_worktree, fetch_latest_worktree, auto_focus, include_group_default_context, remote_control, auto_memory, peer_messaging, ssh_workaround,
 		    is_owner, permission_overrides, context_features, environment_json,
-		    created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		    created_at, updated_at, model_proxy)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Name, p.Disabled, p.DisabledReason, p.OperatorOnly, p.Harness, p.Model, p.Effort, p.Sandbox, p.SandboxImplementation, p.Approval, p.ToolGovernance, p.AskUserQuestionTimeout,
 		p.AutoCompactWindow, p.ContextWindowMax, boolPtrToNull(p.CopilotAPI), boolPtrToNull(p.CodexAppServer), boolPtrToNull(p.FastMode),
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
@@ -264,7 +265,7 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 		boolPtrToNull(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides),
 		marshalStringMapColumn(p.ContextFeatures, "spawn_profiles.context_features"),
 		environmentJSON,
-		now, now)
+		now, now, p.ModelProxy)
 	if err != nil {
 		if isSpawnProfileHandleViolation(err) {
 			return 0, ErrSpawnProfileNameTaken
@@ -319,7 +320,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		   sync_worktree = ?, fetch_latest_worktree = ?, auto_focus = ?, include_group_default_context = ?, remote_control = ?,
 		   auto_memory = ?, peer_messaging = ?, ssh_workaround = ?,
 		   is_owner = ?, permission_overrides = ?, context_features = ?, environment_json = ?,
-		   updated_at = ?
+		   updated_at = ?, model_proxy = ?
 		 WHERE id = ?`,
 		p.Name, p.Disabled, p.DisabledReason, p.OperatorOnly, p.Harness, p.Model, p.Effort, p.Sandbox,
 		p.SandboxImplementation, p.Approval, p.ToolGovernance,
@@ -332,7 +333,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		boolPtrToNull(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides),
 		marshalStringMapColumn(p.ContextFeatures, "spawn_profiles.context_features"),
 		environmentJSON,
-		dbTime(time.Now()), p.ID)
+		dbTime(time.Now()), p.ModelProxy, p.ID)
 	if err != nil {
 		if isSpawnProfileHandleViolation(err) {
 			return ErrSpawnProfileNameTaken
@@ -579,7 +580,7 @@ const spawnProfileSelect = `SELECT id, name, disabled, disabled_reason, operator
 	tools, ask_user_question_timeout, auto_compact_window, context_window_max, copilot_api, codex_app_server, fast_mode,
 	auto_review, trust_dir, agent_name, role, role_ref, role_refs, descr, initial_message, startup_context,
 	sync_worktree, fetch_latest_worktree, auto_focus, include_group_default_context, remote_control, auto_memory, peer_messaging, ssh_workaround,
-	is_owner, permission_overrides, context_features, environment_json, created_at, updated_at
+	is_owner, permission_overrides, context_features, environment_json, created_at, updated_at, model_proxy
 	FROM spawn_profiles`
 
 func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
@@ -593,7 +594,7 @@ func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 		&p.ToolGovernance, &p.AskUserQuestionTimeout, &p.AutoCompactWindow, &p.ContextWindowMax, &copilotAPI, &codexAppServer, &fastMode,
 		&autoReview, &trustDir, &p.AgentName, &p.Role, &p.RoleRef, &roleRefs, &p.Descr, &p.InitialMessage, &p.StartupContext,
 		&syncWorktree, &fetchLatestWorktree, &autoFocus, &includeCtx, &remoteControl, &autoMemory, &peerMessaging, &sshWorkaround,
-		&isOwner, &permOverrides, &contextFeatures, &environmentJSON, &createdAt, &updatedAt); err != nil {
+		&isOwner, &permOverrides, &contextFeatures, &environmentJSON, &createdAt, &updatedAt, &p.ModelProxy); err != nil {
 		return nil, err
 	}
 	p.Disabled = disabled != 0

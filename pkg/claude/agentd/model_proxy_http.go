@@ -1,0 +1,414 @@
+package agentd
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httputil"
+	"strings"
+	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/routebroker"
+)
+
+type modelWireResponse struct {
+	w       io.Writer
+	header  http.Header
+	body    io.WriteCloser
+	err     error
+	started bool
+}
+
+func newModelWireResponse(w io.Writer) *modelWireResponse {
+	return &modelWireResponse{w: w, header: make(http.Header)}
+}
+func (w *modelWireResponse) Header() http.Header { return w.header }
+func (w *modelWireResponse) WriteHeader(status int) {
+	if w.started {
+		return
+	}
+	w.started = true
+	_, w.err = fmt.Fprintf(w.w, "HTTP/1.1 %d %s\r\n", status, http.StatusText(status))
+	h := w.header.Clone()
+	h.Del("Content-Length")
+	h.Set("Transfer-Encoding", "chunked")
+	h.Set("Connection", "close")
+	if w.err == nil {
+		w.err = h.Write(w.w)
+	}
+	if w.err == nil {
+		_, w.err = io.WriteString(w.w, "\r\n")
+	}
+	w.body = httputil.NewChunkedWriter(w.w)
+}
+func (w *modelWireResponse) Write(p []byte) (int, error) {
+	if !w.started {
+		w.WriteHeader(200)
+	}
+	if w.err != nil {
+		return 0, w.err
+	}
+	return w.body.Write(p)
+}
+func (w *modelWireResponse) Flush() {} // Writes go straight to the encrypted stream.
+func (w *modelWireResponse) finish() error {
+	if !w.started {
+		w.WriteHeader(500)
+	}
+	if w.err != nil {
+		return w.err
+	}
+	if err := w.body.Close(); err != nil {
+		return err
+	}
+	_, err := io.WriteString(w.w, "\r\n")
+	return err
+}
+
+func relayModelRequest(w http.ResponseWriter, r *http.Request, conn *routebroker.FlowStream) {
+	path := r.PathValue("path")
+	if path == "" {
+		path = strings.TrimPrefix(r.URL.Path, "/v1/models/request/")
+	}
+	if !modelEndpointAllowed(r.Method, "/"+path, r.URL.RawQuery) {
+		modelError(w, 400, "model gateway supports only Messages, token counting and filtered model discovery")
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 16<<20))
+	if err != nil {
+		modelError(w, 413, "model gateway request exceeds byte limit")
+		return
+	}
+	target := "http://model/" + path
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, target, bytes.NewReader(body))
+	if err != nil {
+		modelError(w, 400, "invalid model gateway request")
+		return
+	}
+	copyModelRequestHeaders(req.Header, r.Header)
+	if err = req.Write(conn); err != nil {
+		modelError(w, 502, "model gateway stream interrupted before response")
+		return
+	}
+	if err = conn.CloseWrite(); err != nil {
+		modelError(w, 502, "model gateway stream interrupted before response")
+		return
+	}
+	response, err := http.ReadResponse(bufio.NewReader(io.LimitReader(conn, 256<<20)), req)
+	if err != nil {
+		modelError(w, 502, "model gateway did not return a complete HTTP response")
+		return
+	}
+	defer response.Body.Close()
+	copyModelResponseHeaders(w.Header(), response.Header)
+	w.WriteHeader(response.StatusCode)
+	// Flush each read, including SSE pings; no full-response buffer or ordinary
+	// HTTP proxy's 60-second timeout is involved.
+	buffer := make([]byte, 32<<10)
+	for {
+		n, e := response.Body.Read(buffer)
+		if n > 0 {
+			if _, err = w.Write(buffer[:n]); err != nil {
+				return
+			}
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+		if e != nil {
+			return
+		}
+	}
+}
+func modelEndpointAllowed(method, path, query string) bool {
+	if query != "" && query != "beta=true" {
+		return false
+	}
+	return method == http.MethodPost && (path == "/v1/messages" || path == "/v1/messages/count_tokens") || method == http.MethodGet && path == "/v1/models"
+}
+func copyModelRequestHeaders(dst, src http.Header) {
+	// The launch bearer, user cookies, OAuth credentials and arbitrary routing
+	// headers never cross the fleet or reach the operator-pinned provider.
+	for _, name := range []string{"Content-Type", "Accept", "Anthropic-Version", "Anthropic-Beta"} {
+		if values := src.Values(name); len(values) > 0 {
+			dst[name] = append([]string(nil), values...)
+		}
+	}
+}
+func copyModelResponseHeaders(dst, src http.Header) {
+	for _, name := range []string{"Content-Type", "Request-Id", "Retry-After"} {
+		if values := src.Values(name); len(values) > 0 {
+			dst[name] = append([]string(nil), values...)
+		}
+	}
+	dst.Set("Cache-Control", "no-store")
+}
+func modelByteBounds(p *config.ModelProxyPolicy) (request, response int64, event int) {
+	request = p.MaxRequestBytes
+	if request == 0 {
+		request = 4 << 20
+	}
+	response = p.MaxResponseBytes
+	if response == 0 {
+		response = 64 << 20
+	}
+	event = p.MaxEventBytes
+	if event == 0 {
+		event = 1 << 20
+	}
+	return
+}
+func serveModelUpstream(w http.ResponseWriter, r *http.Request, peer, session, name, id string) {
+	instance, err := modelProxyPolicy(name)
+	if err != nil {
+		modelError(w, 503, err.Error())
+		return
+	}
+	if !fedPeerModelAllows(peer, name) {
+		modelError(w, 403, "models.proxy grant was revoked for this named gateway")
+		return
+	}
+	if r.URL.IsAbs() || r.URL.Host != "" || !modelEndpointAllowed(r.Method, r.URL.EscapedPath(), r.URL.RawQuery) {
+		modelError(w, 400, "unsupported model gateway endpoint")
+		return
+	}
+	p := instance.ModelPolicy
+	if r.Method == http.MethodGet {
+		data := []map[string]string{}
+		for _, model := range p.Models {
+			data = append(data, map[string]string{"type": "model", "id": model, "display_name": model, "created_at": "1970-01-01T00:00:00Z"})
+		}
+		writeJSON(w, 200, map[string]any{"data": data, "has_more": false, "first_id": p.Models[0], "last_id": p.Models[len(p.Models)-1]})
+		return
+	}
+	requestCap, responseCap, eventCap := modelByteBounds(p)
+	body, err := io.ReadAll(io.LimitReader(r.Body, requestCap+1))
+	if err != nil || int64(len(body)) > requestCap {
+		modelError(w, 413, "model gateway request exceeds configured byte limit")
+		return
+	}
+	var data struct {
+		Model     string `json:"model"`
+		MaxTokens int64  `json:"max_tokens"`
+		Stream    bool   `json:"stream"`
+	}
+	if json.Unmarshal(body, &data) != nil {
+		modelError(w, 400, "model gateway request must be a JSON object")
+		return
+	}
+	allowed := false
+	for _, m := range p.Models {
+		if m == data.Model {
+			allowed = true
+		}
+	}
+	if !allowed {
+		modelError(w, 403, "model is not in this gateway's allowlist")
+		return
+	}
+	counting := r.URL.Path == "/v1/messages/count_tokens"
+	if !counting && (data.MaxTokens < 1 || data.MaxTokens > p.MaxOutputTokens) {
+		modelError(w, 400, "max_tokens exceeds this gateway's configured output bound")
+		return
+	}
+	if counting {
+		data.MaxTokens = 0
+		data.Stream = false
+	}
+	u := db.ModelProxyUsage{ID: id, Day: time.Now().UTC().Format("2006-01-02"), Proxy: name, Peer: peer, Session: session, Model: data.Model, ChargedTokens: p.MaxInputTokens + data.MaxTokens, RequestBytes: int64(len(body))}
+	budget := db.ModelProxyBudget{Requests: p.DailyRequests, Tokens: p.DailyTokens, PeerRequests: p.PeerDailyRequests, PeerTokens: p.PeerDailyTokens, SessionRequests: p.SessionDailyRequests, SessionTokens: p.SessionDailyTokens}
+	if err = db.ReserveModelProxyRequest(u, budget); err != nil {
+		modelError(w, 429, "model gateway daily request or token budget exhausted; incomplete requests remain charged until the next UTC day")
+		return
+	}
+	started := time.Now()
+	defer func() {
+		u.DurationMS = time.Since(started).Milliseconds()
+		_ = db.FinishModelProxyRequest(u)
+		recordFederationAudit("models.proxy.request", peer, "", name, fmt.Sprintf("request=%s session=%s model=%s status=%d complete=%t charged_tokens=%d", id, session, data.Model, u.Status, u.Complete, u.ChargedTokens), u.Status)
+	}()
+	credential, err := httpProxyCredential(instance)
+	if err != nil {
+		u.Status = 503
+		modelError(w, 503, "model gateway provider credential is unavailable")
+		return
+	}
+	target, err := httpProxyURL(instance.URL, r.URL.RequestURI())
+	if err != nil {
+		u.Status = 400
+		modelError(w, 400, "invalid model gateway path")
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), bytes.NewReader(body))
+	if err != nil {
+		u.Status = 400
+		modelError(w, 400, "invalid model gateway request")
+		return
+	}
+	copyModelRequestHeaders(req.Header, r.Header)
+	req.Header.Set(instance.Header, credential)
+	transport := &http.Transport{ResponseHeaderTimeout: 30 * time.Second, MaxResponseHeaderBytes: 32 << 10, DisableCompression: true}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Do(req)
+	if err != nil {
+		u.Status = 502
+		modelError(w, 502, "model gateway provider is unavailable or the request was interrupted")
+		return
+	}
+	defer resp.Body.Close()
+	u.Status = resp.StatusCode
+	// Provider errors can reflect headers or private URLs. Return a readable
+	// fixed Anthropic-shaped refusal without exposing arbitrary provider bodies.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		modelError(w, resp.StatusCode, "model gateway provider refused the request")
+		return
+	}
+	copyModelResponseHeaders(w.Header(), resp.Header)
+	if data.Stream {
+		if !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+			u.Status = 502
+			modelError(w, 502, "model gateway provider did not return an event stream")
+			return
+		}
+		observer := modelUsageObserver{usage: &u}
+		w.WriteHeader(resp.StatusCode)
+		err = relayModelEvents(w, resp.Body, responseCap, eventCap, &observer)
+		u.Complete = err == nil && observer.stopped && observer.sawInput && observer.sawOutput && !observer.invalid
+	} else {
+		result, err := io.ReadAll(io.LimitReader(resp.Body, responseCap+1))
+		u.ResponseBytes = int64(len(result))
+		if err != nil || u.ResponseBytes > responseCap {
+			u.Status = 502
+			modelError(w, 502, "model gateway provider response is incomplete or exceeds the byte limit")
+			return
+		}
+		var resultData struct {
+			Usage       json.RawMessage `json:"usage"`
+			InputTokens *int64          `json:"input_tokens"`
+			Type        string          `json:"type"`
+		}
+		observer := modelUsageObserver{usage: &u}
+		if json.Unmarshal(result, &resultData) == nil {
+			if counting && resultData.InputTokens != nil {
+				observer.apply(map[string]*int64{"input_tokens": resultData.InputTokens})
+				observer.sawOutput = true
+				u.Complete = !observer.invalid
+			}
+			if !counting && resultData.Type == "message" {
+				observer.parse(resultData.Usage)
+				u.Complete = observer.sawInput && observer.sawOutput && !observer.invalid
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(result)
+	}
+	if u.Complete {
+		u.ChargedTokens = u.InputTokens + u.OutputTokens + u.CacheReadTokens + u.CacheWriteTokens
+	}
+}
+
+type modelUsageObserver struct {
+	usage                                 *db.ModelProxyUsage
+	sawInput, sawOutput, stopped, invalid bool
+}
+
+func (o *modelUsageObserver) apply(values map[string]*int64) {
+	fields := map[string]*int64{"input_tokens": &o.usage.InputTokens, "output_tokens": &o.usage.OutputTokens, "cache_read_input_tokens": &o.usage.CacheReadTokens, "cache_creation_input_tokens": &o.usage.CacheWriteTokens}
+	for name, target := range fields {
+		if v := values[name]; v != nil {
+			if *v < 0 || *v > 1000000000 {
+				o.invalid = true
+				continue
+			}
+			*target = *v
+			if name == "input_tokens" {
+				o.sawInput = true
+			}
+			if name == "output_tokens" {
+				o.sawOutput = true
+			}
+		}
+	}
+}
+func (o *modelUsageObserver) parse(data json.RawMessage) {
+	var values map[string]*int64
+	if json.Unmarshal(data, &values) == nil {
+		o.apply(values)
+	}
+}
+func (o *modelUsageObserver) event(raw []byte) {
+	var data []byte
+	for _, line := range bytes.Split(raw, []byte{'\n'}) {
+		line = bytes.TrimSuffix(line, []byte{'\r'})
+		if bytes.HasPrefix(line, []byte("data:")) {
+			if len(data) > 0 {
+				data = append(data, '\n')
+			}
+			data = append(data, bytes.TrimPrefix(line[5:], []byte{' '})...)
+		}
+	}
+	var event struct {
+		Type    string          `json:"type"`
+		Usage   json.RawMessage `json:"usage"`
+		Message struct {
+			Usage json.RawMessage `json:"usage"`
+		} `json:"message"`
+	}
+	if json.Unmarshal(data, &event) != nil {
+		return
+	}
+	switch event.Type {
+	case "message_start":
+		o.parse(event.Message.Usage)
+	case "message_delta":
+		o.parse(event.Usage)
+	case "message_stop":
+		o.stopped = true
+	case "error":
+		o.invalid = true
+	}
+}
+func relayModelEvents(w http.ResponseWriter, r io.Reader, limit int64, eventLimit int, observer *modelUsageObserver) error {
+	br := bufio.NewReaderSize(r, 32<<10)
+	event := make([]byte, 0, 4096)
+	for {
+		line, err := br.ReadSlice('\n')
+		if len(event)+len(line) > eventLimit {
+			return errors.New("model SSE event limit")
+		}
+		event = append(event, line...)
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		if len(line) == 1 && line[0] == '\n' || len(line) == 2 && line[0] == '\r' && line[1] == '\n' {
+			observer.usage.ResponseBytes += int64(len(event))
+			if observer.usage.ResponseBytes > limit {
+				return errors.New("model response byte limit")
+			}
+			observer.event(event)
+			if _, e := w.Write(event); e != nil {
+				return e
+			}
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			event = event[:0]
+		}
+		if err != nil {
+			if err == io.EOF && len(event) == 0 {
+				return nil
+			}
+			return err
+		}
+	}
+}

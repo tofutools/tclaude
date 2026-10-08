@@ -2111,7 +2111,8 @@ type AgentConfig struct {
 
 	// HTTPProxies are named credential-bearing HTTP services, available only
 	// through proxy.http grants (optionally scoped by http_proxy name).
-	HTTPProxies map[string]HTTPProxyConfig `json:"http_proxies,omitempty"`
+	HTTPProxies        map[string]HTTPProxyConfig `json:"http_proxies,omitempty"`
+	ModelProxyDisabled bool                       `json:"model_proxy_disabled,omitempty"`
 }
 
 // AWBProxyConfig is the operator's policy for the daemon-mediated AWB proxy —
@@ -4006,11 +4007,12 @@ func (c *NotificationConfig) HumanMessagesIntent() bool {
 // to HeaderValue, which can supply a prefix such as "Bearer ".
 type HTTPProxyConfig struct {
 	// EnvironmentVariable overrides the default TCLAUDE_HTTP_PROXY_name gateway variable.
-	EnvironmentVariable string `json:"environment_variable,omitempty"`
-	URL                 string `json:"url"`
-	Header              string `json:"header"`
-	HeaderValue         string `json:"header_value,omitempty"`
-	HeaderValueFile     string `json:"header_value_file,omitempty"`
+	EnvironmentVariable string            `json:"environment_variable,omitempty"`
+	URL                 string            `json:"url"`
+	Header              string            `json:"header"`
+	HeaderValue         string            `json:"header_value,omitempty"`
+	HeaderValueFile     string            `json:"header_value_file,omitempty"`
+	ModelPolicy         *ModelProxyPolicy `json:"model_policy,omitempty"`
 }
 
 // HTTPProxyConfigured reports whether any named HTTP instance is configured.
@@ -4041,4 +4043,28 @@ func IsHTTPProxyGatewayURL(value string) bool {
 type StatusSnapshotConfig struct {
 	Disabled    bool `json:"disabled,omitempty"`
 	FreshnessMS int  `json:"freshness_ms,omitempty"`
+}
+
+// ModelProxyPolicy explicitly opts a named HTTP service into the Anthropic
+// Messages gateway. Zero budgets never mean unlimited: all six daily limits
+// and both token bounds must be positive. Incomplete requests retain their
+// conservative input+output reservation until the UTC day rolls over.
+type ModelProxyPolicy struct {
+	Enabled              bool     `json:"enabled"`
+	Models               []string `json:"models"`
+	DailyRequests        int64    `json:"daily_requests"`
+	DailyTokens          int64    `json:"daily_tokens"`
+	PeerDailyRequests    int64    `json:"peer_daily_requests"`
+	PeerDailyTokens      int64    `json:"peer_daily_tokens"`
+	SessionDailyRequests int64    `json:"session_daily_requests"`
+	SessionDailyTokens   int64    `json:"session_daily_tokens"`
+	MaxInputTokens       int64    `json:"max_input_tokens"`
+	MaxOutputTokens      int64    `json:"max_output_tokens"`
+	MaxConcurrent        int      `json:"max_concurrent"`
+	RequestsPerMinute    int      `json:"requests_per_minute"`
+	// Byte bounds are independent safety limits, never substitutes for tokens.
+	MaxRequestBytes    int64 `json:"max_request_bytes,omitempty"`
+	MaxResponseBytes   int64 `json:"max_response_bytes,omitempty"`
+	MaxEventBytes      int   `json:"max_event_bytes,omitempty"`
+	MaxDurationSeconds int   `json:"max_duration_seconds,omitempty"`
 }

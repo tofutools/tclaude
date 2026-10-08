@@ -63,7 +63,7 @@ func normalizeFederationNodeProfile(p *db.FederationNodeProfile) error {
 	for i, g := range s.PeerGrants {
 		_, groupSlug := federationPeerSlugs[g.Slug]
 		instanceSlug := g.Slug == "config.offer" || g.Slug == PermApprovalsAnswer || g.Slug == PermNodeRead
-		if !groupSlug && !instanceSlug {
+		if !groupSlug && !instanceSlug && g.Slug != PermModelsProxy {
 			return fmt.Errorf("unsupported peer slug %s", g.Slug)
 		}
 		if instanceSlug && g.Scope != "" {
@@ -72,7 +72,11 @@ func normalizeFederationNodeProfile(p *db.FederationNodeProfile) error {
 		if g.Slug == PermAgentsReceive && g.Scope == "" {
 			return errors.New("agents.receive requires a local group scope")
 		}
-		if g.Scope != "" {
+		if g.Scope != "" && g.Slug == PermModelsProxy {
+			if !validModelProxyScope(g.Scope) {
+				return errors.New("models.proxy scope must be http_proxy=<name>")
+			}
+		} else if g.Scope != "" {
 			if !strings.HasPrefix(g.Scope, "group=") {
 				return errors.New("peer scope must be group=<local group>")
 			}

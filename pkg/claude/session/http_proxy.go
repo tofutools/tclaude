@@ -80,7 +80,7 @@ func renderHTTPProxyCommand(sessionID, command string, runtime bool, markerOffse
 }
 
 func httpProxyExecCmd() *cobra.Command {
-	var sessionID, command string
+	var sessionID, command, modelProxy string
 	var runtime bool
 	var commandFD int
 	var markerOffsets []int
@@ -95,7 +95,7 @@ func httpProxyExecCmd() *cobra.Command {
 				}
 				command = strings.TrimSuffix(string(data), "\n")
 			}
-			code, err := runHTTPProxyExecWithOptions(sessionID, command, runtime, markerOffsets)
+			code, err := runHTTPProxyExecWithOptions(sessionID, command, runtime, markerOffsets, modelProxy)
 			if err != nil {
 				return err
 			}
@@ -108,6 +108,7 @@ func httpProxyExecCmd() *cobra.Command {
 	cmd.Flags().IntVar(&commandFD, "command-fd", -1, "private workload descriptor")
 	cmd.Flags().IntSliceVar(&markerOffsets, "codex-env-marker-offset", nil, "position of the compile-time Codex environment marker")
 	cmd.Flags().BoolVar(&runtime, "runtime", false, "managed server process boundary")
+	cmd.Flags().StringVar(&modelProxy, "model-proxy", "", "named model gateway reference")
 	cmd.Flags().StringVar(&sessionID, "session-id", "", "generation-bound launch row")
 	cmd.Flags().StringVar(&command, "command", "", "workload shell command")
 	_ = cmd.MarkFlagRequired("session-id")
@@ -233,7 +234,7 @@ func runHTTPProxyExec(sessionID, command string, runtimeMode ...bool) (int, erro
 	return runHTTPProxyExecWithOptions(sessionID, command, runtime, nil)
 }
 
-func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, markerOffsets []int) (int, error) {
+func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, markerOffsets []int, modelRefs ...string) (int, error) {
 	client := newHTTPProxyDaemonClient()
 	if runtime {
 		client.Transport = &httpProxyRuntimeTransport{inner: client.Transport, sessionID: sessionID}
@@ -265,19 +266,42 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 		handler = http.NotFoundHandler()
 		entries = nil
 	}
+	modelRef := ""
+	if len(modelRefs) > 0 {
+		modelRef = modelRefs[0]
+	}
+	var modelBridge *modelProxyBridge
+	if modelRef != "" {
+		modelBridge, err = newModelProxyBridge(client, sessionID, modelRef)
+		if err != nil {
+			return 0, fmt.Errorf("model gateway binding failed; launch refused: %w", err)
+		}
+		defer modelBridge.revoke()
+		ordinary := handler
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/model/") {
+				modelBridge.ServeHTTP(w, r)
+				return
+			}
+			ordinary.ServeHTTP(w, r)
+		})
+	}
 	environ := []string{}
 	for _, pair := range os.Environ() {
 		name, value, _ := strings.Cut(pair, "=")
-		if !httpProxyReservedEnvironment(name) && !config.IsHTTPProxyGatewayURL(value) {
+		if !httpProxyReservedEnvironment(name) && !config.IsHTTPProxyGatewayURL(value) && (modelBridge == nil || !modelProxyCompetingEnvironment(name)) {
 			environ = append(environ, pair)
 		}
 	}
 	gatewayEnvironment := map[string]string{}
 	var server *http.Server
 	var listener net.Listener
-	if len(entries) > 0 {
+	if len(entries) > 0 || modelBridge != nil {
 		listener, err = net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
+			if modelBridge != nil {
+				return 0, errors.New("model gateway loopback listener unavailable; launch refused")
+			}
 			fmt.Fprintln(os.Stderr, "Warning: HTTP proxy loopback listener unavailable; continuing without URLs")
 		}
 	}
@@ -288,7 +312,15 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 			environ = append(environ, name+"="+base+path)
 			gatewayEnvironment[name] = base + path
 		}
+		if modelBridge != nil {
+			environ = append(environ, "ANTHROPIC_BASE_URL="+base+"/model", "ANTHROPIC_AUTH_TOKEN="+modelBridge.bearer, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
+		}
 		server = &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 65 * time.Second, WriteTimeout: 65 * time.Second, IdleTimeout: 30 * time.Second}
+		if modelBridge != nil {
+			server.ReadTimeout = 0
+			server.WriteTimeout = 0
+			server.MaxHeaderBytes = 32 << 10
+		}
 		defer func() { _ = server.Close() }()
 		go func() { _ = server.Serve(listener) }()
 	}
@@ -426,11 +458,15 @@ func (t *httpProxyRuntimeTransport) CloseIdleConnections() {
 func HTTPProxySpawnCommand(sessionID string, h *harness.Harness, spec harness.SpawnSpec, cliPath ...string) string {
 	filteredEnvironment := map[string]string{}
 	for name, value := range spec.ShellEnvironment {
-		if !httpProxyReservedEnvironment(name) && !config.IsHTTPProxyGatewayURL(value) {
+		if !httpProxyReservedEnvironment(name) && !config.IsHTTPProxyGatewayURL(value) && (spec.ModelProxy == "" || !modelProxyCompetingEnvironment(name)) {
 			filteredEnvironment[name] = value
 		}
 	}
 	spec.ShellEnvironment = filteredEnvironment
+	if spec.ModelProxy != "" {
+		command := renderHTTPProxyCommand(sessionID, h.Spawn.BuildCommand(spec), false, nil, cliPath...)
+		return strings.Replace(command, " session http-proxy-exec", " session http-proxy-exec --model-proxy "+clcommon.ShellQuoteArg(spec.ModelProxy), 1)
+	}
 	cfg, err := config.Load()
 	if err != nil || !cfg.HTTPProxyConfigured() || h.UsesAuthoritativeServer() {
 		return h.Spawn.BuildCommand(spec)

@@ -254,6 +254,9 @@ func applyGlobalDefaultLaunchProfileWithLookPath(
 	}
 	profileMatchesHarness := profileHarness == h.Name
 
+	if profileMatchesHarness && !explicit.has("model-proxy") && params.ModelProxy == "" {
+		params.ModelProxy = prof.ModelProxy
+	}
 	// Model and effort belong to one harness's catalog. A global profile for a
 	// different harness is ambient configuration, not intent for this launch,
 	// so it must not supply either field even when the resolved harness has a
