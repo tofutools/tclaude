@@ -83,6 +83,10 @@ CREATE TABLE IF NOT EXISTS instance_spaces (
 	space       TEXT NOT NULL,
 	PRIMARY KEY (instance_id, space)
 );
+CREATE TABLE IF NOT EXISTS identity_rotations (
+ old_instance TEXT PRIMARY KEY,new_instance TEXT NOT NULL,statement TEXT NOT NULL,
+ state TEXT NOT NULL,received_at TEXT NOT NULL,accept_after TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS invites (
 	token_hash TEXT PRIMARY KEY,
 	space      TEXT NOT NULL,

@@ -1877,3 +1877,103 @@ request, worker, generation and last activity. Use `--revoke <id>` to stop one.
 Both instances audit account attribution; prompts, responses and bearer values
 remain outside audit records. The existing budgets and switches apply to leased
 traffic. Remote argv jobs and other harness bindings are outside this release.
+
+### Identity rotation and key-loss recovery
+
+Instance IDs derive from public keys. Rotation therefore creates a linked
+successor ID, rather than changing the key behind an existing ID:
+
+```bash
+tclaude federation identity rotate             # preview consequences
+tclaude federation identity rotate --apply     # stage and publish successor
+tclaude federation identity rotations          # local and peer transition state
+```
+
+The public transition contains both keys and IDs and signatures from both keys.
+Peers verify it from their own pinned predecessor. The hub independently verifies
+it before transferring admission and spaces. Each authority starts a detection
+window at first observation (default ten minutes); replay does not shorten it.
+Set `federation.identity_rotation_seconds` in local configuration or hub
+`serve --identity-rotation-window 10m` to change the window. A competing signed
+successor freezes automatic acceptance until explicit recovery. The original
+key remains current during the window. An operator notification shows both
+fingerprints and the statement issue date when a change is observed and accepted.
+
+The local daemon stages the replacement key privately and journals activation.
+Activation closes federation streams and re-establishes handshakes. Pending
+sealed mail is refused with an instruction to resend; ciphertext and history
+are never rewritten. Existing model credentials and requester-paid leases are
+revoked immediately, with an audit reason. Live execution reservations remain
+charged until their existing lifecycle proves the worker ended. Paused teleport
+backup leases and their linked routing records follow the successor without
+changing epochs, sequence numbers, deadlines or historical origin provenance.
+Normal teleport `--home` resolves accepted successors for routing.
+
+Four public transition hops are retained. A fifth rotation refuses with an
+instruction to re-pair offline peers. Offline peers can verify a retained chain
+from their pinned key and start their own detection window when they return.
+Older peers and hubs lacking rotation support need explicit re-pairing.
+
+A missing previously recorded local key refuses ordinary federation startup;
+it does not silently create another identity. To create an unlinked replacement
+explicitly after key loss or suspected compromise:
+
+```bash
+tclaude federation identity recover-local              # preview
+tclaude federation identity recover-local --apply      # new ID and fingerprint
+```
+
+Recovery journals its replacement before retiring capabilities or changing the key.
+Startup resumes an interrupted recovery with that same replacement. Explicit
+recovery also abandons a pending signed rotation and archives its public journal,
+so lost staged keys do not block recovery.
+
+Local peer grants and historical records remain. The replacement needs explicit
+hub admission recovery and explicit confirmation at every peer that trusted the
+old identity. Verify the replacement fingerprint out of band, then preview and
+apply on each trust authority:
+
+```bash
+tclaude-hub identity recover OLD_ID NEW_ID --db /path/hub.sqlite
+tclaude-hub identity recover OLD_ID NEW_ID --db /path/hub.sqlite \
+  --fingerprint NEW_FINGERPRINT --apply
+
+tclaude federation identity recover-peer OLD_ID NEW_ID
+tclaude federation identity recover-peer OLD_ID NEW_ID \
+  --fingerprint NEW_FINGERPRINT --apply
+```
+
+Peer recovery displays the old label and trust level, direct grants, pool
+memberships, profile assignment and rebind rules. Apply preserves these and
+updates exact peer scopes; it refuses merging two already trusted identities.
+Unrestricted authority stays unrestricted, as explicitly displayed in the
+preview. No default node profile or config offer is applied. Historical activity
+and consumed enrollment records stay under the old identity; enrollment tokens
+cannot resurrect the predecessor. Hub recovery replaces the replacement's
+spaces with the predecessor's spaces and revokes the old admission.
+
+If a transition is unexpected, revoke its predecessor on the relevant peer and
+hub (both commands preview unless `--apply` is present):
+
+```bash
+tclaude federation identity revoke-old OLD_ID --apply
+tclaude-hub identity revoke-old OLD_ID --db /path/hub.sqlite --apply
+```
+
+Revocation blocks pending rotation and old-key replay. An already accepted
+successor remains current; revocation does not roll it back. If the old signing
+key was stolen, the attacker can also sign a valid rotation. The detection window
+helps expose competing successors; it cannot prove which signer is the owner.
+An undetected winning successor inherits authority. For immediate containment,
+revoke that accepted successor itself on every trusting peer and on the hub:
+
+```bash
+tclaude federation identity revoke-old SUCCESSOR_ID --apply
+tclaude-hub identity revoke-old SUCCESSOR_ID --db /path/hub.sqlite --apply
+```
+
+Despite the command name, `revoke-old` can revoke the currently trusted successor.
+It removes that identity's trust and closes its remaining capabilities. Pair a
+separately verified replacement and explicitly restore the intended authority;
+revocation does not preserve an authority assignment for later automatic recovery.
+Identity management commands are operator-only.

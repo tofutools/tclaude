@@ -54,7 +54,11 @@ func validateTeleportLimits(intent *bundletransfer.TeleportIntent, target string
 	if len(intent.Hops) > limits.Chain {
 		return errors.New("teleport chain hop limit reached")
 	}
-	if intent.Home && target != intent.OriginInstance {
+	origin, err := resolveIdentityContinuation(intent.OriginInstance)
+	if err != nil {
+		return err
+	}
+	if intent.Home && target != origin {
 		return errors.New("home return must target the recorded origin")
 	}
 	if intent.Home && limits.AllowReturn {
@@ -184,7 +188,11 @@ func handleFederationTeleport(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 409, "no_home", "this agent has no teleport origin")
 			return
 		}
-		in.Peer = intent.OriginInstance
+		in.Peer, err = resolveIdentityContinuation(intent.OriginInstance)
+		if err != nil {
+			writeError(w, 503, "identity", err.Error())
+			return
+		}
 	}
 	explanation := fedPlacementExplanation{Selector: in.Node, Require: in.Require, Prefer: in.Prefer, Candidates: []fedPlacementCandidate{}}
 	if in.Node != "" {

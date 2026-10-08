@@ -241,6 +241,8 @@ type fedOutgoing struct {
 // queueFederatedEnvelope seals o for its peer and writes the durable outbox
 // row; the outbox loop sends and retries it until acknowledged.
 func queueFederatedEnvelope(o fedOutgoing) (*db.FederationOutboxRow, error) {
+	identitySealMu.RLock()
+	defer identitySealMu.RUnlock()
 	id, err := federationIdentity()
 	if err != nil {
 		return nil, err
@@ -1160,6 +1162,11 @@ func registerFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/federation/config", handleFederationConfig)
 	mux.HandleFunc("/v1/federation/peers/trust", handleFederationTrust)
 	mux.HandleFunc("/v1/federation/peers/untrust", handleFederationUntrust)
+	mux.HandleFunc("/v1/federation/identity/rotate", handleFederationIdentityRotate)
+	mux.HandleFunc("/v1/federation/identity/rotations", handleFederationIdentityRotations)
+	mux.HandleFunc("/v1/federation/identity/recover", handleFederationIdentityRecover)
+	mux.HandleFunc("/v1/federation/identity/recover-local", handleFederationIdentityRecoverLocal)
+	mux.HandleFunc("/v1/federation/identity/revoke", handleFederationIdentityRevoke)
 	mux.HandleFunc("/v1/federation/grants", handleFederationPeerGrants)
 	mux.HandleFunc("GET /v1/federation/outbox", handleFederationOutbox)
 	mux.HandleFunc("/v1/federation/send", handleFederationSend)

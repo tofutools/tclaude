@@ -328,7 +328,12 @@ func (rt *fedRuntime) acceptJobRequest(peer *db.FederationPeer, env *proto.Envel
 		} else {
 			count := 0
 			for _, j := range rows {
-				if j.Peer == peer.InstanceID {
+				currentPeer, resolveErr := db.ResolveFederationIdentitySuccessor(j.Peer)
+				if resolveErr != nil {
+					state, code = "refused", "internal"
+					break
+				}
+				if currentPeer == peer.InstanceID {
 					count++
 				}
 			}
@@ -343,7 +348,12 @@ func (rt *fedRuntime) acceptJobRequest(peer *db.FederationPeer, env *proto.Envel
 					state, code = "refused", "internal"
 				} else {
 					for _, req := range requests {
-						if req.FromInstance == peer.InstanceID && !req.Expired(time.Now()) {
+						requestPeer, resolveErr := db.ResolveFederationIdentitySuccessor(req.FromInstance)
+						if resolveErr != nil {
+							state, code = "refused", "internal"
+							break
+						}
+						if requestPeer == peer.InstanceID && !req.Expired(time.Now()) {
 							id := req.ResultAgent
 							if id == "" {
 								id = "request:" + req.EnvelopeID

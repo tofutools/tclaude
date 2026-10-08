@@ -40,7 +40,7 @@ func reconcileFederationSpawns() {
 		return
 	}
 	for _, req := range work {
-		p, err := db.GetFederationPeer(req.FromInstance)
+		p, err := liveFederationPeer(req.FromInstance)
 		if err != nil || p == nil {
 			continue
 		}

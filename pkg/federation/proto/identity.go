@@ -146,3 +146,18 @@ func SaveIdentity(path string, id *Identity) error {
 	}
 	return nil
 }
+
+// InstanceFingerprint renders an already verified key-derived ID for an
+// operator comparing admission recovery targets before the key is online.
+func InstanceFingerprint(instance string) string {
+	if !ValidInstanceID(instance) {
+		return ""
+	}
+	h := strings.TrimPrefix(instance, InstanceIDPrefix)
+	parts := []string{}
+	for len(h) > 4 {
+		parts = append(parts, h[:4])
+		h = h[4:]
+	}
+	return strings.Join(append(parts, h), "-")
+}

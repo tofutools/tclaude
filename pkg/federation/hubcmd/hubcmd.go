@@ -41,7 +41,7 @@ func RootCmd() *cobra.Command {
 		Long:        long,
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
-			serveCmd(), admitCmd(), revokeCmd(), spacesCmd(), inviteCmd(), lsCmd(), invitesCmd(),
+			serveCmd(), identityCmd(), admitCmd(), revokeCmd(), spacesCmd(), inviteCmd(), lsCmd(), invitesCmd(),
 		},
 	}.ToCobra()
 	cli.ConfigureRoot(cmd)
@@ -76,16 +76,17 @@ func fail(err error) {
 
 type serveParams struct {
 	dbParam
-	Listen          string        `long:"listen" default:"127.0.0.1:8470" help:"Listen address"`
-	TLSCert         string        `long:"tls-cert" optional:"true" help:"TLS certificate (PEM). Without it the hub serves plain HTTP, which clients only accept on loopback; front it with a TLS proxy otherwise"`
-	TLSKey          string        `long:"tls-key" optional:"true" help:"TLS private key (PEM)"`
-	Open            bool          `long:"open" help:"Admit any instance that proves key possession (development only)"`
-	FramesPerMinute int           `long:"frames-per-minute" default:"120" help:"Per-instance send rate limit (frames)"`
-	BytesPerMinute  int           `long:"bytes-per-minute" default:"8388608" help:"Per-instance send rate limit (bytes)"`
-	PolicyRefresh   time.Duration `long:"policy-refresh" default:"15s" help:"How often admin edits are re-read"`
-	MaxStreams      int           `long:"max-streams" default:"16" help:"Per-instance limit on concurrent relayed route streams"`
-	StreamBytes     int           `long:"stream-bytes-per-second" default:"1048576" help:"Per-instance relayed stream bandwidth (bytes/second)"`
-	StreamIdle      time.Duration `long:"stream-idle" default:"90s" help:"How long a relayed route stream may sit idle, or blocked on a receiver that is not reading, before it is closed"`
+	Listen                 string        `long:"listen" default:"127.0.0.1:8470" help:"Listen address"`
+	TLSCert                string        `long:"tls-cert" optional:"true" help:"TLS certificate (PEM). Without it the hub serves plain HTTP, which clients only accept on loopback; front it with a TLS proxy otherwise"`
+	TLSKey                 string        `long:"tls-key" optional:"true" help:"TLS private key (PEM)"`
+	Open                   bool          `long:"open" help:"Admit any instance that proves key possession (development only)"`
+	FramesPerMinute        int           `long:"frames-per-minute" default:"120" help:"Per-instance send rate limit (frames)"`
+	BytesPerMinute         int           `long:"bytes-per-minute" default:"8388608" help:"Per-instance send rate limit (bytes)"`
+	IdentityRotationWindow time.Duration `long:"identity-rotation-window" default:"10m" help:"Detection window before signed key succession is admitted"`
+	PolicyRefresh          time.Duration `long:"policy-refresh" default:"15s" help:"How often admin edits are re-read"`
+	MaxStreams             int           `long:"max-streams" default:"16" help:"Per-instance limit on concurrent relayed route streams"`
+	StreamBytes            int           `long:"stream-bytes-per-second" default:"1048576" help:"Per-instance relayed stream bandwidth (bytes/second)"`
+	StreamIdle             time.Duration `long:"stream-idle" default:"90s" help:"How long a relayed route stream may sit idle, or blocked on a receiver that is not reading, before it is closed"`
 }
 
 func serveCmd() *cobra.Command {
@@ -104,7 +105,7 @@ func serveCmd() *cobra.Command {
 			defer func() { _ = st.Close() }()
 			h, err := hub.New(st, hub.Config{
 				Open: p.Open, FramesPerMinute: p.FramesPerMinute, BytesPerMinute: p.BytesPerMinute,
-				PolicyRefresh: p.PolicyRefresh, Version: buildversion.AppVersion(),
+				PolicyRefresh: p.PolicyRefresh, IdentityRotationWindow: p.IdentityRotationWindow, Version: buildversion.AppVersion(),
 				MaxStreams: p.MaxStreams, StreamBytesPerSecond: p.StreamBytes, StreamIdle: p.StreamIdle,
 			})
 			if err != nil {
