@@ -88,6 +88,7 @@ func TestDocShots(t *testing.T) {
 	// every badge is drawn on the first frame. The in-process fetches need the
 	// popup base URL set; it is cleared again before the browser connects.
 	restorePopup := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restorePopup) // in case a fetch below fails the test
 	_ = fetchDashSnapshot(t, mux)
 	agentd.WaitForBackgroundForTest()
 	_ = fetchDashSnapshot(t, mux)
