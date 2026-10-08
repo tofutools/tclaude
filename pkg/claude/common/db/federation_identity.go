@@ -433,7 +433,15 @@ func ResolveFederationIdentitySuccessor(instance string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for range proto.MaxRotationHops {
+	// The public proof chain is bounded for discovery, but explicit recovery
+	// can extend already committed local history. Never return an intermediate
+	// identity: policy and capacity checks must reach the current successor.
+	seen := map[string]bool{}
+	for {
+		if seen[instance] {
+			return "", errors.New("cyclic successor chain")
+		}
+		seen[instance] = true
 		var next string
 		err = d.QueryRow(`SELECT new_instance FROM federation_identity_rotations WHERE old_instance=? AND state IN ('accepted','recovered')`, instance).Scan(&next)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -447,5 +455,4 @@ func ResolveFederationIdentitySuccessor(instance string) (string, error) {
 		}
 		instance = next
 	}
-	return instance, nil
 }

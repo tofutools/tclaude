@@ -112,3 +112,26 @@ func TestFederationRotationConflictingSuccessorsFailClosed(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, p)
 }
+
+func TestFederationIdentityLocalHistoryBeyondPublicProofBudget(t *testing.T) {
+	setupTestDB(t)
+	first, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, TrustFederationPeer(FederationPeer{InstanceID: first.ID(), PubKey: first.Pub, Label: "recovering"}))
+	current := first
+	for range 6 {
+		next, err := proto.NewIdentity()
+		require.NoError(t, err)
+		require.NoError(t, RebindFederationIdentity(current.ID(), next.ID(), next.Pub, time.Now()))
+		current = next
+	}
+	resolved, err := ResolveFederationIdentitySuccessor(first.ID())
+	require.NoError(t, err)
+	require.Equal(t, current.ID(), resolved)
+	d, err := Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`UPDATE federation_identity_rotations SET new_instance=? WHERE old_instance=?`, first.ID(), first.ID())
+	require.NoError(t, err)
+	_, err = ResolveFederationIdentitySuccessor(first.ID())
+	require.Error(t, err, "corrupt cycles must fail closed")
+}
