@@ -698,3 +698,55 @@ and uncompressed sizes, no symlinks, duplicate entries or arbitrary extraction.
 Agents need explicit `agent.bundle.export` / `agent.bundle.import` grants;
 neither is default-granted or implied by ownership. Import also requires normal
 spawn authority. These commands operate on local files and do not contact peers.
+
+## Offering configuration to a peer
+
+Config offers go to the remote operator, and are never applied automatically,
+including between unrestricted peers. On the receiving machine, grant the
+sender the peer-only, unscoped `config.offer` permission:
+
+```bash
+tclaude federation grant alice config.offer
+```
+
+Send either an existing config bundle or a selection of current configuration:
+
+```bash
+tclaude federation offer-config bob setup.json
+tclaude federation offer-config bob --only roles --only profiles
+```
+
+Sending and managing offers are operator-only. The sender rechecks supplied
+files for credential patterns and omits structured credentials, using the local
+config export boundary described above. Flagged free text refuses sending
+unless `--allow-flagged` is explicit; content is never silently rewritten.
+
+The receiver sees offers in `federation inbox` and manages them with:
+
+```bash
+tclaude federation offers
+tclaude federation offers import <id>                  # fetch if needed, then preview
+tclaude federation offers import <id> --only roles --apply
+tclaude federation offers decline <id>
+```
+
+Preview includes the source peer, offer ID, digest, expiry, before/after diffs
+and security tags. Import uses the existing config import path: `--only`,
+`--skip`, repeatable `--set name=value`, `--keep-paths` and `--replace` retain
+those meanings. Applying selected items finishes the offer and discards the
+rest. A partial apply failure reports items already written and leaves the
+offer available for review and retry. Use `--peer` to disambiguate duplicate
+IDs from different peers. Revoking trust or `config.offer` blocks further
+fetch/import, while local decline remains available.
+
+`federation offers --outgoing` shows sent offer outcomes; `federation outbox`
+shows transport delivery and receipts. Offers expire after 72 hours. Each peer
+may have ten active config offers, totaling at most 64 MiB in each direction;
+a single bundle is limited to 16 MiB. Small payloads (up to 256 KiB) travel in
+sealed envelopes. Larger payloads use the encrypted hub stream relay when the
+operator fetches or previews; the sender must be online then. Explicit
+`federation offers fetch <id>` downloads without importing. Exact length,
+SHA-256 and authenticated stream completion are checked before a private
+spool file becomes ready. Failed transfers remain retryable. Expiry and
+decline remove payload files, including after daemon restart; terminal receipt
+metadata remains visible. No remote bundle becomes an agent prompt.

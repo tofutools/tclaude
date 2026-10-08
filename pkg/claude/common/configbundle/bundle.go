@@ -91,6 +91,15 @@ func (b *Bundle) Select(only, skip []string) error {
 		}
 		b.Sections[section] = kept
 	}
+	// Metadata travels only with retained items. In particular, original paths
+	// from excluded profiles must not leak into a selected offer.
+	retained := map[string]bool{}
+	for section, items := range b.Sections {
+		for _, item := range items {
+			retained[section+"/"+item.Name] = true
+		}
+	}
+	b.Placeholders = slices.DeleteFunc(b.Placeholders, func(p Placeholder) bool { return !retained[p.Item] })
 	return nil
 }
 
@@ -107,7 +116,25 @@ var secretKey = regexp.MustCompile(`(?i)(token|password|secret|api[_-]?key|priva
 // Prepare never edits free text. Structured credentials are omitted; structured
 // absolute paths are portable home references or explicit unresolved values.
 func (b *Bundle) Prepare() error {
+	// Re-exporting an existing bundle must scan recorded originals too: its
+	// structured paths already contain placeholders rather than original text.
+	for _, p := range b.Placeholders {
+		if credential.MatchString(p.Original) {
+			b.Flags = append(b.Flags, Flag{p.Item, p.Field + " (original path)", "suspected credential (value redacted)"})
+		}
+	}
+	for field, value := range map[string]string{"created_at": b.CreatedAt, "tclaude_version": b.TclaudeVersion} {
+		if credential.MatchString(value) {
+			b.Flags = append(b.Flags, Flag{"metadata", field, "suspected credential (value redacted)"})
+		}
+	}
+
 	home, _ := os.UserHomeDir()
+	usedNames := map[string]bool{}
+	for _, p := range b.Placeholders {
+		usedNames[p.Name] = true
+	}
+	nextPath := 1
 	for _, section := range Sections {
 		for n, item := range b.Sections[section] {
 			label := section + "/" + item.Name
@@ -160,7 +187,13 @@ func (b *Bundle) Prepare() error {
 						if home != "" && (x == home || strings.HasPrefix(x, home+string(filepath.Separator))) {
 							return "${HOME}" + strings.TrimPrefix(x, home)
 						}
-						name := fmt.Sprintf("path_%d", len(b.Placeholders)+1)
+						name := fmt.Sprintf("path_%d", nextPath)
+						for usedNames[name] {
+							nextPath++
+							name = fmt.Sprintf("path_%d", nextPath)
+						}
+						usedNames[name] = true
+						nextPath++
 						b.Placeholders = append(b.Placeholders, Placeholder{Name: name, Item: label, Field: field, Original: x})
 						return "${" + name + "}"
 					}

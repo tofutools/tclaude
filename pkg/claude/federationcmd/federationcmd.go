@@ -56,7 +56,7 @@ func Cmd() *cobra.Command {
 			peersCmd(), trustCmd(), untrustCmd(),
 			grantCmd(), revokeCmd(), grantsCmd(), remoteCmd(), sessionsCmd(),
 			sendCmd(), outboxCmd(), notifyCmd(), inboxCmd(),
-			spawnRequestCmd(), requestsCmd(),
+			spawnRequestCmd(), requestsCmd(), offerConfigCmd(), offersCmd(),
 		},
 	}.ToCobra()
 }
@@ -453,7 +453,7 @@ type grantParams struct {
 }
 
 func grantCmd() *cobra.Command {
-	return boa.CmdT[grantParams]{Use: "grant", Short: "Grant a trusted peer permission on local groups (human only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *grantParams, _ *cobra.Command, _ []string) {
+	return boa.CmdT[grantParams]{Use: "grant", Short: "Grant a trusted peer group or config.offer permission (human only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *grantParams, _ *cobra.Command, _ []string) {
 		grant := peerGrant{Peer: p.Peer, Slug: p.Slug, Scope: p.Scope}
 		grant.SpawnPolicy.Profile = p.Profile
 		grant.SpawnPolicy.Cwd = p.Cwd
@@ -664,13 +664,15 @@ func inboxCmd() *cobra.Command {
 				os.Exit(rc)
 			}
 			type msg struct {
-				ID        int64     `json:"id"`
-				From      string    `json:"from"`
-				Instance  string    `json:"instance"`
-				Subject   string    `json:"subject,omitempty"`
-				Body      string    `json:"body"`
-				CreatedAt time.Time `json:"created_at"`
-				Read      bool      `json:"read"`
+				ID         int64     `json:"id"`
+				OfferID    string    `json:"offer_id,omitempty"`
+				OfferState string    `json:"offer_state,omitempty"`
+				From       string    `json:"from"`
+				Instance   string    `json:"instance"`
+				Subject    string    `json:"subject,omitempty"`
+				Body       string    `json:"body"`
+				CreatedAt  time.Time `json:"created_at"`
+				Read       bool      `json:"read"`
 			}
 			var rows []msg
 			if err := agent.DaemonGet("/v1/federation/inbox", &rows); err != nil {
@@ -694,7 +696,11 @@ func inboxCmd() *cobra.Command {
 				if r.Read {
 					state = "read"
 				}
-				fmt.Printf("#%d  %s  %s  %s\n", r.ID, r.From, ago(r.CreatedAt), state)
+				if r.OfferID != "" {
+					fmt.Printf("offer %s  %s  %s\n", r.OfferID, r.From, r.OfferState)
+				} else {
+					fmt.Printf("#%d  %s  %s  %s\n", r.ID, r.From, ago(r.CreatedAt), state)
+				}
 				if r.Subject != "" {
 					fmt.Printf("Subject: %s\n", r.Subject)
 				}

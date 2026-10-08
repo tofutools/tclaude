@@ -198,7 +198,8 @@ func handleConfigBundleImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in configBundleRequest
-	r.Body = http.MaxBytesReader(w, r.Body, 16<<20)
+	// Reserve request overhead for a full 16 MiB bundle plus import options.
+	r.Body = http.MaxBytesReader(w, r.Body, 17<<20)
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(&in); err != nil {
 		writeError(w, 400, "json", err.Error())
