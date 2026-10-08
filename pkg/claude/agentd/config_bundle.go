@@ -453,6 +453,58 @@ func planConfigBundleItem(r *http.Request, section string, item configbundle.Ite
 		if len(env.Roles) > 0 || len(env.Profiles) > 0 {
 			return nil, errors.New("bundle dependencies must use separate roles/profiles sections")
 		}
+		check := env.Template
+		check.Agents = append([]templateAgentJSON{}, env.Template.Agents...)
+		requireRef := func(section, name string) error {
+			if name == "" {
+				return nil
+			}
+			if slices.ContainsFunc(selected.Sections[section], func(i configbundle.Item) bool { return i.Name == name }) {
+				return nil
+			}
+			if section == "roles" {
+				p, err := db.GetRole(name)
+				if err != nil {
+					return err
+				}
+				if p != nil {
+					return nil
+				}
+			} else {
+				p, err := db.GetSpawnProfile(name)
+				if err != nil {
+					return err
+				}
+				if p != nil {
+					return nil
+				}
+			}
+			return fmt.Errorf("missing %s dependency %q; include its bundle item", section, name)
+		}
+		for n, a := range check.Agents {
+			if err := requireRef("profiles", a.SpawnProfile); err != nil {
+				return nil, err
+			}
+			if err := requireRef("roles", a.RoleRef); err != nil {
+				return nil, err
+			}
+			check.Agents[n].SpawnProfile = ""
+			check.Agents[n].RoleRef = ""
+			if a.ProfileInline != nil {
+				inline := *a.ProfileInline
+				for _, ref := range append(append([]string{}, inline.RoleRefs...), inline.RoleRef) {
+					if err := requireRef("roles", ref); err != nil {
+						return nil, err
+					}
+				}
+				inline.RoleRef = ""
+				inline.RoleRefs = nil
+				check.Agents[n].ProfileInline = &inline
+			}
+		}
+		if _, fail := buildTemplateFromJSON(check); fail != nil {
+			return nil, bundleFailure(fail)
+		}
 		return func() error {
 			res, exists, fail := importTemplateEnvelope(env, "", replace)
 			preview.Warnings = append(preview.Warnings, res.Warnings...)
@@ -553,10 +605,11 @@ func planConfigBundleItem(r *http.Request, section string, item configbundle.Ite
 			if err != nil {
 				return err
 			}
-			if err = json.Unmarshal(raw, cfg); err != nil {
+			var updated config.Config
+			if err = json.Unmarshal(raw, &updated); err != nil {
 				return err
 			}
-			return config.Save(cfg)
+			return config.Save(&updated)
 		}, nil
 	}
 	return nil, errors.New("unsupported section")

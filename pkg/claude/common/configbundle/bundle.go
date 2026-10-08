@@ -96,8 +96,10 @@ func (b *Bundle) Select(only, skip []string) error {
 var credential = regexp.MustCompile(`(?i)(?:sk-(?:ant-|proj-)?[a-z0-9_-]{16,}|gh[pousr]_[a-z0-9]{20,}|github_pat_[a-z0-9_]{20,}|(?:token|password|api[_-]?key|secret)\s*[:=]\s*["']?[^\s"']{8,}|-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----|keychain://[^\s]+)`)
 
 func opaqueKey(key string) bool {
-	return slices.Contains([]string{"source", "brief", "descr", "initial_message", "startup_context", "default_context", "script", "command", "text", "reason", "disabled_reason"}, key)
+	return slices.Contains([]string{"source", "brief", "descr", "initial_message", "startup_context", "default_context", "script", "command", "text", "reason", "disabled_reason", "body", "subject", "criteria"}, key)
 }
+
+var secretField = regexp.MustCompile(`(?i)^(?:(?:.*_)?(?:token|password|secret|api_key|private_key)|keychain_ref|keychain_reference)$`)
 
 var secretKey = regexp.MustCompile(`(?i)(token|password|secret|api[_-]?key|private[_-]?key|keychain)`)
 
@@ -128,7 +130,7 @@ func (b *Bundle) Prepare() error {
 					}
 					slices.Sort(keys)
 					for _, k := range keys {
-						if secretKey.MatchString(k) && k != "darwin_disable_keychain_write" {
+						if secretField.MatchString(k) {
 							delete(x, k)
 							b.Omitted = append(b.Omitted, label+":"+field+"."+k)
 							continue
@@ -150,7 +152,7 @@ func (b *Bundle) Prepare() error {
 						b.Flags = append(b.Flags, Flag{label, field, "suspected credential (value redacted)"})
 					}
 					// Source, scripts, prose, and context are opaque, never rewritten.
-					if opaqueKey(key) {
+					if opaqueKey(key) || (key == "value" && !strings.Contains(field, ".environment[")) {
 						return x
 					}
 					if filepath.IsAbs(x) {
@@ -205,7 +207,7 @@ func (b *Bundle) Resolve(values map[string]string) ([]Placeholder, error) {
 					}
 					return x
 				case string:
-					if opaqueKey(key) {
+					if opaqueKey(key) || (key == "value" && !strings.Contains(field, ".environment[")) {
 						return x
 					}
 					return variable.ReplaceAllStringFunc(x, func(token string) string {

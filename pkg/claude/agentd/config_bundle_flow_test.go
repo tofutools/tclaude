@@ -2,7 +2,11 @@ package agentd_test
 
 import (
 	"encoding/json"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -118,4 +122,100 @@ func TestConfigBundlePlaceholdersAndSandboxIncludes(t *testing.T) {
 	raw, err := json.Marshal(b)
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), "/opt/bundle-example")
+}
+
+func TestConfigBundleTemplatesProcessesAndConfig(t *testing.T) {
+	f, root := processAuthoringFlow(t)
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	_, err = fs.PutTemplate(t.Context(), processRESTTemplate("portable-process", "Portable process", 20))
+	require.NoError(t, err)
+	rec := profileReq(t, f, http.MethodPost, "/v1/templates", fullTemplateBody("portable-team"))
+	require.Equal(t, 201, rec.Code, rec.Body.String())
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	cfg.LogLevel = "debug"
+	cfg.Federation = &config.FederationConfig{Invite: "secret-invite", HubCAFile: "/private/ca.pem"}
+	require.NoError(t, config.Save(cfg))
+	rec = profileReq(t, f, http.MethodGet, "/v1/config-bundle/export?only=templates/portable-team&only=process-templates/portable-process&only=config/log_level&only=default-permissions", nil)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "secret-invite")
+	assert.NotContains(t, rec.Body.String(), "/private/ca.pem")
+	var b configbundle.Bundle
+	testharness.DecodeJSON(t, rec, &b)
+	_, err = db.DeleteGroupTemplate("portable-team")
+	require.NoError(t, err)
+	cfg.LogLevel = "info"
+	require.NoError(t, config.Save(cfg))
+	rec = profileReq(t, f, http.MethodPost, "/v1/config-bundle/import", map[string]any{"bundle": b, "apply": true, "replace": true})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	team, err := db.GetGroupTemplate("portable-team")
+	require.NoError(t, err)
+	require.NotNil(t, team)
+	assert.Len(t, team.Agents, 2)
+	cfg, err = config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "debug", cfg.LogLevel)
+	assert.Equal(t, "secret-invite", cfg.Federation.Invite, "unselected private settings survive")
+	// Importing process source under a new declared id exercises first creation.
+	item := b.Sections["process-templates"][0]
+	var source map[string]string
+	require.NoError(t, json.Unmarshal(item.Value, &source))
+	source["source"] = strings.ReplaceAll(source["source"], "portable-process", "portable-process-copy")
+	item.Name = "portable-process-copy"
+	item.Value, err = json.Marshal(source)
+	require.NoError(t, err)
+	b.Sections = map[string][]configbundle.Item{"process-templates": {item}}
+	rec = profileReq(t, f, http.MethodPost, "/v1/config-bundle/import", map[string]any{"bundle": b, "apply": true})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	head, err := fs.GetTemplateHead(t.Context(), item.Name)
+	require.NoError(t, err)
+	require.NotEmpty(t, head.Ref)
+}
+
+func TestConfigBundleAgentGates(t *testing.T) {
+	f := newFlow(t)
+	const peer = "bundle-gate-aaaa-bbbb"
+	f.HaveConvWithTitle(peer, "bundle-worker")
+	for _, route := range []struct{ method, path, slug string }{
+		{http.MethodGet, "/v1/config-bundle/export", agentd.PermConfigExport},
+		{http.MethodPost, "/v1/config-bundle/import", agentd.PermConfigImport},
+	} {
+		rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, route.method, route.path, nil), peer))
+		require.Equal(t, 403, rec.Code, rec.Body.String())
+		assert.Contains(t, rec.Body.String(), route.slug)
+	}
+	require.NoError(t, db.GrantAgentPermission(peer, agentd.PermConfigExport, "test"))
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/config-bundle/export?only=roles", nil), peer))
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+}
+
+func TestConfigBundlePreviewRejectsMissingTemplateDependency(t *testing.T) {
+	f := newFlow(t)
+	raw := json.RawMessage(`{"format":"tclaude-task-force","format_version":3,"template":{"name":"needs-profile","agents":[{"name":"worker","spawn_profile":"missing-profile"}]}}`)
+	b := configbundle.Bundle{Format: configbundle.Format, FormatVersion: 1, Sections: map[string][]configbundle.Item{"templates": {{Name: "needs-profile", Value: raw}}}}
+	rec := profileReq(t, f, http.MethodPost, "/v1/config-bundle/import", map[string]any{"bundle": b})
+	require.Equal(t, 400, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "missing-profile")
+	template, err := db.GetGroupTemplate("needs-profile")
+	require.NoError(t, err)
+	assert.Nil(t, template)
+}
+
+func TestConfigBundleNestedConfigReplacementMatchesPreview(t *testing.T) {
+	f := newFlow(t)
+	oldThreshold, oldTokens := 30, 12345
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	cfg.ClaudeResume = &config.ClaudeResumeConfig{ThresholdMinutes: &oldThreshold, TokenThreshold: &oldTokens}
+	require.NoError(t, config.Save(cfg))
+	b := configbundle.Bundle{Format: configbundle.Format, FormatVersion: 1, Sections: map[string][]configbundle.Item{"config": {{Name: "claude_resume", Value: json.RawMessage(`{"threshold_minutes":60}`)}}}}
+	rec := profileReq(t, f, http.MethodPost, "/v1/config-bundle/import", map[string]any{"bundle": b, "apply": true, "replace": true})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	cfg, err = config.Load()
+	require.NoError(t, err)
+	require.NotNil(t, cfg.ClaudeResume)
+	require.NotNil(t, cfg.ClaudeResume.ThresholdMinutes)
+	assert.Equal(t, 60, *cfg.ClaudeResume.ThresholdMinutes)
+	assert.Nil(t, cfg.ClaudeResume.TokenThreshold)
 }

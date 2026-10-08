@@ -51,3 +51,19 @@ func TestConfigBundleOpaqueTextDoesNotBecomeBinding(t *testing.T) {
 	assert.Empty(t, missing)
 	assert.True(t, strings.Contains(string(b.Sections["process-templates"][0].Value), "${ordinary_shell_var}"))
 }
+
+func TestConfigBundlePreservesAllTemplateProseAndThreshold(t *testing.T) {
+	b := Bundle{Sections: map[string][]Item{"templates": {{Name: "crew", Value: json.RawMessage(`{"work_pattern":[{"value":"/opt/prose ${HOME} ${task}"}],"process":[{"criteria":"/opt/criteria ${criterion}"}],"rhythms":[{"body":"/opt/body ${message}","subject":"/opt/subject ${title}"}]}`)}}, "config": {{Name: "claude_resume", Value: json.RawMessage(`{"token_threshold":12345,"threshold_minutes":30}`)}}}}
+	originals := map[string]string{}
+	for section, items := range b.Sections {
+		originals[section] = string(items[0].Value)
+	}
+	require.NoError(t, b.Prepare())
+	assert.Empty(t, b.Placeholders)
+	missing, err := b.Resolve(nil)
+	require.NoError(t, err)
+	assert.Empty(t, missing)
+	for section, items := range b.Sections {
+		assert.JSONEq(t, originals[section], string(items[0].Value))
+	}
+}
