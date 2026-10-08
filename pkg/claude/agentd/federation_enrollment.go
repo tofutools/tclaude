@@ -300,7 +300,7 @@ func enrollmentPreview(rt *fedRuntime, in fedEnrollmentInput) (*proto.Enrollment
 	if !time.Now().Before(t.Claims.ExpiresAt) {
 		return nil, "", errors.New("enrollment token expired")
 	}
-	preview, e := db.FederationEnrollmentNodePreview(t)
+	preview, e := db.FederationEnrollmentNodePreview(t, rt.id.Pub)
 	return t, preview, e
 }
 func handleFederationEnroll(w http.ResponseWriter, r *http.Request) {

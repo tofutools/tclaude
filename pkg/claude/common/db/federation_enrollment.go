@@ -204,7 +204,7 @@ func RedeemFederationEnrollment(t *proto.EnrollmentToken, nodeKey, localKey []by
 }
 
 // EnrollmentNodePreview binds consent to the local peer and receipt state.
-func enrollmentNodePreviewTx(tx *sql.Tx, t *proto.EnrollmentToken) (string, error) {
+func enrollmentNodePreviewTx(tx *sql.Tx, t *proto.EnrollmentToken, localKey []byte) (string, error) {
 	var raw []any
 	var key []byte
 	var label, name, level string
@@ -213,12 +213,12 @@ func enrollmentNodePreviewTx(tx *sql.Tx, t *proto.EnrollmentToken) (string, erro
 	if e != nil && !errors.Is(e, sql.ErrNoRows) {
 		return "", e
 	}
-	raw = append(raw, t.Public, key, label, name, level, at)
+	raw = append(raw, t.Public, localKey, key, label, name, level, at)
 	b, e := enrollmentBinding(tx, "node", t.Claims.TokenID, t.Claims.Master)
 	if e != nil {
 		return "", e
 	}
-	if (b == nil && len(key) != 0) || (b != nil && (b.Retired || len(key) == 0 || b.Public != t.Public || !bytes.Equal(b.PeerKey, t.Claims.MasterKey))) {
+	if (b == nil && len(key) != 0) || (b != nil && (b.Retired || len(key) == 0 || b.Public != t.Public || !bytes.Equal(b.LocalKey, localKey) || !bytes.Equal(b.PeerKey, t.Claims.MasterKey))) {
 		return "", ErrEnrollmentRefused
 	}
 	raw = append(raw, b)
@@ -229,7 +229,7 @@ func enrollmentNodePreviewTx(tx *sql.Tx, t *proto.EnrollmentToken) (string, erro
 	sum := sha256.Sum256(v)
 	return hex.EncodeToString(sum[:]), nil
 }
-func FederationEnrollmentNodePreview(t *proto.EnrollmentToken) (string, error) {
+func FederationEnrollmentNodePreview(t *proto.EnrollmentToken, localKey []byte) (string, error) {
 	d, e := Open()
 	if e != nil {
 		return "", e
@@ -239,7 +239,7 @@ func FederationEnrollmentNodePreview(t *proto.EnrollmentToken) (string, error) {
 		return "", e
 	}
 	defer func() { _ = tx.Rollback() }()
-	return enrollmentNodePreviewTx(tx, t)
+	return enrollmentNodePreviewTx(tx, t, localKey)
 }
 func CompleteFederationEnrollment(t *proto.EnrollmentToken, localKey []byte, preview string) error {
 	d, e := Open()
@@ -255,7 +255,7 @@ func CompleteFederationEnrollment(t *proto.EnrollmentToken, localKey []byte, pre
 	if _, e = tx.Exec(`UPDATE federation_enrollments SET retired=retired WHERE token_id=?`, t.Claims.TokenID); e != nil {
 		return e
 	}
-	current, e := enrollmentNodePreviewTx(tx, t)
+	current, e := enrollmentNodePreviewTx(tx, t, localKey)
 	if e != nil {
 		return e
 	}

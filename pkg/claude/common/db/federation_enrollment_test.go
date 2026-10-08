@@ -119,16 +119,21 @@ func TestFederationEnrollmentNodeConsentAndRetry(t *testing.T) {
 	require.NoError(t, e)
 	_, tok, e := proto.NewEnrollmentToken(master, "p", "rigs", 1, "restricted", time.Now().Add(time.Hour))
 	require.NoError(t, e)
-	preview, e := FederationEnrollmentNodePreview(tok)
+	preview, e := FederationEnrollmentNodePreview(tok, node.Pub)
 	require.NoError(t, e)
 	require.Error(t, CompleteFederationEnrollment(tok, node.Pub, "wrong"))
 	require.NoError(t, CompleteFederationEnrollment(tok, node.Pub, preview))
+	rotated, e := proto.NewIdentity()
+	require.NoError(t, e)
+	_, e = FederationEnrollmentNodePreview(tok, rotated.Pub)
+	require.ErrorIs(t, e, ErrEnrollmentRefused, "rotation must fail before contacting master and spending another use")
+
 	peer, e := GetFederationPeer(master.ID())
 	require.NoError(t, e)
 	peer.TrustLevel = "unrestricted"
 	require.NoError(t, TrustFederationPeer(*peer))
 	require.Error(t, CompleteFederationEnrollment(tok, node.Pub, preview), "concurrent manual change invalidates consent")
-	preview, e = FederationEnrollmentNodePreview(tok)
+	preview, e = FederationEnrollmentNodePreview(tok, node.Pub)
 	require.NoError(t, e)
 	require.NoError(t, CompleteFederationEnrollment(tok, node.Pub, preview))
 	peer, e = GetFederationPeer(master.ID())
@@ -136,7 +141,7 @@ func TestFederationEnrollmentNodeConsentAndRetry(t *testing.T) {
 	require.Equal(t, "unrestricted", peer.TrustLevel)
 	_, e = UntrustFederationPeer(master.ID())
 	require.NoError(t, e)
-	_, e = FederationEnrollmentNodePreview(tok)
+	_, e = FederationEnrollmentNodePreview(tok, node.Pub)
 	require.ErrorIs(t, e, ErrEnrollmentRefused)
 }
 
