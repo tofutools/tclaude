@@ -234,8 +234,10 @@ func TestFederation_ExportCatalogAndInboundMail(t *testing.T) {
 	in, err := db.FederationInboundByEnvelope(p.id.ID(), mail.ID)
 	require.NoError(t, err)
 	require.NotNil(t, in)
+	// keep-unread: a recipient read marks the message read, after which no
+	// drain will ever nudge it — the async nudge below may not have landed yet.
 	read := testharness.Serve(f.Mux, agentd.AsAgentPeer(
-		testharness.JSONRequest(t, http.MethodGet, fmt.Sprintf("/v1/messages/%d", in.MessageID), nil), alice))
+		testharness.JSONRequest(t, http.MethodGet, fmt.Sprintf("/v1/messages/%d?keep-unread=1", in.MessageID), nil), alice))
 	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
 	var msg map[string]any
 	testharness.DecodeJSON(t, read, &msg)
@@ -477,8 +479,10 @@ func TestFederation_ReplayAfterDeleteAndHostileNames(t *testing.T) {
 		in, _ = db.FederationInboundByEnvelope(p.id.ID(), mail.ID)
 		return in != nil
 	})
+	// keep-unread: a recipient read marks the message read, after which no
+	// drain will ever nudge it — the async nudge below may not have landed yet.
 	read := testharness.Serve(f.Mux, agentd.AsAgentPeer(
-		testharness.JSONRequest(t, http.MethodGet, fmt.Sprintf("/v1/messages/%d", in.MessageID), nil), alice))
+		testharness.JSONRequest(t, http.MethodGet, fmt.Sprintf("/v1/messages/%d?keep-unread=1", in.MessageID), nil), alice))
 	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
 	var msg map[string]any
 	testharness.DecodeJSON(t, read, &msg)
