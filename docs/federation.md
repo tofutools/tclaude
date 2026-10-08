@@ -195,6 +195,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `sessions.read` | live agent sessions, harness, state and waiting reason |
 | `sessions.watch` | read-only terminal view of a group member agent |
 | `sessions.attach` | terminal view and full keyboard input, including harness approvals |
+| `node.read` | platform, harness versions, labels and numeric node resources (unscoped only) |
 | `approvals.answer` | one-shot access-request answer while selected as away cover (unscoped only) |
 
 Prefer `--scope group=<local group>` to limit access. For the same slug, a
@@ -224,6 +225,7 @@ Your operator grants agents ordinary slugs with a required `peer=` scope:
 | `agent.spawn` | request workers in any visible group on a peer; peer-only scope |
 | `routes.consume` | open a route in a peer’s group |
 | `sessions.read` | list live sessions in a peer’s shared groups |
+| `node.read` | read a peer’s shared instance-wide node metadata (peer-only scope) |
 
 Peer grants for roster, presence and attachments control what the receiving
 instance shares. Agents do not need separate roster, presence or attachment
@@ -987,3 +989,63 @@ for senders still authorized through its former group's current peer mail grant.
 The refusal does not disclose the new address. Other senders receive the usual
 unknown-agent or authorization refusal. Mail is never forwarded automatically;
 an operator can share the new destination address and configure its mail grants.
+
+## Peer nodes
+
+Share a path-free node advertisement with a peer, then find suitable machines:
+
+```bash
+tclaude federation grant bob node.read
+tclaude federation node-labels --add gpu --add test-rig
+tclaude federation node-labels --remove test-rig
+tclaude federation nodes --match os=darwin,label=gpu,harness=codex
+tclaude federation nodes --json
+```
+
+`node.read` is an unscoped **instance** peer grant; group scopes are rejected.
+Unrestricted peers hold it implicitly. The ordinary agent `node.read` grant
+requires a peer scope to read a restricted peer's node:
+
+```bash
+tclaude agent permissions grant lead node.read --scope peer=bob
+```
+
+A group-specific scope such as `peer=bob/builders` cannot expose instance-wide
+metadata. Reading node metadata does not grant spawn, mail, session or approval
+rights. `GET /v1/federation/nodes?match=…` applies the same scope checks. Matches
+are ANDed; supported keys are `os`, `arch`, `label` and `harness`. Unknown keys
+are errors. An empty list can mean no peer shares metadata or no authorized
+peer matches. Offline and stale nodes remain visible with explicit markers.
+
+The optional catalog node block contains OS/version/architecture, tclaude
+version, installed registered harnesses and versions, a label set, configured
+maximum live agents, and numeric CPU/load, RAM, data-disk, work-disk and agent
+counts from [local host status](host.md). It includes no hostname, local paths,
+raw probe errors or group names. A failed version probe leaves the installed
+harness's version empty. Labels contain 1–64 letters, digits, dots, dashes or
+underscores, with at most 64 labels. The local set uses incremental add/remove
+operations and can also be updated by future node-profile writers.
+
+The regular catalog includes the advertisement; a separate `node_update`
+refreshes it every 30 seconds while connected with an online peer holding
+`node.read`. Updates reuse the local host cache. Installed harnesses and OS
+version are probed at most once every five minutes while sharing is active;
+API reads never run probes. An unreadable local config withholds the node
+advertisement rather than publishing an unknown maximum as unlimited. Missing resource readings are JSON null, not zero.
+Work-disk byte and percentage minima are independent summaries across required
+work roots, unavailable if a required root could not be measured. Available
+macOS RAM is explicitly marked as an estimate. Source observation time and a
+receiver-owned receipt time prevent an old observation from becoming fresh
+through an update. Nodes are stale when offline, the update or host observation
+is over 90 seconds old, or the source marks the snapshot warming/stale.
+Node updates do not refresh group roster/presence timestamps.
+
+Configure capacity in `~/.tclaude/data/config.json`:
+
+```json
+{"federation":{"max_live_agents":8,"node_labels":["gpu"]}}
+```
+
+Zero (the default) means unlimited. The maximum is advertised capacity, not
+an admission limit or resource reservation. Existing peers without a node block
+continue to work and do not appear in `nodes`.

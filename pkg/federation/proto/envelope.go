@@ -193,8 +193,11 @@ type GroupMailPayload struct {
 
 // CatalogPayload lists what an instance exports to the receiving peer.
 type CatalogPayload struct {
-	AgentMoves bool           `json:"agent_moves,omitempty"`
-	Groups     []CatalogGroup `json:"groups"`
+	AgentMoves     bool           `json:"agent_moves,omitempty"`
+	Node           *NodeMetadata  `json:"node,omitempty"`
+	NodeAt         time.Time      `json:"node_at,omitempty"`
+	NodeReceivedAt time.Time      `json:"node_received_at,omitempty"` // receiver-owned; overwritten on receipt
+	Groups         []CatalogGroup `json:"groups"`
 }
 
 // CatalogGroup is one exported group as seen by one peer.

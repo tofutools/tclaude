@@ -613,6 +613,7 @@ var permissionRegistry = []PermSlug{
 	},
 	{Slug: PermSessionsWatch, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Watch a shared remote agent pane. Requires peer= scope."},
 	{Slug: PermSessionsAttach, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Full keyboard access to a shared remote agent pane, including approval prompts. Requires peer= scope."},
+	{Slug: PermNodeRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Read shared peer platform, harnesses, labels and numeric resource summaries. Requires peer= scope."},
 	{Slug: PermSessionsRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Read a peer's shared live agent sessions and waiting states. Requires peer= scope; no local session authority."},
 	{
 		Slug:        PermRoutesPublish,

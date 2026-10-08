@@ -802,7 +802,11 @@ type FederationAwayConfig struct {
 }
 
 type FederationConfig struct {
-	Away *FederationAwayConfig `json:"away,omitempty"`
+	// NodeLabels is a local set, shared by operator and future node-profile writers.
+	NodeLabels []string `json:"node_labels,omitempty"`
+	// MaxLiveAgents advertises node capacity; zero is unlimited.
+	MaxLiveAgents int                   `json:"max_live_agents,omitempty"`
+	Away          *FederationAwayConfig `json:"away,omitempty"`
 	// UnrestrictedMaxLive caps automatic workers per unrestricted peer. Default 8.
 	UnrestrictedMaxLive int `json:"unrestricted_max_live,omitempty"`
 	// Enabled starts the hub client. Default false.
@@ -3490,6 +3494,27 @@ func Validate(c *Config) []string {
 		return []string{"config is nil"}
 	}
 	var errs []string
+	if f := c.Federation; f != nil {
+		if f.MaxLiveAgents < 0 {
+			errs = append(errs, "federation.max_live_agents must be nonnegative (zero is unlimited)")
+		}
+		if len(f.NodeLabels) > 64 {
+			errs = append(errs, "federation.node_labels allows at most 64 labels")
+		}
+		for _, label := range f.NodeLabels {
+			valid := len(label) > 0 && len(label) <= 64
+			for _, r := range label {
+				allowed := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.'
+				if !allowed {
+					valid = false
+				}
+			}
+			if !valid {
+				errs = append(errs, "federation.node_labels must use 1..64 letters, digits, dot, dash or underscore")
+				break
+			}
+		}
+	}
 	if h := c.Host; h != nil {
 		for _, entry := range []struct {
 			name  string

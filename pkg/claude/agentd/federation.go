@@ -124,6 +124,9 @@ func defaultFederationName() string {
 
 // fedRuntime is one live hub connection plus its workers.
 type fedRuntime struct {
+	nodeMu        sync.RWMutex
+	nodeStatic    proto.NodeMetadata
+	nodeWake      chan struct{}
 	awayMu        sync.Mutex
 	away          *fedAwayState
 	awayWaiting   map[string]string
@@ -246,7 +249,7 @@ func startFederationWith(fc *config.FederationConfig) error {
 		name = defaultFederationName()
 	}
 	rt := &fedRuntime{
-		id: id, name: name,
+		id: id, name: name, nodeWake: make(chan struct{}, 1),
 		inbound: make(chan fedInbound, 256), kick: make(chan struct{}, 1),
 		online: map[string]bool{}, inLimiter: map[string][]time.Time{},
 	}
@@ -272,10 +275,11 @@ func startFederationWith(fc *config.FederationConfig) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	rt.ctx, rt.cancel = ctx, cancel
 	withdrawStaleFederationMirrors()
-	rt.wg.Add(3)
+	rt.wg.Add(4)
 	go func() { defer rt.wg.Done(); cl.Run(ctx) }()
 	go func() { defer rt.wg.Done(); rt.inboundLoop(ctx) }()
 	go func() { defer rt.wg.Done(); rt.outboxLoop(ctx) }()
+	go func() { defer rt.wg.Done(); rt.nodeLoop(ctx) }()
 
 	fedMu.Lock()
 	fedCurrent = rt
@@ -388,6 +392,14 @@ func (rt *fedRuntime) sendCatalog(peer string) {
 		return
 	}
 	rt.sendControl(peer, proto.KindCatalog, "", cat)
+	// Catalog requests must not turn a 30s node heartbeat into fanout traffic.
+	// Wake only to populate the initial static probe; later catalogs read cache.
+	rt.nodeMu.RLock()
+	needsProbe := rt.nodeStatic.Schema != 1
+	rt.nodeMu.RUnlock()
+	if needsProbe {
+		rt.wakeNodes()
+	}
 }
 
 // buildFederationCatalog lists what this instance exports to peer: groups
@@ -415,7 +427,10 @@ func buildFederationCatalog(peer string) (*proto.CatalogPayload, error) {
 			delete(caps[group.ID], proto.CapAttachments)
 		}
 	}
-	cat := &proto.CatalogPayload{AgentMoves: true, Groups: []proto.CatalogGroup{}}
+	cat := &proto.CatalogPayload{AgentMoves: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
+	if fedPeerReadsNode(peer) {
+		cat.Node = localNodeMetadata()
+	}
 	for gid, cs := range caps {
 		g := proto.CatalogGroup{Name: names[gid]}
 		for _, c := range proto.AllCaps {
@@ -521,6 +536,8 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 			return
 		}
 		proto.SanitizeCatalog(&cat)
+		previous, _, _ := fedCatalogFor(from)
+		mergeNodePublication(&cat, previous, cat.NodeAt, env.CreatedAt)
 		// A slow full catalog must not roll back a newer transition push.
 		if previous, _, err := fedCatalogFor(from); err == nil && previous != nil {
 			for i := range cat.Groups {
@@ -550,6 +567,8 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		rt.acceptSessionOpen(peer, env)
 	case proto.KindSessionAnswer:
 		rt.handleSessionAnswer(peer, env)
+	case proto.KindNodeUpdate:
+		rt.acceptNodeUpdate(from, env)
 	case proto.KindSessionsUpdate:
 		rt.acceptSessionUpdate(from, env)
 	case proto.KindCatalogReq:
