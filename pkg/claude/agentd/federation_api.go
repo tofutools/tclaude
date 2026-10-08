@@ -1074,6 +1074,7 @@ func fedFirst(a, b string) string {
 }
 
 func registerFederationRoutes(mux *http.ServeMux) {
+	registerFederationNodeGroupRoutes(mux)
 	registerFederationBundleRoutes(mux)
 	mux.HandleFunc("GET /v1/federation/away", handleFederationAway)
 	mux.HandleFunc("POST /v1/federation/away", handleFederationAway)

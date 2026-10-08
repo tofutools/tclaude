@@ -259,7 +259,15 @@ func permissionScopeLiteralMatches(dim ScopeDim, matcher, value string) bool {
 	}
 	switch spec.matcher {
 	case permissionScopeMatchInstanceID:
-		peer, _, grouped := strings.Cut(matcher, "/")
+		peer, remoteGroup, grouped := strings.Cut(matcher, "/")
+		if strings.HasPrefix(peer, db.FederationNodeGroupScopePrefix) {
+			target, targetGroup, _ := strings.Cut(value, "/")
+			if grouped && targetGroup != remoteGroup {
+				return false
+			}
+			ok, err := db.FederationNodeGroupContainsID(strings.TrimPrefix(peer, db.FederationNodeGroupScopePrefix), target)
+			return err == nil && ok
+		}
 		return matcher == value || (!grouped && strings.HasPrefix(value, peer+"/"))
 	case permissionScopeMatchExact:
 		return matcher == value

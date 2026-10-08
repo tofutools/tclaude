@@ -431,6 +431,8 @@ func untrustCmd() *cobra.Command {
 
 // --- peer grants ---
 type peerGrant struct {
+	PoolID      string `json:"pool_id,omitempty"`
+	PoolName    string `json:"pool_name,omitempty"`
 	Peer        string `json:"peer"`
 	Slug        string `json:"slug"`
 	Scope       string `json:"scope"`
@@ -510,6 +512,9 @@ func grantsCmd() *cobra.Command {
 		}
 		for _, g := range resp.Grants {
 			fmt.Printf("%s %s %s", g.Peer, g.Slug, g.Scope)
+			if g.PoolName != "" && g.Peer != "group:"+g.PoolName {
+				fmt.Printf(" [inherited from group:%s]", g.PoolName)
+			}
 			if g.Slug == "groups.members.spawn" {
 				policy, _ := json.Marshal(g.SpawnPolicy)
 				fmt.Printf(" %s", policy)

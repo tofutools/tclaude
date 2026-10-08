@@ -19,6 +19,8 @@ type FederationSpawnPolicy struct {
 }
 
 type FederationPeerGrant struct {
+	PoolID      string                `json:"pool_id,omitempty"`
+	PoolName    string                `json:"pool_name,omitempty"`
 	Peer        string                `json:"peer"`
 	Slug        string                `json:"slug"`
 	Scope       string                `json:"scope"`
