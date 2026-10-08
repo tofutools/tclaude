@@ -1168,7 +1168,9 @@ peer spawn requests. They overlay role and spawn-profile overrides, are
 persisted before the subprocess starts, and record the originating peer and
 profile revision. They are frozen at birth: re-applying a profile affects future
 workers and leaves existing workers' permissions intact. Harnesses without
-enrollment before launch are refused for profile workers.
+enrollment before launch are refused only when the applied profile has nonempty
+worker permission overrides. Peers with no worker defaults retain ordinary
+spawn behavior on every harness.
 
 An omitted worker slug inherits the normal receiving-group and global defaults.
 A scoped worker grant narrows a broader receiving-group grant **because the

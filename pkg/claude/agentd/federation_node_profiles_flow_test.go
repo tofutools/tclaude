@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -322,5 +323,62 @@ func TestFederation_NodeProfileManagementIsOperatorOnly(t *testing.T) {
 	} {
 		rec := agentReq(t, fh.f, caller, call.method, call.path, call.body)
 		require.Equal(t, 403, rec.Code, call.path+": "+rec.Body.String())
+	}
+}
+
+func TestFederation_NodeProfileEmptyWorkerDefaultsPreserveLegacySpawn(t *testing.T) {
+	for _, automatic := range []bool{false, true} {
+		t.Run(fmt.Sprint(automatic), func(t *testing.T) {
+			fh := newFedHarness(t)
+			fh.f.HaveGroup("team")
+			cfg, e := config.Load()
+			require.NoError(t, e)
+			if cfg.Agent == nil {
+				cfg.Agent = &config.AgentConfig{}
+			}
+			legacy := true
+			cfg.Agent.SpawnLegacyInjection = &legacy
+			require.NoError(t, config.Save(cfg))
+			slug := agentd.PermGroupsRosterRead
+			if automatic {
+				slug = agentd.PermGroupsMembersSpawn
+			}
+			p := fedNodeProfile(t, fh, "plain", db.FederationNodeProfileSpec{PeerGrants: []db.FederationPeerGrant{{Slug: slug, Scope: "group=team"}}})
+			fedApplyNodeProfile(t, fh, p)
+			env := fh.peer.envelope(proto.KindSpawnReq, proto.Endpoint{}, proto.SpawnRequestPayload{Group: "team", Name: "legacy-worker", Brief: "review"})
+			fh.peer.send(env)
+			require.Equal(t, proto.AckAccepted, fedAckFor(t, fh.peer, env.ID).Status)
+			var row *db.FederationSpawnRequest
+			fedEventually(t, "stored legacy request", func() bool {
+				rows, e := db.ListFederationSpawnRequests(100)
+				if e != nil {
+					return false
+				}
+				for _, candidate := range rows {
+					if candidate.EnvelopeID == env.ID {
+						row = candidate
+						return true
+					}
+				}
+				return false
+			})
+			if !automatic {
+				rec := fedHuman(t, fh.f, http.MethodPost, fmt.Sprintf("/v1/federation/spawn-requests/%d/approve", row.ID), map[string]any{})
+				require.Equal(t, 200, rec.Code, rec.Body.String())
+			}
+			fedEventually(t, "legacy worker approved without defaults", func() bool {
+				var e error
+				row, e = db.GetFederationSpawnRequest(row.ID)
+				return e == nil && row.Status == db.FedSpawnApproved
+			})
+			a, e := db.GetAgent(row.ResultAgent)
+			require.NoError(t, e)
+			require.NotEmpty(t, a.CurrentConvID)
+			snapshot, e := db.GetFederationWorkerDefaults(a.AgentID)
+			require.NoError(t, e)
+			require.NotNil(t, snapshot)
+			require.Empty(t, snapshot.Permissions)
+			fh.f.AssertGroupMember("team", a.CurrentConvID, "legacy-worker", 5*time.Second)
+		})
 	}
 }

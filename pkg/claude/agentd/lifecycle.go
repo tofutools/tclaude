@@ -4165,7 +4165,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			writeError(w, 500, "worker_defaults", err.Error())
 			return
 		}
-		if workerDefaults != nil {
+		if workerDefaults != nil && len(workerDefaults.Permissions) > 0 {
 			if body.NonInteractive {
 				writeError(w, 400, "worker_defaults", "profile worker defaults require an enrolled agent")
 				return
@@ -6960,7 +6960,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		if err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "worker_defaults", err.Error()}
 		}
-		if workerDefaults != nil && !launchEnroll {
+		if workerDefaults != nil && len(workerDefaults.Permissions) > 0 && !launchEnroll {
 			return nil, &spawnFailure{http.StatusBadRequest, "worker_defaults", "node-profile workers require a harness with enrollment before launch"}
 		}
 	}
@@ -8453,7 +8453,7 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 	if workerErr != nil {
 		return 0, actorCreated, &spawnFailure{http.StatusInternalServerError, "worker_defaults", workerErr.Error()}
 	}
-	if workerDefaults != nil {
+	if workerDefaults != nil && len(workerDefaults.Permissions) > 0 {
 		provenance := fmt.Sprintf("peer:%s node-profile:%s id:%s revision:%d", workerDefaults.Peer, workerDefaults.ProfileName, workerDefaults.ProfileID, workerDefaults.Revision)
 		for _, slug := range db.SortedOverrideSlugs(workerDefaults.Permissions) {
 			override := workerDefaults.Permissions[slug]
