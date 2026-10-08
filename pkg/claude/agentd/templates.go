@@ -719,6 +719,7 @@ func buildRhythmsFromJSON(in []rhythmJSON) ([]db.Rhythm, *spawnFailure) {
 // + harness secure defaults — the resolved shape the instantiator threads into
 // spawnParams.
 type templateAgentLaunch struct {
+	ModelProxy           string
 	SpawnProfile         string
 	Environment          []sandboxpolicy.EnvironmentEntry
 	EnvironmentOverrides []sandboxpolicy.EnvironmentEntry
@@ -1211,6 +1212,13 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 			Notes:         append([]string(nil), notes...),
 		}, f
 	}
+	modelProxy, _, proxyNote, proxyFail := resolveStringLaunchField("model_proxy", "", h.Name, tiers, func(p *db.SpawnProfile) string { return p.ModelProxy }, validateLaunchModelProxy(h))
+	if proxyFail != nil {
+		return failed(proxyFail)
+	}
+	if proxyNote != "" {
+		notes = append(notes, proxyNote)
+	}
 	model, modelSource, note, fail := resolveStringLaunchField(modelField, a.Model, h.Name, tiers,
 		func(p *db.SpawnProfile) string { return p.Model }, h.Models.ValidateModel)
 	if fail != nil {
@@ -1484,6 +1492,7 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 		EnvironmentOverrides:   environmentOverrides,
 		Harness:                h.Name,
 		Model:                  model,
+		ModelProxy:             modelProxy,
 		Effort:                 effort,
 		Sandbox:                sandbox,
 		SandboxSource:          sandboxSource,

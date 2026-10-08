@@ -3770,35 +3770,24 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
-	if body.ModelProxy == "" {
-		for _, tier := range profileTiers {
-			if tier.profile != nil && tier.profile.ModelProxy != "" {
-				body.ModelProxy = tier.profile.ModelProxy
-				break
-			}
-		}
+	var modelProxyNote string
+	var modelProxyFail *spawnFailure
+	body.ModelProxy, _, modelProxyNote, modelProxyFail = resolveStringLaunchField("model_proxy", body.ModelProxy, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.ModelProxy }, validateLaunchModelProxy(h))
+	if modelProxyFail != nil {
+		writeError(w, modelProxyFail.Status, modelProxyFail.Kind, modelProxyFail.Msg)
+		return
 	}
-	if body.ModelProxy == "off" {
-		body.ModelProxy = ""
-	}
-	if body.ModelProxy != "" {
-		if !h.SupportsModelProxy() {
-			writeError(w, 400, "invalid_model_proxy", "selected harness does not support model gateways")
-			return
-		}
+	if body.ModelProxy != "" && body.ModelProxy != "off" && spawnerConvID != "" {
 		peer, name, err := resolveModelProxyReference(body.ModelProxy)
 		if err != nil {
 			writeError(w, 400, "invalid_model_proxy", err.Error())
 			return
 		}
-		if spawnerConvID != "" {
-			allowed, _, err := permissionAllowsAction(r, spawnerConvID, PermModelsProxy, ActionContext{RemotePeer: peer.InstanceID, HTTPProxy: name})
-			if err != nil || !allowed {
-				writeError(w, 403, "permission_denied", "models.proxy is required for this model gateway")
-				return
-			}
+		allowed, _, err := permissionAllowsAction(r, spawnerConvID, PermModelsProxy, ActionContext{RemotePeer: peer.InstanceID, HTTPProxy: name})
+		if err != nil || !allowed {
+			writeError(w, 403, "permission_denied", "models.proxy is required for this model gateway")
+			return
 		}
-		body.ModelProxy = name + "@" + peer.InstanceID
 	}
 	validateModel := func(raw string) (string, error) {
 		value, err := h.Models.ValidateModel(raw)
@@ -4384,7 +4373,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if body.SandboxImplementation == "" && sandboxImplNote != "" {
 		resolvedLaunch.Notes = append(resolvedLaunch.Notes, sandboxImplNote)
 	}
-	for _, note := range append([]string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, copilotAPINote, codexAppServerNote, fastModeNote, autoReviewNote, trustDirNote, autoMemoryNote, peerMessagingNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote, includeGroupContextNote}, identityNotes...) {
+	for _, note := range append([]string{modelProxyNote, sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, copilotAPINote, codexAppServerNote, fastModeNote, autoReviewNote, trustDirNote, autoMemoryNote, peerMessagingNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote, includeGroupContextNote}, identityNotes...) {
 		if note != "" {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes, note)
 		}
@@ -6025,7 +6014,7 @@ func launchTierIsDefault(tiers []launchProfileTier, source string) bool {
 // Copilot CLI. The gate is keyed on the FIELD, inside the resolver, so no
 // current or future resolution path can forget to apply it.
 func harnessPinnedLaunchField(field string) bool {
-	return field == modelField || field == effortField || field == contextWindowMaxField
+	return field == "model_proxy" || field == modelField || field == effortField || field == contextWindowMaxField
 }
 
 // harnessMismatchSkipNote discloses a default tier skipped because the profile
@@ -6347,6 +6336,11 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 		}
 		fieldNote = ""
 	}
+	p.ModelProxy, _, fieldNote, fail = resolveStringLaunchField("model_proxy", p.ModelProxy, h.Name, tiers, func(prof *db.SpawnProfile) string { return prof.ModelProxy }, validateLaunchModelProxy(h))
+	if fail != nil {
+		return fail
+	}
+	noteLaunch()
 	p.Model, fieldSource, fieldNote, fail = resolveStringLaunchField(modelField, p.Model, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.Model }, h.Models.ValidateModel)
 	if fail != nil {

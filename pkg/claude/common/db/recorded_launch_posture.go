@@ -45,6 +45,9 @@ func ComposeAgentRelaunchProfile(base, overlay *AgentRelaunchProfile) *AgentRela
 	if overlay.ApprovalAutoReview != nil {
 		merged.ApprovalAutoReview = overlay.ApprovalAutoReview
 	}
+	if overlay.ModelProxy != nil {
+		merged.ModelProxy = overlay.ModelProxy
+	}
 	if overlay.ModelID != nil {
 		merged.ModelID = overlay.ModelID
 	}

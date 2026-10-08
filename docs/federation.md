@@ -1559,8 +1559,8 @@ A trusted machine can provide a named Anthropic Messages gateway to Claude
 Code workers on another machine. The provider key stays on the gateway machine;
 the worker receives a random, per-launch loopback bearer. Gateway traffic uses
 sealed federation control messages and an encrypted, flow-controlled hub stream.
-The relay cannot read prompts or responses. This first binding supports Claude
-Code only; it does not transfer subscriptions or implement requester billing.
+The relay cannot read prompts or responses. This first binding supports ordinary Claude
+Code workers only; non-interactive one-shot runs refuse a proxy choice; it does not transfer subscriptions or implement requester billing.
 
 Configure a named entry under `agent.http_proxies` on the gateway machine:
 

@@ -74,3 +74,30 @@ func TestModelUsageBoundsBeforeForwardingEvents(t *testing.T) {
 		require.Empty(t, w.Body.String())
 	}
 }
+
+func TestModelGatewaySharedDefaultResolutionAndExplicitOff(t *testing.T) {
+	setupTestDB(t)
+	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: "peer", PubKey: bytes.Repeat([]byte{1}, 32), Label: "gateway"}))
+	profile := &db.SpawnProfile{Name: "gateway-default", Harness: "claude", ModelProxy: "allowed@gateway"}
+	_, err := db.CreateSpawnProfile(profile)
+	require.NoError(t, err)
+	groupID, err := db.CreateAgentGroup("workers", "")
+	require.NoError(t, err)
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`UPDATE agent_groups SET default_spawn_profile=? WHERE id=?`, profile.Name, groupID)
+	require.NoError(t, err)
+	group, err := db.GetAgentGroupByID(groupID)
+	require.NoError(t, err)
+	for _, tc := range []struct{ harness, ref, want string }{{"claude", "", "allowed@peer"}, {"claude", "off", "off"}, {"codex", "", ""}} {
+		p := spawnParams{Harness: tc.harness, ModelProxy: tc.ref}
+		require.Nil(t, applyDefaultProfile(group, &p))
+		require.Equal(t, tc.want, p.ModelProxy)
+	}
+	launch, fail := resolveTemplateAgentLaunch(group, db.GroupTemplateAgent{ProfileInline: &db.SpawnProfile{Harness: "claude", ModelProxy: "allowed@gateway"}}, nil, "/tmp", "")
+	require.Nil(t, fail)
+	require.Equal(t, "allowed@peer", launch.ModelProxy)
+	_, fail = runNonInteractiveSpawn(context.Background(), spawnParams{ModelProxy: "allowed@peer"}, 1)
+	require.NotNil(t, fail)
+	require.Equal(t, "unsupported_model_proxy", fail.Kind)
+}

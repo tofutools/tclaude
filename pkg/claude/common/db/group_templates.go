@@ -193,6 +193,7 @@ type GroupTemplateAgent struct {
 // itself, and the spawn-dialog-only toggles (sync_worktree/auto_focus/
 // include_group_default_context) have no meaning for a template deploy.
 type templateInlineProfileJSON struct {
+	ModelProxy             string                           `json:"model_proxy,omitempty"`
 	Harness                string                           `json:"harness,omitempty"`
 	Model                  string                           `json:"model,omitempty"`
 	Effort                 string                           `json:"effort,omitempty"`
@@ -229,6 +230,7 @@ func inlineProfileToJSON(p *SpawnProfile) string {
 	}
 	b, err := json.Marshal(templateInlineProfileJSON{
 		Harness:                p.Harness,
+		ModelProxy:             p.ModelProxy,
 		Model:                  p.Model,
 		Effort:                 p.Effort,
 		Sandbox:                p.Sandbox,
@@ -273,6 +275,7 @@ func inlineProfileFromJSON(s string) *SpawnProfile {
 	}
 	return &SpawnProfile{
 		Harness:                j.Harness,
+		ModelProxy:             j.ModelProxy,
 		Model:                  j.Model,
 		Effort:                 j.Effort,
 		Sandbox:                j.Sandbox,

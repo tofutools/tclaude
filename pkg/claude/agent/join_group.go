@@ -112,6 +112,7 @@ func spawnParamsForJoinedSession(params *session.NewParams, group string) *Spawn
 		TaskLabel:              params.TaskLabel,
 		Effort:                 params.Effort,
 		Model:                  params.Model,
+		ModelProxy:             params.ModelProxy,
 		Harness:                params.Harness,
 		Sandbox:                params.Sandbox,
 		AskUserQuestionTimeout: params.AskUserQuestionTimeout,

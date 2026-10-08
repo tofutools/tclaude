@@ -10,6 +10,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 const PermModelsProxy = "models.proxy"
@@ -344,4 +345,20 @@ func handleModelProxyControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"name": in.Name, "peer": in.Peer, "disabled": in.Disabled})
+}
+
+func validateLaunchModelProxy(h *harness.Harness) func(string) (string, error) {
+	return func(ref string) (string, error) {
+		if ref == "off" {
+			return ref, nil
+		}
+		if !h.SupportsModelProxy() {
+			return "", errors.New("selected harness does not support model gateways")
+		}
+		peer, name, err := resolveModelProxyReference(ref)
+		if err != nil {
+			return "", err
+		}
+		return name + "@" + peer.InstanceID, nil
+	}
 }

@@ -323,8 +323,11 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 	modelProxy := ""
 	if agentProfile.ModelProxy != nil {
 		modelProxy = *agentProfile.ModelProxy
+		if modelProxy == "" {
+			modelProxy = "off"
+		}
 	}
-	if modelProxy != "" && !h.SupportsModelProxy() {
+	if modelProxy != "" && modelProxy != "off" && !h.SupportsModelProxy() {
 		return nil, fmt.Errorf("recorded model gateway is unsupported by %s", h.Name)
 	}
 	model := ""
