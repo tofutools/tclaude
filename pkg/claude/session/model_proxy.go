@@ -97,8 +97,9 @@ func (b *modelProxyBridge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
-	for _, name := range []string{"Content-Type", "Request-Id", "Retry-After"} {
-		if values := resp.Header.Values(name); len(values) > 0 {
+	for name, values := range resp.Header {
+		lower := strings.ToLower(name)
+		if lower == "content-type" || lower == "request-id" || lower == "retry-after" || lower == "x-should-retry" || strings.HasPrefix(lower, "anthropic-ratelimit-") {
 			w.Header()[name] = append([]string(nil), values...)
 		}
 	}

@@ -29,6 +29,9 @@ func TestModelProxyBridgeHashOnlyAndForeignBearer(t *testing.T) {
 			return
 		}
 		observed = true
+		w.Header().Set("X-Should-Retry", "false")
+		w.Header().Set("Anthropic-Ratelimit-Tokens-Remaining", "123")
+		w.Header().Set("Retry-After", "17")
 		require.Equal(t, "Bearer "+bearer, r.Header.Get("Authorization"))
 		_, _ = io.WriteString(w, `{"type":"message"}`)
 	}))
@@ -53,6 +56,9 @@ func TestModelProxyBridgeHashOnlyAndForeignBearer(t *testing.T) {
 		} else {
 			require.Equal(t, 200, rec.Code)
 			require.True(t, observed)
+			require.Equal(t, "false", rec.Header().Get("X-Should-Retry"))
+			require.Equal(t, "123", rec.Header().Get("Anthropic-Ratelimit-Tokens-Remaining"))
+			require.Equal(t, "17", rec.Header().Get("Retry-After"))
 		}
 	}
 }
