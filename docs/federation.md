@@ -1049,3 +1049,43 @@ Configure capacity in `~/.tclaude/data/config.json`:
 Zero (the default) means unlimited. The maximum is advertised capacity, not
 an admission limit or resource reservation. Existing peers without a node block
 continue to work and do not appear in `nodes`.
+
+### Local node pools
+
+Pools collect trusted peers under a local name. They are operator-managed and
+are never published to a peer or hub. Pools cannot contain other pools.
+
+```bash
+tclaude federation nodes groups create test-rigs
+tclaude federation nodes groups add test-rigs bob
+tclaude federation nodes groups ls --json
+tclaude federation grant group:test-rigs node.read
+tclaude federation grant group:test-rigs groups.members.spawn --scope group=builders
+tclaude federation grants bob
+tclaude agent permissions grant lead agent.share --scope peer=group:test-rigs/builders
+tclaude federation nodes groups rm test-rigs bob
+tclaude federation nodes groups rm test-rigs
+```
+
+`group` is an alias for `groups`. Adding a member immediately applies every pool
+grant; removing or untrusting a peer immediately removes inherited authority.
+Direct grants remain additive. Listing a concrete peer's grants shows inherited
+policies and their pool names; listing `group:test-rigs` shows the pool policy.
+Untrusting also deletes membership, so trusting the same peer again does not
+restore it. Each pool has an immutable ID. Deleting and recreating its name
+cannot revive old grants or agent permission scopes.
+
+Agent `peer=group:<pool>` scopes are resolved against current trusted membership
+on every check, after a concrete peer has been chosen. An optional `/builders`
+suffix restricts the remote group. Missing pools, removed members and database
+errors fail closed. Stored scopes use the immutable pool ID rather than its name.
+The placement seam accepts `group:<pool>` and reports an explicit error for a
+missing or empty pool; placement still applies the requested capability filters.
+
+For spawn policies, the most specific local group scope wins. Among equally
+specific matches, an explicit peer policy takes precedence over pool policies.
+Unequal pool policies at the winning specificity block spawning until the
+operator resolves the conflict. `max_live` remains a per-peer limit, rather than
+a shared pool budget. Pool authority changes also invalidate pending delegated
+approval epochs, preventing a removed and re-added member from answering an
+old approval request.

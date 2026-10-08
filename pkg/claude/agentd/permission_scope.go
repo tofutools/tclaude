@@ -252,6 +252,24 @@ func normalizePeerScopeForSlug(slug string, scope PermissionScope) (string, erro
 			if slug == PermAgentSpawn && grouped {
 				return "", fmt.Errorf("agent.spawn peer scope must name only a peer, without a group")
 			}
+			if strings.HasPrefix(ref, "group:") || strings.HasPrefix(ref, db.FederationNodeGroupScopePrefix) {
+				var pool *db.FederationNodeGroup
+				var err error
+				if strings.HasPrefix(ref, "group:") {
+					pool, err = db.GetFederationNodeGroup(strings.TrimPrefix(ref, "group:"))
+				} else {
+					pool, err = db.GetFederationNodeGroupByID(strings.TrimPrefix(ref, db.FederationNodeGroupScopePrefix))
+				}
+				if err != nil {
+					return "", err
+				}
+				value := db.FederationNodeGroupScopePrefix + pool.ID
+				if grouped {
+					value += "/" + group
+				}
+				scope[ScopeDimPeer][i] = value
+				continue
+			}
 			peer, err := resolveFederationPeerOpt(ref, false)
 			if err != nil {
 				return "", err

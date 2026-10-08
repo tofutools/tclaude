@@ -1,0 +1,50 @@
+package db
+
+import (
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
+	"testing"
+)
+
+func TestFederationNodeGroupLiveMembershipAndTrust(t *testing.T) {
+	setupTestDB(t)
+	id, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, TrustFederationPeer(FederationPeer{InstanceID: id.ID(), PubKey: id.Pub, Label: "worker"}))
+	g, err := CreateFederationNodeGroup("rigs")
+	require.NoError(t, err)
+	require.NoError(t, UpsertFederationNodeGroupGrant(g.ID, FederationPeerGrant{Slug: "config.offer"}))
+	_, err = ListFederationNodeGroupPeers("rigs")
+	require.ErrorIs(t, err, ErrNodeGroupEmpty)
+	require.NoError(t, AddFederationNodeGroupPeer(g.ID, id.ID()))
+	peers, err := ListFederationNodeGroupPeers("rigs")
+	require.NoError(t, err)
+	require.Len(t, peers, 1)
+	grants, err := ListEffectiveFederationPeerGrants(id.ID())
+	require.NoError(t, err)
+	require.Len(t, grants, 1)
+	require.Equal(t, g.ID, grants[0].PoolID)
+	require.NoError(t, RemoveFederationNodeGroupPeer(g.ID, id.ID()))
+	grants, err = ListEffectiveFederationPeerGrants(id.ID())
+	require.NoError(t, err)
+	require.Empty(t, grants)
+	require.NoError(t, AddFederationNodeGroupPeer(g.ID, id.ID()))
+	_, err = UntrustFederationPeer(id.ID())
+	require.NoError(t, err)
+	require.NoError(t, TrustFederationPeer(FederationPeer{InstanceID: id.ID(), PubKey: id.Pub, Label: "worker"}))
+	has, err := FederationNodeGroupContainsID(g.ID, id.ID())
+	require.NoError(t, err)
+	require.False(t, has, "retrust cannot resurrect membership")
+	require.NoError(t, AddFederationNodeGroupPeer(g.ID, id.ID()))
+	require.NoError(t, DeleteFederationNodeGroup(g.ID))
+	replacement, err := CreateFederationNodeGroup("rigs")
+	require.NoError(t, err)
+	require.NotEqual(t, g.ID, replacement.ID)
+	require.NoError(t, AddFederationNodeGroupPeer(replacement.ID, id.ID()))
+	has, err = FederationNodeGroupContainsID(g.ID, id.ID())
+	require.NoError(t, err)
+	require.False(t, has)
+	grants, err = ListEffectiveFederationPeerGrants(id.ID())
+	require.NoError(t, err)
+	require.Empty(t, grants, "deleted pool grants never bind its replacement")
+}
