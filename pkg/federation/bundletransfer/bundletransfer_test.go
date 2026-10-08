@@ -82,3 +82,13 @@ func TestDescriptorBoundsAndInline(t *testing.T) {
 		require.Error(t, copy.Validate(Config, now))
 	}
 }
+
+func TestAgentDescriptorRequiresReceivingGroup(t *testing.T) {
+	now := time.Now()
+	d := New(Agent, []byte("archive"), "Agent offer", now.Add(time.Hour))
+	require.Error(t, d.Validate(Agent, now))
+	d.Group = "receiver"
+	require.NoError(t, d.Validate(Agent, now))
+	d.Bytes = Agent.MaxBytes + 1
+	require.Error(t, d.Validate(Agent, now))
+}

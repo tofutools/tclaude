@@ -1603,7 +1603,7 @@ CREATE TABLE federation_bundle_offers (
  last_error TEXT NOT NULL DEFAULT '',
  result_queued INTEGER NOT NULL DEFAULT 0,
  created_at INTEGER NOT NULL,
- expires_at INTEGER NOT NULL,
+ expires_at INTEGER NOT NULL, group_id INTEGER NOT NULL DEFAULT 0, sender_agent TEXT NOT NULL DEFAULT '', import_agent TEXT NOT NULL DEFAULT '', import_label TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(direction,peer,id)
  ) STRICT;
 
