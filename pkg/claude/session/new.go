@@ -1133,6 +1133,11 @@ func runNew(params *NewParams) error {
 	// operator never believes a flag took effect that tclaude silently dropped.
 	// Placed after the pass-through branch above, which starts no session and
 	// therefore has no recorded posture to contradict.
+	if params.ModelProxy != "" {
+		if err := validateModelProxyExtraArgs(extraArgs); err != nil {
+			return err
+		}
+	}
 	if err := harness.ValidateLaunchExtraArgs(h, extraArgs); err != nil {
 		return err
 	}

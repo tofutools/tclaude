@@ -173,3 +173,13 @@ func validateModelProxySettings(cwd string, environment []string) error {
 	}
 	return nil
 }
+
+func validateModelProxyExtraArgs(args []string) error {
+	for _, arg := range args {
+		flag, _, _ := strings.Cut(arg, "=")
+		if flag == "--settings" {
+			return errors.New("--model-proxy cannot combine with pass-through --settings; remove the override so the gateway can verify provider settings")
+		}
+	}
+	return nil
+}

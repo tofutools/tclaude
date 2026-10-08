@@ -471,8 +471,12 @@ func HTTPProxySpawnCommand(sessionID string, h *harness.Harness, spec harness.Sp
 	}
 	spec.ShellEnvironment = filteredEnvironment
 	if spec.ModelProxy != "" {
+		// Compose operator environment before the bridge so its preflight and
+		// credential filtering see the environment the harness would inherit.
+		prefix := spec.EnvExports + spec.PreLaunchScript
+		spec.EnvExports, spec.PreLaunchScript = "", ""
 		command := renderHTTPProxyCommand(sessionID, h.Spawn.BuildCommand(spec), false, nil, cliPath...)
-		return strings.Replace(command, " session http-proxy-exec", " session http-proxy-exec --model-proxy "+clcommon.ShellQuoteArg(spec.ModelProxy), 1)
+		return prefix + strings.Replace(command, " session http-proxy-exec", " session http-proxy-exec --model-proxy "+clcommon.ShellQuoteArg(spec.ModelProxy), 1)
 	}
 	cfg, err := config.Load()
 	if err != nil || !cfg.HTTPProxyConfigured() || h.UsesAuthoritativeServer() {
