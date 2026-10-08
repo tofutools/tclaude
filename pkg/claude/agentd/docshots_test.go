@@ -48,6 +48,7 @@ type docAgent struct {
 	// branch the agent moved to — the dashboard stacks the two as INIT/NOW.
 	startBranch, nowBranch string
 	taskURL, taskLabel     string
+	descr                  string
 	tags                   []string
 	age, last              time.Duration
 }
@@ -105,8 +106,11 @@ func TestDocShots(t *testing.T) {
 		Key:     "dashboard-groups",
 		Title:   "Groups — mixed-harness fleet",
 		Caption: "README / docs hero image.",
-		JS:      showGroups + expandMain + `document.body.classList.add('dock-open');`,
-		Width:   1760, Height: 1000,
+		JS: showGroups + expandMain + `document.body.classList.add('dock-open');
+var prs = document.querySelector('.open-prs-trigger');
+if (!prs) throw new Error('open PRs indicator missing');
+prs.click();`,
+		Width: 1760, Height: 1300,
 		SettleMS: 400,
 	}}
 
@@ -131,14 +135,14 @@ func seedDocFleet(t *testing.T, f *testharness.Flow) {
 	t.Helper()
 
 	// Collapsed neighbours, so the tree reads like a real installation.
-	for _, g := range []string{"data-pipeline", "infra", "docs-site", "mobile-app"} {
+	for _, g := range []string{"data-pipeline", "infra"} {
 		f.HaveGroup(g)
 	}
 	main := f.HaveGroup("webshop")
 	if _, err := db.SetAgentGroupDefaultCwd("webshop", docHome+"/git/webshop"); err != nil {
 		t.Fatalf("group cwd: %v", err)
 	}
-	for _, sub := range []string{"webshop-release-2.4", "webshop-perf", "webshop-a11y"} {
+	for _, sub := range []string{"webshop-release-2.4", "webshop-perf"} {
 		g := f.HaveGroup(sub)
 		if _, err := db.SetAgentGroupParent(g.ID, "webshop"); err != nil {
 			t.Fatalf("nest %s: %v", sub, err)
@@ -146,26 +150,26 @@ func seedDocFleet(t *testing.T, f *testharness.Flow) {
 	}
 
 	agents := []docAgent{
-		{conv: "d0c00000-0000-4000-8000-000000000001", title: "lead", role: "lead", owner: true,
+		{conv: "d0c00000-0000-4000-8000-000000000001", title: "lead", descr: "Plans the sprint, reviews and merges", role: "lead", owner: true,
 			harness: "claude", model: "Opus 5.5", effort: "high", status: "idle", online: true, cost: 41.20,
 			startBranch: "main", taskURL: "https://linear.app/acme/issue/SHOP-212", taskLabel: "SHOP-212",
 			age: 26 * time.Hour, last: 4 * time.Minute},
-		{conv: "d0c00000-0000-4000-8000-000000000002", title: "checkout-ui", role: "dev",
+		{conv: "d0c00000-0000-4000-8000-000000000002", title: "checkout-ui", taskURL: "https://linear.app/acme/issue/SHOP-198", taskLabel: "SHOP-198", descr: "Checkout page redesign", role: "dev",
 			harness: "claude", model: "Sonnet 5.5", effort: "medium", status: "working", detail: "Edit", online: true, cost: 6.85,
 			startBranch: "main", nowBranch: "checkout-redesign", age: 3 * time.Hour, last: 8 * time.Second},
-		{conv: "d0c00000-0000-4000-8000-000000000003", title: "search-indexer", role: "dev",
+		{conv: "d0c00000-0000-4000-8000-000000000003", title: "search-indexer", taskURL: "https://linear.app/acme/issue/SHOP-205", taskLabel: "SHOP-205", descr: "Search relevance v2", role: "dev",
 			harness: "codex", model: "gpt-6.1-sol", effort: "high", status: "working", detail: "Bash", online: true, cost: 12.40,
 			startBranch: "search-index-v2", nowBranch: "search-reranker", age: 5 * time.Hour, last: 3 * time.Second},
-		{conv: "d0c00000-0000-4000-8000-000000000004", title: "onboarding-copy", role: "dev",
+		{conv: "d0c00000-0000-4000-8000-000000000004", title: "onboarding-copy", taskURL: "https://linear.app/acme/issue/SHOP-219", taskLabel: "SHOP-219", descr: "Onboarding copy refresh", role: "dev",
 			harness: "gemini", model: "gemini-3-pro", status: "idle", online: true, cost: 2.10,
 			startBranch: "gemini-onboarding", age: 90 * time.Minute, last: 12 * time.Minute},
-		{conv: "d0c00000-0000-4000-8000-000000000005", title: "payments-fix", role: "dev",
+		{conv: "d0c00000-0000-4000-8000-000000000005", title: "payments-fix", taskURL: "https://linear.app/acme/issue/SHOP-207", taskLabel: "SHOP-207", descr: "Retry failed card payments", role: "dev",
 			harness: "copilot", model: "gpt-6-luna", effort: "xhigh", status: "awaiting_permission", online: true, cost: 4.75,
 			startBranch: "payments-retry", age: 2 * time.Hour, last: 45 * time.Second},
-		{conv: "d0c00000-0000-4000-8000-000000000006", title: "cold-reviewer", role: "reviewer",
+		{conv: "d0c00000-0000-4000-8000-000000000006", title: "cold-reviewer", descr: "Fresh-eyes PR review", role: "reviewer",
 			harness: "opencode", model: "openai/gpt-5.6-sol", effort: "medium", status: "idle", online: true, cost: 1.30,
 			startBranch: "main", tags: []string{"review"}, age: 40 * time.Minute, last: 20 * time.Minute},
-		{conv: "d0c00000-0000-4000-8000-000000000007", title: "perf-audit", role: "dev",
+		{conv: "d0c00000-0000-4000-8000-000000000007", title: "perf-audit", taskURL: "https://linear.app/acme/issue/SHOP-176", taskLabel: "SHOP-176", descr: "Lighthouse budget", role: "dev",
 			harness: "claude", model: "Opus 5.5", effort: "medium", online: false, cost: 9.60,
 			startBranch: "lighthouse-budget", age: 30 * time.Hour, last: 26 * time.Hour},
 	}
@@ -178,6 +182,17 @@ func seedDocFleet(t *testing.T, f *testharness.Flow) {
 		t.Fatalf("cost config: %v", err)
 	}
 	seedDocUsage(t)
+	clearLogin, err := agentd.SeedAuthoredOpenPRsForTest("acme-dev", docRepo, []agentd.AuthoredOpenPRForTest{
+		{Number: 1491, Title: "Rerank search results with click signals", Draft: true, Passed: 2},
+		{Number: 1488, Title: "Refresh onboarding copy", Passed: 12},
+		{Number: 1482, Title: "Checkout page redesign", Passed: 14},
+		{Number: 1477, Title: "Search index v2", Passed: 9, Pending: 3},
+		{Number: 1469, Title: "Retry failed card payments", Passed: 11, Failed: 1},
+	})
+	if err != nil {
+		t.Fatalf("seed open PRs: %v", err)
+	}
+	t.Cleanup(clearLogin)
 	seedUsageHistoryDashSnap(t) // the Usage tab only appears once history exists
 	seedDocProfiles(t)
 }
@@ -236,6 +251,11 @@ func seedDocAgent(t *testing.T, f *testharness.Flow, groupID int64, group string
 	}
 	if err := db.UpdateSessionVirtualCost(label, a.cost); err != nil {
 		t.Fatalf("cost %s: %v", a.title, err)
+	}
+	if a.descr != "" {
+		if _, err := db.UpdateAgentGroupMember(groupID, a.conv, nil, &a.descr); err != nil {
+			t.Fatalf("descr %s: %v", a.title, err)
+		}
 	}
 	if a.owner {
 		if err := db.AddAgentGroupOwner(groupID, a.conv, "docshots"); err != nil {

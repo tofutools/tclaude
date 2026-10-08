@@ -11,9 +11,9 @@ It is served by the `agentd` daemon and is human-only: agents talk to `agentd`
 over its API, not through this UI. For the daemon itself and how agents relate
 to it, see [Agents and groups](agents-and-groups.md).
 
-![The Groups home view: a mixed-harness group with per-agent state, cost, branches with PR and CI status, roles, task links — and the profile/template/role libraries on the right rail](assets/dashboard-groups.png)
+![The Groups home view: a mixed-harness group with per-agent state, cost, branches with PR and CI status, roles, task links, the open-PRs popover — and the profile/template/role libraries on the right rail](assets/dashboard-groups.png)
 
-*The Groups home view: a mixed-harness group with per-agent state, cost, branches with PR and CI status, roles, task links — and the profile/template/role libraries on the right rail*
+*The Groups home view: a mixed-harness group with per-agent state, cost, branches with PR and CI status, roles, task links, the open-PRs popover — and the profile/template/role libraries on the right rail*
 
 ## Opening it
 
