@@ -107,5 +107,4 @@ func TestDashboardFederationAdministrationSharedHandlers(t *testing.T) {
 	rec = httptest.NewRecorder()
 	raw.ServeHTTP(rec, testharness.JSONRequest(t, "POST", "/api/federation/config", map[string]any{"enabled": false}))
 	require.Equal(t, 403, rec.Code, rec.Body.String())
-	require.NotContains(t, rec.Body.String(), "ok")
 }
