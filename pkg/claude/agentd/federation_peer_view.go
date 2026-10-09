@@ -246,7 +246,7 @@ func peerViewRequestHeaders(h http.Header) http.Header {
 
 func peerViewReplyHeaders(h http.Header) http.Header {
 	out := make(http.Header)
-	for _, key := range []string{"Content-Type", "Cache-Control", "ETag", "Vary"} {
+	for _, key := range []string{"Content-Type", "ETag", "Vary"} {
 		if v := h.Get(key); v != "" {
 			out.Set(key, v)
 		}

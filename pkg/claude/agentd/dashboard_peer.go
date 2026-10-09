@@ -21,6 +21,11 @@ func handleDashboardPeer(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
+	servePeerViewProxy(w, r)
+}
+
+// Both local operator surfaces use the same pinned peer transport.
+func servePeerViewProxy(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; frame-ancestors 'none'")

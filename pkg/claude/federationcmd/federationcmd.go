@@ -57,7 +57,7 @@ func Cmd() *cobra.Command {
 		SubCmds: []*cobra.Command{
 			statusCmd(), identityCmd(), connectCmd(), disconnectCmd(), auditCmd(),
 			jobsCmd(), reposCmd(), modelsCmd(), peersCmd(), trustCmd(), untrustCmd(), nodeProfilesCmd(), enrollTokenCmd(), enrollCmd(), enrollmentsCmd(),
-			grantCmd(), revokeCmd(), grantsCmd(), remoteCmd(), nodesCmd(), nodeLabelsCmd(), sessionsCmd(), attachCmd(), viewersCmd(), kickCmd(),
+			grantCmd(), revokeCmd(), grantsCmd(), remoteCmd(), peerViewCmd(), nodesCmd(), nodeLabelsCmd(), sessionsCmd(), attachCmd(), viewersCmd(), kickCmd(),
 			sendCmd(), outboxCmd(), notifyCmd(), inboxCmd(), awayCmd(), returnCmd(), answerCmd(),
 			spawnRequestCmd(), requestsCmd(), offerConfigCmd(), offersCmd(), shareAgentCmd(), moveAgentCmd(), movesCmd(), teleportControlCmd(),
 		},
@@ -182,12 +182,12 @@ type jsonParam struct {
 // --- status / identity ---
 
 func statusCmd() *cobra.Command {
-	return boa.CmdT[jsonParam]{
+	return boa.CmdT[statusParams]{
 		Use:         "status",
 		Short:       "Show identity, hub connection, peers, peer grants",
 		ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *jsonParam, _ *cobra.Command, _ []string) {
-			os.Exit(runStatus(p, os.Stdout, os.Stderr))
+		RunFunc: func(p *statusParams, _ *cobra.Command, _ []string) {
+			os.Exit(runStatusOptions(p, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
 }

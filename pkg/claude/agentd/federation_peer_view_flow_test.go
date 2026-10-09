@@ -130,12 +130,13 @@ func TestFederationPeerViewProxyWireAndFailures(t *testing.T) {
 	require.Equal(t, `"map-version"`, wire.Header.Get("If-None-Match"))
 	require.Empty(t, wire.Header.Get("Cookie"))
 	require.Empty(t, wire.Header.Get("Authorization"))
-	writePeerViewWire(t, conn, peerViewWire{Status: 304, Header: http.Header{"Etag": {`"map-version"`}, "Cache-Control": {"private, no-cache"}, "Set-Cookie": {"remote-cookie=secret"}}})
+	writePeerViewWire(t, conn, peerViewWire{Status: 304, Header: http.Header{"Etag": {`"map-version"`}, "Cache-Control": {"public, max-age=31536000"}, "Set-Cookie": {"remote-cookie=secret"}}})
 	rec := readResult(ch)
 	require.Equal(t, 304, rec.Code, rec.Body.String())
 	require.Empty(t, rec.Body.String())
 	require.Equal(t, `"map-version"`, rec.Header().Get("ETag"))
 	require.Empty(t, rec.Header().Get("Set-Cookie"))
+	require.Equal(t, "private, no-store", rec.Header().Get("Cache-Control"))
 	_ = conn.Close()
 	ch = request("POST", "operator-message", map[string]any{"to": "hidden", "body": "remote"})
 	conn = acceptOutboundPeerView(t, p, 1)
@@ -214,4 +215,35 @@ func TestFederationPeerViewIncomingDispatcherAndRevocation(t *testing.T) {
 	writePeerViewWire(t, c, peerViewWire{Method: "GET", URI: "/api/snapshot"})
 	reply = readPeerViewWire(t, c)
 	require.Equal(t, 403, reply.Status, string(reply.Body))
+}
+
+func TestFederationPeerViewOperatorAPI(t *testing.T) {
+	fh := newFedHarness(t)
+	local := fedHuman(t, fh.f, http.MethodGet, "/v1/federation/node-summary", nil)
+	require.Equal(t, 200, local.Code, local.Body.String())
+	require.Contains(t, local.Body.String(), "shared_agents")
+	require.NotEmpty(t, local.Header().Get("ETag"))
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- fedHuman(t, fh.f, http.MethodGet, "/v1/federation/peer/bob/node-summary?scope=visible", nil)
+	}()
+	conn := acceptOutboundPeerView(t, fh.peer, 0)
+	request := readPeerViewWire(t, conn)
+	require.Equal(t, "/api/node-summary?scope=visible", request.URI)
+	writePeerViewWire(t, conn, peerViewWire{Status: 200, Body: []byte(`{"shared_groups":0,"peer_view":{"omitted":[]}}`), Header: http.Header{"Cache-Control": {"public, max-age=31536000"}}})
+	select {
+	case rec := <-done:
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+		require.Equal(t, "private, no-store", rec.Header().Get("Cache-Control"))
+	case <-time.After(5 * time.Second):
+		t.Fatal("operator proxy did not return")
+	}
+	_ = conn.Close()
+	unknown := fedHuman(t, fh.f, http.MethodGet, "/v1/federation/peer/unknown/snapshot", nil)
+	require.Equal(t, 404, unknown.Code)
+	fh.f.HaveEnrolledAgent("reader")
+	for _, path := range []string{"/v1/federation/node-summary", "/v1/federation/peer/bob/snapshot"} {
+		rec := testharness.Serve(fh.f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, path, nil), "reader"))
+		require.Equal(t, 403, rec.Code, rec.Body.String())
+	}
 }

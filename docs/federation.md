@@ -2248,3 +2248,55 @@ Terminal websocket attach continues to use the existing federation sessions
 watch/attach API. This JSON proxy does not yet adapt it under the per-node
 prefix. Remote terminal image uploads remain a separate feature; they need
 staging at the owning instance with the same interactive attach authorization.
+
+### Live peer views from the CLI
+
+The operator CLI uses the same pinned peer transport and authorization as the
+per-node dashboard. It does not introduce remote administrator authority.
+
+```bash
+tclaude federation status --summary --json
+tclaude federation nodes --summary --json
+tclaude federation nodes --node bob --json
+tclaude federation nodes --node self --json
+tclaude federation view snapshot --node bob
+tclaude federation view 'node-summary' --node bob
+tclaude federation view 'costs?page=1' --node bob
+tclaude federation view 'audit?page=1' --node bob
+tclaude agent ls --node bob --json
+tclaude agent ls --node bob --group builders --json
+tclaude agent groups ls --node bob --json
+```
+
+`--node` accepts a pinned instance ID, an unambiguous ID prefix of at least
+8 characters, or a locally assigned peer label. Summary listings additionally
+accept `self` for the local instance. Hub-reported names do not select peers.
+Normal `federation nodes` still reads the cached node capability catalog under
+its existing `node.read` policy; live summaries and live peer views are
+operator reads. The local daemon APIs are `GET /v1/federation/node-summary`
+and `GET /v1/federation/peer/{node}/{tail...}`.
+
+A summary listing explicitly fetches self and trusted peers in the CLI, with
+at most four concurrent requests, no retries, and deterministic output order.
+Peers without `node.read` still supply their authorized shared-group counts;
+resource health remains withheld. Each JSON row contains identity, local
+label, trust level, directory presence and last-seen time, and either `summary`
+(including the peer's omission metadata) or `error` (including its stable code,
+reason, and last-seen when supplied). Partial failures return a nonzero exit
+status while preserving successful rows. A successful live read marks the
+row online even if the cached directory has not caught up.
+
+`federation view` returns the full JSON response, including `peer_view`, and
+preserves structured failure JSON on stderr. The `agent ls --node` and
+`agent groups ls --node` JSON outputs are envelopes with `agents` or `groups`
+and `peer_view`; local listing output retains its existing schema. Remote
+text listings describe reported status rather than treating withheld fields
+as offline. Remote listings reject `--state`, since permissions can withhold
+presence for individual groups. `--archived`, `--no-cache`, and `--remote`
+retain their existing local meanings and cannot combine with the remote
+listing flags. The peer dashboard audit is read with `federation view audit`;
+`federation audit` continues to read the local federation activity ledger.
+
+Proxied responses always keep the local `private, no-store` cache policy.
+Peers cannot replace it with a public or long-lived policy. ETag validators
+continue to pass through for client-managed revalidation.
