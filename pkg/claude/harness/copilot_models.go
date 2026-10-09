@@ -19,6 +19,7 @@ var copilotKnownModels = []string{
 	"claude-sonnet-5",
 	"claude-sonnet-4.6",
 	"claude-sonnet-4.5",
+	"claude-haiku-5.5",
 	"claude-haiku-4.5",
 	"claude-fable-5",
 	"claude-opus-5.5",
@@ -93,6 +94,8 @@ func CopilotContextWindowDefault(model string) int64 {
 	switch {
 	case strings.HasPrefix(model, "gpt-5.6"):
 		return CopilotContextWindow
+	case model == "claude-haiku-5.5":
+		return 1_000_000
 	case strings.HasPrefix(model, "claude-haiku"):
 		return 200_000
 	case strings.HasPrefix(model, "claude-"):

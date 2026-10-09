@@ -135,6 +135,17 @@ setup repairs them.
 ID. `--effort` is
 `low`/`medium`/`high`/`xhigh`/`max`. Empty means "let the harness decide".
 
+Haiku 5.5 uses the pinned API ID `claude-haiku-5-5` and a native 1M-token
+window; no `[1m]` suffix is needed. With Claude Code v2.1.293 or later,
+`haiku` resolves to 5.5 on the Anthropic API and to 4.5 on some other
+providers. tclaude forwards the alias unchanged and displays the model,
+window, and cost Claude Code reports. See [Claude Code model configuration](https://code.claude.com/docs/en/model-config).
+Haiku 5.5's API rates increase for prompts over 100K tokens; OpenCode uses
+its runtime provider catalog for these tiers, so its cost reporting requires
+that catalog to include the model and its rates. Copilot's `claude-haiku-5.5`
+suggestion is prepared ahead of its pinned CLI catalog; Copilot determines
+availability and reports cost in native usage credits.
+
 **Sandbox.** Claude Code's own OS sandbox is configured in `settings.json`,
 not a launch flag, so tclaude's `--sandbox` delivers a per-session settings
 override with three modes:

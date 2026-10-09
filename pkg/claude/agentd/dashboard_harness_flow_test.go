@@ -157,7 +157,7 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.Equal(t, "GitHub Copilot CLI", copilot.DisplayName)
 	assert.Equal(t, harness.MustGet(harness.CopilotName).Models.Models(), copilot.Models,
 		"the dashboard must expose the complete Copilot model catalog")
-	assert.Len(t, copilot.Models, 33, "auto plus the 32 concrete Copilot model suggestions")
+	assert.Len(t, copilot.Models, 34, "auto plus the 33 concrete Copilot model suggestions")
 	assert.Equal(t, harness.MustGet(harness.CopilotName).SupportsAwaitingInputObservation(),
 		copilot.CanObserveAwaitingInput, "awaiting-input observation follows the harness registry")
 }
