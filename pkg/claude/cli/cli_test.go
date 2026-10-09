@@ -3,6 +3,9 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 // failingRoot builds a root carrying one ordinary subcommand and one that has
@@ -110,4 +114,28 @@ func TestExecuteLeavesHelpToCobra(t *testing.T) {
 	assert.Contains(t, stderr.String(), "argv tclaude writes for itself",
 		"declining a usage block on failure does not decline the help someone asked for")
 	assert.NotContains(t, stderr.String(), "Error:")
+}
+
+func TestRunEnablesManagedHarnessDiscovery(t *testing.T) {
+	home := testutil.CanonicalTempDir(t)
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".local", "share", "tclaude", "harnesses", "npm", "bin")
+	require.NoError(t, os.MkdirAll(dir, 0700))
+	path := filepath.Join(dir, "codex")
+	require.NoError(t, os.WriteFile(path, []byte("#!/bin/sh\n"), 0700))
+	t.Setenv("PATH", "/usr/bin")
+	called := false
+	rc := run("", func() *cobra.Command {
+		cmd := &cobra.Command{Use: "test", RunE: func(*cobra.Command, []string) error {
+			called = true
+			got, err := exec.LookPath("codex")
+			require.NoError(t, err)
+			require.Equal(t, path, got)
+			return nil
+		}}
+		cmd.SetArgs([]string{})
+		return cmd
+	})
+	require.Zero(t, rc)
+	require.True(t, called)
 }

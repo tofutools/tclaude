@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -21,6 +22,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/probehelper"
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/common/buildversion"
+	"github.com/tofutools/tclaude/pkg/common/harnesspath"
 )
 
 // Main runs a tclaude binary end to end and never returns: it dispatches
@@ -46,6 +48,14 @@ func Main(version string, newRoot func() *cobra.Command) {
 
 func run(version string, newRoot func() *cobra.Command) int {
 	buildversion.SetStampedVersion(version)
+	if home, err := os.UserHomeDir(); err == nil {
+		if home, err = filepath.EvalSymlinks(home); err == nil {
+			if err := harnesspath.Enable(home); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+		}
+	}
 	cmd := newRoot()
 	cmd.Version = buildversion.AppVersion()
 	if err := execute(os.Stderr, cmd); err != nil {

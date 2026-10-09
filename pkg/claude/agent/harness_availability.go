@@ -73,13 +73,17 @@ func runHarnessLs(p *harnessLsParams, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "Probe: %s (refresh after %s)\n", data.ObservedAt.Format(time.RFC3339), data.RefreshAfter.Format(time.RFC3339))
 	tw := tabwriter.NewWriter(stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "HARNESS\tINSTALLED\tPATH\tVERSION\tCREDENTIAL PRESENT\tUSABLE")
+	fmt.Fprintln(tw, "HARNESS\tINSTALLED\tPATH\tVERSION\tLATEST\tUPDATE AVAILABLE\tCREDENTIAL PRESENT\tUSABLE")
 	for _, h := range data.Harnesses {
 		version := h.Version
 		if version == "" {
 			version = h.VersionStatus
 		}
-		fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%s\t%s\n", cell(h.Name), h.Installed, cell(h.Path), cell(version), flag(h.CredentialPresent), flag(h.Usable))
+		latest := h.LatestVersion
+		if latest == "" {
+			latest = "unknown"
+		}
+		fmt.Fprintf(tw, "%s\t%t\t%s\t%s\t%s\t%s\t%s\t%s\n", cell(h.Name), h.Installed, cell(h.Path), cell(version), cell(latest), flag(h.UpdateAvailable), flag(h.CredentialPresent), flag(h.Usable))
 	}
 	if err := tw.Flush(); err != nil {
 		return rcIOFailure

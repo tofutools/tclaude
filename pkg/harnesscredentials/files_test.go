@@ -75,3 +75,32 @@ func TestCredentialBundleRejectsForeignPathsAndOversize(t *testing.T) {
 		require.Error(t, b.Validate())
 	}
 }
+
+func TestGeminiConfiguredHomeAndClaudeReceivingRoot(t *testing.T) {
+	home := homeFixture(t)
+	configured := testutil.CanonicalTempDir(t)
+	t.Setenv("GEMINI_CLI_HOME", configured)
+	dir := filepath.Join(configured, ".gemini")
+	require.NoError(t, os.Mkdir(dir, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "oauth_creds.json"), []byte(`{"token":"source"}`), 0600))
+	b, err := Capture(home, "gemini")
+	require.NoError(t, err)
+	target := testutil.CanonicalTempDir(t)
+	t.Setenv("GEMINI_CLI_HOME", target)
+	receipt, err := Receive(home, filepath.Join(home, "private"), b, false, func() bool { return true })
+	require.NoError(t, err)
+	require.True(t, receipt.Copied)
+	raw, err := os.ReadFile(filepath.Join(target, ".gemini", "oauth_creds.json"))
+	require.NoError(t, err)
+	require.Equal(t, `{"token":"source"}`, string(raw))
+	_, err = os.Stat(filepath.Join(home, ".gemini"))
+	require.True(t, os.IsNotExist(err))
+	t.Setenv("CLAUDE_CONFIG_DIR", configured)
+	b = Bundle{Harness: "claude", Files: []File{{".credentials.json", []byte(`{"token":"claude-source"}`)}}}
+	_, err = Receive(home, filepath.Join(home, "private"), b, false, func() bool { return true })
+	require.NoError(t, err)
+	_, err = os.Stat(filepath.Join(home, ".claude", ".credentials.json"))
+	require.NoError(t, err)
+	_, err = os.Stat(filepath.Join(configured, ".credentials.json"))
+	require.True(t, os.IsNotExist(err))
+}

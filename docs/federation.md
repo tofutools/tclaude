@@ -2496,7 +2496,8 @@ are refused and new auth files have mode 0600.
 
 File copy supports Claude's `.credentials.json`, Codex's `auth.json`, OpenCode's
 `auth.json`, and Gemini's OAuth/account files in their standard directories.
-Configured Claude/Codex/XDG directories on each node are respected. Keychain-only,
+Configured Codex/Gemini/XDG directories on each node are respected. Claude capture
+honors the sender configuration; receiving uses tclaude's pinned `~/.claude` state root. Keychain-only,
 Copilot, and environment-only credentials need the target's own login flow;
 secret stores and ambient environment variables are never exported. Bundles are
 bounded to 18 KiB. The local daemon captures files only after explicit operator

@@ -44,10 +44,13 @@ type backup struct {
 	Files   []savedFile `json:"files"`
 }
 
-func location(home, name string) (string, []string, error) {
+func location(home, name string, receiving bool) (string, []string, error) {
 	switch name {
 	case "claude":
 		dir := os.Getenv("CLAUDE_CONFIG_DIR")
+		if receiving {
+			dir = ""
+		}
 		if dir == "" {
 			dir = filepath.Join(home, ".claude")
 		}
@@ -65,6 +68,9 @@ func location(home, name string) (string, []string, error) {
 		}
 		return filepath.Join(dir, "opencode"), []string{"auth.json"}, nil
 	case "gemini":
+		if configured := os.Getenv("GEMINI_CLI_HOME"); configured != "" {
+			home = configured
+		}
 		return filepath.Join(home, ".gemini"), []string{"oauth_creds.json", "google_accounts.json"}, nil
 	default:
 		return "", nil, fmt.Errorf("file credential copy unsupported for this harness; use its login flow (keychains and environment secrets are not copied)")
@@ -122,7 +128,7 @@ func readFile(root *os.Root, name string) ([]byte, error) {
 func Capture(home, name string) (Bundle, error) {
 	mu.Lock()
 	defer mu.Unlock()
-	dir, names, err := location(home, name)
+	dir, names, err := location(home, name, false)
 	if err != nil {
 		return Bundle{}, err
 	}
@@ -148,7 +154,7 @@ func Capture(home, name string) (Bundle, error) {
 	return b, nil
 }
 func (b Bundle) Validate() error {
-	_, names, err := location("/unused", b.Harness)
+	_, names, err := location("/unused", b.Harness, false)
 	if err != nil {
 		return err
 	}
@@ -209,7 +215,7 @@ func Receive(home, privateDir string, b Bundle, overwrite bool, authorize func()
 	if !authorize() {
 		return Receipt{}, fmt.Errorf("credential receiving authority revoked")
 	}
-	dir, _, err := location(home, b.Harness)
+	dir, _, err := location(home, b.Harness, true)
 	if err != nil {
 		return Receipt{}, err
 	}
@@ -283,7 +289,7 @@ func restoreFiles(root *os.Root, files []savedFile) error {
 // Presence reports only bounded regular-file presence. Missing files remain
 // unknown because a keychain or ambient provider may authenticate the harness.
 func Presence(home, name string) *bool {
-	dir, names, err := location(home, name)
+	dir, names, err := location(home, name, true)
 	if err != nil {
 		return nil
 	}

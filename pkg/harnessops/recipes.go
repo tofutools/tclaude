@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/tofutools/tclaude/pkg/common/executil"
+	"github.com/tofutools/tclaude/pkg/common/harnesspath"
 	"golang.org/x/sys/unix"
 	"os"
 	"os/exec"
@@ -39,22 +40,9 @@ func recipe(name string) (Recipe, error) {
 	}
 	return Recipe{}, fmt.Errorf("unsupported harness")
 }
-func UserPrefix(home string) string {
-	return filepath.Join(home, ".local", "share", "tclaude", "harnesses", "npm")
-}
-func BinaryDir(home string) string { return filepath.Join(UserPrefix(home), "bin") }
-
-// EnableUserPath makes managed installations visible to subsequent launches and
-// probes, including after a daemon restart. It doesn't run an installer.
-func EnableUserPath(home string) error {
-	dir := BinaryDir(home)
-	for _, p := range filepath.SplitList(os.Getenv("PATH")) {
-		if p == dir {
-			return nil
-		}
-	}
-	return os.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-}
+func UserPrefix(home string) string    { return harnesspath.UserPrefix(home) }
+func BinaryDir(home string) string     { return harnesspath.BinaryDir(home) }
+func EnableUserPath(home string) error { return harnesspath.Enable(home) }
 
 type Command struct {
 	Path string

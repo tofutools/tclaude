@@ -354,6 +354,9 @@ func (s *Service) perform(ctx context.Context, r Request, j *Job, name string, r
 	if err := s.execute(ctx, command); err != nil {
 		return err
 	}
+	if err := EnableUserPath(s.home); err != nil {
+		return err
+	}
 	if r.CopyCredentials {
 		if r.Credentials == nil {
 			return fmt.Errorf("credential copy requires an encrypted sender bundle")
