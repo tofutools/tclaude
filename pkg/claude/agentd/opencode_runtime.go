@@ -3611,6 +3611,10 @@ func applyOpenCodeHooks(
 			input.StandingOrderOrigin = true
 		}
 		if input.StandingOrderOnly {
+			// session.compacted arrives here (projected as
+			// SessionStart(source=compact) without a status change), so the
+			// startup-context re-injection must be queued on this branch too.
+			session.QueueContextReinjection(input, runtime.SessionID)
 			deliverOpenCodeStandingOrders(input, runtime.SessionID)
 			continue
 		}
