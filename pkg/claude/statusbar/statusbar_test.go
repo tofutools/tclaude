@@ -164,6 +164,8 @@ func TestShortModelLabel(t *testing.T) {
 		id          string
 		want        string
 	}{
+		{"Haiku 5.5 display name", "Haiku 5.5", "claude-haiku-5-5", "h5.5"},
+		{"Haiku 5.5 id fallback", "", "claude-haiku-5-5", "haiku-5-5"},
 		{"known two-word display name", "Opus 4.6", "claude-opus-4-6", "o4.6"},
 		{"three-word display name", "Claude Opus 4.8", "claude-opus-4-8", "cOpus4.8"},
 		{"display name with 1m suffix trimmed", "Opus 4.8[1m]", "claude-opus-4-8[1m]", "o4.8"},
