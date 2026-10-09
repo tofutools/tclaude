@@ -297,6 +297,8 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /v1/process/templates/{id}", dashboardProcessRoute(handleProcessTemplate))
 	mux.HandleFunc("POST /v1/process/validate", dashboardProcessRoute(handleProcessValidate))
 	mux.Handle("/static/", handleDashboardStatic())
+	registerDashboardFederationRoutes(mux)
+	registerDashboardPeerRoutes(mux)
 	registerDashboardEditRoutes(mux)
 }
 

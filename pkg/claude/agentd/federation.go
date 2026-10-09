@@ -154,8 +154,10 @@ func defaultFederationName() string {
 
 // fedRuntime is one live hub connection plus its workers.
 type fedRuntime struct {
-	healthMu sync.Mutex
-	health   *fleetHealthState
+	peerViewsMu sync.Mutex
+	peerViews   *fedPeerViewState
+	healthMu    sync.Mutex
+	health      *fleetHealthState
 
 	modelsMu          sync.Mutex
 	models            *fedModelState
@@ -678,6 +680,10 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		rt.acceptModelOpen(peer, env)
 	case proto.KindModelAnswer:
 		rt.handleModelAnswer(peer, env)
+	case proto.KindPeerViewOpen:
+		rt.acceptPeerViewOpen(peer, env)
+	case proto.KindPeerViewAnswer:
+		rt.handlePeerViewAnswer(peer, env)
 	case proto.KindSessionOpen:
 		rt.acceptSessionOpen(peer, env)
 	case proto.KindSessionAnswer:
