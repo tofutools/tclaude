@@ -144,12 +144,21 @@ func collectAgentBundle(convID string, withHistory bool) (*agentbundle.Bundle, e
 	if d.Paths.Cwd == "" && len(sessions) > 0 {
 		d.Paths.Cwd = sessions[0].Cwd
 	}
+	if d.Paths.Cwd == "" {
+		if row, err := db.GetConvIndex(convID); err == nil && row != nil {
+			d.Paths.Cwd = row.ProjectPath
+		}
+	}
+	// Resolving through the harness can need its CLI (OpenCode execs
+	// `opencode`). The cwd is only a placeholder hint unless history is
+	// exported, so a config-only bundle must not fail on it.
+	needsHistoryCwd := withHistory && h.SupportsHistoryTransfer()
 	if d.Paths.Cwd == "" && h.SupportsConvs() {
 		ref, err := h.Convs.Resolve(convID, "", true)
-		if err != nil {
+		if err != nil && needsHistoryCwd {
 			return nil, err
 		}
-		if ref != nil {
+		if err == nil && ref != nil {
 			d.Paths.Cwd = ref.ProjectPath
 		}
 	}
