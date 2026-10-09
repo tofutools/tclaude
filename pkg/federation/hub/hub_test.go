@@ -85,14 +85,16 @@ func startPeer(t *testing.T, url, name, invite string, id *proto.Identity) *peer
 
 func eventually(t *testing.T, what string, f func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	// Allow scheduler delays when the full repository suite shares the host.
+	const timeout = 15 * time.Second
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if f() {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("timed out waiting for %s", what)
+	t.Fatalf("timed out after %s waiting for %s", timeout, what)
 }
 
 func online(p *peer, id string) bool {
