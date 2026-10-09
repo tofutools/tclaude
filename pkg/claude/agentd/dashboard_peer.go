@@ -118,6 +118,7 @@ func servePeerViewProxy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 502, "peer_invalid_response", "peer returned an invalid response")
 		return
 	}
+	auditNodeRunProxy(r, peer.InstanceID, body, reply.Status, reply.Body)
 	// Recheck local trust before returning data from a stream opened earlier.
 	current, err := db.GetFederationPeer(peer.InstanceID)
 	if err != nil || current == nil {

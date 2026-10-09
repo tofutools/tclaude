@@ -2613,3 +2613,60 @@ also works after deletion. Deleting a group now removes its direct peer and
 inherited node-group grants transactionally. Legacy orphaned rows remain
 listed and can be revoked by ID. Display names are separate from identity so
 renames and numeric-name collisions cannot retarget a listed grant's revoke.
+
+### Operator scripts on nodes
+
+`node.exec` grants full remote code execution as the agentd user. It is an
+unscoped node permission, default off and implied by unrestricted trust.
+Remote execution additionally requires the receiving node's local
+`accept_remote_scripts` setting, **including for unrestricted peers**. Enable
+that switch locally; peers cannot change it. Local operator runs require the
+usual dashboard/CLI authority and neither remote lock.
+
+```sh
+tclaude federation scripts --accept-remote on
+tclaude federation scripts --memory 1GiB --pids 256
+tclaude federation run --node laptop --node desktop --file maintenance.sh --timeout 2m
+tclaude federation run --all -- echo 'hello from the fleet'
+tclaude federation run -- printf '%s\n' 'local only'
+tclaude federation run --node laptop --job JOB_ID
+```
+
+Scripts are bounded to 16 KiB and their encoded request to 32 KiB. They run as
+private script files passed as argv to `/bin/sh` in a detached one-shot tmux
+session, with the existing process-group cleanup, timeout (exit 124), output
+limit (4 MiB per stream, exit 125 on overflow), and Linux cgroup resource-limit
+runner. This is code execution, not a filesystem/network sandbox. Root daemon
+execution is refused. Default Linux limits are 1 GiB memory and 256 processes;
+configured limits require working cgroup delegation and fail closed if it is
+unavailable. macOS uses process-group and deadline cleanup, with no cgroups.
+The local operator can change receiver-owned limits in settings. Jobs execute
+in the daemon user's canonical HOME, never a peer-selected working directory.
+
+`--all` selects this node and trusted linked nodes, reporting offline nodes as
+skipped; explicit nodes that are offline are also skipped. No offline queue is
+created. `--no-wait` returns durable per-node job IDs; later `--job` reads one.
+The CLI collects result summaries and bounded output tails. Failed, canceled,
+interrupted, or skipped outcomes return a nonzero command status. Re-run only
+failed nodes by selecting their `--node` values again.
+
+Dashboard/API routes (same tails under `/v1` for local CLI) are:
+
+- `GET /api/node/run`: settings/availability including the receiving switch.
+- `POST /api/node/run`: `{script, timeout_seconds?}`, returns 202 job metadata.
+- `GET /api/node/run/jobs/{id}`: durable result with state, exit code,
+  duration_ms, stdout_tail and stderr_tail (8 KiB each), hash and size.
+- `GET /api/node/run/jobs/{id}/logs?stream=stdout&offset=0`: bounded 64 KiB
+  chunks, `{data, next_offset, eof}` (`data` is base64); stderr is analogous.
+- Local-only `GET/PUT /api/node/run/settings`: `{accept_remote_scripts?,
+  resource_limits?: {memory?, cpu?, pids?}}`, with the full-code-execution warning.
+
+Remote data routes use `/api/peer/{instance_id}/node/run...`, or
+`/v1/federation/peer/{node}/node/run...` for CLI. The UI can fan out the same
+per-node requests for checked nodes and poll their jobs independently. Active
+jobs are canceled when either receiving lock is withdrawn. Peer jobs/logs are
+readable only by their initiating peer and the receiving local operator.
+Scripts and bounded logs remain private on the receiver; audits on each side
+record operator, peer/node, script hash and size, job ID and result. The sender
+records results when they are observed through job polling. After daemon
+restart, unfinished jobs are marked interrupted and never replayed.
