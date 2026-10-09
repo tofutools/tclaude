@@ -40,3 +40,24 @@ func TestHarnessCredentialPushCapturesOnlyExplicitLocalSource(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, normal, out)
 }
+
+func TestStandaloneCredentialPushRequiresConfirmationAndOwnSource(t *testing.T) {
+	home := testutil.CanonicalTempDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	require.NoError(t, os.Mkdir(filepath.Join(home, ".codex"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".codex", "auth.json"), []byte(`{"token":"standalone-fixture"}`), 0600))
+	r := httptest.NewRequest("POST", "/api/peer/pinned/harnesses/credentials/push", nil)
+	r.SetPathValue("tail", "harnesses/credentials/push")
+	_, err := prepareHarnessCredentialPush(r, []byte(`{"harness":"codex"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "act as you")
+	_, err = prepareHarnessCredentialPush(r, []byte(`{"harness":"codex","confirm_share":true,"credentials":{"harness":"codex","files":[]}}`))
+	require.Error(t, err)
+	out, err := prepareHarnessCredentialPush(r, []byte(`{"harness":"codex","confirm_share":true}`))
+	require.NoError(t, err)
+	var req credentialRequest
+	require.NoError(t, json.Unmarshal(out, &req))
+	require.True(t, req.ConfirmShare)
+	require.Equal(t, `{"token":"standalone-fixture"}`, string(req.Credentials.Files[0].Data))
+}
