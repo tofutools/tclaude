@@ -2408,10 +2408,13 @@ unrestricted trust repeats what it implies and sends the fingerprint as the
 daemon's confirmation. Its Peer grants page covers `federation grants`,
 `grant` and `revoke` for a trusted peer or a node pool: each grant shows where
 it applies (an unscoped group grant is flagged as covering future groups too),
-and granting confirms with that consequence spelled out. Receiver launch
-settings beyond the live cap, model gateway scopes, enrollment tokens,
-profiles and the audit log are managed with their `tclaude federation`
-commands.
+and granting confirms with that consequence spelled out. Its Invites & joining
+page covers `enroll-token create/ls/revoke`, `enroll` and `enrollments`: an
+invite confirms its terms (uses, lifetime, the profile's trust here and the
+trust the joining node grants back) and shows the bearer once; joining
+previews both fingerprints, the profile and the trust level before Enroll.
+Receiver launch settings beyond the live cap, model gateway scopes, profiles
+and the audit log are managed with their `tclaude federation` commands.
 
 `federation view` returns the full JSON response, including `peer_view`, and
 preserves structured failure JSON on stderr. The `agent ls --node` and

@@ -30,6 +30,14 @@ const skynetFederationStubJS = `(function(){
       { peer: 'inst_hn3cxq7a', slug: 'groups.members.spawn', scope: 'group=ops', spawn_policy: { max_live: 2 } },
       { peer: 'inst_hn3cxq7a', slug: 'routes.consume', scope: '', pool_id: 'pool_1', pool_name: 'rigs' }
     ] });
+    if (path === '/api/federation/profiles') return json({ profiles: [{ id: 'nprof_7h2k', name: 'test-rig', revision: 3, definition: { trust_level: 'restricted', labels: [] } }, { id: 'nprof_9x1q', name: 'build-farm', revision: 1, definition: { trust_level: 'restricted', labels: [] } }], default: null });
+    if (path === '/api/federation/enroll-tokens') return json({ tokens: [
+      { id: 'etok_4mz81c', public_token: '', max_uses: 3, used: 1, revoked: false, expires_at: '2026-10-11T09:00:00Z' },
+      { id: 'etok_q2v7tn', public_token: '', max_uses: 1, used: 1, revoked: false, expires_at: '2026-10-17T09:00:00Z' },
+      { id: 'etok_8kd0rw', public_token: '', max_uses: 1, used: 0, revoked: true, expires_at: '2026-10-12T09:00:00Z' }
+    ] });
+    if (path === '/api/federation/enrollments') return json({ enrollments: [{ direction: 'issuer', token_id: 'etok_q2v7tn', peer: 'inst_hn3cxq7a', retired: false }] });
+    if (path === '/api/federation/enroll/preview') return json({ claims: { master: 'inst_w5zea3nq', profile_name: 'worker', profile_id: 'nprof_c4r0l', profile_revision: 2, trust_level: 'restricted', expires_at: '2026-10-11T09:00:00Z' }, preview_token: 'pv', master_fingerprint: 'w5ze-a3nq-7m1p-kd42-xr8c-0fv6', node_fingerprint: 'q4w7-pjf2-kx3m-z6bt-y5nd-8c1e', consent: 'Running enroll trusts the pinned master at the displayed level. Its profile controls this node\'s authority on the master. No default profile or config offer is applied locally.' });
     if (path === '/api/federation/peers/trust') return json({ instance_id: 'inst_w5zea3nq', fingerprint: 'w5ze-a3nq-7m1p-kd42-xr8c-0fv6', level: 'restricted', profile: null, plan: null, applied: false });
     if (path === '/api/node-summary') return json({ presence: 'online', shared_groups: 2, shared_agents: 10, online_agents: 8, waiting_for_input: 1, resources: res, health: 'current' }, 200, { ETag: '"local"' });
     if (path === '/api/peer/inst_hn3cxq7a/node-summary') return json({ presence: 'online', shared_groups: 2, shared_agents: 9, online_agents: 7, waiting_for_input: 1, peer_view: { peer: 'desk', included: [], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'terminals', requires: 'sessions.watch' }] } }, 200, { ETag: '"forge"' });
@@ -176,6 +184,43 @@ func skynetStates() []dashsnap.State {
   for (var j = 0; j < 30 && !document.querySelector('#fleet-grants'); j++) await new Promise(function(r){ setTimeout(r, 100); });
   if (document.querySelectorAll('#fleet-grants tbody tr').length !== 5) throw new Error('skynet: grants missing');
   if (document.querySelectorAll('#fleet-grants [data-fa="revoke"]').length !== 4) throw new Error('skynet: pool grant should not be revocable here');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-invites",
+			Title:   "Invites & joining",
+			Caption: "Fleet → Invites & joining: issue an invite token for a node profile (uses, lifetime, and the trust the joining node grants back), the issued tokens with use counts and state (only active ones revocable), joining a master with a token, and completed enrollments.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return /Invites/.test(b.textContent); })[0].click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-tokens'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (document.querySelectorAll('#fleet-tokens [data-fa="revoke-token"]').length !== 1) throw new Error('skynet: only the active token should be revocable');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-join",
+			Title:   "Join a master (preview)",
+			Caption: "Joining with an invite token previews before anything changes: the master's instance and full fingerprint, this node's fingerprint, the profile that sets this node's authority on the master, expiry, and the trust this node would grant it. Enroll stays disabled until the fingerprint check is ticked.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return /Invites/.test(b.textContent); })[0].click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-join-open:not([disabled])'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-join-open').click();
+  for (var k = 0; k < 20 && !document.querySelector('#fleet-join-token'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  var tok = document.querySelector('#fleet-join-token');
+  tok.value = 'tcle1.example'; tok.dispatchEvent(new Event('input', { bubbles: true }));
+  await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-join-preview').click();
+  for (var n = 0; n < 30 && !document.querySelector('#fleet-join-ack'); n++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (document.querySelector('#fleet-join-modal').textContent.indexOf('w5ze-a3nq-7m1p-kd42-xr8c-0fv6') < 0) throw new Error('skynet: master fingerprint not shown');
 })();`,
 			SettleMS: 400,
 		},
