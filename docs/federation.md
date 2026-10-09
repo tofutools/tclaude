@@ -2100,6 +2100,13 @@ Restricted snapshots always send their small registry fields, with
 must not reuse registry blobs from a local, different-peer or older-authority
 snapshot. Unrestricted peers get the complete dashboard snapshot plus metadata.
 
+`GET /api/harnesses/availability` exposes detailed installed harness paths,
+versions and boolean credential presence under the instance-wide
+`node.harnesses.read` peer grant. This permission defaults off and is implied
+only by unrestricted trust. `node.read`, group grants, and unrelated node
+permissions do not imply it. Node profiles and node pools may carry this
+unscoped grant; group scopes are rejected.
+
 `GET /api/instance` exposes node metadata under `node.read`. Costs and audit
 collections require their own instance grants above. Those grants default off,
 are never implied by group access, and can also be supplied by node profiles
@@ -2234,7 +2241,7 @@ Clients should keep their last successful view, mark it stale, and back off.
 The stable `peer_view.included` / `peer_view.omitted[].feature` concept keys are
 `agents.status`, `groups`, `groups.roster`, `groups.presence`, `messaging`,
 `node.summary`, `health`, `costs`, `audit`, `terminals`, `spawn`, and
-`local_dashboard`. `local_dashboard` covers local administration, registries,
+`local_dashboard`, and `node.harnesses`. `local_dashboard` covers local administration, registries,
 and lifecycle controls. An omitted concept carries a `requires` permission or
 `local_only`. Clients must tolerate additive concept keys; absence of an
 omission is not a grant for an unknown endpoint.
@@ -2248,3 +2255,46 @@ Terminal websocket attach continues to use the existing federation sessions
 watch/attach API. This JSON proxy does not yet adapt it under the per-node
 prefix. Remote terminal image uploads remain a separate feature; they need
 staging at the owning instance with the same interactive attach authorization.
+
+
+### Harness availability
+
+Inspect the daemon's registered harnesses, including missing binaries and the
+shell harness, with:
+
+```bash
+tclaude harness ls
+tclaude harness ls --refresh --json
+tclaude harness ls --node bob --json
+tclaude federation grant bob node.harnesses.read
+```
+
+The local dashboard reads `GET /api/harnesses/availability`; the operator CLI
+reads `GET /v1/harnesses/availability`. Remote reads use the same peer-view
+proxy with tail `harnesses/availability`. These are operator reads locally;
+remote peers need `node.harnesses.read` or unrestricted trust. Existing
+`node.read` catalog harness versions remain a coarse capability summary and
+do not reveal binary paths or credential presence.
+
+Responses contain `schema: 1`, `observed_at`, `refresh_after`, and `harnesses`.
+Each harness row includes `name`, `display_name`, `binary`, `installed`,
+optional `path` and `version`, `version_status`, nullable `credential_present`,
+and nullable `usable`. Version status is `known`, `unknown`, `not_installed`,
+`not_spawnable`, or `path_unavailable`. Remote responses also include the
+normal `peer_view` metadata with concept `node.harnesses`.
+
+Paths resolve against agentd's PATH. Version subprocesses use fixed
+`--version` arguments, bounded output, and deadlines. Credential presence is
+only a boolean check for descriptor-declared ambient credential variables;
+credential values are never returned. Presence does not prove that a key is
+valid. Missing ambient credentials mean unknown, since native login and
+provider configuration may still work. The probe does not read credential
+files, run login commands, or contact authentication services. Missing
+binaries are unusable; installed credential-free shell is usable; other
+installed harnesses report unknown usability.
+
+Results cache for five minutes. `--refresh` or `?refresh=1` requests a fresh
+probe, with a ten-second minimum between probes and a single shared probe at
+a time. The first uncached read can take up to eight seconds. Do not put this
+probe on the fast snapshot or map-summary poll; request it when opening a
+node's harness details or explicitly refreshing them.

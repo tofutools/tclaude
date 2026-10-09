@@ -16,15 +16,16 @@ const ShellName = "shell"
 
 func init() {
 	Register(&Harness{
-		Name:             ShellName,
-		DisplayName:      "Shell",
-		Spawn:            shellSpawner{},
-		Models:           shellModels{},
-		Sandbox:          shellSandbox{},
-		TclaudeLayerMode: ShellSandboxOff,
-		TmuxScrollback:   true,
-		LaunchEnrollment: true,
-		CommandInput:     true,
+		UsableWithoutCredentials: true,
+		Name:                     ShellName,
+		DisplayName:              "Shell",
+		Spawn:                    shellSpawner{},
+		Models:                   shellModels{},
+		Sandbox:                  shellSandbox{},
+		TclaudeLayerMode:         ShellSandboxOff,
+		TmuxScrollback:           true,
+		LaunchEnrollment:         true,
+		CommandInput:             true,
 	})
 }
 

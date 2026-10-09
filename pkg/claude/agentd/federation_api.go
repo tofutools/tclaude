@@ -1156,6 +1156,7 @@ func fedFirst(a, b string) string {
 }
 
 func registerFederationRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /v1/harnesses/availability", handleLocalHarnessAvailability)
 	registerFederationNodeGroupRoutes(mux)
 	registerFederationNodeProfileRoutes(mux)
 	registerFederationRepoRoutes(mux)
