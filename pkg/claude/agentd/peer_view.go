@@ -91,6 +91,9 @@ func peerViewRules() map[string]peerViewRule {
 	rules["GET /api/groups"] = peerViewRule{feature: "groups", requires: PermGroupsRosterRead, group: true, visible: true, serve: servePeerGroups}
 	rules["GET /api/groups/{name}"] = peerViewRule{feature: "groups", requires: PermGroupsRosterRead, group: true, visible: true, serve: servePeerGroup}
 	rules["GET /api/agents/{id}"] = peerViewRule{feature: "agents.status", requires: PermAgentsStatusRead, group: true, serve: servePeerAgent}
+	rules["GET /api/node/update"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, serve: servePeerNodeUpdate}
+	rules["GET /api/node/update/jobs/{id}"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, serve: servePeerNodeUpdate}
+	rules["POST /api/node/update"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, write: servePeerNodeUpdate}
 	rules["GET /api/harnesses/availability"] = peerViewRule{feature: "node.harnesses", requires: PermNodeHarnessesRead, serve: servePeerHarnessAvailability}
 	rules["GET /api/node-summary"] = peerViewRule{feature: "node.summary", publicRead: true, summary: true, serve: servePeerSummary}
 	rules["GET /api/instance"] = peerViewRule{feature: "health", requires: PermNodeRead, serve: servePeerNode}

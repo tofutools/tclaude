@@ -220,7 +220,18 @@ func servePeerSummary(w http.ResponseWriter, _ *http.Request, v *peerView, _ pee
 			}
 		}
 	}
-	out := map[string]any{"presence": "online", "shared_groups": len(groups), "shared_agents": len(agents), "online_agents": online, "waiting_for_input": waiting}
+	out := map[string]any{"version": buildversion.AppVersion(), "update_available": nil, "presence": "online", "shared_groups": len(groups), "shared_agents": len(agents), "online_agents": online, "waiting_for_input": waiting}
+	nodeUpdates.Lock()
+	updateService := nodeUpdates.service
+	nodeUpdates.Unlock()
+	if updateService != nil {
+		status := updateService.Status()
+		out["update_available"] = status.UpdateAvailable
+		if status.LatestVersion != "" {
+			out["latest_version"] = status.LatestVersion
+		}
+		out["update_checked_at"] = status.CheckedAt
+	}
 	if v == nil || fedPeerReadsNode(v.peer.InstanceID) {
 		if node := localNodeMetadata(); node != nil {
 			resources := node.Resources

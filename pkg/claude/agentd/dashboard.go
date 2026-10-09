@@ -298,6 +298,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/process/validate", dashboardProcessRoute(handleProcessValidate))
 	mux.Handle("/static/", handleDashboardStatic())
 	registerDashboardFederationRoutes(mux)
+	registerNodeUpdateRoutes(mux)
 	registerHarnessAvailabilityRoutes(mux)
 	registerDashboardPeerRoutes(mux)
 	registerDashboardEditRoutes(mux)

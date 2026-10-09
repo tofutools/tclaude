@@ -929,10 +929,10 @@ jobs:
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "Creating new version: $NEW_VERSION"
 
-  # Builds run in parallel with test/lint/version. goreleaser builds with
-  # --snapshot (version_template "{{ .Tag }}-next", derived from the latest
-  # existing tag), so the build never depends on the new version or its tag.
+  # Compute the release version before building, and stamp that exact value.
+  # Publishing the tag remains behind all test/lint/build/smoke gates.
   build:
+    needs: [version]
     name: Build (${{ matrix.os }})
     if: ${{ inputs.homebrew_only != true }}
     runs-on: ${{ matrix.os }}
@@ -967,13 +967,17 @@ jobs:
           args: build --single-target --snapshot --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TCLAUDE_RELEASE_VERSION: ${{ needs.version.outputs.new_version }}
+          TCLAUDE_INSTALL_METHOD: release
 
       # The repo ships three binaries: the tclaude CLI, the standalone
       # tclaude-agentd daemon, and the tclaude-hub federation relay. All must
       # come out of every platform build.
       # Without this assertion, dropping or mis-targeting a .goreleaser.yaml
       # build id would silently publish a release missing one of them.
-      - name: Verify every binary was built
+      - name: Verify every binary was built and version stamped
+        env:
+          EXPECTED_VERSION: ${{ needs.version.outputs.new_version }}
         shell: bash
         run: |
           set -euo pipefail
@@ -984,6 +988,9 @@ jobs:
               exit 1
             fi
             echo "$binary: $count binary(s)"
+            while IFS= read -r path; do
+              "$path" --tclaude-build-info | python3 -c 'import json,os,sys; info=json.load(sys.stdin); assert info["version"] == os.environ["EXPECTED_VERSION"]; assert info["install_method"] == "release"; assert info["protocol_version"] > 0'
+            done < <(find dist -type f -name "$binary" -perm -u+x)
           done
 
       - name: Upload artifacts

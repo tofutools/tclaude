@@ -10,6 +10,8 @@ builds:
   - id: tclaude-no-cgo
     main: .
     binary: tclaude
+    ldflags: &release_ldflags
+      - -s -w -X main.version={{ .Env.TCLAUDE_RELEASE_VERSION }} -X github.com/tofutools/tclaude/pkg/common/buildversion.InstallMethod={{ .Env.TCLAUDE_INSTALL_METHOD }}
     env:
       - CGO_ENABLED=0
     goos:
@@ -25,6 +27,7 @@ builds:
   - id: tclaude-darwin
     main: .
     binary: tclaude
+    ldflags: *release_ldflags
     env:
       - CGO_ENABLED=1
     goos:
@@ -38,6 +41,7 @@ builds:
   - id: tclaude-agentd-no-cgo
     main: ./cmd/tclaude-agentd
     binary: tclaude-agentd
+    ldflags: *release_ldflags
     env:
       - CGO_ENABLED=0
     goos:
@@ -48,6 +52,7 @@ builds:
   - id: tclaude-agentd-darwin
     main: ./cmd/tclaude-agentd
     binary: tclaude-agentd
+    ldflags: *release_ldflags
     env:
       - CGO_ENABLED=1
     goos:
@@ -60,6 +65,7 @@ builds:
   - id: tclaude-hub
     main: ./cmd/tclaude-hub
     binary: tclaude-hub
+    ldflags: *release_ldflags
     env:
       - CGO_ENABLED=0
     goos:

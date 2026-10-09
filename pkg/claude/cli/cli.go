@@ -7,6 +7,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -29,6 +30,11 @@ import (
 // version is the value stamped into the binary's own main.version at build
 // time via -ldflags; it is empty for a plain `go build`.
 func Main(version string, newRoot func() *cobra.Command) {
+	buildversion.SetStampedVersion(version)
+	if len(os.Args) == 2 && os.Args[1] == "--tclaude-build-info" {
+		_ = json.NewEncoder(os.Stdout).Encode(buildversion.BuildInfo())
+		return
+	}
 	if handled, code := probehelper.Dispatch(os.Args); handled {
 		os.Exit(code)
 	}
