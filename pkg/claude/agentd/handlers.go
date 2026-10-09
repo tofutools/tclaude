@@ -4128,6 +4128,15 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 			return
 		}
 	}
+	reinjectMode := ""
+	if body.ReinjectAfterCompact != nil {
+		reinjectMode = strings.TrimSpace(*body.ReinjectAfterCompact)
+		if reinjectMode == "" || !db.ValidReinjectAfterCompact(reinjectMode) {
+			writeError(w, http.StatusBadRequest, "invalid_reinject_after_compact",
+				fmt.Sprintf("invalid reinject_after_compact %q (want contexts, identity, or off)", reinjectMode))
+			return
+		}
+	}
 	var normalizedPermissions []db.PermissionGrant
 	if body.Permissions != nil {
 		var failure *spawnFailure
@@ -4322,13 +4331,8 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	}
 
 	if body.ReinjectAfterCompact != nil {
-		mode := strings.TrimSpace(*body.ReinjectAfterCompact)
-		if mode == "" || !db.ValidReinjectAfterCompact(mode) {
-			writeError(w, http.StatusBadRequest, "invalid_reinject_after_compact",
-				fmt.Sprintf("invalid reinject_after_compact %q (want contexts, identity, or off)", mode))
-			return
-		}
-		n, err := db.SetAgentGroupReinjectAfterCompact(g.Name, mode)
+		// Validated above, before any write landed.
+		n, err := db.SetAgentGroupReinjectAfterCompact(g.Name, reinjectMode)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
@@ -4337,7 +4341,7 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 			writeError(w, http.StatusNotFound, "not_found", "no such group")
 			return
 		}
-		resp["reinject_after_compact"] = mode
+		resp["reinject_after_compact"] = reinjectMode
 	}
 
 	if body.Permissions != nil {

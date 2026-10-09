@@ -146,3 +146,16 @@ func TestContextReinjection_GroupSetting(t *testing.T) {
 		assert.NotEqual(t, db.ReinjectedAfterClearSubject, m.Subject, "off queues nothing after /clear")
 	}
 }
+
+// An invalid re-inject value fails the whole PATCH before any field is written.
+func TestContextReinjection_InvalidSettingWritesNothing(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	r := agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPatch, "/v1/groups/alpha",
+		map[string]any{"descr": "changed", "reinject_after_compact": "bogus"}))
+	rec := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+	g, err := db.GetAgentGroupByName("alpha")
+	require.NoError(t, err)
+	assert.NotEqual(t, "changed", g.Descr)
+}
