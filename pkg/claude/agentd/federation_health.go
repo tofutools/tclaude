@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"sync"
 	"time"
 
@@ -177,19 +176,32 @@ func fleetPolicy(peer string) (config.FederationHealthPolicy, bool) {
 		p = h.Defaults
 		if override, ok := h.Peers[peer]; ok {
 			p = override
-		} else {
-			// Explicit continuation through accepted links only; no label matching.
-			keys := make([]string, 0, len(h.Peers))
-			for id := range h.Peers {
-				keys = append(keys, id)
+
+		} else if peer != "" && len(h.Peers) > 0 {
+			// Walk accepted continuation links backwards so the closest explicit
+			// ancestor override wins across repeated rotations. Labels never match.
+			rows, e := db.ListFederationIdentityRotations()
+			if e != nil {
+				return config.FederationHealthPolicy{}, false
 			}
-			sort.Strings(keys)
-			for _, id := range keys {
-				if current, e := db.ResolveFederationIdentitySuccessor(id); e == nil && current == peer {
-					p = h.Peers[id]
+			previous := map[string]string{}
+			for _, row := range rows {
+				if row.State == "accepted" || row.State == "recovered" {
+					previous[row.Statement.NewID] = row.Statement.OldID
+				}
+			}
+			seen := map[string]bool{peer: true}
+			for id := previous[peer]; id != ""; id = previous[id] {
+				if seen[id] {
+					return config.FederationHealthPolicy{}, false
+				}
+				seen[id] = true
+				if override, ok := h.Peers[id]; ok {
+					p = override
 					break
 				}
 			}
+
 		}
 	}
 	if p.Validate() != nil {
@@ -331,6 +343,7 @@ func (rt *fedRuntime) observeFleetFailure(peer, id string, now time.Time) {
 			duplicate = duplicate || f.id == id
 		}
 	}
+	s.failures[peer] = rows
 	if duplicate {
 		return
 	}

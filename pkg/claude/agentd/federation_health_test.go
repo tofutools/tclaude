@@ -183,3 +183,51 @@ func TestFleetHealthUnknownWorkDiskCannotRecover(t *testing.T) {
 	rt.flushFleetHealth(later.Add(2 * time.Second))
 	require.Len(t, healthMessages(t), 1)
 }
+
+func TestFleetHealthDuplicateAfterWindowPruneDoesNotInflateCount(t *testing.T) {
+	rt, peer := healthFixture(t)
+	now := time.Now()
+	rt.observeFleetFailure(peer, "expired", now)
+	rt.observeFleetFailure(peer, "current", now.Add(599*time.Second))
+	rt.observeFleetFailure(peer, "current", now.Add(601*time.Second))
+	rt.observeFleetFailure(peer, "second-current", now.Add(602*time.Second))
+	rt.flushFleetHealth(now.Add(604 * time.Second))
+	require.Empty(t, healthMessages(t), "only two distinct failures remain in the window")
+}
+func TestFleetHealthNearestPolicyAcrossTwoRotations(t *testing.T) {
+	_, old := healthFixture(t)
+	peer, err := db.GetFederationPeer(old)
+	require.NoError(t, err)
+	// The fixture's private key is intentionally not retained; generate a fresh
+	// pair for a real signed two-hop continuation chain.
+	first, err := proto.NewIdentity()
+	require.NoError(t, err)
+	second, err := proto.NewIdentity()
+	require.NoError(t, err)
+	third, err := proto.NewIdentity()
+	require.NoError(t, err)
+	peer.InstanceID = first.ID()
+	peer.PubKey = first.Pub
+	peer.Label = "rotating"
+	require.NoError(t, db.TrustFederationPeer(*peer))
+	now := time.Now()
+	for _, pair := range [][2]*proto.Identity{{first, second}, {second, third}} {
+		r, err := proto.NewRotation(pair[0], pair[1], "", 1, now, time.Second)
+		require.NoError(t, err)
+		_, err = db.ObserveFederationRotation(r, now, time.Second)
+		require.NoError(t, err)
+		require.NoError(t, db.AcceptFederationRotation(pair[0].ID(), now.Add(2*time.Second)))
+	}
+	_, err = config.Update(func(c *config.Config, e error) error {
+		if e != nil {
+			return e
+		}
+		c.Federation.Health.Peers = map[string]config.FederationHealthPolicy{first.ID(): {Resources: true}, second.ID(): {Failures: true}}
+		return nil
+	})
+	require.NoError(t, err)
+	p, ok := fleetPolicy(third.ID())
+	require.True(t, ok)
+	require.True(t, p.Failures)
+	require.False(t, p.Resources)
+}

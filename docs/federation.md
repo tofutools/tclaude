@@ -2010,8 +2010,8 @@ defaults, rather than inheriting individual fields from the defaults policy.
 Without `--peer` it replaces the defaults for peers without an override. Policies
 live under `federation.health.defaults` and `federation.health.peers` in the local
 config. Peer keys are immutable instance IDs, resolved from the CLI label.
-Accepted identity successors inherit ancestor settings; a direct successor
-override wins. Deleting/re-pairing an unrelated identity does not inherit them.
+Accepted identity successors inherit the nearest ancestor settings; a direct
+successor override wins. Deleting/re-pairing an unrelated identity does not inherit them.
 
 Available settings (durations are seconds; zero selects the built-in default):
 
