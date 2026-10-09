@@ -1,5 +1,5 @@
 import { h, render } from 'preact';
-import { useCallback, useEffect, useState } from 'preact/hooks';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { shellConfirm, shellToast } from './shell-state.js';
@@ -33,6 +33,17 @@ function defaultCopy(text) {
 }
 
 function errText(error) { return error?.message || String(error); }
+
+// setLevel changes a trusted peer's level. peers/trust by instance ID would
+// also re-trust a peer untrusted elsewhere since the last poll, so the level
+// change re-reads the status first and refuses for a peer no longer trusted.
+async function setLevel(actions, opts) {
+  const st = await actions.status();
+  if (!(st?.peers || []).some((p) => p?.trusted && p.instance_id === opts.instance)) {
+    throw new Error('this peer is no longer trusted (untrusted elsewhere) — trust it again from the waiting list');
+  }
+  return actions.trust(opts);
+}
 
 // suggestLabel turns a peer's self-reported name into a valid local label.
 export function suggestLabel(row) {
@@ -96,10 +107,14 @@ export function TrustDialog({ row, actions, onClose, onDone }) {
   const [checked, setChecked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // seq drops a slower, superseded preview (the profile opt-out toggled).
+  const seq = useRef(0);
   const loadPreview = useCallback(() => {
+    const n = ++seq.current;
     setPreview(null); setError('');
     return actions.previewTrust({ instance: row.id, noDefaultProfile: noDefault })
-      .then(setPreview).catch((e) => setError(errText(e)));
+      .then((p) => { if (n === seq.current) setPreview(p); })
+      .catch((e) => { if (n === seq.current) setError(errText(e)); });
   }, [row.id, noDefault]);
   useEffect(() => { loadPreview(); }, [loadPreview]);
   const profile = preview?.profile || null;
@@ -119,7 +134,7 @@ export function TrustDialog({ row, actions, onClose, onDone }) {
       onDone(`Trusted ${label || row.label} (${effective})`);
     } catch (e) {
       setError(errText(e));
-      if (e?.code === 'stale_preview' || e?.code === 'profile') loadPreview();
+      if (['stale_preview', 'profile', 'preview_required'].includes(e?.code)) loadPreview();
     } finally { setBusy(false); }
   };
   const plan = preview?.plan;
@@ -168,7 +183,7 @@ export function UnrestrictDialog({ row, actions, onClose, onDone }) {
     if (!checked || busy) return;
     setBusy(true); setError('');
     try {
-      await actions.trust({ instance: row.id, level: 'unrestricted', confirmFingerprint: row.fingerprint });
+      await setLevel(actions, { instance: row.id, level: 'unrestricted', confirmFingerprint: row.fingerprint });
       onDone(`${row.label} is now unrestricted`);
     } catch (e) { setError(errText(e)); } finally { setBusy(false); }
   };
@@ -292,7 +307,7 @@ export function FleetAdmin({
     body: `${r.label} loses the implicit access unrestricted trust gave it: from now on it can do only what its explicit peer grants (${r.grants.total}) allow.`,
     okLabel: 'Restrict',
     busyLabel: 'Saving…',
-    action: () => actions.trust({ instance: r.id, level: 'restricted' }),
+    action: () => setLevel(actions, { instance: r.id, level: 'restricted' }),
   }).then((ok) => { if (ok) done(`${r.label} is now restricted`); }).catch((e) => toast(`Restrict failed: ${errText(e)}`, true));
 
   const sub = SUB_PAGES.find((p) => p.id === page) || SUB_PAGES[0];

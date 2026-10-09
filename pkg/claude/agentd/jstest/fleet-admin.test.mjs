@@ -44,7 +44,7 @@ test('actions call the local /api/federation routes and surface the daemon error
   await a.setHubEnabled(false);
   await assert.rejects(a.untrust('inst_x'), (e) => e instanceof FleetAdminError && e.code === 'not_found' && e.status === 404);
   assert.deepEqual(calls, [
-    ['POST', '/api/federation/peers/trust', { instance: 'inst_carol', level: 'restricted', no_default_profile: true, preview: true }],
+    ['POST', '/api/federation/peers/trust', { instance: 'inst_carol', no_default_profile: true, preview: true }],
     ['POST', '/api/federation/config', { enabled: false }],
     ['POST', '/api/federation/peers/untrust', { instance: 'inst_x' }],
   ]);
@@ -152,4 +152,15 @@ test('a peer view hands fleet administration back to this node', async (t) => {
   const mounted = await harness.mount(harness.html`<${island.FleetAdmin} state=${state} actions=${actions} remote="inst_forge" switchHome=${() => homes.push(1)} timers=${fakeTimers()} />`);
   assert.equal(homes.length, 1); assert.equal(reads.length, 0, 'never reads this node\'s federation state into a peer page');
   await mounted.unmount(); state.dispose();
+});
+
+test('a level change refuses a peer untrusted elsewhere since the last poll', async (t) => {
+  const s = await setup(t);
+  await s.show();
+  s.actions.status = async () => ({ ...status(), peers: status().peers.filter((p) => p.instance_id !== 'inst_forge') });
+  await s.click(s.q('[data-peer="inst_forge"] [data-fa="unrestrict"]'));
+  await s.check(s.q('#fleet-level-ack'));
+  await s.click(s.q('#fleet-level-submit'));
+  assert.equal(s.log.some((l) => l[0] === 'trust'), false, 'never re-trusts it');
+  assert.match(s.q('#fleet-level-modal').textContent, /no longer trusted/);
 });

@@ -28,7 +28,9 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
   return Object.freeze({
     status: () => call('GET', 'status'),
     pools: async () => (await call('GET', 'nodes/groups'))?.groups || [],
-    previewTrust: (opts) => call('POST', 'peers/trust', trustBody({ ...opts, preview: true })),
+    // A preview names no level: a default profile decides it, and an explicit
+    // level that differs from the profile's is refused.
+    previewTrust: (opts) => call('POST', 'peers/trust', trustBody({ ...opts, level: '', preview: true })),
     trust: (opts) => call('POST', 'peers/trust', trustBody(opts)),
     untrust: (instance) => call('POST', 'peers/untrust', { instance }),
     setHubEnabled: (enabled) => call('POST', 'config', { enabled }),
