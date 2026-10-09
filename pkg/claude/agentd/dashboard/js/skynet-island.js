@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { STATUS_POLL_MS, cardView, fmtAge, nodeColor, nodeHref, peerViewSummary, pollDelay, remoteHealthView, remoteNodeID, staggerOffset, switchOrder, visibleChips } from './skynet-model.js';
 import { dashboardState } from './snapshot-store.js';
+import { TOP_LEVEL_TABS } from './skynet-state.js';
 
 const html = htm.bind(h);
 
@@ -12,7 +13,7 @@ function defaultNavigate(tab) {
   let anchor = document.querySelector(`nav [data-tab="${tab}"]`);
   // A remembered per-node tab can have been hidden since (Terminals with no
   // pane, Debug switched off); Groups is always there.
-  if (tab !== 'map' && tab !== 'fleet' && (!anchor || anchor.offsetParent === null)) anchor = document.querySelector('nav [data-tab="groups"]');
+  if (!TOP_LEVEL_TABS.has(tab) && (!anchor || anchor.offsetParent === null)) anchor = document.querySelector('nav [data-tab="groups"]');
   anchor?.click();
 }
 
@@ -82,7 +83,7 @@ export function TopLevelBar({ state, navigate = defaultNavigate }) {
   const hub = current.fleet.hub.state;
   const seg = (tab, on, label) => html`<button type="button" class=${`skynet-seg-btn${on ? ' on' : ''}`} aria-current=${on ? 'page' : undefined} onClick=${() => { if (!on) navigate(tab); }}>${label}</button>`;
   return html`<span class="skynet-toplevel-bar">
-    <span class="skynet-seg" role="group" aria-label="Skynet views">${seg('map', current.mapActive, html`<${MapGlyph} /> Map`)}${seg('fleet', current.fleetActive, 'Groups · all nodes')}</span>
+    <span class="skynet-seg" role="group" aria-label="Skynet views">${seg('map', current.mapActive, html`<${MapGlyph} /> Map`)}${seg('fleet', current.fleetActive, 'Groups · all nodes')}${seg('fleet-admin', current.adminActive, '⚙ Fleet')}</span>
     <span class="skynet-toplevel-note">Skynet · ${n} nodes · hub ${hub} · pick ⌂ ${current.fleet.self.name} to return to its dashboard</span>
   </span>`;
 }
@@ -153,10 +154,12 @@ export function SkynetMap({ state, actions, navigate = defaultNavigate, timers =
 
   // Never strand the operator on an empty map: once the node list has loaded
   // without linked nodes (a /map deep link on an unlinked node, or the last
-  // peer untrusted while the map is open), return to the per-node tab.
+  // peer untrusted while the map is open), return to the per-node tab. Fleet
+  // administration stays: it is where the first peer gets trusted.
+  const multiNode = current.mapActive || current.fleetActive;
   useEffect(() => {
-    if (current.topLevel && current.statusLoaded && !fleet) navigate(state.lastLocalTab());
-  }, [current.topLevel, current.statusLoaded, fleetKey]);
+    if (multiNode && current.statusLoaded && !fleet) navigate(state.lastLocalTab());
+  }, [multiNode, current.statusLoaded, fleetKey]);
 
   // [ / ] and ←/→ cycling have no per-node tab to move to while the map hides
   // them; refresh.js hands the keystroke here and the map steps back out.

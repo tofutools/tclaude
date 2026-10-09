@@ -2397,6 +2397,17 @@ peer) and `groups` rows with `group`, `node`, `node_id`, `members` and
 `online`. An unreachable peer keeps the other rows and makes the exit status
 nonzero.
 
+The dashboard's **⚙ Fleet** view (beside Map and Groups · all nodes, or
+"Fleet administration" in the command palette before any peer is trusted)
+covers `federation status`, `peers`, `trust`, `untrust` and `disconnect`:
+this node's identity and hub connection, the trusted peers with their level,
+grants and pools, and the hub-visible instances waiting to be trusted. Trust
+previews first and shows the fingerprint the daemon will pin in full; the
+operator confirms the out-of-band comparison before it applies. Granting
+unrestricted trust repeats what it implies and sends the fingerprint as the
+daemon's confirmation. Enrollment tokens, peer grants, profiles and the audit
+log are managed with their `tclaude federation` commands.
+
 `federation view` returns the full JSON response, including `peer_view`, and
 preserves structured failure JSON on stderr. The `agent ls --node` and
 `agent groups ls --node` JSON outputs are envelopes with `agents` or `groups`

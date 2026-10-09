@@ -2,9 +2,9 @@ import { computed, effect, signal } from '@preact/signals';
 import { dashboardState } from './snapshot-store.js';
 import { normalizeFleet } from './skynet-model.js';
 
-// TOP_LEVEL_TABS are the multi-node views (the map and the merged Groups
-// view): they hide the per-node tabs and are never a per-node tab to return to.
-export const TOP_LEVEL_TABS = new Set(['map', 'fleet']);
+// TOP_LEVEL_TABS are the multi-node views (the map, the merged Groups view
+// and fleet administration): they hide the per-node tabs and are never a per-node tab to return to.
+export const TOP_LEVEL_TABS = new Set(['map', 'fleet', 'fleet-admin']);
 
 // createSkynetState holds the chip row's fleet list and the map's per-node
 // summaries. It owns no timers or fetches; skynet-actions.js loads, and the
@@ -24,6 +24,7 @@ export function createSkynetState({ activeTab = dashboardState.activeTab, now = 
   const view = computed(() => ({
     mapActive: activeTab.value === 'map',
     fleetActive: activeTab.value === 'fleet',
+    adminActive: activeTab.value === 'fleet-admin',
     topLevel: TOP_LEVEL_TABS.has(activeTab.value),
     activeTab: activeTab.value,
     fleet: fleet.value,

@@ -582,6 +582,24 @@ export function mountSkynetFleetFeature(dependencies = {}) {
   return mountIslandDescriptor(skynetFleetDescriptor, dependencies);
 }
 
+// Fleet administration (trust, hub connection) is its own island too.
+const fleetAdminDescriptor = createIslandDescriptor({
+  name: 'fleet-admin', label: 'Fleet administration',
+  hosts: { host: '#fleet-admin-root' },
+  failureClass: 'skynet-error',
+  load: async ({ hosts: { host } }) => {
+    const [{ mountFleetAdminIsland }, { createFleetAdminActions }, { skynetState }] = await Promise.all([
+      import('./fleet-admin-island.js'), import('./fleet-admin-actions.js'), import('./skynet-state.js'),
+    ]);
+    const actions = createFleetAdminActions();
+    return { state: skynetState, mount: (registerCleanup) => mountFleetAdminIsland({ host, state: skynetState, actions, registerCleanup }) };
+  },
+});
+
+export function mountFleetAdminFeature(dependencies = {}) {
+  return mountIslandDescriptor(fleetAdminDescriptor, dependencies);
+}
+
 export async function mountAuditFeature(actionDependencies = {}) {
   const host = document.querySelector('#audit-root');
   if (!host) return null;
