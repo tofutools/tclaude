@@ -204,24 +204,45 @@ export function joinCommand(masterID) {
 }
 
 // profileSummary condenses a node profile definition for the profiles table.
-export function profileSummary(p) {
+// A definition stores its pools by ID; poolNames (id -> name) labels them.
+export function profileSummary(p, poolNames = new Map()) {
   const d = p?.definition || {};
   return {
     name: p?.name || '', id: p?.id || '', revision: p?.revision || 0,
     level: d.trust_level === 'unrestricted' ? 'unrestricted' : 'restricted',
-    pools: Array.isArray(d.pools) ? d.pools : [],
+    poolIDs: Array.isArray(d.pools) ? d.pools : [],
+    pools: (Array.isArray(d.pools) ? d.pools : []).map((id) => poolNames.get(id) || id),
     grants: Array.isArray(d.peer_grants) ? d.peer_grants.length : 0,
     labels: Array.isArray(d.labels) ? d.labels : [],
     bundle: !!d.config_bundle,
   };
 }
 
-// changeText renders one profile plan change ({item, before, after}).
-export function changeText(c) {
+// changeText renders one profile plan change ({item, before, after}); a
+// pool/<id> item is named by poolNames when known.
+export function changeText(c, poolNames = new Map()) {
   const v = (x) => (x == null || x === '' ? '∅' : typeof x === 'string' ? x : JSON.stringify(x));
+  const item = String(c?.item || '');
+  if (item.startsWith('pool/')) {
+    const id = item.slice(5);
+    const name = poolNames.get(id) || id;
+    if (c?.after === true && c?.before !== true) return `joins pool ${name}`;
+    if (c?.before === true && c?.after !== true) return `leaves pool ${name}`;
+    c = { ...c, item: `pool ${name}` };
+  }
   if (c?.before == null) return `${c?.item}: add ${v(c?.after)}`;
   if (c?.after == null) return `${c?.item}: remove ${v(c?.before)}`;
   return `${c?.item}: ${v(c?.before)} → ${v(c?.after)}`;
+}
+
+// grantText names a grant for confirms, flagging an unscoped group grant as
+// covering every group, including future ones.
+export function grantText(g) {
+  const info = slugInfo(g?.slug);
+  const group = g?.group_name || scopeGroup(g?.scope);
+  if (group) return `${g.slug} (group ${group})`;
+  if (!g?.scope && info.kind === 'group') return `${g.slug} (EVERY group, including future ones)`;
+  return g?.slug || '';
 }
 
 // POOL_NAME_RE mirrors the daemon's nodeGroupNamePattern.

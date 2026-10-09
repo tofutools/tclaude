@@ -18925,3 +18925,4 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-member { display: inline-flex; align-items: center; gap: 2px; margin-right: 10px; }
 .fa-badge { font-size: 11px; padding: 0 6px; border: 1px solid #1f6feb; border-radius: 8px; color: #58a6ff; }
 .fa-plan ul { margin: 6px 0; padding-left: 18px; max-height: 240px; overflow: auto; }
+.fa-pool-grants { margin: 4px 0; }

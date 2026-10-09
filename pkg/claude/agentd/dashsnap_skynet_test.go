@@ -31,7 +31,7 @@ const skynetFederationStubJS = `(function(){
       { peer: 'inst_hn3cxq7a', slug: 'routes.consume', scope: '', pool_id: 'pool_1', pool_name: 'rigs' }
     ] });
     if (path === '/api/federation/profiles') return json({ profiles: [
-      { id: 'nprof_7h2k', name: 'test-rig', revision: 3, definition: { trust_level: 'restricted', pools: ['rigs'], peer_grants: [{ slug: 'message.direct' }, { slug: 'groups.roster.read' }], labels: ['gpu', 'ci'] } },
+      { id: 'nprof_7h2k', name: 'test-rig', revision: 3, definition: { trust_level: 'restricted', pools: ['pool_1'], peer_grants: [{ slug: 'message.direct' }, { slug: 'groups.roster.read' }], labels: ['gpu', 'ci'] } },
       { id: 'nprof_9x1q', name: 'build-farm', revision: 1, definition: { trust_level: 'restricted', pools: [], peer_grants: [{ slug: 'jobs.run' }], labels: ['linux'] } }
     ], default: { id: 'nprof_7h2k', name: 'test-rig' } });
     if (path === '/api/federation/enroll-tokens') return json({ tokens: [

@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
-import { POOL_NAME_RE, UNRESTRICTED_CONSEQUENCE, changeText, profileSummary } from './fleet-admin-model.js';
+import { POOL_NAME_RE, UNRESTRICTED_CONSEQUENCE, changeText, grantText, profileSummary } from './fleet-admin-model.js';
 
 const html = htm.bind(h);
 
@@ -12,7 +12,7 @@ function errText(error) { return error?.message || String(error); }
 // plan (every change, how many are security-relevant, conflicts) and commits
 // exactly that plan. Making a restricted peer unrestricted repeats the
 // consequence and confirms its fingerprint.
-export function ApplyDialog({ profile, peers, actions, onClose, onDone }) {
+export function ApplyDialog({ profile, peers, actions, poolNames = new Map(), onClose, onDone }) {
   const [peer, setPeer] = useState(peers[0]?.id || '');
   const [plan, setPlan] = useState(null);
   const [checked, setChecked] = useState(false);
@@ -48,7 +48,8 @@ export function ApplyDialog({ profile, peers, actions, onClose, onDone }) {
       </select></label>
     ${!plan && !error ? html`<div class="empty">Previewing…</div>` : plan && html`<div class="fa-plan">
       <div>${changes.length ? `${changes.length} change(s), ${plan.security_changes || 0} security-relevant${plan.future_workers_only ? ' (worker defaults apply to future workers only)' : ''}:` : 'No changes: the peer already matches this profile.'}</div>
-      ${changes.length > 0 && html`<ul id="fleet-apply-changes">${changes.map((c, i) => html`<li key=${i} class=${c.security ? 'fa-sensitive' : ''}>${changeText(c)}</li>`)}</ul>`}
+      ${changes.length > 0 && html`<ul id="fleet-apply-changes">${changes.map((c, i) => html`<li key=${i} class=${c.security ? 'fa-sensitive' : ''}>${changeText(c, poolNames)}</li>`)}</ul>`}
+      ${(plan.pools || []).filter((p) => (p.live_grants || []).length).map((p) => html`<div key=${p.id} class="fa-pool-grants">Via pool <b>${p.name}</b> it gets: ${p.live_grants.map((g, i) => html`${i ? ', ' : ''}<span class=${!g.scope && !g.group_name ? 'fa-warn' : ''}>${grantText(g)}</span>`)}</div>`)}
       ${conflicts.length > 0 && html`<div class="cron-create-error">Conflicts — resolve before applying: ${conflicts.join('; ')}</div>`}
     </div>`}
     ${widens && html`<div class="fa-consequence" role="note"><b>${row.label} becomes unrestricted.</b> ${UNRESTRICTED_CONSEQUENCE}</div>
@@ -81,7 +82,7 @@ export function ProfilesPage({ view, pools, actions, confirm, toast, onOpenGrant
     let off = false;
     actions.profiles().then((r) => {
       if (off) return;
-      setProfiles((r?.profiles || []).map(profileSummary));
+      setProfiles(r?.profiles || []);
       setDefaultID(r?.default?.id || '');
       setError('');
     }).catch((e) => { if (!off) setError(errText(e)); });
@@ -89,12 +90,14 @@ export function ProfilesPage({ view, pools, actions, confirm, toast, onOpenGrant
   }, [tick]);
 
   const done = (msg) => { toast(msg, false); refresh(); };
+  const summaries = profiles ? profiles.map((p) => profileSummary(p, new Map(pools.map((x) => [x.id, x.name])))) : null;
   const fail = (what) => (e) => toast(`${what} failed: ${errText(e)}`, true);
   const label = (id) => view.trusted.find((r) => r.id === id)?.label || id;
   const poolGrants = async (name) => {
     try { return await actions.grants(`group:${name}`); } catch (_) { return null; }
   };
-  const grantList = (gs) => (gs == null ? 'its grants' : gs.length ? `its ${gs.length} grant(s): ${gs.map((g) => g.slug + (g.group_name || (g.scope ? ` ${g.scope}` : ''))).join(', ')}` : 'no grants yet');
+  const grantList = (gs) => (gs == null ? 'its grants' : gs.length ? `its ${gs.length} grant(s): ${gs.map(grantText).join(', ')}` : 'no grants yet');
+  const poolNames = new Map(pools.map((p) => [p.id, p.name]));
 
   const createPool = () => {
     const name = newPool.trim();
@@ -103,9 +106,11 @@ export function ProfilesPage({ view, pools, actions, confirm, toast, onOpenGrant
   };
   const deletePool = async (pool) => {
     const gs = await poolGrants(pool.name);
+    const users = (summaries || []).filter((p) => p.poolIDs.includes(pool.id));
     confirm({
       title: `Delete pool ${pool.name}?`,
-      body: `Its ${pool.members.length} member(s) lose ${grantList(gs)}, and the pool's grants are deleted with it. The members stay trusted with their own direct grants.`,
+      body: `Its ${pool.members.length} member(s) lose ${grantList(gs)}, and the pool's grants are deleted with it. The members stay trusted with their own direct grants.`
+        + (users.length ? ` Profiles ${users.map((p) => p.name).join(', ')} include this pool: applying them${users.some((p) => p.id === defaultID) ? ', trusting new peers with the default profile' : ''} and enrolling with their invites fail until their definitions drop it.` : ''),
       okLabel: 'Delete pool', busyLabel: 'Deleting…',
       action: () => actions.deletePool(pool.name),
     }).then((ok) => { if (ok) done(`Deleted pool ${pool.name}`); }).catch(fail('Delete pool'));
@@ -128,17 +133,24 @@ export function ProfilesPage({ view, pools, actions, confirm, toast, onOpenGrant
     action: () => actions.removePoolMember(pool.name, peer),
   }).then((ok) => { if (ok) done(`Removed ${label(peer)} from ${pool.name}`); }).catch(fail('Remove member'));
 
-  const setDefault = (p) => confirm({
+  const setDefault = async (p) => {
+    const via = [];
+    for (const name of p ? p.pools : []) {
+      const gs = await poolGrants(name);
+      via.push(`pool ${name} (${grantList(gs)})`);
+    }
+    return confirm({
     title: p ? `Make ${p.name} the default peer profile?` : 'Clear the default peer profile?',
     body: p
-      ? `Every peer trusted from now on (unless the operator opts out) gets ${p.name}: ${p.level} trust, pools ${p.pools.join(', ') || 'none'}, ${p.grants} peer grant(s).${p.level === 'unrestricted' ? ` ${UNRESTRICTED_CONSEQUENCE}` : ''} Peers already trusted are not changed.`
+      ? `Every peer trusted from now on (unless the operator opts out) gets ${p.name}: ${p.level} trust, ${p.grants} direct peer grant(s)${via.length ? `, and membership of ${via.join('; ')}` : ''}.${p.level === 'unrestricted' ? ` ${UNRESTRICTED_CONSEQUENCE}` : ''} Peers already trusted are not changed.`
       : 'Peers trusted from now on start restricted with no grants unless a profile is chosen. Peers already trusted are not changed.',
     okLabel: p ? 'Make default' : 'Clear default', busyLabel: 'Saving…',
     action: () => actions.setDefaultProfile(p ? p.name : ''),
   }).then((ok) => { if (ok) done(p ? `${p.name} is the default peer profile` : 'Cleared the default peer profile'); }).catch(fail('Default profile'));
+  };
   const deleteProfile = (p) => confirm({
     title: `Delete profile ${p.name}?`,
-    body: 'Unused invite tokens for it stop working. Peers it was applied to keep their current trust, pools and grants. A profile still in use is refused.',
+    body: 'Only an unused profile can be deleted: one applied to a peer or set as the default is refused. Unused invite tokens for it stop working.',
     okLabel: 'Delete', busyLabel: 'Deleting…',
     action: () => actions.deleteProfile(p.name),
   }).then((ok) => { if (ok) done(`Deleted profile ${p.name}`); }).catch(fail('Delete profile'));
@@ -167,12 +179,12 @@ export function ProfilesPage({ view, pools, actions, confirm, toast, onOpenGrant
       <input id="fleet-pool-name" type="text" placeholder="new pool name" value=${newPool} autocomplete="off" spellcheck="false" onInput=${(e) => setNewPool(e.currentTarget.value)} />
       <button id="fleet-pool-create" type="button" disabled=${!newPool.trim()} onClick=${createPool}>Create pool</button>
     </div>
-    <h4>Node profiles <span class="muted">${profiles ? profiles.length : ''}</span></h4>
+    <h4>Node profiles <span class="muted">${summaries ? summaries.length : ''}</span></h4>
     <div class="muted">A profile bundles a trust level, pools, peer grants and worker defaults for a peer. Create and edit definitions with <code>tclaude federation profile</code>.</div>
-    ${profiles && profiles.length === 0 && html`<div class="empty">No profiles yet.</div>`}
-    ${profiles && profiles.length > 0 && html`<table class="fa-table" id="fleet-profiles">
+    ${summaries && summaries.length === 0 && html`<div class="empty">No profiles yet.</div>`}
+    ${summaries && summaries.length > 0 && html`<table class="fa-table" id="fleet-profiles">
       <thead><tr><th>Profile</th><th>Level</th><th>Pools</th><th>Grants</th><th>Labels</th><th></th></tr></thead>
-      <tbody>${profiles.map((p) => html`<tr key=${p.id} data-profile=${p.name}>
+      <tbody>${summaries.map((p) => html`<tr key=${p.id} data-profile=${p.name}>
         <td><b>${p.name}</b> <span class="muted">rev ${p.revision}</span>${p.id === defaultID ? html` <span class="fa-badge">default</span>` : ''}</td>
         <td><span class=${`fa-level ${p.level}`}>${p.level}</span></td>
         <td>${p.pools.join(', ') || html`<span class="muted">—</span>`}</td>
@@ -187,7 +199,7 @@ export function ProfilesPage({ view, pools, actions, confirm, toast, onOpenGrant
         </td>
       </tr>`)}</tbody>
     </table>`}
-    ${applying && html`<${ApplyDialog} profile=${applying} peers=${view.trusted} actions=${actions} onClose=${() => setApplying(null)}
+    ${applying && html`<${ApplyDialog} profile=${applying} peers=${view.trusted} actions=${actions} poolNames=${poolNames} onClose=${() => setApplying(null)}
       onDone=${(msg) => { setApplying(null); done(msg); }} />`}
   </div>`;
 }
