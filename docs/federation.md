@@ -2198,6 +2198,58 @@ hub-visible untrusted instances and the administration fields. Responses are
 private and uncached. Poll this local list at a relaxed interval, pause when
 the dashboard is hidden, and poll each visible remote map card separately.
 
+The rest of the local Fleet administration API mirrors the CLI API: replace
+`/v1/federation/` with `/api/federation/`, retaining the HTTP method, JSON
+request/response, query parameters, and path variables. Every wrapper checks
+the local dashboard session before calling the shared handler as the local
+human. Peer-view transport refuses all of these administration routes,
+including for unrestricted peers. `HEAD` reads on enrollment-token and profile
+GET routes preserve read-only semantics on both API surfaces.
+
+| Method | Tail under `/api/federation/` | Existing `tclaude federation` CLI |
+| --- | --- | --- |
+| GET | `status`, `audit` | `status`, `audit` |
+| POST | `config` | `connect`, `disconnect` |
+| GET / POST | `enroll-tokens` | `enroll-token ls`, `enroll-token create` |
+| POST | `enroll-tokens/{id}/revoke` | `enroll-token revoke` |
+| GET | `enrollments` | `enrollments` |
+| POST | `enroll/preview`, `enroll` | `enroll --preview`, `enroll` |
+| POST | `peers/trust`, `peers/untrust` | `trust`, `untrust` |
+| GET / POST / DELETE | `grants` | `grants`, `grant`, `revoke` |
+| GET / POST | `profiles` | `profile ls`, `profile create` |
+| GET / PUT / DELETE | `profiles/{name}` | `profile show`, `profile update`, `profile rm` |
+| POST | `profiles/{name}/apply` | `profile apply` |
+| PUT | `default-peer-profile` | `profile default` |
+| GET / POST | `nodes/groups` | `nodes groups ls`, `nodes groups create` |
+| DELETE | `nodes/groups/{name}` | `nodes groups rm` |
+| POST / DELETE | `nodes/groups/{name}/members` | `nodes groups add`, `nodes groups rm` |
+
+Important shared request shapes for dashboard clients:
+
+- Trust uses `instance`, optional `label`, `level`, `profile`,
+  `no_default_profile`, `preview`, `preview_token`, and
+  `confirm_fingerprint`. Changing to unrestricted requires the exact displayed
+  fingerprint; selecting a profile preserves the CLI preview/apply contract.
+  Untrust uses `instance`.
+- Grants use `peer`, `slug`, optional `scope` and `spawn_policy`. Read a peer's
+  grants with `?peer=<instance_id>`; a local pool selector is `group:<name>`.
+- Profiles are `{name, revision, definition}` with the existing definition
+  schema. Updates must send the current revision. Applying a profile uses
+  `{peer, apply, preview_token, confirm_fingerprint}`: first preview with
+  `apply: false`, then commit using the returned token. The default-profile
+  request is `{profile}` (an empty string clears it).
+- Pool creation uses `{name}`; adding or removing a member uses `{peer}`.
+- Enrollment token creation uses `{profile, uses, ttl_seconds, trust_level}`.
+  The bearer is returned only at creation; token listings expose public
+  metadata. Revoke by public token ID. Joining uses `{master, token}` for
+  preview, then adds `preview_token` for enrollment. Responses preserve the
+  existing consent and fingerprint fields.
+
+Full status exposes hub-visible untrusted instances for the trust screen.
+There is no separate incoming trust-request queue: trusting one of these
+instances pins its identity through the existing trust operation. Summary
+status intentionally lists only linked trusted peers for the chip row.
+
 ### Dashboard peer proxy
 
 The browser uses its local dashboard session for
