@@ -4,11 +4,12 @@ import "net/http"
 
 func registerFederationPeerViewRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/federation/peer/{node}/{tail...}", handleFederationPeerView)
+	mux.HandleFunc("POST /v1/federation/peer/{node}/{tail...}", handleFederationPeerView)
 	mux.HandleFunc("GET /v1/federation/node-summary", handleFederationLocalSummary)
 }
 
 func handleFederationPeerView(w http.ResponseWriter, r *http.Request) {
-	if !requireHuman(w, r, "read a live peer view") {
+	if !requireHuman(w, r, "request a peer view") {
 		return
 	}
 	// Only operator-chosen labels and pinned identities select a destination.

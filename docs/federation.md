@@ -2402,3 +2402,46 @@ listing flags. The peer dashboard audit is read with `federation view audit`;
 Proxied responses always keep the local `private, no-store` cache policy.
 Peers cannot replace it with a public or long-lived policy. ETag validators
 continue to pass through for client-managed revalidation.
+
+### Updating local and linked nodes
+
+`tclaude update` checks the latest stable release. Use `--apply` to install it,
+`--version vX.Y.Z` to pin a release, or `--rollback` to restore the preceding
+binaries. `--node <label-or-instance-id>` performs the same operation on a
+trusted node; that node downloads its own update. Installed `tclaude`,
+`tclaude-agentd`, and `tclaude-hub` binaries are included. Agentd gracefully
+restarts and reconnects; existing tmux sessions continue running. A running
+standalone hub needs its own service restart after its binary is replaced.
+
+Official release binaries report their real release version and the `release`
+install marker. Release archives must match the official SHA-256 checksums.
+Go-installed binaries use `go install` at the selected version. Source/dev or
+unmarked builds report their method explicitly and warn that updating replaces
+local modifications; their default is `go install @latest`. A staged binary
+must report the expected release version and the same federation protocol before
+any installed binary is replaced. Unknown current versions have a nullable
+update-available hint rather than a guessed ordering. A new update creates a
+verified backup; rollback refuses to overwrite files changed outside the updater.
+
+`node.update` is an **instance-wide**, default-off peer permission. Neither
+`node.read` nor `node.harnesses.read` implies it; only unrestricted trust implies
+it automatically. It allows reading updater status/jobs as well as checking,
+applying and rolling back updates. Permission is checked again before each
+replacement. Update requests and results appear in the federation audit.
+
+The local dashboard API is `GET /api/node/update` (status), `POST
+/api/node/update` with `{ "action": "check" | "apply" | "rollback", "version":
+"vX.Y.Z" }` (optional version, never with rollback), and `GET
+/api/node/update/jobs/{id}`. Starting a job returns HTTP 202 and its durable ID;
+concurrent jobs return HTTP 409 `update_busy`. The corresponding operator-only
+CLI API uses `/v1/node/update`; remote dashboard calls use
+`/api/peer/{instance_id}/node/update` and its `/jobs/{id}` suffix.
+
+Poll a started job about once per second. Its states are `running`, `restarting`,
+`succeeded` and `failed`; `phase`, `warnings`, and optional `error` explain its
+progress. During `restarting`, tolerate the normal daemon/peer disconnect and
+resume polling the same ID after reconnecting. `tclaude update --no-wait` returns
+that ID immediately; `--job <id>` reads it later, including after a restart.
+Node summaries expose cached `version`, optional `latest_version`, nullable
+`update_available`, and optional `update_checked_at` without release requests
+in the polling path. Release metadata is refreshed in the background hourly.

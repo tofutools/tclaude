@@ -59,6 +59,10 @@ func serveCmd() *cobra.Command {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
+			if err := performSelfUpdateRestart(); err != nil {
+				fmt.Fprintf(os.Stderr, "Restart failed: %v\n", err)
+				os.Exit(1)
+			}
 		},
 	}.ToCobra()
 }
@@ -871,6 +875,8 @@ func runServe(p *serveParams) error {
 	}
 
 	quit := newQuitter()
+	configureSelfUpdateRestart(quit.signal)
+	startBackgroundNodeUpdates(quit.ch)
 
 	// Translate any of: SIGINT/SIGTERM, the socket server dying,
 	// "Quit" from the tray menu, into a single shutdown signal.
