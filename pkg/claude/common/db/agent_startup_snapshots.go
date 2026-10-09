@@ -7,10 +7,20 @@ import (
 	"time"
 )
 
-// ReinjectedContextSubject is the subject of the agent message tclaude queues
-// after a compaction or /clear boundary to re-inject the agent's startup
-// context. It is also the dedupe key InsertReinjectedContextMessage checks.
-const ReinjectedContextSubject = "Startup context (re-injected)"
+// Subjects of the agent message tclaude queues after a compaction or /clear
+// boundary to re-inject the agent's startup context. Each boundary kind has
+// its own subject because the subject is also the dedupe key
+// InsertReinjectedContextMessage checks: a /clear shortly after a compaction
+// is a separate boundary and must not be swallowed by it.
+const (
+	ReinjectedAfterCompactSubject = "Startup context (re-injected after compaction)"
+	ReinjectedAfterClearSubject   = "Startup context (re-injected after /clear)"
+)
+
+// IsReinjectedContextSubject reports whether subject marks a re-injection.
+func IsReinjectedContextSubject(subject string) bool {
+	return subject == ReinjectedAfterCompactSubject || subject == ReinjectedAfterClearSubject
+}
 
 // AgentStartupSnapshot is the per-agent record of spawn-time facts a later
 // compaction or /clear boundary needs to rebuild the startup context. See
@@ -153,9 +163,9 @@ func ListAgentGroupMembershipsByJoin(agentID string) ([]AgentGroupMembership, er
 	return out, nil
 }
 
-// InsertReinjectedContextMessage queues m (whose Subject must be
-// ReinjectedContextSubject) unless one was already queued for the same
-// recipient actor within window. It returns the new message id, or 0 when the
+// InsertReinjectedContextMessage queues m (whose Subject must be one of the
+// re-injection subjects) unless a message with the same subject was already
+// queued for the same recipient actor within window. It returns the new message id, or 0 when the
 // insert was skipped as a duplicate.
 //
 // The window exists because one boundary can be announced twice — Claude Code
@@ -164,7 +174,7 @@ func ListAgentGroupMembershipsByJoin(agentID string) ([]AgentGroupMembership, er
 // one transaction, and SQLite serializes writers, so two racing callers cannot
 // both insert.
 func InsertReinjectedContextMessage(m *AgentMessage, window time.Duration) (int64, error) {
-	if m == nil || m.Subject != ReinjectedContextSubject {
+	if m == nil || !IsReinjectedContextSubject(m.Subject) {
 		return 0, errors.New("InsertReinjectedContextMessage: wrong subject")
 	}
 	if m.CreatedAt.IsZero() {
@@ -185,7 +195,7 @@ func InsertReinjectedContextMessage(m *AgentMessage, window time.Duration) (int6
 		  AND to_agent != ''
 		  AND subject = ?
 		  AND created_at >= ?`,
-		m.ToConv, ReinjectedContextSubject, dbTime(m.CreatedAt.Add(-window))).Scan(&recent)
+		m.ToConv, m.Subject, dbTime(m.CreatedAt.Add(-window))).Scan(&recent)
 	if err != nil {
 		return 0, err
 	}

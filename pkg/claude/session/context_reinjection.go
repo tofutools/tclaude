@@ -75,11 +75,15 @@ func QueueContextReinjection(input HookCallbackInput, envSessionID string) {
 	if r.Body == "" {
 		return
 	}
+	subject := db.ReinjectedAfterCompactSubject
+	if boundary == startupctx.BoundaryClear {
+		subject = db.ReinjectedAfterClearSubject
+	}
 	id, err := db.InsertReinjectedContextMessage(&db.AgentMessage{
 		GroupID:      r.GroupID,
 		ToConv:       convID,
 		ToRecipients: []string{convID},
-		Subject:      db.ReinjectedContextSubject,
+		Subject:      subject,
 		Body:         r.Body,
 	}, reinjectionDedupeWindow)
 	if err != nil {

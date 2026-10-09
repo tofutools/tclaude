@@ -222,8 +222,14 @@ func TestClearRotation_MessageToPreClearIDReachesAgent(t *testing.T) {
 		"send to the pre-/clear id should report a redirect")
 
 	// The message landed in the NEW conv's inbox, not the old one.
-	newRows, err := db.ListAgentMessagesForConv(c.NewConv, 100)
+	allRows, err := db.ListAgentMessagesForConv(c.NewConv, 100)
 	require.NoError(t, err)
+	var newRows []*db.AgentMessage
+	for _, m := range allRows {
+		if !db.IsReinjectedContextSubject(m.Subject) { // the /clear's own identity re-injection
+			newRows = append(newRows, m)
+		}
+	}
 	require.Len(t, newRows, 1, "new conv inbox should hold the message")
 	assert.Equal(t, c.OldConv, newRows[0].OriginalToConv, "OriginalToConv")
 	assert.Equal(t, c.NewConv, newRows[0].ToConv, "ToConv (live successor)")

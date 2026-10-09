@@ -1591,3 +1591,15 @@ CREATE TABLE federation_auto_workers (
  peer TEXT NOT NULL,
  agent_id TEXT NOT NULL
  ) STRICT;
+
+CREATE TABLE agent_startup_snapshots (
+			agent_id          TEXT PRIMARY KEY,
+			spawn_group_id    INTEGER NOT NULL DEFAULT 0,
+			spawned_by_agent  TEXT NOT NULL DEFAULT '',
+			include_group_ctx INTEGER NOT NULL DEFAULT 1,
+			profile_context   TEXT NOT NULL DEFAULT '',
+			worktree_path     TEXT NOT NULL DEFAULT '',
+			worktree_branch   TEXT NOT NULL DEFAULT '',
+			brief_message_id  INTEGER NOT NULL DEFAULT 0,
+			created_at        INTEGER NOT NULL
+		) STRICT;
