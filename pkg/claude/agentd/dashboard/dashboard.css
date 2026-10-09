@@ -18788,3 +18788,36 @@ body.wizard nav:has(#node-chips-root .node-chip) .nav-inner > [data-tab]:not(.no
 @media (min-width: 1200px) {
   nav:has(#node-chips-root .node-chip) .nav-inner > [data-tab]:not(.node-chip) { flex-shrink: 0; }
 }
+/* Remote per-node view (?node=, js/remote-node.js): the peer's name stands in
+   for the dashboard title, a 3px line in the node's own colour runs along the
+   top edge (fixed overlay: no layout change), and a "peer view" pill opens what
+   the peer shares. No colour means "remote" in general — only that node. */
+html.remote-node .dashboard-title { display: none; }
+html.remote-node body::before {
+  content: ''; position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 10000;
+  background: var(--remote-node-color, #8b949e); pointer-events: none;
+}
+.remote-node-host:empty { display: none; }
+.remote-node-marker { position: relative; display: inline-flex; align-items: center; gap: 8px; }
+.remote-node-title { color: var(--nc); font-weight: 600; white-space: nowrap; max-width: 14ch; overflow: hidden; text-overflow: ellipsis; }
+.remote-node-pill {
+  font: inherit; font-size: 11px; font-weight: normal; line-height: 1.4; padding: 1px 8px; border-radius: 10px; cursor: pointer;
+  color: #c9d1d9; background: transparent; border: 1px solid var(--nc); white-space: nowrap;
+}
+.remote-node-pill:hover { background: #161b22; }
+.remote-node-pill:not(.live) { border-style: dashed; color: #e3b341; }
+.remote-node-health { color: #e3b341; }
+.remote-node-pop {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 60; width: 340px;
+  background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 6px 0;
+  box-shadow: 0 8px 24px rgba(0,0,0,.45); font-size: 12px; font-weight: normal; color: #d4d4d4; white-space: normal;
+}
+.rnp-head { padding: 2px 10px 6px; border-bottom: 1px solid #21262d; color: #7d8590; font-size: 11px; }
+.rnp-head b { color: var(--nc); }
+.rnp-row { padding: 5px 10px; overflow-wrap: anywhere; }
+.rnp-k { color: #7d8590; margin-right: 4px; }
+.rnp-foot { padding: 6px 10px 2px; border-top: 1px solid #21262d; }
+.rnp-foot button {
+  font: inherit; font-size: 11px; color: #58a6ff; background: transparent; border: 1px solid #30363d; border-radius: 4px; padding: 1px 8px; cursor: pointer;
+}
+.rnp-foot button:hover { border-color: #58a6ff; }

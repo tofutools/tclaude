@@ -172,3 +172,51 @@ export function visibleChips(peers, max = MAX_CHIPS) {
   const list = Array.isArray(peers) ? peers : [];
   return { shown: list.slice(0, max), overflow: Math.max(0, list.length - max) };
 }
+
+// remoteNodeID is the peer this page shows as its per-node view (?node=, set
+// up by remote-node.js before any module ran), or '' for this node.
+export function remoteNodeID(global = globalThis) {
+  return global.__tclaudeRemoteNode?.id || '';
+}
+
+// nodeHref is the URL that shows node id's per-node view at the current tab:
+// the same path and theme with ?node= set, or removed for this node. Switching
+// reloads the page so no local state is ever rendered under a peer's banner.
+export function nodeHref(id, loc = globalThis.location) {
+  const params = new URLSearchParams(loc.search);
+  if (id) params.set('node', id); else params.delete('node');
+  const q = params.toString();
+  return loc.pathname + (q ? `?${q}` : '');
+}
+
+// switchOrder lists the nodes Alt+1..9 reach: this node, then peers in chip
+// order.
+export function switchOrder(fleet) {
+  if (!fleet) return [];
+  return [fleet.self, ...fleet.peers].slice(0, 9);
+}
+
+// remoteHealthView turns the remote snapshot poll's health into the marker's
+// wording: offline/timeout/busy with the age of the data still on screen.
+export function remoteHealthView(health, now = Date.now()) {
+  if (!health || health.ok !== false) return { state: 'live', label: '' };
+  const f = health.failure || {};
+  const age = health.lastOK != null ? fmtAge(Math.max(0, now - health.lastOK)) : '';
+  let state = 'error';
+  if (f.code === 'peer_unreachable') state = f.reason === 'peer_timeout' ? 'timeout' : 'offline';
+  else if (f.code === 'peer_busy') state = 'busy';
+  else if (f.code === 'not_trusted') state = 'not_trusted';
+  const words = { offline: 'offline', timeout: 'not responding', busy: 'busy', not_trusted: 'no longer trusted', error: `error (HTTP ${f.status || '?'})` }[state];
+  return { state, label: age ? `${words} · data ${age} old` : words };
+}
+
+// peerViewSummary normalizes the snapshot's peer_view metadata (what the peer
+// shares with this operator) for the marker's popover.
+export function peerViewSummary(meta) {
+  if (!meta || typeof meta !== 'object') return null;
+  const included = Array.isArray(meta.included) ? meta.included.filter(Boolean) : [];
+  const omitted = (Array.isArray(meta.omitted) ? meta.omitted : [])
+    .map((o) => (typeof o === 'string' ? { feature: o, requires: '' } : { feature: o?.feature || '', requires: o?.requires || '' }))
+    .filter((o) => o.feature);
+  return { included, omitted, full: !omitted.length && !included.length };
+}
