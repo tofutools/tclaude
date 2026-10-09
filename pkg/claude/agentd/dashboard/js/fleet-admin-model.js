@@ -187,3 +187,27 @@ export function grantConsequence({ target, slug, group, maxLive }) {
   const cap = info.policy ? ` Live cap: ${maxLive || 2}.` : '';
   return `${target} gets ${slug} (${info.what}) ${where}.${cap}`;
 }
+
+// TOKEN_TTLS are the invite lifetimes offered (the daemon allows 1s–30d).
+export const TOKEN_TTLS = Object.freeze([
+  { seconds: 3600, label: '1 hour' },
+  { seconds: 86400, label: '24 hours' },
+  { seconds: 7 * 86400, label: '7 days' },
+  { seconds: 30 * 86400, label: '30 days' },
+]);
+
+// tokenState reads an enrollment token listing row: revoked, exhausted,
+// expired or active.
+export function tokenState(t, now = Date.now()) {
+  if (t?.revoked) return 'revoked';
+  if ((t?.used || 0) >= (t?.max_uses || 1)) return 'used up';
+  const exp = Date.parse(t?.expires_at || '');
+  if (Number.isFinite(exp) && exp <= now) return 'expired';
+  return 'active';
+}
+
+// joinCommand is the CLI a joining node's operator runs with the bearer on
+// stdin (never on the command line, where shell history would keep it).
+export function joinCommand(masterID) {
+  return `tclaude federation enroll ${masterID} --token-stdin`;
+}

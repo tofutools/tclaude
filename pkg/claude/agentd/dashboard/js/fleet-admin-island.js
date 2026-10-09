@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { GrantsPage } from './fleet-admin-grants.js';
+import { InvitesPage } from './fleet-admin-invites.js';
 import { dashboardState } from './snapshot-store.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { fmtAge, nodeHref, pollDelay, remoteNodeID } from './skynet-model.js';
@@ -18,7 +19,7 @@ const ADMIN_POLL_MS = 10000;
 // covers them until their pages land.
 const SUB_PAGES = Object.freeze([
   { id: 'peers', label: 'Peers' },
-  { id: 'invites', label: 'Invites & joining', cli: ['tclaude federation enroll-token', 'tclaude federation enroll', 'tclaude federation enrollments'] },
+  { id: 'invites', label: 'Invites & joining' },
   { id: 'grants', label: 'Peer grants' },
   { id: 'profiles', label: 'Profiles & pools', cli: ['tclaude federation profile', 'tclaude federation nodes'] },
   { id: 'audit', label: 'Audit', cli: ['tclaude federation audit'] },
@@ -328,6 +329,8 @@ export function FleetAdmin({
       ? html`<${PeersPage} view=${view} now=${now()} onTrust=${(r) => setDialog({ kind: 'trust', row: r })}
           onUnrestrict=${(r) => setDialog({ kind: 'unrestrict', row: r })} onRestrict=${restrict} onUntrust=${untrust}
           onGrants=${(r) => { setGrantTarget(r.id); setPage('grants'); }} />`
+      : sub.id === 'invites'
+      ? html`<${InvitesPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} now=${now()} />`
       : sub.id === 'grants'
       ? html`<${GrantsPage} view=${view} pools=${pools} groups=${localGroups(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast}
           target=${grantTarget} setTarget=${setGrantTarget} />`

@@ -38,5 +38,13 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
     grants: async (target) => (await call('GET', `grants?peer=${encodeURIComponent(target)}`))?.grants || [],
     grant: (body) => call('POST', 'grants', body),
     revoke: ({ peer, slug, scope }) => call('DELETE', 'grants', { peer, slug, scope }),
+    profiles: () => call('GET', 'profiles'),
+    tokens: async () => (await call('GET', 'enroll-tokens'))?.tokens || [],
+    // The bearer is in this response only; callers show it once and drop it.
+    createToken: ({ profile, uses, ttlSeconds, trustLevel }) => call('POST', 'enroll-tokens', { profile, uses, ttl_seconds: ttlSeconds, trust_level: trustLevel }),
+    revokeToken: (id) => call('POST', `enroll-tokens/${encodeURIComponent(id)}/revoke`, {}),
+    enrollments: async () => (await call('GET', 'enrollments'))?.enrollments || [],
+    enrollPreview: ({ master, token }) => call('POST', 'enroll/preview', { master, token }),
+    enroll: ({ master, token, previewToken }) => call('POST', 'enroll', { master, token, preview_token: previewToken }),
   });
 }
