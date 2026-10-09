@@ -34,6 +34,7 @@ const skynetFederationStubJS = `(function(){
         return r.json().then(function(snap){
           snap.peer_view = { peer: 'desk', included: ['agents.status', 'groups', 'messaging'], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'spawn', requires: 'groups.members.spawn' }, { feature: 'terminals', requires: 'sessions.attach' }] };
           delete snap.assets_version;
+          snap.usage = { available: false }; // what filterPeerFields leaves behind
           return new Response(JSON.stringify(snap), { status: 200, headers: { 'Content-Type': 'application/json' } });
         });
       });
@@ -104,7 +105,7 @@ func skynetStates() []dashsnap.State {
 		{
 			Key:     "skynet-remote-view",
 			Title:   "Peer view of a node",
-			Caption: "The whole per-node UI showing the peer forge through the local proxy: forge's name replaces the title, a 2–3px line in forge's colour runs along the top edge, forge's chip is current, and the peer-view pill lists what forge shares. The harness asserts the header, tab bar and main area keep today's offsets.",
+			Caption: "The whole per-node UI showing the peer forge through the local proxy: forge's name replaces the title, a 2–3px line in forge's colour runs along the top edge, forge's chip is current, and the peer-view pill lists what forge shares. Tabs and actions forge does not offer are greyed in place (costs, config, new group…), and the header says usage and costs are not shared. The harness asserts the header, tab bar and main area keep today's offsets.",
 			InitJS:  skynetRemoteViewJS + skynetFederationStubJS,
 			JS: showGroups + `return (async function(){
   for (var i = 0; i < 50 && !document.querySelector('.remote-node-pill'); i++) await new Promise(function(r){ setTimeout(r, 100); });
@@ -112,6 +113,16 @@ func skynetStates() []dashsnap.State {
   for (var j = 0; j < 50 && !document.querySelector('.node-chip.active[aria-current="page"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
   var cur = document.querySelector('.node-chip[aria-current="page"]');
   if (!cur || cur.textContent.indexOf('forge') < 0) throw new Error('skynet: forge chip not current');
+  // What forge does not share stays in place, greyed; a click on a mutation
+  // control is stopped before the control's own handler runs.
+  if (!document.querySelector('nav [data-tab="costs"].pv-off')) throw new Error('skynet: costs tab not greyed');
+  if (!document.querySelector('nav [data-tab="config"].pv-off')) throw new Error('skynet: config tab not greyed');
+  if (document.querySelector('nav [data-tab="groups"].pv-off')) throw new Error('skynet: groups tab greyed');
+  if (!document.querySelector('#usage.peer-view-na')) throw new Error('skynet: header usage does not say it is not shared');
+  var create = document.getElementById('group-create-open'); var reached = false;
+  create.addEventListener('click', function(){ reached = true; });
+  create.click();
+  if (reached) throw new Error('skynet: a mutation control ran on a peer view');
   document.querySelector('.remote-node-pill').click();
   for (var k = 0; k < 20 && !document.querySelector('.remote-node-pop'); k++) await new Promise(function(r){ setTimeout(r, 50); });
   if (!document.querySelector('.remote-node-pop')) throw new Error('skynet: peer view popover did not open');

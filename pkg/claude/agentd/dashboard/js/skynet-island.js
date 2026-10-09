@@ -264,7 +264,9 @@ export function RemoteMarker({ state, remote = remoteNodeID(), snapshot = dashbo
   useEffect(() => {
     if (!remote) return;
     document.documentElement.style.setProperty('--remote-node-color', color);
-  }, [remote, color]);
+    // peer-view-limits.js names the node in its hints.
+    document.documentElement.dataset.remoteNodeName = peer?.name || remote.slice(0, 13);
+  }, [remote, color, peer?.name]);
   useEffect(() => {
     if (!open) return undefined;
     const onDown = (event) => { if (!rootRef.current?.contains(event.target)) setOpen(false); };

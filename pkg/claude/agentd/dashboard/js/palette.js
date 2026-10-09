@@ -72,6 +72,7 @@ import { closeTerminalsForConvs, closeTerminalsForWindowOp, focusTerminalForConv
 import { createPaletteWindowOperator, webWindowTargets } from './palette-window-ops.js';
 import { buildRegisteredCommands } from './command-registry.js';
 import { openMessageCreateModal, openOperatorMessageDialog } from './message-access-dialog-controller.js';
+import { limitPeerViewCommands } from './peer-view-limits.js';
 
 // wiz(regular, wizard) returns the arcane string in 🧙 mode, else the plain
 // one. buildCommands wraps every command's PRESENTED label + hint (and its
@@ -251,7 +252,7 @@ export function buildCommands(snapshot) {
   if (onlineAll) {
     const plural = onlineAll === 1 ? '' : 's';
     cmds.push({
-      icon: wiz('📣', '📯'), label: wiz('Announce to all live agents…', 'Proclaim to all channeling familiars…'),
+      peerView: 'messaging', icon: wiz('📣', '📯'), label: wiz('Announce to all live agents…', 'Proclaim to all channeling familiars…'),
       hint: wiz(`send one human-authored message to ${onlineAll} currently live agent${plural}`,
         `sound one human proclamation to ${onlineAll} channeling familiar${plural}`),
       keywords: 'announce broadcast message notify all live online agents global everyone'
@@ -483,7 +484,7 @@ export function buildCommands(snapshot) {
       run: () => { recordGroupInteraction(g.name); openAgentSpawnModal({ groupName: g.name }); },
     });
     cmds.push({
-      icon: wiz('✉', '✒'), label: wiz(`Message group: ${g.name}…`, `Send missive to party: ${g.name}…`),
+      peerView: 'messaging', icon: wiz('✉', '✒'), label: wiz(`Message group: ${g.name}…`, `Send missive to party: ${g.name}…`),
       hint: wiz('compose a one-shot message to the whole group or a chosen subset',
         'inscribe a missive for every familiar in this party or a chosen circle'),
       keywords: 'message send compose notify group broadcast multicast all members agents ' + g.name
@@ -542,7 +543,7 @@ export function buildCommands(snapshot) {
   //     the pref (nothing to reveal). In 🧙 mode the dock is the grimoire — Furl
   //     / Unfurl — matching its edge-toggle titles.
   cmds.push({
-    icon: wiz('◨', '📖'), label: wiz('Show right panel', 'Unfurl the grimoire'),
+    peerView: 'view', icon: wiz('◨', '📖'), label: wiz('Show right panel', 'Unfurl the grimoire'),
     hint: wiz('reveal the right-side dock of profiles, templates & roles',
       'unfurl the grimoire of patterns, circles & classes'),
     keywords: 'show open reveal expand right panel dock sidebar drawer palette rail'
@@ -579,7 +580,7 @@ export function buildCommands(snapshot) {
       : (btn.textContent || '').replace(/\s*\d+\s*$/, '').trim();
     if (!name) continue;
     cmds.push({
-      icon: wiz('⤢', '🪞'), label: wiz(`Go to ${name}`, `Scry the ${name}`),
+      peerView: 'tab', tab: btn.dataset.tab, icon: wiz('⤢', '🪞'), label: wiz(`Go to ${name}`, `Scry the ${name}`),
       hint: wiz('switch tab', 'peer into this chamber of the Tower'),
       keywords: 'tab navigate go open ' + (btn.dataset.tab || '')
         + ' scry peer gaze behold chamber vision',
@@ -606,14 +607,14 @@ export function buildCommands(snapshot) {
   });
   for (const g of groups) {
     cmds.push({
-      icon: wiz('⊟', '📕'), label: wiz(`Collapse group: ${g.name}`, `Furl party: ${g.name}`),
+      peerView: 'view', icon: wiz('⊟', '📕'), label: wiz(`Collapse group: ${g.name}`, `Furl party: ${g.name}`),
       hint: wiz('fold this group', 'roll up this party'),
       keywords: 'collapse fold close group ' + g.name
         + ' furl seal roll scroll party',
       run: () => setGroupOpen(g.name, false),
     });
     cmds.push({
-      icon: wiz('⊞', '📖'), label: wiz(`Expand group: ${g.name}`, `Unfurl party: ${g.name}`),
+      peerView: 'view', icon: wiz('⊞', '📖'), label: wiz(`Expand group: ${g.name}`, `Unfurl party: ${g.name}`),
       hint: wiz('unfold this group', 'unroll this party'),
       keywords: 'expand unfold open group ' + g.name
         + ' unfurl unseal unroll scroll party',
@@ -864,5 +865,5 @@ export function buildCommands(snapshot) {
   // are evaluated last and live, so opening the palette in the process editor
   // sees its current selection without the shell owning editor state.
   cmds.push(...buildRegisteredCommands({ snapshot: snap }));
-  return cmds;
+  return limitPeerViewCommands(cmds, snap);
 }

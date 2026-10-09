@@ -18,6 +18,11 @@ import {
   confirmDiscard, confirmModal, isCyclingTabs, refresh, toast,
 } from './refresh.js';
 import { openWorktreeCleanup } from './dashboard-operations.js';
+import { installPeerViewLimits } from './peer-view-limits.js';
+
+// A peer's per-node view greys what the peer does not offer. Installed before
+// any feature binds its listeners so its capture-phase click guard runs first.
+installPeerViewLimits();
 
 // Cosmetic re-skins — slop (?slop=1) and wizard (?wizard=1), mutually
 // exclusive (see `tclaude agent dashboard --slop|--wizard`). Run before any

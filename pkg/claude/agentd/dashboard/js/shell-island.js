@@ -14,6 +14,7 @@ import {
 import { PRChecksBadge } from './pr-checks-hover.js';
 import { hasUnreadHumanNotifications } from './human-notification-attention.js';
 import { dashPrefs } from './prefs.js';
+import { featureState } from './peer-view-limits.js';
 
 const html = htm.bind(h);
 const OPEN_PRS_HOVER_CLOSE_DELAY_MS = 1000;
@@ -56,6 +57,15 @@ function Usage({ state }) {
     setModes((current) => ({ ...current, [provider]: mode }));
     dashPrefs.setItem(prefKey(provider), mode);
   };
+  // A peer view (remote-node.js) of a peer that does not share usage: say so
+  // rather than implying the node has none.
+  const remote = globalThis.__tclaudeRemoteNode?.id;
+  // The peer zeroes usage it does not share (it still serializes as
+  // {available:false}), so ask its peer_view metadata, not the payload.
+  if (remote && featureState('costs', state.snapshot.value?.peer_view) !== 'shared') {
+    const name = globalThis.document?.documentElement?.dataset.remoteNodeName || remote.slice(0, 13);
+    return html`<span id="usage" class="meta na peer-view-na" title=${`${name} does not share usage or costs with you`}>usage and costs not shared by ${name}</span>`;
+  }
   if (view.na) return html`<span id="usage" class="meta na" title=${view.title}>${view.text}</span>`;
   return html`
     <span id="usage" class=${`meta${view.multiline ? ' multiline' : ''}`} title=${view.title}>
