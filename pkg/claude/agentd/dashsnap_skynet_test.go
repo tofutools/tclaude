@@ -30,7 +30,10 @@ const skynetFederationStubJS = `(function(){
       { peer: 'inst_hn3cxq7a', slug: 'groups.members.spawn', scope: 'group=ops', spawn_policy: { max_live: 2 } },
       { peer: 'inst_hn3cxq7a', slug: 'routes.consume', scope: '', pool_id: 'pool_1', pool_name: 'rigs' }
     ] });
-    if (path === '/api/federation/profiles') return json({ profiles: [{ id: 'nprof_7h2k', name: 'test-rig', revision: 3, definition: { trust_level: 'restricted', labels: [] } }, { id: 'nprof_9x1q', name: 'build-farm', revision: 1, definition: { trust_level: 'restricted', labels: [] } }], default: null });
+    if (path === '/api/federation/profiles') return json({ profiles: [
+      { id: 'nprof_7h2k', name: 'test-rig', revision: 3, definition: { trust_level: 'restricted', pools: ['pool_1'], peer_grants: [{ slug: 'message.direct' }, { slug: 'groups.roster.read' }], labels: ['gpu', 'ci'] } },
+      { id: 'nprof_9x1q', name: 'build-farm', revision: 1, definition: { trust_level: 'restricted', pools: [], peer_grants: [{ slug: 'jobs.run' }], labels: ['linux'] } }
+    ], default: { id: 'nprof_7h2k', name: 'test-rig' } });
     if (path === '/api/federation/enroll-tokens') return json({ tokens: [
       { id: 'etok_4mz81c', public_token: '', max_uses: 3, used: 1, revoked: false, expires_at: '2026-10-11T09:00:00Z' },
       { id: 'etok_q2v7tn', public_token: '', max_uses: 1, used: 1, revoked: false, expires_at: '2026-10-17T09:00:00Z' },
@@ -221,6 +224,22 @@ func skynetStates() []dashsnap.State {
   document.querySelector('#fleet-join-preview').click();
   for (var n = 0; n < 30 && !document.querySelector('#fleet-join-ack'); n++) await new Promise(function(r){ setTimeout(r, 100); });
   if (document.querySelector('#fleet-join-modal').textContent.indexOf('w5ze-a3nq-7m1p-kd42-xr8c-0fv6') < 0) throw new Error('skynet: master fingerprint not shown');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-profiles",
+			Title:   "Profiles & pools",
+			Caption: "Fleet → Profiles & pools: node pools with their members (× removes, the picker adds behind a confirm naming the grants gained), Grants… for the pool's grants and Delete; node profiles with trust level, pools, grant count and labels, the default marked, and Apply to peer… / Make default… / Delete… — each previewed or confirmed. Definitions are edited with the CLI.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return /Profiles/.test(b.textContent); })[0].click();
+  for (var j = 0; j < 30 && !(document.querySelector('#fleet-profiles') && document.querySelector('#fleet-pools')); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-profiles .fa-badge')) throw new Error('skynet: default profile not marked');
+  if (!document.querySelector('#fleet-pools [data-pool="rigs"]')) throw new Error('skynet: pool missing');
 })();`,
 			SettleMS: 400,
 		},

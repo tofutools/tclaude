@@ -18922,3 +18922,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-cli-note { font-size: 12px; }
 .fa-bearer { width: 100%; box-sizing: border-box; font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; margin: 8px 0; }
 .fa-token-input { flex: 1; min-width: 0; font-family: ui-monospace, monospace; }
+.fa-member { display: inline-flex; align-items: center; gap: 2px; margin-right: 10px; }
+.fa-badge { font-size: 11px; padding: 0 6px; border: 1px solid #1f6feb; border-radius: 8px; color: #58a6ff; }
+.fa-plan ul { margin: 6px 0; padding-left: 18px; max-height: 240px; overflow: auto; }
+.fa-pool-grants { margin: 4px 0; }

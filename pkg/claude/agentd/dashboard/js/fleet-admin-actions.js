@@ -7,6 +7,8 @@ export class FleetAdminError extends Error {
     super(body?.error || `HTTP ${status}`);
     this.status = status;
     this.code = body?.code || '';
+    // A refused profile apply returns its plan (conflicts) in the body.
+    this.body = body || null;
   }
 }
 
@@ -45,6 +47,16 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
     revokeToken: (id) => call('POST', `enroll-tokens/${encodeURIComponent(id)}/revoke`, {}),
     enrollments: async () => (await call('GET', 'enrollments'))?.enrollments || [],
     enrollPreview: ({ master, token }) => call('POST', 'enroll/preview', { master, token }),
+    createPool: (name) => call('POST', 'nodes/groups', { name }),
+    deletePool: (name) => call('DELETE', `nodes/groups/${encodeURIComponent(name)}`),
+    addPoolMember: (name, peer) => call('POST', `nodes/groups/${encodeURIComponent(name)}/members`, { peer }),
+    removePoolMember: (name, peer) => call('DELETE', `nodes/groups/${encodeURIComponent(name)}/members`, { peer }),
+    setDefaultProfile: (profile) => call('PUT', 'default-peer-profile', { profile }),
+    deleteProfile: (name) => call('DELETE', `profiles/${encodeURIComponent(name)}`),
+    // Preview (apply: false) returns the plan and its preview_token; apply
+    // commits exactly that plan.
+    applyProfile: (name, { peer, apply = false, previewToken = '', confirmFingerprint = '' }) => call('POST', `profiles/${encodeURIComponent(name)}/apply`,
+      { peer, apply, preview_token: previewToken, confirm_fingerprint: confirmFingerprint }),
     enroll: ({ master, token, previewToken }) => call('POST', 'enroll', { master, token, preview_token: previewToken }),
   });
 }

@@ -85,6 +85,13 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     revokeToken: async (id) => { log.push(['revokeToken', id]); return { ok: true }; },
     enrollPreview: async (o) => { log.push(['enrollPreview', o]); return { claims: { master: 'inst_carol', profile_name: 'worker', profile_id: 'prof_x', profile_revision: 2, trust_level: 'unrestricted', expires_at: '2099-01-01T00:00:00Z' }, preview_token: 'pv1', master_fingerprint: FP_NEW, node_fingerprint: 'self-fp-0000', consent: 'Running enroll trusts the pinned master.' }; },
     enroll: async (o) => { log.push(['enroll', o]); return { accepted: true }; },
+    createPool: async (n) => { log.push(['createPool', n]); return { ok: true }; },
+    deletePool: async (n) => { log.push(['deletePool', n]); return { ok: true }; },
+    addPoolMember: async (n, p) => { log.push(['addPoolMember', n, p]); return { ok: true }; },
+    removePoolMember: async (n, p) => { log.push(['removePoolMember', n, p]); return { ok: true }; },
+    setDefaultProfile: async (n) => { log.push(['setDefaultProfile', n]); return { profile_id: n }; },
+    deleteProfile: async (n) => { log.push(['deleteProfile', n]); return { ok: true }; },
+    applyProfile: async (n, o) => { log.push(['applyProfile', n, o]); return { preview_token: 'ptok', changes: [{ item: 'trust_level', before: 'restricted', after: 'unrestricted', security: true }, { item: 'pool/pool_r', before: false, after: true, security: true }], pools: [{ id: 'pool_r', name: 'rigs', live_grants: [{ slug: 'groups.members.spawn', scope: '' }] }], security_changes: 2, conflicts: [] }; },
   };
   const snapshot = harness.signals.signal({ groups: [{ name: 'ops' }, { name: 'build' }] });
   // Like shellConfirm: a confirmed action resolves to the action's result.
@@ -347,4 +354,62 @@ test('joining previews the master fingerprint and trust level, and needs the che
   await s.click(s.q('#fleet-join-submit'));
   assert.deepEqual(s.log.find((l) => l[0] === 'enroll')[1], { master: 'inst_carol', token: 'tcle1.FROMCAROL', previewToken: 'pv1' });
   assert.equal(s.q('#fleet-join-modal'), null);
+});
+
+async function openProfiles(s, pools) {
+  s.actions.pools = async () => pools;
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Profiles/.test(b.textContent)));
+}
+
+test('pools: adding a member names the grants it gains; deleting and removing confirm the loss', async (t) => {
+  const s = await setup(t);
+  const m = await s.harness.importDashboardModule('js/fleet-admin-model.js');
+  assert.equal(m.changeText({ item: 'level', before: 'a', after: 'b' }), 'level: a → b');
+  assert.equal(m.changeText({ item: 'pool rigs', after: 'member' }), 'pool rigs: add member');
+  assert.equal(m.POOL_NAME_RE.test('Rigs'), false);
+  s.actions.grants = async () => [{ slug: 'routes.consume', scope: '' }, { slug: 'message.direct', scope: 'group_id=7', group_name: 'ops' }];
+  s.actions.profiles = async () => ({ profiles: [{ id: 'prof_1', name: 'test-rig', revision: 3, definition: { trust_level: 'restricted', pools: ['pool_r'] } }], default: { id: 'prof_1' } });
+  await openProfiles(s, [{ id: 'pool_r', name: 'rigs', members: [{ instance_id: 'inst_lab' }] }]);
+  assert.match(s.q('#fleet-profiles [data-profile="test-rig"]').textContent, /rigs/, 'profile pools are named, not shown by ID');
+  const row = s.q('#fleet-pools [data-pool="rigs"]');
+  assert.match(row.textContent, /lab/);
+  const pick = row.querySelector('[data-fa="member-pick"]');
+  for (const o of pick.querySelectorAll('option')) { if (o.value === 'inst_forge') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
+  await s.harness.act(() => s.harness.fireEvent(pick, 'change'));
+  await s.click(row.querySelector('[data-fa="add-member"]'));
+  assert.match(s.confirms.at(-1).body, /forge gains its 2 grant\(s\): routes\.consume \(EVERY group, including future ones\), message\.direct \(group ops\) — and any grant added to the pool later/);
+  assert.deepEqual(s.log.find((l) => l[0] === 'addPoolMember'), ['addPoolMember', 'rigs', 'inst_forge']);
+  await s.click(s.q('#fleet-pools [data-fa="remove-member"]'));
+  assert.deepEqual(s.log.find((l) => l[0] === 'removePoolMember'), ['removePoolMember', 'rigs', 'inst_lab']);
+  await s.click(s.q('#fleet-pools [data-fa="delete-pool"]'));
+  assert.match(s.confirms.at(-1).body, /1 member\(s\) lose its 2 grant/);
+  assert.match(s.confirms.at(-1).body, /Profiles test-rig include this pool: applying them, trusting new peers with the default profile and enrolling with their invites fail/);
+  assert.deepEqual(s.log.find((l) => l[0] === 'deletePool'), ['deletePool', 'rigs']);
+  await s.click(s.q('#fleet-pools [data-fa="pool-grants"]'));
+  assert.match(s.q('.fa-grants-head').textContent, /A pool's grants apply to every member node/, 'Grants… opens the pool on the grants page');
+});
+
+test('profiles: default and apply preview the effect; applying unrestricted confirms the fingerprint', async (t) => {
+  const s = await setup(t);
+  s.actions.grants = async () => [{ slug: 'jobs.run', scope: '' }];
+  await openProfiles(s, [{ id: 'pool_r', name: 'rigs', members: [] }]);
+  assert.equal(s.q('#fleet-profiles').querySelectorAll('tbody tr').length, 2);
+  await s.click(s.q('#fleet-profiles [data-profile="ops-full"] [data-fa="make-default"]'));
+  assert.match(s.confirms.at(-1).body, /Every peer trusted from now on .* ops-full: unrestricted trust.*created later/);
+  assert.deepEqual(s.log.find((l) => l[0] === 'setDefaultProfile'), ['setDefaultProfile', 'ops-full']);
+  await s.click(s.q('#fleet-profiles [data-profile="ops-full"] [data-fa="apply-profile"]'));
+  assert.deepEqual(s.log.find((l) => l[0] === 'applyProfile'), ['applyProfile', 'ops-full', { peer: 'inst_forge' }], 'previews for the first peer');
+  const modal = s.q('#fleet-apply-modal');
+  assert.match(modal.textContent, /2 change\(s\), 2 security-relevant/);
+  assert.match(modal.textContent, /joins pool rigs/);
+  assert.match(modal.textContent, /Via pool rigs it gets: groups\.members\.spawn \(EVERY group, including future ones\)/);
+  assert.match(modal.textContent, /trust_level: restricted → unrestricted/);
+  assert.match(modal.textContent, /forge becomes unrestricted.*created later/);
+  assert.equal(s.q('#fleet-apply-submit').disabled, true);
+  await s.check(s.q('#fleet-apply-ack'));
+  await s.click(s.q('#fleet-apply-submit'));
+  assert.deepEqual(s.log.filter((l) => l[0] === 'applyProfile').at(-1), ['applyProfile', 'ops-full', { peer: 'inst_forge', apply: true, previewToken: 'ptok', confirmFingerprint: FP_FORGE }]);
+  await s.click(s.q('#fleet-profiles [data-profile="test-rig"] [data-fa="delete-profile"]'));
+  assert.deepEqual(s.log.find((l) => l[0] === 'deleteProfile'), ['deleteProfile', 'test-rig']);
 });
