@@ -264,7 +264,8 @@ func GetFederationOutbox(envelopeID string) (*FederationOutboxRow, error) {
 }
 
 // UpdateFederationOutbox records an attempt outcome. attemptInc adds to
-// the attempt counter.
+// the attempt counter. A late send result or retryable ack must not overwrite
+// a settled outcome; updating an already settled row is a successful no-op.
 func UpdateFederationOutbox(envelopeID, state string, next time.Time, lastError string, attemptInc int) error {
 	if next.IsZero() {
 		next = time.Now()
@@ -274,7 +275,7 @@ func UpdateFederationOutbox(envelopeID, state string, next time.Time, lastError 
 		return err
 	}
 	_, err = d.Exec(`UPDATE federation_outbox SET state=?, next_attempt_at=?, last_error=?, attempts=attempts+?, updated_at=?
-		WHERE envelope_id=?`, state, dbTime(next), lastError, attemptInc, dbTime(time.Now()), envelopeID)
+		WHERE envelope_id=? AND state IN (?, ?)`, state, dbTime(next), lastError, attemptInc, dbTime(time.Now()), envelopeID, FedOutboxQueued, FedOutboxSent)
 	return err
 }
 
