@@ -146,8 +146,10 @@ export function scopeGroup(scope) {
 }
 
 // grantRows shapes a target's grants for the table: direct grants first, then
-// those inherited from a pool (revoked on the pool, not here).
-export function grantRows(grants) {
+// those inherited from a pool (revoked on the pool, not here). On a pool's own
+// page (ownPool) its grants are direct. A scope still naming a numeric group
+// ID means the group is gone (the daemon shows names for live groups).
+export function grantRows(grants, { ownPool = '', groups = null } = {}) {
   const rows = (Array.isArray(grants) ? grants : []).map((g) => {
     const info = slugInfo(g.slug);
     const group = scopeGroup(g.scope);
@@ -155,11 +157,18 @@ export function grantRows(grants) {
       key: `${g.pool_id || ''}|${g.slug}|${g.scope || ''}`,
       slug: g.slug, scope: g.scope || '', group, what: info.what, sensitive: !!info.sensitive,
       allGroups: !g.scope && info.kind === 'group',
-      pool: g.pool_name || '',
+      pool: g.pool_name && g.pool_name !== ownPool ? g.pool_name : '',
+      deletedGroup: !!group && /^\d+$/.test(group) && !!groups && !groups.includes(group),
       maxLive: g.spawn_policy?.max_live || 0,
+      policy: g.spawn_policy || {},
     };
   });
   return rows.sort((a, b) => (a.pool ? 1 : 0) - (b.pool ? 1 : 0) || a.slug.localeCompare(b.slug) || a.group.localeCompare(b.group));
+}
+
+// extraPolicy lists launch settings beyond the live cap (set from the CLI).
+export function extraPolicy(policy) {
+  return Object.entries(policy || {}).filter(([k, v]) => k !== 'max_live' && v != null && v !== '' && !(Array.isArray(v) && !v.length)).map(([k]) => k);
 }
 
 // grantConsequence spells out what a new grant lets the target do.

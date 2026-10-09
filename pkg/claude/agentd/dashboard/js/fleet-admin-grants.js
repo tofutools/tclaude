@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
-import { PEER_SLUGS, grantConsequence, grantRows, slugInfo } from './fleet-admin-model.js';
+import { PEER_SLUGS, extraPolicy, grantConsequence, grantRows, slugInfo } from './fleet-admin-model.js';
 
 const html = htm.bind(h);
 
@@ -45,17 +45,23 @@ export function GrantsPage({ view, pools, groups, actions, confirm, toast, targe
   }, [current?.id, tick]);
 
   if (!current) return html`<div class="empty">Trust a peer first; grants say what it may do on this node.</div>`;
-  const rows = grants ? grantRows(grants) : [];
+  const rows = grants ? grantRows(grants, { ownPool: current.pool ? current.id.slice(6) : '', groups }) : [];
   const scopeGroupName = info.kind === 'node' ? '' : group;
   const canGrant = info.kind !== 'scoped' || !!group;
 
   const grant = () => {
     const body = { peer: current.id, slug, scope: scopeGroupName ? `group=${scopeGroupName}` : '' };
-    if (info.policy) body.spawn_policy = { max_live: Math.max(1, Number(maxLive) || 2) };
+    // The daemon replaces a grant with the same permission and scope, launch
+    // settings included: keep the existing ones and change only the cap.
+    const existing = rows.find((r) => !r.pool && r.slug === slug && r.group === scopeGroupName);
+    if (existing && !info.policy) { toast(`${current.label} already has ${slug} there`, false); return Promise.resolve(); }
+    if (info.policy) body.spawn_policy = { ...(existing?.policy || {}), max_live: Math.max(1, Number(maxLive) || 2) };
+    const kept = existing ? extraPolicy(existing.policy) : [];
     const consequence = grantConsequence({ target: current.label, slug, group: scopeGroupName, maxLive: body.spawn_policy?.max_live });
+    const replaces = existing ? ` This updates the existing grant (cap ${existing.maxLive || 2} → ${body.spawn_policy.max_live})${kept.length ? `; its other launch settings (${kept.join(', ')}) are kept` : ''}.` : '';
     return confirm({
-      title: `Grant ${slug} to ${current.label}?`,
-      body: `${consequence}${info.sensitive ? ' This lets it act on this node, not only read.' : ''}${current.pool ? ' The grant applies to every node in the pool, including nodes added later.' : ''}`,
+      title: `${existing ? 'Update' : 'Grant'} ${slug} ${existing ? 'for' : 'to'} ${current.label}?`,
+      body: `${consequence}${replaces}${info.sensitive ? ' This lets it act on this node, not only read.' : ''}${current.pool ? ' The grant applies to every node in the pool, including nodes added later.' : ''}`,
       okLabel: 'Grant',
       busyLabel: 'Granting…',
       action: () => actions.grant(body),
@@ -89,11 +95,12 @@ export function GrantsPage({ view, pools, groups, actions, confirm, toast, targe
     <table class="fa-table" id="fleet-grants">
       <thead><tr><th>Permission</th><th>Where</th><th>Allows</th><th></th></tr></thead>
       <tbody>${rows.map((r) => html`<tr key=${r.key} data-slug=${r.slug}>
-        <td><code class=${r.sensitive ? 'fa-sensitive' : ''}>${r.slug}</code>${r.maxLive ? html` <span class="muted">cap ${r.maxLive}</span>` : ''}</td>
+        <td><code class=${r.sensitive ? 'fa-sensitive' : ''}>${r.slug}</code>${r.maxLive ? html` <span class="muted">cap ${r.maxLive}</span>` : ''}${extraPolicy(r.policy).length ? html` <span class="muted" title=${extraPolicy(r.policy).map((k) => `${k}: ${JSON.stringify(r.policy[k])}`).join('\n')}>+ settings</span>` : ''}</td>
         <td>${where(r)}</td>
         <td class="muted">${r.what}</td>
         <td class="fa-acts">${r.pool
           ? html`<span class="muted" title="Revoke it on the pool">via pool ${r.pool}</span>`
+          : r.deletedGroup ? html`<span class="muted" title="Its group was deleted; the grant no longer applies to any group">group deleted</span>`
           : html`<button type="button" class="fa-danger" data-fa="revoke" onClick=${() => revoke(r)}>Revoke…</button>`}</td>
       </tr>`)}</tbody>
     </table>`}

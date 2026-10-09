@@ -69,7 +69,7 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     untrust: async (id) => { log.push(['untrust', id]); return { ok: true }; },
     setHubEnabled: async (on) => { log.push(['hub', on]); return { ok: true }; },
     grants: async (target) => { log.push(['grants', target]); return target === 'inst_forge' ? [
-      { peer: 'inst_forge', slug: 'message.direct', scope: '' },
+      { peer: 'inst_forge', slug: 'groups.presence.read', scope: '' },
       { peer: 'inst_forge', slug: 'groups.roster.read', scope: 'group=ops' },
       { peer: 'inst_forge', slug: 'routes.consume', scope: '', pool_id: 'p1', pool_name: 'rigs' },
     ] : []; },
@@ -226,4 +226,31 @@ test('the grants page lists, grants with a spelled-out confirm, and revokes dire
   await s.click(s.q('#fleet-grants [data-slug="groups.roster.read"] [data-fa="revoke"]'));
   assert.match(s.confirms.at(-1).body, /loses groups\.roster\.read .* in group ops/);
   assert.deepEqual(s.log.find((l) => l[0] === 'revoke'), ['revoke', { peer: 'inst_forge', slug: 'groups.roster.read', scope: 'group=ops' }]);
+});
+
+test('a pool page revokes its own grants; re-granting keeps CLI launch settings and only changes the cap', async (t) => {
+  const s = await setup(t);
+  const m = await s.harness.importDashboardModule('js/fleet-admin-model.js');
+  const own = m.grantRows([{ slug: 'routes.consume', scope: '', pool_id: 'p1', pool_name: 'rigs' }], { ownPool: 'rigs' });
+  assert.equal(own[0].pool, '', 'direct on its own pool page');
+  const gone = m.grantRows([{ slug: 'message.direct', scope: 'group=12' }], { groups: ['ops'] });
+  assert.equal(gone[0].deletedGroup, true);
+  assert.deepEqual(m.extraPolicy({ max_live: 2, job_approval: 'manual', allowed_profiles: [] }), ['job_approval']);
+
+  s.actions.grants = async () => [{ peer: 'inst_forge', slug: 'jobs.run', scope: 'group=ops', spawn_policy: { max_live: 2, job_approval: 'manual', profile: 'safe' } }];
+  await s.show();
+  await s.click(s.q('[data-peer="inst_forge"] [data-fa="grants"]'));
+  const pick = async (sel, value) => {
+    const el = s.q(sel);
+    for (const o of el.querySelectorAll('option')) { if (o.value === value) o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
+    await s.harness.act(() => s.harness.fireEvent(el, 'change'));
+  };
+  await pick('#fleet-grant-slug', 'jobs.run');
+  await pick('#fleet-grant-group', 'ops');
+  const cap = s.q('#fleet-grant-cap'); cap.value = '5';
+  await s.harness.act(() => s.harness.fireEvent(cap, 'input'));
+  await s.click(s.q('#fleet-grant-submit'));
+  assert.match(s.confirms.at(-1).title, /^Update jobs\.run/);
+  assert.match(s.confirms.at(-1).body, /cap 2 → 5\); its other launch settings \(job_approval, profile\) are kept/);
+  assert.deepEqual(s.log.find((l) => l[0] === 'grant')[1].spawn_policy, { max_live: 5, job_approval: 'manual', profile: 'safe' });
 });
