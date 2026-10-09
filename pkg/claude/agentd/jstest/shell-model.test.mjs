@@ -87,20 +87,24 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
       { number: 3, url: 'https://github.com/acme/app/pull/3', checks: { total: 2, passed: 2, state: 'passing' } },
       { number: 4, url: 'https://github.com/acme/app/pull/4' },
       { number: 5, url: 'https://github.com/acme/app/pull/5', draft: true, checks: { total: 0, state: 'none' } },
+      // A GitLab merge request on a self-hosted port survives the URL filter.
+      { number: 6, url: 'https://gitlab.example.test:6080/acme/sub/app/-/merge_requests/6', checks: { total: 1, failed: 1, state: 'failing' } },
+      // Anything else does not.
+      { number: 7, url: 'https://example.com/review/7', checks: { total: 1, failed: 1, state: 'failing' } },
     ],
   };
   assert.deepEqual(
     authoredOpenPRsView({ authored_open_prs: prs }, 'attention').items.map((pr) => pr.number),
-    [1, 3, 4],
+    [1, 3, 4, 6],
     'failed, completed, and no-CI PRs need attention; clean CI still running and drafts do not',
   );
   assert.deepEqual(
     authoredOpenPRsView({ authored_open_prs: prs }, 'attention', true).items.map((pr) => pr.number),
-    [1, 3, 4, 5],
+    [1, 3, 4, 5, 6],
     'the explicit opt-in adds otherwise-attention-worthy drafts to the queue',
   );
-  assert.deepEqual(authoredOpenPRsView({ authored_open_prs: prs }, 'unattached').items.map((pr) => pr.number), [2, 3, 4, 5]);
-  assert.equal(authoredOpenPRsView({ authored_open_prs: prs }).attention, 3);
+  assert.deepEqual(authoredOpenPRsView({ authored_open_prs: prs }, 'unattached').items.map((pr) => pr.number), [2, 3, 4, 5, 6]);
+  assert.equal(authoredOpenPRsView({ authored_open_prs: prs }).attention, 4);
   assert.equal(authoredOpenPRsView({ authored_open_prs: prs }).hasDrafts, true);
   assert.equal(authoredOpenPRsView({ authored_open_prs: { ...prs, search_url: 'javascript:alert(1)' } }).searchURL, '');
   const localPR = {

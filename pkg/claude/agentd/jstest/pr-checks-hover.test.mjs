@@ -147,6 +147,9 @@ test('the CI badge summarizes checks and opens a panel on hover', async (t) => {
     // No run could be named (external CI app only) — the PR's checks tab is
     // still a useful landing place, so the badge is never a dead pill.
     assert.equal(badgeHref({ state: 'passing' }, PR), `${PR}/checks`);
+    const MR = 'https://gitlab.example.test:6080/acme/sub/app/-/merge_requests/157';
+    assert.equal(badgeHref({ state: 'passing' }, MR), `${MR}/pipelines`,
+      'a merge request keeps its CI on the pipelines tab');
     assert.equal(badgeHref({ run_url: 'javascript:alert(1)' }, PR), `${PR}/checks`,
       'a hostile run_url must not become the click target');
     // The fallback branch is guarded too, so neither path can produce a

@@ -490,7 +490,8 @@ func derivePRNumber(raw string) int {
 		return 0
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) < 4 || parts[len(parts)-2] != "pull" {
+	// GitHub: owner/repo/pull/<n>. GitLab: group/…/project/-/merge_requests/<n>.
+	if len(parts) < 4 || (parts[len(parts)-2] != "pull" && parts[len(parts)-2] != "merge_requests") {
 		return 0
 	}
 	var n int

@@ -115,6 +115,19 @@ func deriveTaskLabel(rawURL string) string {
 			}
 		}
 	}
+	// GitLab, on any host: the `/-/` marker is its grammar alone. A merge
+	// request is spelled !n, as GitLab's own UI does; an issue #n.
+	for i, s := range segs {
+		if s != "-" || i < 2 || i+2 >= len(segs) || !isAllDigits(segs[i+2]) {
+			continue
+		}
+		switch segs[i+1] {
+		case "merge_requests":
+			return "!" + segs[i+2]
+		case "issues":
+			return "#" + segs[i+2]
+		}
+	}
 
 	// AWB is a single-page app whose issue route lives in the fragment.
 	// The deployment host and base path are configurable, so identify it by

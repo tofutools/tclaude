@@ -389,6 +389,9 @@ func prStateKey(rawURL string) string {
 	if ref, ok := githubPRRefFromURL(rawURL); ok {
 		return "github:" + ref.key()
 	}
+	if ref, ok := gitlabMRRefFromURL(rawURL); ok {
+		return "gitlab:" + ref.key()
+	}
 	return "url:" + rawURL
 }
 

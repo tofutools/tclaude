@@ -338,7 +338,10 @@ function badgeTitle(summary, prNumber) {
 // covers one branch of badgeHref and not the other is the asymmetry that rots.
 export function prChecksPageURL(prURL) {
   const safe = safeCheckURL(prURL);
-  return safe ? `${safe.replace(/\/+$/, '')}/checks` : '';
+  if (!safe) return '';
+  const base = safe.replace(/\/+$/, '');
+  // A GitLab merge request keeps its CI on the pipelines tab.
+  return /\/-\/merge_requests\/[0-9]+$/.test(base) ? `${base}/pipelines` : `${base}/checks`;
 }
 
 // badgeHref: the run that explains the badge's state when the server could

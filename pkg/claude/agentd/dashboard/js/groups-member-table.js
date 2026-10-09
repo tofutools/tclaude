@@ -1244,7 +1244,7 @@ function BranchCell({ member }) {
   const branch = (name, url, pr) => {
     if (!name) return html`<span class="muted">—</span>`;
     const branchNode = url
-      ? html`<a class="branch branch-link" href=${url} target="_blank" rel="noopener noreferrer" draggable=${false} title=${`Open branch on GitHub — ${name}`}>⎇ ${name}</a>`
+      ? html`<a class="branch branch-link" href=${url} target="_blank" rel="noopener noreferrer" draggable=${false} title=${`Open branch — ${name}`}>⎇ ${name}</a>`
       : html`<span class="branch" title=${`git branch: ${name}`}>⎇ ${name}</span>`;
     // .pr-chain keeps the link and its badges one inline run: inside an
     // init/now .loc-row (a flex row with a gap) they would otherwise each

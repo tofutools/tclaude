@@ -213,7 +213,10 @@ export function footerMetaView(snapshot) {
   };
 }
 
-const PR_URL_RE = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*(?:\/.*)?$/;
+// A GitHub pull request, or a GitLab merge request on any host: the `/-/`
+// marker is GitLab's grammar alone, and the server has already validated the
+// instance before the URL reached a snapshot.
+const PR_URL_RE = /^https:\/\/(?:github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*|[A-Za-z0-9.-]+(?::[0-9]+)?\/(?:[A-Za-z0-9_.-]+\/){2,}-\/merge_requests\/[1-9][0-9]*)(?:\/.*)?$/;
 
 // prKey folds a GitHub PR URL to owner/repo#number, case-insensitively, so a
 // /files suffix or a differently-cased owner still names the same PR.

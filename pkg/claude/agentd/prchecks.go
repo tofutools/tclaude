@@ -575,6 +575,9 @@ func schedulePRChecksRefresh(rawURL string) bool {
 // rides an existing `gh pr view`; this one is the extra call a hovering
 // human explicitly asked for.
 func livePRChecksResolver(rawURL string) (prChecksInfo, bool) {
+	if isGitLabPresentedPRURL(rawURL) {
+		return gitlabPRChecks(rawURL)
+	}
 	args, ok := presentedPRViewArgs(rawURL, "state,statusCheckRollup", gitProxyHardeningActive())
 	if !ok {
 		return prChecksInfo{}, false
@@ -651,8 +654,8 @@ func handleDashboardPRChecks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "url is required")
 		return
 	}
-	if len(rawURL) > maxAgentPRURLLen || !isGitHubPresentedPRURL(rawURL) {
-		writeError(w, http.StatusBadRequest, "bad_request", "url must be a GitHub pull request URL")
+	if len(rawURL) > maxAgentPRURLLen || !isForgePresentedPRURL(rawURL) {
+		writeError(w, http.StatusBadRequest, "bad_request", "url must be a GitHub pull request or GitLab merge request URL")
 		return
 	}
 	info, ok := loadPRChecks(rawURL)
