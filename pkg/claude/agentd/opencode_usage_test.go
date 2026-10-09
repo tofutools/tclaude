@@ -1525,7 +1525,7 @@ func TestOpenCodeHaiku55CatalogPricing(t *testing.T) {
 		_, _ = w.Write([]byte(`{"providers":[{"id":"anthropic","models":{"claude-haiku-5-5":{"limit":{"context":1000000},"cost":{"input":0.1,"output":0.5,"cache":{"read":0.01,"write":0.125},"tiers":[{"tier":{"type":"context","size":100000},"input":0.5,"output":2.5,"cache":{"read":0.05,"write":0.625}}]}}}}]}`))
 	}))
 	t.Cleanup(server.Close)
-	_, prices, err := fetchOpenCodeModelCatalog(context.Background(), db.OpenCodeRuntime{ServerURL: server.URL})
+	_, prices, err := fetchOpenCodeModelCatalog(context.Background(), db.OpenCodeRuntime{ServerURL: server.URL, PID: os.Getpid()})
 	require.NoError(t, err)
 	require.Contains(t, prices, "anthropic/claude-haiku-5-5")
 	for _, tc := range []struct {
@@ -1533,12 +1533,12 @@ func TestOpenCodeHaiku55CatalogPricing(t *testing.T) {
 		input int64
 		want  float64
 	}{
-		{"exactly 100K prompt", 70000, 0.01095},
-		{"above 100K prompt", 70001, 0.0547505},
+		{"exactly 100K prompt", 70000, 0.0101},
+		{"above 100K prompt", 70001, 0.0505005},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := projectOpenCodeMessageCost(openCodeContextUsage{
-				ProviderID: "anthropic", ModelID: "claude-haiku-5-5", ReportedCost: float64ptr(0),
+				MessageID: "haiku55-call", ProviderID: "anthropic", ModelID: "claude-haiku-5-5", ReportedCost: float64ptr(0),
 				Input: tc.input, Output: 1000, CacheRead: 10000, CacheWrite: 20000,
 			}, prices, config.DefaultOpenCodeLegacyLongContextPricingCutoff)
 			require.True(t, got.eligible)
