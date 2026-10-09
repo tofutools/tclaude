@@ -94,6 +94,15 @@ func peerViewRules() map[string]peerViewRule {
 	rules["GET /api/harnesses/operations"] = peerViewRule{feature: "node.harnesses.install", requires: PermNodeHarnessesInstall, serve: servePeerHarnessOperations}
 	rules["GET /api/harnesses/operations/jobs/{id}"] = peerViewRule{feature: "node.harnesses.install", requires: PermNodeHarnessesInstall, serve: servePeerHarnessOperations}
 	rules["POST /api/harnesses/operations"] = peerViewRule{feature: "node.harnesses.install", requires: PermNodeHarnessesInstall, write: servePeerHarnessOperations}
+	for _, path := range []string{"GET /api/harnesses/credentials/backups", "POST /api/harnesses/credentials/push", "POST /api/harnesses/credentials/backup", "POST /api/harnesses/credentials/restore"} {
+		rule := peerViewRule{feature: "node.credentials.receive", requires: PermNodeCredentialsReceive}
+		if strings.HasPrefix(path, "GET ") {
+			rule.serve = servePeerHarnessCredentials
+		} else {
+			rule.write = servePeerHarnessCredentials
+		}
+		rules[path] = rule
+	}
 	rules["POST /api/harnesses/credentials"] = peerViewRule{feature: "node.credentials.receive", requires: PermNodeCredentialsReceive, write: servePeerHarnessOperations}
 	rules["GET /api/node/update"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, serve: servePeerNodeUpdate}
 	rules["GET /api/node/update/jobs/{id}"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, serve: servePeerNodeUpdate}

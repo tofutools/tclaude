@@ -2530,3 +2530,52 @@ return HTTP 409 `harness_operation_busy`. Operator CLI routes mirror these under
 Credential copy during install is a third way to prepare a teleport target,
 alongside the target's own login and a model gateway. It does not change teleport's
 credential choice or defaults.
+
+### Standalone credential push and restore
+
+An operator can refresh an existing node's file-based harness login without
+installing a harness:
+
+```sh
+tclaude harness credentials push codex --node laptop --confirm-share
+tclaude harness credentials push claude,gemini --node laptop --confirm-share
+tclaude harness credentials ls codex --node laptop
+tclaude harness credentials restore codex --node laptop --backup BACKUP_ID
+tclaude harness credentials backup codex
+tclaude harness credentials restore codex
+```
+
+`--confirm-share` explicitly acknowledges that the remote node's agents will act
+as you with those providers. The authenticated local daemon captures only your
+selected standard auth files and sends them over the encrypted federation
+channel. Clients cannot supply credential contents or arbitrary paths. There is
+no API for pulling a peer's credentials. Copilot, keychain logins, and environment
+secrets require the target harness's own login flow.
+
+Standalone operations require only `node.credentials.receive` on the receiving
+node, independently of `node.harnesses.install`. This node-wide grant defaults
+off and is implied only by unrestricted trust. Each push writes a timestamped,
+owner-only backup before replacement; a failed backup refuses the replacement.
+Restore also backs up the current files first. Omitting `--backup` selects the
+newest matching backup, including backups created by install-copy. Restore
+removes a copied file if that file was absent in the selected backup. Backup and
+restore work locally when `--node` is omitted; push requires a remote node.
+Chosen-set pushes run separately per harness and report individual failures.
+
+The dashboard API uses `GET /api/harnesses/credentials/backups?harness=codex`,
+`POST /api/harnesses/credentials/push`, `POST /api/harnesses/credentials/backup`,
+and `POST /api/harnesses/credentials/restore`. Use
+`/api/peer/{instance_id}/harnesses/credentials/{action}` for a remote node.
+Local CLI routes have the same tails under `/v1`; remote CLI routes use
+`/v1/federation/peer/{node}/harnesses/credentials/{action}`.
+
+POST bodies contain `harness`; push also requires `confirm_share: true`, and
+restore optionally accepts `backup` (the opaque 32-character backup ID).
+Success returns `receipt` with `backup_id`, `backup_location`, and `copied`;
+restore adds `restored_from` and `restored`. It also returns fresh `availability`.
+Backup listings return `backups` containing `id`, `harness`, `created_at`, and
+`location`, plus `credential_share_warning`. Failed file operations return a
+409 `credential_operation_failed` and any safety-backup receipt. Credential
+contents never appear in responses, logs, or audits. Audits record the harness,
+operator/peer, backup ID, action, and result. File presence can update after a
+push; usability remains unknown until the harness actually authenticates.
