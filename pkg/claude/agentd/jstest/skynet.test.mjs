@@ -120,8 +120,36 @@ test('map polls only while active, staggered, and stops on leave', async (t) => 
   await harness.act(async () => { await timers.queue.shift().fn(); });
   assert.deepEqual(loaded, ['inst_self']);
   assert.ok(mounted.container.querySelector('[aria-label="desk node"]'));
-  assert.ok(mounted.container.querySelector('[aria-label="lab node"].stale') || mounted.container.querySelector('[aria-label="lab node"]'));
+  assert.ok(mounted.container.querySelector('[aria-label="lab node"].stale'), 'an offline peer renders as stale');
   await harness.act(() => { activeTab.value = 'groups'; });
   assert.equal(timers.queue.length, 0, 'leaving the map cancels every pending poll');
   await mounted.unmount(); state.dispose();
+});
+
+test('the map never strands the operator: no fleet or a cycle key returns to the last per-node tab', async (t) => {
+  const { harness, stateMod, island } = await load(t);
+  const activeTab = harness.signals.signal('costs');
+  const state = stateMod.createSkynetState({ activeTab });
+  state.setStatus(status([]));
+  const nav = []; const timers = fakeTimers();
+  const mounted = await harness.mount(harness.html`<${island.SkynetMap} state=${state} actions=${{ loadSummary: async () => true }} timers=${timers} navigate=${(tab) => nav.push(tab)} />`);
+  await harness.act(() => { activeTab.value = 'map'; });
+  await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:leave-map', { detail: { dir: 1 } })));
+  assert.deepEqual(nav, ['costs'], 'cycling out of the map returns to the tab it was opened from');
+  await harness.act(() => { state.clearFleet(); });
+  assert.deepEqual(nav, ['costs'], 'before the first status read settles, a deep link waits');
+  await harness.act(() => { state.markStatusLoaded(); });
+  assert.deepEqual(nav, ['costs', 'costs'], 'no linked nodes after loading: leave the map');
+  await mounted.unmount(); state.dispose();
+});
+
+test('a 5xx status read keeps the known fleet; 404 clears it', async (t) => {
+  const { harness, stateMod, actionsMod } = await load(t);
+  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('map') });
+  let code = 200;
+  const actions = actionsMod.createSkynetActions({ state, fetchImpl: async () => ({ ok: code < 400, status: code, json: async () => status([]) }) });
+  await actions.loadStatus(); assert.equal(state.fleet.value.peers.length, 2); assert.equal(state.statusLoaded.value, true);
+  code = 502; await actions.loadStatus(); assert.ok(state.fleet.value, 'transient failure keeps the chips and map');
+  code = 404; await actions.loadStatus(); assert.equal(state.fleet.value, null);
+  state.dispose();
 });

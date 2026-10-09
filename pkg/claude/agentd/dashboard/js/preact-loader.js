@@ -545,7 +545,9 @@ export async function mountLogsFeature(actionDependencies = {}) {
 // bar that stands in for the tab strip while the map is open, and the map tab.
 const skynetDescriptor = createIslandDescriptor({
   name: 'skynet', label: 'Skynet nodes',
-  hosts: { chipsHost: '#node-chips-root', barHost: '#skynet-toplevel-root', mapHost: '#skynet-map-root' },
+  // mapHost is listed first: a load failure renders into the first host, and it
+  // belongs in the map section, never in the tab bar.
+  hosts: { mapHost: '#skynet-map-root', chipsHost: '#node-chips-root', barHost: '#skynet-toplevel-root' },
   failureClass: 'skynet-error',
   load: async ({ hosts: { chipsHost, barHost, mapHost }, dependencies }) => {
     const islandModule = import('./skynet-island.js');

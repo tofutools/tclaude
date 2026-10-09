@@ -18727,7 +18727,9 @@ nav [data-tab].node-chip.map.active .node-chip-name { display: inline; }
    switch in the same row, so nothing below moves. */
 .skynet-toplevel { display: inline-flex; align-items: center; }
 .skynet-toplevel:empty { display: none; }
-nav:has([data-tab="map"].active) .nav-inner > [data-tab]:not([data-tab="map"]) { display: none; }
+/* Keyed on rendered chips: if the fleet disappears while the map is open, the
+   per-node tabs come back rather than leaving an empty bar. */
+nav:has(#node-chips-root .node-chip):has([data-tab="map"].active) .nav-inner > [data-tab]:not([data-tab="map"]) { display: none; }
 .skynet-toplevel-bar { display: inline-flex; align-items: center; height: 41px; gap: 16px; }
 .skynet-seg { display: inline-flex; height: 28px; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
 .skynet-seg-btn { display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; color: #8b949e; font-size: 13px; background: #0d1117; }
@@ -18781,5 +18783,8 @@ nav:has([data-tab="map"].active) .nav-inner > [data-tab]:not([data-tab="map"]) {
    wrapping a tab label (the bar's height never changes). */
 body.wizard nav:has(#node-chips-root .node-chip) .nav-inner > [data-tab]:not(.node-chip) { padding-left: 12px; padding-right: 12px; }
 /* Tabs never shrink while the row is shown: a tab squeezed by even a pixel
-   wraps its label and grows the bar, so the node row absorbs all the slack. */
-nav:has(#node-chips-root .node-chip) .nav-inner > [data-tab]:not(.node-chip) { flex-shrink: 0; }
+   wraps its label and grows the bar, so the node row absorbs all the slack.
+   Below 1200 px the tabs no longer fit anyway and keep today's behaviour. */
+@media (min-width: 1200px) {
+  nav:has(#node-chips-root .node-chip) .nav-inner > [data-tab]:not(.node-chip) { flex-shrink: 0; }
+}

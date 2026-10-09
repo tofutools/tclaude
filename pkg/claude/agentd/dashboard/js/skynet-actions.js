@@ -14,12 +14,18 @@ export function createSkynetActions({ state, fetchImpl = globalThis.fetch } = {}
   async function loadStatus() {
     try {
       const response = await fetchImpl('/api/federation/status?summary=1', { credentials: 'same-origin' });
-      if (!response.ok) { state.clearFleet(); return null; }
+      // 404 (no route on this daemon) or 403 (federation not available to the
+      // dashboard) mean there is no fleet to show. Other failures are transient:
+      // keep the last known fleet so a daemon hiccup does not yank the map.
+      if (response.status === 404 || response.status === 403) { state.clearFleet(); return null; }
+      if (!response.ok) return state.fleet.value;
       return state.setStatus(await readJSON(response));
     } catch (_) {
-      // Keep the last known fleet on a transient local failure; the connection
-      // banner already reports a dashboard that cannot reach its daemon.
+      // The connection banner already reports a dashboard that cannot reach
+      // its daemon; keep the last known fleet.
       return state.fleet.value;
+    } finally {
+      state.markStatusLoaded();
     }
   }
 

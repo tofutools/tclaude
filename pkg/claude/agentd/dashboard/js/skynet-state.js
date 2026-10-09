@@ -10,6 +10,9 @@ export function createSkynetState({ activeTab = dashboardState.activeTab, now = 
   // summaries maps instance ID -> { summary, etag, receivedAt, failure, failures }.
   const summaries = signal({});
   const focused = signal('');
+  // statusLoaded flips once the first federation status read settles, so the
+  // map can tell "no linked nodes" from "not loaded yet".
+  const statusLoaded = signal(false);
   // lastLocal remembers the per-node tab the operator left for the map, so the
   // ⌂ chip and "Open dashboard" return there rather than always to Groups.
   let lastLocal = activeTab.value && activeTab.value !== 'map' ? activeTab.value : 'groups';
@@ -20,7 +23,9 @@ export function createSkynetState({ activeTab = dashboardState.activeTab, now = 
     fleet: fleet.value,
     summaries: summaries.value,
     focused: focused.value,
+    statusLoaded: statusLoaded.value,
   }));
+  function markStatusLoaded() { statusLoaded.value = true; }
   function setStatus(status) {
     fleet.value = normalizeFleet(status);
     return fleet.value;
@@ -39,7 +44,7 @@ export function createSkynetState({ activeTab = dashboardState.activeTab, now = 
   }
   function setFocused(id) { focused.value = id || ''; }
   function lastLocalTab() { return lastLocal; }
-  return Object.freeze({ fleet, summaries, focused, view, setStatus, clearFleet, entry, commitSummary, failSummary, setFocused, lastLocalTab, dispose: stopTracking });
+  return Object.freeze({ fleet, summaries, focused, view, statusLoaded, markStatusLoaded, setStatus, clearFleet, entry, commitSummary, failSummary, setFocused, lastLocalTab, dispose: stopTracking });
 }
 
 export const skynetState = createSkynetState();
