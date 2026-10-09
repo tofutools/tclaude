@@ -173,6 +173,10 @@ func ListAgentGroupMembershipsByJoin(agentID string) ([]AgentGroupMembership, er
 // and both arrive in separate hook processes. The check and the insert share
 // one transaction, and SQLite serializes writers, so two racing callers cannot
 // both insert.
+//
+// Only system-originated rows count toward the dedupe. A subject is free text
+// on the ordinary send path, so a peer, the operator or a federated sender
+// reusing it must not be able to suppress the real re-injection.
 func InsertReinjectedContextMessage(m *AgentMessage, window time.Duration) (int64, error) {
 	if m == nil || !IsReinjectedContextSubject(m.Subject) {
 		return 0, errors.New("InsertReinjectedContextMessage: wrong subject")
@@ -194,7 +198,10 @@ func InsertReinjectedContextMessage(m *AgentMessage, window time.Duration) (int6
 		WHERE to_agent = COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), '')
 		  AND to_agent != ''
 		  AND subject = ?
-		  AND created_at >= ?`,
+		  AND created_at >= ?
+		  AND from_conv = '' AND from_agent = ''
+		  AND NOT EXISTS (SELECT 1 FROM operator_agent_messages o WHERE o.message_id = agent_messages.id)
+		  AND NOT EXISTS (SELECT 1 FROM federation_inbound f WHERE f.message_id = agent_messages.id)`,
 		m.ToConv, m.Subject, dbTime(m.CreatedAt.Add(-window))).Scan(&recent)
 	if err != nil {
 		return 0, err

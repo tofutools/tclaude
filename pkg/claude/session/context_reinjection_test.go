@@ -163,3 +163,18 @@ func TestContextReinjection_IgnoresSubagentAndForeignConv(t *testing.T) {
 
 	assert.Empty(t, reinjectedMessages(t))
 }
+
+func TestContextReinjection_PeerReusingSubjectDoesNotSuppress(t *testing.T) {
+	reinjectionFixture(t)
+	_, _, err := db.EnsureAgentForConv("conv-peer", "test")
+	require.NoError(t, err)
+	_, err = db.InsertAgentMessage(&db.AgentMessage{
+		FromConv: "conv-peer", ToConv: "conv-1", ToRecipients: []string{"conv-1"},
+		Subject: db.ReinjectedAfterCompactSubject, Body: "spoof",
+	})
+	require.NoError(t, err)
+
+	QueueContextReinjection(sessionStart("compact"), "sess-1")
+
+	assert.Len(t, reinjectedMessages(t), 2, "the real re-injection is still queued")
+}
