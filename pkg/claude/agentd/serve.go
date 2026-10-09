@@ -29,6 +29,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/terminal"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
+	"github.com/tofutools/tclaude/pkg/harnessops"
 )
 
 type serveParams struct {
@@ -877,6 +878,14 @@ func runServe(p *serveParams) error {
 	quit := newQuitter()
 	configureSelfUpdateRestart(quit.signal)
 	startBackgroundNodeUpdates(quit.ch)
+	harnessops.RefreshLatestAsync()
+	startBackgroundHarnessOperations(quit.ch)
+	defer stopHarnessOperations()
+	if home, err := canonicalOperatorHome(); err == nil {
+		if err := harnessops.EnableUserPath(home); err != nil {
+			return err
+		}
+	}
 
 	// Translate any of: SIGINT/SIGTERM, the socket server dying,
 	// "Quit" from the tray menu, into a single shutdown signal.

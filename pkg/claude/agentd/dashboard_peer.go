@@ -79,6 +79,11 @@ func servePeerViewProxy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 413, "request_too_large", "peer request body exceeds limit")
 		return
 	}
+	body, err = prepareHarnessCredentialPush(r, body)
+	if err != nil {
+		writeError(w, 400, "invalid_arg", err.Error())
+		return
+	}
 	target := url.URL{Path: "/api/" + r.PathValue("tail"), RawQuery: r.URL.RawQuery}
 	if len(target.RequestURI()) > 4096 {
 		writeError(w, 414, "request_too_large", "peer request URI exceeds limit")
