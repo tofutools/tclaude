@@ -53,9 +53,9 @@ func TestPeerViewScopedReadsWritesAndRevocation(t *testing.T) {
 	require.Contains(t, string(raw), "visible-agent")
 	require.NotContains(t, string(raw), "hidden-group")
 	require.NotContains(t, string(raw), hiddenID)
-	require.NotContains(t, string(raw), "conv_id")
-	require.NotContains(t, string(raw), "effective")
-	require.NotContains(t, string(raw), `"state"`)
+	require.Contains(t, string(raw), `"conv_id":"visible-conv"`)
+	require.Contains(t, string(raw), `"effective":[]`)
+	require.Contains(t, string(raw), `"state":{}`)
 	read("/api/groups/visible")
 	read("/api/agents/" + aid)
 	for _, path := range []string{"/api/groups/hidden-group", "/api/agents/" + hiddenID, "/api/groups/no-such-group"} {
