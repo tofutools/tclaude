@@ -57,6 +57,8 @@ func TestAgentRestartIdleFailureRequiresNoBackgroundWork(t *testing.T) {
 }
 
 func TestAgentRestartTmuxHandoffCarriesAttachedClients(t *testing.T) {
+	// The simulated server has no external cgroup delegation.
+	t.Setenv(session.ResourceDelegationDirEnv, "")
 	w := testharness.New(t)
 	previousTmux := clcommon.Default
 	clcommon.Default = w.Tmux
