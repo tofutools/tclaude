@@ -7,8 +7,8 @@ import (
 )
 
 // The rollup is the one place a GitHub vocabulary meets a human-facing
-// badge, and the mapping is opinionated (NEUTRAL passes, CANCELLED fails,
-// SKIPPED is its own bucket). These tests pin that mapping, because a
+// badge, and the mapping is opinionated (NEUTRAL passes, CANCELLED and
+// SKIPPED share their own bucket). These tests pin that mapping, because a
 // silent drift in it turns a red PR green on the dashboard.
 
 func TestParseStatusCheckRollupBuckets(t *testing.T) {
@@ -39,8 +39,8 @@ func TestParseStatusCheckRollupBuckets(t *testing.T) {
 	for name, want := range map[string]string{
 		"test":        "pass",
 		"lint":        "pending",
-		"flaky":       "fail", // a cancelled run is not a green light
-		"neutral-job": "pass", // NEUTRAL is explicitly "not a failure"
+		"flaky":       "skipped", // cancelled reads like skipped, not a failure
+		"neutral-job": "pass",    // NEUTRAL is explicitly "not a failure"
 		"docs-only":   "skipped",
 		"ci/legacy":   "fail",
 	} {
@@ -53,8 +53,8 @@ func TestParseStatusCheckRollupBuckets(t *testing.T) {
 	}
 
 	s := info.Summary
-	if s.Total != 6 || s.Passed != 2 || s.Failed != 2 || s.Pending != 1 || s.Skipped != 1 {
-		t.Errorf("summary = %+v, want total 6 / passed 2 / failed 2 / pending 1 / skipped 1", s)
+	if s.Total != 6 || s.Passed != 2 || s.Failed != 1 || s.Pending != 1 || s.Skipped != 2 {
+		t.Errorf("summary = %+v, want total 6 / passed 2 / failed 1 / pending 1 / skipped 2", s)
 	}
 	if s.State != "failing" {
 		t.Errorf("state = %q, want failing (a failure outranks a pending run)", s.State)
@@ -270,5 +270,22 @@ func TestWithPRChecksStampsEveryBadge(t *testing.T) {
 	}
 	if v.PresentedPRs[1].Checks != nil {
 		t.Error("a PR with no cached checks must stay unstamped rather than showing a zeroed badge")
+	}
+}
+
+func TestSummarizePRChecksAllCancelledIsNotGreen(t *testing.T) {
+	raw := json.RawMessage(`[
+		{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"CANCELLED"},
+		{"__typename":"CheckRun","name":"docs-only","status":"COMPLETED","conclusion":"SKIPPED"}
+	]`)
+	if got := parseStatusCheckRollup(raw, time.Now()).Summary.State; got != "failing" {
+		t.Errorf("all-cancelled state = %q, want failing (a wholesale cancel is not green)", got)
+	}
+	raw = json.RawMessage(`[
+		{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"CANCELLED"},
+		{"__typename":"CheckRun","name":"test","status":"COMPLETED","conclusion":"SUCCESS"}
+	]`)
+	if got := parseStatusCheckRollup(raw, time.Now()).Summary.State; got != "passing" {
+		t.Errorf("cancelled-beside-pass state = %q, want passing", got)
 	}
 }
