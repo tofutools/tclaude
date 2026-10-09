@@ -5,10 +5,10 @@ import { relTime } from './helpers.js';
 
 const html = htm.bind(h);
 
-// openNodeOnMap is loaded on demand so the Groups island never depends on the
+// openNodeView is loaded on demand so the Groups island never depends on the
 // separately mounted Skynet modules.
-function openNodeOnMap(id) {
-  void import('./skynet-island.js').then((m) => m.openNodeOnMap(id)).catch(() => {});
+function openNodeView(id) {
+  void import('./skynet-island.js').then((m) => m.openNodeView(id)).catch(() => {});
 }
 
 // group-federation-marker.js — the Groups-tab marker for a group linked to
@@ -45,7 +45,7 @@ export function markerView(links) {
   return { nodes, live, title };
 }
 
-export function GroupFederationMarker({ group, openNode = openNodeOnMap }) {
+export function GroupFederationMarker({ group, openNode = openNodeView }) {
   const view = markerView(group.federation_links);
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
@@ -78,7 +78,7 @@ export function GroupFederationMarker({ group, openNode = openNodeOnMap }) {
             <span class="gfm-how">${v.how} · ${v.state}</span>
             <span class="gfm-can">${v.can}</span>
           </span>
-          <button type="button" class="gfm-open" title=${`Open ${v.name} on the map`}
+          <button type="button" class="gfm-open" title=${`Open ${v.name}'s dashboard`}
             onClick=${(event) => { swallow(event); setOpen(false); openNode(link.peer); }}>open node</button>
         </div>`;
       })}

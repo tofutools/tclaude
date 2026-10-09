@@ -24,6 +24,21 @@ const skynetFederationStubJS = `(function(){
     if (path === '/api/node-summary') return json({ presence: 'online', shared_groups: 2, shared_agents: 10, online_agents: 8, waiting_for_input: 1, resources: res, health: 'current' }, 200, { ETag: '"local"' });
     if (path === '/api/peer/inst_hn3cxq7a/node-summary') return json({ presence: 'online', shared_groups: 2, shared_agents: 9, online_agents: 7, waiting_for_input: 1, peer_view: { peer: 'desk', included: [], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'terminals', requires: 'sessions.watch' }] } }, 200, { ETag: '"forge"' });
     if (path === '/api/peer/inst_2p6ym4ke/node-summary') return json({ error: 'peer offline', code: 'peer_unreachable', reason: 'peer_offline', last_seen: '2026-10-09T20:37:00Z' }, 502);
+    // A peer view of forge: serve this daemon's own per-node data as if forge
+    // answered through the proxy, with forge's peer_view metadata on the snapshot.
+    var forgePrefix = '/api/peer/inst_hn3cxq7a/';
+    if (path.indexOf(forgePrefix) === 0) {
+      var u = new URL(url, location.href);
+      var local = '/api/' + path.slice(forgePrefix.length) + u.search;
+      if (path === forgePrefix + 'snapshot') return realFetch(local, init).then(function(r){
+        return r.json().then(function(snap){
+          snap.peer_view = { peer: 'desk', included: ['agents.status', 'groups', 'messaging'], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'spawn', requires: 'groups.members.spawn' }, { feature: 'terminals', requires: 'sessions.attach' }] };
+          delete snap.assets_version;
+          return new Response(JSON.stringify(snap), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        });
+      });
+      return realFetch(local, init);
+    }
     if (path === '/api/snapshot' && window.__skynetGroupLinks) return realFetch(input, init).then(function(r){
       return r.clone().json().then(function(snap){
         var g = (snap.groups || [])[0];
@@ -42,6 +57,10 @@ const skynetGroupLinksJS = `window.__skynetGroupLinks = [
   { peer: 'inst_2p6ym4ke', label: 'lab', level: 'unrestricted', kind: 'grant', direction: 'in', pool: 'rigs', slugs: ['routes.consume'], online: false, last_seen: '2026-10-09T20:37:00Z' },
   { peer: 'inst_2p6ym4ke', label: 'lab', level: 'unrestricted', kind: 'route', direction: 'out', remote: 'reviewers', online: false, last_seen: '2026-10-09T20:37:00Z' }
 ];`
+
+// skynetRemoteViewJS opens the page as the peer view of forge (?node=) before
+// remote-node.js reads the URL.
+const skynetRemoteViewJS = `history.replaceState(null, '', location.pathname + '?node=inst_hn3cxq7a' + (location.search.indexOf('wizard=1') >= 0 ? '&wizard=1' : ''));`
 
 // skynetZeroHeightJS proves the node row costs no vertical space: the tab bar
 // and the first group sit at the same offsets with the row shown and removed.
@@ -100,7 +119,7 @@ func skynetStates() []dashsnap.State {
 		{
 			Key:     "skynet-group-links",
 			Title:   "Linked-group marker",
-			Caption: "A group linked to federation peers carries a 🌐 marker after its header chips (green dot: a linked node is live). The popover lists each link — direct or pool grant, or route mirror — with what it allows and a jump to the node on the map.",
+			Caption: "A group linked to federation peers carries a 🌐 marker after its header chips (green dot: a linked node is live). The popover lists each link — direct or pool grant, or route mirror — with what it allows and a jump to that node's dashboard.",
 			InitJS:  skynetGroupLinksJS + skynetFederationStubJS,
 			JS: showGroups + `return (async function(){
   for (var i = 0; i < 50 && !document.querySelector('.group-federation-chip'); i++) await new Promise(function(r){ setTimeout(r, 100); });
@@ -110,6 +129,23 @@ func skynetStates() []dashsnap.State {
   chip.click();
   for (var j = 0; j < 20 && !document.querySelector('.group-federation-pop'); j++) await new Promise(function(r){ setTimeout(r, 50); });
   if (!document.querySelector('.group-federation-pop')) throw new Error('skynet: popover did not open');
+})();`,
+			SettleMS: 300,
+		},
+		{
+			Key:     "skynet-remote-view",
+			Title:   "Peer view of a node",
+			Caption: "The whole per-node UI showing the peer forge through the local proxy: forge's name replaces the title, a 2–3px line in forge's colour runs along the top edge, forge's chip is current, and the peer-view pill lists what forge shares. The harness asserts the header, tab bar and main area keep today's offsets.",
+			InitJS:  skynetRemoteViewJS + skynetFederationStubJS,
+			JS: showGroups + `return (async function(){
+  for (var i = 0; i < 50 && !document.querySelector('.remote-node-pill'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('.remote-node-pill')) throw new Error('skynet: no remote marker');
+  for (var j = 0; j < 50 && !document.querySelector('.node-chip.active[aria-current="page"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  var cur = document.querySelector('.node-chip[aria-current="page"]');
+  if (!cur || cur.textContent.indexOf('forge') < 0) throw new Error('skynet: forge chip not current');
+  document.querySelector('.remote-node-pill').click();
+  for (var k = 0; k < 20 && !document.querySelector('.remote-node-pop'); k++) await new Promise(function(r){ setTimeout(r, 50); });
+  if (!document.querySelector('.remote-node-pop')) throw new Error('skynet: peer view popover did not open');
 })();`,
 			SettleMS: 300,
 		},

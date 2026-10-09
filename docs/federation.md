@@ -2198,6 +2198,58 @@ hub-visible untrusted instances and the administration fields. Responses are
 private and uncached. Poll this local list at a relaxed interval, pause when
 the dashboard is hidden, and poll each visible remote map card separately.
 
+The rest of the local Fleet administration API mirrors the CLI API: replace
+`/v1/federation/` with `/api/federation/`, retaining the HTTP method, JSON
+request/response, query parameters, and path variables. Every wrapper checks
+the local dashboard session before calling the shared handler as the local
+human. Peer-view transport refuses all of these administration routes,
+including for unrestricted peers. `HEAD` reads on enrollment-token and profile
+GET routes preserve read-only semantics on both API surfaces.
+
+| Method | Tail under `/api/federation/` | Existing `tclaude federation` CLI |
+| --- | --- | --- |
+| GET | `status`, `audit` | `status`, `audit` |
+| POST | `config` | `connect`, `disconnect` |
+| GET / POST | `enroll-tokens` | `enroll-token ls`, `enroll-token create` |
+| POST | `enroll-tokens/{id}/revoke` | `enroll-token revoke` |
+| GET | `enrollments` | `enrollments` |
+| POST | `enroll/preview`, `enroll` | `enroll --preview`, `enroll` |
+| POST | `peers/trust`, `peers/untrust` | `trust`, `untrust` |
+| GET / POST / DELETE | `grants` | `grants`, `grant`, `revoke` |
+| GET / POST | `profiles` | `profile ls`, `profile create` |
+| GET / PUT / DELETE | `profiles/{name}` | `profile show`, `profile update`, `profile rm` |
+| POST | `profiles/{name}/apply` | `profile apply` |
+| PUT | `default-peer-profile` | `profile default` |
+| GET / POST | `nodes/groups` | `nodes groups ls`, `nodes groups create` |
+| DELETE | `nodes/groups/{name}` | `nodes groups rm` |
+| POST / DELETE | `nodes/groups/{name}/members` | `nodes groups add`, `nodes groups rm` |
+
+Important shared request shapes for dashboard clients:
+
+- Trust uses `instance`, optional `label`, `level`, `profile`,
+  `no_default_profile`, `preview`, `preview_token`, and
+  `confirm_fingerprint`. Changing to unrestricted requires the exact displayed
+  fingerprint; selecting a profile preserves the CLI preview/apply contract.
+  Untrust uses `instance`.
+- Grants use `peer`, `slug`, optional `scope` and `spawn_policy`. Read a peer's
+  grants with `?peer=<instance_id>`; a local pool selector is `group:<name>`.
+- Profiles are `{name, revision, definition}` with the existing definition
+  schema. Updates must send the current revision. Applying a profile uses
+  `{peer, apply, preview_token, confirm_fingerprint}`: first preview with
+  `apply: false`, then commit using the returned token. The default-profile
+  request is `{profile}` (an empty string clears it).
+- Pool creation uses `{name}`; adding or removing a member uses `{peer}`.
+- Enrollment token creation uses `{profile, uses, ttl_seconds, trust_level}`.
+  The bearer is returned only at creation; token listings expose public
+  metadata. Revoke by public token ID. Joining uses `{master, token}` for
+  preview, then adds `preview_token` for enrollment. Responses preserve the
+  existing consent and fingerprint fields.
+
+Full status exposes hub-visible untrusted instances for the trust screen.
+There is no separate incoming trust-request queue: trusting one of these
+instances pins its identity through the existing trust operation. Summary
+status intentionally lists only linked trusted peers for the chip row.
+
 ### Dashboard peer proxy
 
 The browser uses its local dashboard session for
@@ -2215,8 +2267,8 @@ Supported JSON reads are `snapshot`, `groups/{group}`, `agents/{agent}`,
 `instance`, `costs`, `audit`, and `node-summary`; `POST operator-message`
 uses the same scoped messaging permission as a direct peer-view request.
 Other routes are refused by the receiving dispatcher. Nested peer proxies and
-Fleet administration remain local-only. `If-None-Match`, `ETag`, and cache
-headers pass through, including bodyless 304 responses. Errors such as a
+Fleet administration remain local-only. `If-None-Match` and `ETag` pass through, including bodyless 304 responses.
+The local proxy keeps its private/no-store cache policy. Errors such as a
 receiving node's 403 or a hidden agent's 404 retain their status and JSON body.
 Responses are validated as JSON and served with a fixed JSON content type,
 `nosniff`, and a sandbox CSP. A peer cannot publish executable content under
@@ -2248,3 +2300,55 @@ Terminal websocket attach continues to use the existing federation sessions
 watch/attach API. This JSON proxy does not yet adapt it under the per-node
 prefix. Remote terminal image uploads remain a separate feature; they need
 staging at the owning instance with the same interactive attach authorization.
+
+### Live peer views from the CLI
+
+The operator CLI uses the same pinned peer transport and authorization as the
+per-node dashboard. It does not introduce remote administrator authority.
+
+```bash
+tclaude federation status --summary --json
+tclaude federation nodes --summary --json
+tclaude federation nodes --node bob --json
+tclaude federation nodes --node self --json
+tclaude federation view snapshot --node bob
+tclaude federation view 'node-summary' --node bob
+tclaude federation view 'costs?page=1' --node bob
+tclaude federation view 'audit?page=1' --node bob
+tclaude agent ls --node bob --json
+tclaude agent ls --node bob --group builders --json
+tclaude agent groups ls --node bob --json
+```
+
+`--node` accepts a pinned instance ID, an unambiguous ID prefix of at least
+8 characters, or a locally assigned peer label. Summary listings additionally
+accept `self` for the local instance. Hub-reported names do not select peers.
+Normal `federation nodes` still reads the cached node capability catalog under
+its existing `node.read` policy; live summaries and live peer views are
+operator reads. The local daemon APIs are `GET /v1/federation/node-summary`
+and `GET /v1/federation/peer/{node}/{tail...}`.
+
+A summary listing explicitly fetches self and trusted peers in the CLI, with
+at most four concurrent requests, no retries, and deterministic output order.
+Peers without `node.read` still supply their authorized shared-group counts;
+resource health remains withheld. Each JSON row contains identity, local
+label, trust level, directory presence and last-seen time, and either `summary`
+(including the peer's omission metadata) or `error` (including its stable code,
+reason, and last-seen when supplied). Partial failures return a nonzero exit
+status while preserving successful rows. A successful live read marks the
+row online even if the cached directory has not caught up.
+
+`federation view` returns the full JSON response, including `peer_view`, and
+preserves structured failure JSON on stderr. The `agent ls --node` and
+`agent groups ls --node` JSON outputs are envelopes with `agents` or `groups`
+and `peer_view`; local listing output retains its existing schema. Remote
+text listings describe reported status rather than treating withheld fields
+as offline. Remote listings reject `--state`, since permissions can withhold
+presence for individual groups. `--archived`, `--no-cache`, and `--remote`
+retain their existing local meanings and cannot combine with the remote
+listing flags. The peer dashboard audit is read with `federation view audit`;
+`federation audit` continues to read the local federation activity ledger.
+
+Proxied responses always keep the local `private, no-store` cache policy.
+Peers cannot replace it with a public or long-lived policy. ETag validators
+continue to pass through for client-managed revalidation.

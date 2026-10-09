@@ -541,21 +541,22 @@ export async function mountLogsFeature(actionDependencies = {}) {
   });
 }
 
-// The Skynet island owns three hosts: the tab-bar node chips, the top-level
-// bar that stands in for the tab strip while the map is open, and the map tab.
+// The Skynet island owns four hosts: the tab-bar node chips, the top-level
+// bar that stands in for the tab strip while the map is open, the map tab, and
+// the header marker of a peer's per-node view.
 const skynetDescriptor = createIslandDescriptor({
   name: 'skynet', label: 'Skynet nodes',
   // mapHost is listed first: a load failure renders into the first host, and it
   // belongs in the map section, never in the tab bar.
-  hosts: { mapHost: '#skynet-map-root', chipsHost: '#node-chips-root', barHost: '#skynet-toplevel-root' },
+  hosts: { mapHost: '#skynet-map-root', chipsHost: '#node-chips-root', barHost: '#skynet-toplevel-root', remoteHost: '#remote-node-root' },
   failureClass: 'skynet-error',
-  load: async ({ hosts: { chipsHost, barHost, mapHost }, dependencies }) => {
+  load: async ({ hosts: { chipsHost, barHost, mapHost, remoteHost }, dependencies }) => {
     const islandModule = import('./skynet-island.js');
     const stateModule = import('./skynet-state.js');
     const actionsModule = import('./skynet-actions.js');
     const [{ mountSkynetIsland }, { skynetState }, { createSkynetActions }] = await Promise.all([islandModule, stateModule, actionsModule]);
     const actions = createSkynetActions({ state: skynetState, ...dependencies });
-    return { state: skynetState, mount: (registerCleanup) => mountSkynetIsland({ chipsHost, barHost, mapHost, state: skynetState, actions, registerCleanup, navigate: dependencies.navigate, timers: dependencies.timers }) };
+    return { state: skynetState, mount: (registerCleanup) => mountSkynetIsland({ chipsHost, barHost, mapHost, remoteHost, state: skynetState, actions, registerCleanup, navigate: dependencies.navigate, timers: dependencies.timers }) };
   },
 });
 
