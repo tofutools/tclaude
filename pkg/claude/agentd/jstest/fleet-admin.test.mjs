@@ -115,7 +115,19 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     restore: async (node, h, b) => { harnessLog.push(['restore', node.id, h, b]); return { receipt: {}, availability: avail('') }; },
     push: async (node, h) => { harnessLog.push(['push', node.id, h]); return { receipt: {}, availability: avail('') }; },
   };
-  const mounted = await harness.mount(harness.html`<${island.FleetAdmin} state=${state} actions=${actions} harnessActions=${harnessActions} confirm=${confirm} toast=${(m) => toasts.push(m)} timers=${timers} remote="" copy=${async () => {}} snapshot=${snapshot} />`);
+  const runLog = [];
+  let runSettings = { accept_remote_scripts: false, resource_limits: { memory: '1GiB', pids: 256 }, warning: 'Full remote code execution' };
+  const runActions = {
+    status: async (node) => { runLog.push(['status', node.id]); return { accept_remote_scripts: true, resource_limits: {} }; },
+    settings: async () => runSettings,
+    saveSettings: async (body) => { runLog.push(['save', body]); runSettings = { ...runSettings, ...body }; return runSettings; },
+    start: async (node, script, secs) => { runLog.push(['start', node.id, script, secs]); return { id: `j-${node.id}`, node: node.id, state: 'running', exit_code: -1 }; },
+    job: async (node, id) => { runLog.push(['job', node.id, id]); return node.id === 'inst_forge'
+      ? { id, state: 'failed', exit_code: 2, duration_ms: 1500, stdout_tail: '', stderr_tail: 'no such file' }
+      : { id, state: 'completed', exit_code: 0, duration_ms: 320, stdout_tail: 'hello from desk\n', stderr_tail: '' }; },
+    fullLog: async (node, id, stream) => { runLog.push(['log', node.id, id, stream]); return 'line 1\nline 2'; },
+  };
+  const mounted = await harness.mount(harness.html`<${island.FleetAdmin} state=${state} actions=${actions} harnessActions=${harnessActions} runActions=${runActions} confirm=${confirm} toast=${(m) => toasts.push(m)} timers=${timers} remote="" copy=${async () => {}} snapshot=${snapshot} />`);
   const q = (sel) => mounted.container.querySelector(sel);
   const check = async (el) => { el.checked = true; await harness.act(() => harness.fireEvent(el, 'change')); };
   const settle = () => new Promise((r) => setTimeout(r, 25));
@@ -123,7 +135,7 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
   // Effects run when an act ends, so the first read settles in a second one.
   const show = async () => { await harness.act(() => { activeTab.value = 'fleet-admin'; }); await harness.act(settle); };
   t.after(() => state.dispose());
-  return { harnessLog, harnessActions, setWorkersBusy: (v) => { workersBusy = v; }, harness, show, state, activeTab, actions, log, toasts, confirms, timers, mounted, q, check, click };
+  return { runLog, harnessLog, harnessActions, setWorkersBusy: (v) => { workersBusy = v; }, harness, show, state, activeTab, actions, log, toasts, confirms, timers, mounted, q, check, click };
 }
 
 test('the admin view reads status only while shown and lists trusted and waiting peers', async (t) => {
@@ -544,4 +556,49 @@ test('login files: push to a peer confirms the share; restore confirms and backs
   await s.click([...s.q('#fleet-harness-modal').querySelectorAll('button')].find((b) => b.textContent === 'Close'));
   await s.click(s.q('#fleet-harnesses [data-node="inst_self"] [data-cell="claude"]'));
   assert.equal(s.q('#fleet-harness-push'), null, 'no push to this node itself');
+});
+
+test('run scripts: pick ready nodes, run with a confirm, one pane per node, full log, re-run only the failed', async (t) => {
+  const s = await setup(t);
+  const m = await s.harness.importDashboardModule('js/fleet-admin-run.js');
+  assert.equal(m.readiness({ id: 'p', online: true }, { error: { status: 403 } }).text, 'not granted (needs node.exec)');
+  assert.equal(m.readiness({ id: 'p', online: true }, { data: { accept_remote_scripts: false } }).text, 'does not accept remote scripts');
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Run scripts/.test(b.textContent)));
+  assert.deepEqual(s.runLog.filter((l) => l[0] === 'status').map((l) => l[1]), ['inst_forge'], 'only online peers are probed');
+  assert.match(s.q('#fleet-run-nodes [data-node="inst_lab"]').textContent, /offline/);
+  assert.equal(s.q('#fleet-run-nodes [data-node="inst_lab"] input').disabled, true);
+  await s.click(s.q('#fleet-run-all'));
+  const area = s.q('#fleet-run-script');
+  area.value = 'echo hello';
+  await s.harness.act(() => s.harness.fireEvent(area, 'input'));
+  assert.match(s.q('#fleet-run-submit').textContent, /Run on 2 nodes/);
+  await s.click(s.q('#fleet-run-submit'));
+  assert.match(s.confirms.at(-1).body, /\/bin\/sh as the tclaude user on desk, forge, with a 3600 s timeout/);
+  assert.deepEqual(s.runLog.filter((l) => l[0] === 'start').map((l) => [l[1], l[2], l[3]]), [['inst_self', 'echo hello', 3600], ['inst_forge', 'echo hello', 3600]]);
+  const tick = s.timers.queue.find((x) => x.ms === 1000);
+  assert.ok(tick, 'running jobs are polled every second');
+  await s.harness.act(async () => { s.timers.queue.splice(s.timers.queue.indexOf(tick), 1); await tick.fn(); });
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  const self = s.q('#fleet-run-results [data-node="inst_self"]');
+  assert.match(self.textContent, /completed.*exit 0.*320 ms.*hello from desk/s);
+  assert.match(s.q('#fleet-run-results [data-node="inst_forge"]').textContent, /failed.*exit 2.*no such file/s);
+  await s.click(self.querySelector('[data-fa="log-stdout"]'));
+  assert.match(self.querySelector('.fa-run-full').textContent, /line 1\s*line 2/);
+  await s.click(s.q('#fleet-run-rerun'));
+  assert.match(s.confirms.at(-1).title, /Re-run the script on 1 node/);
+  assert.deepEqual(s.runLog.filter((l) => l[0] === 'start').at(-1).slice(1), ['inst_forge', 'echo hello', 3600]);
+});
+
+test('accepting remote scripts confirms full remote code execution; node.exec grants repeat it', async (t) => {
+  const s = await setup(t);
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Run scripts/.test(b.textContent)));
+  assert.match(s.q('#fleet-run-settings').textContent, /does not accept remote scripts/);
+  await s.click(s.q('#fleet-run-accept'));
+  assert.match(s.confirms.at(-1).body, /^Full remote code execution\. Any peer granted node\.exec — and every unrestricted peer — can then run any shell command.*memory 1GiB, 256 processes/);
+  assert.deepEqual(s.runLog.find((l) => l[0] === 'save'), ['save', { accept_remote_scripts: true }]);
+  assert.match(s.q('#fleet-run-settings').textContent, /accepts remote scripts from peers with node\.exec/);
+  const model = await s.harness.importDashboardModule('js/fleet-admin-model.js');
+  assert.match(model.slugInfo('node.exec').warning, /Full remote code execution/);
 });

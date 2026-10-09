@@ -8,6 +8,8 @@ import { ProfilesPage } from './fleet-admin-profiles.js';
 import { AuditPage } from './fleet-admin-audit.js';
 import { HarnessesPage } from './fleet-admin-harnesses.js';
 import { createHarnessActions } from './fleet-harness-actions.js';
+import { RunPage } from './fleet-admin-run.js';
+import { createRunActions } from './fleet-run-actions.js';
 import { dashboardState } from './snapshot-store.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { fmtAge, nodeHref, pollDelay, remoteNodeID } from './skynet-model.js';
@@ -23,6 +25,7 @@ const ADMIN_POLL_MS = 10000;
 const SUB_PAGES = Object.freeze([
   { id: 'peers', label: 'Peers' },
   { id: 'harnesses', label: 'Harnesses' },
+  { id: 'run', label: 'Run scripts' },
   { id: 'invites', label: 'Invites & joining' },
   { id: 'grants', label: 'Peer grants' },
   { id: 'profiles', label: 'Profiles & pools' },
@@ -41,6 +44,11 @@ function defaultCopy(text) {
 
 function errText(error) { return error?.message || String(error); }
 
+let runActionsSingleton = null;
+function defaultRunActions() {
+  runActionsSingleton ||= createRunActions();
+  return runActionsSingleton;
+}
 let harnessActionsSingleton = null;
 function defaultHarnessActions() {
   harnessActionsSingleton ||= createHarnessActions();
@@ -273,7 +281,7 @@ function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust, on
 // hub connection and the peers it trusts. Its data is this node's own (never
 // a peer's), so a peer view hands the page back to this node.
 export function FleetAdmin({
-  state, actions, harnessActions = defaultHarnessActions(), confirm = shellConfirm, toast = shellToast, copy = defaultCopy, snapshot = dashboardState.snapshot,
+  state, actions, harnessActions = defaultHarnessActions(), runActions = defaultRunActions(), confirm = shellConfirm, toast = shellToast, copy = defaultCopy, snapshot = dashboardState.snapshot,
   timers = globalThis, now = () => Date.now(), remote = remoteNodeID(), switchHome = defaultSwitchHome,
 }) {
   const active = state.view.value.adminActive;
@@ -341,6 +349,8 @@ export function FleetAdmin({
           onGrants=${(r) => { setGrantTarget(r.id); setPage('grants'); }} />`
       : sub.id === 'harnesses'
       ? html`<${HarnessesPage} view=${view} actions=${harnessActions} confirm=${confirm} toast=${toast} copy=${copy} timers=${timers} />`
+      : sub.id === 'run'
+      ? html`<${RunPage} view=${view} actions=${runActions} confirm=${confirm} toast=${toast} timers=${timers} />`
       : sub.id === 'invites'
       ? html`<${InvitesPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} now=${now()} />`
       : sub.id === 'profiles'
