@@ -273,6 +273,38 @@ test('a pool page revokes its own grants; re-granting keeps CLI launch settings 
   assert.deepEqual(s.log.find((l) => l[0] === 'grant')[1].spawn_policy, { max_live: 5, job_approval: 'manual', profile: 'safe' });
 });
 
+test('grants scoped by stable group ID label by group_name and keep deleted-group grants revocable', async (t) => {
+  const s = await setup(t);
+  const m = await s.harness.importDashboardModule('js/fleet-admin-model.js');
+  const rows = m.grantRows([
+    { slug: 'message.direct', scope: 'group_id=7', group_id: 7, group_name: 'ops', group_deleted: false },
+    { slug: 'sessions.watch', scope: 'group_id=12', group_id: 12, group_name: '', group_deleted: true },
+    { slug: 'routes.consume', scope: 'group=12' },
+  ], { groups: ['ops'] });
+  const by = Object.fromEntries(rows.map((r) => [r.slug, r]));
+  assert.equal(by['message.direct'].group, 'ops'); assert.equal(by['message.direct'].revocable, true);
+  assert.equal(by['sessions.watch'].deletedGroup, true); assert.equal(by['sessions.watch'].revocable, true, 'a newer daemon revokes by stable ID');
+  assert.equal(by['routes.consume'].deletedGroup, true); assert.equal(by['routes.consume'].revocable, false, 'an older daemon would resolve the id as a name');
+
+  s.actions.grants = async () => [{ peer: 'inst_forge', slug: 'sessions.watch', scope: 'group_id=12', group_id: 12, group_name: '', group_deleted: true }];
+  await s.show();
+  await s.click(s.q('[data-peer="inst_forge"] [data-fa="grants"]'));
+  assert.match(s.q('#fleet-grants').textContent, /deleted group #12/);
+  await s.click(s.q('#fleet-grants [data-fa="revoke"]'));
+  assert.match(s.confirms.at(-1).body, /in a deleted group/);
+  assert.deepEqual(s.log.find((l) => l[0] === 'revoke')[1], { peer: 'inst_forge', slug: 'sessions.watch', scope: 'group_id=12' }, 'the scope goes back unchanged');
+});
+
+test('an all-groups grant is new even when the peer holds the same permission on a deleted group', async (t) => {
+  const s = await setup(t);
+  s.actions.grants = async () => [{ peer: 'inst_forge', slug: 'message.direct', scope: 'group_id=12', group_id: 12, group_deleted: true }];
+  await s.show();
+  await s.click(s.q('[data-peer="inst_forge"] [data-fa="grants"]'));
+  await s.click(s.q('#fleet-grant-submit'));
+  assert.match(s.confirms.at(-1).title, /^Grant message\.direct/);
+  assert.deepEqual(s.log.find((l) => l[0] === 'grant')[1], { peer: 'inst_forge', slug: 'message.direct', scope: '' });
+});
+
 test('invites: create confirms the terms and shows the bearer once; revoke keeps enrolled nodes', async (t) => {
   const s = await setup(t);
   const m = await s.harness.importDashboardModule('js/fleet-admin-model.js');
