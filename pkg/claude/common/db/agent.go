@@ -2209,6 +2209,9 @@ func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
 				{`DELETE FROM agent_sudo_grants WHERE agent_id = ?`, &c.SudoGrants},
 				{`DELETE FROM agent_spawn_history WHERE spawner_agent_id = ?`, &c.SpawnHistory},
 				{`DELETE FROM agent_clone_history WHERE source_agent_id = ?`, &c.CloneHistory},
+				// The startup snapshot is agent-keyed without an FK, and holds
+				// profile context text that should not outlive the actor.
+				{`DELETE FROM agent_startup_snapshots WHERE agent_id = ?`, nil},
 				{`DELETE FROM agents WHERE agent_id = ?`, nil}, // cascades agent_conversations
 			} {
 				res, err := tx.Exec(s.stmt, agentID)

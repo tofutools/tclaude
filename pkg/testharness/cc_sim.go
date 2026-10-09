@@ -1,10 +1,12 @@
 package testharness
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -609,13 +611,30 @@ func (c *CCSim) clear() {
 	// rotated conv-id, where the daemon's identity migration triggers.
 	// source=clear is what real CC sends; the foreign-process guard
 	// keys on it to tell this announced transition apart from a
-	// different claude process's hooks.
-	_ = session.ApplyHook(session.HookCallbackInput{
+	// different claude process's hooks. It goes through the full hook
+	// dispatch (not bare ApplyHook) so the post-event work real CC hooks
+	// trigger — the startup-context re-injection — runs too.
+	_ = session.DispatchHookEvent(context.Background(), session.HookCallbackInput{
 		ConvID:        newConv,
 		HookEventName: "SessionStart",
 		Source:        "clear",
 		Cwd:           cwd,
-	}, sessionID)
+	}, sessionID, session.HookAmbient{}, io.Discard)
+}
+
+// compacted models the hook Claude Code fires once a compaction finishes:
+// SessionStart(source=compact) on the (unchanged) conv-id, through the full
+// hook dispatch like a real hook callback.
+func (c *CCSim) compacted() {
+	c.mu.Lock()
+	conv, cwd, sessionID := c.ConvID, c.Cwd, c.SessionID
+	c.mu.Unlock()
+	_ = session.DispatchHookEvent(context.Background(), session.HookCallbackInput{
+		ConvID:        conv,
+		HookEventName: "SessionStart",
+		Source:        "compact",
+		Cwd:           cwd,
+	}, sessionID, session.HookAmbient{}, io.Discard)
 }
 
 // RunForeignOneShot models a one-shot headless claude invocation
@@ -689,6 +708,7 @@ func (c *CCSim) installDefaultHandlers() {
 		}},
 		{prefix: "/compact", fn: func(c *CCSim, line string) bool {
 			_ = c.WriteSummary("post-compact " + c.ConvID)
+			c.compacted()
 			return true
 		}},
 		{prefix: "/clear", fn: func(c *CCSim, _ string) bool {

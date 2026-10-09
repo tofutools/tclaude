@@ -31,6 +31,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/resumeprovenance"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"github.com/tofutools/tclaude/pkg/claude/startupctx"
 	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -8437,6 +8438,7 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 			spawnContextMsgID = mid
 		}
 	}
+	recordStartupSnapshot(agentID, g, p, spawnContextMsgID)
 	return spawnContextMsgID, actorCreated, nil
 }
 
@@ -8836,57 +8838,47 @@ func persistSpawnTitle(convID, name string) {
 	}
 }
 
-// buildSpawnContextBody assembles the startup briefing delivered to a
-// freshly-spawned agent's inbox. It stitches together up to four
-// sections — the group's shared context, profile-specific guidance and the
-// per-spawn task brief — under plain-text headers, with dividers when needed.
-// present.
-//
-// Every input may be empty (or whitespace-only); when all are empty, the
-// result is "" and the caller skips the inbox insert entirely, so an
-// agent with nothing to brief never gets an empty message.
-func buildSpawnContextBody(groupName, groupContext, profileContext, initialMessage string, attachments []string) string {
-	groupContext = strings.TrimSpace(groupContext)
-	profileContext = strings.TrimSpace(profileContext)
-	initialMessage = strings.TrimSpace(initialMessage)
-
-	var sections []string
-	if groupContext != "" {
-		sections = append(sections, fmt.Sprintf(
-			"Group %q startup context — shared guidance for every agent spawned into this group:\n\n%s",
-			groupName, groupContext))
+// recordStartupSnapshot stores the spawn-time facts the post-compaction
+// re-injection needs (see startupctx.ComposeReinjection). Best-effort: a
+// failure only means a later compaction re-injects less, so it is logged
+// rather than failing a spawn that has already happened.
+func recordStartupSnapshot(agentID string, g *db.AgentGroup, p spawnParams, briefMsgID int64) {
+	if agentID == "" {
+		return
 	}
-	if profileContext != "" {
-		sections = append(sections,
-			"Agent preset startup context — guidance attached to this agent's selected profile and role:\n\n"+profileContext)
+	spawnedByAgent := p.SpawnedByAgent
+	if spawnedByAgent == "" && p.SpawnedByConv != "" {
+		spawnedByAgent, _ = db.AgentIDForConv(p.SpawnedByConv)
 	}
-	if initialMessage != "" {
-		sections = append(sections, "Your task brief:\n\n"+initialMessage)
+	// The spawn opted out of the group context exactly when the group had one
+	// and none was folded in. Deriving it keeps every spawn path (including a
+	// replayed pending spawn) correct without threading another field.
+	includeGroupContext := g == nil || strings.TrimSpace(g.DefaultContext) == "" ||
+		strings.TrimSpace(p.GroupContext) != ""
+	if err := db.UpsertAgentStartupSnapshot(db.AgentStartupSnapshot{
+		AgentID:             agentID,
+		SpawnGroupID:        spawnGroupID(g),
+		SpawnedByAgent:      spawnedByAgent,
+		IncludeGroupContext: includeGroupContext,
+		ProfileContext:      strings.TrimSpace(p.ProfileContext),
+		WorktreePath:        p.WorktreePath,
+		WorktreeBranch:      p.WorktreeBranch,
+		BriefMessageID:      briefMsgID,
+	}); err != nil {
+		slog.Warn("spawn: failed to record startup snapshot", "agent", agentID, "error", err)
 	}
-	if s := buildSpawnAttachmentsSection(attachments); s != "" {
-		sections = append(sections, s)
-	}
-	return strings.Join(sections, "\n\n---\n\n")
 }
 
-// buildSpawnAttachmentsSection renders the briefing's "Attached files" block
-// from a list of file paths, or "" when there are none. The paths were written
-// to a temp dir by the dashboard's upload endpoint (screenshots pasted from the
-// clipboard, or files chosen with the native picker) and are listed here so the
-// new agent can open them with its own Read tool on the first turn — the daemon
-// never reads them itself. Rendered as a markdown bullet list so it stays
-// readable both inline in the launch prompt and in `tclaude agent inbox read`.
+// buildSpawnContextBody assembles the startup briefing body for a
+// freshly-spawned agent's inbox. See startupctx.ContextBody, which owns the
+// rendering so the post-compaction re-injection cannot drift from it.
+func buildSpawnContextBody(groupName, groupContext, profileContext, initialMessage string, attachments []string) string {
+	return startupctx.ContextBody(groupName, groupContext, profileContext, initialMessage, attachments)
+}
+
+// buildSpawnAttachmentsSection renders the briefing's "Attached files" block.
 func buildSpawnAttachmentsSection(attachments []string) string {
-	var lines []string
-	for _, a := range attachments {
-		if a = strings.TrimSpace(a); a != "" {
-			lines = append(lines, "- "+a)
-		}
-	}
-	if len(lines) == 0 {
-		return ""
-	}
-	return "Attached files:\n\n" + strings.Join(lines, "\n")
+	return startupctx.AttachmentsSection(attachments)
 }
 
 // buildSpawnWelcome composes the [system: ...] welcome text. Brackets
@@ -8941,32 +8933,7 @@ func spawnWelcomePrefix(name, role, descr, groupName, worktreePath, worktreeBran
 	if spawnedBy != "" {
 		attribution = "spawned by " + spawnedBy
 	}
-	parts := []string{attribution}
-	if name != "" {
-		parts = append(parts, fmt.Sprintf("as %q", name))
-	}
-	if role != "" {
-		parts = append(parts, fmt.Sprintf("(role: %s)", role))
-	}
-	if groupName != "" {
-		parts = append(parts, fmt.Sprintf("in group %q", groupName))
-	}
-	body := strings.Join(parts, " ") + "."
-	if descr != "" {
-		body += " Descr: " + descr + "."
-	}
-	// When the spawn targeted a sub-repo of a monorepo launch dir, the
-	// agent's cwd is the parent dir but its code work belongs in the
-	// worktree. Spell that out so it doesn't edit the parent's repos.
-	if worktreePath != "" {
-		body += " Your git worktree for code changes is at " + worktreePath
-		if worktreeBranch != "" {
-			body += " (branch " + worktreeBranch + ")"
-		}
-		body += " — make code edits there, not elsewhere under your start directory."
-	}
-	body += " Use `tclaude agent` commands (whoami / --help / inbox ls) to introspect and coordinate."
-	return body
+	return startupctx.IdentityPrefix(attribution, name, role, descr, groupName, worktreePath, worktreeBranch)
 }
 
 // buildSpawnLaunchPrompt builds the positional launch prompt for the

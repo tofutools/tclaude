@@ -578,8 +578,7 @@ func TestHarnessHookSelectorQueuesDirectCallbackWhenEventHasNoInlineContext(t *t
 		ConvID:        "conv-1",
 	}), "message transport must not emit an unsupported hook response")
 
-	messages, err := db.ListAgentMessagesForConv("conv-1", 10)
-	require.NoError(t, err)
+	messages := withoutReinjections(t, "conv-1")
 	require.Len(t, messages, 1)
 	assert.Equal(t, "[standing-order:pr-early]", messages[0].Subject)
 	origin, err := db.AgentMessageStandingOrderOrigin(messages[0].ID)
@@ -795,4 +794,19 @@ func TestStandingOrderGlobalRefusesStalePredecessorGeneration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, latest,
 		"a stale generation must not consume the active agent's cadence slot")
+}
+
+// withoutReinjections lists conv's inbox minus the startup-context
+// re-injection a compaction or /clear boundary also queues.
+func withoutReinjections(t *testing.T, convID string) []*db.AgentMessage {
+	t.Helper()
+	all, err := db.ListAgentMessagesForConv(convID, 10)
+	require.NoError(t, err)
+	var out []*db.AgentMessage
+	for _, m := range all {
+		if !db.IsReinjectedContextSubject(m.Subject) {
+			out = append(out, m)
+		}
+	}
+	return out
 }
