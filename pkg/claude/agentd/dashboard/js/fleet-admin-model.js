@@ -147,18 +147,27 @@ export function scopeGroup(scope) {
 
 // grantRows shapes a target's grants for the table: direct grants first, then
 // those inherited from a pool (revoked on the pool, not here). On a pool's own
-// page (ownPool) its grants are direct. A scope still naming a numeric group
-// ID means the group is gone (the daemon shows names for live groups).
+// page (ownPool) its grants are direct.
+//
+// Newer daemons scope group grants by stable ID (group_id=<ID>) and label them
+// with group_name / group_deleted; the scope goes back unchanged on revoke, so
+// a deleted group's grant is revocable. Older daemons show group=<name>, and a
+// numeric name there means the group is gone — not revocable, since their
+// revoke resolves the scope as a name.
 export function grantRows(grants, { ownPool = '', groups = null } = {}) {
   const rows = (Array.isArray(grants) ? grants : []).map((g) => {
     const info = slugInfo(g.slug);
-    const group = scopeGroup(g.scope);
+    const stableIDs = 'group_deleted' in g || String(g.scope || '').startsWith('group_id=');
+    const group = stableIDs ? (g.group_name || '') : scopeGroup(g.scope);
+    const deletedGroup = stableIDs ? !!g.group_deleted : (!!group && /^\d+$/.test(group) && !!groups && !groups.includes(group));
     return {
       key: `${g.pool_id || ''}|${g.slug}|${g.scope || ''}`,
       slug: g.slug, scope: g.scope || '', group, what: info.what, sensitive: !!info.sensitive,
       allGroups: !g.scope && info.kind === 'group',
       pool: g.pool_name && g.pool_name !== ownPool ? g.pool_name : '',
-      deletedGroup: !!group && /^\d+$/.test(group) && !!groups && !groups.includes(group),
+      deletedGroup,
+      groupID: g.group_id ?? null,
+      revocable: !deletedGroup || stableIDs,
       maxLive: g.spawn_policy?.max_live || 0,
       policy: g.spawn_policy || {},
     };
