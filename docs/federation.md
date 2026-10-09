@@ -197,6 +197,8 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `sessions.watch` | read-only terminal view of a group member agent |
 | `sessions.attach` | terminal view and full keyboard input, including harness approvals |
 | `node.read` | platform, harness versions, labels and numeric node resources (unscoped only) |
+| `costs.read` | complete node-wide cost collection in peer UI requests (unscoped only) |
+| `federation.audit.read` | complete node-wide dashboard audit collection in peer UI requests (unscoped only) |
 | `approvals.answer` | one-shot access-request answer while selected as away cover (unscoped only) |
 
 Prefer `--scope group=<local group>` to limit access. For the same slug, a
@@ -2060,3 +2062,45 @@ Important notices remain in the operator inbox, and identity/teleport audits
 retain their existing durable records. Watch survives an in-process federation
 reload, including an accepted identity rotation. Revoked peers are checked again
 before event delivery.
+
+### Peer UI request contract
+
+The receiving daemon's `agentd.PeerViewHandler(instanceID)` accepts requests
+from an authenticated federation transport. The transport supplies the pinned
+calling instance ID; browser parameters and HTTP headers cannot select it.
+This handler is separate from the local dashboard, whose cookie authentication
+and response shape remain unchanged. Proxy transport and remote actions are
+separate features.
+
+Peer reads carry a `peer_view` object with the peer label, `included` concept
+names and `omitted` entries (`feature`, `requires`). These describe capabilities,
+never hidden object names or counts. A restricted `/api/snapshot` contains only
+visible groups and agents, using roster, presence and status grants to select
+fields. Status comes from the same shared cached gather as the local dashboard.
+The peer projection has `groups` with `name`, `descr`, `members`, and `agents`
+with `agent_id`, `title`, visible `groups`, optional `role`, `online` and `state`
+(the sanitized federation status summary). Single-group and single-agent reads
+use `/api/groups/{name}` and `/api/agents/{id}`; invisible objects return 404.
+Unrestricted peers get the complete dashboard snapshot plus metadata.
+
+`GET /api/instance` exposes node metadata under `node.read`. Costs and audit
+collections require their own instance grants above. Those grants default off,
+are never implied by group access, and can also be supplied by node profiles
+or pools. Only unrestricted trust implies them. Without a grant, a collection
+read succeeds with no rows and reports the omitted concept in metadata. An
+audit grant exposes the entire node's audit collection, including local actions.
+
+`POST /api/operator-message` accepts `{to, subject, body}`, where `to` is a
+visible stable agent ID. It requires `message.direct` in a live group containing
+the recipient. A visible recipient without that grant yields 403 naming the
+missing permission and visible group. No attachment, agent impersonation or
+all-live broadcast is accepted. Mail is persisted with federation sender
+identity and the attempt is recorded in `federation audit` as the calling peer's
+operator.
+
+Every dashboard route is classified in the peer mapping. Other routes and
+methods are local-only and return the default-deny 403, including for
+unrestricted peers. Local-only features cannot be enabled by a grant through
+this handler; their `omitted.requires` identifies the related federation grant
+where one exists, or `local_only`. A route guard test requires an explicit
+classification when a dashboard route is added.
