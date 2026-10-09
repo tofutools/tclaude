@@ -2418,7 +2418,13 @@ and remove members — adding names the pool grants the member gains) and node
 profiles: making one the default for newly trusted peers, applying one to a
 trusted peer after previewing its plan (unrestricted confirms the peer's
 fingerprint), and deleting. Its Audit page reads `federation audit` (filtered
-by peer and time window, newest first, up to 1000 rows). Profile definitions,
+by peer and time window, newest first, up to 1000 rows). Its Harnesses page
+shows every harness on this node and each trusted peer (through the peer
+proxy, so a peer needs `node.harnesses.read`): version, available update and
+whether a login is present. A cell installs or updates that harness (busy
+workers ask whether to run now or when idle), and for login-file harnesses
+pushes your login to a peer, backs up or restores the node's login files —
+the same operations as `tclaude harness install|update|credentials`. Profile definitions,
 receiver launch settings beyond the live cap and model gateway scopes are
 managed with their `tclaude federation` commands.
 

@@ -50,6 +50,18 @@ const skynetFederationStubJS = `(function(){
       { id: 'a1', at: '2026-10-10T08:20:00Z', source: 'audit', direction: 'event', peer: 'inst_hn3cxq7a', kind: 'federation.grant', actor: 'operator', target: 'inst_hn3cxq7a groups.roster.read group=ops', status: 200 }
     ]);
     if (path === '/api/federation/peers/trust') return json({ instance_id: 'inst_w5zea3nq', fingerprint: 'w5ze-a3nq-7m1p-kd42-xr8c-0fv6', level: 'restricted', profile: null, plan: null, applied: false });
+    var hav = function(extra){ return { schema: 1, observed_at: '2026-10-10T09:40:00Z', harnesses: [
+      { name: 'claude', display_name: 'Claude Code', installed: true, version: '2.1.4', latest_version: extra ? '2.1.4' : '2.2.0', update_available: !extra, version_status: 'known', credential_present: true, usable: true },
+      { name: 'codex', display_name: 'Codex', installed: true, version: '0.9.2', latest_version: '0.9.2', update_available: false, version_status: 'known', credential_present: true, usable: true },
+      { name: 'opencode', display_name: 'OpenCode', installed: !extra, version: extra ? undefined : '1.0.3', update_available: false, version_status: extra ? 'not_installed' : 'known', credential_present: null, usable: null },
+      { name: 'copilot', display_name: 'Copilot', installed: false, version_status: 'not_installed' },
+      { name: 'gemini', display_name: 'Gemini', installed: true, version: '0.4.0', version_status: 'unknown', update_available: null, credential_present: null, usable: false }
+    ] }; };
+    if (path === '/api/harnesses/availability') return json(hav(false));
+    if (path === '/api/peer/inst_hn3cxq7a/harnesses/availability') return json(hav(true));
+    if (path === '/api/peer/inst_2p6ym4ke/harnesses/availability') return json({ error: 'peer offline', code: 'peer_unreachable' }, 502);
+    if (/\/harnesses\/operations$/.test(path)) return json({ recipes: [{ harness: 'opencode', install_command: 'npm install -g opencode-ai@latest', update_command: 'npm install -g opencode-ai@latest' }, { harness: 'claude', install_command: 'npm install -g @anthropic-ai/claude-code', update_command: 'claude update' }], modes: ['now', 'when_idle'] });
+    if (/\/harnesses\/credentials\/backups$/.test(path)) return json({ backups: [{ id: 'c'.repeat(32), harness: 'claude', created_at: '2026-10-09T18:02:00Z', location: '~/.tclaude/data/credential-backups' }] });
     if (path === '/api/node-summary') return json({ presence: 'online', shared_groups: 2, shared_agents: 10, online_agents: 8, waiting_for_input: 1, resources: res, health: 'current' }, 200, { ETag: '"local"' });
     if (path === '/api/peer/inst_hn3cxq7a/node-summary') return json({ presence: 'online', shared_groups: 2, shared_agents: 9, online_agents: 7, waiting_for_input: 1, peer_view: { peer: 'desk', included: [], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'terminals', requires: 'sessions.watch' }] } }, 200, { ETag: '"forge"' });
     if (path === '/api/peer/inst_2p6ym4ke/node-summary') return json({ error: 'peer offline', code: 'peer_unreachable', reason: 'peer_offline', last_seen: '2026-10-09T20:37:00Z' }, 502);
@@ -263,6 +275,38 @@ func skynetStates() []dashsnap.State {
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return /Audit/.test(b.textContent); })[0].click();
   for (var j = 0; j < 30 && !document.querySelector('#fleet-audit'); j++) await new Promise(function(r){ setTimeout(r, 100); });
   if (document.querySelectorAll('#fleet-audit tbody tr').length !== 6) throw new Error('skynet: audit rows missing');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-harnesses",
+			Title:   "Harnesses across the fleet",
+			Caption: "Fleet → Harnesses: every node's harnesses in one table (version, ↑ when an update is available, whether a login is present), this node plus each trusted peer through the peer proxy; an offline or unshared peer says why. Each cell opens install/update and the login push/backup/restore controls.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return /Harnesses/.test(b.textContent); })[0].click();
+  for (var j = 0; j < 30 && document.querySelectorAll('#fleet-harnesses [data-cell]').length < 10; j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (document.querySelectorAll('#fleet-harnesses [data-cell]').length < 10) throw new Error('skynet: harness cells missing');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-harness-dialog",
+			Title:   "Harness on a peer: install and logins",
+			Caption: "Opening a harness on a peer: install or update with the exact command it runs, and the login files: push my login (warns that agents there act as you), back up now, and restore a backup.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return /Harnesses/.test(b.textContent); })[0].click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-harnesses [data-node="inst_hn3cxq7a"] [data-cell="claude"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-harnesses [data-node="inst_hn3cxq7a"] [data-cell="claude"]').click();
+  for (var k = 0; k < 30 && !document.querySelector('#fleet-harness-backups'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-harness-push')) throw new Error('skynet: push missing');
 })();`,
 			SettleMS: 400,
 		},
