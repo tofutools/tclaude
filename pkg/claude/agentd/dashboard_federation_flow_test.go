@@ -71,6 +71,31 @@ func TestDashboardFederationAdministrationSharedHandlers(t *testing.T) {
 	require.Equal(t, "stale_profile", call("PUT", "profiles/demo", stale, 409)["code"])
 	updated := call("PUT", "profiles/demo", profile, 200)
 	require.Equal(t, float64(2), updated["revision"])
+	// GET registrations also accept HEAD. Neither dashboard nor CLI HEAD may
+	// interpret a valid write body as a mutation.
+	for _, prefix := range []string{"/api/federation/", "/v1/federation/"} {
+		req := testharness.JSONRequest(t, "HEAD", prefix+"profiles/demo", updated)
+		var rec *httptest.ResponseRecorder
+		if prefix == "/api/federation/" {
+			rec = testharness.Serve(h, req)
+		} else {
+			rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(req))
+		}
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+		stored, err := db.GetFederationNodeProfile("demo")
+		require.NoError(t, err)
+		require.Equal(t, int64(2), stored.Revision)
+		req = testharness.JSONRequest(t, "HEAD", prefix+"enroll-tokens", map[string]any{"profile": "demo", "uses": 1, "ttl_seconds": 600})
+		if prefix == "/api/federation/" {
+			rec = testharness.Serve(h, req)
+		} else {
+			rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(req))
+		}
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+		tokens, err := db.ListFederationEnrollmentTokens()
+		require.NoError(t, err)
+		require.Empty(t, tokens)
+	}
 	plan := call("POST", "profiles/demo/apply", map[string]any{"peer": "bob"}, 200)
 	require.NotEmpty(t, plan["preview_token"])
 	require.Equal(t, false, plan["applied"])

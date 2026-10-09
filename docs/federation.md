@@ -2203,7 +2203,8 @@ The rest of the local Fleet administration API mirrors the CLI API: replace
 request/response, query parameters, and path variables. Every wrapper checks
 the local dashboard session before calling the shared handler as the local
 human. Peer-view transport refuses all of these administration routes,
-including for unrestricted peers.
+including for unrestricted peers. `HEAD` reads on enrollment-token and profile
+GET routes preserve read-only semantics on both API surfaces.
 
 | Method | Tail under `/api/federation/` | Existing `tclaude federation` CLI |
 | --- | --- | --- |
