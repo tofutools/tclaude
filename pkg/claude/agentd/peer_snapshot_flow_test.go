@@ -29,6 +29,7 @@ func TestPeerSnapshotDashboardSchemaAndSummary(t *testing.T) {
 	f.HaveAliveSession("hidden-agent", "hidden-session", "hidden-tmux", f.TestCwd("hidden-work"))
 	f.SetSessionStatus("hidden-agent", "awaiting_input")
 	f.HaveConvWithTitle("loose-agent", "secret-loose")
+	f.HaveEnrolledAgent("loose-agent")
 	f.HaveAliveSession("loose-agent", "loose-session", "loose-tmux", f.TestCwd("loose-work"))
 	require.NoError(t, db.UpdateSessionModel("schema-session", "shared-model"))
 	require.NoError(t, db.UpdateSessionEffort("schema-session", "high"))
