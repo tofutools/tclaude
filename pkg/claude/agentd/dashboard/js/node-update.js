@@ -105,11 +105,12 @@ export function NodeUpdateDialog({ node, confirm, toast, onClose, actions = defa
       .finally(() => setBusy(false));
   };
   const v = versionView(status);
-  const source = status?.install_method === 'source';
+  // Release binaries are swapped for the verified release; any other install
+  // (source, go install, unmarked) is rebuilt with go install at that tag.
+  const built = (status?.binaries || []).some((b) => b.install_method && b.install_method !== 'release');
   const apply = () => confirm({
     title: `Update tclaude on ${node.label} to ${v.latest}?`,
-    body: `${node.label} downloads and verifies the official tclaude ${v.latest} release, replaces its tclaude binaries (the current ones are kept for rollback) and restarts its daemon. Its agent sessions keep running; dashboards and peer links reconnect after the restart.`
-      + (source ? ` It runs a source build (${v.current || 'unknown version'}); the release replaces that build.` : '')
+    body: `${node.label} ${built ? `builds tclaude ${v.latest} with go install (it is not a release install; local modifications are replaced)` : `downloads and verifies the official tclaude ${v.latest} release`}, replaces its tclaude binaries (the current ones are kept for rollback) and restarts its daemon. Its agent sessions keep running; dashboards and peer links reconnect after the restart.`
       + ((status?.warnings || []).length ? ` Warnings: ${status.warnings.join('; ')}.` : ''),
     okLabel: 'Update',
   }).then((ok) => ok && start('apply', v.latest));
@@ -123,7 +124,7 @@ export function NodeUpdateDialog({ node, confirm, toast, onClose, actions = defa
     <h3 id="fleet-node-update-title">tclaude on ${node.label}</h3>
     ${error ? html`<div class="muted" role="alert">${accessText(error, node)}</div>` : !status ? html`<div class="muted">Loading…</div>` : html`
       <div class="fa-dl">
-        <span class="fa-k">Version</span><span>${v.current || 'unknown'}${status.install_method ? html` <span class="muted">(${status.install_method.replace('_', ' ')})</span>` : ''}</span>
+        <span class="fa-k">Version</span><span>${v.current || 'unknown'}${status.install_method ? html` <span class="muted">(${status.install_method.replaceAll('_', ' ')})</span>` : ''}</span>
         <span class="fa-k">Latest</span><span>${v.latest || html`<span class="muted">not checked</span>`}${v.update ? html` <span class="fa-warn">update available</span>` : status.update_available === false ? html` <span class="muted">up to date</span>` : ''}${status.checked_at ? html` <span class="muted">· checked ${new Date(status.checked_at).toLocaleString()}</span>` : ''}</span>
         ${(status.binaries || []).map((b) => html`<span key=${b.name} class="fa-k">${b.name}</span><span><code>${b.version}</code> <span class="muted">${b.path}</span></span>`)}
       </div>
