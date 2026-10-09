@@ -60,6 +60,7 @@ func groupsCmd() *cobra.Command {
 			groupsSetRemoteControlCmd(),
 			groupsSetOwnerScopesCmd(),
 			groupsSetContextCmd(),
+			groupsSetReinjectCmd(),
 			groupsSetEnvironmentCmd(),
 			groupsSetMaxMembersCmd(),
 			groupsSetNotificationsCmd(),
@@ -1653,6 +1654,71 @@ func runGroupsSetRemoteControl(p *groupsSetRemoteControlParams, stdout, stderr i
 		return MapDaemonErrorToRC(err)
 	}
 	fmt.Fprintf(stdout, "%s: remote-control policy set to %s\n", resp.Group, resp.RemoteControlPolicy)
+	return rcOK
+}
+
+// --- groups set-reinject ---
+
+type groupsSetReinjectParams struct {
+	Group    string `pos:"true" help:"Group to configure"`
+	Mode     string `pos:"true" optional:"true" help:"What to re-inject after a compaction or /clear: 'contexts' (identity + group/profile startup context; the default), 'identity' (identity only), or 'off'. Omit to reset to contexts."`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+}
+
+func groupsSetReinjectCmd() *cobra.Command {
+	return boa.CmdT[groupsSetReinjectParams]{
+		Use:   "set-reinject",
+		Short: "Set what tclaude re-injects into a group's agents after compaction or /clear",
+		Long: "After a member agent's context is compacted, tclaude queues a message re-injecting its " +
+			"identity and the startup context it was spawned with (after /clear: identity only). " +
+			"'contexts' (the default) does exactly that, 'identity' re-injects only the identity after " +
+			"a compaction too, and 'off' re-injects nothing. The setting of the agent's spawn group " +
+			"applies (or, once it has left it, its oldest-joined group). Gated on the " +
+			"`groups.settings.default-context` permission (or the `groups.admin` umbrella).",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetReinjectParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.Mode).SetAlternatives([]string{"contexts", "identity", "off"})
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *groupsSetReinjectParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsSetReinject(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsSetReinject(p *groupsSetReinjectParams, stdout, stderr io.Writer) int {
+	if p.Group == "" {
+		fmt.Fprintf(stderr, "Error: group name is required\n")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	mode := strings.TrimSpace(p.Mode)
+	if mode == "" {
+		mode = "contexts"
+	}
+	var resp struct {
+		Group                string `json:"group"`
+		ReinjectAfterCompact string `json:"reinject_after_compact"`
+	}
+	body := map[string]string{"reinject_after_compact": mode}
+	path := "/v1/groups/" + url.PathEscape(p.Group)
+	if err := DaemonRequest(http.MethodPatch, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	fmt.Fprintf(stdout, "%s: re-inject after compact set to %s\n", resp.Group, resp.ReinjectAfterCompact)
 	return rcOK
 }
 

@@ -3418,6 +3418,10 @@ type groupSummary struct {
 	// or "deny" (force it off). Always serialized (the canonical token) so a
 	// consumer never has to guess between "absent" and "inherit".
 	RemoteControlPolicy string `json:"remote_control_policy"`
+	// ReinjectAfterCompact is what tclaude re-injects into member agents after
+	// a compaction or /clear: "contexts" (the default), "identity" or "off".
+	// Always serialized as the effective token.
+	ReinjectAfterCompact string `json:"reinject_after_compact"`
 	// Mission and SourceTemplate are the deploy provenance (JOH-245) carried
 	// on the group row. They are what tells a plain group apart from a deployed
 	// task force: `tclaude agent task-force ls` (JOH-346) filters on a
@@ -3546,6 +3550,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 				Archived:                g.IsArchived(),
 				NotifyMuted:             !g.NotifyEnabled,
 				RemoteControlPolicy:     remoteControlPolicyToWire(g.RemoteControl),
+				ReinjectAfterCompact:    g.EffectiveReinjectAfterCompact(),
 				OwnerScopes:             ownerScopesWireOmitEmpty(g.OwnerScopesJSON),
 				Mission:                 g.Mission,
 				SourceTemplate:          g.SourceTemplate,
@@ -4023,6 +4028,9 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		// caller can change it without touching the other fields; omitting it
 		// leaves the policy unchanged.
 		RemoteControlPolicy *string `json:"remote_control_policy,omitempty"`
+		// ReinjectAfterCompact sets what tclaude re-injects into member agents
+		// after a compaction or /clear: "contexts", "identity" or "off".
+		ReinjectAfterCompact *string `json:"reinject_after_compact,omitempty"`
 		// Permissions is a complete replacement allowlist. Pointer distinguishes
 		// omitted (unchanged) from [] (clear every group grant).
 		Permissions *[]db.PermissionGrant `json:"permissions,omitempty"`
@@ -4037,9 +4045,9 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		writeError(w, http.StatusBadRequest, "json", err.Error())
 		return
 	}
-	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.Environment == nil && body.DefaultSpawnGroup == nil && body.DefaultProfile == nil && body.MaxMembers == nil && body.NotifyEnabled == nil && body.RemoteControlPolicy == nil && body.Permissions == nil && body.OwnerScopes == nil {
+	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.Environment == nil && body.DefaultSpawnGroup == nil && body.DefaultProfile == nil && body.MaxMembers == nil && body.NotifyEnabled == nil && body.RemoteControlPolicy == nil && body.ReinjectAfterCompact == nil && body.Permissions == nil && body.OwnerScopes == nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"nothing to update (expected descr, default_cwd, default_context, environment, default_spawn_group, default_profile, max_members, notify_enabled, remote_control_policy, permissions and/or owner_scopes)")
+			"nothing to update (expected descr, default_cwd, default_context, environment, default_spawn_group, default_profile, max_members, notify_enabled, remote_control_policy, reinject_after_compact, permissions and/or owner_scopes)")
 		return
 	}
 	required := make([]string, 0, 10)
@@ -4049,7 +4057,9 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	if body.DefaultCwd != nil {
 		required = append(required, PermGroupsSettingsDefaultDir)
 	}
-	if body.DefaultContext != nil {
+	// The re-injection mode governs what happens to the startup context after
+	// a compaction, so it shares the startup-context slug.
+	if body.DefaultContext != nil || body.ReinjectAfterCompact != nil {
 		required = append(required, PermGroupsSettingsDefaultContext)
 	}
 	if body.Environment != nil {
@@ -4309,6 +4319,25 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 			return
 		}
 		resp["remote_control_policy"] = remoteControlPolicyToWire(policy)
+	}
+
+	if body.ReinjectAfterCompact != nil {
+		mode := strings.TrimSpace(*body.ReinjectAfterCompact)
+		if mode == "" || !db.ValidReinjectAfterCompact(mode) {
+			writeError(w, http.StatusBadRequest, "invalid_reinject_after_compact",
+				fmt.Sprintf("invalid reinject_after_compact %q (want contexts, identity, or off)", mode))
+			return
+		}
+		n, err := db.SetAgentGroupReinjectAfterCompact(g.Name, mode)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		if n == 0 {
+			writeError(w, http.StatusNotFound, "not_found", "no such group")
+			return
+		}
+		resp["reinject_after_compact"] = mode
 	}
 
 	if body.Permissions != nil {

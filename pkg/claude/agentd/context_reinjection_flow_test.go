@@ -2,12 +2,15 @@ package agentd_test
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
 // reinjectedInbox returns the re-injected startup-context messages in the
@@ -92,4 +95,54 @@ func TestContextReinjection_AfterCompactAndClear(t *testing.T) {
 	assert.Contains(t, clearMsg.Body, "Your conversation was cleared")
 	assert.Contains(t, clearMsg.Body, `in group "alpha"`)
 	assert.NotContains(t, clearMsg.Body, "Use git worktrees", "/clear re-injects identity only")
+}
+
+func setGroupReinject(t *testing.T, f *testharness.Flow, group, mode string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := agentd.AsHumanPeer(testharness.JSONRequest(t,
+		http.MethodPatch, "/v1/groups/"+group,
+		map[string]any{"reinject_after_compact": mode}))
+	return testharness.Serve(f.Mux, r)
+}
+
+// Scenario: the operator changes a group's "re-inject after compact" setting
+// in group settings.
+//
+// Expected: the setting round-trips and rejects an unknown value; "identity"
+// trims a compaction's re-injection to the identity, and "off" suppresses
+// re-injection entirely (a /clear queues nothing).
+func TestContextReinjection_GroupSetting(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	_, err := db.SetAgentGroupDefaultContext("alpha", "Use git worktrees and PRs.")
+	require.NoError(t, err)
+
+	rec := setGroupReinject(t, f, "alpha", "sometimes")
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+	for _, mode := range []string{"off", "contexts", "identity"} {
+		rec = setGroupReinject(t, f, "alpha", mode)
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+		assert.Contains(t, rec.Body.String(), `"reinject_after_compact":"`+mode+`"`)
+	}
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker"})
+	require.Equal(t, http.StatusOK, spawn.Code, "spawn: %s", spawn.Raw)
+	f.AssertSpawnName(spawn.ConvID, "worker", 10*time.Second)
+
+	require.Equal(t, http.StatusOK, f.Compact(spawn.ConvID).Code)
+	var msgs []*db.AgentMessage
+	require.Eventually(t, func() bool {
+		msgs = reinjectedInbox(t, spawn.ConvID, spawn.AgentID)
+		return len(msgs) == 1
+	}, 10*time.Second, 20*time.Millisecond)
+	assert.Contains(t, msgs[0].Body, `in group "alpha"`)
+	assert.NotContains(t, msgs[0].Body, "Use git worktrees", "identity mode skips the startup context")
+
+	require.Equal(t, http.StatusOK, setGroupReinject(t, f, "alpha", "off").Code)
+	c := f.Clear(spawn.Label)
+	// f.Clear returns after the simulator's hooks ran synchronously, so a
+	// queued message would already be visible.
+	for _, m := range reinjectedInbox(t, c.NewConv, spawn.AgentID) {
+		assert.NotEqual(t, db.ReinjectedAfterClearSubject, m.Subject, "off queues nothing after /clear")
+	}
 }
