@@ -2454,3 +2454,67 @@ that ID immediately; `--job <id>` reads it later, including after a restart.
 Node summaries expose cached `version`, optional `latest_version`, nullable
 `update_available`, and optional `update_checked_at` without release requests
 in the polling path. Release metadata is refreshed in the background hourly.
+
+### Installing and updating harnesses
+
+`tclaude harness install <name> [--node <peer>]` runs a fixed official npm
+package recipe as the daemon user, with no sudo. New installs live under
+`~/.local/share/tclaude/harnesses/npm`; the daemon includes its `bin` directory
+in subsequent probes and launches. The supported names are `claude`, `codex`,
+`opencode`, `copilot`, and `gemini`, using their vendors' latest stable npm
+packages. The recipes link to the official vendor instructions.
+
+`tclaude harness update <name|--all> [--node <peer>|--all-nodes]` updates
+recognized npm installations in their existing prefix, or uses the native
+Claude/OpenCode updater for user-owned installations. Other installation methods,
+missing npm, root execution, and unwritable prefixes require a manual command;
+the daemon never elevates privileges. `--all-nodes` includes this node and trusted
+linked nodes, and reports failures per node. Cached npm metadata adds optional
+`latest_version` and nullable `update_available` fields to harness availability.
+
+Active sessions require an explicit choice: `--now` acknowledges the warning,
+or `--when-idle` waits until the selected harness has no busy sessions. With
+neither option, a busy harness returns HTTP 409 `harness_workers_busy`. A node
+runs one harness job at a time. `--no-wait` returns the job ID; `--job <id>` reads
+it later. Jobs contain stored phase/result logs, never vendor stdout, environment
+values or credential contents. An interrupted job is marked failed after daemon
+restart; inspect availability before retrying it.
+
+Remote installs and updates require the instance-wide `node.harnesses.install`
+permission, default off and implied only by unrestricted trust. This grant does
+not follow from `node.harnesses.read`, and it does not authorize credential drops.
+Both grants can be assigned through node profiles/pools. Operations are audited.
+
+For a **single remote install**, `--copy-credentials` explicitly pushes the
+operator's own file credentials to the installing node. Its agents can then act
+as the operator with that provider. Copy is never enabled by default, never pulls
+from a peer, and additionally requires `node.credentials.receive` on the receiver.
+That receiving grant is also instance-wide and default off except unrestricted
+trust. Existing credentials require `--overwrite-credentials`; every write first
+creates a private, owner-only backup and reports its ID/location. Symlink targets
+are refused and new auth files have mode 0600.
+
+File copy supports Claude's `.credentials.json`, Codex's `auth.json`, OpenCode's
+`auth.json`, and Gemini's OAuth/account files in their standard directories.
+Configured Claude/Codex/XDG directories on each node are respected. Keychain-only,
+Copilot, and environment-only credentials need the target's own login flow;
+secret stores and ambient environment variables are never exported. Bundles are
+bounded to 18 KiB. The local daemon captures files only after explicit operator
+opt-in and sends them over the existing end-to-end encrypted peer transport.
+The browser, CLI output, job records, and audit never receive credential contents.
+Availability checks report file presence without reading those contents;
+provider usability remains unknown until the harness authenticates.
+
+The dashboard API uses `GET /api/harnesses/operations` for recipes/options,
+`POST /api/harnesses/operations` with `action`, either `harness` or update `all`,
+optional `mode` (`now` or `when_idle`), and opt-in `copy_credentials` /
+`overwrite_credentials`. POST returns HTTP 202 with a job; poll `GET
+/api/harnesses/operations/jobs/{id}` about once per second until `succeeded` or
+`failed` (intermediate states: `running`, `waiting_idle`). A job includes
+`results`, safe `log`, `warnings`, and final `availability`. Concurrent requests
+return HTTP 409 `harness_operation_busy`. Operator CLI routes mirror these under
+`/v1`; remote dashboard calls use `/api/peer/{instance_id}/harnesses/operations`.
+
+Credential copy during install is a third way to prepare a teleport target,
+alongside the target's own login and a model gateway. It does not change teleport's
+credential choice or defaults.

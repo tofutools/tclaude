@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/harnessops"
 	"github.com/tofutools/tclaude/pkg/nodeinfo"
 )
 
@@ -27,7 +28,7 @@ func cachedHarnessAvailability(refresh bool) nodeinfo.Availability {
 		defer cancel()
 		availabilityCache.value = nodeinfo.ProbeAvailability(ctx)
 	}
-	return availabilityCache.value
+	return harnessops.AddLatest(availabilityCache.value)
 }
 func registerHarnessAvailabilityRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/harnesses/availability", handleDashboardHarnessAvailability)

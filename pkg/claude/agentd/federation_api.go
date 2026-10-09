@@ -1160,6 +1160,10 @@ func registerFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/node/update", handleLocalNodeUpdate)
 	mux.HandleFunc("GET /v1/node/update/jobs/{id}", handleLocalNodeUpdate)
 	mux.HandleFunc("GET /v1/harnesses/availability", handleLocalHarnessAvailability)
+	mux.HandleFunc("GET /v1/harnesses/operations", handleLocalHarnessOperations)
+	mux.HandleFunc("POST /v1/harnesses/operations", handleLocalHarnessOperations)
+	mux.HandleFunc("POST /v1/harnesses/credentials", handleLocalHarnessOperations)
+	mux.HandleFunc("GET /v1/harnesses/operations/jobs/{id}", handleLocalHarnessOperations)
 
 	registerFederationPeerViewRoutes(mux)
 	registerFederationNodeGroupRoutes(mux)

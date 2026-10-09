@@ -91,6 +91,10 @@ func peerViewRules() map[string]peerViewRule {
 	rules["GET /api/groups"] = peerViewRule{feature: "groups", requires: PermGroupsRosterRead, group: true, visible: true, serve: servePeerGroups}
 	rules["GET /api/groups/{name}"] = peerViewRule{feature: "groups", requires: PermGroupsRosterRead, group: true, visible: true, serve: servePeerGroup}
 	rules["GET /api/agents/{id}"] = peerViewRule{feature: "agents.status", requires: PermAgentsStatusRead, group: true, serve: servePeerAgent}
+	rules["GET /api/harnesses/operations"] = peerViewRule{feature: "node.harnesses.install", requires: PermNodeHarnessesInstall, serve: servePeerHarnessOperations}
+	rules["GET /api/harnesses/operations/jobs/{id}"] = peerViewRule{feature: "node.harnesses.install", requires: PermNodeHarnessesInstall, serve: servePeerHarnessOperations}
+	rules["POST /api/harnesses/operations"] = peerViewRule{feature: "node.harnesses.install", requires: PermNodeHarnessesInstall, write: servePeerHarnessOperations}
+	rules["POST /api/harnesses/credentials"] = peerViewRule{feature: "node.credentials.receive", requires: PermNodeCredentialsReceive, write: servePeerHarnessOperations}
 	rules["GET /api/node/update"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, serve: servePeerNodeUpdate}
 	rules["GET /api/node/update/jobs/{id}"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, serve: servePeerNodeUpdate}
 	rules["POST /api/node/update"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, write: servePeerNodeUpdate}

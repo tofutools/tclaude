@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/harnesscredentials"
 )
 
 // HarnessAvailability contains diagnostics, never credential values or probe
@@ -19,6 +20,8 @@ type HarnessAvailability struct {
 	Installed         bool   `json:"installed"`
 	Path              string `json:"path,omitempty"`
 	Version           string `json:"version,omitempty"`
+	LatestVersion     string `json:"latest_version,omitempty"`
+	UpdateAvailable   *bool  `json:"update_available"`
 	VersionStatus     string `json:"version_status"`
 	CredentialPresent *bool  `json:"credential_present"`
 	Usable            *bool  `json:"usable"`
@@ -69,6 +72,13 @@ func ProbeAvailability(ctx context.Context) Availability {
 				yes := true
 				row.CredentialPresent = &yes
 				break
+			}
+		}
+		if row.CredentialPresent == nil {
+			if home, err := os.UserHomeDir(); err == nil {
+				if home, err = filepath.EvalSymlinks(home); err == nil {
+					row.CredentialPresent = harnesscredentials.Presence(home, name)
+				}
 			}
 		}
 		if h.UsableWithoutCredentials {

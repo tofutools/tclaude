@@ -620,6 +620,8 @@ var permissionRegistry = []PermSlug{
 	{Slug: PermAgentsStatusRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Read a peer group’s shared agent runtime status, task links and numeric context. Requires peer= scope; no terminal authority."},
 	{Slug: PermFederationAuditRead, Description: "Read local federation activity metadata across peers. No payloads or credential values are exposed."},
 	{Slug: PermNodeUpdate, Description: "Permit trusted peers to replace installed tclaude binaries and restart agentd. High trust, default off; instance-wide peer grant."},
+	{Slug: PermNodeHarnessesInstall, Description: "Install/update harnesses on this node; high trust, runs official installers as the daemon user"},
+	{Slug: PermNodeCredentialsReceive, Description: "Receive operator harness credentials; high trust, agents can act as the sender"},
 	{Slug: PermNodeHarnessesRead, Description: "Share detailed installed harness paths, versions and credential presence with trusted peers. Default off; instance-wide peer grant."},
 	{Slug: PermNodeRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Read shared peer platform, harnesses, labels and numeric resource summaries. Requires peer= scope."},
 	{Slug: PermSessionsRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Read a peer's shared live agent sessions and waiting states. Requires peer= scope; no local session authority."},
