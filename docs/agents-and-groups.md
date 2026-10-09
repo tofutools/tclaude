@@ -161,6 +161,29 @@ briefing — the standing brief every member of the team should start with.
 A single spawn can opt out with `--no-group-context`, and spawn profiles
 carry an `include_group_default_context` field.
 
+### Re-injection after compaction and /clear
+
+A harness compaction summarizes the first turn, where the startup briefing
+lives, and `/clear` drops it. On either boundary tclaude queues an ordinary
+inbox message (on every harness that reports the boundary) re-injecting what
+the summary may have lost:
+
+- after a compaction: the agent's identity (name, role, groups, spawner,
+  worktree), the group startup context as it reads *now*, the profile/role
+  startup context it was spawned with, and a pointer to the original
+  briefing message and task link — never the full brief;
+- after `/clear`: the identity only.
+
+The group used is the spawn group while the agent is still in it, otherwise
+its oldest-joined group. That group's **Re-inject after compact** setting
+(Group settings dialog, or `groups set-reinject`) chooses `contexts` (the
+default, as above), `identity` (identity only after a compaction too), or
+`off`:
+
+```bash
+tclaude agent groups set-reinject myteam identity
+```
+
 ### Group spawn environment
 
 The dashboard's consolidated **Group settings** dialog edits the default

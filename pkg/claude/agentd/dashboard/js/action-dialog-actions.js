@@ -203,6 +203,7 @@ export function createActionDialogActions({
 				max_members: Math.max(0, Number(values.maxMembers) || 0),
 				notify_enabled: !!values.notifyEnabled,
 				remote_control_policy: values.remoteControlPolicy,
+				reinject_after_compact: values.reinjectAfterCompact || 'contexts',
 			};
 			await requestJSON(fetchImpl, `/api/groups/${encodeURIComponent(group)}`, {
 				method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),

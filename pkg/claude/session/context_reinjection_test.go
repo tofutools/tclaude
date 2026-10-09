@@ -178,3 +178,21 @@ func TestContextReinjection_PeerReusingSubjectDoesNotSuppress(t *testing.T) {
 
 	assert.Len(t, reinjectedMessages(t), 2, "the real re-injection is still queued")
 }
+
+func TestContextReinjection_GroupModeIdentityAndOff(t *testing.T) {
+	reinjectionFixture(t)
+
+	_, err := db.SetAgentGroupReinjectAfterCompact("tclaude", db.ReinjectIdentity)
+	require.NoError(t, err)
+	body := composeForTest(t, startupctx.BoundaryCompact)
+	assert.Contains(t, body, `in group "tclaude"`)
+	assert.NotContains(t, body, "Use git worktrees and PRs.")
+	assert.NotContains(t, body, "You are a careful reviewer.")
+	assert.NotContains(t, body, "#4242")
+
+	_, err = db.SetAgentGroupReinjectAfterCompact("tclaude", db.ReinjectOff)
+	require.NoError(t, err)
+	QueueContextReinjection(sessionStart("compact"), "sess-1")
+	QueueContextReinjection(sessionStart("clear"), "sess-1")
+	assert.Empty(t, reinjectedMessages(t))
+}

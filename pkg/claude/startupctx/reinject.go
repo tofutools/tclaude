@@ -47,6 +47,10 @@ type Reinjection struct {
 // The harness reloads CLAUDE.md/AGENTS.md and its skill list on its own, and
 // standing orders have their own compaction trigger, so none of those are
 // repeated here. After /clear only the identity is re-injected.
+//
+// The primary group's reinject_after_compact setting can narrow this:
+// "identity" re-injects identity only after a compaction too, and "off"
+// re-injects nothing at either boundary.
 func ComposeReinjection(agentID string, boundary Boundary) (Reinjection, error) {
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
@@ -67,8 +71,20 @@ func ComposeReinjection(agentID string, boundary Boundary) (Reinjection, error) 
 	if snap == nil && len(memberships) == 0 {
 		return Reinjection{}, nil
 	}
+	identityOnly := false
 
 	primary := primaryMembership(snap, memberships)
+	// The primary group's reinject_after_compact setting decides how much is
+	// re-injected: off suppresses the message, identity trims a compaction's
+	// message down to what a /clear gets.
+	if primary != nil {
+		switch primary.Group.EffectiveReinjectAfterCompact() {
+		case db.ReinjectOff:
+			return Reinjection{}, nil
+		case db.ReinjectIdentity:
+			identityOnly = true
+		}
+	}
 	var groupName, role, descr string
 	var groupID int64
 	if primary != nil {
@@ -96,15 +112,17 @@ func ComposeReinjection(agentID string, boundary Boundary) (Reinjection, error) 
 	}
 
 	var lead string
-	switch boundary {
-	case BoundaryClear:
+	switch {
+	case boundary == BoundaryClear:
 		lead = "Your conversation was cleared. tclaude re-injected your agent identity so you keep your bearings; this is not a new request."
+	case identityOnly:
+		lead = "Your context was compacted. tclaude re-injected your agent identity so you keep your bearings; this is not a new request — continue your current work."
 	default:
 		lead = "Your context was compacted. tclaude re-injected the durable startup context you were spawned with, since the compaction summary may have dropped it. This is standing guidance, not a new request — continue your current work."
 	}
 	sections := []string{lead + "\n\n" + identity}
 
-	if boundary != BoundaryClear {
+	if boundary != BoundaryClear && !identityOnly {
 		groupContext := ""
 		if primary != nil && (snap == nil || snap.IncludeGroupContext) {
 			groupContext = primary.Group.DefaultContext
