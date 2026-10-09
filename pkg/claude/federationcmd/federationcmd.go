@@ -437,12 +437,14 @@ func untrustCmd() *cobra.Command {
 
 // --- peer grants ---
 type peerGrant struct {
-	PoolID      string `json:"pool_id,omitempty"`
-	PoolName    string `json:"pool_name,omitempty"`
-	Peer        string `json:"peer"`
-	Slug        string `json:"slug"`
-	Scope       string `json:"scope"`
-	SpawnPolicy struct {
+	PoolID       string `json:"pool_id,omitempty"`
+	PoolName     string `json:"pool_name,omitempty"`
+	Peer         string `json:"peer"`
+	Slug         string `json:"slug"`
+	Scope        string `json:"scope"`
+	GroupName    string `json:"group_name,omitempty"`
+	GroupDeleted bool   `json:"group_deleted,omitempty"`
+	SpawnPolicy  struct {
 		AllowedProfiles []string `json:"allowed_profiles,omitempty"`
 		RequesterPays   string   `json:"requester_pays,omitempty"`
 		JobApproval     string   `json:"job_approval,omitempty"`
@@ -459,7 +461,7 @@ type grantParams struct {
 	JobApproval     string   `long:"job-approval" optional:"true" help:"jobs.run only: auto (default) or manual"`
 	Peer            string   `pos:"true" help:"Trusted peer label or instance id"`
 	Slug            string   `pos:"true" help:"Permission slug to grant"`
-	Scope           string   `long:"scope" optional:"true" help:"group=<local group>; omitted covers all current and future groups"`
+	Scope           string   `long:"scope" optional:"true" help:"group=<local name> or group_id=<ID>; omitted covers all current and future groups"`
 	Profile         string   `long:"profile" optional:"true" help:"Receiver launch profile for groups.members.spawn"`
 	Cwd             string   `long:"cwd" optional:"true" help:"Receiver worker directory"`
 	Harness         string   `long:"harness" optional:"true" help:"Receiver worker harness"`
@@ -494,7 +496,7 @@ func grantCmd() *cobra.Command {
 type revokeParams struct {
 	Peer  string `pos:"true" help:"Trusted peer label or instance id"`
 	Slug  string `pos:"true" help:"Permission slug to revoke"`
-	Scope string `long:"scope" optional:"true" help:"group=<local group>; omitted revokes the unscoped grant"`
+	Scope string `long:"scope" optional:"true" help:"group=<local name> or group_id=<ID> from grants listing; omitted revokes the unscoped grant"`
 }
 
 func revokeCmd() *cobra.Command {
@@ -527,6 +529,11 @@ func grantsCmd() *cobra.Command {
 		}
 		for _, g := range resp.Grants {
 			fmt.Printf("%s %s %s", g.Peer, g.Slug, g.Scope)
+			if g.GroupDeleted {
+				fmt.Print(" [group deleted]")
+			} else if g.GroupName != "" {
+				fmt.Printf(" [group %s]", g.GroupName)
+			}
 			if g.PoolName != "" && g.Peer != "group:"+g.PoolName {
 				fmt.Printf(" [inherited from group:%s]", g.PoolName)
 			}
