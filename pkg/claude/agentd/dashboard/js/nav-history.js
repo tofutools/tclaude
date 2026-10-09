@@ -32,7 +32,7 @@ import {
 // set ordering.
 const ROUTABLE_TABS = new Set([
   'groups', 'terminals', 'jobs', 'processes', 'plugins', 'access',
-  'messages', 'usage', 'costs', 'audit', 'logs', 'debug', 'config',
+  'messages', 'usage', 'costs', 'audit', 'logs', 'debug', 'config', 'map',
 ]);
 
 // The virtual stack (see nav-history-core.js). Replaced wholesale on every

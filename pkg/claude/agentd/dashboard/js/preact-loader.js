@@ -541,6 +541,26 @@ export async function mountLogsFeature(actionDependencies = {}) {
   });
 }
 
+// The Skynet island owns three hosts: the tab-bar node chips, the top-level
+// bar that stands in for the tab strip while the map is open, and the map tab.
+const skynetDescriptor = createIslandDescriptor({
+  name: 'skynet', label: 'Skynet nodes',
+  hosts: { chipsHost: '#node-chips-root', barHost: '#skynet-toplevel-root', mapHost: '#skynet-map-root' },
+  failureClass: 'skynet-error',
+  load: async ({ hosts: { chipsHost, barHost, mapHost }, dependencies }) => {
+    const islandModule = import('./skynet-island.js');
+    const stateModule = import('./skynet-state.js');
+    const actionsModule = import('./skynet-actions.js');
+    const [{ mountSkynetIsland }, { skynetState }, { createSkynetActions }] = await Promise.all([islandModule, stateModule, actionsModule]);
+    const actions = createSkynetActions({ state: skynetState, ...dependencies });
+    return { state: skynetState, mount: (registerCleanup) => mountSkynetIsland({ chipsHost, barHost, mapHost, state: skynetState, actions, registerCleanup, navigate: dependencies.navigate, timers: dependencies.timers }) };
+  },
+});
+
+export function mountSkynetFeature(dependencies = {}) {
+  return mountIslandDescriptor(skynetDescriptor, dependencies);
+}
+
 export async function mountAuditFeature(actionDependencies = {}) {
   const host = document.querySelector('#audit-root');
   if (!host) return null;
