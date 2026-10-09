@@ -116,9 +116,16 @@ export function InvitesPage({ view, actions, confirm, toast, copy, now }) {
 
   useEffect(() => {
     let off = false;
-    Promise.all([actions.profiles(), actions.tokens(), actions.enrollments()])
-      .then(([p, t, e]) => { if (off) return; setProfiles(p?.profiles || []); setTokens(t); setEnrollments(e); setError(''); })
-      .catch((e) => { if (!off) setError(errText(e)); });
+    // Each list loads on its own, so one failed read does not hide the others
+    // (a profile-read failure must not hide the tokens' Revoke buttons).
+    Promise.allSettled([actions.profiles(), actions.tokens(), actions.enrollments()]).then(([p, t, e]) => {
+      if (off) return;
+      if (p.status === 'fulfilled') setProfiles(p.value?.profiles || []);
+      if (t.status === 'fulfilled') setTokens(t.value);
+      if (e.status === 'fulfilled') setEnrollments(e.value);
+      const failed = [p, t, e].find((r) => r.status === 'rejected');
+      setError(failed ? errText(failed.reason) : '');
+    });
     return () => { off = true; };
   }, [tick]);
 
@@ -128,7 +135,7 @@ export function InvitesPage({ view, actions, confirm, toast, copy, now }) {
 
   const create = () => {
     if (!chosen) return undefined;
-    const n = Math.max(1, Math.min(10000, Number(uses) || 1));
+    const n = Math.max(1, Math.min(10000, Math.floor(Number(uses)) || 1));
     const ttlLabel = TOKEN_TTLS.find((x) => x.seconds === Number(ttl))?.label || `${ttl}s`;
     const enrolledLevel = chosen.definition?.trust_level === 'unrestricted' ? 'unrestricted' : 'restricted';
     return confirm({
