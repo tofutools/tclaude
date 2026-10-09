@@ -98,7 +98,24 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
   // Like shellConfirm: a confirmed action resolves to the action's result.
   const confirm = async (opts) => { confirms.push(opts); return opts.action ? opts.action() : true; };
   const timers = fakeTimers();
-  const mounted = await harness.mount(harness.html`<${island.FleetAdmin} state=${state} actions=${actions} confirm=${confirm} toast=${(m) => toasts.push(m)} timers=${timers} remote="" copy=${async () => {}} snapshot=${snapshot} />`);
+  const harnessLog = [];
+  let workersBusy = false;
+  const avail = (name) => ({ schema: 1, harnesses: [
+    { name: 'claude', display_name: 'Claude Code', installed: true, version: '2.1.0', latest_version: '2.2.0', update_available: true, version_status: 'known', credential_present: true, usable: true },
+    { name: 'codex', display_name: 'Codex', installed: name !== 'inst_forge', version: '0.9.0', update_available: false, version_status: name === 'inst_forge' ? 'not_installed' : 'known', credential_present: null, usable: null },
+    { name: 'copilot', display_name: 'Copilot', installed: false, version_status: 'not_installed' },
+  ] });
+  const harnessActions = {
+    availability: async (node, o) => { harnessLog.push(['availability', node.id, o]); if (node.id === 'inst_lab') { const e = new Error('not shared'); e.status = 403; e.code = 'permission_denied'; throw e; } return avail(node.id); },
+    operations: async (node) => { harnessLog.push(['operations', node.id]); return { recipes: [{ harness: 'codex', install_command: 'npm install -g @openai/codex@latest', update_command: 'npm install -g @openai/codex@latest' }, { harness: 'claude', install_command: 'npm i claude', update_command: 'claude update' }], modes: ['now', 'when_idle'] }; },
+    start: async (node, req) => { harnessLog.push(['start', node.id, req]); if (workersBusy && !req.mode) { const e = new Error('busy'); e.status = 409; e.code = 'harness_workers_busy'; throw e; } return { id: 'job1', action: req.action, harnesses: [req.harness || 'all'], state: 'running', phase: 'installing', started_at: '2026-10-10T10:00:00Z', log: [], results: [] }; },
+    job: async (node, id) => { harnessLog.push(['job', node.id, id]); return { id, action: 'install', harnesses: ['codex'], state: 'succeeded', phase: 'done', started_at: '2026-10-10T10:00:00Z', log: [], results: [{ harness: 'codex', state: 'succeeded', credentials: { backup_id: 'b'.repeat(32), copied: true } }], availability: avail('') }; },
+    backups: async (node, h) => { harnessLog.push(['backups', node.id, h]); return [{ id: 'a'.repeat(32), harness: h, created_at: '2026-10-09T10:00:00Z', location: '/x' }]; },
+    backup: async (node, h) => { harnessLog.push(['backup', node.id, h]); return { receipt: {} }; },
+    restore: async (node, h, b) => { harnessLog.push(['restore', node.id, h, b]); return { receipt: {}, availability: avail('') }; },
+    push: async (node, h) => { harnessLog.push(['push', node.id, h]); return { receipt: {}, availability: avail('') }; },
+  };
+  const mounted = await harness.mount(harness.html`<${island.FleetAdmin} state=${state} actions=${actions} harnessActions=${harnessActions} confirm=${confirm} toast=${(m) => toasts.push(m)} timers=${timers} remote="" copy=${async () => {}} snapshot=${snapshot} />`);
   const q = (sel) => mounted.container.querySelector(sel);
   const check = async (el) => { el.checked = true; await harness.act(() => harness.fireEvent(el, 'change')); };
   const settle = () => new Promise((r) => setTimeout(r, 25));
@@ -106,7 +123,7 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
   // Effects run when an act ends, so the first read settles in a second one.
   const show = async () => { await harness.act(() => { activeTab.value = 'fleet-admin'; }); await harness.act(settle); };
   t.after(() => state.dispose());
-  return { harness, show, state, activeTab, actions, log, toasts, confirms, timers, mounted, q, check, click };
+  return { harnessLog, harnessActions, setWorkersBusy: (v) => { workersBusy = v; }, harness, show, state, activeTab, actions, log, toasts, confirms, timers, mounted, q, check, click };
 }
 
 test('the admin view reads status only while shown and lists trusted and waiting peers', async (t) => {
@@ -463,4 +480,68 @@ test('audit marks state-only failures red, keeps rows on a failed read, and clea
   assert.match(s.mounted.container.textContent, /federation audit unavailable/);
   assert.equal(s.q('#fleet-audit').querySelectorAll('tbody tr').length, 2, 'a failed read keeps the rows shown');
   assert.doesNotMatch(s.mounted.container.textContent, /No federation activity/);
+});
+
+async function openHarnesses(s) {
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Harnesses/.test(b.textContent)));
+}
+
+test('harness matrix: one row per node, versions and updates per cell, an unshared peer explained', async (t) => {
+  const s = await setup(t);
+  const m = await s.harness.importDashboardModule('js/fleet-harness-model.js');
+  assert.equal(m.nodeBase({ local: true }), '/api');
+  assert.equal(m.nodeBase({ id: 'inst_a/b' }), '/api/peer/inst_a%2Fb');
+  assert.equal(m.cellView({ name: 'x', installed: false }).text, 'not installed');
+  assert.equal(m.cellView({ name: 'x', installed: true, version: '1', update_available: true, usable: true }).state, 'update');
+  await openHarnesses(s);
+  assert.deepEqual(s.harnessLog.filter((l) => l[0] === 'availability').map((l) => l[1]).sort(), ['inst_forge', 'inst_lab', 'inst_self']);
+  const self = s.q('#fleet-harnesses [data-node="inst_self"]');
+  assert.match(self.querySelector('[data-cell="claude"]').textContent, /2\.1\.0.*↑/);
+  assert.ok(self.querySelector('[data-fa="update-all"]'), 'a node with an update offers Update all');
+  assert.match(s.q('#fleet-harnesses [data-node="inst_lab"]').textContent, /not shared with you \(needs node\.harnesses\.read\)/);
+  await s.click(s.q('#fleet-harness-refresh'));
+  assert.deepEqual(s.harnessLog.filter((l) => l[0] === 'availability').at(-1)[2], { refresh: true });
+  await s.click(self.querySelector('[data-fa="update-all"]'));
+  assert.deepEqual(s.harnessLog.find((l) => l[0] === 'start'), ['start', 'inst_self', { action: 'update', all: true, mode: 'when_idle' }]);
+  assert.ok(s.q('#fleet-harness-jobs [data-job="job1"]'), 'the job is tracked');
+});
+
+test('remote install can copy my login with the share warning; busy workers ask now or when idle; job polling', async (t) => {
+  const s = await setup(t);
+  await openHarnesses(s);
+  await s.click(s.q('#fleet-harnesses [data-node="inst_forge"] [data-cell="codex"]'));
+  assert.match(s.q('#fleet-harness-modal').textContent, /Runs npm install -g @openai\/codex@latest/);
+  await s.check(s.q('#fleet-harness-copy'));
+  assert.match(s.q('#fleet-harness-modal .fa-consequence').textContent, /act as you/);
+  s.setWorkersBusy(true);
+  await s.click(s.q('#fleet-harness-run'));
+  assert.match(s.confirms.at(-1).body, /login files are copied there too\. Agents on the target node will act as you.*existing login there is kept/);
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  assert.deepEqual(s.harnessLog.filter((l) => l[0] === 'start')[0][2], { action: 'install', harness: 'codex', copy_credentials: true });
+  assert.ok(s.q('#fleet-harness-idle'), 'busy workers offer when-idle');
+  await s.click(s.q('#fleet-harness-idle'));
+  assert.deepEqual(s.harnessLog.filter((l) => l[0] === 'start').at(-1)[2], { action: 'install', harness: 'codex', mode: 'when_idle', copy_credentials: true });
+  assert.equal(s.q('#fleet-harness-modal'), null);
+  const tick = s.timers.queue.find((q) => q.ms === 1000);
+  assert.ok(tick, 'an active job is polled every second');
+  await s.harness.act(async () => { s.timers.queue.splice(s.timers.queue.indexOf(tick), 1); await tick.fn(); });
+  assert.match(s.q('#fleet-harness-jobs').textContent, /succeeded/);
+  assert.match(s.q('#fleet-harness-jobs').textContent, /login copied/);
+});
+
+test('login files: push to a peer confirms the share; restore confirms and backs up first', async (t) => {
+  const s = await setup(t);
+  await openHarnesses(s);
+  await s.click(s.q('#fleet-harnesses [data-node="inst_forge"] [data-cell="claude"]'));
+  assert.deepEqual(s.harnessLog.find((l) => l[0] === 'backups'), ['backups', 'inst_forge', 'claude']);
+  await s.click(s.q('#fleet-harness-push'));
+  assert.match(s.confirms.at(-1).body, /act as you.*backed up first, then replaced/);
+  assert.deepEqual(s.harnessLog.find((l) => l[0] === 'push'), ['push', 'inst_forge', 'claude']);
+  await s.click(s.q('#fleet-harness-backups [data-fa="restore"]'));
+  assert.match(s.confirms.at(-1).body, /current files are backed up first/);
+  assert.deepEqual(s.harnessLog.find((l) => l[0] === 'restore'), ['restore', 'inst_forge', 'claude', 'a'.repeat(32)]);
+  await s.click([...s.q('#fleet-harness-modal').querySelectorAll('button')].find((b) => b.textContent === 'Close'));
+  await s.click(s.q('#fleet-harnesses [data-node="inst_self"] [data-cell="claude"]'));
+  assert.equal(s.q('#fleet-harness-push'), null, 'no push to this node itself');
 });

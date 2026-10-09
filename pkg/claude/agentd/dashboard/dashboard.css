@@ -18887,6 +18887,13 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 /* Fleet administration (js/fleet-admin-island.js): this node's federation
    identity, hub connection and trusted peers. A top-level view like the map. */
 .fleet-admin { font-size: 13px; color: #c9d1d9; }
+/* Themed base for plain buttons on the Fleet pages and their dialogs; :where
+   keeps it below every class rule (subtabs, cells, links, modal buttons). */
+:where(.fleet-admin, [id^="fleet-"]) button { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 5px; padding: 3px 10px; font: 12px system-ui, sans-serif; cursor: pointer; }
+:where(.fleet-admin, [id^="fleet-"]) button:hover:not(:disabled) { border-color: #58a6ff; }
+:where(.fleet-admin, [id^="fleet-"]) button:disabled { opacity: .5; cursor: default; }
+:where(.fleet-admin, [id^="fleet-"]) button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+:where(.fleet-admin, [id^="fleet-"]) button.danger { background: #21262d; border-color: #f8514966; color: #ffa198; }
 .fa-identity { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; padding: 8px 12px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; }
 .fa-identity > button { margin-left: auto; }
 .fa-k { color: #7d8590; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; margin-right: 4px; }
@@ -18925,3 +18932,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-plan ul { margin: 6px 0; padding-left: 18px; max-height: 240px; overflow: auto; }
 .fa-pool-grants { margin: 4px 0; }
 .fa-nowrap { white-space: nowrap; }
+.fa-cell { border: 1px solid #30363d; border-radius: 4px; background: #0d1117; color: #c9d1d9; padding: 1px 8px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.fa-cell.update { border-color: #9e6a03; }
+.fa-cell.broken { border-color: #f8514966; color: #ffa198; }
+.fa-up { color: #e3b341; font-weight: 600; }

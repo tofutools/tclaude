@@ -6,6 +6,8 @@ import { GrantsPage } from './fleet-admin-grants.js';
 import { InvitesPage } from './fleet-admin-invites.js';
 import { ProfilesPage } from './fleet-admin-profiles.js';
 import { AuditPage } from './fleet-admin-audit.js';
+import { HarnessesPage } from './fleet-admin-harnesses.js';
+import { createHarnessActions } from './fleet-harness-actions.js';
 import { dashboardState } from './snapshot-store.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { fmtAge, nodeHref, pollDelay, remoteNodeID } from './skynet-model.js';
@@ -20,6 +22,7 @@ const ADMIN_POLL_MS = 10000;
 // SUB_PAGES are the admin sections.
 const SUB_PAGES = Object.freeze([
   { id: 'peers', label: 'Peers' },
+  { id: 'harnesses', label: 'Harnesses' },
   { id: 'invites', label: 'Invites & joining' },
   { id: 'grants', label: 'Peer grants' },
   { id: 'profiles', label: 'Profiles & pools' },
@@ -37,6 +40,12 @@ function defaultCopy(text) {
 }
 
 function errText(error) { return error?.message || String(error); }
+
+let harnessActionsSingleton = null;
+function defaultHarnessActions() {
+  harnessActionsSingleton ||= createHarnessActions();
+  return harnessActionsSingleton;
+}
 
 // localGroups names this node's active groups, the scopes a grant can take.
 function localGroups(snap) {
@@ -264,7 +273,7 @@ function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust, on
 // hub connection and the peers it trusts. Its data is this node's own (never
 // a peer's), so a peer view hands the page back to this node.
 export function FleetAdmin({
-  state, actions, confirm = shellConfirm, toast = shellToast, copy = defaultCopy, snapshot = dashboardState.snapshot,
+  state, actions, harnessActions = defaultHarnessActions(), confirm = shellConfirm, toast = shellToast, copy = defaultCopy, snapshot = dashboardState.snapshot,
   timers = globalThis, now = () => Date.now(), remote = remoteNodeID(), switchHome = defaultSwitchHome,
 }) {
   const active = state.view.value.adminActive;
@@ -330,6 +339,8 @@ export function FleetAdmin({
       ? html`<${PeersPage} view=${view} now=${now()} onTrust=${(r) => setDialog({ kind: 'trust', row: r })}
           onUnrestrict=${(r) => setDialog({ kind: 'unrestrict', row: r })} onRestrict=${restrict} onUntrust=${untrust}
           onGrants=${(r) => { setGrantTarget(r.id); setPage('grants'); }} />`
+      : sub.id === 'harnesses'
+      ? html`<${HarnessesPage} view=${view} actions=${harnessActions} confirm=${confirm} toast=${toast} copy=${copy} timers=${timers} />`
       : sub.id === 'invites'
       ? html`<${InvitesPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} now=${now()} />`
       : sub.id === 'profiles'
