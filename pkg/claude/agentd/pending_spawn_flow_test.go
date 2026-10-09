@@ -202,7 +202,10 @@ func TestCodexAgent_PendingResponseThenInlineBackgroundEnrollment(t *testing.T) 
 	f := newFlow(t)
 
 	t.Cleanup(agentd.SetCodexAsyncSpawnResponseGraceForTest(20 * time.Millisecond))
-	t.Cleanup(agentd.SetAsyncSpawnInlineGraceForTest(700 * time.Millisecond))
+	// The 20ms response cap drives Pending; the background budget must outlast
+	// the enrollment assertion window, including simulator startup and scheduling.
+	const enrollmentWait = 10 * time.Second
+	t.Cleanup(agentd.SetAsyncSpawnInlineGraceForTest(3 * enrollmentWait))
 
 	delayed := &delayedCodexSpawner{
 		t:       t,
@@ -240,13 +243,13 @@ func TestCodexAgent_PendingResponseThenInlineBackgroundEnrollment(t *testing.T) 
 		}
 		m, err := db.FindMemberInGroup(g.ID, convID)
 		return err == nil && m != nil
-	}, 10*time.Second, 20*time.Millisecond, "background inline back-fill should enroll without a sweeper tick")
+	}, enrollmentWait, 20*time.Millisecond, "background inline back-fill should enroll without a sweeper tick")
 
 	require.Eventually(t, func() bool {
 		gone, err := db.GetPendingSpawn(resp.Label)
 		return err == nil && gone == nil
-	}, 10*time.Second, 20*time.Millisecond, "background enrollment clears the pending row")
-	f.AssertGroupMember("codex-crew", convID, "codex-worker", 10*time.Second)
+	}, enrollmentWait, 20*time.Millisecond, "background enrollment clears the pending row")
+	f.AssertGroupMember("codex-crew", convID, "codex-worker", enrollmentWait)
 	boundAgentID, err := db.AgentIDForConv(convID)
 	require.NoError(t, err)
 	assert.Equal(t, resp.AgentID, boundAgentID, "background enrollment keeps the response identity")
