@@ -3407,7 +3407,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// GROUP plus a per-conv row assembly, and nothing said which of them
 	// stalled. gt accumulates each part so /api/perf can name the culprit.
 	gt := newGroupsPhaseTimer(rc)
-	groupFedLinks := gatherGroupFederationLinks()
+	var groupFedLinks map[int64][]groupFederationLink
+	if !isPeerSnapshot(r) {
+		groupFedLinks = gatherGroupFederationLinks()
+	}
 	for _, g := range groups {
 		groupMark := gt.begin()
 		groupPermissions := []string{}

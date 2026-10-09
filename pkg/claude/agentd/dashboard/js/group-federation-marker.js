@@ -2,9 +2,14 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { relTime } from './helpers.js';
-import { openNodeOnMap } from './skynet-island.js';
 
 const html = htm.bind(h);
+
+// openNodeOnMap is loaded on demand so the Groups island never depends on the
+// separately mounted Skynet modules.
+function openNodeOnMap(id) {
+  void import('./skynet-island.js').then((m) => m.openNodeOnMap(id)).catch(() => {});
+}
 
 // group-federation-marker.js — the Groups-tab marker for a group linked to
 // federation peers (snapshot field federation_links, see
@@ -57,11 +62,11 @@ export function GroupFederationMarker({ group, openNode = openNodeOnMap }) {
   // the popover never toggles the group open or closed.
   const swallow = (event) => { event.preventDefault(); event.stopPropagation(); };
   return html`<span ref=${rootRef} class="group-federation-marker" onClick=${swallow}>
-    <span class=${`group-federation-chip${view.live ? ' live' : ''}`} tabindex="0" role="button"
+    <button type="button" class=${`group-federation-chip${view.live ? ' live' : ''}`}
       aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'} title=${view.title}
       onClick=${(event) => { swallow(event); setOpen(!open); }}
-      onKeyDown=${(event) => { if (event.key === 'Enter' || event.key === ' ') { swallow(event); setOpen(!open); } }}
-    >🌐<span class="gfm-dot" aria-hidden="true"></span></span>
+      onKeyDown=${(event) => { if (event.key === ' ') event.stopPropagation(); }}
+    >🌐<span class="gfm-dot" aria-hidden="true"></span></button>
     ${open ? html`<div class="group-federation-pop" role="dialog" aria-label=${`Federation links of ${group.name}`}>
       <div class="gfm-head">Federation links · ${group.name}</div>
       ${group.federation_links.map((link, i) => {

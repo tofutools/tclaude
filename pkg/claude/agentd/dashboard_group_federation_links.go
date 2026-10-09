@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,6 +22,9 @@ import (
 //
 // Unscoped (all-groups) grants and unrestricted trust are deliberately not
 // listed: they cover every group, so a per-group marker would only add noise.
+//
+// The links describe this node's other trust relationships, so they are never
+// served to a peer, not even an unrestricted one (see peerSnapshotCtxKey).
 type groupFederationLink struct {
 	Peer      string     `json:"peer"`
 	Label     string     `json:"label"`
@@ -108,22 +112,27 @@ func gatherGroupFederationLinks() map[int64][]groupFederationLink {
 		out[k.group] = append(out[k.group], l)
 	}
 	if mirrors, err := db.ListFederationRouteMirrors(); err == nil {
+		// Several members opening the same peer route each get a mirror; the
+		// group is linked once.
+		type mirrorKey struct {
+			group        int64
+			peer, remote string
+		}
+		seen := map[mirrorKey]bool{}
 		for _, m := range mirrors {
 			p := byID[m.Peer]
-			if p == nil {
+			k := mirrorKey{m.GroupID, m.Peer, m.RemoteRoute}
+			if p == nil || seen[k] {
 				continue
 			}
-			route, err := db.GetAgentRoute(m.RouteID)
-			if err != nil || route == nil {
-				continue
-			}
+			seen[k] = true
 			l := base(p)
 			l.Kind, l.Direction = "route", "out"
 			l.Remote = m.RemoteLabel
 			if l.Remote == "" {
 				l.Remote = m.RemoteRoute
 			}
-			out[route.GroupID] = append(out[route.GroupID], l)
+			out[m.GroupID] = append(out[m.GroupID], l)
 		}
 	}
 	for id := range out {
@@ -144,6 +153,12 @@ func gatherGroupFederationLinks() map[int64][]groupFederationLink {
 	}
 	return out
 }
+
+// peerSnapshotCtxKey marks a dashboard snapshot built for a federation peer
+// (servePeerSnapshot) rather than for this node's operator.
+type peerSnapshotCtxKey struct{}
+
+func isPeerSnapshot(r *http.Request) bool { return r.Context().Value(peerSnapshotCtxKey{}) != nil }
 
 // groupIDFromFederationScope parses the stored "group=<id>" peer-grant scope.
 // An empty (unscoped) scope covers every group and is not a per-group link.

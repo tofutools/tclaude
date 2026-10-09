@@ -358,7 +358,7 @@ function bindGroupReorder() {
   listen(document, 'pointerdown', (e) => {
     const summary = e.target.closest('summary[data-group-reorder]');
     if (!summary) return;
-    const ctl = e.target.closest('button, a, input, select, textarea, label, [data-act], [contenteditable], .group-name');
+    const ctl = e.target.closest('button, a, input, select, textarea, label, [data-act], [contenteditable], .group-name, .group-federation-marker');
     if (ctl && summary.contains(ctl)) {
       summary.draggable = false;
       suppressedSummary = summary;
