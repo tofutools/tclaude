@@ -131,7 +131,7 @@ func federationSpawnFailed(agentID, kind, reason string) {
 	if err != nil || req == nil {
 		return
 	}
-	_, _ = db.ReturnFederationSpawnAttemptToPending(req.ID, agentID, reason)
+	_, _ = returnFederationSpawnFailure(req, agentID, reason)
 	reconcileFederationSpawns()
 }
 
@@ -167,3 +167,15 @@ func handleFederationSpawnRequestAbandon(w http.ResponseWriter, r *http.Request)
 
 // Exposed for deterministic flow checks of restart reconciliation.
 func ReconcileFederationSpawnsForTest() { reconcileFederationSpawns() }
+
+// The winning durable transition emits optional, best-effort health telemetry.
+// It cannot change the final operator decision or release an uncertain launch.
+func returnFederationSpawnFailure(req *db.FederationSpawnRequest, agentID, reason string) (bool, error) {
+	won, err := db.ReturnFederationSpawnAttemptToPending(req.ID, agentID, reason)
+	if won {
+		if rt := currentFederation(); rt != nil {
+			rt.sendControl(req.FromInstance, proto.KindSpawnAttemptFailed, "", spawnAttemptFailure{Request: req.EnvelopeID, Attempt: agentID})
+		}
+	}
+	return won, err
+}

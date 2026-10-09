@@ -269,6 +269,12 @@ func (rt *fedRuntime) reconcileIdentityRotations() {
 	}
 }
 func (rt *fedRuntime) notifyIdentityChange(r proto.Rotation, state string) {
+	peer := r.OldID
+	if state == "accepted" {
+		peer = r.NewID
+	}
+	publishFleetEvent(peer, "identity_"+state, "Identity "+state+": "+r.OldID+" -> "+r.NewID, false)
+
 	_, _ = db.InsertHumanMessage(&db.HumanMessage{FromTitle: "Federation identity", GroupName: "federation:" + r.OldID, Subject: "Peer fingerprint change: " + state, Body: fmt.Sprintf("%s -> %s\nOld fingerprint: %s\nNew fingerprint: %s\nStatement issued: %s\nActivation: %s\nA valid old-key signature cannot distinguish the owner from someone holding a stolen key. Revoke the predecessor if this change was unexpected.", r.OldID, r.NewID, proto.Fingerprint(r.OldKey), proto.Fingerprint(r.NewKey), r.IssuedAt.Format(time.RFC3339), r.ActivateAt.Format(time.RFC3339))})
 }
 

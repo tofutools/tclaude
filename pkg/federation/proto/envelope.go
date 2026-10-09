@@ -25,20 +25,22 @@ const (
 	// KindSpawnReq asks the recipient to spawn a worker into one of its
 	// exported groups. The recipient's operator decides; KindSpawnRes
 	// (InReplyTo = the request) reports the decision.
-	KindJobFollow        = "job_follow"
-	KindJobFollowAnswer  = "job_follow_answer"
-	KindJobRequest       = "job_request"
-	KindJobStatus        = "job_status"
-	KindJobCancel        = "job_cancel"
-	KindJobResult        = "job_result"
-	KindSpawnReq         = "spawn_req"
-	KindSpawnRes         = "spawn_res"
-	KindBundleOffer      = "bundle_offer"
-	KindBundleFetch      = "bundle_fetch"
-	KindBundleAnswer     = "bundle_answer"
-	KindBundleResult     = "bundle_result"
-	KindAgentMoveConfirm = "agent_move_confirm"
-	KindTeleportLease    = "teleport_lease"
+	KindJobFollow       = "job_follow"
+	KindJobFollowAnswer = "job_follow_answer"
+	KindJobRequest      = "job_request"
+	KindJobStatus       = "job_status"
+	KindJobCancel       = "job_cancel"
+	KindJobResult       = "job_result"
+	KindSpawnReq        = "spawn_req"
+	KindSpawnRes        = "spawn_res"
+	// KindSpawnAttemptFailed is optional health telemetry, never a final decision.
+	KindSpawnAttemptFailed = "spawn_attempt_failed"
+	KindBundleOffer        = "bundle_offer"
+	KindBundleFetch        = "bundle_fetch"
+	KindBundleAnswer       = "bundle_answer"
+	KindBundleResult       = "bundle_result"
+	KindAgentMoveConfirm   = "agent_move_confirm"
+	KindTeleportLease      = "teleport_lease"
 	// KindRouteOpen asks the recipient to open one TCP connection to one of
 	// its exported routes; KindRouteAnswer accepts (then both dial the hub
 	// stream relay) or refuses it. These are real-time control envelopes,

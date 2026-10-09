@@ -9,6 +9,8 @@ import (
 
 func TestNodesCLI(t *testing.T) {
 	require.NotNil(t, nodesCmd().Flags().Lookup("match"))
+	require.NotNil(t, nodesCmd().Flags().Lookup("watch"))
+	require.NotNil(t, nodeHealthCmd().Flags().Lookup("set"))
 	require.NotNil(t, nodesCmd().Flags().Lookup("json"))
 	require.NotNil(t, nodeLabelsCmd().Flags().Lookup("add"))
 	var b bytes.Buffer

@@ -154,6 +154,9 @@ func defaultFederationName() string {
 
 // fedRuntime is one live hub connection plus its workers.
 type fedRuntime struct {
+	healthMu sync.Mutex
+	health   *fleetHealthState
+
 	modelsMu          sync.Mutex
 	models            *fedModelState
 	enrollmentMu      sync.Mutex
@@ -371,6 +374,7 @@ func (rt *fedRuntime) onDirectory(entries []proto.DirectoryEntry) {
 	}
 	rt.online = now
 	rt.mu.Unlock()
+	rt.observeFleetPresence(now, time.Now())
 	if len(cameOnline) == 0 {
 		return
 	}
@@ -584,6 +588,7 @@ func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 		case in := <-rt.inbound:
 			rt.handleInbound(in.from, in.sealed)
 		case <-sessions.C:
+			rt.flushFleetHealth(time.Now())
 			rt.revokeStaleModelLeases()
 			rt.pushSessionTransitions()
 			rt.pushAgentStatuses()
@@ -657,7 +662,10 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		}
 		if err := db.PutFederationCatalog(from, string(clean), time.Now()); err != nil {
 			slog.Warn("federation: store catalog failed", "from", from, "error", err)
+		} else {
+			rt.observeFleetNode(from, &cat, time.Now())
 		}
+
 	case proto.KindAwayNotice:
 		rt.acceptAwayNotice(peer, env)
 	case proto.KindAwayAnswer:
@@ -701,6 +709,8 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		rt.acceptJobResult(peer, env)
 	case proto.KindSpawnReq:
 		rt.acceptSpawnRequest(peer, env)
+	case proto.KindSpawnAttemptFailed:
+		rt.acceptSpawnAttemptFailure(peer, env)
 	case proto.KindSpawnRes:
 		rt.handleSpawnResult(peer, env)
 	case proto.KindBundleOffer:
@@ -990,7 +1000,10 @@ func (rt *fedRuntime) handleAck(env *proto.Envelope) {
 	case fedRetryableCode(ack.Code):
 		_ = db.UpdateFederationOutbox(row.EnvelopeID, db.FedOutboxQueued, time.Now().Add(fedBackoff(row.Attempts)), ack.Code+": "+ack.Reason, 0)
 	default:
-		_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxRefused, ack.Code+": "+ack.Reason)
+		won, _ := db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxRefused, ack.Code+": "+ack.Reason)
+		if won && row.Kind == proto.KindSpawnReq && (ack.Code == fedCodeInternal || ack.Code == "node_busy" || ack.Code == "spawn_failed") {
+			rt.observeFleetFailure(row.ToInstance, "spawn/"+row.EnvelopeID, time.Now())
+		}
 	}
 }
 
