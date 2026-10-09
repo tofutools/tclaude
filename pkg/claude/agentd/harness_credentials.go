@@ -142,9 +142,13 @@ func serveHarnessCredentials(w http.ResponseWriter, r *http.Request, actor strin
 	if err != nil {
 		status = 409
 	}
-	recordFederationAudit("federation.credentials."+action, actor, "", "", "harness="+req.Harness+" backup="+receipt.BackupID+" result="+fmt.Sprint(err == nil), status)
+	node := "local"
+	if id, e := federationIdentity(); e == nil {
+		node = id.ID()
+	}
+	recordFederationAudit("federation.credentials."+action, actor, "", "", "harness="+req.Harness+" node="+node+" backup="+receipt.BackupID+" restored_from="+req.Backup+" result="+fmt.Sprint(err == nil), status)
 	if err != nil {
-		writeJSON(w, status, map[string]any{"error": "credential_operation_failed", "message": err.Error(), "receipt": result})
+		writeJSON(w, status, map[string]any{"code": "credential_operation_failed", "error": err.Error(), "receipt": result})
 		return
 	}
 	availability := refreshHarnessAvailability()
