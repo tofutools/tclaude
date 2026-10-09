@@ -31,16 +31,21 @@ test('on a peer view, blocked controls are greyed and clicks never reach their h
   const tab = (name) => doc.querySelector(`[data-tab="${name}"]`);
   assert.equal(tab('groups').classList.contains('pv-off'), false);
   assert.equal(tab('costs').classList.contains('pv-off'), true);
-  assert.equal(tab('costs').getAttribute('data-pv-hint'), 'forge does not share costs with you');
+  assert.equal(tab('costs').getAttribute('title'), 'forge does not share costs with you');
   // linkedom does not order capture before target listeners, so assert the
   // guard's decision (the dashsnap peer-view state proves the browser order).
   const prevented = Object.fromEntries(['retire', 'dot', 'group-create-open', 'filter'].map((id) => [id, harness.fireEvent(doc.getElementById(id), 'click').defaultPrevented]));
   assert.deepEqual(prevented, { retire: true, dot: false, 'group-create-open': true, filter: false }, 'mutations and management controls are stopped; view-only controls work');
   assert.equal(toasts.length, 2);
+  // Keyboard activation of a role=button chip never reaches its own keydown.
+  const enter = harness.fireEvent(doc.getElementById('retire'), 'keydown', { key: 'Enter' });
+  assert.equal(enter.defaultPrevented, true);
+  assert.equal(harness.fireEvent(doc.getElementById('filter'), 'keydown', { key: 'Enter' }).defaultPrevented, false);
   harness.fireEvent(tab('costs'), 'click');
   assert.equal(toasts.at(-1), 'forge does not share costs with you');
   snapshot.value = { peer_view: { ...pv, included: [...pv.included, 'costs'], omitted: [] } };
   assert.equal(tab('costs').classList.contains('pv-off'), false, 'a new grant lights the tab up on the next snapshot');
+  assert.equal(tab('costs').getAttribute('title'), null, 'and drops the stale reason');
   dispose();
   assert.equal(harness.fireEvent(doc.getElementById('retire'), 'click').defaultPrevented, false);
 });
@@ -52,4 +57,26 @@ test('this node is never limited', async (t) => {
   doc.body.innerHTML = '<button id="retire" data-act="retire-agent">retire</button>';
   mod.installPeerViewLimits({ doc, snapshot: harness.signals.signal(null), toast: () => {}, remote: undefined });
   assert.equal(harness.fireEvent(doc.getElementById('retire'), 'click').defaultPrevented, false);
+});
+
+test('palette commands and tab routing respect what the peer offers', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/peer-view-limits.js');
+  const remote = { id: 'inst_forge7' };
+  const cmds = [
+    { label: 'Shut down all' },
+    { label: 'Expand group: ops', peerView: 'view' },
+    { label: 'Go to Costs', peerView: 'tab', tab: 'costs' },
+    { label: 'Go to Groups', peerView: 'tab', tab: 'groups' },
+    { label: 'Announce', peerView: 'messaging' },
+  ];
+  const out = mod.limitPeerViewCommands(cmds, { peer_view: pv }, remote);
+  assert.deepEqual(out.map((c) => c.enabled !== false), [false, true, false, true, true]);
+  assert.match(out[2].disabledReason, /does not share costs/);
+  assert.equal(mod.limitPeerViewCommands(cmds, { peer_view: pv }, undefined), cmds, 'this node: untouched');
+  assert.equal(mod.peerViewTabUsable('costs', { remote, peerView: pv }), false);
+  assert.equal(mod.peerViewTabUsable('audit', { remote, peerView: pv }), true);
+  assert.equal(mod.peerViewTabUsable('config', { remote, peerView: null }), false, 'no peer route at all');
+  assert.equal(mod.peerViewTabUsable('costs', { remote, peerView: null }), true, 'a deep link waits for the peer to answer');
+  assert.equal(mod.peerViewTabUsable('config', { remote: undefined }), true);
 });

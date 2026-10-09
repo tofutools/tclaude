@@ -15,8 +15,9 @@ import { shellToast } from './shell-state.js';
 // view. A tab absent here has no peer route at all.
 const TAB_FEATURES = Object.freeze({ groups: 'agents.status', costs: 'costs', audit: 'audit', map: 'local' });
 
-// READ_ONLY_ACTS are data-act controls that only change this browser's view.
-const READ_ONLY_ACTS = new Set(['dot-toggle', 'copy-generation-id']);
+// READ_ONLY_ACTS are data-act controls that only change this browser's view
+// or show snapshot data. The ⚙ menus open (their items are gated one by one).
+const READ_ONLY_ACTS = new Set(['dot-toggle', 'copy-generation-id', 'sandbox-details', 'group-menu', 'row-menu']);
 
 // GATED_CONTROLS are mutation controls without a data-act: group creation and
 // the management overlays, which edit the shown node's configuration.
@@ -42,6 +43,39 @@ export function featureState(feature, peerView) {
 
 export function tabState(tab, peerView) {
   return featureState(TAB_FEATURES[tab] || '', peerView);
+}
+
+function currentPeerView() {
+  return dashboardState.snapshot.value?.peer_view || null;
+}
+
+// peerViewTabUsable tells tab cycling and history routing whether a tab can
+// be shown on this page: always on this node, and on a peer view only when the
+// peer offers it.
+export function peerViewTabUsable(tab, { remote = globalThis.__tclaudeRemoteNode, peerView = currentPeerView() } = {}) {
+  if (!remote?.id) return true;
+  // Before the peer first answers, only tabs without any peer route are
+  // known to be unusable; a deep link to one the peer may share waits.
+  if (!peerView) return Boolean(TAB_FEATURES[tab]);
+  return tabState(tab, peerView) === 'shared';
+}
+
+// limitPeerViewCommands disables the command palette's node-changing commands
+// on a peer view: only view commands, tabs the peer offers, and messaging when
+// the peer shares it stay runnable.
+export function limitPeerViewCommands(cmds, snap, remote = globalThis.__tclaudeRemoteNode) {
+  if (!remote?.id) return cmds;
+  const pv = snap?.peer_view || null;
+  const name = globalThis.document?.documentElement?.dataset.remoteNodeName || remote.id.slice(0, 13);
+  return cmds.map((cmd) => {
+    let state = 'local';
+    let what = 'This command';
+    if (cmd.peerView === 'view') state = 'shared';
+    else if (cmd.peerView === 'tab') { state = tabState(cmd.tab, pv); what = tabLabel(cmd.tab); }
+    else if (cmd.peerView === 'messaging') { state = featureState('messaging', pv); what = 'messaging'; }
+    if (state === 'shared') return cmd;
+    return { ...cmd, enabled: false, disabledReason: limitHint(state, what, name) };
+  });
 }
 
 // tabLabel names a tab in hints; the visible label varies by theme skin.
@@ -76,42 +110,63 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
   let peerView = snapshot.value?.peer_view || null;
   const nodeName = () => root.dataset.remoteNodeName || remote.id.slice(0, 13);
 
-  // Tabs carry their state as a class so CSS greys them; recomputed whenever
-  // a snapshot changes what the peer shares.
+  // titled remembers each greyed control's own title so the reason can be
+  // prefixed, refreshed and removed again.
+  const titled = new Map();
+  const setReason = (el, reason) => {
+    if (!titled.has(el)) titled.set(el, el.getAttribute('title'));
+    const own = titled.get(el);
+    el.setAttribute('title', `${reason}${own ? `\n\n${own}` : ''}`);
+  };
+  const clearReason = (el) => {
+    if (!titled.has(el)) return;
+    const own = titled.get(el);
+    titled.delete(el);
+    if (own == null) el.removeAttribute('title'); else el.setAttribute('title', own);
+  };
+
+  // Tabs carry their state as a class so CSS greys them, with the reason as
+  // their title; recomputed whenever a snapshot changes what the peer shares
+  // (and so once the marker has named the node).
   const stop = effect(() => {
     peerView = snapshot.value?.peer_view || null;
     for (const tab of doc.querySelectorAll('nav [data-tab]')) {
       const state = tabState(tab.dataset.tab, peerView);
       tab.classList.toggle('pv-off', state !== 'shared');
-      if (state === 'shared') tab.removeAttribute('data-pv-hint');
-      else tab.setAttribute('data-pv-hint', limitHint(state, tabLabel(tab.dataset.tab), nodeName()));
+      if (state === 'shared') clearReason(tab);
+      else setReason(tab, limitHint(state, tabLabel(tab.dataset.tab), nodeName()));
     }
   });
 
-  const onClick = (event) => {
+  const refuse = (event) => {
     const blocked = blockedControl(event.target, peerView);
     if (!blocked) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     toast(limitHint(blocked.state, blocked.what, nodeName()), true);
   };
-  // Hover explanation: set the title the first time the pointer reaches a
-  // blocked control, keeping its own title after it.
+  // role=button chips open their editors on Enter/Space in their own keydown,
+  // without a click; guard the keyboard path the same way.
+  const onKey = (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    if (event.target?.closest?.('input, textarea, select, [contenteditable="true"], [contenteditable=""]')) return;
+    refuse(event);
+  };
+  // Hover explanation for controls (tabs get theirs from the effect).
   const onOver = (event) => {
     const blocked = blockedControl(event.target, peerView);
-    if (!blocked || blocked.el.dataset.pvTitled) return;
-    blocked.el.dataset.pvTitled = '1';
-    const own = blocked.el.getAttribute('title');
-    blocked.el.setAttribute('title', `${limitHint(blocked.state, blocked.what, nodeName())}${own ? `\n\n${own}` : ''}`);
+    if (blocked && !blocked.el.matches('nav [data-tab]')) setReason(blocked.el, limitHint(blocked.state, blocked.what, nodeName()));
   };
   // Drags spawn, move and reorder on the node — never on a peer view.
   const onDrag = (event) => { event.preventDefault(); };
-  doc.addEventListener('click', onClick, true);
+  doc.addEventListener('click', refuse, true);
+  doc.addEventListener('keydown', onKey, true);
   doc.addEventListener('pointerover', onOver, true);
   doc.addEventListener('dragstart', onDrag, true);
   return () => {
     stop();
-    doc.removeEventListener('click', onClick, true);
+    doc.removeEventListener('click', refuse, true);
+    doc.removeEventListener('keydown', onKey, true);
     doc.removeEventListener('pointerover', onOver, true);
     doc.removeEventListener('dragstart', onDrag, true);
   };

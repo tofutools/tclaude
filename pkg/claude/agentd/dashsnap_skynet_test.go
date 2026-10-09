@@ -34,7 +34,7 @@ const skynetFederationStubJS = `(function(){
         return r.json().then(function(snap){
           snap.peer_view = { peer: 'desk', included: ['agents.status', 'groups', 'messaging'], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'spawn', requires: 'groups.members.spawn' }, { feature: 'terminals', requires: 'sessions.attach' }] };
           delete snap.assets_version;
-          delete snap.usage;
+          snap.usage = { available: false }; // what filterPeerFields leaves behind
           return new Response(JSON.stringify(snap), { status: 200, headers: { 'Content-Type': 'application/json' } });
         });
       });

@@ -39,6 +39,7 @@ import {
 import { disclosurePreference } from './group-tree-activity.js';
 import { checkAssetsVersion } from './assets-version.js';
 import { setTerminalAttachConfig } from './terminal-attach-config.js';
+import { peerViewTabUsable } from './peer-view-limits.js';
 
 // groupsTabActive reports whether the Groups tab is the visible one — used to
 // skip the (default-hidden, expensive) conversations/replaced sub-fetches when
@@ -426,7 +427,8 @@ function bindTabs() {
 // body.hide-costs) drop out. Checking visibility instead of naming those
 // two keeps the cycler correct if more conditional tabs appear later.
 function visibleTabButtons() {
-  return $$('nav [data-tab]').filter(b => b.offsetParent !== null);
+  // A peer view skips the tabs the peer does not offer (peer-view-limits.js).
+  return $$('nav [data-tab]').filter(b => b.offsetParent !== null && peerViewTabUsable(b.dataset.tab));
 }
 
 // cyclingTabs is true only while cycleTab() is dispatching its synthetic

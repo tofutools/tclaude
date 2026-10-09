@@ -15,6 +15,7 @@
 
 import { $, $$, isModifiedClick } from './helpers.js';
 import { featureState } from './feature-state-registry.js';
+import { peerViewTabUsable } from './peer-view-limits.js';
 import {
   DEFAULT_TAB, normalizeLocation, initialState, current, locEquals,
   push, replaceCurrent, toPath, fromPath, resolvePopstate,
@@ -179,6 +180,9 @@ function requestGroupsLocation(loc) {
 // data. A non-routable or unknown tab is left as-is.
 function activate(loc) {
   if (!ROUTABLE_TABS.has(loc.tab)) return;
+  // A peer view routes a tab the peer does not offer (a pasted /costs?node=,
+  // Back across a revoked grant) to Groups, and says so in the URL.
+  if (!peerViewTabUsable(loc.tab)) { correct({ tab: 'groups' }); loc = { tab: 'groups' }; }
   applying = true;
   try {
     const navBtn = $$('nav [data-tab]').find(b => b.dataset.tab === loc.tab);
