@@ -15,6 +15,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -1706,7 +1707,11 @@ func runGroupsSetReinject(p *groupsSetReinjectParams, stdout, stderr io.Writer) 
 	}
 	mode := strings.TrimSpace(p.Mode)
 	if mode == "" {
-		mode = "contexts"
+		mode = db.ReinjectContexts
+	}
+	if !db.ValidReinjectAfterCompact(mode) {
+		fmt.Fprintf(stderr, "Error: invalid mode %q (want contexts, identity, or off)\n", mode)
+		return rcInvalidArg
 	}
 	var resp struct {
 		Group                string `json:"group"`
