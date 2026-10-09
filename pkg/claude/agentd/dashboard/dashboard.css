@@ -2970,6 +2970,41 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
    between individual chips. Space adjacent chips directly so they don't butt
    together — applies in every mode, fold or not. */
 .group-link-chip + .group-link-chip { margin-left: 4px; }
+/* Federation marker: a group linked to peer nodes (peer grants scoped to it,
+   directly or via a node pool, or a route mirror). Green dot = at least one
+   linked node is live; grey = all offline. The popover lists each link. */
+.group-federation-marker { position: relative; display: inline-flex; margin-left: 8px; }
+.group-federation-chip {
+  position: relative; cursor: pointer; font: inherit; font-size: 11px; padding: 1px 6px;
+  border-radius: 4px; border: 1px solid transparent; white-space: nowrap; background: transparent; color: inherit;
+}
+.group-federation-chip:hover { border-color: #58a6ff; }
+.group-federation-chip:focus-visible { outline: 1px solid #58a6ff; outline-offset: 1px; }
+.gfm-dot, .gfm-state {
+  display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #6e7681;
+}
+.gfm-dot { position: absolute; right: 2px; bottom: 1px; box-shadow: 0 0 0 1px #0d1117; }
+.group-federation-chip.live .gfm-dot, .gfm-state.live { background: #3fb950; }
+.group-federation-pop {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 50; min-width: 340px; max-width: 440px;
+  background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 6px 0;
+  box-shadow: 0 8px 24px rgba(0,0,0,.45); font-size: 12px; font-weight: normal; color: #d4d4d4;
+  cursor: default; white-space: normal;
+}
+.gfm-head { padding: 2px 10px 6px; color: #7d8590; font-size: 11px; border-bottom: 1px solid #21262d; }
+.gfm-row { display: flex; align-items: flex-start; gap: 8px; padding: 6px 10px; }
+.gfm-row + .gfm-row { border-top: 1px solid #21262d; }
+.gfm-state { margin-top: 5px; flex: none; }
+.gfm-main { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.gfm-target { color: #e6edf3; }
+.gfm-tag { font-size: 10px; color: #e3b341; border: 1px solid #5a4a1a; border-radius: 3px; padding: 0 4px; }
+.gfm-how, .gfm-can { color: #7d8590; font-size: 11px; overflow-wrap: anywhere; }
+.gfm-open {
+  flex: none; background: transparent; color: #58a6ff; border: 1px solid #30363d; border-radius: 4px;
+  font: inherit; font-size: 11px; padding: 1px 6px; cursor: pointer;
+}
+.gfm-open:hover { border-color: #58a6ff; }
+.gfm-foot { padding: 6px 10px 2px; color: #6e7681; font-size: 11px; border-top: 1px solid #21262d; }
 .tag {
   display: inline-block; padding: 2px 8px; margin: 1px 2px 1px 0;
   background: #21262d; color: #d4d4d4; border: 1px solid #2a3340;

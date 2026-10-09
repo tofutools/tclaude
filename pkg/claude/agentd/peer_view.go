@@ -240,7 +240,8 @@ func servePeerSnapshot(w http.ResponseWriter, r *http.Request, v *peerView, _ pe
 	if db.FederationPeerUnrestricted(v.peer.InstanceID) {
 		// Unrestricted trust grants complete collection visibility, while route
 		// classification still limits the available actions.
-		handleDashboardSnapshot(w, r.Clone(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true)))
+		ctx := context.WithValue(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true), peerSnapshotCtxKey{}, true)
+		handleDashboardSnapshot(w, r.Clone(ctx))
 		return
 	}
 	out, err := v.snapshot()
