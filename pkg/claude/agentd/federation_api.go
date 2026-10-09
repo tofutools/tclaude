@@ -1158,6 +1158,12 @@ func fedFirst(a, b string) string {
 }
 
 func registerFederationRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /v1/node/run", handleLocalNodeRun)
+	mux.HandleFunc("POST /v1/node/run", handleLocalNodeRun)
+	mux.HandleFunc("GET /v1/node/run/jobs/{id}", handleLocalNodeRun)
+	mux.HandleFunc("GET /v1/node/run/jobs/{id}/logs", handleLocalNodeRun)
+	mux.HandleFunc("GET /v1/node/run/settings", handleLocalNodeRunSettings)
+	mux.HandleFunc("PUT /v1/node/run/settings", handleLocalNodeRunSettings)
 	mux.HandleFunc("GET /v1/node/update", handleLocalNodeUpdate)
 	mux.HandleFunc("POST /v1/node/update", handleLocalNodeUpdate)
 	mux.HandleFunc("GET /v1/node/update/jobs/{id}", handleLocalNodeUpdate)

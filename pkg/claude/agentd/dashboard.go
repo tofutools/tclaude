@@ -299,6 +299,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.Handle("/static/", handleDashboardStatic())
 	registerDashboardFederationRoutes(mux)
 	registerNodeUpdateRoutes(mux)
+	registerNodeRunRoutes(mux)
 	registerHarnessAvailabilityRoutes(mux)
 	registerHarnessOperationsRoutes(mux)
 	registerDashboardPeerRoutes(mux)

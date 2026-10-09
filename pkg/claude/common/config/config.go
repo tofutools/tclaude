@@ -841,8 +841,16 @@ type FederationHealthConfig struct {
 	Peers map[string]FederationHealthPolicy `json:"peers,omitempty"`
 }
 
+type NodeScriptsConfig struct {
+	AcceptRemoteScripts bool     `json:"accept_remote_scripts"`
+	Memory              string   `json:"memory,omitempty"`
+	CPU                 *float64 `json:"cpu,omitempty"`
+	PIDs                *uint64  `json:"pids,omitempty"`
+}
+
 type FederationConfig struct {
-	Health *FederationHealthConfig `json:"health,omitempty"`
+	Scripts *NodeScriptsConfig      `json:"scripts,omitempty"`
+	Health  *FederationHealthConfig `json:"health,omitempty"`
 
 	// IdentityRotationSeconds is the local successor detection window; default 600.
 	IdentityRotationSeconds int                       `json:"identity_rotation_seconds,omitempty"`

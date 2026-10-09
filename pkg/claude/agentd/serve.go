@@ -881,6 +881,7 @@ func runServe(p *serveParams) error {
 	harnessops.RefreshLatestAsync()
 	startBackgroundHarnessOperations(quit.ch)
 	defer stopHarnessOperations()
+	defer stopNodeRuns()
 	if home, err := canonicalOperatorHome(); err == nil {
 		if err := harnessops.EnableUserPath(home); err != nil {
 			return err
