@@ -173,6 +173,7 @@ func TestHubCloseRejectsInFlightHandshake(t *testing.T) {
 		InstanceID: id.ID(), PubKey: id.Pub,
 		Sig: proto.SignHello(id, challenge.HubID, challenge.Nonce),
 	}))
+	require.NoError(t, ws.SetReadDeadline(time.Now().Add(5*time.Second)))
 	var frame proto.Frame
 	require.NoError(t, ws.ReadJSON(&frame))
 	require.Equal(t, proto.FrameWelcome, frame.Type)
