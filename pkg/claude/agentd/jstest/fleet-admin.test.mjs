@@ -413,3 +413,22 @@ test('audit actions build the query', async (t) => {
   await a.audit({ peer: 'inst_forge', since: '2026-10-10T11:00:00.000Z', limit: 400 });
   assert.equal(urls[0], '/api/federation/audit?limit=400&peer=inst_forge&since=2026-10-10T11%3A00%3A00.000Z');
 });
+
+test('audit marks state-only failures red, keeps rows on a failed read, and clears them on a new filter', async (t) => {
+  const s = await setup(t);
+  let fail = false;
+  s.actions.audit = async (o) => { s.log.push(['audit', o]); if (fail) throw new Error('federation audit unavailable'); return [
+    { id: 'o1', at: '2026-10-10T10:00:00Z', source: 'outbox', direction: 'out', peer: 'inst_forge', kind: 'mail', state: 'failed' },
+    { id: 'o2', at: '2026-10-10T09:00:00Z', source: 'inbound', direction: 'in', peer: 'inst_forge', kind: 'mail', state: 'delivered' },
+  ]; };
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Audit/.test(b.textContent)));
+  const rows = s.q('#fleet-audit').querySelectorAll('tbody tr');
+  assert.ok(rows[0].querySelector('.fa-danger'), 'a failed outbox row is red without an HTTP status');
+  assert.equal(rows[1].querySelector('.fa-danger'), null);
+  fail = true;
+  await s.click(s.q('#fleet-audit-refresh'));
+  assert.match(s.mounted.container.textContent, /federation audit unavailable/);
+  assert.equal(s.q('#fleet-audit').querySelectorAll('tbody tr').length, 2, 'a failed read keeps the rows shown');
+  assert.doesNotMatch(s.mounted.container.textContent, /No federation activity/);
+});

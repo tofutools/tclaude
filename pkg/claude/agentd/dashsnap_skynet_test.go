@@ -42,12 +42,12 @@ const skynetFederationStubJS = `(function(){
     if (path === '/api/federation/enrollments') return json({ enrollments: [{ direction: 'issuer', token_id: 'etok_q2v7tn', peer: 'inst_hn3cxq7a', retired: false }] });
     if (path === '/api/federation/enroll/preview') return json({ claims: { master: 'inst_w5zea3nq', profile_name: 'worker', profile_id: 'nprof_c4r0l', profile_revision: 2, trust_level: 'restricted', expires_at: '2026-10-11T09:00:00Z' }, preview_token: 'pv', master_fingerprint: 'w5ze-a3nq-7m1p-kd42-xr8c-0fv6', node_fingerprint: 'q4w7-pjf2-kx3m-z6bt-y5nd-8c1e', consent: 'Running enroll trusts the pinned master at the displayed level. Its profile controls this node\'s authority on the master. No default profile or config offer is applied locally.' });
     if (path === '/api/federation/audit') return json([
-      { id: 'a6', at: '2026-10-10T09:41:12Z', source: 'remote', direction: 'in', peer: 'inst_hn3cxq7a', kind: 'peer.view', actor: 'operator', target: '/api/snapshot', status: 200 },
-      { id: 'a5', at: '2026-10-10T09:38:02Z', source: 'remote', direction: 'in', peer: 'inst_hn3cxq7a', kind: 'mail.deliver', actor: 'agt_7fk2', target: 'agt_q9m1', group: 'ops', state: 'delivered' },
-      { id: 'a4', at: '2026-10-10T09:30:45Z', source: 'remote', direction: 'out', peer: 'inst_2p6ym4ke', kind: 'spawn.request', actor: 'operator', group: 'rigs', state: 'failed', status: 502 },
-      { id: 'a3', at: '2026-10-10T09:12:09Z', source: 'audit', direction: 'in', peer: 'inst_hn3cxq7a', kind: 'sessions.watch', actor: 'operator', target: 'agt_q9m1', group: 'ops', status: 403 },
-      { id: 'a2', at: '2026-10-10T08:55:31Z', source: 'audit', kind: 'federation.enroll.create', actor: 'operator', target: 'etok_4mz81c', status: 200 },
-      { id: 'a1', at: '2026-10-10T08:20:00Z', source: 'audit', peer: 'inst_hn3cxq7a', kind: 'federation.grant', actor: 'operator', target: 'inst_hn3cxq7a groups.roster.read group=ops', status: 200 }
+      { id: 'a6', at: '2026-10-10T09:41:12Z', source: 'inbound', direction: 'in', peer: 'inst_hn3cxq7a', kind: 'mail', actor: 'agt_7fk2', target: 'agt_q9m1', group: 'ops', state: 'delivered' },
+      { id: 'a5', at: '2026-10-10T09:38:02Z', source: 'outbox', direction: 'out', peer: 'inst_2p6ym4ke', kind: 'mail', actor: 'agt_q9m1', target: 'agt_r2d4', state: 'failed' },
+      { id: 'a4', at: '2026-10-10T09:30:45Z', source: 'spawns', direction: 'in', peer: 'inst_hn3cxq7a', kind: 'spawn', actor: 'agt_7fk2', group: 'ops', state: 'refused' },
+      { id: 'a3', at: '2026-10-10T09:12:09Z', source: 'model_requests', direction: 'in', peer: 'inst_hn3cxq7a', kind: 'model_request', actor: 'agt_7fk2', status: 403 },
+      { id: 'a2', at: '2026-10-10T08:55:31Z', source: 'audit', direction: 'event', kind: 'federation.enroll.create', actor: 'operator', target: 'etok_4mz81c', status: 200 },
+      { id: 'a1', at: '2026-10-10T08:20:00Z', source: 'audit', direction: 'event', peer: 'inst_hn3cxq7a', kind: 'federation.grant', actor: 'operator', target: 'inst_hn3cxq7a groups.roster.read group=ops', status: 200 }
     ]);
     if (path === '/api/federation/peers/trust') return json({ instance_id: 'inst_w5zea3nq', fingerprint: 'w5ze-a3nq-7m1p-kd42-xr8c-0fv6', level: 'restricted', profile: null, plan: null, applied: false });
     if (path === '/api/node-summary') return json({ presence: 'online', shared_groups: 2, shared_agents: 10, online_agents: 8, waiting_for_input: 1, resources: res, health: 'current' }, 200, { ETag: '"local"' });
