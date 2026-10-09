@@ -2413,8 +2413,13 @@ page covers `enroll-token create/ls/revoke`, `enroll` and `enrollments`: an
 invite confirms its terms (uses, lifetime, the profile's trust here and the
 trust the joining node grants back) and shows the bearer once; joining
 previews both fingerprints, the profile and the trust level before Enroll.
-Receiver launch settings beyond the live cap, model gateway scopes, profiles
-and the audit log are managed with their `tclaude federation` commands.
+Its Profiles & pools page covers pools (`nodes/groups`: create, delete, add
+and remove members — adding names the pool grants the member gains) and node
+profiles: making one the default for newly trusted peers, applying one to a
+trusted peer after previewing its plan (unrestricted confirms the peer's
+fingerprint), and deleting. Profile definitions, receiver launch settings
+beyond the live cap, model gateway scopes and the audit log are managed with
+their `tclaude federation` commands.
 
 `federation view` returns the full JSON response, including `peer_view`, and
 preserves structured failure JSON on stderr. The `agent ls --node` and

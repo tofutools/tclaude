@@ -202,3 +202,27 @@ export function tokenState(t, now = Date.now()) {
 export function joinCommand(masterID) {
   return `tclaude federation enroll ${masterID} --token-stdin`;
 }
+
+// profileSummary condenses a node profile definition for the profiles table.
+export function profileSummary(p) {
+  const d = p?.definition || {};
+  return {
+    name: p?.name || '', id: p?.id || '', revision: p?.revision || 0,
+    level: d.trust_level === 'unrestricted' ? 'unrestricted' : 'restricted',
+    pools: Array.isArray(d.pools) ? d.pools : [],
+    grants: Array.isArray(d.peer_grants) ? d.peer_grants.length : 0,
+    labels: Array.isArray(d.labels) ? d.labels : [],
+    bundle: !!d.config_bundle,
+  };
+}
+
+// changeText renders one profile plan change ({item, before, after}).
+export function changeText(c) {
+  const v = (x) => (x == null || x === '' ? '∅' : typeof x === 'string' ? x : JSON.stringify(x));
+  if (c?.before == null) return `${c?.item}: add ${v(c?.after)}`;
+  if (c?.after == null) return `${c?.item}: remove ${v(c?.before)}`;
+  return `${c?.item}: ${v(c?.before)} → ${v(c?.after)}`;
+}
+
+// POOL_NAME_RE mirrors the daemon's nodeGroupNamePattern.
+export const POOL_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;

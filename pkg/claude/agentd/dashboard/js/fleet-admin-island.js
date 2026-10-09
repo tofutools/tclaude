@@ -4,6 +4,7 @@ import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { GrantsPage } from './fleet-admin-grants.js';
 import { InvitesPage } from './fleet-admin-invites.js';
+import { ProfilesPage } from './fleet-admin-profiles.js';
 import { dashboardState } from './snapshot-store.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { fmtAge, nodeHref, pollDelay, remoteNodeID } from './skynet-model.js';
@@ -21,7 +22,7 @@ const SUB_PAGES = Object.freeze([
   { id: 'peers', label: 'Peers' },
   { id: 'invites', label: 'Invites & joining' },
   { id: 'grants', label: 'Peer grants' },
-  { id: 'profiles', label: 'Profiles & pools', cli: ['tclaude federation profile', 'tclaude federation nodes'] },
+  { id: 'profiles', label: 'Profiles & pools' },
   { id: 'audit', label: 'Audit', cli: ['tclaude federation audit'] },
 ]);
 
@@ -331,6 +332,9 @@ export function FleetAdmin({
           onGrants=${(r) => { setGrantTarget(r.id); setPage('grants'); }} />`
       : sub.id === 'invites'
       ? html`<${InvitesPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} now=${now()} />`
+      : sub.id === 'profiles'
+      ? html`<${ProfilesPage} view=${view} pools=${pools} actions=${actions} confirm=${confirm} toast=${toast} reload=${reload}
+          onOpenGrants=${(target) => { setGrantTarget(target); setPage('grants'); }} />`
       : sub.id === 'grants'
       ? html`<${GrantsPage} view=${view} pools=${pools} groups=${localGroups(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast}
           target=${grantTarget} setTarget=${setGrantTarget} />`
