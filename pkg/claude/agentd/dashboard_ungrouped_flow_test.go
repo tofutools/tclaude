@@ -111,6 +111,7 @@ type dashGroup struct {
 }
 
 type dashMember struct {
+	Role            string      `json:"role,omitempty"`
 	AgentID         string      `json:"agent_id,omitempty"`
 	ConvID          string      `json:"conv_id"`
 	Title           string      `json:"title"`
