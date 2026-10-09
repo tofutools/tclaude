@@ -401,6 +401,18 @@ type fedStatusResp struct {
 	Remote      []fedRemoteSystem        `json:"remote"`
 }
 
+// fedStatusSummaryResp is the local Fleet chip-row projection. It avoids
+// loading grants, the outbox, or remote catalogs.
+type fedStatusSummaryResp struct {
+	Enabled     bool          `json:"enabled"`
+	InstanceID  string        `json:"instance_id"`
+	Fingerprint string        `json:"fingerprint"`
+	Name        string        `json:"name"`
+	HubURL      string        `json:"hub_url,omitempty"`
+	Hub         *fedHubStatus `json:"hub,omitempty"`
+	Peers       []fedPeerJSON `json:"peers"`
+}
+
 type fedHubStatus struct {
 	State     string    `json:"state"`
 	HubID     string    `json:"hub_id,omitempty"`
@@ -477,8 +489,9 @@ func handleFederationStatus(w http.ResponseWriter, r *http.Request) {
 		})
 		seen[p.InstanceID] = true
 	}
+	summary := r.URL.Query().Get("summary") == "1"
 	for _, e := range dir {
-		if seen[e.InstanceID] {
+		if summary || seen[e.InstanceID] {
 			continue
 		}
 		resp.Peers = append(resp.Peers, fedPeerJSON{
@@ -492,6 +505,17 @@ func handleFederationStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		return resp.Peers[i].InstanceID < resp.Peers[j].InstanceID
 	})
+	if resp.Peers == nil {
+		resp.Peers = []fedPeerJSON{}
+	}
+	if summary {
+		w.Header().Set("Cache-Control", "private, no-store")
+		writeJSON(w, http.StatusOK, fedStatusSummaryResp{
+			Enabled: resp.Enabled, InstanceID: resp.InstanceID, Fingerprint: resp.Fingerprint,
+			Name: resp.Name, HubURL: resp.HubURL, Hub: resp.Hub, Peers: resp.Peers,
+		})
+		return
+	}
 	grants, _ := db.ListFederationPeerGrants("")
 	for _, grant := range grants {
 		resp.PeerGrants = append(resp.PeerGrants, fedDisplayPeerGrant(grant))

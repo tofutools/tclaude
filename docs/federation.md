@@ -2175,3 +2175,25 @@ Polling contract for the node-switching, map and merged-view frontends:
 - Avoid overlapping polls to a node. Back off on failures, stop polling when
   the view is hidden, and distinguish cached/stale data from an offline node.
   Recheck omitted features after every new authorized response.
+
+### Local dashboard Fleet status
+
+`GET /api/federation/status` is the cookie-authenticated local dashboard wrapper
+for `GET /v1/federation/status`. Federation administration is local-only;
+trusted peers, including unrestricted peers, cannot call this route through
+the peer-view dispatcher.
+
+For the Fleet chip row, use `GET /api/federation/status?summary=1`. The same
+query also works on the CLI API. It returns the local identity (`instance_id`,
+`name`, `fingerprint`), configuration (`enabled`, optional `hub_url`), optional
+cached `hub` connection state, and `peers`. Summary peers include only trusted
+linked instances, with their stable `instance_id`, `label`, `name`, trust
+`level`, `trusted`, `online`, and `last_seen` fields (plus fingerprint, version,
+and trust time). An empty peer list is `[]`. Presence comes from the cached
+hub directory; no remote requests or status probes run during this read.
+
+Summary responses omit `peer_grants`, `outbox`, and `remote`, and avoid loading
+those records or remote catalogs. The full status response still includes
+hub-visible untrusted instances and the administration fields. Responses are
+private and uncached. Poll this local list at a relaxed interval, pause when
+the dashboard is hidden, and poll each visible remote map card separately.
