@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -21,6 +22,8 @@ func handleDashboardPeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; frame-ancestors 'none'")
 	// The browser selects a pinned identity; labels and request headers never
 	// choose the transport's source identity or substitute a different target.
 	peer, err := db.GetFederationPeer(r.PathValue("node"))
@@ -100,7 +103,8 @@ func handleDashboardPeer(w http.ResponseWriter, r *http.Request) {
 		fail(err, ctx)
 		return
 	}
-	if reply.Status < 200 || reply.Status > 599 || len(reply.Body) > fedPeerViewResponseBodyLimit {
+	if reply.Status < 200 || reply.Status > 599 || len(reply.Body) > fedPeerViewResponseBodyLimit ||
+		(len(reply.Body) != 0 && (!json.Valid(reply.Body) || reply.Status == http.StatusNoContent || reply.Status == http.StatusNotModified)) {
 		writeError(w, 502, "peer_invalid_response", "peer returned an invalid response")
 		return
 	}
@@ -113,6 +117,9 @@ func handleDashboardPeer(w http.ResponseWriter, r *http.Request) {
 	for key, values := range peerViewReplyHeaders(reply.Header) {
 		w.Header()[key] = values
 	}
+	// A restricted or compromised peer must never serve executable content on
+	// the local operator's authenticated origin, even on direct navigation.
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(reply.Status)
 	if r.Method != http.MethodHead {
 		_, _ = w.Write(reply.Body)
