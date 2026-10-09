@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -75,7 +76,13 @@ func TestPeerViewScopedReadsWritesAndRevocation(t *testing.T) {
 	messages, err := db.ListAgentMessagesForConv("visible-conv", 100)
 	require.NoError(t, err)
 	require.NotEmpty(t, messages)
-	require.True(t, db.IsOperatorAgentMessage(messages[0].ID))
+	require.False(t, db.IsOperatorAgentMessage(messages[0].ID))
+	inbox := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, "GET", fmt.Sprintf("/v1/messages/%d?keep-unread=1", messages[0].ID), nil), "visible-conv"))
+	require.Equal(t, 200, inbox.Code, inbox.Body.String())
+	var mail map[string]any
+	testharness.DecodeJSON(t, inbox, &mail)
+	require.Equal(t, "operator@bob (remote)", mail["from_title"])
+	require.Equal(t, true, mail["remote"])
 	require.Contains(t, messages[0].Body, "bob")
 	audit, err := db.ListFederationActivity(p.id.ID(), time.Time{}, 100)
 	require.NoError(t, err)

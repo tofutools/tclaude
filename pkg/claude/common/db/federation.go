@@ -377,11 +377,6 @@ func InsertFederationInboundMessage(m *AgentMessage, in FederationInbound, expir
 	if err != nil {
 		return 0, err
 	}
-	if m.OperatorAuthored {
-		if _, err := tx.Exec(`INSERT INTO operator_agent_messages (message_id) VALUES (?)`, id); err != nil {
-			return 0, err
-		}
-	}
 	if err := insertAgentMessageAttachments(tx, id, attachments); err != nil {
 		return 0, err
 	}

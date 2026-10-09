@@ -398,8 +398,8 @@ func servePeerMessage(w http.ResponseWriter, r *http.Request, v *peerView, rule 
 	if g, _ := db.GetAgentGroupByID(gid); g != nil {
 		v.groupName = g.Name
 	}
-	name := "operator@" + peerDisplay(v.peer)
-	id, err := db.InsertFederationInboundMessage(&db.AgentMessage{GroupID: gid, ToConv: target.CurrentConvID, Subject: in.Subject, Body: fedRemoteBanner("operator", peerDisplay(v.peer), v.peer.InstanceID) + in.Body, ToRecipients: []string{target.CurrentConvID}, OperatorAuthored: true}, db.FederationInbound{EnvelopeID: uuid.NewString(), FromInstance: v.peer.InstanceID, FromName: name}, time.Now().Add(24*time.Hour), regularAgentMessageQueueLimit, nil)
+	name := "operator"
+	id, err := db.InsertFederationInboundMessage(&db.AgentMessage{GroupID: gid, ToConv: target.CurrentConvID, Subject: in.Subject, Body: fedRemoteBanner("operator", peerDisplay(v.peer), v.peer.InstanceID) + in.Body, ToRecipients: []string{target.CurrentConvID}}, db.FederationInbound{EnvelopeID: uuid.NewString(), FromInstance: v.peer.InstanceID, FromName: name}, time.Now().Add(24*time.Hour), regularAgentMessageQueueLimit, nil)
 	if err != nil {
 		if full, ok := agentMessageQueueFull(err); ok {
 			writeQueueFull(w, target.CurrentConvID, full)
