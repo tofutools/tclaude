@@ -80,7 +80,7 @@ test('the CI badge summarizes checks and opens a panel on hover', async (t) => {
   await t.test('finished checks never count up without a completion timestamp', () => {
     const now = Date.parse('2026-08-09T10:03:30Z');
     for (const [bucket, conclusion] of [
-      ['skipped', 'skipped'], ['pass', 'success'], ['fail', 'failure'], ['fail', 'cancelled'],
+      ['skipped', 'skipped'], ['pass', 'success'], ['fail', 'failure'], ['skipped', 'cancelled'],
     ]) {
       for (const completed_at of ['', '0001-01-01T00:00:00Z', 'invalid']) {
         const check = { bucket, conclusion, started_at: '2026-08-09T10:00:00Z', completed_at };

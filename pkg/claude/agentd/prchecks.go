@@ -267,10 +267,14 @@ type statusCheckRollupNode struct {
 //
 // Bucketing follows what a human reading the badge expects, which is not
 // quite GitHub's raw vocabulary: NEUTRAL counts as passing (it is
-// explicitly "not a failure"), CANCELLED and TIMED_OUT count as failing (a
-// run that did not finish is not a green light), and SKIPPED is its own
-// bucket so it can be excluded from the badge's denominator — 12/14 should
-// not read as "2 outstanding" when both were skipped by a path filter.
+// explicitly "not a failure"), TIMED_OUT counts as failing (a run that did
+// not finish is not a green light), and SKIPPED is its own bucket so it can
+// be excluded from the badge's denominator — 12/14 should not read as "2
+// outstanding" when both were skipped by a path filter. CANCELLED shares the
+// skipped bucket: a cancelled run is almost always one superseded by a newer
+// push or a concurrency group, or a matrix leg stopped by fail-fast after a
+// sibling failed (which then carries the red itself), so painting it red
+// reports a failure nobody needs to act on.
 func normalizeRollupNode(n statusCheckRollupNode) (prCheckRun, bool) {
 	run := prCheckRun{
 		StartedAt:   normalizePRCheckTimestamp(n.StartedAt),
@@ -310,12 +314,12 @@ func normalizeRollupNode(n statusCheckRollupNode) (prCheckRun, bool) {
 	switch conclusion {
 	case "SUCCESS", "NEUTRAL":
 		run.Bucket = "pass"
-	case "SKIPPED":
+	case "SKIPPED", "CANCELLED":
 		run.Bucket = "skipped"
 	case "":
 		run.Bucket = "pending"
 	default:
-		// FAILURE, CANCELLED, TIMED_OUT, ACTION_REQUIRED, STARTUP_FAILURE.
+		// FAILURE, TIMED_OUT, ACTION_REQUIRED, STARTUP_FAILURE.
 		run.Bucket = "fail"
 	}
 	run.Conclusion = strings.ToLower(strings.ReplaceAll(conclusion, "_", " "))
