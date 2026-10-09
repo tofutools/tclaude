@@ -21,6 +21,7 @@ import (
 const MaxScriptBytes = 16 << 10
 const MaxOutputBytes = 4 << 20
 const TailBytes = 8 << 10
+const maxJobBytes = 256 << 10
 
 var ErrBusy = errors.New("node script workers busy")
 
@@ -94,8 +95,13 @@ func New(dir string, execute Execute, finished func(Job)) (*Service, error) {
 		if !entry.IsDir() || !ValidID(entry.Name()) {
 			continue
 		}
-		raw, err := os.ReadFile(filepath.Join(dir, entry.Name(), "job.json"))
-		if err != nil || len(raw) > 64<<10 {
+		f, err := os.Open(filepath.Join(dir, entry.Name(), "job.json"))
+		if err != nil {
+			continue
+		}
+		raw, err := io.ReadAll(io.LimitReader(f, maxJobBytes+1))
+		_ = f.Close()
+		if err != nil || len(raw) > maxJobBytes {
 			continue
 		}
 		var j Job
@@ -120,6 +126,9 @@ func (s *Service) save(j Job) error {
 	raw, err := json.Marshal(j)
 	if err != nil {
 		return err
+	}
+	if len(raw) > maxJobBytes {
+		return fmt.Errorf("script job metadata exceeds storage limit")
 	}
 	dir := filepath.Join(s.dir, j.ID)
 	f, err := os.CreateTemp(dir, ".job-")
@@ -171,7 +180,7 @@ func (s *Service) Start(req Request, actor, peer, node string, authorize func() 
 	if err := os.Mkdir(dir, 0700); err != nil {
 		return Job{}, err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "script.sh"), []byte(req.Script), 0600); err != nil {
+	if err := writeDurableFile(filepath.Join(dir, "script.sh"), []byte(req.Script)); err != nil {
 		return Job{}, err
 	}
 	if err := s.save(j); err != nil {
@@ -211,6 +220,9 @@ func (s *Service) run(ctx context.Context, j Job, authorize func() bool) {
 	}
 	j.ExitCode = result.ExitCode
 	j.Error = result.Error
+	if len(j.Error) > TailBytes {
+		j.Error = j.Error[:TailBytes]
+	}
 	j.State = "completed"
 	if result.ExitCode != 0 || result.Error != "" {
 		j.State = "failed"
@@ -221,6 +233,11 @@ func (s *Service) run(ctx context.Context, j Job, authorize func() bool) {
 		j.Error = "script authority revoked"
 		j.ExitCode = 130
 	default:
+	}
+	if !authorize() {
+		j.State = "canceled"
+		j.Error = "script authority revoked"
+		j.ExitCode = 130
 	}
 	if ctx.Err() != nil {
 		j.State = "canceled"
@@ -234,7 +251,7 @@ func (s *Service) run(ctx context.Context, j Job, authorize func() bool) {
 		result.Stderr = result.Stderr[:MaxOutputBytes+4096]
 	}
 	for name, data := range map[string]string{"stdout": result.Stdout, "stderr": result.Stderr} {
-		if err := os.WriteFile(filepath.Join(s.dir, j.ID, name+".log"), []byte(data), 0600); err != nil {
+		if err := writeDurableFile(filepath.Join(s.dir, j.ID, name+".log"), []byte(data)); err != nil {
 			j.State = "failed"
 			j.Error = "could not persist script output"
 			j.ExitCode = 125
@@ -311,4 +328,15 @@ func (s *Service) Close() {
 	}
 	s.mu.Unlock()
 	s.wg.Wait()
+}
+
+func writeDurableFile(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	_, e1 := f.Write(data)
+	e2 := f.Sync()
+	e3 := f.Close()
+	return errors.Join(e1, e2, e3)
 }

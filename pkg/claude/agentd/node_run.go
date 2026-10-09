@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -74,7 +75,13 @@ func runNodeScript(ctx context.Context, script, id string, seconds int64) noderu
 		command.ResourceCgroupDir = dir
 		defer func() { _ = removeNonInteractiveResourceCgroup(dir); cleanup() }()
 	}
-	result, failure := runNonInteractiveTmuxCommand(ctx, command)
+	var result nonInteractiveSpawnResult
+	var failure *spawnFailure
+	if runtime.GOOS == "linux" {
+		result, failure = runNonInteractiveTmuxCommand(ctx, command)
+	} else {
+		result, failure = executeNonInteractiveCommand(ctx, command)
+	}
 	if failure != nil {
 		return noderun.Result{ExitCode: 125, Error: failure.Msg}
 	}
@@ -116,7 +123,7 @@ func stopNodeRuns() {
 }
 func recordNodeRunAudit(j noderun.Job, phase string) {
 	status := 200
-	if j.State == "running" {
+	if j.State == "running" || j.State == "requested" {
 		status = 202
 	} else if j.ExitCode != 0 {
 		status = 500
@@ -230,7 +237,7 @@ func serveNodeRun(w http.ResponseWriter, r *http.Request, actor, peer string, au
 		writeError(w, 403, "permission_denied", "script authority revoked")
 		return
 	}
-	if r.URL.Path[len(r.URL.Path)-5:] == "/logs" {
+	if strings.HasSuffix(r.URL.Path, "/logs") {
 		offset := int64(0)
 		if raw := r.URL.Query().Get("offset"); raw != "" {
 			offset, err = strconv.ParseInt(raw, 10, 64)

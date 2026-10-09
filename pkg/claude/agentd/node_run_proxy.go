@@ -51,3 +51,15 @@ func auditNodeRunProxy(r *http.Request, peer string, body []byte, status int, re
 		recordNodeRunAudit(j, "observed_result")
 	}
 }
+
+func auditNodeRunProxyRequest(r *http.Request, peer string, body []byte) {
+	if r.Method != http.MethodPost || r.PathValue("tail") != "node/run" {
+		return
+	}
+	var req noderun.Request
+	if json.Unmarshal(body, &req) != nil || req.Validate() != nil {
+		return
+	}
+	hash := sha256.Sum256([]byte(req.Script))
+	recordNodeRunAudit(noderun.Job{Actor: "operator", Peer: peer, Node: peer, ScriptSHA256: hex.EncodeToString(hash[:]), ScriptBytes: len(req.Script), State: "requested", ExitCode: -1}, "requested")
+}

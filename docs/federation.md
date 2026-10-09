@@ -2293,7 +2293,7 @@ Clients should keep their last successful view, mark it stale, and back off.
 The stable `peer_view.included` / `peer_view.omitted[].feature` concept keys are
 `agents.status`, `groups`, `groups.roster`, `groups.presence`, `messaging`,
 `node.summary`, `health`, `costs`, `audit`, `terminals`, `spawn`, and
-`local_dashboard`, and `node.harnesses`. `local_dashboard` covers local administration, registries,
+`local_dashboard`, `node.harnesses`, and `node.exec`. `local_dashboard` covers local administration, registries,
 and lifecycle controls. An omitted concept carries a `requires` permission or
 `local_only`. Clients must tolerate additive concept keys; absence of an
 omission is not a grant for an unknown endpoint.
@@ -2630,11 +2630,13 @@ tclaude federation run --node laptop --node desktop --file maintenance.sh --time
 tclaude federation run --all -- echo 'hello from the fleet'
 tclaude federation run -- printf '%s\n' 'local only'
 tclaude federation run --node laptop --job JOB_ID
+tclaude federation run --node laptop --job JOB_ID --log stdout
 ```
 
 Scripts are bounded to 16 KiB and their encoded request to 32 KiB. They run as
 private script files passed as argv to `/bin/sh` in a detached one-shot tmux
-session, with the existing process-group cleanup, timeout (exit 124), output
+session on Linux (a managed one-shot subprocess on macOS), with the existing
+process-group cleanup, timeout (exit 124), output
 limit (4 MiB per stream, exit 125 on overflow), and Linux cgroup resource-limit
 runner. This is code execution, not a filesystem/network sandbox. Root daemon
 execution is refused. Default Linux limits are 1 GiB memory and 256 processes;

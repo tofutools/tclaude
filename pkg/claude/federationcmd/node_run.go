@@ -21,6 +21,7 @@ import (
 )
 
 type nodeRunParams struct {
+	Log     string        `long:"log" help:"With --job, collect the full bounded stdout or stderr log"`
 	Node    []string      `long:"node" help:"Repeatable peer label/ID; local selects this node"`
 	All     bool          `long:"all" help:"Run locally and on every online trusted node; report offline nodes as skipped"`
 	File    string        `long:"file" help:"Script file (16 KiB maximum); alternatively put a command after --"`
@@ -47,14 +48,16 @@ func nodeRunPath(node, tail string) string {
 }
 
 type nodeRunOutcome struct {
-	Node  string       `json:"node"`
-	State string       `json:"state"`
-	Job   *noderun.Job `json:"job,omitempty"`
-	Error string       `json:"error,omitempty"`
+	Log    []byte       `json:"log,omitempty"`
+	Stream string       `json:"stream,omitempty"`
+	Node   string       `json:"node"`
+	State  string       `json:"state"`
+	Job    *noderun.Job `json:"job,omitempty"`
+	Error  string       `json:"error,omitempty"`
 }
 
 func runNodeRuns(p *nodeRunParams, args []string, stdout, stderr io.Writer) int {
-	if p.All && len(p.Node) > 0 || p.File != "" && len(args) > 0 || p.Job != "" && (p.All || len(p.Node) > 1 || p.File != "" || len(args) > 0) || p.Job != "" && !noderun.ValidID(p.Job) {
+	if p.Log != "" && (p.Job == "" || p.Log != "stdout" && p.Log != "stderr") || p.All && len(p.Node) > 0 || p.File != "" && len(args) > 0 || p.Job != "" && (p.All || len(p.Node) > 1 || p.File != "" || len(args) > 0) || p.Job != "" && !noderun.ValidID(p.Job) {
 		fmt.Fprintln(stderr, "invalid node/script/job selection")
 		return 1
 	}
@@ -140,7 +143,18 @@ func runNodeRuns(p *nodeRunParams, args []string, stdout, stderr io.Writer) int 
 			result := nodeRunOutcome{Node: node, State: "failed"}
 			var job noderun.Job
 			request := func(method, tail string, in any) error {
-				return agent.DaemonRequest(method, nodeRunPath(node, tail), in, &job, agent.DaemonOpts{Timeout: 20 * time.Second, NoRetry: true})
+				if err := agent.DaemonRequest(method, nodeRunPath(node, tail), in, &job, agent.DaemonOpts{Timeout: 20 * time.Second, NoRetry: true}); err != nil {
+					return err
+				}
+				if !noderun.ValidID(job.ID) || job.TimeoutSeconds < 1 || job.TimeoutSeconds > 86400 {
+					return fmt.Errorf("invalid script job reply")
+				}
+				switch job.State {
+				case "running", "completed", "failed", "canceled", "interrupted":
+				default:
+					return fmt.Errorf("invalid script job state")
+				}
+				return nil
 			}
 			method, tail := "POST", ""
 			var in any = req
@@ -151,7 +165,7 @@ func runNodeRuns(p *nodeRunParams, args []string, stdout, stderr io.Writer) int 
 			}
 			if err := request(method, tail, in); err != nil {
 				var de *agent.DaemonError
-				if errors.As(err, &de) && de.Code == "peer_offline" {
+				if errors.As(err, &de) && nodeRunOffline(de) {
 					result.State = "skipped"
 				}
 				result.Error = err.Error()
@@ -167,6 +181,30 @@ func runNodeRuns(p *nodeRunParams, args []string, stdout, stderr io.Writer) int 
 					results[i] = result
 					return
 				}
+			}
+			if p.Log != "" {
+				offset := int64(0)
+				for {
+					var chunk noderun.LogChunk
+					err := agent.DaemonRequest("GET", nodeRunPath(node, "/jobs/"+job.ID+"/logs?stream="+p.Log+"&offset="+fmt.Sprint(offset)), nil, &chunk, agent.DaemonOpts{Timeout: 20 * time.Second, NoRetry: true})
+					if err != nil {
+						result.Error = err.Error()
+						result.Job = &job
+						results[i] = result
+						return
+					}
+					if len(chunk.Data) > 64<<10 || chunk.NextOffset != offset+int64(len(chunk.Data)) || !chunk.EOF && len(chunk.Data) == 0 || len(result.Log)+len(chunk.Data) > noderun.MaxOutputBytes+4096 {
+						result.Error = "invalid bounded log reply"
+						results[i] = result
+						return
+					}
+					result.Log = append(result.Log, chunk.Data...)
+					offset = chunk.NextOffset
+					if chunk.EOF {
+						break
+					}
+				}
+				result.Stream = p.Log
 			}
 			result.State = job.State
 			result.Job = &job
@@ -186,7 +224,10 @@ func runNodeRuns(p *nodeRunParams, args []string, stdout, stderr io.Writer) int 
 				fmt.Fprintf(stdout, " exit=%d duration=%dms job=%s", r.Job.ExitCode, r.Job.DurationMS, r.Job.ID)
 			}
 			fmt.Fprintln(stdout)
-			if r.Job != nil {
+			if r.Stream != "" {
+				fmt.Fprintln(stdout, proto.StripControls(string(r.Log)))
+			}
+			if r.Job != nil && r.Stream == "" {
 				if r.Job.StdoutTail != "" {
 					fmt.Fprintf(stdout, "%s stdout:\n%s\n", summaryCell(r.Node), proto.StripControls(r.Job.StdoutTail))
 				}
@@ -223,6 +264,9 @@ func runNodeScriptSettings(p *nodeScriptSettingsParams, stdout, stderr io.Writer
 	if p.AcceptRemote != "" && p.AcceptRemote != "on" && p.AcceptRemote != "off" {
 		fmt.Fprintln(stderr, "accept-remote must be on or off")
 		return 1
+	}
+	if rc := agent.RequireDaemonOrExit(stderr); rc != 0 {
+		return rc
 	}
 	method := "GET"
 	var in any
@@ -264,4 +308,14 @@ func runNodeScriptSettings(p *nodeScriptSettingsParams, stdout, stderr io.Writer
 		return 1
 	}
 	return 0
+}
+
+func nodeRunOffline(err *agent.DaemonError) bool {
+	if err.Code == "peer_offline" {
+		return true
+	}
+	var response struct {
+		Reason string `json:"reason"`
+	}
+	return json.Unmarshal(err.Raw, &response) == nil && response.Reason == "peer_offline"
 }
