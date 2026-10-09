@@ -84,8 +84,33 @@ function tabLabel(tab) {
 }
 
 export function limitHint(state, what, node) {
+  if (state === 'attach') return `${node}'s terminals open from the CLI — click to copy the attach command`;
   if (state === 'omitted') return `${node} does not share ${what} with you`;
   return `${what} is not available in a peer view`;
+}
+
+// ATTACH_ACTS open an agent's terminal. A peer's terminals are reachable only
+// from the CLI (remote attach refuses browser origins by design), so on a peer
+// view these copy the attach command instead.
+const ATTACH_ACTS = new Set(['web-open-window', 'jump', 'term-dir']);
+
+// SAFE_AGENT_ID admits only a plain agent ID into a command the operator will
+// paste into a shell: the ID comes from the peer's snapshot, and a hostile
+// peer must not be able to smuggle shell syntax into it.
+const SAFE_AGENT_ID = /^agt_[A-Za-z0-9]{4,64}$/;
+
+// defaultCopy fails when the page has no clipboard API (an insecure-context
+// dashboard over plain http), so the caller shows the command instead of
+// claiming it was copied.
+function defaultCopy(text) {
+  const clipboard = globalThis.navigator?.clipboard;
+  if (!clipboard?.writeText) throw new Error('clipboard unavailable');
+  return clipboard.writeText(text);
+}
+
+// attachCommand is the CLI command that opens agent's pane on the peer.
+export function attachCommand(agentID, remoteID) {
+  return `tclaude federation attach ${agentID}@${remoteID}`;
 }
 
 // blockedControl returns the element a click must not reach, and why.
@@ -96,6 +121,7 @@ export function blockedControl(target, peerView) {
     return state === 'shared' ? null : { el: tab, state, what: tabLabel(tab.dataset.tab) };
   }
   const act = target?.closest?.('[data-act]');
+  if (act && ATTACH_ACTS.has(act.dataset.act) && SAFE_AGENT_ID.test(act.dataset.agent || '')) return { el: act, state: 'attach', what: 'This terminal', agent: act.dataset.agent };
   if (act && !READ_ONLY_ACTS.has(act.dataset.act)) return { el: act, state: 'local', what: 'This action' };
   const ctl = target?.closest?.(GATED_CONTROLS.join(','));
   if (ctl) return { el: ctl, state: 'local', what: 'This action' };
@@ -104,7 +130,7 @@ export function blockedControl(target, peerView) {
 
 // installPeerViewLimits wires the gating for the page's lifetime. It is a
 // no-op unless this page is a peer view.
-export function installPeerViewLimits({ doc = document, snapshot = dashboardState.snapshot, toast = shellToast, remote = globalThis.__tclaudeRemoteNode } = {}) {
+export function installPeerViewLimits({ doc = document, snapshot = dashboardState.snapshot, toast = shellToast, remote = globalThis.__tclaudeRemoteNode, copy = defaultCopy } = {}) {
   if (!remote?.id) return () => {};
   const root = doc.documentElement;
   let peerView = snapshot.value?.peer_view || null;
@@ -143,6 +169,13 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
     if (!blocked) return;
     event.preventDefault();
     event.stopImmediatePropagation();
+    if (blocked.state === 'attach') {
+      const cmd = attachCommand(blocked.agent, remote.id);
+      Promise.resolve().then(() => copy(cmd))
+        .then(() => toast(`Copied: ${cmd} — run it in a terminal to watch or type into this agent on ${nodeName()}`, false))
+        .catch(() => toast(`Run in a terminal: ${cmd}`, false));
+      return;
+    }
     toast(limitHint(blocked.state, blocked.what, nodeName()), true);
   };
   // role=button chips open their editors on Enter/Space in their own keydown,
