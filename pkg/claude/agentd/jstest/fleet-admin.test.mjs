@@ -85,6 +85,7 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     revokeToken: async (id) => { log.push(['revokeToken', id]); return { ok: true }; },
     enrollPreview: async (o) => { log.push(['enrollPreview', o]); return { claims: { master: 'inst_carol', profile_name: 'worker', profile_id: 'prof_x', profile_revision: 2, trust_level: 'unrestricted', expires_at: '2099-01-01T00:00:00Z' }, preview_token: 'pv1', master_fingerprint: FP_NEW, node_fingerprint: 'self-fp-0000', consent: 'Running enroll trusts the pinned master.' }; },
     enroll: async (o) => { log.push(['enroll', o]); return { accepted: true }; },
+    audit: async (o) => { log.push(['audit', o]); return Array.from({ length: o.limit === 200 ? 200 : 3 }, (_, i) => ({ id: `a${i}`, at: '2026-10-10T10:00:00Z', source: 'remote', direction: i % 2 ? 'out' : 'in', peer: 'inst_forge', kind: 'mail.send', actor: 'agt_x', status: i === 0 ? 403 : 200 })); },
     createPool: async (n) => { log.push(['createPool', n]); return { ok: true }; },
     deletePool: async (n) => { log.push(['deletePool', n]); return { ok: true }; },
     addPoolMember: async (n, p) => { log.push(['addPoolMember', n, p]); return { ok: true }; },
@@ -380,4 +381,35 @@ test('profiles: default and apply preview the effect; applying unrestricted conf
   assert.deepEqual(s.log.filter((l) => l[0] === 'applyProfile').at(-1), ['applyProfile', 'ops-full', { peer: 'inst_forge', apply: true, previewToken: 'ptok', confirmFingerprint: FP_FORGE }]);
   await s.click(s.q('#fleet-profiles [data-profile="test-rig"] [data-fa="delete-profile"]'));
   assert.deepEqual(s.log.find((l) => l[0] === 'deleteProfile'), ['deleteProfile', 'test-rig']);
+});
+
+test('audit reads newest-first metadata by peer and time window, and pages up to 1000', async (t) => {
+  const s = await setup(t);
+  const m = await s.harness.importDashboardModule('js/fleet-admin-model.js');
+  assert.equal(m.auditSince(0), '');
+  assert.equal(m.auditSince(3600e3, Date.parse('2026-10-10T12:00:00Z')), '2026-10-10T11:00:00.000Z');
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Audit/.test(b.textContent)));
+  const first = s.log.find((l) => l[0] === 'audit')[1];
+  assert.equal(first.peer, ''); assert.equal(first.limit, 200); assert.ok(first.since, 'defaults to the last 24 hours');
+  assert.equal(s.q('#fleet-audit').querySelectorAll('tbody tr').length, 200);
+  assert.match(s.q('#fleet-audit tbody tr').textContent, /forge/);
+  assert.ok(s.q('#fleet-audit tbody tr .fa-danger'), 'a refused request reads as an error');
+  await s.click(s.q('#fleet-audit-more'));
+  assert.equal(s.log.filter((l) => l[0] === 'audit').at(-1)[1].limit, 400);
+  const sel = s.q('#fleet-audit-peer');
+  for (const o of sel.querySelectorAll('option')) { if (o.value === 'inst_forge') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
+  await s.harness.act(() => s.harness.fireEvent(sel, 'change'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  const last = s.log.filter((l) => l[0] === 'audit').at(-1)[1];
+  assert.equal(last.peer, 'inst_forge'); assert.equal(last.limit, 200, 'a new filter starts from the first page');
+});
+
+test('audit actions build the query', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createFleetAdminActions } = await harness.importDashboardModule('js/fleet-admin-actions.js');
+  const urls = [];
+  const a = createFleetAdminActions({ fetchImpl: async (url) => { urls.push(url); return { ok: true, status: 200, json: async () => [] }; } });
+  await a.audit({ peer: 'inst_forge', since: '2026-10-10T11:00:00.000Z', limit: 400 });
+  assert.equal(urls[0], '/api/federation/audit?limit=400&peer=inst_forge&since=2026-10-10T11%3A00%3A00.000Z');
 });

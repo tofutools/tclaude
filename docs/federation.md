@@ -2417,9 +2417,10 @@ Its Profiles & pools page covers pools (`nodes/groups`: create, delete, add
 and remove members — adding names the pool grants the member gains) and node
 profiles: making one the default for newly trusted peers, applying one to a
 trusted peer after previewing its plan (unrestricted confirms the peer's
-fingerprint), and deleting. Profile definitions, receiver launch settings
-beyond the live cap, model gateway scopes and the audit log are managed with
-their `tclaude federation` commands.
+fingerprint), and deleting. Its Audit page reads `federation audit` (filtered
+by peer and time window, newest first, up to 1000 rows). Profile definitions,
+receiver launch settings beyond the live cap and model gateway scopes are
+managed with their `tclaude federation` commands.
 
 `federation view` returns the full JSON response, including `peer_view`, and
 preserves structured failure JSON on stderr. The `agent ls --node` and

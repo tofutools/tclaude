@@ -247,3 +247,16 @@ export function grantText(g) {
 
 // POOL_NAME_RE mirrors the daemon's nodeGroupNamePattern.
 export const POOL_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+
+// AUDIT_WINDOWS are the audit time filters (ms back from now; 0 = all).
+export const AUDIT_WINDOWS = Object.freeze([
+  { ms: 3600e3, label: 'last hour' },
+  { ms: 86400e3, label: 'last 24 hours' },
+  { ms: 7 * 86400e3, label: 'last 7 days' },
+  { ms: 0, label: 'all' },
+]);
+
+// auditSince turns a window into the audit route's RFC3339 since.
+export function auditSince(ms, now = Date.now()) {
+  return ms ? new Date(now - ms).toISOString() : '';
+}
