@@ -33,7 +33,7 @@ import {
 // set ordering.
 const ROUTABLE_TABS = new Set([
   'groups', 'terminals', 'jobs', 'processes', 'plugins', 'access',
-  'messages', 'usage', 'costs', 'audit', 'logs', 'debug', 'config', 'map',
+  'messages', 'usage', 'costs', 'audit', 'logs', 'debug', 'config', 'map', 'fleet',
 ]);
 
 // The virtual stack (see nav-history-core.js). Replaced wholesale on every
@@ -96,7 +96,7 @@ function pendingTerminalAttach(loc) {
 // last per-node tab once that read settles without a fleet, so a /map deep
 // link is decided by the view that knows rather than bounced to Groups.
 function pendingMapLoad(loc) {
-  return loc.tab === 'map';
+  return loc.tab === 'map' || loc.tab === 'fleet';
 }
 
 // activeLocationFromDOM reads the current dashboard location out of the live
