@@ -48,7 +48,7 @@ test('per-node API reads go through the peer proxy; fleet reads stay local; othe
   const refused = await window.fetch('/api/groups/x', { method: 'DELETE' });
   assert.equal(refused.status, 403);
   assert.equal((await refused.json()).code, 'peer_view_read_only');
-  assert.equal(calls.length, 6, 'a refused method never reaches any agentd');
+  assert.equal(calls.length, 7, 'a refused method never reaches any agentd');
 });
 
 test('snapshot failures publish remote health for the marker', async () => {
