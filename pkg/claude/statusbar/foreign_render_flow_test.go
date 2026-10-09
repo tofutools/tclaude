@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // renderStatusline drives the real status-bar entry point end to end with
@@ -97,6 +98,9 @@ func sessionStatusbarFields(t *testing.T, sessionID string) (autoCompactWindow, 
 // 4.5" and a 200K context, while the parent was an Opus agent on a 1M
 // window.
 func TestStatusbar_ForeignRenderLeavesParentRowIntact(t *testing.T) {
+	// Exercise direct persistence, independent of the launching agent pane.
+	t.Setenv(session.HookBrokerEnvVar, "")
+	t.Setenv("TCLAUDE_IGNORE_HOOKS", "")
 	t.Setenv("HOME", t.TempDir())
 	// run() resolves git/PR context from the PROCESS cwd, not from the
 	// payload's workspace.current_dir — leave the repo so the render
@@ -152,6 +156,9 @@ func TestStatusbar_ForeignRenderLeavesParentRowIntact(t *testing.T) {
 // The same path must stay fully open for the agent's own renders: a
 // second render from the tracked conversation updates the row.
 func TestStatusbar_OwnRenderUpdatesRow(t *testing.T) {
+	// Exercise direct persistence, independent of the launching agent pane.
+	t.Setenv(session.HookBrokerEnvVar, "")
+	t.Setenv("TCLAUDE_IGNORE_HOOKS", "")
 	t.Setenv("HOME", t.TempDir())
 	// run() resolves git/PR context from the PROCESS cwd, not from the
 	// payload's workspace.current_dir — leave the repo so the render

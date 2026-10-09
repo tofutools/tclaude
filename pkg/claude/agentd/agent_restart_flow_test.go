@@ -13,6 +13,8 @@ import (
 )
 
 func TestDashboardAgentRestartReResolvesSandboxProfile(t *testing.T) {
+	// The simulated server has no external cgroup delegation.
+	t.Setenv(session.ResourceDelegationDirEnv, "")
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	f := newFlow(t)
 	f.HaveGroup("crew")

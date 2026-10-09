@@ -12,13 +12,14 @@ import (
 )
 
 // setupHarnessTestHome gives the test a throwaway HOME that both the Claude
-// read path and the Codex ConvStore (os.UserHomeDir) resolve to, with a
+// read path and the Codex ConvStore resolve to, with a
 // fresh SQLite store.
 func setupHarnessTestHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	db.ResetForTest()
 	t.Cleanup(db.ResetForTest)
 	return home

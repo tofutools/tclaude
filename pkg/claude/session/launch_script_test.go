@@ -172,6 +172,8 @@ func swapTmux(t *testing.T, fake clcommon.Tmux) {
 }
 
 func TestLaunchArgvIsConstantSizeThroughProductionPath(t *testing.T) {
+	// The recording tmux models a local server without external delegation.
+	t.Setenv(ResourceDelegationDirEnv, "")
 	t.Setenv("HOME", t.TempDir())
 	rec := &launchRecordingTmux{}
 	swapTmux(t, rec)
@@ -227,6 +229,8 @@ func TestLaunchArgvIsConstantSizeThroughProductionPath(t *testing.T) {
 }
 
 func TestOpenCodeCredentialReachesPaneOnlyThroughPrivateBootstrap(t *testing.T) {
+	// The recording tmux models a local server without external delegation.
+	t.Setenv(ResourceDelegationDirEnv, "")
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("TCLAUDE_OPENCODE_SERVER_URL", "http://127.0.0.1:43210")
 	t.Setenv("OPENCODE_SERVER_PASSWORD", "private-password")
@@ -319,6 +323,8 @@ func TestLaunchDetachedTmuxSessionIDReadsNewSessionOutput(t *testing.T) {
 }
 
 func TestLaunchPreflightRejectsOversizedArgvBeforeTmux(t *testing.T) {
+	// The recording tmux models a local server without external delegation.
+	t.Setenv(ResourceDelegationDirEnv, "")
 	t.Setenv("HOME", t.TempDir())
 	rec := &launchRecordingTmux{}
 	swapTmux(t, rec)
@@ -338,6 +344,8 @@ func TestLaunchPreflightRejectsOversizedArgvBeforeTmux(t *testing.T) {
 }
 
 func TestLaunchFailureRemovesItsScript(t *testing.T) {
+	// The recording tmux models a local server without external delegation.
+	t.Setenv(ResourceDelegationDirEnv, "")
 	t.Setenv("HOME", t.TempDir())
 	rec := &launchRecordingTmux{failNewSession: true}
 	swapTmux(t, rec)
@@ -354,6 +362,8 @@ func TestLaunchFailureRemovesItsScript(t *testing.T) {
 // zombies carrying a conv-id that never existed. Exercises the REAL runNew
 // path, not a helper.
 func TestRunNewRollsBackItsSessionRowWhenLaunchFails(t *testing.T) {
+	// The recording tmux models a local server without external delegation.
+	t.Setenv(ResourceDelegationDirEnv, "")
 	t.Setenv("HOME", t.TempDir())
 	rec := &launchRecordingTmux{failNewSession: true}
 	swapTmux(t, rec)
