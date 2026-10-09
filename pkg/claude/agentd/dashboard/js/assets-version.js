@@ -39,6 +39,9 @@ const RELOAD_CANCELLED_MS = 5000;
 // upgrade prompts again. The native confirm dialog suspends timers while it
 // is up, so a slow human decision cannot fire the un-latch early.
 export function checkAssetsVersion(version, reloadImpl, scheduleImpl) {
+  // A peer view (remote-node.js) polls another node's snapshot: its
+  // fingerprint names that node's build, never this page's.
+  if (globalThis.__tclaudeRemoteNode) return false;
   if (reloading) return true;
   if (!version) return false;
   if (baseline === undefined) {

@@ -1,7 +1,8 @@
 import { Fragment, h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { STATUS_POLL_MS, cardView, fmtAge, pollDelay, staggerOffset, visibleChips } from './skynet-model.js';
+import { STATUS_POLL_MS, cardView, fmtAge, nodeColor, nodeHref, peerViewSummary, pollDelay, remoteHealthView, remoteNodeID, staggerOffset, switchOrder, visibleChips } from './skynet-model.js';
+import { dashboardState } from './snapshot-store.js';
 
 const html = htm.bind(h);
 
@@ -15,6 +16,13 @@ function defaultNavigate(tab) {
   anchor?.click();
 }
 
+// defaultSwitchNode shows node id's per-node view ('' = this node). It is a
+// page navigation: remote-node.js routes the per-node API only from page load,
+// so one node's data can never be painted under another node's marker.
+function defaultSwitchNode(id) {
+  globalThis.location.assign(nodeHref(id));
+}
+
 const MapGlyph = () => html`<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="3" cy="3.5" r="2"/><circle cx="11" cy="3" r="2"/><circle cx="7" cy="11" r="2"/><path d="M4.8 4.3 5.9 9.3M9.4 4.3 7.9 9.3M5 3.4 9 3.1"/></svg>`;
 
 function presenceLabel(node) {
@@ -25,22 +33,31 @@ function presenceLabel(node) {
 // NodeChips is the tab-bar node row: this node, then trusted peers, then an
 // overflow chip. The map entry is the static nav[data-tab="map"] anchor right
 // after this host, so tab routing keeps one owner.
-export function NodeChips({ state, navigate = defaultNavigate }) {
+export function NodeChips({ state, navigate = defaultNavigate, remote = remoteNodeID(), switchNode = defaultSwitchNode }) {
   const current = state.view.value;
   const fleet = current.fleet;
   if (!fleet) return null;
   const { shown, overflow } = visibleChips(fleet.peers);
-  const openPeer = (peer) => { state.setFocused(peer.id); navigate('map'); };
+  // A peer view of a node past the chip budget swaps it into the last slot, so
+  // the node on screen always has its chip highlighted.
+  const remotePeer = remote && !shown.some((p) => p.id === remote) ? fleet.peers.find((p) => p.id === remote) : null;
+  if (remotePeer && shown.length) shown[shown.length - 1] = remotePeer;
+  // The shown node's chip is current while its per-node view is on screen.
+  const isCurrent = (id) => !current.mapActive && (remote ? remote === id : id === fleet.self.id);
+  const openNode = (id) => {
+    if (id === (remote || fleet.self.id)) navigate(state.lastLocalTab());
+    else switchNode(id === fleet.self.id ? '' : id);
+  };
   const self = fleet.self;
   return html`<span class="node-chips" role="group" aria-label="Nodes">
-    <button type="button" class=${`node-chip local${current.mapActive ? '' : ' active'}`} style=${`--nc:${self.color}`}
-      aria-current=${current.mapActive ? undefined : 'page'} aria-label=${`${self.name} (this node)`}
-      title=${`${self.name}: this node`} onClick=${() => navigate(state.lastLocalTab())}>
+    <button type="button" class=${`node-chip local${isCurrent(self.id) ? ' active' : ''}`} style=${`--nc:${self.color}`}
+      aria-current=${isCurrent(self.id) ? 'page' : undefined} aria-label=${`${self.name} (this node)`}
+      title=${`${self.name}: this node · Alt+1`} onClick=${() => openNode(self.id)}>
       <span class="node-chip-home" aria-hidden="true">⌂</span><span class="node-chip-name">${self.name}</span><span class="node-chip-dot"></span>
     </button>
-    ${shown.map((peer) => html`<button key=${peer.id} type="button" class=${`node-chip${peer.online ? '' : ' offline'}`} style=${`--nc:${peer.color}`}
-      aria-label=${`${peer.name}, ${presenceLabel(peer)}, ${peer.level} peer`}
-      title=${`${peer.name}: ${presenceLabel(peer)} · ${peer.level} peer · show on the map`} onClick=${() => openPeer(peer)}>
+    ${shown.map((peer, i) => html`<button key=${peer.id} type="button" class=${`node-chip${peer.online ? '' : ' offline'}${isCurrent(peer.id) ? ' active' : ''}`} style=${`--nc:${peer.color}`}
+      aria-current=${isCurrent(peer.id) ? 'page' : undefined} aria-label=${`${peer.name}, ${presenceLabel(peer)}, ${peer.level} peer`}
+      title=${`${peer.name}: ${presenceLabel(peer)} · ${peer.level} peer · open its dashboard${i < 8 ? ` · Alt+${i + 2}` : ''}`} onClick=${() => openNode(peer.id)}>
       <span class="node-chip-name">${peer.name}</span><span class="node-chip-dot"></span>
     </button>`)}
     ${overflow > 0 && html`<button type="button" class="node-chip more" aria-label=${`${overflow} more nodes on the map`} title=${`${overflow} more nodes: open the map`} onClick=${() => navigate('map')}>+${overflow}</button>`}
@@ -86,7 +103,7 @@ function CardRows({ card, node }) {
   </dl>`;
 }
 
-function NodeCard({ node, card, focused, onOpen, cardRef }) {
+function NodeCard({ node, card, focused, onOpen, cardRef, shown }) {
   const kind = node.local ? 'this node' : node.level === 'unrestricted' ? '⚠ unrestricted peer' : 'restricted peer';
   const presence = card.presence === 'online' ? (node.local ? 'online' : 'online') : card.presence === 'offline' ? 'offline' : card.presence === 'error' ? 'error' : '…';
   return html`<article ref=${cardRef} data-node-id=${node.id} class=${`skynet-card${node.local ? ' local' : ''}${card.stale || card.presence === 'offline' ? ' stale' : ''}${focused ? ' focused' : ''}`}
@@ -95,7 +112,7 @@ function NodeCard({ node, card, focused, onOpen, cardRef }) {
       <span class=${`skynet-card-kind${node.level === 'unrestricted' ? ' unrestricted' : ''}`}>${kind}</span>
       <span class=${`skynet-card-presence ${card.presence}`}><i aria-hidden="true"></i>${presence}${card.stale && card.ageMs != null ? html` <span class="muted">· data ${fmtAge(card.ageMs)} old</span>` : ''}</span></div>
     <${CardRows} card=${card} node=${node} />
-    ${node.local && html`<div class="skynet-card-foot"><button type="button" class="primary" onClick=${onOpen}>Open dashboard</button></div>`}
+    ${onOpen && html`<div class="skynet-card-foot"><button type="button" class=${shown ? 'primary' : ''} onClick=${onOpen}>${shown ? 'Back to its dashboard' : 'Open dashboard'}</button></div>`}
   </article>`;
 }
 
@@ -119,7 +136,7 @@ export function measureEdges(mapEl) {
   });
 }
 
-export function SkynetMap({ state, actions, navigate = defaultNavigate, timers = globalThis, now = () => Date.now() }) {
+export function SkynetMap({ state, actions, navigate = defaultNavigate, timers = globalThis, now = () => Date.now(), remote = remoteNodeID(), switchNode = defaultSwitchNode }) {
   const current = state.view.value;
   const fleet = current.fleet;
   const mapRef = useRef(null);
@@ -178,15 +195,104 @@ export function SkynetMap({ state, actions, navigate = defaultNavigate, timers =
   const t = now();
   const peerById = new Map(fleet.peers.map((p) => [p.id, p]));
   const card = (node) => cardView(node, current.summaries[node.id], t);
+  // Each card opens its node's per-node view; the node already shown returns
+  // to the tab the operator left for the map.
+  const open = (node) => () => {
+    if (node.id === (remote || fleet.self.id)) navigate(state.lastLocalTab());
+    else switchNode(node.local ? '' : node.id);
+  };
   return html`<div class="skynet-map" ref=${mapRef}>
     <svg class="skynet-edges" aria-hidden="true">
       ${edges.map((e) => { const p = peerById.get(e.id); const live = p && card(p).presence === 'online'; return html`<path key=${e.id} d=${e.d} class=${`skynet-edge${live ? ' live' : ' stale'}`} />`; })}
     </svg>
     ${edges.map((e) => { const p = peerById.get(e.id); return p && html`<span key=${`l-${e.id}`} class="skynet-edge-label" style=${`left:${e.mid.x}px;top:${e.mid.y}px`}>${p.level === 'unrestricted' ? '⚠ unrestricted' : 'restricted'} link</span>`; })}
-    <div class="skynet-map-local"><${NodeCard} node=${fleet.self} card=${card(fleet.self)} focused=${current.focused === fleet.self.id} onOpen=${() => navigate(state.lastLocalTab())} /></div>
-    <div class=${`skynet-map-peers${fleet.peers.length > 4 ? ' wide' : ''}`}>${fleet.peers.map((peer) => html`<${NodeCard} key=${peer.id} node=${peer} card=${card(peer)} focused=${current.focused === peer.id} />`)}</div>
+    <div class="skynet-map-local"><${NodeCard} node=${fleet.self} card=${card(fleet.self)} focused=${current.focused === fleet.self.id} shown=${!remote} onOpen=${open(fleet.self)} /></div>
+    <div class=${`skynet-map-peers${fleet.peers.length > 4 ? ' wide' : ''}`}>${fleet.peers.map((peer) => html`<${NodeCard} key=${peer.id} node=${peer} card=${card(peer)} focused=${current.focused === peer.id} shown=${remote === peer.id} onOpen=${open(peer)} />`)}</div>
     <div class="skynet-legend" aria-hidden="true"><span><i class="live"></i>linked, reachable</span><span><i class="stale"></i>unreachable or stale</span><span>Counts show only what each node shares with you.</span></div>
   </div>`;
+}
+
+// switchKeyTarget reports whether an Alt+digit press may switch nodes: never
+// while typing, and never while a web terminal has focus (the shell owns the
+// keyboard there, Alt+digit included).
+export function switchKeyAllowed(event) {
+  if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.repeat) return false;
+  if (!/^Digit[1-9]$/.test(event.code || '')) return false;
+  const t = event.target;
+  if (t?.closest?.('.xterm, .terminal-view, [data-terminal], input, textarea, select, [contenteditable=""], [contenteditable="true"]')) return false;
+  return true;
+}
+
+// NodeSwitchKeys binds Alt+1 (this node) and Alt+2..9 (peers in chip order).
+function NodeSwitchKeys({ state, navigate = defaultNavigate, remote = remoteNodeID(), switchNode = defaultSwitchNode }) {
+  useEffect(() => {
+    const onKey = (event) => {
+      if (!switchKeyAllowed(event)) return;
+      const fleet = state.fleet.value;
+      const node = switchOrder(fleet)[Number(event.code.slice(5)) - 1];
+      if (!node) return;
+      event.preventDefault();
+      if (node.id === (remote || fleet.self.id)) { if (state.view.value.mapActive) navigate(state.lastLocalTab()); return; }
+      switchNode(node.local ? '' : node.id);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+  return null;
+}
+
+// RemoteMarker marks a peer's per-node view without moving any component: the
+// node's name replaces the dashboard title (CSS hides "tclaude"), a thin line
+// in the node's colour runs along the top edge, and a "peer view" pill lists
+// what the peer shares and whether the data is live.
+export function RemoteMarker({ state, remote = remoteNodeID(), snapshot = dashboardState.snapshot, now = () => Date.now(), switchNode = defaultSwitchNode }) {
+  const [health, setHealth] = useState(globalThis.__tclaudeRemoteNode?.health ? { ...globalThis.__tclaudeRemoteNode.health } : null);
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const fleet = state.view.value.fleet;
+  const peer = fleet?.peers.find((p) => p.id === remote) || null;
+  const color = peer?.color || nodeColor(remote);
+  useEffect(() => {
+    if (!remote) return undefined;
+    const win = document.defaultView || globalThis;
+    const onHealth = (event) => setHealth(event.detail);
+    win.addEventListener('tclaude:remote-health', onHealth);
+    // A poll that settled between the first render and this effect.
+    if (globalThis.__tclaudeRemoteNode?.health) setHealth({ ...globalThis.__tclaudeRemoteNode.health });
+    return () => win.removeEventListener('tclaude:remote-health', onHealth);
+  }, [remote]);
+  useEffect(() => {
+    if (!remote) return;
+    document.documentElement.style.setProperty('--remote-node-color', color);
+  }, [remote, color]);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (event) => { if (!rootRef.current?.contains(event.target)) setOpen(false); };
+    const onKey = (event) => { if (event.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+  if (!remote) return null;
+  const name = peer?.name || remote.slice(0, 13);
+  const hv = remoteHealthView(health, now());
+  const pv = peerViewSummary(snapshot.value?.peer_view);
+  const level = peer?.level || '';
+  return html`<span class="remote-node-marker" ref=${rootRef} style=${`--nc:${color}`}>
+    <span class="remote-node-title" title=${`Peer view of ${name} (${remote})`}>${name}</span>
+    <button type="button" class=${`remote-node-pill ${hv.state}`} aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
+      onClick=${() => setOpen(!open)} title="What this peer shares with you">
+      peer view${hv.label ? html` <span class="remote-node-health">· ${hv.label}</span>` : ''}
+    </button>
+    ${open && html`<div class="remote-node-pop" role="dialog" aria-label=${`Peer view of ${name}`}>
+      <div class="rnp-head">Peer view of <b>${name}</b>${level ? html` · ${level === 'unrestricted' ? '⚠ unrestricted' : 'restricted'} peer` : ''}</div>
+      <div class="rnp-row">${hv.state === 'live' ? 'Live: the peer answers through this node.' : `The peer is ${hv.label}. The data on screen is what it last shared.`}</div>
+      ${pv && pv.included.length > 0 && html`<div class="rnp-row"><span class="rnp-k">Shared</span> ${pv.included.join(', ')}</div>`}
+      ${pv && pv.omitted.length > 0 && html`<div class="rnp-row"><span class="rnp-k">Not shared</span> ${pv.omitted.map((o, i) => html`${i ? ', ' : ''}<span title=${o.requires ? `needs ${o.requires}` : ''}>${o.feature}</span>`)}</div>`}
+      ${!pv && html`<div class="rnp-row muted">What the peer shares shows once it answers.</div>`}
+      <div class="rnp-foot"><button type="button" onClick=${() => switchNode('')}>⌂ Back to ${fleet?.self.name || 'this node'}</button></div>
+    </div>`}
+  </span>`;
 }
 
 // StatusPoller keeps the chip row's node list fresh at a relaxed cadence and
@@ -207,9 +313,10 @@ function StatusPoller({ actions, timers = globalThis }) {
   return null;
 }
 
-export function mountSkynetIsland({ chipsHost, barHost, mapHost, state, actions, registerCleanup, navigate, timers }) {
-  render(html`<${Fragment}><${StatusPoller} actions=${actions} timers=${timers} /><${NodeChips} state=${state} navigate=${navigate} /></${Fragment}>`, chipsHost);
+export function mountSkynetIsland({ chipsHost, barHost, mapHost, remoteHost, state, actions, registerCleanup, navigate, timers }) {
+  render(html`<${Fragment}><${StatusPoller} actions=${actions} timers=${timers} /><${NodeSwitchKeys} state=${state} navigate=${navigate} /><${NodeChips} state=${state} navigate=${navigate} /></${Fragment}>`, chipsHost);
+  if (remoteHost) render(html`<${RemoteMarker} state=${state} />`, remoteHost);
   render(html`<${TopLevelBar} state=${state} />`, barHost);
   render(html`<${SkynetMap} state=${state} actions=${actions} navigate=${navigate} timers=${timers} />`, mapHost);
-  registerCleanup(() => { render(null, chipsHost); render(null, barHost); render(null, mapHost); });
+  registerCleanup(() => { render(null, chipsHost); render(null, barHost); render(null, mapHost); if (remoteHost) render(null, remoteHost); });
 }
