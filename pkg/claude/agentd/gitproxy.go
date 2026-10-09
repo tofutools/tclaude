@@ -218,7 +218,8 @@ func proxyVisibilityForRequest(r *http.Request) proxyVisibility {
 		return false
 	}
 	if !vis.git {
-		vis.git = scoped(PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge)
+		vis.git = scoped(PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge,
+			PermGitLabRead, PermGitLabWrite, PermGitLabMerge)
 	}
 	if !vis.linear {
 		vis.linear = scoped(PermLinearRead, PermLinearWrite)

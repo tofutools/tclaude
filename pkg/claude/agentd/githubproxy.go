@@ -310,14 +310,22 @@ func newGHProxySession(ctx context.Context, convID, requestedRemote string, remo
 // bounded by the same-uid reality the whole proxy sits inside
 // (docs/proxies.md), and deliberately not papered over here.
 func (g *ghProxySession) artifactDest(runID string) (string, *proxyFault) {
-	if g.repoRoot == "" {
+	return prepareArtifactDest(g.repoRoot, "run-"+runID)
+}
+
+// prepareArtifactDest is artifactDest with the work tree and the directory
+// name as parameters, shared with the GitLab proxy, whose downloads are per
+// JOB rather than per run and land in `job-<id>/`. Everything said above about
+// computed destinations holds for both.
+func prepareArtifactDest(repoRoot, dirName string) (string, *proxyFault) {
+	if repoRoot == "" {
 		return "", faultf(http.StatusConflict, "repo_unresolved",
 			"the daemon could not resolve your work tree, so there is nowhere to put a download")
 	}
-	root, err := os.OpenRoot(g.repoRoot)
+	root, err := os.OpenRoot(repoRoot)
 	if err != nil {
 		return "", faultf(http.StatusConflict, "repo_unresolved",
-			"your work tree %s is not reachable: %v", g.repoRoot, err)
+			"your work tree %s is not reachable: %v", repoRoot, err)
 	}
 	defer func() { _ = root.Close() }()
 
@@ -335,7 +343,7 @@ func (g *ghProxySession) artifactDest(runID string) (string, *proxyFault) {
 			"could not write %s: %v", ignore, err)
 	}
 
-	rel := path.Join(ghArtifactDirName, "run-"+runID)
+	rel := path.Join(ghArtifactDirName, dirName)
 	// Fresh every time. Left in place, an earlier download's files would be
 	// listed back as part of this one — and a caller reading that listing has
 	// no way to tell which run a file came from.
@@ -349,14 +357,14 @@ func (g *ghProxySession) artifactDest(runID string) (string, *proxyFault) {
 	// DIFFERENT runs are the case that does accumulate, and the one that has
 	// to be pruned: every run id gets its own directory, so without this a
 	// caller could fill a disk one individually-bounded download at a time.
-	if fault := pruneArtifactRuns(root, runID); fault != nil {
+	if fault := pruneArtifactRuns(root, dirName); fault != nil {
 		return "", fault
 	}
 	if err := root.Mkdir(rel, 0o755); err != nil {
 		return "", faultf(http.StatusConflict, "artifact_dir",
 			"could not create %s: %v", rel, err)
 	}
-	return filepath.Join(g.repoRoot, filepath.FromSlash(rel)), nil
+	return filepath.Join(repoRoot, filepath.FromSlash(rel)), nil
 }
 
 // pruneArtifactRuns removes the least recently touched run directories until
@@ -384,7 +392,7 @@ func (g *ghProxySession) artifactDest(runID string) (string, *proxyFault) {
 // and the download is refused before reaching here. What is left is the
 // directory changing under us mid-request, where refusing is still the right
 // answer and costs the caller only its own download.
-func pruneArtifactRuns(root *os.Root, keepRunID string) *proxyFault {
+func pruneArtifactRuns(root *os.Root, keep string) *proxyFault {
 	entries, err := fs.ReadDir(root.FS(), ghArtifactDirName)
 	if err != nil {
 		return faultf(http.StatusConflict, "artifact_dir",
@@ -397,7 +405,6 @@ func pruneArtifactRuns(root *os.Root, keepRunID string) *proxyFault {
 		mod  time.Time
 	}
 	var runs []runDir
-	keep := "run-" + keepRunID
 	for _, e := range entries {
 		if !e.IsDir() || e.Name() == keep || !isArtifactRunDir(e.Name()) {
 			continue
@@ -419,10 +426,17 @@ func pruneArtifactRuns(root *os.Root, keepRunID string) *proxyFault {
 	return nil
 }
 
-// isArtifactRunDir matches only the names artifactDest generates. Anything
-// else in the artifacts directory belongs to whoever put it there.
+// isArtifactRunDir matches only the names the proxies generate: `run-<id>`
+// for a GitHub Actions run, `job-<id>` for a GitLab CI job. Anything else in
+// the artifacts directory belongs to whoever put it there. The two share one
+// cap, so a GitLab download prunes a stale GitHub one and the other way round,
+// which is what "at most three directories kept" has to mean for the store to
+// stay bounded.
 func isArtifactRunDir(name string) bool {
 	digits, ok := strings.CutPrefix(name, "run-")
+	if !ok {
+		digits, ok = strings.CutPrefix(name, "job-")
+	}
 	if !ok || digits == "" {
 		return false
 	}

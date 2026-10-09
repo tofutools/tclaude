@@ -1552,6 +1552,26 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/github/issue/list", handleGHProxyIssueList)
 	mux.HandleFunc("POST /v1/github/issue/view", handleGHProxyIssueView)
 	mux.HandleFunc("POST /v1/github/issue/comment", handleGHProxyIssueComment)
+	// GitLab proxy: the same contract against a GitLab instance the operator
+	// configured (agent.git_proxy.gitlab_hosts, or gitlab.com). Merge
+	// requests, issues, pipelines and jobs; every read is a POST for the same
+	// audit reason as above.
+	mux.HandleFunc("POST /v1/gitlab/mr/create", handleGLProxyMRCreate)
+	mux.HandleFunc("POST /v1/gitlab/mr/list", handleGLProxyMRList)
+	mux.HandleFunc("POST /v1/gitlab/mr/view", handleGLProxyMRView)
+	mux.HandleFunc("POST /v1/gitlab/mr/checks", handleGLProxyMRChecks)
+	mux.HandleFunc("POST /v1/gitlab/mr/comments", handleGLProxyMRComments)
+	mux.HandleFunc("POST /v1/gitlab/mr/comment", handleGLProxyMRComment)
+	mux.HandleFunc("POST /v1/gitlab/mr/edit", handleGLProxyMREdit)
+	mux.HandleFunc("POST /v1/gitlab/mr/ready", handleGLProxyMRReady)
+	mux.HandleFunc("POST /v1/gitlab/mr/merge", handleGLProxyMRMerge)
+	mux.HandleFunc("POST /v1/gitlab/issue/list", handleGLProxyIssueList)
+	mux.HandleFunc("POST /v1/gitlab/issue/view", handleGLProxyIssueView)
+	mux.HandleFunc("POST /v1/gitlab/issue/comment", handleGLProxyIssueComment)
+	mux.HandleFunc("POST /v1/gitlab/pipeline/list", handleGLProxyPipelineList)
+	mux.HandleFunc("POST /v1/gitlab/job/log-failed", handleGLProxyJobLogFailed)
+	mux.HandleFunc("POST /v1/gitlab/job/artifacts", handleGLProxyJobArtifacts)
+	mux.HandleFunc("POST /v1/gitlab/job/download", handleGLProxyJobDownload)
 	mux.HandleFunc("POST /v1/http/request", handleHTTPProxyRequest)
 	mux.HandleFunc("/v1/http/proxy/{name}/{path...}", handleHTTPProxyGateway)
 	mux.HandleFunc("GET /v1/http/environment", handleHTTPProxyEnvironment)

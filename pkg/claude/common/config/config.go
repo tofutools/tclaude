@@ -3193,6 +3193,44 @@ type GitProxyConfig struct {
 	// environment or this file — never through argv, which is world-readable
 	// for the process lifetime via /proc/<pid>/cmdline.
 	GitHubTokenFile string `json:"github_token_file,omitempty"`
+
+	// GitLabHosts maps a remote HOST (as it appears in the allow-list and in
+	// the agent's remote URL, without a port) to the base URL of the GitLab
+	// instance that serves it:
+	//
+	//   "gitlab_hosts": {"gitlab.example.com": "https://gitlab.example.com:6080"}
+	//
+	// The map does two jobs. It is how the daemon RECOGNISES a remote as a
+	// GitLab project — a self-hosted instance cannot be told apart from any
+	// other git server by its name — and it is where the web/API base lives,
+	// which may differ from the SSH host in scheme and port. gitlab.com needs
+	// no entry. The base must be https; the token is only ever sent to it.
+	GitLabHosts map[string]string `json:"gitlab_hosts,omitempty"`
+
+	// GitLabTokenFile names a file whose contents are the GitLab personal or
+	// project access token the GitLab proxy sends as a PRIVATE-TOKEN header.
+	// There is no CLI fallback: with no file configured the GitLab proxy
+	// refuses every call and says so. One token for every configured host.
+	GitLabTokenFile string `json:"gitlab_token_file,omitempty"`
+}
+
+// defaultGitLabHosts are the GitLab instances recognised without a
+// gitlab_hosts entry.
+var defaultGitLabHosts = map[string]string{"gitlab.com": "https://gitlab.com"}
+
+// GitLabBase returns the web/API base URL for a remote host that is a known
+// GitLab instance, or "" when the host is not one. The host is matched
+// case-insensitively and without a port, which is how the allow-list spells
+// it too.
+func (p GitProxyConfig) GitLabBase(host string) string {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return ""
+	}
+	if base, ok := p.GitLabHosts[host]; ok {
+		return base
+	}
+	return defaultGitLabHosts[host]
 }
 
 // DefaultGitProxyProtectedRefs are the branches the Git proxy refuses to push
@@ -3212,6 +3250,8 @@ func (c *Config) ResolvedGitProxy() GitProxyConfig {
 		out.AllowForcePush = src.AllowForcePush
 		out.SSHKey = strings.TrimSpace(src.SSHKey)
 		out.GitHubTokenFile = strings.TrimSpace(src.GitHubTokenFile)
+		out.GitLabTokenFile = strings.TrimSpace(src.GitLabTokenFile)
+		out.GitLabHosts = normalizeGitLabHosts(src.GitLabHosts)
 		if src.ProtectedRefs != nil {
 			// An explicit list — including an explicit empty one, which
 			// deliberately turns the protection off — wins over the default.
@@ -3407,6 +3447,29 @@ func normalizeHarnessList(in HarnessList) HarnessList {
 		}
 		seen[name] = true
 		out = append(out, name)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// normalizeGitLabHosts lower-cases the host keys and trims the base URLs,
+// dropping entries that are empty or whose base is not https: the daemon
+// sends a credential to the base, and a base that is not https would send it
+// in clear text, so such an entry is ignored rather than honoured.
+func normalizeGitLabHosts(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for rawHost, rawBase := range in {
+		host := strings.ToLower(strings.TrimSpace(rawHost))
+		base := strings.TrimRight(strings.TrimSpace(rawBase), "/")
+		if host == "" || !strings.HasPrefix(strings.ToLower(base), "https://") {
+			continue
+		}
+		out[host] = base
 	}
 	if len(out) == 0 {
 		return nil

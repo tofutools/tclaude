@@ -550,6 +550,12 @@ const (
 	PermGitHubRead  = "proxy.github.read"
 	PermGitHubWrite = "proxy.github.write"
 	PermGitHubMerge = "proxy.github.merge"
+	// The GitLab trio mirrors the GitHub one verb for verb: read, write,
+	// merge, each remote-scoped, none default-granted, with merge split off
+	// from write for the same reason.
+	PermGitLabRead  = "proxy.gitlab.read"
+	PermGitLabWrite = "proxy.gitlab.write"
+	PermGitLabMerge = "proxy.gitlab.merge"
 	PermHTTP        = "proxy.http"
 	PermLinearRead  = "proxy.linear.read"
 	PermLinearWrite = "proxy.linear.write"
