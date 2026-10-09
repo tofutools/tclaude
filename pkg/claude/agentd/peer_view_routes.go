@@ -46,6 +46,8 @@ var peerViewLocalRoutes = []string{
 	"/api/open-window/",
 	"/api/pending/delete/",
 	"/api/pending/focus/",
+	"GET /api/peer/{node}/{tail...}",
+	"POST /api/peer/{node}/{tail...}",
 	"/api/perf",
 	"/api/perf/reset",
 	"/api/permissions",
