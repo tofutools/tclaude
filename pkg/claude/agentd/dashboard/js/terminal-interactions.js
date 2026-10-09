@@ -599,6 +599,9 @@ export function attachTerminalInteractions({
   }
 
   async function downloadHostFile(path) {
+    // remote-node.js routes fetch only; this anchor download would read this
+    // node's agentd under a peer's marker.
+    if (globalThis.__tclaudeRemoteNode?.id) { flash('download not available in a peer view yet'); return; }
     if (downloadFile) {
       downloadFile(path);
       return;

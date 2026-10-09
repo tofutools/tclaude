@@ -87,23 +87,82 @@ test('actions send If-None-Match and keep the body on 304; a missing status rout
   assert.equal(state.fleet.value.peers.length, 2);
 });
 
-test('chip row renders only with trusted peers and routes through the nav', async (t) => {
+test('chip row renders only with trusted peers; peer chips switch the whole UI to that node', async (t) => {
   const { harness, stateMod, island } = await load(t);
   const activeTab = harness.signals.signal('access');
   const state = stateMod.createSkynetState({ activeTab });
-  const nav = [];
-  const mounted = await harness.mount(harness.html`<${island.NodeChips} state=${state} navigate=${(tab) => nav.push(tab)} />`);
+  const nav = []; const switched = [];
+  const mounted = await harness.mount(harness.html`<${island.NodeChips} state=${state} navigate=${(tab) => nav.push(tab)} remote="" switchNode=${(id) => switched.push(id)} />`);
   assert.equal(mounted.container.textContent, '', 'no fleet: nothing rendered');
   await harness.act(() => { state.setStatus(status([])); });
   const local = getByRole(mounted.container, 'button', { name: 'desk (this node)' });
   assert.equal(local.getAttribute('aria-current'), 'page');
   await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: 'forge, online, restricted peer' }), 'click'));
-  assert.deepEqual(nav, ['map']); assert.equal(state.focused.value, 'inst_forge');
+  assert.deepEqual(switched, ['inst_forge']);
   await harness.act(() => { activeTab.value = 'map'; });
   assert.equal(local.getAttribute('aria-current'), null);
   await harness.act(() => harness.fireEvent(local, 'click'));
-  assert.deepEqual(nav, ['map', 'access'], 'the ⌂ chip returns to the tab left for the map');
+  assert.deepEqual(nav, ['access'], 'the ⌂ chip returns to the tab left for the map');
   await mounted.unmount(); state.dispose();
+});
+
+test('on a peer view the peer chip is current and ⌂ switches back to this node', async (t) => {
+  const { harness, stateMod, island } = await load(t);
+  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('groups') });
+  state.setStatus(status([]));
+  const nav = []; const switched = [];
+  const mounted = await harness.mount(harness.html`<${island.NodeChips} state=${state} navigate=${(tab) => nav.push(tab)} remote="inst_forge" switchNode=${(id) => switched.push(id)} />`);
+  const forge = getByRole(mounted.container, 'button', { name: 'forge, online, restricted peer' });
+  assert.equal(forge.getAttribute('aria-current'), 'page');
+  assert.equal(getByRole(mounted.container, 'button', { name: 'desk (this node)' }).getAttribute('aria-current'), null);
+  await harness.act(() => harness.fireEvent(forge, 'click'));
+  assert.deepEqual(nav, ['groups'], 're-picking the shown node stays on it');
+  await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: 'desk (this node)' }), 'click'));
+  assert.deepEqual(switched, ['']);
+  await mounted.unmount(); state.dispose();
+});
+
+test('node switching: URLs keep the tab and theme; Alt+digit never fires in a terminal or a field', async (t) => {
+  const { harness, model, island } = await load(t);
+  assert.equal(model.nodeHref('inst_forge', { pathname: '/costs', search: '?wizard=1' }), '/costs?wizard=1&node=inst_forge');
+  assert.equal(model.nodeHref('', { pathname: '/costs', search: '?node=inst_forge&wizard=1' }), '/costs?wizard=1');
+  const fleet = model.normalizeFleet(status([]));
+  assert.deepEqual(model.switchOrder(fleet).map((n) => n.name), ['desk', 'forge', 'lab']);
+  const doc = harness.document;
+  const term = doc.createElement('div'); term.className = 'xterm'; const inner = doc.createElement('textarea'); term.appendChild(inner); doc.body.appendChild(term);
+  const plain = doc.createElement('div'); doc.body.appendChild(plain);
+  const ev = (target, extra = {}) => ({ altKey: true, code: 'Digit2', target, ...extra });
+  assert.equal(island.switchKeyAllowed(ev(plain)), true);
+  assert.equal(island.switchKeyAllowed(ev(inner)), false, 'a focused web terminal owns Alt+digit');
+  assert.equal(island.switchKeyAllowed(ev(plain, { ctrlKey: true })), false);
+  assert.equal(island.switchKeyAllowed(ev(plain, { code: 'Digit0' })), false);
+  assert.equal(island.switchKeyAllowed(ev(plain, { altKey: false })), false);
+});
+
+test('remote marker shows the node, what it shares, and stale data honestly', async (t) => {
+  const { harness, model, stateMod, island } = await load(t);
+  assert.deepEqual(model.remoteHealthView({ ok: true }), { state: 'live', label: '' });
+  assert.equal(model.remoteHealthView({ ok: false, lastOK: 0, failure: { code: 'peer_unreachable', reason: 'peer_offline' } }, 840000).label, 'offline · data 14 min old');
+  assert.equal(model.remoteHealthView({ ok: false, lastOK: null, failure: { code: 'peer_busy' } }).state, 'busy');
+  assert.deepEqual(model.peerViewSummary({ included: ['groups'], omitted: [{ feature: 'costs', requires: 'costs.read' }] }).omitted, [{ feature: 'costs', requires: 'costs.read' }]);
+  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('groups') });
+  state.setStatus(status([]));
+  const snapshot = harness.signals.signal({ peer_view: { peer: 'desk', included: ['groups'], omitted: [{ feature: 'costs', requires: 'costs.read' }] } });
+  const switched = [];
+  const mounted = await harness.mount(harness.html`<${island.RemoteMarker} state=${state} remote="inst_forge" snapshot=${snapshot} switchNode=${(id) => switched.push(id)} />`);
+  assert.match(mounted.container.textContent, /forge/);
+  await harness.act(() => harness.window.dispatchEvent(new harness.window.CustomEvent('tclaude:remote-health', { detail: { ok: false, lastOK: Date.now() - 120000, failure: { code: 'peer_unreachable', reason: 'peer_offline' } } })));
+  const pill = getByRole(mounted.container, 'button', { name: /peer view/ });
+  assert.match(pill.textContent, /offline · data 2 min old/);
+  await harness.act(() => harness.fireEvent(pill, 'click'));
+  const pop = mounted.container.querySelector('[role="dialog"]');
+  assert.match(pop.textContent, /Shared groups/); assert.match(pop.textContent, /Not shared costs/);
+  await harness.act(() => harness.fireEvent(getByRole(pop, 'button', { name: /Back to desk/ }), 'click'));
+  assert.deepEqual(switched, ['']);
+  await mounted.unmount();
+  const none = await harness.mount(harness.html`<${island.RemoteMarker} state=${state} remote="" />`);
+  assert.equal(none.container.innerHTML, '', 'this node: no marker');
+  await none.unmount(); state.dispose();
 });
 
 test('map polls only while active, staggered, and stops on leave', async (t) => {

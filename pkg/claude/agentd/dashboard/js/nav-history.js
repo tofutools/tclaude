@@ -235,11 +235,14 @@ function activate(loc) {
 // across a theme toggle desync the URL from the live theme. Everything else —
 // including consumed-on-load legacy deep-link params (?tab=/?access_request=) —
 // is intentionally dropped so the address bar settles to a clean canonical
-// location. Returns "" or "?slop=1"/"?wizard=1".
+// location. Returns "" or "?slop=1"/"?wizard=1", plus node=<id> on a peer view.
 function preservedQuery() {
   const out = new URLSearchParams();
   if (document.body.classList.contains('slop')) out.set('slop', '1');
   else if (document.body.classList.contains('wizard')) out.set('wizard', '1');
+  // A peer's per-node view (remote-node.js) is a property of the page, not of
+  // a history entry: every location on it stays on that node.
+  if (globalThis.__tclaudeRemoteNode?.id) out.set('node', globalThis.__tclaudeRemoteNode.id);
   const s = out.toString();
   return s ? '?' + s : '';
 }

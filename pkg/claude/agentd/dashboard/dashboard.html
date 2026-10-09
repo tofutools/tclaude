@@ -186,6 +186,7 @@
       <span class="theme-mode-badge" aria-hidden="true"></span>
     </button>
     <span class="dashboard-title">tclaude</span>
+    <span id="remote-node-root" class="remote-node-host"></span>
   </h1>
   <!-- Global activity pulse — a deduped row of status "bots" aggregated
        across every group + the ungrouped bucket by the Preact shell's
@@ -759,6 +760,9 @@
      window.fetch. When agentd says the HttpOnly session is no longer valid,
      the top-level page reloads into the server-rendered sign-in screen. -->
 <script src="/static/js/auth-session.js"></script>
+<!-- A ?node=<instance_id> page is a peer's per-node view: route the per-node
+     API through the local peer proxy before any feature captures fetch. -->
+<script src="/static/js/remote-node.js"></script>
 <script src="/static/third_party/xterm/addon-fit.min.js"></script>
 <script src="/static/third_party/xterm/addon-web-links.min.js"></script>
 <!-- The import map lives in <head>, ahead of the modulepreload block, because a

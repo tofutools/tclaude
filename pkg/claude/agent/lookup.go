@@ -917,6 +917,7 @@ func lookupID(agentID, convID string) string {
 // --- ls (peers in my groups) ---
 
 type lsParams struct {
+	Node    string `long:"node" help:"Read a live peer view by pinned instance ID or local label (operator only)"`
 	NoCache bool   `long:"no-cache" help:"Force a fresh local status gather (debugging escape hatch; rate limited)"`
 	Group   string `long:"group" optional:"true" help:"Only show agents in this group (name or numeric ID). Groups you cannot reach are never matchable, even when named explicitly."`
 	State   string `long:"state" optional:"true" help:"Filter: online | offline"`
@@ -991,6 +992,13 @@ func runLs(p *lsParams, stdout, stderr io.Writer) int {
 }
 
 func runLsDaemon(p *lsParams, stdout, stderr io.Writer) int {
+	if p.Node != "" {
+		if p.NoCache || p.Remote || p.State != "" {
+			fmt.Fprintln(stderr, "Error: --node cannot be combined with --no-cache, --remote or --state")
+			return rcInvalidArg
+		}
+		return runPeerListing(p.Node, "agents", p.Group, p.JSON, stdout, stderr)
+	}
 	path := "/v1/peers"
 	if g := strings.TrimSpace(p.Group); g != "" {
 		path += "?group=" + url.QueryEscape(g)
