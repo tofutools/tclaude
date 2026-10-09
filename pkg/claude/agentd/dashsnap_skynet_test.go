@@ -40,9 +40,24 @@ const skynetFederationStubJS = `(function(){
       });
       return realFetch(local, init);
     }
+    if (path === '/api/snapshot' && window.__skynetGroupLinks) return realFetch(input, init).then(function(r){
+      return r.clone().json().then(function(snap){
+        var g = (snap.groups || [])[0];
+        if (g) g.federation_links = window.__skynetGroupLinks;
+        return new Response(JSON.stringify(snap), { status: r.status, headers: r.headers });
+      }, function(){ return r; });
+    });
     return realFetch(input, init);
   };
 })();`
+
+// skynetGroupLinksJS decorates the first group's snapshot with federation
+// links, as dashboard_group_federation_links.go reports them.
+const skynetGroupLinksJS = `window.__skynetGroupLinks = [
+  { peer: 'inst_hn3cxq7a', label: 'forge', level: 'restricted', kind: 'grant', direction: 'in', slugs: ['groups.roster.read', 'message.direct'], online: true },
+  { peer: 'inst_2p6ym4ke', label: 'lab', level: 'unrestricted', kind: 'grant', direction: 'in', pool: 'rigs', slugs: ['routes.consume'], online: false, last_seen: '2026-10-09T20:37:00Z' },
+  { peer: 'inst_2p6ym4ke', label: 'lab', level: 'unrestricted', kind: 'route', direction: 'out', remote: 'reviewers', online: false, last_seen: '2026-10-09T20:37:00Z' }
+];`
 
 // skynetRemoteViewJS opens the page as the peer view of forge (?node=) before
 // remote-node.js reads the URL.
@@ -119,6 +134,22 @@ func skynetStates() []dashsnap.State {
   if (location.pathname !== '/fleet') throw new Error('skynet: merged view not routed to /fleet: ' + location.pathname);
 })();`,
 			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-group-links",
+			Title:   "Linked-group marker",
+			Caption: "A group linked to federation peers carries a 🌐 marker after its header chips (green dot: a linked node is live). The popover lists each link — direct or pool grant, or route mirror — with what it allows and a jump to that node's dashboard.",
+			InitJS:  skynetGroupLinksJS + skynetFederationStubJS,
+			JS: showGroups + `return (async function(){
+  for (var i = 0; i < 50 && !document.querySelector('.group-federation-chip'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  var chip = document.querySelector('.group-federation-chip');
+  if (!chip) throw new Error('skynet: no federation marker');
+  if (document.querySelectorAll('.group-federation-chip').length !== 1) throw new Error('skynet: marker on an unlinked group');
+  chip.click();
+  for (var j = 0; j < 20 && !document.querySelector('.group-federation-pop'); j++) await new Promise(function(r){ setTimeout(r, 50); });
+  if (!document.querySelector('.group-federation-pop')) throw new Error('skynet: popover did not open');
+})();`,
+			SettleMS: 300,
 		},
 		{
 			Key:     "skynet-remote-view",

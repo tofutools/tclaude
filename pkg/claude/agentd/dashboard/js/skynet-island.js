@@ -23,6 +23,12 @@ function defaultSwitchNode(id) {
   globalThis.location.assign(nodeHref(id));
 }
 
+// openNodeView opens a node's per-node view from elsewhere in the dashboard,
+// e.g. a linked group's federation marker.
+export function openNodeView(id) {
+  defaultSwitchNode(id);
+}
+
 const MapGlyph = () => html`<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="3" cy="3.5" r="2"/><circle cx="11" cy="3" r="2"/><circle cx="7" cy="11" r="2"/><path d="M4.8 4.3 5.9 9.3M9.4 4.3 7.9 9.3M5 3.4 9 3.1"/></svg>`;
 
 function presenceLabel(node) {

@@ -18,7 +18,7 @@ var peerSnapshotFields = map[reflect.Type]map[string]string{
 	reflect.TypeFor[dashboardGroup](): classifyPeerFields(map[string]string{
 		"identity":  "Name Descr",
 		"projected": "Members Online",
-		"denied":    "AttachmentURL AttachmentLabel AttachmentLabelOverride DefaultCwd DefaultSpawnGroup DefaultContext Environment DefaultProfile SandboxProfile Permissions PermissionScopes UnreadablePermissionScopes OwnerScopes MaxMembers NotifyEnabled RemoteControlPolicy ReinjectAfterCompact Mission SourceTemplate Parent RouteGeneration Process Waves Scribe",
+		"denied":    "AttachmentURL AttachmentLabel AttachmentLabelOverride DefaultCwd DefaultSpawnGroup DefaultContext Environment DefaultProfile SandboxProfile Permissions PermissionScopes UnreadablePermissionScopes OwnerScopes MaxMembers NotifyEnabled RemoteControlPolicy ReinjectAfterCompact Mission SourceTemplate Parent RouteGeneration Process Waves Scribe FederationLinks",
 	}),
 	reflect.TypeFor[dashboardMember](): classifyPeerFields(map[string]string{
 		"identity": "AgentID ConvID Title",

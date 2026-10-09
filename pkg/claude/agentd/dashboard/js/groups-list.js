@@ -20,6 +20,7 @@ import {
 } from './groups-view-model.js';
 import { ActionMenu, InlineEditor, useGroupsInteractions } from './groups-interactions.js';
 import { MemberTable } from './groups-member-table.js';
+import { GroupFederationMarker } from './group-federation-marker.js';
 import { groupHasUnreadHumanNotifications } from './human-notification-attention.js';
 
 const html = htm.bind(h);
@@ -480,6 +481,7 @@ function RealGroupSummary({ group, activity, membersView, snapshot, actions }) {
     <${GroupProfileChip} group=${group} actions=${actions} kind="profile" />
     <${GroupProfileChip} group=${group} actions=${actions} kind="sandbox" />
     <${GroupLinkChips} group=${group} snapshot=${snapshot} />
+    <${GroupFederationMarker} group=${group} />
     ${snapshot?.group_attachments_mode === 'fixed'
       ? html`<${GroupAttachment} group=${group} actions=${actions} placement="fixed" />`
       : null}

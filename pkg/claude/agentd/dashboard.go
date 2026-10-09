@@ -1725,9 +1725,13 @@ type dashboardGroup struct {
 	// The Groups tab always surfaces these while at least one member is online;
 	// dormant scribe groups remain behind the "show offline scribes" toggle.
 	// The flag is the discriminator, so the client need not match a name.
-	Scribe  bool              `json:"scribe,omitempty"`
-	Members []dashboardMember `json:"members"`
-	Online  int               `json:"online"`
+	Scribe bool `json:"scribe,omitempty"`
+	// FederationLinks lists how this local group is connected to federation
+	// peers (group-scoped peer grants, opened remote routes), for the Groups
+	// tab's linked-group marker. Local operator data only.
+	FederationLinks []groupFederationLink `json:"federation_links,omitempty"`
+	Members         []dashboardMember     `json:"members"`
+	Online          int                   `json:"online"`
 }
 
 type dashboardRouteMap struct {
@@ -3406,6 +3410,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// GROUP plus a per-conv row assembly, and nothing said which of them
 	// stalled. gt accumulates each part so /api/perf can name the culprit.
 	gt := newGroupsPhaseTimer(rc)
+	var groupFedLinks map[int64][]groupFederationLink
+	if !isPeerSnapshot(r) {
+		groupFedLinks = gatherGroupFederationLinks()
+	}
 	for _, g := range groups {
 		groupMark := gt.begin()
 		groupPermissions := []string{}
@@ -3427,6 +3435,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		if g.ParentGroupID != nil {
 			dg.Parent = groupNameByID[*g.ParentGroupID]
 		}
+		dg.FederationLinks = groupFedLinks[g.ID]
 		// Advisory process state (JOH-242): attach the current phase + phase map
 		// + transition log so the group view can render a phase chip + advance
 		// control. nil for a group with no process.
