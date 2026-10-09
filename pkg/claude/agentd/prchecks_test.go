@@ -40,7 +40,7 @@ func TestParseStatusCheckRollupBuckets(t *testing.T) {
 		"test":        "pass",
 		"lint":        "pending",
 		"flaky":       "skipped", // cancelled reads like skipped, not a failure
-		"neutral-job": "pass", // NEUTRAL is explicitly "not a failure"
+		"neutral-job": "pass",    // NEUTRAL is explicitly "not a failure"
 		"docs-only":   "skipped",
 		"ci/legacy":   "fail",
 	} {
