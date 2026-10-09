@@ -69,7 +69,7 @@ import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import {
-  mountAccessFeature, mountActionDialogsFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountSkynetFeature, mountCostsFeature, mountDebugFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupCreateFeature, mountGroupsFeature, mountHumanNotificationsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountSpawnHarnessPolicyFeature, mountTerminalsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountUsageHistoryFeature, mountWorktreeCleanupFeature, mountGitRepositoriesFeature,
+  mountAccessFeature, mountActionDialogsFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountSkynetFeature, mountSkynetFleetFeature, mountCostsFeature, mountDebugFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupCreateFeature, mountGroupsFeature, mountHumanNotificationsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountSpawnHarnessPolicyFeature, mountTerminalsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountUsageHistoryFeature, mountWorktreeCleanupFeature, mountGitRepositoriesFeature,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
@@ -191,6 +191,7 @@ async function settleInitialLayout() {
     () => mountMessagesFeature(),
     () => mountAuditFeature(),
     () => mountSkynetFeature(),
+    () => mountSkynetFleetFeature(),
     () => mountDebugFeature(),
     () => mountConfigFeature({ toast, isCyclingTabs }),
     () => mountProcessesFeature({ confirm: confirmModal, confirmDiscard, notify: toast }),

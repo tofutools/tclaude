@@ -564,6 +564,24 @@ export function mountSkynetFeature(dependencies = {}) {
   return mountIslandDescriptor(skynetDescriptor, dependencies);
 }
 
+// The merged "Groups · all nodes" view is its own island: it pulls in the
+// Groups renderer, and a failure there must not take the node chips down.
+const skynetFleetDescriptor = createIslandDescriptor({
+  name: 'skynet-fleet', label: 'Groups on all nodes',
+  hosts: { host: '#skynet-fleet-root' },
+  failureClass: 'skynet-error',
+  load: async ({ hosts: { host } }) => {
+    const islandModule = import('./skynet-merged-island.js');
+    const stateModule = import('./skynet-state.js');
+    const [{ mountMergedGroupsIsland }, { skynetState }] = await Promise.all([islandModule, stateModule]);
+    return { state: skynetState, mount: (registerCleanup) => mountMergedGroupsIsland({ host, state: skynetState, registerCleanup }) };
+  },
+});
+
+export function mountSkynetFleetFeature(dependencies = {}) {
+  return mountIslandDescriptor(skynetFleetDescriptor, dependencies);
+}
+
 export async function mountAuditFeature(actionDependencies = {}) {
   const host = document.querySelector('#audit-root');
   if (!host) return null;

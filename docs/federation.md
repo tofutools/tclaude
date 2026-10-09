@@ -2368,6 +2368,7 @@ tclaude federation view 'audit?page=1' --node bob
 tclaude agent ls --node bob --json
 tclaude agent ls --node bob --group builders --json
 tclaude agent groups ls --node bob --json
+tclaude agent groups ls --all-nodes --json
 ```
 
 `--node` accepts a pinned instance ID, an unambiguous ID prefix of at least
@@ -2387,6 +2388,14 @@ label, trust level, directory presence and last-seen time, and either `summary`
 reason, and last-seen when supplied). Partial failures return a nonzero exit
 status while preserving successful rows. A successful live read marks the
 row online even if the cached directory has not caught up.
+
+`agent groups ls --all-nodes` is the CLI side of the dashboard's
+"Groups · all nodes" view: this node's groups and every trusted peer's shared
+groups, named `group@node`. Peers are read like a summary listing (at most four
+at a time, no retries). JSON carries `nodes` (an `error` on any unreachable
+peer) and `groups` rows with `group`, `node`, `node_id`, `members` and
+`online`. An unreachable peer keeps the other rows and makes the exit status
+nonzero.
 
 `federation view` returns the full JSON response, including `peer_view`, and
 preserves structured failure JSON on stderr. The `agent ls --node` and

@@ -374,7 +374,7 @@ func handleDashboardStatic() http.Handler {
 var dashboardAppTabs = map[string]bool{
 	"groups": true, "automations": true, "jobs": true, "processes": true, "plugins": true, "access": true,
 	"messages": true, "usage": true, "costs": true, "audit": true, "logs": true, "config": true,
-	"debug": true, "map": true,
+	"debug": true, "map": true, "fleet": true,
 }
 
 // isDashboardAppPath reports whether a path should serve the dashboard SPA

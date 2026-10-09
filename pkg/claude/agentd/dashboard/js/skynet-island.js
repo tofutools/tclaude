@@ -12,7 +12,7 @@ function defaultNavigate(tab) {
   let anchor = document.querySelector(`nav [data-tab="${tab}"]`);
   // A remembered per-node tab can have been hidden since (Terminals with no
   // pane, Debug switched off); Groups is always there.
-  if (tab !== 'map' && (!anchor || anchor.offsetParent === null)) anchor = document.querySelector('nav [data-tab="groups"]');
+  if (tab !== 'map' && tab !== 'fleet' && (!anchor || anchor.offsetParent === null)) anchor = document.querySelector('nav [data-tab="groups"]');
   anchor?.click();
 }
 
@@ -43,7 +43,7 @@ export function NodeChips({ state, navigate = defaultNavigate, remote = remoteNo
   const remotePeer = remote && !shown.some((p) => p.id === remote) ? fleet.peers.find((p) => p.id === remote) : null;
   if (remotePeer && shown.length) shown[shown.length - 1] = remotePeer;
   // The shown node's chip is current while its per-node view is on screen.
-  const isCurrent = (id) => !current.mapActive && (remote ? remote === id : id === fleet.self.id);
+  const isCurrent = (id) => !current.topLevel && (remote ? remote === id : id === fleet.self.id);
   const openNode = (id) => {
     if (id === (remote || fleet.self.id)) navigate(state.lastLocalTab());
     else switchNode(id === fleet.self.id ? '' : id);
@@ -65,16 +65,18 @@ export function NodeChips({ state, navigate = defaultNavigate, remote = remoteNo
   </span>`;
 }
 
-// TopLevelBar replaces the tab strip while the map (a top-level, multi-node
-// view) is active. CSS hides the per-node tabs in that mode; the row keeps the
-// same height so nothing below moves.
-export function TopLevelBar({ state }) {
+// TopLevelBar replaces the tab strip while a top-level, multi-node view (the
+// map or the merged Groups view) is active, and switches between the two. CSS
+// hides the per-node tabs in that mode; the row keeps the same height so
+// nothing below moves.
+export function TopLevelBar({ state, navigate = defaultNavigate }) {
   const current = state.view.value;
-  if (!current.mapActive || !current.fleet) return null;
+  if (!current.topLevel || !current.fleet) return null;
   const n = current.fleet.peers.length + 1;
   const hub = current.fleet.hub.state;
+  const seg = (tab, on, label) => html`<button type="button" class=${`skynet-seg-btn${on ? ' on' : ''}`} aria-current=${on ? 'page' : undefined} onClick=${() => { if (!on) navigate(tab); }}>${label}</button>`;
   return html`<span class="skynet-toplevel-bar">
-    <span class="skynet-seg" role="group" aria-label="Skynet views"><span class="skynet-seg-btn on" aria-current="page"><${MapGlyph} /> Map</span></span>
+    <span class="skynet-seg" role="group" aria-label="Skynet views">${seg('map', current.mapActive, html`<${MapGlyph} /> Map`)}${seg('fleet', current.fleetActive, 'Groups · all nodes')}</span>
     <span class="skynet-toplevel-note">Skynet · ${n} nodes · hub ${hub} · pick ⌂ ${current.fleet.self.name} to return to its dashboard</span>
   </span>`;
 }
@@ -153,7 +155,7 @@ export function SkynetMap({ state, actions, navigate = defaultNavigate, timers =
   // [ / ] and ←/→ cycling have no per-node tab to move to while the map hides
   // them; refresh.js hands the keystroke here and the map steps back out.
   useEffect(() => {
-    const leave = () => { if (state.view.value.mapActive) navigate(state.lastLocalTab()); };
+    const leave = () => { if (state.view.value.topLevel) navigate(state.lastLocalTab()); };
     document.addEventListener('tclaude:leave-map', leave);
     return () => document.removeEventListener('tclaude:leave-map', leave);
   }, []);
@@ -232,7 +234,7 @@ function NodeSwitchKeys({ state, navigate = defaultNavigate, remote = remoteNode
       const node = switchOrder(fleet)[Number(event.code.slice(5)) - 1];
       if (!node) return;
       event.preventDefault();
-      if (node.id === (remote || fleet.self.id)) { if (state.view.value.mapActive) navigate(state.lastLocalTab()); return; }
+      if (node.id === (remote || fleet.self.id)) { if (state.view.value.topLevel) navigate(state.lastLocalTab()); return; }
       switchNode(node.local ? '' : node.id);
     };
     document.addEventListener('keydown', onKey);
@@ -318,7 +320,7 @@ function StatusPoller({ actions, timers = globalThis }) {
 export function mountSkynetIsland({ chipsHost, barHost, mapHost, remoteHost, state, actions, registerCleanup, navigate, timers }) {
   render(html`<${Fragment}><${StatusPoller} actions=${actions} timers=${timers} /><${NodeSwitchKeys} state=${state} navigate=${navigate} /><${NodeChips} state=${state} navigate=${navigate} /></${Fragment}>`, chipsHost);
   if (remoteHost) render(html`<${RemoteMarker} state=${state} />`, remoteHost);
-  render(html`<${TopLevelBar} state=${state} />`, barHost);
+  render(html`<${TopLevelBar} state=${state} navigate=${navigate} />`, barHost);
   render(html`<${SkynetMap} state=${state} actions=${actions} navigate=${navigate} timers=${timers} />`, mapHost);
   registerCleanup(() => { render(null, chipsHost); render(null, barHost); render(null, mapHost); if (remoteHost) render(null, remoteHost); });
 }

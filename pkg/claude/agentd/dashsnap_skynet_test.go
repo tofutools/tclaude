@@ -103,6 +103,24 @@ func skynetStates() []dashsnap.State {
 			SettleMS: 400,
 		},
 		{
+			Key:     "skynet-merged-groups",
+			Title:   "Groups · all nodes",
+			Caption: "The top-level merged view: today's Groups listing over every linked node, named group@node with the node's colour on the suffix (a click opens that node's dashboard). forge answers through the proxy; lab is unreachable, so its node reads stale. The view switch replaces the tab strip, like the map.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="map"]').click();
+  for (var s = 0; s < 30 && !document.querySelector('.skynet-seg-btn:not(.on)'); s++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('.skynet-seg-btn:not(.on)').click();
+  for (var i = 0; i < 80 && !document.querySelector('#skynet-fleet-root .fleet-node-suffix[data-fleet-open="inst_hn3cxq7a"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#skynet-fleet-root .fleet-node-suffix[data-fleet-open="inst_hn3cxq7a"]')) throw new Error('skynet: no forge groups in the merged view');
+  if (!document.querySelector('#skynet-fleet-root .fleet-node-suffix[data-fleet-open=""]')) throw new Error('skynet: no local groups in the merged view');
+  if (document.querySelector('nav [data-tab="groups"]').offsetParent !== null) throw new Error('skynet: per-node tabs still visible in the merged view');
+  if (location.pathname !== '/fleet') throw new Error('skynet: merged view not routed to /fleet: ' + location.pathname);
+})();`,
+			SettleMS: 400,
+		},
+		{
 			Key:     "skynet-remote-view",
 			Title:   "Peer view of a node",
 			Caption: "The whole per-node UI showing the peer forge through the local proxy: forge's name replaces the title, a 2–3px line in forge's colour runs along the top edge, forge's chip is current, and the peer-view pill lists what forge shares. Tabs and actions forge does not offer are greyed in place (costs, config, new group…), and the header says usage and costs are not shared. The harness asserts the header, tab bar and main area keep today's offsets.",

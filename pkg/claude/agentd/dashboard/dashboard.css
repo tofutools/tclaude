@@ -18829,3 +18829,23 @@ html.remote-node :is(#group-create-open, #group-import-open, #cleanup-all-open, 
   opacity: .45; cursor: not-allowed;
 }
 html.remote-node #usage.peer-view-na { font-style: italic; color: #7d8590; }
+/* Merged "Groups · all nodes" view (js/skynet-merged-island.js): a top-level
+   view like the map, so the per-node tabs give way to the view switch. Its
+   anchor exists for routing only. Groups are named group@node, the suffix in
+   the node's own colour; an unreachable node's groups read as stale. */
+nav [data-tab="fleet"] { display: none; }
+nav:has(#node-chips-root .node-chip):has([data-tab="fleet"].active) .nav-inner > [data-tab]:not([data-tab="map"]) { display: none; }
+.skynet-seg-btn { border: 0; font: inherit; font-size: 13px; cursor: pointer; }
+.skynet-seg-btn + .skynet-seg-btn { border-left: 1px solid #30363d; }
+.skynet-seg-btn.on { cursor: default; }
+.skynet-merged-nodes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 0 12px; font-size: 12px; color: #c9d1d9; }
+.skynet-merged-node { display: inline-flex; align-items: center; gap: 6px; }
+.skynet-merged-node i { width: 8px; height: 8px; border-radius: 50%; background: var(--nc); }
+.skynet-merged-node.stale { color: #7d8590; }
+.skynet-merged-node.stale i { background: transparent; border: 1px dashed var(--nc); }
+.skynet-merged-note { color: #6e7681; margin-left: auto; }
+.fleet-node-suffix { color: var(--nc); font-weight: 600; cursor: pointer; }
+.fleet-node-suffix:hover { text-decoration: underline; }
+.fleet-stale-label { font-size: 11px; font-weight: normal; color: #e3b341; }
+details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
+#skynet-fleet-root [data-act]:not([data-act="dot-toggle"]):not([data-act="copy-generation-id"]):not([data-act="sandbox-details"]):not([data-act="group-menu"]):not([data-act="row-menu"]) { opacity: .45; cursor: not-allowed; }
