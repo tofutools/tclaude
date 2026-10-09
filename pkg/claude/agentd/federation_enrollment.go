@@ -208,7 +208,8 @@ func handleFederationEnrollmentTokens(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "manage enrollment tokens") {
 		return
 	}
-	if r.Method == http.MethodGet {
+	// Go's GET routes also accept HEAD; neither may mint a token.
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		out, e := db.ListFederationEnrollmentTokens()
 		if e != nil {
 			writeFedErr(w, e)
