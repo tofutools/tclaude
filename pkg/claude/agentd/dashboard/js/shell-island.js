@@ -56,6 +56,13 @@ function Usage({ state }) {
     setModes((current) => ({ ...current, [provider]: mode }));
     dashPrefs.setItem(prefKey(provider), mode);
   };
+  // A peer view (remote-node.js) of a peer that does not share usage: say so
+  // rather than implying the node has none.
+  const remote = globalThis.__tclaudeRemoteNode?.id;
+  if (remote && !state.snapshot.value?.usage) {
+    const name = globalThis.document?.documentElement?.dataset.remoteNodeName || remote.slice(0, 13);
+    return html`<span id="usage" class="meta na peer-view-na" title=${`${name} does not share usage or costs with you`}>usage and costs not shared by ${name}</span>`;
+  }
   if (view.na) return html`<span id="usage" class="meta na" title=${view.title}>${view.text}</span>`;
   return html`
     <span id="usage" class=${`meta${view.multiline ? ' multiline' : ''}`} title=${view.title}>

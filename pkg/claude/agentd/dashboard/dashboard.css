@@ -18821,3 +18821,11 @@ html.remote-node body::before {
   font: inherit; font-size: 11px; color: #58a6ff; background: transparent; border: 1px solid #30363d; border-radius: 4px; padding: 1px 8px; cursor: pointer;
 }
 .rnp-foot button:hover { border-color: #58a6ff; }
+/* Peer view limits (js/peer-view-limits.js): what the peer does not offer
+   stays in place, greyed, with the reason on hover and on click. */
+html.remote-node nav [data-tab].pv-off { opacity: .4; }
+html.remote-node [data-act]:not([data-act="dot-toggle"]):not([data-act="copy-generation-id"]),
+html.remote-node :is(#group-create-open, #group-import-open, #cleanup-all-open, #delete-retired-open, #profiles-manage-open, #templates-manage-open, #roles-manage-open, #sandbox-profiles-manage-open, #spawn-harness-policy-open) {
+  opacity: .45; cursor: not-allowed;
+}
+html.remote-node #usage.peer-view-na { font-style: italic; color: #7d8590; }
