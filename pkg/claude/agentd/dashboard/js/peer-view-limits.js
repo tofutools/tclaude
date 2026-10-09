@@ -99,6 +99,15 @@ const ATTACH_ACTS = new Set(['web-open-window', 'jump', 'term-dir']);
 // peer must not be able to smuggle shell syntax into it.
 const SAFE_AGENT_ID = /^agt_[A-Za-z0-9]{4,64}$/;
 
+// defaultCopy fails when the page has no clipboard API (an insecure-context
+// dashboard over plain http), so the caller shows the command instead of
+// claiming it was copied.
+function defaultCopy(text) {
+  const clipboard = globalThis.navigator?.clipboard;
+  if (!clipboard?.writeText) throw new Error('clipboard unavailable');
+  return clipboard.writeText(text);
+}
+
 // attachCommand is the CLI command that opens agent's pane on the peer.
 export function attachCommand(agentID, remoteID) {
   return `tclaude federation attach ${agentID}@${remoteID}`;
@@ -121,7 +130,7 @@ export function blockedControl(target, peerView) {
 
 // installPeerViewLimits wires the gating for the page's lifetime. It is a
 // no-op unless this page is a peer view.
-export function installPeerViewLimits({ doc = document, snapshot = dashboardState.snapshot, toast = shellToast, remote = globalThis.__tclaudeRemoteNode, copy = (text) => globalThis.navigator?.clipboard?.writeText(text) } = {}) {
+export function installPeerViewLimits({ doc = document, snapshot = dashboardState.snapshot, toast = shellToast, remote = globalThis.__tclaudeRemoteNode, copy = defaultCopy } = {}) {
   if (!remote?.id) return () => {};
   const root = doc.documentElement;
   let peerView = snapshot.value?.peer_view || null;

@@ -102,3 +102,16 @@ test('a peer agent\'s terminal action copies the CLI attach command instead', as
   assert.equal(toasts.at(-1)[0], 'This action is not available in a peer view');
   dispose();
 });
+
+test('without a clipboard the command is shown, not claimed as copied', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/peer-view-limits.js');
+  const doc = harness.document;
+  doc.body.innerHTML = '<button id="win" data-act="web-open-window" data-agent="agt_abc123">web window</button>';
+  const toasts = [];
+  const dispose = mod.installPeerViewLimits({ doc, snapshot: harness.signals.signal({ peer_view: pv }), toast: (m) => toasts.push(m), remote: { id: 'inst_forge7' }, copy: () => { throw new Error('clipboard unavailable'); } });
+  harness.fireEvent(doc.getElementById('win'), 'click');
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(toasts.at(-1), 'Run in a terminal: tclaude federation attach agt_abc123@inst_forge7');
+  dispose();
+});
