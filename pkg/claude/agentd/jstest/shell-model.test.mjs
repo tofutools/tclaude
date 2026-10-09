@@ -147,9 +147,9 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
     ],
   };
   const openView = authoredOpenPRsView({ authored_open_prs: withRecent });
-  assert.deepEqual(openView.items.map((pr) => pr.number), [1, 2, 3, 4, 5]);
+  assert.deepEqual(openView.items.map((pr) => pr.number), [1, 2, 3, 4, 5, 6]);
   assert.equal(openView.recentCount, 1, 'a malformed recent URL is dropped');
-  assert.equal(openView.attention, 3, 'recent PRs never inflate the open tallies');
+  assert.equal(openView.attention, 4, 'recent PRs never inflate the open tallies');
   assert.equal(openView.alwaysShow, true);
   const recentView = authoredOpenPRsView({ authored_open_prs: withRecent }, 'recent');
   assert.deepEqual(recentView.items.map((pr) => pr.number), [9]);
@@ -167,7 +167,7 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   const off = authoredOpenPRsView({ authored_open_prs: { ...withRecent, recent_window_days: 0 } }, 'recent');
   assert.equal(off.showingRecent, false);
   assert.equal(off.recentCount, 0);
-  assert.deepEqual(off.items.map((pr) => pr.number), [1, 2, 3, 4, 5]);
+  assert.deepEqual(off.items.map((pr) => pr.number), [1, 2, 3, 4, 5, 6]);
 
   const member = { conv_id: 'same', online: true, state: { status: 'working' } };
   const activity = globalActivityView({
