@@ -94,6 +94,11 @@ export function limitHint(state, what, node) {
 // view these copy the attach command instead.
 const ATTACH_ACTS = new Set(['web-open-window', 'jump', 'term-dir']);
 
+// SAFE_AGENT_ID admits only a plain agent ID into a command the operator will
+// paste into a shell: the ID comes from the peer's snapshot, and a hostile
+// peer must not be able to smuggle shell syntax into it.
+const SAFE_AGENT_ID = /^agt_[A-Za-z0-9]{4,64}$/;
+
 // attachCommand is the CLI command that opens agent's pane on the peer.
 export function attachCommand(agentID, remoteID) {
   return `tclaude federation attach ${agentID}@${remoteID}`;
@@ -107,7 +112,7 @@ export function blockedControl(target, peerView) {
     return state === 'shared' ? null : { el: tab, state, what: tabLabel(tab.dataset.tab) };
   }
   const act = target?.closest?.('[data-act]');
-  if (act && ATTACH_ACTS.has(act.dataset.act) && /^agt_/.test(act.dataset.agent || '')) return { el: act, state: 'attach', what: 'This terminal', agent: act.dataset.agent };
+  if (act && ATTACH_ACTS.has(act.dataset.act) && SAFE_AGENT_ID.test(act.dataset.agent || '')) return { el: act, state: 'attach', what: 'This terminal', agent: act.dataset.agent };
   if (act && !READ_ONLY_ACTS.has(act.dataset.act)) return { el: act, state: 'local', what: 'This action' };
   const ctl = target?.closest?.(GATED_CONTROLS.join(','));
   if (ctl) return { el: ctl, state: 'local', what: 'This action' };

