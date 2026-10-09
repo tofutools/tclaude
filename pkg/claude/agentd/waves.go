@@ -257,6 +257,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			Harness:                     launch.Harness,
 			HarnessSource:               launch.HarnessSource,
 			Model:                       launch.Model,
+			ModelProxy:                  launch.ModelProxy,
 			ModelSource:                 launch.ModelSource,
 			Effort:                      launch.Effort,
 			EffortSource:                launch.EffortSource,

@@ -501,7 +501,7 @@ CREATE TABLE "pending_spawns" (
 			worktree_path   TEXT NOT NULL DEFAULT '',
 			worktree_branch TEXT NOT NULL DEFAULT '',
 			created_at      INTEGER NOT NULL
-		, reply_to_agent TEXT NOT NULL DEFAULT '', spawned_by_agent TEXT NOT NULL DEFAULT '', is_owner INTEGER NOT NULL DEFAULT 0, permission_overrides TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '', effective_sandbox_config TEXT NOT NULL DEFAULT '', agent_id TEXT NOT NULL DEFAULT '', launching INTEGER NOT NULL DEFAULT 0, task_url TEXT NOT NULL DEFAULT '', task_label TEXT NOT NULL DEFAULT '', profile_context TEXT NOT NULL DEFAULT '', codex_app_server INTEGER, codex_app_server_source TEXT NOT NULL DEFAULT '', codex_state_root TEXT NOT NULL DEFAULT '', codex_state_root_source TEXT NOT NULL DEFAULT '', fast_mode_at_launch INTEGER, ssh_workaround INTEGER) STRICT;
+		, reply_to_agent TEXT NOT NULL DEFAULT '', spawned_by_agent TEXT NOT NULL DEFAULT '', is_owner INTEGER NOT NULL DEFAULT 0, permission_overrides TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '', effective_sandbox_config TEXT NOT NULL DEFAULT '', agent_id TEXT NOT NULL DEFAULT '', launching INTEGER NOT NULL DEFAULT 0, task_url TEXT NOT NULL DEFAULT '', task_label TEXT NOT NULL DEFAULT '', profile_context TEXT NOT NULL DEFAULT '', codex_app_server INTEGER, codex_app_server_source TEXT NOT NULL DEFAULT '', codex_state_root TEXT NOT NULL DEFAULT '', codex_state_root_source TEXT NOT NULL DEFAULT '', fast_mode_at_launch INTEGER, ssh_workaround INTEGER, capacity_reserved INTEGER NOT NULL DEFAULT 0) STRICT;
 
 CREATE UNIQUE INDEX idx_pending_spawns_process_command ON pending_spawns(process_command_id) WHERE process_command_id <> '';
 
@@ -527,7 +527,7 @@ CREATE TABLE "spawn_profiles" (
 			include_group_default_context INTEGER,
 			created_at                    INTEGER NOT NULL,
 			updated_at                    INTEGER NOT NULL
-		, remote_control INTEGER, is_owner INTEGER, permission_overrides TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', disabled INTEGER NOT NULL DEFAULT 0, auto_memory INTEGER, tools TEXT NOT NULL DEFAULT '', context_features TEXT NOT NULL DEFAULT '', auto_compact_window TEXT NOT NULL DEFAULT '', ssh_workaround INTEGER, sandbox_implementation TEXT NOT NULL DEFAULT '', operator_only INTEGER NOT NULL DEFAULT 0, startup_context TEXT NOT NULL DEFAULT '', context_window_max INTEGER NOT NULL DEFAULT 0, copilot_api INTEGER, fast_mode INTEGER, codex_app_server INTEGER, role_ref TEXT NOT NULL DEFAULT '', role_refs TEXT NOT NULL DEFAULT '[]', fetch_latest_worktree INTEGER, environment_json TEXT NOT NULL DEFAULT '[]', peer_messaging INTEGER) STRICT;
+		, remote_control INTEGER, is_owner INTEGER, permission_overrides TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', disabled INTEGER NOT NULL DEFAULT 0, auto_memory INTEGER, tools TEXT NOT NULL DEFAULT '', context_features TEXT NOT NULL DEFAULT '', auto_compact_window TEXT NOT NULL DEFAULT '', ssh_workaround INTEGER, sandbox_implementation TEXT NOT NULL DEFAULT '', operator_only INTEGER NOT NULL DEFAULT 0, startup_context TEXT NOT NULL DEFAULT '', context_window_max INTEGER NOT NULL DEFAULT 0, copilot_api INTEGER, fast_mode INTEGER, codex_app_server INTEGER, role_ref TEXT NOT NULL DEFAULT '', role_refs TEXT NOT NULL DEFAULT '[]', fetch_latest_worktree INTEGER, environment_json TEXT NOT NULL DEFAULT '[]', peer_messaging INTEGER, model_proxy TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE TRIGGER spawn_profile_name_not_alias_insert
 		BEFORE INSERT ON spawn_profiles
@@ -1555,7 +1555,7 @@ CREATE TABLE federation_spawn_requests (
 	reason        TEXT NOT NULL DEFAULT '',
 	created_at    INTEGER NOT NULL,
 	expires_at    INTEGER NOT NULL,
-	decided_at    INTEGER, launch_label TEXT NOT NULL DEFAULT '', launch_started_at INTEGER, automatic INTEGER NOT NULL DEFAULT 0, notice_sent INTEGER NOT NULL DEFAULT 0, result_sent INTEGER NOT NULL DEFAULT 0,
+	decided_at    INTEGER, launch_label TEXT NOT NULL DEFAULT '', launch_started_at INTEGER, automatic INTEGER NOT NULL DEFAULT 0, notice_sent INTEGER NOT NULL DEFAULT 0, result_sent INTEGER NOT NULL DEFAULT 0, placement_version INTEGER NOT NULL DEFAULT 0, requirements TEXT NOT NULL DEFAULT '', credentials TEXT NOT NULL DEFAULT '', model_lease TEXT NOT NULL DEFAULT '', requested_profile TEXT NOT NULL DEFAULT '',
 	UNIQUE (from_instance, envelope_id)
 ) STRICT;
 
@@ -1603,3 +1603,115 @@ CREATE TABLE agent_startup_snapshots (
 			brief_message_id  INTEGER NOT NULL DEFAULT 0,
 			created_at        INTEGER NOT NULL
 		) STRICT;
+
+CREATE TABLE federation_bundle_offers (
+ id TEXT NOT NULL,
+ peer TEXT NOT NULL,
+ direction TEXT NOT NULL CHECK(direction IN ('in','out')),
+ kind TEXT NOT NULL,
+ descriptor TEXT NOT NULL,
+ bytes INTEGER NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('pending','ready','applied','declined','expired')),
+ last_error TEXT NOT NULL DEFAULT '',
+ result_queued INTEGER NOT NULL DEFAULT 0,
+ created_at INTEGER NOT NULL,
+ expires_at INTEGER NOT NULL, group_id INTEGER NOT NULL DEFAULT 0, sender_agent TEXT NOT NULL DEFAULT '', import_agent TEXT NOT NULL DEFAULT '', import_label TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(direction,peer,id)
+ ) STRICT;
+
+CREATE INDEX idx_federation_bundle_offer_expiry ON federation_bundle_offers(state,expires_at);
+
+CREATE TABLE federation_agent_moves (
+ direction TEXT NOT NULL, peer TEXT NOT NULL, id TEXT NOT NULL,
+ source_agent TEXT NOT NULL, state TEXT NOT NULL, payload TEXT NOT NULL,
+ PRIMARY KEY(direction,peer,id));
+
+CREATE UNIQUE INDEX federation_agent_moves_active_source ON federation_agent_moves(source_agent)
+ WHERE direction='out' AND state IN ('awaiting_confirmation','confirmed','retiring','blocked');
+
+CREATE TABLE federation_node_groups(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,created_at INTEGER NOT NULL) STRICT;
+
+CREATE TABLE federation_node_group_members(group_id TEXT NOT NULL REFERENCES federation_node_groups(id) ON DELETE CASCADE,peer TEXT NOT NULL REFERENCES federation_peers(instance_id) ON DELETE CASCADE,PRIMARY KEY(group_id,peer)) STRICT;
+
+CREATE TABLE federation_node_group_grants(group_id TEXT NOT NULL REFERENCES federation_node_groups(id) ON DELETE CASCADE,slug TEXT NOT NULL,scope TEXT NOT NULL DEFAULT '',spawn_policy TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,PRIMARY KEY(group_id,slug,scope)) STRICT;
+
+CREATE TABLE federation_node_profiles(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,revision INTEGER NOT NULL,definition TEXT NOT NULL,created_at INTEGER NOT NULL) STRICT;
+
+CREATE TABLE federation_node_profile_default(singleton INTEGER PRIMARY KEY CHECK(singleton=1),profile_id TEXT NOT NULL REFERENCES federation_node_profiles(id)) STRICT;
+
+CREATE TABLE federation_node_profile_assignments(peer TEXT PRIMARY KEY REFERENCES federation_peers(instance_id) ON DELETE CASCADE,profile_id TEXT NOT NULL REFERENCES federation_node_profiles(id),snapshot TEXT NOT NULL) STRICT;
+
+CREATE TABLE federation_worker_defaults(agent_id TEXT PRIMARY KEY,snapshot TEXT NOT NULL) STRICT;
+
+CREATE TABLE federation_enroll_tokens(id TEXT PRIMARY KEY,public_token TEXT NOT NULL,secret_hash BLOB NOT NULL,profile_id TEXT NOT NULL,profile_revision INTEGER NOT NULL,max_uses INTEGER NOT NULL,used_count INTEGER NOT NULL DEFAULT 0,revoked INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL) STRICT;
+
+CREATE TABLE federation_enrollments(direction TEXT NOT NULL,token_id TEXT NOT NULL,peer TEXT NOT NULL,peer_key BLOB NOT NULL,local_key BLOB NOT NULL,public_token TEXT NOT NULL,retired INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,PRIMARY KEY(direction,token_id,peer)) STRICT;
+
+CREATE TABLE federation_repos (
+ id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, revision INTEGER NOT NULL,
+ definition TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1);
+
+CREATE TABLE federation_jobs (
+ id TEXT PRIMARY KEY, direction TEXT NOT NULL, peer TEXT NOT NULL,
+ fingerprint TEXT NOT NULL, state TEXT NOT NULL, request TEXT NOT NULL,
+ repo_id TEXT NOT NULL DEFAULT '', repo_revision INTEGER NOT NULL DEFAULT 0,
+ worker_id TEXT NOT NULL DEFAULT '', caller_agent TEXT NOT NULL DEFAULT '', result TEXT NOT NULL DEFAULT '{}',
+ created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL) STRICT;
+
+CREATE INDEX federation_jobs_reservations ON federation_jobs(direction,state);
+
+CREATE TABLE federation_teleports (
+ direction TEXT NOT NULL, peer TEXT NOT NULL, offer TEXT NOT NULL,
+ chain TEXT NOT NULL, source_agent TEXT NOT NULL, target_agent TEXT NOT NULL DEFAULT '',
+ created_at INTEGER NOT NULL, state TEXT NOT NULL, snapshot TEXT NOT NULL,
+ PRIMARY KEY(direction,peer,offer)) STRICT;
+
+CREATE INDEX federation_teleports_rates ON federation_teleports(direction,source_agent,created_at);
+
+CREATE INDEX federation_teleports_peer_rates ON federation_teleports(direction,peer,created_at);
+
+CREATE INDEX federation_teleports_target ON federation_teleports(target_agent);
+
+CREATE TABLE model_proxy_launches (
+ session TEXT NOT NULL, generation TEXT NOT NULL, reference TEXT NOT NULL,
+ bearer_hash TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0, lease TEXT NOT NULL DEFAULT '', lease_ready INTEGER NOT NULL DEFAULT 1,
+ PRIMARY KEY(session,generation)) STRICT;
+
+CREATE TABLE model_proxy_requests (
+ id TEXT PRIMARY KEY, day TEXT NOT NULL, proxy TEXT NOT NULL, peer TEXT NOT NULL,
+ session TEXT NOT NULL, model TEXT NOT NULL, charged_tokens INTEGER NOT NULL,
+ input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
+ cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+ status INTEGER NOT NULL DEFAULT 0, complete INTEGER NOT NULL DEFAULT 0,
+ request_bytes INTEGER NOT NULL DEFAULT 0, response_bytes INTEGER NOT NULL DEFAULT 0,
+ started_at INTEGER NOT NULL, duration_ms INTEGER NOT NULL DEFAULT 0) STRICT;
+
+CREATE INDEX model_proxy_daily ON model_proxy_requests(day,proxy,peer,session);
+
+CREATE TABLE federation_teleport_leases (
+ direction TEXT NOT NULL, peer TEXT NOT NULL, offer TEXT NOT NULL,
+ source_agent TEXT NOT NULL, target_agent TEXT NOT NULL DEFAULT '',
+ epoch INTEGER NOT NULL, state TEXT NOT NULL, revision INTEGER NOT NULL, snapshot TEXT NOT NULL,
+ PRIMARY KEY(direction,peer,offer)) STRICT;
+
+CREATE UNIQUE INDEX federation_teleport_backup_source ON federation_teleport_leases(source_agent)
+ WHERE direction='out' AND state NOT IN ('recovered','released');
+
+CREATE INDEX federation_teleport_leases_target ON federation_teleport_leases(target_agent);
+
+CREATE TABLE model_proxy_leases (
+ id TEXT PRIMARY KEY, peer TEXT NOT NULL, request TEXT NOT NULL, kind TEXT NOT NULL,
+ proxy TEXT NOT NULL, worker TEXT NOT NULL DEFAULT '', session TEXT NOT NULL DEFAULT '',
+ generation TEXT NOT NULL DEFAULT '', revoked INTEGER NOT NULL DEFAULT 0,
+ idle_seconds INTEGER NOT NULL, touched_at INTEGER NOT NULL,
+ UNIQUE(peer,request,kind)) STRICT;
+
+CREATE TABLE model_proxy_worker_leases (
+ worker TEXT PRIMARY KEY, gateway TEXT NOT NULL, lease TEXT NOT NULL,
+ request TEXT NOT NULL, kind TEXT NOT NULL, proxy TEXT NOT NULL) STRICT;
+
+CREATE TABLE federation_identity_rotations (
+ old_instance TEXT PRIMARY KEY,new_instance TEXT NOT NULL,statement TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('pending','accepted','conflict','revoked','recovered')),
+ received_at INTEGER NOT NULL,accept_after INTEGER NOT NULL,reason TEXT NOT NULL DEFAULT ''
+) STRICT;

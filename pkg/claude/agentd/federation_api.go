@@ -225,21 +225,24 @@ const fedMaxSubject = 512
 
 // fedOutgoing describes one envelope for the outbox.
 type fedOutgoing struct {
-	fromConv  string // "" = the human operator
-	peer      *db.FederationPeer
-	kind      string
-	toAgent   string
-	toLabel   string
-	subject   string
-	preview   string
-	inReplyTo string
-	ttl       time.Duration
-	payload   any
+	envelopeID string
+	fromConv   string // "" = the human operator
+	peer       *db.FederationPeer
+	kind       string
+	toAgent    string
+	toLabel    string
+	subject    string
+	preview    string
+	inReplyTo  string
+	ttl        time.Duration
+	payload    any
 }
 
 // queueFederatedEnvelope seals o for its peer and writes the durable outbox
 // row; the outbox loop sends and retries it until acknowledged.
 func queueFederatedEnvelope(o fedOutgoing) (*db.FederationOutboxRow, error) {
+	identitySealMu.RLock()
+	defer identitySealMu.RUnlock()
 	id, err := federationIdentity()
 	if err != nil {
 		return nil, err
@@ -253,6 +256,9 @@ func queueFederatedEnvelope(o fedOutgoing) (*db.FederationOutboxRow, error) {
 	env, err := proto.NewEnvelope(id, o.kind, from, proto.Endpoint{Instance: o.peer.InstanceID, Agent: o.toAgent}, o.ttl, o.payload)
 	if err != nil {
 		return nil, err
+	}
+	if o.envelopeID != "" {
+		env.ID = o.envelopeID
 	}
 	env.InReplyTo = o.inReplyTo
 	sealed, err := proto.Seal(id, env, ed25519.PublicKey(o.peer.PubKey))
@@ -578,6 +584,10 @@ func handleFederationConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 type fedTrustReq struct {
+	Profile            string `json:"profile,omitempty"`
+	NoDefaultProfile   bool   `json:"no_default_profile,omitempty"`
+	Preview            bool   `json:"preview,omitempty"`
+	PreviewToken       string `json:"preview_token,omitempty"`
 	Level              string `json:"level,omitempty"`
 	ConfirmFingerprint string `json:"confirm_fingerprint,omitempty"`
 	Instance           string `json:"instance"`
@@ -604,10 +614,7 @@ func handleFederationTrust(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "label must be 1-32 chars of [a-z0-9-_.]")
 		return
 	}
-	if req.Level == "" {
-		req.Level = db.FederationTrustRestricted
-	}
-	if req.Level != db.FederationTrustRestricted && req.Level != db.FederationTrustUnrestricted {
+	if req.Level != "" && req.Level != db.FederationTrustRestricted && req.Level != db.FederationTrustUnrestricted {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "level must be restricted or unrestricted")
 		return
 	}
@@ -650,12 +657,74 @@ func handleFederationTrust(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "bad_directory", "hub directory key does not match the instance id; refusing to trust")
 		return
 	}
-	if req.Level == db.FederationTrustUnrestricted && (existing == nil || existing.TrustLevel != db.FederationTrustUnrestricted) && req.ConfirmFingerprint != proto.Fingerprint(entry.PubKey) {
-		writeError(w, http.StatusBadRequest, "confirmation_required", "confirm fingerprint "+proto.Fingerprint(entry.PubKey)+": unrestricted grants all peer permissions on all live groups, automatic spawn, and local unscoped grants towards this peer; approvals remain local")
+	if req.Profile != "" && req.NoDefaultProfile {
+		writeError(w, 400, "profile", "--profile and --no-default-profile are mutually exclusive")
 		return
 	}
-	if err := db.TrustFederationPeer(db.FederationPeer{TrustLevel: req.Level, InstanceID: entry.InstanceID, PubKey: entry.PubKey, Label: req.Label, Name: proto.SafeName(entry.Name, true)}); err != nil {
-		writeError(w, http.StatusConflict, "conflict", err.Error())
+	fedNodeGroupsMu.Lock()
+	defer fedNodeGroupsMu.Unlock()
+	finish := func() {}
+	if !req.Preview {
+		finish = lockAwayMutation(entry.InstanceID, true)
+	}
+	defer finish()
+	existing, err := db.GetFederationPeer(entry.InstanceID)
+	if err != nil {
+		writeFedErr(w, err)
+		return
+	}
+	var profile *db.FederationNodeProfile
+	if req.Profile != "" {
+		profile, err = db.GetFederationNodeProfile(req.Profile)
+	} else if existing == nil && !req.NoDefaultProfile {
+		profile, err = db.DefaultFederationNodeProfile()
+	}
+	if err != nil {
+		writeError(w, 400, "profile", err.Error())
+		return
+	}
+	if profile != nil {
+		if req.Level != "" && req.Level != profile.Definition.TrustLevel {
+			writeError(w, 400, "profile", "explicit trust level conflicts with selected profile")
+			return
+		}
+		req.Level = profile.Definition.TrustLevel
+	}
+	if req.Level == "" {
+		req.Level = db.FederationTrustRestricted
+	}
+	var plan *db.FederationNodeProfilePlan
+	newPeer := &db.FederationPeer{InstanceID: entry.InstanceID, PubKey: entry.PubKey, Label: req.Label, Name: proto.SafeName(entry.Name, true)}
+	if profile != nil {
+		plan, err = db.PlanFederationNodeProfile(profile.ID, entry.InstanceID, "", newPeer)
+		if err != nil {
+			writeError(w, 409, "profile", err.Error())
+			return
+		}
+	}
+	if req.Preview {
+		writeJSON(w, 200, map[string]any{"instance_id": entry.InstanceID, "fingerprint": proto.Fingerprint(entry.PubKey), "level": req.Level, "profile": profile, "plan": plan, "applied": false})
+		return
+	}
+	if profile == nil && req.PreviewToken != "" {
+		writeError(w, 409, "stale_preview", "selected default profile changed; preview trust again")
+		return
+	}
+	if profile != nil && req.PreviewToken == "" {
+		writeError(w, 400, "preview_required", "preview the selected peer profile before trusting")
+		return
+	}
+	if req.Level == db.FederationTrustUnrestricted && (existing == nil || existing.TrustLevel != db.FederationTrustUnrestricted) && req.ConfirmFingerprint != proto.Fingerprint(entry.PubKey) {
+		writeError(w, http.StatusBadRequest, "confirmation_required", "confirm fingerprint "+proto.Fingerprint(entry.PubKey)+": unrestricted grants all peer permissions on all live groups, automatic spawn, and local unscoped grants towards this peer; interactive terminal attach includes harness approval answers")
+		return
+	}
+	if profile != nil {
+		plan, err = db.PlanFederationNodeProfile(profile.ID, entry.InstanceID, req.PreviewToken, newPeer)
+	} else {
+		err = db.TrustFederationPeer(db.FederationPeer{TrustLevel: req.Level, InstanceID: entry.InstanceID, PubKey: entry.PubKey, Label: req.Label, Name: proto.SafeName(entry.Name, true)})
+	}
+	if err != nil {
+		writeError(w, 409, "conflict", err.Error())
 		return
 	}
 	setAuditTargetLabel(r, entry.InstanceID)
@@ -665,7 +734,7 @@ func handleFederationTrust(w http.ResponseWriter, r *http.Request) {
 			rt.sendControl(entry.InstanceID, proto.KindCatalogReq, "", struct{}{})
 		}()
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "instance_id": entry.InstanceID, "fingerprint": proto.Fingerprint(entry.PubKey), "level": req.Level})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "instance_id": entry.InstanceID, "fingerprint": proto.Fingerprint(entry.PubKey), "level": req.Level, "profile": profile, "plan": plan})
 }
 
 func validFedLabel(s string) bool {
@@ -698,6 +767,8 @@ func handleFederationUntrust(w http.ResponseWriter, r *http.Request) {
 		writeFedErr(w, err)
 		return
 	}
+	finish := lockAwayAuthorityMutation(p.InstanceID)
+	defer finish()
 	if _, err := db.UntrustFederationPeer(p.InstanceID); err != nil {
 		writeFedErr(w, err)
 		return
@@ -835,13 +906,15 @@ func handleFederationNotify(w http.ResponseWriter, r *http.Request) {
 }
 
 type fedInboxJSON struct {
-	ID        int64     `json:"id"`
-	From      string    `json:"from"`
-	Instance  string    `json:"instance"`
-	Subject   string    `json:"subject,omitempty"`
-	Body      string    `json:"body"`
-	CreatedAt time.Time `json:"created_at"`
-	Read      bool      `json:"read"`
+	ID         int64     `json:"id"`
+	OfferID    string    `json:"offer_id,omitempty"`
+	OfferState string    `json:"offer_state,omitempty"`
+	From       string    `json:"from"`
+	Instance   string    `json:"instance"`
+	Subject    string    `json:"subject,omitempty"`
+	Body       string    `json:"body"`
+	CreatedAt  time.Time `json:"created_at"`
+	Read       bool      `json:"read"`
 }
 
 // handleFederationInbox lists messages remote operators sent the local
@@ -866,6 +939,19 @@ func handleFederationInbox(w http.ResponseWriter, r *http.Request) {
 		out = append(out, fedInboxJSON{ID: m.ID, From: m.FromTitle, Instance: strings.TrimPrefix(m.GroupName, prefix),
 			Subject: m.Subject, Body: m.Body, CreatedAt: m.CreatedAt, Read: m.IsRead()})
 	}
+	reconcileFederationBundleOffers()
+	offers, err := db.ListFederationBundleOffers("in")
+	if err != nil {
+		writeFedErr(w, err)
+		return
+	}
+	for _, o := range offers {
+		label := o.Peer
+		if p, _ := db.GetFederationPeer(o.Peer); p != nil {
+			label = peerDisplay(p)
+		}
+		out = append(out, fedInboxJSON{OfferID: o.Descriptor.ID, OfferState: o.State, From: label, Instance: o.Peer, Subject: o.Descriptor.Type + " bundle offer", Body: proto.StripControls(o.Descriptor.Summary) + "\nPreview: tclaude federation offers import " + o.Descriptor.ID + " --peer " + o.Peer, CreatedAt: o.CreatedAt, Read: o.State != "pending" && o.State != "ready"})
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -876,6 +962,11 @@ const fedStaleAfter = 3 * fedCatalogRefresh
 
 // fedRemoteMember is one remote member reachable through an import.
 type fedRemoteMember struct {
+	State            *proto.AgentStatus `json:"state,omitempty"`
+	StatusObservedAt time.Time          `json:"status_observed_at,omitempty"`
+	StatusReceivedAt time.Time          `json:"status_received_at,omitempty"`
+	StatusStale      bool               `json:"status_stale,omitempty"`
+	IdleSeconds      *int64             `json:"idle_seconds,omitempty"`
 	// Address is what `tclaude agent message` accepts: name@label, or
 	// name@instance-id for a peer without a label.
 	Address     string    `json:"address"`
@@ -936,6 +1027,11 @@ func handleFederationReachable(w http.ResponseWriter, r *http.Request) {
 		addrPeer := fedFirst(peer.Label, peer.InstanceID)
 		for _, g := range cat.Groups {
 			actx := ActionContext{RemotePeer: peer.InstanceID, RemoteGroup: g.Name}
+			statusAllowed := isHuman
+			if !isHuman {
+				statusAllowed, _, _ = permissionAllowsAction(r, myID, PermAgentsStatusRead, actx)
+			}
+			statusAllowed = statusAllowed && g.HasCap(proto.CapAgentStatus)
 			mail := isHuman && g.HasCap(proto.CapMail)
 			visible := isHuman
 			if !isHuman {
@@ -958,15 +1054,42 @@ func handleFederationReachable(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
-			if !visible {
+			if !visible && !statusAllowed {
 				continue
 			}
-			for _, m := range g.Members {
-				out = append(out, &fedRemoteMember{
-					Address: m.Name + "@" + addrPeer, Agent: m.Agent, Name: m.Name, Role: m.Role, Harness: m.Harness,
-					Presence: m.Presence, Peer: peerDisplay(&peer), Instance: peer.InstanceID, RemoteGroup: g.Name,
-					Mail: mail, PeerOnline: online, CatalogAt: at, Stale: !online || now.Sub(at) > fedStaleAfter,
-				})
+			indices := map[string]*fedRemoteMember{}
+			if visible {
+				for _, m := range g.Members {
+					row := &fedRemoteMember{
+						Address: m.Name + "@" + addrPeer, Agent: m.Agent, Name: m.Name, Role: m.Role, Harness: m.Harness,
+						Presence: m.Presence, Peer: peerDisplay(&peer), Instance: peer.InstanceID, RemoteGroup: g.Name,
+						Mail: mail, PeerOnline: online, CatalogAt: at, Stale: !online || now.Sub(at) > fedStaleAfter,
+					}
+					out = append(out, row)
+					indices[m.Agent] = row
+				}
+			}
+			if statusAllowed {
+				for _, s := range g.AgentStatuses {
+					row := indices[s.Agent]
+					if row == nil {
+						row = &fedRemoteMember{Address: s.Agent + "@" + addrPeer, Agent: s.Agent, Name: s.Name, Role: s.Role, Harness: s.Harness, Peer: peerDisplay(&peer), Instance: peer.InstanceID, RemoteGroup: g.Name, PeerOnline: online, CatalogAt: at, Stale: !online || now.Sub(at) > fedStaleAfter}
+						out = append(out, row)
+					}
+					status := s
+					row.State = &status
+					row.StatusObservedAt = g.AgentStatusesAt
+					row.StatusReceivedAt = g.AgentStatusesReceivedAt
+					row.StatusStale = remoteAgentStatusStale(rt, peer.InstanceID, g)
+					if s.LastActivity != nil && s.Online && s.Status != "working" && s.Status != "running" && s.Status != "main_agent_idle" {
+						end := now
+						if row.StatusStale {
+							end = g.AgentStatusesAt
+						}
+						idle := max(int64(0), int64(end.Sub(*s.LastActivity)/time.Second))
+						row.IdleSeconds = &idle
+					}
+				}
 			}
 		}
 	}
@@ -1009,10 +1132,31 @@ func fedFirst(a, b string) string {
 }
 
 func registerFederationRoutes(mux *http.ServeMux) {
+	registerFederationNodeGroupRoutes(mux)
+	registerFederationNodeProfileRoutes(mux)
+	registerFederationRepoRoutes(mux)
+	registerFederationJobRoutes(mux)
+	registerFederationEnrollmentRoutes(mux)
+	registerFederationBundleRoutes(mux)
+	mux.HandleFunc("GET /v1/federation/away", handleFederationAway)
+	mux.HandleFunc("POST /v1/federation/away", handleFederationAway)
+	mux.HandleFunc("POST /v1/federation/return", handleFederationReturn)
+	mux.HandleFunc("POST /v1/federation/answer", handleFederationAwayAnswer)
 	mux.HandleFunc("GET /v1/federation/status", handleFederationStatus)
+	mux.HandleFunc("GET /v1/federation/audit", handleFederationAudit)
 	mux.HandleFunc("/v1/federation/notify", handleFederationNotify)
 	mux.HandleFunc("GET /v1/federation/inbox", handleFederationInbox)
 	mux.HandleFunc("GET /v1/federation/reachable", handleFederationReachable)
+	mux.HandleFunc("GET /v1/federation/sessions", handleFederationSessions)
+	mux.HandleFunc("GET /v1/federation/nodes", handleFederationNodes)
+	mux.HandleFunc("GET /v1/federation/nodes/watch", handleFleetWatch)
+	mux.HandleFunc("GET /v1/federation/nodes/health", handleFleetHealthConfig)
+	mux.HandleFunc("POST /v1/federation/nodes/health", handleFleetHealthConfig)
+	mux.HandleFunc("GET /v1/federation/node-labels", handleFederationNodeLabels)
+	mux.HandleFunc("POST /v1/federation/node-labels", handleFederationNodeLabels)
+	mux.HandleFunc("GET /v1/federation/attach", handleFederationAttach)
+	mux.HandleFunc("GET /v1/federation/viewers", handleFederationViewers)
+	mux.HandleFunc("POST /v1/federation/viewers/{id}/kick", handleFederationKick)
 	mux.HandleFunc("POST /v1/federation/spawn-requests", handleFederationSpawnRequestSend)
 	mux.HandleFunc("GET /v1/federation/spawn-requests", handleFederationSpawnRequestList)
 	mux.HandleFunc("POST /v1/federation/spawn-requests/{id}/approve", handleFederationSpawnRequestApprove)
@@ -1021,6 +1165,11 @@ func registerFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/federation/config", handleFederationConfig)
 	mux.HandleFunc("/v1/federation/peers/trust", handleFederationTrust)
 	mux.HandleFunc("/v1/federation/peers/untrust", handleFederationUntrust)
+	mux.HandleFunc("/v1/federation/identity/rotate", handleFederationIdentityRotate)
+	mux.HandleFunc("/v1/federation/identity/rotations", handleFederationIdentityRotations)
+	mux.HandleFunc("/v1/federation/identity/recover", handleFederationIdentityRecover)
+	mux.HandleFunc("/v1/federation/identity/recover-local", handleFederationIdentityRecoverLocal)
+	mux.HandleFunc("/v1/federation/identity/revoke", handleFederationIdentityRevoke)
 	mux.HandleFunc("/v1/federation/grants", handleFederationPeerGrants)
 	mux.HandleFunc("GET /v1/federation/outbox", handleFederationOutbox)
 	mux.HandleFunc("/v1/federation/send", handleFederationSend)

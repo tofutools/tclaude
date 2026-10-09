@@ -751,6 +751,7 @@ func runServe(p *serveParams) error {
 	// statusbar is running to populate it. Shares the daemon-wide stop
 	// channel.
 	startUsagePoller(cronStop)
+	startHostMetricsPoller(cronStop)
 
 	// Codex subscription-usage poller. Codex has no usage API wired into
 	// tclaude, so this lifts the 5h/weekly rate limits off Codex's local
@@ -1292,6 +1293,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/lookup", handleLookup)
 	mux.HandleFunc("GET /v1/usage", handleUsage)
 	mux.HandleFunc("GET /v1/usage/summary", handleAccountUsage)
+	mux.HandleFunc("GET /v1/host/status", handleHostStatus)
 	mux.HandleFunc("GET /v1/costs", handleAccountCosts)
 	mux.HandleFunc("/v1/peers", handlePeers)
 	registerFederationRoutes(mux)
@@ -1349,6 +1351,10 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/templates/{name}/deploy", handleTemplateDeploy)
 	mux.HandleFunc("POST /v1/templates/{name}/reinforce", handleTemplateReinforce)
 	mux.HandleFunc("GET /v1/templates/{name}/export", handleTemplateExport)
+	mux.HandleFunc("GET /v1/agent-bundle/export", handleAgentBundleExport)
+	mux.HandleFunc("POST /v1/agent-bundle/import", handleAgentBundleImport)
+	mux.HandleFunc("GET /v1/config-bundle/export", handleConfigBundleExport)
+	mux.HandleFunc("POST /v1/config-bundle/import", handleConfigBundleImport)
 	mux.HandleFunc("/v1/templates/{name}", handleTemplateByName)
 	// Bundled starter task forces (JOH-246). Their own /v1/starters prefix
 	// (not under /v1/templates/) sidesteps a ServeMux pattern conflict with the
@@ -1442,6 +1448,14 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/http/request", handleHTTPProxyRequest)
 	mux.HandleFunc("/v1/http/proxy/{name}/{path...}", handleHTTPProxyGateway)
 	mux.HandleFunc("GET /v1/http/environment", handleHTTPProxyEnvironment)
+	mux.HandleFunc("POST /v1/models/bind", handleModelProxyBind)
+	mux.HandleFunc("DELETE /v1/models/bind", handleModelProxyRevoke)
+	mux.HandleFunc("/v1/models/request/{path...}", handleModelProxyRequest)
+	mux.HandleFunc("GET /v1/models/leases", handleModelProxyLeases)
+	mux.HandleFunc("POST /v1/models/leases", handleModelProxyLeases)
+	mux.HandleFunc("GET /v1/models/usage", handleModelProxyUsage)
+	mux.HandleFunc("GET /v1/models/control", handleModelProxyControl)
+	mux.HandleFunc("POST /v1/models/control", handleModelProxyControl)
 	mux.HandleFunc("POST /v1/linear/whoami", handleLinearProxyWhoami)
 	mux.HandleFunc("POST /v1/linear/issue/view", handleLinearProxyIssueView)
 	mux.HandleFunc("POST /v1/linear/issue/list", handleLinearProxyIssueList)

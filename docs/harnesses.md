@@ -97,8 +97,10 @@ warning. Model and effort are remembered by the harness itself.
 
 | Capability | Claude Code | Codex CLI | OpenCode | Copilot CLI | Gemini CLI | Shell |
 | --- | --- | --- | --- | --- | --- | --- |
+| Federated model gateway (`--model-proxy`) | Yes, ordinary workers | Yes, TUI and app-server | No: provider isolation | Yes, HTTP Responses BYOK | No: native Gemini dialect | No |
 | Sessions: spawn / resume | ✅ | ✅ | ✅ managed server + attach | ✅ | ✅ | ✅ spawn only |
 | One-shot [`ask`](ask.md) | ✅ live-streamed | ✅ buffered | ✅ buffered | ✅ buffered | ✅ buffered | ❌ |
+| Portable agent-bundle history | ✅ JSONL | ✅ rollout JSONL | ⚠️ config only | ⚠️ config only | ⚠️ config only | ❌ |
 | [Conversation](conversations.md) list & search | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only | ⚠️ send-keys only, not yet exercised against a live pane | ⚠️ durable inbox only; never injected into the shell |
 | Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` | ✅ tclaude title overlay | ❌ |
@@ -660,3 +662,38 @@ status line, or tclaude's task runner.
   lifecycle verbs, séance.
 - [Utilities](utilities.md) — status line, context trimming, usage tooling.
 - [Adding a harness](adding-a-harness.md) — the contributor recipe.
+
+### Federated model gateway
+
+Claude Code, Codex and Copilot workers support `--model-proxy <name>@<peer>`
+through a session-bound loopback gateway. Claude Code uses Anthropic Messages;
+Codex uses OpenAI Responses through a launch-only custom provider, covering its
+TUI and app-server drive. Copilot CLI 1.0.91 or newer uses HTTP Responses BYOK
+with `COPILOT_OFFLINE=true`, covering its TUI and embedded API drive. Copilot
+requires an explicit model (`auto` is refused); offline mode disables GitHub
+login, telemetry, GitHub MCP and web tools. Provider headers, key commands,
+registry inputs and ambient authentication cannot replace the launch bearer.
+
+Explicit `off` overrides profile defaults. Saved provider logins cannot replace
+the pinned gateway route; conflicting overrides refuse the launch. See
+[Model gateways](federation.md#model-gateways-claude-code) for permissions,
+limits, usage and shutdown controls.
+
+OpenCode remains unsupported even though it supports custom provider URLs and
+already carries named HTTP proxies. Its managed server loads persistent
+account/org and managed configuration after inline provider config; plugin
+hooks can also change provider settings. The existing filtered-launch guards
+do not prove gateway isolation across ordinary launches and resumes. A future
+binding must establish that invariant for the authoritative server and all
+primary, small-model and subagent choices. See the pinned upstream
+[config merge order](https://github.com/anomalyco/opencode/blob/v1.18.34/packages/opencode/src/config/config.ts)
+and [provider hooks](https://github.com/anomalyco/opencode/blob/v1.18.34/packages/opencode/src/provider/provider.ts).
+
+Gemini CLI remains unsupported. `GOOGLE_GEMINI_BASE_URL` redirects only its
+native Gemini API-key route, which uses GenerateContent rather than Anthropic
+Messages or Responses. A binding needs native path/model authorization,
+streaming usage accounting and output reservations, plus forced API-key auth
+that cannot fall back to saved Google OAuth, Vertex settings or `.env` inputs.
+See [Gemini configuration](https://geminicli.com/docs/reference/configuration/).
+Both harnesses refuse a gateway request with the reason before launching.
+Non-interactive one-shot runs also refuse a proxy choice.

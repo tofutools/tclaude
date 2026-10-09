@@ -340,6 +340,7 @@ func Open() (*sql.DB, error) {
 // Close closes the singleton database connection if it is open.
 // It is safe to call multiple times.
 func Close() {
+	closeStatusVersionReader()
 	stateMu.Lock()
 	defer stateMu.Unlock()
 	if globalDB != nil {
@@ -359,6 +360,7 @@ func Close() {
 // from a prior test is concurrently in Open(): stateMu serializes the two so
 // the reset never races the init (see the stateMu comment above).
 func ResetForTest() {
+	closeStatusVersionReader()
 	stateMu.Lock()
 	defer stateMu.Unlock()
 	if globalDB != nil {

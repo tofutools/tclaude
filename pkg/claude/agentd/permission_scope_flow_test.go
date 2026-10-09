@@ -111,3 +111,28 @@ func TestPermissionSlugsAdvertiseScopeDimensions(t *testing.T) {
 	}
 	t.Fatal("groups.members.spawn missing from registry response")
 }
+
+// The documented command is: permissions grant <worker> models.proxy
+// --scope peer=bob --scope http_proxy=model. Exercise its production API body.
+func TestPermissionScopeModelProxyDocumentedGrant(t *testing.T) {
+	fh := newFedHarness(t)
+	const target = "scope-model-proxy-worker"
+	fh.f.HaveConvWithTitle(target, "worker")
+	grant := postPermissionScope(t, fh.f, "grant", map[string]any{
+		"target": target, "slug": agentd.PermModelsProxy,
+		"scope": map[string][]string{"peer": {"bob"}, "http_proxy": {"model"}},
+	})
+	require.Equal(t, http.StatusOK, grant.Code, grant.Body)
+	peer, err := db.GetFederationPeer(fh.peer.id.ID())
+	require.NoError(t, err)
+	require.NotNil(t, peer)
+	actor, err := db.AgentIDForConv(target)
+	require.NoError(t, err)
+	d, err := db.Open()
+	require.NoError(t, err)
+	var stored string
+	require.NoError(t, d.QueryRow(`SELECT scope_json FROM agent_permissions WHERE agent_id=? AND slug=?`, actor, agentd.PermModelsProxy).Scan(&stored))
+	expected, err := json.Marshal(map[string][]string{"peer": {peer.InstanceID}, "http_proxy": {"model"}})
+	require.NoError(t, err)
+	assert.JSONEq(t, string(expected), stored)
+}

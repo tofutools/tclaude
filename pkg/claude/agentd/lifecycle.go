@@ -288,6 +288,7 @@ func stopBeforePurge(convID, relatedEventID string) (memberOpResult, error) {
 // waitPolicy.wait is set (it is softExitClosed otherwise — nothing was
 // waited for, so nothing is known).
 func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, relatedEventID string, waitPolicy stopWaitPolicy) (memberOpResult, softExitOutcome) {
+	defer db.NotifyStatusChanged()
 	recoveryReason := lifecycleAction
 	if recoveryReason == "" {
 		recoveryReason = db.AgentExitActionStop
@@ -449,6 +450,7 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 // exit command, and a "still alive" member is one whose directories and
 // worktree were deliberately left in place.
 func finishStopWait(target *lifecycleTarget, waitPolicy stopWaitPolicy, lifecycleAction, relatedEventID, reason, fallbackExitReason string, res *memberOpResult) softExitOutcome {
+	defer db.NotifyStatusChanged()
 	if !waitPolicy.wait {
 		return softExitClosed
 	}
@@ -1585,6 +1587,16 @@ func errorString(err error) string {
 // directly so it does not cancel its own durable lease; every manual wrapper
 // above cancels a pending automatic attempt first under the same mutex.
 func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir bool, recoveryClaim *db.AgentRecovery) memberOpResult {
+	return resumeOneConvUnderLaunchLockForTeleport(convID, recreateMissingDir, recoveryClaim, false)
+}
+func resumeOneConvUnderLaunchLockForTeleport(convID string, recreateMissingDir bool, recoveryClaim *db.AgentRecovery, teleportRecovery bool) memberOpResult {
+	if !teleportRecovery {
+		if err := teleportResumeBlocked(convID); err != nil {
+			return memberOpResult{ConvID: convID, Action: "error", Detail: err.Error()}
+		}
+	}
+
+	defer db.NotifyStatusChanged()
 	res := memberOpResult{ConvID: convID}
 	if isConvOnline(convID) {
 		res.Action = "skipped:already_online"
@@ -1772,8 +1784,9 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir bool, recove
 	if _, fail := planSandboxProfileAccessForLaunch(
 		harnessName, relaunchSandbox, effectiveSandbox, relaunchSandboxImplementation,
 		session.ModelTransportLaunchContext{
-			Model: launchConfig.Model,
-			Cwd:   cwd,
+			Model:      launchConfig.Model,
+			ModelProxy: launchConfig.ModelProxy,
+			Cwd:        cwd,
 		},
 		false,
 	); fail != nil {
@@ -1834,6 +1847,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir bool, recove
 		Cwd:                    cwd,
 		Effort:                 launchConfig.Effort,
 		Model:                  launchConfig.Model,
+		ModelProxy:             launchConfig.ModelProxy,
 		Harness:                harnessName,
 		Sandbox:                relaunchSandbox,
 		SandboxImplementation:  relaunchSandboxImplementation,
@@ -2491,9 +2505,10 @@ func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool,
 // when ?delete_worktree was off) and the human-readable notes each step
 // produced, in order.
 type retireTeardown struct {
-	Stop     memberOpResult
-	Worktree *retireWorktreePlan
-	Notes    []string
+	StopOutcome softExitOutcome
+	Stop        memberOpResult
+	Worktree    *retireWorktreePlan
+	Notes       []string
 }
 
 // finishRetiredConv is THE post-demotion half of a retire, shared by all three
@@ -2529,7 +2544,7 @@ type retireTeardown struct {
 func finishRetiredConv(convID string, shutdown, deleteWorktree bool, wt agentWorktreeView, relatedEventID string) retireTeardown {
 	var td retireTeardown
 	if shutdown {
-		td.Stop, _ = stopOneConvAndWait(convID, false /* soft exit */, db.AgentExitActionRetire, relatedEventID, 0)
+		td.Stop, td.StopOutcome = stopOneConvAndWait(convID, false /* soft exit */, db.AgentExitActionRetire, relatedEventID, 0)
 		switch td.Stop.Action {
 		case "soft_stopped":
 			// Harness-agnostic wording on purpose: the group-retire copy of this
@@ -3463,9 +3478,23 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Group: g.Name, SpawnProfile: resolvedSpawnProfileNameForScope(g, body.Profile),
 		SandboxProfile: sandboxProfileForScope,
 	}
-	spawnerConvID, ok := requireSpawnPermission(w, r, g, spawnActionContext)
-	if !ok {
-		return
+	spawnerConvID := ""
+	teleportAuthority := teleportLandingFromRequest(r)
+	if teleportAuthority != nil {
+		if teleportAuthority.record.Landing.GroupID != g.ID {
+			writeError(w, 403, "teleport_group", "teleport landing group changed")
+			return
+		}
+		if err := teleportAuthority.check(); err != nil {
+			writeError(w, 403, "teleport_revoked", err.Error())
+			return
+		}
+	} else {
+		var ok bool
+		spawnerConvID, ok = requireSpawnPermission(w, r, g, spawnActionContext)
+		if !ok {
+			return
+		}
 	}
 	// Whether the grant that admitted this spawn was CONDITIONED on the sandbox
 	// profile, as opposed to merely being evaluated alongside it. Only that
@@ -3512,7 +3541,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// is claimed after the validation gates below (claimSpawnRateSlot) so a
 	// refused request — including the dir write-proof challenge round-trip —
 	// never burns a slot. See spawn_guardrails.go.
-	if body.NonInteractive {
+	if body.NonInteractive && r.Context().Value(federationJobContextKey{}) == nil {
 		// A one-shot does not consume a group seat. Keep the caller's group
 		// restriction and the rate limit while leaving max_members for members.
 		if spawnerConvID != "" && authorizedPermissionForRequest(r, "") != PermAgentSpawn &&
@@ -3734,6 +3763,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, http.StatusBadRequest, "invalid_harness", harnessErr.Error())
 		return
 	}
+	if constraints, ok := r.Context().Value(federationPlacementConstraintsKey{}).(string); ok {
+		if err := validateLocalPlacementRequirements(constraints, h.Name); err != nil {
+			writeError(w, 409, "node_incompatible", err.Error())
+			return
+		}
+	}
 	if body.NonInteractive && h.Name == harness.ShellName && body.IncludeGroupContext != nil && *body.IncludeGroupContext {
 		writeError(w, http.StatusBadRequest, "invalid_group_context",
 			"--group-context is not meaningful for a shell command")
@@ -3745,6 +3780,25 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if fail := spawnHarnessPolicyFailure(g, spawnerConvID, h.Name); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
+	}
+	var modelProxyNote string
+	var modelProxyFail *spawnFailure
+	body.ModelProxy, _, modelProxyNote, modelProxyFail = resolveStringLaunchField("model_proxy", body.ModelProxy, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.ModelProxy }, validateLaunchModelProxy(h))
+	if modelProxyFail != nil {
+		writeError(w, modelProxyFail.Status, modelProxyFail.Kind, modelProxyFail.Msg)
+		return
+	}
+	if body.ModelProxy != "" && body.ModelProxy != "off" && spawnerConvID != "" {
+		peer, name, err := resolveModelProxyReference(body.ModelProxy)
+		if err != nil {
+			writeError(w, 400, "invalid_model_proxy", err.Error())
+			return
+		}
+		allowed, _, err := permissionAllowsAction(r, spawnerConvID, PermModelsProxy, ActionContext{RemotePeer: peer.InstanceID, HTTPProxy: name})
+		if err != nil || !allowed {
+			writeError(w, 403, "permission_denied", "models.proxy is required for this model gateway")
+			return
+		}
 	}
 	validateModel := func(raw string) (string, error) {
 		value, err := h.Models.ValidateModel(raw)
@@ -4041,7 +4095,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		identityNotes = append(identityNotes, profileNameNote)
 	}
 	roleRefs, roleRefsSource := resolveRoleRefsLaunchField(body, profileTiers)
-	if body.NonInteractive {
+	if body.NonInteractive && r.Context().Value(federationJobContextKey{}) == nil {
 		roleRefs = nil
 	}
 	selectedRoles := make([]*db.Role, 0, len(roleRefs))
@@ -4157,7 +4211,28 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		}
 		permOverrides = merged
 	}
-	if body.NonInteractive {
+	// Receiver-owned worker defaults override role and launch-profile grants.
+	// This server-side snapshot cannot be supplied by a remote requester.
+	if reservedID, ok := r.Context().Value(reservedAgentIDContextKey{}).(string); ok {
+		workerDefaults, err := db.GetFederationWorkerDefaults(reservedID)
+		if err != nil {
+			writeError(w, 500, "worker_defaults", err.Error())
+			return
+		}
+		if workerDefaults != nil && len(workerDefaults.Permissions) > 0 {
+			if body.NonInteractive && r.Context().Value(federationJobContextKey{}) == nil {
+				writeError(w, 400, "worker_defaults", "profile worker defaults require an enrolled agent")
+				return
+			}
+			if permOverrides == nil {
+				permOverrides = map[string]db.PermissionOverride{}
+			}
+			for slug, override := range workerDefaults.Permissions {
+				permOverrides[slug] = override
+			}
+		}
+	}
+	if body.NonInteractive && r.Context().Value(federationJobContextKey{}) == nil {
 		// A one-shot has no identity to receive role or birth-time grants.
 		isOwner = false
 		permOverrides = nil
@@ -4309,7 +4384,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if body.SandboxImplementation == "" && sandboxImplNote != "" {
 		resolvedLaunch.Notes = append(resolvedLaunch.Notes, sandboxImplNote)
 	}
-	for _, note := range append([]string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, copilotAPINote, codexAppServerNote, fastModeNote, autoReviewNote, trustDirNote, autoMemoryNote, peerMessagingNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote, includeGroupContextNote}, identityNotes...) {
+	for _, note := range append([]string{modelProxyNote, sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, copilotAPINote, codexAppServerNote, fastModeNote, autoReviewNote, trustDirNote, autoMemoryNote, peerMessagingNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote, includeGroupContextNote}, identityNotes...) {
 		if note != "" {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes, note)
 		}
@@ -4523,8 +4598,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if _, fail := planSandboxProfileAccessForLaunch(
 		h.Name, harnessBuiltinMode, &effectiveSandbox, body.SandboxImplementation,
 		session.ModelTransportLaunchContext{
-			Model: body.Model,
-			Cwd:   cwd,
+			Model:      body.Model,
+			ModelProxy: body.ModelProxy,
+			Cwd:        cwd,
 		},
 		body.AllowUnenforcedSandbox,
 	); fail != nil {
@@ -4819,6 +4895,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		AutoFocusWeb:               body.AutoFocusWeb,
 		Effort:                     effort,
 		Model:                      model,
+		ModelProxy:                 body.ModelProxy,
 		Harness:                    h.Name,
 		// This boundary resolves a tier applyDefaultProfile cannot see — the CLI's
 		// named --profile — so seeding its attributions is what keeps the launch's
@@ -4875,6 +4952,29 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		// (it needs the conv-id for owner/permission grants).
 		Async: true,
 	}
+	p.BundleHistory, _ = r.Context().Value(bundleHistoryContextKey{}).(*bundleHistoryLaunch)
+	if teleportAuthority != nil {
+		p.launchAuthority = teleportAuthority.check
+		p.nodeCapacityReserved = true
+	} else if offer, _ := r.Context().Value(teleportOfferContextKey{}).(*db.FederationBundleOffer); offer != nil && offer.Descriptor.Teleport != nil {
+		row, err := db.GetFederationTeleport("in", offer.Peer, offer.Descriptor.ID)
+		if err != nil || row == nil {
+			writeError(w, 503, "teleport_provenance", "teleport provenance unavailable")
+			return
+		}
+		p.launchAuthority = func() error {
+			if teleportFrozen() {
+				return errors.New("teleports are frozen by the operator")
+			}
+			if !fedPeerAllows(offer.Peer, g.ID, PermAgentsReceive) && !fedPeerAllows(offer.Peer, g.ID, PermAgentsTeleportReceive) {
+				return errors.New("teleport receive authority revoked")
+			}
+			if _, err := pendingTeleportCredentials(offer.Peer, offer.Descriptor.Teleport.Credentials); err != nil {
+				return err
+			}
+			return checkTeleportRepo(row, g.ID)
+		}
+	}
 	// An omitted include_group_context flag means opt-in — every spawn
 	// path inherits the group context by default, the same way it
 	// inherits default_cwd; the dashboard sends false explicitly to opt
@@ -4889,6 +4989,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}))
 	if body.NonInteractive {
 		p.OneShotName = oneShotName
+		p.RemoteJob, _ = r.Context().Value(federationJobContextKey{}).(*federationJobLaunch)
+		if p.RemoteJob != nil {
+			p.RemoteJob.Harness = p.Harness
+			p.RemoteJob.Permissions = p.PermissionOverrides
+		}
 		result, runErr := runNonInteractiveSpawn(r.Context(), p, body.RunTimeoutSeconds)
 		if runErr != nil {
 			writeError(w, runErr.Status, runErr.Kind, runErr.Msg)
@@ -5009,6 +5114,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 // length/charset-checked, reply-to resolved to a conv-id — so the
 // shared core does no HTTP-shaped validation of its own.
 type spawnParams struct {
+	RemoteJob       *federationJobLaunch // trusted internal remote job boundary
+	launchAuthority func() error
+	BundleHistory   *bundleHistoryLaunch // trusted internal bundle route only
 	// AgentID is a stable identity reserved before a pending harness conv-id
 	// materialises. Empty on ordinary inline spawns, whose actor is allocated
 	// together with the conv-id.
@@ -5065,7 +5173,8 @@ type spawnParams struct {
 	// session's `tclaude session new --model`. "" falls back to the
 	// group/global default profiles inside executeSpawn (applyDefaultProfile);
 	// if those are unset too, the flag is omitted entirely.
-	Model string
+	Model      string
+	ModelProxy string
 	// Harness is the resolved harness name to launch ("" or "claude" =
 	// Claude Code, the default; "codex" = Codex CLI). It forwards to
 	// `tclaude session new --harness <h>` and is validated at the spawn
@@ -5337,6 +5446,8 @@ type spawnParams struct {
 	// Empty everywhere else. Unexported on purpose: only
 	// executeServerSpawnDeferred sets it.
 	pendingSpawnLabel string
+	// Set only by node admission: uncertain launches need durable reservations.
+	nodeCapacityReserved bool
 	// privateAttachmentRootReserved says the deferred pass atomically claimed
 	// pendingSpawnLabel's private root before publishing the Pending row. The
 	// continuation may reuse that exact root; every fresh inline spawn must
@@ -5915,7 +6026,7 @@ func launchTierIsDefault(tiers []launchProfileTier, source string) bool {
 // Copilot CLI. The gate is keyed on the FIELD, inside the resolver, so no
 // current or future resolution path can forget to apply it.
 func harnessPinnedLaunchField(field string) bool {
-	return field == modelField || field == effortField || field == contextWindowMaxField
+	return field == "model_proxy" || field == modelField || field == effortField || field == contextWindowMaxField
 }
 
 // harnessMismatchSkipNote discloses a default tier skipped because the profile
@@ -6237,6 +6348,11 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 		}
 		fieldNote = ""
 	}
+	p.ModelProxy, _, fieldNote, fail = resolveStringLaunchField("model_proxy", p.ModelProxy, h.Name, tiers, func(prof *db.SpawnProfile) string { return prof.ModelProxy }, validateLaunchModelProxy(h))
+	if fail != nil {
+		return fail
+	}
+	noteLaunch()
 	p.Model, fieldSource, fieldNote, fail = resolveStringLaunchField(modelField, p.Model, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.Model }, h.Models.ValidateModel)
 	if fail != nil {
@@ -6446,6 +6562,17 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 // an Async PENDING success the outcome carries an empty conv-id and the agent
 // is enrolled later by the sweeper.
 func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failure *spawnFailure) {
+	if p.launchAuthority != nil {
+		if err := p.launchAuthority(); err != nil {
+			return nil, &spawnFailure{Status: 403, Kind: "teleport_revoked", Msg: err.Error()}
+		}
+	}
+	defer db.NotifyStatusChanged()
+	releaseCapacity, capacityFailure := acquireNodeLaunch(&p)
+	if capacityFailure != nil {
+		return nil, capacityFailure
+	}
+	defer releaseCapacity()
 	timing := config.StartupTiming("spawn", "name", p.Name, "harness", p.Harness, "async", p.Async)
 	defer func() {
 		timing("return", "failed", failure != nil)
@@ -6607,8 +6734,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	if _, fail := planSandboxProfileAccessForLaunch(
 		p.Harness, p.HarnessBuiltinMode, p.EffectiveSandbox, p.SandboxImplementation,
 		session.ModelTransportLaunchContext{
-			Model: p.Model,
-			Cwd:   p.Cwd,
+			Model:      p.Model,
+			ModelProxy: p.ModelProxy,
+			Cwd:        p.Cwd,
 		},
 		p.AllowUnenforcedSandbox,
 	); fail != nil {
@@ -6804,6 +6932,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		GitWorktreeWriteDirsPinned: p.GitWorktreeWriteDirsPinned,
 		Effort:                     p.Effort,
 		Model:                      p.Model,
+		ModelProxy:                 p.ModelProxy,
 		Harness:                    p.Harness,
 		Sandbox:                    p.HarnessBuiltinMode,
 		SandboxChosenBy:            p.HarnessBuiltinModeSource,
@@ -6932,6 +7061,37 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// an unknown name (returns nil), and SupportsLaunchEnrollment is nil-safe,
 	// so a bad harness degrades to the legacy path rather than panicking.
 	launchEnroll := spawnHarness.SupportsLaunchEnrollment() && !spawnUsesLegacyInjection()
+	if p.AgentID != "" {
+		workerDefaults, err := db.GetFederationWorkerDefaults(p.AgentID)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "worker_defaults", err.Error()}
+		}
+		if workerDefaults != nil && len(workerDefaults.Permissions) > 0 && !launchEnroll {
+			return nil, &spawnFailure{http.StatusBadRequest, "worker_defaults", "node-profile workers require a harness with enrollment before launch"}
+		}
+	}
+
+	var importedID string
+	importedCleanup := func() {}
+	importedLaunched := false
+	if p.BundleHistory != nil {
+		if !spawnHarness.SupportsHistoryTransfer() || spawnHarness.History.Format() != p.BundleHistory.Format {
+			return nil, &spawnFailure{http.StatusBadRequest, "history", "resolved harness cannot resume this history format"}
+		}
+		var cleanup func()
+		var err error
+		importedID, cleanup, err = spawnHarness.History.Import(p.BundleHistory.Raw, p.BundleHistory.SourceID, p.Cwd)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusBadRequest, "history", "install imported history: " + err.Error()}
+		}
+		importedCleanup = cleanup
+		defer func() {
+			if failure != nil && !importedLaunched {
+				importedCleanup()
+			}
+		}()
+		launchEnroll = true
+	}
 	if p.DarwinRouteCapable && !launchEnroll {
 		return nil, &spawnFailure{http.StatusUnprocessableEntity, "darwin_route_launch",
 			"Darwin route-capable launches require the preset-conversation launch seam"}
@@ -6956,7 +7116,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// read — the agent has the text, so it must never enter the nudge queue.
 	var briefingInlined bool
 	if launchEnroll {
-		if openCodeLaunch != nil {
+		if importedID != "" {
+			preConvID = importedID
+		} else if openCodeLaunch != nil {
 			preConvID = openCodeLaunch.ConvID
 		} else {
 			preConvID = convops.GenerateUUID()
@@ -7106,7 +7268,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		return nil, fail
 	}
 
-	// Async harnesses without launch enrollment may return before their conv-id
+	// Capacity-limited launches and async harnesses without launch enrollment
+	// may return before their pane or conv-id
 	// materialises. Reserve and persist the stable actor identity BEFORE the
 	// process starts, so an immediate hook/reaper enrollment can only bind this
 	// exact id. The row is atomically replaced by the actor binding once the conv
@@ -7119,7 +7282,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// the first was already returned to the caller. pendingHeld is the "some
 	// reservation exists for this label" predicate the shared claim/requeue/
 	// launch-marker sites key on.
-	reservedPending := p.Async && !launchEnroll && p.pendingSpawnLabel == ""
+	reservedPending := (p.Async && !launchEnroll || p.nodeCapacityReserved) && p.pendingSpawnLabel == ""
 	pendingHeld := reservedPending || p.pendingSpawnLabel != ""
 	if reservedPending {
 		if g == nil {
@@ -7157,6 +7320,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// (runNew's liveOwnerConflict guard) whose row a label-keyed delete
 	// would then destroy.
 	launchFailed := func(err error) (*spawnOutcome, *spawnFailure) {
+		importedCleanup()
+		importedCleanup = func() {}
 		privateAttachmentCleanup()
 		privateAttachmentCleanup = func() {}
 		if pendingHeld {
@@ -7187,12 +7352,27 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	if err := db.SetFederationSpawnLaunchLabel(p.AgentID, label); err != nil {
 		return launchFailed(err)
 	}
+	if err := db.SetFederationBundleLaunchLabel(p.AgentID, label); err != nil {
+		return launchFailed(err)
+	}
 	timing("launch_prepared", "label", label)
 	launchedAt := time.Now()
 	rememberHTTPProxyLaunchGroup(label, g, p.PermissionOverrides)
-	if err := SpawnDetachedTclaudeNew(spawnArgs); err != nil {
+	launch := SpawnDetachedTclaudeNew
+	if importedID != "" {
+		spawnArgs.ConvID = importedID
+		spawnArgs.SessionID = ""
+		launch = SpawnDetachedTclaudeResume
+	}
+	if p.launchAuthority != nil {
+		if err := p.launchAuthority(); err != nil {
+			return launchFailed(bundleLaunchPreparationFailed(spawnArgs, err))
+		}
+	}
+	if err := launch(spawnArgs); err != nil {
 		return launchFailed(err)
 	}
+	importedLaunched = true
 	timing("session_wrapper_dispatched", "label", label)
 	agentDirectoriesLaunched = true
 	privateAttachmentsLaunched = true
@@ -7485,7 +7665,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		// miss is benign — the sweeper saw the session row first and cleared
 		// the reservation against the same enrollment; a claim error leaves
 		// the row for the sweeper's idempotent already-enrolled path.
-		if p.pendingSpawnLabel != "" {
+		if pendingHeld {
 			if _, err := db.ClaimPendingSpawnAndBindAgent(label, preConvID, p.AgentID, "spawn"); err != nil {
 				slog.Warn("spawn: failed to claim deferred pending reservation; leaving it for the sweeper",
 					"label", label, "conv", preConvID, "error", err)
@@ -7710,6 +7890,9 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 	if err := db.SetFederationSpawnLaunchLabel(p.AgentID, label); err != nil {
 		return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 	}
+	if err := db.SetFederationBundleLaunchLabel(p.AgentID, label); err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+	}
 	if err := db.InsertPendingSpawn(pendingSpawnFromParams(g, p, label)); err != nil {
 		privateRootCleanup()
 		return nil, &spawnFailure{http.StatusInternalServerError, "io",
@@ -7836,6 +8019,7 @@ func pendingSpawnFromParams(g *db.AgentGroup, p spawnParams, label string) *db.P
 		Label:               label,
 		AgentID:             p.AgentID,
 		Launching:           true,
+		CapacityReserved:    p.nodeCapacityReserved,
 		GroupID:             g.ID,
 		Role:                p.Role,
 		Descr:               p.Descr,
@@ -8373,6 +8557,22 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 		if err := db.SetAgentPermissionOverrideWithScope(convID, slug, override.Effect, override.Scope, permissionGranter); err != nil {
 			slog.Warn("spawn: failed to apply birth permission override",
 				"conv", convID, "slug", slug, "effect", override.Effect, "scope", override.Scope, "error", err)
+		}
+	}
+
+	// Node-profile defaults are mandatory, unlike ordinary best-effort birth
+	// overrides. Persist them before the launch path can start the first turn.
+	workerDefaults, workerErr := db.GetFederationWorkerDefaults(agentID)
+	if workerErr != nil {
+		return 0, actorCreated, &spawnFailure{http.StatusInternalServerError, "worker_defaults", workerErr.Error()}
+	}
+	if workerDefaults != nil && len(workerDefaults.Permissions) > 0 {
+		provenance := fmt.Sprintf("peer:%s node-profile:%s id:%s revision:%d", workerDefaults.Peer, workerDefaults.ProfileName, workerDefaults.ProfileID, workerDefaults.Revision)
+		for _, slug := range db.SortedOverrideSlugs(workerDefaults.Permissions) {
+			override := workerDefaults.Permissions[slug]
+			if err := db.SetAgentPermissionOverrideWithScope(convID, slug, override.Effect, override.Scope, provenance); err != nil {
+				return 0, actorCreated, &spawnFailure{http.StatusInternalServerError, "worker_defaults", err.Error()}
+			}
 		}
 	}
 
@@ -9126,17 +9326,26 @@ func reserveUniqueSpawnPrivateAttachmentRootWith(
 	)
 }
 
+// bundleLaunchPreparationFailed clears only the pre-dispatch marker. Failures
+// returned by Spawn itself remain uncertain: a child may already be running.
+func bundleLaunchPreparationFailed(args clcommon.SpawnArgs, launchErr error) error {
+	if err := db.ClearUnlaunchedFederationBundleLabel(args.AgentID, args.Label); err != nil {
+		return errors.Join(launchErr, fmt.Errorf("clear undispatched bundle launch: %w", err))
+	}
+	return launchErr
+}
+
 // SpawnDetachedTclaudeNew is a thin facade over Spawn.SpawnNew.
 // Tests substitute a behavior-accurate fake by assigning Spawn at
 // setup; production keeps the LiveSpawner default. See clcommon.SpawnArgs
 // for the per-field semantics.
 func SpawnDetachedTclaudeNew(args clcommon.SpawnArgs) error {
 	if err := prepareCodexAppServerRuntime(&args); err != nil {
-		return err
+		return bundleLaunchPreparationFailed(args, err)
 	}
 	if err := prepareCopilotAPIPort(&args); err != nil {
 		failPreparedCodexAppServerRuntime(args, err)
-		return err
+		return bundleLaunchPreparationFailed(args, err)
 	}
 	if err := Spawn.SpawnNew(args); err != nil {
 		failPreparedCodexAppServerRuntime(args, err)
@@ -9192,11 +9401,11 @@ func spawnDetachedTclaudeResumeAs(args clcommon.SpawnArgs, kind copilotAPILaunch
 	// for a TUI hook that Codex does not emit on every resume.
 	args.CodexAppServerExistingThread = kind == copilotAPILaunchResume
 	if err := prepareCodexAppServerRuntime(&args); err != nil {
-		return err
+		return bundleLaunchPreparationFailed(args, err)
 	}
 	if err := prepareCopilotAPIPort(&args); err != nil {
 		failPreparedCodexAppServerRuntime(args, err)
-		return err
+		return bundleLaunchPreparationFailed(args, err)
 	}
 	if err := Spawn.SpawnResume(args); err != nil {
 		failPreparedCodexAppServerRuntime(args, err)
@@ -9222,6 +9431,9 @@ func spawnDetachedTclaudeResumeAs(args clcommon.SpawnArgs, kind copilotAPILaunch
 // subprocess.
 func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	args := []string{"session", "new", "--managed-launch", "-d", "--global", "--label", a.Label}
+	if a.ModelProxy != "" {
+		args = append(args, "--model-proxy", a.ModelProxy)
+	}
 	if a.Cwd != "" {
 		args = append(args, "-C", a.Cwd)
 	}
@@ -9477,6 +9689,10 @@ func appendRemoteControlFlag(args []string, remoteControl bool) []string {
 // can be unit-tested without forking a subprocess.
 func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	args := []string{"session", "new", "--managed-launch", "-r", a.ConvID, "-d", "--global"}
+	if a.Label != "" {
+		args = append(args, "--label", a.Label)
+	}
+	args = appendTrustDirFlag(args, a.TrustDir)
 	if a.Cwd != "" {
 		args = append(args, "-C", a.Cwd)
 	}

@@ -121,7 +121,10 @@ func permissionScopeCovers(granter, conferred PermissionScope) bool {
 			covered := allowed[matcher]
 			if dim == ScopeDimPeer && !covered {
 				for _, parent := range granterMatchers {
-					if permissionScopeLiteralMatches(dim, parent, matcher) {
+					// Coverage must preserve the predicate for all future states.
+					// Current pool membership cannot justify minting a durable
+					// concrete-peer grant that survives membership removal.
+					if !strings.Contains(parent, "/") && strings.HasPrefix(matcher, parent+"/") {
 						covered = true
 						break
 					}

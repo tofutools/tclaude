@@ -1080,6 +1080,9 @@ func ValidateTclaudeLayerNetwork(
 			!resolvedModel.ProviderResolved {
 			return nil, nil
 		}
+		if resolvedModel.SessionGateway && h != nil && h.SupportsModelProxy() {
+			return []sandboxpolicy.AccessNotice{{Class: sandboxpolicy.AccessNoticeClassDegradation, Axis: "network", Reason: sandboxpolicy.AccessNoticeReasonFilteredModelTraffic, Effect: sandboxpolicy.AccessNoticeEffectLaunchGated, Detail: "Model traffic uses the launch-bound loopback gateway and authenticated daemon socket, authorized separately by models.proxy. The authored IP network rules still govern tool traffic; no upstream model IP access is added."}}, nil
+		}
 		if endpointErr := validateModelTransportLoopbackForPlatform(
 			h, resolvedModel, runtime.GOOS, deployedEngine,
 		); endpointErr != nil {

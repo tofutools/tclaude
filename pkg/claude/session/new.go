@@ -88,7 +88,8 @@ type NewParams struct {
 	// an omitted value from the global default spawn profile; if that is also
 	// blank the harness receives no override. A non-empty value is normalized
 	// and validated by the harness catalog in runNew.
-	Model string `long:"model" optional:"true" help:"Harness model or alias. Unset = global profile, then the harness default"`
+	ModelProxy string `long:"model-proxy" optional:"true" help:"Model gateway <name>@<trusted peer>"`
+	Model      string `long:"model" optional:"true" help:"Harness model or alias. Unset = global profile, then the harness default"`
 
 	// Harness selects the coding tool this session runs. A fresh human launch
 	// fills an omitted value from the global default spawn profile, or chooses an
@@ -594,6 +595,20 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	params.Model = model
+	if params.ModelProxy == "off" {
+		params.ModelProxy = ""
+	}
+	if params.ModelProxy != "" {
+		if !h.SupportsModelProxy() {
+			return errors.New(h.ModelProxyRefusal())
+		}
+		if h.Name == harness.CopilotName && (strings.TrimSpace(params.Model) == "" || params.Model == "auto") {
+			return errors.New("copilot model gateway requires an explicit --model; automatic model selection is unavailable offline")
+		}
+		if !strings.Contains(params.ModelProxy, "@") {
+			return fmt.Errorf("--model-proxy must be <name>@<trusted peer>")
+		}
+	}
 
 	// --session-id pins a fresh conversation id for a harness that accepts a
 	// preset one: Claude Code (`claude --session-id`), GitHub Copilot CLI
@@ -1121,6 +1136,16 @@ func runNew(params *NewParams) error {
 	// operator never believes a flag took effect that tclaude silently dropped.
 	// Placed after the pass-through branch above, which starts no session and
 	// therefore has no recorded posture to contradict.
+	if params.ModelProxy != "" {
+		if h.Name == harness.CodexName {
+			if flag, ok := providerChangingArg(extraArgs, map[string]bool{"-c": true, "--config": true, "-p": true, "--profile": true, "--oss": false, "--local-provider": true, "--remote": false}); ok {
+				return fmt.Errorf("model gateway cannot combine with Codex provider override %s", flag)
+			}
+		}
+		if err := validateModelProxyExtraArgs(extraArgs); err != nil {
+			return err
+		}
+	}
 	if err := harness.ValidateLaunchExtraArgs(h, extraArgs); err != nil {
 		return err
 	}
@@ -1777,6 +1802,7 @@ func runNew(params *NewParams) error {
 					h,
 					ModelTransportLaunchContext{
 						Model:       model,
+						ModelProxy:  params.ModelProxy,
 						Cwd:         cwd,
 						Environment: plannedEffective.Environment,
 						ExtraArgs:   extraArgs,
@@ -2141,6 +2167,15 @@ func runNew(params *NewParams) error {
 			return fmt.Errorf("find OpenCode executable: %w", err)
 		}
 	}
+	if h.Name == harness.CopilotName && params.ModelProxy != "" {
+		executablePath, err = exec.LookPath("copilot")
+		if err != nil {
+			return fmt.Errorf("find Copilot gateway executable: %w", err)
+		}
+		if err = validateCopilotModelProxyVersion(executablePath); err != nil {
+			return err
+		}
+	}
 	codexRuntimeDir, err := codexAppServerPrivateWriteDir(params)
 	if err != nil {
 		return err
@@ -2230,6 +2265,7 @@ func runNew(params *NewParams) error {
 		}
 	}
 	spawnSpec := harness.SpawnSpec{
+		ModelProxy:                     params.ModelProxy,
 		ExecutablePath:                 executablePath,
 		ExecutableInterpreter:          executableInterpreter,
 		CodexAppServerSocket:           params.CodexAppServerSocket,
@@ -2362,6 +2398,9 @@ func runNew(params *NewParams) error {
 		if err != nil {
 			return fmt.Errorf("resolve HTTP proxy launch CLI: %w", err)
 		}
+	}
+	if err := db.RecordSessionModelProxy(sessionID, params.ModelProxy); err != nil {
+		return fmt.Errorf("record model gateway launch choice: %w", err)
 	}
 	harnessCmd := HTTPProxySpawnCommand(sessionID, h, spawnSpec, gatewayCLIPath)
 	if outerLayer && tclaudeLayerWrapsPane(h.Name) {

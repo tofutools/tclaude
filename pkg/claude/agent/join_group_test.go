@@ -202,3 +202,9 @@ func TestJoinGroupRejectsConflictingFlags(t *testing.T) {
 		})
 	}
 }
+
+func TestJoinedSessionPreservesModelProxyChoice(t *testing.T) {
+	for _, ref := range []string{"main@gateway", "off"} {
+		require.Equal(t, ref, spawnParamsForJoinedSession(&session.NewParams{ModelProxy: ref}, "team").ModelProxy)
+	}
+}

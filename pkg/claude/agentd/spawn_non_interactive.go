@@ -19,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common/executil"
+	"github.com/tofutools/tclaude/pkg/federation/jobstream"
 )
 
 const maxNonInteractiveOutputBytes = 4 << 20
@@ -31,9 +32,11 @@ var killNonInteractiveResourceCgroupMembers = session.KillResourceCgroupMembers
 var runNonInteractiveTmuxCommand = runNonInteractiveThroughTmux
 
 type nonInteractiveSpawnResult struct {
-	Stdout   string `json:"stdout"`
-	Stderr   string `json:"stderr"`
-	ExitCode int    `json:"exit_code"`
+	StdoutBytes []byte `json:"stdout_bytes,omitempty"`
+	StderrBytes []byte `json:"stderr_bytes,omitempty"`
+	Stdout      string `json:"stdout"`
+	Stderr      string `json:"stderr"`
+	ExitCode    int    `json:"exit_code"`
 }
 
 // runNonInteractiveSpawn uses the ordinary spawn boundary's resolved fields,
@@ -44,6 +47,9 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	}
 	bad := func(kind, message string) (nonInteractiveSpawnResult, *spawnFailure) {
 		return nonInteractiveSpawnResult{}, &spawnFailure{Status: 400, Kind: kind, Msg: message}
+	}
+	if p.ModelProxy != "" && p.ModelProxy != "off" {
+		return bad("unsupported_model_proxy", "non-interactive runs do not yet support model gateways; use an ordinary Claude Code worker or --model-proxy off")
 	}
 	hostFailure := func(kind, message string) (nonInteractiveSpawnResult, *spawnFailure) {
 		return nonInteractiveSpawnResult{}, &spawnFailure{Status: 502, Kind: kind, Msg: message}
@@ -171,6 +177,10 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 		SandboxImplementation: p.SandboxImplementation,
 		TimeoutSeconds:        seconds,
 		TmuxSessionName:       p.OneShotName,
+		RemoteJob:             p.RemoteJob,
+	}
+	if p.RemoteJob != nil {
+		command.JobLiveOutput = p.RemoteJob.LivePath
 	}
 	if p.EffectiveSandbox != nil {
 		command.ResourceLimits = p.EffectiveSandbox.Effective.ResourceLimits
@@ -189,7 +199,7 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 		}
 		return result, failure
 	}
-	if runtime.GOOS == "linux" {
+	if runtime.GOOS == "linux" || p.RemoteJob != nil {
 		if command.ResourceLimits.Enabled() {
 			implementation, implErr := sandboxpolicy.NormalizeImplementation(command.SandboxImplementation)
 			if implErr != nil {
@@ -219,6 +229,7 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 }
 
 type nonInteractiveCommand struct {
+	JobLiveOutput         string                       `json:"job_live_output,omitempty"`
 	Argv                  []string                     `json:"argv"`
 	Cwd                   string                       `json:"cwd"`
 	Env                   []string                     `json:"env"`
@@ -229,10 +240,17 @@ type nonInteractiveCommand struct {
 	ObservePane           bool                         `json:"-"`
 	// TmuxSessionName names the Linux one-shot pane's tmux session. Empty
 	// picks a generated one-shot-<id>. Daemon-side only.
-	TmuxSessionName string `json:"-"`
+	TmuxSessionName string               `json:"-"`
+	RemoteJob       *federationJobLaunch `json:"-"`
 }
 
-func executeNonInteractiveCommand(ctx context.Context, command nonInteractiveCommand) (nonInteractiveSpawnResult, *spawnFailure) {
+func executeNonInteractiveCommand(ctx context.Context, command nonInteractiveCommand) (out nonInteractiveSpawnResult, failure *spawnFailure) {
+	defer func() {
+		if command.JobLiveOutput != "" {
+			out.StdoutBytes = []byte(out.Stdout)
+			out.StderrBytes = []byte(out.Stderr)
+		}
+	}()
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	hostFailure := func(kind, message string) (nonInteractiveSpawnResult, *spawnFailure) {
@@ -252,6 +270,16 @@ func executeNonInteractiveCommand(ctx context.Context, command nonInteractiveCom
 	if command.ObservePane {
 		cmd.Stdout = io.MultiWriter(stdout, bestEffortPaneWriter{os.Stdout})
 		cmd.Stderr = io.MultiWriter(stderr, bestEffortPaneWriter{os.Stderr})
+	}
+	if command.JobLiveOutput != "" {
+		file, e := openFederationJobLiveWriter(command.JobLiveOutput)
+		if e != nil {
+			return hostFailure("live_output", e.Error())
+		}
+		defer func() { _ = file.Close() }()
+		frames := jobstream.NewEncoder(file)
+		cmd.Stdout = io.MultiWriter(cmd.Stdout, frames.Channel(jobstream.Stdout))
+		cmd.Stderr = io.MultiWriter(cmd.Stderr, frames.Channel(jobstream.Stderr))
 	}
 	cmd.Env = command.Env
 	if command.ResourceLimits.Enabled() {

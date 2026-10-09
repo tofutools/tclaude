@@ -45,7 +45,7 @@ func TestFederation_TrustLevelCatalogAndConfirmation(t *testing.T) {
 	}
 	fedEventually(t, "all live groups visible", func() bool { return len(latest().Groups) == 2 })
 	for _, g := range latest().Groups {
-		require.ElementsMatch(t, []string{proto.CapRoster, proto.CapPresence, proto.CapMail, proto.CapAttachments, proto.CapSpawn, proto.CapRoutes}, g.Caps)
+		require.ElementsMatch(t, proto.AllCaps, g.Caps)
 	}
 	rec = fedHuman(t, f, http.MethodGet, "/v1/federation/status", nil)
 	require.Contains(t, rec.Body.String(), `"level":"unrestricted"`)

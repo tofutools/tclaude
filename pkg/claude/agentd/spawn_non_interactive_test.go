@@ -315,6 +315,8 @@ func TestRunNonInteractiveSpawnCancellationKillsResourceCgroup(t *testing.T) {
 }
 
 func TestRunNonInteractiveSpawnBoundsEscapedOutputPipe(t *testing.T) {
+	// These smoke commands use POSIX $! syntax, regardless of login shell.
+	t.Setenv("SHELL", "/bin/sh")
 	useDirectNonInteractiveRunner(t)
 	if runtime.GOOS != "linux" {
 		t.Skip("setsid smoke requires Linux")
@@ -345,6 +347,8 @@ func TestRunNonInteractiveSpawnBoundsEscapedOutputPipe(t *testing.T) {
 }
 
 func TestRunNonInteractiveSpawnReapsBackgroundProcessGroup(t *testing.T) {
+	// These smoke commands use POSIX $! syntax, regardless of login shell.
+	t.Setenv("SHELL", "/bin/sh")
 	useDirectNonInteractiveRunner(t)
 	if runtime.GOOS != "linux" {
 		t.Skip("process-state smoke requires Linux")
@@ -567,4 +571,37 @@ printf 'answered\n'
 	if len(sessions) != 0 {
 		t.Fatalf("the one-shot left its conversation behind: %v", sessions)
 	}
+}
+
+// Swap the subprocess boundary while retaining the production pre-exec
+// enrollment callback for remote-job HTTP/wire flow tests.
+func SetRemoteJobDirectRunnerForTest(before ...func(string)) func() {
+	previous := runNonInteractiveTmuxCommand
+	runNonInteractiveTmuxCommand = func(ctx context.Context, c nonInteractiveCommand) (nonInteractiveSpawnResult, *spawnFailure) {
+		if c.RemoteJob != nil {
+			if e := c.RemoteJob.Enroll("test-job-" + c.RemoteJob.ID); e != nil {
+				return nonInteractiveSpawnResult{}, &spawnFailure{Status: 500, Kind: "enroll", Msg: e.Error()}
+			}
+		}
+		for _, check := range before {
+			if c.RemoteJob != nil {
+				check(c.RemoteJob.WorkerID)
+			}
+		}
+		return executeNonInteractiveCommand(ctx, c)
+	}
+	return func() { runNonInteractiveTmuxCommand = previous }
+}
+
+func SetRemoteJobUnknownRunnerForTest() func() {
+	previous := runNonInteractiveTmuxCommand
+	runNonInteractiveTmuxCommand = func(ctx context.Context, c nonInteractiveCommand) (nonInteractiveSpawnResult, *spawnFailure) {
+		if c.RemoteJob != nil {
+			if e := c.RemoteJob.Enroll("uncertain-job-" + c.RemoteJob.ID); e != nil {
+				return nonInteractiveSpawnResult{}, &spawnFailure{Status: 500, Kind: "enroll", Msg: e.Error()}
+			}
+		}
+		return nonInteractiveSpawnResult{}, &spawnFailure{Status: 502, Kind: "remote_job_unknown", Msg: "simulated uncertain launch"}
+	}
+	return func() { runNonInteractiveTmuxCommand = previous }
 }

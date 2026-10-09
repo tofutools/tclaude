@@ -25,12 +25,13 @@ import (
 // behavior change.
 func init() {
 	Register(&Harness{
-		Name:          DefaultName,
-		DisplayName:   "Claude Code",
-		Spawn:         claudeSpawner{},
-		Ask:           claudeAsker{},
-		OneShotReplay: OneShotReplayDirect,
-		Models:        claudeModels{},
+		Name:               DefaultName,
+		DisplayName:        "Claude Code",
+		ModelProxyProtocol: "anthropic-messages-v1",
+		Spawn:              claudeSpawner{},
+		Ask:                claudeAsker{},
+		OneShotReplay:      OneShotReplayDirect,
+		Models:             claudeModels{},
 		ModelTransport: staticModelTransport{
 			provider:    "anthropic",
 			template:    "net-anthropic",
@@ -39,8 +40,9 @@ func init() {
 				Domain: "api.anthropic.com", Ports: []int{443},
 			}},
 		},
-		Life:  claudeLifecycle{},
-		Convs: claudeConvStore{},
+		Life:    claudeLifecycle{},
+		Convs:   claudeConvStore{},
+		History: jsonlHistory{harness: DefaultName},
 		// Claude Code's OS sandbox lives in settings.json, not a launch flag;
 		// claudeSandbox models a small inherit/on/off tri-state that the
 		// spawner translates to a per-session `--settings` override (the

@@ -13,6 +13,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/dbcmd"
 	"github.com/tofutools/tclaude/pkg/claude/federationcmd"
+	"github.com/tofutools/tclaude/pkg/claude/host"
 	"github.com/tofutools/tclaude/pkg/claude/memoryfiles"
 	"github.com/tofutools/tclaude/pkg/claude/pickup"
 	"github.com/tofutools/tclaude/pkg/claude/processcmd"
@@ -41,12 +42,14 @@ func Cmd() *cobra.Command {
 		worktree.Cmd(),
 		stats.Cmd(),
 		usage.Cmd(),
+		host.Cmd(),
 		usage.CostsCmd(),
 		setup.Cmd(),
 		statusbar.Cmd(),
 		selftest.Cmd(),
 		task.Cmd(),
 		agentCmd,
+		agent.ConfigCmd(),
 	}
 	// The proxy lends the daemon's credentials to an agent, so keep the
 	// entire surface absent unless the operator has opted into it. Besides

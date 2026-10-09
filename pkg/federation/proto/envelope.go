@@ -25,8 +25,22 @@ const (
 	// KindSpawnReq asks the recipient to spawn a worker into one of its
 	// exported groups. The recipient's operator decides; KindSpawnRes
 	// (InReplyTo = the request) reports the decision.
-	KindSpawnReq = "spawn_req"
-	KindSpawnRes = "spawn_res"
+	KindJobFollow       = "job_follow"
+	KindJobFollowAnswer = "job_follow_answer"
+	KindJobRequest      = "job_request"
+	KindJobStatus       = "job_status"
+	KindJobCancel       = "job_cancel"
+	KindJobResult       = "job_result"
+	KindSpawnReq        = "spawn_req"
+	KindSpawnRes        = "spawn_res"
+	// KindSpawnAttemptFailed is optional health telemetry, never a final decision.
+	KindSpawnAttemptFailed = "spawn_attempt_failed"
+	KindBundleOffer        = "bundle_offer"
+	KindBundleFetch        = "bundle_fetch"
+	KindBundleAnswer       = "bundle_answer"
+	KindBundleResult       = "bundle_result"
+	KindAgentMoveConfirm   = "agent_move_confirm"
+	KindTeleportLease      = "teleport_lease"
 	// KindRouteOpen asks the recipient to open one TCP connection to one of
 	// its exported routes; KindRouteAnswer accepts (then both dial the hub
 	// stream relay) or refuses it. These are real-time control envelopes,
@@ -36,7 +50,16 @@ const (
 	// KindGroupMail is mail to every current member of an exported group
 	// (optionally narrowed by role). The receiver resolves the members:
 	// it, not the sender's catalog, is the authority on its roster.
-	KindGroupMail = "group_mail"
+	KindGroupMail        = "group_mail"
+	KindAwayNotice       = "away_notice"
+	KindAwayAnswer       = "away_answer"
+	KindSessionsUpdate   = "sessions_update"
+	KindSessionOpen      = "session_open"
+	KindSessionAnswer    = "session_answer"
+	KindModelOpen        = "model_open"
+	KindModelAnswer      = "model_answer"
+	KindModelLease       = "model_lease"
+	KindModelLeaseAnswer = "model_lease_answer"
 )
 
 // Export capabilities a catalog group can grant.
@@ -50,13 +73,19 @@ const (
 	// CapSpawn lets the peer ask for a worker to be spawned into the group.
 	// Every request still waits for the local operator's approval.
 	CapSpawn = "spawn"
+	CapJobs  = "jobs"
 	// CapRoutes lists the group's ready routes in the catalog and lets the
 	// peer open connections to them through the hub stream relay.
-	CapRoutes = "routes"
+	CapRoutes          = "routes"
+	CapSessions        = "sessions"
+	CapSessionsWatch   = "sessions_watch"
+	CapSessionsAttach  = "sessions_attach"
+	CapAgentsReceive   = "agents_receive"
+	CapTeleportReceive = "teleport_receive"
 )
 
 // AllCaps lists every known capability in canonical order.
-var AllCaps = []string{CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes}
+var AllCaps = []string{CapJobs, CapAgentStatus, CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes, CapSessions, CapSessionsWatch, CapSessionsAttach, CapAgentsReceive, CapTeleportReceive}
 
 // MaxMailBody caps a mail envelope's body in bytes.
 const MaxMailBody = 16 * 1024
@@ -133,10 +162,15 @@ const MaxSpawnBrief = 8 * 1024
 
 // SpawnRequestPayload is the payload of a KindSpawnReq envelope.
 type SpawnRequestPayload struct {
-	Group string `json:"group"`
-	Name  string `json:"name,omitempty"`
-	Role  string `json:"role,omitempty"`
-	Brief string `json:"brief"`
+	Profile          string `json:"profile,omitempty"`
+	Credentials      string `json:"credentials,omitempty"`
+	ModelLease       string `json:"model_lease,omitempty"`
+	PlacementVersion int    `json:"placement_version,omitempty"`
+	Require          string `json:"require,omitempty"`
+	Group            string `json:"group"`
+	Name             string `json:"name,omitempty"`
+	Role             string `json:"role,omitempty"`
+	Brief            string `json:"brief"`
 }
 
 // Spawn result statuses.
@@ -179,16 +213,63 @@ type GroupMailPayload struct {
 
 // CatalogPayload lists what an instance exports to the receiving peer.
 type CatalogPayload struct {
-	Groups []CatalogGroup `json:"groups"`
+	RequesterPays   int            `json:"requester_pays,omitempty"`
+	TeleportBackups bool           `json:"teleport_backups,omitempty"`
+	AgentTeleports  int            `json:"agent_teleports,omitempty"`
+	AgentMoves      bool           `json:"agent_moves,omitempty"`
+	Node            *NodeMetadata  `json:"node,omitempty"`
+	NodeAt          time.Time      `json:"node_at,omitempty"`
+	NodeReceivedAt  time.Time      `json:"node_received_at,omitempty"` // receiver-owned; overwritten on receipt
+	Groups          []CatalogGroup `json:"groups"`
 }
 
 // CatalogGroup is one exported group as seen by one peer.
 type CatalogGroup struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	Caps        []string        `json:"caps"`
-	Members     []CatalogMember `json:"members,omitempty"`
-	Routes      []CatalogRoute  `json:"routes,omitempty"`
+	SpawnProfiles           []CatalogSpawnProfile `json:"spawn_profiles,omitempty"`
+	AgentStatuses           []AgentStatus         `json:"agent_statuses,omitempty"`
+	AgentStatusesUpdatedAt  time.Time             `json:"agent_statuses_updated_at,omitempty"`
+	AgentStatusesAt         time.Time             `json:"agent_statuses_at,omitempty"`
+	AgentStatusesReceivedAt time.Time             `json:"agent_statuses_received_at,omitempty"` // overwritten by receiver
+	Name                    string                `json:"name"`
+	Description             string                `json:"description,omitempty"`
+	Caps                    []string              `json:"caps"`
+	Members                 []CatalogMember       `json:"members,omitempty"`
+	Routes                  []CatalogRoute        `json:"routes,omitempty"`
+	Sessions                []CatalogSession      `json:"sessions,omitempty"`
+	SessionsAt              time.Time             `json:"sessions_at,omitempty"`
+}
+
+// CatalogSpawnProfile is the safe, selectable projection of a local profile.
+type CatalogSpawnProfile struct {
+	Name    string `json:"name"`
+	Harness string `json:"harness"`
+	Model   string `json:"model,omitempty"`
+	Effort  string `json:"effort,omitempty"`
+}
+
+// CatalogSession describes a group member's current live pane. Agent is the
+// stable attach target; Incarnation distinguishes reused runtime session IDs.
+// WaitingObservedSince is a lower bound, reset when the observer restarts.
+type CatalogSession struct {
+	Agent                string     `json:"agent"`
+	Session              string     `json:"session"`
+	Incarnation          string     `json:"incarnation,omitempty"`
+	Name                 string     `json:"name"`
+	Harness              string     `json:"harness,omitempty"`
+	State                string     `json:"state"`
+	WaitingReason        string     `json:"waiting_reason,omitempty"`
+	WaitingObservedSince *time.Time `json:"waiting_observed_since,omitempty"`
+}
+
+// SessionsUpdatePayload replaces session snapshots only, leaving catalog
+// capabilities and roster/presence freshness untouched.
+type SessionsUpdatePayload struct {
+	Groups []SessionGroupUpdate `json:"groups"`
+}
+type SessionGroupUpdate struct {
+	Name     string           `json:"name"`
+	Sessions []CatalogSession `json:"sessions"`
+	At       time.Time        `json:"at"`
 }
 
 // CatalogRoute is one ready route of an exported group (CapRoutes).
@@ -347,4 +428,60 @@ func (e *Envelope) DecodePayload(v any) error {
 		return fmt.Errorf("%w: payload: %v", ErrMalformed, err)
 	}
 	return nil
+}
+
+// SessionOpenPayload requests access to one stable agent's current pane.
+// Session and Incarnation pin discovery to one launch; it cannot follow a restart.
+type SessionOpenPayload struct {
+	Agent       string `json:"agent"`
+	Session     string `json:"session"`
+	Incarnation string `json:"incarnation"`
+	Group       string `json:"group"`
+	Stream      string `json:"stream"`
+	Key         []byte `json:"key"`
+	ReadOnly    bool   `json:"read_only"`
+	Cols        int    `json:"cols"`
+	Rows        int    `json:"rows"`
+}
+type SessionAnswerPayload struct {
+	Stream string `json:"stream"`
+	OK     bool   `json:"ok"`
+	Key    []byte `json:"key,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// ModelOpenPayload binds one model HTTP exchange to a named gateway.
+// Version 1 mandates routebroker credits. Version 2 adds dialect negotiation
+// and authenticated control-only probes. There is no raw TCP fallback.
+type ModelOpenPayload struct {
+	Probe      bool   `json:"probe,omitempty"`
+	Dialect    string `json:"dialect,omitempty"`
+	Lease      string `json:"lease,omitempty"`
+	Generation string `json:"generation,omitempty"`
+	Version    int    `json:"version"`
+	Stream     string `json:"stream"`
+	Key        []byte `json:"key"`
+	Proxy      string `json:"proxy"`
+	Session    string `json:"session"`
+}
+type ModelAnswerPayload struct {
+	Stream string `json:"stream"`
+	Key    []byte `json:"key,omitempty"`
+	OK     bool   `json:"ok"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// ModelLeasePayload is sealed daemon-to-daemon control, never a worker bearer.
+type ModelLeasePayload struct {
+	Lease      string `json:"lease"`
+	Request    string `json:"request"`
+	Kind       string `json:"kind"`
+	Proxy      string `json:"proxy"`
+	Worker     string `json:"worker"`
+	Session    string `json:"session"`
+	Generation string `json:"generation"`
+	Revoke     bool   `json:"revoke,omitempty"`
+}
+type ModelLeaseAnswerPayload struct {
+	OK bool `json:"ok"`
 }

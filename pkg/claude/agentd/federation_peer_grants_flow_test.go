@@ -153,6 +153,16 @@ func TestFederation_AutoSpawnFailureStaysPending(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, db.FedSpawnPending, rows[0].Status)
+	fedEventually(t, "optional launch failure telemetry", func() bool {
+		for _, e := range p.envelopes(proto.KindSpawnAttemptFailed) {
+			var frame struct{ Request, Attempt string }
+			require.NoError(t, e.DecodePayload(&frame))
+			if frame.Request == env.ID && proto.ValidAgentRef(frame.Attempt) {
+				return true
+			}
+		}
+		return false
+	})
 	workers, err := db.ListFederationAutoWorkers(p.id.ID())
 	require.NoError(t, err)
 	require.Empty(t, workers)

@@ -81,9 +81,21 @@ func handleDashboardPendingDeleteAPI(w http.ResponseWriter, r *http.Request) {
 	// could let the launch complete after cleanup and orphan its process. Once
 	// executeSpawn observes the session row it clears Launching; the normal
 	// teardown below is then safe and can reach the pane by label.
-	if p.Launching {
+	if p.Launching && (!p.CapacityReserved || r.URL.Query().Get("acknowledge_late_worker") != "1") {
+		if p.CapacityReserved {
+			http.Error(w, "capacity reservation is still launching; inspect the launch first, then acknowledge a possible late worker with ?acknowledge_late_worker=1", http.StatusConflict)
+			return
+		}
 		http.Error(w, "pending spawn "+label+" is still launching; try again", http.StatusConflict)
 		return
+	}
+
+	if p.CapacityReserved && r.URL.Query().Get("acknowledge_late_worker") != "1" {
+		sess, err := db.LoadSession(label)
+		if err != nil || sess == nil || (sess.TmuxSession == "" || !session.IsTmuxSessionAlive(sess.TmuxSession)) {
+			http.Error(w, "capacity reservation is unconfirmed; inspect the launch first, then acknowledge a possible late worker with ?acknowledge_late_worker=1", http.StatusConflict)
+			return
+		}
 	}
 
 	// Kill the tmux pane if it is still alive — this is the gated harness
@@ -95,6 +107,10 @@ func handleDashboardPendingDeleteAPI(w http.ResponseWriter, r *http.Request) {
 			if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(sess.TmuxSession)).Run(); err != nil {
 				slog.Warn("pending delete: kill-session failed",
 					"label", label, "tmux", sess.TmuxSession, "error", err)
+				if p.CapacityReserved {
+					http.Error(w, "failed to stop capped pending pane; reservation retained", http.StatusServiceUnavailable)
+					return
+				}
 			}
 		}
 	}

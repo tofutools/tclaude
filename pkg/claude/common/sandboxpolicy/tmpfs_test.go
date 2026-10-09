@@ -1,8 +1,10 @@
 package sandboxpolicy
 
 import (
+	"cmp"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,11 +32,15 @@ func TestNormalizeTmpfsCanonicalizesAndSorts(t *testing.T) {
 	// behavior.
 	rawHome, err := os.UserHomeDir()
 	require.NoError(t, err)
-	assert.Equal(t, []TmpfsMount{
+	want := []TmpfsMount{
 		{Path: "/scratch/inner", Size: "512MiB", SizeBytes: 512 << 20},
 		{Path: "/srv/build"},
 		{Path: filepath.Join(rawHome, "work-cache")},
-	}, profile.Tmpfs)
+	}
+	// The temporary home may sort before or after /scratch and /srv depending
+	// on TMPDIR. Keep checking lexical order without assuming the host layout.
+	slices.SortFunc(want, func(a, b TmpfsMount) int { return cmp.Compare(a.Path, b.Path) })
+	assert.Equal(t, want, profile.Tmpfs)
 }
 
 // The flip side of the note above, asserted rather than implied: an authored

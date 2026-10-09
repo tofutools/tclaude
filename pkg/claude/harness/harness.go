@@ -67,6 +67,8 @@ const (
 // provide that capability"; the Supports* helpers fold those into simple
 // booleans for callers that gate behavior on a capability.
 type Harness struct {
+	// ModelProxyProtocol declares an explicitly supported model gateway contract.
+	ModelProxyProtocol string
 	// Name is the stable identifier persisted in the DB `harness` column
 	// and accepted by `--harness`. Lower-case, no spaces (e.g. "claude").
 	Name string
@@ -100,6 +102,8 @@ type Harness struct {
 	// model (list / resolve / read title). Read-only for now; the write
 	// counterpart (SetTitle) rides the Lifecycle/send-keys PR.
 	Convs ConvStore
+	// History installs a reviewed portable transcript for native resume.
+	History HistoryTransfer
 	// Hooks installs/checks/repairs the tclaude callback in the harness's
 	// config target (+ any trust step). nil = this build can't install
 	// hooks for the harness; `tclaude setup` skips it with a message.
@@ -809,4 +813,32 @@ func Names() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// SupportsModelProxy gates per-launch credential bridging on the descriptor.
+func (h *Harness) SupportsModelProxy() bool {
+	return h != nil && (h.ModelProxyProtocol == "anthropic-messages-v1" || h.ModelProxyProtocol == "openai-responses-v1")
+}
+
+// ModelProxyDialect is the wire dialect owned by the declared binding.
+func (h *Harness) ModelProxyDialect() string {
+	if h != nil && h.ModelProxyProtocol == "openai-responses-v1" {
+		return "openai"
+	}
+	return "anthropic"
+}
+
+// ModelProxyRefusal explains the missing security or protocol contract.
+func (h *Harness) ModelProxyRefusal() string {
+	if h == nil {
+		return "selected harness does not support model gateways"
+	}
+	switch h.Name {
+	case OpenCodeName:
+		return "OpenCode model gateways are unsupported: persistent account/org and managed configuration can override the launch provider; credential isolation is not established"
+	case GeminiName:
+		return "Gemini CLI model gateways are unsupported: its native GenerateContent dialect and forced API-key authentication are not implemented"
+	default:
+		return h.DisplayName + " does not support model gateways"
+	}
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	commonTable "github.com/tofutools/tclaude/pkg/claude/common/table"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 func setupTestDB(t *testing.T) {
@@ -814,4 +815,27 @@ func TestRunLookup_Ambiguous(t *testing.T) {
 	rc := runLookupDirect(&lookupParams{Selector: "dup"}, &stdout, &stderr)
 	require.Equal(t, rcAmbiguous, rc, "runLookup rc")
 	assert.Contains(t, stderr.String(), "matches 2 conversations")
+}
+
+func TestRenderRemotePeersStatusOnly(t *testing.T) {
+	row := &remotePeerEntry{Address: "agt_01234567@bob", RemoteGroup: "builders", Harness: "codex", State: &proto.AgentStatus{Online: true, Status: "awaiting_input", Model: "gpt-5.6-sol", Effort: "high", Subagents: 2, TaskLabel: "Build feature", Context: &proto.AgentContext{Percent: 42, Window: 1000}}}
+	var out bytes.Buffer
+	renderRemotePeers([]*remotePeerEntry{row}, &out, 220)
+	for _, expected := range []string{"awaiting_input", "gpt-5.6-sol high", "Build feature", "42%"} {
+		assert.Contains(t, out.String(), expected)
+	}
+	assert.True(t, remotePeerOnline(row), "status-only access reports liveness independently of presence")
+
+	out.Reset()
+	renderRemotePeers([]*remotePeerEntry{row}, &out, 80)
+	for _, line := range strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n") {
+		assert.LessOrEqual(t, commonTable.StringWidth(line), 80)
+	}
+	assert.Contains(t, out.String(), "STATE")
+	assert.Contains(t, out.String(), "MODEL")
+	row.StatusStale = true
+	out.Reset()
+	renderRemotePeers([]*remotePeerEntry{row}, &out, 220)
+	assert.Contains(t, out.String(), "(stale)")
+	assert.False(t, remotePeerOnline(row))
 }

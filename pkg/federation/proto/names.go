@@ -1,6 +1,9 @@
 package proto
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // MaxNameLen bounds every remote-supplied display name.
 const MaxNameLen = 64
@@ -62,6 +65,7 @@ func ValidAgentRef(s string) bool {
 // SanitizeCatalog applies SafeName to every name in a received catalog and
 // drops members whose agent ref is malformed.
 func SanitizeCatalog(c *CatalogPayload) {
+	c.Node = SanitizeNode(c.Node)
 	for gi := range c.Groups {
 		g := &c.Groups[gi]
 		g.Name = SafeName(g.Name, false)
@@ -75,6 +79,10 @@ func SanitizeCatalog(c *CatalogPayload) {
 			}
 		}
 		g.Caps = caps
+		g.SpawnProfiles = sanitizeSpawnProfiles(g.SpawnProfiles)
+		if !g.HasCap(CapSpawn) {
+			g.SpawnProfiles = nil
+		}
 		members := g.Members[:0]
 		for _, m := range g.Members {
 			if !ValidAgentRef(m.Agent) {
@@ -88,6 +96,18 @@ func SanitizeCatalog(c *CatalogPayload) {
 			members = append(members, m)
 		}
 		g.Members = members
+		g.AgentStatuses = SanitizeAgentStatuses(g.AgentStatuses)
+		if !g.HasCap(CapAgentStatus) {
+			g.AgentStatuses = nil
+			g.AgentStatusesAt = time.Time{}
+			g.AgentStatusesUpdatedAt = time.Time{}
+			g.AgentStatusesReceivedAt = time.Time{}
+		}
+		g.Sessions = SanitizeSessions(g.Sessions)
+		if !g.HasCap(CapSessions) {
+			g.Sessions = nil
+			g.SessionsAt = time.Time{}
+		}
 		routes := g.Routes[:0]
 		for _, rt := range g.Routes {
 			if !ValidRouteID(rt.ID) {
@@ -133,4 +153,55 @@ func StripControls(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// SanitizeSessions validates identities and bounds remote display text.
+func SanitizeSessions(in []CatalogSession) []CatalogSession {
+	out := in[:0]
+	for _, s := range in {
+		if !ValidAgentRef(s.Agent) || s.Session == "" || len(s.Session) > 128 {
+			continue
+		}
+		valid := true
+		for _, r := range s.Session {
+			if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' && r != '_' {
+				valid = false
+			}
+		}
+		if !valid {
+			continue
+		}
+		s.Name = SafeName(s.Name, false)
+		s.Harness = safeOptional(s.Harness)
+		s.State = SafeName(s.State, false)
+		switch s.WaitingReason {
+		case "permission", "question", "prompt":
+		default:
+			s.WaitingReason = ""
+			s.WaitingObservedSince = nil
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// Profile identifiers are kept verbatim; rewriting would select another name.
+func sanitizeSpawnProfiles(profiles []CatalogSpawnProfile) []CatalogSpawnProfile {
+	out := profiles[:0]
+	for _, p := range profiles {
+		if len(out) == 64 {
+			break
+		}
+		if p.Name == "" || len(p.Name) > 128 || strings.TrimSpace(p.Name) != p.Name || strings.ContainsAny(p.Name, "\r\n\t/\\") || StripControls(p.Name) != p.Name {
+			continue
+		}
+		p.Harness = SafeName(p.Harness, false)
+		p.Model = strings.Join(strings.Fields(StripControls(p.Model)), " ")
+		p.Effort = strings.Join(strings.Fields(StripControls(p.Effort)), " ")
+		if len(p.Model) > 256 || len(p.Effort) > 64 {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }

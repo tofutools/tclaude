@@ -244,13 +244,32 @@ func canonicalPermissionScopeForSlug(slug, raw string) (string, error) {
 // Catalog group names are intentionally not checked: catalogs can be stale.
 func normalizePeerScopeForSlug(slug string, scope PermissionScope) (string, error) {
 	if len(scope[ScopeDimPeer]) != 0 {
-		if len(scope) != 1 {
+		modelScope := slug == PermModelsProxy && len(scope) == 2 && len(scope[ScopeDimHTTPProxy]) != 0
+		if len(scope) != 1 && !modelScope {
 			return "", fmt.Errorf("a peer= scope cannot be combined with other dimensions; name the remote group as peer=<peer>/<group>")
 		}
 		for i, matcher := range scope[ScopeDimPeer] {
 			ref, group, grouped := strings.Cut(matcher, "/")
 			if slug == PermAgentSpawn && grouped {
 				return "", fmt.Errorf("agent.spawn peer scope must name only a peer, without a group")
+			}
+			if strings.HasPrefix(ref, "group:") || strings.HasPrefix(ref, db.FederationNodeGroupScopePrefix) {
+				var pool *db.FederationNodeGroup
+				var err error
+				if strings.HasPrefix(ref, "group:") {
+					pool, err = db.GetFederationNodeGroup(strings.TrimPrefix(ref, "group:"))
+				} else {
+					pool, err = db.GetFederationNodeGroupByID(strings.TrimPrefix(ref, db.FederationNodeGroupScopePrefix))
+				}
+				if err != nil {
+					return "", err
+				}
+				value := db.FederationNodeGroupScopePrefix + pool.ID
+				if grouped {
+					value += "/" + group
+				}
+				scope[ScopeDimPeer][i] = value
+				continue
 			}
 			peer, err := resolveFederationPeerOpt(ref, false)
 			if err != nil {

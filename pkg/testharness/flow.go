@@ -467,7 +467,10 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 		LaunchGeneration: args.RouteHelperLaunchGeneration, Credential: args.RouteHelperCredential,
 		GroupIDs: args.RouteHelperGroupIDs,
 	})
-	label := generateResumeLabel()
+	label := args.Label
+	if label == "" {
+		label = generateResumeLabel()
+	}
 	// Resume mints a fresh session row / TCLAUDE_SESSION_ID; track it.
 	cc.SessionID = label
 	harnessBuiltinMode := launchHarnessBuiltinMode(args.Harness, args.Sandbox, args.SandboxImplementation)
@@ -664,7 +667,10 @@ func (s *simSpawner) spawnResumeCodex(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnGitWorktreeWriteDirs(convID, args.GitWorktreeWriteDirs)
 	s.w.RecordSpawnCodexGitCommonDir(convID, args.CodexGitCommonDir)
 	s.w.RecordSpawnCodexGitCommonDirPinned(convID, args.CodexGitCommonDirPinned)
-	label := generateResumeLabel()
+	label := args.Label
+	if label == "" {
+		label = generateResumeLabel()
+	}
 	if err := saveSessionWithResumeProvenance(&db.SessionRow{
 		ID:                     label,
 		TmuxSession:            label,
@@ -959,6 +965,7 @@ func (f *Flow) materializeTestCwd(cwd string) {
 // down). Useful between an action that left the conv online and an
 // action that requires it offline (resume).
 func (f *Flow) MarkOffline(tmuxSession string) {
+	defer db.NotifyStatusChanged()
 	f.World.Tmux.MarkOffline(tmuxSession)
 }
 

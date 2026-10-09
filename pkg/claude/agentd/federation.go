@@ -97,13 +97,43 @@ var (
 
 // federationIdentity loads (creating on first use) this instance's identity.
 func federationIdentity() (*proto.Identity, error) {
+	recovery, recoveryErr := loadIdentityRecovery()
+	if recoveryErr != nil {
+		return nil, recoveryErr
+	}
+	if recovery.Pending {
+		return nil, errors.New("local identity recovery is pending; resume federation identity recover-local --apply")
+	}
+
+	journal, journalErr := loadIdentityJournal()
+	if journalErr != nil {
+		return nil, journalErr
+	}
+	if journal.Pending && !time.Now().Before(journal.Chain[len(journal.Chain)-1].ActivateAt) {
+		return nil, errors.New("identity rotation activation is pending")
+	}
 	fedIdentityMu.Lock()
 	defer fedIdentityMu.Unlock()
 	if fedIdentity != nil {
 		return fedIdentity, nil
 	}
-	id, err := proto.LoadOrCreateIdentity(FederationKeyPath())
+	var id *proto.Identity
+	var err error
+	_, receiptErr := os.Stat(identityReceiptPath())
+	if receiptErr != nil && !errors.Is(receiptErr, os.ErrNotExist) {
+		return nil, receiptErr
+	}
+	if _, e := os.Stat(identityJournalPath()); e == nil || receiptErr == nil {
+		id, err = proto.LoadIdentity(FederationKeyPath())
+	} else if !errors.Is(e, os.ErrNotExist) {
+		return nil, e
+	} else {
+		id, err = proto.LoadOrCreateIdentity(FederationKeyPath())
+	}
 	if err != nil {
+		return nil, err
+	}
+	if err = saveIdentityPublicFile(identityReceiptPath(), map[string]any{"instance_id": id.ID(), "public_key": id.Pub}); err != nil {
 		return nil, err
 	}
 	fedIdentity = id
@@ -124,20 +154,47 @@ func defaultFederationName() string {
 
 // fedRuntime is one live hub connection plus its workers.
 type fedRuntime struct {
-	id     *proto.Identity
-	name   string
-	cl     *client.Client
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	healthMu sync.Mutex
+	health   *fleetHealthState
+
+	modelsMu          sync.Mutex
+	models            *fedModelState
+	enrollmentMu      sync.Mutex
+	enrollmentPending map[string]fedEnrollmentPending
+	enrollmentRates   map[string][]time.Time
+	enrollmentGlobal  []time.Time
+
+	agentStatusMu   sync.Mutex
+	agentStatusSent map[string]fedStatusSent
+	nodeMu          sync.RWMutex
+	nodeStatic      proto.NodeMetadata
+	nodeWake        chan struct{}
+	awayMu          sync.Mutex
+	away            *fedAwayState
+	awayWaiting     map[string]string
+	bundleMu        sync.Mutex
+	bundleWaiters   map[string]fedBundleWaiter
+	bundleActive    map[string]bool
+	id              *proto.Identity
+	name            string
+	cl              *client.Client
+	ctx             context.Context
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
 
 	inbound chan fedInbound
 	kick    chan struct{}
 
-	mu        sync.Mutex
-	online    map[string]bool
-	inLimiter map[string][]time.Time
-	routes    *fedRouteState
+	mu                  sync.Mutex
+	online              map[string]bool
+	inLimiter           map[string][]time.Time
+	routes              *fedRouteState
+	sessionsMu          sync.Mutex
+	sessionObservations map[string]fedSessionObservation
+	sessionSent         map[string]string
+	terminalsMu         sync.Mutex
+	terminals           *fedTerminalState
+	teleportLeases      teleportLeaseObservations
 }
 
 type fedInbound struct {
@@ -163,8 +220,24 @@ func currentFederation() *fedRuntime {
 // startFederation starts the hub client when config enables it. Errors are
 // logged, never fatal: federation is an optional add-on to a local daemon.
 func startFederation() {
+	if _, err := completeLocalIdentityRecovery(false); err != nil {
+		slog.Error("federation: local identity recovery failed", "error", err)
+		return
+	}
+
+	if err := activateLocalIdentityRotation(time.Now()); err != nil {
+		slog.Error("federation: rotation recovery failed", "error", err)
+		return
+	}
+	if currentFederation() != nil {
+		return
+	}
+	// Expire private payloads on restart even when federation was disabled.
+	reconcileFederationBundleOffers()
+	go reconcileFederationMoves()
 	fedLifecycleMu.Lock()
 	defer fedLifecycleMu.Unlock()
+	cleanupFedTerminalIndicators()
 	cfg, err := config.Load()
 	if err != nil || cfg == nil || cfg.Federation == nil || !cfg.Federation.Enabled || cfg.Federation.HubURL == "" {
 		return
@@ -202,6 +275,7 @@ func stopFederationLocked() {
 	fedMu.Unlock()
 	if rt != nil {
 		rt.cancel()
+		rt.stopTerminals()
 		rt.wg.Wait()
 		rt.stopRoutes()
 		withdrawStaleFederationMirrors()
@@ -225,17 +299,25 @@ func startFederationWith(fc *config.FederationConfig) error {
 		}
 		tlsCfg = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	}
+	journal, err := loadIdentityJournal()
+	if err != nil {
+		return err
+	}
 	name := fc.Name
 	if name == "" {
 		name = defaultFederationName()
 	}
 	rt := &fedRuntime{
-		id: id, name: name,
+		id: id, name: name, nodeWake: make(chan struct{}, 1),
 		inbound: make(chan fedInbound, 256), kick: make(chan struct{}, 1),
 		online: map[string]bool{}, inLimiter: map[string][]time.Time{},
 	}
+	if fc.Away != nil {
+		rt.away = &fedAwayState{FederationAwayConfig: *fc.Away, Epoch: newApprovalID()}
+	}
 	cl, err := client.New(client.Options{
-		URL: fc.HubURL, Identity: id, Name: name, Version: buildversion.AppVersion(),
+		RotationChain: journal.Chain,
+		URL:           fc.HubURL, Identity: id, Name: name, Version: buildversion.AppVersion(),
 		Invite: fc.Invite, TLS: tlsCfg, Logger: slog.Default(),
 		OnDeliver: func(from string, s *proto.Sealed) {
 			select {
@@ -253,10 +335,11 @@ func startFederationWith(fc *config.FederationConfig) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	rt.ctx, rt.cancel = ctx, cancel
 	withdrawStaleFederationMirrors()
-	rt.wg.Add(3)
+	rt.wg.Add(4)
 	go func() { defer rt.wg.Done(); cl.Run(ctx) }()
 	go func() { defer rt.wg.Done(); rt.inboundLoop(ctx) }()
 	go func() { defer rt.wg.Done(); rt.outboxLoop(ctx) }()
+	go func() { defer rt.wg.Done(); rt.nodeLoop(ctx) }()
 
 	fedMu.Lock()
 	fedCurrent = rt
@@ -275,6 +358,7 @@ func (rt *fedRuntime) kickOutbox() {
 // onDirectory runs on the client's read goroutine: it only records
 // presence and schedules work.
 func (rt *fedRuntime) onDirectory(entries []proto.DirectoryEntry) {
+	go rt.observeIdentityChains(entries)
 	now := map[string]bool{}
 	for _, e := range entries {
 		if e.Online {
@@ -290,13 +374,21 @@ func (rt *fedRuntime) onDirectory(entries []proto.DirectoryEntry) {
 	}
 	rt.online = now
 	rt.mu.Unlock()
+	rt.observeFleetPresence(now, time.Now())
 	if len(cameOnline) == 0 {
 		return
 	}
 	go func() {
+		peers := []db.FederationPeer{}
 		for _, id := range cameOnline {
 			if p, _ := db.GetFederationPeer(id); p != nil {
-				rt.sendCatalog(id)
+				peers = append(peers, *p)
+			}
+		}
+		sharedStatus := rt.sharedStatusForPeers(peers)
+		for _, id := range cameOnline {
+			if p, _ := db.GetFederationPeer(id); p != nil {
+				rt.sendCatalog(id, sharedStatus)
 				rt.sendControl(id, proto.KindCatalogReq, "", struct{}{})
 			}
 		}
@@ -316,9 +408,10 @@ func (rt *fedRuntime) broadcastCatalogs() {
 	if err != nil {
 		return
 	}
+	sharedStatus := rt.sharedStatusForPeers(peers)
 	for _, p := range peers {
 		if rt.isOnline(p.InstanceID) {
-			rt.sendCatalog(p.InstanceID)
+			rt.sendCatalog(p.InstanceID, sharedStatus)
 		}
 	}
 }
@@ -333,46 +426,60 @@ func broadcastFederationCatalogs() {
 // sendControl seals and sends a best-effort control envelope. Only trusted
 // peers are ever addressed: the payload is encrypted to the key pinned at
 // trust time.
-func (rt *fedRuntime) sendControl(to, kind, inReplyTo string, payload any) {
+func (rt *fedRuntime) sendControl(to, kind, inReplyTo string, payload any) bool {
 	peer, err := db.GetFederationPeer(to)
 	if err != nil || peer == nil {
-		return
+		return false
 	}
 	env, err := proto.NewEnvelope(rt.id, kind, proto.Endpoint{Name: rt.name}, proto.Endpoint{Instance: to}, fedControlTTL, payload)
 	if err != nil {
-		return
+		return false
 	}
 	env.InReplyTo = inReplyTo
 	sealed, err := proto.Seal(rt.id, env, ed25519.PublicKey(peer.PubKey))
 	if err != nil {
 		slog.Warn("federation: seal failed", "kind", kind, "error", err)
-		return
+		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	res, err := rt.cl.Send(ctx, to, sealed)
 	if err != nil {
 		slog.Debug("federation: control send failed", "kind", kind, "to", to, "error", err)
-		return
+		return false
 	}
 	if res.Status != proto.SendDelivered {
 		slog.Debug("federation: control not delivered", "kind", kind, "to", to, "status", res.Status, "code", res.Code)
+		return false
 	}
+	return true
 }
 
-func (rt *fedRuntime) sendCatalog(peer string) {
-	cat, err := buildFederationCatalog(peer)
+func (rt *fedRuntime) sendCatalog(peer string, status ...*statusSnapshot) {
+	cat, err := buildFederationCatalog(peer, status...)
 	if err != nil {
 		slog.Warn("federation: build catalog failed", "peer", peer, "error", err)
 		return
 	}
 	rt.sendControl(peer, proto.KindCatalog, "", cat)
+	// Catalog requests must not turn a 30s node heartbeat into fanout traffic.
+	// Wake only to populate the initial static probe; later catalogs read cache.
+	rt.nodeMu.RLock()
+	needsProbe := rt.nodeStatic.Schema != 1
+	rt.nodeMu.RUnlock()
+	if needsProbe {
+		rt.wakeNodes()
+	}
 }
 
 // buildFederationCatalog lists what this instance exports to peer: groups
 // exported to the peer or to every peer, with members when the export
 // grants roster, and presence when it grants presence.
-func buildFederationCatalog(peer string) (*proto.CatalogPayload, error) {
+func buildFederationCatalog(peer string, status ...*statusSnapshot) (*proto.CatalogPayload, error) {
+	var sharedStatus *statusSnapshot
+	if len(status) > 0 {
+		sharedStatus = status[0]
+	}
 	groups, err := db.ListAgentGroups()
 	if err != nil {
 		return nil, err
@@ -394,9 +501,15 @@ func buildFederationCatalog(peer string) (*proto.CatalogPayload, error) {
 			delete(caps[group.ID], proto.CapAttachments)
 		}
 	}
-	cat := &proto.CatalogPayload{Groups: []proto.CatalogGroup{}}
+	cat := &proto.CatalogPayload{RequesterPays: 1, TeleportBackups: true, AgentTeleports: 1, AgentMoves: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
+	if fedPeerReadsNode(peer) {
+		cat.Node = localNodeMetadata()
+	}
 	for gid, cs := range caps {
 		g := proto.CatalogGroup{Name: names[gid]}
+		if cs[proto.CapSpawn] {
+			g.SpawnProfiles = selectableSpawnProfiles(peer, gid)
+		}
 		for _, c := range proto.AllCaps {
 			if cs[c] {
 				g.Caps = append(g.Caps, c)
@@ -436,6 +549,18 @@ func buildFederationCatalog(peer string) (*proto.CatalogPayload, error) {
 				}
 			}
 		}
+		if g.HasCap(proto.CapAgentStatus) {
+			if sharedStatus == nil {
+				sharedStatus = gatheredStatusSnapshot()
+			}
+			g.AgentStatuses = fedGroupAgentStatuses(gid, sharedStatus)
+			g.AgentStatusesAt = sharedStatus.observedAt
+			g.AgentStatusesUpdatedAt = cat.NodeAt
+		}
+		if g.HasCap(proto.CapSessions) {
+			g.Sessions = fedCatalogSessions(gid)
+			g.SessionsAt = time.Now().UTC()
+		}
 		if g.HasCap(proto.CapRoutes) {
 			g.Routes = fedCatalogRoutes(gid)
 		}
@@ -448,18 +573,35 @@ func buildFederationCatalog(peer string) (*proto.CatalogPayload, error) {
 func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 	refresh := time.NewTicker(fedCatalogRefresh)
 	defer refresh.Stop()
+	sessions := time.NewTicker(2 * time.Second)
+	defer sessions.Stop()
 	completion := time.NewTicker(time.Second)
 	defer completion.Stop()
 	reconcileFederationSpawns()
+	reconcileFederationJobs()
+	reconcileFederationBundleOffers()
+	go reconcileFederationMoves()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case in := <-rt.inbound:
 			rt.handleInbound(in.from, in.sealed)
+		case <-sessions.C:
+			rt.flushFleetHealth(time.Now())
+			rt.revokeStaleModelLeases()
+			rt.pushSessionTransitions()
+			rt.pushAgentStatuses()
+			rt.observeAwayWaiting()
 		case <-completion.C:
+			rt.reconcileIdentityRotations()
+			go func() { _ = activateLocalIdentityRotation(time.Now()) }()
 			reconcileFederationSpawns()
+			reconcileFederationJobs()
+			reconcileFederationBundleOffers()
+			go reconcileFederationMoves()
 		case <-refresh.C:
+			pruneFederationJobLogs()
 			rt.broadcastCatalogs()
 			if err := db.PruneFederationSeen(time.Now()); err != nil {
 				slog.Debug("federation: prune replay guard failed", "error", err)
@@ -469,6 +611,10 @@ func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 }
 
 func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
+	if rt.handleEnrollmentInbound(from, sealed) {
+		return
+	}
+
 	peer, err := db.GetFederationPeer(from)
 	if err != nil || peer == nil {
 		slog.Debug("federation: dropping envelope from untrusted instance", "from", from)
@@ -480,6 +626,12 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		return
 	}
 	switch env.Kind {
+	case proto.KindIdentityRotation:
+		var rotation proto.Rotation
+		if err := json.Unmarshal(env.Payload, &rotation); err != nil || rotation.OldID != from {
+			return
+		}
+		rt.observeIdentityChains([]proto.DirectoryEntry{{RotationChain: []proto.Rotation{rotation}}})
 	case proto.KindCatalog:
 		var cat proto.CatalogPayload
 		if err := env.DecodePayload(&cat); err != nil {
@@ -487,13 +639,55 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 			return
 		}
 		proto.SanitizeCatalog(&cat)
+		previous, _, _ := fedCatalogFor(from)
+		mergeNodePublication(&cat, previous, cat.NodeAt, env.CreatedAt)
+		mergeCatalogAgentStatuses(&cat, previous, env.CreatedAt)
+		// A slow full catalog must not roll back a newer transition push.
+		if previous, _, err := fedCatalogFor(from); err == nil && previous != nil {
+			for i := range cat.Groups {
+				g := &cat.Groups[i]
+				if !g.HasCap(proto.CapSessions) {
+					continue
+				}
+				for _, old := range previous.Groups {
+					if old.Name == g.Name && old.SessionsAt.After(g.SessionsAt) {
+						g.Sessions, g.SessionsAt = old.Sessions, old.SessionsAt
+					}
+				}
+			}
+		}
 		clean, err := json.Marshal(cat)
 		if err != nil {
 			return
 		}
 		if err := db.PutFederationCatalog(from, string(clean), time.Now()); err != nil {
 			slog.Warn("federation: store catalog failed", "from", from, "error", err)
+		} else {
+			rt.observeFleetNode(from, &cat, time.Now())
 		}
+
+	case proto.KindAwayNotice:
+		rt.acceptAwayNotice(peer, env)
+	case proto.KindAwayAnswer:
+		rt.acceptAwayAnswer(peer, env)
+	case proto.KindModelLease:
+		rt.acceptModelLease(peer, env)
+	case proto.KindModelLeaseAnswer:
+		rt.acceptModelLeaseAnswer(peer, env)
+	case proto.KindModelOpen:
+		rt.acceptModelOpen(peer, env)
+	case proto.KindModelAnswer:
+		rt.handleModelAnswer(peer, env)
+	case proto.KindSessionOpen:
+		rt.acceptSessionOpen(peer, env)
+	case proto.KindSessionAnswer:
+		rt.handleSessionAnswer(peer, env)
+	case proto.KindAgentStatusUpdate:
+		rt.acceptAgentStatusUpdate(from, env)
+	case proto.KindNodeUpdate:
+		rt.acceptNodeUpdate(from, env)
+	case proto.KindSessionsUpdate:
+		rt.acceptSessionUpdate(from, env)
 	case proto.KindCatalogReq:
 		rt.sendCatalog(from)
 	case proto.KindMail, proto.KindOperatorMail:
@@ -502,10 +696,36 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		rt.acceptGroupMail(peer, env)
 	case proto.KindAck:
 		rt.handleAck(env)
+	case proto.KindJobFollow:
+		rt.wg.Add(1)
+		go func() { defer rt.wg.Done(); rt.serveJobFollow(peer, env) }()
+	case proto.KindJobFollowAnswer:
+		rt.acceptBundleAnswer(peer, env)
+	case proto.KindJobRequest:
+		rt.acceptJobRequest(peer, env)
+	case proto.KindJobStatus, proto.KindJobCancel:
+		rt.acceptJobControl(peer, env)
+	case proto.KindJobResult:
+		rt.acceptJobResult(peer, env)
 	case proto.KindSpawnReq:
 		rt.acceptSpawnRequest(peer, env)
+	case proto.KindSpawnAttemptFailed:
+		rt.acceptSpawnAttemptFailure(peer, env)
 	case proto.KindSpawnRes:
 		rt.handleSpawnResult(peer, env)
+	case proto.KindBundleOffer:
+		rt.acceptBundleOffer(peer, env)
+	case proto.KindBundleFetch:
+		rt.wg.Add(1)
+		go func() { defer rt.wg.Done(); rt.serveBundleFetch(peer, env) }()
+	case proto.KindBundleAnswer:
+		rt.acceptBundleAnswer(peer, env)
+	case teleportLeaseKind:
+		rt.acceptTeleportLease(peer, env)
+	case proto.KindAgentMoveConfirm:
+		rt.acceptAgentMoveConfirmation(peer, env)
+	case proto.KindBundleResult:
+		rt.acceptBundleResult(peer, env)
 	case proto.KindRouteOpen:
 		// One open per envelope: a replayed route_open must not make the
 		// publisher accept a connection nobody can join.
@@ -628,6 +848,14 @@ func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
 	}
 	if env.Kind == proto.KindOperatorMail {
 		rt.acceptOperatorMail(peer, env, senderName, mp, refuse)
+		return
+	}
+	if movedAgentMailRefusal(peer.InstanceID, env.To.Agent) {
+		message := "agent moved to another instance; contact the operator for its new address"
+		if address := movedAgentDestination(peer.InstanceID, env.To.Agent); address != "" {
+			message = "agent moved to " + address
+		}
+		refuse("agent_moved", message)
 		return
 	}
 	conv, err := db.CurrentConvForAgent(env.To.Agent)
@@ -759,6 +987,9 @@ func (rt *fedRuntime) handleAck(env *proto.Envelope) {
 	if err != nil || row == nil || row.ToInstance != env.From.Instance {
 		return
 	}
+	if row.Kind == proto.KindAwayAnswer && row.State != db.FedOutboxAccepted && row.State != db.FedOutboxRefused {
+		recordFederationAudit("federation.away.answer.result", rt.id.ID(), "", "", "decider="+rt.id.ID()+" origin="+env.From.Instance+" request="+row.BodyPreview+" status="+ack.Status+" "+ack.Reason, 200)
+	}
 	switch {
 	case ack.Status == proto.AckAccepted:
 		note := ""
@@ -769,7 +1000,10 @@ func (rt *fedRuntime) handleAck(env *proto.Envelope) {
 	case fedRetryableCode(ack.Code):
 		_ = db.UpdateFederationOutbox(row.EnvelopeID, db.FedOutboxQueued, time.Now().Add(fedBackoff(row.Attempts)), ack.Code+": "+ack.Reason, 0)
 	default:
-		_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxRefused, ack.Code+": "+ack.Reason)
+		won, _ := db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxRefused, ack.Code+": "+ack.Reason)
+		if won && row.Kind == proto.KindSpawnReq && (ack.Code == fedCodeInternal || ack.Code == "node_busy" || ack.Code == "spawn_failed") {
+			rt.observeFleetFailure(row.ToInstance, "spawn/"+row.EnvelopeID, time.Now())
+		}
 	}
 }
 
@@ -812,12 +1046,21 @@ func (rt *fedRuntime) flushOutbox(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		if row.Kind == proto.KindAwayNotice && !rt.awayNoticeCurrent(row.ToInstance, row.InReplyTo) {
+			_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxExpired, "away coverage ended")
+			continue
+		}
 		if now.After(row.ExpiresAt) {
 			_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxExpired, "not acknowledged before expiry")
 			continue
 		}
 		if p, _ := db.GetFederationPeer(row.ToInstance); p == nil {
 			_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxRefused, "peer untrusted locally")
+			continue
+		}
+		// Persisted rows may be corrupt; reject them before splitting env||sig.
+		if len(row.Sealed) <= ed25519.SignatureSize {
+			_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxRefused, "corrupt outbox row: truncated sealed envelope")
 			continue
 		}
 		sctx, cancel := context.WithTimeout(ctx, 15*time.Second)

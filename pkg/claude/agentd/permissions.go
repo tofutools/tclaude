@@ -124,6 +124,11 @@ func init() { initPermissionRegistry() }
 // build registers it; all mutation and authorization boundaries accept only
 // this vocabulary.
 var permissionRegistry = []PermSlug{
+	{Slug: PermJobsRun, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Request and inspect remote one-shot jobs in an allowed repository. Requires peer= scope. Peer grants independently require a receiving group and launch policy."},
+	{Slug: PermHostRead, Description: "Read cached host CPU, RAM, disk and live agent/session load, including configured local work-directory paths. Not default-granted."},
+	{Slug: PermApprovalsAnswer, Description: "Peer-only one-shot access-request answers while selected as away cover. Configure as an unscoped federation peer grant; ordinary agent grants do not authorize answers."},
+	{Slug: PermModelsProxyLeased, Description: "Peer-only access to requester-issued model gateway leases. Configure through federation peer grants."},
+	{Slug: PermAgentsReceive, Description: "Peer-only admission for agent bundle offers into an explicitly granted receiving group. Configure through federation peer grants; ordinary agent grants do not authorize receipt."},
 	{Slug: PermGroupsRosterRead, Description: "Read group member names and roles.", ScopeDims: []ScopeDim{ScopeDimGroup}},
 	{Slug: PermGroupsPresenceRead, Description: "Read group member presence.", ScopeDims: []ScopeDim{ScopeDimGroup}},
 	{Slug: PermMessageAttachments, Description: "Send message attachments.", ScopeDims: []ScopeDim{ScopeDimGroup}},
@@ -521,6 +526,14 @@ var permissionRegistry = []PermSlug{
 		ScopeDims:    []ScopeDim{ScopeDimGroup},
 		Description:  "Instantiate a working group from a template, or rebrief/reinforce an existing group. Ownership contributes this slug scoped to each owned group; instantiating a new group still needs another positive source.",
 	},
+	{Slug: PermSelfTeleport, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Move or clone only yourself to an authorized peer; no grants travel. Not default-granted."},
+	{Slug: PermAgentsTeleportReceive, ScopeDims: []ScopeDim{ScopeDimGroup}, Description: "Automatically land peer teleports under the applied node profile landing policy. Peer grant is group-scoped."},
+	{Slug: PermAgentMove, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Move an agent to a peer with native history, retiring the source after running confirmation. Requires peer= scope and ordinary source retire authority; not default-granted."},
+	{Slug: PermAgentShare, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Share your portable agent configuration and optional private transcript with a peer. Requires peer= scope; exporting another agent also requires agent.bundle.export."},
+	{Slug: PermAgentBundleExport, Description: "Export portable agents and optional private transcripts. Not default-granted."},
+	{Slug: PermAgentBundleImport, Description: "Preview or import portable agents through normal spawn checks. Not default-granted."},
+	{Slug: PermConfigExport, Description: "Export portable setup bundles; may read private setup text. Not default-granted."},
+	{Slug: PermConfigImport, Description: "Import setup bundles, including default permissions and sandbox policy. Grants authority to change agent access. Not default-granted."},
 	{
 		Slug:        PermProfilesManage,
 		Description: "Create, edit and delete reusable spawn profiles — named, saved bundles of the spawn-agent dialog (harness/model/effort/role/… ) that pre-fill spawns and back a group's default spawn settings (JOH-210). Reads are open; writes rewrite shared spawn config, so not default-granted (effectively human-only).",
@@ -602,6 +615,12 @@ var permissionRegistry = []PermSlug{
 		Slug:        PermSettingsDefaultModel,
 		Description: "Set or clear the user-level default Claude model — the \"model\" key in ~/.claude/settings.json, which every claude launched without --model falls back to. Rewrites a config file in the human's home, so not default-granted (effectively human-only).",
 	},
+	{Slug: PermSessionsWatch, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Watch a shared remote agent pane. Requires peer= scope."},
+	{Slug: PermSessionsAttach, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Full keyboard access to a shared remote agent pane, including approval prompts. Requires peer= scope."},
+	{Slug: PermAgentsStatusRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Read a peer group’s shared agent runtime status, task links and numeric context. Requires peer= scope; no terminal authority."},
+	{Slug: PermFederationAuditRead, Description: "Read local federation activity metadata across peers. No payloads or credential values are exposed."},
+	{Slug: PermNodeRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Read shared peer platform, harnesses, labels and numeric resource summaries. Requires peer= scope."},
+	{Slug: PermSessionsRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Read a peer's shared live agent sessions and waiting states. Requires peer= scope; no local session authority."},
 	{
 		Slug:        PermRoutesPublish,
 		ScopeDims:   []ScopeDim{ScopeDimGroup},
@@ -658,6 +677,7 @@ var permissionRegistry = []PermSlug{
 			"would make honouring it here a no-op for most of the merges a grant is given for. Not default-granted and " +
 			"not owner-implied.",
 	},
+	{Slug: PermModelsProxy, Description: "Use a named peer model gateway. Scope with peer= and http_proxy=.", ScopeDims: []ScopeDim{ScopeDimPeer, ScopeDimHTTPProxy}},
 	{Slug: PermHTTP, Description: "Send HTTP requests through a named daemon proxy with its configured credential header. Grants full service access; scope with http_proxy=name.", ScopeDims: []ScopeDim{ScopeDimHTTPProxy}},
 
 	{

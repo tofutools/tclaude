@@ -20,7 +20,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 const long = `Link this tclaude instance to others through a tclaude-hub.
@@ -42,7 +44,8 @@ Flow:
   7. agents: tclaude federation spawn-request <group>@bob --brief "..."
      (needs the groups.members.spawn scoped with peer=bob/group, or agent.spawn scoped with peer=bob; bob's operator approves or denies)
 
-Every federation command is human-only except spawn-request.`
+Every federation command is human-only except nodes (node.read), spawn-request, sessions (sessions.read),
+and attach (sessions.watch or sessions.attach). Remote action permissions need the matching peer= scope; audit is an unscoped local read permission.`
 
 // Cmd returns `tclaude federation`.
 func Cmd() *cobra.Command {
@@ -52,11 +55,11 @@ func Cmd() *cobra.Command {
 		Long:        long,
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
-			statusCmd(), identityCmd(), connectCmd(), disconnectCmd(),
-			peersCmd(), trustCmd(), untrustCmd(),
-			grantCmd(), revokeCmd(), grantsCmd(), remoteCmd(),
-			sendCmd(), outboxCmd(), notifyCmd(), inboxCmd(),
-			spawnRequestCmd(), requestsCmd(),
+			statusCmd(), identityCmd(), connectCmd(), disconnectCmd(), auditCmd(),
+			jobsCmd(), reposCmd(), modelsCmd(), peersCmd(), trustCmd(), untrustCmd(), nodeProfilesCmd(), enrollTokenCmd(), enrollCmd(), enrollmentsCmd(),
+			grantCmd(), revokeCmd(), grantsCmd(), remoteCmd(), nodesCmd(), nodeLabelsCmd(), sessionsCmd(), attachCmd(), viewersCmd(), kickCmd(),
+			sendCmd(), outboxCmd(), notifyCmd(), inboxCmd(), awayCmd(), returnCmd(), answerCmd(),
+			spawnRequestCmd(), requestsCmd(), offerConfigCmd(), offersCmd(), shareAgentCmd(), moveAgentCmd(), movesCmd(), teleportControlCmd(),
 		},
 	}.ToCobra()
 }
@@ -95,10 +98,11 @@ type status struct {
 		Online     bool      `json:"online"`
 		ReceivedAt time.Time `json:"catalog_received_at"`
 		Groups     []struct {
-			Name        string   `json:"name"`
-			Description string   `json:"description"`
-			Caps        []string `json:"caps"`
-			Members     []struct {
+			SpawnProfiles []proto.CatalogSpawnProfile `json:"spawn_profiles,omitempty"`
+			Name          string                      `json:"name"`
+			Description   string                      `json:"description"`
+			Caps          []string                    `json:"caps"`
+			Members       []struct {
 				Agent    string `json:"agent"`
 				Name     string `json:"name"`
 				Role     string `json:"role"`
@@ -243,6 +247,7 @@ func runStatus(p *jsonParam, stdout, stderr io.Writer) int {
 func identityCmd() *cobra.Command {
 	return boa.CmdT[jsonParam]{
 		Use:         "identity",
+		SubCmds:     identityActionCommands(),
 		Short:       "Print this instance's federation id and fingerprint (give the id to a hub admin)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *jsonParam, _ *cobra.Command, _ []string) {
@@ -355,10 +360,12 @@ func dash(s string) string {
 }
 
 type trustParams struct {
-	Level    string `long:"level" default:"restricted" help:"Local trust level: restricted or unrestricted (own machines only)"`
-	Yes      bool   `long:"yes" help:"Confirm unrestricted access without prompting"`
-	Instance string `pos:"true" help:"Instance id (or 8+ char prefix) from 'tclaude federation peers'"`
-	Label    string `long:"label" optional:"true" help:"Short local name for the peer, used in addresses (member@label)"`
+	Profile          string `long:"profile" optional:"true" help:"Apply this local node profile at trust"`
+	NoDefaultProfile bool   `long:"no-default-profile" help:"Skip the default peer profile"`
+	Level            string `long:"level" optional:"true" help:"Local trust level: restricted or unrestricted (own machines only)"`
+	Yes              bool   `long:"yes" help:"Confirm unrestricted access without prompting"`
+	Instance         string `pos:"true" help:"Instance id (or 8+ char prefix) from 'tclaude federation peers'"`
+	Label            string `long:"label" optional:"true" help:"Short local name for the peer, used in addresses (member@label)"`
 }
 
 func trustCmd() *cobra.Command {
@@ -367,42 +374,42 @@ func trustCmd() *cobra.Command {
 		Short:       "Trust a visible instance (compare its fingerprint out of band first)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *trustParams, _ *cobra.Command, _ []string) {
-			if p.Level != "restricted" && p.Level != "unrestricted" {
+			if p.Level != "" && p.Level != "restricted" && p.Level != "unrestricted" {
 				fmt.Fprintln(os.Stderr, "level must be restricted or unrestricted")
 				os.Exit(1)
 			}
-			fingerprint := ""
-			if p.Level == "unrestricted" {
-				st, rc := loadStatus(os.Stderr)
-				if st == nil {
+			in := map[string]any{"instance": p.Instance, "label": p.Label, "level": p.Level, "profile": p.Profile, "no_default_profile": p.NoDefaultProfile, "preview": true}
+			var preview struct {
+				InstanceID  string                        `json:"instance_id"`
+				Fingerprint string                        `json:"fingerprint"`
+				Level       string                        `json:"level"`
+				Plan        *db.FederationNodeProfilePlan `json:"plan"`
+			}
+			if rc := post(os.Stderr, "/v1/federation/peers/trust", in, &preview); rc != 0 {
+				os.Exit(rc)
+			}
+			if preview.Plan != nil {
+				if rc := printJSON(os.Stdout, preview.Plan); rc != 0 {
 					os.Exit(rc)
 				}
-				matches := 0
-				for _, pe := range st.Peers {
-					if pe.InstanceID == p.Instance || pe.Label == p.Instance || (len(p.Instance) >= 8 && (strings.HasPrefix(pe.InstanceID, p.Instance) || strings.HasPrefix(pe.InstanceID, "inst_"+p.Instance))) {
-						matches++
-						fingerprint = pe.Fingerprint
-					}
-				}
-				if matches != 1 {
-					fmt.Fprintln(os.Stderr, "peer must identify exactly one visible or trusted instance")
+				if len(preview.Plan.Conflicts) > 0 {
+					fmt.Fprintln(os.Stderr, "profile has manual-edit conflicts")
 					os.Exit(1)
 				}
-				fmt.Fprintf(os.Stderr, "Fingerprint %s: unrestricted grants all peer permissions on all live groups, automatic spawn, and local unscoped grants towards this peer. Approvals remain local. Intended for your own machines.\n", fingerprint)
-				if !p.Yes {
-					fmt.Fprint(os.Stderr, "Type yes to confirm: ")
-					var answer string
-					if _, err := fmt.Fscanln(os.Stdin, &answer); err != nil || answer != "yes" {
-						fmt.Fprintln(os.Stderr, "not confirmed")
-						os.Exit(1)
-					}
-				}
+				in["preview_token"] = preview.Plan.Token
 			}
+			if preview.Level == "unrestricted" {
+				if e := confirmNodeProfileUnrestricted(preview.Fingerprint, p.Yes); e != nil {
+					os.Exit(fail(os.Stderr, e))
+				}
+				in["confirm_fingerprint"] = preview.Fingerprint
+			}
+			in["preview"] = false
 			var out struct {
 				InstanceID  string `json:"instance_id"`
 				Fingerprint string `json:"fingerprint"`
 			}
-			if rc := post(os.Stderr, "/v1/federation/peers/trust", map[string]any{"instance": p.Instance, "label": p.Label, "level": p.Level, "confirm_fingerprint": fingerprint}, &out); rc != 0 {
+			if rc := post(os.Stderr, "/v1/federation/peers/trust", in, &out); rc != 0 {
 				os.Exit(rc)
 			}
 			fmt.Printf("trusted %s (fingerprint %s)\n", out.InstanceID, out.Fingerprint)
@@ -430,36 +437,47 @@ func untrustCmd() *cobra.Command {
 
 // --- peer grants ---
 type peerGrant struct {
+	PoolID      string `json:"pool_id,omitempty"`
+	PoolName    string `json:"pool_name,omitempty"`
 	Peer        string `json:"peer"`
 	Slug        string `json:"slug"`
 	Scope       string `json:"scope"`
 	SpawnPolicy struct {
-		Profile string `json:"profile,omitempty"`
-		Cwd     string `json:"cwd,omitempty"`
-		Harness string `json:"harness,omitempty"`
-		Model   string `json:"model,omitempty"`
-		MaxLive int    `json:"max_live,omitempty"`
+		AllowedProfiles []string `json:"allowed_profiles,omitempty"`
+		RequesterPays   string   `json:"requester_pays,omitempty"`
+		JobApproval     string   `json:"job_approval,omitempty"`
+		Profile         string   `json:"profile,omitempty"`
+		Cwd             string   `json:"cwd,omitempty"`
+		Harness         string   `json:"harness,omitempty"`
+		Model           string   `json:"model,omitempty"`
+		MaxLive         int      `json:"max_live,omitempty"`
 	} `json:"spawn_policy,omitempty"`
 }
 type grantParams struct {
-	Peer    string `pos:"true" help:"Trusted peer label or instance id"`
-	Slug    string `pos:"true" help:"Permission slug to grant"`
-	Scope   string `long:"scope" optional:"true" help:"group=<local group>; omitted covers all current and future groups"`
-	Profile string `long:"profile" optional:"true" help:"Receiver launch profile for groups.members.spawn"`
-	Cwd     string `long:"cwd" optional:"true" help:"Receiver worker directory"`
-	Harness string `long:"harness" optional:"true" help:"Receiver worker harness"`
-	Model   string `long:"model" optional:"true" help:"Receiver worker model"`
-	MaxLive int    `long:"max-live" optional:"true" help:"Positive live auto-worker cap (default 2)"`
+	AllowedProfiles []string `long:"allow-profile" optional:"true" help:"Selectable receiver profile (repeatable); groups.members.spawn only"`
+	RequesterPays   string   `long:"requester-pays" optional:"true" help:"Receiving spawn policy: required, allowed or off"`
+	JobApproval     string   `long:"job-approval" optional:"true" help:"jobs.run only: auto (default) or manual"`
+	Peer            string   `pos:"true" help:"Trusted peer label or instance id"`
+	Slug            string   `pos:"true" help:"Permission slug to grant"`
+	Scope           string   `long:"scope" optional:"true" help:"group=<local group>; omitted covers all current and future groups"`
+	Profile         string   `long:"profile" optional:"true" help:"Receiver launch profile for groups.members.spawn"`
+	Cwd             string   `long:"cwd" optional:"true" help:"Receiver worker directory"`
+	Harness         string   `long:"harness" optional:"true" help:"Receiver worker harness"`
+	Model           string   `long:"model" optional:"true" help:"Receiver worker model"`
+	MaxLive         int      `long:"max-live" optional:"true" help:"Positive live auto-worker cap (default 2)"`
 }
 
 func grantCmd() *cobra.Command {
-	return boa.CmdT[grantParams]{Use: "grant", Short: "Grant a trusted peer permission on local groups (human only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *grantParams, _ *cobra.Command, _ []string) {
+	return boa.CmdT[grantParams]{Use: "grant", Short: "Grant a trusted peer group or instance permission (human only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *grantParams, _ *cobra.Command, _ []string) {
 		grant := peerGrant{Peer: p.Peer, Slug: p.Slug, Scope: p.Scope}
+		grant.SpawnPolicy.AllowedProfiles = p.AllowedProfiles
 		grant.SpawnPolicy.Profile = p.Profile
 		grant.SpawnPolicy.Cwd = p.Cwd
 		grant.SpawnPolicy.Harness = p.Harness
 		grant.SpawnPolicy.Model = p.Model
 		grant.SpawnPolicy.MaxLive = p.MaxLive
+		grant.SpawnPolicy.JobApproval = p.JobApproval
+		grant.SpawnPolicy.RequesterPays = p.RequesterPays
 		var resp struct {
 			Warnings []string `json:"warnings"`
 		}
@@ -509,6 +527,9 @@ func grantsCmd() *cobra.Command {
 		}
 		for _, g := range resp.Grants {
 			fmt.Printf("%s %s %s", g.Peer, g.Slug, g.Scope)
+			if g.PoolName != "" && g.Peer != "group:"+g.PoolName {
+				fmt.Printf(" [inherited from group:%s]", g.PoolName)
+			}
 			if g.Slug == "groups.members.spawn" {
 				policy, _ := json.Marshal(g.SpawnPolicy)
 				fmt.Printf(" %s", policy)
@@ -552,6 +573,9 @@ func runRemote(p *jsonParam, stdout, stderr io.Writer) int {
 		for _, g := range r.Groups {
 			line := fmt.Sprintf("  %s/%s  [%s]", r.Label, g.Name, strings.Join(g.Caps, ","))
 			fmt.Fprintln(stdout, line)
+			for _, profile := range g.SpawnProfiles {
+				fmt.Fprintf(stdout, "    profile %s  harness=%s model=%s effort=%s\n", profile.Name, profile.Harness, profile.Model, profile.Effort)
+			}
 			for _, m := range g.Members {
 				extra := ""
 				if m.Role != "" {
@@ -664,13 +688,15 @@ func inboxCmd() *cobra.Command {
 				os.Exit(rc)
 			}
 			type msg struct {
-				ID        int64     `json:"id"`
-				From      string    `json:"from"`
-				Instance  string    `json:"instance"`
-				Subject   string    `json:"subject,omitempty"`
-				Body      string    `json:"body"`
-				CreatedAt time.Time `json:"created_at"`
-				Read      bool      `json:"read"`
+				ID         int64     `json:"id"`
+				OfferID    string    `json:"offer_id,omitempty"`
+				OfferState string    `json:"offer_state,omitempty"`
+				From       string    `json:"from"`
+				Instance   string    `json:"instance"`
+				Subject    string    `json:"subject,omitempty"`
+				Body       string    `json:"body"`
+				CreatedAt  time.Time `json:"created_at"`
+				Read       bool      `json:"read"`
 			}
 			var rows []msg
 			if err := agent.DaemonGet("/v1/federation/inbox", &rows); err != nil {
@@ -694,7 +720,11 @@ func inboxCmd() *cobra.Command {
 				if r.Read {
 					state = "read"
 				}
-				fmt.Printf("#%d  %s  %s  %s\n", r.ID, r.From, ago(r.CreatedAt), state)
+				if r.OfferID != "" {
+					fmt.Printf("offer %s  %s  %s\n", r.OfferID, r.From, r.OfferState)
+				} else {
+					fmt.Printf("#%d  %s  %s  %s\n", r.ID, r.From, ago(r.CreatedAt), state)
+				}
 				if r.Subject != "" {
 					fmt.Printf("Subject: %s\n", r.Subject)
 				}
@@ -747,10 +777,17 @@ func outboxCmd() *cobra.Command {
 // --- remote spawn requests ---
 
 type spawnRequestParams struct {
-	Target string `pos:"true" help:"<group>@<peer>: a remote group visible in the peer catalog"`
-	Brief  string `long:"brief" help:"What the worker should do (sent to the remote operator and, if approved, to the worker)"`
-	Name   string `long:"name" optional:"true" help:"Requested worker name"`
-	Role   string `long:"role" optional:"true" help:"Requested worker role"`
+	Profile     string `long:"profile" optional:"true" help:"Select an advertised receiver profile; omitted uses its default"`
+	Credentials string `long:"credentials" optional:"true" help:"local or proxy:<name>@self for requester-paid Claude workers"`
+	Target      string `pos:"true" optional:"true" help:"<group>@<peer>: a remote group visible in the peer catalog (omit with --node)"`
+	Node        string `long:"node" optional:"true" help:"Automatically select a node: auto or group:<pool>"`
+	Group       string `long:"group" optional:"true" help:"Remote group for automatic placement; may be omitted only with one authorized group"`
+	Require     string `long:"require" optional:"true" help:"Required node metadata: comma-separated os=, arch=, harness=, label="`
+	Prefer      string `long:"prefer" optional:"true" help:"Placement ranking: least-loaded (default) or most-free-ram"`
+	JSON        bool   `long:"json" help:"Output the request and placement explanation as JSON"`
+	Brief       string `long:"brief" help:"What the worker should do (sent to the remote operator and, if approved, to the worker)"`
+	Name        string `long:"name" optional:"true" help:"Requested worker name"`
+	Role        string `long:"role" optional:"true" help:"Requested worker role"`
 }
 
 func spawnRequestCmd() *cobra.Command {
@@ -761,39 +798,27 @@ func spawnRequestCmd() *cobra.Command {
 			"The peer either spawns under its granted policy or asks its operator; the decision arrives in your inbox.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *spawnRequestParams, _ *cobra.Command, _ []string) {
-			i := strings.LastIndex(p.Target, "@")
-			if i <= 0 || i == len(p.Target)-1 {
-				os.Exit(fail(os.Stderr, fmt.Errorf("target must be <group>@<peer>")))
-			}
-			var out struct {
-				EnvelopeID string `json:"envelope_id"`
-				To         string `json:"to"`
-				State      string `json:"state"`
-				Connected  bool   `json:"hub_connected"`
-			}
-			req := map[string]any{"group": p.Target[:i], "peer": p.Target[i+1:], "brief": p.Brief, "name": p.Name, "role": p.Role}
-			if rc := post(os.Stderr, "/v1/federation/spawn-requests", req, &out); rc != 0 {
-				os.Exit(rc)
-			}
-			fmt.Printf("spawn request %s to %s (envelope %s); the decision will arrive in your inbox\n", out.State, out.To, out.EnvelopeID[:12])
-			if !out.Connected {
-				fmt.Fprintln(os.Stderr, "hub not connected; the request will be sent when it is")
-			}
+			os.Exit(runSpawnRequest(p, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
 }
 
 type spawnRequestRow struct {
-	ID          int64     `json:"id"`
-	From        string    `json:"from"`
-	Group       string    `json:"group"`
-	Name        string    `json:"name"`
-	Role        string    `json:"role"`
-	Brief       string    `json:"brief"`
-	Status      string    `json:"status"`
-	ResultAgent string    `json:"result_agent"`
-	Reason      string    `json:"reason"`
-	CreatedAt   time.Time `json:"created_at"`
+	Profile          string    `json:"profile,omitempty"`
+	Credentials      string    `json:"credentials,omitempty"`
+	ModelLease       string    `json:"model_lease,omitempty"`
+	Require          string    `json:"require,omitempty"`
+	PlacementVersion int       `json:"placement_version,omitempty"`
+	ID               int64     `json:"id"`
+	From             string    `json:"from"`
+	Group            string    `json:"group"`
+	Name             string    `json:"name"`
+	Role             string    `json:"role"`
+	Brief            string    `json:"brief"`
+	Status           string    `json:"status"`
+	ResultAgent      string    `json:"result_agent"`
+	Reason           string    `json:"reason"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 type requestsParams struct {
@@ -831,6 +856,15 @@ func requestsCmd() *cobra.Command {
 				fmt.Printf("#%d  %s  from %s  into %s  %s\n", r.ID, r.Status, r.From, r.Group, ago(r.CreatedAt))
 				if r.Name != "" || r.Role != "" {
 					fmt.Printf("    name %q  role %q\n", r.Name, r.Role)
+				}
+				if r.Profile != "" {
+					fmt.Printf("    requested profile: %s\n", r.Profile)
+				}
+				if r.Credentials != "" {
+					fmt.Printf("    credentials: %s  requester lease: %s\n", r.Credentials, r.ModelLease)
+				}
+				if r.PlacementVersion != 0 {
+					fmt.Printf("    requires: %s (choose a compatible harness)\n", r.Require)
 				}
 				if r.ResultAgent != "" {
 					fmt.Printf("    spawned %s\n", r.ResultAgent)

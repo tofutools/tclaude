@@ -89,6 +89,9 @@ func retireAgentConvGuarded(
 	requireOffline bool,
 	guard func() error,
 ) (retireConvOutcome, []int64, error) {
+	return retireAgentConvGuardedWithGeneration(convID, by, reason, requireOffline, guard, false)
+}
+func retireAgentConvGuardedWithGeneration(convID, by, reason string, requireOffline bool, guard func() error, requireCurrent bool) (retireConvOutcome, []int64, error) {
 	// Publish cancellation before waiting for the in-process launch mutex. A
 	// recovery worker may already own that mutex while it prepares a resume;
 	// its final durable claim check immediately before Spawn then observes this
@@ -125,7 +128,11 @@ func retireAgentConvGuarded(
 		}
 	}
 	var out retireConvOutcome
-	retired, err := db.RetireAgentAuthorizationByConv(convID, by, reason)
+	retire := db.RetireAgentAuthorizationByConv
+	if requireCurrent {
+		retire = db.RetireAgentAuthorizationAtGeneration
+	}
+	retired, err := retire(convID, by, reason)
 	if err != nil {
 		return out, nil, err
 	}

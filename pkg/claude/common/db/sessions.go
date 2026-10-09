@@ -546,6 +546,8 @@ func FindSessionByPID(pid int) (*SessionRow, error) {
 // Any field can be "" ("not observed" — e.g. a session that hasn't ticked
 // the statusline has no model/effort yet, or a harness with no sandbox flag).
 type SessionLaunchProfile struct {
+	ModelProxy         string
+	ModelProxySet      bool
 	Harness            string
 	ModelID            string
 	Effort             string
@@ -585,6 +587,10 @@ func SessionLaunchProfileForConv(convID string) (SessionLaunchProfile, error) {
 		p := SessionLaunchProfile{}
 		if resume != nil {
 			p.Harness = resume.Harness
+		}
+		if durable.ModelProxy != nil {
+			p.ModelProxy = *durable.ModelProxy
+			p.ModelProxySet = true
 		}
 		if durable.ModelID != nil {
 			p.ModelID = *durable.ModelID

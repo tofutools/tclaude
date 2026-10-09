@@ -170,6 +170,11 @@ type auditRoute struct {
 // dashboard (/api) surfaces. New commands that should appear in the trail
 // add an entry here; a command with no entry is simply not audited.
 var auditRoutes = []auditRoute{
+	// Enrollment bearer bodies and creation responses are never buffered.
+	{method: http.MethodPost, segs: []string{"federation", "enroll-tokens"}, verb: "federation.enroll.token.create", pathOnly: true},
+	{method: http.MethodPost, segs: []string{"federation", "enroll-tokens", "{id}", "revoke"}, verb: "federation.enroll.token.revoke", pathOnly: true},
+	{method: http.MethodPost, segs: []string{"federation", "enroll", "preview"}, verb: "federation.enroll.preview", pathOnly: true},
+	{method: http.MethodPost, segs: []string{"federation", "enroll"}, verb: "federation.enroll", pathOnly: true},
 	// Explicit PR presentation triggers a credentialed GitHub read from the
 	// dashboard refresh path, so presenting is part of the audit trail too.
 	{method: http.MethodPost, segs: []string{"whoami", "prs"}, verb: "present-pr"},

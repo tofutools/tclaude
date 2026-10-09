@@ -19,6 +19,7 @@ import (
 // will actually consume. A resolver may mint ProviderResolved only from this
 // boundary; editor predictions and model names alone are not provider proof.
 type ModelTransportLaunchContext struct {
+	ModelProxy  string
 	Model       string
 	Cwd         string
 	Environment []sandboxpolicy.EnvironmentEntry
@@ -56,6 +57,34 @@ func ResolveTclaudeLayerModelTransport(
 	// user-managed mode, so enter it before the generic provider-proxy gate.
 	if h.Name == harness.OpenCodeName && strings.TrimSpace(context.Model) == "" {
 		return harness.ResolvedModelTransport{}, nil
+	}
+	if h.Name == harness.CopilotName && context.ModelProxy != "" && context.ModelProxy != "off" {
+		if strings.TrimSpace(context.Model) == "" || context.Model == "auto" {
+			return harness.ResolvedModelTransport{}, fmt.Errorf("copilot model gateway requires an explicit model; automatic GitHub model selection is unavailable offline")
+		}
+		return harness.ResolvedModelTransport{Model: context.Model, Provider: "tclaude_gateway", ProviderResolved: true, SessionGateway: true}, nil
+	}
+	if h.Name == harness.CodexName && context.ModelProxy != "" && context.ModelProxy != "off" {
+		if flag, ok := providerChangingArg(context.ExtraArgs, map[string]bool{"-c": true, "--config": true, "-p": true, "--profile": true, "--oss": false, "--local-provider": true, "--remote": false}); ok {
+			return harness.ResolvedModelTransport{}, fmt.Errorf("model gateway cannot combine with Codex provider override %s", flag)
+		}
+		env := launchModelEnvironment(context.Environment)
+		entries := []sandboxpolicy.EnvironmentEntry{}
+		for name, value := range env {
+			if !modelProxyCompetingEnvironment(name) {
+				entries = append(entries, sandboxpolicy.EnvironmentEntry{Name: name, Value: value})
+			}
+		}
+		const provider = "tclaude_gateway_preflight"
+		const base = "http://127.0.0.1:1/model/v1"
+		effective, err := codexEffectiveConfigReader(context.Cwd, entries, context.PermissionProfile, harness.CodexModelProxyOverrides(provider, base)...)
+		if err != nil {
+			return harness.ResolvedModelTransport{}, err
+		}
+		if err := verifyCodexModelProxyProvider(effective, provider, base); err != nil {
+			return harness.ResolvedModelTransport{}, err
+		}
+		return harness.ResolvedModelTransport{Model: context.Model, Provider: provider, ProviderResolved: true, SessionGateway: true}, nil
 	}
 	environment := launchModelEnvironment(context.Environment)
 	// OpenCode has no effective-config API from which tclaude can reliably

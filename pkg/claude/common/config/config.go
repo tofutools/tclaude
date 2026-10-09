@@ -18,10 +18,13 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/common"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 // Config represents the tclaude configuration file structure.
 type Config struct {
+	StatusSnapshot  *StatusSnapshotConfig  `json:"status_snapshot,omitempty"`
+	Host            *HostConfig            `json:"host,omitempty"`
 	Notifications   *NotificationConfig    `json:"notifications,omitempty"`
 	PreCompactGuard *PreCompactGuardConfig `json:"pre_compact_guard,omitempty"`
 	LogLevel        string                 `json:"log_level,omitempty"`
@@ -792,7 +795,63 @@ func (c *Config) ResolvedAuditRetentionDays() (days int, prune bool) {
 }
 
 // FederationConfig configures the outbound hub connection.
+// FederationAwayConfig is the operator's selected covering instance. Live
+// approval authority is deliberately not persisted across daemon restarts.
+type FederationAwayConfig struct {
+	Cover string    `json:"cover"`
+	Since time.Time `json:"since"`
+	Until time.Time `json:"until,omitempty"`
+}
+
+// FederationHealthPolicy controls operator notices; resource/failure signals are opt-in.
+type FederationHealthPolicy struct {
+	Presence             *bool   `json:"presence,omitempty"`
+	Resources            bool    `json:"resources"`
+	Failures             bool    `json:"failures"`
+	DebounceSeconds      int     `json:"debounce_seconds,omitempty"`
+	DiskFreePercent      float64 `json:"disk_free_percent,omitempty"`
+	RAMFreePercent       float64 `json:"ram_free_percent,omitempty"`
+	MemorySeconds        int     `json:"memory_seconds,omitempty"`
+	FailureCount         int     `json:"failure_count,omitempty"`
+	FailureWindowSeconds int     `json:"failure_window_seconds,omitempty"`
+	CooldownSeconds      int     `json:"cooldown_seconds,omitempty"`
+}
+
+func (p FederationHealthPolicy) Validate() error {
+	for _, n := range []int{p.DebounceSeconds, p.MemorySeconds, p.FailureWindowSeconds, p.CooldownSeconds} {
+		if n < 0 || n > 86400 {
+			return fmt.Errorf("durations must be 0..86400 seconds (zero uses default)")
+		}
+	}
+	if p.FailureCount < 0 || p.FailureCount > 256 {
+		return fmt.Errorf("failure_count must be 0..256")
+	}
+	for _, n := range []float64{p.DiskFreePercent, p.RAMFreePercent} {
+		if math.IsNaN(n) || math.IsInf(n, 0) || n < 0 || n > 100 {
+			return fmt.Errorf("free percentages must be 0..100")
+		}
+	}
+	return nil
+}
+
+type FederationHealthConfig struct {
+	Defaults FederationHealthPolicy `json:"defaults,omitempty"`
+	// Keys are immutable instance IDs. Accepted linked successors inherit an
+	// ancestor's settings unless they have an explicit override.
+	Peers map[string]FederationHealthPolicy `json:"peers,omitempty"`
+}
+
 type FederationConfig struct {
+	Health *FederationHealthConfig `json:"health,omitempty"`
+
+	// IdentityRotationSeconds is the local successor detection window; default 600.
+	IdentityRotationSeconds int                       `json:"identity_rotation_seconds,omitempty"`
+	Teleport                *FederationTeleportConfig `json:"teleport,omitempty"`
+	// NodeLabels is a local set, shared by operator and future node-profile writers.
+	NodeLabels []string `json:"node_labels,omitempty"`
+	// MaxLiveAgents advertises node capacity; zero is unlimited.
+	MaxLiveAgents int                   `json:"max_live_agents,omitempty"`
+	Away          *FederationAwayConfig `json:"away,omitempty"`
 	// UnrestrictedMaxLive caps automatic workers per unrestricted peer. Default 8.
 	UnrestrictedMaxLive int `json:"unrestricted_max_live,omitempty"`
 	// Enabled starts the hub client. Default false.
@@ -2096,7 +2155,8 @@ type AgentConfig struct {
 
 	// HTTPProxies are named credential-bearing HTTP services, available only
 	// through proxy.http grants (optionally scoped by http_proxy name).
-	HTTPProxies map[string]HTTPProxyConfig `json:"http_proxies,omitempty"`
+	HTTPProxies        map[string]HTTPProxyConfig `json:"http_proxies,omitempty"`
+	ModelProxyDisabled bool                       `json:"model_proxy_disabled,omitempty"`
 }
 
 // AWBProxyConfig is the operator's policy for the daemon-mediated AWB proxy —
@@ -3480,6 +3540,72 @@ func Validate(c *Config) []string {
 		return []string{"config is nil"}
 	}
 	var errs []string
+	if c.StatusSnapshot != nil && (c.StatusSnapshot.FreshnessMS < 0 || c.StatusSnapshot.FreshnessMS > 60000) {
+		errs = append(errs, "status_snapshot.freshness_ms must be 0 (default) or 1..60000")
+	}
+	if f := c.Federation; f != nil {
+		if f.Teleport != nil {
+			if err := f.Teleport.Backup.Validate(); err != nil {
+				errs = append(errs, err.Error())
+			}
+			l := f.Teleport.Limits.Effective()
+			if l.Hour < 1 || l.Day < 1 || l.Chain < 1 || l.Chain > 128 || l.RevisitMinutes < 0 || l.RevisitMinutes > 525600 {
+				errs = append(errs, "federation.teleport.limits must have positive rates, per_chain 1..128, and revisit_minutes 0..525600")
+			}
+		}
+		if f.Health != nil {
+			if e := f.Health.Defaults.Validate(); e != nil {
+				errs = append(errs, "federation.health.defaults: "+e.Error())
+			}
+			for id, p := range f.Health.Peers {
+				if !proto.ValidInstanceID(id) {
+					errs = append(errs, "federation.health.peers requires immutable instance IDs")
+				}
+				if e := p.Validate(); e != nil {
+					errs = append(errs, "federation.health.peers: "+e.Error())
+				}
+			}
+		}
+		if f.MaxLiveAgents < 0 {
+			errs = append(errs, "federation.max_live_agents must be nonnegative (zero is unlimited)")
+		}
+		if len(f.NodeLabels) > 64 {
+			errs = append(errs, "federation.node_labels allows at most 64 labels")
+		}
+		for _, label := range f.NodeLabels {
+			valid := len(label) > 0 && len(label) <= 64
+			for _, r := range label {
+				allowed := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.'
+				if !allowed {
+					valid = false
+				}
+			}
+			if !valid {
+				errs = append(errs, "federation.node_labels must use 1..64 letters, digits, dot, dash or underscore")
+				break
+			}
+		}
+	}
+	if h := c.Host; h != nil {
+		for _, entry := range []struct {
+			name  string
+			value *float64
+			max   float64
+		}{
+			{"warn_load_per_core", h.WarnLoadPerCore, 0},
+			{"warn_ram_available_percent", h.WarnRAMAvailablePercent, 100},
+			{"warn_disk_available_percent", h.WarnDiskAvailablePercent, 100},
+		} {
+			if entry.value != nil && (math.IsNaN(*entry.value) || math.IsInf(*entry.value, 0) || *entry.value < 0 || (entry.max > 0 && *entry.value > entry.max)) {
+				errs = append(errs, "host."+entry.name+" must be finite and nonnegative (percent thresholds must be at most 100)")
+			}
+		}
+		for _, dir := range h.WorkDirs {
+			if !filepath.IsAbs(dir) {
+				errs = append(errs, "host.work_dirs must contain absolute paths")
+			}
+		}
+	}
 
 	switch c.LogLevel {
 	case "", "debug", "info", "warn", "error":
@@ -3947,11 +4073,12 @@ func (c *NotificationConfig) HumanMessagesIntent() bool {
 // to HeaderValue, which can supply a prefix such as "Bearer ".
 type HTTPProxyConfig struct {
 	// EnvironmentVariable overrides the default TCLAUDE_HTTP_PROXY_name gateway variable.
-	EnvironmentVariable string `json:"environment_variable,omitempty"`
-	URL                 string `json:"url"`
-	Header              string `json:"header"`
-	HeaderValue         string `json:"header_value,omitempty"`
-	HeaderValueFile     string `json:"header_value_file,omitempty"`
+	EnvironmentVariable string            `json:"environment_variable,omitempty"`
+	URL                 string            `json:"url"`
+	Header              string            `json:"header"`
+	HeaderValue         string            `json:"header_value,omitempty"`
+	HeaderValueFile     string            `json:"header_value_file,omitempty"`
+	ModelPolicy         *ModelProxyPolicy `json:"model_policy,omitempty"`
 }
 
 // HTTPProxyConfigured reports whether any named HTTP instance is configured.
@@ -3976,4 +4103,109 @@ func IsHTTPProxyGatewayURL(value string) bool {
 		}
 	}
 	return true
+}
+
+// StatusSnapshotConfig controls the shared runtime gathering window for every consumer.
+type StatusSnapshotConfig struct {
+	Disabled    bool `json:"disabled,omitempty"`
+	FreshnessMS int  `json:"freshness_ms,omitempty"`
+}
+
+// FederationTeleportConfig is local policy. Freeze every instance to freeze a
+// disconnected fleet; this switch does not claim distributed consensus.
+type FederationTeleportConfig struct {
+	Disabled bool                 `json:"disabled,omitempty"`
+	Limits   TeleportLimits       `json:"limits,omitempty"`
+	Backup   TeleportBackupConfig `json:"backup,omitempty"`
+}
+type TeleportLimits struct {
+	Hour           int  `json:"per_hour,omitempty"`
+	Day            int  `json:"per_day,omitempty"`
+	Chain          int  `json:"per_chain,omitempty"`
+	RevisitMinutes int  `json:"revisit_minutes,omitempty"`
+	AllowReturn    bool `json:"allow_return,omitempty"`
+}
+
+func (l TeleportLimits) Effective() TeleportLimits {
+	if l.Hour == 0 {
+		l.Hour = 4
+	}
+	if l.Day == 0 {
+		l.Day = 12
+	}
+	if l.Chain == 0 {
+		l.Chain = 16
+	}
+	if l.RevisitMinutes == 0 {
+		l.RevisitMinutes = 10
+	}
+	return l
+}
+
+// ModelProxyPolicy explicitly opts a named HTTP service into an Anthropic
+// Messages or OpenAI Responses gateway. Zero budgets never mean unlimited: all six daily limits
+// and both token bounds must be positive. Incomplete requests retain their
+// conservative input+output reservation until the UTC day rolls over.
+type ModelProxyPolicy struct {
+	Dialect              string   `json:"dialect,omitempty"`
+	LeaseIdleHours       int      `json:"lease_idle_hours,omitempty"`
+	PrecountInput        bool     `json:"precount_input,omitempty"`
+	BlockedPeers         []string `json:"blocked_peers,omitempty"`
+	Enabled              bool     `json:"enabled"`
+	Models               []string `json:"models"`
+	DailyRequests        int64    `json:"daily_requests"`
+	DailyTokens          int64    `json:"daily_tokens"`
+	PeerDailyRequests    int64    `json:"peer_daily_requests"`
+	PeerDailyTokens      int64    `json:"peer_daily_tokens"`
+	SessionDailyRequests int64    `json:"session_daily_requests"`
+	SessionDailyTokens   int64    `json:"session_daily_tokens"`
+	MaxInputTokens       int64    `json:"max_input_tokens"`
+	MaxOutputTokens      int64    `json:"max_output_tokens"`
+	MaxConcurrent        int      `json:"max_concurrent"`
+	RequestsPerMinute    int      `json:"requests_per_minute"`
+	// Byte bounds are independent safety limits, never substitutes for tokens.
+	MaxRequestBytes    int64 `json:"max_request_bytes,omitempty"`
+	MaxResponseBytes   int64 `json:"max_response_bytes,omitempty"`
+	MaxEventBytes      int   `json:"max_event_bytes,omitempty"`
+	MaxDurationSeconds int   `json:"max_duration_seconds,omitempty"`
+}
+
+// TeleportBackupConfig deliberately prefers remote availability during an
+// origin outage. Epoch reconciliation resolves overlap after a partition.
+type TeleportBackupConfig struct {
+	RenewSeconds int    `json:"renew_seconds,omitempty"`
+	LeaseSeconds int    `json:"lease_seconds,omitempty"`
+	GraceSeconds int    `json:"grace_seconds,omitempty"`
+	DormantMax   int    `json:"dormant_max,omitempty"`
+	Recovery     string `json:"recovery,omitempty"`
+	Superseded   string `json:"superseded,omitempty"`
+}
+
+func (c TeleportBackupConfig) Effective() TeleportBackupConfig {
+	if c.RenewSeconds == 0 {
+		c.RenewSeconds = 30
+	}
+	if c.LeaseSeconds == 0 {
+		c.LeaseSeconds = 300
+	}
+	if c.GraceSeconds == 0 {
+		c.GraceSeconds = 120
+	}
+	if c.DormantMax == 0 {
+		c.DormantMax = 4
+	}
+	if c.Recovery == "" {
+		c.Recovery = "auto"
+	}
+	if c.Superseded == "" {
+		c.Superseded = "stop"
+	}
+	return c
+}
+func (c TeleportBackupConfig) Validate() error {
+	c = c.Effective()
+	if c.RenewSeconds < 1 || c.RenewSeconds > 43200 || c.LeaseSeconds < c.RenewSeconds*2 || c.LeaseSeconds > 86400 || c.GraceSeconds < 1 || c.GraceSeconds > 86400 || c.DormantMax < 1 || c.DormantMax > 10000 || c.Recovery != "auto" && c.Recovery != "manual" || c.Superseded != "stop" && c.Superseded != "clone" {
+		return fmt.Errorf("invalid teleport backup policy")
+	}
+	return nil
 }

@@ -117,3 +117,9 @@ func TestInlineProfileRoundTripsFetchLatestWorktree(t *testing.T) {
 		})
 	}
 }
+
+func TestInlineProfileModelProxyRoundTrip(t *testing.T) {
+	for _, ref := range []string{"main@gateway", "off"} {
+		require.Equal(t, ref, inlineProfileFromJSON(inlineProfileToJSON(&SpawnProfile{ModelProxy: ref})).ModelProxy)
+	}
+}

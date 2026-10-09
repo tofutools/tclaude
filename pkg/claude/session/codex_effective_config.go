@@ -114,6 +114,14 @@ func CodexEffectiveFastMode(
 type codexEffectiveProvider struct {
 	BaseURL            string
 	RequiresOpenAIAuth bool
+	EnvKey             string
+	WireAPI            string
+	SupportsWebsockets bool
+	Auth               json.RawMessage
+	HTTPHeaders        map[string]string
+	EnvHTTPHeaders     map[string]string
+	QueryParams        map[string]string
+	ExperimentalBearer string
 }
 
 // codexRemoteConfigOrigin is one provider-routing key whose winning layer was
@@ -157,13 +165,18 @@ var codexEffectiveConfigReader = readCodexEffectiveConfig
 func SetCodexEffectiveConfigProbeForTest(
 	read func(cwd string, environment []sandboxpolicy.EnvironmentEntry, permissionProfile string) (json.RawMessage, error),
 ) func() {
+	return SetCodexEffectiveConfigProbeWithOverridesForTest(func(cwd string, environment []sandboxpolicy.EnvironmentEntry, profile string, _ []string) (json.RawMessage, error) {
+		return read(cwd, environment, profile)
+	})
+}
+
+// SetCodexEffectiveConfigProbeWithOverridesForTest exposes the generated CLI
+// overrides as part of the same subprocess boundary. Gateway fixtures must
+// model the config Codex returns with those overrides, not the user's route.
+func SetCodexEffectiveConfigProbeWithOverridesForTest(read func(string, []sandboxpolicy.EnvironmentEntry, string, []string) (json.RawMessage, error)) func() {
 	previous := codexEffectiveConfigReader
-	codexEffectiveConfigReader = func(
-		cwd string,
-		environment []sandboxpolicy.EnvironmentEntry,
-		permissionProfile string,
-	) (codexEffectiveConfig, error) {
-		raw, err := read(cwd, environment, permissionProfile)
+	codexEffectiveConfigReader = func(cwd string, environment []sandboxpolicy.EnvironmentEntry, profile string, overrides ...string) (codexEffectiveConfig, error) {
+		raw, err := read(cwd, environment, profile, overrides)
 		if err != nil {
 			return codexEffectiveConfig{}, err
 		}
@@ -182,8 +195,9 @@ func readCodexEffectiveConfig(
 	cwd string,
 	environment []sandboxpolicy.EnvironmentEntry,
 	permissionProfile string,
+	overrides ...string,
 ) (codexEffectiveConfig, error) {
-	raw, err := readCodexEffectiveConfigJSON(cwd, environment, permissionProfile)
+	raw, err := readCodexEffectiveConfigJSON(cwd, environment, permissionProfile, overrides...)
 	if err != nil {
 		return codexEffectiveConfig{}, err
 	}
@@ -196,6 +210,7 @@ func readCodexEffectiveConfigJSON(
 	cwd string,
 	environment []sandboxpolicy.EnvironmentEntry,
 	permissionProfile string,
+	overrides ...string,
 ) (json.RawMessage, error) {
 	timing := config.StartupTiming("codex_effective_config")
 	defer timing("return_after_cleanup")
@@ -227,6 +242,9 @@ func readCodexEffectiveConfigJSON(
 	}
 	if strings.TrimSpace(permissionProfile) != "" {
 		arguments = append(arguments, "-p", strings.TrimSpace(permissionProfile))
+	}
+	for _, value := range overrides {
+		arguments = append(arguments, "-c", value)
 	}
 	arguments = append(arguments, "app-server", "--listen", "stdio://")
 
@@ -381,8 +399,16 @@ func parseCodexEffectiveConfig(
 			AuthStore      *string `json:"cli_auth_credentials_store"`
 			ServiceTier    *string `json:"service_tier"`
 			ModelProviders map[string]struct {
-				BaseURL            *string `json:"base_url"`
-				RequiresOpenAIAuth *bool   `json:"requires_openai_auth"`
+				BaseURL            *string           `json:"base_url"`
+				RequiresOpenAIAuth *bool             `json:"requires_openai_auth"`
+				EnvKey             string            `json:"env_key"`
+				WireAPI            string            `json:"wire_api"`
+				SupportsWebsockets bool              `json:"supports_websockets"`
+				Auth               json.RawMessage   `json:"auth"`
+				HTTPHeaders        map[string]string `json:"http_headers"`
+				EnvHTTPHeaders     map[string]string `json:"env_http_headers"`
+				QueryParams        map[string]string `json:"query_params"`
+				ExperimentalBearer string            `json:"experimental_bearer_token"`
 			} `json:"model_providers"`
 		} `json:"config"`
 		Origins map[string]struct {
@@ -418,7 +444,7 @@ func parseCodexEffectiveConfig(
 		effective.ModelProviders = make(
 			map[string]codexEffectiveProvider, len(response.Config.ModelProviders))
 		for name, provider := range response.Config.ModelProviders {
-			resolved := codexEffectiveProvider{BaseURL: value(provider.BaseURL)}
+			resolved := codexEffectiveProvider{BaseURL: value(provider.BaseURL), EnvKey: provider.EnvKey, WireAPI: provider.WireAPI, SupportsWebsockets: provider.SupportsWebsockets, Auth: provider.Auth, HTTPHeaders: provider.HTTPHeaders, EnvHTTPHeaders: provider.EnvHTTPHeaders, QueryParams: provider.QueryParams, ExperimentalBearer: provider.ExperimentalBearer}
 			if provider.RequiresOpenAIAuth != nil {
 				resolved.RequiresOpenAIAuth = *provider.RequiresOpenAIAuth
 			}

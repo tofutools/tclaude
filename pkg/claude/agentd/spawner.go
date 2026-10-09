@@ -13,8 +13,8 @@ import (
 // positional list — see that type for the per-field semantics (harness,
 // sandbox, approval, auto-review, trust-dir, etc.). SpawnNew launches a fresh
 // conversation keyed by SpawnArgs.Label; SpawnResume relaunches the
-// conversation named by SpawnArgs.ConvID and ignores the fresh-spawn-only
-// Label / TrustDir fields.
+// conversation named by SpawnArgs.ConvID. Imported-history launches may pin
+// Label and use TrustDir after the same checks as a fresh spawn.
 type Spawner interface {
 	SpawnNew(args clcommon.SpawnArgs) error
 	SpawnResume(args clcommon.SpawnArgs) error

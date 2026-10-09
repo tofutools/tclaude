@@ -12,6 +12,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -26,6 +27,8 @@ import (
 // happens after the command is built and handed to the hook.
 func captureWebTermCommand(t *testing.T, path string) string {
 	t.Helper()
+	// These command fixtures use a simulated server without external delegation.
+	t.Setenv(session.ResourceDelegationDirEnv, "")
 	var command string
 	t.Cleanup(agentd.SetTermWSHookForTest(&agentd.TermWSHook{
 		RewriteCommand: func(gotCommand, gotSession string) (string, string) {

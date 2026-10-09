@@ -40,9 +40,19 @@ func TrustFederationPeer(p FederationPeer) error {
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`INSERT INTO federation_peers(instance_id, pubkey, label, name, trusted_at, trust_level) VALUES(?,?,?,?,?,?)
+	res, err := d.Exec(`INSERT INTO federation_peers(instance_id, pubkey, label, name, trusted_at, trust_level)
+ SELECT ?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM federation_identity_rotations WHERE old_instance=? AND state IN ('accepted','revoked','conflict','recovered'))
  ON CONFLICT(instance_id) DO UPDATE SET label=excluded.label, name=excluded.name, trust_level=excluded.trust_level`,
-		p.InstanceID, p.PubKey, p.Label, p.Name, dbTime(time.Now()), p.TrustLevel)
+		p.InstanceID, p.PubKey, p.Label, p.Name, dbTime(time.Now()), p.TrustLevel, p.InstanceID)
+	if err == nil {
+		count, e := res.RowsAffected()
+		if e != nil {
+			return e
+		}
+		if count == 0 {
+			return fmt.Errorf("identity %s is retired, revoked or conflicted; explicit recovery required", p.InstanceID)
+		}
+	}
 	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
 		return fmt.Errorf("label %q is already used by another peer", p.Label)
 	}
@@ -60,6 +70,9 @@ func UntrustFederationPeer(instanceID string) (bool, error) {
 		return false, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`UPDATE federation_identity_rotations SET state='revoked',reason='peer untrusted during rotation' WHERE old_instance=? AND state IN ('pending','conflict')`, instanceID); err != nil {
+		return false, err
+	}
 	res, err := tx.Exec(`DELETE FROM federation_peers WHERE instance_id=?`, instanceID)
 	if err != nil {
 		return false, err
@@ -68,10 +81,17 @@ func UntrustFederationPeer(instanceID string) (bool, error) {
 	for _, q := range []string{
 		`DELETE FROM federation_peer_grants WHERE peer=?`,
 		`DELETE FROM federation_catalogs WHERE peer=?`,
+		`UPDATE model_proxy_leases SET revoked=1 WHERE peer=?`,
 	} {
 		if _, err := tx.Exec(q, instanceID); err != nil {
 			return false, err
 		}
+	}
+	if _, err := tx.Exec(`UPDATE federation_enrollments SET retired=1 WHERE peer=?`, instanceID); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(`UPDATE model_proxy_launches SET revoked=1 WHERE reference LIKE ?`, "%@"+instanceID); err != nil {
+		return false, err
 	}
 	// Nothing more goes to an untrusted instance.
 	if _, err := tx.Exec(`UPDATE federation_outbox SET state=?, last_error=?, updated_at=?
@@ -530,27 +550,32 @@ const (
 // FederationSpawnRequest is a spawn request a peer sent into an exported
 // group, waiting for (or decided by) the local operator.
 type FederationSpawnRequest struct {
-	ID              int64
-	FromInstance    string
-	EnvelopeID      string
-	FromAgent       string
-	FromName        string
-	GroupID         int64
-	GroupName       string
-	Name            string
-	Role            string
-	Brief           string
-	Status          string
-	ResultAgent     string
-	Reason          string
-	CreatedAt       time.Time
-	ExpiresAt       time.Time
-	DecidedAt       time.Time
-	LaunchLabel     string
-	LaunchStartedAt time.Time
-	Automatic       bool
-	NoticeSent      bool
-	ResultSent      bool
+	Profile          string
+	Credentials      string
+	ModelLease       string
+	PlacementVersion int
+	Requirements     string
+	ID               int64
+	FromInstance     string
+	EnvelopeID       string
+	FromAgent        string
+	FromName         string
+	GroupID          int64
+	GroupName        string
+	Name             string
+	Role             string
+	Brief            string
+	Status           string
+	ResultAgent      string
+	Reason           string
+	CreatedAt        time.Time
+	ExpiresAt        time.Time
+	DecidedAt        time.Time
+	LaunchLabel      string
+	LaunchStartedAt  time.Time
+	Automatic        bool
+	NoticeSent       bool
+	ResultSent       bool
 }
 
 // Expired reports whether a pending request has passed its expiry.
@@ -591,10 +616,10 @@ func InsertFederationSpawnRequest(r *FederationSpawnRequest, pendingLimit int) (
 	}
 	now := time.Now()
 	res, err := tx.Exec(`INSERT INTO federation_spawn_requests
-		(from_instance, envelope_id, from_agent, from_name, group_id, group_name, name, role, brief, status, created_at, expires_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+		(from_instance, envelope_id, from_agent, from_name, group_id, group_name, name, role, brief, status, created_at, expires_at, placement_version, requirements, credentials, model_lease, requested_profile)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		r.FromInstance, r.EnvelopeID, r.FromAgent, r.FromName, r.GroupID, r.GroupName, r.Name, r.Role, r.Brief,
-		FedSpawnPending, dbTime(now), dbTime(r.ExpiresAt))
+		FedSpawnPending, dbTime(now), dbTime(r.ExpiresAt), r.PlacementVersion, r.Requirements, r.Credentials, r.ModelLease, r.Profile)
 	if err != nil {
 		return 0, err
 	}
@@ -606,13 +631,13 @@ func InsertFederationSpawnRequest(r *FederationSpawnRequest, pendingLimit int) (
 }
 
 const fedSpawnColumns = `id, from_instance, envelope_id, from_agent, from_name, group_id, group_name, name, role, brief,
-	status, result_agent, reason, created_at, expires_at, decided_at, launch_label, launch_started_at, automatic, notice_sent, result_sent`
+	status, result_agent, reason, created_at, expires_at, decided_at, launch_label, launch_started_at, automatic, notice_sent, result_sent, placement_version, requirements, credentials, model_lease, requested_profile`
 
 func scanFedSpawn(scan func(...any) error) (*FederationSpawnRequest, error) {
 	var r FederationSpawnRequest
 	var created, expires, decided, started dbTimestamp
 	if err := scan(&r.ID, &r.FromInstance, &r.EnvelopeID, &r.FromAgent, &r.FromName, &r.GroupID, &r.GroupName,
-		&r.Name, &r.Role, &r.Brief, &r.Status, &r.ResultAgent, &r.Reason, &created, &expires, &decided, &r.LaunchLabel, &started, &r.Automatic, &r.NoticeSent, &r.ResultSent); err != nil {
+		&r.Name, &r.Role, &r.Brief, &r.Status, &r.ResultAgent, &r.Reason, &created, &expires, &decided, &r.LaunchLabel, &started, &r.Automatic, &r.NoticeSent, &r.ResultSent, &r.PlacementVersion, &r.Requirements, &r.Credentials, &r.ModelLease, &r.Profile); err != nil {
 		return nil, err
 	}
 	r.CreatedAt, r.ExpiresAt, r.DecidedAt = created.Time(), expires.Time(), decided.Time()

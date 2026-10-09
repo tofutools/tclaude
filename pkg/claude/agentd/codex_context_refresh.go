@@ -1195,11 +1195,3 @@ func flushCodexTelemetryCheckpoints(ctx context.Context) (int, error) {
 		}
 	}
 }
-
-func sessionRowAliveIn(sess *db.SessionRow, aliveSet map[string]struct{}) bool {
-	if sess == nil || sess.TmuxSession == "" {
-		return false
-	}
-	_, ok := aliveSet[sess.TmuxSession]
-	return ok
-}

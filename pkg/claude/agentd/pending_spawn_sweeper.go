@@ -88,6 +88,14 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 			"label", ps.Label, "error", err)
 		return // transient — retry next tick
 	}
+	// A preset conversation/session row precedes pane creation. Capacity
+	// reservations may only promote once the pane is live. Even "exited" can
+	// be a premature attach observation; wrapper failures clean up explicitly.
+	if ps.CapacityReserved {
+		if sess == nil || sess.TmuxSession == "" || !session.IsTmuxSessionAlive(sess.TmuxSession) {
+			return
+		}
+	}
 	if sess == nil {
 		if ps.Launching {
 			if created, parseErr := time.Parse(time.RFC3339Nano, ps.CreatedAt); parseErr == nil && time.Since(created) < pendingSpawnLaunchGrace {

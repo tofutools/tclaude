@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -44,11 +45,13 @@ type tmuxSessionCache struct {
 	now   func() time.Time
 	probe func() (map[string]struct{}, error)
 
-	mu       sync.Mutex
-	valid    bool
-	expires  time.Time
-	sessions map[string]struct{}
-	err      error
+	mu         sync.Mutex
+	valid      bool
+	generation uint64
+	revision   func() uint64
+	expires    time.Time
+	sessions   map[string]struct{}
+	err        error
 }
 
 func newTmuxSessionCache(ttl time.Duration, now func() time.Time, probe func() (map[string]struct{}, error)) *tmuxSessionCache {
@@ -62,19 +65,31 @@ func newTmuxSessionCache(ttl time.Duration, now func() time.Time, probe func() (
 // the held lock provides. A ttl of 0 makes every call re-probe (cache
 // transparent) — used by tests to keep production freshness semantics.
 func (c *tmuxSessionCache) get() (map[string]struct{}, error) {
+	return c.getFresh(false)
+}
+func (c *tmuxSessionCache) getFresh(fresh bool) (map[string]struct{}, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.valid && c.now().Before(c.expires) {
+	generation := uint64(0)
+	if c.revision != nil {
+		generation = c.revision()
+	}
+	if !fresh && c.valid && c.generation == generation && c.now().Before(c.expires) {
 		return c.sessions, c.err
 	}
 	c.sessions, c.err = c.probe()
 	c.valid = true
+	c.generation = generation
 	c.expires = c.now().Add(c.ttl)
 	return c.sessions, c.err
 }
 
 // liveTmuxCache is the daemon-wide cache backing cachedLiveTmuxSessions.
-var liveTmuxCache = newTmuxSessionCache(liveTmuxCacheTTL, time.Now, session.LiveTmuxSessions)
+var liveTmuxCache = func() *tmuxSessionCache {
+	c := newTmuxSessionCache(liveTmuxCacheTTL, time.Now, session.LiveTmuxSessions)
+	c.revision = db.StatusSnapshotGeneration
+	return c
+}()
 
 // cachedLiveTmuxSessions returns the live tmux session set through the
 // short-TTL coalescing cache. The dashboard poll handlers use this instead of

@@ -312,3 +312,18 @@ func TestOneShotExecHelperRefusesHandoffOutsidePrivateData(t *testing.T) {
 		t.Fatalf("expected private handoff refusal, got %v", err)
 	}
 }
+
+func TestRemoteJobBinaryResultFitsBrokerAndArtifactBounds(t *testing.T) {
+	text := strings.Repeat("\x00", maxNonInteractiveOutputBytes)
+	result := nonInteractiveSpawnResult{Stdout: text, Stderr: text, StdoutBytes: []byte(text), StderrBytes: []byte(text)}
+	raw, e := json.Marshal(nonInteractiveBrokerReply{Result: result})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(raw) > maxNonInteractiveResultBytes {
+		t.Fatalf("broker encoding=%d limit=%d", len(raw), maxNonInteractiveResultBytes)
+	}
+	if int64(len(raw)) > jobLogType.MaxBytes {
+		t.Fatalf("artifact encoding=%d limit=%d", len(raw), jobLogType.MaxBytes)
+	}
+}

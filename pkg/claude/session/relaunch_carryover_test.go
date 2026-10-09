@@ -54,6 +54,7 @@ func fullClaudePosture() *db.AgentRelaunchProfile {
 	features := map[string]string{"bundled-skills": "off"}
 	return &db.AgentRelaunchProfile{
 		Version:                    db.RelaunchProfileVersion,
+		ModelProxy:                 ptr("main@gateway"),
 		HarnessBuiltinMode:         ptr(harness.ClaudeSandboxOn),
 		SandboxImplementation:      ptr(string(sandboxpolicy.ImplementationTclaudeLayer)),
 		ApprovalPolicy:             ptr("plan"),
