@@ -18868,8 +18868,8 @@ html.remote-node #usage.peer-view-na { font-style: italic; color: #7d8590; }
    view like the map, so the per-node tabs give way to the view switch. Its
    anchor exists for routing only. Groups are named group@node, the suffix in
    the node's own colour; an unreachable node's groups read as stale. */
-nav [data-tab="fleet"] { display: none; }
-nav:has(#node-chips-root .node-chip):has([data-tab="fleet"].active) .nav-inner > [data-tab]:not([data-tab="map"]) { display: none; }
+nav [data-tab="fleet"], nav [data-tab="fleet-admin"] { display: none; }
+nav:has(#node-chips-root .node-chip):has(:is([data-tab="fleet"], [data-tab="fleet-admin"]).active) .nav-inner > [data-tab]:not([data-tab="map"]) { display: none; }
 .skynet-seg-btn { border: 0; font: inherit; font-size: 13px; cursor: pointer; }
 .skynet-seg-btn + .skynet-seg-btn { border-left: 1px solid #30363d; }
 .skynet-seg-btn.on { cursor: default; }
@@ -18884,3 +18884,34 @@ nav:has(#node-chips-root .node-chip):has([data-tab="fleet"].active) .nav-inner >
 .fleet-stale-label { font-size: 11px; font-weight: normal; color: #e3b341; }
 details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 #skynet-fleet-root [data-act]:not([data-act="copy-generation-id"]):not([data-act="sandbox-details"]):not([data-act="group-menu"]):not([data-act="row-menu"]) { opacity: .45; cursor: not-allowed; }
+/* Fleet administration (js/fleet-admin-island.js): this node's federation
+   identity, hub connection and trusted peers. A top-level view like the map. */
+.fleet-admin { font-size: 13px; color: #c9d1d9; }
+.fa-identity { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; padding: 8px 12px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; }
+.fa-identity > button { margin-left: auto; }
+.fa-k { color: #7d8590; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; margin-right: 4px; }
+.fa-hub.ok { color: #3fb950; }
+.fa-hub.warn { color: #e3b341; }
+.fa-hub.off { color: #7d8590; }
+.fa-link { border: 0; background: none; padding: 0; color: #58a6ff; cursor: pointer; font: inherit; font-size: 12px; }
+.fa-subtabs { display: flex; gap: 2px; margin: 12px 0 8px; border-bottom: 1px solid #30363d; }
+.fa-subtab { border: 0; border-bottom: 2px solid transparent; background: none; color: #8b949e; padding: 6px 12px; font: inherit; cursor: pointer; }
+.fa-subtab.on { color: #f0f6fc; border-bottom-color: #1f6feb; }
+.fleet-admin h4 { margin: 14px 0 6px; font-size: 13px; }
+.fa-table { width: 100%; border-collapse: collapse; }
+.fa-table th { text-align: left; font-weight: 600; color: #7d8590; font-size: 11px; padding: 4px 8px; border-bottom: 1px solid #30363d; }
+.fa-table td { padding: 5px 8px; border-bottom: 1px solid #21262d; vertical-align: middle; }
+.fa-acts { text-align: right; white-space: nowrap; }
+.fa-acts button + button { margin-left: 6px; }
+.fa-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #484f58; }
+.fa-dot.on { background: #3fb950; }
+.fa-level.unrestricted { color: #f0883e; font-weight: 600; }
+.fa-danger { color: #f85149; }
+.fa-cli { padding: 8px 0; color: #8b949e; }
+.fa-cli code { color: #c9d1d9; }
+.fa-dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; align-items: baseline; margin: 6px 0 10px; }
+.fa-wrap { word-break: break-all; }
+.fa-fp-full { font-size: 14px; color: #f0f6fc; }
+.fa-levels, .fa-profile { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.fa-consequence { margin: 8px 0; padding: 8px 10px; border: 1px solid #f8514966; border-radius: 6px; background: #f851491a; color: #ffa198; }
+.fa-ack { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0 4px; }

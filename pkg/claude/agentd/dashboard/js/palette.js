@@ -587,6 +587,17 @@ export function buildCommands(snapshot) {
       run: () => btn.click(),
     });
   }
+  // Fleet administration has no visible tab before the first peer is
+  // trusted (the Skynet bar appears with the fleet), so it is reached here.
+  const fleetAdmin = $$('nav [data-tab="fleet-admin"]')[0];
+  if (fleetAdmin) {
+    cmds.push({
+      peerView: 'view', icon: '⚙', label: 'Fleet administration',
+      hint: 'trust peers, compare fingerprints, hub connection',
+      keywords: 'fleet federation peers trust untrust fingerprint hub disconnect skynet admin nodes',
+      run: () => fleetAdmin.click(),
+    });
+  }
 
   // 5) Group view — collapse / expand the Groups-tab listing. These
   //    apply to EVERY group (even idle ones — folding an idle group is
