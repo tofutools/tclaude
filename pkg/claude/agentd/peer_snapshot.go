@@ -27,7 +27,7 @@ func (v *peerView) snapshot() (snapshotPayload, error) {
 	out := snapshotPayload{
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano), Version: buildversion.AppVersion(),
 		AssetsVersion: dashboardAssetsVersion, Groups: groups, Agents: agents, AgentRosterAuthoritative: true,
-		Harnesses: buildHarnessCatalog(), ActivityBots: activityBotsView{Regular: "emoji", Slop: "sprites", Wizard: "emoji"},
+		ActivityBots:  activityBotsView{Regular: "emoji", Slop: "sprites", Wizard: "emoji"},
 		HScrollFollow: true, GroupQuickOptions: "hover", DefaultTerminal: "web", DefaultDirectoryPicker: "web",
 	}
 	// Normal dashboard clients expect arrays/maps, even for withheld concepts.

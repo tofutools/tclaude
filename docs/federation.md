@@ -2083,7 +2083,9 @@ fields and `task_ref_url` / `task_ref_label`. Lists and maps for withheld
 concepts are empty, unsupported scalars are blank/zero, and optional private
 fields are omitted. Paths, worktrees, permissions, spawn configuration,
 account usage and local notification/approval content are not shared through
-roster/presence/status grants. Group roles require roster access; online fields
+roster/presence/status grants. The harness spawn catalog is empty for restricted
+peers: local provider model suggestions and readiness diagnostics are private
+configuration. Group roles require roster access; online fields
 require presence or status access. Status granted on one visible group does
 not populate an agent's row in another group without that grant. The deduped
 `agents` list combines only authorized data and lists only visible groups.

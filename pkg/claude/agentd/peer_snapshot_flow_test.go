@@ -62,6 +62,7 @@ func TestPeerSnapshotDashboardSchemaAndSummary(t *testing.T) {
 	plain := read("/api/snapshot")
 	require.Equal(t, []any{}, plain["pending"])
 	require.Equal(t, []any{}, plain["profiles"])
+	require.Equal(t, []any{}, plain["harnesses"])
 	require.Equal(t, []any{}, plain["templates"])
 	require.Equal(t, []any{}, plain["messages"])
 	require.Equal(t, []any{}, plain["ungrouped"])

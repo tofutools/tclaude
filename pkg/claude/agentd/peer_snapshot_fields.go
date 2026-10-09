@@ -11,9 +11,9 @@ import (
 // projection. Denied fields keep their typed zero/empty values.
 var peerSnapshotFields = map[reflect.Type]map[string]string{
 	reflect.TypeFor[snapshotPayload](): classifyPeerFields(map[string]string{
-		"public":    "GeneratedAt Version AssetsVersion Harnesses ActivityBots HScrollFollow GroupQuickOptions DefaultTerminal DefaultDirectoryPicker",
+		"public":    "GeneratedAt Version AssetsVersion ActivityBots HScrollFollow GroupQuickOptions DefaultTerminal DefaultDirectoryPicker",
 		"projected": "Groups Agents AgentRosterAuthoritative StaticVersion",
-		"denied":    "AuthSession StaticUnchanged SandboxProfiles SandboxProfileDefault Ungrouped Pending Permissions Slugs Cron ExportJobsActive RetiredTotal Sudo Links RouteMap Usage AuthoredOpenPRs Templates Profiles SpawnProfileDefault Roles Messages MessagesUnread AccessRequests AccessRequestsPending Plugins PluginsCatalog PluginsWarn PluginsError PluginsTabVisible DebugTabVisible ProcessesEnabled TriggersEnabled GroupsRouteMapEnabled GroupAttachmentsMode TerminalPaletteShortcut RecordedSandboxDetails UserDefaultModel SandboxImpl PopupBase NotificationsEnabled SpawnNameNormalize VegasInRegularMode HidePullLever TerminalAttach ShowAgentHideButton ShowGroupDescription CostTabVisible CostTabWhatIf BrokerRefusalsTotal BrokerRefusalsUnplaceable UsageTabVisible RemoteAccess",
+		"denied":    "Harnesses AuthSession StaticUnchanged SandboxProfiles SandboxProfileDefault Ungrouped Pending Permissions Slugs Cron ExportJobsActive RetiredTotal Sudo Links RouteMap Usage AuthoredOpenPRs Templates Profiles SpawnProfileDefault Roles Messages MessagesUnread AccessRequests AccessRequestsPending Plugins PluginsCatalog PluginsWarn PluginsError PluginsTabVisible DebugTabVisible ProcessesEnabled TriggersEnabled GroupsRouteMapEnabled GroupAttachmentsMode TerminalPaletteShortcut RecordedSandboxDetails UserDefaultModel SandboxImpl PopupBase NotificationsEnabled SpawnNameNormalize VegasInRegularMode HidePullLever TerminalAttach ShowAgentHideButton ShowGroupDescription CostTabVisible CostTabWhatIf BrokerRefusalsTotal BrokerRefusalsUnplaceable UsageTabVisible RemoteAccess",
 	}),
 	reflect.TypeFor[dashboardGroup](): classifyPeerFields(map[string]string{
 		"identity":  "Name Descr",
