@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/sys/unix"
 	"io"
 	"os"
 	"path/filepath"
@@ -83,6 +84,7 @@ func openDirectory(path string, create bool) (*os.Root, error) {
 	// Reject symlinks in credential directories. HOME may itself have an alias;
 	// resolve that once in the caller, never a peer-selected path.
 	path = filepath.Clean(path)
+	var expected os.FileInfo
 	current := string(os.PathSeparator)
 	for _, part := range strings.Split(strings.TrimPrefix(path, string(os.PathSeparator)), string(os.PathSeparator)) {
 		current = filepath.Join(current, part)
@@ -99,8 +101,24 @@ func openDirectory(path string, create bool) (*os.Root, error) {
 		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return nil, fmt.Errorf("credential directory symlinks are refused")
 		}
+		expected = info
 	}
-	return os.OpenRoot(path)
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := root.Open(".")
+	if err != nil {
+		_ = root.Close()
+		return nil, err
+	}
+	opened, err := dir.Stat()
+	_ = dir.Close()
+	if err != nil || expected == nil || !os.SameFile(expected, opened) {
+		_ = root.Close()
+		return nil, fmt.Errorf("credential directory changed while opening")
+	}
+	return root, nil
 }
 func readFile(root *os.Root, name string) ([]byte, error) {
 	before, err := root.Lstat(name)
@@ -110,7 +128,7 @@ func readFile(root *os.Root, name string) ([]byte, error) {
 	if !before.Mode().IsRegular() || before.Size() > MaxBytes {
 		return nil, fmt.Errorf("credential file must be a bounded regular file")
 	}
-	f, err := root.Open(name)
+	f, err := root.OpenFile(name, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, fmt.Errorf("credential file unavailable")
 	}
