@@ -166,13 +166,14 @@ func handleFederationNodeProfiles(w http.ResponseWriter, r *http.Request) {
 	}
 	// Serialize definition changes with preview/apply, trust-time selection and
 	// offer publication so their security checks use one profile revision.
-	if r.Method != http.MethodGet {
+	// GET route patterns also accept HEAD, which must stay read-only.
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		fedNodeGroupsMu.Lock()
 		defer fedNodeGroupsMu.Unlock()
 	}
 
 	ref := r.PathValue("name")
-	if r.Method == http.MethodGet {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		if ref == "" {
 			ps, e := db.ListFederationNodeProfiles()
 			if e != nil {
