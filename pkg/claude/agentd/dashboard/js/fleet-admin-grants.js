@@ -17,6 +17,7 @@ export function grantTargets(view, pools) {
 }
 
 function where(row) {
+  if (row.deletedGroup) return html`<span class="muted">deleted group${row.groupID != null ? ` #${row.groupID}` : ''}</span>`;
   if (row.group) return html`group <b>${row.group}</b>`;
   if (row.allGroups) return html`<span class="fa-warn" title="Covers every current group and every group created later">all groups, incl. future</span>`;
   return html`<span class="muted">node-wide</span>`;
@@ -74,7 +75,7 @@ export function GrantsPage({ view, pools, groups, actions, confirm, toast, targe
   };
   const revoke = (row) => confirm({
     title: `Revoke ${row.slug} from ${current.label}?`,
-    body: `${current.label} loses ${row.slug} (${row.what || 'this permission'}) ${row.group ? `in group ${row.group}` : row.allGroups ? 'in every group' : 'node-wide'}. Anything it is doing that relies on it stops being allowed.`,
+    body: `${current.label} loses ${row.slug} (${row.what || 'this permission'}) ${row.deletedGroup ? "in a deleted group (it applies nowhere)" : row.group ? `in group ${row.group}` : row.allGroups ? 'in every group' : 'node-wide'}. Anything it is doing that relies on it stops being allowed.`,
     okLabel: 'Revoke',
     busyLabel: 'Revoking…',
     action: () => actions.revoke({ peer: current.id, slug: row.slug, scope: row.scope }),
@@ -100,7 +101,7 @@ export function GrantsPage({ view, pools, groups, actions, confirm, toast, targe
         <td class="muted">${r.what}</td>
         <td class="fa-acts">${r.pool
           ? html`<span class="muted" title="Revoke it on the pool">via pool ${r.pool}</span>`
-          : r.deletedGroup ? html`<span class="muted" title="Its group was deleted; the grant no longer applies to any group">group deleted</span>`
+          : !r.revocable ? html`<span class="muted" title="Its group was deleted; the grant no longer applies to any group">group deleted</span>`
           : html`<button type="button" class="fa-danger" data-fa="revoke" onClick=${() => revoke(r)}>Revoke…</button>`}</td>
       </tr>`)}</tbody>
     </table>`}
