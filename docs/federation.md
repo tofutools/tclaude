@@ -2679,3 +2679,18 @@ Scripts and bounded logs remain private on the receiver; audits on each side
 record operator, peer/node, script hash and size, job ID and result. The sender
 records results when they are observed through job polling. After daemon
 restart, unfinished jobs are marked interrupted and never replayed.
+
+### Per-group federation links
+
+`tclaude federation links [--group NAME] [--json]` reads the same aggregation as
+local dashboard groups' `federation_links`: group-scoped direct/pool grants,
+route mirrors, and peer trust/online/last-seen. Unscoped grants and unrestricted
+trust are not per-group links. Groups without links have an empty array.
+
+The local-only `GET /api/federation/links?group=NAME` (CLI:
+`GET /v1/federation/links`) returns `{groups: [{group_id, name,
+federation_links: [...]}]}`. The optional filter is an exact local group name;
+an unknown name returns 404. Each link has the existing snapshot shape:
+`peer`, `label`, `level`, `kind`, `direction`, `slugs?`, `pool?`, `remote?`,
+`online`, and `last_seen?`. Peers cannot read this node's other trust links,
+including through unrestricted trust.

@@ -4,6 +4,7 @@ import "net/http"
 
 func registerDashboardFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/federation/status", dashboardFederationRoute(handleFederationStatus))
+	mux.HandleFunc("GET /api/federation/links", dashboardFederationRoute(handleFederationLinks))
 	mux.HandleFunc("GET /api/federation/audit", dashboardFederationRoute(handleFederationAudit))
 	mux.HandleFunc("POST /api/federation/config", dashboardFederationRoute(handleFederationConfig))
 	mux.HandleFunc("GET /api/federation/enroll-tokens", dashboardFederationRoute(handleFederationEnrollmentTokens))
