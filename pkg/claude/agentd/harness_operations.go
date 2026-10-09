@@ -92,6 +92,7 @@ func localHarnessOperations() (*harnessops.Service, error) {
 	return svc, nil
 }
 func registerHarnessOperationsRoutes(mux *http.ServeMux) {
+	registerHarnessCredentialRoutes(mux)
 	mux.HandleFunc("GET /api/harnesses/operations", handleDashboardHarnessOperations)
 	mux.HandleFunc("POST /api/harnesses/operations", handleDashboardHarnessOperations)
 	mux.HandleFunc("POST /api/harnesses/credentials", handleDashboardHarnessOperations)
@@ -198,6 +199,9 @@ func serveHarnessOperations(w http.ResponseWriter, r *http.Request, actor string
 // prepareHarnessCredentialPush runs only after local human/cookie auth and a
 // pinned trusted destination lookup. Incoming peers never call this function.
 func prepareHarnessCredentialPush(r *http.Request, body []byte) ([]byte, error) {
+	if r.Method == http.MethodPost && r.PathValue("tail") == "harnesses/credentials/push" {
+		return prepareStandaloneCredentialPush(r, body)
+	}
 	if r.Method != http.MethodPost || (r.PathValue("tail") != "harnesses/operations" && r.PathValue("tail") != "harnesses/credentials") {
 		return body, nil
 	}

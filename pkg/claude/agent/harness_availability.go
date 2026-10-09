@@ -27,7 +27,7 @@ type harnessLsParams struct {
 
 func HarnessCmd() *cobra.Command {
 	ls := boa.CmdT[harnessLsParams]{Use: "ls", Short: "List harness binaries available on the daemon's PATH (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *harnessLsParams, _ *cobra.Command, _ []string) { os.Exit(runHarnessLs(p, os.Stdout, os.Stderr)) }}.ToCobra()
-	return boa.CmdT[struct{}]{Use: "harness", Short: "Inspect coding harness availability", ParamEnrich: common.DefaultParamEnricher(), SubCmds: append([]*cobra.Command{ls}, harnessOperationCommands()...)}.ToCobra()
+	return boa.CmdT[struct{}]{Use: "harness", Short: "Inspect coding harness availability", ParamEnrich: common.DefaultParamEnricher(), SubCmds: append([]*cobra.Command{ls, harnessCredentialCommand()}, harnessOperationCommands()...)}.ToCobra()
 }
 func runHarnessLs(p *harnessLsParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != 0 {

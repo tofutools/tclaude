@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 const MaxBytes = 18 << 10
@@ -41,8 +42,9 @@ type savedFile struct {
 	Data   []byte `json:"data,omitempty"`
 }
 type backup struct {
-	Harness string      `json:"harness"`
-	Files   []savedFile `json:"files"`
+	CreatedAt time.Time   `json:"created_at"`
+	Harness   string      `json:"harness"`
+	Files     []savedFile `json:"files"`
 }
 
 func location(home, name string, receiving bool) (string, []string, error) {
@@ -77,13 +79,44 @@ func location(home, name string, receiving bool) (string, []string, error) {
 		return "", nil, fmt.Errorf("file credential copy unsupported for this harness; use its login flow (keychains and environment secrets are not copied)")
 	}
 }
-func openDirectory(path string, create bool) (*os.Root, error) {
+
+// canonicalDirectory resolves only daemon-configured local directory paths,
+// never a peer-selected path or a credential file. Missing suffixes are appended
+// to the canonical existing ancestor so new directories can be created safely.
+func canonicalDirectory(path string) (string, error) {
 	if !filepath.IsAbs(path) {
-		return nil, fmt.Errorf("credential directory must be absolute")
+		return "", fmt.Errorf("credential directory must be absolute")
 	}
-	// Reject symlinks in credential directories. HOME may itself have an alias;
-	// resolve that once in the caller, never a peer-selected path.
-	path = filepath.Clean(path)
+	ancestor := filepath.Clean(path)
+	suffix := []string{}
+	for {
+		_, err := os.Lstat(ancestor)
+		if err == nil {
+			break
+		}
+		if !os.IsNotExist(err) || ancestor == string(os.PathSeparator) {
+			return "", fmt.Errorf("credential directory unavailable")
+		}
+		suffix = append(suffix, filepath.Base(ancestor))
+		ancestor = filepath.Dir(ancestor)
+	}
+	canonical, err := filepath.EvalSymlinks(ancestor)
+	if err != nil {
+		return "", fmt.Errorf("credential directory unavailable")
+	}
+	for i := len(suffix) - 1; i >= 0; i-- {
+		canonical = filepath.Join(canonical, suffix[i])
+	}
+	return canonical, nil
+}
+func openDirectory(path string, create bool) (*os.Root, error) {
+	// HOME and deliberately linked harness roots are local operator choices.
+	// Resolve their aliases once, then reject symlinks introduced below that
+	// canonical path and pin the opened root to its observed directory identity.
+	path, err := canonicalDirectory(path)
+	if err != nil {
+		return nil, err
+	}
 	var expected os.FileInfo
 	current := string(os.PathSeparator)
 	for _, part := range strings.Split(strings.TrimPrefix(path, string(os.PathSeparator)), string(os.PathSeparator)) {
@@ -121,11 +154,14 @@ func openDirectory(path string, create bool) (*os.Root, error) {
 	return root, nil
 }
 func readFile(root *os.Root, name string) ([]byte, error) {
+	return readBoundedFile(root, name, MaxBytes)
+}
+func readBoundedFile(root *os.Root, name string, limit int) ([]byte, error) {
 	before, err := root.Lstat(name)
 	if err != nil {
 		return nil, err
 	}
-	if !before.Mode().IsRegular() || before.Size() > MaxBytes {
+	if !before.Mode().IsRegular() || before.Size() > int64(limit) {
 		return nil, fmt.Errorf("credential file must be a bounded regular file")
 	}
 	f, err := root.OpenFile(name, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
@@ -137,8 +173,8 @@ func readFile(root *os.Root, name string) ([]byte, error) {
 	if err != nil || !os.SameFile(before, opened) {
 		return nil, fmt.Errorf("credential file changed while opening")
 	}
-	raw, err := io.ReadAll(io.LimitReader(f, MaxBytes+1))
-	if err != nil || len(raw) > MaxBytes {
+	raw, err := io.ReadAll(io.LimitReader(f, int64(limit)+1))
+	if err != nil || len(raw) > limit {
 		return nil, fmt.Errorf("credential file exceeds limit")
 	}
 	return raw, nil
@@ -254,24 +290,11 @@ func Receive(home, privateDir string, b Bundle, overwrite bool, authorize func()
 		}
 		previous.Files = append(previous.Files, savedFile{Name: f.Name, Exists: exists, Data: raw})
 	}
-	var nonce [16]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return Receipt{}, err
-	}
-	id := hex.EncodeToString(nonce[:])
-	backupRoot, err := openDirectory(privateDir, true)
+	receipt, err := saveBackup(privateDir, previous)
 	if err != nil {
 		return Receipt{}, err
 	}
-	defer func() { _ = backupRoot.Close() }()
-	raw, err := json.Marshal(previous)
-	if err != nil {
-		return Receipt{}, err
-	}
-	if err := atomicFile(backupRoot, id+".json", raw); err != nil {
-		return Receipt{}, fmt.Errorf("private credential backup failed")
-	}
-	receipt := Receipt{BackupID: id, BackupLocation: filepath.Join(privateDir, id+".json")}
+
 	for i, f := range b.Files {
 		if !authorize() {
 			return receipt, errors.Join(fmt.Errorf("credential receiving authority revoked"), restoreFiles(root, previous.Files[:i]))
@@ -299,6 +322,12 @@ func restoreFiles(root *os.Root, files []savedFile) error {
 			if !os.IsNotExist(err) {
 				result = errors.Join(result, err)
 			}
+			d, e := root.Open(".")
+			if e == nil {
+				e = d.Sync()
+				_ = d.Close()
+			}
+			result = errors.Join(result, e)
 		}
 	}
 	return result
