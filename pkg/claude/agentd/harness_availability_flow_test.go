@@ -4,6 +4,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/testharness"
 	"net/http"
 	"testing"
@@ -37,6 +38,9 @@ func TestHarnessAvailabilityAuthorityAndPools(t *testing.T) {
 	rec = fedHuman(t, fh.f, "DELETE", "/v1/federation/nodes/groups/availability/members", map[string]any{"peer": "bob"})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.Equal(t, 403, request())
+	rec = fedHuman(t, fh.f, "POST", "/v1/federation/peers/trust", map[string]any{"instance": "bob", "level": "unrestricted", "confirm_fingerprint": proto.Fingerprint(fh.peer.id.Pub)})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.Equal(t, 200, request(), "unrestricted trust implies detailed availability")
 	fedNodeProfile(t, fh, "harness-profile", db.FederationNodeProfileSpec{PeerGrants: []db.FederationPeerGrant{{Slug: agentd.PermNodeHarnessesRead}}})
 	rec = fedHuman(t, fh.f, http.MethodGet, "/v1/harnesses/availability", nil)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
