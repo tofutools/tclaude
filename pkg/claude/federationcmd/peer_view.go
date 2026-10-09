@@ -184,7 +184,7 @@ func runNodeSummaries(p *nodesParams, stdout, stderr io.Writer) int {
 					health = fmt.Sprint(health, " / ", e.Reason)
 				}
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%v\t%v\t%v\t%v\t%v\n", proto.StripControls(row.Label), row.InstanceID, row.Level, cell("shared_groups"), cell("shared_agents"), cell("online_agents"), cell("waiting_for_input"), health)
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", summaryCell(row.Label), summaryCell(row.InstanceID), summaryCell(row.Level), summaryCell(cell("shared_groups")), summaryCell(cell("shared_agents")), summaryCell(cell("online_agents")), summaryCell(cell("waiting_for_input")), summaryCell(health))
 		}
 		_ = tw.Flush()
 	}
@@ -192,4 +192,8 @@ func runNodeSummaries(p *nodesParams, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func summaryCell(v any) string {
+	return strings.Join(strings.Fields(proto.StripControls(fmt.Sprint(v))), " ")
 }

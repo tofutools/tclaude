@@ -40,9 +40,9 @@ func TestNodeSummaryCLIFanoutAndErrors(t *testing.T) {
 			return fmt.Errorf("summary must not retry")
 		}
 		if strings.Contains(path, "inst_2/") {
-			return &agent.DaemonError{Status: 504, Code: "peer_unreachable", Msg: "unreachable", Raw: []byte(`{"code":"peer_unreachable","reason":"peer_timeout","last_seen":"2026-10-09T00:00:00Z"}`)}
+			return &agent.DaemonError{Status: 504, Code: "peer_unreachable", Msg: "unreachable", Raw: []byte(`{"code":"peer_unreachable","reason":"peer_timeout\u001b]52;c;attack\u0007","last_seen":"2026-10-09T00:00:00Z"}`)}
 		}
-		return json.Unmarshal([]byte(`{"shared_groups":1,"shared_agents":2,"waiting_for_input":1,"peer_view":{"omitted":[{"feature":"health"}]}}`), out)
+		return json.Unmarshal([]byte(`{"shared_groups":"1\u001b]52;c;attack\u0007", "health":"bad\u001b[31m\nline","shared_agents":2,"waiting_for_input":1,"peer_view":{"omitted":[{"feature":"health"}]}}`), out)
 	}
 	var stdout, stderr bytes.Buffer
 	require.Equal(t, 1, runNodes(&nodesParams{Summary: true, JSON: true}, &stdout, &stderr), stderr.String())
@@ -54,6 +54,11 @@ func TestNodeSummaryCLIFanoutAndErrors(t *testing.T) {
 	require.Contains(t, string(rows[3].Error), "peer_timeout")
 	require.Contains(t, string(rows[1].Summary), "omitted")
 	require.LessOrEqual(t, peak.Load(), int32(4))
+	stdout.Reset()
+	require.Equal(t, 1, runNodes(&nodesParams{Summary: true}, &stdout, &stderr))
+	require.NotContains(t, stdout.String(), "\x1b")
+	require.NotContains(t, stdout.String(), "\a")
+	require.NotContains(t, stdout.String(), "\nline")
 	stdout.Reset()
 	require.Zero(t, runNodes(&nodesParams{Node: "node-1", JSON: true}, &stdout, &stderr), stderr.String())
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &rows))
