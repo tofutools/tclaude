@@ -151,6 +151,11 @@ export function cardView(node, entry, now = Date.now()) {
     waiting: summary?.waiting_for_input ?? null,
     resources: resourceView(summary?.resources),
     health: summary?.health || null,
+    // tclaude version from the summary (cached on the node, never probed by
+    // the read); update is true only when a newer release is known.
+    version: summary?.version || '',
+    latestVersion: summary?.latest_version || '',
+    updateAvailable: summary?.update_available === true && !!summary?.latest_version,
     omitted,
   };
 }

@@ -2479,6 +2479,15 @@ Node summaries expose cached `version`, optional `latest_version`, nullable
 `update_available`, and optional `update_checked_at` without release requests
 in the polling path. Release metadata is refreshed in the background hourly.
 
+In the dashboard, each Skynet map card shows the node's tclaude version and ↑
+when a newer release is known; its update…/manage… link opens that node's
+update dialog (the Fleet page's identity bar opens it for this node). The
+dialog shows the version, install method, latest release, binaries and
+warnings, and offers Check now, Update to the latest and Roll back; update and
+rollback confirm that the binaries are replaced and the daemon restarts. It
+follows the job through the status read, so the restart does not lose it. A
+peer that has not granted you `node.update` says so.
+
 ### Installing and updating harnesses
 
 `tclaude harness install <name> [--node <peer>]` runs a fixed official npm
