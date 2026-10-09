@@ -50,7 +50,7 @@ func TestDashboardFederationStatusSummaryAndLocalAuth(t *testing.T) {
 	require.Len(t, full["remote"], 1)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/federation/status?summary=1", nil))
-	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	require.Equal(t, http.StatusForbidden, rec.Code)
 	rec = httptest.NewRecorder()
 	PeerViewHandler(id.ID()).ServeHTTP(rec, dashboardRequest("GET", "/api/federation/status?summary=1", ""))
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
