@@ -312,9 +312,11 @@ func (h *Hub) serveWS(w http.ResponseWriter, r *http.Request) {
 		h.log.Info("handshake refused", "remote", r.RemoteAddr, "error", err)
 		return
 	}
-	h.wg.Add(1)
+	if !h.register(c) {
+		c.fail(proto.CodeShuttingDown, "hub shutting down")
+		return
+	}
 	go func() { defer h.wg.Done(); c.writeLoop() }()
-	h.register(c)
 	h.readLoop(c)
 	h.unregister(c)
 }
@@ -438,8 +440,16 @@ func (h *Hub) handshake(ws *websocket.Conn) (*conn, error) {
 	}, nil
 }
 
-func (h *Hub) register(c *conn) {
+func (h *Hub) register(c *conn) bool {
 	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		return false
+	}
+	// Publish the connection and count its writer under the same lock Close
+	// uses to stop admission and snapshot connections. A completed handshake
+	// must not leave an untracked connection alive after that snapshot.
+	h.wg.Add(1)
 	old := h.conns[c.id]
 	h.conns[c.id] = c
 	h.mu.Unlock()
@@ -448,6 +458,7 @@ func (h *Hub) register(c *conn) {
 	}
 	h.log.Info("instance connected", "instance", c.id, "name", c.name)
 	h.broadcastDirectories()
+	return true
 }
 
 func (h *Hub) unregister(c *conn) {

@@ -211,16 +211,24 @@ func TestFederation_RoutesServeRemoteConsumer(t *testing.T) {
 	}
 	require.Error(t, err, "the peer must see the abort")
 
-	// Unexporting withdraws authority: the proxy lease closes.
-	rec = fedGrantCaps(t, f, http.MethodDelete, "/v1/federation/grants", map[string]any{"group": "svc", "peer": "bob"})
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	fedEventually(t, "proxy lease closed", func() bool {
+	openProxyLeases := func() int {
 		var open int
 		d, err := db.Open()
 		require.NoError(t, err)
-		require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM agent_route_leases l JOIN federation_route_proxies p ON p.lease_id=l.id WHERE l.state=?`, string(db.RouteLeaseOpen)).Scan(&open))
-		return open == 0
-	})
+		require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM agent_route_leases l JOIN federation_route_proxies p ON p.lease_id=l.id WHERE l.state=? AND p.route_id=?`, string(db.RouteLeaseOpen), routeID).Scan(&open))
+		return open
+	}
+	// Keep the assertion meaningful: stream completion leaves the shared
+	// proxy lease open until federation authority is withdrawn.
+	require.Equal(t, 1, openProxyLeases())
+
+	// Unexporting withdraws authority: the proxy lease closes.
+	rec = fedGrantCaps(t, f, http.MethodDelete, "/v1/federation/grants", map[string]any{"group": "svc", "peer": "bob"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	// Run the watcher now rather than spending this wait on its five-second
+	// poll. The bounded wait below still observes production teardown in SQLite.
+	agentd.RecheckFederationRouteAuthorityForTest()
+	fedEventually(t, "proxy lease closed", func() bool { return openProxyLeases() == 0 })
 }
 
 // TestFederation_RoutesOpenRemoteRoute: a local agent opens a route a peer
