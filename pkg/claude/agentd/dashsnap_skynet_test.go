@@ -23,6 +23,13 @@ const skynetFederationStubJS = `(function(){
     var path = new URL(url, location.href).pathname;
     if (path === '/api/federation/status') return json(status);
     if (path === '/api/federation/nodes/groups') return json({ groups: [{ id: 'pool_1', name: 'rigs', members: [{ instance_id: 'inst_2p6ym4ke', label: 'lab' }] }] });
+    if (path === '/api/federation/grants') return json({ grants: [
+      { peer: 'inst_hn3cxq7a', slug: 'message.direct', scope: '' },
+      { peer: 'inst_hn3cxq7a', slug: 'groups.roster.read', scope: 'group=ops' },
+      { peer: 'inst_hn3cxq7a', slug: 'sessions.watch', scope: 'group=ops' },
+      { peer: 'inst_hn3cxq7a', slug: 'groups.members.spawn', scope: 'group=ops', spawn_policy: { max_live: 2 } },
+      { peer: 'inst_hn3cxq7a', slug: 'routes.consume', scope: '', pool_id: 'pool_1', pool_name: 'rigs' }
+    ] });
     if (path === '/api/federation/peers/trust') return json({ instance_id: 'inst_w5zea3nq', fingerprint: 'w5ze-a3nq-7m1p-kd42-xr8c-0fv6', level: 'restricted', profile: null, plan: null, applied: false });
     if (path === '/api/node-summary') return json({ presence: 'online', shared_groups: 2, shared_agents: 10, online_agents: 8, waiting_for_input: 1, resources: res, health: 'current' }, 200, { ETag: '"local"' });
     if (path === '/api/peer/inst_hn3cxq7a/node-summary') return json({ presence: 'online', shared_groups: 2, shared_agents: 9, online_agents: 7, waiting_for_input: 1, peer_view: { peer: 'desk', included: [], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'terminals', requires: 'sessions.watch' }] } }, 200, { ETag: '"forge"' });
@@ -153,6 +160,22 @@ func skynetStates() []dashsnap.State {
   if (!document.querySelector('#fleet-waiting [data-fa="trust"]')) throw new Error('skynet: no Trust action for the waiting instance');
   if (document.querySelector('nav [data-tab="groups"]').offsetParent !== null) throw new Error('skynet: per-node tabs still visible in fleet admin');
   if (location.pathname !== '/fleet-admin') throw new Error('skynet: fleet admin not routed to /fleet-admin: ' + location.pathname);
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-grants",
+			Title:   "Peer grants",
+			Caption: "Fleet → Peer grants for forge: each permission with where it applies (a group, or all groups including future ones, flagged), what it allows, and Revoke; a pool-inherited grant is revoked on its pool. The add row picks a permission, a group scope and, for spawning, the live cap; Grant… confirms with the consequence spelled out.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('#fleet-trusted [data-fa="grants"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-trusted [data-fa="grants"]').click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-grants'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (document.querySelectorAll('#fleet-grants tbody tr').length !== 5) throw new Error('skynet: grants missing');
+  if (document.querySelectorAll('#fleet-grants [data-fa="revoke"]').length !== 4) throw new Error('skynet: pool grant should not be revocable here');
 })();`,
 			SettleMS: 400,
 		},

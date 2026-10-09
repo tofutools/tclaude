@@ -2405,8 +2405,13 @@ grants and pools, and the hub-visible instances waiting to be trusted. Trust
 previews first and shows the fingerprint the daemon will pin in full; the
 operator confirms the out-of-band comparison before it applies. Granting
 unrestricted trust repeats what it implies and sends the fingerprint as the
-daemon's confirmation. Enrollment tokens, peer grants, profiles and the audit
-log are managed with their `tclaude federation` commands.
+daemon's confirmation. Its Peer grants page covers `federation grants`,
+`grant` and `revoke` for a trusted peer or a node pool: each grant shows where
+it applies (an unscoped group grant is flagged as covering future groups too),
+and granting confirms with that consequence spelled out. Receiver launch
+settings beyond the live cap, model gateway scopes, enrollment tokens,
+profiles and the audit log are managed with their `tclaude federation`
+commands.
 
 `federation view` returns the full JSON response, including `peer_view`, and
 preserves structured failure JSON on stderr. The `agent ls --node` and
