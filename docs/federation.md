@@ -2077,11 +2077,28 @@ names and `omitted` entries (`feature`, `requires`). These describe capabilities
 never hidden object names or counts. A restricted `/api/snapshot` contains only
 visible groups and agents, using roster, presence and status grants to select
 fields. Status comes from the same shared cached gather as the local dashboard.
-The peer projection has `groups` with `name`, `descr`, `members`, and `agents`
-with `agent_id`, `title`, visible `groups`, optional `role`, `online` and `state`
-(the sanitized federation status summary). Single-group and single-agent reads
-use `/api/groups/{name}` and `/api/agents/{id}`; invisible objects return 404.
-Unrestricted peers get the complete dashboard snapshot plus metadata.
+The peer projection uses the normal dashboard snapshot and row types, including
+`conv_id`, `state.status`, `state.model`, `state.effort_level`, numeric context
+fields and `task_ref_url` / `task_ref_label`. Lists and maps for withheld
+concepts are empty, unsupported scalars are blank/zero, and optional private
+fields are omitted. Paths, worktrees, permissions, spawn configuration,
+account usage and local notification/approval content are not shared through
+roster/presence/status grants. The harness spawn catalog is empty for restricted
+peers: local provider model suggestions and readiness diagnostics are private
+configuration. Group roles require roster access; online fields
+require presence or status access. Status granted on one visible group does
+not populate an agent's row in another group without that grant. The deduped
+`agents` list combines only authorized data and lists only visible groups.
+Task URLs have query strings and fragments stripped. A field classification
+guard and final deny filter cover snapshot, group, member, agent, task and
+state fields; newly added fields default to withheld until classified.
+
+Single-group and single-agent reads use `/api/groups/{name}` and
+`/api/agents/{id}` in the same row schema; invisible objects return 404.
+Restricted snapshots always send their small registry fields, with
+`static_unchanged` false, regardless of a supplied `static_version`. A client
+must not reuse registry blobs from a local, different-peer or older-authority
+snapshot. Unrestricted peers get the complete dashboard snapshot plus metadata.
 
 `GET /api/instance` exposes node metadata under `node.read`. Costs and audit
 collections require their own instance grants above. Those grants default off,
@@ -2104,3 +2121,57 @@ unrestricted peers. Local-only features cannot be enabled by a grant through
 this handler; their `omitted.requires` identifies the related federation grant
 where one exists, or `local_only`. A route guard test requires an explicit
 classification when a dashboard route is added.
+
+### Node summaries and polling
+
+`GET /api/node-summary` is the lightweight map-card endpoint on both the local
+dashboard and the authenticated peer dispatcher. It returns:
+
+```json
+{
+  "presence": "online",
+  "shared_groups": 2,
+  "shared_agents": 4,
+  "online_agents": 3,
+  "waiting_for_input": 1,
+  "peer_view": {"peer": "laptop", "included": [], "omitted": []}
+}
+```
+
+Counts describe only identifiable shared agents, deduplicated across visible
+groups. Online counts need presence or status permission; attention counts
+need status permission and count online `awaiting_input` and
+`awaiting_permission` agents (idle agents are not attention). An unrestricted
+peer, or the local operator, also counts loose active agents. `resources` and
+`health` are optional and require `node.read` for peers. Health is the cached
+resource observation status (`current`, `stale`, or `warming`), not an inferred
+all-clear for all agents. Host-wide agent totals are removed from resources;
+the card uses the authorized shared counts. A successful response means the
+receiving daemon is online; transport failure/offline/staleness is marked by
+the frontend using its own receive time. Local responses have no `peer_view`.
+
+Summaries reuse the shared status gather and cached host readings; they do not
+build full dashboard snapshots or launch resource probes. They return a strong
+`ETag` over the filtered response plus `Cache-Control: private, no-cache`.
+Clients can send `If-None-Match` to get a bodyless 304 for an unchanged summary.
+Trust and grants are reevaluated before the validator, so a scope/permission
+change changes the authorized response/ETag rather than retaining old data.
+A 304 keeps the previously received body and its metadata. Transport caches
+must key representations by receiving node and authenticated calling peer,
+never share them across callers, and forward validators through to agentd.
+Full snapshots continue to return `Cache-Control: no-store`.
+
+Polling contract for the node-switching, map and merged-view frontends:
+
+- A per-node view polls full `/api/snapshot` data only for the displayed node,
+  using the existing dashboard cadence. Stop/abort its poll when switching
+  away, and discard snapshots from an earlier selected-node generation.
+- The map polls `/api/node-summary` only. Start with a relaxed 10-second
+  interval per node, stagger initial offsets across nodes and add jitter;
+  never trigger a synchronized fleet-wide full snapshot poll.
+- The merged regular view polls full snapshots only for nodes whose groups
+  are on screen. Suspend full polls for hidden/collapsed-out nodes and use
+  summary data when only a map card is being shown.
+- Avoid overlapping polls to a node. Back off on failures, stop polling when
+  the view is hidden, and distinguish cached/stale data from an offline node.
+  Recheck omitted features after every new authorized response.

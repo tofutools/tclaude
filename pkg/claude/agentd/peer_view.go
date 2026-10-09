@@ -11,9 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 // PeerViewHandler is the receiving-node UI boundary. Its caller must authenticate
@@ -50,7 +48,12 @@ func PeerViewHandler(instanceID string) http.Handler {
 			if out.statusCode() >= 200 && out.statusCode() < 300 && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 				out.addMetadata(view.metadata())
 			}
-			out.Header().Set("Cache-Control", "no-store")
+			if rule.summary && out.statusCode() == 200 {
+				peerSummaryETag(out, r)
+			}
+			if out.Header().Get("Cache-Control") == "" {
+				out.Header().Set("Cache-Control", "no-store")
+			}
 			for k, vals := range out.Header() {
 				w.Header()[k] = vals
 			}
@@ -64,12 +67,14 @@ func PeerViewHandler(instanceID string) http.Handler {
 }
 
 type peerViewRule struct {
-	feature  string
-	requires string
-	group    bool
-	visible  bool
-	serve    func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
-	write    func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
+	feature    string
+	requires   string
+	group      bool
+	visible    bool
+	summary    bool
+	publicRead bool
+	serve      func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
+	write      func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
 }
 
 // This single mapping drives endpoint dispatch, refusals and omitted features.
@@ -86,6 +91,7 @@ func peerViewRules() map[string]peerViewRule {
 	rules["GET /api/groups"] = peerViewRule{feature: "groups", requires: PermGroupsRosterRead, group: true, visible: true, serve: servePeerGroups}
 	rules["GET /api/groups/{name}"] = peerViewRule{feature: "groups", requires: PermGroupsRosterRead, group: true, visible: true, serve: servePeerGroup}
 	rules["GET /api/agents/{id}"] = peerViewRule{feature: "agents.status", requires: PermAgentsStatusRead, group: true, serve: servePeerAgent}
+	rules["GET /api/node-summary"] = peerViewRule{feature: "node.summary", publicRead: true, summary: true, serve: servePeerSummary}
 	rules["GET /api/instance"] = peerViewRule{feature: "health", requires: PermNodeRead, serve: servePeerNode}
 	rules["GET /api/costs"] = peerViewRule{feature: "costs", requires: PermCostsRead, serve: servePeerGlobalRead(handleDashboardCosts)}
 	rules["GET /api/audit"] = peerViewRule{feature: "audit", requires: PermFederationAuditRead, serve: servePeerGlobalRead(handleDashboardAudit)}
@@ -114,6 +120,9 @@ type peerViewMetadata struct {
 }
 
 func (v *peerView) allows(rule peerViewRule, groupID int64) bool {
+	if v == nil || rule.publicRead {
+		return true
+	}
 	if rule.requires == "local_only" {
 		return false
 	}
@@ -226,96 +235,6 @@ func servePeerNode(w http.ResponseWriter, _ *http.Request, v *peerView, rule pee
 	writeJSON(w, 200, out)
 }
 
-type peerViewAgent struct {
-	AgentID string             `json:"agent_id"`
-	Title   string             `json:"title"`
-	Role    string             `json:"role,omitempty"`
-	Groups  []string           `json:"groups,omitempty"`
-	Online  *bool              `json:"online,omitempty"`
-	State   *proto.AgentStatus `json:"state,omitempty"`
-}
-type peerViewGroup struct {
-	Name    string          `json:"name"`
-	Descr   string          `json:"descr"`
-	Members []peerViewAgent `json:"members"`
-}
-
-func (v *peerView) groups() ([]peerViewGroup, []peerViewAgent) {
-	groups, _ := db.ListAgentGroups()
-	out := []peerViewGroup{}
-	agents := map[string]peerViewAgent{}
-	var shared *statusSnapshot
-	for _, g := range groups {
-		if g.IsArchived() || !fedPeerGroupVisible(v.peer.InstanceID, g.ID) {
-			continue
-		}
-		row := peerViewGroup{Name: g.Name, Descr: g.Descr, Members: []peerViewAgent{}}
-		status := fedPeerAllows(v.peer.InstanceID, g.ID, PermAgentsStatusRead)
-		roster := fedPeerAllows(v.peer.InstanceID, g.ID, PermGroupsRosterRead)
-		presence := fedPeerAllows(v.peer.InstanceID, g.ID, PermGroupsPresenceRead)
-		mail := fedPeerAllows(v.peer.InstanceID, g.ID, PermMessageDirect)
-		states := map[string]proto.AgentStatus{}
-		if status || presence {
-			if shared == nil {
-				shared = gatheredStatusSnapshot()
-			}
-			for _, s := range fedGroupAgentStatuses(g.ID, shared) {
-				states[s.Agent] = s
-			}
-		}
-		if status || roster || presence || mail {
-			members, _ := db.ListAgentGroupMembers(g.ID)
-			for _, m := range members {
-				aid, _ := db.AgentIDForConv(m.ConvID)
-				a, _ := db.GetAgent(aid)
-				if a == nil || !a.Active() || a.CurrentConvID != m.ConvID {
-					continue
-				}
-				ar := peerViewAgent{AgentID: aid, Title: agent.TitleFor(m.ConvID)}
-				if roster {
-					ar.Role = m.Role
-				}
-				if s, ok := states[aid]; ok {
-					if status {
-						if !roster {
-							s.Role = ""
-						}
-						ar.State = &s
-					}
-					if status || presence {
-						online := s.Online
-						ar.Online = &online
-					}
-				}
-				row.Members = append(row.Members, ar)
-				prior := agents[aid]
-				// Merge only fields authorized through a visible group. Never serialize
-				// an agent's complete local group membership or its local permission set.
-				if prior.AgentID == "" {
-					prior = ar
-				} else {
-					if ar.State != nil {
-						prior.State = ar.State
-					}
-					if ar.Online != nil {
-						prior.Online = ar.Online
-					}
-				}
-				prior.Groups = append(prior.Groups, g.Name)
-				agents[aid] = prior
-			}
-		}
-		out = append(out, row)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	rows := []peerViewAgent{}
-	for _, a := range agents {
-		sort.Strings(a.Groups)
-		rows = append(rows, a)
-	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].AgentID < rows[j].AgentID })
-	return out, rows
-}
 func servePeerSnapshot(w http.ResponseWriter, r *http.Request, v *peerView, _ peerViewRule) {
 	if db.FederationPeerUnrestricted(v.peer.InstanceID) {
 		// Unrestricted trust grants complete collection visibility, while route
@@ -323,15 +242,27 @@ func servePeerSnapshot(w http.ResponseWriter, r *http.Request, v *peerView, _ pe
 		handleDashboardSnapshot(w, r.Clone(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true)))
 		return
 	}
-	groups, agents := v.groups()
-	writeJSON(w, 200, map[string]any{"groups": groups, "agents": agents, "ungrouped": []any{}, "pending": []any{}, "agent_roster_authoritative": true})
+	out, err := v.snapshot()
+	if err != nil {
+		writeError(w, 503, "snapshot_unavailable", "shared status unavailable")
+		return
+	}
+	writeJSON(w, 200, out)
 }
 func servePeerGroups(w http.ResponseWriter, _ *http.Request, v *peerView, _ peerViewRule) {
-	groups, _ := v.groups()
+	groups, _, err := v.groups()
+	if err != nil {
+		writeError(w, 503, "snapshot_unavailable", "shared status unavailable")
+		return
+	}
 	writeJSON(w, 200, map[string]any{"groups": groups})
 }
 func servePeerGroup(w http.ResponseWriter, r *http.Request, v *peerView, _ peerViewRule) {
-	groups, _ := v.groups()
+	groups, _, err := v.groups()
+	if err != nil {
+		writeError(w, 503, "snapshot_unavailable", "shared status unavailable")
+		return
+	}
 	for _, g := range groups {
 		if g.Name == r.PathValue("name") {
 			writeJSON(w, 200, map[string]any{"group": g})
@@ -341,7 +272,11 @@ func servePeerGroup(w http.ResponseWriter, r *http.Request, v *peerView, _ peerV
 	writeError(w, 404, "not_found", "object not found")
 }
 func servePeerAgent(w http.ResponseWriter, r *http.Request, v *peerView, _ peerViewRule) {
-	_, agents := v.groups()
+	_, agents, err := v.groups()
+	if err != nil {
+		writeError(w, 503, "snapshot_unavailable", "shared status unavailable")
+		return
+	}
 	for _, a := range agents {
 		if a.AgentID == r.PathValue("id") {
 			writeJSON(w, 200, map[string]any{"agent": a})
@@ -365,7 +300,11 @@ func servePeerMessage(w http.ResponseWriter, r *http.Request, v *peerView, rule 
 	}
 	// Resolve only the filtered roster: an invisible target yields no candidates
 	// and no names, regardless of aliases or ambiguous local selectors.
-	_, agents := v.groups()
+	_, agents, err := v.groups()
+	if err != nil {
+		writeError(w, 503, "snapshot_unavailable", "shared status unavailable")
+		return
+	}
 	var target *db.Agent
 	for _, a := range agents {
 		if a.AgentID == in.To {
