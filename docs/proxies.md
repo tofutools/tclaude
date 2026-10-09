@@ -10,11 +10,12 @@ Semantic proxies have no passthrough flag or raw-query escape hatch. A named
 HTTP proxy additionally supports arbitrary requests within an operator-pinned
 base URL. Every gate is enforced daemon-side.
 
-Five proxy families exist, as subcommands of a top-level command:
+Six proxy families exist, as subcommands of a top-level command:
 
 ```bash
 tclaude proxy git     # fetch, pull, push through the daemon
 tclaude proxy github  # PRs, issues, and Actions runs (alias: gh)
+tclaude proxy gitlab  # merge requests, issues, pipelines and jobs (alias: gl)
 tclaude proxy linear  # Linear issues, bounded by a team allow-list
 tclaude proxy awb     # AWB issues, bounded by a workspace allow-list
 tclaude proxy http    # HTTP(S) requests through a named service instance
@@ -32,7 +33,7 @@ configured, it is an unknown command and does not appear in `tclaude --help` —
 by design, so unconfigured operators do not advertise a capability their
 agents cannot use. The command registers when any proxy family is configured:
 
-- `agent.git_proxy.allowed_remotes` is non-empty (Git and GitHub), or
+- `agent.git_proxy.allowed_remotes` is non-empty (Git, GitHub and GitLab), or
 - `agent.linear_proxy` names an allow-list, a key file or a workspace route, or
 - `agent.awb_proxy.url` is set, or
 - `agent.http_proxies` has at least one named instance, or
@@ -41,7 +42,7 @@ agents cannot use. The command registers when any proxy family is configured:
   the command visible).
 
 The **permission catalog** follows the same per-family answer: a host
-advertises `proxy.git.*` / `proxy.github.*`, `proxy.linear.*` and `proxy.awb.*`
+advertises `proxy.git.*` / `proxy.github.*` / `proxy.gitlab.*`, `proxy.linear.*` and `proxy.awb.*`
 only where that family could work, plus any family the calling agent holds a
 scoped grant for. The two must agree — advertising a slug whose command is not
 registered would let an operator grant a capability nothing can exercise.
@@ -110,6 +111,16 @@ daemon state; migrated automatically from the legacy `~/.tclaude/config.json`):
 - `ssh_key` — pin one key; empty uses the daemon's ambient ssh-agent.
 - `github_token_file` — the GitHub token source (GitHub proxy only); empty
   falls back to `gh auth token`, and that is the entire token chain.
+- `gitlab_hosts` — a map from a remote host to the base URL of the GitLab
+  instance that serves it, `{"gitlab.example.com": "https://gitlab.example.com:6080"}`.
+  It does two jobs: it is how the daemon *recognises* a remote as a GitLab
+  project at all (a self-hosted instance cannot be told apart from any other
+  git server by its name), and it is where the web/API root lives, which may
+  differ from the SSH host in scheme and port. `gitlab.com` needs no entry.
+  The base must be `https`; the GitLab token is only ever sent to it.
+- `gitlab_token_file` — the GitLab token source (GitLab proxy only): a
+  personal or project access token with the `api` scope. There is no CLI
+  fallback; with no file configured every GitLab verb refuses and says so.
 
 `~/` expands in these values; shell variables do not.
 
@@ -141,6 +152,80 @@ Permissions:
   operator can let agents open and discuss PRs while keeping the merge button
   human. GitHub's own branch protection still applies; `protected_refs` does
   not (it bounds direct pushes only).
+
+## GitLab proxy
+
+```bash
+tclaude proxy gitlab mr create --title "Fix the flake" --body-file mr.md
+tclaude proxy gitlab mr view 157
+# other mr verbs:  ls, checks, comments, ready, comment, edit, merge
+# issue verbs:     ls, view, comment
+# pipeline verbs:  ls
+# job verbs:       log-failed <pipeline-id>, artifacts <job-id>, download <job-id>
+```
+
+The same contract as the GitHub proxy against a GitLab instance. Operations
+are restricted to the *project* that the agent's own recorded launch remote
+resolves to, and only when that remote is allowed **and** its host is a
+configured instance (`gitlab_hosts`, or `gitlab.com`). The project is the
+full namespace path, `group/subgroup/project`, exactly as the allow-list
+admitted it; a nested path is ordinary on GitLab and is never re-derived
+from its first and last segments. The token travels as a `PRIVATE-TOKEN`
+header, never through argv or a child's environment.
+
+To authorise some projects and not others, write them out:
+
+```json
+"agent": {
+  "git_proxy": {
+    "allowed_remotes": [
+      "gitlab.example.com/acme/previewplayback",
+      "gitlab.example.com/acme/previewplayback-dashboard",
+      "gitlab.example.com/acme/tools/*"
+    ],
+    "gitlab_hosts": {"gitlab.example.com": "https://gitlab.example.com:6080"},
+    "gitlab_token_file": "~/.config/tclaude/gitlab-token"
+  }
+}
+```
+
+A remote-scoped grant (`--scope remote=gitlab.example.com/acme/*`) narrows
+this further per agent, as it does for GitHub.
+
+Where the two forges differ, the GitLab verbs follow GitLab:
+
+- A merge request's number is its *iid* (`!157`), which is what every verb
+  takes and what `mr ls` reports as `number`.
+- A **draft** is a title prefix (`Draft:`), not a flag. `mr create --draft`
+  adds it and `mr ready` removes it.
+- `mr checks` reports the head pipeline and its jobs rather than a check
+  rollup; the pipeline `id` is what `job log-failed` takes, and a job `id`
+  is what `job artifacts` and `job download` take.
+- `job log-failed` prints the whole trace of each failed job, tailed, since
+  GitLab has no per-step log. Jobs allowed to fail are included and labelled.
+- `mr merge --method` offers `merge` and `squash`; a rebase is a separate
+  GitLab operation the proxy does not perform.
+- Artifacts belong to a job and land in `.tclaude-artifacts/job-<id>/`,
+  sharing the three-directory cap with GitHub's `run-<id>/`.
+
+Permissions, all scopable to a `remote` dimension:
+
+- `proxy.gitlab.read` — `mr ls/view/checks/comments`, `issue ls/view`,
+  `pipeline ls`, and the `job` verbs (`job download` writes into
+  `.tclaude-artifacts/` under the same bounds as `run download`).
+- `proxy.gitlab.write` — `mr create/edit/comment/ready`, `issue comment`.
+  Does not imply merge.
+- `proxy.gitlab.merge` — `mr merge` only. GitLab's own protected-branch rules
+  and approval requirements still apply; `protected_refs` does not.
+
+Agents' remotes should be the SSH form (`git@gitlab.example.com:acme/app.git`):
+the git proxy refuses a remote URL with an explicit port, and the instance's
+web port belongs in `gitlab_hosts` instead.
+
+A merge request opened through the proxy, or presented with
+`tclaude agent present-pr <merge-request URL>`, shows on the dashboard like a
+pull request: its state and head-pipeline jobs are read through the same
+token, under the same allow-list.
 
 ## Linear proxy
 
@@ -495,7 +580,7 @@ tclaude setup --install-proxy-skills
 ```
 
 installs the agent skill for each configured credential proxy (`proxy-git`,
-`proxy-linear`, `proxy-awb` and/or `proxy-http`) into Claude Code, shared `~/.agents/skills`, and Codex home skill
+which covers git, GitHub and GitLab, `proxy-linear`, `proxy-awb` and/or `proxy-http`) into Claude Code, shared `~/.agents/skills`, and Codex home skill
 directories. The shared directory is read by Codex, Gemini, Copilot,
 OpenCode and pi, so agents discover the semantic commands instead of fighting
 their missing credentials. "Configured" uses the host-side rules under

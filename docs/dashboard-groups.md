@@ -173,7 +173,7 @@ shows its name as text.
 | Last | The last hook event |
 | Age | How long since it started |
 | CWD | Start directory and current directory, marked `init` and `now`. Click to open a terminal there. |
-| Branch | `⎇ branch`, then [PR and CI pills](#pr-ci-and-review-pills) and any PRs presented with `tclaude agent present-pr` |
+| Branch | `⎇ branch` (a link to the forge), then [PR and CI pills](#pr-ci-and-review-pills) and any PRs presented with `tclaude agent present-pr`. GitLab merge requests get the same treatment when the project is on a configured instance. |
 | Role | `+ role` to set it; `owner` marks a group owner |
 | Task link | A link to the work item; `＋ attach` to add one (or `tclaude agent task`) |
 | Description | `+ descr / tags` to add text and tags |
@@ -261,7 +261,7 @@ Subscription quota is not on the row; see
 - **PR pill** (`#1234`): colored by open, draft, merged or closed.
 - **CI pill** (`✓ 12/14`): glyphs ✓ ✕ ◐ ·, not counting skipped checks. Hover or
   focus it for a checks panel, failures first, with live timers and a link to
-  GitHub. On merged and closed PRs it only shows when the final run failed,
+  GitHub (the pipelines tab, for a GitLab merge request). On merged and closed PRs it only shows when the final run failed,
   unless **CI on finished PRs** is on in
   [Config › Appearance](dashboard-config.md#appearance).
 - **Review pill**: a person icon on open, non-draft PRs. Green with a count is
@@ -269,7 +269,8 @@ Subscription quota is not on the row; see
   required, grey means none yet. Only human reviews count. Hover for each
   reviewer's latest review.
 
-PR and CI data comes from `git` and `gh`, cached for 90 seconds.
+PR and CI data comes from `git` and `gh`, or the GitLab API for a merge
+request, cached for 90 seconds.
 
 ### Open PRs
 

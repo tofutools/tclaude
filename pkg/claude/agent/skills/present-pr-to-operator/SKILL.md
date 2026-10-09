@@ -20,8 +20,10 @@ tclaude dashboard:
 tclaude agent present-pr https://github.com/owner/repo/pull/42 --summary "ready for review" --state open
 ```
 
-When the Git proxy is active, the URL must be a canonical
-`https://github.com/<owner>/<repo>/pull/<number>` URL. Run the command from that
+When the Git proxy is active, the URL must be canonical: a
+`https://github.com/<owner>/<repo>/pull/<number>` pull request, or a
+`https://<gitlab host>/<group>/<project>/-/merge_requests/<number>` merge
+request on an instance the operator configured. Run the command from that
 repository: the daemon verifies that its origin matches the PR, that the
 repository is inside your recorded launch directory, and that the operator
 allow-listed it in `agent.git_proxy.allowed_remotes`. When the Git proxy is not
@@ -31,8 +33,8 @@ URL without repository or allow-list checks.
 existing branch/statusline PR detection and dedupes by PR URL, so presenting a
 PR is safe even when the automatic path already found the same link.
 
-For GitHub PR URLs, the agent daemon refreshes the PR state on the dashboard's
-normal polling cadence. Merged or closed PRs remain visible briefly, then are
+For GitHub pull requests and GitLab merge requests, the agent daemon refreshes
+the state (and the CI pill) on the dashboard's normal polling cadence. Merged or closed PRs remain visible briefly, then are
 omitted automatically.
 
 When the PR no longer needs operator attention:

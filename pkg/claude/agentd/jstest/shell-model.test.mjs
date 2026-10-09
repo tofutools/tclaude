@@ -108,14 +108,14 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   assert.equal(authoredOpenPRsView({ authored_open_prs: prs }).hasDrafts, true);
   assert.equal(authoredOpenPRsView({ authored_open_prs: { ...prs, search_url: 'javascript:alert(1)' } }).searchURL, '');
   const localPR = {
-    number: 6, url: 'https://github.com/acme/app/pull/6', local: true, agent_id: 'agt_2',
+    number: 8, url: 'https://github.com/acme/app/pull/8', local: true, agent_id: 'agt_2',
   };
-  const withLocal = { ...prs, total: 6, items: [...prs.items, localPR] };
+  const withLocal = { ...prs, total: 8, items: [...prs.items, localPR] };
   assert.equal(authoredOpenPRsView({ authored_open_prs: withLocal }).items.at(-1), localPR,
     'a locally unioned row passes the normal open-PR URL filter');
   assert.deepEqual(
     authoredOpenPRsView({ authored_open_prs: withLocal }, 'unattached').items.map((pr) => pr.number),
-    [2, 3, 4, 5],
+    [2, 3, 4, 5, 6],
     'an associated local row does not inflate the unattached count',
   );
   // The fused Groups view's peers: their agents' PRs count as attached.

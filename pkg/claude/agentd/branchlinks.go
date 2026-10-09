@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"net/url"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -551,10 +552,23 @@ func branchWebURL(repoURL, defaultBranch, branch string) string {
 	if repoURL == "" || branch == "" {
 		return ""
 	}
-	if defaultBranch == "" || branch == defaultBranch {
-		return repoURL + "/tree/" + branch
+	// GitLab keeps its UI routes under `/-/`; everything that is not github.com
+	// here came through a configured GitLab instance (resolveBranchLinkRepo),
+	// so the host decides the grammar.
+	sep := "/"
+	if !isGitHubRepoURL(repoURL) {
+		sep = "/-/"
 	}
-	return repoURL + "/compare/" + defaultBranch + "..." + branch
+	if defaultBranch == "" || branch == defaultBranch {
+		return repoURL + sep + "tree/" + branch
+	}
+	return repoURL + sep + "compare/" + defaultBranch + "..." + branch
+}
+
+// isGitHubRepoURL reports whether a repository web URL is on github.com.
+func isGitHubRepoURL(repoURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(repoURL))
+	return err == nil && strings.EqualFold(u.Host, "github.com")
 }
 
 // liveGitInfoResolver is the production gitInfoResolver: it shells out
@@ -618,6 +632,13 @@ func hardenedGitInfo(policy config.GitProxyConfig, repoDir, branch string) (repo
 		DefaultBranch: repo.DefaultBranch,
 	}
 	if info.DefaultBranch == "" || branch != info.DefaultBranch {
+		if repo.Forge == "gitlab" {
+			// The merge request is read through the GitLab API with the proxy's
+			// token; the project is the one the gate resolved, never the
+			// directory's. See prs_gitlab.go.
+			info.PRNumber, info.PRURL, info.PRState, info.Checks = gitlabMRForBranch(policy, repo, branch)
+			return info, true
+		}
 		// An explicit --repo, and a working directory that is not the agent's.
 		// The guarantee is the flag: it names the repository outright, so gh
 		// never runs its base-repo resolution and a repo-local

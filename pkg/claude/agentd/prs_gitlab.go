@@ -318,3 +318,70 @@ func prStateFromGitLab(state string, draft bool) string {
 	}
 	return ""
 }
+
+// ---------------------------------------------------------------------------
+// A branch's merge request, for the dashboard's Branch column
+// ---------------------------------------------------------------------------
+
+// gitlabMRForBranch is ghPRForBranch for a GitLab project: the merge request
+// opened FROM branch, preferring an open one, with its head pipeline's jobs
+// as the checks. The branch has passed validateBranchName on its way here and
+// travels as a query value, never in a path.
+func gitlabMRForBranch(policy config.GitProxyConfig, repo branchLinkRepo, branch string) (int, string, string, *prChecksInfo) {
+	if !safeBranchForGH("", branch) || repo.Base == "" || repo.OwnerRepo == "" {
+		return 0, "", "", nil
+	}
+	token, fault := gitlabToken(policy)
+	if fault != nil {
+		return 0, "", "", nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), gitlabPresentedPRTimeout)
+	defer cancel()
+
+	projectID := url.PathEscape(repo.OwnerRepo)
+	res, err := glDo(ctx, repo.Base, token, glAPIRequest{
+		Path: "projects/" + projectID + "/merge_requests",
+		Query: url.Values{
+			"source_branch": []string{branch},
+			"state":         []string{"all"},
+			"per_page":      []string{"10"},
+			"order_by":      []string{"created_at"},
+			"sort":          []string{"desc"},
+		},
+	})
+	if err != nil || res.Status < 200 || res.Status > 299 {
+		return 0, "", "", nil
+	}
+	var mrs []glMR
+	if json.Unmarshal(res.Body, &mrs) != nil || len(mrs) == 0 {
+		return 0, "", "", nil
+	}
+	pick := 0
+	for i := range mrs {
+		if mrs[i].State == "opened" {
+			pick = i
+			break
+		}
+	}
+	mr := mrs[pick]
+	// The listing carries no head pipeline; one more read fetches it, and the
+	// jobs follow. A merge request with no pipeline parses to zero checks.
+	ref := gitlabMRRef{base: repo.Base, host: strings.ToLower(strings.TrimSpace(hostOf(repo.Base))), project: repo.OwnerRepo, number: mr.IID}
+	var checks prChecksInfo
+	if full, ok := gitlabReadMR(ctx, repo.Base, token, ref); ok {
+		checks = gitlabPipelineChecks(ctx, repo.Base, token, ref, full.HeadPipeline, time.Now())
+	} else {
+		checks = gitlabPipelineChecks(ctx, repo.Base, token, ref, nil, time.Now())
+	}
+	return mr.IID, mr.WebURL, prStateFromGitLab(mr.State, mr.Draft), &checks
+}
+
+// hostOf returns the host (without port) of a base URL, or "" when it does
+// not parse.
+func hostOf(base string) string {
+	u, err := url.Parse(base)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
+}
