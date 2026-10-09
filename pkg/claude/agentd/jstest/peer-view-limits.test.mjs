@@ -80,3 +80,21 @@ test('palette commands and tab routing respect what the peer offers', async (t) 
   assert.equal(mod.peerViewTabUsable('costs', { remote, peerView: null }), true, 'a deep link waits for the peer to answer');
   assert.equal(mod.peerViewTabUsable('config', { remote: undefined }), true);
 });
+
+test('a peer agent\'s terminal action copies the CLI attach command instead', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/peer-view-limits.js');
+  const doc = harness.document;
+  doc.body.innerHTML = '<button id="win" data-act="web-open-window" data-agent="agt_abc123">web window</button><button id="gt" data-act="group-web-term">group term</button>';
+  doc.documentElement.dataset.remoteNodeName = 'forge';
+  const copied = []; const toasts = [];
+  const dispose = mod.installPeerViewLimits({ doc, snapshot: harness.signals.signal({ peer_view: pv }), toast: (m, err) => toasts.push([m, err]), remote: { id: 'inst_forge7' }, copy: async (text) => { copied.push(text); } });
+  assert.equal(harness.fireEvent(doc.getElementById('win'), 'click').defaultPrevented, true);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(copied, ['tclaude federation attach agt_abc123@inst_forge7']);
+  assert.match(toasts.at(-1)[0], /^Copied: tclaude federation attach agt_abc123@inst_forge7/);
+  assert.equal(toasts.at(-1)[1], false);
+  harness.fireEvent(doc.getElementById('gt'), 'click');
+  assert.equal(toasts.at(-1)[0], 'This action is not available in a peer view', 'a group directory terminal has nothing to attach to');
+  dispose();
+});
