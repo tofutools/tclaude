@@ -23,6 +23,7 @@ var peerViewLocalRoutes = []string{
 	"/api/dashboard/prefs",
 	"/api/delete-directory",
 	"/api/export-jobs/",
+	"GET /api/federation/status",
 	"/api/git-repositories",
 	"/api/git-repositories/batch",
 	"/api/group-term-ws/",
