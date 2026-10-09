@@ -2082,3 +2082,25 @@ func SeedAuthoredOpenPRsForTest(login, repoURL string, prs []AuthoredOpenPRForTe
 	defer func() { authoredOpenPRResolver = prev }()
 	return func() { setAuthoredOpenPRActiveLogin("") }, pollAuthoredOpenPRs()
 }
+
+// RecheckFederationRouteAuthorityForTest runs the periodic watcher's authority
+// check immediately, so revocation flows need not race its five-second ticker.
+// Teardown still runs asynchronously through the production broker read loop.
+func RecheckFederationRouteAuthorityForTest() {
+	rt := currentFederation()
+	if rt == nil {
+		return
+	}
+	rt.mu.Lock()
+	var ends []*fedRouteEnd
+	for _, e := range rt.routesLocked().proxies {
+		ends = append(ends, e)
+	}
+	for _, e := range rt.routesLocked().mirrors {
+		ends = append(ends, e)
+	}
+	rt.mu.Unlock()
+	for _, e := range ends {
+		e.recheckAuthority()
+	}
+}
