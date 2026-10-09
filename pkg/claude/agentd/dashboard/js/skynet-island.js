@@ -2,6 +2,7 @@ import { Fragment, h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { STATUS_POLL_MS, cardView, fmtAge, pollDelay, staggerOffset, visibleChips } from './skynet-model.js';
+import { skynetState } from './skynet-state.js';
 
 const html = htm.bind(h);
 
@@ -13,6 +14,13 @@ function defaultNavigate(tab) {
   // pane, Debug switched off); Groups is always there.
   if (tab !== 'map' && (!anchor || anchor.offsetParent === null)) anchor = document.querySelector('nav [data-tab="groups"]');
   anchor?.click();
+}
+
+// openNodeOnMap focuses a node's card on the map, e.g. from a linked group's
+// federation marker.
+export function openNodeOnMap(id, { state = skynetState, navigate = defaultNavigate } = {}) {
+  state.setFocused(id);
+  navigate('map');
 }
 
 const MapGlyph = () => html`<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="3" cy="3.5" r="2"/><circle cx="11" cy="3" r="2"/><circle cx="7" cy="11" r="2"/><path d="M4.8 4.3 5.9 9.3M9.4 4.3 7.9 9.3M5 3.4 9 3.1"/></svg>`;
