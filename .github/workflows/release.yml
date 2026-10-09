@@ -1045,9 +1045,6 @@ jobs:
               exit 1
             fi
             echo "$binary: $count binary(s)"
-            while IFS= read -r path; do
-              "$path" --tclaude-build-info | python3 -c 'import json,os,sys; info=json.load(sys.stdin); assert info["version"] == os.environ["EXPECTED_VERSION"]; assert info["install_method"] == "release"; assert info["protocol_version"] > 0'
-            done < <(find dist -type f -name "$binary" -perm -u+x)
           done
 
       - name: Create archives

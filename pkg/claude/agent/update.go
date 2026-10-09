@@ -145,6 +145,13 @@ func printUpdateResult(p *updateParams, raw json.RawMessage, stdout, stderr io.W
 		}
 	} else {
 		fmt.Fprintf(stdout, "%s %s: %s (%s)\n", updateCell(job.Action), updateCell(job.Version), updateCell(job.State), updateCell(job.ID))
+		if job.Action == "check" && job.State == "succeeded" {
+			available := "unknown"
+			if job.UpdateAvailable != nil {
+				available = fmt.Sprint(*job.UpdateAvailable)
+			}
+			fmt.Fprintf(stdout, "Current: %s; selected: %s; update available: %s\n", updateCell(job.CurrentVersion), updateCell(job.Version), available)
+		}
 		if job.Error != "" {
 			fmt.Fprintln(stderr, updateCell(job.Error))
 		}

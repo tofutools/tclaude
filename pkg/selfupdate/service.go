@@ -122,7 +122,7 @@ func (s *Service) Start(req Request, actor string, authorize func() bool) (Job, 
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return Job{}, err
 	}
-	job := Job{ID: hex.EncodeToString(nonce[:]), Action: req.Action, Version: req.Version, Actor: actor, State: "running", Phase: "queued", StartedAt: time.Now().UTC(), Warnings: append([]string{}, s.status.Warnings...)}
+	job := Job{CurrentVersion: s.status.CurrentVersion, ID: hex.EncodeToString(nonce[:]), Action: req.Action, Version: req.Version, Actor: actor, State: "running", Phase: "queued", StartedAt: time.Now().UTC(), Warnings: append([]string{}, s.status.Warnings...)}
 	if err := s.saveJob(job); err != nil {
 		return Job{}, err
 	}
@@ -157,6 +157,10 @@ func (s *Service) run(req Request, job Job, authorize func() bool) {
 		}
 		if err == nil {
 			job.Version = release.Tag
+			if semver.IsValid(job.CurrentVersion) {
+				available := semver.Compare(release.Tag, job.CurrentVersion) > 0
+				job.UpdateAvailable = &available
+			}
 			s.mu.Lock()
 			now := time.Now().UTC()
 			if req.Version == "" {
@@ -185,6 +189,11 @@ func (s *Service) run(req Request, job Job, authorize func() bool) {
 		job.Phase = "complete"
 	}
 	saveErr := s.saveJob(job)
+	if saveErr != nil {
+		job.State = "failed"
+		job.Error = "could not persist update result: " + saveErr.Error()
+		_ = s.saveJob(job)
+	}
 	s.active = job.State == "restarting" && saveErr == nil && s.hooks.Restart != nil
 	s.mu.Unlock()
 	if s.hooks.Finished != nil {
@@ -346,6 +355,9 @@ func (s *Service) apply(ctx context.Context, release Release, job *Job, authoriz
 			return fmt.Errorf("update target changed during backup")
 		}
 		manifest.Entries = append(manifest.Entries, backupEntry{Binary: b, Backup: backup, BeforeHash: hash, AfterHash: after, Mode: uint32(info.Mode().Perm())})
+	}
+	if err := syncDir(backupDir); err != nil {
+		return fmt.Errorf("could not persist backup directory: %w", err)
 	}
 	if err := writeJSONFile(filepath.Join(s.dir, "backup.json"), manifest); err != nil {
 		return err

@@ -48,6 +48,8 @@ func (r Request) Validate() error {
 }
 
 type Job struct {
+	CurrentVersion  string     `json:"current_version"`
+	UpdateAvailable *bool      `json:"update_available"`
 	ID              string     `json:"id"`
 	Action          string     `json:"action"`
 	Version         string     `json:"version,omitempty"`
