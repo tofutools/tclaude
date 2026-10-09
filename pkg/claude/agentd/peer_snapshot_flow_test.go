@@ -108,8 +108,9 @@ func TestPeerSnapshotDashboardSchemaAndSummary(t *testing.T) {
 	var localMap, peerMap map[string]any
 	require.NoError(t, json.Unmarshal(local.Body.Bytes(), &localMap))
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &peerMap))
-	for key := range localMap {
-		require.Contains(t, peerMap, key, "local required snapshot field missing")
+	for _, key := range agentd.RequiredDashboardSnapshotFieldsForTest() {
+		require.Contains(t, localMap, key, "local required snapshot field missing")
+		require.Contains(t, peerMap, key, "peer required snapshot field missing")
 	}
 	// A role/roster-only group cannot inherit the status granted on another group.
 	for _, g := range peerMap["groups"].([]any) {

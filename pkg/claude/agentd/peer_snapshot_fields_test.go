@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -30,4 +31,18 @@ func TestPeerSnapshotFieldClassification(t *testing.T) {
 			t.Errorf("unclassified snapshot type %s", typ.Name())
 		}
 	}
+}
+
+// RequiredDashboardSnapshotFieldsForTest lets external flow tests compare the
+// real snapshot schema without treating populated optional fields as required.
+func RequiredDashboardSnapshotFieldsForTest() []string {
+	typ := reflect.TypeFor[snapshotPayload]()
+	var keys []string
+	for i := 0; i < typ.NumField(); i++ {
+		tag := strings.Split(typ.Field(i).Tag.Get("json"), ",")
+		if len(tag) == 1 && tag[0] != "" && tag[0] != "-" {
+			keys = append(keys, tag[0])
+		}
+	}
+	return keys
 }
