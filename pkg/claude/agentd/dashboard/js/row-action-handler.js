@@ -43,6 +43,7 @@ import {
   openDeleteGroupModal,
 } from './dashboard-operations.js';
 import { lastSnapshot, webTerminalDefault } from './dashboard.js';
+import { refuseInPeerView } from './peer-view-guard.js';
 
 export async function handleRowAction(action) {
   const data = action.data;
@@ -781,6 +782,7 @@ export async function handleRowAction(action) {
         // endpoint sets Content-Disposition); the cookie rides along
         // on the same-origin GET. Return so the default toast +
         // refresh do not fire — nothing changed.
+        if (refuseInPeerView('Group export')) return;
         const a = document.createElement('a');
         a.href = `/api/groups/${encodeURIComponent(group)}/export`;
         a.download = '';

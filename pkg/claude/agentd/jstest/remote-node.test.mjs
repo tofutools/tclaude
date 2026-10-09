@@ -58,3 +58,12 @@ test('snapshot failures publish remote health for the marker', async () => {
   assert.equal(events.at(-1).detail.failure.code, 'peer_unreachable');
   assert.equal(window.__tclaudeRemoteNode.health.ok, false);
 });
+
+test('the operator\'s own surfaces stay local; Request objects are rewritten with their method and body', async () => {
+  const { window, calls } = boot('?node=inst_forge7');
+  await window.fetch('/api/dashboard/prefs');
+  await window.fetch('/api/human-messages/read', { method: 'POST' });
+  await window.fetch('/api/auth/session');
+  await window.fetch(new Request('http://127.0.0.1:7777/api/operator-message', { method: 'POST', body: '{"x":1}' }));
+  assert.deepEqual(calls.map((c) => c.url), ['/api/dashboard/prefs', '/api/human-messages/read', '/api/auth/session', 'http://127.0.0.1:7777/api/peer/inst_forge7/operator-message']);
+});

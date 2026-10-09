@@ -38,6 +38,10 @@ export function NodeChips({ state, navigate = defaultNavigate, remote = remoteNo
   const fleet = current.fleet;
   if (!fleet) return null;
   const { shown, overflow } = visibleChips(fleet.peers);
+  // A peer view of a node past the chip budget swaps it into the last slot, so
+  // the node on screen always has its chip highlighted.
+  const remotePeer = remote && !shown.some((p) => p.id === remote) ? fleet.peers.find((p) => p.id === remote) : null;
+  if (remotePeer && shown.length) shown[shown.length - 1] = remotePeer;
   // The shown node's chip is current while its per-node view is on screen.
   const isCurrent = (id) => !current.mapActive && (remote ? remote === id : id === fleet.self.id);
   const openNode = (id) => {
@@ -253,6 +257,8 @@ export function RemoteMarker({ state, remote = remoteNodeID(), snapshot = dashbo
     const win = document.defaultView || globalThis;
     const onHealth = (event) => setHealth(event.detail);
     win.addEventListener('tclaude:remote-health', onHealth);
+    // A poll that settled between the first render and this effect.
+    if (globalThis.__tclaudeRemoteNode?.health) setHealth({ ...globalThis.__tclaudeRemoteNode.health });
     return () => win.removeEventListener('tclaude:remote-health', onHealth);
   }, [remote]);
   useEffect(() => {
@@ -283,7 +289,7 @@ export function RemoteMarker({ state, remote = remoteNodeID(), snapshot = dashbo
       <div class="rnp-row">${hv.state === 'live' ? 'Live: the peer answers through this node.' : `The peer is ${hv.label}. The data on screen is what it last shared.`}</div>
       ${pv && pv.included.length > 0 && html`<div class="rnp-row"><span class="rnp-k">Shared</span> ${pv.included.join(', ')}</div>`}
       ${pv && pv.omitted.length > 0 && html`<div class="rnp-row"><span class="rnp-k">Not shared</span> ${pv.omitted.map((o, i) => html`${i ? ', ' : ''}<span title=${o.requires ? `needs ${o.requires}` : ''}>${o.feature}</span>`)}</div>`}
-      ${!pv && html`<div class="rnp-row muted">Full view: this peer trusts you without restrictions.</div>`}
+      ${!pv && html`<div class="rnp-row muted">What the peer shares shows once it answers.</div>`}
       <div class="rnp-foot"><button type="button" onClick=${() => switchNode('')}>⌂ Back to ${fleet?.self.name || 'this node'}</button></div>
     </div>`}
   </span>`;

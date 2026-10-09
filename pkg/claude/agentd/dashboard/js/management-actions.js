@@ -10,6 +10,7 @@ import {
 import { loadRoles, createRole, updateRole, deleteRole } from './roles.js';
 import { ambientLaunchDecisions } from './management-model.js';
 import { fetchUnsandboxedAutonomy } from './unsandboxed-autonomy.js';
+import { refuseInPeerView } from './peer-view-guard.js';
 import {
   loadSandboxProfiles,
   loadSandboxCommonRules,
@@ -489,6 +490,7 @@ export function createManagementActions({
     state.openDialog({ kind: 'template-duplicate', source });
   }
   function exportTemplate(name) {
+    if (refuseInPeerView('Template export')) return;
     const anchor = document.createElement('a');
     anchor.href = `/api/templates/${encodeURIComponent(name)}/export`;
     anchor.download = `${name}.task-force.json`;

@@ -8,13 +8,18 @@
 // auth-session.js), so every feature that captures globalThis.fetch is routed
 // without knowing about remote mode. Fleet-level reads (federation status,
 // node summaries, the proxy itself) stay local: the chip row and map always
-// describe this operator's fleet.
+// describe this operator's fleet. So do the operator's own surfaces — UI
+// prefs, sign-in session, human inbox, browser notifications, theme audio —
+// which belong to the person at this browser, not to the node on screen.
 (() => {
   const ID_RE = /^inst_[a-z0-9]{4,64}$/;
   const id = new URLSearchParams(window.location.search).get('node') || '';
   if (!ID_RE.test(id)) return;
 
-  const LOCAL_PREFIXES = ['/api/federation/', '/api/peer/', '/api/node-summary'];
+  const LOCAL_PREFIXES = [
+    '/api/federation/', '/api/peer/', '/api/node-summary',
+    '/api/dashboard/prefs', '/api/auth/', '/api/human-messages', '/api/browser-notifications', '/api/slop/',
+  ];
   const PROXIED_METHODS = new Set(['GET', 'HEAD', 'POST']);
   const prefix = '/api/peer/' + encodeURIComponent(id) + '/';
   const nativeFetch = window.fetch.bind(window);
@@ -53,7 +58,7 @@
       // it could be mistaken for a local change.
       return new Response(JSON.stringify({ error: 'not available in a peer view', code: 'peer_view_read_only' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
     }
-    const response = await nativeFetch(request ? new Request(target, request) : target, init);
+    const response = await nativeFetch(request ? new Request(new URL(target, url).href, request) : target, init);
     if (url.pathname === '/api/snapshot') {
       let body = null;
       if (!response.ok) { try { body = await response.clone().json(); } catch (_) { body = null; } }
