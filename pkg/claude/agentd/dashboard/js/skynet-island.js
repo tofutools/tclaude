@@ -149,8 +149,8 @@ export function SkynetMap({ state, actions, navigate = defaultNavigate, timers =
   // without linked nodes (a /map deep link on an unlinked node, or the last
   // peer untrusted while the map is open), return to the per-node tab.
   useEffect(() => {
-    if (current.mapActive && current.statusLoaded && !fleet) navigate(state.lastLocalTab());
-  }, [current.mapActive, current.statusLoaded, fleetKey]);
+    if (current.topLevel && current.statusLoaded && !fleet) navigate(state.lastLocalTab());
+  }, [current.topLevel, current.statusLoaded, fleetKey]);
 
   // [ / ] and ←/→ cycling have no per-node tab to move to while the map hides
   // them; refresh.js hands the keystroke here and the map steps back out.

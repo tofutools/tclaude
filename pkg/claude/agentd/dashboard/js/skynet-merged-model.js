@@ -28,12 +28,32 @@ export function nodeState(node, entry, now = Date.now()) {
   return { stale, ageMs, label, loaded: !!entry?.snapshot };
 }
 
+// uniqueNodeNames gives every node a distinct display name for the @node
+// suffix. A peer's name can be self-reported and so can collide with this
+// node's or another peer's; a collision gets a short instance ID appended so
+// two nodes' groups never share a name (the Groups tree keys on it). An '@'
+// in a node name is replaced, so 'ops@a' on node 'b' and 'ops' on node 'a@b'
+// cannot both become 'ops@a@b'.
+export function uniqueNodeNames(nodes) {
+  const base = (node) => String(node.name || node.id).replace(/@/g, '_');
+  const count = new Map();
+  for (const { node } of nodes) count.set(base(node), (count.get(base(node)) || 0) + 1);
+  const out = new Map();
+  for (const { node } of nodes) {
+    const dup = count.get(base(node)) > 1 && !node.local;
+    out.set(node.id, dup ? `${base(node)}~${String(node.id).replace(/^inst_/, '').slice(0, 6)}` : base(node));
+  }
+  return out;
+}
+
 // mergeSnapshots returns a snapshot-shaped object whose groups and agents come
 // from every node. Group names (and parent references) carry @node so names
 // never collide across nodes; each group also carries fleet_node for the
 // renderer's node colour and stale treatment. The local snapshot provides the
 // presentation settings (theme, attachments mode, …) since the view is local.
-export function mergeSnapshots(nodes, now = Date.now()) {
+export function mergeSnapshots(input, now = Date.now()) {
+  const names = uniqueNodeNames(input);
+  const nodes = input.map(({ node, entry }) => ({ node: { ...node, name: names.get(node.id) }, entry }));
   const local = nodes.find((n) => n.node.local)?.entry?.snapshot || {};
   const groups = [];
   const agents = [];

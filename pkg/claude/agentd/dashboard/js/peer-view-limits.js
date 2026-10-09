@@ -13,11 +13,12 @@ import { shellToast } from './shell-state.js';
 // TAB_FEATURES maps the per-node tabs to the peer-view feature that serves
 // them. Groups is the snapshot itself; the map is this operator's own fleet
 // view. A tab absent here has no peer route at all.
-const TAB_FEATURES = Object.freeze({ groups: 'agents.status', costs: 'costs', audit: 'audit', map: 'local' });
+const TAB_FEATURES = Object.freeze({ groups: 'agents.status', costs: 'costs', audit: 'audit', map: 'local', fleet: 'local' });
 
 // READ_ONLY_ACTS are data-act controls that only change this browser's view
 // or show snapshot data. The ⚙ menus open (their items are gated one by one).
-const READ_ONLY_ACTS = new Set(['dot-toggle', 'copy-generation-id', 'sandbox-details', 'group-menu', 'row-menu']);
+// (The status dot is a power control — wake / shut down — so it is not here.)
+const READ_ONLY_ACTS = new Set(['copy-generation-id', 'sandbox-details', 'group-menu', 'row-menu']);
 
 // GATED_CONTROLS are mutation controls without a data-act: group creation and
 // the management overlays, which edit the shown node's configuration.

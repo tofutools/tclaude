@@ -26,6 +26,22 @@ test('merge names groups group@node, keeps parents per node, and marks stale pee
   assert.deepEqual(m.mergeSnapshots([{ node: forge, entry: null }]).fleet_nodes[0].loaded, false);
 });
 
+test('node names that collide (self-reported or containing @) never merge two nodes\' groups', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/skynet-merged-model.js');
+  const fakeDesk = { id: 'inst_imposter9', name: 'desk', color: '#f00', local: false };
+  const ab = { id: 'inst_abnode77', name: 'a@b', color: '#0f0', local: false };
+  const merged = m.mergeSnapshots([
+    { node: { ...self, name: 'b' }, entry: { snapshot: { groups: [group('ops@a')] }, receivedAt: 0 } },
+    { node: { ...forge, name: 'desk' }, entry: { snapshot: { groups: [group('ops')] }, receivedAt: 0 } },
+    { node: fakeDesk, entry: { snapshot: { groups: [group('ops')] }, receivedAt: 0 } },
+    { node: ab, entry: { snapshot: { groups: [group('ops')] }, receivedAt: 0 } },
+  ], 0);
+  const names = merged.groups.map((g) => g.name);
+  assert.equal(new Set(names).size, names.length, `unique names: ${names.join(', ')}`);
+  assert.deepEqual(names, ['ops@a@b', 'ops@desk~forge', 'ops@desk~impost', 'ops@a_b']);
+});
+
 function fakeTimers() {
   const queue = []; let seq = 0;
   return { queue, setTimeout(fn, ms) { const id = ++seq; queue.push({ id, fn, ms }); return id; }, clearTimeout(id) { const i = queue.findIndex((q) => q.id === id); if (i >= 0) queue.splice(i, 1); } };
@@ -51,6 +67,17 @@ test('the merged view polls peers only while shown, renders group@node, and stay
   assert.match(text, /ops@desk/); assert.match(text, /build@forge/);
   const suffix = [...mounted.container.querySelectorAll('[data-fleet-open]')].find((el) => el.textContent === '@forge');
   assert.ok(suffix, 'the @node suffix is a jump to that node');
+  // Read-only: the status dot (a power control), keyboard activation and the
+  // row context menu are stopped; view-only controls pass.
+  const el = (html) => { const d = harness.document.createElement('div'); d.innerHTML = html; host.appendChild(d); return d.firstElementChild; };
+  const dot = el('<span data-act="dot-toggle" data-agent="agt_1">●</span>');
+  const chip = el('<span data-act="set-group-descr" role="button" tabindex="0">📝</span>');
+  const menu = el('<button data-act="group-menu">⚙</button>');
+  assert.equal(harness.fireEvent(dot, 'click').defaultPrevented, true, 'the dot wakes or shuts down agents: blocked');
+  assert.equal(harness.fireEvent(chip, 'keydown', { key: 'Enter' }).defaultPrevented, true);
+  assert.equal(harness.fireEvent(chip, 'contextmenu').defaultPrevented, true);
+  assert.equal(harness.fireEvent(menu, 'click').defaultPrevented, false, 'menus still open');
+  assert.ok(toasts.length >= 2);
   await harness.act(() => { activeTab.value = 'groups'; });
   assert.equal(timers.queue.length, 0, 'leaving the view cancels polling');
   await mounted.unmount(); state.dispose();

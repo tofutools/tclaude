@@ -22,7 +22,7 @@ test('on a peer view, blocked controls are greyed and clicks never reach their h
   const mod = await harness.importDashboardModule('js/peer-view-limits.js');
   const doc = harness.document;
   doc.body.innerHTML = `<nav><a data-tab="groups">Groups</a><a data-tab="costs">Costs</a><a data-tab="config">Config</a></nav>
-    <button id="retire" data-act="retire-agent">retire</button><button id="dot" data-act="dot-toggle">dot</button>
+    <button id="retire" data-act="retire-agent">retire</button><button id="dot" data-act="dot-toggle">dot</button><button id="menu" data-act="group-menu">⚙</button>
     <button id="group-create-open">+ new group</button><button id="filter">filter</button>`;
   const snapshot = harness.signals.signal({ peer_view: pv });
   const toasts = [];
@@ -34,9 +34,9 @@ test('on a peer view, blocked controls are greyed and clicks never reach their h
   assert.equal(tab('costs').getAttribute('title'), 'forge does not share costs with you');
   // linkedom does not order capture before target listeners, so assert the
   // guard's decision (the dashsnap peer-view state proves the browser order).
-  const prevented = Object.fromEntries(['retire', 'dot', 'group-create-open', 'filter'].map((id) => [id, harness.fireEvent(doc.getElementById(id), 'click').defaultPrevented]));
-  assert.deepEqual(prevented, { retire: true, dot: false, 'group-create-open': true, filter: false }, 'mutations and management controls are stopped; view-only controls work');
-  assert.equal(toasts.length, 2);
+  const prevented = Object.fromEntries(['retire', 'dot', 'menu', 'group-create-open', 'filter'].map((id) => [id, harness.fireEvent(doc.getElementById(id), 'click').defaultPrevented]));
+  assert.deepEqual(prevented, { retire: true, dot: true, menu: false, 'group-create-open': true, filter: false }, 'mutations (the power dot included) and management controls are stopped; view-only controls work');
+  assert.equal(toasts.length, 3);
   // Keyboard activation of a role=button chip never reaches its own keydown.
   const enter = harness.fireEvent(doc.getElementById('retire'), 'keydown', { key: 'Enter' });
   assert.equal(enter.defaultPrevented, true);

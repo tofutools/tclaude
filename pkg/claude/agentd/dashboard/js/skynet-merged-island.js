@@ -12,7 +12,8 @@ const html = htm.bind(h);
 
 // VIEW_ONLY_ACTS open menus or show data already on screen; everything else in
 // the merged view would act on a node and waits for that node's own view.
-const VIEW_ONLY_ACTS = new Set(['dot-toggle', 'copy-generation-id', 'sandbox-details', 'group-menu', 'row-menu']);
+// (The status dot is a power control — wake / shut down — so it is not here.)
+const VIEW_ONLY_ACTS = new Set(['copy-generation-id', 'sandbox-details', 'group-menu', 'row-menu']);
 
 // readOnlyActions stands in for the Groups actions: the merged overview never
 // changes a node, so every action resolves without doing anything.
@@ -48,22 +49,26 @@ function usePeerSnapshots({ active, peers, fetchImpl, timers, now }) {
       if (globalThis.document?.hidden) { schedule(peer, pollDelay({ base: MERGED_POLL_MS })); return; }
       inflight.add(peer.id);
       let ok = false;
+      let failures = entriesRef.current[peer.id]?.failures || 0;
       try {
         const res = await fetchImpl(`/api/peer/${encodeURIComponent(peer.id)}/snapshot`, { credentials: 'same-origin', cache: 'no-store' });
         if (res.ok) {
           const snapshot = await res.json();
           commit(peer.id, { snapshot, receivedAt: now(), failure: null, failures: 0 });
+          failures = 0;
           ok = true;
         } else {
           let body = null; try { body = await res.json(); } catch (_) { body = null; }
-          commit(peer.id, { failure: { status: res.status, code: body?.code || '' }, failures: (entriesRef.current[peer.id]?.failures || 0) + 1 });
+          failures += 1;
+          commit(peer.id, { failure: { status: res.status, code: body?.code || '' }, failures });
         }
       } catch (error) {
-        commit(peer.id, { failure: { status: 0, code: 'network' }, failures: (entriesRef.current[peer.id]?.failures || 0) + 1 });
+        failures += 1;
+        commit(peer.id, { failure: { status: 0, code: 'network' }, failures });
       } finally {
         inflight.delete(peer.id);
       }
-      if (!disposed) schedule(peer, pollDelay({ base: MERGED_POLL_MS, failures: ok ? 0 : (entriesRef.current[peer.id]?.failures || 1) }));
+      if (!disposed) schedule(peer, pollDelay({ base: MERGED_POLL_MS, failures: ok ? 0 : failures }));
     }
     peers.forEach((peer, i) => schedule(peer, staggerOffset(i, peers.length, MERGED_POLL_MS)));
     return () => { disposed = true; pending.forEach((t) => timers.clearTimeout(t)); };
@@ -108,10 +113,27 @@ export function MergedGroups({
       const where = group ? `${group.dataset.fleetNodeName}'s dashboard` : "the node's own dashboard";
       toast(`The all-nodes view is an overview — act on this from ${where} (click the @node name)`, true);
     };
+    // Editable chips open on Enter/Space in their own keydown, and the row
+    // context menu (Ctrl+right-click) opens terminals: guard both like clicks.
+    const onKey = (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      if (event.target?.closest?.('input, textarea, select')) return;
+      onClick(event);
+    };
+    const onContext = (event) => {
+      if (event.target?.closest?.('[data-act]') && host.contains(event.target)) { event.preventDefault(); event.stopImmediatePropagation(); }
+    };
     const onDrag = (event) => { if (host.contains(event.target)) event.preventDefault(); };
     host.addEventListener('click', onClick, true);
+    host.addEventListener('keydown', onKey, true);
+    host.addEventListener('contextmenu', onContext, true);
     host.addEventListener('dragstart', onDrag, true);
-    return () => { host.removeEventListener('click', onClick, true); host.removeEventListener('dragstart', onDrag, true); };
+    return () => {
+      host.removeEventListener('click', onClick, true);
+      host.removeEventListener('keydown', onKey, true);
+      host.removeEventListener('contextmenu', onContext, true);
+      host.removeEventListener('dragstart', onDrag, true);
+    };
   }, [host]);
 
   if (!fleet) return html`<div class="empty">No linked nodes.</div>`;
