@@ -21,9 +21,11 @@ import (
 )
 
 type nodesParams struct {
-	Watch bool   `long:"watch" help:"Stream fleet health transitions (operator only; noisy signals require nodes health)"`
-	Match string `long:"match" help:"All required matches: os=darwin,arch=arm64,label=gpu,harness=codex"`
-	JSON  bool   `long:"json" help:"Output JSON"`
+	Summary bool   `long:"summary" help:"Fetch live map summaries for self and linked peers (operator only)"`
+	Node    string `long:"node" help:"Fetch one live summary by pinned ID or local label (operator only)"`
+	Watch   bool   `long:"watch" help:"Stream fleet health transitions (operator only; noisy signals require nodes health)"`
+	Match   string `long:"match" help:"All required matches: os=darwin,arch=arm64,label=gpu,harness=codex"`
+	JSON    bool   `long:"json" help:"Output JSON"`
 }
 type remoteNode struct {
 	*proto.NodeMetadata
@@ -38,6 +40,9 @@ func nodesCmd() *cobra.Command {
 	return boa.CmdT[nodesParams]{Use: "nodes", Short: "List shared peer node capabilities and resource summaries", ParamEnrich: common.DefaultParamEnricher(), SubCmds: []*cobra.Command{NodeGroupsCmd(), nodeHealthCmd()}, RunFunc: func(p *nodesParams, _ *cobra.Command, _ []string) { os.Exit(runNodes(p, os.Stdout, os.Stderr)) }}.ToCobra()
 }
 func runNodes(p *nodesParams, stdout, stderr io.Writer) int {
+	if p.Summary || p.Node != "" {
+		return runNodeSummaries(p, stdout, stderr)
+	}
 	if _, err := proto.ParseNodeMatch(p.Match); err != nil {
 		return fail(stderr, err)
 	}

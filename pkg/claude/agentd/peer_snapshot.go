@@ -256,6 +256,10 @@ func handleDashboardNodeSummary(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
+	serveLocalNodeSummary(w, r)
+}
+
+func serveLocalNodeSummary(w http.ResponseWriter, r *http.Request) {
 	out := &peerViewResponse{header: make(http.Header)}
 	servePeerSummary(out, r, nil, peerViewRule{})
 	if out.statusCode() == 200 {
