@@ -25,13 +25,14 @@ import (
 // behavior change.
 func init() {
 	Register(&Harness{
-		Name:               DefaultName,
-		DisplayName:        "Claude Code",
-		ModelProxyProtocol: "anthropic-messages-v1",
-		Spawn:              claudeSpawner{},
-		Ask:                claudeAsker{},
-		OneShotReplay:      OneShotReplayDirect,
-		Models:             claudeModels{},
+		Name:                      DefaultName,
+		DisplayName:               "Claude Code",
+		AvailabilityCredentialEnv: []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"},
+		ModelProxyProtocol:        "anthropic-messages-v1",
+		Spawn:                     claudeSpawner{},
+		Ask:                       claudeAsker{},
+		OneShotReplay:             OneShotReplayDirect,
+		Models:                    claudeModels{},
 		ModelTransport: staticModelTransport{
 			provider:    "anthropic",
 			template:    "net-anthropic",

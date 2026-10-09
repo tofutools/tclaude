@@ -27,11 +27,12 @@ const GeminiPinnedVersion = "0.62.0"
 // detect one that is present and wrong.
 func init() {
 	Register(&Harness{
-		Name:        GeminiName,
-		DisplayName: "Gemini CLI",
-		Spawn:       geminiSpawner{},
-		Models:      geminiModels{},
-		Life:        geminiLifecycle{},
+		Name:                      GeminiName,
+		DisplayName:               "Gemini CLI",
+		AvailabilityCredentialEnv: []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"},
+		Spawn:                     geminiSpawner{},
+		Models:                    geminiModels{},
+		Life:                      geminiLifecycle{},
 
 		// The cold conversation store reads Gemini's own per-project chat
 		// files (see gemini_convstore.go for the layout and the "what counts

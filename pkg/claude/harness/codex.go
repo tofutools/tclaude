@@ -23,13 +23,14 @@ const CodexName = "codex"
 // ConvStore.SetTitle.
 func init() {
 	Register(&Harness{
-		Name:               CodexName,
-		ModelProxyProtocol: "openai-responses-v1",
-		DisplayName:        "Codex CLI",
-		Spawn:              codexSpawner{},
-		Ask:                codexAsker{},
-		OneShotReplay:      OneShotReplayCodex,
-		Models:             codexModels{},
+		Name:                      CodexName,
+		ModelProxyProtocol:        "openai-responses-v1",
+		DisplayName:               "Codex CLI",
+		AvailabilityCredentialEnv: []string{"OPENAI_API_KEY"},
+		Spawn:                     codexSpawner{},
+		Ask:                       codexAsker{},
+		OneShotReplay:             OneShotReplayCodex,
+		Models:                    codexModels{},
 		ModelTransport: staticModelTransport{
 			provider:    "openai",
 			template:    "net-openai-codex",

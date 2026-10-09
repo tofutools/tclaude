@@ -74,6 +74,11 @@ type Harness struct {
 	Name string
 	// DisplayName is the human-facing label (e.g. "Claude Code").
 	DisplayName string
+	// AvailabilityCredentialEnv lists ambient credential variables whose
+	// presence is a cheap diagnostic. Absence cannot rule out native login.
+	AvailabilityCredentialEnv []string
+	// UsableWithoutCredentials identifies credential-free harnesses.
+	UsableWithoutCredentials bool
 
 	// Spawn builds the in-tmux launch command + resume form.
 	Spawn Spawner

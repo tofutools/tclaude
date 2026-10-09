@@ -13,6 +13,7 @@ var peerViewLocalRoutes = []string{
 	"/api/browser-notifications",
 	"/api/claude-settings/default-model",
 	"/api/cleanup/",
+	"GET /api/harnesses/availability",
 	"/api/config",
 	"/api/conversations",
 	"/api/cost-factor",
