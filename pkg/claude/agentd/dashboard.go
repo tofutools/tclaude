@@ -298,6 +298,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/process/validate", dashboardProcessRoute(handleProcessValidate))
 	mux.Handle("/static/", handleDashboardStatic())
 	registerDashboardFederationRoutes(mux)
+	registerDashboardPeerRoutes(mux)
 	registerDashboardEditRoutes(mux)
 }
 
@@ -372,7 +373,7 @@ func handleDashboardStatic() http.Handler {
 var dashboardAppTabs = map[string]bool{
 	"groups": true, "automations": true, "jobs": true, "processes": true, "plugins": true, "access": true,
 	"messages": true, "usage": true, "costs": true, "audit": true, "logs": true, "config": true,
-	"debug": true,
+	"debug": true, "map": true,
 }
 
 // isDashboardAppPath reports whether a path should serve the dashboard SPA

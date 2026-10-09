@@ -1,0 +1,86 @@
+package agentd_test
+
+import "github.com/tofutools/tclaude/pkg/claude/agentd/dashsnap"
+
+// skynetFederationStubJS fakes the federation status and node-summary reads the
+// Skynet node row and map make, so the visual harness can show a linked fleet
+// without a hub. Every other request passes through to the real daemon.
+const skynetFederationStubJS = `(function(){
+  var realFetch = window.fetch.bind(window);
+  function json(body, status, headers) {
+    return Promise.resolve(new Response(JSON.stringify(body), { status: status || 200, headers: Object.assign({ 'Content-Type': 'application/json' }, headers || {}) }));
+  }
+  var status = { enabled: true, instance_id: 'inst_q4w7pjf2kx3mz6bty5nd', name: 'desk', hub_url: 'wss://hub.example:8470', hub: { state: 'connected' },
+    peers: [
+      { instance_id: 'inst_hn3cxq7a', label: 'forge', trusted: true, online: true, level: 'restricted' },
+      { instance_id: 'inst_2p6ym4ke', label: 'lab', trusted: true, online: false, level: 'unrestricted', last_seen: '2026-10-09T20:37:00Z' },
+      { instance_id: 'inst_w5zea3nq', name: 'carol@buildbox', trusted: false, online: true }
+    ] };
+  var res = { status: 'current', cpu: { logical_cores: 8, load_average: [2.7, 2, 1] }, ram: { total_bytes: 32e9, available_bytes: 12e9, available_estimated: false }, data_disk: { total_bytes: 500e9, available_bytes: 210e9 } };
+  window.fetch = function(input, init) {
+    var url = typeof input === 'string' ? input : input.url;
+    var path = new URL(url, location.href).pathname;
+    if (path === '/api/federation/status') return json(status);
+    if (path === '/api/node-summary') return json({ presence: 'online', shared_groups: 2, shared_agents: 10, online_agents: 8, waiting_for_input: 1, resources: res, health: 'current' }, 200, { ETag: '"local"' });
+    if (path === '/api/peer/inst_hn3cxq7a/node-summary') return json({ presence: 'online', shared_groups: 2, shared_agents: 9, online_agents: 7, waiting_for_input: 1, peer_view: { peer: 'desk', included: [], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'terminals', requires: 'sessions.watch' }] } }, 200, { ETag: '"forge"' });
+    if (path === '/api/peer/inst_2p6ym4ke/node-summary') return json({ error: 'peer offline', code: 'peer_unreachable', reason: 'peer_offline', last_seen: '2026-10-09T20:37:00Z' }, 502);
+    return realFetch(input, init);
+  };
+})();`
+
+// skynetZeroHeightJS proves the node row costs no vertical space: the tab bar
+// and the first group sit at the same offsets with the row shown and removed.
+const skynetZeroHeightJS = `return (async function(){
+  var host = document.querySelector('#node-chips-root');
+  for (var i = 0; i < 50 && !host.querySelector('.node-chip'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!host.querySelector('.node-chip')) throw new Error('skynet: node chips did not render');
+  function geom() {
+    var nav = document.querySelector('nav').getBoundingClientRect();
+    var main = document.querySelector('main').getBoundingClientRect();
+    return [Math.round(nav.top), Math.round(nav.height), Math.round(main.top)].join(',');
+  }
+  var withRow = geom();
+  var map = document.querySelector('nav [data-tab="map"]');
+  host.style.display = 'none'; map.style.display = 'none';
+  var without = geom();
+  host.style.display = ''; map.style.display = '';
+  if (withRow !== without) {
+    var tall = Array.from(document.querySelectorAll('nav .nav-inner > *')).map(function(el){ var r = el.getBoundingClientRect(); return (el.dataset.tab || el.id || el.className) + ':' + Math.round(r.width) + 'x' + Math.round(r.height); }).join(' ');
+    throw new Error('skynet: node row changed the layout: ' + withRow + ' vs ' + without + ' — ' + tall);
+  }
+})();`
+
+func skynetStates() []dashsnap.State {
+	const showGroups = `document.querySelector('nav [data-tab="groups"]').click();`
+	return []dashsnap.State{
+		{
+			Key:     "skynet-node-row",
+			Title:   "Skynet node row (1600)",
+			Caption: "This node and its trusted peers as chips at the right of the tab bar, with the map entry. The harness asserts the tab bar and main area keep today's offsets.",
+			InitJS:  skynetFederationStubJS,
+			JS:      showGroups + skynetZeroHeightJS,
+		},
+		{
+			Key:     "skynet-node-row-1280",
+			Title:   "Skynet node row (1280)",
+			Caption: "The same row at 1280 px wide: still no added height.",
+			Width:   1280,
+			InitJS:  skynetFederationStubJS,
+			JS:      showGroups + skynetZeroHeightJS,
+		},
+		{
+			Key:     "skynet-map",
+			Title:   "Skynet map",
+			Caption: "The top-level map: this node's card, a reachable restricted peer with omitted concepts, and an unreachable unrestricted peer, joined by measured link edges. The tab strip becomes the top-level view switch in the same row.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="map"]').click();
+  for (var i = 0; i < 80 && document.querySelectorAll('.skynet-card .skynet-card-body').length < 2; i++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('.skynet-edge')) throw new Error('skynet: no map edges');
+  if (document.querySelector('nav [data-tab="groups"]').offsetParent !== null) throw new Error('skynet: per-node tabs still visible in the map');
+})();`,
+			SettleMS: 400,
+		},
+	}
+}

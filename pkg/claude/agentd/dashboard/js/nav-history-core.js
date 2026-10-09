@@ -41,6 +41,7 @@ export const DEFAULT_TAB = 'groups';
 export const KNOWN_TABS = new Set([
   'groups', 'terminals', 'jobs', 'processes', 'plugins',
   'access', 'messages', 'usage', 'costs', 'audit', 'logs', 'debug', 'config', 'vegas',
+  'map',
 ]);
 
 // KNOWN_SUBTABS enumerates the valid second-segment values per tab that has a

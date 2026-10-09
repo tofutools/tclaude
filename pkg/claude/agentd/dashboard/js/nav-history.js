@@ -32,7 +32,7 @@ import {
 // set ordering.
 const ROUTABLE_TABS = new Set([
   'groups', 'terminals', 'jobs', 'processes', 'plugins', 'access',
-  'messages', 'usage', 'costs', 'audit', 'logs', 'debug', 'config',
+  'messages', 'usage', 'costs', 'audit', 'logs', 'debug', 'config', 'map',
 ]);
 
 // The virtual stack (see nav-history-core.js). Replaced wholesale on every
@@ -87,6 +87,15 @@ function locationAvailable(loc) {
 // later.
 function pendingTerminalAttach(loc) {
   return loc.tab === 'terminals' && !!loc.selection;
+}
+
+// pendingMapLoad is the Skynet map's equivalent: its nav anchor stays hidden
+// until the island's first federation status read shows linked nodes, which
+// usually lands after this router boots. The island leaves the map for the
+// last per-node tab once that read settles without a fleet, so a /map deep
+// link is decided by the view that knows rather than bounced to Groups.
+function pendingMapLoad(loc) {
+  return loc.tab === 'map';
 }
 
 // activeLocationFromDOM reads the current dashboard location out of the live
@@ -332,7 +341,8 @@ function onPopstate(e) {
   // the default in place, mirroring the init-time guard.
   if (!locationAvailable(current(stack))
     && !(current(stack).tab === DEFAULT_TAB && !current(stack).subtab)
-    && !pendingTerminalAttach(current(stack))) {
+    && !pendingTerminalAttach(current(stack))
+    && !pendingMapLoad(current(stack))) {
     stack = replaceCurrent(stack, normalizeLocation({ tab: DEFAULT_TAB }));
   }
   activate(current(stack));
@@ -379,7 +389,8 @@ export function initNavHistory() {
   // the Terminal Shell island set the visibility classes.
   if (!locationAvailable(loc)
     && !(loc.tab === DEFAULT_TAB && !loc.subtab)
-    && !pendingTerminalAttach(loc)) {
+    && !pendingTerminalAttach(loc)
+    && !pendingMapLoad(loc)) {
     loc = normalizeLocation({ tab: DEFAULT_TAB });
     stack = initialState(loc);
   }

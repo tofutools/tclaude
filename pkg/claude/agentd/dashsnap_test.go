@@ -2794,6 +2794,7 @@ if (!document.querySelector('#retire-ok[aria-busy="true"]')) throw new Error('re
 			SettleMS: 300,
 		},
 	}
+	states = append(states, skynetStates()...)
 	return append(states, processGraphStates()...)
 }
 

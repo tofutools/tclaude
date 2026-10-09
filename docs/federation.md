@@ -2249,3 +2249,54 @@ Full status exposes hub-visible untrusted instances for the trust screen.
 There is no separate incoming trust-request queue: trusting one of these
 instances pins its identity through the existing trust operation. Summary
 status intentionally lists only linked trusted peers for the chip row.
+
+### Dashboard peer proxy
+
+The browser uses its local dashboard session for
+`/api/peer/{instance_id}/<same tail>`: for example,
+`GET /api/peer/inst_.../snapshot` or
+`GET /api/peer/inst_.../node-summary`. Select peers by their stable pinned
+instance ID from the local Fleet status response; labels are display names.
+The local daemon opens a single encrypted federation stream to the selected
+instance, which serves the request through its peer-view dispatcher using
+the authenticated sender's instance ID. Browser cookies, authorization tokens,
+and caller identity headers are removed before transport. No local-human
+wrapper runs on behalf of a peer.
+
+Supported JSON reads are `snapshot`, `groups/{group}`, `agents/{agent}`,
+`instance`, `costs`, `audit`, and `node-summary`; `POST operator-message`
+uses the same scoped messaging permission as a direct peer-view request.
+Other routes are refused by the receiving dispatcher. Nested peer proxies and
+Fleet administration remain local-only. `If-None-Match`, `ETag`, and cache
+headers pass through, including bodyless 304 responses. Errors such as a
+receiving node's 403 or a hidden agent's 404 retain their status and JSON body.
+Responses are validated as JSON and served with a fixed JSON content type,
+`nosniff`, and a sandbox CSP. A peer cannot publish executable content under
+the local dashboard origin.
+
+An unknown or no longer trusted selector returns 403 with `code: not_trusted`.
+Unavailable peers return 502 with `code: peer_unreachable` and
+`reason: peer_offline`; deadlines return 504 with the same code and
+`reason: peer_timeout`. These errors include `last_seen` when the cached hub
+directory has an observation. Concurrency saturation returns 503 with
+`code: peer_busy`. Requests have a 15-second deadline, bounded JSON bodies,
+and bounded concurrent streams. The proxy does not retry or fan out requests.
+Clients should keep their last successful view, mark it stale, and back off.
+
+The stable `peer_view.included` / `peer_view.omitted[].feature` concept keys are
+`agents.status`, `groups`, `groups.roster`, `groups.presence`, `messaging`,
+`node.summary`, `health`, `costs`, `audit`, `terminals`, `spawn`, and
+`local_dashboard`. `local_dashboard` covers local administration, registries,
+and lifecycle controls. An omitted concept carries a `requires` permission or
+`local_only`. Clients must tolerate additive concept keys; absence of an
+omission is not a grant for an unknown endpoint.
+
+Poll full snapshots only for nodes whose regular dashboard views are visible.
+Map cards use relaxed, staggered summary polls. Merged views poll the nodes
+that contribute visible groups. Pause hidden dashboards, avoid overlapping
+requests to one node, and back off on failure.
+
+Terminal websocket attach continues to use the existing federation sessions
+watch/attach API. This JSON proxy does not yet adapt it under the per-node
+prefix. Remote terminal image uploads remain a separate feature; they need
+staging at the owning instance with the same interactive attach authorization.
