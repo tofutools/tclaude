@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
+	"github.com/stretchr/testify/require"
+
 	"github.com/tofutools/tclaude/pkg/federation/client"
 	"github.com/tofutools/tclaude/pkg/federation/hub"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
@@ -140,6 +143,44 @@ func TestNotAdmittedRefused(t *testing.T) {
 	if !strings.Contains(p.status().LastError, proto.CodeNotAdmitted) {
 		t.Fatalf("error = %q", p.status().LastError)
 	}
+}
+
+func TestHubCloseRejectsInFlightHandshake(t *testing.T) {
+	h, st, url := newHub(t, hub.Config{})
+	id, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, st.Admit(id.ID()))
+	ws, _, err := websocket.DefaultDialer.Dial(url+proto.WSPath, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ws.Close() })
+	require.NoError(t, ws.SetReadDeadline(time.Now().Add(5*time.Second)))
+	var challenge proto.Frame
+	require.NoError(t, ws.ReadJSON(&challenge))
+	require.Equal(t, proto.FrameChallenge, challenge.Type)
+
+	// Hold the handshake at the client hello so shutdown snapshots an empty
+	// connection map. Completing it afterwards must not start a live writer.
+	closed := make(chan struct{})
+	go func() { h.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("hub shutdown blocked on an unfinished handshake")
+	}
+	require.NoError(t, ws.SetWriteDeadline(time.Now().Add(5*time.Second)))
+	require.NoError(t, ws.WriteJSON(&proto.Frame{
+		Type: proto.FrameHello, Proto: proto.ProtocolVersion,
+		InstanceID: id.ID(), PubKey: id.Pub,
+		Sig: proto.SignHello(id, challenge.HubID, challenge.Nonce),
+	}))
+	require.NoError(t, ws.SetReadDeadline(time.Now().Add(5*time.Second)))
+	var frame proto.Frame
+	require.NoError(t, ws.ReadJSON(&frame))
+	require.Equal(t, proto.FrameWelcome, frame.Type)
+	require.NoError(t, ws.ReadJSON(&frame))
+	require.Equal(t, proto.FrameError, frame.Type)
+	require.Equal(t, proto.CodeShuttingDown, frame.Code)
+	require.Zero(t, h.OnlineCount())
 }
 
 func TestInviteAdmitsOnce(t *testing.T) {
