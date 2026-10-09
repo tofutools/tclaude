@@ -132,6 +132,33 @@ func fedDisplayPeerGrant(g db.FederationPeerGrant) db.FederationPeerGrant {
 	return g
 }
 
+// Grant listings carry a typed identity for round-trip revocation. Display
+// names are separate so a deleted or renamed group cannot select another grant.
+type fedPeerGrantView struct {
+	db.FederationPeerGrant
+	GroupID      int64  `json:"group_id,omitempty"`
+	GroupName    string `json:"group_name,omitempty"`
+	GroupDeleted bool   `json:"group_deleted,omitempty"`
+}
+
+func fedViewPeerGrant(g db.FederationPeerGrant) fedPeerGrantView {
+	out := fedPeerGrantView{FederationPeerGrant: g}
+	if strings.HasPrefix(g.Scope, "group=") {
+		id, err := strconv.ParseInt(strings.TrimPrefix(g.Scope, "group="), 10, 64)
+		if err == nil && id > 0 {
+			out.Scope = "group_id=" + strconv.FormatInt(id, 10)
+			out.GroupID = id
+			group, _ := db.GetAgentGroupByID(id)
+			if group == nil {
+				out.GroupDeleted = true
+			} else {
+				out.GroupName = group.Name
+			}
+		}
+	}
+	return out
+}
+
 func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "manage federation peer grants") {
 		return
@@ -182,10 +209,11 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 			writeFedErr(w, err)
 			return
 		}
-		for i := range grants {
-			grants[i] = fedDisplayPeerGrant(grants[i])
+		views := make([]fedPeerGrantView, 0, len(grants))
+		for _, grant := range grants {
+			views = append(views, fedViewPeerGrant(grant))
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"grants": grants})
+		writeJSON(w, http.StatusOK, map[string]any{"grants": views})
 		return
 	}
 	_, groupSlug := federationPeerSlugs[in.Slug]
@@ -210,17 +238,34 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if scope != "" {
-		if !strings.HasPrefix(scope, "group=") || strings.Contains(scope, ",") {
-			writeError(w, http.StatusBadRequest, "invalid_arg", "peer scope must be group=<local group>")
-			return
+		if strings.HasPrefix(scope, "group_id=") {
+			raw := strings.TrimPrefix(scope, "group_id=")
+			id, err := strconv.ParseInt(raw, 10, 64)
+			if err != nil || id <= 0 || raw != strconv.FormatInt(id, 10) {
+				writeError(w, 400, "invalid_arg", "group_id must be a positive canonical integer")
+				return
+			}
+			gid = id
+			if r.Method != http.MethodDelete {
+				group, err := db.GetAgentGroupByID(id)
+				if err != nil || group == nil || group.IsArchived() {
+					writeError(w, 400, "invalid_arg", "no active local group by that ID")
+					return
+				}
+			}
+		} else {
+			if !strings.HasPrefix(scope, "group=") || strings.Contains(scope, ",") {
+				writeError(w, 400, "invalid_arg", "peer scope must be group=<local name> or group_id=<local ID>")
+				return
+			}
+			group, err := db.GetAgentGroupByName(strings.TrimPrefix(scope, "group="))
+			if err != nil || group == nil || (r.Method != http.MethodDelete && group.IsArchived()) {
+				writeError(w, 400, "invalid_arg", "no active local group by that name")
+				return
+			}
+			gid = group.ID
 		}
-		g, err := db.GetAgentGroupByName(strings.TrimPrefix(scope, "group="))
-		if err != nil || g == nil || (r.Method != http.MethodDelete && g.IsArchived()) {
-			writeError(w, http.StatusBadRequest, "invalid_arg", "no active local group by that name")
-			return
-		}
-		gid = g.ID
-		scope = db.FederationGroupScope(g.ID)
+		scope = db.FederationGroupScope(gid)
 	}
 	warnings := []string{}
 	if scope == "" && !instanceSlug && (in.Slug != PermModelsProxy && in.Slug != PermModelsProxyLeased) {

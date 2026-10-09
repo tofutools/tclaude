@@ -2594,3 +2594,22 @@ Backup listings return `backups` containing `id`, `harness`, `created_at`, and
 contents never appear in responses, logs, or audits. Audits record the harness,
 operator/peer, backup ID, action, and result. File presence can update after a
 push; usability remains unknown until the harness actually authenticates.
+
+### Stable group grant identities
+
+Grant listings (`tclaude federation grants`, `GET /v1/federation/grants`, and
+`GET /api/federation/grants`) return group scopes as `group_id=<id>`, with
+`group_id`, `group_name` for a live group, and `group_deleted: true` for an
+orphan left by an older version. Use the returned scope unchanged to revoke:
+
+```sh
+tclaude federation revoke laptop groups.roster.read --scope group_id=12
+```
+
+`group=<name>` explicitly selects a current local group by name, even if that
+name is numeric. `group_id=<id>` explicitly selects its stable identity. Grant
+creation accepts either form and requires an active group; revocation by ID
+also works after deletion. Deleting a group now removes its direct peer and
+inherited node-group grants transactionally. Legacy orphaned rows remain
+listed and can be revoked by ID. Display names are separate from identity so
+renames and numeric-name collisions cannot retarget a listed grant's revoke.
