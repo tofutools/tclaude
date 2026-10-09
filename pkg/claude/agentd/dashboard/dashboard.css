@@ -18920,3 +18920,5 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-sensitive { color: #f0883e; }
 .fa-grant-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 6px; }
 .fa-cli-note { font-size: 12px; }
+.fa-bearer { width: 100%; box-sizing: border-box; font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; margin: 8px 0; }
+.fa-token-input { flex: 1; min-width: 0; font-family: ui-monospace, monospace; }

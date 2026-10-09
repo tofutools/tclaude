@@ -75,6 +75,16 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     ] : []; },
     grant: async (body) => { log.push(['grant', body]); return { ok: true, warnings: ['WARNING: unscoped peer grant covers every active group, including future groups'] }; },
     revoke: async (body) => { log.push(['revoke', body]); return { ok: true }; },
+    profiles: async () => ({ profiles: [{ id: 'prof_1', name: 'test-rig', revision: 3, definition: { trust_level: 'restricted' } }, { id: 'prof_2', name: 'ops-full', revision: 1, definition: { trust_level: 'unrestricted' } }], default: null }),
+    tokens: async () => [
+      { id: 'tok_live', used: 0, max_uses: 2, revoked: false, expires_at: '2099-01-01T00:00:00Z' },
+      { id: 'tok_old', used: 1, max_uses: 1, revoked: false, expires_at: '2099-01-01T00:00:00Z' },
+    ],
+    enrollments: async () => [{ direction: 'issuer', token_id: 'tok_old', peer: 'inst_forge', retired: false }],
+    createToken: async (o) => { log.push(['createToken', o]); return { token: 'tcle1.SECRET', claims: { profile_name: 'test-rig', expires_at: '2099-01-02T00:00:00Z' }, master_fingerprint: 'self-fp-0000', uses: o.uses }; },
+    revokeToken: async (id) => { log.push(['revokeToken', id]); return { ok: true }; },
+    enrollPreview: async (o) => { log.push(['enrollPreview', o]); return { claims: { master: 'inst_carol', profile_name: 'worker', profile_id: 'prof_x', profile_revision: 2, trust_level: 'unrestricted', expires_at: '2099-01-01T00:00:00Z' }, preview_token: 'pv1', master_fingerprint: FP_NEW, node_fingerprint: 'self-fp-0000', consent: 'Running enroll trusts the pinned master.' }; },
+    enroll: async (o) => { log.push(['enroll', o]); return { accepted: true }; },
   };
   const snapshot = harness.signals.signal({ groups: [{ name: 'ops' }, { name: 'build' }] });
   // Like shellConfirm: a confirmed action resolves to the action's result.
@@ -253,4 +263,56 @@ test('a pool page revokes its own grants; re-granting keeps CLI launch settings 
   assert.match(s.confirms.at(-1).title, /^Update jobs\.run/);
   assert.match(s.confirms.at(-1).body, /cap 2 → 5\); its other launch settings \(job_approval, profile\) are kept/);
   assert.deepEqual(s.log.find((l) => l[0] === 'grant')[1].spawn_policy, { max_live: 5, job_approval: 'manual', profile: 'safe' });
+});
+
+test('invites: create confirms the terms and shows the bearer once; revoke keeps enrolled nodes', async (t) => {
+  const s = await setup(t);
+  const m = await s.harness.importDashboardModule('js/fleet-admin-model.js');
+  assert.equal(m.tokenState({ used: 1, max_uses: 1 }), 'used up');
+  assert.equal(m.tokenState({ used: 0, max_uses: 1, expires_at: '2000-01-01T00:00:00Z' }), 'expired');
+  assert.equal(m.joinCommand('inst_self'), 'tclaude federation enroll inst_self --token-stdin');
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Invites/.test(b.textContent)));
+  assert.equal(s.q('#fleet-tokens').querySelectorAll('[data-fa="revoke-token"]').length, 1, 'only the active token is revocable');
+  assert.match(s.q('#fleet-enrollments').textContent, /forge/);
+  await s.click(s.q('#fleet-invite-create'));
+  assert.match(s.confirms.at(-1).body, /one node within 24 hours.*profile test-rig.*restricted trust/);
+  assert.deepEqual(s.log.find((l) => l[0] === 'createToken')[1], { profile: 'test-rig', uses: 1, ttlSeconds: 86400, trustLevel: 'restricted' });
+  assert.equal(s.q('#fleet-token-bearer').value || s.q('#fleet-token-bearer').textContent, 'tcle1.SECRET');
+  assert.match(s.q('#fleet-token-modal').textContent, /--token-stdin/);
+  await s.click(s.q('#fleet-token-close'));
+  assert.equal(s.q('#fleet-token-modal'), null);
+  assert.equal(s.mounted.container.textContent.includes('tcle1.SECRET'), false, 'the bearer is gone once closed');
+  await s.click(s.q('#fleet-tokens [data-fa="revoke-token"]'));
+  assert.match(s.confirms.at(-1).body, /stay trusted/);
+  assert.deepEqual(s.log.find((l) => l[0] === 'revokeToken'), ['revokeToken', 'tok_live']);
+});
+
+test('an invite for an unrestricted profile repeats the consequence', async (t) => {
+  const s = await setup(t);
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Invites/.test(b.textContent)));
+  const sel = s.q('#fleet-invite-profile');
+  for (const o of sel.querySelectorAll('option')) { if (o.value === 'ops-full') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
+  await s.harness.act(() => s.harness.fireEvent(sel, 'change'));
+  await s.click(s.q('#fleet-invite-create'));
+  assert.match(s.confirms.at(-1).body, /at unrestricted trust — .*created later/);
+});
+
+test('joining previews the master fingerprint and trust level, and needs the check before enrolling', async (t) => {
+  const s = await setup(t);
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Invites/.test(b.textContent)));
+  await s.click(s.q('#fleet-join-open'));
+  const tok = s.q('#fleet-join-token'); tok.value = ' tcle1.FROMCAROL ';
+  await s.harness.act(() => s.harness.fireEvent(tok, 'input'));
+  await s.click(s.q('#fleet-join-preview'));
+  assert.deepEqual(s.log.find((l) => l[0] === 'enrollPreview')[1], { master: 'inst_carol', token: 'tcle1.FROMCAROL' });
+  const modal = s.q('#fleet-join-modal').textContent;
+  assert.match(modal, new RegExp(FP_NEW)); assert.match(modal, /unrestricted trust on this node/); assert.match(modal, /created later/);
+  assert.equal(s.q('#fleet-join-submit').disabled, true);
+  await s.check(s.q('#fleet-join-ack'));
+  await s.click(s.q('#fleet-join-submit'));
+  assert.deepEqual(s.log.find((l) => l[0] === 'enroll')[1], { master: 'inst_carol', token: 'tcle1.FROMCAROL', previewToken: 'pv1' });
+  assert.equal(s.q('#fleet-join-modal'), null);
 });
