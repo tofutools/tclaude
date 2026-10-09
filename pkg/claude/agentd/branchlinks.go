@@ -1,12 +1,12 @@
 package agentd
 
 import (
-	"net/url"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
+	"net/url"
 	"os/exec"
 	"strings"
 	"sync"

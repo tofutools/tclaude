@@ -52,16 +52,16 @@ func TestGLRequestURL(t *testing.T) {
 
 func TestGLStripDraftPrefix(t *testing.T) {
 	cases := map[string]string{
-		"Draft: Add a thing":          "Add a thing",
-		"draft:Add a thing":           "Add a thing",
-		"[Draft] Add a thing":         "Add a thing",
-		"(Draft) Add a thing":         "Add a thing",
-		"WIP: Add a thing":            "Add a thing",
-		"Draft: [Draft] Add a thing":  "Add a thing",
-		"Add a thing":                 "Add a thing",
-		"Drafting the thing":          "Drafting the thing",
-		"  Draft:   Add a thing   ":   "Add a thing",
-		"Draft: ":                     "",
+		"Draft: Add a thing":         "Add a thing",
+		"draft:Add a thing":          "Add a thing",
+		"[Draft] Add a thing":        "Add a thing",
+		"(Draft) Add a thing":        "Add a thing",
+		"WIP: Add a thing":           "Add a thing",
+		"Draft: [Draft] Add a thing": "Add a thing",
+		"Add a thing":                "Add a thing",
+		"Drafting the thing":         "Drafting the thing",
+		"  Draft:   Add a thing   ":  "Add a thing",
+		"Draft: ":                    "",
 	}
 	for in, want := range cases {
 		assert.Equal(t, want, glStripDraftPrefix(in), "%q", in)
@@ -108,9 +108,9 @@ func TestGLMergePreflight(t *testing.T) {
 	assert.Equal(t, 0, merged.ExitCode, "already merged is the state asked for")
 
 	for name, mr := range map[string]*glMR{
-		"closed":    {IID: 1, State: "closed"},
-		"draft":     {IID: 1, State: "opened", Draft: true},
-		"conflicts": {IID: 1, State: "opened", HasConflicts: true},
+		"closed":          {IID: 1, State: "closed"},
+		"draft":           {IID: 1, State: "opened", Draft: true},
+		"conflicts":       {IID: 1, State: "opened", HasConflicts: true},
 		"conflict status": {IID: 1, State: "opened", DetailedMergeStatus: "conflict"},
 	} {
 		res := glMergePreflight(mr)

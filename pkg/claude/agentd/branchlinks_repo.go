@@ -60,7 +60,7 @@ type branchLinkRepo struct {
 	// request is looked up and how its web links are spelled.
 	Forge string
 	// Base is the GitLab instance's web/API root, for a gitlab repository.
-	Base string
+	Base          string
 	Root          string // physical git work-tree root
 	RepoURL       string // https://github.com/owner/repo — the dashboard's web link base
 	OwnerRepo     string // owner/repo, passed to `gh --repo`
