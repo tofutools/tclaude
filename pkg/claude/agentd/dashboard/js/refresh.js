@@ -453,6 +453,13 @@ export function isCyclingTabs() { return cyclingTabs; }
 function cycleTab(dir) {
   const tabs = visibleTabButtons();
   if (!tabs.length) return null;
+  // The Skynet map is a top-level view that hides the per-node tabs, so it is
+  // the only visible tab while open. Cycling hands off to its island, which
+  // returns to the per-node tab the operator left for the map.
+  if (tabs.length === 1 && tabs[0].dataset.tab === 'map' && tabs[0].classList.contains('active')) {
+    document.dispatchEvent(new CustomEvent('tclaude:leave-map', { detail: { dir } }));
+    return null;
+  }
   const active = tabs.findIndex(b => b.classList.contains('active'));
   // active < 0 ⇒ the current tab is itself hidden (e.g. you were on Vegas
   // and slop just turned off); start the step from the first visible tab.
