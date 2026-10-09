@@ -79,13 +79,44 @@ func location(home, name string, receiving bool) (string, []string, error) {
 		return "", nil, fmt.Errorf("file credential copy unsupported for this harness; use its login flow (keychains and environment secrets are not copied)")
 	}
 }
-func openDirectory(path string, create bool) (*os.Root, error) {
+
+// canonicalDirectory resolves only daemon-configured local directory paths,
+// never a peer-selected path or a credential file. Missing suffixes are appended
+// to the canonical existing ancestor so new directories can be created safely.
+func canonicalDirectory(path string) (string, error) {
 	if !filepath.IsAbs(path) {
-		return nil, fmt.Errorf("credential directory must be absolute")
+		return "", fmt.Errorf("credential directory must be absolute")
 	}
-	// Reject symlinks in credential directories. HOME may itself have an alias;
-	// resolve that once in the caller, never a peer-selected path.
-	path = filepath.Clean(path)
+	ancestor := filepath.Clean(path)
+	suffix := []string{}
+	for {
+		_, err := os.Lstat(ancestor)
+		if err == nil {
+			break
+		}
+		if !os.IsNotExist(err) || ancestor == string(os.PathSeparator) {
+			return "", fmt.Errorf("credential directory unavailable")
+		}
+		suffix = append(suffix, filepath.Base(ancestor))
+		ancestor = filepath.Dir(ancestor)
+	}
+	canonical, err := filepath.EvalSymlinks(ancestor)
+	if err != nil {
+		return "", fmt.Errorf("credential directory unavailable")
+	}
+	for i := len(suffix) - 1; i >= 0; i-- {
+		canonical = filepath.Join(canonical, suffix[i])
+	}
+	return canonical, nil
+}
+func openDirectory(path string, create bool) (*os.Root, error) {
+	// HOME and deliberately linked harness roots are local operator choices.
+	// Resolve their aliases once, then reject symlinks introduced below that
+	// canonical path and pin the opened root to its observed directory identity.
+	path, err := canonicalDirectory(path)
+	if err != nil {
+		return nil, err
+	}
 	var expected os.FileInfo
 	current := string(os.PathSeparator)
 	for _, part := range strings.Split(strings.TrimPrefix(path, string(os.PathSeparator)), string(os.PathSeparator)) {

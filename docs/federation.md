@@ -2548,7 +2548,9 @@ tclaude harness credentials restore codex
 `--confirm-share` explicitly acknowledges that the remote node's agents will act
 as you with those providers. The authenticated local daemon captures only your
 selected standard auth files and sends them over the encrypted federation
-channel. Clients cannot supply credential contents or arbitrary paths. There is
+channel. Clients cannot supply credential contents or arbitrary paths. Locally configured
+HOME and harness-directory symlinks are resolved once before opening a pinned
+canonical directory; credential-file symlinks are refused. There is
 no API for pulling a peer's credentials. Copilot, keychain logins, and environment
 secrets require the target harness's own login flow.
 
