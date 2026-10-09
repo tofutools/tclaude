@@ -18907,8 +18907,6 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-dot.on { background: #3fb950; }
 .fa-level.unrestricted { color: #f0883e; font-weight: 600; }
 .fa-danger { color: #f85149; }
-.fa-cli { padding: 8px 0; color: #8b949e; }
-.fa-cli code { color: #c9d1d9; }
 .fa-dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; align-items: baseline; margin: 6px 0 10px; }
 .fa-wrap { word-break: break-all; }
 .fa-fp-full { font-size: 14px; color: #f0f6fc; }
@@ -18926,3 +18924,4 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-badge { font-size: 11px; padding: 0 6px; border: 1px solid #1f6feb; border-radius: 8px; color: #58a6ff; }
 .fa-plan ul { margin: 6px 0; padding-left: 18px; max-height: 240px; overflow: auto; }
 .fa-pool-grants { margin: 4px 0; }
+.fa-nowrap { white-space: nowrap; }
