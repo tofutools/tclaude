@@ -1,16 +1,19 @@
 package agentd_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/statusbar"
+	"github.com/tofutools/tclaude/pkg/claude/usage"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -407,4 +410,48 @@ func TestStatuslineBroker_PayloadWithNoConversationWritesTheCallersOwnRow(t *tes
 	ws, err := db.GetAgentWorkspace(slLayerConv)
 	require.NoError(t, err)
 	assert.Equal(t, slLayerConv, ws.ConvID)
+}
+
+// Haiku 5.5 telemetry must feed the roster, dashboard Costs view and the CLI
+// model breakdown without assigning it to an older Haiku or unknown bucket.
+func TestHaiku55StatuslineCostsReachDashboardAndCLI(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	callerPID := layerProcTree(t)
+	haveLayerSession(t, f, slLayerConv, slLayerLabel, "tmux-haiku55", brokerPanePID)
+	f.HaveEnrolledAgent(slLayerConv)
+	code, _ := postBrokeredRender(t, f, callerPID, statusbar.BrokeredRenderRequest{
+		RenderConvID: slLayerConv,
+		Payload:      statuslinePayload(slLayerConv, "Haiku 5.5", "claude-haiku-5-5", "medium", 12, 120000, 1000, 1000000, 0.0625),
+		ApplyWrites:  true,
+	})
+	require.Equal(t, http.StatusOK, code)
+	row := findDashAgent(fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), slLayerConv)
+	require.NotNil(t, row)
+	assert.Equal(t, "Haiku 5.5", row.State.Model)
+	assert.EqualValues(t, 1000000, row.State.ContextWindowSize)
+	assert.InDelta(t, 0.0625, row.State.CostUSD, 1e-12)
+	costs := fetchCosts(t, agentd.BuildDashboardHandlerForTest(), "")
+	require.Len(t, costs.Agents, 1)
+	assert.Equal(t, "Haiku 5.5", costs.Agents[0].Model)
+	assert.InDelta(t, 0.0625, costs.Agents[0].CostUSD, 1e-12)
+
+	// Only replace the external daemon transport: Cobra and the daemon cost
+	// query still execute their production paths against the same recorded data.
+	prev := agent.DaemonRequestImpl
+	t.Cleanup(func() { agent.DaemonRequestImpl = prev })
+	agent.DaemonRequestImpl = func(method, path string, in, out any, opts agent.DaemonOpts) error {
+		assert.Equal(t, http.MethodGet, method)
+		rec := accountQuery(t, f, "", path)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		return json.Unmarshal(rec.Body.Bytes(), out)
+	}
+	cmd := usage.CostsCmd()
+	var output bytes.Buffer
+	cmd.SetOut(&output)
+	cmd.SetArgs([]string{"--models"})
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, output.String(), "Haiku 5.5")
+	assert.Contains(t, output.String(), "$0.0625")
+	assert.NotContains(t, output.String(), "Haiku 4.5")
 }

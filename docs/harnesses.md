@@ -13,7 +13,7 @@ Five coding harnesses and one shell pseudo-harness are supported:
 | `codex` | OpenAI Codex CLI | `codex` |
 | `opencode` | OpenCode | managed `opencode serve` + an `attach` client |
 | `copilot` | GitHub Copilot CLI | `copilot` |
-| `gemini` | Google Gemini CLI | `gemini` |
+| `gemini` | Google Gemini CLI (beta) | `gemini` |
 | `shell` | ordinary shell (no model) | `$SHELL` or `/bin/sh` |
 
 tclaude owns everything around the pane — the tmux session, status tracking,
@@ -136,6 +136,17 @@ setup repairs them.
 `[1m]` long-context suffix, e.g. `sonnet[1m]` — or any full `claude-*` model
 ID. `--effort` is
 `low`/`medium`/`high`/`xhigh`/`max`. Empty means "let the harness decide".
+
+Haiku 5.5 uses the pinned API ID `claude-haiku-5-5` and a native 1M-token
+window; no `[1m]` suffix is needed. With Claude Code v2.1.293 or later,
+`haiku` resolves to 5.5 on the Anthropic API and to 4.5 on some other
+providers. tclaude forwards the alias unchanged and displays the model,
+window, and cost Claude Code reports. See [Claude Code model configuration](https://code.claude.com/docs/en/model-config).
+Haiku 5.5's API rates increase for prompts over 100K tokens; OpenCode uses
+its runtime provider catalog for these tiers, so its cost reporting requires
+that catalog to include the model and its rates. Copilot's `claude-haiku-5.5`
+suggestion is prepared ahead of its pinned CLI catalog; Copilot determines
+availability and reports cost in native usage credits.
 
 **Sandbox.** Claude Code's own OS sandbox is configured in `settings.json`,
 not a launch flag, so tclaude's `--sandbox` delivers a per-session settings
@@ -412,6 +423,11 @@ never reaches its first turn. `--trust-dir` seeds the entry in
   `ask`** — each an honest absence, refused or degraded with a message.
 
 ## Gemini CLI
+
+!!! warning "Beta"
+    Gemini CLI support is new and has seen far less real-world use than the
+    other harnesses. Expect rough edges, especially in the interactive pane,
+    and please report problems you hit.
 
 The Gemini CLI adapter, pinned to 0.62.0, covers:
 

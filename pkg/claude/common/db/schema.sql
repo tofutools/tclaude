@@ -188,7 +188,7 @@ CREATE TABLE "agent_groups" (
 			descr       TEXT NOT NULL DEFAULT '',
 			created_at  INTEGER NOT NULL
 		, archived_at INTEGER, default_cwd TEXT NOT NULL DEFAULT '', default_context TEXT NOT NULL DEFAULT '', max_members INTEGER NOT NULL DEFAULT 0, notify_enabled INTEGER NOT NULL DEFAULT 1, default_profile TEXT NOT NULL DEFAULT '', remote_control INTEGER, mission TEXT NOT NULL DEFAULT '', source_template TEXT NOT NULL DEFAULT '', parent_id INTEGER REFERENCES agent_groups(id) ON DELETE SET NULL, default_profile_id INTEGER, source_template_id INTEGER, sandbox_profile TEXT NOT NULL DEFAULT '', sandbox_profile_id INTEGER, attachment_url TEXT NOT NULL DEFAULT '', attachment_label TEXT NOT NULL DEFAULT '', route_generation INTEGER NOT NULL DEFAULT 0, owner_scopes_json TEXT NOT NULL DEFAULT ''
-			CHECK(length(CAST(owner_scopes_json AS BLOB)) BETWEEN 0 AND 262144), default_spawn_group INTEGER NOT NULL DEFAULT 0, environment_json TEXT NOT NULL DEFAULT '[]') STRICT;
+			CHECK(length(CAST(owner_scopes_json AS BLOB)) BETWEEN 0 AND 262144), default_spawn_group INTEGER NOT NULL DEFAULT 0, environment_json TEXT NOT NULL DEFAULT '[]', reinject_after_compact TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE INDEX idx_agent_groups_archived
 			ON agent_groups(archived_at);
@@ -1591,6 +1591,18 @@ CREATE TABLE federation_auto_workers (
  peer TEXT NOT NULL,
  agent_id TEXT NOT NULL
  ) STRICT;
+
+CREATE TABLE agent_startup_snapshots (
+			agent_id          TEXT PRIMARY KEY,
+			spawn_group_id    INTEGER NOT NULL DEFAULT 0,
+			spawned_by_agent  TEXT NOT NULL DEFAULT '',
+			include_group_ctx INTEGER NOT NULL DEFAULT 1,
+			profile_context   TEXT NOT NULL DEFAULT '',
+			worktree_path     TEXT NOT NULL DEFAULT '',
+			worktree_branch   TEXT NOT NULL DEFAULT '',
+			brief_message_id  INTEGER NOT NULL DEFAULT 0,
+			created_at        INTEGER NOT NULL
+		) STRICT;
 
 CREATE TABLE federation_bundle_offers (
  id TEXT NOT NULL,

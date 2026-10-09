@@ -1,6 +1,6 @@
 module github.com/tofutools/tclaude
 
-go 1.26.6
+go 1.26.9
 
 require (
 	charm.land/bubbles/v2 v2.2.1
@@ -31,7 +31,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/crypto v0.57.0
-	golang.org/x/net v0.59.0
+	golang.org/x/net v0.60.0
 	golang.org/x/sync v0.23.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0

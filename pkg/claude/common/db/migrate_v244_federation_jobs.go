@@ -2,7 +2,7 @@ package db
 
 import "database/sql"
 
-func migrateV241toV242(d *sql.DB) error {
+func migrateV243toV244(d *sql.DB) error {
 	tx, e := d.Begin()
 	if e != nil {
 		return e
@@ -18,7 +18,7 @@ func migrateV241toV242(d *sql.DB) error {
  worker_id TEXT NOT NULL DEFAULT '', caller_agent TEXT NOT NULL DEFAULT '', result TEXT NOT NULL DEFAULT '{}',
  created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL) STRICT;
  CREATE INDEX federation_jobs_reservations ON federation_jobs(direction,state);
- UPDATE schema_version SET version=242;`)
+ UPDATE schema_version SET version=244;`)
 	if e != nil {
 		return e
 	}

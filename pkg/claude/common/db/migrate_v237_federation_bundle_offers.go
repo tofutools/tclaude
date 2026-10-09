@@ -2,7 +2,7 @@ package db
 
 import "database/sql"
 
-func migrateV234toV235(d *sql.DB) error {
+func migrateV236toV237(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -23,7 +23,7 @@ func migrateV234toV235(d *sql.DB) error {
  PRIMARY KEY(direction,peer,id)
  ) STRICT;
  CREATE INDEX idx_federation_bundle_offer_expiry ON federation_bundle_offers(state,expires_at);
- UPDATE schema_version SET version=235;`)
+ UPDATE schema_version SET version=237;`)
 	if err != nil {
 		return err
 	}

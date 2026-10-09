@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -2040,4 +2042,43 @@ func ResetStatusSnapshotForTest() {
 }
 func FederationCatalogForStatusTest(peer string) (*proto.CatalogPayload, error) {
 	return buildFederationCatalog(peer)
+}
+
+// AuthoredOpenPRForTest is one fake pull request for SeedAuthoredOpenPRsForTest.
+type AuthoredOpenPRForTest struct {
+	Number                  int
+	Title                   string
+	Draft                   bool
+	Passed, Pending, Failed int
+}
+
+// SeedAuthoredOpenPRsForTest runs one footer "Open PRs" poll against a canned
+// GitHub answer, so the dashboard's open-PR indicator and popover render from
+// the same cache production fills. The returned closure clears the active
+// login the poll published (a package global).
+func SeedAuthoredOpenPRsForTest(login, repoURL string, prs []AuthoredOpenPRForTest) (func(), error) {
+	items := make([]dashboardAuthoredOpenPR, 0, len(prs))
+	repo := strings.TrimPrefix(repoURL, "https://github.com/")
+	for _, pr := range prs {
+		sum := prChecksSummary{
+			Total: pr.Passed + pr.Pending + pr.Failed, Passed: pr.Passed, Pending: pr.Pending, Failed: pr.Failed,
+			State: "passing",
+		}
+		switch {
+		case pr.Failed > 0:
+			sum.State = "failing"
+		case pr.Pending > 0:
+			sum.State = "pending"
+		}
+		items = append(items, dashboardAuthoredOpenPR{
+			Number: pr.Number, URL: repoURL + "/pull/" + strconv.Itoa(pr.Number), Title: pr.Title,
+			Repository: repo, Draft: pr.Draft, Checks: &sum,
+		})
+	}
+	prev := authoredOpenPRResolver
+	authoredOpenPRResolver = func() (dashboardAuthoredOpenPRs, error) {
+		return dashboardAuthoredOpenPRs{Login: login, Total: len(items), Items: items}, nil
+	}
+	defer func() { authoredOpenPRResolver = prev }()
+	return func() { setAuthoredOpenPRActiveLogin("") }, pollAuthoredOpenPRs()
 }

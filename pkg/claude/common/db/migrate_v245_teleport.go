@@ -2,7 +2,7 @@ package db
 
 import "database/sql"
 
-func migrateV242toV243(d *sql.DB) error {
+func migrateV244toV245(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -16,7 +16,7 @@ func migrateV242toV243(d *sql.DB) error {
  CREATE INDEX federation_teleports_rates ON federation_teleports(direction,source_agent,created_at);
  CREATE INDEX federation_teleports_peer_rates ON federation_teleports(direction,peer,created_at);
  CREATE INDEX federation_teleports_target ON federation_teleports(target_agent);
- UPDATE schema_version SET version=243;`)
+ UPDATE schema_version SET version=245;`)
 	if err != nil {
 		return err
 	}

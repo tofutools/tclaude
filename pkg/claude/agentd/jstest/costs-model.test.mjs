@@ -338,3 +338,21 @@ test('The per-model rollup merges spellings, shares to 100%, and marks hypotheti
   assert.deepEqual(model.modelRollup([]), []);
   assert.deepEqual(model.modelRollup(undefined), []);
 });
+
+test('Haiku 5.5 cost labels retain version and provider identity', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/costs-model.js');
+  const rows = [
+    { conv_id: 'a', model: 'Haiku 5.5', cost_usd: 0.01 },
+    { conv_id: 'b', model: 'Haiku 5.5 (1M context)', cost_usd: 0.02 },
+    { conv_id: 'c', model: 'claude-haiku-5-5[1m]', cost_usd: 0.03 },
+    { conv_id: 'd', harness: 'opencode', model: 'anthropic/claude-haiku-5-5', cost_usd: 0.04 },
+    { conv_id: 'e', model: 'Haiku 4.5', cost_usd: 0.05 },
+  ];
+  assert.equal(model.costModelLabel(rows[2]), 'claude-haiku-5-5');
+  assert.equal(model.costModelLabel(rows[3]), 'anthropic/claude-haiku-5-5');
+  const rollup = model.modelRollup(rows);
+  assert.equal(rollup.find((entry) => entry.model === 'Haiku 5.5').cost, 0.03);
+  assert.equal(rollup.find((entry) => entry.model === 'Haiku 4.5').cost, 0.05);
+  assert.equal(rollup.some((entry) => entry.model === '(unknown)'), false);
+});

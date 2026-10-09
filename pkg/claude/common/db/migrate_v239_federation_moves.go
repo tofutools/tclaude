@@ -2,7 +2,7 @@ package db
 
 import "database/sql"
 
-func migrateV236toV237(d *sql.DB) error {
+func migrateV238toV239(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -14,7 +14,7 @@ func migrateV236toV237(d *sql.DB) error {
  PRIMARY KEY(direction,peer,id));
  CREATE UNIQUE INDEX federation_agent_moves_active_source ON federation_agent_moves(source_agent)
  WHERE direction='out' AND state IN ('awaiting_confirmation','confirmed','retiring','blocked');
- UPDATE schema_version SET version=237;`)
+ UPDATE schema_version SET version=239;`)
 	if err != nil {
 		return err
 	}

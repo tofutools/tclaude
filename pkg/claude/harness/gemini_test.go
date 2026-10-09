@@ -126,7 +126,7 @@ func TestGeminiModelCatalog(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "", got)
 
-	for _, bad := range []string{"-y", "--yolo", "claude-sonnet-5", "opus", "sonnet[1m]", "gpt-5.4", "o3-mini", "two words", strings.Repeat("x", 129)} {
+	for _, bad := range []string{"-y", "--yolo", "claude-sonnet-5", "claude-haiku-5-5", "opus", "sonnet[1m]", "gpt-5.4", "o3-mini", "two words", strings.Repeat("x", 129)} {
 		_, err := m.ValidateModel(bad)
 		assert.Error(t, err, bad)
 	}

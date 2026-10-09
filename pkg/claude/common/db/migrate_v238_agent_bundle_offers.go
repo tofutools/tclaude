@@ -4,7 +4,7 @@ import "database/sql"
 
 // Pin receiving groups by identity so renaming cannot orphan an offer and
 // deleting/recreating a same-name group cannot retarget imported agents.
-func migrateV235toV236(d *sql.DB) error {
+func migrateV237toV238(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -14,7 +14,7 @@ func migrateV235toV236(d *sql.DB) error {
  ALTER TABLE federation_bundle_offers ADD COLUMN sender_agent TEXT NOT NULL DEFAULT '';
  ALTER TABLE federation_bundle_offers ADD COLUMN import_agent TEXT NOT NULL DEFAULT '';
  ALTER TABLE federation_bundle_offers ADD COLUMN import_label TEXT NOT NULL DEFAULT '';
- UPDATE schema_version SET version=236;`)
+ UPDATE schema_version SET version=238;`)
 	if err != nil {
 		return err
 	}

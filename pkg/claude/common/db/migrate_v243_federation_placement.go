@@ -2,7 +2,7 @@ package db
 
 import "database/sql"
 
-func migrateV240toV241(d *sql.DB) error {
+func migrateV242toV243(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -25,7 +25,7 @@ func migrateV240toV241(d *sql.DB) error {
 			return err
 		}
 	}
-	if _, err := tx.Exec("UPDATE schema_version SET version=241"); err != nil {
+	if _, err := tx.Exec("UPDATE schema_version SET version=243"); err != nil {
 		return err
 	}
 	return tx.Commit()

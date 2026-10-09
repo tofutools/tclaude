@@ -73,6 +73,7 @@ test('group settings emits complete wizard copy and browses for its default dire
     groups: [{
       name: 'alpha', descr: 'builders', default_cwd: '/repo', default_context: 'shared lore',
       environment: [{ name: 'TEAM', value: 'alpha' }], notify_enabled: true,
+      reinject_after_compact: 'identity',
     }],
     profiles: [{ name: 'reviewer' }], sandbox_profiles: [{ name: 'confined' }],
   } };
@@ -101,6 +102,7 @@ test('group settings emits complete wizard copy and browses for its default dire
   assert.match(host.querySelector('#group-settings-modal').textContent, /Opening lore/);
   assert.match(host.querySelector('#group-settings-modal').textContent, /Familiar pattern/);
   assert.match(host.querySelector('#group-settings-modal').textContent, /Scrying policy/);
+  assert.match(host.querySelector('#group-settings-modal').textContent, /Memory ward/);
   assert.equal(host.querySelector('#group-settings-default-cwd-browse .theme-copy-wizard').textContent, 'Scry…');
   host.querySelector('#group-settings-default-cwd-browse').click();
   await mounted.harness.act(() => Promise.resolve());
@@ -112,6 +114,7 @@ test('group settings emits complete wizard copy and browses for its default dire
   await mounted.harness.act(() => Promise.resolve());
   assert.equal(saves[0].group, 'alpha');
   assert.equal(saves[0].values.name, 'beta');
+  assert.equal(saves[0].values.reinjectAfterCompact, 'identity');
   await mounted.cleanup();
 });
 
@@ -285,10 +288,11 @@ test('group settings saves against the old name before renaming the group', asyn
       name: ' beta ', descr: ' builders ', defaultCwd: ' /repo ', defaultContext: 'context',
       defaultProfile: 'reviewer', sandboxProfile: 'confined',
       environment: [{ name: ' TEAM ', value: 'alpha' }], maxMembers: '3',
-      notifyEnabled: true, remoteControlPolicy: 'optin',
+      notifyEnabled: true, remoteControlPolicy: 'optin', reinjectAfterCompact: 'off',
       attachmentURL: ' https://example.com/task ', attachmentLabel: ' Task ',
     },
   }, owner);
+  assert.equal(JSON.parse(requests[0][1].body).reinject_after_compact, 'off');
 
   assert.deepEqual(requests.map(([url]) => url), [
     '/api/groups/alpha',

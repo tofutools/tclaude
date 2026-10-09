@@ -2,7 +2,7 @@ package db
 
 import "database/sql"
 
-func migrateV245toV246(d *sql.DB) error {
+func migrateV247toV248(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
@@ -21,7 +21,7 @@ func migrateV245toV246(d *sql.DB) error {
  ALTER TABLE model_proxy_launches ADD COLUMN lease_ready INTEGER NOT NULL DEFAULT 1;
  ALTER TABLE federation_spawn_requests ADD COLUMN credentials TEXT NOT NULL DEFAULT '';
  ALTER TABLE federation_spawn_requests ADD COLUMN model_lease TEXT NOT NULL DEFAULT '';
- UPDATE schema_version SET version=246;`)
+ UPDATE schema_version SET version=248;`)
 	if err != nil {
 		return err
 	}

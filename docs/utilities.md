@@ -43,8 +43,8 @@ durable rollout `token_count` events rather than from the footer, so the
 dashboard's Codex context figures work whether or not the curated items are
 installed.
 
-OpenCode shows only its own TUI status, and Copilot CLI has no status line at
-all; see the [capability matrix](harnesses.md#capability-matrix).
+OpenCode shows only its own TUI status, and Copilot CLI and Gemini CLI have
+no tclaude status line; see the [capability matrix](harnesses.md#capability-matrix).
 
 ## tclaude stats
 
@@ -59,8 +59,8 @@ tclaude stats -t         # token detail
 tclaude stats -j         # raw cache as JSON
 ```
 
-The data source is Claude Code's; Codex, OpenCode, and Copilot activity is
-not included here — the [dashboard](dashboard.md) is where cross-harness
+The data source is Claude Code's; Codex, OpenCode, Copilot, and Gemini
+activity is not included here — the [dashboard](dashboard.md) is where cross-harness
 usage lives.
 
 ## tclaude usage
@@ -164,7 +164,7 @@ from the two sessions' permission modes, holding a message for approval when
 the sender bypasses permission prompts and the receiver does not. That default
 is more careful than a blunt `accept`, so an operator opting back in gets it.
 
-Claude-Code-only; asking for it on Codex, OpenCode, or Copilot is an error
+Claude-Code-only; asking for it on any other harness is an error
 rather than a silent no-op. The posture is recorded per session, so a resume,
 clone, or reincarnation reproduces what the agent actually launched with.
 

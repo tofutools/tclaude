@@ -25,7 +25,11 @@ type AgentGroup struct {
 	SandboxProfileID  int64                            `json:"-"`
 	MaxMembers        int                              // hard cap on member count; a spawn that would exceed it is refused. 0 = unlimited
 	NotifyEnabled     bool                             // OS notifications for member agents; false mutes the whole group (a per-agent 'on' pref still overrides)
-	RemoteControl     *bool                            // remote-control policy for agents spawned into this group; tri-state: nil = inherit (defer to the spawn profile), false = actively deny (force off), true = actively opt-in (force on). Overrides the profile default (JOH-262)
+	// ReinjectAfterCompact is what tclaude re-injects into member agents after
+	// a compaction or /clear boundary: one of the ReinjectAfterCompact*
+	// values, "" meaning the default (ReinjectContexts).
+	ReinjectAfterCompact string
+	RemoteControl        *bool // remote-control policy for agents spawned into this group; tri-state: nil = inherit (defer to the spawn profile), false = actively deny (force off), true = actively opt-in (force on). Overrides the profile default (JOH-262)
 	// AttachmentURL is the group's optional persistent http(s) reference
 	// (a Linear project, GitHub board, design doc, …). AttachmentLabel is an
 	// optional display override; callers derive a compact label when blank.
@@ -1110,13 +1114,13 @@ func CreateAgentGroupFrom(name string, src AgentGroup) (int64, error) {
 			(name, descr, default_cwd, default_context, default_profile, default_profile_id,
 			 sandbox_profile, sandbox_profile_id, max_members, notify_enabled, remote_control,
 			 attachment_url, attachment_label, mission, source_template, source_template_id,
-			 parent_id, created_at, owner_scopes_json, environment_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 parent_id, created_at, owner_scopes_json, environment_json, reinject_after_compact)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		name, src.Descr, src.DefaultCwd, src.DefaultContext, src.DefaultProfile, defaultProfileID,
 		sandboxProfileName, sandboxProfileID, src.MaxMembers, src.NotifyEnabled, boolPtrToNull(src.RemoteControl),
 		src.AttachmentURL, src.AttachmentLabel, src.Mission, src.SourceTemplate, sourceTemplateID,
 		src.ParentGroupID,
-		dbTime(time.Now()), src.OwnerScopesJSON, environmentJSON)
+		dbTime(time.Now()), src.OwnerScopesJSON, environmentJSON, src.ReinjectAfterCompact)
 	if err != nil {
 		return 0, err
 	}
@@ -1377,6 +1381,58 @@ func SetAgentGroupRemoteControl(name string, policy *bool) (int64, error) {
 	return res.RowsAffected()
 }
 
+// Values of AgentGroup.ReinjectAfterCompact.
+const (
+	// ReinjectContexts re-injects identity plus the group and profile startup
+	// context after a compaction (identity only after /clear). The default.
+	ReinjectContexts = "contexts"
+	// ReinjectIdentity re-injects only the agent's identity, after both
+	// compaction and /clear.
+	ReinjectIdentity = "identity"
+	// ReinjectOff re-injects nothing.
+	ReinjectOff = "off"
+)
+
+// ValidReinjectAfterCompact reports whether v is a storable value ("" is the
+// default and is valid).
+func ValidReinjectAfterCompact(v string) bool {
+	switch v {
+	case "", ReinjectContexts, ReinjectIdentity, ReinjectOff:
+		return true
+	}
+	return false
+}
+
+// EffectiveReinjectAfterCompact resolves the stored value, mapping "" to the
+// default.
+func (g *AgentGroup) EffectiveReinjectAfterCompact() string {
+	if g == nil || g.ReinjectAfterCompact == "" {
+		return ReinjectContexts
+	}
+	return g.ReinjectAfterCompact
+}
+
+// SetAgentGroupReinjectAfterCompact sets the group's re-injection mode.
+// Storing the default spells it "" so a later change of default reaches
+// groups that never chose. Returns rows affected (0 = no such group).
+func SetAgentGroupReinjectAfterCompact(name, mode string) (int64, error) {
+	if !ValidReinjectAfterCompact(mode) {
+		return 0, fmt.Errorf("invalid reinject_after_compact %q (want contexts, identity, or off)", mode)
+	}
+	if mode == ReinjectContexts {
+		mode = ""
+	}
+	db, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := db.Exec(`UPDATE agent_groups SET reinject_after_compact = ? WHERE name = ?`, mode, name)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // SetAgentGroupAttachment sets (or, with url == "", clears) the group's
 // persistent reference. Clearing the URL also clears the optional label so a
 // stale label cannot outlive the attachment it described.
@@ -1566,7 +1622,8 @@ const agentGroupSelect = `SELECT id, name, descr, default_cwd, default_spawn_gro
 	CASE WHEN source_template_id IS NULL THEN source_template
 	     ELSE COALESCE((SELECT name FROM group_templates WHERE id = source_template_id), source_template) END,
 	COALESCE(source_template_id, 0),
-	created_at, archived_at, parent_id, route_generation, owner_scopes_json, environment_json FROM agent_groups`
+	created_at, archived_at, parent_id, route_generation, owner_scopes_json, environment_json,
+	reinject_after_compact FROM agent_groups`
 
 const agentGroupAliasedSelect = `SELECT g.id, g.name, g.descr, g.default_cwd, g.default_spawn_group, g.default_context,
 	CASE WHEN g.default_profile_id IS NULL THEN g.default_profile
@@ -1578,7 +1635,8 @@ const agentGroupAliasedSelect = `SELECT g.id, g.name, g.descr, g.default_cwd, g.
 	CASE WHEN g.source_template_id IS NULL THEN g.source_template
 	     ELSE COALESCE((SELECT name FROM group_templates WHERE id = g.source_template_id), g.source_template) END,
 	COALESCE(g.source_template_id, 0),
-	g.created_at, g.archived_at, g.parent_id, g.route_generation, g.owner_scopes_json, g.environment_json`
+	g.created_at, g.archived_at, g.parent_id, g.route_generation, g.owner_scopes_json, g.environment_json,
+	g.reinject_after_compact`
 
 // GetAgentGroupByName returns the group with the given name, or nil if not
 // found.
@@ -2209,6 +2267,9 @@ func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
 				{`DELETE FROM agent_sudo_grants WHERE agent_id = ?`, &c.SudoGrants},
 				{`DELETE FROM agent_spawn_history WHERE spawner_agent_id = ?`, &c.SpawnHistory},
 				{`DELETE FROM agent_clone_history WHERE source_agent_id = ?`, &c.CloneHistory},
+				// The startup snapshot is agent-keyed without an FK, and holds
+				// profile context text that should not outlive the actor.
+				{`DELETE FROM agent_startup_snapshots WHERE agent_id = ?`, nil},
 				{`DELETE FROM agents WHERE agent_id = ?`, nil}, // cascades agent_conversations
 			} {
 				res, err := tx.Exec(s.stmt, agentID)
@@ -4635,7 +4696,7 @@ func scanAgentGroup(s rowScanner) (*AgentGroup, error) {
 		&g.DefaultProfile, &g.SandboxProfile, &g.SandboxProfileID,
 		&g.MaxMembers, &g.NotifyEnabled, &remoteControl, &g.AttachmentURL, &g.AttachmentLabel, &g.Mission,
 		&g.SourceTemplate, &g.SourceTemplateID, &createdAt, &archivedAt, &parentID, &g.RouteGeneration,
-		&g.OwnerScopesJSON, &environmentJSON); err != nil {
+		&g.OwnerScopesJSON, &environmentJSON, &g.ReinjectAfterCompact); err != nil {
 		return nil, err
 	}
 	environment, err := unmarshalEnvironmentColumn(environmentJSON)
