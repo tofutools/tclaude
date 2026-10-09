@@ -88,7 +88,7 @@ func handleDashboardPeer(w http.ResponseWriter, r *http.Request) {
 		fail(err, ctx)
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 	deadline, _ := ctx.Deadline()

@@ -204,7 +204,7 @@ func (rt *fedRuntime) acceptPeerViewOpen(peer *db.FederationPeer, env *proto.Env
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 		defer stop()
 		deadline, _ := ctx.Deadline()

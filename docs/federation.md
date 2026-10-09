@@ -2196,6 +2196,9 @@ Other routes are refused by the receiving dispatcher. Nested peer proxies and
 Fleet administration remain local-only. `If-None-Match`, `ETag`, and cache
 headers pass through, including bodyless 304 responses. Errors such as a
 receiving node's 403 or a hidden agent's 404 retain their status and JSON body.
+Responses are validated as JSON and served with a fixed JSON content type,
+`nosniff`, and a sandbox CSP. A peer cannot publish executable content under
+the local dashboard origin.
 
 An unknown or no longer trusted selector returns 403 with `code: not_trusted`.
 Unavailable peers return 502 with `code: peer_unreachable` and
