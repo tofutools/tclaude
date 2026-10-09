@@ -295,6 +295,7 @@ test('an all-groups grant is new even when the peer holds the same permission on
   await s.click(s.q('#fleet-grant-submit'));
   assert.match(s.confirms.at(-1).title, /^Grant message\.direct/);
   assert.deepEqual(s.log.find((l) => l[0] === 'grant')[1], { peer: 'inst_forge', slug: 'message.direct', scope: '' });
+});
 
 test('invites: create confirms the terms and shows the bearer once; revoke keeps enrolled nodes', async (t) => {
   const s = await setup(t);
