@@ -138,6 +138,8 @@ type fedRouteEnd struct {
 	opening map[uint64]chan routebroker.Frame
 	streams map[uint64]*fedRouteStream
 	done    chan struct{}
+
+	checkAuthority func() error
 }
 
 func newFedRouteEnd(rt *fedRuntime, key, role, peer string, route *db.AgentRoute, conn net.Conn) *fedRouteEnd {
@@ -380,8 +382,16 @@ func (e *fedRouteEnd) serve() {
 	}
 }
 
+// recheckAuthority shuts down the end when its federation authority fails.
+func (e *fedRouteEnd) recheckAuthority() {
+	if err := e.checkAuthority(); err != nil {
+		slog.Info("federation: route authority withdrawn", "role", e.role, "route", e.route.ID, "peer", e.peer, "reason", err)
+		e.shutdown()
+	}
+}
+
 // watch re-checks federation authority until it fails or the end closes.
-func (e *fedRouteEnd) watch(check func() error) {
+func (e *fedRouteEnd) watch() {
 	t := time.NewTicker(fedRouteCheckInterval)
 	defer t.Stop()
 	for {
@@ -389,11 +399,7 @@ func (e *fedRouteEnd) watch(check func() error) {
 		case <-e.ctx.Done():
 			return
 		case <-t.C:
-			if err := check(); err != nil {
-				slog.Info("federation: route authority withdrawn", "role", e.role, "route", e.route.ID, "peer", e.peer, "reason", err)
-				e.shutdown()
-				return
-			}
+			e.recheckAuthority()
 		}
 	}
 }
@@ -681,6 +687,7 @@ func (rt *fedRuntime) startMirror(route *db.AgentRoute, peer, remote string, che
 	ours, theirs := net.Pipe()
 	e := newFedRouteEnd(rt, route.ID, "mirror", peer, route, ours)
 	e.remote = remote
+	e.checkAuthority = check
 	auth := routebroker.PublisherAuth{
 		RouteID: route.ID, AgentID: route.PublisherAgentID, ConvID: route.PublisherConvID,
 		LaunchGeneration: route.PublisherLaunchGeneration, GroupGeneration: route.GroupGeneration,
@@ -702,7 +709,7 @@ func (rt *fedRuntime) startMirror(route *db.AgentRoute, peer, remote string, che
 	st.mirrors[route.ID] = e
 	rt.mu.Unlock()
 	go e.serve()
-	go e.watch(check)
+	go e.watch()
 	return nil
 }
 
@@ -1010,7 +1017,7 @@ func (rt *fedRuntime) proxyFor(peer string, route *db.AgentRoute) (*fedRouteEnd,
 		return nil, err
 	}
 	go e.serve()
-	go e.watch(func() error { _, err := fedProxyAuthorized(peer, route.ID); return err })
+	go e.watch()
 	return e, nil
 }
 
@@ -1022,6 +1029,7 @@ func (rt *fedRuntime) startProxy(key, peer string, route *db.AgentRoute) (*fedRo
 	ours, theirs := net.Pipe()
 	e := newFedRouteEnd(rt, key, "proxy", peer, route, ours)
 	e.lease = lease
+	e.checkAuthority = func() error { _, err := fedProxyAuthorized(peer, route.ID); return err }
 	auth := routebroker.ConsumerAuth{
 		LeaseID: lease.ID, RouteID: route.ID, AgentID: lease.ConsumerAgentID, ConvID: lease.ConsumerConvID,
 		LaunchGeneration: lease.ConsumerLaunchGeneration, GroupGeneration: lease.GroupGeneration,

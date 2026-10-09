@@ -753,10 +753,12 @@ func handleFederationTrust(w http.ResponseWriter, r *http.Request) {
 	}
 	setAuditTargetLabel(r, entry.InstanceID)
 	if rt != nil {
-		go func() {
+		// Catalog construction reads shared daemon state, including tmux.
+		// Let flow cleanup drain this work before restoring its globals.
+		goBackground(func() {
 			rt.sendCatalog(entry.InstanceID)
 			rt.sendControl(entry.InstanceID, proto.KindCatalogReq, "", struct{}{})
-		}()
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "instance_id": entry.InstanceID, "fingerprint": proto.Fingerprint(entry.PubKey), "level": req.Level, "profile": profile, "plan": plan})
 }
