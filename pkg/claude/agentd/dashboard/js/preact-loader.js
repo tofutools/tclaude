@@ -588,9 +588,10 @@ const fleetAdminDescriptor = createIslandDescriptor({
   hosts: { host: '#fleet-admin-root' },
   failureClass: 'skynet-error',
   load: async ({ hosts: { host } }) => {
-    const [{ mountFleetAdminIsland }, { createFleetAdminActions }, { skynetState }] = await Promise.all([
-      import('./fleet-admin-island.js'), import('./fleet-admin-actions.js'), import('./skynet-state.js'),
-    ]);
+    const islandModule = import('./fleet-admin-island.js');
+    const actionsModule = import('./fleet-admin-actions.js');
+    const stateModule = import('./skynet-state.js');
+    const [{ mountFleetAdminIsland }, { createFleetAdminActions }, { skynetState }] = await Promise.all([islandModule, actionsModule, stateModule]);
     const actions = createFleetAdminActions();
     return { state: skynetState, mount: (registerCleanup) => mountFleetAdminIsland({ host, state: skynetState, actions, registerCleanup }) };
   },
