@@ -54,7 +54,9 @@ export function GrantsPage({ view, pools, groups, actions, confirm, toast, targe
     const body = { peer: current.id, slug, scope: scopeGroupName ? `group=${scopeGroupName}` : '' };
     // The daemon replaces a grant with the same permission and scope, launch
     // settings included: keep the existing ones and change only the cap.
-    const existing = rows.find((r) => !r.pool && r.slug === slug && r.group === scopeGroupName);
+    // A deleted group's grant has no name, so an unscoped grant matches only
+    // an empty scope, never a nameless group row.
+    const existing = rows.find((r) => !r.pool && !r.deletedGroup && r.slug === slug && (scopeGroupName ? r.group === scopeGroupName : !r.scope));
     if (existing && !info.policy) { toast(`${current.label} already has ${slug} there`, false); return Promise.resolve(); }
     if (info.policy) body.spawn_policy = { ...(existing?.policy || {}), max_live: Math.max(1, Number(maxLive) || 2) };
     const kept = existing ? extraPolicy(existing.policy) : [];
