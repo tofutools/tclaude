@@ -1606,6 +1606,13 @@ func DeleteAgentGroup(name string) error {
 	if _, err := tx.Exec(`DELETE FROM spawn_harness_rules WHERE group_id = ?`, gID); err != nil {
 		return err
 	}
+	// Peer and inherited pool grants store stable group IDs in their scope.
+	// Sweep them in the deletion transaction, like other group-owned authority.
+	for _, table := range []string{"federation_peer_grants", "federation_node_group_grants"} {
+		if _, err := tx.Exec(`DELETE FROM `+table+` WHERE scope = ?`, FederationGroupScope(gID)); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.Exec(`DELETE FROM agent_groups WHERE id = ?`, gID); err != nil {
 		return err
 	}

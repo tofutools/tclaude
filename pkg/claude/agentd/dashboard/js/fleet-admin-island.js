@@ -5,6 +5,7 @@ import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { GrantsPage } from './fleet-admin-grants.js';
 import { InvitesPage } from './fleet-admin-invites.js';
 import { ProfilesPage } from './fleet-admin-profiles.js';
+import { AuditPage } from './fleet-admin-audit.js';
 import { NodeUpdateDialog } from './node-update.js';
 import { dashboardState } from './snapshot-store.js';
 import { shellConfirm, shellToast } from './shell-state.js';
@@ -17,14 +18,13 @@ const html = htm.bind(h);
 // so a peer coming online or a CLI-side change shows without a reload.
 const ADMIN_POLL_MS = 10000;
 
-// SUB_PAGES are the admin sections. Those with a cli list name the CLI that
-// covers them until their pages land.
+// SUB_PAGES are the admin sections.
 const SUB_PAGES = Object.freeze([
   { id: 'peers', label: 'Peers' },
   { id: 'invites', label: 'Invites & joining' },
   { id: 'grants', label: 'Peer grants' },
   { id: 'profiles', label: 'Profiles & pools' },
-  { id: 'audit', label: 'Audit', cli: ['tclaude federation audit'] },
+  { id: 'audit', label: 'Audit' },
 ]);
 
 function defaultSwitchHome() {
@@ -340,7 +340,7 @@ export function FleetAdmin({
       : sub.id === 'grants'
       ? html`<${GrantsPage} view=${view} pools=${pools} groups=${localGroups(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast}
           target=${grantTarget} setTarget=${setGrantTarget} />`
-      : html`<div class="fa-cli"><p>${sub.label} is managed from the CLI for now:</p>${sub.cli.map((c) => html`<div><code>${c}</code></div>`)}</div>`}
+      : html`<${AuditPage} view=${view} actions=${actions} now=${now()} />`}
     ${dialog?.kind === 'trust' && html`<${TrustDialog} row=${dialog.row} actions=${actions} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${dialog?.kind === 'update' && html`<${NodeUpdateDialog} node=${{ id: view.self.id, label: view.self.name, local: true }} actions=${updateActions} confirm=${confirm} toast=${toast} timers=${timers} onClose=${() => setDialog(null)} />`}
     ${dialog?.kind === 'unrestrict' && html`<${UnrestrictDialog} row=${dialog.row} actions=${actions} onClose=${() => setDialog(null)} onDone=${done} />`}

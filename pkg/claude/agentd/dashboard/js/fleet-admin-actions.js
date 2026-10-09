@@ -47,6 +47,13 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
     revokeToken: (id) => call('POST', `enroll-tokens/${encodeURIComponent(id)}/revoke`, {}),
     enrollments: async () => (await call('GET', 'enrollments'))?.enrollments || [],
     enrollPreview: ({ master, token }) => call('POST', 'enroll/preview', { master, token }),
+    // Newest first; peer is an instance ID ('' = all), since an ISO time.
+    audit: ({ peer = '', since = '', limit = 200 } = {}) => {
+      const q = new URLSearchParams({ limit: String(limit) });
+      if (peer) q.set('peer', peer);
+      if (since) q.set('since', since);
+      return call('GET', `audit?${q}`).then((rows) => (Array.isArray(rows) ? rows : []));
+    },
     createPool: (name) => call('POST', 'nodes/groups', { name }),
     deletePool: (name) => call('DELETE', `nodes/groups/${encodeURIComponent(name)}`),
     addPoolMember: (name, peer) => call('POST', `nodes/groups/${encodeURIComponent(name)}/members`, { peer }),

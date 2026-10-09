@@ -2417,9 +2417,10 @@ Its Profiles & pools page covers pools (`nodes/groups`: create, delete, add
 and remove members — adding names the pool grants the member gains) and node
 profiles: making one the default for newly trusted peers, applying one to a
 trusted peer after previewing its plan (unrestricted confirms the peer's
-fingerprint), and deleting. Profile definitions, receiver launch settings
-beyond the live cap, model gateway scopes and the audit log are managed with
-their `tclaude federation` commands.
+fingerprint), and deleting. Its Audit page reads `federation audit` (filtered
+by peer and time window, newest first, up to 1000 rows). Profile definitions,
+receiver launch settings beyond the live cap and model gateway scopes are
+managed with their `tclaude federation` commands.
 
 `federation view` returns the full JSON response, including `peer_view`, and
 preserves structured failure JSON on stderr. The `agent ls --node` and
@@ -2603,3 +2604,22 @@ Backup listings return `backups` containing `id`, `harness`, `created_at`, and
 contents never appear in responses, logs, or audits. Audits record the harness,
 operator/peer, backup ID, action, and result. File presence can update after a
 push; usability remains unknown until the harness actually authenticates.
+
+### Stable group grant identities
+
+Grant listings (`tclaude federation grants`, `GET /v1/federation/grants`, and
+`GET /api/federation/grants`) return group scopes as `group_id=<id>`, with
+`group_id`, `group_name` for a live group, and `group_deleted: true` for an
+orphan left by an older version. Use the returned scope unchanged to revoke:
+
+```sh
+tclaude federation revoke laptop groups.roster.read --scope group_id=12
+```
+
+`group=<name>` explicitly selects a current local group by name, even if that
+name is numeric. `group_id=<id>` explicitly selects its stable identity. Grant
+creation accepts either form and requires an active group; revocation by ID
+also works after deletion. Deleting a group now removes its direct peer and
+inherited node-group grants transactionally. Legacy orphaned rows remain
+listed and can be revoked by ID. Display names are separate from identity so
+renames and numeric-name collisions cannot retarget a listed grant's revoke.
