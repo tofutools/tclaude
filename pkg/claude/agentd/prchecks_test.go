@@ -272,3 +272,20 @@ func TestWithPRChecksStampsEveryBadge(t *testing.T) {
 		t.Error("a PR with no cached checks must stay unstamped rather than showing a zeroed badge")
 	}
 }
+
+func TestSummarizePRChecksAllCancelledIsNotGreen(t *testing.T) {
+	raw := json.RawMessage(`[
+		{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"CANCELLED"},
+		{"__typename":"CheckRun","name":"docs-only","status":"COMPLETED","conclusion":"SKIPPED"}
+	]`)
+	if got := parseStatusCheckRollup(raw, time.Now()).Summary.State; got != "failing" {
+		t.Errorf("all-cancelled state = %q, want failing (a wholesale cancel is not green)", got)
+	}
+	raw = json.RawMessage(`[
+		{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"CANCELLED"},
+		{"__typename":"CheckRun","name":"test","status":"COMPLETED","conclusion":"SUCCESS"}
+	]`)
+	if got := parseStatusCheckRollup(raw, time.Now()).Summary.State; got != "passing" {
+		t.Errorf("cancelled-beside-pass state = %q, want passing", got)
+	}
+}

@@ -140,6 +140,7 @@ func prChecksCacheKey(rawURL string) string {
 // summarize recomputes the aggregate counts from a check list.
 func summarizePRChecks(checks []prCheckRun, fetchedAt time.Time) prChecksSummary {
 	s := prChecksSummary{Total: len(checks)}
+	cancelled := 0
 	for _, c := range checks {
 		switch c.Bucket {
 		case "pass":
@@ -148,6 +149,9 @@ func summarizePRChecks(checks []prCheckRun, fetchedAt time.Time) prChecksSummary
 			s.Failed++
 		case "skipped":
 			s.Skipped++
+			if c.Conclusion == "cancelled" {
+				cancelled++
+			}
 		default:
 			s.Pending++
 		}
@@ -155,7 +159,10 @@ func summarizePRChecks(checks []prCheckRun, fetchedAt time.Time) prChecksSummary
 	switch {
 	case s.Total == 0:
 		s.State = "none"
-	case s.Failed > 0:
+	// Cancelled checks read as skipped only alongside real results: a run
+	// cancelled wholesale (nothing passed) is not a green light, and must not
+	// fire a "CI passed" trigger.
+	case s.Failed > 0, s.Passed == 0 && s.Pending == 0 && cancelled > 0:
 		s.State = "failing"
 	case s.Pending > 0:
 		s.State = "pending"
