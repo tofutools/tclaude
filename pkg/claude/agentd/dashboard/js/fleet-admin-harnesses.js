@@ -72,7 +72,7 @@ export function HarnessDialog({ node, row, actions, confirm, toast, onJob, onClo
     confirm({
       title: `${action === 'install' ? 'Install' : 'Update'} ${label} on ${node.label}?`,
       body: `Runs ${command || `the ${label} ${action}`} on ${node.label} as its daemon user.`
-        + (copying ? ` Your ${label} login files are copied there too. ${SHARE_WARNING}${overwrite ? ' An existing login there is backed up, then replaced.' : ' An existing login there is kept.'}` : ''),
+        + (copying ? ` Your ${label} login files are copied there too. ${SHARE_WARNING}${overwrite ? ' An existing login there is backed up, then replaced.' : ' If a login already exists there, it is kept and the job reports the copy as failed (the install itself still runs).'}` : ''),
       okLabel: action === 'install' ? 'Install' : 'Update',
     }).then((ok) => { if (ok) start(''); });
   };
@@ -189,7 +189,13 @@ export function HarnessesPage({ view, actions, confirm, toast, copy, timers = gl
           if (disposed) return;
           setJobs((cur) => ({ ...cur, [job.id]: { ...entry, job } }));
           if (!jobActive(job) && job.availability) setAvail((cur) => ({ ...cur, [entry.node.id]: { data: job.availability } }));
-        } catch (_) { /* a restarting or busy peer: try again next tick */ }
+        } catch (e) {
+          // A restarting or busy peer: try again next tick. A job that is gone
+          // or no longer readable (404/403) stops polling and can be dismissed.
+          if (!disposed && (e?.status === 404 || e?.status === 403)) {
+            setJobs((cur) => ({ ...cur, [entry.job.id]: { ...entry, job: { ...entry.job, state: 'lost', error: `can no longer read this job: ${errText(e)}` } } }));
+          }
+        }
       }
       if (!disposed) timer = timers.setTimeout(tick, JOB_POLL_MS);
     };

@@ -516,7 +516,7 @@ test('remote install can copy my login with the share warning; busy workers ask 
   assert.match(s.q('#fleet-harness-modal .fa-consequence').textContent, /act as you/);
   s.setWorkersBusy(true);
   await s.click(s.q('#fleet-harness-run'));
-  assert.match(s.confirms.at(-1).body, /login files are copied there too\. Agents on the target node will act as you.*existing login there is kept/);
+  assert.match(s.confirms.at(-1).body, /login files are copied there too\. Agents on the target node will act as you.*If a login already exists there, it is kept/);
   await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
   assert.deepEqual(s.harnessLog.filter((l) => l[0] === 'start')[0][2], { action: 'install', harness: 'codex', copy_credentials: true });
   assert.ok(s.q('#fleet-harness-idle'), 'busy workers offer when-idle');
