@@ -792,6 +792,9 @@ func dispatchHookEvent(ctx context.Context, input HookCallbackInput, envSessionI
 	if err := applyHook(ctx, input, envSessionID, amb); err != nil {
 		return HookResponse{}, err
 	}
+	if !amb.InTaskRunnerHook() {
+		QueueContextReinjection(input, envSessionID)
+	}
 	input = applyStandingOrderTurnOrigin(input, envSessionID)
 	return standingOrderResponse(ctx, input, envSessionID), nil
 }

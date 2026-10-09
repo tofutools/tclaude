@@ -3623,6 +3623,7 @@ func applyOpenCodeHooks(
 			err := session.ApplyHook(input, runtime.SessionID)
 			if err == nil {
 				applied = true
+				session.QueueContextReinjection(input, runtime.SessionID)
 				deliverOpenCodeStandingOrders(input, runtime.SessionID)
 				break
 			}
