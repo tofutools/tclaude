@@ -18915,3 +18915,8 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-levels, .fa-profile { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
 .fa-consequence { margin: 8px 0; padding: 8px 10px; border: 1px solid #f8514966; border-radius: 6px; background: #f851491a; color: #ffa198; }
 .fa-ack { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0 4px; }
+.fa-grants-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 4px 0 10px; }
+.fa-warn { color: #e3b341; }
+.fa-sensitive { color: #f0883e; }
+.fa-grant-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 6px; }
+.fa-cli-note { font-size: 12px; }

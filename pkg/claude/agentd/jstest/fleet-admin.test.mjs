@@ -68,10 +68,19 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     trust: async (o) => { log.push(['trust', o]); return { ok: true }; },
     untrust: async (id) => { log.push(['untrust', id]); return { ok: true }; },
     setHubEnabled: async (on) => { log.push(['hub', on]); return { ok: true }; },
+    grants: async (target) => { log.push(['grants', target]); return target === 'inst_forge' ? [
+      { peer: 'inst_forge', slug: 'groups.presence.read', scope: '' },
+      { peer: 'inst_forge', slug: 'groups.roster.read', scope: 'group=ops' },
+      { peer: 'inst_forge', slug: 'routes.consume', scope: '', pool_id: 'p1', pool_name: 'rigs' },
+    ] : []; },
+    grant: async (body) => { log.push(['grant', body]); return { ok: true, warnings: ['WARNING: unscoped peer grant covers every active group, including future groups'] }; },
+    revoke: async (body) => { log.push(['revoke', body]); return { ok: true }; },
   };
-  const confirm = async (opts) => { confirms.push(opts); await opts.action(); return true; };
+  const snapshot = harness.signals.signal({ groups: [{ name: 'ops' }, { name: 'build' }] });
+  // Like shellConfirm: a confirmed action resolves to the action's result.
+  const confirm = async (opts) => { confirms.push(opts); return opts.action ? opts.action() : true; };
   const timers = fakeTimers();
-  const mounted = await harness.mount(harness.html`<${island.FleetAdmin} state=${state} actions=${actions} confirm=${confirm} toast=${(m) => toasts.push(m)} timers=${timers} remote="" copy=${async () => {}} />`);
+  const mounted = await harness.mount(harness.html`<${island.FleetAdmin} state=${state} actions=${actions} confirm=${confirm} toast=${(m) => toasts.push(m)} timers=${timers} remote="" copy=${async () => {}} snapshot=${snapshot} />`);
   const q = (sel) => mounted.container.querySelector(sel);
   const check = async (el) => { el.checked = true; await harness.act(() => harness.fireEvent(el, 'change')); };
   const settle = () => new Promise((r) => setTimeout(r, 25));
@@ -163,4 +172,85 @@ test('a level change refuses a peer untrusted elsewhere since the last poll', as
   await s.click(s.q('#fleet-level-submit'));
   assert.equal(s.log.some((l) => l[0] === 'trust'), false, 'never re-trusts it');
   assert.match(s.q('#fleet-level-modal').textContent, /no longer trusted/);
+});
+
+test('grant rows mark all-groups and pool-inherited grants; the consequence names future groups', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/fleet-admin-model.js');
+  const rows = m.grantRows([
+    { slug: 'routes.consume', scope: '', pool_name: 'rigs' },
+    { slug: 'message.direct', scope: '' },
+    { slug: 'node.read', scope: '' },
+    { slug: 'groups.members.spawn', scope: 'group=ops', spawn_policy: { max_live: 3 } },
+  ]);
+  assert.deepEqual(rows.map((r) => [r.slug, r.allGroups, r.group, r.pool]), [
+    ['groups.members.spawn', false, 'ops', ''], ['message.direct', true, '', ''], ['node.read', false, '', ''], ['routes.consume', true, '', 'rigs'],
+  ]);
+  assert.equal(rows[0].maxLive, 3); assert.equal(rows[0].sensitive, true);
+  assert.match(m.grantConsequence({ target: 'forge', slug: 'message.direct', group: '' }), /EVERY group.*created later/);
+  assert.match(m.grantConsequence({ target: 'forge', slug: 'message.direct', group: 'ops' }), /in group ops\./);
+  assert.match(m.grantConsequence({ target: 'forge', slug: 'node.read', group: 'ops' }), /node-wide/);
+});
+
+test('the grants page lists, grants with a spelled-out confirm, and revokes direct grants only', async (t) => {
+  const s = await setup(t);
+  await s.show();
+  await s.click(s.q('[data-peer="inst_forge"] [data-fa="grants"]'));
+  assert.deepEqual(s.log.at(-1), ['grants', 'inst_forge']);
+  const rows = s.q('#fleet-grants').querySelectorAll('tbody tr');
+  assert.equal(rows.length, 3);
+  assert.match(s.q('#fleet-grants').textContent, /all groups, incl\. future/);
+  assert.equal(rows[2].querySelector('[data-fa="revoke"]'), null, 'a pool grant is revoked on the pool');
+  assert.match(rows[2].textContent, /via pool rigs/);
+  // Default form: message.direct on all groups.
+  await s.click(s.q('#fleet-grant-submit'));
+  assert.match(s.confirms.at(-1).body, /EVERY group.*created later/);
+  assert.deepEqual(s.log.find((l) => l[0] === 'grant'), ['grant', { peer: 'inst_forge', slug: 'message.direct', scope: '' }]);
+  assert.ok(s.toasts.some((m) => /future groups/.test(m)), 'daemon warnings are shown');
+  // A spawn grant scoped to a group carries its live cap.
+  // linkedom's select.value is read-only: pick the option instead.
+  const pick = async (sel, value) => {
+    const el = s.q(sel);
+    for (const o of el.querySelectorAll('option')) { if (o.value === value) o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
+    await s.harness.act(() => s.harness.fireEvent(el, 'change'));
+  };
+  await pick('#fleet-grant-slug', 'groups.members.spawn');
+  await pick('#fleet-grant-group', 'ops');
+  await s.click(s.q('#fleet-grant-submit'));
+  assert.match(s.confirms.at(-1).body, /in group ops\. Live cap: 2\. This lets it act on this node/);
+  assert.deepEqual(s.log.filter((l) => l[0] === 'grant').at(-1)[1], { peer: 'inst_forge', slug: 'groups.members.spawn', scope: 'group=ops', spawn_policy: { max_live: 2 } });
+  // A slug that requires a group cannot be granted without one.
+  await pick('#fleet-grant-slug', 'agents.receive');
+  await pick('#fleet-grant-group', '');
+  assert.equal(s.q('#fleet-grant-submit').disabled, true);
+  await s.click(s.q('#fleet-grants [data-slug="groups.roster.read"] [data-fa="revoke"]'));
+  assert.match(s.confirms.at(-1).body, /loses groups\.roster\.read .* in group ops/);
+  assert.deepEqual(s.log.find((l) => l[0] === 'revoke'), ['revoke', { peer: 'inst_forge', slug: 'groups.roster.read', scope: 'group=ops' }]);
+});
+
+test('a pool page revokes its own grants; re-granting keeps CLI launch settings and only changes the cap', async (t) => {
+  const s = await setup(t);
+  const m = await s.harness.importDashboardModule('js/fleet-admin-model.js');
+  const own = m.grantRows([{ slug: 'routes.consume', scope: '', pool_id: 'p1', pool_name: 'rigs' }], { ownPool: 'rigs' });
+  assert.equal(own[0].pool, '', 'direct on its own pool page');
+  const gone = m.grantRows([{ slug: 'message.direct', scope: 'group=12' }], { groups: ['ops'] });
+  assert.equal(gone[0].deletedGroup, true);
+  assert.deepEqual(m.extraPolicy({ max_live: 2, job_approval: 'manual', allowed_profiles: [] }), ['job_approval']);
+
+  s.actions.grants = async () => [{ peer: 'inst_forge', slug: 'jobs.run', scope: 'group=ops', spawn_policy: { max_live: 2, job_approval: 'manual', profile: 'safe' } }];
+  await s.show();
+  await s.click(s.q('[data-peer="inst_forge"] [data-fa="grants"]'));
+  const pick = async (sel, value) => {
+    const el = s.q(sel);
+    for (const o of el.querySelectorAll('option')) { if (o.value === value) o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
+    await s.harness.act(() => s.harness.fireEvent(el, 'change'));
+  };
+  await pick('#fleet-grant-slug', 'jobs.run');
+  await pick('#fleet-grant-group', 'ops');
+  const cap = s.q('#fleet-grant-cap'); cap.value = '5';
+  await s.harness.act(() => s.harness.fireEvent(cap, 'input'));
+  await s.click(s.q('#fleet-grant-submit'));
+  assert.match(s.confirms.at(-1).title, /^Update jobs\.run/);
+  assert.match(s.confirms.at(-1).body, /cap 2 → 5\); its other launch settings \(job_approval, profile\) are kept/);
+  assert.deepEqual(s.log.find((l) => l[0] === 'grant')[1].spawn_policy, { max_live: 5, job_approval: 'manual', profile: 'safe' });
 });

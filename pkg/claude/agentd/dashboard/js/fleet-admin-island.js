@@ -2,6 +2,8 @@ import { h, render } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { GrantsPage } from './fleet-admin-grants.js';
+import { dashboardState } from './snapshot-store.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { fmtAge, nodeHref, pollDelay, remoteNodeID } from './skynet-model.js';
 import { LABEL_RE, UNRESTRICTED_CONSEQUENCE, adminView, shortFingerprint, shortID } from './fleet-admin-model.js';
@@ -12,12 +14,12 @@ const html = htm.bind(h);
 // so a peer coming online or a CLI-side change shows without a reload.
 const ADMIN_POLL_MS = 10000;
 
-// SUB_PAGES are the admin sections. Peers is served here; the rest name the
-// CLI that covers them until their pages land.
+// SUB_PAGES are the admin sections. Those with a cli list name the CLI that
+// covers them until their pages land.
 const SUB_PAGES = Object.freeze([
   { id: 'peers', label: 'Peers' },
   { id: 'invites', label: 'Invites & joining', cli: ['tclaude federation enroll-token', 'tclaude federation enroll', 'tclaude federation enrollments'] },
-  { id: 'grants', label: 'Peer grants', cli: ['tclaude federation grants <peer>', 'tclaude federation grant', 'tclaude federation revoke'] },
+  { id: 'grants', label: 'Peer grants' },
   { id: 'profiles', label: 'Profiles & pools', cli: ['tclaude federation profile', 'tclaude federation nodes'] },
   { id: 'audit', label: 'Audit', cli: ['tclaude federation audit'] },
 ]);
@@ -33,6 +35,11 @@ function defaultCopy(text) {
 }
 
 function errText(error) { return error?.message || String(error); }
+
+// localGroups names this node's active groups, the scopes a grant can take.
+function localGroups(snap) {
+  return (snap?.groups || []).filter((g) => g?.name && !g.archived).map((g) => g.name).sort();
+}
 
 // setLevel changes a trusted peer's level. peers/trust by instance ID would
 // also re-trust a peer untrusted elsewhere since the last poll, so the level
@@ -211,7 +218,7 @@ function grantsCell(g) {
   return html`<span title=${parts}>${g.total} <span class="muted">(${parts})</span></span>`;
 }
 
-function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust }) {
+function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust, onGrants }) {
   return html`<div class="fa-peers">
     <h4>Trusted peers <span class="muted">${view.trusted.length}</span></h4>
     ${view.trusted.length === 0
@@ -227,6 +234,7 @@ function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust }) 
           <td>${grantsCell(r.grants)}</td>
           <td>${r.pools.length ? r.pools.join(', ') : html`<span class="muted">—</span>`}</td>
           <td class="fa-acts">
+            <button type="button" data-fa="grants" onClick=${() => onGrants(r)}>Grants…</button>
             ${r.level === 'unrestricted'
               ? html`<button type="button" data-fa="restrict" onClick=${() => onRestrict(r)}>Restrict…</button>`
               : html`<button type="button" data-fa="unrestrict" onClick=${() => onUnrestrict(r)}>Make unrestricted…</button>`}
@@ -254,7 +262,7 @@ function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust }) 
 // hub connection and the peers it trusts. Its data is this node's own (never
 // a peer's), so a peer view hands the page back to this node.
 export function FleetAdmin({
-  state, actions, confirm = shellConfirm, toast = shellToast, copy = defaultCopy,
+  state, actions, confirm = shellConfirm, toast = shellToast, copy = defaultCopy, snapshot = dashboardState.snapshot,
   timers = globalThis, now = () => Date.now(), remote = remoteNodeID(), switchHome = defaultSwitchHome,
 }) {
   const active = state.view.value.adminActive;
@@ -263,6 +271,7 @@ export function FleetAdmin({
   const [failure, setFailure] = useState('');
   const [page, setPage] = useState('peers');
   const [dialog, setDialog] = useState(null);
+  const [grantTarget, setGrantTarget] = useState('');
   const [tick, setTick] = useState(0);
   const reload = () => setTick((n) => n + 1);
 
@@ -317,7 +326,11 @@ export function FleetAdmin({
       class=${`fa-subtab${p.id === sub.id ? ' on' : ''}`} onClick=${() => setPage(p.id)}>${p.label}</button>`)}</div>
     ${sub.id === 'peers'
       ? html`<${PeersPage} view=${view} now=${now()} onTrust=${(r) => setDialog({ kind: 'trust', row: r })}
-          onUnrestrict=${(r) => setDialog({ kind: 'unrestrict', row: r })} onRestrict=${restrict} onUntrust=${untrust} />`
+          onUnrestrict=${(r) => setDialog({ kind: 'unrestrict', row: r })} onRestrict=${restrict} onUntrust=${untrust}
+          onGrants=${(r) => { setGrantTarget(r.id); setPage('grants'); }} />`
+      : sub.id === 'grants'
+      ? html`<${GrantsPage} view=${view} pools=${pools} groups=${localGroups(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast}
+          target=${grantTarget} setTarget=${setGrantTarget} />`
       : html`<div class="fa-cli"><p>${sub.label} is managed from the CLI for now:</p>${sub.cli.map((c) => html`<div><code>${c}</code></div>`)}</div>`}
     ${dialog?.kind === 'trust' && html`<${TrustDialog} row=${dialog.row} actions=${actions} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${dialog?.kind === 'unrestrict' && html`<${UnrestrictDialog} row=${dialog.row} actions=${actions} onClose=${() => setDialog(null)} onDone=${done} />`}

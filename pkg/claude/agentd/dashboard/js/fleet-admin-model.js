@@ -103,3 +103,78 @@ export function trustBody({ instance, label = '', level = 'restricted', profile 
   if (confirmFingerprint) body.confirm_fingerprint = confirmFingerprint;
   return body;
 }
+
+// PEER_SLUGS lists what a peer may be granted on this node (mirrors the
+// daemon's federationPeerSlugs plus its instance-wide slugs). kind: 'group'
+// slugs take an optional group scope (none = every group, including future
+// ones), 'scoped' slugs require one, 'node' slugs are node-wide only.
+// sensitive marks grants that let the peer act on this node, not just read.
+export const PEER_SLUGS = Object.freeze([
+  { slug: 'agents.status.read', kind: 'group', what: 'agent activity, model, task and context summaries' },
+  { slug: 'groups.roster.read', kind: 'group', what: 'member names and roles' },
+  { slug: 'groups.presence.read', kind: 'group', what: 'online/offline per member' },
+  { slug: 'sessions.read', kind: 'group', what: 'live agent sessions, harness, state and waiting reason' },
+  { slug: 'sessions.watch', kind: 'group', what: 'read-only terminal view of member agents' },
+  { slug: 'sessions.attach', kind: 'group', sensitive: true, what: 'terminal view and full keyboard input, including answering harness approvals' },
+  { slug: 'message.direct', kind: 'group', what: 'mail to members (shares their names and ids)' },
+  { slug: 'message.attachments', kind: 'group', what: 'attachments, together with message.direct on the same group' },
+  { slug: 'routes.consume', kind: 'group', what: 'list and open ready group routes' },
+  { slug: 'groups.members.spawn', kind: 'group', sensitive: true, policy: true, what: 'spawn workers automatically, within your launch settings and live cap' },
+  { slug: 'jobs.run', kind: 'group', sensitive: true, policy: true, what: 'run one-shot jobs in your allowed repositories, within the live cap' },
+  { slug: 'agents.receive', kind: 'scoped', what: 'move or share agents into the group' },
+  { slug: 'agents.teleport.receive', kind: 'scoped', what: 'teleport agents into the group' },
+  { slug: 'node.read', kind: 'node', what: 'platform, harness versions, labels and resource numbers' },
+  { slug: 'node.harnesses.read', kind: 'node', what: 'harness availability and versions' },
+  { slug: 'costs.read', kind: 'node', what: 'the complete node-wide cost collection' },
+  { slug: 'federation.audit.read', kind: 'node', what: 'the complete node-wide dashboard audit log' },
+  { slug: 'config.offer', kind: 'node', what: 'offer config bundles for your review' },
+  { slug: 'approvals.answer', kind: 'node', sensitive: true, what: 'answer access requests once while selected as your away cover' },
+  { slug: 'node.update', kind: 'node', sensitive: true, what: 'update tclaude on this node' },
+  { slug: 'node.harnesses.install', kind: 'node', sensitive: true, what: 'install and update harnesses on this node' },
+  { slug: 'node.credentials.receive', kind: 'node', sensitive: true, what: 'push its harness credentials here — this node\'s agents then act as that operator with the provider' },
+  { slug: 'models.proxy', kind: 'node', what: 'use this node\'s model gateway (gateway scopes: CLI)' },
+  { slug: 'models.proxy.leased', kind: 'node', what: 'leased model gateway access' },
+]);
+
+export function slugInfo(slug) {
+  return PEER_SLUGS.find((s) => s.slug === slug) || { slug, kind: 'node', what: '' };
+}
+
+// scopeGroup names the group of a 'group=<name>' scope ('' = unscoped).
+export function scopeGroup(scope) {
+  return String(scope || '').startsWith('group=') ? String(scope).slice(6) : '';
+}
+
+// grantRows shapes a target's grants for the table: direct grants first, then
+// those inherited from a pool (revoked on the pool, not here). On a pool's own
+// page (ownPool) its grants are direct. A scope still naming a numeric group
+// ID means the group is gone (the daemon shows names for live groups).
+export function grantRows(grants, { ownPool = '', groups = null } = {}) {
+  const rows = (Array.isArray(grants) ? grants : []).map((g) => {
+    const info = slugInfo(g.slug);
+    const group = scopeGroup(g.scope);
+    return {
+      key: `${g.pool_id || ''}|${g.slug}|${g.scope || ''}`,
+      slug: g.slug, scope: g.scope || '', group, what: info.what, sensitive: !!info.sensitive,
+      allGroups: !g.scope && info.kind === 'group',
+      pool: g.pool_name && g.pool_name !== ownPool ? g.pool_name : '',
+      deletedGroup: !!group && /^\d+$/.test(group) && !!groups && !groups.includes(group),
+      maxLive: g.spawn_policy?.max_live || 0,
+      policy: g.spawn_policy || {},
+    };
+  });
+  return rows.sort((a, b) => (a.pool ? 1 : 0) - (b.pool ? 1 : 0) || a.slug.localeCompare(b.slug) || a.group.localeCompare(b.group));
+}
+
+// extraPolicy lists launch settings beyond the live cap (set from the CLI).
+export function extraPolicy(policy) {
+  return Object.entries(policy || {}).filter(([k, v]) => k !== 'max_live' && v != null && v !== '' && !(Array.isArray(v) && !v.length)).map(([k]) => k);
+}
+
+// grantConsequence spells out what a new grant lets the target do.
+export function grantConsequence({ target, slug, group, maxLive }) {
+  const info = slugInfo(slug);
+  const where = info.kind === 'node' ? 'node-wide' : group ? `in group ${group}` : 'in EVERY group on this node — every current group and every group created later';
+  const cap = info.policy ? ` Live cap: ${maxLive || 2}.` : '';
+  return `${target} gets ${slug} (${info.what}) ${where}.${cap}`;
+}
