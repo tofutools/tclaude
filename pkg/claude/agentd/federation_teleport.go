@@ -318,7 +318,11 @@ func handleFederationTeleport(w http.ResponseWriter, r *http.Request) {
 }
 func ioNop(body []byte) io.ReadCloser { return io.NopCloser(bytes.NewReader(body)) }
 func handleFederationTeleportSwitch(w http.ResponseWriter, r *http.Request) {
-	if !requireHuman(w, r, "freeze or enable teleports") {
+	if !requireHuman(w, r, "inspect, freeze or enable teleports") {
+		return
+	}
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		writeJSON(w, 200, map[string]bool{"disabled": teleportFrozen()})
 		return
 	}
 	var in struct {

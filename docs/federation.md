@@ -1139,6 +1139,11 @@ tclaude federation moves show OFFER_ID
 tclaude federation moves abandon OFFER_ID
 ```
 
+The local dashboard uses the same responses at `GET /api/federation/moves`,
+`GET /api/federation/moves/{id}` and `POST /api/federation/moves/{id}/abandon`.
+These cookie-authenticated routes are local operator administration and are
+refused through peer views.
+
 Moves require history; `--skip-history` is refused. Paths, group membership and
 permissions follow the agent-offer import rules. The receiving agent has a new
 agent ID and conversation ID, with a durable `moved_from` link containing the
@@ -1621,6 +1626,11 @@ limits. `allow_return` on both the node and landing policy permits an explicit
 are explanatory, not authority to act as another principal.
 
 An operator can run `tclaude federation teleport off` (and `on` to restore it).
+`tclaude federation teleport status` reads the current switch as
+`{"disabled": true|false}`. The local dashboard has the same read and write
+contract at `GET` and `PUT /api/federation/teleport`; the CLI uses
+`GET` and `PUT /v1/federation/teleport`. The dashboard routes require the local
+operator cookie and are refused through peer views.
 This freezes new incoming/outgoing teleports and prevents uncommitted launch or
 retirement on that instance. Apply it on each node to freeze a fleet; disconnected
 nodes cannot be changed by a local switch. Existing agents and backup leases keep running.
