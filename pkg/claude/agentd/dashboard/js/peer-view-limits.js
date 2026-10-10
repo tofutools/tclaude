@@ -12,8 +12,10 @@ import { shellToast } from './shell-state.js';
 
 // TAB_FEATURES maps the per-node tabs to the peer-view feature that serves
 // them. Groups is the snapshot itself; the map is this operator's own fleet
-// view. A tab absent here has no peer route at all.
-const TAB_FEATURES = Object.freeze({ groups: 'agents.status', costs: 'costs', audit: 'audit', map: 'local', fleet: 'local', 'fleet-admin': 'local' });
+// view, and Terminals holds this browser's own terminals (a peer's agent
+// opens there through this node's federation bridge). A tab absent here has
+// no peer route at all.
+const TAB_FEATURES = Object.freeze({ groups: 'agents.status', costs: 'costs', audit: 'audit', map: 'local', fleet: 'local', 'fleet-admin': 'local', terminals: 'local' });
 
 // READ_ONLY_ACTS are data-act controls that only change this browser's view
 // or show snapshot data. The ⚙ menus open (their items are gated one by one).
