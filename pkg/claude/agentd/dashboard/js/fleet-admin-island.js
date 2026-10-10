@@ -399,7 +399,7 @@ export function FleetAdmin({
       : html`<${AuditPage} view=${view} actions=${actions} now=${now()} />`}
     ${dialog?.kind === 'trust' && html`<${TrustDialog} row=${dialog.row} actions=${actions} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${dialog?.kind === 'key' && html`<${KeyTransitionDialog} row=${view.trusted.find((r) => r.id === dialog.row.id && r.keyTransition) || dialog.row} resolved=${!view.trusted.some((r) => r.id === dialog.row.id && r.keyTransition)} copy=${copy} toast=${toast} onClose=${() => setDialog(null)} />`}
-    ${dialog?.kind === 'settings' && html`<${NodeSettingsDialog} self=${view.self} actions=${actions} confirm=${confirm} toast=${toast} onClose=${() => setDialog(null)} onDone=${done} />`}
+    ${dialog?.kind === 'settings' && html`<${NodeSettingsDialog} self=${view.self} peers=${view.trusted} actions=${actions} confirm=${confirm} toast=${toast} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${dialog?.kind === 'update' && html`<${NodeUpdateDialog} node=${{ id: view.self.id, label: view.self.name, local: true }} actions=${updateActions} confirm=${confirm} toast=${toast} timers=${timers} onClose=${() => setDialog(null)} />`}
     ${dialog?.kind === 'unrestrict' && html`<${UnrestrictDialog} row=${dialog.row} actions=${actions} onClose=${() => setDialog(null)} onDone=${done} />`}
   </div>`;

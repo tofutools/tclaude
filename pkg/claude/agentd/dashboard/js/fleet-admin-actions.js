@@ -40,6 +40,10 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
     // hub_ca_file — a path on this node).
     setHubConfig: (body) => call('POST', 'config', body),
     nodeLabels: async () => (await call('GET', 'node-labels'))?.labels || [],
+    // Fleet health notice policy: the defaults ('' peer) or one peer's (the
+    // effective policy, built-in defaults filled in); a save replaces it.
+    healthPolicy: (peer = '') => call('GET', `nodes/health?peer=${encodeURIComponent(peer)}`),
+    setHealthPolicy: (peer, policy) => call('POST', `nodes/health?peer=${encodeURIComponent(peer || '')}`, policy),
     setNodeLabels: ({ add = [], remove = [] }) => call('POST', 'node-labels', { add, remove }),
     // Peers viewing this node's agent terminals now; kick closes one view.
     viewers: async () => (await call('GET', 'viewers')) || [],

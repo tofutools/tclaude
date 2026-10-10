@@ -25,6 +25,7 @@ const (
 	// KindSpawnReq asks the recipient to spawn a worker into one of its
 	// exported groups. The recipient's operator decides; KindSpawnRes
 	// (InReplyTo = the request) reports the decision.
+	KindJobOutput       = "job_output"
 	KindJobFollow       = "job_follow"
 	KindJobFollowAnswer = "job_follow_answer"
 	KindJobRequest      = "job_request"
@@ -216,6 +217,7 @@ type CatalogPayload struct {
 	RequesterPays   int            `json:"requester_pays,omitempty"`
 	TeleportBackups bool           `json:"teleport_backups,omitempty"`
 	AgentTeleports  int            `json:"agent_teleports,omitempty"`
+	JobOutput       bool           `json:"job_output,omitempty"`
 	AgentMoves      bool           `json:"agent_moves,omitempty"`
 	Node            *NodeMetadata  `json:"node,omitempty"`
 	NodeAt          time.Time      `json:"node_at,omitempty"`
