@@ -120,7 +120,7 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	agentID, _ := db.AgentIDForConv(p.ConvID)
-	presence, _ := db.GetAgentFederationPresence(agentID)
+	presence, _ := db.ProjectedAgentFederationPresence(agentID)
 	writeJSON(w, http.StatusOK, whoamiResp{FederationPresence: presence, Predecessor: teleportPredecessor(agentID), AgentID: agentID, ConvID: p.ConvID, Title: title, Groups: gs, ActiveGroups: activeGroups, Phases: phases})
 }
 
@@ -349,7 +349,7 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 	for conv, pe := range byConv {
 		state, _ := shared.stateFor(conv)
 		pe.State = peerStateFromAgentState(state)
-		pe.FederationPresence, _ = db.GetAgentFederationPresence(pe.AgentID)
+		pe.FederationPresence, _ = db.ProjectedAgentFederationPresence(pe.AgentID)
 		if pe.FederationPresence != nil && pe.FederationPresence.State == "away" {
 			pe.Online = false
 			pe.State.Status = "away"

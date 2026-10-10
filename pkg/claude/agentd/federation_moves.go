@@ -132,6 +132,9 @@ func confirmIncomingAgentMove(m db.FederationAgentMove) {
 			return
 		}
 	}
+	if err := sendConfirmedAgentLocation(m); err != nil {
+		return
+	}
 	m.TargetConv = a.CurrentConvID
 	m.Cwd = s.Cwd
 	m.Disposition = "landed"

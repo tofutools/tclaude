@@ -133,7 +133,7 @@ func (v *peerView) groups() ([]dashboardGroup, []dashboardAgent, error) {
 					continue
 				}
 				ar := dashboardMember{AgentID: aid, ConvID: m.ConvID, Title: agent.TitleFor(m.ConvID)}
-				fp, err := db.GetAgentFederationPresence(aid)
+				fp, err := db.ProjectedAgentFederationPresence(aid)
 				if err != nil {
 					return nil, nil, err
 				}

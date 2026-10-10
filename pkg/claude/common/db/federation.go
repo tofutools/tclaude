@@ -355,6 +355,22 @@ func InsertFederationInboundMessage(m *AgentMessage, in FederationInbound, expir
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if m.ToAgent != "" {
+		fenced, err := federationMailFencedTx(tx, m.ToAgent)
+		if err != nil {
+			return 0, err
+		}
+		if fenced {
+			return 0, ErrFederationMailMoving
+		}
+		res, err := tx.Exec(`INSERT OR IGNORE INTO federation_agent_mail_deliveries(agent_id,sender_instance,envelope_id,expires_at) VALUES(?,?,?,?)`, m.ToAgent, in.FromInstance, in.EnvelopeID, dbTime(expiresAt))
+		if err != nil {
+			return 0, err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return 0, ErrFederationDuplicate
+		}
+	}
 	res, err := tx.Exec(`INSERT OR IGNORE INTO federation_seen(from_instance, envelope_id, expires_at) VALUES(?,?,?)`,
 		in.FromInstance, in.EnvelopeID, dbTime(expiresAt))
 	if err != nil {

@@ -99,6 +99,8 @@ func DecodeFile(f *os.File, limit int64, dir string) (bundle *Bundle, err error)
 		case ManifestFile:
 			cap = MaxManifestBytes
 		case HistoryFile:
+		case MailLedgerFile:
+			cap = MaxMailLedgerBytes
 		default:
 			return nil, fmt.Errorf("unexpected archive entry %q", entry.Name)
 		}
@@ -128,6 +130,21 @@ func DecodeFile(f *os.File, limit int64, dir string) (bundle *Bundle, err error)
 			if e = json.Unmarshal(raw, &b.Manifest); e != nil {
 				return nil, e
 			}
+		} else if entry.Name == MailLedgerFile {
+			raw, e := io.ReadAll(io.LimitReader(r, cap+1))
+			ce := r.Close()
+			if e != nil {
+				return nil, e
+			}
+			if ce != nil {
+				return nil, ce
+			}
+			if int64(len(raw)) > cap {
+				return nil, errors.New("mail ledger exceeds 64 MiB")
+			}
+			if e = json.Unmarshal(raw, &b.MailDeliveries); e != nil {
+				return nil, e
+			}
 		} else {
 			tmp, e := os.CreateTemp(dir, ".agent-history-")
 			if e != nil {
@@ -155,6 +172,9 @@ func DecodeFile(f *os.File, limit int64, dir string) (bundle *Bundle, err error)
 	}
 	if !seen[ManifestFile] {
 		return nil, errors.New("archive has no manifest.json")
+	}
+	if b.Manifest.MailLedger != seen[MailLedgerFile] {
+		return nil, errors.New("mail ledger declaration does not match archive")
 	}
 	if b.Manifest.History != nil && !seen[HistoryFile] {
 		return nil, errors.New("declared history entry is missing")
