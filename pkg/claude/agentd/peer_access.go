@@ -43,7 +43,7 @@ func peerHasAccess(peer string) bool {
 		if !slices.Contains(meaningful, g.Slug) {
 			continue
 		}
-		if g.Scope == "" {
+		if g.Scope == "" || (g.Slug == PermModelsProxy || g.Slug == PermModelsProxyLeased) && strings.HasPrefix(g.Scope, "http_proxy=") {
 			return true
 		}
 		groupID, err := strconv.ParseInt(strings.TrimPrefix(g.Scope, "group="), 10, 64)

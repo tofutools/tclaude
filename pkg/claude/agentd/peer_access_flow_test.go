@@ -128,3 +128,41 @@ func TestPeerAccessAwayCoverCannotApprove(t *testing.T) {
 		})
 	}
 }
+
+func TestPeerAccessAgentAsksOwnOperatorOnlyForSharedTarget(t *testing.T) {
+	fh := newFedHarness(t)
+	aid := fedMoveSource(t, fh)
+	count, reset := agentd.StubCountingApprovalForTest(false)
+	t.Cleanup(reset)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:9999"))
+	call := func() int {
+		r := agentd.AsAgentPeer(testharness.JSONRequest(t, "POST", "/v1/federation/move-agent", map[string]any{"agent": aid, "peer": "bob", "group": "receiver"}), moveSourceConv)
+		r.Header.Set("X-Tclaude-Ask-Human", "30s")
+		rec := testharness.Serve(fh.f.Mux, r)
+		return rec.Code
+	}
+	require.Equal(t, 403, call())
+	require.Zero(t, count(), "public placement metadata cannot prompt own operator for nonexistent peer access")
+	fh.peer.send(fh.peer.envelope(proto.KindCatalog, proto.Endpoint{}, proto.CatalogPayload{AgentMoves: true, Groups: []proto.CatalogGroup{{Name: "receiver", Caps: []string{proto.CapRoster}}}}))
+	fedEventually(t, "shared catalog group", func() bool {
+		raw, _, _ := db.GetFederationCatalog(fh.peer.id.ID())
+		var c proto.CatalogPayload
+		return json.Unmarshal([]byte(raw), &c) == nil && len(c.Groups) == 1
+	})
+	require.Equal(t, 403, call())
+	require.EqualValues(t, 1, count(), "missing local permission prompts own operator after peer access exists")
+}
+
+func TestPeerAccessModelOnlyAdmission(t *testing.T) {
+	fh := newFedHarness(t)
+	require.NoError(t, db.UpsertFederationPeerGrant(db.FederationPeerGrant{Peer: fh.peer.id.ID(), Slug: agentd.PermModelsProxy, Scope: "http_proxy=model"}))
+	rec := testharness.Serve(agentd.PeerViewHandler(fh.peer.id.ID()), testharness.JSONRequest(t, "POST", "/api/peer-access-requests", map[string]any{"permission": agentd.PermNodeUpdate}))
+	require.Equal(t, 202, rec.Code, rec.Body.String())
+	var row db.FederationPeerAccessRequest
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &row))
+	require.Equal(t, 200, fedHuman(t, fh.f, "POST", "/v1/federation/access-requests/"+row.ID+"/decision", map[string]any{"decision": "approve"}).Code)
+	fedEventually(t, "model-only access approval", func() bool {
+		r, e := db.GetFederationPeerAccessRequest(row.ID)
+		return e == nil && r != nil && r.Status == "approved"
+	})
+}
