@@ -459,8 +459,17 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 		if result.Spawn.Conv == "" {
 			require.NotEmpty(t, result.Spawn.AgentID, string(raw))
 			// Managed native imports may finish after the HTTP inline grace.
-			fedEventuallyWithin(t, "imported agent enrolled", 30*time.Second, func() bool {
-				code, raw := historyNodeRequest(t, node, "GET", "/v1/groups/project/members", "", nil)
+			fedEventuallyWithin(t, "imported agent running", 30*time.Second, func() bool {
+				// Stable identity keeps the home placeholder in this group.
+				// Its old conv is not the asynchronously arriving generation.
+				code, raw := historyNodeRequest(t, node, "GET", "/v1/federation/moves/"+d.ID, "", nil)
+				var move struct {
+					State string `json:"state"`
+				}
+				if code != 200 || json.Unmarshal(raw, &move) != nil || move.State != "running" {
+					return false
+				}
+				code, raw = historyNodeRequest(t, node, "GET", "/v1/groups/project/members", "", nil)
 				if code != 200 {
 					return false
 				}
