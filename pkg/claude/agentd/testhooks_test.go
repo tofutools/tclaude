@@ -2126,3 +2126,11 @@ func RefreshFederationCatalogsForTest() {
 		rt.broadcastCatalogs()
 	}
 }
+
+// Source fixture uses the real managed-server launch on its seeded native ID;
+// the OpenCode executable is the external subprocess simulator on PATH.
+func StartHistoryOpenCodeRuntimeForTest(label, cwd, id string) error {
+	_, err := startOpenCodeRuntimeForSpawn(label, cwd, "traveller", id, `[]`, "off", nil, "")
+	return err
+}
+func StopHistoryOpenCodeRuntimeForTest(label string) { _ = stopOpenCodeRuntime(label) }

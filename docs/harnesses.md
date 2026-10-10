@@ -100,7 +100,7 @@ warning. Model and effort are remembered by the harness itself.
 | Federated model gateway (`--model-proxy`) | Yes, ordinary workers | Yes, TUI and app-server | No: provider isolation | Yes, HTTP Responses BYOK | No: native Gemini dialect | No |
 | Sessions: spawn / resume | ✅ | ✅ | ✅ managed server + attach | ✅ | ✅ | ✅ spawn only |
 | One-shot [`ask`](ask.md) | ✅ live-streamed | ✅ buffered | ✅ buffered | ✅ buffered | ✅ buffered | ❌ |
-| Portable agent-bundle history | ✅ JSONL | ✅ rollout JSONL | ⚠️ config only | ⚠️ config only | ✅ native chat JSONL | ❌ |
+| Portable agent-bundle history | ✅ JSONL | ✅ rollout JSONL | ✅ native export/import | ⚠️ config only | ✅ native chat JSONL | ❌ |
 | [Conversation](conversations.md) list & search | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only | ⚠️ send-keys only, not yet exercised against a live pane | ⚠️ durable inbox only; never injected into the shell |
 | Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` | ✅ tclaude title overlay | ❌ |

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -23,9 +24,11 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
 	"github.com/tofutools/tclaude/pkg/federation/hub"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
+	"github.com/tofutools/tclaude/pkg/testharness"
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
@@ -41,10 +44,25 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 	t.Setenv("CODEX_HOME", "")
 	t.Setenv("GEMINI_CLI_HOME", "")
 	f := newFlow(t)
+	if name == "opencode" {
+		bin := filepath.Join(f.World.HomeDir, "bin")
+		require.NoError(t, os.MkdirAll(bin, 0700))
+		script := "#!/bin/sh\nexec '" + strings.ReplaceAll(os.Args[0], "'", "'\\''") + "' -test.run=^TestFederation_OpenCodeHistoryCLI$ -- \"$@\"\n"
+		require.NoError(t, os.WriteFile(filepath.Join(bin, "opencode"), []byte(script), 0700))
+		t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+		t.Setenv("TCLAUDE_OPENCODE_HISTORY_FLOW_HELPER", "1")
+	}
+
 	agentd.ResetFederationForTest()
 	t.Cleanup(agentd.ResetFederationForTest)
 	cwd := testutil.CanonicalTempDir(t)
 	f.HaveGroup("project")
+	if name == "opencode" {
+		_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "native-history", Harness: "opencode", SandboxImplementation: "off"})
+		require.NoError(t, err)
+		_, err = db.SetAgentGroupDefaultProfile("project", "native-history")
+		require.NoError(t, err)
+	}
 	_, err := db.SetAgentGroupDefaultCwd("project", cwd)
 	require.NoError(t, err)
 	// The operator explicitly permits return-home within the revisit window.
@@ -99,6 +117,22 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 			default:
 				f.HaveAliveSession(in.Conv, "traveller", "traveller-pane", cwd)
 			}
+
+			if name == "opencode" {
+				row, err := db.LoadSession("traveller")
+				require.NoError(t, err)
+				row.Harness = "opencode"
+				row.ApprovalPolicy = ""
+				row.SandboxImplementation = "off"
+				require.NoError(t, db.SaveSession(row))
+				// The initial simulator session was Claude; replace its durable
+				// launch facts with the explicitly selected OpenCode posture too.
+				profile, err := db.ConversationResumeProfileForConv(in.Conv)
+				require.NoError(t, err)
+				profile.Harness = "opencode"
+				profile.FallbackRelaunch.SandboxImplementation = &row.SandboxImplementation
+				require.NoError(t, db.SetConversationResumeProfile(in.Conv, *profile))
+			}
 			f.HaveMember("project", in.Conv)
 		}
 		// Append through the same native writer as a harness completing a turn.
@@ -111,6 +145,20 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 				sim.Receive("Enter")
 			}
 			sim.WriteGeminiReply(in.Assistant, "gemini-2.5-flash")
+		case "opencode":
+			require.NoError(t, testharness.AppendOpenCodeHistory(f.World.HomeDir, in.Conv, cwd, in.Text, in.Assistant))
+			_, err := harness.MustGet("opencode").Convs.ListConvs("")
+			require.NoError(t, err)
+			if in.Seed {
+				require.NoError(t, agentd.StartHistoryOpenCodeRuntimeForTest("traveller", cwd, in.Conv))
+				t.Cleanup(func() { agentd.StopHistoryOpenCodeRuntimeForTest("traveller") })
+			}
+			row, err := db.FindSessionByConvID(in.Conv)
+			require.NoError(t, err)
+			require.NotNil(t, row)
+			row.Status = "idle"
+			require.NoError(t, db.SaveSession(row))
+
 		case "codex":
 			require.NoError(t, f.World.Codexes.GetByConvID(in.Conv).WriteExchange(in.Text, in.Assistant))
 		default:
@@ -125,6 +173,20 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 		}
 		w.WriteHeader(204)
 	})
+
+	mux.HandleFunc("/test/opencode-exit", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			PID int `json:"pid"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&in))
+		runtime, err := db.FindOpenCodeRuntimeByPID(in.PID)
+		require.NoError(t, err)
+		require.NotNil(t, runtime)
+		cc := f.World.CCs.GetByConvID(runtime.ConvID)
+		require.NotNil(t, cc)
+		cc.Shutdown()
+		w.WriteHeader(204)
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if conv := r.Header.Get("X-Test-Agent-Conv"); conv != "" {
 			r = agentd.AsAgentPeer(r, conv)
@@ -134,6 +196,10 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 		f.Mux.ServeHTTP(w, r)
 	})
 	srv := httptest.NewServer(mux)
+	if name == "opencode" {
+		t.Setenv("TCLAUDE_OPENCODE_HISTORY_EXIT_URL", srv.URL+"/test/opencode-exit")
+	}
+
 	t.Cleanup(srv.Close)
 	instance := agentd.FederationInstanceIDForTest()
 	identity, err := proto.LoadIdentity(agentd.FederationKeyPath())
@@ -235,7 +301,7 @@ func historyNodeRequest(t *testing.T, node historyNode, method, path, conv strin
 }
 
 func TestFederation_TeleportHistoryRoundTrip(t *testing.T) {
-	for _, name := range []string{"claude", "codex", "gemini"} {
+	for _, name := range []string{"claude", "codex", "opencode", "gemini"} {
 		t.Run(name, func(t *testing.T) { runHistoryRoundTrip(t, name, false) })
 	}
 }
@@ -258,6 +324,10 @@ func historyTestRequestTimeout() time.Duration {
 	return 15 * time.Second
 }
 func runHistoryRoundTrip(t *testing.T, name string, large bool) {
+	sourceConv := moveSourceConv
+	if name == "opencode" {
+		sourceConv = "ses_historysource"
+	}
 	st, err := hub.OpenStore(filepath.Join(testutil.CanonicalTempDir(t), "hub.sqlite"))
 	require.NoError(t, err)
 	h, err := hub.New(st, hub.Config{BytesPerMinute: 2 << 30, StreamBytesPerSecond: 100 << 20, FramesPerMinute: 6000})
@@ -299,8 +369,7 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 	}
 	const original = "Original plan from node A: repair the index."
 	const originalReply = "I will inspect the source repository before travelling."
-	code, raw := historyNodeRequest(t, a, "POST", "/test/turn", "", map[string]any{"Conv": moveSourceConv, "Text": original, "Assistant": originalReply, "Peer": b.Instance, "Seed": true})
-	sourceConv := moveSourceConv
+	code, raw := historyNodeRequest(t, a, "POST", "/test/turn", "", map[string]any{"Conv": sourceConv, "Text": original, "Assistant": originalReply, "Peer": b.Instance, "Seed": true})
 	if name == "gemini" {
 		require.Equal(t, 200, code, string(raw))
 		var seed struct{ Conv string }
@@ -351,8 +420,16 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 	}
 	land := func(node historyNode, d bundletransfer.Descriptor) string {
 		path := "/v1/federation/bundle-offers/" + d.ID + "/import"
+		var lastRaw []byte
+		var lastCode int
+		t.Cleanup(func() {
+			if t.Failed() {
+				t.Logf("last import preview: %d %s", lastCode, lastRaw)
+			}
+		})
 		fedEventuallyWithin(t, "offer received", historyTestRequestTimeout(), func() bool {
-			code, _ := historyNodeRequest(t, node, "POST", path, "", map[string]any{"cwd": node.Cwd})
+			code, raw := historyNodeRequest(t, node, "POST", path, "", map[string]any{"cwd": node.Cwd})
+			lastCode, lastRaw = code, raw
 			return code == 200
 		})
 		code, raw := historyNodeRequest(t, node, "POST", path, "", map[string]any{"apply": true, "cwd": node.Cwd})
@@ -360,12 +437,36 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 		var result struct {
 			History bool `json:"history"`
 			Spawn   struct {
-				Conv string `json:"conv_id"`
+				Conv    string `json:"conv_id"`
+				AgentID string `json:"agent_id"`
 			} `json:"spawn"`
 		}
 		require.NoError(t, json.Unmarshal(raw, &result))
 		require.True(t, result.History)
-		require.NotEmpty(t, result.Spawn.Conv)
+		if result.Spawn.Conv == "" {
+			require.NotEmpty(t, result.Spawn.AgentID, string(raw))
+			// Managed native imports may finish after the HTTP inline grace.
+			fedEventuallyWithin(t, "imported agent enrolled", 30*time.Second, func() bool {
+				code, raw := historyNodeRequest(t, node, "GET", "/v1/groups/project/members", "", nil)
+				if code != 200 {
+					return false
+				}
+				var members []struct {
+					AgentID string `json:"agent_id"`
+					Conv    string `json:"conv_id"`
+				}
+				if json.Unmarshal(raw, &members) != nil {
+					return false
+				}
+				for _, member := range members {
+					if member.AgentID == result.Spawn.AgentID {
+						result.Spawn.Conv = member.Conv
+					}
+				}
+				return result.Spawn.Conv != ""
+			})
+		}
+		require.NotEmpty(t, result.Spawn.Conv, string(raw))
 		return result.Spawn.Conv
 	}
 	outward := teleport(a, b, sourceConv, false)
@@ -381,10 +482,7 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 			historyMoveDiagnostics(t, a, b, outward.ID)
 		}
 	})
-	// This crosses two real daemon processes: running observation, durable
-	// outbox delivery/retry, then source teardown. The shared 10s in-process
-	// test budget is shorter than even one production send timeout (15s).
-	// Keep polling the committed state rather than sleeping for that budget.
+	// The two-daemon delivery/retirement crosses production retries (15s each).
 	fedEventuallyWithin(t, "A retires only after B is running", 60*time.Second, func() bool {
 		code, raw := historyNodeRequest(t, a, "GET", "/v1/federation/moves/"+outward.ID, "", nil)
 		var move struct {
@@ -503,4 +601,22 @@ func (c *historyInterruptConn) Read(p []byte) (int, error) {
 		_ = c.Close()
 	}
 	return n, err
+}
+
+func TestFederation_OpenCodeHistoryCLI(t *testing.T) {
+	if os.Getenv("TCLAUDE_OPENCODE_HISTORY_FLOW_HELPER") != "1" {
+		t.Skip("native CLI subprocess")
+	}
+	args := os.Args
+	for i, arg := range args {
+		if arg == "--" {
+			args = args[i+1:]
+			break
+		}
+	}
+	if err := testharness.OpenCodeHistoryCLI(args); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	os.Exit(0)
 }

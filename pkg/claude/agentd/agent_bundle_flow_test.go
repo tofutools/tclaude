@@ -175,16 +175,26 @@ func TestAgentBundleCredentialCountsAndConfigOnly(t *testing.T) {
 	b, err := agentbundle.Decode(rec.Body.Bytes())
 	require.NoError(t, err)
 	assert.Equal(t, 8, strings.Count(string(b.Transcript), "keepverbatim123456789"))
-	// Unsupported harnesses carry the complete config with a visible warning.
+	// Missing optional native tools carry the complete config with a visible warning.
+	t.Setenv("PATH", testutil.CanonicalTempDir(t))
 	cx := "ses_portable-config"
 	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: cx, Harness: "opencode", ProjectPath: cwd, FullPath: filepath.Join(cwd, "unused")}))
 	f.HaveMember("source", cx)
+	// Preserve the actual harness in the native launch row, as a real agent does.
+	require.NoError(t, db.SaveSession(&db.SessionRow{ID: "opencode-config", ConvID: cx, Harness: "opencode", Cwd: cwd}))
 	rec = profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+cx+"&history=true", nil)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	b, err = agentbundle.Decode(rec.Body.Bytes())
 	require.NoError(t, err)
 	assert.Nil(t, b.Manifest.History)
 	assert.Contains(t, strings.Join(b.Manifest.Warnings, " "), "config only")
+	// Skipping history also works with no OpenCode binary installed.
+	rec = profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+cx, nil)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	b, err = agentbundle.Decode(rec.Body.Bytes())
+	require.NoError(t, err)
+	assert.Nil(t, b.Manifest.History)
+	assert.Equal(t, "opencode", b.Manifest.Agent.Harness)
 }
 
 type failingBundleSpawner struct {

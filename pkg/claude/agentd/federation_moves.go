@@ -140,7 +140,7 @@ func confirmIncomingAgentMove(m db.FederationAgentMove) {
 }
 func (rt *fedRuntime) acceptAgentMoveConfirmation(p *db.FederationPeer, env *proto.Envelope) {
 	var c bundletransfer.MoveConfirmation
-	if env.From.Agent != "" || env.To.Agent != "" || env.DecodePayload(&c) != nil || !proto.ValidAgentRef(c.TargetAgent) || len(c.TargetConv) != 36 {
+	if env.From.Agent != "" || env.To.Agent != "" || env.DecodePayload(&c) != nil || !proto.ValidAgentRef(c.TargetAgent) || !proto.ValidConversationRef(c.TargetConv) {
 		return
 	}
 	m, err := db.GetFederationAgentMove("out", p.InstanceID, c.Offer)

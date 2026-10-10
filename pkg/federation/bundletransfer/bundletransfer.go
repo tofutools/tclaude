@@ -124,7 +124,7 @@ func (d Descriptor) Validate(kind Type, now time.Time) error {
 			return err
 		}
 	}
-	if d.Move != nil && (kind.Name != Agent.Name || !proto.ValidAgentRef(d.Move.SourceAgent) || len(d.Move.SourceConv) != 36) {
+	if d.Move != nil && (kind.Name != Agent.Name || !proto.ValidAgentRef(d.Move.SourceAgent) || !proto.ValidConversationRef(d.Move.SourceConv)) {
 		return errors.New("invalid agent move identity")
 	}
 	if d.Move != nil && (len(d.Move.Cwd) > 4096 || len(d.Move.Landing) > 256 || d.Move.DirectIfAllowed && d.Teleport != nil) {

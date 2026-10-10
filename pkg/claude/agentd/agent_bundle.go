@@ -57,6 +57,13 @@ func collectAgentBundle(convID string, withHistory bool) (*agentbundle.Bundle, e
 	if h.UsesCommandInput() {
 		return nil, errors.New("command-input harnesses cannot be bundled as agents")
 	}
+	historyWarning := ""
+	if withHistory && h.Name == harness.OpenCodeName {
+		if _, err := harness.OpenCodeExecutable(); err != nil {
+			withHistory = false
+			historyWarning = "OpenCode executable unavailable; exporting config only (no conversation history)"
+		}
+	}
 	seed, err := seedProfileFromConv(convID)
 	if err != nil {
 		return nil, err
@@ -273,6 +280,9 @@ func collectAgentBundle(convID string, withHistory bool) (*agentbundle.Bundle, e
 	}
 	d.Profile = safe.Sections["profiles"][0].Value
 	b := &agentbundle.Bundle{MaxBytes: agentTransferLimit(), Manifest: agentbundle.Manifest{Format: agentbundle.Format, FormatVersion: 1, CreatedAt: time.Now().UTC().Format(time.RFC3339), TclaudeVersion: buildversion.AppVersion(), Agent: d, Placeholders: safe.Placeholders}}
+	if historyWarning != "" {
+		b.Manifest.Warnings = append(b.Manifest.Warnings, historyWarning)
+	}
 	if len(safe.Omitted) > 0 {
 		b.Manifest.Warnings = append(b.Manifest.Warnings, "Structured credential fields omitted: "+strings.Join(safe.Omitted, ", "))
 	}
