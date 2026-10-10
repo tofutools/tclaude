@@ -24,13 +24,13 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	}
 
 	// The native components are defined and read state.model.
-	must("function HarnessLine({ member, snapshot })", "HarnessLine component is defined")
+	must("function HarnessLine({ member, snapshot, local = true })", "HarnessLine component is defined")
 	must("function AgentStatusDot({ member })", "status-dot component is defined")
 	must("state.model", "the line reads the model off the agent's state")
 
 	// MemberCell wires it into the member control cell — same column as the
 	// dot/actions, NOT a new <td>.
-	must("<${HarnessLine} member=${member} snapshot=${snapshot} /></td>", "HarnessLine renders in the agent-ctl cell")
+	must("<${HarnessLine} member=${member} snapshot=${snapshot} local=${!group?.fleet_node || !!group.fleet_node.local} /></td>", "HarnessLine renders in the agent-ctl cell")
 
 	// The always-visible model is displayModel()-normalised; the harness uses a
 	// compact product mark while both FULL names stay in tooltips/accessibility
