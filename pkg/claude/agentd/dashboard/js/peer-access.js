@@ -7,6 +7,7 @@ import { slugInfo } from './fleet-admin-model.js';
 const html = htm.bind(h);
 
 const STATUS_POLL_MS = 3000;
+const MAX_MISSES = 20;
 const REASON_MAX = 4096;
 
 // TTL_CHOICES are the grant lifetimes an access request can ask for (or an
@@ -76,14 +77,16 @@ export function RequestAccessDialog({ node, perm, groups = [], onClose, actions 
   const [groupID, setGroupID] = useState(scope === 'scoped' && groups[0] ? String(groups[0].id) : '');
   const [reason, setReason] = useState('');
   const [ttl, setTtl] = useState('3600');
+  const [misses, setMisses] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [request, setRequest] = useState(null);
   useEffect(() => {
-    if (!request || !ACTIVE.has(request.status)) return undefined;
+    if (!request || !ACTIVE.has(request.status) || misses >= MAX_MISSES) return undefined;
     let off = false;
     const t = timers.setTimeout(() => {
-      actions.status(request.id).then((r) => { if (!off) setRequest(r); }).catch(() => { if (!off) setRequest({ ...request }); });
+      actions.status(request.id).then((r) => { if (!off) { setMisses(0); setRequest(r); } })
+        .catch(() => { if (!off) { setMisses((n) => n + 1); setRequest({ ...request }); } });
     }, STATUS_POLL_MS);
     return () => { off = true; timers.clearTimeout(t); };
   }, [request]);
@@ -99,13 +102,15 @@ export function RequestAccessDialog({ node, perm, groups = [], onClose, actions 
     <h3 id="peer-access-title">Request <code>${perm}</code> from ${node}</h3>
     ${request ? html`<div id="peer-access-status" class=${request.status === 'approved' ? '' : request.status === 'pending' ? 'muted' : 'fa-danger'}>
         Request ${request.id}: <b>${request.status}</b>
-        ${request.status === 'pending' && html`<div class="muted">${node}'s operator decides; this updates on its own.</div>`}
+        ${request.status === 'pending' && (misses >= MAX_MISSES
+          ? html`<div class="fa-danger">${node} stopped answering; check later with <code>tclaude federation access status --node … --id ${request.id}</code>.</div>`
+          : html`<div class="muted">${node}'s operator decides; this updates on its own.</div>`)}
         ${request.status === 'approved' && html`<div>Granted${request.grant_ttl_seconds ? ` for ${ttlText(request.grant_ttl_seconds)}` : ' permanently'}${request.grant_group_id ? ` in group #${request.grant_group_id}` : ''}. Retry the action; the view picks it up on its next refresh.</div>`}
       </div>` : html`
       <div class="muted">${slugInfo(perm)?.what || ''}</div>
-      ${scope !== 'node' && html`<label class="peer-access-opt">Group
+      ${scope !== 'node' && groups.length > 0 && html`<label class="peer-access-opt">Group
         <select id="peer-access-group" value=${groupID} onChange=${(e) => setGroupID(e.currentTarget.value)}>
-          ${scope === 'group' && html`<option value="">any group ${node} shares with me (it may narrow)</option>`}
+          ${scope === 'group' && html`<option value="">every group on ${node}, including future ones (it may narrow to one)</option>`}
           ${groups.map((g) => html`<option key=${g.id} value=${String(g.id)}>${g.name}</option>`)}
         </select></label>`}
       <label class="peer-access-opt">For
@@ -113,6 +118,7 @@ export function RequestAccessDialog({ node, perm, groups = [], onClose, actions 
           ${TTL_CHOICES.map((c) => html`<option key=${c.s} value=${String(c.s)}>${c.label}</option>`)}
         </select></label>
       <label class="peer-access-opt peer-access-reason">Reason <textarea id="peer-access-reason" rows="3" maxlength=${REASON_MAX} value=${reason} onInput=${(e) => setReason(e.currentTarget.value)}></textarea></label>
+      ${scope === 'group' && !groupID && html`<div class="muted">Without a group this asks for <code>${perm}</code> in every group on ${node}, including ones created later; its operator may narrow it to one group.</div>`}
       <div class="muted">${node}'s operator sees the permission${group ? `, group ${group.name}` : ''}, how long, and your reason, and may approve it for less. Requests time out after 5 minutes without a decision.</div>
       ${error && html`<div class="fa-danger" role="alert">${error}</div>`}`}
     <div class="modal-buttons">
@@ -120,6 +126,6 @@ export function RequestAccessDialog({ node, perm, groups = [], onClose, actions 
       <button type="button" onClick=${onClose}>${request ? 'Close' : 'Cancel'}</button>
       ${!request && html`<button id="peer-access-submit" type="button" class="primary" disabled=${busy || (scope === 'scoped' && !groupID)} onClick=${send}>Send request</button>`}
     </div>
-    <div class="muted fa-cli-note">CLI: <code>tclaude federation access request --node … --permission ${perm}</code></div>
+    <div class="muted fa-cli-note">CLI: <code>tclaude federation access request --node … --permission ${perm}${scope !== 'node' ? ' [--group-id …]' : ''}</code></div>
   </${Overlay}>`;
 }

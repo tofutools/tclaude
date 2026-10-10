@@ -446,7 +446,7 @@ function AccessReader({ request, controller }) {
       ${request.scope_display && html`<div class="access-row"><span class="access-k">${wizard ? 'Bounds' : 'Scope'}</span><span class="access-v mono"
         title="What a scoped “always allow” would be limited to — the typed context this gate evaluates grants against">${request.scope_display}</span></div>`}
       ${request.origin_peer && html`<div class="access-row"><span class="access-k">Peer</span><span class="access-v">${request.conv_title || request.origin_peer} <span class="mail-cid">${request.origin_peer}</span></span></div>
-        <div class="access-row"><span class="access-k">Asks for</span><span class="access-v">${request.group_id ? `group ${request.target_group || `#${request.group_id}`}` : slugInfo(request.perm)?.kind === 'node' ? 'node-wide' : 'every group shared with it'} · ${ttlText(request.grant_ttl_seconds) || 'permanent'}</span></div>
+        <div class="access-row"><span class="access-k">Asks for</span><span class="access-v">${request.group_id ? `group ${request.target_group || `#${request.group_id}`}` : slugInfo(request.perm)?.kind === 'node' ? 'node-wide' : 'every group on this node, including future ones'} · ${ttlText(request.grant_ttl_seconds) || 'permanent'}</span></div>
         ${request.grant_expires_at && html`<div class="access-row"><span class="access-k">Grant expires</span><span class="access-v">${new Date(request.grant_expires_at).toLocaleString()}</span></div>`}`}
       ${request.body && html`<div class="access-row access-body-row"><span class="access-k">${request.body_label || 'Body'}</span><pre class="access-body">${request.body}</pre></div>`}
     </div></div>
@@ -481,23 +481,29 @@ function PeerAccessDecision({ request, controller, loadLinks = defaultLinks }) {
   const [ttl, setTtl] = useState(String(request.grant_ttl_seconds ?? 3600));
   const [group, setGroup] = useState('');
   const [groups, setGroups] = useState([]);
-  const kind = slugInfo(request.perm)?.kind || 'node';
+  const info = slugInfo(request.perm);
+  const kind = info?.kind || 'node';
+  // Approval may shorten the grant, never lengthen it: offer the requested
+  // lifetime and the shorter choices (all of them when permanent was asked).
+  const asked = Number(request.grant_ttl_seconds ?? 3600);
+  const ttlChoices = [...TTL_CHOICES.filter((c) => asked === 0 || (c.s !== 0 && c.s <= asked)),
+    ...(TTL_CHOICES.some((c) => c.s === asked) ? [] : [{ s: asked, label: ttlText(asked) }])].sort((a, b) => (a.s || Infinity) - (b.s || Infinity));
   const narrowable = !request.group_id && kind === 'group';
   useEffect(() => {
     if (!narrowable) return;
-    loadLinks().then((rows) => setGroups(rows.filter((g) => (g.federation_links || []).some((l) => l?.peer === request.origin_peer)).map((g) => ({ id: g.group_id, name: g.name }))))
+    loadLinks().then((rows) => setGroups(rows.filter((g) => (g.federation_links || []).some((l) => l?.peer === request.origin_peer && l.kind === 'grant')).map((g) => ({ id: g.group_id, name: g.name }))))
       .catch(() => setGroups([]));
   }, [request.id]);
   const peer = request.conv_title || request.origin_peer;
-  const where = request.group_id ? `in group ${request.target_group || `#${request.group_id}`}` : group ? `in group ${groups.find((g) => String(g.id) === group)?.name || group}` : kind === 'node' ? 'node-wide' : 'in every group shared with it';
+  const where = request.group_id ? `in group ${request.target_group || `#${request.group_id}`}` : group ? `in group ${groups.find((g) => String(g.id) === group)?.name || group}` : kind === 'node' ? 'node-wide' : 'in every group on this node, including future ones';
   const approve = () => controller.decideAccess(request.id, 'approve', { grant_ttl_seconds: Number(ttl), ...(group ? { group_id: Number(group) } : {}) });
   return html`<${Fragment}><span class="access-countdown" title="If you don't decide, this request is automatically declined.">${controller.accessCountdown(request.deadline)}</span>
-    <span class="access-peer-consequence">Approving lets ${peer} use <code>${request.perm}</code> ${where} ${Number(ttl) ? `for ${ttlText(Number(ttl))}` : 'permanently'}.</span>
+    <span class="access-peer-consequence">Approving lets ${peer} use <code>${request.perm}</code> (${info?.what || 'see the slug registry'}) ${where} ${Number(ttl) ? `for ${ttlText(Number(ttl))}` : 'permanently'}.${info?.warning ? html` <b class="fa-danger">${info.warning}</b>` : ''}</span>
     <span class="grow"></span>
     ${narrowable && groups.length > 0 && html`<select class="access-peer-group" title="Narrow to one shared group" value=${group} onChange=${(e) => setGroup(e.currentTarget.value)}>
-      <option value="">every shared group</option>${groups.map((g) => html`<option key=${g.id} value=${String(g.id)}>${g.name}</option>`)}</select>`}
+      <option value="">every group, including future ones</option>${groups.map((g) => html`<option key=${g.id} value=${String(g.id)}>${g.name}</option>`)}</select>`}
     <select class="access-peer-ttl" title="How long the grant lasts" value=${ttl} onChange=${(e) => setTtl(e.currentTarget.value)}>
-      ${TTL_CHOICES.map((c) => html`<option key=${c.s} value=${String(c.s)}>${c.label}</option>`)}</select>
+      ${ttlChoices.map((c) => html`<option key=${c.s} value=${String(c.s)}>${c.label}</option>`)}</select>
     <button class="access-btn extend" title="Push the auto-decline back 5 minutes" onClick=${() => controller.decideAccess(request.id, 'extend')}>+5m</button>
     <button class="access-btn deny" onClick=${() => controller.decideAccess(request.id, 'deny')}>Decline</button>
     <button class="access-btn approve" onClick=${approve}>Approve</button></${Fragment}>`;

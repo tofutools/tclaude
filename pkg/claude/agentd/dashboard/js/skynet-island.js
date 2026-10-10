@@ -13,6 +13,11 @@ const html = htm.bind(h);
 
 // SAFE_SLUG admits a permission slug from the peer's metadata into a request.
 const SAFE_SLUG = /^[a-z][a-z0-9._-]{0,63}$/;
+// Features a peer can never open through an access request: local-only
+// transports (the dashboard shell, terminals, inline spawn) and the access
+// requests themselves. The daemon refuses these as not requestable.
+const UNREQUESTABLE = new Set(['local_dashboard', 'terminals', 'spawn.inline', 'permissions.requests']);
+const requestable = (o) => o.requires && SAFE_SLUG.test(o.requires) && !UNREQUESTABLE.has(o.feature) && o.requires !== 'local_only' && o.requires !== 'peer_access';
 
 // navigateTab routes through the real nav anchors so tab activation, history
 // and per-tab side effects stay owned by refresh.js / nav-history.js.
@@ -313,7 +318,7 @@ export function RemoteMarker({ state, remote = remoteNodeID(), snapshot = dashbo
       <div class="rnp-head">Peer view of <b>${name}</b>${level ? html` · ${level === 'unrestricted' ? '⚠ unrestricted' : 'restricted'} peer` : ''}</div>
       <div class="rnp-row">${hv.state === 'live' ? 'Live: the peer answers through this node.' : `The peer is ${hv.label}. The data on screen is what it last shared.`}</div>
       ${pv && pv.included.length > 0 && html`<div class="rnp-row"><span class="rnp-k">Shared</span> ${pv.included.join(', ')}</div>`}
-      ${pv && pv.omitted.length > 0 && html`<div class="rnp-row"><span class="rnp-k">Not shared</span> ${pv.omitted.map((o, i) => html`${i ? ', ' : ''}<span title=${o.requires ? `needs ${o.requires}` : ''}>${o.feature}</span>${o.requires && SAFE_SLUG.test(o.requires) ? html` <button type="button" class="rnp-ask" data-perm=${o.requires} title=${`Ask ${name}'s operator for ${o.requires}`} onClick=${() => { setAsking(o.requires); setOpen(false); }}>request…</button>` : ''}`)}</div>`}
+      ${pv && pv.omitted.length > 0 && html`<div class="rnp-row"><span class="rnp-k">Not shared</span> ${pv.omitted.map((o, i) => html`${i ? ', ' : ''}<span title=${o.requires ? `needs ${o.requires}` : ''}>${o.feature}</span>${requestable(o) ? html` <button type="button" class="rnp-ask" data-perm=${o.requires} title=${`Ask ${name}'s operator for ${o.requires}`} onClick=${() => { setAsking(o.requires); setOpen(false); }}>request…</button>` : ''}`)}</div>`}
       ${!pv && html`<div class="rnp-row muted">What the peer shares shows once it answers.</div>`}
       <div class="rnp-foot"><button type="button" onClick=${() => switchNode('')}>⌂ Back to ${fleet?.self.name || 'this node'}</button></div>
     </div>`}

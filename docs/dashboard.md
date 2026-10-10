@@ -387,9 +387,11 @@ operator dialog with role filtering and attachments for offline recipients.
 A peer operator's request for access to this node (see
 [Requesting access](#requesting-access-from-a-peer)) lands in the same folder,
 naming the peer, the permission, the scope and how long it asked for, plus
-its reason. Only you decide these — an away cover never does. Approve can
-shorten the grant or narrow an any-group request to one group linked to that
-peer, never widen it, and there is no Always-allow for peers. CLI:
+its reason. Only you decide these — an away cover never does. A group
+permission requested without a group covers every group on this node,
+including future ones. Approve can shorten the grant (never lengthen it) or
+narrow an any-group request to one group the peer already holds grants in,
+and there is no Always-allow for peers. CLI:
 `tclaude federation access list|approve|deny|extend --id … [--ttl …] [--group-id …]`.
 
 ## Usage
@@ -576,9 +578,11 @@ terminal.
 #### Requesting access from a peer
 
 Each feature in the pill's "Not shared" list has a **request…** link. It asks
-the peer's operator for the grant that feature needs: pick a group (or leave
-it to every group the peer shares with you, which the peer may narrow), how
-long the grant lasts (1 hour to 30 days, or permanent), and a reason. The
+the peer's operator for the grant that feature needs: how long it lasts (1
+hour to 30 days, or permanent) and a reason. A group permission asked for
+without a group covers every group on the peer, including future ones; the
+peer's operator may narrow it to one group (the CLI's `--group-id` asks for one
+directly). Local-only features such as terminals have no link. The
 dialog follows the request until the peer's operator approves or declines it,
 or it times out after 5 minutes; an approved grant shows up on the view's next
 refresh. A peer only takes requests from nodes it already shares something

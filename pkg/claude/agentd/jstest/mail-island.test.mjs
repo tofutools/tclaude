@@ -275,8 +275,9 @@ test('a peer operator\'s access request decides with a TTL and an optional narro
     created_at: '2026-07-12T00:00:00Z', deadline: '2026-07-12T00:05:00Z', auto_grantable: false, scope_display: 'group_id=0' };
   const realFetch = globalThis.fetch;
   globalThis.fetch = async () => ({ ok: true, json: async () => ({ groups: [
-    { group_id: 4, name: 'ops', federation_links: [{ peer: 'inst_forge7', slugs: ['agents.status'] }] },
+    { group_id: 4, name: 'ops', federation_links: [{ peer: 'inst_forge7', kind: 'grant', slugs: ['agents.status'] }] },
     { group_id: 5, name: 'private', federation_links: [] },
+    { group_id: 6, name: 'mirror', federation_links: [{ peer: 'inst_forge7', kind: 'route', direction: 'out' }] },
   ] }) });
   t.after(() => { globalThis.fetch = realFetch; });
   const state = harness.signals.signal({ ...populated(), selected: 'access-requests', selectedMsgId: 'par-1', messages: [] });
@@ -289,13 +290,14 @@ test('a peer operator\'s access request decides with a TTL and an optional narro
   await harness.act(() => new Promise((r) => setTimeout(r, 25)));
   const root = mounted.container;
   assert.doesNotMatch(root.textContent, /Always allow/);
-  assert.match(root.textContent, /every group shared with it · 1 day/);
-  assert.match(root.textContent, /Approving lets operator@inst_forge7 use sessions.watch in every group shared with it for 1 day/);
-  assert.deepEqual([...root.querySelectorAll('.access-peer-group option')].map((o) => o.textContent), ['every shared group', 'ops'], 'only groups linked to the peer narrow');
+  assert.match(root.textContent, /every group on this node, including future ones · 1 day/);
+  assert.match(root.textContent, /Approving lets operator@inst_forge7 use sessions.watch \(read-only terminal view of member agents\) in every group on this node, including future ones for 1 day/);
+  assert.deepEqual([...root.querySelectorAll('.access-peer-group option')].map((o) => o.textContent), ['every group, including future ones', 'ops'], 'only groups the peer holds grants in narrow');
   const group = root.querySelector('.access-peer-group');
   for (const o of group.querySelectorAll('option')) { if (o.value === '4') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
   await harness.act(() => harness.fireEvent(group, 'change'));
   const ttl = root.querySelector('.access-peer-ttl');
+  assert.deepEqual([...ttl.querySelectorAll('option')].map((o) => o.textContent), ['1 hour', '8 hours', '1 day'], 'approval never lengthens the grant');
   for (const o of ttl.querySelectorAll('option')) { if (o.value === '3600') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
   await harness.act(() => harness.fireEvent(ttl, 'change'));
   assert.match(root.textContent, /in group ops for 1 hour/);

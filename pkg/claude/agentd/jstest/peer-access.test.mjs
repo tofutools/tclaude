@@ -21,6 +21,7 @@ test('the request dialog sends permission, group, TTL and reason and follows the
   const mounted = await harness.mount(harness.html`<${mod.RequestAccessDialog} node="forge" perm="groups.members.clone" groups=${[{ id: 4, name: 'ops' }]} onClose=${() => {}} actions=${actions} timers=${timers} />`);
   const doc = harness.document; const q = (s) => doc.querySelector(s);
   assert.deepEqual([...q('#peer-access-group').querySelectorAll('option')].map((o) => o.value), ['', '4'], 'a group permission may leave the group to the peer');
+  assert.match(doc.body.textContent, /every group on forge, including ones created later/);
   const ttl = q('#peer-access-ttl'); for (const o of ttl.querySelectorAll('option')) { if (o.value === '86400') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
   await harness.act(() => harness.fireEvent(ttl, 'change'));
   const reason = q('#peer-access-reason'); reason.value = ' clone for triage ';
