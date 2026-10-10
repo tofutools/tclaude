@@ -15,6 +15,7 @@ import (
 )
 
 var adminMethodCapability = map[string]string{
+	"boards.list": "hub.boards.manage", "boards.patch": "hub.boards.manage", "boards.delete": "hub.boards.manage",
 	"status": "", "claim": "",
 	"run.status": "@admin", "run.start": "hub.exec", "run.job": "@admin", "run.logs": "hub.exec", "audit": "hub.logs.read",
 	"update.status": "hub.update", "update.start": "hub.update", "update.job": "hub.update",
@@ -140,6 +141,9 @@ func validateAdminSpaces(spaces []string) error {
 	return nil
 }
 func (h *Hub) executeAdmin(c *conn, req *proto.HubAdminRequest) (any, error) {
+	if strings.HasPrefix(req.Method, "boards.") {
+		return h.store.moderateBoard(req.Method, req.Payload)
+	}
 	if strings.HasPrefix(req.Method, "update.") {
 		return h.executeUpdate(c, req.Method, req.Payload)
 	}

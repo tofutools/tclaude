@@ -134,6 +134,9 @@ type Hub struct {
 // New creates a hub over store and starts its policy refresher.
 func New(store *Store, cfg Config) (*Hub, error) {
 	cfg.defaults()
+	if err := store.SweepBoardBlobs(); err != nil {
+		return nil, err
+	}
 	logs := &adminLogRing{}
 	cfg.Logger = slog.New(&adminLogHandler{next: cfg.Logger.Handler(), ring: logs})
 	hubID, err := store.HubID()

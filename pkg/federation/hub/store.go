@@ -61,7 +61,7 @@ func OpenStore(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema + adminSchema + boardSchema); err != nil {
+	if _, err := db.Exec(schema + adminSchema + boardSchema + boardBlobSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("hub schema: %w", err)
 	}

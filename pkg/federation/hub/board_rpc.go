@@ -48,7 +48,7 @@ func (h *Hub) serveBoardWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if hello.BoardToken != "" {
-		if _, err = h.store.redeemBoardInvite(hello.BoardToken, hello.InstanceID, time.Now()); err != nil {
+		if _, err = h.store.redeemBoardInvite(hello.BoardToken, hello.InstanceID, hello.PubKey, time.Now()); err != nil {
 			refuse("board_invite", "board invitation refused")
 			return
 		}
@@ -114,11 +114,14 @@ func (h *Hub) boardRequest(c *conn, f *proto.Frame, size int) {
 	} else if req.Verify(c.pub, h.hubID, c.nonce, time.Now()) != nil {
 		fail(adminErr(403, "bad_auth", "board request signature or validity check failed"))
 	} else {
+		retired, e := h.store.IdentityRetired(c.id)
 		fleet, err := h.store.Get(c.id)
-		if err != nil {
+		if e != nil || retired {
+			fail(adminErr(403, "identity_retired", "identity retired or conflicted"))
+		} else if err != nil {
 			fail(err)
 		} else {
-			body, err := h.store.boardCall(c.id, req, fleet != nil && !fleet.Revoked)
+			body, err := h.store.boardCall(c.id, c.pub, req, fleet != nil && !fleet.Revoked)
 			if err != nil {
 				fail(err)
 			} else {
@@ -144,7 +147,7 @@ func (h *Hub) boardRequest(c *conn, f *proto.Frame, size int) {
 }
 func boardMethodKnown(method string) bool {
 	switch method {
-	case "boards.list", "boards.create", "boards.get", "members.list", "members.set", "members.remove", "invites.create", "invites.revoke", "keys.get", "keys.rotate":
+	case "boards.list", "boards.create", "boards.get", "members.list", "members.set", "members.remove", "invites.create", "invites.revoke", "keys.get", "keys.rotate", "keys.join", "keys.install":
 		return true
 	}
 	return false

@@ -3305,3 +3305,48 @@ Send `landing` in the import body or use `federation offers import --landing`;
 receiving grant and directory before dispatch. Results and audits record the
 resolved cwd and reason. Sender responses include `receiver_decides: true` and
 `source_repo`; the sender cannot promise a receiver filesystem path.
+
+### Content board membership
+
+Content boards use a separate hub connection at `/v1/boards/connect`. Joining
+with a board invitation binds membership to the joining instance's key; it does
+not admit that instance to the fleet, assign peer-visible spaces, pair it with
+other members, or grant access to any member's machine. Board connections accept
+only signed board RPCs. Hub administration, envelopes, directories and relay
+streams remain unavailable, even when the hub uses open fleet admission.
+
+Owners manage membership and invitations; publishers may publish and readers
+may browse and pull. Removing or demoting the last owner is refused. Invitations
+are single-use, expire after at most seven days, and may grant only reader or
+publisher membership. Keep the invitation private: its token includes the
+secret needed to unwrap the board key. Neither bearer tokens nor plaintext
+board keys are stored by the hub. A consumed invitation can recover an
+interrupted join only for the same instance while its membership still exists.
+
+The hub stores encrypted key envelopes and ciphertext. A key rotation wraps a
+new epoch key separately to each current member's instance key and invalidates
+unused invitations from the previous epoch. Removed members immediately lose
+hub access; rotation protects future publications. Previously obtained keys or
+plaintext cannot be revoked. Remaining members keep access to retained older
+key epochs. Lost owner keys require another owner or a new board; hub admins
+cannot recover content keys.
+
+Use `tclaude federation boards list`, `create --name NAME`, `join --token TOKEN`,
+`show --board ID`, `members --board ID`, `invite --board ID --role reader --ttl 1h`,
+`revoke-invite --board ID --token-id HASH`, `set-member --board ID --instance ID
+--role publisher`, `remove-member --board ID --instance ID`, `rotate-key --board
+ID`, and `leave --board ID`. Configure the invitation's hub URL first; joining
+never enables a peer connection. Dashboard and CLI routes under
+`/api/federation/boards` and `/v1/federation/boards` require local human authority
+and are never forwarded through peer view.
+
+Hub admins with `hub.boards.manage` can list, freeze, limit or delete boards using
+`tclaude federation hub boards list|set|delete --board ID`. This capability does
+not reveal keys or plaintext. Default limits are 100 boards per hub, 100 members
+per board, 256 MiB of ciphertext and 1,000 blobs per board. Ciphertext objects are
+bounded at 16 MiB plus encryption overhead. Pending uploads consume quota;
+failed uploads release their reservation. Ready, unpinned blobs expire after
+30 days, and abandoned upload reservations after one hour; startup cleanup
+reaps expired objects and old orphan files. A quota reduction never silently
+ejects members or removes pinned objects. Publication/import surfaces follow
+in the item slice: membership alone never installs content or runs commands.

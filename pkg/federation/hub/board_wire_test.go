@@ -143,6 +143,14 @@ func TestBoardOnlyConnectionFullInventory(t *testing.T) {
 	}
 	for _, method := range append(methods, "spaces.new_future_method") {
 		t.Run("rpc/"+method, func(t *testing.T) {
+			require.NoError(t, rw.WriteJSON(&proto.Frame{Type: proto.FrameAdminRequest, AdminRequest: adminRequest(reader, rc, proto.Frame{}, method, map[string]any{"board": board})}))
+			rw.SetReadDeadline(time.Now().Add(5 * time.Second))
+			var denied proto.Frame
+			require.NoError(t, rw.ReadJSON(&denied))
+			require.Equal(t, proto.CodeBoardOnly, denied.Code)
+			if method == "boards.list" {
+				return
+			} // Same spelling, separate signature/frame domain.
 			result := boardCall(t, rw, reader, rc, method, map[string]any{"board": board})
 			require.GreaterOrEqual(t, result.Status, 400)
 			require.Empty(t, result.Body)

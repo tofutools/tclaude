@@ -13,7 +13,7 @@ import (
 
 const boardSchema = `
 CREATE TABLE IF NOT EXISTS boards(id TEXT PRIMARY KEY,name TEXT NOT NULL,epoch INTEGER NOT NULL CHECK(epoch>0),frozen INTEGER NOT NULL DEFAULT 0,quota_bytes INTEGER NOT NULL DEFAULT 268435456,max_members INTEGER NOT NULL DEFAULT 100,max_versions INTEGER NOT NULL DEFAULT 1000,created_at TEXT NOT NULL) STRICT;
-CREATE TABLE IF NOT EXISTS board_members(board TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,instance TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('owner','publisher','reader')),PRIMARY KEY(board,instance)) STRICT;
+CREATE TABLE IF NOT EXISTS board_members(board TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,instance TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('owner','publisher','reader')),pub BLOB NOT NULL,PRIMARY KEY(board,instance)) STRICT;
 CREATE TABLE IF NOT EXISTS board_keys(board TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,epoch INTEGER NOT NULL,instance TEXT NOT NULL,envelope TEXT NOT NULL,PRIMARY KEY(board,epoch,instance)) STRICT;
 CREATE TABLE IF NOT EXISTS board_invites(hash TEXT PRIMARY KEY,board TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,role TEXT NOT NULL CHECK(role IN ('publisher','reader')),epoch INTEGER NOT NULL,key_package TEXT NOT NULL,expires_at TEXT NOT NULL,used_by TEXT NOT NULL DEFAULT '') STRICT;
 CREATE TABLE IF NOT EXISTS board_replay(instance TEXT NOT NULL,id TEXT NOT NULL,expires_at TEXT NOT NULL,PRIMARY KEY(instance,id)) STRICT;
@@ -32,6 +32,7 @@ type Board struct {
 type BoardMember struct {
 	Instance string `json:"instance"`
 	Role     string `json:"role"`
+	Pub      []byte `json:"pubkey"`
 }
 type boardParams struct {
 	Board      string                     `json:"board"`
@@ -56,7 +57,7 @@ func (s *Store) hasBoardMembership(instance string) bool {
 	var n int
 	return s.db.QueryRow(`SELECT count(*) FROM board_members WHERE instance=?`, instance).Scan(&n) == nil && n > 0
 }
-func (s *Store) redeemBoardInvite(token, instance string, now time.Time) (string, error) {
+func (s *Store) redeemBoardInvite(token, instance string, pub []byte, now time.Time) (string, error) {
 	if !proto.ValidStreamID(token) || !proto.ValidInstanceID(instance) {
 		return "", adminErr(403, "board_invite", "invalid board invitation")
 	}
@@ -67,8 +68,20 @@ func (s *Store) redeemBoardInvite(token, instance string, now time.Time) (string
 	defer tx.Rollback()
 	var board, role, expiry, used string
 	var epoch, current, max, count int64
-	if err = tx.QueryRow(`SELECT board,role,expires_at,used_by,epoch FROM board_invites WHERE hash=?`, boardHash(token)).Scan(&board, &role, &expiry, &used, &epoch); err != nil || used != "" || !parseTS(expiry).After(now) {
+	if err = tx.QueryRow(`SELECT board,role,expires_at,used_by,epoch FROM board_invites WHERE hash=?`, boardHash(token)).Scan(&board, &role, &expiry, &used, &epoch); err != nil || (used != "" && used != instance) || (used == "" && !parseTS(expiry).After(now)) {
 		return "", adminErr(403, "board_invite", "invitation expired, used or unknown")
+	}
+	// Recover a consumed invitation only for the same key and an existing
+	// membership. Never re-add a removed member or redeem for another identity.
+	if used == instance {
+		var n int
+		if err = tx.QueryRow(`SELECT count(*) FROM board_members WHERE board=? AND instance=?`, board, instance).Scan(&n); err != nil {
+			return "", err
+		}
+		if n != 1 {
+			return "", adminErr(403, "board_invite", "board membership was removed")
+		}
+		return board, tx.Commit()
 	}
 	if err = tx.QueryRow(`SELECT epoch,max_members FROM boards WHERE id=? AND frozen=0`, board).Scan(&current, &max); err != nil || epoch != current {
 		return "", adminErr(409, "board_changed", "board invitation key epoch changed or board frozen")
@@ -80,16 +93,19 @@ func (s *Store) redeemBoardInvite(token, instance string, now time.Time) (string
 		return "", adminErr(409, "board_quota", "board member quota reached")
 	}
 	// Existing members cannot use a weaker invitation to replace their authority.
-	if _, err = tx.Exec(`INSERT INTO board_members VALUES(?,?,?)`, board, instance, role); err != nil {
+	if _, err = tx.Exec(`INSERT INTO board_members VALUES(?,?,?,?)`, board, instance, role, pub); err != nil {
 		return "", adminErr(409, "already_member", "already a member of this board")
 	}
 	if _, err = tx.Exec(`UPDATE board_invites SET used_by=? WHERE hash=?`, instance, boardHash(token)); err != nil {
 		return "", err
 	}
+	if _, err = tx.Exec(`INSERT INTO hub_admin_audit(at,instance,request_id,operation,status,detail) VALUES(?,?,?,'board.join',200,'')`, ts(now), instance, boardHash(token)); err != nil {
+		return "", err
+	}
 	return board, tx.Commit()
 }
 
-func (s *Store) boardCall(instance string, r *proto.BoardRequest, canCreate bool) (any, error) {
+func (s *Store) boardCall(instance string, pub []byte, r *proto.BoardRequest, canCreate bool) (any, error) {
 	var p boardParams
 	if err := json.Unmarshal(r.Payload, &p); err != nil {
 		return nil, adminErr(400, "invalid_arg", "invalid board payload")
@@ -133,6 +149,13 @@ func (s *Store) boardCall(instance string, r *proto.BoardRequest, canCreate bool
 		}
 		body = map[string]any{"boards": items, "next_cursor": cursor}
 	} else if r.Method == "boards.create" {
+		var boardCount int
+		if err = tx.QueryRow(`SELECT count(*) FROM boards`).Scan(&boardCount); err != nil {
+			return nil, err
+		}
+		if boardCount >= 100 {
+			return nil, adminErr(409, "board_quota", "hub board quota reached")
+		}
 		if !canCreate {
 			return nil, adminErr(403, "board_create", "board creation requires fleet admission")
 		}
@@ -145,7 +168,7 @@ func (s *Store) boardCall(instance string, r *proto.BoardRequest, canCreate bool
 		if _, err = tx.Exec(`INSERT INTO boards(id,name,epoch,created_at) VALUES(?,?,1,?)`, p.Board, p.Name, ts(time.Now())); err != nil {
 			return nil, err
 		}
-		if _, err = tx.Exec(`INSERT INTO board_members VALUES(?,?,'owner')`, p.Board, instance); err != nil {
+		if _, err = tx.Exec(`INSERT INTO board_members VALUES(?,?,'owner',?)`, p.Board, instance, pub); err != nil {
 			return nil, err
 		}
 		if _, err = tx.Exec(`INSERT INTO board_keys VALUES(?,1,?,?)`, p.Board, instance, string(p.Envelopes[instance])); err != nil {
@@ -166,14 +189,14 @@ func (s *Store) boardCall(instance string, r *proto.BoardRequest, canCreate bool
 		case "boards.get":
 			body = b
 		case "members.list":
-			rows, e := tx.Query(`SELECT instance,role FROM board_members WHERE board=? AND instance>? ORDER BY instance LIMIT 101`, p.Board, p.Cursor)
+			rows, e := tx.Query(`SELECT instance,role,pub FROM board_members WHERE board=? AND instance>? ORDER BY instance LIMIT 101`, p.Board, p.Cursor)
 			if e != nil {
 				return nil, e
 			}
 			items := []BoardMember{}
 			for rows.Next() {
 				var m BoardMember
-				if e = rows.Scan(&m.Instance, &m.Role); e != nil {
+				if e = rows.Scan(&m.Instance, &m.Role, &m.Pub); e != nil {
 					rows.Close()
 					return nil, e
 				}
@@ -240,6 +263,19 @@ func (s *Store) boardCall(instance string, r *proto.BoardRequest, canCreate bool
 				return nil, adminErr(403, "board_owner", "board owner required")
 			}
 			_, err = tx.Exec(`DELETE FROM board_invites WHERE board=? AND hash=?`, p.Board, p.TokenID)
+			body = map[string]any{"ok": true}
+		case "keys.join":
+			var pack string
+			var epoch int64
+			if e := tx.QueryRow(`SELECT key_package,epoch FROM board_invites WHERE board=? AND hash=? AND used_by=?`, p.Board, boardHash(p.Token), instance).Scan(&pack, &epoch); e != nil {
+				return nil, adminErr(404, "board_invite", "no redeemed key package for this instance")
+			}
+			body = map[string]any{"key_package": pack, "epoch": epoch}
+		case "keys.install":
+			if p.Epoch != b.Epoch || len(p.Envelopes) != 1 || len(p.Envelopes[instance]) == 0 {
+				return nil, adminErr(409, "board_key", "install current key for this instance only")
+			}
+			_, err = tx.Exec(`INSERT INTO board_keys VALUES(?,?,?,?) ON CONFLICT(board,epoch,instance) DO UPDATE SET envelope=excluded.envelope`, p.Board, p.Epoch, instance, string(p.Envelopes[instance]))
 			body = map[string]any{"ok": true}
 		case "keys.get":
 			rows, e := tx.Query(`SELECT epoch,envelope FROM board_keys WHERE board=? AND instance=? ORDER BY epoch`, p.Board, instance)

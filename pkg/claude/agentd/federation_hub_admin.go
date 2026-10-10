@@ -13,6 +13,9 @@ import (
 )
 
 func registerFederationHubRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /v1/federation/hub/boards", hubOperatorRoute("boards.list"))
+	mux.HandleFunc("PATCH /v1/federation/hub/boards/{board}", hubOperatorRoute("boards.patch"))
+	mux.HandleFunc("DELETE /v1/federation/hub/boards/{board}", hubOperatorRoute("boards.delete"))
 	mux.HandleFunc("GET /v1/federation/hub/run", hubOperatorRoute("run.status"))
 	mux.HandleFunc("POST /v1/federation/hub/run", hubOperatorRoute("run.start"))
 	mux.HandleFunc("GET /v1/federation/hub/run/jobs/{job_id}", hubOperatorRoute("run.job"))
@@ -65,7 +68,7 @@ func hubOperatorRoute(operation string) http.HandlerFunc {
 				return
 			}
 		}
-		for _, key := range []string{"instance", "token_hash", "job_id"} {
+		for _, key := range []string{"instance", "token_hash", "job_id", "board"} {
 			if value := r.PathValue(key); value != "" {
 				payload[key] = value
 			}
