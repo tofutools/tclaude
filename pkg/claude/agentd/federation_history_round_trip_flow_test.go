@@ -157,19 +157,45 @@ func startHistoryNode(t *testing.T, name, label string) historyNode {
 		case err := <-finished:
 			_ = log.Close()
 			if err != nil {
-				raw, _ := os.ReadFile(log.Name())
-				t.Errorf("%s node: %v\n%s", label, err, raw)
+				t.Errorf("%s node: %v", label, err)
 			}
-		case <-time.After(5 * time.Second):
+		// Federation shutdown drains in-flight sends (each may take 15s), as
+		// well as background reconciliation. Leave room under runner load.
+		case <-time.After(30 * time.Second):
 			_ = cmd.Process.Kill()
 			<-finished
 			_ = log.Close()
+			t.Errorf("%s node failed to shut down", label)
+		}
+		if t.Failed() {
 			raw, _ := os.ReadFile(log.Name())
-			t.Errorf("%s node failed to shut down\n%s", label, raw)
+			t.Logf("%s node log:\n%s", label, raw)
 		}
 	})
-	fedEventuallyWithin(t, label+" node starts", 30*time.Second, func() bool { raw, e := os.ReadFile(infoPath); return e == nil && json.Unmarshal(raw, &node) == nil })
+	// Each fresh process migrates its own SQLite database. Race instrumentation
+	// plus concurrent CPU load can exceed the ordinary 30s startup budget.
+	fedEventuallyWithin(t, label+" node starts", 90*time.Second, func() bool { raw, e := os.ReadFile(infoPath); return e == nil && json.Unmarshal(raw, &node) == nil })
 	return node
+}
+
+// Capture both sides before node cleanup, including confirmation delivery and
+// the last retirement error. Diagnostic requests must not fail the test again
+// or hang cleanup when a node is unresponsive.
+func historyMoveDiagnostics(t *testing.T, from, to historyNode, id string) {
+	t.Helper()
+	client := &http.Client{Timeout: 2 * time.Second}
+	for _, node := range []historyNode{from, to} {
+		for _, path := range []string{"/v1/federation/moves/" + id, "/v1/federation/outbox", "/v1/federation/status"} {
+			resp, err := client.Get(node.URL + path)
+			if err != nil {
+				t.Logf("%s %s: %v", node.Instance, path, err)
+				continue
+			}
+			raw, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+			_ = resp.Body.Close()
+			t.Logf("%s %s: HTTP %d, read error %v\n%s", node.Instance, path, resp.StatusCode, err, raw)
+		}
+	}
 }
 
 func historyNodeRequest(t *testing.T, node historyNode, method, path, conv string, body any) (int, []byte) {
@@ -205,7 +231,7 @@ func historyTestLifetime() time.Duration {
 	if os.Getenv("TCLAUDE_LARGE_AGENT_TRANSFER") == "1" {
 		return 30 * time.Minute
 	}
-	return 90 * time.Second
+	return 5 * time.Minute
 }
 func historyTestRequestTimeout() time.Duration {
 	if os.Getenv("TCLAUDE_LARGE_AGENT_TRANSFER") == "1" {
@@ -323,7 +349,16 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 		require.Equal(t, int32(2*(chunks+1)), streamJoins.Load(), "completed chunks must not be fetched again after interruption")
 	}
 	require.NotEqual(t, moveSourceConv, remoteConv)
-	fedEventually(t, "A retires only after B is running", func() bool {
+	t.Cleanup(func() {
+		if t.Failed() {
+			historyMoveDiagnostics(t, a, b, outward.ID)
+		}
+	})
+	// This crosses two real daemon processes: running observation, durable
+	// outbox delivery/retry, then source teardown. The shared 10s in-process
+	// test budget is shorter than even one production send timeout (15s).
+	// Keep polling the committed state rather than sleeping for that budget.
+	fedEventuallyWithin(t, "A retires only after B is running", 60*time.Second, func() bool {
 		code, raw := historyNodeRequest(t, a, "GET", "/v1/federation/moves/"+outward.ID, "", nil)
 		var move struct {
 			State string `json:"state"`
