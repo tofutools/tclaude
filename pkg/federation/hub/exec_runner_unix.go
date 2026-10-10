@@ -86,6 +86,10 @@ func RunExecGuardian() {
 			os.Exit(125)
 		}
 	}
+	// ExtraFiles arrives without CLOEXEC; scripts must never inherit the
+	// lifetime or result channels.
+	syscall.CloseOnExec(3)
+	syscall.CloseOnExec(4)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _, _ = io.Copy(io.Discard, life); cancel() }()
 	r := executeOwnedHubScript(ctx, os.Args[3], "", seconds, os.Stdout, os.Stderr)

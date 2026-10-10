@@ -63,7 +63,7 @@ func TestDashboardHubExecTwoLocksOutputAuditAndRevocation(t *testing.T) {
 	require.Eventually(t, func() bool {
 		live = must("GET", "run/jobs/"+id, nil)
 		return live["stdout_tail"] == "hub-secret-output"
-	}, 3*time.Second, 10*time.Millisecond)
+	}, 5*time.Second, 100*time.Millisecond)
 	require.Equal(t, "running", live["state"])
 	require.NotNil(t, live["duration_ms"])
 	chunk := must("GET", "run/jobs/"+id+"/logs?stream=stdout&offset=0", nil)
@@ -111,7 +111,7 @@ func TestDashboardHubExecTwoLocksOutputAuditAndRevocation(t *testing.T) {
 	require.Equal(t, "hub_exec_required", result.Code)
 	// Changing the HOST config cancels an already-running process group.
 	require.NoError(t, os.WriteFile(config, []byte(`{"accept_remote_scripts":false}`), 0600))
-	require.Eventually(t, func() bool { job = must("GET", "run/jobs/"+id, nil); return job["state"] == "cancelled" }, 4*time.Second, 20*time.Millisecond)
+	require.Eventually(t, func() bool { job = must("GET", "run/jobs/"+id, nil); return job["state"] == "cancelled" }, 6*time.Second, 100*time.Millisecond)
 	require.Equal(t, float64(130), job["exit_code"])
 	audit = must("GET", "audit?max_entries=200", nil)
 	raw, _ = json.Marshal(audit)

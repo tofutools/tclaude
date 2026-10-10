@@ -147,3 +147,39 @@ func TestHubExecFinishedAuditReconcilesIdempotently(t *testing.T) {
 	require.NoError(t, st.db.QueryRow(`SELECT count(*) FROM hub_admin_audit WHERE request_id=? AND operation='exec' AND status=200`, jobID).Scan(&count))
 	require.Equal(t, 1, count)
 }
+
+func TestHubExecGuardianDoesNotLeakControlPipes(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("scripts refuse root")
+	}
+	st, _, _ := adminTestStore(t)
+	path := filepath.Join(filepath.Dir(st.path), "fds.sh")
+	// Opening either private FD from a script would allow corrupting the result
+	// or defeating lifetime supervision. The shell redirects errors away.
+	require.NoError(t, os.WriteFile(path, []byte("if (printf forged >&4) 2>/dev/null; then exit 91; fi\nif (: <&3) 2>/dev/null; then exit 92; fi\nprintf isolated"), 0600))
+	var out, stderr strings.Builder
+	r := executeHubScript(context.Background(), path, "fixture", 2, &out, &stderr)
+	require.Zero(t, r.ExitCode, r.Error)
+	require.Equal(t, "isolated", out.String())
+}
+
+func TestHubExecOutcomeMarkerSurvivesAuditRetentionAndWriteFailure(t *testing.T) {
+	st, id, _ := adminTestStore(t)
+	jobID := strings.Repeat("b", 32)
+	_, err := st.db.Exec(`CREATE TRIGGER fail_exec_audit BEFORE INSERT ON hub_admin_audit BEGIN SELECT RAISE(ABORT,'audit unavailable'); END`)
+	require.NoError(t, err)
+	require.Error(t, st.auditExecOutcome(id.ID(), jobID, `{"exit_code":7}`))
+	var count int
+	require.NoError(t, st.db.QueryRow(`SELECT count(*) FROM hub_exec_outcome_audits`).Scan(&count))
+	require.Zero(t, count, "marker must not commit before its audit")
+	_, err = st.db.Exec(`DROP TRIGGER fail_exec_audit`)
+	require.NoError(t, err)
+	require.NoError(t, st.auditExecOutcome(id.ID(), jobID, `{"exit_code":7}`))
+	_, err = st.db.Exec(`DELETE FROM hub_admin_audit`)
+	require.NoError(t, err)
+	require.NoError(t, st.auditExecOutcome(id.ID(), jobID, `{"exit_code":7}`))
+	require.NoError(t, st.db.QueryRow(`SELECT count(*) FROM hub_admin_audit`).Scan(&count))
+	require.Zero(t, count, "retention must not resurrect old outcomes")
+	require.NoError(t, st.db.QueryRow(`SELECT count(*) FROM hub_exec_outcome_audits`).Scan(&count))
+	require.Equal(t, 1, count)
+}
