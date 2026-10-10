@@ -65,7 +65,7 @@ export function viewersOf(rows, agentId, session = '') {
 // peerLabel names a viewing peer as the chip row does; an unknown peer shows
 // its instance ID.
 export function peerLabel(id, fleet = skynetState.fleet.value) {
-  return fleet?.peers?.find((p) => p.id === id)?.label || id;
+  return fleet?.peers?.find((p) => p.id === id)?.name || id;
 }
 
 // viewerSummary is what a badge shows: typing outranks watching, the first

@@ -71,9 +71,12 @@ const skynetFederationStubJS = `(function(){
     if (path === '/api/federation/identity/rotate') return json({ instance_id: 'inst_q4w7pjf2kx3mz6bty5nd', fingerprint: 'q4w7 pjf2 kx3m z6bt y5nd 8c1e', window_seconds: 172800, hop_count: window.__dashsnapRotationPending ? 2 : 1, hop_limit: 4, pending: !!window.__dashsnapRotationPending,
       effects: { successor_linked: true, streams_reconnect: true, pending_sealed_mail_requires_resend: true, issued_model_credentials_revoked: true, requester_paid_leases_revoked: true } });
     if (path === '/api/federation/nodes/health' && !(init && init.method === 'POST')) return json({ presence: true, resources: true, failures: false, debounce_seconds: 15, disk_free_percent: 10, ram_free_percent: 10, memory_seconds: 120, failure_count: 3, failure_window_seconds: 600, cooldown_seconds: 600 });
+    // The viewer rows name real fixture agents, so the per-agent badges land on
+    // their rows; the agent IDs are minted at fixture time.
+    function __dashsnapAgentID(title, fallback) { var el = document.querySelector('.member-row[data-label="' + title + '"][data-agent], [data-label="' + title + '"][data-agent]'); return (el && el.dataset.agent) || fallback; }
     if (path === '/api/federation/viewers') return json(window.__dashsnapViewers ? [
-      { id: 'tv_8k2q', peer: 'inst_hn3cxq7a', agent: 'agt_r8k2m4c1x9', session: 'fe-dev-forms', group: 'frontend-squad', read_only: false, started: new Date(Date.now() - 720000).toISOString(), incoming: true },
-      { id: 'tv_3m1x', peer: 'inst_2p6ym4ke', agent: 'agt_p2w7d0j5n3', session: 'infra-bench', group: 'infra-crew', read_only: true, started: new Date(Date.now() - 95000).toISOString(), incoming: true }
+      { id: 'tv_8k2q', peer: 'inst_hn3cxq7a', agent: __dashsnapAgentID('fe-dev-forms', 'agt_r8k2m4c1x9'), session: 'fe-dev-forms', group: 'frontend-squad', read_only: false, started: new Date(Date.now() - 720000).toISOString(), incoming: true },
+      { id: 'tv_3m1x', peer: 'inst_2p6ym4ke', agent: __dashsnapAgentID('fe-dev-charts', 'agt_p2w7d0j5n3'), session: 'infra-bench', group: 'infra-crew', read_only: true, started: new Date(Date.now() - 95000).toISOString(), incoming: true }
     ] : []);
     if (path === '/api/federation/bundle-offers') return json(url.indexOf('direction=out') >= 0 ? [
       { offer: { id: 'off_7q2m', type: 'agent', summary: 'Agent reviewer (config only)', expires_at: '2026-10-17T09:00:00Z' }, peer: 'inst_2p6ym4ke', direction: 'out', state: 'pending' },
@@ -698,6 +701,33 @@ func skynetStates() []dashsnap.State {
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('#fleet-viewers'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   if (!document.querySelector('#fleet-viewers')) throw new Error('skynet: viewers panel missing');
+})();`,
+			SettleMS: 300,
+		},
+		{
+			Key:     "skynet-agent-viewer-badges",
+			Title:   "Agents a peer is watching or typing into",
+			Caption: "While a peer views an agent terminal here, the agent's harness line names it: amber ⌨ forge is typing into fe-dev-forms, 👁 lab is watching fe-dev-charts. Clicking the badge opens Fleet → Peers with the viewers panel filtered to that agent.",
+			InitJS:  "window.__dashsnapViewers = true;" + skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var i = 0; i < 100 && document.querySelectorAll('.remote-viewers-badge').length < 2; i++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelectorAll('details[data-dnd-target-group]').forEach(function(d){ d.open = true; });
+  if (document.querySelectorAll('.remote-viewers-badge').length < 2) throw new Error('skynet: agent viewer badges missing');
+  document.querySelector('.remote-viewers-badge').scrollIntoView({ block: 'center' });
+})();`,
+			SettleMS: 300,
+		},
+		{
+			Key:     "skynet-agent-viewer-filtered",
+			Title:   "Viewers filtered to one agent",
+			Caption: "Clicking an agent's viewer badge opens Fleet → Peers with the viewers panel showing only that agent's viewers, where they can be disconnected; show all lists every viewer again.",
+			InitJS:  "window.__dashsnapViewers = true;" + skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var i = 0; i < 100 && !document.querySelector('.remote-viewers-badge.typing'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('.remote-viewers-badge.typing')) throw new Error('skynet: agent viewer badge missing');
+  document.querySelector('.remote-viewers-badge.typing').click();
+  for (var j = 0; j < 50 && !document.querySelector('#fleet-viewers-focus'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-viewers-focus')) throw new Error('skynet: filtered viewers panel missing');
 })();`,
 			SettleMS: 300,
 		},

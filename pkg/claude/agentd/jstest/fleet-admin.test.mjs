@@ -1890,3 +1890,24 @@ test('hub phase 2 features absent from this build degrade to a plain note, never
     s.actions.hubRunStatus = prevRun; s.actions.hubAudit = prevAudit;
   }
 });
+
+test('a viewer badge opens Peers with the viewers panel filtered to its agent, until show all', async (t) => {
+  const s = await setup(t);
+  const rv = await s.harness.importDashboardModule('js/remote-viewers.js');
+  s_viewers = [
+    { id: 'v1', peer: 'inst_forge', agent: 'agt_a1', session: 'ada', group: 'ops', read_only: true, incoming: true },
+    { id: 'v2', peer: 'inst_lab', agent: 'agt_b2', session: 'bob', group: 'ops', read_only: false, incoming: true },
+  ];
+  t.after(() => { s_viewers = []; rv.resetViewersForTest(); });
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => b.textContent === 'Offers'));
+  assert.equal(s.q('#fleet-viewers'), null, 'not on Peers');
+  await s.harness.act(() => { rv.viewersFocus.value = 'agt_a1'; });
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  assert.match(s.q('#fleet-viewers-focus').textContent, /Showing who views ada now/);
+  assert.ok(s.q('[data-viewer="v1"]')); assert.equal(s.q('[data-viewer="v2"]'), null, 'another agent\'s viewer is filtered out');
+  await s.click(s.q('#fleet-viewers-focus button'));
+  assert.equal(rv.viewersFocus.value, '');
+  assert.ok(s.q('[data-viewer="v2"]'), 'show all lists every viewer again');
+});
