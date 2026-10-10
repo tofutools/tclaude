@@ -270,7 +270,8 @@ export function mountTerminalWidget({
   // fitRemote scales the font so the peer's grid fits the host, never
   // resizing the grid itself.
   function fitRemote() {
-    const screen = host.querySelector?.('.xterm-screen');
+    // Reads xterm's own grid box; the core never writes shell DOM.
+    const screen = host.getElementsByClassName?.('xterm-screen')[0];
     const width = host.clientWidth; const height = host.clientHeight;
     if (!screen || !width || !height) return;
     const box = () => screen.getBoundingClientRect();
