@@ -45,6 +45,10 @@ func TestTerminalFilePathSafety(t *testing.T) {
 		require.ErrorAs(t, err, &e)
 		require.Equal(t, "root_too_broad", e.code)
 	}
+	require.NoError(t, os.Mkdir(filepath.Join(rootPath, ".ssh"), 0700))
+	_, _, err = openTerminalFileRoot(filepath.Join(rootPath, ".ssh"))
+	require.ErrorAs(t, err, &e)
+	require.Equal(t, "unsafe_path", e.code)
 	t.Setenv("HOME", rootPath)
 	_, _, err = openTerminalFileRoot(rootPath)
 	require.ErrorAs(t, err, &e)

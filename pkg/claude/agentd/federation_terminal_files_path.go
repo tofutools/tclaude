@@ -29,6 +29,10 @@ func openTerminalFileRoot(cwd string) (*os.File, string, error) {
 	if !filepath.IsAbs(cwd) {
 		return nil, "", terminalFileRefusal(403, "root_too_broad", "downloads need an agent running in a project directory")
 	}
+	expected, err := os.Stat(cwd)
+	if err != nil || !expected.IsDir() {
+		return nil, "", terminalFileRefusal(403, "unsafe_path", "working directory unavailable")
+	}
 	root, err := filepath.EvalSymlinks(cwd)
 	if err != nil {
 		return nil, "", terminalFileRefusal(403, "unsafe_path", "working directory unavailable")
@@ -45,8 +49,28 @@ func openTerminalFileRoot(cwd string) (*os.File, string, error) {
 	if broad {
 		return nil, "", terminalFileRefusal(403, "root_too_broad", "downloads need an agent running in a project directory; system and home roots are refused")
 	}
-	f, err := os.OpenFile(root, os.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-	return f, root, err
+	if _, err := terminalFileRelative("/", root); err != nil {
+		return nil, "", err
+	}
+	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, "", err
+	}
+	for _, part := range strings.Split(strings.TrimPrefix(root, "/"), "/") {
+		next, e := unix.Openat(fd, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		_ = unix.Close(fd)
+		if e != nil {
+			return nil, "", terminalFileRefusal(403, "unsafe_path", "working directory changed while opening")
+		}
+		fd = next
+	}
+	f := os.NewFile(uintptr(fd), root)
+	opened, e := f.Stat()
+	if e != nil || !os.SameFile(expected, opened) {
+		_ = f.Close()
+		return nil, "", terminalFileRefusal(403, "unsafe_path", "working directory changed while opening")
+	}
+	return f, root, nil
 }
 
 func terminalFileRelative(root, path string) (string, error) {
@@ -66,10 +90,10 @@ func terminalFileRelative(root, path string) (string, error) {
 		}
 	}
 	path = filepath.Clean(path)
-	parts := strings.Split(path, "/")
+	parts := strings.Split(filepath.Join(root, path), "/")
 	folded := parts
 	if runtime.GOOS == "darwin" {
-		folded = strings.Split(strings.ToLower(path), "/")
+		folded = strings.Split(strings.ToLower(filepath.Join(root, path)), "/")
 	}
 	for i, part := range folded {
 		if part == ".ssh" || part == ".gnupg" || part == ".aws" || part == ".azure" || part == ".kube" || part == ".netrc" || part == ".npmrc" || part == ".pypirc" || part == ".git-credentials" || part == ".env" || strings.HasPrefix(part, ".env.") {

@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -142,7 +143,7 @@ func (rt *fedRuntime) acceptTerminalFile(peer *db.FederationPeer, env *proto.Env
 	refuse := func(code string) {
 		answer.Reason = code
 		rt.sendControl(peer.InstanceID, proto.KindBundleAnswer, env.ID, answer)
-		recordFederationAudit("sessions.files.read", peerDisplay(peer), "", "", "refused: "+code, 403)
+		recordFederationAudit("sessions.files.read", peerDisplay(peer), "", "", fmt.Sprintf("viewer=%s path=%q refused=%s", req.Viewer, req.Path, code), 403)
 	}
 	v, err := rt.terminalFileViewer(req.Viewer, peer.InstanceID, true)
 	if err != nil {
@@ -183,13 +184,14 @@ func (rt *fedRuntime) sendTerminalFile(peer *db.FederationPeer, env *proto.Envel
 	if err != nil {
 		return
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() { _ = conn.CloseWrite(); _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(terminalUploadTimeout))
 	closeOnCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer closeOnCancel()
 	status := 500
+	var auditedBytes int64
 	defer func() {
-		recordFederationAudit("sessions.files.read", peerDisplay(peer), v.Agent, v.Group, fmt.Sprintf("viewer=%s path=%q status=%d", v.ID, req.Path, status), status)
+		recordFederationAudit("sessions.files.read", peerDisplay(peer), v.Agent, v.Group, fmt.Sprintf("viewer=%s path=%q bytes=%d status=%d", v.ID, req.Path, auditedBytes, status), status)
 	}()
 	fail := func(err error) { h := fileErrorHeader(err); status = h.Status; _ = writeTerminalFileHeader(conn, h) }
 	if !rt.terminalFileAuthorized(v) {
@@ -231,8 +233,11 @@ func (rt *fedRuntime) sendTerminalFile(peer *db.FederationPeer, env *proto.Envel
 		return
 	}
 	if req.Head {
-		status = 200
-		_ = writeTerminalFileHeader(conn, fedTerminalFileHeader{Status: 200, Bytes: info.Size()})
+		auditedBytes = info.Size()
+		status = 502
+		if writeTerminalFileHeader(conn, fedTerminalFileHeader{Status: 200, Bytes: info.Size()}) == nil && conn.CloseWrite() == nil {
+			status = 200
+		}
 		return
 	}
 	spool, err := os.CreateTemp("", "tclaude-terminal-file-")
@@ -277,7 +282,8 @@ func (rt *fedRuntime) sendTerminalFile(peer *db.FederationPeer, env *proto.Envel
 		fail(terminalFileRefusal(403, "not_shared", "file read authority revoked"))
 		return
 	}
-	status = 200
+	auditedBytes = size
+	status = 502
 	if writeTerminalFileHeader(conn, fedTerminalFileHeader{Status: 200, Bytes: size, SHA256: hex.EncodeToString(hash.Sum(nil))}) != nil {
 		return
 	}
@@ -286,11 +292,16 @@ func (rt *fedRuntime) sendTerminalFile(peer *db.FederationPeer, env *proto.Envel
 		status = 403
 		return
 	}
-	_ = conn.CloseWrite()
+	if conn.CloseWrite() == nil {
+		status = 200
+	}
 }
 
 func (rt *fedRuntime) receiveTerminalFile(ctx context.Context, v *fedTerminalView, path string, head bool) (*os.File, fedTerminalFileHeader, error) {
 	var h fedTerminalFileHeader
+	if len(path) > 4096 || strings.ContainsRune(path, 0) {
+		return nil, h, terminalFileRefusal(403, "unsafe_path", "invalid file path")
+	}
 	key := "terminal-file-in/" + v.Peer
 	if !rt.reserveBundleTransfer(key) {
 		return nil, h, terminalFileRefusal(429, "limit", "file download busy")

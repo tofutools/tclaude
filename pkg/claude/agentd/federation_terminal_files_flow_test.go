@@ -22,9 +22,21 @@ import (
 )
 
 func TestFederationTerminalFilePinnedProjectRead(t *testing.T) {
+	terminalFileTargetFlow(t, false, false)
+}
+func TestFederationTerminalFileRefusesHomeRoot(t *testing.T) { terminalFileTargetFlow(t, true, false) }
+func TestFederationTerminalFileRefusesReplacementPane(t *testing.T) {
+	terminalFileTargetFlow(t, false, true)
+}
+func terminalFileTargetFlow(t *testing.T, homeRoot, pinChange bool) {
 	fh := newFedHarness(t)
 	f, p := fh.f, fh.peer
 	root := testutil.CanonicalTempDir(t)
+	if homeRoot {
+		var e error
+		root, e = os.UserHomeDir()
+		require.NoError(t, e)
+	}
 	require.NoError(t, os.WriteFile(filepath.Join(root, "report.txt"), []byte("verified report"), 0600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "empty"), nil, 0600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".env"), []byte("secret"), 0600))
@@ -39,7 +51,8 @@ func TestFederationTerminalFilePinnedProjectRead(t *testing.T) {
 	aid, err := db.AgentIDForConv(conv)
 	require.NoError(t, err)
 	original := clcommon.Default
-	clcommon.Default = &terminalTmux{Tmux: original, options: map[string]string{}, pane: "%1", windows: "1", version: "tmux 3.4"}
+	mock := &terminalTmux{Tmux: original, options: map[string]string{}, pane: "%1", windows: "1", version: "tmux 3.4"}
+	clcommon.Default = mock
 	t.Cleanup(func() { agentd.ResetFederationForTest(); clcommon.Default = original })
 	incarnation := terminalCatalogIncarnation(t, fh, aid)
 	grant := func(slug string) {
@@ -118,6 +131,12 @@ func TestFederationTerminalFilePinnedProjectRead(t *testing.T) {
 	require.Equal(t, 403, status)
 	require.Equal(t, "not_shared", code)
 	grant(agentd.PermSessionsFilesRead)
+	if homeRoot {
+		status, code, _ = read("report.txt", false)
+		require.Equal(t, 403, status)
+		require.Equal(t, "root_too_broad", code)
+		return
+	}
 	status, _, body := read("report.txt", false)
 	require.Equal(t, 200, status)
 	require.Equal(t, "verified report", string(body))
@@ -138,4 +157,23 @@ func TestFederationTerminalFilePinnedProjectRead(t *testing.T) {
 	status, code, _ = read("report.txt", false)
 	require.Equal(t, 403, status)
 	require.Equal(t, "not_shared", code)
+	grant(agentd.PermSessionsFilesRead)
+	audit := fedHuman(t, f, "GET", "/v1/federation/audit", nil)
+	require.Equal(t, 200, audit.Code)
+	require.Contains(t, audit.Body.String(), "sessions.files.read")
+	require.Contains(t, audit.Body.String(), `"status":200`)
+	if pinChange {
+		mock.mu.Lock()
+		mock.pane = "%2"
+		mock.mu.Unlock()
+		status, code, _ = read("report.txt", false)
+		require.Equal(t, 403, status)
+		require.Contains(t, []string{"not_shared", "viewer_closed"}, code)
+		return
+	}
+	rec = fedHuman(t, f, "POST", "/v1/federation/viewers/"+open.Stream+"/kick", nil)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	status, code, _ = read("report.txt", false)
+	require.Equal(t, 403, status)
+	require.Equal(t, "viewer_closed", code)
 }
