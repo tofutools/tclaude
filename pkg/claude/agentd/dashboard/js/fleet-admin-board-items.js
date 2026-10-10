@@ -34,11 +34,11 @@ export function postedBy(item, name) {
   return item.republisher && item.republisher !== item.publisher ? `${by}, re-posted by ${name(item.republisher) || item.republisher}` : by;
 }
 
-// selection turns the publish form into the route's only list: whole
-// sections, or the named items typed as section/name.
+// selection turns the publish form into the route's only list: the ticked
+// whole sections plus the named items (section/name) outside them.
 export function selection(sections, named) {
   const picked = String(named || '').split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
-  return picked.length ? picked : [...sections];
+  return [...sections, ...picked.filter((p) => !sections.includes(p.split('/')[0]))];
 }
 
 // importConsequence spells out what importing a preview does here.
@@ -51,6 +51,27 @@ export function importConsequence(item, board, preview, skip, by) {
     + `${security.length ? ` Security-relevant: ${security.join(', ')} — these decide what this node's agents may do.` : ''}`;
 }
 
+// parentSelection reads what a version shares, as section/name selectors,
+// from its verified contents (sections/<section>.json lists the items), so a
+// new version starts from the same selection. Unknown → [].
+export async function parentSelection(actions, board, item, version) {
+  try {
+    await actions.fetchBoardItem(board, item, version);
+    const entries = (await actions.boardItemContents(board, item, version))?.entries || [];
+    const out = [];
+    for (const e of entries) {
+      const m = /^sections\/([a-z-]+)\.json$/.exec(e?.path || '');
+      if (!m || !POSTABLE.includes(m[1])) continue;
+      const r = await actions.boardItemEntry(board, item, version, e.path, 0, 1 << 20);
+      if (r?.truncated) return [];
+      for (const it of JSON.parse(String(r?.text || '[]'))) if (it?.name) out.push(`${m[1]}/${it.name}`);
+    }
+    return out;
+  } catch (_) {
+    return [];
+  }
+}
+
 // PublishDialog posts config to a board, as a new item or a new version of
 // one (item + parent).
 function PublishDialog({ board, item, actions, confirm, onClose, onDone }) {
@@ -58,6 +79,21 @@ function PublishDialog({ board, item, actions, confirm, onClose, onDone }) {
   const [sections, setSections] = useState([]);
   const [named, setNamed] = useState('');
   const [error, setError] = useState('');
+  const [prefilled, setPrefilled] = useState('');
+  // A new version starts from what the previous version shared.
+  useEffect(() => {
+    if (!item?.latest_version) return undefined;
+    let off = false;
+    parentSelection(actions, board.id, item.id, item.latest_version).then((sel) => {
+      if (off || !sel.length) return;
+      setNamed((cur) => {
+        if (cur) return cur;
+        setPrefilled(item.latest_version);
+        return sel.join(', ');
+      });
+    });
+    return () => { off = true; };
+  }, []);
   const only = selection(sections, named);
   const ready = name.trim() && only.length > 0;
   const post = () => {
@@ -77,6 +113,7 @@ function PublishDialog({ board, item, actions, confirm, onClose, onDone }) {
     <div class="fa-grant-form">${POSTABLE.map((s) => html`<label key=${s}><input type="checkbox" data-section=${s} checked=${sections.includes(s)}
       onChange=${(e) => setSections(e.currentTarget.checked ? [...sections, s] : sections.filter((x) => x !== s))} /> ${s}</label>`)}</div>
     <label class="fa-of-row"><span class="fa-k">or only</span><input id="fleet-board-publish-only" value=${named} placeholder="roles/reviewer, profiles/fast" autocomplete="off" spellcheck="false" onInput=${(e) => setNamed(e.currentTarget.value)} /></label>
+    ${prefilled && html`<div class="muted" id="fleet-board-publish-prefilled">Prefilled with the items version ${short(prefilled)} shares; this node's current config for them is posted. To share a whole section again, including items added since, tick it.</div>`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation boards publish --board ${board.id} --name … --only roles/NAME${item ? ` --item ${item.id} --parent ${item.latest_version}` : ''}</code></div>
     <div class="modal-buttons"><span class="spacer"></span>

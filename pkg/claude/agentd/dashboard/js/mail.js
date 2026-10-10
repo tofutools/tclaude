@@ -1289,7 +1289,10 @@ function renderAccessRequests(list, pending) {
   resolveArmedAccessAutoSelect(list);
   const banner = $('#access-banner');
   if (!banner) return;
-  const n = pending || 0;
+  // Count what Review will show: the list's pending rows when the snapshot
+  // carries the list, so the banner never promises a request the Access
+  // folder does not have.
+  const n = Array.isArray(list) && list.length ? list.filter(accessIsPending).length : (Array.isArray(list) ? 0 : pending || 0);
   banner.classList.toggle('show', n > 0);
   banner.setAttribute('aria-hidden', n > 0 ? 'false' : 'true');
   const label = $('#access-banner-text');

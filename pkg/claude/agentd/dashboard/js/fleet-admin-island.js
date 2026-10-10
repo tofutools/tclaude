@@ -205,7 +205,7 @@ export function TrustDialog({ row, actions, onClose, onDone }) {
     </div>
     <label class="cron-create-row"><span class="cron-create-label">Local label</span>
       <input id="fleet-trust-label" type="text" value=${label} placeholder="optional, a-z 0-9 - _ ." autocomplete="off" spellcheck="false"
-        onInput=${(e) => setLabel(e.currentTarget.value)} />
+        onInput=${(e) => setLabel(e.currentTarget.value)} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (!busy && preview && checked && labelOK) submit(); } }} />
     </label>
     ${!labelOK && html`<div class="cron-create-error">Labels are 1–32 characters of a-z, 0-9, - _ .</div>`}
     ${profile

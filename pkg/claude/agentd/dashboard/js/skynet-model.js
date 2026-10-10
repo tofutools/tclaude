@@ -164,7 +164,7 @@ export function cardView(node, entry, now = Date.now()) {
   else presence = 'loading';
   const stale = !!summary && (presence === 'offline' || presence === 'error');
   const lastSeen = failure?.lastSeen || node.lastSeen || null;
-  const omitted = (summary?.peer_view?.omitted || []).map((o) => (typeof o === 'string' ? o : o?.feature)).filter(Boolean);
+  const omitted = (summary?.peer_view?.omitted || []).filter(shownOmission).map((o) => (typeof o === 'string' ? o : o?.feature)).filter(Boolean);
   return {
     presence,
     stale,
@@ -242,13 +242,30 @@ export function remoteHealthView(health, now = Date.now()) {
   return { state, label: age ? `${words} · data ${age} old` : words };
 }
 
+// TRANSPORT_FEATURES are served on their own channels (the dashboard shell,
+// terminals and their file links, inline spawn, access requests), never by the
+// peer view itself: the peer's metadata lists them as omitted, but that says
+// nothing about whether they work, so they are not shown as "not shared".
+// Newer daemons mark them transport; the names are the fallback for older
+// ones, and never hide an entry the peer says can be requested.
+const TRANSPORT_FEATURES = new Set(['local_dashboard', 'terminals', 'sessions.files.read', 'spawn.inline', 'permissions.requests']);
+
+export function shownOmission(o) {
+  if (typeof o === 'string') return !TRANSPORT_FEATURES.has(o);
+  if (!o) return false;
+  if (typeof o.transport === 'boolean') return !o.transport;
+  if (o.requestable === true) return true;
+  return !TRANSPORT_FEATURES.has(o.feature) && o.requires !== 'local_only' && o.requires !== 'peer_access';
+}
+
 // peerViewSummary normalizes the snapshot's peer_view metadata (what the peer
 // shares with this operator) for the marker's popover.
 export function peerViewSummary(meta) {
   if (!meta || typeof meta !== 'object') return null;
   const included = Array.isArray(meta.included) ? meta.included.filter(Boolean) : [];
   const omitted = (Array.isArray(meta.omitted) ? meta.omitted : [])
-    .map((o) => (typeof o === 'string' ? { feature: o, requires: '' } : { feature: o?.feature || '', requires: o?.requires || '' }))
+    .filter(shownOmission)
+    .map((o) => (typeof o === 'string' ? { feature: o, requires: '' } : { feature: o?.feature || '', requires: o?.requires || '', ...(typeof o?.requestable === 'boolean' ? { requestable: o.requestable } : {}) }))
     .filter((o) => o.feature);
   return { included, omitted, full: !omitted.length && !included.length };
 }
