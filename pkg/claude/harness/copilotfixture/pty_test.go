@@ -3,6 +3,7 @@ package copilotfixture_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -150,4 +151,44 @@ func TestRunPTYWaitsForOutputBeforeTyping(t *testing.T) {
 	assert.Contains(t, res.TranscriptText(), "typed-after-startup",
 		"input typed before the CLI drew anything is discarded, which is how this "+
 			"failed in production; transcript=%q", res.TranscriptText())
+}
+
+func TestRunPTYGatesKeystrokesOnRenderedOutput(t *testing.T) {
+	fakeCopilot(t, `stty -echo -icanon
+echo starting
+(sleep 0.4; printf 'GATE-\033[31mOPEN\033[0m\n') &
+dd bs=1 count=1 2>/dev/null
+echo RECEIVED
+wait`)
+	res := copilotfixture.RunPTY(t, copilotfixture.PTYOptions{
+		RunOptions: fakeRunOptions(t),
+		Deadline:   5 * time.Second,
+		Keystrokes: []copilotfixture.Keystroke{{Bytes: "X"}},
+		KeystrokesWhen: func(text string) bool {
+			return strings.Contains(text, "GATE-OPEN")
+		},
+	})
+	require.True(t, res.Exited, "transcript=%q", res.TranscriptText())
+	require.Equal(t, 0, res.ExitCode)
+	text := res.TranscriptText()
+	require.Contains(t, text, "GATE-OPEN")
+	require.Contains(t, text, "RECEIVED")
+	assert.Less(t, strings.Index(text, "GATE-OPEN"), strings.Index(text, "RECEIVED"),
+		"the CLI must render the marker before receiving input")
+}
+
+func TestRunPTYKeystrokeGateStopsOnExitOrDeadline(t *testing.T) {
+	for _, script := range []string{"echo starting; sleep 0.2", "echo starting; sleep 60"} {
+		t.Run(script, func(t *testing.T) {
+			fakeCopilot(t, script)
+			res := copilotfixture.RunPTY(t, copilotfixture.PTYOptions{
+				RunOptions:     fakeRunOptions(t),
+				Deadline:       time.Second,
+				Keystrokes:     []copilotfixture.Keystroke{{Bytes: "MUST_NOT_TYPE"}},
+				KeystrokesWhen: func(string) bool { return false },
+			})
+			assert.NotContains(t, res.TranscriptText(), "MUST_NOT_TYPE")
+			assert.Equal(t, strings.Contains(script, "0.2"), res.Exited)
+		})
+	}
 }

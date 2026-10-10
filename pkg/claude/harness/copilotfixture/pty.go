@@ -173,6 +173,12 @@ type PTYOptions struct {
 	// what makes a measurement here evidence about tclaude's pane injection.
 	Keystrokes []Keystroke
 
+	// KeystrokesWhen, when set, gates the first keystroke on observed terminal
+	// output instead of assuming startup finishes within a fixed delay. It is
+	// passed the ANSI-stripped transcript; After delays start once it is true.
+	// The process exit and run deadline still bound the wait.
+	KeystrokesWhen func(string) bool
+
 	// SettledWhen, when non-nil, ends the run as soon as it returns true.
 	//
 	// Interactive mode never exits on its own — after a turn completes the CLI
@@ -346,6 +352,17 @@ func RunPTY(t *testing.T, opts PTYOptions) PTYResult {
 	// the ones quiescence never arrives in.
 	if len(opts.Keystrokes) > 0 {
 		go func() {
+			if opts.KeystrokesWhen != nil {
+				ready := func() bool {
+					mu.Lock()
+					text := transcript.String()
+					mu.Unlock()
+					return opts.KeystrokesWhen(stripANSI(text))
+				}
+				if !awaitPTYCondition(ctx, exitedCh, ready) {
+					return
+				}
+			}
 			for _, k := range opts.Keystrokes {
 				select {
 				case <-ctx.Done():
@@ -369,7 +386,7 @@ func RunPTY(t *testing.T, opts PTYOptions) PTYResult {
 	// the scenario waited out its deadline, and it read as the CLI ignoring a
 	// command instead of a race, with a 109-second silence in the timing log.
 	for _, line := range opts.Input {
-		if !awaitQuiescence(ctx, exitedCh, quiet) {
+		if !awaitPTYCondition(ctx, exitedCh, quiet) {
 			break
 		}
 		mu.Lock()
@@ -514,13 +531,13 @@ func logPTYTiming(t *testing.T, res PTYResult) {
 		res.MaxOutputGap.Round(100*time.Millisecond))
 }
 
-// awaitQuiescence blocks until output settles, the process exits, or the
+// awaitPTYCondition blocks until observed output satisfies the condition, the process exits, or the
 // deadline passes. It reports whether the caller should still write input.
 //
 // exited is a broadcast channel rather than the status channel: consuming the
 // exit status here would steal it from the main loop, which is the only place
 // that may report it.
-func awaitQuiescence(ctx context.Context, exited <-chan struct{}, quiet func() bool) bool {
+func awaitPTYCondition(ctx context.Context, exited <-chan struct{}, ready func() bool) bool {
 	for {
 		select {
 		case <-ctx.Done():
@@ -528,7 +545,7 @@ func awaitQuiescence(ctx context.Context, exited <-chan struct{}, quiet func() b
 		case <-exited:
 			return false
 		case <-time.After(100 * time.Millisecond):
-			if quiet() {
+			if ready() {
 				return true
 			}
 		}
