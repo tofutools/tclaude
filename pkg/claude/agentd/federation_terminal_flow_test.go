@@ -43,6 +43,9 @@ func (m *terminalTmux) Command(args ...string) *exec.Cmd {
 	case "-V":
 		return terminalEcho(m.version)
 	case "display-message":
+		if args[len(args)-1] == "#{pane_width} #{pane_height}" {
+			return terminalEcho("120 40")
+		}
 		if strings.Contains(args[len(args)-1], "#{window_panes}") {
 			m.probes++
 			return terminalEcho(m.pane + "\t@1\t$1\t" + m.windows + "\t1\n")
@@ -198,6 +201,7 @@ func TestFederation_TerminalInputWatchKickAndPin(t *testing.T) {
 	require.Contains(t, rec.Body.String(), o.Stream)
 	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/viewers/"+o.Stream+"/kick", nil)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.Equal(t, 404, fedHuman(t, f, http.MethodPost, "/v1/federation/viewers/"+o.Stream+"/kick", nil).Code, "successful kick waits for viewer removal")
 	fedEventually(t, "indicator restored after kick", func() bool {
 		opts, _, _ := mock.snapshot()
 		return opts["pane-border-format"] == "original" && opts["@tclaude-federation-viewers"] == ""

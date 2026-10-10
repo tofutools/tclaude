@@ -1,6 +1,7 @@
 package federationcmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -147,6 +148,8 @@ func offersCmd() *cobra.Command {
 			fmt.Println("no bundle offers")
 		}
 	}, SubCmds: []*cobra.Command{
+		offerContentsCmd(),
+		offerDownloadCmd(),
 		boa.CmdT[offerImportParams]{Use: "import", Short: "Preview a received config or agent offer; --apply imports it", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *offerImportParams, _ *cobra.Command, _ []string) {
 			os.Exit(runOfferImport(p, os.Stdout, os.Stderr))
 		}}.ToCobra(),
@@ -209,6 +212,73 @@ func offerPost(stderr io.Writer, path string, in, out any) int {
 			}
 		}
 		return fail(stderr, err)
+	}
+	return 0
+}
+
+type offerContentsParams struct {
+	ID       string `pos:"true" help:"Received offer ID (fetch it first)."`
+	Peer     string `long:"peer" optional:"true" help:"Source peer."`
+	Path     string `long:"path" optional:"true" help:"Entry path from the contents listing."`
+	Offset   int64  `long:"offset" help:"Byte offset within the entry."`
+	MaxBytes int64  `long:"max-bytes" default:"262144" help:"Bounded bytes to read, at most 1048576."`
+}
+
+func offerContentsCmd() *cobra.Command {
+	return boa.CmdT[offerContentsParams]{Use: "contents", Short: "Inspect a verified offer's entries or bounded text", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *offerContentsParams, _ *cobra.Command, _ []string) {
+		os.Exit(runOfferContents(p, os.Stdout, os.Stderr))
+	}}.ToCobra()
+}
+func runOfferContents(p *offerContentsParams, out, stderr io.Writer) int {
+	if rc := agent.RequireDaemonOrExit(stderr); rc != 0 {
+		return rc
+	}
+	path := offerPath(p.ID, p.Peer, "contents")
+	if p.Path != "" {
+		path += "&path=" + url.QueryEscape(p.Path) + fmt.Sprintf("&offset=%d&max_bytes=%d", p.Offset, p.MaxBytes)
+	}
+	var response any
+	if err := agent.DaemonGet(path, &response); err != nil {
+		return fail(stderr, err)
+	}
+	return printJSON(out, response)
+}
+
+type offerDownloadParams struct {
+	ID   string `pos:"true" help:"Received offer ID (fetch it first)."`
+	File string `pos:"true" help:"New output file; existing files are refused."`
+	Peer string `long:"peer" optional:"true" help:"Source peer."`
+}
+
+func offerDownloadCmd() *cobra.Command {
+	return boa.CmdT[offerDownloadParams]{Use: "download", Short: "Save a verified offer without importing it", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *offerDownloadParams, _ *cobra.Command, _ []string) { os.Exit(runOfferDownload(p, os.Stderr)) }}.ToCobra()
+}
+func runOfferDownload(p *offerDownloadParams, stderr io.Writer) int {
+	if rc := agent.RequireDaemonOrExit(stderr); rc != 0 {
+		return rc
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	body, err := agent.DaemonStreamGet(ctx, offerPath(p.ID, p.Peer, "download"))
+	if err != nil {
+		return fail(stderr, err)
+	}
+	defer body.Close()
+	f, err := os.OpenFile(p.File, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	n, copyErr := io.Copy(f, io.LimitReader(body, bundletransfer.Agent.MaxBytes+1))
+	closeErr := f.Close()
+	if copyErr == nil {
+		copyErr = closeErr
+	}
+	if copyErr == nil && n > bundletransfer.Agent.MaxBytes {
+		copyErr = errors.New("bundle exceeds 256 MiB")
+	}
+	if copyErr != nil {
+		_ = os.Remove(p.File)
+		return fail(stderr, copyErr)
 	}
 	return 0
 }

