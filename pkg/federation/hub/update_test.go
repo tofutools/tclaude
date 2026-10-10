@@ -43,3 +43,20 @@ func TestUnsupervisedHubRecoversInterruptedCheckWithoutConfirmingApply(t *testin
 		})
 	}
 }
+
+func TestHubUpdateOutcomeAuditRemainsIdempotentAfterRetention(t *testing.T) {
+	st, err := OpenStore(filepath.Join(testutil.CanonicalTempDir(t), "hub.sqlite"))
+	require.NoError(t, err)
+	defer st.Close()
+	job := selfupdate.Job{ID: strings.Repeat("a", 32), Actor: "operator", Action: "apply", State: "rolled_back", RolledBack: true, Error: "health failed"}
+	require.NoError(t, st.AuditUpdateOutcome(job))
+	require.NoError(t, st.AuditUpdateOutcome(job))
+	var count int
+	require.NoError(t, st.db.QueryRow(`SELECT count(*) FROM hub_admin_audit WHERE operation='update'`).Scan(&count))
+	require.Equal(t, 1, count)
+	_, err = st.db.Exec(`DELETE FROM hub_admin_audit`)
+	require.NoError(t, err)
+	require.NoError(t, st.AuditUpdateOutcome(job))
+	require.NoError(t, st.db.QueryRow(`SELECT count(*) FROM hub_admin_audit WHERE operation='update'`).Scan(&count))
+	require.Zero(t, count, "retention must not resurrect old outcomes on restart")
+}

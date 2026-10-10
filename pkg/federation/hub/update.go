@@ -67,6 +67,13 @@ func (h *Hub) executeUpdate(c *conn, operation string, raw json.RawMessage) (any
 		}
 		return out, err
 	}
+	// Reconcile the previous terminal outcome before a new submission can
+	// replace the status pointer, including after a transient audit failure.
+	if j := h.updates.Pending(); j != nil {
+		if err := h.store.AuditUpdateOutcome(*j); err != nil {
+			return nil, adminErr(503, "audit", "hub update outcome audit unavailable")
+		}
+	}
 	switch operation {
 	case "update.status":
 		return hubupdate.StatusJSON(h.updates.Status(), ""), nil
