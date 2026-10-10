@@ -333,8 +333,10 @@ function Confirm({ feedback }) {
   // — the same busy vocabulary the transaction dialogs already use.
   const busy = !!model?.busy;
   const okRef = useRef(null);
+  const cancelRef = useRef(null);
   useLayoutEffect(() => {
-    if (model && !busy) okRef.current?.focus();
+    if (!model || busy) return;
+    (model.focusCancel && !model.informational ? cancelRef : okRef).current?.focus();
   }, [model, busy]);
   useEffect(() => {
     if (!model || busy) return undefined;
@@ -368,7 +370,7 @@ function Confirm({ feedback }) {
         <p id="confirm-body" class=${model?.preformatted ? 'confirm-body-preformatted' : ''}>${model?.body || ''}</p>
         <div class="modal-meta" id="confirm-meta" style=${`display:${model?.meta ? 'block' : 'none'}`}>${model?.meta || ''}</div>
         <div class="modal-buttons">
-          ${model?.informational ? null : html`<button id="confirm-cancel" disabled=${busy} onClick=${() => feedback.resolveConfirmation(false)}>${model?.cancelLabel || 'Cancel'}</button>`}
+          ${model?.informational ? null : html`<button ref=${cancelRef} id="confirm-cancel" disabled=${busy} onClick=${() => feedback.resolveConfirmation(false)}>${model?.cancelLabel || 'Cancel'}</button>`}
           <button ref=${okRef} id="confirm-ok" class=${model?.informational ? '' : 'confirm-danger'}
             disabled=${busy} aria-busy=${busy ? 'true' : undefined}
             onClick=${() => feedback.resolveConfirmation(true)}>

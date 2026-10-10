@@ -71,3 +71,39 @@ func TestDashboardFederationMovesAndTeleport(t *testing.T) {
 	rec := testharness.Serve(raw, testharness.JSONRequest(t, "GET", "/api/federation/teleport", nil))
 	require.Equal(t, 403, rec.Code, rec.Body.String())
 }
+
+func TestDashboardFederationMoveAgent(t *testing.T) {
+	fh := newFedHarness(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://localhost:12345"))
+	aid := fedMoveSource(t, fh)
+	h := agentd.BuildDashboardHandlerForTest()
+	rec := testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/federation/move-agent", map[string]any{"agent": moveSourceConv, "peer": "bob", "group": "receiver"}))
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.Equal(t, "private, no-store", rec.Header().Get("Cache-Control"))
+	var v struct {
+		Offer struct {
+			D struct {
+				ID   string          `json:"id"`
+				Move json.RawMessage `json:"move"`
+			} `json:"offer"`
+		} `json:"offer"`
+	}
+	testharness.DecodeJSON(t, rec, &v)
+	require.NotEmpty(t, v.Offer.D.Move, "the dashboard route starts a move, not a plain share")
+	m, err := db.GetFederationAgentMove("out", fh.peer.id.ID(), v.Offer.D.ID)
+	require.NoError(t, err)
+	require.Equal(t, "awaiting_confirmation", m.State)
+	require.Equal(t, aid, m.SourceAgent)
+	// The source keeps running until the peer confirms its copy.
+	a, err := db.GetAgent(aid)
+	require.NoError(t, err)
+	require.True(t, a.Active())
+
+	// A peer view never reaches move-agent, even for an unrestricted peer.
+	peer, err := db.GetFederationPeer(fh.peer.id.ID())
+	require.NoError(t, err)
+	peer.TrustLevel = db.FederationTrustUnrestricted
+	require.NoError(t, db.TrustFederationPeer(*peer))
+	rec = testharness.Serve(agentd.PeerViewHandler(peer.InstanceID), testharness.JSONRequest(t, "POST", "/api/federation/move-agent", map[string]any{"agent": moveSourceConv, "peer": "bob", "group": "receiver"}))
+	require.Equal(t, 403, rec.Code, rec.Body.String())
+}

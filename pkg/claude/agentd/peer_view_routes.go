@@ -43,6 +43,7 @@ var peerViewLocalRoutes = []string{
 	"/api/export-jobs/",
 	"POST /api/federation/offer-config",
 	"POST /api/federation/share-agent",
+	"POST /api/federation/move-agent",
 	"GET /api/federation/bundle-offers",
 	"POST /api/federation/bundle-offers/{id}/fetch",
 	"POST /api/federation/bundle-offers/{id}/import",

@@ -5,6 +5,7 @@ import "net/http"
 func registerDashboardFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/federation/offer-config", dashboardFederationRoute(handleFederationOfferConfig))
 	mux.HandleFunc("POST /api/federation/share-agent", dashboardFederationRoute(handleFederationShareAgent))
+	mux.HandleFunc("POST /api/federation/move-agent", dashboardFederationRoute(handleFederationShareAgent))
 	mux.HandleFunc("GET /api/federation/bundle-offers", dashboardFederationRoute(handleFederationBundleOffers))
 	mux.HandleFunc("POST /api/federation/bundle-offers/{id}/fetch", dashboardFederationRoute(handleFederationBundleFetch))
 	mux.HandleFunc("POST /api/federation/bundle-offers/{id}/import", dashboardFederationRoute(handleFederationBundleImport))
