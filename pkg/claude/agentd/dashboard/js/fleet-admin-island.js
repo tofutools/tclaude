@@ -9,6 +9,7 @@ import { AuditPage } from './fleet-admin-audit.js';
 import { HarnessesPage } from './fleet-admin-harnesses.js';
 import { createHarnessActions } from './fleet-harness-actions.js';
 import { NodeUpdateDialog } from './node-update.js';
+import { AwayControl } from './peer-mail.js';
 import { RunPage } from './fleet-admin-run.js';
 import { createRunActions } from './fleet-run-actions.js';
 import { dashboardState } from './snapshot-store.js';
@@ -109,6 +110,7 @@ function Identity({ self, actions, confirm, toast, copy, reload, onUpdate }) {
     <span><span class="fa-k">Instance</span> <code>${self.id}</code></span>
     <span><span class="fa-k">Fingerprint</span> <${Fingerprint} value=${self.fingerprint} copy=${copy} toast=${toast} /></span>
     <span><span class="fa-k">tclaude</span> <button id="fleet-node-update-open" type="button" class="fa-link" onClick=${onUpdate}>version & updates…</button></span>
+    <span><${AwayControl} confirm=${confirm} toast=${toast} /></span>
     <span><span class="fa-k">Hub</span> ${self.hubURL ? html`<code>${self.hubURL}</code> ` : ''}<span class=${`fa-hub ${hubClass}`} title=${self.hubError || ''}>${self.hubState}</span></span>
     ${self.enabled
       ? html`<button type="button" class="fa-danger" onClick=${disconnect}>Disconnect</button>`
