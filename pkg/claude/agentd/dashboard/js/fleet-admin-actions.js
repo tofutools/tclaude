@@ -75,5 +75,14 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
     applyProfile: (name, { peer, apply = false, previewToken = '', confirmFingerprint = '' }) => call('POST', `profiles/${encodeURIComponent(name)}/apply`,
       { peer, apply, preview_token: previewToken, confirm_fingerprint: confirmFingerprint }),
     enroll: ({ master, token, previewToken }) => call('POST', 'enroll', { master, token, preview_token: previewToken }),
+    // Spawn requests: incoming ones peers sent to this node's groups (all
+    // states, newest first), and asking a peer for a worker.
+    spawnRequests: async () => (await call('GET', 'spawn-requests')) || [],
+    sendSpawnRequest: (body) => call('POST', 'spawn-requests', body),
+    approveSpawn: (id, overrides = {}) => call('POST', `spawn-requests/${encodeURIComponent(id)}/approve`, overrides),
+    denySpawn: (id, reason = '') => call('POST', `spawn-requests/${encodeURIComponent(id)}/deny`, reason ? { reason } : {}),
+    abandonSpawn: (id) => call('POST', `spawn-requests/${encodeURIComponent(id)}/abandon`, { acknowledge_late_worker: true }),
+    // Delivery state of what this node sent peers (spawn requests, mail).
+    outbox: async (limit = 100) => (await call('GET', `outbox?limit=${limit}`)) || [],
   });
 }

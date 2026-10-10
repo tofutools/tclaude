@@ -56,6 +56,15 @@ const skynetFederationStubJS = `(function(){
       { id: 'a1', at: '2026-10-10T08:20:00Z', source: 'audit', direction: 'event', peer: 'inst_hn3cxq7a', kind: 'federation.grant', actor: 'operator', target: 'inst_hn3cxq7a groups.roster.read group=ops', status: 200 }
     ]);
     if (/^\/api\/federation\/profiles\/[^/]+$/.test(path) && !(init && init.method === 'PUT')) return json({ profile: {}, applied_peers: ['inst_hn3cxq7a'] });
+    if (path === '/api/federation/spawn-requests' && !(init && init.method === 'POST')) return json([
+      { id: 12, from: 'ada@forge', instance: 'inst_hn3cxq7a', group: 'frontend-squad', name: 'flake-hunter', role: 'dev', profile: 'opus-fast', brief: 'The deploy smoke test fails about one run in five on CI. Find the race and fix it; keep the change small.', status: 'pending', credentials: 'proxy:claude@inst_hn3cxq7a', model_lease: 'mlease_7q2kx9d4hpa1', created_at: '2026-10-10T09:12:00Z', expires_at: '2026-10-13T09:12:00Z' },
+      { id: 11, from: 'ada@forge', instance: 'inst_hn3cxq7a', group: 'infra-crew', brief: 'Benchmark the new cache layer against main.', status: 'launching', result_agent: 'agt_k3v9q2m7x1', created_at: '2026-10-10T08:40:00Z', expires_at: '2026-10-13T08:40:00Z' },
+      { id: 9, from: 'lab', instance: 'inst_2p6ym4ke', group: 'infra-crew', brief: 'Rebuild the docs index.', status: 'approved', result_agent: 'agt_p8d2w4c6z0', created_at: '2026-10-09T15:00:00Z', expires_at: '2026-10-12T15:00:00Z' }
+    ]);
+    if (path === '/api/federation/outbox') return json([
+      { envelope_id: 'env_7k2q', to: 'reviewers@lab', from: 'human operator', subject: 'spawn request', preview: 'Second pair of eyes on PR 2776', state: 'pending', attempts: 4, last_error: 'peer offline', created_at: '2026-10-10T09:20:00Z', updated_at: '2026-10-10T09:31:00Z' },
+      { envelope_id: 'env_5m1x', to: 'ops@forge', from: 'human operator', subject: 'Release window', preview: 'Freeze starts at 18:00', state: 'acked', attempts: 1, created_at: '2026-10-10T08:02:00Z', updated_at: '2026-10-10T08:02:01Z' }
+    ]);
     if (path === '/api/federation/peers/trust') return json({ instance_id: 'inst_w5zea3nq', fingerprint: 'w5ze-a3nq-7m1p-kd42-xr8c-0fv6', level: 'restricted', profile: null, plan: null, applied: false });
     var hav = function(extra){ return { schema: 1, observed_at: '2026-10-10T09:40:00Z', harnesses: [
       { name: 'claude', display_name: 'Claude Code', installed: true, version: '2.1.4', latest_version: extra ? '2.1.4' : '2.2.0', update_available: !extra, version_status: 'known', credential_present: true, usable: true },
@@ -242,6 +251,24 @@ func skynetStates() []dashsnap.State {
   for (var j = 0; j < 30 && !document.querySelector('#fleet-grants'); j++) await new Promise(function(r){ setTimeout(r, 100); });
   if (document.querySelectorAll('#fleet-grants tbody tr').length !== 5) throw new Error('skynet: grants missing');
   if (document.querySelectorAll('#fleet-grants [data-fa="revoke"]').length !== 4) throw new Error('skynet: pool grant should not be revocable here');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-spawns",
+			Title:   "Spawn requests",
+			Caption: "Fleet → Spawn requests: workers peers asked this node to start in its groups, with who asked, the group, requested name/role/profile (requester-paid flagged), the brief and its state. Pending requests can be approved (optionally overriding name, profile, cwd, harness or model) or denied with a reason; an unconfirmed launch can be abandoned, warning that the original worker may still appear. Request a worker on a peer… asks a peer (or automatic placement) for one. The outbox shows delivery of what this node sent.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  Array.from(document.querySelectorAll('.fa-subtab')).find(function(b){ return /Spawn requests/.test(b.textContent); }).click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-outbox'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (document.querySelectorAll('#fleet-spawn-requests tbody tr').length !== 2) throw new Error('skynet: open spawn requests missing');
+  document.querySelector('[data-spawn="12"] [data-fa="approve"]').click();
+  for (var k = 0; k < 30 && !document.querySelector('#fleet-spawn-approve'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-spawn-approve')) throw new Error('skynet: approve dialog did not open');
 })();`,
 			SettleMS: 400,
 		},
