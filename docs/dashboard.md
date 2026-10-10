@@ -544,8 +544,10 @@ height to the page.
 
 **nodes ▾**, after the node buttons, shows several nodes together: tick the
 nodes (all by default), and **Groups** lists the ticked nodes' groups as one
-tree (see [Groups on several nodes](#groups-on-several-nodes)); the button
-reads e.g. `2/3`. Clicking a node's name (or its **only**) shows that node
+tree (see [Groups on several nodes](#groups-on-several-nodes)) while
+**Terminals** shows the open terminals on the ticked nodes, each tab and pane
+labelled with its node (the others stay open, out of sight); the button reads
+e.g. `2/3`. Clicking a node's name (or its **only**) shows that node
 alone, as does unticking all but one. Every other tab still shows one node, the
 primary: the node of the page you fused from. It says so in a strip at the top,
 whose buttons switch the primary without leaving the fused view, and the tab

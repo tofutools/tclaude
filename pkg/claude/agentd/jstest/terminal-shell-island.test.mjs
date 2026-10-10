@@ -746,3 +746,49 @@ test('a local agent pane header names the peer watching its terminal, also when 
   assertAbsent(host.querySelector('.remote-viewers-badge'), 'the badge goes when the viewer leaves');
   cleanup();
 });
+
+test('a fused node scope labels panes by node and keeps unticked nodes\' panes out of sight', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host } = installHosts(harness);
+  const fake = fakeWidgetFactory(harness);
+  const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
+  const controller = await harness.importDashboardModule('js/terminals-tab.js');
+  const { skynetState } = await harness.importDashboardModule('js/skynet-state.js');
+  skynetState.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [
+    { instance_id: 'inst_forge', label: 'forge', trusted: true, online: true },
+    { instance_id: 'inst_lab', label: 'lab', trusted: true, online: true },
+  ] });
+  const cleanup = await mountTerminalsFeature({ widgetFactory: fake.factory });
+  await harness.act(async () => {
+    controller.openTerminalPane({ ws: '/local', key: 'local', label: 'builder-1' });
+    controller.openTerminalPane({ ws: '/forge', key: 'forge', label: 'reviewer-2 @ forge', remote: { peer: 'inst_forge', peerLabel: 'forge', agent: 'agt_r2' } });
+    controller.openTerminalPane({ ws: '/lab', key: 'lab', label: 'qa-1 @ lab', remote: { peer: 'inst_lab', peerLabel: 'lab', agent: 'agt_q1' } });
+    await Promise.resolve();
+  });
+  const tabs = () => [...host.querySelectorAll('.mux-tab')];
+  assert.equal(host.querySelectorAll('.mux-node-pill').length, 0, 'one node shown: no node labels');
+  await harness.act(() => { skynetState.setFused(['inst_self', 'inst_forge']); });
+  const shown = tabs().filter((tab) => !tab.classList.contains('scope-hidden'));
+  assert.deepEqual(shown.map((tab) => tab.querySelector('.mux-node-pill').textContent), ['⌂ desk', 'forge']);
+  assert.ok(tabs().find((tab) => tab.textContent.includes('qa-1')).classList.contains('scope-hidden'), 'lab is not ticked');
+  assert.ok(host.querySelector('.mux-pane.active:not(.scope-hidden)'), 'the active pane is on a ticked node');
+  assert.match(host.querySelector('.mux-pane.active .mux-pane-header').textContent, /forge|desk/);
+  // Keyboard reorder steps over hidden tabs: desk's tab passes lab (hidden)
+  // and forge in one press.
+  const deskTab = tabs().find((tab) => tab.textContent.includes('builder-1'));
+  await harness.act(() => harness.fireEvent(deskTab, 'keydown', { key: 'ArrowRight', altKey: true, shiftKey: true }));
+  assert.deepEqual(tabs().filter((tab) => !tab.classList.contains('scope-hidden')).map((tab) => tab.querySelector('.mux-tab-label').textContent),
+    ['reviewer-2 @ forge', 'builder-1']);
+  // Unticking the active pane's node hands over quietly: the dashboard stays
+  // on the tab the operator is on.
+  harness.document.querySelector('nav [data-tab="groups"]').click();
+  const activeLabel = host.querySelector('.mux-pane.active .mux-pane-title').textContent;
+  await harness.act(() => { skynetState.setFused(activeLabel.includes('forge') ? ['inst_self', 'inst_lab'] : ['inst_lab', 'inst_forge']); });
+  assert.equal(host.querySelector('.mux-pane.active').classList.contains('scope-hidden'), false,
+    'an active pane leaving the scope hands over to one in it');
+  assert.equal(harness.document.getElementById('tab-terminals').classList.contains('active'), false, 'without switching to Terminals');
+  await harness.act(() => { skynetState.setFused(null); });
+  assert.equal(host.querySelectorAll('.scope-hidden').length, 0);
+  cleanup();
+  skynetState.clearFleet();
+});

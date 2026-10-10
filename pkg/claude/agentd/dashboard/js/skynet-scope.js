@@ -86,3 +86,21 @@ export function filterNodes(fleet, query) {
   if (!q) return nodes;
   return nodes.filter((n) => n.local || n.name.toLowerCase().includes(q) || n.id.toLowerCase().includes(q));
 }
+
+// paneNode names the node a browser terminal pane belongs to: the peer of a
+// remote pane (fleet-known, else its own label), or this node. Null without a
+// fleet: a dashboard with no linked nodes labels nothing.
+export function paneNode(fleet, seed, colorOf) {
+  if (!fleet) return null;
+  const peer = seed?.remote?.peer;
+  if (!peer) return fleet.self;
+  return fleet.peers.find((p) => p.id === peer) || { id: peer, name: seed.remote.peerLabel || peer.slice(0, 13), color: colorOf(peer), local: false };
+}
+
+// paneScope says how a fused view shows a pane: hidden when its node is not
+// ticked, and labelled with its node whenever a view is fused.
+export function paneScope(fleet, fused, seed, colorOf) {
+  if (!fused) return { hidden: false, node: null };
+  const node = paneNode(fleet, seed, colorOf);
+  return { hidden: !!node && !isTicked(fused, node.id), node };
+}

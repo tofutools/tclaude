@@ -20,6 +20,8 @@ import {
 } from './human-notification-attention.js';
 import { ViewersBadge } from './remote-viewers.js';
 import { RemoteFilesPanel } from './remote-files-panel.js';
+import { paneScope } from './skynet-scope.js';
+import { nodeColor } from './skynet-model.js';
 
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
@@ -220,7 +222,7 @@ function RemoteBadge({ seed, remote }) {
 
 function TerminalPane({
   pane, active, activationToken, solo, manageTitle, actions, widgetFactory, onComposeMessage,
-  snapshot = null,
+  snapshot = null, scope = null,
 }) {
   const [status, setStatus] = useState('disconnected');
   const [reconnect, setReconnect] = useState(false);
@@ -261,7 +263,7 @@ function TerminalPane({
   }, [active, agentStatus?.symbol, manageTitle, pane.label, snapshotReady]);
   return html`
     <div
-      class=${`mux-pane${active ? ' active' : ''}${theme.wizard && theme.palette ? ' arcane-palette' : ''}`}
+      class=${`mux-pane${active ? ' active' : ''}${theme.wizard && theme.palette ? ' arcane-palette' : ''}${scope?.hidden ? ' scope-hidden' : ''}`}
       id=${pane.id}
       role=${solo ? null : 'tabpanel'}
     >
@@ -283,7 +285,7 @@ function TerminalPane({
             onDragEnd=${endTitleDrag}
           >${pane.label}</span>
           ${reattachArmed ? html`<span class="mux-drag-out-hint">Release anywhere — even outside the browser — to send this terminal back to the dashboard</span>` : null}
-        ` : html`<span class="mux-pane-title">${pane.label}</span>`}
+        ` : html`<${NodePill} node=${scope?.node} /><span class="mux-pane-title">${pane.label}</span>`}
         <${RemoteBadge} seed=${pane.seed} remote=${remote} />
         ${!pane.seed.remote && pane.seed.agent ? html`<${ViewersBadge} agentId=${pane.seed.agent} className="term-viewers-badge" />` : null}
         <span class="mux-pane-status" role="status" aria-live="polite" aria-atomic="true">${status}</span>
@@ -422,9 +424,16 @@ function TerminalCosts({ agent }) {
   `;
 }
 
+// NodePill names a pane's node in a fused view (skynet-scope.js), in that
+// node's colour.
+function NodePill({ node }) {
+  if (!node) return null;
+  return html`<span class="mux-node-pill" style=${`--nc:${node.color}`} title=${node.local ? 'This node' : `On ${node.name}`}>${node.local ? '⌂ ' : ''}${node.name}</span>`;
+}
+
 function PaneTab({
   pane, active, menuOpen, groupId = null, actions, openMenu, dragging, dropSide,
-  onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onReordered, snapshot = null,
+  onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onReordered, snapshot = null, scope = null,
 }) {
   const agentStatus = terminalTabStatus(pane, snapshot?.value);
   const unreadMessages = paneUnreadNotifications(pane, snapshot?.value);
@@ -476,7 +485,7 @@ function PaneTab({
   };
   return html`
     <div
-      class=${`mux-tab${active ? ' active' : ''}${dragging ? ' dragging' : ''}${dropSide ? ` drop-${dropSide}` : ''}`}
+      class=${`mux-tab${active ? ' active' : ''}${dragging ? ' dragging' : ''}${dropSide ? ` drop-${dropSide}` : ''}${scope?.hidden ? ' scope-hidden' : ''}`}
       role="tab"
       data-pane-key=${pane.key}
       data-agent-status=${agentStatus.key}
@@ -505,6 +514,7 @@ function PaneTab({
         title=${agentStatus.title}
       >${agentStatus.symbol}</span>
       <${TabAttention} pane=${pane} snapshot=${snapshot} messages=${unreadMessages} />
+      <${NodePill} node=${scope?.node} />
       <span class="mux-tab-label">${pane.label}</span>
       <${TerminalCosts} agent=${agentStatus.agent} />
       <button
@@ -830,9 +840,45 @@ function PaneContextMenu({
 function TerminalTabs({
   state, actions, widgetFactory, onComposeMessage, composeMessageReady = null,
   composeMessageDialogKind = () => '',
-  solo = false, manageTitle = false, empty = false, snapshot = null,
+  solo = false, manageTitle = false, empty = false, snapshot = null, scope = null,
 }) {
   const current = state.view.value;
+  // A fused node scope (skynet-scope.js) shows the ticked nodes' panes, each
+  // labelled with its node; the rest stay open, just out of sight.
+  const scopeView = scope?.view.value;
+  const scopeOf = (pane) => paneScope(scopeView?.fleet, scopeView?.fused, pane.seed, nodeColor);
+  const shownPanes = current.panes.filter((pane) => !scopeOf(pane).hidden);
+  const activeHidden = current.activeKey && scopeOf(current.panes.find((p) => p.key === current.activeKey) || {}).hidden;
+  // Quietly: unticking a node must not pull the operator into this tab.
+  useEffect(() => {
+    if (activeHidden && shownPanes.length) actions.activatePane(shownPanes[0].key, { reveal: false });
+  }, [activeHidden, shownPanes[0]?.key]);
+  // skipHidden makes a keyboard move step over tabs the scope hides: one
+  // press moves past the next visible neighbour, never only past unseen ones.
+  const skipHidden = (move, movedKeys) => (id, offset) => {
+    if (!scopeView?.fused) return move(id, offset);
+    const dir = offset > 0 ? 1 : -1;
+    let moved = null;
+    for (let guard = state.view.value.panes.length; guard >= 0; guard -= 1) {
+      const before = state.view.value.panes.map((p) => p.key);
+      const out = move(id, dir);
+      if (!out) break;
+      moved = out;
+      const after = state.view.value.panes;
+      const own = new Set(movedKeys(id));
+      const at = (keys, k) => keys.indexOf(k);
+      const firstOwn = (keys) => keys.findIndex((k) => own.has(k));
+      const afterKeys = after.map((p) => p.key);
+      const passed = after.filter((p) => !own.has(p.key)
+        && (at(before, p.key) < firstOwn(before)) !== (at(afterKeys, p.key) < firstOwn(afterKeys)));
+      if (!passed.length || passed.some((p) => !scopeOf(p).hidden)) break;
+    }
+    return moved;
+  };
+  const scopedActions = scopeView?.fused
+    ? { ...actions, movePaneByOffset: skipHidden(actions.movePaneByOffset, (key) => [key]) }
+    : actions;
+  const moveGroupScoped = skipHidden(actions.moveGroupByOffset, (gid) => (current.segments.find((sg) => sg.type === 'group' && sg.group.id === gid)?.panes || []).map((p) => p.key));
   const composeMessageAvailable = Boolean(onComposeMessage) &&
     (composeMessageReady === null || composeMessageReady.value);
   const hasPanes = current.panes.length > 0;
@@ -932,7 +978,7 @@ function TerminalTabs({
     queueMicrotask(() => focusGroupPill(moved.group.id));
   };
   const moveGroupKeyboard = (groupID, offset) => {
-    const moved = actions.moveGroupByOffset(groupID, offset);
+    const moved = moveGroupScoped(groupID, offset);
     if (moved) announceGroupAndRefocus(moved);
   };
   const startGroupDrag = (event, groupID) => {
@@ -1358,7 +1404,7 @@ function TerminalTabs({
                 active=${current.activeKey === pane.key}
                 menuOpen=${tabMenu?.kind !== 'group' && tabMenu?.key === pane.key}
                 groupId=${segment.type === 'group' ? segment.group.id : null}
-                actions=${actions}
+                actions=${scopedActions}
                 openMenu=${setTabMenu}
                 dragging=${dragKey === pane.key}
                 dropSide=${dropTarget?.key === pane.key ? dropTarget.side : ''}
@@ -1369,9 +1415,12 @@ function TerminalTabs({
                 onDrop=${dropTab}
                 onReordered=${announceAndRefocus}
                 snapshot=${snapshot}
+                scope=${scopeOf(pane)}
               />
             `;
             if (segment.type !== 'group') return renderTab(segment.pane);
+            // A stack none of whose panes are on a ticked node is out of sight too.
+            if (segment.panes.every((pane) => scopeOf(pane).hidden)) return null;
             const gid = segment.group.id;
             const dragging = Boolean(dragKey) || Boolean(dragGroupId);
             // A leading gap is only reachable — and only needed — when this
@@ -1448,9 +1497,13 @@ function TerminalTabs({
               widgetFactory=${widgetFactory}
               onComposeMessage=${composeMessageAvailable ? onComposeMessage : null}
               snapshot=${manageTitle ? snapshot : null}
+              scope=${scopeOf(pane)}
             />
           `)}
         </div>
+      ` : null}
+      ${hasPanes && !shownPanes.length ? html`
+        <div class="mux-scope-empty">None of your open terminals is on the ticked nodes. Tick more nodes in <b>nodes ▾</b> to see them.</div>
       ` : null}
       ${empty && !hasPanes ? html`
         <div id="mux-empty">
@@ -1479,6 +1532,7 @@ export function mountTerminalShellIsland({
   onComposeMessage = null,
   composeMessageDialogKind = () => '',
   snapshot = null,
+  scope = null,
 }) {
   // A custom widget factory (tests or another embedding) owns its own runtime.
   // The production xterm adapter asks the facade to load the classic core
@@ -1505,7 +1559,7 @@ export function mountTerminalShellIsland({
   });
   render(html`<${TerminalTabs} state=${state} actions=${actions} widgetFactory=${widgetFactory}
     onComposeMessage=${onComposeMessage} composeMessageDialogKind=${composeMessageDialogKind}
-    snapshot=${snapshot} />`, host);
+    snapshot=${snapshot} scope=${scope} />`, host);
   render(html`<${TerminalBadge} state=${state} />`, badgeHost);
   registerCleanup(() => {
     unbindNavRouting();

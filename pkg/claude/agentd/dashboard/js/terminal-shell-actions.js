@@ -62,8 +62,8 @@ export function createTerminalShellActions({
     return openPane(seed);
   }
 
-  function activatePane(key) {
-    return !disposed && state.activatePane(key);
+  function activatePane(key, options) {
+    return !disposed && state.activatePane(key, options);
   }
 
   function reorderPane(key, targetKey, options) {

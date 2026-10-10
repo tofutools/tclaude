@@ -451,3 +451,13 @@ body.wizard .mux-pane-xterm {
   background: #171024;
   box-shadow: inset 0 0 0 1px rgba(122, 93, 176, 0.24);
 }
+
+/* Node scope (skynet-scope.js): a fused view labels each pane with its node
+   and keeps the unticked nodes' panes open but out of sight. */
+.mux-tab.scope-hidden, .mux-pane.scope-hidden { display: none !important; }
+.mux-node-pill {
+  display: inline-flex; align-items: center; flex: none; padding: 0 6px; margin-right: 5px; border-radius: 9px;
+  font: 500 10.5px/16px ui-monospace, SFMono-Regular, Menlo, monospace; color: #f0f6fc;
+  background: color-mix(in srgb, var(--nc) 22%, #0d1117); border: 1px solid color-mix(in srgb, var(--nc) 60%, #0d1117);
+}
+.mux-scope-empty { padding: 24px; color: #8b949e; }
