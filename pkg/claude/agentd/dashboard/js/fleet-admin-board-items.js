@@ -268,7 +268,7 @@ function VersionsDialog({ board, item, name, actions, confirm, toast, onOpen, on
 }
 
 // BoardItems is a board's item list inside its detail view.
-export function BoardItems({ board, boards = [], name, actions, confirm, toast }) {
+export function BoardItems({ board, boards = [], name, actions, confirm, toast, onChanged = () => {} }) {
   const [items, setItems] = useState(null);
   const [tick, setTick] = useState(0);
   const [dialog, setDialog] = useState(null);
@@ -312,7 +312,7 @@ export function BoardItems({ board, boards = [], name, actions, confirm, toast }
           </td></tr>`)}</tbody></table>`}
     ${d?.kind === 'publish' && html`<${PublishDialog} board=${board} item=${d.item} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${d?.kind === 'versions' && html`<${VersionsDialog} board=${board} item=${d.item} name=${name} actions=${actions} confirm=${confirm} toast=${toast} onOpen=${(v) => open(withVersion(d.item, v), v.version)}
-      onRepost=${reposter ? (v) => setDialog({ kind: 'repost', item: withVersion(d.item, v), version: v.version }) : null} onClose=${() => setDialog(null)} onPinned=${() => { setDialog(null); reload(); }} />`}
+      onRepost=${reposter ? (v) => setDialog({ kind: 'repost', item: withVersion(d.item, v), version: v.version }) : null} onClose=${() => setDialog(null)} onPinned=${() => { setDialog(null); reload(); onChanged(); }} />`}
     ${d?.kind === 'inspect' && html`<${BundleInspectDialog} offer=${{ offer: { type: 'config', summary: `${d.item.name} · posted by ${by} · sha256 ${d.item.digest || '—'}`, bytes: d.item.bytes }, peer: '' }} label=${() => ''}
       title=${`${d.item.name} (version ${short(d.version)})`} note="verified on this node; nothing is imported until you import it."
       actions=${inspectActions} toast=${toast} onImport=${() => setDialog({ kind: 'import', item: d.item, version: d.version })} onClose=${() => setDialog(null)} />`}

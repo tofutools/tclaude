@@ -338,8 +338,13 @@ export function FleetAdmin({
   const [runPreselect, setRunPreselect] = useState('');
   const [tick, setTick] = useState(0);
   const reload = () => setTick((n) => n + 1);
+  // Board items this node keeps that have a newer version: the Boards badge.
+  const [boardUpdates, setBoardUpdates] = useState(null);
+  const loadBoardUpdates = (refresh = false) => (actions.boardUpdates ? actions.boardUpdates(refresh) : Promise.resolve(null))
+    .then((u) => { setBoardUpdates(u); return u; }, (e) => { setBoardUpdates({ error: errText(e) }); throw e; });
 
   useEffect(() => { if (active && remote) switchHome(); }, [active, remote]);
+  useEffect(() => { if (active && !remote) loadBoardUpdates().catch(() => {}); }, [active, remote, tick]);
 
   useEffect(() => {
     if (!active || remote) return undefined;
@@ -397,7 +402,8 @@ export function FleetAdmin({
   return html`<div class="fleet-admin">
     <${Identity} self=${view.self} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload} onUpdate=${() => setDialog({ kind: 'update' })} onSettings=${() => setDialog({ kind: 'settings' })} />
     <div class="fa-subtabs" role="tablist">${SUB_PAGES.map((p) => html`<button type="button" role="tab" key=${p.id} aria-selected=${p.id === sub.id ? 'true' : 'false'}
-      class=${`fa-subtab${p.id === sub.id ? ' on' : ''}`} onClick=${() => { if (p.id !== sub.id) { setRunPreselect(''); setPage(p.id); } }}>${p.label}</button>`)}</div>
+      class=${`fa-subtab${p.id === sub.id ? ' on' : ''}`} onClick=${() => { if (p.id !== sub.id) { setRunPreselect(''); setPage(p.id); } }}>${p.label}${p.id === 'boards' && boardUpdates?.updates?.length > 0
+        ? html` <span class="fa-badge" id="fleet-boards-update-count" title="Items you keep have a newer version">${boardUpdates.updates.length}</span>` : ''}</button>`)}</div>
     ${sub.id === 'peers'
       ? html`${active && html`<${ViewersPanel} view=${view} actions=${actions} confirm=${confirm} toast=${toast} timers=${timers} />`}<${PeersPage} view=${view} now=${now()} onKey=${(r) => setDialog({ kind: 'key', row: r })} onTrust=${(r) => setDialog({ kind: 'trust', row: r })}
           onUnrestrict=${(r) => setDialog({ kind: 'unrestrict', row: r })} onRestrict=${restrict} onUntrust=${untrust}
@@ -422,7 +428,7 @@ export function FleetAdmin({
       : sub.id === 'models'
       ? html`<${ModelsPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} now=${now()} />`
       : sub.id === 'boards'
-      ? html`<${BoardsPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} />`
+      ? html`<${BoardsPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} updates=${boardUpdates} loadUpdates=${loadBoardUpdates} />`
       : sub.id === 'hub'
       ? html`<${HubPage} view=${view} actions=${actions} updateActions=${updateActions} confirm=${confirm} toast=${toast} copy=${copy} timers=${timers} onRunHub=${() => { setRunPreselect('hub'); setPage('run'); }} />`
       : sub.id === 'grants'

@@ -25,6 +25,7 @@ const INVITE_TTLS = Object.freeze([
 ]);
 
 function errText(error) { return error?.message || String(error); }
+const short = (v) => String(v || '').slice(0, 10);
 
 // inviteHub reads the hub URL out of a pasted invite (board1_ + base64url
 // JSON), for the "wrong hub" message only; the daemon does the real check.
@@ -145,7 +146,7 @@ function BoardDetail({ board, boards = [], view, actions, confirm, toast, copy, 
   }).then((r) => { if (r) { toast('Key changed', false); setToken(null); reload(); onChanged(); } }).catch(fail('Change key'));
 
   return html`<div class="fa-board-detail" id="fleet-board-detail" data-board=${board.id}>
-    <${BoardItems} board=${board} boards=${boards} name=${(id) => memberName(id, view)} actions=${actions} confirm=${confirm} toast=${toast} />
+    <${BoardItems} board=${board} boards=${boards} name=${(id) => memberName(id, view)} actions=${actions} confirm=${confirm} toast=${toast} onChanged=${onChanged} />
     <div class="fa-row"><b>Members</b></div>
     ${members?.error ? html`<div class="fa-danger">${members.error}</div>` : !members ? html`<div class="muted">Loading members…</div>` : html`<table class="fa-table" id="fleet-board-members">
       <thead><tr><th>Member</th><th>Role</th><th></th></tr></thead>
@@ -183,7 +184,40 @@ function BoardDetail({ board, boards = [], view, actions, confirm, toast, copy, 
 
 // BoardsPage lists this node's boards: join by pasting an invite, create one,
 // open a board for its members, or leave it.
-export function BoardsPage({ view, actions, confirm, toast, copy }) {
+// BoardUpdates lists the items this node keeps (pins) whose board has a newer
+// version, with the opt-in for a Messages note per new version. Reading the
+// list fetches nothing: open the board to inspect or import.
+function BoardUpdates({ updates, actions, toast, loadUpdates, onOpen }) {
+  const [busy, setBusy] = useState(false);
+  if (!updates) return null;
+  const list = Array.isArray(updates.updates) ? updates.updates : [];
+  const check = () => {
+    setBusy(true);
+    loadUpdates(true).catch((e) => toast(`Check failed: ${errText(e)}`, true)).finally(() => setBusy(false));
+  };
+  const notify = (on) => {
+    setBusy(true);
+    actions.setBoardUpdateNotify(on).then(() => loadUpdates(false)).then(() => toast(on ? 'You will get a Messages note for each new version of an item you keep' : 'Board update notes are off', false))
+      .catch((e) => toast(`Saving failed: ${errText(e)}`, true)).finally(() => setBusy(false));
+  };
+  return html`<div class="fa-board-updates" id="fleet-board-updates">
+    ${list.length > 0 && html`<h4>Newer versions of items you keep <span class="fa-badge">${list.length}</span></h4>
+      <table class="fa-table" id="fleet-board-updates-list"><tbody>${list.map((u) => html`<tr key=${`${u.board}/${u.item}`} data-board-update=${u.item}>
+        <td>${u.name}</td><td class="muted">on ${u.board_name || u.board}</td>
+        <td class="muted">you keep <code title=${u.pinned_version}>${short(u.pinned_version)}</code> · latest <code title=${u.latest_version}>${short(u.latest_version)}</code></td>
+        <td class="fa-acts"><button type="button" data-board-update-open=${u.board} onClick=${() => onOpen(u.board)}>Open board</button></td>
+      </tr>`)}</tbody></table>`}
+    <div class="fa-row muted">
+      <label><input type="checkbox" id="fleet-board-update-notify" checked=${!!updates.notify} disabled=${busy} onChange=${(e) => notify(e.currentTarget.checked)} />
+        Also leave a note in Messages when an item I keep gets a newer version</label>
+      <button type="button" id="fleet-board-update-check" disabled=${busy} onClick=${check}>Check now</button>
+      ${updates.checked_at && html`<span>checked ${new Date(updates.checked_at).toLocaleTimeString()}</span>`}
+      ${updates.error && html`<span class="fa-danger">last check failed: ${updates.error}</span>`}
+    </div>
+  </div>`;
+}
+
+export function BoardsPage({ view, actions, confirm, toast, copy, updates = null, loadUpdates = () => Promise.resolve(null) }) {
   const [boards, setBoards] = useState(null);
   const [tick, setTick] = useState(0);
   const [token, setToken] = useState('');
@@ -197,6 +231,8 @@ export function BoardsPage({ view, actions, confirm, toast, copy }) {
     return () => { off = true; };
   }, [tick]);
   const reload = () => setTick((n) => n + 1);
+  // Leaving, deleting or keeping a version can change the update list too.
+  const reloadAll = () => { reload(); loadUpdates().catch(() => {}); };
 
   const join = () => {
     const t = token.trim();
@@ -220,7 +256,7 @@ export function BoardsPage({ view, actions, confirm, toast, copy }) {
     okLabel: 'Leave board',
     busyLabel: 'Leaving…',
     action: () => actions.leaveBoard(b.id),
-  }).then((r) => { if (r) { toast(`Left ${b.name}`, false); if (open === b.id) setOpen(''); reload(); } }).catch((e) => toast(`Leave failed: ${errText(e)}`, true));
+  }).then((r) => { if (r) { toast(`Left ${b.name}`, false); if (open === b.id) setOpen(''); reloadAll(); } }).catch((e) => toast(`Leave failed: ${errText(e)}`, true));
 
   const remove = (b) => confirm({
     title: `Delete ${b.name} for everyone?`,
@@ -228,7 +264,7 @@ export function BoardsPage({ view, actions, confirm, toast, copy }) {
     okLabel: 'Delete board',
     busyLabel: 'Deleting…',
     action: () => actions.deleteBoard(b.id),
-  }).then((r) => { if (r) { toast(`Deleted ${b.name}`, false); if (open === b.id) setOpen(''); reload(); } }).catch((e) => toast(`Delete failed: ${errText(e)}`, true));
+  }).then((r) => { if (r) { toast(`Deleted ${b.name}`, false); if (open === b.id) setOpen(''); reloadAll(); } }).catch((e) => toast(`Delete failed: ${errText(e)}`, true));
 
   const list = Array.isArray(boards) ? boards : [];
   return html`<div class="fa-boards" id="fleet-boards">
@@ -241,6 +277,7 @@ export function BoardsPage({ view, actions, confirm, toast, copy }) {
       <button type="button" id="fleet-board-create" disabled=${busy || !name.trim()} onClick=${create}>Create</button>
     </div>
     ${joinFail && html`<div class="fa-danger" id="fleet-board-join-error" role="alert">${joinFail}</div>`}
+    <${BoardUpdates} updates=${updates} actions=${actions} toast=${toast} loadUpdates=${loadUpdates} onOpen=${setOpen} />
     ${boards?.error ? html`<div class="fa-danger">${boards.error}</div>` : !boards ? html`<div class="muted">Loading…</div>` : !list.length ? html`<div class="muted" id="fleet-boards-empty">No boards yet. Paste an invite above, or create one.</div>` : html`<table class="fa-table" id="fleet-boards-list">
       <thead><tr><th>Board</th><th>You</th><th>Limits</th><th></th></tr></thead>
       <tbody>${list.flatMap((b) => [html`<tr key=${b.id} data-board-id=${b.id} class=${open === b.id ? 'on' : ''}>
@@ -251,8 +288,8 @@ export function BoardsPage({ view, actions, confirm, toast, copy }) {
       </tr>`,
       // The open board's details sit directly under its own row.
       open === b.id && html`<tr key=${`${b.id}:detail`} class="fa-board-detail-row"><td colspan="4">
-        <${BoardDetail} key=${open} board=${b} boards=${list} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} onChanged=${reload} /></td></tr>`])}</tbody></table>`}
-    <div class="muted fa-cli-note">CLI: <code>tclaude federation boards list</code>, <code>join --token …</code>, <code>create --name …</code>, <code>delete --board …</code></div>
+        <${BoardDetail} key=${open} board=${b} boards=${list} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} onChanged=${reloadAll} /></td></tr>`])}</tbody></table>`}
+    <div class="muted fa-cli-note">CLI: <code>tclaude federation boards list</code>, <code>join --token …</code>, <code>create --name …</code>, <code>delete --board …</code>, <code>updates [--notify on|off]</code></div>
   </div>`;
 }
 

@@ -659,6 +659,7 @@ func runServe(p *serveParams) error {
 	cronStop := make(chan struct{})
 	defer close(cronStop)
 	startFederation()
+	startBoardUpdateChecker(cronStop)
 	startCronScheduler(cronStop)
 	startStandingOrderDebounceScheduler(cronStop)
 	startTriggerScheduler(cronStop)

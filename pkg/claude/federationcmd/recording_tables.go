@@ -47,6 +47,9 @@ func printRecordingTable(stdout io.Writer, kind string, out any) int {
 	case "items":
 		header = []string{"ID", "NAME", "KIND", "VERSION", "PINNED", "UPDATE"}
 		fields = []string{"id", "name", "kind", "version", "pinned_version", "update_available"}
+	case "updates":
+		header = []string{"BOARD", "ITEM", "NAME", "KEPT", "LATEST"}
+		fields = []string{"board_name", "item", "name", "pinned_version", "latest_version"}
 	case "invites":
 		header = []string{"TOKEN ID", "ROLE", "EXPIRES", "USED BY"}
 		fields = []string{"token_id", "role", "expires_at", "used_by"}

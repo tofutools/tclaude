@@ -334,6 +334,7 @@ func boardItemRoute(op string) http.HandlerFunc {
 				fail(e)
 				return
 			}
+			boardUpdates.expire()
 			var out any
 			_ = json.Unmarshal(raw, &out)
 			writeJSON(w, 200, out)

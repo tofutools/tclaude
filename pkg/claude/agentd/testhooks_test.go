@@ -2127,6 +2127,22 @@ func RefreshFederationCatalogsForTest() {
 	}
 }
 
+// ResetBoardUpdatesForTest gives the test a fresh board-update state
+// (nothing checked, nothing announced) and restores the previous one.
+func ResetBoardUpdatesForTest(notesPath string) func() {
+	prev, prevPath := boardUpdates, boardUpdateNotesPath
+	boardUpdates = &boardUpdateState{}
+	boardUpdateNotesPath = func() string { return notesPath }
+	return func() { boardUpdates, boardUpdateNotesPath = prev, prevPath }
+}
+
+// RestartBoardUpdatesForTest forgets the in-memory state, as a daemon
+// restart does, keeping the notes file.
+func RestartBoardUpdatesForTest() { boardUpdates = &boardUpdateState{} }
+
+// ExpireBoardUpdatesForTest makes the next board-update read scan again.
+func ExpireBoardUpdatesForTest() { boardUpdates.expire() }
+
 // Source fixture uses the real managed-server launch on its seeded native ID;
 // the OpenCode executable is the external subprocess simulator on PATH.
 func StartHistoryOpenCodeRuntimeForTest(label, cwd, id string) error {
