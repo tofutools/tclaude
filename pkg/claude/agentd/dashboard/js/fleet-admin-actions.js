@@ -52,6 +52,18 @@ const settingRows = (v) => {
     }
     return out;
   };
+  // pages reads a cursor-paged board list whole, a bounded number of pages.
+  const pages = async (path, key) => {
+    const out = [];
+    let cursor = '';
+    for (let page = 0; page < 20; page++) {
+      const v = await call('GET', cursor ? `${path}?cursor=${enc(cursor)}` : path);
+      out.push(...rows(v, key));
+      cursor = v?.next_cursor || '';
+      if (!cursor) break;
+    }
+    return out;
+  };
   return Object.freeze({
     status: () => call('GET', 'status'),
     // Hub administration (tclaude federation hub …): signed requests this
@@ -205,6 +217,23 @@ const settingRows = (v) => {
     abandonSpawn: (id) => call('POST', `spawn-requests/${encodeURIComponent(id)}/abandon`, { acknowledge_late_worker: true }),
     // Delivery state of what this node sent peers (spawn requests, mail).
     outbox: async (limit = 100) => (await call('GET', `outbox?limit=${limit}`)) || [],
+    // Content boards (tclaude federation boards …): this node's memberships,
+    // run over the hub's separate board connection. The hub is authoritative
+    // for membership; joining grants no peer access.
+    boards: () => pages('boards', 'boards'),
+    createBoard: (name) => call('POST', 'boards', { name }),
+    joinBoard: (token) => call('POST', 'boards/join', { token }),
+    leaveBoard: (board) => done(call('DELETE', `boards/${enc(board)}/membership`)),
+    boardMembers: (board) => pages(`boards/${enc(board)}/members`, 'members'),
+    setBoardMember: (board, instance, role) => done(call('PUT', `boards/${enc(board)}/members/${enc(instance)}`, { role })),
+    removeBoardMember: (board, instance) => done(call('DELETE', `boards/${enc(board)}/members/${enc(instance)}`)),
+    createBoardInvite: (board, role, ttlSeconds) => call('POST', `boards/${enc(board)}/invites`, { role, ttl_seconds: ttlSeconds }),
+    revokeBoardInvite: (board, tokenID) => done(call('DELETE', `boards/${enc(board)}/invites/${enc(tokenID)}`)),
+    rotateBoardKey: (board) => call('POST', `boards/${enc(board)}/rotate-key`, {}),
+    // Hub moderation (hub.boards.manage): metadata only, never content or keys.
+    hubBoards: () => pages('hub/boards', 'boards'),
+    patchHubBoard: (board, patch) => done(call('PATCH', `hub/boards/${enc(board)}`, patch)),
+    deleteHubBoard: (board) => done(call('DELETE', `hub/boards/${enc(board)}`)),
   });
 }
 // dashboard-imperative-boundary: browser-io

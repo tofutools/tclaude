@@ -3,6 +3,7 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { HUB_CONSEQUENCE } from './fleet-admin-run.js';
+import { HubBoards } from './fleet-admin-boards.js';
 import { NodeUpdateDialog } from './node-update.js';
 
 const html = htm.bind(h);
@@ -543,6 +544,7 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
         </tr>`)}</tbody></table>`)}
       ${h4('Settings')}
       ${listOr(data.settings, (rows) => html`<${SettingsSection} settings=${rows} actions=${actions} confirm=${confirm} toast=${toast} reload=${reload} />`)}
+      ${caps.includes('hub.boards.manage') && html`${h4('Boards')}<${HubBoards} actions=${actions} confirm=${confirm} toast=${toast} />`}
       ${h4('Remote scripts')}
       <${RemoteScripts} actions=${actions} onRunHub=${onRunHub} />
       ${h4('Audit')}
