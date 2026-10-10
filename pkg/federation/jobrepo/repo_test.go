@@ -235,3 +235,26 @@ func TestFullCommitFanoutPins(t *testing.T) {
 		}
 	}
 }
+
+func TestReceiverHeadAndSafeOriginHint(t *testing.T) {
+	d, _, commit := fixture(t)
+	head, err := Head(context.Background(), d)
+	if err != nil || head != commit {
+		t.Fatalf("HEAD %q: %v", head, err)
+	}
+	for _, tc := range []struct{ raw, want string }{
+		{"https://example.test/team/project.git", "https://example.test/team/project.git"},
+		{"git@example.test:team/project.git", "git@example.test:team/project.git"},
+		{"ssh://git@example.test/team/project.git", "ssh://git@example.test/team/project.git"},
+		{"https://user:password@example.test/team/project.git", ""},
+		{"https://token@example.test/team/project.git", ""},
+		{"ssh://git:secret@example.test/team/project.git", ""},
+		{"file:///source/private/checkout", ""},
+		{"ext::unsafe helper", ""},
+	} {
+		runGit(t, d.Clone, "config", "remote.origin.url", tc.raw)
+		if got := OriginHint(context.Background(), d.Clone); got != tc.want {
+			t.Errorf("hint %q: got %q", tc.raw, got)
+		}
+	}
+}

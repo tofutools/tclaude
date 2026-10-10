@@ -10,10 +10,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
@@ -231,7 +233,7 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 		recordFederationAudit("teleport.send", peer.InstanceID, teleport.SourceAgent, in.Group, fmt.Sprintf("offer=%s chain=%s hop=%d credentials=%s clone=%t", d.ID, teleport.Chain, len(teleport.Hops), teleport.Credentials, teleport.Clone), 200)
 	}
 	setAuditTargetLabel(r, in.Group+"@"+peerDisplay(peer))
-	writeJSON(w, 200, map[string]any{"offer": o, "envelope_id": row.EnvelopeID, "state": row.State, "findings": b.Manifest.Findings, "warnings": b.Manifest.Warnings})
+	writeJSON(w, 200, map[string]any{"offer": o, "envelope_id": row.EnvelopeID, "state": row.State, "findings": b.Manifest.Findings, "warnings": b.Manifest.Warnings, "receiver_decides": true, "source_repo": b.Manifest.Agent.Paths.RepoURL})
 }
 
 type fedBundleImportRequest struct {
@@ -241,6 +243,7 @@ type fedBundleImportRequest struct {
 	Group       string   `json:"group"`
 	Name        string   `json:"name"`
 	SkipHistory bool     `json:"skip_history"`
+	Landing     string   `json:"landing"`
 	Set         []string `json:"set"`
 }
 
@@ -302,15 +305,7 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 			writeError(w, 409, "teleport_repo", err.Error())
 			return
 		}
-		if teleportRow.Intent.GitRef != "" && teleportLandingFromRequest(r) == nil {
-			assignment, err := db.GetFederationNodeProfileAssignment(o.Peer)
-			if err != nil || assignment == nil || assignment.Profile.Definition.TeleportLanding == nil {
-				writeError(w, 409, "teleport_repo", "git-ref requires an applied landing policy")
-				return
-			}
-			in.Cwd = assignment.Profile.Definition.TeleportLanding.Cwd
-			in.Worktree = ""
-		}
+
 	}
 	if teleportRow != nil {
 		if err := checkRequesterPays(o.Peer, g.ID, teleportRow.Credentials, teleportRow.Intent.ModelLease, true); err != nil {
@@ -318,7 +313,32 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 			return
 		}
 	}
-	q := url.Values{"group": {g.Name}, "cwd": {in.Cwd}, "worktree": {in.Worktree}, "name": {in.Name}}
+	bundle, err := agentbundle.Decode(raw)
+	if err != nil {
+		writeError(w, 400, "bundle", err.Error())
+		return
+	}
+	landing, err := resolveFederationLanding(r.Context(), o, g, bundle.Manifest.Agent.Paths, in, teleportRow)
+	if err != nil || landing.Preview.Cwd == "" || !landing.Preview.Exists && !landing.Preview.CheckoutRequired {
+		code, status, message := "landing_unresolved", 409, "no receiving working directory resolved"
+		if err != nil {
+			code, message = "landing_candidate_changed", err.Error()
+			if in.Cwd != "" {
+				code, status = "landing_unowned", 403
+			}
+		} else if landing.Preview.Cwd != "" {
+			code, message = "landing_missing", "selected receiving directory does not exist"
+		}
+		writeJSON(w, status, map[string]any{"code": code, "error": federationLandingError(message), "landing": landing.Preview, "offer": federationOfferProvenance(o)})
+		return
+	}
+	// Preview is side-effect free. The inner importer validates the existing
+	// receiver clone while the outer response names the planned isolated tree.
+	innerCwd := landing.Preview.Cwd
+	if landing.repo != nil {
+		innerCwd = landing.repo.Definition.Clone
+	}
+	q := url.Values{"group": {g.Name}, "cwd": {innerCwd}, "worktree": {in.Worktree}, "name": {in.Name}}
 	if in.KeepPaths {
 		q.Set("keep_paths", "true")
 	}
@@ -385,48 +405,80 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 			return
 		}
 		o.ImportAgent = reserved
+		releaseUnlaunched := func() {
+			if released, err := db.ReleaseUnlaunchedFederationBundleImport(o.Peer, o.Descriptor.ID, reserved); err == nil && released {
+				o.ImportAgent = ""
+				_ = db.DeleteFederationAgentMove("in", o.Peer, o.Descriptor.ID)
+				cleanupReleasedFederationLanding(o)
+			}
+		}
+
+		// Persist ownership before creating the isolated tree. A crash at any
+		// later point retains the existing reserved-launch inspection contract.
+		if err := landing.prepare(r.Context(), g.ID); err != nil {
+			releaseUnlaunched()
+			writeJSON(w, 409, map[string]any{"code": "landing_candidate_changed", "error": err.Error(), "landing": landing.Preview})
+			return
+		}
+		q.Set("cwd", landing.Preview.Cwd)
+		defer func() {
+			if landing.repo != nil && o.ImportAgent == "" {
+				_ = os.RemoveAll(landing.root)
+			}
+		}()
+
 		if o.Descriptor.Teleport != nil && teleportLandingFromRequest(r) == nil {
 			row, err := db.GetFederationTeleport("in", o.Peer, o.Descriptor.ID)
 			if err != nil || row == nil {
-				_, _ = db.ReleaseUnlaunchedFederationBundleImport(o.Peer, o.Descriptor.ID, reserved)
+				releaseUnlaunched()
 				writeError(w, 503, "teleport_reservation", "teleport provenance unavailable; reserved launch was not started")
 				return
 			}
 			old := row.State
 			row.TargetAgent, row.State = reserved, "admitting"
 			if won, err := db.TransitionFederationTeleport(*row, old); err != nil || !won {
-				_, _ = db.ReleaseUnlaunchedFederationBundleImport(o.Peer, o.Descriptor.ID, reserved)
+				releaseUnlaunched()
 				writeError(w, 409, "teleport_reservation", "teleport changed; reserved launch was not started")
 				return
 			}
 		}
 		if o.Descriptor.Move != nil {
 			if err = reserveIncomingAgentMove(o, raw, reserved); err != nil {
-				_, _ = db.ReleaseUnlaunchedFederationBundleImport(o.Peer, o.Descriptor.ID, reserved)
+				releaseUnlaunched()
 				writeError(w, 400, "move", err.Error())
 				return
 			}
 		}
-		if teleportRow != nil && teleportRow.Intent.GitRef != "" && teleportLandingFromRequest(r) == nil {
-			teleportRow, err = db.GetFederationTeleport("in", o.Peer, o.Descriptor.ID)
-			if err != nil || teleportRow == nil {
-				_, _ = db.ReleaseUnlaunchedFederationBundleImport(o.Peer, o.Descriptor.ID, reserved)
-				o.ImportAgent = ""
-				_ = db.DeleteFederationAgentMove("in", o.Peer, o.Descriptor.ID)
-				writeError(w, 503, "teleport_provenance", "teleport provenance unavailable; launch was not started")
+
+		if teleportRow != nil && landing.checkout != nil {
+			row, err := db.GetFederationTeleport("in", o.Peer, o.Descriptor.ID)
+			if err != nil || row == nil {
+				releaseUnlaunched()
+				writeError(w, 503, "teleport_provenance", "cannot persist landing checkout; reserved launch was not started")
 				return
 			}
-			checkout, checkoutErr := prepareTeleportCheckout(r.Context(), teleportRow, g.ID)
-			if checkoutErr != nil {
-				_, _ = db.ReleaseUnlaunchedFederationBundleImport(o.Peer, o.Descriptor.ID, reserved)
-				o.ImportAgent = ""
-				_ = db.DeleteFederationAgentMove("in", o.Peer, o.Descriptor.ID)
-				teleportRow.State, teleportRow.TargetAgent = "pending", ""
-				_, _ = db.TransitionFederationTeleport(*teleportRow, "admitting")
-				writeError(w, 409, "teleport_repo", checkoutErr.Error())
+			row.Checkout = landing.checkout
+			if won, err := db.TransitionFederationTeleport(*row, row.State); err != nil || !won {
+				releaseUnlaunched()
+				writeError(w, 409, "teleport_provenance", "teleport changed before dispatch")
 				return
 			}
-			q.Set("cwd", checkout.Path)
+			teleportRow = row
+			if authority := teleportLandingFromRequest(r); authority != nil {
+				authority.record.Checkout = landing.checkout
+			}
+		}
+		liveGroup, groupErr := db.GetAgentGroupByID(g.ID)
+		if groupErr != nil || liveGroup == nil || liveGroup.IsArchived() || !fedPeerAllows(o.Peer, g.ID, PermAgentsReceive) && (o.Descriptor.Teleport == nil || !fedPeerAllows(o.Peer, g.ID, PermAgentsTeleportReceive)) {
+			releaseUnlaunched()
+			writeError(w, 403, "admission", "receiving group admission changed before dispatch")
+			return
+		}
+		q.Set("group", liveGroup.Name)
+		if _, exists, err := federationLandingDirectory(landing.Preview.Cwd); err != nil || !exists {
+			releaseUnlaunched()
+			writeJSON(w, 409, map[string]any{"code": "landing_candidate_changed", "error": "landing directory changed before dispatch", "landing": landing.Preview})
+			return
 		}
 		rec = invoke(true, reserved)
 		if rec.Code == 200 {
@@ -464,6 +516,11 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 		return
 	}
 	response["offer"] = federationOfferProvenance(o)
+	response["landing"] = landing.Preview
+	response["cwd"] = landing.Preview.Cwd
+	if in.Apply {
+		recordFederationAudit("agent.landing", o.Peer, o.ImportAgent, g.Name, fmt.Sprintf("offer=%s cwd=%q reason=%s", o.Descriptor.ID, landing.Preview.Cwd, landing.Preview.Reason), rec.Code)
+	}
 	if o.Descriptor.Teleport != nil {
 		response["credentials"], _ = pendingTeleportCredentials(o.Peer, o.Descriptor.Teleport.Credentials)
 		response["git_ref"] = o.Descriptor.Teleport.GitRef

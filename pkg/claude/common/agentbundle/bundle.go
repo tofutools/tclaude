@@ -32,6 +32,7 @@ type Permission struct {
 	Source string          `json:"source"`
 }
 type Paths struct {
+	RepoURL  string `json:"repo_url,omitempty"`
 	Cwd      string `json:"cwd,omitempty"`
 	Worktree string `json:"worktree,omitempty"`
 	Branch   string `json:"branch,omitempty"`
@@ -90,6 +91,9 @@ func (b *Bundle) Validate() error {
 	}
 	if strings.TrimSpace(m.Agent.Name) == "" || m.Agent.Harness == "" || !json.Valid(m.Agent.Profile) {
 		return errors.New("agent name, harness and valid inline profile are required")
+	}
+	if len(m.Agent.Paths.RepoURL) > 4096 || strings.ContainsAny(m.Agent.Paths.RepoURL, "\x00\r\n") {
+		return errors.New("invalid repository URL hint")
 	}
 	if len(b.Transcript) > MaxBytes {
 		return errors.New("history exceeds 256 MiB")

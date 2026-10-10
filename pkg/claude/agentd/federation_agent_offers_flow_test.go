@@ -70,10 +70,9 @@ func TestFederation_AgentOfferAdmissionAndLocalImport(t *testing.T) {
 	require.NotEmpty(t, stored.SenderAgent)
 	path := "/v1/federation/bundle-offers/" + d.ID + "/import"
 	rec = fedHuman(t, f, http.MethodPost, path, nil)
-	require.Equal(t, 200, rec.Code, rec.Body.String())
-	require.Contains(t, rec.Body.String(), `"applied":false`)
-	require.Contains(t, rec.Body.String(), `"group":"receiver"`)
-	require.Contains(t, rec.Body.String(), "Permissions and ownership are advisory")
+	require.Equal(t, 409, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"code":"landing_unresolved"`)
+	require.Contains(t, rec.Body.String(), `"candidates"`)
 	members, err := db.ListAgentGroupMembers(group.ID)
 	require.NoError(t, err)
 	require.Empty(t, members)

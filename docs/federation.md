@@ -3267,3 +3267,41 @@ Status adds `supervisor`, a `blocked` reason when unsupervised, and a durable
 `job` containing the phase/deadline/outcome. Poll the selected job while it is
 `running` or `restarting`; temporary read failures during restart do not imply
 failure. Never retry an apply submission automatically.
+
+### Receiving agent working directories
+
+Clone, move and teleport imports resolve the working directory on the receiving
+node. The source's `paths.cwd` and optional `paths.repo_url` are hints, not
+permission to fetch a repository or create a source-selected directory.
+The first available receiver-owned choice wins:
+
+1. An explicit `--cwd` or `--landing` candidate selected by the operator.
+2. An enabled `federation repos` entry allowing the receiving group whose URL
+   matches the source hint. The receiver creates an isolated checkout of its
+   own clone's HEAD commit; source branches, hooks and Git configuration are
+   not copied. Explicit teleport `--git-ref` still requires its configured
+   allowlisted repo and isolated checkout.
+3. The source cwd, if it exists locally. HOME, `/` and system directories remain
+   visible choices but are skipped automatically.
+4. The receiving group's default directory.
+5. The automatic teleport landing policy directory.
+
+If none resolves, import refuses with `landing_unresolved` and the candidate
+list. There is no implicit HOME fallback. `--keep-paths` explicitly selects the
+source path and refuses if it is unavailable; it does not fall through to a
+repo or group default. Missing paths and paths not owned by the receiving
+service user are refused. An explicit broad directory or a broad group default
+is allowed when owned by that user; remote terminal file downloads retain their
+independent `root_too_broad` restriction.
+
+The import preview and result include `landing` with `cwd`, `reason`, `exists`,
+`source_cwd`, `source_repo` and `candidates`. Reasons are `explicit`, `repo_match`,
+`same_path`, `group_default`, `landing_policy` and `none`. Repo candidates also
+carry `checkout_required: true` and `repo: {id, name, ref}`; the planned path
+need not exist until apply. Preview never creates a checkout. Candidate IDs are
+`repo:<stable repo ID>`, `same_path`, `group_default` and `landing_policy`.
+Send `landing` in the import body or use `federation offers import --landing`;
+`cwd` takes precedence. Apply recomputes the selection and rechecks the repo,
+receiving grant and directory before dispatch. Results and audits record the
+resolved cwd and reason. Sender responses include `receiver_decides: true` and
+`source_repo`; the sender cannot promise a receiver filesystem path.

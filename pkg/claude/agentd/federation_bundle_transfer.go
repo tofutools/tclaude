@@ -378,6 +378,7 @@ func reconcileFederationBundleOffers() {
 				// No subprocess boundary was reached, including across a daemon restart.
 				if released, err := db.ReleaseUnlaunchedFederationBundleImport(o.Peer, o.Descriptor.ID, o.ImportAgent); err == nil && released {
 					_ = db.DeleteFederationAgentMove("in", o.Peer, o.Descriptor.ID)
+					cleanupReleasedFederationLanding(&o)
 				}
 			} else if a, err := db.GetAgent(o.ImportAgent); err == nil && a != nil && a.Active() && a.CurrentConvID != "" {
 				if s, err := db.LoadSession(o.ImportLabel); err == nil && s != nil && s.ConvID == a.CurrentConvID && s.TmuxSession != "" && session.IsTmuxSessionAlive(s.TmuxSession) {
