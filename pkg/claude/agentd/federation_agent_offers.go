@@ -25,11 +25,14 @@ const PermAgentShare = "agent.share"
 const PermAgentMove = "agent.move"
 
 type fedShareAgentRequest struct {
-	Agent        string `json:"agent"`
-	Peer         string `json:"peer"`
-	Group        string `json:"group"`
-	History      bool   `json:"history"`
-	AllowFlagged bool   `json:"allow_flagged"`
+	DirectIfAllowed bool   `json:"direct_if_allowed"`
+	Cwd             string `json:"cwd"`
+	Landing         string `json:"landing"`
+	Agent           string `json:"agent"`
+	Peer            string `json:"peer"`
+	Group           string `json:"group"`
+	History         bool   `json:"history"`
+	AllowFlagged    bool   `json:"allow_flagged"`
 }
 
 func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
@@ -174,6 +177,9 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		d.Move = &bundletransfer.MoveIntent{SourceAgent: aid, SourceConv: source}
+		if teleport == nil {
+			d.Move.DirectIfAllowed, d.Move.Cwd, d.Move.Landing = in.DirectIfAllowed && peerSupportsDirectAgentMoves(peer.InstanceID), in.Cwd, in.Landing
+		}
 	}
 	o := db.FederationBundleOffer{Descriptor: d, Peer: peer.InstanceID, Direction: "out", State: "pending"}
 	fromConv := ""
@@ -193,7 +199,10 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 		_ = db.DeleteFederationAgentMove("out", peer.InstanceID, d.ID)
 	}
 	if moving {
-		m := db.FederationAgentMove{Teleport: teleport != nil, Direction: "out", Peer: peer.InstanceID, ID: d.ID, State: "awaiting_confirmation", SourceAgent: d.Move.SourceAgent, SourceConv: source, SHA256: d.SHA256, Human: human, Group: in.Group, ExpiresAt: d.ExpiresAt}
+		m := db.FederationAgentMove{Disposition: "pending_acceptance", Teleport: teleport != nil, Direction: "out", Peer: peer.InstanceID, ID: d.ID, State: "awaiting_confirmation", SourceAgent: d.Move.SourceAgent, SourceConv: source, SHA256: d.SHA256, Human: human, Group: in.Group, ExpiresAt: d.ExpiresAt}
+		if d.Move.DirectIfAllowed {
+			m.Disposition = "checking"
+		}
 		if !human {
 			m.Initiator, _ = db.AgentIDForConv(caller)
 			if a := peerActionFromRequest(r); a != nil {
@@ -233,7 +242,11 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 		recordFederationAudit("teleport.send", peer.InstanceID, teleport.SourceAgent, in.Group, fmt.Sprintf("offer=%s chain=%s hop=%d credentials=%s clone=%t", d.ID, teleport.Chain, len(teleport.Hops), teleport.Credentials, teleport.Clone), 200)
 	}
 	setAuditTargetLabel(r, in.Group+"@"+peerDisplay(peer))
-	writeJSON(w, 200, map[string]any{"offer": o, "envelope_id": row.EnvelopeID, "state": row.State, "findings": b.Manifest.Findings, "warnings": b.Manifest.Warnings, "receiver_decides": true, "source_repo": b.Manifest.Agent.Paths.RepoURL})
+	disposition := "pending_acceptance"
+	if d.Move != nil && d.Move.DirectIfAllowed {
+		disposition = "checking"
+	}
+	writeJSON(w, 200, map[string]any{"move_id": d.ID, "disposition": disposition, "offer": o, "envelope_id": row.EnvelopeID, "state": row.State, "findings": b.Manifest.Findings, "warnings": b.Manifest.Warnings, "receiver_decides": true, "source_repo": b.Manifest.Agent.Paths.RepoURL})
 }
 
 type fedBundleImportRequest struct {

@@ -3446,3 +3446,29 @@ Owners can permanently delete a board with `tclaude federation boards delete --b
 `tclaude federation file ls agt_…@peer [dir]` lists one project directory level through a temporary pinned terminal viewer, with the same watch/attach and `sessions.files.read` checks as `file get`. It examines at most 100 entries, omits secret paths, symlinks, special files and files above the download cap, and reports when the listing is capped. Use a narrower directory to see more. No recursive scan is performed. A browser with a live viewer uses `GET /api/federation/terminal-file?terminal=…&viewer=…&path=DIR&list=true`; the JSON response contains `entries` (`path`, `kind`, `size`) and `truncated`.
 
 `federation boards ls`, `items`, `invites`, `federation file ls` and `federation hub status` show compact tables by default; pass `--json` for the unchanged structured response. Short-lived board RPC connections are deliberately isolated from fleet pairing and appear only in hub Debug logs.
+
+### Direct operator moves
+
+Dashboard moves may request `direct_if_allowed: true` on
+`POST /api/federation/move-agent` (the `/v1` route accepts the same body).
+The receiver decides whether to launch automatically: unrestricted trust needs
+an available landing directory; a restricted peer needs `agents.receive` for
+the receiving group and an applied landing policy. Explicit directory or candidate hints from restricted senders are ignored on
+the automatic path; the receiver uses its own landing resolution.
+Automatic moves otherwise use the same repository, source-path, group-default
+and policy fallback order as offer imports. Permission and policy are checked
+again before launch. If automatic landing is unavailable, the offer remains
+available for the receiving operator to inspect and accept.
+
+The initial response includes `move_id` and `disposition: "checking"`.
+Poll `GET /api/federation/moves/{move_id}` for `pending_acceptance`, or `landed`
+with `target_agent` and `cwd`. Existing move state and error fields describe
+refusal, expiry or abandonment. The source stays active until the receiver
+confirms that its successor is running. Receivers without direct-move support
+continue to receive ordinary pending offers. Pulling an agent uses the existing
+peer action endpoint and always moves toward the requester; moves between two
+other nodes must be issued from the source node's dashboard.
+
+Direct operator moves remain ordinary moves: the self-service teleport freeze
+and per-chain/hour/day teleport limits do not apply. Node capacity, admission
+and the applied policy's live-worker limit still apply.

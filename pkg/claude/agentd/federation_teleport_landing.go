@@ -25,7 +25,10 @@ import (
 
 var fedTeleportMu sync.Mutex
 
-type teleportLandingAuthority struct{ record *db.FederationTeleport }
+type teleportLandingAuthority struct {
+	record *db.FederationTeleport
+	direct *db.FederationBundleOffer
+}
 type teleportLandingContextKey struct{}
 type teleportOfferContextKey struct{}
 
@@ -140,6 +143,9 @@ func resolveTeleportLanding(peer string, group int64, credentials string) (*db.F
 	return &landing, profile, worker, mode, err
 }
 func (a *teleportLandingAuthority) check() error {
+	if a.direct != nil {
+		return a.checkDirectMove()
+	}
 	t := a.record
 	if teleportFrozen() {
 		return errors.New("teleports are frozen by the operator")
@@ -346,6 +352,7 @@ func teleportPeerCapacity(peer string, limit int) error {
 		reserved[p.AgentID] = true
 	}
 	used := 0
+	counted := map[string]bool{}
 	for _, t := range rows {
 		currentPeer, err := db.ResolveFederationIdentitySuccessor(t.Peer)
 		if err != nil {
@@ -354,6 +361,7 @@ func teleportPeerCapacity(peer string, limit int) error {
 		if t.Direction != "in" || currentPeer != peer || t.TargetAgent == "" {
 			continue
 		}
+		counted[t.TargetAgent] = true
 		if t.State == "admitting" || t.State == "uncertain" || reserved[t.TargetAgent] || nodeAdmission.launches[t.TargetAgent] == config.DataDir() {
 			used++
 			continue
@@ -370,6 +378,40 @@ func teleportPeerCapacity(peer string, limit int) error {
 			if isConvOnlineInSessions(sessions, alive) {
 				used++
 			}
+		}
+	}
+	// A landing policy's worker budget is shared with direct operator moves.
+	// Teleport receipts are already counted above; deduplicate by stable agent.
+	offers, err := db.ListFederationBundleOffers("in")
+	if err != nil {
+		return err
+	}
+	for _, o := range offers {
+		currentPeer, err := db.ResolveFederationIdentitySuccessor(o.Peer)
+		if err != nil {
+			return err
+		}
+		if currentPeer != peer || o.ImportAgent == "" || counted[o.ImportAgent] {
+			continue
+		}
+		counted[o.ImportAgent] = true
+		if reserved[o.ImportAgent] || nodeAdmission.launches[o.ImportAgent] == config.DataDir() {
+			used++
+			continue
+		}
+		a, err := db.GetAgent(o.ImportAgent)
+		if err != nil {
+			return err
+		}
+		if a == nil || !a.Active() {
+			continue
+		}
+		sessions, err := db.FindSessionsByConvID(a.CurrentConvID)
+		if err != nil {
+			return err
+		}
+		if isConvOnlineInSessions(sessions, alive) {
+			used++
 		}
 	}
 	if used >= limit {
@@ -394,6 +436,9 @@ func teleportBriefing(t *db.FederationTeleport) string {
 }
 func teleportImportBundle(r *http.Request, b *agentbundle.Bundle) error {
 	a := teleportLandingFromRequest(r)
+	if a != nil && a.direct != nil {
+		return a.prepareDirectMoveBundle(b)
+	}
 	if a == nil {
 		o, _ := r.Context().Value(teleportOfferContextKey{}).(*db.FederationBundleOffer)
 		if o == nil || o.Descriptor.Teleport == nil {

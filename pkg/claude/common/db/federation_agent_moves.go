@@ -16,6 +16,8 @@ type FederationMoveLink struct {
 }
 
 type FederationAgentMove struct {
+	Disposition          string              `json:"disposition,omitempty"`
+	Cwd                  string              `json:"cwd,omitempty"`
 	Teleport             bool                `json:"teleport,omitempty"`
 	ShutdownPID          int                 `json:"shutdown_pid,omitempty"`
 	ShutdownProcessStart string              `json:"shutdown_process_start,omitempty"`
