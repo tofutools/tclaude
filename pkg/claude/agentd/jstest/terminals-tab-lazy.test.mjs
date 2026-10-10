@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  openTerminalPane, openTermModal, registerTerminalShellController,
+  openTerminalPane, registerTerminalShellController,
 } from '../dashboard/js/terminals-tab.js';
 
 test('invalid and canceled terminal requests do not prepare the runtime', async () => {
@@ -9,13 +9,12 @@ test('invalid and canceled terminal requests do not prepare the runtime', async 
   let prepares = 0;
   const controller = {
     openPane(seed, options) { opened.push([seed, options]); return seed; },
-    openModal(options) { opened.push(options); return options; },
   };
   const unregister = registerTerminalShellController(controller, async () => { prepares += 1; });
 
   assert.equal(await openTerminalPane(null), null);
   assert.equal(await openTerminalPane(Promise.resolve(null)), null);
-  assert.equal(openTermModal({ wsPath: 'https://elsewhere.test/socket' }), null);
+  assert.equal(await openTerminalPane({ ws: 'https://elsewhere.test/socket' }), null);
   assert.equal(prepares, 0);
   assert.deepEqual(opened, []);
 

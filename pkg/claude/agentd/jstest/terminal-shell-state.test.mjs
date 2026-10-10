@@ -54,16 +54,9 @@ test('terminal shell state owns stable pane, active, reveal, and modal descripto
   assert.equal(state.findPaneKey(['agt_two']), second.key);
   assert.equal(state.findPaneKey(['agt_missing']), null);
 
-  const modalOne = state.openModal({ wsPath: '/modal-one', label: 'first', hideConv: 'agt_one' });
-  const modalTwo = state.openModal({ wsPath: '/modal-two', label: 'second' });
-  assert.notEqual(modalOne.id, modalTwo.id, 'replacement gets a new lifecycle generation');
-  assert.equal(state.closeModal(modalOne.id), null, 'a stale modal generation cannot close its successor');
-  assert.equal(state.closeModal(modalTwo.id), modalTwo);
-
   state.dispose();
   assert.deepEqual(state.panes.value, []);
   assert.equal(state.activeKey.value, null);
-  assert.equal(state.modal.value, null);
 });
 
 test('every opened terminal pane appends and explicit moves remain session-local', async (t) => {
@@ -273,55 +266,3 @@ test('terminal actions close one, other, and all panes through detach-only seman
   assert.deepEqual(requests.slice(3).sort(), ['/api/hide/agt_five', '/api/hide/agt_one']);
 });
 
-test('modal confirmation keeps reconnect and close mutually exclusive and preserves view semantics', async (t) => {
-  const harness = await createPreactHarness(t);
-  const [{ createTerminalShellState }, { createTerminalShellActions }] = await Promise.all([
-    harness.importDashboardModule('js/terminal-shell-state.js'),
-    harness.importDashboardModule('js/terminal-shell-actions.js'),
-  ]);
-  const state = createTerminalShellState();
-  const confirmations = [];
-  const pending = [];
-  const requests = [];
-  const actions = createTerminalShellActions({
-    state,
-    confirm: (options) => {
-      confirmations.push(options);
-      return new Promise((resolve) => pending.push(resolve));
-    },
-    fetchImpl: async (url) => { requests.push(url); return { ok: true }; },
-    documentRef: harness.document,
-    windowRef: harness.window,
-  });
-
-  const modal = actions.openModal({ wsPath: '/modal', label: 'live', hideConv: 'agt_live' });
-  const widget = fakeWidget();
-  actions.registerWidget(modal.id, widget);
-  const closing = actions.confirmModalClose(modal.id);
-  actions.onModalDisconnect(modal.id);
-  assert.equal(confirmations.length, 1, 'disconnect cannot stack over the close confirmation');
-  assert.equal(confirmations[0].okLabel, 'Detach');
-  widget.currentStatus = 'disconnected';
-  pending.shift()(false);
-  await closing;
-  await Promise.resolve();
-  assert.equal(confirmations.length, 2, 'keeping a dropped terminal re-offers reconnect after the close prompt');
-  assert.equal(confirmations[1].okLabel, 'Reconnect');
-  pending.shift()(true);
-  await Promise.resolve();
-  assert.equal(widget.connectCount, 1);
-
-  await actions.detachModal(modal.id);
-  assert.equal(widget.disposeCount, 1);
-  assert.deepEqual(requests, ['/api/hide/agt_live']);
-
-  const throwaway = actions.openModal({ wsPath: '/throwaway', label: 'scratch' });
-  const throwawayWidget = fakeWidget();
-  actions.registerWidget(throwaway.id, throwawayWidget);
-  const throwawayClose = actions.confirmModalClose(throwaway.id);
-  assert.equal(confirmations.at(-1).okLabel, 'Close terminal');
-  pending.shift()(true);
-  await throwawayClose;
-  assert.equal(throwawayWidget.disposeCount, 1);
-  assert.equal(requests.length, 1, 'a throwaway terminal never hides the agent live session');
-});

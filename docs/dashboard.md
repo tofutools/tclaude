@@ -227,6 +227,9 @@ Row actions:
   when `dashboard.default_terminal` is `"native"`; the crossed-eye variant
   hides the native window (detaches the tmux client; the agent keeps running).
 
+Browser terminal actions open panes in the **Terminals** tab, including native-window
+fallbacks and scribe launches.
+
 Web terminals are fully interactive attached PTYs (xterm.js over WebSocket,
 backed by a real tmux client) — there is no read-only mode; what you type
 lands in the agent's session. Ctrl/Cmd-click opens a pane in the background.

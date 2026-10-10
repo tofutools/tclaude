@@ -22,7 +22,6 @@ func TestDashboardTerminalFitContainerWiring(t *testing.T) {
 		fit   string
 	}{
 		{asset: "mux.css", host: ".mux-pane-xterm", fit: ".mux-pane-xterm-fit"},
-		{asset: "dashboard.css", host: ".term-session-xterm", fit: ".term-session-xterm-fit"},
 	} {
 		t.Run(tt.asset, func(t *testing.T) {
 			data, err := fs.ReadFile(dashboardAssetsFS, tt.asset)
@@ -74,15 +73,6 @@ func TestDashboardTerminalFitContainerWiring(t *testing.T) {
 			t.Errorf("dashboard-level scrollbar must retain native chrome; found %q", unwanted)
 		}
 	}
-	for _, want := range []string{
-		".term-session-xterm .xterm-viewport { scrollbar-width: none; }",
-		".term-session-xterm .xterm-viewport::-webkit-scrollbar { display: none; }",
-		".term-session-xterm .xterm-scrollable-element > .scrollbar { display: none; }",
-	} {
-		if !strings.Contains(string(dashboardCSS), want) {
-			t.Errorf("dashboard terminal missing hidden-scrollbar rule %q", want)
-		}
-	}
 
 	core := readDashboardJS(t, "terminals-core.js")
 	if !strings.Contains(core, "scrollback: 0") {
@@ -94,14 +84,10 @@ func TestDashboardTerminalFitContainerWiring(t *testing.T) {
 		"return html`<div class=${className}><div ref=${hostRef} class=${fitClassName}></div>${disconnectNotice}</div>`;",
 		`className="mux-pane-xterm"`,
 		`fitClassName="mux-pane-xterm-fit"`,
-		`className="term-session-xterm"`,
-		`fitClassName="term-session-xterm-fit"`,
 	} {
 		if !strings.Contains(shell, want) {
 			t.Errorf("Preact terminal shell missing fit-container wiring %q", want)
 		}
 	}
-	if !strings.Contains(string(dashboardIndexHTML), `id="terminal-session-root"`) {
-		t.Error("dashboard HTML missing the stable Preact terminal-modal host")
-	}
+
 }

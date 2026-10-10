@@ -681,8 +681,8 @@ func skynetStates() []dashsnap.State {
   document.querySelector('.skynet-card-terms').click();
   for (var j = 0; j < 30 && !document.querySelector('#remote-sessions [data-open="watch"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('#remote-sessions [data-open="watch"]').click();
-  for (var k = 0; k < 60 && !document.querySelector('#term-session-modal .term-remote-badge.watch'); k++) await new Promise(function(r){ setTimeout(r, 100); });
-  if (!document.querySelector('#term-session-modal .term-remote-badge.watch')) throw new Error('skynet: watch-only badge missing');
+  for (var k = 0; k < 60 && !document.querySelector('.mux-pane.active .term-remote-badge.watch'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('.mux-pane.active .term-remote-badge.watch')) throw new Error('skynet: watch-only badge missing');
 })();`,
 			SettleMS: 600,
 		},
@@ -698,8 +698,8 @@ func skynetStates() []dashsnap.State {
   document.querySelector('.skynet-card-terms').click();
   for (var j = 0; j < 30 && !document.querySelector('#remote-sessions [data-open="interactive"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('#remote-sessions [data-open="interactive"]').click();
-  for (var k = 0; k < 60 && !document.querySelector('#term-session-modal .term-remote-badge.interactive'); k++) await new Promise(function(r){ setTimeout(r, 100); });
-  if (!document.querySelector('#term-session-modal .term-remote-badge.interactive')) throw new Error('skynet: interactive badge missing');
+  for (var k = 0; k < 60 && !document.querySelector('.mux-pane.active .term-remote-badge.interactive'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('.mux-pane.active .term-remote-badge.interactive')) throw new Error('skynet: interactive badge missing');
 })();`,
 			SettleMS: 600,
 		},

@@ -18,9 +18,7 @@ function installHosts(harness) {
   host.id = 'terminals-root';
   const badgeHost = nav.appendChild(harness.document.createElement('span'));
   badgeHost.id = 'terminals-badge-root';
-  const modalHost = harness.document.body.appendChild(harness.document.createElement('div'));
-  modalHost.id = 'terminal-session-root';
-  return { host, badgeHost, modalHost };
+  return { host, badgeHost };
 }
 
 function widgetFactory() {

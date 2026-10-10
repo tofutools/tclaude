@@ -170,10 +170,6 @@ export function mountTerminalWidget({
   preAttachDelayMs = POST_ATTACH_RESIZE_DELAY_MS,
   postAttachResizeNudgeMs = POST_ATTACH_RESIZE_NUDGE_MS,
   restartWatcher = sharedRestartWatcher,
-  // Off for a surface that answers its own disconnect. The modal terminal
-  // raises a blocking "reconnect or close?" dialog, and a reattach landing
-  // silently behind it would leave the operator answering a stale question —
-  // "Close terminal" would then kill a session that had already come back.
   autoReattach = true,
   setTimeoutImpl = globalThis.setTimeout,
   clearTimeoutImpl = globalThis.clearTimeout,

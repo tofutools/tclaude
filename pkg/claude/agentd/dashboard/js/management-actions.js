@@ -722,11 +722,15 @@ export function createManagementActions({
     await refresh();
     return result;
   }
-  function editTemplatesWithAgent() {
-    return summonTemplateScribe({ scope: 'library' });
+  async function editTemplatesWithAgent() {
+    const result = await summonTemplateScribe({ scope: 'library' });
+    if (result?.focus_mode === 'browser' && result.focus_ws) state.closeTemplateManager();
+    return result;
   }
-  function editTemplateWithAgent(name) {
-    return summonTemplateScribe({ scope: 'template', name });
+  async function editTemplateWithAgent(name) {
+    const result = await summonTemplateScribe({ scope: 'template', name });
+    if (result?.focus_mode === 'browser' && result.focus_ws) state.closeTemplateManager();
+    return result;
   }
 
   async function saveProfile({ draft, original, options, payload }) {
@@ -973,12 +977,14 @@ export function createManagementActions({
   async function configureSandboxWithAgent(seed, options = {}) {
     const editExisting = options.editExisting !== false
       && !!(options.targetName || seed?.name);
-    await summonSandboxScribe(
+    const result = await summonSandboxScribe(
       seed,
       editExisting ? options.targetName || seed?.name || '' : '',
       options.onCreate || null,
       { editExisting, cloneSourceName: options.cloneSourceName || '' },
     );
+    if (result?.focus_mode === 'browser' && result.focus_ws) state.closeManager();
+    return result;
   }
   function inspectDirectories(filesystem) {
     return sandbox.inspectSandboxDirectories({
