@@ -421,17 +421,28 @@ type fedHubStatus struct {
 	Since     time.Time `json:"since"`
 }
 
+type fedIdentityTransition struct {
+	State          string    `json:"state"`
+	OldID          string    `json:"old_id"`
+	NewID          string    `json:"new_id"`
+	NewFingerprint string    `json:"new_fingerprint"`
+	ReceivedAt     time.Time `json:"received_at"`
+	AcceptAfter    time.Time `json:"accept_after"`
+	Reason         string    `json:"reason,omitempty"`
+}
+
 type fedPeerJSON struct {
-	Level       string    `json:"level,omitempty"`
-	InstanceID  string    `json:"instance_id"`
-	Fingerprint string    `json:"fingerprint"`
-	Label       string    `json:"label,omitempty"`
-	Name        string    `json:"name,omitempty"`
-	Trusted     bool      `json:"trusted"`
-	Online      bool      `json:"online"`
-	LastSeen    time.Time `json:"last_seen,omitempty"`
-	Version     string    `json:"version,omitempty"`
-	TrustedAt   time.Time `json:"trusted_at,omitempty"`
+	IdentityTransition *fedIdentityTransition `json:"identity_transition,omitempty"`
+	Level              string                 `json:"level,omitempty"`
+	InstanceID         string                 `json:"instance_id"`
+	Fingerprint        string                 `json:"fingerprint"`
+	Label              string                 `json:"label,omitempty"`
+	Name               string                 `json:"name,omitempty"`
+	Trusted            bool                   `json:"trusted"`
+	Online             bool                   `json:"online"`
+	LastSeen           time.Time              `json:"last_seen,omitempty"`
+	Version            string                 `json:"version,omitempty"`
+	TrustedAt          time.Time              `json:"trusted_at,omitempty"`
 }
 
 // fedRemoteSystem is what one trusted peer exports to us (discovery).
@@ -478,13 +489,30 @@ func handleFederationStatus(w http.ResponseWriter, r *http.Request) {
 		writeFedErr(w, err)
 		return
 	}
+	transitions := map[string]*fedIdentityTransition{}
+	rotations, err := db.ListFederationIdentityRotations()
+	if err != nil {
+		writeFedErr(w, err)
+		return
+	}
+	for _, rotation := range rotations {
+		if rotation.State != "pending" && rotation.State != "conflict" {
+			continue
+		}
+		transitions[rotation.Statement.OldID] = &fedIdentityTransition{
+			State: rotation.State, OldID: rotation.Statement.OldID, NewID: rotation.Statement.NewID,
+			NewFingerprint: proto.Fingerprint(rotation.Statement.NewKey), ReceivedAt: rotation.ReceivedAt,
+			AcceptAfter: rotation.AcceptAfter, Reason: rotation.Reason,
+		}
+	}
 	labels := map[string]string{}
 	seen := map[string]bool{}
 	for _, p := range trusted {
 		labels[p.InstanceID] = peerDisplay(&p)
 		e := dir[p.InstanceID]
 		resp.Peers = append(resp.Peers, fedPeerJSON{
-			InstanceID: p.InstanceID, Fingerprint: proto.Fingerprint(p.PubKey), Label: p.Label, Name: fedFirst(e.Name, p.Name),
+			IdentityTransition: transitions[p.InstanceID],
+			InstanceID:         p.InstanceID, Fingerprint: proto.Fingerprint(p.PubKey), Label: p.Label, Name: fedFirst(e.Name, p.Name),
 			Level: p.TrustLevel, Trusted: true, Online: e.Online, LastSeen: e.LastSeen, Version: e.Version, TrustedAt: p.TrustedAt,
 		})
 		seen[p.InstanceID] = true

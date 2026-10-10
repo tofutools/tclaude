@@ -2915,3 +2915,39 @@ These local cookie-authenticated routes share the CLI's `/v1/federation` handler
 A delegated answer is one-shot and never grants persistent permission. Peer
 access requests remain decidable only by the receiving local operator and are
 never forwarded to an away cover. None of these administration routes is peer-viewable.
+
+### Dashboard incremental job output and identity transitions
+
+The local dashboard can poll `GET /api/federation/jobs/{id}/output` for a
+submitted outbound job. The corresponding CLI API is
+`GET /v1/federation/jobs/{id}/output`; CLI live follow remains available.
+Both use the existing job ownership authorization. These dashboard routes
+are local-only, including for unrestricted peers.
+
+Output accepts an opaque `cursor` (omit it to start at the beginning) and
+`max_bytes`, default 65536, range 32768–262144. Replies contain `chunks`
+(`{stream:"stdout"|"stderr",data:string,encoding:"base64"}`), the next `cursor`, `state`,
+`done`, and optionally `truncated` when more output remains. Each read is
+bounded and closes its authenticated stream; it does not wait for future
+output. Decode base64 into bytes and use a separate streaming UTF-8 decoder per channel
+across polls, preserving characters split between frames. `max_bytes` counts
+original bytes. Poll only while the output panel is visible. When `done` becomes
+true, fetch the verified terminal `/logs` result. Inbound or unstarted jobs
+return 409, as do peers without incremental-output support. A simultaneous
+CLI follow may occupy the same per-job stream slot.
+
+Trusted rows in `/api/federation/status`, including `?summary=1`, carry
+`identity_transition` while a signed identity successor is `pending` or
+`conflict`. Its fields are `state`, `old_id`, `new_id`, `new_fingerprint`,
+`received_at`, `accept_after`, and an optional `reason`. Pending means the
+local detection window has started; `accept_after` is the earliest possible
+acceptance, not confirmation that acceptance succeeded. Conflict means
+competing signed successors require explicit operator recovery. Completed
+history is available through the read-only, human-only
+`GET /api/federation/identity/rotations`, mirroring `/v1`.
+
+`tclaude federation identity recover-peer OLD_ID NEW_ID` previews recovery without
+changing authority. Applying recovery requires independently checking the
+replacement fingerprint with that node's operator, then passing
+`--fingerprint NEW_FINGERPRINT --apply`. The dashboard exposes no identity
+recovery actions.
