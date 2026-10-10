@@ -68,15 +68,18 @@ export function GrantsPage({ view, pools, groups, actions, confirm, toast, targe
     if (info.policy) {
       // Launch settings left untouched keep the existing grant's values; the
       // daemon replaces a same-scope grant wholesale.
+      // Only settings this permission shows are sent; others typed before
+      // switching permission are dropped.
+      const visible = new Set([...fields.map((f) => f.key), ...(slug === 'groups.members.spawn' ? ['requester_pays'] : []), ...(slug === 'jobs.run' ? ['job_approval'] : [])]);
       const set = {};
       for (const [k, v] of Object.entries(launch)) {
-        if (v === undefined) continue;
+        if (v === undefined || !visible.has(k)) continue;
         set[k] = k === 'allowed_profiles' ? String(v).split(',').map((x) => x.trim()).filter(Boolean) : String(v).trim();
       }
       body.spawn_policy = { ...(existing?.policy || {}), ...set, max_live: Math.max(1, Number(maxLive) || 2) };
       for (const k of Object.keys(body.spawn_policy)) { const v = body.spawn_policy[k]; if (v === '' || (Array.isArray(v) && !v.length)) delete body.spawn_policy[k]; }
     }
-    const kept = existing ? extraPolicy(existing.policy).filter((k) => !(k in launch)) : [];
+    const kept = existing ? extraPolicy(existing.policy).filter((k) => !(k in (body.spawn_policy || {})) || existing.policy[k] === body.spawn_policy[k]) : [];
     const consequence = grantConsequence({ target: current.label, slug, group: scopeGroupName, maxLive: body.spawn_policy?.max_live, gateway: gw, policy: body.spawn_policy });
     const replaces = existing ? ` This updates the existing grant (cap ${existing.maxLive || 2} → ${body.spawn_policy.max_live})${kept.length ? `; its other launch settings (${kept.join(', ')}) are kept` : ''}.` : '';
     return confirm({
@@ -127,7 +130,7 @@ export function GrantsPage({ view, pools, groups, actions, confirm, toast, targe
     </table>`}
     <div class="fa-grant-form">
       <span class="fa-k">Add</span>
-      <select id="fleet-grant-slug" value=${slug} onChange=${(e) => setSlug(e.currentTarget.value)}>
+      <select id="fleet-grant-slug" value=${slug} onChange=${(e) => { setSlug(e.currentTarget.value); setLaunch({}); }}>
         ${PEER_SLUGS.map((s) => html`<option key=${s.slug} value=${s.slug}>${s.slug}</option>`)}
       </select>
       ${info.kind !== 'node' && html`<select id="fleet-grant-group" value=${group} onChange=${(e) => setGroup(e.currentTarget.value)}>

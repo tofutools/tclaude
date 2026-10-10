@@ -18,8 +18,9 @@ function scopeText(scope, groupNames) {
   const s = String(scope || '');
   if (!s) return '';
   if (s.startsWith('http_proxy=')) return `gateway ${s.slice(11)}`;
-  if (s.startsWith('group_id=')) return `group ${groupNames.get(s.slice(9)) || `#${s.slice(9)}`}`;
-  if (s.startsWith('group=')) return `group ${s.slice(6)}`;
+  // The daemon stores a profile grant's group by ID (group=<id>).
+  const g = s.startsWith('group_id=') ? s.slice(9) : s.startsWith('group=') ? s.slice(6) : null;
+  if (g != null) return /^\d+$/.test(g) ? `group ${groupNames.get(g) || `#${g}`}` : `group ${g}`;
   return s;
 }
 
@@ -80,7 +81,7 @@ export function ProfileEditor({ profile = null, pools = [], groups = [], actions
     const sensitive = def.peer_grants.filter((g) => slugInfo(g.slug).sensitive).map((g) => g.slug);
     confirm({
       title: profile ? `Save profile ${profile.name} (revision ${profile.revision} → ${profile.revision + 1})?` : `Create profile ${name.trim()}?`,
-      body: `A peer this profile is applied to gets ${level} trust, ${def.peer_grants.length} peer grant(s)${sensitive.length ? ` (including ${sensitive.join(', ')}, which let it act on this node)` : ''} and ${def.pools.length} pool membership(s).${level === 'unrestricted' ? ` ${UNRESTRICTED_CONSEQUENCE}` : ''}${profile ? appliedText : ' Nothing changes for any peer until you apply it, make it the default, or issue invites with it.'} Peers trusted from now on with this profile (as the default or through its invites) get this version.`,
+      body: `A peer this profile is applied to gets ${level} trust, ${def.peer_grants.length} peer grant(s)${sensitive.length ? ` (including ${sensitive.join(', ')}, which let it act on this node)` : ''} and ${def.pools.length} pool membership(s).${level === 'unrestricted' ? ` ${UNRESTRICTED_CONSEQUENCE}` : ''}${profile ? `${appliedText} Invites already issued for ${profile.name} pin revision ${profile.revision} and stop working: issue new ones. Peers trusted from now on with it as the default get this version.` : ' Nothing changes for any peer until you apply it, make it the default, or issue invites with it.'}`,
       okLabel: profile ? 'Save' : 'Create',
       busyLabel: 'Saving…',
       action: () => (profile ? actions.saveProfile({ id: profile.id, name: profile.name, revision: profile.revision, definition: def }) : actions.createProfile({ name: name.trim(), definition: def })),

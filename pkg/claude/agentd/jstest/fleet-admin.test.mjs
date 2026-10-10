@@ -649,6 +649,8 @@ test('grant launch settings and model gateway scopes reach the grant body and th
   await type('[data-launch="cwd"]', '/srv/ops');
   await pick('[data-launch="requester_pays"]', 'required');
   await s.click(s.q('#fleet-grant-submit'));
+  // A spawn-only setting typed, then a switch to jobs.run: it is not sent.
+  await pick('[data-launch="requester_pays"]', 'allowed');
   assert.match(s.confirms.at(-1).body, /Workers start with profile opus-fast; selectable opus-fast, sonnet-review; directory \/srv\/ops; requester pays: required\. Its workers must use its own model gateway/);
   assert.deepEqual(s.log.filter((l) => l[0] === 'grant').at(-1)[1], { peer: 'inst_forge', slug: 'groups.members.spawn', scope: 'group=ops',
     spawn_policy: { profile: 'opus-fast', allowed_profiles: ['opus-fast', 'sonnet-review'], cwd: '/srv/ops', requester_pays: 'required', max_live: 2 } });
@@ -657,6 +659,7 @@ test('grant launch settings and model gateway scopes reach the grant body and th
   await pick('[data-launch="job_approval"]', 'manual');
   await s.click(s.q('#fleet-grant-submit'));
   assert.match(s.confirms.at(-1).body, /Each job waits for your approval/);
+  assert.equal(s.log.filter((l) => l[0] === 'grant').at(-1)[1].spawn_policy.requester_pays, undefined, 'a spawn-only setting never rides along');
   await pick('#fleet-grant-slug', 'models.proxy');
   await type('#fleet-grant-gateway', 'claude');
   await s.click(s.q('#fleet-grant-submit'));
@@ -666,7 +669,7 @@ test('grant launch settings and model gateway scopes reach the grant body and th
 
 test('profile editor: create and edit confirm the effect, keep advanced fields, and explain a stale revision', async (t) => {
   const s = await setup(t);
-  s.actions.profiles = async () => ({ profiles: [{ id: 'prof_1', name: 'test-rig', revision: 3, definition: { trust_level: 'restricted', pools: ['pool_r'], labels: ['gpu'], peer_grants: [{ slug: 'jobs.run', scope: 'group_id=7', spawn_policy: { max_live: 3, job_approval: 'manual' } }], worker_permissions: { 'tasks.read': { allow: true } } } }], default: null });
+  s.actions.profiles = async () => ({ profiles: [{ id: 'prof_1', name: 'test-rig', revision: 3, definition: { trust_level: 'restricted', pools: ['pool_r'], labels: ['gpu'], peer_grants: [{ slug: 'jobs.run', scope: 'group=7', spawn_policy: { max_live: 3, job_approval: 'manual' } }], worker_permissions: { 'tasks.read': { allow: true } } } }], default: null });
   await openProfiles(s, [{ id: 'pool_r', name: 'rigs', members: [] }, { id: 'pool_b', name: 'builders', members: [] }]);
   const doc = s.harness.document; const q = (x) => doc.querySelector(x);
   const type = async (sel, v) => { const el = q(sel); el.value = v; await s.harness.act(() => s.harness.fireEvent(el, 'input')); };
@@ -689,8 +692,8 @@ test('profile editor: create and edit confirm the effect, keep advanced fields, 
   await s.harness.act(() => s.harness.fireEvent(lvl, 'change'));
   await s.click(q('#fleet-profile-save'));
   assert.match(s.confirms.at(-1).title, /revision 3 → 4/);
-  assert.match(s.confirms.at(-1).body, /unrestricted trust.*created later.*applied to 1 peer\(s\); they keep their current settings until you apply it again/);
+  assert.match(s.confirms.at(-1).body, /unrestricted trust.*created later.*applied to 1 peer\(s\); they keep their current settings until you apply it again.*Invites already issued for test-rig pin revision 3 and stop working/);
   const saved = s.log.findLast((l) => l[0] === 'saveProfile')[1];
   assert.deepEqual(saved, { id: 'prof_1', name: 'test-rig', revision: 3, definition: { trust_level: 'unrestricted', pools: ['pool_r'], labels: ['gpu'],
-    peer_grants: [{ slug: 'jobs.run', scope: 'group_id=7', spawn_policy: { max_live: 3, job_approval: 'manual' } }], worker_permissions: { 'tasks.read': { allow: true } } } }, 'launch settings and advanced fields survive');
+    peer_grants: [{ slug: 'jobs.run', scope: 'group=7', spawn_policy: { max_live: 3, job_approval: 'manual' } }], worker_permissions: { 'tasks.read': { allow: true } } } }, 'launch settings and advanced fields survive');
 });
