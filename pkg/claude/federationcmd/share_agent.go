@@ -13,12 +13,13 @@ import (
 )
 
 type shareAgentParams struct {
-	Agent        string `pos:"true" help:"Source agent selector; agents can use self."`
-	Peer         string `pos:"true" help:"Trusted destination peer (label, name or instance ID)."`
-	Group        string `long:"group" help:"Receiving group on the peer; it must grant agents.receive."`
-	History      bool   `long:"history" help:"Clone with conversation history; the original keeps running."`
-	AllowFlagged bool   `long:"allow-flagged" help:"Explicitly allow suspected credentials in configuration or transcripts."`
-	JSON         bool   `long:"json" help:"Output JSON."`
+	CarryPermissions bool   `long:"carry-permissions" help:"Request receiver-approved permission carry; off by default."`
+	Agent            string `pos:"true" help:"Source agent selector; agents can use self."`
+	Peer             string `pos:"true" help:"Trusted destination peer (label, name or instance ID)."`
+	Group            string `long:"group" help:"Receiving group on the peer; it must grant agents.receive."`
+	History          bool   `long:"history" help:"Clone with conversation history; the original keeps running."`
+	AllowFlagged     bool   `long:"allow-flagged" help:"Explicitly allow suspected credentials in configuration or transcripts."`
+	JSON             bool   `long:"json" help:"Output JSON."`
 }
 
 func shareAgentCmd() *cobra.Command {
@@ -30,7 +31,7 @@ func runShareAgent(p *shareAgentParams, out, stderr io.Writer) int {
 	return runAgentOffer(p, "/v1/federation/share-agent", out, stderr)
 }
 func runAgentOffer(p *shareAgentParams, path string, out, stderr io.Writer) int {
-	in := map[string]any{"agent": p.Agent, "peer": p.Peer, "group": p.Group, "history": p.History, "allow_flagged": p.AllowFlagged}
+	in := map[string]any{"agent": p.Agent, "peer": p.Peer, "group": p.Group, "history": p.History, "allow_flagged": p.AllowFlagged, "carry_permissions": p.CarryPermissions}
 	var response struct {
 		Offer struct {
 			Descriptor  bundletransfer.Descriptor `json:"offer"`

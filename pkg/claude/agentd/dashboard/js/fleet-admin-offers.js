@@ -45,6 +45,8 @@ export function importBody(offer, opts, apply) {
     for (const k of ['cwd', 'worktree', 'group', 'name']) if (String(opts[k] || '').trim()) body[k] = opts[k].trim();
     // A typed path wins over a picked landing candidate, as --cwd over --landing.
     if (opts.landing && !body.cwd) body.landing = opts.landing;
+    if (opts.dropPermissions) body.drop_permissions = true;
+    if (opts.allowSensitivePermissions) body.allow_sensitive_permissions = true;
     if (opts.skipHistory && !offer.offer.move && !offer.offer.teleport) body.skip_history = true;
   } else {
     if (opts.skip?.length) body.skip = [...opts.skip];
@@ -92,13 +94,13 @@ export function agentConsequence(peer, offer, preview) {
   return `Starts a new agent ${name} on this node${where}, ${creds}, under this node's spawn checks.`
     + `${preview?.history ? ' It starts from the shared conversation history, which may contain code, file contents and anything pasted into it.' : ' It starts without conversation history.'}`
     + `${(preview?.findings || []).length ? ` The history has suspected credentials: ${preview.findings.map((f) => `${f.kind} ×${f.count}`).join(', ')}.` : ''}`
-    + ` Its permissions and ownership from ${peer} are not copied.${tail}`;
+    + (preview?.agent?.carry_permissions ? ` Receiver-approved permission decisions: ${(preview.permissions || []).filter((p) => p.decision !== 'drop').length} applied or remapped; ${(preview.permissions || []).filter((p) => p.decision === 'drop').length} dropped. Ownership never travels.${tail}` : ` Its permissions and ownership from ${peer} are not copied.${tail}`);
 }
 
 function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) {
   const agent = offer.offer?.type === 'agent';
   const fixedHistory = !!(offer.offer?.move || offer.offer?.teleport);
-  const [opts, setOpts] = useState({ skip: [], values: {}, replace: false, keepPaths: false, cwd: '', landing: '', worktree: '', group: '', name: '', skipHistory: false });
+  const [opts, setOpts] = useState({ skip: [], values: {}, replace: false, keepPaths: false, cwd: '', landing: '', worktree: '', group: '', name: '', skipHistory: false, dropPermissions: false, allowSensitivePermissions: false });
   const [preview, setPreview] = useState(null);
   // rows keeps every config item seen in any preview: a skipped item drops out
   // of the next preview but stays listed (unticked) so it can be re-included.
@@ -155,7 +157,7 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
 
   const apply = () => confirm({
     title: agent ? `Start ${preview?.agent?.name || 'the agent'} from ${peer}?` : `Apply ${peer}'s config here?`,
-    body: agent ? agentConsequence(peer, offer, preview) : configConsequence(peer, preview, opts.skip),
+    body: agent ? agentConsequence(peer, offer, preview) + (opts.allowSensitivePermissions && !opts.dropPermissions ? ' You explicitly authorize carried permission administration, sandbox administration, human interaction and federation administration grants in the preview.' : '') : configConsequence(peer, preview, opts.skip),
     okLabel: agent ? 'Start agent' : 'Apply',
     busyLabel: agent ? 'Starting…' : 'Applying…',
     action: () => actions.importOffer(offer, importBody(offer, opts, true)),
@@ -167,7 +169,7 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
       setError(errText(e));
     });
 
-  return html`<${Overlay} id="fleet-offer-import" labelledby="fleet-offer-import-title" onClose=${onClose}>
+  return html`<${Overlay} id="fleet-offer-import" labelledby="fleet-offer-import-title" onClose=${onClose} onSubmitEnter=${() => { if (!blocked) apply(); }}>
     <h3 id="fleet-offer-import-title">${offerKind(offer)} offer from ${peer}</h3>
     <div class="muted">${offer.offer?.summary || ''} · ${size(offer.offer?.bytes)} · expires ${when(offer.offer?.expires_at)}${offer.sender_agent ? ` · sent by ${offer.sender_agent}` : ''}</div>
     <div class="muted fa-wrap">sha256 <code>${offer.offer?.sha256 || '—'}</code></div>
@@ -179,6 +181,11 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
       <label class="fa-of-row"><span class="fa-k">group</span><input id="fleet-offer-group" value=${opts.group} placeholder=${offer.offer?.group ? `the group bound on receipt (${offer.offer.group}); type another to override` : 'receiving group here'} autocomplete="off" onInput=${set('group')} /></label>
       <label class="fa-of-row"><span class="fa-k">name</span><input id="fleet-offer-name" value=${opts.name} placeholder=${preview?.agent?.name || 'keep the offered name'} autocomplete="off" onInput=${set('name')} /></label>
       ${!fixedHistory && html`<label class="fa-of-check"><input id="fleet-offer-skip-history" type="checkbox" checked=${opts.skipHistory} onChange=${set('skipHistory')} /> start without the shared conversation history</label>`}
+      ${preview?.agent?.carry_permissions && html`
+        <label class="fa-of-check"><input id="fleet-offer-drop-permissions" type="checkbox" checked=${opts.dropPermissions} onChange=${set('dropPermissions')} /> discard carried permissions; use this node's defaults only</label>
+        <label class="fa-of-check"><input id="fleet-offer-sensitive-permissions" type="checkbox" checked=${opts.allowSensitivePermissions} disabled=${opts.dropPermissions} onChange=${set('allowSensitivePermissions')} /> I explicitly authorize carried permission administration, sandbox administration, human interaction and federation administration grants. These can change security policy and contact the operator; unrestricted trust is also required.</label>
+        <table class="fa-table" id="fleet-offer-permissions"><thead><tr><th>Permission</th><th>Effect</th><th>Source scope</th><th>Receiving scope</th><th>Decision</th><th>Reason</th></tr></thead>
+          <tbody>${(preview.permissions || []).map((p, i) => html`<tr key=${i}><td><code>${p.slug}</code></td><td>${p.effect}</td><td>${p.source_scope ? JSON.stringify(p.source_scope) : 'all'}</td><td>${p.scope ? JSON.stringify(p.scope) : p.decision === 'drop' ? '—' : 'all'}</td><td>${p.decision}</td><td>${p.reason}</td></tr>`)}</tbody></table>`}
       ${preview && html`<div class="fa-plan"><ul>
         <li>${preview.history ? 'With conversation history.' : 'Without conversation history.'}</li>
         ${(preview.findings || []).map((f) => html`<li class="fa-danger">Suspected credentials in the history: ${f.kind} ×${f.count}${f.locations?.length ? ` (${f.locations.slice(0, 3).join(', ')})` : ''}</li>`)}
@@ -247,7 +254,7 @@ function SendConfigDialog({ peers, actions, confirm, onClose, onDone }) {
 }
 
 function ShareAgentDialog({ peers, agents, actions, confirm, onClose, onDone }) {
-  const [form, setForm] = useState({ agent: agents[0]?.id || '', peer: peers[0]?.id || '', group: '', history: false });
+  const [form, setForm] = useState({ agent: agents[0]?.id || '', peer: peers[0]?.id || '', group: '', history: false, carryPermissions: false });
   const [findings, setFindings] = useState(null);
   const [allow, setAllow] = useState(false);
   const [error, setError] = useState('');
@@ -260,10 +267,10 @@ function ShareAgentDialog({ peers, agents, actions, confirm, onClose, onDone }) 
     setError('');
     confirm({
       title: `Offer ${agentLabel} to ${peerLabel}?`,
-      body: `Sends ${agentLabel}'s configuration (role, profile, startup context)${form.history ? ' and a copy of its conversation history — which may contain code, file contents and anything pasted into it —' : ''} to ${peerLabel}'s operator, who previews it and may start their own copy in group ${form.group.trim()}. ${agentLabel} keeps running here; its permissions are not copied. ${receiverDecides(peerLabel)}${allow ? ` The history includes suspected credentials (${findings.map((f) => `${f.kind} ×${f.count}`).join(', ')}).` : ''}`,
+      body: `Sends ${agentLabel}'s configuration (role, profile, startup context)${form.history ? ' and a copy of its conversation history — which may contain code, file contents and anything pasted into it —' : ''} to ${peerLabel}'s operator, who previews it and may start their own copy in group ${form.group.trim()}. ${agentLabel} keeps running here; ${form.carryPermissions ? 'the receiver decides which requested permissions to carry, and ownership never travels' : 'its permissions are not copied'}. ${receiverDecides(peerLabel)}${allow ? ` The history includes suspected credentials (${findings.map((f) => `${f.kind} ×${f.count}`).join(', ')}).` : ''}`,
       okLabel: 'Send offer',
       busyLabel: 'Sending…',
-      action: () => actions.shareAgent({ agent: form.agent, peer: form.peer, group: form.group.trim(), history: form.history, allow_flagged: allow }),
+      action: () => actions.shareAgent({ agent: form.agent, peer: form.peer, group: form.group.trim(), history: form.history, carry_permissions: form.carryPermissions, allow_flagged: allow }),
     }).then((r) => { if (r) onDone(`Offered ${agentLabel} to ${peerLabel}${sentLanding(r, peerLabel)}`); })
       .catch((e) => { if (e?.code === 'flagged_credentials') { setFindings(e.body?.findings || []); setError('The history looks like it contains credentials. Share without history, or send it anyway.'); } else setError(errText(e)); });
   };
@@ -275,6 +282,7 @@ function ShareAgentDialog({ peers, agents, actions, confirm, onClose, onDone }) 
       ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}</select></label>
     <label class="fa-of-row"><span class="fa-k">group</span><input id="fleet-share-agent-group" value=${form.group} placeholder="receiving group on the peer (it must grant agents.receive)" autocomplete="off" onInput=${set('group')} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (!(findings && !allow)) send(); } }} /></label>
     <label class="fa-of-check"><input id="fleet-share-agent-history" type="checkbox" checked=${form.history} onChange=${set('history')} /> include a copy of the conversation history</label>
+    <label class="fa-of-check"><input id="fleet-share-agent-carry" type="checkbox" checked=${form.carryPermissions} onChange=${set('carryPermissions')} /> request receiver-approved permission carry (ownership and sudo leases stay here)</label>
     <div class="muted" id="fleet-share-agent-landing">Starting directory: the receiver chooses on accept.</div>
     ${findings && html`<div class="fa-plan"><ul>${findings.map((f) => html`<li class="fa-warn">${f.kind} ×${f.count}${f.locations?.length ? ` (${f.locations.slice(0, 3).join(', ')})` : ''}</li>`)}</ul></div>
       <label class="fa-of-check"><input id="fleet-share-agent-allow" type="checkbox" checked=${allow} onChange=${(e) => setAllow(e.currentTarget.checked)} /> send the history anyway</label>`}

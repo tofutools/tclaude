@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -29,25 +30,26 @@ const (
 
 // Wire capabilities stay stable while authority lives in regular peer slugs.
 var federationPeerSlugs = map[string]string{
-	PermAgentsStatusRead:      proto.CapAgentStatus,
-	PermGroupsRosterRead:      proto.CapRoster,
-	PermSessionsRead:          proto.CapSessions,
-	PermSessionsWatch:         proto.CapSessionsWatch,
-	PermSessionsAttach:        proto.CapSessionsAttach,
-	PermSessionsFilesRead:     proto.CapSessionsFilesRead,
-	PermGroupsPresenceRead:    proto.CapPresence,
-	PermMessageDirect:         proto.CapMail,
-	PermMessageAttachments:    proto.CapAttachments,
-	PermAgentsReceive:         proto.CapAgentsReceive,
-	PermAgentsTeleportReceive: proto.CapTeleportReceive,
-	PermGroupsMembersSpawn:    proto.CapSpawn,
-	PermGroupsMembersStop:     "stop",
-	PermGroupsMembersResume:   "resume",
-	PermGroupsMembersRetire:   "retire",
-	PermGroupsMembersClone:    "clone",
-	PermAgentMove:             "move",
-	PermRoutesConsume:         proto.CapRoutes,
-	PermJobsRun:               proto.CapJobs,
+	PermAgentsStatusRead:         proto.CapAgentStatus,
+	PermGroupsRosterRead:         proto.CapRoster,
+	PermSessionsRead:             proto.CapSessions,
+	PermSessionsWatch:            proto.CapSessionsWatch,
+	PermSessionsAttach:           proto.CapSessionsAttach,
+	PermSessionsFilesRead:        proto.CapSessionsFilesRead,
+	PermGroupsPresenceRead:       proto.CapPresence,
+	PermMessageDirect:            proto.CapMail,
+	PermMessageAttachments:       proto.CapAttachments,
+	PermAgentsReceive:            proto.CapAgentsReceive,
+	PermAgentsReceivePermissions: proto.CapAgentsReceivePermissions,
+	PermAgentsTeleportReceive:    proto.CapTeleportReceive,
+	PermGroupsMembersSpawn:       proto.CapSpawn,
+	PermGroupsMembersStop:        "stop",
+	PermGroupsMembersResume:      "resume",
+	PermGroupsMembersRetire:      "retire",
+	PermGroupsMembersClone:       "clone",
+	PermAgentMove:                "move",
+	PermRoutesConsume:            proto.CapRoutes,
+	PermJobsRun:                  proto.CapJobs,
 }
 
 func fedPeerGroupGrant(peer string, groupID int64, slug string) *db.FederationPeerGrant {
@@ -107,7 +109,7 @@ func fedPeerExplicitGroupGrant(peer string, groupID int64, slug string) *db.Fede
 			best = g
 		}
 	}
-	if slug == PermGroupsMembersSpawn || slug == PermJobsRun {
+	if slug == PermGroupsMembersSpawn || slug == PermJobsRun || slug == PermAgentsReceivePermissions {
 		for _, g := range candidates {
 			if rank(g) == rank(best) && !g.SpawnPolicy.Equal(best.SpawnPolicy) {
 				return nil
@@ -232,7 +234,7 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scope := strings.TrimSpace(in.Scope)
-	if (in.Slug == PermAgentsReceive || in.Slug == PermAgentsTeleportReceive) && scope == "" {
+	if (in.Slug == PermAgentsReceive || in.Slug == PermAgentsTeleportReceive || in.Slug == PermAgentsReceivePermissions) && scope == "" {
 		writeError(w, 400, "invalid_arg", in.Slug+" requires scope group=<local group>")
 		return
 	}
@@ -300,6 +302,23 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
+		if in.Slug == PermAgentsReceivePermissions {
+			slices.Sort(in.SpawnPolicy.PermissionSlugs)
+			in.SpawnPolicy.PermissionSlugs = slices.Compact(in.SpawnPolicy.PermissionSlugs)
+			if len(in.SpawnPolicy.PermissionSlugs) > 512 {
+				writeError(w, 400, "invalid_arg", "permission allowlist exceeds 512 entries")
+				return
+			}
+			for _, slug := range in.SpawnPolicy.PermissionSlugs {
+				if !IsKnownPermSlug(slug) {
+					writeError(w, 400, "invalid_arg", "unknown permission: "+slug)
+					return
+				}
+			}
+		} else if len(in.SpawnPolicy.PermissionSlugs) > 0 {
+			writeError(w, 400, "invalid_arg", "permission_slugs requires agents.receive.permissions")
+			return
+		}
 		if err := normalizeSelectableProfiles(in.Slug, &in.SpawnPolicy); err != nil {
 			writeError(w, 400, "invalid_arg", err.Error())
 			return
@@ -312,6 +331,8 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, "invalid_arg", "job_approval must be auto or manual and requires jobs.run")
 			return
 		}
+		launchSettings := in.SpawnPolicy
+		launchSettings.PermissionSlugs = nil
 		if in.Slug == PermGroupsMembersSpawn || in.Slug == PermJobsRun {
 			if in.SpawnPolicy.MaxLive == 0 {
 				in.SpawnPolicy.MaxLive = 2
@@ -320,7 +341,7 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, "invalid_arg", "max-live must be positive")
 				return
 			}
-		} else if !in.SpawnPolicy.Equal(db.FederationSpawnPolicy{}) {
+		} else if !launchSettings.Equal(db.FederationSpawnPolicy{}) {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "launch settings apply only to groups.members.spawn or jobs.run")
 			return
 		}

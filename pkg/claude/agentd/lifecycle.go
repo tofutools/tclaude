@@ -4976,6 +4976,17 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			return checkTeleportRepo(row, g.ID)
 		}
 	}
+	if carry, ok := r.Context().Value(permissionCarryLaunchContextKey{}).(permissionCarryLaunch); ok && carry.Policy.Enabled {
+		priorCheck := p.launchAuthority
+		p.launchAuthority = func() error {
+			if priorCheck != nil {
+				if err := priorCheck(); err != nil {
+					return err
+				}
+			}
+			return carry.check()
+		}
+	}
 	// An omitted include_group_context flag means opt-in — every spawn
 	// path inherits the group context by default, the same way it
 	// inherits default_cwd; the dashboard sends false explicitly to opt

@@ -965,10 +965,11 @@ placeholders use the same `--set name=value` and `--keep-paths` conventions as
 setup bundles. Working directories, branches and paths inside prompts or tool
 output are hints, not filesystem contents; no repository or worktree is copied.
 
-`--history` includes Claude Code JSONL or a Codex rollout through the harness's
+`--history` includes Claude Code JSONL, a Codex rollout, OpenCode native export or Gemini
+native chat JSONL through the harness's
 `HistoryTransfer` capability. Import remints native conversation identity and
 remaps known cwd metadata before resuming it as a new local agent. Message and
-tool-output text is preserved. OpenCode, Copilot and Gemini currently export
+tool-output text is preserved. Copilot currently exports
 configuration only with a warning; `--skip-history` also requests configuration
 only on import. Sidecar databases, credentials, hooks and artifacts are excluded.
 Credential detection uses the setup-bundle boundary, reporting counts per kind
@@ -1120,7 +1121,7 @@ tclaude federation share-agent reviewer bob --group reviewers --history
 
 The default shares configuration only. `--history` includes the native
 conversation when the harness supports `HistoryTransfer` (currently Claude
-Code and Codex); other harnesses warn and share configuration only. The original
+Code, Codex, OpenCode and Gemini); other harnesses warn and share configuration only. The original
 agent and transcript remain in place. Credential findings report counts and at
 most three locations per kind; sharing refuses unless `--allow-flagged` is
 explicit. Structured credential fields are omitted and history stays verbatim.
@@ -1182,7 +1183,7 @@ it does not stop an already dispatched agent.
 
 A move clones native conversation history to a new destination agent, then
 retires the source after the destination confirms that its reserved launch is
-running. Claude, Codex and OpenCode history are supported. A peer must advertise move
+running. Claude, Codex, OpenCode and Gemini history are supported. A peer must advertise move
 support; an older peer cannot complete a move with an ordinary import receipt.
 
 ```bash
@@ -1615,7 +1616,7 @@ tclaude agent teleport status
 tclaude agent teleport --home --group helpers
 ```
 
-Teleport transfers native Claude Code, Codex or OpenCode conversation history using the
+Teleport transfers native Claude Code, Codex, OpenCode or Gemini conversation history using the
 existing agent-offer transport. Move mode keeps the source running until the
 receiver confirms that the imported generation is running. `--clone` keeps the
 source running. There is no destination retry after an offer might have been
@@ -3570,3 +3571,38 @@ remints the session and event identities, writes fresh workspace metadata, and
 resumes with the native CLI. Databases, checkpoints, rewind files, permissions,
 and other executable artifacts are not transferred. Full conversation events
 remain available to the native resume path.
+
+### Receiver-approved permission carry
+
+Permission carry is off by default. Add `--carry-permissions` to
+`federation share-agent`, `federation move-agent`, or `agent teleport` (including
+`--clone`) to request it. Agent callers additionally need the peer-scoped
+`self.teleport.permissions` permission. Ownership and temporary sudo leases
+never travel.
+
+The receiver previews each permission as applied, remapped, or dropped with a
+reason. Unrestricted trust allows ordinary grants. A restricted peer needs a
+receiving-group grant such as:
+
+```sh
+tclaude federation grant node-a agents.receive.permissions --scope group=support --permission-slug groups.members.spawn
+```
+
+Omit `--permission-slug` to allow ordinary known slugs. Group scopes are remapped
+to the landing group; unmapped source-local agent, target, profile, peer or path
+selectors are dropped. Restricted group capabilities are narrowed to the landing
+group. Source denies carry and receiver policy denies win.
+
+Permission administration, sandbox administration, `human.*`, and federation
+administration grants require unrestricted trust **and** explicit receiving
+operator approval (`federation offers import --allow-sensitive-permissions`, or
+the import dialog's explicit opt-in). Automatic landing never opts into them.
+`--drop-permissions` discards all requested carry. The receiving policy is checked
+again immediately before dispatch; a changed decision refuses the launch.
+The visiting copy's grants are retired with it on departure. Returning-home
+identity and grant restoration are separate from this fresh-ID import path.
+
+Local archive export and import both need `--carry-permissions`; applying carried
+grants additionally requires normal permission-administration authority. The
+arrival message and federation audit summarize receiver decisions.
+

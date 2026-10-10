@@ -14,16 +14,17 @@ import (
 )
 
 type moveAgentParams struct {
-	Agent        string `pos:"true" help:"Source agent selector; agents can use self."`
-	Peer         string `pos:"true" help:"Trusted destination peer."`
-	Group        string `long:"group" help:"Receiving group granting agents.receive."`
-	AllowFlagged bool   `long:"allow-flagged" help:"Explicitly allow suspected credentials in the history."`
-	JSON         bool   `long:"json" help:"Output JSON."`
+	CarryPermissions bool   `long:"carry-permissions" help:"Request receiver-approved permission carry; off by default."`
+	Agent            string `pos:"true" help:"Source agent selector; agents can use self."`
+	Peer             string `pos:"true" help:"Trusted destination peer."`
+	Group            string `long:"group" help:"Receiving group granting agents.receive."`
+	AllowFlagged     bool   `long:"allow-flagged" help:"Explicitly allow suspected credentials in the history."`
+	JSON             bool   `long:"json" help:"Output JSON."`
 }
 
 func moveAgentCmd() *cobra.Command {
 	return boa.CmdT[moveAgentParams]{Use: "move-agent", Short: "Clone with history, retiring the source after running confirmation", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *moveAgentParams, _ *cobra.Command, _ []string) {
-		os.Exit(runAgentOffer(&shareAgentParams{Agent: p.Agent, Peer: p.Peer, Group: p.Group, History: true, AllowFlagged: p.AllowFlagged, JSON: p.JSON}, "/v1/federation/move-agent", os.Stdout, os.Stderr))
+		os.Exit(runAgentOffer(&shareAgentParams{Agent: p.Agent, Peer: p.Peer, Group: p.Group, History: true, CarryPermissions: p.CarryPermissions, AllowFlagged: p.AllowFlagged, JSON: p.JSON}, "/v1/federation/move-agent", os.Stdout, os.Stderr))
 	}}.ToCobra()
 }
 

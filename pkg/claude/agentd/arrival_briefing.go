@@ -22,6 +22,7 @@ type arrivalContextKey struct{}
 type arrivalContext struct {
 	Operation, Peer, Reason, Note string
 	Source                        agentbundle.Definition
+	PermissionSummary             string
 	LocalClone                    bool
 	Restored                      bool
 }
@@ -180,6 +181,9 @@ func buildArrivalBriefing(a arrivalContext, agentID, cwd, group, h, model string
 		reason = "receiver-selected path"
 	}
 	permissions := "source permissions not copied; receiver policy applies; fresh inbox"
+	if a.PermissionSummary != "" {
+		permissions = a.PermissionSummary + "; fresh inbox"
+	}
 	if a.LocalClone {
 		permissions = "local permissions inherited; independent inbox"
 	}

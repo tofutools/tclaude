@@ -411,6 +411,10 @@ func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = b.Close() }()
+	b.Manifest.Agent.CarryPermissions = r.URL.Query().Get("carry_permissions") == "true"
+	if b.Manifest.Agent.CarryPermissions {
+		b.Manifest.Agent.Permissions = standingCarryRows(b.Manifest.Agent.Permissions)
+	}
 	if len(b.Manifest.Findings) > 0 && r.URL.Query().Get("allow_flagged") != "true" {
 		writeJSON(w, 422, map[string]any{"error": "suspected credentials: use --allow-flagged or export without --history", "code": "flagged_credentials", "findings": b.Manifest.Findings})
 		return
@@ -431,17 +435,18 @@ func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
 }
 
 type agentBundlePreview struct {
-	Agent      agentbundle.Definition     `json:"agent"`
-	Cwd        string                     `json:"cwd"`
-	Worktree   string                     `json:"worktree,omitempty"`
-	Group      string                     `json:"group,omitempty"`
-	History    bool                       `json:"history"`
-	Unresolved []configbundle.Placeholder `json:"unresolved,omitempty"`
-	Warnings   []string                   `json:"warnings"`
-	Security   string                     `json:"security"`
-	Findings   []agentbundle.Finding      `json:"findings,omitempty"`
-	Applied    bool                       `json:"applied"`
-	Spawn      *agent.SpawnResponse       `json:"spawn,omitempty"`
+	Permissions []carriedPermissionDecision `json:"permissions,omitempty"`
+	Agent       agentbundle.Definition      `json:"agent"`
+	Cwd         string                      `json:"cwd"`
+	Worktree    string                      `json:"worktree,omitempty"`
+	Group       string                      `json:"group,omitempty"`
+	History     bool                        `json:"history"`
+	Unresolved  []configbundle.Placeholder  `json:"unresolved,omitempty"`
+	Warnings    []string                    `json:"warnings"`
+	Security    string                      `json:"security"`
+	Findings    []agentbundle.Finding       `json:"findings,omitempty"`
+	Applied     bool                        `json:"applied"`
+	Spawn       *agent.SpawnResponse        `json:"spawn,omitempty"`
 }
 
 func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
@@ -546,7 +551,32 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "history", err.Error())
 		return
 	}
-	preview := agentBundlePreview{Findings: findings, Agent: d, Cwd: q.Get("cwd"), Worktree: q.Get("worktree"), Group: q.Get("group"), Unresolved: missing, Warnings: append([]string{}, b.Manifest.Warnings...), Security: "Permissions and ownership are advisory only; none will be copied. Launch posture uses normal receiver spawn checks."}
+	carryPolicy, hasCarryPolicy := r.Context().Value(permissionCarryContextKey{}).(permissionCarryPolicy)
+	if !hasCarryPolicy {
+		carryPolicy = permissionCarryPolicy{Group: q.Get("group"), Enabled: d.CarryPermissions && q.Get("carry_permissions") == "true", AllowSensitive: q.Get("allow_sensitive_permissions") == "true"}
+		if apply && carryPolicy.Enabled {
+			if _, ok := requirePermission(w, r, PermPermissionsGrant); !ok {
+				return
+			}
+		}
+	}
+	if carryPolicy.Enabled && len(d.Permissions) > 512 {
+		writeError(w, 400, "permissions", "permission carry exceeds 512 rows")
+		return
+	}
+	carryDecisions, carryOverrides := planCarriedPermissions(d.Permissions, carryPolicy)
+	if authority != nil && authority.record.WorkerDefaults != nil {
+		for i := range carryDecisions {
+			d := &carryDecisions[i]
+			if authority.record.WorkerDefaults.Permissions[d.Slug].Effect == "deny" && d.Effect != "deny" && d.Decision != "drop" {
+				d.Decision, d.Reason = "drop", "receiver worker policy deny wins"
+			}
+		}
+	}
+	preview := agentBundlePreview{Permissions: carryDecisions, Findings: findings, Agent: d, Cwd: q.Get("cwd"), Worktree: q.Get("worktree"), Group: q.Get("group"), Unresolved: missing, Warnings: append([]string{}, b.Manifest.Warnings...), Security: "Permissions and ownership are advisory only; none will be copied. Launch posture uses normal receiver spawn checks."}
+	if carryPolicy.Enabled {
+		preview.Security = permissionCarrySummary(preview.Permissions) + " Launch posture uses normal receiver spawn checks."
+	}
 	if preview.Cwd == "" && q.Get("keep_paths") == "true" {
 		preview.Cwd = d.Paths.Cwd
 		if preview.Worktree == "" {
@@ -633,7 +663,39 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		}
 		wire, _ = json.Marshal(shape)
 	}
-	inner := r.Clone(r.Context())
+	var launchShape map[string]any
+	_ = json.Unmarshal(wire, &launchShape)
+	var receiverOverrides map[string]db.PermissionOverride
+	if raw, err := json.Marshal(launchShape["permission_overrides"]); err == nil {
+		_ = json.Unmarshal(raw, &receiverOverrides)
+	}
+	if receiverOverrides == nil {
+		receiverOverrides = map[string]db.PermissionOverride{}
+	}
+	for slug, override := range carryOverrides {
+		if receiverOverrides[slug].Effect == "deny" && override.Effect != "deny" {
+			for i := range preview.Permissions {
+				if preview.Permissions[i].Slug == slug && preview.Permissions[i].Effect != "deny" {
+					preview.Permissions[i].Decision = "drop"
+					preview.Permissions[i].Reason = "receiver worker policy deny wins"
+				}
+			}
+			continue
+		}
+		receiverOverrides[slug] = override
+	}
+	launchShape["permission_overrides"] = receiverOverrides
+	if carryPolicy.Enabled {
+		brief, _ := launchShape["initial_message"].(string)
+		launchShape["initial_message"] = permissionCarrySummary(preview.Permissions) + "\n\n" + brief
+	}
+	wire, _ = json.Marshal(launchShape)
+	inner := r.Clone(context.WithValue(r.Context(), permissionCarryLaunchContextKey{}, permissionCarryLaunch{Policy: carryPolicy, Rows: d.Permissions, Expected: carryOverrides}))
+	if a := arrivalFromRequest(inner); a != nil && carryPolicy.Enabled {
+		copy := *a
+		copy.PermissionSummary = permissionCarrySummary(preview.Permissions)
+		inner = inner.WithContext(context.WithValue(inner.Context(), arrivalContextKey{}, &copy))
+	}
 	inner.Method = http.MethodPost
 	inner.Body = io.NopCloser(bytes.NewReader(wire))
 	inner.ContentLength = int64(len(wire))
@@ -652,6 +714,10 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &spawned); err != nil {
 		writeError(w, 500, "spawn", err.Error())
 		return
+	}
+	if carryPolicy.Enabled {
+		auditDecisions, _ := json.Marshal(preview.Permissions)
+		recordFederationAudit("agent.permissions.carry", carryPolicy.Peer, spawned.AgentID, preview.Group, string(auditDecisions), 200)
 	}
 	preview.Applied = true
 	preview.Spawn = &spawned

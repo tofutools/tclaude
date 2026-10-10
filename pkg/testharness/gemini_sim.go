@@ -262,6 +262,22 @@ func geminiSimProjectDir(home, cwd string) (string, error) {
 	}
 	slug, ok := registry.Projects[root]
 	if !ok {
+		// Native ProjectRegistry adopts a matching ownership marker before
+		// inventing a new slug (for stores imported before the first launch).
+		dirs, _ := os.ReadDir(filepath.Join(dir, "tmp"))
+		for _, entry := range dirs {
+			if !entry.IsDir() {
+				continue
+			}
+			marker, e := os.ReadFile(filepath.Join(dir, "tmp", entry.Name(), ".project_root"))
+			if e == nil && strings.TrimSpace(string(marker)) == root {
+				slug = entry.Name()
+				ok = true
+				break
+			}
+		}
+	}
+	if !ok {
 		base := strings.ToLower(regexp.MustCompile(`[^a-z0-9-]+`).ReplaceAllString(
 			strings.ToLower(filepath.Base(root)), "-"))
 		if base == "" {
@@ -275,6 +291,8 @@ func geminiSimProjectDir(home, cwd string) (string, error) {
 		for n := 1; taken[slug]; n++ {
 			slug = fmt.Sprintf("%s-%d", base, n)
 		}
+	}
+	if registry.Projects[root] != slug {
 		registry.Projects[root] = slug
 		raw, _ := json.MarshalIndent(registry, "", "  ")
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -570,7 +588,11 @@ func (s *simSpawner) spawnResumeGemini(args clcommon.SpawnArgs) error {
 	if err != nil {
 		return err
 	}
-	return s.startGemini(args, generateResumeLabel(), cwd, cmd, s.w.Geminis.GetByConvID(args.ConvID))
+	label := generateResumeLabel()
+	if args.Label != "" {
+		label = args.Label
+	}
+	return s.startGemini(args, label, cwd, cmd, s.w.Geminis.GetByConvID(args.ConvID))
 }
 
 func (s *simSpawner) startGemini(args clcommon.SpawnArgs, label, cwd, cmd string, existing *GeminiSim) error {

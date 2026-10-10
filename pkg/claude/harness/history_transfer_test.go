@@ -37,10 +37,6 @@ func TestHistoryTransferRemapsMetadataOnly(t *testing.T) {
 			require.Error(t, native.Validate([]byte("not-json\n"), historySource))
 		})
 	}
-	for _, name := range []string{GeminiName} {
-		h, _ := Get(name)
-		assert.False(t, h.SupportsHistoryTransfer())
-	}
 }
 
 func TestHistoryTransferLargeSingleRecord(t *testing.T) {

@@ -23,14 +23,15 @@ const PermAgentShare = "agent.share"
 const PermAgentMove = "agent.move"
 
 type fedShareAgentRequest struct {
-	DirectIfAllowed bool   `json:"direct_if_allowed"`
-	Cwd             string `json:"cwd"`
-	Landing         string `json:"landing"`
-	Agent           string `json:"agent"`
-	Peer            string `json:"peer"`
-	Group           string `json:"group"`
-	History         bool   `json:"history"`
-	AllowFlagged    bool   `json:"allow_flagged"`
+	CarryPermissions bool   `json:"carry_permissions"`
+	DirectIfAllowed  bool   `json:"direct_if_allowed"`
+	Cwd              string `json:"cwd"`
+	Landing          string `json:"landing"`
+	Agent            string `json:"agent"`
+	Peer             string `json:"peer"`
+	Group            string `json:"group"`
+	History          bool   `json:"history"`
+	AllowFlagged     bool   `json:"allow_flagged"`
 }
 
 func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
@@ -98,12 +99,21 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if in.CarryPermissions && !human {
+		if _, ok := requirePermission(w, r, PermSelfTeleportPermissions, ActionContext{RemotePeer: peer.InstanceID, RemoteGroup: in.Group}); !ok {
+			return
+		}
+	}
 	b, err := collectAgentBundle(source, in.History)
 	if err != nil {
 		writeError(w, 400, "bundle_export", err.Error())
 		return
 	}
 	defer func() { _ = b.Close() }()
+	b.Manifest.Agent.CarryPermissions = in.CarryPermissions
+	if b.Manifest.Agent.CarryPermissions {
+		b.Manifest.Agent.Permissions = standingCarryRows(b.Manifest.Agent.Permissions)
+	}
 	if (moving || teleport != nil) && b.Manifest.History == nil {
 		writeError(w, 400, "history_required", "moves and teleports require native conversation history")
 		return
@@ -261,6 +271,8 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 type fedBundleImportRequest struct {
+	DropPermissions           bool `json:"drop_permissions"`
+	AllowSensitivePermissions bool `json:"allow_sensitive_permissions"`
 	configBundleRequest
 	Cwd         string   `json:"cwd"`
 	Worktree    string   `json:"worktree"`
@@ -385,8 +397,10 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 		if apply {
 			query.Set("apply", "true")
 		}
-		inner := r.Clone(context.WithValue(r.Context(), arrivalContextKey{}, arrival))
+		inner := r.Clone(context.WithValue(r.Context(), permissionCarryContextKey{}, permissionCarryPolicy{Peer: o.Peer, GroupID: g.ID, Group: g.Name, Enabled: bundle.Manifest.Agent.CarryPermissions && !in.DropPermissions, AllowSensitive: in.AllowSensitivePermissions && teleportLandingFromRequest(r) == nil}))
+		inner = inner.WithContext(context.WithValue(inner.Context(), arrivalContextKey{}, arrival))
 		arrival.Reason = landing.Preview.Reason
+
 		if o.Descriptor.Teleport != nil {
 			inner = inner.WithContext(context.WithValue(inner.Context(), teleportOfferContextKey{}, o))
 		}
