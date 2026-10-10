@@ -15,15 +15,30 @@ import (
 )
 
 type boardCommandParams struct {
-	Action   string `pos:"true" help:"list, create, join, show, leave, members, invite, revoke-invite, set-member, remove-member, rotate-key"`
-	Board    string `long:"board" help:"Immutable board ID"`
-	Name     string `long:"name" help:"Board display name"`
-	Token    string `long:"token" help:"One-time board invitation (keep private)"`
-	TokenID  string `long:"token-id" help:"Invitation hash to revoke"`
-	Instance string `long:"instance" help:"Member instance ID"`
-	Role     string `long:"role" help:"reader, publisher or owner"`
-	TTL      string `long:"ttl" help:"Invitation lifetime (default 1h; 1m to 7d)"`
-	Cursor   string `long:"cursor" help:"Opaque page cursor"`
+	Item         string   `long:"item" optional:"true" help:"Board item ID"`
+	Version      string   `long:"version" optional:"true" help:"Exact version ID"`
+	Parent       string   `long:"parent" optional:"true" help:"Current parent version for an update"`
+	FromBoard    string   `long:"from-board" optional:"true" help:"Republish an original signed item from this board"`
+	FromItem     string   `long:"from-item" optional:"true" help:"Original item ID"`
+	FromVersion  string   `long:"from-version" optional:"true" help:"Original exact version"`
+	Only         []string `long:"only" optional:"true" help:"Portable sections/items to publish or import"`
+	Skip         []string `long:"skip" optional:"true" help:"Excluded sections/items"`
+	Set          []string `long:"set" optional:"true" help:"Placeholder name=value"`
+	Replace      bool     `long:"replace" optional:"true" help:"Explicitly replace conflicts"`
+	PreviewToken string   `long:"preview-token" optional:"true" help:"Token from an explicit matching preview"`
+	Path         string   `long:"path" optional:"true" help:"Entry from contents listing"`
+	Offset       int64    `long:"offset" optional:"true" help:"Text entry offset"`
+	MaxBytes     int64    `long:"max-bytes" optional:"true" help:"Bound text inspection"`
+	File         string   `long:"file" optional:"true" help:"New output file for download"`
+	Action       string   `pos:"true" help:"list, create, join, show, leave, members, invite, revoke-invite, set-member, remove-member, rotate-key"`
+	Board        string   `long:"board" help:"Immutable board ID"`
+	Name         string   `long:"name" help:"Board display name"`
+	Token        string   `long:"token" help:"One-time board invitation (keep private)"`
+	TokenID      string   `long:"token-id" help:"Invitation hash to revoke"`
+	Instance     string   `long:"instance" help:"Member instance ID"`
+	Role         string   `long:"role" help:"reader, publisher or owner"`
+	TTL          string   `long:"ttl" help:"Invitation lifetime (default 1h; 1m to 7d)"`
+	Cursor       string   `long:"cursor" help:"Opaque page cursor"`
 }
 
 func boardsCmd() *cobra.Command {
@@ -32,6 +47,9 @@ func boardsCmd() *cobra.Command {
 	}}.ToCobra()
 }
 func runBoardCommand(p *boardCommandParams, stdout, stderr io.Writer) int {
+	if isBoardItemAction(p.Action) {
+		return runBoardItemCommand(p, stdout, stderr)
+	}
 	method, path := "GET", "/v1/federation/boards"
 	body := map[string]any{}
 	invalid := func(s string) int { return fail(stderr, fmt.Errorf("boards: %s", s)) }

@@ -21,7 +21,11 @@ import (
 
 func boardSocket(t *testing.T, url string, id *proto.Identity, token string) (*websocket.Conn, proto.Frame) {
 	t.Helper()
-	ws, _, err := websocket.DefaultDialer.Dial(url+proto.BoardWSPath, nil)
+	return boardSocketAt(t, url, id, token, proto.BoardWSPath)
+}
+func boardSocketAt(t *testing.T, url string, id *proto.Identity, token, path string) (*websocket.Conn, proto.Frame) {
+	t.Helper()
+	ws, _, err := websocket.DefaultDialer.Dial(url+path, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { ws.Close() })
 	ws.SetReadDeadline(time.Now().Add(5 * time.Second))

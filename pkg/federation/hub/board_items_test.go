@@ -76,3 +76,28 @@ func TestBoardItemsCiphertextStreamPublicationPinAndAuthority(t *testing.T) {
 	_, e = client.BoardBlob(ctx, client.Options{URL: url, Identity: reader}, v, nil)
 	require.Error(t, e, "removed board-only member loses streams")
 }
+
+func TestBoardStreamRefusesNonBoardInventory(t *testing.T) {
+	_, live, url := newHub(t, hub.Config{FramesPerMinute: 10000})
+	owner, e := proto.NewIdentity()
+	require.NoError(t, e)
+	require.NoError(t, live.Admit(owner.ID()))
+	frames, methods := wireInventory(t)
+	for _, kind := range append(frames, "future_unrecognized_frame") {
+		if kind == proto.FrameBoardRequest {
+			continue
+		}
+		ws, _ := boardSocketAt(t, url, owner, "", proto.BoardStreamPath)
+		require.NoError(t, ws.WriteJSON(&proto.Frame{Type: kind}))
+		var reply proto.Frame
+		require.Error(t, ws.ReadJSON(&reply), "non-board frame must end isolated stream: "+kind)
+		require.NoError(t, ws.Close())
+	}
+	for _, method := range append(methods, "future_unrecognized_rpc") {
+		ws, ch := boardSocketAt(t, url, owner, "", proto.BoardStreamPath)
+		reply := boardCall(t, ws, owner, ch, method, map[string]any{})
+		require.Equal(t, 403, reply.Status, method)
+		require.Equal(t, proto.CodeBoardOnly, reply.Code, method)
+		require.NoError(t, ws.Close())
+	}
+}

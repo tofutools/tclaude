@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -82,7 +83,16 @@ func (h *Hub) serveBoardBlob(c *conn) {
 		st.limiters[c.id] = lim
 	}
 	h.mu.Unlock()
-	limited := &boardBandwidth{rw: conn, lim: lim, done: c.done}
+	transferCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	go func() {
+		select {
+		case <-c.done:
+			cancel()
+		case <-transferCtx.Done():
+		}
+	}()
+	limited := &boardBandwidth{rw: conn, lim: lim, done: transferCtx.Done()}
 	if req.Method == "blobs.put" {
 		e = h.store.StoreBoardBlob(c.id, p.Board, p.Blob, p.Digest, p.Bytes, limited)
 		status := 200
