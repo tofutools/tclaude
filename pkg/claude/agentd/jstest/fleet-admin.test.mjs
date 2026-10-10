@@ -96,7 +96,7 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
       { id: 'job_in1', direction: 'in', peer: 'inst_forge', state: 'pending', request: { repo: 'tclaude', ref: 'main', group: 'ops', command: 'go test ./pkg/...', timeout_seconds: 600 }, created_at: '2026-10-10T09:00:00Z' },
       { id: 'job_in2', direction: 'in', peer: 'inst_forge', state: 'unknown', request: { repo: 'tclaude', ref: 'main', group: 'ops', command: 'make' }, result: { state: 'unknown', code: 'daemon_interrupted', exit_code: 1 }, created_at: '2026-10-10T08:00:00Z' },
       { id: 'job_out1', direction: 'out', peer: 'inst_lab', state: 'submitted', request: JSON.stringify({ repo: 'site', ref: 'v2', group: 'web', harness: 'codex', command: 'fix the flaky test' }), created_at: '2026-10-10T07:00:00Z' },
-      { id: 'job_out2', direction: 'out', peer: 'inst_lab', state: 'completed', request: { repo: 'site', ref: 'v2', group: 'web', command: 'ls' }, result: { state: 'completed', exit_code: 0, commit: 'abcdef1234567890' }, created_at: '2026-10-10T06:00:00Z' },
+      { id: 'job_out2', direction: 'out', peer: 'inst_lab', state: 'completed', request: { repo: 'site', ref: 'v2', group: 'web', command: 'ls' }, result: { state: 'completed', exit_code: 0, commit: 'abcdef1234567890', logs: { id: 'l1' } }, created_at: '2026-10-10T06:00:00Z' },
     ]; },
     runJob: async (body) => { log.push(['runJob', body]); return body.nodes ? { results: [{ peer: 'inst_forge', status: 200, delivered: true }, { peer: 'inst_lab', status: 403, error: 'peer does not export this group for jobs' }] } : { job: {}, delivered: false }; },
     approveJob: async (id) => { log.push(['approveJob', id]); return { id }; },
@@ -104,7 +104,7 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     retryJob: async (id) => { log.push(['retryJob', id]); return { id, delivered: true }; },
     acknowledgeJobStopped: async (id) => { log.push(['ackJob', id]); return { id }; },
     jobLogs: async (id) => { log.push(['jobLogs', id]); return { stdout: 'index.html\n', stderr: '', exit_code: 0 }; },
-    repos: async () => [{ id: 'r1', name: 'tclaude', revision: 2, enabled: true, definition: { url: 'git@github.com:tofutools/tclaude.git', clone: '/home/me/git/tclaude', groups: [7] } }],
+    repos: async () => [{ id: 'r1', name: 'tclaude', revision: 2, enabled: true, definition: { url: 'git@github.com:tofutools/tclaude.git', clone: '/home/me/git/tclaude', groups: [7] } }, { id: 'r2', name: 'old', revision: 4, enabled: false, group_names: ['ops'], definition: { url: 'git@x:old.git', clone: '/srv/old', groups: [1] } }],
     addRepo: async (body) => { log.push(['addRepo', body]); return body; },
     updateRepo: async (name, body) => { log.push(['updateRepo', name, body]); return body; },
     disableRepo: async (name) => { log.push(['disableRepo', name]); return { ok: true }; },
@@ -709,8 +709,12 @@ test('jobs & repos: approve, cancel, resend and acknowledge with spelled-out con
   await s.click(q('#fleet-repo-save'));
   assert.deepEqual(s.log.findLast((l) => l[0] === 'updateRepo'), ['updateRepo', 'tclaude', { name: 'tclaude', url: 'git@github.com:tofutools/tclaude.git', clone: '/home/me/git/tclaude', groups: ['build'], revision: 2 }]);
   await s.click(s.q('[data-repo="tclaude"] [data-fa="disable"]'));
-  assert.match(s.confirms.at(-1).body, /Jobs waiting for approval in it are refused/);
+  assert.match(s.confirms.at(-1).body, /still waiting for approval can no longer run: approving one fails it.*Re-enable… allows it again/);
   assert.deepEqual(s.log.findLast((l) => l[0] === 'disableRepo'), ['disableRepo', 'tclaude']);
+  await s.click(s.q('[data-repo="old"] [data-fa="enable"]'));
+  assert.match(q('#fleet-repo-title').textContent, /Re-enable repository old/);
+  await s.click(q('#fleet-repo-save'));
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'updateRepo'), ['updateRepo', 'old', { name: 'old', url: 'git@x:old.git', clone: '/srv/old', groups: ['ops'], revision: 4 }], 're-enabling is a PUT with the revision');
 
   await s.harness.act(() => { s.activeTab.value = 'groups'; });
   await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));

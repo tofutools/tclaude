@@ -13,6 +13,9 @@ const REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 function errText(error) { return error?.message || String(error); }
 
+// expired pending jobs can no longer start (approve is a silent no-op).
+function expired(j) { const t = Date.parse(j.expires || ''); return Number.isFinite(t) && t > 0 && t <= Date.now(); }
+
 function when(iso) {
   const t = new Date(iso);
   return Number.isFinite(t.getTime()) && t.getFullYear() > 1 ? t.toLocaleString() : '—';
@@ -34,6 +37,8 @@ export function jobView(j) {
     timeout: q.timeout_seconds || 0, require: q.require || '',
     code: r.code || '', exit: r.state ? r.exit_code : null, commit: r.commit || '',
     created: j.created_at, terminal: TERMINAL.has(j.state), caller: j.caller_agent || '',
+    // Output exists only when the result carries a log artifact.
+    hasLogs: !!r.logs, expires: j.expires_at,
   };
 }
 
@@ -142,8 +147,8 @@ function RepoDialog({ repo, groups, actions, confirm, onClose, onDone }) {
     const body = { name: form.name.trim(), url: form.url.trim(), clone: form.clone.trim(), groups: form.groups };
     if (repo) body.revision = repo.revision;
     confirm({
-      title: repo ? `Save repository ${body.name}?` : `Allow repository ${body.name} for remote jobs?`,
-      body: `Peers granted jobs.run in ${body.groups.join(', ')} can ask to run commands in a checkout of ${body.clone} (${body.url}) on this node, at any ref they name. Jobs run as soon as they arrive, as the user tclaude runs as — unless the peer's jobs.run grant sets manual job approval (job_approval=manual), then each waits for you under Jobs.${repo ? ' Jobs already queued for the old entry are refused and have to be sent again.' : ''}`,
+      title: repo ? `${repo.enabled ? 'Save' : 'Re-enable'} repository ${body.name}?` : `Allow repository ${body.name} for remote jobs?`,
+      body: `Peers granted jobs.run in ${body.groups.join(', ')} can ask to run commands in a checkout of ${body.clone} (${body.url}) on this node, at any ref they name. Jobs run as soon as they arrive, as the user tclaude runs as — unless the peer's jobs.run grant sets manual job approval (job_approval=manual), then each waits for you under Jobs.${repo ? ' Jobs from it still waiting for approval can no longer run (approving one fails it); peers send them again.' : ''}`,
       okLabel: repo ? 'Save' : 'Allow',
       busyLabel: 'Saving…',
       action: () => (repo ? actions.updateRepo(repo.name, body) : actions.addRepo(body)),
@@ -151,7 +156,7 @@ function RepoDialog({ repo, groups, actions, confirm, onClose, onDone }) {
       .catch((e) => setError(errText(e)));
   };
   return html`<${Overlay} id="fleet-repo" labelledby="fleet-repo-title" onClose=${onClose}>
-    <h3 id="fleet-repo-title">${repo ? `Edit repository ${repo.name}` : 'Allow a repository for remote jobs'}</h3>
+    <h3 id="fleet-repo-title">${repo ? `${repo.enabled ? 'Edit' : 'Re-enable'} repository ${repo.name}` : 'Allow a repository for remote jobs'}</h3>
     <label class="fa-jb-row"><span class="fa-k">alias</span><input id="fleet-repo-name" value=${form.name} disabled=${!!repo} placeholder="name peers use (--repo)" autocomplete="off" spellcheck="false" onInput=${set('name')} /></label>
     <label class="fa-jb-row"><span class="fa-k">URL</span><input id="fleet-repo-url" value=${form.url} placeholder="git remote, e.g. git@github.com:org/repo.git" autocomplete="off" spellcheck="false" onInput=${set('url')} /></label>
     <label class="fa-jb-row"><span class="fa-k">clone</span><input id="fleet-repo-clone" value=${form.clone} placeholder="/abs/path of the local clone on this node" autocomplete="off" spellcheck="false" onInput=${set('clone')} /></label>
@@ -222,13 +227,13 @@ export function JobsPage({ view, pools, groups, actions, confirm, toast, timers,
   }, 'Job marked interrupted');
   const disableRepo = (r) => act({
     title: `Disable repository ${r.name}?`,
-    body: `Peers can no longer run jobs in ${r.definition?.clone || r.name}. Jobs waiting for approval in it are refused; a job already running finishes. Add it again to re-allow it.`,
+    body: `Peers can no longer run jobs in ${r.definition?.clone || r.name}. Jobs from it still waiting for approval can no longer run: approving one fails it. A job already running finishes. Re-enable… allows it again.`,
     okLabel: 'Disable', busyLabel: 'Disabling…',
     action: () => actions.disableRepo(r.name),
   }, `Repository ${r.name} disabled`);
 
   const list = jobs || [];
-  const pending = list.filter((j) => j.incoming && j.state === 'pending').length;
+  const pending = list.filter((j) => j.incoming && j.state === 'pending' && !expired(j)).length;
   const repoRows = Array.isArray(repos) ? repos : [];
   return html`<div class="fa-jobs">
     <div class="fa-grant-form">
@@ -249,11 +254,11 @@ export function JobsPage({ view, pools, groups, actions, confirm, toast, timers,
         <td class="fa-nowrap">${when(j.created)}</td>
         <td class=${BAD.has(j.state) ? 'fa-danger' : j.state === 'pending' && j.incoming ? 'fa-warn' : ''}>${j.state}${j.exit != null && j.terminal ? ` (${j.exit})` : ''}${j.code ? html` <span class="muted">${j.code}</span>` : ''}</td>
         <td class="fa-acts">
-          ${j.incoming && j.state === 'pending' && html`<button type="button" data-fa="approve" onClick=${() => approve(j)}>Approve…</button>`}
+          ${j.incoming && j.state === 'pending' && !expired(j) && html`<button type="button" data-fa="approve" onClick=${() => approve(j)}>Approve…</button>`}
           ${!j.terminal && j.state !== 'unknown' && html`<button type="button" data-fa="cancel" onClick=${() => cancel(j)}>Cancel…</button>`}
           ${!j.incoming && j.state === 'submitted' && html`<button type="button" data-fa="retry" onClick=${() => retry(j)}>Resend…</button>`}
           ${j.incoming && j.state === 'unknown' && html`<button type="button" data-fa="ack" onClick=${() => ack(j)}>Acknowledge stopped…</button>`}
-          ${j.terminal && j.state !== 'refused' && html`<button type="button" data-fa="logs" onClick=${() => setDialog({ kind: 'logs', job: j })}>Output</button>`}
+          ${j.terminal && j.hasLogs && html`<button type="button" data-fa="logs" onClick=${() => setDialog({ kind: 'logs', job: j })}>Output</button>`}
         </td>
       </tr>`)}</tbody>
     </table>`}
@@ -266,7 +271,7 @@ export function JobsPage({ view, pools, groups, actions, confirm, toast, timers,
       <tbody>${repoRows.map((r) => html`<tr key=${r.name} data-repo=${r.name} class=${r.enabled ? '' : 'muted'}>
         <td>${r.name}</td><td class="fa-wrap"><code>${r.definition?.clone || ''}</code></td><td class="fa-wrap"><code>${r.definition?.url || ''}</code></td>
         <td>${groupText(r)}</td><td>${r.revision}</td>
-        <td class="fa-acts">${r.enabled ? html`<button type="button" data-fa="edit" onClick=${() => setDialog({ kind: 'repo', repo: r })}>Edit…</button><button type="button" data-fa="disable" onClick=${() => disableRepo(r)}>Disable…</button>` : 'disabled'}</td>
+        <td class="fa-acts">${r.enabled ? html`<button type="button" data-fa="edit" onClick=${() => setDialog({ kind: 'repo', repo: r })}>Edit…</button><button type="button" data-fa="disable" onClick=${() => disableRepo(r)}>Disable…</button>` : html`<span class="muted">disabled </span><button type="button" data-fa="enable" onClick=${() => setDialog({ kind: 'repo', repo: r })}>Re-enable…</button>`}</td>
       </tr>`)}</tbody>
     </table>`}
     ${dialog?.kind === 'run' && html`<${RunJobDialog} peers=${view.trusted} pools=${pools} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
