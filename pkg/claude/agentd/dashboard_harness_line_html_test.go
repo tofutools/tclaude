@@ -159,9 +159,12 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	// never GETS a model (the status line is what stamps one, and it is
 	// exactly what is being refused), so the pre-tick branch is the only one
 	// it ever renders through. Behaviour: jstest/broker-refusal-badge.test.mjs.
-	must("|| Number(state.broker_refusals || 0) > 0;",
+	must("|| Number(state.broker_refusals || 0) > 0",
 		"a starved agent must be badged on the branch it is stuck on")
-	must("return indicated ? html`<div class=\"agent-harness\">${sandbox}${remote}${refused}</div>` : null;",
+	// tcl-yuju57: a peer watching or typing into the terminal is live
+	// knowledge too. Behaviour: jstest/remote-viewers.test.mjs.
+	must("|| viewed;", "a viewed agent is badged before its first tick")
+	must("return indicated ? html`<div class=\"agent-harness\">${sandbox}${remote}${viewers}${refused}</div>` : null;",
 		"the pre-tick line carries every armed indicator")
 
 	// The sandbox badge component reads state.sandbox_mode and special-cases
