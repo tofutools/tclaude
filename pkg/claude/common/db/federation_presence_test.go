@@ -252,3 +252,37 @@ func TestFederationIdentityFailedFirstArrivalCanRetry(t *testing.T) {
 	_, e = ReserveFederationIdentity(identity, "visit", "origin", "again")
 	require.ErrorContains(t, e, "explicitly retired")
 }
+
+func TestFederationPresenceTimestampBoundary(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err)
+	p := AgentFederationPresence{AgentID: NewAgentID(), HomeInstance: "home", State: "reserved", CurrentInstance: "visit", Transfer: FederationIdentity{Home: "home"}}
+	write := func() error {
+		tx, err := d.Begin()
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback() }()
+		if err := putFederationPresenceTx(tx, p); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	require.NoError(t, write())
+	var absent bool
+	require.NoError(t, d.QueryRow(`SELECT departed_at IS NULL AND arrived_at IS NULL AND typeof(updated_at)='integer' FROM agent_federation_presence WHERE agent_id=?`, p.AgentID).Scan(&absent))
+	require.True(t, absent)
+	p.DepartedAt = time.Date(2026, 10, 11, 12, 13, 14, 123456789, time.FixedZone("fixture", 3600))
+	require.NoError(t, write())
+	got, err := GetAgentFederationPresence(p.AgentID)
+	require.NoError(t, err)
+	require.Equal(t, p.DepartedAt.UTC(), got.DepartedAt)
+	require.Equal(t, time.UTC, got.UpdatedAt.Location())
+	require.True(t, got.ArrivedAt.IsZero())
+	p.DepartedAt = time.Unix(0, 0)
+	require.Error(t, write())
+	got, err = GetAgentFederationPresence(p.AgentID)
+	require.NoError(t, err)
+	require.Equal(t, int64(123456789), int64(got.DepartedAt.Nanosecond()))
+}

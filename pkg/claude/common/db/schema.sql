@@ -1719,3 +1719,10 @@ CREATE TABLE federation_identity_rotations (
 CREATE TABLE federation_peer_access_requests (
  id TEXT PRIMARY KEY, peer TEXT NOT NULL, slug TEXT NOT NULL, group_id INTEGER NOT NULL,
  grant_group_id INTEGER NOT NULL, grant_ttl_seconds INTEGER NOT NULL, expires_at INTEGER) STRICT;
+
+CREATE TABLE agent_federation_presence (
+ agent_id TEXT PRIMARY KEY, home_instance TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('here','away','reserved','terminal')),
+ current_instance TEXT NOT NULL, current_peer TEXT NOT NULL, predecessor_instance TEXT NOT NULL,
+ departure_offer TEXT NOT NULL, arrival_offer TEXT NOT NULL, hop_count INTEGER NOT NULL, visit_epoch INTEGER NOT NULL,
+ independent_clone TEXT NOT NULL DEFAULT '', arrival_rollback_json TEXT NOT NULL DEFAULT '', continuation_nonce_hash TEXT NOT NULL, transfer_json TEXT NOT NULL, departed_at INTEGER, arrived_at INTEGER, updated_at INTEGER NOT NULL
+ ) STRICT;

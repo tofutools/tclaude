@@ -49,8 +49,7 @@ const federationPresenceColumns = `agent_id,home_instance,state,current_instance
 func scanFederationPresence(row rowScanner) (*AgentFederationPresence, error) {
 	var p AgentFederationPresence
 	var raw string
-	var departed, arrived sql.NullInt64
-	var updated int64
+	var departed, arrived, updated dbTimestamp
 	err := row.Scan(&p.AgentID, &p.HomeInstance, &p.State, &p.CurrentInstance, &p.CurrentPeer, &p.PredecessorInstance, &p.DepartureOffer, &p.ArrivalOffer, &p.HopCount, &p.VisitEpoch, &p.IndependentClone, &p.ArrivalRollbackJSON, &p.ContinuationNonceHash, &raw, &departed, &arrived, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -61,13 +60,9 @@ func scanFederationPresence(row rowScanner) (*AgentFederationPresence, error) {
 	if err = json.Unmarshal([]byte(raw), &p.Transfer); err != nil {
 		return nil, err
 	}
-	if departed.Valid {
-		p.DepartedAt = time.Unix(0, departed.Int64)
-	}
-	if arrived.Valid {
-		p.ArrivedAt = time.Unix(0, arrived.Int64)
-	}
-	p.UpdatedAt = time.Unix(0, updated)
+	p.DepartedAt = departed.Time()
+	p.ArrivedAt = arrived.Time()
+	p.UpdatedAt = updated.Time()
 	return &p, nil
 }
 func GetAgentFederationPresence(id string) (*AgentFederationPresence, error) {
@@ -90,14 +85,8 @@ func putFederationPresenceTx(tx *sql.Tx, p AgentFederationPresence) error {
 	if e != nil {
 		return e
 	}
-	_, e = tx.Exec(`INSERT INTO agent_federation_presence (`+federationPresenceColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET home_instance=excluded.home_instance,state=excluded.state,current_instance=excluded.current_instance,current_peer=excluded.current_peer,predecessor_instance=excluded.predecessor_instance,departure_offer=excluded.departure_offer,arrival_offer=excluded.arrival_offer,hop_count=excluded.hop_count,visit_epoch=excluded.visit_epoch,independent_clone=excluded.independent_clone,arrival_rollback_json=excluded.arrival_rollback_json,continuation_nonce_hash=excluded.continuation_nonce_hash,transfer_json=excluded.transfer_json,departed_at=excluded.departed_at,arrived_at=excluded.arrived_at,updated_at=excluded.updated_at`, p.AgentID, p.HomeInstance, p.State, p.CurrentInstance, p.CurrentPeer, p.PredecessorInstance, p.DepartureOffer, p.ArrivalOffer, p.HopCount, p.VisitEpoch, p.IndependentClone, p.ArrivalRollbackJSON, p.ContinuationNonceHash, string(raw), presenceTime(p.DepartedAt), presenceTime(p.ArrivedAt), time.Now().UnixNano())
+	_, e = tx.Exec(`INSERT INTO agent_federation_presence (`+federationPresenceColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET home_instance=excluded.home_instance,state=excluded.state,current_instance=excluded.current_instance,current_peer=excluded.current_peer,predecessor_instance=excluded.predecessor_instance,departure_offer=excluded.departure_offer,arrival_offer=excluded.arrival_offer,hop_count=excluded.hop_count,visit_epoch=excluded.visit_epoch,independent_clone=excluded.independent_clone,arrival_rollback_json=excluded.arrival_rollback_json,continuation_nonce_hash=excluded.continuation_nonce_hash,transfer_json=excluded.transfer_json,departed_at=excluded.departed_at,arrived_at=excluded.arrived_at,updated_at=excluded.updated_at`, p.AgentID, p.HomeInstance, p.State, p.CurrentInstance, p.CurrentPeer, p.PredecessorInstance, p.DepartureOffer, p.ArrivalOffer, p.HopCount, p.VisitEpoch, p.IndependentClone, p.ArrivalRollbackJSON, p.ContinuationNonceHash, string(raw), dbTime(p.DepartedAt), dbTime(p.ArrivedAt), dbTime(time.Now()))
 	return e
-}
-func presenceTime(t time.Time) any {
-	if t.IsZero() {
-		return nil
-	}
-	return t.UnixNano()
 }
 
 // ReserveFederationIdentity pins the actor before any launch. Existing local
@@ -269,7 +258,7 @@ func departFederationIdentityTx(tx *sql.Tx, conv, local, peer, offer string, ide
 }
 
 func terminalFederationPresenceTx(tx *sql.Tx, id string) error {
-	_, e := tx.Exec(`UPDATE agent_federation_presence SET state='terminal',continuation_nonce_hash='',updated_at=? WHERE agent_id=?`, time.Now().UnixNano(), id)
+	_, e := tx.Exec(`UPDATE agent_federation_presence SET state='terminal',continuation_nonce_hash='',updated_at=? WHERE agent_id=?`, dbTime(time.Now()), id)
 	return e
 }
 
