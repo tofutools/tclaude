@@ -198,12 +198,13 @@ func servePeerAgentAction(w http.ResponseWriter, r *http.Request, v *peerView, r
 			return
 		}
 		var body struct {
-			Group           string `json:"group"`
-			DirectIfAllowed bool   `json:"direct_if_allowed"`
-			Cwd             string `json:"cwd"`
-			Landing         string `json:"landing"`
-			Note            string `json:"note,omitempty"`
-			Clone           bool   `json:"clone,omitempty"`
+			Group            string `json:"group"`
+			DirectIfAllowed  bool   `json:"direct_if_allowed"`
+			Cwd              string `json:"cwd"`
+			Landing          string `json:"landing"`
+			Note             string `json:"note,omitempty"`
+			Clone            bool   `json:"clone,omitempty"`
+			CarryPermissions bool   `json:"carry_permissions,omitempty"`
 		}
 		if !decodePeerAction(w, r, &body) {
 			return
@@ -213,7 +214,7 @@ func servePeerAgentAction(w http.ResponseWriter, r *http.Request, v *peerView, r
 			return
 		}
 		if strings.HasSuffix(r.URL.Path, "/teleport") {
-			raw, _ := json.Marshal(teleportRequest{Peer: a.peer, Group: body.Group, Note: body.Note, Clone: body.Clone})
+			raw, _ := json.Marshal(teleportRequest{Peer: a.peer, Group: body.Group, Note: body.Note, Clone: body.Clone, CarryPermissions: body.CarryPermissions})
 			r.Body = io.NopCloser(bytes.NewReader(raw))
 			handleFederationTeleport(w, r)
 		} else {
@@ -221,7 +222,7 @@ func servePeerAgentAction(w http.ResponseWriter, r *http.Request, v *peerView, r
 				writeError(w, 400, "invalid_arg", "move accepts only receiving group")
 				return
 			}
-			raw, _ := json.Marshal(fedShareAgentRequest{Agent: target.AgentID, Peer: a.peer, Group: body.Group, History: true, DirectIfAllowed: body.DirectIfAllowed, Cwd: body.Cwd, Landing: body.Landing})
+			raw, _ := json.Marshal(fedShareAgentRequest{Agent: target.AgentID, Peer: a.peer, Group: body.Group, History: true, CarryPermissions: body.CarryPermissions, DirectIfAllowed: body.DirectIfAllowed, Cwd: body.Cwd, Landing: body.Landing})
 			r.Body = io.NopCloser(bytes.NewReader(raw))
 			r.URL.Path = "/v1/federation/move-agent"
 			handleFederationShareAgent(w, r)

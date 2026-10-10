@@ -2102,6 +2102,7 @@ test('permission carry decisions are text, with explicit receiver options and co
       ...(body.apply ? { spawn: { agent_id: 'agt_new' } } : {}) };
   };
   await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => b.textContent === 'Offers'));
   await s.click(s.q('[data-offer="off_mv"] [data-fa="preview"]'));
   assert.match(q('#fleet-offer-permissions').textContent, /onerror=alert\(1\)/);
   assert.equal(q('#fleet-offer-permissions img'), null);
