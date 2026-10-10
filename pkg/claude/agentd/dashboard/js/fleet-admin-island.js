@@ -271,6 +271,16 @@ function grantsCell(g) {
 
 function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust, onGrants, onKey }) {
   return html`<div class="fa-peers">
+    <h4>This node</h4>
+    <table class="fa-table" id="fleet-self">
+      <thead><tr><th>Node</th><th>Instance</th><th>Fingerprint</th><th>Level</th><th>Seen</th></tr></thead>
+      <tbody><tr data-self=${view.self.id}>
+        <td><span class="fa-dot on" title="online"></span> <b>${view.self.name}</b> <span class="muted">(this node)</span></td>
+        <td><code title=${view.self.id}>${shortID(view.self.id)}</code></td>
+        <td><code title=${view.self.fingerprint}>${shortFingerprint(view.self.fingerprint)}</code></td>
+        <td>self</td><td>online</td>
+      </tr></tbody>
+    </table>
     <h4>Trusted peers <span class="muted">${view.trusted.length}</span></h4>
     ${view.trusted.length === 0
       ? html`<div class="empty">No trusted peers yet. Trust an instance below once its operator has read you its fingerprint.</div>`
