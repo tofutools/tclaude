@@ -82,7 +82,7 @@ type cloneSpawnParams struct {
 	// still injects it post-connect.
 	Title string
 	// FollowUp is the clone's first-turn handoff, "" for none. It is also what
-	// makes a clone eligible for launch enrollment at all (see cloneSpawnOnce).
+	// makes a clone eligible for launch enrollment along with Arrival (see cloneSpawnOnce).
 	// When the clone is enrolled, cloneSpawnOnce inserts the inbox row BEFORE
 	// the fork — so the launch prompt can name it by id — and reports that id
 	// in the result; the caller must not enqueue it a second time.

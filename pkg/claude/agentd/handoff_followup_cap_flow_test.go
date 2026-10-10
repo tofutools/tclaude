@@ -51,9 +51,8 @@ func TestReincarnate_GroupedHandoffAcceptsLargeMultiLineBrief(t *testing.T) {
 	require.NoError(t, err, "ListAgentMessagesForConv")
 	require.Len(t, rows, 1, "successor should have exactly one inbox message (the handoff)")
 	assert.Equal(t, "reincarnation handoff", rows[0].Subject, "handoff subject")
-	assert.True(t, strings.HasSuffix(rows[0].Body, "\n\n"+followUp),
-		"handoff body must survive verbatim after the arrival briefing — length and newlines intact")
-	assert.Contains(t, rows[0].Body, "Arrival briefing — local clone")
+	assert.Equal(t, followUp, rows[0].Body,
+		"handoff body must survive verbatim — length and newlines intact")
 }
 
 // Scenario: a solo (groupless) agent is reincarnated with a multi-line
@@ -88,9 +87,8 @@ func TestReincarnate_SoloHandoffRidesInbox(t *testing.T) {
 	require.NoError(t, err, "ListAgentMessagesForConv")
 	require.Len(t, rows, 1, "solo successor should have exactly one inbox message (the handoff)")
 	assert.Equal(t, "reincarnation handoff", rows[0].Subject, "handoff subject")
-	assert.True(t, strings.HasSuffix(rows[0].Body, "\n\n"+followUp),
-		"handoff body must survive verbatim after the arrival briefing — length and newlines intact")
-	assert.Contains(t, rows[0].Body, "Arrival briefing — local clone")
+	assert.Equal(t, followUp, rows[0].Body,
+		"handoff body must survive verbatim — length and newlines intact")
 	assert.Equal(t, int64(0), rows[0].GroupID,
 		"a solo handoff is a direct message — group_id 0")
 }
