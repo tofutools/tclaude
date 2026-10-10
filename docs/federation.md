@@ -3156,7 +3156,10 @@ tclaude federation hub audit list --max-entries 100
 
 Jobs are durable, never replayed after a restart, and limited to four concurrent
 runs, a 16 KiB script, 1s–24h runtime (default 1h), and 4 MiB per output stream.
-The waiting CLI shows incremental output, exit status, and duration. Revoking
+A private child guardian owns the timeout and watches a hub-lifetime pipe, so
+a hub crash also kills the script process group. Terminal outcome audits are
+reconciled idempotently on restart. The waiting CLI shows incremental output,
+exit status, and duration. Revoking
 `hub.exec` or the caller's admission cancels an active run within the authority
 watch interval. A restart records an interrupted job and its outcome.
 

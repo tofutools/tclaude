@@ -25,7 +25,7 @@ func (h *Hub) initExec() error {
 		detail := map[string]any{"job_id": j.ID, "script_sha256": j.ScriptSHA256, "script_bytes": j.ScriptBytes, "exit_code": j.ExitCode, "state": j.State, "duration_ms": j.DurationMS, "phase": "result"}
 		raw, err := json.Marshal(detail)
 		if err == nil {
-			err = h.store.AuditAdmin(j.Actor, j.ID, "exec", 200, string(raw))
+			err = h.store.auditExecOutcome(j.Actor, j.ID, string(raw))
 		}
 		if err != nil {
 			h.log.Error("hub exec outcome audit failed", "job", j.ID)

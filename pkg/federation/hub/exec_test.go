@@ -1,13 +1,19 @@
 package hub
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
+	"github.com/tofutools/tclaude/pkg/noderun"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -83,4 +89,61 @@ func TestHubExecRunnerTimeoutAndOutput(t *testing.T) {
 	r = executeHubScript(context.Background(), script, "fixture", 1, &out, &stderr)
 	require.True(t, r.TimedOut)
 	require.NotZero(t, r.ExitCode)
+}
+
+func TestHubExecCrashFixture(t *testing.T) {
+	path := os.Getenv("TCLAUDE_HUB_EXEC_CRASH_FIXTURE")
+	if path == "" {
+		return
+	}
+	_ = executeHubScript(context.Background(), path, "fixture", 30, os.Stdout, os.Stderr)
+}
+func TestHubExecGuardianReapsScriptAfterHubCrash(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("scripts refuse root")
+	}
+	st, _, _ := adminTestStore(t)
+	path := filepath.Join(filepath.Dir(st.path), "crash.sh")
+	require.NoError(t, os.WriteFile(path, []byte("echo $$; sleep 30"), 0600))
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	command := exec.Command(exe, "-test.run=^TestHubExecCrashFixture$")
+	command.Env = append(os.Environ(), "TCLAUDE_HUB_EXEC_CRASH_FIXTURE="+path)
+	pipe, err := command.StdoutPipe()
+	require.NoError(t, err)
+	require.NoError(t, command.Start())
+	t.Cleanup(func() { _ = command.Process.Kill() })
+	reader := bufio.NewReader(pipe)
+	line, err := reader.ReadString('\n')
+	require.NoError(t, err)
+	pid, err := strconv.Atoi(strings.TrimSpace(line))
+	require.NoError(t, err)
+	require.NoError(t, command.Process.Kill())
+	drained := make(chan error, 1)
+	go func() { _, err := io.Copy(io.Discard, reader); drained <- err }()
+	select {
+	case err = <-drained:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("guardian retained script after hub crash")
+	}
+	require.Error(t, command.Wait())
+	require.ErrorIs(t, syscall.Kill(pid, 0), syscall.ESRCH, "guardian must reap the script leader")
+}
+func TestHubExecFinishedAuditReconcilesIdempotently(t *testing.T) {
+	st, id, _ := adminTestStore(t)
+	jobID := strings.Repeat("a", 32)
+	dir := filepath.Join(filepath.Dir(st.path), "hub-runs", jobID)
+	require.NoError(t, os.MkdirAll(dir, 0700))
+	raw, err := json.Marshal(noderun.Job{ID: jobID, Actor: id.ID(), State: "completed", ExitCode: 7, CreatedAt: time.Now(), FinishedAt: time.Now(), ScriptSHA256: "hash", ScriptBytes: 12})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "job.json"), raw, 0600))
+	for range 2 {
+		h, err := New(st, Config{})
+		require.NoError(t, err)
+		h.Close()
+	}
+	var count int
+	require.NoError(t, st.db.QueryRow(`SELECT count(*) FROM hub_admin_audit WHERE request_id=? AND operation='exec' AND status=200`, jobID).Scan(&count))
+	require.Equal(t, 1, count)
 }

@@ -432,3 +432,11 @@ func wrapAdminError(err error) *AdminError {
 	}
 	return &AdminError{500, "hub", fmt.Sprintf("hub operation failed: %v", err)}
 }
+
+// A terminal job is reconciled again at startup. Keep outcome inserts
+// idempotent across a crash between durable job completion and audit commit.
+func (s *Store) auditExecOutcome(instance, id, detail string) error {
+	_, err := s.db.Exec(`INSERT INTO hub_admin_audit(at,instance,request_id,operation,status,detail)
+ SELECT ?,?,?,'exec',200,? WHERE NOT EXISTS(SELECT 1 FROM hub_admin_audit WHERE request_id=? AND operation='exec' AND status=200)`, ts(time.Now()), instance, id, detail, id)
+	return err
+}

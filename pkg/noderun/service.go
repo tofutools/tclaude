@@ -86,7 +86,6 @@ type Service struct {
 	finished  func(Job)
 	streaming ExecuteStreaming
 	started   func(Job, Request) error
-	recovered []Job
 }
 
 func ValidID(id string) bool { return len(id) == 32 && strings.Trim(id, "0123456789abcdef") == "" }
@@ -125,7 +124,6 @@ func New(dir string, execute Execute, finished func(Job)) (*Service, error) {
 			if err := s.save(j); err != nil {
 				return nil, err
 			}
-			s.recovered = append(s.recovered, j)
 		}
 		s.jobs[j.ID] = j
 	}

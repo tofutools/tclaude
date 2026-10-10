@@ -21,11 +21,12 @@ func NewStreaming(dir string, execute ExecuteStreaming, started func(Job, Reques
 	s.streaming = execute
 	s.started = started
 	if finished != nil {
-		for _, job := range s.recovered {
-			finished(job)
+		for _, job := range s.jobs {
+			if job.State != "running" {
+				finished(job)
+			}
 		}
 	}
-	s.recovered = nil
 	return s, nil
 }
 
