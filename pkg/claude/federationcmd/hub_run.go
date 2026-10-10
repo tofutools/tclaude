@@ -101,7 +101,8 @@ func runHubScript(p *hubRunParams, stdout, stderr io.Writer) int {
 		if time.Now().After(deadline) {
 			return fail(stderr, fmt.Errorf("hub job still running; inspect --job %s", job.ID))
 		}
-		time.Sleep(time.Second)
+		// Three calls per cycle fit the default120/min hub control limit.
+		time.Sleep(3 * time.Second)
 		if err = request("GET", "run/jobs/"+job.ID, nil); err != nil {
 			return fail(stderr, err)
 		}

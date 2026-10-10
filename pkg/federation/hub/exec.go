@@ -22,12 +22,7 @@ func (h *Hub) initExec() error {
 		return h.store.AuditAdmin(j.Actor, j.ID, "exec", 202, string(raw))
 	}
 	finished := func(j noderun.Job) {
-		detail := map[string]any{"job_id": j.ID, "script_sha256": j.ScriptSHA256, "script_bytes": j.ScriptBytes, "exit_code": j.ExitCode, "state": j.State, "duration_ms": j.DurationMS, "phase": "result"}
-		raw, err := json.Marshal(detail)
-		if err == nil {
-			err = h.store.auditExecOutcome(j.Actor, j.ID, string(raw))
-		}
-		if err != nil {
+		if err := h.auditExecJob(j); err != nil {
 			h.log.Error("hub exec outcome audit failed", "job", j.ID)
 		}
 	}
@@ -85,6 +80,11 @@ func (h *Hub) executeRun(c *conn, method string, p adminParams) (any, error) {
 			return nil, adminErr(404, "job", "no such hub script job")
 		}
 		if method == "run.job" {
+			if j.State != "running" {
+				if err := h.auditExecJob(j); err != nil {
+					return nil, adminErr(503, "audit", "hub outcome audit unavailable")
+				}
+			}
 			return h.execJobJSON(j, c.id), nil
 		}
 		chunk, err := h.runs.Log(p.JobID, p.Stream, p.Offset)
@@ -174,4 +174,13 @@ func (h *Hub) auditRows(c *conn, p adminParams) (any, error) {
 		return nil, err
 	}
 	return map[string]any{"entries": entries, "next_cursor": strconv.FormatInt(next, 10)}, nil
+}
+
+func (h *Hub) auditExecJob(j noderun.Job) error {
+	detail := map[string]any{"job_id": j.ID, "script_sha256": j.ScriptSHA256, "script_bytes": j.ScriptBytes, "exit_code": j.ExitCode, "state": j.State, "duration_ms": j.DurationMS, "phase": "result"}
+	raw, err := json.Marshal(detail)
+	if err != nil {
+		return err
+	}
+	return h.store.auditExecOutcome(j.Actor, j.ID, string(raw))
 }
