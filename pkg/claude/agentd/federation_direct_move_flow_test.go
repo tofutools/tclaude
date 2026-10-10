@@ -124,6 +124,15 @@ func TestFederation_DirectMoveReceiverDecidesAndReportsDirectory(t *testing.T) {
 				return m != nil && m.State == "running"
 			})
 			require.EqualValues(t, 1, births.Load())
+			landed, err := db.GetFederationBundleOffer("in", fh.peer.id.ID(), d.ID)
+			require.NoError(t, err)
+			actor, err := db.GetAgent(landed.ImportAgent)
+			require.NoError(t, err)
+			require.NotNil(t, actor)
+			brief := arrivalInbox(t, actor.CurrentConvID)
+			require.Contains(t, brief, "Arrival briefing — direct move")
+			require.Contains(t, brief, cwd)
+
 			rec := testharness.Serve(dashboard, testharness.JSONRequest(t, http.MethodGet, "/api/federation/moves/"+d.ID, nil))
 			require.Equal(t, 200, rec.Code, rec.Body.String())
 			require.Contains(t, rec.Body.String(), `"disposition":"landed"`)

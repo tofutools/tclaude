@@ -160,6 +160,9 @@ func TestFederation_TeleportBackupReportReturnsOriginalIdentity(t *testing.T) {
 	rec = testharness.Serve(fh.f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, fmt.Sprintf("/v1/messages/%d", inbox[0].ID), nil), moveSourceConv))
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), "Fixed the index")
+	require.Contains(t, rec.Body.String(), "Arrival briefing — teleport home (paused backup return)")
+	require.Contains(t, rec.Body.String(), "restored home identity and inbox")
+	require.Contains(t, rec.Body.String(), aid)
 	fedLeaseControl(t, fh, d, "return", 0, map[string]any{"return_id": report, "findings": "Fixed the index; commit abc123."})
 	fedEventually(t, "report retry answered", func() bool { return len(fh.peer.envelopes(proto.KindTeleportLease)) >= 2 })
 }
