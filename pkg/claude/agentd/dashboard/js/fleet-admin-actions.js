@@ -229,6 +229,9 @@ const settingRows = (v) => {
     setBoardMember: (board, instance, role) => done(call('PUT', `boards/${enc(board)}/members/${enc(instance)}`, { role })),
     removeBoardMember: (board, instance) => done(call('DELETE', `boards/${enc(board)}/members/${enc(instance)}`)),
     createBoardInvite: (board, role, ttlSeconds) => call('POST', `boards/${enc(board)}/invites`, { role, ttl_seconds: ttlSeconds }),
+    // Owner only: invitation metadata (role, expiry, who used it), never the
+    // invite itself.
+    boardInvites: (board) => pages(`boards/${enc(board)}/invites`, 'invites'),
     revokeBoardInvite: (board, tokenID) => done(call('DELETE', `boards/${enc(board)}/invites/${enc(tokenID)}`)),
     rotateBoardKey: (board) => call('POST', `boards/${enc(board)}/rotate-key`, {}),
     // Board items: signed config versions. Fetch verifies and scans a version
