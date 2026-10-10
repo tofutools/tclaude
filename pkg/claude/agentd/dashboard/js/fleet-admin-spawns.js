@@ -142,7 +142,7 @@ function SendDialog({ view, pools, actions, confirm, toast, onClose, onDone }) {
       <button type="button" onClick=${result && !result.error ? onDone : onClose}>${result ? 'Close' : 'Cancel'}</button>
       <button id="fleet-spawn-send-go" type="button" class="primary" disabled=${!f.brief.trim() || (!auto && !f.group.trim())} onClick=${go}>Send…</button>
     </div>
-    <div class="muted fa-cli-note">CLI: <code>tclaude federation spawn-request &lt;group&gt;@&lt;peer&gt; --brief …</code> or <code>--node auto|group:&lt;pool&gt;</code></div>
+    <div class="muted fa-cli-note">CLI: <code>tclaude federation spawn-request ${'<group>@<peer>'} --brief …</code> or <code>--node ${'auto|group:<pool>'}</code></div>
   </${Overlay}>`;
 }
 
