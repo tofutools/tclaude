@@ -280,7 +280,7 @@ func rewriteGeminiHistory(r io.Reader, source, target, cwd string, out io.Writer
 		}
 	}
 	if err := scan.Err(); err != nil {
-		return fmt.Errorf("Gemini history record exceeds federation.agent_history_record_max_bytes=%d or cannot be read: %w", limit, err)
+		return fmt.Errorf("gemini history record exceeds federation.agent_history_record_max_bytes=%d or cannot be read: %w", limit, err)
 	}
 	if !found {
 		return errors.New("gemini history has no session metadata")
