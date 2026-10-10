@@ -33,6 +33,7 @@ const PermAgentBundleImport = "agent.bundle.import"
 // route, never through a user-controlled SpawnRequest resume/id parameter.
 type bundleHistoryContextKey struct{}
 type bundleHistoryLaunch struct {
+	Path     string
 	Raw      []byte
 	SourceID string
 	Format   string
@@ -271,7 +272,7 @@ func collectAgentBundle(convID string, withHistory bool) (*agentbundle.Bundle, e
 		return nil, err
 	}
 	d.Profile = safe.Sections["profiles"][0].Value
-	b := &agentbundle.Bundle{Manifest: agentbundle.Manifest{Format: agentbundle.Format, FormatVersion: 1, CreatedAt: time.Now().UTC().Format(time.RFC3339), TclaudeVersion: buildversion.AppVersion(), Agent: d, Placeholders: safe.Placeholders}}
+	b := &agentbundle.Bundle{MaxBytes: agentTransferLimit(), Manifest: agentbundle.Manifest{Format: agentbundle.Format, FormatVersion: 1, CreatedAt: time.Now().UTC().Format(time.RFC3339), TclaudeVersion: buildversion.AppVersion(), Agent: d, Placeholders: safe.Placeholders}}
 	if len(safe.Omitted) > 0 {
 		b.Manifest.Warnings = append(b.Manifest.Warnings, "Structured credential fields omitted: "+strings.Join(safe.Omitted, ", "))
 	}
@@ -289,20 +290,23 @@ func collectAgentBundle(convID string, withHistory bool) (*agentbundle.Bundle, e
 		if !h.SupportsHistoryTransfer() {
 			b.Manifest.Warnings = append(b.Manifest.Warnings, h.DisplayName+" does not support imported history; exporting config only")
 		} else {
-			transcript, err := h.History.Export(convID, d.Paths.Cwd)
-			if err != nil {
+			if err := snapshotAgentHistory(b, h, convID, d.Paths.Cwd); err != nil {
+				_ = b.Close()
 				return nil, err
 			}
-			b.SetHistory(h.History.Format(), convID, transcript)
 		}
 	}
-	b.Manifest.Findings = scanAgentBundle(b)
+	b.Manifest.Findings, err = scanAgentBundle(b)
+	if err != nil {
+		_ = b.Close()
+		return nil, err
+	}
 	return b, nil
 }
 
 // Counts are grouped by kind with at most three locations each, including for
 // large tool-output transcripts. Suspected values never reach diagnostics.
-func scanAgentBundle(b *agentbundle.Bundle) []agentbundle.Finding {
+func scanAgentBundle(b *agentbundle.Bundle) ([]agentbundle.Finding, error) {
 	byKind := map[string]*agentbundle.Finding{}
 	scan := func(text, location string) {
 		for kind, count := range configbundle.CredentialKinds(text) {
@@ -350,8 +354,13 @@ func scanAgentBundle(b *agentbundle.Bundle) []agentbundle.Finding {
 	var meta any
 	_ = json.Unmarshal(metadata, &meta)
 	walk(meta, "manifest")
-	scanner := bufio.NewScanner(bytes.NewReader(b.Transcript))
-	scanner.Buffer(make([]byte, 64<<10), 10<<20)
+	history, err := b.OpenHistory()
+	if err != nil {
+		return nil, err
+	}
+	defer history.Close()
+	scanner := bufio.NewScanner(history)
+	scanner.Buffer(make([]byte, min(64<<10, agentRecordLimit())), agentRecordLimit())
 	line := 0
 	for scanner.Scan() {
 		line++
@@ -359,6 +368,9 @@ func scanAgentBundle(b *agentbundle.Bundle) []agentbundle.Finding {
 		if json.Unmarshal(scanner.Bytes(), &record) == nil {
 			walk(record, fmt.Sprintf("history line %d", line))
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan history within federation.agent_history_record_max_bytes=%d: %w", agentRecordLimit(), err)
 	}
 	kinds := make([]string, 0, len(byKind))
 	for kind := range byKind {
@@ -369,7 +381,7 @@ func scanAgentBundle(b *agentbundle.Bundle) []agentbundle.Finding {
 	for _, kind := range kinds {
 		findings = append(findings, *byKind[kind])
 	}
-	return findings
+	return findings, nil
 }
 
 func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
@@ -387,11 +399,12 @@ func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "bundle_export", err.Error())
 		return
 	}
+	defer func() { _ = b.Close() }()
 	if len(b.Manifest.Findings) > 0 && r.URL.Query().Get("allow_flagged") != "true" {
 		writeJSON(w, 422, map[string]any{"error": "suspected credentials: use --allow-flagged or export without --history", "code": "flagged_credentials", "findings": b.Manifest.Findings})
 		return
 	}
-	raw, err := b.Encode()
+	archive, err := archiveAgentBundle(b)
 	if err != nil {
 		writeError(w, 400, "bundle_export", err.Error())
 		return
@@ -399,7 +412,8 @@ func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", `attachment; filename="agent.bundle.zip"`)
 	w.WriteHeader(200)
-	_, _ = w.Write(raw)
+	defer func() { _ = archive.Close(); _ = os.Remove(archive.Name()) }()
+	_, _ = io.Copy(w, archive)
 }
 
 type agentBundlePreview struct {
@@ -426,15 +440,25 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	} else if _, ok := requirePermission(w, r, PermAgentBundleImport); !ok {
 		return
 	}
-	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, agentbundle.MaxBytes+1))
-	if err != nil {
-		writeError(w, 400, "archive", err.Error())
-		return
-	}
-	b, err := agentbundle.Decode(raw)
-	if err != nil {
-		writeError(w, 400, "archive", err.Error())
-		return
+	b, _ := r.Context().Value(agentBundleDataContextKey{}).(*agentbundle.Bundle)
+	if b == nil {
+		file, err := os.CreateTemp("", ".agent-import-archive-")
+		if err != nil {
+			writeError(w, 500, "archive", err.Error())
+			return
+		}
+		defer func() { _ = file.Close(); _ = os.Remove(file.Name()) }()
+		n, err := io.Copy(file, http.MaxBytesReader(w, r.Body, agentTransferLimit()+1))
+		if err != nil || n > agentTransferLimit() {
+			writeError(w, 400, "archive", fmt.Sprintf("archive exceeds or cannot be read within federation.agent_transfer_max_bytes=%d", agentTransferLimit()))
+			return
+		}
+		b, err = agentbundle.DecodeFile(file, agentTransferLimit(), "")
+		if err != nil {
+			writeError(w, 400, "archive", err.Error())
+			return
+		}
+		defer func() { _ = b.Close() }()
 	}
 	if err := teleportImportBundle(r, b); err != nil {
 		writeError(w, 409, "teleport_landing", err.Error())
@@ -498,7 +522,12 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	preview := agentBundlePreview{Findings: scanAgentBundle(b), Agent: d, Cwd: q.Get("cwd"), Worktree: q.Get("worktree"), Group: q.Get("group"), Unresolved: missing, Warnings: append([]string{}, b.Manifest.Warnings...), Security: "Permissions and ownership are advisory only; none will be copied. Launch posture uses normal receiver spawn checks."}
+	findings, err := scanAgentBundle(b)
+	if err != nil {
+		writeError(w, 400, "history", err.Error())
+		return
+	}
+	preview := agentBundlePreview{Findings: findings, Agent: d, Cwd: q.Get("cwd"), Worktree: q.Get("worktree"), Group: q.Get("group"), Unresolved: missing, Warnings: append([]string{}, b.Manifest.Warnings...), Security: "Permissions and ownership are advisory only; none will be copied. Launch posture uses normal receiver spawn checks."}
 	if preview.Cwd == "" && q.Get("keep_paths") == "true" {
 		preview.Cwd = d.Paths.Cwd
 		if preview.Worktree == "" {
@@ -537,7 +566,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		} else if b.Manifest.History.Format != h.History.Format() {
 			writeError(w, 400, "history", "history format does not match harness")
 			return
-		} else if err := h.History.Validate(b.Transcript, b.Manifest.History.SourceConvID); err != nil {
+		} else if err := validateBundleHistory(h, b); err != nil {
 			writeError(w, 400, "history", err.Error())
 			return
 		} else {
@@ -590,7 +619,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	inner.Body = io.NopCloser(bytes.NewReader(wire))
 	inner.ContentLength = int64(len(wire))
 	if preview.History {
-		inner = inner.WithContext(context.WithValue(inner.Context(), bundleHistoryContextKey{}, &bundleHistoryLaunch{Raw: b.Transcript, SourceID: b.Manifest.History.SourceConvID, Format: b.Manifest.History.Format}))
+		inner = inner.WithContext(context.WithValue(inner.Context(), bundleHistoryContextKey{}, &bundleHistoryLaunch{Raw: b.Transcript, Path: b.TranscriptPath, SourceID: b.Manifest.History.SourceConvID, Format: b.Manifest.History.Format}))
 	}
 	rec := httptest.NewRecorder()
 	handleGroupSpawn(rec, inner, group)

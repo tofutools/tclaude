@@ -1,6 +1,7 @@
 package testharness
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -797,20 +798,26 @@ func HydrateCCSim(t *testing.T, home, convID, cwd string) *CCSim {
 // readLatestTitle scans a .jsonl for the most recent custom-title
 // turn. Returns "" if the file doesn't exist or has no title turn.
 func readLatestTitle(jsonlPath string) string {
-	data, err := os.ReadFile(jsonlPath)
+	file, err := os.Open(jsonlPath)
 	if err != nil {
 		return ""
 	}
+	defer func() { _ = file.Close() }()
+	// The simulator must not allocate an entire large imported history merely
+	// to recover the title at its native resume boundary.
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64<<10), 256<<20)
 	title := ""
-	for _, line := range strings.Split(string(data), "\n") {
-		if line == "" {
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
 			continue
 		}
 		var msg struct {
 			Type        string `json:"type"`
 			CustomTitle string `json:"customTitle"`
 		}
-		if err := json.Unmarshal([]byte(line), &msg); err != nil {
+		if err := json.Unmarshal(line, &msg); err != nil {
 			continue
 		}
 		if msg.Type == "custom-title" && msg.CustomTitle != "" {

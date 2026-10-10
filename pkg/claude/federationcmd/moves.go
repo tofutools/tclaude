@@ -60,9 +60,13 @@ func runMovesList(p *movesListParams, stdout, stderr io.Writer) int {
 		return printJSON(stdout, out)
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tDIRECTION\tPEER\tSTATE\tSOURCE\tTARGET\tGROUP")
+	fmt.Fprintln(tw, "ID\tDIRECTION\tPEER\tSTATE\tSOURCE\tTARGET\tGROUP\tTRANSFER")
 	for _, m := range out.Moves {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", m.ID, m.Direction, m.Peer, m.State, dash(m.SourceAgent), dash(m.TargetAgent), dash(m.Group))
+		progress := "-"
+		if m.Transfer != nil {
+			progress = fmt.Sprintf("%.1f/%.1f MiB", float64(m.Transfer.BytesDone)/(1<<20), float64(m.Transfer.BytesTotal)/(1<<20))
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", m.ID, m.Direction, m.Peer, m.State, dash(m.SourceAgent), dash(m.TargetAgent), dash(m.Group), progress)
 	}
 	if err := tw.Flush(); err != nil {
 		return fail(stderr, err)

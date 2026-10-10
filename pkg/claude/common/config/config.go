@@ -849,8 +849,12 @@ type NodeScriptsConfig struct {
 }
 
 type FederationConfig struct {
-	Scripts *NodeScriptsConfig      `json:"scripts,omitempty"`
-	Health  *FederationHealthConfig `json:"health,omitempty"`
+	// AgentTransferMaxBytes caps agent archives and uncompressed history; zero defaults to 2 GiB.
+	AgentTransferMaxBytes int64 `json:"agent_transfer_max_bytes,omitempty"`
+	// AgentHistoryRecordMaxBytes is the JSONL record memory bound; zero defaults to256 MiB.
+	AgentHistoryRecordMaxBytes int                     `json:"agent_history_record_max_bytes,omitempty"`
+	Scripts                    *NodeScriptsConfig      `json:"scripts,omitempty"`
+	Health                     *FederationHealthConfig `json:"health,omitempty"`
 
 	// IdentityRotationSeconds is the local successor detection window; default 600.
 	IdentityRotationSeconds int                       `json:"identity_rotation_seconds,omitempty"`

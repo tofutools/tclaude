@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/federation/client"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
@@ -568,7 +570,7 @@ func beginTeleportReport(w http.ResponseWriter, r *http.Request, caller, finding
 				writeError(w, 409, "history", "provide findings explicitly with report or --note")
 				return
 			}
-			raw, e := h.History.Export(caller, "")
+			raw, e := nativeHistoryTail(h, caller)
 			if e != nil {
 				writeError(w, 409, "history", "could not capture transcript tail; retry or provide explicit findings with report or --note: "+e.Error())
 				return
@@ -694,4 +696,46 @@ func teleportTranscriptTail(raw []byte) string {
 		}
 	}
 	return prefix + tail
+}
+
+// A backup report needs only the last 16 KiB, never a whole multi-GiB history.
+func nativeHistoryTail(h *harness.Harness, conv string) ([]byte, error) {
+	streaming, ok := h.History.(harness.StreamingHistoryTransfer)
+	if !ok {
+		return h.History.Export(conv, "")
+	}
+	r, err := streaming.Open(conv, "")
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	if seeker, ok := r.(io.Seeker); ok {
+		size, err := seeker.Seek(0, io.SeekEnd)
+		if err != nil {
+			return nil, err
+		}
+		if _, err = seeker.Seek(max(0, size-(16<<10)), io.SeekStart); err != nil {
+			return nil, err
+		}
+		return io.ReadAll(io.LimitReader(r, 16<<10))
+	}
+	tail := &historyTailWriter{}
+	_, err = io.Copy(tail, r)
+	return tail.raw, err
+}
+
+type historyTailWriter struct{ raw []byte }
+
+func (w *historyTailWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	if len(p) >= 16<<10 {
+		w.raw = append(w.raw[:0], p[len(p)-(16<<10):]...)
+		return n, nil
+	}
+	if extra := len(w.raw) + len(p) - (16 << 10); extra > 0 {
+		copy(w.raw, w.raw[extra:])
+		w.raw = w.raw[:len(w.raw)-extra]
+	}
+	w.raw = append(w.raw, p...)
+	return n, nil
 }

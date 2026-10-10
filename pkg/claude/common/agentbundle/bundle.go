@@ -16,7 +16,7 @@ import (
 )
 
 const Format = "tclaude-agent-bundle"
-const MaxBytes = 256 << 20
+const MaxBytes = 2 << 30
 const MaxManifestBytes = 1 << 20
 const ManifestFile = "manifest.json"
 const HistoryFile = "history/transcript.jsonl"
@@ -79,6 +79,10 @@ type Manifest struct {
 type Bundle struct {
 	Manifest   Manifest
 	Transcript []byte
+	// TranscriptPath is local-only; it is never an archive entry or a wire path.
+	TranscriptPath  string
+	MaxBytes        int64
+	ownedTranscript bool
 }
 
 func (b *Bundle) Validate() error {
@@ -95,20 +99,30 @@ func (b *Bundle) Validate() error {
 	if len(m.Agent.Paths.RepoURL) > 4096 || strings.ContainsAny(m.Agent.Paths.RepoURL, "\x00\r\n") {
 		return errors.New("invalid repository URL hint")
 	}
-	if len(b.Transcript) > MaxBytes {
-		return errors.New("history exceeds 256 MiB")
+	r, err := b.OpenHistory()
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	sum := sha256.New()
+	n, err := io.Copy(sum, io.LimitReader(r, b.Limit()+1))
+	if err != nil {
+		return err
+	}
+	if n > b.Limit() {
+		return b.LimitError("history")
 	}
 	if m.History != nil {
-		sum := sha256.Sum256(b.Transcript)
-		if m.History.Bytes != int64(len(b.Transcript)) || m.History.SHA256 != hex.EncodeToString(sum[:]) {
+		if m.History.Bytes != n || m.History.SHA256 != hex.EncodeToString(sum.Sum(nil)) {
 			return errors.New("history length or checksum mismatch")
 		}
-		if len(b.Transcript) == 0 || m.History.SourceConvID == "" {
+		if n == 0 || m.History.SourceConvID == "" {
 			return errors.New("history metadata is incomplete")
 		}
-	} else if len(b.Transcript) > 0 {
+	} else if n > 0 {
 		return errors.New("history entry has no manifest declaration")
 	}
+
 	return nil
 }
 func (b *Bundle) SetHistory(format, source string, raw []byte) {
@@ -117,46 +131,62 @@ func (b *Bundle) SetHistory(format, source string, raw []byte) {
 	b.Manifest.History = &History{format, source, int64(len(raw)), hex.EncodeToString(sum[:])}
 }
 func (b *Bundle) Encode() ([]byte, error) {
-	if err := b.Validate(); err != nil {
-		return nil, err
-	}
-	raw, err := json.MarshalIndent(b.Manifest, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	if len(raw) > MaxManifestBytes {
-		return nil, errors.New("manifest exceeds 1 MiB")
-	}
 	var out bytes.Buffer
-	zw := zip.NewWriter(&out)
-	for _, entry := range []struct {
-		name string
-		data []byte
-	}{{ManifestFile, raw}, {HistoryFile, b.Transcript}} {
-		if entry.name == HistoryFile && b.Manifest.History == nil {
-			continue
-		}
-		hdr := &zip.FileHeader{Name: entry.name, Method: zip.Deflate}
-		hdr.SetMode(0600)
-		w, err := zw.CreateHeader(hdr)
-		if err != nil {
-			return nil, err
-		}
-		if _, err = w.Write(entry.data); err != nil {
-			return nil, err
-		}
-	}
-	if err := zw.Close(); err != nil {
+	if err := b.EncodeTo(&out); err != nil {
 		return nil, err
-	}
-	if out.Len() > MaxBytes {
-		return nil, errors.New("archive exceeds 256 MiB")
 	}
 	return out.Bytes(), nil
 }
+func (b *Bundle) EncodeTo(out io.Writer) error {
+	if err := b.Validate(); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(b.Manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	if len(raw) > MaxManifestBytes {
+		return errors.New("manifest exceeds 1 MiB")
+	}
+	bounded := &limitWriter{Writer: out, left: b.Limit()}
+	zw := zip.NewWriter(bounded)
+	hdr := &zip.FileHeader{Name: ManifestFile, Method: zip.Deflate}
+	hdr.SetMode(0600)
+	w, err := zw.CreateHeader(hdr)
+	if err != nil {
+		return err
+	}
+	if _, err = w.Write(raw); err != nil {
+		return err
+	}
+	if b.Manifest.History != nil {
+		hdr = &zip.FileHeader{Name: HistoryFile, Method: zip.Deflate}
+		hdr.SetMode(0600)
+		w, err = zw.CreateHeader(hdr)
+		if err != nil {
+			return err
+		}
+		r, err := b.OpenHistory()
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(w, r)
+		closeErr := r.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	if err = zw.Close(); err != nil {
+		return fmt.Errorf("write archive (federation.agent_transfer_max_bytes=%d): %w", b.Limit(), err)
+	}
+	return nil
+}
 func Decode(raw []byte) (*Bundle, error) {
 	if len(raw) > MaxBytes {
-		return nil, errors.New("archive exceeds 256 MiB")
+		return nil, errors.New("archive exceeds federation.agent_transfer_max_bytes=2147483648; raise that node setting")
 	}
 	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
 	if err != nil {

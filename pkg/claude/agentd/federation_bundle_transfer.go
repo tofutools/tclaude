@@ -3,9 +3,13 @@ package agentd
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -23,8 +27,9 @@ import (
 // Bundle-specific policy/validation stays out of the transport. Agent sharing
 // registers another kind here with its own admission scope and importer.
 type fedBundleKind struct {
-	Type     bundletransfer.Type
-	Validate func([]byte) error
+	Type         bundletransfer.Type
+	Validate     func([]byte) error
+	ValidateFile func(*os.File) error
 }
 
 func federationBundleKind(name string) (fedBundleKind, bool) {
@@ -32,7 +37,13 @@ func federationBundleKind(name string) (fedBundleKind, bool) {
 		return fedBundleKind{Type: bundletransfer.Config, Validate: validateOfferedConfig}, true
 	}
 	if name == bundletransfer.Agent.Name {
-		return fedBundleKind{Type: bundletransfer.Agent, Validate: func(raw []byte) error { _, err := agentbundle.Decode(raw); return err }}, true
+		return fedBundleKind{Type: agentTransferType(), ValidateFile: func(f *os.File) error {
+			b, err := agentbundle.DecodeFile(f, agentTransferLimit(), "")
+			if err == nil {
+				_ = b.Close()
+			}
+			return err
+		}, Validate: func(raw []byte) error { _, err := agentbundle.Decode(raw); return err }}, true
 	}
 	return fedBundleKind{}, false
 }
@@ -87,6 +98,10 @@ func (rt *fedRuntime) acceptBundleOffer(peer *db.FederationPeer, env *proto.Enve
 	kind, ok := federationBundleKind(d.Type)
 	if !ok {
 		refuse(fedCodeMalformed, "unsupported bundle type")
+		return
+	}
+	if d.Type == bundletransfer.Agent.Name && d.Bytes > kind.Type.MaxBytes {
+		refuse(fedCodeMalformed, fmt.Sprintf("agent archive exceeds federation.agent_transfer_max_bytes=%d on the receiver; raise that node setting", kind.Type.MaxBytes))
 		return
 	}
 	if err := d.Validate(kind.Type, time.Now()); err != nil || d.ID != env.ID || d.ExpiresAt.After(env.ExpiresAt.Add(time.Second)) {
@@ -228,7 +243,85 @@ func (rt *fedRuntime) fetchBundle(ctx context.Context, o *db.FederationBundleOff
 		return errors.New("bundle transfer already active or transfer limit reached")
 	}
 	defer rt.releaseBundleTransfer(key)
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	ctx, cancel := context.WithDeadline(ctx, o.Descriptor.ExpiresAt)
+	defer cancel()
+	var catalog proto.CatalogPayload
+	rawCatalog, _, _ := db.GetFederationCatalog(o.Peer)
+	_ = json.Unmarshal([]byte(rawCatalog), &catalog)
+	var err error
+	if o.Descriptor.Type == bundletransfer.Agent.Name && catalog.AgentBundleChunks {
+		var offset int64
+		offset, err = fedBundleSpool().PartialBytes(o.Peer, o.Descriptor)
+		if err != nil {
+			return err
+		}
+		for offset < o.Descriptor.Bytes {
+			kind, known := federationBundleKind(o.Descriptor.Type)
+			if !known || !fedBundleOfferAdmitted(o, kind.Type) {
+				return errors.New("bundle admission revoked")
+			}
+			length := min(bundletransfer.ChunkBytes, o.Descriptor.Bytes-offset)
+			for {
+				err = rt.fetchBundlePart(ctx, o, true, offset, length)
+				if err == nil {
+					break
+				}
+				var refusal bundleFetchRefusal
+				if !errors.As(err, &refusal) || refusal.reason != "transfer busy" && refusal.reason != "transfer request rate exceeded" {
+					return err
+				}
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(time.Second):
+				}
+			}
+			offset += length
+			rt.sendControl(o.Peer, proto.KindBundleResult, "", bundletransfer.Result{Offer: o.Descriptor.ID, State: "progress", SHA256: o.Descriptor.SHA256, BytesDone: offset, BytesTotal: o.Descriptor.Bytes})
+		}
+		err = fedBundleSpool().FinishChunks(o.Peer, o.Descriptor)
+	} else {
+		err = rt.fetchBundlePart(ctx, o, false, 0, 0)
+	}
+	if err != nil {
+		return err
+	}
+	kind, ok := federationBundleKind(o.Descriptor.Type)
+	if !ok {
+		return errors.New("unknown bundle type")
+	}
+	if kind.ValidateFile != nil {
+		f, openErr := fedBundleSpool().Open("in", o.Peer, o.Descriptor)
+		if openErr != nil {
+			return openErr
+		}
+		err = kind.ValidateFile(f)
+		_ = f.Close()
+	} else {
+		var raw []byte
+		raw, err = fedBundleSpool().Read("in", o.Peer, o.Descriptor)
+		if err == nil {
+			err = kind.Validate(raw)
+		}
+	}
+	if err != nil {
+		_ = fedBundleSpool().Remove("in", o.Peer, o.Descriptor.ID)
+		return err
+	}
+	fedBundleMu.Lock()
+	defer fedBundleMu.Unlock()
+	current, err := db.GetFederationBundleOffer("in", o.Peer, o.Descriptor.ID)
+	if err != nil {
+		return err
+	}
+	if current == nil || current.State != "pending" || !current.Descriptor.ExpiresAt.After(time.Now()) || !fedBundleOfferAdmitted(current, kind.Type) {
+		_ = fedBundleSpool().Remove("in", o.Peer, o.Descriptor.ID)
+		return errors.New("offer expired, declined or admission revoked during transfer")
+	}
+	return db.SetFederationBundleOfferState("in", o.Peer, o.Descriptor.ID, "ready", "")
+}
+func (rt *fedRuntime) fetchBundlePart(ctx context.Context, o *db.FederationBundleOffer, chunked bool, offset, length int64) error {
+	ctx, cancel := context.WithDeadline(ctx, o.Descriptor.ExpiresAt)
 	defer cancel()
 	stop := context.AfterFunc(rt.ctx, cancel)
 	defer stop()
@@ -245,7 +338,7 @@ func (rt *fedRuntime) fetchBundle(ctx context.Context, o *db.FederationBundleOff
 	rt.bundleWaiters[sid] = fedBundleWaiter{Peer: o.Peer, Offer: o.Descriptor.ID, Digest: o.Descriptor.SHA256, Answer: ch}
 	rt.bundleMu.Unlock()
 	defer func() { rt.bundleMu.Lock(); delete(rt.bundleWaiters, sid); rt.bundleMu.Unlock() }()
-	req := bundletransfer.Request{Offer: o.Descriptor.ID, Stream: sid, SHA256: o.Descriptor.SHA256, Key: kp.Pub}
+	req := bundletransfer.Request{Chunked: chunked, Offset: offset, Bytes: length, Offer: o.Descriptor.ID, Stream: sid, SHA256: o.Descriptor.SHA256, Key: kp.Pub}
 	if !rt.sendControl(o.Peer, proto.KindBundleFetch, "", req) {
 		return errors.New("sender is offline or transfer request was not delivered")
 	}
@@ -257,8 +350,11 @@ func (rt *fedRuntime) fetchBundle(ctx context.Context, o *db.FederationBundleOff
 	case <-time.After(30 * time.Second):
 		return errors.New("sender did not answer bundle fetch")
 	}
+	if a.Chunked != chunked || a.Offset != offset || a.Bytes != length {
+		return errors.New("bundle answer range mismatch")
+	}
 	if !a.OK {
-		return fmt.Errorf("sender refused: %s", proto.StripControls(a.Reason))
+		return bundleFetchRefusal{proto.StripControls(a.Reason)}
 	}
 	conn, err := rt.joinStream(ctx, o.Peer, sid, kp, a.Key, true)
 	if err != nil {
@@ -267,33 +363,11 @@ func (rt *fedRuntime) fetchBundle(ctx context.Context, o *db.FederationBundleOff
 	defer func() { _ = conn.Close() }()
 	closeOnCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer closeOnCancel()
-	_ = conn.SetDeadline(time.Now().Add(5 * time.Minute))
-	if err = fedBundleSpool().Receive("in", o.Peer, o.Descriptor, conn); err != nil {
-		return err
+	reader := bundleIdleReader{conn}
+	if chunked {
+		return fedBundleSpool().ReceiveChunk(o.Peer, o.Descriptor, offset, length, a.ChunkSHA256, reader)
 	}
-	raw, err := fedBundleSpool().Read("in", o.Peer, o.Descriptor)
-	if err != nil {
-		return err
-	}
-	kind, ok := federationBundleKind(o.Descriptor.Type)
-	if !ok {
-		return errors.New("unknown bundle type")
-	}
-	if err = kind.Validate(raw); err != nil {
-		_ = fedBundleSpool().Remove("in", o.Peer, o.Descriptor.ID)
-		return err
-	}
-	fedBundleMu.Lock()
-	defer fedBundleMu.Unlock()
-	current, err := db.GetFederationBundleOffer("in", o.Peer, o.Descriptor.ID)
-	if err != nil {
-		return err
-	}
-	if current == nil || current.State != "pending" || !current.Descriptor.ExpiresAt.After(time.Now()) || !fedBundleOfferAdmitted(current, kind.Type) {
-		_ = fedBundleSpool().Remove("in", o.Peer, o.Descriptor.ID)
-		return errors.New("offer expired, declined or admission revoked during transfer")
-	}
-	return db.SetFederationBundleOfferState("in", o.Peer, o.Descriptor.ID, "ready", "")
+	return fedBundleSpool().Receive("in", o.Peer, o.Descriptor, reader)
 }
 func (rt *fedRuntime) serveBundleFetch(peer *db.FederationPeer, env *proto.Envelope) {
 	var req bundletransfer.Request
@@ -329,6 +403,31 @@ func (rt *fedRuntime) serveBundleFetch(peer *db.FederationPeer, env *proto.Envel
 		return
 	}
 	defer f.Close()
+	length := o.Descriptor.Bytes
+	if req.Chunked {
+		if o.Descriptor.Type != bundletransfer.Agent.Name || req.Offset < 0 || req.Offset%bundletransfer.ChunkBytes != 0 || req.Bytes <= 0 || req.Bytes > bundletransfer.ChunkBytes || req.Offset > o.Descriptor.Bytes-req.Bytes || req.Bytes != min(bundletransfer.ChunkBytes, o.Descriptor.Bytes-req.Offset) {
+			refuse("invalid bundle chunk range")
+			return
+		}
+		length = req.Bytes
+		if _, err = f.Seek(req.Offset, io.SeekStart); err != nil {
+			refuse("chunk unavailable")
+			return
+		}
+		digest := sha256.New()
+		if _, err = io.CopyN(digest, f, length); err != nil {
+			refuse("chunk unavailable")
+			return
+		}
+		a.ChunkSHA256 = hex.EncodeToString(digest.Sum(nil))
+		if _, err = f.Seek(req.Offset, io.SeekStart); err != nil {
+			refuse("chunk unavailable")
+			return
+		}
+	} else if req.Offset != 0 || req.Bytes != 0 {
+		refuse("invalid bundle range")
+		return
+	}
 	kp, err := stream.NewKeyPair()
 	if err != nil {
 		return
@@ -338,7 +437,7 @@ func (rt *fedRuntime) serveBundleFetch(peer *db.FederationPeer, env *proto.Envel
 	if !rt.sendControl(peer.InstanceID, proto.KindBundleAnswer, env.ID, a) {
 		return
 	}
-	ctx, cancel := context.WithTimeout(rt.ctx, 5*time.Minute)
+	ctx, cancel := context.WithDeadline(rt.ctx, o.Descriptor.ExpiresAt)
 	defer cancel()
 	conn, err := rt.joinStream(ctx, peer.InstanceID, req.Stream, kp, req.Key, false)
 	if err != nil {
@@ -347,14 +446,13 @@ func (rt *fedRuntime) serveBundleFetch(peer *db.FederationPeer, env *proto.Envel
 	defer func() { _ = conn.Close() }()
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
-	_ = conn.SetDeadline(time.Now().Add(5 * time.Minute))
-	if _, err = io.CopyN(conn, f, o.Descriptor.Bytes); err == nil {
+	if _, err = io.CopyN(bundleIdleWriter{conn}, f, length); err == nil {
 		_ = conn.CloseWrite()
 	}
 }
 func (rt *fedRuntime) acceptBundleResult(peer *db.FederationPeer, env *proto.Envelope) {
 	var res bundletransfer.Result
-	if env.From.Agent != "" || env.To.Agent != "" || env.DecodePayload(&res) != nil || (res.State != "applied" && res.State != "declined" && (res.State != "pending" || res.Disposition != "pending_acceptance")) {
+	if env.From.Agent != "" || env.To.Agent != "" || env.DecodePayload(&res) != nil || (res.State != "progress" && res.State != "applied" && res.State != "declined" && (res.State != "pending" || res.Disposition != "pending_acceptance")) {
 		return
 	}
 	o, err := db.GetFederationBundleOffer("out", peer.InstanceID, res.Offer)
@@ -363,6 +461,14 @@ func (rt *fedRuntime) acceptBundleResult(peer *db.FederationPeer, env *proto.Env
 	}
 	fedBundleMu.Lock()
 	defer fedBundleMu.Unlock()
+	if res.State == "progress" {
+		if res.SHA256 != o.Descriptor.SHA256 || res.BytesTotal != o.Descriptor.Bytes || res.BytesDone < 0 || res.BytesDone > res.BytesTotal || o.Descriptor.Move == nil {
+			return
+		}
+		_ = db.UpdateFederationMoveTransfer("out", o.Peer, res.Offer, res.BytesDone, res.BytesTotal)
+		rt.sendControl(peer.InstanceID, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckAccepted})
+		return
+	}
 	if res.State == "pending" {
 		if o.Descriptor.Move == nil || !o.Descriptor.Move.DirectIfAllowed {
 			return
@@ -429,3 +535,29 @@ func reconcileFederationBundleOffers() {
 		}
 	}
 }
+
+type bundleDeadlineReader interface {
+	io.Reader
+	SetReadDeadline(time.Time) error
+}
+type bundleIdleReader struct{ bundleDeadlineReader }
+
+func (r bundleIdleReader) Read(p []byte) (int, error) {
+	_ = r.SetReadDeadline(time.Now().Add(5 * time.Minute))
+	return r.bundleDeadlineReader.Read(p)
+}
+
+type bundleDeadlineWriter interface {
+	io.Writer
+	SetWriteDeadline(time.Time) error
+}
+type bundleIdleWriter struct{ bundleDeadlineWriter }
+
+func (w bundleIdleWriter) Write(p []byte) (int, error) {
+	_ = w.SetWriteDeadline(time.Now().Add(5 * time.Minute))
+	return w.bundleDeadlineWriter.Write(p)
+}
+
+type bundleFetchRefusal struct{ reason string }
+
+func (e bundleFetchRefusal) Error() string { return "sender refused: " + e.reason }
