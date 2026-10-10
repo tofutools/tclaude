@@ -76,6 +76,8 @@ var peerViewLocalRoutes = []string{
 	"POST /api/federation/jobs",
 	"GET /api/federation/jobs",
 	"GET /api/federation/jobs/{id}",
+	"GET /api/federation/jobs/{id}/output",
+	"GET /api/federation/identity/rotations",
 	"GET /api/federation/jobs/{id}/follow",
 	"GET /api/federation/jobs/{id}/logs",
 	"POST /api/federation/jobs/{id}/cancel",

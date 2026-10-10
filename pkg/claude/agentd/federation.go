@@ -513,7 +513,7 @@ func buildFederationCatalog(peer string, status ...*statusSnapshot) (*proto.Cata
 			delete(caps[group.ID], proto.CapAttachments)
 		}
 	}
-	cat := &proto.CatalogPayload{RequesterPays: 1, TeleportBackups: true, AgentTeleports: 1, AgentMoves: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
+	cat := &proto.CatalogPayload{RequesterPays: 1, TeleportBackups: true, AgentTeleports: 1, AgentMoves: true, JobOutput: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
 	if fedPeerReadsNode(peer) {
 		cat.Node = localNodeMetadata()
 	}
@@ -712,7 +712,7 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		rt.acceptGroupMail(peer, env)
 	case proto.KindAck:
 		rt.handleAck(env)
-	case proto.KindJobFollow:
+	case proto.KindJobFollow, proto.KindJobOutput:
 		rt.wg.Add(1)
 		go func() { defer rt.wg.Done(); rt.serveJobFollow(peer, env) }()
 	case proto.KindJobFollowAnswer:

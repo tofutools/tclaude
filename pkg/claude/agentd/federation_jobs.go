@@ -33,6 +33,7 @@ func registerFederationJobRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/federation/jobs", handleFederationJobSend)
 	mux.HandleFunc("GET /v1/federation/jobs", handleFederationJobs)
 	mux.HandleFunc("GET /v1/federation/jobs/{id}", handleFederationJobs)
+	mux.HandleFunc("GET /v1/federation/jobs/{id}/output", handleFederationJobOutput)
 	mux.HandleFunc("GET /v1/federation/jobs/{id}/follow", handleFederationJobFollow)
 	mux.HandleFunc("GET /v1/federation/jobs/{id}/logs", handleFederationJobLogs)
 	mux.HandleFunc("POST /v1/federation/jobs/{id}/cancel", handleFederationJobCancel)
