@@ -87,7 +87,9 @@ const skynetFederationStubJS = `(function(){
       var local = '/api/' + path.slice(forgePrefix.length) + u.search;
       if (path === forgePrefix + 'snapshot') return realFetch(local, init).then(function(r){
         return r.json().then(function(snap){
-          snap.peer_view = { peer: 'desk', included: ['agents.status', 'groups', 'messaging'], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'spawn', requires: 'groups.members.spawn' }, { feature: 'terminals', requires: 'sessions.attach' }] };
+          snap.peer_view = window.__dashsnapPeerActions
+            ? { peer: 'desk', included: ['agents.status', 'groups', 'messaging', 'spawn', 'lifecycle.stop', 'lifecycle.retire', 'lifecycle.clone', 'lifecycle.move', 'lifecycle.teleport'], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'terminals', requires: 'sessions.attach' }] }
+            : { peer: 'desk', included: ['agents.status', 'groups', 'messaging'], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'spawn', requires: 'groups.members.spawn' }, { feature: 'terminals', requires: 'sessions.attach' }] };
           delete snap.assets_version;
           snap.usage = { available: false }; // what filterPeerFields leaves behind
           return new Response(JSON.stringify(snap), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -412,6 +414,22 @@ func skynetStates() []dashsnap.State {
   if (!document.querySelector('.group-federation-pop')) throw new Error('skynet: popover did not open');
 })();`,
 			SettleMS: 300,
+		},
+		{
+			Key:     "skynet-peer-actions",
+			Title:   "Acting on a peer's agent",
+			Caption: "On a peer view where forge granted lifecycle actions, an agent's retire, clone and stop controls open the peer action dialog instead of the local one: the actions forge shares (stop, retire, clone, move here, teleport here), the consequence spelled out, and the CLI equivalent. Move and teleport always bring the agent to a group on this node.",
+			InitJS:  "window.__dashsnapPeerActions = true;" + skynetRemoteViewJS + skynetFederationStubJS,
+			JS: showGroups + `return (async function(){
+  for (var i = 0; i < 50 && !document.querySelector('.remote-node-pill'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var j = 0; j < 50 && !document.querySelector('[data-act="retire-agent"][data-stable-agent^="agt_"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  var btn = document.querySelector('[data-act="retire-agent"][data-stable-agent^="agt_"]');
+  if (!btn) throw new Error('skynet: no retire control with an agent ID');
+  btn.click();
+  for (var k = 0; k < 30 && !document.querySelector('#peer-action-modal'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (document.querySelectorAll('#peer-action-modal .peer-action-choices label').length !== 5) throw new Error('skynet: peer actions missing');
+})();`,
+			SettleMS: 400,
 		},
 		{
 			Key:     "skynet-remote-view",

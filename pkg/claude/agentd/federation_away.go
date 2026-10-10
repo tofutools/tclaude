@@ -255,6 +255,10 @@ func forwardAwayHumanMessage(conv, title, subject, body string) {
 	_ = rt.queueAwayLocked(a, "Away: "+subject, text, time.Time{})
 }
 func forwardAwayApproval(req *approvalRequest) {
+	// Peer grants are trust administration and belong only to the local operator.
+	if req.peerAccess != nil {
+		return
+	}
 	rt := currentFederation()
 	if rt == nil {
 		return
@@ -439,6 +443,9 @@ func (rt *fedRuntime) acceptAwayAnswer(peer *db.FederationPeer, env *proto.Envel
 	// Ack only after the waiter consumes and rechecks the decision.
 }
 func (rt *fedRuntime) awayDecisionAllowedLocked(req *approvalRequest, d fedAwayDecision) bool {
+	if req.peerAccess != nil {
+		return false
+	}
 	if currentFederation() != rt {
 		return false
 	}
