@@ -1855,3 +1855,38 @@ test('hub remote scripts: without hub.exec the page says it is granted on the hu
     s_hubRun = prev;
   }
 });
+
+test('hub phase 2 features absent from this build degrade to a plain note, never an error', async (t) => {
+  const s = await setup(t);
+  const run = await s.harness.importDashboardModule('js/fleet-admin-run.js');
+  const missing = { status: 404, code: '' };
+  const oldHub = { status: 400, code: 'operation' };
+  for (const error of [missing, oldHub]) {
+    assert.equal(run.readiness({ id: 'hub', hub: true, online: true }, { error }).text, 'hub scripts not available on this build');
+  }
+  const { NodeUpdateDialog } = await s.harness.importDashboardModule('js/node-update.js');
+  for (const error of [missing, oldHub]) {
+    const host = s.harness.document.createElement('div');
+    s.harness.document.body.appendChild(host);
+    const actions = { status: async () => { throw Object.assign(new Error('nope'), error); }, start: async () => { throw new Error('no'); } };
+    const queue = [];
+    const timers = { setTimeout: (fn, ms) => { queue.push({ fn, ms }); return 1; }, clearTimeout: () => {} };
+    const m = await s.harness.mount(s.harness.html`<${NodeUpdateDialog} node=${{ id: 'hub', label: 'the hub', hub: true }} actions=${actions} confirm=${async () => true} toast=${() => {}} timers=${timers} onClose=${() => {}} />`, host);
+    await s.harness.act(() => new Promise((r) => setTimeout(r, 20)));
+    assert.match(host.querySelector('[role=alert]').textContent, /^Hub update is not available on this build of tclaude or the hub\.$/);
+    assert.equal(queue.length, 0, 'an absent feature is not retried');
+    await m.unmount();
+  }
+  const prevRun = s.actions.hubRunStatus; const prevAudit = s.actions.hubAudit;
+  s.actions.hubRunStatus = async () => { throw Object.assign(new Error('404 page not found'), missing); };
+  s.actions.hubAudit = async () => { throw Object.assign(new Error('unknown hub operation'), oldHub); };
+  try {
+    await openHub(s);
+    const q = (x) => s.harness.document.querySelector(x);
+    assert.match(q('#fleet-hub-scripts').textContent, /not available on this build/);
+    assert.match(q('#fleet-hub-audit').textContent, /hub audit is not available on this build/);
+    assert.equal(q('#fleet-hub-audit [role=alert]'), null);
+  } finally {
+    s.actions.hubRunStatus = prevRun; s.actions.hubAudit = prevAudit;
+  }
+});

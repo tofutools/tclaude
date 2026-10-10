@@ -74,7 +74,9 @@ function hubMayBeRestarting(error) {
 
 function accessText(error, node) {
   if (node.hub && error?.status === 403) return 'This node does not hold the hub capability for updates (hub.update).';
-  if (node.hub && error?.status === 404) return 'The hub does not offer supervised self-update yet.';
+  // A daemon without the route answers 404; an older hub refuses the
+  // operation (400 "operation"). Either way the feature is simply absent.
+  if (node.hub && (error?.status === 404 || (error?.status === 400 && error?.code === 'operation'))) return 'Hub update is not available on this build of tclaude or the hub.';
   if (node.hub && hubMayBeRestarting(error)) return 'The hub is not answering right now (it may be restarting); retrying…';
   if (error?.status === 403) return `${node.label} does not let you manage its updates (needs node.update).`;
   if (error?.status === 503) return `Self-update is unavailable on ${node.label}: ${errText(error)}`;

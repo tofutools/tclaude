@@ -21,6 +21,12 @@ const LOG_PAGE = 200;
 
 function errText(error) { return error?.message || String(error); }
 
+// absent is a hub route this daemon does not have (404) or an older hub does
+// not know (400 "operation"): the feature is missing, not failing.
+function absent(error) {
+  return error?.status === 404 || (error?.status === 400 && error?.code === 'operation');
+}
+
 function when(iso) {
   const t = new Date(iso);
   return Number.isFinite(t.getTime()) && t.getFullYear() > 1 ? t.toLocaleString() : '—';
@@ -276,7 +282,7 @@ function RemoteScripts({ actions, onRunHub }) {
     return () => { off = true; };
   }, []);
   if (!st) return html`<div class="muted">Loading…</div>`;
-  if (st.error) return html`<div class="muted" id="fleet-hub-scripts">${st.error.status === 403 ? 'Remote scripts on the hub need hub.exec.' : errText(st.error)}</div>`;
+  if (st.error) return html`<div class="muted" id="fleet-hub-scripts">${st.error.status === 403 ? 'Remote scripts on the hub need hub.exec.' : absent(st.error) ? 'Remote scripts on the hub are not available on this build of tclaude or the hub.' : errText(st.error)}</div>`;
   const on = !!st.accept_remote_scripts;
   return html`<div id="fleet-hub-scripts" class="fa-hub-scripts">
     <div>
@@ -297,11 +303,15 @@ function AuditSection({ actions }) {
   const [cursor, setCursor] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
   const load = (from = '') => {
     setBusy(true); setError('');
     actions.hubAudit(from)
       .then((r) => { const got = r?.entries || []; setEntries((prev) => (from ? [...(prev || []), ...got] : got)); setCursor(got.length ? r?.next_cursor || null : null); })
-      .catch((e) => { setError(e?.status === 403 ? 'Reading the hub audit needs a hub admin capability this node does not hold.' : errText(e)); if (!from) setEntries([]); })
+      .catch((e) => {
+        if (absent(e)) { setEntries([]); setCursor(null); setUnavailable(true); return; }
+        setError(e?.status === 403 ? 'Reading the hub audit needs a hub admin capability this node does not hold.' : errText(e)); if (!from) setEntries([]);
+      })
       .finally(() => setBusy(false));
   };
   useEffect(() => load(), []);
@@ -315,7 +325,7 @@ function AuditSection({ actions }) {
   };
   return html`<div id="fleet-hub-audit">
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
-    ${entries == null ? html`<div class="muted">Loading…</div>` : !entries.length ? (!error && html`<div class="muted">No audit entries.</div>`) : html`<table class="fa-table">
+    ${unavailable ? html`<div class="muted">The hub audit is not available on this build of tclaude or the hub.</div>` : entries == null ? html`<div class="muted">Loading…</div>` : !entries.length ? (!error && html`<div class="muted">No audit entries.</div>`) : html`<table class="fa-table">
       <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Outcome</th><th>Detail</th></tr></thead>
       <tbody>${entries.map((e, i) => html`<tr key=${e.id || i} data-kind=${e.kind || ''}>
         <td class="fa-nowrap">${when(e.at)}</td>

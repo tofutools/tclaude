@@ -38,6 +38,7 @@ export function readiness(row, probe) {
   if (row.hub) {
     if (!probe) return { ok: false, text: 'checking…' };
     if (probe.error?.status === 403 || probe.data?.can_exec === false) return { ok: false, text: 'needs hub.exec' };
+    if (probe.error?.status === 404 || (probe.error?.status === 400 && probe.error?.code === 'operation')) return { ok: false, text: 'hub scripts not available on this build' };
     if (probe.error) return { ok: false, text: errText(probe.error) };
     if (!probe.data?.accept_remote_scripts) return { ok: false, text: 'does not accept remote scripts' };
     return { ok: true, text: 'ready' };
