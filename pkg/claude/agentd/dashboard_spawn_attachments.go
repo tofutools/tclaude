@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log/slog"
@@ -195,6 +196,10 @@ func handleDashboardTerminalFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET or HEAD only")
 		return
 	}
+	if _, remote := remoteTerminalPath(r.URL.Query().Get("terminal")); remote {
+		writeError(w, 403, "not_shared", "remote file downloads are not shared")
+		return
+	}
 	if _, _, status, err := terminalAttachmentBase(
 		r.URL.Query().Get("terminal"),
 		session.IsTmuxSessionAlive,
@@ -376,6 +381,10 @@ func storeDashboardAttachments(
 	base string,
 	createBase bool,
 ) {
+	storeDashboardAttachmentBatch(w, r, base, createBase, false)
+}
+
+func storeDashboardAttachmentBatch(w http.ResponseWriter, r *http.Request, base string, createBase bool, imageOnly bool) {
 	mr, err := r.MultipartReader()
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "multipart",
@@ -427,9 +436,29 @@ func storeDashboardAttachments(
 			return
 		}
 
+		var source io.Reader = part
+		if imageOnly {
+			peek := make([]byte, 512)
+			n, err := io.ReadFull(part, peek)
+			if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+				cleanup()
+				writeError(w, 400, "image", "incomplete image")
+				return
+			}
+			mimeType := http.DetectContentType(peek[:n])
+			declared, _, _ := mime.ParseMediaType(part.Header.Get("Content-Type"))
+			extension := strings.ToLower(filepath.Ext(part.FileName()))
+			valid := (mimeType == "image/png" && extension == ".png") || (mimeType == "image/jpeg" && (extension == ".jpg" || extension == ".jpeg")) || (mimeType == "image/webp" && extension == ".webp")
+			if !valid || declared != mimeType {
+				cleanup()
+				writeError(w, 415, "image", "only PNG, JPEG and WebP images with matching MIME type are accepted")
+				return
+			}
+			source = io.MultiReader(bytes.NewReader(peek[:n]), part)
+		}
 		name := uniqueAttachmentName(sanitizeAttachmentFilename(part.FileName()), used)
 		dest := filepath.Join(dir, name)
-		size, werr := writeSpawnAttachmentPart(dest, part, spawnAttachmentMaxFileBytes, spawnAttachmentMaxTotalBytes-total)
+		size, werr := writeSpawnAttachmentPart(dest, source, spawnAttachmentMaxFileBytes, spawnAttachmentMaxTotalBytes-total)
 		_ = part.Close()
 		if werr != nil {
 			cleanup()
