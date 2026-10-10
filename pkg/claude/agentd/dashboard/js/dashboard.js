@@ -74,6 +74,7 @@ import {
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
 import { startSnapshotPoll, waitForInitialSnapshot } from './snapshot-poll.js';
+import { onSkynetOverviewChange, skynetOverviewShown } from './snapshot-store.js';
 import { startBrowserNotifyPoll } from './browser-notify.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
@@ -451,6 +452,8 @@ async function settleInitialLayout() {
     immediate: true,
     bootOptions: { includeLists: false },
     bootUntil: bootFinished,
+    quiet: skynetOverviewShown,
+    subscribeQuiet: onSkynetOverviewChange,
   }));
   // Independent of the snapshot cadence on purpose — see browser-notify.js.
   // Self-gating: it costs one no-op function call per tick until the human

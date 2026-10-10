@@ -79,6 +79,37 @@ test('snapshot poll starts immediately and uses visible/hidden cadences', async 
   assert.equal(listeners.has('visibilitychange'), false);
 });
 
+test('a quiet view slows the poll and leaving it refreshes at once', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { startSnapshotPoll } = await harness.importDashboardModule('js/snapshot-poll.js');
+  const h = pollHarness();
+  const { calls } = h;
+  let quiet = true;
+  let notify = null;
+  let unsubscribed = false;
+  const stop = startSnapshotPoll(() => { calls.push('refresh'); }, {
+    ...h.options,
+    quiet: () => quiet,
+    subscribeQuiet: (cb) => { notify = cb; return () => { unsubscribed = true; }; },
+  });
+  assert.equal(calls.at(-1).milliseconds, 10000);
+  await flush();
+
+  quiet = false;
+  notify();
+  assert.equal(calls.at(-2), 'refresh');
+  assert.equal(calls.at(-1).milliseconds, 2000);
+  await flush();
+
+  quiet = true;
+  notify();
+  assert.equal(calls.filter((call) => call === 'refresh').length, 2);
+  assert.equal(calls.at(-1).milliseconds, 10000);
+
+  stop();
+  assert.equal(unsubscribed, true);
+});
+
 test('snapshot poll can schedule after an awaited bootstrap refresh', async (t) => {
   const harness = await createPreactHarness(t);
   const { startSnapshotPoll } =

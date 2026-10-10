@@ -8,6 +8,8 @@ import { fmtAge } from './skynet-model.js';
 // MERGED_POLL_MS paces each peer's snapshot read while the merged view is on
 // screen: slower than a per-node view (2 s), faster than the map's summaries.
 export const MERGED_POLL_MS = 5000;
+// MERGED_IDLE_POLL_MS re-checks peers that are offline or share no groups.
+export const MERGED_IDLE_POLL_MS = 20000;
 
 // STALE_AFTER_MS is how old a node's last good snapshot may get before its
 // groups read as stale even without a failed read.
