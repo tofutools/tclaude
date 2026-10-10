@@ -1685,6 +1685,15 @@ policy, group selection and revisit limits above.
 
 ### Model gateways (Claude Code)
 
+Local dashboard administration mirrors the CLI's `/v1/models` handlers at
+`/api/federation/models`: GET/POST `/control` for policy and switches,
+GET/POST `/leases` to list or revoke a lease (`{"id":"LEASE_ID"}`), and GET
+`/usage?day=YYYY-MM-DD` for daily usage. Control reads return `{disabled,
+gateways}` without provider URLs, headers or credentials; writes accept
+`{name?, peer?, disabled}`. Lease and usage reads return arrays. These dashboard
+routes require the local operator cookie and are refused through peer views.
+
+
 A trusted machine can provide a named gateway to Claude Code or Codex workers
 on another machine. Claude Code uses Anthropic Messages; Codex uses OpenAI Responses. The provider key stays on the gateway machine;
 the worker receives a random, per-launch loopback bearer. Gateway traffic uses
