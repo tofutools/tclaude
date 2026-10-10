@@ -88,7 +88,9 @@ export function createAgentRosterReconciler() {
 // It keeps the local framing (binary output and input) and adds JSON text
 // control frames: hello (mode and the target's pinned size), size, and closed
 // (a reason, sent just before the socket closes). The viewer renders at the
-// pinned size and never resizes the target; watch mode sends no input.
+// pinned size and never resizes the target; watch mode sends no input. Each
+// binary output frame is acknowledged with {type:'credit', bytes} once xterm
+// has written it, which is what refills the stream's flow-control window.
 export const REMOTE_TERMINAL_PATH = '/api/federation/terminal';
 
 export function remoteTerminalPath({ peer, agent, mode = 'watch' }) {
@@ -562,6 +564,16 @@ export function mountTerminalWidget({
     socket.onmessage = (event) => {
       if (disposed || mine !== generation || ws !== socket) return;
       if (remote && typeof event.data === 'string') { remoteControl(event.data); return; }
+      if (remote) {
+        // Credit flows back only once xterm has consumed the bytes, so the
+        // federation stream's window stays bounded through the renderer.
+        const bytes = event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : new TextEncoder().encode(String(event.data));
+        term.write(bytes, () => {
+          if (disposed || mine !== generation || ws !== socket || socket.readyState !== WebSocketCtor.OPEN || !bytes.byteLength) return;
+          socket.send(JSON.stringify({ type: 'credit', bytes: bytes.byteLength }));
+        });
+        return;
+      }
       term.write(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data);
       // WebSocket open precedes PTY creation on the server. The first output is
       // the browser's earliest proof that the command/tmux attach is actually

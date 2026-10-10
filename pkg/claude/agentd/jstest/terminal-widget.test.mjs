@@ -612,6 +612,7 @@ test('a remote terminal follows the hello: pinned size, no resizes, watch-only d
   const fakes = widgetFakes(harness.document);
   class SizedTerminal extends fakes.FakeTerminal {
     resize(cols, rows) { this.cols = cols; this.rows = rows; this.resizeHandler?.({ cols, rows }); }
+    write(data, done) { super.write(data); this.pending = done; }
   }
   const statuses = []; const remotes = []; const reconnect = []; let disconnected = 0;
   const wsPath = core.remoteTerminalPath({ peer: 'inst_forge7', agent: 'agt_ada1', mode: 'interactive' });
@@ -646,6 +647,9 @@ test('a remote terminal follows the hello: pinned size, no resizes, watch-only d
   assert.equal(fakes.counts.write, 0, 'control text never reaches the terminal');
   socket.onmessage({ data: new ArrayBuffer(3) });
   assert.equal(fakes.counts.write, 1, 'binary output is written');
+  assert.deepEqual(socket.sent, [], 'no credit before xterm has consumed the bytes');
+  fakes.terminal().pending();
+  assert.deepEqual(socket.sent, [JSON.stringify({ type: 'credit', bytes: 3 })], 'credit follows the write, exact byte count, even when watching');
   socket.onmessage({ data: JSON.stringify({ type: 'closed', reason: 'revoked', message: 'sessions.watch revoked' }) });
   socket.disconnect();
   assert.equal(statuses.at(-1), 'closed: the peer revoked your access to this terminal');
@@ -663,6 +667,11 @@ test('a remote terminal follows the hello: pinned size, no resizes, watch-only d
   fakes.terminal().dataHandler('ls\r');
   assert.equal(again.sent.length, 1);
   assert.ok(again.sent[0] instanceof Uint8Array, 'interactive input is binary, as locally');
+  again.onmessage({ data: new ArrayBuffer(5) });
+  const done = fakes.terminal().pending;
+  again.disconnect();
+  done();
+  assert.equal(again.sent.length, 1, 'no credit on a socket that has closed');
   again.onmessage({ data: JSON.stringify({ type: 'closed', reason: 'kicked' }) });
   again.disconnect();
   assert.equal(statuses.at(-1), "closed: the peer's operator disconnected this view");
