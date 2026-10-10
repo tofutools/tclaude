@@ -185,7 +185,9 @@ step_move() {
 	# a restricts b and lets it offer agents into builders, with no landing
 	# policy: b's agents can reach a only as offers a accepts. b keeps trusting
 	# a unrestricted, so a's agents land on b at once.
-	"$E" run a federation trust "$("$E" run b federation identity 2>/dev/null | head -1)" --level restricted --yes --label b >/dev/null
+	local idb
+	idb=$("$E" run b federation identity 2>/dev/null | head -1)
+	"$E" run a federation trust "$idb" --level restricted --yes --label b >/dev/null
 	"$E" run a federation grant b agents.receive --scope group=builders >/dev/null
 	groups "$A"
 	rec_start 04-move-agent
@@ -197,7 +199,8 @@ step_move() {
 	d key Enter
 	sleep 1
 	cap "b trusts a fully, so b takes it in directly"
-	sleep 5
+	d wait "landed in group" 60
+	sleep 1
 	cap "Landed on b, in reviewers. a retires its copy"
 	sleep 1.5
 	d click '#skynet-move-drop-close'
@@ -207,7 +210,8 @@ step_move() {
 	drag reviewer-2 builders@node-a
 	sleep 1
 	d key Enter
-	sleep 3
+	d wait "waiting for you to accept" 60
+	sleep 1
 	cap "No landing policy for b here, so it waits for a to accept"
 	d click '[data-move-drop="moves"]'
 	sleep 2
@@ -217,6 +221,9 @@ step_move() {
 	sleep 2
 	cap "a decides where it lands: same path, the group's default dir, or any dir a owns"
 	sleep 1
+	select_nth 0 group_default
+	sleep 2
+	cap "Pick the builders group's default dir"
 	d clicktext "Start agent"
 	sleep 1.5
 	cap "Accept. Once it runs here, b retires its source"
@@ -232,6 +239,7 @@ step_move() {
 	sleep 2
 	nocap
 	rec_stop 04-move-agent
+	"$E" run a federation trust "$idb" --level unrestricted --yes --label b >/dev/null # as the map clip shows it
 }
 
 step_boards() {
