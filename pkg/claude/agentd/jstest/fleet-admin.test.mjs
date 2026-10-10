@@ -5,6 +5,7 @@ const FP_FORGE = 'k7q2-mx9d-4hpa-zz31-0e8c';
 const FP_NEW = 'w5ze-a3nq-9c1b-77f0-d2aa';
 let s_transition = null;
 let s_hubAdmin = true;
+const s_hubEcho = () => !!globalThis.window?.__hubEchoOther;
 let s_rotation = { hop_count: 1, pending: false };
 const status = () => ({
   enabled: true, instance_id: 'inst_self', name: 'desk', fingerprint: 'self-fp-0000', hub_url: 'wss://hub.example', hub: { state: 'connected' },
@@ -121,7 +122,7 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     saveProfile: async (o) => { log.push(['saveProfile', o]); if (o.revision === 99) { const e = new Error('reload the current profile revision'); e.status = 409; e.code = 'stale_profile'; throw e; } return { ...o, revision: o.revision + 1 }; },
     setHubConfig: async (b) => { log.push(['hubConfig', b]); return { ok: true }; },
     nodeLabels: async () => ['gpu', 'ci'],
-    hubStatus: async () => ({ hub_id: 'hub_7k', hub_url: 'wss://hub.example', hub_version: 'v0.43.0', connected: true, admin: s_hubAdmin, admin_count: s_hubAdmin ? 2 : 0, my_capabilities: ['admissions', 'settings', 'admins'], bootstrap_claimable: !s_hubAdmin }),
+    hubStatus: async () => ({ hub_id: 'hub_7k', hub_url: 'wss://hub.example', hub_version: 'v0.43.0', connected: true, admin: s_hubAdmin, admin_count: s_hubAdmin ? 2 : 0, my_capabilities: ['hub.admissions.manage', 'hub.settings.manage', 'hub.admins.manage'], bootstrap_claimable: !s_hubAdmin }),
     hubClaim: async (token) => { log.push(['hubClaim', token]); s_hubAdmin = true; return { ok: true }; },
     hubHealth: async () => ({ connected_instances: 3, streams: 7, goroutines: 140, heap_bytes: 52428800, recent_errors: [{ at: '2026-10-10T09:00:00Z', code: 'stream_reset', message: 'peer inst_lab reset stream 4' }] }),
     hubAdmissions: async () => [
@@ -134,7 +135,7 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     hubInvites: async () => [{ token_hash: 'abcdef0123456789', space: 'ops', created_at: '2026-10-10T08:00:00Z', expires_at: '2026-10-11T08:00:00Z', used: false }],
     createHubInvite: async (space, ttl) => { log.push(['invite', space, ttl]); return { token: 'hubinv-SECRET-1', token_hash: 'ffff', space, expires_at: '2026-10-11T09:00:00Z' }; },
     revokeHubInvite: async (hash) => { log.push(['revokeInvite', hash]); return { ok: true }; },
-    hubAdmins: async () => [{ instance: 'inst_self', name: 'desk', fingerprint: 'self-fp-0000', capabilities: ['admissions', 'settings', 'admins'], added_at: '2026-10-01T00:00:00Z' }, { instance: 'inst_lab', name: 'lab', fingerprint: 'lab-fp', capabilities: ['admissions'] }],
+    hubAdmins: async () => [{ instance: 'inst_self', name: 'desk', fingerprint: 'self-fp-0000', capabilities: ['hub.admissions.manage', 'hub.settings.manage', 'hub.admins.manage'], added_at: '2026-10-01T00:00:00Z' }, { instance: 'inst_lab', name: 'lab', fingerprint: 'lab-fp', capabilities: ['hub.admissions.manage'] }],
     addHubAdmin: async (i, caps) => { log.push(['addAdmin', i, caps]); return { ok: true }; },
     removeHubAdmin: async (i) => { log.push(['removeAdmin', i]); return { ok: true }; },
     hubSettings: async () => [
@@ -142,10 +143,10 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
       { key: 'max_streams_per_instance', type: 'int', min: 1, max: 64, effective: 16, source: 'remote', boot: 8, restart_required: false, flag_overridden: true },
     ],
     patchHubSettings: async (o) => { log.push(['settings', o]); return { ok: true }; },
-    recoverHubIdentity: async (old, nw, fp) => { log.push(['recover', old, nw, fp]); return { old: { instance: old, name: 'lost', fingerprint: 'old-fp', spaces: ['ops'] }, replacement: null, new: nw, new_fingerprint: 'abcd-efgh-ijkl-mnop-qrst-uvwx-yz', applied: !!fp, warning: 'The old instance held admin; it is not transferred.' }; },
+    recoverHubIdentity: async (old, nw, fp) => { log.push(['recover', old, nw, fp]); return { old: { instance: old, name: 'lost', fingerprint: 'old-fp', spaces: ['ops'] }, replacement: null, new: nw, new_fingerprint: s_hubEcho() ? 'aaaa-bbbb-cccc-dddd-eeee-ffff-gg' : 'abcd-efgh-ijkl-mnop-qrst-uvwx-yz', applied: !!fp, warning: 'The old instance held admin; it is not transferred.' }; },
     revokeOldHubIdentity: async (i, fp) => { log.push(['revokeOld', i, fp]); return { instance: i, fingerprint: 'zyxw-vuts-rqpo-nmlk-jihg-fedc-ba', applied: !!fp, warning: '' }; },
-    hubLogs: async (cursor) => { log.push(['logs', cursor]); return cursor ? { entries: [{ at: '2026-10-10T08:59:00Z', level: 'info', message: 'older line' }] }
-      : { entries: [{ at: '2026-10-10T09:01:00Z', level: 'warn', message: '<script>alert(1)</script> admission refused' }], next_cursor: 'c1' }; },
+    hubLogs: async (cursor) => { log.push(['logs', cursor]); return cursor ? { entries: [{ at: '2026-10-10T09:02:00Z', level: 'info', message: 'later line' }], next_cursor: 'c2' }
+      : { entries: [{ at: '2026-10-10T09:01:00Z', level: 'warn', message: '<script>alert(1)</script> admission refused' }, ...Array.from({ length: 199 }, (_, i) => ({ at: '2026-10-10T09:01:30Z', level: 'info', message: `line ${i}` }))], next_cursor: 'c1' }; },
     healthPolicy: async (peer) => { log.push(['healthPolicy', peer]); return peer ? { presence: false, resources: true, failures: false, debounce_seconds: 15, disk_free_percent: 5, ram_free_percent: 10, memory_seconds: 120, failure_count: 3, failure_window_seconds: 600, cooldown_seconds: 600 }
       : { presence: true, resources: false, failures: false, debounce_seconds: 15, disk_free_percent: 10, ram_free_percent: 10, memory_seconds: 120, failure_count: 3, failure_window_seconds: 600, cooldown_seconds: 600 }; },
     setHealthPolicy: async (peer, body) => { log.push(['setHealth', peer, body]); return { ...body, presence: body.presence }; },
@@ -1464,7 +1465,7 @@ test('hub: admin sees health, admissions, invites, admins; admit checks ID and f
   assert.equal(s.confirms.at(-1).title, 'Give up hub admin for this node?');
   assert.match(s.confirms.at(-1).body, /1 admin\(s\) remain/);
   await s.click(q('#fleet-hub-admissions [data-instance="inst_forge"] [data-hub="make-admin"]'));
-  assert.match(s.confirms.at(-1).body, new RegExp(`inst_forge \\(fingerprint ${FP_FORGE}\\) gets these hub admin capabilities: admissions, settings, admins.*including this node`));
+  assert.match(s.confirms.at(-1).body, new RegExp(`inst_forge \\(fingerprint ${FP_FORGE}\\) gets these hub admin capabilities: hub.admissions.manage, hub.settings.manage, hub.admins.manage.*including this node`));
   assert.ok(s.confirms.every((c) => typeof c.action === 'function'), 'every mutation runs inside a confirmation');
 });
 
@@ -1503,8 +1504,8 @@ test('hub log tail is text only and pages with the cursor', async (t) => {
   await s.click(q('#fleet-hub-logs-more'));
   await s.harness.act(() => new Promise((r) => setTimeout(r, 10)));
   assert.deepEqual(s.log.filter((l) => l[0] === 'logs').map((l) => l[1]), ['', 'c1']);
-  assert.match(q('#fleet-hub-logs pre').textContent, /admission refused[\s\S]*older line/);
-  assert.equal(q('#fleet-hub-logs-more'), null, 'no cursor, no more');
+  assert.match(q('#fleet-hub-logs pre').textContent, /admission refused[\s\S]*later line/);
+  assert.equal(q('#fleet-hub-logs-more'), null, 'a short page is the end even though the hub returns a cursor');
 });
 
 test('hub actions use resource paths and the agreed bodies', async (t) => {
@@ -1542,15 +1543,28 @@ test('hub identity recovery previews, confirms with the hub warning, and applies
   await s.click(q('#fleet-hub-identity-send'));
   await s.harness.act(() => new Promise((r) => setTimeout(r, 10)));
   const c = s.confirms.at(-1);
-  assert.match(c.body, /Removes the old admission lost inst_zyxwvutsrqponmlkjihgfedcba \(fingerprint old-fp, spaces ops\).*fingerprint abcd-efgh-ijkl-mnop-qrst-uvwx-yz.*not transferred.*The old instance held admin/);
+  assert.match(c.body, /Revokes the old admission inst_zyxwvutsrqponmlkjihgfedcba \(fingerprint zyxw-vuts-rqpo-nmlk-jihg-fedc-ba\).*fingerprint abcd-efgh-ijkl-mnop-qrst-uvwx-yz.*old spaces \(ops\).*not transferred.*Hub: The old instance held admin/);
   assert.deepEqual(s.log.filter((l) => l[0] === 'recover'), [['recover', 'inst_zyxwvutsrqponmlkjihgfedcba', 'inst_abcdefghijklmnopqrstuvwxyz', undefined], ['recover', 'inst_zyxwvutsrqponmlkjihgfedcba', 'inst_abcdefghijklmnopqrstuvwxyz', 'abcd-efgh-ijkl-mnop-qrst-uvwx-yz']]);
+  // A preview naming another identity never reaches a confirm.
+  const n = s.confirms.length;
+  s.harness.window.__hubEchoOther = true;
+  await s.click(q('#fleet-hub-identity-open'));
+  await type('#fleet-hub-identity-old', 'inst_zyxwvutsrqponmlkjihgfedcba');
+  await type('#fleet-hub-identity-new', 'inst_abcdefghijklmnopqrstuvwxyz');
+  await type('#fleet-hub-identity-fp', 'abcd-efgh-ijkl-mnop-qrst-uvwx-yz');
+  await s.click(q('#fleet-hub-identity-send'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  assert.equal(s.confirms.length, n);
+  assert.match(q('#fleet-hub-identity [role=alert]').textContent, /previewed a different identity/);
+  s.harness.window.__hubEchoOther = false;
+  await s.click([...doc.querySelectorAll('#fleet-hub-identity button')].find((b) => b.textContent === 'Cancel'));
   await s.click(q('#fleet-hub-identity-open'));
   await s.click(q('#fleet-hub-identity-revoke'));
   await type('#fleet-hub-identity-old', 'inst_zyxwvutsrqponmlkjihgfedcba');
   await type('#fleet-hub-identity-fp', 'ZYXW VUTS RQPO NMLK JIHG FEDC BA');
   await s.click(q('#fleet-hub-identity-send'));
   await s.harness.act(() => new Promise((r) => setTimeout(r, 10)));
-  assert.match(s.confirms.at(-1).body, /inst_zyxwvutsrqponmlkjihgfedcba \(fingerprint zyxw-vuts-rqpo-nmlk-jihg-fedc-ba\) loses its hub admission and any admin authority/);
+  assert.match(s.confirms.at(-1).body, /inst_zyxwvutsrqponmlkjihgfedcba \(fingerprint zyxw-vuts-rqpo-nmlk-jihg-fedc-ba\) is revoked as a rotated predecessor.*pending automatic rotation from it is cancelled/);
   assert.deepEqual(s.log.findLast((l) => l[0] === 'revokeOld'), ['revokeOld', 'inst_zyxwvutsrqponmlkjihgfedcba', 'zyxw-vuts-rqpo-nmlk-jihg-fedc-ba']);
 });
 

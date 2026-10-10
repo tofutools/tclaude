@@ -144,19 +144,30 @@ function IdentityDialog({ actions, confirm, onClose, onDone }) {
     if (bad) { setError(bad); return; }
     setError(''); setBusy(true);
     const preview = recover ? actions.recoverHubIdentity(old, next) : actions.revokeOldHubIdentity(old);
-    preview.then((p) => confirm(recover ? {
-      title: `Recover ${old}'s admission onto ${next}?`,
-      body: `Removes the old admission ${rowText(p?.old)} and admits ${next} with fingerprint ${p?.new_fingerprint || instanceFingerprint(next)} in its place${p?.replacement ? `, replacing its current admission ${rowText(p.replacement)}` : ''}. Admin authority the old instance held is removed and is not transferred.${p?.warning ? ` ${p.warning}` : ''}`,
-      okLabel: 'Recover',
-      busyLabel: 'Recovering…',
-      action: () => actions.recoverHubIdentity(old, next, p?.new_fingerprint || instanceFingerprint(next)),
-    } : {
-      title: `Revoke the old identity ${old}?`,
-      body: `${old} (fingerprint ${p?.fingerprint || instanceFingerprint(old)}) loses its hub admission and any admin authority, and can no longer connect.${p?.warning ? ` ${p.warning}` : ''}`,
-      okLabel: 'Revoke old identity',
-      busyLabel: 'Revoking…',
-      action: () => actions.revokeOldHubIdentity(old, p?.fingerprint || instanceFingerprint(old)),
-    }))
+    // The confirm and the apply use the fingerprint derived from the ID the
+    // operator checked, never one the hub echoes; a preview for anything else
+    // is refused.
+    const nextFp = instanceFingerprint(next);
+    const oldFp = instanceFingerprint(old);
+    preview.then((p) => {
+      const echoed = recover ? [p?.new, p?.old?.instance, p?.new_fingerprint] : [p?.instance, p?.fingerprint];
+      const want = recover ? [next, old, nextFp] : [old, oldFp];
+      if (echoed.some((v, i) => v != null && v !== want[i])) throw new Error('The hub previewed a different identity than the one entered; nothing was changed.');
+      const oldSpaces = (p?.old?.spaces || []).join(', ') || 'none';
+      return confirm(recover ? {
+        title: `Recover ${old}'s admission onto ${next}?`,
+        body: `Revokes the old admission ${old} (fingerprint ${oldFp}) and its admin capabilities, and admits ${next} with fingerprint ${nextFp} in its place with the old spaces (${oldSpaces})${p?.replacement ? `, replacing its current spaces (${(p.replacement.spaces || []).join(', ') || 'none'})` : ''}. Admin authority is not transferred, and each node's trust in ${next} still needs recovering there.${p?.warning ? ` Hub: ${p.warning}` : ''}`,
+        okLabel: 'Recover',
+        busyLabel: 'Recovering…',
+        action: () => actions.recoverHubIdentity(old, next, nextFp),
+      } : {
+        title: `Revoke the old identity ${old}?`,
+        body: `${old} (fingerprint ${oldFp}) is revoked as a rotated predecessor and can no longer connect, and any pending automatic rotation from it is cancelled. An already accepted successor stays current.${p?.warning ? ` Hub: ${p.warning}` : ''}`,
+        okLabel: 'Revoke old identity',
+        busyLabel: 'Revoking…',
+        action: () => actions.revokeOldHubIdentity(old, oldFp),
+      });
+    })
       .then((r) => { if (r) onDone(recover ? `${old} recovered onto ${next}` : `${old} revoked`); })
       .catch((e) => setError(errText(e)))
       .finally(() => setBusy(false));
@@ -259,7 +270,12 @@ function LogsSection({ actions }) {
   const load = (from = '') => {
     setBusy(true); setError('');
     actions.hubLogs(from, LOG_PAGE)
-      .then((r) => { setEntries((prev) => (from ? [...(prev || []), ...(r?.entries || [])] : r?.entries || [])); setCursor(r?.next_cursor || null); })
+      .then((r) => {
+        const got = r?.entries || [];
+        setEntries((prev) => (from ? [...(prev || []), ...got] : got));
+        // The hub returns a cursor even when caught up; a short page is the end.
+        setCursor(r?.next_cursor && got.length >= LOG_PAGE ? r.next_cursor : null);
+      })
       .catch((e) => setError(errText(e)))
       .finally(() => setBusy(false));
   };
@@ -333,10 +349,10 @@ export function HubPage({ view, actions, confirm, toast, copy }) {
     const space = invite.space.trim();
     const hours = Number(invite.ttl);
     if (space && !SPACE_RE.test(space)) { toast('Space: letters, digits, . _ -', true); return; }
-    if (!(hours >= 1 && hours <= 24 * 30)) { toast('Expiry: 1 hour to 30 days', true); return; }
+    if (!(hours >= 1 && hours <= 24 * 7)) { toast('Expiry: 1 hour to 7 days', true); return; }
     confirm({
       title: 'Create a hub invite?',
-      body: `Anyone holding the token can join the hub${space ? ` into space ${space}` : ''} once, within ${hours} hours. It is shown only once; send it over a channel you trust.`,
+      body: `Anyone holding the token can join the hub${space ? ` into space ${space}` : ' into its default space'} once, within ${hours} hours. It is shown only once; send it over a channel you trust.`,
       okLabel: 'Create invite',
       busyLabel: 'Creating…',
       action: () => actions.createHubInvite(space, Math.round(hours * 3600)),
@@ -366,7 +382,7 @@ export function HubPage({ view, actions, confirm, toast, copy }) {
   const caps = status.my_capabilities || [];
   const addAdmin = (a) => confirm({
     title: `Make ${a.name || a.instance} a hub admin?`,
-    body: `${a.instance} (fingerprint ${a.fingerprint || 'unknown'}) gets these hub admin capabilities: ${caps.join(', ')}.${caps.includes('admins') ? ' With admins it can add or remove admins, including this node.' : ''} Hub admin grants no access to any node's content.`,
+    body: `${a.instance} (fingerprint ${a.fingerprint || 'unknown'}) gets these hub admin capabilities: ${caps.join(', ')}.${caps.includes('hub.admins.manage') ? ' With hub.admins.manage it can add or remove admins, including this node.' : ''} Hub admin grants no access to any node's content.`,
     okLabel: 'Make admin',
     busyLabel: 'Saving…',
     action: () => actions.addHubAdmin(a.instance, caps),
@@ -376,7 +392,7 @@ export function HubPage({ view, actions, confirm, toast, copy }) {
   const admins = ok(data.admins) ? data.admins : [];
   return html`<div class="fa-hub-page" id="fleet-hub">
     <div class="fa-hub-head">
-      <span><span class="fa-k">hub</span> <code>${status.hub_url || '—'}</code></span>
+      <span><span class="fa-k">hub</span> <code>${status.hub_url || self.hubURL || '—'}</code></span>
       <span><span class="fa-k">version</span> ${status.hub_version || '—'}</span>
       <span><span class="fa-k">id</span> <code>${status.hub_id || '—'}</code></span>
       <span class=${status.connected ? '' : 'fa-danger'}>${status.connected ? 'connected' : 'not connected'}</span>
@@ -391,22 +407,27 @@ export function HubPage({ view, actions, confirm, toast, copy }) {
       ${listOr(data.health, (hl) => html`<div class="fa-hub-health" id="fleet-hub-health">
         <span><span class="fa-k">connected</span> ${hl.connected_instances ?? '—'}</span>
         <span><span class="fa-k">streams</span> ${hl.streams ?? '—'}</span>
-        <span><span class="fa-k">goroutines</span> ${hl.goroutines ?? '—'}</span>
-        <span><span class="fa-k">heap</span> ${bytes(hl.heap_bytes)}</span>
+        <span><span class="fa-k">goroutines</span> ${hl.load?.goroutines ?? hl.goroutines ?? '—'}</span>
+        <span><span class="fa-k">heap</span> ${bytes(hl.load?.heap_bytes ?? hl.heap_bytes)}</span>
         ${hl.uptime_seconds != null && html`<span><span class="fa-k">up</span> ${Math.round(hl.uptime_seconds / 3600)} h</span>`}
         ${(hl.recent_errors || []).length ? html`<ul class="fa-hub-errors">${hl.recent_errors.map((e, i) => html`<li key=${i} class="fa-danger">${when(e.at)} ${e.code ? html`<code>${e.code}</code> ` : ''}${e.message || ''}</li>`)}</ul>` : html`<span class="muted">no recent errors</span>`}
       </div>`)}
       ${h4('Admissions', html` <button type="button" class="fa-link" id="fleet-hub-admit-open" onClick=${() => setDialog('admit')}>admit…</button> <button type="button" class="fa-link" id="fleet-hub-identity-open" onClick=${() => setDialog('identity')}>identity recovery…</button>`)}
       ${listOr(data.admissions, (rows) => html`<table class="fa-table" id="fleet-hub-admissions">
         <thead><tr><th>Instance</th><th>Fingerprint</th><th>Spaces</th><th>Seen</th><th></th></tr></thead>
-        <tbody>${rows.map((a) => html`<tr key=${a.instance} data-instance=${a.instance}>
+        <tbody>${rows.map((a) => (a.revoked ? html`<tr key=${a.instance} data-instance=${a.instance} data-revoked class="muted">
+          <td>${a.name || ''} <code>${a.instance}</code></td>
+          <td><code>${a.fingerprint || '—'}</code></td>
+          <td>${(a.spaces || []).join(', ') || '—'}</td>
+          <td class="fa-nowrap">revoked</td><td></td>
+        </tr>` : html`<tr key=${a.instance} data-instance=${a.instance}>
           <td>${a.name || ''} <code>${a.instance}</code>${a.instance === self.id ? html` <span class="muted">(this node)</span>` : ''}</td>
           <td><code>${a.fingerprint || '—'}</code></td>
           <td><input class="fa-hub-spaces" aria-label=${`Spaces for ${a.instance}`} value=${(a.spaces || []).join(', ')} onChange=${(e) => editSpaces(a, e.currentTarget.value)} /></td>
           <td class="fa-nowrap">${a.connected ? 'connected' : when(a.last_seen)}</td>
           <td class="fa-acts">${ok(data.admins) && caps.length > 0 && !admins.some((x) => x.instance === a.instance) && html`<button type="button" data-hub="make-admin" onClick=${() => addAdmin(a)}>Make admin…</button>`}
             ${a.instance !== self.id && html`<button type="button" data-hub="revoke" onClick=${() => revokeAdmission(a)}>Revoke…</button>`}</td>
-        </tr>`)}</tbody></table>`)}
+        </tr>`))}</tbody></table>`)}
       ${h4('Invites')}
       <div class="fa-grant-form">
         <input id="fleet-hub-invite-space" placeholder="space (optional)" value=${invite.space} onInput=${(e) => setInvite({ ...invite, space: e.currentTarget.value })} />

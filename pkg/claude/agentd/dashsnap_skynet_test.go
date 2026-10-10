@@ -129,16 +129,17 @@ const skynetFederationStubJS = `(function(){
       { proxy: 'claude', peer: 'inst_hn3cxq7a', model: 'claude-haiku-5-5', charged_tokens: 52000, input_tokens: 50000, output_tokens: 2000, status: 429, complete: false },
       { proxy: 'claude', peer: 'inst_hn3cxq7a', model: 'claude-sonnet-5-5', charged_tokens: 232000, input_tokens: 0, output_tokens: 0, status: 0, complete: false }
     ]);
-    if (path === '/api/federation/hub/status') return json({ hub_id: 'hub_7kq2m9', hub_url: 'wss://hub.lab.example', hub_version: 'v0.43.0', connected: true, admin: true, admin_count: 2, my_capabilities: ['admissions', 'settings', 'admins'], bootstrap_claimable: false });
-    if (path === '/api/federation/hub/health') return json({ connected_instances: 3, streams: 7, goroutines: 142, heap_bytes: 52428800, recent_errors: [{ at: '2026-10-10T09:12:00Z', code: 'stream_reset', message: 'inst_2p6ym4ke reset stream 4' }] });
+    if (path === '/api/federation/hub/status') return json({ hub_id: 'hub_7kq2m9', hub_url: 'wss://hub.lab.example', hub_version: 'v0.43.0', connected: true, admin: true, admin_count: 2, my_capabilities: ['hub.admins.manage', 'hub.admissions.manage', 'hub.invites.manage', 'hub.spaces.manage', 'hub.settings.manage', 'hub.identity.manage', 'hub.health.read', 'hub.logs.read'], bootstrap_claimable: false });
+    if (path === '/api/federation/hub/health') return json({ connected_instances: 3, streams: 7, load: { goroutines: 142, heap_bytes: 52428800 }, uptime_seconds: 302400, recent_errors: [{ at: '2026-10-10T09:12:00Z', code: 'stream_reset', message: 'inst_2p6ym4ke reset stream 4' }] });
     if (path === '/api/federation/hub/admissions' && !(init && init.method === 'POST')) return json({ admissions: [
       { instance: 'inst_q4w7pjf2kx3mz6bty5nd', name: 'desk', fingerprint: 'q4w7-pjf2-kx3m-z6bt-y5nd-8c1e', spaces: ['ops'], connected: true },
       { instance: 'inst_hn3cxq7a', name: 'forge', fingerprint: 'hn3c-xq7a-2m8d-p0kf-w4tz-91rb', spaces: ['ops', 'ci'], connected: true },
-      { instance: 'inst_2p6ym4ke', name: 'lab', fingerprint: '2p6y-m4ke-v7cq-h1ns-d3xw-5jt0', spaces: ['ci'], last_seen: '2026-10-10T08:40:00Z' }] });
+      { instance: 'inst_2p6ym4ke', name: 'lab', fingerprint: '2p6y-m4ke-v7cq-h1ns-d3xw-5jt0', spaces: ['ci'], last_seen: '2026-10-10T08:40:00Z' },
+      { instance: 'inst_m3rk7d2v', name: 'old-laptop', fingerprint: 'm3rk-7d2v-bq5x-ra6h-ue4n-2wpc', spaces: ['ops'], last_seen: '2026-09-28T17:00:00Z', revoked: true }] });
     if (path === '/api/federation/hub/invites' && !(init && init.method === 'POST')) return json({ invites: [{ token_hash: '9f2c4e1ab07d3355', space: 'ci', created_at: '2026-10-10T08:00:00Z', expires_at: '2026-10-11T08:00:00Z', used: false }] });
     if (path === '/api/federation/hub/admins' && !(init && init.method === 'POST')) return json({ admins: [
-      { instance: 'inst_q4w7pjf2kx3mz6bty5nd', name: 'desk', fingerprint: 'q4w7-pjf2-kx3m-z6bt-y5nd-8c1e', capabilities: ['admissions', 'settings', 'admins'], added_at: '2026-10-01T00:00:00Z' },
-      { instance: 'inst_hn3cxq7a', name: 'forge', fingerprint: 'hn3c-xq7a-2m8d-p0kf-w4tz-91rb', capabilities: ['admissions'], added_at: '2026-10-03T00:00:00Z' }] });
+      { instance: 'inst_q4w7pjf2kx3mz6bty5nd', name: 'desk', fingerprint: 'q4w7-pjf2-kx3m-z6bt-y5nd-8c1e', capabilities: ['hub.admins.manage', 'hub.admissions.manage', 'hub.settings.manage', 'hub.health.read', 'hub.logs.read'], added_at: '2026-10-01T00:00:00Z' },
+      { instance: 'inst_hn3cxq7a', name: 'forge', fingerprint: 'hn3c-xq7a-2m8d-p0kf-w4tz-91rb', capabilities: ['hub.admissions.manage', 'hub.health.read'], added_at: '2026-10-03T00:00:00Z' }] });
     if (path === '/api/federation/hub/settings' && !(init && init.method === 'PATCH')) return json({ settings: {
       rotation_window: { type: 'duration', unit: 's', min: 60, max: 604800, effective: 600, source: 'flag', boot: 600, restart_required: false, flag_overridden: false },
       max_streams_per_instance: { type: 'int', min: 1, max: 64, effective: 16, source: 'remote', boot: 8, restart_required: false, flag_overridden: true },
