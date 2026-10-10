@@ -41,7 +41,7 @@ func handleDashboardFederationTerminal(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	defer ws.Close()
+	defer func() { _ = ws.Close() }()
 	var body struct {
 		Code  string
 		Error string
@@ -75,7 +75,7 @@ func serveDashboardFederationTerminal(w http.ResponseWriter, r *http.Request, rt
 	if err != nil {
 		return
 	}
-	defer ws.Close()
+	defer func() { _ = ws.Close() }()
 	ws.SetReadLimit(terminal.MaxPayload)
 	var wsMu, streamMu, creditMu sync.Mutex
 	outstanding := 0
@@ -141,7 +141,11 @@ func serveDashboardFederationTerminal(w http.ResponseWriter, r *http.Request, rt
 		for {
 			frame, err := terminal.Read(conn)
 			if err != nil {
-				stopped <- "offline"
+				reason := authorized()
+				if reason == "" {
+					reason = "offline"
+				}
+				stopped <- reason
 				return
 			}
 			if frame.Kind == terminal.Closed {

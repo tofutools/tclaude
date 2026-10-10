@@ -131,6 +131,14 @@ func TestFederationTerminalImageUploadTargetAuthorityAndMime(t *testing.T) {
 			raw, contentType := terminalImageMultipart(t, test.mimeType)
 			d := bundletransfer.New(bundletransfer.Type{Name: "terminal-image"}, raw, "", time.Now().Add(time.Minute))
 			d.Inline = nil
+			fedGrantConfig(t, fh)
+			prior := fedSendOffer(t, p, fedOfferedConfig(t, "Existing offer must survive image ID collision"))
+			require.Equal(t, proto.AckAccepted, fedAckFor(t, p, prior.ID).Status)
+			d.ID = prior.ID
+			t.Cleanup(func() {
+				rec := fedHuman(t, f, "POST", "/v1/federation/bundle-offers/"+prior.ID+"/preview", nil)
+				require.Equal(t, 200, rec.Code, "ready configuration payload survives image-ID reuse: "+rec.Body.String())
+			})
 			kp, err := stream.NewKeyPair()
 			require.NoError(t, err)
 			sid := proto.NewEnvelopeID()

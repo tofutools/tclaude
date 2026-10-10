@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -80,8 +81,8 @@ func handleDashboardFederationTerminalAttachments(w http.ResponseWriter, r *http
 		writeFedErr(w, err)
 		return
 	}
-	defer os.Remove(file.Name())
-	defer file.Close()
+	defer func() { _ = os.Remove(file.Name()) }()
+	defer func() { _ = file.Close() }()
 	hash := sha256.New()
 	n, err := io.Copy(io.MultiWriter(file, hash), io.LimitReader(r.Body, terminalUploadType.MaxBytes+1))
 	if err != nil || n == 0 || n > terminalUploadType.MaxBytes {
@@ -129,7 +130,7 @@ func handleDashboardFederationTerminalAttachments(w http.ResponseWriter, r *http
 		writeError(w, 502, "upload", err.Error())
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 	_ = conn.SetDeadline(time.Now().Add(terminalUploadTimeout))
@@ -213,15 +214,17 @@ func (rt *fedRuntime) receiveTerminalUpload(peer *db.FederationPeer, env *proto.
 	if err != nil {
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 	_ = conn.SetDeadline(time.Now().Add(terminalUploadTimeout))
 	// Check the exact same pinned attach authority while receiving, then again
 	// before and after staging. Neither watch nor an old incarnation can upload.
 	done := make(chan struct{})
-	defer close(done)
+	observerDone := make(chan struct{})
+	defer func() { close(done); <-observerDone }()
 	go func() {
+		defer close(observerDone)
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for {
@@ -239,18 +242,18 @@ func (rt *fedRuntime) receiveTerminalUpload(peer *db.FederationPeer, env *proto.
 		}
 	}()
 	d := req.Descriptor
-	defer fedBundleSpool().Remove("in", peer.InstanceID, d.ID)
-	if fedBundleSpool().Receive("in", peer.InstanceID, d, conn) != nil {
+	defer func() { _ = terminalImageSpool().Remove("in", peer.InstanceID, d.ID) }()
+	if terminalImageSpool().Receive("in", peer.InstanceID, d, conn) != nil {
 		return
 	}
 	if !pin.authorized(peer.InstanceID, req.Target) {
 		return
 	}
-	file, err := fedBundleSpool().Open("in", peer.InstanceID, d)
+	file, err := terminalImageSpool().Open("in", peer.InstanceID, d)
 	if err != nil {
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	base, create, status, err := terminalAttachmentBase("/api/spawn-focus-ws/"+url.PathEscape(pin.session), session.IsTmuxSessionAlive)
 	rec := &peerViewResponse{header: make(http.Header)}
 	if err != nil {
@@ -288,4 +291,10 @@ func (r *terminalUploadReader) Read(p []byte) (int, error) {
 		return 0, err
 	}
 	return r.r.Read(p)
+}
+
+// Image IDs are supplied by a peer. Their short-lived payloads must never share
+// the path namespace of ready config/agent/job bundles from that same peer.
+func terminalImageSpool() bundletransfer.Spool {
+	return bundletransfer.Spool{Root: filepath.Join(fedBundleSpool().Root, "terminal-images")}
 }
