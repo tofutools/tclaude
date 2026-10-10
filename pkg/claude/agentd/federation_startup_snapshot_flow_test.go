@@ -18,7 +18,7 @@ import (
 // snapshot must refer to local policy and the local briefing, never a source
 // node's group identity or immutable startup snapshot.
 func TestFederationImportedStartupContextAfterCompaction(t *testing.T) {
-	for _, mode := range []string{"clone", "move", "teleport"} {
+	for _, mode := range []string{"clone", "move", "teleport", "teleport_home"} {
 		t.Run(mode, func(t *testing.T) {
 			fh := newFedHarness(t)
 			fh.f.HaveGroup("receiver")
@@ -26,8 +26,17 @@ func TestFederationImportedStartupContextAfterCompaction(t *testing.T) {
 			_, err := db.SetAgentGroupDefaultContext("receiver", "Target operator startup guidance.")
 			require.NoError(t, err)
 			var d bundletransfer.Descriptor
-			if mode == "teleport" {
-				d = fedIncomingTeleport(t, fh, "local", nil)
+			if mode == "teleport" || mode == "teleport_home" {
+				d = fedIncomingTeleport(t, fh, "local", func(in *bundletransfer.TeleportIntent) {
+					if mode == "teleport_home" {
+						in.Home = true
+						in.OriginInstance = fh.peer.agentdID
+						in.Clone = false
+						last := in.Hops[0]
+						first := bundletransfer.TeleportHop{Offer: proto.NewEnvelopeID(), FromInstance: fh.peer.agentdID, FromAgent: in.OriginAgent, ToInstance: fh.peer.id.ID(), ToGroup: "source", At: time.Now().Add(-24 * time.Hour)}
+						in.Hops = []bundletransfer.TeleportHop{first, last}
+					}
+				})
 			} else {
 				b := fedAgentBundle(t)
 				b.Manifest.Agent.StartupContext = "Origin-only startup text."
@@ -44,7 +53,8 @@ func TestFederationImportedStartupContextAfterCompaction(t *testing.T) {
 				env.ID = d.ID
 				fh.peer.send(env)
 			}
-			require.Equal(t, proto.AckAccepted, fedAckFor(t, fh.peer, d.ID).Status)
+			ack := fedAckFor(t, fh.peer, d.ID)
+			require.Equal(t, proto.AckAccepted, ack.Status, ack.Reason)
 			rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/bundle-offers/"+d.ID+"/import", map[string]any{"cwd": testutil.CanonicalTempDir(t), "name": "arriving-worker", "apply": true})
 			require.Equal(t, 200, rec.Code, rec.Body.String())
 			var result struct {
@@ -57,6 +67,15 @@ func TestFederationImportedStartupContextAfterCompaction(t *testing.T) {
 			actor, err := db.GetAgentByConv(result.Spawn.ConvID)
 			require.NoError(t, err)
 			require.NotNil(t, actor)
+			brief := arrivalInbox(t, result.Spawn.ConvID)
+			require.Contains(t, brief, "Arrival briefing")
+			require.Contains(t, brief, actor.AgentID)
+			require.Contains(t, brief, fh.peer.id.ID())
+			require.Contains(t, brief, "source permissions not copied")
+			if mode == "teleport_home" {
+				require.Contains(t, brief, "Arrival briefing — teleport home")
+			}
+
 			snapshot, err := db.GetAgentStartupSnapshot(actor.AgentID)
 			require.NoError(t, err)
 			require.NotNil(t, snapshot, "receiving spawn must record its startup snapshot")

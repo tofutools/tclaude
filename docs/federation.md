@@ -1182,7 +1182,7 @@ it does not stop an already dispatched agent.
 
 A move clones native conversation history to a new destination agent, then
 retires the source after the destination confirms that its reserved launch is
-running. Claude and Codex history are supported. A peer must advertise move
+running. Claude, Codex and OpenCode history are supported. A peer must advertise move
 support; an older peer cannot complete a move with an ordinary import receipt.
 
 ```bash
@@ -1615,7 +1615,7 @@ tclaude agent teleport status
 tclaude agent teleport --home --group helpers
 ```
 
-Teleport transfers native Claude Code or Codex conversation history using the
+Teleport transfers native Claude Code, Codex or OpenCode conversation history using the
 existing agent-offer transport. Move mode keeps the source running until the
 receiver confirms that the imported generation is running. `--clone` keeps the
 source running. There is no destination retry after an offer might have been
@@ -1627,7 +1627,9 @@ The destination gets a fresh agent identity and inbox. Its continuation briefing
 includes the origin, predecessor, current instance, hop count and note. `agent ls`
 and `agent whoami` show its predecessor. The old inbox remains at the source;
 after a completed teleport, mail to the old address bounces with the destination
-address. Teleport does not forward mail or transfer permissions, credentials or
+address. Every receiving import, move or teleport starts with a short arrival briefing: operation and identity, receiver-selected cwd and reason, local Git state, source-reported path/branch/commit facts, and what was not transferred. Missing facts stay unknown. Local clones receive the same orientation, while a paused-backup return names the restored home identity. The briefing uses the startup context or inbox, never raw pane keystrokes.
+
+Teleport does not forward mail or transfer permissions, credentials or
 uncommitted working-tree changes.
 
 Automatic landing requires a group-scoped peer grant `agents.teleport.receive`
@@ -3556,3 +3558,15 @@ The test uses private simulated nodes and elevated test-hub bandwidth; it does
 not change a running operator's nodes or settings. The ordinary chunk-spool
 regression also interrupts a chunk, reopens the spool, and resumes from the
 verified prefix.
+
+OpenCode history uses its supported `export`/`import` CLI projection, not a copy
+of the native SQLite database. Session, message and part IDs are reminted, native
+cwd metadata is remapped, and message/tool text is preserved. Import does not
+carry session permissions or sharing state; the receiving managed server
+reapplies its own permission policy. Private agent XDG stores remain private.
+
+Copilot portable history uses its native append-only event log. The receiver
+remints the session and event identities, writes fresh workspace metadata, and
+resumes with the native CLI. Databases, checkpoints, rewind files, permissions,
+and other executable artifacts are not transferred. Full conversation events
+remain available to the native resume path.

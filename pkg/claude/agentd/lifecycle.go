@@ -4870,6 +4870,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// same function in a loop. handleGroupSpawn keeps only the HTTP
 	// shape — decode + validate above, error/JSON mapping below.
 	p := spawnParams{
+		Arrival:                    arrivalFromRequest(r),
 		AgentID:                    reservedAgentIDFromContext(r.Context()),
 		EffectiveSandbox:           &effectiveSandbox,
 		Name:                       body.Name,
@@ -5114,6 +5115,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 // length/charset-checked, reply-to resolved to a conv-id — so the
 // shared core does no HTTP-shaped validation of its own.
 type spawnParams struct {
+	Arrival         *arrivalContext
 	RemoteJob       *federationJobLaunch // trusted internal remote job boundary
 	launchAuthority func() error
 	BundleHistory   *bundleHistoryLaunch // trusted internal bundle route only
@@ -6965,6 +6967,29 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		}
 	}()
 
+	var importedID string
+	importedCleanup := func() {}
+	importedLaunched := false
+	defer func() {
+		if failure != nil && !importedLaunched {
+			importedCleanup()
+		}
+	}()
+	installHistory := func() *spawnFailure {
+		if p.BundleHistory == nil || importedID != "" {
+			return nil
+		}
+		if !spawnHarness.SupportsHistoryTransfer() || spawnHarness.History.Format() != p.BundleHistory.Format {
+			return &spawnFailure{http.StatusBadRequest, "history", "resolved harness cannot resume this history format"}
+		}
+		var err error
+		importedID, importedCleanup, err = importBundleHistory(spawnHarness, p.BundleHistory, p.Cwd)
+		if err != nil {
+			importedCleanup = func() {}
+			return &spawnFailure{http.StatusBadRequest, "history", "install imported history: " + err.Error()}
+		}
+		return nil
+	}
 	var openCodeLaunch *openCodeLaunch
 	if spawnHarness.UsesAuthoritativeServer() {
 		rememberHTTPProxyLaunchGroup(label, g, p.PermissionOverrides)
@@ -7012,8 +7037,24 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			return nil, &spawnFailure{http.StatusUnprocessableEntity,
 				"unsupported_sandbox_profile_resource_limits", resourceErr.Error()}
 		}
+
+		if p.BundleHistory != nil {
+			if err = prepareOpenCodeTclaudeLayerState(sandboxSpec); err != nil {
+				resourceCleanup()
+				return nil, &spawnFailure{http.StatusInternalServerError, "history", err.Error()}
+			}
+			spawnHarness, err = openCodeHistoryForAgent(spawnHarness, p.AgentID)
+			if err != nil {
+				resourceCleanup()
+				return nil, &spawnFailure{http.StatusInternalServerError, "history", err.Error()}
+			}
+			if fail := installHistory(); fail != nil {
+				resourceCleanup()
+				return nil, fail
+			}
+		}
 		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
-			label, p.Cwd, p.Name, "", permissionJSON,
+			label, p.Cwd, p.Name, importedID, permissionJSON,
 			p.SandboxImplementation, sandboxSpec, resourceCgroupDir)
 		if err != nil && resourceCgroupDir != "" &&
 			errors.Is(err, errOpenCodeResourceCgroup) &&
@@ -7022,7 +7063,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			resourceCleanup()
 			resourceCgroupDir = ""
 			openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
-				label, p.Cwd, p.Name, "", permissionJSON,
+				label, p.Cwd, p.Name, importedID, permissionJSON,
 				p.SandboxImplementation, sandboxSpec, "")
 		}
 		if err != nil {
@@ -7071,25 +7112,10 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		}
 	}
 
-	var importedID string
-	importedCleanup := func() {}
-	importedLaunched := false
-	if p.BundleHistory != nil {
-		if !spawnHarness.SupportsHistoryTransfer() || spawnHarness.History.Format() != p.BundleHistory.Format {
-			return nil, &spawnFailure{http.StatusBadRequest, "history", "resolved harness cannot resume this history format"}
-		}
-		var cleanup func()
-		var err error
-		importedID, cleanup, err = importBundleHistory(spawnHarness, p.BundleHistory, p.Cwd)
-		if err != nil {
-			return nil, &spawnFailure{http.StatusBadRequest, "history", "install imported history: " + err.Error()}
-		}
-		importedCleanup = cleanup
-		defer func() {
-			if failure != nil && !importedLaunched {
-				importedCleanup()
-			}
-		}()
+	if fail := installHistory(); fail != nil {
+		return nil, fail
+	}
+	if importedID != "" {
 		launchEnroll = true
 	}
 	if p.DarwinRouteCapable && !launchEnroll {
@@ -7106,6 +7132,13 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		if routeEnabled && (!layeredLaunch || !launchEnroll) {
 			return nil, &spawnFailure{http.StatusUnprocessableEntity, "unsupported_group_route_launch", "Linux group routes require a pre-enrolled pane-authoritative launch with tclaude’s sandbox"}
 		}
+	}
+	if p.Arrival != nil {
+		if p.AgentID == "" {
+			p.AgentID = db.NewAgentID()
+		}
+		p.InitialMessage = buildArrivalBriefing(*p.Arrival, p.AgentID, p.Cwd, groupName, spawnHarness.Name, p.Model) + "\n\n" + p.InitialMessage
+		p.Arrival = nil // an async continuation must not add a second briefing
 	}
 	var preConvID string
 	var preMsgID int64

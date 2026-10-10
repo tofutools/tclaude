@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -20,12 +21,15 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
 	"github.com/tofutools/tclaude/pkg/federation/hub"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
+	"github.com/tofutools/tclaude/pkg/testharness"
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
@@ -40,10 +44,25 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 	name := os.Getenv("TCLAUDE_TEST_HISTORY_HARNESS")
 	t.Setenv("CODEX_HOME", "")
 	f := newFlow(t)
+	if name == "opencode" {
+		bin := filepath.Join(f.World.HomeDir, "bin")
+		require.NoError(t, os.MkdirAll(bin, 0700))
+		script := "#!/bin/sh\nexec '" + strings.ReplaceAll(os.Args[0], "'", "'\\''") + "' -test.run=^TestFederation_OpenCodeHistoryCLI$ -- \"$@\"\n"
+		require.NoError(t, os.WriteFile(filepath.Join(bin, "opencode"), []byte(script), 0700))
+		t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+		t.Setenv("TCLAUDE_OPENCODE_HISTORY_FLOW_HELPER", "1")
+	}
+
 	agentd.ResetFederationForTest()
 	t.Cleanup(agentd.ResetFederationForTest)
 	cwd := testutil.CanonicalTempDir(t)
 	f.HaveGroup("project")
+	if name == "opencode" || name == "copilot" {
+		_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "native-history", Harness: name, SandboxImplementation: "off"})
+		require.NoError(t, err)
+		_, err = db.SetAgentGroupDefaultProfile("project", "native-history")
+		require.NoError(t, err)
+	}
 	_, err := db.SetAgentGroupDefaultCwd("project", cwd)
 	require.NoError(t, err)
 	// The operator explicitly permits return-home within the revisit window.
@@ -89,22 +108,72 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 		}
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&in))
 		if in.Seed {
-			if name == "codex" {
+			switch name {
+			case "copilot":
+				require.NoError(t, agentd.Spawn.SpawnNew(clcommon.SpawnArgs{Harness: "copilot", SessionID: in.Conv, Label: "traveller", Cwd: cwd, TrustDir: true, Approval: "all", SandboxImplementation: "off"}))
+			case "codex":
 				f.HaveAliveCodexSession(in.Conv, "traveller", "traveller-pane", cwd)
-			} else {
+			default:
 				f.HaveAliveSession(in.Conv, "traveller", "traveller-pane", cwd)
+			}
+
+			if name == "opencode" {
+				row, err := db.LoadSession("traveller")
+				require.NoError(t, err)
+				row.Harness = "opencode"
+				row.ApprovalPolicy = ""
+				row.SandboxImplementation = "off"
+				require.NoError(t, db.SaveSession(row))
+				// The initial simulator session was Claude; replace its durable
+				// launch facts with the explicitly selected OpenCode posture too.
+				profile, err := db.ConversationResumeProfileForConv(in.Conv)
+				require.NoError(t, err)
+				profile.Harness = "opencode"
+				profile.FallbackRelaunch.SandboxImplementation = &row.SandboxImplementation
+				require.NoError(t, db.SetConversationResumeProfile(in.Conv, *profile))
 			}
 			f.HaveMember("project", in.Conv)
 		}
 		// Append through the same native writer as a harness completing a turn.
-		if name == "codex" {
+		switch name {
+		case "opencode":
+			require.NoError(t, testharness.AppendOpenCodeHistory(f.World.HomeDir, in.Conv, cwd, in.Text, in.Assistant))
+			_, err := harness.MustGet("opencode").Convs.ListConvs("")
+			require.NoError(t, err)
+			if in.Seed {
+				require.NoError(t, agentd.StartHistoryOpenCodeRuntimeForTest("traveller", cwd, in.Conv))
+				t.Cleanup(func() { agentd.StopHistoryOpenCodeRuntimeForTest("traveller") })
+			}
+			row, err := db.FindSessionByConvID(in.Conv)
+			require.NoError(t, err)
+			require.NotNil(t, row)
+			row.Status = "idle"
+			require.NoError(t, db.SaveSession(row))
+
+		case "copilot":
+			require.NoError(t, testharness.AppendCopilotHistory(f.World.HomeDir, in.Conv, in.Text, in.Assistant))
+		case "codex":
 			require.NoError(t, f.World.Codexes.GetByConvID(in.Conv).WriteExchange(in.Text, in.Assistant))
-		} else {
+		default:
 			cc := f.World.CCs.GetByConvID(in.Conv)
 			require.NoError(t, cc.WriteUserTurn(in.Text))
 			require.NoError(t, cc.AppendTurn(map[string]any{"type": "assistant", "cwd": cwd, "message": map[string]any{"role": "assistant", "content": []map[string]string{{"type": "text", "text": in.Assistant}}}}))
 		}
 		require.NoError(t, db.GrantAgentPermissionWithScope(in.Conv, agentd.PermSelfTeleport, string(mustJSON(t, map[string]any{"peer": []string{in.Peer}})), "test operator"))
+		w.WriteHeader(204)
+	})
+
+	mux.HandleFunc("/test/opencode-exit", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			PID int `json:"pid"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&in))
+		runtime, err := db.FindOpenCodeRuntimeByPID(in.PID)
+		require.NoError(t, err)
+		require.NotNil(t, runtime)
+		cc := f.World.CCs.GetByConvID(runtime.ConvID)
+		require.NotNil(t, cc)
+		cc.Shutdown()
 		w.WriteHeader(204)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -116,6 +185,10 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 		f.Mux.ServeHTTP(w, r)
 	})
 	srv := httptest.NewServer(mux)
+	if name == "opencode" {
+		t.Setenv("TCLAUDE_OPENCODE_HISTORY_EXIT_URL", srv.URL+"/test/opencode-exit")
+	}
+
 	t.Cleanup(srv.Close)
 	instance := agentd.FederationInstanceIDForTest()
 	identity, err := proto.LoadIdentity(agentd.FederationKeyPath())
@@ -157,19 +230,45 @@ func startHistoryNode(t *testing.T, name, label string) historyNode {
 		case err := <-finished:
 			_ = log.Close()
 			if err != nil {
-				raw, _ := os.ReadFile(log.Name())
-				t.Errorf("%s node: %v\n%s", label, err, raw)
+				t.Errorf("%s node: %v", label, err)
 			}
-		case <-time.After(5 * time.Second):
+		// Federation shutdown drains in-flight sends (each may take 15s), as
+		// well as background reconciliation. Leave room under runner load.
+		case <-time.After(30 * time.Second):
 			_ = cmd.Process.Kill()
 			<-finished
 			_ = log.Close()
+			t.Errorf("%s node failed to shut down", label)
+		}
+		if t.Failed() {
 			raw, _ := os.ReadFile(log.Name())
-			t.Errorf("%s node failed to shut down\n%s", label, raw)
+			t.Logf("%s node log:\n%s", label, raw)
 		}
 	})
-	fedEventuallyWithin(t, label+" node starts", 30*time.Second, func() bool { raw, e := os.ReadFile(infoPath); return e == nil && json.Unmarshal(raw, &node) == nil })
+	// Each fresh process migrates its own SQLite database. Race instrumentation
+	// plus concurrent CPU load can exceed the ordinary 30s startup budget.
+	fedEventuallyWithin(t, label+" node starts", 90*time.Second, func() bool { raw, e := os.ReadFile(infoPath); return e == nil && json.Unmarshal(raw, &node) == nil })
 	return node
+}
+
+// Capture both sides before node cleanup, including confirmation delivery and
+// the last retirement error. Diagnostic requests must not fail the test again
+// or hang cleanup when a node is unresponsive.
+func historyMoveDiagnostics(t *testing.T, from, to historyNode, id string) {
+	t.Helper()
+	client := &http.Client{Timeout: 2 * time.Second}
+	for _, node := range []historyNode{from, to} {
+		for _, path := range []string{"/v1/federation/moves/" + id, "/v1/federation/outbox", "/v1/federation/status"} {
+			resp, err := client.Get(node.URL + path)
+			if err != nil {
+				t.Logf("%s %s: %v", node.Instance, path, err)
+				continue
+			}
+			raw, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+			_ = resp.Body.Close()
+			t.Logf("%s %s: HTTP %d, read error %v\n%s", node.Instance, path, resp.StatusCode, err, raw)
+		}
+	}
 }
 
 func historyNodeRequest(t *testing.T, node historyNode, method, path, conv string, body any) (int, []byte) {
@@ -191,7 +290,7 @@ func historyNodeRequest(t *testing.T, node historyNode, method, path, conv strin
 }
 
 func TestFederation_TeleportHistoryRoundTrip(t *testing.T) {
-	for _, name := range []string{"claude", "codex"} {
+	for _, name := range []string{"claude", "codex", "opencode", "copilot"} {
 		t.Run(name, func(t *testing.T) { runHistoryRoundTrip(t, name, false) })
 	}
 }
@@ -205,7 +304,7 @@ func historyTestLifetime() time.Duration {
 	if os.Getenv("TCLAUDE_LARGE_AGENT_TRANSFER") == "1" {
 		return 30 * time.Minute
 	}
-	return 90 * time.Second
+	return 5 * time.Minute
 }
 func historyTestRequestTimeout() time.Duration {
 	if os.Getenv("TCLAUDE_LARGE_AGENT_TRANSFER") == "1" {
@@ -214,6 +313,10 @@ func historyTestRequestTimeout() time.Duration {
 	return 15 * time.Second
 }
 func runHistoryRoundTrip(t *testing.T, name string, large bool) {
+	sourceConv := moveSourceConv
+	if name == "opencode" {
+		sourceConv = "ses_historysource"
+	}
 	st, err := hub.OpenStore(filepath.Join(testutil.CanonicalTempDir(t), "hub.sqlite"))
 	require.NoError(t, err)
 	h, err := hub.New(st, hub.Config{BytesPerMinute: 2 << 30, StreamBytesPerSecond: 100 << 20, FramesPerMinute: 6000})
@@ -255,7 +358,7 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 	}
 	const original = "Original plan from node A: repair the index."
 	const originalReply = "I will inspect the source repository before travelling."
-	code, raw := historyNodeRequest(t, a, "POST", "/test/turn", "", map[string]any{"Conv": moveSourceConv, "Text": original, "Assistant": originalReply, "Peer": b.Instance, "Seed": true})
+	code, raw := historyNodeRequest(t, a, "POST", "/test/turn", "", map[string]any{"Conv": sourceConv, "Text": original, "Assistant": originalReply, "Peer": b.Instance, "Seed": true})
 	require.Equal(t, 204, code, string(raw))
 	if large {
 		code, raw = historyNodeRequest(t, a, "POST", "/test/large", "", nil)
@@ -298,8 +401,16 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 	}
 	land := func(node historyNode, d bundletransfer.Descriptor) string {
 		path := "/v1/federation/bundle-offers/" + d.ID + "/import"
+		var lastRaw []byte
+		var lastCode int
+		t.Cleanup(func() {
+			if t.Failed() {
+				t.Logf("last import preview: %d %s", lastCode, lastRaw)
+			}
+		})
 		fedEventuallyWithin(t, "offer received", historyTestRequestTimeout(), func() bool {
-			code, _ := historyNodeRequest(t, node, "POST", path, "", map[string]any{"cwd": node.Cwd})
+			code, raw := historyNodeRequest(t, node, "POST", path, "", map[string]any{"cwd": node.Cwd})
+			lastCode, lastRaw = code, raw
 			return code == 200
 		})
 		code, raw := historyNodeRequest(t, node, "POST", path, "", map[string]any{"apply": true, "cwd": node.Cwd})
@@ -307,23 +418,53 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 		var result struct {
 			History bool `json:"history"`
 			Spawn   struct {
-				Conv string `json:"conv_id"`
+				Conv    string `json:"conv_id"`
+				AgentID string `json:"agent_id"`
 			} `json:"spawn"`
 		}
 		require.NoError(t, json.Unmarshal(raw, &result))
 		require.True(t, result.History)
-		require.NotEmpty(t, result.Spawn.Conv)
+		if result.Spawn.Conv == "" {
+			require.NotEmpty(t, result.Spawn.AgentID, string(raw))
+			// Managed native imports may finish after the HTTP inline grace.
+			fedEventuallyWithin(t, "imported agent enrolled", 30*time.Second, func() bool {
+				code, raw := historyNodeRequest(t, node, "GET", "/v1/groups/project/members", "", nil)
+				if code != 200 {
+					return false
+				}
+				var members []struct {
+					AgentID string `json:"agent_id"`
+					Conv    string `json:"conv_id"`
+				}
+				if json.Unmarshal(raw, &members) != nil {
+					return false
+				}
+				for _, member := range members {
+					if member.AgentID == result.Spawn.AgentID {
+						result.Spawn.Conv = member.Conv
+					}
+				}
+				return result.Spawn.Conv != ""
+			})
+		}
+		require.NotEmpty(t, result.Spawn.Conv, string(raw))
 		return result.Spawn.Conv
 	}
-	outward := teleport(a, b, moveSourceConv, false)
+	outward := teleport(a, b, sourceConv, false)
 	remoteConv := land(b, outward)
 	if large {
 		require.True(t, interrupted.Load(), "the third stream chunk must be interrupted before successful resume")
 		chunks := (outward.Bytes + bundletransfer.ChunkBytes - 1) / bundletransfer.ChunkBytes
 		require.Equal(t, int32(2*(chunks+1)), streamJoins.Load(), "completed chunks must not be fetched again after interruption")
 	}
-	require.NotEqual(t, moveSourceConv, remoteConv)
-	fedEventually(t, "A retires only after B is running", func() bool {
+	require.NotEqual(t, sourceConv, remoteConv)
+	t.Cleanup(func() {
+		if t.Failed() {
+			historyMoveDiagnostics(t, a, b, outward.ID)
+		}
+	})
+	// The two-daemon delivery/retirement crosses production retries (15s each).
+	fedEventuallyWithin(t, "A retires only after B is running", 60*time.Second, func() bool {
 		code, raw := historyNodeRequest(t, a, "GET", "/v1/federation/moves/"+outward.ID, "", nil)
 		var move struct {
 			State string `json:"state"`
@@ -347,7 +488,7 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 	require.True(t, home.Teleport.Home)
 	require.Equal(t, a.Instance, home.Teleport.OriginInstance)
 	returned := land(a, home)
-	require.NotEqual(t, moveSourceConv, returned)
+	require.NotEqual(t, sourceConv, returned)
 	require.NotEqual(t, remoteConv, returned)
 	// Export through the production read surface after native SpawnResume has
 	// reopened the reminted transcript; both the original and new turns survive.
@@ -441,4 +582,22 @@ func (c *historyInterruptConn) Read(p []byte) (int, error) {
 		_ = c.Close()
 	}
 	return n, err
+}
+
+func TestFederation_OpenCodeHistoryCLI(t *testing.T) {
+	if os.Getenv("TCLAUDE_OPENCODE_HISTORY_FLOW_HELPER") != "1" {
+		t.Skip("native CLI subprocess")
+	}
+	args := os.Args
+	for i, arg := range args {
+		if arg == "--" {
+			args = args[i+1:]
+			break
+		}
+	}
+	if err := testharness.OpenCodeHistoryCLI(args); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	os.Exit(0)
 }
