@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"net/http"
 	"net/http/httptest"
@@ -32,11 +33,12 @@ func TestDashboardTerminalFileVerifiedDownloadAndHead(t *testing.T) {
 		method  string
 		corrupt bool
 		status  int
-	}{{"GET", false, 200}, {"HEAD", false, 200}, {"GET", true, 403}} {
+		list    bool
+	}{{"GET", false, 200, false}, {"HEAD", false, 200, false}, {"GET", true, 403, false}, {"GET", false, 200, true}} {
 		before := len(fh.peer.envelopes(proto.KindTerminalFile))
 		done := make(chan *httptest.ResponseRecorder, 1)
 		go func() {
-			done <- testharness.Serve(agentd.BuildDashboardHandlerForTest(), httptest.NewRequest(test.method, endpoint, nil))
+			done <- testharness.Serve(agentd.BuildDashboardHandlerForTest(), httptest.NewRequest(test.method, endpoint+"&list="+fmt.Sprint(test.list), nil))
 		}()
 		var env *proto.Envelope
 		fedEventually(t, "browser file request", func() bool {
@@ -51,11 +53,13 @@ func TestDashboardTerminalFileVerifiedDownloadAndHead(t *testing.T) {
 			bundletransfer.Request
 			Viewer, Path string
 			Head         bool
+			List         bool
 		}
 		require.NoError(t, env.DecodePayload(&req))
 		require.Equal(t, open.Stream, req.Viewer)
 		require.Equal(t, "report.txt", req.Path)
 		require.Equal(t, test.method == "HEAD", req.Head)
+		require.Equal(t, test.list, req.List)
 		kp, err := stream.NewKeyPair()
 		require.NoError(t, err)
 		answer := bundletransfer.Answer{Request: req.Request, OK: true}
@@ -66,6 +70,9 @@ func TestDashboardTerminalFileVerifiedDownloadAndHead(t *testing.T) {
 		fh.peer.send(reply)
 		conn := fedPeerStream(t, fh.peer, req.Stream, kp, req.Key, false)
 		body := []byte("binary report\x00\xff")
+		if test.list {
+			body = []byte(`{"entries":[{"path":"report.txt","kind":"file","size":9}],"truncated":false}`)
+		}
 		hash := sha256.Sum256(body)
 		digest := hex.EncodeToString(hash[:])
 		if test.corrupt {
@@ -88,7 +95,12 @@ func TestDashboardTerminalFileVerifiedDownloadAndHead(t *testing.T) {
 		if test.status == 200 {
 			require.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
 			require.Equal(t, "sandbox", rec.Header().Get("Content-Security-Policy"))
-			require.Contains(t, rec.Header().Get("Content-Disposition"), "attachment")
+			if test.list {
+				require.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+				require.Empty(t, rec.Header().Get("Content-Disposition"))
+			} else {
+				require.Contains(t, rec.Header().Get("Content-Disposition"), "attachment")
+			}
 			if req.Head {
 				require.Empty(t, rec.Body.Bytes())
 			} else {
@@ -115,14 +127,19 @@ func TestDashboardTerminalFileVerifiedDownloadAndHead(t *testing.T) {
 	require.Equal(t, 403, refused.Code)
 }
 
-func TestFederationFileCLIUsesTemporaryPinnedViewer(t *testing.T) { cliFileTransferFlow(t, false) }
-func TestFederationFileCLIStopsOnViewerReset(t *testing.T)        { cliFileTransferFlow(t, true) }
-func cliFileTransferFlow(t *testing.T, reset bool) {
+func TestFederationFileCLIUsesTemporaryPinnedViewer(t *testing.T) {
+	cliFileTransferFlow(t, false, false)
+}
+func TestFederationFileCLIStopsOnViewerReset(t *testing.T) { cliFileTransferFlow(t, true, false) }
+func TestFederationFileCLIListsTemporaryPinnedViewer(t *testing.T) {
+	cliFileTransferFlow(t, false, true)
+}
+func cliFileTransferFlow(t *testing.T, reset, list bool) {
 	fh := newFedHarness(t)
 	row := dashboardRemoteTerminalCatalog(t, fh, proto.CapSessionsWatch, proto.CapSessionsFilesRead)
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
-		done <- fedHuman(t, fh.f, "GET", "/v1/federation/file?"+url.Values{"target": {row.Agent + "@bob"}, "path": {"empty.txt"}}.Encode(), nil)
+		done <- fedHuman(t, fh.f, "GET", "/v1/federation/file?"+url.Values{"target": {row.Agent + "@bob"}, "path": {"empty.txt"}, "list": {fmt.Sprint(list)}}.Encode(), nil)
 	}()
 	var env *proto.Envelope
 	fedEventually(t, "CLI viewer open", func() bool {
@@ -155,10 +172,12 @@ func cliFileTransferFlow(t *testing.T, reset bool) {
 	var req struct {
 		bundletransfer.Request
 		Viewer, Path string
+		List         bool
 	}
 	require.NoError(t, env.DecodePayload(&req))
 	require.Equal(t, open.Stream, req.Viewer)
 	require.Equal(t, "empty.txt", req.Path)
+	require.Equal(t, list, req.List)
 	fileKey, err := stream.NewKeyPair()
 	require.NoError(t, err)
 	answer := bundletransfer.Answer{Request: req.Request, OK: true}
@@ -168,8 +187,12 @@ func cliFileTransferFlow(t *testing.T, reset bool) {
 	reply.InReplyTo = env.ID
 	fh.peer.send(reply)
 	file := fedPeerStream(t, fh.peer, req.Stream, fileKey, req.Key, false)
-	hash := sha256.Sum256(nil)
-	size := 0
+	var body []byte
+	if list {
+		body = []byte(`{"entries":[],"truncated":false}`)
+	}
+	hash := sha256.Sum256(body)
+	size := len(body)
 	if reset {
 		size = 1
 	}
@@ -191,12 +214,20 @@ func cliFileTransferFlow(t *testing.T, reset bool) {
 		file.Close()
 		return
 	}
+	if len(body) > 0 {
+		_, err = file.Write(body)
+		require.NoError(t, err)
+	}
 	require.NoError(t, file.CloseWrite())
 	rec := <-done
 	file.Close()
 	require.Equal(t, 200, rec.Code, rec.Body.String())
-	require.Empty(t, rec.Body.Bytes())
-	require.Contains(t, rec.Header().Get("Content-Disposition"), "empty.txt")
+	require.Equal(t, string(body), rec.Body.String())
+	if list {
+		require.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+	} else {
+		require.Contains(t, rec.Header().Get("Content-Disposition"), "empty.txt")
+	}
 	viewers := fedHuman(t, fh.f, "GET", "/v1/federation/viewers", nil)
 	require.NotContains(t, viewers.Body.String(), open.Stream)
 }

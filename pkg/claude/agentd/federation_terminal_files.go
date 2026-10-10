@@ -30,6 +30,7 @@ type fedTerminalFileRequest struct {
 	Viewer string `json:"viewer"`
 	Path   string `json:"path"`
 	Head   bool   `json:"head"`
+	List   bool   `json:"list,omitempty"`
 }
 type fedTerminalFileHeader struct {
 	Status int    `json:"status"`
@@ -221,7 +222,12 @@ func (rt *fedRuntime) sendTerminalFile(peer *db.FederationPeer, env *proto.Envel
 		return
 	}
 	defer func() { _ = root.Close() }()
-	f, err := openTerminalFile(root, rootPath, req.Path)
+	var f *os.File
+	if req.List {
+		f, err = terminalDirectoryListing(root, rootPath, req.Path)
+	} else {
+		f, err = openTerminalFile(root, rootPath, req.Path)
+	}
 	if err != nil {
 		fail(err)
 		return
@@ -298,6 +304,9 @@ func (rt *fedRuntime) sendTerminalFile(peer *db.FederationPeer, env *proto.Envel
 }
 
 func (rt *fedRuntime) receiveTerminalFile(ctx context.Context, v *fedTerminalView, path string, head bool) (*os.File, fedTerminalFileHeader, error) {
+	return rt.receiveTerminalFileMode(ctx, v, path, head, false)
+}
+func (rt *fedRuntime) receiveTerminalFileMode(ctx context.Context, v *fedTerminalView, path string, head, list bool) (*os.File, fedTerminalFileHeader, error) {
 	var h fedTerminalFileHeader
 	if len(path) > 4096 || strings.ContainsRune(path, 0) {
 		return nil, h, terminalFileRefusal(403, "unsafe_path", "invalid file path")
@@ -324,7 +333,7 @@ func (rt *fedRuntime) receiveTerminalFile(ctx context.Context, v *fedTerminalVie
 	rt.bundleWaiters[sid] = fedBundleWaiter{Peer: v.Peer, Offer: v.ID, Answer: ch}
 	rt.bundleMu.Unlock()
 	defer func() { rt.bundleMu.Lock(); delete(rt.bundleWaiters, sid); rt.bundleMu.Unlock() }()
-	req := fedTerminalFileRequest{Request: bundletransfer.Request{Offer: v.ID, Stream: sid, Key: kp.Pub}, Viewer: v.ID, Path: path, Head: head}
+	req := fedTerminalFileRequest{Request: bundletransfer.Request{Offer: v.ID, Stream: sid, Key: kp.Pub}, Viewer: v.ID, Path: path, Head: head, List: list}
 	if !rt.sendControl(v.Peer, proto.KindTerminalFile, "", req) {
 		return nil, h, terminalFileRefusal(503, "peer_offline", "peer unavailable")
 	}
@@ -409,7 +418,8 @@ func handleDashboardFederationTerminalFile(w http.ResponseWriter, r *http.Reques
 		writeError(w, h.Status, h.Code, h.Error)
 		return
 	}
-	f, h, err := rt.receiveTerminalFile(r.Context(), v, r.URL.Query().Get("path"), r.Method == "HEAD")
+	list := r.URL.Query().Get("list") == "true"
+	f, h, err := rt.receiveTerminalFileMode(r.Context(), v, r.URL.Query().Get("path"), r.Method == "HEAD", list)
 	status := h.Status
 	if err != nil {
 		h = fileErrorHeader(err)
@@ -423,8 +433,12 @@ func handleDashboardFederationTerminalFile(w http.ResponseWriter, r *http.Reques
 	if f != nil {
 		defer func() { _ = f.Close() }()
 	}
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filepath.Base(r.URL.Query().Get("path"))}))
+	if list {
+		w.Header().Set("Content-Type", "application/json")
+	} else {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filepath.Base(r.URL.Query().Get("path"))}))
+	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Security-Policy", "sandbox")
 	w.Header().Set("Cache-Control", "private, no-store")

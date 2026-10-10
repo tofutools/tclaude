@@ -134,6 +134,10 @@ func terminalFileRelative(root, path string) (string, error) {
 }
 
 func openTerminalFile(root *os.File, rootPath, path string) (*os.File, error) {
+	return openTerminalProjectPath(root, rootPath, path, false)
+}
+
+func openTerminalProjectPath(root *os.File, rootPath, path string, directory bool) (*os.File, error) {
 	rel, err := terminalFileRelative(rootPath, path)
 	if err != nil {
 		return nil, err
@@ -147,7 +151,7 @@ func openTerminalFile(root *os.File, rootPath, path string) (*os.File, error) {
 	parts := strings.Split(rel, "/")
 	for i, part := range parts {
 		flags := unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_CLOEXEC | unix.O_NONBLOCK
-		if i < len(parts)-1 {
+		if i < len(parts)-1 || directory {
 			flags |= unix.O_DIRECTORY
 		}
 		next, e := unix.Openat(fd, part, flags, 0)
@@ -163,11 +167,11 @@ func openTerminalFile(root *os.File, rootPath, path string) (*os.File, error) {
 	f := os.NewFile(uintptr(fd), rel)
 	fd = -1
 	info, err := f.Stat()
-	if err != nil || !info.Mode().IsRegular() {
+	if err != nil || (directory && !info.IsDir()) || (!directory && !info.Mode().IsRegular()) {
 		_ = f.Close()
 		return nil, terminalFileRefusal(403, "unsafe_path", "only regular files can be downloaded")
 	}
-	if info.Size() > terminalFileMaxBytes {
+	if !directory && info.Size() > terminalFileMaxBytes {
 		_ = f.Close()
 		return nil, terminalFileRefusal(413, "file_too_large", "file exceeds the 32 MiB download cap")
 	}
