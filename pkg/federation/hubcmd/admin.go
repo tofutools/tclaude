@@ -17,7 +17,7 @@ func adminCmd() *cobra.Command {
 			if err != nil {
 				fail(err)
 			}
-			defer st.Close()
+			defer func() { _ = st.Close() }()
 			token, err := st.PrepareAdminClaim(true, time.Now())
 			if err != nil {
 				fail(err)

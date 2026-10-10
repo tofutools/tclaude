@@ -167,7 +167,7 @@ func (s *Store) Revoke(instanceID string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.Exec(`UPDATE instances SET revoked=revoked WHERE instance_id=?`, instanceID); err != nil {
 		return err
 	}

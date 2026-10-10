@@ -75,7 +75,7 @@ func (s *Store) PatchSettings(overrides map[string]*int64) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	for key, value := range overrides {
 		if value == nil {
 			_, err = tx.Exec(`DELETE FROM hub_settings WHERE key=?`, key)

@@ -80,7 +80,7 @@ func writeClaimFile(path, token string) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(f.Name())
+	defer func() { _ = os.Remove(f.Name()) }()
 	if _, err = f.WriteString(token + "\n"); err == nil {
 		err = f.Sync()
 	}
@@ -101,7 +101,7 @@ func (s *Store) PrepareAdminClaim(reset bool, now time.Time) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.Exec(`UPDATE meta SET v=v WHERE k='admin_generation'`); err != nil {
 		return "", err
 	}
@@ -157,7 +157,7 @@ func (s *Store) ClaimAdmin(instance string, pub ed25519.PublicKey, token string,
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.Exec(`UPDATE hub_admin_claim SET consumed=consumed WHERE singleton=1`); err != nil {
 		return err
 	}
@@ -278,7 +278,7 @@ func (s *Store) SetAdmin(instance, creator string, caps []string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.Exec(`UPDATE hub_admins SET created_at=created_at WHERE 0`); err != nil {
 		return err
 	}
@@ -308,7 +308,7 @@ func (s *Store) RemoveAdmin(instance string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.Exec(`UPDATE hub_admins SET created_at=created_at WHERE 0`); err != nil {
 		return err
 	}
@@ -334,7 +334,7 @@ func (s *Store) AuthorizeAdminRequest(instance string, pub []byte, r *proto.HubA
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.Exec(`DELETE FROM hub_admin_replay WHERE expires_at<?`, ts(time.Now().Add(-time.Minute))); err != nil {
 		return err
 	}

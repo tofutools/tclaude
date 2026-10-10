@@ -32,7 +32,8 @@ func (c *Client) AdminCall(ctx context.Context, method string, payload any) (*pr
 		c.mu.Unlock()
 		return nil, errors.New("connected hub does not support admin RPCs; upgrade it locally")
 	}
-	request := &proto.HubAdminRequest{ID: proto.NewEnvelopeID(), HubID: hubID, Nonce: nonce, Generation: generation, Method: method, Payload: raw, IssuedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Minute)}
+	now := time.Now().UTC()
+	request := &proto.HubAdminRequest{ID: proto.NewEnvelopeID(), HubID: hubID, Nonce: nonce, Generation: generation, Method: method, Payload: raw, IssuedAt: now, ExpiresAt: now.Add(time.Minute)}
 	request.Sign(c.opts.Identity)
 	ch := make(chan *proto.Frame, 1)
 	c.pending[request.ID] = ch
