@@ -457,7 +457,14 @@ export const REMOTE_FILE_ERRORS = Object.freeze({
   file_too_large: 'the file is over the 32 MiB download limit',
   viewer_closed: 'this terminal view is no longer live; reopen it to download',
   peer_offline: 'the peer is offline; try again when it reconnects',
+  not_found: 'no such file under the agent\'s working directory',
+  limit: 'another download from this peer is still running; try again shortly',
+  timeout: 'the download took too long; try again',
 });
+
+// Statuses that name their refusal on their own; only an ambiguous 403 needs
+// its body read (HEAD has none).
+const REMOTE_FILE_STATUS = Object.freeze({ 404: 'not_found', 413: 'file_too_large', 429: 'limit', 503: 'peer_offline', 504: 'timeout' });
 
 export function remoteFileError(code, status) {
   return REMOTE_FILE_ERRORS[code] || `download unavailable (${status || 'network error'})`;
@@ -663,14 +670,17 @@ export function attachTerminalInteractions({
   }
 
   // downloadRemoteFile fetches a path from the peer through this node's
-  // pinned viewer. HEAD carries no error body, so a refused preflight is read
-  // once more with an aborted GET to learn the stable error code.
+  // pinned viewer. HEAD carries no error body, so a 403 preflight (several
+  // refusals share it) is read once more with an aborted GET for its stable
+  // code; other statuses name their refusal and are never retried as a GET,
+  // which would transfer the file in full if it had become available.
   async function downloadRemoteFile(path) {
     const viewer = remoteFileViewer();
     if (!viewer) throw new Error(REMOTE_FILE_ERRORS.not_shared);
     const href = `/api/federation/terminal-file?${new URLSearchParams({ terminal: terminalPath, viewer, path })}`;
     const head = await fetchImpl(href, { method: 'HEAD', credentials: 'same-origin', cache: 'no-store' }).catch(() => null);
     if (!head?.ok) {
+      if (head?.status !== 403) throw new Error(remoteFileError(REMOTE_FILE_STATUS[head?.status], head?.status));
       const ctl = new AbortController();
       const res = await fetchImpl(href, { credentials: 'same-origin', cache: 'no-store', signal: ctl.signal }).catch(() => null);
       let code = '';
@@ -693,7 +703,9 @@ export function attachTerminalInteractions({
   const linkFor = (raw, visible = false) => {
     const link = safeTerminalLink(raw);
     if (!link || link.kind !== 'file') return link;
-    if (remoteFileViewer) return visible && remoteFileViewer() ? link : null;
+    // A remote path downloads exactly as shown: no percent-decoding, which
+    // could make the target differ from the visible text.
+    if (remoteFileViewer) return visible && remoteFileViewer() && !String(raw).includes('%') ? link : null;
     return fileDownloads ? link : null;
   };
   const activateLink = (event, raw, visible = false) => {

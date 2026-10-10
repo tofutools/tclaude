@@ -729,8 +729,8 @@ test('a remote terminal links visible paths only while the live view holds the p
     links.hover({}, 'file:///srv/proj/.env');
     assert.equal(statuses.at(-1), 'blocked unsafe link');
 
-    // A refused HEAD has no body: one aborted GET reads the stable code.
-    for (const code of Object.keys(REMOTE_FILE_ERRORS)) {
+    // A refused HEAD has no body: a 403 is read once with an aborted GET.
+    for (const code of ['not_shared', 'unsafe_path', 'root_too_broad', 'viewer_closed']) {
       fetches.length = 0;
       answer = async (u, init) => init.method === 'HEAD' ? { ok: false, status: 403 } : { ok: false, status: 403, json: async () => ({ code }) };
       link.activate({ ctrlKey: true }, link.text);
@@ -738,7 +738,18 @@ test('a remote terminal links visible paths only while the live view holds the p
       assert.equal(fetches.length, 2); assert.ok(fetches[1][1].signal, 'the error read is abortable');
       assert.equal(statuses.at(-1), REMOTE_FILE_ERRORS[code].slice(0, 120));
     }
+    // Other statuses explain themselves and never re-read as a GET.
+    for (const [status, code] of [[404, 'not_found'], [413, 'file_too_large'], [429, 'limit'], [503, 'peer_offline'], [504, 'timeout']]) {
+      fetches.length = 0;
+      answer = async () => ({ ok: false, status });
+      link.activate({ ctrlKey: true }, link.text);
+      await settle(); await settle();
+      assert.equal(fetches.length, 1, `${status} is not re-read`);
+      assert.equal(statuses.at(-1), REMOTE_FILE_ERRORS[code].slice(0, 120));
+    }
     assert.equal(anchors.length, 1, 'a refused download clicks nothing');
+    links.hover({}, '/srv/proj/%2e%2e/%2e%2e/home/u/.ssh/id');
+    assert.equal(statuses.at(-1), 'blocked unsafe link', 'a remote path is never percent-decoded');
     viewer = '';
     assert.deepEqual(linksAt(), [], 'the view closed: links go');
   } finally {

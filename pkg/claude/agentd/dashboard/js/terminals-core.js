@@ -555,7 +555,7 @@ export function mountTerminalWidget({
     if (disposed || mine !== generation) return false;
     const proto = locationRef.protocol === 'https:' ? 'wss:' : 'ws:';
     const socket = new WebSocketCtor(proto + '//' + locationRef.host + wsPath);
-    if (remote) setRemote({ mode: '', closed: null });
+    if (remote) setRemote({ mode: '', closed: null, files: false, viewer: '' });
     socket.binaryType = 'arraybuffer';
     ws = socket;
     let openedAt = null;

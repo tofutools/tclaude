@@ -663,6 +663,7 @@ test('a remote terminal follows the hello: pinned size, no resizes, watch-only d
   await widget.connect();
   const again = fakes.sockets[1];
   again.open();
+  assert.equal(fakes.interactionOptions().remoteFileViewer(), '', 'no file links before the new hello');
   assert.equal(widget.remoteState().closed, null, 'a new connection forgets the old closure');
   again.onmessage({ data: JSON.stringify({ type: 'hello', mode: 'interactive', cols: 100, rows: 30, viewer_id: 'env_7k2q', files: true }) });
   assert.equal(fakes.interactionOptions().remoteFileViewer(), 'env_7k2q', 'the peer shares files with this live view');
