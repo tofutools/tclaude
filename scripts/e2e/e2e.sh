@@ -46,16 +46,19 @@ hub_env() { clean_env HOME="$BASE/hub" TCLAUDE_HUB_DIR="$BASE/hub/data" PATH="$B
 # folder trust are pre-accepted so agents start without interactive prompts.
 seed_claude() { # seed_claude <a|b>
 	local n=$1
-	python3 - "$BASE/$n/.claude.json" "$BASE/$n" "$BASE/$n/proj" <<'EOF'
+	mkdir -p "$BASE/$n/.claude"
+	# Spawned agents read ~/.claude/.claude.json; a bare `claude` reads ~/.claude.json.
+	python3 - "$BASE/$n" "$BASE/$n/proj" <<'EOF'
 import json, os, sys
-path, *dirs = sys.argv[1:]
-d = json.load(open(path)) if os.path.exists(path) else {}
-d.setdefault("hasCompletedOnboarding", True)
-d.setdefault("theme", "dark")
-d.setdefault("customApiKeyResponses", {"approved": ["-mock-key-0000000000"], "rejected": []})
-for p in dirs:
-    d.setdefault("projects", {}).setdefault(p, {})["hasTrustDialogAccepted"] = True
-json.dump(d, open(path, "w"))
+home, *dirs = sys.argv[1:]
+for path in (f"{home}/.claude.json", f"{home}/.claude/.claude.json"):
+    d = json.load(open(path)) if os.path.exists(path) else {}
+    d.setdefault("hasCompletedOnboarding", True)
+    d.setdefault("theme", "dark")
+    d.setdefault("customApiKeyResponses", {"approved": ["-mock-key-0000000000"], "rejected": []})
+    for p in [home, *dirs]:
+        d.setdefault("projects", {}).setdefault(p, {})["hasTrustDialogAccepted"] = True
+    json.dump(d, open(path, "w"))
 EOF
 }
 

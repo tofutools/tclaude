@@ -130,10 +130,12 @@ your report.
 
 ### 3. Remote files
 
-- [ ] `$E run a federation file get reviewer-1@b notes.txt --output /tmp/notes.txt`
+- [ ] `$E run a federation sessions b` lists b's agents as `agt_…@b`
+      handles. `$E run a federation file get <reviewer-1 handle> notes.txt --output /tmp/notes.txt`
       downloads the file
-- [ ] Refused with a clear error: a path outside the agent's root (`../`),
-      a secret-looking file (`.env`), and any file from `reviewer-home`, whose root is the node's whole `HOME` (`root_too_broad`)
+- [ ] Each of these is refused with a clear error: `../.claude.json`
+      (parent traversal), `.env` (secret path), and any file from
+      `reviewer-home`, whose root is the node's whole `HOME`
 - [ ] The dashboard file browser lists and previews the same file 📸
 
 ### 4. Hub administration
