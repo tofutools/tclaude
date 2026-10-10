@@ -144,7 +144,7 @@ func TestFederation_HomeMailRetargetsAfterHopAndReturnsLocally(t *testing.T) {
 			if env.InReplyTo == stale.ID {
 				var ack proto.AckPayload
 				_ = env.DecodePayload(&ack)
-				return ack.Status == proto.AckRefused
+				return ack.Status == proto.AckRefused && ack.Code == "continuation_refused"
 			}
 		}
 		return false
@@ -356,4 +356,29 @@ func TestFederation_HomeMailOfflineCustodySurvivesUntilLiveRevocation(t *testing
 	m, e = db.GetFederationMailCustody(sender.id.ID(), mail.ID, id)
 	require.NoError(t, e)
 	require.Equal(t, "refused", m.State)
+}
+
+func TestFederation_HomeMailLocationBeforeSourceConfirmationRetriesOnlyLiveOffer(t *testing.T) {
+	fh := newFedHarness(t)
+	f, host := fh.f, fh.peer
+	f.HaveConvWithTitle("pending-location", "source")
+	id, e := db.AgentIDForConv("pending-location")
+	require.NoError(t, e)
+	identity := db.FederationIdentity{Agent: id, Home: host.agentdID, Hops: 1, Mail: true, Proofs: map[string]string{host.agentdID: "pending-proof"}}
+	require.NoError(t, db.InsertFederationAgentMove(db.FederationAgentMove{Direction: "out", Peer: host.id.ID(), ID: "pending-offer", State: "awaiting_confirmation", SourceAgent: id, SourceConv: "pending-location", Identity: &identity, ExpiresAt: time.Now().Add(time.Hour)}))
+	update := homeMailControl(host, proto.KindAgentLocation, map[string]any{"agent": id, "home": host.agentdID, "host": host.id.ID(), "nonce": "pending-proof", "offer": "pending-offer", "hops": 1})
+	host.send(update)
+	fedEventually(t, "arrival retries while source is confirming", func() bool {
+		for _, env := range host.envelopes(proto.KindAck) {
+			var ack proto.AckPayload
+			_ = env.DecodePayload(&ack)
+			if env.InReplyTo == update.ID {
+				return ack.Code == "agent_moving"
+			}
+		}
+		return false
+	})
+	require.NoError(t, db.DepartFederationIdentity("pending-location", host.agentdID, host.id.ID(), "pending-offer", identity))
+	host.send(update)
+	fedEventually(t, "pending location accepts after confirmation", func() bool { return homeMailAck(host, update.ID, proto.AckAccepted) })
 }

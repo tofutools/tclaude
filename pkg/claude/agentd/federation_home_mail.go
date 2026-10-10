@@ -120,16 +120,16 @@ func (rt *fedRuntime) queueAwayMail(peer *db.FederationPeer, env *proto.Envelope
 	refuse := func(code, reason string) {
 		rt.sendControl(peer.InstanceID, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckRefused, Code: code, Reason: reason})
 	}
-	if !peerSupportsHomeMail(peer.InstanceID) {
-		refuse("agent_moved", "agent is away; send to "+p.AgentID+"@"+p.HomeInstance+" with a home-routed-mail capable node")
-		return true
-	}
 	if !stableMailIngressAuthorized(peer.InstanceID, env, p.AgentID) {
 		refuse(fedCodeNotExported, "away recipient is not shared with this sender")
 		return true
 	}
 	if len(mp.Attachments) > 0 && !stableMailAttachmentsAllowed(peer.InstanceID, p.AgentID) {
 		refuse(fedCodeNotExported, "away recipient does not accept attachments from this sender")
+		return true
+	}
+	if !peerSupportsHomeMail(peer.InstanceID) {
+		refuse("agent_moved", "agent is away; send to "+p.AgentID+"@"+p.HomeInstance+" with a home-routed-mail capable node")
 		return true
 	}
 	payload := homeMailPayload{Op: "handoff", Home: p.HomeInstance, Agent: p.AgentID, Nonce: p.Transfer.Proofs[p.HomeInstance], Sender: env.From, Envelope: env.ID, InReplyTo: env.InReplyTo, ExpiresAt: env.ExpiresAt, Mail: mp}
