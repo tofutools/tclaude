@@ -2065,7 +2065,7 @@ test('moves: the group is picked from the peer\'s receiving groups, with typing 
 
 test('hub numbers read in human units with thousands separators', async (t) => {
   const harness = await createPreactHarness(t);
-  const { settingValue, settingExact, uptime } = await harness.importDashboardModule('js/fleet-admin-hub.js');
+  const { settingValue, settingExact, settingPrecise, uptime } = await harness.importDashboardModule('js/fleet-admin-hub.js');
   const v = (unit, n, type = 'integer') => settingValue({ type, unit }, n);
   assert.equal(v('bytes/minute', 8388608), '8 MiB/min');
   assert.equal(v('bytes/second', 1536), '1.5 KiB/s');
@@ -2078,6 +2078,10 @@ test('hub numbers read in human units with thousands separators', async (t) => {
   assert.equal(settingValue({ type: 'bool' }, true), 'true');
   assert.equal(settingValue({ type: 'string', unit: '' }, 'x'), 'x');
   assert.equal(settingExact({ type: 'integer', unit: 'bytes/second' }, 1048576), '1,048,576 bytes/second');
+  assert.equal(v('bytes/minute', 8390000), '≈ 8 MiB/min', 'a rounded figure says so');
+  assert.equal(v('bytes/minute', 1048575), '≈ 1024 KiB/min');
+  assert.equal(settingPrecise({ type: 'integer', unit: 'bytes/minute' }, 8390000), '≈ 8 MiB/min (8,390,000 bytes/minute)');
+  assert.equal(settingPrecise({ type: 'integer', unit: 'bytes/minute' }, 8388608), '8 MiB/min');
   assert.equal(uptime(59), '0 min');
   assert.equal(uptime(3 * 3600 + 120), '3 h 2 min');
   assert.equal(uptime(2 * 86400 + 3600), '2 d 1 h');

@@ -54,7 +54,11 @@ const group = (n) => Number(n).toLocaleString('en-US');
 function sizeUnit(n) {
   const units = [['GiB', 1 << 30], ['MiB', 1 << 20], ['KiB', 1 << 10]];
   for (const [name, size] of units) {
-    if (Math.abs(n) >= size) return `${Number((n / size).toFixed(2))} ${name}`;
+    if (Math.abs(n) >= size) {
+      const shown = Number((n / size).toFixed(2));
+      // A rounded figure says so; the exact value is never silently hidden.
+      return `${shown * size === n ? '' : '≈ '}${shown} ${name}`;
+    }
   }
   return `${group(n)} B`;
 }
@@ -88,6 +92,13 @@ export function uptime(sec) {
   if (d) return `${group(d)} d${h % 24 ? ` ${h % 24} h` : ''}`;
   if (h) return `${h} h${m % 60 ? ` ${m % 60} min` : ''}`;
   return `${m} min`;
+}
+
+// settingPrecise is settingValue plus the exact figure whenever the readable
+// form is rounded: what a confirmation or an edit read-back must show.
+export function settingPrecise(s, v = s?.effective) {
+  const shown = settingValue(s, v);
+  return shown.startsWith('≈') ? `${shown} (${settingExact(s, v)})` : shown;
 }
 
 export function settingExact(s, v = s?.effective) {
@@ -133,7 +144,7 @@ export function settingsPlan(settings, edits) {
     if (p.error) return { error: p.error };
     if (p.value === s.effective) continue;
     overrides[s.key] = p.value;
-    lines.push(`${s.key}: ${settingValue(s)} → ${settingValue(s, p.value)}${s.source === 'flag' ? ' (overrides the serve flag)' : ''}${s.restart_required ? ' — takes effect after a hub restart' : ''}`);
+    lines.push(`${s.key}: ${settingPrecise(s)} → ${settingPrecise(s, p.value)}${s.source === 'flag' ? ' (overrides the serve flag)' : ''}${s.restart_required ? ' — takes effect after a hub restart' : ''}`);
   }
   return { overrides, lines };
 }
@@ -303,7 +314,7 @@ function SettingsSection({ settings, actions, confirm, toast, reload }) {
   const typed = (s) => {
     if (!(s.key in edits) || edits[s.key] === null || !NUMERIC.has(s.type)) return '';
     const p = parseSetting(s, edits[s.key]);
-    return p.error ? '' : html` <span class="muted" data-setting-typed>= ${settingValue(s, p.value)}</span>`;
+    return p.error ? '' : html` <span class="muted" data-setting-typed>= ${settingPrecise(s, p.value)}</span>`;
   };
   return html`<table class="fa-table" id="fleet-hub-settings">
       <thead><tr><th>Setting</th><th>Effective</th><th>Source</th><th>Serve flag / default</th><th>New value</th><th></th></tr></thead>
