@@ -19,26 +19,26 @@ type hubClaimParams struct {
 	Token string `pos:"true" help:"One-time token printed by the hub host"`
 }
 type hubResourceParams struct {
-	Board        string   `long:"board" help:"Board ID for hub moderation"`
+	Board        string   `long:"board" optional:"true" help:"Board ID for hub moderation"`
 	Frozen       *bool    `long:"frozen" help:"Freeze/unfreeze a board"`
-	QuotaBytes   *int64   `long:"quota-bytes" help:"Board ciphertext quota"`
-	MaxMembers   *int64   `long:"max-members" help:"Board member quota"`
-	MaxVersions  *int64   `long:"max-versions" help:"Board version quota"`
+	QuotaBytes   *int64   `long:"quota-bytes" optional:"true" help:"Board ciphertext quota"`
+	MaxMembers   *int64   `long:"max-members" optional:"true" help:"Board member quota"`
+	MaxVersions  *int64   `long:"max-versions" optional:"true" help:"Board version quota"`
 	Action       string   `pos:"true" help:"list, add/remove (admins), admit/revoke, create/revoke, set/reset, recover/revoke-old"`
-	Instance     string   `long:"instance" help:"Immutable instance ID"`
-	Spaces       []string `long:"spaces" help:"Visible space names"`
-	Capabilities []string `long:"capabilities" help:"Explicit hub admin capabilities"`
-	TokenHash    string   `long:"token-hash" help:"Invite token hash, never the bearer token"`
-	Space        string   `long:"space" help:"Invite space (default default)"`
-	TTL          string   `long:"ttl" help:"Invite TTL (default 1h)"`
-	Key          string   `long:"key" help:"Setting name"`
-	Value        string   `long:"value" help:"Integer setting value"`
-	Old          string   `long:"old" help:"Predecessor immutable ID"`
-	New          string   `long:"new" help:"Replacement immutable ID"`
+	Instance     string   `long:"instance" optional:"true" help:"Immutable instance ID"`
+	Spaces       []string `long:"spaces" optional:"true" help:"Visible space names"`
+	Capabilities []string `long:"capabilities" optional:"true" help:"Explicit hub admin capabilities"`
+	TokenHash    string   `long:"token-hash" optional:"true" help:"Invite token hash, never the bearer token"`
+	Space        string   `long:"space" optional:"true" help:"Invite space (default default)"`
+	TTL          string   `long:"ttl" optional:"true" help:"Invite TTL (default 1h)"`
+	Key          string   `long:"key" optional:"true" help:"Setting name"`
+	Value        string   `long:"value" optional:"true" help:"Integer setting value"`
+	Old          string   `long:"old" optional:"true" help:"Predecessor immutable ID"`
+	New          string   `long:"new" optional:"true" help:"Replacement immutable ID"`
 	Apply        bool     `long:"apply" help:"Apply identity change (default preview)"`
-	Fingerprint  string   `long:"fingerprint" help:"Exact fingerprint confirmed out of band"`
-	Cursor       string   `long:"cursor" help:"Opaque continuation cursor"`
-	MaxEntries   int      `long:"max-entries" help:"Bound the list or log response"`
+	Fingerprint  string   `long:"fingerprint" optional:"true" help:"Exact fingerprint confirmed out of band"`
+	Cursor       string   `long:"cursor" optional:"true" help:"Opaque continuation cursor"`
+	MaxEntries   int      `long:"max-entries" optional:"true" help:"Bound the list or log response"`
 }
 
 func hubCmd() *cobra.Command {

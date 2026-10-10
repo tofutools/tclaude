@@ -917,7 +917,7 @@ func lookupID(agentID, convID string) string {
 // --- ls (peers in my groups) ---
 
 type lsParams struct {
-	Node    string `long:"node" help:"Read a live peer view by pinned instance ID or local label (operator only)"`
+	Node    string `long:"node" optional:"true" help:"Read a live peer view by pinned instance ID or local label (operator only)"`
 	NoCache bool   `long:"no-cache" help:"Force a fresh local status gather (debugging escape hatch; rate limited)"`
 	Group   string `long:"group" optional:"true" help:"Only show agents in this group (name or numeric ID). Groups you cannot reach are never matchable, even when named explicitly."`
 	State   string `long:"state" optional:"true" help:"Filter: online | offline"`

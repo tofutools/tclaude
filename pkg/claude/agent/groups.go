@@ -80,7 +80,7 @@ func groupsCmd() *cobra.Command {
 // --- groups ls ---
 
 type groupsLsParams struct {
-	Node     string `long:"node" help:"Read a live peer view by pinned instance ID or local label (operator only)"`
+	Node     string `long:"node" optional:"true" help:"Read a live peer view by pinned instance ID or local label (operator only)"`
 	AllNodes bool   `long:"all-nodes" help:"List this node's groups and every trusted peer's shared groups as group@node (operator only)"`
 	State    string `long:"state" optional:"true" help:"Filter: online (any member online) | offline (no member online)"`
 	Archived bool   `long:"archived" help:"Include archived (soft-deleted) groups in the listing"`

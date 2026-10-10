@@ -22,9 +22,9 @@ import (
 
 type nodesParams struct {
 	Summary bool   `long:"summary" help:"Fetch live map summaries for self and linked peers (operator only)"`
-	Node    string `long:"node" help:"Fetch one live summary by pinned ID or local label (operator only)"`
+	Node    string `long:"node" optional:"true" help:"Fetch one live summary by pinned ID or local label (operator only)"`
 	Watch   bool   `long:"watch" help:"Stream fleet health transitions (operator only; noisy signals require nodes health)"`
-	Match   string `long:"match" help:"All required matches: os=darwin,arch=arm64,label=gpu,harness=codex"`
+	Match   string `long:"match" optional:"true" help:"All required matches: os=darwin,arch=arm64,label=gpu,harness=codex"`
 	JSON    bool   `long:"json" help:"Output JSON"`
 }
 type remoteNode struct {
@@ -110,8 +110,8 @@ func printNodes(w io.Writer, rows []remoteNode) {
 }
 
 type nodeLabelsParams struct {
-	Add    []string `long:"add" help:"Add labels to the local set"`
-	Remove []string `long:"remove" help:"Remove labels from the local set"`
+	Add    []string `long:"add" optional:"true" help:"Add labels to the local set"`
+	Remove []string `long:"remove" optional:"true" help:"Remove labels from the local set"`
 	JSON   bool     `long:"json" help:"Output JSON"`
 }
 
@@ -193,8 +193,8 @@ func watchNodes(p *nodesParams, stdout, stderr io.Writer) int {
 }
 
 type nodeHealthParams struct {
-	Peer string `long:"peer" help:"Trusted peer label or instance ID; omit for defaults"`
-	Set  string `long:"set" help:"Replace this policy with a JSON object (operator only)"`
+	Peer string `long:"peer" optional:"true" help:"Trusted peer label or instance ID; omit for defaults"`
+	Set  string `long:"set" optional:"true" help:"Replace this policy with a JSON object (operator only)"`
 }
 
 func nodeHealthCmd() *cobra.Command {

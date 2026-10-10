@@ -20,7 +20,7 @@ import (
 )
 
 type harnessLsParams struct {
-	Node    string `long:"node" help:"Read a trusted peer's harness availability by local label or instance ID (operator only)"`
+	Node    string `long:"node" optional:"true" help:"Read a trusted peer's harness availability by local label or instance ID (operator only)"`
 	Refresh bool   `long:"refresh" help:"Refresh the cached probe (10-second minimum between probes)"`
 	JSON    bool   `long:"json" help:"Output full JSON, including peer omissions"`
 }

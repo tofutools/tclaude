@@ -19,7 +19,7 @@ import (
 
 type harnessOperationParams struct {
 	Harness              string `pos:"true" optional:"true" help:"Harness name (claude, codex, opencode, copilot, gemini)"`
-	Node                 string `long:"node" help:"Trusted node label/ID; omit for local node"`
+	Node                 string `long:"node" optional:"true" help:"Trusted node label/ID; omit for local node"`
 	All                  bool   `long:"all" help:"Update every installed harness"`
 	AllNodes             bool   `long:"all-nodes" help:"Update on this node and every trusted linked node"`
 	Now                  bool   `long:"now" help:"Explicitly update now even if agents are active"`
@@ -27,7 +27,7 @@ type harnessOperationParams struct {
 	CopyCredentials      bool   `long:"copy-credentials" help:"Explicitly copy own file credentials to the target; its agents will act as you"`
 	OverwriteCredentials bool   `long:"overwrite-credentials" help:"Confirm replacement of target credentials after a successful private backup"`
 	NoWait               bool   `long:"no-wait" help:"Return job IDs immediately"`
-	Job                  string `long:"job" help:"Read a durable harness-operation job"`
+	Job                  string `long:"job" optional:"true" help:"Read a durable harness-operation job"`
 	JSON                 bool   `long:"json" help:"Output JSON"`
 }
 

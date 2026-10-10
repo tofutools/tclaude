@@ -19,9 +19,9 @@ import (
 
 type credentialParams struct {
 	Harness      string `pos:"true" help:"Harness name; push accepts a comma-separated chosen set (claude,codex,opencode,gemini)"`
-	Node         string `long:"node" help:"Trusted peer label/ID; omit for local backup/restore"`
+	Node         string `long:"node" optional:"true" help:"Trusted peer label/ID; omit for local backup/restore"`
 	ConfirmShare bool   `long:"confirm-share" help:"Confirm that remote agents will act as you with these providers"`
-	Backup       string `long:"backup" help:"Restore a specific backup ID; omit for newest matching backup"`
+	Backup       string `long:"backup" optional:"true" help:"Restore a specific backup ID; omit for newest matching backup"`
 	JSON         bool   `long:"json" help:"Output JSON metadata; credential contents are never returned"`
 }
 

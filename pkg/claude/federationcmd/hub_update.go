@@ -16,8 +16,8 @@ import (
 
 type hubUpdateParams struct {
 	Action  string `pos:"true" optional:"true" help:"check, apply or rollback (default: status)"`
-	Version string `long:"version" help:"Canonical release version; downgrades refused"`
-	Job     string `long:"job" help:"Read an existing update job"`
+	Version string `long:"version" optional:"true" help:"Canonical release version; downgrades refused"`
+	Job     string `long:"job" optional:"true" help:"Read an existing update job"`
 	NoWait  bool   `long:"no-wait" help:"Return immediately after creating a durable job"`
 }
 

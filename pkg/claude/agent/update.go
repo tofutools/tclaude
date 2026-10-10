@@ -19,13 +19,13 @@ import (
 )
 
 type updateParams struct {
-	Node     string `long:"node" help:"Trusted peer label or instance ID; omit for this node"`
-	Version  string `long:"version" help:"Pin a canonical v-prefixed release version"`
+	Node     string `long:"node" optional:"true" help:"Trusted peer label or instance ID; omit for this node"`
+	Version  string `long:"version" optional:"true" help:"Pin a canonical v-prefixed release version"`
 	Apply    bool   `long:"apply" help:"Apply a verified update and gracefully restart agentd"`
 	Rollback bool   `long:"rollback" help:"Restore the previous binaries and restart agentd"`
 	Check    bool   `long:"check" help:"Check for an update (the default)"`
 	NoWait   bool   `long:"no-wait" help:"Return the durable job ID without waiting"`
-	Job      string `long:"job" help:"Read an existing durable update job by ID"`
+	Job      string `long:"job" optional:"true" help:"Read an existing durable update job by ID"`
 	JSON     bool   `long:"json" help:"Output JSON"`
 }
 

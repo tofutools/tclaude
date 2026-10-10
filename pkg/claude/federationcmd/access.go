@@ -15,13 +15,13 @@ import (
 
 type accessParams struct {
 	Action     string `pos:"true" help:"request, status, list, approve, deny, or extend"`
-	Node       string `long:"node" help:"Receiving peer ID or local label (request/status)"`
-	ID         string `long:"id" help:"Opaque access request ID"`
-	Permission string `long:"permission" help:"Requested peer permission from the dispatcher"`
-	GroupID    int64  `long:"group-id" help:"Stable receiving group ID; 0 requests an unscoped grant"`
-	Reason     string `long:"reason" help:"Explain the access request to the receiving operator"`
-	TTL        string `long:"ttl" help:"Grant lifetime, e.g. 1h or 0 for permanent; default 1h on requests"`
-	Seconds    int    `long:"seconds" help:"Extend the decision deadline by 1-300 seconds"`
+	Node       string `long:"node" optional:"true" help:"Receiving peer ID or local label (request/status)"`
+	ID         string `long:"id" optional:"true" help:"Opaque access request ID"`
+	Permission string `long:"permission" optional:"true" help:"Requested peer permission from the dispatcher"`
+	GroupID    int64  `long:"group-id" optional:"true" help:"Stable receiving group ID; 0 requests an unscoped grant"`
+	Reason     string `long:"reason" optional:"true" help:"Explain the access request to the receiving operator"`
+	TTL        string `long:"ttl" optional:"true" help:"Grant lifetime, e.g. 1h or 0 for permanent; default 1h on requests"`
+	Seconds    int    `long:"seconds" optional:"true" help:"Extend the decision deadline by 1-300 seconds"`
 }
 
 func accessCmd() *cobra.Command {
