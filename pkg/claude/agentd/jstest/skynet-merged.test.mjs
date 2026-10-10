@@ -27,6 +27,7 @@ test('merge names groups group@node, keeps parents per node, and marks stale pee
   const offline = m.mergeSnapshots([{ node: { ...forge, online: false }, entry: null }]).fleet_nodes[0];
   assert.equal(offline.label, 'offline', 'a peer the hub reports offline is not "loading…"');
   assert.equal(offline.stale, true);
+  assert.equal(m.mergeSnapshots([{ node: { ...forge, online: false }, entry: { failure: { status: 502, code: 'peer_unreachable' } } }]).fleet_nodes[0].label, 'offline', 'a failed poll keeps it offline');
 });
 
 test('node names that collide (self-reported or containing @) never merge two nodes\' groups', async (t) => {

@@ -23,11 +23,11 @@ export function nodeState(node, entry, now = Date.now()) {
   const ageMs = receivedAt != null ? Math.max(0, now - receivedAt) : null;
   const failed = !!entry?.failure;
   const stale = !node.local && (failed || (ageMs != null && ageMs > STALE_AFTER_MS));
+  // A peer the hub reports offline that never answered: say so, rather than
+  // "loading…" before its first poll or a bare "stale" after it fails.
+  if (!node.local && !entry?.snapshot && node.online === false) return { stale: true, ageMs, label: 'offline', loaded: false };
   let label = '';
   if (stale) label = ageMs != null ? `stale · data ${fmtAge(ageMs)} old` : 'stale';
-  // A peer the hub reports offline will not answer its first poll either: say
-  // so instead of "loading…" until that poll fails.
-  else if (!node.local && !entry?.snapshot && node.online === false) return { stale: true, ageMs, label: 'offline', loaded: false };
   return { stale, ageMs, label, loaded: !!entry?.snapshot };
 }
 
