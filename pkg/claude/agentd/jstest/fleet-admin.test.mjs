@@ -85,6 +85,14 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     revokeToken: async (id) => { log.push(['revokeToken', id]); return { ok: true }; },
     enrollPreview: async (o) => { log.push(['enrollPreview', o]); return { claims: { master: 'inst_carol', profile_name: 'worker', profile_id: 'prof_x', profile_revision: 2, trust_level: 'unrestricted', expires_at: '2099-01-01T00:00:00Z' }, preview_token: 'pv1', master_fingerprint: FP_NEW, node_fingerprint: 'self-fp-0000', consent: 'Running enroll trusts the pinned master.' }; },
     enroll: async (o) => { log.push(['enroll', o]); return { accepted: true }; },
+    moves: async () => { log.push(['moves']); return [
+      { id: 'm1', direction: 'out', teleport: false, peer: 'inst_forge', source_agent: 'agt_aaaaaaaaaaaaaaaa', group: 'ops', state: 'awaiting_confirmation', expires_at: '2099-01-01T00:00:00Z' },
+      { id: 'm2', direction: 'in', teleport: true, peer: 'inst_forge', source_agent: 'agt_bbbbbbbbbbbbbbbb', target_agent: 'agt_cccccccccccccccc', group: 'rigs', state: 'complete', expires_at: '2026-10-09T00:00:00Z' },
+      { id: 'm3', direction: 'out', teleport: true, peer: 'inst_lab', source_agent: 'agt_dddddddddddddddd', group: 'ops', state: 'retiring', expires_at: '2099-01-01T00:00:00Z' },
+    ]; },
+    abandonMove: async (id) => { log.push(['abandon', id]); return { id, state: 'abandoned' }; },
+    teleport: async () => ({ disabled: false }),
+    setTeleport: async (disabled) => { log.push(['teleport', disabled]); return { disabled }; },
     audit: async (o) => { log.push(['audit', o]); return Array.from({ length: o.limit === 200 ? 200 : 3 }, (_, i) => ({ id: `a${i}`, at: '2026-10-10T10:00:00Z', source: 'remote', direction: i % 2 ? 'out' : 'in', peer: 'inst_forge', kind: 'mail.send', actor: 'agt_x', status: i === 0 ? 403 : 200 })); },
     createPool: async (n) => { log.push(['createPool', n]); return { ok: true }; },
     deletePool: async (n) => { log.push(['deletePool', n]); return { ok: true }; },
@@ -736,4 +744,22 @@ test('job actions hit the local job and repo routes', async (t) => {
     ['PUT', '/api/federation/repos/my%20repo', { revision: 3 }],
     ['DELETE', '/api/federation/repos/r', null],
   ]);
+});
+
+test('moves: both directions listed, only abandonable outgoing moves offer Abandon, and the teleport freeze confirms', async (t) => {
+  const s = await setup(t);
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Moves/.test(b.textContent)));
+  const rows = [...s.mounted.container.querySelectorAll('#fleet-moves tbody tr')];
+  assert.equal(rows.length, 3);
+  assert.match(s.q('[data-move="m1"]').textContent, /⇢.*move.*forge.*ops.*awaiting_confirmation/s);
+  assert.match(s.q('[data-move="m2"]').textContent, /⇠.*teleport.*→/s);
+  assert.deepEqual(rows.filter((r) => r.querySelector('[data-fa="abandon"]')).map((r) => r.dataset.move), ['m1'], 'arriving and retiring moves cannot be abandoned');
+  await s.click(s.q('[data-move="m1"] [data-fa="abandon"]'));
+  assert.match(s.confirms.at(-1).body, /does not retire it here.*copy stays there as an independent agent/);
+  assert.ok(s.log.some((l) => l[0] === 'abandon' && l[1] === 'm1'));
+  await s.click(s.q('#fleet-teleport-toggle'));
+  assert.match(s.confirms.at(-1).body, /can no longer teleport to a peer, and teleports from peers can no longer land here/);
+  assert.ok(s.log.some((l) => l[0] === 'teleport' && l[1] === true));
+  assert.match(s.q('#fleet-teleport').textContent, /frozen/);
 });

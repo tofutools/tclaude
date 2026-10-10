@@ -548,6 +548,20 @@ as it does for the receiving teleport landing profile. Placement considers
 only groups advertising the selected profile.
 
 A visible group without a spawn grant queues the request for human approval.
+
+The local dashboard mirrors the CLI handlers at `/api/federation/spawn-requests`:
+GET returns the incoming request array; POST queues an outgoing request with the
+same `{peer, group, brief, name?, role?, profile?, credentials?, node?, require?,
+prefer?}` body as `/v1/federation/spawn-requests`. POST `/{id}/approve` accepts
+optional name, profile, cwd, harness and model overrides; POST `/{id}/deny`
+accepts an optional reason. POST `/{id}/abandon` requires
+`{"acknowledge_late_worker":true}` before returning an unconfirmed incoming
+launch to pending. A late worker may still appear.
+`GET /api/federation/outbox?limit=100` returns the same outgoing delivery rows
+as `/v1/federation/outbox`, including spawn requests and operator mail. This is
+delivery status; the remote operator's spawn result arrives in the local inbox.
+All these dashboard routes require the local operator cookie and are refused
+through peer views.
 An automatic spawn with a definite failure, including a worker cap or rate limit, also
 leaves the request pending and notifies the operator; it is not retried
 without a human decision. Every automatic spawn notifies the operator inbox.
@@ -2812,6 +2826,13 @@ requests and terminal decisions without copying the reason into audit logs.
 Agents continue to request missing local cross-node permissions from their own
 operator using the existing `--ask-human` path.
 
+Peer snapshot and group reads include each visible group's stable numeric `id`,
+which is the `group_id` used in permission requests. Omitted feature entries
+include `requestable: true|false`, derived from the dispatcher's permission and
+transport mapping plus existing-access admission. Local-only features and the
+request mechanism itself are never requestable. An approval may shorten the
+requested lifetime, but cannot lengthen it or convert a finite request to a
+permanent grant. A permanent request can be approved with a finite lifetime.
 ### Local dashboard away administration
 
 `GET /api/federation/away` reads `{away: null|{cover,since,until}}`;
