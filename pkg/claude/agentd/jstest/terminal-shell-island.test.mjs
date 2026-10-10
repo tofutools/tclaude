@@ -770,3 +770,28 @@ test('dragging a terminal tab clear of the strip detaches it into its own window
   assert.equal(opened.length, 1);
   cleanup();
 });
+
+test('a local agent pane header names the peer watching its terminal, also when opened by conversation ID', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host } = installHosts(harness);
+  const fake = fakeWidgetFactory(harness);
+  const rv = await harness.importDashboardModule('js/remote-viewers.js');
+  const { dashboardState } = await harness.importDashboardModule('js/snapshot-store.js');
+  const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
+  const controller = await harness.importDashboardModule('js/terminals-tab.js');
+  const cleanup = await mountTerminalsFeature({ widgetFactory: fake.factory });
+  t.after(() => { rv.resetViewersForTest(); dashboardState.snapshot.value = null; });
+  await harness.act(async () => {
+    rv.remoteViewers.value = [{ id: 'v1', peer: 'inst_forge', agent: 'agt_one', session: 'one', read_only: true, incoming: true }];
+    // A palette jump keys the pane by conversation ID; the snapshot maps it.
+    dashboardState.snapshot.value = { agents: [{ conv_id: 'c-one', agent_id: 'agt_one' }] };
+    controller.openTerminalPane({ ws: '/one', key: 'one', label: 'one', agent: 'c-one' });
+    await Promise.resolve();
+  });
+  const badge = host.querySelector('.mux-pane.active .remote-viewers-badge.term-viewers-badge');
+  assert.ok(badge, 'the pane header shows the viewer');
+  assert.equal(badge.textContent, '👁 inst_forge', 'an unlabelled peer shows its instance ID');
+  await harness.act(() => { rv.remoteViewers.value = []; });
+  assertAbsent(host.querySelector('.remote-viewers-badge'), 'the badge goes when the viewer leaves');
+  cleanup();
+});

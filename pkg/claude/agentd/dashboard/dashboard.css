@@ -4113,6 +4113,13 @@ tr:hover .agent-harness { color: #c9d1d9; }
    cursor and a subtle hover lift, mirroring the .cwd-link click affordance. */
 .remote-badge { margin-left: 5px; cursor: pointer; }
 .remote-badge:hover { filter: brightness(1.25); }
+/* Per-agent "a peer is watching / typing into this terminal right now"
+   indicator (tcl-yuju57): a bare glyph plus the peer label trailing the same
+   harness line, so it costs no row. Typing (an interactive view) is amber.
+   Clicking opens Fleet → Peers with the viewers panel filtered to the agent. */
+.remote-viewers-badge { margin-left: 5px; padding: 0; border: 0; background: none; font: inherit; color: #8b949e; cursor: pointer; white-space: nowrap; max-width: 14em; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+.remote-viewers-badge.typing { color: #d29922; }
+.remote-viewers-badge:hover { filter: brightness(1.25); text-decoration: underline; }
 /* Per-agent "agentd is refusing this agent's brokered telemetry" indicator
    (TCL-761) — a bare 🚫 trailing the same harness line, styled like its
    neighbours so it costs no extra row. It is deliberately NOT clickable:
@@ -19099,6 +19106,8 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .term-remote-badge { flex: none; font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid #30363d; color: #8b949e; white-space: nowrap; }
 .term-remote-badge.interactive { border-color: #9e6a03; color: #d29922; }
 .term-remote-badge.watch { border-color: #3d444d; color: #c9d1d9; }
+.remote-viewers-badge.term-viewers-badge { flex: none; margin-left: 0; font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid #30363d; }
+.remote-viewers-badge.term-viewers-badge.typing { border-color: #9e6a03; }
 .skynet-card-terms { margin-left: 6px; }
 #remote-sessions button[data-open] { background: #21262d; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; cursor: pointer; padding: 2px 10px; font: inherit; font-size: 12px; }
 #remote-sessions button[data-open]:hover { border-color: #58a6ff; }

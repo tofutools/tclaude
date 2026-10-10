@@ -28,6 +28,7 @@ import { setVegasRegularMode } from './slop.js';
 import { setHScrollFollow } from './hscroll.js';
 import { noteConnected, noteDisconnected } from './connection.js';
 import { syncDashDefaultProfile } from './profiles.js';
+import { claimViewersRead, noteViewersRead } from './remote-viewers.js';
 import { dashboardState } from './snapshot-store.js';
 import { featureState } from './feature-state-registry.js';
 import {
@@ -137,7 +138,11 @@ export async function refresh(options) {
     const [retiredRequest, convRequest, replacedRequest] = fetchVisibleGroupListPages(
       groups, onGroups, groupsQ, get,
     );
-    const [snapR, retiredR, convR, replacedR, jobsR] = await Promise.all([
+    // Peers viewing this node's terminals ride the same tick, at most every
+    // VIEWERS_EVERY_MS and only on a federated node's own dashboard, so the
+    // per-agent viewer badges cost no request or timer of their own.
+    const readViewers = claimViewersRead();
+    const [snapR, retiredR, convR, replacedR, jobsR, viewersR] = await Promise.all([
       fetch('/api/snapshot' + (staticVersion
         ? '?static_version=' + encodeURIComponent(staticVersion)
         : ''), { credentials: 'same-origin', cache: 'no-store', signal: abort.signal }),
@@ -145,7 +150,13 @@ export async function refresh(options) {
       convRequest,
       replacedRequest,
       jobsActive ? get('/api/jobs?' + jobs.params.value) : Promise.resolve(undefined),
+      readViewers ? get('/api/federation/viewers') : Promise.resolve(undefined),
     ]);
+    if (readViewers) {
+      // The read rides this tick's fetches; a failed or unparsable one keeps
+      // the last list.
+      Promise.resolve(viewersR?.ok ? viewersR.json() : null).catch(() => null).then((rows) => noteViewersRead(rows));
+    }
     // agentd answered this poll (any HTTP status) — we're connected. Clear the
     // disconnect banner + resume music if it had been raised. Done before the
     // stale-request bail below so even a superseded run registers the reconnect.

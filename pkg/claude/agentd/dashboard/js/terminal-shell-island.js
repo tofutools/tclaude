@@ -18,6 +18,7 @@ import { agentCostsHidden, subscribeAgentCosts, toggleAgentCosts } from './cost-
 import {
   memberHumanMessages, openHumanNotificationReader,
 } from './human-notification-attention.js';
+import { ViewersBadge } from './remote-viewers.js';
 
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
@@ -281,6 +282,7 @@ function TerminalPane({
           ${reattachArmed ? html`<span class="mux-drag-out-hint">Release anywhere — even outside the browser — to send this terminal back to the dashboard</span>` : null}
         ` : html`<span class="mux-pane-title">${pane.label}</span>`}
         <${RemoteBadge} seed=${pane.seed} remote=${remote} />
+        ${!pane.seed.remote && pane.seed.agent ? html`<${ViewersBadge} agentId=${pane.seed.agent} className="term-viewers-badge" />` : null}
         <span class="mux-pane-status" role="status" aria-live="polite" aria-atomic="true">${status}</span>
         <span class="terminal-interaction-hint">${INTERACTION_HINT}</span>
         ${reconnect ? html`<button type="button" class="mux-btn" onClick=${() => void actions.widgetFor(pane.id)?.connect()}>Reconnect</button>` : null}

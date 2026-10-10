@@ -16,6 +16,7 @@ import { AwayControl } from './peer-mail.js';
 import { NodeSettingsDialog } from './fleet-admin-node-settings.js';
 import { KeyTransitionDialog, keyBadge } from './fleet-admin-identity.js';
 import { RunPage } from './fleet-admin-run.js';
+import { viewersFocus, viewersOpened } from './remote-viewers.js';
 import { ViewersPanel } from './fleet-admin-viewers.js';
 import { ModelsPage } from './fleet-admin-models.js';
 import { SpawnRequestsPage } from './fleet-admin-spawns.js';
@@ -346,6 +347,10 @@ export function FleetAdmin({
     return () => { disposed = true; timers.clearTimeout(timer); };
   }, [active, remote, tick]);
 
+  // A viewer badge elsewhere asks for the viewers panel, which lives on Peers.
+  const focus = viewersFocus.value;
+  const opened = viewersOpened.value;
+  useEffect(() => { if (focus) setPage('peers'); }, [focus, opened]);
   if (remote) return html`<div class="empty">Opening fleet administration on this node…</div>`;
   if (failure === 'unavailable') return html`<div class="empty">Federation is not available on this daemon. Link nodes with <code>tclaude federation connect</code> (see docs/federation.md).</div>`;
   const view = adminView(status, { pools });

@@ -19,6 +19,7 @@ import { HarnessMark } from './harness-mark.js';
 import { fmtCredits, fmtExactUSD, fmtUSD } from './costs-model.js';
 import { isPendingWake, clearPendingWake } from './waking-state.js';
 import { PRChecksBadge } from './pr-checks-hover.js';
+import { ViewersBadge, remoteViewers, viewersOf } from './remote-viewers.js';
 
 const html = htm.bind(h);
 
@@ -194,6 +195,9 @@ export function HarnessLine({ member, snapshot }) {
   const fastMode = html`<${FastModeBadge} member=${member} />`;
   const remote = html`<${RemoteBadge} member=${member} />`;
   const refused = html`<${BrokerRefusalBadge} member=${member} />`;
+  // A peer watching or typing into this agent's pane right now (federation).
+  const viewed = member.online && member.agent_id ? viewersOf(remoteViewers.value, member.agent_id).length > 0 : false;
+  const viewers = viewed ? html`<${ViewersBadge} agentId=${member.agent_id} />` : null;
   const drive = driveTooltip(state);
   if (!model) {
     // A pre-tick row has no metadata text to trail, but an armed indicator is
@@ -206,13 +210,14 @@ export function HarnessLine({ member, snapshot }) {
     if (!harness || harness === 'claude') {
       const indicated = (member.online && state.remote_control)
         || !!sandboxIndicator(member)
-        || Number(state.broker_refusals || 0) > 0;
-      return indicated ? html`<div class="agent-harness">${sandbox}${remote}${refused}</div>` : null;
+        || Number(state.broker_refusals || 0) > 0
+        || viewed;
+      return indicated ? html`<div class="agent-harness">${sandbox}${remote}${viewers}${refused}</div>` : null;
     }
     let title = `${offline ? 'Last used harness' : 'Harness'}: ${labels.long}`;
     if (drive) title += ` — ${drive}`;
     return html`<div class="agent-harness" title=${title} tabindex=${drive ? '0' : null}
-      data-full-metadata=${drive ? title : null}><span class=${metadataClass} role="note" aria-label=${title}><${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} tooltip=${drive ? title : labels.long} /></span>${sandbox}${remote}${refused}</div>`;
+      data-full-metadata=${drive ? title : null}><span class=${metadataClass} role="note" aria-label=${title}><${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} tooltip=${drive ? title : labels.long} /></span>${sandbox}${remote}${viewers}${refused}</div>`;
   }
   const effort = state.effort_level || '';
   const cost = Number(state.cost_usd || 0);
@@ -237,7 +242,7 @@ export function HarnessLine({ member, snapshot }) {
       ${effort ? html`<span class="harness-effort" title=${effort}>${shortEffort(effort)}</span>` : null}
       ${cost > 0 ? html`<span class="harness-cost">${fmtUSD(cost)}</span>` : null}
       ${virtualCost > 0 ? html`<span class="harness-cost harness-cost-whatif" title=${virtualTitle}>≈${fmtUSD(virtualCost)}</span>` : null}
-    </span>${sandbox}${fastMode}${remote}${refused}
+    </span>${sandbox}${fastMode}${remote}${viewers}${refused}
   </div>`;
 }
 
