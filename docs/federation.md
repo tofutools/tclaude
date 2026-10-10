@@ -3556,3 +3556,38 @@ remints the session and event identities, writes fresh workspace metadata, and
 resumes with the native CLI. Databases, checkpoints, rewind files, permissions,
 and other executable artifacts are not transferred. Full conversation events
 remain available to the native resume path.
+
+### Receiver-approved permission carry
+
+Permission carry is off by default. Add `--carry-permissions` to
+`federation share-agent`, `federation move-agent`, or `agent teleport` (including
+`--clone`) to request it. Agent callers additionally need the peer-scoped
+`self.teleport.permissions` permission. Ownership and temporary sudo leases
+never travel.
+
+The receiver previews each permission as applied, remapped, or dropped with a
+reason. Unrestricted trust allows ordinary grants. A restricted peer needs a
+receiving-group grant such as:
+
+```sh
+tclaude federation grant node-a agents.receive.permissions --scope group=support --permission-slug groups.members.spawn
+```
+
+Omit `--permission-slug` to allow ordinary known slugs. Group scopes are remapped
+to the landing group; unmapped source-local agent, target, profile, peer or path
+selectors are dropped. Restricted group capabilities are narrowed to the landing
+group. Source denies carry and receiver policy denies win.
+
+Permission administration, sandbox administration, `human.*`, and federation
+administration grants require unrestricted trust **and** explicit receiving
+operator approval (`federation offers import --allow-sensitive-permissions`, or
+the import dialog's explicit opt-in). Automatic landing never opts into them.
+`--drop-permissions` discards all requested carry. The receiving policy is checked
+again immediately before dispatch; a changed decision refuses the launch.
+The visiting copy's grants are retired with it on departure. Returning-home
+identity and grant restoration are separate from this fresh-ID import path.
+
+Local archive export and import both need `--carry-permissions`; applying carried
+grants additionally requires normal permission-administration authority. The
+arrival message and federation audit summarize receiver decisions.
+

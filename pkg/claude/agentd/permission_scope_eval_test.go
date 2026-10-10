@@ -360,6 +360,7 @@ var scopedSlugEnforcementPaths = map[string]string{
 	PermAgentsStatusRead:                  "handleFederationReachable evaluates peer/group scope before projecting status",
 	PermModelsProxy:                       "modelLaunchAllowed checks peer and HTTPProxy on bind and every request",
 	PermNodeRead:                          "handleFederationNodes evaluates permissionAllowsAction with RemotePeer",
+	PermSelfTeleportPermissions:           "permission carry on self-initiated transfer checks destination peer",
 	PermSelfTeleport:                      "self teleport selection and delayed retirement recheck",
 	PermAgentsTeleportReceive:             "receiver landing group grant and pre-dispatch recheck",
 	PermAgentMove:                         "federation move-agent and delayed move retirement",

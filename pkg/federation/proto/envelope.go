@@ -79,17 +79,18 @@ const (
 	CapJobs  = "jobs"
 	// CapRoutes lists the group's ready routes in the catalog and lets the
 	// peer open connections to them through the hub stream relay.
-	CapRoutes            = "routes"
-	CapSessions          = "sessions"
-	CapSessionsWatch     = "sessions_watch"
-	CapSessionsAttach    = "sessions_attach"
-	CapSessionsFilesRead = "sessions_files_read"
-	CapAgentsReceive     = "agents_receive"
-	CapTeleportReceive   = "teleport_receive"
+	CapRoutes                   = "routes"
+	CapSessions                 = "sessions"
+	CapSessionsWatch            = "sessions_watch"
+	CapSessionsAttach           = "sessions_attach"
+	CapSessionsFilesRead        = "sessions_files_read"
+	CapAgentsReceivePermissions = "agents_receive_permissions"
+	CapAgentsReceive            = "agents_receive"
+	CapTeleportReceive          = "teleport_receive"
 )
 
 // AllCaps lists every known capability in canonical order.
-var AllCaps = []string{CapJobs, CapAgentStatus, CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes, CapSessions, CapSessionsWatch, CapSessionsAttach, CapSessionsFilesRead, CapAgentsReceive, CapTeleportReceive}
+var AllCaps = []string{CapJobs, CapAgentStatus, CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes, CapSessions, CapSessionsWatch, CapSessionsAttach, CapSessionsFilesRead, CapAgentsReceive, CapAgentsReceivePermissions, CapTeleportReceive}
 
 // MaxMailBody caps a mail envelope's body in bytes.
 const MaxMailBody = 16 * 1024
