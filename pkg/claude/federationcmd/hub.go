@@ -38,7 +38,7 @@ type hubResourceParams struct {
 
 func hubCmd() *cobra.Command {
 	sub := []*cobra.Command{
-		hubRunCmd(),
+		hubRunCmd(), hubUpdateCmd(),
 		boa.CmdT[hubClaimParams]{Use: "claim", Short: "Claim hub administration using the host's one-time token", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *hubClaimParams, _ *cobra.Command, _ []string) {
 			os.Exit(runHubCall("POST", "claim", map[string]any{"token": p.Token}, os.Stdout, os.Stderr))
 		}}.ToCobra(),

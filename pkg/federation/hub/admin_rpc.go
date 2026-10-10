@@ -17,6 +17,7 @@ import (
 var adminMethodCapability = map[string]string{
 	"status": "", "claim": "",
 	"run.status": "@admin", "run.start": "hub.exec", "run.job": "@admin", "run.logs": "hub.exec", "audit": "hub.logs.read",
+	"update.status": "hub.update", "update.start": "hub.update", "update.job": "hub.update",
 	"admins.list": "hub.admins.manage", "admins.add": "hub.admins.manage", "admins.remove": "hub.admins.manage",
 	"admissions.list": "hub.admissions.manage", "admissions.admit": "hub.admissions.manage", "admissions.revoke": "hub.admissions.manage",
 	"invites.list": "hub.invites.manage", "invites.create": "hub.invites.manage", "invites.revoke": "hub.invites.manage",
@@ -135,6 +136,9 @@ func validateAdminSpaces(spaces []string) error {
 	return nil
 }
 func (h *Hub) executeAdmin(c *conn, req *proto.HubAdminRequest) (any, error) {
+	if strings.HasPrefix(req.Method, "update.") {
+		return h.executeUpdate(c, req.Method, req.Payload)
+	}
 	p, err := decodeAdminParams(req.Payload)
 	if err != nil {
 		return nil, err

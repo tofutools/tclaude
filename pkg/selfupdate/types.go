@@ -48,6 +48,8 @@ func (r Request) Validate() error {
 }
 
 type Job struct {
+	Deadline        *time.Time `json:"deadline,omitempty"`
+	RolledBack      bool       `json:"rolled_back,omitempty"`
 	CurrentVersion  string     `json:"current_version"`
 	UpdateAvailable *bool      `json:"update_available"`
 	ID              string     `json:"id"`
@@ -170,3 +172,6 @@ func inspectStaged(ctx context.Context, path string) (buildversion.Info, error) 
 	}
 	return info, nil
 }
+
+// DiscoverBinary inspects one host-selected executable, never a remote path.
+func DiscoverBinary(name, path string) (Binary, error) { return inspectBinary(name, path) }

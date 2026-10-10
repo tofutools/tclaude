@@ -20,6 +20,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/common/buildversion"
 	"github.com/tofutools/tclaude/pkg/federation/hub"
+	"github.com/tofutools/tclaude/pkg/federation/hubupdate"
 )
 
 const long = `tclaude-hub relays messages between federated tclaude agentd instances.
@@ -75,6 +76,9 @@ func fail(err error) {
 }
 
 type serveParams struct {
+	Supervised      bool   `long:"supervised" help:"Run a health-checking update guardian under systemd/launchd"`
+	SupervisorLabel string `long:"supervisor-label" help:"launchd label for supervised mode"`
+	GuardianWorker  bool   `long:"guardian-worker" hidden:"true"`
 	dbParam
 	AcceptRemoteScripts    bool          `long:"accept-remote-scripts" help:"Allow explicitly granted hub.exec administrators to run scripts as the hub service user (full host code execution)"`
 	Listen                 string        `long:"listen" default:"127.0.0.1:8470" help:"Listen address"`
@@ -103,6 +107,31 @@ func serveCmd() *cobra.Command {
 			if (p.TLSCert == "") != (p.TLSKey == "") {
 				fail(fmt.Errorf("--tls-cert and --tls-key go together"))
 			}
+			if p.Supervised && !p.GuardianWorker {
+				if err := serveSupervised(p); err != nil {
+					fail(err)
+				}
+				return
+			}
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			var backend hub.UpdateBackend
+			var onListen func(string) error
+			var worker hubupdate.Client
+			if p.GuardianWorker {
+				config, err := hubupdate.ReadWorkerConfig()
+				if err != nil {
+					fail(err)
+				}
+				stop()
+				ctx, stop, err = workerContext()
+				if err != nil {
+					fail(err)
+				}
+				defer stop()
+				worker = hubupdate.Client(config)
+				backend = worker
+			}
 			st, err := p.open()
 			if err != nil {
 				fail(err)
@@ -126,7 +155,17 @@ func serveCmd() *cobra.Command {
 			if cmd.Flags().Changed("accept-remote-scripts") {
 				scriptSwitch = &p.AcceptRemoteScripts
 			}
+			if p.GuardianWorker {
+				id, err := st.HubID()
+				if err != nil {
+					fail(err)
+				}
+				onListen = func(address string) error {
+					return worker.Ready(ctx, hubupdate.Ready{HubID: id, Version: buildversion.AppVersion(), Address: address})
+				}
+			}
 			h, err := hub.New(st, hub.Config{
+				UpdateBackend: backend, OnListen: onListen,
 				AcceptRemoteScripts: scriptSwitch,
 				Open:                p.Open, MaxConnections: p.MaxConnections, ConnectionIdle: p.ConnectionIdle, StreamWait: p.StreamWait, HelloTimeout: p.HelloTimeout, FlagSettings: flags, FramesPerMinute: p.FramesPerMinute, BytesPerMinute: p.BytesPerMinute,
 				PolicyRefresh: p.PolicyRefresh, IdentityRotationWindow: p.IdentityRotationWindow, Version: buildversion.AppVersion(),
@@ -140,8 +179,6 @@ func serveCmd() *cobra.Command {
 				scheme = "wss"
 			}
 			fmt.Fprintf(os.Stderr, "tclaude-hub %s listening on %s://%s (open=%v)\n", h.ID(), scheme, p.Listen, p.Open)
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
 			srv := &http.Server{Addr: p.Listen, ReadHeaderTimeout: 10 * time.Second}
 			if err := hub.ListenAndServe(ctx, srv, h, p.TLSCert, p.TLSKey); err != nil {
 				fail(err)

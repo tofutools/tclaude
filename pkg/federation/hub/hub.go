@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"sort"
 	"sync"
@@ -20,12 +21,15 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/noderun"
+	"github.com/tofutools/tclaude/pkg/selfupdate"
 )
 
 // Config tunes a Hub. Zero values pick defaults.
 type Config struct {
 	AcceptRemoteScripts *bool
 
+	UpdateBackend UpdateBackend
+	OnListen      func(string) error
 	// Open admits any instance that proves key possession into
 	// DefaultSpace. Development only.
 	Open           bool
@@ -100,6 +104,7 @@ func (c *Config) defaults() {
 type Hub struct {
 	runs *noderun.Service
 
+	updates    *selfupdate.Service
 	cfg        Config
 	effective  atomic.Pointer[Config]
 	adminMu    sync.Mutex
@@ -163,6 +168,9 @@ func New(store *Store, cfg Config) (*Hub, error) {
 	if err = h.initExec(); err != nil {
 		return nil, err
 	}
+	if err = h.initUpdate(); err != nil {
+		return nil, err
+	}
 	h.wg.Add(1)
 	go h.refreshLoop()
 	return h, nil
@@ -178,7 +186,7 @@ func (h *Hub) Handler() http.Handler {
 	mux.HandleFunc(proto.StreamPath, h.serveStream)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "hub_id": h.hubID, "online": h.OnlineCount()})
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "hub_id": h.hubID, "version": h.cfg.Version, "online": h.OnlineCount()})
 	})
 	return mux
 }
@@ -630,12 +638,24 @@ func truncate(s string, n int) string {
 // ListenAndServe serves h on srv until ctx is done.
 func ListenAndServe(ctx context.Context, srv *http.Server, h *Hub, certFile, keyFile string) error {
 	srv.Handler = h.Handler()
+	listener, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		h.Close()
+		return err
+	}
+	defer listener.Close()
+	if h.cfg.OnListen != nil {
+		if err := h.cfg.OnListen(listener.Addr().String()); err != nil {
+			h.Close()
+			return err
+		}
+	}
 	errc := make(chan error, 1)
 	go func() {
 		if certFile != "" {
-			errc <- srv.ListenAndServeTLS(certFile, keyFile)
+			errc <- srv.ServeTLS(listener, certFile, keyFile)
 		} else {
-			errc <- srv.ListenAndServe()
+			errc <- srv.Serve(listener)
 		}
 	}()
 	select {

@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS hub_admin_claim(singleton INTEGER PRIMARY KEY CHECK(s
 CREATE TABLE IF NOT EXISTS hub_admin_replay(instance_id TEXT NOT NULL,request_id TEXT NOT NULL,expires_at TEXT NOT NULL,PRIMARY KEY(instance_id,request_id));
 CREATE TABLE IF NOT EXISTS hub_admin_audit(sequence INTEGER PRIMARY KEY AUTOINCREMENT,at TEXT NOT NULL,instance TEXT NOT NULL,request_id TEXT NOT NULL,operation TEXT NOT NULL,status INTEGER NOT NULL,detail TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS hub_exec_outcome_audits(job_id TEXT PRIMARY KEY,at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS hub_update_outcome_audits(job_id TEXT PRIMARY KEY,at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS hub_settings(key TEXT PRIMARY KEY,value INTEGER NOT NULL);
 `
 
@@ -454,6 +455,32 @@ func (s *Store) auditExecOutcome(instance, id, detail string) error {
 		return tx.Commit()
 	}
 	if _, err = tx.Exec(`INSERT INTO hub_admin_audit(at,instance,request_id,operation,status,detail) VALUES(?,?,?,'exec',200,?)`, ts(time.Now()), instance, id, detail); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DELETE FROM hub_admin_audit WHERE sequence < (SELECT coalesce(max(sequence),0)-10000 FROM hub_admin_audit)`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) auditUpdateOutcome(instance, id, detail string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.Exec(`INSERT OR IGNORE INTO hub_update_outcome_audits(job_id,at) VALUES(?,?)`, id, ts(time.Now()))
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return tx.Commit()
+	}
+	if _, err = tx.Exec(`INSERT INTO hub_admin_audit(at,instance,request_id,operation,status,detail) VALUES(?,?,?,'update',200,?)`, ts(time.Now()), instance, id, detail); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(`DELETE FROM hub_admin_audit WHERE sequence < (SELECT coalesce(max(sequence),0)-10000 FROM hub_admin_audit)`); err != nil {
