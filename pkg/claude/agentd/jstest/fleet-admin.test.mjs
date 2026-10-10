@@ -1826,7 +1826,7 @@ test('hub update: opened while the hub is not answering, the dialog retries unti
   const queue = [];
   const timers = { setTimeout: (fn, ms) => { queue.push({ fn, ms }); return queue.length; }, clearTimeout: () => {} };
   const down = Object.assign(new Error('hub unreachable'), { status: 503 });
-  const reads = [down, { current_version: 'v0.44.0', latest_version: 'v0.44.0', update_available: false, supervisor: 'launchd', job: { id: 'u2', action: 'apply', from_version: 'v0.43.0', version: 'v0.44.0', state: 'completed' } }];
+  const reads = [down, { current_version: 'v0.44.0', latest_version: 'v0.44.0', update_available: false, supervisor: 'launchd', job: { id: 'u2', action: 'apply', from_version: 'v0.43.0', version: 'v0.44.0', state: 'completed', phase: 'complete' } }];
   const actions = { status: async () => { const r = reads.length > 1 ? reads.shift() : reads[0]; if (r instanceof Error) throw r; return r; }, start: async () => { throw new Error('no'); } };
   await harness.mount(harness.html`<${NodeUpdateDialog} node=${{ id: 'hub', label: 'the hub', hub: true }} actions=${actions} confirm=${async () => true} toast=${() => {}} timers=${timers} onClose=${() => {}} />`);
   await harness.act(() => new Promise((r) => setTimeout(r, 20)));
@@ -1836,7 +1836,7 @@ test('hub update: opened while the hub is not answering, the dialog retries unti
   assert.equal(next.ms, 2000);
   await harness.act(async () => { next.fn(); await new Promise((r) => setTimeout(r, 20)); });
   await harness.act(() => new Promise((r) => setTimeout(r, 20)));
-  assert.match(q('#fleet-node-update-job').textContent, /v0\.43\.0 → v0\.44\.0: completed/);
+  assert.match(q('#fleet-node-update-job').textContent, /v0\.43\.0 → v0\.44\.0: completed\s*$/, 'no "(complete)" after completed');
   assert.equal(q('#fleet-node-update-modal [role=alert]'), null);
 });
 
