@@ -134,7 +134,10 @@ function peerAction(act, peerView) {
   if (spec.action === 'spawn') return SAFE_GROUP.test(act.dataset.group || '') ? { action: 'spawn', group: act.dataset.group } : null;
   // The status dot only stops a running agent; waking is not a peer action.
   if (act.dataset.act === 'dot-toggle' && act.dataset.online !== '1') return null;
-  return SAFE_AGENT_ID.test(act.dataset.agent || '') ? { action: spec.action, agent: act.dataset.agent, label: act.dataset.label || '' } : null;
+  // The retire icon stays conv-keyed (data-agent would change its local
+  // recovery path), so it carries the stable ID as data-stable-agent.
+  const agent = act.dataset.stableAgent || act.dataset.agent || '';
+  return SAFE_AGENT_ID.test(agent) ? { action: spec.action, agent, label: act.dataset.label || '' } : null;
 }
 
 // blockedControl returns the element a click must not reach, and why.

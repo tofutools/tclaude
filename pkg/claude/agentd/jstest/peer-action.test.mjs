@@ -16,12 +16,12 @@ test('shared lifecycle and spawn controls open the peer action dialog; unshared 
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/peer-view-limits.js');
   const doc = harness.document;
-  doc.body.innerHTML = '<button id="retire" data-act="retire-agent" data-agent="agt_abc123" data-label="ada">r</button>'
+  doc.body.innerHTML = '<button id="retire" data-act="retire-agent" data-conv="conv-1" data-stable-agent="agt_abc123" data-label="ada">r</button>'
     + '<button id="clone" data-act="clone" data-agent="agt_abc123">c</button>'
     + '<button id="dot-on" data-act="dot-toggle" data-online="1" data-agent="agt_abc123">●</button>'
     + '<button id="dot-off" data-act="dot-toggle" data-online="0" data-agent="agt_abc123">○</button>'
     + '<button id="spawn" data-act="spawn-agent" data-group="ops">+</button>'
-    + '<button id="evil" data-act="retire-agent" data-agent="agt_x;rm -rf">r</button>';
+    + '<button id="evil" data-act="retire-agent" data-stable-agent="agt_x;rm -rf">r</button>';
   doc.documentElement.dataset.remoteNodeName = 'forge';
   const events = []; const toasts = [];
   doc.addEventListener(mod.PEER_ACTION_EVENT, (e) => events.push(e.detail));

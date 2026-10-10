@@ -401,8 +401,8 @@ func skynetStates() []dashsnap.State {
 			InitJS:  "window.__dashsnapPeerActions = true;" + skynetRemoteViewJS + skynetFederationStubJS,
 			JS: showGroups + `return (async function(){
   for (var i = 0; i < 50 && !document.querySelector('.remote-node-pill'); i++) await new Promise(function(r){ setTimeout(r, 100); });
-  for (var j = 0; j < 50 && !document.querySelector('[data-act="retire-agent"][data-agent^="agt_"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
-  var btn = document.querySelector('[data-act="retire-agent"][data-agent^="agt_"]');
+  for (var j = 0; j < 50 && !document.querySelector('[data-act="retire-agent"][data-stable-agent^="agt_"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  var btn = document.querySelector('[data-act="retire-agent"][data-stable-agent^="agt_"]');
   if (!btn) throw new Error('skynet: no retire control with an agent ID');
   btn.click();
   for (var k = 0; k < 30 && !document.querySelector('#peer-action-modal'); k++) await new Promise(function(r){ setTimeout(r, 100); });
