@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -22,7 +23,7 @@ import (
 func TestDashboardBoardItemPullPreviewImportWithoutPairing(t *testing.T) {
 	fh := newFedHarness(t)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://localhost:12345"))
-	t.Cleanup(agentd.ResetBoardUpdatesForTest())
+	t.Cleanup(agentd.ResetBoardUpdatesForTest(filepath.Join(t.TempDir(), "board-update-notes.json")))
 	dash := agentd.BuildDashboardHandlerForTest()
 	call := func(method, tail string, p any) *httptest.ResponseRecorder {
 		t.Helper()
@@ -196,6 +197,22 @@ func TestDashboardBoardItemPullPreviewImportWithoutPairing(t *testing.T) {
 		}
 	}
 	require.Equal(t, 1, again, "one note per version")
+	// A version posted while the daemon is down is announced once it is back.
+	agentd.RestartBoardUpdatesForTest()
+	fourth := must("POST", "/"+copiedBoard+"/items", map[string]any{"name": "fourth edition", "item": copiedItem, "parent": third["version"], "only": []string{"roles/board-role"}})
+	must("GET", "/updates", nil)
+	notes, e = db.ListHumanMessages()
+	require.NoError(t, e)
+	subjects := []string{}
+	for _, n := range notes {
+		if strings.HasPrefix(n.Subject, "Board update: ") {
+			subjects = append(subjects, n.Subject)
+		}
+	}
+	require.ElementsMatch(t, []string{"Board update: third edition", "Board update: fourth edition"}, subjects)
+	// Keeping the latest version clears it at once, not after the cache ages.
+	must("PUT", "/"+copiedBoard+"/items/"+copiedItem+"/pin", map[string]any{"version": fourth["version"]})
+	require.Empty(t, must("GET", "/updates", nil)["updates"])
 
 	var poisoned configbundle.Bundle
 	require.NoError(t, json.Unmarshal(raw, &poisoned))

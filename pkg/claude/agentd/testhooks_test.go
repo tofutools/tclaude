@@ -2129,15 +2129,16 @@ func RefreshFederationCatalogsForTest() {
 
 // ResetBoardUpdatesForTest gives the test a fresh board-update state
 // (nothing checked, nothing announced) and restores the previous one.
-func ResetBoardUpdatesForTest() func() {
-	prev := boardUpdates
-	boardUpdates = &boardUpdateState{notified: map[string]bool{}}
-	return func() { boardUpdates = prev }
+func ResetBoardUpdatesForTest(notesPath string) func() {
+	prev, prevPath := boardUpdates, boardUpdateNotesPath
+	boardUpdates = &boardUpdateState{}
+	boardUpdateNotesPath = func() string { return notesPath }
+	return func() { boardUpdates, boardUpdateNotesPath = prev, prevPath }
 }
 
+// RestartBoardUpdatesForTest forgets the in-memory state, as a daemon
+// restart does, keeping the notes file.
+func RestartBoardUpdatesForTest() { boardUpdates = &boardUpdateState{} }
+
 // ExpireBoardUpdatesForTest makes the next board-update read scan again.
-func ExpireBoardUpdatesForTest() {
-	boardUpdates.mu.Lock()
-	boardUpdates.checkedAt = time.Time{}
-	boardUpdates.mu.Unlock()
-}
+func ExpireBoardUpdatesForTest() { boardUpdates.expire() }

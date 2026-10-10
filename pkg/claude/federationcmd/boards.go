@@ -154,6 +154,9 @@ func runBoardCommand(p *boardCommandParams, stdout, stderr io.Writer) int {
 				path += "?refresh=1"
 			}
 		case "on", "off":
+			if p.Refresh {
+				return invalid("--refresh and --notify are separate commands")
+			}
 			method = "PUT"
 			body["notify"] = p.Notify == "on"
 		default:
@@ -229,11 +232,28 @@ func runBoardCommand(p *boardCommandParams, stdout, stderr io.Writer) int {
 		return rc
 	}
 	var out any
-	if err := agent.DaemonRequest(method, path, body, &out, agent.DaemonOpts{NoRetry: true, Timeout: 35 * time.Second}); err != nil {
+	timeout := 35 * time.Second
+	if p.Action == "updates" {
+		timeout = 150 * time.Second // longer than the daemon's two-minute board check
+	}
+	if err := agent.DaemonRequest(method, path, body, &out, agent.DaemonOpts{NoRetry: true, Timeout: timeout}); err != nil {
 		return fail(stderr, err)
 	}
-	if m, ok := out.(map[string]any); ok && !p.JSON && p.Action == "updates" && m["error"] != nil {
-		_, _ = fmt.Fprintf(stderr, "boards: last check failed: %v\n", m["error"])
+	if m, ok := out.(map[string]any); ok && !p.JSON && p.Action == "updates" && method == "GET" {
+		if m["error"] != nil {
+			_, _ = fmt.Fprintf(stderr, "boards: last check failed: %v\n", m["error"])
+		}
+		notes := "off"
+		if m["notify"] == true {
+			notes = "on"
+		}
+		rc := printRecordingTable(stdout, p.Action, out)
+		checked := ""
+		if at, _ := m["checked_at"].(string); at != "" {
+			checked = " · checked " + at
+		}
+		_, _ = fmt.Fprintf(stdout, "Messages notes: %s%s\n", notes, checked)
+		return rc
 	}
 	if !p.JSON && (p.Action == "list" || p.Action == "invites" || (p.Action == "updates" && method == "GET")) {
 		return printRecordingTable(stdout, p.Action, out)

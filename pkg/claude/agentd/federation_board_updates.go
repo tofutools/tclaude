@@ -3,10 +3,13 @@ package agentd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -36,9 +39,15 @@ const (
 	boardUpdateInterval = 15 * time.Minute
 	boardUpdateFresh    = 5 * time.Minute
 	boardUpdateMinGap   = 30 * time.Second
-	// Bounds on one scan: boards and catalog pages per board.
+	// Bounds on one scan. The hub pages catalogs 8 items at a time in item
+	// order; paging stops past the last kept item, so the cap only bounds a
+	// pathological board (1,000 versions by default fit in 125 pages).
 	boardUpdateMaxBoardPages = 10
-	boardUpdateMaxItemPages  = 20
+	boardUpdateMaxPinPages   = 50
+	boardUpdateMaxItemPages  = 150
+	boardUpdateScanTimeout   = 2 * time.Minute
+	// Announced versions are remembered this long (the notes file stays small).
+	boardUpdateNoteRetention = 180 * 24 * time.Hour
 )
 
 type boardUpdateState struct {
@@ -47,20 +56,77 @@ type boardUpdateState struct {
 	checkedAt time.Time
 	updates   []boardUpdate
 	err       string
-	// notified holds board/item/version keys already announced, seeded by
-	// the first scan so a daemon restart does not repeat them.
-	notified map[string]bool
+	// notified holds board/item/version keys already announced (with when),
+	// persisted so versions posted while the daemon was down are announced
+	// once it is back, and a restart repeats nothing. Only the very first
+	// scan on a node (no notes file yet) seeds silently.
+	notified map[string]time.Time
+	loaded   bool
 	seeded   bool
 }
 
-var boardUpdates = &boardUpdateState{notified: map[string]bool{}}
+var boardUpdates = &boardUpdateState{}
+
+// boardUpdateNotesPath is swappable so tests keep their notes private.
+var boardUpdateNotesPath = func() string { return filepath.Join(config.DataDir(), "board-update-notes.json") }
+
+func (s *boardUpdateState) loadNotes() {
+	if s.loaded {
+		return
+	}
+	s.loaded = true
+	s.notified = map[string]time.Time{}
+	raw, err := os.ReadFile(boardUpdateNotesPath())
+	if err != nil {
+		return
+	}
+	if json.Unmarshal(raw, &s.notified) == nil {
+		s.seeded = true
+	}
+	if s.notified == nil {
+		s.notified = map[string]time.Time{}
+	}
+}
+
+func (s *boardUpdateState) saveNotes() {
+	for k, at := range s.notified {
+		if time.Since(at) > boardUpdateNoteRetention {
+			delete(s.notified, k)
+		}
+	}
+	raw, err := json.Marshal(s.notified)
+	if err == nil {
+		err = writeBoardNotes(boardUpdateNotesPath(), raw)
+	}
+	if err != nil {
+		slog.Warn("boards: saving update notes", "err", err)
+	}
+}
+
+func writeBoardNotes(path string, raw []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// expire makes the next read check again (after a pin, leave or delete).
+func (s *boardUpdateState) expire() {
+	s.mu.Lock()
+	s.checkedAt = time.Time{}
+	s.mu.Unlock()
+}
 
 // boardUpdateScan is swappable so tests can count scans.
 var boardUpdateScan = scanBoardUpdates
 
 // scanBoardUpdates lists every board this node belongs to and reports its
 // pinned items whose latest version differs from the pin.
-func scanBoardUpdates(ctx context.Context) ([]boardUpdate, error) {
+func scanBoardUpdates(ctx context.Context, previous []boardUpdate) ([]boardUpdate, error) {
 	a, err := newBoardItemAccess(ctx)
 	if err != nil {
 		return nil, err
@@ -89,10 +155,44 @@ func scanBoardUpdates(ctx context.Context) ([]boardUpdate, error) {
 		}
 	}
 	out := []boardUpdate{}
+	failed := []string{}
 	for _, b := range boards {
+		found, e := scanBoardUpdatesOn(a, b.ID, b.Name)
+		if e != nil {
+			// One unreadable board keeps what it showed before and does not
+			// hide the others.
+			failed = append(failed, fmt.Sprintf("%s: %v", b.Name, e))
+			for _, u := range previous {
+				if u.Board == b.ID {
+					out = append(out, u)
+				}
+			}
+			continue
+		}
+		out = append(out, found...)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].BoardName != out[j].BoardName {
+			return out[i].BoardName < out[j].BoardName
+		}
+		return out[i].Name < out[j].Name
+	})
+	if len(failed) > 0 {
+		return out, fmt.Errorf("could not check %s", strings.Join(failed, "; "))
+	}
+	return out, nil
+}
+
+func scanBoardUpdatesOn(a *boardItemAccess, boardID, boardName string) ([]boardUpdate, error) {
+	b := struct{ ID, Name string }{boardID, boardName}
+	out := []boardUpdate{}
+	{
 		pins := map[string]string{}
-		cursor = ""
-		for {
+		cursor := ""
+		for page := 0; ; page++ {
+			if page == boardUpdateMaxPinPages {
+				return nil, errors.New("too many kept items")
+			}
 			raw, e := a.call("pins.list", map[string]any{"board": b.ID, "cursor": cursor})
 			if e != nil {
 				return nil, e
@@ -115,7 +215,13 @@ func scanBoardUpdates(ctx context.Context) ([]boardUpdate, error) {
 			}
 		}
 		if len(pins) == 0 {
-			continue
+			return out, nil
+		}
+		last := ""
+		for item := range pins {
+			if item > last {
+				last = item
+			}
 		}
 		cursor = ""
 		for page := 0; page < boardUpdateMaxItemPages; page++ {
@@ -141,17 +247,13 @@ func scanBoardUpdates(ctx context.Context) ([]boardUpdate, error) {
 				}
 				out = append(out, boardUpdate{Board: b.ID, BoardName: b.Name, Item: v.Item, Name: name, Pinned: pin, Latest: v.Version})
 			}
-			if cursor = reply.Cursor; cursor == "" {
+			// The catalog is in item order: past the last kept item there
+			// is nothing left to compare.
+			if cursor = reply.Cursor; cursor == "" || cursor >= last {
 				break
 			}
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].BoardName != out[j].BoardName {
-			return out[i].BoardName < out[j].BoardName
-		}
-		return out[i].Name < out[j].Name
-	})
 	return out, nil
 }
 
@@ -161,20 +263,29 @@ func (s *boardUpdateState) refresh(ctx context.Context, minAge time.Duration) ([
 	s.scanning.Lock()
 	defer s.scanning.Unlock()
 	s.mu.Lock()
-	fresh := !s.checkedAt.IsZero() && time.Since(s.checkedAt) < minAge
+	age := time.Since(s.checkedAt)
+	// A failed check is retried after the minimum gap, not the fresh window.
+	fresh := !s.checkedAt.IsZero() && (age < boardUpdateMinGap || (s.err == "" && age < minAge))
+	previous := append([]boardUpdate(nil), s.updates...)
 	s.mu.Unlock()
 	if !fresh {
-		updates, err := boardUpdateScan(ctx)
+		// The scan outlives the request that started it: a client giving up
+		// must not turn into a cached failure for everyone else.
+		scanCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), boardUpdateScanTimeout)
+		updates, err := boardUpdateScan(scanCtx, previous)
+		cancel()
 		s.mu.Lock()
 		s.checkedAt = time.Now()
 		if err != nil {
 			s.err = err.Error()
 		} else {
 			s.err = ""
+		}
+		if updates != nil {
 			s.updates = updates
 		}
 		s.mu.Unlock()
-		if err == nil {
+		if updates != nil {
 			s.announce(updates)
 		}
 	}
@@ -187,17 +298,23 @@ func (s *boardUpdateState) refresh(ctx context.Context, minAge time.Duration) ([
 // operator opted in. The first scan after start only seeds what is known.
 func (s *boardUpdateState) announce(updates []boardUpdate) {
 	s.mu.Lock()
+	s.loadNotes()
 	fresh := []boardUpdate{}
+	changed := !s.seeded
 	for _, u := range updates {
 		k := u.Board + "/" + u.Item + "/" + u.Latest
-		if !s.notified[k] {
-			s.notified[k] = true
+		if _, done := s.notified[k]; !done {
+			s.notified[k] = time.Now()
+			changed = true
 			if s.seeded {
 				fresh = append(fresh, u)
 			}
 		}
 	}
 	s.seeded = true
+	if changed {
+		s.saveNotes()
+	}
 	s.mu.Unlock()
 	if len(fresh) == 0 || !boardUpdateNotifyEnabled() {
 		return
@@ -245,9 +362,7 @@ func startBoardUpdateChecker(stop <-chan struct{}) {
 			if !boardHubConfigured() || !boardUpdateNotifyEnabled() {
 				continue
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			boardUpdates.refresh(ctx, boardUpdateMinGap)
-			cancel()
+			boardUpdates.refresh(context.Background(), boardUpdateMinGap)
 		}
 	}()
 }
@@ -278,9 +393,7 @@ func handleBoardUpdates(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("refresh") == "1" {
 		minAge = boardUpdateMinGap
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
-	defer cancel()
-	updates, at, errText := boardUpdates.refresh(ctx, minAge)
+	updates, at, errText := boardUpdates.refresh(r.Context(), minAge)
 	out := map[string]any{"updates": updates, "notify": boardUpdateNotifyEnabled()}
 	if !at.IsZero() {
 		out["checked_at"] = at.UTC().Format(time.RFC3339)

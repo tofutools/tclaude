@@ -146,7 +146,7 @@ function BoardDetail({ board, boards = [], view, actions, confirm, toast, copy, 
   }).then((r) => { if (r) { toast('Key changed', false); setToken(null); reload(); onChanged(); } }).catch(fail('Change key'));
 
   return html`<div class="fa-board-detail" id="fleet-board-detail" data-board=${board.id}>
-    <${BoardItems} board=${board} boards=${boards} name=${(id) => memberName(id, view)} actions=${actions} confirm=${confirm} toast=${toast} />
+    <${BoardItems} board=${board} boards=${boards} name=${(id) => memberName(id, view)} actions=${actions} confirm=${confirm} toast=${toast} onChanged=${onChanged} />
     <div class="fa-row"><b>Members</b></div>
     ${members?.error ? html`<div class="fa-danger">${members.error}</div>` : !members ? html`<div class="muted">Loading members…</div>` : html`<table class="fa-table" id="fleet-board-members">
       <thead><tr><th>Member</th><th>Role</th><th></th></tr></thead>
@@ -231,6 +231,8 @@ export function BoardsPage({ view, actions, confirm, toast, copy, updates = null
     return () => { off = true; };
   }, [tick]);
   const reload = () => setTick((n) => n + 1);
+  // Leaving, deleting or keeping a version can change the update list too.
+  const reloadAll = () => { reload(); loadUpdates().catch(() => {}); };
 
   const join = () => {
     const t = token.trim();
@@ -254,7 +256,7 @@ export function BoardsPage({ view, actions, confirm, toast, copy, updates = null
     okLabel: 'Leave board',
     busyLabel: 'Leaving…',
     action: () => actions.leaveBoard(b.id),
-  }).then((r) => { if (r) { toast(`Left ${b.name}`, false); if (open === b.id) setOpen(''); reload(); } }).catch((e) => toast(`Leave failed: ${errText(e)}`, true));
+  }).then((r) => { if (r) { toast(`Left ${b.name}`, false); if (open === b.id) setOpen(''); reloadAll(); } }).catch((e) => toast(`Leave failed: ${errText(e)}`, true));
 
   const remove = (b) => confirm({
     title: `Delete ${b.name} for everyone?`,
@@ -262,7 +264,7 @@ export function BoardsPage({ view, actions, confirm, toast, copy, updates = null
     okLabel: 'Delete board',
     busyLabel: 'Deleting…',
     action: () => actions.deleteBoard(b.id),
-  }).then((r) => { if (r) { toast(`Deleted ${b.name}`, false); if (open === b.id) setOpen(''); reload(); } }).catch((e) => toast(`Delete failed: ${errText(e)}`, true));
+  }).then((r) => { if (r) { toast(`Deleted ${b.name}`, false); if (open === b.id) setOpen(''); reloadAll(); } }).catch((e) => toast(`Delete failed: ${errText(e)}`, true));
 
   const list = Array.isArray(boards) ? boards : [];
   return html`<div class="fa-boards" id="fleet-boards">
@@ -286,7 +288,7 @@ export function BoardsPage({ view, actions, confirm, toast, copy, updates = null
       </tr>`,
       // The open board's details sit directly under its own row.
       open === b.id && html`<tr key=${`${b.id}:detail`} class="fa-board-detail-row"><td colspan="4">
-        <${BoardDetail} key=${open} board=${b} boards=${list} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} onChanged=${reload} /></td></tr>`])}</tbody></table>`}
+        <${BoardDetail} key=${open} board=${b} boards=${list} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} onChanged=${reloadAll} /></td></tr>`])}</tbody></table>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation boards list</code>, <code>join --token …</code>, <code>create --name …</code>, <code>delete --board …</code>, <code>updates [--notify on|off]</code></div>
   </div>`;
 }

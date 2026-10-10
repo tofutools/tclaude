@@ -291,6 +291,9 @@ func boardOperatorRoute(operation string) http.HandlerFunc {
 			}
 			return
 		}
+		if operation == "leave" || operation == "boards.delete" {
+			boardUpdates.expire()
+		}
 		var out any
 		if err = json.Unmarshal(body, &out); err != nil {
 			writeError(w, 502, "board_reply", "invalid board response")

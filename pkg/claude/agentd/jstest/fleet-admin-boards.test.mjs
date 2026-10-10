@@ -344,6 +344,9 @@ test('kept items with a newer version are listed with a jump to their board, a c
   await s.settle();
   assert.deepEqual(s.log.find((l) => l[0] === 'notify'), ['notify', true]);
   assert.match(s.toasts.at(-1)[0], /Messages note for each new version/);
+  const reads = s.log.filter((l) => l[0] === 'loadUpdates').length;
+  await s.click(s.q('[data-board="leave"]'));
+  assert.equal(s.log.filter((l) => l[0] === 'loadUpdates').length, reads + 1, 'leaving a board re-reads the update list');
 });
 
 test('the board client reads updates and sets the opt-in', async (t) => {

@@ -3434,8 +3434,13 @@ notify,checked_at,error}`. It reuses a check up to five minutes old; `--refresh`
 (`?refresh=1`) checks again, at most every 30 seconds. `boards updates --notify
 on|off` (PUT `{notify}`, stored as `federation.board_update_notify`, default off)
 makes the daemon check every 15 minutes and leave one Messages note per newly
-seen version; versions already known when it starts are not announced. The
-check reads catalogs and pins only: nothing is fetched or imported. These routes
+seen version. The very first check on a node only records what it finds;
+after that every new version gets one note, including versions posted while
+the daemon was down (announced versions are kept in the data directory for 180
+days). A failed check is retried after 30 seconds rather than cached, one
+unreadable board does not hide the others, and keeping a version, leaving or
+deleting a board refreshes the list. The check reads catalogs and pins only:
+nothing is fetched or imported. These routes
 are human-only and never served through peer view.
 Re-publication uses `publish --board DEST --from-board SOURCE --from-item ITEM
 --from-version VERSION` and retains exact original bytes and provenance.

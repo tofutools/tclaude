@@ -58,6 +58,8 @@ func TestBoardsUpdatesRoutesAndTable(t *testing.T) {
 	require.Zero(t, runBoardCommand(&boardCommandParams{Action: "updates", Refresh: true}, &out, &stderr), stderr.String())
 	require.Contains(t, out.String(), "review pack")
 	require.Contains(t, out.String(), "LATEST")
+	require.Contains(t, out.String(), "Messages notes: off")
+	require.NotZero(t, runBoardCommand(&boardCommandParams{Action: "updates", Notify: "on", Refresh: true}, &out, &stderr))
 	require.Zero(t, runBoardCommand(&boardCommandParams{Action: "updates", Notify: "on"}, &out, &stderr), stderr.String())
 	require.Equal(t, []string{"GET /v1/federation/boards/updates?refresh=1 {}", `PUT /v1/federation/boards/updates {"notify":true}`}, calls)
 	require.NotZero(t, runBoardCommand(&boardCommandParams{Action: "updates", Notify: "maybe"}, &out, &stderr))
