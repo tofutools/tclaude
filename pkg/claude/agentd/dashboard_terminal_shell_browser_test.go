@@ -433,6 +433,9 @@ func terminalLiveReconnectState() dashsnap.State {
 		JS: `
 return (async function () {
   await __smokeOpenLivePane();
+  // Exercise settled disconnect, rather than the bounded startup retry.
+  var core = await import('/static/js/terminals-core.js');
+  await new Promise(function (resolve) { setTimeout(resolve, core.INITIAL_RETRY_STABILITY_MS + 100); });
   await fetch('/testhook/term/kill', { method: 'POST' });
   await __smokePoll('pane disconnected after PTY kill', function () {
     return __smokePaneStatus() === 'disconnected';
