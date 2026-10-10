@@ -60,6 +60,7 @@ const skynetFederationStubJS = `(function(){
     if (path === '/api/federation/outbox') return json([
       { envelope_id: 'env_7k2q', to: 'operator@lab', from: 'human operator', subject: 'Release window', preview: 'Freeze starts at 18:00', state: 'pending', attempts: 4, last_error: 'peer offline', created_at: '2026-10-10T09:20:00Z', updated_at: '2026-10-10T09:31:00Z' },
       { envelope_id: 'env_5m1x', to: 'operator@forge', from: 'human operator', subject: 'Re: deploy freeze', preview: 'Agreed', state: 'acked', attempts: 1, created_at: '2026-10-10T08:02:00Z', updated_at: '2026-10-10T08:02:01Z' }
+    ]);
     if (path === '/api/federation/node-labels' && !(init && init.method === 'POST')) return json({ labels: ['gpu', 'ci', 'linux'] });
     if (path === '/api/federation/viewers') return json(window.__dashsnapViewers ? [
       { id: 'tv_8k2q', peer: 'inst_hn3cxq7a', agent: 'agt_r8k2m4c1x9', session: 'fe-dev-forms', group: 'frontend-squad', read_only: false, started: new Date(Date.now() - 720000).toISOString(), incoming: true },
@@ -68,9 +69,11 @@ const skynetFederationStubJS = `(function(){
     if (path === '/api/federation/bundle-offers') return json(url.indexOf('direction=out') >= 0 ? [
       { offer: { id: 'off_7q2m', type: 'agent', summary: 'Agent reviewer (config only)', expires_at: '2026-10-17T09:00:00Z' }, peer: 'inst_2p6ym4ke', direction: 'out', state: 'pending' },
       { offer: { id: 'off_3k1x', type: 'config', summary: 'Config bundle: 4 items', expires_at: '2026-10-16T09:00:00Z' }, peer: 'inst_hn3cxq7a', direction: 'out', state: 'applied' }
+    ] : [
       { offer: { id: 'off_9c4r', type: 'config', bytes: 6144, sha256: '3f9a0c27d1e84b56a7c2e9f01d3b8a64c5e7f2190ab3d4e6f8a1c2b3d4e5f607', expires_at: '2026-10-17T09:00:00Z', summary: 'Config bundle: 3 items' }, peer: 'inst_hn3cxq7a', direction: 'in', state: 'pending', sender_agent: 'agt_7fk2' },
       { offer: { id: 'off_5m8t', type: 'agent', bytes: 482000, sha256: '9b1d', expires_at: '2026-10-17T09:00:00Z', summary: 'Agent ada with history', group: 'ops', move: { source_agent: 'agt_ada0' } }, peer: 'inst_hn3cxq7a', direction: 'in', state: 'ready' },
       { offer: { id: 'off_2w6p', type: 'config', bytes: 900, expires_at: '2026-10-12T09:00:00Z', summary: 'Config bundle: 1 items' }, peer: 'inst_2p6ym4ke', direction: 'in', state: 'pending', last_error: 'sender offline; fetch again later' }
+    ]);
     if (path.indexOf('/api/federation/bundle-offers/') === 0 && path.slice(-7) === '/import') return json({ changes: [
       { item: 'roles/reviewer', action: 'create', security: true },
       { item: 'templates/pr-review', action: 'replace', security: true },
@@ -81,9 +84,11 @@ const skynetFederationStubJS = `(function(){
       { id: 'job_3m9tx4', direction: 'in', peer: 'inst_hn3cxq7a', state: 'running', request: { repo: 'tclaude', ref: 'feature/viewers', group: 'ops', harness: 'codex', command: 'Fix the flaky federation test and push a branch', timeout_seconds: 3600 }, created_at: '2026-10-10T09:20:00Z' },
       { id: 'job_q7w2n8', direction: 'out', peer: 'inst_2p6ym4ke', state: 'completed', request: { repo: 'site', ref: 'v2', group: 'web', command: 'npm run build', timeout_seconds: 900 }, result: { state: 'completed', exit_code: 0, commit: '4e1c9a7b2d3f' }, created_at: '2026-10-10T08:50:00Z' },
       { id: 'job_z1v5c6', direction: 'out', peer: 'inst_2p6ym4ke', state: 'timeout', request: { repo: 'site', ref: 'v2', group: 'web', command: 'npm test', timeout_seconds: 600 }, result: { state: 'timeout', exit_code: 124 }, created_at: '2026-10-10T08:10:00Z' }
+    ] });
     if (path === '/api/federation/repos') return json({ repos: [
       { id: 'repo_1', name: 'tclaude', revision: 3, enabled: true, group_names: ['ops'], definition: { url: 'git@github.com:tofutools/tclaude.git', clone: '/home/ana/git/tclaude', groups: [4] } },
       { id: 'repo_2', name: 'infra', revision: 1, enabled: false, group_names: ['ops', 'build'], definition: { url: 'git@github.com:tofutools/infra.git', clone: '/home/ana/git/infra', groups: [4, 6] } }
+    ] });
     if (path === '/api/federation/peers/trust') return json({ instance_id: 'inst_w5zea3nq', fingerprint: 'w5ze-a3nq-7m1p-kd42-xr8c-0fv6', level: 'restricted', profile: null, plan: null, applied: false });
     var hav = function(extra){ return { schema: 1, observed_at: '2026-10-10T09:40:00Z', harnesses: [
       { name: 'claude', display_name: 'Claude Code', installed: true, version: '2.1.4', latest_version: extra ? '2.1.4' : '2.2.0', update_available: !extra, version_status: 'known', credential_present: true, usable: true },
