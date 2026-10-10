@@ -29,6 +29,7 @@ import { setHScrollFollow } from './hscroll.js';
 import { noteConnected, noteDisconnected } from './connection.js';
 import { syncDashDefaultProfile } from './profiles.js';
 import { claimViewersRead, noteViewersRead } from './remote-viewers.js';
+import { claimRemoteInboxRead, readRemoteInboxes } from './remote-inbox.js';
 import { dashboardState } from './snapshot-store.js';
 import { featureState } from './feature-state-registry.js';
 import {
@@ -142,6 +143,9 @@ export async function refresh(options) {
     // VIEWERS_EVERY_MS and only on a federated node's own dashboard, so the
     // per-agent viewer badges cost no request or timer of their own.
     const readViewers = claimViewersRead();
+    // Other own nodes' human inboxes: relaxed cadence, never holds the tick.
+    const inboxPeers = claimRemoteInboxRead();
+    if (inboxPeers.length) void readRemoteInboxes(inboxPeers);
     const [snapR, retiredR, convR, replacedR, jobsR, viewersR] = await Promise.all([
       fetch('/api/snapshot' + (staticVersion
         ? '?static_version=' + encodeURIComponent(staticVersion)

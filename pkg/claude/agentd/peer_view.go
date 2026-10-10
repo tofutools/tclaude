@@ -51,7 +51,11 @@ func PeerViewHandler(instanceID string) http.Handler {
 			}
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {
 				// Do not audit untrusted input (body, target selector, query) as a label.
-				recordFederationAudit("federation.peer_view", "operator@"+instanceID, view.targetConv, view.groupName, r.Method+" "+pattern, out.statusCode())
+				label := r.Method + " " + pattern
+				if view.auditDetail != "" {
+					label += " " + view.auditDetail
+				}
+				recordFederationAudit("federation.peer_view", "operator@"+instanceID, view.targetConv, view.groupName, label, out.statusCode())
 			}
 			if out.statusCode() >= 200 && out.statusCode() < 300 && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 				out.addMetadata(view.metadata())
@@ -82,6 +86,9 @@ type peerViewRule struct {
 	summary       bool
 	accessRequest bool
 	publicRead    bool
+	// unrestrictedOnly rules are held only through unrestricted trust: they
+	// cannot be granted or requested (the human inbox across own nodes).
+	unrestrictedOnly bool
 	serve         func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
 	write         func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
 }
@@ -149,6 +156,7 @@ func peerViewRules() map[string]peerViewRule {
 	for _, action := range []struct{ tail, permission string }{{"stop", PermGroupsMembersStop}, {"retire", PermGroupsMembersRetire}, {"clone", PermGroupsMembersClone}, {"move", PermAgentMove}, {"teleport", PermAgentMove}} {
 		rules["POST /api/agents/{id}/"+action.tail] = peerViewRule{feature: "lifecycle." + action.tail, requires: action.permission, group: true, write: servePeerAgentAction}
 	}
+	addPeerHumanInboxRules(rules)
 	rules["feature:roster"] = peerViewRule{feature: "groups.roster", requires: PermGroupsRosterRead, group: true, serve: servePeerGroups}
 	rules["feature:presence"] = peerViewRule{feature: "groups.presence", requires: PermGroupsPresenceRead, group: true, serve: servePeerGroups}
 	return rules
@@ -158,6 +166,9 @@ type peerView struct {
 	peer       *db.FederationPeer
 	targetConv string
 	groupName  string
+	// auditDetail is a validated closed value (never request text) that
+	// distinguishes otherwise identical audit labels, e.g. sandbox direction.
+	auditDetail string
 }
 type peerViewOmission struct {
 	Requestable bool   `json:"requestable"`
@@ -171,6 +182,9 @@ type peerViewMetadata struct {
 }
 
 func (v *peerView) allows(rule peerViewRule, groupID int64) bool {
+	if rule.unrestrictedOnly {
+		return v != nil && db.FederationPeerUnrestricted(v.peer.InstanceID)
+	}
 	if v != nil && rule.accessRequest {
 		return peerHasAccess(v.peer.InstanceID)
 	}
@@ -227,7 +241,7 @@ func (v *peerView) metadata() peerViewMetadata {
 			out.Included = append(out.Included, rule.feature)
 		} else {
 			_, requestable := requestablePeerPermission(rule.requires)
-			requestable = requestable && !rule.accessRequest && !rule.visible && !rule.publicRead && (rule.serve != nil || rule.write != nil) && hasAccess
+			requestable = requestable && !rule.unrestrictedOnly && !rule.accessRequest && !rule.visible && !rule.publicRead && (rule.serve != nil || rule.write != nil) && hasAccess
 			out.Omitted = append(out.Omitted, peerViewOmission{Feature: rule.feature, Requires: rule.requires, Requestable: requestable})
 		}
 	}

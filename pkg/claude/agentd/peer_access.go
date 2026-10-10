@@ -30,7 +30,7 @@ func requestablePeerPermission(slug string) (group bool, ok bool) {
 	requestablePeerPermissions.once.Do(func() {
 		permissions := map[string]bool{}
 		for _, rule := range peerViewRules() {
-			if !rule.accessRequest && !rule.visible && !rule.publicRead && (rule.serve != nil || rule.write != nil) {
+			if !rule.unrestrictedOnly && !rule.accessRequest && !rule.visible && !rule.publicRead && (rule.serve != nil || rule.write != nil) {
 				permissions[rule.requires] = rule.group
 			}
 		}
