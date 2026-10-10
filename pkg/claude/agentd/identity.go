@@ -1314,6 +1314,13 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 		// block on the decision. Timeout = deny, so a doomed agent can
 		// never get stuck waiting forever.
 		if timeout := parseAskHumanHeader(r); timeout > 0 && popupBaseURL != "" {
+			for _, action := range actx {
+				if action.RemotePeer != "" && !operatorPeerActionVisible(action) {
+					writeError(w, 403, "peer_access", "operator has no catalog access to this peer target")
+					return "", false
+				}
+			}
+
 			// Snapshot a safe description now so the popup can show what's
 			// being approved. The preview helper replaces r.Body with a
 			// fresh reader so the downstream handler still gets the same

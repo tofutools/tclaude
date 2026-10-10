@@ -2737,7 +2737,8 @@ approvable; status reads report `interrupted`. Each peer can have eight pending
 requests. Approval is a grant, so retry the original action explicitly afterwards.
 
 Receiving operators see peer requests in the existing Access requests folder,
-including its away-mode delegated approval flow. Rows add `origin_peer`,
+with decisions reserved to the local operator; away-cover peers cannot answer
+these trust-administration requests. Rows add `origin_peer`,
 `group_id`, `grant_ttl_seconds`, and `grant_expires_at` when applicable. The local
 `GET /api/federation/access-requests` lists peer requests and history. Decide via
 `POST /api/federation/access-requests/{id}/decision` (or the existing local

@@ -6,6 +6,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -38,7 +39,8 @@ func peerHasAccess(peer string) bool {
 	for _, g := range grants {
 		// Public node summaries, obsolete slugs, and grants on deleted groups do
 		// not constitute access that may be used to solicit more authority.
-		if _, ok := requestablePeerPermission(g.Slug); !ok {
+		meaningful, _ := peerAccessCatalog()
+		if !slices.Contains(meaningful, g.Slug) {
 			continue
 		}
 		if g.Scope == "" {
@@ -160,10 +162,15 @@ func servePeerAccessDecision(w http.ResponseWriter, req *approvalRequest, decisi
 	}
 	req.mu.Lock()
 	defer req.mu.Unlock()
+	if req.peerDecisionQueued {
+		writeError(w, 409, "already_decided", "decision already queued")
+		return
+	}
 	pa := *req.peerAccess
 	if decision == "deny" {
 		select {
 		case req.decision <- outcomeDeny:
+			req.peerDecisionQueued = true
 			writeJSON(w, 200, map[string]any{"decision": "deny"})
 		default:
 			writeError(w, 409, "already_decided", "decision already queued")
@@ -194,7 +201,10 @@ func servePeerAccessDecision(w http.ResponseWriter, req *approvalRequest, decisi
 	}
 	select {
 	case req.decision <- outcome:
-		*req.peerAccess = pa
+		req.peerDecisionQueued = true
+		req.peerAccess.GrantGroupID = pa.GrantGroupID
+		req.peerAccess.GrantTTLSeconds = pa.GrantTTLSeconds
+		req.peerAccess.ExpiresAt = pa.ExpiresAt
 	default:
 		writeError(w, 409, "already_decided", "decision already queued")
 		return
@@ -205,40 +215,22 @@ func applyPeerAccessOutcome(req *approvalRequest, outcome approvalOutcome) bool 
 	req.mu.Lock()
 	pa := *req.peerAccess
 	req.mu.Unlock()
-	approved := outcome.approved() && peerHasAccess(pa.Peer)
+	approved := false
 	scope := ""
 	if pa.GrantGroupID != 0 {
 		scope = db.FederationGroupScope(pa.GrantGroupID)
-		g, err := db.GetAgentGroupByID(pa.GrantGroupID)
-		approved = approved && err == nil && g != nil && !g.IsArchived() && fedPeerGroupVisible(pa.Peer, pa.GrantGroupID)
 	}
-	if approved {
-		// No new more-specific policy should shadow a broader existing grant.
-		covered := false
-		if db.FederationPeerUnrestricted(pa.Peer) {
-			covered = true
-		} else if grants, err := db.ListEffectiveFederationPeerGrants(pa.Peer); err == nil {
-			for _, g := range grants {
-				if g.Slug == pa.Slug && (g.Scope == "" || g.Scope == scope) {
-					covered = true
-					pa.ExpiresAt = g.ExpiresAt
-					break
-				}
-			}
-		}
-		if !covered {
-			if pa.GrantTTLSeconds > 0 {
-				expires := time.Now().Add(time.Duration(pa.GrantTTLSeconds) * time.Second)
-				pa.ExpiresAt = &expires
-			}
-			approved = db.EnsureFederationPeerGrant(db.FederationPeerGrant{Peer: pa.Peer, Slug: pa.Slug, Scope: scope, ExpiresAt: pa.ExpiresAt}) == nil
-		}
+	if outcome.approved() {
+		meaningful, groupSlugs := peerAccessCatalog()
+		approved, _ = db.ApproveFederationPeerAccessRequest(&pa, meaningful, groupSlugs)
 	}
 	req.mu.Lock()
-	*req.peerAccess = pa
+	req.peerAccess.GrantGroupID = pa.GrantGroupID
+	req.peerAccess.GrantTTLSeconds = pa.GrantTTLSeconds
+	req.peerAccess.ExpiresAt = pa.ExpiresAt
 	req.mu.Unlock()
-	if err := db.UpsertFederationPeerAccessRequest(pa); err != nil {
-		approved = false
+	if !approved {
+		_ = db.UpsertFederationPeerAccessRequest(pa)
 	}
 	verb := "federation.access.deny"
 	status := 403
@@ -291,4 +283,37 @@ func auditPeerAccessProxy(r *http.Request, peer, phase string, status int, body 
 			recordFederationAudit("federation.access.out.decision", "operator", "", "", fmt.Sprintf("peer=%s request=%s decision=%s", peer, auditClip(row.ID, 40), auditClip(row.Status, 40)), status)
 		}
 	}
+}
+
+func peerAccessCatalog() (meaningful, groupSlugs []string) {
+	for slug := range federationPeerSlugs {
+		groupSlugs = append(groupSlugs, slug)
+		meaningful = append(meaningful, slug)
+	}
+	for _, rule := range peerViewRules() {
+		if _, ok := requestablePeerPermission(rule.requires); ok {
+			meaningful = append(meaningful, rule.requires)
+		}
+	}
+	meaningful = append(meaningful, "config.offer", PermApprovalsAnswer, PermModelsProxy, PermModelsProxyLeased)
+	return meaningful, groupSlugs
+}
+
+// Agent requests go to their own operator only after that operator already
+// sees the receiving group; trust/placement metadata alone is insufficient.
+func operatorPeerActionVisible(action ActionContext) bool {
+	peer, err := db.GetFederationPeer(action.RemotePeer)
+	if err != nil || peer == nil {
+		return false
+	}
+	cat, _, err := fedCatalogFor(peer.InstanceID)
+	if err != nil || cat == nil {
+		return false
+	}
+	for _, group := range cat.Groups {
+		if action.RemoteGroup == "" || group.Name == action.RemoteGroup {
+			return true
+		}
+	}
+	return false
 }

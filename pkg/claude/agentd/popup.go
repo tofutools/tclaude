@@ -183,13 +183,14 @@ type approvalRequest struct {
 	// clicks. Set by the waiter (realRequestHumanApproval) at start and on
 	// each extend; read by the snapshot under mu. Zero until the waiter
 	// runs — the snapshot then falls back to createdAt+timeout.
-	deadline          time.Time
-	delegated         chan fedAwayDecision
-	delegatedEpoch    string
-	delegatedDeadline time.Time
-	originalDeadline  time.Time
-	delegatedDecider  string
-	delegatedEnvelope string
+	peerDecisionQueued bool
+	deadline           time.Time
+	delegated          chan fedAwayDecision
+	delegatedEpoch     string
+	delegatedDeadline  time.Time
+	originalDeadline   time.Time
+	delegatedDecider   string
+	delegatedEnvelope  string
 }
 
 // approvalRegistry holds pending approvals keyed by ID. Browser
@@ -216,6 +217,9 @@ func (a *approvalRegistry) pendingCount() int {
 // Called by the approval waiter at each terminal outcome (human decision or
 // timeout) so the dashboard can show what was chosen.
 func (a *approvalRegistry) recordResolved(req *approvalRequest, outcome string) {
+	if req.peerAccess != nil && outcome == "timed out" {
+		recordFederationAudit("federation.access.timeout", "system", "", req.targetGroup, req.perm, 403)
+	}
 	if err := db.UpsertAccessRequest(accessRequestDB(req, outcome, time.Now())); err != nil {
 		slog.Warn("access request: failed to persist resolved request",
 			"id", req.id, "perm", req.perm, "outcome", outcome, "err", err)
