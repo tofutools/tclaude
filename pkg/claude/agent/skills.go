@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/skillroots"
+	utilityskills "github.com/tofutools/tclaude/skills"
 )
 
 // skillsFS holds the canonical skill files shipped with the binary. The CLI
@@ -112,6 +113,29 @@ func InstallCodexProxySkills(force bool, selection ProxySkills) ([]InstalledSkil
 	return installCodexSkills(force, skills)
 }
 
+// writeUtilitySkillTree copies one optional utility skill from the repo's
+// skills/ package into dst.
+func writeUtilitySkillTree(name, dst string) error {
+	return writeSkillTreeFS(utilityskills.FS, name, dst)
+}
+
+// InstallUtilitySkills writes the optional utility skills (repo skills/, e.g.
+// demo-recording) into ~/.claude/skills/<name>/. They are opt-in via
+// `tclaude setup --install-utility-skills` and not part of --install-all.
+func InstallUtilitySkills(force bool) ([]InstalledSkill, error) {
+	root, err := skillroots.Claude()
+	if err != nil {
+		return nil, err
+	}
+	return installTreesInRoot(root, force, utilityskills.Names, writeUtilitySkillTree)
+}
+
+// InstallCodexUtilitySkills writes the optional utility skills into Codex's
+// user-scope skill directories.
+func InstallCodexUtilitySkills(force bool) ([]InstalledSkill, error) {
+	return installCodexTrees(force, utilityskills.Names, writeUtilitySkillTree)
+}
+
 // ProxySkills selects which credential-proxy skills to install.
 type ProxySkills struct {
 	Git    bool
@@ -131,6 +155,10 @@ func (s ProxySkills) names() []string {
 }
 
 func installCodexSkills(force bool, skills []string) ([]InstalledSkill, error) {
+	return installCodexTrees(force, skills, writeSkillTree)
+}
+
+func installCodexTrees(force bool, skills []string, write func(name, dst string) error) ([]InstalledSkill, error) {
 	roots, err := codexSkillRoots()
 	if err != nil {
 		return nil, err
@@ -139,7 +167,7 @@ func installCodexSkills(force bool, skills []string) ([]InstalledSkill, error) {
 	var installed []InstalledSkill
 	var firstExistsErr error
 	for _, root := range roots {
-		got, err := installSkillsInRoot(root, force, skills)
+		got, err := installTreesInRoot(root, force, skills, write)
 		installed = append(installed, got...)
 		if err == nil {
 			continue
@@ -159,6 +187,10 @@ func installCodexSkills(force bool, skills []string) ([]InstalledSkill, error) {
 }
 
 func installSkillsInRoot(root string, force bool, skills []string) ([]InstalledSkill, error) {
+	return installTreesInRoot(root, force, skills, writeSkillTree)
+}
+
+func installTreesInRoot(root string, force bool, skills []string, write func(name, dst string) error) ([]InstalledSkill, error) {
 	var installed []InstalledSkill
 	var firstExistsErr error
 	for _, name := range skills {
@@ -171,7 +203,7 @@ func installSkillsInRoot(root string, force bool, skills []string) ([]InstalledS
 				continue
 			}
 		}
-		if err := writeSkillTree(name, dst); err != nil {
+		if err := write(name, dst); err != nil {
 			return installed, err
 		}
 		installed = append(installed, InstalledSkill{Name: name, Path: dst})
@@ -188,11 +220,15 @@ func codexSkillRoots() ([]string, error) {
 
 // writeSkillTree copies the embedded skills/<name>/ subtree into dst.
 func writeSkillTree(name, dst string) error {
+	return writeSkillTreeFS(skillsFS, "skills/"+name, dst)
+}
+
+// writeSkillTreeFS copies the root subtree of fsys into dst.
+func writeSkillTreeFS(fsys fs.FS, root, dst string) error {
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", dst, err)
 	}
-	root := "skills/" + name
-	return fs.WalkDir(skillsFS, root, func(p string, d fs.DirEntry, walkErr error) error {
+	return fs.WalkDir(fsys, root, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -203,7 +239,7 @@ func writeSkillTree(name, dst string) error {
 		if err != nil {
 			return err
 		}
-		data, err := skillsFS.ReadFile(p)
+		data, err := fs.ReadFile(fsys, p)
 		if err != nil {
 			return err
 		}

@@ -124,6 +124,14 @@ configured:
 tclaude setup --install-proxy-skills
 ```
 
+Optional utility skills are another opt-in. For example, `demo-recording`
+teaches an agent to record and send a demo video of a feature it built end
+to end:
+
+```bash
+tclaude setup --install-utility-skills
+```
+
 To prepare hooks before installing the harness CLIs, explicitly add
 `--all-harnesses`. This creates missing configuration directories for every
 supported hook installer (Claude Code, Codex, Copilot, and Gemini CLI); `--install-all`
