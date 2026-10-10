@@ -2926,10 +2926,12 @@ are local-only, including for unrestricted peers.
 
 Output accepts an opaque `cursor` (omit it to start at the beginning) and
 `max_bytes`, default 65536, range 32768–262144. Replies contain `chunks`
-(`{stream:"stdout"|"stderr",data:string}`), the next `cursor`, `state`,
+(`{stream:"stdout"|"stderr",data:string,encoding:"base64"}`), the next `cursor`, `state`,
 `done`, and optionally `truncated` when more output remains. Each read is
 bounded and closes its authenticated stream; it does not wait for future
-output. Poll only while the output panel is visible. When `done` becomes
+output. Decode base64 into bytes and use a separate streaming UTF-8 decoder per channel
+across polls, preserving characters split between frames. `max_bytes` counts
+original bytes. Poll only while the output panel is visible. When `done` becomes
 true, fetch the verified terminal `/logs` result. Inbound or unstarted jobs
 return 409, as do peers without incremental-output support. A simultaneous
 CLI follow may occupy the same per-job stream slot.
@@ -2944,7 +2946,7 @@ competing signed successors require explicit operator recovery. Completed
 history is available through the read-only, human-only
 `GET /api/federation/identity/rotations`, mirroring `/v1`.
 
-`tclaude federation recover-peer OLD_ID NEW_ID` previews recovery without
+`tclaude federation identity recover-peer OLD_ID NEW_ID` previews recovery without
 changing authority. Applying recovery requires independently checking the
 replacement fingerprint with that node's operator, then passing
 `--fingerprint NEW_FINGERPRINT --apply`. The dashboard exposes no identity

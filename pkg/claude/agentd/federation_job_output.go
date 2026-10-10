@@ -36,8 +36,9 @@ func (r fedJobOutputRequest) valid(j *db.FederationJob) bool {
 }
 
 type fedJobOutputChunk struct {
-	Stream string `json:"stream"`
-	Data   string `json:"data"`
+	Stream   string `json:"stream"`
+	Data     string `json:"data"`
+	Encoding string `json:"encoding"`
 }
 type fedJobOutputResponse struct {
 	Chunks    []fedJobOutputChunk `json:"chunks"`
@@ -113,7 +114,7 @@ func readFederationJobOutput(f *os.File, j *db.FederationJob, c fedJobOutputCurs
 		if err = c.Cursor.Apply(frame, io.Discard, io.Discard); err != nil {
 			return out, err
 		}
-		out.Chunks = append(out.Chunks, fedJobOutputChunk{Stream: streamName, Data: string(frame.Data)})
+		out.Chunks = append(out.Chunks, fedJobOutputChunk{Stream: streamName, Data: base64.StdEncoding.EncodeToString(frame.Data), Encoding: "base64"})
 		used += len(frame.Data)
 		after, _ := reader.Seek(0, io.SeekCurrent)
 		c.Offset += after - before
@@ -132,6 +133,7 @@ func handleFederationJobOutput(w http.ResponseWriter, r *http.Request) {
 	if !authorizeJobAccess(w, r, j) {
 		return
 	}
+	w.Header().Set("Cache-Control", "private, no-store")
 	c, err := decodeJobOutputCursor(r.URL.Query().Get("cursor"), j)
 	if err != nil {
 		writeError(w, 400, "cursor", err.Error())
@@ -192,9 +194,13 @@ func handleFederationJobOutput(w http.ResponseWriter, r *http.Request) {
 		if chunk.Stream != "stdout" && chunk.Stream != "stderr" {
 			err = errors.New("invalid channel")
 		}
-		size += len(chunk.Data)
+		decoded, decodeErr := base64.StdEncoding.DecodeString(chunk.Data)
+		if decodeErr != nil || chunk.Encoding != "base64" {
+			err = errors.New("invalid output encoding")
+		}
+		size += len(decoded)
 	}
-	if err != nil || next.Offset < c.Offset || next.Stdout < c.Stdout || next.Stderr < c.Stderr || size > 3*limit {
+	if err != nil || next.Offset < c.Offset || next.Stdout < c.Stdout || next.Stderr < c.Stderr || size > limit {
 		writeError(w, 502, "output", "invalid output cursor or chunks")
 		return
 	}
