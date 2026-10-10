@@ -2,6 +2,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { receiverDecides, sentLanding } from './fleet-admin-landing.js';
 
 const html = htm.bind(h);
 
@@ -50,11 +51,11 @@ export function MoveAgentDialog({ peers, agents, actions, confirm, onClose, onDo
     setError('');
     confirm({
       title: `Move ${agentLabel} to ${peerLabel}?`,
-      body: `Sends ${agentLabel}'s configuration and its full conversation history — which may contain code, file contents and anything pasted into it — to ${peerLabel}, whose operator may start it in group ${group}. Once ${peerLabel} confirms its copy is running, ${agentLabel} is retired here: it stops running, leaves its groups and loses its grants on this node (its history and worktree stay), and mail peers send to its old address is refused. Until then you can abandon the move on this page, which keeps the agent here, but the history already offered to ${peerLabel} is not withdrawn and any copy it makes stays there.${allow ? ` The history includes suspected credentials (${findings.map((f) => `${f.kind} ×${f.count}`).join(', ')}).` : ''}`,
+      body: `Sends ${agentLabel}'s configuration and its full conversation history — which may contain code, file contents and anything pasted into it — to ${peerLabel}, whose operator may start it in group ${group}. Once ${peerLabel} confirms its copy is running, ${agentLabel} is retired here: it stops running, leaves its groups and loses its grants on this node (its history and worktree stay), and mail peers send to its old address is refused. Until then you can abandon the move on this page, which keeps the agent here, but the history already offered to ${peerLabel} is not withdrawn and any copy it makes stays there. ${receiverDecides(peerLabel)}${allow ? ` The history includes suspected credentials (${findings.map((f) => `${f.kind} ×${f.count}`).join(', ')}).` : ''}`,
       okLabel: 'Move agent',
       busyLabel: 'Sending…',
       action: () => actions.moveAgent({ agent: form.agent, peer: form.peer, group, allow_flagged: allow }),
-    }).then((r) => { if (r) onDone(`Move of ${agentLabel} to ${peerLabel} started`); })
+    }).then((r) => { if (r) onDone(`Move of ${agentLabel} to ${peerLabel} started${sentLanding(r, peerLabel)}`); })
       .catch((e) => {
         if (e?.code === 'flagged_credentials') { setFindings(e.body?.findings || []); setError('The history looks like it contains credentials. A move always carries the history: send it anyway, or clean up first.'); }
         else setError(moveErrorText(e, peerLabel));
@@ -68,7 +69,7 @@ export function MoveAgentDialog({ peers, agents, actions, confirm, onClose, onDo
     <label class="fa-of-row"><span class="fa-k">peer</span><select id="fleet-move-agent-peer" value=${form.peer} onChange=${set('peer')}>
       ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}</select></label>
     <label class="fa-of-row"><span class="fa-k">group</span><input id="fleet-move-agent-group" value=${form.group} placeholder="receiving group on the peer (it must grant agents.receive)" autocomplete="off" onInput=${set('group')} /></label>
-    <div class="muted">The agent retires here once the peer runs its copy. To keep it running here, offer a copy from Offers instead.</div>`}
+    <div class="muted">The agent retires here once the peer runs its copy. To keep it running here, offer a copy from Offers instead. Starting directory: the receiver chooses on accept.</div>`}
     ${findings && html`<div class="fa-plan"><ul>${findings.map((f) => html`<li class="fa-warn">${f.kind} ×${f.count}${f.locations?.length ? ` (${f.locations.slice(0, 3).join(', ')})` : ''}</li>`)}</ul></div>
       <label class="fa-of-check"><input id="fleet-move-agent-allow" type="checkbox" checked=${allow} onChange=${(e) => setAllow(e.currentTarget.checked)} /> send the history anyway</label>`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}

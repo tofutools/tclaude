@@ -85,6 +85,11 @@ let sharedActions = null;
 function defaultActions() { return (sharedActions ||= createPeerActionActions()); }
 
 // consequence spells out what an agent action does on the peer.
+// MOVE_LANDS / TELEPORT_LANDS say where an agent arriving here starts: this
+// node decides, and the agent's path on the peer is only a hint.
+const MOVE_LANDS = 'It waits in Fleet → Offers, where you choose its starting directory on accept: a matching Fleet repo, its own path if that exists here, or the group\'s default dir are offered.';
+const TELEPORT_LANDS = 'Where this node lands teleports in that group automatically, it starts in the first fit (a matching Fleet repo, its own path if that exists here, the group\'s default dir, then the landing policy); otherwise it waits in Fleet → Offers for you to choose.';
+
 export function consequence(action, { agent, node, force, group, clone, direction }) {
   switch (action) {
     case 'stop': return force
@@ -97,8 +102,8 @@ export function consequence(action, { agent, node, force, group, clone, directio
       ? `${agent} is restarted on ${node} with its sandbox OFF: full access to ${node}'s machine — its files, logins, keys and network — until its sandbox is restored. ${node} allows this only for a peer it trusts unrestricted, and refuses unless the agent is fully idle.`
       : `${agent} is restarted on ${node} under its normal sandbox configuration. ${node} refuses unless the agent is fully idle.`;
     case 'clone': return `A sibling of ${agent} starts on ${node}, inheriting its identity (groups, permissions, ownership). The original keeps running.`;
-    case 'move': return `${agent} leaves ${node} and is offered to this node with its history, to land in group ${group}. Once it lands, the original on ${node} is retired.`;
-    case 'teleport': return `${agent} teleports from ${node} to this node, continuing its history in group ${group}${clone ? '; the original keeps running on ' + node : '; the original on ' + node + ' is retired'}.`;
+    case 'move': return `${agent} leaves ${node} and is offered to this node with its history, to land in group ${group}. Once it lands, the original on ${node} is retired. ${MOVE_LANDS}`;
+    case 'teleport': return `${agent} teleports from ${node} to this node, continuing its history in group ${group}${clone ? '; the original keeps running on ' + node : '; the original on ' + node + ' is retired'}. ${TELEPORT_LANDS}`;
     default: return '';
   }
 }
@@ -139,7 +144,7 @@ function AgentDialog({ req, shared, actions, confirm, toast, onClose }) {
     return confirm({ title: `${title}: ${label} on ${req.node}?`, body: text, okLabel: title, busyLabel: 'Sending…', action: send })
       .then((res) => {
         if (!res) return;
-        toast(toHere ? `${title} offered: ${label} comes to group ${group} on this node (follow it with tclaude federation moves)` : `${title} sent to ${req.node} for ${label}`, false);
+        toast(toHere ? `${title} offered: ${label} comes to group ${group} on this node (follow it with tclaude federation moves)${res?.source_repo ? `; repo hint ${res.source_repo}` : ''}` : `${title} sent to ${req.node} for ${label}`, false);
         onClose();
       })
       .catch((e) => toast(`${title} failed: ${e?.status === 403 ? `${req.node} refused it — ${errText(e)}` : errText(e)}`, true))
