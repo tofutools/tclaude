@@ -145,6 +145,7 @@ const settingRows = (v) => {
     // Moves a local agent to a peer with its history; the source retires
     // here once the peer confirms its copy is running (move-agent).
     moveAgent: (body) => call('POST', 'move-agent', body),
+    moveDetail: (id) => call('GET', `moves/${encodeURIComponent(id)}`),
     teleport: () => call('GET', 'teleport'),
     setTeleport: (disabled) => call('PUT', 'teleport', { disabled }),
     createPool: (name) => call('POST', 'nodes/groups', { name }),

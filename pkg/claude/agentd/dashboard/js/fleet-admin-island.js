@@ -21,6 +21,7 @@ import { viewersFocus, viewersOpened } from './remote-viewers.js';
 import { ViewersPanel } from './fleet-admin-viewers.js';
 import { ModelsPage } from './fleet-admin-models.js';
 import { SpawnRequestsPage } from './fleet-admin-spawns.js';
+import { FLEET_PAGE_EVENT, takeFleetPage } from './skynet-move-drop.js';
 import { MovesPage } from './fleet-admin-moves.js';
 import { createRunActions } from './fleet-run-actions.js';
 import { dashboardState } from './snapshot-store.js';
@@ -330,7 +331,7 @@ export function FleetAdmin({
   const [status, setStatus] = useState(null);
   const [pools, setPools] = useState([]);
   const [failure, setFailure] = useState('');
-  const [page, setPage] = useState('peers');
+  const [page, setPage] = useState(() => takeFleetPage() || 'peers');
   const [dialog, setDialog] = useState(null);
   const [grantTarget, setGrantTarget] = useState('');
   // runPreselect is the Run target another page sent the operator to (the hub).
@@ -363,6 +364,12 @@ export function FleetAdmin({
   const focus = viewersFocus.value;
   const opened = viewersOpened.value;
   useEffect(() => { if (focus) setPage('peers'); }, [focus, opened]);
+  // Other views (a dropped move's progress) can ask for a section.
+  useEffect(() => {
+    const on = (e) => { takeFleetPage(); if (SUB_PAGES.some((p) => p.id === e.detail)) setPage(e.detail); };
+    document.addEventListener(FLEET_PAGE_EVENT, on);
+    return () => document.removeEventListener(FLEET_PAGE_EVENT, on);
+  }, []);
   if (remote) return html`<div class="empty">Opening fleet administration on this node…</div>`;
   if (failure === 'unavailable') return html`<div class="empty">Federation is not available on this daemon. Link nodes with <code>tclaude federation connect</code> (see docs/federation.md).</div>`;
   const view = adminView(status, { pools });
