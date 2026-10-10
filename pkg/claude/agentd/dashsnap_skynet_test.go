@@ -31,7 +31,7 @@ const skynetFederationStubJS = `(function(){
       { peer: 'inst_hn3cxq7a', slug: 'routes.consume', scope: '', pool_id: 'pool_1', pool_name: 'rigs' }
     ] });
     if (path === '/api/federation/profiles') return json({ profiles: [
-      { id: 'nprof_7h2k', name: 'test-rig', revision: 3, definition: { trust_level: 'restricted', pools: ['pool_1'], peer_grants: [{ slug: 'message.direct' }, { slug: 'groups.roster.read' }], labels: ['gpu', 'ci'] } },
+      { id: 'nprof_7h2k', name: 'test-rig', revision: 3, definition: { trust_level: 'restricted', pools: ['pool_1'], peer_grants: [{ slug: 'message.direct' }, { slug: 'groups.roster.read' }, { slug: 'groups.members.spawn', scope: 'group=frontend-squad', spawn_policy: { max_live: 2, profile: 'opus-fast', requester_pays: 'required' } }], labels: ['gpu', 'ci'], worker_permissions: { 'tasks.read': { allow: true } } } },
       { id: 'nprof_9x1q', name: 'build-farm', revision: 1, definition: { trust_level: 'restricted', pools: [], peer_grants: [{ slug: 'jobs.run' }], labels: ['linux'] } }
     ], default: { id: 'nprof_7h2k', name: 'test-rig' } });
     if (path === '/api/federation/enroll-tokens') return json({ tokens: [
@@ -64,6 +64,7 @@ const skynetFederationStubJS = `(function(){
       { envelope_id: 'env_7k2q', to: 'reviewers@lab', from: 'human operator', subject: 'spawn request', preview: 'Second pair of eyes on PR 2776', state: 'pending', attempts: 4, last_error: 'peer offline', created_at: '2026-10-10T09:20:00Z', updated_at: '2026-10-10T09:31:00Z' },
       { envelope_id: 'env_5m1x', to: 'ops@forge', from: 'human operator', subject: 'Release window', preview: 'Freeze starts at 18:00', state: 'acked', attempts: 1, created_at: '2026-10-10T08:02:00Z', updated_at: '2026-10-10T08:02:01Z' }
     ]);
+    if (/^\/api\/federation\/profiles\/[^/]+$/.test(path) && !(init && init.method === 'PUT')) return json({ profile: {}, applied_peers: ['inst_hn3cxq7a'] });
     if (path === '/api/federation/peers/trust') return json({ instance_id: 'inst_w5zea3nq', fingerprint: 'w5ze-a3nq-7m1p-kd42-xr8c-0fv6', level: 'restricted', profile: null, plan: null, applied: false });
     var hav = function(extra){ return { schema: 1, observed_at: '2026-10-10T09:40:00Z', harnesses: [
       { name: 'claude', display_name: 'Claude Code', installed: true, version: '2.1.4', latest_version: extra ? '2.1.4' : '2.2.0', update_available: !extra, version_status: 'known', credential_present: true, usable: true },
@@ -257,6 +258,9 @@ func skynetStates() []dashsnap.State {
 			Key:     "skynet-fleet-spawns",
 			Title:   "Spawn requests",
 			Caption: "Fleet → Spawn requests: workers peers asked this node to start in its groups, with who asked, the group, requested name/role/profile (requester-paid flagged), the brief and its state. Pending requests can be approved (optionally overriding name, profile, cwd, harness or model) or denied with a reason; an unconfirmed launch can be abandoned, warning that the original worker may still appear. Request a worker on a peer… asks a peer (or automatic placement) for one. The outbox shows delivery of what this node sent.",
+			Key:     "skynet-fleet-profile-editor",
+			Title:   "Editing a node profile",
+			Caption: "Fleet → Profiles & pools → Edit…: a profile's trust level, pool memberships, labels, requester-pays default and peer grants (scope and live cap per grant; add or remove), with worker permission overrides, the teleport landing and the config bundle as JSON. Saving makes a new revision and confirms what a peer it is applied to gets; peers it was already applied to keep their settings until it is applied again.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
   for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
@@ -268,8 +272,32 @@ func skynetStates() []dashsnap.State {
   document.querySelector('[data-spawn="12"] [data-fa="approve"]').click();
   for (var k = 0; k < 30 && !document.querySelector('#fleet-spawn-approve'); k++) await new Promise(function(r){ setTimeout(r, 100); });
   if (!document.querySelector('#fleet-spawn-approve')) throw new Error('skynet: approve dialog did not open');
+  Array.from(document.querySelectorAll('.fa-subtab')).find(function(b){ return /Profiles/.test(b.textContent); }).click();
+  for (var j = 0; j < 30 && !document.querySelector('[data-profile="test-rig"] [data-fa="edit-profile"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('[data-profile="test-rig"] [data-fa="edit-profile"]').click();
+  for (var k = 0; k < 30 && !document.querySelector('#fleet-profile-grants'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-profile-grants')) throw new Error('skynet: profile editor did not open');
 })();`,
 			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-grant-launch",
+			Title:   "Grant launch settings",
+			Caption: "Fleet → Peer grants with groups.members.spawn picked: launch settings opens the receiver settings this node uses when it starts a worker for the peer — profile, selectable profiles, harness, model, directory and requester pays (jobs.run gets job approval instead). models.proxy grants take a gateway name or cover every gateway.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('#fleet-trusted [data-fa="grants"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-trusted [data-fa="grants"]').click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-grant-slug'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  var sel = document.querySelector('#fleet-grant-slug'); sel.value = 'groups.members.spawn'; sel.dispatchEvent(new Event('change', { bubbles: true }));
+  for (var k = 0; k < 20 && !document.querySelector('#fleet-grant-launch-toggle'); k++) await new Promise(function(r){ setTimeout(r, 50); });
+  document.querySelector('#fleet-grant-launch-toggle').click();
+  for (var l = 0; l < 20 && !document.querySelector('#fleet-grant-launch'); l++) await new Promise(function(r){ setTimeout(r, 50); });
+  var p = document.querySelector('[data-launch="profile"]'); p.value = 'opus-fast'; p.dispatchEvent(new Event('input', { bubbles: true }));
+})();`,
+			SettleMS: 300,
 		},
 		{
 			Key:     "skynet-fleet-invites",
@@ -426,6 +454,36 @@ func skynetStates() []dashsnap.State {
   for (var k = 0; k < 20 && !document.querySelector('#fleet-trust-modal .fa-consequence'); k++) await new Promise(function(r){ setTimeout(r, 100); });
   if (!document.querySelector('#fleet-trust-modal .fa-consequence')) throw new Error('skynet: unrestricted consequence not shown');
   if (document.querySelector('#fleet-trust-modal').textContent.indexOf('w5ze-a3nq-7m1p-kd42-xr8c-0fv6') < 0) throw new Error('skynet: full fingerprint not shown');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-unrestrict",
+			Title:   "Make unrestricted dialog",
+			Caption: "Raising a trusted peer to unrestricted shows its full fingerprint, repeats what unrestricted grants (every peer permission on all groups, including later ones) and needs the out-of-band check before the button enables.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('#fleet-trusted [data-fa="unrestrict"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-trusted [data-fa="unrestrict"]').click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-level-modal .fa-consequence'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-level-modal .fa-consequence')) throw new Error('skynet: unrestrict consequence not shown');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-untrust-confirm",
+			Title:   "Untrust confirm",
+			Caption: "Untrust… goes through the shared confirm, which says what the peer loses — every grant, pool grants, catalog and access — before anything changes.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('#fleet-trusted [data-fa="unrestrict"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-trusted [data-fa="untrust"]').click();
+  for (var j = 0; j < 30 && !document.querySelector('#confirm-modal.show'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#confirm-modal.show')) throw new Error('skynet: untrust confirm not shown');
 })();`,
 			SettleMS: 400,
 		},

@@ -110,6 +110,9 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     abandonSpawn: async (id) => { log.push(['abandonSpawn', id]); return { id, status: 'pending', warning: 'a late worker may still appear' }; },
     sendSpawnRequest: async (body) => { log.push(['sendSpawn', body]); return { envelope_id: 'env1', to: 'ops@forge', state: 'queued', hub_connected: true }; },
     outbox: async () => [{ envelope_id: 'env0', to: 'ops@forge', from: 'human operator', subject: 'spawn request', preview: 'Bench run', state: 'failed', attempts: 3, last_error: 'peer offline', updated_at: '2026-10-10T09:00:00Z' }],
+    profile: async (n) => { log.push(['profile', n]); return { profile: {}, applied_peers: ['inst_forge'] }; },
+    createProfile: async (o) => { log.push(['createProfile', o]); return { id: 'prof_new', name: o.name, revision: 1, definition: o.definition }; },
+    saveProfile: async (o) => { log.push(['saveProfile', o]); if (o.revision === 99) { const e = new Error('reload the current profile revision'); e.status = 409; e.code = 'stale_profile'; throw e; } return { ...o, revision: o.revision + 1 }; },
     applyProfile: async (n, o) => { log.push(['applyProfile', n, o]); return { preview_token: 'ptok', changes: [{ item: 'trust_level', before: 'restricted', after: 'unrestricted', security: true }, { item: 'pool/pool_r', before: false, after: true, security: true }], pools: [{ id: 'pool_r', name: 'rigs', live_grants: [{ slug: 'groups.members.spawn', scope: '' }] }], security_changes: 2, conflicts: [] }; },
   };
   const snapshot = harness.signals.signal({ groups: [{ name: 'ops' }, { name: 'build' }] });
@@ -677,6 +680,73 @@ test('spawn requests: approve with overrides, deny with a reason, abandon an unc
   const all = s.q('.fa-spawns input[type=checkbox]');
   await s.check(all);
   assert.equal(s.mounted.container.querySelectorAll('#fleet-spawn-requests tbody tr').length, 3);
+});
+
+test('grant launch settings and model gateway scopes reach the grant body and the confirm', async (t) => {
+  const s = await setup(t);
+  await s.show();
+  await s.click(s.q('[data-peer="inst_forge"] [data-fa="grants"]'));
+  const pick = async (sel, value) => {
+    const el = s.q(sel);
+    for (const o of el.querySelectorAll('option')) { if (o.value === value) o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
+    await s.harness.act(() => s.harness.fireEvent(el, 'change'));
+  };
+  const type = async (sel, v) => { const el = s.q(sel); el.value = v; await s.harness.act(() => s.harness.fireEvent(el, 'input')); };
+  await pick('#fleet-grant-slug', 'groups.members.spawn');
+  await pick('#fleet-grant-group', 'ops');
+  await s.click(s.q('#fleet-grant-launch-toggle'));
+  await type('[data-launch="profile"]', 'opus-fast');
+  await type('[data-launch="allowed_profiles"]', 'opus-fast, sonnet-review');
+  await type('[data-launch="cwd"]', '/srv/ops');
+  await pick('[data-launch="requester_pays"]', 'required');
+  await s.click(s.q('#fleet-grant-submit'));
+  // A spawn-only setting typed, then a switch to jobs.run: it is not sent.
+  await pick('[data-launch="requester_pays"]', 'allowed');
+  assert.match(s.confirms.at(-1).body, /Workers start with profile opus-fast; selectable opus-fast, sonnet-review; directory \/srv\/ops; requester pays: required\. Its workers must use its own model gateway/);
+  assert.deepEqual(s.log.filter((l) => l[0] === 'grant').at(-1)[1], { peer: 'inst_forge', slug: 'groups.members.spawn', scope: 'group=ops',
+    spawn_policy: { profile: 'opus-fast', allowed_profiles: ['opus-fast', 'sonnet-review'], cwd: '/srv/ops', requester_pays: 'required', max_live: 2 } });
+  await pick('#fleet-grant-slug', 'jobs.run');
+  assert.equal(s.q('[data-launch="requester_pays"]'), null, 'requester pays is a spawn setting');
+  await pick('[data-launch="job_approval"]', 'manual');
+  await s.click(s.q('#fleet-grant-submit'));
+  assert.match(s.confirms.at(-1).body, /Each job waits for your approval/);
+  assert.equal(s.log.filter((l) => l[0] === 'grant').at(-1)[1].spawn_policy.requester_pays, undefined, 'a spawn-only setting never rides along');
+  await pick('#fleet-grant-slug', 'models.proxy');
+  await type('#fleet-grant-gateway', 'claude');
+  await s.click(s.q('#fleet-grant-submit'));
+  assert.match(s.confirms.at(-1).body, /on gateway claude only/);
+  assert.deepEqual(s.log.filter((l) => l[0] === 'grant').at(-1)[1], { peer: 'inst_forge', slug: 'models.proxy', scope: 'http_proxy=claude' });
+});
+
+test('profile editor: create and edit confirm the effect, keep advanced fields, and explain a stale revision', async (t) => {
+  const s = await setup(t);
+  s.actions.profiles = async () => ({ profiles: [{ id: 'prof_1', name: 'test-rig', revision: 3, definition: { trust_level: 'restricted', pools: ['pool_r'], labels: ['gpu'], peer_grants: [{ slug: 'jobs.run', scope: 'group=7', spawn_policy: { max_live: 3, job_approval: 'manual' } }], worker_permissions: { 'tasks.read': { allow: true } } } }], default: null });
+  await openProfiles(s, [{ id: 'pool_r', name: 'rigs', members: [] }, { id: 'pool_b', name: 'builders', members: [] }]);
+  const doc = s.harness.document; const q = (x) => doc.querySelector(x);
+  const type = async (sel, v) => { const el = q(sel); el.value = v; await s.harness.act(() => s.harness.fireEvent(el, 'input')); };
+  await s.click(s.q('#fleet-profile-new'));
+  await type('#fleet-profile-name', 'Bad Name');
+  await s.click(q('#fleet-profile-save'));
+  assert.match(q('#fleet-profile-editor [role=alert]').textContent, /lowercase/);
+  await type('#fleet-profile-name', 'ci-workers');
+  await type('#fleet-profile-labels', 'ci, linux');
+  await s.check(q('[data-pool="pool_b"]'));
+  await s.click(q('#fleet-profile-add-grant'));
+  await s.click(q('#fleet-profile-save'));
+  assert.match(s.confirms.at(-1).body, /restricted trust, 1 peer grant\(s\) and 1 pool membership.*Nothing changes for any peer until you apply it/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'createProfile')[1], { name: 'ci-workers', definition: { trust_level: 'restricted', pools: ['pool_b'], labels: ['ci', 'linux'], peer_grants: [{ slug: 'message.direct', scope: '' }] } });
+  await s.click(s.q('#fleet-profiles [data-profile="test-rig"] [data-fa="edit-profile"]'));
+  assert.match(q('#fleet-profile-grants').textContent, /jobs\.run.*group #7/s);
+  assert.match(q('#fleet-profile-advanced').value, /tasks\.read/);
+  const lvl = q('#fleet-profile-level');
+  for (const o of lvl.querySelectorAll('option')) { if (o.value === 'unrestricted') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
+  await s.harness.act(() => s.harness.fireEvent(lvl, 'change'));
+  await s.click(q('#fleet-profile-save'));
+  assert.match(s.confirms.at(-1).title, /revision 3 → 4/);
+  assert.match(s.confirms.at(-1).body, /unrestricted trust.*created later.*applied to 1 peer\(s\); they keep their current settings until you apply it again.*Invites already issued for test-rig pin revision 3 and stop working/);
+  const saved = s.log.findLast((l) => l[0] === 'saveProfile')[1];
+  assert.deepEqual(saved, { id: 'prof_1', name: 'test-rig', revision: 3, definition: { trust_level: 'unrestricted', pools: ['pool_r'], labels: ['gpu'],
+    peer_grants: [{ slug: 'jobs.run', scope: 'group=7', spawn_policy: { max_live: 3, job_approval: 'manual' } }], worker_permissions: { 'tasks.read': { allow: true } } } }, 'launch settings and advanced fields survive');
 });
 
 test('moves: both directions listed, only abandonable outgoing moves offer Abandon, and the teleport freeze confirms', async (t) => {
