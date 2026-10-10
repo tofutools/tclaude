@@ -144,10 +144,11 @@ func startHistoryNode(t *testing.T, name, label string) historyNode {
 			_ = cmd.Process.Kill()
 			<-finished
 			_ = log.Close()
-			t.Errorf("%s node failed to shut down", label)
+			raw, _ := os.ReadFile(log.Name())
+			t.Errorf("%s node failed to shut down\n%s", label, raw)
 		}
 	})
-	fedEventually(t, label+" node starts", func() bool { raw, e := os.ReadFile(infoPath); return e == nil && json.Unmarshal(raw, &node) == nil })
+	fedEventuallyWithin(t, label+" node starts", 30*time.Second, func() bool { raw, e := os.ReadFile(infoPath); return e == nil && json.Unmarshal(raw, &node) == nil })
 	return node
 }
 
