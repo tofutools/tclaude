@@ -1433,15 +1433,16 @@ test('hub: admin sees health, admissions, invites, admins; admit checks ID and f
   await type('#fleet-hub-admit-instance', 'forge');
   await s.click(q('#fleet-hub-admit-send'));
   assert.match(q('#fleet-hub-admit [role=alert]').textContent, /inst_/);
-  await type('#fleet-hub-admit-instance', 'inst_forge');
-  await type('#fleet-hub-admit-fp', 'wrong-fp');
+  const NEW_ID = 'inst_abcdefghijklmnopqrstuvwxyz';
+  await type('#fleet-hub-admit-instance', NEW_ID);
+  await type('#fleet-hub-admit-fp', 'abcd-efgh-ijkl-mnop-qrst-uvwx-yy');
   await s.click(q('#fleet-hub-admit-send'));
-  assert.match(q('#fleet-hub-admit [role=alert]').textContent, /does not match/);
-  await type('#fleet-hub-admit-fp', FP_FORGE);
+  assert.match(q('#fleet-hub-admit [role=alert]').textContent, /does not belong to inst_abcdefghijklmnopqrstuvwxyz; its fingerprint is abcd-efgh-ijkl-mnop-qrst-uvwx-yz/, 'the fingerprint is checked against the ID, not only for known peers');
+  await type('#fleet-hub-admit-fp', 'ABCD EFGH IJKL MNOP QRST UVWX YZ');
   await type('#fleet-hub-admit-spaces', 'ops ci');
   await s.click(q('#fleet-hub-admit-send'));
-  assert.match(s.confirms.at(-1).body, new RegExp(`inst_forge with fingerprint ${FP_FORGE}.*spaces ops, ci`));
-  assert.deepEqual(s.log.findLast((l) => l[0] === 'admit'), ['admit', 'inst_forge', ['ops', 'ci']]);
+  assert.match(s.confirms.at(-1).body, new RegExp(`${NEW_ID} with fingerprint abcd-efgh-ijkl-mnop-qrst-uvwx-yz.*spaces ops, ci`));
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'admit'), ['admit', NEW_ID, ['ops', 'ci']]);
   // revoke + spaces
   await s.click(q('#fleet-hub-admissions [data-instance="inst_forge"] [data-hub="revoke"]'));
   assert.match(s.confirms.at(-1).body, /disconnected from the hub.*trust relationships on each node are unchanged/);
@@ -1461,7 +1462,7 @@ test('hub: admin sees health, admissions, invites, admins; admit checks ID and f
   assert.equal(s.confirms.at(-1).title, 'Give up hub admin for this node?');
   assert.match(s.confirms.at(-1).body, /1 admin\(s\) remain/);
   await s.click(q('#fleet-hub-admissions [data-instance="inst_forge"] [data-hub="make-admin"]'));
-  assert.match(s.confirms.at(-1).body, new RegExp(`inst_forge \\(fingerprint ${FP_FORGE}\\).*including this node`));
+  assert.match(s.confirms.at(-1).body, new RegExp(`inst_forge \\(fingerprint ${FP_FORGE}\\) gets these hub admin capabilities: admissions, settings, admins.*including this node`));
   assert.ok(s.confirms.every((c) => typeof c.action === 'function'), 'every mutation runs inside a confirmation');
 });
 
@@ -1480,6 +1481,9 @@ test('hub settings: effective value, source and flag-overridden marker; validate
   await set('rotation_window', '30');
   await s.click(q('#fleet-hub-settings-save'));
   assert.match(doc.querySelector('#fleet-hub [role=alert]').textContent, /at least 60 s/);
+  await set('rotation_window', '');
+  await s.click(q('#fleet-hub-settings-save'));
+  assert.match(doc.querySelector('#fleet-hub [role=alert]').textContent, /Nothing changed/, 'a cleared field drops its edit');
   await set('rotation_window', '1800');
   await s.click(row('max_streams_per_instance').querySelector('[data-revert]'));
   await s.click(q('#fleet-hub-settings-save'));

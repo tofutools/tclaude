@@ -10,7 +10,10 @@ const html = htm.bind(h);
 // relayed over its hub connection; hub admin grants no access to any node's
 // content. Every mutation is confirmed first.
 
-const INSTANCE_RE = /^inst_[A-Za-z0-9]{4,64}$/;
+// An instance ID is inst_ plus 26 base32 characters of its key hash, and its
+// fingerprint is that same hash in groups of four (proto.InstanceFingerprint),
+// so a pasted fingerprint can be checked against the ID it claims to belong to.
+const INSTANCE_RE = /^inst_[a-z2-7]{26}$/;
 const SPACE_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const LOG_PAGE = 200;
 
@@ -24,6 +27,10 @@ function when(iso) {
 function bytes(n) {
   if (!(n >= 0)) return '—';
   return n < 1 << 20 ? `${(n / 1024).toFixed(0)} KiB` : n < 1 << 30 ? `${(n / (1 << 20)).toFixed(1)} MiB` : `${(n / (1 << 30)).toFixed(2)} GiB`;
+}
+
+export function instanceFingerprint(instance) {
+  return INSTANCE_RE.test(instance) ? instance.slice(5).match(/.{1,4}/g).join('-') : '';
 }
 
 export function splitSpaces(text) {
@@ -114,13 +121,15 @@ function AdmitDialog({ peers, actions, confirm, onClose, onDone }) {
     const spaces = splitSpaces(form.spaces);
     if (!INSTANCE_RE.test(instance)) { setError('The instance ID is inst_… as the instance reports it (tclaude federation identity on that node).'); return; }
     if (!fp) { setError('Paste the instance\'s full fingerprint, compared with its operator over another channel.'); return; }
-    if (known?.fingerprint && known.fingerprint !== fp) { setError(`That fingerprint does not match the one this node knows for ${instance} (${known.fingerprint}).`); return; }
+    const derived = instanceFingerprint(instance);
+    if (fp.toLowerCase().replace(/[\s-]/g, '') !== derived.replace(/-/g, '')) { setError(`That fingerprint does not belong to ${instance}; its fingerprint is ${derived}. Check the ID and the fingerprint with its operator again.`); return; }
+    if (known?.fingerprint && known.fingerprint !== derived) { setError(`${instance} does not match the fingerprint this node knows for it (${known.fingerprint}).`); return; }
     const bad = spaces.find((s) => !SPACE_RE.test(s));
     if (bad) { setError(`Space ${bad}: letters, digits, . _ -`); return; }
     setError('');
     confirm({
       title: `Admit ${instance} to the hub?`,
-      body: `${instance} with fingerprint ${fp} may connect to the hub${spaces.length ? ` and join spaces ${spaces.join(', ')}` : ''}. Admission lets it reach other nodes through the hub; each node still decides for itself whether to trust it.`,
+      body: `${instance} with fingerprint ${derived} may connect to the hub${spaces.length ? ` and join spaces ${spaces.join(', ')}` : ''}. Admission lets it reach other nodes through the hub; each node still decides for itself whether to trust it.`,
       okLabel: 'Admit',
       busyLabel: 'Admitting…',
       action: () => actions.admitToHub(instance, spaces),
@@ -139,7 +148,12 @@ function AdmitDialog({ peers, actions, confirm, onClose, onDone }) {
 function SettingsSection({ settings, actions, confirm, toast, reload }) {
   const [edits, setEdits] = useState({});
   const [error, setError] = useState('');
-  const edit = (key, v) => setEdits({ ...edits, [key]: v });
+  // Clearing a field drops the edit rather than saving an empty value.
+  const edit = (key, v) => setEdits((cur) => {
+    const next = { ...cur };
+    if (v === '') delete next[key]; else next[key] = v;
+    return next;
+  });
   const save = () => {
     const plan = settingsPlan(settings, edits);
     if (plan.error) { setError(plan.error); return; }
@@ -240,7 +254,7 @@ export function HubPage({ view, actions, confirm, toast, copy }) {
   const editSpaces = (a, text) => {
     const spaces = splitSpaces(text);
     const bad = spaces.find((s) => !SPACE_RE.test(s));
-    if (bad) { toast(`Space ${bad}: letters, digits, . _ -`, true); return; }
+    if (bad) { toast(`Space ${bad}: letters, digits, . _ -`, true); reload(); return; }
     confirm({
       title: `Change ${a.name || a.instance}'s spaces?`,
       body: `${a.instance} will be in ${spaces.length ? spaces.join(', ') : 'no spaces'} (was ${(a.spaces || []).join(', ') || 'none'}). It can reach only nodes that share a space with it.`,
@@ -253,7 +267,7 @@ export function HubPage({ view, actions, confirm, toast, copy }) {
     const space = invite.space.trim();
     const hours = Number(invite.ttl);
     if (space && !SPACE_RE.test(space)) { toast('Space: letters, digits, . _ -', true); return; }
-    if (!(hours > 0 && hours <= 24 * 30)) { toast('Expiry: 1 hour to 30 days', true); return; }
+    if (!(hours >= 1 && hours <= 24 * 30)) { toast('Expiry: 1 hour to 30 days', true); return; }
     confirm({
       title: 'Create a hub invite?',
       body: `Anyone holding the token can join the hub${space ? ` into space ${space}` : ''} once, within ${hours} hours. It is shown only once; send it over a channel you trust.`,
@@ -271,7 +285,7 @@ export function HubPage({ view, actions, confirm, toast, copy }) {
   }).then((r) => { if (r) done('Invite revoked'); }).catch(fail('Revoke'));
   const removeAdmin = (a) => {
     const me = a.instance === self.id;
-    if (status.admin_count <= 1) { toast('The last admin cannot be removed here; add another admin first.', true); return; }
+    if (!(status.admin_count > 1)) { toast('The last admin cannot be removed here; add another admin first.', true); return; }
     confirm({
       title: me ? 'Give up hub admin for this node?' : `Remove ${a.name || a.instance} as hub admin?`,
       body: me
@@ -282,12 +296,14 @@ export function HubPage({ view, actions, confirm, toast, copy }) {
       action: () => actions.removeHubAdmin(a.instance),
     }).then((r) => { if (r) done(me ? 'This node is no longer a hub admin' : 'Admin removed'); }).catch(fail('Remove'));
   };
+  // A new admin gets exactly this node's capabilities, named in the confirm.
+  const caps = status.my_capabilities || [];
   const addAdmin = (a) => confirm({
     title: `Make ${a.name || a.instance} a hub admin?`,
-    body: `${a.instance} (fingerprint ${a.fingerprint || 'unknown'}) can then admit and revoke instances, change hub settings and add or remove admins, including this node. Hub admin grants no access to any node's content.`,
+    body: `${a.instance} (fingerprint ${a.fingerprint || 'unknown'}) gets these hub admin capabilities: ${caps.join(', ')}.${caps.includes('admins') ? ' With admins it can add or remove admins, including this node.' : ''} Hub admin grants no access to any node's content.`,
     okLabel: 'Make admin',
     busyLabel: 'Saving…',
-    action: () => actions.addHubAdmin(a.instance, status.my_capabilities || []),
+    action: () => actions.addHubAdmin(a.instance, caps),
   }).then((r) => { if (r) done(`${a.instance} is now a hub admin`); }).catch(fail('Add admin'));
 
   const h4 = (t, extra = '') => html`<h4 class="fa-h">${t}${extra}</h4>`;
@@ -322,7 +338,7 @@ export function HubPage({ view, actions, confirm, toast, copy }) {
           <td><code>${a.fingerprint || '—'}</code></td>
           <td><input class="fa-hub-spaces" aria-label=${`Spaces for ${a.instance}`} value=${(a.spaces || []).join(', ')} onChange=${(e) => editSpaces(a, e.currentTarget.value)} /></td>
           <td class="fa-nowrap">${a.connected ? 'connected' : when(a.last_seen)}</td>
-          <td class="fa-acts">${!admins.some((x) => x.instance === a.instance) && html`<button type="button" data-hub="make-admin" onClick=${() => addAdmin(a)}>Make admin…</button>`}
+          <td class="fa-acts">${ok(data.admins) && caps.length > 0 && !admins.some((x) => x.instance === a.instance) && html`<button type="button" data-hub="make-admin" onClick=${() => addAdmin(a)}>Make admin…</button>`}
             ${a.instance !== self.id && html`<button type="button" data-hub="revoke" onClick=${() => revokeAdmission(a)}>Revoke…</button>`}</td>
         </tr>`)}</tbody></table>`)}
       ${h4('Invites')}

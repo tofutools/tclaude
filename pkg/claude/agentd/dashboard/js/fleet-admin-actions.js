@@ -30,26 +30,29 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
   const enc = encodeURIComponent;
 // rows reads a hub list response, bare or wrapped in its named field.
 const rows = (v, key) => (Array.isArray(v) ? v : v?.[key] || []);
+// done makes a hub mutation that succeeded without a body (204) truthy, since
+// the confirm treats a falsy action result as cancelled.
+const done = async (p) => (await p) ?? true;
   return Object.freeze({
     status: () => call('GET', 'status'),
     // Hub administration (tclaude federation hub …): signed requests this
     // node's daemon relays to the hub over its authenticated connection. Every
     // mutation is confirmed in the UI first.
     hubStatus: () => call('GET', 'hub/status'),
-    hubClaim: (token) => call('POST', 'hub/claim', { token }),
+    hubClaim: (token) => done(call('POST', 'hub/claim', { token })),
     hubAdmins: async () => rows(await call('GET', 'hub/admins'), 'admins'),
-    addHubAdmin: (instance, capabilities) => call('POST', 'hub/admins', { instance, capabilities }),
-    removeHubAdmin: (instance) => call('DELETE', `hub/admins/${enc(instance)}`),
+    addHubAdmin: (instance, capabilities) => done(call('POST', 'hub/admins', { instance, capabilities })),
+    removeHubAdmin: (instance) => done(call('DELETE', `hub/admins/${enc(instance)}`)),
     hubAdmissions: async () => rows(await call('GET', 'hub/admissions'), 'admissions'),
-    admitToHub: (instance, spaces) => call('POST', 'hub/admissions', { instance, spaces }),
-    revokeHubAdmission: (instance) => call('DELETE', `hub/admissions/${enc(instance)}`),
+    admitToHub: (instance, spaces) => done(call('POST', 'hub/admissions', { instance, spaces })),
+    revokeHubAdmission: (instance) => done(call('DELETE', `hub/admissions/${enc(instance)}`)),
     hubInvites: async () => rows(await call('GET', 'hub/invites'), 'invites'),
     createHubInvite: (space, ttlSeconds) => call('POST', 'hub/invites', { space, ttl_seconds: ttlSeconds }),
-    revokeHubInvite: (tokenHash) => call('DELETE', `hub/invites/${enc(tokenHash)}`),
+    revokeHubInvite: (tokenHash) => done(call('DELETE', `hub/invites/${enc(tokenHash)}`)),
     hubSpaces: async () => rows(await call('GET', 'hub/spaces'), 'spaces'),
-    setHubSpaces: (instance, spaces) => call('PUT', 'hub/spaces', { instance, spaces }),
+    setHubSpaces: (instance, spaces) => done(call('PUT', 'hub/spaces', { instance, spaces })),
     hubSettings: async () => rows(await call('GET', 'hub/settings'), 'settings'),
-    patchHubSettings: (overrides) => call('PATCH', 'hub/settings', { overrides }),
+    patchHubSettings: (overrides) => done(call('PATCH', 'hub/settings', { overrides })),
     hubHealth: () => call('GET', 'hub/health'),
     hubLogs: (cursor = '', maxEntries = 200) => call('GET', `hub/logs?${new URLSearchParams({ cursor, max_entries: String(maxEntries) })}`),
     pools: async () => (await call('GET', 'nodes/groups'))?.groups || [],
