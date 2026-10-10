@@ -2842,6 +2842,16 @@ transport mapping plus existing-access admission. Local-only features and the
 request mechanism itself are never requestable. An approval may shorten the
 requested lifetime, but cannot lengthen it or convert a finite request to a
 permanent grant. A permanent request can be approved with a finite lifetime.
+
+### Local dashboard labels and hub setup
+
+`GET /api/federation/node-labels` returns `{labels:[...]}`; POST accepts
+`{add:[...],remove:[...]}` and shares the CLI's label validation and normalized
+label set. GET/HEAD are reads. These cookie-authenticated routes are local-only.
+Hub setup already uses `POST /api/federation/config` with optional
+`enabled`, `hub_url`, `name`, `invite` and `hub_ca_file` fields. Omitted fields
+are preserved; CA file paths refer to this node's filesystem. URL validation,
+configuration writes and client reload are shared with `federation connect`.
 ### Local dashboard away administration
 
 `GET /api/federation/away` reads `{away: null|{cover,since,until}}`;
