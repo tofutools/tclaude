@@ -92,6 +92,9 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     removePoolMember: async (n, p) => { log.push(['removePoolMember', n, p]); return { ok: true }; },
     setDefaultProfile: async (n) => { log.push(['setDefaultProfile', n]); return { profile_id: n }; },
     deleteProfile: async (n) => { log.push(['deleteProfile', n]); return { ok: true }; },
+    setHubConfig: async (b) => { log.push(['hubConfig', b]); return { ok: true }; },
+    nodeLabels: async () => ['gpu', 'ci'],
+    setNodeLabels: async (o) => { log.push(['labels', o]); return { ok: true }; },
     applyProfile: async (n, o) => { log.push(['applyProfile', n, o]); return { preview_token: 'ptok', changes: [{ item: 'trust_level', before: 'restricted', after: 'unrestricted', security: true }, { item: 'pool/pool_r', before: false, after: true, security: true }], pools: [{ id: 'pool_r', name: 'rigs', live_grants: [{ slug: 'groups.members.spawn', scope: '' }] }], security_changes: 2, conflicts: [] }; },
   };
   const snapshot = harness.signals.signal({ groups: [{ name: 'ops' }, { name: 'build' }] });
@@ -626,4 +629,34 @@ test('accepting remote scripts confirms full remote code execution; node.exec gr
   const saves = s.runLog.filter((l) => l[0] === 'save').length;
   await s.click(s.q('#fleet-run-limits'));
   assert.equal(s.runLog.filter((l) => l[0] === 'save').length, saves, 'a non-numeric cpu is rejected, never sent');
+});
+
+test('node settings: moving to another hub and changing labels confirm the consequence and send only changes', async (t) => {
+  const s = await setup(t);
+  await s.show();
+  await s.click(s.q('#fleet-node-settings-open'));
+  const doc = s.harness.document; const q = (x) => doc.querySelector(x);
+  const type = async (sel, v) => { const el = q(sel); el.value = v; await s.harness.act(() => s.harness.fireEvent(el, 'input')); };
+  assert.equal(q('#fleet-hub-url').value, 'wss://hub.example');
+  await s.click(q('#fleet-hub-save'));
+  assert.match(q('#fleet-node-settings [role=alert]').textContent, /Nothing changed/);
+  await type('#fleet-hub-url', 'wss://hub2.example:8470');
+  await type('#fleet-hub-ca', 'certs/ca.pem');
+  await s.click(q('#fleet-hub-save'));
+  assert.match(q('#fleet-node-settings [role=alert]').textContent, /absolute path/);
+  await type('#fleet-hub-ca', '/etc/tclaude/hub-ca.pem');
+  await type('#fleet-hub-invite', 'inv-123');
+  await s.click(q('#fleet-hub-save'));
+  assert.match(s.confirms.at(-1).title, /Move this node to the hub at wss:\/\/hub2\.example:8470/);
+  assert.match(s.confirms.at(-1).body, /nothing here is shared with a peer until you trust it.*current hub connection drops.*single-use.*\/etc\/tclaude\/hub-ca\.pem/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'hubConfig')[1], { hub_url: 'wss://hub2.example:8470', invite: 'inv-123', hub_ca_file: '/etc/tclaude/hub-ca.pem' });
+  await s.click(s.q('#fleet-node-settings-open'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  await type('#fleet-node-labels', 'gpu linux, bad label!');
+  await s.click(q('#fleet-labels-save'));
+  assert.match(q('#fleet-node-settings [role=alert]').textContent, /label!/);
+  await type('#fleet-node-labels', 'gpu, linux');
+  await s.click(q('#fleet-labels-save'));
+  assert.match(s.confirms.at(-1).body, /Adds linux\. Removes ci\..*stops landing here/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'labels')[1], { add: ['linux'], remove: ['ci'] });
 });

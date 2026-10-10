@@ -585,7 +585,10 @@ CLI: `tclaude federation links [--group NAME]`.
 is trusted) manages this node's federation. The identity bar at the top shows
 this node's instance ID and full fingerprint (copy it to compare out of band),
 the hub connection with **Disconnect**, and **version & updates…** for this
-node. Every action that widens trust, overwrites state or runs code confirms
+node. **settings…** (or **connect…** before a hub is set) edits the hub
+connection — URL, display name, a single-use invite, a CA file on this node —
+and this node's labels, which automatic placement matches and peers with
+`node.read` see. Every action that widens trust, overwrites state or runs code confirms
 first and says what will happen. Most pages name their CLI.
 
 - **Peers** — trusted peers (level, grants, pools) and hub-visible instances
