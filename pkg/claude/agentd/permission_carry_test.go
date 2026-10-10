@@ -25,3 +25,9 @@ func TestPermissionCarryStandingPrecedence(t *testing.T) {
 	require.Equal(t, "drop", decisions[1].Decision)
 	require.Equal(t, "drop", decisions[2].Decision)
 }
+
+func TestPermissionCarryGroupTierKeepsGroupBoundary(t *testing.T) {
+	rows := []agentbundle.Permission{{Slug: PermGroupsMembersSpawn, Effect: "grant", Source: "group:source"}}
+	_, overrides := planCarriedPermissions(rows, permissionCarryPolicy{Enabled: true, Group: "receiver"})
+	require.JSONEq(t, `{"group":["receiver"]}`, overrides[PermGroupsMembersSpawn].Scope)
+}

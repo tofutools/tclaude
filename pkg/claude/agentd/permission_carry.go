@@ -119,7 +119,7 @@ func planCarriedPermissions(rows []agentbundle.Permission, p permissionCarryPoli
 				break
 			}
 			d.Decision, d.Reason = "apply", "authorized by receiver"
-			if len(scope) > 0 || !unrestricted && containsScopeDim(permissionScopeDimsForSlug(row.Slug), ScopeDimGroup) {
+			if len(scope) > 0 || (!unrestricted || strings.HasPrefix(row.Source, "group:")) && containsScopeDim(permissionScopeDimsForSlug(row.Slug), ScopeDimGroup) {
 				if p.Group == "" {
 					d.Decision, d.Reason = "drop", "no landing group for scope remap"
 					break
