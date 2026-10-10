@@ -2,7 +2,9 @@ package agentd_test
 
 import (
 	"net/http"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
@@ -57,6 +59,61 @@ func TestFederation_TrustLevelCatalogAndConfirmation(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/federation/peers/trust", map[string]any{"instance": "bob", "level": "unrestricted", "confirm_fingerprint": proto.Fingerprint(p.id.Pub)}), "agent"))
 	require.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+func TestFederation_TrustDowngradeCatalogOrdering(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	f.HaveGroup("visible-before-downgrade")
+	agentd.WaitForBackgroundForTest()
+	agentd.ResetStatusSnapshotForTest()
+
+	// Catalog construction has already selected the unrestricted groups when
+	// it gathers their statuses. Hold that gather so a concurrent downgrade
+	// has the opportunity to publish its withdrawal first on the broken path.
+	building := make(chan struct{})
+	released := make(chan struct{})
+	var enter, leave sync.Once
+	release := func() { leave.Do(func() { close(released) }) }
+	restore := agentd.SetStatusGatherHookForTest(func() {
+		enter.Do(func() { close(building) })
+		<-released
+	})
+	t.Cleanup(func() {
+		release()
+		restoreAfterBackgroundDrain(restore)
+	})
+	setFedTrustLevel(t, fh, "unrestricted")
+	select {
+	case <-building:
+	case <-time.After(5 * time.Second):
+		t.Fatal("unrestricted catalog did not reach the status gather")
+	}
+	before := len(p.envelopes(proto.KindCatalog))
+	setFedTrustLevel(t, fh, "restricted")
+	// With the first build held, a replacement must wait. This bounded window
+	// catches the old path's empty catalog overtaking the unrestricted build.
+	require.Never(t, func() bool {
+		return len(p.envelopes(proto.KindCatalog)) > before
+	}, 200*time.Millisecond, 5*time.Millisecond, "downgrade catalog overtook the in-flight build")
+	release()
+
+	done := make(chan struct{})
+	go func() { agentd.WaitForBackgroundForTest(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("catalog sends did not finish after releasing the build")
+	}
+	fedEventually(t, "ordered trust catalogs received", func() bool {
+		return len(p.envelopes(proto.KindCatalog)) >= before+2
+	})
+	cats := p.envelopes(proto.KindCatalog)[before:]
+	var first, last proto.CatalogPayload
+	require.NoError(t, cats[0].DecodePayload(&first))
+	require.NoError(t, cats[len(cats)-1].DecodePayload(&last))
+	require.Len(t, first.Groups, 1)
+	require.Empty(t, last.Groups, "the final catalog must reflect restricted trust")
 }
 
 func TestFederation_UnrestrictedRequestingGrantsAndDowngrade(t *testing.T) {
