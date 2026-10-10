@@ -624,7 +624,11 @@ it. Peer operators' access requests are never
 forwarded. **settings…** (or **connect…** before a hub is set) edits the hub
 connection — URL, display name, a single-use invite, a CA file on this node —
 and this node's labels, which automatic placement matches and peers with
-`node.read` see. Every action that widens trust, overwrites state or runs code confirms
+`node.read` see. It also holds the fleet health notice policy
+(`tclaude federation nodes health`): the defaults, or one trusted peer's own
+policy, with offline/back, resource and failure notices and their thresholds
+(empty = built-in default). Saving a peer's policy stops it following the
+defaults. Every action that widens trust, overwrites state or runs code confirms
 first and says what will happen. Most pages name their CLI.
 
 - **Peers** — while a peer views an agent terminal here, a panel on top shows

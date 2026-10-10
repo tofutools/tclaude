@@ -2,6 +2,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { HealthPolicySection } from './fleet-admin-health.js';
 
 const html = htm.bind(h);
 
@@ -31,8 +32,9 @@ export function hubBody(self, form) {
 }
 
 // NodeSettingsDialog edits this node's hub connection (tclaude federation
-// connect) and its node labels (tclaude federation node-labels).
-export function NodeSettingsDialog({ self, actions, confirm, toast, onClose, onDone }) {
+// connect), its node labels (tclaude federation node-labels) and its fleet
+// health notice policy (tclaude federation nodes health).
+export function NodeSettingsDialog({ self, peers = [], actions, confirm, toast, onClose, onDone }) {
   const [form, setForm] = useState({ hubURL: self.hubURL || '', name: self.name === 'this node' ? '' : self.name, invite: '', caFile: '', clearCA: false, connect: self.enabled || !self.hubURL });
   const [labels, setLabels] = useState(null);
   const [labelText, setLabelText] = useState('');
@@ -115,6 +117,7 @@ export function NodeSettingsDialog({ self, actions, confirm, toast, onClose, onD
       <div class="fa-ns-actions"><button id="fleet-labels-save" type="button" onClick=${saveLabels}>Save labels…</button>
         <span class="muted">CLI: <code>tclaude federation node-labels [--add …] [--remove …]</code></span></div>`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
+    <${HealthPolicySection} peers=${peers} actions=${actions} confirm=${confirm} toast=${toast} />
     <div class="modal-buttons"><span class="spacer"></span><button type="button" onClick=${onClose}>Close</button></div>
   </${Overlay}>`;
 }
