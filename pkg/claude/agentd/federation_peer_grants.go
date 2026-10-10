@@ -40,6 +40,7 @@ var federationPeerSlugs = map[string]string{
 	PermAgentsTeleportReceive: proto.CapTeleportReceive,
 	PermGroupsMembersSpawn:    proto.CapSpawn,
 	PermGroupsMembersStop:     "stop",
+	PermGroupsMembersResume:   "resume",
 	PermGroupsMembersRetire:   "retire",
 	PermGroupsMembersClone:    "clone",
 	PermAgentMove:             "move",

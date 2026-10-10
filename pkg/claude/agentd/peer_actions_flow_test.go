@@ -167,3 +167,60 @@ func TestPeerTeleportProductionOffer(t *testing.T) {
 	require.Equal(t, "peer:"+fh.peer.id.ID(), m.Initiator)
 	require.False(t, m.Human)
 }
+
+// A peer brings an agent back with groups.members.resume; restarting also
+// needs groups.members.stop, and only an unrestricted peer may restart one
+// with its sandbox off. Resume options that recreate directories or switch a
+// Codex drive stay local.
+func TestPeerResumeAndRestartGrants(t *testing.T) {
+	fh := newFedHarness(t)
+	f := fh.f
+	f.HaveGroup("one")
+	f.HaveAliveSession(moveSourceConv, "remote-resume-source", "remote-resume-pane", testutil.CanonicalTempDir(t))
+	f.HaveMember("one", moveSourceConv)
+	aid, err := db.AgentIDForConv(moveSourceConv)
+	require.NoError(t, err)
+	h := agentd.PeerViewHandler(fh.peer.id.ID())
+	post := func(action string, body any) (int, string) {
+		rec := testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/agents/"+aid+"/"+action, body))
+		return rec.Code, rec.Body.String()
+	}
+	grant := func(slug string) {
+		rec := fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": slug, "scope": "group=one"})
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+	}
+	grant(agentd.PermGroupsRosterRead)
+	for _, action := range []string{"resume", "restart", "sandbox-restart"} {
+		code, body := post(action, map[string]any{"action": "restore"})
+		require.Equal(t, 403, code, action+": "+body)
+	}
+	grant(agentd.PermGroupsMembersResume)
+	code, body := post("resume?recreate=1", nil)
+	require.Equal(t, 400, code, body)
+	code, body = post("resume?send_keys=1", nil)
+	require.Equal(t, 400, code, body)
+	code, body = post("resume", nil)
+	require.Equal(t, 200, code, body)
+	code, body = post("restart", nil)
+	require.Equal(t, 403, code, "restart stops the agent first: "+body)
+	grant(agentd.PermGroupsMembersStop)
+	code, body = post("restart", nil)
+	require.NotEqual(t, 403, code, body)
+	code, body = post("sandbox-restart", map[string]any{"action": "unlock"})
+	require.Equal(t, 403, code, "sandbox off needs unrestricted trust: "+body)
+	for _, padded := range []string{" unlock", "unlock\n", "\tunlock", "UNLOCK"} {
+		code, body = post("sandbox-restart", map[string]any{"action": padded})
+		require.Equal(t, 400, code, "only the exact closed values pass: "+body)
+	}
+	code, body = post("sandbox-restart", map[string]any{"action": "restore", "cwd": "/x"})
+	require.Equal(t, 400, code, body)
+	code, body = post("sandbox-restart", map[string]any{"action": "restore"})
+	require.NotEqual(t, 403, code, body)
+
+	peer, err := db.GetFederationPeer(fh.peer.id.ID())
+	require.NoError(t, err)
+	peer.TrustLevel = db.FederationTrustUnrestricted
+	require.NoError(t, db.TrustFederationPeer(*peer))
+	code, body = post("sandbox-restart", map[string]any{"action": "unlock"})
+	require.NotEqual(t, 403, code, "unrestricted trust implies the grants and may unlock: "+body)
+}

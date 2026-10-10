@@ -106,12 +106,14 @@ export function attachCommand(agentID, remoteID) {
   return `tclaude federation attach ${agentID}@${remoteID}`;
 }
 
-// PEER_ACTS are controls a peer may grant through its action routes (stop,
-// retire, clone; spawn into a group). When the peer shares the feature, the
+// PEER_ACTS are controls a peer may grant through its action routes (stop or
+// wake, restart, sandbox restart, retire, clone; spawn into a group). When the peer shares the feature, the
 // click opens the peer action dialog (peer-action.js) instead of the local
 // one, whose requests (conv IDs, local-only options) the peer refuses.
 const PEER_ACTS = Object.freeze({
   'dot-toggle': { action: 'stop', feature: 'lifecycle.stop' },
+  restart: { action: 'restart', feature: 'lifecycle.restart' },
+  'sandbox-restart': { action: 'sandbox-restart', feature: 'lifecycle.sandbox-restart' },
   'retire-agent': { action: 'retire', feature: 'lifecycle.retire' },
   clone: { action: 'clone', feature: 'lifecycle.clone' },
   'spawn-agent': { action: 'spawn', feature: 'spawn' },
@@ -121,15 +123,18 @@ export const PEER_ACTION_EVENT = 'tclaude:peer-action';
 const SAFE_GROUP = /^[A-Za-z0-9._@:-]{1,128}$/;
 
 function peerAction(act, peerView) {
-  const spec = PEER_ACTS[act.dataset.act];
+  let spec = PEER_ACTS[act.dataset.act];
+  // The status dot stops a running agent and wakes a stopped one.
+  if (act.dataset.act === 'dot-toggle' && act.dataset.online !== '1') spec = { action: 'resume', feature: 'lifecycle.resume' };
   if (!spec || featureState(spec.feature, peerView) !== 'shared') return null;
   if (spec.action === 'spawn') return SAFE_GROUP.test(act.dataset.group || '') ? { action: 'spawn', group: act.dataset.group } : null;
-  // The status dot only stops a running agent; waking is not a peer action.
-  if (act.dataset.act === 'dot-toggle' && act.dataset.online !== '1') return null;
   // The retire icon stays conv-keyed (data-agent would change its local
   // recovery path), so it carries the stable ID as data-stable-agent.
   const agent = act.dataset.stableAgent || act.dataset.agent || '';
-  return SAFE_AGENT_ID.test(agent) ? { action: spec.action, agent, label: act.dataset.label || '' } : null;
+  if (!SAFE_AGENT_ID.test(agent)) return null;
+  const req = { action: spec.action, agent, label: act.dataset.label || '' };
+  if (spec.action === 'sandbox-restart') req.direction = act.dataset.action === 'unlock' ? 'unlock' : 'restore';
+  return req;
 }
 
 // blockedControl returns the element a click must not reach, and why.

@@ -2828,7 +2828,7 @@ an unknown name returns 404. Each link has the existing snapshot shape:
 `online`, and `last_seen?`. Peers cannot read this node's other trust links,
 including through unrestricted trust.
 
-Additional stable action concept keys are `spawn.inline`, `lifecycle.stop`, `lifecycle.retire`, `lifecycle.clone`, `lifecycle.move`, `lifecycle.teleport`.
+Additional stable action concept keys are `spawn.inline`, `lifecycle.stop`, `lifecycle.resume`, `lifecycle.restart`, `lifecycle.sandbox-restart`, `lifecycle.retire`, `lifecycle.clone`, `lifecycle.move`, `lifecycle.teleport`.
 
 ### Remote operator actions
 
@@ -2844,6 +2844,14 @@ peer grant on every affected active group; clone/retire/move also cover owned gr
   durable spawn-request row (202); `GET /api/spawn-requests/{id}` reads only
   that initiating peer's request while its grant remains valid.
 - `POST /api/agents/{id}/stop[?force=1]`: `groups.members.stop`.
+- `POST /api/agents/{id}/resume`: `groups.members.resume`. No options:
+  recreating a missing launch directory and switching a Codex drive stay
+  with the local operator.
+- `POST /api/agents/{id}/restart`: `groups.members.resume` plus
+  `groups.members.stop`; refused unless the agent is fully idle.
+- `POST /api/agents/{id}/sandbox-restart`: `{action: "restore"|"unlock"}`
+  under the same grants. `unlock` restarts the agent with its sandbox off and
+  is accepted only from an unrestricted peer.
 - `POST /api/agents/{id}/retire`: `groups.members.retire`; worktree deletion
   and its options are not exposed remotely.
 - `POST /api/agents/{id}/clone`: `groups.members.clone`, with optional
@@ -2858,7 +2866,8 @@ IDs are stable remote agent IDs, and `group` on move/teleport names the
 receiving group on the requesting node. No third-node delegation is accepted.
 Use `/api/peer/{instance_id}/<tail>` or the CLI's
 `/v1/federation/peer/{node}/<tail>` proxy. The CLI equivalent is
-`tclaude federation action ACTION --node PEER --agent ID`, adding
+`tclaude federation action ACTION --node PEER --agent ID` (ACTION includes
+`resume`, `restart` and `sandbox-restart --sandbox unlock|restore`), adding
 `--group GROUP --brief TEXT` for spawn, `--group GROUP` for move/teleport,
 or `spawn-status --job ID` to inspect a remote launch. Message uses
 `--body TEXT [--subject TEXT]`; clone uses `--follow-up`/`--no-copy-conv`.

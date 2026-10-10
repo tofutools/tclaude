@@ -51,7 +51,11 @@ func PeerViewHandler(instanceID string) http.Handler {
 			}
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {
 				// Do not audit untrusted input (body, target selector, query) as a label.
-				recordFederationAudit("federation.peer_view", "operator@"+instanceID, view.targetConv, view.groupName, r.Method+" "+pattern, out.statusCode())
+				label := r.Method + " " + pattern
+				if view.auditDetail != "" {
+					label += " " + view.auditDetail
+				}
+				recordFederationAudit("federation.peer_view", "operator@"+instanceID, view.targetConv, view.groupName, label, out.statusCode())
 			}
 			if out.statusCode() >= 200 && out.statusCode() < 300 && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 				out.addMetadata(view.metadata())
@@ -146,7 +150,7 @@ func peerViewRules() map[string]peerViewRule {
 	rules["feature:session-files"] = peerViewRule{feature: "sessions.files.read", requires: PermSessionsFilesRead, group: true}
 	rules["/api/term/"] = peerViewRule{feature: "terminals", requires: PermSessionsAttach, group: true}
 	rules["/api/spawn"] = peerViewRule{feature: "spawn.inline", requires: PermGroupsMembersSpawn, group: true}
-	for _, action := range []struct{ tail, permission string }{{"stop", PermGroupsMembersStop}, {"retire", PermGroupsMembersRetire}, {"clone", PermGroupsMembersClone}, {"move", PermAgentMove}, {"teleport", PermAgentMove}} {
+	for _, action := range []struct{ tail, permission string }{{"stop", PermGroupsMembersStop}, {"resume", PermGroupsMembersResume}, {"restart", PermGroupsMembersResume}, {"sandbox-restart", PermGroupsMembersResume}, {"retire", PermGroupsMembersRetire}, {"clone", PermGroupsMembersClone}, {"move", PermAgentMove}, {"teleport", PermAgentMove}} {
 		rules["POST /api/agents/{id}/"+action.tail] = peerViewRule{feature: "lifecycle." + action.tail, requires: action.permission, group: true, write: servePeerAgentAction}
 	}
 	rules["feature:roster"] = peerViewRule{feature: "groups.roster", requires: PermGroupsRosterRead, group: true, serve: servePeerGroups}
@@ -158,6 +162,9 @@ type peerView struct {
 	peer       *db.FederationPeer
 	targetConv string
 	groupName  string
+	// auditDetail is a validated closed value (never request text) that
+	// distinguishes otherwise identical audit labels, e.g. sandbox direction.
+	auditDetail string
 }
 type peerViewOmission struct {
 	Requestable bool   `json:"requestable"`

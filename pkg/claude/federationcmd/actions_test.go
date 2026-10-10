@@ -31,6 +31,9 @@ func TestRemoteActionCLIPathsAndNoRetry(t *testing.T) {
 		{Action: "move", Node: "bob", Agent: "agt_source", Group: "receiver"},
 		{Action: "teleport", Node: "bob", Agent: "agt_source", Group: "receiver", Clone: true},
 		{Action: "message", Node: "bob", Agent: "agt_source", Body: "hello"},
+		{Action: "resume", Node: "bob", Agent: "agt_source"},
+		{Action: "restart", Node: "bob", Agent: "agt_source"},
+		{Action: "sandbox-restart", Node: "bob", Agent: "agt_source", Sandbox: "unlock"},
 	} {
 		require.Zero(t, runAction(p, &stdout, &stderr), stderr.String())
 	}
@@ -42,9 +45,14 @@ func TestRemoteActionCLIPathsAndNoRetry(t *testing.T) {
 		"POST /v1/federation/peer/bob/agents/agt_source/clone",
 		"POST /v1/federation/peer/bob/agents/agt_source/move",
 		"POST /v1/federation/peer/bob/agents/agt_source/teleport",
-		"POST /v1/federation/peer/bob/operator-message"}, calls)
+		"POST /v1/federation/peer/bob/operator-message",
+		"POST /v1/federation/peer/bob/agents/agt_source/resume",
+		"POST /v1/federation/peer/bob/agents/agt_source/restart",
+		"POST /v1/federation/peer/bob/agents/agt_source/sandbox-restart"}, calls)
+	require.Equal(t, map[string]any{"action": "unlock"}, bodies[10])
 	require.Equal(t, "task data; $(literal)", bodies[0].(map[string]any)["brief"])
 	require.Equal(t, map[string]any{"group": "receiver"}, bodies[5])
 	require.NotZero(t, runAction(&actionParams{Action: "move", Node: "bob", Agent: "agt_source"}, &stdout, &stderr))
-	require.Len(t, calls, 8, "invalid destination cannot issue a request")
+	require.NotZero(t, runAction(&actionParams{Action: "sandbox-restart", Node: "bob", Agent: "agt_source"}, &stdout, &stderr))
+	require.Len(t, calls, 11, "invalid destination or sandbox direction cannot issue a request")
 }
