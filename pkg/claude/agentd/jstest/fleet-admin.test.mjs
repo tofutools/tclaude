@@ -640,7 +640,7 @@ test('live terminal viewers show on Peers only while someone watches, and discon
   await s.show();
   assert.match(s.q('#fleet-viewers').textContent, /forge.*ada.*ops.*interactive/s);
   await s.click(s.q('[data-viewer="v1"] [data-fa="kick"]'));
-  assert.match(s.confirms.at(-1).body, /interactive session \(it can type, including answering harness prompts\) of ada closes now.*still holds sessions\.attach for group ops/);
+  assert.match(s.confirms.at(-1).body, /interactive session \(it can type, including answering harness prompts\) of ada closes now.*(any sessions\.watch \(read-only\) or sessions\.attach \(typing\) grant covers group ops — direct, all-groups or through a pool)/);
   assert.deepEqual(s.log.findLast((l) => l[0] === 'kick'), ['kick', 'v1']);
   assert.equal(s.q('#fleet-viewers'), null, 'nobody watching: nothing shown');
 });

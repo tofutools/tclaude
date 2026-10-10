@@ -33,9 +33,12 @@ export function ViewersPanel({ view, actions, confirm, toast, timers = globalThi
     return () => { off = true; timers.clearTimeout(t); };
   }, [tick]);
   const label = (id) => view.trusted.find((r) => r.id === id)?.label || id;
+  const unrestricted = (id) => view.trusted.find((r) => r.id === id)?.level === 'unrestricted';
   const kick = (v) => confirm({
     title: `Disconnect ${label(v.peer)} from ${v.session || v.agent}?`,
-    body: `${label(v.peer)}'s ${v.read_only ? 'read-only view' : 'interactive session (it can type, including answering harness prompts)'} of ${v.session || v.agent} closes now. The agent keeps running. ${label(v.peer)} can open it again while it still holds ${v.read_only ? 'sessions.watch' : 'sessions.attach'} for ${v.group ? `group ${v.group}` : 'that agent\'s group'} — revoke that grant on Peer grants to keep it out.`,
+    body: `${label(v.peer)}'s ${v.read_only ? 'read-only view' : 'interactive session (it can type, including answering harness prompts)'} of ${v.session || v.agent} closes now. The agent keeps running. ${unrestricted(v.peer)
+      ? `${label(v.peer)} is unrestricted, so it can open it again at once: restrict or untrust it to keep it out.`
+      : `${label(v.peer)} can open it again while any sessions.watch (read-only) or sessions.attach (typing) grant covers ${v.group ? `group ${v.group}` : 'that agent\'s group'} — direct, all-groups or through a pool. Revoke those (or remove it from the pool) to keep it out.`}`,
     okLabel: 'Disconnect',
     busyLabel: 'Disconnecting…',
     action: () => actions.kickViewer(v.id),

@@ -590,7 +590,8 @@ first and says what will happen. Most pages name their CLI.
 
 - **Peers** — while a peer views an agent terminal here, a panel on top shows
   who watches or drives which agent; **Disconnect…** closes that view (the peer
-  can reopen it while it holds the grant). Below: trusted peers (level, grants, pools) and hub-visible instances
+  can reopen it while any sessions.watch/attach grant covers that group, or at
+  once if it is unrestricted). Below: trusted peers (level, grants, pools) and hub-visible instances
   waiting to be trusted. To trust one: **Trust…**, compare the fingerprint
   shown in full with the other operator, tick the check, pick the level and
   confirm. Unrestricted repeats that it grants every peer permission on all
