@@ -111,6 +111,9 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = b.Close() }()
 	b.Manifest.Agent.CarryPermissions = in.CarryPermissions
+	if b.Manifest.Agent.CarryPermissions {
+		b.Manifest.Agent.Permissions = standingCarryRows(b.Manifest.Agent.Permissions)
+	}
 	if (moving || teleport != nil) && b.Manifest.History == nil {
 		writeError(w, 400, "history_required", "moves and teleports require native conversation history")
 		return

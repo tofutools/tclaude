@@ -39,9 +39,41 @@ func carrySensitiveSlug(slug string) bool {
 	return strings.HasPrefix(slug, "permissions.") || strings.HasPrefix(slug, "human.") || strings.HasPrefix(slug, "federation.") || strings.HasPrefix(slug, "sandbox.") || slug == PermConfigImport || slug == PermAgentSandboxImplementation || slug == PermSandboxProfilesManage
 }
 
+// Permission seeds are historical launch configuration, not current standing
+// authority. Match the central resolver's override > group > defaults order.
+func carrySourceTier(source string) int {
+	switch {
+	case strings.HasPrefix(source, "profile:"), strings.HasPrefix(source, "role:"), strings.HasPrefix(source, "ownership:"):
+		return -1
+	case source == "defaults":
+		return 0
+	case strings.HasPrefix(source, "group:"):
+		return 1
+	default:
+		return 2
+	}
+}
+func standingCarryRows(rows []agentbundle.Permission) []agentbundle.Permission {
+	tiers := map[string]int{}
+	for _, row := range rows {
+		tiers[row.Slug] = max(tiers[row.Slug], carrySourceTier(row.Source))
+	}
+	var result []agentbundle.Permission
+	for _, row := range rows {
+		if tier := carrySourceTier(row.Source); tier >= 0 && tier == tiers[row.Slug] {
+			result = append(result, row)
+		}
+	}
+	return result
+}
+
 func planCarriedPermissions(rows []agentbundle.Permission, p permissionCarryPolicy) ([]carriedPermissionDecision, map[string]db.PermissionOverride) {
 	decisions := make([]carriedPermissionDecision, 0, len(rows))
 	overrides := map[string]db.PermissionOverride{}
+	tiers := map[string]int{}
+	for _, row := range rows {
+		tiers[row.Slug] = max(tiers[row.Slug], carrySourceTier(row.Source))
+	}
 	unrestricted := p.Peer == "" || db.FederationPeerUnrestricted(p.Peer)
 	var receive *db.FederationPeerGrant
 	if p.Peer != "" {
@@ -56,6 +88,10 @@ func planCarriedPermissions(rows []agentbundle.Permission, p permissionCarryPoli
 			d.Reason = "unknown permission on receiver"
 		case strings.HasPrefix(row.Source, "ownership:"):
 			d.Reason = "source ownership does not travel"
+		case carrySourceTier(row.Source) < 0:
+			d.Reason = "spawn-time profile and role authority does not travel"
+		case carrySourceTier(row.Source) < tiers[row.Slug]:
+			d.Reason = "shadowed by current source permission tier"
 		case row.Effect == "deny":
 			d.Decision, d.Reason = "apply", "deny only narrows receiver authority"
 		case row.Effect != "grant":

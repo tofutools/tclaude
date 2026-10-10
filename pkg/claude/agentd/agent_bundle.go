@@ -412,6 +412,9 @@ func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = b.Close() }()
 	b.Manifest.Agent.CarryPermissions = r.URL.Query().Get("carry_permissions") == "true"
+	if b.Manifest.Agent.CarryPermissions {
+		b.Manifest.Agent.Permissions = standingCarryRows(b.Manifest.Agent.Permissions)
+	}
 	if len(b.Manifest.Findings) > 0 && r.URL.Query().Get("allow_flagged") != "true" {
 		writeJSON(w, 422, map[string]any{"error": "suspected credentials: use --allow-flagged or export without --history", "code": "flagged_credentials", "findings": b.Manifest.Findings})
 		return
