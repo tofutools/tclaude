@@ -610,6 +610,15 @@ first and says what will happen. Most pages name their CLI.
   `node.exec` and turned on **Accept remote scripts** on its own Run scripts
   page — that switch is full remote code execution as the tclaude user, and the
   limits beside it cap each script's memory, cpu and processes.
+- **Spawn requests** — workers peers asked this node to start in its groups.
+  **Approve…** starts the worker in that group as you (optionally overriding
+  name, profile, cwd, harness or model); **Deny…** declines with an optional
+  reason. A launch that never confirmed can be abandoned back to pending, but
+  the original worker may still appear late. **Request a worker on a peer…**
+  sends a brief to a peer's exported group, or to automatic placement (any
+  trusted node or a pool, with requirements). The outbox below shows delivery
+  of the spawn requests and operator mail this node sent; decisions arrive in
+  Messages. CLI: `tclaude federation spawn-request`, `requests`, `outbox`.
 - **Invites & joining** — **Create invite…** issues an enrollment token for a
   node profile (uses, lifetime, the trust the joining node grants back) and
   shows it once; revoke active tokens from the list. To join a master:

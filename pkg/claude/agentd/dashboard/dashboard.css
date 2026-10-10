@@ -18922,6 +18922,13 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-ack { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0 4px; }
 .fa-grants-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 4px 0 10px; }
 .fa-warn { color: #e3b341; }
+#fleet-spawn-approve > :not(h3):not(.modal-buttons), #fleet-spawn-deny > :not(h3):not(.modal-buttons), #fleet-spawn-send > :not(h3):not(.modal-buttons) { font-size: 13px; font-weight: normal; }
+.fa-spawn-opt { display: grid; grid-template-columns: 90px minmax(0, 1fr); align-items: center; gap: 8px; margin: 6px 0; }
+.fa-spawn-opt input, .fa-spawn-opt select, .fa-spawn-opt textarea { width: 100%; max-width: none; box-sizing: border-box; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; }
+.fa-spawn-top { align-items: flex-start; }
+.fa-spawn-brief { white-space: pre-wrap; background: #0d1117; border: 1px solid #21262d; border-radius: 4px; padding: 6px 8px; margin: 6px 0; max-height: 160px; overflow: auto; }
+.fa-spawn-brief-cell { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fa-spawns .fa-h { margin: 16px 0 6px; font-size: 13px; font-weight: 600; }
 .fa-sensitive { color: #f0883e; }
 .fa-grant-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 6px; }
 .fa-cli-note { font-size: 12px; }
