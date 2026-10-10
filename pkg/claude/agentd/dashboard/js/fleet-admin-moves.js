@@ -50,7 +50,7 @@ export function MoveAgentDialog({ peers, agents, actions, confirm, onClose, onDo
     setError('');
     confirm({
       title: `Move ${agentLabel} to ${peerLabel}?`,
-      body: `Sends ${agentLabel}'s configuration and its full conversation history — which may contain code, file contents and anything pasted into it — to ${peerLabel}, whose operator may start it in group ${group}. Once ${peerLabel} confirms its copy is running, ${agentLabel} is retired here: it stops running on this node (its conversation stays here as history), and mail peers send to its old address is refused. Until then you can abandon the move on this page.${allow ? ` The history includes suspected credentials (${findings.map((f) => `${f.kind} ×${f.count}`).join(', ')}).` : ''}`,
+      body: `Sends ${agentLabel}'s configuration and its full conversation history — which may contain code, file contents and anything pasted into it — to ${peerLabel}, whose operator may start it in group ${group}. Once ${peerLabel} confirms its copy is running, ${agentLabel} is retired here: it stops running, leaves its groups and loses its grants on this node (its history and worktree stay), and mail peers send to its old address is refused. Until then you can abandon the move on this page, which keeps the agent here, but the history already offered to ${peerLabel} is not withdrawn and any copy it makes stays there.${allow ? ` The history includes suspected credentials (${findings.map((f) => `${f.kind} ×${f.count}`).join(', ')}).` : ''}`,
       okLabel: 'Move agent',
       busyLabel: 'Sending…',
       focusCancel: true,

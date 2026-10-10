@@ -1004,7 +1004,7 @@ test('moves: the move dialog spells out that the source retires, starts focus on
   const c = s.confirms.at(-1);
   assert.equal(c.focusCancel, true);
   assert.match(c.title, /Move ada \(agt_a1\) to forge\?/);
-  assert.match(c.body, /full conversation history.*retired here: it stops running on this node.*abandon the move/);
+  assert.match(c.body, /full conversation history.*retired here: it stops running, leaves its groups and loses its grants.*abandon the move.*not withdrawn/);
   assert.match(q('#fleet-move-agent [role=alert]').textContent, /contains credentials/);
   assert.equal(q('#fleet-move-agent-send').disabled, true, 'flagged history needs an explicit choice');
   await s.check(q('#fleet-move-agent-allow'));

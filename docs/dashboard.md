@@ -721,8 +721,9 @@ first and says what will happen. Most pages name their CLI.
   on this node until you allow them again; plain moves are not affected.
   **Move an agent to a peer…** is `tclaude federation move-agent`: it sends a
   local agent with its conversation history to a peer's receiving group, and
-  the agent retires here once the peer confirms its copy is running. The
-  confirm says so, and keyboard focus starts on Cancel.
+  the agent retires here once the peer confirms its copy is running (it leaves
+  its groups and loses its grants here). The confirm says so, and keyboard
+  focus starts on Cancel.
 - **Audit** — this node's federation activity, newest first: a peer acting
   here (⇠) or this node acting on a peer (⇢), with actor, target, group and
   outcome; refused or failed requests in red. Filter by peer and time window.
