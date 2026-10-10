@@ -94,3 +94,57 @@ test('the merged view polls peers only while shown, renders group@node, and stay
   assert.equal(timers.queue.length, 0, 'leaving the view cancels polling');
   await mounted.unmount(); state.dispose();
 });
+
+test('a peer row runs what the peer shares through its peer routes; this node and unshared controls stay an overview', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/skynet-state.js'), harness.importDashboardModule('js/skynet-merged-island.js')]);
+  const activeTab = harness.signals.signal('fleet');
+  const state = stateMod.createSkynetState({ activeTab });
+  state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }] });
+  const snapshot = harness.signals.signal({ groups: [group('ops')], agents: [] });
+  const timers = fakeTimers(); const toasts = []; const calls = []; const confirms = [];
+  const peerSnap = { groups: [group('build', { members: [{ agent_id: 'agt_ada1', title: 'ada' }] })], agents: [], peer_view: { included: ['agents.status', 'lifecycle.resume', 'spawn', 'messaging'] } };
+  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => peerSnap });
+  const peerActions = (node) => ({
+    resume: async (id) => { calls.push([node, 'resume', id]); return {}; },
+    spawn: async (g, o) => { calls.push([node, 'spawn', g, o.brief]); return { id: 3, status: 'approved' }; },
+    message: async (to, o) => { calls.push([node, 'message', to, o.body]); return {}; },
+  });
+  const confirm = async (o) => { confirms.push(o); return o.action(); };
+  const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${snapshot} fetchImpl=${fetchImpl} timers=${timers} remote="" toast=${(m) => toasts.push(m)} switchNode=${() => {}} peerActions=${peerActions} confirm=${confirm} />`);
+  await harness.act(async () => { await timers.queue.shift().fn(); });
+  const doc = harness.document;
+  const inGroup = (node, name, inner) => { const d = doc.createElement('div'); d.innerHTML = `<details data-fleet-node="${node}" data-fleet-node-name="${name}">${inner}</details>`; host.appendChild(d); return d.firstElementChild.firstElementChild; };
+  // A stopped agent's dot wakes it on forge.
+  const dot = inGroup('inst_forge', 'forge', '<span data-act="dot-toggle" data-online="0" data-agent="agt_ada1" data-label="ada">○</span>');
+  await harness.act(() => harness.fireEvent(dot, 'click'));
+  assert.match(doc.querySelector('#peer-action-title').textContent, /ada on forge/);
+  await harness.act(() => doc.querySelector('#peer-action-submit').click());
+  await harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  assert.deepEqual(calls.shift(), ['inst_forge', 'resume', 'agt_ada1']);
+  assert.match(confirms[0].body, /ada starts again on forge/);
+  // Spawn and message carry the peer's own group name, not group@node.
+  const spawn = inGroup('inst_forge', 'forge', '<button data-act="spawn-agent" data-group="build@forge">+</button>');
+  await harness.act(() => harness.fireEvent(spawn, 'click'));
+  assert.match(doc.querySelector('#peer-spawn-title').textContent, /Spawn in build on forge/);
+  await harness.act(() => doc.querySelector('#peer-spawn-modal button').click());
+  const msg = inGroup('inst_forge', 'forge', `<button data-act="message-new" data-prefill='{"targetMode":"group","groupName":"build@forge"}'>✉</button>`);
+  await harness.act(() => harness.fireEvent(msg, 'click'));
+  const body = doc.querySelector('#peer-message-body');
+  body.value = 'hello';
+  await harness.act(() => harness.fireEvent(body, 'input'));
+  await harness.act(() => doc.querySelector('#peer-message-send').click());
+  await harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  assert.deepEqual(calls.shift(), ['inst_forge', 'message', 'agt_ada1', 'hello']);
+  // Unshared (stop), this node's rows and unknown controls keep the overview toast.
+  const before = toasts.length;
+  const running = inGroup('inst_forge', 'forge', '<span data-act="dot-toggle" data-online="1" data-agent="agt_ada1">●</span>');
+  const local = inGroup('inst_self', 'desk', '<span data-act="dot-toggle" data-online="0" data-agent="agt_me1">○</span>');
+  assert.equal(harness.fireEvent(running, 'click').defaultPrevented, true);
+  assert.equal(harness.fireEvent(local, 'click').defaultPrevented, true);
+  assert.equal(doc.querySelector('#peer-action-modal'), null);
+  assert.equal(toasts.length, before + 2);
+  assert.equal(calls.length, 0);
+  await mounted.unmount(); state.dispose();
+});
