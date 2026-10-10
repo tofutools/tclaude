@@ -131,10 +131,15 @@ func peerViewRules() map[string]peerViewRule {
 	rules["GET /api/instance"] = peerViewRule{feature: "health", requires: PermNodeRead, serve: servePeerNode}
 	rules["GET /api/costs"] = peerViewRule{feature: "costs", requires: PermCostsRead, serve: servePeerGlobalRead(handleDashboardCosts)}
 	rules["GET /api/audit"] = peerViewRule{feature: "audit", requires: PermFederationAuditRead, serve: servePeerGlobalRead(handleDashboardAudit)}
+	rules["POST /api/groups/{name}/spawn"] = peerViewRule{feature: "spawn", requires: PermGroupsMembersSpawn, group: true, write: servePeerSpawn}
+	rules["GET /api/spawn-requests/{id}"] = peerViewRule{feature: "spawn", requires: PermGroupsMembersSpawn, group: true, serve: servePeerSpawnStatus}
 	rules["POST /api/operator-message"] = peerViewRule{feature: "messaging", requires: PermMessageDirect, group: true, write: servePeerMessage}
 	// Concepts consumed by the UI, whose transports remain outside this contract.
 	rules["/api/term/"] = peerViewRule{feature: "terminals", requires: PermSessionsAttach, group: true}
-	rules["/api/spawn"] = peerViewRule{feature: "spawn", requires: PermGroupsMembersSpawn, group: true}
+	rules["/api/spawn"] = peerViewRule{feature: "spawn.inline", requires: PermGroupsMembersSpawn, group: true}
+	for _, action := range []struct{ tail, permission string }{{"stop", PermGroupsMembersStop}, {"retire", PermGroupsMembersRetire}, {"clone", PermGroupsMembersClone}, {"move", PermAgentMove}, {"teleport", PermAgentMove}} {
+		rules["POST /api/agents/{id}/"+action.tail] = peerViewRule{feature: "lifecycle." + action.tail, requires: action.permission, group: true, write: servePeerAgentAction}
+	}
 	rules["feature:roster"] = peerViewRule{feature: "groups.roster", requires: PermGroupsRosterRead, group: true, serve: servePeerGroups}
 	rules["feature:presence"] = peerViewRule{feature: "groups.presence", requires: PermGroupsPresenceRead, group: true, serve: servePeerGroups}
 	return rules

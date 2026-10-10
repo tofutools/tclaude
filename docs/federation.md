@@ -16,7 +16,8 @@ laptops behind NAT or a corporate network work as-is.
     CLI only. Built: discovery, mail with attachments, mail to remote
     groups, operator mail, automatic or operator-approved remote spawn, and
     cross-instance group routes, remote session state, and remote terminal
-    watch and interactive attach. A federation dashboard view is not built yet.
+    watch and interactive attach. The dashboard shows and manages linked
+    nodes too; see [Skynet UI](dashboard.md#skynet-ui-linked-nodes).
 
 For a step-by-step first setup, including the hub's TLS certificate, see
 the [setup walkthrough](federation-setup.md).
@@ -829,7 +830,9 @@ is by inspecting the caller's process tree.
 - Operator mail is sent from the CLI only; agents cannot reach a remote
   operator.
 - One hub per instance. Hub-to-hub federation is a later step.
-- CLI only; the dashboard does not show federation yet.
+- Some capabilities are still CLI-only in the dashboard (away cover,
+  sending operator mail, spawn requests, remote jobs, offers, moves); see
+  [Skynet UI](dashboard.md#skynet-ui-linked-nodes) for what it covers.
 
 ## Portable local setup bundles
 
@@ -2397,6 +2400,9 @@ peer) and `groups` rows with `group`, `node`, `node_id`, `members` and
 `online`. An unreachable peer keeps the other rows and makes the exit status
 nonzero.
 
+For a how-to tour of the dashboard side, see
+[Skynet UI](dashboard.md#skynet-ui-linked-nodes).
+
 The dashboard's **⚙ Fleet** view (beside Map and Groups · all nodes, or
 "Fleet administration" in the command palette before any peer is trusted)
 covers `federation status`, `peers`, `trust`, `untrust` and `disconnect`:
@@ -2711,6 +2717,41 @@ an unknown name returns 404. Each link has the existing snapshot shape:
 `online`, and `last_seen?`. Peers cannot read this node's other trust links,
 including through unrestricted trust.
 
+Additional stable action concept keys are `spawn.inline`, `lifecycle.stop`, `lifecycle.retire`, `lifecycle.clone`, `lifecycle.move`, `lifecycle.teleport`.
+
+### Remote operator actions
+
+Remote actions use the peer-view dispatcher and the existing dashboard proxy.
+The receiver authorizes every request and rechecks durable move authority before
+retiring a source. It never gives the requester local human identity or the
+source agent's own grants. Whole-agent stop/retire/clone/move actions need their
+peer grant on every affected active group; clone/retire/move also cover owned groups.
+
+- `POST /api/groups/{name}/spawn`: `{brief, name?, role?, profile?}` under
+  `groups.members.spawn` and receiver-owned launch policy. Arbitrary cwd,
+  harness, model, permissions and launch overrides are refused. Returns a
+  durable spawn-request row (202); `GET /api/spawn-requests/{id}` reads only
+  that initiating peer's request while its grant remains valid.
+- `POST /api/agents/{id}/stop[?force=1]`: `groups.members.stop`.
+- `POST /api/agents/{id}/retire`: `groups.members.retire`; worktree deletion
+  and its options are not exposed remotely.
+- `POST /api/agents/{id}/clone`: `groups.members.clone`, with optional
+  `{follow_up, no_copy_conv}` and receiver-owned source defaults.
+- `POST /api/agents/{id}/move`: `{group}`; `agent.move` plus source
+  `groups.members.retire`. The destination is always the requesting peer.
+- `POST /api/agents/{id}/teleport`: `{group, note?, clone?}` with the same
+  source authority and existing teleport landing/confirmation policy.
+- `POST /api/operator-message` retains the existing scoped messaging contract.
+
+IDs are stable remote agent IDs, and `group` on move/teleport names the
+receiving group on the requesting node. No third-node delegation is accepted.
+Use `/api/peer/{instance_id}/<tail>` or the CLI's
+`/v1/federation/peer/{node}/<tail>` proxy. The CLI equivalent is
+`tclaude federation action ACTION --node PEER --agent ID`, adding
+`--group GROUP --brief TEXT` for spawn, `--group GROUP` for move/teleport,
+or `spawn-status --job ID` to inspect a remote launch. Message uses
+`--body TEXT [--subject TEXT]`; clone uses `--follow-up`/`--no-copy-conv`.
+The action command never retries mutations automatically.
 ### Operator access requests
 
 A trusted peer with an existing active grant can request additional dispatcher

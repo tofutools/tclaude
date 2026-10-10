@@ -148,6 +148,15 @@ func TestFederationPeerViewProxyWireAndFailures(t *testing.T) {
 	rec = readResult(ch)
 	require.Equal(t, 404, rec.Code)
 	require.JSONEq(t, `{"error":"not found","code":"not_found"}`, rec.Body.String())
+	senderAudit, auditErr := db.ListAuditLog(db.AuditLogFilter{Verb: "federation.peer_view.out"})
+	require.NoError(t, auditErr)
+	require.Len(t, senderAudit, 2)
+	require.Equal(t, 404, senderAudit[0].Status)
+	for _, row := range senderAudit {
+		require.Contains(t, row.Detail, "POST /api/operator-message")
+		require.NotContains(t, row.Detail, "hidden")
+		require.NotContains(t, row.Detail, "remote")
+	}
 	_ = conn.Close()
 	ch = request("GET", "snapshot", nil)
 	conn = acceptOutboundPeerView(t, p, 2)

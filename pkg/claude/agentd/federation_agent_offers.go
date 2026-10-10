@@ -194,6 +194,10 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 		m := db.FederationAgentMove{Teleport: teleport != nil, Direction: "out", Peer: peer.InstanceID, ID: d.ID, State: "awaiting_confirmation", SourceAgent: d.Move.SourceAgent, SourceConv: source, SHA256: d.SHA256, Human: human, Group: in.Group, ExpiresAt: d.ExpiresAt}
 		if !human {
 			m.Initiator, _ = db.AgentIDForConv(caller)
+			if a := peerActionFromRequest(r); a != nil {
+				m.Initiator = "peer:" + a.peer
+				m.Human = false
+			}
 		}
 		groups, e := db.ListGroupsForConv(source)
 		if e != nil {
