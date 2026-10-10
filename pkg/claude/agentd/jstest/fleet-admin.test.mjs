@@ -293,6 +293,10 @@ test('the admin view reads status only while shown and lists trusted and waiting
   await s.show();
   assert.deepEqual(s.log, [['status']]);
   assert.match(s.mounted.container.textContent, /self-fp-0000/, 'this node\'s fingerprint is shown whole');
+  const self = s.q('#fleet-self tbody tr');
+  assert.equal(self.dataset.self, 'inst_self');
+  assert.match(self.textContent, /desk.*this node/);
+  assert.equal(self.querySelectorAll('button').length, 0, 'self has no trust or grants actions');
   assert.equal(s.q('#fleet-trusted').querySelectorAll('tbody tr').length, 2);
   assert.equal(s.q('#fleet-waiting').querySelectorAll('tbody tr').length, 1);
   // The status poll; the live-viewers poll (5 s) runs alongside on Peers.

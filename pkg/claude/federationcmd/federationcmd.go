@@ -79,17 +79,7 @@ type status struct {
 		LastError string    `json:"last_error"`
 		Since     time.Time `json:"since"`
 	} `json:"hub"`
-	Peers []struct {
-		Level       string    `json:"level"`
-		InstanceID  string    `json:"instance_id"`
-		Fingerprint string    `json:"fingerprint"`
-		Label       string    `json:"label"`
-		Name        string    `json:"name"`
-		Trusted     bool      `json:"trusted"`
-		Online      bool      `json:"online"`
-		LastSeen    time.Time `json:"last_seen"`
-		Version     string    `json:"version"`
-	} `json:"peers"`
+	Peers      []statusPeer   `json:"peers"`
 	PeerGrants []peerGrant    `json:"peer_grants"`
 	Outbox     map[string]int `json:"outbox"`
 	Remote     []struct {
@@ -114,6 +104,25 @@ type status struct {
 			} `json:"routes"`
 		} `json:"groups"`
 	} `json:"remote"`
+}
+
+type statusPeer struct {
+	Level       string    `json:"level"`
+	InstanceID  string    `json:"instance_id"`
+	Fingerprint string    `json:"fingerprint"`
+	Label       string    `json:"label"`
+	Name        string    `json:"name"`
+	Trusted     bool      `json:"trusted"`
+	Online      bool      `json:"online"`
+	LastSeen    time.Time `json:"last_seen"`
+	Version     string    `json:"version"`
+
+	Self bool `json:"self,omitempty"`
+}
+
+func (st *status) displayPeers() []statusPeer {
+	self := statusPeer{InstanceID: st.InstanceID, Fingerprint: st.Fingerprint, Name: st.Name, Label: "this node", Level: "self", Online: true, Self: true}
+	return append([]statusPeer{self}, st.Peers...)
 }
 
 func fail(stderr io.Writer, err error) int {
@@ -225,6 +234,7 @@ func runStatus(p *jsonParam, stdout, stderr io.Writer) int {
 			visible++
 		}
 	}
+	fmt.Fprintf(stdout, "  %s: this node (%s)\n", st.InstanceID, proto.StripControls(st.Name))
 	fmt.Fprintf(stdout, "Peers:       %d trusted, %d visible untrusted\n", trusted, visible)
 	for _, pe := range st.Peers {
 		if pe.Trusted {
@@ -331,25 +341,33 @@ func peersCmd() *cobra.Command {
 			if st == nil {
 				os.Exit(rc)
 			}
-			if p.JSON {
-				os.Exit(printJSON(os.Stdout, st.Peers))
-			}
-			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-			_, _ = fmt.Fprintln(tw, "INSTANCE\tLABEL\tNAME\tTRUSTED\tLEVEL\tONLINE\tLAST SEEN\tFINGERPRINT")
-			for _, pe := range st.Peers {
-				online := "no"
-				if pe.Online {
-					online = "yes"
-				}
-				trusted := "no"
-				if pe.Trusted {
-					trusted = "yes"
-				}
-				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", pe.InstanceID, dash(pe.Label), dash(pe.Name), trusted, dash(pe.Level), online, ago(pe.LastSeen), pe.Fingerprint)
-			}
-			_ = tw.Flush()
+			os.Exit(printPeers(p, st, os.Stdout))
 		},
 	}.ToCobra()
+}
+
+func printPeers(p *jsonParam, st *status, stdout io.Writer) int {
+	if p.JSON {
+		return printJSON(stdout, st.displayPeers())
+	}
+	tw := tabwriter.NewWriter(stdout, 0, 2, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "INSTANCE\tLABEL\tNAME\tTRUSTED\tLEVEL\tONLINE\tLAST SEEN\tFINGERPRINT")
+	for _, pe := range st.displayPeers() {
+		online := "no"
+		if pe.Online {
+			online = "yes"
+		}
+		trusted := "no"
+		if pe.Self {
+			trusted = "—"
+		}
+		if pe.Trusted {
+			trusted = "yes"
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", pe.InstanceID, dash(pe.Label), dash(pe.Name), trusted, dash(pe.Level), online, ago(pe.LastSeen), pe.Fingerprint)
+	}
+	_ = tw.Flush()
+	return 0
 }
 
 func dash(s string) string {
