@@ -19,6 +19,7 @@ func TestCopilotHistoryNativeProjection(t *testing.T) {
 	raw := []byte(`{"id":"event-start","type":"session.start","data":{"sessionId":"019fe740-43a4-7023-b8ae-1ee64459f2a1","context":{"cwd":"/old","trustedDirectories":["/"]}}}
 {"id":"event-user","parentId":"event-start","type":"user.message","data":{"content":"retain /old and 019fe740-43a4-7023-b8ae-1ee64459f2a1 verbatim"}}
 {"id":"event-answer","parentId":"event-user","type":"assistant.message","data":{"content":"portable answer"}}
+{"id":"event-resume","parentId":"event-answer","type":"session.resume","data":{"context":{"cwd":"/old"}}}
 `)
 	require.NoError(t, h.Validate(raw, historySource))
 	require.Error(t, h.Validate(raw, historyTarget))

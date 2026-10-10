@@ -39,7 +39,7 @@ func (h copilotHistory) Export(id, cwd string) ([]byte, error) {
 		return nil, err
 	}
 	if int64(len(raw)) > agentbundle.MaxBytes {
-		return nil, errors.New("Copilot history exceeds federation.agent_transfer_max_bytes default (2 GiB)")
+		return nil, errors.New("copilot history exceeds federation.agent_transfer_max_bytes default (2 GiB)")
 	}
 	return raw, h.Validate(raw, id)
 }
@@ -51,7 +51,7 @@ func (h copilotHistory) ValidateReader(r io.Reader, id string) error {
 }
 func rewriteCopilotHistory(r io.Reader, source, target, cwd string, out io.Writer) error {
 	if _, err := uuid.Parse(source); err != nil {
-		return errors.New("Copilot history source identity must be a UUID")
+		return errors.New("copilot history source identity must be a UUID")
 	}
 	limit := MaxHistoryRecordBytes
 	if bound, ok := r.(interface{ HistoryRecordLimit() int }); ok && bound.HistoryRecordLimit() > 0 {
@@ -87,8 +87,9 @@ func rewriteCopilotHistory(r io.Reader, source, target, cwd string, out io.Write
 			if err := json.Unmarshal(event["data"], &data); err != nil || data == nil {
 				return errors.New("invalid Copilot session metadata")
 			}
-			if rawString(data, "sessionId") != source {
-				return errors.New("Copilot history session identity mismatch")
+			nativeID := rawString(data, "sessionId")
+			if (kind == "session.start" || nativeID != "") && nativeID != source {
+				return errors.New("copilot history session identity mismatch")
 			}
 			if kind == "session.start" {
 				if found {
@@ -97,7 +98,9 @@ func rewriteCopilotHistory(r io.Reader, source, target, cwd string, out io.Write
 				found = true
 			}
 			if target != "" {
-				putRawString(data, "sessionId", target)
+				if nativeID != "" {
+					putRawString(data, "sessionId", target)
+				}
 				data["context"], _ = json.Marshal(map[string]string{"cwd": cwd})
 				event["data"], _ = json.Marshal(data)
 			}
@@ -115,10 +118,10 @@ func rewriteCopilotHistory(r io.Reader, source, target, cwd string, out io.Write
 		}
 	}
 	if err := scan.Err(); err != nil {
-		return fmt.Errorf("Copilot history record exceeds federation.agent_history_record_max_bytes=%d or cannot be read: %w", limit, err)
+		return fmt.Errorf("copilot history record exceeds federation.agent_history_record_max_bytes=%d or cannot be read: %w", limit, err)
 	}
 	if !found {
-		return errors.New("Copilot history has no matching session.start")
+		return errors.New("copilot history has no matching session.start")
 	}
 	return nil
 }

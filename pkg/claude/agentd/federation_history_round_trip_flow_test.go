@@ -108,11 +108,12 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 		}
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&in))
 		if in.Seed {
-			if name == "copilot" {
+			switch name {
+			case "copilot":
 				require.NoError(t, agentd.Spawn.SpawnNew(clcommon.SpawnArgs{Harness: "copilot", SessionID: in.Conv, Label: "traveller", Cwd: cwd, TrustDir: true, Approval: "all", SandboxImplementation: "off"}))
-			} else if name == "codex" {
+			case "codex":
 				f.HaveAliveCodexSession(in.Conv, "traveller", "traveller-pane", cwd)
-			} else {
+			default:
 				f.HaveAliveSession(in.Conv, "traveller", "traveller-pane", cwd)
 			}
 
