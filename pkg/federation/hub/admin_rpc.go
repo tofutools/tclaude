@@ -26,13 +26,12 @@ var adminMethodCapability = map[string]string{
 }
 
 func (h *Hub) adminRequest(c *conn, frame *proto.Frame, size int) {
-	h.adminMu.Lock()
-	defer h.adminMu.Unlock()
 	req := frame.AdminRequest
 	if req == nil || !proto.ValidStreamID(req.ID) {
 		c.send(&proto.Frame{Type: proto.FrameError, Code: proto.CodeBadFrame, Message: "invalid hub admin frame"})
 		return
 	}
+	h.adminMu.Lock()
 	generation, err := h.store.AdminGeneration()
 	result := &proto.HubAdminResult{ID: req.ID, Generation: generation, Status: 200}
 	fail := func(e error) {
@@ -78,6 +77,9 @@ func (h *Hub) adminRequest(c *conn, frame *proto.Frame, size int) {
 		fail(adminErr(500, "audit", "hub audit persistence failed"))
 	}
 	h.log.Info("hub admin request", "instance", c.id, "operation", operation, "status", result.Status, "code", result.Code)
+	// Serialize authorization, mutation and audit, but never hold global admin
+	// authority behind a slow socket writer. Other instances remain responsive.
+	h.adminMu.Unlock()
 	// Write before policy refresh: an admin may revoke its own admission.
 	// Mutations are never retried if the reply fails after execution.
 	_ = c.write(&proto.Frame{Type: proto.FrameAdminResult, AdminResult: result}, 5*time.Second)

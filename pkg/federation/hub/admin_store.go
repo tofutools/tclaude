@@ -251,7 +251,7 @@ func guardAdminLoss(tx *sql.Tx, instance string, keepManager bool) error {
 	if owns == 0 || keepManager {
 		return nil
 	}
-	if err := tx.QueryRow(`SELECT count(*) FROM hub_admin_capabilities c JOIN instances i ON i.instance_id=c.instance_id WHERE c.instance_id<>? AND c.capability='hub.admins.manage' AND i.revoked=0`, instance).Scan(&others); err != nil {
+	if err := tx.QueryRow(`SELECT count(*) FROM hub_admin_capabilities c JOIN instances i ON i.instance_id=c.instance_id WHERE c.instance_id<>? AND c.capability='hub.admins.manage' AND i.revoked=0 AND NOT EXISTS(SELECT 1 FROM identity_rotations r WHERE r.old_instance=i.instance_id AND r.state IN ('accepted','conflict','revoked','recovered'))`, instance).Scan(&others); err != nil {
 		return err
 	}
 	if others == 0 {
@@ -286,6 +286,13 @@ func (s *Store) SetAdmin(instance, creator string, caps []string) error {
 	var revoked bool
 	if err = tx.QueryRow(`SELECT pubkey,revoked FROM instances WHERE instance_id=?`, instance).Scan(&pub, &revoked); err != nil || revoked || len(pub) != ed25519.PublicKeySize {
 		return adminErr(409, "instance", "admin must be an admitted instance with a verified key")
+	}
+	var retired int
+	if err = tx.QueryRow(`SELECT count(*) FROM identity_rotations WHERE old_instance=? AND state IN ('accepted','conflict','revoked','recovered')`, instance).Scan(&retired); err != nil {
+		return err
+	}
+	if retired != 0 {
+		return adminErr(409, "instance", "retired or conflicted identities cannot administer the hub")
 	}
 	if err = guardAdminLoss(tx, instance, slices.Contains(caps, "hub.admins.manage")); err != nil {
 		return err
@@ -348,6 +355,13 @@ func (s *Store) AuthorizeAdminRequest(instance string, pub []byte, r *proto.HubA
 	var revoked bool
 	if err = tx.QueryRow(`SELECT revoked FROM instances WHERE instance_id=?`, instance).Scan(&revoked); err != nil || revoked {
 		return adminErr(403, "not_admitted", "instance is no longer admitted")
+	}
+	var retired int
+	if err = tx.QueryRow(`SELECT count(*) FROM identity_rotations WHERE old_instance=? AND state IN ('accepted','conflict','revoked','recovered')`, instance).Scan(&retired); err != nil {
+		return err
+	}
+	if retired != 0 {
+		return adminErr(403, "not_admitted", "identity is retired or conflicted")
 	}
 	if capability != "" {
 		var key []byte

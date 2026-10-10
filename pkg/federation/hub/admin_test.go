@@ -172,3 +172,27 @@ func TestHubAdminLogsBoundedAndRedacted(t *testing.T) {
 	require.NotContains(t, string(raw), "\\u001b")
 	require.Less(t, len(raw), 256<<10)
 }
+
+func TestHubAdminRetiredOrConflictedKeysNeverCountAsManagers(t *testing.T) {
+	for _, state := range []string{"accepted", "conflict", "revoked", "recovered"} {
+		t.Run(state, func(t *testing.T) {
+			st, id, token := adminTestStore(t)
+			require.NoError(t, st.ClaimAdmin(id.ID(), id.Pub, token, time.Now()))
+			stranded, _ := proto.NewIdentity()
+			require.NoError(t, st.Admit(stranded.ID()))
+			require.NoError(t, st.RecordSeen(stranded.ID(), stranded.Pub, "stranded", "", time.Now()))
+			require.NoError(t, st.SetAdmin(stranded.ID(), id.ID(), []string{"hub.admins.manage"}))
+			_, err := st.db.Exec(`INSERT INTO identity_rotations(old_instance,new_instance,statement,state,received_at,accept_after) VALUES(?,'','{}',?,?,?)`, stranded.ID(), state, ts(time.Now()), ts(time.Now()))
+			require.NoError(t, err)
+			// Admission alone cannot make a retired/conflicted key usable again.
+			require.NoError(t, st.Admit(stranded.ID()))
+			requireAdminCode(t, st.SetAdmin(stranded.ID(), id.ID(), []string{"hub.admins.manage"}), "instance")
+			requireAdminCode(t, st.RemoveAdmin(id.ID()), "last_admin")
+			requireAdminCode(t, st.Revoke(id.ID()), "last_admin")
+			generation, err := st.AdminGeneration()
+			require.NoError(t, err)
+			request := &proto.HubAdminRequest{ID: proto.NewEnvelopeID(), Generation: generation, ExpiresAt: time.Now().Add(time.Minute)}
+			requireAdminCode(t, st.AuthorizeAdminRequest(stranded.ID(), stranded.Pub, request, "hub.admins.manage"), "not_admitted")
+		})
+	}
+}
