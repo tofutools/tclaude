@@ -3324,12 +3324,15 @@ board keys are stored by the hub. A consumed invitation can recover an
 interrupted join only for the same instance while its membership still exists.
 
 The hub stores encrypted key envelopes and ciphertext. A key rotation wraps a
-new epoch key separately to each current member's instance key and invalidates
+new epoch key separately to each current member's instance key, after verifying
+that member's proof of the current key, and invalidates
 unused invitations from the previous epoch. Removed members immediately lose
 hub access; rotation protects future publications. Previously obtained keys or
 plaintext cannot be revoked. Remaining members keep access to retained older
 key epochs. Lost owner keys require another owner or a new board; hub admins
-cannot recover content keys.
+cannot recover content keys. A dishonest hub operator could deny service or
+keep a removed member in the loop for new content; it cannot read content or
+forge publisher-signed items, so pick a hub you trust.
 
 Use `tclaude federation boards list`, `create --name NAME`, `join --token TOKEN`,
 `show --board ID`, `members --board ID`, `invite --board ID --role reader --ttl 1h`,
@@ -3343,7 +3346,8 @@ and are never forwarded through peer view.
 Hub admins with `hub.boards.manage` can list, freeze, limit or delete boards using
 `tclaude federation hub boards list|set|delete --board ID`. This capability does
 not reveal keys or plaintext. Default limits are 100 boards per hub, 100 members
-per board, 256 MiB of ciphertext and 1,000 blobs per board. Ciphertext objects are
+per board, 100 outstanding invitations, 256 MiB of ciphertext plus encrypted
+key/invitation metadata, and 1,000 blobs per board. Ciphertext objects are
 bounded at 16 MiB plus encryption overhead. Pending uploads consume quota;
 failed uploads release their reservation. Ready, unpinned blobs expire after
 30 days, and abandoned upload reservations after one hour; startup cleanup

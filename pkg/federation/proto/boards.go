@@ -91,7 +91,8 @@ func OpenBoardContent(key []byte, board string, epoch int64, blob string, cipher
 }
 
 // BoardKeyProof binds a member's identity to possession of an epoch key. A
-// hub cannot inject a new rotation recipient using unverified roster metadata.
+// hub cannot inject a recipient that never possessed the key. Membership
+// remains authoritative at the hub; this proof is not a signed roster.
 // Members already know the key and can disclose it: this protects against the
 // storage/relay host, not against a member intentionally sharing its content.
 func BoardKeyProof(key []byte, board string, epoch int64, instance string) []byte {

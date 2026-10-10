@@ -120,6 +120,19 @@ func TestDashboardContentBoardMembershipKeysAndModeration(t *testing.T) {
 	joined := must("POST", "/join", map[string]any{"token": "board1_" + base64.RawURLEncoding.EncodeToString(raw)})
 	require.Equal(t, "reader", joined["role"])
 	must("DELETE", "/"+other+"/membership", nil)
+	// Even an unrestricted peer cannot use local board authority.
+	peerView := agentd.PeerViewHandler(fh.peer.id.ID())
+	for _, endpoint := range []struct{ method, tail string }{
+		{"GET", ""}, {"POST", ""}, {"POST", "/join"}, {"GET", "/" + board},
+		{"GET", "/" + board + "/members"}, {"PUT", "/" + board + "/members/" + reader.ID()},
+		{"DELETE", "/" + board + "/members/" + reader.ID()}, {"DELETE", "/" + board + "/membership"},
+		{"POST", "/" + board + "/invites"}, {"DELETE", "/" + board + "/invites/token"},
+		{"POST", "/" + board + "/rotate-key"},
+	} {
+		rec := testharness.Serve(peerView, testharness.JSONRequest(t, endpoint.method, "/api/federation/boards"+endpoint.tail, map[string]any{}))
+		require.Equal(t, 403, rec.Code, endpoint.method+" "+endpoint.tail)
+	}
+
 	// Human-only routes must refuse agent authority, including read surfaces.
 	for _, method := range []string{"GET", "POST"} {
 		req := agentd.AsAgentPeer(testharness.JSONRequest(t, method, "/v1/federation/boards", map[string]any{}), "board-agent")

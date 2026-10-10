@@ -303,7 +303,7 @@ func (s *Store) boardCall(instance string, pub []byte, r *proto.BoardRequest, ca
 				return nil, e
 			}
 			var replaced int64
-			if e = tx.QueryRow(`SELECT coalesce(sum(length(envelope)),0) FROM board_keys WHERE board=? AND epoch=? AND instance=?`, p.Board, p.Epoch, instance).Scan(&replaced); e != nil {
+			if e = tx.QueryRow(`SELECT coalesce(sum(length(CAST(envelope AS BLOB))),0) FROM board_keys WHERE board=? AND epoch=? AND instance=?`, p.Board, p.Epoch, instance).Scan(&replaced); e != nil {
 				return nil, e
 			}
 			if int64(len(p.Envelopes[instance])) > b.QuotaBytes-used+replaced {
@@ -410,6 +410,6 @@ func (s *Store) boardCall(instance string, pub []byte, r *proto.BoardRequest, ca
 // otherwise repeated rotations could bypass the blob quota indefinitely.
 func boardStorageUsed(tx *sql.Tx, board string) (int64, error) {
 	var used int64
-	err := tx.QueryRow(`SELECT (SELECT coalesce(sum(bytes),0) FROM board_blobs WHERE board=?)+(SELECT coalesce(sum(length(envelope)),0) FROM board_keys WHERE board=?)+(SELECT coalesce(sum(length(key_package)),0) FROM board_invites WHERE board=?)`, board, board, board).Scan(&used)
+	err := tx.QueryRow(`SELECT (SELECT coalesce(sum(bytes),0) FROM board_blobs WHERE board=?)+(SELECT coalesce(sum(length(CAST(envelope AS BLOB))),0) FROM board_keys WHERE board=?)+(SELECT coalesce(sum(length(CAST(key_package AS BLOB))),0) FROM board_invites WHERE board=?)`, board, board, board).Scan(&used)
 	return used, err
 }
