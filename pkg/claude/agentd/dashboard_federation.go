@@ -5,6 +5,13 @@ import "net/http"
 func registerDashboardFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/federation/node-labels", dashboardFederationRoute(handleFederationNodeLabels))
 	mux.HandleFunc("POST /api/federation/node-labels", dashboardFederationRoute(handleFederationNodeLabels))
+	mux.HandleFunc("POST /api/federation/send", dashboardFederationRoute(handleFederationSend))
+	mux.HandleFunc("POST /api/federation/notify", dashboardFederationRoute(handleFederationNotify))
+	mux.HandleFunc("GET /api/federation/inbox", dashboardFederationRoute(handleFederationInbox))
+	mux.HandleFunc("GET /api/federation/away", dashboardFederationRoute(handleFederationAway))
+	mux.HandleFunc("POST /api/federation/away", dashboardFederationRoute(handleFederationAway))
+	mux.HandleFunc("POST /api/federation/return", dashboardFederationRoute(handleFederationReturn))
+	mux.HandleFunc("POST /api/federation/answer", dashboardFederationRoute(handleFederationAwayAnswer))
 	mux.HandleFunc("GET /api/federation/moves", dashboardFederationRoute(handleFederationMoves))
 	mux.HandleFunc("GET /api/federation/moves/{id}", dashboardFederationRoute(handleFederationMoves))
 	mux.HandleFunc("POST /api/federation/moves/{id}/abandon", dashboardFederationRoute(handleFederationMoveAbandon))

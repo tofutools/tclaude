@@ -119,7 +119,7 @@ func handleFederationAway(w http.ResponseWriter, r *http.Request) {
 	}
 	rt.awayMu.Lock()
 	defer rt.awayMu.Unlock()
-	if r.Method == http.MethodGet {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		writeJSON(w, 200, map[string]any{"away": rt.activeAwayLocked()})
 		return
 	}
