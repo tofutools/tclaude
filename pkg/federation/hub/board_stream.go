@@ -108,7 +108,7 @@ func (h *Hub) serveBoardBlob(c *conn) {
 		if e == nil {
 			_, e = conn.Write([]byte("ok"))
 			if e == nil {
-				e = conn.CloseWrite()
+				_ = conn.CloseWrite()
 			}
 		}
 	} else {
@@ -124,7 +124,7 @@ func (h *Hub) serveBoardBlob(c *conn) {
 			e = auditErr
 		}
 		if e == nil {
-			e = conn.CloseWrite()
+			_ = conn.CloseWrite()
 		}
 	}
 }

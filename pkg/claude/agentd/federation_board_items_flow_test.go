@@ -140,6 +140,18 @@ func TestDashboardBoardItemPullPreviewImportWithoutPairing(t *testing.T) {
 	require.NotEqual(t, publisher.ID(), copyReceipt["publisher"])
 	copied := must("GET", "/"+copiedBoard+"/items", nil)["items"].([]any)[0].(map[string]any)
 	require.Equal(t, publisher.ID(), copied["publisher"], "original provenance survives re-publication")
+	copiedItem := copyReceipt["item"].(string)
+	copiedVersion := copyReceipt["version"].(string)
+	must("PUT", "/"+copiedBoard+"/items/"+copiedItem+"/pin", map[string]any{"version": copiedVersion})
+	update := must("POST", "/"+copiedBoard+"/items", map[string]any{"name": "receiver edition", "item": copiedItem, "parent": copiedVersion, "only": []string{"roles/board-role"}})
+	require.NotEqual(t, copiedVersion, update["version"])
+	stalePublish := call("POST", "/"+copiedBoard+"/items", map[string]any{"name": "stale edition", "item": copiedItem, "parent": copiedVersion, "only": []string{"roles/board-role"}})
+	require.Equal(t, 409, stalePublish.Code, stalePublish.Body.String())
+	updated := must("GET", "/"+copiedBoard+"/items", nil)["items"].([]any)[0].(map[string]any)
+	require.Equal(t, update["version"], updated["latest_version"])
+	require.Equal(t, copiedVersion, updated["pinned_version"])
+	require.Equal(t, true, updated["update_available"])
+
 	var poisoned configbundle.Bundle
 	require.NoError(t, json.Unmarshal(raw, &poisoned))
 	poisoned.Sections["roles"][0].Value = json.RawMessage(`{"name":"board-role","brief":"api_key=supersecret123456789"}`)
