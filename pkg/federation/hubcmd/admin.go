@@ -38,7 +38,7 @@ func adminCmd() *cobra.Command {
 			if err != nil {
 				fail(err)
 			}
-			fmt.Fprintf(os.Stdout, "All hub admins cleared. Claim token (single-use,valid24h): %s\nPrivate claim file: %s\n", token, st.ClaimPath())
+			fmt.Fprintf(os.Stdout, "All hub admins cleared. Claim token (single-use, valid 24h): %s\nPrivate claim file: %s\n", token, st.ClaimPath())
 		}}.ToCobra(),
 	}}.ToCobra()
 }
