@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 
@@ -112,6 +113,11 @@ func TestCommandTreeRequiredFlags(t *testing.T) {
 		"claude session codex-app-server-token-consume": "path",
 		"claude session codex-profile-cleanup":          "path",
 		"claude session http-proxy-exec":                "session-id",
+	}
+	if runtime.GOOS == "darwin" {
+		// The hidden launcher consumes an encoded launch contract; it has no
+		// meaningful operation without it and exists only on macOS.
+		allow["claude session tclaude-layer-darwin-proxy-launcher"] = "launch"
 	}
 	seen := map[string]bool{}
 	var walk func(*cobra.Command)
