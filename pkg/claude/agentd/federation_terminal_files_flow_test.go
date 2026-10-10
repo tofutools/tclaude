@@ -70,7 +70,7 @@ func terminalFileTargetFlow(t *testing.T, homeRoot, pinChange bool) {
 	terminalConn := fedPeerStream(t, p, open.Stream, kp, a.Key, true)
 	defer terminalConn.Close()
 	// A file read addresses the already-live viewer, never a freshly discovered agent.
-	read := func(path string, head bool) (int, string, []byte) {
+	readMode := func(path string, head, list bool) (int, string, []byte) {
 		key, err := stream.NewKeyPair()
 		require.NoError(t, err)
 		sid := proto.NewEnvelopeID()
@@ -79,7 +79,8 @@ func terminalFileTargetFlow(t *testing.T, homeRoot, pinChange bool) {
 			Viewer string `json:"viewer"`
 			Path   string `json:"path"`
 			Head   bool   `json:"head"`
-		}{bundletransfer.Request{Offer: open.Stream, Stream: sid, Key: key.Pub}, open.Stream, path, head}
+			List   bool   `json:"list"`
+		}{bundletransfer.Request{Offer: open.Stream, Stream: sid, Key: key.Pub}, open.Stream, path, head, list}
 		env := p.envelope(proto.KindTerminalFile, proto.Endpoint{}, req)
 		env.From.Agent = ""
 		p.send(env)
@@ -127,15 +128,34 @@ func terminalFileTargetFlow(t *testing.T, homeRoot, pinChange bool) {
 		}
 		return h.Status, h.Code, body
 	}
-	status, code, _ := read("report.txt", false)
+	read := func(path string, head bool) (int, string, []byte) { return readMode(path, head, false) }
+	status, code, _ := readMode(".", false, true)
+	require.Equal(t, 403, status)
+	require.Equal(t, "not_shared", code)
+	status, code, _ = read("report.txt", false)
 	require.Equal(t, 403, status)
 	require.Equal(t, "not_shared", code)
 	grant(agentd.PermSessionsFilesRead)
 	if homeRoot {
+		status, code, _ = readMode(".", false, true)
+		require.Equal(t, 403, status)
+		require.Equal(t, "root_too_broad", code)
 		status, code, _ = read("report.txt", false)
 		require.Equal(t, 403, status)
 		require.Equal(t, "root_too_broad", code)
 		return
+	}
+
+	status, _, listing := readMode(".", false, true)
+	require.Equal(t, 200, status)
+	require.Contains(t, string(listing), "report.txt")
+	for _, hidden := range []string{".env", ".ssh", "alias"} {
+		require.NotContains(t, string(listing), hidden)
+	}
+	for _, unsafe := range []string{"..", ".ssh", "alias"} {
+		status, code, _ = readMode(unsafe, false, true)
+		require.Equal(t, 403, status)
+		require.Equal(t, "unsafe_path", code)
 	}
 	status, _, body := read("report.txt", false)
 	require.Equal(t, 200, status)
@@ -155,6 +175,9 @@ func terminalFileTargetFlow(t *testing.T, homeRoot, pinChange bool) {
 	rec := fedHuman(t, f, "DELETE", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermSessionsFilesRead, "scope": "group=team"})
 	require.Equal(t, 200, rec.Code)
 	status, code, _ = read("report.txt", false)
+	require.Equal(t, 403, status)
+	require.Equal(t, "not_shared", code)
+	status, code, _ = readMode(".", false, true)
 	require.Equal(t, 403, status)
 	require.Equal(t, "not_shared", code)
 	grant(agentd.PermSessionsFilesRead)

@@ -41,7 +41,7 @@ func TestBoardsActionSpecificFlags(t *testing.T) {
 	cmd, _, err := boardsCmd().Find([]string{"download"})
 	require.NoError(t, err)
 	require.ErrorContains(t, cmd.ValidateRequiredFlags(), "file")
-	require.Len(t, boardsCmd().Commands(), 21)
+	require.Len(t, boardsCmd().Commands(), 22)
 }
 
 func TestMovesListTableAndJSON(t *testing.T) {

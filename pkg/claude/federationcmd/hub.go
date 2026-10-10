@@ -49,8 +49,8 @@ func hubCmd() *cobra.Command {
 		}}.ToCobra(),
 	}
 	for _, resource := range []string{"status", "health"} {
-		sub = append(sub, boa.CmdT[struct{}]{Use: resource, Short: "Read hub " + resource, ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
-			os.Exit(runHubCall("GET", resource, nil, os.Stdout, os.Stderr))
+		sub = append(sub, boa.CmdT[hubReadParams]{Use: resource, Short: "Read hub " + resource, ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *hubReadParams, _ *cobra.Command, _ []string) {
+			os.Exit(runHubRead(resource, p, os.Stdout, os.Stderr))
 		}}.ToCobra())
 	}
 	for _, resource := range []string{"admins", "admissions", "invites", "spaces", "settings", "identity", "logs", "audit", "boards"} {

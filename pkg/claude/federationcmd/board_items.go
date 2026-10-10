@@ -124,5 +124,8 @@ func runBoardItemCommand(p *boardCommandParams, stdout, stderr io.Writer) int {
 	if e := agent.DaemonRequest(method, path, body, &out, agent.DaemonOpts{NoRetry: true, Timeout: 5 * time.Minute}); e != nil {
 		return fail(stderr, e)
 	}
+	if p.Action == "items" && !p.JSON {
+		return printRecordingTable(stdout, "items", out)
+	}
 	return printJSON(stdout, out)
 }

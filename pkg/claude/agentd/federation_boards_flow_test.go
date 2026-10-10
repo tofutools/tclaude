@@ -130,6 +130,7 @@ func TestDashboardContentBoardMembershipKeysAndModeration(t *testing.T) {
 	require.NoError(t, err)
 	joined := must("POST", "/join", map[string]any{"token": "board1_" + base64.RawURLEncoding.EncodeToString(raw)})
 	require.Equal(t, "reader", joined["role"])
+	require.Equal(t, 403, call("DELETE", "/"+other, nil).Code)
 	must("DELETE", "/"+other+"/membership", nil)
 	// A used invite is refused by the hub in the board hello: the UI gets the
 	// invite code, not a generic upstream failure.
@@ -139,7 +140,7 @@ func TestDashboardContentBoardMembershipKeysAndModeration(t *testing.T) {
 	// Even an unrestricted peer cannot use local board authority.
 	peerView := agentd.PeerViewHandler(fh.peer.id.ID())
 	for _, endpoint := range []struct{ method, tail string }{
-		{"GET", ""}, {"POST", ""}, {"POST", "/join"}, {"GET", "/" + board},
+		{"DELETE", "/" + board}, {"GET", ""}, {"POST", ""}, {"POST", "/join"}, {"GET", "/" + board},
 		{"GET", "/" + board + "/members"}, {"PUT", "/" + board + "/members/" + reader.ID()},
 		{"DELETE", "/" + board + "/members/" + reader.ID()}, {"DELETE", "/" + board + "/membership"},
 		{"GET", "/" + board + "/invites"}, {"POST", "/" + board + "/invites"}, {"DELETE", "/" + board + "/invites/token"},
@@ -149,6 +150,9 @@ func TestDashboardContentBoardMembershipKeysAndModeration(t *testing.T) {
 		require.Equal(t, 403, rec.Code, endpoint.method+" "+endpoint.tail)
 	}
 
+	must("DELETE", "/"+board, nil)
+	require.Equal(t, 404, call("GET", "/"+board, nil).Code)
+	require.Empty(t, must("GET", "", nil)["boards"])
 	// Human-only routes must refuse agent authority, including read surfaces.
 	for _, method := range []string{"GET", "POST"} {
 		req := agentd.AsAgentPeer(testharness.JSONRequest(t, method, "/v1/federation/boards", map[string]any{}), "board-agent")

@@ -293,3 +293,26 @@ func (s *Store) SweepBoardBlobs() error {
 	}
 	return nil
 }
+
+// Metadata cascades do not remove ciphertext files. Remove the board directory
+// immediately after a committed deletion, through the operator-owned pinned
+// storage root, rather than leaving it outside quota until the next startup.
+func (s *Store) removeDeletedBoardFiles(board string) error {
+	if !proto.ValidStreamID(board) {
+		return adminErr(400, "board", "invalid board ID")
+	}
+	base := filepath.Join(filepath.Dir(s.path), "board-blobs")
+	canonical, err := filepath.EvalSymlinks(base)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(canonical)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	return root.RemoveAll(board)
+}

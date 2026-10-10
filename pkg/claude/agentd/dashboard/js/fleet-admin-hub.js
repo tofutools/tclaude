@@ -491,7 +491,7 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
   return html`<div class="fa-hub-page" id="fleet-hub">
     <div class="fa-hub-head">
       <span><span class="fa-k">hub</span> <code>${status.hub_url || self.hubURL || '—'}</code></span>
-      <span><span class="fa-k">version</span> ${status.hub_version || '—'}${status.admin && html` <button type="button" class="fa-link" id="fleet-hub-update-open" onClick=${() => setDialog('update')}>update…</button>`}</span>
+      <span><span class="fa-k">version</span> ${status.hub_version || '—'}${status.admin && html` <button type="button" class="fa-link" id="fleet-hub-update-open" onClick=${() => setDialog('update')}>Updates</button>`}</span>
       <span><span class="fa-k">id</span> <code>${status.hub_id || '—'}</code></span>
       <span class=${status.connected ? '' : 'fa-danger'}>${status.connected ? 'connected' : 'not connected'}</span>
       <span>${status.admin ? html`<b>you are a hub admin</b> <span class="muted">(${status.admin_count} admin${status.admin_count === 1 ? '' : 's'})</span>` : html`<span class="muted">not a hub admin</span>`}</span>
