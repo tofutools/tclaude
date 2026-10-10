@@ -114,7 +114,13 @@ func (rt *fedRuntime) addTerminal(peer string, p proto.SessionOpenPayload, incom
 	ctx, cancel := context.WithCancel(rt.ctx)
 	v := &fedTerminalView{ID: p.Stream, Peer: peer, Agent: p.Agent, Session: p.Session, Group: p.Group, ReadOnly: p.ReadOnly, Started: time.Now(), Incoming: incoming, fixedSize: p.FixedSize, ctx: ctx, cancel: cancel, done: make(chan struct{})}
 	st.views[v.ID] = v
-	v.addCleanup(func() { rt.terminalsMu.Lock(); delete(rt.terminalsLocked().views, v.ID); rt.terminalsMu.Unlock() })
+	v.addCleanup(func() {
+		rt.terminalsMu.Lock()
+		if rt.terminalsLocked().views[v.ID] == v {
+			delete(rt.terminalsLocked().views, v.ID)
+		}
+		rt.terminalsMu.Unlock()
+	})
 	return v, nil
 }
 func (rt *fedRuntime) stopTerminals() {
@@ -740,7 +746,9 @@ func (rt *fedRuntime) waitKickedTerminal(ctx context.Context, v *fedTerminalView
 	case <-timer.C:
 	}
 	rt.terminalsMu.Lock()
-	delete(rt.terminalsLocked().views, v.ID)
+	if rt.terminalsLocked().views[v.ID] == v {
+		delete(rt.terminalsLocked().views, v.ID)
+	}
 	rt.terminalsMu.Unlock()
 	goBackground(v.close)
 }
