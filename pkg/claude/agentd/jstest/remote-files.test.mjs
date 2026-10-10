@@ -34,6 +34,13 @@ test('the helpers list one level, preview text, spot binaries and word refusals'
   assert.deepEqual(log[0], ['GET', '/api/federation/terminal-file', { terminal: TERM, viewer: 'env_7k', path: '.', list: 'true' }]);
   assert.deepEqual(await m.previewRemoteFile({ terminal: TERM, viewer: 'env_7k', path: 'README.md', fetchImpl }), { text: '# <b>hello</b>\n' });
   assert.deepEqual(await m.previewRemoteFile({ terminal: TERM, viewer: 'env_7k', path: 'logo.png', fetchImpl }), { binary: true });
+  let cancelled = false; let pulls = 0;
+  const growing = async () => ({ ok: true, status: 200, body: { getReader: () => ({
+    read: async () => { pulls += 1; return pulls > 100 ? { done: true } : { done: false, value: new Uint8Array(64 << 10) }; },
+    cancel: async () => { cancelled = true; },
+  }) } });
+  assert.deepEqual(await m.previewRemoteFile({ terminal: TERM, viewer: 'env_7k', path: 'grew.log', fetchImpl: growing }), { tooLarge: true });
+  assert.ok(cancelled && pulls === 5, 'the transfer stops just past the preview cap');
   await assert.rejects(m.previewRemoteFile({ terminal: TERM, viewer: 'env_7k', path: 'secret.env', fetchImpl }), { message: m.REMOTE_FILE_ERRORS.unsafe_path });
   await assert.rejects(m.listRemoteDir({ terminal: TERM, viewer: 'env_7k', path: '.', fetchImpl: peerFiles([], { listError: { status: 403, code: 'root_too_broad' } }) }), { message: m.REMOTE_FILE_ERRORS.root_too_broad });
   await assert.rejects(m.listRemoteDir({ terminal: TERM, viewer: '', fetchImpl }), { message: m.REMOTE_FILE_ERRORS.not_shared });

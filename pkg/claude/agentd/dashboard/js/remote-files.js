@@ -11,7 +11,7 @@ export const REMOTE_FILE_ERRORS = Object.freeze({
   unsafe_path: 'not downloadable: outside the agent\'s working directory, a symlink, or a protected file (credentials, .env, .git/config)',
   root_too_broad: 'the agent runs in a home or system directory; the peer shares files only from a project directory',
   file_too_large: 'the file is over the 32 MiB download limit',
-  viewer_closed: 'this terminal view is no longer live; reopen it to download',
+  viewer_closed: 'this terminal view is no longer live; reopen it to browse or download files',
   peer_offline: 'the peer is offline; try again when it reconnects',
   not_found: 'no such file under the agent\'s working directory',
   limit: 'another download from this peer is still running; try again shortly',
@@ -23,7 +23,7 @@ export const REMOTE_FILE_ERRORS = Object.freeze({
 const REMOTE_FILE_STATUS = Object.freeze({ 404: 'not_found', 413: 'file_too_large', 429: 'limit', 503: 'peer_offline', 504: 'timeout' });
 
 export function remoteFileError(code, status) {
-  return REMOTE_FILE_ERRORS[code] || `download unavailable (${status || 'network error'})`;
+  return REMOTE_FILE_ERRORS[code] || `file unavailable (${status || 'network error'})`;
 }
 
 // PREVIEW_MAX_BYTES caps what a preview transfers: past it, download instead.
@@ -49,14 +49,37 @@ export async function listRemoteDir({ terminal, viewer, path = '.', fetchImpl = 
   return { entries: Array.isArray(body?.entries) ? body.entries : [], truncated: body?.truncated === true };
 }
 
+// readCapped returns the body, or null once it exceeds max bytes (and stops
+// the transfer there).
+async function readCapped(res, max) {
+  const reader = res.body?.getReader?.();
+  if (!reader) {
+    const all = new Uint8Array(await res.arrayBuffer());
+    return all.length > max ? null : all;
+  }
+  const chunks = []; let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.length;
+    if (n > max) { await reader.cancel().catch(() => {}); return null; }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(n); let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.length; }
+  return out;
+}
+
 // previewRemoteFile fetches a small file as text: {text} or {binary: true}.
 export async function previewRemoteFile({ terminal, viewer, path, fetchImpl = globalThis.fetch }) {
   if (!viewer) throw new Error(REMOTE_FILE_ERRORS.not_shared);
   const res = await fetchImpl(remoteFileHref({ terminal, viewer, path }), { credentials: 'same-origin', cache: 'no-store' }).catch(() => null);
   if (!res) throw new Error(remoteFileError('', 0));
   if (!res.ok) throw await refusal(res);
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  if (bytes.length > PREVIEW_MAX_BYTES) return { tooLarge: true };
+  // Read at most the preview cap: a file that grew since it was listed stops
+  // transferring once it is past the cap.
+  const bytes = await readCapped(res, PREVIEW_MAX_BYTES);
+  if (!bytes) return { tooLarge: true };
   if (bytes.subarray(0, 8192).includes(0)) return { binary: true };
   return { text: new TextDecoder('utf-8', { fatal: false }).decode(bytes) };
 }
