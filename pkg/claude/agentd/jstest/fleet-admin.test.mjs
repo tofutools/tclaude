@@ -152,6 +152,7 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     hubSettings: async () => [
       { key: 'rotation_window', type: 'duration', unit: 's', min: 60, max: 604800, effective: 600, source: 'flag', boot: 600, restart_required: false, flag_overridden: false },
       { key: 'max_streams_per_instance', type: 'int', min: 1, max: 64, effective: 16, source: 'remote', boot: 8, restart_required: false, flag_overridden: true },
+      { key: 'bytes_per_minute', type: 'integer', unit: 'bytes/minute', min: 1024, max: 1 << 30, effective: 8388608, source: 'default', boot: 8388608, restart_required: false, flag_overridden: false },
     ],
     hubRunStatus: async () => s_hubRun,
     hubAudit: async (cursor) => { log.push(['audit', cursor]); return cursor ? { entries: [] } : { entries: [
@@ -293,6 +294,10 @@ test('the admin view reads status only while shown and lists trusted and waiting
   await s.show();
   assert.deepEqual(s.log, [['status']]);
   assert.match(s.mounted.container.textContent, /self-fp-0000/, 'this node\'s fingerprint is shown whole');
+  const self = s.q('#fleet-self tbody tr');
+  assert.equal(self.dataset.self, 'inst_self');
+  assert.match(self.textContent, /desk.*this node/);
+  assert.equal(self.querySelectorAll('button').length, 0, 'self has no trust or grants actions');
   assert.equal(s.q('#fleet-trusted').querySelectorAll('tbody tr').length, 2);
   assert.equal(s.q('#fleet-waiting').querySelectorAll('tbody tr').length, 1);
   // The status poll; the live-viewers poll (5 s) runs alongside on Peers.
@@ -1536,7 +1541,9 @@ test('hub settings: effective value, source and flag-overridden marker; validate
   await openHub(s);
   const doc = s.harness.document; const q = (x) => doc.querySelector(x);
   const row = (k) => q(`#fleet-hub-settings [data-setting="${k}"]`);
-  assert.match(row('rotation_window').textContent, /600 s.*flag/);
+  assert.match(row('rotation_window').textContent, /10 min.*flag/);
+  assert.match(row('bytes_per_minute').textContent, /8 MiB\/min/, 'bytes read as MiB per minute');
+  assert.equal(row('bytes_per_minute').querySelector('td[title]').getAttribute('title'), '8,388,608 bytes/minute', 'the exact value stays in a tooltip');
   assert.ok(row('max_streams_per_instance').querySelector('[data-flag-overridden]'), 'flag overridden by a remote setting is marked');
   assert.equal(row('rotation_window').querySelector('[data-flag-overridden]'), null);
   const set = async (k, v) => { const el = row(k).querySelector('input'); el.value = v; await s.harness.act(() => s.harness.fireEvent(el, 'input')); };
@@ -1544,15 +1551,17 @@ test('hub settings: effective value, source and flag-overridden marker; validate
   assert.match(doc.querySelector('#fleet-hub [role=alert]').textContent, /Nothing changed/);
   await set('rotation_window', '30');
   await s.click(q('#fleet-hub-settings-save'));
-  assert.match(doc.querySelector('#fleet-hub [role=alert]').textContent, /at least 60 s/);
+  assert.match(doc.querySelector('#fleet-hub [role=alert]').textContent, /at least 1 min/);
   await set('rotation_window', '');
   await s.click(q('#fleet-hub-settings-save'));
   assert.match(doc.querySelector('#fleet-hub [role=alert]').textContent, /Nothing changed/, 'a cleared field drops its edit');
   await set('rotation_window', '1800');
+  await set('bytes_per_minute', '16777216');
+  assert.match(row('bytes_per_minute').querySelector('[data-setting-typed]').textContent, /= 16 MiB\/min/);
   await s.click(row('max_streams_per_instance').querySelector('[data-revert]'));
   await s.click(q('#fleet-hub-settings-save'));
-  assert.match(s.confirms.at(-1).body, /rotation_window: 600 s → 1800 s \(overrides the serve flag\).*max_streams_per_instance: back to the serve flag or default \(8\)/);
-  assert.deepEqual(s.log.findLast((l) => l[0] === 'settings'), ['settings', { rotation_window: 1800, max_streams_per_instance: null }]);
+  assert.match(s.confirms.at(-1).body, /rotation_window: 10 min → 30 min \(overrides the serve flag\).*max_streams_per_instance: back to the serve flag or default \(8\).*bytes_per_minute: 8 MiB\/min → 16 MiB\/min/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'settings'), ['settings', { rotation_window: 1800, bytes_per_minute: 16777216, max_streams_per_instance: null }], 'the hub\'s integer settings are sent as numbers');
 });
 
 test('hub log tail is text only and pages with the cursor', async (t) => {
@@ -2056,4 +2065,28 @@ test('moves: the group is picked from the peer\'s receiving groups, with typing 
   await pick('#fleet-move-agent-peer', 'inst_lab');
   assert.equal(q('#fleet-move-agent-group-pick'), null, 'a peer listing no receiving group gets the text field');
   await mounted.unmount();
+});
+
+test('hub numbers read in human units with thousands separators', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { settingValue, settingExact, settingPrecise, uptime } = await harness.importDashboardModule('js/fleet-admin-hub.js');
+  const v = (unit, n, type = 'integer') => settingValue({ type, unit }, n);
+  assert.equal(v('bytes/minute', 8388608), '8 MiB/min');
+  assert.equal(v('bytes/second', 1536), '1.5 KiB/s');
+  assert.equal(v('bytes/minute', 1 << 30), '1 GiB/min');
+  assert.equal(v('bytes/second', 512), '512 B/s');
+  assert.equal(v('seconds', 45), '45 s');
+  assert.equal(v('seconds', 5400), '1 h 30 min');
+  assert.equal(v('frames/minute', 100000), '100,000 frames/minute');
+  assert.equal(v('', 12345), '12,345');
+  assert.equal(settingValue({ type: 'bool' }, true), 'true');
+  assert.equal(settingValue({ type: 'string', unit: '' }, 'x'), 'x');
+  assert.equal(settingExact({ type: 'integer', unit: 'bytes/second' }, 1048576), '1,048,576 bytes/second');
+  assert.equal(v('bytes/minute', 8390000), '≈ 8 MiB/min', 'a rounded figure says so');
+  assert.equal(v('bytes/minute', 1048575), '≈ 1024 KiB/min');
+  assert.equal(settingPrecise({ type: 'integer', unit: 'bytes/minute' }, 8390000), '≈ 8 MiB/min (8,390,000 bytes/minute)');
+  assert.equal(settingPrecise({ type: 'integer', unit: 'bytes/minute' }, 8388608), '8 MiB/min');
+  assert.equal(uptime(59), '0 min');
+  assert.equal(uptime(3 * 3600 + 120), '3 h 2 min');
+  assert.equal(uptime(2 * 86400 + 3600), '2 d 1 h');
 });

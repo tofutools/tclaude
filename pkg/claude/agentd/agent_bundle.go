@@ -577,7 +577,9 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	if authority != nil {
 		var shape map[string]any
 		_ = json.Unmarshal(wire, &shape)
-		shape["profile"] = authority.record.Profile.Name
+		if authority.record.Profile != nil {
+			shape["profile"] = authority.record.Profile.Name
+		}
 		if authority.record.WorkerDefaults != nil {
 			shape["permission_overrides"] = authority.record.WorkerDefaults.Permissions
 		}

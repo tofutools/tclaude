@@ -12,12 +12,18 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
-import { openTermModal } from './terminals-tab.js';
+import { openTerminalPane } from './terminals-tab.js';
 import { remoteTerminalPath } from './terminals-core.js';
 import { shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
 const SESSIONS_TTL_MS = 10000;
+
+// openRemotePane opens a peer's terminal as a tab in the Terminals tab, like
+// a local web terminal (pop-out and drag-out work the same way).
+export function openRemotePane({ wsPath, label, remote }) {
+  return openTerminalPane({ ws: wsPath, label, initialRetry: true, remote: Object.freeze({ peer: String(remote.peer), peerLabel: String(remote.peerLabel || ''), agent: String(remote.agent || '') }) });
+}
 const SAFE_ID = /^(agt|inst)_[A-Za-z0-9]{4,64}$/;
 
 let cache = null;
@@ -47,9 +53,9 @@ export function nativeAttachCommand(agent, instance) {
   return SAFE_ID.test(agent) && SAFE_ID.test(instance) ? `tclaude federation attach ${agent}@${instance}` : '';
 }
 
-// openRemoteTerminal opens instance's agent in the terminal modal, or says why
+// openRemoteTerminal opens instance's agent in the Terminals tab, or says why
 // it cannot. It resolves to the opened descriptor or null.
-export async function openRemoteTerminal({ instance, agent, peerLabel = '', label = '', fetchImpl, toast = shellToast, open = openTermModal } = {}) {
+export async function openRemoteTerminal({ instance, agent, peerLabel = '', label = '', fetchImpl, toast = shellToast, open = openRemotePane } = {}) {
   if (!SAFE_ID.test(agent || '') || !SAFE_ID.test(instance || '')) {
     toast('This agent has no stable ID to open its terminal on the peer', true);
     return null;
@@ -83,7 +89,7 @@ export async function openRemoteTerminal({ instance, agent, peerLabel = '', labe
 
 // RemoteSessionsDialog lists a peer's sessions (the map's "Terminals…") with
 // how each opens here; the CLI attach command is the native-terminal option.
-export function RemoteSessionsDialog({ node, onClose, fetchImpl, toast = shellToast, open = openTermModal, copy = (t) => globalThis.navigator.clipboard.writeText(t) }) {
+export function RemoteSessionsDialog({ node, onClose, fetchImpl, toast = shellToast, open = openRemotePane, copy = (t) => globalThis.navigator.clipboard.writeText(t) }) {
   const [rows, setRows] = useState(null);
   useEffect(() => {
     let off = false;

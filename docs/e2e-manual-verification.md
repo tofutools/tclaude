@@ -138,7 +138,6 @@ your report.
 - [ ] Each of these is refused with a clear error: `../.claude.json`
       (parent traversal), `.env` (secret path), and any file from
       `reviewer-home`, whose root is the node's whole `HOME`
-- [ ] The dashboard file browser lists and previews the same file 📸
 
 ### 4. Hub administration
 
@@ -183,10 +182,19 @@ your report.
 
 ## Recording demos
 
-Browser clips come from Chrome's screencast. Start `drive record` in the
-background, drive the page, then stop the recorder with SIGINT. It encodes
-the frames with ffmpeg, holding each frame on screen for as long as it was
-actually visible:
+`scripts/e2e/demo/record.sh all` records the standard set of demo clips and a
+titled reel: CLI pairing, the map, a remote terminal, moving an agent,
+boards, hub admin, and CLI remote files. Run it on a fresh, unpaired
+environment (`up` and `browser start`, but not `pair`), because the first
+clip pairs the nodes on camera. Clips go to `$E2E_BASE/demos/`, and
+individual steps can be rerun by name (see the script header). Use it as a
+template for new clips; the rest of this section explains the building
+blocks.
+
+Browser clips are a steady stream of screenshots (`DRIVE_FPS`, default 10).
+Start `drive record` in the background, drive the page, then stop the
+recorder with SIGINT. It encodes the frames with ffmpeg, holding each frame
+for as long as it was actually on screen:
 
 ```bash
 export DRIVE_SHOW=1                            # outline each click/type target first
@@ -198,7 +206,11 @@ kill -INT $R; wait $R
 ```
 
 Navigating to another page removes the caption, so set it again after each
-navigation.
+navigation. The recorder follows the tab across navigations, including a
+switch to the other node's dashboard. Chrome's screencast API is not used:
+it delivers frames at two viewport heights, which makes the video jump. The
+CLI clips need asciinema 2.x, which writes the asciicast v2 format the
+pinned player reads.
 
 For CLI clips, record a scripted session with asciinema. Set
 `ASCIINEMA_CONFIG_HOME` to a writable directory when `~/.config` is

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -170,6 +171,9 @@ func (rt *fedRuntime) acceptBundleOffer(peer *db.FederationPeer, env *proto.Enve
 			return
 		}
 		_ = db.SetFederationBundleOfferState("in", peer.InstanceID, d.ID, "ready", "")
+	}
+	if d.Move != nil && d.Move.DirectIfAllowed {
+		_ = db.InsertFederationAgentMove(db.FederationAgentMove{Direction: "in", Peer: peer.InstanceID, ID: d.ID, State: "awaiting_acceptance", Disposition: "checking", SourceAgent: d.Move.SourceAgent, SourceConv: d.Move.SourceConv, SHA256: d.SHA256, Group: d.Group, ExpiresAt: d.ExpiresAt})
 	}
 	// The durable offer itself appears in federation inbox and offers listings;
 	// no prompt/content from it is delivered to an agent.
@@ -350,7 +354,7 @@ func (rt *fedRuntime) serveBundleFetch(peer *db.FederationPeer, env *proto.Envel
 }
 func (rt *fedRuntime) acceptBundleResult(peer *db.FederationPeer, env *proto.Envelope) {
 	var res bundletransfer.Result
-	if env.From.Agent != "" || env.To.Agent != "" || env.DecodePayload(&res) != nil || (res.State != "applied" && res.State != "declined") {
+	if env.From.Agent != "" || env.To.Agent != "" || env.DecodePayload(&res) != nil || (res.State != "applied" && res.State != "declined" && (res.State != "pending" || res.Disposition != "pending_acceptance")) {
 		return
 	}
 	o, err := db.GetFederationBundleOffer("out", peer.InstanceID, res.Offer)
@@ -359,6 +363,17 @@ func (rt *fedRuntime) acceptBundleResult(peer *db.FederationPeer, env *proto.Env
 	}
 	fedBundleMu.Lock()
 	defer fedBundleMu.Unlock()
+	if res.State == "pending" {
+		if o.Descriptor.Move == nil || !o.Descriptor.Move.DirectIfAllowed {
+			return
+		}
+		if m, err := db.GetFederationAgentMove("out", peer.InstanceID, res.Offer); err == nil && m != nil && m.State == "awaiting_confirmation" && m.Disposition == "checking" {
+			m.Disposition = "pending_acceptance"
+			_, _ = db.TransitionFederationAgentMove(*m, "awaiting_confirmation")
+		}
+		rt.sendControl(peer.InstanceID, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckAccepted})
+		return
+	}
 	_ = db.SetFederationBundleOfferState("out", peer.InstanceID, res.Offer, res.State, "")
 	_ = fedBundleSpool().Remove("out", peer.InstanceID, res.Offer)
 	rt.sendControl(peer.InstanceID, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckAccepted})
@@ -373,6 +388,9 @@ func reconcileFederationBundleOffers() {
 	now := time.Now()
 	fedBundleSpool().PruneTemporary(now)
 	for _, o := range offers {
+		if o.Direction == "in" && o.Descriptor.Move != nil && o.Descriptor.Move.DirectIfAllowed && (o.State == "ready" || o.State == "pending") && o.ImportAgent == "" && strings.HasPrefix(o.LastError, "Awaiting receiver acceptance:") {
+			queueDirectMovePending(&o)
+		}
 		if o.Direction == "in" && o.State == "ready" && o.ImportAgent != "" {
 			if o.ImportLabel == "" {
 				// No subprocess boundary was reached, including across a daemon restart.

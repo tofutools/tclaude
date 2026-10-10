@@ -71,7 +71,7 @@ func runStatusOptions(p *statusParams, stdout, stderr io.Writer) int {
 		return fail(stderr, err)
 	}
 	fmt.Fprintf(stdout, "Instance: %s (%s)\n", st.InstanceID, proto.StripControls(st.Name))
-	for _, p := range st.Peers {
+	for _, p := range st.displayPeers() {
 		fmt.Fprintf(stdout, "%s\t%s\t%s\tonline=%t\tlast_seen=%s\n", p.InstanceID, proto.StripControls(p.Label), p.Level, p.Online, p.LastSeen)
 	}
 	return 0

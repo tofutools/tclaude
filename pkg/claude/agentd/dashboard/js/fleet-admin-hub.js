@@ -46,10 +46,66 @@ export function splitSpaces(text) {
   return [...new Set(String(text || '').split(/[\s,]+/).map((x) => x.trim()).filter(Boolean))];
 }
 
-// settingValue shows a setting's value with its unit.
+const NUMERIC = new Set(['int', 'integer', 'duration', 'number']);
+const group = (n) => Number(n).toLocaleString('en-US');
+
+// sizeUnit shows a byte count in the largest binary unit it fills, with up to
+// two decimals ("8 MiB", "1.5 KiB").
+function sizeUnit(n) {
+  const units = [['GiB', 1 << 30], ['MiB', 1 << 20], ['KiB', 1 << 10]];
+  for (const [name, size] of units) {
+    if (Math.abs(n) >= size) {
+      const shown = Number((n / size).toFixed(2));
+      // A rounded figure says so; the exact value is never silently hidden.
+      return `${shown * size === n ? '' : '≈ '}${shown} ${name}`;
+    }
+  }
+  return `${group(n)} B`;
+}
+
+// spanUnit shows seconds as h/min/s ("10 min", "1 h 30 min", "45 s").
+function spanUnit(n) {
+  if (!(Math.abs(n) >= 60)) return `${group(n)} s`;
+  const h = Math.floor(n / 3600); const m = Math.floor((n % 3600) / 60); const sec = n % 60;
+  return [h && `${group(h)} h`, m && `${m} min`, sec && `${sec} s`].filter(Boolean).join(' ');
+}
+
+// settingValue shows a setting's value readably: bytes as KiB/MiB/GiB per
+// minute or second, seconds as h/min/s, other counts with thousands
+// separators. settingExact is the raw value, for a tooltip.
 export function settingValue(s, v = s?.effective) {
   if (v == null || v === '') return '—';
-  return s?.unit ? `${v} ${s.unit}` : String(v);
+  const n = Number(v);
+  if (typeof v === 'boolean' || !Number.isFinite(n) || !NUMERIC.has(s?.type)) return s?.unit ? `${v} ${s.unit}` : String(v);
+  switch (s?.unit) {
+    case 'bytes/minute': return `${sizeUnit(n)}/min`;
+    case 'bytes/second': return `${sizeUnit(n)}/s`;
+    case 'bytes': return sizeUnit(n);
+    case 'seconds': case 's': return spanUnit(n);
+    default: return s?.unit ? `${group(n)} ${s.unit}` : group(n);
+  }
+}
+
+// uptime is coarse: minutes, then hours and minutes, then days and hours.
+export function uptime(sec) {
+  const m = Math.floor(sec / 60); const h = Math.floor(m / 60); const d = Math.floor(h / 24);
+  if (d) return `${group(d)} d${h % 24 ? ` ${h % 24} h` : ''}`;
+  if (h) return `${h} h${m % 60 ? ` ${m % 60} min` : ''}`;
+  return `${m} min`;
+}
+
+// settingPrecise is settingValue plus the exact figure whenever the readable
+// form is rounded: what a confirmation or an edit read-back must show.
+export function settingPrecise(s, v = s?.effective) {
+  const shown = settingValue(s, v);
+  return shown.startsWith('≈') ? `${shown} (${settingExact(s, v)})` : shown;
+}
+
+export function settingExact(s, v = s?.effective) {
+  if (v == null || v === '') return '';
+  const n = Number(v);
+  const shown = NUMERIC.has(s?.type) && Number.isFinite(n) ? group(n) : String(v);
+  return s?.unit ? `${shown} ${s.unit}` : shown;
 }
 
 // parseSetting validates an edited value against the descriptor; it returns
@@ -57,7 +113,7 @@ export function settingValue(s, v = s?.effective) {
 export function parseSetting(s, raw) {
   const text = String(raw ?? '').trim();
   if (s.type === 'bool') return text === 'true' || text === 'false' ? { value: text === 'true' } : { error: `${s.key}: true or false` };
-  if (s.type === 'int' || s.type === 'duration' || s.type === 'number') {
+  if (NUMERIC.has(s.type)) {
     if (!/^-?\d+(\.\d+)?$/.test(text)) return { error: `${s.key}: a number${s.unit ? ` of ${s.unit}` : ''}` };
     const n = Number(text);
     if (s.type !== 'number' && !Number.isInteger(n)) return { error: `${s.key}: a whole number${s.unit ? ` of ${s.unit}` : ''}` };
@@ -88,7 +144,7 @@ export function settingsPlan(settings, edits) {
     if (p.error) return { error: p.error };
     if (p.value === s.effective) continue;
     overrides[s.key] = p.value;
-    lines.push(`${s.key}: ${settingValue(s)} → ${settingValue(s, p.value)}${s.source === 'flag' ? ' (overrides the serve flag)' : ''}${s.restart_required ? ' — takes effect after a hub restart' : ''}`);
+    lines.push(`${s.key}: ${settingPrecise(s)} → ${settingPrecise(s, p.value)}${s.source === 'flag' ? ' (overrides the serve flag)' : ''}${s.restart_required ? ' — takes effect after a hub restart' : ''}`);
   }
   return { overrides, lines };
 }
@@ -253,18 +309,26 @@ function SettingsSection({ settings, actions, confirm, toast, reload }) {
       action: () => actions.patchHubSettings(plan.overrides),
     }).then((r) => { if (r) { setEdits({}); toast('Hub settings saved', false); reload(); } }).catch((e) => setError(errText(e)));
   };
+  // typed reads an edited number back in the setting's units, so 8388608
+  // bytes/minute shows as "= 8 MiB/min" while it is typed.
+  const typed = (s) => {
+    if (!(s.key in edits) || edits[s.key] === null || !NUMERIC.has(s.type)) return '';
+    const p = parseSetting(s, edits[s.key]);
+    return p.error ? '' : html` <span class="muted" data-setting-typed>= ${settingPrecise(s, p.value)}</span>`;
+  };
   return html`<table class="fa-table" id="fleet-hub-settings">
       <thead><tr><th>Setting</th><th>Effective</th><th>Source</th><th>Serve flag / default</th><th>New value</th><th></th></tr></thead>
       <tbody>${settings.map((s) => html`<tr key=${s.key} data-setting=${s.key}>
         <td><code>${s.key}</code>${s.description ? html`<div class="muted">${s.description}</div>` : ''}</td>
-        <td>${settingValue(s)}${s.restart_required ? html` <span class="muted" title="Takes effect after a hub restart">⟳</span>` : ''}</td>
+        <td title=${settingExact(s)}>${settingValue(s)}${s.restart_required ? html` <span class="muted" title="Takes effect after a hub restart">⟳</span>` : ''}</td>
         <td>${s.source}${s.flag_overridden ? html` <span class="fa-warn" data-flag-overridden title="A serve flag sets this too; the remote setting wins">flag overridden</span>` : ''}</td>
-        <td class="muted">${settingValue(s, s.boot)}</td>
+        <td class="muted" title=${settingExact(s, s.boot)}>${settingValue(s, s.boot)}</td>
         <td>${s.remote_writable === false
           ? html`<span class="muted" data-host-only>set on the hub host</span>`
           : s.type === 'bool'
           ? html`<select aria-label=${`New ${s.key}`} value=${s.key in edits && edits[s.key] !== null ? edits[s.key] : ''} onChange=${(e) => edit(s.key, e.currentTarget.value)}><option value="">—</option><option value="true">true</option><option value="false">false</option></select>`
-          : html`<input aria-label=${`New ${s.key}`} inputmode=${s.type === 'string' ? null : 'numeric'} value=${s.key in edits && edits[s.key] !== null ? edits[s.key] : ''} placeholder=${s.min != null || s.max != null ? `${s.min ?? ''}–${s.max ?? ''}` : ''} onInput=${(e) => edit(s.key, e.currentTarget.value)} />`}</td>
+          : html`<input aria-label=${`New ${s.key}`} inputmode=${s.type === 'string' ? null : 'numeric'} value=${s.key in edits && edits[s.key] !== null ? edits[s.key] : ''} placeholder=${s.min != null || s.max != null ? `${s.min ?? ''}–${s.max ?? ''}` : ''}
+              title=${s.min != null || s.max != null ? `${settingValue(s, s.min)} to ${settingValue(s, s.max)}${s.unit ? `, entered in ${s.unit}` : ''}` : ''} onInput=${(e) => edit(s.key, e.currentTarget.value)} />${typed(s)}`}</td>
         <td class="fa-acts">${(s.source === 'remote' || s.source === 'db') && html`<button type="button" class="fa-link" data-revert=${s.key} onClick=${() => edit(s.key, null)}>${edits[s.key] === null ? 'reverts on save' : 'revert'}</button>`}</td>
       </tr>`)}</tbody>
     </table>
@@ -503,11 +567,11 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
     : html`
       ${h4('Health')}
       ${listOr(data.health, (hl) => html`<div class="fa-hub-health" id="fleet-hub-health">
-        <span><span class="fa-k">connected</span> ${hl.connected_instances ?? '—'}</span>
-        <span><span class="fa-k">streams</span> ${hl.streams ?? '—'}</span>
-        <span><span class="fa-k">goroutines</span> ${hl.load?.goroutines ?? hl.goroutines ?? '—'}</span>
-        <span><span class="fa-k">heap</span> ${bytes(hl.load?.heap_bytes ?? hl.heap_bytes)}</span>
-        ${hl.uptime_seconds != null && html`<span><span class="fa-k">up</span> ${Math.round(hl.uptime_seconds / 3600)} h</span>`}
+        <span><span class="fa-k">connected</span> ${hl.connected_instances != null ? group(hl.connected_instances) : '—'}</span>
+        <span><span class="fa-k">streams</span> ${hl.streams != null ? group(hl.streams) : '—'}</span>
+        <span><span class="fa-k">goroutines</span> ${(hl.load?.goroutines ?? hl.goroutines) != null ? group(hl.load?.goroutines ?? hl.goroutines) : '—'}</span>
+        <span title=${(hl.load?.heap_bytes ?? hl.heap_bytes) != null ? `${group(hl.load?.heap_bytes ?? hl.heap_bytes)} bytes` : ''}><span class="fa-k">heap</span> ${bytes(hl.load?.heap_bytes ?? hl.heap_bytes)}</span>
+        ${hl.uptime_seconds != null && html`<span><span class="fa-k">up</span> ${uptime(hl.uptime_seconds)}</span>`}
         ${(hl.recent_errors || []).length ? html`<ul class="fa-hub-errors">${hl.recent_errors.map((e, i) => html`<li key=${i} class="fa-danger">${when(e.at)} ${e.code ? html`<code>${e.code}</code> ` : ''}${e.message || ''}</li>`)}</ul>` : html`<span class="muted">no recent errors</span>`}
       </div>`)}
       ${h4('Admissions', html` <button type="button" class="fa-link" id="fleet-hub-admit-open" onClick=${() => setDialog('admit')}>admit…</button> <button type="button" class="fa-link" id="fleet-hub-identity-open" onClick=${() => setDialog('identity')}>identity recovery…</button>`)}

