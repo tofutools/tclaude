@@ -8,6 +8,7 @@ import { ProfilesPage } from './fleet-admin-profiles.js';
 import { AuditPage } from './fleet-admin-audit.js';
 import { OffersPage } from './fleet-admin-offers.js';
 import { HubPage } from './fleet-admin-hub.js';
+import { BoardsPage } from './fleet-admin-boards.js';
 import { JobsPage } from './fleet-admin-jobs.js';
 import { HarnessesPage } from './fleet-admin-harnesses.js';
 import { createHarnessActions } from './fleet-harness-actions.js';
@@ -46,6 +47,7 @@ const SUB_PAGES = Object.freeze([
   { id: 'offers', label: 'Offers' },
   { id: 'jobs', label: 'Jobs & repos' },
   { id: 'moves', label: 'Moves' },
+  { id: 'boards', label: 'Boards' },
   { id: 'audit', label: 'Audit' },
   { id: 'hub', label: 'Hub' },
 ]);
@@ -402,6 +404,8 @@ export function FleetAdmin({
       ? html`<${JobsPage} view=${view} pools=${(pools || []).map((p) => p.name)} groups=${localGroups(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} timers=${timers} active=${active} />`
       : sub.id === 'models'
       ? html`<${ModelsPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} now=${now()} />`
+      : sub.id === 'boards'
+      ? html`<${BoardsPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} />`
       : sub.id === 'hub'
       ? html`<${HubPage} view=${view} actions=${actions} updateActions=${updateActions} confirm=${confirm} toast=${toast} copy=${copy} timers=${timers} onRunHub=${() => { setRunPreselect('hub'); setPage('run'); }} />`
       : sub.id === 'grants'

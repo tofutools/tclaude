@@ -18931,7 +18931,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-hub.off { color: #7d8590; }
 .fa-link { border: 0; background: none; padding: 0; color: #58a6ff; cursor: pointer; font: inherit; font-size: 12px; }
 .fa-subtabs { display: flex; gap: 2px; margin: 12px 0 8px; border-bottom: 1px solid #30363d; }
-.fa-subtab { border: 0; border-bottom: 2px solid transparent; background: none; color: #8b949e; padding: 6px 12px; font: inherit; cursor: pointer; }
+.fa-subtab { border: 0; border-bottom: 2px solid transparent; background: none; color: #8b949e; padding: 6px 10px; font: inherit; cursor: pointer; }
 .fa-subtab.on { color: #f0f6fc; border-bottom-color: #1f6feb; }
 .fleet-admin h4 { margin: 14px 0 6px; font-size: 13px; }
 .fa-table { width: 100%; border-collapse: collapse; }
@@ -19086,6 +19086,14 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-hub-errors { flex-basis: 100%; margin: 4px 0 0; padding-left: 18px; }
 .fa-hub-claim { margin: 10px 0; }
 .fa-hub-token { margin: 6px 0 10px; padding: 6px 10px; border: 1px solid #9e6a03; border-radius: 6px; overflow-wrap: anywhere; }
+/* Content boards (fleet-admin-boards.js). */
+.fa-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0; }
+.fa-row .spacer { flex: 1; }
+.fa-grow { flex: 1 1 260px; min-width: 0; }
+.fa-num { width: 64px; }
+.fa-warn-chip { font-size: 11px; padding: 0 6px; border: 1px solid #9e6a03; border-radius: 8px; color: #d29922; }
+.fa-boards .fa-table tr.on td { background: rgba(56, 139, 253, 0.08); }
+.fa-board-detail { margin: 4px 0 12px; padding: 6px 10px; border-left: 2px solid #1f6feb; }
 .fa-hub-spaces { width: 14em; font: inherit; font-size: 12px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; padding: 2px 6px; }
 #fleet-hub-settings input, #fleet-hub-settings select { width: 8em; font: inherit; font-size: 12px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; padding: 2px 6px; }
 .fa-hub-log { max-height: 50vh; }

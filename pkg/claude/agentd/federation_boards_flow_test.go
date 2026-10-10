@@ -120,6 +120,11 @@ func TestDashboardContentBoardMembershipKeysAndModeration(t *testing.T) {
 	joined := must("POST", "/join", map[string]any{"token": "board1_" + base64.RawURLEncoding.EncodeToString(raw)})
 	require.Equal(t, "reader", joined["role"])
 	must("DELETE", "/"+other+"/membership", nil)
+	// A used invite is refused by the hub in the board hello: the UI gets the
+	// invite code, not a generic upstream failure.
+	again := call("POST", "/join", map[string]any{"token": "board1_" + base64.RawURLEncoding.EncodeToString(raw)})
+	require.Equal(t, 403, again.Code, again.Body.String())
+	require.Contains(t, again.Body.String(), `"board_invite"`)
 	// Even an unrestricted peer cannot use local board authority.
 	peerView := agentd.PeerViewHandler(fh.peer.id.ID())
 	for _, endpoint := range []struct{ method, tail string }{

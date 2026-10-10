@@ -750,6 +750,23 @@ first and says what will happen. Most pages name their CLI.
 The full federation model, grants and CLI are in
 [Federation](federation.md).
 
+### Boards (⚙ Fleet → Boards)
+
+Boards share content with other nodes through the hub, without linking the
+nodes or giving anyone access to this machine. To join, paste an invite and
+press **Join**; to start one, type a name and press **Create** (you become its
+owner). Each board lists your role in plain words — owner, can post, can read —
+and its limits. Open a board to see its members. An owner can also invite
+someone who can read or post (the invite is shown once, with **cancel
+invite…**), change members' roles, remove members, and **Change key…** so that
+members removed earlier cannot read anything posted afterwards. **Leave…**
+ends this node's membership. The hub decides who is a member: a dishonest hub
+operator could block a board or keep a removed member getting new posts, but
+cannot read anything or fake a post, so use a hub you trust. Hub admins
+holding `hub.boards.manage` see **Boards** on the Hub page to freeze, limit
+or delete boards; they never see content or keys. CLI:
+`tclaude federation boards …` and `tclaude federation hub boards …`.
+
 ## Shared behavior
 
 The dashboard polls a full snapshot every 2 seconds (10 when the tab is
