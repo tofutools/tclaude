@@ -117,7 +117,7 @@ func (j jsonlHistory) rewriteHistoryReader(reader io.Reader, sourceID, newID, cw
 	if bounded, ok := reader.(interface{ HistoryRecordLimit() int }); ok && bounded.HistoryRecordLimit() > 0 {
 		recordLimit = bounded.HistoryRecordLimit()
 	}
-	scanner.Buffer(make([]byte, 64<<10), recordLimit)
+	scanner.Buffer(make([]byte, min(64<<10, recordLimit)), recordLimit)
 	found := false
 	line := 0
 	for scanner.Scan() {

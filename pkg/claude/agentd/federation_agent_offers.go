@@ -118,6 +118,10 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = archive.Close(); _ = os.Remove(archive.Name()) }()
+	if err := r.Context().Err(); err != nil {
+		writeError(w, 400, "bundle_export", err.Error())
+		return
+	}
 	summary := "Agent bundle: configuration only"
 	if b.Manifest.History != nil {
 		summary = "Agent bundle: configuration and conversation history"

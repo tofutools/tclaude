@@ -360,7 +360,7 @@ func scanAgentBundle(b *agentbundle.Bundle) ([]agentbundle.Finding, error) {
 	}
 	defer history.Close()
 	scanner := bufio.NewScanner(history)
-	scanner.Buffer(make([]byte, 64<<10), agentRecordLimit())
+	scanner.Buffer(make([]byte, min(64<<10, agentRecordLimit())), agentRecordLimit())
 	line := 0
 	for scanner.Scan() {
 		line++

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 
@@ -69,7 +70,7 @@ func runTeleport(p *teleportParams, stdout, stderr io.Writer) int {
 	}
 	request := map[string]any{"peer": peer, "node": node, "group": p.Group, "require": p.Require, "prefer": p.Prefer, "keep_paused_backup": p.KeepPausedBackup, "clone": p.Clone, "home": p.Home, "note": p.Note, "credentials": p.Credentials, "git_ref": p.GitRef}
 	var response map[string]any
-	if err := DaemonPost("/v1/whoami/teleport", request, &response); err != nil {
+	if err := DaemonRequest(http.MethodPost, "/v1/whoami/teleport", request, &response, DaemonOpts{Timeout: bundletransfer.DefaultTTL}); err != nil {
 		var de *DaemonError
 		if errors.As(err, &de) && p.JSON && len(de.Raw) > 0 {
 			fmt.Fprintln(stdout, string(de.Raw))

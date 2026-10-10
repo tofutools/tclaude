@@ -7,12 +7,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -216,7 +218,16 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 	require.NoError(t, err)
 	h, err := hub.New(st, hub.Config{BytesPerMinute: 2 << 30, StreamBytesPerSecond: 100 << 20, FramesPerMinute: 6000})
 	require.NoError(t, err)
-	srv := httptest.NewServer(h.Handler())
+	var streamJoins atomic.Int32
+	var interrupted atomic.Bool
+	handler := h.Handler()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if large && r.URL.Path == proto.StreamPath && streamJoins.Add(1) == 5 {
+			handler.ServeHTTP(historyInterruptWriter{ResponseWriter: w, interrupted: &interrupted}, r)
+		} else {
+			handler.ServeHTTP(w, r)
+		}
+	}))
 	t.Cleanup(func() { h.Close(); srv.Close(); _ = st.Close() })
 	a, b := startHistoryNode(t, name, "A"), startHistoryNode(t, name, "B")
 	require.NotEqual(t, a.Instance, b.Instance)
@@ -306,6 +317,9 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 	}
 	outward := teleport(a, b, moveSourceConv, false)
 	remoteConv := land(b, outward)
+	if large {
+		require.True(t, interrupted.Load(), "the third stream chunk must be interrupted before successful resume")
+	}
 	require.NotEqual(t, moveSourceConv, remoteConv)
 	fedEventually(t, "A retires only after B is running", func() bool {
 		code, raw := historyNodeRequest(t, a, "GET", "/v1/federation/moves/"+outward.ID, "", nil)
@@ -369,4 +383,35 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 	require.Contains(t, string(bundle.Transcript), addedReply)
 	require.Equal(t, returned, bundle.Manifest.History.SourceConvID)
 	require.Equal(t, a.Cwd, bundle.Manifest.Agent.Paths.Cwd)
+}
+
+// Interrupt one real hub-relayed stream after two whole chunks have already
+// arrived. The production fetch retries through the same receiving API, keeping
+// the verified prefix and validating the complete archive before import.
+type historyInterruptWriter struct {
+	http.ResponseWriter
+	interrupted *atomic.Bool
+}
+
+func (w historyInterruptWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	conn, rw, err := w.ResponseWriter.(http.Hijacker).Hijack()
+	if err != nil {
+		return nil, nil, err
+	}
+	return &historyInterruptConn{Conn: conn, interrupted: w.interrupted}, rw, nil
+}
+
+type historyInterruptConn struct {
+	net.Conn
+	bytes       int64
+	interrupted *atomic.Bool
+}
+
+func (c *historyInterruptConn) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	c.bytes += int64(n)
+	if c.bytes > 1<<20 && c.interrupted.CompareAndSwap(false, true) {
+		_ = c.Conn.Close()
+	}
+	return n, err
 }

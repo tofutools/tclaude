@@ -10,11 +10,11 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/configbundle"
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
@@ -207,7 +207,7 @@ func offerPost(stderr io.Writer, path string, in, out any) int {
 	if rc := agent.RequireDaemonOrExit(stderr); rc != 0 {
 		return rc
 	}
-	if err := agent.DaemonRequest(http.MethodPost, path, in, out, agent.DaemonOpts{Timeout: 6 * time.Minute}); err != nil {
+	if err := agent.DaemonRequest(http.MethodPost, path, in, out, agent.DaemonOpts{Timeout: bundletransfer.DefaultTTL}); err != nil {
 		var de *agent.DaemonError
 		if errors.As(err, &de) {
 			var detail map[string]any
@@ -261,7 +261,7 @@ func runOfferDownload(p *offerDownloadParams, stderr io.Writer) int {
 	if rc := agent.RequireDaemonOrExit(stderr); rc != 0 {
 		return rc
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), bundletransfer.DefaultTTL)
 	defer cancel()
 	body, err := agent.DaemonStreamGet(ctx, offerPath(p.ID, p.Peer, "download"))
 	if err != nil {
@@ -272,13 +272,17 @@ func runOfferDownload(p *offerDownloadParams, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, err)
 	}
-	n, copyErr := io.Copy(f, io.LimitReader(body, bundletransfer.Agent.MaxBytes+1))
+	limit := bundletransfer.Agent.MaxBytes
+	if cfg, e := config.Load(); e == nil && cfg.Federation != nil && cfg.Federation.AgentTransferMaxBytes > 0 {
+		limit = cfg.Federation.AgentTransferMaxBytes
+	}
+	n, copyErr := io.Copy(f, io.LimitReader(body, limit+1))
 	closeErr := f.Close()
 	if copyErr == nil {
 		copyErr = closeErr
 	}
-	if copyErr == nil && n > bundletransfer.Agent.MaxBytes {
-		copyErr = errors.New("bundle exceeds 256 MiB")
+	if copyErr == nil && n > limit {
+		copyErr = fmt.Errorf("archive exceeds federation.agent_transfer_max_bytes=%d; raise that node setting", limit)
 	}
 	if copyErr != nil {
 		_ = os.Remove(p.File)
