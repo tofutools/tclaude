@@ -685,6 +685,15 @@ first and says what will happen. Most pages name their CLI.
   config…**, **Offer an agent…** and **Offer a profile's config…** send new
   ones; flagged credentials are listed and need an explicit send-anyway.
   CLI: `tclaude federation offers`, `offer-config`, `share-agent`.
+- **Jobs & repos** — remote jobs: those peers sent here (⇠) and those this
+  node sent (⇢), with repo@ref, group, command and state. **Approve…** runs a
+  job a manual-approval `jobs.run` grant holds (jobs otherwise run on
+  arrival); **Cancel…**, **Resend…** (same job ID, never runs twice),
+  **Acknowledge stopped…** for a job this node lost track of, and **Output**
+  once finished — each confirm says what happens. **Run a job…** sends one to
+  picked nodes or an automatically placed one. Below, the repositories peers
+  may run jobs in here: **Allow…**, **Edit…**, **Disable…**. Live output
+  (`--follow`) stays in the CLI. CLI: `tclaude federation job`, `repos`.
 - **Moves** — agent moves and teleports in both directions (⇢ leaving, ⇠
   arriving) with peer, group, state and expiry. **Abandon…** stops an outgoing
   move that has not started retiring the agent here; the agent is not retired

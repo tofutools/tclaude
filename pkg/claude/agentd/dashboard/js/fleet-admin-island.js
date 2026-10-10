@@ -7,6 +7,7 @@ import { InvitesPage } from './fleet-admin-invites.js';
 import { ProfilesPage } from './fleet-admin-profiles.js';
 import { AuditPage } from './fleet-admin-audit.js';
 import { OffersPage } from './fleet-admin-offers.js';
+import { JobsPage } from './fleet-admin-jobs.js';
 import { HarnessesPage } from './fleet-admin-harnesses.js';
 import { createHarnessActions } from './fleet-harness-actions.js';
 import { NodeUpdateDialog } from './node-update.js';
@@ -36,6 +37,7 @@ const SUB_PAGES = Object.freeze([
   { id: 'grants', label: 'Peer grants' },
   { id: 'profiles', label: 'Profiles & pools' },
   { id: 'offers', label: 'Offers' },
+  { id: 'jobs', label: 'Jobs & repos' },
   { id: 'moves', label: 'Moves' },
   { id: 'audit', label: 'Audit' },
 ]);
@@ -380,6 +382,8 @@ export function FleetAdmin({
           onOpenGrants=${(target) => { setGrantTarget(target); setPage('grants'); }} />`
       : sub.id === 'offers'
       ? html`<${OffersPage} view=${view} agents=${localAgents(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} />`
+      : sub.id === 'jobs'
+      ? html`<${JobsPage} view=${view} pools=${(pools || []).map((p) => p.name)} groups=${localGroups(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} timers=${timers} active=${active} />`
       : sub.id === 'grants'
       ? html`<${GrantsPage} view=${view} pools=${pools} groups=${localGroups(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast}
           target=${grantTarget} setTarget=${setGrantTarget} />`
