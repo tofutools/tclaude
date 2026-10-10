@@ -676,6 +676,17 @@ first and says what will happen. Most pages name their CLI.
   decide how this node starts workers for the peer; `models.proxy` grants
   take one gateway name or cover them all. Sensitive grants (spawning,
   attach, `node.exec`, …) say what they let the peer do.
+- **Model gateways** — this node's model gateways, which peers with a
+  `models.proxy` (or, for requester-paid workers, `models.proxy.leased`)
+  grant use to send model requests charged to this node's provider account.
+  See each gateway's models and limits — a gateway missing a model allowlist,
+  a budget or a cap refuses every request and says so — turn one off or on,
+  block or unblock a peer on it, or **Turn off all…**. Turning anything off
+  revokes the matching leases at once, so requester-paid workers using them
+  lose model access. Below that are the leases (**Revoke…** one) and a day's
+  usage per gateway, peer and model. Gateways themselves (provider,
+  credentials, limits) are configured in config. CLI: `tclaude federation
+  models`.
 - **Profiles & pools** — pools group nodes so one grant covers every member;
   add or remove members and open a pool's grants. Profiles bundle a trust
   level, pools and grants: **Apply to peer…** previews the plan, **Make

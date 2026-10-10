@@ -15,6 +15,7 @@ import { AwayControl } from './peer-mail.js';
 import { NodeSettingsDialog } from './fleet-admin-node-settings.js';
 import { RunPage } from './fleet-admin-run.js';
 import { ViewersPanel } from './fleet-admin-viewers.js';
+import { ModelsPage } from './fleet-admin-models.js';
 import { SpawnRequestsPage } from './fleet-admin-spawns.js';
 import { MovesPage } from './fleet-admin-moves.js';
 import { createRunActions } from './fleet-run-actions.js';
@@ -37,6 +38,7 @@ const SUB_PAGES = Object.freeze([
   { id: 'spawns', label: 'Spawn requests' },
   { id: 'invites', label: 'Invites & joining' },
   { id: 'grants', label: 'Peer grants' },
+  { id: 'models', label: 'Model gateways' },
   { id: 'profiles', label: 'Profiles & pools' },
   { id: 'offers', label: 'Offers' },
   { id: 'jobs', label: 'Jobs & repos' },
@@ -388,6 +390,8 @@ export function FleetAdmin({
       ? html`<${OffersPage} view=${view} agents=${localAgents(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} />`
       : sub.id === 'jobs'
       ? html`<${JobsPage} view=${view} pools=${(pools || []).map((p) => p.name)} groups=${localGroups(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} timers=${timers} active=${active} />`
+      : sub.id === 'models'
+      ? html`<${ModelsPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} now=${now()} />`
       : sub.id === 'grants'
       ? html`<${GrantsPage} view=${view} pools=${pools} groups=${localGroups(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast}
           target=${grantTarget} setTarget=${setGrantTarget} />`

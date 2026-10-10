@@ -18953,6 +18953,10 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-ns-check { display: block; margin: 6px 0 6px 88px; }
 .fa-ns-actions { display: flex; align-items: center; gap: 10px; margin: 6px 0 4px 88px; }
 .fa-ns-actions button { flex: none; white-space: nowrap; }
+.fa-models .fa-h { margin: 16px 0 6px; font-size: 13px; font-weight: 600; }
+.fa-models .fa-h input[type=date] { font: inherit; font-size: 12px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; padding: 1px 4px; }
+.fa-chip { display: inline-block; padding: 0 6px; border: 1px solid #30363d; border-radius: 10px; font-size: 12px; white-space: nowrap; }
+.fa-model-block { font-size: 12px; }
 #fleet-spawn-approve > :not(h3):not(.modal-buttons), #fleet-spawn-deny > :not(h3):not(.modal-buttons), #fleet-spawn-send > :not(h3):not(.modal-buttons) { font-size: 13px; font-weight: normal; }
 .fa-spawn-opt { display: grid; grid-template-columns: 90px minmax(0, 1fr); align-items: center; gap: 8px; margin: 6px 0; }
 .fa-spawn-opt input, .fa-spawn-opt select, .fa-spawn-opt textarea { width: 100%; max-width: none; box-sizing: border-box; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; }

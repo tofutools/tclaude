@@ -103,6 +103,13 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
     addRepo: (body) => call('POST', 'repos', body),
     updateRepo: (name, body) => call('PUT', `repos/${encodeURIComponent(name)}`, body),
     disableRepo: (name) => call('DELETE', `repos/${encodeURIComponent(name)}`),
+    // Model gateways: policy and switches (no provider URLs or credentials),
+    // requester-paid leases, and daily usage (UTC day, '' = today).
+    models: () => call('GET', 'models/control'),
+    setModelSwitch: ({ name = '', peer = '', disabled }) => call('POST', 'models/control', { ...(name ? { name } : {}), ...(peer ? { peer } : {}), disabled }),
+    modelLeases: async () => (await call('GET', 'models/leases')) || [],
+    revokeModelLease: (id) => call('POST', 'models/leases', { id }),
+    modelUsage: async (day = '') => (await call('GET', `models/usage${day ? `?day=${encodeURIComponent(day)}` : ''}`)) || [],
     // Spawn requests: incoming ones peers sent to this node's groups (all
     // states, newest first), and asking a peer for a worker.
     spawnRequests: async () => (await call('GET', 'spawn-requests')) || [],
