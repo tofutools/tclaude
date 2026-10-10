@@ -3,6 +3,11 @@ package agentd
 import "net/http"
 
 func registerDashboardFederationRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/federation/models/control", dashboardFederationRoute(handleModelProxyControl))
+	mux.HandleFunc("POST /api/federation/models/control", dashboardFederationRoute(handleModelProxyControl))
+	mux.HandleFunc("GET /api/federation/models/leases", dashboardFederationRoute(handleModelProxyLeases))
+	mux.HandleFunc("POST /api/federation/models/leases", dashboardFederationRoute(handleModelProxyLeases))
+	mux.HandleFunc("GET /api/federation/models/usage", dashboardFederationRoute(handleModelProxyUsage))
 	mux.HandleFunc("GET /api/federation/spawn-requests", dashboardFederationRoute(handleFederationSpawnRequestList))
 	mux.HandleFunc("POST /api/federation/spawn-requests", dashboardFederationRoute(handleFederationSpawnRequestSend))
 	mux.HandleFunc("POST /api/federation/spawn-requests/{id}/approve", dashboardFederationRoute(handleFederationSpawnRequestApprove))
