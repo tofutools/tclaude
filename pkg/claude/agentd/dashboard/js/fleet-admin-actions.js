@@ -65,5 +65,17 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
     applyProfile: (name, { peer, apply = false, previewToken = '', confirmFingerprint = '' }) => call('POST', `profiles/${encodeURIComponent(name)}/apply`,
       { peer, apply, preview_token: previewToken, confirm_fingerprint: confirmFingerprint }),
     enroll: ({ master, token, previewToken }) => call('POST', 'enroll', { master, token, preview_token: previewToken }),
+    // Remote jobs (sent and received) and the repositories peers may use here.
+    jobs: async () => (await call('GET', 'jobs'))?.jobs || [],
+    runJob: (body) => call('POST', 'jobs', body),
+    approveJob: (id) => call('POST', `jobs/${encodeURIComponent(id)}/approve`, {}),
+    cancelJob: (id) => call('POST', `jobs/${encodeURIComponent(id)}/cancel`, {}),
+    retryJob: (id) => call('POST', `jobs/${encodeURIComponent(id)}/retry`, {}),
+    acknowledgeJobStopped: (id) => call('POST', `jobs/${encodeURIComponent(id)}/acknowledge-stopped`, { acknowledge_stopped: true }),
+    jobLogs: (id) => call('GET', `jobs/${encodeURIComponent(id)}/logs`),
+    repos: async () => (await call('GET', 'repos'))?.repos || [],
+    addRepo: (body) => call('POST', 'repos', body),
+    updateRepo: (name, body) => call('PUT', `repos/${encodeURIComponent(name)}`, body),
+    disableRepo: (name) => call('DELETE', `repos/${encodeURIComponent(name)}`),
   });
 }

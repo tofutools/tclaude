@@ -92,6 +92,22 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     removePoolMember: async (n, p) => { log.push(['removePoolMember', n, p]); return { ok: true }; },
     setDefaultProfile: async (n) => { log.push(['setDefaultProfile', n]); return { profile_id: n }; },
     deleteProfile: async (n) => { log.push(['deleteProfile', n]); return { ok: true }; },
+    jobs: async () => { log.push(['jobs']); return [
+      { id: 'job_in1', direction: 'in', peer: 'inst_forge', state: 'pending', request: { repo: 'tclaude', ref: 'main', group: 'ops', command: 'go test ./pkg/...', timeout_seconds: 600 }, created_at: '2026-10-10T09:00:00Z' },
+      { id: 'job_in2', direction: 'in', peer: 'inst_forge', state: 'unknown', request: { repo: 'tclaude', ref: 'main', group: 'ops', command: 'make' }, result: { state: 'unknown', code: 'daemon_interrupted', exit_code: 1 }, created_at: '2026-10-10T08:00:00Z' },
+      { id: 'job_out1', direction: 'out', peer: 'inst_lab', state: 'submitted', request: JSON.stringify({ repo: 'site', ref: 'v2', group: 'web', harness: 'codex', command: 'fix the flaky test' }), created_at: '2026-10-10T07:00:00Z' },
+      { id: 'job_out2', direction: 'out', peer: 'inst_lab', state: 'completed', request: { repo: 'site', ref: 'v2', group: 'web', command: 'ls' }, result: { state: 'completed', exit_code: 0, commit: 'abcdef1234567890' }, created_at: '2026-10-10T06:00:00Z' },
+    ]; },
+    runJob: async (body) => { log.push(['runJob', body]); return body.nodes ? { results: [{ peer: 'inst_forge', status: 200, delivered: true }, { peer: 'inst_lab', status: 403, error: 'peer does not export this group for jobs' }] } : { job: {}, delivered: false }; },
+    approveJob: async (id) => { log.push(['approveJob', id]); return { id }; },
+    cancelJob: async (id) => { log.push(['cancelJob', id]); return { id }; },
+    retryJob: async (id) => { log.push(['retryJob', id]); return { id, delivered: true }; },
+    acknowledgeJobStopped: async (id) => { log.push(['ackJob', id]); return { id }; },
+    jobLogs: async (id) => { log.push(['jobLogs', id]); return { stdout: 'index.html\n', stderr: '', exit_code: 0 }; },
+    repos: async () => [{ id: 'r1', name: 'tclaude', revision: 2, enabled: true, definition: { url: 'git@github.com:tofutools/tclaude.git', clone: '/home/me/git/tclaude', groups: [7] } }],
+    addRepo: async (body) => { log.push(['addRepo', body]); return body; },
+    updateRepo: async (name, body) => { log.push(['updateRepo', name, body]); return body; },
+    disableRepo: async (name) => { log.push(['disableRepo', name]); return { ok: true }; },
     applyProfile: async (n, o) => { log.push(['applyProfile', n, o]); return { preview_token: 'ptok', changes: [{ item: 'trust_level', before: 'restricted', after: 'unrestricted', security: true }, { item: 'pool/pool_r', before: false, after: true, security: true }], pools: [{ id: 'pool_r', name: 'rigs', live_grants: [{ slug: 'groups.members.spawn', scope: '' }] }], security_changes: 2, conflicts: [] }; },
   };
   const snapshot = harness.signals.signal({ groups: [{ name: 'ops' }, { name: 'build' }] });
@@ -626,4 +642,94 @@ test('accepting remote scripts confirms full remote code execution; node.exec gr
   const saves = s.runLog.filter((l) => l[0] === 'save').length;
   await s.click(s.q('#fleet-run-limits'));
   assert.equal(s.runLog.filter((l) => l[0] === 'save').length, saves, 'a non-numeric cpu is rejected, never sent');
+});
+
+test('jobs & repos: approve, cancel, resend and acknowledge with spelled-out consequences; send jobs; allow repositories', async (t) => {
+  const s = await setup(t);
+  const doc = s.harness.document; const q = (x) => doc.querySelector(x);
+  const type = async (el, v) => { el.value = v; await s.harness.act(() => s.harness.fireEvent(el, 'input')); };
+  const tick = async (el, on) => { el.checked = on; await s.harness.act(() => s.harness.fireEvent(el, 'change')); };
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => b.textContent === 'Jobs & repos'));
+  assert.equal(s.q('#fleet-jobs').querySelectorAll('tbody tr').length, 4);
+  assert.match(s.mounted.container.textContent, /1 waiting for your approval/);
+  assert.ok(s.timers.queue.some((x) => x.ms === 5000), 'the job list polls while shown');
+  const acts = (id) => [...s.q(`[data-job="${id}"]`).querySelectorAll('[data-fa]')].map((b) => b.dataset.fa);
+  assert.deepEqual(acts('job_in1'), ['approve', 'cancel']);
+  assert.deepEqual(acts('job_in2'), ['ack']);
+  assert.deepEqual(acts('job_out1'), ['cancel', 'retry']);
+  assert.deepEqual(acts('job_out2'), ['logs']);
+  assert.match(s.q('[data-job="job_out1"]').textContent, /site@v2.*fix the flaky test.*codex/);
+
+  await s.click(s.q('[data-job="job_in1"] [data-fa="approve"]'));
+  assert.match(s.confirms.at(-1).body, /one-shot worker runs this shell command in tclaude@main \(group ops\) on this node, as the user tclaude runs as, for up to 600 s.*logins and network.*Command: go test \.\/pkg\/\.\.\./);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'approveJob'), ['approveJob', 'job_in1']);
+  await s.click(s.q('[data-job="job_in1"] [data-fa="cancel"]'));
+  assert.match(s.confirms.at(-1).body, /refused without running/);
+  await s.click(s.q('[data-job="job_out1"] [data-fa="retry"]'));
+  assert.match(s.confirms.at(-1).body, /same job ID.*will not run twice/);
+  await s.click(s.q('[data-job="job_in2"] [data-fa="ack"]'));
+  assert.match(s.confirms.at(-1).body, /Only confirm after checking that its worker and anything it started have stopped/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'ackJob'), ['ackJob', 'job_in2']);
+  await s.click(s.q('[data-job="job_out2"] [data-fa="logs"]'));
+  assert.match(q('#fleet-job-logs').textContent, /abcdef123456.*exit 0.*index\.html/s);
+  await s.click([...q('#fleet-job-logs').querySelectorAll('button')].find((b) => b.textContent === 'Close'));
+
+  // Fan-out: per-node refusals are reported.
+  await s.click(s.q('#fleet-job-open'));
+  await s.click(q('#fleet-job-send'));
+  assert.match(q('#fleet-run-job [role=alert]').textContent, /at least one node/);
+  await tick(q('[data-node="inst_forge"]'), true);
+  await tick(q('[data-node="inst_lab"]'), true);
+  await type(q('#fleet-job-repo'), 'tclaude');
+  await type(q('#fleet-job-ref'), 'main');
+  await type(q('#fleet-job-group'), 'ops');
+  await type(q('#fleet-job-command'), 'go vet ./...');
+  await s.click(q('#fleet-job-send'));
+  assert.match(s.confirms.at(-1).body, /to forge, lab: a one-shot worker runs it in a checkout of tclaude at main in group ops, for up to 3600 s\. It runs as soon as a node admits it — unless that node's jobs\.run grant to you asks for manual approval/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'runJob')[1], { repo: 'tclaude', ref: 'main', group: 'ops', command: 'go vet ./...', timeout_seconds: 3600, nodes: ['inst_forge', 'inst_lab'] });
+  assert.match(s.toasts.at(-1), /1 job sent; 1 refused \(lab: peer does not export this group for jobs\)/);
+
+  // Repositories: group IDs show until names come; editing re-picks groups.
+  assert.match(s.q('[data-repo="tclaude"]').textContent, /group #7/);
+  await s.click(s.q('#fleet-repo-add'));
+  await type(q('#fleet-repo-name'), 'site');
+  await type(q('#fleet-repo-url'), 'git@example:site.git');
+  await type(q('#fleet-repo-clone'), 'src/site');
+  await tick(q('[data-group="ops"]'), true);
+  await s.click(q('#fleet-repo-save'));
+  assert.match(q('#fleet-repo [role=alert]').textContent, /absolute path/);
+  await type(q('#fleet-repo-clone'), '/srv/site');
+  await s.click(q('#fleet-repo-save'));
+  assert.match(s.confirms.at(-1).body, /Peers granted jobs\.run in ops can ask to run commands in a checkout of \/srv\/site.*any ref they name\. Jobs run as soon as they arrive.*job_approval=manual/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'addRepo')[1], { name: 'site', url: 'git@example:site.git', clone: '/srv/site', groups: ['ops'] });
+  await s.click(s.q('[data-repo="tclaude"] [data-fa="edit"]'));
+  assert.match(q('#fleet-repo').textContent, /Currently group #7; tick the groups to keep/);
+  await tick(q('[data-group="build"]'), true);
+  await s.click(q('#fleet-repo-save'));
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'updateRepo'), ['updateRepo', 'tclaude', { name: 'tclaude', url: 'git@github.com:tofutools/tclaude.git', clone: '/home/me/git/tclaude', groups: ['build'], revision: 2 }]);
+  await s.click(s.q('[data-repo="tclaude"] [data-fa="disable"]'));
+  assert.match(s.confirms.at(-1).body, /Jobs waiting for approval in it are refused/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'disableRepo'), ['disableRepo', 'tclaude']);
+
+  await s.harness.act(() => { s.activeTab.value = 'groups'; });
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  assert.equal(s.timers.queue.filter((x) => x.ms === 5000).length, 0, 'leaving Fleet stops the job poll');
+});
+
+test('job actions hit the local job and repo routes', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createFleetAdminActions } = await harness.importDashboardModule('js/fleet-admin-actions.js');
+  const calls = [];
+  const a = createFleetAdminActions({ fetchImpl: async (url, init) => { calls.push([init.method, url, init.body ? JSON.parse(init.body) : null]); return { ok: true, status: 200, json: async () => ({}) }; } });
+  await a.acknowledgeJobStopped('j1');
+  await a.jobLogs('j1');
+  await a.updateRepo('my repo', { revision: 3 });
+  await a.disableRepo('r');
+  assert.deepEqual(calls, [
+    ['POST', '/api/federation/jobs/j1/acknowledge-stopped', { acknowledge_stopped: true }],
+    ['GET', '/api/federation/jobs/j1/logs', null],
+    ['PUT', '/api/federation/repos/my%20repo', { revision: 3 }],
+    ['DELETE', '/api/federation/repos/r', null],
+  ]);
 });

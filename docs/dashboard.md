@@ -625,6 +625,15 @@ first and says what will happen. Most pages name their CLI.
   level, pools and grants: **Apply to peer…** previews the plan, **Make
   default…** applies it to newly trusted peers. Profile definitions are edited
   with `tclaude federation profile`.
+- **Jobs & repos** — remote jobs: those peers sent here (⇠) and those this
+  node sent (⇢), with repo@ref, group, command and state. **Approve…** runs a
+  job a manual-approval `jobs.run` grant holds (jobs otherwise run on
+  arrival); **Cancel…**, **Resend…** (same job ID, never runs twice),
+  **Acknowledge stopped…** for a job this node lost track of, and **Output**
+  once finished — each confirm says what happens. **Run a job…** sends one to
+  picked nodes or an automatically placed one. Below, the repositories peers
+  may run jobs in here: **Allow…**, **Edit…**, **Disable…**. Live output
+  (`--follow`) stays in the CLI. CLI: `tclaude federation job`, `repos`.
 - **Audit** — this node's federation activity, newest first: a peer acting
   here (⇠) or this node acting on a peer (⇢), with actor, target, group and
   outcome; refused or failed requests in red. Filter by peer and time window.
