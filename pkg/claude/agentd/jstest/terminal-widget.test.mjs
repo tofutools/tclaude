@@ -604,3 +604,79 @@ test('disposing an initial retry cancels its timer and prevents a late socket', 
   await Promise.resolve();
   assert.equal(fakes.sockets.length, 1);
 });
+
+test('a remote terminal follows the hello: pinned size, no resizes, watch-only drops input, and a closure says why', async (t) => {
+  const harness = await createPreactHarness(t);
+  const core = await harness.importDashboardModule('js/terminals-core.js');
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const fakes = widgetFakes(harness.document);
+  class SizedTerminal extends fakes.FakeTerminal {
+    resize(cols, rows) { this.cols = cols; this.rows = rows; this.resizeHandler?.({ cols, rows }); }
+    write(data, done) { super.write(data); this.pending = done; }
+  }
+  const statuses = []; const remotes = []; const reconnect = []; let disconnected = 0;
+  const wsPath = core.remoteTerminalPath({ peer: 'inst_forge7', agent: 'agt_ada1', mode: 'interactive' });
+  assert.equal(wsPath, '/api/federation/terminal?peer=inst_forge7&agent=agt_ada1&mode=interactive');
+  assert.equal(core.isRemoteTerminalPath(wsPath), true);
+  assert.equal(core.isRemoteTerminalPath('/api/term-ws/agt_one'), false);
+  const widget = core.mountTerminalWidget({
+    host, wsPath, authenticate: false,
+    onStatus: (v) => statuses.push(v), onRemoteChange: (v) => remotes.push(v),
+    onReconnectChange: (v) => reconnect.push(v), onDisconnect: () => { disconnected += 1; },
+    TerminalCtor: SizedTerminal, FitAddonCtor: fakes.FakeFitAddon, WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver, locationRef: { protocol: 'https:', host: 'dashboard.test' },
+    documentRef: harness.document, interactionsFactory: fakes.interactionsFactory,
+  });
+  await widget.connect();
+  const socket = fakes.sockets[0];
+  socket.open();
+  assert.equal(statuses.at(-1), 'connecting to the peer…');
+  assert.equal(fakes.interactionOptions().fileDownloads, false, 'no file downloads from a remote node');
+  assert.equal(fakes.interactionOptions().canInput(), false, 'no input before the peer names the mode');
+  fakes.terminal().dataHandler('x');
+  socket.onmessage({ data: JSON.stringify({ type: 'hello', mode: 'watch', cols: 132, rows: 40 }) });
+  assert.equal(statuses.at(-1), 'connected · watch-only');
+  assert.deepEqual([fakes.terminal().cols, fakes.terminal().rows], [132, 40], 'renders at the target pinned size');
+  socket.onmessage({ data: JSON.stringify({ type: 'size', cols: 5000, rows: 4000 }) });
+  assert.deepEqual([fakes.terminal().cols, fakes.terminal().rows], [132, 40], 'a hostile oversized grid is refused');
+  assert.equal(fakes.terminal().options.disableStdin, true);
+  assert.equal(remotes.at(-1).mode, 'watch');
+  fakes.terminal().dataHandler('typed');
+  widget.setActive(true);
+  fakes.observer().handler();
+  assert.deepEqual(socket.sent, [], 'watch sends no input and nothing ever resizes the target');
+  socket.onmessage({ data: 'not json' });
+  assert.equal(fakes.counts.write, 0, 'control text never reaches the terminal');
+  socket.onmessage({ data: new ArrayBuffer(3) });
+  assert.equal(fakes.counts.write, 1, 'binary output is written');
+  assert.deepEqual(socket.sent, [], 'no credit before xterm has consumed the bytes');
+  fakes.terminal().pending();
+  assert.deepEqual(socket.sent, [JSON.stringify({ type: 'credit', bytes: 3 })], 'credit follows the write, exact byte count, even when watching');
+  socket.onmessage({ data: JSON.stringify({ type: 'closed', reason: 'revoked', message: 'sessions.watch revoked' }) });
+  socket.disconnect();
+  assert.equal(statuses.at(-1), 'closed: the peer revoked your access to this terminal (sessions.watch revoked)');
+  assert.equal(reconnect.at(-1) ?? false, false, 'a final reason offers no reconnect');
+  assert.equal(disconnected, 1);
+  assert.equal(widget.remoteState().closed.reason, 'revoked');
+
+  await widget.connect();
+  const again = fakes.sockets[1];
+  again.open();
+  assert.equal(widget.remoteState().closed, null, 'a new connection forgets the old closure');
+  again.onmessage({ data: JSON.stringify({ type: 'hello', mode: 'interactive', cols: 100, rows: 30 }) });
+  assert.equal(statuses.at(-1), 'connected · interactive');
+  assert.equal(fakes.interactionOptions().canInput(), true);
+  fakes.terminal().dataHandler('ls\r');
+  assert.equal(again.sent.length, 1);
+  assert.ok(again.sent[0] instanceof Uint8Array, 'interactive input is binary, as locally');
+  again.onmessage({ data: new ArrayBuffer(5) });
+  const done = fakes.terminal().pending;
+  again.disconnect();
+  done();
+  assert.equal(again.sent.length, 1, 'no credit on a socket that has closed');
+  again.onmessage({ data: JSON.stringify({ type: 'closed', reason: 'kicked' }) });
+  again.disconnect();
+  assert.equal(statuses.at(-1), "closed: the peer's operator disconnected this view");
+  assert.equal(reconnect.at(-1), true, 'a kicked view may reconnect');
+  widget.dispose();
+});

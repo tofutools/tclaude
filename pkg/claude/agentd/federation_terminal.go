@@ -32,20 +32,23 @@ type fedTerminalState struct {
 	stopped bool
 }
 type fedTerminalView struct {
-	ID       string    `json:"id"`
-	Peer     string    `json:"peer"`
-	Agent    string    `json:"agent"`
-	Session  string    `json:"session"`
-	Group    string    `json:"group"`
-	ReadOnly bool      `json:"read_only"`
-	Started  time.Time `json:"started"`
-	Incoming bool      `json:"incoming"`
-	ctx      context.Context
-	cancel   context.CancelFunc
-	mu       sync.Mutex
-	stopped  bool
-	cleanup  []func()
-	done     chan struct{}
+	ID         string    `json:"id"`
+	Peer       string    `json:"peer"`
+	Agent      string    `json:"agent"`
+	Session    string    `json:"session"`
+	Group      string    `json:"group"`
+	ReadOnly   bool      `json:"read_only"`
+	Started    time.Time `json:"started"`
+	Incoming   bool      `json:"incoming"`
+	ctx        context.Context
+	cancel     context.CancelFunc
+	mu         sync.Mutex
+	stopped    bool
+	cleanup    []func()
+	done       chan struct{}
+	fixedSize  bool
+	cols, rows int
+	reason     string
 }
 
 func (rt *fedRuntime) terminalsLocked() *fedTerminalState {
@@ -109,9 +112,15 @@ func (rt *fedRuntime) addTerminal(peer string, p proto.SessionOpenPayload, incom
 		return nil, errors.New("remote attach rate limited")
 	}
 	ctx, cancel := context.WithCancel(rt.ctx)
-	v := &fedTerminalView{ID: p.Stream, Peer: peer, Agent: p.Agent, Session: p.Session, Group: p.Group, ReadOnly: p.ReadOnly, Started: time.Now(), Incoming: incoming, ctx: ctx, cancel: cancel, done: make(chan struct{})}
+	v := &fedTerminalView{ID: p.Stream, Peer: peer, Agent: p.Agent, Session: p.Session, Group: p.Group, ReadOnly: p.ReadOnly, Started: time.Now(), Incoming: incoming, fixedSize: p.FixedSize, ctx: ctx, cancel: cancel, done: make(chan struct{})}
 	st.views[v.ID] = v
-	v.addCleanup(func() { rt.terminalsMu.Lock(); delete(rt.terminalsLocked().views, v.ID); rt.terminalsMu.Unlock() })
+	v.addCleanup(func() {
+		rt.terminalsMu.Lock()
+		if rt.terminalsLocked().views[v.ID] == v {
+			delete(rt.terminalsLocked().views, v.ID)
+		}
+		rt.terminalsMu.Unlock()
+	})
 	return v, nil
 }
 func (rt *fedRuntime) stopTerminals() {
@@ -184,8 +193,9 @@ func (rt *fedRuntime) openTerminalStream(v *fedTerminalView, p proto.SessionOpen
 				continue
 			}
 			if !a.answer.OK {
-				return nil, fmt.Errorf("peer refused attach: %s", proto.StripControls(a.answer.Reason))
+				return nil, &fedTerminalRefusal{reason: proto.StripControls(a.answer.Reason)}
 			}
+			v.cols, v.rows = a.answer.Cols, a.answer.Rows
 			return rt.joinStream(ctx, v.Peer, p.Stream, kp, a.answer.Key, true)
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -233,11 +243,15 @@ func fedTerminalAudit(verb, caller, peer, target, group, detail string, status i
 	_, _ = db.InsertAuditLog(db.AuditLogEntry{At: time.Now(), ActorKind: kind, ActorConv: caller, ActorLabel: label, Verb: verb, TargetLabel: target + "@" + peer, GroupName: group, Detail: detail, Status: status, Source: "federation"})
 }
 func handleFederationAttach(w http.ResponseWriter, r *http.Request) {
+	handleFederationTerminal(w, r, false)
+}
+
+func handleFederationTerminal(w http.ResponseWriter, r *http.Request, browser bool) {
 	caller, human, ok := authedCaller(w, r)
 	if !ok {
 		return
 	}
-	if r.Header.Get("Origin") != "" {
+	if !browser && r.Header.Get("Origin") != "" {
 		writeError(w, 403, "origin", "browser origins are not supported")
 		return
 	}
@@ -282,6 +296,7 @@ func handleFederationAttach(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "offline", "federation peer is offline")
 		return
 	}
+	p.FixedSize = browser
 	p.Cols, p.Rows = queryInt(r, "cols", 80), queryInt(r, "rows", 24)
 	if p.Cols < 1 || p.Cols > 1000 || p.Rows < 1 || p.Rows > 1000 {
 		writeError(w, 400, "invalid_arg", "terminal dimensions must be 1..1000")
@@ -296,10 +311,22 @@ func handleFederationAttach(w http.ResponseWriter, r *http.Request) {
 	conn, err := rt.openTerminalStream(v, p)
 	if err != nil {
 		fedTerminalAudit("sessions.attach.open", caller, peer.InstanceID, p.Agent, p.Group, err.Error(), 502)
-		writeError(w, 502, "attach_failed", err.Error())
+		status, code := 502, "attach_failed"
+		var refused *fedTerminalRefusal
+		if errors.As(err, &refused) {
+			status, code = 403, "denied"
+			if strings.Contains(refused.reason, "limit") {
+				status, code = 429, "limit"
+			}
+		}
+		writeError(w, status, code, err.Error())
 		return
 	}
 	v.addCleanup(func() { _ = conn.Close() })
+	if browser {
+		serveDashboardFederationTerminal(w, r, rt, v, conn, peer, p)
+		return
+	}
 	// No browser is allowed to turn an ambient operator credential into a
 	// terminal bridge. This endpoint is the Unix-socket CLI transport only.
 	if r.Header.Get("Origin") != "" {
@@ -433,15 +460,21 @@ func (rt *fedRuntime) acceptSessionOpen(peer *db.FederationPeer, env *proto.Enve
 	if env.DecodePayload(&p) != nil || !proto.ValidStreamID(p.Stream) || !proto.ValidAgentRef(p.Agent) || len(p.Key) != 32 {
 		return
 	}
+	var v *fedTerminalView
 	answer := func(ok bool, key []byte, reason string) {
-		rt.sendControl(peer.InstanceID, proto.KindSessionAnswer, env.ID, proto.SessionAnswerPayload{Stream: p.Stream, OK: ok, Key: key, Reason: reason})
+		cols, rows := 0, 0
+		if v != nil {
+			cols, rows = v.cols, v.rows
+		}
+		rt.sendControl(peer.InstanceID, proto.KindSessionAnswer, env.ID, proto.SessionAnswerPayload{Stream: p.Stream, OK: ok, Key: key, Reason: reason, Cols: cols, Rows: rows})
 	}
 	if p.Cols < 1 || p.Rows < 1 || p.Cols > 1000 || p.Rows > 1000 {
 		answer(false, nil, "invalid terminal dimensions")
 		return
 	}
 	// Reserve admission before spawning or performing database/tmux probes.
-	v, err := rt.addTerminal(peer.InstanceID, p, true)
+	var err error
+	v, err = rt.addTerminal(peer.InstanceID, p, true)
 	if err != nil {
 		answer(false, nil, err.Error())
 		return
@@ -456,6 +489,14 @@ func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, p proto.Session
 		answer(false, nil, err.Error())
 		recordFederationAudit("sessions.attach.open", peerDisplay(peer), "", p.Group, "refused: "+err.Error(), 403)
 		return
+	}
+	if p.FixedSize {
+		cols, rows, err := pin.size()
+		if err != nil {
+			answer(false, nil, "target terminal size unavailable")
+			return
+		}
+		p.Cols, p.Rows = cols, rows
 	}
 	restore, err := setFedIndicator(pin, v.ID, peerDisplay(peer), p.ReadOnly)
 	if err != nil {
@@ -478,6 +519,7 @@ func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, p proto.Session
 		answer(false, nil, "viewer closed")
 		return
 	}
+	v.cols, v.rows = p.Cols, p.Rows
 	answer(true, kp.Pub, "")
 	conn, err := rt.joinStream(v.ctx, peer.InstanceID, p.Stream, kp, p.Key, false)
 	if err != nil {
@@ -494,13 +536,27 @@ func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, p proto.Session
 	})
 }
 func (rt *fedRuntime) servePaneTerminal(v *fedTerminalView, conn io.ReadWriteCloser, backend *fedPaneTerminal, authorized func() bool) {
+	reason := "exit"
 	window := terminal.NewWindow()
 	v.addCleanup(window.Close)
 	var writeMu sync.Mutex
 	write := func(f terminal.Frame) error { writeMu.Lock(); defer writeMu.Unlock(); return terminal.Write(conn, f) }
 	var workers sync.WaitGroup
 	workers.Add(2)
-	defer func() { v.close(); workers.Wait() }()
+	defer func() {
+		v.mu.Lock()
+		if v.reason != "" {
+			reason = v.reason
+		}
+		v.mu.Unlock()
+		if reason == "revoked" {
+			reason = backend.pin.closureReason(v.Peer, proto.SessionOpenPayload{ReadOnly: v.ReadOnly})
+		}
+		writeTerminalClosed(conn, &writeMu, reason)
+		v.close()
+		workers.Wait()
+	}()
+
 	errs := make(chan error, 2)
 	go func() {
 		defer workers.Done()
@@ -590,7 +646,12 @@ func (rt *fedRuntime) servePaneTerminal(v *fedTerminalView, conn io.ReadWriteClo
 	defer ticker.Stop()
 	for {
 		select {
-		case <-errs:
+		case err := <-errs:
+			if !authorized() {
+				reason = "revoked"
+			} else if err != io.EOF {
+				reason = "error"
+			}
 			return
 		case <-v.ctx.Done():
 			return
@@ -599,10 +660,30 @@ func (rt *fedRuntime) servePaneTerminal(v *fedTerminalView, conn io.ReadWriteClo
 				continue
 			}
 			if !authorized() || backend.FlushInput() != nil {
+				reason = "revoked"
 				return
 			}
 		case <-ticker.C:
+			if v.fixedSize {
+				cols, rows, err := backend.pin.size()
+				if err != nil {
+					reason = "exit"
+					return
+				}
+				if cols != v.cols || rows != v.rows {
+					if !authorized() {
+						reason = "revoked"
+						return
+					}
+					if backend.Resize(cols, rows) != nil || write(terminal.Frame{Kind: terminal.Resize, Data: terminal.Size(cols, rows)}) != nil {
+						reason = "error"
+						return
+					}
+					v.cols, v.rows = cols, rows
+				}
+			}
 			if !authorized() {
+				reason = "revoked"
 				return
 			}
 		}
@@ -643,7 +724,46 @@ func handleFederationKick(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "not_found", "no such incoming remote viewer")
 		return
 	}
-	v.close()
+	v.mu.Lock()
+	v.reason = "kicked"
+	v.mu.Unlock()
+	v.cancel()
+	// A normal kick replies after cleanup. A wedged worker must not hold the
+	// operator's HTTP request indefinitely; detach its registry entry and
+	// force-close in the background if the bounded wait is exhausted.
+	rt.waitKickedTerminal(r.Context(), v)
 	fedTerminalAudit("sessions.attach.kick", "", v.Peer, v.Agent, v.Group, "viewer="+v.ID, 200)
 	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (rt *fedRuntime) waitKickedTerminal(ctx context.Context, v *fedTerminalView) {
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	select {
+	case <-v.done:
+		return
+	case <-ctx.Done():
+	case <-timer.C:
+	}
+	rt.terminalsMu.Lock()
+	if rt.terminalsLocked().views[v.ID] == v {
+		delete(rt.terminalsLocked().views, v.ID)
+	}
+	rt.terminalsMu.Unlock()
+	goBackground(v.close)
+}
+
+type fedTerminalRefusal struct{ reason string }
+
+func (e *fedTerminalRefusal) Error() string { return "peer refused attach: " + e.reason }
+
+// A stuck output writer must never retain a kicked viewer, PTY or indicator.
+// Notification is best effort; abort interrupts both a prior blocked writer
+// and the notification itself before normal viewer cleanup proceeds.
+func writeTerminalClosed(conn io.ReadWriteCloser, writeMu *sync.Mutex, reason string) {
+	timer := time.AfterFunc(200*time.Millisecond, func() { _ = conn.Close() })
+	defer timer.Stop()
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	_ = terminal.Write(conn, terminal.Frame{Kind: terminal.Closed, Data: []byte(reason)})
 }

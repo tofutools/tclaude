@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { NodeUpdateDialog } from './node-update.js';
 import { RequestAccessDialog } from './peer-access.js';
+import { RemoteSessionsDialog } from './remote-terminal.js';
 import { PeerActionHost } from './peer-action.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { STATUS_POLL_MS, cardView, fmtAge, nodeColor, nodeHref, peerViewSummary, pollDelay, remoteHealthView, remoteNodeID, staggerOffset, switchOrder, visibleChips } from './skynet-model.js';
@@ -127,7 +128,7 @@ function CardRows({ card, node, onUpdate }) {
   </dl>`;
 }
 
-function NodeCard({ node, card, focused, onOpen, onUpdate, cardRef, shown }) {
+function NodeCard({ node, card, focused, onOpen, onUpdate, onTerminals, cardRef, shown }) {
   const kind = node.local ? 'this node' : node.level === 'unrestricted' ? '⚠ unrestricted peer' : 'restricted peer';
   const presence = card.presence === 'online' ? (node.local ? 'online' : 'online') : card.presence === 'offline' ? 'offline' : card.presence === 'error' ? 'error' : '…';
   return html`<article ref=${cardRef} data-node-id=${node.id} class=${`skynet-card${node.local ? ' local' : ''}${card.stale || card.presence === 'offline' ? ' stale' : ''}${focused ? ' focused' : ''}`}
@@ -137,7 +138,7 @@ function NodeCard({ node, card, focused, onOpen, onUpdate, cardRef, shown }) {
       <span class=${`skynet-card-presence ${card.presence}`}><i aria-hidden="true"></i>${presence}${card.stale && card.ageMs != null ? html` <span class="muted">· data ${fmtAge(card.ageMs)} old</span>` : ''}</span></div>
     <${CardRows} card=${card} node=${node} onUpdate=${onUpdate} />
     ${node.keyTransition && html`<div class=${`skynet-card-key ${node.keyTransition.state}`} title="See Fleet → Peers">${node.keyTransition.state === 'conflict' ? '⚠ competing new signing keys: needs recovery (Fleet → Peers)' : '🔑 new signing key pending: not yet accepted'}</div>`}
-    ${onOpen && html`<div class="skynet-card-foot"><button type="button" class=${shown ? 'primary' : ''} onClick=${onOpen}>${shown ? 'Back to its dashboard' : 'Open dashboard'}</button></div>`}
+    ${onOpen && html`<div class="skynet-card-foot"><button type="button" class=${shown ? 'primary' : ''} onClick=${onOpen}>${shown ? 'Back to its dashboard' : 'Open dashboard'}</button>${onTerminals && html` <button type="button" class="skynet-card-terms" title=${`Watch or type into ${node.name}'s agents in the browser, as it shares them`} onClick=${onTerminals}>Terminals…</button>`}</div>`}
   </article>`;
 }
 
@@ -167,6 +168,7 @@ export function SkynetMap({ state, actions, navigate = defaultNavigate, timers =
   const mapRef = useRef(null);
   const [edges, setEdges] = useState([]);
   const [updating, setUpdating] = useState(null);
+  const [terminals, setTerminals] = useState(null);
   const fleetKey = fleet ? [fleet.self.id, ...fleet.peers.map((p) => p.id)].join(',') : '';
 
   // Never strand the operator on an empty map: once the node list has loaded
@@ -235,7 +237,8 @@ export function SkynetMap({ state, actions, navigate = defaultNavigate, timers =
     </svg>
     ${edges.map((e) => { const p = peerById.get(e.id); return p && html`<span key=${`l-${e.id}`} class="skynet-edge-label" style=${`left:${e.mid.x}px;top:${e.mid.y}px`}>${p.level === 'unrestricted' ? '⚠ unrestricted' : 'restricted'} link</span>`; })}
     <div class="skynet-map-local"><${NodeCard} node=${fleet.self} card=${card(fleet.self)} focused=${current.focused === fleet.self.id} shown=${!remote} onOpen=${open(fleet.self)} onUpdate=${() => setUpdating(fleet.self)} /></div>
-    <div class=${`skynet-map-peers${fleet.peers.length > 4 ? ' wide' : ''}`}>${fleet.peers.map((peer) => html`<${NodeCard} key=${peer.id} node=${peer} card=${card(peer)} focused=${current.focused === peer.id} shown=${remote === peer.id} onOpen=${open(peer)} onUpdate=${() => setUpdating(peer)} />`)}</div>
+    <div class=${`skynet-map-peers${fleet.peers.length > 4 ? ' wide' : ''}`}>${fleet.peers.map((peer) => html`<${NodeCard} key=${peer.id} node=${peer} card=${card(peer)} focused=${current.focused === peer.id} shown=${remote === peer.id} onOpen=${open(peer)} onUpdate=${() => setUpdating(peer)} onTerminals=${() => setTerminals(peer)} />`)}</div>
+    ${terminals && html`<${RemoteSessionsDialog} node=${terminals} toast=${toast} onClose=${() => setTerminals(null)} />`}
     ${updating && html`<${NodeUpdateDialog} node=${{ ...updating, label: updating.name }} confirm=${confirm} toast=${toast} timers=${timers} actions=${updateActions}
       onClose=${() => { setUpdating(null); actions.loadSummary(updating); }} />`}
     <div class="skynet-legend" aria-hidden="true"><span><i class="live"></i>linked, reachable</span><span><i class="stale"></i>unreachable or stale</span><span>Counts show only what each node shares with you.</span></div>

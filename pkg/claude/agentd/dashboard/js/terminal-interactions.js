@@ -436,7 +436,10 @@ async function uploadImages(files, signal, terminalPath) {
     const ext = IMAGE_TYPES.get(file.type);
     fd.append('file', file, `pasted-image-${stamp}-${i + 1}.${ext}`);
   });
-  const endpoint = `/api/terminal-attachments?terminal=${encodeURIComponent(terminalPath)}`;
+  // A remote terminal's upload is proxied to the peer under /api/federation/,
+  // which a peer-view page keeps local (remote-node.js rewrites other /api/).
+  const base = terminalPath.startsWith('/api/federation/terminal?') ? '/api/federation/terminal-attachments' : '/api/terminal-attachments';
+  const endpoint = `${base}?terminal=${encodeURIComponent(terminalPath)}`;
   const res = await fetch(endpoint, {
     method: 'POST', credentials: 'same-origin', body: fd, signal,
   });
@@ -455,6 +458,15 @@ export function attachTerminalInteractions({
   requestPalette = requestCommandPalette,
   fetchImpl = globalThis.fetch,
   downloadFile = null,
+  // A watch-only remote terminal takes no input, so no image upload either;
+  // file downloads from a remote node are not offered (a separate grant).
+  canInput = () => true,
+  fileDownloads = true,
+  // OSC 52 clipboard writes are trusted only from the local tmux, which
+  // filters pane applications. A peer controls a remote terminal's whole byte
+  // stream, so there the clipboard is never written from it: copy uses
+  // xterm's own selection (Shift-drag) instead.
+  oscClipboard = true,
 }) {
   let statusTimer = null;
   let uploadPending = false;
@@ -514,6 +526,7 @@ export function attachTerminalInteractions({
   }
 
   function armTmuxClipboardFromGesture() {
+    if (!oscClipboard) return;
     if (activeTmuxClipboardCopy) activeTmuxClipboardCopy.cancel();
     const deferred = beginGestureClipboardWrite();
     debugCopy('armed', {
@@ -602,6 +615,7 @@ export function attachTerminalInteractions({
     // remote-node.js routes fetch only; this anchor download would read this
     // node's agentd under a peer's marker.
     if (globalThis.__tclaudeRemoteNode?.id) { flash('download not available in a peer view yet'); return; }
+    if (!fileDownloads) { flash('downloading files from a remote node is not available yet'); return; }
     if (downloadFile) {
       downloadFile(path);
       return;
@@ -627,8 +641,14 @@ export function attachTerminalInteractions({
     anchor.remove();
   }
 
-  const activateLink = (event, raw) => {
+  // A file link names a path on the terminal's host. On a remote terminal that
+  // host is the peer, so file links are not offered at all (no download hint).
+  const linkFor = (raw) => {
     const link = safeTerminalLink(raw);
+    return link && link.kind === 'file' && !fileDownloads ? null : link;
+  };
+  const activateLink = (event, raw) => {
+    const link = linkFor(raw);
     if (!link) { flash('blocked unsafe link'); return; }
     if (!event || (!event.ctrlKey && !event.metaKey)) {
       // Keep the destination in the hint. This flash replaces whatever the
@@ -660,7 +680,7 @@ export function attachTerminalInteractions({
   const showLinkTarget = (raw) => {
     if (!setStatus) return;
     if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
-    const link = safeTerminalLink(raw);
+    const link = linkFor(raw);
     if (!link) {
       setStatus('blocked unsafe link');
       return;
@@ -690,9 +710,11 @@ export function attachTerminalInteractions({
       (event, uri) => activateLink(event, uri), linkHandler,
     ));
   }
-  disposables.push(term.registerLinkProvider(
-    visibleLocalFileLinkProvider(term, linkHandler),
-  ));
+  if (fileDownloads) {
+    disposables.push(term.registerLinkProvider(
+      visibleLocalFileLinkProvider(term, linkHandler),
+    ));
+  }
 
   disposables.push(term.onSelectionChange(updateCopyButton));
   // tmux's normal mouse/copy-mode path stores the text in a tmux buffer and
@@ -700,6 +722,7 @@ export function attachTerminalInteractions({
   // a browser clipboard write gives unmodified drag the same end result as a
   // native terminal, without polling tmux or adding a second server protocol.
   disposables.push(term.parser.registerOscHandler(52, (payload) => {
+    if (!oscClipboard) return true;
     const text = decodeOSC52(payload);
     debugCopy('osc52', {
       valid: text !== null,
@@ -792,6 +815,7 @@ export function attachTerminalInteractions({
     }
     event.preventDefault();
     event.stopPropagation();
+    if (!canInput()) { flash('watch-only: this terminal takes no input'); return; }
     if (uploadPending) return;
     const key = files.map(f => `${f.size}|${f.type}`).join(',');
     const now = performance.now();
