@@ -158,6 +158,13 @@ func servePeerAgentAction(w http.ResponseWriter, r *http.Request, v *peerView, r
 		if !decodePeerAction(w, r, &body) {
 			return
 		}
+		// Only the exact closed values pass: the handler trims, so a padded
+		// " unlock" must not slip past the unrestricted check below.
+		if body.Action != sandboxRestartUnlock && body.Action != sandboxRestartRestore {
+			writeError(w, 400, "invalid_arg", "action must be unlock or restore")
+			return
+		}
+		v.auditDetail = "action=" + body.Action
 		// Unlocking runs the agent with its harness sandbox off: only a peer
 		// this node trusts unrestricted may ask for that. Restoring is the
 		// safe direction and needs only the restart grants.

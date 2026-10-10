@@ -208,6 +208,10 @@ func TestPeerResumeAndRestartGrants(t *testing.T) {
 	require.NotEqual(t, 403, code, body)
 	code, body = post("sandbox-restart", map[string]any{"action": "unlock"})
 	require.Equal(t, 403, code, "sandbox off needs unrestricted trust: "+body)
+	for _, padded := range []string{" unlock", "unlock\n", "\tunlock", "UNLOCK"} {
+		code, body = post("sandbox-restart", map[string]any{"action": padded})
+		require.Equal(t, 400, code, "only the exact closed values pass: "+body)
+	}
 	code, body = post("sandbox-restart", map[string]any{"action": "restore", "cwd": "/x"})
 	require.Equal(t, 400, code, body)
 	code, body = post("sandbox-restart", map[string]any{"action": "restore"})
