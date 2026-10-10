@@ -64,9 +64,34 @@ func (rt *fedRuntime) pushCatalogStructureChanges() {
 		rows = append(rows, row)
 	}
 	raw, err := json.Marshal(rows)
-	if err != nil || string(raw) == rt.catalogStructure {
+	if err != nil {
 		return
 	}
-	rt.catalogStructure = string(raw)
-	rt.broadcastCatalogs()
+	var shared *statusSnapshot
+	rt.publishCatalogStructure(string(raw), peers, func(peer string) bool {
+		if shared == nil {
+			shared = rt.sharedStatusForPeers(peers)
+		}
+		return rt.sendCatalog(peer, shared)
+	})
+}
+
+// Advance only the peers whose replacement catalog was delivered. Transient
+// rate limits retry next tick without duplicating successful peers' traffic.
+func (rt *fedRuntime) publishCatalogStructure(structure string, peers []db.FederationPeer, send func(string) bool) {
+	if rt.catalogStructure == nil {
+		rt.catalogStructure = map[string]string{}
+	}
+	trusted := map[string]bool{}
+	for _, p := range peers {
+		trusted[p.InstanceID] = true
+		if rt.isOnline(p.InstanceID) && rt.catalogStructure[p.InstanceID] != structure && send(p.InstanceID) {
+			rt.catalogStructure[p.InstanceID] = structure
+		}
+	}
+	for peer := range rt.catalogStructure {
+		if !trusted[peer] {
+			delete(rt.catalogStructure, peer)
+		}
+	}
 }

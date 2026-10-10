@@ -154,8 +154,8 @@ func defaultFederationName() string {
 
 // fedRuntime is one live hub connection plus its workers.
 type fedRuntime struct {
-	catalogLocks     sync.Map // peer instance id -> *sync.Mutex
-	catalogStructure string   // group/member state last observed by inboundLoop
+	catalogLocks     sync.Map          // peer instance id -> *sync.Mutex
+	catalogStructure map[string]string // successfully published structure per peer, owned by inboundLoop
 
 	peerViewsMu sync.Mutex
 	peerViews   *fedPeerViewState
@@ -460,7 +460,7 @@ func (rt *fedRuntime) sendControl(to, kind, inReplyTo string, payload any) bool 
 	return true
 }
 
-func (rt *fedRuntime) sendCatalog(peer string, status ...*statusSnapshot) {
+func (rt *fedRuntime) sendCatalog(peer string, status ...*statusSnapshot) bool {
 	// Catalogs are replacements. Serialize construction through delivery for
 	// each peer so a slow build under old trust cannot arrive after a newer
 	// downgrade/withdrawal and restore the peer's stale view.
@@ -472,9 +472,9 @@ func (rt *fedRuntime) sendCatalog(peer string, status ...*statusSnapshot) {
 	cat, err := buildFederationCatalog(peer, status...)
 	if err != nil {
 		slog.Warn("federation: build catalog failed", "peer", peer, "error", err)
-		return
+		return false
 	}
-	rt.sendControl(peer, proto.KindCatalog, "", cat)
+	delivered := rt.sendControl(peer, proto.KindCatalog, "", cat)
 	// Catalog requests must not turn a 30s node heartbeat into fanout traffic.
 	// Wake only to populate the initial static probe; later catalogs read cache.
 	rt.nodeMu.RLock()
@@ -483,6 +483,7 @@ func (rt *fedRuntime) sendCatalog(peer string, status ...*statusSnapshot) {
 	if needsProbe {
 		rt.wakeNodes()
 	}
+	return delivered
 }
 
 // buildFederationCatalog lists what this instance exports to peer: groups
