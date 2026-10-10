@@ -252,8 +252,13 @@ func (rt *fedRuntime) acceptModelOpen(peer *db.FederationPeer, env *proto.Envelo
 		grace := time.AfterFunc(5*time.Second, func() { _ = flow.Close() })
 		defer grace.Stop()
 		// Discovery and early policy refusals may leave a framed body unread.
-		// Consume it under the same grace before looking for the half-close.
-		_, _ = io.Copy(io.Discard, req.Body)
+		// Bound both time and bytes before looking for the half-close. Close
+		// immediately on overflow so deferred Body.Close cannot drain the rest.
+		const maxDrain = 64 << 10
+		if n, _ := io.Copy(io.Discard, io.LimitReader(req.Body, maxDrain+1)); n > maxDrain {
+			_ = flow.Close()
+			return
+		}
 		var extra [1]byte
 		_, _ = flow.Read(extra[:])
 	}()
