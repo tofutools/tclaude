@@ -1731,6 +1731,13 @@ test('hub as a run target: readiness, the hub threat note in the confirm, and th
     assert.equal(c.title, 'Run the script on 1 hub?');
     assert.match(c.body, /on the hub \(hub\.example\) as its service user tclaude-hub, with a 3600 s timeout.*disrupt every node's connectivity.*cannot read or forge.*full script in its audit/);
     assert.deepEqual(s.runLog.filter((l) => l[0] === 'start').at(-1).slice(1), ['hub', 'df -h', 3600]);
+    // Hub jobs are read on every second 1 s tick: hub admin calls share a control budget.
+    const hubReads = () => s.runLog.filter((l) => l[0] === 'job' && l[1] === 'hub').length;
+    for (const expected of [0, 1]) {
+      const tk = s.timers.queue.find((x) => x.ms === 1000);
+      await s.harness.act(async () => { s.timers.queue.splice(s.timers.queue.indexOf(tk), 1); await tk.fn(); });
+      assert.equal(hubReads(), expected);
+    }
     await s.click(s.q('#fleet-run-all'));
     await s.click(q('#fleet-run-submit'));
     assert.match(s.confirms.at(-1).title, /on 3 nodes including the hub/);
@@ -1793,7 +1800,7 @@ test('hub update: confirms the restart and automatic rollback, polls through the
   assert.match(q('#fleet-node-update-job').textContent, /v0\.43\.0 → v0\.44\.0: restarting… \(not answering yet\) \(health check\).*or it rolls back/, 'a failed read during the restart is not an error');
   assert.equal(q('#fleet-node-update-modal [role=alert]'), null);
   const next = queue.shift();
-  assert.equal(next.ms, 1000, 'polling continues every second through the restart');
+  assert.equal(next.ms, 2000, 'the hub is re-read every 2 s through the restart (shared control budget)');
   await harness.act(async () => { next.fn(); await new Promise((r) => setTimeout(r, 10)); });
   await harness.act(() => new Promise((r) => setTimeout(r, 20)));
   const job = q('#fleet-node-update-job');
@@ -1826,7 +1833,7 @@ test('hub update: opened while the hub is not answering, the dialog retries unti
   const q = (x) => harness.document.querySelector(x);
   assert.match(q('#fleet-node-update-modal [role=alert]').textContent, /not answering right now \(it may be restarting\); retrying/);
   const next = queue.shift();
-  assert.equal(next.ms, 1000);
+  assert.equal(next.ms, 2000);
   await harness.act(async () => { next.fn(); await new Promise((r) => setTimeout(r, 20)); });
   await harness.act(() => new Promise((r) => setTimeout(r, 20)));
   assert.match(q('#fleet-node-update-job').textContent, /v0\.43\.0 → v0\.44\.0: completed/);

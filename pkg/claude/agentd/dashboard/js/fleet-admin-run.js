@@ -6,6 +6,9 @@ import { SCRIPT_MAX_BYTES, TIMEOUT_DEFAULT_S, TIMEOUT_MAX_S, runActive, runOK, s
 const html = htm.bind(h);
 
 const RUN_POLL_MS = 1000;
+// HUB_POLL_EVERY reads a hub job on every second tick (2 s): hub admin calls
+// share the hub's per-connection control budget with everything else.
+const HUB_POLL_EVERY = 2;
 const RUN_POLL_GIVE_UP = 30;
 
 function errText(error) { return error?.message || String(error); }
@@ -219,8 +222,10 @@ export function RunPage({ view, actions, confirm, toast, timers = globalThis, pr
     if (!anyActive) return undefined;
     let stopped = false; let t = null;
     const update = (id, fn) => { if (mounted.current) setRuns((cur) => (cur[id] ? { ...cur, [id]: fn(cur[id]) } : cur)); };
+    let ticks = 0;
     const tick = async () => {
-      const active = Object.values(runsRef.current).filter((r) => runActive(r.job));
+      ticks++;
+      const active = Object.values(runsRef.current).filter((r) => runActive(r.job) && (!r.node.hub || ticks % HUB_POLL_EVERY === 0));
       await Promise.all(active.map((r) => actions.job(r.node, r.job.id)
         .then((job) => update(r.node.id, (e) => (e.job?.id === job.id ? { ...e, job, misses: 0 } : e)))
         .catch((err) => update(r.node.id, (e) => {

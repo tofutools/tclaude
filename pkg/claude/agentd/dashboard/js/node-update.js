@@ -8,6 +8,8 @@ const html = htm.bind(h);
 // UPDATE_POLL_MS paces the status re-read while an update job runs; the node's
 // daemon restarts mid-job, so failed reads are retried rather than shown.
 const UPDATE_POLL_MS = 1000;
+// The hub is read every 2 s: its admin calls share a per-connection budget.
+const HUB_UPDATE_POLL_MS = 2000;
 
 function errText(error) { return error?.message || String(error); }
 
@@ -107,7 +109,7 @@ export function NodeUpdateDialog({ node, confirm, toast, onClose, actions = defa
   const retrying = !active && node.hub && error && hubMayBeRestarting(error);
   useEffect(() => {
     if (!active && !retrying) return undefined;
-    const t = timers.setTimeout(() => setTick((n) => n + 1), UPDATE_POLL_MS);
+    const t = timers.setTimeout(() => setTick((n) => n + 1), node.hub ? HUB_UPDATE_POLL_MS : UPDATE_POLL_MS);
     return () => timers.clearTimeout(t);
   }, [active, retrying, tick]);
 
