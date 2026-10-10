@@ -286,6 +286,10 @@ nav { background: #161b22; border-bottom: 1px solid #2a3340; }
 body.hscroll-overflow.hscroll-follow .bar-inner { position: sticky; left: 0; }
 body.hscroll-overflow.hscroll-follow header .bar-inner { z-index: 2; }
 body.hscroll-overflow.hscroll-follow nav .bar-inner { z-index: 1; }
+/* The peer-view marker opens its popover and request dialog inside the header;
+   while one is open, lift the sticky header layer over the dock (45) so the
+   sticky context doesn't trap the dialog underneath it. */
+body.hscroll-overflow.hscroll-follow header .bar-inner:has(.remote-node-pop, .modal-overlay.show) { z-index: 100; }
 /* The tab controls are real <a href> anchors (so hover previews the URL and
    Cmd/Ctrl/middle-click open the location in a new tab), except Vegas which
    stays a <button> (not URL-routed). The [data-tab] selector styles both, and
@@ -19044,3 +19048,28 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-kt-cmd { margin: 6px 0; }
 .fa-kt-cmd code { word-break: break-all; }
 .fa-kt-cmd button { margin-left: 6px; }
+
+/* Phone widths. The skynet dialogs use the shared .cron-create-modal, whose
+   520px min-width clips them on a phone; let them shrink to the viewport and
+   wrap long CLI lines. The map stacks its cards instead of laying peers out to
+   the right of this node, and drops the edges (each card already names its
+   link level). */
+@media (max-width: 560px) {
+  :where([id^="fleet-"], #peer-mail-modal, #peer-access-modal, #peer-action-modal, #peer-spawn-modal) .cron-create-modal { min-width: 0; padding: 14px; }
+  :where([id^="fleet-"], #peer-mail-modal, #peer-access-modal, #peer-action-modal, #peer-spawn-modal) code { overflow-wrap: anywhere; }
+  .fa-ns-check, .fa-ns-actions, .fa-hp-rows, .fa-jb-nodes, .fa-of-check { margin-left: 0; }
+  .fa-ns-actions { flex-wrap: wrap; }
+  /* Stack the profile editor's label column, and let each grant row wrap
+     its cells instead of squeezing the slug to one character per line. */
+  .fa-pe-row { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  #fleet-profile-grants tr { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; border-bottom: 1px solid #21262d; padding: 4px 0; }
+  #fleet-profile-grants td { display: block; border: 0; padding: 0; }
+  #fleet-profile-grants code { overflow-wrap: normal; }
+}
+@media (max-width: 720px) {
+  .skynet-map { grid-template-columns: minmax(0, 1fr); row-gap: 20px; padding: 16px 12px 56px; align-items: start; }
+  .skynet-map-local, .skynet-map-peers, .skynet-map-peers.wide { grid-column: 1; }
+  .skynet-map-peers, .skynet-map-peers.wide { grid-template-columns: minmax(0, 1fr); gap: 16px; justify-content: stretch; }
+  .skynet-edges, .skynet-edge-label { display: none; }
+}
+

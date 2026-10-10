@@ -83,7 +83,13 @@ const skynetFederationStubJS = `(function(){
       { id: 'job_3m9tx4', direction: 'in', peer: 'inst_hn3cxq7a', state: 'running', request: { repo: 'tclaude', ref: 'feature/viewers', group: 'ops', harness: 'codex', command: 'Fix the flaky federation test and push a branch', timeout_seconds: 3600 }, created_at: '2026-10-10T09:20:00Z' },
       { id: 'job_q7w2n8', direction: 'out', peer: 'inst_2p6ym4ke', state: 'completed', request: { repo: 'site', ref: 'v2', group: 'web', command: 'npm run build', timeout_seconds: 900 }, result: { state: 'completed', exit_code: 0, commit: '4e1c9a7b2d3f' }, created_at: '2026-10-10T08:50:00Z' },
       { id: 'job_z1v5c6', direction: 'out', peer: 'inst_2p6ym4ke', state: 'timeout', request: { repo: 'site', ref: 'v2', group: 'web', command: 'npm test', timeout_seconds: 600 }, result: { state: 'timeout', exit_code: 124 }, created_at: '2026-10-10T08:10:00Z' }
-    ] });
+    ].concat(window.__dashsnapLiveJob ? [
+      { id: 'job_live7k', direction: 'out', peer: 'inst_hn3cxq7a', state: 'running', request: { repo: 'tclaude', ref: 'main', group: 'ops', command: 'go test ./pkg/federation/...', timeout_seconds: 1800 }, created_at: '2026-10-10T09:44:00Z' }
+    ] : []) });
+    if (path === '/api/federation/jobs/job_live7k/output') return json({ chunks: [
+      { stream: 'stdout', data: btoa('ok  \tgithub.com/tofutools/tclaude/pkg/federation\t3.112s\nok  \tgithub.com/tofutools/tclaude/pkg/federation/proto\t0.408s\n=== RUN   TestHubRelayBackpressure\n'), encoding: 'base64' },
+      { stream: 'stderr', data: btoa('warning: GOFLAGS=-mod=mod ignored for test binaries\n'), encoding: 'base64' }
+    ], cursor: 'c1', done: false, state: 'running' });
     if (path === '/api/federation/repos') return json({ repos: [
       { id: 'repo_1', name: 'tclaude', revision: 3, enabled: true, group_names: ['ops'], definition: { url: 'git@github.com:tofutools/tclaude.git', clone: '/home/ana/git/tclaude', groups: [4] } },
       { id: 'repo_2', name: 'infra', revision: 1, enabled: false, group_names: ['ops', 'build'], definition: { url: 'git@github.com:tofutools/infra.git', clone: '/home/ana/git/infra', groups: [4, 6] } }
@@ -530,6 +536,40 @@ func skynetStates() []dashsnap.State {
 			SettleMS: 400,
 		},
 		{
+			Key:     "skynet-fleet-move-dialog",
+			Title:   "Moving an agent to a peer",
+			Caption: "Fleet → Moves → Move an agent to a peer…: pick a local agent, a trusted peer and the peer's receiving group; the confirm spells out that the agent retires here once the peer runs its copy, and starts focus on Cancel.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return /Moves/.test(b.textContent); })[0].click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-move-open'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-move-open').click();
+  for (var k = 0; k < 30 && !document.querySelector('#fleet-move-agent'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-move-agent')) throw new Error('skynet: move dialog did not open');
+})();`,
+			SettleMS: 300,
+		},
+		{
+			Key:     "skynet-fleet-job-live",
+			Title:   "Live output of a running job",
+			Caption: "Fleet → Jobs & repos → Live output on a running job this node sent: stdout and stderr as they arrive, read every 2 s only while the dialog is open, Fleet is shown and the tab is visible; the stored output replaces it once the job ends.",
+			InitJS:  "window.__dashsnapLiveJob = true;" + skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Jobs & repos'; })[0].click();
+  for (var j = 0; j < 30 && !document.querySelector('[data-job="job_live7k"] [data-fa="follow"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('[data-job="job_live7k"] [data-fa="follow"]').click();
+  for (var k = 0; k < 30 && !(document.querySelector('#fleet-job-logs pre') && document.querySelector('#fleet-job-logs pre').textContent); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!/TestHubRelayBackpressure/.test(document.querySelector('#fleet-job-logs').textContent)) throw new Error('skynet: live output missing');
+})();`,
+			SettleMS: 300,
+		},
+		{
 			Key:     "skynet-fleet-offers",
 			Title:   "Bundle offers",
 			Caption: "Fleet → Offers: config and agent bundles peers offered this node (from, kind — moves and teleports flagged —, summary, size, expiry, state; Preview… and Decline…) and the ones this node sent with their outcome, plus Offer my config… / Offer an agent… / Offer a profile's config….",
@@ -771,6 +811,20 @@ func skynetStates() []dashsnap.State {
   if (document.querySelectorAll('#peer-action-modal .peer-action-choices label').length !== 5) throw new Error('skynet: peer actions missing');
 })();`,
 			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-remote-marker-pop",
+			Title:   "What a peer shares with you",
+			Caption: "On a peer view, the peer-view pill next to the node name opens what this peer shares and what it does not (each with request… where a permission would open it), its trust level, whether it is live, and the way back to this node.",
+			InitJS:  skynetRemoteViewJS + skynetFederationStubJS,
+			JS: showGroups + `return (async function(){
+  for (var i = 0; i < 50 && !document.querySelector('.remote-node-pill'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var j = 0; j < 50 && !document.querySelector('.remote-node-pill.live'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('.remote-node-pill').click();
+  for (var k = 0; k < 30 && !document.querySelector('.remote-node-pop'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('.remote-node-pop')) throw new Error('skynet: remote marker popover did not open');
+})();`,
+			SettleMS: 300,
 		},
 		{
 			Key:     "skynet-remote-view",
