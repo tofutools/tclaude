@@ -56,18 +56,29 @@ export function landingSentence(l) {
   return ` in ${l.cwd} (${landingReason(l)}${l.checkout_required ? `; ${checkoutText(l)}` : ''})`;
 }
 
+// REFUSALS say why the daemon refused the directory the picker points at.
+const REFUSALS = Object.freeze({
+  landing_unowned: (l) => `${l.cwd || 'That directory'} is not usable: it must be an absolute directory this node's operator owns. Choose another.`,
+  landing_missing: (l) => `${l.cwd || 'That directory'} does not exist on this node — create it, or choose another directory.`,
+  landing_candidate_changed: () => 'The chosen directory is no longer offered here — the choice is back on automatic; preview again or pick another.',
+  landing_unresolved: () => 'No directory on this node fits — choose one below or type a path.',
+});
+
 // LandingPicker shows where the agent will start and lets the operator pick
 // another candidate or type a path. choice is a candidate ID ('' = automatic),
 // cwd a typed path; a typed path wins, as on the CLI (--cwd over --landing).
-export function LandingPicker({ landing: l, choice = '', cwd = '', onChoose, onCwd }) {
+export function LandingPicker({ landing: l, refusal = '', choice = '', cwd = '', onChoose, onCwd }) {
   const candidates = l.candidates || [];
+  const refused = REFUSALS[refusal] || (refusal ? REFUSALS.landing_unresolved : null);
   return html`<div class="fa-landing" id="fleet-offer-landing">
     <div class="fa-of-row"><span class="fa-k">starts in</span>
-      ${landingResolved(l)
+      ${refused
+        ? html`<span id="fleet-landing-resolved" class="fa-danger">${refused(l)}</span>`
+        : landingResolved(l)
         ? html`<span id="fleet-landing-resolved">Will start in <code>${l.cwd}</code> <span class="muted">(${landingReason(l)})</span>${l.checkout_required ? html` <span class="muted">— ${checkoutText(l)}</span>` : ''}</span>`
         : html`<span id="fleet-landing-resolved" class="fa-danger">No directory on this node fits — choose one below or type a path.</span>`}
     </div>
-    ${landingMissing(l) && html`<div class="fa-warn" id="fleet-landing-missing" role="alert"><code>${l.cwd}</code> does not exist on this node — create it, or choose another directory.</div>`}
+    ${!refused && landingMissing(l) && html`<div class="fa-warn" id="fleet-landing-missing" role="alert"><code>${l.cwd}</code> does not exist on this node — create it, or choose another directory.</div>`}
     ${candidates.length > 0 && html`<label class="fa-of-row"><span class="fa-k">choose</span>
       <select id="fleet-landing-choice" value=${choice} onChange=${(e) => onChoose(e.currentTarget.value)}>
         <option value="">automatic (first match)</option>

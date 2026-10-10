@@ -57,6 +57,8 @@ export function importBody(offer, opts, apply) {
 // unresolved placeholders or paths) returns beside its error. A landing
 // refusal (landing_unresolved, landing_missing, landing_unowned,
 // landing_candidate_changed) carries the landing to pick from instead.
+function landingCode(e) { return /^landing_/.test(e?.code || '') ? e.code : ''; }
+
 function previewOf(e, prev = null) {
   if (e?.body?.preview) return e.body.preview;
   if (e?.body?.landing) return { ...(prev || {}), landing: e.body.landing };
@@ -109,8 +111,12 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
   const version = useRef(0);
   const peer = label(offer.peer);
 
-  const show = (p, v = version.current) => {
-    setPreview(p); setStale(v !== version.current);
+  // refusal is the landing_* code of the last answer: the daemon would not
+  // start the agent where the picker points, so Start stays off until a
+  // preview resolves again.
+  const [refusal, setRefusal] = useState('');
+  const show = (p, v = version.current, refused = '') => {
+    setPreview(p); setStale(v !== version.current); setRefusal(refused);
     setRows((prev) => {
       const by = new Map(prev.map((c) => [c.item, c]));
       for (const c of p?.changes || []) by.set(c.item, c);
@@ -122,7 +128,14 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
     const v = version.current;
     actions.importOffer(offer, importBody(offer, o, false))
       .then((p) => show(p, v))
-      .catch((e) => { const p = previewOf(e, preview); if (p) show(p, v); setError(errText(e)); })
+      .catch((e) => {
+        const p = previewOf(e, preview);
+        if (p) show(p, v, landingCode(e));
+        // A candidate the daemon no longer offers would fail every preview:
+        // fall back to automatic so Preview again can succeed.
+        if (e?.code === 'landing_candidate_changed') setOpts((o) => ({ ...o, landing: '' }));
+        setError(errText(e));
+      })
       .finally(() => setBusy(false));
   };
   useEffect(() => run(), []);
@@ -138,7 +151,7 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
   const unresolved = preview?.unresolved || [];
   const missing = unresolved.some((u) => !String(opts.values[u.name] || '').trim());
   const nothing = !agent && !changes.some((c) => c.action !== 'unchanged' && !opts.skip.includes(c.item));
-  const blocked = !preview || stale || busy || missing || nothing || (conflicts && !opts.replace) || (agent && landingBlocks(preview?.landing));
+  const blocked = !preview || stale || busy || missing || nothing || (conflicts && !opts.replace) || (agent && (!!refusal || landingBlocks(preview?.landing)));
 
   const apply = () => confirm({
     title: agent ? `Start ${preview?.agent?.name || 'the agent'} from ${peer}?` : `Apply ${peer}'s config here?`,
@@ -147,7 +160,12 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
     busyLabel: agent ? 'Starting…' : 'Applying…',
     action: () => actions.importOffer(offer, importBody(offer, opts, true)),
   }).then((r) => { if (r) onDone(agent ? `Started ${r.spawn?.agent_id || preview?.agent?.name || 'the agent'} from ${peer}'s offer` : `Applied ${(r.applied || []).length} items from ${peer}`); })
-    .catch((e) => { const p = previewOf(e, preview); if (p) setPreview(p); setError(errText(e)); });
+    .catch((e) => {
+      const p = previewOf(e, preview);
+      if (p) setPreview(p);
+      if (landingCode(e)) { setRefusal(landingCode(e)); setStale(true); }
+      setError(errText(e));
+    });
 
   return html`<${Overlay} id="fleet-offer-import" labelledby="fleet-offer-import-title" onClose=${onClose}>
     <h3 id="fleet-offer-import-title">${offerKind(offer)} offer from ${peer}</h3>
@@ -156,7 +174,7 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
     ${agent ? html`
       <div class="fa-of-row"><span class="fa-k">agent</span><span>${preview?.agent?.name || '…'}${preview?.agent?.harness ? html` <span class="muted">(${preview.agent.harness}${preview.agent.role ? `, role ${preview.agent.role}` : ''})</span>` : ''}</span></div>
       ${preview?.landing
-        ? html`<${LandingPicker} landing=${preview.landing} choice=${opts.landing} cwd=${opts.cwd} onChoose=${choose} onCwd=${(v) => change({ cwd: v })} />`
+        ? html`<${LandingPicker} landing=${preview.landing} refusal=${refusal} choice=${opts.landing} cwd=${opts.cwd} onChoose=${choose} onCwd=${(v) => change({ cwd: v })} />`
         : html`<label class="fa-of-row"><span class="fa-k">cwd</span><input id="fleet-offer-cwd" value=${opts.cwd} placeholder=${preview?.cwd || 'directory on this node'} autocomplete="off" spellcheck="false" onInput=${set('cwd')} /></label>`}
       <label class="fa-of-row"><span class="fa-k">group</span><input id="fleet-offer-group" value=${opts.group} placeholder=${offer.offer?.group ? `the group bound on receipt (${offer.offer.group}); type another to override` : 'receiving group here'} autocomplete="off" onInput=${set('group')} /></label>
       <label class="fa-of-row"><span class="fa-k">name</span><input id="fleet-offer-name" value=${opts.name} placeholder=${preview?.agent?.name || 'keep the offered name'} autocomplete="off" onInput=${set('name')} /></label>
@@ -180,7 +198,7 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
       ${changes.some((c) => c.action === 'replace') && html`<label class="fa-of-check"><input id="fleet-offer-replace" type="checkbox" checked=${opts.replace} onChange=${set('replace')} /> overwrite my items that differ (otherwise untick them)</label>`}`}
     ${unresolved.length > 0 && html`<div class="fa-cli-note">Values this offer needs on this node:</div>
       ${unresolved.map((u) => html`<label class="fa-of-row" key=${u.name}><span class="fa-k">${u.name}</span><input data-placeholder=${u.name} value=${opts.values[u.name] || ''} placeholder=${u.original || `${u.item} ${u.field}`} autocomplete="off" spellcheck="false" onInput=${(e) => change({ values: { ...opts.values, [u.name]: e.currentTarget.value } })} /></label>`)}
-      <label class="fa-of-check"><input id="fleet-offer-keep-paths" type="checkbox" checked=${opts.keepPaths} onChange=${set('keepPaths')} /> keep the sender's recorded absolute paths</label>`}
+      ${!(agent && preview?.landing) && html`<label class="fa-of-check"><input id="fleet-offer-keep-paths" type="checkbox" checked=${opts.keepPaths} onChange=${set('keepPaths')} /> keep the sender's recorded absolute paths</label>`}`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation offers import ${offer.offer?.id} --peer ${shortID(offer.peer)}${agent ? ' [--cwd … | --landing ID] [--group …]' : ' [--skip …] [--replace]'} [--apply]</code></div>
     <div class="modal-buttons">

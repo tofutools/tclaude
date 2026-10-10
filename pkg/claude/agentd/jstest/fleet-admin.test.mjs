@@ -1926,10 +1926,14 @@ test('an arriving agent shows where it will start and why, offers the other cand
     { id: 'group_default', cwd: '/work/ops', reason: 'group_default', exists: true },
   ];
   const source = { source_cwd: '/home/x/repo', source_repo: 'git@github.com:tofutools/<b>tclaude</b>.git' };
+  // Like the daemon: a refused directory answers with a landing_* error that
+  // carries the landing, on preview as on apply.
+  const refuse = (code, status, msg, landing) => { const e = new Error(msg); e.status = status; e.code = code; e.body = { code, landing: { ...landing, candidates, ...source } }; throw e; };
   s_landing = (body) => {
     if (body.cwd) {
-      if (body.apply && body.cwd === '/srv/gone') { const e = new Error('landing directory is missing'); e.status = 409; e.code = 'landing_missing'; e.body = { landing: { cwd: '/srv/gone', reason: 'explicit', exists: false, candidates, ...source } }; throw e; }
-      return { cwd: body.cwd, reason: 'explicit', exists: body.cwd !== '/nope', candidates, ...source };
+      if (body.cwd === '/nope' || (body.apply && body.cwd === '/srv/gone')) refuse('landing_missing', 409, 'selected receiving directory does not exist', { cwd: body.cwd, reason: 'explicit', exists: false });
+      if (body.cwd === '/home/other') refuse('landing_unowned', 403, 'receiving directory is not owned by the operator', { cwd: body.cwd, reason: 'explicit', exists: true });
+      return { cwd: body.cwd, reason: 'explicit', exists: true, candidates, ...source };
     }
     const c = candidates.find((x) => x.id === (body.landing || 'repo:r1'));
     return { ...c, candidates, ...source };
@@ -1948,6 +1952,7 @@ test('an arriving agent shows where it will start and why, offers the other cand
   assert.deepEqual([...q('#fleet-landing-choice').querySelectorAll('option')].map((o) => o.textContent),
     ['automatic (first match)', '/srv/checkouts/tclaude-ada — matched repo tclaude (new checkout)', '/home/x/repo — same path exists here', '/work/ops — group default dir']);
   assert.equal(q('#fleet-offer-apply').disabled, false);
+  assert.equal(q('#fleet-offer-keep-paths'), null, 'keep-paths would silently override the picker');
 
   // Picking a candidate previews at once with it.
   const sel = q('#fleet-landing-choice');
@@ -1961,16 +1966,24 @@ test('an arriving agent shows where it will start and why, offers the other cand
   await s.click(q('#fleet-offer-preview'));
   const body = s.log.findLast((l) => l[0] === 'import')[2];
   assert.equal(body.cwd, '/nope'); assert.equal(body.landing, undefined, 'cwd wins, as --cwd over --landing');
-  assert.match(q('#fleet-landing-missing').textContent, /\/nope does not exist on this node/);
+  assert.match(q('#fleet-landing-resolved').textContent, /\/nope does not exist on this node/);
   assert.equal(q('#fleet-offer-apply').disabled, true, 'a missing directory cannot start the agent');
+
+  // A directory another user owns is refused, not shown as where it starts.
+  await type(q('#fleet-offer-cwd'), '/home/other');
+  await s.click(q('#fleet-offer-preview'));
+  assert.match(q('#fleet-landing-resolved').textContent, /\/home\/other is not usable: it must be an absolute directory this node's operator owns/);
+  assert.doesNotMatch(q('#fleet-offer-landing').textContent, /Will start in/);
+  assert.equal(q('#fleet-offer-apply').disabled, true, 'an unowned directory cannot start the agent');
 
   // A directory that vanished before apply comes back as a landing refusal to pick from.
   await type(q('#fleet-offer-cwd'), '/srv/gone');
   await s.click(q('#fleet-offer-preview'));
   await s.click(q('#fleet-offer-apply'));
   assert.match(s.confirms.at(-1).body, /new agent ada on this node in \/srv\/gone \(your choice\)/);
-  assert.match(q('#fleet-offer-import .fa-danger[role="alert"]').textContent, /landing directory is missing/);
-  assert.match(q('#fleet-landing-missing').textContent, /\/srv\/gone does not exist/);
+  assert.match(q('#fleet-offer-import .fa-danger[role="alert"]').textContent, /selected receiving directory does not exist/);
+  assert.match(q('#fleet-landing-resolved').textContent, /\/srv\/gone does not exist/);
+  assert.equal(q('#fleet-offer-apply').disabled, true, 'a refused apply needs a new preview');
   assert.match(q('#fleet-offer-import').textContent, /--cwd … \| --landing ID/);
 });
 

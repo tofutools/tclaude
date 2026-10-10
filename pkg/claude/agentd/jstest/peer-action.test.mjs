@@ -76,7 +76,7 @@ test('the agent dialog offers what the peer shares, confirms the consequence and
   await harness.act(() => q('#peer-action-submit').click());
   await settle();
   assert.match(confirms.at(-1).body, /teleports from forge to this node, continuing its history in group beta; the original keeps running on forge/);
-  assert.match(confirms.at(-1).body, /This node picks its starting directory: a matching Fleet repo, its own path if that exists here, the group's default dir, or the teleport landing policy\. When none fits, it waits in Fleet → Offers/);
+  assert.match(confirms.at(-1).body, /Where this node lands teleports in that group automatically, it starts in the first fit \(a matching Fleet repo, its own path if that exists here, the group's default dir, then the landing policy\); otherwise it waits in Fleet → Offers/);
   assert.deepEqual(calls.at(-1), ['teleport', 'agt_abc123', { group: 'beta', note: '', clone: true }]);
   assert.equal(q('#peer-action-modal'), null, 'the dialog closes once sent');
   assert.match(toasts.at(-1)[0], /comes to group beta on this node/);
