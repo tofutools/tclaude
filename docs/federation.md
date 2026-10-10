@@ -1627,7 +1627,9 @@ The destination gets a fresh agent identity and inbox. Its continuation briefing
 includes the origin, predecessor, current instance, hop count and note. `agent ls`
 and `agent whoami` show its predecessor. The old inbox remains at the source;
 after a completed teleport, mail to the old address bounces with the destination
-address. Teleport does not forward mail or transfer permissions, credentials or
+address. Every receiving import, move or teleport starts with a short arrival briefing: operation and identity, receiver-selected cwd and reason, local Git state, source-reported path/branch/commit facts, and what was not transferred. Missing facts stay unknown. Local clones receive the same orientation, while a paused-backup return names the restored home identity. The briefing uses the startup context or inbox, never raw pane keystrokes.
+
+Teleport does not forward mail or transfer permissions, credentials or
 uncommitted working-tree changes.
 
 Automatic landing requires a group-scoped peer grant `agents.teleport.receive`

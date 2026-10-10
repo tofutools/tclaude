@@ -4870,6 +4870,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// same function in a loop. handleGroupSpawn keeps only the HTTP
 	// shape — decode + validate above, error/JSON mapping below.
 	p := spawnParams{
+		Arrival:                    arrivalFromRequest(r),
 		AgentID:                    reservedAgentIDFromContext(r.Context()),
 		EffectiveSandbox:           &effectiveSandbox,
 		Name:                       body.Name,
@@ -5125,6 +5126,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 // length/charset-checked, reply-to resolved to a conv-id — so the
 // shared core does no HTTP-shaped validation of its own.
 type spawnParams struct {
+	Arrival         *arrivalContext
 	RemoteJob       *federationJobLaunch // trusted internal remote job boundary
 	launchAuthority func() error
 	BundleHistory   *bundleHistoryLaunch // trusted internal bundle route only
@@ -7141,6 +7143,13 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		if routeEnabled && (!layeredLaunch || !launchEnroll) {
 			return nil, &spawnFailure{http.StatusUnprocessableEntity, "unsupported_group_route_launch", "Linux group routes require a pre-enrolled pane-authoritative launch with tclaude’s sandbox"}
 		}
+	}
+	if p.Arrival != nil {
+		if p.AgentID == "" {
+			p.AgentID = db.NewAgentID()
+		}
+		p.InitialMessage = buildArrivalBriefing(*p.Arrival, p.AgentID, p.Cwd, groupName, spawnHarness.Name, p.Model) + "\n\n" + p.InitialMessage
+		p.Arrival = nil // an async continuation must not add a second briefing
 	}
 	var preConvID string
 	var preMsgID int64

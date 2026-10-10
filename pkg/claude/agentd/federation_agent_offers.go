@@ -119,6 +119,9 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 422, map[string]any{"error": "suspected credentials: use --allow-flagged or share without --history", "code": "flagged_credentials", "findings": b.Manifest.Findings})
 		return
 	}
+	if b.Manifest.Agent.Origin != nil {
+		b.Manifest.Agent.Origin.Trigger = arrivalTrigger(caller, source, human)
+	}
 	archive, err := archiveAgentBundle(b)
 	if err != nil {
 		writeError(w, 400, "bundle_export", err.Error())
@@ -354,6 +357,7 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 		return
 	}
 	defer func() { _ = bundle.Close() }()
+	arrival := arrivalFromOffer(o, bundle.Manifest.Agent)
 	landing, err := resolveFederationLanding(r.Context(), o, g, bundle.Manifest.Agent.Paths, in, teleportRow)
 	if err != nil || landing.Preview.Cwd == "" || !landing.Preview.Exists && !landing.Preview.CheckoutRequired {
 		code, status, message := "landing_unresolved", 409, "no receiving working directory resolved"
@@ -391,6 +395,9 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 			query.Set("apply", "true")
 		}
 		inner := r.Clone(context.WithValue(r.Context(), permissionCarryContextKey{}, permissionCarryPolicy{Peer: o.Peer, GroupID: g.ID, Group: g.Name, Enabled: bundle.Manifest.Agent.CarryPermissions && !in.DropPermissions, AllowSensitive: in.AllowSensitivePermissions && teleportLandingFromRequest(r) == nil}))
+		inner = inner.WithContext(context.WithValue(inner.Context(), arrivalContextKey{}, arrival))
+		arrival.Reason = landing.Preview.Reason
+
 		if o.Descriptor.Teleport != nil {
 			inner = inner.WithContext(context.WithValue(inner.Context(), teleportOfferContextKey{}, o))
 		}
