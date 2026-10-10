@@ -92,9 +92,29 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     removePoolMember: async (n, p) => { log.push(['removePoolMember', n, p]); return { ok: true }; },
     setDefaultProfile: async (n) => { log.push(['setDefaultProfile', n]); return { profile_id: n }; },
     deleteProfile: async (n) => { log.push(['deleteProfile', n]); return { ok: true }; },
+    offers: async (dir) => { log.push(['offers', dir]); return dir === 'in' ? [
+      { offer: { id: 'off_cfg', type: 'config', bytes: 2048, sha256: 'ab'.repeat(32), expires_at: '2099-01-01T00:00:00Z', summary: 'Config bundle: 3 items' }, peer: 'inst_forge', direction: 'in', state: 'pending' },
+      { offer: { id: 'off_mv', type: 'agent', bytes: 9000, sha256: 'cd'.repeat(32), expires_at: '2099-01-01T00:00:00Z', summary: 'Agent ada', group: 'ops', move: { source_agent: 'agt_src' } }, peer: 'inst_forge', direction: 'in', state: 'ready', sender_agent: 'agt_src' },
+      { offer: { id: 'off_old', type: 'config', summary: 'old' }, peer: 'inst_lab', direction: 'in', state: 'applied' },
+    ] : [{ offer: { id: 'off_out', type: 'config', summary: 'Config bundle: 1 items', expires_at: '2099-01-01T00:00:00Z' }, peer: 'inst_lab', direction: 'out', state: 'declined' }]; },
+    importOffer: async (o, body) => {
+      log.push(['import', o.offer.id, body]);
+      if (o.offer.type === 'agent') {
+        const preview = { agent: { name: 'ada', harness: 'claude' }, cwd: body.cwd || '/srv/ada', group: body.group, history: true, unresolved: body.values?.REPO ? [] : [{ name: 'REPO', item: 'paths', field: 'cwd', original: '/home/x/repo' }], warnings: [], security: 'Permissions and ownership are advisory only.', findings: [{ kind: 'api_key', count: 1, locations: ['turn 3'] }], applied: !!body.apply };
+        if (body.apply) return { ...preview, spawn: { agent_id: 'agt_new' } };
+        return preview;
+      }
+      const all = [{ item: 'roles/reviewer', action: 'create', security: true }, { item: 'config/theme', action: 'replace' }, { item: 'templates/t', action: 'unchanged', security: true }];
+      const changes = all.filter((c) => !(body.skip || []).includes(c.item));
+      return { changes, applied: body.apply ? changes.filter((c) => c.action !== 'unchanged').map((c) => c.item) : [], security_changes: 1 };
+    },
+    declineOffer: async (o) => { log.push(['decline', o.offer.id, o.peer]); return { state: 'declined' }; },
+    offerConfig: async (body) => { log.push(['offerConfig', body]); if (!body.allow_flagged) { const e = new Error('suspected credentials'); e.code = 'flagged_credentials'; e.status = 422; e.body = { flags: [{ item: 'roles/reviewer', field: 'prompt', hint: 'looks like a token' }] }; throw e; } return { offer: {} }; },
+    shareAgent: async (body) => { log.push(['shareAgent', body]); return { offer: {} }; },
+    offerProfile: async (n, peer) => { log.push(['offerProfile', n, peer]); const e = new Error('profile not applied to peer'); e.status = 409; throw e; },
     applyProfile: async (n, o) => { log.push(['applyProfile', n, o]); return { preview_token: 'ptok', changes: [{ item: 'trust_level', before: 'restricted', after: 'unrestricted', security: true }, { item: 'pool/pool_r', before: false, after: true, security: true }], pools: [{ id: 'pool_r', name: 'rigs', live_grants: [{ slug: 'groups.members.spawn', scope: '' }] }], security_changes: 2, conflicts: [] }; },
   };
-  const snapshot = harness.signals.signal({ groups: [{ name: 'ops' }, { name: 'build' }] });
+  const snapshot = harness.signals.signal({ groups: [{ name: 'ops' }, { name: 'build' }], agents: [{ agent_id: 'agt_a1', title: 'ada', online: true }, { conv_id: 'c-no-id', title: 'legacy' }] });
   // Like shellConfirm: a confirmed action resolves to the action's result.
   const confirm = async (opts) => { confirms.push(opts); return opts.action ? opts.action() : true; };
   const timers = fakeTimers();
@@ -626,4 +646,100 @@ test('accepting remote scripts confirms full remote code execution; node.exec gr
   const saves = s.runLog.filter((l) => l[0] === 'save').length;
   await s.click(s.q('#fleet-run-limits'));
   assert.equal(s.runLog.filter((l) => l[0] === 'save').length, saves, 'a non-numeric cpu is rejected, never sent');
+});
+
+test('offers: preview then apply a config offer item by item, start a moved agent, decline, and send offers with flagged-credential handling', async (t) => {
+  const s = await setup(t);
+  const doc = s.harness.document; const q = (x) => doc.querySelector(x);
+  const type = async (el, v) => { el.value = v; await s.harness.act(() => s.harness.fireEvent(el, 'input')); };
+  const tick = async (el, on) => { el.checked = on; await s.harness.act(() => s.harness.fireEvent(el, 'change')); };
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => b.textContent === 'Offers'));
+  assert.equal(s.q('#fleet-offers-in').querySelectorAll('tbody tr').length, 3);
+  assert.equal(s.q('[data-offer="off_old"] [data-fa]'), null, 'a finished offer has no actions');
+  assert.match(s.q('[data-offer="off_mv"]').textContent, /agent move.*→ group ops/);
+  assert.match(s.q('#fleet-offers-out').textContent, /lab.*declined/);
+
+  // Config: a conflicting item blocks apply until it is unticked (or replaced).
+  await s.click(s.q('[data-offer="off_cfg"] [data-fa="preview"]'));
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'import'), ['import', 'off_cfg', { apply: false }]);
+  assert.equal(q('#fleet-offer-changes').querySelectorAll('tbody tr').length, 3);
+  assert.match(q('[data-item="roles/reviewer"]').textContent, /new.*security/);
+  assert.match(q('[data-item="config/theme"]').textContent, /overwrites yours/);
+  assert.equal(q('#fleet-offer-apply').disabled, true, 'a conflict needs replace or exclusion');
+  await tick(q('[data-item="config/theme"] input'), false);
+  assert.equal(q('#fleet-offer-apply').disabled, true, 'a changed selection needs a fresh preview');
+  await s.click(q('#fleet-offer-preview'));
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'import')[2], { apply: false, skip: ['config/theme'] });
+  assert.ok(q('[data-item="config/theme"]'), 'a skipped item stays listed so it can be re-included');
+  assert.equal(q('#fleet-offer-apply').disabled, false);
+  await s.click(q('#fleet-offer-apply'));
+  assert.match(s.confirms.at(-1).body, /^Applies 1 item from forge.*take effect immediately: 1 new\. Security-relevant: roles\/reviewer.*forge is told the offer was applied/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'import')[2], { apply: true, skip: ['config/theme'] });
+  assert.equal(q('#fleet-offer-import'), null);
+  assert.match(s.toasts.at(-1), /Applied 1 items from forge/);
+
+  // Agent move: a placeholder needs a value; the confirm names the move.
+  await s.click(s.q('[data-offer="off_mv"] [data-fa="preview"]'));
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'import')[2], { apply: false, group: 'ops' });
+  assert.equal(q('#fleet-offer-skip-history'), null, 'a move always carries history');
+  assert.match(q('#fleet-offer-import').textContent, /Suspected credentials in the history: api_key ×1/);
+  assert.equal(q('#fleet-offer-apply').disabled, true, 'an unresolved placeholder blocks apply');
+  await type(q('[data-placeholder="REPO"]'), '/srv/repo');
+  await s.click(q('#fleet-offer-preview'));
+  await s.click(q('#fleet-offer-apply'));
+  assert.match(s.confirms.at(-1).title, /Start ada from forge/);
+  assert.match(s.confirms.at(-1).body, /new agent ada on this node in \/srv\/ada in group ops.*shared conversation history.*suspected credentials: api_key ×1.*not copied\. This is a move: once it runs here, forge retires its source agent/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'import')[2], { apply: true, values: { REPO: '/srv/repo' }, group: 'ops' });
+  assert.match(s.toasts.at(-1), /Started agt_new/);
+
+  await s.click(s.q('[data-offer="off_cfg"] [data-fa="decline"]'));
+  assert.match(s.confirms.at(-1).body, /payload is deleted and forge is told it was declined/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'decline'), ['decline', 'off_cfg', 'inst_forge']);
+
+  // Offer config: flagged items are shown and need an explicit send-anyway.
+  await s.click(s.q('#fleet-offer-config-open'));
+  await tick(q('[data-section="roles"]'), true);
+  await s.click(q('#fleet-offer-config-send'));
+  assert.match(s.confirms.at(-1).body, /Sends roles to forge's operator.*free text .* is sent as written/);
+  assert.match(q('#fleet-offer-config').textContent, /roles\/reviewer prompt: looks like a token/);
+  assert.equal(q('#fleet-offer-config-send').disabled, true);
+  await tick(q('#fleet-offer-config-allow'), true);
+  await s.click(q('#fleet-offer-config-send'));
+  assert.match(s.confirms.at(-1).body, /includes 1 item flagged as possible credentials/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'offerConfig')[1], { peer: 'inst_forge', only: ['roles'], allow_flagged: true });
+
+  // Share an agent: only agents with a stable ID; the receiving group is required.
+  await s.click(s.q('#fleet-share-agent-open'));
+  assert.deepEqual([...q('#fleet-share-agent-agent').querySelectorAll('option')].map((o) => o.value), ['agt_a1']);
+  await s.click(q('#fleet-share-agent-send'));
+  assert.match(q('#fleet-share-agent [role=alert]').textContent, /receiving group/);
+  await type(q('#fleet-share-agent-group'), 'team');
+  await tick(q('#fleet-share-agent-history'), true);
+  await s.click(q('#fleet-share-agent-send'));
+  assert.match(s.confirms.at(-1).body, /and a copy of its conversation history.*group team\. ada \(agt_a1\) keeps running here/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'shareAgent')[1], { agent: 'agt_a1', peer: 'inst_forge', group: 'team', history: true, allow_flagged: false });
+
+  await s.click(s.q('#fleet-offer-profile-open'));
+  await s.click(q('#fleet-offer-profile-send'));
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'offerProfile'), ['offerProfile', 'ops-full', 'inst_forge']);
+  assert.match(q('#fleet-offer-profile [role=alert]').textContent, /apply the profile to forge first/);
+});
+
+test('offer actions address an incoming offer by ID and source peer', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createFleetAdminActions } = await harness.importDashboardModule('js/fleet-admin-actions.js');
+  const calls = [];
+  const a = createFleetAdminActions({ fetchImpl: async (url, init) => { calls.push([init.method, url, init.body ? JSON.parse(init.body) : null]); return { ok: true, status: 200, json: async () => [] }; } });
+  const o = { offer: { id: 'off 1' }, peer: 'inst_forge' };
+  await a.offers('in');
+  await a.importOffer(o, { apply: false });
+  await a.declineOffer(o);
+  await a.offerProfile('rig', 'inst_forge');
+  assert.deepEqual(calls, [
+    ['GET', '/api/federation/bundle-offers?direction=in', null],
+    ['POST', '/api/federation/bundle-offers/off%201/import?peer=inst_forge', { apply: false }],
+    ['POST', '/api/federation/bundle-offers/off%201/decline?peer=inst_forge', {}],
+    ['POST', '/api/federation/profiles/rig/offer', { peer: 'inst_forge' }],
+  ]);
 });

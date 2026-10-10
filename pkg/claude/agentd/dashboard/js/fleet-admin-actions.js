@@ -65,5 +65,13 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
     applyProfile: (name, { peer, apply = false, previewToken = '', confirmFingerprint = '' }) => call('POST', `profiles/${encodeURIComponent(name)}/apply`,
       { peer, apply, preview_token: previewToken, confirm_fingerprint: confirmFingerprint }),
     enroll: ({ master, token, previewToken }) => call('POST', 'enroll', { master, token, preview_token: previewToken }),
+    // Bundle offers. An incoming offer is addressed by ID plus its source peer
+    // (the same ID can come from two peers); import defaults to a preview.
+    offers: async (direction) => (await call('GET', `bundle-offers?direction=${direction}`)) || [],
+    importOffer: (o, body) => call('POST', `bundle-offers/${encodeURIComponent(o.offer.id)}/import?peer=${encodeURIComponent(o.peer)}`, body),
+    declineOffer: (o) => call('POST', `bundle-offers/${encodeURIComponent(o.offer.id)}/decline?peer=${encodeURIComponent(o.peer)}`, {}),
+    offerConfig: (body) => call('POST', 'offer-config', body),
+    shareAgent: (body) => call('POST', 'share-agent', body),
+    offerProfile: (name, peer) => call('POST', `profiles/${encodeURIComponent(name)}/offer`, { peer }),
   });
 }

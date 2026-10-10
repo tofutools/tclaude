@@ -625,6 +625,16 @@ first and says what will happen. Most pages name their CLI.
   level, pools and grants: **Apply to peer…** previews the plan, **Make
   default…** applies it to newly trusted peers. Profile definitions are edited
   with `tclaude federation profile`.
+- **Offers** — config and agent bundles peers offered this node, and the ones
+  it sent. **Preview…** shows what an incoming offer would change: per config
+  item new / overwrites yours / unchanged with security-relevant items marked
+  and a tick to leave each out, or for an agent its name, history and any
+  suspected credentials in it, plus placement and the values it needs here.
+  **Apply…** / **Start agent…** confirm what changes (a move or teleport says
+  the peer retires its source); **Decline…** deletes the payload. **Offer my
+  config…**, **Offer an agent…** and **Offer a profile's config…** send new
+  ones; flagged credentials are listed and need an explicit send-anyway.
+  CLI: `tclaude federation offers`, `offer-config`, `share-agent`.
 - **Audit** — this node's federation activity, newest first: a peer acting
   here (⇠) or this node acting on a peer (⇢), with actor, target, group and
   outcome; refused or failed requests in red. Filter by peer and time window.
