@@ -18937,6 +18937,15 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-ack { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0 4px; }
 .fa-grants-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 4px 0 10px; }
 .fa-warn { color: #e3b341; }
+/* Peer operator mail and away cover (js/peer-mail.js). */
+#peer-mail-modal > :not(h3):not(.modal-buttons) { font-size: 13px; font-weight: normal; }
+.peer-mail-kind { display: flex; gap: 14px; margin: 4px 0 8px; }
+.peer-mail-opt { display: grid; grid-template-columns: 70px minmax(0, 1fr); align-items: center; gap: 8px; margin: 6px 0; }
+.peer-mail-opt input, .peer-mail-opt select, .peer-mail-opt textarea { width: 100%; box-sizing: border-box; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; }
+.peer-mail-top { align-items: start; }
+.peer-mail-h { margin: 14px 0 4px; font-size: 13px; font-weight: 600; }
+.fa-away-edit select, .fa-away-edit input { font: inherit; font-size: 12px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; padding: 1px 4px; }
+.peer-away-answer { display: inline-flex; gap: 6px; margin-right: 8px; }
 .fa-sensitive { color: #f0883e; }
 .fa-grant-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 6px; }
 .fa-grant-launch { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 0 0 8px; padding: 8px 10px; border: 1px solid #21262d; border-radius: 6px; }

@@ -56,6 +56,10 @@ const skynetFederationStubJS = `(function(){
       { id: 'a1', at: '2026-10-10T08:20:00Z', source: 'audit', direction: 'event', peer: 'inst_hn3cxq7a', kind: 'federation.grant', actor: 'operator', target: 'inst_hn3cxq7a groups.roster.read group=ops', status: 200 }
     ]);
     if (/^\/api\/federation\/profiles\/[^/]+$/.test(path) && !(init && init.method === 'PUT')) return json({ profile: {}, applied_peers: ['inst_hn3cxq7a'] });
+    if (path === '/api/federation/away' && !(init && init.method === 'POST')) return json({ away: window.__dashsnapAway ? { cover: 'inst_hn3cxq7a', since: '2026-10-10T08:00:00Z', until: '2026-10-10T18:00:00Z' } : null });
+    if (path === '/api/federation/outbox') return json([
+      { envelope_id: 'env_7k2q', to: 'operator@lab', from: 'human operator', subject: 'Release window', preview: 'Freeze starts at 18:00', state: 'pending', attempts: 4, last_error: 'peer offline', created_at: '2026-10-10T09:20:00Z', updated_at: '2026-10-10T09:31:00Z' },
+      { envelope_id: 'env_5m1x', to: 'operator@forge', from: 'human operator', subject: 'Re: deploy freeze', preview: 'Agreed', state: 'acked', attempts: 1, created_at: '2026-10-10T08:02:00Z', updated_at: '2026-10-10T08:02:01Z' }
     if (path === '/api/federation/peers/trust') return json({ instance_id: 'inst_w5zea3nq', fingerprint: 'w5ze-a3nq-7m1p-kd42-xr8c-0fv6', level: 'restricted', profile: null, plan: null, applied: false });
     var hav = function(extra){ return { schema: 1, observed_at: '2026-10-10T09:40:00Z', harnesses: [
       { name: 'claude', display_name: 'Claude Code', installed: true, version: '2.1.4', latest_version: extra ? '2.1.4' : '2.2.0', update_available: !extra, version_status: 'known', credential_present: true, usable: true },
@@ -363,6 +367,39 @@ func skynetStates() []dashsnap.State {
   if (document.querySelectorAll('#fleet-audit tbody tr').length !== 6) throw new Error('skynet: audit rows missing');
 })();`,
 			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-peer-mail",
+			Title:   "Message a peer operator",
+			Caption: "Messages → Human notifications → ✉ peer: write to a peer's operator, or to agents on a peer (agent@peer or group:<group>@peer, optionally by role), with the recent outbox and its delivery state below. Peer operator mail in the inbox gets a reply button, and a cover request a peer forwarded while away gets Approve once / Deny.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  document.querySelector('nav [data-tab="messages"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('#mail-peer-compose:not([hidden])'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  var b = document.querySelector('#mail-peer-compose');
+  if (!b || b.hidden) throw new Error('skynet: no peer compose button');
+  b.click();
+  for (var j = 0; j < 30 && !document.querySelector('#peer-mail-outbox'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  var body = document.querySelector('#peer-mail-body');
+  body.value = 'Deploy freeze starts at 18:00 today; please hold merges on your side.';
+  body.dispatchEvent(new Event('input', { bubbles: true }));
+  var subj = document.querySelector('#peer-mail-subject');
+  subj.value = 'Release window'; subj.dispatchEvent(new Event('input', { bubbles: true }));
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-away",
+			Title:   "Away cover",
+			Caption: "Fleet's identity row shows away cover: here, with away… to pick a trusted peer's operator (and an optional end time) who answers your agents' access requests once each while you are away, or — as here — away with forge covering and return…. Peer operators' access requests are never forwarded.",
+			InitJS:  "window.__dashsnapAway = true;" + skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('#fleet-away-return'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-away-return')) throw new Error('skynet: away state missing');
+})();`,
+			SettleMS: 300,
 		},
 		{
 			Key:     "skynet-fleet-run",
