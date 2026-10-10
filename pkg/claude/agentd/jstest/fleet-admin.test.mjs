@@ -116,6 +116,9 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     saveProfile: async (o) => { log.push(['saveProfile', o]); if (o.revision === 99) { const e = new Error('reload the current profile revision'); e.status = 409; e.code = 'stale_profile'; throw e; } return { ...o, revision: o.revision + 1 }; },
     setHubConfig: async (b) => { log.push(['hubConfig', b]); return { ok: true }; },
     nodeLabels: async () => ['gpu', 'ci'],
+    healthPolicy: async (peer) => { log.push(['healthPolicy', peer]); return peer ? { presence: false, resources: true, failures: false, debounce_seconds: 15, disk_free_percent: 5, ram_free_percent: 10, memory_seconds: 120, failure_count: 3, failure_window_seconds: 600, cooldown_seconds: 600 }
+      : { presence: true, resources: false, failures: false, debounce_seconds: 15, disk_free_percent: 10, ram_free_percent: 10, memory_seconds: 120, failure_count: 3, failure_window_seconds: 600, cooldown_seconds: 600 }; },
+    setHealthPolicy: async (peer, body) => { log.push(['setHealth', peer, body]); return { ...body, presence: body.presence }; },
     setNodeLabels: async (o) => { log.push(['labels', o]); return { ok: true }; },
     viewers: async () => s_viewers,
     kickViewer: async (id) => { log.push(['kick', id]); s_viewers = s_viewers.filter((v) => v.id !== id); return { ok: true }; },
@@ -848,6 +851,51 @@ test('node settings: moving to another hub and changing labels confirm the conse
   await s.click(q('#fleet-labels-save'));
   assert.match(s.confirms.at(-1).body, /Adds linux\. Removes ci\..*stops landing here/);
   assert.deepEqual(s.log.findLast((l) => l[0] === 'labels')[1], { add: ['linux'], remove: ['ci'] });
+});
+
+test('node settings: the fleet health policy reads per scope, validates, and confirms what it replaces', async (t) => {
+  const s = await setup(t);
+  await s.show();
+  await s.click(s.q('#fleet-node-settings-open'));
+  const doc = s.harness.document; const q = (x) => doc.querySelector(x);
+  const type = async (sel, v) => { const el = q(sel); el.value = v; await s.harness.act(() => s.harness.fireEvent(el, 'input')); };
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'healthPolicy'), ['healthPolicy', '']);
+  assert.equal(q('#fleet-health [data-signal="presence"]').hasAttribute('checked'), true);
+  assert.equal(q('[data-num="debounce_seconds"]').value, '15');
+  const sel = q('#fleet-health-peer');
+  assert.deepEqual([...sel.querySelectorAll('option')].map((o) => o.value), ['', 'inst_forge', 'inst_lab']);
+  for (const o of sel.querySelectorAll('option')) { if (o.value === 'inst_forge') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
+  await s.harness.act(() => s.harness.fireEvent(sel, 'change'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'healthPolicy'), ['healthPolicy', 'inst_forge']);
+  assert.equal(q('#fleet-health [data-signal="presence"]').hasAttribute('checked'), false);
+  assert.equal(q('[data-num="disk_free_percent"]').value, '5');
+  await type('[data-num="failure_count"]', '2.5');
+  await s.click(q('#fleet-health-save'));
+  assert.match(q('#fleet-health [role=alert]').textContent, /failures: a whole number from 0 to 256/);
+  await type('[data-num="failure_count"]', '');
+  const f = q('[data-signal="failures"]'); f.checked = true;
+  await s.harness.act(() => s.harness.fireEvent(f, 'change'));
+  await s.click(q('#fleet-health-save'));
+  assert.match(s.confirms.at(-1).title, /Replace forge's fleet health policy\?/);
+  assert.match(s.confirms.at(-1).body, /forge no longer follows the defaults.*Notices on: low disk, sustained high memory; repeated job \/ spawn failures\./);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'setHealth'), ['setHealth', 'inst_forge', { presence: false, resources: true, failures: true,
+    debounce_seconds: 15, disk_free_percent: 5, ram_free_percent: 10, memory_seconds: 120, failure_window_seconds: 600, cooldown_seconds: 600 }], 'an emptied number falls back to the built-in default');
+  assert.match(s.toasts.at(-1), /Fleet health policy saved/);
+});
+
+test('health policy actions hit the local nodes/health route', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createFleetAdminActions } = await harness.importDashboardModule('js/fleet-admin-actions.js');
+  const calls = [];
+  const a = createFleetAdminActions({ fetchImpl: async (url, init) => { calls.push([init.method, url, init.body ? JSON.parse(init.body) : null]); return { ok: true, status: 200, json: async () => ({}) }; } });
+  await a.healthPolicy();
+  await a.setHealthPolicy('inst forge', { presence: true });
+  assert.deepEqual(calls, [
+    ['GET', '/api/federation/nodes/health?peer=', null],
+    ['POST', '/api/federation/nodes/health?peer=inst%20forge', { presence: true }],
+  ]);
 });
 
 test('live terminal viewers show on Peers only while someone watches, and disconnecting one says it can come back', async (t) => {
