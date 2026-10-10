@@ -152,6 +152,9 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 // target-scoped grant fails closed.
 func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, targetConv string, actx ...ActionContext) (string, bool) {
 	clearAuthorizedPermission(r)
+	if a := peerActionFromRequest(r); a != nil {
+		return peerActionGate(w, r, a, perm, targetConv, actionContextOf(actx))
+	}
 	p := peerFromContext(r.Context())
 	switch classify(p) {
 	case classUnidentified:
