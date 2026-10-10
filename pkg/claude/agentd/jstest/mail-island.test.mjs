@@ -266,3 +266,41 @@ test('Messages production mount registers cleanup for listeners, bridge ownershi
   assert.equal(disposed, 1);
   assert.equal(host.childElementCount, 0);
 });
+
+test('a peer operator\'s access request decides with a TTL and an optional narrower group, never "always"', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
+  const request = { id: 'par-1', origin_peer: 'inst_forge7', conv_title: 'operator@inst_forge7', caller_state: 'operator', title_status: 'available',
+    perm: 'sessions.watch', grant_ttl_seconds: 86400, body: 'need to clone', body_label: 'Reason',
+    created_at: '2026-07-12T00:00:00Z', deadline: '2026-07-12T00:05:00Z', auto_grantable: false, scope_display: 'group_id=0' };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ groups: [
+    { group_id: 4, name: 'ops', federation_links: [{ peer: 'inst_forge7', slugs: ['agents.status'] }] },
+    { group_id: 5, name: 'private', federation_links: [] },
+  ] }) });
+  t.after(() => { globalThis.fetch = realFetch; });
+  const state = harness.signals.signal({ ...populated(), selected: 'access-requests', selectedMsgId: 'par-1', messages: [] });
+  const controller = controllerFor(state);
+  const decided = [];
+  controller.decideAccess = (...a) => decided.push(a);
+  controller.messageView = () => ({ access: true, allAccess: [request], pendingAccess: [request], handledAccess: [], search: '' });
+  controller.messageCountText = () => '1 pending';
+  const mounted = await harness.mount(harness.html`<${MailApp} controller=${controller} />`);
+  await harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  const root = mounted.container;
+  assert.doesNotMatch(root.textContent, /Always allow/);
+  assert.match(root.textContent, /every group shared with it · 1 day/);
+  assert.match(root.textContent, /Approving lets operator@inst_forge7 use sessions.watch in every group shared with it for 1 day/);
+  assert.deepEqual([...root.querySelectorAll('.access-peer-group option')].map((o) => o.textContent), ['every shared group', 'ops'], 'only groups linked to the peer narrow');
+  const group = root.querySelector('.access-peer-group');
+  for (const o of group.querySelectorAll('option')) { if (o.value === '4') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
+  await harness.act(() => harness.fireEvent(group, 'change'));
+  const ttl = root.querySelector('.access-peer-ttl');
+  for (const o of ttl.querySelectorAll('option')) { if (o.value === '3600') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
+  await harness.act(() => harness.fireEvent(ttl, 'change'));
+  assert.match(root.textContent, /in group ops for 1 hour/);
+  await harness.act(() => root.querySelector('.access-btn.approve').click());
+  await harness.act(() => root.querySelector('.access-btn.deny').click());
+  assert.deepEqual(decided, [['par-1', 'approve', { grant_ttl_seconds: 3600, group_id: 4 }], ['par-1', 'deny']]);
+  await mounted.unmount();
+});

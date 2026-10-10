@@ -18856,6 +18856,17 @@ html.remote-node body::before {
   font: inherit; font-size: 11px; color: #58a6ff; background: transparent; border: 1px solid #30363d; border-radius: 4px; padding: 1px 8px; cursor: pointer;
 }
 .rnp-foot button:hover { border-color: #58a6ff; }
+.rnp-ask {
+  background: none; border: 0; padding: 0 2px; color: #58a6ff; font: inherit; font-size: 11px; cursor: pointer;
+}
+.rnp-ask:hover { text-decoration: underline; }
+/* Peer access requests (js/peer-access.js). */
+#peer-access-modal > :not(h3):not(.modal-buttons) { font-size: 13px; font-weight: normal; }
+.peer-access-opt { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.peer-access-opt select, .peer-access-opt textarea { flex: 1; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; }
+.peer-access-reason { align-items: flex-start; }
+.access-peer-consequence { font-size: 12px; color: #c9d1d9; }
+.access-peer-ttl, .access-peer-group { font-size: 12px; }
 /* Peer view limits (js/peer-view-limits.js): what the peer does not offer
    stays in place, greyed, with the reason on hover and on click. */
 html.remote-node nav [data-tab].pv-off { opacity: .4; }

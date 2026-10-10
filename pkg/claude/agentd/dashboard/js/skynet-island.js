@@ -2,12 +2,16 @@ import { Fragment, h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { NodeUpdateDialog } from './node-update.js';
+import { RequestAccessDialog } from './peer-access.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { STATUS_POLL_MS, cardView, fmtAge, nodeColor, nodeHref, peerViewSummary, pollDelay, remoteHealthView, remoteNodeID, staggerOffset, switchOrder, visibleChips } from './skynet-model.js';
 import { dashboardState } from './snapshot-store.js';
 import { TOP_LEVEL_TABS } from './skynet-state.js';
 
 const html = htm.bind(h);
+
+// SAFE_SLUG admits a permission slug from the peer's metadata into a request.
+const SAFE_SLUG = /^[a-z][a-z0-9._-]{0,63}$/;
 
 // navigateTab routes through the real nav anchors so tab activation, history
 // and per-tab side effects stay owned by refresh.js / nav-history.js.
@@ -265,6 +269,7 @@ function NodeSwitchKeys({ state, navigate = defaultNavigate, remote = remoteNode
 export function RemoteMarker({ state, remote = remoteNodeID(), snapshot = dashboardState.snapshot, now = () => Date.now(), switchNode = defaultSwitchNode }) {
   const [health, setHealth] = useState(globalThis.__tclaudeRemoteNode?.health ? { ...globalThis.__tclaudeRemoteNode.health } : null);
   const [open, setOpen] = useState(false);
+  const [asking, setAsking] = useState('');
   const rootRef = useRef(null);
   const fleet = state.view.value.fleet;
   const peer = fleet?.peers.find((p) => p.id === remote) || null;
@@ -307,10 +312,11 @@ export function RemoteMarker({ state, remote = remoteNodeID(), snapshot = dashbo
       <div class="rnp-head">Peer view of <b>${name}</b>${level ? html` · ${level === 'unrestricted' ? '⚠ unrestricted' : 'restricted'} peer` : ''}</div>
       <div class="rnp-row">${hv.state === 'live' ? 'Live: the peer answers through this node.' : `The peer is ${hv.label}. The data on screen is what it last shared.`}</div>
       ${pv && pv.included.length > 0 && html`<div class="rnp-row"><span class="rnp-k">Shared</span> ${pv.included.join(', ')}</div>`}
-      ${pv && pv.omitted.length > 0 && html`<div class="rnp-row"><span class="rnp-k">Not shared</span> ${pv.omitted.map((o, i) => html`${i ? ', ' : ''}<span title=${o.requires ? `needs ${o.requires}` : ''}>${o.feature}</span>`)}</div>`}
+      ${pv && pv.omitted.length > 0 && html`<div class="rnp-row"><span class="rnp-k">Not shared</span> ${pv.omitted.map((o, i) => html`${i ? ', ' : ''}<span title=${o.requires ? `needs ${o.requires}` : ''}>${o.feature}</span>${o.requires && SAFE_SLUG.test(o.requires) ? html` <button type="button" class="rnp-ask" data-perm=${o.requires} title=${`Ask ${name}'s operator for ${o.requires}`} onClick=${() => { setAsking(o.requires); setOpen(false); }}>request…</button>` : ''}`)}</div>`}
       ${!pv && html`<div class="rnp-row muted">What the peer shares shows once it answers.</div>`}
       <div class="rnp-foot"><button type="button" onClick=${() => switchNode('')}>⌂ Back to ${fleet?.self.name || 'this node'}</button></div>
     </div>`}
+    ${asking && html`<${RequestAccessDialog} node=${name} perm=${asking} groups=${(snapshot.value?.groups || []).filter((g) => g?.id && g.name)} onClose=${() => setAsking('')} />`}
   </span>`;
 }
 

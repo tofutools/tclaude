@@ -384,6 +384,14 @@ remotely, and history survives restarts. Compose paths: a group's cog
 ✉ message (whole group or a ticked subset) and a top-level `+ message`
 operator dialog with role filtering and attachments for offline recipients.
 
+A peer operator's request for access to this node (see
+[Requesting access](#requesting-access-from-a-peer)) lands in the same folder,
+naming the peer, the permission, the scope and how long it asked for, plus
+its reason. Only you decide these — an away cover never does. Approve can
+shorten the grant or narrow an any-group request to one group linked to that
+peer, never widen it, and there is no Always-allow for peers. CLI:
+`tclaude federation access list|approve|deny|extend --id … [--ttl …] [--group-id …]`.
+
 ## Usage
 
 Agents and operators can also query quotas and costs through the daemon with
@@ -553,6 +561,18 @@ and costs say when they are not shared. Terminals in a peer view are not
 opened in the browser: clicking a terminal control copies
 `tclaude federation attach <agent-id>@<instance-id>` to run in your own
 terminal.
+
+#### Requesting access from a peer
+
+Each feature in the pill's "Not shared" list has a **request…** link. It asks
+the peer's operator for the grant that feature needs: pick a group (or leave
+it to every group the peer shares with you, which the peer may narrow), how
+long the grant lasts (1 hour to 30 days, or permanent), and a reason. The
+dialog follows the request until the peer's operator approves or declines it,
+or it times out after 5 minutes; an approved grant shows up on the view's next
+refresh. A peer only takes requests from nodes it already shares something
+with. CLI: `tclaude federation access request --node <peer> --permission <slug>
+[--group-id …] [--ttl …] [--reason …]`, then `access status`.
 
 ### Groups · all nodes
 
