@@ -615,6 +615,7 @@ var permissionRegistry = []PermSlug{
 		Slug:        PermSettingsDefaultModel,
 		Description: "Set or clear the user-level default Claude model — the \"model\" key in ~/.claude/settings.json, which every claude launched without --model falls back to. Rewrites a config file in the human's home, so not default-granted (effectively human-only).",
 	},
+	{Slug: PermSessionsFilesRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Download bounded non-secret project files through a live remote terminal viewer. Independent of watch/attach; default off."},
 	{Slug: PermSessionsWatch, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Watch a shared remote agent pane. Requires peer= scope."},
 	{Slug: PermSessionsAttach, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Full keyboard access to a shared remote agent pane, including approval prompts. Requires peer= scope."},
 	{Slug: PermAgentsStatusRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Read a peer group’s shared agent runtime status, task links and numeric context. Requires peer= scope; no terminal authority."},

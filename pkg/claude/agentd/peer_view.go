@@ -143,6 +143,7 @@ func peerViewRules() map[string]peerViewRule {
 	rules["GET /api/spawn-requests/{id}"] = peerViewRule{feature: "spawn", requires: PermGroupsMembersSpawn, group: true, serve: servePeerSpawnStatus}
 	rules["POST /api/operator-message"] = peerViewRule{feature: "messaging", requires: PermMessageDirect, group: true, write: servePeerMessage}
 	// Concepts consumed by the UI, whose transports remain outside this contract.
+	rules["feature:session-files"] = peerViewRule{feature: "sessions.files.read", requires: PermSessionsFilesRead, group: true}
 	rules["/api/term/"] = peerViewRule{feature: "terminals", requires: PermSessionsAttach, group: true}
 	rules["/api/spawn"] = peerViewRule{feature: "spawn.inline", requires: PermGroupsMembersSpawn, group: true}
 	for _, action := range []struct{ tail, permission string }{{"stop", PermGroupsMembersStop}, {"retire", PermGroupsMembersRetire}, {"clone", PermGroupsMembersClone}, {"move", PermAgentMove}, {"teleport", PermAgentMove}} {

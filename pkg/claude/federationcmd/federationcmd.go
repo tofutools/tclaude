@@ -57,7 +57,7 @@ func Cmd() *cobra.Command {
 		SubCmds: []*cobra.Command{
 			hubCmd(), accessCmd(), actionCmd(), linksCmd(), statusCmd(), nodeRunCmd(), nodeScriptSettingsCmd(), identityCmd(), connectCmd(), disconnectCmd(), auditCmd(),
 			jobsCmd(), reposCmd(), modelsCmd(), peersCmd(), trustCmd(), untrustCmd(), nodeProfilesCmd(), enrollTokenCmd(), enrollCmd(), enrollmentsCmd(),
-			grantCmd(), revokeCmd(), grantsCmd(), remoteCmd(), peerViewCmd(), nodesCmd(), nodeLabelsCmd(), sessionsCmd(), attachCmd(), viewersCmd(), kickCmd(),
+			grantCmd(), revokeCmd(), grantsCmd(), remoteCmd(), peerViewCmd(), nodesCmd(), nodeLabelsCmd(), sessionsCmd(), fileCmd(), attachCmd(), viewersCmd(), kickCmd(),
 			sendCmd(), outboxCmd(), notifyCmd(), inboxCmd(), awayCmd(), returnCmd(), answerCmd(),
 			spawnRequestCmd(), requestsCmd(), offerConfigCmd(), offersCmd(), shareAgentCmd(), moveAgentCmd(), movesCmd(), teleportControlCmd(),
 		},

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -32,23 +33,29 @@ type fedTerminalState struct {
 	stopped bool
 }
 type fedTerminalView struct {
-	ID         string    `json:"id"`
-	Peer       string    `json:"peer"`
-	Agent      string    `json:"agent"`
-	Session    string    `json:"session"`
-	Group      string    `json:"group"`
-	ReadOnly   bool      `json:"read_only"`
-	Started    time.Time `json:"started"`
-	Incoming   bool      `json:"incoming"`
-	ctx        context.Context
-	cancel     context.CancelFunc
-	mu         sync.Mutex
-	stopped    bool
-	cleanup    []func()
-	done       chan struct{}
-	fixedSize  bool
-	cols, rows int
-	reason     string
+	ID           string    `json:"id"`
+	Peer         string    `json:"peer"`
+	Agent        string    `json:"agent"`
+	Session      string    `json:"session"`
+	Group        string    `json:"group"`
+	ReadOnly     bool      `json:"read_only"`
+	Started      time.Time `json:"started"`
+	Incoming     bool      `json:"incoming"`
+	ctx          context.Context
+	cancel       context.CancelFunc
+	mu           sync.Mutex
+	stopped      bool
+	cleanup      []func()
+	done         chan struct{}
+	fixedSize    bool
+	cols, rows   int
+	reason       string
+	target       proto.SessionOpenPayload
+	pin          *fedPanePin
+	fileRoot     *os.File
+	fileRootPath string
+	fileRootErr  error
+	files        bool
 }
 
 func (rt *fedRuntime) terminalsLocked() *fedTerminalState {
@@ -113,6 +120,7 @@ func (rt *fedRuntime) addTerminal(peer string, p proto.SessionOpenPayload, incom
 	}
 	ctx, cancel := context.WithCancel(rt.ctx)
 	v := &fedTerminalView{ID: p.Stream, Peer: peer, Agent: p.Agent, Session: p.Session, Group: p.Group, ReadOnly: p.ReadOnly, Started: time.Now(), Incoming: incoming, fixedSize: p.FixedSize, ctx: ctx, cancel: cancel, done: make(chan struct{})}
+	v.target = p
 	st.views[v.ID] = v
 	v.addCleanup(func() {
 		rt.terminalsMu.Lock()
@@ -196,6 +204,7 @@ func (rt *fedRuntime) openTerminalStream(v *fedTerminalView, p proto.SessionOpen
 				return nil, &fedTerminalRefusal{reason: proto.StripControls(a.answer.Reason)}
 			}
 			v.cols, v.rows = a.answer.Cols, a.answer.Rows
+			v.files = a.answer.Files
 			return rt.joinStream(ctx, v.Peer, p.Stream, kp, a.answer.Key, true)
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -466,7 +475,7 @@ func (rt *fedRuntime) acceptSessionOpen(peer *db.FederationPeer, env *proto.Enve
 		if v != nil {
 			cols, rows = v.cols, v.rows
 		}
-		rt.sendControl(peer.InstanceID, proto.KindSessionAnswer, env.ID, proto.SessionAnswerPayload{Stream: p.Stream, OK: ok, Key: key, Reason: reason, Cols: cols, Rows: rows})
+		rt.sendControl(peer.InstanceID, proto.KindSessionAnswer, env.ID, proto.SessionAnswerPayload{Stream: p.Stream, OK: ok, Key: key, Reason: reason, Cols: cols, Rows: rows, Files: v != nil && v.files})
 	}
 	if p.Cols < 1 || p.Rows < 1 || p.Cols > 1000 || p.Rows > 1000 {
 		answer(false, nil, "invalid terminal dimensions")
@@ -489,6 +498,14 @@ func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, p proto.Session
 		answer(false, nil, err.Error())
 		recordFederationAudit("sessions.attach.open", peerDisplay(peer), "", p.Group, "refused: "+err.Error(), 403)
 		return
+	}
+	root, rootPath, rootErr := openTerminalFileRoot(pin.cwd)
+	v.mu.Lock()
+	v.pin, v.fileRoot, v.fileRootPath, v.fileRootErr = pin, root, rootPath, rootErr
+	v.files = rootErr == nil && fedPeerAllows(peer.InstanceID, pin.group, PermSessionsFilesRead)
+	v.mu.Unlock()
+	if root != nil {
+		v.addCleanup(func() { v.mu.Lock(); _ = root.Close(); v.fileRoot = nil; v.mu.Unlock() })
 	}
 	if p.FixedSize {
 		cols, rows, err := pin.size()

@@ -23,6 +23,7 @@ import (
 
 type fedPanePin struct {
 	agent, conv, session, tmux, pane, window, serverSession, incarnation string
+	cwd                                                                  string
 	group                                                                int64
 	created                                                              time.Time
 }
@@ -82,6 +83,7 @@ func resolveFedPane(peer string, p proto.SessionOpenPayload) (*fedPanePin, error
 		if err != nil {
 			return nil, err
 		}
+		pin.cwd = r.Cwd
 		pin.agent, pin.conv, pin.session, pin.tmux, pin.group, pin.created, pin.incarnation = p.Agent, a.CurrentConvID, r.ID, r.TmuxSession, g.ID, r.CreatedAt, incarnation
 		return pin, nil
 	}

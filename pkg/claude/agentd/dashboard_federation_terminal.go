@@ -97,7 +97,7 @@ func serveDashboardFederationTerminal(w http.ResponseWriter, r *http.Request, rt
 	if p.ReadOnly {
 		mode = "watch"
 	}
-	if control(map[string]any{"type": "hello", "mode": mode, "cols": v.cols, "rows": v.rows, "peer": peer.InstanceID, "agent": p.Agent}) != nil {
+	if control(map[string]any{"type": "hello", "mode": mode, "cols": v.cols, "rows": v.rows, "peer": peer.InstanceID, "agent": p.Agent, "viewer_id": v.ID, "files": v.files}) != nil {
 		return
 	}
 	fedTerminalAudit("sessions.attach.open", "", peer.InstanceID, p.Agent, p.Group, "viewer="+v.ID+" browser mode="+mode, 200)
