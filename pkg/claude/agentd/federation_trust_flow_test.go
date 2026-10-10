@@ -66,6 +66,9 @@ func TestFederation_TrustDowngradeCatalogOrdering(t *testing.T) {
 	f, p := fh.f, fh.peer
 	f.HaveGroup("visible-before-downgrade")
 	agentd.WaitForBackgroundForTest()
+	fedEventually(t, "initial restricted catalog received", func() bool {
+		return len(p.envelopes(proto.KindCatalog)) > 0
+	})
 	agentd.ResetStatusSnapshotForTest()
 
 	// Catalog construction has already selected the unrestricted groups when
