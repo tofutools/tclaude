@@ -64,6 +64,7 @@ func homeMailControl(p *fedPeer, kind string, payload any) *proto.Envelope {
 
 func TestFederation_HomeMailRetargetsAfterHopAndReturnsLocally(t *testing.T) {
 	fh := newFedHarness(t)
+	require.NoError(t, db.PutFederationCatalog(fh.peer.id.ID(), string(mustJSON(t, proto.CatalogPayload{HomeRoutedMail: true, StableAgentIdentity: true})), time.Now()))
 	f, sender := fh.f, fh.peer
 	b := homeMailPeer(t, fh, "b")
 	c := homeMailPeer(t, fh, "c")
@@ -78,6 +79,14 @@ func TestFederation_HomeMailRetargetsAfterHopAndReturnsLocally(t *testing.T) {
 	home := sender.agentdID
 	identity := db.FederationIdentity{Agent: id, Home: home, Hops: 1, Mail: true, Proofs: map[string]string{home: "home-proof"}}
 	require.NoError(t, db.DepartFederationIdentity(conv, home, b.id.ID(), "departure-b", identity))
+	require.NoError(t, db.PutFederationCatalog(sender.id.ID(), string(mustJSON(t, proto.CatalogPayload{})), time.Now()))
+	legacy := sender.envelope(proto.KindMail, proto.Endpoint{Agent: id}, proto.MailPayload{Body: "old sender"})
+	sender.send(legacy)
+	fedEventually(t, "legacy sender retains moved-address bounce", func() bool { return homeMailAck(sender, legacy.ID, proto.AckRefused) })
+	custody, e := db.GetFederationMailCustody(sender.id.ID(), legacy.ID, id)
+	require.NoError(t, e)
+	require.Nil(t, custody)
+	require.NoError(t, db.PutFederationCatalog(sender.id.ID(), string(mustJSON(t, proto.CatalogPayload{HomeRoutedMail: true, StableAgentIdentity: true})), time.Now()))
 	mail := sender.envelope(proto.KindMail, proto.Endpoint{Agent: id}, proto.MailPayload{Subject: "while away", Body: "retarget me"})
 	sender.send(mail)
 	fedEventually(t, "durable home custody", func() bool { return homeMailAck(sender, mail.ID, "custody") })
@@ -144,6 +153,7 @@ func TestFederation_HomeMailRetargetsAfterHopAndReturnsLocally(t *testing.T) {
 
 func TestFederation_HomeMailFinalHostGrantDedupAndDepartureFence(t *testing.T) {
 	fh := newFedHarness(t)
+	require.NoError(t, db.PutFederationCatalog(fh.peer.id.ID(), string(mustJSON(t, proto.CatalogPayload{HomeRoutedMail: true, StableAgentIdentity: true})), time.Now()))
 	f, home := fh.f, fh.peer
 	identity := db.FederationIdentity{Agent: db.NewAgentID(), Home: home.id.ID(), Hops: 1, Mail: true, Proofs: map[string]string{home.id.ID(): "proof"}}
 	_, e := db.ReserveFederationIdentity(identity, home.agentdID, home.id.ID(), "arrival")
@@ -227,6 +237,7 @@ func TestFederation_HomeMailFinalHostGrantDedupAndDepartureFence(t *testing.T) {
 
 func TestFederation_HomeMailRevokesRemovedHomeMembershipAndSendsExpiredReceipt(t *testing.T) {
 	fh := newFedHarness(t)
+	require.NoError(t, db.PutFederationCatalog(fh.peer.id.ID(), string(mustJSON(t, proto.CatalogPayload{HomeRoutedMail: true, StableAgentIdentity: true})), time.Now()))
 	f, sender := fh.f, fh.peer
 	old := homeMailPeer(t, fh, "old-host")
 	f.HaveGroup("home-team")
@@ -264,6 +275,7 @@ func TestFederation_HomeMailRevokesRemovedHomeMembershipAndSendsExpiredReceipt(t
 
 func TestFederation_HomeMailOldHostHandsOffAndAcknowledgesDuplicateReceipts(t *testing.T) {
 	fh := newFedHarness(t)
+	require.NoError(t, db.PutFederationCatalog(fh.peer.id.ID(), string(mustJSON(t, proto.CatalogPayload{HomeRoutedMail: true, StableAgentIdentity: true})), time.Now()))
 	f, sender := fh.f, fh.peer
 	home := homeMailPeer(t, fh, "home")
 	f.HaveGroup("visited")
@@ -308,11 +320,12 @@ func TestFederation_HomeMailOldHostHandsOffAndAcknowledgesDuplicateReceipts(t *t
 
 func TestFederation_HomeMailOfflineCustodySurvivesUntilLiveRevocation(t *testing.T) {
 	fh := newFedHarness(t)
+	require.NoError(t, db.PutFederationCatalog(fh.peer.id.ID(), string(mustJSON(t, proto.CatalogPayload{HomeRoutedMail: true, StableAgentIdentity: true})), time.Now()))
 	f, sender := fh.f, fh.peer
 	offline, e := proto.NewIdentity()
 	require.NoError(t, e)
-	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/peers/trust", map[string]any{"instance": offline.ID(), "label": "offline-host"})
-	require.Equal(t, 200, rec.Code, rec.Body.String())
+	// A previously paired host can be offline without appearing in discovery.
+	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: offline.ID(), PubKey: offline.Pub, Label: "offline-host"}))
 	require.NoError(t, db.PutFederationCatalog(offline.ID(), string(mustJSON(t, proto.CatalogPayload{HomeRoutedMail: true, StableAgentIdentity: true})), time.Now()))
 	f.HaveGroup("offline-team")
 	f.HaveConvWithTitle("offline-traveler", "away")
@@ -321,7 +334,7 @@ func TestFederation_HomeMailOfflineCustodySurvivesUntilLiveRevocation(t *testing
 	require.NoError(t, e)
 	group, e := db.GetAgentGroupByName("offline-team")
 	require.NoError(t, e)
-	rec = fedGrantCaps(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"group": "offline-team", "peer": "bob", "caps": []string{"mail"}})
+	rec := fedGrantCaps(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"group": "offline-team", "peer": "bob", "caps": []string{"mail"}})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	identity := db.FederationIdentity{Agent: id, Home: sender.agentdID, Hops: 1, Mail: true, Proofs: map[string]string{sender.agentdID: "proof"}}
 	require.NoError(t, db.DepartFederationIdentity("offline-traveler", sender.agentdID, offline.ID(), "offline-departure", identity))

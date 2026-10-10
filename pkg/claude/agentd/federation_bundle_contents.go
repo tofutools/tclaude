@@ -99,7 +99,7 @@ func bundleEntries(f *os.File, d bundletransfer.Descriptor) ([]bundleContentEntr
 		if err != nil {
 			return nil, err
 		}
-		if len(z.File) > 2 {
+		if len(z.File) > 3 {
 			return nil, errors.New("unexpected archive entries")
 		}
 		seen := map[string]bool{}

@@ -84,7 +84,7 @@ func DecodeFile(f *os.File, limit int64, dir string) (bundle *Bundle, err error)
 	if err != nil {
 		return nil, fmt.Errorf("invalid agent bundle ZIP: %w", err)
 	}
-	if len(zr.File) > 2 {
+	if len(zr.File) > 3 {
 		return nil, errors.New("unexpected archive entries")
 	}
 	defer func() {
@@ -115,7 +115,8 @@ func DecodeFile(f *os.File, limit int64, dir string) (bundle *Bundle, err error)
 		if e != nil {
 			return nil, e
 		}
-		if entry.Name == ManifestFile {
+		switch entry.Name {
+		case ManifestFile:
 			raw, e := io.ReadAll(io.LimitReader(r, cap+1))
 			ce := r.Close()
 			if e != nil {
@@ -130,7 +131,7 @@ func DecodeFile(f *os.File, limit int64, dir string) (bundle *Bundle, err error)
 			if e = json.Unmarshal(raw, &b.Manifest); e != nil {
 				return nil, e
 			}
-		} else if entry.Name == MailLedgerFile {
+		case MailLedgerFile:
 			raw, e := io.ReadAll(io.LimitReader(r, cap+1))
 			ce := r.Close()
 			if e != nil {
@@ -145,7 +146,7 @@ func DecodeFile(f *os.File, limit int64, dir string) (bundle *Bundle, err error)
 			if e = json.Unmarshal(raw, &b.MailDeliveries); e != nil {
 				return nil, e
 			}
-		} else {
+		default:
 			tmp, e := os.CreateTemp(dir, ".agent-history-")
 			if e != nil {
 				_ = r.Close()

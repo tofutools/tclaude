@@ -87,6 +87,7 @@ func TestStableMailLedgerRoundTripMemoryAndDisk(t *testing.T) {
 	b := fixtureBundle()
 	b.Manifest.Agent.Identity = &db.FederationIdentity{Agent: db.NewAgentID(), Home: "home", Hops: 1, Mail: true, Proofs: map[string]string{"home": "proof"}}
 	b.Manifest.MailLedger = true
+	b.SetHistory("claude-jsonl", "source", []byte("native history\n"))
 	b.MailDeliveries = []db.FederationMailDelivery{{Sender: "sender", Envelope: "delivered", ExpiresAt: time.Now().Add(time.Hour).UTC()}}
 	raw, e := b.Encode()
 	require.NoError(t, e)

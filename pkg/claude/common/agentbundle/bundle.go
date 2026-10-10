@@ -237,7 +237,7 @@ func Decode(raw []byte) (*Bundle, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid agent bundle ZIP: %w", err)
 	}
-	if len(zr.File) > 2 {
+	if len(zr.File) > 3 {
 		return nil, errors.New("unexpected archive entries")
 	}
 	b := &Bundle{}
@@ -275,15 +275,16 @@ func Decode(raw []byte) (*Bundle, error) {
 		if len(data) > limit {
 			return nil, errors.New("uncompressed entry is too large")
 		}
-		if f.Name == ManifestFile {
+		switch f.Name {
+		case ManifestFile:
 			if err := json.Unmarshal(data, &b.Manifest); err != nil {
 				return nil, err
 			}
-		} else if f.Name == MailLedgerFile {
+		case MailLedgerFile:
 			if err := json.Unmarshal(data, &b.MailDeliveries); err != nil {
 				return nil, err
 			}
-		} else {
+		default:
 			b.Transcript = data
 		}
 	}
