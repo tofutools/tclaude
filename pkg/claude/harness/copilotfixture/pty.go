@@ -208,6 +208,12 @@ type PTYOptions struct {
 	// the outer bound so a run that never gets anywhere still lands in the
 	// classifier's error arm rather than being called blocked.
 	BlockedAfter time.Duration
+
+	// BlockedAfterReady gates the quiet window on launch readiness. When set,
+	// BlockedAfter starts counting only once this predicate has returned true;
+	// a startup banner followed by silence is not evidence of a blocked turn.
+	// It receives the ANSI-stripped transcript and is sampled in the main loop.
+	BlockedAfterReady func(string) bool
 }
 
 // Keystroke is one scheduled raw write onto the terminal.
@@ -402,6 +408,8 @@ func RunPTY(t *testing.T, opts PTYOptions) PTYResult {
 	gotExit := false
 	settled := false
 	blocked := false
+	blockedReady := opts.BlockedAfterReady == nil
+	blockedReadyAt := start
 loop:
 	for {
 		select {
@@ -424,6 +432,15 @@ loop:
 				settled = true
 				break loop
 			}
+			if !blockedReady && drawn {
+				mu.Lock()
+				text := transcript.String()
+				mu.Unlock()
+				if opts.BlockedAfterReady(stripANSI(text)) {
+					blockedReady = true
+					blockedReadyAt = time.Now()
+				}
+			}
 			// No evidence, and silent for longer than a working turn ever goes
 			// silent: the same state the deadline would have found, reached
 			// without waiting for it. Checked AFTER the evidence, so a run that
@@ -434,7 +451,7 @@ loop:
 			// written its first byte is still in Node's startup, which is
 			// silent by nature and stretches under load — calling that
 			// "parked on a prompt" would turn a busy runner into a finding.
-			if opts.BlockedAfter > 0 && drawn && gap >= opts.BlockedAfter {
+			if opts.BlockedAfter > 0 && blockedReady && drawn && gap >= opts.BlockedAfter && time.Since(blockedReadyAt) >= opts.BlockedAfter {
 				blocked = true
 				break loop
 			}

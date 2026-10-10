@@ -354,6 +354,11 @@ func ClassifyPermission(
 				totalRequests),
 		}, nil
 
+	case totalRequests == 0 && stillAlive:
+		return PermissionVerdict{}, fmt.Errorf(
+			"cannot classify this launch: no provider request or recognized permission dialog; " +
+				"startup readiness was never established, so quiet output cannot prove blocking")
+
 	case stillAlive && quiesced:
 		return PermissionVerdict{
 			Outcome: PermissionBlocked,

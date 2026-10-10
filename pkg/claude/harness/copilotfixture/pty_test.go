@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -191,4 +192,61 @@ func TestRunPTYKeystrokeGateStopsOnExitOrDeadline(t *testing.T) {
 			assert.Equal(t, strings.Contains(script, "0.2"), res.Exited)
 		})
 	}
+}
+
+func TestRunPTYBlockedAfterWaitsForReadiness(t *testing.T) {
+	fakeCopilot(t, "echo startup-banner; sleep 60")
+	var ready atomic.Bool
+	timer := time.AfterFunc(time.Second, func() { ready.Store(true) })
+	defer timer.Stop()
+	var readyAt time.Time
+	res := copilotfixture.RunPTY(t, copilotfixture.PTYOptions{
+		RunOptions:   fakeRunOptions(t),
+		Deadline:     10 * time.Second,
+		BlockedAfter: 3 * time.Second,
+		BlockedAfterReady: func(string) bool {
+			if !ready.Load() {
+				return false
+			}
+			readyAt = time.Now()
+			return true
+		},
+	})
+	require.False(t, readyAt.IsZero(), "startup silence must not end the run before readiness")
+	assert.GreaterOrEqual(t, time.Since(readyAt), 3*time.Second,
+		"silence before readiness must not count toward the quiet window")
+	require.True(t, res.Blocked, "a ready turn that remains quiet is still detected early")
+	assert.Less(t, res.Elapsed, 8*time.Second)
+	verdict, err := copilotfixture.ClassifyPermission(1, 0, !res.Exited, res.Quiesced, res.TranscriptText(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, copilotfixture.PermissionBlocked, verdict.Outcome)
+}
+
+func TestRunPTYBlockedAfterRecognizesTrustReadiness(t *testing.T) {
+	fakeCopilot(t, "echo '"+copilotfixture.TrustPromptMarker+"'; sleep 60")
+	res := copilotfixture.RunPTY(t, copilotfixture.PTYOptions{
+		RunOptions:   fakeRunOptions(t),
+		Deadline:     10 * time.Second,
+		BlockedAfter: 3 * time.Second,
+		BlockedAfterReady: func(text string) bool {
+			return strings.Contains(text, copilotfixture.TrustPromptMarker)
+		},
+	})
+	require.True(t, res.Blocked, "a trust dialog is ready without a provider request")
+	assert.Less(t, res.Elapsed, 8*time.Second)
+	verdict, err := copilotfixture.ClassifyPermission(0, 0, !res.Exited, res.Quiesced, res.TranscriptText(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, copilotfixture.PermissionBlocked, verdict.Outcome)
+}
+
+func TestRunPTYBlockedAfterDoesNotClassifyStartupBanner(t *testing.T) {
+	fakeCopilot(t, "echo startup-banner; sleep 60")
+	res := copilotfixture.RunPTY(t, copilotfixture.PTYOptions{
+		RunOptions:        fakeRunOptions(t),
+		Deadline:          time.Second,
+		BlockedAfter:      200 * time.Millisecond,
+		BlockedAfterReady: func(string) bool { return false },
+	})
+	assert.False(t, res.Blocked, "a banner alone must not establish launch readiness")
+	assert.False(t, res.Exited)
 }
