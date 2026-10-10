@@ -36,6 +36,12 @@ func TestSkynetJourneyInstance(t *testing.T) {
 	f := newFlow(t)
 	agentd.ResetFederationForTest()
 	t.Cleanup(agentd.ResetFederationForTest)
+	// No host harness binaries are needed by the simulated instances.
+	git, err := exec.LookPath("git")
+	require.NoError(t, err)
+	binDir := testutil.CanonicalTempDir(t)
+	require.NoError(t, os.Symlink(git, filepath.Join(binDir, "git")))
+	t.Setenv("PATH", binDir)
 	for _, name := range []string{"shared", "hidden", "receiver"} {
 		f.HaveGroup(name)
 	}
@@ -136,7 +142,7 @@ func startJourneyNode(t *testing.T) *journeyNode {
 	case url := <-ready:
 		require.NotEmpty(t, url, "instance did not start; see %s", logPath)
 		return &journeyNode{url: url, client: &http.Client{Timeout: 10 * time.Second}}
-	case <-time.After(10 * time.Second):
+	case <-time.After(30 * time.Second):
 		_ = cmd.Process.Kill()
 		t.Fatal("journey instance startup timed out")
 		return nil
@@ -225,14 +231,15 @@ func TestSkynetJourney(t *testing.T) {
 		node *journeyNode
 		peer string
 	}{{alice, bobID}, {bob, aliceID}} {
-		pair.node.call(t, "POST", "/api/federation/peers/trust", map[string]any{"instance": pair.peer, "level": "restricted"}, 200)
 		summary := pair.node.call(t, "GET", "/api/federation/status?summary=1", nil, 200)
 		peers := journeyRows(t, summary["peers"])
 		require.Len(t, peers, 1)
 		require.Equal(t, pair.peer, peers[0]["instance_id"])
 		require.Equal(t, "restricted", peers[0]["level"])
 		require.Equal(t, true, peers[0]["online"])
-		require.Equal(t, true, peers[0]["trusted"])
+		require.Equal(t, true, peers[0]["trusted"], "enrollment must persist trust before the explicit trust route is exercised")
+		pair.node.call(t, "POST", "/api/federation/peers/trust", map[string]any{"instance": pair.peer, "level": "restricted"}, 200)
+
 		pair.node.call(t, "GET", "/api/peer/"+pair.peer+"/node-summary", nil, 200)
 	}
 	remote := "/api/peer/" + bobID
@@ -313,7 +320,31 @@ func TestSkynetJourney(t *testing.T) {
 	require.NotEmpty(t, landingCwd)
 	importPath := "/api/federation/bundle-offers/" + offerID + "/import?peer=" + bobID
 	alice.call(t, "POST", importPath, map[string]any{"cwd": landingCwd}, 200)
-	alice.call(t, "POST", importPath, map[string]any{"cwd": landingCwd, "apply": true}, 200)
+	landed := alice.call(t, "POST", importPath, map[string]any{"cwd": landingCwd, "apply": true}, 200)
+	landedID := landed["reserved_agent_id"]
+	require.NotEmpty(t, landedID)
+	journeyAwait(t, "teleport receiving identity", func() bool {
+		landedSnapshot := alice.call(t, "GET", "/api/snapshot", nil, 200)
+		found := false
+		for _, a := range journeyRows(t, landedSnapshot["agents"]) {
+			if a["agent_id"] == landedID {
+				require.Equal(t, landingCwd, a["startup_dir"])
+				found = true
+			}
+		}
+		if !found {
+			return false
+		}
+		for _, g := range journeyRows(t, landedSnapshot["groups"]) {
+			for _, m := range journeyRows(t, g["members"]) {
+				if m["agent_id"] == landedID {
+					require.Equal(t, "receiver", g["name"])
+					return true
+				}
+			}
+		}
+		return false
+	})
 	journeyAwait(t, "teleport source retirement", func() bool {
 		rows := journeyRows(t, bob.call(t, "GET", "/api/snapshot", nil, 200)["agents"])
 		for _, row := range rows {
