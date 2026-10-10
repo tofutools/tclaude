@@ -240,6 +240,9 @@ const settingRows = (v) => {
     // into a private spool on this node; nothing is imported until import,
     // which needs the preview's token and the same choices.
     boardItems: (board) => pages(`boards/${enc(board)}/items`, 'items'),
+    // Kept (pinned) items with a newer version, and the Messages-note opt-in.
+    boardUpdates: (refresh = false) => call('GET', `boards/updates${refresh ? '?refresh=1' : ''}`),
+    setBoardUpdateNotify: (notify) => call('PUT', 'boards/updates', { notify }),
     boardItemVersions: (board, item) => pages(`boards/${enc(board)}/items/${enc(item)}/versions`, 'versions'),
     publishBoardItem: (board, body) => call('POST', `boards/${enc(board)}/items`, body),
     pinBoardItem: (board, item, version) => done(call('PUT', `boards/${enc(board)}/items/${enc(item)}/pin`, { version })),

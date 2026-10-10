@@ -27,6 +27,7 @@ type boardInviteToken struct {
 
 func registerBoardRoutes(mux *http.ServeMux, prefix string, dashboard bool) {
 	registerBoardItemRoutes(mux, prefix, dashboard)
+	registerBoardUpdateRoutes(mux, prefix, dashboard)
 	for pattern, operation := range map[string]string{
 		"GET ": "boards.list", "POST ": "boards.create", "POST /join": "join", "GET /{board}": "boards.get", "DELETE /{board}": "boards.delete",
 		"DELETE /{board}/membership": "leave", "GET /{board}/members": "members.list", "PUT /{board}/members/{instance}": "members.set", "DELETE /{board}/members/{instance}": "members.remove",

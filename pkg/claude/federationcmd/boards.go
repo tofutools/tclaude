@@ -38,6 +38,8 @@ type boardCommandParams struct {
 	Role         string   `long:"role" optional:"true" help:"reader, publisher or owner"`
 	TTL          string   `long:"ttl" optional:"true" help:"Invitation lifetime (default 1h; 1m to 7d)"`
 	Cursor       string   `long:"cursor" optional:"true" help:"Opaque page cursor"`
+	Notify       string   `long:"notify" optional:"true" help:"on or off: leave a Messages note when a kept item gets a newer version"`
+	Refresh      bool     `long:"refresh" optional:"true" help:"Check the boards now instead of using a recent result"`
 }
 
 // Each action registers only its own flags; required markers reflect that
@@ -52,6 +54,7 @@ func boardsCmd() *cobra.Command {
 	actions := []action{
 		{"create", "create", "Create a board", []string{"name"}, []string{"name"}, nil},
 		{"ls", "list", "List joined boards", []string{"cursor"}, nil, []string{"list"}},
+		{"updates", "updates", "List kept (pinned) items with a newer version; --notify on|off sets Messages notes", []string{"notify", "refresh"}, nil, nil},
 		{"show", "show", "Show one board", []string{"board"}, []string{"board"}, nil},
 		{"join", "join", "Join with a private invitation", []string{"token"}, []string{"token"}, nil},
 		{"delete", "delete", "Permanently delete a board (owner only)", []string{"board"}, []string{"board"}, nil},
@@ -108,6 +111,10 @@ func addBoardFlag(cmd *cobra.Command, p *boardCommandParams, name string) {
 		return
 	}
 	switch name {
+	case "notify":
+		f.StringVar(&p.Notify, name, "", "on or off: leave a Messages note when a kept item gets a newer version")
+	case "refresh":
+		f.BoolVar(&p.Refresh, name, false, "Check the boards now instead of using a recent result")
 	case "only":
 		f.StringSliceVar(&p.Only, name, nil, "Select portable sections/items")
 	case "skip":
@@ -131,7 +138,7 @@ func runBoardCommand(p *boardCommandParams, stdout, stderr io.Writer) int {
 	method, path := "GET", "/v1/federation/boards"
 	body := map[string]any{}
 	invalid := func(s string) int { return fail(stderr, fmt.Errorf("boards: %s", s)) }
-	if p.Action != "list" && p.Action != "create" && p.Action != "join" {
+	if p.Action != "list" && p.Action != "create" && p.Action != "join" && p.Action != "updates" {
 		if p.Board == "" {
 			return invalid("--board is required")
 		}
@@ -139,6 +146,19 @@ func runBoardCommand(p *boardCommandParams, stdout, stderr io.Writer) int {
 	}
 	switch p.Action {
 	case "list", "show":
+	case "updates":
+		path += "/updates"
+		switch p.Notify {
+		case "":
+			if p.Refresh {
+				path += "?refresh=1"
+			}
+		case "on", "off":
+			method = "PUT"
+			body["notify"] = p.Notify == "on"
+		default:
+			return invalid("--notify must be on or off")
+		}
 	case "create":
 		if p.Name == "" {
 			return invalid("--name required")
@@ -212,7 +232,10 @@ func runBoardCommand(p *boardCommandParams, stdout, stderr io.Writer) int {
 	if err := agent.DaemonRequest(method, path, body, &out, agent.DaemonOpts{NoRetry: true, Timeout: 35 * time.Second}); err != nil {
 		return fail(stderr, err)
 	}
-	if !p.JSON && (p.Action == "list" || p.Action == "invites") {
+	if m, ok := out.(map[string]any); ok && !p.JSON && p.Action == "updates" && m["error"] != nil {
+		_, _ = fmt.Fprintf(stderr, "boards: last check failed: %v\n", m["error"])
+	}
+	if !p.JSON && (p.Action == "list" || p.Action == "invites" || (p.Action == "updates" && method == "GET")) {
 		return printRecordingTable(stdout, p.Action, out)
 	}
 	return printJSON(stdout, out)

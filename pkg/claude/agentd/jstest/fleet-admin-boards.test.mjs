@@ -61,7 +61,9 @@ async function mount(t, opts = {}) {
   const log = []; const toasts = []; const confirms = [];
   const confirm = async (o) => { confirms.push(o); return o.action(); };
   const actions = boardActions(log, opts);
-  const mounted = await harness.mount(harness.html`<${mod.BoardsPage} view=${view} actions=${actions} confirm=${confirm} toast=${(m, e) => toasts.push([m, e])} copy=${async () => {}} />`);
+  const extra = opts.updates ? { updates: opts.updates, loadUpdates: (refresh) => { log.push(['loadUpdates', refresh]); return Promise.resolve(opts.updates); } } : {};
+  actions.setBoardUpdateNotify = async (on) => { log.push(['notify', on]); return { notify: on }; };
+  const mounted = await harness.mount(harness.html`<${mod.BoardsPage} view=${view} actions=${actions} confirm=${confirm} toast=${(m, e) => toasts.push([m, e])} copy=${async () => {}} ...${extra} />`);
   const q = (sel) => mounted.container.querySelector(sel);
   const settle = () => harness.act(() => new Promise((r) => setTimeout(r, 10)));
   const click = async (el) => { await harness.act(() => el.click()); await settle(); };
@@ -324,4 +326,38 @@ test('re-posting sends one version, unchanged, to another board this node can po
   await s.click(s.q('[data-version="v1aaaaaaaaaaaa"] [data-version-act="repost"]'));
   await s.click(s.q('#fleet-board-repost-post'));
   assert.deepEqual(s.log.filter((l) => l[0] === 'publish').at(-1)[2], { source: { board: 'brd_ops', item: 'itm_1', version: 'v1aaaaaaaaaaaa' } });
+});
+
+test('kept items with a newer version are listed with a jump to their board, a check and the Messages opt-in', async (t) => {
+  const updates = { notify: false, checked_at: '2026-10-10T21:00:00Z', updates: [{ board: 'brd_ops', board_name: 'ops notes', item: 'itm_1', name: '<b>review roles</b>', pinned_version: 'v1aaaaaaaaaaaa', latest_version: 'v2bbbbbbbbbbbb' }] };
+  const s = await mount(t, { updates });
+  const list = s.q('#fleet-board-updates-list');
+  assert.match(list.textContent, /<b>review roles<\/b>.*on ops notes.*you keep v1aaaaaaaa · latest v2bbbbbbbb/, 'names are text, never HTML');
+  assert.equal(list.querySelector('b'), null);
+  await s.click(s.q('[data-board-update-open="brd_ops"]'));
+  assert.equal(s.q('#fleet-board-detail').dataset.board, 'brd_ops', 'Open board opens it in place');
+  await s.click(s.q('#fleet-board-update-check'));
+  assert.deepEqual(s.log.filter((l) => l[0] === 'loadUpdates').at(-1), ['loadUpdates', true]);
+  const box = s.q('#fleet-board-update-notify');
+  box.checked = true;
+  await s.harness.act(() => s.harness.fireEvent(box, 'change'));
+  await s.settle();
+  assert.deepEqual(s.log.find((l) => l[0] === 'notify'), ['notify', true]);
+  assert.match(s.toasts.at(-1)[0], /Messages note for each new version/);
+});
+
+test('the board client reads updates and sets the opt-in', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createFleetAdminActions } = await harness.importDashboardModule('js/fleet-admin-actions.js');
+  const calls = [];
+  const fetchImpl = async (url, init) => { calls.push([init.method, url, init.body ? JSON.parse(init.body) : null]); return { ok: true, status: 200, json: async () => ({ updates: [] }) }; };
+  const a = createFleetAdminActions({ fetchImpl });
+  await a.boardUpdates();
+  await a.boardUpdates(true);
+  await a.setBoardUpdateNotify(false);
+  assert.deepEqual(calls, [
+    ['GET', '/api/federation/boards/updates', null],
+    ['GET', '/api/federation/boards/updates?refresh=1', null],
+    ['PUT', '/api/federation/boards/updates', { notify: false }],
+  ]);
 });

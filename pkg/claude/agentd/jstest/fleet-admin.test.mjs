@@ -2090,3 +2090,14 @@ test('hub numbers read in human units with thousands separators', async (t) => {
   assert.equal(uptime(3 * 3600 + 120), '3 h 2 min');
   assert.equal(uptime(2 * 86400 + 3600), '2 d 1 h');
 });
+
+test('the Boards sub-tab counts kept items with a newer version', async (t) => {
+  const s = await setup(t);
+  const reads = [];
+  s.actions.boardUpdates = async (refresh) => { reads.push(refresh); return { notify: false, updates: [{ board: 'b', item: 'i1', name: 'x' }, { board: 'b', item: 'i2', name: 'y' }] }; };
+  assert.equal(s.q('#fleet-boards-update-count'), null);
+  await s.show();
+  assert.deepEqual(reads, [false], 'read once when shown, without forcing a check');
+  const tab = [...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Boards/.test(b.textContent));
+  assert.equal(tab.querySelector('#fleet-boards-update-count').textContent, '2');
+});

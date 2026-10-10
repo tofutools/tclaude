@@ -825,6 +825,12 @@ holding `hub.boards.manage` see **Boards** on the Hub page to freeze, limit
 or delete boards; they never see content or keys. CLI:
 `tclaude federation boards …` and `tclaude federation hub boards …`.
 
+When an item you keep has a newer version on its board, the **Boards** tab
+shows a count, and the page lists those items with **Open board**. Tick
+"Also leave a note in Messages…" to get one Messages note per new version
+(off by default). Neither fetches nor imports anything. CLI:
+`tclaude federation boards updates [--refresh] [--notify on|off]`.
+
 ## Shared behavior
 
 The dashboard polls a full snapshot every 2 seconds (10 when the tab is

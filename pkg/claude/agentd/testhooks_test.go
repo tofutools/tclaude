@@ -2126,3 +2126,18 @@ func RefreshFederationCatalogsForTest() {
 		rt.broadcastCatalogs()
 	}
 }
+
+// ResetBoardUpdatesForTest gives the test a fresh board-update state
+// (nothing checked, nothing announced) and restores the previous one.
+func ResetBoardUpdatesForTest() func() {
+	prev := boardUpdates
+	boardUpdates = &boardUpdateState{notified: map[string]bool{}}
+	return func() { boardUpdates = prev }
+}
+
+// ExpireBoardUpdatesForTest makes the next board-update read scan again.
+func ExpireBoardUpdatesForTest() {
+	boardUpdates.mu.Lock()
+	boardUpdates.checkedAt = time.Time{}
+	boardUpdates.mu.Unlock()
+}

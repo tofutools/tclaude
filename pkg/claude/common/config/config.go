@@ -849,6 +849,9 @@ type NodeScriptsConfig struct {
 }
 
 type FederationConfig struct {
+	// BoardUpdateNotify leaves a Messages note when a kept content-board item
+	// gets a newer version. Off by default; the dashboard badge works regardless.
+	BoardUpdateNotify bool `json:"board_update_notify,omitempty"`
 	// AgentTransferMaxBytes caps agent archives and uncompressed history; zero defaults to 2 GiB.
 	AgentTransferMaxBytes int64 `json:"agent_transfer_max_bytes,omitempty"`
 	// AgentHistoryRecordMaxBytes is the JSONL record memory bound; zero defaults to256 MiB.

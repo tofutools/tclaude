@@ -3427,6 +3427,16 @@ Use `federation boards publish --board ID --name NAME --only roles/NAME`,
 `publish --item ITEM --parent VERSION`; a stale parent is refused. `pin --board
 ID --item ITEM --version VERSION` keeps a selected version through retention;
 item listings show `latest_version`, `pinned_version` and `update_available`.
+`boards updates` (GET `/api/federation/boards/updates`, `/v1` alike) lists
+every kept item, across this node's boards, whose latest version differs from
+its pin: `{updates:[{board,board_name,item,name,pinned_version,latest_version}],
+notify,checked_at,error}`. It reuses a check up to five minutes old; `--refresh`
+(`?refresh=1`) checks again, at most every 30 seconds. `boards updates --notify
+on|off` (PUT `{notify}`, stored as `federation.board_update_notify`, default off)
+makes the daemon check every 15 minutes and leave one Messages note per newly
+seen version; versions already known when it starts are not announced. The
+check reads catalogs and pins only: nothing is fetched or imported. These routes
+are human-only and never served through peer view.
 Re-publication uses `publish --board DEST --from-board SOURCE --from-item ITEM
 --from-version VERSION` and retains exact original bytes and provenance.
 

@@ -22,6 +22,7 @@ import (
 func TestDashboardBoardItemPullPreviewImportWithoutPairing(t *testing.T) {
 	fh := newFedHarness(t)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://localhost:12345"))
+	t.Cleanup(agentd.ResetBoardUpdatesForTest())
 	dash := agentd.BuildDashboardHandlerForTest()
 	call := func(method, tail string, p any) *httptest.ResponseRecorder {
 		t.Helper()
@@ -155,6 +156,47 @@ func TestDashboardBoardItemPullPreviewImportWithoutPairing(t *testing.T) {
 	require.Equal(t, copiedVersion, updated["pinned_version"])
 	require.Equal(t, true, updated["update_available"])
 
+	// tcl-1gpqb1: the kept item with a newer version is listed for the badge;
+	// Messages notes are opt-in and announce only versions first seen later.
+	updates := must("GET", "/updates?refresh=1", nil)
+	require.Equal(t, false, updates["notify"])
+	require.Len(t, updates["updates"], 1)
+	notice := updates["updates"].([]any)[0].(map[string]any)
+	require.Equal(t, copiedBoard, notice["board"])
+	require.Equal(t, "copy", notice["board_name"])
+	require.Equal(t, "receiver edition", notice["name"])
+	require.Equal(t, copiedVersion, notice["pinned_version"])
+	require.Equal(t, update["version"], notice["latest_version"])
+	require.Equal(t, 400, call("PUT", "/updates", map[string]any{"notify": "yes"}).Code)
+	require.Equal(t, true, must("PUT", "/updates", map[string]any{"notify": true})["notify"])
+	third := must("POST", "/"+copiedBoard+"/items", map[string]any{"name": "third edition", "item": copiedItem, "parent": update["version"], "only": []string{"roles/board-role"}})
+	agentd.ExpireBoardUpdatesForTest()
+	updates = must("GET", "/updates", nil)
+	require.Equal(t, true, updates["notify"])
+	require.Equal(t, third["version"], updates["updates"].([]any)[0].(map[string]any)["latest_version"])
+	notes, e := db.ListHumanMessages()
+	require.NoError(t, e)
+	announced := 0
+	for _, n := range notes {
+		if strings.HasPrefix(n.Subject, "Board update: ") {
+			announced++
+			require.Equal(t, "Board update: third edition", n.Subject, "the version known before opting in is not announced")
+			require.Contains(t, n.Body, "nothing is fetched or imported")
+		}
+	}
+	require.Equal(t, 1, announced)
+	agentd.ExpireBoardUpdatesForTest()
+	must("GET", "/updates", nil)
+	notes, e = db.ListHumanMessages()
+	require.NoError(t, e)
+	again := 0
+	for _, n := range notes {
+		if strings.HasPrefix(n.Subject, "Board update: ") {
+			again++
+		}
+	}
+	require.Equal(t, 1, again, "one note per version")
+
 	var poisoned configbundle.Bundle
 	require.NoError(t, json.Unmarshal(raw, &poisoned))
 	poisoned.Sections["roles"][0].Value = json.RawMessage(`{"name":"board-role","brief":"api_key=supersecret123456789"}`)
@@ -183,7 +225,7 @@ func TestDashboardBoardItemPullPreviewImportWithoutPairing(t *testing.T) {
 	history := must("GET", "/"+board+"/items/"+invalid.Item+"/versions", nil)
 	require.Equal(t, true, history["versions"].([]any)[0].(map[string]any)["invalid"])
 	require.NotEqual(t, 200, call("POST", "/"+board+"/items/"+invalid.Item+"/versions/"+invalid.Version+"/fetch", map[string]any{}).Code)
-	for _, op := range []struct{ method, tail string }{{"GET", "/" + board + "/items"}, {"POST", "/" + board + "/items"}, {"POST", base + "/import"}, {"GET", base + "/download"}} {
+	for _, op := range []struct{ method, tail string }{{"GET", "/updates"}, {"PUT", "/updates"}, {"GET", "/" + board + "/items"}, {"POST", "/" + board + "/items"}, {"POST", base + "/import"}, {"GET", base + "/download"}} {
 		require.Equal(t, 403, testharness.Serve(agentd.PeerViewHandler(fh.peer.id.ID()), testharness.JSONRequest(t, op.method, "/api/federation/boards"+op.tail, map[string]any{})).Code)
 	}
 	require.Equal(t, 403, testharness.Serve(fh.f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, "GET", "/v1/federation/boards/"+board+"/items", nil), "agent")).Code)

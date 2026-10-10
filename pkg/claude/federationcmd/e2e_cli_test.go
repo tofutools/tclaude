@@ -41,7 +41,26 @@ func TestBoardsActionSpecificFlags(t *testing.T) {
 	cmd, _, err := boardsCmd().Find([]string{"download"})
 	require.NoError(t, err)
 	require.ErrorContains(t, cmd.ValidateRequiredFlags(), "file")
-	require.Len(t, boardsCmd().Commands(), 22)
+	require.Len(t, boardsCmd().Commands(), 23)
+}
+
+func TestBoardsUpdatesRoutesAndTable(t *testing.T) {
+	oldAvail, oldReq := agent.DaemonAvailableImpl, agent.DaemonRequestImpl
+	t.Cleanup(func() { agent.DaemonAvailableImpl = oldAvail; agent.DaemonRequestImpl = oldReq })
+	agent.DaemonAvailableImpl = func() bool { return true }
+	var calls []string
+	agent.DaemonRequestImpl = func(method, path string, in, out any, _ agent.DaemonOpts) error {
+		body, _ := json.Marshal(in)
+		calls = append(calls, method+" "+path+" "+string(body))
+		return json.Unmarshal([]byte(`{"updates":[{"board":"b1","board_name":"library","item":"it","name":"review pack","pinned_version":"v1","latest_version":"v2"}],"notify":false}`), out)
+	}
+	var out, stderr bytes.Buffer
+	require.Zero(t, runBoardCommand(&boardCommandParams{Action: "updates", Refresh: true}, &out, &stderr), stderr.String())
+	require.Contains(t, out.String(), "review pack")
+	require.Contains(t, out.String(), "LATEST")
+	require.Zero(t, runBoardCommand(&boardCommandParams{Action: "updates", Notify: "on"}, &out, &stderr), stderr.String())
+	require.Equal(t, []string{"GET /v1/federation/boards/updates?refresh=1 {}", `PUT /v1/federation/boards/updates {"notify":true}`}, calls)
+	require.NotZero(t, runBoardCommand(&boardCommandParams{Action: "updates", Notify: "maybe"}, &out, &stderr))
 }
 
 func TestMovesListTableAndJSON(t *testing.T) {
