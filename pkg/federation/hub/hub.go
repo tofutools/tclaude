@@ -183,6 +183,7 @@ func (h *Hub) ID() string { return h.hubID }
 func (h *Hub) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc(proto.WSPath, h.serveWS)
+	mux.HandleFunc(proto.BoardWSPath, h.serveBoardWS)
 	mux.HandleFunc(proto.StreamPath, h.serveStream)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -241,7 +242,7 @@ func (h *Hub) RefreshPolicy() {
 	h.policy = snap
 	var drop []*conn
 	for id, c := range h.conns {
-		if !snap.admitted[id] {
+		if !c.boardOnly && !snap.admitted[id] {
 			drop = append(drop, c)
 		}
 	}
@@ -282,17 +283,18 @@ func (h *Hub) refreshLoop() {
 }
 
 type conn struct {
-	hub     *Hub
-	ws      *websocket.Conn
-	id      string
-	name    string
-	version string
-	pub     []byte
-	nonce   string
-	out     chan *proto.Frame
-	done    chan struct{}
-	once    sync.Once
-	limiter *bucketPair
+	boardOnly bool
+	hub       *Hub
+	ws        *websocket.Conn
+	id        string
+	name      string
+	version   string
+	pub       []byte
+	nonce     string
+	out       chan *proto.Frame
+	done      chan struct{}
+	once      sync.Once
+	limiter   *bucketPair
 	// wmu serialises writes: gorilla/websocket allows one concurrent
 	// writer, and fail may run alongside writeLoop.
 	wmu sync.Mutex
@@ -409,6 +411,9 @@ func (h *Hub) handshake(ws *websocket.Conn) (*conn, error) {
 	if !proto.VerifyHello(&hello, h.hubID, nonce) {
 		return refuse(proto.CodeBadAuth, "hello signature does not verify")
 	}
+	if hello.BoardToken != "" {
+		return refuse(proto.CodeBoardOnly, "board invitations are accepted only on the board endpoint")
+	}
 	id := hello.InstanceID
 	now := time.Now()
 	if len(hello.RotationChain) > 0 {
@@ -450,7 +455,7 @@ func (h *Hub) handshake(ws *websocket.Conn) (*conn, error) {
 			if err := h.store.RedeemInvite(hello.Invite, id, now); err != nil {
 				return refuse(proto.CodeNotAdmitted, err.Error())
 			}
-		case h.cfg.Open:
+		case h.cfg.Open && !h.store.hasBoardMembership(id):
 			if err := h.store.Admit(id); err != nil {
 				return refuse(proto.CodeNotAdmitted, err.Error())
 			}
@@ -502,7 +507,7 @@ func (h *Hub) handshake(ws *websocket.Conn) (*conn, error) {
 
 func (h *Hub) register(c *conn) bool {
 	h.mu.Lock()
-	if h.closed || (h.conns[c.id] == nil && len(h.conns) >= h.config().MaxConnections) {
+	if h.closed || (h.conns[c.registryKey()] == nil && len(h.conns) >= h.config().MaxConnections) {
 		h.mu.Unlock()
 		return false
 	}
@@ -510,8 +515,8 @@ func (h *Hub) register(c *conn) bool {
 	// uses to stop admission and snapshot connections. A completed handshake
 	// must not leave an untracked connection alive after that snapshot.
 	h.wg.Add(1)
-	old := h.conns[c.id]
-	h.conns[c.id] = c
+	old := h.conns[c.registryKey()]
+	h.conns[c.registryKey()] = c
 	h.mu.Unlock()
 	if old != nil {
 		old.fail(proto.CodeReplaced, "replaced by a newer connection from the same instance")
@@ -524,12 +529,14 @@ func (h *Hub) register(c *conn) bool {
 func (h *Hub) unregister(c *conn) {
 	c.fail("", "")
 	h.mu.Lock()
-	if h.conns[c.id] == c {
-		delete(h.conns, c.id)
+	if h.conns[c.registryKey()] == c {
+		delete(h.conns, c.registryKey())
 	}
 	closed := h.closed
 	h.mu.Unlock()
-	_ = h.store.RecordSeen(c.id, c.pub, c.name, c.version, time.Now())
+	if !c.boardOnly {
+		_ = h.store.RecordSeen(c.id, c.pub, c.name, c.version, time.Now())
+	}
 	h.log.Info("instance disconnected", "instance", c.id)
 	if !closed {
 		h.broadcastDirectories()
@@ -548,7 +555,13 @@ func (h *Hub) readLoop(c *conn) {
 			c.fail(proto.CodeBadFrame, "malformed frame")
 			return
 		}
+		if c.boardOnly && !boardFrameAllowed(f.Type) {
+			c.send(&proto.Frame{Type: proto.FrameError, Code: proto.CodeBoardOnly, Message: "board membership permits board RPCs only"})
+			continue
+		}
 		switch f.Type {
+		case proto.FrameBoardRequest:
+			h.boardRequest(c, &f, len(raw))
 		case proto.FrameSend:
 			h.route(c, &f, len(raw))
 		case proto.FrameAdminRequest:
@@ -560,6 +573,10 @@ func (h *Hub) readLoop(c *conn) {
 }
 
 func (h *Hub) route(c *conn, f *proto.Frame, size int) {
+	if c.boardOnly {
+		c.send(&proto.Frame{Type: proto.FrameError, Code: proto.CodeBoardOnly, Message: "board connection cannot relay"})
+		return
+	}
 	result := func(status, code, msg string) {
 		c.send(&proto.Frame{Type: proto.FrameSendResult, Ref: f.Ref, To: f.To, Status: status, Code: code, Message: msg})
 	}
@@ -599,10 +616,15 @@ func (h *Hub) broadcastDirectories() {
 	h.mu.Lock()
 	conns := make([]*conn, 0, len(h.conns))
 	for _, c := range h.conns {
-		conns = append(conns, c)
+		if !c.boardOnly {
+			conns = append(conns, c)
+		}
 	}
 	online := map[string]bool{}
-	for id := range h.conns {
+	for id, c := range h.conns {
+		if c.boardOnly {
+			continue
+		}
 		online[id] = true
 	}
 	policy := h.policy

@@ -28,6 +28,10 @@ var adminMethodCapability = map[string]string{
 }
 
 func (h *Hub) adminRequest(c *conn, frame *proto.Frame, size int) {
+	if c.boardOnly {
+		c.send(&proto.Frame{Type: proto.FrameError, Code: proto.CodeBoardOnly, Message: "board connection cannot administer the hub"})
+		return
+	}
 	req := frame.AdminRequest
 	if req == nil || !proto.ValidStreamID(req.ID) {
 		c.send(&proto.Frame{Type: proto.FrameError, Code: proto.CodeBadFrame, Message: "invalid hub admin frame"})
