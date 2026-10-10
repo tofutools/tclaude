@@ -14,7 +14,7 @@ import { attachmentHref, bodilessNotice, messageAttachments } from './human-atta
 import { dashboardState } from './snapshot-store.js';
 import { ImageAttachmentPreview } from './image-preview-overlay.js';
 import { MarkdownAttachment } from './markdown-attachment.js';
-import { AwayAnswer, PEER_MAIL_EVENT, PeerMailHost, awayTicket, peerOfMessage, replySubject } from './peer-mail.js';
+import { AwayAnswer, PEER_MAIL_EVENT, PeerMailHost, awayTicket, peerLabelOf, peerOfMessage, replySubject } from './peer-mail.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { remoteNodeID } from './skynet-model.js';
 
@@ -537,7 +537,7 @@ function MessageReader({ current, controller, model }) {
       : html`<${LinkifiedBody} text=${message.body || ''} />`}</div>
     ${human && html`<${HumanAttachment} message=${message} />`}
     <div class="mail-reader-actions">
-      ${ticket && html`<${AwayAnswer} ticket=${ticket} peerLabel=${message.from_title || peer} confirm=${shellConfirm} toast=${shellToast} />`}
+      ${ticket && html`<${AwayAnswer} ticket=${ticket} peerLabel=${peerLabelOf(message)} confirm=${shellConfirm} toast=${shellToast} />`}
       ${peer && html`<button data-act="peer-mail-reply" title="Reply to this peer's operator"
         onClick=${() => openPeerMail({ peer, subject: replySubject(message.subject) })}>reply</button>`}
       ${human && message.from_conv && html`<${Fragment}><button data-act="msg-reply" data-id=${message.id} data-agent=${message.from_agent || ''}

@@ -387,7 +387,7 @@ operator dialog with role filtering and attachments for offline recipients.
 Federation mail: in Human notifications, **✉ peer** writes to a peer's
 operator, or to agents on a peer (`agent@peer`, or `group:<group>@peer`
 optionally by role), with the recent outbox and its delivery state below.
-Mail from a peer's operator gets a **reply** button. While a peer's operator
+Mail from a peer's operator (it starts with the remote-message banner) gets a **reply** button. While a peer's operator
 is away with you as their cover, the requests they forward arrive here with
 **Approve once** / **Deny**: one answer for that one request, nothing lasting.
 CLI: `tclaude federation notify|send|outbox|answer`.
@@ -594,8 +594,10 @@ is trusted) manages this node's federation. The identity bar at the top shows
 this node's instance ID and full fingerprint (copy it to compare out of band),
 the hub connection with **Disconnect**, **version & updates…** for this
 node, and away cover: **away…** picks a trusted peer's operator (and an
-optional end) to answer your agents' access requests once each while you are
-away, and **return…** ends it. Peer operators' access requests are never
+optional end) who, while you are away, receives your agents' access requests
+as they arise (and may answer each once; the first answer wins), every
+message your agents send you, and waiting-session notices; **return…** ends
+it. Peer operators' access requests are never
 forwarded. Every action that widens trust, overwrites state or runs code confirms
 first and says what will happen. Most pages name their CLI.
 

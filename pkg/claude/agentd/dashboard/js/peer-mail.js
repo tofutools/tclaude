@@ -10,22 +10,37 @@ const html = htm.bind(h);
 export const PEER_MAIL_EVENT = 'tclaude:peer-mail';
 const PEER_GROUP = 'federation:';
 // A forwarded away request carries its one-shot ticket in this line.
-const TICKET_RE = /One-shot answer: tclaude federation answer ([0-9a-f]{16,64}\.[0-9a-f]{16,64}@[A-Za-z0-9_.-]{1,128}) --decision/;
+const TICKET_RE = /One-shot answer: tclaude federation answer ([0-9a-f]{32}\.[0-9a-f]{32}@[A-Za-z0-9_.-]{1,128}) --decision/;
 
 function errText(error) { return error?.message || String(error); }
 
-// peerOfMessage is the peer instance an inbound operator message came from
-// (peer operator mail lands in the human inbox under federation:<instance>).
+// Operator mail from a peer starts with the daemon's remote banner, which
+// names the sender, the peer's label and its instance. Other notices filed
+// under federation:<instance> (fleet health, spawn notices and results) lack it.
+const BANNER_RE = /^\[remote message from (.{1,200}?)@(.{1,200}?) \(instance ([A-Za-z0-9_.-]{1,128})\)/;
+
+// peerOfMessage is the peer instance a peer operator's message came from
+// (filed in the human inbox under federation:<instance>), or ''.
 export function peerOfMessage(m) {
   if (!m || m.from_conv || !String(m.group || '').startsWith(PEER_GROUP)) return '';
-  return String(m.group).slice(PEER_GROUP.length);
+  const inst = String(m.group).slice(PEER_GROUP.length);
+  const b = BANNER_RE.exec(String(m.body || ''));
+  return b && b[3] === inst ? inst : '';
+}
+
+// peerLabelOf is the peer's display name from the banner.
+export function peerLabelOf(m) {
+  return BANNER_RE.exec(String(m?.body || ''))?.[2] || peerOfMessage(m);
 }
 
 // awayTicket extracts the one-shot answer ticket from a cover request a peer
-// operator forwarded while away.
+// operator forwarded while away. The ticket must name the sending peer: the
+// answer goes to the instance in the ticket.
 export function awayTicket(m) {
-  if (!peerOfMessage(m)) return '';
-  return TICKET_RE.exec(String(m.body || ''))?.[1] || '';
+  const peer = peerOfMessage(m);
+  if (!peer || !String(m.from_title || '').startsWith('cover request@')) return '';
+  const t = TICKET_RE.exec(String(m.body || ''))?.[1] || '';
+  return t.endsWith(`@${peer}`) ? t : '';
 }
 
 export function replySubject(s) {
@@ -181,7 +196,7 @@ export function AwayControl({ confirm, toast, actions = defaultActions(), now = 
     const untilISO = until ? new Date(until).toISOString() : '';
     confirm({
       title: `Hand your approvals to ${label(cover)} while away?`,
-      body: `Until you return${until ? ` or ${new Date(until).toLocaleString()}` : ''}, access requests your agents raise that you do not answer are forwarded to ${label(cover)}'s operator, who may approve or deny each one once (it needs your approvals.answer grant; to answer harness prompts it also needs sessions.read and sessions.attach). Peer operators' access requests are never forwarded; only you decide those.`,
+      body: `Until you return${until ? ` or ${new Date(until).toLocaleString()}` : ''}, ${label(cover)}'s operator receives, as they happen: every access request your agents raise (permission, action and its body preview), which it may approve or deny once each — you can still answer here, and the first answer wins; every message your agents send you (notify-human, full text); and notices when a session waits for a permission or question. It needs your approvals.answer grant to answer, and sessions.read and sessions.attach to answer harness prompts. Peer operators' access requests are never forwarded; only you decide those.`,
       okLabel: 'Go away',
       busyLabel: 'Saving…',
       action: () => actions.setAway({ cover, until: untilISO }),
@@ -193,7 +208,7 @@ export function AwayControl({ confirm, toast, actions = defaultActions(), now = 
   };
   const back = () => confirm({
     title: 'Return?',
-    body: `Requests stop forwarding to ${label(away.cover)}, and answers it has not sent yet are no longer accepted.`,
+    body: `Requests and messages stop forwarding to ${label(away.cover)}, and any answer from it not yet applied here is refused.`,
     okLabel: 'Return',
     busyLabel: 'Saving…',
     action: () => actions.returnHome(),
