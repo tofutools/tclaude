@@ -2805,3 +2805,13 @@ administration routes mirror `/v1/federation/access-requests`. Both nodes audit
 requests and terminal decisions without copying the reason into audit logs.
 Agents continue to request missing local cross-node permissions from their own
 operator using the existing `--ask-human` path.
+
+### Local dashboard labels and hub setup
+
+`GET /api/federation/node-labels` returns `{labels:[...]}`; POST accepts
+`{add:[...],remove:[...]}` and shares the CLI's label validation and normalized
+label set. GET/HEAD are reads. These cookie-authenticated routes are local-only.
+Hub setup already uses `POST /api/federation/config` with optional
+`enabled`, `hub_url`, `name`, `invite` and `hub_ca_file` fields. Omitted fields
+are preserved; CA file paths refer to this node's filesystem. URL validation,
+configuration writes and client reload are shared with `federation connect`.
