@@ -1,6 +1,7 @@
 // terminal-interactions.js — shared native-terminal affordances for every
 // dashboard xterm surface: selection/copy, safe links, and clipboard images.
 
+import { downloadRemoteFile as downloadRemoteFileVia } from './remote-files.js';
 import {
   isCommandPaletteShortcut,
   requestCommandPalette,
@@ -448,28 +449,6 @@ async function uploadImages(files, signal, terminalPath) {
   return (payload.files || []).map(f => f.path).filter(Boolean);
 }
 
-// REMOTE_FILE_ERRORS explain the stable refusals of a remote terminal file
-// download (the peer's or this node's), in the operator's terms.
-export const REMOTE_FILE_ERRORS = Object.freeze({
-  not_shared: 'the peer does not share files from this terminal (needs a sessions.files.read grant)',
-  unsafe_path: 'not downloadable: outside the agent\'s working directory, a symlink, or a protected file (credentials, .env, .git/config)',
-  root_too_broad: 'the agent runs in a home or system directory; the peer shares files only from a project directory',
-  file_too_large: 'the file is over the 32 MiB download limit',
-  viewer_closed: 'this terminal view is no longer live; reopen it to download',
-  peer_offline: 'the peer is offline; try again when it reconnects',
-  not_found: 'no such file under the agent\'s working directory',
-  limit: 'another download from this peer is still running; try again shortly',
-  timeout: 'the download took too long; try again',
-});
-
-// Statuses that name their refusal on their own; only an ambiguous 403 needs
-// its body read (HEAD has none).
-const REMOTE_FILE_STATUS = Object.freeze({ 404: 'not_found', 413: 'file_too_large', 429: 'limit', 503: 'peer_offline', 504: 'timeout' });
-
-export function remoteFileError(code, status) {
-  return REMOTE_FILE_ERRORS[code] || `download unavailable (${status || 'network error'})`;
-}
-
 // attachTerminalInteractions must be called after term.open(host). It returns a
 // disposer for DOM listeners; xterm-owned handlers/addons die with term.dispose.
 export function attachTerminalInteractions({
@@ -670,31 +649,9 @@ export function attachTerminalInteractions({
   }
 
   // downloadRemoteFile fetches a path from the peer through this node's
-  // pinned viewer. HEAD carries no error body, so a 403 preflight (several
-  // refusals share it) is read once more with an aborted GET for its stable
-  // code; other statuses name their refusal and are never retried as a GET,
-  // which would transfer the file in full if it had become available.
-  async function downloadRemoteFile(path) {
-    const viewer = remoteFileViewer();
-    if (!viewer) throw new Error(REMOTE_FILE_ERRORS.not_shared);
-    const href = `/api/federation/terminal-file?${new URLSearchParams({ terminal: terminalPath, viewer, path })}`;
-    const head = await fetchImpl(href, { method: 'HEAD', credentials: 'same-origin', cache: 'no-store' }).catch(() => null);
-    if (!head?.ok) {
-      if (head?.status !== 403) throw new Error(remoteFileError(REMOTE_FILE_STATUS[head?.status], head?.status));
-      const ctl = new AbortController();
-      const res = await fetchImpl(href, { credentials: 'same-origin', cache: 'no-store', signal: ctl.signal }).catch(() => null);
-      let code = '';
-      if (res && !res.ok) code = await res.json().then((b) => b?.code || '', () => '');
-      ctl.abort();
-      throw new Error(remoteFileError(code, res?.status || head?.status));
-    }
-    const anchor = ownerDocument.createElement('a');
-    anchor.href = href;
-    anchor.download = '';
-    anchor.style.display = 'none';
-    ownerDocument.body.append(anchor);
-    anchor.click();
-    anchor.remove();
+  // pinned viewer (remote-files.js owns the preflight and refusal wording).
+  function downloadRemoteFile(path) {
+    return downloadRemoteFileVia({ terminal: terminalPath, viewer: remoteFileViewer(), path, fetchImpl, documentRef: ownerDocument });
   }
 
   // A file link names a path on the terminal's host. On a remote terminal that

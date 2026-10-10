@@ -19,6 +19,7 @@ import {
   memberHumanMessages, openHumanNotificationReader,
 } from './human-notification-attention.js';
 import { ViewersBadge } from './remote-viewers.js';
+import { RemoteFilesPanel } from './remote-files-panel.js';
 
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
@@ -225,6 +226,8 @@ function TerminalPane({
   const [reconnect, setReconnect] = useState(false);
   const [hasSelection, setHasSelection] = useState(false);
   const [remote, setRemote] = useState(null);
+  const [files, setFiles] = useState(false);
+  const filesOK = !!(pane.seed.remote && remote?.files && remote?.viewer && !remote?.closed);
   const [dragging, setDragging] = useState(false);
   // Dashboard panes get their status from PaneTab. Only the solo title needs
   // to subscribe to the standalone snapshot signal; keeping this null in the
@@ -286,6 +289,7 @@ function TerminalPane({
         <span class="mux-pane-status" role="status" aria-live="polite" aria-atomic="true">${status}</span>
         <span class="terminal-interaction-hint">${INTERACTION_HINT}</span>
         ${reconnect ? html`<button type="button" class="mux-btn" onClick=${() => void actions.widgetFor(pane.id)?.connect()}>Reconnect</button>` : null}
+        ${filesOK ? html`<button type="button" class="mux-btn" data-term-files aria-pressed=${files ? 'true' : 'false'} title="Browse the agent's project files on the peer: preview or download" onClick=${() => setFiles(!files)}>Files</button>` : null}
         <${CopyButton} className="mux-btn" hasSelection=${hasSelection} actions=${actions} runtimeID=${pane.id} />
         ${composeMessage ? html`
           <button type="button" class="mux-btn" title="Send a queued message to this agent (Ctrl/Cmd+M)" onClick=${composeMessage}>✉ Message</button>
@@ -309,6 +313,8 @@ function TerminalPane({
           <button type="button" class="mux-btn" title="Move this terminal to its own browser tab" onClick=${() => void actions.popOutPane(pane.key)}>⧉ tab</button>
         `}
       </div>
+      ${files && filesOK ? html`<${RemoteFilesPanel} terminal=${pane.seed.ws} viewer=${remote.viewer}
+        peer=${pane.seed.remote.peerLabel || pane.seed.remote.peer} onClose=${() => setFiles(false)} />` : null}
       <${OpaqueTerminalHost}
         descriptor=${pane}
         runtimeID=${pane.id}
@@ -1461,6 +1467,7 @@ function TerminalBadge({ state }) {
   const count = state.view.value.count;
   return html`<span id="terminals-badge" class="tab-badge count" hidden=${count === 0}>${count}</span>`;
 }
+
 
 export function mountTerminalShellIsland({
   host,

@@ -73,6 +73,9 @@ export function createPeerActionActions({ fetchImpl = (...a) => globalThis.fetch
     retire: (id) => call('POST', agent(id, 'retire'), {}),
     clone: (id, { followUp = '', noCopyConv = false } = {}) => call('POST', agent(id, 'clone'), { ...(followUp ? { follow_up: followUp } : {}), ...(noCopyConv ? { no_copy_conv: true } : {}) }),
     move: (id, group) => call('POST', agent(id, 'move'), { group }),
+    // moveDirect lets the receiving node (this one) land it at once when its
+    // permissions allow; otherwise it waits as an offer (tcl-u4yodp).
+    moveDirect: (id, body) => call('POST', agent(id, 'move'), body),
     teleport: (id, { group, note = '', clone = false }) => call('POST', agent(id, 'teleport'), { group, ...(note ? { note } : {}), ...(clone ? { clone: true } : {}) }),
     spawn: (group, { brief, name = '', role = '', profile = '' }) => call('POST', `${api}groups/${encodeURIComponent(group)}/spawn`, { brief, ...(name ? { name } : {}), ...(role ? { role } : {}), ...(profile ? { profile } : {}) }),
     spawnStatus: (id) => call('GET', `${api}spawn-requests/${encodeURIComponent(id)}`),

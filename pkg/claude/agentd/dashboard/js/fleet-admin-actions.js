@@ -145,6 +145,7 @@ const settingRows = (v) => {
     // Moves a local agent to a peer with its history; the source retires
     // here once the peer confirms its copy is running (move-agent).
     moveAgent: (body) => call('POST', 'move-agent', body),
+    moveDetail: (id) => call('GET', `moves/${encodeURIComponent(id)}`),
     teleport: () => call('GET', 'teleport'),
     setTeleport: (disabled) => call('PUT', 'teleport', { disabled }),
     createPool: (name) => call('POST', 'nodes/groups', { name }),
@@ -224,6 +225,7 @@ const settingRows = (v) => {
     boards: () => pages('boards', 'boards'),
     createBoard: (name) => call('POST', 'boards', { name }),
     joinBoard: (token) => call('POST', 'boards/join', { token }),
+    deleteBoard: (board) => done(call('DELETE', `boards/${enc(board)}`)),
     leaveBoard: (board) => done(call('DELETE', `boards/${enc(board)}/membership`)),
     boardMembers: (board) => pages(`boards/${enc(board)}/members`, 'members'),
     setBoardMember: (board, instance, role) => done(call('PUT', `boards/${enc(board)}/members/${enc(instance)}`, { role })),

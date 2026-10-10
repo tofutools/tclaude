@@ -5,8 +5,9 @@ import {
 	isBrowserPasteShortcut, isComposeMessageShortcut, safeTerminalLink,
 	isTerminalClipboardRequestShortcut, shouldArmTmuxClipboard, terminalKeyInput,
 	visibleLocalFileLinkProvider,
-	visibleLocalFileLinks, REMOTE_FILE_ERRORS,
+	visibleLocalFileLinks,
 } from '../dashboard/js/terminal-interactions.js';
+import { REMOTE_FILE_ERRORS } from '../dashboard/js/remote-files.js';
 
 function key(overrides = {}) {
   return {
