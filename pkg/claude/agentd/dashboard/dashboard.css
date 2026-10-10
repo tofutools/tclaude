@@ -18949,7 +18949,8 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-level.unrestricted { color: #f0883e; font-weight: 600; }
 .fa-danger { color: #f85149; }
 .fa-dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; align-items: baseline; margin: 6px 0 10px; }
-.fa-wrap { word-break: break-all; }
+/* Long IDs, fingerprints and paths break anywhere; prose still wraps at spaces. */
+.fa-wrap { overflow-wrap: anywhere; }
 .fa-fp-full { font-size: 14px; color: #f0f6fc; }
 .fa-levels, .fa-profile { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
 .fa-consequence { margin: 8px 0; padding: 8px 10px; border: 1px solid #f8514966; border-radius: 6px; background: #f851491a; color: #ffa198; }

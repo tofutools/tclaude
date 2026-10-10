@@ -1118,8 +1118,8 @@ test('moves: the move dialog spells out that the source retires and surfaces ref
   await s.harness.act(() => s.harness.fireEvent(g, 'input'));
   await s.click(q('#fleet-move-agent-send'));
   const c = s.confirms.at(-1);
-  assert.match(c.title, /Move ada \(agt_a1\) to forge\?/);
-  assert.match(c.body, /^Sends ada \(agt_a1\)'s config and full conversation history .* to group team on forge\. Once forge runs its copy, ada \(agt_a1\) is retired here; until then you can abandon the move on this page, but what was sent stays there\. forge picks the starting directory\.$/);
+  assert.match(c.title, /^Move ada to forge\?$/);
+  assert.match(c.body, /^Sends ada \(agt_a1\)'s config and full conversation history .* to group team on forge\. Once forge runs its copy, ada is retired here; until then you can abandon the move on this page, but what was sent stays there\. forge picks the starting directory\.$/);
   assert.match(q('#fleet-move-agent [role=alert]').textContent, /contains credentials/);
   assert.equal(q('#fleet-move-agent-send').disabled, true, 'flagged history needs an explicit choice');
   await s.check(q('#fleet-move-agent-allow'));
