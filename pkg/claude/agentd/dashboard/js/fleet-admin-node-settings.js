@@ -3,6 +3,7 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { HealthPolicySection } from './fleet-admin-health.js';
+import { IdentityRotationSection } from './fleet-admin-identity.js';
 
 const html = htm.bind(h);
 
@@ -118,6 +119,7 @@ export function NodeSettingsDialog({ self, peers = [], actions, confirm, toast, 
         <span class="muted">CLI: <code>tclaude federation node-labels [--add …] [--remove …]</code></span></div>`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <${HealthPolicySection} peers=${peers} actions=${actions} confirm=${confirm} toast=${toast} />
+    <${IdentityRotationSection} actions=${actions} confirm=${confirm} toast=${toast} />
     <div class="modal-buttons"><span class="spacer"></span><button type="button" onClick=${onClose}>Close</button></div>
   </${Overlay}>`;
 }

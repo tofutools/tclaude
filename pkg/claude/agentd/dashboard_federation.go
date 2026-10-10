@@ -20,6 +20,7 @@ func registerDashboardFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/federation/jobs/{id}", dashboardFederationRoute(handleFederationJobs))
 	mux.HandleFunc("GET /api/federation/jobs/{id}/output", dashboardFederationRoute(handleFederationJobOutput))
 	mux.HandleFunc("GET /api/federation/identity/rotations", dashboardFederationRoute(handleFederationIdentityRotations))
+	mux.HandleFunc("POST /api/federation/identity/rotate", dashboardFederationRoute(handleFederationIdentityRotate))
 	mux.HandleFunc("GET /api/federation/jobs/{id}/follow", dashboardFederationRoute(handleFederationJobFollow))
 	mux.HandleFunc("GET /api/federation/jobs/{id}/logs", dashboardFederationRoute(handleFederationJobLogs))
 	mux.HandleFunc("POST /api/federation/jobs/{id}/cancel", dashboardFederationRoute(handleFederationJobCancel))
