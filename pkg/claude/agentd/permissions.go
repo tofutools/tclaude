@@ -126,6 +126,8 @@ func init() { initPermissionRegistry() }
 var permissionRegistry = []PermSlug{
 	{Slug: PermJobsRun, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Request and inspect remote one-shot jobs in an allowed repository. Requires peer= scope. Peer grants independently require a receiving group and launch policy."},
 	{Slug: PermHostRead, Description: "Read cached host CPU, RAM, disk and live agent/session load, including configured local work-directory paths. Not default-granted."},
+	{Slug: PermHumanInboxRead, Description: "Peer-only: read this node's human notifications and pending ask-human requests. Held only through unrestricted federation trust; not grantable, not requestable."},
+	{Slug: PermHumanInboxAnswer, Description: "Peer-only: reply to this node's agents' human notifications and answer their ask-human requests once (approve or deny). Held only through unrestricted federation trust; not grantable, not requestable."},
 	{Slug: PermApprovalsAnswer, Description: "Peer-only one-shot access-request answers while selected as away cover. Configure as an unscoped federation peer grant; ordinary agent grants do not authorize answers."},
 	{Slug: PermModelsProxyLeased, Description: "Peer-only access to requester-issued model gateway leases. Configure through federation peer grants."},
 	{Slug: PermAgentsReceive, Description: "Peer-only admission for agent bundle offers into an explicitly granted receiving group. Configure through federation peer grants; ordinary agent grants do not authorize receipt."},

@@ -133,4 +133,18 @@ func TestPeerHumanInboxUnrestrictedOnlyAndOneShot(t *testing.T) {
 	_, ok, err := db.AgentPermissionOverride(moveSourceConv, agentd.PermHumanClipboard)
 	require.NoError(t, err)
 	require.False(t, ok, "a remote answer leaves no lasting grant")
+	require.Eventually(t, func() bool {
+		rows, err := db.ListAuditLog(db.AuditLogFilter{})
+		if err != nil {
+			return false
+		}
+		for _, row := range rows {
+			if row.ActorKind == db.AuditActorHuman && row.ActorLabel == "operator@"+peer.InstanceID {
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 20*time.Millisecond, "the approval history names the deciding node")
+	code, body = serve("POST", "/api/human-inbox/access/"+reqID, map[string]any{"decision": "deny"})
+	require.Equal(t, 404, code, "one answer only: "+body)
 }

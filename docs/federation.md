@@ -2867,16 +2867,20 @@ The action command never retries mutations automatically.
 
 An operator running several nodes of their own can read and answer each node's
 human inbox from one dashboard. A node serves `GET /api/human-inbox` (the
-newest 50 human notifications and the pending ask-human requests of its own
+newest 50 unread human notifications and the pending ask-human requests of its own
 agents) and the answers `POST /api/human-inbox/reply {id, body}`,
 `POST /api/human-inbox/read {id}` and
 `POST /api/human-inbox/access/{id} {decision: approve|deny}` only to a peer it
 trusts unrestricted (`human.inbox.read` / `human.inbox.answer`); these slugs
 cannot be granted or requested. Decisions are one-shot: "always allow" and
 extending a deadline stay with the node's own operator, as do peer access
-requests, away-cover forwards, process obligations and attachments. The
-requesting node reaches the routes only through its dashboard peer proxy or
-the operator-only CLI, and both nodes audit each answer.
+requests, away-cover forwards, process obligations and attachments. An
+approval lets the blocked call run with all its effects (a `sudo.*` request
+grants what it names for the time it asked); it writes no standing rule. A
+reply reaches the agent with the remote-operator banner, and the approval
+history names the deciding node (`operator@INSTANCE`). The requesting node
+reaches the routes only through its dashboard peer proxy or the operator-only
+CLI, and both nodes audit each answer.
 
 The dashboard's Messages tab lists the other nodes' unread notifications and
 pending requests under **Other nodes**, read every minute (every five while

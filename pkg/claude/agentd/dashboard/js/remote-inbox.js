@@ -76,7 +76,10 @@ export async function readRemoteInboxes(peers, fetchImpl = (...a) => globalThis.
       remoteInbox.value = { ...remoteInbox.value, [p.id]: { label: p.name || p.id, messages, access_requests: requests, error: '' } };
     } catch (e) {
       const prev = remoteInbox.value[p.id] || { messages: [], access_requests: [] };
-      remoteInbox.value = { ...remoteInbox.value, [p.id]: { ...prev, label: p.name || p.id, error: e.code === 'permission' ? '' : String(e.message || e) } };
+      // A node that no longer trusts this one unrestricted shows nothing.
+      remoteInbox.value = { ...remoteInbox.value, [p.id]: e.code === 'permission'
+        ? { label: p.name || p.id, messages: [], access_requests: [], error: '' }
+        : { ...prev, label: p.name || p.id, error: String(e.message || e) } };
     }
   }));
 }
@@ -110,7 +113,10 @@ function errText(e) { return e?.message || String(e); }
 // approveConsequence spells out what one remote approval does.
 export function approveConsequence(r, node) {
   const who = r.title || r.agent_id || 'an agent';
-  return `Approves ${r.perm} once for ${who} on ${node}${r.path ? `: the blocked call ${r.path} goes through now` : ''}${r.target_group ? ` (group ${r.target_group})` : ''}${r.target_conv_title ? ` (target ${r.target_conv_title})` : ''}. Nothing lasting is granted; "always allow" stays on ${node}'s own dashboard.`;
+  const sudo = String(r.perm || '').startsWith('sudo.')
+    ? ` A sudo request grants the permissions it names for the time it asked for.`
+    : '';
+  return `Approves ${r.perm} once for ${who} on ${node}${r.path ? `: the blocked call ${r.path} goes through now` : ''}${r.target_group ? ` (group ${r.target_group})` : ''}${r.target_conv_title ? ` (target ${r.target_conv_title})` : ''}, with all its effects on ${node}.${sudo} No "always allow" rule is written; that stays on ${node}'s own dashboard.`;
 }
 
 function InboxReader({ item, onClose, actions, confirm, toast }) {
@@ -136,7 +142,7 @@ function InboxReader({ item, onClose, actions, confirm, toast }) {
       ${data.path && html`<div><code>${data.path}</code></div>`}
       ${(data.target_group || data.target_conv_title) && html`<div class="muted">target: ${data.target_group ? `group ${data.target_group}` : ''}${data.target_conv_title ? ` ${data.target_conv_title}` : ''}</div>`}
       ${data.body && html`<pre class="remote-inbox-body">${data.body}</pre>`}
-      <div class="muted">One answer for this one request. "Always allow" stays on ${label}'s own dashboard.</div>
+      <div class="muted">One answer for this one request; the call runs with all its effects. "Always allow" stays on ${label}'s own dashboard.</div>
       <div class="modal-buttons"><span class="spacer"></span>
         <button type="button" id="remote-inbox-deny" disabled=${busy} onClick=${deny}>Deny</button>
         <button type="button" id="remote-inbox-approve" class="primary" disabled=${busy} onClick=${approve}>Approve once…</button>

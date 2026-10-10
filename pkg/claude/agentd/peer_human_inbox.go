@@ -3,6 +3,7 @@ package agentd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"sort"
@@ -102,6 +103,15 @@ func servePeerHumanInbox(w http.ResponseWriter, r *http.Request, v *peerView, ru
 		writeError(w, 500, "io", "list human messages")
 		return
 	}
+	// Only unread notifications: the remote inbox is a to-do list, and an
+	// unread one must not drop behind newer read ones.
+	unread := all[:0]
+	for _, m := range all {
+		if m.ReadAt.IsZero() {
+			unread = append(unread, m)
+		}
+	}
+	all = unread
 	sort.Slice(all, func(i, j int) bool { return all[i].ID > all[j].ID })
 	if len(all) > peerHumanInboxMessages {
 		all = all[:peerHumanInboxMessages]
@@ -144,20 +154,7 @@ func servePeerHumanInboxAnswer(w http.ResponseWriter, r *http.Request, v *peerVi
 			writeError(w, 400, "invalid_arg", "decision must be approve or deny (one-shot only)")
 			return
 		}
-		found := false
-		for _, ar := range localPendingAccessRequests() {
-			if ar.ID == r.PathValue("id") {
-				found = true
-				break
-			}
-		}
-		if !found {
-			writeError(w, 404, "not_found", "no such pending access request")
-			return
-		}
-		v.auditDetail = "decision=" + body.Decision
-		r.Body = io.NopCloser(bytes.NewReader([]byte(`{"decision":"` + body.Decision + `"}`)))
-		serveAccessRequestDecision(w, r)
+		decidePeerHumanInboxRequest(w, v, r.PathValue("id"), body.Decision)
 	case r.URL.Path == "/api/human-inbox/read":
 		var body struct {
 			ID int64 `json:"id"`
@@ -169,6 +166,7 @@ func servePeerHumanInboxAnswer(w http.ResponseWriter, r *http.Request, v *peerVi
 			writeError(w, 400, "invalid_arg", "id is required")
 			return
 		}
+		v.auditDetail = fmt.Sprintf("read id=%d", body.ID)
 		if _, err := db.MarkHumanMessageRead(body.ID); err != nil {
 			writeError(w, 500, "io", "mark read")
 			return
@@ -191,9 +189,44 @@ func servePeerHumanInboxAnswer(w http.ResponseWriter, r *http.Request, v *peerVi
 			writeError(w, 409, "not_replyable", "this notification cannot be answered from another node")
 			return
 		}
-		v.auditDetail = "reply"
+		v.auditDetail = fmt.Sprintf("reply id=%d", body.ID)
+		// The agent sees who answered, as with a peer operator message: the
+		// reply does not pass as this node's own operator.
+		if body.Body != "" {
+			body.Body = fedRemoteBanner("operator", peerDisplay(v.peer), v.peer.InstanceID) + body.Body
+		}
 		raw, _ := json.Marshal(map[string]any{"id": body.ID, "body": body.Body})
 		r.Body = io.NopCloser(bytes.NewReader(raw))
 		serveHumanMessagesReply(w, r)
+	}
+}
+
+// decidePeerHumanInboxRequest answers one of this node's own pending ask-human
+// requests once, recording the peer as the decider in the approval history.
+func decidePeerHumanInboxRequest(w http.ResponseWriter, v *peerView, id, decision string) {
+	approvals.mu.Lock()
+	req, ok := approvals.pending[id]
+	approvals.mu.Unlock()
+	if !ok || req.peerAccess != nil {
+		writeError(w, 404, "not_found", "no such pending access request")
+		return
+	}
+	v.auditDetail = fmt.Sprintf("decision=%s id=%s perm=%s", decision, id, req.perm)
+	outcome := outcomeDeny
+	if decision == "approve" {
+		outcome = outcomeApprove
+	}
+	req.mu.Lock()
+	prev := req.delegatedDecider
+	req.delegatedDecider = v.peer.InstanceID
+	req.mu.Unlock()
+	select {
+	case req.decision <- outcome:
+		writeJSON(w, 200, map[string]any{"decision": decision})
+	default:
+		req.mu.Lock()
+		req.delegatedDecider = prev
+		req.mu.Unlock()
+		writeError(w, 409, "already_decided", "this request was already answered")
 	}
 }

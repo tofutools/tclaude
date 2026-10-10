@@ -74,7 +74,7 @@ test('the sidebar lists items @node as text; the reader replies, marks read, and
   await harness.act(() => q('[data-request="r1"]').click());
   assert.match(q('#remote-inbox-reader').textContent, /One answer for this one request/);
   await harness.act(() => q('#remote-inbox-approve').click()); await settle();
-  assert.match(confirms.at(-1).body, /Approves human\.clipboard once for worker on lab: the blocked call \/v1\/clipboard goes through now\. Nothing lasting is granted/);
+  assert.match(confirms.at(-1).body, /Approves human\.clipboard once for worker on lab: the blocked call \/v1\/clipboard goes through now, with all its effects on lab\. No "always allow" rule is written/);
   assert.deepEqual(calls.at(-1), ['decide', 'inst_lab', 'r1', 'approve']);
   assert.match(toasts.at(-1)[0], /Approved once on lab/);
   await mounted.unmount();
