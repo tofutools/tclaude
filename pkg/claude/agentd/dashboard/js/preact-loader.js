@@ -287,16 +287,19 @@ const terminalsDescriptor = createIslandDescriptor({
     // unread human notifications. The standalone pop-out shell mounts without
     // it and simply draws no attention glyph.
     const snapshotStoreModule = import('./snapshot-store.js');
+    // The node scope: a fused view shows only the ticked nodes' panes.
+    const scopeModule = import('./skynet-state.js');
     const [
       { mountTerminalShellIsland }, { terminalShellState }, { createTerminalShellActions },
-      { dashboardState },
-    ] = await Promise.all([islandModule, stateModule, actionsModule, snapshotStoreModule]);
+      { dashboardState }, { skynetState },
+    ] = await Promise.all([islandModule, stateModule, actionsModule, snapshotStoreModule, scopeModule]);
     const actions = createTerminalShellActions({ state: terminalShellState, ...dependencies });
     return {
       state: terminalShellState,
       mount: (registerCleanup) => mountTerminalShellIsland({
         host, badgeHost, state: terminalShellState, actions, registerCleanup,
         snapshot: dashboardState.snapshot,
+        scope: skynetState,
         widgetFactory: dependencies.widgetFactory,
         onComposeMessage: dependencies.onComposeMessage,
         composeMessageDialogKind: dependencies.composeMessageDialogKind,
