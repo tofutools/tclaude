@@ -176,9 +176,10 @@ export function createDashboardState({ now = () => Date.now() } = {}) {
 
 export const dashboardState = createDashboardState();
 
-// The Skynet overviews (Map, Groups · all nodes) render from their own polls,
-// not this node's snapshot, so the snapshot poll slows while one is shown.
-const OVERVIEW_TABS = new Set(['map', 'fleet']);
+// The Skynet map renders from its own per-node summary polls, not this node's
+// snapshot, so the snapshot poll slows while it is shown. (Groups · all nodes
+// renders this node's groups from the snapshot, so it keeps the full cadence.)
+const OVERVIEW_TABS = new Set(['map']);
 export function skynetOverviewShown(tab = dashboardState.activeTab) {
   return OVERVIEW_TABS.has(tab.value);
 }

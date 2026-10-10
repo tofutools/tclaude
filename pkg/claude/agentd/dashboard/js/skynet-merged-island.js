@@ -33,10 +33,9 @@ function usePeerSnapshots({ active, peers, fetchImpl, timers, now }) {
   const [entries, setEntries] = useState({});
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
-  const peersKey = peers.map((p) => p.id).join(',');
-  // The live peer list (online flags change without restarting the loop).
-  const peersRef = useRef(peers);
-  peersRef.current = peers;
+  // A peer's online flag is in the key so one coming back online restarts its
+  // poll at once instead of waiting out the idle cadence.
+  const peersKey = peers.map((p) => `${p.id}:${p.online}`).join(',');
   useEffect(() => {
     if (!active || !peers.length) return undefined;
     let disposed = false;
@@ -52,7 +51,7 @@ function usePeerSnapshots({ active, peers, fetchImpl, timers, now }) {
       if (globalThis.document?.hidden) { schedule(peer, pollDelay({ base: MERGED_POLL_MS })); return; }
       // A peer the hub reports offline cannot answer: check back slowly
       // instead of sending a full snapshot read each interval.
-      if (peersRef.current.find((p) => p.id === peer.id)?.online === false) { schedule(peer, pollDelay({ base: MERGED_IDLE_POLL_MS })); return; }
+      if (peer.online === false) { schedule(peer, pollDelay({ base: MERGED_IDLE_POLL_MS })); return; }
       inflight.add(peer.id);
       let ok = false;
       let empty = false;
