@@ -783,20 +783,15 @@ initialSize:
 		}
 	}()
 
-	// Closing ptmx unblocks the PTY->WS pump; closing conn unblocks the
-	// connection-reader goroutine, whose channel close in turn ends the
-	// WS->PTY pump. Whichever pump exits first runs this once, so the
-	// other side can never stay blocked and wg.Wait() always completes —
-	// e.g. when the PTY EOFs (shell/tmux exited) the reader would
-	// otherwise stay parked in conn.ReadMessage() forever. The
-	// outer defers (conn.Close, then detachTmuxSession + ptmx.Close + a
-	// process-group SIGHUP + cmd.Wait) still run afterwards; the double
-	// close is a harmless no-op. The underlying tmux session lives on —
-	// detach-client drops our CLIENT (and any others) but never touches the
-	// tmux server daemon, so the session keeps running detached.
+	// A PTY master can have a blocking read that Close itself waits for.
+	// Hang up the attached process group before closing the master, otherwise
+	// the two pumps can wait forever and never reach the outer cleanup defer.
+	// The tmux server lives outside this group, so its session keeps running.
+	// Closing conn also releases the frame reader and the input pump.
 	var closeOnce sync.Once
 	closeBoth := func() {
 		closeOnce.Do(func() {
+			hangupProcessGroup(cmd.Process)
 			_ = ptmx.Close()
 			_ = conn.Close()
 		})
