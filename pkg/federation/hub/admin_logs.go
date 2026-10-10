@@ -3,7 +3,9 @@ package hub
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"log/slog"
 	"regexp"
 	"strconv"
@@ -120,8 +122,17 @@ func (h *Hub) adminLogTail(p adminParams) (any, error) {
 	defer h.logs.mu.Unlock()
 	entries := []adminLogEntry{}
 	next := after
+	budget := proto.MaxAdminResult - 1024
 	for _, e := range h.logs.entries {
 		if e.sequence > after && len(entries) < limit {
+			raw, err := json.Marshal(e)
+			if err != nil {
+				return nil, err
+			}
+			if len(raw)+1 > budget {
+				break
+			}
+			budget -= len(raw) + 1
 			entries = append(entries, e)
 			next = e.sequence
 		}

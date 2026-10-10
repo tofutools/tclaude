@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -195,4 +196,24 @@ func TestHubAdminRetiredOrConflictedKeysNeverCountAsManagers(t *testing.T) {
 			requireAdminCode(t, st.AuthorizeAdminRequest(stranded.ID(), stranded.Pub, request, "hub.admins.manage"), "not_admitted")
 		})
 	}
+}
+
+func TestHubAdminLogPagesFitRPCByteLimit(t *testing.T) {
+	st, _, _ := adminTestStore(t)
+	h, err := New(st, Config{})
+	require.NoError(t, err)
+	defer h.Close()
+	for range 250 {
+		h.log.Info(strings.Repeat("<", 2048))
+	}
+	page, err := h.adminLogTail(adminParams{MaxEntries: 200})
+	require.NoError(t, err)
+	raw, err := json.Marshal(page)
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(raw), proto.MaxAdminResult)
+	next := page.(map[string]any)["next_cursor"].(string)
+	require.NotEmpty(t, next)
+	second, err := h.adminLogTail(adminParams{MaxEntries: 200, Cursor: next})
+	require.NoError(t, err)
+	require.NotEmpty(t, second.(map[string]any)["entries"])
 }
