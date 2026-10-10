@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 
@@ -51,17 +51,25 @@ export function BundleInspectDialog({ offer, label, actions, toast, onImport, on
       .catch((e) => { if (!off) setEntries({ error: errText(e) }); });
     return () => { off = true; };
   }, []);
+  // seq numbers reads: only the latest one may change the view, so a slow
+  // earlier read (another entry, or a page of one no longer shown) is dropped.
+  const seq = useRef(0);
   const read = (entry, offset = 0) => {
+    const mine = ++seq.current;
     setBusy(true); setError('');
     actions.offerEntry(offer, entry.path, offset, ENTRY_BYTES)
-      .then((r) => setOpen((prev) => {
-        const text = String(r?.text || '');
-        // A later page continues the same entry; the first page replaces it.
-        const raw = offset > 0 && prev?.path === entry.path ? prev.raw + text : text;
-        return { path: entry.path, kind: r?.kind || entry.kind, size: r?.size ?? entry.size, raw, truncated: !!r?.truncated, next: r?.next_offset ?? null };
-      }))
-      .catch((e) => setError(errText(e)))
-      .finally(() => setBusy(false));
+      .then((r) => {
+        if (mine !== seq.current) return;
+        setOpen((prev) => {
+          const text = String(r?.text || '');
+          // A page continues the entry only exactly where the last one ended.
+          const more = offset > 0 && prev?.path === entry.path && prev.next === offset;
+          if (offset > 0 && !more) return prev;
+          return { path: entry.path, kind: r?.kind || entry.kind, size: r?.size ?? entry.size, raw: more ? prev.raw + text : text, truncated: !!r?.truncated, next: r?.next_offset ?? null };
+        });
+      })
+      .catch((e) => { if (mine === seq.current) setError(errText(e)); })
+      .finally(() => { if (mine === seq.current) setBusy(false); });
   };
   const download = () => {
     setError('');
@@ -70,6 +78,7 @@ export function BundleInspectDialog({ offer, label, actions, toast, onImport, on
       .catch((e) => setError(errText(e)));
   };
   const list = Array.isArray(entries) ? entries : [];
+  const shown = useMemo(() => (open && open.kind !== 'binary' ? entryText(open.kind, open.raw, !open.truncated) : ''), [open]);
   return html`<${Overlay} id="fleet-bundle-inspect" labelledby="fleet-bundle-inspect-title" onClose=${onClose} blocked=${busy}>
     <h3 id="fleet-bundle-inspect-title">Inspect ${peer}'s ${offer.offer?.type || 'bundle'} offer</h3>
     <div class="muted">${offer.offer?.summary || ''} · ${size(offer.offer?.bytes)} · fetched and verified on this node; nothing is imported until you apply it.</div>
@@ -83,8 +92,8 @@ export function BundleInspectDialog({ offer, label, actions, toast, onImport, on
         <div class="fa-bi-view">
           ${!open ? html`<div class="muted">Pick an entry to read it here.</div>`
             : open.kind === 'binary' ? html`<div class="muted" id="fleet-bundle-binary">${open.path} is binary (${size(open.size)}); it is not shown. Download the bundle to inspect it.</div>`
-            : html`<pre class="fa-bi-text" id="fleet-bundle-text">${entryText(open.kind, open.raw, !open.truncated)}</pre>
-              ${open.truncated && html`<div class="fa-bi-more muted">Showing ${size(open.raw.length)} of ${size(open.size)}.
+            : html`<pre class="fa-bi-text" id="fleet-bundle-text">${shown}</pre>
+              ${open.truncated && html`<div class="fa-bi-more muted">Showing the first ${size(open.next ?? 0)} of ${size(open.size)}.
                 ${open.next != null && html` <button type="button" class="fa-link" id="fleet-bundle-more" disabled=${busy} onClick=${() => read({ path: open.path, kind: open.kind, size: open.size }, open.next)}>Load more</button>`}</div>`}`}
         </div>
       </div>`}

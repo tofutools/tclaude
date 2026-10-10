@@ -358,7 +358,7 @@ export function OffersPage({ view, agents, actions, confirm, toast }) {
       </tr>`)}</tbody>
     </table>`}
     ${dialog?.kind === 'inspect' && html`<${BundleInspectDialog} offer=${dialog.offer} label=${label} actions=${actions} toast=${toast}
-      onImport=${() => setDialog({ kind: 'import', offer: dialog.offer })} onDecline=${() => { const o = dialog.offer; setDialog(null); decline(o); }} onClose=${() => setDialog(null)} />`}
+      onImport=${() => setDialog({ kind: 'import', offer: dialog.offer })} onDecline=${() => { const o = dialog.offer; setDialog(null); decline(o); }} onClose=${() => { setDialog(null); setTick((n) => n + 1); }} />`}
     ${dialog?.kind === 'import' && html`<${OfferImportDialog} offer=${dialog.offer} label=${label} actions=${actions} confirm=${confirm} onClose=${() => { setDialog(null); setTick((n) => n + 1); }} onDone=${done} />`}
     ${dialog?.kind === 'config' && html`<${SendConfigDialog} peers=${peers} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${dialog?.kind === 'agent' && html`<${ShareAgentDialog} peers=${peers} agents=${agents} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}

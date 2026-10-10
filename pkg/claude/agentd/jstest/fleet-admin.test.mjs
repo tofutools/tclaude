@@ -1446,3 +1446,24 @@ test('bundle actions address the incoming offer by ID and peer, and preflight th
     ['HEAD', '/api/federation/bundle-offers/off%201/download?peer=inst_forge'],
   ]);
 });
+
+test('bundle inspect: a slow earlier read never replaces the entry picked after it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/fleet-admin-bundle.js');
+  const pending = new Map();
+  const actions = {
+    fetchOffer: async () => ({}),
+    offerContents: async () => ({ entries: [{ path: 'history/transcript.jsonl', kind: 'jsonl', size: 9 }, { path: 'manifest.json', kind: 'json', size: 9 }] }),
+    offerEntry: (o, path) => new Promise((resolve) => { pending.set(path, resolve); }),
+  };
+  const mounted = await harness.mount(harness.html`<${m.BundleInspectDialog} offer=${{ offer: { id: 'o1', type: 'agent' }, peer: 'inst_f', state: 'ready' }} label=${(x) => x} actions=${actions} toast=${() => {}} onImport=${() => {}} onDecline=${() => {}} onClose=${() => {}} />`);
+  await harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  const q = (s) => harness.document.querySelector(s);
+  await harness.act(() => q('[data-path="history/transcript.jsonl"]').click());
+  await harness.act(() => q('[data-path="manifest.json"]').click());
+  await harness.act(async () => { pending.get('manifest.json')({ kind: 'json', size: 9, text: '{"name":"ada"}', truncated: false }); });
+  await harness.act(async () => { pending.get('history/transcript.jsonl')({ kind: 'jsonl', size: 9, text: '{"late":true}', truncated: false }); });
+  await harness.act(() => new Promise((r) => setTimeout(r, 0)));
+  assert.match(q('#fleet-bundle-text').textContent, /"name": "ada"/, 'the later pick stays shown');
+  await mounted.unmount();
+});
