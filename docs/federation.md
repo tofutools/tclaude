@@ -2813,3 +2813,18 @@ transport mapping plus existing-access admission. Local-only features and the
 request mechanism itself are never requestable. An approval may shorten the
 requested lifetime, but cannot lengthen it or convert a finite request to a
 permanent grant. A permanent request can be approved with a finite lifetime.
+### Local dashboard bundle offers
+
+Local cookie-authenticated routes mirror the offer CLI handlers:
+`POST /api/federation/offer-config` accepts `{peer,bundle?,only?,skip?,allow_flagged?}`;
+`POST /api/federation/share-agent` accepts `{agent,peer,group,history?,allow_flagged?}`;
+`POST /api/federation/profiles/{name}/offer` accepts `{peer}` after the profile
+revision has been applied. `GET /api/federation/bundle-offers?direction=in|out`
+returns offer rows. POST `/{id}/fetch`, `/{id}/import` and `/{id}/decline` act on
+an incoming offer; add `?peer=INSTANCE_ID` to disambiguate its source.
+Import defaults to preview. Its body preserves the CLI fields: `apply`, `only`,
+`skip`, `replace`, `values`, `keep_paths`; agent offers also accept `cwd`,
+`worktree`, `group`, `name`, `skip_history` and `set`. Apply is explicit and uses
+the same live admission, credential findings, path and launch checks as the CLI.
+Responses retain the existing preview diffs and provenance. Every route is
+local operator administration and is refused through peer views.
