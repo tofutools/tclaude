@@ -18891,6 +18891,10 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
    keeps it below every class rule (subtabs, cells, links, modal buttons). */
 :where(.fleet-admin, [id^="fleet-"]) button { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 5px; padding: 3px 10px; font: 12px system-ui, sans-serif; cursor: pointer; }
 :where(.fleet-admin, [id^="fleet-"]) button:where(:hover:not(:disabled)) { border-color: #58a6ff; }
+:where(.fleet-admin, [id^="fleet-"]) :where(select, textarea, input:not([type="checkbox"]):not([type="radio"])) { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 2px 6px; font: inherit; color-scheme: dark; }
+:where(.fleet-admin, [id^="fleet-"]) :where(select, textarea, input):where(:disabled) { opacity: 0.6; }
+:where(.fleet-admin, [id^="fleet-"]) :where(button, select, textarea, input, a):where(:focus-visible) { outline: 2px solid #58a6ff; outline-offset: 1px; }
+#fleet-harness-run { align-self: flex-start; width: auto; }
 :where(.fleet-admin, [id^="fleet-"]) button:where(:disabled) { opacity: .5; cursor: default; }
 :where(.fleet-admin, [id^="fleet-"]) button:where(.primary) { background: #1f6feb; border-color: #1f6feb; color: #fff; }
 :where(.fleet-admin, [id^="fleet-"]) button:where(.danger) { background: #21262d; border-color: #f8514966; color: #ffa198; }

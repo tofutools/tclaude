@@ -379,6 +379,36 @@ func skynetStates() []dashsnap.State {
 			SettleMS: 400,
 		},
 		{
+			Key:     "skynet-fleet-unrestrict",
+			Title:   "Make unrestricted dialog",
+			Caption: "Raising a trusted peer to unrestricted shows its full fingerprint, repeats what unrestricted grants (every peer permission on all groups, including later ones) and needs the out-of-band check before the button enables.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('#fleet-trusted [data-fa="unrestrict"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-trusted [data-fa="unrestrict"]').click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-level-modal .fa-consequence'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-level-modal .fa-consequence')) throw new Error('skynet: unrestrict consequence not shown');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-untrust-confirm",
+			Title:   "Untrust confirm",
+			Caption: "Untrust… goes through the shared confirm, which says what the peer loses — every grant, pool grants, catalog and access — before anything changes.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('#fleet-trusted [data-fa="unrestrict"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-trusted [data-fa="untrust"]').click();
+  for (var j = 0; j < 30 && !document.querySelector('#confirm-modal.show'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#confirm-modal.show')) throw new Error('skynet: untrust confirm not shown');
+})();`,
+			SettleMS: 400,
+		},
+		{
 			Key:     "skynet-group-links",
 			Title:   "Linked-group marker",
 			Caption: "A group linked to federation peers carries a 🌐 marker after its header chips (green dot: a linked node is live). The popover lists each link — direct or pool grant, or route mirror — with what it allows and a jump to that node's dashboard.",

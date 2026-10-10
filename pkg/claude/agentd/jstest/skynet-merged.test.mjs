@@ -24,6 +24,9 @@ test('merge names groups group@node, keeps parents per node, and marks stale pee
   assert.equal(merged.groups[2].fleet_node.stale, true, 'a minute-old snapshot is stale even without a failure');
   assert.equal(merged.groups[0].fleet_node.stale, false, 'this node is never stale');
   assert.deepEqual(m.mergeSnapshots([{ node: forge, entry: null }]).fleet_nodes[0].loaded, false);
+  const offline = m.mergeSnapshots([{ node: { ...forge, online: false }, entry: null }]).fleet_nodes[0];
+  assert.equal(offline.label, 'offline', 'a peer the hub reports offline is not "loading…"');
+  assert.equal(offline.stale, true);
 });
 
 test('node names that collide (self-reported or containing @) never merge two nodes\' groups', async (t) => {
