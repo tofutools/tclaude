@@ -110,6 +110,72 @@ function ClaimDialog({ self, actions, confirm, onClose, onDone }) {
   </${Overlay}>`;
 }
 
+// fingerprintError checks a pasted fingerprint against the one derived from
+// the instance ID it is said to belong to.
+function fingerprintError(instance, typed) {
+  const derived = instanceFingerprint(instance);
+  if (!typed) return `Paste ${instance}'s full fingerprint, compared with its operator over another channel.`;
+  if (typed.toLowerCase().replace(/[\s-]/g, '') !== derived.replace(/-/g, '')) return `That fingerprint does not belong to ${instance}; its fingerprint is ${derived}. Check the ID and the fingerprint with its operator again.`;
+  return '';
+}
+
+function rowText(a) {
+  return a ? `${a.name ? `${a.name} ` : ''}${a.instance} (fingerprint ${a.fingerprint || instanceFingerprint(a.instance) || 'unknown'}${(a.spaces || []).length ? `, spaces ${a.spaces.join(', ')}` : ''})` : 'none';
+}
+
+// IdentityDialog recovers a lost instance's admission onto a new instance, or
+// revokes a rotated instance's predecessor. Each previews on the hub first and
+// applies only after a confirm that shows the hub's warning.
+function IdentityDialog({ actions, confirm, onClose, onDone }) {
+  const [mode, setMode] = useState('recover');
+  const [form, setForm] = useState({ old: '', next: '', fingerprint: '' });
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const set = (k) => (e) => setForm({ ...form, [k]: e.currentTarget.value });
+  const recover = mode === 'recover';
+  const run = () => {
+    const old = form.old.trim();
+    const next = form.next.trim();
+    const fp = form.fingerprint.trim();
+    if (!INSTANCE_RE.test(old)) { setError(`The ${recover ? 'lost' : 'predecessor'} instance ID is inst_ followed by 26 characters.`); return; }
+    if (recover && !INSTANCE_RE.test(next)) { setError('The replacement instance ID is inst_ followed by 26 characters.'); return; }
+    if (recover && next === old) { setError('The replacement must be a different instance.'); return; }
+    const bad = fingerprintError(recover ? next : old, fp);
+    if (bad) { setError(bad); return; }
+    setError(''); setBusy(true);
+    const preview = recover ? actions.recoverHubIdentity(old, next) : actions.revokeOldHubIdentity(old);
+    preview.then((p) => confirm(recover ? {
+      title: `Recover ${old}'s admission onto ${next}?`,
+      body: `Removes the old admission ${rowText(p?.old)} and admits ${next} with fingerprint ${p?.new_fingerprint || instanceFingerprint(next)} in its place${p?.replacement ? `, replacing its current admission ${rowText(p.replacement)}` : ''}. Admin authority the old instance held is removed and is not transferred.${p?.warning ? ` ${p.warning}` : ''}`,
+      okLabel: 'Recover',
+      busyLabel: 'Recovering…',
+      action: () => actions.recoverHubIdentity(old, next, p?.new_fingerprint || instanceFingerprint(next)),
+    } : {
+      title: `Revoke the old identity ${old}?`,
+      body: `${old} (fingerprint ${p?.fingerprint || instanceFingerprint(old)}) loses its hub admission and any admin authority, and can no longer connect.${p?.warning ? ` ${p.warning}` : ''}`,
+      okLabel: 'Revoke old identity',
+      busyLabel: 'Revoking…',
+      action: () => actions.revokeOldHubIdentity(old, p?.fingerprint || instanceFingerprint(old)),
+    }))
+      .then((r) => { if (r) onDone(recover ? `${old} recovered onto ${next}` : `${old} revoked`); })
+      .catch((e) => setError(errText(e)))
+      .finally(() => setBusy(false));
+  };
+  return html`<${Overlay} id="fleet-hub-identity" labelledby="fleet-hub-identity-title" onClose=${onClose} blocked=${busy}>
+    <h3 id="fleet-hub-identity-title">Hub identity recovery</h3>
+    <div class="fa-pe-row" role="radiogroup" aria-label="Action">
+      <label><input type="radio" name="fleet-hub-identity-mode" id="fleet-hub-identity-recover" checked=${recover} onClick=${() => setMode('recover')} /> Recover a lost instance onto a new one</label>
+      <label><input type="radio" name="fleet-hub-identity-mode" id="fleet-hub-identity-revoke" checked=${!recover} onClick=${() => setMode('revoke')} /> Revoke a rotated instance's old identity</label>
+    </div>
+    <label class="fa-pe-row"><span class="fa-k">${recover ? 'lost instance' : 'old instance'}</span><input id="fleet-hub-identity-old" value=${form.old} placeholder="inst_…" autocomplete="off" spellcheck="false" onInput=${set('old')} /></label>
+    ${recover && html`<label class="fa-pe-row"><span class="fa-k">new instance</span><input id="fleet-hub-identity-new" value=${form.next} placeholder="inst_…" autocomplete="off" spellcheck="false" onInput=${set('next')} /></label>`}
+    <label class="fa-pe-row"><span class="fa-k">${recover ? 'new fingerprint' : 'old fingerprint'}</span><input id="fleet-hub-identity-fp" value=${form.fingerprint} placeholder="full fingerprint" autocomplete="off" spellcheck="false" onInput=${set('fingerprint')} /></label>
+    ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
+    <div class="muted fa-cli-note">CLI: <code>tclaude federation hub identity recover OLD NEW</code> · <code>tclaude federation hub identity revoke-old INSTANCE</code></div>
+    <div class="modal-buttons"><span class="spacer"></span><button type="button" onClick=${onClose}>Cancel</button><button type="button" class="primary" id="fleet-hub-identity-send" disabled=${busy} onClick=${run}>${recover ? 'Recover…' : 'Revoke…'}</button></div>
+  </${Overlay}>`;
+}
+
 function AdmitDialog({ peers, actions, confirm, onClose, onDone }) {
   const [form, setForm] = useState({ instance: '', fingerprint: '', spaces: '' });
   const [error, setError] = useState('');
@@ -120,9 +186,9 @@ function AdmitDialog({ peers, actions, confirm, onClose, onDone }) {
     const fp = form.fingerprint.trim();
     const spaces = splitSpaces(form.spaces);
     if (!INSTANCE_RE.test(instance)) { setError('The instance ID is inst_… as the instance reports it (tclaude federation identity on that node).'); return; }
-    if (!fp) { setError('Paste the instance\'s full fingerprint, compared with its operator over another channel.'); return; }
+    const fpError = fingerprintError(instance, fp);
+    if (fpError) { setError(fpError); return; }
     const derived = instanceFingerprint(instance);
-    if (fp.toLowerCase().replace(/[\s-]/g, '') !== derived.replace(/-/g, '')) { setError(`That fingerprint does not belong to ${instance}; its fingerprint is ${derived}. Check the ID and the fingerprint with its operator again.`); return; }
     if (known?.fingerprint && known.fingerprint !== derived) { setError(`${instance} does not match the fingerprint this node knows for it (${known.fingerprint}).`); return; }
     const bad = spaces.find((s) => !SPACE_RE.test(s));
     if (bad) { setError(`Space ${bad}: letters, digits, . _ -`); return; }
@@ -330,7 +396,7 @@ export function HubPage({ view, actions, confirm, toast, copy }) {
         ${hl.uptime_seconds != null && html`<span><span class="fa-k">up</span> ${Math.round(hl.uptime_seconds / 3600)} h</span>`}
         ${(hl.recent_errors || []).length ? html`<ul class="fa-hub-errors">${hl.recent_errors.map((e, i) => html`<li key=${i} class="fa-danger">${when(e.at)} ${e.code ? html`<code>${e.code}</code> ` : ''}${e.message || ''}</li>`)}</ul>` : html`<span class="muted">no recent errors</span>`}
       </div>`)}
-      ${h4('Admissions', html` <button type="button" class="fa-link" id="fleet-hub-admit-open" onClick=${() => setDialog('admit')}>admit…</button>`)}
+      ${h4('Admissions', html` <button type="button" class="fa-link" id="fleet-hub-admit-open" onClick=${() => setDialog('admit')}>admit…</button> <button type="button" class="fa-link" id="fleet-hub-identity-open" onClick=${() => setDialog('identity')}>identity recovery…</button>`)}
       ${listOr(data.admissions, (rows) => html`<table class="fa-table" id="fleet-hub-admissions">
         <thead><tr><th>Instance</th><th>Fingerprint</th><th>Spaces</th><th>Seen</th><th></th></tr></thead>
         <tbody>${rows.map((a) => html`<tr key=${a.instance} data-instance=${a.instance}>
@@ -373,6 +439,7 @@ export function HubPage({ view, actions, confirm, toast, copy }) {
       <${LogsSection} actions=${actions} />`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation hub status|admissions|invites|admins|settings|health|logs</code>. Hub admin never sees node content; the hub relays ciphertext only.</div>
     ${dialog === 'claim' && html`<${ClaimDialog} self=${self} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
+    ${dialog === 'identity' && html`<${IdentityDialog} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${dialog === 'admit' && html`<${AdmitDialog} peers=${[...view.trusted, ...view.waiting]} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
   </div>`;
 }

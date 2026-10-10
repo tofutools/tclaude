@@ -142,6 +142,8 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
       { key: 'max_streams_per_instance', type: 'int', min: 1, max: 64, effective: 16, source: 'remote', boot: 8, restart_required: false, flag_overridden: true },
     ],
     patchHubSettings: async (o) => { log.push(['settings', o]); return { ok: true }; },
+    recoverHubIdentity: async (old, nw, fp) => { log.push(['recover', old, nw, fp]); return { old: { instance: old, name: 'lost', fingerprint: 'old-fp', spaces: ['ops'] }, replacement: null, new: nw, new_fingerprint: 'abcd-efgh-ijkl-mnop-qrst-uvwx-yz', applied: !!fp, warning: 'The old instance held admin; it is not transferred.' }; },
+    revokeOldHubIdentity: async (i, fp) => { log.push(['revokeOld', i, fp]); return { instance: i, fingerprint: 'zyxw-vuts-rqpo-nmlk-jihg-fedc-ba', applied: !!fp, warning: '' }; },
     hubLogs: async (cursor) => { log.push(['logs', cursor]); return cursor ? { entries: [{ at: '2026-10-10T08:59:00Z', level: 'info', message: 'older line' }] }
       : { entries: [{ at: '2026-10-10T09:01:00Z', level: 'warn', message: '<script>alert(1)</script> admission refused' }], next_cursor: 'c1' }; },
     healthPolicy: async (peer) => { log.push(['healthPolicy', peer]); return peer ? { presence: false, resources: true, failures: false, debounce_seconds: 15, disk_free_percent: 5, ram_free_percent: 10, memory_seconds: 120, failure_count: 3, failure_window_seconds: 600, cooldown_seconds: 600 }
@@ -1521,5 +1523,52 @@ test('hub actions use resource paths and the agreed bodies', async (t) => {
     ['PUT', '/api/federation/hub/spaces', { instance: 'inst_x', spaces: ['ops'] }],
     ['GET', '/api/federation/hub/logs?cursor=c&max_entries=50', null],
     ['POST', '/api/federation/hub/invites', { space: 'ops', ttl_seconds: 3600 }],
+  ]);
+});
+
+test('hub identity recovery previews, confirms with the hub warning, and applies with the exact fingerprint', async (t) => {
+  s_hubAdmin = true;
+  const s = await setup(t);
+  await openHub(s);
+  const doc = s.harness.document; const q = (x) => doc.querySelector(x);
+  const type = async (sel, v) => { const el = q(sel); el.value = v; await s.harness.act(() => s.harness.fireEvent(el, 'input')); };
+  await s.click(q('#fleet-hub-identity-open'));
+  await type('#fleet-hub-identity-old', 'inst_zyxwvutsrqponmlkjihgfedcba');
+  await type('#fleet-hub-identity-new', 'inst_abcdefghijklmnopqrstuvwxyz');
+  await type('#fleet-hub-identity-fp', 'zyxw-vuts-rqpo-nmlk-jihg-fedc-ba');
+  await s.click(q('#fleet-hub-identity-send'));
+  assert.match(q('#fleet-hub-identity [role=alert]').textContent, /does not belong to inst_abcdefghijklmnopqrstuvwxyz/, 'recover checks the replacement fingerprint');
+  await type('#fleet-hub-identity-fp', 'abcd-efgh-ijkl-mnop-qrst-uvwx-yz');
+  await s.click(q('#fleet-hub-identity-send'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  const c = s.confirms.at(-1);
+  assert.match(c.body, /Removes the old admission lost inst_zyxwvutsrqponmlkjihgfedcba \(fingerprint old-fp, spaces ops\).*fingerprint abcd-efgh-ijkl-mnop-qrst-uvwx-yz.*not transferred.*The old instance held admin/);
+  assert.deepEqual(s.log.filter((l) => l[0] === 'recover'), [['recover', 'inst_zyxwvutsrqponmlkjihgfedcba', 'inst_abcdefghijklmnopqrstuvwxyz', undefined], ['recover', 'inst_zyxwvutsrqponmlkjihgfedcba', 'inst_abcdefghijklmnopqrstuvwxyz', 'abcd-efgh-ijkl-mnop-qrst-uvwx-yz']]);
+  await s.click(q('#fleet-hub-identity-open'));
+  await s.click(q('#fleet-hub-identity-revoke'));
+  await type('#fleet-hub-identity-old', 'inst_zyxwvutsrqponmlkjihgfedcba');
+  await type('#fleet-hub-identity-fp', 'ZYXW VUTS RQPO NMLK JIHG FEDC BA');
+  await s.click(q('#fleet-hub-identity-send'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  assert.match(s.confirms.at(-1).body, /inst_zyxwvutsrqponmlkjihgfedcba \(fingerprint zyxw-vuts-rqpo-nmlk-jihg-fedc-ba\) loses its hub admission and any admin authority/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'revokeOld'), ['revokeOld', 'inst_zyxwvutsrqponmlkjihgfedcba', 'zyxw-vuts-rqpo-nmlk-jihg-fedc-ba']);
+});
+
+test('hub lists follow next_cursor, settings come as a map, and a bodiless success counts as done', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createFleetAdminActions } = await harness.importDashboardModule('js/fleet-admin-actions.js');
+  const urls = [];
+  const body = (url) => (url.includes('hub/admissions') ? (url.includes('cursor=p2') ? { admissions: [{ instance: 'inst_b' }] } : { admissions: [{ instance: 'inst_a' }], next_cursor: 'p2' })
+    : url.includes('hub/settings') ? { settings: { rotation_window: { effective: 600, source: 'flag' } } } : null);
+  const a = createFleetAdminActions({ fetchImpl: async (url, init) => { urls.push([init.method, url, init.body ? JSON.parse(init.body) : null]); const b = body(url); return { ok: true, status: b ? 200 : 204, json: async () => { if (!b) throw new SyntaxError('no body'); return b; } }; } });
+  assert.deepEqual((await a.hubAdmissions()).map((x) => x.instance), ['inst_a', 'inst_b']);
+  assert.deepEqual(urls.slice(0, 2).map((u) => u[1]), ['/api/federation/hub/admissions?max_entries=250', '/api/federation/hub/admissions?max_entries=250&cursor=p2']);
+  assert.deepEqual(await a.hubSettings(), [{ key: 'rotation_window', effective: 600, source: 'flag' }]);
+  assert.equal(await a.removeHubAdmin('inst_x'), true);
+  await a.recoverHubIdentity('inst_o', 'inst_n'); await a.recoverHubIdentity('inst_o', 'inst_n', 'fp-n'); await a.revokeOldHubIdentity('inst_o', 'fp-o');
+  assert.deepEqual(urls.slice(-3), [
+    ['POST', '/api/federation/hub/identity/recover', { old: 'inst_o', new: 'inst_n' }],
+    ['POST', '/api/federation/hub/identity/recover', { old: 'inst_o', new: 'inst_n', apply: true, fingerprint: 'fp-n' }],
+    ['POST', '/api/federation/hub/identity/revoke-old', { instance: 'inst_o', apply: true, fingerprint: 'fp-o' }],
   ]);
 });

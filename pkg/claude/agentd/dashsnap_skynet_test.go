@@ -126,19 +126,19 @@ const skynetFederationStubJS = `(function(){
     ]);
     if (path === '/api/federation/hub/status') return json({ hub_id: 'hub_7kq2m9', hub_url: 'wss://hub.lab.example', hub_version: 'v0.43.0', connected: true, admin: true, admin_count: 2, my_capabilities: ['admissions', 'settings', 'admins'], bootstrap_claimable: false });
     if (path === '/api/federation/hub/health') return json({ connected_instances: 3, streams: 7, goroutines: 142, heap_bytes: 52428800, recent_errors: [{ at: '2026-10-10T09:12:00Z', code: 'stream_reset', message: 'inst_2p6ym4ke reset stream 4' }] });
-    if (path === '/api/federation/hub/admissions' && !(init && init.method === 'POST')) return json([
+    if (path === '/api/federation/hub/admissions' && !(init && init.method === 'POST')) return json({ admissions: [
       { instance: 'inst_q4w7pjf2kx3mz6bty5nd', name: 'desk', fingerprint: 'q4w7-pjf2-kx3m-z6bt-y5nd-8c1e', spaces: ['ops'], connected: true },
       { instance: 'inst_hn3cxq7a', name: 'forge', fingerprint: 'hn3c-xq7a-2m8d-p0kf-w4tz-91rb', spaces: ['ops', 'ci'], connected: true },
-      { instance: 'inst_2p6ym4ke', name: 'lab', fingerprint: '2p6y-m4ke-v7cq-h1ns-d3xw-5jt0', spaces: ['ci'], last_seen: '2026-10-10T08:40:00Z' }]);
-    if (path === '/api/federation/hub/invites' && !(init && init.method === 'POST')) return json([{ token_hash: '9f2c4e1ab07d3355', space: 'ci', created_at: '2026-10-10T08:00:00Z', expires_at: '2026-10-11T08:00:00Z', used: false }]);
-    if (path === '/api/federation/hub/admins' && !(init && init.method === 'POST')) return json([
+      { instance: 'inst_2p6ym4ke', name: 'lab', fingerprint: '2p6y-m4ke-v7cq-h1ns-d3xw-5jt0', spaces: ['ci'], last_seen: '2026-10-10T08:40:00Z' }] });
+    if (path === '/api/federation/hub/invites' && !(init && init.method === 'POST')) return json({ invites: [{ token_hash: '9f2c4e1ab07d3355', space: 'ci', created_at: '2026-10-10T08:00:00Z', expires_at: '2026-10-11T08:00:00Z', used: false }] });
+    if (path === '/api/federation/hub/admins' && !(init && init.method === 'POST')) return json({ admins: [
       { instance: 'inst_q4w7pjf2kx3mz6bty5nd', name: 'desk', fingerprint: 'q4w7-pjf2-kx3m-z6bt-y5nd-8c1e', capabilities: ['admissions', 'settings', 'admins'], added_at: '2026-10-01T00:00:00Z' },
-      { instance: 'inst_hn3cxq7a', name: 'forge', fingerprint: 'hn3c-xq7a-2m8d-p0kf-w4tz-91rb', capabilities: ['admissions'], added_at: '2026-10-03T00:00:00Z' }]);
-    if (path === '/api/federation/hub/settings' && !(init && init.method === 'PATCH')) return json([
-      { key: 'rotation_window', type: 'duration', unit: 's', min: 60, max: 604800, effective: 600, source: 'flag', boot: 600, restart_required: false, flag_overridden: false },
-      { key: 'max_streams_per_instance', type: 'int', min: 1, max: 64, effective: 16, source: 'remote', boot: 8, restart_required: false, flag_overridden: true },
-      { key: 'invite_ttl_max', type: 'duration', unit: 's', min: 300, max: 2592000, effective: 604800, source: 'default', boot: 604800, restart_required: false, flag_overridden: false },
-      { key: 'listen_backlog', type: 'int', min: 16, max: 4096, effective: 256, source: 'flag', boot: 256, restart_required: true, flag_overridden: false }]);
+      { instance: 'inst_hn3cxq7a', name: 'forge', fingerprint: 'hn3c-xq7a-2m8d-p0kf-w4tz-91rb', capabilities: ['admissions'], added_at: '2026-10-03T00:00:00Z' }] });
+    if (path === '/api/federation/hub/settings' && !(init && init.method === 'PATCH')) return json({ settings: {
+      rotation_window: { type: 'duration', unit: 's', min: 60, max: 604800, effective: 600, source: 'flag', boot: 600, restart_required: false, flag_overridden: false },
+      max_streams_per_instance: { type: 'int', min: 1, max: 64, effective: 16, source: 'remote', boot: 8, restart_required: false, flag_overridden: true },
+      invite_ttl_max: { type: 'duration', unit: 's', min: 300, max: 2592000, effective: 604800, source: 'default', boot: 604800, restart_required: false, flag_overridden: false },
+      listen_backlog: { type: 'int', min: 16, max: 4096, effective: 256, source: 'flag', boot: 256, restart_required: true, flag_overridden: false } } });
     if (path === '/api/federation/hub/logs') return json({ entries: [
       { at: '2026-10-10T09:14:02Z', level: 'info', message: 'admitted inst_2p6ym4ke to space ci' },
       { at: '2026-10-10T09:12:00Z', level: 'warn', message: 'stream reset by inst_2p6ym4ke (stream 4)' },
