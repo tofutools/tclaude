@@ -76,7 +76,7 @@ export function BundleInspectDialog({ offer, label, actions, toast, onImport, on
   const download = () => {
     setError('');
     actions.downloadOffer(offer)
-      .then(() => toast(`Downloading ${peer}'s ${offer.offer?.type || 'bundle'} offer`, false))
+      .then(() => toast(title ? `Downloading ${title}` : `Downloading ${peer}'s ${offer.offer?.type || 'bundle'} offer`, false))
       .catch((e) => setError(errText(e)));
   };
   const list = Array.isArray(entries) ? entries : [];

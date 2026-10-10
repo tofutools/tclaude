@@ -40,7 +40,8 @@ function boardActions(log, { joinError = null } = {}) {
     boardItemContents: async () => ({ type: 'config', entries: [{ path: 'roles/reviewer.json', size: 120, kind: 'json' }] }),
     boardItemEntry: async (b, i, v, path) => { log.push(['entry', path]); return { kind: 'json', size: 20, text: '{"name":"<b>reviewer</b>"}', truncated: false }; },
     downloadBoardItem: async (b, i, v) => { log.push(['download', b, i, v]); },
-    previewBoardItem: async (b, i, v, c) => { log.push(['preview', c]); return { changes: [{ item: 'roles/reviewer', action: 'replace', security: true }, { item: 'roles/writer', action: 'create' }], unresolved: [], applied: [], preview_token: `tok${log.length}` }; },
+    // Like the daemon, a preview leaves skipped items out.
+    previewBoardItem: async (b, i, v, c) => { log.push(['preview', c]); return { changes: [{ item: 'roles/reviewer', action: 'replace', security: true }, { item: 'roles/writer', action: 'create' }].filter((x) => !(c.skip || []).includes(x.item)), unresolved: [], applied: [], preview_token: `tok${log.length}` }; },
     importBoardItem: async (b, i, v, tok, c) => { log.push(['import', b, i, v, tok, c]); return { applied: ['roles/writer'] }; },
   };
 }
@@ -207,6 +208,7 @@ test('shared config: open verifies and shows text, import previews then applies 
   assert.equal(s.q('#fleet-board-import-apply').disabled, true, 'changed choices need a fresh preview');
   await s.click(s.q('#fleet-board-import-preview'));
   assert.deepEqual(s.log.filter((l) => l[0] === 'preview').at(-1), ['preview', { skip: ['roles/reviewer'] }]);
+  assert.equal(s.q('[data-item="roles/reviewer"] input').checked, false, 'a skipped item stays listed, to tick again');
   await s.click(s.q('#fleet-board-import-apply'));
   assert.match(s.confirms.at(-1).body, /Applies 1 item from review roles \(board ops notes, posted by forge\).*1 new/);
   const imp = s.log.find((l) => l[0] === 'import');

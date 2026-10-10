@@ -90,6 +90,9 @@ function PublishDialog({ board, item, actions, confirm, onClose, onDone }) {
 function ImportDialog({ board, item, version, by, actions, confirm, onClose, onDone }) {
   const [opts, setOpts] = useState({ skip: [], values: {}, replace: false });
   const [preview, setPreview] = useState(null);
+  // seen keeps every change and placeholder any preview showed: a re-preview
+  // leaves skipped items out, and they must stay on screen to tick again.
+  const [seen, setSeen] = useState({ changes: [], unresolved: [] });
   const [stale, setStale] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -102,16 +105,24 @@ function ImportDialog({ board, item, version, by, actions, confirm, onClose, onD
     const mine = ++seq.current;
     setBusy(true); setError('');
     actions.previewBoardItem(board.id, item.id, version, choices(o))
-      .then((p) => { if (mine === seq.current) { setPreview(p); setStale(false); } })
+      .then((p) => {
+        if (mine !== seq.current) return;
+        setPreview(p); setStale(false);
+        setSeen((s) => {
+          const merge = (old, now, key) => { const by = new Map(old.map((x) => [x[key], x])); for (const x of now || []) by.set(x[key], x); return [...by.values()]; };
+          return { changes: merge(s.changes, p?.changes, 'item'), unresolved: merge(s.unresolved, p?.unresolved, 'name') };
+        });
+      })
       .catch((e) => { if (mine === seq.current) setError(errText(e)); })
       .finally(() => { if (mine === seq.current) setBusy(false); });
   };
   useEffect(() => run(), []);
-  const change = (patch) => { const next = { ...opts, ...patch }; setOpts(next); setStale(true); return next; };
-  const changes = preview?.changes || [];
-  const unresolved = preview?.unresolved || [];
+  // A change invalidates any preview still in flight, too.
+  const change = (patch) => { seq.current += 1; setBusy(false); const next = { ...opts, ...patch }; setOpts(next); setStale(true); return next; };
+  const changes = seen.changes;
+  const unresolved = seen.unresolved;
   const conflicts = changes.some((c) => c.action === 'replace' && !opts.skip.includes(c.item));
-  const missing = unresolved.some((u) => !String(opts.values[u.name] || '').trim());
+  const missing = (preview?.unresolved || []).some((u) => !String(opts.values[u.name] || '').trim());
   const nothing = !changes.some((c) => c.action !== 'unchanged' && !opts.skip.includes(c.item));
   const blocked = !preview?.preview_token || stale || busy || missing || nothing || (conflicts && !opts.replace);
   const apply = () => confirm({
@@ -122,8 +133,9 @@ function ImportDialog({ board, item, version, by, actions, confirm, onClose, onD
     action: () => actions.importBoardItem(board.id, item.id, version, preview.preview_token, choices(opts)),
   }).then((r) => { if (r) onDone(`Imported ${(r.applied || []).length} items from ${item.name}`); })
     .catch((e) => {
-      // A spent or outdated preview needs a fresh one.
-      if (e?.code === 'preview_required' || e?.code === 'preview_changed') { setStale(true); setError('This node\'s config or the choices changed since the preview — preview again, then import.'); } else setError(errText(e));
+      // Every import attempt spends the preview token: preview again.
+      setStale(true);
+      setError(e?.code === 'preview_required' || e?.code === 'preview_changed' ? 'This node\'s config or the choices changed since the preview — preview again, then import.' : `${errText(e)} — preview again to retry.`);
     });
   return html`<${Overlay} id="fleet-board-import" labelledby="fleet-board-import-title" onClose=${onClose}>
     <h3 id="fleet-board-import-title">Import ${item.name} <span class="muted">v ${short(version)}</span></h3>
