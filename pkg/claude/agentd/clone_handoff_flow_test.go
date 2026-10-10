@@ -167,7 +167,9 @@ func TestClone_LegacyInjection_UnreadyPaneMergesRenameAndHandoff(t *testing.T) {
 	require.Equal(t, http.StatusOK, c.Code, "clone: body=%s", c.Raw)
 
 	// Legacy path: the title and the handoff are both typed into the pane...
-	f.AssertSentContains(c.TmuxTarget(), "/rename worker-c-1", 10*time.Second)
+	f.AssertSpawnName(c.NewConv, "worker-c-1", 10*time.Second)
+	f.AssertSpawnInitialPrompt(c.NewConv, "Arrival briefing", 10*time.Second)
+	assertNoSendKeysTo(t, f, c.TmuxTarget())
 	f.AssertSentContains(c.TmuxTarget(), "new agent message", 15*time.Second)
 
 	// ...and against a pane that is not reading yet, they arrive as ONE line:
@@ -192,7 +194,7 @@ func TestClone_LegacyInjection_UnreadyPaneMergesRenameAndHandoff(t *testing.T) {
 // Expected: the clone is renamed over tmux, exactly as before TCL-732, and no
 // launch name is applied. Nothing is lost by staying here: with one injected
 // stream there is no second stream to merge with.
-func TestClone_NoFollowUp_KeepsPostConnectRename(t *testing.T) {
+func TestClone_NoFollowUp_ArrivalRidesLaunchArgs(t *testing.T) {
 	f := newFlow(t)
 
 	const oldConv = "chf4-aaaa-bbbb-cccc-dddd"
@@ -210,10 +212,7 @@ func TestClone_NoFollowUp_KeepsPostConnectRename(t *testing.T) {
 	f.AssertSentContains(c.TmuxTarget(), "/rename worker-c-1", 10*time.Second)
 	f.AssertCloneTitle(c, "alpha", "worker-c-1", 10*time.Second)
 
-	if name, ok := f.World.SpawnName(c.NewConv); ok {
-		assert.Empty(t, name,
-			"a follow-up-less clone must not be launch-enrolled: a name-only launch writes no transcript")
-	}
+	assert.Contains(t, arrivalInbox(t, c.NewConv), "Arrival briefing")
 }
 
 // Scenario: a follow-up too long to inline in the launch command.

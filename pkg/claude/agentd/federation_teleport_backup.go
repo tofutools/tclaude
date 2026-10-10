@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -322,6 +323,21 @@ func (rt *fedRuntime) beginTeleportRecovery(l *db.FederationTeleportLease, brief
 	l.State = "recovering"
 	l.Epoch++
 	l.LastError = ""
+	if l.ReturnID != "" {
+		launch, err := durableRelaunchConfigForConv(l.SourceConv)
+		if err == nil {
+			group := ""
+			if groups, e := db.ListGroupsForConv(l.SourceConv); e == nil {
+				var names []string
+				for _, g := range groups {
+					names = append(names, g.Name)
+				}
+				group = strings.Join(names, ", ")
+			}
+			a := arrivalContext{Operation: "teleport home (paused backup return)", Peer: l.Peer, Reason: "retained home session cwd", Restored: true, Source: agentbundle.Definition{Origin: &agentbundle.Origin{Agent: l.TargetAgent, Trigger: "agent itself"}}}
+			briefing = buildArrivalBriefing(a, l.SourceAgent, launch.Cwd, group, launch.Harness, launch.Model) + "\n\n" + briefing
+		}
+	}
 	won, err := db.TransitionFederationTeleportLease(*l, briefing)
 	if err != nil || !won {
 		return

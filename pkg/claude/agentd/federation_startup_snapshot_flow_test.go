@@ -18,7 +18,7 @@ import (
 // snapshot must refer to local policy and the local briefing, never a source
 // node's group identity or immutable startup snapshot.
 func TestFederationImportedStartupContextAfterCompaction(t *testing.T) {
-	for _, mode := range []string{"clone", "move", "teleport"} {
+	for _, mode := range []string{"clone", "move", "teleport", "teleport_home"} {
 		t.Run(mode, func(t *testing.T) {
 			fh := newFedHarness(t)
 			fh.f.HaveGroup("receiver")
@@ -26,8 +26,14 @@ func TestFederationImportedStartupContextAfterCompaction(t *testing.T) {
 			_, err := db.SetAgentGroupDefaultContext("receiver", "Target operator startup guidance.")
 			require.NoError(t, err)
 			var d bundletransfer.Descriptor
-			if mode == "teleport" {
-				d = fedIncomingTeleport(t, fh, "local", nil)
+			if mode == "teleport" || mode == "teleport_home" {
+				d = fedIncomingTeleport(t, fh, "local", func(in *bundletransfer.TeleportIntent) {
+					if mode == "teleport_home" {
+						in.Home = true
+						in.OriginInstance = fh.peer.agentdID
+						in.Clone = false
+					}
+				})
 			} else {
 				b := fedAgentBundle(t)
 				b.Manifest.Agent.StartupContext = "Origin-only startup text."
@@ -57,6 +63,15 @@ func TestFederationImportedStartupContextAfterCompaction(t *testing.T) {
 			actor, err := db.GetAgentByConv(result.Spawn.ConvID)
 			require.NoError(t, err)
 			require.NotNil(t, actor)
+			brief := arrivalInbox(t, result.Spawn.ConvID)
+			require.Contains(t, brief, "Arrival briefing")
+			require.Contains(t, brief, actor.AgentID)
+			require.Contains(t, brief, fh.peer.id.ID())
+			require.Contains(t, brief, "source permissions not copied")
+			if mode == "teleport_home" {
+				require.Contains(t, brief, "Arrival briefing — teleport home")
+			}
+
 			snapshot, err := db.GetAgentStartupSnapshot(actor.AgentID)
 			require.NoError(t, err)
 			require.NotNil(t, snapshot, "receiving spawn must record its startup snapshot")

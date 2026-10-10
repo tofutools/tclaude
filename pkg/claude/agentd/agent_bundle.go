@@ -164,6 +164,7 @@ func collectAgentBundle(convID string, withHistory bool) (*agentbundle.Bundle, e
 			d.Paths.Cwd = ref.ProjectPath
 		}
 	}
+	d.Origin = arrivalOrigin(convID, d.Paths.Cwd, seed.Model)
 	if filepath.IsAbs(d.Paths.Cwd) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		d.Paths.RepoURL = jobrepo.OriginHint(ctx, d.Paths.Cwd)
@@ -404,6 +405,9 @@ func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 422, map[string]any{"error": "suspected credentials: use --allow-flagged or export without --history", "code": "flagged_credentials", "findings": b.Manifest.Findings})
 		return
 	}
+	if caller, human, ok := authedCaller(w, r); ok && b.Manifest.Agent.Origin != nil {
+		b.Manifest.Agent.Origin.Trigger = arrivalTrigger(caller, res.ConvID, human)
+	}
 	archive, err := archiveAgentBundle(b)
 	if err != nil {
 		writeError(w, 400, "bundle_export", err.Error())
@@ -459,6 +463,11 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer func() { _ = b.Close() }()
+	}
+	arrival, _ := r.Context().Value(arrivalContextKey{}).(*arrivalContext)
+	if arrival == nil {
+		arrival = &arrivalContext{Operation: "bundle import", Source: b.Manifest.Agent, Reason: "explicit import path"}
+		r = r.WithContext(context.WithValue(r.Context(), arrivalContextKey{}, arrival))
 	}
 	if err := teleportImportBundle(r, b); err != nil {
 		writeError(w, 409, "teleport_landing", err.Error())

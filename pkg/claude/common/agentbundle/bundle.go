@@ -37,7 +37,18 @@ type Paths struct {
 	Worktree string `json:"worktree,omitempty"`
 	Branch   string `json:"branch,omitempty"`
 }
+
+// Origin is advisory source-reported context, never receiver launch authority.
+type Origin struct {
+	Instance string `json:"instance,omitempty"`
+	Agent    string `json:"agent,omitempty"`
+	Trigger  string `json:"trigger,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Commit   string `json:"commit,omitempty"`
+	Dirty    *bool  `json:"dirty,omitempty"`
+}
 type Definition struct {
+	Origin         *Origin         `json:"origin,omitempty"`
 	Name           string          `json:"name"`
 	Role           string          `json:"role,omitempty"`
 	Description    string          `json:"description,omitempty"`
