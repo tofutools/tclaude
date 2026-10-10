@@ -36,6 +36,13 @@ type BoardMember struct {
 	Proof    []byte `json:"key_proof"`
 }
 type boardParams struct {
+	Blob       string                     `json:"blob"`
+	Digest     string                     `json:"digest"`
+	Bytes      int64                      `json:"bytes"`
+	Key        []byte                     `json:"key"`
+	Item       string                     `json:"item"`
+	VersionID  string                     `json:"version_id"`
+	Version    *proto.BoardItemVersion    `json:"version"`
 	Board      string                     `json:"board"`
 	Name       string                     `json:"name"`
 	Instance   string                     `json:"instance"`
@@ -189,6 +196,16 @@ func (s *Store) boardCall(instance string, pub []byte, r *proto.BoardRequest, ca
 		}
 		owner := b.Role == "owner"
 		switch r.Method {
+		case "blobs.put", "blobs.get":
+			if !proto.ValidStreamID(p.Blob) || p.Bytes < 1 || p.Bytes > proto.MaxBoardItemBytes+64 || len(p.Key) != 32 {
+				return nil, adminErr(400, "blob", "invalid blob stream descriptor")
+			}
+			if r.Method == "blobs.put" && (b.Frozen || (b.Role != "owner" && b.Role != "publisher")) {
+				return nil, adminErr(403, "board_publish", "board publication refused")
+			}
+			body = map[string]any{"ok": true}
+		case "items.publish", "items.list", "items.versions", "items.get", "pins.set", "pins.list":
+			body, err = boardItemsCall(tx, instance, r.Method, p, b)
 		case "boards.get":
 			body = b
 		case "members.list":
@@ -237,6 +254,12 @@ func (s *Store) boardCall(instance string, pub []byte, r *proto.BoardRequest, ca
 				}
 			}
 			if r.Method == "members.remove" {
+				if _, err = tx.Exec(`DELETE FROM board_pins WHERE board=? AND instance=?`, p.Board, p.Instance); err != nil {
+					return nil, err
+				}
+				if _, err = tx.Exec(`UPDATE board_blobs SET pinned=EXISTS(SELECT 1 FROM board_versions v JOIN board_pins p ON p.board=v.board AND p.item=v.item AND p.version=v.version WHERE v.board=board_blobs.board AND v.blob=board_blobs.id) WHERE board=?`, p.Board); err != nil {
+					return nil, err
+				}
 				_, err = tx.Exec(`DELETE FROM board_members WHERE board=? AND instance=?`, p.Board, p.Instance)
 				if err == nil {
 					_, err = tx.Exec(`DELETE FROM board_keys WHERE board=? AND instance=?`, p.Board, p.Instance)
@@ -410,6 +433,6 @@ func (s *Store) boardCall(instance string, pub []byte, r *proto.BoardRequest, ca
 // otherwise repeated rotations could bypass the blob quota indefinitely.
 func boardStorageUsed(tx *sql.Tx, board string) (int64, error) {
 	var used int64
-	err := tx.QueryRow(`SELECT (SELECT coalesce(sum(bytes),0) FROM board_blobs WHERE board=?)+(SELECT coalesce(sum(length(CAST(envelope AS BLOB))),0) FROM board_keys WHERE board=?)+(SELECT coalesce(sum(length(CAST(key_package AS BLOB))),0) FROM board_invites WHERE board=?)`, board, board, board).Scan(&used)
+	err := tx.QueryRow(`SELECT (SELECT coalesce(sum(bytes),0) FROM board_blobs WHERE board=?)+(SELECT coalesce(sum(length(CAST(envelope AS BLOB))),0) FROM board_keys WHERE board=?)+(SELECT coalesce(sum(length(CAST(key_package AS BLOB))),0) FROM board_invites WHERE board=?)+(SELECT coalesce(sum(length(CAST(body AS BLOB))),0) FROM board_versions WHERE board=?)`, board, board, board, board).Scan(&used)
 	return used, err
 }

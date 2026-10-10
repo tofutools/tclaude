@@ -3388,3 +3388,37 @@ failed uploads release their reservation. Ready, unpinned blobs expire after
 reaps expired objects and old orphan files. A quota reduction never silently
 ejects members or removes pinned objects. Publication/import surfaces follow
 in the item slice: membership alone never installs content or runs commands.
+
+Board items are immutable, publisher-signed configuration versions. The hub
+stores only encrypted payloads and encrypted descriptive metadata; re-publishing
+an unchanged version preserves its original publisher signature. Phase 1 shares
+portable configuration sections such as roles, profiles and process templates,
+not broad local config or default permissions. Credential scanning runs before
+publication and again after decryption on the receiver. Suspected credentials
+must be excluded before publication.
+
+Use `federation boards publish --board ID --name NAME --only roles/NAME`,
+`items --board ID`, and `versions --board ID --item ITEM`. Updates use
+`publish --item ITEM --parent VERSION`; a stale parent is refused. `pin --board
+ID --item ITEM --version VERSION` keeps a selected version through retention;
+item listings show `latest_version`, `pinned_version` and `update_available`.
+Re-publication uses `publish --board DEST --from-board SOURCE --from-item ITEM
+--from-version VERSION` and retains exact original bytes and provenance.
+
+`fetch`, `contents`, `download`, `preview` and `import` take `--board ID --item
+ITEM --version VERSION`. Fetch verifies and scans into a private spool; it never
+imports. Contents accepts `--path`, `--offset` and `--max-bytes` for bounded
+inspection. Download requires `--file PATH` and never overwrites an existing
+file. Preview accepts the existing `--only`, `--skip`, `--set NAME=VALUE` and
+`--replace` choices. Import requires the preview's `--preview-token` with the
+same choices. Tokens expire after ten minutes and are single-use; changed local
+configuration requires a fresh preview. There is no automatic apply.
+
+The matching human-only `/api/federation/boards/{board}/items` and `/v1` routes
+provide list/publish, `/{item}/versions`, `/{item}/pin`, and
+`/{item}/versions/{version}/{fetch,contents,download,preview,import}`. Downloads
+support HEAD and use attachment disposition, nosniff and a sandbox CSP. Board
+blob transfer uses the separate `/v1/boards/stream` connection with the existing
+authenticated stream framing, shared hub bandwidth limits, bounded sizes and a
+five-minute deadline. Board-only connections remain refused at every fleet and
+hub-admin entry point, including on this stream endpoint.

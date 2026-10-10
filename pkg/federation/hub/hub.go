@@ -187,6 +187,7 @@ func (h *Hub) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc(proto.WSPath, h.serveWS)
 	mux.HandleFunc(proto.BoardWSPath, h.serveBoardWS)
+	mux.HandleFunc(proto.BoardStreamPath, h.serveBoardWS)
 	mux.HandleFunc(proto.StreamPath, h.serveStream)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -292,18 +293,19 @@ func (h *Hub) refreshLoop() {
 }
 
 type conn struct {
-	boardOnly bool
-	hub       *Hub
-	ws        *websocket.Conn
-	id        string
-	name      string
-	version   string
-	pub       []byte
-	nonce     string
-	out       chan *proto.Frame
-	done      chan struct{}
-	once      sync.Once
-	limiter   *bucketPair
+	boardOnly   bool
+	boardStream bool
+	hub         *Hub
+	ws          *websocket.Conn
+	id          string
+	name        string
+	version     string
+	pub         []byte
+	nonce       string
+	out         chan *proto.Frame
+	done        chan struct{}
+	once        sync.Once
+	limiter     *bucketPair
 	// wmu serialises writes: gorilla/websocket allows one concurrent
 	// writer, and fail may run alongside writeLoop.
 	wmu sync.Mutex
@@ -336,7 +338,7 @@ func (c *conn) send(f *proto.Frame) bool {
 
 func (c *conn) fail(code, msg string) {
 	c.once.Do(func() {
-		if code != "" {
+		if code != "" && !c.boardStream {
 			_ = c.write(&proto.Frame{Type: proto.FrameError, Code: code, Message: msg}, 2*time.Second)
 		}
 		close(c.done)
@@ -519,6 +521,18 @@ func (h *Hub) register(c *conn) bool {
 	if h.closed || (h.conns[c.registryKey()] == nil && len(h.conns) >= h.config().MaxConnections) {
 		h.mu.Unlock()
 		return false
+	}
+	if c.boardStream {
+		streams := 0
+		for _, live := range h.conns {
+			if live.id == c.id && live.boardStream {
+				streams++
+			}
+		}
+		if streams >= h.config().MaxStreams {
+			h.mu.Unlock()
+			return false
+		}
 	}
 	// Publish the connection and count its writer under the same lock Close
 	// uses to stop admission and snapshot connections. A completed handshake
