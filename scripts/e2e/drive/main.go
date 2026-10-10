@@ -16,7 +16,7 @@
 //	drive wait <text> [secs]     wait until page text contains text
 //	drive size <w> <h>           set viewport size
 //	drive caption [text]         show (or clear) a caption banner for recordings
-//	drive record <dir> [out.mp4] screencast the tab into <dir> until SIGINT/SIGTERM,
+//	drive record <dir> [out.mp4] record the tab (screenshots, DRIVE_FPS, default 10) into <dir> until SIGINT/SIGTERM,
 //	                             then encode out.mp4 with ffmpeg when given
 //	                             (viewport pinned to DRIVE_SIZE, default 1280x800)
 //
@@ -25,7 +25,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -220,9 +219,11 @@ func show(p *rod.Page, el *rod.Element, js string) {
 	time.Sleep(900 * time.Millisecond)
 }
 
-// record saves screencast frames with their arrival times. Chrome only sends
-// a frame when the page changes, so the ffmpeg concat list carries each
-// frame's on-screen duration.
+// record captures the tab as a steady stream of screenshots until SIGINT or
+// SIGTERM. Chrome's screencast was tried first, but it delivers frames at two
+// viewport heights (the page re-lays out), which makes the video jump.
+// Screenshots always match the viewport, and the tab is re-resolved after a
+// failed capture, so cross-origin navigation is handled too.
 func record(b *rod.Browser, cur int, args []string) {
 	if len(args) == 0 {
 		die("usage: drive record <dir> [out.mp4]")
@@ -234,69 +235,46 @@ func record(b *rod.Browser, cur int, args []string) {
 		at   time.Time
 	}
 	var frames []frame
-	// Pin the viewport. Chrome still sends some frames (e.g. while an xterm
-	// is open) as the full page squashed to a smaller height, so the encoder
-	// scales every frame back to exactly w x h.
 	w, h := 1280, 800
 	if v := os.Getenv("DRIVE_SIZE"); v != "" {
 		_, _ = fmt.Sscanf(v, "%dx%d", &w, &h)
 	}
 	w, h = w&^1, h&^1 // libx264 yuv420p needs even dimensions
+	fps := 10
+	if v, err := strconv.Atoi(os.Getenv("DRIVE_FPS")); err == nil && v > 0 {
+		fps = v
+	}
+	interval := time.Second / time.Duration(fps)
 	var stopped atomic.Bool
-	var page atomic.Pointer[rod.Page]
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	var cancelAttempt atomic.Pointer[context.CancelFunc]
-	// A static page sends no frames, so poke repaints to deliver the stop. If
-	// none arrives (the screencast died), cancel the attempt so wait() returns.
-	go func() {
-		<-stop
-		stopped.Store(true)
-		for range 30 {
-			if p := page.Load(); p != nil {
-				_, _ = p.Eval(`() => { document.body.style.outline = document.body.style.outline ? '' : '0px solid transparent' }`)
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-		if c := cancelAttempt.Load(); c != nil {
-			(*c)()
-		}
-	}()
+	go func() { <-stop; stopped.Store(true) }()
 	fmt.Println("recording into", dir, "(SIGINT/SIGTERM to stop)")
-	// Navigating to another origin swaps the tab's renderer and ends the
-	// screencast, so re-attach to the same tab and keep going.
+	var p *rod.Page
+	q := 85
 	for misses := 0; !stopped.Load() && misses < 50; {
-		pages, err := b.Pages()
-		if err != nil || cur >= len(pages) {
-			misses++
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
-		ctx, cancel := context.WithCancel(context.Background())
-		cancelAttempt.Store(&cancel)
-		p := pages[cur].Context(ctx)
-		wait := p.EachEvent(func(e *proto.PageScreencastFrame) bool {
-			name := fmt.Sprintf("f%06d.jpg", len(frames))
-			if err := os.WriteFile(filepath.Join(dir, name), e.Data, 0o644); err == nil {
-				frames = append(frames, frame{name, time.Now()})
+		next := time.Now().Add(interval)
+		if p == nil {
+			pages, err := b.Pages()
+			if err != nil || cur >= len(pages) {
+				misses++
+				time.Sleep(200 * time.Millisecond)
+				continue
 			}
-			_ = proto.PageScreencastFrameAck{SessionID: e.SessionID}.Call(p)
-			return stopped.Load()
-		})
-		sw, sh := w, h
-		q := 85
-		if p.SetViewport(&proto.EmulationSetDeviceMetricsOverride{Width: w, Height: h, DeviceScaleFactor: 1, ScreenWidth: &sw, ScreenHeight: &sh}) != nil ||
-			(proto.PageStartScreencast{Format: proto.PageStartScreencastFormatJpeg, Quality: &q}).Call(p) != nil {
-			cancel()
+			p = pages[cur].Timeout(5 * time.Second)
+		}
+		img, err := p.Screenshot(false, &proto.PageCaptureScreenshot{Format: proto.PageCaptureScreenshotFormatJpeg, Quality: &q})
+		if err != nil {
+			p = nil // the tab's target may have been swapped by a navigation
 			misses++
-			time.Sleep(200 * time.Millisecond)
 			continue
 		}
-		page.Store(p)
 		misses = 0
-		wait()
-		_ = proto.PageStopScreencast{}.Call(pages[cur])
-		cancel()
+		name := fmt.Sprintf("f%06d.jpg", len(frames))
+		if os.WriteFile(filepath.Join(dir, name), img, 0o644) == nil {
+			frames = append(frames, frame{name, time.Now()})
+		}
+		time.Sleep(time.Until(next))
 	}
 	if len(frames) == 0 {
 		die("no frames captured")
