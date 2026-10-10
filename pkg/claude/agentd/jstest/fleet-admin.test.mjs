@@ -646,7 +646,7 @@ test('moves: both directions listed, only abandonable outgoing moves offer Aband
   assert.match(s.q('[data-move="m2"]').textContent, /⇠.*teleport.*→/s);
   assert.deepEqual(rows.filter((r) => r.querySelector('[data-fa="abandon"]')).map((r) => r.dataset.move), ['m1'], 'arriving and retiring moves cannot be abandoned');
   await s.click(s.q('[data-move="m1"] [data-fa="abandon"]'));
-  assert.match(s.confirms.at(-1).body, /stays here and keeps running.*copy stays there as an independent agent/);
+  assert.match(s.confirms.at(-1).body, /does not retire it here.*copy stays there as an independent agent/);
   assert.ok(s.log.some((l) => l[0] === 'abandon' && l[1] === 'm1'));
   await s.click(s.q('#fleet-teleport-toggle'));
   assert.match(s.confirms.at(-1).body, /can no longer teleport to a peer, and teleports from peers can no longer land here/);

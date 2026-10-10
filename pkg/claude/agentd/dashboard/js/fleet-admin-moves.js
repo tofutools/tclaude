@@ -50,7 +50,7 @@ export function MovesPage({ view, actions, confirm, toast, now = Date.now() }) {
 
   const abandon = (m) => confirm({
     title: `Abandon moving ${shortAgent(m.source_agent)} to ${label(m.peer)}?`,
-    body: `The agent stays here and keeps running. If ${label(m.peer)} already created its copy, that copy stays there as an independent agent.`,
+    body: `This node stops moving the agent and does not retire it here; if it is already stopped (a paused-backup teleport), it stays stopped. If ${label(m.peer)} already created its copy, that copy stays there as an independent agent.`,
     okLabel: 'Abandon',
     busyLabel: 'Abandoning…',
     action: () => actions.abandonMove(m.id),

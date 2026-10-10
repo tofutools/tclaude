@@ -616,8 +616,8 @@ first and says what will happen. Most pages name their CLI.
   with `tclaude federation profile`.
 - **Moves** — agent moves and teleports in both directions (⇢ leaving, ⇠
   arriving) with peer, group, state and expiry. **Abandon…** stops an outgoing
-  move that has not started retiring the agent here (a copy the peer already
-  made stays there). **Freeze teleports…** stops teleports leaving or landing
+  move that has not started retiring the agent here; the agent is not retired
+  (a copy the peer already made stays there). **Freeze teleports…** stops teleports leaving or landing
   on this node until you allow them again; plain moves are not affected.
 - **Audit** — this node's federation activity, newest first: a peer acting
   here (⇠) or this node acting on a peer (⇢), with actor, target, group and
