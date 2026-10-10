@@ -19056,7 +19056,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
    link level). */
 @media (max-width: 560px) {
   :where([id^="fleet-"], #peer-mail-modal, #peer-access-modal, #peer-action-modal, #peer-spawn-modal) .cron-create-modal { min-width: 0; padding: 14px; }
-  :where([id^="fleet-"], #peer-mail-modal, #peer-access-modal, #peer-action-modal, #peer-spawn-modal) code { overflow-wrap: anywhere; }
+  :where([id^="fleet-"], #peer-mail-modal, #peer-access-modal, #peer-action-modal, #peer-spawn-modal) .cron-create-modal code { overflow-wrap: anywhere; }
   .fa-ns-check, .fa-ns-actions, .fa-hp-rows, .fa-jb-nodes, .fa-of-check { margin-left: 0; }
   .fa-ns-actions { flex-wrap: wrap; }
   /* Stack the profile editor's label column, and let each grant row wrap
