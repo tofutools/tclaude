@@ -436,7 +436,10 @@ async function uploadImages(files, signal, terminalPath) {
     const ext = IMAGE_TYPES.get(file.type);
     fd.append('file', file, `pasted-image-${stamp}-${i + 1}.${ext}`);
   });
-  const endpoint = `/api/terminal-attachments?terminal=${encodeURIComponent(terminalPath)}`;
+  // A remote terminal's upload is proxied to the peer under /api/federation/,
+  // which a peer-view page keeps local (remote-node.js rewrites other /api/).
+  const base = terminalPath.startsWith('/api/federation/terminal?') ? '/api/federation/terminal-attachments' : '/api/terminal-attachments';
+  const endpoint = `${base}?terminal=${encodeURIComponent(terminalPath)}`;
   const res = await fetch(endpoint, {
     method: 'POST', credentials: 'same-origin', body: fd, signal,
   });
@@ -455,6 +458,10 @@ export function attachTerminalInteractions({
   requestPalette = requestCommandPalette,
   fetchImpl = globalThis.fetch,
   downloadFile = null,
+  // A watch-only remote terminal takes no input, so no image upload either;
+  // file downloads from a remote node are not offered (a separate grant).
+  canInput = () => true,
+  fileDownloads = true,
 }) {
   let statusTimer = null;
   let uploadPending = false;
@@ -602,6 +609,7 @@ export function attachTerminalInteractions({
     // remote-node.js routes fetch only; this anchor download would read this
     // node's agentd under a peer's marker.
     if (globalThis.__tclaudeRemoteNode?.id) { flash('download not available in a peer view yet'); return; }
+    if (!fileDownloads) { flash('downloading files from a remote node is not available yet'); return; }
     if (downloadFile) {
       downloadFile(path);
       return;
@@ -792,6 +800,7 @@ export function attachTerminalInteractions({
     }
     event.preventDefault();
     event.stopPropagation();
+    if (!canInput()) { flash('watch-only: this terminal takes no input'); return; }
     if (uploadPending) return;
     const key = files.map(f => `${f.size}|${f.type}`).join(',');
     const now = performance.now();

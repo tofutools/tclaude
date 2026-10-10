@@ -83,6 +83,41 @@ export function createAgentRosterReconciler() {
 // normalizeSeed accepts a seed only if its ws is a same-origin absolute path
 // (leading "/"), so neither a crafted hash nor a caller can point the socket at
 // an arbitrary host. Returns the seed or null.
+// A remote terminal is a peer's agent pane, bridged by this node's daemon over
+// the federation terminal stream (the path `tclaude federation attach` uses).
+// It keeps the local framing (binary output and input) and adds JSON text
+// control frames: hello (mode and the target's pinned size), size, and closed
+// (a reason, sent just before the socket closes). The viewer renders at the
+// pinned size and never resizes the target; watch mode sends no input.
+export const REMOTE_TERMINAL_PATH = '/api/federation/terminal';
+
+export function remoteTerminalPath({ peer, agent, mode = 'watch' }) {
+  return `${REMOTE_TERMINAL_PATH}?${new URLSearchParams({ peer, agent, mode: mode === 'interactive' ? 'interactive' : 'watch' })}`;
+}
+
+export function isRemoteTerminalPath(path) {
+  return typeof path === 'string' && path.startsWith(`${REMOTE_TERMINAL_PATH}?`);
+}
+
+// REMOTE_CLOSE says why a remote terminal closed; final reasons offer no
+// reconnect, since reopening would be refused the same way.
+export const REMOTE_CLOSE = Object.freeze({
+  exit: { text: 'the agent exited', final: false },
+  reincarnated: { text: 'the session restarted on the peer; reopen to follow it', final: false },
+  revoked: { text: 'the peer revoked your access to this terminal', final: true },
+  untrusted: { text: 'the peer is no longer trusted', final: true },
+  kicked: { text: "the peer's operator disconnected this view", final: false },
+  denied: { text: "the peer does not share this terminal with you", final: true },
+  limit: { text: 'the peer has too many terminal views open; try again shortly', final: false },
+  offline: { text: 'the peer is unreachable', final: false },
+  error: { text: 'the connection failed', final: false },
+});
+
+export function remoteCloseText(closed) {
+  const known = REMOTE_CLOSE[closed?.reason];
+  return known ? known.text : (closed?.message || 'the remote terminal closed');
+}
+
 export function normalizeSeed(seed) {
   return (seed && typeof seed.ws === 'string' && seed.ws.startsWith('/')) ? seed : null;
 }
@@ -110,6 +145,8 @@ export function mountTerminalWidget({
   onComposeMessage = null,
   applicationClipboardShortcuts = false,
   onDisconnect = () => {},
+  // Remote terminals report {mode, closed} as the control frames arrive.
+  onRemoteChange = () => {},
   initialRetry = false,
   initialRetryDelays = INITIAL_RETRY_DELAYS_MS,
   initialRetryStabilityMs = INITIAL_RETRY_STABILITY_MS,
@@ -165,6 +202,13 @@ export function mountTerminalWidget({
   // outstanding "tell me if that changes" registration.
   let instanceBaseline = null;
   let cancelRestartWatch = null;
+  const remote = isRemoteTerminalPath(wsPath);
+  let remoteState = { mode: '', closed: null };
+  function setRemote(next) {
+    if (disposed) return;
+    remoteState = Object.freeze({ ...remoteState, ...next });
+    onRemoteChange(remoteState);
+  }
   const disposables = [];
 
   const term = new TerminalCtor({
@@ -203,7 +247,7 @@ export function mountTerminalWidget({
   documentRef.addEventListener('tclaude:terminal-palette', syncTheme);
 
   function fit() {
-    if (disposed) return;
+    if (disposed || remote) return;
     try { fitAddon.fit(); } catch (_) { /* host may not be laid out yet */ }
   }
 
@@ -501,6 +545,7 @@ export function mountTerminalWidget({
     if (disposed || mine !== generation) return false;
     const proto = locationRef.protocol === 'https:' ? 'wss:' : 'ws:';
     const socket = new WebSocketCtor(proto + '//' + locationRef.host + wsPath);
+    if (remote) setRemote({ mode: '', closed: null });
     socket.binaryType = 'arraybuffer';
     ws = socket;
     let openedAt = null;
@@ -509,12 +554,14 @@ export function mountTerminalWidget({
       if (disposed || mine !== generation || ws !== socket) return;
       openedAt = now();
       captureInstanceBaseline(mine);
-      setStatus('connected');
       setReconnectAvailable(false);
+      if (remote) { setStatus('connecting to the peer…'); return; }
+      setStatus('connected');
       scheduleInitialResize(mine, socket);
     };
     socket.onmessage = (event) => {
       if (disposed || mine !== generation || ws !== socket) return;
+      if (remote && typeof event.data === 'string') { remoteControl(event.data); return; }
       term.write(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data);
       // WebSocket open precedes PTY creation on the server. The first output is
       // the browser's earliest proof that the command/tmux attach is actually
@@ -527,6 +574,13 @@ export function mountTerminalWidget({
       if (disposed || mine !== generation || ws !== socket) return;
       cancelPostAttachResize();
       cancelInitialResize();
+      if (remote) {
+        const closed = remoteState.closed;
+        setStatus(closed ? `closed: ${remoteCloseText(closed)}` : 'disconnected');
+        setReconnectAvailable(!(closed && REMOTE_CLOSE[closed.reason]?.final));
+        onDisconnect();
+        return;
+      }
       const unstable = openedAt === null || now() - openedAt < initialRetryStabilityMs;
       if (unstable && scheduleInitialRetry()) return;
       setStatus('disconnected');
@@ -539,6 +593,28 @@ export function mountTerminalWidget({
       try { socket.close(); } catch (_) { /* onclose handles it */ }
     };
     return true;
+  }
+
+  // remoteControl applies a remote terminal's JSON control frame. Unparseable
+  // text is dropped, never written to the terminal.
+  function remoteControl(text) {
+    let msg = null;
+    try { msg = JSON.parse(text); } catch (_) { return; }
+    const size = () => {
+      const cols = Number(msg.cols); const rows = Number(msg.rows);
+      if (Number.isInteger(cols) && Number.isInteger(rows) && cols > 0 && rows > 0 && cols <= 1000 && rows <= 1000) term.resize(cols, rows);
+    };
+    if (msg?.type === 'hello') {
+      const mode = msg.mode === 'interactive' ? 'interactive' : 'watch';
+      term.options.disableStdin = mode !== 'interactive';
+      size();
+      setRemote({ mode });
+      setStatus(mode === 'interactive' ? 'connected · interactive' : 'connected · watch-only');
+    } else if (msg?.type === 'size') {
+      size();
+    } else if (msg?.type === 'closed') {
+      setRemote({ closed: { reason: String(msg.reason || ''), message: String(msg.message || '') } });
+    }
   }
 
   function connect() {
@@ -557,9 +633,12 @@ export function mountTerminalWidget({
     onComposeMessage,
     applicationClipboardShortcuts,
     onSelectionChange: (selected) => { if (!disposed) onSelectionChange(selected); },
+    canInput: () => !remote || remoteState.mode === 'interactive',
+    fileDownloads: !remote,
   });
 
   disposables.push(term.onData((data) => {
+    if (remote && remoteState.mode !== 'interactive') return;
     if (!disposed && ws && ws.readyState === WebSocketCtor.OPEN) {
       ws.send(new TextEncoder().encode(data));
     }
@@ -587,6 +666,7 @@ export function mountTerminalWidget({
       }
     },
     status: () => status,
+    remoteState: () => (remote ? remoteState : null),
     reconnectAvailable: () => reconnectAvailable,
     isDisposed: () => disposed,
     dispose() {

@@ -15,6 +15,11 @@ const html = htm.bind(h);
 // (The status dot is a power control — wake / shut down — so it is not here.)
 const VIEW_ONLY_ACTS = new Set(['copy-generation-id', 'sandbox-details', 'group-menu', 'row-menu']);
 
+// TERMINAL_ACTS open an agent's terminal; on a peer's row they open the peer's
+// agent in the browser terminal (remote-terminal.js), as the peer shares it.
+const TERMINAL_ACTS = new Set(['web-open-window', 'jump']);
+const openRemote = (opts) => import('./remote-terminal.js').then((m) => m.openRemoteTerminal(opts));
+
 // readOnlyActions stands in for the Groups actions: the merged overview never
 // changes a node, so every action resolves without doing anything.
 const readOnlyActions = new Proxy({}, {
@@ -91,7 +96,7 @@ function usePeerSnapshots({ active, peers, fetchImpl, timers, now }) {
 // its @node away.
 export function MergedGroups({
   state, host, snapshot = dashboardState.snapshot, fetchImpl = (...a) => globalThis.fetch(...a),
-  timers = globalThis, now = () => Date.now(), toast = shellToast, remote = remoteNodeID(), switchNode = defaultSwitchNode,
+  timers = globalThis, now = () => Date.now(), toast = shellToast, remote = remoteNodeID(), switchNode = defaultSwitchNode, openTerminal = openRemote,
 }) {
   const current = state.view.value;
   const fleet = current.fleet;
@@ -119,6 +124,11 @@ export function MergedGroups({
       if (!act || !host.contains(act) || VIEW_ONLY_ACTS.has(act.dataset.act)) return;
       event.preventDefault(); event.stopImmediatePropagation();
       const group = act.closest('details[data-fleet-node]');
+      const instance = group?.dataset.fleetNode || '';
+      if (TERMINAL_ACTS.has(act.dataset.act) && act.dataset.agent && instance && instance !== state.view.value.fleet?.self?.id) {
+        void openTerminal({ instance, agent: act.dataset.agent, peerLabel: group.dataset.fleetNodeName || '', toast });
+        return;
+      }
       const where = group ? `${group.dataset.fleetNodeName}'s dashboard` : "the node's own dashboard";
       toast(`The all-nodes view is an overview — act on this from ${where} (click the @node name)`, true);
     };

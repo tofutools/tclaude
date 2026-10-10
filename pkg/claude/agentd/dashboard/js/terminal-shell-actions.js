@@ -3,6 +3,7 @@ import { encodeTerminalOpenHash } from './terminal-handoff.js';
 import { shellToast } from './shell-state.js';
 import { detachWindowFeatures } from './terminal-drag-out.js';
 import { terminalAttachConfig } from './terminal-attach-config.js';
+import { REMOTE_CLOSE, remoteCloseText } from './terminals-core.js';
 
 export function createTerminalShellActions({
   state,
@@ -232,13 +233,31 @@ export function createTerminalShellActions({
     if (disposed || confirmOpen || state.modal.value?.id !== id) return;
     confirmOpen = true;
     let reconnect = false;
+    // A remote terminal says why it closed; a final reason (revoked,
+    // untrusted, denied) offers only Close, since reopening is refused too.
+    const remote = widgetFor(id)?.remoteState?.() || null;
+    const peer = state.modal.value?.seed?.remote?.peerLabel || 'the peer';
     try {
-      reconnect = await confirm({
-        title: 'Terminal disconnected',
-        body: 'The connection to the terminal was closed. The underlying session keeps running — reconnect to it, or close this terminal?',
-        okLabel: 'Reconnect',
-        cancelLabel: 'Close terminal',
-      });
+      if (remote?.closed && REMOTE_CLOSE[remote.closed.reason]?.final) {
+        await confirm({
+          title: 'Remote terminal closed',
+          body: `This view closed: ${remoteCloseText(remote.closed)}.${remote.closed.message ? ` ${peer} says: ${remote.closed.message}` : ''}`,
+          okLabel: 'Close terminal',
+          informational: true,
+        });
+      } else {
+        reconnect = await confirm(remote ? {
+          title: remote.closed ? 'Remote terminal closed' : 'Remote terminal disconnected',
+          body: `${remote.closed ? `This view closed: ${remoteCloseText(remote.closed)}.` : `The connection to ${peer} was lost.`} Closing this view never stops the agent on ${peer}. Reconnect, or close this terminal?`,
+          okLabel: 'Reconnect',
+          cancelLabel: 'Close terminal',
+        } : {
+          title: 'Terminal disconnected',
+          body: 'The connection to the terminal was closed. The underlying session keeps running — reconnect to it, or close this terminal?',
+          okLabel: 'Reconnect',
+          cancelLabel: 'Close terminal',
+        });
+      }
     } finally {
       confirmOpen = false;
     }
@@ -293,6 +312,7 @@ export function createTerminalShellActions({
       agent: descriptor.seed.hideConv,
       harness: descriptor.seed.harness,
       initialRetry: descriptor.seed.initialRetry,
+      ...(descriptor.seed.remote ? { remote: descriptor.seed.remote } : {}),
     };
     await closeModal(id, { detach: true });
     openPane(seed);

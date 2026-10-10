@@ -656,10 +656,12 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
     return panes.value.filter((pane) => groupIDFor(pane.key) === id);
   }
 
-  function openModal({ wsPath, ws, label = '', hideConv = null, harness = '', initialRetry = false } = {}) {
+  function openModal({ wsPath, ws, label = '', hideConv = null, harness = '', initialRetry = false, remote = null } = {}) {
     const seed = normalizeSeed({
       ws: wsPath || ws, label, hideConv: hideConv || null, harness,
       initialRetry: initialRetry === true,
+      // A peer's terminal: {peer, peerLabel, agent} for its badge and prompts.
+      ...(remote?.peer ? { remote: Object.freeze({ peer: String(remote.peer), peerLabel: String(remote.peerLabel || ''), agent: String(remote.agent || '') }) } : {}),
     });
     if (!seed) return null;
     modalSequence += 1;

@@ -137,6 +137,7 @@ function OpaqueTerminalHost({
   onSelectionChange,
   onComposeMessage,
   onDisconnect,
+  onRemoteChange,
   disconnectNotice = null,
 }) {
   const hostRef = useRef(null);
@@ -155,6 +156,7 @@ function OpaqueTerminalHost({
       onComposeMessage,
       applicationClipboardShortcuts: descriptor.seed.harness === 'copilot',
       onDisconnect,
+      onRemoteChange,
       initialRetry: descriptor.seed.initialRetry === true,
     });
     widgetRef.current = widget;
@@ -200,6 +202,20 @@ function TerminalDisconnectNotice() {
   `;
 }
 
+// RemoteBadge marks a peer's terminal: whose it is and whether this view can
+// type (interactive) or only watch, as the peer granted it.
+function RemoteBadge({ seed, remote }) {
+  if (!seed.remote) return null;
+  const peer = seed.remote.peerLabel || seed.remote.peer;
+  const mode = remote?.mode;
+  const text = mode === 'interactive' ? `⌨ interactive · ${peer}` : mode === 'watch' ? `👁 watch-only · ${peer}` : `remote · ${peer}`;
+  const title = mode === 'interactive'
+    ? `${peer}'s agent: your keystrokes reach it. The peer shows REMOTE INPUT on the pane and can disconnect you.`
+    : mode === 'watch' ? `${peer}'s agent, read-only: you see the pane but cannot type. The peer shows REMOTE WATCH on the pane.`
+    : `${peer}'s agent, through this node`;
+  return html`<span class=${`term-remote-badge${mode ? ` ${mode}` : ''}`} title=${title}>${text}</span>`;
+}
+
 function TerminalPane({
   pane, active, activationToken, solo, manageTitle, actions, widgetFactory, onComposeMessage,
   snapshot = null,
@@ -207,6 +223,7 @@ function TerminalPane({
   const [status, setStatus] = useState('disconnected');
   const [reconnect, setReconnect] = useState(false);
   const [hasSelection, setHasSelection] = useState(false);
+  const [remote, setRemote] = useState(null);
   const [dragging, setDragging] = useState(false);
   // Dashboard panes get their status from PaneTab. Only the solo title needs
   // to subscribe to the standalone snapshot signal; keeping this null in the
@@ -263,6 +280,7 @@ function TerminalPane({
           >${pane.label}</span>
           ${reattachArmed ? html`<span class="mux-drag-out-hint">Release anywhere — even outside the browser — to send this terminal back to the dashboard</span>` : null}
         ` : html`<span class="mux-pane-title">${pane.label}</span>`}
+        <${RemoteBadge} seed=${pane.seed} remote=${remote} />
         <span class="mux-pane-status" role="status" aria-live="polite" aria-atomic="true">${status}</span>
         <span class="terminal-interaction-hint">${INTERACTION_HINT}</span>
         ${reconnect ? html`<button type="button" class="mux-btn" onClick=${() => void actions.widgetFor(pane.id)?.connect()}>Reconnect</button>` : null}
@@ -302,6 +320,7 @@ function TerminalPane({
         onStatus=${setStatus}
         onReconnectChange=${setReconnect}
         onSelectionChange=${setHasSelection}
+        onRemoteChange=${setRemote}
         onComposeMessage=${composeMessage}
         disconnectNotice=${status === 'disconnected' && reconnect ? html`<${TerminalDisconnectNotice} />` : null}
       />
@@ -1444,6 +1463,7 @@ function TerminalBadge({ state }) {
 function TerminalModalSession({ descriptor, actions, widgetFactory }) {
   const [status, setStatus] = useState('disconnected');
   const [hasSelection, setHasSelection] = useState(false);
+  const [remote, setRemote] = useState(null);
   const title = descriptor.label ? `Terminal — ${descriptor.label}` : 'Terminal';
   // Escape is NOT a close key here: it is terminal input for vim, less and the
   // agent TUIs. Only the shared confirmation overlay consumes Escape while it
@@ -1457,6 +1477,7 @@ function TerminalModalSession({ descriptor, actions, widgetFactory }) {
       <div class="term-session-modal" role="dialog" aria-modal="true" aria-labelledby="term-session-title">
         <div class="term-session-header">
           <h3 id="term-session-title">${title}</h3>
+          <${RemoteBadge} seed=${descriptor.seed} remote=${remote} />
           <span class="term-session-status" id="term-session-status" role="status" aria-live="polite" aria-atomic="true">${status}</span>
           <span class="terminal-interaction-hint">${INTERACTION_HINT}</span>
           <${CopyButton} className="term-session-action" id="term-session-copy" hasSelection=${hasSelection} actions=${actions} runtimeID=${descriptor.id} />
@@ -1479,6 +1500,7 @@ function TerminalModalSession({ descriptor, actions, widgetFactory }) {
           onStatus=${setStatus}
           onReconnectChange=${() => {}}
           onSelectionChange=${setHasSelection}
+          onRemoteChange=${setRemote}
           onDisconnect=${() => actions.onModalDisconnect(descriptor.id)}
         />
       </div>
