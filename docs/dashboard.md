@@ -673,8 +673,6 @@ first and says what will happen. Most pages name their CLI.
   peer grants, with worker permissions, the teleport landing and the config
   bundle as JSON. Saving makes a new revision; peers it was applied to keep
   their settings until it is applied again.
-  default…** applies it to newly trusted peers. Profile definitions are edited
-  with `tclaude federation profile`.
 - **Offers** — config and agent bundles peers offered this node, and the ones
   it sent. **Preview…** shows what an incoming offer would change: per config
   item new / overwrites yours / unchanged with security-relevant items marked

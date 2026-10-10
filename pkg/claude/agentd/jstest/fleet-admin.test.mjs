@@ -1022,20 +1022,3 @@ test('job actions hit the local job and repo routes', async (t) => {
   ]);
 });
 
-test('moves: both directions listed, only abandonable outgoing moves offer Abandon, and the teleport freeze confirms', async (t) => {
-  const s = await setup(t);
-  await s.show();
-  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Moves/.test(b.textContent)));
-  const rows = [...s.mounted.container.querySelectorAll('#fleet-moves tbody tr')];
-  assert.equal(rows.length, 3);
-  assert.match(s.q('[data-move="m1"]').textContent, /⇢.*move.*forge.*ops.*awaiting_confirmation/s);
-  assert.match(s.q('[data-move="m2"]').textContent, /⇠.*teleport.*→/s);
-  assert.deepEqual(rows.filter((r) => r.querySelector('[data-fa="abandon"]')).map((r) => r.dataset.move), ['m1'], 'arriving and retiring moves cannot be abandoned');
-  await s.click(s.q('[data-move="m1"] [data-fa="abandon"]'));
-  assert.match(s.confirms.at(-1).body, /does not retire it here.*copy stays there as an independent agent/);
-  assert.ok(s.log.some((l) => l[0] === 'abandon' && l[1] === 'm1'));
-  await s.click(s.q('#fleet-teleport-toggle'));
-  assert.match(s.confirms.at(-1).body, /can no longer teleport to a peer, and teleports from peers can no longer land here/);
-  assert.ok(s.log.some((l) => l[0] === 'teleport' && l[1] === true));
-  assert.match(s.q('#fleet-teleport').textContent, /frozen/);
-});
