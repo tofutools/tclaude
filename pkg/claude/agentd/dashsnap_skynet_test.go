@@ -78,6 +78,18 @@ const skynetFederationStubJS = `(function(){
       { offer: { id: 'off_5m8t', type: 'agent', bytes: 482000, sha256: '9b1d', expires_at: '2026-10-17T09:00:00Z', summary: 'Agent ada with history', group: 'ops', move: { source_agent: 'agt_ada0' } }, peer: 'inst_hn3cxq7a', direction: 'in', state: 'ready' },
       { offer: { id: 'off_2w6p', type: 'config', bytes: 900, expires_at: '2026-10-12T09:00:00Z', summary: 'Config bundle: 1 items' }, peer: 'inst_2p6ym4ke', direction: 'in', state: 'pending', last_error: 'sender offline; fetch again later' }
     ]);
+    if (path.indexOf('/api/federation/bundle-offers/') === 0 && path.slice(-6) === '/fetch') return json({ state: 'ready' });
+    if (path.indexOf('/api/federation/bundle-offers/') === 0 && path.slice(-9) === '/contents') {
+      var entry = new URL(url, location.origin).searchParams.get('path');
+      if (!entry) return json({ type: 'config', entries: [
+        { path: 'bundle.json', size: 6144, kind: 'json' }, { path: 'sections/roles.json', size: 1830, kind: 'json' },
+        { path: 'sections/templates.json', size: 2410, kind: 'json' }, { path: 'sections/config.json', size: 512, kind: 'json' }
+      ] });
+      return json({ path: entry, kind: 'json', size: 1830, truncated: false, offset: 0, text: JSON.stringify([
+        { name: 'reviewer', description: 'Reviews diffs cold; never edits', permissions: { 'tasks.read': { allow: true }, 'repo.write': { allow: false } }, prompt: 'You are a careful reviewer. Report only significant defects.' },
+        { name: 'release-captain', description: 'Cuts releases and watches CI', permissions: { 'jobs.run': { allow: true } }, prompt: 'Coordinate the release train; never force-push main.' }
+      ]) });
+    }
     if (path.indexOf('/api/federation/bundle-offers/') === 0 && path.slice(-7) === '/import') return json({ changes: [
       { item: 'roles/reviewer', action: 'create', security: true },
       { item: 'templates/pr-review', action: 'replace', security: true },
@@ -529,6 +541,25 @@ func skynetStates() []dashsnap.State {
   var p = document.querySelector('#fleet-rotation-pending');
   if (!p || !/no earlier than/.test(p.textContent)) throw new Error('skynet: pending rotation missing');
   document.querySelector('#fleet-identity').scrollIntoView({ block: 'center' });
+})();`,
+			SettleMS: 300,
+		},
+		{
+			Key:     "skynet-fleet-bundle-inspect",
+			Title:   "Inspect an offered bundle before importing",
+			Caption: "Offers → Inspect… fetches and verifies the payload on this node, lists its entries (bundle.json and sections/*.json for config; manifest.json and the transcript for agents) and shows any of them as plain text, JSON pretty-printed and transcripts paged; Download saves the bundle, Import… continues to the import preview, Decline… refuses it.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Offers'; })[0].click();
+  for (var j = 0; j < 30 && !document.querySelector('[data-offer="off_9c4r"] [data-fa="inspect"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('[data-offer="off_9c4r"] [data-fa="inspect"]').click();
+  for (var k = 0; k < 30 && !document.querySelector('#fleet-bundle-entries [data-path="sections/roles.json"]'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-bundle-entries [data-path="sections/roles.json"]').click();
+  for (var m = 0; m < 30 && !document.querySelector('#fleet-bundle-text'); m++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!/release-captain/.test((document.querySelector('#fleet-bundle-text') || {}).textContent || '')) throw new Error('skynet: bundle entry not shown');
 })();`,
 			SettleMS: 300,
 		},

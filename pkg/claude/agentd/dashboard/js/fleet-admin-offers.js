@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { shortID } from './fleet-admin-model.js';
+import { BundleInspectDialog } from './fleet-admin-bundle.js';
 
 const html = htm.bind(h);
 
@@ -343,7 +344,7 @@ export function OffersPage({ view, agents, actions, confirm, toast }) {
         <td class="fa-nowrap">${size(o.offer?.bytes)}</td>
         <td class="fa-nowrap">${when(o.offer?.expires_at)}</td>
         <td class=${o.last_error ? 'fa-danger' : ''} title=${o.last_error || ''}>${o.state}</td>
-        <td class="fa-acts">${OPEN.has(o.state) && html`<button type="button" data-fa="preview" onClick=${() => setDialog({ kind: 'import', offer: o })}>Preview…</button><button type="button" data-fa="decline" onClick=${() => decline(o)}>Decline…</button>`}</td>
+        <td class="fa-acts">${OPEN.has(o.state) && html`<button type="button" data-fa="inspect" onClick=${() => setDialog({ kind: 'inspect', offer: o })}>Inspect…</button><button type="button" data-fa="preview" onClick=${() => setDialog({ kind: 'import', offer: o })}>Preview…</button><button type="button" data-fa="decline" onClick=${() => decline(o)}>Decline…</button>`}</td>
       </tr>`)}</tbody>
     </table>`}
     <h4>Sent by this node</h4>
@@ -356,6 +357,8 @@ export function OffersPage({ view, agents, actions, confirm, toast }) {
         <td class=${o.last_error || o.state === 'declined' ? 'fa-danger' : ''} title=${o.last_error || ''}>${o.state}</td>
       </tr>`)}</tbody>
     </table>`}
+    ${dialog?.kind === 'inspect' && html`<${BundleInspectDialog} offer=${dialog.offer} label=${label} actions=${actions} toast=${toast}
+      onImport=${() => setDialog({ kind: 'import', offer: dialog.offer })} onDecline=${() => { const o = dialog.offer; setDialog(null); decline(o); }} onClose=${() => setDialog(null)} />`}
     ${dialog?.kind === 'import' && html`<${OfferImportDialog} offer=${dialog.offer} label=${label} actions=${actions} confirm=${confirm} onClose=${() => { setDialog(null); setTick((n) => n + 1); }} onDone=${done} />`}
     ${dialog?.kind === 'config' && html`<${SendConfigDialog} peers=${peers} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${dialog?.kind === 'agent' && html`<${ShareAgentDialog} peers=${peers} agents=${agents} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
