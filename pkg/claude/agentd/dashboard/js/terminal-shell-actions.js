@@ -200,6 +200,7 @@ export function createTerminalShellActions({
       hideConv: pane.seed.hideConv,
       agent: pane.seed.agent,
       harness: pane.seed.harness,
+      ...(pane.seed.remote ? { remote: pane.seed.remote } : {}),
       initialRetry: true,
       wizard: documentRef.body.classList.contains('wizard'),
       terminalAttach: terminalAttachConfig(),
@@ -241,7 +242,7 @@ export function createTerminalShellActions({
       if (remote?.closed && REMOTE_CLOSE[remote.closed.reason]?.final) {
         await confirm({
           title: 'Remote terminal closed',
-          body: `This view closed: ${remoteCloseText(remote.closed)}.${remote.closed.message ? ` ${peer} says: ${remote.closed.message}` : ''}`,
+          body: `This view closed: ${remoteCloseText(remote.closed)}. Closing it never stops the agent on ${peer}.`,
           okLabel: 'Close terminal',
           informational: true,
         });

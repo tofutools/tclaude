@@ -50,7 +50,10 @@ export function nativeAttachCommand(agent, instance) {
 // openRemoteTerminal opens instance's agent in the terminal modal, or says why
 // it cannot. It resolves to the opened descriptor or null.
 export async function openRemoteTerminal({ instance, agent, peerLabel = '', label = '', fetchImpl, toast = shellToast, open = openTermModal } = {}) {
-  if (!SAFE_ID.test(agent || '') || !SAFE_ID.test(instance || '')) return null;
+  if (!SAFE_ID.test(agent || '') || !SAFE_ID.test(instance || '')) {
+    toast('This agent has no stable ID to open its terminal on the peer', true);
+    return null;
+  }
   const peer = peerLabel || instance.slice(0, 13);
   let rows;
   try {
@@ -69,11 +72,13 @@ export async function openRemoteTerminal({ instance, agent, peerLabel = '', labe
     return null;
   }
   const name = label || row.name || agent;
-  return open({
+  const opened = await open({
     wsPath: remoteTerminalPath({ peer: instance, agent, mode }),
     label: `${name} @ ${peer}`,
     remote: { peer: instance, peerLabel: peer, agent },
   });
+  if (!opened) toast('The terminal could not open here (the terminal runtime did not load)', true);
+  return opened || null;
 }
 
 // RemoteSessionsDialog lists a peer's sessions (the map's "Terminals…") with

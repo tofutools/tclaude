@@ -92,6 +92,10 @@ export function createAgentRosterReconciler() {
 // binary output frame is acknowledged with {type:'credit', bytes} once xterm
 // has written it, which is what refills the stream's flow-control window.
 export const REMOTE_TERMINAL_PATH = '/api/federation/terminal';
+// A peer's pinned size beyond these is refused rather than rendered: a hostile
+// peer must not be able to make this tab allocate a huge grid.
+const MAX_REMOTE_COLS = 500;
+const MAX_REMOTE_ROWS = 200;
 
 export function remoteTerminalPath({ peer, agent, mode = 'watch' }) {
   return `${REMOTE_TERMINAL_PATH}?${new URLSearchParams({ peer, agent, mode: mode === 'interactive' ? 'interactive' : 'watch' })}`;
@@ -115,9 +119,13 @@ export const REMOTE_CLOSE = Object.freeze({
   error: { text: 'the connection failed', final: false },
 });
 
+// remoteCloseText words a closure from its reason; the peer's own message is
+// shown only as a short, control-free detail next to a known reason.
 export function remoteCloseText(closed) {
   const known = REMOTE_CLOSE[closed?.reason];
-  return known ? known.text : (closed?.message || 'the remote terminal closed');
+  if (!known) return 'the remote terminal closed';
+  const detail = String(closed?.message || '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').trim().slice(0, 160);
+  return detail ? `${known.text} (${detail})` : known.text;
 }
 
 export function normalizeSeed(seed) {
@@ -614,7 +622,7 @@ export function mountTerminalWidget({
     try { msg = JSON.parse(text); } catch (_) { return; }
     const size = () => {
       const cols = Number(msg.cols); const rows = Number(msg.rows);
-      if (Number.isInteger(cols) && Number.isInteger(rows) && cols > 0 && rows > 0 && cols <= 1000 && rows <= 1000) term.resize(cols, rows);
+      if (Number.isInteger(cols) && Number.isInteger(rows) && cols > 0 && rows > 0 && cols <= MAX_REMOTE_COLS && rows <= MAX_REMOTE_ROWS && (cols !== term.cols || rows !== term.rows)) term.resize(cols, rows);
     };
     if (msg?.type === 'hello') {
       const mode = msg.mode === 'interactive' ? 'interactive' : 'watch';
@@ -647,6 +655,7 @@ export function mountTerminalWidget({
     onSelectionChange: (selected) => { if (!disposed) onSelectionChange(selected); },
     canInput: () => !remote || remoteState.mode === 'interactive',
     fileDownloads: !remote,
+    oscClipboard: !remote,
   });
 
   disposables.push(term.onData((data) => {

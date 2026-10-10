@@ -93,7 +93,8 @@ export function limitHint(state, what, node) {
 // ATTACH_ACTS open an agent's terminal. On a peer view they open the peer's
 // agent in the browser terminal, bridged by this node's daemon over the
 // federation terminal stream (remote-terminal.js); the peer authorises it.
-const ATTACH_ACTS = new Set(['web-open-window', 'jump', 'term-dir']);
+// (term-dir opens a shell in a directory, not the agent: never on a peer.)
+const ATTACH_ACTS = new Set(['web-open-window', 'jump']);
 
 // SAFE_AGENT_ID admits only a plain agent ID into a command the operator will
 // paste into a shell: the ID comes from the peer's snapshot, and a hostile

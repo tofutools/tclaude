@@ -637,6 +637,8 @@ test('a remote terminal follows the hello: pinned size, no resizes, watch-only d
   socket.onmessage({ data: JSON.stringify({ type: 'hello', mode: 'watch', cols: 132, rows: 40 }) });
   assert.equal(statuses.at(-1), 'connected · watch-only');
   assert.deepEqual([fakes.terminal().cols, fakes.terminal().rows], [132, 40], 'renders at the target pinned size');
+  socket.onmessage({ data: JSON.stringify({ type: 'size', cols: 5000, rows: 4000 }) });
+  assert.deepEqual([fakes.terminal().cols, fakes.terminal().rows], [132, 40], 'a hostile oversized grid is refused');
   assert.equal(fakes.terminal().options.disableStdin, true);
   assert.equal(remotes.at(-1).mode, 'watch');
   fakes.terminal().dataHandler('typed');
@@ -652,7 +654,7 @@ test('a remote terminal follows the hello: pinned size, no resizes, watch-only d
   assert.deepEqual(socket.sent, [JSON.stringify({ type: 'credit', bytes: 3 })], 'credit follows the write, exact byte count, even when watching');
   socket.onmessage({ data: JSON.stringify({ type: 'closed', reason: 'revoked', message: 'sessions.watch revoked' }) });
   socket.disconnect();
-  assert.equal(statuses.at(-1), 'closed: the peer revoked your access to this terminal');
+  assert.equal(statuses.at(-1), 'closed: the peer revoked your access to this terminal (sessions.watch revoked)');
   assert.equal(reconnect.at(-1) ?? false, false, 'a final reason offers no reconnect');
   assert.equal(disconnected, 1);
   assert.equal(widget.remoteState().closed.reason, 'revoked');
