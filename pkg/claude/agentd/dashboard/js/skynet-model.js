@@ -243,15 +243,19 @@ export function remoteHealthView(health, now = Date.now()) {
 }
 
 // TRANSPORT_FEATURES are served on their own channels (the dashboard shell,
-// terminals and their file links, inline spawn, node exec, access requests),
-// never by the peer view itself: the peer's metadata lists them as omitted
-// (newer daemons mark them transport), but that says nothing about whether
-// they work, so they are not shown as "not shared".
-const TRANSPORT_FEATURES = new Set(['local_dashboard', 'terminals', 'sessions.files.read', 'spawn.inline', 'node.exec', 'node.credentials.receive', 'permissions.requests']);
+// terminals and their file links, inline spawn, access requests), never by the
+// peer view itself: the peer's metadata lists them as omitted, but that says
+// nothing about whether they work, so they are not shown as "not shared".
+// Newer daemons mark them transport; the names are the fallback for older
+// ones, and never hide an entry the peer says can be requested.
+const TRANSPORT_FEATURES = new Set(['local_dashboard', 'terminals', 'sessions.files.read', 'spawn.inline', 'permissions.requests']);
 
 export function shownOmission(o) {
   if (typeof o === 'string') return !TRANSPORT_FEATURES.has(o);
-  return !!o && !o.transport && !TRANSPORT_FEATURES.has(o.feature) && o.requires !== 'local_only' && o.requires !== 'peer_access';
+  if (!o) return false;
+  if (typeof o.transport === 'boolean') return !o.transport;
+  if (o.requestable === true) return true;
+  return !TRANSPORT_FEATURES.has(o.feature) && o.requires !== 'local_only' && o.requires !== 'peer_access';
 }
 
 // peerViewSummary normalizes the snapshot's peer_view metadata (what the peer

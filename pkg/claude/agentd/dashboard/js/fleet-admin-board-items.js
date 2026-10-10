@@ -34,11 +34,11 @@ export function postedBy(item, name) {
   return item.republisher && item.republisher !== item.publisher ? `${by}, re-posted by ${name(item.republisher) || item.republisher}` : by;
 }
 
-// selection turns the publish form into the route's only list: whole
-// sections, or the named items typed as section/name.
+// selection turns the publish form into the route's only list: the ticked
+// whole sections plus the named items (section/name) outside them.
 export function selection(sections, named) {
   const picked = String(named || '').split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
-  return picked.length ? picked : [...sections];
+  return [...sections, ...picked.filter((p) => !sections.includes(p.split('/')[0]))];
 }
 
 // importConsequence spells out what importing a preview does here.
@@ -86,8 +86,11 @@ function PublishDialog({ board, item, actions, confirm, onClose, onDone }) {
     let off = false;
     parentSelection(actions, board.id, item.id, item.latest_version).then((sel) => {
       if (off || !sel.length) return;
-      setNamed((cur) => cur || sel.join(', '));
-      setPrefilled(item.latest_version);
+      setNamed((cur) => {
+        if (cur) return cur;
+        setPrefilled(item.latest_version);
+        return sel.join(', ');
+      });
     });
     return () => { off = true; };
   }, []);
@@ -110,7 +113,7 @@ function PublishDialog({ board, item, actions, confirm, onClose, onDone }) {
     <div class="fa-grant-form">${POSTABLE.map((s) => html`<label key=${s}><input type="checkbox" data-section=${s} checked=${sections.includes(s)}
       onChange=${(e) => setSections(e.currentTarget.checked ? [...sections, s] : sections.filter((x) => x !== s))} /> ${s}</label>`)}</div>
     <label class="fa-of-row"><span class="fa-k">or only</span><input id="fleet-board-publish-only" value=${named} placeholder="roles/reviewer, profiles/fast" autocomplete="off" spellcheck="false" onInput=${(e) => setNamed(e.currentTarget.value)} /></label>
-    ${prefilled && html`<div class="muted" id="fleet-board-publish-prefilled">Prefilled with what version ${short(prefilled)} shares; this node's current config for those items is posted.</div>`}
+    ${prefilled && html`<div class="muted" id="fleet-board-publish-prefilled">Prefilled with the items version ${short(prefilled)} shares; this node's current config for them is posted. To share a whole section again, including items added since, tick it.</div>`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation boards publish --board ${board.id} --name … --only roles/NAME${item ? ` --item ${item.id} --parent ${item.latest_version}` : ''}</code></div>
     <div class="modal-buttons"><span class="spacer"></span>

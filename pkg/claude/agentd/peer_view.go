@@ -175,10 +175,10 @@ type peerViewOmission struct {
 	Feature     string `json:"feature"`
 	Requires    string `json:"requires"`
 	// Transport marks a feature the peer view never serves itself (the local
-	// dashboard shell, terminals and their file links, inline spawn, node
-	// exec): whether it works is decided on its own channel, so a UI should
-	// not list it as "not shared".
-	Transport bool `json:"transport,omitempty"`
+	// dashboard shell, terminals and their file links, inline spawn, access
+	// requests): whether it works is decided on its own channel, so a UI
+	// should not list it as "not shared".
+	Transport bool `json:"transport"`
 }
 type peerViewMetadata struct {
 	Peer     string             `json:"peer"`

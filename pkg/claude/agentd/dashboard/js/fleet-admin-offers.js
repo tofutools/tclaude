@@ -273,7 +273,7 @@ function ShareAgentDialog({ peers, agents, actions, confirm, onClose, onDone }) 
       ${agents.map((a) => html`<option key=${a.id} value=${a.id}>${a.label}</option>`)}</select></label>
     <label class="fa-of-row"><span class="fa-k">peer</span><select id="fleet-share-agent-peer" value=${form.peer} onChange=${set('peer')}>
       ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}</select></label>
-    <label class="fa-of-row"><span class="fa-k">group</span><input id="fleet-share-agent-group" value=${form.group} placeholder="receiving group on the peer (it must grant agents.receive)" autocomplete="off" onInput=${set('group')} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); send(); } }} /></label>
+    <label class="fa-of-row"><span class="fa-k">group</span><input id="fleet-share-agent-group" value=${form.group} placeholder="receiving group on the peer (it must grant agents.receive)" autocomplete="off" onInput=${set('group')} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (!(findings && !allow)) send(); } }} /></label>
     <label class="fa-of-check"><input id="fleet-share-agent-history" type="checkbox" checked=${form.history} onChange=${set('history')} /> include a copy of the conversation history</label>
     <div class="muted" id="fleet-share-agent-landing">Starting directory: the receiver chooses on accept.</div>
     ${findings && html`<div class="fa-plan"><ul>${findings.map((f) => html`<li class="fa-warn">${f.kind} ×${f.count}${f.locations?.length ? ` (${f.locations.slice(0, 3).join(', ')})` : ''}</li>`)}</ul></div>

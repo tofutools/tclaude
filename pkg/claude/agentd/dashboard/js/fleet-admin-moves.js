@@ -80,7 +80,7 @@ export function MoveAgentDialog({ peers, agents, actions, confirm, onClose, onDo
           <option value="">pick a group that receives agents…</option>
           ${receiving.map((g) => html`<option key=${g} value=${g} selected=${form.group === g}>${g}</option>`)}
           <option value=${'\u0000other'}>another group (type its name)…</option></select>`
-      : html`<input id="fleet-move-agent-group" value=${form.group} placeholder="receiving group on the peer (it must grant agents.receive)" autocomplete="off" onInput=${set('group')} onKeyDown=${(e) => { if (e.key === 'Enter') send(); }} />`}</label>
+      : html`<input id="fleet-move-agent-group" value=${form.group} placeholder="receiving group on the peer (it must grant agents.receive)" autocomplete="off" onInput=${set('group')} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (!(findings && !allow)) send(); } }} />`}</label>
     <div class="muted">The agent retires here once the peer runs its copy. To keep it running here, offer a copy from Offers instead. Starting directory: the receiver chooses on accept.</div>`}
     ${findings && html`<div class="fa-plan"><ul>${findings.map((f) => html`<li class="fa-warn">${f.kind} ×${f.count}${f.locations?.length ? ` (${f.locations.slice(0, 3).join(', ')})` : ''}</li>`)}</ul></div>
       <label class="fa-of-check"><input id="fleet-move-agent-allow" type="checkbox" checked=${allow} onChange=${(e) => setAllow(e.currentTarget.checked)} /> send the history anyway</label>`}

@@ -62,6 +62,9 @@ test('card view distinguishes stale data, unreachable peers and absent summaries
   // shell) work on their own channels: never listed as "not shared".
   const unrestricted = model.cardView(peer, { summary: { peer_view: { omitted: [{ feature: 'local_dashboard', requires: 'local_only' }, { feature: 'sessions.files.read', requires: 'sessions.files.read', transport: true }, { feature: 'spawn.inline' }, 'terminals', { feature: 'custom.thing', transport: true }] } }, receivedAt: 1000 }, 2000);
   assert.deepEqual(unrestricted.omitted, []);
+  // A requestable or non-transport entry always shows, whatever its name.
+  const restricted = model.cardView(peer, { summary: { peer_view: { omitted: [{ feature: 'node.exec', requires: 'node.exec', requestable: true, transport: false }, { feature: 'terminals', requestable: true }, { feature: 'spawn.inline', transport: false }] } }, receivedAt: 1000 }, 2000);
+  assert.deepEqual(restricted.omitted, ['node.exec', 'terminals', 'spawn.inline']);
   const stale = model.cardView(peer, { summary: { shared_agents: 4 }, receivedAt: 0, failure: model.classifyFailure(502, { code: 'peer_unreachable', reason: 'peer_offline', last_seen: 'x' }) }, 840000);
   assert.equal(stale.presence, 'offline'); assert.equal(stale.stale, true); assert.equal(model.fmtAge(stale.ageMs), '14 min'); assert.equal(stale.lastSeen, 'x');
   assert.equal(model.classifyFailure(504, { code: 'peer_unreachable', reason: 'peer_timeout' }).kind, 'timeout');
