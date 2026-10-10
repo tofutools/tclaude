@@ -58,7 +58,12 @@ var sharedStatusCache = statusSnapshotCache{revision: db.StatusSnapshotGeneratio
 var peerStatusCache statusSnapshotCache
 
 func gatheredPeerStatusSnapshot() *statusSnapshot {
-	return peerStatusCache.get(config.DataDir(), 1500*time.Millisecond, gatheredStatusSnapshot)
+	if statusSnapshotDisabled() {
+		return gatheredStatusSnapshot()
+	}
+	return peerStatusCache.get(config.DataDir(), 1500*time.Millisecond, func() *statusSnapshot {
+		return gatherStatusSnapshotFresh(false)
+	})
 }
 
 // A joining consumer returns this flight's result even if gathering exceeded

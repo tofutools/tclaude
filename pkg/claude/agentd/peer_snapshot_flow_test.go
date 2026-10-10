@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -190,9 +191,28 @@ func TestPeerSnapshotPollsShareGatherWithoutStalingLocalReads(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, seen, "replay remains refused")
 	require.NoError(t, db.UpdateSessionModel("poll-cache-session", "changed-model"))
-	local := fetchSnapshotOnly(t, agentd.BuildDashboardHandlerForTest())
+	f.SetSessionStatus("poll-cache-agent", "awaiting_input")
+	dashboard := agentd.BuildDashboardHandlerForTest()
+	summary := testharness.Serve(dashboard, testharness.JSONRequest(t, "GET", "/api/node-summary", nil))
+	require.Equal(t, 200, summary.Code, summary.Body.String())
+	var counts map[string]any
+	testharness.DecodeJSON(t, summary, &counts)
+	require.Equal(t, float64(1), counts["waiting_for_input"], "local node summary remains immediately fresh")
+	local := fetchSnapshotOnly(t, dashboard)
 	require.Equal(t, "changed-model", findDashMember(local, "team", "poll-cache-agent").State.Model)
 	require.Equal(t, int64(2), gathers.Load(), "a local read observes the status write immediately")
+	_, err = config.Update(func(c *config.Config, err error) error {
+		if err != nil {
+			return err
+		}
+		c.StatusSnapshot = &config.StatusSnapshotConfig{Disabled: true}
+		return nil
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.UpdateSessionModel("poll-cache-session", "uncached-model"))
+	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "uncached-model", "global cache-off also disables peer coalescing")
 	rec = fedHuman(t, f, "DELETE", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermAgentsStatusRead, "scope": "group=team"})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
