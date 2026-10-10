@@ -353,6 +353,9 @@ func (rt *fedRuntime) receiveTerminalFile(ctx context.Context, v *fedTerminalVie
 		return nil, h, terminalFileRefusal(h.Status, h.Code, h.Error)
 	}
 	if head {
+		if !rt.terminalFileAuthorized(v) {
+			return nil, h, terminalFileRefusal(403, "viewer_closed", "terminal viewer is no longer authorized")
+		}
 		return nil, h, nil
 	}
 	f, err := os.CreateTemp("", "tclaude-terminal-download-")
