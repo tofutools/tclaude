@@ -243,6 +243,24 @@ func (rt *fedRuntime) acceptModelOpen(peer *db.FederationPeer, env *proto.Envelo
 		serveModelUpstream(writer, req, peer.InstanceID, p.Session, p.Proxy, p.Stream, p)
 		_ = writer.finish()
 		_ = flow.CloseWrite()
+		// HTTP framing can complete the request before the sender writes its
+		// half-close. Deliver the response immediately, but keep the stream open
+		// until that half-close arrives so a fast response cannot race it and
+		// turn a successful request into a relay-side write error. Only one HTTP
+		// request is allowed on this stream; extra data ends it as well. Cap this
+		// post-response grace even when the request's context has a long deadline.
+		grace := time.AfterFunc(5*time.Second, func() { _ = flow.Close() })
+		defer grace.Stop()
+		// Discovery and early policy refusals may leave a framed body unread.
+		// Bound both time and bytes before looking for the half-close. Close
+		// immediately on overflow so deferred Body.Close cannot drain the rest.
+		const maxDrain = 64 << 10
+		if n, _ := io.Copy(io.Discard, io.LimitReader(req.Body, maxDrain+1)); n > maxDrain {
+			_ = flow.Close()
+			return
+		}
+		var extra [1]byte
+		_, _ = flow.Read(extra[:])
 	}()
 }
 

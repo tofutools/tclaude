@@ -154,6 +154,94 @@ func TestFederation_ModelGatewayDialectProbeDoesNotConsumeRequestCapacity(t *tes
 	require.Contains(t, answer.Reason, "limit", "actual generation still consumes the single request slot")
 }
 
+func TestFederation_ModelGatewayResponseBeforeRequestHalfClose(t *testing.T) {
+	for _, finish := range []string{"half-close", "discovery-body", "discovery-overflow", "deadline", "grace"} {
+		t.Run(finish, func(t *testing.T) {
+			fh := newFedHarness(t)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, `{"object":"response","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}`)
+			}))
+			defer upstream.Close()
+			fedModelPolicy(t, fh, upstream.URL)
+			_, err := config.Update(func(cfg *config.Config, err error) error {
+				if err != nil {
+					return err
+				}
+				p := cfg.Agent.HTTPProxies["model"].ModelPolicy
+				p.Dialect = "openai"
+				p.PrecountInput = false
+				switch finish {
+				case "deadline":
+					p.MaxDurationSeconds = 1
+				case "grace":
+					p.MaxDurationSeconds = 30
+				}
+				return nil
+			})
+			require.NoError(t, err)
+			flow := fedModelFlow(t, fh, proto.ModelOpenPayload{Proxy: "model", Session: "immutable-launch", Dialect: "openai"})
+			method, path, input := http.MethodPost, "/v1/responses", `{"model":"test-model","input":"hello"}`
+			if strings.HasPrefix(finish, "discovery-") {
+				method, path, input = http.MethodGet, "/v1/models", strings.Repeat("x", 16<<10)
+				if finish == "discovery-overflow" {
+					input = strings.Repeat("x", (64<<10)+1)
+				}
+			}
+			req, err := http.NewRequest(method, "http://model"+path, strings.NewReader(input))
+			require.NoError(t, err)
+			if finish == "discovery-overflow" {
+				// Leave the framed body incomplete so only the byte cap, rather
+				// than body EOF or the grace timer, can trigger immediate cleanup.
+				// Request.Write buffers its last byte on a length mismatch,
+				// so write the incomplete HTTP message directly to the stream.
+				_, err = io.WriteString(flow, "GET /v1/models HTTP/1.1\r\nHost: model\r\nContent-Length: 65538\r\n\r\n"+input)
+				require.NoError(t, err)
+				resp, err := http.ReadResponse(bufio.NewReader(flow), req)
+				require.NoError(t, err)
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+				require.NoError(t, resp.Body.Close())
+				require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+				select {
+				case <-flow.Done():
+				case <-time.After(3 * time.Second):
+					t.Fatal("over-limit drain did not close the stream before its grace")
+				}
+				return
+			}
+			require.NoError(t, req.Write(flow))
+			// Deliberately receive the entire response, including the gateway's
+			// half-close, before sending ours. HTTP body framing already ended the
+			// request, so this ordering must neither stall the response nor abort us.
+			response, err := io.ReadAll(flow)
+			require.NoError(t, err)
+			if finish == "half-close" || finish == "discovery-body" {
+				require.NoError(t, flow.CloseWrite())
+			} else {
+				// A peer that never half-closes still receives its response, and
+				// the earlier of its deadline and the post-response grace bounds
+				// the gateway's wait for the missing FIN.
+				select {
+				case <-flow.Done():
+				case <-time.After(10 * time.Second):
+					t.Fatal("stream remained open after its half-close grace or deadline")
+				}
+			}
+			resp, err := http.ReadResponse(bufio.NewReader(strings.NewReader(string(response))), req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+			if finish == "discovery-body" {
+				require.Contains(t, string(body), `"id":"test-model"`)
+			} else {
+				require.Contains(t, string(body), `"status":"completed"`)
+			}
+		})
+	}
+}
+
 func fedModelControlAnswer(t *testing.T, fh *fedHarness, p proto.ModelOpenPayload) proto.ModelAnswerPayload {
 	t.Helper()
 	kp, err := stream.NewKeyPair()
