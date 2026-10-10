@@ -584,6 +584,23 @@ export function mountSkynetFleetFeature(dependencies = {}) {
   return mountIslandDescriptor(skynetFleetDescriptor, dependencies);
 }
 
+// Fused Messages: the ticked nodes' mail in the Messages layout.
+const fusedMessagesDescriptor = createIslandDescriptor({
+  name: 'fused-messages', label: 'Messages on several nodes',
+  hosts: { host: '#skynet-fused-messages-root' },
+  failureClass: 'skynet-error',
+  load: async ({ hosts: { host } }) => {
+    const islandModule = import('./fused-mail.js');
+    const stateModule = import('./skynet-state.js');
+    const [{ mountFusedMailIsland }, { skynetState }] = await Promise.all([islandModule, stateModule]);
+    return { state: skynetState, mount: (registerCleanup) => mountFusedMailIsland({ host, state: skynetState, registerCleanup }) };
+  },
+});
+
+export function mountFusedMessagesFeature(dependencies = {}) {
+  return mountIslandDescriptor(fusedMessagesDescriptor, dependencies);
+}
+
 // Fleet administration (trust, hub connection) is its own island too.
 const fleetAdminDescriptor = createIslandDescriptor({
   name: 'fleet-admin', label: 'Fleet administration',

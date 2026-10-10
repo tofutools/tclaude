@@ -544,10 +544,11 @@ height to the page.
 
 **nodes ▾**, after the node buttons, shows several nodes together: tick the
 nodes (all by default), and **Groups** lists the ticked nodes' groups as one
-tree (see [Groups on several nodes](#groups-on-several-nodes)) while
+tree (see [Groups on several nodes](#groups-on-several-nodes)),
 **Terminals** shows the open terminals on the ticked nodes, each tab and pane
-labelled with its node (the others stay open, out of sight); the button reads
-e.g. `2/3`. Clicking a node's name (or its **only**) shows that node
+labelled with its node (the others stay open, out of sight), and **Messages**
+their mail (see [Messages on several nodes](#messages-on-several-nodes)); the
+button reads e.g. `2/3`. Clicking a node's name (or its **only**) shows that node
 alone, as does unticking all but one. Every other tab still shows one node, the
 primary: the node of the page you fused from. It says so in a strip at the top,
 whose buttons switch the primary without leaving the fused view, and the tab
@@ -629,6 +630,27 @@ it in that node's dashboard. An unreachable node keeps its last rows, marked
 stale; a node no longer trusted drops them. The old `/fleet` address opens this
 view with every node ticked. CLI: `tclaude agent groups ls --all-nodes`; actions are
 `tclaude federation action ... --node NODE`.
+
+### Messages on several nodes
+
+In a fused view, Messages shows the ticked nodes' mail in the usual layout.
+**All agent messages**, **Human notifications** and **Access requests** span
+every ticked node, newest first (access requests oldest first), each row
+carrying its node's pill; under that, each node lists its own groups and
+agents. The filter searches every ticked node. A peer's mail is shown only if
+it grants you `node.messages.read`; otherwise the sidebar says "not shared"
+next to it. An unreachable node keeps its last page, marked with its age; a
+node no longer trusted drops it. Bodies are shown as text.
+
+Actions go to the node that owns the message. Mark read/unread on an agent
+message needs that node's `node.messages.manage`; a reply to an agent goes
+through its `operator-message` route (`message.direct`). Human notifications
+(mark read, reply) and access requests (approve once, deny) are answered here
+on this node and on peers that trust you unrestricted; approving says exactly
+what it lets through on that node. Anything a node does not allow from here
+says so, and **Open on NODE** shows that node's own Messages. CLI:
+`tclaude federation human-inbox PEER` (with `reply` and `decide`) and
+`tclaude federation action message --node NODE --agent ID --body TEXT`.
 
 ### The 🌐 marker
 

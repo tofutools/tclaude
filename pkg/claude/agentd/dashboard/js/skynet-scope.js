@@ -9,7 +9,7 @@
 // list of instance IDs.
 
 // FUSED_TABS show every ticked node; every other per-node tab shows the primary.
-export const FUSED_TABS = new Set(['groups', 'terminals']);
+export const FUSED_TABS = new Set(['groups', 'terminals', 'messages']);
 
 // BUTTON_LIMIT is how many nodes (this one included) still get a button each;
 // past it the buttons fold into one node dropdown.
