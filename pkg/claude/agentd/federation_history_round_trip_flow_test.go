@@ -203,7 +203,7 @@ func TestFederation_LargeTeleportHistoryRoundTrip(t *testing.T) {
 }
 func historyTestLifetime() time.Duration {
 	if os.Getenv("TCLAUDE_LARGE_AGENT_TRANSFER") == "1" {
-		return 15 * time.Minute
+		return 30 * time.Minute
 	}
 	return 90 * time.Second
 }
@@ -319,6 +319,8 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 	remoteConv := land(b, outward)
 	if large {
 		require.True(t, interrupted.Load(), "the third stream chunk must be interrupted before successful resume")
+		chunks := (outward.Bytes + bundletransfer.ChunkBytes - 1) / bundletransfer.ChunkBytes
+		require.Equal(t, int32(2*(chunks+1)), streamJoins.Load(), "completed chunks must not be fetched again after interruption")
 	}
 	require.NotEqual(t, moveSourceConv, remoteConv)
 	fedEventually(t, "A retires only after B is running", func() bool {
@@ -398,19 +400,35 @@ func (w historyInterruptWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return &historyInterruptConn{Conn: conn, interrupted: w.interrupted}, rw, nil
+	wrapped := &historyInterruptConn{Conn: conn, interrupted: w.interrupted}
+	pending, err := rw.Reader.Peek(rw.Reader.Buffered())
+	if err != nil {
+		conn.Close()
+		return nil, nil, err
+	}
+	prefix := append([]byte(nil), pending...)
+	rw.Reader = bufio.NewReader(io.MultiReader(bytes.NewReader(prefix), wrapped))
+	rw.Writer = bufio.NewWriter(wrapped)
+	return wrapped, rw, nil
 }
 
 type historyInterruptConn struct {
 	net.Conn
-	bytes       int64
+	bytes       atomic.Int64
 	interrupted *atomic.Bool
 }
 
 func (c *historyInterruptConn) Write(p []byte) (int, error) {
 	n, err := c.Conn.Write(p)
-	c.bytes += int64(n)
-	if c.bytes > 1<<20 && c.interrupted.CompareAndSwap(false, true) {
+	if c.bytes.Add(int64(n)) > 1<<20 && c.interrupted.CompareAndSwap(false, true) {
+		_ = c.Conn.Close()
+	}
+	return n, err
+}
+
+func (c *historyInterruptConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if c.bytes.Add(int64(n)) > 1<<20 && c.interrupted.CompareAndSwap(false, true) {
 		_ = c.Conn.Close()
 	}
 	return n, err

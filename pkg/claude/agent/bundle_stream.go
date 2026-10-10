@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,25 +22,15 @@ func localAgentBundleLimit() int64 {
 }
 
 func downloadAgentArchive(path string, f *os.File) error {
-	req, err := http.NewRequest(http.MethodGet, "http://_"+path, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), bundletransfer.DefaultTTL)
+	defer cancel()
+	body, err := DaemonStreamGet(ctx, path)
 	if err != nil {
 		return err
 	}
-	attachCallerIdentity(req)
-	resp, err := doDaemonRequest(httpClientWithTimeout(bundletransfer.DefaultTTL), req, os.Stderr, defaultRetryPolicy())
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		raw, err := daemonResponseBytes(resp)
-		if err != nil {
-			return err
-		}
-		return decodeDaemonError(resp.StatusCode, raw)
-	}
+	defer body.Close()
 	limit := localAgentBundleLimit()
-	n, err := io.Copy(f, io.LimitReader(resp.Body, limit+1))
+	n, err := io.Copy(f, io.LimitReader(body, limit+1))
 	if err != nil {
 		return err
 	}
