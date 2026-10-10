@@ -65,7 +65,7 @@ test('fused Messages lists every ticked node\'s mail, answers on the owning node
   const mounted = await harness.mount(harness.html`<${island.FusedMail} state=${state} snapshot=${snapshot} fetchImpl=${fetchImpl} localFetch=${localFetch}
     timers=${timers} now=${() => 0} remote="" toast=${(msg, err) => toasts.push([msg, err])} confirm=${confirm} openOnNode=${(n) => opened.push(n.id)} />`);
   const c = mounted.container;
-  const once = async () => { const q = timers.queue.splice(0); await harness.act(async () => { for (const x of q) if (x.ms !== 300) await x.fn(); }); };
+  const once = async () => { const q = timers.queue.splice(0); await harness.act(async () => { for (const x of q) await x.fn(); }); };
   await once();
   const subjects = [...c.querySelectorAll('.mail-row-subject')].map((s) => s.textContent);
   assert.deepEqual(subjects, ['forge hello', 'lab hello', 'local hello'], 'newest first across nodes');
@@ -107,5 +107,46 @@ test('fused Messages lists every ticked node\'s mail, answers on the owning node
   await harness.act(async () => { harness.fireEvent(c.querySelector('[data-fused="approve"]'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
   assert.match(confirms[0].body, /Approves agents\.spawn once for forge-agent on forge/);
   assert.ok(calls.includes('POST /api/peer/inst_forge/human-inbox/access/r2 {"decision":"approve"}'));
+  await mounted.unmount(); state.dispose();
+});
+
+test('switching folders never shows the old folder\'s rows; human actions use each node\'s own routes; lost trust drops a node', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/skynet-state.js'), harness.importDashboardModule('js/fused-mail.js')]);
+  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('messages'), search: '?nodes=all' });
+  state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true, level: 'unrestricted' }] });
+  const timers = fakeTimers(); const calls = [];
+  let forgeTrusted = true;
+  const respond = async (url, init = {}) => {
+    calls.push(init.method === 'POST' ? `POST ${url} ${init.body}` : url);
+    if (init.method === 'POST') return ok({ ok: true });
+    if (url.startsWith('/api/peer/inst_forge/') && !forgeTrusted) return fail(403, { error: 'not trusted', code: 'not_trusted' });
+    if (url.endsWith('mailboxes')) return ok({ mailboxes: [] });
+    if (url.endsWith('human-inbox')) return ok({ messages: [], access_requests: [] });
+    const human = url.includes('id=human');
+    const from = url.startsWith('/api/peer/') ? 'forge' : 'desk';
+    return ok({ messages: [{ id: 5, from_agent: 'agt_abcd1234', subject: `${from} ${human ? 'human' : 'agent'} note`, body: 'b', created_at: '2026-01-01T00:00:00Z', replyable: true }], total: 1 });
+  };
+  const mounted = await harness.mount(harness.html`<${island.FusedMail} state=${state} snapshot=${harness.signals.signal({})} fetchImpl=${respond} localFetch=${respond}
+    timers=${timers} now=${() => 0} remote="" toast=${() => {}} confirm=${async () => true} openOnNode=${() => {}} />`);
+  const c = mounted.container;
+  const once = async () => { const q = timers.queue.splice(0); await harness.act(async () => { for (const x of q) await x.fn(); }); };
+  const subjects = () => [...c.querySelectorAll('.mail-row-subject')].map((s) => s.textContent).sort();
+  await once();
+  assert.deepEqual(subjects(), ['desk agent note', 'forge agent note']);
+  await harness.act(() => harness.fireEvent(getByRole(c, 'button', { name: /Human notifications/ }), 'click'));
+  assert.deepEqual(subjects(), [], 'the agent pages are not relabelled as human notifications');
+  assert.match(c.querySelector('#fused-mail-list').textContent, /Loading/);
+  await once();
+  assert.deepEqual(subjects(), ['desk human note', 'forge human note']);
+  for (const [key, route] of [['inst_self/human/5', '/api/human-messages/read'], ['inst_forge/human/5', '/api/peer/inst_forge/human-inbox/read']]) {
+    await harness.act(() => harness.fireEvent(c.querySelector(`.mail-row-wrap[data-key="${key}"] .mail-row`), 'click'));
+    await harness.act(async () => { harness.fireEvent(c.querySelector('[data-fused="read"]'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
+    assert.ok(calls.includes(`POST ${route} {"id":5}`), route);
+  }
+  forgeTrusted = false;
+  await once();
+  assert.deepEqual(subjects(), ['desk human note'], 'a node that withdrew trust keeps nothing on screen');
+  assert.match(c.querySelector('.fused-mail-node[data-node="inst_forge"]').textContent, /no longer trusted/);
   await mounted.unmount(); state.dispose();
 });

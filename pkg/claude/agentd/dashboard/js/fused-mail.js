@@ -67,7 +67,8 @@ function useFusedMail({ active, nodes, folder, q, size, fetchImpl, localFetch, t
   const ref = useRef(entries);
   ref.current = entries;
   const nodesKey = nodes.map((n) => `${n.id}:${n.online}:${n.level}`).join(',');
-  const sig = `${folder.scope}:${folder.node || ''}:${folder.id}:${q}:${size}:${reload}`;
+  // sig names what a page shows; a page read for another folder is never shown.
+  const sig = `${folder.scope}:${folder.node || ''}:${folder.id}:${q}:${size}`;
   useEffect(() => {
     if (!active || !nodes.length) return undefined;
     let disposed = false;
@@ -96,6 +97,12 @@ function useFusedMail({ active, nodes, folder, q, size, fetchImpl, localFetch, t
           if (mode === 'roster' || ticks % ROSTER_EVERY === 0 || !ref.current[node.id]?.mailboxes) {
             const roster = await readJSON(fetchFn, `${apiBase(node)}mailboxes`);
             commit(node.id, { mailboxes: Array.isArray(roster?.mailboxes) ? roster.mailboxes : [], ...(mode === 'roster' ? { status: null, at: now() } : {}) });
+            // An unrestricted peer's access requests keep the sidebar count
+            // current in every folder.
+            if (!node.local && canActOnHuman(node)) {
+              const inbox = await readJSON(fetchFn, `${apiBase(node)}human-inbox`);
+              commit(node.id, { requests: Array.isArray(inbox?.access_requests) ? inbox.access_requests : [] });
+            }
           }
           if (mode === 'page') {
             const page = await readJSON(fetchFn, folderURL(node, folder.id, { q, size }));
@@ -116,7 +123,7 @@ function useFusedMail({ active, nodes, folder, q, size, fetchImpl, localFetch, t
     const all = [...readers, ...nodes.filter((n) => !readers.includes(n))];
     all.forEach((node, i) => schedule(node, staggerOffset(i, all.length, 600)));
     return () => { disposed = true; pending.forEach((t) => timers.clearTimeout(t)); };
-  }, [active, nodesKey, sig]);
+  }, [active, nodesKey, sig, reload]);
   // This node's pending access requests come with the page's own snapshot.
   const local = nodes.find((n) => n.local);
   const localRequests = !remote && local ? (snapshot.value?.access_requests || []) : [];
@@ -201,15 +208,16 @@ export function FusedMail({
   const t = now();
   const kindOf = folder.id === 'human' ? 'human' : 'agent';
   const shownNodes = folder.scope === 'node' ? nodes.filter((n) => n.id === folder.node) : nodes;
-  const requestRows = mergeRequests(nodes.map((node) => ({ node, requests: node.local ? localRequests : entries[node.id]?.requests })));
+  const requestRows = mergeRequests(nodes.map((node) => ({ node, requests: node.local ? localRequests : canActOnHuman(node) ? entries[node.id]?.requests : [] })));
   const rows = folder.id === 'access' && folder.scope === 'fused'
     ? requestRows
-    : mergeMessages(shownNodes.map((node) => ({ node, kind: kindOf, messages: entries[node.id]?.page?.sig === sig ? entries[node.id].page.messages : entries[node.id]?.page?.messages })));
+    : mergeMessages(shownNodes.map((node) => ({ node, kind: kindOf, messages: entries[node.id]?.page?.sig === sig ? entries[node.id].page.messages : [] })));
   const item = rows.find((r) => r.key === selected) || null;
-  const more = folder.id !== 'access' && size < MAX_PAGE_SIZE && shownNodes.some((n) => (entries[n.id]?.page?.total || 0) > size);
+  const more = folder.id !== 'access' && size < MAX_PAGE_SIZE && shownNodes.some((n) => entries[n.id]?.page?.sig === sig && (entries[n.id].page.total || 0) > size);
   const status = (n) => {
     const e = entries[n.id];
     if (e?.status) return `${e.status.label}${e.at && e.status.kind === 'offline' ? ` · data ${fmtAge(Math.max(0, t - e.at))} old` : ''}`;
+    if (folder.id === 'access' && folder.scope === 'fused' && n.local && remote) return 'its requests show on its own page';
     if (folder.id === 'access' && folder.scope === 'fused' && !n.local && !canActOnHuman(n)) return 'requests answered on its own dashboard';
     return e?.at ? '' : 'loading…';
   };
@@ -241,7 +249,7 @@ export function FusedMail({
     </div>
     <div class="mail-col mail-list-col">
       <div class="mail-list" id="fused-mail-list" role="list">
-        ${!rows.length && html`<div class="empty">${shownNodes.every((n) => entries[n.id]?.at) ? 'No messages here.' : 'Loading…'}</div>`}
+        ${!rows.length && html`<div class="empty">${shownNodes.every((n) => entries[n.id]?.status || (folder.id === 'access' && folder.scope === 'fused' ? entries[n.id]?.at || n.local : entries[n.id]?.page?.sig === sig)) ? 'No messages here.' : 'Loading…'}</div>`}
         ${rows.map((m) => html`<div class="mail-row-wrap" key=${m.key} data-key=${m.key} role="listitem">
           <button type="button" class=${`mail-row${m.key === selected ? ' active' : ''}${m.kind !== 'access' && !m.read ? ' unread' : ''}${m.kind === 'access' ? ' unread' : ''}`}
             aria-current=${m.key === selected ? 'true' : undefined} onClick=${() => setSelected(m.key)}>
