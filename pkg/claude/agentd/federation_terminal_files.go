@@ -303,10 +303,7 @@ func (rt *fedRuntime) sendTerminalFile(peer *db.FederationPeer, env *proto.Envel
 	}
 }
 
-func (rt *fedRuntime) receiveTerminalFile(ctx context.Context, v *fedTerminalView, path string, head bool) (*os.File, fedTerminalFileHeader, error) {
-	return rt.receiveTerminalFileMode(ctx, v, path, head, false)
-}
-func (rt *fedRuntime) receiveTerminalFileMode(ctx context.Context, v *fedTerminalView, path string, head, list bool) (*os.File, fedTerminalFileHeader, error) {
+func (rt *fedRuntime) receiveTerminalFile(ctx context.Context, v *fedTerminalView, path string, head, list bool) (*os.File, fedTerminalFileHeader, error) {
 	var h fedTerminalFileHeader
 	if len(path) > 4096 || strings.ContainsRune(path, 0) {
 		return nil, h, terminalFileRefusal(403, "unsafe_path", "invalid file path")
@@ -419,7 +416,7 @@ func handleDashboardFederationTerminalFile(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	list := r.URL.Query().Get("list") == "true"
-	f, h, err := rt.receiveTerminalFileMode(r.Context(), v, r.URL.Query().Get("path"), r.Method == "HEAD", list)
+	f, h, err := rt.receiveTerminalFile(r.Context(), v, r.URL.Query().Get("path"), r.Method == "HEAD", list)
 	status := h.Status
 	if err != nil {
 		h = fileErrorHeader(err)
