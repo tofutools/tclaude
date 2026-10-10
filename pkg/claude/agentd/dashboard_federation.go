@@ -3,6 +3,21 @@ package agentd
 import "net/http"
 
 func registerDashboardFederationRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/federation/jobs", dashboardFederationRoute(handleFederationJobSend))
+	mux.HandleFunc("GET /api/federation/jobs", dashboardFederationRoute(handleFederationJobs))
+	mux.HandleFunc("GET /api/federation/jobs/{id}", dashboardFederationRoute(handleFederationJobs))
+	mux.HandleFunc("GET /api/federation/jobs/{id}/follow", dashboardFederationRoute(handleFederationJobFollow))
+	mux.HandleFunc("GET /api/federation/jobs/{id}/logs", dashboardFederationRoute(handleFederationJobLogs))
+	mux.HandleFunc("POST /api/federation/jobs/{id}/cancel", dashboardFederationRoute(handleFederationJobCancel))
+	mux.HandleFunc("POST /api/federation/jobs/{id}/approve", dashboardFederationRoute(handleFederationJobApprove))
+	mux.HandleFunc("POST /api/federation/jobs/{id}/retry", dashboardFederationRoute(handleFederationJobRetry))
+	mux.HandleFunc("POST /api/federation/jobs/{id}/acknowledge-stopped", dashboardFederationRoute(handleFederationJobAcknowledgeStopped))
+	mux.HandleFunc("GET /api/federation/repos", dashboardFederationRoute(handleFederationRepos))
+	mux.HandleFunc("POST /api/federation/repos", dashboardFederationRoute(handleFederationRepos))
+	mux.HandleFunc("PUT /api/federation/repos/{name}", dashboardFederationRoute(handleFederationRepos))
+	mux.HandleFunc("DELETE /api/federation/repos/{name}", dashboardFederationRoute(handleFederationRepos))
+	mux.HandleFunc("GET /api/federation/viewers", dashboardFederationRoute(handleFederationViewers))
+	mux.HandleFunc("POST /api/federation/viewers/{id}/kick", dashboardFederationRoute(handleFederationKick))
 	mux.HandleFunc("GET /api/federation/moves", dashboardFederationRoute(handleFederationMoves))
 	mux.HandleFunc("GET /api/federation/moves/{id}", dashboardFederationRoute(handleFederationMoves))
 	mux.HandleFunc("POST /api/federation/moves/{id}/abandon", dashboardFederationRoute(handleFederationMoveAbandon))

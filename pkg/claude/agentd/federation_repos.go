@@ -18,7 +18,7 @@ func handleFederationRepos(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "manage allowed repositories") {
 		return
 	}
-	if r.Method == http.MethodGet {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		rows, e := db.ListFederationRepos()
 		if e != nil {
 			writeFedErr(w, e)
