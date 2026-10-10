@@ -200,7 +200,7 @@ export function createTerminalShellActions({
       hideConv: pane.seed.hideConv,
       agent: pane.seed.agent,
       harness: pane.seed.harness,
-      ...(pane.seed.remote ? { remote: pane.seed.remote } : {}),
+      remote: pane.seed.remote || undefined,
       initialRetry: true,
       wizard: documentRef.body.classList.contains('wizard'),
       terminalAttach: terminalAttachConfig(),
@@ -243,16 +243,18 @@ export function createTerminalShellActions({
         await confirm({
           title: 'Remote terminal closed',
           body: `This view closed: ${remoteCloseText(remote.closed)}. Closing it never stops the agent on ${peer}.`,
-          okLabel: 'Close terminal',
+          okLabel: 'Close view',
           informational: true,
         });
-      } else {
-        reconnect = await confirm(remote ? {
+      } else if (remote) {
+        reconnect = await confirm({
           title: remote.closed ? 'Remote terminal closed' : 'Remote terminal disconnected',
           body: `${remote.closed ? `This view closed: ${remoteCloseText(remote.closed)}.` : `The connection to ${peer} was lost.`} Closing this view never stops the agent on ${peer}. Reconnect, or close this terminal?`,
           okLabel: 'Reconnect',
           cancelLabel: 'Close terminal',
-        } : {
+        });
+      } else {
+        reconnect = await confirm({
           title: 'Terminal disconnected',
           body: 'The connection to the terminal was closed. The underlying session keeps running — reconnect to it, or close this terminal?',
           okLabel: 'Reconnect',
@@ -313,7 +315,7 @@ export function createTerminalShellActions({
       agent: descriptor.seed.hideConv,
       harness: descriptor.seed.harness,
       initialRetry: descriptor.seed.initialRetry,
-      ...(descriptor.seed.remote ? { remote: descriptor.seed.remote } : {}),
+      remote: descriptor.seed.remote || undefined,
     };
     await closeModal(id, { detach: true });
     openPane(seed);

@@ -73,7 +73,8 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		// Userinfo renders as the victim host right up to the '@'.
 		"if (url.username || url.password) return null;",
 		"host.addEventListener('paste', onPaste, true)",
-		"`/api/terminal-attachments?terminal=${encodeURIComponent(terminalPath)}`",
+		"`${base}?terminal=${encodeURIComponent(terminalPath)}`",
+		"'/api/federation/terminal-attachments' : '/api/terminal-attachments'",
 		"term.paste(paths.join(' ') + ' ')",
 		"if (controller.signal.aborted || generation !== myGeneration) return",
 		"uploadController.abort()",
