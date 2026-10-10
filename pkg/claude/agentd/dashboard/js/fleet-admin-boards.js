@@ -65,6 +65,15 @@ function limits(b) {
   return parts.join(' · ') || '—';
 }
 
+// inviteState says whether an invite still works: the hub keeps used,
+// expired and pre-key-change invites until the next invite is created.
+export function inviteState(inv, board, now = Date.now()) {
+  if (inv.used_by) return 'used';
+  if (!(Date.parse(inv.expires_at) > now)) return 'expired';
+  if (typeof board.epoch === 'number' && inv.epoch !== board.epoch) return 'stale';
+  return 'open';
+}
+
 // BoardDetail lists a board's members; an owner also invites, changes roles,
 // removes members and changes the key.
 function BoardDetail({ board, boards = [], view, actions, confirm, toast, copy, onChanged }) {
@@ -72,12 +81,15 @@ function BoardDetail({ board, boards = [], view, actions, confirm, toast, copy, 
   const [tick, setTick] = useState(0);
   const [invite, setInvite] = useState({ role: 'reader', ttl: 3600 });
   const [token, setToken] = useState(null);
+  const [invites, setInvites] = useState(null);
   const owner = board.role === 'owner';
   useEffect(() => {
     let off = false;
     actions.boardMembers(board.id).then((m) => { if (!off) setMembers(m); }).catch((e) => { if (!off) setMembers({ error: errText(e) }); });
+    if (owner) actions.boardInvites(board.id).then((v) => { if (!off) setInvites(v); }).catch((e) => { if (!off) setInvites({ error: errText(e) }); });
+    else setInvites(null);
     return () => { off = true; };
-  }, [board.id, tick]);
+  }, [board.id, board.epoch, owner, tick]);
   const reload = () => setTick((n) => n + 1);
   const fail = (what) => (e) => toast(`${what} failed: ${errText(e)}`, true);
   const who = (m) => memberName(m.instance, view) || m.instance;
@@ -88,14 +100,21 @@ function BoardDetail({ board, boards = [], view, actions, confirm, toast, copy, 
     okLabel: 'Create invite',
     busyLabel: 'Creating…',
     action: () => actions.createBoardInvite(board.id, invite.role, invite.ttl),
-  }).then((r) => { if (r?.token) setToken(r); }).catch(fail('Invite'));
-  const cancelInvite = () => confirm({
+  }).then((r) => { if (r?.token) { setToken(r); reload(); } }).catch(fail('Invite'));
+  const cancelInvite = (tokenID) => confirm({
     title: 'Cancel this invite?',
-    body: 'The invite stops working. Anyone who already joined with it stays a member.',
+    body: `The invite stops working, so no one can join ${board.name} with it. Anyone who already joined with it stays a member.`,
     okLabel: 'Cancel invite',
     busyLabel: 'Cancelling…',
-    action: () => actions.revokeBoardInvite(board.id, token.token_id),
-  }).then((r) => { if (r) { setToken(null); toast('Invite cancelled', false); } }).catch(fail('Cancel invite'));
+    action: () => actions.revokeBoardInvite(board.id, tokenID),
+  }).then((r) => {
+    if (!r) return;
+    if (token?.token_id === tokenID) setToken(null);
+    toast('Invite cancelled', false);
+    reload();
+  }).catch(fail('Cancel invite'));
+  const open = Array.isArray(invites) ? invites.filter((i) => inviteState(i, board) === 'open') : [];
+  const used = Array.isArray(invites) ? invites.filter((i) => inviteState(i, board) === 'used') : [];
   const setRole = (m, role) => confirm({
     title: `Change ${who(m)} to ${roleText(role)}?`,
     body: role === 'owner'
@@ -123,7 +142,7 @@ function BoardDetail({ board, boards = [], view, actions, confirm, toast, copy, 
     okLabel: 'Change key',
     busyLabel: 'Changing…',
     action: () => actions.rotateBoardKey(board.id),
-  }).then((r) => { if (r) { toast('Key changed', false); setToken(null); onChanged(); } }).catch(fail('Change key'));
+  }).then((r) => { if (r) { toast('Key changed', false); setToken(null); reload(); onChanged(); } }).catch(fail('Change key'));
 
   return html`<div class="fa-board-detail" id="fleet-board-detail" data-board=${board.id}>
     <${BoardItems} board=${board} boards=${boards} name=${(id) => memberName(id, view)} actions=${actions} confirm=${confirm} toast=${toast} />
@@ -147,8 +166,17 @@ function BoardDetail({ board, boards = [], view, actions, confirm, toast, copy, 
     </div>`}
     ${token?.token && html`<div class="fa-hub-token" id="fleet-board-new-invite">Invite, shown once (expires ${new Date(token.expires_at).toLocaleString()}): <code>${token.token}</code>
       <button type="button" class="fa-link" onClick=${() => copy(token.token).then(() => toast('Invite copied', false)).catch(() => toast('Copy it from the page', true))}>copy</button>
-      <button type="button" class="fa-link" id="fleet-board-invite-cancel" onClick=${cancelInvite}>cancel invite…</button>
+      <button type="button" class="fa-link" id="fleet-board-invite-cancel" onClick=${() => cancelInvite(token.token_id)}>cancel invite…</button>
       <button type="button" class="fa-link" onClick=${() => setToken(null)}>hide</button></div>`}
+    ${owner && invites?.error && html`<div class="fa-danger" id="fleet-board-invites-error">Could not list invites: ${invites.error}</div>`}
+    ${owner && open.length > 0 && html`<table class="fa-table" id="fleet-board-invites">
+      <thead><tr><th>Open invites</th><th>Expires</th><th></th></tr></thead>
+      <tbody>${open.map((i) => html`<tr key=${i.token_id} data-invite=${i.token_id}>
+        <td>${roleText(i.role)}</td>
+        <td>${new Date(i.expires_at).toLocaleString()}</td>
+        <td class="fa-acts"><button type="button" data-board="cancel-invite" onClick=${() => cancelInvite(i.token_id)}>Cancel…</button></td>
+      </tr>`)}</tbody></table>`}
+    ${owner && used.length > 0 && html`<div class="muted" id="fleet-board-invites-used">Recently used invites: ${used.map((i, n) => html`${n ? ', ' : ''}${memberName(i.used_by, view) || html`<code>${i.used_by}</code>`} (${roleText(i.role)})`)}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation boards members --board ${board.id}</code>${owner ? html`, <code>invite --board ${board.id} --role reader --ttl 1h</code>` : ''}</div>
   </div>`;
 }

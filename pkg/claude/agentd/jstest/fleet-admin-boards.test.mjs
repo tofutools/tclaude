@@ -30,6 +30,12 @@ function boardActions(log, { joinError = null, extraBoards = [] } = {}) {
     setBoardMember: async (b, i, r) => { log.push(['role', b, i, r]); return true; },
     removeBoardMember: async (b, i) => { log.push(['remove', b, i]); return true; },
     createBoardInvite: async (b, role, ttl) => { log.push(['invite', b, role, ttl]); return { token: 'board1_SECRET', token_id: 'tid_9', expires_at: '2026-10-10T15:00:00Z' }; },
+    boardInvites: async (b) => { log.push(['invites', b]); return [
+      { token_id: 'tid_open', role: 'publisher', epoch: 2, expires_at: '2099-01-01T00:00:00Z', used_by: '' },
+      { token_id: 'tid_used', role: 'reader', epoch: 2, expires_at: '2000-01-01T00:00:00Z', used_by: 'inst_forge' },
+      { token_id: 'tid_old', role: 'reader', epoch: 2, expires_at: '2000-01-01T00:00:00Z', used_by: '' },
+      { token_id: 'tid_stale', role: 'reader', epoch: 1, expires_at: '2099-01-01T00:00:00Z', used_by: '' },
+    ]; },
     revokeBoardInvite: async (b, id) => { log.push(['revoke', b, id]); return true; },
     rotateBoardKey: async (b) => { log.push(['rotate', b]); return { epoch: 3 }; },
     boardItems: async (b) => { log.push(['items', b]); return b === 'brd_ops' ? ITEMS : []; },
@@ -119,6 +125,33 @@ test('an owner invites (token once, cancellable), changes roles, removes members
   assert.match(s.confirms.at(-1).body, /last owner cannot leave/);
 });
 
+test('owners see open invites with a cancel, and who used the others; never the invite itself', async (t) => {
+  const s = await mount(t);
+  await s.click(s.q('[data-board-id="brd_ops"] [data-board="open"]'));
+  const rows = [...s.q('#fleet-board-invites').querySelectorAll('tbody tr')];
+  assert.deepEqual(rows.map((r) => r.dataset.invite), ['tid_open'], 'expired, used and pre-key-change invites are not open');
+  assert.match(rows[0].textContent, /can post/);
+  assert.doesNotMatch(s.q('#fleet-board-detail').textContent, /tid_open|board1_/);
+  assert.match(s.q('#fleet-board-invites-used').textContent, /forge \(can read\)/);
+  const before = s.log.filter((l) => l[0] === 'invites').length;
+  await s.click(rows[0].querySelector('[data-board="cancel-invite"]'));
+  assert.match(s.confirms.at(-1).body, /no one can join ops notes with it.*stays a member/);
+  assert.deepEqual(s.log.find((l) => l[0] === 'revoke'), ['revoke', 'brd_ops', 'tid_open']);
+  assert.ok(s.log.filter((l) => l[0] === 'invites').length > before, 'the list reloads after a cancel');
+});
+
+test('inviteState tells open invites from used, expired and pre-key-change ones', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { inviteState } = await harness.importDashboardModule('js/fleet-admin-boards.js');
+  const now = Date.parse('2026-10-10T12:00:00Z');
+  const b = { epoch: 3 };
+  assert.equal(inviteState({ epoch: 3, expires_at: '2026-10-10T13:00:00Z', used_by: '' }, b, now), 'open');
+  assert.equal(inviteState({ epoch: 3, expires_at: '2026-10-10T11:00:00Z', used_by: 'inst_x' }, b, now), 'used');
+  assert.equal(inviteState({ epoch: 3, expires_at: '2026-10-10T12:00:00Z', used_by: '' }, b, now), 'expired');
+  assert.equal(inviteState({ epoch: 2, expires_at: '2026-10-10T13:00:00Z', used_by: '' }, b, now), 'stale');
+  assert.equal(inviteState({ epoch: 2, expires_at: '2026-10-10T13:00:00Z', used_by: '' }, {}, now), 'open', 'unknown board epoch: trust the hub');
+});
+
 test('hub moderation freezes, limits and deletes boards with the consequence spelled out', async (t) => {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/fleet-admin-boards.js');
@@ -162,6 +195,7 @@ test('the board client sends the PR A routes', async (t) => {
   assert.deepEqual((await a.boards()).map((b) => b.id), ['a', 'b'], 'pages are read whole');
   await a.joinBoard('board1_x');
   await a.createBoardInvite('brd 1', 'reader', 3600);
+  await a.boardInvites('brd');
   await a.setBoardMember('brd', 'inst_f', 'publisher');
   await a.rotateBoardKey('brd');
   await a.patchHubBoard('brd', { frozen: true });
@@ -174,6 +208,7 @@ test('the board client sends the PR A routes', async (t) => {
   assert.deepEqual(calls.slice(2), [
     ['POST', '/api/federation/boards/join', { token: 'board1_x' }],
     ['POST', '/api/federation/boards/brd%201/invites', { role: 'reader', ttl_seconds: 3600 }],
+    ['GET', '/api/federation/boards/brd/invites', null],
     ['PUT', '/api/federation/boards/brd/members/inst_f', { role: 'publisher' }],
     ['POST', '/api/federation/boards/brd/rotate-key', {}],
     ['PATCH', '/api/federation/hub/boards/brd', { frozen: true }],
