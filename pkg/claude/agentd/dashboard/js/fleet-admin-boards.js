@@ -46,7 +46,7 @@ export function joinError(e, token, hubURL) {
       return `This invite is for ${hub ? `the hub at ${hub}` : 'another hub'}, but this node uses ${hubURL || 'no hub'}. Switch this node's hub first, or ask for an invite on your hub.`;
     }
     case 'board_invite': return 'That invite does not work: it is mistyped, expired, already used, or was cancelled. Ask the board owner for a new one.';
-    case 'board_changed': return 'The board changed its key or was frozen after this invite was made. Ask the board owner for a new one.';
+    case 'board_changed': return 'The board changed its key after this invite was made, or is frozen right now. Ask the board owner for a new invite.';
     default: return errText(e);
   }
 }
@@ -103,7 +103,12 @@ function BoardDetail({ board, view, actions, confirm, toast, copy, onChanged }) 
     okLabel: 'Change role',
     busyLabel: 'Saving…',
     action: () => actions.setBoardMember(board.id, m.instance, role),
-  }).then((r) => { if (r) { toast('Role changed', false); reload(); } else reload(); }).catch((e) => { fail('Role')(e); reload(); });
+  }).then((r) => {
+    if (r) toast('Role changed', false);
+    reload();
+    // Demoting this node changes what it may do here.
+    if (r && m.instance === view.self?.id) onChanged();
+  }).catch((e) => { fail('Role')(e); reload(); });
   const remove = (m) => confirm({
     title: `Remove ${who(m)} from ${board.name}?`,
     body: `${m.instance} loses access to ${board.name} now. What it already downloaded stays with it. To be sure a dishonest hub cannot pass it new posts, change the key afterwards.`,
@@ -133,9 +138,9 @@ function BoardDetail({ board, view, actions, confirm, toast, copy, onChanged }) 
         <option value="reader" selected=${invite.role === 'reader'}>can read</option><option value="publisher" selected=${invite.role === 'publisher'}>can post</option></select>
       valid for <select id="fleet-board-invite-ttl" value=${String(invite.ttl)} onChange=${(e) => setInvite({ ...invite, ttl: Number(e.currentTarget.value) })}>
         ${INVITE_TTLS.map((t) => html`<option key=${t.s} value=${String(t.s)} selected=${invite.ttl === t.s}>${t.label}</option>`)}</select>
-      <button type="button" class="primary" id="fleet-board-invite-create" onClick=${createInvite}>Create invite…</button>
+      <button type="button" class="primary" id="fleet-board-invite-create" disabled=${!!board.frozen} title=${board.frozen ? 'The hub froze this board: no one can join until it is unfrozen' : ''} onClick=${createInvite}>Create invite…</button>
       <span class="spacer"></span>
-      <button type="button" id="fleet-board-rotate" onClick=${rotate} disabled=${!!board.frozen}>Change key…</button>
+      <button type="button" id="fleet-board-rotate" onClick=${rotate}>Change key…</button>
     </div>`}
     ${token?.token && html`<div class="fa-hub-token" id="fleet-board-new-invite">Invite, shown once (expires ${new Date(token.expires_at).toLocaleString()}): <code>${token.token}</code>
       <button type="button" class="fa-link" onClick=${() => copy(token.token).then(() => toast('Invite copied', false)).catch(() => toast('Copy it from the page', true))}>copy</button>
@@ -164,7 +169,7 @@ export function BoardsPage({ view, actions, confirm, toast, copy }) {
 
   const join = () => {
     const t = token.trim();
-    if (!t) return;
+    if (!t || busy) return;
     setBusy(true); setJoinFail('');
     actions.joinBoard(t).then((b) => { setToken(''); toast(`Joined ${b?.name || 'the board'} (${roleText(b?.role)})`, false); setOpen(b?.id || ''); reload(); })
       .catch((e) => setJoinFail(joinError(e, t, view.self?.hubURL)))
@@ -172,7 +177,7 @@ export function BoardsPage({ view, actions, confirm, toast, copy }) {
   };
   const create = () => {
     const n = name.trim();
-    if (!n) return;
+    if (!n || busy) return;
     setBusy(true);
     actions.createBoard(n).then((b) => { setName(''); toast(`Created ${b?.name || n}; you are its owner`, false); setOpen(b?.id || ''); reload(); })
       .catch((e) => toast(`Create failed: ${e?.code === 'board_create' ? 'creating a board needs this node to be admitted to the hub' : errText(e)}`, true))

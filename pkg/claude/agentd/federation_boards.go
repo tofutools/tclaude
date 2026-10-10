@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -282,8 +283,12 @@ func boardOperatorRoute(operation string) http.HandlerFunc {
 			body, err = call(operation, payload)
 		}
 		if err != nil {
+			var refused *client.RefusedError
 			if e, ok := err.(*boardHTTPError); ok {
 				writeError(w, e.Status, e.Code, e.Message)
+			} else if errors.As(err, &refused) && refused.Code == "board_invite" {
+				// The hub refuses a bad invite in the board hello, before any RPC.
+				writeError(w, 403, "board_invite", "board invitation refused (expired, used, cancelled, or the board changed)")
 			} else {
 				writeError(w, 502, "board_unavailable", fmt.Sprintf("board operation failed: %v", err))
 			}
