@@ -17,7 +17,14 @@ const MaxAdminResult = 256 << 10
 // These capabilities authorize hub infrastructure only, never node content.
 // hub.exec is deliberately absent: a future implementation must also require
 // the hub host's independent, default-off accept_remote_scripts switch.
-var HubAdminCapabilities = []string{"hub.admins.manage", "hub.admissions.manage", "hub.invites.manage", "hub.spaces.manage", "hub.settings.manage", "hub.identity.manage", "hub.health.read", "hub.logs.read"}
+var HubAdminBootstrapCapabilities = []string{"hub.admins.manage", "hub.admissions.manage", "hub.invites.manage", "hub.spaces.manage", "hub.settings.manage", "hub.identity.manage", "hub.health.read", "hub.logs.read"}
+
+// Supported capabilities may grow, but bootstrap never gains elevated authority.
+var HubAdminCapabilities = append([]string(nil), HubAdminBootstrapCapabilities...)
+
+// Elevated capabilities require the granting admin to hold that exact capability.
+// Phase 1 has none; future hub.exec must be registered here as elevated.
+var HubAdminElevatedCapabilities = map[string]bool{}
 
 type HubAdminRequest struct {
 	ID         string          `json:"id"`

@@ -161,6 +161,13 @@ func (s *Store) ClaimAdmin(instance string, pub ed25519.PublicKey, token string,
 	if _, err = tx.Exec(`UPDATE hub_admin_claim SET consumed=consumed WHERE singleton=1`); err != nil {
 		return err
 	}
+	var admins int
+	if err = tx.QueryRow(`SELECT count(*) FROM hub_admins`).Scan(&admins); err != nil {
+		return err
+	}
+	if admins != 0 {
+		return adminErr(409, "claim_used", "hub already has an administrator")
+	}
 	var hash, expiry string
 	var used bool
 	if err = tx.QueryRow(`SELECT token_hash,expires_at,consumed FROM hub_admin_claim WHERE singleton=1`).Scan(&hash, &expiry, &used); err != nil {
@@ -181,7 +188,7 @@ func (s *Store) ClaimAdmin(instance string, pub ed25519.PublicKey, token string,
 	if _, err = tx.Exec(`INSERT INTO hub_admins VALUES(?,?,?,?)`, instance, []byte(pub), ts(now), instance); err != nil {
 		return err
 	}
-	for _, cap := range proto.HubAdminCapabilities {
+	for _, cap := range proto.HubAdminBootstrapCapabilities {
 		if _, err = tx.Exec(`INSERT INTO hub_admin_capabilities VALUES(?,?)`, instance, cap); err != nil {
 			return err
 		}
@@ -281,6 +288,17 @@ func (s *Store) SetAdmin(instance, creator string, caps []string) error {
 	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.Exec(`UPDATE hub_admins SET created_at=created_at WHERE 0`); err != nil {
 		return err
+	}
+	for _, cap := range caps {
+		if proto.HubAdminElevatedCapabilities[cap] {
+			var holds int
+			if err = tx.QueryRow(`SELECT count(*) FROM hub_admin_capabilities c JOIN instances i ON i.instance_id=c.instance_id WHERE c.instance_id=? AND c.capability=? AND i.revoked=0 AND NOT EXISTS(SELECT 1 FROM identity_rotations r WHERE r.old_instance=i.instance_id AND r.state IN ('accepted','conflict','revoked','recovered'))`, creator, cap).Scan(&holds); err != nil {
+				return err
+			}
+			if holds != 1 {
+				return adminErr(403, "elevated_capability", "granting admin must already hold the elevated capability")
+			}
+		}
 	}
 	var pub []byte
 	var revoked bool

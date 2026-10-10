@@ -217,3 +217,39 @@ func TestHubAdminLogPagesFitRPCByteLimit(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, second.(map[string]any)["entries"])
 }
+
+func TestHubAdminBootstrapNeverImpliesElevatedCapabilities(t *testing.T) {
+	oldCaps := proto.HubAdminCapabilities
+	const elevated = "hub.test.elevated"
+	proto.HubAdminCapabilities = append(append([]string{}, oldCaps...), elevated)
+	proto.HubAdminElevatedCapabilities[elevated] = true
+	t.Cleanup(func() { proto.HubAdminCapabilities = oldCaps; delete(proto.HubAdminElevatedCapabilities, elevated) })
+	st, id, token := adminTestStore(t)
+	require.NoError(t, st.ClaimAdmin(id.ID(), id.Pub, token, time.Now()))
+	caps, err := st.AdminCapabilities(id.ID())
+	require.NoError(t, err)
+	require.ElementsMatch(t, proto.HubAdminBootstrapCapabilities, caps)
+	require.NotContains(t, caps, elevated)
+	next, _ := proto.NewIdentity()
+	require.NoError(t, st.Admit(next.ID()))
+	require.NoError(t, st.RecordSeen(next.ID(), next.Pub, "next", "", time.Now()))
+	requireAdminCode(t, st.SetAdmin(next.ID(), id.ID(), []string{elevated}), "elevated_capability")
+	// Only separately established authority permits delegation of an elevated cap.
+	_, err = st.db.Exec(`INSERT INTO hub_admin_capabilities VALUES(?,?)`, id.ID(), elevated)
+	require.NoError(t, err)
+	require.NoError(t, st.SetAdmin(next.ID(), id.ID(), []string{elevated}))
+	caps, err = st.AdminCapabilities(next.ID())
+	require.NoError(t, err)
+	require.Equal(t, []string{elevated}, caps)
+}
+func TestHubAdminClaimRefusesPreexistingAdminsEvenWithUnusedToken(t *testing.T) {
+	st, id, token := adminTestStore(t)
+	require.NoError(t, st.SetAdmin(id.ID(), id.ID(), []string{"hub.admins.manage"}))
+	requireAdminCode(t, st.ClaimAdmin(id.ID(), id.Pub, token, time.Now()), "claim_used")
+	var consumed bool
+	require.NoError(t, st.db.QueryRow(`SELECT consumed FROM hub_admin_claim WHERE singleton=1`).Scan(&consumed))
+	require.False(t, consumed, "a refused claim changes no token or grant state")
+	caps, err := st.AdminCapabilities(id.ID())
+	require.NoError(t, err)
+	require.Equal(t, []string{"hub.admins.manage"}, caps)
+}
