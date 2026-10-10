@@ -382,7 +382,12 @@ func (a *approvalRegistry) snapshot() []pendingApprovalSummary {
 // without spawning a browser. Production assigns realRequestHumanApproval
 // (the inline body below); tests replace it via t.Cleanup-restored
 // assignment.
-var RequestHumanApprovalImpl = realRequestHumanApproval
+// The dispatcher now reaches shared action cores which can themselves ask for
+// local approval. Assign after variable initialization to avoid a Go dependency
+// cycle through the dispatcher mapping; the runtime seam stays unchanged.
+var RequestHumanApprovalImpl func(*approvalRequest, string) bool
+
+func init() { RequestHumanApprovalImpl = realRequestHumanApproval }
 
 var (
 	approvalBrowserOpener = openBrowser
