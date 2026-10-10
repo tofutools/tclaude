@@ -128,7 +128,7 @@ test('an owner invites (token once, cancellable), changes roles, removes members
 test('owners see open invites with a cancel, and who used the others; never the invite itself', async (t) => {
   const s = await mount(t);
   await s.click(s.q('[data-board-id="brd_ops"] [data-board="open"]'));
-  const rows = [...s.q('#fleet-board-invites').querySelectorAll('tbody tr')];
+  const rows = [...s.q('#fleet-board-invites').querySelectorAll(':scope > tbody > tr')];
   assert.deepEqual(rows.map((r) => r.dataset.invite), ['tid_open'], 'expired, used and pre-key-change invites are not open');
   assert.match(rows[0].textContent, /can post/);
   assert.doesNotMatch(s.q('#fleet-board-detail').textContent, /tid_open|board1_/);
@@ -150,6 +150,14 @@ test('inviteState tells open invites from used, expired and pre-key-change ones'
   assert.equal(inviteState({ epoch: 3, expires_at: '2026-10-10T12:00:00Z', used_by: '' }, b, now), 'expired');
   assert.equal(inviteState({ epoch: 2, expires_at: '2026-10-10T13:00:00Z', used_by: '' }, b, now), 'stale');
   assert.equal(inviteState({ epoch: 2, expires_at: '2026-10-10T13:00:00Z', used_by: '' }, {}, now), 'open', 'unknown board epoch: trust the hub');
+});
+
+test('an open board shows its details directly under its own row', async (t) => {
+  const s = await mount(t, { extraBoards: [{ id: 'brd_b', name: 'b', role: 'reader', epoch: 1 }, { id: 'brd_c', name: 'c', role: 'reader', epoch: 1 }] });
+  await s.click(s.q('[data-board-id="brd_ops"] [data-board="open"]'));
+  const detailRow = s.q('#fleet-board-detail').closest('tr');
+  assert.equal(detailRow.previousElementSibling.dataset.boardId, 'brd_ops');
+  assert.equal(detailRow.nextElementSibling.dataset.boardId, 'brd_b', 'the other boards follow it');
 });
 
 test('hub moderation freezes, limits and deletes boards with the consequence spelled out', async (t) => {

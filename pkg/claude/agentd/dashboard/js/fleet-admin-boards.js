@@ -235,13 +235,15 @@ export function BoardsPage({ view, actions, confirm, toast, copy }) {
     ${joinFail && html`<div class="fa-danger" id="fleet-board-join-error" role="alert">${joinFail}</div>`}
     ${boards?.error ? html`<div class="fa-danger">${boards.error}</div>` : !boards ? html`<div class="muted">Loading…</div>` : !list.length ? html`<div class="muted" id="fleet-boards-empty">No boards yet. Paste an invite above, or create one.</div>` : html`<table class="fa-table" id="fleet-boards-list">
       <thead><tr><th>Board</th><th>You</th><th>Limits</th><th></th></tr></thead>
-      <tbody>${list.map((b) => html`<tr key=${b.id} data-board-id=${b.id} class=${open === b.id ? 'on' : ''}>
+      <tbody>${list.flatMap((b) => [html`<tr key=${b.id} data-board-id=${b.id} class=${open === b.id ? 'on' : ''}>
         <td><button type="button" class="fa-link" data-board="open" onClick=${() => setOpen(open === b.id ? '' : b.id)}>${b.name || b.id}</button>${b.frozen ? html` <span class="fa-warn-chip" title="The hub froze this board: no posting or joining until it is unfrozen">frozen</span>` : ''}</td>
         <td>${roleText(b.role)}</td>
         <td class="muted">${limits(b)}</td>
         <td class="fa-acts"><button type="button" data-board="leave" onClick=${() => leave(b)}>Leave…</button></td>
-      </tr>`)}</tbody></table>`}
-    ${list.find((b) => b.id === open) && html`<${BoardDetail} key=${open} board=${list.find((b) => b.id === open)} boards=${list} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} onChanged=${reload} />`}
+      </tr>`,
+      // The open board's details sit directly under its own row.
+      open === b.id && html`<tr key=${`${b.id}:detail`} class="fa-board-detail-row"><td colspan="4">
+        <${BoardDetail} key=${open} board=${b} boards=${list} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} onChanged=${reload} /></td></tr>`])}</tbody></table>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation boards list</code>, <code>join --token …</code>, <code>create --name …</code></div>
   </div>`;
 }

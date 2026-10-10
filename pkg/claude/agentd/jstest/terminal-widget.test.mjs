@@ -605,6 +605,49 @@ test('disposing an initial retry cancels its timer and prevents a late socket', 
   assert.equal(fakes.sockets.length, 1);
 });
 
+test('a remote terminal shrinks its font to fit the peer grid, down to a floor, and never resizes the peer', async (t) => {
+  const harness = await createPreactHarness(t);
+  const core = await harness.importDashboardModule('js/terminals-core.js');
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const box = { w: 1400, h: 900 };
+  Object.defineProperty(host, 'clientWidth', { get: () => box.w });
+  Object.defineProperty(host, 'clientHeight', { get: () => box.h });
+  const fakes = widgetFakes(harness.document);
+  let term = null;
+  class SizedTerminal extends fakes.FakeTerminal {
+    constructor(o) { super(o); term = this; }
+    open(h) {
+      super.open(h);
+      const screen = harness.document.createElement('div');
+      screen.className = 'xterm-screen';
+      // A monospace cell is about 0.6em wide and 1.2em tall.
+      screen.getBoundingClientRect = () => ({ width: this.cols * 0.6 * this.options.fontSize, height: this.rows * 1.2 * this.options.fontSize });
+      h.append(screen);
+    }
+    resize(cols, rows) { this.cols = cols; this.rows = rows; this.resizeHandler?.({ cols, rows }); }
+  }
+  const widget = core.mountTerminalWidget({
+    host, wsPath: core.remoteTerminalPath({ peer: 'inst_forge7', agent: 'agt_ada1', mode: 'watch' }), authenticate: false,
+    TerminalCtor: SizedTerminal, FitAddonCtor: fakes.FakeFitAddon, WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver, locationRef: { protocol: 'https:', host: 'dashboard.test' },
+    documentRef: harness.document, interactionsFactory: fakes.interactionsFactory, requestAnimationFrameImpl: (f) => { f(); return 1; },
+  });
+  await widget.connect();
+  const socket = fakes.sockets[0];
+  socket.open();
+  assert.ok(host.classList.contains('term-remote'), 'the host scrolls past the font floor');
+  socket.onmessage({ data: JSON.stringify({ type: 'hello', mode: 'watch', cols: 200, rows: 50 }) });
+  assert.equal(term.options.fontSize, 11.5, '200 columns fit 1400px');
+  assert.deepEqual([term.cols, term.rows], [200, 50], 'the grid keeps the peer size');
+  box.w = 800;
+  widget.setActive(true);
+  assert.equal(term.options.fontSize, 9, 'never below the readable floor');
+  box.w = 1400;
+  socket.onmessage({ data: JSON.stringify({ type: 'size', cols: 80, rows: 24 }) });
+  assert.equal(term.options.fontSize, 13, 'a small grid gets the normal font back');
+  assert.deepEqual(socket.sent.filter((m) => typeof m === 'string' && m.includes('resize')), [], 'nothing resizes the peer');
+});
+
 test('a remote terminal follows the hello: pinned size, no resizes, watch-only drops input, and a closure says why', async (t) => {
   const harness = await createPreactHarness(t);
   const core = await harness.importDashboardModule('js/terminals-core.js');

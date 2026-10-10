@@ -95,6 +95,10 @@ export const REMOTE_TERMINAL_PATH = '/api/federation/terminal';
 // A peer's pinned size beyond these is refused rather than rendered: a hostile
 // peer must not be able to make this tab allocate a huge grid.
 const MAX_REMOTE_COLS = 500;
+// A remote pane keeps the peer's size, so its font shrinks (to a readable
+// floor) until the whole grid fits; past the floor the host scrolls.
+const REMOTE_FONT_MAX = 13;
+const REMOTE_FONT_MIN = 9;
 const MAX_REMOTE_ROWS = 200;
 
 export function remoteTerminalPath({ peer, agent, mode = 'watch' }) {
@@ -236,6 +240,7 @@ export function mountTerminalWidget({
   const fitAddon = new FitAddonCtor();
   term.loadAddon(fitAddon);
   term.open(host);
+  if (remote) host.classList?.add('term-remote');
 
   function setStatus(next) {
     if (disposed) return;
@@ -257,8 +262,29 @@ export function mountTerminalWidget({
   documentRef.addEventListener('tclaude:terminal-palette', syncTheme);
 
   function fit() {
-    if (disposed || remote) return;
+    if (disposed) return;
+    if (remote) { fitRemote(); return; }
     try { fitAddon.fit(); } catch (_) { /* host may not be laid out yet */ }
+  }
+
+  // fitRemote scales the font so the peer's grid fits the host, never
+  // resizing the grid itself.
+  function fitRemote() {
+    const screen = host.querySelector?.('.xterm-screen');
+    const width = host.clientWidth; const height = host.clientHeight;
+    if (!screen || !width || !height) return;
+    const box = () => screen.getBoundingClientRect();
+    let r = box();
+    if (!r.width || !r.height) return;
+    const font = term.options.fontSize;
+    const next = Math.max(REMOTE_FONT_MIN, Math.min(REMOTE_FONT_MAX, Math.floor(font * Math.min(width / r.width, height / r.height) * 2) / 2));
+    if (next !== font) term.options.fontSize = next;
+    // Cell sizes round to device pixels; step down until it really fits.
+    for (let i = 0; i < 4 && term.options.fontSize > REMOTE_FONT_MIN; i++) {
+      r = box();
+      if (r.width <= width && r.height <= height) break;
+      term.options.fontSize = Math.max(REMOTE_FONT_MIN, term.options.fontSize - 0.5);
+    }
   }
 
   function focus() {
@@ -624,7 +650,10 @@ export function mountTerminalWidget({
     try { msg = JSON.parse(text); } catch (_) { return; }
     const size = () => {
       const cols = Number(msg.cols); const rows = Number(msg.rows);
-      if (Number.isInteger(cols) && Number.isInteger(rows) && cols > 0 && rows > 0 && cols <= MAX_REMOTE_COLS && rows <= MAX_REMOTE_ROWS && (cols !== term.cols || rows !== term.rows)) term.resize(cols, rows);
+      if (Number.isInteger(cols) && Number.isInteger(rows) && cols > 0 && rows > 0 && cols <= MAX_REMOTE_COLS && rows <= MAX_REMOTE_ROWS && (cols !== term.cols || rows !== term.rows)) {
+        term.resize(cols, rows);
+        if (typeof requestAnimationFrameImpl === 'function') requestAnimationFrameImpl(fit);
+      }
     };
     if (msg?.type === 'hello') {
       const mode = msg.mode === 'interactive' ? 'interactive' : 'watch';

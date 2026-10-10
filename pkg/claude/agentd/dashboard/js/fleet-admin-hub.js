@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { HUB_CONSEQUENCE } from './fleet-admin-run.js';
@@ -389,11 +389,13 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
   const [tick, setTick] = useState(0);
   const [invite, setInvite] = useState({ space: '', ttl: '24' });
   const [newToken, setNewToken] = useState(null);
+  const retried = useRef(false);
   const reload = () => setTick((n) => n + 1);
   useEffect(() => {
     let off = false;
     actions.hubStatus().then((s) => {
       if (off) return;
+      retried.current = false;
       setStatus(s);
       if (!s?.admin) return;
       const part = (k, p) => p.then((v) => { if (!off) setData((d) => ({ ...d, [k]: v })); }).catch((e) => { if (!off) setData((d) => ({ ...d, [k]: { error: errText(e) } })); });
@@ -402,7 +404,14 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
       part('invites', actions.hubInvites());
       part('admins', actions.hubAdmins());
       part('settings', actions.hubSettings());
-    }).catch((e) => { if (!off) setStatus({ error: errText(e) }); });
+    }).catch((e) => {
+      if (off) return;
+      // After a hub admin reset the first signed call is refused, and the
+      // refusal carries the new generation: one automatic retry lands on the
+      // page as it now is (usually "no admin yet… Claim").
+      if (e?.code === 'admin_generation' && !retried.current) { retried.current = true; reload(); return; }
+      setStatus({ error: errText(e) });
+    });
     return () => { off = true; };
   }, [tick]);
   const self = view.self;
@@ -410,7 +419,8 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
   const fail = (what) => (e) => toast(`${what} failed: ${errText(e)}`, true);
 
   if (!status) return html`<div class="empty">Loading…</div>`;
-  if (status.error) return html`<div class="fa-danger" role="alert">${status.error}</div>`;
+  if (status.error) return html`<div class="fa-row"><span class="fa-danger" role="alert">${status.error}</span>
+    <button type="button" id="fleet-hub-retry" onClick=${() => { setStatus(null); reload(); }}>Retry</button></div>`;
   const ok = (v) => Array.isArray(v);
   const listOr = (v, render) => (v?.error ? html`<div class="fa-danger">${v.error}</div>` : !v ? html`<div class="muted">Loading…</div>` : render(v));
 

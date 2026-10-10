@@ -5,6 +5,7 @@ const FP_FORGE = 'k7q2-mx9d-4hpa-zz31-0e8c';
 const FP_NEW = 'w5ze-a3nq-9c1b-77f0-d2aa';
 let s_transition = null;
 let s_hubAdmin = true;
+let s_hubGenFails = 0;
 // s_hubRun is the hub's script status: off by default, like a fresh hub.
 let s_hubRun = { accept_remote_scripts: false, switch_source: 'flag', can_exec: true, service_user: 'tclaude-hub', limits: { max_script_bytes: 16384, max_timeout_seconds: 3600 } };
 const s_hubEcho = () => !!globalThis.window?.__hubEchoOther;
@@ -129,7 +130,10 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     saveProfile: async (o) => { log.push(['saveProfile', o]); if (o.revision === 99) { const e = new Error('reload the current profile revision'); e.status = 409; e.code = 'stale_profile'; throw e; } return { ...o, revision: o.revision + 1 }; },
     setHubConfig: async (b) => { log.push(['hubConfig', b]); return { ok: true }; },
     nodeLabels: async () => ['gpu', 'ci'],
-    hubStatus: async () => ({ hub_id: 'hub_7k', hub_url: 'wss://hub.example', hub_version: 'v0.43.0', connected: true, admin: s_hubAdmin, admin_count: s_hubAdmin ? 2 : 0, my_capabilities: ['hub.admissions.manage', 'hub.settings.manage', 'hub.admins.manage'], bootstrap_claimable: !s_hubAdmin }),
+    hubStatus: async () => {
+      if (s_hubGenFails > 0) { s_hubGenFails -= 1; const e = new Error('admin generation changed; retry explicitly'); e.code = 'admin_generation'; e.status = 409; throw e; }
+      return ({ hub_id: 'hub_7k', hub_url: 'wss://hub.example', hub_version: 'v0.43.0', connected: true, admin: s_hubAdmin, admin_count: s_hubAdmin ? 2 : 0, my_capabilities: ['hub.admissions.manage', 'hub.settings.manage', 'hub.admins.manage'], bootstrap_claimable: !s_hubAdmin })
+    },
     hubClaim: async (token) => { log.push(['hubClaim', token]); s_hubAdmin = true; return { ok: true }; },
     hubHealth: async () => ({ connected_instances: 3, streams: 7, goroutines: 140, heap_bytes: 52428800, recent_errors: [{ at: '2026-10-10T09:00:00Z', code: 'stream_reset', message: 'peer inst_lab reset stream 4' }] }),
     hubAdmissions: async () => [
@@ -1429,6 +1433,27 @@ test('fleet dialogs close on Escape', async (t) => {
   assert.ok(q('#fleet-move-agent'));
   await esc();
   assert.equal(q('#fleet-move-agent'), null);
+});
+
+test('hub: after an admin reset the page retries once by itself', async (t) => {
+  t.after(() => { s_hubGenFails = 0; });
+  s_hubAdmin = false; s_hubGenFails = 1;
+  const s = await setup(t);
+  await openHub(s);
+  const q = (x) => s.harness.document.querySelector(x);
+  assert.match(q('#fleet-hub').textContent, /no admin yet/, 'one refusal: lands on the claim page');
+});
+
+test('hub: a refusal that persists past the automatic retry shows Retry', async (t) => {
+  t.after(() => { s_hubGenFails = 0; });
+  s_hubAdmin = false; s_hubGenFails = 2;
+  const s = await setup(t);
+  await openHub(s);
+  const q = (x) => s.harness.document.querySelector(x);
+  assert.match(q('[role=alert]').textContent, /admin generation changed/);
+  await s.click(q('#fleet-hub-retry'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 30)));
+  assert.match(q('#fleet-hub').textContent, /no admin yet/, 'Retry recovers');
 });
 
 async function openHub(s) {
