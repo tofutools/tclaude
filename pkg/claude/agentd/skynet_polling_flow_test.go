@@ -92,7 +92,9 @@ func TestSkynetPollingEfficiency(t *testing.T) {
 	receiver := startSkynetFixtureNode(t, "TestSkynetPollingInstance", "TCLAUDE_SKYNET_POLLING_CHILD=1")
 	store, err := hub.OpenStore(filepath.Join(testutil.CanonicalTempDir(t), "hub.sqlite"))
 	require.NoError(t, err)
-	h, err := hub.New(store, hub.Config{})
+	// Exclude startup catalog fan-out and hub control-plane quotas from the
+	// receiver-work measurement (the bridge doubles normal control traffic).
+	h, err := hub.New(store, hub.Config{FramesPerMinute: 100000})
 	require.NoError(t, err)
 	server := httptest.NewServer(h.Handler())
 	t.Cleanup(func() { h.Close(); server.Close(); _ = store.Close() })
@@ -178,6 +180,7 @@ func TestSkynetPollingEfficiency(t *testing.T) {
 		status int
 		bytes  int
 		etag   string
+		body   []byte
 	}
 	request := func(peer *fedPeer, tail, tag string) response {
 		t.Helper()
@@ -190,7 +193,7 @@ func TestSkynetPollingEfficiency(t *testing.T) {
 		raw, err := io.ReadAll(res.Body)
 		require.NoError(t, err)
 		require.Contains(t, []int{200, 304}, res.StatusCode, string(raw))
-		return response{res.StatusCode, len(raw), res.Header.Get("ETag")}
+		return response{res.StatusCode, len(raw), res.Header.Get("ETag"), raw}
 	}
 	first := request(peers[0], "node-summary", "")
 	require.NotEmpty(t, first.etag)
@@ -207,8 +210,21 @@ func TestSkynetPollingEfficiency(t *testing.T) {
 	cpu, gather := metrics()
 	start := time.Now()
 	bytes := 0
-	for _, peer := range peers {
-		bytes += request(peer, "snapshot", "").bytes
+	for i, peer := range peers {
+		res := request(peer, "snapshot", "")
+		bytes += res.bytes
+		if i == 0 {
+			var snapshot struct {
+				Agents []struct {
+					Online bool `json:"online"`
+				} `json:"agents"`
+			}
+			require.NoError(t, json.Unmarshal(res.body, &snapshot))
+			require.Len(t, snapshot.Agents, 20, "measure the intended visible workload")
+			for _, agent := range snapshot.Agents {
+				require.True(t, agent.Online)
+			}
+		}
 	}
 	afterCPU, afterGather := metrics()
 	require.LessOrEqual(t, afterGather-gather, int64(2), "warm ten-peer reads must reuse the shared gather")
