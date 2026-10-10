@@ -77,7 +77,7 @@ func fail(err error) {
 
 type serveParams struct {
 	Supervised      bool   `long:"supervised" help:"Run a health-checking update guardian under systemd/launchd"`
-	SupervisorLabel string `long:"supervisor-label" help:"launchd label for supervised mode"`
+	SupervisorLabel string `long:"supervisor-label" optional:"true" help:"launchd label for supervised mode"`
 	GuardianWorker  bool   `long:"guardian-worker" hidden:"true"`
 	dbParam
 	AcceptRemoteScripts    bool          `long:"accept-remote-scripts" help:"Allow explicitly granted hub.exec administrators to run scripts as the hub service user (full host code execution)"`
@@ -99,6 +99,10 @@ type serveParams struct {
 }
 
 func serveCmd() *cobra.Command {
+	return serveDefinition().ToCobra()
+}
+
+func serveDefinition() boa.CmdT[serveParams] {
 	return boa.CmdT[serveParams]{
 		Use:         "serve",
 		Short:       "Run the hub",
@@ -184,7 +188,7 @@ func serveCmd() *cobra.Command {
 				fail(err)
 			}
 		},
-	}.ToCobra()
+	}
 }
 
 type admitParams struct {
