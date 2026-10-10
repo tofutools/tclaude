@@ -39,15 +39,16 @@ test('per-node API reads go through the peer proxy; fleet reads stay local; othe
   await window.fetch('/api/federation/status?summary=1');
   await window.fetch('/api/peer/inst_lab/node-summary');
   await window.fetch('/api/node-summary');
+  await window.fetch('/api/node/update', { method: 'POST' });
   await window.fetch('/static/js/x.js');
   await window.fetch('/api/operator-message', { method: 'POST' });
   assert.deepEqual(calls.map((c) => c.url), [
-    '/api/peer/inst_forge7/groups?x=1', '/api/federation/status?summary=1', '/api/peer/inst_lab/node-summary', '/api/node-summary', '/static/js/x.js', '/api/peer/inst_forge7/operator-message',
+    '/api/peer/inst_forge7/groups?x=1', '/api/federation/status?summary=1', '/api/peer/inst_lab/node-summary', '/api/node-summary', '/api/node/update', '/static/js/x.js', '/api/peer/inst_forge7/operator-message',
   ]);
   const refused = await window.fetch('/api/groups/x', { method: 'DELETE' });
   assert.equal(refused.status, 403);
   assert.equal((await refused.json()).code, 'peer_view_read_only');
-  assert.equal(calls.length, 6, 'a refused method never reaches any agentd');
+  assert.equal(calls.length, 7, 'a refused method never reaches any agentd');
 });
 
 test('snapshot failures publish remote health for the marker', async () => {

@@ -68,8 +68,10 @@ const skynetFederationStubJS = `(function(){
     if (path === '/api/peer/inst_2p6ym4ke/harnesses/availability') return json({ error: 'peer offline', code: 'peer_unreachable' }, 502);
     if (/\/harnesses\/operations$/.test(path)) return json({ recipes: [{ harness: 'opencode', install_command: 'npm install -g opencode-ai@latest', update_command: 'npm install -g opencode-ai@latest' }, { harness: 'claude', install_command: 'npm install -g @anthropic-ai/claude-code', update_command: 'claude update' }], modes: ['now', 'when_idle'] });
     if (/\/harnesses\/credentials\/backups$/.test(path)) return json({ backups: [{ id: 'c'.repeat(32), harness: 'claude', created_at: '2026-10-09T18:02:00Z', location: '~/.tclaude/data/credential-backups' }] });
-    if (path === '/api/node-summary') return json({ presence: 'online', shared_groups: 2, shared_agents: 10, online_agents: 8, waiting_for_input: 1, resources: res, health: 'current' }, 200, { ETag: '"local"' });
-    if (path === '/api/peer/inst_hn3cxq7a/node-summary') return json({ presence: 'online', shared_groups: 2, shared_agents: 9, online_agents: 7, waiting_for_input: 1, peer_view: { peer: 'desk', included: [], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'terminals', requires: 'sessions.watch' }] } }, 200, { ETag: '"forge"' });
+    if (path === '/api/node/update') return json({ current_version: 'v0.42.1', install_method: 'release', protocol_version: 1, binaries: [{ name: 'tclaude', path: '/home/op/.local/bin/tclaude', version: 'v0.42.1', install_method: 'release' }, { name: 'tclaude-agentd', path: '/home/op/.local/bin/tclaude-agentd', version: 'v0.42.1', install_method: 'release' }], latest_version: 'v0.43.0', checked_at: '2026-10-10T08:00:00Z', update_available: true, rollback_available: true, warnings: ['Version skew: inst_2p6ym4ke runs v0.41.0'] });
+    if (path === '/api/peer/inst_hn3cxq7a/node/update') return json({ error: 'node.update is not shared', code: 'permission_denied' }, 403);
+    if (path === '/api/node-summary') return json({ version: 'v0.42.1', latest_version: 'v0.43.0', update_available: true, update_checked_at: '2026-10-10T08:00:00Z', presence: 'online', shared_groups: 2, shared_agents: 10, online_agents: 8, waiting_for_input: 1, resources: res, health: 'current' }, 200, { ETag: '"local"' });
+    if (path === '/api/peer/inst_hn3cxq7a/node-summary') return json({ version: 'v0.43.0', update_available: false, presence: 'online', shared_groups: 2, shared_agents: 9, online_agents: 7, waiting_for_input: 1, peer_view: { peer: 'desk', included: [], omitted: [{ feature: 'costs', requires: 'costs.read' }, { feature: 'terminals', requires: 'sessions.watch' }] } }, 200, { ETag: '"forge"' });
     if (path === '/api/peer/inst_2p6ym4ke/node-summary') return json({ error: 'peer offline', code: 'peer_unreachable', reason: 'peer_offline', last_seen: '2026-10-09T20:37:00Z' }, 502);
     // A peer view of forge: serve this daemon's own per-node data as if forge
     // answered through the proxy, with forge's peer_view metadata on the snapshot.
@@ -161,6 +163,21 @@ func skynetStates() []dashsnap.State {
   for (var i = 0; i < 80 && document.querySelectorAll('.skynet-card .skynet-card-body').length < 2; i++) await new Promise(function(r){ setTimeout(r, 100); });
   if (!document.querySelector('.skynet-edge')) throw new Error('skynet: no map edges');
   if (document.querySelector('nav [data-tab="groups"]').offsetParent !== null) throw new Error('skynet: per-node tabs still visible in the map');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-node-update",
+			Title:   "Node self-update from the map",
+			Caption: "Each map card shows the node's tclaude version and ↑ when a newer release is known; update…/manage… opens the node's update dialog: version and install method, latest release and when it was checked, the binaries, version-skew warnings, Check now, Update to the latest (confirms the binary swap and daemon restart) and Roll back.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="map"]').click();
+  for (var i = 0; i < 80 && !document.querySelector('.skynet-card.local [data-skynet="node-update"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('.skynet-card.local [data-skynet="node-update"]').click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-node-update-apply'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-node-update-rollback')) throw new Error('skynet: update dialog incomplete');
 })();`,
 			SettleMS: 400,
 		},

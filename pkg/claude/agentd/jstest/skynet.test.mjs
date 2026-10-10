@@ -212,3 +212,56 @@ test('a 5xx status read keeps the known fleet; 404 clears it', async (t) => {
   code = 404; await actions.loadStatus(); assert.equal(state.fleet.value, null);
   state.dispose();
 });
+
+test('node self-update: the card shows the version and an available update; the dialog confirms, applies and follows the job across the restart', async (t) => {
+  const { harness, stateMod, island } = await load(t);
+  const upd = await harness.importDashboardModule('js/node-update.js');
+  assert.equal(upd.updateBase({ local: true }), '/api/node/update');
+  assert.equal(upd.updateBase({ id: 'inst_a/b' }), '/api/peer/inst_a%2Fb/node/update');
+  assert.deepEqual(upd.versionView({ version: 'v1.2.0', latest_version: 'v1.3.0', update_available: null }), { current: 'v1.2.0', latest: 'v1.3.0', update: false });
+  const activeTab = harness.signals.signal('map');
+  const state = stateMod.createSkynetState({ activeTab });
+  state.setStatus(status([]));
+  state.commitSummary('inst_self', { version: 'v1.2.0', latest_version: 'v1.3.0', update_available: true, shared_groups: 1, shared_agents: 2, online_agents: 2, waiting_for_input: 0 }, '');
+  state.commitSummary('inst_forge', { version: 'v1.3.0', update_available: false, shared_groups: 1, shared_agents: 1, online_agents: 1, waiting_for_input: 0 }, '');
+  const timers = fakeTimers(); const confirms = []; const calls = [];
+  let job = null; let reads = 0;
+  const updateActions = {
+    status: async (node) => {
+      calls.push(['status', node.id]);
+      if (node.id === 'inst_forge') { const e = new Error('node.update is not shared'); e.status = 403; throw e; }
+      reads++;
+      if (job && reads === 3) throw new Error('daemon restarting');
+      if (job && reads >= 4) job = { ...job, state: 'succeeded', phase: 'restarted' };
+      return { current_version: job?.state === 'succeeded' ? 'v1.3.0' : 'v1.2.0', install_method: 'release', latest_version: 'v1.3.0', update_available: job?.state !== 'succeeded', rollback_available: !!job, warnings: [], binaries: [{ name: 'tclaude', version: 'v1.2.0', path: '/bin/tclaude' }], job };
+    },
+    start: async (node, action, version) => { calls.push(['start', node.id, action, version]); job = { id: 'u1', action, version, state: 'running', phase: 'downloading' }; return job; },
+  };
+  const confirm = async (o) => { confirms.push(o); return true; };
+  const mounted = await harness.mount(harness.html`<${island.SkynetMap} state=${state} actions=${{ loadSummary: async () => true }} timers=${timers} confirm=${confirm} toast=${() => {}} updateActions=${updateActions} />`);
+  const q = (s) => mounted.container.ownerDocument.querySelector(s);
+  const selfCard = mounted.container.querySelector('[aria-label="desk node"]');
+  assert.match(selfCard.textContent, /v1\.2\.0 ↑ v1\.3\.0 update…/);
+  assert.match(mounted.container.querySelector('[aria-label="forge node"]').textContent, /v1\.3\.0 manage…/);
+  const settle = () => harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  await harness.act(() => selfCard.querySelector('[data-skynet="node-update"]').click());
+  await settle();
+  assert.match(q('#fleet-node-update-modal').textContent, /Version\s*v1\.2\.0/);
+  await harness.act(() => q('#fleet-node-update-apply').click());
+  await settle();
+  assert.match(confirms[0].body, /replaces its tclaude binaries .*restarts its daemon\. Its agent sessions keep running/);
+  assert.deepEqual(calls.find((c) => c[0] === 'start'), ['start', 'inst_self', 'apply', 'v1.3.0']);
+  for (let i = 0; i < 4 && /running|restarting/.test(q('#fleet-node-update-job')?.textContent || 'running'); i++) {
+    const tick = timers.queue.find((x) => x.ms === 1000);
+    assert.ok(tick, 'an active job is re-read every second');
+    await harness.act(() => { timers.queue.splice(timers.queue.indexOf(tick), 1); tick.fn(); });
+    await settle();
+  }
+  assert.match(q('#fleet-node-update-job').textContent, /succeeded/);
+  assert.ok(q('#fleet-node-update-rollback'), 'rollback is offered once a backup exists');
+  await harness.act(() => [...q('#fleet-node-update-modal').querySelectorAll('button')].find((b) => b.textContent === 'Close').click());
+  await harness.act(() => mounted.container.querySelector('[aria-label="forge node"] [data-skynet="node-update"]').click());
+  await settle();
+  assert.match(q('#fleet-node-update-modal').textContent, /forge does not let you manage its updates \(needs node\.update\)/);
+  await mounted.unmount(); state.dispose();
+});
