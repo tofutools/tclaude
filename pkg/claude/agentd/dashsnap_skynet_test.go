@@ -75,6 +75,7 @@ const skynetFederationStubJS = `(function(){
     if (path === '/api/peer/inst_2p6ym4ke/node-summary') return json({ error: 'peer offline', code: 'peer_unreachable', reason: 'peer_offline', last_seen: '2026-10-09T20:37:00Z' }, 502);
     // A peer view of forge: serve this daemon's own per-node data as if forge
     // answered through the proxy, with forge's peer_view metadata on the snapshot.
+    if (path === '/api/peer/inst_hn3cxq7a/peer-access-requests' && post) return json({ id: 'par_8kq2', origin_peer: 'inst_q4w7pjf2kx3mz6bty5nd', perm: 'costs.read', group_id: 0, grant_ttl_seconds: 28800, status: 'pending' }, 202);
     var forgePrefix = '/api/peer/inst_hn3cxq7a/';
     if (path.indexOf(forgePrefix) === 0) {
       var u = new URL(url, location.href);
@@ -91,10 +92,12 @@ const skynetFederationStubJS = `(function(){
       });
       return realFetch(local, init);
     }
-    if (path === '/api/snapshot' && window.__skynetGroupLinks) return realFetch(input, init).then(function(r){
+    if (path === '/api/federation/links' && window.__skynetGroupLinks) return json({ groups: [{ group_id: 1, name: 'ops', federation_links: window.__skynetGroupLinks }] });
+    if (path === '/api/snapshot' && (window.__skynetGroupLinks || window.__peerAccessRow)) return realFetch(input, init).then(function(r){
       return r.clone().json().then(function(snap){
         var g = (snap.groups || [])[0];
-        if (g) g.federation_links = window.__skynetGroupLinks;
+        if (g && window.__skynetGroupLinks) g.federation_links = window.__skynetGroupLinks;
+        if (window.__peerAccessRow) { snap.access_requests = [window.__peerAccessRow]; snap.access_requests_pending = 1; }
         return new Response(JSON.stringify(snap), { status: r.status, headers: r.headers });
       }, function(){ return r; });
     });
@@ -393,6 +396,49 @@ func skynetStates() []dashsnap.State {
   if (!document.querySelector('.group-federation-pop')) throw new Error('skynet: popover did not open');
 })();`,
 			SettleMS: 300,
+		},
+		{
+			Key:     "skynet-request-access",
+			Title:   "Request access from a peer",
+			Caption: "In a peer view, each feature the peer does not share has a request… link in the peer-view pill. It opens a dialog that asks the peer's operator for that permission: how long and a reason (group permissions without a group cover every group on the peer, which its operator may narrow). Local-only features such as terminals have no link. Once sent, the dialog follows the request until the peer's operator decides.",
+			InitJS:  skynetRemoteViewJS + skynetFederationStubJS,
+			JS: showGroups + `return (async function(){
+  for (var i = 0; i < 50 && !document.querySelector('.remote-node-pill'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('.remote-node-pill').click();
+  for (var k = 0; k < 20 && !document.querySelector('.rnp-ask[data-perm="costs.read"]'); k++) await new Promise(function(r){ setTimeout(r, 50); });
+  var ask = document.querySelector('.rnp-ask[data-perm="costs.read"]');
+  if (document.querySelector('.rnp-ask[data-perm="sessions.attach"]')) throw new Error('skynet: terminals offered a request link');
+  if (!ask) throw new Error('skynet: no request link for an unshared feature');
+  ask.click();
+  for (var j = 0; j < 20 && !document.querySelector('#peer-access-reason'); j++) await new Promise(function(r){ setTimeout(r, 50); });
+  var reason = document.querySelector('#peer-access-reason');
+  if (!reason) throw new Error('skynet: request dialog did not open');
+  reason.value = 'Pair on the flaky deploy test with ada';
+  reason.dispatchEvent(new Event('input', { bubbles: true }));
+  var ttl = document.querySelector('#peer-access-ttl');
+  ttl.value = '28800'; ttl.dispatchEvent(new Event('change', { bubbles: true }));
+})();`,
+			SettleMS: 300,
+		},
+		{
+			Key:     "skynet-peer-access-decide",
+			Title:   "A peer operator's access request",
+			Caption: "Messages → Access requests on the receiving node: a request from a peer's operator names the peer, the permission, the scope and how long it asked for, plus its reason. Only this node's operator decides (never an away cover). An any-group request covers every group on this node, including future ones; approval can shorten the grant or narrow it to one group the peer already holds grants in, and there is no \"always\" for peers.",
+			InitJS:  skynetGroupLinksJS + `window.__peerAccessRow = { id: 'par_8kq2', origin_peer: 'inst_hn3cxq7a', perm: 'sessions.watch', conv_title: 'operator@inst_hn3cxq7a', caller_state: 'operator', title_status: 'available', grant_ttl_seconds: 86400, body: 'Pair on the flaky deploy test with ada', body_label: 'Reason', path: '/api/peer-access-requests', scope_display: 'group_id=0', created_at: new Date(Date.now() - 40000).toISOString(), deadline: new Date(Date.now() + 260000).toISOString() };` + skynetFederationStubJS,
+			JS: `return (async function(){
+  document.querySelector('nav [data-tab="messages"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('[data-id="access-requests"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  var box = document.querySelector('[data-id="access-requests"]');
+  if (!box) throw new Error('skynet: no access requests folder');
+  box.click();
+  for (var j = 0; j < 50 && !document.querySelector('.access-row-wrap'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  var row = document.querySelector('.access-row-wrap');
+  if (!row) throw new Error('skynet: no peer access request row');
+  row.click();
+  for (var k = 0; k < 50 && !document.querySelector('.access-peer-group'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('.access-peer-ttl')) throw new Error('skynet: no peer decide controls');
+})();`,
+			SettleMS: 400,
 		},
 		{
 			Key:     "skynet-peer-actions",
