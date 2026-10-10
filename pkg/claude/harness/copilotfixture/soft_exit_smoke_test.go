@@ -36,18 +36,19 @@ import (
 // blocked arm's whole claim — while an arm that exits ends the moment the
 // process does.
 //
-// 18s, down from 25s, and the margins are the argument rather than the number:
-// the turn streams for ~28s, so the deadline still lands with it comfortably in
-// flight, and the keystroke sequence finishes by ~9.5s, so an exit that was
-// going to land has ~8.5s to do it. The control arm takes about one second.
+// The turn remains in flight for ~28s after it begins, beyond this whole-run
+// deadline. Keystrokes wait for the first rendered content delta, so slow
+// startup cannot turn a mid-turn cancel into a startup interrupt.
 const softExitDeadline = 18 * time.Second
+
+const softExitTurnMarker = "SOFT_EXIT_TURN_RUNNING"
 
 // softExitBusyTurn holds the TUI mid-turn for the whole scenario: ~40 deltas
 // at 700ms is far longer than the deadline, so the turn is still in flight
 // whenever the keystrokes below arrive.
 func softExitBusyTurn() []copilotfixture.Turn {
 	return []copilotfixture.Turn{{
-		Text:       "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twenty-one twenty-two twenty-three twenty-four twenty-five twenty-six twenty-seven twenty-eight twenty-nine thirty thirty-one thirty-two thirty-three thirty-four thirty-five thirty-six thirty-seven thirty-eight thirty-nine forty",
+		Text:       softExitTurnMarker + " one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twenty-one twenty-two twenty-three twenty-four twenty-five twenty-six twenty-seven twenty-eight twenty-nine thirty thirty-one thirty-two thirty-three thirty-four thirty-five thirty-six thirty-seven thirty-eight thirty-nine forty",
 		ChunkDelay: 700 * time.Millisecond,
 	}}
 }
@@ -67,16 +68,19 @@ func softExitRun(t *testing.T, keys []copilotfixture.Keystroke) copilotfixture.P
 		},
 		Deadline:   softExitDeadline,
 		Keystrokes: keys,
+		KeystrokesWhen: func(text string) bool {
+			return strings.Contains(text, softExitTurnMarker)
+		},
 	})
 }
 
 // softExitKeys renders the injection tclaude performs: optional prefix keys,
 // then the command text, then the two settled Enters. The 500ms gaps are the
-// production settle (paneinput.defaultSettleDelay); the 8s lead-in is what
-// puts the whole sequence inside the running turn.
+// production settle (paneinput.defaultSettleDelay). softExitRun gates the
+// sequence on the first rendered delta, which proves the turn is running.
 func softExitKeys(prefix string) []copilotfixture.Keystroke {
 	keys := []copilotfixture.Keystroke{}
-	lead := 8 * time.Second
+	lead := time.Duration(0)
 	if prefix != "" {
 		keys = append(keys, copilotfixture.Keystroke{After: lead, Bytes: prefix})
 		lead = 500 * time.Millisecond
@@ -95,22 +99,11 @@ func softExitKeys(prefix string) []copilotfixture.Keystroke {
 // The negative claim is only worth as much as its control, which is the next
 // scenario: the same rig, the same bytes, one cancel keystroke in front.
 func TestCopilotSoftExitBareExitIsDiscardedMidTurn(t *testing.T) {
-	// Sequential, and for the same reason as the pane-injection scenario in
-	// permission_smoke_test.go: this one is ABOUT timing. Its keystrokes are
-	// scheduled on a wall clock from launch, and the 8s lead exists to put them
-	// inside a turn that is still running — an assumption about how far the CLI
-	// has got by then, which is exactly the assumption CPU contention breaks.
-	//
-	// It broke, on CI, and the way it broke is worth recording: the run still
-	// reported "did not exit", so the headline assertion passed, and only the
-	// positive control caught it. The transcript showed a COMPLETED turn with
-	// no "/exit" on screen anywhere — the keystrokes had been typed during a
-	// startup that had not finished yet and were discarded, so the scenario was
-	// one assertion away from reporting the bug it exists to reproduce on
-	// evidence that had nothing to do with the bug.
+	// Both arms use the same rendered-turn gate and remain sequential.
 	requireLab(t)
 
 	res := softExitRun(t, softExitKeys(""))
+	require.True(t, res.Contains(softExitTurnMarker), "the injection must observe a running turn")
 
 	assert.False(t, res.Exited,
 		"1.0.77 discarded a mid-turn /exit; a run that EXITED means the CLI changed "+
@@ -126,20 +119,19 @@ func TestCopilotSoftExitBareExitIsDiscardedMidTurn(t *testing.T) {
 // TestCopilotSoftExitCancelFirstExitsMidTurn is the fix, measured: one cancel
 // keystroke ahead of the identical sequence and the busy pane exits cleanly.
 func TestCopilotSoftExitCancelFirstExitsMidTurn(t *testing.T) {
-	// Sequential, for the reason spelled out on the scenario above: the same
-	// wall-clock keystroke schedule, so the same assumption about how far the
-	// CLI has got by 8s. A control that raced for CPU while the arm it controls
-	// did not would not be a control.
+	// Both arms use the same rendered-turn gate and remain sequential.
 	requireSmoke(t)
 
 	// "\x03" is the byte tmux send-keys C-c delivers.
 	res := softExitRun(t, softExitKeys("\x03"))
+	require.True(t, res.Contains(softExitTurnMarker), "the injection must observe a running turn")
 
 	require.True(t, res.Exited,
 		"a cancel before /exit must let a busy pane exit; transcript=%q",
 		lastLines(res.TranscriptText(), 12))
 	assert.Equal(t, 0, res.ExitCode,
-		"the escalation ladder's whole premise is that this layer exits GRACEFULLY")
+		"the escalation ladder's whole premise is that this layer exits GRACEFULLY; transcript=%q",
+		lastLines(res.TranscriptText(), 12))
 }
 
 // lastLines trims a transcript for failure messages: the tail is where the
