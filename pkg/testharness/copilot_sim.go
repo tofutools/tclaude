@@ -283,6 +283,7 @@ func newCopilotSim(t copilotSimT, capture copilotfixture.HookCapture,
 		launch:     launch,
 		capture:    capture,
 		createdAt:  time.Now().UTC(),
+		launched:   launch.ResumeID != "",
 	}
 	if c.Model == "" {
 		c.Model = "claude-sonnet-4.5"

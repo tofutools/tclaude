@@ -3547,3 +3547,9 @@ of the native SQLite database. Session, message and part IDs are reminted, nativ
 cwd metadata is remapped, and message/tool text is preserved. Import does not
 carry session permissions or sharing state; the receiving managed server
 reapplies its own permission policy. Private agent XDG stores remain private.
+
+Copilot portable history uses its native append-only event log. The receiver
+remints the session and event identities, writes fresh workspace metadata, and
+resumes with the native CLI. Databases, checkpoints, rewind files, permissions,
+and other executable artifacts are not transferred. Full conversation events
+remain available to the native resume path.
