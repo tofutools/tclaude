@@ -154,6 +154,42 @@ func TestFederation_ModelGatewayDialectProbeDoesNotConsumeRequestCapacity(t *tes
 	require.Contains(t, answer.Reason, "limit", "actual generation still consumes the single request slot")
 }
 
+func TestFederation_ModelGatewayResponseBeforeRequestHalfClose(t *testing.T) {
+	fh := newFedHarness(t)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"object":"response","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer upstream.Close()
+	fedModelPolicy(t, fh, upstream.URL)
+	_, err := config.Update(func(cfg *config.Config, err error) error {
+		if err != nil {
+			return err
+		}
+		p := cfg.Agent.HTTPProxies["model"].ModelPolicy
+		p.Dialect = "openai"
+		p.PrecountInput = false
+		return nil
+	})
+	require.NoError(t, err)
+	flow := fedModelFlow(t, fh, proto.ModelOpenPayload{Proxy: "model", Session: "immutable-launch", Dialect: "openai"})
+	req, err := http.NewRequest(http.MethodPost, "http://model/v1/responses", strings.NewReader(`{"model":"test-model","input":"hello"}`))
+	require.NoError(t, err)
+	require.NoError(t, req.Write(flow))
+	// Deliberately receive the entire response, including the gateway's
+	// half-close, before sending ours. HTTP body framing already ended the
+	// request, so this ordering must neither stall the response nor abort us.
+	response, err := io.ReadAll(flow)
+	require.NoError(t, err)
+	require.NoError(t, flow.CloseWrite())
+	resp, err := http.ReadResponse(bufio.NewReader(strings.NewReader(string(response))), req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+	require.Contains(t, string(body), `"status":"completed"`)
+}
+
 func fedModelControlAnswer(t *testing.T, fh *fedHarness, p proto.ModelOpenPayload) proto.ModelAnswerPayload {
 	t.Helper()
 	kp, err := stream.NewKeyPair()

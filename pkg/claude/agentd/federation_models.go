@@ -243,6 +243,13 @@ func (rt *fedRuntime) acceptModelOpen(peer *db.FederationPeer, env *proto.Envelo
 		serveModelUpstream(writer, req, peer.InstanceID, p.Session, p.Proxy, p.Stream, p)
 		_ = writer.finish()
 		_ = flow.CloseWrite()
+		// HTTP framing can complete the request before the sender writes its
+		// half-close. Deliver the response immediately, but keep the stream open
+		// until that half-close arrives so a fast response cannot race it and
+		// turn a successful request into a relay-side write error. Only one HTTP
+		// request is allowed on this stream; extra data ends it as well.
+		var extra [1]byte
+		_, _ = flow.Read(extra[:])
 	}()
 }
 
