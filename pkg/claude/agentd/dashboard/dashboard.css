@@ -18808,6 +18808,9 @@ nav:has(#node-chips-root .node-chip):has([data-tab="map"].active) .nav-inner > [
 .skynet-meter-bar { display: inline-block; width: 46px; height: 6px; border-radius: 3px; background: #21262d; overflow: hidden; }
 .skynet-meter-bar b { display: block; height: 100%; background: var(--nc, #58a6ff); }
 .skynet-card-foot { display: flex; gap: 6px; padding: 0 12px 10px; }
+.skynet-card-key { padding: 0 12px 8px; font-size: 12px; }
+.skynet-card-key.pending { color: #e3b341; }
+.skynet-card-key.conflict { color: #f85149; }
 .skynet-legend { position: absolute; left: 16px; bottom: 12px; display: flex; gap: 16px; align-items: center; color: #7d8590; font-size: 11px; }
 .skynet-legend i { display: inline-block; width: 24px; height: 0; border-top: 2px solid #3fb950; margin-right: 5px; vertical-align: middle; }
 .skynet-legend i.stale { border-top: 2px dashed #6e7681; }
@@ -19035,3 +19038,8 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 #peer-spawn-status { margin: 6px 0 10px; }
 #peer-action-modal .peer-action-choices, #peer-action-modal .peer-action-opt, #peer-action-modal .peer-action-consequence,
 #peer-spawn-modal .peer-action-opt, #peer-spawn-modal #peer-spawn-status { font-size: 13px; font-weight: normal; }
+#fleet-key-transition > :not(h3):not(.modal-buttons) { font-size: 13px; font-weight: normal; }
+#fleet-key-transition .fa-table th { text-align: left; white-space: nowrap; padding-right: 12px; vertical-align: top; }
+.fa-kt-cmd { margin: 6px 0; }
+.fa-kt-cmd code { word-break: break-all; }
+.fa-kt-cmd button { margin-left: 6px; }

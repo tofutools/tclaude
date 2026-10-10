@@ -13,6 +13,7 @@ import { createHarnessActions } from './fleet-harness-actions.js';
 import { NodeUpdateDialog } from './node-update.js';
 import { AwayControl } from './peer-mail.js';
 import { NodeSettingsDialog } from './fleet-admin-node-settings.js';
+import { KeyTransitionDialog, keyBadge } from './fleet-admin-identity.js';
 import { RunPage } from './fleet-admin-run.js';
 import { ViewersPanel } from './fleet-admin-viewers.js';
 import { ModelsPage } from './fleet-admin-models.js';
@@ -263,7 +264,7 @@ function grantsCell(g) {
   return html`<span title=${parts}>${g.total} <span class="muted">(${parts})</span></span>`;
 }
 
-function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust, onGrants }) {
+function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust, onGrants, onKey }) {
   return html`<div class="fa-peers">
     <h4>Trusted peers <span class="muted">${view.trusted.length}</span></h4>
     ${view.trusted.length === 0
@@ -273,7 +274,7 @@ function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust, on
         <tbody>${view.trusted.map((r) => html`<tr key=${r.id} data-peer=${r.id}>
           <td><span class=${`fa-dot${r.online ? ' on' : ''}`} title=${r.online ? 'online' : 'offline'}></span> <b>${r.label}</b>${r.name && r.name !== r.label ? html` <span class="muted">${r.name}</span>` : ''}</td>
           <td><code title=${r.id}>${shortID(r.id)}</code></td>
-          <td><code title=${r.fingerprint}>${shortFingerprint(r.fingerprint)}</code></td>
+          <td><code title=${r.fingerprint}>${shortFingerprint(r.fingerprint)}</code>${keyBadge(r.keyTransition) && html` <button type="button" class=${`fa-link ${keyBadge(r.keyTransition).cls}`} data-fa="key" title=${keyBadge(r.keyTransition).title} onClick=${() => onKey(r)}>${keyBadge(r.keyTransition).text}</button>`}</td>
           <td><span class=${`fa-level ${r.level}`}>${r.level}</span></td>
           <td>${r.online ? 'online' : ago(r.lastSeen, now)}</td>
           <td>${grantsCell(r.grants)}</td>
@@ -370,7 +371,7 @@ export function FleetAdmin({
     <div class="fa-subtabs" role="tablist">${SUB_PAGES.map((p) => html`<button type="button" role="tab" key=${p.id} aria-selected=${p.id === sub.id ? 'true' : 'false'}
       class=${`fa-subtab${p.id === sub.id ? ' on' : ''}`} onClick=${() => setPage(p.id)}>${p.label}</button>`)}</div>
     ${sub.id === 'peers'
-      ? html`${active && html`<${ViewersPanel} view=${view} actions=${actions} confirm=${confirm} toast=${toast} timers=${timers} />`}<${PeersPage} view=${view} now=${now()} onTrust=${(r) => setDialog({ kind: 'trust', row: r })}
+      ? html`${active && html`<${ViewersPanel} view=${view} actions=${actions} confirm=${confirm} toast=${toast} timers=${timers} />`}<${PeersPage} view=${view} now=${now()} onKey=${(r) => setDialog({ kind: 'key', row: r })} onTrust=${(r) => setDialog({ kind: 'trust', row: r })}
           onUnrestrict=${(r) => setDialog({ kind: 'unrestrict', row: r })} onRestrict=${restrict} onUntrust=${untrust}
           onGrants=${(r) => { setGrantTarget(r.id); setPage('grants'); }} />`
       : sub.id === 'harnesses'
@@ -397,6 +398,7 @@ export function FleetAdmin({
           target=${grantTarget} setTarget=${setGrantTarget} />`
       : html`<${AuditPage} view=${view} actions=${actions} now=${now()} />`}
     ${dialog?.kind === 'trust' && html`<${TrustDialog} row=${dialog.row} actions=${actions} onClose=${() => setDialog(null)} onDone=${done} />`}
+    ${dialog?.kind === 'key' && html`<${KeyTransitionDialog} row=${view.trusted.find((r) => r.id === dialog.row.id && r.keyTransition) || dialog.row} resolved=${!view.trusted.some((r) => r.id === dialog.row.id && r.keyTransition)} copy=${copy} toast=${toast} onClose=${() => setDialog(null)} />`}
     ${dialog?.kind === 'settings' && html`<${NodeSettingsDialog} self=${view.self} peers=${view.trusted} actions=${actions} confirm=${confirm} toast=${toast} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${dialog?.kind === 'update' && html`<${NodeUpdateDialog} node=${{ id: view.self.id, label: view.self.name, local: true }} actions=${updateActions} confirm=${confirm} toast=${toast} timers=${timers} onClose=${() => setDialog(null)} />`}
     ${dialog?.kind === 'unrestrict' && html`<${UnrestrictDialog} row=${dialog.row} actions=${actions} onClose=${() => setDialog(null)} onDone=${done} />`}

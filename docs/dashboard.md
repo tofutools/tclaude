@@ -639,7 +639,13 @@ first and says what will happen. Most pages name their CLI.
   shown in full with the other operator, tick the check, pick the level and
   confirm. Unrestricted repeats that it grants every peer permission on all
   groups, including ones created later. Restrict, unrestrict and untrust from
-  the row.
+  the row. A peer whose signing key is changing is marked next to
+  its fingerprint (and on its map card): **new key pending** is information
+  only — the successor waits out this node's detection window and is not yet
+  accepted; **⚠ competing keys** needs explicit recovery, and its dialog shows
+  both fingerprints in full plus the `tclaude federation identity recover-peer`
+  preview and the apply to run only after verifying the new fingerprint with
+  the peer's operator. Key rotation and recovery stay in the CLI.
 - **Harnesses** — each node's harnesses in one table: version, ↑ when an
   update exists, 🔑 when a login is present. Click a cell to install or update
   (if workers are busy, choose to run now or when they are idle), or, for
