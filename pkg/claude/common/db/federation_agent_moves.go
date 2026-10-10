@@ -15,31 +15,38 @@ type FederationMoveLink struct {
 	Offer    string `json:"offer"`
 }
 
+type FederationMoveTransfer struct {
+	BytesDone  int64  `json:"bytes_done"`
+	BytesTotal int64  `json:"bytes_total"`
+	State      string `json:"state"`
+}
+
 type FederationAgentMove struct {
-	Disposition          string              `json:"disposition,omitempty"`
-	Cwd                  string              `json:"cwd,omitempty"`
-	Teleport             bool                `json:"teleport,omitempty"`
-	ShutdownPID          int                 `json:"shutdown_pid,omitempty"`
-	ShutdownProcessStart string              `json:"shutdown_process_start,omitempty"`
-	ConfirmedAt          time.Time           `json:"confirmed_at,omitempty"`
-	MovedFrom            *FederationMoveLink `json:"moved_from,omitempty"`
-	MovedTo              *FederationMoveLink `json:"moved_to,omitempty"`
-	Direction            string              `json:"direction"`
-	Peer                 string              `json:"peer"`
-	ID                   string              `json:"id"`
-	State                string              `json:"state"`
-	SourceAgent          string              `json:"source_agent"`
-	SourceConv           string              `json:"source_conv"`
-	TargetAgent          string              `json:"target_agent,omitempty"`
-	TargetConv           string              `json:"target_conv,omitempty"`
-	SHA256               string              `json:"sha256"`
-	Initiator            string              `json:"initiator,omitempty"`
-	CodexAppServer       bool                `json:"codex_app_server,omitempty"`
-	Human                bool                `json:"human"`
-	Group                string              `json:"group"`
-	SourceGroups         []int64             `json:"-"`
-	ExpiresAt            time.Time           `json:"expires_at"`
-	LastError            string              `json:"last_error,omitempty"`
+	Transfer             *FederationMoveTransfer `json:"transfer,omitempty"`
+	Disposition          string                  `json:"disposition,omitempty"`
+	Cwd                  string                  `json:"cwd,omitempty"`
+	Teleport             bool                    `json:"teleport,omitempty"`
+	ShutdownPID          int                     `json:"shutdown_pid,omitempty"`
+	ShutdownProcessStart string                  `json:"shutdown_process_start,omitempty"`
+	ConfirmedAt          time.Time               `json:"confirmed_at,omitempty"`
+	MovedFrom            *FederationMoveLink     `json:"moved_from,omitempty"`
+	MovedTo              *FederationMoveLink     `json:"moved_to,omitempty"`
+	Direction            string                  `json:"direction"`
+	Peer                 string                  `json:"peer"`
+	ID                   string                  `json:"id"`
+	State                string                  `json:"state"`
+	SourceAgent          string                  `json:"source_agent"`
+	SourceConv           string                  `json:"source_conv"`
+	TargetAgent          string                  `json:"target_agent,omitempty"`
+	TargetConv           string                  `json:"target_conv,omitempty"`
+	SHA256               string                  `json:"sha256"`
+	Initiator            string                  `json:"initiator,omitempty"`
+	CodexAppServer       bool                    `json:"codex_app_server,omitempty"`
+	Human                bool                    `json:"human"`
+	Group                string                  `json:"group"`
+	SourceGroups         []int64                 `json:"-"`
+	ExpiresAt            time.Time               `json:"expires_at"`
+	LastError            string                  `json:"last_error,omitempty"`
 }
 
 func InsertFederationAgentMove(m FederationAgentMove) error {
@@ -130,5 +137,24 @@ func DeleteFederationAgentMove(direction, peer, id string) error {
 		return err
 	}
 	_, err = d.Exec(`DELETE FROM federation_agent_moves WHERE direction=? AND peer=? AND id=?`, direction, peer, id)
+	return err
+}
+
+// Progress updates only their JSON projection, avoiding a stale read/write
+// overwriting a concurrent running confirmation or disposition transition.
+func UpdateFederationMoveTransfer(direction, peer, id string, done, total int64) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	state := "transferring"
+	if done == total {
+		state = "downloaded"
+	}
+	raw, err := json.Marshal(FederationMoveTransfer{done, total, state})
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE federation_agent_moves SET payload=json_set(payload,'$.transfer',json(?)) WHERE direction=? AND peer=? AND id=? AND state='awaiting_confirmation' AND coalesce(json_extract(payload,'$.transfer.bytes_done'),0)<=?`, string(raw), direction, peer, id, done)
 	return err
 }

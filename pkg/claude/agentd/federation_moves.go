@@ -44,18 +44,14 @@ func peerSupportsDirectAgentMoves(peer string) bool {
 	return err == nil && json.Unmarshal([]byte(raw), &cat) == nil && cat.DirectAgentMoves
 }
 
-func reserveIncomingAgentMove(o *db.FederationBundleOffer, raw []byte, agentID string) error {
-	b, err := agentbundle.Decode(raw)
-	if err != nil {
-		return err
-	}
+func reserveIncomingAgentMove(o *db.FederationBundleOffer, b *agentbundle.Bundle, agentID string) error {
 	if b.Manifest.History == nil || b.Manifest.History.SourceConvID != o.Descriptor.Move.SourceConv {
 		return errors.New("move requires the offered source generation's native history")
 	}
 	var profile struct {
 		CodexAppServer bool `json:"codex_app_server"`
 	}
-	if err = json.Unmarshal(b.Manifest.Agent.Profile, &profile); err != nil {
+	if err := json.Unmarshal(b.Manifest.Agent.Profile, &profile); err != nil {
 		return err
 	}
 	m := db.FederationAgentMove{Direction: "in", Peer: o.Peer, ID: o.Descriptor.ID, State: "awaiting_running", SourceAgent: o.Descriptor.Move.SourceAgent, SourceConv: o.Descriptor.Move.SourceConv, TargetAgent: agentID, SHA256: o.Descriptor.SHA256, Group: o.Descriptor.Group, ExpiresAt: o.Descriptor.ExpiresAt, CodexAppServer: profile.CodexAppServer}

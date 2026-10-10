@@ -32,7 +32,7 @@ type Type struct {
 	PendingBytes  int64
 }
 
-var Agent = Type{Name: "agent", MaxBytes: 256 << 20, AdmissionSlug: "agents.receive", GroupScoped: true, PendingLimit: 10, PendingBytes: 512 << 20}
+var Agent = Type{Name: "agent", MaxBytes: 2 << 30, AdmissionSlug: "agents.receive", GroupScoped: true, PendingLimit: 10, PendingBytes: 4 << 30}
 
 var Config = Type{Name: "config", MaxBytes: 16 << 20, AdmissionSlug: "config.offer", PendingLimit: PendingLimit, PendingBytes: PendingBytes}
 
@@ -75,6 +75,46 @@ func New(kind Type, raw []byte, summary string, expiry time.Time) Descriptor {
 	}
 	return d
 }
+
+// NewFile hashes a disk-backed archive without loading it into memory.
+// The file is rewound for the caller's subsequent spool write.
+func NewFile(kind Type, f *os.File, summary string, expiry time.Time) (Descriptor, error) {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return Descriptor{}, err
+	}
+	digest := sha256.New()
+	n, err := io.Copy(digest, io.LimitReader(f, kind.MaxBytes+1))
+	if err != nil {
+		return Descriptor{}, err
+	}
+	if n > kind.MaxBytes {
+		return Descriptor{}, fmt.Errorf("bundle exceeds federation.agent_transfer_max_bytes=%d; raise that node setting", kind.MaxBytes)
+	}
+	d := Descriptor{ID: proto.NewEnvelopeID(), Type: kind.Name, Bytes: n, SHA256: hex.EncodeToString(digest.Sum(nil)), ExpiresAt: expiry, Summary: summary}
+	if _, err = f.Seek(0, io.SeekStart); err != nil {
+		return Descriptor{}, err
+	}
+	if n <= InlineLimit {
+		d.Inline, err = io.ReadAll(f)
+		if err != nil {
+			return Descriptor{}, err
+		}
+		_, err = f.Seek(0, io.SeekStart)
+	}
+	return d, err
+}
+func (d Descriptor) VerifyReader(r io.Reader) error {
+	digest := sha256.New()
+	n, err := io.Copy(digest, io.LimitReader(r, d.Bytes+1))
+	if err != nil {
+		return err
+	}
+	if n != d.Bytes || hex.EncodeToString(digest.Sum(nil)) != d.SHA256 {
+		return errors.New("bundle length or SHA-256 mismatch")
+	}
+	return nil
+}
+
 func (d Descriptor) Validate(kind Type, now time.Time) error {
 	if d.Teleport != nil {
 		if kind.Name != Agent.Name {
@@ -128,17 +168,24 @@ func (d Descriptor) Verify(raw []byte) error {
 // Request/Answer travel in sealed envelopes; the peer, offer, stream and digest
 // must all match the locally reserved waiter before deriving stream keys.
 type Request struct {
-	Offer  string `json:"offer"`
-	Stream string `json:"stream"`
-	SHA256 string `json:"sha256"`
-	Key    []byte `json:"key"`
+	Chunked bool   `json:"chunked,omitempty"`
+	Offset  int64  `json:"offset,omitempty"`
+	Bytes   int64  `json:"bytes,omitempty"`
+	Offer   string `json:"offer"`
+	Stream  string `json:"stream"`
+	SHA256  string `json:"sha256"`
+	Key     []byte `json:"key"`
 }
 type Answer struct {
 	Request
-	OK     bool   `json:"ok"`
-	Reason string `json:"reason,omitempty"`
+	OK          bool   `json:"ok"`
+	Reason      string `json:"reason,omitempty"`
+	ChunkSHA256 string `json:"chunk_sha256,omitempty"`
 }
 type Result struct {
+	SHA256      string `json:"sha256,omitempty"`
+	BytesDone   int64  `json:"bytes_done,omitempty"`
+	BytesTotal  int64  `json:"bytes_total,omitempty"`
 	Disposition string `json:"disposition,omitempty"`
 	Offer       string `json:"offer"`
 	State       string `json:"state"`
@@ -221,6 +268,14 @@ func (s Spool) Remove(direction, peer, id string) error {
 	path, err := s.path(direction, peer, id)
 	if err != nil {
 		return err
+	}
+	// Partial transfers are private spool entries too, and expire with the offer.
+	entries, _ := os.ReadDir(s.Root)
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, filepath.Base(path)+".") && strings.HasSuffix(name, ".partial") && entry.Type().IsRegular() {
+			_ = os.Remove(filepath.Join(s.Root, name))
+		}
 	}
 	err = os.Remove(path)
 	if os.IsNotExist(err) {

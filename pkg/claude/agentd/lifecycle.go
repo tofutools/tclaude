@@ -7080,7 +7080,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		}
 		var cleanup func()
 		var err error
-		importedID, cleanup, err = spawnHarness.History.Import(p.BundleHistory.Raw, p.BundleHistory.SourceID, p.Cwd)
+		importedID, cleanup, err = importBundleHistory(spawnHarness, p.BundleHistory, p.Cwd)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusBadRequest, "history", "install imported history: " + err.Error()}
 		}

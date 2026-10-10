@@ -42,3 +42,18 @@ func TestHistoryTransferRemapsMetadataOnly(t *testing.T) {
 		assert.False(t, h.SupportsHistoryTransfer())
 	}
 }
+
+func TestHistoryTransferLargeSingleRecord(t *testing.T) {
+	h, _ := Get(DefaultName)
+	history := h.History.(StreamingHistoryTransfer)
+	raw := `{"sessionId":"` + historySource + `","cwd":"/original","type":"user","message":{"content":"` + strings.Repeat("x", 11<<20) + `"}}` + "\n"
+	require.NoError(t, history.ValidateReader(strings.NewReader(raw), historySource))
+	require.ErrorContains(t, history.ValidateReader(historyLimitedReader{strings.NewReader(raw), 1 << 20}, historySource), "federation.agent_history_record_max_bytes")
+}
+
+type historyLimitedReader struct {
+	*strings.Reader
+	limit int
+}
+
+func (r historyLimitedReader) HistoryRecordLimit() int { return r.limit }

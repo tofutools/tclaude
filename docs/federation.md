@@ -1153,8 +1153,25 @@ Configuration selectors (`--only`, `--skip`, `--replace`) do not apply to agent
 offers. Missing paths or unresolved placeholders refuse apply. Group identity
 and admission are rechecked after transfer and immediately before import.
 
-Agent archives are limited to 256 MiB, with ten active offers and at most
-512 MiB of archived payload per peer per direction. The shared 72-hour expiry,
+Agent archives and uncompressed native history default to a 2 GiB limit, with
+ ten active offers and at most twice that limit of archived payload per peer
+ per direction. Set `federation.agent_transfer_max_bytes` in the node's
+ `~/.tclaude/config.json` to raise it (both the source and receiver enforce their
+ own limit). The human-only federation config API accepts
+ `{"agent_transfer_max_bytes":4294967296}` for a 4 GiB limit; zero restores the
+ default. Individual JSONL records default to 256 MiB, including image and tool
+ output records; `federation.agent_history_record_max_bytes` can raise that
+ limit too. Over-limit exports fail before the source is paused or retired,
+ naming the setting to change.
+
+ Agent archives and history are streamed through private files. Updated peers
+ fetch 16 MiB chunks, verify each chunk's SHA-256 and the final archive digest,
+ and retain completed chunks across interrupted fetches and daemon restarts.
+ Retrying fetch resumes at the verified prefix. A chunk uses an idle timeout,
+ rather than a five-minute total-transfer deadline; the offer still expires
+ after 72 hours. Older peers retain the existing single-stream protocol.
+ Move status includes `transfer.{bytes_done,bytes_total,state}` as verified
+ chunks arrive, where state is `transferring` or `downloaded`. The shared 72-hour expiry,
 inline threshold, verification and decline behavior apply. If an apply is
 interrupted after dispatching a launch, its reserved agent ID stays visible;
 inspect that identity before requesting another offer. Pre-launch failures can
@@ -3510,3 +3527,17 @@ time during an outage. The peer proxy returns `peer_unreachable` with reason
 `peer_offline` or `peer_timeout` and optional `last_seen`; a missing history
 grant returns HTTP 403 `permission`. Show those states instead of treating them
 as an empty mailbox. Stop using retained pages after local trust is removed.
+
+
+The optional large-history flow moves more than 300 MiB through a hub and then
+returns home with the destination's added turns. It is deliberately outside
+normal CI. Run it with:
+
+```bash
+TCLAUDE_LARGE_AGENT_TRANSFER=1 scripts/test.sh ./pkg/claude/agentd -run '^TestFederation_LargeTeleportHistoryRoundTrip$' -count=1 -timeout 1200s
+```
+
+The test uses private simulated nodes and elevated test-hub bandwidth; it does
+not change a running operator's nodes or settings. The ordinary chunk-spool
+regression also interrupts a chunk, reopens the spool, and resumes from the
+verified prefix.

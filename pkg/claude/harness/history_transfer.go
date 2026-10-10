@@ -29,6 +29,18 @@ type HistoryTransfer interface {
 	Import(raw []byte, sourceID, cwd string) (convID string, cleanup func(), err error)
 }
 
+// StreamingHistoryTransfer keeps large transcripts out of whole-conversation
+// buffers. The caller snapshots/limits Open's native file before transferring.
+type StreamingHistoryTransfer interface {
+	Open(convID, cwd string) (io.ReadCloser, error)
+	ValidateReader(io.Reader, string) error
+	ImportReader(io.Reader, string, string) (string, func(), error)
+}
+
+// A single record may contain images or large tool output. This is a record
+// memory bound rather than a history-size bound; no record is truncated.
+const MaxHistoryRecordBytes = 256 << 20
+
 func (h *Harness) SupportsHistoryTransfer() bool { return h != nil && h.History != nil }
 
 type jsonlHistory struct{ harness string }
@@ -39,7 +51,7 @@ func (j jsonlHistory) Format() string {
 	}
 	return "claude-jsonl"
 }
-func (j jsonlHistory) Export(convID, cwd string) ([]byte, error) {
+func (j jsonlHistory) Open(convID, cwd string) (io.ReadCloser, error) {
 	var path string
 	row, err := db.GetConvIndex(convID)
 	if err != nil {
@@ -73,13 +85,20 @@ func (j jsonlHistory) Export(convID, cwd string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return reader, nil
+}
+func (j jsonlHistory) Export(convID, cwd string) ([]byte, error) {
+	reader, err := j.Open(convID, cwd)
+	if err != nil {
+		return nil, err
+	}
 	defer reader.Close()
 	raw, err := io.ReadAll(io.LimitReader(reader, agentbundle.MaxBytes+1))
 	if err != nil {
 		return nil, err
 	}
 	if len(raw) > agentbundle.MaxBytes {
-		return nil, errors.New("transcript exceeds 256 MiB")
+		return nil, errors.New("transcript exceeds federation.agent_transfer_max_bytes default (2 GiB)")
 	}
 	if err := j.Validate(raw, convID); err != nil {
 		return nil, err
@@ -89,26 +108,33 @@ func (j jsonlHistory) Export(convID, cwd string) ([]byte, error) {
 
 // rewriteHistory only replaces documented native identity/path fields at
 // record boundaries. It never searches/replaces UUIDs or paths in free text.
-func (j jsonlHistory) rewriteHistory(raw []byte, sourceID, newID, cwd string) ([]byte, error) {
+func (j jsonlHistory) rewriteHistoryReader(reader io.Reader, sourceID, newID, cwd string, out io.Writer) error {
 	if _, err := uuid.Parse(sourceID); err != nil {
-		return nil, errors.New("history source identity must be a UUID")
+		return errors.New("history source identity must be a UUID")
 	}
-	scanner := bufio.NewScanner(bytes.NewReader(raw))
-	scanner.Buffer(make([]byte, 64<<10), 10<<20)
-	var out bytes.Buffer
+	scanner := bufio.NewScanner(reader)
+	recordLimit := MaxHistoryRecordBytes
+	if bounded, ok := reader.(interface{ HistoryRecordLimit() int }); ok && bounded.HistoryRecordLimit() > 0 {
+		recordLimit = bounded.HistoryRecordLimit()
+	}
+	scanner.Buffer(make([]byte, 64<<10), recordLimit)
 	found := false
 	line := 0
 	for scanner.Scan() {
 		line++
 		record := scanner.Bytes()
 		if len(bytes.TrimSpace(record)) == 0 {
-			out.Write(record)
-			out.WriteByte('\n')
+			if _, err := out.Write(record); err != nil {
+				return err
+			}
+			if _, err := out.Write([]byte{'\n'}); err != nil {
+				return err
+			}
 			continue
 		}
 		var obj map[string]json.RawMessage
 		if err := json.Unmarshal(record, &obj); err != nil || obj == nil {
-			return nil, fmt.Errorf("invalid history JSON object at line %d", line)
+			return fmt.Errorf("invalid history JSON object at line %d", line)
 		}
 		changed := false
 		set := func(m map[string]json.RawMessage, key, value string) { m[key], _ = json.Marshal(value); changed = true }
@@ -118,13 +144,13 @@ func (j jsonlHistory) rewriteHistory(raw []byte, sourceID, newID, cwd string) ([
 			if kind == "session_meta" || kind == "turn_context" {
 				var payload map[string]json.RawMessage
 				if err := json.Unmarshal(obj["payload"], &payload); err != nil || payload == nil {
-					return nil, fmt.Errorf("invalid %s at line %d", kind, line)
+					return fmt.Errorf("invalid %s at line %d", kind, line)
 				}
 				if kind == "session_meta" {
 					var id string
 					_ = json.Unmarshal(payload["id"], &id)
 					if id != sourceID || found {
-						return nil, errors.New("history session_meta identity mismatch or duplicate")
+						return errors.New("history session_meta identity mismatch or duplicate")
 					}
 					found = true
 					if newID != "" {
@@ -141,7 +167,7 @@ func (j jsonlHistory) rewriteHistory(raw []byte, sourceID, newID, cwd string) ([
 			_ = json.Unmarshal(obj["sessionId"], &id)
 			if id != "" {
 				if id != sourceID {
-					return nil, fmt.Errorf("history sessionId mismatch at line %d", line)
+					return fmt.Errorf("history sessionId mismatch at line %d", line)
 				}
 				found = true
 				if newID != "" {
@@ -157,27 +183,40 @@ func (j jsonlHistory) rewriteHistory(raw []byte, sourceID, newID, cwd string) ([
 		if changed {
 			record, _ = json.Marshal(obj)
 		}
-		out.Write(record)
-		out.WriteByte('\n')
+		if _, err := out.Write(record); err != nil {
+			return err
+		}
+		if _, err := out.Write([]byte{'\n'}); err != nil {
+			return err
+		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("history record exceeds 10 MiB or cannot be read: %w", err)
+		return fmt.Errorf("history record exceeds federation.agent_history_record_max_bytes=%d or cannot be read: %w", recordLimit, err)
 	}
 	if !found {
-		return nil, errors.New("history has no matching native session identity")
+		return errors.New("history has no matching native session identity")
+	}
+	return nil
+}
+func (j jsonlHistory) rewriteHistory(raw []byte, sourceID, newID, cwd string) ([]byte, error) {
+	var out bytes.Buffer
+	if err := j.rewriteHistoryReader(bytes.NewReader(raw), sourceID, newID, cwd, &out); err != nil {
+		return nil, err
 	}
 	return out.Bytes(), nil
+}
+func (j jsonlHistory) ValidateReader(r io.Reader, sourceID string) error {
+	return j.rewriteHistoryReader(r, sourceID, "", "", io.Discard)
 }
 func (j jsonlHistory) Validate(raw []byte, sourceID string) error {
 	_, err := j.rewriteHistory(raw, sourceID, "", "")
 	return err
 }
 func (j jsonlHistory) Import(raw []byte, sourceID, cwd string) (string, func(), error) {
+	return j.ImportReader(bytes.NewReader(raw), sourceID, cwd)
+}
+func (j jsonlHistory) ImportReader(reader io.Reader, sourceID, cwd string) (string, func(), error) {
 	id := uuid.NewString()
-	updated, err := j.rewriteHistory(raw, sourceID, id, cwd)
-	if err != nil {
-		return "", nil, err
-	}
 	var path string
 	if j.harness == CodexName {
 		root, err := codexConfigDir()
@@ -197,7 +236,7 @@ func (j jsonlHistory) Import(raw []byte, sourceID, cwd string) (string, func(), 
 		return "", nil, err
 	}
 	cleanup := func() { _ = os.Remove(path); _ = db.DeleteConvIndex(id); _ = db.DeleteConvBranchHistory(id) }
-	_, writeErr := file.Write(updated)
+	writeErr := j.rewriteHistoryReader(reader, sourceID, id, cwd, file)
 	closeErr := file.Close()
 	if writeErr != nil {
 		cleanup()

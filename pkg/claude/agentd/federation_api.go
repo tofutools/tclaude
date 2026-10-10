@@ -568,11 +568,13 @@ func handleFederationStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 type fedConfigReq struct {
-	Enabled   *bool   `json:"enabled,omitempty"`
-	HubURL    *string `json:"hub_url,omitempty"`
-	Name      *string `json:"name,omitempty"`
-	Invite    *string `json:"invite,omitempty"`
-	HubCAFile *string `json:"hub_ca_file,omitempty"`
+	AgentTransferMaxBytes      *int64  `json:"agent_transfer_max_bytes,omitempty"`
+	AgentHistoryRecordMaxBytes *int    `json:"agent_history_record_max_bytes,omitempty"`
+	Enabled                    *bool   `json:"enabled,omitempty"`
+	HubURL                     *string `json:"hub_url,omitempty"`
+	Name                       *string `json:"name,omitempty"`
+	Invite                     *string `json:"invite,omitempty"`
+	HubCAFile                  *string `json:"hub_ca_file,omitempty"`
 }
 
 // handleFederationConfig updates the federation config block and restarts
@@ -590,6 +592,14 @@ func handleFederationConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
+	if req.AgentTransferMaxBytes != nil && (*req.AgentTransferMaxBytes < 0 || *req.AgentTransferMaxBytes > 1<<62-1) {
+		writeError(w, 400, "invalid_arg", "agent_transfer_max_bytes must be zero (default) or a positive byte limit below 2^62")
+		return
+	}
+	if req.AgentHistoryRecordMaxBytes != nil && *req.AgentHistoryRecordMaxBytes < 0 {
+		writeError(w, 400, "invalid_arg", "agent_history_record_max_bytes must be zero (default) or a positive byte limit")
+		return
+	}
 	if req.HubURL != nil && *req.HubURL != "" {
 		if _, err := client.ValidateURL(*req.HubURL); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -604,6 +614,12 @@ func handleFederationConfig(w http.ResponseWriter, r *http.Request) {
 			cfg.Federation = &config.FederationConfig{}
 		}
 		f := cfg.Federation
+		if req.AgentTransferMaxBytes != nil {
+			f.AgentTransferMaxBytes = *req.AgentTransferMaxBytes
+		}
+		if req.AgentHistoryRecordMaxBytes != nil {
+			f.AgentHistoryRecordMaxBytes = *req.AgentHistoryRecordMaxBytes
+		}
 		if req.Enabled != nil {
 			f.Enabled = *req.Enabled
 		}

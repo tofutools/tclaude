@@ -108,7 +108,7 @@ func bundleEntries(f *os.File, d bundletransfer.Descriptor) ([]bundleContentEntr
 			switch entry.Name {
 			case agentbundle.ManifestFile:
 			case agentbundle.HistoryFile:
-				kind, limit = "jsonl", uint64(agentbundle.MaxBytes)
+				kind, limit = "jsonl", uint64(agentTransferLimit())
 			default:
 				return nil, errors.New("unexpected archive entry")
 			}

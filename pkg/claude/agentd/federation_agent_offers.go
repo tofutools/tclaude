@@ -1,11 +1,9 @@
 package agentd
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -105,6 +103,7 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "bundle_export", err.Error())
 		return
 	}
+	defer b.Close()
 	if (moving || teleport != nil) && b.Manifest.History == nil {
 		writeError(w, 400, "history_required", "moves and teleports require native conversation history")
 		return
@@ -113,16 +112,21 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 422, map[string]any{"error": "suspected credentials: use --allow-flagged or share without --history", "code": "flagged_credentials", "findings": b.Manifest.Findings})
 		return
 	}
-	raw, err := b.Encode()
+	archive, err := archiveAgentBundle(b)
 	if err != nil {
 		writeError(w, 400, "bundle_export", err.Error())
 		return
 	}
+	defer func() { _ = archive.Close(); _ = os.Remove(archive.Name()) }()
 	summary := "Agent bundle: configuration only"
 	if b.Manifest.History != nil {
 		summary = "Agent bundle: configuration and conversation history"
 	}
-	d := bundletransfer.New(bundletransfer.Agent, raw, summary, time.Now().Add(bundletransfer.DefaultTTL))
+	d, err := bundletransfer.NewFile(agentTransferType(), archive, summary, time.Now().Add(bundletransfer.DefaultTTL))
+	if err != nil {
+		writeError(w, 400, "bundle_export", err.Error())
+		return
+	}
 	d.Group = in.Group
 	backupQueued := false
 	defer func() {
@@ -189,7 +193,7 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	fedBundleMu.Lock()
 	defer fedBundleMu.Unlock()
-	if _, err = db.InsertFederationBundleOffer(o, bundletransfer.Agent); err != nil {
+	if _, err = db.InsertFederationBundleOffer(o, agentTransferType()); err != nil {
 		writeError(w, 409, "quota", err.Error())
 		return
 	}
@@ -225,7 +229,7 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err = fedBundleSpool().Receive("out", peer.InstanceID, d, bytes.NewReader(raw)); err != nil {
+	if err = fedBundleSpool().Receive("out", peer.InstanceID, d, archive); err != nil {
 		cleanup()
 		writeError(w, 500, "spool", err.Error())
 		return
@@ -302,9 +306,14 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 		writeJSON(w, 409, map[string]any{"code": "launch_reserved", "error": "an earlier apply may have launched an agent; inspect the reserved identity before declining this offer", "agent_id": o.ImportAgent, "offer": federationOfferProvenance(o)})
 		return
 	}
-	raw, err := fedBundleSpool().Read("in", o.Peer, o.Descriptor)
+	archive, err := fedBundleSpool().Open("in", o.Peer, o.Descriptor)
 	if err != nil {
 		writeError(w, 500, "spool", err.Error())
+		return
+	}
+	defer archive.Close()
+	if err = o.Descriptor.VerifyReader(archive); err != nil {
+		writeError(w, 400, "bundle", err.Error())
 		return
 	}
 	var teleportRow *db.FederationTeleport
@@ -326,11 +335,12 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 			return
 		}
 	}
-	bundle, err := agentbundle.Decode(raw)
+	bundle, err := agentbundle.DecodeFile(archive, agentTransferLimit(), "")
 	if err != nil {
 		writeError(w, 400, "bundle", err.Error())
 		return
 	}
+	defer bundle.Close()
 	landing, err := resolveFederationLanding(r.Context(), o, g, bundle.Manifest.Agent.Paths, in, teleportRow)
 	if err != nil || landing.Preview.Cwd == "" || !landing.Preview.Exists && !landing.Preview.CheckoutRequired {
 		code, status, message := "landing_unresolved", 409, "no receiving working directory resolved"
@@ -372,8 +382,9 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 			inner = inner.WithContext(context.WithValue(inner.Context(), teleportOfferContextKey{}, o))
 		}
 		inner.URL = &url.URL{Path: "/v1/agent-bundle/import", RawQuery: query.Encode()}
-		inner.Body = io.NopCloser(bytes.NewReader(raw))
-		inner.ContentLength = int64(len(raw))
+		inner = inner.WithContext(context.WithValue(inner.Context(), agentBundleDataContextKey{}, bundle))
+		inner.Body = http.NoBody
+		inner.ContentLength = 0
 		if reserved != "" {
 			inner = inner.WithContext(context.WithValue(inner.Context(), reservedAgentIDContextKey{}, reserved))
 		}
@@ -456,7 +467,7 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 			}
 		}
 		if o.Descriptor.Move != nil {
-			if err = reserveIncomingAgentMove(o, raw, reserved); err != nil {
+			if err = reserveIncomingAgentMove(o, bundle, reserved); err != nil {
 				releaseUnlaunched()
 				writeError(w, 400, "move", err.Error())
 				return
