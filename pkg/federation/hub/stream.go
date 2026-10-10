@@ -40,6 +40,14 @@ type streamSession struct {
 	// this long (its route flow control holding it, or a dead peer) ends
 	// the stream, just as silence on the read side does.
 	idle time.Duration
+	hub  *Hub
+}
+
+func (s *streamSession) idleTimeout() time.Duration {
+	if s.hub != nil {
+		return s.hub.config().StreamIdle
+	}
+	return s.idle
 }
 
 func (s *streamSession) writeJSON(f *proto.Frame) error {
@@ -52,7 +60,7 @@ func (s *streamSession) writeJSON(f *proto.Frame) error {
 func (s *streamSession) writeBinary(p []byte) error {
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
-	_ = s.ws.SetWriteDeadline(time.Now().Add(s.idle))
+	_ = s.ws.SetWriteDeadline(time.Now().Add(s.idleTimeout()))
 	return s.ws.WriteMessage(websocket.BinaryMessage, p)
 }
 
@@ -129,7 +137,7 @@ func (h *Hub) serveStream(w http.ResponseWriter, r *http.Request) {
 	if other == nil {
 		select {
 		case other = <-s.paired:
-		case <-time.After(h.cfg.StreamWait):
+		case <-time.After(h.config().StreamWait):
 			h.mu.Lock()
 			if st.pending[s.sid] == s {
 				delete(st.pending, s.sid)
@@ -173,7 +181,7 @@ func (h *Hub) forwardStream(src, dst *streamSession) {
 		if err != nil {
 			return
 		}
-		_ = src.ws.SetReadDeadline(time.Now().Add(h.cfg.StreamIdle))
+		_ = src.ws.SetReadDeadline(time.Now().Add(h.config().StreamIdle))
 		if mt != websocket.BinaryMessage {
 			src.fail(proto.CodeBadFrame, "only binary messages after stream_ready")
 			return
@@ -185,13 +193,13 @@ func (h *Hub) forwardStream(src, dst *streamSession) {
 			return
 		}
 		// A write the receiver held up is not idleness on this side.
-		_ = src.ws.SetReadDeadline(time.Now().Add(h.cfg.StreamIdle))
+		_ = src.ws.SetReadDeadline(time.Now().Add(h.config().StreamIdle))
 	}
 }
 
 func (h *Hub) streamHandshake(ws *websocket.Conn) (*streamSession, error) {
 	nonce := randHex(16)
-	deadline := time.Now().Add(h.cfg.HelloTimeout)
+	deadline := time.Now().Add(h.config().HelloTimeout)
 	_ = ws.SetWriteDeadline(deadline)
 	if err := ws.WriteJSON(&proto.Frame{Type: proto.FrameChallenge, HubID: h.hubID, Nonce: nonce, Proto: proto.ProtocolVersion}); err != nil {
 		_ = ws.Close()
@@ -228,19 +236,19 @@ func (h *Hub) streamHandshake(ws *websocket.Conn) (*streamSession, error) {
 		return refuse(proto.CodeNotVisible, "peer is not visible to this instance")
 	}
 	st := h.streamsLocked()
-	if len(st.sessions[id]) >= h.cfg.MaxStreams {
+	if len(st.sessions[id]) >= h.config().MaxStreams {
 		return refuse(proto.CodeStreamLimit, "too many concurrent streams for this instance")
 	}
-	s := &streamSession{ws: ws, id: id, peer: hello.Peer, sid: hello.Stream, done: make(chan struct{}), paired: make(chan *streamSession, 1), ready: make(chan struct{}), idle: h.cfg.StreamIdle}
+	s := &streamSession{ws: ws, id: id, peer: hello.Peer, sid: hello.Stream, done: make(chan struct{}), paired: make(chan *streamSession, 1), ready: make(chan struct{}), idle: h.config().StreamIdle, hub: h}
 	if st.sessions[id] == nil {
 		st.sessions[id] = map[*streamSession]bool{}
 	}
 	st.sessions[id][s] = true
 	if st.limiters[id] == nil {
-		st.limiters[id] = newByteLimiter(h.cfg.StreamBytesPerSecond)
+		st.limiters[id] = newByteLimiter(h.config().StreamBytesPerSecond)
 	}
-	_ = ws.SetReadDeadline(time.Now().Add(h.cfg.StreamIdle))
-	ws.SetPongHandler(func(string) error { _ = ws.SetReadDeadline(time.Now().Add(h.cfg.StreamIdle)); return nil })
+	_ = ws.SetReadDeadline(time.Now().Add(h.config().StreamIdle))
+	ws.SetPongHandler(func(string) error { _ = ws.SetReadDeadline(time.Now().Add(h.config().StreamIdle)); return nil })
 	go s.keepalive()
 	return s, nil
 }

@@ -24,7 +24,8 @@ const DefaultSpace = "default"
 // that scope their visibility, and single-use invites. The hub never stores
 // messages.
 type Store struct {
-	db *sql.DB
+	db   *sql.DB
+	path string
 }
 
 // Instance is one admitted (or revoked) instance.
@@ -60,11 +61,11 @@ func OpenStore(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
+	if _, err := db.Exec(schema + adminSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("hub schema: %w", err)
 	}
-	return &Store{db: db}, nil
+	return &Store{db: db, path: path}, nil
 }
 
 const schema = `
@@ -162,14 +163,28 @@ func (s *Store) Admit(instanceID string, spaces ...string) error {
 // Revoke marks instanceID revoked; a live connection is dropped by the hub's
 // policy refresh.
 func (s *Store) Revoke(instanceID string) error {
-	res, err := s.db.Exec(`UPDATE instances SET revoked=1 WHERE instance_id=?`, instanceID)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(`UPDATE instances SET revoked=revoked WHERE instance_id=?`, instanceID); err != nil {
+		return err
+	}
+	if err = guardAdminLoss(tx, instanceID, false); err != nil {
+		return err
+	}
+	res, err := tx.Exec(`UPDATE instances SET revoked=1 WHERE instance_id=?`, instanceID)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return fmt.Errorf("unknown instance %q", instanceID)
 	}
-	return nil
+	if _, err = tx.Exec(`DELETE FROM hub_admins WHERE instance_id=?`, instanceID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // SetSpaces replaces instanceID's spaces.

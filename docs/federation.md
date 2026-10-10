@@ -2963,3 +2963,104 @@ the same fingerprint fields appear on `local.chain` in the rotations read.
 A pending rotation refuses another apply, and four retained hops refuse a
 fifth rotation until explicit re-pairing. Recovery and old-key revocation
 remain CLI-only.
+
+### Remote hub administration
+
+A node operator can administer its connected hub with `tclaude federation hub`
+(or Fleet → Hub). This is separate from peer trust and node grants: these routes
+are local human-only, and peers cannot proxy them. The hub must already admit the
+claiming instance, either through its normal admission list or a hub invite.
+
+On an unclaimed hub, `tclaude-hub serve` prints a one-use claim token and writes
+`admin-claim.token` next to the hub database with mode `0600`. Redeem it using
+`tclaude federation hub claim TOKEN`. It expires after 24 hours. Restarting a hub
+with no admins retains a valid claim, or regenerates a lost/expired claim. The
+hub stores only the token hash and deletes the token file after redemption.
+Treat this token as a credential; do not paste it into shared messages.
+
+The claim grants the redeeming instance's signing key the explicit capabilities
+`hub.admins.manage`, `hub.admissions.manage`, `hub.invites.manage`,
+`hub.spaces.manage`, `hub.settings.manage`, `hub.identity.manage`,
+`hub.health.read`, and `hub.logs.read`. Additional admins receive only the named
+capabilities you select. Unknown capabilities are refused. `hub.exec` is reserved
+for a future, separately gated feature and is not granted by admin status.
+Removing the last admitted admin with `hub.admins.manage`, stripping that
+capability, revoking its admission, or recovering its lost key is refused. If all
+admin keys are lost, the hub host can run the shell-only command
+`tclaude-hub admin reset --db PATH` to clear admin authority and create a fresh
+claim. There is no remote reset endpoint.
+
+Commands (all return JSON):
+
+```bash
+tclaude federation hub status
+tclaude federation hub admins list
+tclaude federation hub admins add --instance inst_ID --capabilities hub.health.read,hub.logs.read
+tclaude federation hub admins remove --instance inst_ID
+tclaude federation hub admissions list
+tclaude federation hub admissions admit --instance inst_ID --spaces team
+tclaude federation hub admissions revoke --instance inst_ID
+tclaude federation hub invites create --space team --ttl 1h
+tclaude federation hub invites list
+tclaude federation hub invites revoke --token-hash HASH
+tclaude federation hub spaces list
+tclaude federation hub spaces set --instance inst_ID --spaces team,other
+tclaude federation hub settings get
+tclaude federation hub settings set --key max_connections --value 1024
+tclaude federation hub settings reset --key max_connections
+tclaude federation hub identity recover --old inst_OLD --new inst_NEW
+tclaude federation hub identity recover --old inst_OLD --new inst_NEW --fingerprint FP --apply
+tclaude federation hub identity revoke-old --instance inst_OLD
+tclaude federation hub identity revoke-old --instance inst_OLD --fingerprint FP --apply
+tclaude federation hub health
+tclaude federation hub logs tail --max-entries 100
+```
+
+Settings precedence is **built-in defaults < serve flags < persisted hub DB
+settings**, independently per field. Startup logs report each DB override with
+both its boot and effective value. Status lists explicitly overridden flags;
+setting descriptors include `effective`, `boot`, `source` (`default`, `flag`, or
+`db`), `flag_overridden`, bounds/unit, and `restart_required:false`. Resetting a
+setting removes its DB override and restores the boot flag/default. Changes apply
+live; reducing a capacity prevents new connections/streams without killing
+unrelated existing streams. Rotation-window changes affect new statements and
+never change an already promised activation time. Host security settings such as
+listen address, TLS, open admission, and script acceptance are not writable.
+
+The local `/api/federation/hub/` dashboard routes and matching
+`/v1/federation/hub/` CLI routes are:
+
+| Tail | Methods | Body / result |
+| --- | --- | --- |
+| `status` | GET | Connected hub, admin capabilities, overridden flags |
+| `claim` | POST | `{token}` → `{claimed:true}` |
+| `admins` | GET, POST | `{admins:[...]}`; POST `{instance,capabilities}` |
+| `admins/{instance}` | DELETE | Remove an admin |
+| `admissions` | GET, POST | `{admissions:[...]}`; POST `{instance,spaces}` |
+| `admissions/{instance}` | DELETE | Revoke admission |
+| `invites` | GET, POST | `{invites:[...]}`; POST `{space,ttl_seconds}` returns bearer once |
+| `invites/{token_hash}` | DELETE | Revoke invitation |
+| `spaces` | GET, PUT | `{spaces:[...]}`; PUT `{instance,spaces}` |
+| `settings` | GET, PATCH | `{settings:{key:descriptor}}`; PATCH `{overrides:{key:integer_or_null}}` |
+| `identity/recover` | POST | `{old,new,apply?,fingerprint?}` |
+| `identity/revoke-old` | POST | `{instance,apply?,fingerprint?}` |
+| `health` | GET | Counts, portable runtime load, uptime, recent errors |
+| `logs` | GET | `{entries:[{at,level,message}],next_cursor}` |
+
+Admission/invite/space lists accept opaque `cursor` and `max_entries` (default
+100, maximum 250), returning `next_cursor` when more rows remain. Logs use an
+opaque cursor with a maximum of 200 entries per response, from a bounded,
+redacted in-memory event ring. They expose no arbitrary files or node content.
+Errors use `{code,error}`. Identity operations preview by default; apply requires
+the exact displayed fingerprint. Key-loss recovery inherits the predecessor's
+spaces, revokes its admission and admin authority, and does **not** automatically
+grant the replacement admin capabilities. Accepted dual-signed key rotation
+preserves the predecessor's exact capability set.
+
+RPC requests use the existing authenticated hub connection. Each signature binds
+the hub identity, connection challenge, persistent admin generation, request ID,
+method, payload digest, and a validity period of at most one minute. The hub
+persists a replay marker before executing/responding and records a bounded audit
+without payloads or tokens. Mutations are never automatically retried: if the
+connection drops after submission, inspect current state before explicitly
+submitting another change.

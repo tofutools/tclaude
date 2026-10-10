@@ -41,7 +41,7 @@ func RootCmd() *cobra.Command {
 		Long:        long,
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
-			serveCmd(), identityCmd(), admitCmd(), revokeCmd(), spacesCmd(), inviteCmd(), lsCmd(), invitesCmd(),
+			serveCmd(), adminCmd(), identityCmd(), admitCmd(), revokeCmd(), spacesCmd(), inviteCmd(), lsCmd(), invitesCmd(),
 		},
 	}.ToCobra()
 	cli.ConfigureRoot(cmd)
@@ -80,6 +80,10 @@ type serveParams struct {
 	TLSCert                string        `long:"tls-cert" optional:"true" help:"TLS certificate (PEM). Without it the hub serves plain HTTP, which clients only accept on loopback; front it with a TLS proxy otherwise"`
 	TLSKey                 string        `long:"tls-key" optional:"true" help:"TLS private key (PEM)"`
 	Open                   bool          `long:"open" help:"Admit any instance that proves key possession (development only)"`
+	MaxConnections         int           `long:"max-connections" default:"1024" help:"Maximum concurrent instance connections"`
+	ConnectionIdle         time.Duration `long:"connection-idle" default:"90s" help:"Instance control connection idle timeout"`
+	StreamWait             time.Duration `long:"stream-wait" default:"30s" help:"How long a stream waits for its peer"`
+	HelloTimeout           time.Duration `long:"hello-timeout" default:"10s" help:"Authentication handshake timeout"`
 	FramesPerMinute        int           `long:"frames-per-minute" default:"120" help:"Per-instance send rate limit (frames)"`
 	BytesPerMinute         int           `long:"bytes-per-minute" default:"8388608" help:"Per-instance send rate limit (bytes)"`
 	IdentityRotationWindow time.Duration `long:"identity-rotation-window" default:"10m" help:"Detection window before signed key succession is admitted"`
@@ -94,7 +98,7 @@ func serveCmd() *cobra.Command {
 		Use:         "serve",
 		Short:       "Run the hub",
 		ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *serveParams, _ *cobra.Command, _ []string) {
+		RunFunc: func(p *serveParams, cmd *cobra.Command, _ []string) {
 			if (p.TLSCert == "") != (p.TLSKey == "") {
 				fail(fmt.Errorf("--tls-cert and --tls-key go together"))
 			}
@@ -103,8 +107,22 @@ func serveCmd() *cobra.Command {
 				fail(err)
 			}
 			defer func() { _ = st.Close() }()
+			token, err := st.PrepareAdminClaim(false, time.Now())
+			if err != nil {
+				fail(err)
+			}
+			if token != "" {
+				fmt.Fprintf(os.Stderr, "Hub admin claim token (single-use, valid24h): %s\nPrivate claim file: %s\n", token, st.ClaimPath())
+			}
+			flags := []string{}
+			flagKeys := map[string]string{"identity-rotation-window": "identity_rotation_window_seconds", "frames-per-minute": "frames_per_minute", "bytes-per-minute": "bytes_per_minute", "max-connections": "max_connections", "max-streams": "max_streams", "stream-bytes-per-second": "stream_bytes_per_second", "stream-wait": "stream_wait_seconds", "stream-idle": "stream_idle_seconds", "connection-idle": "connection_idle_seconds", "hello-timeout": "hello_timeout_seconds", "policy-refresh": "policy_refresh_seconds"}
+			for flag, key := range flagKeys {
+				if cmd.Flags().Changed(flag) {
+					flags = append(flags, key)
+				}
+			}
 			h, err := hub.New(st, hub.Config{
-				Open: p.Open, FramesPerMinute: p.FramesPerMinute, BytesPerMinute: p.BytesPerMinute,
+				Open: p.Open, MaxConnections: p.MaxConnections, ConnectionIdle: p.ConnectionIdle, StreamWait: p.StreamWait, HelloTimeout: p.HelloTimeout, FlagSettings: flags, FramesPerMinute: p.FramesPerMinute, BytesPerMinute: p.BytesPerMinute,
 				PolicyRefresh: p.PolicyRefresh, IdentityRotationWindow: p.IdentityRotationWindow, Version: buildversion.AppVersion(),
 				MaxStreams: p.MaxStreams, StreamBytesPerSecond: p.StreamBytes, StreamIdle: p.StreamIdle,
 			})
