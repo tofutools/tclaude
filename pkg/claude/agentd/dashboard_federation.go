@@ -7,6 +7,8 @@ func registerDashboardFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/federation/share-agent", dashboardFederationRoute(handleFederationShareAgent))
 	mux.HandleFunc("POST /api/federation/move-agent", dashboardFederationRoute(handleFederationShareAgent))
 	mux.HandleFunc("GET /api/federation/bundle-offers", dashboardFederationRoute(handleFederationBundleOffers))
+	mux.HandleFunc("GET /api/federation/bundle-offers/{id}/contents", dashboardFederationRoute(handleFederationBundleContents))
+	mux.HandleFunc("GET /api/federation/bundle-offers/{id}/download", dashboardFederationRoute(handleFederationBundleDownload))
 	mux.HandleFunc("POST /api/federation/bundle-offers/{id}/fetch", dashboardFederationRoute(handleFederationBundleFetch))
 	mux.HandleFunc("POST /api/federation/bundle-offers/{id}/import", dashboardFederationRoute(handleFederationBundleImport))
 	mux.HandleFunc("POST /api/federation/bundle-offers/{id}/decline", dashboardFederationRoute(handleFederationBundleDecline))
