@@ -21,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -56,8 +57,8 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 	t.Cleanup(agentd.ResetFederationForTest)
 	cwd := testutil.CanonicalTempDir(t)
 	f.HaveGroup("project")
-	if name == "opencode" {
-		_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "native-history", Harness: "opencode", SandboxImplementation: "off"})
+	if name == "opencode" || name == "copilot" {
+		_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "native-history", Harness: name, SandboxImplementation: "off"})
 		require.NoError(t, err)
 		_, err = db.SetAgentGroupDefaultProfile("project", "native-history")
 		require.NoError(t, err)
@@ -107,9 +108,12 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 		}
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&in))
 		if in.Seed {
-			if name == "codex" {
+			switch name {
+			case "copilot":
+				require.NoError(t, agentd.Spawn.SpawnNew(clcommon.SpawnArgs{Harness: "copilot", SessionID: in.Conv, Label: "traveller", Cwd: cwd, TrustDir: true, Approval: "all", SandboxImplementation: "off"}))
+			case "codex":
 				f.HaveAliveCodexSession(in.Conv, "traveller", "traveller-pane", cwd)
-			} else {
+			default:
 				f.HaveAliveSession(in.Conv, "traveller", "traveller-pane", cwd)
 			}
 
@@ -146,6 +150,8 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 			row.Status = "idle"
 			require.NoError(t, db.SaveSession(row))
 
+		case "copilot":
+			require.NoError(t, testharness.AppendCopilotHistory(f.World.HomeDir, in.Conv, in.Text, in.Assistant))
 		case "codex":
 			require.NoError(t, f.World.Codexes.GetByConvID(in.Conv).WriteExchange(in.Text, in.Assistant))
 		default:
@@ -284,7 +290,7 @@ func historyNodeRequest(t *testing.T, node historyNode, method, path, conv strin
 }
 
 func TestFederation_TeleportHistoryRoundTrip(t *testing.T) {
-	for _, name := range []string{"claude", "codex", "opencode"} {
+	for _, name := range []string{"claude", "codex", "opencode", "copilot"} {
 		t.Run(name, func(t *testing.T) { runHistoryRoundTrip(t, name, false) })
 	}
 }

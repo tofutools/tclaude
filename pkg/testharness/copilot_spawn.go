@@ -143,7 +143,10 @@ func (s *simSpawner) spawnResumeCopilot(args clcommon.SpawnArgs) error {
 		return err
 	}
 	s.recordCopilotSpawnObservability(convID, args)
-	label := generateResumeLabel()
+	label := args.Label
+	if label == "" {
+		label = generateResumeLabel()
+	}
 	sim.SetSessionID(label)
 	if err := saveSessionWithResumeProvenance(&db.SessionRow{
 		ID:                       label,

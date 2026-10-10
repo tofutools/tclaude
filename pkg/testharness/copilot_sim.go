@@ -283,6 +283,7 @@ func newCopilotSim(t copilotSimT, capture copilotfixture.HookCapture,
 		launch:     launch,
 		capture:    capture,
 		createdAt:  time.Now().UTC(),
+		launched:   launch.ResumeID != "",
 	}
 	if c.Model == "" {
 		c.Model = "claude-sonnet-4.5"
@@ -447,14 +448,11 @@ func (c *CopilotSim) Start() error {
 	if c.launched {
 		event = "session.resume"
 	}
-	if err := c.appendEventLocked(map[string]any{
-		"type": event,
-		"data": map[string]any{
-			"sessionId":      c.ConvID,
-			"copilotVersion": c.CliVersion,
-			"selectedModel":  c.Model,
-		},
-	}); err != nil {
+	data := map[string]any{"copilotVersion": c.CliVersion, "selectedModel": c.Model}
+	if event == "session.start" {
+		data["sessionId"] = c.ConvID
+	}
+	if err := c.appendEventLocked(map[string]any{"type": event, "data": data}); err != nil {
 		return err
 	}
 	c.alive = true
