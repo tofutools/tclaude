@@ -58,11 +58,12 @@ func DefaultDBPath() string {
 	return filepath.Join(home, ".tclaude-hub", "hub.sqlite")
 }
 
-type dbParam struct {
+// DBParam exposes the shared database flag to Boa when embedded in command parameters.
+type DBParam struct {
 	DB string `long:"db" optional:"true" help:"Hub database path (default $TCLAUDE_HUB_DIR/hub.sqlite or ~/.tclaude-hub/hub.sqlite)"`
 }
 
-func (p dbParam) open() (*hub.Store, error) {
+func (p DBParam) open() (*hub.Store, error) {
 	path := p.DB
 	if path == "" {
 		path = DefaultDBPath()
@@ -79,7 +80,7 @@ type serveParams struct {
 	Supervised      bool   `long:"supervised" help:"Run a health-checking update guardian under systemd/launchd"`
 	SupervisorLabel string `long:"supervisor-label" help:"launchd label for supervised mode"`
 	GuardianWorker  bool   `long:"guardian-worker" hidden:"true"`
-	dbParam
+	DBParam
 	AcceptRemoteScripts    bool          `long:"accept-remote-scripts" help:"Allow explicitly granted hub.exec administrators to run scripts as the hub service user (full host code execution)"`
 	Listen                 string        `long:"listen" default:"127.0.0.1:8470" help:"Listen address"`
 	TLSCert                string        `long:"tls-cert" optional:"true" help:"TLS certificate (PEM). Without it the hub serves plain HTTP, which clients only accept on loopback; front it with a TLS proxy otherwise"`
@@ -188,7 +189,7 @@ func serveCmd() *cobra.Command {
 }
 
 type admitParams struct {
-	dbParam
+	DBParam
 	Instance string   `pos:"true" help:"Instance id (inst_…) as printed by 'tclaude federation identity'"`
 	Space    []string `long:"space" optional:"true" help:"Space(s) to admit into (default: default)"`
 }
@@ -213,7 +214,7 @@ func admitCmd() *cobra.Command {
 }
 
 type instanceParams struct {
-	dbParam
+	DBParam
 	Instance string `pos:"true" help:"Instance id (inst_…)"`
 }
 
@@ -237,7 +238,7 @@ func revokeCmd() *cobra.Command {
 }
 
 type spacesParams struct {
-	dbParam
+	DBParam
 	Instance string `pos:"true" help:"Instance id (inst_…)"`
 	Spaces   string `pos:"true" help:"Comma-separated spaces that replace the current set"`
 }
@@ -268,7 +269,7 @@ func spacesCmd() *cobra.Command {
 }
 
 type inviteParams struct {
-	dbParam
+	DBParam
 	Space string        `long:"space" default:"default" help:"Space the invitee joins"`
 	TTL   time.Duration `long:"ttl" default:"24h" help:"Invite validity"`
 }
@@ -294,11 +295,11 @@ func inviteCmd() *cobra.Command {
 }
 
 func lsCmd() *cobra.Command {
-	return boa.CmdT[dbParam]{
+	return boa.CmdT[DBParam]{
 		Use:         "ls",
 		Short:       "List known instances",
 		ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *dbParam, _ *cobra.Command, _ []string) {
+		RunFunc: func(p *DBParam, _ *cobra.Command, _ []string) {
 			st, err := p.open()
 			if err != nil {
 				fail(err)
@@ -327,11 +328,11 @@ func lsCmd() *cobra.Command {
 }
 
 func invitesCmd() *cobra.Command {
-	return boa.CmdT[dbParam]{
+	return boa.CmdT[DBParam]{
 		Use:         "invites",
 		Short:       "List invites (hashes only)",
 		ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *dbParam, _ *cobra.Command, _ []string) {
+		RunFunc: func(p *DBParam, _ *cobra.Command, _ []string) {
 			st, err := p.open()
 			if err != nil {
 				fail(err)
