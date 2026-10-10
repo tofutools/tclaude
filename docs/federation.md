@@ -2354,10 +2354,41 @@ Map cards use relaxed, staggered summary polls. Merged views poll the nodes
 that contribute visible groups. Pause hidden dashboards, avoid overlapping
 requests to one node, and back off on failure.
 
-Terminal websocket attach continues to use the existing federation sessions
-watch/attach API. This JSON proxy does not yet adapt it under the per-node
-prefix. Remote terminal image uploads remain a separate feature; they need
-staging at the owning instance with the same interactive attach authorization.
+Remote browser terminals use the local-only dashboard WebSocket
+`GET /api/federation/terminal?peer=<instance_id>&agent=<agent_id>&mode=watch|interactive`.
+The local dashboard cookie and origin checks protect the browser endpoint;
+peers cannot call it or chain an attach through another node. It opens the same
+encrypted, incarnation-pinned terminal stream as CLI federation attach, with
+unchanged target-side watch/attach grants, indicators, viewer limits and audit.
+`GET /api/federation/sessions?peer=<instance_id>` returns the existing CLI session
+array, adding `watch` and `attach` flags; `instance` is the stable peer ID and
+`peer` its display label. Cached catalogs may be stale; the target authorizes
+both initial opens and every ongoing session.
+
+The socket sends a JSON `hello` first (`mode`, `peer`, `agent`, `cols`, `rows`),
+then binary output. Its dimensions come from the pinned target pane. Later JSON
+`size` frames report changes; browser `resize` messages never resize the target.
+Interactive binary input passes through the existing fixed-key/literal-text
+encoder; watch input is discarded. After xterm consumes each output frame,
+the browser sends `{"type":"credit","bytes":N}` with its exact byte count.
+Credits cannot exceed outstanding output, keeping the 256 KiB window bounded
+through the browser renderer. Operational refusals use a hello-less JSON
+`closed` frame after upgrade; authentication/origin failures remain HTTP errors.
+Established sockets close with a reason: `exit`, `reincarnated`, `revoked`,
+`untrusted`, `kicked`, `offline`, or `error`; initial opens also use `denied` and
+`limit`. A stalled connection can be aborted without delaying viewer cleanup.
+Detach closes the viewer and never stops the agent.
+
+Image paste uses local-only `POST /api/federation/terminal-attachments?terminal=`
+with the encoded remote socket path and the same multipart `file` fields and
+JSON response as local terminal uploads. It requires interactive attach. Image
+bodies travel over the shared authenticated bundle stream, not control frames.
+The receiver validates the pinned attach authority during transfer and before
+and after staging, verifies length/digest/FIN, then reapplies PNG/JPEG/WebP MIME
+and extension checks and the existing file/count/total caps. It returns paths
+on the target, including its existing sandbox attachment root where needed.
+Remote `/api/terminal-file` downloads remain refused with `403 not_shared`;
+file download needs a separate future permission.
 
 
 ### Harness availability
@@ -2867,6 +2898,28 @@ Import defaults to preview. Its body preserves the CLI fields: `apply`, `only`,
 the same live admission, credential findings, path and launch checks as the CLI.
 Responses retain the existing preview diffs and provenance. Every route is
 local operator administration and is refused through peer views.
+
+After fetching, `state: "ready"` means the private payload is verified.
+`GET /api/federation/bundle-offers/{id}/contents?peer=INSTANCE_ID` returns
+`{type,entries:[{path,size,kind}]}`. Agent entries are `manifest.json` and optional
+`history/transcript.jsonl`; config entries are `bundle.json` and
+`sections/<section>.json`. Entries are data labels, never host paths.
+Add `path`, optional byte `offset` and `max_bytes` to read one entry:
+`{path,kind,size,text,truncated,offset,next_offset?}`. Reads default to 256 KiB
+and accept at most 1 MiB; invalid UTF-8 is replaced. `next_offset` is the next
+byte offset when more text remains. All current entries are JSON or JSONL.
+`GET` or `HEAD` `/{id}/download?peer=INSTANCE_ID` returns the original payload
+as an attachment with octet-stream, sandbox, nosniff and private/no-store
+headers. Neither read fetches implicitly: pending returns 409 `not_fetched`,
+expired/declined/applied returns 410 `offer_state`, unknown entry paths return
+404 `path`, and revoked receiving admission returns 403 `admission`.
+
+The matching CLI commands use the same human-only `/v1` handlers:
+`federation offers contents ID --peer PEER` lists entries; add
+`--path history/transcript.jsonl --offset 0 --max-bytes 262144` to read text.
+`federation offers download ID OUTPUT --peer PEER` saves the original verified
+bundle without importing and refuses an existing output file. Both require a
+ready offer and preserve current trust/receive admission.
 
 ### Local dashboard labels and hub setup
 
