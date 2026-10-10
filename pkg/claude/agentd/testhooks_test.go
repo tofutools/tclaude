@@ -2134,3 +2134,12 @@ func StartHistoryOpenCodeRuntimeForTest(label, cwd, id string) error {
 	return err
 }
 func StopHistoryOpenCodeRuntimeForTest(label string) { _ = stopOpenCodeRuntime(label) }
+
+// Exercise the destructive lifecycle observers against a dormant home record.
+// The AWB monitor's guard runs before any subprocess or tracker request.
+func RunAwayLifecycleObserversForTest(conv string) bool {
+	cleanupRetiredCodexNativeProfiles(conv)
+	cleanupAgentDirectoriesAfterRetire(conv, false)
+	id, _ := db.AgentIDForConv(conv)
+	return !(awbReadyWorker{}).cleanupAfterClose(context.Background(), &db.AWBReadyDispatch{AgentID: id}, awbReadyPRState{})
+}

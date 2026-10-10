@@ -125,6 +125,14 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 	if b.Manifest.Agent.Origin != nil {
 		b.Manifest.Agent.Origin.Trigger = arrivalTrigger(caller, source, human)
 	}
+	if moving && (teleport == nil || !teleport.Clone) && peerSupportsStableIdentity(peer.InstanceID) {
+		identity, err := departingFederationIdentity(source)
+		if err != nil {
+			writeError(w, 409, "identity", err.Error())
+			return
+		}
+		b.Manifest.Agent.Identity = identity
+	}
 	archive, err := archiveAgentBundle(b)
 	if err != nil {
 		writeError(w, 400, "bundle_export", err.Error())
@@ -220,7 +228,7 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 		_ = db.DeleteFederationAgentMove("out", peer.InstanceID, d.ID)
 	}
 	if moving {
-		m := db.FederationAgentMove{Disposition: "pending_acceptance", Teleport: teleport != nil, Direction: "out", Peer: peer.InstanceID, ID: d.ID, State: "awaiting_confirmation", SourceAgent: d.Move.SourceAgent, SourceConv: source, SHA256: d.SHA256, Human: human, Group: in.Group, ExpiresAt: d.ExpiresAt}
+		m := db.FederationAgentMove{Identity: b.Manifest.Agent.Identity, Disposition: "pending_acceptance", Teleport: teleport != nil, Direction: "out", Peer: peer.InstanceID, ID: d.ID, State: "awaiting_confirmation", SourceAgent: d.Move.SourceAgent, SourceConv: source, SHA256: d.SHA256, Human: human, Group: in.Group, ExpiresAt: d.ExpiresAt}
 		if d.Move.DirectIfAllowed {
 			m.Disposition = "checking"
 		}
@@ -360,6 +368,13 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 		return
 	}
 	defer func() { _ = bundle.Close() }()
+	identity := stableOfferIdentity(o, bundle)
+	if identity != nil {
+		if identity.Agent != o.Descriptor.Move.SourceAgent || !proto.ValidAgentRef(identity.Agent) || !proto.ValidInstanceID(identity.Home) {
+			writeError(w, 409, "identity", "stable identity does not match offered source")
+			return
+		}
+	}
 	arrival := arrivalFromOffer(o, bundle.Manifest.Agent)
 	landing, err := resolveFederationLanding(r.Context(), o, g, bundle.Manifest.Agent.Paths, in, teleportRow)
 	if err != nil || landing.Preview.Cwd == "" || !landing.Preview.Exists && !landing.Preview.CheckoutRequired {
@@ -408,6 +423,9 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 		inner = inner.WithContext(context.WithValue(inner.Context(), agentBundleDataContextKey{}, bundle))
 		inner.Body = http.NoBody
 		inner.ContentLength = 0
+		if identity != nil && apply {
+			inner = inner.WithContext(context.WithValue(inner.Context(), federationIdentityLaunchKey{}, federationIdentityLaunch{reserved, o.Descriptor.ID}))
+		}
 		if reserved != "" {
 			inner = inner.WithContext(context.WithValue(inner.Context(), reservedAgentIDContextKey{}, reserved))
 		}
@@ -429,15 +447,24 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 			return
 		}
 		reserved := db.NewAgentID()
+		if identity != nil {
+			reserved = identity.Agent
+		}
 		if authority := teleportLandingFromRequest(r); authority != nil {
-			reserved = authority.record.TargetAgent
+			if identity == nil {
+				reserved = authority.record.TargetAgent
+			} else {
+				authority.record.TargetAgent = reserved
+			}
 			if err := authority.check(); err != nil {
 				writeError(w, 403, "teleport_revoked", err.Error())
 				return
 			}
-			if err := db.RecordFederationWorkerDefaults(reserved, authority.record.WorkerDefaults); err != nil {
-				writeError(w, 503, "worker_defaults", err.Error())
-				return
+			if identity == nil {
+				if err := db.RecordFederationWorkerDefaults(reserved, authority.record.WorkerDefaults); err != nil {
+					writeError(w, 503, "worker_defaults", err.Error())
+					return
+				}
 			}
 		}
 		if teleportRow != nil && teleportRow.Intent.ModelLease != "" {
@@ -447,7 +474,27 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 				return
 			}
 		}
+		if identity != nil {
+			if _, err := db.ReserveFederationIdentity(*identity, arrivalNode(), o.Peer, o.Descriptor.ID); err != nil {
+				writeError(w, 409, "identity_conflict", err.Error())
+				return
+			}
+		}
+		if identity != nil {
+			var defaults *db.FederationWorkerDefaults
+			if authority := teleportLandingFromRequest(r); authority != nil {
+				defaults = authority.record.WorkerDefaults
+			}
+			if err := db.ReplaceFederationArrivalWorkerDefaults(reserved, o.Descriptor.ID, defaults); err != nil {
+				_ = db.ReleaseFederationIdentity(reserved, o.Descriptor.ID)
+				writeError(w, 503, "worker_defaults", err.Error())
+				return
+			}
+		}
 		if err = db.ReserveFederationBundleImport(o.Peer, o.Descriptor.ID, reserved); err != nil {
+			if identity != nil {
+				_ = db.ReleaseFederationIdentity(reserved, o.Descriptor.ID)
+			}
 			writeError(w, 409, "launch_reserved", err.Error())
 			return
 		}
@@ -455,6 +502,9 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 		releaseUnlaunched := func() {
 			if released, err := db.ReleaseUnlaunchedFederationBundleImport(o.Peer, o.Descriptor.ID, reserved); err == nil && released {
 				o.ImportAgent = ""
+				if identity != nil {
+					_ = db.ReleaseFederationIdentity(reserved, o.Descriptor.ID)
+				}
 				_ = db.DeleteFederationAgentMove("in", o.Peer, o.Descriptor.ID)
 				cleanupReleasedFederationLanding(o)
 			}
@@ -537,6 +587,9 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 			queueBundleResult(o, "applied")
 		} else if released, err := db.ReleaseUnlaunchedFederationBundleImport(o.Peer, o.Descriptor.ID, reserved); err == nil && released {
 			o.ImportAgent = ""
+			if identity != nil {
+				_ = db.ReleaseFederationIdentity(reserved, o.Descriptor.ID)
+			}
 			_ = db.DeleteFederationAgentMove("in", o.Peer, o.Descriptor.ID)
 		} else {
 			// Keep the reserved ID on uncertain failures. Discarding an offer never

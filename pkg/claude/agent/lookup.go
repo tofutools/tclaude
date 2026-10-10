@@ -944,8 +944,9 @@ func lsCmd() *cobra.Command {
 }
 
 type peerEntry struct {
-	TeleportPaused string                 `json:"teleport_paused,omitempty"`
-	Predecessor    *db.FederationMoveLink `json:"predecessor,omitempty"`
+	FederationPresence *db.AgentFederationPresence `json:"federation_presence,omitempty"`
+	TeleportPaused     string                      `json:"teleport_paused,omitempty"`
+	Predecessor        *db.FederationMoveLink      `json:"predecessor,omitempty"`
 	// AgentID is the stable, rotation-immune actor key — what `agent ls`
 	// shows as the canonical ID. ConvID is the live generation behind it.
 	AgentID string `json:"agent_id,omitempty"`
@@ -1253,6 +1254,9 @@ func renderPeersAtWidth(p *lsParams, peers []*peerEntry, stdout io.Writer, termi
 	for _, pe := range peers {
 		if pe.TeleportPaused != "" {
 			fmt.Fprintf(stdout, "  %s %s\n", shortAgentID(pe.AgentID, pe.ConvID), pe.TeleportPaused)
+		}
+		if pe.FederationPresence != nil {
+			fmt.Fprintf(stdout, "  %s %s home=%s current=%s\n", shortAgentID(pe.AgentID, pe.ConvID), pe.FederationPresence.State, pe.FederationPresence.HomeInstance, pe.FederationPresence.CurrentInstance)
 		}
 		if pe.Predecessor != nil {
 			fmt.Fprintf(stdout, "  %s predecessor: %s@%s\n", shortAgentID(pe.AgentID, pe.ConvID), pe.Predecessor.Agent, pe.Predecessor.Instance)

@@ -1624,14 +1624,38 @@ delivered. Selection failures include candidate reasons; missing or stale node
 metrics exclude a candidate. Automatic selection also needs peer-scoped
 `node.read` authority. Agent-visible candidate information follows that scope.
 
-The destination gets a fresh agent identity and inbox. Its continuation briefing
-includes the origin, predecessor, current instance, hop count and note. `agent ls`
-and `agent whoami` show its predecessor. The old inbox remains at the source;
-after a completed teleport, mail to the old address bounces with the destination
-address. Every receiving import, move or teleport starts with a short arrival briefing: operation and identity, receiver-selected cwd and reason, local Git state, source-reported path/branch/commit facts, and what was not transferred. Missing facts stay unknown. Local clones receive the same orientation, while a paused-backup return names the restored home identity. The briefing uses the startup context or inbox, never raw pane keystrokes.
+When both nodes advertise stable agent identity, move and teleport keep the
+`agent_id`; each arrival still remints the harness conversation ID. Clone keeps
+its existing fresh-ID behavior. Older peers fall back to fresh IDs, and the
+arrival briefing names which mode was used.
 
-Teleport does not forward mail or transfer permissions, credentials or
-uncommitted working-tree changes.
+The home record becomes an inactive **away** placeholder in its groups. Its
+memberships, ownership, permanent permissions, scheduled intent and inbox remain
+at home; they confer no authority on the visiting node. Ordinary visiting
+copies lose their local grants when they depart. An explicitly retained paused
+backup keeps its dormant local state until recovery or deletion. Returning with
+`teleport --home` goes directly home from any hop and restores the original home
+record with the new history. The receiver still controls admission and landing.
+
+A private, single-use continuation travels in the authenticated bundle. Trusted
+intermediate hosts can see it. Returning or recovering a paused backup invalidates
+that departure's continuation; every subsequent departure gets a new one. Live
+or unrelated ID collisions refuse, and explicitly retiring or deleting an away
+home record permanently refuses later return under that ID. Home notifies the
+first-hop visitor when reachable. Until location forwarding is available, the
+home placeholder and Recall action know only that first hop; a multi-hop return
+is accepted from any trusted host holding the valid continuation. Recall uses
+the existing peer move grants and can refuse if that first-hop copy has moved on.
+A superseded roaming copy retained as an independent clone gets a fresh ID.
+
+Every receiving import, move or teleport starts with a short factual arrival
+briefing: identity mode, receiver-selected cwd and reason, local Git state,
+source-reported facts, and what was not transferred. Missing facts stay unknown.
+The briefing uses startup context or inbox, never raw pane keystrokes.
+
+Mail forwarding is a separate feature. Credentials and uncommitted working-tree
+changes are not transferred. Permission carry remains an explicit departure
+opt-in with receiver-controlled admission; returning home preserves home grants.
 
 Automatic landing requires a group-scoped peer grant `agents.teleport.receive`
 and an applied node profile with `teleport_landing`. Its `group` and

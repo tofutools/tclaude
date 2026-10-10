@@ -40,6 +40,15 @@ var FederationIdentityColumns = []IdentityColumn{
 	{"model_proxy_worker_leases", "gateway", IdentityClose},
 	{"federation_identity_rotations", "old_instance", IdentityHistorical},
 	{"federation_identity_rotations", "new_instance", IdentityHistorical},
+	// Continuations pin the original host identities and proof-map keys. They
+	// retain those identities across rotation, just like bundle provenance;
+	// rewriting them would invalidate a returning agent's continuation.
+	{"agent_federation_presence", "home_instance", IdentityHistorical},
+	{"agent_federation_presence", "current_instance", IdentityHistorical},
+	{"agent_federation_presence", "current_peer", IdentityHistorical},
+	{"agent_federation_presence", "predecessor_instance", IdentityHistorical},
+	{"agent_federation_presence", "transfer_json", IdentityHistorical},
+	{"agent_federation_presence", "arrival_rollback_json", IdentityHistorical},
 	// Structured and embedded references also need an explicit rule. Frozen
 	// request bodies and origin provenance are never recursively rewritten.
 	{"human_messages", "group_name", IdentityHistorical},

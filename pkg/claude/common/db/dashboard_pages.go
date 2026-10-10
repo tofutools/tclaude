@@ -66,7 +66,7 @@ func ListRetiredAgentsPage(q string, offset, limit int) ([]*Agent, error) {
 	sql := `SELECT ` + retiredAgentCols + `
 		FROM agents a
 		LEFT JOIN conv_index ci ON ci.conv_id = a.current_conv_id
-		WHERE a.retired_at IS NOT NULL` + qClause + `
+		WHERE a.retired_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM agent_federation_presence p WHERE p.agent_id=a.agent_id AND p.state='away')` + qClause + `
 		ORDER BY a.retired_at DESC, a.agent_id`
 	if limit > 0 {
 		sql += ` LIMIT ? OFFSET ?`
@@ -96,7 +96,7 @@ func CountRetiredAgents(q string) (total, totalUnfiltered int, err error) {
 	if err != nil {
 		return 0, 0, err
 	}
-	if err = d.QueryRow(`SELECT COUNT(*) FROM agents WHERE retired_at IS NOT NULL`).Scan(&totalUnfiltered); err != nil {
+	if err = d.QueryRow(`SELECT COUNT(*) FROM agents WHERE retired_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM agent_federation_presence p WHERE p.agent_id=agents.agent_id AND p.state='away')`).Scan(&totalUnfiltered); err != nil {
 		return 0, 0, err
 	}
 	if q == "" {
@@ -105,7 +105,7 @@ func CountRetiredAgents(q string) (total, totalUnfiltered int, err error) {
 	qClause, args := retiredAgentQ(q)
 	sql := `SELECT COUNT(*) FROM agents a
 		LEFT JOIN conv_index ci ON ci.conv_id = a.current_conv_id
-		WHERE a.retired_at IS NOT NULL` + qClause
+		WHERE a.retired_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM agent_federation_presence p WHERE p.agent_id=a.agent_id AND p.state='away')` + qClause
 	if err = d.QueryRow(sql, args...).Scan(&total); err != nil {
 		return 0, 0, err
 	}

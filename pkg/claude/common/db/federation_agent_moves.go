@@ -22,6 +22,7 @@ type FederationMoveTransfer struct {
 }
 
 type FederationAgentMove struct {
+	Identity             *FederationIdentity     `json:"-"`
 	Transfer             *FederationMoveTransfer `json:"transfer,omitempty"`
 	Disposition          string                  `json:"disposition,omitempty"`
 	Cwd                  string                  `json:"cwd,omitempty"`
@@ -57,8 +58,9 @@ func InsertFederationAgentMove(m FederationAgentMove) error {
 	// SourceGroups are private persisted authorization metadata.
 	raw, err := json.Marshal(struct {
 		FederationAgentMove
-		Groups []int64 `json:"source_groups"`
-	}{m, m.SourceGroups})
+		Groups   []int64             `json:"source_groups"`
+		Identity *FederationIdentity `json:"identity,omitempty"`
+	}{m, m.SourceGroups, m.Identity})
 	if err != nil {
 		return err
 	}
@@ -76,13 +78,15 @@ func scanFederationAgentMove(row rowScanner) (*FederationAgentMove, error) {
 	}
 	var v struct {
 		FederationAgentMove
-		Groups []int64 `json:"source_groups"`
+		Groups   []int64             `json:"source_groups"`
+		Identity *FederationIdentity `json:"identity,omitempty"`
 	}
 	if err = json.Unmarshal([]byte(raw), &v); err != nil {
 		return nil, err
 	}
 	v.State = state
 	v.SourceGroups = v.Groups
+	v.FederationAgentMove.Identity = v.Identity
 	return &v.FederationAgentMove, nil
 }
 func GetFederationAgentMove(direction, peer, id string) (*FederationAgentMove, error) {
@@ -119,8 +123,9 @@ func TransitionFederationAgentMove(m FederationAgentMove, from string) (bool, er
 	}
 	raw, err := json.Marshal(struct {
 		FederationAgentMove
-		Groups []int64 `json:"source_groups"`
-	}{m, m.SourceGroups})
+		Groups   []int64             `json:"source_groups"`
+		Identity *FederationIdentity `json:"identity,omitempty"`
+	}{m, m.SourceGroups, m.Identity})
 	if err != nil {
 		return false, err
 	}

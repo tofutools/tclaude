@@ -53,13 +53,14 @@ func handleInfo(w http.ResponseWriter, r *http.Request) {
 // --- /v1/whoami ---
 
 type whoamiResp struct {
-	Predecessor  *db.FederationMoveLink `json:"predecessor,omitempty"`
-	IsHuman      bool                   `json:"is_human"`
-	AgentID      string                 `json:"agent_id,omitempty"` // stable actor key — the canonical identity
-	ConvID       string                 `json:"conv_id,omitempty"`  // live generation behind it (rotates)
-	Title        string                 `json:"title,omitempty"`
-	Groups       []string               `json:"groups,omitempty"`
-	ActiveGroups []string               `json:"active_groups,omitempty"` // current memberships eligible for an implicit spawn target
+	FederationPresence *db.AgentFederationPresence `json:"federation_presence,omitempty"`
+	Predecessor        *db.FederationMoveLink      `json:"predecessor,omitempty"`
+	IsHuman            bool                        `json:"is_human"`
+	AgentID            string                      `json:"agent_id,omitempty"` // stable actor key — the canonical identity
+	ConvID             string                      `json:"conv_id,omitempty"`  // live generation behind it (rotates)
+	Title              string                      `json:"title,omitempty"`
+	Groups             []string                    `json:"groups,omitempty"`
+	ActiveGroups       []string                    `json:"active_groups,omitempty"` // current memberships eligible for an implicit spawn target
 	// Phases lists the advisory process phase (JOH-242) of each group the
 	// caller is in that HAS a process — one "<group>: phase <n>/<m>: <name>"
 	// line per such group. Omitted when no group the caller is in has a
@@ -119,7 +120,8 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	agentID, _ := db.AgentIDForConv(p.ConvID)
-	writeJSON(w, http.StatusOK, whoamiResp{Predecessor: teleportPredecessor(agentID), AgentID: agentID, ConvID: p.ConvID, Title: title, Groups: gs, ActiveGroups: activeGroups, Phases: phases})
+	presence, _ := db.GetAgentFederationPresence(agentID)
+	writeJSON(w, http.StatusOK, whoamiResp{FederationPresence: presence, Predecessor: teleportPredecessor(agentID), AgentID: agentID, ConvID: p.ConvID, Title: title, Groups: gs, ActiveGroups: activeGroups, Phases: phases})
 }
 
 // --- /v1/lookup ---
@@ -158,8 +160,9 @@ func handleLookup(w http.ResponseWriter, r *http.Request) {
 // --- /v1/peers ---
 
 type peerEntry struct {
-	TeleportPaused string                 `json:"teleport_paused,omitempty"`
-	Predecessor    *db.FederationMoveLink `json:"predecessor,omitempty"`
+	FederationPresence *db.AgentFederationPresence `json:"federation_presence,omitempty"`
+	TeleportPaused     string                      `json:"teleport_paused,omitempty"`
+	Predecessor        *db.FederationMoveLink      `json:"predecessor,omitempty"`
 	// AgentID is the stable, rotation-immune actor key — the canonical
 	// way to reference an agent. The agent CLI leads with it; ConvID is
 	// the live generation behind it (which rotates on reincarnate/clone).
@@ -346,6 +349,11 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 	for conv, pe := range byConv {
 		state, _ := shared.stateFor(conv)
 		pe.State = peerStateFromAgentState(state)
+		pe.FederationPresence, _ = db.GetAgentFederationPresence(pe.AgentID)
+		if pe.FederationPresence != nil && pe.FederationPresence.State == "away" {
+			pe.Online = false
+			pe.State.Status = "away"
+		}
 		pe.Predecessor = teleportPredecessor(pe.AgentID)
 		pe.TeleportPaused = pausedTeleportDescription(pe.AgentID)
 	}

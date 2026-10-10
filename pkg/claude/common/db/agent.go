@@ -2148,6 +2148,15 @@ func (c *AgentDeletionCounts) Add(o AgentDeletionCounts) {
 // Idempotent: calling on a conv-id that doesn't exist returns
 // AgentDeletionCounts{} with no error.
 func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
+	return deleteAgentByConvID(convID, false)
+}
+
+// DeleteUnlaunchedAgentByConvID rolls back a newly created, provably
+// undispatched birth. A first stable arrival has no permanent tombstone.
+func DeleteUnlaunchedAgentByConvID(convID string) (AgentDeletionCounts, error) {
+	return deleteAgentByConvID(convID, true)
+}
+func deleteAgentByConvID(convID string, unlaunched bool) (AgentDeletionCounts, error) {
 	var c AgentDeletionCounts
 	if convID == "" {
 		return c, fmt.Errorf("convID is required")
@@ -2246,6 +2255,22 @@ func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
 		case err != nil:
 			return c, err
 		case current == convID:
+			if unlaunched {
+				p, err := scanFederationPresence(tx.QueryRow(`SELECT `+federationPresenceColumns+` FROM agent_federation_presence WHERE agent_id=?`, agentID))
+				if err != nil {
+					return c, err
+				}
+				if p != nil {
+					if p.State != "here" || p.ArrivalOffer == "" || p.ArrivalRollbackJSON != "" {
+						return c, errors.New("stable arrival cannot be deleted as an unlaunched birth")
+					}
+					if _, err := tx.Exec(`DELETE FROM agent_federation_presence WHERE agent_id=?`, agentID); err != nil {
+						return c, err
+					}
+				}
+			} else if err := terminalFederationPresenceTx(tx, agentID); err != nil {
+				return c, err
+			}
 			type actorStep struct {
 				stmt string
 				into *int64
@@ -3642,7 +3667,7 @@ func CancelAgentMessageNudge(id int64, targetAgentID string, now time.Time, reas
 		WHERE id = ? AND delivered_at IS NULL AND read_at IS NULL
 		  AND nudge_claimed_at IS NULL AND nudge_cancelled_at IS NULL
 		  AND NOT EXISTS (
-			SELECT 1 FROM agents WHERE agent_id = ? AND retired_at IS NULL)`,
+			SELECT 1 FROM agents WHERE agent_id = ? AND (retired_at IS NULL OR EXISTS (SELECT 1 FROM agent_federation_presence p WHERE p.agent_id=agents.agent_id AND p.state='away')))`,
 		dbTime(now), reason, id, targetAgentID)
 	if err != nil {
 		return false, err

@@ -204,6 +204,40 @@ func RecordFederationWorkerDefaults(agentID string, w *FederationWorkerDefaults)
 	_, e = d.Exec(`INSERT INTO federation_worker_defaults(agent_id,snapshot) VALUES(?,?)`, agentID, string(raw))
 	return e
 }
+
+// ReplaceFederationArrivalWorkerDefaults replaces a prior visit's snapshot only
+// after the stable identity has been reserved for this exact offer.
+func ReplaceFederationArrivalWorkerDefaults(agentID, offer string, w *FederationWorkerDefaults) error {
+	d, e := Open()
+	if e != nil {
+		return e
+	}
+	tx, e := d.Begin()
+	if e != nil {
+		return e
+	}
+	defer func() { _ = tx.Rollback() }()
+	var n int
+	if e = tx.QueryRow(`SELECT COUNT(*) FROM agent_federation_presence WHERE agent_id=? AND state='reserved' AND arrival_offer=?`, agentID, offer).Scan(&n); e != nil {
+		return e
+	}
+	if n != 1 {
+		return errors.New("stable arrival is not reserved")
+	}
+	if _, e = tx.Exec(`DELETE FROM federation_worker_defaults WHERE agent_id=?`, agentID); e != nil {
+		return e
+	}
+	if w != nil {
+		raw, err := json.Marshal(w)
+		if err != nil {
+			return err
+		}
+		if _, e = tx.Exec(`INSERT INTO federation_worker_defaults(agent_id,snapshot) VALUES(?,?)`, agentID, string(raw)); e != nil {
+			return e
+		}
+	}
+	return tx.Commit()
+}
 func GetFederationWorkerDefaults(agentID string) (*FederationWorkerDefaults, error) {
 	d, e := Open()
 	if e != nil {

@@ -719,6 +719,12 @@ func loadPermSources(convID string) permSources {
 // gate asks to fail closed if the override or group tier cannot be read, since
 // treating either as absent could expose a lower group/default allow.
 func loadPermSourcesWithReadPolicy(convID string, failOnTierReadError bool) (permSources, error) {
+	return loadPermSourcesForState(convID, failOnTierReadError, false)
+}
+
+// Only the pinned dormant backup renewal uses allowAway; ordinary caller gates
+// continue to reject inactive actors.
+func loadPermSourcesForState(convID string, failOnTierReadError, allowAway bool) (permSources, error) {
 	if convID == "" {
 		return permSources{}, nil
 	}
@@ -729,7 +735,7 @@ func loadPermSourcesWithReadPolicy(convID string, failOnTierReadError bool) (per
 		}
 		return permSources{}, nil
 	}
-	if state == db.AgentStateRetired {
+	if state == db.AgentStateRetired && (!allowAway || !db.AgentConvAway(convID)) {
 		return permSources{}, nil
 	}
 	out := permSources{

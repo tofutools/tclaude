@@ -1789,6 +1789,7 @@ type dashboardRouteConsumer struct {
 //   - true on a row with Role=="owner" and no descr → a pure owner
 //     who isn't a member (so the list stays comprehensive).
 type dashboardMember struct {
+	FederationPresence *db.AgentFederationPresence `json:"federation_presence,omitempty"`
 	// AgentID is the member's stable actor key — the canonical, rotation-immune
 	// ID the roster leads with; ConvID is the live generation behind it (still
 	// the internal drag-and-drop / routing key).
@@ -3475,26 +3476,32 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			links := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
 				withFreshestPRStates(freshPRStates).
 				withPRChecks(prChecks)
+			presence, _ := db.GetAgentFederationPresence(b.AgentID)
+			online := b.Online
+			if presence != nil && presence.State == "away" {
+				online = false
+			}
 			dg.Members = append(dg.Members, dashboardMember{
-				AgentID:           b.AgentID,
-				ConvID:            m.ConvID,
-				Title:             b.Title,
-				CreatedAt:         b.Created,
-				Role:              m.Role,
-				Descr:             m.Descr,
-				agentLocationView: b.Loc,
-				repoLinksView:     links,
-				taskRefView:       taskRefFor(b.AgentID),
-				tagsView:          tagsFor(b.AgentID),
-				Online:            b.Online,
-				Waking:            !b.Online && isConvWaking(m.ConvID),
-				Owner:             ownerSet[m.ConvID],
-				State:             b.State,
-				Notify:            notifyPrefs[m.ConvID],
-				NotifyEffective:   notifyEffective(m.ConvID),
-				RouteHealth:       routeHealth,
+				FederationPresence: presence,
+				AgentID:            b.AgentID,
+				ConvID:             m.ConvID,
+				Title:              b.Title,
+				CreatedAt:          b.Created,
+				Role:               m.Role,
+				Descr:              m.Descr,
+				agentLocationView:  b.Loc,
+				repoLinksView:      links,
+				taskRefView:        taskRefFor(b.AgentID),
+				tagsView:           tagsFor(b.AgentID),
+				Online:             online,
+				Waking:             !b.Online && isConvWaking(m.ConvID),
+				Owner:              ownerSet[m.ConvID],
+				State:              b.State,
+				Notify:             notifyPrefs[m.ConvID],
+				NotifyEffective:    notifyEffective(m.ConvID),
+				RouteHealth:        routeHealth,
 			})
-			if b.Online {
+			if online {
 				dg.Online++
 			}
 			// addAgent returns nil for a retired/superseded member (TCL-369):
@@ -3524,23 +3531,26 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			ownerLinks := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
 				withFreshestPRStates(freshPRStates).
 				withPRChecks(prChecks)
+			presence, _ := db.GetAgentFederationPresence(b.AgentID)
+			ownerOnline := b.Online && (presence == nil || presence.State != "away")
 			dg.Members = append(dg.Members, dashboardMember{
-				AgentID:           b.AgentID,
-				ConvID:            ownerConv,
-				Title:             b.Title,
-				CreatedAt:         b.Created,
-				Role:              "owner",
-				agentLocationView: b.Loc,
-				repoLinksView:     ownerLinks,
-				taskRefView:       taskRefFor(b.AgentID),
-				tagsView:          tagsFor(b.AgentID),
-				Online:            b.Online,
-				Waking:            !b.Online && isConvWaking(ownerConv),
-				Owner:             true,
-				State:             b.State,
-				Notify:            notifyPrefs[ownerConv],
-				NotifyEffective:   notifyEffective(ownerConv),
-				RouteHealth:       routeHealth,
+				AgentID:            b.AgentID,
+				ConvID:             ownerConv,
+				Title:              b.Title,
+				CreatedAt:          b.Created,
+				Role:               "owner",
+				agentLocationView:  b.Loc,
+				repoLinksView:      ownerLinks,
+				taskRefView:        taskRefFor(b.AgentID),
+				tagsView:           tagsFor(b.AgentID),
+				Online:             ownerOnline,
+				FederationPresence: presence,
+				Waking:             !b.Online && isConvWaking(ownerConv),
+				Owner:              true,
+				State:              b.State,
+				Notify:             notifyPrefs[ownerConv],
+				NotifyEffective:    notifyEffective(ownerConv),
+				RouteHealth:        routeHealth,
 			})
 			// Pure-owners are reachable via this group too — surface
 			// the group on the agent's row in the Agents view so

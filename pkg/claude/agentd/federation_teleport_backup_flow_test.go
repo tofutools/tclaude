@@ -37,9 +37,12 @@ func fedBackupPolicy(t *testing.T, recovery string) {
 	require.NoError(t, err)
 }
 func fedPausedBackup(t *testing.T, fh *fedHarness) (string, bundletransfer.Descriptor) {
+	return fedPausedBackupMode(t, fh, false)
+}
+func fedPausedBackupMode(t *testing.T, fh *fedHarness, stable bool) (string, bundletransfer.Descriptor) {
 	t.Helper()
 	aid := fedTeleportSource(t, fh)
-	require.NoError(t, db.PutFederationCatalog(fh.peer.id.ID(), string(mustJSON(t, proto.CatalogPayload{AgentMoves: true, AgentTeleports: 1, TeleportBackups: true, Groups: []proto.CatalogGroup{}})), time.Now()))
+	require.NoError(t, db.PutFederationCatalog(fh.peer.id.ID(), string(mustJSON(t, proto.CatalogPayload{StableAgentIdentity: stable, AgentMoves: true, AgentTeleports: 1, TeleportBackups: true, Groups: []proto.CatalogGroup{}})), time.Now()))
 	require.NoError(t, db.GrantAgentPermissionWithScope(moveSourceConv, agentd.PermSelfTeleport, `{"peer":["`+fh.peer.id.ID()+`"]}`, "test"))
 	rec := fedSelfTeleport(t, fh, map[string]any{"peer": "bob", "group": "receiver", "keep_paused_backup": true})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
@@ -52,14 +55,18 @@ func fedPausedBackup(t *testing.T, fh *fedHarness) (string, bundletransfer.Descr
 	d := out.Offer.D
 	require.True(t, d.Teleport.KeepPausedBackup)
 	require.Greater(t, d.Teleport.BackupRenewSeconds, 0)
-	fedMoveConfirm(t, fh, d, d.SHA256)
+	target := "agt_bobremote0000000000000000"
+	if stable {
+		target = aid
+	}
+	fedMoveConfirmTarget(t, fh, d, d.SHA256, target)
 	fedEventually(t, "source paused", func() bool {
 		m, _ := db.GetFederationAgentMove("out", fh.peer.id.ID(), d.ID)
 		return m != nil && m.State == "paused"
 	})
 	a, err := db.GetAgent(aid)
 	require.NoError(t, err)
-	require.True(t, a.Active(), "pause must retain identity and grants")
+	require.Equal(t, !stable, a.Active(), "stable paused identity is dormant")
 	return aid, d
 }
 func fedLeaseControl(t *testing.T, fh *fedHarness, d bundletransfer.Descriptor, op string, seq int64, extra map[string]any) {
@@ -199,14 +206,17 @@ func TestFederation_TeleportBackupOriginRestartWaitsFullOnlineWindow(t *testing.
 }
 
 func fedLandedBackup(t *testing.T, fh *fedHarness) (bundletransfer.Descriptor, *db.Agent) {
+	return fedLandedBackupIdentity(t, fh, nil)
+}
+func fedLandedBackupIdentity(t *testing.T, fh *fedHarness, identity *db.FederationIdentity) (bundletransfer.Descriptor, *db.Agent) {
 	t.Helper()
 	fh.f.HaveGroup("receiver")
 	fedReceiveAgents(t, fh, "receiver")
-	d := fedIncomingTeleport(t, fh, "local", func(in *bundletransfer.TeleportIntent) {
+	d := fedIncomingTeleportIdentity(t, fh, "local", func(in *bundletransfer.TeleportIntent) {
 		in.Clone = false
 		in.KeepPausedBackup = true
 		in.BackupRenewSeconds = 1
-	})
+	}, identity)
 	require.Equal(t, proto.AckAccepted, fedAckFor(t, fh.peer, d.ID).Status)
 	rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/bundle-offers/"+d.ID+"/import", map[string]any{"cwd": testutil.CanonicalTempDir(t), "apply": true})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
@@ -431,4 +441,119 @@ func TestFederation_TeleportBackupHomeWithoutNoteIncludesTranscriptTail(t *testi
 	l, err := db.GetFederationTeleportLease("in", fh.peer.id.ID(), d.ID)
 	require.NoError(t, err)
 	require.Contains(t, l.Findings, "Transcript tail")
+}
+
+func TestFederation_TeleportStableBackupRenewsAndRevocationStillWins(t *testing.T) {
+	fh := newFedHarness(t)
+	fedBackupPolicy(t, "manual")
+	aid, d := fedPausedBackupMode(t, fh, true)
+	fedLeaseControl(t, fh, d, "renew", 1, map[string]any{"agent": aid})
+	fedEventually(t, "stable dormant backup renews", func() bool {
+		l, _ := db.GetFederationTeleportLease("out", fh.peer.id.ID(), d.ID)
+		return l != nil && l.Sequence == 1
+	})
+	_, err := db.RevokeAgentPermission(moveSourceConv, agentd.PermSelfTeleport)
+	require.NoError(t, err)
+	fedLeaseControl(t, fh, d, "renew", 2, map[string]any{"agent": aid})
+	fedEventuallyWithin(t, "revocation expires backup", 6*time.Second, func() bool {
+		l, _ := db.GetFederationTeleportLease("out", fh.peer.id.ID(), d.ID)
+		return l != nil && l.State == "recovery_needed" && l.Sequence == 1
+	})
+}
+
+func TestFederation_TeleportStableBackupReturnKeepsHomeAndVisitReusable(t *testing.T) {
+	fh := newFedHarness(t)
+	aid, d := fedPausedBackupMode(t, fh, true)
+	report := proto.NewEnvelopeID()
+	fedLeaseControl(t, fh, d, "return", 0, map[string]any{"agent": aid, "return_id": report, "findings": "Done.", "return_proof": "visit-proof"})
+	fedEventually(t, "stable home backup restored", func() bool {
+		l, _ := db.GetFederationTeleportLease("out", fh.peer.id.ID(), d.ID)
+		return l != nil && l.State == "recovered"
+	})
+	a, e := db.GetAgent(aid)
+	require.NoError(t, e)
+	require.True(t, a.Active())
+	require.Equal(t, moveSourceConv, a.CurrentConvID)
+	p, e := db.GetAgentFederationPresence(aid)
+	require.NoError(t, e)
+	require.Equal(t, "here", p.State)
+	require.Equal(t, "visit-proof", p.Transfer.Proofs[fh.peer.id.ID()])
+}
+func TestFederation_TeleportStableVisitorReportLeavesReusableContinuation(t *testing.T) {
+	fh := newFedHarness(t)
+	identity := db.FederationIdentity{Agent: "agt_bobremote0000000000000000", Home: fh.peer.id.ID(), Hops: 1, Proofs: map[string]string{fh.peer.id.ID(): "home-proof"}}
+	d, a := fedLandedBackupIdentity(t, fh, &identity)
+	rec := testharness.Serve(fh.f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/teleport/report", map[string]any{"findings": "Done."}), a.CurrentConvID))
+	require.Equal(t, 202, rec.Code, rec.Body.String())
+	fedEventually(t, "visitor stopped with continuation", func() bool {
+		l, _ := db.GetFederationTeleportLease("in", fh.peer.id.ID(), d.ID)
+		return l != nil && l.State == "stopped"
+	})
+	p, e := db.GetAgentFederationPresence(a.AgentID)
+	require.NoError(t, e)
+	require.Equal(t, "away", p.State)
+	proof := p.Transfer.Proofs[fh.peer.agentdID]
+	require.NotEmpty(t, proof)
+	fedEventually(t, "return carries private continuation", func() bool {
+		for _, env := range fh.peer.envelopes(proto.KindTeleportLease) {
+			var f struct {
+				Op    string `json:"op"`
+				Proof string `json:"return_proof"`
+			}
+			if env.DecodePayload(&f) == nil && f.Op == "return" && f.Proof == proof {
+				return true
+			}
+		}
+		return false
+	})
+	_, e = db.ReserveFederationIdentity(p.Transfer, fh.peer.agentdID, fh.peer.id.ID(), "second-visit")
+	require.NoError(t, e)
+}
+
+func TestFederation_TeleportStableSupersededVisitorRetriesContinuation(t *testing.T) {
+	fh := newFedHarness(t)
+	identity := db.FederationIdentity{Agent: "agt_bobremote0000000000000000", Home: fh.peer.id.ID(), Hops: 1, Proofs: map[string]string{fh.peer.id.ID(): "home-proof"}}
+	d, a := fedLandedBackupIdentity(t, fh, &identity)
+	body := map[string]any{"op": "superseded", "offer": d.ID, "agent": a.AgentID, "epoch": 2, "policy": "stop"}
+	env := fh.peer.envelope(proto.KindTeleportLease, proto.Endpoint{}, body)
+	env.From.Agent = ""
+	fh.peer.send(env)
+	fedEventually(t, "visitor superseded", func() bool {
+		l, _ := db.GetFederationTeleportLease("in", fh.peer.id.ID(), d.ID)
+		return l != nil && l.State == "superseded"
+	})
+	p, e := db.GetAgentFederationPresence(a.AgentID)
+	require.NoError(t, e)
+	require.Equal(t, "away", p.State)
+	proof := p.Transfer.Proofs[fh.peer.agentdID]
+	require.NotEmpty(t, proof)
+	fedEventually(t, "superseded continuation delivered", func() bool {
+		for _, env := range fh.peer.envelopes(proto.KindTeleportLease) {
+			var f struct {
+				Op    string `json:"op"`
+				Proof string `json:"return_proof"`
+			}
+			if env.DecodePayload(&f) == nil && f.Op == "departed" && f.Proof == proof {
+				return true
+			}
+		}
+		return false
+	})
+	_, e = db.ReserveFederationIdentity(p.Transfer, fh.peer.agentdID, fh.peer.id.ID(), "second-visit")
+	require.NoError(t, e)
+}
+
+func TestFederation_TeleportStableLateReturnCarriesContinuation(t *testing.T) {
+	fh := newFedHarness(t)
+	fedBackupPolicy(t, "auto")
+	aid, d := fedPausedBackupMode(t, fh, true)
+	fedEventuallyWithin(t, "home recovered before late return", 6*time.Second, func() bool {
+		l, _ := db.GetFederationTeleportLease("out", fh.peer.id.ID(), d.ID)
+		return l != nil && l.State == "recovered"
+	})
+	fedLeaseControl(t, fh, d, "return", 0, map[string]any{"agent": aid, "return_id": proto.NewEnvelopeID(), "findings": "Late report.", "return_proof": "late-visit-proof"})
+	fedEventually(t, "late continuation retained", func() bool {
+		p, _ := db.GetAgentFederationPresence(aid)
+		return p != nil && p.State == "here" && p.Transfer.Proofs[fh.peer.id.ID()] == "late-visit-proof"
+	})
 }

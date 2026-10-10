@@ -147,6 +147,9 @@ func (rt *fedRuntime) acceptAgentMoveConfirmation(p *db.FederationPeer, env *pro
 	if err != nil || m == nil || m.SHA256 != c.SHA256 || m.SourceAgent != c.SourceAgent || m.SourceConv != c.SourceConv {
 		return
 	}
+	if m.Identity != nil && c.TargetAgent != m.SourceAgent {
+		return
+	}
 	if m.State == "awaiting_confirmation" && m.ExpiresAt.After(time.Now()) {
 		if c.ObservedAt.IsZero() || time.Since(c.ObservedAt) > 5*time.Minute || c.ObservedAt.After(time.Now().Add(5*time.Second)) {
 			return
@@ -238,7 +241,25 @@ func retireConfirmedAgentMove(m db.FederationAgentMove) {
 	// A restart after the retire commit resumes teardown, rather than demoting
 	// twice or losing the moved-address tombstone.
 	if a.Active() {
-		_, _, err = retireAgentConvGuardedWithGeneration(m.SourceConv, "system:federation-move", "moved to "+m.Peer+"/"+m.TargetAgent, false, func() error { return moveAuthority(m) }, true)
+		if m.Identity != nil && m.Identity.Home == arrivalNode() {
+			cronAuthorityMu.Lock()
+			lock := resumeLaunchLock(m.SourceConv)
+			lock.Lock()
+			err = moveAuthority(m)
+			if err == nil {
+				err = db.DepartFederationIdentity(m.SourceConv, arrivalNode(), m.Peer, m.ID, *m.Identity)
+			}
+			lock.Unlock()
+			cronAuthorityMu.Unlock()
+		} else {
+			var transition func(string, string, string) (db.RetireAgentAuthorizationOutcome, error)
+			if m.Identity != nil {
+				transition = func(conv, _, _ string) (db.RetireAgentAuthorizationOutcome, error) {
+					return db.RetireFederationVisitor(conv, arrivalNode(), m.Peer, m.ID, *m.Identity)
+				}
+			}
+			_, _, err = retireAgentConvWithTransition(m.SourceConv, "system:federation-move", "moved to "+m.Peer+"/"+m.TargetAgent, false, func() error { return moveAuthority(m) }, true, transition)
+		}
 		if err != nil {
 			m.LastError = err.Error()
 			m.State = "blocked"

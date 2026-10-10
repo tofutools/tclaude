@@ -515,7 +515,7 @@ func buildFederationCatalog(peer string, status ...*statusSnapshot) (*proto.Cata
 			delete(caps[group.ID], proto.CapAttachments)
 		}
 	}
-	cat := &proto.CatalogPayload{AgentBundleChunks: true, RequesterPays: 1, TeleportBackups: true, AgentTeleports: 1, AgentMoves: true, DirectAgentMoves: true, JobOutput: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
+	cat := &proto.CatalogPayload{AgentBundleChunks: true, RequesterPays: 1, TeleportBackups: true, AgentTeleports: 1, AgentMoves: true, StableAgentIdentity: true, DirectAgentMoves: true, JobOutput: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
 	if fedPeerReadsNode(peer) {
 		cat.Node = localNodeMetadata()
 	}
@@ -542,15 +542,20 @@ func buildFederationCatalog(peer string, status ...*statusSnapshot) (*proto.Cata
 				if agentID == "" {
 					continue
 				}
-				if a, _ := db.GetAgent(agentID); a == nil || !a.Active() {
+				if a, _ := db.GetAgent(agentID); a == nil || !a.Active() && !db.AgentAway(agentID) {
 					continue
 				}
+				presence, _ := db.GetAgentFederationPresence(agentID)
 				cm := proto.CatalogMember{Agent: agentID, Name: agent.TitleFor(m.ConvID), Role: m.Role}
 				if g.HasCap(proto.CapPresence) {
+					cm.FederationPresence = catalogFederationPresence(presence)
 					cm.Presence = "offline"
 					if isConvOnline(m.ConvID) {
 						cm.Presence = "online"
 					}
+				}
+				if g.HasCap(proto.CapPresence) && presence != nil && presence.State == "away" {
+					cm.Presence = "away"
 				}
 				g.Members = append(g.Members, cm)
 			}
@@ -743,6 +748,8 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		go func() { defer rt.wg.Done(); rt.serveBundleFetch(peer, env) }()
 	case proto.KindBundleAnswer:
 		rt.acceptBundleAnswer(peer, env)
+	case proto.KindAgentPresence:
+		rt.acceptAgentPresence(peer, env)
 	case teleportLeaseKind:
 		rt.acceptTeleportLease(peer, env)
 	case proto.KindAgentMoveConfirm:
