@@ -9,6 +9,11 @@ const view = {
 
 const invite = (hub) => `board1_${Buffer.from(JSON.stringify({ hub, board: 'brd_1', secret: 's', key: 'k' })).toString('base64url')}`;
 
+const ITEMS = [
+  { id: 'itm_1', version: 'v2bbbbbbbbbbbb', name: 'review roles', kind: 'config', publisher: 'inst_forge', republisher: 'inst_forge', digest: 'ab'.repeat(32), bytes: 2048, latest_version: 'v2bbbbbbbbbbbb', pinned_version: 'v1aaaaaaaaaaaa', update_available: true },
+  { id: 'itm_bad', version: 'vx', name: 'Invalid item metadata', invalid: true, error: 'publisher metadata could not be verified' },
+];
+
 function boardActions(log, { joinError = null } = {}) {
   let boards = [{ id: 'brd_ops', name: 'ops notes', role: 'owner', epoch: 2, frozen: false, quota_bytes: 256 << 20, max_members: 100, max_versions: 10 }];
   return {
@@ -27,6 +32,16 @@ function boardActions(log, { joinError = null } = {}) {
     createBoardInvite: async (b, role, ttl) => { log.push(['invite', b, role, ttl]); return { token: 'board1_SECRET', token_id: 'tid_9', expires_at: '2026-10-10T15:00:00Z' }; },
     revokeBoardInvite: async (b, id) => { log.push(['revoke', b, id]); return true; },
     rotateBoardKey: async (b) => { log.push(['rotate', b]); return { epoch: 3 }; },
+    boardItems: async (b) => { log.push(['items', b]); return b === 'brd_ops' ? ITEMS : []; },
+    boardItemVersions: async (b, i) => { log.push(['versions', b, i]); return [{ ...ITEMS[0], version: 'v2bbbbbbbbbbbb' }, { ...ITEMS[0], version: 'v1aaaaaaaaaaaa' }]; },
+    publishBoardItem: async (b, body) => { log.push(['publish', b, body]); return { board: b, item: 'itm_2', version: 'v1', blob: 'x', signature: 'sig' }; },
+    pinBoardItem: async (b, i, v) => { log.push(['pin', b, i, v]); return true; },
+    fetchBoardItem: async (b, i, v) => { log.push(['fetch', b, i, v]); return { state: 'ready', version: v }; },
+    boardItemContents: async () => ({ type: 'config', entries: [{ path: 'roles/reviewer.json', size: 120, kind: 'json' }] }),
+    boardItemEntry: async (b, i, v, path) => { log.push(['entry', path]); return { kind: 'json', size: 20, text: '{"name":"<b>reviewer</b>"}', truncated: false }; },
+    downloadBoardItem: async (b, i, v) => { log.push(['download', b, i, v]); },
+    previewBoardItem: async (b, i, v, c) => { log.push(['preview', c]); return { changes: [{ item: 'roles/reviewer', action: 'replace', security: true }, { item: 'roles/writer', action: 'create' }], unresolved: [], applied: [], preview_token: `tok${log.length}` }; },
+    importBoardItem: async (b, i, v, tok, c) => { log.push(['import', b, i, v, tok, c]); return { applied: ['roles/writer'] }; },
   };
 }
 
@@ -147,11 +162,78 @@ test('the board client sends the PR A routes', async (t) => {
   await a.setBoardMember('brd', 'inst_f', 'publisher');
   await a.rotateBoardKey('brd');
   await a.patchHubBoard('brd', { frozen: true });
+  await a.publishBoardItem('brd', { name: 'n', only: ['roles'] });
+  await a.fetchBoardItem('brd', 'itm', 'v1');
+  await a.boardItemEntry('brd', 'itm', 'v1', 'roles/x.json', 0, 100);
+  await a.previewBoardItem('brd', 'itm', 'v1', { skip: ['roles/y'] });
+  await a.importBoardItem('brd', 'itm', 'v1', 'tok', { skip: ['roles/y'] });
+  await a.pinBoardItem('brd', 'itm', 'v1');
   assert.deepEqual(calls.slice(2), [
     ['POST', '/api/federation/boards/join', { token: 'board1_x' }],
     ['POST', '/api/federation/boards/brd%201/invites', { role: 'reader', ttl_seconds: 3600 }],
     ['PUT', '/api/federation/boards/brd/members/inst_f', { role: 'publisher' }],
     ['POST', '/api/federation/boards/brd/rotate-key', {}],
     ['PATCH', '/api/federation/hub/boards/brd', { frozen: true }],
+    ['POST', '/api/federation/boards/brd/items', { name: 'n', only: ['roles'] }],
+    ['POST', '/api/federation/boards/brd/items/itm/versions/v1/fetch', {}],
+    ['GET', '/api/federation/boards/brd/items/itm/versions/v1/contents?path=roles%2Fx.json&offset=0&max_bytes=100', null],
+    ['POST', '/api/federation/boards/brd/items/itm/versions/v1/preview', { skip: ['roles/y'] }],
+    ['POST', '/api/federation/boards/brd/items/itm/versions/v1/import', { skip: ['roles/y'], preview_token: 'tok' }],
+    ['PUT', '/api/federation/boards/brd/items/itm/pin', { version: 'v1' }],
   ]);
+});
+
+test('shared config: open verifies and shows text, import previews then applies with the token; invalid rows stay inert', async (t) => {
+  const s = await mount(t);
+  await s.click(s.q('[data-board-id="brd_ops"] [data-board="open"]'));
+  const list = s.q('#fleet-board-item-list');
+  assert.match(list.textContent, /review roles.*update.*kept v1aaaaaaaa.*forge/);
+  const bad = s.q('[data-item-id="itm_bad"]');
+  assert.match(bad.textContent, /publisher metadata could not be verified.*not importable/);
+  assert.equal(bad.querySelector('button'), null, 'no fetch or import on an invalid row');
+  await s.click(s.q('[data-item-id="itm_1"] [data-item-act="open"]'));
+  assert.deepEqual(s.log.find((l) => l[0] === 'fetch'), ['fetch', 'brd_ops', 'itm_1', 'v2bbbbbbbbbbbb']);
+  assert.match(s.q('#fleet-bundle-inspect-title').textContent, /review roles \(version v2bbbbbbbb\)/);
+  assert.match(s.q('#fleet-bundle-inspect').textContent, /posted by forge · sha256 abab/);
+  await s.click(s.q('#fleet-bundle-entries [data-path="roles/reviewer.json"]'));
+  assert.match(s.q('#fleet-bundle-text').textContent, /<b>reviewer<\/b>/, 'shown as text');
+  assert.equal(s.q('#fleet-bundle-text b'), null);
+  assert.equal([...s.q('#fleet-bundle-inspect').querySelectorAll('button')].some((b) => /Decline/.test(b.textContent)), false);
+  await s.click(s.q('#fleet-bundle-import'));
+  assert.equal(s.q('#fleet-board-import-apply').disabled, true, 'a conflict needs overwrite or untick');
+  const box = s.q('[data-item="roles/reviewer"] input');
+  box.checked = false;
+  await s.harness.act(() => s.harness.fireEvent(box, 'change'));
+  assert.equal(s.q('#fleet-board-import-apply').disabled, true, 'changed choices need a fresh preview');
+  await s.click(s.q('#fleet-board-import-preview'));
+  assert.deepEqual(s.log.filter((l) => l[0] === 'preview').at(-1), ['preview', { skip: ['roles/reviewer'] }]);
+  await s.click(s.q('#fleet-board-import-apply'));
+  assert.match(s.confirms.at(-1).body, /Applies 1 item from review roles \(board ops notes, posted by forge\).*1 new/);
+  const imp = s.log.find((l) => l[0] === 'import');
+  assert.deepEqual(imp.slice(1, 4), ['brd_ops', 'itm_1', 'v2bbbbbbbbbbbb']);
+  assert.match(imp[4], /^tok/); assert.deepEqual(imp[5], { skip: ['roles/reviewer'] });
+  assert.match(s.toasts.at(-1)[0], /Imported 1 items from review roles/);
+});
+
+test('posting config: sections or named items, new versions carry the parent; versions can be kept', async (t) => {
+  const s = await mount(t);
+  await s.click(s.q('[data-board-id="brd_ops"] [data-board="open"]'));
+  await s.click(s.q('#fleet-board-post'));
+  assert.equal(s.q('#fleet-board-publish-post').disabled, true);
+  await s.type(s.q('#fleet-board-publish-name'), 'team roles');
+  const roles = s.q('#fleet-board-publish [data-section="roles"]');
+  roles.checked = true;
+  await s.harness.act(() => s.harness.fireEvent(roles, 'change'));
+  await s.click(s.q('#fleet-board-publish-post'));
+  assert.match(s.confirms.at(-1).body, /Shares roles from this node's config with every member of ops notes.*nothing changes on their nodes until they do/);
+  assert.deepEqual(s.log.find((l) => l[0] === 'publish'), ['publish', 'brd_ops', { name: 'team roles', only: ['roles'] }]);
+  await s.click(s.q('[data-item-id="itm_1"] [data-item-act="update"]'));
+  await s.type(s.q('#fleet-board-publish-only'), 'roles/reviewer, profiles/fast');
+  await s.click(s.q('#fleet-board-publish-post'));
+  assert.deepEqual(s.log.filter((l) => l[0] === 'publish').at(-1), ['publish', 'brd_ops', { name: 'review roles', only: ['roles/reviewer', 'profiles/fast'], item: 'itm_1', parent: 'v2bbbbbbbbbbbb' }]);
+  await s.click(s.q('[data-item-id="itm_1"] [data-item-act="versions"]'));
+  assert.equal(s.q('[data-version="v1aaaaaaaaaaaa"] [data-version-act="pin"]'), null, 'the kept version is marked, not offered');
+  await s.click(s.q('[data-version="v2bbbbbbbbbbbb"] [data-version-act="pin"]'));
+  assert.match(s.confirms.at(-1).body, /It is not imported/);
+  assert.deepEqual(s.log.find((l) => l[0] === 'pin'), ['pin', 'brd_ops', 'itm_1', 'v2bbbbbbbbbbbb']);
 });

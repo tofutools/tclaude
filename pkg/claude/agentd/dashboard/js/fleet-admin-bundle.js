@@ -36,7 +36,9 @@ export function entryText(kind, text, complete) {
 // BundleInspectDialog fetches and verifies an incoming offer's payload on
 // this node, lists its entries and shows any of them as text, so the operator
 // can read what a peer sent before downloading or importing it.
-export function BundleInspectDialog({ offer, label, actions, toast, onImport, onDecline, onClose }) {
+// title and note replace the offer wording for other verified bundles (board
+// items); without onDecline there is no Decline button.
+export function BundleInspectDialog({ offer, label, actions, toast, onImport, onDecline, onClose, title = '', note = '' }) {
   const peer = label(offer.peer);
   const [entries, setEntries] = useState(null);
   const [open, setOpen] = useState(null);
@@ -80,8 +82,8 @@ export function BundleInspectDialog({ offer, label, actions, toast, onImport, on
   const list = Array.isArray(entries) ? entries : [];
   const shown = useMemo(() => (open && open.kind !== 'binary' ? entryText(open.kind, open.raw, !open.truncated) : ''), [open]);
   return html`<${Overlay} id="fleet-bundle-inspect" labelledby="fleet-bundle-inspect-title" onClose=${onClose} blocked=${busy}>
-    <h3 id="fleet-bundle-inspect-title">Inspect ${peer}'s ${offer.offer?.type || 'bundle'} offer</h3>
-    <div class="muted">${offer.offer?.summary || ''} · ${size(offer.offer?.bytes)} · fetched and verified on this node; nothing is imported until you apply it.</div>
+    <h3 id="fleet-bundle-inspect-title">${title || `Inspect ${peer}'s ${offer.offer?.type || 'bundle'} offer`}</h3>
+    <div class="muted">${offer.offer?.summary || ''} · ${size(offer.offer?.bytes)} · ${note || 'fetched and verified on this node; nothing is imported until you apply it.'}</div>
     ${entries?.error ? html`<div class="fa-danger" role="alert">${entries.error}</div>`
       : entries == null ? html`<div class="muted">Fetching and verifying…</div>`
       : !list.length ? html`<div class="muted">The bundle lists no entries.</div>`
@@ -101,7 +103,7 @@ export function BundleInspectDialog({ offer, label, actions, toast, onImport, on
     <div class="modal-buttons">
       <button type="button" id="fleet-bundle-download" disabled=${!Array.isArray(entries)} onClick=${download}>Download</button>
       <span class="spacer"></span>
-      <button type="button" onClick=${onDecline}>Decline…</button>
+      ${onDecline && html`<button type="button" onClick=${onDecline}>Decline…</button>`}
       <button type="button" class="primary" id="fleet-bundle-import" onClick=${onImport}>Import…</button>
       <button type="button" onClick=${onClose}>Close</button>
     </div>

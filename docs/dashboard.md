@@ -760,7 +760,20 @@ and its limits. Open a board to see its members. An owner can also invite
 someone who can read or post (the invite is shown once, with **cancel
 invite…**), change members' roles, remove members, and **Change key…** so that
 members removed earlier cannot read anything posted afterwards. **Leave…**
-ends this node's membership. The hub decides who is a member: a dishonest hub
+ends this node's membership.
+
+An open board also lists its **shared config**: signed, versioned roles,
+profiles, sandbox profiles, templates and process templates its members
+posted. **Open…** fetches and verifies a version on this node and shows its
+files as text (or **Download**); **Import…** previews what would change in
+this node's config — new, overwritten, security-relevant — and applies only
+what you confirm, with any values it needs. Nothing on a board is applied
+automatically. **Versions…** lists older versions and **Keep…** pins one (the
+list then flags newer ones as *update*). Members who can post use
+**Post config…** (whole sections, or named items such as `roles/reviewer`)
+and **New version…**; anything that looks like a credential is refused. An
+item whose signed details cannot be verified shows the error and cannot be
+opened or imported. The hub decides who is a member: a dishonest hub
 operator could block a board or keep a removed member getting new posts, but
 cannot read anything or fake a post, so use a hub you trust. Hub admins
 holding `hub.boards.manage` see **Boards** on the Hub page to freeze, limit
