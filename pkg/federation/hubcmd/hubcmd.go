@@ -90,12 +90,12 @@ type serveParams struct {
 	ConnectionIdle         time.Duration `long:"connection-idle" default:"90s" help:"Instance control connection idle timeout"`
 	StreamWait             time.Duration `long:"stream-wait" default:"30s" help:"How long a stream waits for its peer"`
 	HelloTimeout           time.Duration `long:"hello-timeout" default:"10s" help:"Authentication handshake timeout"`
-	FramesPerMinute        int           `long:"frames-per-minute" default:"120" help:"Per-instance send rate limit (frames)"`
-	BytesPerMinute         int           `long:"bytes-per-minute" default:"8388608" help:"Per-instance send rate limit (bytes)"`
+	FramesPerMinute        int           `long:"frames-per-minute" default:"600" help:"Per-instance send rate limit (frames)"`
+	BytesPerMinute         int           `long:"bytes-per-minute" default:"104857600" help:"Per-instance send rate limit (bytes)"`
 	IdentityRotationWindow time.Duration `long:"identity-rotation-window" default:"10m" help:"Detection window before signed key succession is admitted"`
 	PolicyRefresh          time.Duration `long:"policy-refresh" default:"15s" help:"How often admin edits are re-read"`
 	MaxStreams             int           `long:"max-streams" default:"16" help:"Per-instance limit on concurrent relayed route streams"`
-	StreamBytes            int           `long:"stream-bytes-per-second" default:"1048576" help:"Per-instance relayed stream bandwidth (bytes/second)"`
+	StreamBytes            int           `long:"stream-bytes-per-second" default:"10485760" help:"Per-instance relayed stream bandwidth (bytes/second)"`
 	StreamIdle             time.Duration `long:"stream-idle" default:"90s" help:"How long a relayed route stream may sit idle, or blocked on a receiver that is not reading, before it is closed"`
 }
 

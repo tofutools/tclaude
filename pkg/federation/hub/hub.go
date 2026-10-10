@@ -72,10 +72,10 @@ func (c *Config) defaults() {
 		c.IdentityRotationWindow = 10 * time.Minute
 	}
 	if c.FramesPerMinute <= 0 {
-		c.FramesPerMinute = 120
+		c.FramesPerMinute = 600
 	}
 	if c.BytesPerMinute <= 0 {
-		c.BytesPerMinute = 8 << 20
+		c.BytesPerMinute = 100 << 20
 	}
 	if c.PolicyRefresh <= 0 {
 		c.PolicyRefresh = 15 * time.Second
@@ -87,7 +87,7 @@ func (c *Config) defaults() {
 		c.MaxStreams = 16
 	}
 	if c.StreamBytesPerSecond <= 0 {
-		c.StreamBytesPerSecond = 1 << 20
+		c.StreamBytesPerSecond = 10 << 20
 	}
 	if c.StreamWait <= 0 {
 		c.StreamWait = 30 * time.Second

@@ -111,7 +111,7 @@ tclaude-hub revoke inst_…                   # drop it (live within ~15s)
 Instances see each other only if they share a **space**. Admin commands edit
 the database directly. A running hub picks up changes at its next policy
 refresh (`--policy-refresh`, default 15s). Per-instance send limits are
-`--frames-per-minute` (default 120) and `--bytes-per-minute` (default 8 MiB).
+`--frames-per-minute` (default 600) and `--bytes-per-minute` (default 100 MiB).
 `--open` admits anyone who proves key possession and is for development only.
 
 ## Joining
@@ -676,7 +676,7 @@ an ephemeral X25519 key travel in sealed control envelopes. The two
 instances derive per-direction ChaCha20-Poly1305 keys, so the hub relays
 ciphertext it cannot read, and a truncated stream is detected, not mistaken
 for a clean end. The hub limits each instance to 16 concurrent streams and
-1 MiB/s by default (`tclaude-hub serve --max-streams`,
+10 MiB/s by default (`tclaude-hub serve --max-streams`,
 `--stream-bytes-per-second`).
 
 Remote route connections are [flow-controlled](group-routes.md#flow-control)
@@ -874,7 +874,7 @@ is by inspecting the caller's process tree.
   sender that outruns the hub's bandwidth for longer resets its
   connection.
 - Each remote route connection costs one sealed control frame from each
-  instance against the hub's per-instance frame budget (120 a minute by
+  instance against the hub's per-instance frame budget (600 a minute by
   default, shared with mail). A peer accepts at most 240 opens a minute.
 - Mirror routes cannot be shared onward to another peer.
 - Attachments ride inline and are capped at 512 KiB per message; operator
@@ -3138,6 +3138,10 @@ tclaude federation hub identity revoke-old --instance inst_OLD --fingerprint FP 
 tclaude federation hub health
 tclaude federation hub logs tail --max-entries 100
 ```
+
+Built-in hub rate limits are 600 frames/minute, 100 MiB/minute of sent data,
+and 10 MiB/second of relayed stream bandwidth per instance. Existing explicit
+DB settings are preserved when upgrading.
 
 Settings precedence is **built-in defaults < serve flags < persisted hub DB
 settings**, independently per field. Startup logs report each DB override with
