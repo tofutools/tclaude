@@ -773,9 +773,20 @@ test('a fused node scope labels panes by node and keeps unticked nodes\' panes o
   assert.ok(tabs().find((tab) => tab.textContent.includes('qa-1')).classList.contains('scope-hidden'), 'lab is not ticked');
   assert.ok(host.querySelector('.mux-pane.active:not(.scope-hidden)'), 'the active pane is on a ticked node');
   assert.match(host.querySelector('.mux-pane.active .mux-pane-header').textContent, /forge|desk/);
-  await harness.act(() => { skynetState.setFused(['inst_lab', 'inst_forge']); });
+  // Keyboard reorder steps over hidden tabs: desk's tab passes lab (hidden)
+  // and forge in one press.
+  const deskTab = tabs().find((tab) => tab.textContent.includes('builder-1'));
+  await harness.act(() => harness.fireEvent(deskTab, 'keydown', { key: 'ArrowRight', altKey: true, shiftKey: true }));
+  assert.deepEqual(tabs().filter((tab) => !tab.classList.contains('scope-hidden')).map((tab) => tab.querySelector('.mux-tab-label').textContent),
+    ['reviewer-2 @ forge', 'builder-1']);
+  // Unticking the active pane's node hands over quietly: the dashboard stays
+  // on the tab the operator is on.
+  harness.document.querySelector('nav [data-tab="groups"]').click();
+  const activeLabel = host.querySelector('.mux-pane.active .mux-pane-title').textContent;
+  await harness.act(() => { skynetState.setFused(activeLabel.includes('forge') ? ['inst_self', 'inst_lab'] : ['inst_lab', 'inst_forge']); });
   assert.equal(host.querySelector('.mux-pane.active').classList.contains('scope-hidden'), false,
     'an active pane leaving the scope hands over to one in it');
+  assert.equal(harness.document.getElementById('tab-terminals').classList.contains('active'), false, 'without switching to Terminals');
   await harness.act(() => { skynetState.setFused(null); });
   assert.equal(host.querySelectorAll('.scope-hidden').length, 0);
   cleanup();

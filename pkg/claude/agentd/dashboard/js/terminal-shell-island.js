@@ -849,9 +849,36 @@ function TerminalTabs({
   const scopeOf = (pane) => paneScope(scopeView?.fleet, scopeView?.fused, pane.seed, nodeColor);
   const shownPanes = current.panes.filter((pane) => !scopeOf(pane).hidden);
   const activeHidden = current.activeKey && scopeOf(current.panes.find((p) => p.key === current.activeKey) || {}).hidden;
+  // Quietly: unticking a node must not pull the operator into this tab.
   useEffect(() => {
-    if (activeHidden && shownPanes.length) actions.activatePane(shownPanes[0].key);
+    if (activeHidden && shownPanes.length) actions.activatePane(shownPanes[0].key, { reveal: false });
   }, [activeHidden, shownPanes[0]?.key]);
+  // skipHidden makes a keyboard move step over tabs the scope hides: one
+  // press moves past the next visible neighbour, never only past unseen ones.
+  const skipHidden = (move, movedKeys) => (id, offset) => {
+    if (!scopeView?.fused) return move(id, offset);
+    const dir = offset > 0 ? 1 : -1;
+    let moved = null;
+    for (let guard = state.view.value.panes.length; guard >= 0; guard -= 1) {
+      const before = state.view.value.panes.map((p) => p.key);
+      const out = move(id, dir);
+      if (!out) break;
+      moved = out;
+      const after = state.view.value.panes;
+      const own = new Set(movedKeys(id));
+      const at = (keys, k) => keys.indexOf(k);
+      const firstOwn = (keys) => keys.findIndex((k) => own.has(k));
+      const afterKeys = after.map((p) => p.key);
+      const passed = after.filter((p) => !own.has(p.key)
+        && (at(before, p.key) < firstOwn(before)) !== (at(afterKeys, p.key) < firstOwn(afterKeys)));
+      if (!passed.length || passed.some((p) => !scopeOf(p).hidden)) break;
+    }
+    return moved;
+  };
+  const scopedActions = scopeView?.fused
+    ? { ...actions, movePaneByOffset: skipHidden(actions.movePaneByOffset, (key) => [key]) }
+    : actions;
+  const moveGroupScoped = skipHidden(actions.moveGroupByOffset, (gid) => (current.segments.find((sg) => sg.type === 'group' && sg.group.id === gid)?.panes || []).map((p) => p.key));
   const composeMessageAvailable = Boolean(onComposeMessage) &&
     (composeMessageReady === null || composeMessageReady.value);
   const hasPanes = current.panes.length > 0;
@@ -951,7 +978,7 @@ function TerminalTabs({
     queueMicrotask(() => focusGroupPill(moved.group.id));
   };
   const moveGroupKeyboard = (groupID, offset) => {
-    const moved = actions.moveGroupByOffset(groupID, offset);
+    const moved = moveGroupScoped(groupID, offset);
     if (moved) announceGroupAndRefocus(moved);
   };
   const startGroupDrag = (event, groupID) => {
@@ -1377,7 +1404,7 @@ function TerminalTabs({
                 active=${current.activeKey === pane.key}
                 menuOpen=${tabMenu?.kind !== 'group' && tabMenu?.key === pane.key}
                 groupId=${segment.type === 'group' ? segment.group.id : null}
-                actions=${actions}
+                actions=${scopedActions}
                 openMenu=${setTabMenu}
                 dragging=${dragKey === pane.key}
                 dropSide=${dropTarget?.key === pane.key ? dropTarget.side : ''}
