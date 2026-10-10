@@ -544,7 +544,11 @@ func (h *Hub) register(c *conn) bool {
 	if old != nil {
 		old.fail(proto.CodeReplaced, "replaced by a newer connection from the same instance")
 	}
-	h.log.Info("instance connected", "instance", c.id, "name", c.name)
+	if c.boardOnly {
+		h.log.Debug("board connection opened", "instance", c.id, "name", c.name)
+	} else {
+		h.log.Info("instance connected", "instance", c.id, "name", c.name)
+	}
 	h.broadcastDirectories()
 	return true
 }
@@ -560,7 +564,11 @@ func (h *Hub) unregister(c *conn) {
 	if !c.boardOnly {
 		_ = h.store.RecordSeen(c.id, c.pub, c.name, c.version, time.Now())
 	}
-	h.log.Info("instance disconnected", "instance", c.id)
+	if c.boardOnly {
+		h.log.Debug("board connection closed", "instance", c.id, "name", c.name)
+	} else {
+		h.log.Info("instance disconnected", "instance", c.id)
+	}
 	if !closed {
 		h.broadcastDirectories()
 	}

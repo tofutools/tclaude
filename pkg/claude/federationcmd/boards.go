@@ -13,6 +13,7 @@ import (
 )
 
 type boardCommandParams struct {
+	JSON         bool
 	Item         string   `long:"item" optional:"true" help:"Board item ID"`
 	Version      string   `long:"version" optional:"true" help:"Exact version ID"`
 	Parent       string   `long:"parent" optional:"true" help:"Current parent version for an update"`
@@ -53,6 +54,7 @@ func boardsCmd() *cobra.Command {
 		{"ls", "list", "List joined boards", []string{"cursor"}, nil, []string{"list"}},
 		{"show", "show", "Show one board", []string{"board"}, []string{"board"}, nil},
 		{"join", "join", "Join with a private invitation", []string{"token"}, []string{"token"}, nil},
+		{"delete", "delete", "Permanently delete a board (owner only)", []string{"board"}, []string{"board"}, nil},
 		{"leave", "leave", "Leave a board", []string{"board"}, []string{"board"}, nil},
 		{"invite", "invite", "Create a one-time invitation", []string{"board", "role", "ttl"}, []string{"board"}, nil},
 		{"invites", "invites", "List invitation metadata (owner only)", []string{"board", "cursor"}, []string{"board"}, nil},
@@ -83,6 +85,7 @@ func boardsCmd() *cobra.Command {
 				panic(err)
 			}
 		}
+		cmd.Flags().BoolVar(&p.JSON, "json", false, "Print raw JSON")
 		root.AddCommand(cmd)
 	}
 	return root
@@ -149,6 +152,8 @@ func runBoardCommand(p *boardCommandParams, stdout, stderr io.Writer) int {
 		method = "POST"
 		path += "/join"
 		body["token"] = p.Token
+	case "delete":
+		method = "DELETE"
 	case "leave":
 		method = "DELETE"
 		path += "/membership"
@@ -206,6 +211,9 @@ func runBoardCommand(p *boardCommandParams, stdout, stderr io.Writer) int {
 	var out any
 	if err := agent.DaemonRequest(method, path, body, &out, agent.DaemonOpts{NoRetry: true, Timeout: 35 * time.Second}); err != nil {
 		return fail(stderr, err)
+	}
+	if !p.JSON && (p.Action == "list" || p.Action == "invites") {
+		return printRecordingTable(stdout, p.Action, out)
 	}
 	return printJSON(stdout, out)
 }

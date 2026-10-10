@@ -206,6 +206,12 @@ func (s *Store) boardCall(instance string, pub []byte, r *proto.BoardRequest, ca
 			body = map[string]any{"ok": true}
 		case "items.publish", "items.list", "items.versions", "items.get", "pins.set", "pins.list":
 			body, err = boardItemsCall(tx, instance, r.Method, p, b)
+		case "boards.delete":
+			if !owner {
+				return nil, adminErr(403, "board_owner", "only an owner can delete a board")
+			}
+			_, err = tx.Exec(`DELETE FROM boards WHERE id=?`, p.Board)
+			body = map[string]any{"ok": true}
 		case "boards.get":
 			body = b
 		case "members.list":
