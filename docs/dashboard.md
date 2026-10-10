@@ -722,8 +722,11 @@ first and says what will happen. Most pages name their CLI.
   **Acknowledge stopped…** for a job this node lost track of, and **Output**
   once finished — each confirm says what happens. **Run a job…** sends one to
   picked nodes or an automatically placed one. Below, the repositories peers
-  may run jobs in here: **Allow…**, **Edit…**, **Disable…**. Live output
-  (`--follow`) stays in the CLI. CLI: `tclaude federation job`, `repos`.
+  may run jobs in here: **Allow…**, **Edit…**, **Disable…**. **Live output**
+  on a running job this node sent shows its output as it arrives (like
+  `job run --follow`), read every 2 s only while the dialog is open, Fleet is
+  shown and the browser tab is visible; once the job ends it shows the stored
+  output. CLI: `tclaude federation job`, `repos`.
 - **Moves** — agent moves and teleports in both directions (⇢ leaving, ⇠
   arriving) with peer, group, state and expiry. **Abandon…** stops an outgoing
   move that has not started retiring the agent here; the agent is not retired

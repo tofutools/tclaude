@@ -19022,6 +19022,7 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-of-check { display: block; margin: 6px 0 6px 88px; }
 #fleet-offer-import .modal-buttons button, #fleet-offer-config .modal-buttons button, #fleet-share-agent .modal-buttons button, #fleet-offer-profile .modal-buttons button { flex: none; white-space: nowrap; }
 .fa-jobs h4 { margin: 14px 0 4px; font-size: 13px; }
+.fa-jb-live { color: #3fb950; }
 .fa-jb-row { display: grid; grid-template-columns: 80px minmax(0, 1fr); align-items: center; gap: 8px; margin: 6px 0; }
 .fa-jb-row input, .fa-jb-row select, .fa-jb-row textarea { width: 100%; box-sizing: border-box; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; }
 .fa-jb-row textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }

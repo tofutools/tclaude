@@ -106,6 +106,9 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
     retryJob: (id) => call('POST', `jobs/${encodeURIComponent(id)}/retry`, {}),
     acknowledgeJobStopped: (id) => call('POST', `jobs/${encodeURIComponent(id)}/acknowledge-stopped`, { acknowledge_stopped: true }),
     jobLogs: (id) => call('GET', `jobs/${encodeURIComponent(id)}/logs`),
+    // Live output of an active outbound job: the chunks after cursor ('' =
+    // from the start), the next cursor, and done once the job is terminal.
+    jobOutput: (id, cursor = '', maxBytes = 65536) => call('GET', `jobs/${encodeURIComponent(id)}/output?cursor=${encodeURIComponent(cursor)}&max_bytes=${maxBytes}`),
     repos: async () => (await call('GET', 'repos'))?.repos || [],
     addRepo: (body) => call('POST', 'repos', body),
     updateRepo: (name, body) => call('PUT', `repos/${encodeURIComponent(name)}`, body),

@@ -56,6 +56,7 @@ function fakeTimers() {
   return { queue, setTimeout(fn, ms) { const id = ++seq; queue.push({ id, fn, ms }); return id; }, clearTimeout(id) { const i = queue.findIndex((q) => q.id === id); if (i >= 0) queue.splice(i, 1); } };
 }
 
+let s_output = [];
 let s_viewers = [];
 async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP_NEW, level: 'restricted', profile: null, plan: null } } = {}) {
   const harness = await createPreactHarness(t);
@@ -155,6 +156,7 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     cancelJob: async (id) => { log.push(['cancelJob', id]); return { id }; },
     retryJob: async (id) => { log.push(['retryJob', id]); return { id, delivered: true }; },
     acknowledgeJobStopped: async (id) => { log.push(['ackJob', id]); return { id }; },
+    jobOutput: async (id, cursor) => { log.push(['jobOutput', id, cursor]); const r = s_output.shift(); if (r instanceof Error) throw r; return r; },
     jobLogs: async (id) => { log.push(['jobLogs', id]); return { stdout: 'index.html\n', stderr: '', exit_code: 0 }; },
     repos: async () => [{ id: 'r1', name: 'tclaude', revision: 2, enabled: true, definition: { url: 'git@github.com:tofutools/tclaude.git', clone: '/home/me/git/tclaude', groups: [7] } }, { id: 'r2', name: 'old', revision: 4, enabled: false, group_names: ['ops'], definition: { url: 'git@x:old.git', clone: '/srv/old', groups: [1] } }],
     addRepo: async (body) => { log.push(['addRepo', body]); return body; },
@@ -1082,7 +1084,7 @@ test('jobs & repos: approve, cancel, resend and acknowledge with spelled-out con
   const acts = (id) => [...s.q(`[data-job="${id}"]`).querySelectorAll('[data-fa]')].map((b) => b.dataset.fa);
   assert.deepEqual(acts('job_in1'), ['approve', 'cancel']);
   assert.deepEqual(acts('job_in2'), ['ack']);
-  assert.deepEqual(acts('job_out1'), ['cancel', 'retry']);
+  assert.deepEqual(acts('job_out1'), ['cancel', 'retry', 'follow']);
   assert.deepEqual(acts('job_out2'), ['logs']);
   assert.match(s.q('[data-job="job_out1"]').textContent, /site@v2.*fix the flaky test.*codex/);
 
@@ -1146,6 +1148,65 @@ test('jobs & repos: approve, cancel, resend and acknowledge with spelled-out con
   assert.equal(s.timers.queue.filter((x) => x.ms === 5000).length, 0, 'leaving Fleet stops the job poll');
 });
 
+test('jobs: live output polls while the dialog is open and shown, waits out a 409, then switches to the stored logs', async (t) => {
+  const s = await setup(t);
+  const doc = s.harness.document; const q = (x) => doc.querySelector(x);
+  const notYet = new Error('job has not started'); notYet.status = 409; notYet.code = 'follow';
+  s_output = [notYet,
+    { chunks: [{ stream: 'stdout', data: btoa('building\n'), encoding: 'base64' }, { stream: 'stderr', data: btoa('warn: slow\n'), encoding: 'base64' }], cursor: 'c1', done: false, state: 'running' },
+    { chunks: [{ stream: 'stdout', data: btoa('tests ok\n'), encoding: 'base64' }], cursor: 'c2', done: true, state: 'completed' }];
+  t.after(() => { s_output = []; });
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => b.textContent === 'Jobs & repos'));
+  await s.click(s.q('[data-job="job_out1"] [data-fa="follow"]'));
+  assert.match(q('#fleet-job-wait').textContent, /Waiting for output: job has not started/);
+  const step = async () => {
+    const tick = s.timers.queue.find((x) => x.ms === 2000);
+    assert.ok(tick, 'a follow read is scheduled');
+    await s.harness.act(async () => { s.timers.queue.splice(s.timers.queue.indexOf(tick), 1); await tick.fn(); await new Promise((r) => setTimeout(r, 10)); });
+  };
+  await step();
+  assert.match(q('#fleet-job-logs').textContent, /● live.*building.*warn: slow/s);
+  assert.deepEqual(s.log.filter((l) => l[0] === 'jobOutput').map((l) => l[2]), ['', '']);
+  await s.harness.act(() => { s.activeTab.value = 'groups'; });
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  assert.equal(s.timers.queue.filter((x) => x.ms === 2000).length, 0, 'hiding Fleet stops the live output poll');
+  await s.harness.act(() => { s.activeTab.value = 'fleet-admin'; });
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'jobOutput'), ['jobOutput', 'job_out1', 'c1'], 'showing it again resumes from the last cursor');
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'jobLogs'), ['jobLogs', 'job_out1'], 'done switches to the stored logs');
+  assert.match(q('#fleet-job-logs').textContent, /finished.*index\.html/s);
+  assert.equal(s.timers.queue.filter((x) => x.ms === 2000).length, 0, 'no more follow reads');
+});
+
+test('decodeChunks keeps a character split across reads intact, per stream', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { decodeChunks, outputDecoders } = await harness.importDashboardModule('js/fleet-admin-jobs.js');
+  const b64 = (bytes) => btoa(String.fromCharCode(...bytes));
+  const euro = [0xe2, 0x82, 0xac];
+  const d = outputDecoders();
+  const first = decodeChunks(d, [{ stream: 'stdout', data: b64([0x31, ...euro.slice(0, 2)]), encoding: 'base64' }, { stream: 'stderr', data: b64([euro[0]]), encoding: 'base64' }]);
+  assert.deepEqual(first.map((c) => c.data), ['1', '']);
+  const second = decodeChunks(d, [{ stream: 'stdout', data: b64([euro[2], 0x32]), encoding: 'base64' }]);
+  assert.deepEqual(second, [{ stream: 'stdout', data: '€2' }]);
+  const done = decodeChunks(d, [], true);
+  assert.deepEqual(done, [{ stream: 'stderr', data: '\ufffd' }], 'flush releases a dangling partial character');
+});
+
+test('appendOutput keeps each stream separately and only its newest text', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { appendOutput, OUTPUT_KEEP, canFollow } = await harness.importDashboardModule('js/fleet-admin-jobs.js');
+  let o = appendOutput({ stdout: '', stderr: '', trimmed: false }, [{ stream: 'stdout', data: 'a' }, { stream: 'stderr', data: 'b' }, { data: 'c' }]);
+  assert.deepEqual(o, { stdout: 'ac', stderr: 'b', trimmed: false });
+  o = appendOutput(o, [{ stream: 'stdout', data: 'x'.repeat(OUTPUT_KEEP) }]);
+  assert.equal(o.stdout.length, OUTPUT_KEEP);
+  assert.equal(o.trimmed, true);
+  assert.equal(canFollow({ incoming: false, terminal: false, state: 'running' }), true);
+  assert.equal(canFollow({ incoming: true, terminal: false, state: 'running' }), false);
+  assert.equal(canFollow({ incoming: false, terminal: true, state: 'completed' }), false);
+});
+
 test('job actions hit the local job and repo routes', async (t) => {
   const harness = await createPreactHarness(t);
   const { createFleetAdminActions } = await harness.importDashboardModule('js/fleet-admin-actions.js');
@@ -1153,11 +1214,13 @@ test('job actions hit the local job and repo routes', async (t) => {
   const a = createFleetAdminActions({ fetchImpl: async (url, init) => { calls.push([init.method, url, init.body ? JSON.parse(init.body) : null]); return { ok: true, status: 200, json: async () => ({}) }; } });
   await a.acknowledgeJobStopped('j1');
   await a.jobLogs('j1');
+  await a.jobOutput('j1', 'c/1');
   await a.updateRepo('my repo', { revision: 3 });
   await a.disableRepo('r');
   assert.deepEqual(calls, [
     ['POST', '/api/federation/jobs/j1/acknowledge-stopped', { acknowledge_stopped: true }],
     ['GET', '/api/federation/jobs/j1/logs', null],
+    ['GET', '/api/federation/jobs/j1/output?cursor=c%2F1&max_bytes=65536', null],
     ['PUT', '/api/federation/repos/my%20repo', { revision: 3 }],
     ['DELETE', '/api/federation/repos/r', null],
   ]);
