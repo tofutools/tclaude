@@ -52,6 +52,7 @@ const settingRows = (v) => {
     }
     return out;
   };
+  const boardVersion = (board, item, version) => `boards/${enc(board)}/items/${enc(item)}/versions/${enc(version)}`;
   // pages reads a cursor-paged board list whole, a bounded number of pages.
   const pages = async (path, key) => {
     const out = [];
@@ -230,6 +231,27 @@ const settingRows = (v) => {
     createBoardInvite: (board, role, ttlSeconds) => call('POST', `boards/${enc(board)}/invites`, { role, ttl_seconds: ttlSeconds }),
     revokeBoardInvite: (board, tokenID) => done(call('DELETE', `boards/${enc(board)}/invites/${enc(tokenID)}`)),
     rotateBoardKey: (board) => call('POST', `boards/${enc(board)}/rotate-key`, {}),
+    // Board items: signed config versions. Fetch verifies and scans a version
+    // into a private spool on this node; nothing is imported until import,
+    // which needs the preview's token and the same choices.
+    boardItems: (board) => pages(`boards/${enc(board)}/items`, 'items'),
+    boardItemVersions: (board, item) => pages(`boards/${enc(board)}/items/${enc(item)}/versions`, 'versions'),
+    publishBoardItem: (board, body) => call('POST', `boards/${enc(board)}/items`, body),
+    pinBoardItem: (board, item, version) => done(call('PUT', `boards/${enc(board)}/items/${enc(item)}/pin`, { version })),
+    fetchBoardItem: (board, item, version) => call('POST', `${boardVersion(board, item, version)}/fetch`, {}),
+    boardItemContents: (board, item, version) => call('GET', `${boardVersion(board, item, version)}/contents`),
+    boardItemEntry: (board, item, version, path, offset = 0, maxBytes = 262144) => call('GET', `${boardVersion(board, item, version)}/contents?${new URLSearchParams({ path, offset: String(offset), max_bytes: String(maxBytes) })}`),
+    previewBoardItem: (board, item, version, choices) => call('POST', `${boardVersion(board, item, version)}/preview`, choices),
+    importBoardItem: (board, item, version, previewToken, choices) => call('POST', `${boardVersion(board, item, version)}/import`, { ...choices, preview_token: previewToken }),
+    // Like downloadOffer: preflight for a readable error, then a short-lived anchor.
+    downloadBoardItem: async (board, item, version, doc = globalThis.document) => {
+      const href = `/api/federation/${boardVersion(board, item, version)}/download`;
+      const res = await fetchImpl(href, { method: 'HEAD', credentials: 'same-origin', cache: 'no-store' });
+      if (!res.ok) throw new FleetAdminError(res.status, { error: res.status === 409 ? 'fetch this version first' : `download unavailable (HTTP ${res.status})` });
+      const a = doc.createElement('a');
+      a.href = href; a.download = ''; a.style.display = 'none';
+      doc.body.append(a); a.click(); a.remove();
+    },
     // Hub moderation (hub.boards.manage): metadata only, never content or keys.
     hubBoards: () => pages('hub/boards', 'boards'),
     patchHubBoard: (board, patch) => done(call('PATCH', `hub/boards/${enc(board)}`, patch)),

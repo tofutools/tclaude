@@ -1,14 +1,15 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { BoardItems } from './fleet-admin-board-items.js';
 
 const html = htm.bind(h);
 
 // Content boards: share content between nodes through the hub without
 // linking them (no trust, no peer access). The hub decides membership; content
 // is encrypted end to end and items are signed by whoever posted them. This
-// page covers boards and their members; posting and importing come with the
-// item routes.
+// page covers boards and their members; a board's shared config (posting,
+// reading, importing) is fleet-admin-board-items.js.
 
 export const HUB_TRUST = "The hub decides who is a member: a dishonest hub operator could block a board or keep a removed member getting new posts, but cannot read anything or fake a post. Use a hub you trust.";
 
@@ -125,6 +126,8 @@ function BoardDetail({ board, view, actions, confirm, toast, copy, onChanged }) 
   }).then((r) => { if (r) { toast('Key changed', false); setToken(null); onChanged(); } }).catch(fail('Change key'));
 
   return html`<div class="fa-board-detail" id="fleet-board-detail" data-board=${board.id}>
+    <${BoardItems} board=${board} name=${(id) => memberName(id, view)} actions=${actions} confirm=${confirm} toast=${toast} />
+    <div class="fa-row"><b>Members</b></div>
     ${members?.error ? html`<div class="fa-danger">${members.error}</div>` : !members ? html`<div class="muted">Loading members…</div>` : html`<table class="fa-table" id="fleet-board-members">
       <thead><tr><th>Member</th><th>Role</th><th></th></tr></thead>
       <tbody>${members.map((m) => html`<tr key=${m.instance} data-member=${m.instance}>
