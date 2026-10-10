@@ -2833,6 +2833,7 @@ transport mapping plus existing-access admission. Local-only features and the
 request mechanism itself are never requestable. An approval may shorten the
 requested lifetime, but cannot lengthen it or convert a finite request to a
 permanent grant. A permanent request can be approved with a finite lifetime.
+
 ### Local dashboard bundle offers
 
 Local cookie-authenticated routes mirror the offer CLI handlers:
