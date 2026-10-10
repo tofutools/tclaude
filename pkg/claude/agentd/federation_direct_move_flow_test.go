@@ -64,7 +64,7 @@ func TestFederation_DirectMoveReceiverDecidesAndReportsDirectory(t *testing.T) {
 			if mode == "receive_policy" || mode == "restricted_override" || mode == "revoked_at_dispatch" {
 				_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "landing", Harness: "claude", Model: "sonnet", Approval: "default"})
 				require.NoError(t, err)
-				p := fedNodeProfile(t, fh, "direct-node", db.FederationNodeProfileSpec{PeerGrants: []db.FederationPeerGrant{{Slug: agentd.PermAgentsReceive, Scope: "group=receiver"}}, TeleportLanding: &db.FederationTeleportLanding{Group: "receiver", Cwd: cwd, SpawnProfile: "landing", MaxLive: 1}})
+				p := fedNodeProfile(t, fh, "direct-node", db.FederationNodeProfileSpec{PeerGrants: []db.FederationPeerGrant{{Slug: agentd.PermAgentsReceive, Scope: "group=receiver"}, {Slug: agentd.PermAgentsTeleportReceive, Scope: "group=receiver"}}, TeleportLanding: &db.FederationTeleportLanding{Group: "receiver", Cwd: cwd, SpawnProfile: "landing", MaxLive: 1}})
 				fedApplyNodeProfile(t, fh, p)
 			}
 			previous := agentd.Spawn
@@ -138,15 +138,25 @@ func TestFederation_DirectMoveReceiverDecidesAndReportsDirectory(t *testing.T) {
 				return false
 			})
 			if mode == "receive_policy" {
+				first, err := db.GetFederationBundleOffer("in", fh.peer.id.ID(), d.ID)
+				require.NoError(t, err)
+				a, err := db.GetAgent(first.ImportAgent)
+				require.NoError(t, err)
+				reincarnated := fh.f.AsHuman().Reincarnate(a.CurrentConvID, "Continue in a fresh context")
+				require.NotEmpty(t, reincarnated.NewConv)
+				teleport := fedIncomingTeleport(t, fh, "local", nil)
+				require.Equal(t, proto.AckAccepted, fedAckFor(t, fh.peer, teleport.ID).Status)
+				fedEventually(t, "direct worker also occupies teleport policy slot", func() bool {
+					row, _ := db.GetFederationTeleport("in", fh.peer.id.ID(), teleport.ID)
+					return row != nil && row.State == "pending" && row.TargetAgent == ""
+				})
 				second := fedIncomingDirectMove(t, fh)
 				fedEventually(t, "live worker occupies policy slot", func() bool {
 					m, _ := db.GetFederationAgentMove("in", fh.peer.id.ID(), second.ID)
 					return m != nil && m.Disposition == "pending_acceptance"
 				})
-				require.EqualValues(t, 1, births.Load())
-				first, err := db.GetFederationBundleOffer("in", fh.peer.id.ID(), d.ID)
-				require.NoError(t, err)
-				ses, err := db.LoadSession(first.ImportLabel)
+				require.EqualValues(t, 2, births.Load())
+				ses, err := db.FindSessionByConvID(reincarnated.NewConv)
 				require.NoError(t, err)
 				require.NotNil(t, ses)
 				fh.f.World.Tmux.KillBySignalForTest(ses.TmuxSession)
@@ -155,7 +165,7 @@ func TestFederation_DirectMoveReceiverDecidesAndReportsDirectory(t *testing.T) {
 					m, _ := db.GetFederationAgentMove("in", fh.peer.id.ID(), third.ID)
 					return m != nil && m.State == "running"
 				})
-				require.EqualValues(t, 2, births.Load())
+				require.EqualValues(t, 3, births.Load())
 			}
 
 		})

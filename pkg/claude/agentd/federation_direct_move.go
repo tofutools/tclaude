@@ -250,14 +250,12 @@ func directMoveCapacity(o *db.FederationBundleOffer, limit int) error {
 		if a == nil || !a.Active() {
 			continue
 		}
-		sessionRow, err := db.LoadSession(other.ImportLabel)
+		sessions, err := db.FindSessionsByConvID(a.CurrentConvID)
 		if err != nil {
 			return err
 		}
-		if sessionRow != nil {
-			if _, ok := alive[sessionRow.TmuxSession]; ok {
-				used++
-			}
+		if isConvOnlineInSessions(sessions, alive) {
+			used++
 		}
 	}
 	if used >= limit {
