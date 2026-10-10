@@ -11,7 +11,7 @@ import (
 )
 
 type grantExecParams struct {
-	dbParam
+	DBParam
 	Instance string `pos:"true" help:"Existing hub administrator immutable instance ID"`
 }
 
@@ -28,7 +28,7 @@ func adminCmd() *cobra.Command {
 			}
 			fmt.Fprintln(os.Stdout, "Granted hub.exec. Scripts still require the hub-local accept_remote_scripts switch; they run with the hub service user's full authority.")
 		}}.ToCobra(),
-		boa.CmdT[dbParam]{Use: "reset", Short: "Break-glass: remove all admins and issue a new private claim token", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *dbParam, _ *cobra.Command, _ []string) {
+		boa.CmdT[DBParam]{Use: "reset", Short: "Break-glass: remove all admins and issue a new private claim token", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *DBParam, _ *cobra.Command, _ []string) {
 			st, err := p.open()
 			if err != nil {
 				fail(err)
