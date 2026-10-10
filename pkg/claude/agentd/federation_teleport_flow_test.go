@@ -180,8 +180,11 @@ func TestFederation_TeleportAutomaticLandingUsesReceiverPolicy(t *testing.T) {
 	fh := newFedHarness(t)
 	fh.f.HaveGroup("receiver")
 	cwd := testutil.CanonicalTempDir(t)
+	groupCwd := testutil.CanonicalTempDir(t)
+	_, err := db.SetAgentGroupDefaultCwd("receiver", groupCwd)
+	require.NoError(t, err)
 	profile := &db.SpawnProfile{Name: "landing", Harness: "claude", Model: "sonnet", Approval: "default"}
-	_, err := db.CreateSpawnProfile(profile)
+	_, err = db.CreateSpawnProfile(profile)
 	require.NoError(t, err)
 	p := fedNodeProfile(t, fh, "landing-node", db.FederationNodeProfileSpec{
 		PeerGrants:        []db.FederationPeerGrant{{Slug: agentd.PermAgentsTeleportReceive, Scope: "group=receiver"}},
@@ -194,7 +197,7 @@ func TestFederation_TeleportAutomaticLandingUsesReceiverPolicy(t *testing.T) {
 	agentd.Spawn = &fedTeleportBirthSpawner{inner: previous, check: func(args clcommon.SpawnArgs) {
 		births++
 		require.Equal(t, "sonnet", args.Model)
-		require.Equal(t, cwd, args.Cwd)
+		require.Equal(t, groupCwd, args.Cwd)
 		conv := args.SessionID
 		if conv == "" {
 			conv = args.ConvID

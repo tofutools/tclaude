@@ -416,6 +416,19 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 			return
 		}
 		o.ImportAgent = reserved
+		releaseUnlaunched := func() {
+			if released, err := db.ReleaseUnlaunchedFederationBundleImport(o.Peer, o.Descriptor.ID, reserved); err == nil && released {
+				o.ImportAgent = ""
+				_ = db.DeleteFederationAgentMove("in", o.Peer, o.Descriptor.ID)
+				if row, err := db.GetFederationTeleport("in", o.Peer, o.Descriptor.ID); err == nil && row != nil {
+					old := row.State
+					row.State, row.TargetAgent = "pending", ""
+					cleanupUnlaunchedTeleportCheckout(row)
+					_, _ = db.TransitionFederationTeleport(*row, old)
+				}
+			}
+		}
+
 		if o.Descriptor.Teleport != nil && teleportLandingFromRequest(r) == nil {
 			row, err := db.GetFederationTeleport("in", o.Peer, o.Descriptor.ID)
 			if err != nil || row == nil {
@@ -442,11 +455,13 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 		if teleportRow != nil && landing.checkout != nil {
 			row, err := db.GetFederationTeleport("in", o.Peer, o.Descriptor.ID)
 			if err != nil || row == nil {
+				releaseUnlaunched()
 				writeError(w, 503, "teleport_provenance", "cannot persist landing checkout; reserved launch was not started")
 				return
 			}
 			row.Checkout = landing.checkout
 			if won, err := db.TransitionFederationTeleport(*row, row.State); err != nil || !won {
+				releaseUnlaunched()
 				writeError(w, 409, "teleport_provenance", "teleport changed before dispatch")
 				return
 			}
@@ -454,6 +469,17 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 			if authority := teleportLandingFromRequest(r); authority != nil {
 				authority.record.Checkout = landing.checkout
 			}
+		}
+		liveGroup, groupErr := db.GetAgentGroupByID(g.ID)
+		if groupErr != nil || liveGroup == nil || liveGroup.IsArchived() || !fedPeerAllows(o.Peer, g.ID, PermAgentsReceive) && (o.Descriptor.Teleport == nil || !fedPeerAllows(o.Peer, g.ID, PermAgentsTeleportReceive)) {
+			releaseUnlaunched()
+			writeError(w, 403, "admission", "receiving group admission changed before dispatch")
+			return
+		}
+		if _, exists, err := federationLandingDirectory(landing.Preview.Cwd); err != nil || !exists {
+			releaseUnlaunched()
+			writeJSON(w, 409, map[string]any{"code": "landing_candidate_changed", "error": "landing directory changed before dispatch", "landing": landing.Preview})
+			return
 		}
 		rec = invoke(true, reserved)
 		if rec.Code == 200 {

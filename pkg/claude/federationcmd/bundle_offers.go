@@ -186,7 +186,7 @@ func runOfferImport(p *offerImportParams, out, stderr io.Writer) int {
 		return printJSON(out, response)
 	}
 	if landing, ok := response["landing"].(map[string]any); ok {
-		fmt.Fprintf(out, "Will start in %v (%v)\n", landing["cwd"], landing["reason"])
+		fmt.Fprintf(out, "Will start in %s (%s)\n", summaryCell(fmt.Sprint(landing["cwd"])), summaryCell(fmt.Sprint(landing["reason"])))
 	}
 	// The full existing import diff includes security tags and provenance.
 	if rc := printJSON(out, response); rc != 0 {

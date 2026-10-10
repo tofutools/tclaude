@@ -138,11 +138,11 @@ func resolveFederationLanding(ctx context.Context, o *db.FederationBundleOffer, 
 		return strings.Compare(a.ID, b.ID)
 	})
 	plans := map[string]*db.FederationRepo{}
+	explicitRef := teleport != nil && teleport.Intent.GitRef != ""
 	for _, repo := range repos {
 		if !jobRepoAllows(&repo, g.ID) {
 			continue
 		}
-		explicitRef := teleport != nil && teleport.Intent.GitRef != ""
 		if explicitRef {
 			if teleport.Repo == nil || repo.ID != teleport.Repo.ID {
 				continue
@@ -190,6 +190,9 @@ func resolveFederationLanding(ctx context.Context, o *db.FederationBundleOffer, 
 			p.root = filepath.Dir(c.Cwd)
 		}
 	}
+	if explicitRef && (in.Cwd != "" || in.KeepPaths || in.Landing != "" && !strings.HasPrefix(in.Landing, "repo:")) {
+		return p, errors.New("git-ref requires its receiver allowlisted repository checkout")
+	}
 	if in.Cwd != "" {
 		cwd, exists, err := federationLandingDirectory(in.Cwd)
 		p.Preview.federationLandingCandidate = federationLandingCandidate{Cwd: cwd, Reason: "explicit", Exists: exists}
@@ -209,6 +212,9 @@ func resolveFederationLanding(ctx context.Context, o *db.FederationBundleOffer, 
 		return p, errors.New("landing candidate is unavailable; reload the preview")
 	}
 	for _, c := range p.Preview.Candidates {
+		if explicitRef && c.Repo == nil {
+			continue
+		}
 		if !c.Exists && !c.CheckoutRequired || c.Reason == "same_path" && federationLandingBroad(c.Cwd) {
 			continue
 		}
