@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,8 +34,20 @@ func dashboardRemoteTerminalCatalog(t *testing.T, fh *fedHarness, caps ...string
 func dashboardTerminalOpen(t *testing.T, fh *fedHarness, mode string) (*websocket.Conn, *stream.Conn, proto.SessionOpenPayload) {
 	t.Helper()
 	row := dashboardRemoteTerminalCatalog(t, fh, proto.CapSessionsWatch, proto.CapSessionsAttach)
-	server := httptest.NewServer(agentd.BuildDashboardHandlerForTest())
-	t.Cleanup(server.Close)
+	handler := agentd.BuildDashboardHandlerForTest()
+	var handlers sync.WaitGroup
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlers.Add(1)
+		defer handlers.Done()
+		handler.ServeHTTP(w, r)
+	}))
+	// Server.Close does not join hijacked WebSocket handlers. Client/stream
+	// cleanups registered below run first, unblocking these handlers; join them
+	// so their deferred closing audits finish before the World closes SQLite.
+	t.Cleanup(func() {
+		server.Close()
+		handlers.Wait()
+	})
 	type result struct {
 		ws  *websocket.Conn
 		err error
