@@ -200,3 +200,13 @@ func cliFileTransferFlow(t *testing.T, reset bool) {
 	viewers := fedHuman(t, fh.f, "GET", "/v1/federation/viewers", nil)
 	require.NotContains(t, viewers.Body.String(), open.Stream)
 }
+
+func TestFederationFileCLINameAddressGuidance(t *testing.T) {
+	fh := newFedHarness(t)
+	dashboardRemoteTerminalCatalog(t, fh, proto.CapSessionsWatch, proto.CapSessionsFilesRead)
+	rec := fedHuman(t, fh.f, "GET", "/v1/federation/file?target=reviewer-1@bob&path=notes.txt", nil)
+	require.Equal(t, 403, rec.Code)
+	require.Contains(t, rec.Body.String(), "unknown session")
+	require.Contains(t, rec.Body.String(), "federation sessions")
+	require.NotContains(t, rec.Body.String(), "watch/attach capability")
+}

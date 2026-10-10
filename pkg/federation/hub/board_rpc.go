@@ -151,7 +151,7 @@ func (h *Hub) boardRequest(c *conn, f *proto.Frame, size int) {
 }
 func boardMethodKnown(method string) bool {
 	switch method {
-	case "blobs.put", "blobs.get", "items.publish", "items.list", "items.versions", "items.get", "pins.set", "pins.list", "boards.list", "boards.create", "boards.get", "members.list", "members.set", "members.remove", "invites.create", "invites.revoke", "keys.get", "keys.rotate", "keys.join", "keys.install":
+	case "blobs.put", "blobs.get", "items.publish", "items.list", "items.versions", "items.get", "pins.set", "pins.list", "boards.list", "boards.create", "boards.get", "members.list", "members.set", "members.remove", "invites.create", "invites.list", "invites.revoke", "keys.get", "keys.rotate", "keys.join", "keys.install":
 		return true
 	}
 	return false

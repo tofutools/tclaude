@@ -219,6 +219,9 @@ func resolveFedTerminalTarget(address string, readOnly bool) (*db.FederationPeer
 	if !ok {
 		return nil, proto.SessionOpenPayload{}, errors.New("target must be agt_…@peer from federation sessions")
 	}
+	if !strings.HasPrefix(ref, "agt_") {
+		return nil, proto.SessionOpenPayload{}, errors.New("unknown session; use the agt_…@peer address from federation sessions")
+	}
 	peer, err := resolveFederationPeer(sel)
 	if err != nil {
 		return nil, proto.SessionOpenPayload{}, err

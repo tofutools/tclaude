@@ -1,12 +1,16 @@
 package federationcmd
 
 import (
+	"fmt"
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
+	"io"
 	"net/url"
 	"os"
+	"text/tabwriter"
 )
 
 type moveAgentParams struct {
@@ -37,9 +41,37 @@ func movesGet(path string) {
 	}
 	os.Exit(printJSON(os.Stdout, out))
 }
+
+type movesListParams struct {
+	JSON bool `long:"json" help:"Output JSON."`
+}
+
+func runMovesList(p *movesListParams, stdout, stderr io.Writer) int {
+	if rc := agent.RequireDaemonOrExit(stderr); rc != 0 {
+		return rc
+	}
+	var out struct {
+		Moves []db.FederationAgentMove `json:"moves"`
+	}
+	if err := agent.DaemonGet("/v1/federation/moves", &out); err != nil {
+		return fail(stderr, err)
+	}
+	if p.JSON {
+		return printJSON(stdout, out)
+	}
+	tw := tabwriter.NewWriter(stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tDIRECTION\tPEER\tSTATE\tSOURCE\tTARGET\tGROUP")
+	for _, m := range out.Moves {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", m.ID, m.Direction, m.Peer, m.State, dash(m.SourceAgent), dash(m.TargetAgent), dash(m.Group))
+	}
+	if err := tw.Flush(); err != nil {
+		return fail(stderr, err)
+	}
+	return 0
+}
 func movesCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{Use: "moves", Short: "Inspect or abandon durable agent moves (operator only)", ParamEnrich: common.DefaultParamEnricher(), SubCmds: []*cobra.Command{
-		boa.CmdT[struct{}]{Use: "ls", Short: "List incoming and outgoing moves, including moved-from provenance", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) { movesGet("/v1/federation/moves") }}.ToCobra(),
+		boa.CmdT[movesListParams]{Use: "ls", Short: "List incoming and outgoing moves, including moved-from provenance", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *movesListParams, _ *cobra.Command, _ []string) { os.Exit(runMovesList(p, os.Stdout, os.Stderr)) }}.ToCobra(),
 		boa.CmdT[moveIDParams]{Use: "show", Short: "Show one move and its source/destination identities", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *moveIDParams, _ *cobra.Command, _ []string) {
 			movesGet("/v1/federation/moves/" + url.PathEscape(p.ID))
 		}}.ToCobra(),

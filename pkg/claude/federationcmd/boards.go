@@ -8,10 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
-	"github.com/tofutools/tclaude/pkg/common"
 )
 
 type boardCommandParams struct {
@@ -41,10 +39,87 @@ type boardCommandParams struct {
 	Cursor       string   `long:"cursor" help:"Opaque page cursor"`
 }
 
+// Each action registers only its own flags; required markers reflect that
+// action rather than the union of every board operation.
 func boardsCmd() *cobra.Command {
-	return boa.CmdT[boardCommandParams]{Use: "boards", Short: "Join and manage content boards without granting peer access", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *boardCommandParams, _ *cobra.Command, _ []string) {
-		os.Exit(runBoardCommand(p, os.Stdout, os.Stderr))
-	}}.ToCobra()
+	root := &cobra.Command{Use: "boards", Short: "Join and manage content boards without granting peer access"}
+	type action struct {
+		name, dispatch, short string
+		flags, required       []string
+		aliases               []string
+	}
+	actions := []action{
+		{"create", "create", "Create a board", []string{"name"}, []string{"name"}, nil},
+		{"ls", "list", "List joined boards", []string{"cursor"}, nil, []string{"list"}},
+		{"show", "show", "Show one board", []string{"board"}, []string{"board"}, nil},
+		{"join", "join", "Join with a private invitation", []string{"token"}, []string{"token"}, nil},
+		{"leave", "leave", "Leave a board", []string{"board"}, []string{"board"}, nil},
+		{"invite", "invite", "Create a one-time invitation", []string{"board", "role", "ttl"}, []string{"board"}, nil},
+		{"invites", "invites", "List invitation metadata (owner only)", []string{"board", "cursor"}, []string{"board"}, nil},
+		{"revoke-invite", "revoke-invite", "Revoke an invitation", []string{"board", "token-id"}, []string{"board", "token-id"}, nil},
+		{"members", "members", "List members", []string{"board", "cursor"}, []string{"board"}, nil},
+		{"set-role", "set-member", "Set a member role", []string{"board", "instance", "role"}, []string{"board", "instance", "role"}, []string{"set-member"}},
+		{"remove-member", "remove-member", "Remove a member", []string{"board", "instance"}, []string{"board", "instance"}, nil},
+		{"rotate-key", "rotate-key", "Rotate the board content key", []string{"board"}, []string{"board"}, nil},
+		{"items", "items", "List items and update notices", []string{"board", "cursor"}, []string{"board"}, nil},
+		{"versions", "versions", "List item versions", []string{"board", "item", "cursor"}, []string{"board", "item"}, nil},
+		{"publish", "publish", "Publish selected config or republish a signed item", []string{"board", "name", "item", "parent", "from-board", "from-item", "from-version", "only", "skip"}, []string{"board"}, nil},
+		{"pin", "pin", "Pin an exact item version", []string{"board", "item", "version"}, []string{"board", "item", "version"}, nil},
+		{"fetch", "fetch", "Fetch and verify without importing", []string{"board", "item", "version"}, []string{"board", "item", "version"}, nil},
+		{"contents", "contents", "Inspect fetched contents", []string{"board", "item", "version", "path", "offset", "max-bytes"}, []string{"board", "item", "version"}, nil},
+		{"download", "download", "Save a fetched bundle to a new file", []string{"board", "item", "version", "file"}, []string{"board", "item", "version", "file"}, nil},
+		{"preview", "preview", "Preview an explicit import", []string{"board", "item", "version", "only", "skip", "set", "replace"}, []string{"board", "item", "version"}, nil},
+		{"import", "import", "Apply the matching reviewed preview", []string{"board", "item", "version", "only", "skip", "set", "replace", "preview-token"}, []string{"board", "item", "version", "preview-token"}, nil},
+	}
+	for _, a := range actions {
+		p := &boardCommandParams{Action: a.dispatch}
+		cmd := &cobra.Command{Use: a.name, Aliases: a.aliases, Short: a.short, Args: cobra.NoArgs, Run: func(_ *cobra.Command, _ []string) { os.Exit(runBoardCommand(p, os.Stdout, os.Stderr)) }}
+		for _, name := range a.flags {
+			addBoardFlag(cmd, p, name)
+		}
+		for _, name := range a.required {
+			cmd.Flags().Lookup(name).Usage += " (required)"
+			if err := cmd.MarkFlagRequired(name); err != nil {
+				panic(err)
+			}
+		}
+		root.AddCommand(cmd)
+	}
+	return root
+}
+func addBoardFlag(cmd *cobra.Command, p *boardCommandParams, name string) {
+	f := cmd.Flags()
+	strings := map[string]struct {
+		value *string
+		help  string
+	}{
+		"board": {&p.Board, "Immutable board ID"}, "name": {&p.Name, "Display name (required for a new publication unless republishing)"},
+		"token": {&p.Token, "Private one-time invitation"}, "token-id": {&p.TokenID, "Invitation hash to revoke"}, "instance": {&p.Instance, "Member instance ID"},
+		"role": {&p.Role, "reader, publisher or owner (invite defaults to reader)"}, "ttl": {&p.TTL, "Invitation lifetime, default 1h (1m to 168h)"}, "cursor": {&p.Cursor, "Opaque page cursor"},
+		"item": {&p.Item, "Item ID"}, "version": {&p.Version, "Exact version ID"}, "parent": {&p.Parent, "Latest parent version when updating an item"},
+		"from-board": {&p.FromBoard, "Republish an original signed item from this board"}, "from-item": {&p.FromItem, "Original item ID"}, "from-version": {&p.FromVersion, "Original version ID"},
+		"preview-token": {&p.PreviewToken, "Token from a matching explicit preview"}, "path": {&p.Path, "Entry path from contents listing"}, "file": {&p.File, "New local output file"},
+	}
+	if v, ok := strings[name]; ok {
+		f.StringVar(v.value, name, "", v.help)
+		return
+	}
+	switch name {
+	case "only":
+		f.StringSliceVar(&p.Only, name, nil, "Select portable sections/items")
+	case "skip":
+		f.StringSliceVar(&p.Skip, name, nil, "Exclude sections/items")
+	case "set":
+		f.StringArrayVar(&p.Set, name, nil, "Placeholder name=value")
+	case "replace":
+		f.BoolVar(&p.Replace, name, false, "Explicitly replace conflicts")
+	case "offset":
+		f.Int64Var(&p.Offset, name, 0, "Text entry byte offset")
+	case "max-bytes":
+		f.Int64Var(&p.MaxBytes, name, 0, "Bound text inspection")
+	default:
+		panic("unknown board flag: " + name)
+	}
 }
 func runBoardCommand(p *boardCommandParams, stdout, stderr io.Writer) int {
 	if isBoardItemAction(p.Action) {
@@ -77,6 +152,8 @@ func runBoardCommand(p *boardCommandParams, stdout, stderr io.Writer) int {
 	case "leave":
 		method = "DELETE"
 		path += "/membership"
+	case "invites":
+		path += "/invites"
 	case "members":
 		path += "/members"
 	case "invite":

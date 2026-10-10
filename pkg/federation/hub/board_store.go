@@ -271,6 +271,38 @@ func (s *Store) boardCall(instance string, pub []byte, r *proto.BoardRequest, ca
 				_, err = tx.Exec(`UPDATE board_members SET role=? WHERE board=? AND instance=?`, p.Role, p.Board, p.Instance)
 			}
 			body = map[string]any{"ok": true}
+		case "invites.list":
+			if !owner {
+				return nil, adminErr(403, "board_owner", "board owner required")
+			}
+			rows, e := tx.Query(`SELECT hash,role,epoch,expires_at,used_by FROM board_invites WHERE board=? AND hash>? ORDER BY hash LIMIT 51`, p.Board, p.Cursor)
+			if e != nil {
+				return nil, e
+			}
+			type invite struct {
+				TokenID   string `json:"token_id"`
+				Role      string `json:"role"`
+				Epoch     int64  `json:"epoch"`
+				ExpiresAt string `json:"expires_at"`
+				UsedBy    string `json:"used_by"`
+			}
+			entries := []invite{}
+			for rows.Next() {
+				var v invite
+				if e = rows.Scan(&v.TokenID, &v.Role, &v.Epoch, &v.ExpiresAt, &v.UsedBy); e != nil {
+					rows.Close()
+					return nil, e
+				}
+				entries = append(entries, v)
+			}
+			err = rows.Err()
+			rows.Close()
+			cursor := ""
+			if len(entries) > 50 {
+				entries = entries[:50]
+				cursor = entries[49].TokenID
+			}
+			body = map[string]any{"invites": entries, "next_cursor": cursor}
 		case "invites.create":
 			if _, err = tx.Exec(`DELETE FROM board_invites WHERE board=? AND (expires_at<=? OR (used_by='' AND epoch<>?))`, p.Board, ts(time.Now()), b.Epoch); err != nil {
 				return nil, err
