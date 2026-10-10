@@ -66,6 +66,9 @@ type whoamiResp struct {
 	// line per such group. Omitted when no group the caller is in has a
 	// process (absence = feature off, degrade everywhere).
 	Phases []string `json:"phases,omitempty"`
+	// PendingMorph is a requested morph of the caller waiting for its turn to
+	// end (tclaude agent morph).
+	PendingMorph *db.AgentPendingMorph `json:"pending_morph,omitempty"`
 }
 
 func handleWhoami(w http.ResponseWriter, r *http.Request) {
@@ -121,7 +124,11 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 	}
 	agentID, _ := db.AgentIDForConv(p.ConvID)
 	presence, _ := db.GetAgentFederationPresence(agentID)
-	writeJSON(w, http.StatusOK, whoamiResp{FederationPresence: presence, Predecessor: teleportPredecessor(agentID), AgentID: agentID, ConvID: p.ConvID, Title: title, Groups: gs, ActiveGroups: activeGroups, Phases: phases})
+	var pendingMorph *db.AgentPendingMorph
+	if agentID != "" {
+		pendingMorph, _ = db.PendingMorphForAgent(agentID)
+	}
+	writeJSON(w, http.StatusOK, whoamiResp{FederationPresence: presence, Predecessor: teleportPredecessor(agentID), AgentID: agentID, ConvID: p.ConvID, Title: title, Groups: gs, ActiveGroups: activeGroups, Phases: phases, PendingMorph: pendingMorph})
 }
 
 // --- /v1/lookup ---
@@ -182,6 +189,8 @@ type peerEntry struct {
 	// see. Do not embed agentState here: it also carries context and cost data,
 	// whose cross-agent read is separately permission-gated.
 	State peerState `json:"state"`
+	// PendingMorph is a requested morph waiting for the agent to go idle.
+	PendingMorph *db.AgentPendingMorph `json:"pending_morph,omitempty"`
 }
 
 // peerState is the runtime summary `tclaude agent ls` needs. Its values come
@@ -356,6 +365,9 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 		}
 		pe.Predecessor = teleportPredecessor(pe.AgentID)
 		pe.TeleportPaused = pausedTeleportDescription(pe.AgentID)
+		if pe.AgentID != "" {
+			pe.PendingMorph, _ = db.PendingMorphForAgent(pe.AgentID)
+		}
 	}
 	out := make([]*peerEntry, 0, len(byConv))
 	for _, pe := range byConv {

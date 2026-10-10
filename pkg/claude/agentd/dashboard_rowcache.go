@@ -233,6 +233,7 @@ func (rc *snapshotRowCache) viewFor(convID string) *convRowBundle {
 		State:            rc.status.states[convID],
 	}
 	b.State.TemporaryHarnessBuiltinMode = rc.agents[convID].TemporaryHarnessBuiltinMode
+	b.State.PendingMorph = rc.agents[convID].PendingMorph
 	// Codex does not currently append thread_settings_applied merely because an
 	// explicit service tier was selected at launch. Until the follower sees a
 	// current-generation settings event, expose tclaude's recorded launch

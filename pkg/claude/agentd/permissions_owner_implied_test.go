@@ -15,7 +15,7 @@ func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 		entries[entry.Slug] = entry
 	}
 	wantGroupScoped := []string{
-		PermGroupsMembersReincarnate, PermGroupsMembersCompact,
+		PermGroupsMembersMorph, PermGroupsMembersReincarnate, PermGroupsMembersCompact,
 		PermGroupsMembersInterrupt, PermGroupsMembersRename,
 		PermGroupsMembersClone, PermGroupsMembersContextInfo,
 		PermGroupsMembersDebugExport,
@@ -74,6 +74,7 @@ func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 	}
 
 	wantSibling := map[string]string{
+		PermAgentMorph:         PermGroupsMembersMorph,
 		PermAgentReincarnate:   PermGroupsMembersReincarnate,
 		PermAgentCompact:       PermGroupsMembersCompact,
 		PermAgentInterrupt:     PermGroupsMembersInterrupt,

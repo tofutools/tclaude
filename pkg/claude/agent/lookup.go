@@ -776,12 +776,13 @@ func runWhoami(stdout, stderr io.Writer) int {
 
 func runWhoamiDaemon(stdout, stderr io.Writer) int {
 	var resp struct {
-		Predecessor *db.FederationMoveLink `json:"predecessor,omitempty"`
-		IsHuman     bool                   `json:"is_human"`
-		AgentID     string                 `json:"agent_id"`
-		ConvID      string                 `json:"conv_id"`
-		Title       string                 `json:"title"`
-		Phases      []string               `json:"phases"`
+		Predecessor  *db.FederationMoveLink `json:"predecessor,omitempty"`
+		IsHuman      bool                   `json:"is_human"`
+		AgentID      string                 `json:"agent_id"`
+		ConvID       string                 `json:"conv_id"`
+		Title        string                 `json:"title"`
+		Phases       []string               `json:"phases"`
+		PendingMorph *db.AgentPendingMorph  `json:"pending_morph,omitempty"`
 	}
 	if err := DaemonGet("/v1/whoami", &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -809,6 +810,9 @@ func runWhoamiDaemon(stdout, stderr io.Writer) int {
 	// its current phase.
 	for _, ph := range resp.Phases {
 		fmt.Fprintf(stdout, "  %s\n", ph)
+	}
+	if resp.PendingMorph != nil {
+		fmt.Fprintf(stdout, "  %s\n", pendingMorphLine(resp.PendingMorph))
 	}
 	return rcOK
 }
@@ -962,6 +966,8 @@ type peerEntry struct {
 	Online bool      `json:"online"`
 	Groups []string  `json:"groups"`
 	State  peerState `json:"state"`
+	// PendingMorph is a requested morph waiting for the agent to go idle.
+	PendingMorph *db.AgentPendingMorph `json:"pending_morph,omitempty"`
 }
 
 // peerState mirrors the deliberately narrow runtime summary returned by
@@ -1260,6 +1266,9 @@ func renderPeersAtWidth(p *lsParams, peers []*peerEntry, stdout io.Writer, termi
 		}
 		if pe.Predecessor != nil {
 			fmt.Fprintf(stdout, "  %s predecessor: %s@%s\n", shortAgentID(pe.AgentID, pe.ConvID), pe.Predecessor.Agent, pe.Predecessor.Instance)
+		}
+		if pe.PendingMorph != nil {
+			fmt.Fprintf(stdout, "  %s %s\n", shortAgentID(pe.AgentID, pe.ConvID), pendingMorphLine(pe.PendingMorph))
 		}
 	}
 	return rcOK

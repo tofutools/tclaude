@@ -146,6 +146,14 @@ type AgentRelaunchProfile struct {
 	// which is what lets an agent deliberately trimmed back to nothing stay that
 	// way across a relaunch instead of reverting to unknown/legacy. See TCL-597.
 	ContextFeatures *map[string]string `json:"context_features,omitempty"`
+	// MorphProfile labels the spawn profile the last morph applied ("" =
+	// free-form or never morphed). PreviousMorphForm is the form that morph
+	// replaced, for `agent morph --back`. PendingMorph is a requested morph
+	// waiting for the agent to go idle. Session projection never writes these;
+	// the merge path copies the existing profile, so they survive it.
+	MorphProfile      string             `json:"morph_profile,omitempty"`
+	PreviousMorphForm *AgentMorphForm    `json:"previous_morph_form,omitempty"`
+	PendingMorph      *AgentPendingMorph `json:"pending_morph,omitempty"`
 }
 
 // ConversationResumeProfile is the durable resume identity intrinsic to one
