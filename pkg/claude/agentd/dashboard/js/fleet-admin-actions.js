@@ -150,6 +150,22 @@ const settingRows = (v) => {
     offers: async (direction) => (await call('GET', `bundle-offers?direction=${direction}`)) || [],
     importOffer: (o, body) => call('POST', `bundle-offers/${encodeURIComponent(o.offer.id)}/import?peer=${encodeURIComponent(o.peer)}`, body),
     declineOffer: (o) => call('POST', `bundle-offers/${encodeURIComponent(o.offer.id)}/decline?peer=${encodeURIComponent(o.peer)}`, {}),
+    // Inspect: fetch spools and verifies the payload on this node; contents
+    // lists its entries and reads one as bounded text (never raw bytes).
+    fetchOffer: (o) => call('POST', `bundle-offers/${encodeURIComponent(o.offer.id)}/fetch?peer=${encodeURIComponent(o.peer)}`, {}),
+    offerContents: (o) => call('GET', `bundle-offers/${encodeURIComponent(o.offer.id)}/contents?peer=${encodeURIComponent(o.peer)}`),
+    offerEntry: (o, path, offset = 0, maxBytes = 262144) => call('GET', `bundle-offers/${encodeURIComponent(o.offer.id)}/contents?${new URLSearchParams({ peer: o.peer, path, offset: String(offset), max_bytes: String(maxBytes) })}`),
+    // The download is an attachment: preflight for a readable error, then let
+    // the browser stream it to disk through a short-lived anchor, removed in
+    // the same call (the browser-io imperative boundary).
+    downloadOffer: async (o, doc = globalThis.document) => {
+      const href = `/api/federation/bundle-offers/${encodeURIComponent(o.offer.id)}/download?peer=${encodeURIComponent(o.peer)}`;
+      const res = await fetchImpl(href, { method: 'HEAD', credentials: 'same-origin', cache: 'no-store' });
+      if (!res.ok) throw new FleetAdminError(res.status, { error: `download unavailable (HTTP ${res.status})` });
+      const a = doc.createElement('a');
+      a.href = href; a.download = ''; a.style.display = 'none';
+      doc.body.append(a); a.click(); a.remove();
+    },
     offerConfig: (body) => call('POST', 'offer-config', body),
     shareAgent: (body) => call('POST', 'share-agent', body),
     offerProfile: (name, peer) => call('POST', `profiles/${encodeURIComponent(name)}/offer`, { peer }),
@@ -186,3 +202,4 @@ const settingRows = (v) => {
     outbox: async (limit = 100) => (await call('GET', `outbox?limit=${limit}`)) || [],
   });
 }
+// dashboard-imperative-boundary: browser-io
