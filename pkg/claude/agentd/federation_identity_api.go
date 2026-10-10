@@ -17,6 +17,17 @@ type fedIdentityAction struct {
 	Apply       bool   `json:"apply"`
 }
 
+// Fingerprints are display metadata; the embedded signed rotation is unchanged.
+type fedIdentityRotationJSON struct {
+	proto.Rotation
+	OldFingerprint string `json:"old_fingerprint"`
+	NewFingerprint string `json:"new_fingerprint"`
+}
+
+func identityRotationJSON(r proto.Rotation) fedIdentityRotationJSON {
+	return fedIdentityRotationJSON{r, proto.Fingerprint(r.OldKey), proto.Fingerprint(r.NewKey)}
+}
+
 func readIdentityAction(w http.ResponseWriter, r *http.Request) (*fedIdentityAction, bool) {
 	if r.Method != http.MethodPost {
 		writeError(w, 405, "method", "POST only")
@@ -87,11 +98,7 @@ func handleFederationIdentityRotate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "rotation_pending", "rotation is staged; reconnect federation to publish it: "+err.Error())
 		return
 	}
-	writeJSON(w, 200, struct {
-		proto.Rotation
-		OldFingerprint string `json:"old_fingerprint"`
-		NewFingerprint string `json:"new_fingerprint"`
-	}{statement, proto.Fingerprint(statement.OldKey), proto.Fingerprint(statement.NewKey)})
+	writeJSON(w, 200, identityRotationJSON(statement))
 }
 func handleFederationIdentityRotations(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "read identity rotation state") {
@@ -107,7 +114,14 @@ func handleFederationIdentityRotations(w http.ResponseWriter, r *http.Request) {
 		writeFedErr(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"peers": rows, "local": local})
+	var chain []fedIdentityRotationJSON
+	for _, rotation := range local.Chain {
+		chain = append(chain, identityRotationJSON(rotation))
+	}
+	writeJSON(w, 200, map[string]any{"peers": rows, "local": struct {
+		Chain   []fedIdentityRotationJSON `json:"chain"`
+		Pending bool                      `json:"pending"`
+	}{chain, local.Pending}})
 }
 func handleFederationIdentityRecover(w http.ResponseWriter, r *http.Request) {
 	req, ok := readIdentityAction(w, r)
