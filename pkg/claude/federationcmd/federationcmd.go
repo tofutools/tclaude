@@ -463,6 +463,7 @@ type peerGrant struct {
 	GroupName    string `json:"group_name,omitempty"`
 	GroupDeleted bool   `json:"group_deleted,omitempty"`
 	SpawnPolicy  struct {
+		PermissionSlugs []string `json:"permission_slugs,omitempty"`
 		AllowedProfiles []string `json:"allowed_profiles,omitempty"`
 		RequesterPays   string   `json:"requester_pays,omitempty"`
 		JobApproval     string   `json:"job_approval,omitempty"`
@@ -474,6 +475,7 @@ type peerGrant struct {
 	} `json:"spawn_policy,omitempty"`
 }
 type grantParams struct {
+	PermissionSlugs []string `long:"permission-slug" optional:"true" help:"agents.receive.permissions only: allowed carried permission slug (repeatable); omitted allows ordinary slugs."`
 	AllowedProfiles []string `long:"allow-profile" optional:"true" help:"Selectable receiver profile (repeatable); groups.members.spawn only"`
 	RequesterPays   string   `long:"requester-pays" optional:"true" help:"Receiving spawn policy: required, allowed or off"`
 	JobApproval     string   `long:"job-approval" optional:"true" help:"jobs.run only: auto (default) or manual"`
@@ -490,6 +492,7 @@ type grantParams struct {
 func grantCmd() *cobra.Command {
 	return boa.CmdT[grantParams]{Use: "grant", Short: "Grant a trusted peer group or instance permission (human only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *grantParams, _ *cobra.Command, _ []string) {
 		grant := peerGrant{Peer: p.Peer, Slug: p.Slug, Scope: p.Scope}
+		grant.SpawnPolicy.PermissionSlugs = p.PermissionSlugs
 		grant.SpawnPolicy.AllowedProfiles = p.AllowedProfiles
 		grant.SpawnPolicy.Profile = p.Profile
 		grant.SpawnPolicy.Cwd = p.Cwd

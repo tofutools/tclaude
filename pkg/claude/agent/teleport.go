@@ -16,6 +16,7 @@ import (
 )
 
 type teleportParams struct {
+	CarryPermissions bool   `long:"carry-permissions" help:"Request receiver-approved permission carry; off by default."`
 	Target           string `pos:"true" optional:"true" help:"Trusted peer or group:<node pool>"`
 	Node             string `long:"node" optional:"true" help:"auto or group:<node pool>"`
 	Group            string `long:"group" optional:"true" help:"Receiving group; automatic only when exactly one is authorized"`
@@ -68,7 +69,7 @@ func runTeleport(p *teleportParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != 0 {
 		return rc
 	}
-	request := map[string]any{"peer": peer, "node": node, "group": p.Group, "require": p.Require, "prefer": p.Prefer, "keep_paused_backup": p.KeepPausedBackup, "clone": p.Clone, "home": p.Home, "note": p.Note, "credentials": p.Credentials, "git_ref": p.GitRef}
+	request := map[string]any{"peer": peer, "node": node, "group": p.Group, "require": p.Require, "prefer": p.Prefer, "keep_paused_backup": p.KeepPausedBackup, "clone": p.Clone, "home": p.Home, "note": p.Note, "credentials": p.Credentials, "git_ref": p.GitRef, "carry_permissions": p.CarryPermissions}
 	var response map[string]any
 	if err := DaemonRequest(http.MethodPost, "/v1/whoami/teleport", request, &response, DaemonOpts{Timeout: bundletransfer.DefaultTTL}); err != nil {
 		var de *DaemonError

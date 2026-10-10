@@ -22,6 +22,7 @@ const PermAgentsTeleportReceive = "agents.teleport.receive"
 
 type teleportSourceContextKey struct{}
 type teleportRequest struct {
+	CarryPermissions bool   `json:"carry_permissions,omitempty"`
 	Peer             string `json:"peer,omitempty"`
 	Node             string `json:"node,omitempty"`
 	Group            string `json:"group,omitempty"`
@@ -288,7 +289,7 @@ func handleFederationTeleport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, "teleport_limit", err.Error())
 		return
 	}
-	body, _ := json.Marshal(fedShareAgentRequest{Agent: "self", Peer: p.InstanceID, Group: in.Group, History: true})
+	body, _ := json.Marshal(fedShareAgentRequest{Agent: "self", Peer: p.InstanceID, Group: in.Group, History: true, CarryPermissions: in.CarryPermissions})
 	inner := r.Clone(context.WithValue(r.Context(), teleportSourceContextKey{}, &intent))
 	path := "/v1/federation/move-agent"
 	if in.Clone {

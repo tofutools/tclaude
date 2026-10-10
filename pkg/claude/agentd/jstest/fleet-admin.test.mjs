@@ -1054,7 +1054,7 @@ test('offers: preview then apply a config offer item by item, start a moved agen
   await tick(q('#fleet-share-agent-history'), true);
   await s.click(q('#fleet-share-agent-send'));
   assert.match(s.confirms.at(-1).body, /and a copy of its conversation history.*group team\. ada \(agt_a1\) keeps running here/);
-  assert.deepEqual(s.log.findLast((l) => l[0] === 'shareAgent')[1], { agent: 'agt_a1', peer: 'inst_forge', group: 'team', history: true, allow_flagged: false });
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'shareAgent')[1], { agent: 'agt_a1', peer: 'inst_forge', group: 'team', history: true, carry_permissions: false, allow_flagged: false });
 
   await s.click(s.q('#fleet-offer-profile-open'));
   await s.click(q('#fleet-offer-profile-send'));
@@ -2089,4 +2089,27 @@ test('hub numbers read in human units with thousands separators', async (t) => {
   assert.equal(uptime(59), '0 min');
   assert.equal(uptime(3 * 3600 + 120), '3 h 2 min');
   assert.equal(uptime(2 * 86400 + 3600), '2 d 1 h');
+});
+
+test('permission carry decisions are text, with explicit receiver options and confirmation', async (t) => {
+  const s = await setup(t);
+  const doc = s.harness.document; const q = (x) => doc.querySelector(x);
+  const hostile = '<img src=x onerror=alert(1)>';
+  s.actions.importOffer = async (o, body) => {
+    s.log.push(['carry', body]);
+    return { agent: { name: 'ada', carry_permissions: true }, cwd: '/srv/project', group: 'ops', unresolved: [],
+      permissions: [{ slug: hostile, effect: 'grant', source_scope: { group: [hostile] }, scope: { group: ['ops'] }, decision: 'remap', reason: hostile }],
+      ...(body.apply ? { spawn: { agent_id: 'agt_new' } } : {}) };
+  };
+  await s.show();
+  await s.click(s.q('[data-offer="off_mv"] [data-fa="preview"]'));
+  assert.match(q('#fleet-offer-permissions').textContent, /onerror=alert\(1\)/);
+  assert.equal(q('#fleet-offer-permissions img'), null);
+  const sensitive = q('#fleet-offer-sensitive-permissions'); sensitive.checked = true;
+  await s.harness.act(() => s.harness.fireEvent(sensitive, 'change'));
+  assert.equal(q('#fleet-offer-apply').disabled, true, 'changing authority requires a fresh preview');
+  await s.click(q('#fleet-offer-preview'));
+  await s.click(q('#fleet-offer-apply'));
+  assert.match(s.confirms.at(-1).body, /explicitly authorize carried permission administration, sandbox administration, human interaction and federation administration/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'carry')[1], { apply: true, allow_sensitive_permissions: true });
 });
