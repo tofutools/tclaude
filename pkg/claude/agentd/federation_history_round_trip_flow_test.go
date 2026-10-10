@@ -43,6 +43,7 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 	}
 	name := os.Getenv("TCLAUDE_TEST_HISTORY_HARNESS")
 	t.Setenv("CODEX_HOME", "")
+	t.Setenv("GEMINI_CLI_HOME", "")
 	f := newFlow(t)
 	if name == "opencode" {
 		bin := filepath.Join(f.World.HomeDir, "bin")
@@ -109,6 +110,9 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&in))
 		if in.Seed {
 			switch name {
+			case "gemini":
+				resp, _ := spawnGemini(t, f, "project", map[string]any{"name": "traveller", "cwd": cwd, "initial_message": in.Text, "sandbox_implementation": "off"})
+				in.Conv = resp.ConvID
 			case "copilot":
 				require.NoError(t, agentd.Spawn.SpawnNew(clcommon.SpawnArgs{Harness: "copilot", SessionID: in.Conv, Label: "traveller", Cwd: cwd, TrustDir: true, Approval: "all", SandboxImplementation: "off"}))
 			case "codex":
@@ -136,6 +140,14 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 		}
 		// Append through the same native writer as a harness completing a turn.
 		switch name {
+		case "gemini":
+			sim := f.World.Geminis.GetByConvID(in.Conv)
+			require.NotNil(t, sim)
+			if !in.Seed {
+				sim.Receive(in.Text)
+				sim.Receive("Enter")
+			}
+			sim.WriteGeminiReply(in.Assistant, "gemini-2.5-flash")
 		case "opencode":
 			require.NoError(t, testharness.AppendOpenCodeHistory(f.World.HomeDir, in.Conv, cwd, in.Text, in.Assistant))
 			_, err := harness.MustGet("opencode").Convs.ListConvs("")
@@ -160,6 +172,10 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 			require.NoError(t, cc.AppendTurn(map[string]any{"type": "assistant", "cwd": cwd, "message": map[string]any{"role": "assistant", "content": []map[string]string{{"type": "text", "text": in.Assistant}}}}))
 		}
 		require.NoError(t, db.GrantAgentPermissionWithScope(in.Conv, agentd.PermSelfTeleport, string(mustJSON(t, map[string]any{"peer": []string{in.Peer}})), "test operator"))
+		if name == "gemini" && in.Seed {
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]string{"conv": in.Conv}))
+			return
+		}
 		w.WriteHeader(204)
 	})
 
@@ -290,7 +306,7 @@ func historyNodeRequest(t *testing.T, node historyNode, method, path, conv strin
 }
 
 func TestFederation_TeleportHistoryRoundTrip(t *testing.T) {
-	for _, name := range []string{"claude", "codex", "opencode", "copilot"} {
+	for _, name := range []string{"claude", "codex", "opencode", "copilot", "gemini"} {
 		t.Run(name, func(t *testing.T) { runHistoryRoundTrip(t, name, false) })
 	}
 }
@@ -359,7 +375,15 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 	const original = "Original plan from node A: repair the index."
 	const originalReply = "I will inspect the source repository before travelling."
 	code, raw := historyNodeRequest(t, a, "POST", "/test/turn", "", map[string]any{"Conv": sourceConv, "Text": original, "Assistant": originalReply, "Peer": b.Instance, "Seed": true})
-	require.Equal(t, 204, code, string(raw))
+	if name == "gemini" {
+		require.Equal(t, 200, code, string(raw))
+		var seed struct{ Conv string }
+		require.NoError(t, json.Unmarshal(raw, &seed))
+		sourceConv = seed.Conv
+		require.NotEmpty(t, sourceConv)
+	} else {
+		require.Equal(t, 204, code, string(raw))
+	}
 	if large {
 		code, raw = historyNodeRequest(t, a, "POST", "/test/large", "", nil)
 		require.Equal(t, 204, code, string(raw))

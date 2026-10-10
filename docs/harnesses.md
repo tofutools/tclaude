@@ -100,7 +100,7 @@ warning. Model and effort are remembered by the harness itself.
 | Federated model gateway (`--model-proxy`) | Yes, ordinary workers | Yes, TUI and app-server | No: provider isolation | Yes, HTTP Responses BYOK | No: native Gemini dialect | No |
 | Sessions: spawn / resume | ✅ | ✅ | ✅ managed server + attach | ✅ | ✅ | ✅ spawn only |
 | One-shot [`ask`](ask.md) | ✅ live-streamed | ✅ buffered | ✅ buffered | ✅ buffered | ✅ buffered | ❌ |
-| Portable agent-bundle history | ✅ JSONL | ✅ rollout JSONL | ✅ native export/import | ✅ native event log | ⚠️ config only | ❌ |
+| Portable agent-bundle history | ✅ JSONL | ✅ rollout JSONL | ✅ native export/import | ✅ native event log | ✅ native chat JSONL | ❌ |
 | [Conversation](conversations.md) list & search | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only | ⚠️ send-keys only, not yet exercised against a live pane | ⚠️ durable inbox only; never injected into the shell |
 | Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` | ✅ tclaude title overlay | ❌ |
@@ -483,6 +483,11 @@ legacy whole-file `.json` sessions included. A session counts as a
 conversation exactly when Gemini's own `--resume` would offer it: it has real
 content and is not a subagent session. Resume is scoped to the project
 directory, as in the CLI.
+
+**Portable history.** Gemini portable history preserves native chat messages, metadata updates and rewind
+records. Import remints session and message IDs, maps the receiver project, and resumes
+through Gemini’s own session store. Legacy JSON sessions are converted to JSONL.
+Settings, trust decisions, credentials and filesystem checkpoints do not travel.
 
 **Ask.** `tclaude ask --harness gemini` runs headless `gemini --prompt` and
 returns the buffered answer. In headless mode Gemini denies any tool call
