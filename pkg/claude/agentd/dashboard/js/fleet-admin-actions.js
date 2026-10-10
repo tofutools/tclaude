@@ -106,7 +106,8 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
     offerContents: (o) => call('GET', `bundle-offers/${encodeURIComponent(o.offer.id)}/contents?peer=${encodeURIComponent(o.peer)}`),
     offerEntry: (o, path, offset = 0, maxBytes = 262144) => call('GET', `bundle-offers/${encodeURIComponent(o.offer.id)}/contents?${new URLSearchParams({ peer: o.peer, path, offset: String(offset), max_bytes: String(maxBytes) })}`),
     // The download is an attachment: preflight for a readable error, then let
-    // the browser stream it to disk.
+    // the browser stream it to disk through a short-lived anchor, removed in
+    // the same call (the browser-io imperative boundary).
     downloadOffer: async (o, doc = globalThis.document) => {
       const href = `/api/federation/bundle-offers/${encodeURIComponent(o.offer.id)}/download?peer=${encodeURIComponent(o.peer)}`;
       const res = await fetchImpl(href, { method: 'HEAD', credentials: 'same-origin', cache: 'no-store' });
@@ -151,3 +152,4 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
     outbox: async (limit = 100) => (await call('GET', `outbox?limit=${limit}`)) || [],
   });
 }
+// dashboard-imperative-boundary: browser-io
