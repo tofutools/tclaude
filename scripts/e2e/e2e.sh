@@ -139,7 +139,7 @@ browser)
 		c=$BASE/chrome
 		mkdir -p "$c"/{config,cache,data,profile}
 		(XDG_CONFIG_HOME=$c/config XDG_CACHE_HOME=$c/cache XDG_DATA_HOME=$c/data exec nohup google-chrome --headless=new \
-			--no-sandbox --disable-gpu --hide-scrollbars --window-size=1280,800 --remote-debugging-port="$DRIVE_PORT" \
+			--no-sandbox --disable-gpu --hide-scrollbars --window-size=1280,800 --screen-info={1280x800} --remote-debugging-port="$DRIVE_PORT" \
 			--user-data-dir="$c/profile" about:blank >"$BASE/logs/chrome.log" 2>&1) &
 		echo $! >"$BASE/chrome.pid"
 		sleep 2
