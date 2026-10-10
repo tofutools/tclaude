@@ -15,6 +15,7 @@ import (
 )
 
 var adminMethodCapability = map[string]string{
+	"boards.list": "hub.boards.manage", "boards.patch": "hub.boards.manage", "boards.delete": "hub.boards.manage",
 	"status": "", "claim": "",
 	"run.status": "@admin", "run.start": "hub.exec", "run.job": "@admin", "run.logs": "hub.exec", "audit": "hub.logs.read",
 	"update.status": "hub.update", "update.start": "hub.update", "update.job": "hub.update",
@@ -28,6 +29,10 @@ var adminMethodCapability = map[string]string{
 }
 
 func (h *Hub) adminRequest(c *conn, frame *proto.Frame, size int) {
+	if c.boardOnly {
+		c.send(&proto.Frame{Type: proto.FrameError, Code: proto.CodeBoardOnly, Message: "board connection cannot administer the hub"})
+		return
+	}
 	req := frame.AdminRequest
 	if req == nil || !proto.ValidStreamID(req.ID) {
 		c.send(&proto.Frame{Type: proto.FrameError, Code: proto.CodeBadFrame, Message: "invalid hub admin frame"})
@@ -136,6 +141,9 @@ func validateAdminSpaces(spaces []string) error {
 	return nil
 }
 func (h *Hub) executeAdmin(c *conn, req *proto.HubAdminRequest) (any, error) {
+	if strings.HasPrefix(req.Method, "boards.") {
+		return h.store.moderateBoard(req.Method, req.Payload)
+	}
 	if strings.HasPrefix(req.Method, "update.") {
 		return h.executeUpdate(c, req.Method, req.Payload)
 	}

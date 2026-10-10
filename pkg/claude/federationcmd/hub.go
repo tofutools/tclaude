@@ -19,6 +19,11 @@ type hubClaimParams struct {
 	Token string `pos:"true" help:"One-time token printed by the hub host"`
 }
 type hubResourceParams struct {
+	Board        string   `long:"board" help:"Board ID for hub moderation"`
+	Frozen       *bool    `long:"frozen" help:"Freeze/unfreeze a board"`
+	QuotaBytes   *int64   `long:"quota-bytes" help:"Board ciphertext quota"`
+	MaxMembers   *int64   `long:"max-members" help:"Board member quota"`
+	MaxVersions  *int64   `long:"max-versions" help:"Board version quota"`
 	Action       string   `pos:"true" help:"list, add/remove (admins), admit/revoke, create/revoke, set/reset, recover/revoke-old"`
 	Instance     string   `long:"instance" help:"Immutable instance ID"`
 	Spaces       []string `long:"spaces" help:"Visible space names"`
@@ -48,7 +53,7 @@ func hubCmd() *cobra.Command {
 			os.Exit(runHubCall("GET", resource, nil, os.Stdout, os.Stderr))
 		}}.ToCobra())
 	}
-	for _, resource := range []string{"admins", "admissions", "invites", "spaces", "settings", "identity", "logs", "audit"} {
+	for _, resource := range []string{"admins", "admissions", "invites", "spaces", "settings", "identity", "logs", "audit", "boards"} {
 		sub = append(sub, boa.CmdT[hubResourceParams]{Use: resource, Short: "Manage hub " + resource + " (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *hubResourceParams, _ *cobra.Command, _ []string) {
 			os.Exit(runHubResource(resource, p, os.Stdout, os.Stderr))
 		}}.ToCobra())
@@ -60,6 +65,29 @@ func runHubResource(resource string, p *hubResourceParams, stdout, stderr io.Wri
 	body := map[string]any{}
 	invalid := func(message string) int { return fail(stderr, fmt.Errorf("%s: %s", resource, message)) }
 	switch resource + "/" + p.Action {
+	case "boards/list":
+	case "boards/set", "boards/delete":
+		if p.Board == "" {
+			return invalid("requires --board")
+		}
+		tail += "/" + url.PathEscape(p.Board)
+		method = "DELETE"
+		if p.Action == "set" {
+			method = "PATCH"
+			if p.Frozen != nil {
+				body["frozen"] = *p.Frozen
+			}
+			if p.QuotaBytes != nil {
+				body["quota_bytes"] = *p.QuotaBytes
+			}
+			if p.MaxMembers != nil {
+				body["max_members"] = *p.MaxMembers
+			}
+			if p.MaxVersions != nil {
+				body["max_versions"] = *p.MaxVersions
+			}
+		}
+
 	case "admins/list", "admissions/list", "invites/list", "spaces/list", "settings/get", "logs/tail", "audit/list":
 	case "admins/add":
 		if p.Instance == "" || len(p.Capabilities) == 0 {

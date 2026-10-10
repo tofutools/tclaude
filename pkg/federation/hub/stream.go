@@ -217,6 +217,8 @@ func (h *Hub) streamHandshake(ws *websocket.Conn) (*streamSession, error) {
 		return nil, &refusal{code, msg}
 	}
 	switch {
+	case hello.BoardToken != "":
+		return refuse(proto.CodeBoardOnly, "board invitations cannot authorize relay streams")
 	case hello.Type != proto.FrameHello:
 		return refuse(proto.CodeBadFrame, "expected hello")
 	case hello.Proto != proto.ProtocolVersion:
