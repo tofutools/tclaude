@@ -320,6 +320,8 @@ export function FleetAdmin({
   const [page, setPage] = useState('peers');
   const [dialog, setDialog] = useState(null);
   const [grantTarget, setGrantTarget] = useState('');
+  // runPreselect is the Run target another page sent the operator to (the hub).
+  const [runPreselect, setRunPreselect] = useState('');
   const [tick, setTick] = useState(0);
   const reload = () => setTick((n) => n + 1);
 
@@ -371,7 +373,7 @@ export function FleetAdmin({
   return html`<div class="fleet-admin">
     <${Identity} self=${view.self} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload} onUpdate=${() => setDialog({ kind: 'update' })} onSettings=${() => setDialog({ kind: 'settings' })} />
     <div class="fa-subtabs" role="tablist">${SUB_PAGES.map((p) => html`<button type="button" role="tab" key=${p.id} aria-selected=${p.id === sub.id ? 'true' : 'false'}
-      class=${`fa-subtab${p.id === sub.id ? ' on' : ''}`} onClick=${() => setPage(p.id)}>${p.label}</button>`)}</div>
+      class=${`fa-subtab${p.id === sub.id ? ' on' : ''}`} onClick=${() => { if (p.id !== sub.id) { setRunPreselect(''); setPage(p.id); } }}>${p.label}</button>`)}</div>
     ${sub.id === 'peers'
       ? html`${active && html`<${ViewersPanel} view=${view} actions=${actions} confirm=${confirm} toast=${toast} timers=${timers} />`}<${PeersPage} view=${view} now=${now()} onKey=${(r) => setDialog({ kind: 'key', row: r })} onTrust=${(r) => setDialog({ kind: 'trust', row: r })}
           onUnrestrict=${(r) => setDialog({ kind: 'unrestrict', row: r })} onRestrict=${restrict} onUntrust=${untrust}
@@ -379,7 +381,7 @@ export function FleetAdmin({
       : sub.id === 'harnesses'
       ? html`<${HarnessesPage} view=${view} actions=${harnessActions} confirm=${confirm} toast=${toast} copy=${copy} timers=${timers} />`
       : sub.id === 'run'
-      ? html`<${RunPage} view=${view} actions=${runActions} confirm=${confirm} toast=${toast} timers=${timers} />`
+      ? html`<${RunPage} key=${runPreselect} view=${view} actions=${runActions} confirm=${confirm} toast=${toast} timers=${timers} preselect=${runPreselect} />`
       : sub.id === 'spawns'
       ? html`<${SpawnRequestsPage} view=${view} pools=${pools} actions=${actions} confirm=${confirm} toast=${toast} now=${now()} />`
       : sub.id === 'moves'
@@ -396,7 +398,7 @@ export function FleetAdmin({
       : sub.id === 'models'
       ? html`<${ModelsPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} now=${now()} />`
       : sub.id === 'hub'
-      ? html`<${HubPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} />`
+      ? html`<${HubPage} view=${view} actions=${actions} updateActions=${updateActions} confirm=${confirm} toast=${toast} copy=${copy} timers=${timers} onRunHub=${() => { setRunPreselect('hub'); setPage('run'); }} />`
       : sub.id === 'grants'
       ? html`<${GrantsPage} view=${view} pools=${pools} groups=${localGroups(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast}
           target=${grantTarget} setTarget=${setGrantTarget} />`

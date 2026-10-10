@@ -5,6 +5,8 @@ const FP_FORGE = 'k7q2-mx9d-4hpa-zz31-0e8c';
 const FP_NEW = 'w5ze-a3nq-9c1b-77f0-d2aa';
 let s_transition = null;
 let s_hubAdmin = true;
+// s_hubRun is the hub's script status: off by default, like a fresh hub.
+let s_hubRun = { accept_remote_scripts: false, switch_source: 'flag', can_exec: true, service_user: 'tclaude-hub', limits: { max_script_bytes: 16384, max_timeout_seconds: 3600 } };
 const s_hubEcho = () => !!globalThis.window?.__hubEchoOther;
 let s_rotation = { hop_count: 1, pending: false };
 const status = () => ({
@@ -142,6 +144,12 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
       { key: 'rotation_window', type: 'duration', unit: 's', min: 60, max: 604800, effective: 600, source: 'flag', boot: 600, restart_required: false, flag_overridden: false },
       { key: 'max_streams_per_instance', type: 'int', min: 1, max: 64, effective: 16, source: 'remote', boot: 8, restart_required: false, flag_overridden: true },
     ],
+    hubRunStatus: async () => s_hubRun,
+    hubAudit: async (cursor) => { log.push(['audit', cursor]); return cursor ? { entries: [] } : { entries: [
+      { id: 'a1', at: '2026-10-10T09:30:00Z', actor: 'inst_self', kind: 'exec', outcome: 'completed', detail: { exit_code: 0, script: 'uptime\n<b>not markup</b>', script_sha256: 'ab'.repeat(32) } },
+      { id: 'a2', at: '2026-10-10T09:20:00Z', actor: 'inst_lab', kind: 'exec', outcome: 'failed', detail: { exit_code: 1, script_sha256: 'cd'.repeat(32), redacted: true } },
+      { id: 'a3', at: '2026-10-10T09:10:00Z', actor: 'inst_self', kind: 'update', outcome: 'rolled_back', detail: { from_version: 'v0.43.0', to_version: 'v0.44.0' } },
+    ], next_cursor: 'a3' }; },
     patchHubSettings: async (o) => { log.push(['settings', o]); return { ok: true }; },
     recoverHubIdentity: async (old, nw, fp) => { log.push(['recover', old, nw, fp]); return { old: { instance: old, name: 'lost', fingerprint: 'old-fp', spaces: ['ops'] }, replacement: null, new: nw, new_fingerprint: s_hubEcho() ? 'aaaa-bbbb-cccc-dddd-eeee-ffff-gg' : 'abcd-efgh-ijkl-mnop-qrst-uvwx-yz', applied: !!fp, warning: 'The old instance held admin; it is not transferred.' }; },
     revokeOldHubIdentity: async (i, fp) => { log.push(['revokeOld', i, fp]); return { instance: i, fingerprint: 'zyxw-vuts-rqpo-nmlk-jihg-fedc-ba', applied: !!fp, warning: '' }; },
@@ -249,7 +257,7 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
   const runLog = [];
   let runSettings = { accept_remote_scripts: false, resource_limits: { memory: '1GiB', pids: 256 }, warning: 'Full remote code execution' };
   const runActions = {
-    status: async (node) => { runLog.push(['status', node.id]); return { accept_remote_scripts: true, resource_limits: {} }; },
+    status: async (node) => { runLog.push(['status', node.id]); return node.hub ? s_hubRun : { accept_remote_scripts: true, resource_limits: {} }; },
     settings: async () => runSettings,
     saveSettings: async (body) => { runLog.push(['save', body]); runSettings = { ...runSettings, ...body }; return runSettings; },
     start: async (node, script, secs) => { runLog.push(['start', node.id, script, secs]); return { id: `j-${node.id}`, node: node.id, state: 'running', exit_code: -1 }; },
@@ -698,7 +706,8 @@ test('run scripts: pick ready nodes, run with a confirm, one pane per node, full
   assert.equal(m.readiness({ id: 'p', online: true }, { data: { accept_remote_scripts: false } }).text, 'does not accept remote scripts');
   await s.show();
   await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Run scripts/.test(b.textContent)));
-  assert.deepEqual(s.runLog.filter((l) => l[0] === 'status').map((l) => l[1]), ['inst_forge'], 'only online peers are probed');
+  assert.deepEqual(s.runLog.filter((l) => l[0] === 'status').map((l) => l[1]), ['inst_forge', 'hub'], 'only online peers and the connected hub are probed');
+  assert.match(s.q('#fleet-run-nodes [data-node="hub"]').textContent, /hub hub\.example.*does not accept remote scripts/);
   assert.match(s.q('#fleet-run-nodes [data-node="inst_lab"]').textContent, /offline/);
   assert.equal(s.q('#fleet-run-nodes [data-node="inst_lab"] input').disabled, true);
   await s.click(s.q('#fleet-run-all'));
@@ -1688,4 +1697,196 @@ test('bundle inspect: a slow earlier read never replaces the entry picked after 
   await harness.act(() => new Promise((r) => setTimeout(r, 0)));
   assert.match(q('#fleet-bundle-text').textContent, /"name": "ada"/, 'the later pick stays shown');
   await mounted.unmount();
+});
+
+test('hub as a run target: readiness, the hub threat note in the confirm, and the Hub page sends the operator there', async (t) => {
+  const s = await setup(t);
+  const m = await s.harness.importDashboardModule('js/fleet-admin-run.js');
+  const hub = { id: 'hub', hub: true, online: true };
+  assert.equal(m.readiness({ ...hub, online: false }, null).text, 'not connected');
+  assert.equal(m.readiness(hub, { error: { status: 403 } }).text, 'needs hub.exec');
+  assert.equal(m.readiness(hub, { data: { accept_remote_scripts: true, can_exec: false } }).text, 'needs hub.exec');
+  assert.equal(m.readiness(hub, { data: { accept_remote_scripts: true, can_exec: true } }).text, 'ready');
+  assert.deepEqual(m.hubTarget({ hubURL: 'wss://hub.example:8470', hubState: 'connected' }), { id: 'hub', label: 'hub hub.example:8470', hub: true, online: true });
+  assert.equal(m.hubTarget({ hubURL: '' }), null);
+  s_hubRun = { ...s_hubRun, accept_remote_scripts: true };
+  try {
+    await openHub(s);
+    const q = (x) => s.harness.document.querySelector(x);
+    assert.match(q('#fleet-hub-scripts').textContent, /accepts scripts from admins with hub\.exec \(set by flag\).*holds hub\.exec.*can never be switched from here.*tclaude-hub.*cannot read or forge end-to-end node content/s);
+    await s.click(q('#fleet-hub-run-open'));
+    await s.harness.act(() => new Promise((r) => setTimeout(r, 10)));
+    assert.equal(q('#fleet-run-nodes [data-node="hub"] input').getAttribute('checked'), 'true', 'the hub arrives preselected');
+    const area = q('#fleet-run-script'); area.value = 'df -h';
+    await s.harness.act(() => s.harness.fireEvent(area, 'input'));
+    const to = q('#fleet-run-timeout'); to.value = '7200';
+    await s.harness.act(() => s.harness.fireEvent(to, 'input'));
+    assert.match(q('.fa-run-bar').textContent, /1–3600 s \(hub limit\)/, 'the hub\'s own timeout cap applies');
+    assert.equal(q('#fleet-run-submit').disabled, true);
+    to.value = '3600';
+    await s.harness.act(() => s.harness.fireEvent(to, 'input'));
+    assert.match(q('#fleet-run-submit').textContent, /Run on 1 node/);
+    await s.click(q('#fleet-run-submit'));
+    const c = s.confirms.at(-1);
+    assert.equal(c.title, 'Run the script on 1 hub?');
+    assert.match(c.body, /on the hub \(hub\.example\) as its service user tclaude-hub, with a 3600 s timeout.*disrupt every node's connectivity.*cannot read or forge.*full script in its audit/);
+    assert.deepEqual(s.runLog.filter((l) => l[0] === 'start').at(-1).slice(1), ['hub', 'df -h', 3600]);
+    // Hub jobs are read on every second 1 s tick: hub admin calls share a control budget.
+    const hubReads = () => s.runLog.filter((l) => l[0] === 'job' && l[1] === 'hub').length;
+    for (const expected of [0, 1]) {
+      const tk = s.timers.queue.find((x) => x.ms === 1000);
+      await s.harness.act(async () => { s.timers.queue.splice(s.timers.queue.indexOf(tk), 1); await tk.fn(); });
+      assert.equal(hubReads(), expected);
+    }
+    await s.click(s.q('#fleet-run-all'));
+    await s.click(q('#fleet-run-submit'));
+    assert.match(s.confirms.at(-1).title, /on 3 nodes including the hub/);
+    assert.match(s.confirms.at(-1).body, /tclaude user on desk, forge, and on the hub/);
+  } finally {
+    s_hubRun = { ...s_hubRun, accept_remote_scripts: false };
+  }
+});
+
+test('hub audit: exec scripts as text for hub.exec holders, redacted otherwise; remote scripts switch is read-only', async (t) => {
+  const s = await setup(t);
+  await openHub(s);
+  const q = (x) => s.harness.document.querySelector(x);
+  const rows = [...s.harness.document.querySelectorAll('#fleet-hub-audit tbody tr')];
+  assert.equal(rows.length, 3);
+  assert.equal(rows[0].querySelector('details b'), null, 'script text never becomes markup');
+  assert.match(rows[0].querySelector('details pre').textContent, /uptime\n<b>not markup<\/b>/);
+  assert.match(rows[1].textContent, /exit 1.*the script needs hub\.exec.*sha256 cdcdcdcdcdcd…/);
+  assert.equal(rows[1].querySelector('details'), null);
+  assert.match(rows[2].textContent, /rolled_back.*v0\.43\.0 → v0\.44\.0/);
+  await s.click(q('#fleet-hub-audit-more'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  assert.deepEqual(s.log.filter((l) => l[0] === 'audit').map((l) => l[1]), ['', 'a3']);
+  assert.equal(q('#fleet-hub-audit-more'), null, 'an empty page ends the audit');
+  assert.match(q('#fleet-hub-scripts').textContent, /^\s*off/);
+  assert.equal(q('#fleet-hub-scripts button, #fleet-hub-scripts input'), null, 'the switch is never toggled from here');
+});
+
+test('hub update: confirms the restart and automatic rollback, polls through the restart, shows a rollback, refuses when unsupervised', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { NodeUpdateDialog, updateBase } = await harness.importDashboardModule('js/node-update.js');
+  assert.equal(updateBase({ hub: true }), '/api/federation/hub/update');
+  const queue = [];
+  const timers = { setTimeout: (fn, ms) => { queue.push({ fn, ms }); return queue.length; }, clearTimeout: () => {} };
+  const reads = [
+    { current_version: 'v0.43.0', latest_version: 'v0.44.0', update_available: true, supervisor: 'systemd', rollback_available: false },
+    new Error('hub restarting'),
+    { current_version: 'v0.43.0', latest_version: 'v0.44.0', update_available: true, supervisor: 'systemd', rollback_available: false,
+      job: { id: 'u1', action: 'apply', from_version: 'v0.43.0', version: 'v0.44.0', state: 'rolled_back', rolled_back: true, error: 'health check failed: no hello within 60 s' } },
+  ];
+  const calls = [];
+  const actions = {
+    status: async () => { const r = reads.length > 1 ? reads.shift() : reads[0]; calls.push('status'); if (r instanceof Error) throw r; return r; },
+    start: async (node, action, version) => { calls.push(['start', node.id, action, version]); return { id: 'u1', action, from_version: 'v0.43.0', version, state: 'restarting', phase: 'health_check', deadline: '2026-10-10T12:01:00Z' }; },
+  };
+  const confirms = [];
+  const confirm = async (o) => { confirms.push(o); return true; };
+  await harness.mount(harness.html`<${NodeUpdateDialog} node=${{ id: 'hub', label: 'the hub', hub: true }} actions=${actions} confirm=${confirm} toast=${() => {}} timers=${timers} onClose=${() => {}} />`);
+  await harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  const q = (x) => harness.document.querySelector(x);
+  assert.match(q('#fleet-node-update-title').textContent, /tclaude-hub/);
+  assert.match(q('#fleet-hub-supervisor').textContent, /systemd/);
+  await harness.act(() => q('#fleet-node-update-apply').click());
+  await harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  assert.equal(confirms[0].title, 'Update the hub to v0.44.0?');
+  assert.match(confirms[0].body, /verifies its checksum.*restarts under systemd.*Every node's hub connection drops.*not healthy by the deadline it rolls back to v0\.43\.0 automatically/);
+  assert.deepEqual(calls.find((c) => Array.isArray(c)), ['start', 'hub', 'apply', 'v0.44.0']);
+  await harness.act(() => new Promise((r) => setTimeout(r, 20)));
+  // The read right after the start fails: the hub is restarting.
+  assert.match(q('#fleet-node-update-job').textContent, /v0\.43\.0 → v0\.44\.0: restarting… \(not answering yet\) \(health check\).*or it rolls back/, 'a failed read during the restart is not an error');
+  assert.equal(q('#fleet-node-update-modal [role=alert]'), null);
+  const next = queue.shift();
+  assert.equal(next.ms, 2000, 'the hub is re-read every 2 s through the restart (shared control budget)');
+  await harness.act(async () => { next.fn(); await new Promise((r) => setTimeout(r, 10)); });
+  await harness.act(() => new Promise((r) => setTimeout(r, 20)));
+  const job = q('#fleet-node-update-job');
+  assert.match(job.className, /fa-danger/);
+  assert.match(job.textContent, /rolled back.*health check failed/);
+});
+
+test('hub update: an unsupervised hub refuses with a clear reason and no update button works', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { NodeUpdateDialog } = await harness.importDashboardModule('js/node-update.js');
+  const actions = { status: async () => ({ current_version: 'v0.43.0', latest_version: 'v0.44.0', update_available: true, supervisor: null, blocked: { code: 'not_supervised', message: 'Run tclaude-hub under the guardian (systemd or launchd unit).' } }), start: async () => { throw new Error('must not start'); } };
+  await harness.mount(harness.html`<${NodeUpdateDialog} node=${{ id: 'hub', label: 'the hub', hub: true }} actions=${actions} confirm=${async () => true} toast=${() => {}} timers=${globalThis} onClose=${() => {}} />`);
+  await harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  const q = (x) => harness.document.querySelector(x);
+  assert.match(q('#fleet-hub-supervisor').textContent, /none/);
+  assert.match(q('#fleet-hub-update-blocked').textContent, /not running under systemd or launchd.*update refused.*guardian/);
+  assert.equal(q('#fleet-node-update-apply').disabled, true);
+});
+
+test('hub update: opened while the hub is not answering, the dialog retries until it reads the outcome', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { NodeUpdateDialog } = await harness.importDashboardModule('js/node-update.js');
+  const queue = [];
+  const timers = { setTimeout: (fn, ms) => { queue.push({ fn, ms }); return queue.length; }, clearTimeout: () => {} };
+  const down = Object.assign(new Error('hub unreachable'), { status: 503 });
+  const reads = [down, { current_version: 'v0.44.0', latest_version: 'v0.44.0', update_available: false, supervisor: 'launchd', job: { id: 'u2', action: 'apply', from_version: 'v0.43.0', version: 'v0.44.0', state: 'completed' } }];
+  const actions = { status: async () => { const r = reads.length > 1 ? reads.shift() : reads[0]; if (r instanceof Error) throw r; return r; }, start: async () => { throw new Error('no'); } };
+  await harness.mount(harness.html`<${NodeUpdateDialog} node=${{ id: 'hub', label: 'the hub', hub: true }} actions=${actions} confirm=${async () => true} toast=${() => {}} timers=${timers} onClose=${() => {}} />`);
+  await harness.act(() => new Promise((r) => setTimeout(r, 20)));
+  const q = (x) => harness.document.querySelector(x);
+  assert.match(q('#fleet-node-update-modal [role=alert]').textContent, /not answering right now \(it may be restarting\); retrying/);
+  const next = queue.shift();
+  assert.equal(next.ms, 2000);
+  await harness.act(async () => { next.fn(); await new Promise((r) => setTimeout(r, 20)); });
+  await harness.act(() => new Promise((r) => setTimeout(r, 20)));
+  assert.match(q('#fleet-node-update-job').textContent, /v0\.43\.0 → v0\.44\.0: completed/);
+  assert.equal(q('#fleet-node-update-modal [role=alert]'), null);
+});
+
+test('hub remote scripts: without hub.exec the page says it is granted on the hub host, and shows the hub warning as text', async (t) => {
+  const prev = s_hubRun;
+  s_hubRun = { ...s_hubRun, can_exec: false, warning: '<i>Full remote code execution</i> as tclaude-hub' };
+  try {
+    const s = await setup(t);
+    await openHub(s);
+    const box = s.harness.document.querySelector('#fleet-hub-scripts');
+    assert.match(box.textContent, /does not hold hub\.exec.*hub-config\.json beside the hub database.*tclaude-hub serve --accept-remote-scripts.*tclaude-hub admin grant-exec <instance>/s);
+    assert.equal(box.querySelector('i'), null, 'the hub warning never becomes markup');
+    assert.match(box.textContent, /<i>Full remote code execution<\/i>/);
+    assert.equal(box.querySelector('#fleet-hub-run-open'), null);
+  } finally {
+    s_hubRun = prev;
+  }
+});
+
+test('hub phase 2 features absent from this build degrade to a plain note, never an error', async (t) => {
+  const s = await setup(t);
+  const run = await s.harness.importDashboardModule('js/fleet-admin-run.js');
+  const missing = { status: 404, code: '' };
+  const oldHub = { status: 400, code: 'operation' };
+  for (const error of [missing, oldHub]) {
+    assert.equal(run.readiness({ id: 'hub', hub: true, online: true }, { error }).text, 'hub scripts not available on this build');
+  }
+  const { NodeUpdateDialog } = await s.harness.importDashboardModule('js/node-update.js');
+  for (const error of [missing, oldHub]) {
+    const host = s.harness.document.createElement('div');
+    s.harness.document.body.appendChild(host);
+    const actions = { status: async () => { throw Object.assign(new Error('nope'), error); }, start: async () => { throw new Error('no'); } };
+    const queue = [];
+    const timers = { setTimeout: (fn, ms) => { queue.push({ fn, ms }); return 1; }, clearTimeout: () => {} };
+    const m = await s.harness.mount(s.harness.html`<${NodeUpdateDialog} node=${{ id: 'hub', label: 'the hub', hub: true }} actions=${actions} confirm=${async () => true} toast=${() => {}} timers=${timers} onClose=${() => {}} />`, host);
+    await s.harness.act(() => new Promise((r) => setTimeout(r, 20)));
+    assert.match(host.querySelector('[role=alert]').textContent, /^Hub update is not available on this build of tclaude or the hub\.$/);
+    assert.equal(queue.length, 0, 'an absent feature is not retried');
+    await m.unmount();
+  }
+  const prevRun = s.actions.hubRunStatus; const prevAudit = s.actions.hubAudit;
+  s.actions.hubRunStatus = async () => { throw Object.assign(new Error('404 page not found'), missing); };
+  s.actions.hubAudit = async () => { throw Object.assign(new Error('unknown hub operation'), oldHub); };
+  try {
+    await openHub(s);
+    const q = (x) => s.harness.document.querySelector(x);
+    assert.match(q('#fleet-hub-scripts').textContent, /not available on this build/);
+    assert.match(q('#fleet-hub-audit').textContent, /hub audit is not available on this build/);
+    assert.equal(q('#fleet-hub-audit [role=alert]'), null);
+  } finally {
+    s.actions.hubRunStatus = prevRun; s.actions.hubAudit = prevAudit;
+  }
 });

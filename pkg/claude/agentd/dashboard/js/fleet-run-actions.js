@@ -9,10 +9,16 @@ export const TIMEOUT_MAX_S = 86400;
 // most 4 MiB per stream.
 const LOG_MAX_BYTES = 4 * 1024 * 1024;
 
+// HUB_RUN_PATH is the hub's script route, relayed over this node's signed hub
+// connection; the hub runs it only for a holder of hub.exec while its
+// host-set accept_remote_scripts switch is on.
+export const HUB_RUN_PATH = '/api/federation/hub/run';
+
 // runBase addresses a node's script routes: this node directly, a peer
 // through the peer proxy (which needs node.exec there plus its local accept
-// switch).
+// switch), or the hub.
 export function runBase(node) {
+  if (node?.hub) return HUB_RUN_PATH;
   return node?.local ? '/api/node/run' : `/api/peer/${encodeURIComponent(node.id)}/node/run`;
 }
 
