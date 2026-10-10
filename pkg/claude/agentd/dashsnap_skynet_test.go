@@ -157,6 +157,18 @@ const skynetFederationStubJS = `(function(){
       max_streams_per_instance: { type: 'int', min: 1, max: 64, effective: 16, source: 'remote', boot: 8, restart_required: false, flag_overridden: true },
       invite_ttl_max: { type: 'duration', unit: 's', min: 300, max: 2592000, effective: 604800, source: 'default', boot: 604800, restart_required: false, flag_overridden: false },
       listen_backlog: { type: 'int', min: 16, max: 4096, effective: 256, source: 'flag', boot: 256, restart_required: true, flag_overridden: false } } });
+    if (path === '/api/federation/hub/run' && !(init && init.method === 'POST')) return json({ accept_remote_scripts: !!window.__dashsnapHubRun, switch_source: 'flag', can_exec: true, service_user: 'tclaude-hub', limits: { max_script_bytes: 16384, default_timeout_seconds: 300, max_timeout_seconds: 3600, max_output_bytes: 4194304 } });
+    if (path === '/api/federation/hub/run') return json({ id: 'rhub', state: 'running', exit_code: -1, timeout_seconds: 3600 }, 202);
+    if (path === '/api/federation/hub/run/jobs/rhub') return json({ id: 'rhub', state: 'completed', exit_code: 0, duration_ms: 214, stdout_tail: '● tclaude-hub.service - tclaude federation hub\n     Active: active (running) since Fri 2026-10-10 06:12:44 UTC; 6h ago\n   Main PID: 812 (tclaude-hub)\n      Tasks: 14\nESTAB 0 0 10.0.0.4:8470 10.0.0.17:51522\nESTAB 0 0 10.0.0.4:8470 10.0.0.23:40110\n', stderr_tail: '' });
+    if (path === '/api/federation/hub/audit') return json({ entries: [
+      { id: 'au3', at: '2026-10-10T09:31:00Z', actor: 'inst_q4w7pjf2kx3mz6bty5nd', kind: 'exec', outcome: 'completed', detail: { exit_code: 0, script: 'systemctl status tclaude-hub --no-pager\nss -tn state established', script_sha256: '5be1c0a3d9f2e47b8a61f0c2d3e4b5a69788c1d2e3f4a5b6c7d8e9f0a1b2c3d4' } },
+      { id: 'au2', at: '2026-10-10T09:05:41Z', actor: 'inst_q4w7pjf2kx3mz6bty5nd', kind: 'settings', outcome: 'applied', detail: {} },
+      { id: 'au1', at: '2026-10-09T17:20:00Z', actor: 'inst_q4w7pjf2kx3mz6bty5nd', kind: 'update', outcome: 'rolled_back', detail: { from_version: 'v0.42.1', to_version: 'v0.43.0' } }], next_cursor: 'au1' });
+    if (path === '/api/federation/hub/update') return json(window.__dashsnapHubUpdate === 'unsupervised'
+      ? { current_version: 'v0.43.0', latest_version: 'v0.44.0', update_available: true, checked_at: '2026-10-10T08:00:00Z', supervisor: null, blocked: { code: 'not_supervised', message: 'Start it with tclaude-hub serve --guardian under a systemd or launchd unit, then try again.' } }
+      : { current_version: 'v0.43.0', latest_version: 'v0.44.0', update_available: true, checked_at: '2026-10-10T08:00:00Z', supervisor: 'systemd', rollback_available: false,
+          job: window.__dashsnapHubUpdate === 'rolled_back' ? { id: 'hu1', action: 'apply', from_version: 'v0.43.0', version: 'v0.44.0', state: 'rolled_back', rolled_back: true, error: 'health check failed: candidate did not accept connections within 60 s; restored v0.43.0', finished_at: '2026-10-10T09:48:00Z' }
+            : { id: 'hu1', action: 'apply', from_version: 'v0.43.0', version: 'v0.44.0', state: 'restarting', phase: 'health_check', deadline: '2026-10-10T09:49:00Z' } });
     if (path === '/api/federation/hub/logs') return json({ entries: [
       { at: '2026-10-10T09:14:02Z', level: 'info', message: 'admitted inst_2p6ym4ke to space ci' },
       { at: '2026-10-10T09:12:00Z', level: 'warn', message: 'stream reset by inst_2p6ym4ke (stream 4)' },
@@ -812,6 +824,82 @@ func skynetStates() []dashsnap.State {
   for (var j = 0; j < 30 && !document.querySelector('#fleet-model-usage'); j++) await new Promise(function(r){ setTimeout(r, 100); });
   if (document.querySelectorAll('#fleet-model-gateways tbody tr').length !== 2) throw new Error('skynet: gateways missing');
   if (document.querySelectorAll('#fleet-model-leases [data-fa="revoke-lease"]').length !== 1) throw new Error('skynet: revoked lease should not be revocable');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-hub-run",
+			Title:   "Run a script on the hub",
+			Caption: "Fleet → Hub → run a script on the hub…: with the host-set accept switch on and hub.exec held, the hub is a target on the Run page, preselected; it runs as the hub's service user, the confirm adds the hub threat note, and the pane shows its live output tail and exit status.",
+			InitJS:  "window.__dashsnapHubRun = true;" + skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Hub'; })[0].click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-hub-run-open'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-hub-run-open').click();
+  for (var k = 0; k < 30 && !/ready/.test((document.querySelector('#fleet-run-nodes [data-node="hub"]') || {}).textContent || ''); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  var area = document.querySelector('#fleet-run-script');
+  area.value = '#!/bin/sh\nsystemctl status tclaude-hub --no-pager | head -4\nss -tn state established';
+  area.dispatchEvent(new Event('input', { bubbles: true }));
+  await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-run-submit').click();
+  for (var c = 0; c < 30 && !document.querySelector('#confirm-ok'); c++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#confirm-ok').click();
+  for (var n = 0; n < 50 && !/completed/.test((document.querySelector('#fleet-run-results [data-node="hub"]') || {}).textContent || ''); n++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!/tclaude-hub\.service/.test((document.querySelector('#fleet-run-results [data-node="hub"]') || {}).textContent || '')) throw new Error('skynet: hub run output missing');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-hub-update",
+			Title:   "Hub self-update in progress",
+			Caption: "Fleet → Hub → update…: the hub's version, its supervisor and the update job restarting into its health check, with the deadline after which it rolls back on its own.",
+			InitJS:  "window.__dashsnapHubUpdate = 'running';" + skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Hub'; })[0].click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-hub-update-open'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-hub-update-open').click();
+  for (var k = 0; k < 30 && !document.querySelector('#fleet-node-update-job'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-node-update-job')) throw new Error('skynet: hub update state missing');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-hub-update-rolled-back",
+			Title:   "Hub update rolled back",
+			Caption: "A hub update whose candidate failed its health check: the hub restored the previous version and the outcome stays visible with the reason.",
+			InitJS:  "window.__dashsnapHubUpdate = 'rolled_back';" + skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Hub'; })[0].click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-hub-update-open'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-hub-update-open').click();
+  for (var k = 0; k < 30 && !document.querySelector('#fleet-node-update-job.fa-danger'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-node-update-job.fa-danger')) throw new Error('skynet: hub update state missing');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-hub-update-unsupervised",
+			Title:   "Hub update refused: not supervised",
+			Caption: "A hub that is not running under systemd or launchd cannot restart itself or roll back safely, so update is refused with the reason and the update button is disabled.",
+			InitJS:  "window.__dashsnapHubUpdate = 'unsupervised';" + skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Hub'; })[0].click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-hub-update-open'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-hub-update-open').click();
+  for (var k = 0; k < 30 && !document.querySelector('#fleet-hub-update-blocked'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-hub-update-blocked')) throw new Error('skynet: hub update state missing');
 })();`,
 			SettleMS: 400,
 		},

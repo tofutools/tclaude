@@ -14,12 +14,31 @@ function errText(error) { return error?.message || String(error); }
 // and the node.exec grant both spell out.
 export const ACCEPT_CONSEQUENCE = 'Any peer granted node.exec — and every unrestricted peer — can then run any shell command on this node as the user tclaude runs as: read and change your files, use your logins and keys, and reach whatever this machine can reach.';
 
+// HUB_CONSEQUENCE is what running code on the hub can and cannot do; the run
+// confirm and the Hub page both say it.
+export const HUB_CONSEQUENCE = 'Code on the hub can disrupt every node\'s connectivity through it. Pinned identity keys mean it still cannot read or forge end-to-end node content.';
+
+// hubTarget is the hub as a Run target, present while this node has one.
+export function hubTarget(self) {
+  if (!self?.hubURL) return null;
+  let host = self.hubURL;
+  try { host = new URL(self.hubURL).host || host; } catch (_) { /* keep the URL */ }
+  return { id: 'hub', label: `hub ${host}`, hub: true, online: self.hubState === 'connected' };
+}
+
 // readiness says whether a node can take a script from this operator now:
 // this node always can; a peer needs node.exec and its accept switch, and
-// must be online.
+// must be online; the hub needs hub.exec and its host-set switch.
 export function readiness(row, probe) {
   if (row.local) return { ok: true, text: 'this node' };
-  if (!row.online) return { ok: false, text: 'offline' };
+  if (!row.online) return { ok: false, text: row.hub ? 'not connected' : 'offline' };
+  if (row.hub) {
+    if (!probe) return { ok: false, text: 'checking…' };
+    if (probe.error?.status === 403 || probe.data?.can_exec === false) return { ok: false, text: 'needs hub.exec' };
+    if (probe.error) return { ok: false, text: errText(probe.error) };
+    if (!probe.data?.accept_remote_scripts) return { ok: false, text: 'does not accept remote scripts (set on the hub host)' };
+    return { ok: true, text: 'ready' };
+  }
   if (!probe) return { ok: false, text: 'checking…' };
   if (probe.error) {
     if (probe.error.status === 403) return { ok: false, text: 'not granted (needs node.exec)' };
@@ -137,7 +156,7 @@ function ResultPane({ node, entry, actions }) {
   const state = entry.error ? 'not started' : job?.state || 'starting';
   const bad = entry.error || (job && !runActive(job) && !runOK(job));
   return html`<div class=${`fa-run-pane${bad ? ' bad' : ''}`} data-node=${node.id}>
-    <div class="fa-run-head"><b>${node.local ? '⌂ ' : ''}${node.label}</b>
+    <div class="fa-run-head"><b>${node.local ? '⌂ ' : node.hub ? '⬡ ' : ''}${node.label}</b>
       <span class=${bad ? 'fa-danger' : runActive(job) ? 'fa-warn' : ''}>${state}</span>
       ${job && !runActive(job) && html`<span>exit ${job.exit_code}</span><span class="muted">${fmtDuration(job.duration_ms)}</span>`}
       ${job && !runActive(job) && html`<${LogView} node=${node} job=${job} actions=${actions} />`}
@@ -152,11 +171,12 @@ function ResultPane({ node, entry, actions }) {
 // RunPage runs one script on chosen nodes: this node and any trusted peer
 // that granted node.exec and accepts remote scripts. Each node gets its own
 // POST and its own polling; offline nodes are skipped, never queued.
-export function RunPage({ view, actions, confirm, toast, timers = globalThis }) {
-  const nodes = [{ id: view.self.id, label: view.self.name, local: true, online: true }, ...view.trusted.map((r) => ({ id: r.id, label: r.label, online: r.online }))];
+export function RunPage({ view, actions, confirm, toast, timers = globalThis, preselect = '' }) {
+  const hub = hubTarget(view.self);
+  const nodes = [{ id: view.self.id, label: view.self.name, local: true, online: true }, ...view.trusted.map((r) => ({ id: r.id, label: r.label, online: r.online })), ...(hub ? [hub] : [])];
   const nodesKey = nodes.map((n) => `${n.id}:${n.online}`).join(',');
   const [probes, setProbes] = useState({});
-  const [picked, setPicked] = useState(() => new Set());
+  const [picked, setPicked] = useState(() => new Set(preselect ? [preselect] : []));
   const [script, setScript] = useState('');
   const [timeout, setTimeoutS] = useState(String(TIMEOUT_DEFAULT_S));
   const [runs, setRuns] = useState({});
@@ -223,11 +243,18 @@ export function RunPage({ view, actions, confirm, toast, timers = globalThis }) 
       .then((job) => { if (mounted.current) setRuns((cur) => ({ ...cur, [n.id]: { node: n, job, text, secs } })); })
       .catch((e) => { if (mounted.current) setRuns((cur) => ({ ...cur, [n.id]: { node: n, job: null, text, secs, error: e?.code === 'remote_scripts_disabled' ? `${n.label} no longer accepts remote scripts` : errText(e) } })); })));
   };
-  const confirmRun = (targets, text, secs, again) => confirm({
-    title: `${again ? 'Re-run' : 'Run'} the script on ${targets.length} node${targets.length === 1 ? '' : 's'}?`,
-    body: `Runs it with /bin/sh as the tclaude user on ${targets.map((n) => n.label).join(', ')}, with a ${secs} s timeout. It can do anything that user can on those machines. Each node runs it independently; nothing is queued for nodes that are offline.`,
+  // The hub runs it as its own service user, and code there reaches the
+  // whole fleet's connectivity, so a hub target is spelled out separately.
+  const confirmRun = (targets, text, secs, again) => {
+    const onHub = targets.find((n) => n.hub);
+    const nodesOnly = targets.filter((n) => !n.hub);
+    const user = probes.hub?.data?.service_user;
+    return confirm({
+    title: `${again ? 'Re-run' : 'Run'} the script on ${targets.length} ${onHub && !nodesOnly.length ? 'hub' : `node${targets.length === 1 ? '' : 's'}`}${onHub && nodesOnly.length ? ' including the hub' : ''}?`,
+    body: `${nodesOnly.length ? `Runs it with /bin/sh as the tclaude user on ${nodesOnly.map((n) => n.label).join(', ')}` : 'Runs it with /bin/sh'}${onHub ? `${nodesOnly.length ? ', and' : ''} on the hub (${onHub.label.replace(/^hub /, '')}) as its service user${user ? ` ${user}` : ''}` : ''}, with a ${secs} s timeout. It can do anything that user can on those machines.${onHub ? ` ${HUB_CONSEQUENCE} The hub records the full script in its audit.` : ''} Each target runs it independently; nothing is queued for targets that are offline.`,
     okLabel: again ? 'Re-run' : 'Run',
-  }).then((ok) => ok && launch(targets, text, secs, again));
+    }).then((ok) => ok && launch(targets, text, secs, again));
+  };
   const run = () => confirmRun(chosen, script, timeoutS, false);
   // Every pane holds the same script (a new run replaces them all), so the
   // re-run sends that script to the failed nodes that are still ready.
@@ -241,7 +268,7 @@ export function RunPage({ view, actions, confirm, toast, timers = globalThis }) 
     <div class="fa-run-nodes" id="fleet-run-nodes">
       ${nodes.map((n) => { const r = readiness(n, probes[n.id]); return html`<label key=${n.id} class=${r.ok ? '' : 'muted'} data-node=${n.id}>
         <input type="checkbox" disabled=${!r.ok} checked=${picked.has(n.id) && r.ok} onChange=${() => toggle(n.id)} />
-        ${n.local ? '⌂ ' : ''}${n.label} <span class="muted">${r.text}</span></label>`; })}
+        ${n.local ? '⌂ ' : n.hub ? '⬡ ' : ''}${n.label} <span class="muted">${r.text}</span></label>`; })}
       <button id="fleet-run-all" type="button" class="fa-link" onClick=${allOnline}>all online</button>
     </div>
     <textarea id="fleet-run-script" class="fa-run-script" rows="8" spellcheck="false" placeholder="#!/bin/sh — runs with /bin/sh in the tclaude user's home directory" value=${script} onInput=${(e) => setScript(e.currentTarget.value)}></textarea>
@@ -255,6 +282,6 @@ export function RunPage({ view, actions, confirm, toast, timers = globalThis }) 
     ${Object.keys(runs).length > 0 && html`<div class="fa-run-results" id="fleet-run-results">
       ${nodes.filter((n) => runs[n.id]).map((n) => html`<${ResultPane} key=${n.id} node=${n} entry=${runs[n.id]} actions=${actions} />`)}
     </div>`}
-    <div class="muted fa-cli-note">CLI: <code>tclaude federation run --node … | --all --file script.sh</code>; receiving settings: <code>tclaude federation scripts</code>. Peers need the <code>node.exec</code> grant (Peer grants) and this switch on their own node.</div>
+    <div class="muted fa-cli-note">CLI: <code>tclaude federation run --node … | --all --file script.sh</code>; receiving settings: <code>tclaude federation scripts</code>. Peers need the <code>node.exec</code> grant (Peer grants) and this switch on their own node; the hub needs <code>hub.exec</code> and its switch set on the hub host (<code>tclaude federation hub run</code>).</div>
   </div>`;
 }

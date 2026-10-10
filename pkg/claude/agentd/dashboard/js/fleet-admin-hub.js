@@ -2,6 +2,8 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { HUB_CONSEQUENCE } from './fleet-admin-run.js';
+import { NodeUpdateDialog } from './node-update.js';
 
 const html = htm.bind(h);
 
@@ -251,7 +253,9 @@ function SettingsSection({ settings, actions, confirm, toast, reload }) {
         <td>${settingValue(s)}${s.restart_required ? html` <span class="muted" title="Takes effect after a hub restart">⟳</span>` : ''}</td>
         <td>${s.source}${s.flag_overridden ? html` <span class="fa-warn" data-flag-overridden title="A serve flag sets this too; the remote setting wins">flag overridden</span>` : ''}</td>
         <td class="muted">${settingValue(s, s.boot)}</td>
-        <td>${s.type === 'bool'
+        <td>${s.remote_writable === false
+          ? html`<span class="muted" data-host-only>set on the hub host</span>`
+          : s.type === 'bool'
           ? html`<select aria-label=${`New ${s.key}`} value=${s.key in edits && edits[s.key] !== null ? edits[s.key] : ''} onChange=${(e) => edit(s.key, e.currentTarget.value)}><option value="">—</option><option value="true">true</option><option value="false">false</option></select>`
           : html`<input aria-label=${`New ${s.key}`} inputmode=${s.type === 'string' ? null : 'numeric'} value=${s.key in edits && edits[s.key] !== null ? edits[s.key] : ''} placeholder=${s.min != null || s.max != null ? `${s.min ?? ''}–${s.max ?? ''}` : ''} onInput=${(e) => edit(s.key, e.currentTarget.value)} />`}</td>
         <td class="fa-acts">${(s.source === 'remote' || s.source === 'db') && html`<button type="button" class="fa-link" data-revert=${s.key} onClick=${() => edit(s.key, null)}>${edits[s.key] === null ? 'reverts on save' : 'revert'}</button>`}</td>
@@ -260,6 +264,73 @@ function SettingsSection({ settings, actions, confirm, toast, reload }) {
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="fa-ns-actions"><button type="button" id="fleet-hub-settings-save" onClick=${save}>Save settings…</button>
       <span class="muted">CLI: <code>tclaude federation hub settings [--set key=value] [--unset key]</code></span></div>`;
+}
+
+// RemoteScripts shows the hub's accept switch, which only the hub host can
+// turn on, and opens the Run page on the hub when this node may use it.
+function RemoteScripts({ actions, onRunHub }) {
+  const [st, setSt] = useState(null);
+  useEffect(() => {
+    let off = false;
+    actions.hubRunStatus().then((v) => { if (!off) setSt(v || {}); }).catch((e) => { if (!off) setSt({ error: e }); });
+    return () => { off = true; };
+  }, []);
+  if (!st) return html`<div class="muted">Loading…</div>`;
+  if (st.error) return html`<div class="muted" id="fleet-hub-scripts">${st.error.status === 403 ? 'Remote scripts on the hub need hub.exec.' : errText(st.error)}</div>`;
+  const on = !!st.accept_remote_scripts;
+  return html`<div id="fleet-hub-scripts" class="fa-hub-scripts">
+    <div>
+      <span class=${on ? 'fa-warn' : 'muted'} data-accept=${on ? 'on' : 'off'}>${on ? `⚠ accepts scripts from admins with hub.exec (set by ${st.switch_source || 'the hub host'})` : 'off'}</span>
+      · <span class="muted">${st.can_exec ? 'this node holds hub.exec' : 'this node does not hold hub.exec'}</span>
+      ${on && st.can_exec && html` · <button type="button" class="fa-link" id="fleet-hub-run-open" onClick=${onRunHub}>run a script on the hub…</button>`}
+    </div>
+    <div class="muted">Only the hub host can turn this on (its accept_remote_scripts flag or config); it can never be switched from here. Scripts run as the hub's service user${st.service_user ? ` (${st.service_user})` : ''}, never root, with bounded output and runtime, and the hub audits the full script. ${HUB_CONSEQUENCE}</div>
+  </div>`;
+}
+
+// AuditSection is the hub's audit trail, newest first. Exec entries show the
+// script as plain text, and only to holders of hub.exec; the hub redacts it
+// for everyone else.
+function AuditSection({ actions }) {
+  const [entries, setEntries] = useState(null);
+  const [cursor, setCursor] = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = (from = '') => {
+    setBusy(true); setError('');
+    actions.hubAudit(from)
+      .then((r) => { const got = r?.entries || []; setEntries((prev) => (from ? [...(prev || []), ...got] : got)); setCursor(got.length ? r?.next_cursor || null : null); })
+      .catch((e) => { setError(e?.status === 403 ? 'Reading the hub audit needs a hub admin capability this node does not hold.' : errText(e)); if (!from) setEntries([]); })
+      .finally(() => setBusy(false));
+  };
+  useEffect(() => load(), []);
+  const detail = (e) => {
+    const d = e.detail || {};
+    const bits = [];
+    if (d.from_version || d.to_version) bits.push(`${d.from_version || '?'} → ${d.to_version || '?'}`);
+    if (d.exit_code != null) bits.push(`exit ${d.exit_code}`);
+    if (d.timed_out) bits.push('timed out');
+    return bits.join(' · ');
+  };
+  return html`<div id="fleet-hub-audit">
+    ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
+    ${entries == null ? html`<div class="muted">Loading…</div>` : !entries.length ? (!error && html`<div class="muted">No audit entries.</div>`) : html`<table class="fa-table">
+      <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Outcome</th><th>Detail</th></tr></thead>
+      <tbody>${entries.map((e, i) => html`<tr key=${e.id || i} data-kind=${e.kind || ''}>
+        <td class="fa-nowrap">${when(e.at)}</td>
+        <td><code>${e.actor || '—'}</code></td>
+        <td>${e.kind || '—'}</td>
+        <td class=${/fail|denied|refused|rolled/.test(e.outcome || '') ? 'fa-danger' : ''}>${e.outcome || '—'}</td>
+        <td>${detail(e)}
+          ${e.kind === 'exec' && (e.detail?.script != null
+            ? html`<details class="fa-hub-script"><summary>script (${e.detail.script.length} chars)</summary><pre class="fa-bi-text">${e.detail.script}</pre></details>`
+            : html` <span class="muted" data-redacted>script and output need hub.exec${e.detail?.script_sha256 ? html` · sha256 <code>${String(e.detail.script_sha256).slice(0, 12)}…</code>` : ''}</span>`)}</td>
+      </tr>`)}</tbody></table>`}
+    <div class="fa-ns-actions">
+      <button type="button" disabled=${busy} onClick=${() => load()}>Refresh</button>
+      ${cursor && html`<button type="button" id="fleet-hub-audit-more" disabled=${busy} onClick=${() => load(cursor)}>Load more</button>`}
+      <span class="muted">CLI: <code>tclaude federation hub audit</code></span></div>
+  </div>`;
 }
 
 function LogsSection({ actions }) {
@@ -299,7 +370,7 @@ function LogsSection({ actions }) {
 // HubPage is Fleet → Hub: the hub's status and health, its admissions,
 // invites and admins, its settings and a log tail. Without admin it offers
 // only the claim.
-export function HubPage({ view, actions, confirm, toast, copy }) {
+export function HubPage({ view, actions, updateActions, confirm, toast, copy, timers = globalThis, onRunHub }) {
   const [status, setStatus] = useState(null);
   const [data, setData] = useState({});
   const [dialog, setDialog] = useState(null);
@@ -398,7 +469,7 @@ export function HubPage({ view, actions, confirm, toast, copy }) {
   return html`<div class="fa-hub-page" id="fleet-hub">
     <div class="fa-hub-head">
       <span><span class="fa-k">hub</span> <code>${status.hub_url || self.hubURL || '—'}</code></span>
-      <span><span class="fa-k">version</span> ${status.hub_version || '—'}</span>
+      <span><span class="fa-k">version</span> ${status.hub_version || '—'}${status.admin && html` <button type="button" class="fa-link" id="fleet-hub-update-open" onClick=${() => setDialog('update')}>update…</button>`}</span>
       <span><span class="fa-k">id</span> <code>${status.hub_id || '—'}</code></span>
       <span class=${status.connected ? '' : 'fa-danger'}>${status.connected ? 'connected' : 'not connected'}</span>
       <span>${status.admin ? html`<b>you are a hub admin</b> <span class="muted">(${status.admin_count} admin${status.admin_count === 1 ? '' : 's'})</span>` : html`<span class="muted">not a hub admin</span>`}</span>
@@ -461,10 +532,15 @@ export function HubPage({ view, actions, confirm, toast, copy }) {
         </tr>`)}</tbody></table>`)}
       ${h4('Settings')}
       ${listOr(data.settings, (rows) => html`<${SettingsSection} settings=${rows} actions=${actions} confirm=${confirm} toast=${toast} reload=${reload} />`)}
+      ${h4('Remote scripts')}
+      <${RemoteScripts} actions=${actions} onRunHub=${onRunHub} />
+      ${h4('Audit')}
+      <${AuditSection} actions=${actions} />
       ${h4('Log tail')}
       <${LogsSection} actions=${actions} />`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation hub status|admissions|invites|admins|settings|health|logs</code>. Hub admin never sees node content; the hub relays ciphertext only.</div>
     ${dialog === 'claim' && html`<${ClaimDialog} self=${self} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
+    ${dialog === 'update' && html`<${NodeUpdateDialog} node=${{ id: 'hub', label: 'the hub', hub: true }} actions=${updateActions} confirm=${confirm} toast=${toast} timers=${timers} onClose=${() => { setDialog(null); reload(); }} />`}
     ${dialog === 'identity' && html`<${IdentityDialog} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${dialog === 'admit' && html`<${AdmitDialog} peers=${[...view.trusted, ...view.waiting]} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
   </div>`;

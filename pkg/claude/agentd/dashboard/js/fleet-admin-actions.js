@@ -78,6 +78,11 @@ const settingRows = (v) => {
     recoverHubIdentity: (old, nw, fingerprint = '') => call('POST', 'hub/identity/recover', fingerprint ? { old, new: nw, apply: true, fingerprint } : { old, new: nw }),
     revokeOldHubIdentity: (instance, fingerprint = '') => call('POST', 'hub/identity/revoke-old', fingerprint ? { instance, apply: true, fingerprint } : { instance }),
     hubHealth: () => call('GET', 'hub/health'),
+    // Remote scripts on the hub: its accept switch (host-set, read-only here)
+    // and whether this node holds hub.exec. Runs go through fleet-run-actions.
+    hubRunStatus: () => call('GET', 'hub/run'),
+    // The hub's audit. Exec entries carry the script only for hub.exec holders.
+    hubAudit: (cursor = '', maxEntries = 100) => call('GET', `hub/audit?${new URLSearchParams({ cursor, max_entries: String(maxEntries) })}`),
     hubLogs: (cursor = '', maxEntries = 200) => call('GET', `hub/logs?${new URLSearchParams({ cursor, max_entries: String(maxEntries) })}`),
     pools: async () => (await call('GET', 'nodes/groups'))?.groups || [],
     // A preview names no level: a default profile decides it, and an explicit
