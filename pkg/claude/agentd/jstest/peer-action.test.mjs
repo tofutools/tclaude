@@ -53,7 +53,7 @@ test('the agent dialog offers what the peer shares, confirms the consequence and
     stop: async (id, force) => { calls.push(['stop', id, force]); return {}; },
     retire: async (id) => { calls.push(['retire', id]); return {}; },
     teleport: async (id, o) => { calls.push(['teleport', id, o]); return { id: 'tp1' }; },
-    localGroups: async () => { calls.push(['groups']); return ['alpha', 'beta']; },
+    localGroups: async (peer) => { calls.push(['groups', peer]); return [{ name: 'beta', receives: true }, { name: 'alpha', receives: false }]; },
   };
   const confirm = async (o) => { confirms.push(o); return o.action ? o.action() : true; };
   const snapshot = harness.signals.signal({ peer_view: pv });
@@ -63,21 +63,22 @@ test('the agent dialog offers what the peer shares, confirms the consequence and
   await harness.act(() => doc.dispatchEvent(new harness.window.CustomEvent(limits.PEER_ACTION_EVENT, { detail: { action: 'retire', agent: 'agt_abc123', label: 'ada' } })));
   const choices = [...q('#peer-action-modal').querySelectorAll('.peer-action-choices label')].map((l) => l.textContent.trim());
   assert.deepEqual(choices, ['Stop', 'Retire', 'Teleport here'], 'clone and move are not shared');
-  assert.match(q('#peer-action-modal').textContent, /ada on forge is retired.*worktree is kept/);
+  assert.match(q('#peer-action-modal').textContent, /ada on forge is retired: its running session is asked to exit.*worktree is kept/);
   const teleport = [...q('#peer-action-modal').querySelectorAll('input[type=radio]')].find((r) => r.value === 'teleport');
   teleport.checked = true;
   await harness.act(() => harness.fireEvent(teleport, 'change'));
   await settle();
-  assert.deepEqual([...q('#peer-action-group').querySelectorAll('option')].map((o) => o.textContent), ['alpha', 'beta'], 'destinations are this node\'s groups');
+  assert.deepEqual([...q('#peer-action-group').querySelectorAll('optgroup')].map((o) => [o.getAttribute('label'), [...o.querySelectorAll('option')].map((x) => x.textContent)]), [['receives agents from forge', ['beta']], ['needs an agents.receive grant for forge', ['alpha']]]);
+  assert.deepEqual(calls.find((c) => c[0] === 'groups'), ['groups', 'inst_forge7']);
   const keep = q('#peer-action-keep');
   keep.checked = true;
   await harness.act(() => harness.fireEvent(keep, 'change'));
   await harness.act(() => q('#peer-action-submit').click());
   await settle();
-  assert.match(confirms.at(-1).body, /teleports from forge to this node, continuing its history in group alpha; the original keeps running on forge/);
-  assert.deepEqual(calls.at(-1), ['teleport', 'agt_abc123', { group: 'alpha', note: '', clone: true }]);
+  assert.match(confirms.at(-1).body, /teleports from forge to this node, continuing its history in group beta; the original keeps running on forge/);
+  assert.deepEqual(calls.at(-1), ['teleport', 'agt_abc123', { group: 'beta', note: '', clone: true }]);
   assert.equal(q('#peer-action-modal'), null, 'the dialog closes once sent');
-  assert.match(toasts.at(-1)[0], /comes to group alpha on this node/);
+  assert.match(toasts.at(-1)[0], /comes to group beta on this node/);
 
   await harness.act(() => doc.dispatchEvent(new harness.window.CustomEvent(limits.PEER_ACTION_EVENT, { detail: { action: 'stop', agent: 'agt_abc123' } })));
   const force = q('#peer-action-force');
@@ -125,14 +126,14 @@ test('the action client sends the peer route shapes', async (t) => {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/peer-action.js');
   const sent = [];
-  const fetchImpl = async (url, init) => { sent.push([init.method, url, init.body ? JSON.parse(init.body) : undefined]); return { ok: true, json: async () => ({ groups: [{ name: 'b' }, { name: 'a' }] }) }; };
+  const fetchImpl = async (url, init) => { sent.push([init.method, url, init.body ? JSON.parse(init.body) : undefined]); return { ok: true, json: async () => ({ groups: [{ name: 'b' }, { name: 'a' }, { name: 'c', federation_links: [{ peer: 'inst_p', slugs: ['agents.receive'] }, { peer: 'inst_q', slugs: ['agents.receive'] }] }] }) }; };
   const a = mod.createPeerActionActions({ fetchImpl });
   await a.stop('agt_1', true);
   await a.retire('agt_1');
   await a.clone('agt_1', { followUp: 'go on' });
   await a.move('agt_1', 'alpha');
   await a.spawn('ops', { brief: 'b' });
-  assert.deepEqual(await a.localGroups(), ['a', 'b']);
+  assert.deepEqual(await a.localGroups('inst_p'), [{ name: 'c', receives: true }, { name: 'a', receives: false }, { name: 'b', receives: false }]);
   assert.deepEqual(sent, [
     ['POST', '/api/agents/agt_1/stop?force=1', undefined],
     ['POST', '/api/agents/agt_1/retire', {}],

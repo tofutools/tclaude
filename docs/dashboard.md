@@ -554,8 +554,9 @@ and costs say when they are not shared.
 If the peer granted you lifecycle actions, its agents' stop (the status dot),
 retire and clone controls open a peer action dialog instead of the local one.
 It lists only what the peer allows — Stop (optionally force kill), Retire
-(its worktree is kept), Clone, **Move here** and **Teleport here** (always to
-a group on this node) — and confirms what will happen. A group's spawn button
+(its session exits; its worktree is kept), Clone, **Move here** and **Teleport here** (always to
+a group on this node; groups that receive agents from that peer are listed
+first) — and confirms what will happen. A group's spawn button
 asks the peer to spawn an agent from your brief under the peer's own launch
 policy and shows the request until the peer decides. CLI:
 `tclaude federation action <action> --node PEER --agent ID`.

@@ -24,6 +24,8 @@ export const AGENT_ACTIONS = Object.freeze([
 
 function errText(error) { return error?.message || String(error); }
 
+const RECEIVE_SLUGS = new Set(['agents.receive', 'agents.teleport.receive']);
+
 export function sharedFeatures(peerView) {
   return new Set(Array.isArray(peerView?.included) ? peerView.included : []);
 }
@@ -62,7 +64,14 @@ export function createPeerActionActions({ fetchImpl = (...a) => globalThis.fetch
     teleport: (id, { group, note = '', clone = false }) => call('POST', agent(id, 'teleport'), { group, ...(note ? { note } : {}), ...(clone ? { clone: true } : {}) }),
     spawn: (group, { brief, name = '', role = '', profile = '' }) => call('POST', `/api/groups/${encodeURIComponent(group)}/spawn`, { brief, ...(name ? { name } : {}), ...(role ? { role } : {}), ...(profile ? { profile } : {}) }),
     spawnStatus: (id) => call('GET', `/api/spawn-requests/${encodeURIComponent(id)}`),
-    localGroups: async () => ((await call('GET', '/api/federation/links'))?.groups || []).map((g) => g?.name).filter(Boolean).sort(),
+    // localGroups lists this node's groups, marking those with a link that
+    // receives agents from peer (an agents.receive or agents.teleport.receive
+    // grant). Unscoped grants and unrestricted trust are not listed as links,
+    // so the other groups stay selectable too.
+    localGroups: async (peer) => ((await call('GET', '/api/federation/links'))?.groups || [])
+      .filter((g) => g?.name)
+      .map((g) => ({ name: g.name, receives: (g.federation_links || []).some((l) => l?.peer === peer && (l.slugs || []).some((x) => RECEIVE_SLUGS.has(x))) }))
+      .sort((a, b) => (b.receives - a.receives) || a.name.localeCompare(b.name)),
   });
 }
 
@@ -75,7 +84,7 @@ export function consequence(action, { agent, node, force, group, clone }) {
     case 'stop': return force
       ? `${agent} on ${node} is killed at once: its tmux session ends without a clean exit, and unsaved work in its turn is lost.`
       : `${agent} on ${node} is asked to exit cleanly and its tmux session ends. It can be woken again on ${node}.`;
-    case 'retire': return `${agent} on ${node} is retired: demoted to a plain conversation, leaving its groups and losing its permission grants (its worktree is kept). ${node}'s operator can reinstate it.`;
+    case 'retire': return `${agent} on ${node} is retired: its running session is asked to exit, and it is demoted to a plain conversation, leaving its groups and losing its permission grants (its worktree is kept). ${node}'s operator can reinstate it.`;
     case 'clone': return `A sibling of ${agent} starts on ${node}, inheriting its identity (groups, permissions, ownership). The original keeps running.`;
     case 'move': return `${agent} leaves ${node} and is offered to this node with its history, to land in group ${group}. Once it lands, the original on ${node} is retired.`;
     case 'teleport': return `${agent} teleports from ${node} to this node, continuing its history in group ${group}${clone ? '; the original keeps running on ' + node : '; the original on ' + node + ' is retired'}.`;
@@ -97,7 +106,8 @@ function AgentDialog({ req, shared, actions, confirm, toast, onClose }) {
   const toHere = action === 'move' || action === 'teleport';
   useEffect(() => {
     if (!toHere || groups) return;
-    actions.localGroups().then((g) => { setGroups(g); setGroup((cur) => cur || g[0] || ''); }).catch((e) => setGroups({ error: errText(e) }));
+    // Preselect only when exactly one group receives from this peer.
+    actions.localGroups(req.nodeId).then((g) => { setGroups(g); const rx = g.filter((x) => x.receives); setGroup((cur) => cur || (rx.length === 1 ? rx[0].name : '')); }).catch((e) => setGroups({ error: errText(e) }));
   }, [toHere]);
   const label = req.label || req.agent;
   const run = () => {
@@ -133,7 +143,12 @@ function AgentDialog({ req, shared, actions, confirm, toast, onClose }) {
         <label class="peer-action-opt"><input type="checkbox" checked=${noCopy} onChange=${(e) => setNoCopy(e.currentTarget.checked)} /> Start without its conversation</label>`}
       ${toHere && html`
         <label class="peer-action-opt">Group on this node
-          ${groups?.error ? html`<span class="fa-danger">${groups.error}</span>` : !groups ? html`<span class="muted">loading…</span>` : html`<select id="peer-action-group" value=${group} onChange=${(e) => setGroup(e.currentTarget.value)}>${groups.map((g) => html`<option key=${g} value=${g}>${g}</option>`)}</select>`}</label>
+          ${groups?.error ? html`<span class="fa-danger">${groups.error}</span>` : !groups ? html`<span class="muted">loading…</span>` : html`<select id="peer-action-group" value=${group} onChange=${(e) => setGroup(e.currentTarget.value)}>
+            <option value="">pick a group…</option>
+            ${groups.some((g) => g.receives) && html`<optgroup label=${`receives agents from ${req.node}`}>${groups.filter((g) => g.receives).map((g) => html`<option key=${g.name} value=${g.name}>${g.name}</option>`)}</optgroup>`}
+            ${groups.some((g) => !g.receives) && html`<optgroup label=${`needs an agents.receive grant for ${req.node}`}>${groups.filter((g) => !g.receives).map((g) => html`<option key=${g.name} value=${g.name}>${g.name}</option>`)}</optgroup>`}
+          </select>`}</label>
+        ${Array.isArray(groups) && group && !groups.find((g) => g.name === group)?.receives && html`<div class="fa-warn">${group} has no listed grant receiving agents from ${req.node}; the agent lands only if an unscoped grant or unrestricted trust covers it.</div>`}
         ${action === 'teleport' && html`
           <label class="peer-action-opt">Note <input id="peer-action-note" value=${note} onInput=${(e) => setNote(e.currentTarget.value)} /></label>
           <label class="peer-action-opt"><input id="peer-action-keep" type="checkbox" checked=${keep} onChange=${(e) => setKeep(e.currentTarget.checked)} /> Keep the original running (clone over)</label>`}`}
