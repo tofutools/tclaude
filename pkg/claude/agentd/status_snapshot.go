@@ -62,6 +62,12 @@ func gatheredPeerStatusSnapshot() *statusSnapshot {
 		return gatheredStatusSnapshot()
 	}
 	return peerStatusCache.get(config.DataDir(), 1500*time.Millisecond, func() *statusSnapshot {
+		statusHook.RLock()
+		hook := statusHook.peerFn
+		statusHook.RUnlock()
+		if hook != nil {
+			hook()
+		}
 		return gatherStatusSnapshotFresh(false)
 	})
 }
@@ -242,7 +248,8 @@ func gatherStatusSnapshotFresh(fresh bool) *statusSnapshot {
 // its single shared boundary. It is nil during normal daemon operation.
 var statusHook struct {
 	sync.RWMutex
-	fn func()
+	fn     func()
+	peerFn func()
 }
 
 func statusGatherTestHook() {

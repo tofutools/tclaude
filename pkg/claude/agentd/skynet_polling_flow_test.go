@@ -48,7 +48,7 @@ func TestSkynetPollingInstance(t *testing.T) {
 		f.HaveMember("team", conv)
 		f.HaveAliveSession(conv, fmt.Sprintf("poll-session-%d", i), fmt.Sprintf("poll-pane-%d", i), f.TestCwd("work"))
 	}
-	var gathers, dispatchCPU, dispatchWall, requests atomic.Int64
+	var gathers, peerGathers, dispatchCPU, dispatchWall, requests atomic.Int64
 	cpu := func() int64 {
 		var usage unix.Rusage
 		require.NoError(t, unix.Getrusage(unix.RUSAGE_SELF, &usage))
@@ -63,6 +63,7 @@ func TestSkynetPollingInstance(t *testing.T) {
 		}
 	}))
 	t.Cleanup(agentd.SetStatusGatherHookForTest(func() { gathers.Add(1) }))
+	t.Cleanup(agentd.SetPeerStatusGatherHookForTest(func() { peerGathers.Add(1) }))
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /polling-metrics", func(w http.ResponseWriter, _ *http.Request) {
 		var usage unix.Rusage
@@ -70,7 +71,7 @@ func TestSkynetPollingInstance(t *testing.T) {
 			http.Error(w, err.Error(), 500)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"cpu_ns": usage.Utime.Nano() + usage.Stime.Nano(), "gathers": gathers.Load(), "dispatch_cpu_ns": dispatchCPU.Load(), "dispatch_wall_ns": dispatchWall.Load(), "requests": requests.Load()})
+		_ = json.NewEncoder(w).Encode(map[string]any{"cpu_ns": usage.Utime.Nano() + usage.Stime.Nano(), "gathers": gathers.Load(), "peer_gathers": peerGathers.Load(), "dispatch_cpu_ns": dispatchCPU.Load(), "dispatch_wall_ns": dispatchWall.Load(), "requests": requests.Load()})
 	})
 	mux.HandleFunc("POST /polling-reset", func(w http.ResponseWriter, _ *http.Request) { agentd.ResetStatusSnapshotForTest(); w.WriteHeader(204) })
 	mux.HandleFunc("POST /polling-status-write", func(w http.ResponseWriter, _ *http.Request) {
@@ -206,13 +207,13 @@ func TestSkynetPollingEfficiency(t *testing.T) {
 	require.Equal(t, 304, unchanged.status)
 	require.Zero(t, unchanged.bytes)
 	require.Equal(t, first.etag, unchanged.etag)
-	metrics := func() (int64, int64) {
+	metrics := func() (int64, int64, int64) {
 		v := receiver.call(t, "GET", "/polling-metrics", nil, 200)
-		return int64(v["dispatch_cpu_ns"].(float64)), int64(v["gathers"].(float64))
+		return int64(v["dispatch_cpu_ns"].(float64)), int64(v["peer_gathers"].(float64)), int64(v["gathers"].(float64))
 	}
 	// A tight ten-peer fan-out must share one gather, rather than one per peer.
 	receiver.call(t, "POST", "/polling-reset", nil, 204)
-	cpu, gather := metrics()
+	cpu, gather, total := metrics()
 	start := time.Now()
 	bytes := 0
 	for i, peer := range peers {
@@ -231,14 +232,14 @@ func TestSkynetPollingEfficiency(t *testing.T) {
 			}
 		}
 	}
-	afterCPU, afterGather := metrics()
-	t.Logf("warm fan-out: peers=10 agents=20 cpu/request=%.3fms wall/request=%.3fms gathers=%d bytes/request=%d", float64(afterCPU-cpu)/1e7, float64(time.Since(start).Microseconds())/10000, afterGather-gather, bytes/10)
+	afterCPU, afterGather, afterTotal := metrics()
+	t.Logf("warm fan-out: peers=10 agents=20 cpu/request=%.3fms wall/request=%.3fms peer-gathers=%d total-gathers=%d bytes/request=%d", float64(afterCPU-cpu)/1e7, float64(time.Since(start).Microseconds())/10000, afterGather-gather, afterTotal-total, bytes/10)
 	require.Equal(t, int64(1), afterGather-gather, "ten peer polls must share one status gather")
 	receiver.call(t, "POST", "/polling-status-write", nil, 204)
 	local := receiver.call(t, "GET", "/api/snapshot", nil, 200)
 	require.Contains(t, fmt.Sprint(local), "model-after-write", "local status remains immediately fresh")
-	_, changedGather := metrics()
-	require.Equal(t, afterGather+1, changedGather, "a real status write invalidates the local cache immediately")
+	_, changedGather, _ := metrics()
+	require.Equal(t, afterGather, changedGather, "the local fresh read does not refresh the peer cache")
 	for _, scenario := range []struct {
 		name, tail  string
 		interval    time.Duration
@@ -251,7 +252,7 @@ func TestSkynetPollingEfficiency(t *testing.T) {
 	} {
 		tags := map[string]string{}
 		bytes, notModified := 0, 0
-		cpu, gather := metrics()
+		cpu, gather, total := metrics()
 		start := time.Now()
 		for i := 0; i < scenario.count; i++ {
 			target := start.Add(time.Duration(i) * scenario.interval)
@@ -273,7 +274,7 @@ func TestSkynetPollingEfficiency(t *testing.T) {
 				notModified++
 			}
 		}
-		afterCPU, afterGather := metrics()
-		t.Logf("%s: cadence=%s requests=%d cpu/request=%.3fms gathers=%d cache-reuses=%d mean-body=%dB 304=%d elapsed=%s", scenario.name, scenario.interval, scenario.count, float64(afterCPU-cpu)/float64(scenario.count)/1e6, afterGather-gather, scenario.count-int(afterGather-gather), bytes/scenario.count, notModified, time.Since(start).Round(time.Millisecond))
+		afterCPU, afterGather, afterTotal := metrics()
+		t.Logf("%s: cadence=%s requests=%d cpu/request=%.3fms peer-gathers=%d total-gathers=%d cache-reuses=%d mean-body=%dB 304=%d elapsed=%s", scenario.name, scenario.interval, scenario.count, float64(afterCPU-cpu)/float64(scenario.count)/1e6, afterGather-gather, afterTotal-total, scenario.count-int(afterGather-gather), bytes/scenario.count, notModified, time.Since(start).Round(time.Millisecond))
 	}
 }

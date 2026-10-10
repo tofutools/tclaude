@@ -174,7 +174,7 @@ func TestPeerSnapshotPollsShareGatherWithoutStalingLocalReads(t *testing.T) {
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	agentd.ResetStatusSnapshotForTest()
 	var gathers atomic.Int64
-	t.Cleanup(agentd.SetStatusGatherHookForTest(func() { gathers.Add(1) }))
+	t.Cleanup(agentd.SetPeerStatusGatherHookForTest(func() { gathers.Add(1) }))
 	h := agentd.PeerViewHandler(p.id.ID())
 	for i := 0; i < 10; i++ {
 		seen, err := db.MarkFederationEnvelopeSeen(p.id.ID(), fmt.Sprintf("poll-%d", i), time.Now().Add(time.Hour))
@@ -200,7 +200,7 @@ func TestPeerSnapshotPollsShareGatherWithoutStalingLocalReads(t *testing.T) {
 	require.Equal(t, float64(1), counts["waiting_for_input"], "local node summary remains immediately fresh")
 	local := fetchSnapshotOnly(t, dashboard)
 	require.Equal(t, "changed-model", findDashMember(local, "team", "poll-cache-agent").State.Model)
-	require.Equal(t, int64(2), gathers.Load(), "a local read observes the status write immediately")
+	require.Equal(t, int64(1), gathers.Load(), "local reads do not refresh the peer cache")
 	_, err = config.Update(func(c *config.Config, err error) error {
 		if err != nil {
 			return err
@@ -213,6 +213,8 @@ func TestPeerSnapshotPollsShareGatherWithoutStalingLocalReads(t *testing.T) {
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), "uncached-model", "global cache-off also disables peer coalescing")
+	_, err = config.Update(func(c *config.Config, err error) error { c.StatusSnapshot = nil; return err })
+	require.NoError(t, err)
 	rec = fedHuman(t, f, "DELETE", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermAgentsStatusRead, "scope": "group=team"})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
