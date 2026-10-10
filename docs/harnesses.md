@@ -484,6 +484,11 @@ conversation exactly when Gemini's own `--resume` would offer it: it has real
 content and is not a subagent session. Resume is scoped to the project
 directory, as in the CLI.
 
+**Portable history.** Gemini portable history preserves native chat messages, metadata updates and rewind
+records. Import remints session and message IDs, maps the receiver project, and resumes
+through Gemini’s own session store. Legacy JSON sessions are converted to JSONL.
+Settings, trust decisions, credentials and filesystem checkpoints do not travel.
+
 **Ask.** `tclaude ask --harness gemini` runs headless `gemini --prompt` and
 returns the buffered answer. In headless mode Gemini denies any tool call
 that would need approval. Live streaming is not supported.
@@ -697,8 +702,3 @@ that cannot fall back to saved Google OAuth, Vertex settings or `.env` inputs.
 See [Gemini configuration](https://geminicli.com/docs/reference/configuration/).
 Both harnesses refuse a gateway request with the reason before launching.
 Non-interactive one-shot runs also refuse a proxy choice.
-
-Gemini portable history preserves native chat messages, metadata updates and rewind
-records. Import remints session and message IDs, maps the receiver project, and resumes
-through Gemini’s own session store. Legacy JSON sessions are converted to JSONL.
-Settings, trust decisions, credentials and filesystem checkpoints do not travel.
