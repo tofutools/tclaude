@@ -59,6 +59,12 @@ const skynetFederationStubJS = `(function(){
     ] }; };
     if (path === '/api/harnesses/availability') return json(hav(false));
     if (path === '/api/peer/inst_hn3cxq7a/harnesses/availability') return json(hav(true));
+    var post = init && init.method === 'POST';
+    if (path === '/api/node/run/settings' || (path === '/api/node/run' && !post)) return json({ accept_remote_scripts: false, resource_limits: { memory: '1GiB', memory_bytes: 1073741824, pids: 256 }, warning: 'Full remote code execution as the agentd user' });
+    if (path === '/api/peer/inst_hn3cxq7a/node/run' && !post) return json({ accept_remote_scripts: true, resource_limits: { memory: '2GiB', pids: 512 } });
+    if (/\/node\/run$/.test(path) && post) return json({ id: path.indexOf('/peer/') >= 0 ? 'rforge' : 'rdesk', state: 'running', exit_code: -1, timeout_seconds: 3600 }, 202);
+    if (path === '/api/node/run/jobs/rdesk') return json({ id: 'rdesk', state: 'completed', exit_code: 0, duration_ms: 842, stdout_tail: 'Filesystem      Size  Used Avail Use% Mounted on\n/dev/nvme0n1p2  468G  271G  174G  61% /\n', stderr_tail: '' });
+    if (path === '/api/peer/inst_hn3cxq7a/node/run/jobs/rforge') return json({ id: 'rforge', state: 'failed', exit_code: 127, duration_ms: 35, stdout_tail: '', stderr_tail: 'sh: 3: nvidia-smi: not found\n' });
     if (path === '/api/peer/inst_2p6ym4ke/harnesses/availability') return json({ error: 'peer offline', code: 'peer_unreachable' }, 502);
     if (/\/harnesses\/operations$/.test(path)) return json({ recipes: [{ harness: 'opencode', install_command: 'npm install -g opencode-ai@latest', update_command: 'npm install -g opencode-ai@latest' }, { harness: 'claude', install_command: 'npm install -g @anthropic-ai/claude-code', update_command: 'claude update' }], modes: ['now', 'when_idle'] });
     if (/\/harnesses\/credentials\/backups$/.test(path)) return json({ backups: [{ id: 'c'.repeat(32), harness: 'claude', created_at: '2026-10-09T18:02:00Z', location: '~/.tclaude/data/credential-backups' }] });
@@ -292,6 +298,31 @@ func skynetStates() []dashsnap.State {
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return /Audit/.test(b.textContent); })[0].click();
   for (var j = 0; j < 30 && !document.querySelector('#fleet-audit'); j++) await new Promise(function(r){ setTimeout(r, 100); });
   if (document.querySelectorAll('#fleet-audit tbody tr').length !== 6) throw new Error('skynet: audit rows missing');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-run",
+			Title:   "Run a script on nodes",
+			Caption: "Fleet → Run scripts: this node's receiving switch (off, with its limits), the node picker (a peer must grant node.exec and accept remote scripts; offline peers are skipped), the script editor with its size and timeout, and one result pane per node with state, exit code, duration and output tail; failed nodes can be re-run.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return /Run scripts/.test(b.textContent); })[0].click();
+  for (var j = 0; j < 30 && !/ready/.test((document.querySelector('#fleet-run-nodes') || {}).textContent || ''); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-run-all').click();
+  await new Promise(function(r){ setTimeout(r, 100); });
+  var area = document.querySelector('#fleet-run-script');
+  area.value = '#!/bin/sh\ndf -h /\nnvidia-smi --query-gpu=name,memory.used --format=csv';
+  area.dispatchEvent(new Event('input', { bubbles: true }));
+  await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-run-submit').click();
+  for (var k = 0; k < 30 && !document.querySelector('#confirm-ok'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#confirm-ok').click();
+  for (var n = 0; n < 50 && !document.querySelector('#fleet-run-rerun'); n++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (document.querySelectorAll('#fleet-run-results .fa-run-pane').length !== 2) throw new Error('skynet: run panes missing');
 })();`,
 			SettleMS: 400,
 		},

@@ -64,7 +64,7 @@ export function GrantsPage({ view, pools, groups, actions, confirm, toast, targe
     const replaces = existing ? ` This updates the existing grant (cap ${existing.maxLive || 2} → ${body.spawn_policy.max_live})${kept.length ? `; its other launch settings (${kept.join(', ')}) are kept` : ''}.` : '';
     return confirm({
       title: `${existing ? 'Update' : 'Grant'} ${slug} ${existing ? 'for' : 'to'} ${current.label}?`,
-      body: `${consequence}${replaces}${info.sensitive ? ' This lets it act on this node, not only read.' : ''}${current.pool ? ' The grant applies to every node in the pool, including nodes added later.' : ''}`,
+      body: `${consequence}${replaces}${info.sensitive ? ' This lets it act on this node, not only read.' : ''}${info.warning ? ` ${info.warning}` : ''}${current.pool ? ' The grant applies to every node in the pool, including nodes added later.' : ''}`,
       okLabel: 'Grant',
       busyLabel: 'Granting…',
       action: () => actions.grant(body),

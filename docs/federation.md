@@ -2424,7 +2424,14 @@ proxy, so a peer needs `node.harnesses.read`): version, available update and
 whether a login is present. A cell installs or updates that harness (busy
 workers ask whether to run now or when idle), and for login-file harnesses
 pushes your login to a peer, backs up or restores the node's login files —
-the same operations as `tclaude harness install|update|credentials`. Profile definitions,
+the same operations as `tclaude harness install|update|credentials`. Its Run
+scripts page is `federation run` and `federation scripts`: this node's
+local-only accept-remote-scripts switch (turning it on confirms the full
+remote-code-execution consequence) and script limits; a node picker (this
+node plus peers that granted `node.exec` and accept remote scripts, with an
+all-online shortcut; offline peers are skipped); and one result pane per node
+with state, exit code, duration, output tails and the full logs on demand.
+Failed nodes can be re-run alone. Profile definitions,
 receiver launch settings beyond the live cap and model gateway scopes are
 managed with their `tclaude federation` commands.
 

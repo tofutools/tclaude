@@ -18941,3 +18941,20 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .skynet-link { border: 0; background: none; padding: 0; color: #58a6ff; cursor: pointer; font: inherit; font-size: 12px; }
 .skynet-link:hover { text-decoration: underline; }
 #fleet-node-update-job { margin: 8px 0; }
+/* Fleet → Run scripts (js/fleet-admin-run.js). */
+.fa-run-settings { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 12px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; }
+.fa-run-settings input, .fa-run-bar input { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 2px 6px; font: inherit; }
+.fa-run-nodes { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; margin: 6px 0; }
+.fa-run-script { display: block; width: 100%; box-sizing: border-box; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; padding: 8px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+.fa-run-script:focus { border-color: #58a6ff; outline: none; }
+.fa-run-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 6px 0 10px; }
+.fa-run-bar .primary { margin-left: auto; }
+.fa-run-results { margin-bottom: 10px; display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 10px; }
+.fa-run-pane { border: 1px solid #30363d; border-radius: 6px; padding: 8px 10px; background: #0d1117; min-width: 0; }
+.fa-run-pane.bad { border-color: #f8514966; }
+.fa-run-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.fa-run-logs { margin-left: auto; }
+.fa-run-logs .fa-link + .fa-link { margin-left: 8px; }
+.fa-run-full { flex-basis: 100%; }
+.fa-run-out { margin: 6px 0 0; max-height: 240px; overflow: auto; padding: 6px 8px; background: #010409; border-radius: 4px; font-size: 11px; white-space: pre-wrap; word-break: break-word; }
+.fa-run-out.err { color: #ffa198; }

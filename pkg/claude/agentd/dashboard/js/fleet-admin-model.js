@@ -130,6 +130,7 @@ export const PEER_SLUGS = Object.freeze([
   { slug: 'config.offer', kind: 'node', what: 'offer config bundles for your review' },
   { slug: 'approvals.answer', kind: 'node', sensitive: true, what: 'answer access requests once while selected as your away cover' },
   { slug: 'node.update', kind: 'node', sensitive: true, what: 'update tclaude on this node' },
+  { slug: 'node.exec', kind: 'node', sensitive: true, what: 'run any shell script on this node (only while it accepts remote scripts)', warning: 'Full remote code execution: once this node accepts remote scripts (Run scripts page), it can run any command here as the tclaude user — read and change your files, use your logins and keys, and reach whatever this machine can reach.' },
   { slug: 'node.harnesses.install', kind: 'node', sensitive: true, what: 'install and update harnesses on this node' },
   { slug: 'node.credentials.receive', kind: 'node', sensitive: true, what: 'push its harness credentials here — this node\'s agents then act as that operator with the provider' },
   { slug: 'models.proxy', kind: 'node', what: 'use this node\'s model gateway (gateway scopes: CLI)' },
