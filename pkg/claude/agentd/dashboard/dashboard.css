@@ -18762,7 +18762,7 @@ html.scope-fused #messages-root { display: none !important; }
 .fused-mail { grid-template-columns: 260px 10px minmax(260px, 1fr) 10px minmax(320px, 1.4fr); }
 .fused-mail .mail-sidebar-filter { grid-column: 1; grid-row: 1; }
 .fused-mail-nodes { display: flex; flex-direction: column; gap: 3px; padding: 2px 4px 8px; margin-bottom: 6px; border-bottom: 1px solid #21262d; font-size: 12px; }
-.fused-mail-section .mailbox-section { margin-top: 10px; }
+.fused-mail-section .mailbox-section { margin-top: 10px; text-transform: none; }
 .fused-mail .mail-row-top .scope-pill { flex: none; }
 .fused-mail-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .fused-mail-reply { width: 100%; box-sizing: border-box; margin-top: 10px; }

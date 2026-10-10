@@ -134,7 +134,7 @@ function Reader({ item, actions, confirm, toast, openOnNode, onDone }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   useEffect(() => { setText(''); setBusy(false); }, [item?.key]);
-  if (!item) return html`<section class="mail-reader fused-mail-reader" id="fused-mail-reader"><div class="empty">Select a message.</div></section>`;
+  if (!item) return html`<div class="mail-reader fused-mail-reader" id="fused-mail-reader"><div class="empty">Select a message.</div></div>`;
   const { node } = item;
   const run = (what, p, done) => { setBusy(true); p.then(() => { setBusy(false); setText(''); toast(done, false); onDone(); }, (e) => {
     setBusy(false);
@@ -174,10 +174,10 @@ function Reader({ item, actions, confirm, toast, openOnNode, onDone }) {
         <button type="button" data-fused="mark" disabled=${busy} onClick=${() => run(item.read ? 'Mark unread' : 'Mark read', actions.markAgent(node, item.id, !item.read), `Marked ${item.read ? 'unread' : 'read'} on ${node.name}`)}>${item.read ? 'Mark unread' : 'Mark read'}</button>
         ${target && html`<button type="button" class="primary" data-fused="reply" disabled=${busy || !text.trim()} onClick=${() => run('Reply', actions.reply(node, target, replySubject(item.subject), text.trim()), `Sent to ${item.from_title || target} on ${node.name}`)}>Send reply</button>`}`;
   }
-  return html`<section class="mail-reader fused-mail-reader" id="fused-mail-reader">
+  return html`<div class="mail-reader fused-mail-reader" id="fused-mail-reader">
     ${body}
     <div class="modal-buttons fused-mail-actions">${buttons}<span class="spacer"></span>${open}</div>
-  </section>`;
+  </div>`;
 }
 
 // FusedMail is the fused Messages view.

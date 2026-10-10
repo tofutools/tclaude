@@ -84,6 +84,7 @@ test('fused Messages lists every ticked node\'s mail, answers on the owning node
   // The local body is text, never HTML.
   await harness.act(() => harness.fireEvent(c.querySelector('.mail-row-wrap[data-key="inst_self/agent/1"] .mail-row'), 'click'));
   assert.equal(c.querySelector('#fused-mail-reader pre').textContent, '<b>raw</b>');
+  assert.equal(c.querySelector('#fused-mail-reader').tagName, 'DIV', 'a bare <section> is a hidden tab panel in the dashboard CSS');
   assert.equal(c.querySelector('#fused-mail-reader b b'), null);
 
   // lab refuses the reply: the toast says so and Open on lab is there.
