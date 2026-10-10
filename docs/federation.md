@@ -16,7 +16,8 @@ laptops behind NAT or a corporate network work as-is.
     CLI only. Built: discovery, mail with attachments, mail to remote
     groups, operator mail, automatic or operator-approved remote spawn, and
     cross-instance group routes, remote session state, and remote terminal
-    watch and interactive attach. A federation dashboard view is not built yet.
+    watch and interactive attach. The dashboard shows and manages linked
+    nodes too; see [Skynet UI](dashboard.md#skynet-ui-linked-nodes).
 
 For a step-by-step first setup, including the hub's TLS certificate, see
 the [setup walkthrough](federation-setup.md).
@@ -829,7 +830,9 @@ is by inspecting the caller's process tree.
 - Operator mail is sent from the CLI only; agents cannot reach a remote
   operator.
 - One hub per instance. Hub-to-hub federation is a later step.
-- CLI only; the dashboard does not show federation yet.
+- Some capabilities are still CLI-only in the dashboard (away cover,
+  sending operator mail, spawn requests, remote jobs, offers, moves); see
+  [Skynet UI](dashboard.md#skynet-ui-linked-nodes) for what it covers.
 
 ## Portable local setup bundles
 
@@ -2396,6 +2399,9 @@ at a time, no retries). JSON carries `nodes` (an `error` on any unreachable
 peer) and `groups` rows with `group`, `node`, `node_id`, `members` and
 `online`. An unreachable peer keeps the other rows and makes the exit status
 nonzero.
+
+For a how-to tour of the dashboard side, see
+[Skynet UI](dashboard.md#skynet-ui-linked-nodes).
 
 The dashboard's **⚙ Fleet** view (beside Map and Groups · all nodes, or
 "Fleet administration" in the command palette before any peer is trusted)
