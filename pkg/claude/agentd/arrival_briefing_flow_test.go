@@ -75,7 +75,8 @@ func TestCloneArrivalBriefingWithoutFollowup(t *testing.T) {
 	const source = "c1f1aaaa-bbbb-cccc-dddd-eeeeffff0001"
 	f.HaveConvWithTitle(source, "traveller")
 	f.HaveEnrolledAgent(source)
-	f.HaveAliveSession(source, "arrival-source", "arrival-pane", f.TestCwd("project"))
+	cwd := testutil.CanonicalTempDir(t)
+	f.HaveAliveSession(source, "arrival-source", "arrival-pane", cwd)
 	f.HaveGroup("project")
 	f.HaveMember("project", source)
 	c := f.AsHuman().CloneWith(source, map[string]any{"no_copy_conv": true})

@@ -444,7 +444,9 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		probeCancel()
 		arrival.Source.Origin = arrivalOrigin(sourceConv, relaunch.Cwd, relaunch.Model)
 		arrival.Source.Origin.Trigger = arrivalTrigger(p.HandoffFrom, sourceConv, isHumanCloneCaller(p.HandoffFrom))
-		if cwd != relaunch.Cwd {
+		sourceCwd, sourceErr := filepath.EvalSymlinks(relaunch.Cwd)
+		arrivalCwd, arrivalErr := filepath.EvalSymlinks(cwd)
+		if cwd != relaunch.Cwd && (sourceErr != nil || arrivalErr != nil || sourceCwd != arrivalCwd) {
 			arrival.Reason = "explicit clone cwd"
 		}
 		if p.ArrivalGroup == "" {
