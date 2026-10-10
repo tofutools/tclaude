@@ -18958,3 +18958,12 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-run-full { flex-basis: 100%; }
 .fa-run-out { margin: 6px 0 0; max-height: 240px; overflow: auto; padding: 6px 8px; background: #010409; border-radius: 4px; font-size: 11px; white-space: pre-wrap; word-break: break-word; }
 .fa-run-out.err { color: #ffa198; }
+/* Peer actions on a peer view (js/peer-action.js). */
+.peer-action-choices { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 6px 0 10px; }
+.peer-action-opt { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.peer-action-opt input:not([type]), .peer-action-opt select, .peer-action-opt textarea { flex: 1; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; }
+.peer-action-brief { align-items: flex-start; }
+.peer-action-consequence { margin: 8px 0; }
+#peer-spawn-status { margin: 6px 0 10px; }
+#peer-action-modal .peer-action-choices, #peer-action-modal .peer-action-opt, #peer-action-modal .peer-action-consequence,
+#peer-spawn-modal .peer-action-opt, #peer-spawn-modal #peer-spawn-status { font-size: 13px; font-weight: normal; }
