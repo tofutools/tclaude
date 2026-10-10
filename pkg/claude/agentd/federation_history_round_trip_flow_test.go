@@ -90,18 +90,20 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 		}
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&in))
 		if in.Seed {
-			if name == "gemini" {
+			switch name {
+			case "gemini":
 				resp, _ := spawnGemini(t, f, "project", map[string]any{"name": "traveller", "cwd": cwd, "initial_message": in.Text, "sandbox_implementation": "off"})
 				in.Conv = resp.ConvID
-			} else if name == "codex" {
+			case "codex":
 				f.HaveAliveCodexSession(in.Conv, "traveller", "traveller-pane", cwd)
-			} else {
+			default:
 				f.HaveAliveSession(in.Conv, "traveller", "traveller-pane", cwd)
 			}
 			f.HaveMember("project", in.Conv)
 		}
 		// Append through the same native writer as a harness completing a turn.
-		if name == "gemini" {
+		switch name {
+		case "gemini":
 			sim := f.World.Geminis.GetByConvID(in.Conv)
 			require.NotNil(t, sim)
 			if !in.Seed {
@@ -109,9 +111,9 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 				sim.Receive("Enter")
 			}
 			sim.WriteGeminiReply(in.Assistant, "gemini-2.5-flash")
-		} else if name == "codex" {
+		case "codex":
 			require.NoError(t, f.World.Codexes.GetByConvID(in.Conv).WriteExchange(in.Text, in.Assistant))
-		} else {
+		default:
 			cc := f.World.CCs.GetByConvID(in.Conv)
 			require.NoError(t, cc.WriteUserTurn(in.Text))
 			require.NoError(t, cc.AppendTurn(map[string]any{"type": "assistant", "cwd": cwd, "message": map[string]any{"role": "assistant", "content": []map[string]string{{"type": "text", "text": in.Assistant}}}}))

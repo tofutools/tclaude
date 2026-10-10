@@ -30,7 +30,7 @@ func (geminiHistory) Open(id, cwd string) (io.ReadCloser, error) {
 	if _, err := uuid.Parse(id); err != nil {
 		return nil, errors.New("invalid Gemini session identity")
 	}
-	path, found, err := LocateGeminiSessionFile(id)
+	path, found, err := locateGeminiHistoryFile(id)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +68,7 @@ func (h geminiHistory) Export(id, cwd string) ([]byte, error) {
 		return nil, err
 	}
 	if int64(len(raw)) > agentbundle.MaxBytes {
-		return nil, errors.New("Gemini history exceeds federation.agent_transfer_max_bytes default (2 GiB)")
+		return nil, errors.New("gemini history exceeds federation.agent_transfer_max_bytes default (2 GiB)")
 	}
 	return raw, h.Validate(raw, id)
 }
@@ -94,7 +94,7 @@ type geminiRecordReader struct {
 
 func (r *geminiRecordReader) Read(p []byte) (int, error) {
 	if r.remaining <= 0 {
-		return 0, errors.New("Gemini legacy record exceeds federation.agent_history_record_max_bytes")
+		return 0, errors.New("gemini legacy record exceeds federation.agent_history_record_max_bytes")
 	}
 	if int64(len(p)) > r.remaining {
 		p = p[:r.remaining]
@@ -177,7 +177,7 @@ func geminiProjectHash(cwd string) string {
 }
 func rewriteGeminiHistory(r io.Reader, source, target, cwd string, out io.Writer) error {
 	if _, err := uuid.Parse(source); err != nil {
-		return errors.New("Gemini history source identity must be a UUID")
+		return errors.New("gemini history source identity must be a UUID")
 	}
 	limit := MaxHistoryRecordBytes
 	if b, ok := r.(interface{ HistoryRecordLimit() int }); ok && b.HistoryRecordLimit() > 0 {
@@ -201,7 +201,7 @@ func rewriteGeminiHistory(r io.Reader, source, target, cwd string, out io.Writer
 	}
 	rewriteMessage := func(msg map[string]json.RawMessage) error {
 		if geminiHistoryRawString(msg, "id") == "" {
-			return errors.New("Gemini message has no identity")
+			return errors.New("gemini message has no identity")
 		}
 		if target != "" {
 			geminiHistoryPutString(msg, "id", remint(geminiHistoryRawString(msg, "id")))
@@ -210,10 +210,10 @@ func rewriteGeminiHistory(r io.Reader, source, target, cwd string, out io.Writer
 	}
 	rewriteMeta := func(meta map[string]json.RawMessage) error {
 		if id := geminiHistoryRawString(meta, "sessionId"); id != "" && id != source {
-			return errors.New("Gemini history session identity mismatch")
+			return errors.New("gemini history session identity mismatch")
 		}
 		if kind := geminiHistoryRawString(meta, "kind"); kind != "" && kind != "main" {
-			return errors.New("Gemini subagent history is not a main session")
+			return errors.New("gemini subagent history is not a main session")
 		}
 		if target != "" {
 			if _, ok := meta["sessionId"]; ok {
@@ -247,7 +247,7 @@ func rewriteGeminiHistory(r io.Reader, source, target, cwd string, out io.Writer
 		}
 		if !found {
 			if geminiHistoryRawString(rec, "sessionId") != source || geminiHistoryRawString(rec, "projectHash") == "" {
-				return errors.New("Gemini history has no matching session metadata")
+				return errors.New("gemini history has no matching session metadata")
 			}
 			if err := rewriteMeta(rec); err != nil {
 				return err
@@ -283,7 +283,7 @@ func rewriteGeminiHistory(r io.Reader, source, target, cwd string, out io.Writer
 		return fmt.Errorf("Gemini history record exceeds federation.agent_history_record_max_bytes=%d or cannot be read: %w", limit, err)
 	}
 	if !found {
-		return errors.New("Gemini history has no session metadata")
+		return errors.New("gemini history has no session metadata")
 	}
 	return nil
 }
@@ -296,7 +296,7 @@ func (h geminiHistory) ImportReader(r io.Reader, source, cwd string) (string, fu
 		return "", nil, err
 	}
 	if !filepath.IsAbs(cwd) {
-		return "", nil, errors.New("Gemini history requires an absolute receiver cwd")
+		return "", nil, errors.New("gemini history requires an absolute receiver cwd")
 	}
 	id := uuid.NewString()
 	roots := []string{geminiDir()}
@@ -311,7 +311,7 @@ func (h geminiHistory) ImportReader(r io.Reader, source, cwd string) (string, fu
 		for _, p := range paths {
 			_ = os.Remove(p)
 		}
-		if p, found, _ := LocateGeminiSessionFile(id); found {
+		if p, found, _ := locateGeminiHistoryFile(id); found {
 			_ = os.Remove(p)
 		}
 		_ = db.DeleteConvIndex(id)
@@ -333,7 +333,7 @@ func (h geminiHistory) ImportReader(r io.Reader, source, cwd string) (string, fu
 		marker := filepath.Join(project, geminiProjectRootFile)
 		if raw, e := os.ReadFile(marker); e == nil {
 			if strings.TrimSpace(string(raw)) != cwd {
-				return fail(errors.New("Gemini project directory belongs to another cwd"))
+				return fail(errors.New("gemini project directory belongs to another cwd"))
 			}
 		} else if os.IsNotExist(e) {
 			if err = os.WriteFile(marker, []byte(cwd), 0600); err != nil {
@@ -404,4 +404,157 @@ func geminiHistoryRawString(m map[string]json.RawMessage, key string) string {
 }
 func geminiHistoryPutString(m map[string]json.RawMessage, key, value string) {
 	m[key], _ = json.Marshal(value)
+}
+
+// Find identity from metadata only. The ordinary conversation locator folds
+// all turns for UI summaries, which is inappropriate before transfer limits.
+func locateGeminiHistoryFile(id string) (string, bool, error) {
+	var best string
+	var newest time.Time
+	for _, root := range geminiRuntimeDirs() {
+		candidates, err := filepath.Glob(filepath.Join(root, geminiTmpDirName, "*", geminiChatsDirName, geminiSessionPrefix+"*-"+id[:8]+".json*"))
+		if err != nil {
+			return "", false, err
+		}
+		for _, path := range candidates {
+			if !geminiIsSessionFile(filepath.Base(path)) {
+				continue
+			}
+			f, err := os.Open(path)
+			if err != nil {
+				continue
+			}
+			metadata, err := geminiHistoryMetadata(bufio.NewReader(f))
+			info, statErr := f.Stat()
+			_ = f.Close()
+			if err != nil || statErr != nil || metadata["sessionId"] != id {
+				continue
+			}
+			// A migrated JSONL is authoritative over its legacy JSON source.
+			jsonl, bestJSONL := strings.HasSuffix(path, ".jsonl"), strings.HasSuffix(best, ".jsonl")
+			if best == "" || (jsonl && !bestJSONL) || (jsonl == bestJSONL && info.ModTime().After(newest)) {
+				best, newest = path, info.ModTime()
+			}
+		}
+	}
+	return best, best != "", nil
+}
+
+// Legacy JSON permits messages before metadata. Skip arbitrary JSON values
+// byte by byte, without allocating their contents, then read identity fields.
+func geminiHistoryMetadata(r *bufio.Reader) (map[string]string, error) {
+	metadata := map[string]string{}
+	next := func() (byte, error) {
+		for {
+			b, err := r.ReadByte()
+			if err != nil {
+				return 0, err
+			}
+			if !strings.ContainsRune(" \t\r\n", rune(b)) {
+				return b, nil
+			}
+		}
+	}
+	b, err := next()
+	if err != nil || b != '{' {
+		return nil, errors.New("invalid gemini metadata")
+	}
+	for {
+		b, err = next()
+		if err != nil {
+			return nil, err
+		}
+		if b == '}' {
+			return metadata, nil
+		}
+		if b != '"' {
+			return nil, errors.New("invalid gemini metadata key")
+		}
+		_ = r.UnreadByte()
+		keyRaw, err := geminiHistoryJSONValue(r, true)
+		if err != nil {
+			return nil, err
+		}
+		var key string
+		if err = json.Unmarshal(keyRaw, &key); err != nil {
+			return nil, err
+		}
+		b, err = next()
+		if err != nil || b != ':' {
+			return nil, errors.New("invalid gemini metadata field")
+		}
+		keep := key == "sessionId" || key == "projectHash"
+		raw, err := geminiHistoryJSONValue(r, keep)
+		if err != nil {
+			return nil, err
+		}
+		if keep {
+			var value string
+			if err = json.Unmarshal(raw, &value); err != nil {
+				return nil, err
+			}
+			metadata[key] = value
+		}
+		b, err = next()
+		if err != nil {
+			return nil, err
+		}
+		if b == '}' {
+			return metadata, nil
+		}
+		if b != ',' {
+			return nil, errors.New("invalid gemini metadata separator")
+		}
+	}
+}
+func geminiHistoryJSONValue(r *bufio.Reader, keep bool) ([]byte, error) {
+	var raw []byte
+	depth, started, quoted, escaped := 0, false, false, false
+	for {
+		b, err := r.ReadByte()
+		if err != nil {
+			return nil, err
+		}
+		if !started && strings.ContainsRune(" \t\r\n", rune(b)) {
+			continue
+		}
+		if started && !quoted && depth == 0 && (b == ',' || b == '}' || strings.ContainsRune(" \t\r\n", rune(b))) {
+			_ = r.UnreadByte()
+			return raw, nil
+		}
+		started = true
+		if keep {
+			if len(raw) >= 64<<10 {
+				return nil, errors.New("gemini metadata field too large")
+			}
+			raw = append(raw, b)
+		}
+		if quoted {
+			if escaped {
+				escaped = false
+			} else if b == '\\' {
+				escaped = true
+			} else if b == '"' {
+				quoted = false
+				if depth == 0 {
+					return raw, nil
+				}
+			}
+		} else {
+			switch b {
+			case '"':
+				quoted = true
+			case '{', '[':
+				depth++
+			case '}', ']':
+				depth--
+				if depth == 0 {
+					return raw, nil
+				}
+				if depth < 0 {
+					return nil, errors.New("invalid gemini JSON value")
+				}
+			}
+		}
+	}
 }
