@@ -32,6 +32,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -132,10 +133,21 @@ if (!__preactShell || !__preactShell.firstElementChild) throw new Error('Preact 
 	// Millisecond granularity so two runs in the same second don't overwrite;
 	// the shard suffix keeps concurrent shard outputs apart even then.
 	outDir := filepath.Join(dashSnapOutRoot(t), time.Now().Format("20060102-150405.000")+shard.Suffix())
+	// TCLAUDE_DASHSNAP_SIZE=WxH renders the run at another default viewport
+	// (states with their own size keep it), e.g. a 1280x800 pass over a filter.
+	width, height, err := dashSnapSize(os.Getenv("TCLAUDE_DASHSNAP_SIZE"))
+	if err != nil {
+		t.Fatalf("TCLAUDE_DASHSNAP_SIZE: %v", err)
+	}
+	if width > 0 {
+		outDir += fmt.Sprintf("-%dx%d", width, height)
+	}
 	shots, err := dashsnap.Capture(dashsnap.Config{
 		BaseURL: srv.URL,
 		OutDir:  outDir,
 		States:  states,
+		Width:   width,
+		Height:  height,
 	})
 	if errors.Is(err, dashsnap.ErrBrowserUnavailable) {
 		t.Skipf("environment: %v", err)
@@ -4748,4 +4760,18 @@ func retireDialogDanglingJS() string {
   if (document.querySelector('#confirm-meta').textContent.indexOf('dangling-entry') === -1) throw new Error('retire-dangling: confirm meta does not carry the agent label');
   if (document.activeElement !== confirmOK) throw new Error('retire-dangling: focus did not hand off to the confirm action');
 })();`, retireDialogWaitJS, retireDanglingConv)
+}
+
+// dashSnapSize parses TCLAUDE_DASHSNAP_SIZE ("1280x800"); "" keeps defaults.
+func dashSnapSize(v string) (int, int, error) {
+	if v == "" {
+		return 0, 0, nil
+	}
+	w, h, ok := strings.Cut(v, "x")
+	width, werr := strconv.Atoi(w)
+	height, herr := strconv.Atoi(h)
+	if !ok || werr != nil || herr != nil || width < 320 || height < 240 {
+		return 0, 0, fmt.Errorf("want WxH (at least 320x240), got %q", v)
+	}
+	return width, height, nil
 }

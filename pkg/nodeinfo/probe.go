@@ -51,6 +51,7 @@ func output(parent context.Context, binary string, args ...string) string {
 	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, args...)
+	configureProbeProcess(cmd)
 	var b limitedOutput
 	cmd.Stdout = &b
 	// Bound Wait even if a descendant retains stdout after the probe exits.
