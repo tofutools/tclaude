@@ -3368,7 +3368,7 @@ cannot recover content keys. A dishonest hub operator could deny service or
 keep a removed member in the loop for new content; it cannot read content or
 forge publisher-signed items, so pick a hub you trust.
 
-Use `tclaude federation boards list`, `create --name NAME`, `join --token TOKEN`,
+Use `tclaude federation boards ls` (with `list` retained as an alias), `create --name NAME`, `join --token TOKEN`,
 `show --board ID`, `members --board ID`, `invite --board ID --role reader --ttl 1h`,
 `revoke-invite --board ID --token-id HASH`, `set-member --board ID --instance ID
 --role publisher`, `remove-member --board ID --instance ID`, `rotate-key --board
@@ -3422,3 +3422,15 @@ blob transfer uses the separate `/v1/boards/stream` connection with the existing
 authenticated stream framing, shared hub bandwidth limits, bounded sizes and a
 five-minute deadline. Board-only connections remain refused at every fleet and
 hub-admin entry point, including on this stream endpoint.
+
+
+`federation boards --help` lists action subcommands. Each action's help shows
+only its applicable flags and marks the required ones. `boards invites --board
+ID` lists owner-visible invitation IDs, roles, epochs, expiry times and redeemed
+instances; it never returns bearer tokens or sealed key packages. The matching
+human-only local GET `/api/federation/boards/{board}/invites` and `/v1` routes
+return `{invites:[...],next_cursor}` with at most 50 rows per page.
+
+`federation moves ls` prints a table; use `--json` for the full response.
+Remote file downloads require the stable `agt_…@peer` address shown by
+`federation sessions`, rather than a session display name.
