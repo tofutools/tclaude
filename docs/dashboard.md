@@ -547,17 +547,18 @@ the title, a thin line in its colour runs along the top, its chip is current,
 and a peer-view pill lists what it shares.
 
 Greyed-out tabs, buttons and menu items are ones the peer does not offer you.
-They stay in place so the layout does not jump; hover one to see why (usually
-the grant it needs), and a click does nothing. Usage and costs say when they
-are not shared. Terminals in a peer view are not opened in the browser: the
-pane offers a `tclaude federation attach agent@node` command to copy and run
-in your own terminal.
+They stay in place so the layout does not jump; hover or click one to see why.
+The peer-view pill lists what is not shared and the grant each needs. Usage
+and costs say when they are not shared. Terminals in a peer view are not
+opened in the browser: clicking a terminal control copies
+`tclaude federation attach <agent-id>@<instance-id>` to run in your own
+terminal.
 
 ### Groups · all nodes
 
 The merged view lists every group on this node and each peer, named
-`group@node` with the node's colour on the suffix. Click a remote group to
-open that node's dashboard. An unreachable node keeps its last rows, marked
+`group@node` with the node's colour on the suffix. The view is read-only:
+click a group's `@node` suffix to open that node's dashboard. An unreachable node keeps its last rows, marked
 stale. CLI: `tclaude agent groups ls --all-nodes`.
 
 ### The 🌐 marker
@@ -574,7 +575,7 @@ is trusted) manages this node's federation. The identity bar at the top shows
 this node's instance ID and full fingerprint (copy it to compare out of band),
 the hub connection with **Disconnect**, and **version & updates…** for this
 node. Every action that widens trust, overwrites state or runs code confirms
-first and says what will happen. The CLI for each page is named on the page.
+first and says what will happen. Most pages name their CLI.
 
 - **Peers** — trusted peers (level, grants, pools) and hub-visible instances
   waiting to be trusted. To trust one: **Trust…**, compare the fingerprint
@@ -600,9 +601,9 @@ first and says what will happen. The CLI for each page is named on the page.
   limits beside it cap each script's memory, cpu and processes.
 - **Invites & joining** — **Create invite…** issues an enrollment token for a
   node profile (uses, lifetime, the trust the joining node grants back) and
-  shows it once; revoke active tokens from the list. To join a master, paste
-  its instance ID and token into **Join**, check both fingerprints in the
-  preview, tick the check and **Enroll**.
+  shows it once; revoke active tokens from the list. To join a master:
+  **Join with a token…**, pick the master, paste the token, check both
+  fingerprints in the preview, tick the check and **Enroll**.
 - **Peer grants** — pick a peer or a pool, see each grant with where it
   applies (a group, or all groups including future ones, flagged) and what it
   allows, **Revoke…** it, or add one: permission, group, cap, **Grant…**.
@@ -618,7 +619,7 @@ first and says what will happen. The CLI for each page is named on the page.
   outcome; refused or failed requests in red. Filter by peer and time window.
 
 The full federation model, grants and CLI are in
-[Federation](federation.md#live-peer-views-from-the-cli).
+[Federation](federation.md).
 
 ## Shared behavior
 
