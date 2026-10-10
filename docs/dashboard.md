@@ -557,8 +557,19 @@ and a peer-view pill lists what it shares.
 Greyed-out tabs, buttons and menu items are ones the peer does not offer you.
 They stay in place so the layout does not jump; hover or click one to see why.
 The peer-view pill lists what is not shared and the grant each needs. Usage
-and costs say when they are not shared. Terminals in a peer view are not
-opened in the browser: clicking a terminal control copies
+and costs say when they are not shared.
+
+If the peer granted you lifecycle actions, its agents' stop (the status dot),
+retire and clone controls open a peer action dialog instead of the local one.
+It lists only what the peer allows — Stop (optionally force kill), Retire
+(its session exits; its worktree is kept), Clone, **Move here** and **Teleport here** (always to
+a group on this node; groups that receive agents from that peer are listed
+first) — and confirms what will happen. A group's spawn button
+asks the peer to spawn an agent from your brief under the peer's own launch
+policy and shows the request until the peer decides. CLI:
+`tclaude federation action <action> --node PEER --agent ID`.
+
+Terminals in a peer view are not opened in the browser: clicking a terminal control copies
 `tclaude federation attach <agent-id>@<instance-id>` to run in your own
 terminal.
 

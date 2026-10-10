@@ -114,6 +114,32 @@ export function attachCommand(agentID, remoteID) {
   return `tclaude federation attach ${agentID}@${remoteID}`;
 }
 
+// PEER_ACTS are controls a peer may grant through its action routes (stop,
+// retire, clone; spawn into a group). When the peer shares the feature, the
+// click opens the peer action dialog (peer-action.js) instead of the local
+// one, whose requests (conv IDs, local-only options) the peer refuses.
+const PEER_ACTS = Object.freeze({
+  'dot-toggle': { action: 'stop', feature: 'lifecycle.stop' },
+  'retire-agent': { action: 'retire', feature: 'lifecycle.retire' },
+  clone: { action: 'clone', feature: 'lifecycle.clone' },
+  'spawn-agent': { action: 'spawn', feature: 'spawn' },
+});
+// PEER_ACTION_EVENT carries such a click to peer-action.js.
+export const PEER_ACTION_EVENT = 'tclaude:peer-action';
+const SAFE_GROUP = /^[A-Za-z0-9._@:-]{1,128}$/;
+
+function peerAction(act, peerView) {
+  const spec = PEER_ACTS[act.dataset.act];
+  if (!spec || featureState(spec.feature, peerView) !== 'shared') return null;
+  if (spec.action === 'spawn') return SAFE_GROUP.test(act.dataset.group || '') ? { action: 'spawn', group: act.dataset.group } : null;
+  // The status dot only stops a running agent; waking is not a peer action.
+  if (act.dataset.act === 'dot-toggle' && act.dataset.online !== '1') return null;
+  // The retire icon stays conv-keyed (data-agent would change its local
+  // recovery path), so it carries the stable ID as data-stable-agent.
+  const agent = act.dataset.stableAgent || act.dataset.agent || '';
+  return SAFE_AGENT_ID.test(agent) ? { action: spec.action, agent, label: act.dataset.label || '' } : null;
+}
+
 // blockedControl returns the element a click must not reach, and why.
 export function blockedControl(target, peerView) {
   const tab = target?.closest?.('nav [data-tab]');
@@ -123,6 +149,8 @@ export function blockedControl(target, peerView) {
   }
   const act = target?.closest?.('[data-act]');
   if (act && ATTACH_ACTS.has(act.dataset.act) && SAFE_AGENT_ID.test(act.dataset.agent || '')) return { el: act, state: 'attach', what: 'This terminal', agent: act.dataset.agent };
+  const pa = act && peerAction(act, peerView);
+  if (pa) return { el: act, state: 'peer-action', what: 'This action', request: pa };
   if (act && !READ_ONLY_ACTS.has(act.dataset.act)) return { el: act, state: 'local', what: 'This action' };
   const ctl = target?.closest?.(GATED_CONTROLS.join(','));
   if (ctl) return { el: ctl, state: 'local', what: 'This action' };
@@ -170,6 +198,10 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
     if (!blocked) return;
     event.preventDefault();
     event.stopImmediatePropagation();
+    if (blocked.state === 'peer-action') {
+      doc.dispatchEvent(new CustomEvent(PEER_ACTION_EVENT, { detail: blocked.request }));
+      return;
+    }
     if (blocked.state === 'attach') {
       const cmd = attachCommand(blocked.agent, remote.id);
       Promise.resolve().then(() => copy(cmd))
@@ -189,7 +221,7 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
   // Hover explanation for controls (tabs get theirs from the effect).
   const onOver = (event) => {
     const blocked = blockedControl(event.target, peerView);
-    if (blocked && !blocked.el.matches('nav [data-tab]')) setReason(blocked.el, limitHint(blocked.state, blocked.what, nodeName()));
+    if (blocked && blocked.state !== 'peer-action' && !blocked.el.matches('nav [data-tab]')) setReason(blocked.el, limitHint(blocked.state, blocked.what, nodeName()));
   };
   // Drags spawn, move and reorder on the node — never on a peer view.
   const onDrag = (event) => { event.preventDefault(); };

@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { NodeUpdateDialog } from './node-update.js';
 import { RequestAccessDialog } from './peer-access.js';
+import { PeerActionHost } from './peer-action.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { STATUS_POLL_MS, cardView, fmtAge, nodeColor, nodeHref, peerViewSummary, pollDelay, remoteHealthView, remoteNodeID, staggerOffset, switchOrder, visibleChips } from './skynet-model.js';
 import { dashboardState } from './snapshot-store.js';
@@ -340,7 +341,9 @@ function StatusPoller({ actions, timers = globalThis }) {
 
 export function mountSkynetIsland({ chipsHost, barHost, mapHost, remoteHost, state, actions, registerCleanup, navigate, timers }) {
   render(html`<${Fragment}><${StatusPoller} actions=${actions} timers=${timers} /><${NodeSwitchKeys} state=${state} navigate=${navigate} /><${NodeChips} state=${state} navigate=${navigate} /></${Fragment}>`, chipsHost);
-  if (remoteHost) render(html`<${RemoteMarker} state=${state} />`, remoteHost);
+  // A peer view also hosts the peer action dialog (stop/retire/clone/move/
+  // teleport/spawn through the peer's action routes).
+  if (remoteHost) render(html`<${RemoteMarker} state=${state} /><${PeerActionHost} snapshot=${dashboardState.snapshot} />`, remoteHost);
   render(html`<${TopLevelBar} state=${state} navigate=${navigate} />`, barHost);
   render(html`<${SkynetMap} state=${state} actions=${actions} navigate=${navigate} timers=${timers} />`, mapHost);
   registerCleanup(() => { render(null, chipsHost); render(null, barHost); render(null, mapHost); if (remoteHost) render(null, remoteHost); });
