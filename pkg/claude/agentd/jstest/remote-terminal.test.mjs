@@ -63,3 +63,26 @@ test('the map\'s terminal picker lists one peer\'s sessions with how each opens,
   assert.equal(opened[0].label, 'bob @ forge');
   await mounted.unmount();
 });
+
+test('by default a remote terminal opens as a Terminals tab pane, not the overlay', async (t) => {
+  const harness = await createPreactHarness(t);
+  const tab = await harness.importDashboardModule('js/terminals-tab.js');
+  const m = await harness.importDashboardModule('js/remote-terminal.js');
+  const panes = []; const modals = [];
+  const release = tab.registerTerminalShellController({
+    openPane: (seed, opts) => { panes.push([seed, opts]); return { key: seed.ws }; },
+    openModal: (d) => { modals.push(d); return d; },
+  });
+  t.after(release);
+  const fetchImpl = async () => ({ ok: true, json: async () => ROWS });
+  const opened = await m.openRemoteTerminal({ instance: 'inst_forge7', agent: 'agt_ada1', peerLabel: 'forge', fetchImpl, toast: () => {} });
+  assert.ok(opened);
+  assert.equal(modals.length, 0, 'no overlay terminal');
+  assert.equal(panes.length, 1);
+  const [seed, opts] = panes[0];
+  assert.equal(seed.ws, '/api/federation/terminal?peer=inst_forge7&agent=agt_ada1&mode=interactive');
+  assert.equal(seed.label, 'ada @ forge');
+  assert.deepEqual({ ...seed.remote }, { peer: 'inst_forge7', peerLabel: 'forge', agent: 'agt_ada1' });
+  assert.equal(seed.agent, undefined, 'no local agent actions on a peer agent');
+  assert.deepEqual(opts, { reveal: true });
+});
