@@ -8,6 +8,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -34,7 +35,7 @@ func peerAgentActionAllowed(peer, conv, slug string) bool {
 		return false
 	}
 	names, err := activeGroupNamesForConvs(conv)
-	if slug == PermGroupsMembersClone {
+	if slug == PermGroupsMembersClone || slug == PermGroupsMembersRetire || slug == PermAgentMove {
 		names, err = cloneAuthorizationGroups(conv)
 	}
 	if err != nil || len(names) == 0 {
@@ -66,6 +67,9 @@ func (a *peerActionAuthority) allows(perm, target string, actx ActionContext) bo
 			return false
 		}
 	case PermAgentRetire:
+		if slug != PermGroupsMembersRetire && slug != PermAgentMove {
+			return false
+		}
 		slug = PermGroupsMembersRetire
 	case PermAgentClone:
 		if slug != PermGroupsMembersClone {
@@ -217,6 +221,8 @@ func servePeerSpawn(w http.ResponseWriter, r *http.Request, v *peerView, rule pe
 		return
 	}
 	req.ID = id
+	req.Status = db.FedSpawnPending
+	req.CreatedAt = time.Now().UTC()
 	v.groupName = g.Name
 	go autoApproveFederationSpawnWithPeerAction(req, v.peer, true)
 	writeJSON(w, 202, fedSpawnRequestView(req, time.Now()))
@@ -237,4 +243,22 @@ func servePeerSpawnStatus(w http.ResponseWriter, r *http.Request, v *peerView, r
 		return
 	}
 	writeJSON(w, 200, fedSpawnRequestView(req, time.Now()))
+}
+
+// Sender audits use the same mapping as receiving authorization. Only known
+// route patterns enter the log; peer-controlled bodies/selectors never do.
+func auditPeerActionProxy(r *http.Request, peer, phase string, status int) {
+	mux := http.NewServeMux()
+	for pattern, rule := range peerViewRules() {
+		if rule.write == nil || !(rule.feature == "messaging" || rule.feature == "spawn" || strings.HasPrefix(rule.feature, "lifecycle.")) {
+			continue
+		}
+		mux.HandleFunc(pattern, func(http.ResponseWriter, *http.Request) {})
+	}
+	probe := &http.Request{Method: r.Method, URL: &url.URL{Path: "/api/" + r.PathValue("tail")}, Header: make(http.Header)}
+	_, pattern := mux.Handler(probe)
+	if pattern == "" {
+		return
+	}
+	recordFederationAudit("federation.peer_view.out", "operator", "", "", fmt.Sprintf("phase=%s peer=%s route=%s", phase, peer, pattern), status)
 }

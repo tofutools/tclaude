@@ -2704,13 +2704,15 @@ an unknown name returns 404. Each link has the existing snapshot shape:
 `online`, and `last_seen?`. Peers cannot read this node's other trust links,
 including through unrestricted trust.
 
+Additional stable action concept keys are `spawn.inline`, `lifecycle.stop`, `lifecycle.retire`, `lifecycle.clone`, `lifecycle.move`, `lifecycle.teleport`.
+
 ### Remote operator actions
 
 Remote actions use the peer-view dispatcher and the existing dashboard proxy.
 The receiver authorizes every request and rechecks durable move authority before
 retiring a source. It never gives the requester local human identity or the
 source agent's own grants. Whole-agent stop/retire/clone/move actions need their
-peer grant on every affected active group; clone also covers owned groups.
+peer grant on every affected active group; clone/retire/move also cover owned groups.
 
 - `POST /api/groups/{name}/spawn`: `{brief, name?, role?, profile?}` under
   `groups.members.spawn` and receiver-owned launch policy. Arbitrary cwd,
