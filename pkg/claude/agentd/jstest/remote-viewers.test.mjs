@@ -24,9 +24,10 @@ test('the viewers read rides the snapshot tick: local federated node only, local
   assert.equal(rv.claimViewersRead(1000, { ...local, fleet: null }), false, 'not federated: no read');
   assert.equal(rv.claimViewersRead(1000, { ...local, remote: 'inst_forge' }), false, 'a peer\'s view: its viewers are not ours');
   assert.equal(rv.claimViewersRead(1000, { ...local, tab: 'fleet-admin' }), false, 'Fleet polls its own panel');
+  assert.equal(rv.claimViewersRead(1000, { ...local, tab: 'map' }), false, 'the map has no agent rows');
   assert.equal(rv.claimViewersRead(1000, local), true);
   assert.equal(rv.claimViewersRead(3000, local), false, 'throttled');
-  assert.equal(rv.claimViewersRead(6000, local), true);
+  assert.equal(rv.claimViewersRead(6000, { ...local, tab: 'fleet' }), true, 'the merged Groups view shows this node\'s rows');
 
   rv.noteViewersRead([watch, { ...type, incoming: false }]);
   assert.deepEqual(rv.remoteViewers.value.map((v) => v.id), ['v1'], 'only incoming views');
@@ -64,8 +65,13 @@ test('the badge names the peer, typing outranks watching, and a click opens the 
   const clicks = [];
   const doc = { querySelector: (sel) => ({ click: () => clicks.push(sel) }) };
   rv.openViewers('agt_a1', doc);
+  rv.openViewers('agt_a1', doc);
   assert.equal(rv.viewersFocus.value, 'agt_a1');
-  assert.deepEqual(clicks, ['nav [data-tab="fleet-admin"]']);
+  assert.equal(rv.viewersOpened.value, 2, 'a repeat click still counts, so Fleet returns to Peers');
+  assert.deepEqual(clicks, ['nav [data-tab="fleet-admin"]', 'nav [data-tab="fleet-admin"]']);
+  const snap = { groups: [{ members: [{ conv_id: 'c-1', agent_id: 'agt_a1' }] }] };
+  assert.equal(rv.agentIDOf('c-1', snap), 'agt_a1', 'a conversation-keyed pane resolves to its agent');
+  assert.equal(rv.agentIDOf('agt_z', snap), 'agt_z');
 });
 
 test('an online agent row carries the badge on its harness line', async (t) => {

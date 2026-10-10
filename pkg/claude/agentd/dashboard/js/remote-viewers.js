@@ -3,7 +3,7 @@ import { signal } from '@preact/signals';
 import htm from 'htm';
 import { remoteNodeID } from './skynet-model.js';
 import { dashboardState } from './snapshot-store.js';
-import { TOP_LEVEL_TABS, skynetState } from './skynet-state.js';
+import { skynetState } from './skynet-state.js';
 
 const html = htm.bind(h);
 
@@ -21,6 +21,12 @@ export const remoteViewers = signal([]);
 // filters its viewers panel to it until the operator clears the filter.
 export const viewersFocus = signal('');
 
+// viewersOpened counts badge clicks, so a second click on the same agent's
+// badge still brings Fleet back to Peers.
+export const viewersOpened = signal(0);
+
+const VIEWERLESS_TABS = new Set(['map', 'fleet-admin']);
+
 let lastRead = -Infinity;
 
 // claimViewersRead says whether this tick should read the viewers, and if so
@@ -28,15 +34,15 @@ let lastRead = -Infinity;
 // node's own dashboard (a peer's per-node view shows the peer's agents, whose
 // viewers are not ours), only once this node is known to be federated, and at
 // most every VIEWERS_EVERY_MS. A node that leaves the federation drops its
-// badges. The multi-node views (map, merged Groups, Fleet) show no local agent
-// rows or terminal headers, and Fleet → Peers polls its own viewers panel, so
-// they skip the read.
+// badges. The map shows no agent rows and Fleet → Peers polls its own viewers
+// panel, so those two skip the read; the merged Groups view renders this
+// node's rows and keeps reading.
 export function claimViewersRead(now = Date.now(), { remote = remoteNodeID(), fleet = skynetState.fleet.value, tab = dashboardState.activeTab.value } = {}) {
   if (remote || !fleet) {
     if (remoteViewers.value.length) remoteViewers.value = [];
     return false;
   }
-  if (TOP_LEVEL_TABS.has(tab)) return false;
+  if (VIEWERLESS_TABS.has(tab)) return false;
   if (now - lastRead < VIEWERS_EVERY_MS) return false;
   lastRead = now;
   return true;
@@ -53,6 +59,20 @@ export function resetViewersForTest() {
   lastRead = -Infinity;
   remoteViewers.value = [];
   viewersFocus.value = '';
+  viewersOpened.value = 0;
+}
+
+// agentIDOf resolves a terminal selector, which may be a conversation ID (a
+// pane opened from the palette or a jump), to the agent ID the viewers rows
+// carry, through the current snapshot.
+export function agentIDOf(selector, snapshot = dashboardState.snapshot.value) {
+  if (!selector || selector.startsWith('agt_')) return selector;
+  const lists = [snapshot?.agents, snapshot?.ungrouped, ...(snapshot?.groups || []).map((g) => g?.members)];
+  for (const list of lists) {
+    const hit = (list || []).find((m) => m && m.conv_id === selector && m.agent_id);
+    if (hit) return hit.agent_id;
+  }
+  return selector;
 }
 
 // viewersOf lists the incoming views of one agent, matched by agent ID or by
@@ -88,13 +108,15 @@ export function viewerSummary(views, label = peerLabel) {
 // through the real nav anchor so tab activation stays owned by refresh.js.
 export function openViewers(agentId, doc = globalThis.document) {
   viewersFocus.value = agentId || '';
+  viewersOpened.value += 1;
   doc?.querySelector('nav [data-tab="fleet-admin"]')?.click();
 }
 
 // ViewersBadge marks an agent that a peer is watching (👁) or typing into (⌨)
 // right now, naming the peer. Peer labels and instance IDs are rendered as
 // text only.
-export function ViewersBadge({ agentId, session = '', rows = remoteViewers.value, label = peerLabel, open = openViewers, className = '' }) {
+export function ViewersBadge({ agentId: selector, session = '', rows = remoteViewers.value, label = peerLabel, open = openViewers, className = '' }) {
+  const agentId = agentIDOf(selector);
   const s = viewerSummary(viewersOf(rows, agentId, session), label);
   if (!s) return null;
   const onClick = (e) => { e.preventDefault(); e.stopPropagation(); open(agentId || session); };

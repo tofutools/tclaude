@@ -76,7 +76,7 @@ const skynetFederationStubJS = `(function(){
     function __dashsnapAgentID(title, fallback) { var el = document.querySelector('.member-row[data-label="' + title + '"][data-agent], [data-label="' + title + '"][data-agent]'); return (el && el.dataset.agent) || fallback; }
     if (path === '/api/federation/viewers') return json(window.__dashsnapViewers ? [
       { id: 'tv_8k2q', peer: 'inst_hn3cxq7a', agent: __dashsnapAgentID('fe-dev-forms', 'agt_r8k2m4c1x9'), session: 'fe-dev-forms', group: 'frontend-squad', read_only: false, started: new Date(Date.now() - 720000).toISOString(), incoming: true },
-      { id: 'tv_3m1x', peer: 'inst_2p6ym4ke', agent: __dashsnapAgentID('fe-dev-charts', 'agt_p2w7d0j5n3'), session: 'infra-bench', group: 'infra-crew', read_only: true, started: new Date(Date.now() - 95000).toISOString(), incoming: true }
+      { id: 'tv_3m1x', peer: 'inst_2p6ym4ke', agent: __dashsnapAgentID('infra-lead', 'agt_p2w7d0j5n3'), session: 'infra-lead', group: 'infra-crew', read_only: true, started: new Date(Date.now() - 95000).toISOString(), incoming: true }
     ] : []);
     if (path === '/api/federation/bundle-offers') return json(url.indexOf('direction=out') >= 0 ? [
       { offer: { id: 'off_7q2m', type: 'agent', summary: 'Agent reviewer (config only)', expires_at: '2026-10-17T09:00:00Z' }, peer: 'inst_2p6ym4ke', direction: 'out', state: 'pending' },
@@ -707,13 +707,13 @@ func skynetStates() []dashsnap.State {
 		{
 			Key:     "skynet-agent-viewer-badges",
 			Title:   "Agents a peer is watching or typing into",
-			Caption: "While a peer views an agent terminal here, the agent's harness line names it: amber ⌨ forge is typing into fe-dev-forms, 👁 lab is watching fe-dev-charts. Clicking the badge opens Fleet → Peers with the viewers panel filtered to that agent.",
+			Caption: "While a peer views an agent terminal here, the agent's harness line names it: amber ⌨ forge is typing into fe-dev-forms, 👁 lab is watching infra-lead. Clicking the badge opens Fleet → Peers with the viewers panel filtered to that agent.",
 			InitJS:  "window.__dashsnapViewers = true;" + skynetFederationStubJS,
 			JS: `return (async function(){
   for (var i = 0; i < 100 && document.querySelectorAll('.remote-viewers-badge').length < 2; i++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelectorAll('details[data-dnd-target-group]').forEach(function(d){ d.open = true; });
   if (document.querySelectorAll('.remote-viewers-badge').length < 2) throw new Error('skynet: agent viewer badges missing');
-  document.querySelector('.remote-viewers-badge').scrollIntoView({ block: 'center' });
+  document.querySelector('.remote-viewers-badge.typing').scrollIntoView({ block: 'center' });
 })();`,
 			SettleMS: 300,
 		},

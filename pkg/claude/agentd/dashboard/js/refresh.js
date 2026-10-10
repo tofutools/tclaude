@@ -153,7 +153,8 @@ export async function refresh(options) {
       readViewers ? get('/api/federation/viewers') : Promise.resolve(undefined),
     ]);
     if (readViewers) {
-      // Never holds the tick: a failed or unparsable read keeps the last list.
+      // The read rides this tick's fetches; a failed or unparsable one keeps
+      // the last list.
       Promise.resolve(viewersR?.ok ? viewersR.json() : null).catch(() => null).then((rows) => noteViewersRead(rows));
     }
     // agentd answered this poll (any HTTP status) — we're connected. Clear the
