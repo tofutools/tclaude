@@ -3472,3 +3472,37 @@ other nodes must be issued from the source node's dashboard.
 Direct operator moves remain ordinary moves: the self-service teleport freeze
 and per-chain/hour/day teleport limits do not apply. Node capacity, admission
 and the applied policy's live-worker limit still apply.
+
+### Message history across nodes
+
+The dashboard peer proxy can read `GET /api/peer/INSTANCE/mailboxes` and
+`GET /api/peer/INSTANCE/mailbox?id=all|human|CONV|group:NAME&q=&sender=&page=&page_size=`.
+These reuse the local Messages sidebar and newest-first page shapes, including
+`messages`, `page`, `page_size`, `total` and `total_unfiltered`. Pages default to
+50 messages and are capped at 500. Prefix each message ID with its owning node
+when merging pages from several nodes; send any action back to that node.
+
+Both reads require the instance-wide peer grant `node.messages.read`, which is
+off by default and is never implied by `message.direct`. **This grant exposes
+private message bodies across the entire node**, including human notifications
+and agent-to-agent mail. It is not group-scoped. Unrestricted trust includes it.
+Reading a page does not change any message's read state.
+
+`POST /api/peer/INSTANCE/mailbox/mark-read` accepts `{ids:[ID],read:true|false}`
+or `{conv:CONV,read:true}` under the separate, off-by-default instance-wide
+`node.messages.manage` grant. It changes agent mail read state only. Delete,
+wipe, attachment downloads and human message mutations are not shared through
+these routes. Attachment metadata is display data, not download authority.
+
+Neither grant authorizes replies or approval decisions. Reply delivery to an
+agent uses the existing `operator-message` route and its group-scoped
+`message.direct` permission. Human notification replies, marking human
+notifications read, and one-shot ask-human decisions keep the unrestricted-only
+human-inbox routes described above. Peer access decisions, away cover,
+permanent approvals and process obligations remain local.
+
+A fused view retains each selected node's last successful page and its receipt
+time during an outage. The peer proxy returns `peer_unreachable` with reason
+`peer_offline` or `peer_timeout` and optional `last_seen`; a missing history
+grant returns HTTP 403 `permission`. Show those states instead of treating them
+as an empty mailbox. Stop using retained pages after local trust is removed.

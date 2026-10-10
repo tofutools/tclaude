@@ -89,8 +89,8 @@ type peerViewRule struct {
 	// unrestrictedOnly rules are held only through unrestricted trust: they
 	// cannot be granted or requested (the human inbox across own nodes).
 	unrestrictedOnly bool
-	serve         func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
-	write         func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
+	serve            func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
+	write            func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
 }
 
 // This single mapping drives endpoint dispatch, refusals and omitted features.
@@ -157,6 +157,7 @@ func peerViewRules() map[string]peerViewRule {
 		rules["POST /api/agents/{id}/"+action.tail] = peerViewRule{feature: "lifecycle." + action.tail, requires: action.permission, group: true, write: servePeerAgentAction}
 	}
 	addPeerHumanInboxRules(rules)
+	addPeerMailboxRules(rules)
 	rules["feature:roster"] = peerViewRule{feature: "groups.roster", requires: PermGroupsRosterRead, group: true, serve: servePeerGroups}
 	rules["feature:presence"] = peerViewRule{feature: "groups.presence", requires: PermGroupsPresenceRead, group: true, serve: servePeerGroups}
 	return rules
