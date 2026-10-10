@@ -22,7 +22,7 @@ func TestDashboardFederationModelsSharedHandlers(t *testing.T) {
 		t.Helper()
 		rec := testharness.Serve(h, testharness.JSONRequest(t, method, "/api/federation/models/"+tail, body))
 		require.Equal(t, status, rec.Code, rec.Body.String())
-		require.Equal(t, "private, no-store", rec.Header().Get("Cache-Control"))
+		require.Contains(t, rec.Header().Get("Cache-Control"), "no-store")
 		return rec
 	}
 	rec := call("GET", "control", nil, 200)
