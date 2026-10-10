@@ -58,10 +58,10 @@ test('the merged view polls peers only while shown, renders group@node, and stay
   const state = stateMod.createSkynetState({ activeTab });
   state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }] });
   const snapshot = harness.signals.signal({ groups: [group('ops')], agents: [] });
-  const timers = fakeTimers(); const calls = []; const toasts = []; const switched = [];
+  const timers = fakeTimers(); const calls = []; const toasts = []; const switched = []; const opened = [];
   const fetchImpl = async (url) => { calls.push(url); return { ok: true, status: 200, json: async () => ({ groups: [group('build')], agents: [], peer_view: { included: ['agents.status'] } }) }; };
   const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
-  const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${snapshot} fetchImpl=${fetchImpl} timers=${timers} remote="" toast=${(m) => toasts.push(m)} switchNode=${(id) => switched.push(id)} />`);
+  const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${snapshot} fetchImpl=${fetchImpl} timers=${timers} remote="" toast=${(m) => toasts.push(m)} switchNode=${(id) => switched.push(id)} openTerminal=${(o) => opened.push(o)} />`);
   assert.equal(timers.queue.length, 0, 'hidden view polls nothing');
   await harness.act(() => { activeTab.value = 'fleet'; });
   assert.equal(timers.queue.length, 1);
@@ -82,6 +82,14 @@ test('the merged view polls peers only while shown, renders group@node, and stay
   assert.equal(harness.fireEvent(chip, 'contextmenu').defaultPrevented, true);
   assert.equal(harness.fireEvent(menu, 'click').defaultPrevented, false, 'menus still open');
   assert.ok(toasts.length >= 2);
+  // A peer agent's terminal opens in the browser; this node's stays an overview.
+  const inGroup = (node, name, inner) => { const d = el(`<details data-fleet-node="${node}" data-fleet-node-name="${name}">${inner}</details>`); return d.firstElementChild; };
+  const peerWin = inGroup('inst_forge', 'forge', '<button data-act="web-open-window" data-agent="agt_ada1">web window</button>');
+  assert.equal(harness.fireEvent(peerWin, 'click').defaultPrevented, true);
+  assert.deepEqual({ instance: opened[0].instance, agent: opened[0].agent, peerLabel: opened[0].peerLabel }, { instance: 'inst_forge', agent: 'agt_ada1', peerLabel: 'forge' });
+  const localWin = inGroup('inst_self', 'desk', '<button data-act="web-open-window" data-agent="agt_me1">web window</button>');
+  harness.fireEvent(localWin, 'click');
+  assert.equal(opened.length, 1, "this node's rows keep the overview rule");
   await harness.act(() => { activeTab.value = 'groups'; });
   assert.equal(timers.queue.length, 0, 'leaving the view cancels polling');
   await mounted.unmount(); state.dispose();

@@ -85,29 +85,21 @@ function tabLabel(tab) {
 }
 
 export function limitHint(state, what, node) {
-  if (state === 'attach') return `${node}'s terminals open from the CLI — click to copy the attach command`;
+  if (state === 'attach') return `${node}'s agent terminal — opens here, watch-only or interactive as ${node} shares it`;
   if (state === 'omitted') return `${node} does not share ${what} with you`;
   return `${what} is not available in a peer view`;
 }
 
-// ATTACH_ACTS open an agent's terminal. A peer's terminals are reachable only
-// from the CLI (remote attach refuses browser origins by design), so on a peer
-// view these copy the attach command instead.
-const ATTACH_ACTS = new Set(['web-open-window', 'jump', 'term-dir']);
+// ATTACH_ACTS open an agent's terminal. On a peer view they open the peer's
+// agent in the browser terminal, bridged by this node's daemon over the
+// federation terminal stream (remote-terminal.js); the peer authorises it.
+// (term-dir opens a shell in a directory, not the agent: never on a peer.)
+const ATTACH_ACTS = new Set(['web-open-window', 'jump']);
 
 // SAFE_AGENT_ID admits only a plain agent ID into a command the operator will
 // paste into a shell: the ID comes from the peer's snapshot, and a hostile
 // peer must not be able to smuggle shell syntax into it.
 const SAFE_AGENT_ID = /^agt_[A-Za-z0-9]{4,64}$/;
-
-// defaultCopy fails when the page has no clipboard API (an insecure-context
-// dashboard over plain http), so the caller shows the command instead of
-// claiming it was copied.
-function defaultCopy(text) {
-  const clipboard = globalThis.navigator?.clipboard;
-  if (!clipboard?.writeText) throw new Error('clipboard unavailable');
-  return clipboard.writeText(text);
-}
 
 // attachCommand is the CLI command that opens agent's pane on the peer.
 export function attachCommand(agentID, remoteID) {
@@ -159,7 +151,9 @@ export function blockedControl(target, peerView) {
 
 // installPeerViewLimits wires the gating for the page's lifetime. It is a
 // no-op unless this page is a peer view.
-export function installPeerViewLimits({ doc = document, snapshot = dashboardState.snapshot, toast = shellToast, remote = globalThis.__tclaudeRemoteNode, copy = defaultCopy } = {}) {
+const openRemote = (opts) => import('./remote-terminal.js').then((m) => m.openRemoteTerminal(opts));
+
+export function installPeerViewLimits({ doc = document, snapshot = dashboardState.snapshot, toast = shellToast, remote = globalThis.__tclaudeRemoteNode, openTerminal = openRemote } = {}) {
   if (!remote?.id) return () => {};
   const root = doc.documentElement;
   let peerView = snapshot.value?.peer_view || null;
@@ -203,10 +197,7 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
       return;
     }
     if (blocked.state === 'attach') {
-      const cmd = attachCommand(blocked.agent, remote.id);
-      Promise.resolve().then(() => copy(cmd))
-        .then(() => toast(`Copied: ${cmd} — run it in a terminal to watch or type into this agent on ${nodeName()}`, false))
-        .catch(() => toast(`Run in a terminal: ${cmd}`, false));
+      void openTerminal({ instance: remote.id, agent: blocked.agent, peerLabel: nodeName(), toast });
       return;
     }
     toast(limitHint(blocked.state, blocked.what, nodeName()), true);

@@ -60,6 +60,11 @@ const skynetFederationStubJS = `(function(){
     if (/^\/api\/federation\/profiles\/[^/]+$/.test(path) && !(init && init.method === 'PUT')) return json({ profile: {}, applied_peers: ['inst_hn3cxq7a'] });
     if (path === '/api/federation/away' && !(init && init.method === 'POST')) return json({ away: window.__dashsnapAway ? { cover: 'inst_hn3cxq7a', since: '2026-10-10T08:00:00Z', until: '2026-10-10T18:00:00Z' } : null });
     if (path === '/api/federation/node-labels' && !(init && init.method === 'POST')) return json({ labels: ['gpu', 'ci', 'linux'] });
+    if (path === '/api/federation/sessions') return json([
+      { instance: 'inst_hn3cxq7a', peer: 'forge', agent: 'agt_ada7k2m9', name: 'ada', groups: ['ops'], watch: true, attach: true, stale: false },
+      { instance: 'inst_hn3cxq7a', peer: 'forge', agent: 'agt_bob4n8q1', name: 'bench-runner', groups: ['ops'], watch: true, attach: false, stale: false },
+      { instance: 'inst_hn3cxq7a', peer: 'forge', agent: 'agt_cyd2p5w3', name: 'infra-dev', groups: ['infra'], watch: false, attach: false, stale: true }
+    ]);
     if (path === '/api/federation/identity/rotations') return json({ local: window.__dashsnapRotationPending
       ? { pending: true, chain: [{ new_id: 'inst_q4w7pjf2kx3mz6bty5nd' }, { new_id: 'inst_r8vn2c5xq7hd3m9kz1wa', new_fingerprint: 'r8vn 2c5x q7hd 3m9k z1wa 6tpe', activate_at: new Date(Date.now() + 38 * 3600e3).toISOString() }] }
       : { pending: false, chain: [{ new_id: 'inst_q4w7pjf2kx3mz6bty5nd' }] } });
@@ -178,6 +183,30 @@ const skynetFederationStubJS = `(function(){
     });
     return realFetch(input, init);
   };
+})();`
+
+// skynetRemoteTerminalJS stands in for the federation terminal socket: the
+// hello names the mode (from the URL) and the target's pinned size, then a
+// screen of agent output arrives as binary frames, as the bridge sends them.
+const skynetRemoteTerminalJS = `(function(){
+  var Real = window.WebSocket;
+  function Fake(url) {
+    if (String(url).indexOf('/api/federation/terminal?') < 0) return new Real(url);
+    var self = this; this.readyState = 0; this.binaryType = 'blob';
+    var mode = /mode=interactive/.test(url) ? 'interactive' : 'watch';
+    var enc = new TextEncoder();
+    setTimeout(function(){
+      self.readyState = 1; self.onopen && self.onopen();
+      self.onmessage && self.onmessage({ data: JSON.stringify({ type: 'hello', mode: mode, cols: 96, rows: 20 }) });
+      var lines = ['\x1b[1;36m● ada\x1b[0m  (forge · ops)', '', '> Run the federation tests and fix the relay backpressure failure', '',
+        '\x1b[2m  Bash(go test ./pkg/federation/...)\x1b[0m', '  ok   pkg/federation/relay   3.112s', '  \x1b[31mFAIL\x1b[0m pkg/federation/hub  TestHubRelayBackpressure', '',
+        '  The credit window is not refilled after a slow reader drains; patching hub/stream.go …', '', '\x1b[7m REMOTE ' + (mode === 'interactive' ? 'INPUT' : 'WATCH') + ' · desk \x1b[0m'];
+      self.onmessage && self.onmessage({ data: enc.encode(lines.join('\r\n')).buffer });
+    }, 50);
+  }
+  Fake.OPEN = 1; Fake.CLOSED = 3; Fake.CONNECTING = 0; Fake.CLOSING = 2;
+  Fake.prototype.send = function(){}; Fake.prototype.close = function(){ this.readyState = 3; };
+  window.WebSocket = Fake;
 })();`
 
 // skynetGroupLinksJS decorates the first group's snapshot with federation
@@ -531,6 +560,55 @@ func skynetStates() []dashsnap.State {
   document.querySelector('#fleet-identity').scrollIntoView({ block: 'center' });
 })();`,
 			SettleMS: 300,
+		},
+		{
+			Key:     "skynet-remote-terminals-picker",
+			Title:   "A peer's terminals from the map",
+			Caption: "Map → a peer card → Terminals…: that peer's sessions from the cached catalog, each opening interactive (sessions.attach) or watch-only (sessions.watch) as the peer shares it, unshared ones marked, and the CLI attach command kept as the native-terminal option.",
+			InitJS:  skynetRemoteTerminalJS + skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="map"]').click();
+  for (var i = 0; i < 80 && !document.querySelector('.skynet-card-terms'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('.skynet-card-terms').click();
+  for (var j = 0; j < 30 && document.querySelectorAll('#remote-sessions tr').length < 3; j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#remote-sessions [data-open="watch"]')) throw new Error('skynet: terminal picker missing');
+})();`,
+			SettleMS: 300,
+		},
+		{
+			Key:     "skynet-remote-terminal-watch",
+			Title:   "A peer's agent terminal, watch-only",
+			Caption: "Opening a watch-only session: the same browser terminal as a local one, rendered at the peer's pinned size, with a watch-only badge naming the peer; keystrokes and image paste are not sent.",
+			InitJS:  skynetRemoteTerminalJS + skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="map"]').click();
+  for (var i = 0; i < 80 && !document.querySelector('.skynet-card-terms'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('.skynet-card-terms').click();
+  for (var j = 0; j < 30 && !document.querySelector('#remote-sessions [data-open="watch"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#remote-sessions [data-open="watch"]').click();
+  for (var k = 0; k < 60 && !document.querySelector('#term-session-modal .term-remote-badge.watch'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#term-session-modal .term-remote-badge.watch')) throw new Error('skynet: watch-only badge missing');
+})();`,
+			SettleMS: 600,
+		},
+		{
+			Key:     "skynet-remote-terminal-interactive",
+			Title:   "A peer's agent terminal, interactive",
+			Caption: "Opening a session the peer lets this node type into (sessions.attach): the badge turns amber, keystrokes and image paste reach the peer's agent, and the peer shows REMOTE INPUT on its pane.",
+			InitJS:  skynetRemoteTerminalJS + skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="map"]').click();
+  for (var i = 0; i < 80 && !document.querySelector('.skynet-card-terms'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('.skynet-card-terms').click();
+  for (var j = 0; j < 30 && !document.querySelector('#remote-sessions [data-open="interactive"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#remote-sessions [data-open="interactive"]').click();
+  for (var k = 0; k < 60 && !document.querySelector('#term-session-modal .term-remote-badge.interactive'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#term-session-modal .term-remote-badge.interactive')) throw new Error('skynet: interactive badge missing');
+})();`,
+			SettleMS: 600,
 		},
 		{
 			Key:     "skynet-fleet-viewers",
