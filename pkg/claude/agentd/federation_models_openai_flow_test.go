@@ -155,39 +155,56 @@ func TestFederation_ModelGatewayDialectProbeDoesNotConsumeRequestCapacity(t *tes
 }
 
 func TestFederation_ModelGatewayResponseBeforeRequestHalfClose(t *testing.T) {
-	fh := newFedHarness(t)
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, `{"object":"response","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}`)
-	}))
-	defer upstream.Close()
-	fedModelPolicy(t, fh, upstream.URL)
-	_, err := config.Update(func(cfg *config.Config, err error) error {
-		if err != nil {
-			return err
-		}
-		p := cfg.Agent.HTTPProxies["model"].ModelPolicy
-		p.Dialect = "openai"
-		p.PrecountInput = false
-		return nil
-	})
-	require.NoError(t, err)
-	flow := fedModelFlow(t, fh, proto.ModelOpenPayload{Proxy: "model", Session: "immutable-launch", Dialect: "openai"})
-	req, err := http.NewRequest(http.MethodPost, "http://model/v1/responses", strings.NewReader(`{"model":"test-model","input":"hello"}`))
-	require.NoError(t, err)
-	require.NoError(t, req.Write(flow))
-	// Deliberately receive the entire response, including the gateway's
-	// half-close, before sending ours. HTTP body framing already ended the
-	// request, so this ordering must neither stall the response nor abort us.
-	response, err := io.ReadAll(flow)
-	require.NoError(t, err)
-	require.NoError(t, flow.CloseWrite())
-	resp, err := http.ReadResponse(bufio.NewReader(strings.NewReader(string(response))), req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
-	require.Contains(t, string(body), `"status":"completed"`)
+	for _, halfClose := range []bool{true, false} {
+		t.Run(map[bool]string{true: "half-close", false: "deadline"}[halfClose], func(t *testing.T) {
+			fh := newFedHarness(t)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, `{"object":"response","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}`)
+			}))
+			defer upstream.Close()
+			fedModelPolicy(t, fh, upstream.URL)
+			_, err := config.Update(func(cfg *config.Config, err error) error {
+				if err != nil {
+					return err
+				}
+				p := cfg.Agent.HTTPProxies["model"].ModelPolicy
+				p.Dialect = "openai"
+				p.PrecountInput = false
+				if !halfClose {
+					p.MaxDurationSeconds = 1
+				}
+				return nil
+			})
+			require.NoError(t, err)
+			flow := fedModelFlow(t, fh, proto.ModelOpenPayload{Proxy: "model", Session: "immutable-launch", Dialect: "openai"})
+			req, err := http.NewRequest(http.MethodPost, "http://model/v1/responses", strings.NewReader(`{"model":"test-model","input":"hello"}`))
+			require.NoError(t, err)
+			require.NoError(t, req.Write(flow))
+			// Deliberately receive the entire response, including the gateway's
+			// half-close, before sending ours. HTTP body framing already ended the
+			// request, so this ordering must neither stall the response nor abort us.
+			response, err := io.ReadAll(flow)
+			require.NoError(t, err)
+			if halfClose {
+				require.NoError(t, flow.CloseWrite())
+			} else {
+				// A peer that never half-closes still receives its response, and
+				// the stream deadline bounds the gateway's wait for the missing FIN.
+				select {
+				case <-flow.Done():
+				case <-time.After(5 * time.Second):
+					t.Fatal("stream remained open after its deadline")
+				}
+			}
+			resp, err := http.ReadResponse(bufio.NewReader(strings.NewReader(string(response))), req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+			require.Contains(t, string(body), `"status":"completed"`)
+		})
+	}
 }
 
 func fedModelControlAnswer(t *testing.T, fh *fedHarness, p proto.ModelOpenPayload) proto.ModelAnswerPayload {
