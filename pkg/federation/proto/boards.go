@@ -15,6 +15,7 @@ import (
 )
 
 const BoardWSPath = "/v1/boards/connect"
+const BoardStreamPath = "/v1/boards/stream"
 const FrameBoardRequest = "board_request"
 const FrameBoardResult = "board_result"
 const CodeBoardOnly = "board_only"

@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/federation/client"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
@@ -27,6 +26,7 @@ type boardInviteToken struct {
 }
 
 func registerBoardRoutes(mux *http.ServeMux, prefix string, dashboard bool) {
+	registerBoardItemRoutes(mux, prefix, dashboard)
 	for pattern, operation := range map[string]string{
 		"GET ": "boards.list", "POST ": "boards.create", "POST /join": "join", "GET /{board}": "boards.get",
 		"DELETE /{board}/membership": "leave", "GET /{board}/members": "members.list", "PUT /{board}/members/{instance}": "members.set", "DELETE /{board}/members/{instance}": "members.remove",
@@ -69,17 +69,13 @@ func boardOperatorRoute(operation string) http.HandlerFunc {
 		if v := r.URL.Query().Get("cursor"); v != "" {
 			payload["cursor"] = v
 		}
-		identity, err := federationIdentity()
+		access, err := newBoardItemAccess(r.Context())
 		if err != nil {
-			writeError(w, 500, "identity", err.Error())
+			writeError(w, 409, "hub_required", err.Error())
 			return
 		}
-		cfg, err := config.Load()
-		if err != nil || cfg == nil || cfg.Federation == nil || cfg.Federation.HubURL == "" {
-			writeError(w, 409, "hub_required", "configure a federation hub URL before joining a board")
-			return
-		}
-		opts := client.Options{URL: cfg.Federation.HubURL, Identity: identity}
+		opts := access.opts
+		identity := opts.Identity
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
 		call := func(op string, p any) (json.RawMessage, error) {

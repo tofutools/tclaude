@@ -159,14 +159,18 @@ func handleFederationBundleContents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
-	entries, err := bundleEntries(f, o.Descriptor)
+	serveBundleContents(w, r, f, o.Descriptor)
+}
+
+func serveBundleContents(w http.ResponseWriter, r *http.Request, f *os.File, d bundletransfer.Descriptor) {
+	entries, err := bundleEntries(f, d)
 	if err != nil {
 		writeError(w, 400, "bundle", err.Error())
 		return
 	}
 	path, reading := r.URL.Query()["path"]
 	if !reading {
-		writeJSON(w, 200, map[string]any{"type": o.Descriptor.Type, "entries": entries})
+		writeJSON(w, 200, map[string]any{"type": d.Type, "entries": entries})
 		return
 	}
 	if len(path) != 1 {
