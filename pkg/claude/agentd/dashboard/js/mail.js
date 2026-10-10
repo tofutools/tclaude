@@ -1218,14 +1218,14 @@ function accessStatusText(r) {
 // Access-request rows are rendered by the Preact island. Details and decision
 // buttons live in the reader pane, matching the Human / All mail split:
 // middle pane for scanning, right pane for the selected item.
-async function decideAccess(id, decision) {
+async function decideAccess(id, decision, extra = {}) {
   if (!id) return;
   try {
     const r = await fetch(`/api/access-requests/${encodeURIComponent(id)}/decision`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ decision }),
+      body: JSON.stringify({ decision, ...extra }),
     });
     if (!r.ok) throw new Error(await r.text());
     if (decision === 'extend') {
