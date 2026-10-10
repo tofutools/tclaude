@@ -176,8 +176,8 @@ function BoardDetail({ board, boards = [], view, actions, confirm, toast, copy, 
         <td>${new Date(i.expires_at).toLocaleString()}</td>
         <td class="fa-acts"><button type="button" data-board="cancel-invite" onClick=${() => cancelInvite(i.token_id)}>Cancel…</button></td>
       </tr>`)}</tbody></table>`}
-    ${owner && used.length > 0 && html`<div class="muted" id="fleet-board-invites-used">Used invites: ${used.map((i, n) => html`${n ? ', ' : ''}${memberName(i.used_by, view) || html`<code>${i.used_by}</code>`} (${roleText(i.role)})`)}</div>`}
-    <div class="muted fa-cli-note">CLI: <code>tclaude federation boards members --board ${board.id}</code>${owner ? html`, <code>invite --board ${board.id} --role reader --ttl 1h</code>, <code>invites --board ${board.id}</code>` : ''}</div>
+    ${owner && used.length > 0 && html`<div class="muted" id="fleet-board-invites-used">Recently used invites: ${used.map((i, n) => html`${n ? ', ' : ''}${memberName(i.used_by, view) || html`<code>${i.used_by}</code>`} (${roleText(i.role)})`)}</div>`}
+    <div class="muted fa-cli-note">CLI: <code>tclaude federation boards members --board ${board.id}</code>${owner ? html`, <code>invite --board ${board.id} --role reader --ttl 1h</code>` : ''}</div>
   </div>`;
 }
 
