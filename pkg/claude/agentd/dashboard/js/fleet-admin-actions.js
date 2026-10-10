@@ -224,6 +224,7 @@ const settingRows = (v) => {
     boards: () => pages('boards', 'boards'),
     createBoard: (name) => call('POST', 'boards', { name }),
     joinBoard: (token) => call('POST', 'boards/join', { token }),
+    deleteBoard: (board) => done(call('DELETE', `boards/${enc(board)}`)),
     leaveBoard: (board) => done(call('DELETE', `boards/${enc(board)}/membership`)),
     boardMembers: (board) => pages(`boards/${enc(board)}/members`, 'members'),
     setBoardMember: (board, instance, role) => done(call('PUT', `boards/${enc(board)}/members/${enc(instance)}`, { role })),
