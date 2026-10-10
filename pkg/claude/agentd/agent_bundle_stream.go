@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
 	"io"
 	"os"
+	"strings"
 )
 
 func agentTransferLimit() int64 {
@@ -41,6 +43,26 @@ func (r boundedHistoryReader) HistoryRecordLimit() int { return r.limit }
 type agentBundleDataContextKey struct{}
 
 func snapshotAgentHistory(b *agentbundle.Bundle, h *harness.Harness, conv, cwd string) error {
+	if h.Name == harness.OpenCodeName {
+		actor, err := db.GetAgentByConv(conv)
+		if err != nil {
+			return err
+		}
+		if actor != nil {
+			h, err = openCodeHistoryForAgent(h, actor.AgentID)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	if scoped, ok := h.History.(interface {
+		WithLimits(int64, int) harness.HistoryTransfer
+	}); ok {
+		clone := *h
+		clone.History = scoped.WithLimits(b.Limit(), agentRecordLimit())
+		h = &clone
+	}
 	streaming, ok := h.History.(harness.StreamingHistoryTransfer)
 	if !ok {
 		raw, err := h.History.Export(conv, cwd)
@@ -134,4 +156,38 @@ func importBundleHistory(h *harness.Harness, history *bundleHistoryLaunch, cwd s
 	}
 	defer f.Close()
 	return streaming.ImportReader(boundedHistoryReader{f, agentRecordLimit()}, history.SourceID, cwd)
+}
+
+// Native history uses the same daemon-proven per-agent XDG allocation as the
+// executor. Neither bundle metadata nor the sender can name this location.
+func openCodeHistoryForAgent(h *harness.Harness, agentID string) (*harness.Harness, error) {
+	allocation, err := db.GetOpenCodeAgentStateAllocation(agentID)
+	if err != nil {
+		return nil, err
+	}
+	if allocation == nil || allocation.Mode == db.OpenCodeStateLegacyShared {
+		return h, nil
+	}
+	if err = requireOpenCodeAllocatedStateRoot(allocation.StateRoot, "OpenCode history", "state root"); err != nil {
+		return nil, err
+	}
+	layout, err := openCodeStateLayoutForAllocation(*allocation)
+	if err != nil {
+		return nil, err
+	}
+	var env []string
+	for _, entry := range layout.environment {
+		if strings.HasPrefix(entry.Name, "XDG_") {
+			env = append(env, entry.Name+"="+entry.Value)
+		}
+	}
+	scoped, ok := h.History.(interface {
+		WithEnvironment([]string) harness.HistoryTransfer
+	})
+	if !ok {
+		return nil, fmt.Errorf("OpenCode history cannot select private state")
+	}
+	clone := *h
+	clone.History = scoped.WithEnvironment(env)
+	return &clone, nil
 }

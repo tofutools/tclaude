@@ -6965,6 +6965,29 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		}
 	}()
 
+	var importedID string
+	importedCleanup := func() {}
+	importedLaunched := false
+	defer func() {
+		if failure != nil && !importedLaunched {
+			importedCleanup()
+		}
+	}()
+	installHistory := func() *spawnFailure {
+		if p.BundleHistory == nil || importedID != "" {
+			return nil
+		}
+		if !spawnHarness.SupportsHistoryTransfer() || spawnHarness.History.Format() != p.BundleHistory.Format {
+			return &spawnFailure{http.StatusBadRequest, "history", "resolved harness cannot resume this history format"}
+		}
+		var err error
+		importedID, importedCleanup, err = importBundleHistory(spawnHarness, p.BundleHistory, p.Cwd)
+		if err != nil {
+			importedCleanup = func() {}
+			return &spawnFailure{http.StatusBadRequest, "history", "install imported history: " + err.Error()}
+		}
+		return nil
+	}
 	var openCodeLaunch *openCodeLaunch
 	if spawnHarness.UsesAuthoritativeServer() {
 		rememberHTTPProxyLaunchGroup(label, g, p.PermissionOverrides)
@@ -7012,8 +7035,24 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			return nil, &spawnFailure{http.StatusUnprocessableEntity,
 				"unsupported_sandbox_profile_resource_limits", resourceErr.Error()}
 		}
+
+		if p.BundleHistory != nil {
+			if err = prepareOpenCodeTclaudeLayerState(sandboxSpec); err != nil {
+				resourceCleanup()
+				return nil, &spawnFailure{http.StatusInternalServerError, "history", err.Error()}
+			}
+			spawnHarness, err = openCodeHistoryForAgent(spawnHarness, p.AgentID)
+			if err != nil {
+				resourceCleanup()
+				return nil, &spawnFailure{http.StatusInternalServerError, "history", err.Error()}
+			}
+			if fail := installHistory(); fail != nil {
+				resourceCleanup()
+				return nil, fail
+			}
+		}
 		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
-			label, p.Cwd, p.Name, "", permissionJSON,
+			label, p.Cwd, p.Name, importedID, permissionJSON,
 			p.SandboxImplementation, sandboxSpec, resourceCgroupDir)
 		if err != nil && resourceCgroupDir != "" &&
 			errors.Is(err, errOpenCodeResourceCgroup) &&
@@ -7022,7 +7061,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			resourceCleanup()
 			resourceCgroupDir = ""
 			openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
-				label, p.Cwd, p.Name, "", permissionJSON,
+				label, p.Cwd, p.Name, importedID, permissionJSON,
 				p.SandboxImplementation, sandboxSpec, "")
 		}
 		if err != nil {
@@ -7071,25 +7110,10 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		}
 	}
 
-	var importedID string
-	importedCleanup := func() {}
-	importedLaunched := false
-	if p.BundleHistory != nil {
-		if !spawnHarness.SupportsHistoryTransfer() || spawnHarness.History.Format() != p.BundleHistory.Format {
-			return nil, &spawnFailure{http.StatusBadRequest, "history", "resolved harness cannot resume this history format"}
-		}
-		var cleanup func()
-		var err error
-		importedID, cleanup, err = importBundleHistory(spawnHarness, p.BundleHistory, p.Cwd)
-		if err != nil {
-			return nil, &spawnFailure{http.StatusBadRequest, "history", "install imported history: " + err.Error()}
-		}
-		importedCleanup = cleanup
-		defer func() {
-			if failure != nil && !importedLaunched {
-				importedCleanup()
-			}
-		}()
+	if fail := installHistory(); fail != nil {
+		return nil, fail
+	}
+	if importedID != "" {
 		launchEnroll = true
 	}
 	if p.DarwinRouteCapable && !launchEnroll {
