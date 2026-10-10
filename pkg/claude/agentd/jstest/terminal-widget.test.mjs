@@ -641,6 +641,7 @@ test('a remote terminal follows the hello: pinned size, no resizes, watch-only d
   assert.deepEqual([fakes.terminal().cols, fakes.terminal().rows], [132, 40], 'a hostile oversized grid is refused');
   assert.equal(fakes.terminal().options.disableStdin, true);
   assert.equal(remotes.at(-1).mode, 'watch');
+  assert.equal(fakes.interactionOptions().remoteFileViewer(), '', 'no files flag in the hello: no file links');
   fakes.terminal().dataHandler('typed');
   widget.setActive(true);
   fakes.observer().handler();
@@ -662,8 +663,10 @@ test('a remote terminal follows the hello: pinned size, no resizes, watch-only d
   await widget.connect();
   const again = fakes.sockets[1];
   again.open();
+  assert.equal(fakes.interactionOptions().remoteFileViewer(), '', 'no file links before the new hello');
   assert.equal(widget.remoteState().closed, null, 'a new connection forgets the old closure');
-  again.onmessage({ data: JSON.stringify({ type: 'hello', mode: 'interactive', cols: 100, rows: 30 }) });
+  again.onmessage({ data: JSON.stringify({ type: 'hello', mode: 'interactive', cols: 100, rows: 30, viewer_id: 'env_7k2q', files: true }) });
+  assert.equal(fakes.interactionOptions().remoteFileViewer(), 'env_7k2q', 'the peer shares files with this live view');
   assert.equal(statuses.at(-1), 'connected · interactive');
   assert.equal(fakes.interactionOptions().canInput(), true);
   fakes.terminal().dataHandler('ls\r');
@@ -672,6 +675,7 @@ test('a remote terminal follows the hello: pinned size, no resizes, watch-only d
   again.onmessage({ data: new ArrayBuffer(5) });
   const done = fakes.terminal().pending;
   again.disconnect();
+  assert.equal(fakes.interactionOptions().remoteFileViewer(), '', 'a closed view drops its file links');
   done();
   assert.equal(again.sent.length, 1, 'no credit on a socket that has closed');
   again.onmessage({ data: JSON.stringify({ type: 'closed', reason: 'kicked' }) });

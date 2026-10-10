@@ -213,7 +213,7 @@ export function mountTerminalWidget({
   let instanceBaseline = null;
   let cancelRestartWatch = null;
   const remote = isRemoteTerminalPath(wsPath);
-  let remoteState = { mode: '', closed: null };
+  let remoteState = { mode: '', closed: null, files: false, viewer: '' };
   function setRemote(next) {
     if (disposed) return;
     remoteState = Object.freeze({ ...remoteState, ...next });
@@ -555,7 +555,7 @@ export function mountTerminalWidget({
     if (disposed || mine !== generation) return false;
     const proto = locationRef.protocol === 'https:' ? 'wss:' : 'ws:';
     const socket = new WebSocketCtor(proto + '//' + locationRef.host + wsPath);
-    if (remote) setRemote({ mode: '', closed: null });
+    if (remote) setRemote({ mode: '', closed: null, files: false, viewer: '' });
     socket.binaryType = 'arraybuffer';
     ws = socket;
     let openedAt = null;
@@ -595,6 +595,8 @@ export function mountTerminalWidget({
       cancelPostAttachResize();
       cancelInitialResize();
       if (remote) {
+        // The pinned viewer is gone with the socket: no more file links.
+        setRemote({ files: false, viewer: '' });
         const closed = remoteState.closed;
         setStatus(closed ? `closed: ${remoteCloseText(closed)}` : 'disconnected');
         setReconnectAvailable(!(closed && REMOTE_CLOSE[closed.reason]?.final));
@@ -628,7 +630,10 @@ export function mountTerminalWidget({
       const mode = msg.mode === 'interactive' ? 'interactive' : 'watch';
       term.options.disableStdin = mode !== 'interactive';
       size();
-      setRemote({ mode });
+      // files says the peer shares this terminal's files with us
+      // (sessions.files.read); viewer_id pins downloads to this very view.
+      const viewer = typeof msg.viewer_id === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(msg.viewer_id) ? msg.viewer_id : '';
+      setRemote({ mode, files: msg.files === true && !!viewer, viewer });
       setStatus(mode === 'interactive' ? 'connected · interactive' : 'connected · watch-only');
     } else if (msg?.type === 'size') {
       size();
@@ -655,6 +660,9 @@ export function mountTerminalWidget({
     onSelectionChange: (selected) => { if (!disposed) onSelectionChange(selected); },
     canInput: () => !remote || remoteState.mode === 'interactive',
     fileDownloads: !remote,
+    // A remote terminal's visible paths download from the peer only while
+    // the live view holds sessions.files.read.
+    remoteFileViewer: remote ? () => (remoteState.files ? remoteState.viewer : '') : null,
     oscClipboard: !remote,
   });
 

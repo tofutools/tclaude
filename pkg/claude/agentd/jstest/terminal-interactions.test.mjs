@@ -5,7 +5,7 @@ import {
 	isBrowserPasteShortcut, isComposeMessageShortcut, safeTerminalLink,
 	isTerminalClipboardRequestShortcut, shouldArmTmuxClipboard, terminalKeyInput,
 	visibleLocalFileLinkProvider,
-	visibleLocalFileLinks,
+	visibleLocalFileLinks, REMOTE_FILE_ERRORS,
 } from '../dashboard/js/terminal-interactions.js';
 
 function key(overrides = {}) {
@@ -687,6 +687,71 @@ test('a remote terminal offers no file links: no download hint, no visible-path 
     assert.match(statuses.at(-1), /Ctrl\/Cmd-click → https:\/\/example\.com\/docs/, 'http(s) links still work');
     links.hover({}, 'javascript:alert(1)');
     assert.equal(statuses.at(-1), 'blocked unsafe link');
+  } finally {
+    interactions.dispose();
+  }
+});
+
+test('a remote terminal links visible paths only while the live view holds the peer file grant, and explains refusals', async () => {
+  let viewer = '';
+  const fetches = []; const anchors = [];
+  let answer = async () => ({ ok: true, status: 200 });
+  const terminalPath = '/api/federation/terminal?peer=inst_forge&agent=agt_a1&mode=watch';
+  const { harness, statuses, interactions, links } = linkHarness({
+    fileDownloads: false, terminalPath,
+    remoteFileViewer: () => viewer,
+    fetchImpl: async (url, init) => { fetches.push([url, init]); return answer(url, init); },
+  }, (doc) => {
+    doc.body = { append: (a) => anchors.push(a) };
+    doc.createElement = () => ({ style: {}, click() { this.clicked = true; }, remove() {} });
+  });
+  const text = 'wrote /srv/proj/out/report.txt';
+  const line = { length: text.length, isWrapped: false, translateToString: () => text, getCell: (col) => ({ getWidth: () => 1, getChars: () => text[col] }) };
+  harness.term.buffer = { active: { getLine: (row) => row === 0 ? line : null } };
+  const linksAt = () => { let out; harness.linkProvider().provideLinks(1, (v) => { out = v; }); return out; };
+  const settle = () => new Promise((r) => setImmediate(r));
+  try {
+    assert.deepEqual(linksAt(), [], 'no grant: visible paths stay plain text');
+    viewer = 'env_v1';
+    const [link] = linksAt();
+    assert.equal(link.text, '/srv/proj/out/report.txt');
+    link.hover({}, link.text);
+    assert.equal(statuses.at(-1), 'Ctrl/Cmd-click download → /srv/proj/out/report.txt');
+    link.activate({ ctrlKey: true }, link.text);
+    await settle();
+    const url = new URL(fetches[0][0], 'http://x');
+    assert.equal(url.pathname, '/api/federation/terminal-file');
+    assert.deepEqual(Object.fromEntries(url.searchParams), { terminal: terminalPath, viewer: 'env_v1', path: '/srv/proj/out/report.txt' });
+    assert.equal(fetches[0][1].method, 'HEAD');
+    assert.equal(anchors.length, 1); assert.ok(anchors[0].clicked); assert.equal(anchors[0].href, fetches[0][0]);
+
+    // An OSC 8 link's label need not match its target: never a remote download.
+    links.hover({}, 'file:///srv/proj/.env');
+    assert.equal(statuses.at(-1), 'blocked unsafe link');
+
+    // A refused HEAD has no body: a 403 is read once with an aborted GET.
+    for (const code of ['not_shared', 'unsafe_path', 'root_too_broad', 'viewer_closed']) {
+      fetches.length = 0;
+      answer = async (u, init) => init.method === 'HEAD' ? { ok: false, status: 403 } : { ok: false, status: 403, json: async () => ({ code }) };
+      link.activate({ ctrlKey: true }, link.text);
+      await settle(); await settle();
+      assert.equal(fetches.length, 2); assert.ok(fetches[1][1].signal, 'the error read is abortable');
+      assert.equal(statuses.at(-1), REMOTE_FILE_ERRORS[code].slice(0, 120));
+    }
+    // Other statuses explain themselves and never re-read as a GET.
+    for (const [status, code] of [[404, 'not_found'], [413, 'file_too_large'], [429, 'limit'], [503, 'peer_offline'], [504, 'timeout']]) {
+      fetches.length = 0;
+      answer = async () => ({ ok: false, status });
+      link.activate({ ctrlKey: true }, link.text);
+      await settle(); await settle();
+      assert.equal(fetches.length, 1, `${status} is not re-read`);
+      assert.equal(statuses.at(-1), REMOTE_FILE_ERRORS[code].slice(0, 120));
+    }
+    assert.equal(anchors.length, 1, 'a refused download clicks nothing');
+    links.hover({}, '/srv/proj/%2e%2e/%2e%2e/home/u/.ssh/id');
+    assert.equal(statuses.at(-1), 'blocked unsafe link', 'a remote path is never percent-decoded');
+    viewer = '';
+    assert.deepEqual(linksAt(), [], 'the view closed: links go');
   } finally {
     interactions.dispose();
   }
