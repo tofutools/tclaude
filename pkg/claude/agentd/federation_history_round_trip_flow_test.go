@@ -39,6 +39,7 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 	}
 	name := os.Getenv("TCLAUDE_TEST_HISTORY_HARNESS")
 	t.Setenv("CODEX_HOME", "")
+	t.Setenv("GEMINI_CLI_HOME", "")
 	f := newFlow(t)
 	agentd.ResetFederationForTest()
 	t.Cleanup(agentd.ResetFederationForTest)
@@ -89,7 +90,10 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 		}
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&in))
 		if in.Seed {
-			if name == "codex" {
+			if name == "gemini" {
+				resp, _ := spawnGemini(t, f, "project", map[string]any{"name": "traveller", "cwd": cwd, "initial_message": in.Text, "sandbox_implementation": "off"})
+				in.Conv = resp.ConvID
+			} else if name == "codex" {
 				f.HaveAliveCodexSession(in.Conv, "traveller", "traveller-pane", cwd)
 			} else {
 				f.HaveAliveSession(in.Conv, "traveller", "traveller-pane", cwd)
@@ -97,7 +101,15 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 			f.HaveMember("project", in.Conv)
 		}
 		// Append through the same native writer as a harness completing a turn.
-		if name == "codex" {
+		if name == "gemini" {
+			sim := f.World.Geminis.GetByConvID(in.Conv)
+			require.NotNil(t, sim)
+			if !in.Seed {
+				sim.Receive(in.Text)
+				sim.Receive("Enter")
+			}
+			sim.WriteGeminiReply(in.Assistant, "gemini-2.5-flash")
+		} else if name == "codex" {
 			require.NoError(t, f.World.Codexes.GetByConvID(in.Conv).WriteExchange(in.Text, in.Assistant))
 		} else {
 			cc := f.World.CCs.GetByConvID(in.Conv)
@@ -105,6 +117,10 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 			require.NoError(t, cc.AppendTurn(map[string]any{"type": "assistant", "cwd": cwd, "message": map[string]any{"role": "assistant", "content": []map[string]string{{"type": "text", "text": in.Assistant}}}}))
 		}
 		require.NoError(t, db.GrantAgentPermissionWithScope(in.Conv, agentd.PermSelfTeleport, string(mustJSON(t, map[string]any{"peer": []string{in.Peer}})), "test operator"))
+		if name == "gemini" && in.Seed {
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]string{"conv": in.Conv}))
+			return
+		}
 		w.WriteHeader(204)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -217,7 +233,7 @@ func historyNodeRequest(t *testing.T, node historyNode, method, path, conv strin
 }
 
 func TestFederation_TeleportHistoryRoundTrip(t *testing.T) {
-	for _, name := range []string{"claude", "codex"} {
+	for _, name := range []string{"claude", "codex", "gemini"} {
 		t.Run(name, func(t *testing.T) { runHistoryRoundTrip(t, name, false) })
 	}
 }
@@ -282,7 +298,16 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 	const original = "Original plan from node A: repair the index."
 	const originalReply = "I will inspect the source repository before travelling."
 	code, raw := historyNodeRequest(t, a, "POST", "/test/turn", "", map[string]any{"Conv": moveSourceConv, "Text": original, "Assistant": originalReply, "Peer": b.Instance, "Seed": true})
-	require.Equal(t, 204, code, string(raw))
+	sourceConv := moveSourceConv
+	if name == "gemini" {
+		require.Equal(t, 200, code, string(raw))
+		var seed struct{ Conv string }
+		require.NoError(t, json.Unmarshal(raw, &seed))
+		sourceConv = seed.Conv
+		require.NotEmpty(t, sourceConv)
+	} else {
+		require.Equal(t, 204, code, string(raw))
+	}
 	if large {
 		code, raw = historyNodeRequest(t, a, "POST", "/test/large", "", nil)
 		require.Equal(t, 204, code, string(raw))
@@ -341,14 +366,14 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 		require.NotEmpty(t, result.Spawn.Conv)
 		return result.Spawn.Conv
 	}
-	outward := teleport(a, b, moveSourceConv, false)
+	outward := teleport(a, b, sourceConv, false)
 	remoteConv := land(b, outward)
 	if large {
 		require.True(t, interrupted.Load(), "the third stream chunk must be interrupted before successful resume")
 		chunks := (outward.Bytes + bundletransfer.ChunkBytes - 1) / bundletransfer.ChunkBytes
 		require.Equal(t, int32(2*(chunks+1)), streamJoins.Load(), "completed chunks must not be fetched again after interruption")
 	}
-	require.NotEqual(t, moveSourceConv, remoteConv)
+	require.NotEqual(t, sourceConv, remoteConv)
 	t.Cleanup(func() {
 		if t.Failed() {
 			historyMoveDiagnostics(t, a, b, outward.ID)
@@ -382,7 +407,7 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 	require.True(t, home.Teleport.Home)
 	require.Equal(t, a.Instance, home.Teleport.OriginInstance)
 	returned := land(a, home)
-	require.NotEqual(t, moveSourceConv, returned)
+	require.NotEqual(t, sourceConv, returned)
 	require.NotEqual(t, remoteConv, returned)
 	// Export through the production read surface after native SpawnResume has
 	// reopened the reminted transcript; both the original and new turns survive.

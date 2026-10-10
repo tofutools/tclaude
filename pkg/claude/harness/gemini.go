@@ -40,7 +40,8 @@ func init() {
 		// title store, so SetTitle writes tclaude's conv_index overlay —
 		// which is also what makes rename deliverable (CanRename) without an
 		// in-pane command.
-		Convs: geminiConvStore{},
+		Convs:   geminiConvStore{},
+		History: geminiHistory{},
 
 		// One-shot `tclaude ask`, buffered only. Headless `--prompt=` writes
 		// the answer to stdout and turns every ask_user approval into a deny,

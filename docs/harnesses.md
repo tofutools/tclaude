@@ -100,7 +100,7 @@ warning. Model and effort are remembered by the harness itself.
 | Federated model gateway (`--model-proxy`) | Yes, ordinary workers | Yes, TUI and app-server | No: provider isolation | Yes, HTTP Responses BYOK | No: native Gemini dialect | No |
 | Sessions: spawn / resume | ✅ | ✅ | ✅ managed server + attach | ✅ | ✅ | ✅ spawn only |
 | One-shot [`ask`](ask.md) | ✅ live-streamed | ✅ buffered | ✅ buffered | ✅ buffered | ✅ buffered | ❌ |
-| Portable agent-bundle history | ✅ JSONL | ✅ rollout JSONL | ⚠️ config only | ⚠️ config only | ⚠️ config only | ❌ |
+| Portable agent-bundle history | ✅ JSONL | ✅ rollout JSONL | ⚠️ config only | ⚠️ config only | ✅ native chat JSONL | ❌ |
 | [Conversation](conversations.md) list & search | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only | ⚠️ send-keys only, not yet exercised against a live pane | ⚠️ durable inbox only; never injected into the shell |
 | Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` | ✅ tclaude title overlay | ❌ |
@@ -697,3 +697,8 @@ that cannot fall back to saved Google OAuth, Vertex settings or `.env` inputs.
 See [Gemini configuration](https://geminicli.com/docs/reference/configuration/).
 Both harnesses refuse a gateway request with the reason before launching.
 Non-interactive one-shot runs also refuse a proxy choice.
+
+Gemini portable history preserves native chat messages, metadata updates and rewind
+records. Import remints session and message IDs, maps the receiver project, and resumes
+through Gemini’s own session store. Legacy JSON sessions are converted to JSONL.
+Settings, trust decisions, credentials and filesystem checkpoints do not travel.
