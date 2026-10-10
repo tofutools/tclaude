@@ -18936,3 +18936,8 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-cell.update { border-color: #9e6a03; }
 .fa-cell.broken { border-color: #f8514966; color: #ffa198; }
 .fa-up { color: #e3b341; font-weight: 600; }
+/* Node self-update (js/node-update.js): the map card's version row. */
+.skynet-update { color: #d29922; }
+.skynet-link { border: 0; background: none; padding: 0; color: #58a6ff; cursor: pointer; font: inherit; font-size: 12px; }
+.skynet-link:hover { text-decoration: underline; }
+#fleet-node-update-job { margin: 8px 0; }

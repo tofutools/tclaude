@@ -17,7 +17,7 @@
   if (!ID_RE.test(id)) return;
 
   const LOCAL_PREFIXES = [
-    '/api/federation/', '/api/peer/', '/api/node-summary',
+    '/api/federation/', '/api/peer/', '/api/node-summary', '/api/node/update',
     '/api/dashboard/prefs', '/api/auth/', '/api/human-messages', '/api/browser-notifications', '/api/slop/',
   ];
   const PROXIED_METHODS = new Set(['GET', 'HEAD', 'POST']);
