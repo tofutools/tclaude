@@ -51,14 +51,16 @@ export function MoveAgentDialog({ peers, agents, actions, confirm, onClose, onDo
   const pickPeer = (e) => { setForm({ ...form, peer: e.currentTarget.value, group: '' }); setTyped(false); setFindings(null); setAllow(false); };
   const pickGroup = (e) => { if (e.currentTarget.value === '\u0000other') { setTyped(true); setForm({ ...form, group: '' }); } else set('group')(e); };
   const agentLabel = agents.find((a) => a.id === form.agent)?.label || form.agent;
+  // The full ID is named once; after that the name reads better.
+  const agentName = agents.find((a) => a.id === form.agent)?.name || agentLabel;
   const send = () => {
     if (!form.agent || !form.peer) { setError('Pick an agent and a peer.'); return; }
     const group = form.group.trim();
     if (!group) { setError('Name the receiving group on the peer.'); return; }
     setError('');
     confirm({
-      title: `Move ${agentLabel} to ${peerLabel}?`,
-      body: `Sends ${agentLabel}'s config and full conversation history (it may hold code or pasted secrets) to group ${group} on ${peerLabel}.${allow ? ` The history includes suspected credentials (${findings.map((f) => `${f.kind} ×${f.count}`).join(', ')}).` : ''} Once ${peerLabel} runs its copy, ${agentLabel} is retired here; until then you can abandon the move on this page, but what was sent stays there. ${peerLabel} picks the starting directory.`,
+      title: `Move ${agentName} to ${peerLabel}?`,
+      body: `Sends ${agentLabel}'s config and full conversation history (it may hold code or pasted secrets) to group ${group} on ${peerLabel}.${allow ? ` The history includes suspected credentials (${findings.map((f) => `${f.kind} ×${f.count}`).join(', ')}).` : ''} Once ${peerLabel} runs its copy, ${agentName} is retired here; until then you can abandon the move on this page, but what was sent stays there. ${peerLabel} picks the starting directory.`,
       okLabel: 'Move agent',
       busyLabel: 'Sending…',
       action: () => actions.moveAgent({ agent: form.agent, peer: form.peer, group, allow_flagged: allow }),

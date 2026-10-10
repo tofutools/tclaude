@@ -1476,7 +1476,7 @@ function TerminalModalSession({ descriptor, actions, widgetFactory }) {
       id="term-session-modal"
       onClick=${(event) => { if (event.currentTarget === event.target) void actions.confirmModalClose(descriptor.id); }}
     >
-      <div class="term-session-modal" role="dialog" aria-modal="true" aria-labelledby="term-session-title">
+      <div class=${descriptor.seed.remote ? 'term-session-modal remote' : 'term-session-modal'} role="dialog" aria-modal="true" aria-labelledby="term-session-title">
         <div class="term-session-header">
           <h3 id="term-session-title">${title}</h3>
           <${RemoteBadge} seed=${descriptor.seed} remote=${remote} />

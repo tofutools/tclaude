@@ -85,7 +85,7 @@ function localGroups(snap) {
 function localAgents(snap) {
   const seen = new Map();
   for (const a of (snap?.agents || []).concat(snap?.ungrouped || [])) {
-    if (a?.agent_id && !seen.has(a.agent_id)) seen.set(a.agent_id, { id: a.agent_id, label: a.title ? `${a.title} (${a.agent_id})` : a.agent_id });
+    if (a?.agent_id && !seen.has(a.agent_id)) seen.set(a.agent_id, { id: a.agent_id, name: a.title || a.agent_id, label: a.title ? `${a.title} (${a.agent_id})` : a.agent_id });
   }
   return [...seen.values()].sort((x, y) => x.label.localeCompare(y.label));
 }
