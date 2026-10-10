@@ -37,10 +37,14 @@ func TestFederationLandingReceiverChoices(t *testing.T) {
 	fh := newFedHarness(t)
 	fh.f.HaveGroup("receiver")
 	fedReceiveAgents(t, fh, "receiver")
+	// Keep the flow harness HOME (and its possible alias) for config/DB state.
+	// Explicit directory choices return the canonical path, including HOME.
+	home, err := filepath.EvalSymlinks(os.Getenv("HOME"))
+	require.NoError(t, err)
 	fallback := testutil.CanonicalTempDir(t)
 	source := testutil.CanonicalTempDir(t)
 	explicit := testutil.CanonicalTempDir(t)
-	_, err := db.SetAgentGroupDefaultCwd("receiver", fallback)
+	_, err = db.SetAgentGroupDefaultCwd("receiver", fallback)
 	require.NoError(t, err)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://localhost:12345"))
 	dash := agentd.BuildDashboardHandlerForTest()
@@ -55,7 +59,7 @@ func TestFederationLandingReceiverChoices(t *testing.T) {
 		{"explicit wins", source, map[string]any{"cwd": explicit}, explicit, "explicit", 200},
 		{"candidate overrides same path", source, map[string]any{"landing": "group_default"}, fallback, "group_default", 200},
 		{"HOME source skips to group default", os.Getenv("HOME"), nil, fallback, "group_default", 200},
-		{"explicit HOME allowed", source, map[string]any{"cwd": os.Getenv("HOME")}, os.Getenv("HOME"), "explicit", 200},
+		{"explicit HOME allowed", source, map[string]any{"cwd": os.Getenv("HOME")}, home, "explicit", 200},
 		{"strict keep paths", "/missing/source", map[string]any{"keep_paths": true}, "/missing/source", "same_path", 409},
 		{"explicit missing does not fallback", source, map[string]any{"cwd": "/missing/explicit"}, "/missing/explicit", "explicit", 409},
 	} {
