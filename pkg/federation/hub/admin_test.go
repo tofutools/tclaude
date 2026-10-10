@@ -253,3 +253,38 @@ func TestHubAdminClaimRefusesPreexistingAdminsEvenWithUnusedToken(t *testing.T) 
 	require.NoError(t, err)
 	require.Equal(t, []string{"hub.admins.manage"}, caps)
 }
+
+func TestHubRateDefaultsPreserveExplicitSettings(t *testing.T) {
+	defaults := Config{}
+	defaults.defaults()
+	want := map[string]int64{"frames_per_minute": 600, "bytes_per_minute": 100 << 20, "stream_bytes_per_second": 10 << 20}
+	for key, value := range want {
+		require.Equal(t, value, configSettingValues(defaults)[key], key)
+	}
+	explicit := Config{FramesPerMinute: 120, BytesPerMinute: 8 << 20, StreamBytesPerSecond: 1 << 20}
+	explicit.defaults()
+	require.Equal(t, 120, explicit.FramesPerMinute)
+	require.Equal(t, 8<<20, explicit.BytesPerMinute)
+	require.Equal(t, 1<<20, explicit.StreamBytesPerSecond)
+	st, _, _ := adminTestStore(t)
+	old := map[string]*int64{}
+	for key := range want {
+		value := configSettingValues(explicit)[key]
+		old[key] = &value
+	}
+	require.NoError(t, st.PatchSettings(old))
+	h, err := New(st, Config{})
+	require.NoError(t, err)
+	defer h.Close()
+	settings, err := h.Settings()
+	require.NoError(t, err)
+	patch := map[string]*int64{}
+	for key, value := range want {
+		require.Equal(t, value, settings[key].Boot, key)
+		require.Equal(t, *old[key], settings[key].Effective, key)
+		require.Equal(t, "db", settings[key].Source, key)
+		patch[key] = &value
+	}
+	// All three new defaults fit the admin setting ranges, without widening them.
+	require.NoError(t, st.PatchSettings(patch))
+}
