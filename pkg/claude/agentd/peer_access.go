@@ -178,8 +178,13 @@ func servePeerAccessDecision(w http.ResponseWriter, req *approvalRequest, decisi
 		}
 		return
 	}
+	requestedTTL := pa.GrantTTLSeconds
 	if ttl != nil {
 		pa.GrantTTLSeconds = *ttl
+	}
+	if requestedTTL > 0 && (pa.GrantTTLSeconds == 0 || pa.GrantTTLSeconds > requestedTTL) {
+		writeError(w, 400, "invalid_arg", "approval cannot extend the requested grant lifetime")
+		return
 	}
 	if groupID != nil {
 		pa.GrantGroupID = *groupID
