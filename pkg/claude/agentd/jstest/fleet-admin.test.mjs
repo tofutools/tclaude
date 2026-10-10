@@ -137,6 +137,18 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
       { offer: { id: 'off_mv', type: 'agent', bytes: 9000, sha256: 'cd'.repeat(32), expires_at: '2099-01-01T00:00:00Z', summary: 'Agent ada', group: 'ops', move: { source_agent: 'agt_src' } }, peer: 'inst_forge', direction: 'in', state: 'ready', sender_agent: 'agt_src' },
       { offer: { id: 'off_old', type: 'config', summary: 'old' }, peer: 'inst_lab', direction: 'in', state: 'applied' },
     ] : [{ offer: { id: 'off_out', type: 'config', summary: 'Config bundle: 1 items', expires_at: '2099-01-01T00:00:00Z' }, peer: 'inst_lab', direction: 'out', state: 'declined' }]; },
+    fetchOffer: async (o) => { log.push(['fetchOffer', o.offer.id, o.peer]); return { ok: true }; },
+    offerContents: async (o) => { log.push(['contents', o.offer.id]); return { type: o.offer.type, entries: [
+      { path: 'manifest.json', size: 120, kind: 'json' }, { path: 'history/transcript.jsonl', size: 600000, kind: 'jsonl' }, { path: 'assets/logo.png', size: 2048, kind: 'binary' }, { path: 'notes.md', size: 40, kind: 'text' },
+    ] }; },
+    offerEntry: async (o, path, offset) => { log.push(['entry', path, offset]);
+      if (path === 'manifest.json') return { path, kind: 'json', size: 120, text: '{"name":"ada","harness":"claude"}', truncated: false };
+      if (path === 'notes.md') return { path, kind: 'text', size: 40, text: '<img src=x onerror="window.__pwned=1">hi', truncated: false };
+      if (path === 'assets/logo.png') return { path, kind: 'binary', size: 2048 };
+      return offset === 0 ? { path, kind: 'jsonl', size: 600000, text: '{"role":"user","text":"one"}\n', truncated: true, offset: 0, next_offset: 262144 }
+        : { path, kind: 'jsonl', size: 600000, text: '{"role":"assistant","text":"two"}\n', truncated: false, offset };
+    },
+    downloadOffer: async (o) => { log.push(['download', o.offer.id, o.peer]); },
     importOffer: async (o, body) => {
       log.push(['import', o.offer.id, body]);
       if (o.offer.type === 'agent') {
@@ -1368,4 +1380,90 @@ test('fleet dialogs close on Escape', async (t) => {
   assert.ok(q('#fleet-move-agent'));
   await esc();
   assert.equal(q('#fleet-move-agent'), null);
+});
+
+test('offers: inspect fetches and lists a bundle, shows entries as text only, pages a transcript, and downloads', async (t) => {
+  const s = await setup(t);
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Offers/.test(b.textContent)));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  const doc = s.harness.document; const q = (x) => doc.querySelector(x);
+  await s.click(q('[data-offer="off_cfg"] [data-fa="inspect"]'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  assert.deepEqual(s.log.filter((l) => ['fetchOffer', 'contents'].includes(l[0])), [['fetchOffer', 'off_cfg', 'inst_forge'], ['contents', 'off_cfg']], 'fetch and verify before listing');
+  assert.deepEqual([...doc.querySelectorAll('#fleet-bundle-entries [data-path]')].map((b) => b.dataset.path), ['manifest.json', 'history/transcript.jsonl', 'assets/logo.png', 'notes.md']);
+  await s.click(q('#fleet-bundle-inspect .modal-buttons button:last-child'));
+  await s.click(q('[data-offer="off_mv"] [data-fa="inspect"]'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  assert.equal(s.log.filter((l) => l[0] === 'fetchOffer').length, 1, 'a ready offer is already fetched and verified');
+  await s.click(q('#fleet-bundle-inspect .modal-buttons button:last-child'));
+  await s.click(q('[data-offer="off_cfg"] [data-fa="inspect"]'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  const open = async (path) => { await s.click(q(`#fleet-bundle-entries [data-path="${path}"]`)); await s.harness.act(() => new Promise((r) => setTimeout(r, 10))); };
+  await open('manifest.json');
+  assert.equal(q('#fleet-bundle-text').textContent, '{\n  "name": "ada",\n  "harness": "claude"\n}', 'complete JSON is pretty-printed');
+  await open('notes.md');
+  assert.equal(q('#fleet-bundle-text img'), null, 'bundle content never becomes markup');
+  assert.match(q('#fleet-bundle-text').textContent, /^<img src=x onerror=/);
+  await open('assets/logo.png');
+  assert.match(q('#fleet-bundle-binary').textContent, /binary.*not shown/);
+  await open('history/transcript.jsonl');
+  assert.match(q('#fleet-bundle-inspect').textContent, /Showing .* of 585\.9 KiB/);
+  await s.click(q('#fleet-bundle-more'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  assert.deepEqual(s.log.filter((l) => l[0] === 'entry' && l[1] === 'history/transcript.jsonl').map((l) => l[2]), [0, 262144]);
+  assert.match(q('#fleet-bundle-text').textContent, /"one"[\s\S]*"two"/, 'the next page continues the entry');
+  assert.equal(q('#fleet-bundle-more'), null);
+  await s.click(q('#fleet-bundle-download'));
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'download'), ['download', 'off_cfg', 'inst_forge']);
+  await s.click(q('#fleet-bundle-import'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  assert.equal(q('#fleet-bundle-inspect'), null);
+  assert.ok(q('#fleet-offer-import'), 'Import… continues to the import preview');
+});
+
+test('bundle entry text: JSON lines pretty per line, partial JSON left as is', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/fleet-admin-bundle.js');
+  assert.equal(m.entryText('jsonl', '{"a":1}\nnot json\n', true), '{\n  "a": 1\n}\nnot json\n');
+  assert.equal(m.entryText('json', '{"a":', false), '{"a":', 'a truncated JSON entry is not reparsed');
+  assert.equal(m.entryText('text', '<b>x</b>', true), '<b>x</b>');
+});
+
+test('bundle actions address the incoming offer by ID and peer, and preflight the download', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createFleetAdminActions } = await harness.importDashboardModule('js/fleet-admin-actions.js');
+  const calls = [];
+  const fetchImpl = async (url, init) => { calls.push([init.method, url]); return url.includes('download') ? { ok: false, status: 410 } : { ok: true, status: 200, json: async () => ({}) }; };
+  const a = createFleetAdminActions({ fetchImpl });
+  const o = { offer: { id: 'off 1' }, peer: 'inst_forge' };
+  await a.fetchOffer(o); await a.offerContents(o); await a.offerEntry(o, 'history/transcript.jsonl', 262144);
+  await assert.rejects(a.downloadOffer(o), /download unavailable \(HTTP 410\)/);
+  assert.deepEqual(calls, [
+    ['POST', '/api/federation/bundle-offers/off%201/fetch?peer=inst_forge'],
+    ['GET', '/api/federation/bundle-offers/off%201/contents?peer=inst_forge'],
+    ['GET', '/api/federation/bundle-offers/off%201/contents?peer=inst_forge&path=history%2Ftranscript.jsonl&offset=262144&max_bytes=262144'],
+    ['HEAD', '/api/federation/bundle-offers/off%201/download?peer=inst_forge'],
+  ]);
+});
+
+test('bundle inspect: a slow earlier read never replaces the entry picked after it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/fleet-admin-bundle.js');
+  const pending = new Map();
+  const actions = {
+    fetchOffer: async () => ({}),
+    offerContents: async () => ({ entries: [{ path: 'history/transcript.jsonl', kind: 'jsonl', size: 9 }, { path: 'manifest.json', kind: 'json', size: 9 }] }),
+    offerEntry: (o, path) => new Promise((resolve) => { pending.set(path, resolve); }),
+  };
+  const mounted = await harness.mount(harness.html`<${m.BundleInspectDialog} offer=${{ offer: { id: 'o1', type: 'agent' }, peer: 'inst_f', state: 'ready' }} label=${(x) => x} actions=${actions} toast=${() => {}} onImport=${() => {}} onDecline=${() => {}} onClose=${() => {}} />`);
+  await harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  const q = (s) => harness.document.querySelector(s);
+  await harness.act(() => q('[data-path="history/transcript.jsonl"]').click());
+  await harness.act(() => q('[data-path="manifest.json"]').click());
+  await harness.act(async () => { pending.get('manifest.json')({ kind: 'json', size: 9, text: '{"name":"ada"}', truncated: false }); });
+  await harness.act(async () => { pending.get('history/transcript.jsonl')({ kind: 'jsonl', size: 9, text: '{"late":true}', truncated: false }); });
+  await harness.act(() => new Promise((r) => setTimeout(r, 0)));
+  assert.match(q('#fleet-bundle-text').textContent, /"name": "ada"/, 'the later pick stays shown');
+  await mounted.unmount();
 });
