@@ -330,6 +330,15 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 		}
 		return code == 200 && json.Unmarshal(raw, &move) == nil && move.State == "moved"
 	})
+	if large {
+		code, raw = historyNodeRequest(t, a, "GET", "/v1/federation/moves/"+outward.ID, "", nil)
+		require.Equal(t, 200, code, string(raw))
+		var moved db.FederationAgentMove
+		require.NoError(t, json.Unmarshal(raw, &moved))
+		require.NotNil(t, moved.Transfer)
+		require.Equal(t, outward.Bytes, moved.Transfer.BytesTotal)
+		require.Equal(t, outward.Bytes, moved.Transfer.BytesDone)
+	}
 	const addition = "New result from node B: repaired the index and verified build 123."
 	const addedReply = "The remote tests passed; return home with the patch."
 	code, raw = historyNodeRequest(t, b, "POST", "/test/turn", "", map[string]any{"Conv": remoteConv, "Text": addition, "Assistant": addedReply, "Peer": a.Instance})
@@ -401,7 +410,7 @@ func (w historyInterruptWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 		return nil, nil, err
 	}
 	wrapped := &historyInterruptConn{Conn: conn, interrupted: w.interrupted}
-	pending, err := rw.Reader.Peek(rw.Reader.Buffered())
+	pending, err := rw.Peek(rw.Reader.Buffered())
 	if err != nil {
 		conn.Close()
 		return nil, nil, err
@@ -421,7 +430,7 @@ type historyInterruptConn struct {
 func (c *historyInterruptConn) Write(p []byte) (int, error) {
 	n, err := c.Conn.Write(p)
 	if c.bytes.Add(int64(n)) > 1<<20 && c.interrupted.CompareAndSwap(false, true) {
-		_ = c.Conn.Close()
+		_ = c.Close()
 	}
 	return n, err
 }
@@ -429,7 +438,7 @@ func (c *historyInterruptConn) Write(p []byte) (int, error) {
 func (c *historyInterruptConn) Read(p []byte) (int, error) {
 	n, err := c.Conn.Read(p)
 	if c.bytes.Add(int64(n)) > 1<<20 && c.interrupted.CompareAndSwap(false, true) {
-		_ = c.Conn.Close()
+		_ = c.Close()
 	}
 	return n, err
 }

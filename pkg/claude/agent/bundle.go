@@ -91,7 +91,7 @@ func runBundleExport(p *bundleExportParams, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return rcIOFailure
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 	for _, warning := range b.Manifest.Warnings {
 		fmt.Fprintln(stderr, "Warning:", warning)
 	}

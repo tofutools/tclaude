@@ -399,7 +399,7 @@ func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "bundle_export", err.Error())
 		return
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 	if len(b.Manifest.Findings) > 0 && r.URL.Query().Get("allow_flagged") != "true" {
 		writeJSON(w, 422, map[string]any{"error": "suspected credentials: use --allow-flagged or export without --history", "code": "flagged_credentials", "findings": b.Manifest.Findings})
 		return
@@ -458,7 +458,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, "archive", err.Error())
 			return
 		}
-		defer b.Close()
+		defer func() { _ = b.Close() }()
 	}
 	if err := teleportImportBundle(r, b); err != nil {
 		writeError(w, 409, "teleport_landing", err.Error())

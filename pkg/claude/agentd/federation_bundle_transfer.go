@@ -40,7 +40,7 @@ func federationBundleKind(name string) (fedBundleKind, bool) {
 		return fedBundleKind{Type: agentTransferType(), ValidateFile: func(f *os.File) error {
 			b, err := agentbundle.DecodeFile(f, agentTransferLimit(), "")
 			if err == nil {
-				b.Close()
+				_ = b.Close()
 			}
 			return err
 		}, Validate: func(raw []byte) error { _, err := agentbundle.Decode(raw); return err }}, true

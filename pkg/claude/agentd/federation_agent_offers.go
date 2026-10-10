@@ -103,7 +103,7 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "bundle_export", err.Error())
 		return
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 	if (moving || teleport != nil) && b.Manifest.History == nil {
 		writeError(w, 400, "history_required", "moves and teleports require native conversation history")
 		return
@@ -344,7 +344,7 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 		writeError(w, 400, "bundle", err.Error())
 		return
 	}
-	defer bundle.Close()
+	defer func() { _ = bundle.Close() }()
 	landing, err := resolveFederationLanding(r.Context(), o, g, bundle.Manifest.Agent.Paths, in, teleportRow)
 	if err != nil || landing.Preview.Cwd == "" || !landing.Preview.Exists && !landing.Preview.CheckoutRequired {
 		code, status, message := "landing_unresolved", 409, "no receiving working directory resolved"
