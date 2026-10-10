@@ -43,6 +43,9 @@ func (m *terminalTmux) Command(args ...string) *exec.Cmd {
 	case "-V":
 		return terminalEcho(m.version)
 	case "display-message":
+		if args[len(args)-1] == "#{pane_width} #{pane_height}" {
+			return terminalEcho("120 40")
+		}
 		if strings.Contains(args[len(args)-1], "#{window_panes}") {
 			m.probes++
 			return terminalEcho(m.pane + "\t@1\t$1\t" + m.windows + "\t1\n")

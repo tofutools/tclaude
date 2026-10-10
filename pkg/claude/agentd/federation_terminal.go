@@ -546,9 +546,7 @@ func (rt *fedRuntime) servePaneTerminal(v *fedTerminalView, conn io.ReadWriteClo
 		if reason == "revoked" {
 			reason = backend.pin.closureReason(v.Peer, proto.SessionOpenPayload{ReadOnly: v.ReadOnly})
 		}
-		writeMu.Lock()
-		_ = terminal.Write(conn, terminal.Frame{Kind: terminal.Closed, Data: []byte(reason)})
-		writeMu.Unlock()
+		writeTerminalClosed(conn, &writeMu, reason)
 		v.close()
 		workers.Wait()
 	}()
@@ -731,3 +729,14 @@ func handleFederationKick(w http.ResponseWriter, r *http.Request) {
 type fedTerminalRefusal struct{ reason string }
 
 func (e *fedTerminalRefusal) Error() string { return "peer refused attach: " + e.reason }
+
+// A stuck output writer must never retain a kicked viewer, PTY or indicator.
+// Notification is best effort; abort interrupts both a prior blocked writer
+// and the notification itself before normal viewer cleanup proceeds.
+func writeTerminalClosed(conn io.ReadWriteCloser, writeMu *sync.Mutex, reason string) {
+	timer := time.AfterFunc(200*time.Millisecond, func() { _ = conn.Close() })
+	defer timer.Stop()
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	_ = terminal.Write(conn, terminal.Frame{Kind: terminal.Closed, Data: []byte(reason)})
+}

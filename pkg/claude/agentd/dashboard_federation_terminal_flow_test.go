@@ -11,6 +11,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/federation/stream"
 	"github.com/tofutools/tclaude/pkg/federation/terminal"
@@ -99,6 +101,7 @@ func TestDashboardFederationTerminalWatchAndInteractive(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, websocket.BinaryMessage, kind)
 			require.Equal(t, "pane bytes", string(body))
+			require.NoError(t, ws.WriteJSON(map[string]any{"type": "credit", "bytes": len(body)}))
 			frame := terminalRead(t, conn)
 			require.Equal(t, terminal.Credit, frame.Kind, "watch input and browser resize never reach target")
 			n, err := terminal.ParseNumber(frame.Data)
@@ -147,4 +150,104 @@ func TestDashboardFederationTerminalRefusalAndAuthority(t *testing.T) {
 	require.Equal(t, true, rows[0]["watch"])
 	require.Equal(t, false, rows[0]["attach"])
 	require.Equal(t, fh.peer.id.ID(), rows[0]["instance"])
+}
+
+func TestDashboardFederationTerminalRevocationAndIncarnation(t *testing.T) {
+	for _, change := range []string{"revoked", "reincarnated"} {
+		t.Run(change, func(t *testing.T) {
+			fh := newFedHarness(t)
+			t.Cleanup(agentd.SetPopupBaseURLForTest("http://localhost:12345"))
+			ws, _, _ := dashboardTerminalOpen(t, fh, "watch")
+			row := proto.CatalogSession{Agent: "agt_remote00001", Session: "runtime", Incarnation: "pinned-runtime", Name: "remote"}
+			caps := []string{proto.CapSessions}
+			if change == "reincarnated" {
+				row.Incarnation = "replacement-runtime"
+				caps = append(caps, proto.CapSessionsWatch)
+			}
+			fh.peer.send(fh.peer.envelope(proto.KindCatalog, proto.Endpoint{}, proto.CatalogPayload{Groups: []proto.CatalogGroup{{Name: "builders", Caps: caps, Sessions: []proto.CatalogSession{row}, SessionsAt: time.Now()}}}))
+			var closed map[string]any
+			require.NoError(t, ws.ReadJSON(&closed))
+			require.Equal(t, change, closed["reason"])
+		})
+	}
+}
+
+func TestFederationTerminalPinnedBrowserSizeAndClosedReasons(t *testing.T) {
+	for _, change := range []string{"kicked", "revoked", "reincarnated"} {
+		t.Run(change, func(t *testing.T) {
+			fh := newFedHarness(t)
+			f, p := fh.f, fh.peer
+			const conv = "browser-pinned-target"
+			f.HaveGroup("team")
+			f.HaveConvWithTitle(conv, "pinned")
+			f.HaveMember("team", conv)
+			f.HaveAliveSession(conv, "browser-pinned-runtime", "tclaude-browser-pinned", f.TestCwd("work"))
+			aid, err := db.AgentIDForConv(conv)
+			require.NoError(t, err)
+			original := clcommon.Default
+			mock := &terminalTmux{Tmux: original, options: map[string]string{}, pane: "%1", windows: "1", version: "tmux 3.4"}
+			clcommon.Default = mock
+			t.Cleanup(func() { agentd.ResetFederationForTest(); clcommon.Default = original })
+			incarnation := terminalCatalogIncarnation(t, fh, aid)
+			grant := fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermSessionsWatch, "scope": "group=team"})
+			require.Equal(t, 200, grant.Code)
+			kp, err := stream.NewKeyPair()
+			require.NoError(t, err)
+			open := proto.SessionOpenPayload{Agent: aid, Session: "browser-pinned-runtime", Incarnation: incarnation, Group: "team", Stream: proto.NewEnvelopeID(), Key: kp.Pub, ReadOnly: true, FixedSize: true, Cols: 80, Rows: 24}
+			p.send(p.envelope(proto.KindSessionOpen, proto.Endpoint{}, open))
+			answer := terminalAnswer(t, p, open.Stream)
+			require.True(t, answer.OK, answer.Reason)
+			require.Equal(t, 120, answer.Cols)
+			require.Equal(t, 40, answer.Rows)
+			conn := fedPeerStream(t, p, open.Stream, kp, answer.Key, true)
+			t.Cleanup(func() { _ = conn.Close() })
+			require.Equal(t, terminal.Output, terminalRead(t, conn).Kind)
+			switch change {
+			case "kicked":
+				rec := fedHuman(t, f, "POST", "/v1/federation/viewers/"+open.Stream+"/kick", nil)
+				require.Equal(t, 200, rec.Code)
+			case "revoked":
+				rec := fedHuman(t, f, "DELETE", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermSessionsWatch, "scope": "group=team"})
+				require.Equal(t, 200, rec.Code)
+			case "reincarnated":
+				mock.mu.Lock()
+				mock.pane = "%2"
+				mock.mu.Unlock()
+			}
+			closed := terminalRead(t, conn)
+			require.Equal(t, terminal.Closed, closed.Kind)
+			require.Equal(t, change, string(closed.Data))
+			fedEventually(t, "incoming viewer released", func() bool {
+				return !strings.Contains(fedHuman(t, f, "GET", "/v1/federation/viewers", nil).Body.String(), open.Stream)
+			})
+		})
+	}
+}
+
+func TestDashboardFederationTerminalViewerLimit(t *testing.T) {
+	fh := newFedHarness(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://localhost:12345"))
+	for range 8 {
+		dashboardTerminalOpen(t, fh, "watch")
+	}
+	server := httptest.NewServer(agentd.BuildDashboardHandlerForTest())
+	t.Cleanup(server.Close)
+	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/api/federation/terminal?peer="+fh.peer.id.ID()+"&agent=agt_remote00001&mode=watch", nil)
+	require.NoError(t, err)
+	defer ws.Close()
+	require.NoError(t, ws.SetReadDeadline(time.Now().Add(5*time.Second)))
+	var closed map[string]any
+	require.NoError(t, ws.ReadJSON(&closed))
+	require.Equal(t, "limit", closed["reason"])
+	require.Len(t, fh.peer.envelopes(proto.KindSessionOpen), 8)
+}
+
+func TestDashboardFederationTerminalRejectsForgedCredit(t *testing.T) {
+	fh := newFedHarness(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://localhost:12345"))
+	ws, _, _ := dashboardTerminalOpen(t, fh, "watch")
+	require.NoError(t, ws.WriteJSON(map[string]any{"type": "credit", "bytes": 1}))
+	var closed map[string]any
+	require.NoError(t, ws.ReadJSON(&closed))
+	require.Equal(t, "error", closed["reason"])
 }

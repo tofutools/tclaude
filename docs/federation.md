@@ -2354,10 +2354,41 @@ Map cards use relaxed, staggered summary polls. Merged views poll the nodes
 that contribute visible groups. Pause hidden dashboards, avoid overlapping
 requests to one node, and back off on failure.
 
-Terminal websocket attach continues to use the existing federation sessions
-watch/attach API. This JSON proxy does not yet adapt it under the per-node
-prefix. Remote terminal image uploads remain a separate feature; they need
-staging at the owning instance with the same interactive attach authorization.
+Remote browser terminals use the local-only dashboard WebSocket
+`GET /api/federation/terminal?peer=<instance_id>&agent=<agent_id>&mode=watch|interactive`.
+The local dashboard cookie and origin checks protect the browser endpoint;
+peers cannot call it or chain an attach through another node. It opens the same
+encrypted, incarnation-pinned terminal stream as CLI federation attach, with
+unchanged target-side watch/attach grants, indicators, viewer limits and audit.
+`GET /api/federation/sessions?peer=<instance_id>` returns the existing CLI session
+array, adding `watch` and `attach` flags; `instance` is the stable peer ID and
+`peer` its display label. Cached catalogs may be stale; the target authorizes
+both initial opens and every ongoing session.
+
+The socket sends a JSON `hello` first (`mode`, `peer`, `agent`, `cols`, `rows`),
+then binary output. Its dimensions come from the pinned target pane. Later JSON
+`size` frames report changes; browser `resize` messages never resize the target.
+Interactive binary input passes through the existing fixed-key/literal-text
+encoder; watch input is discarded. After xterm consumes each output frame,
+the browser sends `{"type":"credit","bytes":N}` with its exact byte count.
+Credits cannot exceed outstanding output, keeping the 256 KiB window bounded
+through the browser renderer. Operational refusals use a hello-less JSON
+`closed` frame after upgrade; authentication/origin failures remain HTTP errors.
+Established sockets close with a reason: `exit`, `reincarnated`, `revoked`,
+`untrusted`, `kicked`, `offline`, or `error`; initial opens also use `denied` and
+`limit`. A stalled connection can be aborted without delaying viewer cleanup.
+Detach closes the viewer and never stops the agent.
+
+Image paste uses local-only `POST /api/federation/terminal-attachments?terminal=`
+with the encoded remote socket path and the same multipart `file` fields and
+JSON response as local terminal uploads. It requires interactive attach. Image
+bodies travel over the shared authenticated bundle stream, not control frames.
+The receiver validates the pinned attach authority during transfer and before
+and after staging, verifies length/digest/FIN, then reapplies PNG/JPEG/WebP MIME
+and extension checks and the existing file/count/total caps. It returns paths
+on the target, including its existing sandbox attachment root where needed.
+Remote `/api/terminal-file` downloads remain refused with `403 not_shared`;
+file download needs a separate future permission.
 
 
 ### Harness availability

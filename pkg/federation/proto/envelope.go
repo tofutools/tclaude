@@ -55,6 +55,7 @@ const (
 	KindAwayNotice       = "away_notice"
 	KindAwayAnswer       = "away_answer"
 	KindSessionsUpdate   = "sessions_update"
+	KindTerminalUpload   = "terminal_upload"
 	KindSessionOpen      = "session_open"
 	KindSessionAnswer    = "session_answer"
 	KindModelOpen        = "model_open"

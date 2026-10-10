@@ -77,7 +77,8 @@ func serveDashboardFederationTerminal(w http.ResponseWriter, r *http.Request, rt
 	}
 	defer ws.Close()
 	ws.SetReadLimit(terminal.MaxPayload)
-	var wsMu, streamMu sync.Mutex
+	var wsMu, streamMu, creditMu sync.Mutex
+	outstanding := 0
 	writeWS := func(kind int, body []byte) error {
 		wsMu.Lock()
 		defer wsMu.Unlock()
@@ -159,8 +160,14 @@ func serveDashboardFederationTerminal(w http.ResponseWriter, r *http.Request, rt
 			}
 			switch frame.Kind {
 			case terminal.Output:
-				if err = writeWS(websocket.BinaryMessage, frame.Data); err == nil && len(frame.Data) > 0 {
-					err = write(terminal.Frame{Kind: terminal.Credit, Data: terminal.Number(len(frame.Data))})
+				creditMu.Lock()
+				outstanding += len(frame.Data)
+				overflow := outstanding > terminal.WindowSize
+				creditMu.Unlock()
+				if overflow {
+					err = terminal.ErrProtocol
+				} else {
+					err = writeWS(websocket.BinaryMessage, frame.Data)
 				}
 			case terminal.Credit:
 				var n int
@@ -192,9 +199,25 @@ func serveDashboardFederationTerminal(w http.ResponseWriter, r *http.Request, rt
 				return
 			}
 			if kind == websocket.TextMessage {
-				var resize struct{ Type string }
-				if json.Unmarshal(body, &resize) == nil && resize.Type == "resize" {
-					continue
+				var control struct {
+					Type  string
+					Bytes int
+				}
+				if json.Unmarshal(body, &control) == nil {
+					if control.Type == "resize" {
+						continue
+					}
+					if control.Type == "credit" {
+						creditMu.Lock()
+						valid := control.Bytes > 0 && control.Bytes <= terminal.WindowSize && control.Bytes <= outstanding
+						if valid {
+							outstanding -= control.Bytes
+						}
+						creditMu.Unlock()
+						if valid && authorized() == "" && write(terminal.Frame{Kind: terminal.Credit, Data: terminal.Number(control.Bytes)}) == nil {
+							continue
+						}
+					}
 				}
 				stopped <- "error"
 				return
@@ -245,7 +268,7 @@ loop:
 		}
 	}
 	if reason != "" {
-		_ = control(map[string]any{"type": "closed", "reason": reason, "message": "Remote terminal closed: " + reason})
+		_ = control(map[string]any{"type": "closed", "reason": reason, "message": ""})
 	}
 	wsMu.Lock()
 	_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, reason), time.Now().Add(time.Second))
