@@ -62,6 +62,33 @@ func TestDashboardSnapshot_GroupFederationLinks(t *testing.T) {
 		{Peer: bob.ID(), Label: "bob", Level: db.FederationTrustRestricted, Kind: "grant", Direction: "in", Slugs: []string{"groups.roster.read", agentd.PermMessageDirect}},
 		{Peer: bob.ID(), Label: "bob", Level: db.FederationTrustRestricted, Kind: "grant", Direction: "in", Slugs: []string{"routes.consume"}, Pool: "rigs"},
 	}, links["builders"])
+	// The CLI aggregation must match the dashboard's existing rows exactly.
+	rec = fedHuman(t, f, "GET", "/v1/federation/links?group=builders", nil)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var cli struct {
+		Groups []struct {
+			GroupID int64         `json:"group_id"`
+			Name    string        `json:"name"`
+			Links   []dashFedLink `json:"federation_links"`
+		} `json:"groups"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &cli))
+	require.Len(t, cli.Groups, 1)
+	require.Equal(t, builders.ID, cli.Groups[0].GroupID)
+	require.Equal(t, links["builders"], cli.Groups[0].Links)
+	rec = testharness.Serve(agentd.BuildDashboardHandlerForTest(), testharness.JSONRequest(t, "GET", "/api/federation/links?group=quiet", nil))
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"federation_links":[]`)
+	rec = fedHuman(t, f, "GET", "/v1/federation/links?group=missing", nil)
+	require.Equal(t, 404, rec.Code)
+	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, "GET", "/v1/federation/links", nil), "reader"))
+	require.Equal(t, 403, rec.Code)
+	for _, level := range []string{db.FederationTrustRestricted, db.FederationTrustUnrestricted} {
+		require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: bob.ID(), PubKey: bob.Pub, Label: "bob", TrustLevel: level}))
+		rec = testharness.Serve(agentd.PeerViewHandler(bob.ID()), testharness.JSONRequest(t, "GET", "/api/federation/links", nil))
+		require.Equal(t, 403, rec.Code)
+	}
+
 }
 
 // A route mirror links the consuming group once, however many members opened

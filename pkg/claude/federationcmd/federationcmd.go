@@ -55,7 +55,7 @@ func Cmd() *cobra.Command {
 		Long:        long,
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
-			statusCmd(), nodeRunCmd(), nodeScriptSettingsCmd(), identityCmd(), connectCmd(), disconnectCmd(), auditCmd(),
+			linksCmd(), statusCmd(), nodeRunCmd(), nodeScriptSettingsCmd(), identityCmd(), connectCmd(), disconnectCmd(), auditCmd(),
 			jobsCmd(), reposCmd(), modelsCmd(), peersCmd(), trustCmd(), untrustCmd(), nodeProfilesCmd(), enrollTokenCmd(), enrollCmd(), enrollmentsCmd(),
 			grantCmd(), revokeCmd(), grantsCmd(), remoteCmd(), peerViewCmd(), nodesCmd(), nodeLabelsCmd(), sessionsCmd(), attachCmd(), viewersCmd(), kickCmd(),
 			sendCmd(), outboxCmd(), notifyCmd(), inboxCmd(), awayCmd(), returnCmd(), answerCmd(),
