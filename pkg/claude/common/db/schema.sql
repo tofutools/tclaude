@@ -1582,7 +1582,7 @@ CREATE TABLE federation_peer_grants (
  slug TEXT NOT NULL,
  scope TEXT NOT NULL DEFAULT '',
  spawn_policy TEXT NOT NULL DEFAULT '{}',
- created_at INTEGER NOT NULL,
+ created_at INTEGER NOT NULL, expires_at INTEGER,
  PRIMARY KEY(peer, slug, scope)
  ) STRICT;
 
@@ -1715,3 +1715,7 @@ CREATE TABLE federation_identity_rotations (
  state TEXT NOT NULL CHECK(state IN ('pending','accepted','conflict','revoked','recovered')),
  received_at INTEGER NOT NULL,accept_after INTEGER NOT NULL,reason TEXT NOT NULL DEFAULT ''
 ) STRICT;
+
+CREATE TABLE federation_peer_access_requests (
+ id TEXT PRIMARY KEY, peer TEXT NOT NULL, slug TEXT NOT NULL, group_id INTEGER NOT NULL,
+ grant_group_id INTEGER NOT NULL, grant_ttl_seconds INTEGER NOT NULL, expires_at INTEGER) STRICT;
