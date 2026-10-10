@@ -599,9 +599,15 @@ with. CLI: `tclaude federation access request --node <peer> --permission <slug>
 ### Groups · all nodes
 
 The merged view lists every group on this node and each peer, named
-`group@node` with the node's colour on the suffix. The view is read-only:
-click a group's `@node` suffix to open that node's dashboard. An unreachable node keeps its last rows, marked
-stale. CLI: `tclaude agent groups ls --all-nodes`.
+`group@node` with the node's colour on the suffix. On a peer's rows, the
+controls that peer shares with you run through its peer routes, exactly as on
+its per-node view: the status dot (stop, or wake a stopped agent), restart,
+sandbox restart, retire, clone, the group's spawn button and its ✉ message
+button (one agent at a time). Everything else — and every control on this
+node's own rows — stays an overview: click a group's `@node` suffix to act on
+it in that node's dashboard. An unreachable node keeps its last rows, marked
+stale. CLI: `tclaude agent groups ls --all-nodes`; actions are
+`tclaude federation action ... --node NODE`.
 
 ### The 🌐 marker
 

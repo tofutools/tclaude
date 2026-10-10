@@ -7,11 +7,16 @@ import { dashboardState } from './snapshot-store.js';
 import { shellToast } from './shell-state.js';
 import { nodeHref, pollDelay, remoteNodeID, staggerOffset } from './skynet-model.js';
 import { MERGED_IDLE_POLL_MS, MERGED_POLL_MS, mergeSnapshots } from './skynet-merged-model.js';
+import { peerAction } from './peer-view-limits.js';
+import { PeerActionDialog, createPeerActionActions } from './peer-action.js';
 
 const html = htm.bind(h);
 
-// VIEW_ONLY_ACTS open menus or show data already on screen; everything else in
-// the merged view would act on a node and waits for that node's own view.
+// VIEW_ONLY_ACTS open menus or show data already on screen. On a peer's rows
+// the controls the peer shares (peerAction: stop or wake, restart, sandbox
+// restart, retire, clone, spawn, message) open the peer action dialog against
+// that node's peer routes, as on its per-node view; everything else waits for
+// that node's own view.
 // (The status dot is a power control — wake / shut down — so it is not here.)
 const VIEW_ONLY_ACTS = new Set(['copy-generation-id', 'sandbox-details', 'group-menu', 'row-menu']);
 
@@ -19,6 +24,13 @@ const VIEW_ONLY_ACTS = new Set(['copy-generation-id', 'sandbox-details', 'group-
 // agent in the browser terminal (remote-terminal.js), as the peer shares it.
 const TERMINAL_ACTS = new Set(['web-open-window', 'jump']);
 const openRemote = (opts) => import('./remote-terminal.js').then((m) => m.openRemoteTerminal(opts));
+const peerRoutes = (node) => createPeerActionActions({ node });
+
+// ownGroup turns a merged group@node name back into the peer's own name.
+function ownGroup(name, node) {
+  const at = `@${node}`;
+  return node && name.endsWith(at) ? name.slice(0, -at.length) : '';
+}
 
 // readOnlyActions stands in for the Groups actions: the merged overview never
 // changes a node, so every action resolves without doing anything.
@@ -92,17 +104,22 @@ function usePeerSnapshots({ active, peers, fetchImpl, timers, now }) {
 
 // MergedGroups is the top-level "Groups · all nodes" view: today's Groups
 // listing over every linked node's groups, named group@node. It is an
-// overview — acting on a group happens in that node's own view, one click on
-// its @node away.
+// overview: what a peer shares runs through its peer routes from here, the
+// rest happens in that node's own view, one click on its @node away.
 export function MergedGroups({
   state, host, snapshot = dashboardState.snapshot, fetchImpl = (...a) => globalThis.fetch(...a),
   timers = globalThis, now = () => Date.now(), toast = shellToast, remote = remoteNodeID(), switchNode = defaultSwitchNode, openTerminal = openRemote,
+  peerActions = peerRoutes, confirm,
 }) {
   const current = state.view.value;
   const fleet = current.fleet;
   const active = current.fleetActive && !!fleet && !remote;
   const peers = fleet ? fleet.peers : [];
   const entries = usePeerSnapshots({ active, peers, fetchImpl, timers, now });
+  const [peerReq, setPeerReq] = useState(null);
+  // The capture handlers below are bound once; they read the latest snapshots.
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
 
   // The merged view merges from this node; a peer's page hands it over.
   useEffect(() => {
@@ -128,6 +145,11 @@ export function MergedGroups({
       if (TERMINAL_ACTS.has(act.dataset.act) && act.dataset.agent && instance && instance !== state.view.value.fleet?.self?.id) {
         void openTerminal({ instance, agent: act.dataset.agent, peerLabel: group.dataset.fleetNodeName || '', toast });
         return;
+      }
+      const name = group?.dataset.fleetNodeName || '';
+      if (instance && instance !== state.view.value.fleet?.self?.id) {
+        const req = peerAction(act, entriesRef.current[instance]?.snapshot?.peer_view, (g) => ownGroup(g, name));
+        if (req) { setPeerReq({ ...req, node: name || instance.slice(0, 13), nodeId: instance }); return; }
       }
       const where = group ? `${group.dataset.fleetNodeName}'s dashboard` : "the node's own dashboard";
       toast(`The all-nodes view is an overview — act on this from ${where} (click the @node name)`, true);
@@ -169,11 +191,13 @@ export function MergedGroups({
         title=${n.node.local ? 'This node' : n.failure ? `Unreachable (${n.failure.code || `HTTP ${n.failure.status}`})` : n.loaded ? 'Shared groups of this peer' : 'Loading…'}>
         <i aria-hidden="true"></i>${n.node.local ? '⌂ ' : ''}${n.node.name}${n.label ? html` <span class="muted">· ${n.label}</span>` : !n.loaded && !n.node.local ? html` <span class="muted">· loading…</span>` : ''}
       </span>`)}
-      <span class="skynet-merged-note">Overview: open a group's <b>@node</b> to act on it there.</span>
+      <span class="skynet-merged-note">Overview: shared actions go to the peer; open <b>@node</b> for the rest.</span>
     </div>
     <${GroupsInteractionProvider}>
       <${GroupsNativeList} groups=${merged.groups} snapshot=${merged} actions=${readOnlyActions} />
     <//>
+    ${peerReq && html`<${PeerActionDialog} req=${peerReq} peerView=${entries[peerReq.nodeId]?.snapshot?.peer_view} groups=${entries[peerReq.nodeId]?.snapshot?.groups}
+      actions=${peerActions(peerReq.nodeId)} toast=${toast} timers=${timers} onClose=${() => setPeerReq(null)} ...${confirm ? { confirm } : {}} />`}
   </div>`;
 }
 

@@ -107,7 +107,8 @@ export function attachCommand(agentID, remoteID) {
 }
 
 // PEER_ACTS are controls a peer may grant through its action routes (stop or
-// wake, restart, sandbox restart, retire, clone; spawn into a group). When the peer shares the feature, the
+// wake, restart, sandbox restart, retire, clone; spawn into a group; message
+// one of its members). When the peer shares the feature, the
 // click opens the peer action dialog (peer-action.js) instead of the local
 // one, whose requests (conv IDs, local-only options) the peer refuses.
 const PEER_ACTS = Object.freeze({
@@ -117,17 +118,29 @@ const PEER_ACTS = Object.freeze({
   'retire-agent': { action: 'retire', feature: 'lifecycle.retire' },
   clone: { action: 'clone', feature: 'lifecycle.clone' },
   'spawn-agent': { action: 'spawn', feature: 'spawn' },
+  'message-new': { action: 'message', feature: 'messaging' },
 });
 // PEER_ACTION_EVENT carries such a click to peer-action.js.
 export const PEER_ACTION_EVENT = 'tclaude:peer-action';
 const SAFE_GROUP = /^[A-Za-z0-9._@:-]{1,128}$/;
 
-function peerAction(act, peerView) {
+// peerAction maps a clicked control to the peer action request it stands for,
+// or null when the peer does not share it. The merged all-nodes view
+// (skynet-merged-island.js) uses it for a peer's rows too, with groupOf
+// turning its group@node names back into the peer's own.
+export function peerAction(act, peerView, groupOf = (g) => g) {
   let spec = PEER_ACTS[act.dataset.act];
   // The status dot stops a running agent and wakes a stopped one.
   if (act.dataset.act === 'dot-toggle' && act.dataset.online !== '1') spec = { action: 'resume', feature: 'lifecycle.resume' };
   if (!spec || featureState(spec.feature, peerView) !== 'shared') return null;
-  if (spec.action === 'spawn') return SAFE_GROUP.test(act.dataset.group || '') ? { action: 'spawn', group: act.dataset.group } : null;
+  if (spec.action === 'spawn' || spec.action === 'message') {
+    let group = act.dataset.group || '';
+    if (spec.action === 'message') {
+      try { group = JSON.parse(act.dataset.prefill || '{}')?.groupName; } catch (_) { group = ''; }
+    }
+    group = typeof group === 'string' ? groupOf(group) : '';
+    return SAFE_GROUP.test(group) ? { action: spec.action, group } : null;
+  }
   // The retire icon stays conv-keyed (data-agent would change its local
   // recovery path), so it carries the stable ID as data-stable-agent.
   const agent = act.dataset.stableAgent || act.dataset.agent || '';
