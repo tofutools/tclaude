@@ -136,6 +136,7 @@ function NodeCard({ node, card, focused, onOpen, onUpdate, cardRef, shown }) {
       <span class=${`skynet-card-kind${node.level === 'unrestricted' ? ' unrestricted' : ''}`}>${kind}</span>
       <span class=${`skynet-card-presence ${card.presence}`}><i aria-hidden="true"></i>${presence}${card.stale && card.ageMs != null ? html` <span class="muted">· data ${fmtAge(card.ageMs)} old</span>` : ''}</span></div>
     <${CardRows} card=${card} node=${node} onUpdate=${onUpdate} />
+    ${node.keyTransition && html`<div class=${`skynet-card-key ${node.keyTransition.state}`} title="See Fleet → Peers">${node.keyTransition.state === 'conflict' ? '⚠ competing new signing keys: needs recovery (Fleet → Peers)' : '🔑 new signing key pending: not yet accepted'}</div>`}
     ${onOpen && html`<div class="skynet-card-foot"><button type="button" class=${shown ? 'primary' : ''} onClick=${onOpen}>${shown ? 'Back to its dashboard' : 'Open dashboard'}</button></div>`}
   </article>`;
 }

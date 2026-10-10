@@ -17,6 +17,8 @@ const skynetFederationStubJS = `(function(){
       { instance_id: 'inst_w5zea3nq', name: 'carol@buildbox', fingerprint: 'w5ze-a3nq-7m1p-kd42-xr8c-0fv6', trusted: false, online: true }
     ],
     peer_grants: [{ peer: 'inst_hn3cxq7a', slug: 'message.direct' }, { peer: 'inst_hn3cxq7a', slug: 'groups.roster.read', scope: 'ops' }, { peer: 'inst_hn3cxq7a', slug: 'sessions.watch', scope: 'ops' }] };
+  if (window.__dashsnapKeyConflict) status.peers[1].identity_transition = { state: 'conflict', old_id: 'inst_2p6ym4ke', new_id: 'inst_8r3kq0vd', new_fingerprint: '8r3k-q0vd-n6wz-2hc4-pm7y-e1xa', received_at: '2026-10-10T08:41:00Z', accept_after: '2026-10-10T08:51:00Z', reason: 'competing signed successors' };
+  if (window.__dashsnapKeyPending) status.peers[0].identity_transition = { state: 'pending', old_id: 'inst_hn3cxq7a', new_id: 'inst_c7m2x9tf', new_fingerprint: 'c7m2-x9tf-4kp1-wq8e-zn3d-6hv0', received_at: '2026-10-10T09:02:00Z', accept_after: '2026-10-10T09:12:00Z' };
   var res = { status: 'current', cpu: { logical_cores: 8, load_average: [2.7, 2, 1] }, ram: { total_bytes: 32e9, available_bytes: 12e9, available_estimated: false }, data_disk: { total_bytes: 500e9, available_bytes: 210e9 } };
   window.fetch = function(input, init) {
     var url = typeof input === 'string' ? input : input.url;
@@ -496,6 +498,35 @@ func skynetStates() []dashsnap.State {
   if (!document.querySelector('#fleet-viewers')) throw new Error('skynet: viewers panel missing');
 })();`,
 			SettleMS: 300,
+		},
+		{
+			Key:     "skynet-fleet-key-transition",
+			Title:   "A peer's signing-key transition",
+			Caption: "Fleet → Peers marks a peer whose signing key is changing in its fingerprint cell: forge's new key is pending (information only), lab has competing successors. The dialog shows both fingerprints in full and, for the conflict, the recover-peer preview and the apply to run only after verifying the fingerprint with the peer's operator; recovery stays in the CLI.",
+			InitJS:  "window.__dashsnapKeyConflict = true; window.__dashsnapKeyPending = true;" + skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('[data-peer="inst_2p6ym4ke"] [data-fa="key"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('[data-peer="inst_hn3cxq7a"] [data-fa="key"]')) throw new Error('skynet: pending key marker missing');
+  document.querySelector('[data-peer="inst_2p6ym4ke"] [data-fa="key"]').click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-key-preview'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-key-apply')) throw new Error('skynet: recover commands missing');
+})();`,
+			SettleMS: 300,
+		},
+		{
+			Key:     "skynet-map-key-transition",
+			Title:   "Map cards with signing-key transitions",
+			Caption: "The map notes a pending new signing key (amber, not yet accepted) and competing keys that need recovery (red) on the peer cards, pointing to Fleet → Peers.",
+			InitJS:  "window.__dashsnapKeyConflict = true; window.__dashsnapKeyPending = true;" + skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="map"]').click();
+  for (var i = 0; i < 80 && document.querySelectorAll('.skynet-card-key').length < 2; i++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (document.querySelectorAll('.skynet-card-key').length !== 2) throw new Error('skynet: key transition notes missing on the map');
+})();`,
+			SettleMS: 400,
 		},
 		{
 			Key:     "skynet-fleet-offers",

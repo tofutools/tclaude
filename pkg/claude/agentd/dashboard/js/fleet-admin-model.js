@@ -1,3 +1,5 @@
+import { keyTransition } from './skynet-model.js';
+
 // fleet-admin-model.js — DOM-free view helpers for Fleet administration: which
 // nodes this node trusts and what they may do. The data is this node's own
 // federation state (/api/federation/*, cookie-authenticated, never served to
@@ -70,6 +72,7 @@ export function adminView(status, { pools = [] } = {}) {
     trustedAt: p.trusted_at && !String(p.trusted_at).startsWith('0001-') ? p.trusted_at : null,
     grants: grants.get(p.instance_id) || { total: 0, nodeWide: 0, scoped: 0 },
     pools: poolMap.get(p.instance_id) || [],
+    keyTransition: keyTransition(p),
   });
   const byLabel = (a, b) => a.label.localeCompare(b.label);
   return {

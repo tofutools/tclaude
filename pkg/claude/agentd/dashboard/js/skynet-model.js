@@ -45,6 +45,31 @@ export function peerName(peer) {
   return peer?.label || peer?.name || String(peer?.instance_id || '').slice(0, 13) || 'peer';
 }
 
+// keyTransition reads a trusted peer's active identity transition from the
+// status row: present only while pending (a signed successor key waits out
+// this node's detection window) or conflict (competing successors; only an
+// explicit operator recovery resolves it).
+export function keyTransition(peer) {
+  const t = peer?.identity_transition;
+  if (!t || (t.state !== 'pending' && t.state !== 'conflict')) return null;
+  return {
+    state: t.state, oldID: t.old_id || '', newID: t.new_id || '', newFingerprint: t.new_fingerprint || '',
+    receivedAt: t.received_at || '', acceptAfter: t.accept_after || '', reason: t.reason || '',
+  };
+}
+
+const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+const FP_RE = /^[A-Za-z0-9-]{1,128}$/;
+
+// recoverCommands are the CLI commands for a conflicted transition: a preview
+// that changes nothing, and the apply to run only after the new fingerprint
+// was verified with the peer's operator. Null when a field is not a plain ID.
+export function recoverCommands(t) {
+  if (!t || !ID_RE.test(t.oldID) || !ID_RE.test(t.newID)) return null;
+  const preview = `tclaude federation identity recover-peer ${t.oldID} ${t.newID}`;
+  return { preview, apply: FP_RE.test(t.newFingerprint) ? `${preview} --fingerprint ${t.newFingerprint} --apply` : '' };
+}
+
 // normalizeFleet turns a federation status response into the chip row's node
 // list. Only trusted peers become nodes; hub-visible strangers belong to Fleet
 // administration, not to navigation. A disabled or peerless federation yields
@@ -59,6 +84,7 @@ export function normalizeFleet(status) {
       level: p.level === 'unrestricted' ? 'unrestricted' : 'restricted',
       online: !!p.online,
       lastSeen: p.last_seen || null,
+      keyTransition: keyTransition(p),
       color: nodeColor(p.instance_id),
       local: false,
     }))

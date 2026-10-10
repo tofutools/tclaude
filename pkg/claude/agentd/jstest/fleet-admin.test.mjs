@@ -3,10 +3,11 @@ import { createPreactHarness } from './preact-harness.mjs';
 
 const FP_FORGE = 'k7q2-mx9d-4hpa-zz31-0e8c';
 const FP_NEW = 'w5ze-a3nq-9c1b-77f0-d2aa';
+let s_transition = null;
 const status = () => ({
   enabled: true, instance_id: 'inst_self', name: 'desk', fingerprint: 'self-fp-0000', hub_url: 'wss://hub.example', hub: { state: 'connected' },
   peers: [
-    { instance_id: 'inst_forge', label: 'forge', name: 'forge', fingerprint: FP_FORGE, trusted: true, online: true, level: 'restricted', last_seen: '0001-01-01T00:00:00Z' },
+    { instance_id: 'inst_forge', label: 'forge', name: 'forge', fingerprint: FP_FORGE, trusted: true, online: true, level: 'restricted', last_seen: '0001-01-01T00:00:00Z', ...(s_transition ? { identity_transition: s_transition } : {}) },
     { instance_id: 'inst_lab', label: 'lab', trusted: true, online: false, level: 'unrestricted', last_seen: '2026-10-09T20:00:00Z' },
     { instance_id: 'inst_carol', name: 'Carol@Buildbox', fingerprint: FP_NEW, trusted: false, online: true },
   ],
@@ -1109,3 +1110,44 @@ test('model gateways: switches confirm what they revoke, leases revoke, and usag
   const usage = [...s.mounted.container.querySelectorAll('#fleet-model-usage tbody tr')].map((r) => [...r.querySelectorAll('td')].map((c) => c.textContent.trim()).join('|'));
   assert.deepEqual(usage, ['claude|forge|claude-sonnet-5-5|3 (1 in progress) (1 failed)|109.5k|1.3k · 200']);
 });
+
+test('a pending key transition is information only, with no recovery command', async (t) => {
+  t.after(() => { s_transition = null; });
+  s_transition = { state: 'pending', old_id: 'inst_forge', new_id: 'inst_forge2', new_fingerprint: FP_NEW, received_at: '2026-10-10T09:00:00Z', accept_after: '2026-10-10T09:10:00Z' };
+  const s = await setup(t);
+  await s.show();
+  const q = (x) => s.harness.document.querySelector(x);
+  assert.match(s.q('[data-peer="inst_forge"] [data-fa="key"]').textContent, /new key pending/);
+  assert.equal(s.q('[data-peer="inst_lab"] [data-fa="key"]'), null);
+  await s.click(s.q('[data-peer="inst_forge"] [data-fa="key"]'));
+  assert.match(q('#fleet-key-transition').textContent, new RegExp(`inst_forge2.*${FP_NEW}.*earliest acceptance.*nothing needs doing now.*Acceptance is not guaranteed`, 's'));
+  assert.equal(q('#fleet-key-preview'), null, 'pending offers no recovery command');
+  assert.equal(/needs recovery|recover-peer/.test(q('#fleet-key-transition').textContent), false);
+});
+
+test('a conflicted key transition shows the recover-peer preview and, separately, the verified apply', async (t) => {
+  t.after(() => { s_transition = null; });
+  s_transition = { state: 'conflict', old_id: 'inst_forge', new_id: 'inst_forge2', new_fingerprint: FP_NEW, received_at: '2026-10-10T09:00:00Z', reason: 'competing successors' };
+  const s = await setup(t);
+  await s.show();
+  const q = (x) => s.harness.document.querySelector(x);
+  assert.match(s.q('[data-peer="inst_forge"] [data-fa="key"]').textContent, /competing keys/);
+  await s.click(s.q('[data-peer="inst_forge"] [data-fa="key"]'));
+  assert.equal(q('#fleet-key-preview').textContent, 'tclaude federation identity recover-peer inst_forge inst_forge2');
+  assert.equal(q('#fleet-key-apply').textContent, `tclaude federation identity recover-peer inst_forge inst_forge2 --fingerprint ${FP_NEW} --apply`);
+  assert.match(q('#fleet-key-transition').textContent, /out of band.*Only after the operator confirmed this exact fingerprint/s);
+});
+
+test('keyTransition shows only pending and conflict, and recoverCommands refuses odd IDs', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { keyTransition, recoverCommands, normalizeFleet } = await harness.importDashboardModule('js/skynet-model.js');
+  assert.equal(keyTransition({ identity_transition: { state: 'accepted' } }), null);
+  assert.equal(keyTransition({}), null);
+  const t1 = keyTransition({ identity_transition: { state: 'conflict', old_id: 'inst_a', new_id: 'inst_b', new_fingerprint: 'ab-cd' } });
+  assert.equal(t1.state, 'conflict');
+  assert.equal(recoverCommands({ ...t1, newID: 'inst_b; rm -rf ~' }), null);
+  assert.equal(recoverCommands({ ...t1, newFingerprint: '$(x)' }).apply, '');
+  const fleet = normalizeFleet({ instance_id: 'inst_self', peers: [{ instance_id: 'inst_a', trusted: true, identity_transition: { state: 'pending', old_id: 'inst_a', new_id: 'inst_b' } }] });
+  assert.equal(fleet.peers[0].keyTransition.state, 'pending');
+});
+
