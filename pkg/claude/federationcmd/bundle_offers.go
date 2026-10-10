@@ -95,6 +95,7 @@ type offerImportParams struct {
 	Cwd         string `long:"cwd" optional:"true" help:"Remap an agent offer's working directory."`
 	Worktree    string `long:"worktree" optional:"true" help:"Remap an agent offer's worktree hint."`
 	Group       string `long:"group" optional:"true" help:"Choose a receiving group with agents.receive (default offered group)."`
+	Landing     string `long:"landing" optional:"true" help:"Select a receiver landing candidate from the preview."`
 	Name        string `long:"name" optional:"true" help:"Name the new receiving agent."`
 	SkipHistory bool   `long:"skip-history" help:"Import only configuration from an agent offer."`
 
@@ -176,13 +177,16 @@ func runOfferImport(p *offerImportParams, out, stderr io.Writer) int {
 		}
 		values[name] = value
 	}
-	in := map[string]any{"only": p.Only, "skip": p.Skip, "values": values, "apply": p.Apply, "replace": p.Replace, "keep_paths": p.KeepPaths, "cwd": p.Cwd, "worktree": p.Worktree, "group": p.Group, "name": p.Name, "skip_history": p.SkipHistory}
+	in := map[string]any{"only": p.Only, "skip": p.Skip, "values": values, "apply": p.Apply, "replace": p.Replace, "keep_paths": p.KeepPaths, "cwd": p.Cwd, "landing": p.Landing, "worktree": p.Worktree, "group": p.Group, "name": p.Name, "skip_history": p.SkipHistory}
 	var response map[string]any
 	if rc := offerPost(stderr, offerPath(p.ID, p.Peer, "import"), in, &response); rc != 0 {
 		return rc
 	}
 	if p.JSON {
 		return printJSON(out, response)
+	}
+	if landing, ok := response["landing"].(map[string]any); ok {
+		fmt.Fprintf(out, "Will start in %v (%v)\n", landing["cwd"], landing["reason"])
 	}
 	// The full existing import diff includes security tags and provenance.
 	if rc := printJSON(out, response); rc != 0 {

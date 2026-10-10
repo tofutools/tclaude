@@ -23,6 +23,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common/buildversion"
+	"github.com/tofutools/tclaude/pkg/federation/jobrepo"
 )
 
 const PermAgentBundleExport = "agent.bundle.export"
@@ -161,6 +162,11 @@ func collectAgentBundle(convID string, withHistory bool) (*agentbundle.Bundle, e
 		if err == nil && ref != nil {
 			d.Paths.Cwd = ref.ProjectPath
 		}
+	}
+	if d.Paths.Cwd != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		d.Paths.RepoURL = jobrepo.OriginHint(ctx, d.Paths.Cwd)
+		cancel()
 	}
 	groups, err := db.ListGroupsForConv(convID)
 	if err != nil {

@@ -32,6 +32,7 @@ type Permission struct {
 	Source string          `json:"source"`
 }
 type Paths struct {
+	RepoURL  string `json:"repo_url,omitempty"`
 	Cwd      string `json:"cwd,omitempty"`
 	Worktree string `json:"worktree,omitempty"`
 	Branch   string `json:"branch,omitempty"`

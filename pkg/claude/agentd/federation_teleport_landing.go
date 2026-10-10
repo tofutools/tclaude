@@ -312,21 +312,10 @@ func processTeleportLanding(rt *fedRuntime, t *db.FederationTeleport) {
 	if err != nil || !won {
 		return
 	}
-	cwd := t.Landing.Cwd
-	if t.Intent.GitRef != "" {
-		checkout, err := prepareTeleportCheckout(rt.ctx, t, o.GroupID)
-		if err != nil {
-			t.State, t.TargetAgent = "pending", ""
-			_, _ = db.TransitionFederationTeleport(*t, "admitting")
-			_ = db.SetFederationBundleOfferState("in", o.Peer, o.Descriptor.ID, o.State, err.Error())
-			return
-		}
-		cwd = checkout.Path
-	}
 	request := httptest.NewRequest(http.MethodPost, "/internal/teleport-landing", nil)
 	request = request.WithContext(context.WithValue(rt.ctx, teleportLandingContextKey{}, authority))
 	rec := httptest.NewRecorder()
-	importFederationAgentOffer(rec, request, o, &fedBundleImportRequest{Group: t.Landing.Group, Cwd: cwd, configBundleRequest: configBundleRequest{Apply: true}})
+	importFederationAgentOffer(rec, request, o, &fedBundleImportRequest{Group: t.Landing.Group, configBundleRequest: configBundleRequest{Apply: true}})
 	if rec.Code == 200 {
 		t.State = "landed"
 	} else {
@@ -581,7 +570,7 @@ func cleanupUnlaunchedTeleportCheckout(t *db.FederationTeleport) {
 	if t.Checkout == nil {
 		return
 	}
-	root := filepath.Join(config.DataDir(), "federation", "teleport-checkouts", t.Peer, t.Offer)
+	root := t.Checkout.Root
 	if os.RemoveAll(root) == nil {
 		t.Checkout = nil
 	}
