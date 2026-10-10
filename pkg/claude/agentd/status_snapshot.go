@@ -51,6 +51,27 @@ type statusSnapshotCache struct {
 
 var sharedStatusCache = statusSnapshotCache{revision: db.StatusSnapshotGeneration}
 
+// Peer polling tolerates 1.5s of status staleness, independently of SQLite
+// replay-marker writes. Cache only private immutable gathered data: visibility,
+// trust and grants are still projected afresh on every peer request. Local
+// dashboard/CLI consumers retain immediate data_version invalidation.
+var peerStatusCache statusSnapshotCache
+
+func gatheredPeerStatusSnapshot() *statusSnapshot {
+	if statusSnapshotDisabled() {
+		return gatheredStatusSnapshot()
+	}
+	return peerStatusCache.get(config.DataDir(), 1500*time.Millisecond, func() *statusSnapshot {
+		statusHook.RLock()
+		hook := statusHook.peerFn
+		statusHook.RUnlock()
+		if hook != nil {
+			hook()
+		}
+		return gatherStatusSnapshotFresh(false)
+	})
+}
+
 // A joining consumer returns this flight's result even if gathering exceeded
 // the TTL. Otherwise a slow gather could trap every waiter in a refresh loop.
 func (c *statusSnapshotCache) get(key string, ttl time.Duration, gather func() *statusSnapshot) *statusSnapshot {
@@ -227,7 +248,8 @@ func gatherStatusSnapshotFresh(fresh bool) *statusSnapshot {
 // its single shared boundary. It is nil during normal daemon operation.
 var statusHook struct {
 	sync.RWMutex
-	fn func()
+	fn     func()
+	peerFn func()
 }
 
 func statusGatherTestHook() {

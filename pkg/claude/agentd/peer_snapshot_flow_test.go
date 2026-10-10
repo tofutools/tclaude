@@ -2,11 +2,15 @@ package agentd_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -156,4 +160,67 @@ func TestPeerSnapshotDashboardSchemaAndSummary(t *testing.T) {
 	testharness.DecodeJSON(t, localSummary, &localCounts)
 	require.Equal(t, float64(3), localCounts["shared_agents"])
 	require.NotContains(t, localCounts, "peer_view")
+}
+
+func TestPeerSnapshotPollsShareGatherWithoutStalingLocalReads(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://localhost:12345"))
+	f.HaveGroup("team")
+	f.HaveConvWithTitle("poll-cache-agent", "worker")
+	f.HaveMember("team", "poll-cache-agent")
+	f.HaveAliveSession("poll-cache-agent", "poll-cache-session", "poll-cache-pane", f.TestCwd("work"))
+	rec := fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermAgentsStatusRead, "scope": "group=team"})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	agentd.ResetStatusSnapshotForTest()
+	var gathers atomic.Int64
+	t.Cleanup(agentd.SetPeerStatusGatherHookForTest(func() { gathers.Add(1) }))
+	h := agentd.PeerViewHandler(p.id.ID())
+	for i := 0; i < 10; i++ {
+		seen, err := db.MarkFederationEnvelopeSeen(p.id.ID(), fmt.Sprintf("poll-%d", i), time.Now().Add(time.Hour))
+		require.NoError(t, err)
+		require.True(t, seen)
+		rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+		var snapshot dashSnapshot
+		testharness.DecodeJSON(t, rec, &snapshot)
+		require.Len(t, snapshot.Agents, 1)
+	}
+	require.Equal(t, int64(1), gathers.Load(), "ten peer polls share one gather despite persisted replay markers")
+	seen, err := db.MarkFederationEnvelopeSeen(p.id.ID(), "poll-0", time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	require.False(t, seen, "replay remains refused")
+	require.NoError(t, db.UpdateSessionModel("poll-cache-session", "changed-model"))
+	f.SetSessionStatus("poll-cache-agent", "awaiting_input")
+	dashboard := agentd.BuildDashboardHandlerForTest()
+	summary := testharness.Serve(dashboard, testharness.JSONRequest(t, "GET", "/api/node-summary", nil))
+	require.Equal(t, 200, summary.Code, summary.Body.String())
+	var counts map[string]any
+	testharness.DecodeJSON(t, summary, &counts)
+	require.Equal(t, float64(1), counts["waiting_for_input"], "local node summary remains immediately fresh")
+	local := fetchSnapshotOnly(t, dashboard)
+	require.Equal(t, "changed-model", findDashMember(local, "team", "poll-cache-agent").State.Model)
+	require.Equal(t, int64(1), gathers.Load(), "local reads do not refresh the peer cache")
+	_, err = config.Update(func(c *config.Config, err error) error {
+		if err != nil {
+			return err
+		}
+		c.StatusSnapshot = &config.StatusSnapshotConfig{Disabled: true}
+		return nil
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.UpdateSessionModel("poll-cache-session", "uncached-model"))
+	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "uncached-model", "global cache-off also disables peer coalescing")
+	_, err = config.Update(func(c *config.Config, err error) error { c.StatusSnapshot = nil; return err })
+	require.NoError(t, err)
+	rec = fedHuman(t, f, "DELETE", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermAgentsStatusRead, "scope": "group=team"})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var snapshot dashSnapshot
+	testharness.DecodeJSON(t, rec, &snapshot)
+	require.Empty(t, snapshot.Groups, "revocation is immediate even with warm private status data")
+	require.Empty(t, snapshot.Agents)
 }

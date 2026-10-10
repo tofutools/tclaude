@@ -2035,7 +2035,21 @@ func SetStatusGatherHookForTest(fn func()) func() {
 	statusHook.Unlock()
 	return func() { statusHook.Lock(); statusHook.fn = old; statusHook.Unlock() }
 }
+
+// SetPeerStatusGatherHookForTest counts only gathers initiated by peer polling,
+// separately from local/background consumers sharing the receiving process.
+func SetPeerStatusGatherHookForTest(fn func()) func() {
+	statusHook.Lock()
+	old := statusHook.peerFn
+	statusHook.peerFn = fn
+	statusHook.Unlock()
+	return func() { statusHook.Lock(); statusHook.peerFn = old; statusHook.Unlock() }
+}
+
 func ResetStatusSnapshotForTest() {
+	peerStatusCache.mu.Lock()
+	peerStatusCache.value = nil
+	peerStatusCache.mu.Unlock()
 	sharedStatusCache.mu.Lock()
 	sharedStatusCache.value = nil
 	sharedStatusCache.mu.Unlock()

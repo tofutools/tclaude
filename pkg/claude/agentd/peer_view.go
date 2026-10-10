@@ -8,11 +8,16 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
+
+// Optional observation at the receiver's production dispatch boundary. Tests
+// install this before starting traffic; normal daemon operation has no observer.
+var peerViewObserver atomic.Pointer[func() func()]
 
 // PeerViewHandler is the receiving-node UI boundary. Its caller must authenticate
 // the transport and supply the pinned instance ID, never a request header or
@@ -25,6 +30,9 @@ func PeerViewHandler(instanceID string) http.Handler {
 			continue
 		}
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+			if observer := peerViewObserver.Load(); observer != nil {
+				defer (*observer)()()
+			}
 			p, err := db.GetFederationPeer(instanceID)
 			if err != nil || p == nil {
 				writeError(w, 403, "peer_view", "trusted peer required")
@@ -194,6 +202,7 @@ func (v *peerView) allows(rule peerViewRule, groupID int64) bool {
 func (v *peerView) metadata() peerViewMetadata {
 	out := peerViewMetadata{Peer: peerDisplay(v.peer), Included: []string{}, Omitted: []peerViewOmission{}}
 	groups, _ := db.ListAgentGroups()
+	hasAccess := peerHasAccess(v.peer.InstanceID)
 	features := map[string]peerViewRule{}
 	for _, rule := range peerViewRules() {
 		features[rule.feature] = rule
@@ -217,7 +226,7 @@ func (v *peerView) metadata() peerViewMetadata {
 			out.Included = append(out.Included, rule.feature)
 		} else {
 			_, requestable := requestablePeerPermission(rule.requires)
-			requestable = requestable && !rule.accessRequest && !rule.visible && !rule.publicRead && (rule.serve != nil || rule.write != nil) && peerHasAccess(v.peer.InstanceID)
+			requestable = requestable && !rule.accessRequest && !rule.visible && !rule.publicRead && (rule.serve != nil || rule.write != nil) && hasAccess
 			out.Omitted = append(out.Omitted, peerViewOmission{Feature: rule.feature, Requires: rule.requires, Requestable: requestable})
 		}
 	}

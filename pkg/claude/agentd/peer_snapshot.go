@@ -81,6 +81,13 @@ func peerDashboardState(s proto.AgentStatus) agentState {
 	return out
 }
 
+func (v *peerView) gatheredStatusSnapshot() *statusSnapshot {
+	if v == nil {
+		return gatheredStatusSnapshot()
+	}
+	return gatheredPeerStatusSnapshot()
+}
+
 func (v *peerView) groups() ([]dashboardGroup, []dashboardAgent, error) {
 	groups, err := db.ListAgentGroups()
 	if err != nil {
@@ -102,7 +109,7 @@ func (v *peerView) groups() ([]dashboardGroup, []dashboardAgent, error) {
 		states := map[string]proto.AgentStatus{}
 		if status || presence {
 			if shared == nil {
-				shared = gatheredStatusSnapshot()
+				shared = v.gatheredStatusSnapshot()
 			}
 			for _, s := range fedGroupAgentStatuses(g.ID, shared) {
 				states[s.Agent] = s
@@ -207,7 +214,7 @@ func servePeerSummary(w http.ResponseWriter, _ *http.Request, v *peerView, _ pee
 				continue
 			}
 			if shared == nil {
-				shared = gatheredStatusSnapshot()
+				shared = v.gatheredStatusSnapshot()
 			}
 			agents = append(agents, dashboardAgent{AgentID: a.AgentID})
 			st := shared.states[a.CurrentConvID]

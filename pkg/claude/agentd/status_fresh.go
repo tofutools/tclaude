@@ -75,7 +75,12 @@ func requestStatusSnapshot(w http.ResponseWriter, r *http.Request, record func([
 	}
 	defer done()
 	span := perfSpanFrom(r)
-	snapshot := gatheredStatusSnapshotAfter(after, record)
+	var snapshot *statusSnapshot
+	if peer, _ := r.Context().Value(peerSnapshotCtxKey{}).(bool); peer && after.IsZero() {
+		snapshot = gatheredPeerStatusSnapshot()
+	} else {
+		snapshot = gatheredStatusSnapshotAfter(after, record)
+	}
 	if !after.IsZero() {
 		span.mark("status_snapshot_forced")
 	}

@@ -2212,6 +2212,13 @@ must key representations by receiving node and authenticated calling peer,
 never share them across callers, and forward validators through to agentd.
 Full snapshots continue to return `Cache-Control: no-store`.
 
+Peer snapshot and summary reads share an immutable private status gather for
+up to 1.5 seconds, independently of persisted replay markers. Trust, grants,
+visibility and response projection are checked on every request, including
+conditional summary reads. Local dashboard/CLI status reads still invalidate
+immediately on database writes. Disabling the status cache also disables this
+peer coalescing window.
+
 Polling contract for the node-switching, map and merged-view frontends:
 
 - A per-node view polls full `/api/snapshot` data only for the displayed node,

@@ -104,12 +104,17 @@ type journeyNode struct {
 
 func startJourneyNode(t *testing.T) *journeyNode {
 	t.Helper()
+	return startSkynetFixtureNode(t, "TestSkynetJourneyInstance", "TCLAUDE_SKYNET_JOURNEY_CHILD=1")
+}
+
+func startSkynetFixtureNode(t *testing.T, testName, childEnv string) *journeyNode {
+	t.Helper()
 	binary, err := os.Executable()
 	require.NoError(t, err)
 	// Allow race-instrumented SQLite migrations in both isolated children;
 	// the normal complete journey runs in about five seconds.
-	cmd := exec.Command(binary, "-test.run=^TestSkynetJourneyInstance$", "-test.timeout=120s")
-	cmd.Env = append(os.Environ(), "TCLAUDE_SKYNET_JOURNEY_CHILD=1")
+	cmd := exec.Command(binary, "-test.run=^"+testName+"$", "-test.timeout=180s")
+	cmd.Env = append(os.Environ(), childEnv)
 	stdin, err := cmd.StdinPipe()
 	require.NoError(t, err)
 	stdout, err := cmd.StdoutPipe()

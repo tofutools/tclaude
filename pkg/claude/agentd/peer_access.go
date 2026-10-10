@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -17,13 +18,26 @@ const maxPeerGrantTTL = 30 * 24 * 60 * 60
 
 // The dispatcher is the requestable permission catalog as well as the action
 // authority boundary. A local-only route never becomes grantable by asking.
+// Only the compile-time mapping is cached; peer trust and grants are always
+// read for the current request. Lazy initialization avoids the handler/mapping
+// initialization cycle.
+var requestablePeerPermissions struct {
+	once        sync.Once
+	permissions map[string]bool
+}
+
 func requestablePeerPermission(slug string) (group bool, ok bool) {
-	for _, rule := range peerViewRules() {
-		if rule.requires == slug && !rule.accessRequest && !rule.visible && !rule.publicRead && (rule.serve != nil || rule.write != nil) {
-			return rule.group, true
+	requestablePeerPermissions.once.Do(func() {
+		permissions := map[string]bool{}
+		for _, rule := range peerViewRules() {
+			if !rule.accessRequest && !rule.visible && !rule.publicRead && (rule.serve != nil || rule.write != nil) {
+				permissions[rule.requires] = rule.group
+			}
 		}
-	}
-	return false, false
+		requestablePeerPermissions.permissions = permissions
+	})
+	group, ok = requestablePeerPermissions.permissions[slug]
+	return group, ok
 }
 func peerHasAccess(peer string) bool {
 	p, err := db.GetFederationPeer(peer)
@@ -37,10 +51,10 @@ func peerHasAccess(peer string) bool {
 	if err != nil {
 		return false
 	}
+	meaningful, _ := peerAccessCatalog()
 	for _, g := range grants {
 		// Public node summaries, obsolete slugs, and grants on deleted groups do
 		// not constitute access that may be used to solicit more authority.
-		meaningful, _ := peerAccessCatalog()
 		if !slices.Contains(meaningful, g.Slug) {
 			continue
 		}
