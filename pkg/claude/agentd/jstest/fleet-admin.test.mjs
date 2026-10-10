@@ -100,6 +100,16 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     removePoolMember: async (n, p) => { log.push(['removePoolMember', n, p]); return { ok: true }; },
     setDefaultProfile: async (n) => { log.push(['setDefaultProfile', n]); return { profile_id: n }; },
     deleteProfile: async (n) => { log.push(['deleteProfile', n]); return { ok: true }; },
+    spawnRequests: async () => { log.push(['spawnRequests']); return [
+      { id: 7, from: 'ada@forge', instance: 'inst_forge', group: 'ops', name: 'fixer', role: 'dev', brief: 'Fix the flaky deploy test', status: 'pending', credentials: 'proxy:claude@inst_forge', model_lease: 'lease_1', created_at: '2026-10-10T09:00:00Z', expires_at: '2099-01-01T00:00:00Z' },
+      { id: 6, from: 'ada@forge', instance: 'inst_forge', group: 'ops', brief: 'Bench run', status: 'launching', result_agent: 'agt_late1', created_at: '2026-10-10T08:00:00Z', expires_at: '2099-01-01T00:00:00Z' },
+      { id: 5, from: 'bob@lab', instance: 'inst_lab', group: 'ops', brief: 'Old', status: 'denied', reason: 'busy', created_at: '2026-10-09T08:00:00Z', expires_at: '2026-10-12T08:00:00Z' },
+    ]; },
+    approveSpawn: async (id, o) => { log.push(['approveSpawn', id, o]); return { id, group: 'ops', agent_id: 'agt_new', label: 'fixer' }; },
+    denySpawn: async (id, reason) => { log.push(['denySpawn', id, reason]); return { ok: true }; },
+    abandonSpawn: async (id) => { log.push(['abandonSpawn', id]); return { id, status: 'pending', warning: 'a late worker may still appear' }; },
+    sendSpawnRequest: async (body) => { log.push(['sendSpawn', body]); return { envelope_id: 'env1', to: 'ops@forge', state: 'queued', hub_connected: true }; },
+    outbox: async () => [{ envelope_id: 'env0', to: 'ops@forge', from: 'human operator', subject: 'spawn request', preview: 'Bench run', state: 'failed', attempts: 3, last_error: 'peer offline', updated_at: '2026-10-10T09:00:00Z' }],
     profile: async (n) => { log.push(['profile', n]); return { profile: {}, applied_peers: ['inst_forge'] }; },
     createProfile: async (o) => { log.push(['createProfile', o]); return { id: 'prof_new', name: o.name, revision: 1, definition: o.definition }; },
     saveProfile: async (o) => { log.push(['saveProfile', o]); if (o.revision === 99) { const e = new Error('reload the current profile revision'); e.status = 409; e.code = 'stale_profile'; throw e; } return { ...o, revision: o.revision + 1 }; },
@@ -652,6 +662,39 @@ test('accepting remote scripts confirms full remote code execution; node.exec gr
   const saves = s.runLog.filter((l) => l[0] === 'save').length;
   await s.click(s.q('#fleet-run-limits'));
   assert.equal(s.runLog.filter((l) => l[0] === 'save').length, saves, 'a non-numeric cpu is rejected, never sent');
+});
+
+test('spawn requests: approve with overrides, deny with a reason, abandon an unconfirmed launch, and ask a peer for a worker', async (t) => {
+  const s = await setup(t);
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Spawn requests/.test(b.textContent)));
+  const doc = s.harness.document;
+  const fill = async (sel, v, ev = 'input') => { const el = doc.querySelector(sel); el.value = v; await s.harness.act(() => s.harness.fireEvent(el, ev)); };
+  assert.deepEqual([...s.mounted.container.querySelectorAll('#fleet-spawn-requests tbody tr')].map((r) => r.dataset.spawn), ['7', '6'], 'decided requests are hidden by default');
+  assert.match(s.q('[data-spawn="7"]').textContent, /requester-paid/);
+  assert.match(s.q('#fleet-outbox').textContent, /failed.*peer offline/s);
+  await s.click(s.q('[data-spawn="7"] [data-fa="approve"]'));
+  await fill('#fleet-spawn-cwd', '/srv/ops');
+  await s.click(doc.querySelector('#fleet-spawn-approve-go'));
+  assert.match(s.confirms.at(-1).body, /starts in your group ops on this node, as you.*ada@forge's model gateway \(requester-paid.*worker permissions in the node profile/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'approveSpawn'), ['approveSpawn', 7, { cwd: '/srv/ops' }], 'unchanged requested fields are not sent as overrides');
+  await s.click(s.q('[data-spawn="7"] [data-fa="deny"]'));
+  await fill('#fleet-spawn-deny-reason', ' no capacity ');
+  await s.click(doc.querySelector('#fleet-spawn-deny-go'));
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'denySpawn'), ['denySpawn', 7, 'no capacity']);
+  await s.click(s.q('[data-spawn="6"] [data-fa="abandon"]'));
+  assert.match(s.confirms.at(-1).body, /original worker may still appear late \(agt_late1\)/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'abandonSpawn'), ['abandonSpawn', 6]);
+  await s.click(s.q('#fleet-spawn-new'));
+  assert.equal(doc.querySelector('#fleet-spawn-send-go').disabled, true, 'a brief and group are needed');
+  await fill('#fleet-spawn-group', 'ops');
+  await fill('#fleet-spawn-brief', 'Review the release notes');
+  await s.click(doc.querySelector('#fleet-spawn-send-go'));
+  assert.match(s.confirms.at(-1).body, /forge's operator gets your brief for its group ops.*starts right away without its operator deciding/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'sendSpawn'), ['sendSpawn', { brief: 'Review the release notes', group: 'ops', peer: 'inst_forge' }]);
+  const all = s.q('.fa-spawns input[type=checkbox]');
+  await s.check(all);
+  assert.equal(s.mounted.container.querySelectorAll('#fleet-spawn-requests tbody tr').length, 3);
 });
 
 test('grant launch settings and model gateway scopes reach the grant body and the confirm', async (t) => {

@@ -82,5 +82,14 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
     modelLeases: async () => (await call('GET', 'models/leases')) || [],
     revokeModelLease: (id) => call('POST', 'models/leases', { id }),
     modelUsage: async (day = '') => (await call('GET', `models/usage${day ? `?day=${encodeURIComponent(day)}` : ''}`)) || [],
+    // Spawn requests: incoming ones peers sent to this node's groups (all
+    // states, newest first), and asking a peer for a worker.
+    spawnRequests: async () => (await call('GET', 'spawn-requests')) || [],
+    sendSpawnRequest: (body) => call('POST', 'spawn-requests', body),
+    approveSpawn: (id, overrides = {}) => call('POST', `spawn-requests/${encodeURIComponent(id)}/approve`, overrides),
+    denySpawn: (id, reason = '') => call('POST', `spawn-requests/${encodeURIComponent(id)}/deny`, reason ? { reason } : {}),
+    abandonSpawn: (id) => call('POST', `spawn-requests/${encodeURIComponent(id)}/abandon`, { acknowledge_late_worker: true }),
+    // Delivery state of what this node sent peers (spawn requests, mail).
+    outbox: async (limit = 100) => (await call('GET', `outbox?limit=${limit}`)) || [],
   });
 }

@@ -2842,6 +2842,59 @@ transport mapping plus existing-access admission. Local-only features and the
 request mechanism itself are never requestable. An approval may shorten the
 requested lifetime, but cannot lengthen it or convert a finite request to a
 permanent grant. A permanent request can be approved with a finite lifetime.
+
+### Local dashboard bundle offers
+
+Local cookie-authenticated routes mirror the offer CLI handlers:
+`POST /api/federation/offer-config` accepts `{peer,bundle?,only?,skip?,allow_flagged?}`;
+`POST /api/federation/share-agent` accepts `{agent,peer,group,history?,allow_flagged?}`;
+`POST /api/federation/profiles/{name}/offer` accepts `{peer}` after the profile
+revision has been applied. `GET /api/federation/bundle-offers?direction=in|out`
+returns offer rows. POST `/{id}/fetch`, `/{id}/import` and `/{id}/decline` act on
+an incoming offer; add `?peer=INSTANCE_ID` to disambiguate its source.
+Import defaults to preview. Its body preserves the CLI fields: `apply`, `only`,
+`skip`, `replace`, `values`, `keep_paths`; agent offers also accept `cwd`,
+`worktree`, `group`, `name`, `skip_history` and `set`. Apply is explicit and uses
+the same live admission, credential findings, path and launch checks as the CLI.
+Responses retain the existing preview diffs and provenance. Every route is
+local operator administration and is refused through peer views.
+
+### Local dashboard labels and hub setup
+
+`GET /api/federation/node-labels` returns `{labels:[...]}`; POST accepts
+`{add:[...],remove:[...]}` and shares the CLI's label validation and normalized
+label set. GET/HEAD are reads. These cookie-authenticated routes are local-only.
+Hub setup already uses `POST /api/federation/config` with optional
+`enabled`, `hub_url`, `name`, `invite` and `hub_ca_file` fields. Omitted fields
+are preserved; CA file paths refer to this node's filesystem. URL validation,
+configuration writes and client reload are shared with `federation connect`.
+
+### Local dashboard jobs, repositories and viewers
+
+Local cookie-authenticated `/api/federation/jobs` mirrors the CLI:
+POST submits `{peer|node|nodes,repo,ref,group,harness?,command,timeout_seconds,
+require?,prefer?}`, GET returns `{jobs:[...]}`, and GET `/{id}` returns the durable
+job row. POST `/{id}/cancel`, `/approve`, `/retry` and `/acknowledge-stopped`
+share the CLI handlers; the last requires `{acknowledge_stopped:true}` and a
+confirmed stopped, uncertain local job. GET `/{id}/logs` returns completed output
+JSON. GET `/{id}/follow` streams `application/vnd.tclaude.job-frames` using the
+CLI frame contract. Job actions use this local route with an explicit trusted
+peer selection, including when the dashboard is displaying a remote node.
+
+GET `/api/federation/repos` returns `{repos:[...]}`; POST accepts
+`{name,url,clone,groups:[...]}`, PUT `/{name}` also carries the current `revision`,
+and DELETE `/{name}` disables it. Repository aliases, inspected canonical local
+paths, receiving groups and revisions retain the CLI validation and checks.
+GET/HEAD list requests never mutate the allowlist. Each repository row also carries
+`group_names`, the current names in `definition.groups` order, omitting deleted
+groups while preserving the relative order of surviving names. Create and update
+responses carry this field too; the stored group IDs remain the authority.
+
+GET `/api/federation/viewers?session=...` lists incoming terminal viewer rows
+(`id`, `peer`, `agent`, `session`, `group`, `read_only`, `started`, `incoming`).
+The optional session filter matches an agent ID or session name. POST
+`/viewers/{id}/kick` disconnects the named incoming viewer and returns `{ok:true}`.
+All these routes are local operator administration and are refused through peer views.
 ### Local dashboard away administration
 
 `GET /api/federation/away` reads `{away: null|{cover,since,until}}`;
