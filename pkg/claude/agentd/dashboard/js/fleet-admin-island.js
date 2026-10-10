@@ -10,6 +10,7 @@ import { HarnessesPage } from './fleet-admin-harnesses.js';
 import { createHarnessActions } from './fleet-harness-actions.js';
 import { NodeUpdateDialog } from './node-update.js';
 import { RunPage } from './fleet-admin-run.js';
+import { ViewersPanel } from './fleet-admin-viewers.js';
 import { createRunActions } from './fleet-run-actions.js';
 import { dashboardState } from './snapshot-store.js';
 import { shellConfirm, shellToast } from './shell-state.js';
@@ -346,7 +347,7 @@ export function FleetAdmin({
     <div class="fa-subtabs" role="tablist">${SUB_PAGES.map((p) => html`<button type="button" role="tab" key=${p.id} aria-selected=${p.id === sub.id ? 'true' : 'false'}
       class=${`fa-subtab${p.id === sub.id ? ' on' : ''}`} onClick=${() => setPage(p.id)}>${p.label}</button>`)}</div>
     ${sub.id === 'peers'
-      ? html`<${PeersPage} view=${view} now=${now()} onTrust=${(r) => setDialog({ kind: 'trust', row: r })}
+      ? html`${active && html`<${ViewersPanel} view=${view} actions=${actions} confirm=${confirm} toast=${toast} timers=${timers} />`}<${PeersPage} view=${view} now=${now()} onTrust=${(r) => setDialog({ kind: 'trust', row: r })}
           onUnrestrict=${(r) => setDialog({ kind: 'unrestrict', row: r })} onRestrict=${restrict} onUntrust=${untrust}
           onGrants=${(r) => { setGrantTarget(r.id); setPage('grants'); }} />`
       : sub.id === 'harnesses'

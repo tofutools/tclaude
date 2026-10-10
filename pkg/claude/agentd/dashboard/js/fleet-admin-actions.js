@@ -36,6 +36,9 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
     trust: (opts) => call('POST', 'peers/trust', trustBody(opts)),
     untrust: (instance) => call('POST', 'peers/untrust', { instance }),
     setHubEnabled: (enabled) => call('POST', 'config', { enabled }),
+    // Peers viewing this node's agent terminals now; kick closes one view.
+    viewers: async () => (await call('GET', 'viewers')) || [],
+    kickViewer: (id) => call('POST', `viewers/${encodeURIComponent(id)}/kick`, {}),
     // target is a peer instance ID or group:<pool name>.
     grants: async (target) => (await call('GET', `grants?peer=${encodeURIComponent(target)}`))?.grants || [],
     grant: (body) => call('POST', 'grants', body),
