@@ -151,8 +151,9 @@ type peerView struct {
 	groupName  string
 }
 type peerViewOmission struct {
-	Feature  string `json:"feature"`
-	Requires string `json:"requires"`
+	Requestable bool   `json:"requestable"`
+	Feature     string `json:"feature"`
+	Requires    string `json:"requires"`
 }
 type peerViewMetadata struct {
 	Peer     string             `json:"peer"`
@@ -215,7 +216,9 @@ func (v *peerView) metadata() peerViewMetadata {
 		if allowed {
 			out.Included = append(out.Included, rule.feature)
 		} else {
-			out.Omitted = append(out.Omitted, peerViewOmission{rule.feature, rule.requires})
+			_, requestable := requestablePeerPermission(rule.requires)
+			requestable = requestable && !rule.accessRequest && !rule.visible && !rule.publicRead && (rule.serve != nil || rule.write != nil) && peerHasAccess(v.peer.InstanceID)
+			out.Omitted = append(out.Omitted, peerViewOmission{Feature: rule.feature, Requires: rule.requires, Requestable: requestable})
 		}
 	}
 	sort.Strings(out.Included)

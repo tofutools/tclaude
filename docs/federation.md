@@ -2826,6 +2826,14 @@ requests and terminal decisions without copying the reason into audit logs.
 Agents continue to request missing local cross-node permissions from their own
 operator using the existing `--ask-human` path.
 
+Peer snapshot and group reads include each visible group's stable numeric `id`,
+which is the `group_id` used in permission requests. Omitted feature entries
+include `requestable: true|false`, derived from the dispatcher's permission and
+transport mapping plus existing-access admission. Local-only features and the
+request mechanism itself are never requestable. An approval may shorten the
+requested lifetime, but cannot lengthen it or convert a finite request to a
+permanent grant. A permanent request can be approved with a finite lifetime.
+
 ### Local dashboard labels and hub setup
 
 `GET /api/federation/node-labels` returns `{labels:[...]}`; POST accepts

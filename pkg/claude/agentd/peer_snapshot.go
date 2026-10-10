@@ -94,7 +94,7 @@ func (v *peerView) groups() ([]dashboardGroup, []dashboardAgent, error) {
 		if g.IsArchived() || (v != nil && !fedPeerGroupVisible(v.peer.InstanceID, g.ID)) {
 			continue
 		}
-		row := dashboardGroup{Name: g.Name, Descr: g.Descr, Members: []dashboardMember{}}
+		row := dashboardGroup{ID: g.ID, Name: g.Name, Descr: g.Descr, Members: []dashboardMember{}}
 		status := v.allows(rules["GET /api/snapshot"], g.ID)
 		roster := v.allows(rules["feature:roster"], g.ID)
 		presence := v.allows(rules["feature:presence"], g.ID)
