@@ -1178,6 +1178,7 @@ func registerFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/harnesses/operations/jobs/{id}", handleLocalHarnessOperations)
 
 	registerFederationPeerViewRoutes(mux)
+	registerFederationAccessRequestRoutes(mux)
 	registerFederationNodeGroupRoutes(mux)
 	registerFederationNodeProfileRoutes(mux)
 	registerFederationRepoRoutes(mux)

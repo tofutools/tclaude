@@ -3,6 +3,8 @@ package agentd
 import "net/http"
 
 func registerDashboardFederationRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/federation/access-requests", dashboardFederationRoute(handleFederationAccessRequests))
+	mux.HandleFunc("POST /api/federation/access-requests/{id}/decision", dashboardFederationRoute(handleFederationAccessRequests))
 	mux.HandleFunc("GET /api/federation/status", dashboardFederationRoute(handleFederationStatus))
 	mux.HandleFunc("GET /api/federation/links", dashboardFederationRoute(handleFederationLinks))
 	mux.HandleFunc("GET /api/federation/audit", dashboardFederationRoute(handleFederationAudit))
