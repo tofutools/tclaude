@@ -91,3 +91,21 @@ func TestCloneArrivalBriefingWithoutFollowup(t *testing.T) {
 	assert.Contains(t, brief, id)
 	assertNoSendKeysTo(t, f, c.TmuxTarget())
 }
+
+func TestCloneArrivalBriefingCwdAlias(t *testing.T) {
+	f := newFlow(t)
+	const source = "c1f1aaaa-bbbb-cccc-dddd-eeeeffff0002"
+	cwd := testutil.CanonicalTempDir(t)
+	alias := filepath.Join(testutil.CanonicalTempDir(t), "project-alias")
+	require.NoError(t, os.Symlink(cwd, alias))
+	f.HaveConvWithTitle(source, "alias-traveller")
+	f.HaveEnrolledAgent(source)
+	f.HaveAliveSession(source, "arrival-alias-source", "arrival-alias-pane", alias)
+	f.HaveGroup("project")
+	f.HaveMember("project", source)
+	c := f.AsHuman().CloneWith(source, map[string]any{"no_copy_conv": true})
+	require.Equal(t, 200, c.Code, c.Raw)
+	brief := arrivalInbox(t, c.NewConv)
+	assert.Contains(t, brief, "inherited source cwd")
+	assert.NotContains(t, brief, "explicit clone cwd")
+}
