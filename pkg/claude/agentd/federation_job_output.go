@@ -111,7 +111,7 @@ func readFederationJobOutput(f *os.File, j *db.FederationJob, c fedJobOutputCurs
 		if frame.Offset != expected {
 			return out, jobstream.ErrGap
 		}
-		if err = c.Cursor.Apply(frame, io.Discard, io.Discard); err != nil {
+		if err = c.Apply(frame, io.Discard, io.Discard); err != nil {
 			return out, err
 		}
 		out.Chunks = append(out.Chunks, fedJobOutputChunk{Stream: streamName, Data: base64.StdEncoding.EncodeToString(frame.Data), Encoding: "base64"})
