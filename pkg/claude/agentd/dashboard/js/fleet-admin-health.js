@@ -13,15 +13,16 @@ const HEALTH_SIGNALS = [
   { key: 'failures', label: 'repeated job / spawn failures' },
 ];
 
-// HEALTH_NUMBERS mirror config.FederationHealthPolicy's limits.
+// HEALTH_NUMBERS mirror config.FederationHealthPolicy's limits; def is the
+// daemon's built-in default (effectiveFleetPolicy).
 export const HEALTH_NUMBERS = [
-  { key: 'debounce_seconds', label: 'debounce', unit: 's', max: 86400 },
-  { key: 'disk_free_percent', label: 'disk free under', unit: '%', max: 100, float: true },
-  { key: 'ram_free_percent', label: 'RAM free under', unit: '%', max: 100, float: true },
-  { key: 'memory_seconds', label: 'for at least', unit: 's', max: 86400 },
-  { key: 'failure_count', label: 'failures', unit: '', max: 256 },
-  { key: 'failure_window_seconds', label: 'within', unit: 's', max: 86400 },
-  { key: 'cooldown_seconds', label: 'cooldown', unit: 's', max: 86400 },
+  { key: 'debounce_seconds', def: 15, label: 'debounce', unit: 's', max: 86400 },
+  { key: 'disk_free_percent', def: 10, label: 'disk free under', unit: '%', max: 100, float: true },
+  { key: 'ram_free_percent', def: 10, label: 'RAM free under', unit: '%', max: 100, float: true },
+  { key: 'memory_seconds', def: 120, label: 'for at least', unit: 's', max: 86400 },
+  { key: 'failure_count', def: 3, label: 'failures', unit: '', max: 256 },
+  { key: 'failure_window_seconds', def: 600, label: 'within', unit: 's', max: 86400 },
+  { key: 'cooldown_seconds', def: 600, label: 'cooldown', unit: 's', max: 86400 },
 ];
 
 export function policyForm(p) {
@@ -31,7 +32,8 @@ export function policyForm(p) {
 }
 
 // policyBody turns the form into the replacement policy, or an error string.
-// An empty number is sent as 0: the daemon's built-in default.
+// An empty number, or one equal to the built-in default, is left out so the
+// policy keeps following the built-in default.
 export function policyBody(form) {
   const body = { presence: !!form.presence, resources: !!form.resources, failures: !!form.failures };
   for (const n of HEALTH_NUMBERS) {
@@ -40,7 +42,7 @@ export function policyBody(form) {
     if (!Number.isFinite(v) || v < 0 || v > n.max || (!n.float && !Number.isInteger(v))) {
       return `${n.label}: ${n.float ? 'a number' : 'a whole number'} from 0 to ${n.max} (empty or 0 = default)`;
     }
-    if (v) body[n.key] = v;
+    if (v && v !== n.def) body[n.key] = v;
   }
   return body;
 }

@@ -881,7 +881,7 @@ test('node settings: the fleet health policy reads per scope, validates, and con
   assert.match(s.confirms.at(-1).title, /Replace forge's fleet health policy\?/);
   assert.match(s.confirms.at(-1).body, /forge no longer follows the defaults.*Notices on: low disk, sustained high memory; repeated job \/ spawn failures\./);
   assert.deepEqual(s.log.findLast((l) => l[0] === 'setHealth'), ['setHealth', 'inst_forge', { presence: false, resources: true, failures: true,
-    debounce_seconds: 15, disk_free_percent: 5, ram_free_percent: 10, memory_seconds: 120, failure_window_seconds: 600, cooldown_seconds: 600 }], 'an emptied number falls back to the built-in default');
+    disk_free_percent: 5 }], 'emptied numbers and built-in default values are left out, so they keep following the default');
   assert.match(s.toasts.at(-1), /Fleet health policy saved/);
 });
 

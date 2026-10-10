@@ -116,8 +116,8 @@ export function NodeSettingsDialog({ self, peers = [], actions, confirm, toast, 
       <label class="fa-ns-row"><span class="fa-k">labels</span><input id="fleet-node-labels" value=${labelText} placeholder="gpu, ci, linux" autocomplete="off" spellcheck="false" onInput=${(e) => setLabelText(e.currentTarget.value)} /></label>
       <div class="fa-ns-actions"><button id="fleet-labels-save" type="button" onClick=${saveLabels}>Save labels…</button>
         <span class="muted">CLI: <code>tclaude federation node-labels [--add …] [--remove …]</code></span></div>`}
-    <${HealthPolicySection} peers=${peers} actions=${actions} confirm=${confirm} toast=${toast} />
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
+    <${HealthPolicySection} peers=${peers} actions=${actions} confirm=${confirm} toast=${toast} />
     <div class="modal-buttons"><span class="spacer"></span><button type="button" onClick=${onClose}>Close</button></div>
   </${Overlay}>`;
 }
