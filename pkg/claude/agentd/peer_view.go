@@ -8,11 +8,16 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
+
+// Optional observation at the receiver's production dispatch boundary. Tests
+// install this before starting traffic; normal daemon operation has no observer.
+var peerViewObserver atomic.Pointer[func() func()]
 
 // PeerViewHandler is the receiving-node UI boundary. Its caller must authenticate
 // the transport and supply the pinned instance ID, never a request header or
@@ -25,6 +30,9 @@ func PeerViewHandler(instanceID string) http.Handler {
 			continue
 		}
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+			if observer := peerViewObserver.Load(); observer != nil {
+				defer (*observer)()()
+			}
 			p, err := db.GetFederationPeer(instanceID)
 			if err != nil || p == nil {
 				writeError(w, 403, "peer_view", "trusted peer required")
