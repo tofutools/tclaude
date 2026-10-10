@@ -260,3 +260,58 @@ func TestFederationLandingAutomaticPolicyFallback(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, cwd, sessions[0].Cwd)
 }
+
+func TestFederationLandingRecoversUndispatchedCheckout(t *testing.T) {
+	fh := newFedHarness(t)
+	fh.f.HaveGroup("team")
+	fedReceiveAgents(t, fh, "team")
+	fedJobRepo(t, fh)
+	repo, err := db.GetFederationRepo("project")
+	require.NoError(t, err)
+	repo.Definition.URL = "https://127.0.0.1:1/project.git"
+	require.NoError(t, db.SaveFederationRepo(repo))
+	for _, dispatched := range []bool{false, true} {
+		t.Run(map[bool]string{false: "undispatched", true: "uncertain_dispatched"}[dispatched], func(t *testing.T) {
+			b := fedAgentBundle(t)
+			b.Manifest.Agent.Paths.RepoURL = repo.Definition.URL
+			d := fedAgentOffer(t, fh.peer, "team", b)
+			require.Equal(t, proto.AckAccepted, fedAckFor(t, fh.peer, d.ID).Status)
+			path := "/v1/federation/bundle-offers/" + d.ID + "/import"
+			rec := fedHuman(t, fh.f, http.MethodPost, path, nil)
+			require.Equal(t, 200, rec.Code, rec.Body.String())
+			var reply landingFlowReply
+			testharness.DecodeJSON(t, rec, &reply)
+			reserved := db.NewAgentID()
+			require.NoError(t, db.ReserveFederationBundleImport(fh.peer.id.ID(), d.ID, reserved))
+			root := filepath.Dir(reply.Landing.Cwd)
+			require.NoError(t, os.MkdirAll(root, 0700))
+			marker := filepath.Join(root, "partial")
+			require.NoError(t, os.WriteFile(marker, []byte("interrupted preparation"), 0600))
+			if dispatched {
+				require.NoError(t, db.SetFederationBundleLaunchLabel(reserved, "uncertain-worker"))
+			}
+			// The real list route runs daemon recovery; simulate its durable crash state
+			// without killing the test process or replacing the import implementation.
+			rec = fedHuman(t, fh.f, http.MethodGet, "/v1/federation/bundle-offers?direction=in", nil)
+			require.Equal(t, 200, rec.Code, rec.Body.String())
+			row, err := db.GetFederationBundleOffer("in", fh.peer.id.ID(), d.ID)
+			require.NoError(t, err)
+			if dispatched {
+				require.Equal(t, reserved, row.ImportAgent)
+				_, err = os.Stat(marker)
+				require.NoError(t, err)
+				rec = fedHuman(t, fh.f, http.MethodPost, path, map[string]any{"apply": true})
+				require.Equal(t, 409, rec.Code)
+				require.Contains(t, rec.Body.String(), "launch_reserved")
+				return
+			}
+			require.Empty(t, row.ImportAgent)
+			_, err = os.Stat(root)
+			require.True(t, os.IsNotExist(err))
+			rec = fedHuman(t, fh.f, http.MethodPost, path, map[string]any{"apply": true})
+			require.Equal(t, 200, rec.Code, rec.Body.String())
+			_, err = os.Stat(filepath.Join(reply.Landing.Cwd, "hello"))
+			require.NoError(t, err)
+		})
+	}
+}

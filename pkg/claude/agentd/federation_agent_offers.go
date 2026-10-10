@@ -409,12 +409,7 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 			if released, err := db.ReleaseUnlaunchedFederationBundleImport(o.Peer, o.Descriptor.ID, reserved); err == nil && released {
 				o.ImportAgent = ""
 				_ = db.DeleteFederationAgentMove("in", o.Peer, o.Descriptor.ID)
-				if row, err := db.GetFederationTeleport("in", o.Peer, o.Descriptor.ID); err == nil && row != nil {
-					old := row.State
-					row.State, row.TargetAgent = "pending", ""
-					cleanupUnlaunchedTeleportCheckout(row)
-					_, _ = db.TransitionFederationTeleport(*row, old)
-				}
+				cleanupReleasedFederationLanding(o)
 			}
 		}
 

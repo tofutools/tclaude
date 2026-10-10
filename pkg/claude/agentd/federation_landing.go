@@ -16,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/federation/jobrepo"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 type federationLandingRepo struct {
@@ -262,4 +263,19 @@ func teleportLandingFromRequestContext(ctx context.Context) *teleportLandingAuth
 }
 func federationLandingError(written string) string {
 	return fmt.Sprintf("%s; choose --cwd or --landing from the receiver preview", written)
+}
+
+// Call only after the DB has positively released an undispatched reservation.
+// An uncertain or dispatched launch may still be using its checkout.
+func cleanupReleasedFederationLanding(o *db.FederationBundleOffer) {
+	if !proto.ValidInstanceID(o.Peer) || !proto.ValidStreamID(o.Descriptor.ID) {
+		return
+	}
+	_ = os.RemoveAll(filepath.Join(config.DataDir(), "federation", "landing-checkouts", o.Peer, o.Descriptor.ID))
+	if row, err := db.GetFederationTeleport("in", o.Peer, o.Descriptor.ID); err == nil && row != nil {
+		old := row.State
+		row.State, row.TargetAgent = "pending", ""
+		cleanupUnlaunchedTeleportCheckout(row)
+		_, _ = db.TransitionFederationTeleport(*row, old)
+	}
 }
