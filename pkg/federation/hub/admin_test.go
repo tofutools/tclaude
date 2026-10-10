@@ -53,7 +53,7 @@ func TestHubAdminClaimPrivateSingleUseAndRestart(t *testing.T) {
 	require.Empty(t, next, "admins must survive restarts")
 	caps, err := st.AdminCapabilities(id.ID())
 	require.NoError(t, err)
-	require.ElementsMatch(t, proto.HubAdminCapabilities, caps)
+	require.ElementsMatch(t, proto.HubAdminBootstrapCapabilities, caps)
 	generation, err := st.AdminGeneration()
 	require.NoError(t, err)
 	reset, err := st.PrepareAdminClaim(true, time.Now())
@@ -128,7 +128,7 @@ func TestHubAdminRotationCarriesExactCapabilities(t *testing.T) {
 	require.Empty(t, oldCaps)
 	caps, err := st.AdminCapabilities(next.ID())
 	require.NoError(t, err)
-	require.ElementsMatch(t, proto.HubAdminCapabilities, caps)
+	require.ElementsMatch(t, proto.HubAdminBootstrapCapabilities, caps)
 	requireAdminCode(t, st.RemoveAdmin(next.ID()), "last_admin")
 }
 func TestHubAdminSettingsLiveAndPersisted(t *testing.T) {

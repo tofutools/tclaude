@@ -13,6 +13,11 @@ import (
 )
 
 func registerFederationHubRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /v1/federation/hub/run", hubOperatorRoute("run.status"))
+	mux.HandleFunc("POST /v1/federation/hub/run", hubOperatorRoute("run.start"))
+	mux.HandleFunc("GET /v1/federation/hub/run/jobs/{job_id}", hubOperatorRoute("run.job"))
+	mux.HandleFunc("GET /v1/federation/hub/run/jobs/{job_id}/logs", hubOperatorRoute("run.logs"))
+	mux.HandleFunc("GET /v1/federation/hub/audit", hubOperatorRoute("audit"))
 	mux.HandleFunc("GET /v1/federation/hub/status", hubOperatorRoute("status"))
 	mux.HandleFunc("POST /v1/federation/hub/claim", hubOperatorRoute("claim"))
 	mux.HandleFunc("GET /v1/federation/hub/admins", hubOperatorRoute("admins.list"))
@@ -57,12 +62,23 @@ func hubOperatorRoute(operation string) http.HandlerFunc {
 				return
 			}
 		}
-		for _, key := range []string{"instance", "token_hash"} {
+		for _, key := range []string{"instance", "token_hash", "job_id"} {
 			if value := r.PathValue(key); value != "" {
 				payload[key] = value
 			}
 		}
 		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			if stream := r.URL.Query().Get("stream"); stream != "" {
+				payload["stream"] = stream
+			}
+			if value := r.URL.Query().Get("offset"); value != "" {
+				n, err := strconv.ParseInt(value, 10, 64)
+				if err != nil || n < 0 {
+					writeError(w, 400, "invalid_arg", "invalid offset")
+					return
+				}
+				payload["offset"] = n
+			}
 			if cursor := r.URL.Query().Get("cursor"); cursor != "" {
 				payload["cursor"] = cursor
 			}

@@ -16,6 +16,7 @@ import (
 
 var adminMethodCapability = map[string]string{
 	"status": "", "claim": "",
+	"run.status": "@admin", "run.start": "hub.exec", "run.job": "@admin", "run.logs": "hub.exec", "audit": "hub.logs.read",
 	"admins.list": "hub.admins.manage", "admins.add": "hub.admins.manage", "admins.remove": "hub.admins.manage",
 	"admissions.list": "hub.admissions.manage", "admissions.admit": "hub.admissions.manage", "admissions.revoke": "hub.admissions.manage",
 	"invites.list": "hub.invites.manage", "invites.create": "hub.invites.manage", "invites.revoke": "hub.invites.manage",
@@ -89,20 +90,25 @@ func (h *Hub) adminRequest(c *conn, frame *proto.Frame, size int) {
 }
 
 type adminParams struct {
-	Instance     string            `json:"instance"`
-	Capabilities []string          `json:"capabilities"`
-	Spaces       []string          `json:"spaces"`
-	Token        string            `json:"token"`
-	TokenHash    string            `json:"token_hash"`
-	Space        string            `json:"space"`
-	TTLSeconds   int64             `json:"ttl_seconds"`
-	Overrides    map[string]*int64 `json:"overrides"`
-	Old          string            `json:"old"`
-	New          string            `json:"new"`
-	Fingerprint  string            `json:"fingerprint"`
-	Apply        bool              `json:"apply"`
-	Cursor       string            `json:"cursor"`
-	MaxEntries   int               `json:"max_entries"`
+	Instance       string            `json:"instance"`
+	Capabilities   []string          `json:"capabilities"`
+	Spaces         []string          `json:"spaces"`
+	Token          string            `json:"token"`
+	TokenHash      string            `json:"token_hash"`
+	Space          string            `json:"space"`
+	TTLSeconds     int64             `json:"ttl_seconds"`
+	Overrides      map[string]*int64 `json:"overrides"`
+	Old            string            `json:"old"`
+	New            string            `json:"new"`
+	Fingerprint    string            `json:"fingerprint"`
+	Apply          bool              `json:"apply"`
+	Cursor         string            `json:"cursor"`
+	MaxEntries     int               `json:"max_entries"`
+	Script         string            `json:"script"`
+	TimeoutSeconds int64             `json:"timeout_seconds"`
+	JobID          string            `json:"job_id"`
+	Stream         string            `json:"stream"`
+	Offset         int64             `json:"offset"`
 }
 
 func decodeAdminParams(raw []byte) (adminParams, error) {
@@ -134,6 +140,10 @@ func (h *Hub) executeAdmin(c *conn, req *proto.HubAdminRequest) (any, error) {
 		return nil, err
 	}
 	switch req.Method {
+	case "run.status", "run.start", "run.job", "run.logs":
+		return h.executeRun(c, req.Method, p)
+	case "audit":
+		return h.auditRows(c, p)
 	case "status":
 		admins, err := h.store.Admins()
 		if err != nil {

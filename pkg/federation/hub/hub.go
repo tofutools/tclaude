@@ -19,10 +19,13 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/tofutools/tclaude/pkg/federation/proto"
+	"github.com/tofutools/tclaude/pkg/noderun"
 )
 
 // Config tunes a Hub. Zero values pick defaults.
 type Config struct {
+	AcceptRemoteScripts *bool
+
 	// Open admits any instance that proves key possession into
 	// DefaultSpace. Development only.
 	Open           bool
@@ -95,6 +98,8 @@ func (c *Config) defaults() {
 
 // Hub routes envelopes between connected instances.
 type Hub struct {
+	runs *noderun.Service
+
 	cfg        Config
 	effective  atomic.Pointer[Config]
 	adminMu    sync.Mutex
@@ -155,6 +160,9 @@ func New(store *Store, cfg Config) (*Hub, error) {
 			h.log.Warn("serve value overridden by persisted remote setting", "field", field, "serve_value", spec.Boot, "db_value", spec.Effective)
 		}
 	}
+	if err = h.initExec(); err != nil {
+		return nil, err
+	}
 	h.wg.Add(1)
 	go h.refreshLoop()
 	return h, nil
@@ -197,6 +205,9 @@ func (h *Hub) Close() {
 	streams := h.streamsToDropLocked(func(string) bool { return false })
 	h.mu.Unlock()
 	close(h.stop)
+	if h.runs != nil {
+		h.runs.Close()
+	}
 	for _, c := range conns {
 		c.fail(proto.CodeShuttingDown, "hub shutting down")
 	}

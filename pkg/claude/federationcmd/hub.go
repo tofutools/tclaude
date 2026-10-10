@@ -38,6 +38,7 @@ type hubResourceParams struct {
 
 func hubCmd() *cobra.Command {
 	sub := []*cobra.Command{
+		hubRunCmd(),
 		boa.CmdT[hubClaimParams]{Use: "claim", Short: "Claim hub administration using the host's one-time token", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *hubClaimParams, _ *cobra.Command, _ []string) {
 			os.Exit(runHubCall("POST", "claim", map[string]any{"token": p.Token}, os.Stdout, os.Stderr))
 		}}.ToCobra(),
@@ -47,7 +48,7 @@ func hubCmd() *cobra.Command {
 			os.Exit(runHubCall("GET", resource, nil, os.Stdout, os.Stderr))
 		}}.ToCobra())
 	}
-	for _, resource := range []string{"admins", "admissions", "invites", "spaces", "settings", "identity", "logs"} {
+	for _, resource := range []string{"admins", "admissions", "invites", "spaces", "settings", "identity", "logs", "audit"} {
 		sub = append(sub, boa.CmdT[hubResourceParams]{Use: resource, Short: "Manage hub " + resource + " (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *hubResourceParams, _ *cobra.Command, _ []string) {
 			os.Exit(runHubResource(resource, p, os.Stdout, os.Stderr))
 		}}.ToCobra())
@@ -59,7 +60,7 @@ func runHubResource(resource string, p *hubResourceParams, stdout, stderr io.Wri
 	body := map[string]any{}
 	invalid := func(message string) int { return fail(stderr, fmt.Errorf("%s: %s", resource, message)) }
 	switch resource + "/" + p.Action {
-	case "admins/list", "admissions/list", "invites/list", "spaces/list", "settings/get", "logs/tail":
+	case "admins/list", "admissions/list", "invites/list", "spaces/list", "settings/get", "logs/tail", "audit/list":
 	case "admins/add":
 		if p.Instance == "" || len(p.Capabilities) == 0 {
 			return invalid("add requires --instance and --capabilities")

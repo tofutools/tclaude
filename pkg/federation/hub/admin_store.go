@@ -381,10 +381,18 @@ func (s *Store) AuthorizeAdminRequest(instance string, pub []byte, r *proto.HubA
 	if retired != 0 {
 		return adminErr(403, "not_admitted", "identity is retired or conflicted")
 	}
-	if capability != "" {
+	if capability == "@admin" {
+		var key []byte
+		if err = tx.QueryRow(`SELECT pubkey FROM hub_admins WHERE instance_id=?`, instance).Scan(&key); err != nil || string(key) != string(pub) {
+			return adminErr(403, "not_admin", "hub admin authority required")
+		}
+	} else if capability != "" {
 		var key []byte
 		var count int
 		if err = tx.QueryRow(`SELECT a.pubkey,count(c.capability) FROM hub_admins a LEFT JOIN hub_admin_capabilities c ON c.instance_id=a.instance_id AND c.capability=? WHERE a.instance_id=? GROUP BY a.instance_id`, capability, instance).Scan(&key, &count); err != nil || count != 1 || string(key) != string(pub) {
+			if capability == "hub.exec" {
+				return adminErr(403, "hub_exec_required", "hub.exec capability required")
+			}
 			return adminErr(403, "not_admin", "hub admin capability required")
 		}
 	}

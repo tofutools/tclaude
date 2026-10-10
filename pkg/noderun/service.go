@@ -48,37 +48,45 @@ func (r *Request) Validate() error {
 }
 
 type Job struct {
-	ID             string    `json:"id"`
-	Actor          string    `json:"actor"`
-	Peer           string    `json:"peer,omitempty"`
-	Node           string    `json:"node"`
-	State          string    `json:"state"`
-	ScriptSHA256   string    `json:"script_sha256"`
-	ScriptBytes    int       `json:"script_bytes"`
-	TimeoutSeconds int64     `json:"timeout_seconds"`
-	CreatedAt      time.Time `json:"created_at"`
-	FinishedAt     time.Time `json:"finished_at,omitempty"`
-	DurationMS     int64     `json:"duration_ms"`
-	ExitCode       int       `json:"exit_code"`
-	Error          string    `json:"error,omitempty"`
-	StdoutTail     string    `json:"stdout_tail"`
-	StderrTail     string    `json:"stderr_tail"`
+	ID              string    `json:"id"`
+	Actor           string    `json:"actor"`
+	Peer            string    `json:"peer,omitempty"`
+	Node            string    `json:"node"`
+	State           string    `json:"state"`
+	ScriptSHA256    string    `json:"script_sha256"`
+	ScriptBytes     int       `json:"script_bytes"`
+	TimeoutSeconds  int64     `json:"timeout_seconds"`
+	CreatedAt       time.Time `json:"created_at"`
+	FinishedAt      time.Time `json:"finished_at,omitempty"`
+	DurationMS      int64     `json:"duration_ms"`
+	ExitCode        int       `json:"exit_code"`
+	Error           string    `json:"error,omitempty"`
+	StdoutBytes     int64     `json:"stdout_bytes"`
+	StderrBytes     int64     `json:"stderr_bytes"`
+	OutputTruncated bool      `json:"output_truncated"`
+	StdoutTail      string    `json:"stdout_tail"`
+	StderrTail      string    `json:"stderr_tail"`
 }
 type Result struct {
-	Stdout, Stderr string
-	ExitCode       int
-	Error          string
+	Stdout, Stderr  string
+	ExitCode        int
+	Error           string
+	TimedOut        bool
+	OutputTruncated bool
 }
 type Execute func(context.Context, string, string, int64) Result
 type Service struct {
-	mu       sync.Mutex
-	dir      string
-	jobs     map[string]Job
-	active   map[string]context.CancelFunc
-	closed   bool
-	wg       sync.WaitGroup
-	execute  Execute
-	finished func(Job)
+	mu        sync.Mutex
+	dir       string
+	jobs      map[string]Job
+	active    map[string]context.CancelFunc
+	closed    bool
+	wg        sync.WaitGroup
+	execute   Execute
+	finished  func(Job)
+	streaming ExecuteStreaming
+	started   func(Job, Request) error
+	recovered []Job
 }
 
 func ValidID(id string) bool { return len(id) == 32 && strings.Trim(id, "0123456789abcdef") == "" }
@@ -117,6 +125,7 @@ func New(dir string, execute Execute, finished func(Job)) (*Service, error) {
 			if err := s.save(j); err != nil {
 				return nil, err
 			}
+			s.recovered = append(s.recovered, j)
 		}
 		s.jobs[j.ID] = j
 	}
@@ -186,6 +195,17 @@ func (s *Service) Start(req Request, actor, peer, node string, authorize func() 
 	if err := s.save(j); err != nil {
 		return Job{}, err
 	}
+	if s.started != nil {
+		if err := s.started(j, req); err != nil {
+			j.State = "failed"
+			j.Error = "script audit unavailable"
+			j.ExitCode = 125
+			j.FinishedAt = time.Now().UTC()
+			saveErr := s.save(j)
+			s.jobs[id] = j
+			return Job{}, errors.Join(err, saveErr)
+		}
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.active[id] = cancel
 	s.jobs[id] = j
@@ -216,7 +236,11 @@ func (s *Service) run(ctx context.Context, j Job, authorize func() bool) {
 	}()
 	result := Result{ExitCode: 125, Error: "script authority unavailable"}
 	if authorize() {
-		result = s.execute(watchCtx, filepath.Join(s.dir, j.ID, "script.sh"), j.ID, j.TimeoutSeconds)
+		if s.streaming != nil {
+			result = s.executeStreaming(watchCtx, j)
+		} else {
+			result = s.execute(watchCtx, filepath.Join(s.dir, j.ID, "script.sh"), j.ID, j.TimeoutSeconds)
+		}
 	}
 	j.ExitCode = result.ExitCode
 	j.Error = result.Error
@@ -224,8 +248,12 @@ func (s *Service) run(ctx context.Context, j Job, authorize func() bool) {
 		j.Error = j.Error[:TailBytes]
 	}
 	j.State = "completed"
+	j.OutputTruncated = result.OutputTruncated
 	if result.ExitCode != 0 || result.Error != "" {
 		j.State = "failed"
+	}
+	if result.TimedOut {
+		j.State = "timed_out"
 	}
 	select {
 	case <-revoked:
@@ -251,12 +279,16 @@ func (s *Service) run(ctx context.Context, j Job, authorize func() bool) {
 		result.Stderr = result.Stderr[:MaxOutputBytes+4096]
 	}
 	for name, data := range map[string]string{"stdout": result.Stdout, "stderr": result.Stderr} {
-		if err := writeDurableFile(filepath.Join(s.dir, j.ID, name+".log"), []byte(data)); err != nil {
-			j.State = "failed"
-			j.Error = "could not persist script output"
-			j.ExitCode = 125
+		if s.streaming == nil {
+			if err := writeDurableFile(filepath.Join(s.dir, j.ID, name+".log"), []byte(data)); err != nil {
+				j.State = "failed"
+				j.Error = "could not persist script output"
+				j.ExitCode = 125
+			}
 		}
 	}
+	j.StdoutBytes = int64(len(result.Stdout))
+	j.StderrBytes = int64(len(result.Stderr))
 	tail := func(text string) string {
 		if len(text) > TailBytes {
 			return text[len(text)-TailBytes:]
@@ -288,6 +320,9 @@ func (s *Service) Job(id string) (Job, error) {
 	j, ok := s.jobs[id]
 	if !ValidID(id) || !ok {
 		return Job{}, os.ErrNotExist
+	}
+	if s.streaming != nil {
+		s.refreshStreamingJob(&j)
 	}
 	return j, nil
 }
