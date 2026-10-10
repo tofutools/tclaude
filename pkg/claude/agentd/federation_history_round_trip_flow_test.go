@@ -61,10 +61,11 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 	mux.HandleFunc("/test/stop", func(w http.ResponseWriter, r *http.Request) { close(done) })
 	mux.HandleFunc("/test/turn", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
-			Conv string
-			Text string
-			Peer string
-			Seed bool
+			Conv      string
+			Text      string
+			Assistant string
+			Peer      string
+			Seed      bool
 		}
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&in))
 		if in.Seed {
@@ -77,7 +78,7 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 		}
 		// Append through the same native writer as a harness completing a turn.
 		if name == "codex" {
-			require.NoError(t, f.World.Codexes.GetByConvID(in.Conv).WriteExchange(in.Text, "Recorded "+in.Text))
+			require.NoError(t, f.World.Codexes.GetByConvID(in.Conv).WriteExchange(in.Text, in.Assistant))
 		} else {
 			cc := f.World.CCs.GetByConvID(in.Conv)
 			require.NoError(t, cc.WriteUserTurn(in.Text))
@@ -202,7 +203,8 @@ func TestFederation_TeleportHistoryRoundTrip(t *testing.T) {
 				require.Equal(t, 200, code, string(raw))
 			}
 			const original = "Original plan from node A: repair the index."
-			code, raw := historyNodeRequest(t, a, "POST", "/test/turn", "", map[string]any{"Conv": moveSourceConv, "Text": original, "Peer": b.Instance, "Seed": true})
+			const originalReply = "I will inspect the source repository before travelling."
+			code, raw := historyNodeRequest(t, a, "POST", "/test/turn", "", map[string]any{"Conv": moveSourceConv, "Text": original, "Assistant": originalReply, "Peer": b.Instance, "Seed": true})
 			require.Equal(t, 204, code, string(raw))
 			// Wait for the receiving group and teleport support to be advertised.
 			for _, node := range []historyNode{a, b} {
@@ -266,7 +268,8 @@ func TestFederation_TeleportHistoryRoundTrip(t *testing.T) {
 				return code == 200 && json.Unmarshal(raw, &move) == nil && move.State == "moved"
 			})
 			const addition = "New result from node B: repaired the index and verified build 123."
-			code, raw = historyNodeRequest(t, b, "POST", "/test/turn", "", map[string]any{"Conv": remoteConv, "Text": addition, "Peer": a.Instance})
+			const addedReply = "The remote tests passed; return home with the patch."
+			code, raw = historyNodeRequest(t, b, "POST", "/test/turn", "", map[string]any{"Conv": remoteConv, "Text": addition, "Assistant": addedReply, "Peer": a.Instance})
 			require.Equal(t, 204, code, string(raw))
 			home := teleport(b, a, remoteConv, true)
 			require.True(t, home.Teleport.Home)
@@ -282,8 +285,8 @@ func TestFederation_TeleportHistoryRoundTrip(t *testing.T) {
 			require.NoError(t, err)
 			require.Contains(t, string(bundle.Transcript), original)
 			require.Contains(t, string(bundle.Transcript), addition)
-			require.Contains(t, string(bundle.Transcript), "Recorded "+original)
-			require.Contains(t, string(bundle.Transcript), "Recorded "+addition)
+			require.Contains(t, string(bundle.Transcript), originalReply)
+			require.Contains(t, string(bundle.Transcript), addedReply)
 			require.Equal(t, returned, bundle.Manifest.History.SourceConvID)
 			require.Equal(t, a.Cwd, bundle.Manifest.Agent.Paths.Cwd)
 		})
