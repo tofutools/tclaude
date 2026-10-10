@@ -261,12 +261,22 @@ func record(b *rod.Browser, cur int, args []string) {
 				time.Sleep(200 * time.Millisecond)
 				continue
 			}
-			p = pages[cur].Timeout(5 * time.Second)
+			p = pages[cur]
+			// Pin the viewport for this CDP session; without it a headless
+			// window can report a shorter layout height than DRIVE_SIZE.
+			sw, sh := w, h
+			if p.Timeout(5*time.Second).SetViewport(&proto.EmulationSetDeviceMetricsOverride{Width: w, Height: h, DeviceScaleFactor: 1, ScreenWidth: &sw, ScreenHeight: &sh}) != nil {
+				p = nil
+				misses++
+				time.Sleep(200 * time.Millisecond)
+				continue
+			}
 		}
-		img, err := p.Screenshot(false, &proto.PageCaptureScreenshot{Format: proto.PageCaptureScreenshotFormatJpeg, Quality: &q})
+		img, err := p.Timeout(5*time.Second).Screenshot(false, &proto.PageCaptureScreenshot{Format: proto.PageCaptureScreenshotFormatJpeg, Quality: &q})
 		if err != nil {
 			p = nil // the tab's target may have been swapped by a navigation
 			misses++
+			time.Sleep(200 * time.Millisecond)
 			continue
 		}
 		misses = 0
