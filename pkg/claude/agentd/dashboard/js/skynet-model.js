@@ -58,8 +58,9 @@ export function keyTransition(peer) {
   };
 }
 
-const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
-const FP_RE = /^[A-Za-z0-9-]{1,128}$/;
+// A leading letter or digit keeps a value from ever reading as a flag.
+const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const FP_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/;
 
 // recoverCommands are the CLI commands for a conflicted transition: a preview
 // that changes nothing, and the apply to run only after the new fingerprint

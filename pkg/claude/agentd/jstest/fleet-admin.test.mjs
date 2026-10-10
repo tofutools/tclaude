@@ -1135,7 +1135,7 @@ test('a conflicted key transition shows the recover-peer preview and, separately
   await s.click(s.q('[data-peer="inst_forge"] [data-fa="key"]'));
   assert.equal(q('#fleet-key-preview').textContent, 'tclaude federation identity recover-peer inst_forge inst_forge2');
   assert.equal(q('#fleet-key-apply').textContent, `tclaude federation identity recover-peer inst_forge inst_forge2 --fingerprint ${FP_NEW} --apply`);
-  assert.match(q('#fleet-key-transition').textContent, /out of band.*Only after the operator confirmed this exact fingerprint/s);
+  assert.match(q('#fleet-key-transition').textContent, /one candidate.*others.*identity rotations.*out of band.*Only if the operator confirmed this exact candidate's fingerprint/s);
 });
 
 test('keyTransition shows only pending and conflict, and recoverCommands refuses odd IDs', async (t) => {
@@ -1147,6 +1147,8 @@ test('keyTransition shows only pending and conflict, and recoverCommands refuses
   assert.equal(t1.state, 'conflict');
   assert.equal(recoverCommands({ ...t1, newID: 'inst_b; rm -rf ~' }), null);
   assert.equal(recoverCommands({ ...t1, newFingerprint: '$(x)' }).apply, '');
+  assert.equal(recoverCommands({ ...t1, newID: '--apply' }), null, 'a flag-shaped ID never lands in a command');
+  assert.equal(recoverCommands({ ...t1, newFingerprint: '--x' }).apply, '');
   const fleet = normalizeFleet({ instance_id: 'inst_self', peers: [{ instance_id: 'inst_a', trusted: true, identity_transition: { state: 'pending', old_id: 'inst_a', new_id: 'inst_b' } }] });
   assert.equal(fleet.peers[0].keyTransition.state, 'pending');
 });
