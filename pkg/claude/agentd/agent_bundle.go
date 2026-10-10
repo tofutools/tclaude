@@ -163,7 +163,7 @@ func collectAgentBundle(convID string, withHistory bool) (*agentbundle.Bundle, e
 			d.Paths.Cwd = ref.ProjectPath
 		}
 	}
-	if d.Paths.Cwd != "" {
+	if filepath.IsAbs(d.Paths.Cwd) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		d.Paths.RepoURL = jobrepo.OriginHint(ctx, d.Paths.Cwd)
 		cancel()

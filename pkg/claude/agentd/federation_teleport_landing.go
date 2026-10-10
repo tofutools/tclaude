@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -533,35 +532,6 @@ func checkTeleportRepo(t *db.FederationTeleport, group int64) error {
 		return errors.New("teleport repository admission revoked")
 	}
 	return jobrepo.Revalidate(context.Background(), repo.Definition)
-}
-func prepareTeleportCheckout(ctx context.Context, t *db.FederationTeleport, group int64) (*jobrepo.Checkout, error) {
-	if err := checkTeleportRepo(t, group); err != nil {
-		return nil, err
-	}
-	if t.Checkout != nil {
-		return nil, errors.New("teleport checkout already reserved; inspect the prior launch")
-	}
-	root := filepath.Join(config.DataDir(), "federation", "teleport-checkouts", t.Peer, t.Offer)
-	if err := os.MkdirAll(filepath.Dir(root), 0700); err != nil {
-		return nil, err
-	}
-	checkout, err := jobrepo.Prepare(ctx, t.Repo.Definition, root, t.Intent.GitRef)
-	if err != nil {
-		return nil, err
-	}
-	if err := checkTeleportRepo(t, group); err != nil {
-		_ = os.RemoveAll(root)
-		return nil, err
-	}
-	t.Checkout = checkout
-	won, err := db.TransitionFederationTeleport(*t, t.State)
-	if err != nil || !won {
-		_ = os.RemoveAll(root)
-		return nil, errors.New("teleport changed while preparing checkout")
-	}
-	// Keep successful checkouts across restart and agent exit: their native
-	// history may still resume here. Never remove a possibly running agent's cwd.
-	return checkout, nil
 }
 
 // Caller has positively released the unlaunched import reservation. Never call

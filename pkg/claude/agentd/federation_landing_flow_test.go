@@ -2,10 +2,12 @@ package agentd_test
 
 import (
 	"encoding/json"
+	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
 	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
@@ -99,6 +101,22 @@ func TestFederationLandingReceiverChoices(t *testing.T) {
 			require.Equal(t, tc.want, sessions[0].Cwd)
 		})
 	}
+	if os.Geteuid() != 0 {
+		b := fedAgentBundle(t)
+		d := fedAgentOffer(t, fh.peer, "receiver", b)
+		require.Equal(t, proto.AckAccepted, fedAckFor(t, fh.peer, d.ID).Status)
+		rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/bundle-offers/"+d.ID+"/import", map[string]any{"cwd": "/"})
+		require.Equal(t, 403, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), "landing_unowned")
+	}
+	_, err = db.SetAgentGroupDefaultCwd("receiver", os.Getenv("HOME"))
+	require.NoError(t, err)
+	homeBundle := fedAgentBundle(t)
+	homeOffer := fedAgentOffer(t, fh.peer, "receiver", homeBundle)
+	require.Equal(t, proto.AckAccepted, fedAckFor(t, fh.peer, homeOffer.ID).Status)
+	homePreview := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/bundle-offers/"+homeOffer.ID+"/import", nil)
+	require.Equal(t, 200, homePreview.Code, homePreview.Body.String())
+	require.Contains(t, homePreview.Body.String(), `"reason":"group_default"`)
 	_, err = db.SetAgentGroupDefaultCwd("receiver", "")
 	require.NoError(t, err)
 	b := fedAgentBundle(t)
@@ -151,4 +169,94 @@ func TestFederationLandingAllowlistedRepoIsolated(t *testing.T) {
 	raw, err := json.Marshal(b.Manifest.Agent.Paths)
 	require.NoError(t, err)
 	require.Contains(t, string(raw), "repo_url")
+}
+
+func TestFederationLandingMovePreparationFailureRetries(t *testing.T) {
+	fh := newFedHarness(t)
+	fh.f.HaveGroup("team")
+	fedReceiveAgents(t, fh, "team")
+	clone := fedJobRepo(t, fh)
+	repo, err := db.GetFederationRepo("project")
+	require.NoError(t, err)
+	repo.Definition.URL = "https://127.0.0.1:1/project.git"
+	require.NoError(t, db.SaveFederationRepo(repo))
+	b := fedAgentBundle(t)
+	b.Manifest.Agent.Paths.RepoURL = repo.Definition.URL
+	b.SetHistory("claude-jsonl", moveSourceConv, []byte(`{"type":"user","sessionId":"`+moveSourceConv+`","cwd":"/source","message":{"content":"continue"}}`+"\n"))
+	raw, err := b.Encode()
+	require.NoError(t, err)
+	d := bundletransfer.New(bundletransfer.Agent, raw, "Move", time.Now().Add(time.Hour))
+	d.Group = "team"
+	d.Move = &bundletransfer.MoveIntent{SourceAgent: "agt_bobremote0000000000000000", SourceConv: moveSourceConv}
+	env := fh.peer.envelope(proto.KindBundleOffer, proto.Endpoint{}, d)
+	env.ID = d.ID
+	fh.peer.send(env)
+	require.Equal(t, proto.AckAccepted, fedAckFor(t, fh.peer, d.ID).Status)
+	database, err := db.Open()
+	require.NoError(t, err)
+	_, err = database.Exec(`CREATE TRIGGER fail_landing_move BEFORE INSERT ON federation_agent_moves BEGIN SELECT RAISE(ABORT,'injected before dispatch'); END`)
+	require.NoError(t, err)
+	path := "/v1/federation/bundle-offers/" + d.ID + "/import"
+	preview := fedHuman(t, fh.f, http.MethodPost, path, nil)
+	require.Equal(t, 200, preview.Code, preview.Body.String())
+	var result landingFlowReply
+	testharness.DecodeJSON(t, preview, &result)
+	failed := fedHuman(t, fh.f, http.MethodPost, path, map[string]any{"apply": true})
+	require.Equal(t, 400, failed.Code, failed.Body.String())
+	row, err := db.GetFederationBundleOffer("in", fh.peer.id.ID(), d.ID)
+	require.NoError(t, err)
+	require.Empty(t, row.ImportAgent)
+	_, err = os.Stat(filepath.Dir(result.Landing.Cwd))
+	require.True(t, os.IsNotExist(err), "released undispatched checkout is removed")
+	_, err = database.Exec(`DROP TRIGGER fail_landing_move`)
+	require.NoError(t, err)
+	retried := fedHuman(t, fh.f, http.MethodPost, path, map[string]any{"apply": true})
+	require.Equal(t, 200, retried.Code, retried.Body.String())
+	data, err := os.ReadFile(filepath.Join(result.Landing.Cwd, "hello"))
+	require.NoError(t, err)
+	require.Equal(t, "from git\n", string(data))
+	require.NotEqual(t, clone, result.Landing.Cwd)
+}
+func TestFederationLandingPendingTeleportGroupDefault(t *testing.T) {
+	fh := newFedHarness(t)
+	fh.f.HaveGroup("receiver")
+	fedReceiveAgents(t, fh, "receiver")
+	cwd := testutil.CanonicalTempDir(t)
+	_, err := db.SetAgentGroupDefaultCwd("receiver", cwd)
+	require.NoError(t, err)
+	d := fedIncomingTeleport(t, fh, "local", nil)
+	require.Equal(t, proto.AckAccepted, fedAckFor(t, fh.peer, d.ID).Status)
+	rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/bundle-offers/"+d.ID+"/import", map[string]any{"apply": true})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"reason":"group_default"`)
+	row, err := db.GetFederationTeleport("in", fh.peer.id.ID(), d.ID)
+	require.NoError(t, err)
+	require.Equal(t, "landed", row.State)
+	a, err := db.GetAgent(row.TargetAgent)
+	require.NoError(t, err)
+	sessions, err := db.FindSessionsByConvID(a.CurrentConvID)
+	require.NoError(t, err)
+	require.Equal(t, cwd, sessions[0].Cwd)
+}
+func TestFederationLandingAutomaticPolicyFallback(t *testing.T) {
+	fh := newFedHarness(t)
+	fh.f.HaveGroup("receiver")
+	cwd := testutil.CanonicalTempDir(t)
+	profile := &db.SpawnProfile{Name: "landing-fallback", Harness: "claude", Approval: "default"}
+	_, err := db.CreateSpawnProfile(profile)
+	require.NoError(t, err)
+	policy := fedNodeProfile(t, fh, "fallback", db.FederationNodeProfileSpec{PeerGrants: []db.FederationPeerGrant{{Slug: agentd.PermAgentsTeleportReceive, Scope: "group=receiver"}}, TeleportLanding: &db.FederationTeleportLanding{Group: "receiver", Cwd: cwd, SpawnProfile: profile.Name, MaxLive: 1}})
+	fedApplyNodeProfile(t, fh, policy)
+	d := fedIncomingTeleport(t, fh, "local", nil)
+	require.Equal(t, proto.AckAccepted, fedAckFor(t, fh.peer, d.ID).Status)
+	var row *db.FederationTeleport
+	fedEventually(t, "fallback teleport lands", func() bool {
+		row, _ = db.GetFederationTeleport("in", fh.peer.id.ID(), d.ID)
+		return row != nil && row.State == "landed"
+	})
+	a, err := db.GetAgent(row.TargetAgent)
+	require.NoError(t, err)
+	sessions, err := db.FindSessionsByConvID(a.CurrentConvID)
+	require.NoError(t, err)
+	require.Equal(t, cwd, sessions[0].Cwd)
 }
