@@ -3,6 +3,19 @@ package agentd
 import "net/http"
 
 func registerDashboardFederationRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/federation/spawn-requests", dashboardFederationRoute(handleFederationSpawnRequestList))
+	mux.HandleFunc("POST /api/federation/spawn-requests", dashboardFederationRoute(handleFederationSpawnRequestSend))
+	mux.HandleFunc("POST /api/federation/spawn-requests/{id}/approve", dashboardFederationRoute(handleFederationSpawnRequestApprove))
+	mux.HandleFunc("POST /api/federation/spawn-requests/{id}/deny", dashboardFederationRoute(handleFederationSpawnRequestDeny))
+	mux.HandleFunc("POST /api/federation/spawn-requests/{id}/abandon", dashboardFederationRoute(handleFederationSpawnRequestAbandon))
+	mux.HandleFunc("GET /api/federation/outbox", dashboardFederationRoute(handleFederationOutbox))
+	mux.HandleFunc("POST /api/federation/send", dashboardFederationRoute(handleFederationSend))
+	mux.HandleFunc("POST /api/federation/notify", dashboardFederationRoute(handleFederationNotify))
+	mux.HandleFunc("GET /api/federation/inbox", dashboardFederationRoute(handleFederationInbox))
+	mux.HandleFunc("GET /api/federation/away", dashboardFederationRoute(handleFederationAway))
+	mux.HandleFunc("POST /api/federation/away", dashboardFederationRoute(handleFederationAway))
+	mux.HandleFunc("POST /api/federation/return", dashboardFederationRoute(handleFederationReturn))
+	mux.HandleFunc("POST /api/federation/answer", dashboardFederationRoute(handleFederationAwayAnswer))
 	mux.HandleFunc("GET /api/federation/moves", dashboardFederationRoute(handleFederationMoves))
 	mux.HandleFunc("GET /api/federation/moves/{id}", dashboardFederationRoute(handleFederationMoves))
 	mux.HandleFunc("POST /api/federation/moves/{id}/abandon", dashboardFederationRoute(handleFederationMoveAbandon))

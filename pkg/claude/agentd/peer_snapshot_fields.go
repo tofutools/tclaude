@@ -16,7 +16,7 @@ var peerSnapshotFields = map[reflect.Type]map[string]string{
 		"denied":    "Harnesses AuthSession StaticUnchanged SandboxProfiles SandboxProfileDefault Ungrouped Pending Permissions Slugs Cron ExportJobsActive RetiredTotal Sudo Links RouteMap Usage AuthoredOpenPRs Templates Profiles SpawnProfileDefault Roles Messages MessagesUnread AccessRequests AccessRequestsPending Plugins PluginsCatalog PluginsWarn PluginsError PluginsTabVisible DebugTabVisible ProcessesEnabled TriggersEnabled GroupsRouteMapEnabled GroupAttachmentsMode TerminalPaletteShortcut RecordedSandboxDetails UserDefaultModel SandboxImpl PopupBase NotificationsEnabled SpawnNameNormalize VegasInRegularMode HidePullLever TerminalAttach ShowAgentHideButton ShowGroupDescription CostTabVisible CostTabWhatIf BrokerRefusalsTotal BrokerRefusalsUnplaceable UsageTabVisible RemoteAccess",
 	}),
 	reflect.TypeFor[dashboardGroup](): classifyPeerFields(map[string]string{
-		"identity":  "Name Descr",
+		"identity":  "ID Name Descr",
 		"projected": "Members Online",
 		"denied":    "AttachmentURL AttachmentLabel AttachmentLabelOverride DefaultCwd DefaultSpawnGroup DefaultContext Environment DefaultProfile SandboxProfile Permissions PermissionScopes UnreadablePermissionScopes OwnerScopes MaxMembers NotifyEnabled RemoteControlPolicy ReinjectAfterCompact Mission SourceTemplate Parent RouteGeneration Process Waves Scribe FederationLinks",
 	}),
