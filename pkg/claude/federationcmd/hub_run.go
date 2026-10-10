@@ -17,11 +17,11 @@ import (
 )
 
 type hubRunParams struct {
-	File    string        `long:"file" help:"Script file (maximum 16 KiB)"`
+	File    string        `long:"file" optional:"true" help:"Script file (maximum 16 KiB)"`
 	Timeout time.Duration `long:"timeout" default:"1h" help:"Deadline (1s..24h)"`
-	Job     string        `long:"job" help:"Read an existing job instead of starting one"`
-	Log     string        `long:"log" help:"Read stdout or stderr for --job"`
-	Offset  int64         `long:"offset" help:"Byte offset for --log"`
+	Job     string        `long:"job" optional:"true" help:"Read an existing job instead of starting one"`
+	Log     string        `long:"log" optional:"true" help:"Read stdout or stderr for --job"`
+	Offset  int64         `long:"offset" optional:"true" help:"Byte offset for --log"`
 	NoWait  bool          `long:"no-wait" help:"Return the durable job immediately"`
 }
 

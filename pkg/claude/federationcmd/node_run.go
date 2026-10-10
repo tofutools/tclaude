@@ -21,13 +21,13 @@ import (
 )
 
 type nodeRunParams struct {
-	Log     string        `long:"log" help:"With --job, collect the full bounded stdout or stderr log"`
-	Node    []string      `long:"node" help:"Repeatable peer label/ID; local selects this node"`
+	Log     string        `long:"log" optional:"true" help:"With --job, collect the full bounded stdout or stderr log"`
+	Node    []string      `long:"node" optional:"true" help:"Repeatable peer label/ID; local selects this node"`
 	All     bool          `long:"all" help:"Run locally and on every online trusted node; report offline nodes as skipped"`
-	File    string        `long:"file" help:"Script file (16 KiB maximum); alternatively put a command after --"`
+	File    string        `long:"file" optional:"true" help:"Script file (16 KiB maximum); alternatively put a command after --"`
 	Timeout time.Duration `long:"timeout" default:"1h" help:"Per-node deadline (1s..24h)"`
 	NoWait  bool          `long:"no-wait" help:"Return durable job IDs immediately"`
-	Job     string        `long:"job" help:"Inspect an existing job on exactly one node"`
+	Job     string        `long:"job" optional:"true" help:"Inspect an existing job on exactly one node"`
 	JSON    bool          `long:"json" help:"Output per-node JSON results"`
 }
 
@@ -249,10 +249,10 @@ func runNodeRuns(p *nodeRunParams, args []string, stdout, stderr io.Writer) int 
 }
 
 type nodeScriptSettingsParams struct {
-	AcceptRemote string  `long:"accept-remote" help:"Local receiving switch: on or off; omit to inspect"`
-	Memory       string  `long:"memory" help:"Local Linux memory ceiling, e.g. 1GiB"`
-	PIDs         uint64  `long:"pids" help:"Local Linux process/thread ceiling"`
-	CPU          float64 `long:"cpu" help:"Local Linux CPU cores ceiling"`
+	AcceptRemote string  `long:"accept-remote" optional:"true" help:"Local receiving switch: on or off; omit to inspect"`
+	Memory       string  `long:"memory" optional:"true" help:"Local Linux memory ceiling, e.g. 1GiB"`
+	PIDs         uint64  `long:"pids" optional:"true" help:"Local Linux process/thread ceiling"`
+	CPU          float64 `long:"cpu" optional:"true" help:"Local Linux CPU cores ceiling"`
 }
 
 func nodeScriptSettingsCmd() *cobra.Command {

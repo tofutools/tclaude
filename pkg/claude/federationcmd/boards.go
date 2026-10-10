@@ -29,14 +29,14 @@ type boardCommandParams struct {
 	MaxBytes     int64    `long:"max-bytes" optional:"true" help:"Bound text inspection"`
 	File         string   `long:"file" optional:"true" help:"New output file for download"`
 	Action       string   `pos:"true" help:"list, create, join, show, leave, members, invite, revoke-invite, set-member, remove-member, rotate-key"`
-	Board        string   `long:"board" help:"Immutable board ID"`
-	Name         string   `long:"name" help:"Board display name"`
-	Token        string   `long:"token" help:"One-time board invitation (keep private)"`
-	TokenID      string   `long:"token-id" help:"Invitation hash to revoke"`
-	Instance     string   `long:"instance" help:"Member instance ID"`
-	Role         string   `long:"role" help:"reader, publisher or owner"`
-	TTL          string   `long:"ttl" help:"Invitation lifetime (default 1h; 1m to 7d)"`
-	Cursor       string   `long:"cursor" help:"Opaque page cursor"`
+	Board        string   `long:"board" optional:"true" help:"Immutable board ID"`
+	Name         string   `long:"name" optional:"true" help:"Board display name"`
+	Token        string   `long:"token" optional:"true" help:"One-time board invitation (keep private)"`
+	TokenID      string   `long:"token-id" optional:"true" help:"Invitation hash to revoke"`
+	Instance     string   `long:"instance" optional:"true" help:"Member instance ID"`
+	Role         string   `long:"role" optional:"true" help:"reader, publisher or owner"`
+	TTL          string   `long:"ttl" optional:"true" help:"Invitation lifetime (default 1h; 1m to 7d)"`
+	Cursor       string   `long:"cursor" optional:"true" help:"Opaque page cursor"`
 }
 
 // Each action registers only its own flags; required markers reflect that

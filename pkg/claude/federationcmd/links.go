@@ -16,7 +16,7 @@ import (
 )
 
 type linksParams struct {
-	Group string `long:"group" help:"Exact local group name; omit to list all groups"`
+	Group string `long:"group" optional:"true" help:"Exact local group name; omit to list all groups"`
 	JSON  bool   `long:"json" help:"Output JSON"`
 }
 type federationGroupLinks struct {

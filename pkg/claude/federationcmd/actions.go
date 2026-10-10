@@ -14,22 +14,22 @@ import (
 
 type actionParams struct {
 	Action     string `pos:"true" help:"message|spawn|spawn-status|stop|resume|restart|sandbox-restart|retire|clone|move|teleport"`
-	Node       string `long:"node" help:"Receiving trusted peer label or stable ID"`
-	Agent      string `long:"agent" help:"Stable remote agent ID"`
-	Group      string `long:"group" help:"Spawn group, or destination group on this node for move/teleport"`
-	Job        int64  `long:"job" help:"Remote spawn request ID for spawn-status"`
-	Brief      string `long:"brief" help:"Task briefing for spawn"`
-	Profile    string `long:"profile" help:"Receiver-allowlisted spawn profile"`
-	Name       string `long:"name" help:"Spawn worker name"`
-	Role       string `long:"role" help:"Spawn worker role"`
-	Body       string `long:"body" help:"Message text"`
-	Subject    string `long:"subject" help:"Message subject"`
-	FollowUp   string `long:"follow-up" help:"Clone initial prompt"`
+	Node       string `long:"node" optional:"true" help:"Receiving trusted peer label or stable ID"`
+	Agent      string `long:"agent" optional:"true" help:"Stable remote agent ID"`
+	Group      string `long:"group" optional:"true" help:"Spawn group, or destination group on this node for move/teleport"`
+	Job        int64  `long:"job" optional:"true" help:"Remote spawn request ID for spawn-status"`
+	Brief      string `long:"brief" optional:"true" help:"Task briefing for spawn"`
+	Profile    string `long:"profile" optional:"true" help:"Receiver-allowlisted spawn profile"`
+	Name       string `long:"name" optional:"true" help:"Spawn worker name"`
+	Role       string `long:"role" optional:"true" help:"Spawn worker role"`
+	Body       string `long:"body" optional:"true" help:"Message text"`
+	Subject    string `long:"subject" optional:"true" help:"Message subject"`
+	FollowUp   string `long:"follow-up" optional:"true" help:"Clone initial prompt"`
 	NoCopyConv bool   `long:"no-copy-conv" help:"Clone without conversation history"`
 	Force      bool   `long:"force" help:"Force-stop the remote pane"`
 	Clone      bool   `long:"clone" help:"Teleport a copy instead of retiring the source"`
-	Note       string `long:"note" help:"Teleport handoff note"`
-	Sandbox    string `long:"sandbox" help:"sandbox-restart: unlock (sandbox off; needs unrestricted trust) or restore"`
+	Note       string `long:"note" optional:"true" help:"Teleport handoff note"`
+	Sandbox    string `long:"sandbox" optional:"true" help:"sandbox-restart: unlock (sandbox off; needs unrestricted trust) or restore"`
 }
 
 func actionCmd() *cobra.Command {

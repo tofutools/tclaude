@@ -224,7 +224,7 @@ type offerContentsParams struct {
 	ID       string `pos:"true" help:"Received offer ID (fetch it first)."`
 	Peer     string `long:"peer" optional:"true" help:"Source peer."`
 	Path     string `long:"path" optional:"true" help:"Entry path from the contents listing."`
-	Offset   int64  `long:"offset" help:"Byte offset within the entry."`
+	Offset   int64  `long:"offset" optional:"true" help:"Byte offset within the entry."`
 	MaxBytes int64  `long:"max-bytes" default:"262144" help:"Bounded bytes to read, at most 1048576."`
 }
 
