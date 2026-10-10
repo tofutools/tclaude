@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -259,6 +260,58 @@ func TestMorphOwnerScopeAndRefusals(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, rec.Code, "free-form morph under a profile-scoped grant; body=%s", rec.Body.String())
 	rec = asOutsider.Morph(worker.AgentID, map[string]any{"profile": "cheap", "dry_run": true})
 	assert.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	rec = asOutsider.Morph(worker.AgentID, map[string]any{"profile": "cheap", "model": "opus", "dry_run": true})
+	assert.Equal(t, http.StatusForbidden, rec.Code,
+		"explicit fields on top of a scoped profile are a free-form morph; body=%s", rec.Body.String())
+
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "vip", Harness: "claude", Model: "opus", OperatorOnly: true})
+	require.NoError(t, err)
+	rec = asManager.Morph(worker.AgentID, map[string]any{"profile": "vip", "dry_run": true})
+	assert.Equal(t, http.StatusForbidden, rec.Code, "operator-only profile; body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "operator_only")
+
+	// An agent may not replace or cancel a pending morph the operator requested.
+	rec = f.AsHuman().Morph(worker.AgentID, map[string]any{"model": "opus"})
+	require.Equal(t, "pending", decodeMorph(t, rec.Code, rec.Body.Bytes()).Result)
+	rec = asManager.Morph(worker.AgentID, map[string]any{"model": "haiku"})
+	assert.Equal(t, http.StatusConflict, rec.Code, "body=%s", rec.Body.String())
+	rec = asManager.Morph(worker.AgentID, map[string]any{"cancel": true})
+	assert.Equal(t, http.StatusConflict, rec.Code, "body=%s", rec.Body.String())
+}
+
+func TestMorphWatcherDropsExpiredAndStaleGenerations(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	spawn := spawnMorphWorker(t, f, "crew", "slow", nil)
+	rec := f.AsHuman().Morph(spawn.AgentID, map[string]any{"model": "opus"})
+	require.Equal(t, "pending", decodeMorph(t, rec.Code, rec.Body.Bytes()).Result)
+
+	pending, err := db.PendingMorphForAgent(spawn.AgentID)
+	require.NoError(t, err)
+	pending.ExpiresAt = pending.RequestedAt.Add(-time.Minute)
+	require.NoError(t, db.SetAgentPendingMorphForConv(spawn.ConvID, pending))
+	f.SetSessionStatus(spawn.ConvID, session.StatusIdle)
+	agentd.SweepPendingMorphsForTest()
+	model, _ := f.World.SpawnModel(spawn.ConvID)
+	assert.Equal(t, "sonnet", model, "an expired pending morph must not apply")
+	left, err := db.PendingMorphForAgent(spawn.AgentID)
+	require.NoError(t, err)
+	assert.Nil(t, left)
+
+	stale := *pending
+	stale.ExpiresAt = time.Now().Add(time.Hour)
+	stale.ConvID = "some-older-generation"
+	require.NoError(t, db.SetAgentPendingMorphForConv(spawn.ConvID, &stale))
+	agentd.SweepPendingMorphsForTest()
+	model, _ = f.World.SpawnModel(spawn.ConvID)
+	assert.Equal(t, "sonnet", model, "a pending morph for another generation must not apply")
+	left, err = db.PendingMorphForAgent(spawn.AgentID)
+	require.NoError(t, err)
+	assert.Nil(t, left)
+	audit, err := db.ListAuditLog(db.AuditLogFilter{Verb: "morph", Search: "dropped"})
+	require.NoError(t, err)
+	assert.Len(t, audit, 2)
 }
 
 func TestMorphOtherHarnessesResumeWithNewForm(t *testing.T) {

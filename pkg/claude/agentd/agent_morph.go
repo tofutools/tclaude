@@ -110,6 +110,11 @@ func readLimitedBody(r *http.Request) ([]byte, error) {
 	return buf.Bytes(), err
 }
 
+func (q morphRequest) hasFieldOverrides() bool {
+	return q.Model != nil || q.Effort != nil || q.Approval != nil ||
+		q.Tools != nil || q.AskTimeout != nil || q.AutoCompactWindow != nil
+}
+
 func (q morphRequest) hasForm() bool {
 	return q.Profile != "" || q.Model != nil || q.Effort != nil || q.Approval != nil ||
 		q.Tools != nil || q.AskTimeout != nil || q.AutoCompactWindow != nil
@@ -378,8 +383,11 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 		}
 	}
 
+	// A spawn_profile-scoped grant covers a morph into that profile only.
+	// Explicit fields on top of the profile make it a free-form morph, which
+	// such a grant must not authorize, so the dimension is left undescribed.
 	actx := ActionContext{}
-	if prof != nil {
+	if prof != nil && !req.hasFieldOverrides() {
 		actx.SpawnProfile = prof.Name
 	}
 	var caller string
@@ -414,12 +422,24 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 	setAuditTargetConv(r, targetConv)
 
 	if req.Cancel {
+		// Under the launch lock, so a cancel cannot report success while the
+		// watcher is applying the same pending morph.
+		lock := resumeLaunchLock(targetConv)
+		lock.Lock()
 		pending, _ := db.PendingMorphForAgent(agentID)
 		if pending == nil {
+			lock.Unlock()
 			writeError(w, http.StatusNotFound, "no_pending_morph", "the agent has no pending morph")
 			return
 		}
-		if err := db.SetAgentPendingMorphForConv(targetConv, nil); err != nil {
+		if failure := pendingMorphOwnedByOther(pending, caller); failure != "" {
+			lock.Unlock()
+			writeError(w, http.StatusConflict, "pending_morph_exists", failure)
+			return
+		}
+		err := db.SetAgentPendingMorphForConv(targetConv, nil)
+		lock.Unlock()
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
@@ -436,6 +456,13 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 			return
 		}
 		target = *previous
+		if caller != "" && target.Profile != "" {
+			if back, _ := db.ResolveSpawnProfile(target.Profile); back != nil && back.OperatorOnly {
+				writeError(w, http.StatusForbidden, "operator_only",
+					"the previous form came from operator-only spawn profile "+back.Name)
+				return
+			}
+		}
 	} else {
 		target, err = resolveMorphTarget(h, req, prof)
 		if err != nil {
@@ -455,6 +482,13 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 		}
 		if failure := spawnApprovalLineageFailure(caller, h.Name, *target.Approval, autoReview); failure != nil {
 			writeError(w, failure.Status, failure.Kind, strings.Replace(failure.Msg, "may not spawn a", "may not morph an agent into a", 1))
+			return
+		}
+	}
+
+	if existing, _ := db.PendingMorphForAgent(agentID); existing != nil {
+		if failure := pendingMorphOwnedByOther(existing, caller); failure != "" {
+			writeError(w, http.StatusConflict, "pending_morph_exists", failure)
 			return
 		}
 	}
@@ -485,6 +519,16 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// pendingMorphOwnedByOther refuses an agent caller that would replace or
+// cancel a pending morph someone else requested. The operator may always.
+func pendingMorphOwnedByOther(pending *db.AgentPendingMorph, caller string) string {
+	if caller == "" || pending == nil || sameActor(pending.ActorConv, caller) {
+		return ""
+	}
+	return "the agent already has a pending morph requested by " + pending.Actor +
+		"; it can be cancelled by its requester or the operator"
+}
+
 // morphOrDefer applies the morph now when the target is offline, idle, or now
 // was requested, and otherwise records it as pending for the idle watcher.
 // A self-morph is always deferred: its own turn is still running.
@@ -513,6 +557,9 @@ func morphOrDefer(agentID, convID string, pending db.AgentPendingMorph, now, sel
 // holds resumeLaunchLock(convID) and has checked the generation.
 func applyMorphUnderLaunchLock(agentID, convID string, pending db.AgentPendingMorph, live *db.SessionRow) (string, int, string, string) {
 	if live == nil {
+		if _, err := durableRelaunchConfigForConvWith(convID, pending.Target.ApplyTo); err != nil {
+			return "", http.StatusConflict, "relaunch_profile", "the new form cannot be launched: " + err.Error()
+		}
 		previous, err := db.ApplyAgentMorphForConv(convID, pending.Target)
 		if err != nil {
 			return "", http.StatusInternalServerError, "io", err.Error()
@@ -520,8 +567,10 @@ func applyMorphUnderLaunchLock(agentID, convID string, pending db.AgentPendingMo
 		deliverMorphNote(convID, pending, previous)
 		return "morphed", http.StatusOK, "", "the agent is offline; the new form applies when it is next woken"
 	}
-	if _, err := durableRelaunchConfigForConv(convID); err != nil {
-		return "", http.StatusConflict, "relaunch_profile", err.Error()
+	// Resolve the full config with the new form applied in memory, so a form
+	// resume would reject fails here, before the agent is stopped.
+	if _, err := durableRelaunchConfigForConvWith(convID, pending.Target.ApplyTo); err != nil {
+		return "", http.StatusConflict, "relaunch_profile", "the new form cannot be launched: " + err.Error()
 	}
 	clientHandoff := beginAgentRestartTmuxHandoff(live.TmuxSession)
 	defer clientHandoff.finishForConv(convID)
@@ -580,7 +629,7 @@ func deliverMorphNote(convID string, pending db.AgentPendingMorph, previous db.A
 	if sameActor(from, convID) {
 		from = ""
 	}
-	if _, err := db.InsertAgentMessage(&db.AgentMessage{
+	if _, err := queueAgentMessage(&db.AgentMessage{
 		GroupID: groupID, FromConv: from, ToConv: convID, Subject: "Morphed: " + now.Model, Body: body,
 	}); err != nil {
 		slog.Warn("morph: deliver note failed", "conv", convID, "error", err)
@@ -660,12 +709,11 @@ func applyPendingMorph(row db.AgentWithPendingMorph) {
 	}
 	result, status, _, detail := applyMorphUnderLaunchLock(row.AgentID, convID, pending, live)
 	if status != http.StatusOK {
-		// The pending entry is kept only when nothing was stopped yet; a
-		// failed resume leaves the recorded form, which a wake replays.
-		if p, _ := db.PendingMorphForAgent(row.AgentID); p != nil {
-			_ = db.SetAgentPendingMorphForConv(convID, nil)
-		}
+		// A failed pending morph is not retried: drop it, audit it, and tell
+		// the requester and the operator, since the agent may now be stopped.
+		_ = db.SetAgentPendingMorphForConv(convID, nil)
 		auditMorphSystem(row.AgentID, convID, "pending morph failed: "+detail, status)
+		reportPendingMorphFailure(row.AgentID, convID, pending, detail)
 		return
 	}
 	h := harnessForConv(convID)
@@ -675,6 +723,22 @@ func applyPendingMorph(row db.AgentWithPendingMorph) {
 	}
 	auditMorphSystem(row.AgentID, convID, fmt.Sprintf("%s (pending, requested by %s): -> %s",
 		result, pending.Actor, viewMorphForm(name, pending.Target)), http.StatusOK)
+}
+
+func reportPendingMorphFailure(agentID, convID string, pending db.AgentPendingMorph, detail string) {
+	name := auditConvLabel(convID)
+	subject := "Morph of " + name + " failed"
+	body := fmt.Sprintf("The pending morph of %s (%s), requested by %s, failed: %s\n\nIf the agent is offline, wake it to resume it.",
+		name, agentID, pending.Actor, detail)
+	if _, err := recordHumanMessage("", subject, body); err != nil {
+		slog.Warn("morph watcher: notify operator failed", "agent", agentID, "error", err)
+	}
+	if pending.ActorConv == "" || sameActor(pending.ActorConv, convID) {
+		return
+	}
+	if _, err := queueAgentMessage(&db.AgentMessage{ToConv: pending.ActorConv, Subject: subject, Body: body}); err != nil {
+		slog.Warn("morph watcher: notify requester failed", "agent", agentID, "error", err)
+	}
 }
 
 func auditMorphSystem(agentID, convID, detail string, status int) {

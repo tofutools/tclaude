@@ -314,6 +314,32 @@ no permission slug. It is primarily a Claude Code tool for context
 pressure; Codex agents should run on and let native auto-compaction do its
 job. Cross-agent handoffs record the caller as the originator.
 
+### morph
+
+`morph [agent] --model M --effort E --ask-for-approval A` (or `--profile P`)
+relaunches an agent in place with a different launch form within the same
+harness. The daemon rewrites the agent's durable relaunch profile and resumes
+the same conversation, so the agent keeps its id, history, inbox, groups and
+permissions, and gets a short inbox note saying what it was and what it is
+now. Tools, the AskUserQuestion timeout and the auto-compact window are
+morphable too; sandbox settings, working directory, harness, drive and model
+proxy are not. A spawn profile for another harness is refused.
+
+An idle or offline agent is morphed at once. A busy agent gets a pending morph
+(shown in `agent ls`, `whoami` and the dashboard) that applies when it next
+goes fully idle, or expires after 30 minutes. `--now` stops a busy or stuck
+agent immediately and resumes it from its last durable history. `--back`
+restores the form the last morph replaced, `--cancel` drops a pending morph,
+`--dry-run` previews the change, and `group:<name>` morphs every other member
+of a group with per-agent results.
+
+Morphing yourself needs `self.morph` (not default-granted, not conferred by
+ownership) and always waits for your current turn to end. Morphing another
+agent needs `agent.morph`, or `groups.members.morph` covering every group of
+the target, which group ownership contributes. A grant scoped to
+`spawn_profile` allows only `--profile` morphs into those profiles. An agent
+may not morph a target into a broader approval posture than its own.
+
 ### clone
 
 `clone [follow-up]` forks an agent into a sibling that inherits its

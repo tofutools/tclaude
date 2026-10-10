@@ -69,6 +69,9 @@ func morphFormOf(p *AgentRelaunchProfile, profile string) AgentMorphForm {
 	return f
 }
 
+// ApplyTo writes the form's non-nil fields into p.
+func (f AgentMorphForm) ApplyTo(p *AgentRelaunchProfile) { applyMorphForm(p, f) }
+
 func applyMorphForm(p *AgentRelaunchProfile, f AgentMorphForm) {
 	if f.Model != nil {
 		p.ModelID = stringPtr(*f.Model)
@@ -103,7 +106,18 @@ func CurrentMorphForm(convID string) (current AgentMorphForm, previous *AgentMor
 	if p == nil {
 		return AgentMorphForm{}, nil, fmt.Errorf("conversation %s has no durable agent launch profile", convID)
 	}
-	return morphFormOf(p, p.MorphProfile), p.PreviousMorphForm, nil
+	return morphFormOf(effectiveMorphBase(convID, p), p.MorphProfile), p.PreviousMorphForm, nil
+}
+
+// effectiveMorphBase composes the conversation fallback under the agent's
+// profile, so a field the agent profile leaves nil is captured as the value
+// resume would actually use rather than as unknown.
+func effectiveMorphBase(convID string, p *AgentRelaunchProfile) *AgentRelaunchProfile {
+	conversation, err := ConversationResumeProfileForConv(convID)
+	if err != nil || conversation == nil {
+		return p
+	}
+	return ComposeAgentRelaunchProfile(conversation.FallbackRelaunch, p)
 }
 
 // updateAgentRelaunchProfileForConvTx runs a read/modify/write of the current
@@ -158,8 +172,16 @@ func updateAgentRelaunchProfileForConv(convID string, apply func(agentID string,
 // morph. It returns the replaced form.
 func ApplyAgentMorphForConv(convID string, target AgentMorphForm) (AgentMorphForm, error) {
 	var previous AgentMorphForm
-	err := updateAgentRelaunchProfileForConv(convID, func(_ string, p *AgentRelaunchProfile) error {
-		previous = morphFormOf(p, p.MorphProfile)
+	conversation, err := ConversationResumeProfileForConv(convID)
+	if err != nil {
+		return previous, err
+	}
+	err = updateAgentRelaunchProfileForConv(convID, func(_ string, p *AgentRelaunchProfile) error {
+		base := p
+		if conversation != nil {
+			base = ComposeAgentRelaunchProfile(conversation.FallbackRelaunch, p)
+		}
+		previous = morphFormOf(base, p.MorphProfile)
 		applyMorphForm(p, target)
 		p.MorphProfile = target.Profile
 		p.PreviousMorphForm = &previous
