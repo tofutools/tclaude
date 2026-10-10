@@ -1776,7 +1776,7 @@ test('hub update: confirms the restart and automatic rollback, polls through the
     { current_version: 'v0.43.0', latest_version: 'v0.44.0', update_available: true, supervisor: 'systemd', rollback_available: false },
     new Error('hub restarting'),
     { current_version: 'v0.43.0', latest_version: 'v0.44.0', update_available: true, supervisor: 'systemd', rollback_available: false,
-      job: { id: 'u1', action: 'apply', from_version: 'v0.43.0', version: 'v0.44.0', state: 'rolled_back', rolled_back: true, error: 'health check failed: no hello within 60 s' } },
+      job: { id: 'u1', action: 'apply', from_version: 'v0.43.0', version: 'v0.44.0', state: 'rolled_back', phase: 'rolled_back', rolled_back: true, error: 'health check failed: no hello within 60 s' } },
   ];
   const calls = [];
   const actions = {
@@ -1805,18 +1805,18 @@ test('hub update: confirms the restart and automatic rollback, polls through the
   await harness.act(() => new Promise((r) => setTimeout(r, 20)));
   const job = q('#fleet-node-update-job');
   assert.match(job.className, /fa-danger/);
-  assert.match(job.textContent, /rolled back.*health check failed/);
+  assert.match(job.textContent, /rolled back — health check failed/, 'a phase equal to the state is not repeated');
 });
 
 test('hub update: an unsupervised hub refuses with a clear reason and no update button works', async (t) => {
   const harness = await createPreactHarness(t);
   const { NodeUpdateDialog } = await harness.importDashboardModule('js/node-update.js');
-  const actions = { status: async () => ({ current_version: 'v0.43.0', latest_version: 'v0.44.0', update_available: true, supervisor: null, blocked: { code: 'not_supervised', message: 'Run tclaude-hub under the guardian (systemd or launchd unit).' } }), start: async () => { throw new Error('must not start'); } };
+  const actions = { status: async () => ({ current_version: 'v0.43.0', latest_version: 'v0.44.0', update_available: true, supervisor: null, blocked: { code: 'not_supervised', message: 'host must run serve --supervised under a verified systemd/launchd restart policy' } }), start: async () => { throw new Error('must not start'); } };
   await harness.mount(harness.html`<${NodeUpdateDialog} node=${{ id: 'hub', label: 'the hub', hub: true }} actions=${actions} confirm=${async () => true} toast=${() => {}} timers=${globalThis} onClose=${() => {}} />`);
   await harness.act(() => new Promise((r) => setTimeout(r, 10)));
   const q = (x) => harness.document.querySelector(x);
   assert.match(q('#fleet-hub-supervisor').textContent, /none/);
-  assert.match(q('#fleet-hub-update-blocked').textContent, /not running under systemd or launchd.*update refused.*guardian/);
+  assert.match(q('#fleet-hub-update-blocked').textContent, /not running under systemd or launchd.*update refused.*serve --supervised/);
   assert.equal(q('#fleet-node-update-apply').disabled, true);
 });
 

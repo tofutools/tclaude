@@ -165,9 +165,9 @@ const skynetFederationStubJS = `(function(){
       { id: 'au2', at: '2026-10-10T09:05:41Z', actor: 'inst_q4w7pjf2kx3mz6bty5nd', kind: 'settings', outcome: 'applied', detail: {} },
       { id: 'au1', at: '2026-10-09T17:20:00Z', actor: 'inst_q4w7pjf2kx3mz6bty5nd', kind: 'update', outcome: 'rolled_back', detail: { from_version: 'v0.42.1', to_version: 'v0.43.0' } }], next_cursor: 'au1' });
     if (path === '/api/federation/hub/update') return json(window.__dashsnapHubUpdate === 'unsupervised'
-      ? { current_version: 'v0.43.0', latest_version: 'v0.44.0', update_available: true, checked_at: '2026-10-10T08:00:00Z', supervisor: null, blocked: { code: 'not_supervised', message: 'Start it with tclaude-hub serve --guardian under a systemd or launchd unit, then try again.' } }
+      ? { current_version: 'v0.43.0', latest_version: 'v0.44.0', update_available: true, checked_at: '2026-10-10T08:00:00Z', supervisor: null, blocked: { code: 'not_supervised', message: 'host must run serve --supervised under a verified systemd/launchd restart policy' } }
       : { current_version: 'v0.43.0', latest_version: 'v0.44.0', update_available: true, checked_at: '2026-10-10T08:00:00Z', supervisor: 'systemd', rollback_available: false,
-          job: window.__dashsnapHubUpdate === 'rolled_back' ? { id: 'hu1', action: 'apply', from_version: 'v0.43.0', version: 'v0.44.0', state: 'rolled_back', rolled_back: true, error: 'health check failed: candidate did not accept connections within 60 s; restored v0.43.0', finished_at: '2026-10-10T09:48:00Z' }
+          job: window.__dashsnapHubUpdate === 'rolled_back' ? { id: 'hu1', action: 'apply', from_version: 'v0.43.0', version: 'v0.44.0', state: 'rolled_back', phase: 'rolled_back', rolled_back: true, error: 'health check failed: candidate did not accept connections within 60 s; restored v0.43.0', finished_at: '2026-10-10T09:48:00Z' }
             : { id: 'hu1', action: 'apply', from_version: 'v0.43.0', version: 'v0.44.0', state: 'restarting', phase: 'health_check', deadline: '2026-10-10T09:49:00Z' } });
     if (path === '/api/federation/hub/logs') return json({ entries: [
       { at: '2026-10-10T09:14:02Z', level: 'info', message: 'admitted inst_2p6ym4ke to space ci' },

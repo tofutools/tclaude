@@ -162,9 +162,9 @@ export function NodeUpdateDialog({ node, confirm, toast, onClose, actions = defa
         ${(status.binaries || []).map((b) => html`<span key=${b.name} class="fa-k">${b.name}</span><span><code>${b.version}</code> <span class="muted">${b.path}</span></span>`)}
       </div>
       ${(status.warnings || []).map((w) => html`<div key=${w} class="fa-warn">${w}</div>`)}
-      ${blocked && html`<div class="fa-danger" role="alert" id="fleet-hub-update-blocked">${blocked.code === 'not_supervised' ? 'The hub is not running under systemd or launchd, so it cannot restart itself or roll back safely; update refused. ' : ''}${blocked.message || ''}</div>`}
+      ${blocked && html`<div class="fa-danger" role="alert" id="fleet-hub-update-blocked">${blocked.code === 'not_supervised' ? 'The hub is not running under systemd or launchd, so it cannot restart itself or roll back safely; update refused' : 'Update is not possible'}${blocked.message ? `: ${blocked.message}` : '.'}</div>`}
       ${job && html`<div id="fleet-node-update-job" class=${job.state === 'failed' || job.state === 'rolled_back' || job.rolled_back ? 'fa-danger' : ''}>
-        ${job.action} ${job.from_version ? `${job.from_version} → ` : ''}${job.version || ''}: <b>${unanswered ? `${job.state === 'rolling_back' ? 'rolling back' : 'restarting'}… (not answering yet)` : job.state.replaceAll('_', ' ')}</b>${job.phase ? ` (${job.phase.replaceAll('_', ' ')})` : ''}${job.rolled_back && job.state !== 'rolled_back' ? ' — rolled back' : ''}${job.error ? ` — ${job.error}` : ''}
+        ${job.action} ${job.from_version ? `${job.from_version} → ` : ''}${job.version || ''}: <b>${unanswered ? `${job.state === 'rolling_back' ? 'rolling back' : 'restarting'}… (not answering yet)` : job.state.replaceAll('_', ' ')}</b>${job.phase && job.phase !== job.state ? ` (${job.phase.replaceAll('_', ' ')})` : ''}${job.rolled_back && job.state !== 'rolled_back' ? ' — rolled back' : ''}${job.error ? ` — ${job.error}` : ''}
         ${job.deadline && updateJobActive(job) && html`<span class="muted"> · healthy by ${new Date(job.deadline).toLocaleTimeString()} or it rolls back</span>`}
       </div>`}`}
     <div class="modal-buttons">
