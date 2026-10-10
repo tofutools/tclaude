@@ -43,6 +43,13 @@ func TestDashboardContentBoardMembershipKeysAndModeration(t *testing.T) {
 	token := invitation["token"].(string)
 	require.NotEmpty(t, token)
 	require.NotEmpty(t, invitation["token_id"])
+	invites := must("GET", "/"+board+"/invites", nil)
+	require.Len(t, invites["invites"], 1)
+	inviteRow := invites["invites"].([]any)[0].(map[string]any)
+	require.Equal(t, invitation["token_id"], inviteRow["token_id"])
+	require.NotContains(t, inviteRow, "token")
+	require.NotContains(t, inviteRow, "key_package")
+
 	var decoded struct{ Hub, Board, Secret, Key string }
 	raw, err := base64.RawURLEncoding.DecodeString(token[len("board1_"):])
 	require.NoError(t, err)
@@ -78,6 +85,10 @@ func TestDashboardContentBoardMembershipKeysAndModeration(t *testing.T) {
 	result, err = client.BoardCall(context.Background(), opts, "", "invites.create", map[string]any{"board": board, "role": "publisher", "token": proto.NewEnvelopeID(), "ttl_seconds": 120, "epoch": 1, "key_package": "opaque"})
 	require.NoError(t, err)
 	require.Equal(t, 403, result.Status)
+	result, err = client.BoardCall(context.Background(), opts, "", "invites.list", map[string]any{"board": board})
+	require.NoError(t, err)
+	require.Equal(t, 403, result.Status, "invitation metadata is owner-only")
+
 	must("PUT", "/"+board+"/members/"+reader.ID(), map[string]any{"role": "publisher"})
 	require.Equal(t, float64(2), must("POST", "/"+board+"/rotate-key", map[string]any{})["epoch"])
 	result, err = client.BoardCall(context.Background(), opts, "", "keys.get", map[string]any{"board": board})
@@ -131,7 +142,7 @@ func TestDashboardContentBoardMembershipKeysAndModeration(t *testing.T) {
 		{"GET", ""}, {"POST", ""}, {"POST", "/join"}, {"GET", "/" + board},
 		{"GET", "/" + board + "/members"}, {"PUT", "/" + board + "/members/" + reader.ID()},
 		{"DELETE", "/" + board + "/members/" + reader.ID()}, {"DELETE", "/" + board + "/membership"},
-		{"POST", "/" + board + "/invites"}, {"DELETE", "/" + board + "/invites/token"},
+		{"GET", "/" + board + "/invites"}, {"POST", "/" + board + "/invites"}, {"DELETE", "/" + board + "/invites/token"},
 		{"POST", "/" + board + "/rotate-key"},
 	} {
 		rec := testharness.Serve(peerView, testharness.JSONRequest(t, endpoint.method, "/api/federation/boards"+endpoint.tail, map[string]any{}))

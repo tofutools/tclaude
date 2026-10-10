@@ -30,7 +30,7 @@ func registerBoardRoutes(mux *http.ServeMux, prefix string, dashboard bool) {
 	for pattern, operation := range map[string]string{
 		"GET ": "boards.list", "POST ": "boards.create", "POST /join": "join", "GET /{board}": "boards.get",
 		"DELETE /{board}/membership": "leave", "GET /{board}/members": "members.list", "PUT /{board}/members/{instance}": "members.set", "DELETE /{board}/members/{instance}": "members.remove",
-		"POST /{board}/invites": "invites.create", "DELETE /{board}/invites/{token_id}": "invites.revoke", "POST /{board}/rotate-key": "keys.rotate",
+		"GET /{board}/invites": "invites.list", "POST /{board}/invites": "invites.create", "DELETE /{board}/invites/{token_id}": "invites.revoke", "POST /{board}/rotate-key": "keys.rotate",
 	} {
 		method, tail, _ := strings.Cut(pattern, " ")
 		handler := boardOperatorRoute(operation)

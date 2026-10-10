@@ -184,3 +184,32 @@ func TestReleaseArchiveAndChecksumValidation(t *testing.T) {
 	_, err = checksumFor([]byte(strings.Repeat("z", 64)+" archive.tar.gz"), "archive.tar.gz")
 	require.Error(t, err)
 }
+
+func TestDevelopmentBuildUpdateAvailability(t *testing.T) {
+	for _, tc := range []struct {
+		current, latest string
+		want            bool
+	}{
+		{"v0.0.2194-0.20261010123456-2d4ba05719d1", "v0.0.2194", false},
+		{"v0.0.2194-0.20261010123456-2d4ba05719d1", "v0.0.2193", false},
+		{"v0.0.2194-0.20261010123456-2d4ba05719d1", "v0.0.2195", true},
+		{"v1.0.0-rc.1", "v1.0.0", true},
+		{"v1.0.0", "v1.0.1", true},
+	} {
+		t.Run(tc.current+"/"+tc.latest, func(t *testing.T) {
+			s, _ := fixture(t)
+			s.status.CurrentVersion = tc.current
+			s.status.LatestVersion = tc.latest
+			s.updateAvailable()
+			require.NotNil(t, s.Status().UpdateAvailable)
+			require.Equal(t, tc.want, *s.Status().UpdateAvailable)
+			s.release = func(context.Context, string) (Release, error) { return Release{Tag: tc.latest}, nil }
+			j, err := s.Start(Request{Action: "check"}, "operator", func() bool { return true })
+			require.NoError(t, err)
+			job := waitJob(t, s, j.ID)
+			require.Equal(t, "succeeded", job.State, job.Error)
+			require.NotNil(t, job.UpdateAvailable)
+			require.Equal(t, tc.want, *job.UpdateAvailable)
+		})
+	}
+}

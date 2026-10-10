@@ -12,10 +12,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/common/buildversion"
+	gomodule "golang.org/x/mod/module"
 	"golang.org/x/mod/semver"
 )
 
@@ -93,9 +95,19 @@ func New(dir string, binaries []Binary, hooks Hooks) (*Service, error) {
 	s.updateAvailable()
 	return s, nil
 }
+
+// A pseudo-version is a development build at the release prefix. Do not
+// advertise its matching release as an update merely because semver ranks
+// a pseudo-version as a prerelease.
+func releaseNewerThanBuild(release, current string) bool {
+	if gomodule.IsPseudoVersion(current) {
+		current = strings.TrimSuffix(semver.Canonical(current), semver.Prerelease(current))
+	}
+	return semver.Compare(release, current) > 0
+}
 func (s *Service) updateAvailable() {
 	if semver.IsValid(s.status.CurrentVersion) && semver.IsValid(s.status.LatestVersion) {
-		v := semver.Compare(s.status.LatestVersion, s.status.CurrentVersion) > 0
+		v := releaseNewerThanBuild(s.status.LatestVersion, s.status.CurrentVersion)
 		s.status.UpdateAvailable = &v
 	} else {
 		s.status.UpdateAvailable = nil
@@ -190,7 +202,7 @@ func (s *Service) run(req Request, job Job, authorize func() bool) {
 		if err == nil {
 			job.Version = release.Tag
 			if semver.IsValid(job.CurrentVersion) {
-				available := semver.Compare(release.Tag, job.CurrentVersion) > 0
+				available := releaseNewerThanBuild(release.Tag, job.CurrentVersion)
 				job.UpdateAvailable = &available
 			}
 			s.mu.Lock()
