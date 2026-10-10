@@ -147,7 +147,7 @@ func serveDefinition() boa.CmdT[serveParams] {
 				fail(err)
 			}
 			if token != "" {
-				fmt.Fprintf(os.Stderr, "Hub admin claim token (single-use, valid24h): %s\nPrivate claim file: %s\n", token, st.ClaimPath())
+				fmt.Fprintf(os.Stderr, "Hub admin claim token (single-use, valid 24h): %s\nPrivate claim file: %s\n", token, st.ClaimPath())
 			}
 			flags := []string{}
 			flagKeys := map[string]string{"identity-rotation-window": "identity_rotation_window_seconds", "frames-per-minute": "frames_per_minute", "bytes-per-minute": "bytes_per_minute", "max-connections": "max_connections", "max-streams": "max_streams", "stream-bytes-per-second": "stream_bytes_per_second", "stream-wait": "stream_wait_seconds", "stream-idle": "stream_idle_seconds", "connection-idle": "connection_idle_seconds", "hello-timeout": "hello_timeout_seconds", "policy-refresh": "policy_refresh_seconds"}
