@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { viewersFocus } from './remote-viewers.js';
 
 const html = htm.bind(h);
 
@@ -44,12 +45,17 @@ export function ViewersPanel({ view, actions, confirm, toast, timers = globalThi
     action: () => actions.kickViewer(v.id),
   }).then((r) => { if (r) { toast(`Disconnected ${label(v.peer)}`, false); setTick((n) => n + 1); } })
     .catch((e) => toast(`Disconnect failed: ${errText(e)}`, true));
-  if (!rows.length && !error) return null;
+  // A viewer badge on an agent row or terminal header opens this panel
+  // filtered to that agent until the operator shows them all again.
+  const focus = viewersFocus.value;
+  const shown = focus ? rows.filter((v) => v.agent === focus || v.session === focus) : rows;
+  if (!rows.length && !error && !focus) return null;
   return html`<div class="fa-viewers" id="fleet-viewers">
     <h4>Watching this node's terminals now <span class="muted">${rows.length}</span></h4>
+    ${focus && html`<div class="muted" id="fleet-viewers-focus">${shown.length ? 'Showing who views' : 'No one is viewing'} <code>${focus}</code> now · <button type="button" class="fa-link" onClick=${() => { viewersFocus.value = ''; }}>show all</button></div>`}
     ${error && html`<div class="fa-danger">${error}</div>`}
-    ${rows.length > 0 && html`<table class="fa-table"><thead><tr><th>Peer</th><th>Agent</th><th>Group</th><th>Mode</th><th>For</th><th></th></tr></thead>
-      <tbody>${rows.map((v) => html`<tr key=${v.id} data-viewer=${v.id}>
+    ${shown.length > 0 && html`<table class="fa-table"><thead><tr><th>Peer</th><th>Agent</th><th>Group</th><th>Mode</th><th>For</th><th></th></tr></thead>
+      <tbody>${shown.map((v) => html`<tr key=${v.id} data-viewer=${v.id}>
         <td>${label(v.peer)}</td>
         <td><code title=${v.agent}>${v.session || v.agent}</code></td>
         <td>${v.group || ''}</td>
