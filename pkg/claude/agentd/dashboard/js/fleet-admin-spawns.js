@@ -13,11 +13,29 @@ function when(t) {
   return t && !String(t).startsWith('0001-') ? new Date(t).toLocaleString() : '';
 }
 
-// paidBy says whose model account a requested worker uses: requester-paid
-// workers route through the requester's gateway (credentials proxy:…).
+// paidBy says whose model account a requested worker uses. Only a request
+// that carries a model lease is requester-paid; a proxy selector naming some
+// other node passes through to that node's gateway without a lease.
 function paidBy(r) {
-  if (String(r.credentials || '').startsWith('proxy:')) return `${r.from}'s model gateway (requester-paid)`;
-  return 'this node\'s harness logins';
+  if (r.model_lease) return `${r.from}'s model gateway (requester-paid: its usage is charged to them)`;
+  if (String(r.credentials || '').startsWith('proxy:')) return `the model gateway ${String(r.credentials).slice(6)} (a third-party gateway, not this node's logins)`;
+  return 'this node\'s harness logins (your provider account)';
+}
+
+function payTag(r) {
+  if (r.model_lease) return 'requester-paid';
+  if (String(r.credentials || '').startsWith('proxy:')) return `via ${String(r.credentials).slice(6)}`;
+  return '';
+}
+
+// PlacementList renders why each candidate node was or was not chosen, like
+// the CLI's placement readout.
+function PlacementList({ placement }) {
+  if (!placement?.candidates?.length) return null;
+  return html`<table class="fa-table" id="fleet-spawn-placement"><tbody>${placement.candidates.map((c) => html`<tr key=${c.instance}>
+    <td>${c.peer || c.instance}</td><td>${c.group || ''}</td>
+    <td class=${c.instance === placement.selected ? '' : c.eligible ? 'muted' : 'fa-danger'}>${c.instance === placement.selected ? 'selected' : c.eligible ? 'eligible' : 'skipped'}${c.reason ? ` — ${c.reason}` : ''}${c.attempt ? ` (${c.attempt})` : ''}</td>
+  </tr>`)}</tbody></table>`;
 }
 
 // ApproveDialog launches a peer's requested worker here, optionally
@@ -30,7 +48,7 @@ function ApproveDialog({ req, actions, confirm, toast, onClose, onDone }) {
     const overrides = Object.fromEntries(Object.entries(o).map(([k, v]) => [k, v.trim()]).filter(([k, v]) => v && v !== (req[k] || '')));
     confirm({
       title: `Start ${o.name.trim() || 'a worker'} for ${req.from}?`,
-      body: `A new agent starts in your group ${req.group} on this node, as you, under that group's spawn rules, and works on ${req.from}'s brief. It runs with ${paidBy(req)}, can use what members of ${req.group} can, and stays until you retire it. ${req.from} is told it was approved and can reach it like any member of ${req.group}.`,
+      body: `A new agent starts in your group ${req.group} on this node, as you, under that group's spawn rules, and works on ${req.from}'s brief. It runs with ${paidBy(req)}, can use what members of ${req.group} can plus any worker permissions in the node profile assigned to ${req.from}, and stays until you retire it. ${req.from} is told it was approved and can reach it like any member of ${req.group}.`,
       okLabel: 'Approve and start',
       busyLabel: 'Starting…',
       action: () => actions.approveSpawn(req.id, overrides),
@@ -76,6 +94,7 @@ function DenyDialog({ req, actions, confirm, toast, onClose, onDone }) {
 // exported groups; the peer's operator decides. Mirrors
 // `tclaude federation spawn-request`.
 function SendDialog({ view, pools, actions, confirm, toast, onClose, onDone }) {
+  const [result, setResult] = useState(null);
   const peers = view.trusted || [];
   const [target, setTarget] = useState(peers[0] ? `peer:${peers[0].id}` : 'auto');
   const [f, setF] = useState({ group: '', brief: '', name: '', role: '', profile: '', credentials: '', require: '', prefer: '' });
@@ -88,12 +107,16 @@ function SendDialog({ view, pools, actions, confirm, toast, onClose, onDone }) {
     if (auto) { body.node = target; for (const k of ['require', 'prefer']) if (f[k].trim()) body[k] = f[k].trim(); } else body.peer = target.slice(5);
     confirm({
       title: `Ask ${where} for a worker?`,
-      body: `${where}'s operator gets your brief${body.group ? ` for its group ${body.group}` : ''} and decides whether to start a worker there. If approved, the worker runs on that node under its rules${body.credentials?.startsWith('proxy:') ? ', using your model gateway (requester-paid: its model usage is charged to you)' : ''}. Requests wait up to 72 hours.`,
+      body: `${where}'s operator gets your brief${body.group ? ` for its group ${body.group}` : ''} and decides whether to start a worker there — unless that node granted you groups.members.spawn on the group, in which case the worker starts right away without its operator deciding. The worker runs on that node under its rules${/^proxy:.*@self$/.test(body.credentials || '') ? ', using your model gateway (requester-paid: its model usage is charged to you)' : body.credentials?.startsWith('proxy:') ? `, through the model gateway ${body.credentials.slice(6)}` : ''}. Requests wait up to 72 hours.`,
       okLabel: 'Send request',
       busyLabel: 'Sending…',
       action: () => actions.sendSpawnRequest(body),
-    }).then((r) => { if (r) { toast(`Spawn request sent to ${r.to || where}${r.hub_connected === false ? ' (queued until the hub reconnects)' : ''}`, false); onDone(); } })
-      .catch((e) => toast(`Spawn request failed: ${errText(e)}`, true));
+    }).then((r) => {
+      if (!r) return;
+      const refused = r.state === 'refused';
+      toast(refused ? `${r.to || where} refused the spawn request` : `Spawn request sent to ${r.to || where}${r.hub_connected === false ? ' (queued until the hub reconnects)' : ''}`, refused);
+      if (r.placement || refused) setResult(r); else onDone();
+    }).catch((e) => { toast(`Spawn request failed: ${errText(e)}`, true); if (e?.body?.placement) setResult({ error: errText(e), placement: e.body.placement }); });
   };
   return html`<${Overlay} id="fleet-spawn-send" labelledby="fleet-spawn-send-title" onClose=${onClose}>
     <h3 id="fleet-spawn-send-title">Request a worker on a peer</h3>
@@ -111,8 +134,12 @@ function SendDialog({ view, pools, actions, confirm, toast, onClose, onDone }) {
     <label class="fa-spawn-opt">Credentials <input value=${f.credentials} onInput=${set('credentials')} placeholder="local, or proxy:<gateway>@self (requester-paid)" /></label>
     ${auto && html`<label class="fa-spawn-opt">Require <input value=${f.require} onInput=${set('require')} placeholder="os=linux,harness=claude,label=gpu" /></label>
       <label class="fa-spawn-opt">Prefer <select value=${f.prefer} onChange=${set('prefer')}><option value="">least-loaded</option><option value="most-free-ram">most-free-ram</option></select></label>`}
+    ${result && html`<div id="fleet-spawn-result">
+      ${result.error ? html`<div class="fa-danger" role="alert">${result.error}</div>`
+        : html`<div class=${result.state === 'refused' ? 'fa-danger' : ''}>Sent to ${result.to}: <b>${result.state}</b>${result.state === 'refused' ? ' — placement never retries elsewhere after a refusal' : result.state === 'sent' ? ' — not yet acknowledged; check the outbox' : ''}</div>`}
+      <${PlacementList} placement=${result.placement} /></div>`}
     <div class="modal-buttons"><span class="spacer"></span>
-      <button type="button" onClick=${onClose}>Cancel</button>
+      <button type="button" onClick=${result && !result.error ? onDone : onClose}>${result ? 'Close' : 'Cancel'}</button>
       <button id="fleet-spawn-send-go" type="button" class="primary" disabled=${!f.brief.trim() || (!auto && !f.group.trim())} onClick=${go}>Send…</button>
     </div>
     <div class="muted fa-cli-note">CLI: <code>tclaude federation spawn-request &lt;group&gt;@&lt;peer&gt; --brief …</code> or <code>--node auto|group:&lt;pool&gt;</code></div>
@@ -164,7 +191,7 @@ export function SpawnRequestsPage({ view, pools, actions, confirm, toast, now = 
         <td title=${r.instance}>${r.from}</td>
         <td>${r.group}</td>
         <td>${[r.name, r.role && `role ${r.role}`, r.profile && `profile ${r.profile}`].filter(Boolean).join(' · ') || html`<span class="muted">defaults</span>`}
-          ${String(r.credentials || '').startsWith('proxy:') && html`<div class="muted">requester-paid</div>`}</td>
+          ${payTag(r) && html`<div class="muted">${payTag(r)}</div>`}</td>
         <td class="fa-spawn-brief-cell" title=${r.brief}>${r.brief}</td>
         <td class=${r.status === 'denied' || r.status === 'expired' ? 'fa-danger' : r.status === 'launching' ? 'fa-warn' : ''} title=${r.reason || ''}>${r.status}${r.result_agent ? html` <code title=${r.result_agent}>${r.result_agent.slice(0, 14)}</code>` : ''}${r.reason ? html` <span class="muted">— ${r.reason}</span>` : ''}</td>
         <td class="muted">${r.status === 'pending' ? (Date.parse(r.expires_at) < now ? 'expired' : when(r.expires_at)) : ''}</td>

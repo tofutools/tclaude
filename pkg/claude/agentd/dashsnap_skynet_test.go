@@ -50,7 +50,7 @@ const skynetFederationStubJS = `(function(){
       { id: 'a1', at: '2026-10-10T08:20:00Z', source: 'audit', direction: 'event', peer: 'inst_hn3cxq7a', kind: 'federation.grant', actor: 'operator', target: 'inst_hn3cxq7a groups.roster.read group=ops', status: 200 }
     ]);
     if (path === '/api/federation/spawn-requests' && !(init && init.method === 'POST')) return json([
-      { id: 12, from: 'ada@forge', instance: 'inst_hn3cxq7a', group: 'frontend-squad', name: 'flake-hunter', role: 'dev', profile: 'opus-fast', brief: 'The deploy smoke test fails about one run in five on CI. Find the race and fix it; keep the change small.', status: 'pending', credentials: 'proxy:claude@self', created_at: '2026-10-10T09:12:00Z', expires_at: '2026-10-13T09:12:00Z' },
+      { id: 12, from: 'ada@forge', instance: 'inst_hn3cxq7a', group: 'frontend-squad', name: 'flake-hunter', role: 'dev', profile: 'opus-fast', brief: 'The deploy smoke test fails about one run in five on CI. Find the race and fix it; keep the change small.', status: 'pending', credentials: 'proxy:claude@inst_hn3cxq7a', model_lease: 'mlease_7q2kx9d4hpa1', created_at: '2026-10-10T09:12:00Z', expires_at: '2026-10-13T09:12:00Z' },
       { id: 11, from: 'ada@forge', instance: 'inst_hn3cxq7a', group: 'infra-crew', brief: 'Benchmark the new cache layer against main.', status: 'launching', result_agent: 'agt_k3v9q2m7x1', created_at: '2026-10-10T08:40:00Z', expires_at: '2026-10-13T08:40:00Z' },
       { id: 9, from: 'lab', instance: 'inst_2p6ym4ke', group: 'infra-crew', brief: 'Rebuild the docs index.', status: 'approved', result_agent: 'agt_p8d2w4c6z0', created_at: '2026-10-09T15:00:00Z', expires_at: '2026-10-12T15:00:00Z' }
     ]);

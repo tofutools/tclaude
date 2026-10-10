@@ -616,7 +616,9 @@ first and says what will happen. Most pages name their CLI.
   reason. A launch that never confirmed can be abandoned back to pending, but
   the original worker may still appear late. **Request a worker on a peer…**
   sends a brief to a peer's exported group, or to automatic placement (any
-  trusted node or a pool, with requirements). The outbox below shows delivery
+  trusted node or a pool, with requirements; the dialog shows why each
+  candidate was chosen or skipped). A peer that granted you
+  `groups.members.spawn` on the group starts the worker right away. The outbox below shows delivery
   of the spawn requests and operator mail this node sent; decisions arrive in
   Messages. CLI: `tclaude federation spawn-request`, `requests`, `outbox`.
 - **Invites & joining** — **Create invite…** issues an enrollment token for a
