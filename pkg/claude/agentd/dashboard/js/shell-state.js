@@ -60,6 +60,9 @@ export function createShellState({ setTimer = setTimeout, clearTimer = clearTime
         cancelLabel: String(options.cancelLabel || 'Cancel'),
         busyLabel: String(options.busyLabel || 'Working…'),
         informational: !!options.informational,
+        // focusCancel starts keyboard focus on Cancel instead of the action,
+        // for confirms whose action cannot be undone.
+        focusCancel: !!options.focusCancel,
         preformatted: !!options.preformatted,
         busy: false,
       };

@@ -91,6 +91,7 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
       { id: 'm2', direction: 'in', teleport: true, peer: 'inst_forge', source_agent: 'agt_bbbbbbbbbbbbbbbb', target_agent: 'agt_cccccccccccccccc', group: 'rigs', state: 'complete', expires_at: '2026-10-09T00:00:00Z' },
       { id: 'm3', direction: 'out', teleport: true, peer: 'inst_lab', source_agent: 'agt_dddddddddddddddd', group: 'ops', state: 'retiring', expires_at: '2099-01-01T00:00:00Z' },
     ]; },
+    moveAgent: async (body) => { log.push(['moveAgent', body]); if (!body.allow_flagged) { const e = new Error('suspected credentials'); e.status = 422; e.code = 'flagged_credentials'; e.body = { findings: [{ kind: 'aws_key', count: 1 }] }; throw e; } return { offer: { offer: { id: 'off_mv', move: {} } } }; },
     abandonMove: async (id) => { log.push(['abandon', id]); return { id, state: 'abandoned' }; },
     teleport: async () => ({ disabled: false }),
     setTeleport: async (disabled) => { log.push(['teleport', disabled]); return { disabled }; },
@@ -960,11 +961,13 @@ test('offer actions address an incoming offer by ID and source peer', async (t) 
   await a.importOffer(o, { apply: false });
   await a.declineOffer(o);
   await a.offerProfile('rig', 'inst_forge');
+  await a.moveAgent({ agent: 'agt_a1', peer: 'inst_forge', group: 'team' });
   assert.deepEqual(calls, [
     ['GET', '/api/federation/bundle-offers?direction=in', null],
     ['POST', '/api/federation/bundle-offers/off%201/import?peer=inst_forge', { apply: false }],
     ['POST', '/api/federation/bundle-offers/off%201/decline?peer=inst_forge', {}],
     ['POST', '/api/federation/profiles/rig/offer', { peer: 'inst_forge' }],
+    ['POST', '/api/federation/move-agent', { agent: 'agt_a1', peer: 'inst_forge', group: 'team' }],
   ]);
 });
 
@@ -984,6 +987,37 @@ test('moves: both directions listed, only abandonable outgoing moves offer Aband
   assert.match(s.confirms.at(-1).body, /can no longer teleport to a peer, and teleports from peers can no longer land here/);
   assert.ok(s.log.some((l) => l[0] === 'teleport' && l[1] === true));
   assert.match(s.q('#fleet-teleport').textContent, /frozen/);
+});
+
+test('moves: the move dialog spells out that the source retires, starts focus on Cancel, and surfaces refusals', async (t) => {
+  const s = await setup(t);
+  const doc = s.harness.document; const q = (x) => doc.querySelector(x);
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Moves/.test(b.textContent)));
+  await s.click(s.q('#fleet-move-open'));
+  assert.deepEqual([...q('#fleet-move-agent-agent').querySelectorAll('option')].map((o) => o.value), ['agt_a1'], 'only agents with a stable ID can move');
+  await s.click(q('#fleet-move-agent-send'));
+  assert.match(q('#fleet-move-agent [role=alert]').textContent, /receiving group/);
+  const g = q('#fleet-move-agent-group'); g.value = 'team';
+  await s.harness.act(() => s.harness.fireEvent(g, 'input'));
+  await s.click(q('#fleet-move-agent-send'));
+  const c = s.confirms.at(-1);
+  assert.equal(c.focusCancel, true);
+  assert.match(c.title, /Move ada \(agt_a1\) to forge\?/);
+  assert.match(c.body, /full conversation history.*retired here: it stops running on this node.*abandon the move/);
+  assert.match(q('#fleet-move-agent [role=alert]').textContent, /contains credentials/);
+  assert.equal(q('#fleet-move-agent-send').disabled, true, 'flagged history needs an explicit choice');
+  await s.check(q('#fleet-move-agent-allow'));
+  await s.click(q('#fleet-move-agent-send'));
+  assert.match(s.confirms.at(-1).body, /suspected credentials \(aws_key ×1\)/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'moveAgent')[1], { agent: 'agt_a1', peer: 'inst_forge', group: 'team', allow_flagged: true });
+  assert.equal(q('#fleet-move-agent'), null, 'closes when the move starts');
+  assert.match(s.toasts.at(-1), /Move of ada \(agt_a1\) to forge started/);
+
+  const { moveErrorText } = await s.harness.importDashboardModule('js/fleet-admin-moves.js');
+  const e = new Error('peer has not advertised agent move support'); e.code = 'unsupported_peer';
+  assert.match(moveErrorText(e, 'forge'), /^forge has not advertised agent move support.*Offer a copy/);
+  assert.equal(moveErrorText(new Error('boom'), 'forge'), 'boom');
 });
 
 test('jobs & repos: approve, cancel, resend and acknowledge with spelled-out consequences; send jobs; allow repositories', async (t) => {

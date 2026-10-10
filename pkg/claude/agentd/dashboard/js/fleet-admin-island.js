@@ -380,7 +380,7 @@ export function FleetAdmin({
       : sub.id === 'spawns'
       ? html`<${SpawnRequestsPage} view=${view} pools=${pools} actions=${actions} confirm=${confirm} toast=${toast} now=${now()} />`
       : sub.id === 'moves'
-      ? html`<${MovesPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} now=${now()} />`
+      ? html`<${MovesPage} view=${view} agents=${localAgents(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} now=${now()} />`
       : sub.id === 'invites'
       ? html`<${InvitesPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} now=${now()} />`
       : sub.id === 'profiles'

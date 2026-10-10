@@ -65,6 +65,9 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
     // Durable agent moves (both directions) and this node's teleport freeze.
     moves: async () => (await call('GET', 'moves'))?.moves || [],
     abandonMove: (id) => call('POST', `moves/${encodeURIComponent(id)}/abandon`, {}),
+    // Moves a local agent to a peer with its history; the source retires
+    // here once the peer confirms its copy is running (move-agent).
+    moveAgent: (body) => call('POST', 'move-agent', body),
     teleport: () => call('GET', 'teleport'),
     setTeleport: (disabled) => call('PUT', 'teleport', { disabled }),
     createPool: (name) => call('POST', 'nodes/groups', { name }),

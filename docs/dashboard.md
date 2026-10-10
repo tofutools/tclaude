@@ -719,6 +719,10 @@ first and says what will happen. Most pages name their CLI.
   move that has not started retiring the agent here; the agent is not retired
   (a copy the peer already made stays there). **Freeze teleports…** stops teleports leaving or landing
   on this node until you allow them again; plain moves are not affected.
+  **Move an agent to a peer…** is `tclaude federation move-agent`: it sends a
+  local agent with its conversation history to a peer's receiving group, and
+  the agent retires here once the peer confirms its copy is running. The
+  confirm says so, and keyboard focus starts on Cancel.
 - **Audit** — this node's federation activity, newest first: a peer acting
   here (⇠) or this node acting on a peer (⇢), with actor, target, group and
   outcome; refused or failed requests in red. Filter by peer and time window.

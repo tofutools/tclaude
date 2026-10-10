@@ -323,6 +323,23 @@ test('shell confirmation keeps capture-Escape semantics and feedback cleanup', a
   await mounted.unmount();
 });
 
+test('a confirmation can start keyboard focus on Cancel for an irreversible action', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createShellState }, { Confirm }] = await Promise.all([
+    harness.importDashboardModule('js/shell-state.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const feedback = createShellState();
+  const mounted = await harness.mount(harness.html`<${Confirm} feedback=${feedback} />`);
+  let answered;
+  await harness.act(() => { answered = feedback.confirm({ title: 'Move?', okLabel: 'Move agent', focusCancel: true }); });
+  assertSameNode(harness.document.activeElement, mounted.container.querySelector('#confirm-cancel'));
+  await harness.act(() => { harness.fireEvent(harness.document, 'keydown', { key: 'Enter' }); });
+  await harness.act(() => mounted.container.querySelector('#confirm-cancel').click());
+  assert.equal(await answered, false);
+  await mounted.unmount();
+});
+
 test('global activity keeps keyed native bot identity across polls and wizard changes', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, { GlobalActivity }] = await Promise.all([
