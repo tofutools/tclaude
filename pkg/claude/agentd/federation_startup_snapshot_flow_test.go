@@ -32,6 +32,9 @@ func TestFederationImportedStartupContextAfterCompaction(t *testing.T) {
 						in.Home = true
 						in.OriginInstance = fh.peer.agentdID
 						in.Clone = false
+						last := in.Hops[0]
+						first := bundletransfer.TeleportHop{Offer: proto.NewEnvelopeID(), FromInstance: fh.peer.agentdID, FromAgent: in.OriginAgent, ToInstance: fh.peer.id.ID(), ToGroup: "source", At: time.Now().Add(-24 * time.Hour)}
+						in.Hops = []bundletransfer.TeleportHop{first, last}
 					}
 				})
 			} else {
@@ -50,7 +53,8 @@ func TestFederationImportedStartupContextAfterCompaction(t *testing.T) {
 				env.ID = d.ID
 				fh.peer.send(env)
 			}
-			require.Equal(t, proto.AckAccepted, fedAckFor(t, fh.peer, d.ID).Status)
+			ack := fedAckFor(t, fh.peer, d.ID)
+			require.Equal(t, proto.AckAccepted, ack.Status, ack.Reason)
 			rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/bundle-offers/"+d.ID+"/import", map[string]any{"cwd": testutil.CanonicalTempDir(t), "name": "arriving-worker", "apply": true})
 			require.Equal(t, 200, rec.Code, rec.Body.String())
 			var result struct {

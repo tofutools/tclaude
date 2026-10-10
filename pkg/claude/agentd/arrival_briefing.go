@@ -3,6 +3,7 @@ package agentd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -111,8 +112,15 @@ var arrivalCommitRE = regexp.MustCompile(`^[0-9a-fA-F]{40,64}$`)
 // These are local read-only Git probes, sharing one short deadline. Disable
 // fsmonitor hooks and discard output beyond the bounded diagnostic prefix.
 func arrivalGit(ctx context.Context, cwd string, args ...string) (string, bool) {
+	out, ok, _ := arrivalGitProbe(ctx, cwd, args...)
+	return out, ok
+}
+
+// Exit 1 from the quiet verification commands means absence. Other failures,
+// including a consumed deadline, leave the fact unknown.
+func arrivalGitProbe(ctx context.Context, cwd string, args ...string) (string, bool, bool) {
 	if cwd == "" {
-		return "", false
+		return "", false, false
 	}
 	argv := append([]string{"-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-C", cwd}, args...)
 	cmd := exec.CommandContext(ctx, "git", argv...)
@@ -124,9 +132,11 @@ func arrivalGit(ctx context.Context, cwd string, args ...string) (string, bool) 
 	out := &arrivalBuffer{}
 	cmd.Stdout = out
 	if err := cmd.Run(); err != nil {
-		return "", false
+		var exit *exec.ExitError
+		missing := ctx.Err() == nil && errors.As(err, &exit) && exit.ExitCode() == 1
+		return "", false, missing
 	}
-	return strings.TrimSpace(out.String()), true
+	return strings.TrimSpace(out.String()), true, false
 }
 
 type arrivalBuffer struct{ bytes.Buffer }
@@ -190,9 +200,12 @@ func buildArrivalBriefing(a arrivalContext, agentID, cwd, group, h, model string
 	if !repo {
 		b.WriteString("Git: no repository verified at landing.\n")
 	} else {
-		branch, ok := arrivalGit(ctx, cwd, "symbolic-ref", "--short", "HEAD")
+		branch, ok, detached := arrivalGitProbe(ctx, cwd, "symbolic-ref", "--quiet", "--short", "HEAD")
 		if !ok {
-			branch = "detached HEAD"
+			branch = "unknown"
+			if detached {
+				branch = "detached HEAD"
+			}
 		}
 		dirty := "unknown"
 		if status, ok := arrivalGit(ctx, cwd, "status", "--porcelain", "--untracked-files=normal"); ok {
@@ -203,16 +216,18 @@ func buildArrivalBriefing(a arrivalContext, agentID, cwd, group, h, model string
 		}
 		branchHere := "unknown"
 		if a.Source.Paths.Branch != "" {
-			branchHere = "no"
-			if _, ok := arrivalGit(ctx, cwd, "show-ref", "--verify", "--", "refs/heads/"+a.Source.Paths.Branch); ok {
+			if _, ok, missing := arrivalGitProbe(ctx, cwd, "show-ref", "--quiet", "--verify", "--", "refs/heads/"+a.Source.Paths.Branch); ok {
 				branchHere = "yes"
+			} else if missing {
+				branchHere = "no"
 			}
 		}
 		commitHere := "unknown"
 		if arrivalCommitRE.MatchString(sourceCommit) {
-			commitHere = "no"
-			if _, ok := arrivalGit(ctx, cwd, "cat-file", "-e", sourceCommit+"^{commit}"); ok {
+			if _, ok, missing := arrivalGitProbe(ctx, cwd, "rev-parse", "--quiet", "--verify", sourceCommit+"^{commit}"); ok {
 				commitHere = "yes"
+			} else if missing {
+				commitHere = "no"
 			}
 		}
 		fmt.Fprintf(&b, "Git: %s; remote %s; branch %s; %s. Source branch %s present: %s; source commit %s present: %s.\n", arrivalQuote(root), arrivalQuote(jobrepo.OriginHint(ctx, cwd)), arrivalQuote(branch), dirty, arrivalQuote(a.Source.Paths.Branch), branchHere, arrivalQuote(sourceCommit), commitHere)

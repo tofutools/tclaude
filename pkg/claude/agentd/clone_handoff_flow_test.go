@@ -167,9 +167,7 @@ func TestClone_LegacyInjection_UnreadyPaneMergesRenameAndHandoff(t *testing.T) {
 	require.Equal(t, http.StatusOK, c.Code, "clone: body=%s", c.Raw)
 
 	// Legacy path: the title and the handoff are both typed into the pane...
-	f.AssertSpawnName(c.NewConv, "worker-c-1", 10*time.Second)
-	f.AssertSpawnInitialPrompt(c.NewConv, "Arrival briefing", 10*time.Second)
-	assertNoSendKeysTo(t, f, c.TmuxTarget())
+	f.AssertSentContains(c.TmuxTarget(), "/rename worker-c-1", 10*time.Second)
 	f.AssertSentContains(c.TmuxTarget(), "new agent message", 15*time.Second)
 
 	// ...and against a pane that is not reading yet, they arrive as ONE line:
@@ -185,15 +183,9 @@ func TestClone_LegacyInjection_UnreadyPaneMergesRenameAndHandoff(t *testing.T) {
 			"the simulator's unready-pane model has regressed")
 }
 
-// Scenario: a clone with NO follow-up. There is nothing for it to submit as a
-// first turn, and `claude --session-id <id> --name <n>` with no positional
-// prompt writes no transcript at all — the conversation materialises on its
-// first turn. So such a clone deliberately stays on the post-connect /rename,
-// which forces that turn and gives the clone a .jsonl to be found by.
-//
-// Expected: the clone is renamed over tmux, exactly as before TCL-732, and no
-// launch name is applied. Nothing is lost by staying here: with one injected
-// stream there is no second stream to merge with.
+// A public clone always receives an arrival briefing, even without a task
+// follow-up. That first turn lets Claude enroll through launch arguments,
+// avoiding the post-connect rename injection.
 func TestClone_NoFollowUp_ArrivalRidesLaunchArgs(t *testing.T) {
 	f := newFlow(t)
 
@@ -209,7 +201,9 @@ func TestClone_NoFollowUp_ArrivalRidesLaunchArgs(t *testing.T) {
 
 	c := f.AsHuman().CloneFresh(oldConv)
 
-	f.AssertSentContains(c.TmuxTarget(), "/rename worker-c-1", 10*time.Second)
+	f.AssertSpawnName(c.NewConv, "worker-c-1", 10*time.Second)
+	f.AssertSpawnInitialPrompt(c.NewConv, "Arrival briefing", 10*time.Second)
+	assertNoSendKeysTo(t, f, c.TmuxTarget())
 	f.AssertCloneTitle(c, "alpha", "worker-c-1", 10*time.Second)
 
 	assert.Contains(t, arrivalInbox(t, c.NewConv), "Arrival briefing")
