@@ -20,8 +20,12 @@ export function hubBody(self, form) {
   const body = {};
   if (form.hubURL.trim() !== (self.hubURL || '')) body.hub_url = form.hubURL.trim();
   if (form.name.trim() && form.name.trim() !== self.name) body.name = form.name.trim();
+  // A hub move must not resend the old hub's invite or keep its CA pin by
+  // accident: an empty invite clears it, clearCA sends an empty CA file.
   if (form.invite.trim()) body.invite = form.invite.trim();
-  if (form.caFile.trim()) body.hub_ca_file = form.caFile.trim();
+  else if ('hub_url' in body && self.hubURL) body.invite = '';
+  if (form.clearCA) body.hub_ca_file = '';
+  else if (form.caFile.trim()) body.hub_ca_file = form.caFile.trim();
   if (form.connect !== self.enabled) body.enabled = form.connect;
   return body;
 }
@@ -29,7 +33,7 @@ export function hubBody(self, form) {
 // NodeSettingsDialog edits this node's hub connection (tclaude federation
 // connect) and its node labels (tclaude federation node-labels).
 export function NodeSettingsDialog({ self, actions, confirm, toast, onClose, onDone }) {
-  const [form, setForm] = useState({ hubURL: self.hubURL || '', name: self.name === 'this node' ? '' : self.name, invite: '', caFile: '', connect: self.enabled || !self.hubURL });
+  const [form, setForm] = useState({ hubURL: self.hubURL || '', name: self.name === 'this node' ? '' : self.name, invite: '', caFile: '', clearCA: false, connect: self.enabled || !self.hubURL });
   const [labels, setLabels] = useState(null);
   const [labelText, setLabelText] = useState('');
   const [error, setError] = useState('');
@@ -47,15 +51,27 @@ export function NodeSettingsDialog({ self, actions, confirm, toast, onClose, onD
     setError('');
     const url = form.hubURL.trim();
     const moving = 'hub_url' in body && self.hubURL && self.enabled;
+    const disconnecting = body.enabled === false;
+    const ca = body.hub_ca_file === '' ? ' The pinned hub CA file is cleared: TLS to the hub uses the system roots.' : body.hub_ca_file ? ` TLS to the hub trusts the certificates in ${body.hub_ca_file}.` : '';
+    const pinKept = 'hub_url' in body && self.hubURL && !('hub_ca_file' in body) ? ' Any pinned hub CA file is kept; clear it if the new hub uses a different CA.' : '';
+    if (!form.connect && !disconnecting) {
+      confirm({
+        title: 'Save hub settings?',
+        body: `This node stays disconnected; the settings apply the next time you connect.${ca}${pinKept}`,
+        okLabel: 'Save', busyLabel: 'Saving…',
+        action: () => actions.setHubConfig(body),
+      }).then((r) => { if (r) onDone('Hub settings saved'); }).catch((e) => setError(errText(e)));
+      return;
+    }
     confirm({
-      title: !form.connect ? 'Disconnect from the hub?' : moving ? `Move this node to the hub at ${url}?` : self.enabled ? 'Update the hub connection?' : `Connect to the hub at ${url}?`,
-      body: !form.connect
+      title: disconnecting ? 'Disconnect from the hub?' : moving ? `Move this node to the hub at ${url}?` : self.enabled ? 'Update the hub connection?' : `Connect to the hub at ${url}?`,
+      body: disconnecting
         ? 'No peer can reach this node and this node cannot reach any peer until you connect again: remote views, mail, attach and remote jobs stop in both directions. Trusted peers and grants are kept.'
-        : `This node connects to ${url}${body.name ? ` as ${body.name}` : ''}. The hub and every node on it see this node's name, instance ID and fingerprint and can ask to be trusted; nothing here is shared with a peer until you trust it and grant it something.${moving ? ' The current hub connection drops; peers reachable only through the old hub become unreachable.' : ''}${body.invite ? ' The invite token is single-use.' : ''}${body.hub_ca_file ? ` TLS to the hub trusts the certificates in ${body.hub_ca_file}.` : ''}`,
-      okLabel: !form.connect ? 'Disconnect' : self.enabled ? 'Save' : 'Connect',
+        : `This node connects to ${url}${body.name ? ` as ${body.name}` : ''}. The hub and every node on it see this node's name, instance ID and fingerprint and can ask to be trusted; nothing here is shared with a peer until you trust it and grant it something.${moving ? ' The current hub connection drops; peers reachable only through the old hub become unreachable.' : ''}${body.invite ? ' The invite token is single-use.' : ''}${ca}${pinKept}`,
+      okLabel: disconnecting ? 'Disconnect' : self.enabled ? 'Save' : 'Connect',
       busyLabel: 'Saving…',
       action: () => actions.setHubConfig(body),
-    }).then((r) => { if (r) onDone(!form.connect ? 'Disconnected from the hub' : 'Hub settings saved; connecting…'); })
+    }).then((r) => { if (r) onDone(disconnecting ? 'Disconnected from the hub' : 'Hub settings saved; connecting…'); })
       .catch((e) => setError(errText(e)));
   };
 
@@ -87,7 +103,8 @@ export function NodeSettingsDialog({ self, actions, confirm, toast, onClose, onD
     <label class="fa-ns-row"><span class="fa-k">hub URL</span><input id="fleet-hub-url" value=${form.hubURL} placeholder="wss://hub.example:8470" autocomplete="off" spellcheck="false" onInput=${set('hubURL')} /></label>
     <label class="fa-ns-row"><span class="fa-k">name</span><input id="fleet-hub-name" value=${form.name} placeholder="user@hostname (default)" autocomplete="off" onInput=${set('name')} /></label>
     <label class="fa-ns-row"><span class="fa-k">invite</span><input id="fleet-hub-invite" type="password" value=${form.invite} placeholder="single-use token from the hub admin (if it needs one)" autocomplete="off" onInput=${set('invite')} /></label>
-    <label class="fa-ns-row"><span class="fa-k">CA file</span><input id="fleet-hub-ca" value=${form.caFile} placeholder="/abs/path/hub-ca.pem on this node (optional; leave empty to keep)" autocomplete="off" spellcheck="false" onInput=${set('caFile')} /></label>
+    <label class="fa-ns-row"><span class="fa-k">CA file</span><input id="fleet-hub-ca" value=${form.caFile} placeholder="/abs/path/hub-ca.pem on this node (optional; leave empty to keep)" autocomplete="off" spellcheck="false" onInput=${set('caFile')} disabled=${form.clearCA} /></label>
+    <label class="fa-ns-check"><input id="fleet-hub-ca-clear" type="checkbox" checked=${form.clearCA} onChange=${set('clearCA')} /> clear the pinned CA file (use system roots)</label>
     <label class="fa-ns-check"><input id="fleet-hub-connect" type="checkbox" checked=${form.connect} onChange=${set('connect')} /> connected</label>
     <div class="fa-ns-actions"><button id="fleet-hub-save" type="button" class="primary" onClick=${saveHub}>${self.enabled ? 'Save…' : 'Connect…'}</button>
       <span class="muted">CLI: <code>tclaude federation connect URL [--name …] [--invite …] [--ca-file …]</code>, <code>disconnect</code></span></div>

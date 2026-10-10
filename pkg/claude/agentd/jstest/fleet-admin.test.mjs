@@ -651,6 +651,18 @@ test('node settings: moving to another hub and changing labels confirm the conse
   assert.match(s.confirms.at(-1).body, /nothing here is shared with a peer until you trust it.*current hub connection drops.*single-use.*\/etc\/tclaude\/hub-ca\.pem/);
   assert.deepEqual(s.log.findLast((l) => l[0] === 'hubConfig')[1], { hub_url: 'wss://hub2.example:8470', invite: 'inv-123', hub_ca_file: '/etc/tclaude/hub-ca.pem' });
   await s.click(s.q('#fleet-node-settings-open'));
+  await type('#fleet-hub-url', 'wss://hub3.example');
+  await s.click(q('#fleet-hub-save'));
+  assert.match(s.confirms.at(-1).body, /pinned hub CA file is kept/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'hubConfig')[1], { hub_url: 'wss://hub3.example', invite: '' }, 'a move never resends the old invite');
+  await s.click(s.q('#fleet-node-settings-open'));
+  await type('#fleet-hub-url', 'wss://hub4.example');
+  const clear = q('#fleet-hub-ca-clear'); clear.checked = true;
+  await s.harness.act(() => s.harness.fireEvent(clear, 'change'));
+  await s.click(q('#fleet-hub-save'));
+  assert.match(s.confirms.at(-1).body, /CA file is cleared/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'hubConfig')[1], { hub_url: 'wss://hub4.example', invite: '', hub_ca_file: '' });
+  await s.click(s.q('#fleet-node-settings-open'));
   await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
   await type('#fleet-node-labels', 'gpu linux, bad label!');
   await s.click(q('#fleet-labels-save'));
