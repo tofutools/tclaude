@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,8 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/config"
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -105,7 +106,7 @@ func TestDashboardFederationBundleContentsAndDownload(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &page))
 	require.Equal(t, int64(16), page.Offset)
 	require.Equal(t, string(transcript[16:32]), page.Text)
-	rec = call("GET", base+"&offset="+jsonNumber(len(transcript)-1), 200)
+	rec = call("GET", base+"&offset="+strconv.Itoa(len(transcript)-1), 200)
 	require.Contains(t, rec.Body.String(), "�")
 	call("GET", base+"&max_bytes=1048577", 400)
 	call("GET", base+"&offset=-1", 400)
@@ -117,8 +118,6 @@ func TestDashboardFederationBundleContentsAndDownload(t *testing.T) {
 	require.Equal(t, 200, rec.Code)
 	call("GET", "/api/federation/bundle-offers/"+config.ID+"/download", 403)
 }
-
-func jsonNumber(n int) string { raw, _ := json.Marshal(n); return string(raw) }
 
 func TestDashboardFederationBundleContentsUnavailableStates(t *testing.T) {
 	fh := newFedHarness(t)

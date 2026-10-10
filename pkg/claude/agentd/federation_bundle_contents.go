@@ -68,7 +68,8 @@ func openInspectableBundle(w http.ResponseWriter, r *http.Request) (*db.Federati
 		writeError(w, 409, "spool", "verified payload is unavailable; fetch again")
 		return nil, nil
 	}
-	// Reverify before disclosing bytes, including modifications by other processes.
+	// Reverify to detect preexisting modifications. Published spool files are
+	// replaced by rename, so this descriptor pins the checked inode.
 	digest := sha256.New()
 	n, err := io.Copy(digest, io.LimitReader(f, current.Descriptor.Bytes+1))
 	if err == nil && (n != current.Descriptor.Bytes || hex.EncodeToString(digest.Sum(nil)) != current.Descriptor.SHA256) {

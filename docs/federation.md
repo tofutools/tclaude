@@ -2868,6 +2868,28 @@ the same live admission, credential findings, path and launch checks as the CLI.
 Responses retain the existing preview diffs and provenance. Every route is
 local operator administration and is refused through peer views.
 
+After fetching, `state: "ready"` means the private payload is verified.
+`GET /api/federation/bundle-offers/{id}/contents?peer=INSTANCE_ID` returns
+`{type,entries:[{path,size,kind}]}`. Agent entries are `manifest.json` and optional
+`history/transcript.jsonl`; config entries are `bundle.json` and
+`sections/<section>.json`. Entries are data labels, never host paths.
+Add `path`, optional byte `offset` and `max_bytes` to read one entry:
+`{path,kind,size,text,truncated,offset,next_offset?}`. Reads default to 256 KiB
+and accept at most 1 MiB; invalid UTF-8 is replaced. `next_offset` is the next
+byte offset when more text remains. All current entries are JSON or JSONL.
+`GET` or `HEAD` `/{id}/download?peer=INSTANCE_ID` returns the original payload
+as an attachment with octet-stream, sandbox, nosniff and private/no-store
+headers. Neither read fetches implicitly: pending returns 409 `not_fetched`,
+expired/declined/applied returns 410 `offer_state`, unknown entry paths return
+404 `path`, and revoked receiving admission returns 403 `admission`.
+
+The matching CLI commands use the same human-only `/v1` handlers:
+`federation offers contents ID --peer PEER` lists entries; add
+`--path history/transcript.jsonl --offset 0 --max-bytes 262144` to read text.
+`federation offers download ID OUTPUT --peer PEER` saves the original verified
+bundle without importing and refuses an existing output file. Both require a
+ready offer and preserve current trust/receive admission.
+
 ### Local dashboard labels and hub setup
 
 `GET /api/federation/node-labels` returns `{labels:[...]}`; POST accepts
