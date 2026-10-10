@@ -25,6 +25,7 @@ test('a drop is a push from this node, a pull to it, or nothing this node can do
   assert.deepEqual(m.moveProgress({ state: 'confirmed', disposition: 'landed', target_agent: 'agt_n1', cwd: '/w' }), { phase: 'landed', agent: 'agt_n1', cwd: '/w' });
   assert.deepEqual(m.moveProgress({ state: 'awaiting_confirmation', disposition: 'pending_acceptance' }), { phase: 'waiting' });
   assert.deepEqual(m.moveProgress({ state: 'declined', last_error: 'no' }), { phase: 'failed', state: 'declined', error: 'no' });
+  assert.equal(m.moveProgress({ state: 'blocked', disposition: 'landed', last_error: 'retire failed' }).phase, 'failed', 'a blocked retirement is not a clean landing');
 });
 
 async function mountDialog(t, { plan = { kind: 'push' }, actions, peerActions = () => ({}) }) {
@@ -57,7 +58,7 @@ test('a pushed move confirms where it goes, then follows the record until it lan
   await s.tick();
   assert.match(s.q('#skynet-move-drop').textContent, /Checking/);
   await s.tick();
-  assert.match(s.q('[data-move-drop-state="landed"]').textContent, /builder-1 landed in group reviewers on forge as agt_n1, starting in \/srv\/review\. It is retired on desk\./);
+  assert.match(s.q('[data-move-drop-state="landed"]').textContent, /builder-1 landed in group reviewers on forge as agt_n1, starting in \/srv\/review\. The original on desk is being retired; follow that in/);
   assert.equal(s.timers.queue.length, 0, 'polling stops once landed');
 });
 
@@ -97,4 +98,30 @@ test('a pull asks the peer and follows this node\'s record, tolerating its late 
   assert.deepEqual(calls, [['inst_self', 'agt_b1', { group: 'reviewers', direct_if_allowed: true }]]);
   await s.tick(); await s.tick(); await s.tick();
   assert.match(s.q('[data-move-drop-state="failed"]').textContent, /The move declined: refused by policy\. builder-1 is still on desk/);
+});
+
+test('a peer without direct moves still takes the pull as an offer; a flagged pull says where to go', async (t) => {
+  const calls = [];
+  const old = await mountDialog(t, {
+    plan: { kind: 'pull' },
+    actions: { moveDetail: async () => assert.fail('no poll') },
+    peerActions: () => ({
+      moveDirect: async () => { calls.push('direct'); const e = new Error('invalid remote action body'); e.status = 400; throw e; },
+      move: async (id, group) => { calls.push(['move', id, group]); return {}; },
+    }),
+  });
+  await old.click(old.q('#skynet-move-drop-ok'));
+  assert.deepEqual(calls, ['direct', ['move', 'agt_b1', 'reviewers']]);
+  assert.match(old.q('[data-move-drop-state="waiting"]').textContent, /waiting for you to accept it/);
+});
+
+test('a pull refused for flagged history points at the source dashboard', async (t) => {
+  const s = await mountDialog(t, {
+    plan: { kind: 'pull' },
+    actions: { moveDetail: async () => ({}) },
+    peerActions: () => ({ moveDirect: async () => { const e = new Error('suspected credentials'); e.status = 422; e.code = 'flagged_credentials'; throw e; } }),
+  });
+  await s.click(s.q('#skynet-move-drop-ok'));
+  assert.match(s.q('#skynet-move-drop [role=alert]').textContent, /contains credentials.*Move it from desk's dashboard/);
+  assert.equal(s.q('#skynet-move-drop-allow'), null, 'no override a pull cannot carry');
 });

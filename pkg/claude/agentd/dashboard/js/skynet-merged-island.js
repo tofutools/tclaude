@@ -208,6 +208,9 @@ export function MergedGroups({
       if (!src) { event.preventDefault(); return; }
       event.stopPropagation();
       dragging = src;
+      // dragend reaches its source even if a re-render detached it.
+      const row = event.target.closest('tr.dnd-draggable');
+      row?.addEventListener('dragend', () => { if (dragging === src) { dragging = null; unmark(); } }, { once: true });
       event.dataTransfer?.setData(MOVE_MIME, src.agent.id);
       event.dataTransfer?.setData('text/plain', src.agent.name);
       if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';

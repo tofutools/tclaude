@@ -47,8 +47,8 @@ export function dropPlan({ source, target, self }) {
 // moveProgress reads a move record into what the dialog shows.
 export function moveProgress(rec) {
   if (!rec) return { phase: 'checking' };
-  if (rec.disposition === 'landed') return { phase: 'landed', agent: rec.target_agent || '', cwd: rec.cwd || '' };
   if (FAILED.has(rec.state)) return { phase: 'failed', state: rec.state, error: rec.last_error || '' };
+  if (rec.disposition === 'landed') return { phase: 'landed', agent: rec.target_agent || '', cwd: rec.cwd || '' };
   if (rec.disposition === 'pending_acceptance' || rec.state === 'awaiting_acceptance') return { phase: 'waiting' };
   return { phase: 'checking' };
 }
@@ -68,23 +68,37 @@ export function MoveDropDialog({ drop, plan, actions, peerActions, timers = glob
   const push = plan.kind === 'push';
   const { agent, source, target } = drop;
   const there = push ? target.name : 'this node';
-  useEffect(() => () => { if (timer.current) timers.clearTimeout(timer.current); }, []);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; if (timer.current) timers.clearTimeout(timer.current); }, []);
 
   const follow = (id, started) => {
     const tick = async () => {
       timer.current = null;
+      if (!alive.current) return;
       let rec = null;
       try { rec = await actions.moveDetail(id); } catch (e) {
         if (e?.status === 404 && now() - started < MOVE_APPEAR_MS) { timer.current = timers.setTimeout(tick, MOVE_POLL_MS); return; }
-        setProgress({ phase: 'unknown', error: errText(e) });
+        if (alive.current) setProgress({ phase: 'unknown', error: errText(e) });
         return;
       }
+      if (!alive.current) return;
       const p = moveProgress(rec);
       setProgress(p);
       if (p.phase === 'checking' && now() - started < MOVE_WATCH_MS) timer.current = timers.setTimeout(tick, MOVE_POLL_MS);
       else if (p.phase === 'checking') setProgress({ phase: 'slow' });
     };
     timer.current = timers.setTimeout(tick, MOVE_POLL_MS);
+  };
+
+  // pull asks the peer to move it here. A peer without direct moves refuses
+  // the unknown field; then it is today's move, offered for acceptance.
+  const pull = async (body) => {
+    const routes = peerActions(source.node);
+    try { return await routes.moveDirect(agent.id, body); } catch (e) {
+      if (e?.status !== 400) throw e;
+      await routes.move(agent.id, target.group);
+      return { disposition: 'pending_acceptance' };
+    }
   };
 
   const send = async () => {
@@ -94,7 +108,8 @@ export function MoveDropDialog({ drop, plan, actions, peerActions, timers = glob
       const body = { group: target.group, direct_if_allowed: true, ...(allow ? { allow_flagged: true } : {}) };
       const res = push
         ? await actions.moveAgent({ agent: agent.id, peer: target.node, ...body })
-        : await peerActions(source.node).moveDirect(agent.id, body);
+        : await pull(body);
+      if (!alive.current) return;
       const id = res?.move_id || '';
       setPhase('progress');
       // A daemon without direct moves answers with no move_id: that is
@@ -103,8 +118,11 @@ export function MoveDropDialog({ drop, plan, actions, peerActions, timers = glob
       setProgress({ phase: 'checking' });
       follow(id, now());
     } catch (e) {
+      if (!alive.current) return;
       setPhase('confirm');
-      if (push && e?.code === 'flagged_credentials') {
+      if (!push && (e?.code === 'flagged_credentials' || e?.status === 422)) {
+        setError(`${agent.name}'s history looks like it contains credentials, and a pulled move cannot override that. Move it from ${source.name}'s dashboard, where you can choose to send it anyway.`);
+      } else if (push && e?.code === 'flagged_credentials') {
         setFindings(e.body?.findings || []);
         setError('The history looks like it contains credentials. A move always carries the history: send it anyway, or clean up first.');
       } else setError(errText(e));
@@ -114,7 +132,7 @@ export function MoveDropDialog({ drop, plan, actions, peerActions, timers = glob
   const moves = html`<button type="button" class="fa-link" data-move-drop="moves" onClick=${() => { onClose(); openPage(push ? 'moves' : 'offers'); }}>⚙ Fleet → ${push ? 'Moves' : 'Offers'}</button>`;
   const status = !progress ? null
     : progress.phase === 'checking' ? html`<div class="muted" role="status">⏳ Checking whether ${there} takes ${agent.name} in directly…</div>`
-    : progress.phase === 'landed' ? html`<div role="status" data-move-drop-state="landed">✅ ${agent.name} landed in group ${target.group} on ${there}${progress.agent ? html` as <code>${progress.agent}</code>` : ''}${progress.cwd ? html`, starting in <code>${progress.cwd}</code>` : ''}. ${push ? `It is retired on ${source.name}.` : `The original on ${source.name} is retired.`}</div>`
+    : progress.phase === 'landed' ? html`<div role="status" data-move-drop-state="landed">✅ ${agent.name} landed in group ${target.group} on ${there}${progress.agent ? html` as <code>${progress.agent}</code>` : ''}${progress.cwd ? html`, starting in <code>${progress.cwd}</code>` : ''}. The original on ${source.name} is being retired; ${push ? html`follow that in ${moves}` : `${source.name}'s ⚙ Fleet → Moves shows when it is done`}.</div>`
     : progress.phase === 'waiting' ? html`<div role="status" data-move-drop-state="waiting">⏸ ${push ? `${there} did not take it in directly: it is waiting for ${there} to accept it (in ${there}'s ⚙ Fleet → Offers). ${agent.name} keeps running here until then; follow or abandon it in ` : `It is waiting for you to accept it in this node's `}${moves}.</div>`
     : progress.phase === 'failed' ? html`<div class="fa-danger" role="alert" data-move-drop-state="failed">The move ${progress.state}${progress.error ? `: ${progress.error}` : ''}. ${agent.name} ${push ? 'is still here' : `is still on ${source.name}`}. Details in ${moves}.</div>`
     : progress.phase === 'slow' ? html`<div class="muted" role="status">Still in progress; follow it in ${moves}.</div>`
