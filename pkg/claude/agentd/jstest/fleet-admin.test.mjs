@@ -1070,8 +1070,8 @@ test('jobs: live output polls while the dialog is open and shown, waits out a 40
   const doc = s.harness.document; const q = (x) => doc.querySelector(x);
   const notYet = new Error('job has not started'); notYet.status = 409; notYet.code = 'follow';
   s_output = [notYet,
-    { chunks: [{ stream: 'stdout', data: 'building\n' }, { stream: 'stderr', data: 'warn: slow\n' }], cursor: 'c1', done: false, state: 'running' },
-    { chunks: [{ stream: 'stdout', data: 'tests ok\n' }], cursor: 'c2', done: true, state: 'completed' }];
+    { chunks: [{ stream: 'stdout', data: btoa('building\n'), encoding: 'base64' }, { stream: 'stderr', data: btoa('warn: slow\n'), encoding: 'base64' }], cursor: 'c1', done: false, state: 'running' },
+    { chunks: [{ stream: 'stdout', data: btoa('tests ok\n'), encoding: 'base64' }], cursor: 'c2', done: true, state: 'completed' }];
   t.after(() => { s_output = []; });
   await s.show();
   await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => b.textContent === 'Jobs & repos'));
@@ -1095,6 +1095,20 @@ test('jobs: live output polls while the dialog is open and shown, waits out a 40
   assert.deepEqual(s.log.findLast((l) => l[0] === 'jobLogs'), ['jobLogs', 'job_out1'], 'done switches to the stored logs');
   assert.match(q('#fleet-job-logs').textContent, /finished.*index\.html/s);
   assert.equal(s.timers.queue.filter((x) => x.ms === 2000).length, 0, 'no more follow reads');
+});
+
+test('decodeChunks keeps a character split across reads intact, per stream', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { decodeChunks, outputDecoders } = await harness.importDashboardModule('js/fleet-admin-jobs.js');
+  const b64 = (bytes) => btoa(String.fromCharCode(...bytes));
+  const euro = [0xe2, 0x82, 0xac];
+  const d = outputDecoders();
+  const first = decodeChunks(d, [{ stream: 'stdout', data: b64([0x31, ...euro.slice(0, 2)]), encoding: 'base64' }, { stream: 'stderr', data: b64([euro[0]]), encoding: 'base64' }]);
+  assert.deepEqual(first.map((c) => c.data), ['1', '']);
+  const second = decodeChunks(d, [{ stream: 'stdout', data: b64([euro[2], 0x32]), encoding: 'base64' }]);
+  assert.deepEqual(second, [{ stream: 'stdout', data: '€2' }]);
+  const done = decodeChunks(d, [], true);
+  assert.deepEqual(done, [{ stream: 'stderr', data: '\ufffd' }], 'flush releases a dangling partial character');
 });
 
 test('appendOutput keeps each stream separately and only its newest text', async (t) => {

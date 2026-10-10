@@ -136,6 +136,31 @@ export function appendOutput(out, chunks) {
   return next;
 }
 
+// outputDecoders keeps one streaming UTF-8 decoder per stream across reads,
+// so a character split between two reads is not corrupted.
+export function outputDecoders() {
+  return { stdout: new TextDecoder(), stderr: new TextDecoder() };
+}
+
+// decodeChunks turns base64 chunks into text through the streaming decoders;
+// flush (when the job is done) also releases any buffered partial character.
+export function decodeChunks(decoders, chunks, flush = false) {
+  const out = [];
+  for (const c of chunks || []) {
+    const k = c?.stream === 'stderr' ? 'stderr' : 'stdout';
+    if (c?.encoding === 'base64') {
+      const bin = atob(String(c.data || ''));
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      out.push({ stream: k, data: decoders[k].decode(bytes, { stream: true }) });
+    } else {
+      out.push({ stream: k, data: String(c?.data ?? '') });
+    }
+  }
+  if (flush) for (const k of ['stdout', 'stderr']) { const rest = decoders[k].decode(); if (rest) out.push({ stream: k, data: rest }); }
+  return out;
+}
+
 // canFollow is a job whose output can be read live: one this node sent that
 // has not finished.
 export function canFollow(j) {
@@ -154,7 +179,15 @@ function OutputDialog({ job, label, actions, timers, active, onClose }) {
   const [visible, setVisible] = useState(() => !globalThis.document?.hidden);
   const [retry, setRetry] = useState(0);
   const cursor = useRef('');
+  const decoders = useRef(null);
+  if (!decoders.current) decoders.current = outputDecoders();
   const pre = useRef(null);
+  // Follow the tail only while the reader is at the bottom: measured on
+  // scroll, before new output lands.
+  const atBottom = useRef(true);
+  // The jobs list keeps polling; once it reports this job finished, stop
+  // reading live and show the stored output.
+  useEffect(() => { if (job.terminal && live) setLive(false); }, [job.terminal]);
   useEffect(() => {
     const doc = globalThis.document;
     if (!doc?.addEventListener) return undefined;
@@ -175,7 +208,8 @@ function OutputDialog({ job, label, actions, timers, active, onClose }) {
         if (off) return;
         setNote('');
         cursor.current = r?.cursor ?? cursor.current;
-        if ((r?.chunks || []).length || r?.truncated) setOut((o) => ({ ...appendOutput(o, r.chunks), skipped: o.skipped || !!r.truncated }));
+        const chunks = decodeChunks(decoders.current, r?.chunks, !!r?.done);
+        if (chunks.length || r?.truncated) setOut((o) => ({ ...appendOutput(o, chunks), skipped: o.skipped || !!r.truncated }));
         if (r?.done) { setLive(false); return; }
         t = timers.setTimeout(loop, FOLLOW_MS);
       }).catch((e) => {
@@ -190,8 +224,9 @@ function OutputDialog({ job, label, actions, timers, active, onClose }) {
   }, [live, active, visible, failed, retry]);
   useEffect(() => {
     const el = pre.current;
-    if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 40) el.scrollTop = el.scrollHeight;
+    if (el && atBottom.current) el.scrollTop = el.scrollHeight;
   }, [out]);
+  const onScroll = (e) => { const el = e.currentTarget; atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 8; };
   const shown = live ? out : logs;
   return html`<${Overlay} id="fleet-job-logs" labelledby="fleet-job-logs-title" onClose=${onClose}>
     <h3 id="fleet-job-logs-title">Job ${job.id} ${job.incoming ? 'from' : 'on'} ${label(job.peer)}</h3>
@@ -200,7 +235,7 @@ function OutputDialog({ job, label, actions, timers, active, onClose }) {
     ${live && note && html`<div class="muted" id="fleet-job-wait">${note}</div>`}
     ${live && failed && html`<div class="fa-danger" role="alert">Live output stopped: ${failed} <button type="button" class="fa-link" onClick=${() => { setFailed(''); setRetry((n) => n + 1); }}>retry</button></div>`}
     ${shown == null ? html`<div class="empty">Loading…</div>` : shown.error ? html`<div class="fa-danger" role="alert">${shown.error}</div>` : html`
-      <div class="fa-k">stdout</div><pre class="fa-run-out" ref=${pre}>${shown.stdout || ''}</pre>
+      <div class="fa-k">stdout</div><pre class="fa-run-out" ref=${pre} onScroll=${onScroll}>${shown.stdout || ''}</pre>
       ${shown.stderr ? html`<div class="fa-k">stderr</div><pre class="fa-run-out err">${shown.stderr}</pre>` : ''}`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation job status ${job.id}</code>${live ? html`; live output: <code>job run … --follow</code>` : ''}</div>
     <div class="modal-buttons"><span class="spacer"></span><button type="button" onClick=${onClose}>Close</button></div>
@@ -349,7 +384,7 @@ export function JobsPage({ view, pools, groups, actions, confirm, toast, timers,
       </tr>`)}</tbody>
     </table>`}
     ${dialog?.kind === 'run' && html`<${RunJobDialog} peers=${view.trusted} pools=${pools} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
-    ${dialog?.kind === 'logs' && html`<${OutputDialog} job=${dialog.job} label=${label} actions=${actions} timers=${timers} active=${active} onClose=${() => setDialog(null)} />`}
+    ${dialog?.kind === 'logs' && html`<${OutputDialog} job=${(jobs || []).find((x) => x.id === dialog.job.id) || dialog.job} label=${label} actions=${actions} timers=${timers} active=${active} onClose=${() => setDialog(null)} />`}
     ${dialog?.kind === 'repo' && html`<${RepoDialog} repo=${dialog.repo} groups=${groups} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
   </div>`;
 }
