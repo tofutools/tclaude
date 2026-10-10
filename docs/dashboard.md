@@ -673,6 +673,18 @@ first and says what will happen. Most pages name their CLI.
   peer grants, with worker permissions, the teleport landing and the config
   bundle as JSON. Saving makes a new revision; peers it was applied to keep
   their settings until it is applied again.
+  default…** applies it to newly trusted peers. Profile definitions are edited
+  with `tclaude federation profile`.
+- **Offers** — config and agent bundles peers offered this node, and the ones
+  it sent. **Preview…** shows what an incoming offer would change: per config
+  item new / overwrites yours / unchanged with security-relevant items marked
+  and a tick to leave each out, or for an agent its name, history and any
+  suspected credentials in it, plus placement and the values it needs here.
+  **Apply…** / **Start agent…** confirm what changes (a move or teleport says
+  the peer retires its source); **Decline…** deletes the payload. **Offer my
+  config…**, **Offer an agent…** and **Offer a profile's config…** send new
+  ones; flagged credentials are listed and need an explicit send-anyway.
+  CLI: `tclaude federation offers`, `offer-config`, `share-agent`.
 - **Moves** — agent moves and teleports in both directions (⇢ leaving, ⇠
   arriving) with peer, group, state and expiry. **Abandon…** stops an outgoing
   move that has not started retiring the agent here; the agent is not retired

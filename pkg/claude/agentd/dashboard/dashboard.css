@@ -18999,6 +18999,11 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-run-full { flex-basis: 100%; }
 .fa-run-out { margin: 6px 0 0; max-height: 240px; overflow: auto; padding: 6px 8px; background: #010409; border-radius: 4px; font-size: 11px; white-space: pre-wrap; word-break: break-word; }
 .fa-run-out.err { color: #ffa198; }
+.fa-offers h4 { margin: 14px 0 4px; font-size: 13px; }
+.fa-of-row { display: grid; grid-template-columns: 80px minmax(0, 1fr); align-items: center; gap: 8px; margin: 6px 0; }
+.fa-of-row input, .fa-of-row select { width: 100%; box-sizing: border-box; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; }
+.fa-of-check { display: block; margin: 6px 0 6px 88px; }
+#fleet-offer-import .modal-buttons button, #fleet-offer-config .modal-buttons button, #fleet-share-agent .modal-buttons button, #fleet-offer-profile .modal-buttons button { flex: none; white-space: nowrap; }
 /* Peer actions on a peer view (js/peer-action.js). */
 .peer-action-choices { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 6px 0 10px; }
 .peer-action-opt { display: flex; align-items: center; gap: 8px; margin: 6px 0; }

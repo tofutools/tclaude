@@ -6,6 +6,7 @@ import { GrantsPage } from './fleet-admin-grants.js';
 import { InvitesPage } from './fleet-admin-invites.js';
 import { ProfilesPage } from './fleet-admin-profiles.js';
 import { AuditPage } from './fleet-admin-audit.js';
+import { OffersPage } from './fleet-admin-offers.js';
 import { HarnessesPage } from './fleet-admin-harnesses.js';
 import { createHarnessActions } from './fleet-harness-actions.js';
 import { NodeUpdateDialog } from './node-update.js';
@@ -34,6 +35,7 @@ const SUB_PAGES = Object.freeze([
   { id: 'invites', label: 'Invites & joining' },
   { id: 'grants', label: 'Peer grants' },
   { id: 'profiles', label: 'Profiles & pools' },
+  { id: 'offers', label: 'Offers' },
   { id: 'moves', label: 'Moves' },
   { id: 'audit', label: 'Audit' },
 ]);
@@ -64,6 +66,16 @@ function defaultHarnessActions() {
 // localGroups names this node's active groups, the scopes a grant can take.
 function localGroups(snap) {
   return (snap?.groups || []).filter((g) => g?.name && !g.archived).map((g) => g.name).sort();
+}
+
+// localAgents are this node's agents with a stable ID, the sources an agent
+// offer can share.
+function localAgents(snap) {
+  const seen = new Map();
+  for (const a of (snap?.agents || []).concat(snap?.ungrouped || [])) {
+    if (a?.agent_id && !seen.has(a.agent_id)) seen.set(a.agent_id, { id: a.agent_id, label: a.title ? `${a.title} (${a.agent_id})` : a.agent_id });
+  }
+  return [...seen.values()].sort((x, y) => x.label.localeCompare(y.label));
 }
 
 // setLevel changes a trusted peer's level. peers/trust by instance ID would
@@ -366,6 +378,8 @@ export function FleetAdmin({
       : sub.id === 'profiles'
       ? html`<${ProfilesPage} view=${view} pools=${pools} groups=${localGroups(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} reload=${reload}
           onOpenGrants=${(target) => { setGrantTarget(target); setPage('grants'); }} />`
+      : sub.id === 'offers'
+      ? html`<${OffersPage} view=${view} agents=${localAgents(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} />`
       : sub.id === 'grants'
       ? html`<${GrantsPage} view=${view} pools=${pools} groups=${localGroups(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast}
           target=${grantTarget} setTarget=${setGrantTarget} />`

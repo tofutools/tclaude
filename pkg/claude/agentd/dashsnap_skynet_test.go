@@ -65,6 +65,17 @@ const skynetFederationStubJS = `(function(){
       { id: 'tv_8k2q', peer: 'inst_hn3cxq7a', agent: 'agt_r8k2m4c1x9', session: 'fe-dev-forms', group: 'frontend-squad', read_only: false, started: new Date(Date.now() - 720000).toISOString(), incoming: true },
       { id: 'tv_3m1x', peer: 'inst_2p6ym4ke', agent: 'agt_p2w7d0j5n3', session: 'infra-bench', group: 'infra-crew', read_only: true, started: new Date(Date.now() - 95000).toISOString(), incoming: true }
     ] : []);
+    if (path === '/api/federation/bundle-offers') return json(url.indexOf('direction=out') >= 0 ? [
+      { offer: { id: 'off_7q2m', type: 'agent', summary: 'Agent reviewer (config only)', expires_at: '2026-10-17T09:00:00Z' }, peer: 'inst_2p6ym4ke', direction: 'out', state: 'pending' },
+      { offer: { id: 'off_3k1x', type: 'config', summary: 'Config bundle: 4 items', expires_at: '2026-10-16T09:00:00Z' }, peer: 'inst_hn3cxq7a', direction: 'out', state: 'applied' }
+      { offer: { id: 'off_9c4r', type: 'config', bytes: 6144, sha256: '3f9a0c27d1e84b56a7c2e9f01d3b8a64c5e7f2190ab3d4e6f8a1c2b3d4e5f607', expires_at: '2026-10-17T09:00:00Z', summary: 'Config bundle: 3 items' }, peer: 'inst_hn3cxq7a', direction: 'in', state: 'pending', sender_agent: 'agt_7fk2' },
+      { offer: { id: 'off_5m8t', type: 'agent', bytes: 482000, sha256: '9b1d', expires_at: '2026-10-17T09:00:00Z', summary: 'Agent ada with history', group: 'ops', move: { source_agent: 'agt_ada0' } }, peer: 'inst_hn3cxq7a', direction: 'in', state: 'ready' },
+      { offer: { id: 'off_2w6p', type: 'config', bytes: 900, expires_at: '2026-10-12T09:00:00Z', summary: 'Config bundle: 1 items' }, peer: 'inst_2p6ym4ke', direction: 'in', state: 'pending', last_error: 'sender offline; fetch again later' }
+    if (path.indexOf('/api/federation/bundle-offers/') === 0 && path.slice(-7) === '/import') return json({ changes: [
+      { item: 'roles/reviewer', action: 'create', security: true },
+      { item: 'templates/pr-review', action: 'replace', security: true },
+      { item: 'config/theme', action: 'unchanged' }
+    ], unresolved: [{ name: 'REPO_ROOT', item: 'templates/pr-review', field: 'cwd', original: '/home/ana/src' }], warnings: [], applied: [], security_changes: 2 });
     if (path === '/api/federation/peers/trust') return json({ instance_id: 'inst_w5zea3nq', fingerprint: 'w5ze-a3nq-7m1p-kd42-xr8c-0fv6', level: 'restricted', profile: null, plan: null, applied: false });
     var hav = function(extra){ return { schema: 1, observed_at: '2026-10-10T09:40:00Z', harnesses: [
       { name: 'claude', display_name: 'Claude Code', installed: true, version: '2.1.4', latest_version: extra ? '2.1.4' : '2.2.0', update_available: !extra, version_status: 'known', credential_present: true, usable: true },
@@ -433,6 +444,38 @@ func skynetStates() []dashsnap.State {
   if (!document.querySelector('#fleet-viewers')) throw new Error('skynet: viewers panel missing');
 })();`,
 			SettleMS: 300,
+		},
+		{
+			Key:     "skynet-fleet-offers",
+			Title:   "Bundle offers",
+			Caption: "Fleet → Offers: config and agent bundles peers offered this node (from, kind — moves and teleports flagged —, summary, size, expiry, state; Preview… and Decline…) and the ones this node sent with their outcome, plus Offer my config… / Offer an agent… / Offer a profile's config….",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Offers'; })[0].click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-offers-out'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (document.querySelectorAll('#fleet-offers-in tbody tr').length !== 3) throw new Error('skynet: incoming offers missing');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-offer-import",
+			Title:   "Previewing a config offer",
+			Caption: "Fleet → Offers → Preview…: the offer's size, expiry and full sha256, one row per item (new, overwrites yours, unchanged; security-relevant items marked) with a tick to include it, the values the offer needs on this node, and Apply… — blocked until conflicts are unticked or overwriting is chosen and the placeholders are filled, and confirmed with what changes.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Offers'; })[0].click();
+  for (var j = 0; j < 30 && !document.querySelector('[data-offer="off_9c4r"] [data-fa="preview"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('[data-offer="off_9c4r"] [data-fa="preview"]').click();
+  for (var k = 0; k < 30 && !document.querySelector('#fleet-offer-changes'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (document.querySelectorAll('#fleet-offer-changes tbody tr').length !== 3) throw new Error('skynet: preview rows missing');
+})();`,
+			SettleMS: 400,
 		},
 		{
 			Key:     "skynet-fleet-run",
