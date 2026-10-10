@@ -56,6 +56,9 @@ In order across the top:
 | Debug | Poll-latency self-diagnostics (hidden by default) |
 | Config | Visual editor for `~/.tclaude/config.json` |
 
+With trusted federation peers, node chips and the Map / Groups · all nodes /
+⚙ Fleet views join the tab bar; see [Skynet UI](#skynet-ui-linked-nodes).
+
 `[` and `]` cycle tabs; Ctrl/Cmd-K opens a command palette covering tab
 navigation, window focus, spawn, retire, power, and every manager dialog.
 Type `spawn luna` to find saved profiles by partial name or alias. Add `fast`
@@ -497,6 +500,126 @@ features, and the remote-access panel described in
 The **Debug** tab (enable `dashboard.show_debug_tab`) shows in-memory
 poll-latency self-diagnostics per endpoint — p50/p90/p99/max, sparkline,
 per-phase breakdown — reset on daemon restart.
+
+## Skynet UI: linked nodes
+
+Once this node trusts at least one federation peer (see
+[Federation](federation.md) and its [setup walkthrough](federation-setup.md)),
+the dashboard can show and manage the whole fleet. A peer only ever shows what
+it shares with you: the peer grants it gave you decide what its cards, views
+and pages can read or change.
+
+### Node chips and switching
+
+The right end of the tab bar shows a chip for this node (⌂) and one per trusted
+peer, with a dot for its presence. Click a chip to open that node's own
+dashboard; ⌂ returns to this node. Alt+1 is this node and Alt+2…9 the peers in
+chip order; the shortcut never fires while you type in a field or a web
+terminal has focus. The chip row appears only when a peer is trusted and adds
+no height to the page.
+
+### The map
+
+The map icon at the end of the chip row opens the top-level views, and the tab
+strip turns into their switch: **Map**, **Groups · all nodes** and **⚙ Fleet**.
+`[` / `]` step back to the tab you came from.
+
+The map draws this node and each peer as a card joined by link edges (solid:
+reachable; dashed: unreachable or stale). A card shows the shared agents and
+how many are online, agents waiting for input, cpu/mem/disk, the tclaude
+version (↑ when a newer release is known), health, and what the peer does not
+share. **Open dashboard** opens that node's view. Cards are polled only while
+the map is on screen; an unreachable peer keeps its last data, marked with its
+age.
+
+To update a node: click **update…** (or **manage…**) on its card, check the
+version and warnings, then **Update to vX…** and confirm. The node replaces its
+binaries (keeping the old ones for **Roll back…**) and restarts its daemon;
+agent sessions keep running and the dialog follows the job through the
+restart. Updating a peer needs its `node.update` grant. CLI:
+`tclaude update [--node PEER] --check|--apply|--rollback`.
+
+### A peer's dashboard (remote node view)
+
+Opening a peer shows the normal per-node dashboard, served through this
+daemon's peer proxy (the URL carries `?node=inst_…`). The peer's name replaces
+the title, a thin line in its colour runs along the top, its chip is current,
+and a peer-view pill lists what it shares.
+
+Greyed-out tabs, buttons and menu items are ones the peer does not offer you.
+They stay in place so the layout does not jump; hover or click one to see why.
+The peer-view pill lists what is not shared and the grant each needs. Usage
+and costs say when they are not shared. Terminals in a peer view are not
+opened in the browser: clicking a terminal control copies
+`tclaude federation attach <agent-id>@<instance-id>` to run in your own
+terminal.
+
+### Groups · all nodes
+
+The merged view lists every group on this node and each peer, named
+`group@node` with the node's colour on the suffix. The view is read-only:
+click a group's `@node` suffix to open that node's dashboard. An unreachable node keeps its last rows, marked
+stale. CLI: `tclaude agent groups ls --all-nodes`.
+
+### The 🌐 marker
+
+A group linked to federation peers carries a 🌐 after its header chips (a green
+dot: a linked node is live). Click it for the links — a direct or pool grant,
+or a route mirror — with what each allows and a jump to that node's dashboard.
+CLI: `tclaude federation links [--group NAME]`.
+
+### Fleet administration (⚙ Fleet)
+
+**⚙ Fleet** (or "Fleet administration" in the command palette, before any peer
+is trusted) manages this node's federation. The identity bar at the top shows
+this node's instance ID and full fingerprint (copy it to compare out of band),
+the hub connection with **Disconnect**, and **version & updates…** for this
+node. Every action that widens trust, overwrites state or runs code confirms
+first and says what will happen. Most pages name their CLI.
+
+- **Peers** — trusted peers (level, grants, pools) and hub-visible instances
+  waiting to be trusted. To trust one: **Trust…**, compare the fingerprint
+  shown in full with the other operator, tick the check, pick the level and
+  confirm. Unrestricted repeats that it grants every peer permission on all
+  groups, including ones created later. Restrict, unrestrict and untrust from
+  the row.
+- **Harnesses** — each node's harnesses in one table: version, ↑ when an
+  update exists, 🔑 when a login is present. Click a cell to install or update
+  (if workers are busy, choose to run now or when they are idle), or, for
+  login-file harnesses, to push your login to a peer (agents there then act as
+  you), back up or restore the node's login files. **Update all…** updates a
+  node's harnesses when its workers are idle. A peer needs to share
+  `node.harnesses.read` (and `.install`, `node.credentials.receive` to change
+  anything).
+- **Run scripts** — run one shell script on several nodes. Tick nodes (or
+  **all online**), write the script, set the timeout, **Run** and confirm. Each
+  node gets a pane with state, exit code, duration and output; **full stdout**
+  / **full stderr** load the whole log, and **Re-run on N failed…** repeats it
+  only where it failed. A peer runs your script only if it granted you
+  `node.exec` and turned on **Accept remote scripts** on its own Run scripts
+  page — that switch is full remote code execution as the tclaude user, and the
+  limits beside it cap each script's memory, cpu and processes.
+- **Invites & joining** — **Create invite…** issues an enrollment token for a
+  node profile (uses, lifetime, the trust the joining node grants back) and
+  shows it once; revoke active tokens from the list. To join a master:
+  **Join with a token…**, pick the master, paste the token, check both
+  fingerprints in the preview, tick the check and **Enroll**.
+- **Peer grants** — pick a peer or a pool, see each grant with where it
+  applies (a group, or all groups including future ones, flagged) and what it
+  allows, **Revoke…** it, or add one: permission, group, cap, **Grant…**.
+  Sensitive grants (spawning, attach, `node.exec`, …) say what they let the
+  peer do.
+- **Profiles & pools** — pools group nodes so one grant covers every member;
+  add or remove members and open a pool's grants. Profiles bundle a trust
+  level, pools and grants: **Apply to peer…** previews the plan, **Make
+  default…** applies it to newly trusted peers. Profile definitions are edited
+  with `tclaude federation profile`.
+- **Audit** — this node's federation activity, newest first: a peer acting
+  here (⇠) or this node acting on a peer (⇢), with actor, target, group and
+  outcome; refused or failed requests in red. Filter by peer and time window.
+
+The full federation model, grants and CLI are in
+[Federation](federation.md).
 
 ## Shared behavior
 
