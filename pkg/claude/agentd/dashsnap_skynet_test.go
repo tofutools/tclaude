@@ -98,6 +98,18 @@ const skynetFederationStubJS = `(function(){
         { name: 'release-captain', description: 'Cuts releases and watches CI', permissions: { 'jobs.run': { allow: true } }, prompt: 'Coordinate the release train; never force-push main.' }
       ]) });
     }
+    if (path === '/api/federation/bundle-offers/off_5m8t/import') {
+      var ib = JSON.parse((init && init.body) || '{}');
+      var cands = [
+        { id: 'repo:repo_7k2', cwd: '/srv/tclaude/checkouts/ada-7k2q', reason: 'repo_match', exists: false, checkout_required: true, repo: { id: 'repo_7k2', name: 'tclaude', ref: 'main' } },
+        { id: 'same_path', cwd: '/home/johan/git/tclaude', reason: 'same_path', exists: true },
+        { id: 'group_default', cwd: '/srv/ops', reason: 'group_default', exists: true }
+      ];
+      var pick = ib.cwd ? { cwd: ib.cwd, reason: 'explicit', exists: false } : cands.filter(function(c){ return c.id === (ib.landing || 'repo:repo_7k2'); })[0];
+      return json({ agent: { name: 'ada', harness: 'claude', role: 'dev' }, group: 'ops', history: true, unresolved: [], warnings: [], findings: [],
+        security: 'Permissions and ownership from the sender are not copied.',
+        landing: Object.assign({}, pick, { candidates: cands, source_cwd: '/home/johan/git/tclaude', source_repo: 'git@github.com:tofutools/tclaude.git' }) });
+    }
     if (path.indexOf('/api/federation/bundle-offers/') === 0 && path.slice(-7) === '/import') return json({ changes: [
       { item: 'roles/reviewer', action: 'create', security: true },
       { item: 'templates/pr-review', action: 'replace', security: true },
@@ -823,6 +835,23 @@ func skynetStates() []dashsnap.State {
   document.querySelector('[data-offer="off_9c4r"] [data-fa="preview"]').click();
   for (var k = 0; k < 30 && !document.querySelector('#fleet-offer-changes'); k++) await new Promise(function(r){ setTimeout(r, 100); });
   if (document.querySelectorAll('#fleet-offer-changes tbody tr').length !== 3) throw new Error('skynet: preview rows missing');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-offer-landing",
+			Title:   "Where an arriving agent starts",
+			Caption: "Previewing an agent offer (clone, move or teleport): Will start in names the directory this node resolved and why — here a matching Fleet repo, as a new isolated checkout — with the other valid candidates to choose from, a free path field, and the sender's path and repo URL shown as hints only.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Offers'; })[0].click();
+  for (var j = 0; j < 30 && !document.querySelector('[data-offer="off_5m8t"] [data-fa="preview"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('[data-offer="off_5m8t"] [data-fa="preview"]').click();
+  for (var k = 0; k < 30 && !document.querySelector('#fleet-landing-resolved'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-landing-choice')) throw new Error('skynet: landing picker missing');
 })();`,
 			SettleMS: 400,
 		},

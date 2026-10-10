@@ -79,6 +79,10 @@ let sharedActions = null;
 function defaultActions() { return (sharedActions ||= createPeerActionActions()); }
 
 // consequence spells out what an agent action does on the peer.
+// LANDS_HERE says where an agent arriving here starts: this node decides, and
+// the agent's path on the peer is only a hint.
+const LANDS_HERE = 'This node picks its starting directory: a matching Fleet repo, its own path if that exists here, the group\'s default dir, or the teleport landing policy. When none fits, it waits in Fleet → Offers for you to choose.';
+
 export function consequence(action, { agent, node, force, group, clone }) {
   switch (action) {
     case 'stop': return force
@@ -86,8 +90,8 @@ export function consequence(action, { agent, node, force, group, clone }) {
       : `${agent} on ${node} is asked to exit cleanly and its tmux session ends. It can be woken again on ${node}.`;
     case 'retire': return `${agent} on ${node} is retired: its running session is asked to exit, and it is demoted to a plain conversation, leaving its groups and losing its permission grants (its worktree is kept). ${node}'s operator can reinstate it.`;
     case 'clone': return `A sibling of ${agent} starts on ${node}, inheriting its identity (groups, permissions, ownership). The original keeps running.`;
-    case 'move': return `${agent} leaves ${node} and is offered to this node with its history, to land in group ${group}. Once it lands, the original on ${node} is retired.`;
-    case 'teleport': return `${agent} teleports from ${node} to this node, continuing its history in group ${group}${clone ? '; the original keeps running on ' + node : '; the original on ' + node + ' is retired'}.`;
+    case 'move': return `${agent} leaves ${node} and is offered to this node with its history, to land in group ${group}. Once it lands, the original on ${node} is retired. ${LANDS_HERE}`;
+    case 'teleport': return `${agent} teleports from ${node} to this node, continuing its history in group ${group}${clone ? '; the original keeps running on ' + node : '; the original on ' + node + ' is retired'}. ${LANDS_HERE}`;
     default: return '';
   }
 }
