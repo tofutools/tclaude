@@ -155,7 +155,7 @@ func TestFederation_ModelGatewayDialectProbeDoesNotConsumeRequestCapacity(t *tes
 }
 
 func TestFederation_ModelGatewayResponseBeforeRequestHalfClose(t *testing.T) {
-	for _, finish := range []string{"half-close", "deadline", "grace"} {
+	for _, finish := range []string{"half-close", "discovery-body", "deadline", "grace"} {
 		t.Run(finish, func(t *testing.T) {
 			fh := newFedHarness(t)
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -180,7 +180,11 @@ func TestFederation_ModelGatewayResponseBeforeRequestHalfClose(t *testing.T) {
 			})
 			require.NoError(t, err)
 			flow := fedModelFlow(t, fh, proto.ModelOpenPayload{Proxy: "model", Session: "immutable-launch", Dialect: "openai"})
-			req, err := http.NewRequest(http.MethodPost, "http://model/v1/responses", strings.NewReader(`{"model":"test-model","input":"hello"}`))
+			method, path, input := http.MethodPost, "/v1/responses", `{"model":"test-model","input":"hello"}`
+			if finish == "discovery-body" {
+				method, path, input = http.MethodGet, "/v1/models", strings.Repeat("x", 16<<10)
+			}
+			req, err := http.NewRequest(method, "http://model"+path, strings.NewReader(input))
 			require.NoError(t, err)
 			require.NoError(t, req.Write(flow))
 			// Deliberately receive the entire response, including the gateway's
@@ -188,7 +192,7 @@ func TestFederation_ModelGatewayResponseBeforeRequestHalfClose(t *testing.T) {
 			// request, so this ordering must neither stall the response nor abort us.
 			response, err := io.ReadAll(flow)
 			require.NoError(t, err)
-			if finish == "half-close" {
+			if finish == "half-close" || finish == "discovery-body" {
 				require.NoError(t, flow.CloseWrite())
 			} else {
 				// A peer that never half-closes still receives its response, and
@@ -206,7 +210,11 @@ func TestFederation_ModelGatewayResponseBeforeRequestHalfClose(t *testing.T) {
 			body, err := io.ReadAll(resp.Body)
 			require.NoError(t, err)
 			require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
-			require.Contains(t, string(body), `"status":"completed"`)
+			if finish == "discovery-body" {
+				require.Contains(t, string(body), `"id":"test-model"`)
+			} else {
+				require.Contains(t, string(body), `"status":"completed"`)
+			}
 		})
 	}
 }

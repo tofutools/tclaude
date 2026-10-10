@@ -251,6 +251,9 @@ func (rt *fedRuntime) acceptModelOpen(peer *db.FederationPeer, env *proto.Envelo
 		// post-response grace even when the request's context has a long deadline.
 		grace := time.AfterFunc(5*time.Second, func() { _ = flow.Close() })
 		defer grace.Stop()
+		// Discovery and early policy refusals may leave a framed body unread.
+		// Consume it under the same grace before looking for the half-close.
+		_, _ = io.Copy(io.Discard, req.Body)
 		var extra [1]byte
 		_, _ = flow.Read(extra[:])
 	}()
