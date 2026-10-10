@@ -18909,6 +18909,10 @@ nav:has(#node-chips-root .node-chip):has(:is([data-tab="fleet"], [data-tab="flee
 .skynet-merged-node.stale { color: #7d8590; }
 .skynet-merged-node.stale i { background: transparent; border: 1px dashed var(--nc); }
 .skynet-merged-note { color: #6e7681; margin-left: auto; }
+/* Drag an agent onto another node's group (skynet-move-drop.js): the group
+   under the pointer says whether the drop can move it from here. */
+.skynet-merged details.skynet-drop-ok > summary { outline: 2px dashed #3fb950; outline-offset: -2px; background: rgba(63, 185, 80, 0.08); }
+.skynet-merged details.skynet-drop-no > summary { outline: 2px dashed #f85149; outline-offset: -2px; }
 .fleet-node-suffix { color: var(--nc); font-weight: 600; cursor: pointer; }
 .fleet-node-suffix:hover { text-decoration: underline; }
 .fleet-stale-label { font-size: 11px; font-weight: normal; color: #e3b341; }

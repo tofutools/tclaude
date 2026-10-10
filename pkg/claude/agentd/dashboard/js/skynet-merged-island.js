@@ -9,6 +9,8 @@ import { nodeHref, pollDelay, remoteNodeID, staggerOffset } from './skynet-model
 import { MERGED_IDLE_POLL_MS, MERGED_POLL_MS, mergeSnapshots } from './skynet-merged-model.js';
 import { peerAction } from './peer-view-limits.js';
 import { PeerActionDialog, createPeerActionActions } from './peer-action.js';
+import { MoveDropDialog, dropPlan } from './skynet-move-drop.js';
+import { createFleetAdminActions } from './fleet-admin-actions.js';
 
 const html = htm.bind(h);
 
@@ -25,6 +27,26 @@ const VIEW_ONLY_ACTS = new Set(['copy-generation-id', 'sandbox-details', 'group-
 const TERMINAL_ACTS = new Set(['web-open-window', 'jump']);
 const openRemote = (opts) => import('./remote-terminal.js').then((m) => m.openRemoteTerminal(opts));
 const peerRoutes = (node) => createPeerActionActions({ node });
+const MOVE_MIME = 'application/x-tclaude-fleet-move';
+
+// dragSource reads a dragged member row in the merged view: the agent and the
+// node and group it is in. Only real group members can move.
+function dragSource(row) {
+  const group = row?.closest?.('details[data-fleet-node]');
+  const agent = row?.getAttribute?.('data-dnd-agent');
+  const merged = row?.getAttribute?.('data-dnd-source-group');
+  if (!group || !agent || !merged || !/^agt_[A-Za-z0-9]+$/.test(agent)) return null;
+  const name = group.dataset.fleetNodeName || '';
+  return { agent: { id: agent, name: row.getAttribute('data-dnd-label') || agent }, source: { node: group.dataset.fleetNode, name, group: ownGroup(merged, name) || merged } };
+}
+
+// dropTarget reads the group a drag is over (the innermost one).
+function dropTarget(el) {
+  const group = el?.closest?.('details[data-fleet-node]');
+  if (!group) return null;
+  const name = group.dataset.fleetNodeName || '';
+  return { el: group, node: group.dataset.fleetNode, name, group: ownGroup(group.dataset.groupKey || '', name) };
+}
 
 // ownGroup turns a merged group@node name back into the peer's own name.
 function ownGroup(name, node) {
@@ -109,7 +131,7 @@ function usePeerSnapshots({ active, peers, fetchImpl, timers, now }) {
 export function MergedGroups({
   state, host, snapshot = dashboardState.snapshot, fetchImpl = (...a) => globalThis.fetch(...a),
   timers = globalThis, now = () => Date.now(), toast = shellToast, remote = remoteNodeID(), switchNode = defaultSwitchNode, openTerminal = openRemote,
-  peerActions = peerRoutes, confirm,
+  peerActions = peerRoutes, confirm, moveActions = null,
 }) {
   const current = state.view.value;
   const fleet = current.fleet;
@@ -117,6 +139,9 @@ export function MergedGroups({
   const peers = fleet ? fleet.peers : [];
   const entries = usePeerSnapshots({ active, peers, fetchImpl, timers, now });
   const [peerReq, setPeerReq] = useState(null);
+  const [moveDrop, setMoveDrop] = useState(null);
+  const fleetActions = useRef(moveActions);
+  if (!fleetActions.current) fleetActions.current = createFleetAdminActions({ fetchImpl });
   // The capture handlers below are bound once; they read the latest snapshots.
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
@@ -164,16 +189,69 @@ export function MergedGroups({
     const onContext = (event) => {
       if (event.target?.closest?.('[data-act]') && host.contains(event.target)) { event.preventDefault(); event.stopImmediatePropagation(); }
     };
-    const onDrag = (event) => { if (host.contains(event.target)) event.preventDefault(); };
+    // Drag an agent onto a group on another node to move it there (to or from
+    // this node). These handlers own the gesture here: the per-node Groups
+    // drag-and-drop (dnd.js) never sees it, and nothing else drags.
+    let dragging = null;
+    let marked = null;
+    const mark = (el, ok) => {
+      if (marked && marked !== el) marked.classList.remove('skynet-drop-ok', 'skynet-drop-no');
+      marked = el;
+      el?.classList.toggle('skynet-drop-ok', ok);
+      el?.classList.toggle('skynet-drop-no', !ok);
+    };
+    const unmark = () => { marked?.classList.remove('skynet-drop-ok', 'skynet-drop-no'); marked = null; };
+    const self = () => state.view.value.fleet?.self?.id || '';
+    const onDragStart = (event) => {
+      if (!host.contains(event.target)) return;
+      const src = dragSource(event.target.closest?.('tr.dnd-draggable'));
+      if (!src) { event.preventDefault(); return; }
+      event.stopPropagation();
+      dragging = src;
+      event.dataTransfer?.setData(MOVE_MIME, src.agent.id);
+      event.dataTransfer?.setData('text/plain', src.agent.name);
+      if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+    };
+    const onDragOver = (event) => {
+      if (!dragging) return;
+      event.stopPropagation();
+      const target = dropTarget(event.target);
+      if (!target) { unmark(); return; }
+      const plan = dropPlan({ source: dragging.source, target, self: self() });
+      if (plan.kind === 'none') { unmark(); return; }
+      // Same-node and third-node drops are accepted only to say why not.
+      event.preventDefault();
+      const ok = plan.kind === 'push' || plan.kind === 'pull';
+      if (event.dataTransfer) event.dataTransfer.dropEffect = ok ? 'move' : 'none';
+      mark(target.el, ok);
+    };
+    const onDrop = (event) => {
+      if (!dragging) return;
+      event.preventDefault(); event.stopPropagation();
+      const src = dragging; dragging = null; unmark();
+      const target = dropTarget(event.target);
+      if (!target) return;
+      const plan = dropPlan({ source: src.source, target, self: self() });
+      if (plan.kind === 'same') { toast(`To move ${src.agent.name} between groups on ${src.source.name}, use ${src.source.name}'s own Groups view`, true); return; }
+      if (plan.kind === 'third') { toast(`Neither ${src.source.name} nor ${target.name} is this node: move ${src.agent.name} from ${src.source.name}'s dashboard`, true); return; }
+      if (plan.kind === 'push' || plan.kind === 'pull') setMoveDrop({ drop: { agent: src.agent, source: src.source, target }, plan });
+    };
+    const onDragEnd = () => { dragging = null; unmark(); };
     host.addEventListener('click', onClick, true);
     host.addEventListener('keydown', onKey, true);
     host.addEventListener('contextmenu', onContext, true);
-    host.addEventListener('dragstart', onDrag, true);
+    host.addEventListener('dragstart', onDragStart, true);
+    host.addEventListener('dragover', onDragOver, true);
+    host.addEventListener('drop', onDrop, true);
+    host.addEventListener('dragend', onDragEnd, true);
     return () => {
       host.removeEventListener('click', onClick, true);
       host.removeEventListener('keydown', onKey, true);
       host.removeEventListener('contextmenu', onContext, true);
-      host.removeEventListener('dragstart', onDrag, true);
+      host.removeEventListener('dragstart', onDragStart, true);
+      host.removeEventListener('dragover', onDragOver, true);
+      host.removeEventListener('drop', onDrop, true);
+      host.removeEventListener('dragend', onDragEnd, true);
     };
   }, [host]);
 
@@ -191,13 +269,15 @@ export function MergedGroups({
         title=${n.node.local ? 'This node' : n.failure ? `Unreachable (${n.failure.code || `HTTP ${n.failure.status}`})` : n.loaded ? 'Shared groups of this peer' : 'Loading…'}>
         <i aria-hidden="true"></i>${n.node.local ? '⌂ ' : ''}${n.node.name}${n.label ? html` <span class="muted">· ${n.label}</span>` : !n.loaded && !n.node.local ? html` <span class="muted">· loading…</span>` : ''}
       </span>`)}
-      <span class="skynet-merged-note">Overview: shared actions go to the peer; open <b>@node</b> for the rest.</span>
+      <span class="skynet-merged-note">Overview: shared actions go to the peer; drag an agent onto another node's group to move it; open <b>@node</b> for the rest.</span>
     </div>
     <${GroupsInteractionProvider}>
       <${GroupsNativeList} groups=${merged.groups} snapshot=${merged} actions=${readOnlyActions} />
     <//>
     ${peerReq && html`<${PeerActionDialog} req=${peerReq} peerView=${entries[peerReq.nodeId]?.snapshot?.peer_view} groups=${entries[peerReq.nodeId]?.snapshot?.groups}
       actions=${peerActions(peerReq.nodeId)} toast=${toast} timers=${timers} onClose=${() => setPeerReq(null)} ...${confirm ? { confirm } : {}} />`}
+    ${moveDrop && html`<${MoveDropDialog} drop=${moveDrop.drop} plan=${moveDrop.plan} actions=${fleetActions.current} peerActions=${peerActions}
+      timers=${timers} now=${now} onClose=${() => setMoveDrop(null)} />`}
   </div>`;
 }
 
