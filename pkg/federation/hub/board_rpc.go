@@ -86,9 +86,13 @@ func (h *Hub) serveBoardWS(w http.ResponseWriter, r *http.Request) {
 		h.limiters[hello.InstanceID] = lim
 	}
 	h.mu.Unlock()
-	c := &conn{hub: h, ws: ws, id: hello.InstanceID, pub: hello.PubKey, nonce: nonce, boardOnly: true, out: make(chan *proto.Frame, 256), done: make(chan struct{}), limiter: lim}
+	c := &conn{hub: h, ws: ws, id: hello.InstanceID, pub: hello.PubKey, nonce: nonce, boardOnly: true, boardStream: r.URL.Path == proto.BoardStreamPath, out: make(chan *proto.Frame, 256), done: make(chan struct{}), limiter: lim}
 	if !h.register(c) {
 		c.fail(proto.CodeShuttingDown, "hub shutting down")
+		return
+	}
+	if c.boardStream {
+		h.serveBoardBlob(c)
 		return
 	}
 	go func() { defer h.wg.Done(); c.writeLoop() }()
@@ -147,7 +151,7 @@ func (h *Hub) boardRequest(c *conn, f *proto.Frame, size int) {
 }
 func boardMethodKnown(method string) bool {
 	switch method {
-	case "boards.list", "boards.create", "boards.get", "members.list", "members.set", "members.remove", "invites.create", "invites.revoke", "keys.get", "keys.rotate", "keys.join", "keys.install":
+	case "blobs.put", "blobs.get", "items.publish", "items.list", "items.versions", "items.get", "pins.set", "pins.list", "boards.list", "boards.create", "boards.get", "members.list", "members.set", "members.remove", "invites.create", "invites.revoke", "keys.get", "keys.rotate", "keys.join", "keys.install":
 		return true
 	}
 	return false
