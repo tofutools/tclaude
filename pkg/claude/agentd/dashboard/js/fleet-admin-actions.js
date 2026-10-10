@@ -27,8 +27,31 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
     if (!res.ok) throw new FleetAdminError(res.status, data);
     return data;
   }
+  const enc = encodeURIComponent;
+// rows reads a hub list response, bare or wrapped in its named field.
+const rows = (v, key) => (Array.isArray(v) ? v : v?.[key] || []);
   return Object.freeze({
     status: () => call('GET', 'status'),
+    // Hub administration (tclaude federation hub …): signed requests this
+    // node's daemon relays to the hub over its authenticated connection. Every
+    // mutation is confirmed in the UI first.
+    hubStatus: () => call('GET', 'hub/status'),
+    hubClaim: (token) => call('POST', 'hub/claim', { token }),
+    hubAdmins: async () => rows(await call('GET', 'hub/admins'), 'admins'),
+    addHubAdmin: (instance, capabilities) => call('POST', 'hub/admins', { instance, capabilities }),
+    removeHubAdmin: (instance) => call('DELETE', `hub/admins/${enc(instance)}`),
+    hubAdmissions: async () => rows(await call('GET', 'hub/admissions'), 'admissions'),
+    admitToHub: (instance, spaces) => call('POST', 'hub/admissions', { instance, spaces }),
+    revokeHubAdmission: (instance) => call('DELETE', `hub/admissions/${enc(instance)}`),
+    hubInvites: async () => rows(await call('GET', 'hub/invites'), 'invites'),
+    createHubInvite: (space, ttlSeconds) => call('POST', 'hub/invites', { space, ttl_seconds: ttlSeconds }),
+    revokeHubInvite: (tokenHash) => call('DELETE', `hub/invites/${enc(tokenHash)}`),
+    hubSpaces: async () => rows(await call('GET', 'hub/spaces'), 'spaces'),
+    setHubSpaces: (instance, spaces) => call('PUT', 'hub/spaces', { instance, spaces }),
+    hubSettings: async () => rows(await call('GET', 'hub/settings'), 'settings'),
+    patchHubSettings: (overrides) => call('PATCH', 'hub/settings', { overrides }),
+    hubHealth: () => call('GET', 'hub/health'),
+    hubLogs: (cursor = '', maxEntries = 200) => call('GET', `hub/logs?${new URLSearchParams({ cursor, max_entries: String(maxEntries) })}`),
     pools: async () => (await call('GET', 'nodes/groups'))?.groups || [],
     // A preview names no level: a default profile decides it, and an explicit
     // level that differs from the profile's is refused.

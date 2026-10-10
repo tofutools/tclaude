@@ -4,6 +4,7 @@ import { createPreactHarness } from './preact-harness.mjs';
 const FP_FORGE = 'k7q2-mx9d-4hpa-zz31-0e8c';
 const FP_NEW = 'w5ze-a3nq-9c1b-77f0-d2aa';
 let s_transition = null;
+let s_hubAdmin = true;
 let s_rotation = { hop_count: 1, pending: false };
 const status = () => ({
   enabled: true, instance_id: 'inst_self', name: 'desk', fingerprint: 'self-fp-0000', hub_url: 'wss://hub.example', hub: { state: 'connected' },
@@ -120,6 +121,29 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     saveProfile: async (o) => { log.push(['saveProfile', o]); if (o.revision === 99) { const e = new Error('reload the current profile revision'); e.status = 409; e.code = 'stale_profile'; throw e; } return { ...o, revision: o.revision + 1 }; },
     setHubConfig: async (b) => { log.push(['hubConfig', b]); return { ok: true }; },
     nodeLabels: async () => ['gpu', 'ci'],
+    hubStatus: async () => ({ hub_id: 'hub_7k', hub_url: 'wss://hub.example', hub_version: 'v0.43.0', connected: true, admin: s_hubAdmin, admin_count: s_hubAdmin ? 2 : 0, my_capabilities: ['admissions', 'settings', 'admins'], bootstrap_claimable: !s_hubAdmin }),
+    hubClaim: async (token) => { log.push(['hubClaim', token]); s_hubAdmin = true; return { ok: true }; },
+    hubHealth: async () => ({ connected_instances: 3, streams: 7, goroutines: 140, heap_bytes: 52428800, recent_errors: [{ at: '2026-10-10T09:00:00Z', code: 'stream_reset', message: 'peer inst_lab reset stream 4' }] }),
+    hubAdmissions: async () => [
+      { instance: 'inst_self', name: 'desk', fingerprint: 'self-fp-0000', spaces: ['ops'], connected: true },
+      { instance: 'inst_forge', name: 'forge', fingerprint: FP_FORGE, spaces: ['ops', 'ci'], last_seen: '2026-10-10T08:00:00Z' },
+    ],
+    admitToHub: async (i, sp) => { log.push(['admit', i, sp]); return { ok: true }; },
+    revokeHubAdmission: async (i) => { log.push(['revokeAdmission', i]); return { ok: true }; },
+    setHubSpaces: async (i, sp) => { log.push(['spaces', i, sp]); return { ok: true }; },
+    hubInvites: async () => [{ token_hash: 'abcdef0123456789', space: 'ops', created_at: '2026-10-10T08:00:00Z', expires_at: '2026-10-11T08:00:00Z', used: false }],
+    createHubInvite: async (space, ttl) => { log.push(['invite', space, ttl]); return { token: 'hubinv-SECRET-1', token_hash: 'ffff', space, expires_at: '2026-10-11T09:00:00Z' }; },
+    revokeHubInvite: async (hash) => { log.push(['revokeInvite', hash]); return { ok: true }; },
+    hubAdmins: async () => [{ instance: 'inst_self', name: 'desk', fingerprint: 'self-fp-0000', capabilities: ['admissions', 'settings', 'admins'], added_at: '2026-10-01T00:00:00Z' }, { instance: 'inst_lab', name: 'lab', fingerprint: 'lab-fp', capabilities: ['admissions'] }],
+    addHubAdmin: async (i, caps) => { log.push(['addAdmin', i, caps]); return { ok: true }; },
+    removeHubAdmin: async (i) => { log.push(['removeAdmin', i]); return { ok: true }; },
+    hubSettings: async () => [
+      { key: 'rotation_window', type: 'duration', unit: 's', min: 60, max: 604800, effective: 600, source: 'flag', boot: 600, restart_required: false, flag_overridden: false },
+      { key: 'max_streams_per_instance', type: 'int', min: 1, max: 64, effective: 16, source: 'remote', boot: 8, restart_required: false, flag_overridden: true },
+    ],
+    patchHubSettings: async (o) => { log.push(['settings', o]); return { ok: true }; },
+    hubLogs: async (cursor) => { log.push(['logs', cursor]); return cursor ? { entries: [{ at: '2026-10-10T08:59:00Z', level: 'info', message: 'older line' }] }
+      : { entries: [{ at: '2026-10-10T09:01:00Z', level: 'warn', message: '<script>alert(1)</script> admission refused' }], next_cursor: 'c1' }; },
     healthPolicy: async (peer) => { log.push(['healthPolicy', peer]); return peer ? { presence: false, resources: true, failures: false, debounce_seconds: 15, disk_free_percent: 5, ram_free_percent: 10, memory_seconds: 120, failure_count: 3, failure_window_seconds: 600, cooldown_seconds: 600 }
       : { presence: true, resources: false, failures: false, debounce_seconds: 15, disk_free_percent: 10, ram_free_percent: 10, memory_seconds: 120, failure_count: 3, failure_window_seconds: 600, cooldown_seconds: 600 }; },
     setHealthPolicy: async (peer, body) => { log.push(['setHealth', peer, body]); return { ...body, presence: body.presence }; },
@@ -1368,4 +1392,130 @@ test('fleet dialogs close on Escape', async (t) => {
   assert.ok(q('#fleet-move-agent'));
   await esc();
   assert.equal(q('#fleet-move-agent'), null);
+});
+
+async function openHub(s) {
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => b.textContent === 'Hub'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 30)));
+}
+
+test('hub: a non-admin node claims admin with the pasted token, confirming what it binds', async (t) => {
+  s_hubAdmin = false;
+  const s = await setup(t);
+  await openHub(s);
+  const q = (x) => s.harness.document.querySelector(x);
+  assert.match(q('#fleet-hub').textContent, /no admin yet/);
+  assert.equal(q('#fleet-hub-admissions'), null, 'nothing but the claim without admin');
+  await s.click(q('#fleet-hub-claim-open'));
+  await s.click(q('#fleet-hub-claim-send'));
+  assert.match(q('#fleet-hub-claim [role=alert]').textContent, /Paste the claim token/);
+  const tok = q('#fleet-hub-claim-token'); tok.value = '  claim-123  ';
+  await s.harness.act(() => s.harness.fireEvent(tok, 'input'));
+  await s.click(q('#fleet-hub-claim-send'));
+  const c = s.confirms.at(-1);
+  assert.match(c.body, /desk \(inst_self, fingerprint self-fp-0000\).*single-use.*no access to any node's content/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'hubClaim'), ['hubClaim', 'claim-123']);
+  s_hubAdmin = true;
+});
+
+test('hub: admin sees health, admissions, invites, admins; admit checks ID and fingerprint; every change confirms', async (t) => {
+  s_hubAdmin = true;
+  const s = await setup(t);
+  await openHub(s);
+  const doc = s.harness.document; const q = (x) => doc.querySelector(x);
+  const type = async (sel, v) => { const el = q(sel); el.value = v; await s.harness.act(() => s.harness.fireEvent(el, 'input')); };
+  assert.match(q('#fleet-hub-health').textContent, /3.*7.*140.*50\.0 MiB.*stream_reset/);
+  assert.match(q('#fleet-hub-admissions [data-instance="inst_forge"]').textContent, new RegExp(FP_FORGE), 'full fingerprints');
+  assert.equal(q('#fleet-hub-admissions [data-instance="inst_self"] [data-hub="revoke"]'), null, 'this node cannot revoke itself from the admissions');
+  // admit
+  await s.click(q('#fleet-hub-admit-open'));
+  await type('#fleet-hub-admit-instance', 'forge');
+  await s.click(q('#fleet-hub-admit-send'));
+  assert.match(q('#fleet-hub-admit [role=alert]').textContent, /inst_/);
+  await type('#fleet-hub-admit-instance', 'inst_forge');
+  await type('#fleet-hub-admit-fp', 'wrong-fp');
+  await s.click(q('#fleet-hub-admit-send'));
+  assert.match(q('#fleet-hub-admit [role=alert]').textContent, /does not match/);
+  await type('#fleet-hub-admit-fp', FP_FORGE);
+  await type('#fleet-hub-admit-spaces', 'ops ci');
+  await s.click(q('#fleet-hub-admit-send'));
+  assert.match(s.confirms.at(-1).body, new RegExp(`inst_forge with fingerprint ${FP_FORGE}.*spaces ops, ci`));
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'admit'), ['admit', 'inst_forge', ['ops', 'ci']]);
+  // revoke + spaces
+  await s.click(q('#fleet-hub-admissions [data-instance="inst_forge"] [data-hub="revoke"]'));
+  assert.match(s.confirms.at(-1).body, /disconnected from the hub.*trust relationships on each node are unchanged/);
+  const sp = q('#fleet-hub-admissions [data-instance="inst_forge"] .fa-hub-spaces'); sp.value = 'ops';
+  await s.harness.act(() => s.harness.fireEvent(sp, 'change'));
+  assert.match(s.confirms.at(-1).body, /in ops \(was ops, ci\)/);
+  // invite shown once
+  await s.click(q('#fleet-hub-invite-create'));
+  assert.match(s.confirms.at(-1).body, /shown only once/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'invite'), ['invite', '', 86400]);
+  assert.match(q('#fleet-hub-new-token').textContent, /hubinv-SECRET-1/);
+  assert.doesNotMatch(q('#fleet-hub-invites').textContent, /SECRET/, 'listings show only the hash');
+  await s.click(q('#fleet-hub-invites [data-hub="revoke-invite"]'));
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'revokeInvite'), ['revokeInvite', 'abcdef0123456789']);
+  // admins
+  await s.click(q('#fleet-hub-admins [data-instance="inst_self"] [data-hub="remove-admin"]'));
+  assert.equal(s.confirms.at(-1).title, 'Give up hub admin for this node?');
+  assert.match(s.confirms.at(-1).body, /1 admin\(s\) remain/);
+  await s.click(q('#fleet-hub-admissions [data-instance="inst_forge"] [data-hub="make-admin"]'));
+  assert.match(s.confirms.at(-1).body, new RegExp(`inst_forge \\(fingerprint ${FP_FORGE}\\).*including this node`));
+  assert.ok(s.confirms.every((c) => typeof c.action === 'function'), 'every mutation runs inside a confirmation');
+});
+
+test('hub settings: effective value, source and flag-overridden marker; validated edits confirm each change; revert sends null', async (t) => {
+  s_hubAdmin = true;
+  const s = await setup(t);
+  await openHub(s);
+  const doc = s.harness.document; const q = (x) => doc.querySelector(x);
+  const row = (k) => q(`#fleet-hub-settings [data-setting="${k}"]`);
+  assert.match(row('rotation_window').textContent, /600 s.*flag/);
+  assert.ok(row('max_streams_per_instance').querySelector('[data-flag-overridden]'), 'flag overridden by a remote setting is marked');
+  assert.equal(row('rotation_window').querySelector('[data-flag-overridden]'), null);
+  const set = async (k, v) => { const el = row(k).querySelector('input'); el.value = v; await s.harness.act(() => s.harness.fireEvent(el, 'input')); };
+  await s.click(q('#fleet-hub-settings-save'));
+  assert.match(doc.querySelector('#fleet-hub [role=alert]').textContent, /Nothing changed/);
+  await set('rotation_window', '30');
+  await s.click(q('#fleet-hub-settings-save'));
+  assert.match(doc.querySelector('#fleet-hub [role=alert]').textContent, /at least 60 s/);
+  await set('rotation_window', '1800');
+  await s.click(row('max_streams_per_instance').querySelector('[data-revert]'));
+  await s.click(q('#fleet-hub-settings-save'));
+  assert.match(s.confirms.at(-1).body, /rotation_window: 600 s → 1800 s \(overrides the serve flag\).*max_streams_per_instance: back to the serve flag or default \(8\)/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'settings'), ['settings', { rotation_window: 1800, max_streams_per_instance: null }]);
+});
+
+test('hub log tail is text only and pages with the cursor', async (t) => {
+  s_hubAdmin = true;
+  const s = await setup(t);
+  await openHub(s);
+  const q = (x) => s.harness.document.querySelector(x);
+  assert.equal(q('#fleet-hub-logs script'), null, 'log lines never become markup');
+  assert.match(q('#fleet-hub-logs pre').textContent, /WARN.*<script>alert\(1\)<\/script> admission refused/);
+  await s.click(q('#fleet-hub-logs-more'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  assert.deepEqual(s.log.filter((l) => l[0] === 'logs').map((l) => l[1]), ['', 'c1']);
+  assert.match(q('#fleet-hub-logs pre').textContent, /admission refused[\s\S]*older line/);
+  assert.equal(q('#fleet-hub-logs-more'), null, 'no cursor, no more');
+});
+
+test('hub actions use resource paths and the agreed bodies', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createFleetAdminActions } = await harness.importDashboardModule('js/fleet-admin-actions.js');
+  const calls = [];
+  const a = createFleetAdminActions({ fetchImpl: async (url, init) => { calls.push([init.method, url, init.body ? JSON.parse(init.body) : null]); return { ok: true, status: 200, json: async () => ({}) }; } });
+  await a.hubClaim('t'); await a.removeHubAdmin('inst_x'); await a.revokeHubAdmission('inst_x'); await a.revokeHubInvite('h/1');
+  await a.patchHubSettings({ k: null }); await a.setHubSpaces('inst_x', ['ops']); await a.hubLogs('c', 50); await a.createHubInvite('ops', 3600);
+  assert.deepEqual(calls, [
+    ['POST', '/api/federation/hub/claim', { token: 't' }],
+    ['DELETE', '/api/federation/hub/admins/inst_x', null],
+    ['DELETE', '/api/federation/hub/admissions/inst_x', null],
+    ['DELETE', '/api/federation/hub/invites/h%2F1', null],
+    ['PATCH', '/api/federation/hub/settings', { overrides: { k: null } }],
+    ['PUT', '/api/federation/hub/spaces', { instance: 'inst_x', spaces: ['ops'] }],
+    ['GET', '/api/federation/hub/logs?cursor=c&max_entries=50', null],
+    ['POST', '/api/federation/hub/invites', { space: 'ops', ttl_seconds: 3600 }],
+  ]);
 });

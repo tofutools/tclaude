@@ -124,6 +124,25 @@ const skynetFederationStubJS = `(function(){
       { proxy: 'claude', peer: 'inst_hn3cxq7a', model: 'claude-haiku-5-5', charged_tokens: 52000, input_tokens: 50000, output_tokens: 2000, status: 429, complete: false },
       { proxy: 'claude', peer: 'inst_hn3cxq7a', model: 'claude-sonnet-5-5', charged_tokens: 232000, input_tokens: 0, output_tokens: 0, status: 0, complete: false }
     ]);
+    if (path === '/api/federation/hub/status') return json({ hub_id: 'hub_7kq2m9', hub_url: 'wss://hub.lab.example', hub_version: 'v0.43.0', connected: true, admin: true, admin_count: 2, my_capabilities: ['admissions', 'settings', 'admins'], bootstrap_claimable: false });
+    if (path === '/api/federation/hub/health') return json({ connected_instances: 3, streams: 7, goroutines: 142, heap_bytes: 52428800, recent_errors: [{ at: '2026-10-10T09:12:00Z', code: 'stream_reset', message: 'inst_2p6ym4ke reset stream 4' }] });
+    if (path === '/api/federation/hub/admissions' && !(init && init.method === 'POST')) return json([
+      { instance: 'inst_q4w7pjf2kx3mz6bty5nd', name: 'desk', fingerprint: 'q4w7-pjf2-kx3m-z6bt-y5nd-8c1e', spaces: ['ops'], connected: true },
+      { instance: 'inst_hn3cxq7a', name: 'forge', fingerprint: 'hn3c-xq7a-2m8d-p0kf-w4tz-91rb', spaces: ['ops', 'ci'], connected: true },
+      { instance: 'inst_2p6ym4ke', name: 'lab', fingerprint: '2p6y-m4ke-v7cq-h1ns-d3xw-5jt0', spaces: ['ci'], last_seen: '2026-10-10T08:40:00Z' }]);
+    if (path === '/api/federation/hub/invites' && !(init && init.method === 'POST')) return json([{ token_hash: '9f2c4e1ab07d3355', space: 'ci', created_at: '2026-10-10T08:00:00Z', expires_at: '2026-10-11T08:00:00Z', used: false }]);
+    if (path === '/api/federation/hub/admins' && !(init && init.method === 'POST')) return json([
+      { instance: 'inst_q4w7pjf2kx3mz6bty5nd', name: 'desk', fingerprint: 'q4w7-pjf2-kx3m-z6bt-y5nd-8c1e', capabilities: ['admissions', 'settings', 'admins'], added_at: '2026-10-01T00:00:00Z' },
+      { instance: 'inst_hn3cxq7a', name: 'forge', fingerprint: 'hn3c-xq7a-2m8d-p0kf-w4tz-91rb', capabilities: ['admissions'], added_at: '2026-10-03T00:00:00Z' }]);
+    if (path === '/api/federation/hub/settings' && !(init && init.method === 'PATCH')) return json([
+      { key: 'rotation_window', type: 'duration', unit: 's', min: 60, max: 604800, effective: 600, source: 'flag', boot: 600, restart_required: false, flag_overridden: false },
+      { key: 'max_streams_per_instance', type: 'int', min: 1, max: 64, effective: 16, source: 'remote', boot: 8, restart_required: false, flag_overridden: true },
+      { key: 'invite_ttl_max', type: 'duration', unit: 's', min: 300, max: 2592000, effective: 604800, source: 'default', boot: 604800, restart_required: false, flag_overridden: false },
+      { key: 'listen_backlog', type: 'int', min: 16, max: 4096, effective: 256, source: 'flag', boot: 256, restart_required: true, flag_overridden: false }]);
+    if (path === '/api/federation/hub/logs') return json({ entries: [
+      { at: '2026-10-10T09:14:02Z', level: 'info', message: 'admitted inst_2p6ym4ke to space ci' },
+      { at: '2026-10-10T09:12:00Z', level: 'warn', message: 'stream reset by inst_2p6ym4ke (stream 4)' },
+      { at: '2026-10-10T09:05:41Z', level: 'info', message: 'setting max_streams_per_instance = 16 (remote, overrides flag)' }], next_cursor: 'c_1' });
     if (path === '/api/federation/peers/trust') return json({ instance_id: 'inst_w5zea3nq', fingerprint: 'w5ze-a3nq-7m1p-kd42-xr8c-0fv6', level: 'restricted', profile: null, plan: null, applied: false });
     var hav = function(extra){ return { schema: 1, observed_at: '2026-10-10T09:40:00Z', harnesses: [
       { name: 'claude', display_name: 'Claude Code', installed: true, version: '2.1.4', latest_version: extra ? '2.1.4' : '2.2.0', update_available: !extra, version_status: 'known', credential_present: true, usable: true },
@@ -447,6 +466,21 @@ func skynetStates() []dashsnap.State {
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return /Audit/.test(b.textContent); })[0].click();
   for (var j = 0; j < 30 && !document.querySelector('#fleet-audit'); j++) await new Promise(function(r){ setTimeout(r, 100); });
   if (document.querySelectorAll('#fleet-audit tbody tr').length !== 6) throw new Error('skynet: audit rows missing');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-hub",
+			Title:   "Hub admin",
+			Caption: "Fleet → Hub: the hub's status and health, admissions with their spaces, open invites, admins, settings (effective value, source, and a marker where a remote setting overrides a serve flag) and an escaped log tail. Every change goes through a confirmation; a node that is not a hub admin sees only the claim.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Hub'; })[0].click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-hub-settings [data-setting]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-hub-settings [data-flag-overridden]')) throw new Error('skynet: hub settings missing the flag-overridden marker');
 })();`,
 			SettleMS: 400,
 		},
