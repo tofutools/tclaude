@@ -487,6 +487,8 @@ is a plain inbox entry: it cannot answer a permission prompt, an
 `--ask-human` request or anything else that needs local approval. At most
 100 unread messages per peer are kept; beyond that the sender's outbox
 retries. Untrust the peer to stop it entirely. Agents cannot send operator
+mail yet. Reply with `tclaude federation notify`, or with **reply** on the
+message in the dashboard's Messages tab.
 mail yet. The local dashboard can compose or reply to the sending operator
 through `POST /api/federation/notify` with `{peer, subject?, body}`; replies use
 the inbox row's stable `instance` and a reply subject. The same operation is

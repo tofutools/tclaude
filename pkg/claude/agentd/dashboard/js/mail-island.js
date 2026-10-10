@@ -14,6 +14,15 @@ import { attachmentHref, bodilessNotice, messageAttachments } from './human-atta
 import { dashboardState } from './snapshot-store.js';
 import { ImageAttachmentPreview } from './image-preview-overlay.js';
 import { MarkdownAttachment } from './markdown-attachment.js';
+import { AwayAnswer, PEER_MAIL_EVENT, PeerMailHost, awayTicket, peerLabelOf, peerOfMessage, replySubject } from './peer-mail.js';
+import { shellConfirm, shellToast } from './shell-state.js';
+import { remoteNodeID } from './skynet-model.js';
+
+// openPeerMail opens the peer mail dialog (peer operator mail goes out
+// through this node, so it is offered only on this node's own view).
+function openPeerMail(detail) {
+  document.dispatchEvent(new CustomEvent(PEER_MAIL_EVENT, { detail }));
+}
 import { TTL_CHOICES, ttlText } from './peer-access.js';
 import { slugInfo } from './fleet-admin-model.js';
 
@@ -553,6 +562,8 @@ function MessageReader({ current, controller, model }) {
   const stateBits = html`<${Fragment}>${message.read ? 'read' : html`<span class="mail-state-unread">unread</span>`}${deliveryState
     ? html`<${Fragment}> · <span class=${deliveryState === 'delivered' ? '' : 'mail-state-pending'}>${deliveryState}</span></${Fragment}>` : null}</${Fragment}>`;
   const human = current.selected === 'human';
+  const peer = human && !remoteNodeID() ? peerOfMessage(message) : '';
+  const ticket = peer ? awayTicket(message) : '';
   const fromTarget = message.from_agent || message.from_conv;
   const senderLive = controller.senderOnline(message.from_agent, message.from_conv);
   return html`<div class="mail-reader" id="mail-reader" data-kind=${controller.msgKind(message)}
@@ -574,6 +585,9 @@ function MessageReader({ current, controller, model }) {
       : html`<${LinkifiedBody} text=${message.body || ''} />`}</div>
     ${human && html`<${HumanAttachment} message=${message} />`}
     <div class="mail-reader-actions">
+      ${ticket && html`<${AwayAnswer} ticket=${ticket} peerLabel=${peerLabelOf(message)} confirm=${shellConfirm} toast=${shellToast} />`}
+      ${peer && html`<button data-act="peer-mail-reply" title="Reply to this peer's operator"
+        onClick=${() => openPeerMail({ peer, subject: replySubject(message.subject) })}>reply</button>`}
       ${human && message.from_conv && html`<${Fragment}><button data-act="msg-reply" data-id=${message.id} data-agent=${message.from_agent || ''}
         data-conv=${message.from_conv} data-label=${message.from_title || message.from_conv} data-subject=${message.subject || ''}
         title="Reply to this agent — opens a dialog to send your answer back">reply</button>
@@ -620,6 +634,7 @@ export function MailApp({ controller }) {
     });
   };
   return html`<div class="mail-client" onKeyDown=${(event) => movePaneFocus(event, controller)}>
+    <${PeerMailHost} toast=${shellToast} />
     <input id="filter-mailboxes" type="text" class="mail-sidebar-filter"
       placeholder=${wizard ? 'Seek a familiar…' : 'Filter mailboxes (name / id)'}
       autocomplete="off" spellcheck=${false} value=${current.boxQuery}
@@ -639,6 +654,8 @@ export function MailApp({ controller }) {
         }}>×</button>
       <button class="tool" id="mail-mark-all" data-act="msg-mark-all-read"
         title="Mark every human notification read" hidden=${current.selected !== 'human'}>✓ mark all read</button>
+      <button class="tool" id="mail-peer-compose" title="Message a peer's operator or agents on a peer (federation)"
+        hidden=${current.selected !== 'human' || !!remoteNodeID()} onClick=${() => openPeerMail({})}>✉ peer</button>
       <button class="tool" id="mail-clear-read" data-act="msg-clear"
         title="Delete every human notification that has been marked read" hidden=${current.selected !== 'human'}>🗑 delete read</button>
       <button class="tool" id="mail-agent-mark-all" data-act="mail-agent-mark-all"

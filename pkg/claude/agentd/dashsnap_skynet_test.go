@@ -56,6 +56,35 @@ const skynetFederationStubJS = `(function(){
       { id: 'a1', at: '2026-10-10T08:20:00Z', source: 'audit', direction: 'event', peer: 'inst_hn3cxq7a', kind: 'federation.grant', actor: 'operator', target: 'inst_hn3cxq7a groups.roster.read group=ops', status: 200 }
     ]);
     if (/^\/api\/federation\/profiles\/[^/]+$/.test(path) && !(init && init.method === 'PUT')) return json({ profile: {}, applied_peers: ['inst_hn3cxq7a'] });
+    if (path === '/api/federation/away' && !(init && init.method === 'POST')) return json({ away: window.__dashsnapAway ? { cover: 'inst_hn3cxq7a', since: '2026-10-10T08:00:00Z', until: '2026-10-10T18:00:00Z' } : null });
+    if (path === '/api/federation/node-labels' && !(init && init.method === 'POST')) return json({ labels: ['gpu', 'ci', 'linux'] });
+    if (path === '/api/federation/viewers') return json(window.__dashsnapViewers ? [
+      { id: 'tv_8k2q', peer: 'inst_hn3cxq7a', agent: 'agt_r8k2m4c1x9', session: 'fe-dev-forms', group: 'frontend-squad', read_only: false, started: new Date(Date.now() - 720000).toISOString(), incoming: true },
+      { id: 'tv_3m1x', peer: 'inst_2p6ym4ke', agent: 'agt_p2w7d0j5n3', session: 'infra-bench', group: 'infra-crew', read_only: true, started: new Date(Date.now() - 95000).toISOString(), incoming: true }
+    ] : []);
+    if (path === '/api/federation/bundle-offers') return json(url.indexOf('direction=out') >= 0 ? [
+      { offer: { id: 'off_7q2m', type: 'agent', summary: 'Agent reviewer (config only)', expires_at: '2026-10-17T09:00:00Z' }, peer: 'inst_2p6ym4ke', direction: 'out', state: 'pending' },
+      { offer: { id: 'off_3k1x', type: 'config', summary: 'Config bundle: 4 items', expires_at: '2026-10-16T09:00:00Z' }, peer: 'inst_hn3cxq7a', direction: 'out', state: 'applied' }
+    ] : [
+      { offer: { id: 'off_9c4r', type: 'config', bytes: 6144, sha256: '3f9a0c27d1e84b56a7c2e9f01d3b8a64c5e7f2190ab3d4e6f8a1c2b3d4e5f607', expires_at: '2026-10-17T09:00:00Z', summary: 'Config bundle: 3 items' }, peer: 'inst_hn3cxq7a', direction: 'in', state: 'pending', sender_agent: 'agt_7fk2' },
+      { offer: { id: 'off_5m8t', type: 'agent', bytes: 482000, sha256: '9b1d', expires_at: '2026-10-17T09:00:00Z', summary: 'Agent ada with history', group: 'ops', move: { source_agent: 'agt_ada0' } }, peer: 'inst_hn3cxq7a', direction: 'in', state: 'ready' },
+      { offer: { id: 'off_2w6p', type: 'config', bytes: 900, expires_at: '2026-10-12T09:00:00Z', summary: 'Config bundle: 1 items' }, peer: 'inst_2p6ym4ke', direction: 'in', state: 'pending', last_error: 'sender offline; fetch again later' }
+    ]);
+    if (path.indexOf('/api/federation/bundle-offers/') === 0 && path.slice(-7) === '/import') return json({ changes: [
+      { item: 'roles/reviewer', action: 'create', security: true },
+      { item: 'templates/pr-review', action: 'replace', security: true },
+      { item: 'config/theme', action: 'unchanged' }
+    ], unresolved: [{ name: 'REPO_ROOT', item: 'templates/pr-review', field: 'cwd', original: '/home/ana/src' }], warnings: [], applied: [], security_changes: 2 });
+    if (path === '/api/federation/jobs') return json({ jobs: [
+      { id: 'job_8f2kq1', direction: 'in', peer: 'inst_hn3cxq7a', state: 'pending', request: { repo: 'tclaude', ref: 'main', group: 'ops', command: 'go test ./pkg/claude/...', timeout_seconds: 1800 }, created_at: '2026-10-10T09:40:00Z', caller_agent: 'agt_7fk2' },
+      { id: 'job_3m9tx4', direction: 'in', peer: 'inst_hn3cxq7a', state: 'running', request: { repo: 'tclaude', ref: 'feature/viewers', group: 'ops', harness: 'codex', command: 'Fix the flaky federation test and push a branch', timeout_seconds: 3600 }, created_at: '2026-10-10T09:20:00Z' },
+      { id: 'job_q7w2n8', direction: 'out', peer: 'inst_2p6ym4ke', state: 'completed', request: { repo: 'site', ref: 'v2', group: 'web', command: 'npm run build', timeout_seconds: 900 }, result: { state: 'completed', exit_code: 0, commit: '4e1c9a7b2d3f' }, created_at: '2026-10-10T08:50:00Z' },
+      { id: 'job_z1v5c6', direction: 'out', peer: 'inst_2p6ym4ke', state: 'timeout', request: { repo: 'site', ref: 'v2', group: 'web', command: 'npm test', timeout_seconds: 600 }, result: { state: 'timeout', exit_code: 124 }, created_at: '2026-10-10T08:10:00Z' }
+    ] });
+    if (path === '/api/federation/repos') return json({ repos: [
+      { id: 'repo_1', name: 'tclaude', revision: 3, enabled: true, group_names: ['ops'], definition: { url: 'git@github.com:tofutools/tclaude.git', clone: '/home/ana/git/tclaude', groups: [4] } },
+      { id: 'repo_2', name: 'infra', revision: 1, enabled: false, group_names: ['ops', 'build'], definition: { url: 'git@github.com:tofutools/infra.git', clone: '/home/ana/git/infra', groups: [4, 6] } }
+    ] });
     if (path === '/api/federation/spawn-requests' && !(init && init.method === 'POST')) return json([
       { id: 12, from: 'ada@forge', instance: 'inst_hn3cxq7a', group: 'frontend-squad', name: 'flake-hunter', role: 'dev', profile: 'opus-fast', brief: 'The deploy smoke test fails about one run in five on CI. Find the race and fix it; keep the change small.', status: 'pending', credentials: 'proxy:claude@inst_hn3cxq7a', model_lease: 'mlease_7q2kx9d4hpa1', created_at: '2026-10-10T09:12:00Z', expires_at: '2026-10-13T09:12:00Z' },
       { id: 11, from: 'ada@forge', instance: 'inst_hn3cxq7a', group: 'infra-crew', brief: 'Benchmark the new cache layer against main.', status: 'launching', result_agent: 'agt_k3v9q2m7x1', created_at: '2026-10-10T08:40:00Z', expires_at: '2026-10-13T08:40:00Z' },
@@ -63,7 +92,23 @@ const skynetFederationStubJS = `(function(){
     ]);
     if (path === '/api/federation/outbox') return json([
       { envelope_id: 'env_7k2q', to: 'reviewers@lab', from: 'human operator', subject: 'spawn request', preview: 'Second pair of eyes on PR 2776', state: 'pending', attempts: 4, last_error: 'peer offline', created_at: '2026-10-10T09:20:00Z', updated_at: '2026-10-10T09:31:00Z' },
-      { envelope_id: 'env_5m1x', to: 'ops@forge', from: 'human operator', subject: 'Release window', preview: 'Freeze starts at 18:00', state: 'acked', attempts: 1, created_at: '2026-10-10T08:02:00Z', updated_at: '2026-10-10T08:02:01Z' }
+      { envelope_id: 'env_5m1x', to: 'ops@forge', from: 'human operator', subject: 'Release window', preview: 'Freeze starts at 18:00', state: 'acked', attempts: 1, created_at: '2026-10-10T08:02:00Z', updated_at: '2026-10-10T08:02:01Z' },
+      { envelope_id: 'env_9p4d', to: 'operator@lab', from: 'human operator', subject: 'Release window', preview: 'Freeze starts at 18:00', state: 'pending', attempts: 4, last_error: 'peer offline', created_at: '2026-10-10T09:20:00Z', updated_at: '2026-10-10T09:31:00Z' },
+      { envelope_id: 'env_2h6w', to: 'operator@forge', from: 'human operator', subject: 'Re: deploy freeze', preview: 'Agreed', state: 'acked', attempts: 1, created_at: '2026-10-10T08:02:00Z', updated_at: '2026-10-10T08:02:01Z' }
+    ]);
+    if (path === '/api/federation/models/control' && !(init && init.method === 'POST')) return json({ disabled: false, gateways: {
+      claude: { enabled: true, dialect: 'anthropic', models: ['claude-sonnet-5-5', 'claude-haiku-5-5'], daily_requests: 2000, daily_tokens: 20000000, peer_daily_requests: 500, peer_daily_tokens: 5000000, session_daily_requests: 200, session_daily_tokens: 1000000, max_input_tokens: 200000, max_output_tokens: 32000, max_concurrent: 4, requests_per_minute: 60, lease_idle_hours: 8, blocked_peers: ['inst_2p6ym4ke'] },
+      openai: { enabled: false, dialect: 'openai', models: ['gpt-5.6'], daily_requests: 500, daily_tokens: 0 }
+    } });
+    if (path === '/api/federation/models/leases' && !(init && init.method === 'POST')) return json([
+      { id: 'mlease_7q2kx9d4hpa1', peer: 'inst_hn3cxq7a', proxy: 'claude', kind: 'requester_paid', worker: 'agt_r8k2m4c1x9', revoked: false, idle_seconds: 28800, touched_at: '2026-10-10T09:31:00Z' },
+      { id: 'mlease_3mz81cqv0e8c', peer: 'inst_hn3cxq7a', proxy: 'claude', kind: 'requester_paid', worker: 'agt_p2w7d0j5n3', revoked: true, idle_seconds: 28800, touched_at: '2026-10-09T17:02:00Z' }
+    ]);
+    if (path === '/api/federation/models/usage') return json([
+      { proxy: 'claude', peer: 'inst_hn3cxq7a', model: 'claude-sonnet-5-5', charged_tokens: 812000, input_tokens: 690000, output_tokens: 122000, status: 200, complete: true },
+      { proxy: 'claude', peer: 'inst_hn3cxq7a', model: 'claude-sonnet-5-5', charged_tokens: 410000, input_tokens: 380000, output_tokens: 30000, status: 200, complete: true },
+      { proxy: 'claude', peer: 'inst_hn3cxq7a', model: 'claude-haiku-5-5', charged_tokens: 52000, input_tokens: 50000, output_tokens: 2000, status: 429, complete: false },
+      { proxy: 'claude', peer: 'inst_hn3cxq7a', model: 'claude-sonnet-5-5', charged_tokens: 232000, input_tokens: 0, output_tokens: 0, status: 0, complete: false }
     ]);
     if (path === '/api/federation/peers/trust') return json({ instance_id: 'inst_w5zea3nq', fingerprint: 'w5ze-a3nq-7m1p-kd42-xr8c-0fv6', level: 'restricted', profile: null, plan: null, applied: false });
     var hav = function(extra){ return { schema: 1, observed_at: '2026-10-10T09:40:00Z', harnesses: [
@@ -388,6 +433,130 @@ func skynetStates() []dashsnap.State {
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return /Audit/.test(b.textContent); })[0].click();
   for (var j = 0; j < 30 && !document.querySelector('#fleet-audit'); j++) await new Promise(function(r){ setTimeout(r, 100); });
   if (document.querySelectorAll('#fleet-audit tbody tr').length !== 6) throw new Error('skynet: audit rows missing');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-peer-mail",
+			Title:   "Message a peer operator",
+			Caption: "Messages → Human notifications → ✉ peer: write to a peer's operator, or to agents on a peer (agent@peer or group:<group>@peer, optionally by role), with the recent outbox and its delivery state below. Peer operator mail in the inbox gets a reply button, and a cover request a peer forwarded while away gets Approve once / Deny.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  document.querySelector('nav [data-tab="messages"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('#mail-peer-compose:not([hidden])'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  var b = document.querySelector('#mail-peer-compose');
+  if (!b || b.hidden) throw new Error('skynet: no peer compose button');
+  b.click();
+  for (var j = 0; j < 30 && !document.querySelector('#peer-mail-outbox'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  var body = document.querySelector('#peer-mail-body');
+  body.value = 'Deploy freeze starts at 18:00 today; please hold merges on your side.';
+  body.dispatchEvent(new Event('input', { bubbles: true }));
+  var subj = document.querySelector('#peer-mail-subject');
+  subj.value = 'Release window'; subj.dispatchEvent(new Event('input', { bubbles: true }));
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-away",
+			Title:   "Away cover",
+			Caption: "Fleet's identity row shows away cover: here, with away… to pick a trusted peer's operator (and an optional end time) who answers your agents' access requests once each while you are away, or — as here — away with forge covering and return…. Peer operators' access requests are never forwarded.",
+			InitJS:  "window.__dashsnapAway = true;" + skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('#fleet-away-return'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-away-return')) throw new Error('skynet: away state missing');
+})();`,
+			SettleMS: 300,
+		},
+		{
+			Key:     "skynet-fleet-node-settings",
+			Title:   "Node settings: hub and labels",
+			Caption: "Fleet's identity row → settings…: the hub connection (URL, display name, a single-use invite, a CA file on this node, connected or not) and this node's labels, which automatic placement matches and peers with node.read see. Saving either confirms what changes; moving hubs warns that peers reachable only through the old hub drop.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('#fleet-node-settings-open'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-node-settings-open').click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-node-labels'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-node-labels')) throw new Error('skynet: node settings did not open');
+})();`,
+			SettleMS: 300,
+		},
+		{
+			Key:     "skynet-fleet-viewers",
+			Title:   "Who is watching this node's terminals",
+			Caption: "Fleet → Peers shows, while any peer is viewing an agent terminal here, who watches or drives which agent (interactive viewers can type, including answering harness prompts) and for how long; Disconnect… closes one view and says the peer can reopen it while it still holds the grant.",
+			InitJS:  "window.__dashsnapViewers = true;" + skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('#fleet-viewers'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-viewers')) throw new Error('skynet: viewers panel missing');
+})();`,
+			SettleMS: 300,
+		},
+		{
+			Key:     "skynet-fleet-offers",
+			Title:   "Bundle offers",
+			Caption: "Fleet → Offers: config and agent bundles peers offered this node (from, kind — moves and teleports flagged —, summary, size, expiry, state; Preview… and Decline…) and the ones this node sent with their outcome, plus Offer my config… / Offer an agent… / Offer a profile's config….",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Offers'; })[0].click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-offers-out'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (document.querySelectorAll('#fleet-offers-in tbody tr').length !== 3) throw new Error('skynet: incoming offers missing');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-offer-import",
+			Title:   "Previewing a config offer",
+			Caption: "Fleet → Offers → Preview…: the offer's size, expiry and full sha256, one row per item (new, overwrites yours, unchanged; security-relevant items marked) with a tick to include it, the values the offer needs on this node, and Apply… — blocked until conflicts are unticked or overwriting is chosen and the placeholders are filled, and confirmed with what changes.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Offers'; })[0].click();
+  for (var j = 0; j < 30 && !document.querySelector('[data-offer="off_9c4r"] [data-fa="preview"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('[data-offer="off_9c4r"] [data-fa="preview"]').click();
+  for (var k = 0; k < 30 && !document.querySelector('#fleet-offer-changes'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (document.querySelectorAll('#fleet-offer-changes tbody tr').length !== 3) throw new Error('skynet: preview rows missing');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-jobs",
+			Title:   "Remote jobs and repositories",
+			Caption: "Fleet → Jobs & repos: jobs peers sent here (⇠) and jobs this node sent (⇢) with repo@ref, group, command and state — Approve… for jobs a manual-approval grant holds, Cancel…, Resend… for uncertain delivery, Acknowledge stopped… for a job this node lost track of, Output for finished ones — plus Run a job… and the repositories peers may run jobs in here (Allow…, Edit…, Disable…).",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Jobs & repos'; })[0].click();
+  for (var j = 0; j < 30 && !(document.querySelector('#fleet-jobs') && document.querySelector('#fleet-repos')); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (document.querySelectorAll('#fleet-jobs tbody tr').length !== 4) throw new Error('skynet: jobs missing');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-models",
+			Title:   "Model gateways",
+			Caption: "Fleet → Model gateways: the all-gateways switch, each gateway's state (a policy missing an allowlist, budget or cap refuses every request and says so), models and limits (daily for all peers, per peer, per session; per-request caps), peers blocked on it with unblock and a block picker, requester-paid leases with Revoke, and the day's usage per gateway, peer and model. Turning a gateway or a peer off revokes the matching leases, and each confirm says so.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  Array.from(document.querySelectorAll('.fa-subtab')).find(function(b){ return /Model gateways/.test(b.textContent); }).click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-model-usage'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (document.querySelectorAll('#fleet-model-gateways tbody tr').length !== 2) throw new Error('skynet: gateways missing');
+  if (document.querySelectorAll('#fleet-model-leases [data-fa="revoke-lease"]').length !== 1) throw new Error('skynet: revoked lease should not be revocable');
 })();`,
 			SettleMS: 400,
 		},

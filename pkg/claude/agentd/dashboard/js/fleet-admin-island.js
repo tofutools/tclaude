@@ -6,10 +6,16 @@ import { GrantsPage } from './fleet-admin-grants.js';
 import { InvitesPage } from './fleet-admin-invites.js';
 import { ProfilesPage } from './fleet-admin-profiles.js';
 import { AuditPage } from './fleet-admin-audit.js';
+import { OffersPage } from './fleet-admin-offers.js';
+import { JobsPage } from './fleet-admin-jobs.js';
 import { HarnessesPage } from './fleet-admin-harnesses.js';
 import { createHarnessActions } from './fleet-harness-actions.js';
 import { NodeUpdateDialog } from './node-update.js';
+import { AwayControl } from './peer-mail.js';
+import { NodeSettingsDialog } from './fleet-admin-node-settings.js';
 import { RunPage } from './fleet-admin-run.js';
+import { ViewersPanel } from './fleet-admin-viewers.js';
+import { ModelsPage } from './fleet-admin-models.js';
 import { SpawnRequestsPage } from './fleet-admin-spawns.js';
 import { MovesPage } from './fleet-admin-moves.js';
 import { createRunActions } from './fleet-run-actions.js';
@@ -32,7 +38,10 @@ const SUB_PAGES = Object.freeze([
   { id: 'spawns', label: 'Spawn requests' },
   { id: 'invites', label: 'Invites & joining' },
   { id: 'grants', label: 'Peer grants' },
+  { id: 'models', label: 'Model gateways' },
   { id: 'profiles', label: 'Profiles & pools' },
+  { id: 'offers', label: 'Offers' },
+  { id: 'jobs', label: 'Jobs & repos' },
   { id: 'moves', label: 'Moves' },
   { id: 'audit', label: 'Audit' },
 ]);
@@ -65,6 +74,16 @@ function localGroups(snap) {
   return (snap?.groups || []).filter((g) => g?.name && !g.archived).map((g) => g.name).sort();
 }
 
+// localAgents are this node's agents with a stable ID, the sources an agent
+// offer can share.
+function localAgents(snap) {
+  const seen = new Map();
+  for (const a of (snap?.agents || []).concat(snap?.ungrouped || [])) {
+    if (a?.agent_id && !seen.has(a.agent_id)) seen.set(a.agent_id, { id: a.agent_id, label: a.title ? `${a.title} (${a.agent_id})` : a.agent_id });
+  }
+  return [...seen.values()].sort((x, y) => x.label.localeCompare(y.label));
+}
+
 // setLevel changes a trusted peer's level. peers/trust by instance ID would
 // also re-trust a peer untrusted elsewhere since the last poll, so the level
 // change re-reads the status first and refuses for a peer no longer trusted.
@@ -93,7 +112,7 @@ function Fingerprint({ value, copy, toast }) {
   return html`<span class="fa-fp"><code>${value}</code> <button type="button" class="fa-link" onClick=${onCopy} title="Copy the fingerprint">copy</button></span>`;
 }
 
-function Identity({ self, actions, confirm, toast, copy, reload, onUpdate }) {
+function Identity({ self, actions, confirm, toast, copy, reload, onUpdate, onSettings }) {
   const disconnect = () => confirm({
     title: 'Disconnect from the hub?',
     body: `${self.name} stops talking to the hub at ${self.hubURL || 'its configured URL'}. Until you reconnect, `
@@ -113,7 +132,8 @@ function Identity({ self, actions, confirm, toast, copy, reload, onUpdate }) {
     <span><span class="fa-k">Instance</span> <code>${self.id}</code></span>
     <span><span class="fa-k">Fingerprint</span> <${Fingerprint} value=${self.fingerprint} copy=${copy} toast=${toast} /></span>
     <span><span class="fa-k">tclaude</span> <button id="fleet-node-update-open" type="button" class="fa-link" onClick=${onUpdate}>version & updates…</button></span>
-    <span><span class="fa-k">Hub</span> ${self.hubURL ? html`<code>${self.hubURL}</code> ` : ''}<span class=${`fa-hub ${hubClass}`} title=${self.hubError || ''}>${self.hubState}</span></span>
+    <span><${AwayControl} confirm=${confirm} toast=${toast} /></span>
+    <span><span class="fa-k">Hub</span> ${self.hubURL ? html`<code>${self.hubURL}</code> ` : ''}<span class=${`fa-hub ${hubClass}`} title=${self.hubError || ''}>${self.hubState}</span>${' '}<button id="fleet-node-settings-open" type="button" class="fa-link" title="Hub connection and node labels" onClick=${onSettings}>${self.hubURL ? 'settings…' : 'connect…'}</button></span>
     ${self.enabled
       ? html`<button type="button" class="fa-danger" onClick=${disconnect}>Disconnect</button>`
       : self.hubURL ? html`<button type="button" onClick=${reconnect}>Reconnect</button>` : ''}
@@ -346,11 +366,11 @@ export function FleetAdmin({
 
   const sub = SUB_PAGES.find((p) => p.id === page) || SUB_PAGES[0];
   return html`<div class="fleet-admin">
-    <${Identity} self=${view.self} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload} onUpdate=${() => setDialog({ kind: 'update' })} />
+    <${Identity} self=${view.self} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload} onUpdate=${() => setDialog({ kind: 'update' })} onSettings=${() => setDialog({ kind: 'settings' })} />
     <div class="fa-subtabs" role="tablist">${SUB_PAGES.map((p) => html`<button type="button" role="tab" key=${p.id} aria-selected=${p.id === sub.id ? 'true' : 'false'}
       class=${`fa-subtab${p.id === sub.id ? ' on' : ''}`} onClick=${() => setPage(p.id)}>${p.label}</button>`)}</div>
     ${sub.id === 'peers'
-      ? html`<${PeersPage} view=${view} now=${now()} onTrust=${(r) => setDialog({ kind: 'trust', row: r })}
+      ? html`${active && html`<${ViewersPanel} view=${view} actions=${actions} confirm=${confirm} toast=${toast} timers=${timers} />`}<${PeersPage} view=${view} now=${now()} onTrust=${(r) => setDialog({ kind: 'trust', row: r })}
           onUnrestrict=${(r) => setDialog({ kind: 'unrestrict', row: r })} onRestrict=${restrict} onUntrust=${untrust}
           onGrants=${(r) => { setGrantTarget(r.id); setPage('grants'); }} />`
       : sub.id === 'harnesses'
@@ -366,11 +386,18 @@ export function FleetAdmin({
       : sub.id === 'profiles'
       ? html`<${ProfilesPage} view=${view} pools=${pools} groups=${localGroups(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} reload=${reload}
           onOpenGrants=${(target) => { setGrantTarget(target); setPage('grants'); }} />`
+      : sub.id === 'offers'
+      ? html`<${OffersPage} view=${view} agents=${localAgents(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} />`
+      : sub.id === 'jobs'
+      ? html`<${JobsPage} view=${view} pools=${(pools || []).map((p) => p.name)} groups=${localGroups(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} timers=${timers} active=${active} />`
+      : sub.id === 'models'
+      ? html`<${ModelsPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} now=${now()} />`
       : sub.id === 'grants'
       ? html`<${GrantsPage} view=${view} pools=${pools} groups=${localGroups(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast}
           target=${grantTarget} setTarget=${setGrantTarget} />`
       : html`<${AuditPage} view=${view} actions=${actions} now=${now()} />`}
     ${dialog?.kind === 'trust' && html`<${TrustDialog} row=${dialog.row} actions=${actions} onClose=${() => setDialog(null)} onDone=${done} />`}
+    ${dialog?.kind === 'settings' && html`<${NodeSettingsDialog} self=${view.self} actions=${actions} confirm=${confirm} toast=${toast} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${dialog?.kind === 'update' && html`<${NodeUpdateDialog} node=${{ id: view.self.id, label: view.self.name, local: true }} actions=${updateActions} confirm=${confirm} toast=${toast} timers=${timers} onClose=${() => setDialog(null)} />`}
     ${dialog?.kind === 'unrestrict' && html`<${UnrestrictDialog} row=${dialog.row} actions=${actions} onClose=${() => setDialog(null)} onDone=${done} />`}
   </div>`;

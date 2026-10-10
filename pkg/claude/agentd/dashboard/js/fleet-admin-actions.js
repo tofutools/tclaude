@@ -36,6 +36,14 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
     trust: (opts) => call('POST', 'peers/trust', trustBody(opts)),
     untrust: (instance) => call('POST', 'peers/untrust', { instance }),
     setHubEnabled: (enabled) => call('POST', 'config', { enabled }),
+    // Hub setup: only the fields sent change (enabled, hub_url, name, invite,
+    // hub_ca_file — a path on this node).
+    setHubConfig: (body) => call('POST', 'config', body),
+    nodeLabels: async () => (await call('GET', 'node-labels'))?.labels || [],
+    setNodeLabels: ({ add = [], remove = [] }) => call('POST', 'node-labels', { add, remove }),
+    // Peers viewing this node's agent terminals now; kick closes one view.
+    viewers: async () => (await call('GET', 'viewers')) || [],
+    kickViewer: (id) => call('POST', `viewers/${encodeURIComponent(id)}/kick`, {}),
     // target is a peer instance ID or group:<pool name>.
     grants: async (target) => (await call('GET', `grants?peer=${encodeURIComponent(target)}`))?.grants || [],
     grant: (body) => call('POST', 'grants', body),
@@ -75,6 +83,33 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
     applyProfile: (name, { peer, apply = false, previewToken = '', confirmFingerprint = '' }) => call('POST', `profiles/${encodeURIComponent(name)}/apply`,
       { peer, apply, preview_token: previewToken, confirm_fingerprint: confirmFingerprint }),
     enroll: ({ master, token, previewToken }) => call('POST', 'enroll', { master, token, preview_token: previewToken }),
+    // Bundle offers. An incoming offer is addressed by ID plus its source peer
+    // (the same ID can come from two peers); import defaults to a preview.
+    offers: async (direction) => (await call('GET', `bundle-offers?direction=${direction}`)) || [],
+    importOffer: (o, body) => call('POST', `bundle-offers/${encodeURIComponent(o.offer.id)}/import?peer=${encodeURIComponent(o.peer)}`, body),
+    declineOffer: (o) => call('POST', `bundle-offers/${encodeURIComponent(o.offer.id)}/decline?peer=${encodeURIComponent(o.peer)}`, {}),
+    offerConfig: (body) => call('POST', 'offer-config', body),
+    shareAgent: (body) => call('POST', 'share-agent', body),
+    offerProfile: (name, peer) => call('POST', `profiles/${encodeURIComponent(name)}/offer`, { peer }),
+    // Remote jobs (sent and received) and the repositories peers may use here.
+    jobs: async () => (await call('GET', 'jobs'))?.jobs || [],
+    runJob: (body) => call('POST', 'jobs', body),
+    approveJob: (id) => call('POST', `jobs/${encodeURIComponent(id)}/approve`, {}),
+    cancelJob: (id) => call('POST', `jobs/${encodeURIComponent(id)}/cancel`, {}),
+    retryJob: (id) => call('POST', `jobs/${encodeURIComponent(id)}/retry`, {}),
+    acknowledgeJobStopped: (id) => call('POST', `jobs/${encodeURIComponent(id)}/acknowledge-stopped`, { acknowledge_stopped: true }),
+    jobLogs: (id) => call('GET', `jobs/${encodeURIComponent(id)}/logs`),
+    repos: async () => (await call('GET', 'repos'))?.repos || [],
+    addRepo: (body) => call('POST', 'repos', body),
+    updateRepo: (name, body) => call('PUT', `repos/${encodeURIComponent(name)}`, body),
+    disableRepo: (name) => call('DELETE', `repos/${encodeURIComponent(name)}`),
+    // Model gateways: policy and switches (no provider URLs or credentials),
+    // requester-paid leases, and daily usage (UTC day, '' = today).
+    models: () => call('GET', 'models/control'),
+    setModelSwitch: ({ name = '', peer = '', disabled }) => call('POST', 'models/control', { ...(name ? { name } : {}), ...(peer ? { peer } : {}), disabled }),
+    modelLeases: async () => (await call('GET', 'models/leases')) || [],
+    revokeModelLease: (id) => call('POST', 'models/leases', { id }),
+    modelUsage: async (day = '') => (await call('GET', `models/usage${day ? `?day=${encodeURIComponent(day)}` : ''}`)) || [],
     // Spawn requests: incoming ones peers sent to this node's groups (all
     // states, newest first), and asking a peer for a worker.
     spawnRequests: async () => (await call('GET', 'spawn-requests')) || [],

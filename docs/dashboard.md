@@ -384,6 +384,13 @@ remotely, and history survives restarts. Compose paths: a group's cog
 ✉ message (whole group or a ticked subset) and a top-level `+ message`
 operator dialog with role filtering and attachments for offline recipients.
 
+Federation mail: in Human notifications, **✉ peer** writes to a peer's
+operator, or to agents on a peer (`agent@peer`, or `group:<group>@peer`
+optionally by role), with the recent outbox and its delivery state below.
+Mail from a peer's operator (it starts with the remote-message banner) gets a **reply** button. While a peer's operator
+is away with you as their cover, the requests they forward arrive here with
+**Approve once** / **Deny**: one answer for that one request, nothing lasting.
+CLI: `tclaude federation notify|send|outbox|answer`.
 A peer operator's request for access to this node (see
 [Requesting access](#requesting-access-from-a-peer)) lands in the same folder,
 naming the peer, the permission, the scope and how long it asked for, plus
@@ -608,11 +615,22 @@ CLI: `tclaude federation links [--group NAME]`.
 **⚙ Fleet** (or "Fleet administration" in the command palette, before any peer
 is trusted) manages this node's federation. The identity bar at the top shows
 this node's instance ID and full fingerprint (copy it to compare out of band),
-the hub connection with **Disconnect**, and **version & updates…** for this
-node. Every action that widens trust, overwrites state or runs code confirms
+the hub connection with **Disconnect**, **version & updates…** for this
+node, and away cover: **away…** picks a trusted peer's operator (and an
+optional end) who, while you are away, receives your agents' access requests
+as they arise (and may answer each once; the first answer wins), every
+message your agents send you, and waiting-session notices; **return…** ends
+it. Peer operators' access requests are never
+forwarded. **settings…** (or **connect…** before a hub is set) edits the hub
+connection — URL, display name, a single-use invite, a CA file on this node —
+and this node's labels, which automatic placement matches and peers with
+`node.read` see. Every action that widens trust, overwrites state or runs code confirms
 first and says what will happen. Most pages name their CLI.
 
-- **Peers** — trusted peers (level, grants, pools) and hub-visible instances
+- **Peers** — while a peer views an agent terminal here, a panel on top shows
+  who watches or drives which agent; **Disconnect…** closes that view (the peer
+  can reopen it while any sessions.watch/attach grant covers that group, or at
+  once if it is unrestricted). Below: trusted peers (level, grants, pools) and hub-visible instances
   waiting to be trusted. To trust one: **Trust…**, compare the fingerprint
   shown in full with the other operator, tick the check, pick the level and
   confirm. Unrestricted repeats that it grants every peer permission on all
@@ -658,6 +676,17 @@ first and says what will happen. Most pages name their CLI.
   decide how this node starts workers for the peer; `models.proxy` grants
   take one gateway name or cover them all. Sensitive grants (spawning,
   attach, `node.exec`, …) say what they let the peer do.
+- **Model gateways** — this node's model gateways, which peers with a
+  `models.proxy` (or, for requester-paid workers, `models.proxy.leased`)
+  grant use to send model requests charged to this node's provider account.
+  See each gateway's models and limits — a gateway missing a model allowlist,
+  a budget or a cap refuses every request and says so — turn one off or on,
+  block or unblock a peer on it, or **Turn off all…**. Turning anything off
+  revokes the matching leases at once, so requester-paid workers using them
+  lose model access. Below that are the leases (**Revoke…** one) and a day's
+  usage per gateway, peer and model. Gateways themselves (provider,
+  credentials, limits) are configured in config. CLI: `tclaude federation
+  models`.
 - **Profiles & pools** — pools group nodes so one grant covers every member;
   add or remove members and open a pool's grants. Profiles bundle a trust
   level, pools and grants: **Apply to peer…** previews the plan, **Make
@@ -666,6 +695,25 @@ first and says what will happen. Most pages name their CLI.
   peer grants, with worker permissions, the teleport landing and the config
   bundle as JSON. Saving makes a new revision; peers it was applied to keep
   their settings until it is applied again.
+- **Offers** — config and agent bundles peers offered this node, and the ones
+  it sent. **Preview…** shows what an incoming offer would change: per config
+  item new / overwrites yours / unchanged with security-relevant items marked
+  and a tick to leave each out, or for an agent its name, history and any
+  suspected credentials in it, plus placement and the values it needs here.
+  **Apply…** / **Start agent…** confirm what changes (a move or teleport says
+  the peer retires its source); **Decline…** deletes the payload. **Offer my
+  config…**, **Offer an agent…** and **Offer a profile's config…** send new
+  ones; flagged credentials are listed and need an explicit send-anyway.
+  CLI: `tclaude federation offers`, `offer-config`, `share-agent`.
+- **Jobs & repos** — remote jobs: those peers sent here (⇠) and those this
+  node sent (⇢), with repo@ref, group, command and state. **Approve…** runs a
+  job a manual-approval `jobs.run` grant holds (jobs otherwise run on
+  arrival); **Cancel…**, **Resend…** (same job ID, never runs twice),
+  **Acknowledge stopped…** for a job this node lost track of, and **Output**
+  once finished — each confirm says what happens. **Run a job…** sends one to
+  picked nodes or an automatically placed one. Below, the repositories peers
+  may run jobs in here: **Allow…**, **Edit…**, **Disable…**. Live output
+  (`--follow`) stays in the CLI. CLI: `tclaude federation job`, `repos`.
 - **Moves** — agent moves and teleports in both directions (⇢ leaving, ⇠
   arriving) with peer, group, state and expiry. **Abandon…** stops an outgoing
   move that has not started retiring the agent here; the agent is not retired
