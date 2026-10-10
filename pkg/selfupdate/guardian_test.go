@@ -130,3 +130,28 @@ func (c *versionHealthChild) Healthy(ctx context.Context, version string) error 
 	}
 	return exec.CommandContext(ctx, c.path).Run()
 }
+
+type unhealthyLiveChild struct{ done chan struct{} }
+
+func (c *unhealthyLiveChild) Stop(context.Context) error { return nil } // stuck process: fatal channel still releases Wait
+func (c *unhealthyLiveChild) Done() <-chan struct{}      { return c.done }
+func (c *unhealthyLiveChild) Healthy(context.Context, string) error {
+	return fmt.Errorf("listener unhealthy while process remains alive")
+}
+func TestSupervisedGuardianFatalRestoredHealthExitsWait(t *testing.T) {
+	s, binaries := fixture(t)
+	g, err := NewGuardian(context.Background(), s.dir, binaries[0], func(context.Context, string) (SupervisedChild, error) {
+		return &unhealthyLiveChild{done: make(chan struct{})}, nil
+	}, nil)
+	require.NoError(t, err)
+	g.child = &unhealthyLiveChild{done: make(chan struct{})}
+	g.service.release = s.release
+	g.service.stageRelease = s.stageRelease
+	g.service.inspect = s.inspect
+	_, err = g.service.Start(Request{Action: "apply", Version: "v1.1.0"}, "operator", func() bool { return true })
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.ErrorContains(t, g.Wait(ctx), "health")
+	require.Equal(t, "failed", g.service.Pending().State)
+}

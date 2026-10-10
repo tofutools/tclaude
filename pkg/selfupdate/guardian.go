@@ -23,11 +23,12 @@ type Guardian struct {
 	binary   Binary
 	deadline time.Duration
 	context  context.Context
+	fatal    chan error
 	outcome  func(Job)
 }
 
 func NewGuardian(ctx context.Context, dir string, binary Binary, launch func(context.Context, string) (SupervisedChild, error), outcome func(Job), audits ...func(Job) error) (*Guardian, error) {
-	g := &Guardian{context: ctx, binary: binary, launch: launch, deadline: 60 * time.Second, outcome: outcome}
+	g := &Guardian{fatal: make(chan error, 1), context: ctx, binary: binary, launch: launch, deadline: 60 * time.Second, outcome: outcome}
 	var started func(Job) error
 	var progress func(Job)
 	if len(audits) > 0 {
@@ -88,7 +89,19 @@ func (g *Guardian) restart() error {
 	if job == nil {
 		return fmt.Errorf("missing supervised restart job")
 	}
-	return g.recover(*job)
+	err := g.recover(*job)
+	if err != nil {
+		if g.child != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = g.child.Stop(ctx)
+			cancel()
+		}
+		select {
+		case g.fatal <- err:
+		default:
+		}
+	}
+	return err
 }
 func (g *Guardian) recover(job Job) error {
 	deadline := time.Now().UTC().Add(g.deadline)
@@ -187,6 +200,8 @@ func (g *Guardian) Wait(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
+		case err := <-g.fatal:
+			return err
 		case <-observable.Done():
 		}
 		g.mu.Lock()

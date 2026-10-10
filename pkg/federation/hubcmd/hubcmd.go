@@ -129,7 +129,7 @@ func serveCmd() *cobra.Command {
 					fail(err)
 				}
 				defer stop()
-				worker = hubupdate.Client{Socket: config.Socket, Token: config.Token}
+				worker = hubupdate.Client(config)
 				backend = worker
 			}
 			st, err := p.open()

@@ -23,7 +23,7 @@ func serveSupervised(p *serveParams) error {
 	if err != nil {
 		return err
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	id, err := st.HubID()
 	if err != nil {
 		return err

@@ -89,7 +89,7 @@ func (b *Bridge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	b.mu.Unlock()
 	supplied := r.Header.Get("X-Hub-Guardian-Token")
 	if token == "" || len(supplied) != len(token) || subtle.ConstantTimeCompare([]byte(token), []byte(supplied)) != 1 {
-		http.Error(w, "private guardian channel", 403)
+		http.Error(w, "private guardian channel", http.StatusForbidden)
 		return
 	}
 	if r.Method == "POST" && r.URL.Path == "/ready" {
@@ -104,12 +104,12 @@ func (b *Bridge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case ready <- value:
 			w.WriteHeader(200)
 		default:
-			http.Error(w, "duplicate readiness", 409)
+			http.Error(w, "duplicate readiness", http.StatusConflict)
 		}
 		return
 	}
 	if controller == nil {
-		http.Error(w, "guardian initializing", 503)
+		http.Error(w, "guardian initializing", http.StatusServiceUnavailable)
 		return
 	}
 	controller.ServeHTTP(w, r)

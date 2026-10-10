@@ -25,8 +25,8 @@ func TestPrivateGuardianWorkerGenerationAndReadiness(t *testing.T) {
 	current, ready, err := b.NewWorker()
 	require.NoError(t, err)
 	value := Ready{HubID: "hub-id", Version: "v1.0.0", Address: "127.0.0.1:1234"}
-	require.Error(t, (Client{Socket: old.Socket, Token: old.Token}).Ready(context.Background(), value))
-	require.NoError(t, (Client{Socket: current.Socket, Token: current.Token}).Ready(context.Background(), value))
+	require.Error(t, (Client(old)).Ready(context.Background(), value))
+	require.NoError(t, (Client(current)).Ready(context.Background(), value))
 	require.Equal(t, value, <-ready)
 	// Without a current private token neither ready nor control is reachable.
 	for _, path := range []string{"/ready", "/control"} {
@@ -61,7 +61,7 @@ func TestGuardianChildHelper(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "hub_id": "test-hub", "version": "v1.0.0"})
 	}), ReadHeaderTimeout: time.Second}
 	go server.Serve(listener)
-	if err = (Client{Socket: config.Socket, Token: config.Token}).Ready(context.Background(), Ready{HubID: "test-hub", Version: "v1.0.0", Address: listener.Addr().String()}); err != nil {
+	if err = (Client(config)).Ready(context.Background(), Ready{HubID: "test-hub", Version: "v1.0.0", Address: listener.Addr().String()}); err != nil {
 		os.Exit(12)
 	}
 	_, _ = io.Copy(io.Discard, life)

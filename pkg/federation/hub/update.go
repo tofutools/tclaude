@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/tofutools/tclaude/pkg/federation/hubupdate"
 	"github.com/tofutools/tclaude/pkg/selfupdate"
 	"os"
@@ -40,6 +41,13 @@ func (h *Hub) initUpdate() error {
 	}})
 	if err != nil {
 		return err
+	}
+	// Plain serve has no guardian to finish an interrupted read-only check.
+	// Do not finalize apply/rollback here: only the guardian can prove health.
+	if j := svc.Pending(); j != nil && j.Action == "check" && (j.State == "running" || j.State == "restarting") {
+		if err := svc.FinishSupervised(j.CurrentVersion, false, fmt.Errorf("hub exited during release check; start a new check")); err != nil {
+			return err
+		}
 	}
 	h.updates = svc
 	if j := svc.Pending(); j != nil {
