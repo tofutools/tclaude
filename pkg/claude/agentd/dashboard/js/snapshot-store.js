@@ -1,4 +1,4 @@
-import { batch, computed, signal } from '@preact/signals';
+import { batch, computed, effect, signal } from '@preact/signals';
 
 function messageOf(error) {
   if (!error) return null;
@@ -175,3 +175,19 @@ export function createDashboardState({ now = () => Date.now() } = {}) {
 }
 
 export const dashboardState = createDashboardState();
+
+// The Skynet overviews (Map, Groups · all nodes) render from their own polls,
+// not this node's snapshot, so the snapshot poll slows while one is shown.
+const OVERVIEW_TABS = new Set(['map', 'fleet']);
+export function skynetOverviewShown(tab = dashboardState.activeTab) {
+  return OVERVIEW_TABS.has(tab.value);
+}
+// onSkynetOverviewChange calls cb (outside the tracking effect) whenever an
+// overview is entered or left; returns the unsubscribe.
+export function onSkynetOverviewChange(cb, tab = dashboardState.activeTab) {
+  let prev = skynetOverviewShown(tab);
+  return effect(() => {
+    const shown = OVERVIEW_TABS.has(tab.value);
+    if (shown !== prev) { prev = shown; queueMicrotask(cb); }
+  });
+}

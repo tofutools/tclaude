@@ -6,7 +6,7 @@ import { GroupsInteractionProvider } from './groups-interactions.js';
 import { dashboardState } from './snapshot-store.js';
 import { shellToast } from './shell-state.js';
 import { nodeHref, pollDelay, remoteNodeID, staggerOffset } from './skynet-model.js';
-import { MERGED_POLL_MS, mergeSnapshots } from './skynet-merged-model.js';
+import { MERGED_IDLE_POLL_MS, MERGED_POLL_MS, mergeSnapshots } from './skynet-merged-model.js';
 
 const html = htm.bind(h);
 
@@ -34,6 +34,9 @@ function usePeerSnapshots({ active, peers, fetchImpl, timers, now }) {
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
   const peersKey = peers.map((p) => p.id).join(',');
+  // The live peer list (online flags change without restarting the loop).
+  const peersRef = useRef(peers);
+  peersRef.current = peers;
   useEffect(() => {
     if (!active || !peers.length) return undefined;
     let disposed = false;
@@ -47,8 +50,12 @@ function usePeerSnapshots({ active, peers, fetchImpl, timers, now }) {
     async function tick(peer) {
       if (disposed || inflight.has(peer.id)) return;
       if (globalThis.document?.hidden) { schedule(peer, pollDelay({ base: MERGED_POLL_MS })); return; }
+      // A peer the hub reports offline cannot answer: check back slowly
+      // instead of sending a full snapshot read each interval.
+      if (peersRef.current.find((p) => p.id === peer.id)?.online === false) { schedule(peer, pollDelay({ base: MERGED_IDLE_POLL_MS })); return; }
       inflight.add(peer.id);
       let ok = false;
+      let empty = false;
       let failures = entriesRef.current[peer.id]?.failures || 0;
       try {
         const res = await fetchImpl(`/api/peer/${encodeURIComponent(peer.id)}/snapshot`, { credentials: 'same-origin', cache: 'no-store' });
@@ -57,6 +64,7 @@ function usePeerSnapshots({ active, peers, fetchImpl, timers, now }) {
           commit(peer.id, { snapshot, receivedAt: now(), failure: null, failures: 0 });
           failures = 0;
           ok = true;
+          empty = !(snapshot?.groups || []).length;
         } else {
           let body = null; try { body = await res.json(); } catch (_) { body = null; }
           failures += 1;
@@ -68,7 +76,9 @@ function usePeerSnapshots({ active, peers, fetchImpl, timers, now }) {
       } finally {
         inflight.delete(peer.id);
       }
-      if (!disposed) schedule(peer, pollDelay({ base: MERGED_POLL_MS, failures: ok ? 0 : failures }));
+      // A peer sharing no groups shows nothing here: re-check it at the idle
+      // cadence so a newly shared group still appears.
+      if (!disposed) schedule(peer, pollDelay({ base: ok && empty ? MERGED_IDLE_POLL_MS : MERGED_POLL_MS, failures: ok ? 0 : failures }));
     }
     peers.forEach((peer, i) => schedule(peer, staggerOffset(i, peers.length, MERGED_POLL_MS)));
     return () => { disposed = true; pending.forEach((t) => timers.clearTimeout(t)); };

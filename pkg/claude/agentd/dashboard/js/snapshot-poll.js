@@ -57,6 +57,13 @@ export function startSnapshotPoll(refresh, {
   // frame's lists empty for no gain.)
   bootUntil = undefined,
   stallMs = SNAPSHOT_STALL_MS,
+  // quiet() true slows the cadence to the background one while a view that
+  // does not render this node's snapshot is shown (the Skynet map and the
+  // all-nodes Groups view poll their own sources); subscribeQuiet(cb) calls cb
+  // whenever quiet() flips and returns an unsubscribe. Leaving quiet refreshes
+  // at once, like returning to a visible tab.
+  quiet = () => false,
+  subscribeQuiet = undefined,
 } = {}) {
   if (typeof refresh !== 'function') throw new TypeError('snapshot poll requires refresh');
   if (typeof setTimeoutImpl !== 'function') throw new TypeError('snapshot poll requires setTimeout');
@@ -87,7 +94,7 @@ export function startSnapshotPoll(refresh, {
     bootUntil.then(endBoot, endBoot);
   }
 
-  const delay = () => documentImpl?.hidden ? SNAPSHOT_HIDDEN_POLL_MS : SNAPSHOT_POLL_MS;
+  const delay = () => (documentImpl?.hidden || quiet()) ? SNAPSHOT_HIDDEN_POLL_MS : SNAPSHOT_POLL_MS;
   const schedule = () => {
     if (!stopped) timer = setTimeoutImpl(tick, delay());
   };
@@ -124,13 +131,22 @@ export function startSnapshotPoll(refresh, {
     schedule();
   };
 
+  const quietChanged = () => {
+    if (stopped) return;
+    if (timer !== null) clearTimeoutImpl(timer);
+    if (!quiet() && !documentImpl?.hidden) run();
+    schedule();
+  };
+
   if (immediate) run();
   schedule();
   documentImpl?.addEventListener?.('visibilitychange', visibilityChanged);
+  const unsubscribeQuiet = typeof subscribeQuiet === 'function' ? subscribeQuiet(quietChanged) : null;
 
   return () => {
     stopped = true;
     if (timer !== null) clearTimeoutImpl(timer);
     documentImpl?.removeEventListener?.('visibilitychange', visibilityChanged);
+    if (typeof unsubscribeQuiet === 'function') unsubscribeQuiet();
   };
 }
