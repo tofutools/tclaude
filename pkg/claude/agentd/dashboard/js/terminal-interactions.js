@@ -448,6 +448,21 @@ async function uploadImages(files, signal, terminalPath) {
   return (payload.files || []).map(f => f.path).filter(Boolean);
 }
 
+// REMOTE_FILE_ERRORS explain the stable refusals of a remote terminal file
+// download (the peer's or this node's), in the operator's terms.
+export const REMOTE_FILE_ERRORS = Object.freeze({
+  not_shared: 'the peer does not share files from this terminal (needs a sessions.files.read grant)',
+  unsafe_path: 'not downloadable: outside the agent\'s working directory, a symlink, or a protected file (credentials, .env, .git/config)',
+  root_too_broad: 'the agent runs in a home or system directory; the peer shares files only from a project directory',
+  file_too_large: 'the file is over the 32 MiB download limit',
+  viewer_closed: 'this terminal view is no longer live; reopen it to download',
+  peer_offline: 'the peer is offline; try again when it reconnects',
+});
+
+export function remoteFileError(code, status) {
+  return REMOTE_FILE_ERRORS[code] || `download unavailable (${status || 'network error'})`;
+}
+
 // attachTerminalInteractions must be called after term.open(host). It returns a
 // disposer for DOM listeners; xterm-owned handlers/addons die with term.dispose.
 export function attachTerminalInteractions({
@@ -462,6 +477,11 @@ export function attachTerminalInteractions({
   // file downloads from a remote node are not offered (a separate grant).
   canInput = () => true,
   fileDownloads = true,
+  // remoteFileViewer, on a remote terminal, returns the live viewer ID while
+  // the peer shares this terminal's files (sessions.files.read), else ''.
+  // Only paths visible in the output download: an OSC 8 link's label need not
+  // match its target, and the peer controls the whole byte stream.
+  remoteFileViewer = null,
   // OSC 52 clipboard writes are trusted only from the local tmux, which
   // filters pane applications. A peer controls a remote terminal's whole byte
   // stream, so there the clipboard is never written from it: copy uses
@@ -615,6 +635,7 @@ export function attachTerminalInteractions({
     // remote-node.js routes fetch only; this anchor download would read this
     // node's agentd under a peer's marker.
     if (globalThis.__tclaudeRemoteNode?.id) { flash('download not available in a peer view yet'); return; }
+    if (remoteFileViewer) { await downloadRemoteFile(path); return; }
     if (!fileDownloads) { flash('downloading files from a remote node is not available yet'); return; }
     if (downloadFile) {
       downloadFile(path);
@@ -641,14 +662,42 @@ export function attachTerminalInteractions({
     anchor.remove();
   }
 
+  // downloadRemoteFile fetches a path from the peer through this node's
+  // pinned viewer. HEAD carries no error body, so a refused preflight is read
+  // once more with an aborted GET to learn the stable error code.
+  async function downloadRemoteFile(path) {
+    const viewer = remoteFileViewer();
+    if (!viewer) throw new Error(REMOTE_FILE_ERRORS.not_shared);
+    const href = `/api/federation/terminal-file?${new URLSearchParams({ terminal: terminalPath, viewer, path })}`;
+    const head = await fetchImpl(href, { method: 'HEAD', credentials: 'same-origin', cache: 'no-store' }).catch(() => null);
+    if (!head?.ok) {
+      const ctl = new AbortController();
+      const res = await fetchImpl(href, { credentials: 'same-origin', cache: 'no-store', signal: ctl.signal }).catch(() => null);
+      let code = '';
+      if (res && !res.ok) code = await res.json().then((b) => b?.code || '', () => '');
+      ctl.abort();
+      throw new Error(remoteFileError(code, res?.status || head?.status));
+    }
+    const anchor = ownerDocument.createElement('a');
+    anchor.href = href;
+    anchor.download = '';
+    anchor.style.display = 'none';
+    ownerDocument.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  }
+
   // A file link names a path on the terminal's host. On a remote terminal that
-  // host is the peer, so file links are not offered at all (no download hint).
-  const linkFor = (raw) => {
+  // host is the peer: only a visible path, and only while the live view holds
+  // the peer's file grant, is offered (no download hint otherwise).
+  const linkFor = (raw, visible = false) => {
     const link = safeTerminalLink(raw);
-    return link && link.kind === 'file' && !fileDownloads ? null : link;
+    if (!link || link.kind !== 'file') return link;
+    if (remoteFileViewer) return visible && remoteFileViewer() ? link : null;
+    return fileDownloads ? link : null;
   };
-  const activateLink = (event, raw) => {
-    const link = linkFor(raw);
+  const activateLink = (event, raw, visible = false) => {
+    const link = linkFor(raw, visible);
     if (!link) { flash('blocked unsafe link'); return; }
     if (!event || (!event.ctrlKey && !event.metaKey)) {
       // Keep the destination in the hint. This flash replaces whatever the
@@ -677,10 +726,10 @@ export function attachTerminalInteractions({
   // Ctrl/Cmd-click is never a blind gesture. The same linkHandler is handed to
   // the web-links addon below, so plain URL matches get the reveal too; there
   // the text already IS the target, and it costs nothing to be consistent.
-  const showLinkTarget = (raw) => {
+  const showLinkTarget = (raw, visible = false) => {
     if (!setStatus) return;
     if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
-    const link = linkFor(raw);
+    const link = linkFor(raw, visible);
     if (!link) {
       setStatus('blocked unsafe link');
       return;
@@ -714,6 +763,20 @@ export function attachTerminalInteractions({
     disposables.push(term.registerLinkProvider(
       visibleLocalFileLinkProvider(term, linkHandler),
     ));
+  } else if (remoteFileViewer) {
+    // Visible paths link only while the peer shares files with this view.
+    const visibleHandler = {
+      activate: (event, text) => activateLink(event, text, true),
+      hover: (event, text) => showLinkTarget(text, true),
+      leave: () => clearLinkTarget(),
+    };
+    const provider = visibleLocalFileLinkProvider(term, visibleHandler);
+    disposables.push(term.registerLinkProvider({
+      provideLinks(y, callback) {
+        if (!remoteFileViewer()) { callback([]); return; }
+        provider.provideLinks(y, callback);
+      },
+    }));
   }
 
   disposables.push(term.onSelectionChange(updateCopyButton));
