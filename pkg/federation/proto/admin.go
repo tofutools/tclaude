@@ -20,7 +20,7 @@ const MaxAdminResult = 256 << 10
 var HubAdminBootstrapCapabilities = []string{"hub.admins.manage", "hub.admissions.manage", "hub.invites.manage", "hub.spaces.manage", "hub.settings.manage", "hub.identity.manage", "hub.health.read", "hub.logs.read"}
 
 // Supported capabilities may grow, but bootstrap never gains elevated authority.
-var HubAdminCapabilities = append(append([]string(nil), HubAdminBootstrapCapabilities...), "hub.exec")
+var HubAdminCapabilities = append(append([]string(nil), HubAdminBootstrapCapabilities...), "hub.exec", "hub.update")
 
 // Elevated capabilities require the granting admin to hold that exact capability.
 // Phase 1 has none; future hub.exec must be registered here as elevated.

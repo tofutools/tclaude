@@ -3181,3 +3181,57 @@ and the outcome afterward. Audit readers without `hub.exec` see the actor,
 script hash/length and result, with `redacted:true` and no script text. The
 ordinary hub log ring never includes scripts or their output. These APIs are
 local-only; peer-view routes cannot reach them, regardless of node trust.
+
+### Supervised hub updates
+
+Hub self-update requires the explicit `hub.update` capability. Bootstrap admins
+can grant it through the admin editor; it does not grant `hub.exec`. The dashboard
+and `tclaude federation hub update` use the same signed hub-admin connection.
+Use `update check`, `update apply [--version vX.Y.Z]`, or `update rollback`.
+`--no-wait` returns the durable job; `--job ID` reads it later. Explicit and
+resolved release downgrades are refused. Rollback restores only the verified
+previous binary in the journal, never an arbitrary release or path.
+
+A host operator must first enable guardian mode in the service definition.
+Plain `serve` allows status/check but refuses apply/rollback with
+`not_supervised`. For systemd, run the hub directly as the service MainPID:
+
+```ini
+[Service]
+User=tclaude-hub
+ExecStart=/usr/local/bin/tclaude-hub serve --supervised --db /var/lib/tclaude-hub/hub.sqlite
+Restart=on-failure
+```
+
+The service user needs write access to the installed hub binary's directory and
+its private database/update directory. Do not wrap ExecStart in a shell. The
+hub verifies its own MainPID and an `always` or `on-failure` restart policy;
+unverifiable supervision refuses guardian startup. A user systemd unit works
+with the equivalent permissions and restart policy.
+
+On macOS, the LaunchAgent/LaunchDaemon must directly run
+`tclaude-hub serve --supervised --supervisor-label YOUR.LABEL`, with `Label`
+matching that argument and unconditional boolean `KeepAlive=true`. Conditional
+KeepAlive policies are refused. The hub verifies the loaded job's PID and its
+host-owned plist. Restart/reload the unit once after enabling guardian mode.
+
+The guardian remains the supervisor's main process and starts a serving child.
+Only verified official release artifacts with matching version and federation
+protocol are staged; source/dev builds with an unknown release version cannot
+apply an update. Readiness uses a private per-child channel created with 0700
+and 0600 permissions, followed by a probe of that child's actual bound listener
+and expected hub ID/version. The health deadline is 60 seconds. If the candidate
+exits, reports wrong health, or misses the deadline, the guardian verifies the
+backup and installed hashes, restores the prior binary, restarts it, and records
+`rolled_back`. A failed manual rollback likewise restores the pre-rollback
+working release. The journal survives guardian restarts; a serving worker never
+infers successful health from an executable hash alone. Federation connections
+reconnect during each serving-child restart. Update starts, progress, and final
+outcomes are recorded in the hub audit.
+
+The local, human-only routes are `GET/POST /api/federation/hub/update` and
+`GET /api/federation/hub/update/jobs/{job_id}`, with identical `/v1` tails.
+Status adds `supervisor`, a `blocked` reason when unsupervised, and a durable
+`job` containing the phase/deadline/outcome. Poll the selected job while it is
+`running` or `restarting`; temporary read failures during restart do not imply
+failure. Never retry an apply submission automatically.

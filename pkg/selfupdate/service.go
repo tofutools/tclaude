@@ -23,8 +23,15 @@ var jobIDPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
 var ErrBusy = errors.New("an update job is already running")
 
 type Hooks struct {
-	Finished func(Job)
-	Restart  func() error
+	// Guardian owns health confirmation and recovery; ordinary node updates retain
+	// their existing restart verification.
+	Supervised  bool
+	ReleaseOnly bool
+	NoDowngrade bool
+	Started     func(Job) error
+	Progress    func(Job)
+	Finished    func(Job)
+	Restart     func() error
 }
 type Service struct {
 	mu           sync.Mutex
@@ -63,7 +70,7 @@ func New(dir string, binaries []Binary, hooks Hooks) (*Service, error) {
 	if _, err := os.Stat(filepath.Join(dir, "backup.json")); err == nil {
 		s.status.RollbackAvailable = true
 	}
-	if s.status.Job != nil && (s.status.Job.State == "running" || s.status.Job.State == "restarting") {
+	if !hooks.Supervised && s.status.Job != nil && (s.status.Job.State == "running" || s.status.Job.State == "restarting") {
 		job := *s.status.Job
 		now := time.Now().UTC()
 		job.FinishedAt = &now
@@ -115,7 +122,15 @@ func (s *Service) Start(req Request, actor string, authorize func() bool) (Job, 
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.active {
+	if s.hooks.NoDowngrade && req.Action == "apply" {
+		if !semver.IsValid(s.status.CurrentVersion) {
+			return Job{}, fmt.Errorf("release version unknown; supervised updates require a stamped current release")
+		}
+		if req.Version != "" && semver.Compare(req.Version, s.status.CurrentVersion) < 0 {
+			return Job{}, fmt.Errorf("downgrades are refused; use rollback to restore the journal backup")
+		}
+	}
+	if s.active || s.hooks.Supervised && s.status.Job != nil && (s.status.Job.State == "running" || s.status.Job.State == "restarting") {
 		return Job{}, ErrBusy
 	}
 	var nonce [16]byte
@@ -123,6 +138,11 @@ func (s *Service) Start(req Request, actor string, authorize func() bool) (Job, 
 		return Job{}, err
 	}
 	job := Job{CurrentVersion: s.status.CurrentVersion, ID: hex.EncodeToString(nonce[:]), Action: req.Action, Version: req.Version, Actor: actor, State: "running", Phase: "queued", StartedAt: time.Now().UTC(), Warnings: append([]string{}, s.status.Warnings...)}
+	if s.hooks.Started != nil {
+		if err := s.hooks.Started(job); err != nil {
+			return Job{}, err
+		}
+	}
 	if err := s.saveJob(job); err != nil {
 		return Job{}, err
 	}
@@ -141,7 +161,13 @@ func (s *Service) phase(job *Job, phase string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	job.Phase = phase
-	return s.saveJob(*job)
+	if err := s.saveJob(*job); err != nil {
+		return err
+	}
+	if s.hooks.Progress != nil {
+		s.hooks.Progress(*job)
+	}
+	return nil
 }
 func (s *Service) run(req Request, job Job, authorize func() bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
@@ -170,6 +196,9 @@ func (s *Service) run(req Request, job Job, authorize func() bool) {
 			s.updateAvailable()
 			err = s.saveJob(job)
 			s.mu.Unlock()
+		}
+		if err == nil && req.Action == "apply" && s.hooks.NoDowngrade && semver.Compare(release.Tag, job.CurrentVersion) < 0 {
+			err = fmt.Errorf("downgrades are refused; use rollback to restore the journal backup")
 		}
 		if err == nil && req.Action == "apply" {
 			err = s.apply(ctx, release, &job, authorize, req.Version)
@@ -203,6 +232,10 @@ func (s *Service) run(req Request, job Job, authorize func() bool) {
 		// The result is durable before shutting down the serving process.
 		if err := s.hooks.Restart(); err != nil {
 			s.mu.Lock()
+			if s.hooks.Supervised && s.status.Job != nil && s.status.Job.State != "restarting" {
+				s.mu.Unlock()
+				return
+			}
 			job.State = "failed"
 			s.active = false
 			job.Error = "binaries updated but daemon restart failed: " + err.Error()
@@ -298,7 +331,7 @@ func (s *Service) apply(ctx context.Context, release Release, job *Job, authoriz
 			continue
 		}
 		var path string
-		if b.Method == "release" {
+		if b.Method == "release" || s.hooks.ReleaseOnly {
 			path, err = s.stageRelease(ctx, release, b.Name, dir)
 		} else {
 			version := release.Tag
@@ -399,6 +432,9 @@ func (s *Service) verifyRestart(job Job) error {
 	if err := readJSON(filepath.Join(s.dir, "backup.json"), &manifest); err != nil {
 		return err
 	}
+	if s.hooks.Supervised && job.Action == "apply" && manifest.ID != job.ID {
+		return fmt.Errorf("backup does not match pending update")
+	}
 	for _, e := range manifest.Entries {
 		expected := e.AfterHash
 		if job.Action == "rollback" {
@@ -423,7 +459,12 @@ func (s *Service) rollback(job *Job, authorize func() bool) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.RemoveAll(dir) }()
+	keepUndo := false
+	defer func() {
+		if !keepUndo {
+			_ = os.RemoveAll(dir)
+		}
+	}()
 	undo := []backupEntry{}
 	for i, e := range manifest.Entries {
 		hash, err := fileHash(e.Backup)
@@ -442,7 +483,18 @@ func (s *Service) rollback(job *Job, authorize func() bool) error {
 		if err != nil || copied != hash {
 			return fmt.Errorf("binary changed during rollback preparation")
 		}
-		undo = append(undo, backupEntry{Binary: e.Binary, Backup: current, BeforeHash: hash, Mode: e.Mode})
+		binary := e.Binary
+		binary.Version = job.CurrentVersion
+		undo = append(undo, backupEntry{Binary: binary, Backup: current, BeforeHash: hash, AfterHash: e.BeforeHash, Mode: e.Mode})
+	}
+	if s.hooks.Supervised {
+		if err := syncDir(dir); err != nil {
+			return err
+		}
+		if err := writeJSONFile(filepath.Join(s.dir, "rollback-undo.json"), backupManifest{ID: job.ID, Version: job.CurrentVersion, Entries: undo}); err != nil {
+			return err
+		}
+		keepUndo = true
 	}
 	if err := s.phase(job, "restoring_backup"); err != nil {
 		return err
