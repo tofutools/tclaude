@@ -735,7 +735,7 @@ func loadPermSourcesForState(convID string, failOnTierReadError, allowAway bool)
 		}
 		return permSources{}, nil
 	}
-	if state == db.AgentStateRetired && !(allowAway && db.AgentConvAway(convID)) {
+	if state == db.AgentStateRetired && (!allowAway || !db.AgentConvAway(convID)) {
 		return permSources{}, nil
 	}
 	out := permSources{

@@ -446,6 +446,11 @@ func (rt *fedRuntime) acceptTeleportLease(peer *db.FederationPeer, env *proto.En
 			return
 		}
 		if f.Op == "return" && f.Epoch <= l.Epoch && (l.State == "recovered" || l.State == "recovering") && proto.ValidStreamID(f.ReturnID) {
+			if f.ReturnProof != "" {
+				if err := db.AcceptFederationBackupReturnProof(l.SourceAgent, l.Offer, l.Peer, f.ReturnProof); err != nil {
+					return
+				}
+			}
 			if l.ReturnID == "" {
 				l.ReturnID = f.ReturnID
 				l.Findings = f.Findings

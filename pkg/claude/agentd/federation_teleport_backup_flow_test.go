@@ -509,3 +509,51 @@ func TestFederation_TeleportStableVisitorReportLeavesReusableContinuation(t *tes
 	_, e = db.ReserveFederationIdentity(p.Transfer, fh.peer.agentdID, fh.peer.id.ID(), "second-visit")
 	require.NoError(t, e)
 }
+
+func TestFederation_TeleportStableSupersededVisitorRetriesContinuation(t *testing.T) {
+	fh := newFedHarness(t)
+	identity := db.FederationIdentity{Agent: "agt_bobremote0000000000000000", Home: fh.peer.id.ID(), Hops: 1, Proofs: map[string]string{fh.peer.id.ID(): "home-proof"}}
+	d, a := fedLandedBackupIdentity(t, fh, &identity)
+	body := map[string]any{"op": "superseded", "offer": d.ID, "agent": a.AgentID, "epoch": 2, "policy": "stop"}
+	env := fh.peer.envelope(proto.KindTeleportLease, proto.Endpoint{}, body)
+	env.From.Agent = ""
+	fh.peer.send(env)
+	fedEventually(t, "visitor superseded", func() bool {
+		l, _ := db.GetFederationTeleportLease("in", fh.peer.id.ID(), d.ID)
+		return l != nil && l.State == "superseded"
+	})
+	p, e := db.GetAgentFederationPresence(a.AgentID)
+	require.NoError(t, e)
+	require.Equal(t, "away", p.State)
+	proof := p.Transfer.Proofs[fh.peer.agentdID]
+	require.NotEmpty(t, proof)
+	fedEventually(t, "superseded continuation delivered", func() bool {
+		for _, env := range fh.peer.envelopes(proto.KindTeleportLease) {
+			var f struct {
+				Op    string `json:"op"`
+				Proof string `json:"return_proof"`
+			}
+			if env.DecodePayload(&f) == nil && f.Op == "departed" && f.Proof == proof {
+				return true
+			}
+		}
+		return false
+	})
+	_, e = db.ReserveFederationIdentity(p.Transfer, fh.peer.agentdID, fh.peer.id.ID(), "second-visit")
+	require.NoError(t, e)
+}
+
+func TestFederation_TeleportStableLateReturnCarriesContinuation(t *testing.T) {
+	fh := newFedHarness(t)
+	fedBackupPolicy(t, "auto")
+	aid, d := fedPausedBackupMode(t, fh, true)
+	fedEventuallyWithin(t, "home recovered before late return", 6*time.Second, func() bool {
+		l, _ := db.GetFederationTeleportLease("out", fh.peer.id.ID(), d.ID)
+		return l != nil && l.State == "recovered"
+	})
+	fedLeaseControl(t, fh, d, "return", 0, map[string]any{"agent": aid, "return_id": proto.NewEnvelopeID(), "findings": "Late report.", "return_proof": "late-visit-proof"})
+	fedEventually(t, "late continuation retained", func() bool {
+		p, _ := db.GetAgentFederationPresence(aid)
+		return p != nil && p.State == "here" && p.Transfer.Proofs[fh.peer.id.ID()] == "late-visit-proof"
+	})
+}
