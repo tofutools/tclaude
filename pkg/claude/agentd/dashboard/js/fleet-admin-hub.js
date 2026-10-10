@@ -284,7 +284,7 @@ function RemoteScripts({ actions, onRunHub }) {
       · <span class="muted">${st.can_exec ? 'this node holds hub.exec' : 'this node does not hold hub.exec'}</span>
       ${on && st.can_exec && html` · <button type="button" class="fa-link" id="fleet-hub-run-open" onClick=${onRunHub}>run a script on the hub…</button>`}
     </div>
-    <div class="muted">Only the hub host can turn this on (its accept_remote_scripts flag or config); it can never be switched from here. Scripts run as the hub's service user${st.service_user ? ` (${st.service_user})` : ''}, never root, with bounded output and runtime, and the hub audits the full script. ${HUB_CONSEQUENCE}</div>
+    <div class="muted">Only the hub host can turn this on (its accept_remote_scripts flag or config); it can never be switched from here. Scripts run as the hub's service user${st.service_user ? ` (${st.service_user})` : ''} with bounded output and runtime, and the hub audits the full script. ${HUB_CONSEQUENCE}</div>
   </div>`;
 }
 
@@ -324,7 +324,7 @@ function AuditSection({ actions }) {
         <td>${detail(e)}
           ${e.kind === 'exec' && (e.detail?.script != null
             ? html`<details class="fa-hub-script"><summary>script (${e.detail.script.length} chars)</summary><pre class="fa-bi-text">${e.detail.script}</pre></details>`
-            : html` <span class="muted" data-redacted>script and output need hub.exec${e.detail?.script_sha256 ? html` · sha256 <code>${String(e.detail.script_sha256).slice(0, 12)}…</code>` : ''}</span>`)}</td>
+            : html` <span class="muted" data-redacted>the script needs hub.exec${e.detail?.script_sha256 ? html` · sha256 <code>${String(e.detail.script_sha256).slice(0, 12)}…</code>` : ''}</span>`)}</td>
       </tr>`)}</tbody></table>`}
     <div class="fa-ns-actions">
       <button type="button" disabled=${busy} onClick=${() => load()}>Refresh</button>

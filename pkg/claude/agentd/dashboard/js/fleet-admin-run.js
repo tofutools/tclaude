@@ -36,7 +36,7 @@ export function readiness(row, probe) {
     if (!probe) return { ok: false, text: 'checking…' };
     if (probe.error?.status === 403 || probe.data?.can_exec === false) return { ok: false, text: 'needs hub.exec' };
     if (probe.error) return { ok: false, text: errText(probe.error) };
-    if (!probe.data?.accept_remote_scripts) return { ok: false, text: 'does not accept remote scripts (set on the hub host)' };
+    if (!probe.data?.accept_remote_scripts) return { ok: false, text: 'does not accept remote scripts' };
     return { ok: true, text: 'ready' };
   }
   if (!probe) return { ok: false, text: 'checking…' };
@@ -222,11 +222,16 @@ export function RunPage({ view, actions, confirm, toast, timers = globalThis, pr
     return () => { stopped = true; timers.clearTimeout(t); };
   }, [anyActive]);
 
+  const chosen = nodes.filter((n) => picked.has(n.id) && ready(n));
+  // The hub sets its own, usually tighter, limits; with the hub picked the
+  // script and timeout must fit them so the confirmed timeout is the one used.
+  const hubLimits = chosen.some((n) => n.hub) ? probes.hub?.data?.limits || {} : {};
+  const maxBytes = Math.min(SCRIPT_MAX_BYTES, hubLimits.max_script_bytes || SCRIPT_MAX_BYTES);
+  const maxTimeout = Math.min(TIMEOUT_MAX_S, hubLimits.max_timeout_seconds || TIMEOUT_MAX_S);
   const bytes = scriptBytes(script);
   const timeoutS = Math.trunc(Number(timeout));
-  const timeoutOK = timeoutS >= 1 && timeoutS <= TIMEOUT_MAX_S;
-  const chosen = nodes.filter((n) => picked.has(n.id) && ready(n));
-  const canRun = chosen.length > 0 && script.trim() && bytes <= SCRIPT_MAX_BYTES && timeoutOK && !anyActive;
+  const timeoutOK = timeoutS >= 1 && timeoutS <= maxTimeout;
+  const canRun = chosen.length > 0 && script.trim() && bytes <= maxBytes && timeoutOK && !anyActive;
 
   const toggle = (id) => setPicked((cur) => { const next = new Set(cur); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const allOnline = () => setPicked(new Set(nodes.filter(ready).map((n) => n.id)));
@@ -273,15 +278,15 @@ export function RunPage({ view, actions, confirm, toast, timers = globalThis, pr
     </div>
     <textarea id="fleet-run-script" class="fa-run-script" rows="8" spellcheck="false" placeholder="#!/bin/sh — runs with /bin/sh in the tclaude user's home directory" value=${script} onInput=${(e) => setScript(e.currentTarget.value)}></textarea>
     <div class="fa-run-bar">
-      <span class=${bytes > SCRIPT_MAX_BYTES ? 'fa-danger' : 'muted'}>${bytes} / ${SCRIPT_MAX_BYTES} bytes</span>
+      <span class=${bytes > maxBytes ? 'fa-danger' : 'muted'}>${bytes} / ${maxBytes} bytes</span>
       <label><span class="fa-k">Timeout</span> <input id="fleet-run-timeout" size="6" value=${timeout} onInput=${(e) => setTimeoutS(e.currentTarget.value)} /> s</label>
-      ${!timeoutOK && html`<span class="fa-danger">1–${TIMEOUT_MAX_S} s</span>`}
+      ${!timeoutOK && html`<span class="fa-danger">1–${maxTimeout} s${maxTimeout < TIMEOUT_MAX_S ? ' (hub limit)' : ''}</span>`}
       <button id="fleet-run-submit" type="button" class="primary" disabled=${!canRun} onClick=${run}>Run on ${chosen.length} node${chosen.length === 1 ? '' : 's'}…</button>
       ${failed.length > 0 && !anyActive && html`<button id="fleet-run-rerun" type="button" onClick=${rerun}>Re-run on ${failed.length} failed…</button>`}
     </div>
     ${Object.keys(runs).length > 0 && html`<div class="fa-run-results" id="fleet-run-results">
       ${nodes.filter((n) => runs[n.id]).map((n) => html`<${ResultPane} key=${n.id} node=${n} entry=${runs[n.id]} actions=${actions} />`)}
     </div>`}
-    <div class="muted fa-cli-note">CLI: <code>tclaude federation run --node … | --all --file script.sh</code>; receiving settings: <code>tclaude federation scripts</code>. Peers need the <code>node.exec</code> grant (Peer grants) and this switch on their own node; the hub needs <code>hub.exec</code> and its switch set on the hub host (<code>tclaude federation hub run</code>).</div>
+    <div class="muted fa-cli-note">CLI: <code>tclaude federation run --node … | --all --file script.sh</code>; receiving settings: <code>tclaude federation scripts</code>. Peers need the <code>node.exec</code> grant (Peer grants) and this switch on their own node.</div>
   </div>`;
 }

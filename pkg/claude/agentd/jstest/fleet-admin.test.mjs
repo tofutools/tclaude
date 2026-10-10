@@ -6,7 +6,7 @@ const FP_NEW = 'w5ze-a3nq-9c1b-77f0-d2aa';
 let s_transition = null;
 let s_hubAdmin = true;
 // s_hubRun is the hub's script status: off by default, like a fresh hub.
-let s_hubRun = { accept_remote_scripts: false, switch_source: 'flag', can_exec: true, service_user: 'tclaude-hub' };
+let s_hubRun = { accept_remote_scripts: false, switch_source: 'flag', can_exec: true, service_user: 'tclaude-hub', limits: { max_script_bytes: 16384, max_timeout_seconds: 3600 } };
 const s_hubEcho = () => !!globalThis.window?.__hubEchoOther;
 let s_rotation = { hop_count: 1, pending: false };
 const status = () => ({
@@ -707,7 +707,7 @@ test('run scripts: pick ready nodes, run with a confirm, one pane per node, full
   await s.show();
   await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Run scripts/.test(b.textContent)));
   assert.deepEqual(s.runLog.filter((l) => l[0] === 'status').map((l) => l[1]), ['inst_forge', 'hub'], 'only online peers and the connected hub are probed');
-  assert.match(s.q('#fleet-run-nodes [data-node="hub"]').textContent, /hub hub\.example.*does not accept remote scripts \(set on the hub host\)/);
+  assert.match(s.q('#fleet-run-nodes [data-node="hub"]').textContent, /hub hub\.example.*does not accept remote scripts/);
   assert.match(s.q('#fleet-run-nodes [data-node="inst_lab"]').textContent, /offline/);
   assert.equal(s.q('#fleet-run-nodes [data-node="inst_lab"] input').disabled, true);
   await s.click(s.q('#fleet-run-all'));
@@ -1719,6 +1719,12 @@ test('hub as a run target: readiness, the hub threat note in the confirm, and th
     assert.equal(q('#fleet-run-nodes [data-node="hub"] input').getAttribute('checked'), 'true', 'the hub arrives preselected');
     const area = q('#fleet-run-script'); area.value = 'df -h';
     await s.harness.act(() => s.harness.fireEvent(area, 'input'));
+    const to = q('#fleet-run-timeout'); to.value = '7200';
+    await s.harness.act(() => s.harness.fireEvent(to, 'input'));
+    assert.match(q('.fa-run-bar').textContent, /1–3600 s \(hub limit\)/, 'the hub\'s own timeout cap applies');
+    assert.equal(q('#fleet-run-submit').disabled, true);
+    to.value = '3600';
+    await s.harness.act(() => s.harness.fireEvent(to, 'input'));
     assert.match(q('#fleet-run-submit').textContent, /Run on 1 node/);
     await s.click(q('#fleet-run-submit'));
     const c = s.confirms.at(-1);
@@ -1742,7 +1748,7 @@ test('hub audit: exec scripts as text for hub.exec holders, redacted otherwise; 
   assert.equal(rows.length, 3);
   assert.equal(rows[0].querySelector('details b'), null, 'script text never becomes markup');
   assert.match(rows[0].querySelector('details pre').textContent, /uptime\n<b>not markup<\/b>/);
-  assert.match(rows[1].textContent, /exit 1.*script and output need hub\.exec.*sha256 cdcdcdcdcdcd…/);
+  assert.match(rows[1].textContent, /exit 1.*the script needs hub\.exec.*sha256 cdcdcdcdcdcd…/);
   assert.equal(rows[1].querySelector('details'), null);
   assert.match(rows[2].textContent, /rolled_back.*v0\.43\.0 → v0\.44\.0/);
   await s.click(q('#fleet-hub-audit-more'));
@@ -1805,4 +1811,24 @@ test('hub update: an unsupervised hub refuses with a clear reason and no update 
   assert.match(q('#fleet-hub-supervisor').textContent, /none/);
   assert.match(q('#fleet-hub-update-blocked').textContent, /not running under systemd or launchd.*update refused.*guardian/);
   assert.equal(q('#fleet-node-update-apply').disabled, true);
+});
+
+test('hub update: opened while the hub is not answering, the dialog retries until it reads the outcome', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { NodeUpdateDialog } = await harness.importDashboardModule('js/node-update.js');
+  const queue = [];
+  const timers = { setTimeout: (fn, ms) => { queue.push({ fn, ms }); return queue.length; }, clearTimeout: () => {} };
+  const down = Object.assign(new Error('hub unreachable'), { status: 503 });
+  const reads = [down, { current_version: 'v0.44.0', latest_version: 'v0.44.0', update_available: false, supervisor: 'launchd', job: { id: 'u2', action: 'apply', from_version: 'v0.43.0', version: 'v0.44.0', state: 'completed' } }];
+  const actions = { status: async () => { const r = reads.length > 1 ? reads.shift() : reads[0]; if (r instanceof Error) throw r; return r; }, start: async () => { throw new Error('no'); } };
+  await harness.mount(harness.html`<${NodeUpdateDialog} node=${{ id: 'hub', label: 'the hub', hub: true }} actions=${actions} confirm=${async () => true} toast=${() => {}} timers=${timers} onClose=${() => {}} />`);
+  await harness.act(() => new Promise((r) => setTimeout(r, 20)));
+  const q = (x) => harness.document.querySelector(x);
+  assert.match(q('#fleet-node-update-modal [role=alert]').textContent, /not answering right now \(it may be restarting\); retrying/);
+  const next = queue.shift();
+  assert.equal(next.ms, 1000);
+  await harness.act(async () => { next.fn(); await new Promise((r) => setTimeout(r, 20)); });
+  await harness.act(() => new Promise((r) => setTimeout(r, 20)));
+  assert.match(q('#fleet-node-update-job').textContent, /v0\.43\.0 → v0\.44\.0: completed/);
+  assert.equal(q('#fleet-node-update-modal [role=alert]'), null);
 });

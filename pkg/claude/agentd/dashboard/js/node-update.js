@@ -64,9 +64,16 @@ export function createNodeUpdateActions({ fetchImpl = (...a) => globalThis.fetch
 let sharedActions = null;
 function defaultActions() { return (sharedActions ||= createNodeUpdateActions()); }
 
+// hubMayBeRestarting is a failed hub read that a restart explains: no answer
+// through the relay. The dialog keeps retrying those instead of giving up.
+function hubMayBeRestarting(error) {
+  return !error?.status || error.status === 502 || error.status === 503 || error.status === 504;
+}
+
 function accessText(error, node) {
   if (node.hub && error?.status === 403) return 'This node does not hold the hub capability for updates (hub.update).';
   if (node.hub && error?.status === 404) return 'The hub does not offer supervised self-update yet.';
+  if (node.hub && hubMayBeRestarting(error)) return 'The hub is not answering right now (it may be restarting); retrying…';
   if (error?.status === 403) return `${node.label} does not let you manage its updates (needs node.update).`;
   if (error?.status === 503) return `Self-update is unavailable on ${node.label}: ${errText(error)}`;
   if (error?.status === 404 && !node.local) return `${node.label} does not offer self-update yet.`;
@@ -97,11 +104,12 @@ export function NodeUpdateDialog({ node, confirm, toast, onClose, actions = defa
 
   // While a job runs, re-read the status every second. Reads fail while the
   // daemon restarts; keep trying until the job settles.
+  const retrying = !active && node.hub && error && hubMayBeRestarting(error);
   useEffect(() => {
-    if (!active) return undefined;
+    if (!active && !retrying) return undefined;
     const t = timers.setTimeout(() => setTick((n) => n + 1), UPDATE_POLL_MS);
     return () => timers.clearTimeout(t);
-  }, [active, tick]);
+  }, [active, retrying, tick]);
 
   const start = (action, version) => {
     setBusy(true);
