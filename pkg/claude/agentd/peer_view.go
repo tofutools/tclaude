@@ -146,7 +146,7 @@ func peerViewRules() map[string]peerViewRule {
 	rules["feature:session-files"] = peerViewRule{feature: "sessions.files.read", requires: PermSessionsFilesRead, group: true}
 	rules["/api/term/"] = peerViewRule{feature: "terminals", requires: PermSessionsAttach, group: true}
 	rules["/api/spawn"] = peerViewRule{feature: "spawn.inline", requires: PermGroupsMembersSpawn, group: true}
-	for _, action := range []struct{ tail, permission string }{{"stop", PermGroupsMembersStop}, {"retire", PermGroupsMembersRetire}, {"clone", PermGroupsMembersClone}, {"move", PermAgentMove}, {"teleport", PermAgentMove}} {
+	for _, action := range []struct{ tail, permission string }{{"stop", PermGroupsMembersStop}, {"resume", PermGroupsMembersResume}, {"restart", PermGroupsMembersResume}, {"sandbox-restart", PermGroupsMembersResume}, {"retire", PermGroupsMembersRetire}, {"clone", PermGroupsMembersClone}, {"move", PermAgentMove}, {"teleport", PermAgentMove}} {
 		rules["POST /api/agents/{id}/"+action.tail] = peerViewRule{feature: "lifecycle." + action.tail, requires: action.permission, group: true, write: servePeerAgentAction}
 	}
 	rules["feature:roster"] = peerViewRule{feature: "groups.roster", requires: PermGroupsRosterRead, group: true, serve: servePeerGroups}

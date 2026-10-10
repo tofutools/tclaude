@@ -66,6 +66,10 @@ func (a *peerActionAuthority) allows(perm, target string, actx ActionContext) bo
 		if slug != PermGroupsMembersStop {
 			return false
 		}
+	case PermAgentResume:
+		if slug != PermGroupsMembersResume {
+			return false
+		}
 	case PermAgentRetire:
 		if slug != PermGroupsMembersRetire && slug != PermAgentMove {
 			return false
@@ -126,6 +130,44 @@ func servePeerAgentAction(w http.ResponseWriter, r *http.Request, v *peerView, r
 			return
 		}
 		handleAgentStop(w, r, target.CurrentConvID)
+	case strings.HasSuffix(r.URL.Path, "/resume"):
+		// A peer's resume is the plain wake: recreating a missing launch
+		// directory and switching a Codex drive stay local-human decisions.
+		if len(r.URL.Query()) > 0 {
+			writeError(w, 400, "invalid_arg", "remote resume accepts no options")
+			return
+		}
+		handleAgentResume(w, r, target.CurrentConvID)
+	case strings.HasSuffix(r.URL.Path, "/sandbox-restart"), strings.HasSuffix(r.URL.Path, "/restart"):
+		// A restart stops the agent first, so it also needs the stop grant.
+		if len(r.URL.Query()) > 0 {
+			writeError(w, 400, "invalid_arg", "remote restart accepts no options")
+			return
+		}
+		if !peerAgentActionAllowed(a.peer, a.sourceConv, PermGroupsMembersStop) {
+			writeError(w, 403, "permission", "requires groups.members.stop and groups.members.resume for every affected group")
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/restart") && !strings.HasSuffix(r.URL.Path, "/sandbox-restart") {
+			dashboardRestartAgent(w, r, target.CurrentConvID)
+			return
+		}
+		var body struct {
+			Action string `json:"action"`
+		}
+		if !decodePeerAction(w, r, &body) {
+			return
+		}
+		// Unlocking runs the agent with its harness sandbox off: only a peer
+		// this node trusts unrestricted may ask for that. Restoring is the
+		// safe direction and needs only the restart grants.
+		if body.Action == sandboxRestartUnlock && !db.FederationPeerUnrestricted(a.peer) {
+			writeError(w, 403, "permission", "turning an agent's sandbox off remotely requires unrestricted trust")
+			return
+		}
+		raw, _ := json.Marshal(body)
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		dashboardSandboxRestartAgent(w, r, target.CurrentConvID)
 	case strings.HasSuffix(r.URL.Path, "/retire"):
 		if len(r.URL.Query()) > 0 {
 			writeError(w, 400, "invalid_arg", "remote retire does not accept destructive worktree options")

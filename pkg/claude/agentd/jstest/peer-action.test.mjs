@@ -143,3 +143,63 @@ test('the action client sends the peer route shapes', async (t) => {
     ['GET', '/api/federation/links', undefined],
   ]);
 });
+
+test('a peer sharing resume and restart: the stopped dot wakes, restart and sandbox restart go to the peer, and sandbox-off says what it means', async (t) => {
+  const harness = await createPreactHarness(t);
+  const limits = await harness.importDashboardModule('js/peer-view-limits.js');
+  const mod = await harness.importDashboardModule('js/peer-action.js');
+  const doc = harness.document;
+  const shared = { peer: 'desk', included: ['agents.status', 'lifecycle.stop', 'lifecycle.resume', 'lifecycle.restart', 'lifecycle.sandbox-restart'], omitted: [] };
+  doc.body.innerHTML = '<button id="dot-off" data-act="dot-toggle" data-online="0" data-agent="agt_abc123" data-label="ada">○</button>'
+    + '<button id="restart" data-act="restart" data-agent="agt_abc123" data-label="ada">↻</button>'
+    + '<span id="unlock" data-act="sandbox-restart" data-action="unlock" data-agent="agt_abc123" data-label="ada">🔒</span>';
+  doc.documentElement.dataset.remoteNodeName = 'forge';
+  const events = [];
+  doc.addEventListener(limits.PEER_ACTION_EVENT, (e) => events.push(e.detail));
+  const snapshot = harness.signals.signal({ peer_view: shared });
+  const dispose = limits.installPeerViewLimits({ doc, snapshot, toast: () => {}, remote: { id: 'inst_forge7' } });
+  for (const id of ['dot-off', 'restart', 'unlock']) harness.fireEvent(doc.getElementById(id), 'click');
+  assert.deepEqual(events, [
+    { action: 'resume', agent: 'agt_abc123', label: 'ada' },
+    { action: 'restart', agent: 'agt_abc123', label: 'ada' },
+    { action: 'sandbox-restart', agent: 'agt_abc123', label: 'ada', direction: 'unlock' },
+  ]);
+  dispose();
+
+  const calls = []; const confirms = [];
+  const actions = {
+    resume: async (id) => { calls.push(['resume', id]); return {}; },
+    restart: async (id) => { calls.push(['restart', id]); return {}; },
+    sandboxRestart: async (id, d) => { calls.push(['sandbox-restart', id, d]); return {}; },
+  };
+  const confirm = async (o) => { confirms.push(o); return o.action ? o.action() : true; };
+  const mounted = await harness.mount(harness.html`<${mod.PeerActionHost} snapshot=${snapshot} remote=${{ id: 'inst_forge7' }} actions=${actions} confirm=${confirm} toast=${() => {}} doc=${doc} />`);
+  const q = (s) => doc.querySelector(s);
+  const send = async (detail) => {
+    await harness.act(() => doc.dispatchEvent(new harness.window.CustomEvent(limits.PEER_ACTION_EVENT, { detail })));
+    await harness.act(() => q('#peer-action-submit').click());
+    await harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  };
+  await send(events[0]);
+  assert.match(confirms.at(-1).body, /ada starts again on forge.*missing launch directory or switching a Codex drive is left to forge's operator/);
+  await send(events[1]);
+  assert.match(confirms.at(-1).body, /stopped and started again on forge.*fully idle/);
+  await send(events[2]);
+  assert.match(confirms.at(-1).body, /sandbox OFF: full access to forge's machine.*only for a peer it trusts unrestricted/);
+  assert.deepEqual(calls, [['resume', 'agt_abc123'], ['restart', 'agt_abc123'], ['sandbox-restart', 'agt_abc123', 'unlock']]);
+  await mounted.unmount();
+});
+
+test('the peer action routes for resume, restart and sandbox restart', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/peer-action.js');
+  const sent = [];
+  const a = mod.createPeerActionActions({ fetchImpl: async (url, init) => { sent.push([init.method, url, init.body ? JSON.parse(init.body) : null]); return { ok: true, json: async () => ({}) }; } });
+  await a.resume('agt_1'); await a.restart('agt_1'); await a.sandboxRestart('agt_1', 'unlock'); await a.sandboxRestart('agt_1', 'x');
+  assert.deepEqual(sent, [
+    ['POST', '/api/agents/agt_1/resume', null],
+    ['POST', '/api/agents/agt_1/restart', null],
+    ['POST', '/api/agents/agt_1/sandbox-restart', { action: 'unlock' }],
+    ['POST', '/api/agents/agt_1/sandbox-restart', { action: 'restore' }],
+  ]);
+});

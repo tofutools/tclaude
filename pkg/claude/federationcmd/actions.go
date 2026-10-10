@@ -13,7 +13,7 @@ import (
 )
 
 type actionParams struct {
-	Action     string `pos:"true" help:"message|spawn|spawn-status|stop|retire|clone|move|teleport"`
+	Action     string `pos:"true" help:"message|spawn|spawn-status|stop|resume|restart|sandbox-restart|retire|clone|move|teleport"`
 	Node       string `long:"node" help:"Receiving trusted peer label or stable ID"`
 	Agent      string `long:"agent" help:"Stable remote agent ID"`
 	Group      string `long:"group" help:"Spawn group, or destination group on this node for move/teleport"`
@@ -29,6 +29,7 @@ type actionParams struct {
 	Force      bool   `long:"force" help:"Force-stop the remote pane"`
 	Clone      bool   `long:"clone" help:"Teleport a copy instead of retiring the source"`
 	Note       string `long:"note" help:"Teleport handoff note"`
+	Sandbox    string `long:"sandbox" help:"sandbox-restart: unlock (sandbox off; needs unrestricted trust) or restore"`
 }
 
 func actionCmd() *cobra.Command {
@@ -63,7 +64,7 @@ func runAction(p *actionParams, stdout, stderr io.Writer) int {
 		}
 		tail = "operator-message"
 		body = map[string]any{"to": p.Agent, "subject": p.Subject, "body": p.Body}
-	case "stop", "retire", "clone", "move", "teleport":
+	case "stop", "resume", "restart", "sandbox-restart", "retire", "clone", "move", "teleport":
 		if p.Agent == "" {
 			return fail(stderr, fmt.Errorf("--agent stable ID is required"))
 		}
@@ -74,6 +75,11 @@ func runAction(p *actionParams, stdout, stderr io.Writer) int {
 			if p.Force {
 				tail += "?force=1"
 			}
+		case "sandbox-restart":
+			if p.Sandbox != "unlock" && p.Sandbox != "restore" {
+				return fail(stderr, fmt.Errorf("sandbox-restart requires --sandbox unlock|restore"))
+			}
+			body = map[string]any{"action": p.Sandbox}
 		case "clone":
 			body = map[string]any{"follow_up": p.FollowUp, "no_copy_conv": p.NoCopyConv}
 		case "move", "teleport":

@@ -16,6 +16,9 @@ const BRIEF_MAX = 8 * 1024;
 // the agent to this node.
 export const AGENT_ACTIONS = Object.freeze([
   { id: 'stop', feature: 'lifecycle.stop', label: 'Stop' },
+  { id: 'resume', feature: 'lifecycle.resume', label: 'Wake' },
+  { id: 'restart', feature: 'lifecycle.restart', label: 'Restart' },
+  { id: 'sandbox-restart', feature: 'lifecycle.sandbox-restart', label: 'Sandbox restart' },
   { id: 'retire', feature: 'lifecycle.retire', label: 'Retire' },
   { id: 'clone', feature: 'lifecycle.clone', label: 'Clone' },
   { id: 'move', feature: 'lifecycle.move', label: 'Move here' },
@@ -58,6 +61,9 @@ export function createPeerActionActions({ fetchImpl = (...a) => globalThis.fetch
   const agent = (id, tail) => `/api/agents/${encodeURIComponent(id)}/${tail}`;
   return Object.freeze({
     stop: (id, force) => call('POST', agent(id, 'stop') + (force ? '?force=1' : '')),
+    resume: (id) => call('POST', agent(id, 'resume')),
+    restart: (id) => call('POST', agent(id, 'restart')),
+    sandboxRestart: (id, direction) => call('POST', agent(id, 'sandbox-restart'), { action: direction === 'unlock' ? 'unlock' : 'restore' }),
     retire: (id) => call('POST', agent(id, 'retire'), {}),
     clone: (id, { followUp = '', noCopyConv = false } = {}) => call('POST', agent(id, 'clone'), { ...(followUp ? { follow_up: followUp } : {}), ...(noCopyConv ? { no_copy_conv: true } : {}) }),
     move: (id, group) => call('POST', agent(id, 'move'), { group }),
@@ -79,12 +85,17 @@ let sharedActions = null;
 function defaultActions() { return (sharedActions ||= createPeerActionActions()); }
 
 // consequence spells out what an agent action does on the peer.
-export function consequence(action, { agent, node, force, group, clone }) {
+export function consequence(action, { agent, node, force, group, clone, direction }) {
   switch (action) {
     case 'stop': return force
       ? `${agent} on ${node} is killed at once: its tmux session ends without a clean exit, and unsaved work in its turn is lost.`
       : `${agent} on ${node} is asked to exit cleanly and its tmux session ends. It can be woken again on ${node}.`;
     case 'retire': return `${agent} on ${node} is retired: its running session is asked to exit, and it is demoted to a plain conversation, leaving its groups and losing its permission grants (its worktree is kept). ${node}'s operator can reinstate it.`;
+    case 'resume': return `${agent} starts again on ${node}, resuming its conversation under ${node}'s own launch configuration. Recreating a missing launch directory or switching a Codex drive is left to ${node}'s operator.`;
+    case 'restart': return `${agent} is stopped and started again on ${node} with the same conversation, re-resolving its sandbox rules. ${node} refuses unless the agent is fully idle, with no background agents or shell commands.`;
+    case 'sandbox-restart': return direction === 'unlock'
+      ? `${agent} is restarted on ${node} with its sandbox OFF: full access to ${node}'s machine — its files, logins, keys and network — until its sandbox is restored. ${node} allows this only for a peer it trusts unrestricted, and refuses unless the agent is fully idle.`
+      : `${agent} is restarted on ${node} under its normal sandbox configuration. ${node} refuses unless the agent is fully idle.`;
     case 'clone': return `A sibling of ${agent} starts on ${node}, inheriting its identity (groups, permissions, ownership). The original keeps running.`;
     case 'move': return `${agent} leaves ${node} and is offered to this node with its history, to land in group ${group}. Once it lands, the original on ${node} is retired.`;
     case 'teleport': return `${agent} teleports from ${node} to this node, continuing its history in group ${group}${clone ? '; the original keeps running on ' + node : '; the original on ' + node + ' is retired'}.`;
@@ -102,6 +113,7 @@ function AgentDialog({ req, shared, actions, confirm, toast, onClose }) {
   const [group, setGroup] = useState('');
   const [note, setNote] = useState('');
   const [keep, setKeep] = useState(false);
+  const [direction, setDirection] = useState(req.direction === 'unlock' ? 'unlock' : 'restore');
   const [busy, setBusy] = useState(false);
   const toHere = action === 'move' || action === 'teleport';
   useEffect(() => {
@@ -111,9 +123,12 @@ function AgentDialog({ req, shared, actions, confirm, toast, onClose }) {
   }, [toHere]);
   const label = req.label || req.agent;
   const run = () => {
-    const text = consequence(action, { agent: label, node: req.node, force, group, clone: keep });
+    const text = consequence(action, { agent: label, node: req.node, force, group, clone: keep, direction });
     const send = () => {
       if (action === 'stop') return actions.stop(req.agent, force);
+      if (action === 'resume') return actions.resume(req.agent);
+      if (action === 'restart') return actions.restart(req.agent);
+      if (action === 'sandbox-restart') return actions.sandboxRestart(req.agent, direction);
       if (action === 'retire') return actions.retire(req.agent);
       if (action === 'clone') return actions.clone(req.agent, { followUp: followUp.trim(), noCopyConv: noCopy });
       if (action === 'move') return actions.move(req.agent, group);
@@ -137,6 +152,11 @@ function AgentDialog({ req, shared, actions, confirm, toast, onClose }) {
       <div class="peer-action-choices" role="radiogroup">
         ${available.map((a) => html`<label key=${a.id}><input type="radio" name="peer-action" value=${a.id} checked=${action === a.id} onChange=${() => setAction(a.id)} /> ${a.label}</label>`)}
       </div>
+      ${action === 'sandbox-restart' && html`<label class="peer-action-opt">Sandbox
+        <select id="peer-action-sandbox" value=${direction} onChange=${(e) => setDirection(e.currentTarget.value)}>
+          <option value="restore">restore its normal sandbox</option>
+          <option value="unlock">turn its sandbox OFF (unrestricted trust only)</option>
+        </select></label>`}
       ${action === 'stop' && html`<label class="peer-action-opt"><input id="peer-action-force" type="checkbox" checked=${force} onChange=${(e) => setForce(e.currentTarget.checked)} /> Force kill (no clean exit)</label>`}
       ${action === 'clone' && html`
         <label class="peer-action-opt">Follow-up message for the clone <input id="peer-action-followup" value=${followUp} onInput=${(e) => setFollowUp(e.currentTarget.value)} /></label>
@@ -152,7 +172,7 @@ function AgentDialog({ req, shared, actions, confirm, toast, onClose }) {
         ${action === 'teleport' && html`
           <label class="peer-action-opt">Note <input id="peer-action-note" value=${note} onInput=${(e) => setNote(e.currentTarget.value)} /></label>
           <label class="peer-action-opt"><input id="peer-action-keep" type="checkbox" checked=${keep} onChange=${(e) => setKeep(e.currentTarget.checked)} /> Keep the original running (clone over)</label>`}`}
-      <div class="peer-action-consequence muted">${consequence(action, { agent: label, node: req.node, force, group: group || '…', clone: keep })}</div>`}
+      <div class="peer-action-consequence muted">${consequence(action, { agent: label, node: req.node, force, group: group || '…', clone: keep, direction })}</div>`}
     <div class="modal-buttons">
       <span class="spacer"></span>
       <button type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
