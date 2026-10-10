@@ -24,7 +24,7 @@ type hubResourceParams struct {
 	Spaces       []string `long:"spaces" help:"Visible space names"`
 	Capabilities []string `long:"capabilities" help:"Explicit hub admin capabilities"`
 	TokenHash    string   `long:"token-hash" help:"Invite token hash, never the bearer token"`
-	Space        string   `long:"space" help:"Invite space (default public)"`
+	Space        string   `long:"space" help:"Invite space (default default)"`
 	TTL          string   `long:"ttl" help:"Invite TTL (default 1h)"`
 	Key          string   `long:"key" help:"Setting name"`
 	Value        string   `long:"value" help:"Integer setting value"`

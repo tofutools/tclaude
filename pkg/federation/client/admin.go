@@ -51,7 +51,7 @@ func (c *Client) AdminCall(ctx context.Context, method string, payload any) (*pr
 		if !ok {
 			return nil, ErrNotConnected
 		}
-		if frame.AdminResult == nil {
+		if frame.AdminResult == nil || frame.AdminResult.Status < 200 || frame.AdminResult.Status > 599 || len(frame.AdminResult.Body) > proto.MaxAdminResult {
 			return nil, errors.New("invalid hub admin result")
 		}
 		return frame.AdminResult, nil

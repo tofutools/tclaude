@@ -100,7 +100,7 @@ func TestDashboardHubAdminClaimAndManagement(t *testing.T) {
 	require.Equal(t, false, preview["applied"])
 	require.Equal(t, third.ID(), preview["old"].(map[string]any)["instance"])
 	require.Equal(t, 400, call("POST", "identity/recover", map[string]any{"old": third.ID(), "new": replacement.ID(), "apply": true, "fingerprint": "wrong"}).Code)
-	// Recover a live admission; revoked predecessor is refused by the store.
+	// Re-admission preserves the predecessor identity and its configured spaces.
 	must("POST", "admissions", map[string]any{"instance": third.ID(), "spaces": []string{"team"}})
 	applied := must("POST", "identity/recover", map[string]any{"old": third.ID(), "new": replacement.ID(), "apply": true, "fingerprint": proto.InstanceFingerprint(replacement.ID())})
 	require.Equal(t, true, applied["applied"])
