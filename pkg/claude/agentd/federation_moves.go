@@ -168,6 +168,15 @@ func moveAuthority(m db.FederationAgentMove) error {
 	if err != nil || a == nil || a.CurrentConvID != m.SourceConv {
 		return errors.New("source generation changed; abandon this move and offer the current generation")
 	}
+	if sourcePeer, ok := strings.CutPrefix(m.Initiator, "peer:"); ok {
+		if sourcePeer != m.Peer || !peerAgentActionAllowed(sourcePeer, m.SourceConv, PermAgentMove) || !peerAgentActionAllowed(sourcePeer, m.SourceConv, PermGroupsMembersRetire) {
+			return errors.New("initiating peer move authority was revoked")
+		}
+		if m.Teleport && teleportFrozen() {
+			return errors.New("teleports are frozen by the operator")
+		}
+		return nil
+	}
 	if m.Teleport {
 		return teleportMoveAuthority(m)
 	}

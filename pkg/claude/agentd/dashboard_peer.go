@@ -85,6 +85,7 @@ func servePeerViewProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditNodeRunProxyRequest(r, peer.InstanceID, body)
+	auditPeerActionProxy(r, peer.InstanceID, "requested", 202)
 	target := url.URL{Path: "/api/" + r.PathValue("tail"), RawQuery: r.URL.RawQuery}
 	if len(target.RequestURI()) > 4096 {
 		writeError(w, 414, "request_too_large", "peer request URI exceeds limit")
@@ -120,6 +121,7 @@ func servePeerViewProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditNodeRunProxy(r, peer.InstanceID, body, reply.Status, reply.Body)
+	auditPeerActionProxy(r, peer.InstanceID, "result", reply.Status)
 	// Recheck local trust before returning data from a stream opened earlier.
 	current, err := db.GetFederationPeer(peer.InstanceID)
 	if err != nil || current == nil {

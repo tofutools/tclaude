@@ -2710,3 +2710,39 @@ an unknown name returns 404. Each link has the existing snapshot shape:
 `peer`, `label`, `level`, `kind`, `direction`, `slugs?`, `pool?`, `remote?`,
 `online`, and `last_seen?`. Peers cannot read this node's other trust links,
 including through unrestricted trust.
+
+Additional stable action concept keys are `spawn.inline`, `lifecycle.stop`, `lifecycle.retire`, `lifecycle.clone`, `lifecycle.move`, `lifecycle.teleport`.
+
+### Remote operator actions
+
+Remote actions use the peer-view dispatcher and the existing dashboard proxy.
+The receiver authorizes every request and rechecks durable move authority before
+retiring a source. It never gives the requester local human identity or the
+source agent's own grants. Whole-agent stop/retire/clone/move actions need their
+peer grant on every affected active group; clone/retire/move also cover owned groups.
+
+- `POST /api/groups/{name}/spawn`: `{brief, name?, role?, profile?}` under
+  `groups.members.spawn` and receiver-owned launch policy. Arbitrary cwd,
+  harness, model, permissions and launch overrides are refused. Returns a
+  durable spawn-request row (202); `GET /api/spawn-requests/{id}` reads only
+  that initiating peer's request while its grant remains valid.
+- `POST /api/agents/{id}/stop[?force=1]`: `groups.members.stop`.
+- `POST /api/agents/{id}/retire`: `groups.members.retire`; worktree deletion
+  and its options are not exposed remotely.
+- `POST /api/agents/{id}/clone`: `groups.members.clone`, with optional
+  `{follow_up, no_copy_conv}` and receiver-owned source defaults.
+- `POST /api/agents/{id}/move`: `{group}`; `agent.move` plus source
+  `groups.members.retire`. The destination is always the requesting peer.
+- `POST /api/agents/{id}/teleport`: `{group, note?, clone?}` with the same
+  source authority and existing teleport landing/confirmation policy.
+- `POST /api/operator-message` retains the existing scoped messaging contract.
+
+IDs are stable remote agent IDs, and `group` on move/teleport names the
+receiving group on the requesting node. No third-node delegation is accepted.
+Use `/api/peer/{instance_id}/<tail>` or the CLI's
+`/v1/federation/peer/{node}/<tail>` proxy. The CLI equivalent is
+`tclaude federation action ACTION --node PEER --agent ID`, adding
+`--group GROUP --brief TEXT` for spawn, `--group GROUP` for move/teleport,
+or `spawn-status --job ID` to inspect a remote launch. Message uses
+`--body TEXT [--subject TEXT]`; clone uses `--follow-up`/`--no-copy-conv`.
+The action command never retries mutations automatically.

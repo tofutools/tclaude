@@ -169,6 +169,9 @@ func writeAgentUnknown(w http.ResponseWriter) {
 // unidentified / unconfirmed / unidentifiable-agent callers it writes the
 // fail-closed response and returns ok=false; the caller just returns.
 func authedCaller(w http.ResponseWriter, r *http.Request) (convID string, isHuman, ok bool) {
+	if a := peerActionFromRequest(r); a != nil && a.sourceConv != "" {
+		return a.sourceConv, false, true
+	}
 	p := peerFromContext(r.Context())
 	switch classify(p) {
 	case classHuman:
@@ -340,6 +343,9 @@ func enrollCallerOnce(convID string) {
 // success, or writes 401 and returns false. The human operator and
 // unconfirmed callers are refused — this endpoint has no human path.
 func requireAgent(w http.ResponseWriter, r *http.Request) (string, bool) {
+	if a := peerActionFromRequest(r); a != nil && a.sourceConv != "" {
+		return a.sourceConv, true
+	}
 	p := peerFromContext(r.Context())
 	if classify(p) != classAgent {
 		writeError(w, http.StatusUnauthorized, "auth",
@@ -1096,6 +1102,9 @@ func resolveRemotePermissionVerdictFrom(src permSources, slug string) permVerdic
 // revoke lower positive authority: the owner/member tier may still cover it.
 // An explicit deny remains authoritative and suppresses structural grants.
 func permissionAllowsAction(r *http.Request, convID, perm string, actx ActionContext) (bool, string, error) {
+	if a := peerActionFromRequest(r); a != nil {
+		return a.allows(perm, actx.targetConv, actx), "peer", nil
+	}
 	v := resolvePermissionVerdictForAction(r, convID, perm, actx)
 	if !actx.bulkGroupMemberCoverage {
 		allowed, matched := permissionVerdictAllowsAction(v, convID, perm, actx)
@@ -1242,6 +1251,9 @@ func loadBearingSudoGrantID(r *http.Request, convID, perm string, actx ActionCon
 //     owner/member-derived grant may still cover it, then the ask-human popup,
 //     then 403. Never a silent allow.
 func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, actx ...ActionContext) (string, bool) {
+	if a := peerActionFromRequest(r); a != nil {
+		return peerActionGate(w, r, a, perm, "", actionContextOf(actx))
+	}
 	// Authorization code may only name capabilities in the central registry.
 	// Fail before identity resolution (including the implicit-human path), so a
 	// typo can never appear as a valid denial or reach one-time approval.
