@@ -2951,3 +2951,15 @@ changing authority. Applying recovery requires independently checking the
 replacement fingerprint with that node's operator, then passing
 `--fingerprint NEW_FINGERPRINT --apply`. The dashboard exposes no identity
 recovery actions.
+
+The local dashboard also supports identity rotation through
+`POST /api/federation/identity/rotate`, using `{}` for preview and
+`{"apply":true}` after operator confirmation. This mirrors the human-only CLI
+handler and is refused on every peer path. Preview includes the current
+identity and fingerprint, `window_seconds`, `hop_count`, `hop_limit`, `pending`,
+and consequence flags in `effects`. It generates no successor key. Apply
+returns the signed rotation plus `old_fingerprint` and `new_fingerprint`;
+the same fingerprint fields appear on `local.chain` in the rotations read.
+A pending rotation refuses another apply, and four retained hops refuse a
+fifth rotation until explicit re-pairing. Recovery and old-key revocation
+remain CLI-only.
