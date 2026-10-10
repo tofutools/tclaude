@@ -91,6 +91,11 @@ func TestClassifyPermissionArms(t *testing.T) {
 			want:       copilotfixture.PermissionBlocked,
 		},
 		{
+			name: "quiet-startup-is-not-blocked", total: 0, followUps: 0,
+			stillAlive: true, quiesced: true, transcript: "Starting Copilot...",
+			wantErr: true,
+		},
+		{
 			// Reached the provider, then parked on a prompt.
 			name: "blocked-on-a-prompt", total: 1, followUps: 0,
 			stillAlive: true, quiesced: true,
