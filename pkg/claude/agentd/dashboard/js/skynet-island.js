@@ -17,7 +17,9 @@ const SAFE_SLUG = /^[a-z][a-z0-9._-]{0,63}$/;
 // transports (the dashboard shell, terminals, inline spawn) and the access
 // requests themselves. The daemon refuses these as not requestable.
 const UNREQUESTABLE = new Set(['local_dashboard', 'terminals', 'spawn.inline', 'permissions.requests']);
-const requestable = (o) => o.requires && SAFE_SLUG.test(o.requires) && !UNREQUESTABLE.has(o.feature) && o.requires !== 'local_only' && o.requires !== 'peer_access';
+// Newer daemons say so per entry (requestable); older ones fall back to the list.
+const requestable = (o) => !!o.requires && SAFE_SLUG.test(o.requires)
+  && (typeof o.requestable === 'boolean' ? o.requestable : !UNREQUESTABLE.has(o.feature) && o.requires !== 'local_only' && o.requires !== 'peer_access');
 
 // navigateTab routes through the real nav anchors so tab activation, history
 // and per-tab side effects stay owned by refresh.js / nav-history.js.
