@@ -1450,3 +1450,23 @@ test('an ambiguous template-create failure retries with the same durable attempt
   assert.equal(state.canvas.value?.id, generatedID,
     'the retry adopts the original backend result instead of minting a second template');
 });
+
+test('process scribe browser fallback opens a revealed terminal pane with live identity', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }, { registerTerminalShellController }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'),
+    harness.importDashboardModule('js/processes-actions.js'),
+    harness.importDashboardModule('js/terminals-tab.js'),
+  ]);
+  const opened = [];
+  t.after(registerTerminalShellController({ openPane(seed, options) { opened.push({ seed, options }); return seed; } }));
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const agentId = `agt_${'d'.repeat(32)}`;
+  const actions = createProcessesActions({ state, notify() {}, fetchImpl: async () => ({ ok: true, json: async () => ({ mode: 'browser', ws: `/api/open-window-ws/${agentId}` }) }) });
+  assert.equal(await actions.openScribe({ agentId, online: true, name: 'process scribe' }), true);
+  await Promise.resolve();
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].seed.agent, agentId);
+  assert.equal(opened[0].seed.hideConv, agentId);
+  assert.deepEqual(opened[0].options, { reveal: true });
+});

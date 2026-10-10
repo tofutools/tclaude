@@ -855,7 +855,7 @@ test('sandbox clone suggestions stay within the UTF-8 server limit across collis
 test('sandbox scribe return reopens clone drafts in explicit create mode', async (t) => {
   const harness = await createPreactHarness(t);
   await harness.replaceDashboardModule('js/refresh.js', 'export function toast() {}');
-  await harness.replaceDashboardModule('js/terminals-tab.js', 'export function openTermModal() {}');
+  await harness.replaceDashboardModule('js/terminals-tab.js', 'export function openTerminalPane() {}');
   const [{ registerManagementController }, { summonSandboxScribe }, { createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-controller.js'),
     harness.importDashboardModule('js/sandbox-profiles.js'),
@@ -4953,4 +4953,25 @@ test('sandbox tmpfs validation compares sandbox paths the way the daemon cleans 
   assert.deepEqual(sandboxTmpfsValidation([{ path: '/host/corpus' }],
     [{ path: '/host/corpus', mount_path: '/data', access: 'read' }]).errors, [],
     'the host path a remapped row reads from is not a sandbox position a tmpfs can collide with');
+});
+
+test('scribe browser handoffs dismiss the manager so the terminal tab is visible', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { createManagementActions }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/management-actions.js'),
+  ]);
+  const state = createManagementState();
+  let result = { focus_mode: 'browser', focus_ws: '/api/open-window-ws/scribe' };
+  const actions = createManagementActions({ state, summonTemplateScribe: async () => result, summonSandboxScribe: async () => result });
+  state.openTemplateManager();
+  await actions.editTemplatesWithAgent();
+  assert.equal(state.templateManager.value, false);
+  state.openManager('sandbox');
+  await actions.configureSandboxWithAgent({ name: 'project' });
+  assert.equal(state.manager.value, '');
+  result = undefined;
+  state.openTemplateManager();
+  await actions.editTemplatesWithAgent();
+  assert.equal(state.templateManager.value, true, 'failed handoff keeps the manager available');
 });

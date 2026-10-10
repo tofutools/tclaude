@@ -269,7 +269,7 @@ export function mountDockFeature(dependencies = {}) {
 }
 
 // Terminal chrome and open state are one ownership unit across the nav badge,
-// dashboard pane stack and fallback session modal. xterm itself remains behind
+// dashboard pane stack. xterm itself remains behind
 // the opaque host adapter loaded by terminal-shell-island.js.
 const terminalsDescriptor = createIslandDescriptor({
   name: 'terminals',
@@ -277,10 +277,9 @@ const terminalsDescriptor = createIslandDescriptor({
   hosts: {
     host: '#terminals-root',
     badgeHost: '#terminals-badge-root',
-    modalHost: '#terminal-session-root',
   },
   failureClass: 'terminals-error',
-  load: async ({ hosts: { host, badgeHost, modalHost }, dependencies }) => {
+  load: async ({ hosts: { host, badgeHost }, dependencies }) => {
     const islandModule = import('./terminal-shell-island.js');
     const stateModule = import('./terminal-shell-state.js');
     const actionsModule = import('./terminal-shell-actions.js');
@@ -296,7 +295,7 @@ const terminalsDescriptor = createIslandDescriptor({
     return {
       state: terminalShellState,
       mount: (registerCleanup) => mountTerminalShellIsland({
-        host, badgeHost, modalHost, state: terminalShellState, actions, registerCleanup,
+        host, badgeHost, state: terminalShellState, actions, registerCleanup,
         snapshot: dashboardState.snapshot,
         widgetFactory: dependencies.widgetFactory,
         onComposeMessage: dependencies.onComposeMessage,

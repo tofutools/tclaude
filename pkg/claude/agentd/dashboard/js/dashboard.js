@@ -142,7 +142,6 @@ async function settleInitialLayout() {
   // independent and are started concurrently at the Promise.all.
   const featureMounts = [
     () => mountTerminalsFeature({
-      confirm: confirmModal,
       onComposeMessage: (seed) => openOperatorMessageDialog(seed),
       composeMessageDialogKind: activeMessageAccessDialogKind,
     }),

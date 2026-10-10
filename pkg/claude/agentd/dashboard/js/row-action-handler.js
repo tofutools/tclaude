@@ -25,7 +25,6 @@ import {
 import {
   openDeleteAgentDialog, openRetireAgentDialog, openShutdownAgentDialog,
 } from './transaction-dialog-controller.js';
-import { openTermModal } from './terminals-tab.js';
 import {
   openTerminalPane, closeTerminalsForConvs, focusTerminalForConv,
   openWebWindowPane, openWebTermPane, openGroupWebTermPane,
@@ -386,7 +385,7 @@ export async function handleRowAction(action) {
         });
         if (!r.ok) { toast(`Open terminal failed: ${await r.text()}`, true); return; }
         const info = await r.json().catch(() => ({}));
-        if (info.mode === 'browser') { openTermModal({ wsPath: info.ws, label }); return; }
+        if (info.mode === 'browser') { openTerminalPane({ ws: info.ws, label }); return; }
         toast(`terminal opened: ${info.dir || label}`);
         return;
       }
@@ -394,7 +393,7 @@ export async function handleRowAction(action) {
         // The dedicated "web term" button ALWAYS streams an in-browser PTY,
         // opened as a pane in the dashboard's own "Terminals" tab
         // (js/terminals-tab.js) — an in-SPA nav tab that holds many live
-        // terminals at once — instead of the blocking in-page modal, so
+        // terminals at once — so
         // several agents' terminals can be open simultaneously without
         // covering the dashboard. openWebTermPane takes the which-dir picker
         // promise directly and reveals the tab once it resolves (a cancelled
@@ -420,12 +419,12 @@ export async function handleRowAction(action) {
         });
         if (!r.ok) { toast(`Open window failed: ${await r.text()}`, true); return; }
         const info = await r.json().catch(() => ({}));
-        // Pass hideConv so the modal's Detach/Close runs the real server-side
+        // Pass hideConv so closing the pane runs the real server-side
         // detach (/api/hide/{conv}) — closing the in-browser window must drop
         // the tmux client, or the agent session stays "attached" and can't be
         // reattached. Only the open-window attach (the agent's live session)
         // gets this; web-term opens its own throwaway session.
-        if (info.mode === 'browser') { openTermModal({ wsPath: info.ws, label, hideConv: agent, harness }); return; }
+        if (info.mode === 'browser') { openTerminalPane({ ws: info.ws, label, hideConv: agent, agent, harness }); return; }
         toast(`window opened: ${label}`);
         return;
       }
@@ -490,7 +489,7 @@ export async function handleRowAction(action) {
         });
         if (!r.ok) { toast(`Open terminal failed: ${await r.text()}`, true); return; }
         const info = await r.json().catch(() => ({}));
-        if (info.mode === 'browser') { openTermModal({ wsPath: info.ws, label }); return; }
+        if (info.mode === 'browser') { openTerminalPane({ ws: info.ws, label }); return; }
         toast(`terminal opened: ${info.dir || which}`);
         return;
       }

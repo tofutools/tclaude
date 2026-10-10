@@ -29,9 +29,7 @@ function installHosts(harness) {
   host.id = 'terminals-root';
   const badgeHost = nav.appendChild(harness.document.createElement('span'));
   badgeHost.id = 'terminals-badge-root';
-  const modalHost = harness.document.body.appendChild(harness.document.createElement('div'));
-  modalHost.id = 'terminal-session-root';
-  return { host, badgeHost, modalHost, terminals };
+  return { host, badgeHost, terminals };
 }
 
 function fakeWidgetFactory(harness) {
@@ -84,9 +82,9 @@ function fakeWidgetFactory(harness) {
   return { factory, widgets };
 }
 
-test('dashboard terminal feature owns three hosts while preserving opaque xterm descendants', async (t) => {
+test('dashboard terminal feature owns its tab and badge hosts while preserving opaque xterm descendants', async (t) => {
   const harness = await createPreactHarness(t);
-  const { host, badgeHost, modalHost, terminals } = installHosts(harness);
+  const { host, badgeHost, terminals } = installHosts(harness);
   const fake = fakeWidgetFactory(harness);
   const requests = [];
   const composed = [];
@@ -104,7 +102,6 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
 
   assert.equal(host.dataset.islandOwner, 'terminals');
   assert.equal(badgeHost.dataset.islandOwner, 'terminals');
-  assert.equal(modalHost.dataset.islandOwner, 'terminals');
   assert.equal(harness.document.body.classList.contains('hide-terminals'), true);
 
   await harness.act(async () => {
@@ -276,35 +273,17 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   assert.equal(fake.widgets[0].disposeCount, 1);
   assert.equal(badgeHost.querySelector('#terminals-badge').textContent, '1');
 
-  await harness.act(() => controller.openTermModal({
-    wsPath: '/modal-live', label: 'agent one', hideConv: 'agt_one',
-  }));
-  assert.equal(modalHost.querySelector('#term-session-title').textContent, 'Terminal — agent one');
-  assert.ok(modalHost.querySelector('#term-session-detach'));
-  assert.equal(fake.widgets.length, 3);
-  const modalOpaque = fake.widgets[2].child;
-  await harness.act(() => fake.widgets[2].options.onStatus('connected'));
-  assert.equal(fake.widgets[2].child, modalOpaque);
-  await harness.act(async () => {
-    harness.fireEvent(modalHost.querySelector('#term-session-close'), 'click');
-    await Promise.resolve();
-    await Promise.resolve();
-  });
-  assert.equal(modalHost.childElementCount, 0);
-  assert.equal(fake.widgets[2].disposeCount, 1);
-  assert.deepEqual(requests, ['/api/hide/agt_one']);
 
   cleanup();
   cleanup();
   assert.equal(fake.widgets[1].disposeCount, 1, 'feature cleanup disposes the remaining pane once');
   assert.equal(host.childElementCount, 0);
   assert.equal(badgeHost.childElementCount, 0);
-  assert.equal(modalHost.childElementCount, 0);
 });
 
 test('a disconnected active pane gets a terminal-area notice while keeping Reconnect in the header', async (t) => {
   const harness = await createPreactHarness(t);
-  const { host, badgeHost, modalHost } = installHosts(harness);
+  const { host, badgeHost } = installHosts(harness);
   const fake = fakeWidgetFactory(harness);
   const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
   const controller = await harness.importDashboardModule('js/terminals-tab.js');
@@ -336,7 +315,6 @@ test('a disconnected active pane gets a terminal-area notice while keeping Recon
     'reconnecting removes the terminal-area notice');
   cleanup();
   assert.equal(badgeHost.childElementCount, 0);
-  assert.equal(modalHost.childElementCount, 0);
 });
 
 test('background pane open and focus leave the current dashboard tab visible', async (t) => {
@@ -558,33 +536,6 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
   cleanup();
 });
 
-test('throwaway modal omits Detach, ignores Escape, and confirms backdrop close', async (t) => {
-  const harness = await createPreactHarness(t);
-  const { modalHost } = installHosts(harness);
-  const fake = fakeWidgetFactory(harness);
-  const confirmations = [];
-  const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
-  const { openTermModal } = await harness.importDashboardModule('js/terminals-tab.js');
-  const cleanup = await mountTerminalsFeature({
-    widgetFactory: fake.factory,
-    confirm: async (options) => { confirmations.push(options); return true; },
-    fetchImpl: async () => { throw new Error('throwaway close must not detach'); },
-  });
-  await harness.act(() => openTermModal({ wsPath: '/scratch', label: 'scratch' }));
-  assertAbsent(modalHost.querySelector('#term-session-detach'));
-  const overlay = modalHost.querySelector('#term-session-modal');
-  const escape = harness.fireEvent(overlay, 'keydown', { key: 'Escape' });
-  assert.equal(escape.defaultPrevented, false, 'Escape remains terminal input, not a shell close key');
-  assert.ok(modalHost.querySelector('#term-session-modal'));
-  await harness.act(async () => {
-    harness.fireEvent(overlay, 'click');
-    await Promise.resolve();
-    await Promise.resolve();
-  });
-  assert.equal(confirmations[0].okLabel, 'Close terminal');
-  assert.equal(modalHost.childElementCount, 0);
-  cleanup();
-});
 
 test('terminal button and shortcut route through the mounted Preact operator composer', async (t) => {
   const harness = await createPreactHarness(t);

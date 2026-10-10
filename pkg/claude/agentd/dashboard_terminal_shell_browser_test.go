@@ -4,7 +4,7 @@ package agentd_test
 // smoke for the Preact terminal shells (TCL-490, follow-up to TCL-459): a live
 // end-to-end terminal session — headless Chrome ↔ xterm ↔ WebSocket ↔ server
 // PTY — driven across pane reveal/refocus, keyboard round trip, copy, kill →
-// reconnect, the modal's detach/close confirmation, pop-out to the
+// reconnect, native-window fallback into the tab, pop-out to the
 // /terminals?solo=1 window, fit/resize, and exact-once teardown.
 //
 // Determinism: the PTY never touches host tmux or `tclaude session attach`.
@@ -42,6 +42,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/agentd/dashsnap"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
 // termSmokeMember is the seeded ONLINE fixture member every state opens its
@@ -57,9 +58,9 @@ const termSmokeMember = "f1000000-0000-4000-8000-000000000001"
 const termSmokeShellCommand = `printf 'SMOKEREADY\nCOPYTOKEN42\n'; exec cat`
 
 // termSmokeExpectedStarts is the exact number of PTYs the state matrix opens:
-// reveal/refocus 1, copy 1, reconnect 2, modal confirm 2, pop-out+reattach 3,
+// reveal/refocus 1, copy 1, reconnect 2, native fallback 1, pop-out+reattach 3,
 // resize 1.
-const termSmokeExpectedStarts = 10
+const termSmokeExpectedStarts = 9
 
 // termSmokeCounters is the server-side ledger behind /testhook/term/*: PTY
 // starts, completed teardowns, applied resizes (count + last geometry), and
@@ -142,10 +143,21 @@ func TestDashboardTerminalShellLiveChrome(t *testing.T) {
 
 	f := newFlow(t)
 	seedDashSnapFixture(t, f)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Dashboard == nil {
+		cfg.Dashboard = &config.DashboardConfig{}
+	}
+	cfg.Dashboard.DefaultTerminal = config.DefaultTerminalNative
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
 
 	// Native windows must never pop during the smoke, and forcing the native
 	// path to fail is also what routes the plain "open window" action into the
-	// in-page terminal MODAL the confirmation state exercises.
+	// Terminals tab the native fallback state exercises.
 	t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {
 		return errors.New("terminal shell smoke: native windows disabled")
 	}))
@@ -173,7 +185,7 @@ func TestDashboardTerminalShellLiveChrome(t *testing.T) {
 		terminalLiveRevealTypeState(),
 		terminalLiveCopyState(),
 		terminalLiveReconnectState(),
-		terminalLiveModalConfirmState(),
+		terminalLiveNativeFallbackState(),
 		terminalLivePopOutState(),
 		terminalLiveResizeState(),
 	}
@@ -458,79 +470,6 @@ return (async function () {
 	}
 }
 
-// terminalLiveModalConfirmState exercises the in-page terminal MODAL (the
-// "open window" browser fallback): × asks before detaching and cancel keeps
-// the live session; a PTY death raises the disconnect prompt whose OK
-// reconnects; Detach closes immediately.
-func terminalLiveModalConfirmState() dashsnap.State {
-	return dashsnap.State{
-		Key:     "live-modal-confirm",
-		Title:   "Live modal: close confirmation, disconnect prompt, detach",
-		Caption: "The open-window modal asks before detaching (cancel keeps the live PTY), prompts on disconnect (OK reconnects), and Detach closes at once.",
-		JS: `
-return (async function () {
-  window.__s0 = await __smokeStats();
-  document.querySelector('nav [data-tab="groups"]').click();
-  var action = document.querySelector(
-    'button[data-act="open-window"][data-conv="` + termSmokeMember + `"]');
-  if (!action) throw new Error('open window action for the online fixture member missing');
-  action.click();
-  var statusOf = function () {
-    var span = document.querySelector('#term-session-status');
-    return span ? span.textContent : '';
-  };
-  await __smokePoll('terminal modal opens (browser fallback)', function () {
-    return document.querySelector('#term-session-modal') !== null;
-  });
-  await __smokePoll('modal connected', function () { return statusOf() === 'connected'; });
-  await __smokePoll('modal PTY banner', function () {
-    var rows = document.querySelector('#term-session-modal .xterm-rows');
-    return rows && rows.textContent.indexOf('SMOKEREADY') !== -1;
-  });
-  // Close (×) must ask first; cancelling must keep the live session attached.
-  document.querySelector('#term-session-close').click();
-  await __smokePoll('detach confirmation shows', function () {
-    return document.querySelector('#confirm-modal').classList.contains('show') &&
-      document.querySelector('#confirm-title').textContent === 'Detach terminal?';
-  });
-  document.querySelector('#confirm-cancel').click();
-  await __smokePoll('confirmation dismissed', function () {
-    return !document.querySelector('#confirm-modal').classList.contains('show');
-  });
-  if (!document.querySelector('#term-session-modal')) throw new Error('cancel closed the modal');
-  if (statusOf() !== 'connected') throw new Error('cancel dropped the live PTY: ' + statusOf());
-  // A dying PTY must raise the disconnect prompt; OK ("Reconnect") revives it.
-  await fetch('/testhook/term/kill', { method: 'POST' });
-  await __smokePoll('disconnect prompt shows', function () {
-    return document.querySelector('#confirm-modal').classList.contains('show') &&
-      document.querySelector('#confirm-title').textContent === 'Terminal disconnected';
-  });
-  document.querySelector('#confirm-ok').click();
-  await __smokePoll('modal reconnected onto a fresh PTY', async function () {
-    var s = await __smokeStats();
-    return statusOf() === 'connected' &&
-      s.starts - __s0.starts === 2 && s.teardowns - __s0.teardowns === 1;
-  });
-  // Detach closes immediately — no confirmation — and tears down exactly once.
-  document.querySelector('#term-session-detach').click();
-  await __smokePoll('modal closed by Detach', function () {
-    return document.querySelector('#term-session-modal') === null;
-  });
-  await __smokePoll('exact-once teardown for both modal PTYs', async function () {
-    var s = await __smokeStats();
-    return s.starts - __s0.starts === 2 && s.teardowns - __s0.teardowns === 2;
-  });
-  if (document.querySelectorAll('.xterm').length !== 0) throw new Error('modal close leaked xterm DOM');
-  __smokeNoPageErrors();
-})();`,
-	}
-}
-
-// terminalLivePopOutState pops the live pane out into the real
-// /terminals?solo=1 window via the ⧉ tab button (a REAL click, so window.open
-// runs with user activation), asserts the solo page connects its own PTY, and
-// reattaches it to the exact opener dashboard, and proves the solo page closes
-// without firing a late detach over the replacement client.
 func terminalLivePopOutState() dashsnap.State {
 	return dashsnap.State{
 		Key:     "live-pop-out",
@@ -638,5 +577,24 @@ return (async function () {
   });
   await __smokeCloseAllPanesAndVerify(1);
 })();`,
+	}
+}
+
+// A failed native attach opens the same tab surface as the dedicated web action.
+func terminalLiveNativeFallbackState() dashsnap.State {
+	return dashsnap.State{
+		Key: "live-native-fallback", Title: "Native attach fallback opens a terminal tab",
+		Caption: "When native windows are unavailable, open window reveals a terminal pane in the Terminals tab.",
+		JS: `return (async function () {
+    window.__s0 = await __smokeStats();
+    document.querySelector('nav [data-tab="groups"]').click();
+    document.querySelector('button[data-act="open-window"][data-conv="` + termSmokeMember + `"]').click();
+    await __smokePoll('fallback reveals terminal tab', function () {
+      return document.querySelector('#tab-terminals').classList.contains('active');
+    });
+    await __smokePoll('fallback connected', function () { return __smokePaneStatus() === 'connected'; });
+    if (document.querySelector('#term-session-modal')) throw new Error('terminal overlay remains');
+    await __smokeCloseAllPanesAndVerify(1);
+  })();`,
 	}
 }

@@ -5503,79 +5503,9 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 .modal .field input:focus,
 .modal .field textarea:focus { border-color: #58a6ff; outline: none; }
 .modal .field textarea { resize: vertical; min-height: 60px; }
-/* term-session-modal — the in-browser xterm.js terminal (js/modal-term.js),
-   opened when /api/term or /api/open-window reports mode:"browser"
-   (no native window available). A plain .modal is sized for a form;
-   this needs real screen real estate for a usable terminal, hence its
-   own class rather than reusing .modal.
-
-   The terminal can be opened by a control inside another modal (notably the
-   sandbox-profile editor's "configure with agent" action). Keep its overlay
-   above every normal editor (currently capped by #perm-edit-modal at 160),
-   while leaving toasts (200) and the shared confirmation dialog (1000) above
-   it. Without this explicit layer it inherits .modal-overlay's 100 and paints
-   behind the editor that launched it. */
-#term-session-modal { z-index: 190; }
-.term-session-modal {
-  background: #0d1117; border: 1px solid #2a3340; border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-  width: min(960px, calc(100vw - 32px)); height: min(640px, calc(100vh - 64px));
-  display: flex; flex-direction: column; overflow: hidden;
-}
-.term-session-header {
-  display: flex; align-items: center; gap: 10px;
-  padding: 6px 10px; border-bottom: 1px solid #2a3340; background: #161b22;
-  flex: none;
-}
-.term-session-header h3 {
-  margin: 0; font-size: 13px; color: #d4d4d4; font-family: ui-monospace, monospace;
-}
-.term-session-status {
-  font-size: 11px; color: #7d8590; flex: 1; min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-/* "⧉ tab" — hand this modal terminal to the dashboard's Terminals tab
-   (js/terminals-tab.js). Themed dark: a bare <button> would render with
-   the browser's white default. */
-.term-session-pop,
-.term-session-action {
-  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
-  border-radius: 5px; padding: 3px 8px; font-size: 12px; cursor: pointer;
-}
-.term-session-pop:hover,
-.term-session-action:hover { background: #2d333b; border-color: #3d4451; }
-.term-session-action[data-has-selection="false"] { opacity: 0.65; }
-.term-session-close {
-  background: none; border: none; color: #7d8590; cursor: pointer;
-  font-size: 20px; line-height: 1; padding: 0 4px;
-}
-.term-session-close:hover { color: #c9d1d9; }
-/* Detach: a small bordered pill, deliberately distinct from the borderless ×
-   glyph so the two close affordances read as different actions (Detach is the
-   instant, no-confirm path; × asks first). Explicit dark-theme colours — an
-   inline dashboard <button> otherwise renders with the browser's white
-   default. */
-.term-session-detach {
-  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
-  color: #c9d1d9; cursor: pointer;
-  font-size: 11px; line-height: 1; padding: 4px 9px;
-  font-family: ui-monospace, monospace;
-}
-.term-session-detach:hover { background: #2d333b; border-color: #3d4450; }
-.term-session-xterm { flex: 1; padding: 6px 6px 0; overflow: hidden; min-height: 0; }
-/* FitAddon measures .xterm's direct parent. Size that inner parent to the
-   padded host's content box so the modal keeps its top/side visual inset while
-   fitting only rows and columns that are actually drawable. The whole-row
-   remainder supplies the bottom spacing, so the host adds none there. */
-.term-session-xterm-fit,
-.term-session-xterm-fit .xterm { height: 100%; }
-/* A remote pane keeps the peer's size: the modal grows toward the viewport,
-   terminals-core.js shrinks the font to fit, and past its floor the host
-   scrolls instead of clipping the right edge. */
-.term-session-modal.remote { width: min(1600px, calc(100vw - 32px)); height: min(960px, calc(100vh - 64px)); }
 .term-remote { overflow: auto; }
 /* The remote terminal's file browser (remote-files-panel.js): a strip above
-   the terminal, never taller than half the modal. */
+   the terminal, never taller than half the pane. */
 .term-files { flex: none; max-height: 50%; overflow: auto; padding: 6px 10px; border-bottom: 1px solid #2a3340; background: #11161d; color: #c9d1d9; font-size: 12px; }
 .term-files-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
 .term-files-spacer { flex: 1; }
@@ -5587,11 +5517,6 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 .term-files-table td { padding: 2px 6px; border-bottom: 1px solid #1c222a; }
 .term-files-acts { text-align: right; white-space: nowrap; }
 .term-files-text { margin: 0; max-height: 40vh; overflow: auto; white-space: pre; font-size: 12px; color: #d4d4d4; }
-/* modal-term.js disables xterm scrollback; hide the still-created scrollbar
-   DOM so its inactive edge cannot leak into the modal. */
-.term-session-xterm .xterm-viewport { scrollbar-width: none; }
-.term-session-xterm .xterm-viewport::-webkit-scrollbar { display: none; }
-.term-session-xterm .xterm-scrollable-element > .scrollbar { display: none; }
 /* The "auto" self-rename checkbox sits under the Title input in the
    same .field — strip the text-input styling .modal .field input
    would otherwise smear onto a checkbox. The selectors carry the

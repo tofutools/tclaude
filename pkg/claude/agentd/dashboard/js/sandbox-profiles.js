@@ -1,7 +1,7 @@
 // Sandbox-profile loading and scribe integration. The management DOM is owned
 // by management-island.js; the spawn policy preview is plain model/actions code.
 import { toast } from './refresh.js';
-import { openTermModal } from './terminals-tab.js';
+import { openTerminalPane } from './terminals-tab.js';
 import { createSandboxDraftQueue } from './sandbox-draft-queue.js';
 import { managementController } from './management-controller.js';
 
@@ -76,8 +76,8 @@ async function summonSandboxScribe(seed, targetName = '', onCreate = null, edito
     const response = await fetch('/api/scribe', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: SANDBOX_SCRIBE_NAME, slugs: SANDBOX_SCRIBE_SLUGS, brief: sandboxScribeBrief(token, targetName, seed) }) });
     if (!response.ok) throw new Error((await response.text()) || `HTTP ${response.status}`);
     const result = await response.json().catch(() => ({})); const name = result.name || SANDBOX_SCRIBE_NAME;
-    if (result.focus_mode === 'browser' && result.focus_ws) openTermModal({ wsPath: result.focus_ws, label: name, hideConv: result.conv_id || null });
-    toast(`summoned ${name}${result.focus_mode === 'browser' ? ' — opened in-browser terminal' : ' — opening its terminal'}`); void pollSandboxScribeDraft(token, targetName, onCreate, editorOptions);
+    if (result.focus_mode === 'browser' && result.focus_ws) openTerminalPane({ ws: result.focus_ws, label: name, hideConv: result.conv_id || null, agent: result.agent_id || result.conv_id || null });
+    toast(`summoned ${name}${result.focus_mode === 'browser' ? ' — opened in-browser terminal' : ' — opening its terminal'}`); void pollSandboxScribeDraft(token, targetName, onCreate, editorOptions); return result;
   } catch (error) { openSandboxProfileEditor(seed, { ...editorOptions, targetName, onCreate, notice: `Could not summon sandbox scribe: ${error.message || String(error)}` }); toast(error.message || String(error), true); }
 }
 

@@ -80,8 +80,4 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 	must("shouldHandle: () => isTopmostOverlay(overlayRef.current)", "all shared overlays yield Escape to the painted topmost dialog")
 	mustNot("if (document.querySelector('.modal-overlay.show')) return;", "the naive any-modal-shown Escape guard is gone from the manage overlays")
 
-	// modal-term.js: the live-terminal modal DELIBERATELY does not bind
-	// Escape (ESC is a control char the terminal itself needs). Pin the
-	// rationale comment so the exclusion can't be "fixed" into a regression.
-	must("// Escape is NOT a close key here", "the terminal modal keeps its documented Escape exclusion")
 }

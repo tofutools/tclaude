@@ -861,9 +861,8 @@ export function attachTerminalInteractions({
     flash(files.length === 1 ? 'uploading image…' : `uploading ${files.length} images…`, 30000);
     try {
       const paths = await uploadImages(files, controller.signal, terminalPath);
-      // The fallback modal reuses one xterm across sessions. close/reopen calls
-      // invalidate(), so a slow upload from the old session can never paste its
-      // path through the replacement session's WebSocket.
+      // Session changes invalidate pending uploads, so an old upload cannot
+      // paste its path through a replacement session's WebSocket.
       if (controller.signal.aborted || generation !== myGeneration) return;
       if (!paths.length) throw new Error('upload returned no file path');
       term.paste(paths.join(' ') + ' ');

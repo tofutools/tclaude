@@ -102,7 +102,6 @@ export function terminalSeedKey(seed) {
 export function createTerminalShellState({ prefs = dashPrefs, persistPresentation = true } = {}) {
   const panes = signal([]);
   const activeKey = signal(null);
-  const modal = signal(null);
   const revealRequest = signal(0);
   // Group descriptors and pane→group membership are two signals because they
   // change independently: renaming or collapsing a stack touches no pane, and
@@ -133,14 +132,12 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
   const view = computed(() => ({
     panes: panes.value,
     activeKey: activeKey.value,
-    modal: modal.value,
     count: panes.value.length,
     revealRequest: revealRequest.value,
     groups: groups.value,
     segments: segments.value,
   }));
   let paneSequence = 0;
-  let modalSequence = 0;
   let groupSequence = 0;
   let groupsLoaded = false;
 
@@ -656,31 +653,6 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
     return panes.value.filter((pane) => groupIDFor(pane.key) === id);
   }
 
-  function openModal({ wsPath, ws, label = '', hideConv = null, harness = '', initialRetry = false, remote = null } = {}) {
-    const seed = normalizeSeed({
-      ws: wsPath || ws, label, hideConv: hideConv || null, harness,
-      initialRetry: initialRetry === true,
-      // A peer's terminal: {peer, peerLabel, agent} for its badge and prompts.
-      ...(remote?.peer ? { remote: Object.freeze({ peer: String(remote.peer), peerLabel: String(remote.peerLabel || ''), agent: String(remote.agent || '') }) } : {}),
-    });
-    if (!seed) return null;
-    modalSequence += 1;
-    const descriptor = Object.freeze({
-      id: `terminal-modal-${modalSequence}`,
-      label: seed.label || '',
-      seed: Object.freeze({ ...seed }),
-    });
-    modal.value = descriptor;
-    return descriptor;
-  }
-
-  function closeModal(id) {
-    if (!modal.value || (id && modal.value.id !== id)) return null;
-    const descriptor = modal.value;
-    modal.value = null;
-    return descriptor;
-  }
-
   function findPaneKey(selectors) {
     const wanted = new Set(selectors || []);
     if (!wanted.size) return null;
@@ -690,7 +662,6 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
   function dispose() {
     panes.value = [];
     activeKey.value = null;
-    modal.value = null;
     // Grouping is prefs-backed, so this drops only the in-memory mirror; a
     // remount reloads it. Clearing groupsLoaded is what makes that reload
     // happen instead of the successor starting from an empty registry.
@@ -702,7 +673,6 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
   return Object.freeze({
     panes,
     activeKey,
-    modal,
     revealRequest,
     groups,
     membership,
@@ -727,8 +697,6 @@ export function createTerminalShellState({ prefs = dashPrefs, persistPresentatio
     assignPaneToGroup,
     groupFor,
     groupMembers,
-    openModal,
-    closeModal,
     findPaneKey,
     requestReveal,
     dispose,

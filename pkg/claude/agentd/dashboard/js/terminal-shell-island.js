@@ -1468,72 +1468,10 @@ function TerminalBadge({ state }) {
   return html`<span id="terminals-badge" class="tab-badge count" hidden=${count === 0}>${count}</span>`;
 }
 
-function TerminalModalSession({ descriptor, actions, widgetFactory }) {
-  const [status, setStatus] = useState('disconnected');
-  const [hasSelection, setHasSelection] = useState(false);
-  const [remote, setRemote] = useState(null);
-  const [files, setFiles] = useState(false);
-  // The peer shares this view's files (sessions.files.read) only while it
-  // is live; the browser closes with it.
-  const filesOK = !!(descriptor.seed.remote && remote?.files && remote?.viewer && !remote?.closed);
-  const title = descriptor.label ? `Terminal — ${descriptor.label}` : 'Terminal';
-  // Escape is NOT a close key here: it is terminal input for vim, less and the
-  // agent TUIs. Only the shared confirmation overlay consumes Escape while it
-  // is above this shell.
-  return html`
-    <div
-      class="modal-overlay show"
-      id="term-session-modal"
-      onClick=${(event) => { if (event.currentTarget === event.target) void actions.confirmModalClose(descriptor.id); }}
-    >
-      <div class=${descriptor.seed.remote ? 'term-session-modal remote' : 'term-session-modal'} role="dialog" aria-modal="true" aria-labelledby="term-session-title">
-        <div class="term-session-header">
-          <h3 id="term-session-title">${title}</h3>
-          <${RemoteBadge} seed=${descriptor.seed} remote=${remote} />
-          <span class="term-session-status" id="term-session-status" role="status" aria-live="polite" aria-atomic="true">${status}</span>
-          <span class="terminal-interaction-hint">${INTERACTION_HINT}</span>
-          ${filesOK && html`<button type="button" class="term-session-action" id="term-session-files" aria-pressed=${files ? 'true' : 'false'} title="Browse the agent's project files on the peer: preview or download" onClick=${() => setFiles(!files)}>Files</button>`}
-          <${CopyButton} className="term-session-action" id="term-session-copy" hasSelection=${hasSelection} actions=${actions} runtimeID=${descriptor.id} />
-          ${descriptor.seed.hideConv ? html`
-            <button type="button" class="term-session-detach" id="term-session-detach" aria-label="Detach" title="Detach — drop this view now; the agent keeps running, reopen to reattach" onClick=${() => void actions.detachModal(descriptor.id)}>Detach</button>
-          ` : null}
-          <button type="button" class="term-session-pop" id="term-session-pop" title="Move this terminal to the dashboard's Terminals tab, where several can be open at once" onClick=${() => void actions.moveModalToPane(descriptor.id)}>⧉ tab</button>
-          <button type="button" class="term-session-close" id="term-session-close" aria-label="Close" title="Close — asks first; the agent keeps running, reopen to reattach" onClick=${() => void actions.confirmModalClose(descriptor.id)}>×</button>
-        </div>
-        ${files && filesOK && html`<${RemoteFilesPanel} terminal=${descriptor.seed.ws} viewer=${remote.viewer}
-          peer=${descriptor.seed.remote.peerLabel || descriptor.seed.remote.peer} onClose=${() => setFiles(false)} />`}
-        <${OpaqueTerminalHost}
-          descriptor=${descriptor}
-          runtimeID=${descriptor.id}
-          active=${true}
-          authenticate=${false}
-          autoReattach=${false}
-          className="term-session-xterm"
-          fitClassName="term-session-xterm-fit"
-          actions=${actions}
-          widgetFactory=${widgetFactory}
-          onStatus=${setStatus}
-          onReconnectChange=${() => {}}
-          onSelectionChange=${setHasSelection}
-          onRemoteChange=${setRemote}
-          onDisconnect=${() => actions.onModalDisconnect(descriptor.id)}
-        />
-      </div>
-    </div>
-  `;
-}
-
-function TerminalModal({ state, actions, widgetFactory }) {
-  const descriptor = state.view.value.modal;
-  return descriptor
-    ? html`<${TerminalModalSession} key=${descriptor.id} descriptor=${descriptor} actions=${actions} widgetFactory=${widgetFactory} />`
-    : null;
-}
 
 export function mountTerminalShellIsland({
   host,
   badgeHost,
-  modalHost,
   state,
   actions,
   registerCleanup,
@@ -1544,7 +1482,7 @@ export function mountTerminalShellIsland({
 }) {
   // A custom widget factory (tests or another embedding) owns its own runtime.
   // The production xterm adapter asks the facade to load the classic core
-  // before it lets the first pane/modal enter Preact state.
+  // before it lets the first pane enter Preact state.
   const runtimeLoader = widgetFactory === mountTerminalWidget ? loadXtermRuntime : null;
   const unregisterController = registerTerminalShellController(actions, runtimeLoader);
   const unbindHandoff = bindTerminalHandoffReceiver({
@@ -1569,12 +1507,10 @@ export function mountTerminalShellIsland({
     onComposeMessage=${onComposeMessage} composeMessageDialogKind=${composeMessageDialogKind}
     snapshot=${snapshot} />`, host);
   render(html`<${TerminalBadge} state=${state} />`, badgeHost);
-  render(html`<${TerminalModal} state=${state} actions=${actions} widgetFactory=${widgetFactory} />`, modalHost);
   registerCleanup(() => {
     unbindNavRouting();
     unbindHandoff();
     unregisterController();
-    render(null, modalHost);
     render(null, badgeHost);
     render(null, host);
     actions.dispose();
@@ -1616,5 +1552,5 @@ export function mountStandaloneTerminalShell({
 
 export {
   GroupStack, OpaqueTerminalHost, PaneContextMenu, PaneTab, TabAttention, TerminalBadge,
-  TerminalModal, TerminalModalSession, TerminalPane, TerminalTabs,
+  TerminalPane, TerminalTabs,
 };
