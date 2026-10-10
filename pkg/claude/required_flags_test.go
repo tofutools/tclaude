@@ -76,6 +76,7 @@ func TestCommandTreeRequiredFlags(t *testing.T) {
 		"claude config import":                          "file",
 		"claude federation answer":                      "decision",
 		"claude federation boards contents":             "board item version",
+		"claude federation boards delete":               "board",
 		"claude federation boards create":               "name",
 		"claude federation boards download":             "board file item version",
 		"claude federation boards fetch":                "board item version",

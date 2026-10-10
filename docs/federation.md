@@ -3438,3 +3438,11 @@ return `{invites:[...],next_cursor}` with at most 50 rows per page.
 `federation moves ls` prints a table; use `--json` for the full response.
 Remote file downloads require the stable `agt_…@peer` address shown by
 `federation sessions`, rather than a session display name.
+
+### Board cleanup and project file browsing
+
+Owners can permanently delete a board with `tclaude federation boards delete --board ID` (dashboard API: `DELETE /api/federation/boards/ID`). Deletion removes hub membership, invitations, keys and item metadata; it cannot erase copies members already pulled. The dashboard should confirm deletion before calling it.
+
+`tclaude federation file ls agt_…@peer [dir]` lists one project directory level through a temporary pinned terminal viewer, with the same watch/attach and `sessions.files.read` checks as `file get`. It examines at most 100 entries, omits secret paths, symlinks, special files and files above the download cap, and reports when the listing is capped. Use a narrower directory to see more. No recursive scan is performed. A browser with a live viewer uses `GET /api/federation/terminal-file?terminal=…&viewer=…&path=DIR&list=true`; the JSON response contains `entries` (`path`, `kind`, `size`) and `truncated`.
+
+`federation boards ls`, `items`, `invites`, `federation file ls` and `federation hub status` show compact tables by default; pass `--json` for the unchanged structured response. Short-lived board RPC connections are deliberately isolated from fleet pairing and appear only in hub Debug logs.
