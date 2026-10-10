@@ -222,6 +222,14 @@ export function BoardsPage({ view, actions, confirm, toast, copy }) {
     action: () => actions.leaveBoard(b.id),
   }).then((r) => { if (r) { toast(`Left ${b.name}`, false); if (open === b.id) setOpen(''); reload(); } }).catch((e) => toast(`Leave failed: ${errText(e)}`, true));
 
+  const remove = (b) => confirm({
+    title: `Delete ${b.name} for everyone?`,
+    body: `${b.name} is deleted on the hub for every member: its members, invites, keys and everything posted to it are removed and cannot be brought back. Copies members already downloaded or imported stay with them.`,
+    okLabel: 'Delete board',
+    busyLabel: 'Deleting…',
+    action: () => actions.deleteBoard(b.id),
+  }).then((r) => { if (r) { toast(`Deleted ${b.name}`, false); if (open === b.id) setOpen(''); reload(); } }).catch((e) => toast(`Delete failed: ${errText(e)}`, true));
+
   const list = Array.isArray(boards) ? boards : [];
   return html`<div class="fa-boards" id="fleet-boards">
     <div class="muted fa-wrap">Boards share content with other nodes through the hub, without linking the nodes or giving anyone access to this machine. ${HUB_TRUST}</div>
@@ -239,12 +247,12 @@ export function BoardsPage({ view, actions, confirm, toast, copy }) {
         <td><button type="button" class="fa-link" data-board="open" onClick=${() => setOpen(open === b.id ? '' : b.id)}>${b.name || b.id}</button>${b.frozen ? html` <span class="fa-warn-chip" title="The hub froze this board: no posting or joining until it is unfrozen">frozen</span>` : ''}</td>
         <td>${roleText(b.role)}</td>
         <td class="muted">${limits(b)}</td>
-        <td class="fa-acts"><button type="button" data-board="leave" onClick=${() => leave(b)}>Leave…</button></td>
+        <td class="fa-acts"><button type="button" data-board="leave" onClick=${() => leave(b)}>Leave…</button>${b.role === 'owner' && html` <button type="button" data-board="delete" onClick=${() => remove(b)}>Delete…</button>`}</td>
       </tr>`,
       // The open board's details sit directly under its own row.
       open === b.id && html`<tr key=${`${b.id}:detail`} class="fa-board-detail-row"><td colspan="4">
         <${BoardDetail} key=${open} board=${b} boards=${list} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} onChanged=${reload} /></td></tr>`])}</tbody></table>`}
-    <div class="muted fa-cli-note">CLI: <code>tclaude federation boards list</code>, <code>join --token …</code>, <code>create --name …</code></div>
+    <div class="muted fa-cli-note">CLI: <code>tclaude federation boards list</code>, <code>join --token …</code>, <code>create --name …</code>, <code>delete --board …</code></div>
   </div>`;
 }
 

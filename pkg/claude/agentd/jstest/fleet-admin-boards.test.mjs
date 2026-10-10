@@ -25,6 +25,7 @@ function boardActions(log, { joinError = null, extraBoards = [] } = {}) {
       return boards.at(-1);
     },
     createBoard: async (name) => { log.push(['create', name]); return { id: 'brd_c', name, role: 'owner', epoch: 1 }; },
+    deleteBoard: async (id) => { log.push(['deleteBoard', id]); boards = boards.filter((b) => b.id !== id); return true; },
     leaveBoard: async (id) => { log.push(['leave', id]); return true; },
     boardMembers: async (id) => { log.push(['members', id]); return [{ instance: 'inst_self', role: 'owner', pubkey: 'AAAA', key_proof: 'BBBB' }, { instance: 'inst_forge', role: 'reader' }, { instance: 'inst_zed', role: 'publisher' }]; },
     setBoardMember: async (b, i, r) => { log.push(['role', b, i, r]); return true; },
@@ -160,6 +161,18 @@ test('an open board shows its details directly under its own row', async (t) => 
   assert.equal(detailRow.nextElementSibling.dataset.boardId, 'brd_b', 'the other boards follow it');
 });
 
+test('an owner deletes a board for everyone after a confirm that says what is lost', async (t) => {
+  const s = await mount(t, { extraBoards: [{ id: 'brd_b', name: 'b', role: 'reader', epoch: 1 }] });
+  assert.equal(s.q('[data-board-id="brd_b"] [data-board="delete"]'), null, 'only owners can delete');
+  await s.click(s.q('[data-board-id="brd_ops"] [data-board="open"]'));
+  await s.click(s.q('[data-board-id="brd_ops"] [data-board="delete"]'));
+  assert.match(s.confirms.at(-1).title, /Delete ops notes for everyone\?/);
+  assert.match(s.confirms.at(-1).body, /every member.*cannot be brought back.*already downloaded or imported stay with them/);
+  assert.deepEqual(s.log.find((l) => l[0] === 'deleteBoard'), ['deleteBoard', 'brd_ops']);
+  assert.equal(s.q('[data-board-id="brd_ops"]'), null, 'the list reloads without it');
+  assert.equal(s.q('#fleet-board-detail'), null, 'its open details close');
+});
+
 test('hub moderation freezes, limits and deletes boards with the consequence spelled out', async (t) => {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/fleet-admin-boards.js');
@@ -206,6 +219,7 @@ test('the board client sends the PR A routes', async (t) => {
   await a.boardInvites('brd');
   await a.setBoardMember('brd', 'inst_f', 'publisher');
   await a.rotateBoardKey('brd');
+  await a.deleteBoard('brd');
   await a.patchHubBoard('brd', { frozen: true });
   await a.publishBoardItem('brd', { name: 'n', only: ['roles'] });
   await a.fetchBoardItem('brd', 'itm', 'v1');
@@ -219,6 +233,7 @@ test('the board client sends the PR A routes', async (t) => {
     ['GET', '/api/federation/boards/brd/invites', null],
     ['PUT', '/api/federation/boards/brd/members/inst_f', { role: 'publisher' }],
     ['POST', '/api/federation/boards/brd/rotate-key', {}],
+    ['DELETE', '/api/federation/boards/brd', null],
     ['PATCH', '/api/federation/hub/boards/brd', { frozen: true }],
     ['POST', '/api/federation/boards/brd/items', { name: 'n', only: ['roles'] }],
     ['POST', '/api/federation/boards/brd/items/itm/versions/v1/fetch', {}],
