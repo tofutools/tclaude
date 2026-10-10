@@ -138,7 +138,6 @@ your report.
 - [ ] Each of these is refused with a clear error: `../.claude.json`
       (parent traversal), `.env` (secret path), and any file from
       `reviewer-home`, whose root is the node's whole `HOME`
-- [ ] The dashboard file browser lists and previews the same file 📸
 
 ### 4. Hub administration
 
@@ -183,6 +182,15 @@ your report.
 
 ## Recording demos
 
+`scripts/e2e/demo/record.sh all` records the standard set of demo clips and a
+titled reel: CLI pairing, the map, a remote terminal, moving an agent,
+boards, hub admin, and CLI remote files. Run it on a fresh, unpaired
+environment (`up` and `browser start`, but not `pair`), because the first
+clip pairs the nodes on camera. Clips go to `$E2E_BASE/demos/`, and
+individual steps can be rerun by name (see the script header). Use it as a
+template for new clips; the rest of this section explains the building
+blocks.
+
 Browser clips come from Chrome's screencast. Start `drive record` in the
 background, drive the page, then stop the recorder with SIGINT. It encodes
 the frames with ffmpeg, holding each frame on screen for as long as it was
@@ -198,7 +206,14 @@ kill -INT $R; wait $R
 ```
 
 Navigating to another page removes the caption, so set it again after each
-navigation.
+navigation. The recorder follows the tab across navigations, including a
+switch to the other node's dashboard. Frames are scaled to the viewport size
+(`DRIVE_SIZE`, default `1280x800`). `e2e.sh browser start` passes Chrome
+`--window-size` and `--screen-info` of 1280x800, because headless Chrome's
+default 800x600 screen distorts screencast frames. If you change
+`DRIVE_SIZE`, change those two flags to match. The CLI clips need
+asciinema 2.x, which writes the asciicast v2 format the pinned player
+reads.
 
 For CLI clips, record a scripted session with asciinema. Set
 `ASCIINEMA_CONFIG_HOME` to a writable directory when `~/.config` is
