@@ -49,6 +49,18 @@ export function readiness(row, probe) {
   return { ok: true, text: 'ready' };
 }
 
+// START_ERRORS explain a refused start in the operator's terms.
+const START_ERRORS = {
+  remote_scripts_disabled: (n) => `${n.label} no longer accepts remote scripts`,
+  hub_exec_required: () => 'This node no longer holds hub.exec on the hub',
+  hub_root_refused: () => 'The hub refuses to run scripts because its service user is root',
+  run_busy: (n) => `${n.label} is already running as many scripts as it allows; try again when one finishes`,
+};
+
+function startError(n, e) {
+  return START_ERRORS[e?.code]?.(n) || errText(e);
+}
+
 function fmtDuration(ms) {
   if (ms == null || ms < 0) return '';
   if (ms < 1000) return `${ms} ms`;
@@ -162,6 +174,7 @@ function ResultPane({ node, entry, actions }) {
       ${job && !runActive(job) && html`<${LogView} node=${node} job=${job} actions=${actions} />`}
     </div>
     ${entry.error && html`<div class="fa-danger">${entry.error}</div>`}
+    ${job?.output_truncated && html`<div class="muted">Output reached the size limit and was cut off.</div>`}
     ${job?.error && html`<div class="fa-danger">${job.error}</div>`}
     ${job?.stdout_tail && html`<pre class="fa-run-out">${job.stdout_tail}</pre>`}
     ${job?.stderr_tail && html`<pre class="fa-run-out err">${job.stderr_tail}</pre>`}
@@ -246,7 +259,7 @@ export function RunPage({ view, actions, confirm, toast, timers = globalThis, pr
     });
     return Promise.all(targets.map((n) => actions.start(n, text, secs)
       .then((job) => { if (mounted.current) setRuns((cur) => ({ ...cur, [n.id]: { node: n, job, text, secs } })); })
-      .catch((e) => { if (mounted.current) setRuns((cur) => ({ ...cur, [n.id]: { node: n, job: null, text, secs, error: e?.code === 'remote_scripts_disabled' ? `${n.label} no longer accepts remote scripts` : errText(e) } })); })));
+      .catch((e) => { if (mounted.current) setRuns((cur) => ({ ...cur, [n.id]: { node: n, job: null, text, secs, error: startError(n, e) } })); })));
   };
   // The hub runs it as its own service user, and code there reaches the
   // whole fleet's connectivity, so a hub target is spelled out separately.

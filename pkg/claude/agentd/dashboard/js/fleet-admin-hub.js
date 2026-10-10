@@ -284,7 +284,8 @@ function RemoteScripts({ actions, onRunHub }) {
       · <span class="muted">${st.can_exec ? 'this node holds hub.exec' : 'this node does not hold hub.exec'}</span>
       ${on && st.can_exec && html` · <button type="button" class="fa-link" id="fleet-hub-run-open" onClick=${onRunHub}>run a script on the hub…</button>`}
     </div>
-    <div class="muted">Only the hub host can turn this on (its accept_remote_scripts flag or config); it can never be switched from here. Scripts run as the hub's service user${st.service_user ? ` (${st.service_user})` : ''} with bounded output and runtime, and the hub audits the full script. ${HUB_CONSEQUENCE}</div>
+    ${st.warning && html`<div class="fa-warn">${st.warning}</div>`}
+    <div class="muted">Only the hub host can turn this on: <code>accept_remote_scripts</code> in hub-config.json beside the hub database, or <code>tclaude-hub serve --accept-remote-scripts</code>; it can never be switched from here.${st.can_exec ? '' : html` hub.exec is granted on the hub host too: <code>tclaude-hub admin grant-exec ${'<instance>'}</code>.`} Scripts run as the hub's service user${st.service_user ? ` (${st.service_user})` : ''} with bounded output and runtime, and the hub audits the full script. ${HUB_CONSEQUENCE}</div>
   </div>`;
 }
 

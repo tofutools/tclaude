@@ -1832,3 +1832,19 @@ test('hub update: opened while the hub is not answering, the dialog retries unti
   assert.match(q('#fleet-node-update-job').textContent, /v0\.43\.0 → v0\.44\.0: completed/);
   assert.equal(q('#fleet-node-update-modal [role=alert]'), null);
 });
+
+test('hub remote scripts: without hub.exec the page says it is granted on the hub host, and shows the hub warning as text', async (t) => {
+  const prev = s_hubRun;
+  s_hubRun = { ...s_hubRun, can_exec: false, warning: '<i>Full remote code execution</i> as tclaude-hub' };
+  try {
+    const s = await setup(t);
+    await openHub(s);
+    const box = s.harness.document.querySelector('#fleet-hub-scripts');
+    assert.match(box.textContent, /does not hold hub\.exec.*hub-config\.json beside the hub database.*tclaude-hub serve --accept-remote-scripts.*tclaude-hub admin grant-exec <instance>/s);
+    assert.equal(box.querySelector('i'), null, 'the hub warning never becomes markup');
+    assert.match(box.textContent, /<i>Full remote code execution<\/i>/);
+    assert.equal(box.querySelector('#fleet-hub-run-open'), null);
+  } finally {
+    s_hubRun = prev;
+  }
+});
