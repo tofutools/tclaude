@@ -95,3 +95,14 @@ test('away: choose a cover with the consequence spelled out, return, and answer 
   assert.deepEqual(calls.at(-1), ['answer', TICKET, 'approve']);
   await mounted.unmount();
 });
+
+test('Escape cancels the mail dialog', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/peer-mail.js');
+  let closed = 0;
+  const actions = { peers: async () => peers, outbox: async () => [] };
+  const mounted = await harness.mount(harness.html`<${m.PeerMailDialog} initial=${{ peer: 'inst_forge7' }} actions=${actions} toast=${() => {}} onClose=${() => { closed++; }} />`);
+  await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
+  assert.equal(closed, 1);
+  await mounted.unmount();
+});

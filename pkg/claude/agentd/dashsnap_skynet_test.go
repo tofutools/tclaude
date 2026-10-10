@@ -60,6 +60,11 @@ const skynetFederationStubJS = `(function(){
     if (/^\/api\/federation\/profiles\/[^/]+$/.test(path) && !(init && init.method === 'PUT')) return json({ profile: {}, applied_peers: ['inst_hn3cxq7a'] });
     if (path === '/api/federation/away' && !(init && init.method === 'POST')) return json({ away: window.__dashsnapAway ? { cover: 'inst_hn3cxq7a', since: '2026-10-10T08:00:00Z', until: '2026-10-10T18:00:00Z' } : null });
     if (path === '/api/federation/node-labels' && !(init && init.method === 'POST')) return json({ labels: ['gpu', 'ci', 'linux'] });
+    if (path === '/api/federation/identity/rotations') return json({ local: window.__dashsnapRotationPending
+      ? { pending: true, chain: [{ new_id: 'inst_q4w7pjf2kx3mz6bty5nd' }, { new_id: 'inst_r8vn2c5xq7hd3m9kz1wa', new_fingerprint: 'r8vn 2c5x q7hd 3m9k z1wa 6tpe', activate_at: new Date(Date.now() + 38 * 3600e3).toISOString() }] }
+      : { pending: false, chain: [{ new_id: 'inst_q4w7pjf2kx3mz6bty5nd' }] } });
+    if (path === '/api/federation/identity/rotate') return json({ instance_id: 'inst_q4w7pjf2kx3mz6bty5nd', fingerprint: 'q4w7 pjf2 kx3m z6bt y5nd 8c1e', window_seconds: 172800, hop_count: window.__dashsnapRotationPending ? 2 : 1, hop_limit: 4, pending: !!window.__dashsnapRotationPending,
+      effects: { successor_linked: true, streams_reconnect: true, pending_sealed_mail_requires_resend: true, issued_model_credentials_revoked: true, requester_paid_leases_revoked: true } });
     if (path === '/api/federation/nodes/health' && !(init && init.method === 'POST')) return json({ presence: true, resources: true, failures: false, debounce_seconds: 15, disk_free_percent: 10, ram_free_percent: 10, memory_seconds: 120, failure_count: 3, failure_window_seconds: 600, cooldown_seconds: 600 });
     if (path === '/api/federation/viewers') return json(window.__dashsnapViewers ? [
       { id: 'tv_8k2q', peer: 'inst_hn3cxq7a', agent: 'agt_r8k2m4c1x9', session: 'fe-dev-forms', group: 'frontend-squad', read_only: false, started: new Date(Date.now() - 720000).toISOString(), incoming: true },
@@ -490,6 +495,40 @@ func skynetStates() []dashsnap.State {
   document.querySelector('#fleet-node-settings-open').click();
   for (var j = 0; j < 30 && !document.querySelector('#fleet-node-labels'); j++) await new Promise(function(r){ setTimeout(r, 100); });
   if (!document.querySelector('#fleet-node-labels')) throw new Error('skynet: node settings did not open');
+})();`,
+			SettleMS: 300,
+		},
+		{
+			Key:     "skynet-fleet-rotate-confirm",
+			Title:   "Rotate this node's identity: the confirmation",
+			Caption: "Node settings → Identity → Rotate identity… fetches the read-only preview and confirms every consequence before anything is generated: the successor ID is linked to this one, the detection window, streams reconnect, pending sealed mail must be resent, issued model credentials and requester-paid leases are revoked, and the hop limit. Enter confirms and Escape cancels, like every confirm.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('#fleet-node-settings-open'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-node-settings-open').click();
+  for (var j = 0; j < 30 && !(document.querySelector('#fleet-rotate-open') && !document.querySelector('#fleet-rotate-open').disabled); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-rotate-open').click();
+  for (var k = 0; k < 30 && !/detection window/.test((document.querySelector('#confirm-body') || {}).textContent || ''); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!/hop|linked rotation/.test((document.querySelector('#confirm-body') || {}).textContent || '')) throw new Error('skynet: rotate confirmation missing');
+})();`,
+			SettleMS: 300,
+		},
+		{
+			Key:     "skynet-fleet-rotation-pending",
+			Title:   "Identity rotation pending",
+			Caption: "After a rotation, node settings shows the successor and when peers accept it at the earliest (the detection window countdown); Rotate is disabled while one is pending, and recovery stays in the CLI.",
+			InitJS:  "window.__dashsnapRotationPending = true;" + skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('#fleet-node-settings-open'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-node-settings-open').click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-rotation-pending'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  var p = document.querySelector('#fleet-rotation-pending');
+  if (!p || !/no earlier than/.test(p.textContent)) throw new Error('skynet: pending rotation missing');
+  document.querySelector('#fleet-identity').scrollIntoView({ block: 'center' });
 })();`,
 			SettleMS: 300,
 		},

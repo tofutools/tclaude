@@ -56,3 +56,13 @@ test('a peer that shares nothing yet explains the 403; the client sends the rout
   assert.match(doc.querySelector('[role=alert]').textContent, /forge only takes requests from peers it already shares something with/);
   await mounted.unmount();
 });
+
+test('Escape cancels the request dialog', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/peer-access.js');
+  let closed = 0;
+  const mounted = await harness.mount(harness.html`<${mod.RequestAccessDialog} node="forge" perm="costs.read" onClose=${() => { closed++; }} actions=${{ request: async () => ({}) }} timers=${fakeTimers()} />`);
+  await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
+  assert.equal(closed, 1);
+  await mounted.unmount();
+});
