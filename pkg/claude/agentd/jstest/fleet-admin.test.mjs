@@ -145,8 +145,8 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     patchHubSettings: async (o) => { log.push(['settings', o]); return { ok: true }; },
     recoverHubIdentity: async (old, nw, fp) => { log.push(['recover', old, nw, fp]); return { old: { instance: old, name: 'lost', fingerprint: 'old-fp', spaces: ['ops'] }, replacement: null, new: nw, new_fingerprint: s_hubEcho() ? 'aaaa-bbbb-cccc-dddd-eeee-ffff-gg' : 'abcd-efgh-ijkl-mnop-qrst-uvwx-yz', applied: !!fp, warning: 'The old instance held admin; it is not transferred.' }; },
     revokeOldHubIdentity: async (i, fp) => { log.push(['revokeOld', i, fp]); return { instance: i, fingerprint: 'zyxw-vuts-rqpo-nmlk-jihg-fedc-ba', applied: !!fp, warning: '' }; },
-    hubLogs: async (cursor) => { log.push(['logs', cursor]); return cursor ? { entries: [{ at: '2026-10-10T09:02:00Z', level: 'info', message: 'later line' }], next_cursor: 'c2' }
-      : { entries: [{ at: '2026-10-10T09:01:00Z', level: 'warn', message: '<script>alert(1)</script> admission refused' }, ...Array.from({ length: 199 }, (_, i) => ({ at: '2026-10-10T09:01:30Z', level: 'info', message: `line ${i}` }))], next_cursor: 'c1' }; },
+    hubLogs: async (cursor) => { log.push(['logs', cursor]); return cursor === 'c2' ? { entries: [], next_cursor: 'c2' } : cursor ? { entries: [{ at: '2026-10-10T09:02:00Z', level: 'info', message: 'later line' }], next_cursor: 'c2' }
+      : { entries: [{ at: '2026-10-10T09:01:00Z', level: 'warn', message: '<script>alert(1)</script> admission refused' }], next_cursor: 'c1' }; },
     healthPolicy: async (peer) => { log.push(['healthPolicy', peer]); return peer ? { presence: false, resources: true, failures: false, debounce_seconds: 15, disk_free_percent: 5, ram_free_percent: 10, memory_seconds: 120, failure_count: 3, failure_window_seconds: 600, cooldown_seconds: 600 }
       : { presence: true, resources: false, failures: false, debounce_seconds: 15, disk_free_percent: 10, ram_free_percent: 10, memory_seconds: 120, failure_count: 3, failure_window_seconds: 600, cooldown_seconds: 600 }; },
     setHealthPolicy: async (peer, body) => { log.push(['setHealth', peer, body]); return { ...body, presence: body.presence }; },
@@ -1505,7 +1505,12 @@ test('hub log tail is text only and pages with the cursor', async (t) => {
   await s.harness.act(() => new Promise((r) => setTimeout(r, 10)));
   assert.deepEqual(s.log.filter((l) => l[0] === 'logs').map((l) => l[1]), ['', 'c1']);
   assert.match(q('#fleet-hub-logs pre').textContent, /admission refused[\s\S]*later line/);
-  assert.equal(q('#fleet-hub-logs-more'), null, 'a short page is the end even though the hub returns a cursor');
+  assert.equal(q('#fleet-hub-logs-end'), null, 'a short page is not the end (the hub may stop on its byte budget)');
+  await s.click(q('#fleet-hub-logs-more'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  assert.deepEqual(s.log.filter((l) => l[0] === 'logs').map((l) => l[1]), ['', 'c1', 'c2']);
+  assert.ok(q('#fleet-hub-logs-end'), 'an empty page says nothing newer yet');
+  assert.ok(q('#fleet-hub-logs-more'), 'the resume cursor is kept for the next look');
 });
 
 test('hub actions use resource paths and the agreed bodies', async (t) => {

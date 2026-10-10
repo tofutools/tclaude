@@ -265,6 +265,7 @@ function SettingsSection({ settings, actions, confirm, toast, reload }) {
 function LogsSection({ actions }) {
   const [entries, setEntries] = useState(null);
   const [cursor, setCursor] = useState(null);
+  const [caughtUp, setCaughtUp] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const load = (from = '') => {
@@ -273,8 +274,11 @@ function LogsSection({ actions }) {
       .then((r) => {
         const got = r?.entries || [];
         setEntries((prev) => (from ? [...(prev || []), ...got] : got));
-        // The hub returns a cursor even when caught up; a short page is the end.
-        setCursor(r?.next_cursor && got.length >= LOG_PAGE ? r.next_cursor : null);
+        // The hub always returns the resume cursor, even at the end, and a page
+        // can stop short of LOG_PAGE on its byte budget; only an empty page
+        // means nothing newer yet.
+        setCursor(r?.next_cursor || null);
+        setCaughtUp(!!from && !got.length);
       })
       .catch((e) => setError(errText(e)))
       .finally(() => setBusy(false));
@@ -287,6 +291,7 @@ function LogsSection({ actions }) {
     <div class="fa-ns-actions">
       <button type="button" id="fleet-hub-logs-refresh" disabled=${busy} onClick=${() => load()}>Refresh</button>
       ${cursor && html`<button type="button" id="fleet-hub-logs-more" disabled=${busy} onClick=${() => load(cursor)}>Load more</button>`}
+      ${caughtUp && html`<span class="muted" id="fleet-hub-logs-end">nothing newer yet</span>`}
       <span class="muted">Redacted on the hub; CLI: <code>tclaude federation hub logs</code></span></div>
   </div>`;
 }
