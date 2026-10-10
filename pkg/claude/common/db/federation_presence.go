@@ -216,6 +216,14 @@ func DepartFederationIdentity(conv, local, peer, offer string, identity Federati
 		return e
 	}
 	defer func() { _ = tx.Rollback() }()
+	if e = departFederationIdentityTx(tx, conv, local, peer, offer, identity); e != nil {
+		return e
+	}
+	return tx.Commit()
+}
+
+func departFederationIdentityTx(tx *sql.Tx, conv, local, peer, offer string, identity FederationIdentity) error {
+	var e error
 	var id, current string
 	var retired sql.NullString
 	e = tx.QueryRow(`SELECT a.agent_id,a.current_conv_id,a.retired_at FROM agents a JOIN agent_conversations c ON c.agent_id=a.agent_id WHERE c.conv_id=?`, conv).Scan(&id, &current, &retired)
@@ -233,7 +241,7 @@ func DepartFederationIdentity(conv, local, peer, offer string, identity Federati
 		return errors.New("agent was explicitly retired or deleted")
 	}
 	if p != nil && p.State == "away" && p.DepartureOffer == offer {
-		return tx.Commit()
+		return nil
 	}
 	if identity.Home == local && retired.Valid {
 		return errors.New("home agent is no longer active")
@@ -257,7 +265,7 @@ func DepartFederationIdentity(conv, local, peer, offer string, identity Federati
 	if e = putFederationPresenceTx(tx, *p); e != nil {
 		return e
 	}
-	return tx.Commit()
+	return nil
 }
 
 func terminalFederationPresenceTx(tx *sql.Tx, id string) error {
@@ -343,6 +351,38 @@ func RestoreFederationBackup(id, offer, local string) error {
 	p.ContinuationNonceHash = ""
 	p.ArrivalOffer = ""
 	p.VisitEpoch++
+	if e = putFederationPresenceTx(tx, *p); e != nil {
+		return e
+	}
+	return tx.Commit()
+}
+
+// AcceptFederationBackupReturnProof retains the returning host's continuation
+// before resuming the home backup. The authenticated lease pins host and offer.
+func AcceptFederationBackupReturnProof(id, offer, peer, proof string) error {
+	if proof == "" || len(proof) > 128 {
+		return errors.New("return continuation missing")
+	}
+	d, e := Open()
+	if e != nil {
+		return e
+	}
+	tx, e := d.Begin()
+	if e != nil {
+		return e
+	}
+	defer func() { _ = tx.Rollback() }()
+	p, e := scanFederationPresence(tx.QueryRow(`SELECT `+federationPresenceColumns+` FROM agent_federation_presence WHERE agent_id=?`, id))
+	if e != nil {
+		return e
+	}
+	if p == nil || (p.State != "away" && p.State != "here") || p.DepartureOffer != offer || (p.State == "away" && p.CurrentPeer != peer) {
+		return errors.New("backup return no longer current")
+	}
+	if p.Transfer.Proofs == nil {
+		p.Transfer.Proofs = map[string]string{}
+	}
+	p.Transfer.Proofs[peer] = proof
 	if e = putFederationPresenceTx(tx, *p); e != nil {
 		return e
 	}

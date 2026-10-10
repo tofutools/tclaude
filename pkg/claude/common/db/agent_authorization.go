@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -42,6 +43,15 @@ func RetireAgentAuthorizationAtGeneration(convID, by, reason string) (RetireAgen
 	return retireAgentAuthorizationByConv(convID, by, reason, true)
 }
 func retireAgentAuthorizationByConv(convID, by, reason string, requireCurrent bool) (RetireAgentAuthorizationOutcome, error) {
+	return retireAgentAuthorizationWithDeparture(convID, by, reason, requireCurrent, nil)
+}
+
+// RetireFederationVisitor couples local grant revocation and the continuation
+// checkpoint in one commit, so recovery cannot observe half a departure.
+func RetireFederationVisitor(conv, local, peer, offer string, identity FederationIdentity) (RetireAgentAuthorizationOutcome, error) {
+	return retireAgentAuthorizationWithDeparture(conv, "system:federation-move", "moved to "+peer, true, func(tx *sql.Tx) error { return departFederationIdentityTx(tx, conv, local, peer, offer, identity) })
+}
+func retireAgentAuthorizationWithDeparture(convID, by, reason string, requireCurrent bool, departure func(*sql.Tx) error) (RetireAgentAuthorizationOutcome, error) {
 	var out RetireAgentAuthorizationOutcome
 	convID = strings.TrimSpace(convID)
 	if convID == "" {
@@ -186,6 +196,11 @@ func retireAgentAuthorizationByConv(convID, by, reason string, requireCurrent bo
 	retiredRows, _ := res.RowsAffected()
 	out.Retired = retiredRows > 0
 
+	if departure != nil {
+		if err := departure(tx); err != nil {
+			return out, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return RetireAgentAuthorizationOutcome{}, fmt.Errorf("commit retirement revocation: %w", err)
 	}

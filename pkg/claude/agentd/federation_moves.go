@@ -252,10 +252,13 @@ func retireConfirmedAgentMove(m db.FederationAgentMove) {
 			lock.Unlock()
 			cronAuthorityMu.Unlock()
 		} else {
-			_, _, err = retireAgentConvGuardedWithGeneration(m.SourceConv, "system:federation-move", "moved to "+m.Peer+"/"+m.TargetAgent, false, func() error { return moveAuthority(m) }, true)
-			if err == nil && m.Identity != nil {
-				err = db.DepartFederationIdentity(m.SourceConv, arrivalNode(), m.Peer, m.ID, *m.Identity)
+			var transition func(string, string, string) (db.RetireAgentAuthorizationOutcome, error)
+			if m.Identity != nil {
+				transition = func(conv, _, _ string) (db.RetireAgentAuthorizationOutcome, error) {
+					return db.RetireFederationVisitor(conv, arrivalNode(), m.Peer, m.ID, *m.Identity)
+				}
 			}
+			_, _, err = retireAgentConvWithTransition(m.SourceConv, "system:federation-move", "moved to "+m.Peer+"/"+m.TargetAgent, false, func() error { return moveAuthority(m) }, true, transition)
 		}
 		if err != nil {
 			m.LastError = err.Error()

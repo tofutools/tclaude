@@ -174,3 +174,59 @@ func TestFederationIdentityPausedBackupAndIndependentClone(t *testing.T) {
 	_, e = ReserveFederationIdentity(backup, "origin", "remote", "late-return")
 	require.Error(t, e)
 }
+
+func TestFederationIdentityVisitorDepartureIsAtomicAndDefaultsReplace(t *testing.T) {
+	setupTestDB(t)
+	identity := FederationIdentity{Agent: NewAgentID(), Home: "origin", Hops: 1, Proofs: map[string]string{"origin": "home-proof"}}
+	_, e := ReserveFederationIdentity(identity, "visit", "origin", "first")
+	require.NoError(t, e)
+	require.NoError(t, ReplaceFederationArrivalWorkerDefaults(identity.Agent, "first", &FederationWorkerDefaults{Peer: "origin", ProfileName: "first"}))
+	_, _, e = EnsureAgentForConvWithID("visitor", identity.Agent, "visit")
+	require.NoError(t, e)
+	require.NoError(t, GrantAgentPermission("visitor", "human.notify", "local"))
+	_, e = RetireFederationVisitor("visitor", "visit", "origin", "return", identity)
+	require.ErrorContains(t, e, "continuation")
+	a, e := GetAgent(identity.Agent)
+	require.NoError(t, e)
+	require.True(t, a.Active())
+	perms, e := ListAgentPermissionOverridesForConv("visitor")
+	require.NoError(t, e)
+	require.Contains(t, perms, "human.notify")
+	identity.Proofs["visit"] = "visit-proof"
+	identity.Hops++
+	_, e = RetireFederationVisitor("visitor", "visit", "origin", "return", identity)
+	require.NoError(t, e)
+	require.True(t, AgentAway(identity.Agent))
+	perms, e = ListAgentPermissionOverridesForConv("visitor")
+	require.NoError(t, e)
+	require.Empty(t, perms)
+	_, e = ReserveFederationIdentity(identity, "visit", "origin", "second")
+	require.NoError(t, e)
+	require.NoError(t, ReplaceFederationArrivalWorkerDefaults(identity.Agent, "second", &FederationWorkerDefaults{Peer: "origin", ProfileName: "second"}))
+	defaults, e := GetFederationWorkerDefaults(identity.Agent)
+	require.NoError(t, e)
+	require.Equal(t, "second", defaults.ProfileName)
+	require.Error(t, ReplaceFederationArrivalWorkerDefaults(identity.Agent, "wrong", nil))
+	_, _, e = EnsureAgentForConvWithID("visitor2", identity.Agent, "visit")
+	require.NoError(t, e)
+}
+
+func TestFederationIdentityBackupReturnRetainsVisitContinuation(t *testing.T) {
+	setupTestDB(t)
+	id, _, e := EnsureAgentForConv("home-conv", "test")
+	require.NoError(t, e)
+	identity := FederationIdentity{Agent: id, Home: "home", Hops: 1, Proofs: map[string]string{"home": "departure"}}
+	require.NoError(t, DepartFederationIdentity("home-conv", "home", "visit", "offer", identity))
+	require.Error(t, AcceptFederationBackupReturnProof(id, "wrong", "visit", "visit-proof"))
+	require.NoError(t, AcceptFederationBackupReturnProof(id, "offer", "visit", "visit-proof"))
+	require.NoError(t, RestoreFederationBackup(id, "offer", "home"))
+	p, e := GetAgentFederationPresence(id)
+	require.NoError(t, e)
+	require.Equal(t, "visit-proof", p.Transfer.Proofs["visit"])
+	require.NoError(t, AcceptFederationBackupReturnProof(id, "offer", "visit", "visit-proof"))
+	identity = p.Transfer
+	identity.Proofs["home"] = "next-departure"
+	identity.Hops++
+	require.NoError(t, DepartFederationIdentity("home-conv", "home", "visit", "next-offer", identity))
+	require.Error(t, AcceptFederationBackupReturnProof(id, "offer", "visit", "late"))
+}

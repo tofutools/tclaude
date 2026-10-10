@@ -101,8 +101,12 @@ func TestFederation_TeleportRevocationKeepsSourceAlive(t *testing.T) {
 	require.True(t, a.Active())
 }
 func fedIncomingTeleport(t *testing.T, fh *fedHarness, credentials string, alter func(*bundletransfer.TeleportIntent)) bundletransfer.Descriptor {
+	return fedIncomingTeleportIdentity(t, fh, credentials, alter, nil)
+}
+func fedIncomingTeleportIdentity(t *testing.T, fh *fedHarness, credentials string, alter func(*bundletransfer.TeleportIntent), identity *db.FederationIdentity) bundletransfer.Descriptor {
 	t.Helper()
 	b := fedAgentBundle(t)
+	b.Manifest.Agent.Identity = identity
 	transcript := append(mustJSON(t, map[string]any{"type": "user", "sessionId": moveSourceConv, "cwd": "/source", "message": map[string]string{"content": "Continue the test task."}}), '\n')
 	b.SetHistory("claude-jsonl", moveSourceConv, transcript)
 	raw, err := b.Encode()

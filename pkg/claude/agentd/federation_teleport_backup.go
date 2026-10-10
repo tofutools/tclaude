@@ -24,14 +24,15 @@ const teleportLeaseKind = proto.KindTeleportLease
 var teleportLeaseMu sync.Mutex
 
 type teleportLeaseFrame struct {
-	Op       string `json:"op"`
-	Offer    string `json:"offer"`
-	Agent    string `json:"agent"`
-	Epoch    int64  `json:"epoch"`
-	Sequence int64  `json:"sequence,omitempty"`
-	ReturnID string `json:"return_id,omitempty"`
-	Findings string `json:"findings,omitempty"`
-	Policy   string `json:"policy,omitempty"`
+	ReturnProof string `json:"return_proof,omitempty"`
+	Op          string `json:"op"`
+	Offer       string `json:"offer"`
+	Agent       string `json:"agent"`
+	Epoch       int64  `json:"epoch"`
+	Sequence    int64  `json:"sequence,omitempty"`
+	ReturnID    string `json:"return_id,omitempty"`
+	Findings    string `json:"findings,omitempty"`
+	Policy      string `json:"policy,omitempty"`
 }
 type teleportLeaseObservation struct {
 	LastLive time.Time
@@ -244,7 +245,11 @@ func (rt *fedRuntime) reconcileTeleportLeases() {
 				if e != nil {
 					continue
 				}
-				if a == nil || !a.Active() || a.CurrentConvID != l.SourceConv {
+				dormant := false
+				if presence, err := db.GetAgentFederationPresence(l.SourceAgent); err == nil && presence != nil {
+					dormant = presence.State == "away" && presence.DepartureOffer == l.Offer
+				}
+				if a == nil || (!a.Active() && !dormant) || a.CurrentConvID != l.SourceConv {
 					l.State = "released"
 					l.Epoch++
 					_, _ = db.TransitionFederationTeleportLease(l, "")
@@ -294,7 +299,7 @@ func (rt *fedRuntime) reconcileTeleportLeases() {
 		if l.State == "returning" {
 			rt.stopReturningTeleport(&l)
 		}
-		if l.State != "active" && l.State != "stopped" {
+		if l.State != "active" && l.State != "stopped" && l.State != "superseded" {
 			continue
 		}
 		o := rt.teleportObservation(l, now)
@@ -303,8 +308,16 @@ func (rt *fedRuntime) reconcileTeleportLeases() {
 		}
 		o.Sent = now
 		rt.teleportLeases.Rows[teleportObservationKey(l)] = o
-		if l.State == "stopped" {
-			rt.sendTeleportLease(l, teleportLeaseFrame{Op: "return", Epoch: l.Epoch, ReturnID: l.ReturnID, Findings: l.Findings})
+		if l.State == "stopped" || l.State == "superseded" {
+			proof := ""
+			if presence, err := db.GetAgentFederationPresence(l.TargetAgent); err == nil && presence != nil && presence.State == "away" {
+				proof = presence.Transfer.Proofs[arrivalNode()]
+			}
+			op := "return"
+			if l.State == "superseded" {
+				op = "departed"
+			}
+			rt.sendTeleportLease(l, teleportLeaseFrame{Op: op, Epoch: l.Epoch, ReturnID: l.ReturnID, Findings: l.Findings, ReturnProof: proof})
 			continue
 		}
 		a, e := db.GetAgent(l.TargetAgent)
@@ -396,7 +409,7 @@ func teleportSupersededPolicy() string {
 }
 func (rt *fedRuntime) acceptTeleportLease(peer *db.FederationPeer, env *proto.Envelope) {
 	var f teleportLeaseFrame
-	if env.From.Agent != "" || env.To.Agent != "" || env.DecodePayload(&f) != nil || !proto.ValidStreamID(f.Offer) || !proto.ValidAgentRef(f.Agent) || f.Epoch < 1 || f.Sequence < 0 || len(f.Findings) > 16<<10 || len(f.ReturnID) > 128 {
+	if env.From.Agent != "" || env.To.Agent != "" || env.DecodePayload(&f) != nil || !proto.ValidStreamID(f.Offer) || !proto.ValidAgentRef(f.Agent) || f.Epoch < 1 || f.Sequence < 0 || len(f.Findings) > 16<<10 || len(f.ReturnID) > 128 || len(f.ReturnProof) > 128 {
 		return
 	}
 	p, err := teleportBackupPolicy()
@@ -414,7 +427,7 @@ func (rt *fedRuntime) acceptTeleportLease(peer *db.FederationPeer, env *proto.En
 		return
 	}
 	switch f.Op {
-	case "renew", "gone", "return":
+	case "renew", "gone", "return", "departed":
 		l, e := db.GetFederationTeleportLease("out", peer.InstanceID, f.Offer)
 		if e != nil || l == nil || l.TargetAgent != f.Agent && (l.TargetAgent != "" || l.State != "released") {
 			return
@@ -425,6 +438,12 @@ func (rt *fedRuntime) acceptTeleportLease(peer *db.FederationPeer, env *proto.En
 				return
 			}
 			l.Revision++
+		}
+		if f.Op == "departed" {
+			if f.Epoch == l.Epoch && (l.State == "recovered" || l.State == "recovering") {
+				_ = db.AcceptFederationBackupReturnProof(l.SourceAgent, l.Offer, l.Peer, f.ReturnProof)
+			}
+			return
 		}
 		if f.Op == "return" && f.Epoch <= l.Epoch && (l.State == "recovered" || l.State == "recovering") && proto.ValidStreamID(f.ReturnID) {
 			if l.ReturnID == "" {
@@ -451,6 +470,13 @@ func (rt *fedRuntime) acceptTeleportLease(peer *db.FederationPeer, env *proto.En
 			if !proto.ValidStreamID(f.ReturnID) {
 				return
 			}
+			if presence, err := db.GetAgentFederationPresence(l.SourceAgent); err != nil {
+				return
+			} else if presence != nil {
+				if err := db.AcceptFederationBackupReturnProof(l.SourceAgent, l.Offer, l.Peer, f.ReturnProof); err != nil {
+					return
+				}
+			}
 			l.ReturnID = f.ReturnID
 			l.Findings = f.Findings
 			recordFederationAudit("teleport.report", l.Peer, l.TargetAgent, "", "offer="+l.Offer+" return="+f.ReturnID, 200)
@@ -462,7 +488,18 @@ func (rt *fedRuntime) acceptTeleportLease(peer *db.FederationPeer, env *proto.En
 			if e != nil || m == nil {
 				return
 			}
-			allowed, _, e := permissionAllowsAction(httpRequestAsAgent(l.SourceConv), l.SourceConv, PermSelfTeleport, ActionContext{RemotePeer: l.Peer, RemoteGroup: m.Group})
+			actx := ActionContext{RemotePeer: l.Peer, RemoteGroup: m.Group}
+			sources, e := loadPermSourcesForState(l.SourceConv, true, false)
+			if m.Identity != nil {
+				a, err := db.GetAgent(l.SourceAgent)
+				presence, perr := db.GetAgentFederationPresence(l.SourceAgent)
+				if err != nil || perr != nil || a == nil || a.CurrentConvID != l.SourceConv || presence == nil || presence.State != "away" || presence.DepartureOffer != l.Offer {
+					return
+				}
+				sources, e = loadPermSourcesForState(l.SourceConv, true, true)
+			}
+			verdict := resolveRemotePermissionVerdictForActionFrom(httpRequestAsAgent(l.SourceConv), sources, PermSelfTeleport, actx)
+			allowed, _ := permissionVerdictAllowsAction(verdict, l.SourceConv, PermSelfTeleport, actx)
 			if e != nil || !allowed {
 				return
 			}
@@ -543,7 +580,17 @@ func (rt *fedRuntime) stopSupersededTeleport(l *db.FederationTeleportLease) {
 	if presence, err := db.GetAgentFederationPresence(l.TargetAgent); err != nil {
 		return
 	} else if presence != nil && a != nil {
-		if _, err := db.RetireAgentAuthorizationByConv(a.CurrentConvID, "system:teleport-lease-ended", "roaming lease ended"); err != nil {
+		if presence.State == "here" {
+			identity := presence.Transfer
+			identity.Hops++
+			if identity.Proofs == nil {
+				identity.Proofs = map[string]string{}
+			}
+			identity.Proofs[arrivalNode()] = db.NewAgentID()
+			if _, err := db.RetireFederationVisitor(a.CurrentConvID, arrivalNode(), l.Peer, l.Offer, identity); err != nil {
+				return
+			}
+		} else if presence.State != "away" || presence.DepartureOffer != l.Offer {
 			return
 		}
 	}
@@ -572,7 +619,17 @@ func (rt *fedRuntime) stopReturningTeleport(l *db.FederationTeleportLease) {
 	if presence, err := db.GetAgentFederationPresence(l.TargetAgent); err != nil {
 		return
 	} else if presence != nil && a != nil {
-		if _, err := db.RetireAgentAuthorizationByConv(a.CurrentConvID, "system:teleport-lease-ended", "roaming lease ended"); err != nil {
+		if presence.State == "here" {
+			identity := presence.Transfer
+			identity.Hops++
+			if identity.Proofs == nil {
+				identity.Proofs = map[string]string{}
+			}
+			identity.Proofs[arrivalNode()] = db.NewAgentID()
+			if _, err := db.RetireFederationVisitor(a.CurrentConvID, arrivalNode(), l.Peer, l.Offer, identity); err != nil {
+				return
+			}
+		} else if presence.State != "away" || presence.DepartureOffer != l.Offer {
 			return
 		}
 	}

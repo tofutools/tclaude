@@ -97,3 +97,24 @@ func TestFederationAwayExplicitRetireDeleteAndRecall(t *testing.T) {
 		})
 	}
 }
+
+func TestFederationAwayCatalogHonorsPresenceGrant(t *testing.T) {
+	fh := newFedHarness(t)
+	aid := fedMoveSource(t, fh)
+	local := "home"
+	require.NoError(t, db.DepartFederationIdentity(moveSourceConv, local, fh.peer.id.ID(), "away", db.FederationIdentity{Agent: aid, Home: local, Hops: 1, Proofs: map[string]string{local: "nonce"}}))
+	rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": "groups.roster.read", "scope": "group=source"})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	cat, e := agentd.FederationCatalogForStatusTest(fh.peer.id.ID())
+	require.NoError(t, e)
+	require.Len(t, cat.Groups, 1)
+	require.Len(t, cat.Groups[0].Members, 1)
+	require.Empty(t, cat.Groups[0].Members[0].Presence)
+	require.Nil(t, cat.Groups[0].Members[0].FederationPresence)
+	rec = fedHuman(t, fh.f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": "groups.presence.read", "scope": "group=source"})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	cat, e = agentd.FederationCatalogForStatusTest(fh.peer.id.ID())
+	require.NoError(t, e)
+	require.Equal(t, "away", cat.Groups[0].Members[0].Presence)
+	require.NotNil(t, cat.Groups[0].Members[0].FederationPresence)
+}

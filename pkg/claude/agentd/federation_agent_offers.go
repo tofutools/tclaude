@@ -460,9 +460,11 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 				writeError(w, 403, "teleport_revoked", err.Error())
 				return
 			}
-			if err := db.RecordFederationWorkerDefaults(reserved, authority.record.WorkerDefaults); err != nil {
-				writeError(w, 503, "worker_defaults", err.Error())
-				return
+			if identity == nil {
+				if err := db.RecordFederationWorkerDefaults(reserved, authority.record.WorkerDefaults); err != nil {
+					writeError(w, 503, "worker_defaults", err.Error())
+					return
+				}
 			}
 		}
 		if teleportRow != nil && teleportRow.Intent.ModelLease != "" {
@@ -475,6 +477,17 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 		if identity != nil {
 			if _, err := db.ReserveFederationIdentity(*identity, arrivalNode(), o.Peer, o.Descriptor.ID); err != nil {
 				writeError(w, 409, "identity_conflict", err.Error())
+				return
+			}
+		}
+		if identity != nil {
+			var defaults *db.FederationWorkerDefaults
+			if authority := teleportLandingFromRequest(r); authority != nil {
+				defaults = authority.record.WorkerDefaults
+			}
+			if err := db.ReplaceFederationArrivalWorkerDefaults(reserved, o.Descriptor.ID, defaults); err != nil {
+				_ = db.ReleaseFederationIdentity(reserved, o.Descriptor.ID)
+				writeError(w, 503, "worker_defaults", err.Error())
 				return
 			}
 		}

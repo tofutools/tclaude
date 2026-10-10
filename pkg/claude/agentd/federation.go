@@ -546,14 +546,15 @@ func buildFederationCatalog(peer string, status ...*statusSnapshot) (*proto.Cata
 					continue
 				}
 				presence, _ := db.GetAgentFederationPresence(agentID)
-				cm := proto.CatalogMember{FederationPresence: catalogFederationPresence(presence), Agent: agentID, Name: agent.TitleFor(m.ConvID), Role: m.Role}
+				cm := proto.CatalogMember{Agent: agentID, Name: agent.TitleFor(m.ConvID), Role: m.Role}
 				if g.HasCap(proto.CapPresence) {
+					cm.FederationPresence = catalogFederationPresence(presence)
 					cm.Presence = "offline"
 					if isConvOnline(m.ConvID) {
 						cm.Presence = "online"
 					}
 				}
-				if presence != nil && presence.State == "away" {
+				if g.HasCap(proto.CapPresence) && presence != nil && presence.State == "away" {
 					cm.Presence = "away"
 				}
 				g.Members = append(g.Members, cm)

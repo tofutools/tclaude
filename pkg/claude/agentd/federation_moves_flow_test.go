@@ -49,8 +49,11 @@ func fedStartMove(t *testing.T, fh *fedHarness) bundletransfer.Descriptor {
 	return v.Offer.D
 }
 func fedMoveConfirm(t *testing.T, fh *fedHarness, d bundletransfer.Descriptor, hash string) *proto.Envelope {
+	return fedMoveConfirmTarget(t, fh, d, hash, "agt_bobremote0000000000000000")
+}
+func fedMoveConfirmTarget(t *testing.T, fh *fedHarness, d bundletransfer.Descriptor, hash, target string) *proto.Envelope {
 	t.Helper()
-	env := fh.peer.envelope(proto.KindAgentMoveConfirm, proto.Endpoint{}, bundletransfer.MoveConfirmation{ObservedAt: time.Now().UTC(), Offer: d.ID, SHA256: hash, SourceAgent: d.Move.SourceAgent, SourceConv: d.Move.SourceConv, TargetAgent: "agt_bobremote0000000000000000", TargetConv: "019fe740-43a4-7023-b8ae-1ee64459f2a2"})
+	env := fh.peer.envelope(proto.KindAgentMoveConfirm, proto.Endpoint{}, bundletransfer.MoveConfirmation{ObservedAt: time.Now().UTC(), Offer: d.ID, SHA256: hash, SourceAgent: d.Move.SourceAgent, SourceConv: d.Move.SourceConv, TargetAgent: target, TargetConv: "019fe740-43a4-7023-b8ae-1ee64459f2a2"})
 	env.From.Agent = ""
 	fh.peer.send(env)
 	return env
