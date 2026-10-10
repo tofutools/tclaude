@@ -43,7 +43,9 @@
     return prefix + url.pathname.slice('/api/'.length) + url.search;
   }
 
-  window.__tclaudeRemoteNode = Object.freeze({ id, health });
+  // localFetch reaches this node's own API from a peer's page: the fused
+  // Groups view reads this node's snapshot alongside the peers'.
+  window.__tclaudeRemoteNode = Object.freeze({ id, health, localFetch: nativeFetch });
   document.documentElement.classList.add('remote-node');
 
   window.fetch = async (input, init) => {

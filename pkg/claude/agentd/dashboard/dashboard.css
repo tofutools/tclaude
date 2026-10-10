@@ -18712,6 +18712,61 @@ nav [data-tab].node-chip.map .node-chip-name { display: none; }
 nav [data-tab].node-chip.map.active .node-chip-name { display: inline; }
 .node-chips-sep { width: 1px; height: 16px; background: #2a3340; margin: 0 3px; }
 
+/* Node scope (tcl-sb4grp): fused-view outlines, the node and fused dropdowns. */
+.node-chip.ticked { border-color: color-mix(in srgb, var(--nc, #c9d1d9) 55%, #2a3340); }
+.node-pick { position: relative; display: inline-flex; }
+.node-pick-caret { color: #8b949e; font-size: 9px; }
+.node-chip.node-fuse { --nc: #58a6ff; gap: 4px; }
+.node-chip.node-fuse.active .node-pick-caret { color: #c9d1d9; }
+.node-fuse-stack { display: inline-flex; padding-left: 2px; }
+.node-fuse-stack b { width: 7px; height: 7px; border-radius: 50%; background: var(--c); margin-left: -2px; border: 1px solid #0d1117; }
+.node-fuse-stack b.off { background: #30363d; }
+/* The fused control never clips: the node buttons' names give way first. */
+.node-chips > button.node-chip { flex-shrink: 1; }
+.node-pick { flex: none; }
+/* Fixed, placed under its button by the island: the chip host clips. */
+.node-pop {
+  position: fixed; z-index: 60; width: 290px; max-height: 60vh; overflow-y: auto;
+  background: #161b22; border: 1px solid #30363d; border-radius: 8px; box-shadow: 0 10px 28px rgba(0, 0, 0, .55);
+  padding: 6px; font: 13px/1.3 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; text-align: left;
+}
+.node-pop-head { display: flex; align-items: center; color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 6px 8px 4px; }
+.node-pop-link { margin-left: auto; background: none; border: 0; padding: 0; color: #58a6ff; font-size: 11px; text-transform: none; letter-spacing: 0; cursor: pointer; }
+.node-pop-filter { display: block; margin: 2px 2px 6px; }
+.node-pop-filter input { box-sizing: border-box; width: 100%; padding: 5px 8px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; color: #e6edf3; font-size: 12px; }
+.node-pop-filter input:focus { outline: none; border-color: #1f6feb; }
+.node-pop-row { display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; padding: 6px 8px; border: 0; border-radius: 6px; background: none; color: #c9d1d9; font: inherit; text-align: left; cursor: pointer; }
+.node-pop-row:hover, .node-pop-row.hl { background: #1f6feb33; color: #f0f6fc; }
+.node-pop-row.sel { box-shadow: inset 2px 0 0 #58a6ff; }
+.node-pop-row.offline { color: #7d8590; }
+.node-pop-row input[type=checkbox] { margin: 0; accent-color: #1f6feb; cursor: pointer; }
+.node-pop-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #3fb950; flex: none; margin-right: 4px; vertical-align: 0; }
+.node-pop-row.offline .node-pop-dot { background: #6e7681; }
+.node-pop-swatch { width: 10px; height: 10px; border-radius: 3px; background: var(--nc); flex: none; }
+.node-pop-name { background: none; border: 0; padding: 0; color: inherit; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.node-pop-only { background: none; border: 0; padding: 0; color: #58a6ff; font-size: 11px; cursor: pointer; visibility: hidden; }
+.node-pop-row:hover .node-pop-only { visibility: visible; }
+.node-pop-meta { margin-left: auto; color: #7d8590; font-size: 11px; white-space: nowrap; }
+.node-pop-sep { border: 0; border-top: 1px solid #21262d; margin: 4px 2px; }
+.node-pop-foot { border-top: 1px solid #21262d; margin-top: 4px; padding: 7px 8px 3px; color: #7d8590; font-size: 11.5px; line-height: 1.45; }
+.node-pop-foot b { color: #c9d1d9; font-weight: 500; }
+
+/* Fused Groups replaces this node's roster in the Groups tab. */
+#skynet-fused-groups-root { display: none; }
+html.scope-fused #skynet-fused-groups-root { display: block; }
+html.scope-fused #tab-groups > :not(#skynet-fused-groups-root) { display: none !important; }
+/* A per-node tab in a fused view: a dot in the primary's colour on its label,
+   and a one-line banner over its content. */
+html.scope-fused nav [data-tab].active:not([data-tab="groups"]):not([data-tab="terminals"]):not(.node-chip):not(.fleet-anchor)::after {
+  content: ""; width: 7px; height: 7px; margin-left: 6px; border-radius: 50%; background: var(--scope-primary, #58a6ff);
+}
+.scope-banner-host:empty { display: none; }
+.scope-banner { display: flex; align-items: center; gap: 10px; padding: 7px 12px; margin-bottom: 12px; border: 1px solid #30363d; border-left: 3px solid var(--nc); border-radius: 6px; background: #161b22; font-size: 13px; }
+.scope-pill { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 10px; font: 500 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: #f0f6fc; background: color-mix(in srgb, var(--nc) 22%, #0d1117); border: 1px solid color-mix(in srgb, var(--nc) 60%, #0d1117); }
+.scope-banner-seg { display: inline-flex; margin-left: auto; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
+.scope-banner-seg button { padding: 3px 10px; border: 0; background: #0d1117; color: #8b949e; font: 500 11px ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; }
+.scope-banner-seg button.on { background: #1f6feb33; color: #f0f6fc; cursor: default; }
+
 /* Top-level mode: the map replaces the per-node tab strip with its own view
    switch in the same row, so nothing below moves. */
 .skynet-toplevel { display: inline-flex; align-items: center; }

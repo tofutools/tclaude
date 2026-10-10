@@ -547,15 +547,15 @@ const skynetDescriptor = createIslandDescriptor({
   name: 'skynet', label: 'Skynet nodes',
   // mapHost is listed first: a load failure renders into the first host, and it
   // belongs in the map section, never in the tab bar.
-  hosts: { mapHost: '#skynet-map-root', chipsHost: '#node-chips-root', barHost: '#skynet-toplevel-root', remoteHost: '#remote-node-root' },
+  hosts: { mapHost: '#skynet-map-root', chipsHost: '#node-chips-root', barHost: '#skynet-toplevel-root', remoteHost: '#remote-node-root', bannerHost: '#skynet-scope-banner-root' },
   failureClass: 'skynet-error',
-  load: async ({ hosts: { chipsHost, barHost, mapHost, remoteHost }, dependencies }) => {
+  load: async ({ hosts: { chipsHost, barHost, mapHost, remoteHost, bannerHost }, dependencies }) => {
     const islandModule = import('./skynet-island.js');
     const stateModule = import('./skynet-state.js');
     const actionsModule = import('./skynet-actions.js');
     const [{ mountSkynetIsland }, { skynetState }, { createSkynetActions }] = await Promise.all([islandModule, stateModule, actionsModule]);
     const actions = createSkynetActions({ state: skynetState, ...dependencies });
-    return { state: skynetState, mount: (registerCleanup) => mountSkynetIsland({ chipsHost, barHost, mapHost, remoteHost, state: skynetState, actions, registerCleanup, navigate: dependencies.navigate, timers: dependencies.timers }) };
+    return { state: skynetState, mount: (registerCleanup) => mountSkynetIsland({ chipsHost, barHost, mapHost, remoteHost, bannerHost, state: skynetState, actions, registerCleanup, navigate: dependencies.navigate, timers: dependencies.timers }) };
   },
 });
 
@@ -563,11 +563,11 @@ export function mountSkynetFeature(dependencies = {}) {
   return mountIslandDescriptor(skynetDescriptor, dependencies);
 }
 
-// The merged "Groups · all nodes" view is its own island: it pulls in the
-// Groups renderer, and a failure there must not take the node chips down.
+// The fused Groups view is its own island: it pulls in the Groups renderer,
+// and a failure there must not take the node chips down.
 const skynetFleetDescriptor = createIslandDescriptor({
-  name: 'skynet-fleet', label: 'Groups on all nodes',
-  hosts: { host: '#skynet-fleet-root' },
+  name: 'skynet-fleet', label: 'Groups on several nodes',
+  hosts: { host: '#skynet-fused-groups-root' },
   failureClass: 'skynet-error',
   load: async ({ hosts: { host } }) => {
     const islandModule = import('./skynet-merged-island.js');

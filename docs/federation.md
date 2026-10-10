@@ -2504,7 +2504,7 @@ status while preserving successful rows. A successful live read marks the
 row online even if the cached directory has not caught up.
 
 `agent groups ls --all-nodes` is the CLI side of the dashboard's
-"Groups · all nodes" view: this node's groups and every trusted peer's shared
+fused Groups view with every node ticked: this node's groups and every trusted peer's shared
 groups, named `group@node`. Peers are read like a summary listing (at most four
 at a time, no retries). JSON carries `nodes` (an `error` on any unreachable
 peer) and `groups` rows with `group`, `node`, `node_id`, `members` and

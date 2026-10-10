@@ -239,7 +239,8 @@ function activate(loc) {
 // across a theme toggle desync the URL from the live theme. Everything else —
 // including consumed-on-load legacy deep-link params (?tab=/?access_request=) —
 // is intentionally dropped so the address bar settles to a clean canonical
-// location. Returns "" or "?slop=1"/"?wizard=1", plus node=<id> on a peer view.
+// location. Returns "" or "?slop=1"/"?wizard=1", plus node=<id> on a peer view
+// and nodes=<set> in a fused view.
 function preservedQuery() {
   const out = new URLSearchParams();
   if (document.body.classList.contains('slop')) out.set('slop', '1');
@@ -247,6 +248,9 @@ function preservedQuery() {
   // A peer's per-node view (remote-node.js) is a property of the page, not of
   // a history entry: every location on it stays on that node.
   if (globalThis.__tclaudeRemoteNode?.id) out.set('node', globalThis.__tclaudeRemoteNode.id);
+  // So is a fused view's node set (skynet-island.js mirrors it here).
+  const nodes = document.documentElement.dataset.scopeNodes;
+  if (nodes) out.set('nodes', nodes);
   const s = out.toString();
   return s ? '?' + s : '';
 }

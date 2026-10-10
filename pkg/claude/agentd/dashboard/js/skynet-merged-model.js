@@ -54,12 +54,13 @@ export function uniqueNodeNames(nodes) {
 // mergeSnapshots returns a snapshot-shaped object whose groups and agents come
 // from every node. Group names (and parent references) carry @node so names
 // never collide across nodes; each group also carries fleet_node for the
-// renderer's node colour and stale treatment. The local snapshot provides the
-// presentation settings (theme, attachments mode, …) since the view is local.
-export function mergeSnapshots(input, now = Date.now()) {
+// renderer's node colour and stale treatment. The page's own snapshot (base,
+// else this node's) provides the presentation settings (theme, attachments
+// mode, …).
+export function mergeSnapshots(input, now = Date.now(), base = null) {
   const names = uniqueNodeNames(input);
   const nodes = input.map(({ node, entry }) => ({ node: { ...node, name: names.get(node.id) }, entry }));
-  const local = nodes.find((n) => n.node.local)?.entry?.snapshot || {};
+  const local = base || nodes.find((n) => n.node.local)?.entry?.snapshot || {};
   const groups = [];
   const agents = [];
   const seenAgents = new Set();

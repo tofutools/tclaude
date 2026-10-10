@@ -1,6 +1,7 @@
 import { computed, effect, signal } from '@preact/signals';
 import { dashboardState } from './snapshot-store.js';
 import { normalizeFleet } from './skynet-model.js';
+import { parseFused } from './skynet-scope.js';
 
 // TOP_LEVEL_TABS are the multi-node views (the map, the merged Groups view
 // and fleet administration): they hide the per-node tabs and are never a per-node tab to return to.
@@ -9,8 +10,11 @@ export const TOP_LEVEL_TABS = new Set(['map', 'fleet', 'fleet-admin']);
 // createSkynetState holds the chip row's fleet list and the map's per-node
 // summaries. It owns no timers or fetches; skynet-actions.js loads, and the
 // island's effects decide when (only while the map is on screen).
-export function createSkynetState({ activeTab = dashboardState.activeTab, now = () => Date.now() } = {}) {
+export function createSkynetState({ activeTab = dashboardState.activeTab, now = () => Date.now(), search = globalThis.location?.search || '' } = {}) {
   const fleet = signal(null);
+  // fused is the node scope's fused set (skynet-scope.js): null shows one
+  // node, else 'all' or the ticked instance IDs. It starts from ?nodes=.
+  const fused = signal(parseFused(search));
   // summaries maps instance ID -> { summary, etag, receivedAt, failure, failures }.
   const summaries = signal({});
   const focused = signal('');
@@ -31,6 +35,7 @@ export function createSkynetState({ activeTab = dashboardState.activeTab, now = 
     summaries: summaries.value,
     focused: focused.value,
     statusLoaded: statusLoaded.value,
+    fused: fused.value,
   }));
   function markStatusLoaded() { statusLoaded.value = true; }
   function setStatus(status) {
@@ -49,9 +54,10 @@ export function createSkynetState({ activeTab = dashboardState.activeTab, now = 
     const prev = entry(id);
     summaries.value = { ...summaries.value, [id]: { summary: prev?.summary ?? null, etag: prev?.etag || '', receivedAt: prev?.receivedAt ?? null, failure, failures: (prev?.failures || 0) + 1 } };
   }
+  function setFused(value) { fused.value = value || null; }
   function setFocused(id) { focused.value = id || ''; }
   function lastLocalTab() { return lastLocal; }
-  return Object.freeze({ fleet, summaries, focused, view, statusLoaded, markStatusLoaded, setStatus, clearFleet, entry, commitSummary, failSummary, setFocused, lastLocalTab, dispose: stopTracking });
+  return Object.freeze({ fleet, fused, setFused, summaries, focused, view, statusLoaded, markStatusLoaded, setStatus, clearFleet, entry, commitSummary, failSummary, setFocused, lastLocalTab, dispose: stopTracking });
 }
 
 export const skynetState = createSkynetState();
