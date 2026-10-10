@@ -39,12 +39,25 @@ func openTerminalFileRoot(cwd string) (*os.File, string, error) {
 	}
 	home, _ := os.UserHomeDir()
 	home, _ = filepath.EvalSymlinks(home)
+	policyRoot := root
+	if runtime.GOOS == "darwin" {
+		policyRoot = strings.ToLower(root)
+	}
 	broad := root == "/" || root == home
+	if homeInfo, e := os.Stat(home); e == nil {
+		broad = broad || os.SameFile(expected, homeInfo)
+	}
 	for _, dir := range []string{"/etc", "/usr", "/var", "/private", "/private/etc", "/private/var", "/System", "/Library", "/bin", "/sbin", "/dev", "/proc", "/sys"} {
-		broad = broad || root == dir
+		if runtime.GOOS == "darwin" {
+			dir = strings.ToLower(dir)
+		}
+		broad = broad || policyRoot == dir
 	}
 	for _, dir := range []string{"/etc/", "/usr/", "/private/etc/", "/System/", "/Library/", "/dev/", "/proc/", "/sys/"} {
-		broad = broad || strings.HasPrefix(root, dir)
+		if runtime.GOOS == "darwin" {
+			dir = strings.ToLower(dir)
+		}
+		broad = broad || strings.HasPrefix(policyRoot, dir)
 	}
 	if broad {
 		return nil, "", terminalFileRefusal(403, "root_too_broad", "downloads need an agent running in a project directory; system and home roots are refused")

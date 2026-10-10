@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
@@ -114,7 +115,9 @@ func TestDashboardTerminalFileVerifiedDownloadAndHead(t *testing.T) {
 	require.Equal(t, 403, refused.Code)
 }
 
-func TestFederationFileCLIUsesTemporaryPinnedViewer(t *testing.T) {
+func TestFederationFileCLIUsesTemporaryPinnedViewer(t *testing.T) { cliFileTransferFlow(t, false) }
+func TestFederationFileCLIStopsOnViewerReset(t *testing.T)        { cliFileTransferFlow(t, true) }
+func cliFileTransferFlow(t *testing.T, reset bool) {
 	fh := newFedHarness(t)
 	row := dashboardRemoteTerminalCatalog(t, fh, proto.CapSessionsWatch, proto.CapSessionsFilesRead)
 	done := make(chan *httptest.ResponseRecorder, 1)
@@ -166,12 +169,28 @@ func TestFederationFileCLIUsesTemporaryPinnedViewer(t *testing.T) {
 	fh.peer.send(reply)
 	file := fedPeerStream(t, fh.peer, req.Stream, fileKey, req.Key, false)
 	hash := sha256.Sum256(nil)
-	raw, err := json.Marshal(map[string]any{"status": 200, "bytes": 0, "sha256": hex.EncodeToString(hash[:])})
+	size := 0
+	if reset {
+		size = 1
+	}
+	raw, err := json.Marshal(map[string]any{"status": 200, "bytes": size, "sha256": hex.EncodeToString(hash[:])})
 	require.NoError(t, err)
 	var prefix [4]byte
 	binary.BigEndian.PutUint32(prefix[:], uint32(len(raw)))
 	_, err = file.Write(append(prefix[:], raw...))
 	require.NoError(t, err)
+	if reset {
+		require.NoError(t, viewer.Close())
+		select {
+		case rec := <-done:
+			require.NotEqual(t, 200, rec.Code)
+			require.NotContains(t, rec.Body.String(), "binary report")
+		case <-time.After(5 * time.Second):
+			t.Fatal("download survived closed temporary viewer")
+		}
+		file.Close()
+		return
+	}
 	require.NoError(t, file.CloseWrite())
 	rec := <-done
 	file.Close()

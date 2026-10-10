@@ -467,6 +467,7 @@ func handleFederationFileGet(w http.ResponseWriter, r *http.Request) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		defer v.cancel()
 		for {
 			frame, err := terminal.Read(conn)
 			if err != nil {
