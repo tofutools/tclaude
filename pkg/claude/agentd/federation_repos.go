@@ -8,6 +8,12 @@ import (
 	"github.com/tofutools/tclaude/pkg/federation/jobrepo"
 )
 
+// Names are display metadata; the immutable definition keeps group IDs as authority.
+type federationRepoResponse struct {
+	db.FederationRepo
+	GroupNames []string `json:"group_names"`
+}
+
 func registerFederationRepoRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/federation/repos", handleFederationRepos)
 	mux.HandleFunc("POST /v1/federation/repos", handleFederationRepos)
@@ -24,7 +30,26 @@ func handleFederationRepos(w http.ResponseWriter, r *http.Request) {
 			writeFedErr(w, e)
 			return
 		}
-		writeJSON(w, 200, map[string]any{"repos": rows})
+		groups, e := db.ListAgentGroups()
+		if e != nil {
+			writeFedErr(w, e)
+			return
+		}
+		names := make(map[int64]string, len(groups))
+		for _, group := range groups {
+			names[group.ID] = group.Name
+		}
+		result := make([]federationRepoResponse, 0, len(rows))
+		for _, row := range rows {
+			groupNames := []string{}
+			for _, id := range row.Definition.Groups {
+				if name, exists := names[id]; exists {
+					groupNames = append(groupNames, name)
+				}
+			}
+			result = append(result, federationRepoResponse{FederationRepo: row, GroupNames: groupNames})
+		}
+		writeJSON(w, 200, map[string]any{"repos": result})
 		return
 	}
 	// Share the policy mutex with trust/grant/profile changes; a launch pins
@@ -55,6 +80,7 @@ func handleFederationRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	groups := []int64{}
+	groupNames := []string{}
 	seen := map[int64]bool{}
 	for _, name := range body.Groups {
 		g, e := db.GetAgentGroupByName(name)
@@ -64,6 +90,7 @@ func handleFederationRepos(w http.ResponseWriter, r *http.Request) {
 		}
 		if !seen[g.ID] {
 			groups = append(groups, g.ID)
+			groupNames = append(groupNames, g.Name)
 			seen[g.ID] = true
 		}
 	}
@@ -86,5 +113,5 @@ func handleFederationRepos(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, "repository", e.Error())
 		return
 	}
-	writeJSON(w, 200, row)
+	writeJSON(w, 200, federationRepoResponse{FederationRepo: row, GroupNames: groupNames})
 }

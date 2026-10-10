@@ -2828,7 +2828,10 @@ GET `/api/federation/repos` returns `{repos:[...]}`; POST accepts
 `{name,url,clone,groups:[...]}`, PUT `/{name}` also carries the current `revision`,
 and DELETE `/{name}` disables it. Repository aliases, inspected canonical local
 paths, receiving groups and revisions retain the CLI validation and checks.
-GET/HEAD list requests never mutate the allowlist.
+GET/HEAD list requests never mutate the allowlist. Each repository row also carries
+`group_names`, the current names in `definition.groups` order, omitting deleted
+groups while preserving the relative order of surviving names. Create and update
+responses carry this field too; the stored group IDs remain the authority.
 
 GET `/api/federation/viewers?session=...` lists incoming terminal viewer rows
 (`id`, `peer`, `agent`, `session`, `group`, `read_only`, `started`, `incoming`).

@@ -83,6 +83,70 @@ func TestDashboardFederationJobsAndRepos(t *testing.T) {
 	require.Equal(t, 403, rec.Code, rec.Body.String())
 }
 
+func TestDashboardFederationRepositoryGroupNames(t *testing.T) {
+	fh := newFedHarness(t)
+	for _, name := range []string{"team", "alpha", "zeta"} {
+		fh.f.HaveGroup(name)
+	}
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://localhost:12345"))
+	root := fedJobRepo(t, fh)
+	h := agentd.BuildDashboardHandlerForTest()
+	type repoResponse struct {
+		db.FederationRepo
+		GroupNames []string `json:"group_names"`
+	}
+	body := map[string]any{"name": "ordered", "url": (&url.URL{Scheme: "file", Path: root}).String(), "clone": root, "groups": []string{"zeta", "alpha", "zeta"}}
+	rec := testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/federation/repos", body))
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var created repoResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+	require.Equal(t, []string{"zeta", "alpha"}, created.GroupNames)
+	require.Len(t, created.Definition.Groups, 2)
+	body["revision"] = created.Revision
+	rec = testharness.Serve(h, testharness.JSONRequest(t, "PUT", "/api/federation/repos/ordered", body))
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var updated repoResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &updated))
+	require.Equal(t, created.GroupNames, updated.GroupNames)
+
+	read := func(cli bool, want []string) {
+		t.Helper()
+		var raw []byte
+		if cli {
+			rec := fedHuman(t, fh.f, "GET", "/v1/federation/repos", nil)
+			require.Equal(t, 200, rec.Code, rec.Body.String())
+			raw = rec.Body.Bytes()
+		} else {
+			rec := testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/federation/repos", nil))
+			require.Equal(t, 200, rec.Code, rec.Body.String())
+			raw = rec.Body.Bytes()
+		}
+		var result struct {
+			Repos []repoResponse `json:"repos"`
+		}
+		require.NoError(t, json.Unmarshal(raw, &result))
+		for _, row := range result.Repos {
+			if row.Name == "ordered" {
+				require.Equal(t, want, row.GroupNames)
+				require.Equal(t, created.Definition.Groups, row.Definition.Groups, "names must not change the stored authority")
+				return
+			}
+		}
+		t.Fatal("repository missing")
+	}
+	read(false, []string{"zeta", "alpha"})
+	rec = testharness.Serve(h, testharness.JSONRequest(t, "POST", "/api/groups/zeta/rename", map[string]string{"new_name": "renamed"}))
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	read(false, []string{"renamed", "alpha"})
+	rec = testharness.Serve(h, testharness.JSONRequest(t, "DELETE", "/api/groups/alpha", nil))
+	require.Equal(t, 204, rec.Code, rec.Body.String())
+	read(false, []string{"renamed"})
+	read(true, []string{"renamed"})
+	rec = testharness.Serve(h, testharness.JSONRequest(t, "DELETE", "/api/groups/renamed", nil))
+	require.Equal(t, 204, rec.Code, rec.Body.String())
+	read(false, []string{})
+}
+
 func TestDashboardFederationIncomingViewerKick(t *testing.T) {
 	fh := newFedHarness(t)
 	f, p := fh.f, fh.peer
