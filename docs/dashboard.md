@@ -531,17 +531,32 @@ and pages can read or change.
 
 ### Node chips and switching
 
-The right end of the tab bar shows a chip for this node (⌂) and one per trusted
-peer, with a dot for its presence. Click a chip to open that node's own
-dashboard; ⌂ returns to this node. Alt+1 is this node and Alt+2…9 the peers in
-chip order; the shortcut never fires while you type in a field or a web
-terminal has focus. The chip row appears only when a peer is trusted and adds
-no height to the page.
+The right end of the tab bar picks the nodes the dashboard shows. With up to
+four nodes there is a button for this node (⌂) and one per trusted peer, with a
+dot for its presence; past four they fold into one dropdown that names the node
+on screen, filters as you type and keeps this node first. Click a node to open
+its own dashboard; ⌂ returns to this node. Alt+1 is this node and Alt+2…9 the
+peers in order; the shortcut never fires while you type in a field or a web
+terminal has focus. The row appears only when a peer is trusted and adds no
+height to the page.
+
+### Fused nodes
+
+**nodes ▾**, after the node buttons, shows several nodes together: tick the
+nodes (all by default), and **Groups** lists the ticked nodes' groups as one
+tree (see [Groups on several nodes](#groups-on-several-nodes)); the button
+reads e.g. `2/3`. Clicking a node's name (or its **only**) shows that node
+alone, as does unticking all but one. Every other tab still shows one node, the
+primary: the node of the page you fused from. It says so in a strip at the top,
+whose buttons switch the primary without leaving the fused view, and the tab
+label carries a dot in the primary's colour. The fused set is part of the
+address (`?nodes=all`, or the ticked instance IDs), so a reload keeps it.
 
 ### The map
 
-The map icon at the end of the chip row opens the top-level views, and the tab
-strip turns into their switch: **Map**, **Groups · all nodes** and **⚙ Fleet**.
+The map icon at the end of the node row opens the top-level views, and the tab
+strip turns into their switch: **Map**, **Groups · all nodes** (the fused
+Groups view of every node) and **⚙ Fleet**.
 `[` / `]` step back to the tab you came from.
 
 The map draws this node and each peer as a card joined by link edges (solid:
@@ -599,9 +614,9 @@ refresh. A peer only takes requests from nodes it already shares something
 with. CLI: `tclaude federation access request --node <peer> --permission <slug>
 [--group-id …] [--ttl …] [--reason …]`, then `access status`.
 
-### Groups · all nodes
+### Groups on several nodes
 
-The merged view lists every group on this node and each peer, named
+In a fused view, Groups lists every group on the ticked nodes, named
 `group@node` with the node's colour on the suffix. On a peer's rows, the
 controls that peer shares with you run through its peer routes, exactly as on
 its per-node view: the status dot (stop, or wake a stopped agent), restart,
@@ -609,7 +624,8 @@ sandbox restart, retire, clone, the group's spawn button and its ✉ message
 button (one agent at a time). Everything else — and every control on this
 node's own rows — stays an overview: click a group's `@node` suffix to act on
 it in that node's dashboard. An unreachable node keeps its last rows, marked
-stale. CLI: `tclaude agent groups ls --all-nodes`; actions are
+stale; a node no longer trusted drops them. The old `/fleet` address opens this
+view with every node ticked. CLI: `tclaude agent groups ls --all-nodes`; actions are
 `tclaude federation action ... --node NODE`.
 
 ### The 🌐 marker

@@ -6,7 +6,8 @@ import { RequestAccessDialog } from './peer-access.js';
 import { RemoteSessionsDialog } from './remote-terminal.js';
 import { PeerActionHost } from './peer-action.js';
 import { shellConfirm, shellToast } from './shell-state.js';
-import { STATUS_POLL_MS, cardView, fmtAge, nodeColor, nodeHref, peerViewSummary, pollDelay, remoteHealthView, remoteNodeID, staggerOffset, switchOrder, visibleChips } from './skynet-model.js';
+import { STATUS_POLL_MS, cardView, fmtAge, nodeColor, nodeHref, peerViewSummary, pollDelay, remoteHealthView, remoteNodeID, staggerOffset, switchOrder } from './skynet-model.js';
+import { FUSED_TABS, filterNodes, fleetNodes, fusedParam, isTicked, selectorKind, tickedNodes, toggleNode, withFused } from './skynet-scope.js';
 import { dashboardState } from './snapshot-store.js';
 import { TOP_LEVEL_TABS } from './skynet-state.js';
 
@@ -52,39 +53,221 @@ function presenceLabel(node) {
   return node.online ? 'online' : 'offline';
 }
 
-// NodeChips is the tab-bar node row: this node, then trusted peers, then an
-// overflow chip. The map entry is the static nav[data-tab="map"] anchor right
-// after this host, so tab routing keeps one owner.
+// writeScopeURL keeps ?nodes= in the address bar in step with the fused set
+// without a page load; nav-history.js carries it across tab pushes. Callers
+// that navigate right after (switchNode) need it written synchronously.
+export function writeScopeURL(fused, win = globalThis) {
+  const loc = win.location;
+  if (!loc || !win.history?.replaceState) return;
+  const next = loc.pathname + withFused(loc.search, fused) + (loc.hash || '');
+  if (next !== loc.pathname + loc.search + (loc.hash || '')) win.history.replaceState(win.history.state, '', next);
+}
+
+// pickNode shows one node on its own: it leaves any fused view, then shows
+// that node's per-node view (a page load for another node, as before).
+function pickNode(state, id, { navigate, remote, switchNode }) {
+  const fleet = state.fleet.value;
+  if (!fleet) return;
+  const wasFused = !!state.fused.value;
+  state.setFused(null);
+  writeScopeURL(null);
+  if (id === (remote || fleet.self.id)) {
+    if (state.view.value.topLevel || !wasFused) navigate(state.lastLocalTab());
+  } else switchNode(id === fleet.self.id ? '' : id);
+}
+
+// usePopover closes a popover on a click outside it or Escape. The popover is
+// fixed under its button (the chip host clips), right-aligned to it.
+function usePopover(rootRef) {
+  const [open, setOpenRaw] = useState(false);
+  const [pos, setPos] = useState(null);
+  const setOpen = (next) => {
+    const r = next && rootRef.current?.getBoundingClientRect?.();
+    if (r) setPos({ top: Math.round(r.bottom + 6), right: Math.max(8, Math.round((globalThis.innerWidth || r.right) - r.right)) });
+    setOpenRaw(next);
+  };
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (event) => { if (!rootRef.current?.contains(event.target)) setOpen(false); };
+    const onKey = (event) => { if (event.key === 'Escape') { event.stopPropagation(); setOpen(false); } };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey, true);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey, true); };
+  }, [open]);
+  return [open, setOpen, pos ? `top:${pos.top}px;right:${pos.right}px` : ''];
+}
+
+function nodeMeta(node) {
+  if (node.local) return 'this node';
+  if (node.online) return 'connected';
+  return node.lastSeen ? `offline · seen ${fmtAge(Math.max(0, Date.now() - new Date(node.lastSeen).getTime()))} ago` : 'offline';
+}
+
+// NodeDropdown stands in for the node buttons past BUTTON_LIMIT nodes: one
+// button naming the node on screen, opening a type-to-filter list with this
+// node pinned first and a status dot per node.
+function NodeDropdown({ state, fleet, pageNode, fused, onPick }) {
+  const rootRef = useRef(null);
+  const inputRef = useRef(null);
+  const [open, setOpen, popStyle] = usePopover(rootRef);
+  const [query, setQuery] = useState('');
+  const [hl, setHl] = useState(0);
+  useEffect(() => { if (open) { setQuery(''); setHl(0); inputRef.current?.focus(); } }, [open]);
+  const shown = fleetNodes(fleet).find((n) => n.id === pageNode) || fleet.self;
+  const list = filterNodes(fleet, query);
+  const pick = (node) => { setOpen(false); onPick(node.id); };
+  const onKey = (event) => {
+    if (event.key === 'ArrowDown') { event.preventDefault(); setHl((i) => Math.min(list.length - 1, i + 1)); }
+    else if (event.key === 'ArrowUp') { event.preventDefault(); setHl((i) => Math.max(0, i - 1)); }
+    else if (event.key === 'Enter' && list[hl]) { event.preventDefault(); pick(list[hl]); }
+  };
+  const row = (node, i) => html`<button type="button" key=${node.id} role="option" aria-selected=${i === hl ? 'true' : 'false'}
+    class=${`node-pop-row${node.online || node.local ? '' : ' offline'}${i === hl ? ' hl' : ''}${!fused && node.id === pageNode ? ' sel' : ''}`}
+    style=${`--nc:${node.color}`} onMouseEnter=${() => setHl(i)} onClick=${() => pick(node)}>
+    <span class="node-pop-dot" aria-hidden="true"></span><span class="node-pop-name">${node.local ? '⌂ ' : ''}${node.name}</span>
+    <span class="node-pop-meta">${nodeMeta(node)}${!fused && node.id === pageNode ? ' · shown' : ''}</span>
+  </button>`;
+  const self = list[0]?.local ? list[0] : null;
+  return html`<span class="node-pick" ref=${rootRef}>
+    <button type="button" class=${`node-chip node-pick-btn${fused ? (isTicked(fused, shown.id) ? ' ticked' : '') : ' active'}${shown.local || shown.online ? '' : ' offline'}`} style=${`--nc:${shown.color}`}
+      aria-haspopup="listbox" aria-expanded=${open ? 'true' : 'false'} aria-label=${`Node: ${shown.name}. Choose a node`} title=${`${shown.name}: pick a node to show`}
+      onClick=${() => setOpen(!open)}>
+      ${shown.local && html`<span class="node-chip-home" aria-hidden="true">⌂</span>`}<span class="node-chip-name">${shown.name}</span><span class="node-pick-caret" aria-hidden="true">▾</span><span class="node-chip-dot"></span>
+    </button>
+    ${open && html`<div class="node-pop" role="dialog" aria-label="Choose a node" style=${popStyle}>
+      <label class="node-pop-filter"><input ref=${inputRef} type="text" value=${query} placeholder="type to filter" aria-label="Filter nodes"
+        onInput=${(e) => { setQuery(e.currentTarget.value); setHl(0); }} onKeyDown=${onKey} /></label>
+      <div role="listbox" aria-label="Nodes">
+        ${list.map((node, i) => html`${row(node, i)}${self && i === 0 && list.length > 1 ? html`<hr class="node-pop-sep" />` : ''}`)}
+      </div>
+      <div class="node-pop-foot">${list.length} of ${fleetNodes(fleet).length} · ↑↓ ↵ · Alt+1 this node</div>
+    </div>`}
+  </span>`;
+}
+
+// FusedDropdown is the fused-view control: a checkbox per node, defaulting to
+// all. Ticking two or more shows them together in Groups and Terminals;
+// clicking a node's name (or its "only") shows that node alone.
+function FusedDropdown({ state, fleet, fused, pageNode, onPick, onFuse }) {
+  const rootRef = useRef(null);
+  const [open, setOpen, popStyle] = usePopover(rootRef);
+  const [query, setQuery] = useState('');
+  const nodes = fleetNodes(fleet);
+  const ticked = fused ? tickedNodes(fleet, fused) : nodes;
+  const list = selectorKind(fleet) === 'dropdown' ? filterNodes(fleet, query) : nodes;
+  const toggle = (id) => {
+    const next = toggleNode(fleet, fused || 'all', id);
+    if (next.only !== undefined) { setOpen(false); onPick(next.only); } else onFuse(next);
+  };
+  const onButton = () => {
+    if (!fused) { onFuse('all'); setOpen(true); } else setOpen(!open);
+  };
+  const primary = nodes.find((n) => n.id === pageNode) || fleet.self;
+  return html`<span class="node-pick" ref=${rootRef}>
+    <button type="button" class=${`node-chip node-fuse${fused ? ' active' : ''}`} aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
+      aria-label=${fused ? `Fused view of ${ticked.length} of ${nodes.length} nodes. Change the nodes` : 'Show several nodes together'}
+      title=${fused ? `Groups and Terminals show ${ticked.length} of ${nodes.length} nodes` : 'Show several nodes together in Groups and Terminals'} onClick=${onButton}>
+      <span class="node-fuse-stack" aria-hidden="true">${nodes.slice(0, 4).map((n) => html`<b key=${n.id} class=${isTicked(fused || 'all', n.id) ? '' : 'off'} style=${`--c:${n.color}`}></b>`)}</span>
+      <span class="node-chip-name">${fused ? `${ticked.length}/${nodes.length}` : 'nodes'}</span><span class="node-pick-caret" aria-hidden="true">▾</span>
+    </button>
+    ${open && html`<div class="node-pop node-fuse-pop" role="dialog" aria-label="Fuse nodes" style=${popStyle}>
+      <div class="node-pop-head"><span>Fuse nodes</span>${fused !== 'all' && html`<button type="button" class="node-pop-link" data-fuse="all" onClick=${() => onFuse('all')}>all</button>`}</div>
+      ${list !== nodes && html`<label class="node-pop-filter"><input type="text" value=${query} placeholder="type to filter" aria-label="Filter nodes" onInput=${(e) => setQuery(e.currentTarget.value)} /></label>`}
+      ${list.map((node) => html`<div key=${node.id} class=${`node-pop-row${node.online || node.local ? '' : ' offline'}`} style=${`--nc:${node.color}`}>
+        <input type="checkbox" checked=${isTicked(fused || 'all', node.id)} aria-label=${`Include ${node.name}`} data-fuse-node=${node.id} onChange=${() => toggle(node.id)} />
+        <span class="node-pop-swatch" aria-hidden="true"></span>
+        <button type="button" class="node-pop-name" title=${`Show ${node.name} alone`} onClick=${() => { setOpen(false); onPick(node.id); }}>${node.local ? '⌂ ' : ''}${node.name}</button>
+        <button type="button" class="node-pop-only" tabindex="-1" onClick=${() => { setOpen(false); onPick(node.id); }}>only</button>
+        <span class="node-pop-meta">${node.local ? '' : html`<span class="node-pop-dot" aria-hidden="true"></span>`}${nodeMeta(node)}${node.id === primary.id ? ' · primary' : ''}</span>
+      </div>`)}
+      <div class="node-pop-foot"><b>Groups</b> and <b>Terminals</b> show the ticked nodes together. Other tabs show one node, the primary: <b>${primary.local ? '⌂ ' : ''}${primary.name}</b>.</div>
+    </div>`}
+  </span>`;
+}
+
+// NodeChips is the tab-bar node selector: a button per node (or one node
+// dropdown past BUTTON_LIMIT nodes), then the fused-view dropdown. The map
+// entry is the static nav[data-tab="map"] anchor right after this host, so tab
+// routing keeps one owner.
 export function NodeChips({ state, navigate = defaultNavigate, remote = remoteNodeID(), switchNode = defaultSwitchNode }) {
   const current = state.view.value;
   const fleet = current.fleet;
   if (!fleet) return null;
-  const { shown, overflow } = visibleChips(fleet.peers);
-  // A peer view of a node past the chip budget swaps it into the last slot, so
-  // the node on screen always has its chip highlighted.
-  const remotePeer = remote && !shown.some((p) => p.id === remote) ? fleet.peers.find((p) => p.id === remote) : null;
-  if (remotePeer && shown.length) shown[shown.length - 1] = remotePeer;
-  // The shown node's chip is current while its per-node view is on screen.
-  const isCurrent = (id) => !current.topLevel && (remote ? remote === id : id === fleet.self.id);
-  const openNode = (id) => {
-    if (id === (remote || fleet.self.id)) navigate(state.lastLocalTab());
-    else switchNode(id === fleet.self.id ? '' : id);
+  const fused = current.fused;
+  const pageNode = remote || fleet.self.id;
+  const onPick = (id) => pickNode(state, id, { navigate, remote, switchNode });
+  const onFuse = (value) => {
+    state.setFused(value);
+    writeScopeURL(value);
+    if (state.view.value.topLevel) navigate('groups');
   };
+  // The shown node's button is current while its per-node view is on screen;
+  // in a fused view every ticked node's button is outlined instead.
+  const isCurrent = (id) => !fused && !current.topLevel && id === pageNode;
+  const cls = (node) => `node-chip${node.local ? ' local' : ''}${node.local || node.online ? '' : ' offline'}${isCurrent(node.id) ? ' active' : ''}${fused && isTicked(fused, node.id) ? ' ticked' : ''}`;
   const self = fleet.self;
+  const buttons = selectorKind(fleet) === 'buttons';
   return html`<span class="node-chips" role="group" aria-label="Nodes">
-    <button type="button" class=${`node-chip local${isCurrent(self.id) ? ' active' : ''}`} style=${`--nc:${self.color}`}
+    ${buttons ? html`
+    <button type="button" class=${cls(self)} style=${`--nc:${self.color}`}
       aria-current=${isCurrent(self.id) ? 'page' : undefined} aria-label=${`${self.name} (this node)`}
-      title=${`${self.name}: this node · Alt+1`} onClick=${() => openNode(self.id)}>
+      title=${`${self.name}: this node · Alt+1`} onClick=${() => onPick(self.id)}>
       <span class="node-chip-home" aria-hidden="true">⌂</span><span class="node-chip-name">${self.name}</span><span class="node-chip-dot"></span>
     </button>
-    ${shown.map((peer, i) => html`<button key=${peer.id} type="button" class=${`node-chip${peer.online ? '' : ' offline'}${isCurrent(peer.id) ? ' active' : ''}`} style=${`--nc:${peer.color}`}
+    ${fleet.peers.map((peer, i) => html`<button key=${peer.id} type="button" class=${cls(peer)} style=${`--nc:${peer.color}`}
       aria-current=${isCurrent(peer.id) ? 'page' : undefined} aria-label=${`${peer.name}, ${presenceLabel(peer)}, ${peer.level} peer`}
-      title=${`${peer.name}: ${presenceLabel(peer)} · ${peer.level} peer · open its dashboard${i < 8 ? ` · Alt+${i + 2}` : ''}`} onClick=${() => openNode(peer.id)}>
+      title=${`${peer.name}: ${presenceLabel(peer)} · ${peer.level} peer · open its dashboard${i < 8 ? ` · Alt+${i + 2}` : ''}`} onClick=${() => onPick(peer.id)}>
       <span class="node-chip-name">${peer.name}</span><span class="node-chip-dot"></span>
-    </button>`)}
-    ${overflow > 0 && html`<button type="button" class="node-chip more" aria-label=${`${overflow} more nodes on the map`} title=${`${overflow} more nodes: open the map`} onClick=${() => navigate('map')}>+${overflow}</button>`}
+    </button>`)}`
+    : html`<${NodeDropdown} state=${state} fleet=${fleet} pageNode=${pageNode} fused=${fused} onPick=${onPick} />`}
     <span class="node-chips-sep" aria-hidden="true"></span>
+    <${FusedDropdown} state=${state} fleet=${fleet} fused=${fused} pageNode=${pageNode} onPick=${onPick} onFuse=${onFuse} />
   </span>`;
+}
+
+// ScopeSync mirrors the fused set onto the page: the html class the CSS keys
+// on, the ?nodes= value nav-history.js carries across tab pushes, and the
+// primary's colour. It drops a fused set once a status read says no linked
+// nodes are left (a failed read keeps it).
+export function ScopeSync({ state, navigate = defaultNavigate, remote = remoteNodeID() }) {
+  const current = state.view.value;
+  const fused = current.fused;
+  const fleet = current.fleet;
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle('scope-fused', !!fused);
+    if (fused) root.dataset.scopeNodes = fusedParam(fused); else delete root.dataset.scopeNodes;
+    writeScopeURL(fused);
+  }, [fusedParam(fused)]);
+  useEffect(() => {
+    const primary = fleet && (fleetNodes(fleet).find((n) => n.id === (remote || fleet.self.id)) || fleet.self);
+    if (primary) document.documentElement.style.setProperty('--scope-primary', primary.color);
+  }, [fleet, remote]);
+  useEffect(() => {
+    if (fused && current.noFleet) { state.setFused(null); writeScopeURL(null); }
+  }, [!!fused, current.noFleet]);
+  return null;
+}
+
+// ScopeBanner tops a per-node tab while a fused view is on: that tab shows one
+// node, the primary, and the strip says which and can switch it (a page load,
+// as any node switch; the fused set stays).
+export function ScopeBanner({ state, remote = remoteNodeID(), switchNode = defaultSwitchNode, doc = globalThis.document }) {
+  const current = state.view.value;
+  const fleet = current.fleet;
+  if (!fleet || !current.fused || current.topLevel || FUSED_TABS.has(current.activeTab)) return null;
+  const ticked = tickedNodes(fleet, current.fused);
+  const pageNode = remote || fleet.self.id;
+  const primary = fleetNodes(fleet).find((n) => n.id === pageNode) || fleet.self;
+  const label = doc?.querySelector?.(`nav [data-tab="${current.activeTab}"] .tab-label-regular`)?.textContent?.trim() || 'This tab';
+  const pill = (n) => html`<span class="scope-pill" style=${`--nc:${n.color}`}>${n.local ? '⌂ ' : ''}${n.name}</span>`;
+  return html`<div class="scope-banner" role="status" style=${`--nc:${primary.color}`}>
+    <span>${label} shows one node. Showing ${pill(primary)}, the primary of your ${ticked.length} fused nodes.</span>
+    <span class="scope-banner-seg" role="group" aria-label="Primary node">
+      ${ticked.map((n) => html`<button type="button" key=${n.id} class=${n.id === pageNode ? 'on' : ''} aria-pressed=${n.id === pageNode ? 'true' : 'false'}
+        onClick=${() => { if (n.id !== pageNode) switchNode(n.local ? '' : n.id); }}>${n.local ? '⌂ ' : ''}${n.name}</button>`)}
+    </span>
+  </div>`;
 }
 
 // TopLevelBar replaces the tab strip while a top-level, multi-node view (the
@@ -96,9 +279,14 @@ export function TopLevelBar({ state, navigate = defaultNavigate }) {
   if (!current.topLevel || !current.fleet) return null;
   const n = current.fleet.peers.length + 1;
   const hub = current.fleet.hub.state;
-  const seg = (tab, on, label) => html`<button type="button" class=${`skynet-seg-btn${on ? ' on' : ''}`} aria-current=${on ? 'page' : undefined} onClick=${() => { if (!on) navigate(tab); }}>${label}</button>`;
+  // "Groups · all nodes" is the fused Groups view of every node.
+  const go = (tab) => {
+    if (tab !== 'groups-fused') { navigate(tab); return; }
+    state.setFused('all'); writeScopeURL('all'); navigate('groups');
+  };
+  const seg = (tab, on, label) => html`<button type="button" class=${`skynet-seg-btn${on ? ' on' : ''}`} aria-current=${on ? 'page' : undefined} onClick=${() => { if (!on) go(tab); }}>${label}</button>`;
   return html`<span class="skynet-toplevel-bar">
-    <span class="skynet-seg" role="group" aria-label="Skynet views">${seg('map', current.mapActive, html`<${MapGlyph} /> Map`)}${seg('fleet', current.fleetActive, 'Groups · all nodes')}${seg('fleet-admin', current.adminActive, '⚙ Fleet')}</span>
+    <span class="skynet-seg" role="group" aria-label="Skynet views">${seg('map', current.mapActive, html`<${MapGlyph} /> Map`)}${seg('groups-fused', false, 'Groups · all nodes')}${seg('fleet-admin', current.adminActive, '⚙ Fleet')}</span>
     <span class="skynet-toplevel-note">Skynet · ${n} nodes · hub ${hub} · pick ⌂ ${current.fleet.self.name} to return to its dashboard</span>
   </span>`;
 }
@@ -175,7 +363,7 @@ export function SkynetMap({ state, actions, navigate = defaultNavigate, timers =
   // without linked nodes (a /map deep link on an unlinked node, or the last
   // peer untrusted while the map is open), return to the per-node tab. Fleet
   // administration stays: it is where the first peer gets trusted.
-  const multiNode = current.mapActive || current.fleetActive;
+  const multiNode = current.mapActive;
   useEffect(() => {
     if (multiNode && current.statusLoaded && !fleet) navigate(state.lastLocalTab());
   }, [multiNode, current.statusLoaded, fleetKey]);
@@ -227,10 +415,7 @@ export function SkynetMap({ state, actions, navigate = defaultNavigate, timers =
   const card = (node) => cardView(node, current.summaries[node.id], t);
   // Each card opens its node's per-node view; the node already shown returns
   // to the tab the operator left for the map.
-  const open = (node) => () => {
-    if (node.id === (remote || fleet.self.id)) navigate(state.lastLocalTab());
-    else switchNode(node.local ? '' : node.id);
-  };
+  const open = (node) => () => pickNode(state, node.id, { navigate: () => navigate(state.lastLocalTab()), remote, switchNode });
   return html`<div class="skynet-map" ref=${mapRef}>
     <svg class="skynet-edges" aria-hidden="true">
       ${edges.map((e) => { const p = peerById.get(e.id); const live = p && card(p).presence === 'online'; return html`<path key=${e.id} d=${e.d} class=${`skynet-edge${live ? ' live' : ' stale'}`} />`; })}
@@ -265,8 +450,8 @@ function NodeSwitchKeys({ state, navigate = defaultNavigate, remote = remoteNode
       const node = switchOrder(fleet)[Number(event.code.slice(5)) - 1];
       if (!node) return;
       event.preventDefault();
-      if (node.id === (remote || fleet.self.id)) { if (state.view.value.topLevel) navigate(state.lastLocalTab()); return; }
-      switchNode(node.local ? '' : node.id);
+      if (node.id === (remote || fleet.self.id) && !state.fused.value) { if (state.view.value.topLevel) navigate(state.lastLocalTab()); return; }
+      pickNode(state, node.id, { navigate, remote, switchNode });
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -350,12 +535,13 @@ function StatusPoller({ actions, timers = globalThis }) {
   return null;
 }
 
-export function mountSkynetIsland({ chipsHost, barHost, mapHost, remoteHost, state, actions, registerCleanup, navigate, timers }) {
-  render(html`<${Fragment}><${StatusPoller} actions=${actions} timers=${timers} /><${NodeSwitchKeys} state=${state} navigate=${navigate} /><${NodeChips} state=${state} navigate=${navigate} /></${Fragment}>`, chipsHost);
+export function mountSkynetIsland({ chipsHost, barHost, mapHost, remoteHost, bannerHost, state, actions, registerCleanup, navigate, timers }) {
+  render(html`<${Fragment}><${StatusPoller} actions=${actions} timers=${timers} /><${NodeSwitchKeys} state=${state} navigate=${navigate} /><${ScopeSync} state=${state} navigate=${navigate} /><${NodeChips} state=${state} navigate=${navigate} /></${Fragment}>`, chipsHost);
+  if (bannerHost) render(html`<${ScopeBanner} state=${state} />`, bannerHost);
   // A peer view also hosts the peer action dialog (stop/retire/clone/move/
   // teleport/spawn through the peer's action routes).
   if (remoteHost) render(html`<${RemoteMarker} state=${state} /><${PeerActionHost} snapshot=${dashboardState.snapshot} />`, remoteHost);
   render(html`<${TopLevelBar} state=${state} navigate=${navigate} />`, barHost);
   render(html`<${SkynetMap} state=${state} actions=${actions} navigate=${navigate} timers=${timers} />`, mapHost);
-  registerCleanup(() => { render(null, chipsHost); render(null, barHost); render(null, mapHost); if (remoteHost) render(null, remoteHost); });
+  registerCleanup(() => { render(null, chipsHost); render(null, barHost); render(null, mapHost); if (remoteHost) render(null, remoteHost); if (bannerHost) render(null, bannerHost); });
 }

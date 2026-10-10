@@ -316,12 +316,17 @@
        below is CSS-hidden while the host is empty. -->
   <span id="node-chips-root" class="node-chips-host"></span>
   <a data-tab="map" href="/map" class="node-chip map" title="Skynet map: every linked node" aria-label="Skynet map"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="3" cy="3.5" r="2"/><circle cx="11" cy="3" r="2"/><circle cx="7" cy="11" r="2"/><path d="M4.8 4.3 5.9 9.3M9.4 4.3 7.9 9.3M5 3.4 9 3.1"/></svg><span class="node-chip-name">map</span></a>
-  <a data-tab="fleet" href="/fleet" class="fleet-anchor" aria-label="Groups on all nodes">Groups · all nodes</a>
   <a data-tab="fleet-admin" href="/fleet-admin" class="fleet-anchor" aria-label="Fleet administration">Fleet</a>
   </div>
 </nav>
 <main>
+  <!-- Node scope banner (skynet-island.js): while a fused view is on, a
+       per-node tab says which node it shows. Empty otherwise. -->
+  <div id="skynet-scope-banner-root" class="scope-banner-host"></div>
   <section id="tab-groups" class="active">
+    <!-- Fused Groups (skynet-merged-island.js): the ticked nodes' groups
+         together. CSS shows it instead of this node's roster while fused. -->
+    <div id="skynet-fused-groups-root"></div>
     <!-- Groups keeps the compact roster as the default view; the dedicated
          Route map island owns its read-only graph/list/detail surface. -->
     <div id="groups-route-map-root"></div>
@@ -497,8 +502,7 @@
   </section>
   <!-- Preact owns the Audit query, filtering, paging, slow snapshot-triggered
        refresh, and stable keyed command rows inside this feature host. -->
-  <section id="tab-fleet"><div id="skynet-fleet-root"></div></section>
-  <section id="tab-fleet-admin"><div id="fleet-admin-root"></div></section>
+    <section id="tab-fleet-admin"><div id="fleet-admin-root"></div></section>
   <section id="tab-map">
     <div id="skynet-map-root"></div>
   </section>

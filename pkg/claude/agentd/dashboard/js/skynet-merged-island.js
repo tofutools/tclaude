@@ -6,6 +6,7 @@ import { GroupsInteractionProvider } from './groups-interactions.js';
 import { dashboardState } from './snapshot-store.js';
 import { shellToast } from './shell-state.js';
 import { nodeHref, pollDelay, remoteNodeID, staggerOffset } from './skynet-model.js';
+import { tickedNodes, withFused } from './skynet-scope.js';
 import { MERGED_IDLE_POLL_MS, MERGED_POLL_MS, mergeSnapshots } from './skynet-merged-model.js';
 import { peerAction } from './peer-view-limits.js';
 import { PeerActionDialog, createPeerActionActions } from './peer-action.js';
@@ -60,15 +61,30 @@ const readOnlyActions = new Proxy({}, {
   get: (_, key) => (key === 'reportError' ? () => {} : () => Promise.resolve()),
 });
 
-function defaultSwitchNode(id, tab = 'groups') {
-  globalThis.location.assign(nodeHref(id, { pathname: `/${tab}`, search: globalThis.location.search }));
+// defaultSwitchNode shows one node's own Groups view: it leaves the fused
+// view, as picking a node alone does.
+function defaultSwitchNode(id) {
+  globalThis.location.assign(nodeHref(id, { pathname: '/groups', search: withFused(globalThis.location.search, null) }));
 }
 
-// usePeerSnapshots reads each peer's dashboard snapshot through the local peer
-// proxy while the merged view is on screen: staggered first reads, a relaxed
-// jittered interval, failure backoff, one read in flight per node, and nothing
-// at all while the view is hidden or the page is in the background.
-function usePeerSnapshots({ active, peers, fetchImpl, timers, now }) {
+// MAX_IN_FLIGHT caps concurrent snapshot reads: the peer proxy allows 4
+// streams per peer and 16 overall, and a wide fused view must leave room for
+// everything else.
+export const MAX_IN_FLIGHT = 4;
+
+// snapshotURL addresses a node's snapshot: the peer proxy for a peer, this
+// node's own route for this node (read only from a peer's page).
+function snapshotURL(node) {
+  return node.local ? '/api/snapshot' : `/api/peer/${encodeURIComponent(node.id)}/snapshot`;
+}
+
+// usePeerSnapshots reads each node's dashboard snapshot (a peer's through the
+// local peer proxy) while the fused view is on screen: staggered first reads,
+// a relaxed jittered interval, failure backoff, one read in flight per node
+// and at most MAX_IN_FLIGHT overall, and nothing at all while the view is
+// hidden or the page is in the background. A node's last good snapshot stays
+// on a failed read (shown stale), except when trust is gone.
+function usePeerSnapshots({ active, peers, fetchImpl, localFetch, timers, now }) {
   const [entries, setEntries] = useState({});
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
@@ -88,15 +104,16 @@ function usePeerSnapshots({ active, peers, fetchImpl, timers, now }) {
     async function tick(peer) {
       if (disposed || inflight.has(peer.id)) return;
       if (globalThis.document?.hidden) { schedule(peer, pollDelay({ base: MERGED_POLL_MS })); return; }
+      if (inflight.size >= MAX_IN_FLIGHT) { schedule(peer, 250 + Math.round(250 * Math.random())); return; }
       // A peer the hub reports offline cannot answer: check back slowly
       // instead of sending a full snapshot read each interval.
-      if (peer.online === false) { schedule(peer, pollDelay({ base: MERGED_IDLE_POLL_MS })); return; }
+      if (!peer.local && peer.online === false) { schedule(peer, pollDelay({ base: MERGED_IDLE_POLL_MS })); return; }
       inflight.add(peer.id);
       let ok = false;
       let empty = false;
       let failures = entriesRef.current[peer.id]?.failures || 0;
       try {
-        const res = await fetchImpl(`/api/peer/${encodeURIComponent(peer.id)}/snapshot`, { credentials: 'same-origin', cache: 'no-store' });
+        const res = await (peer.local ? localFetch : fetchImpl)(snapshotURL(peer), { credentials: 'same-origin', cache: 'no-store' });
         if (res.ok) {
           const snapshot = await res.json();
           commit(peer.id, { snapshot, receivedAt: now(), failure: null, failures: 0 });
@@ -106,7 +123,9 @@ function usePeerSnapshots({ active, peers, fetchImpl, timers, now }) {
         } else {
           let body = null; try { body = await res.json(); } catch (_) { body = null; }
           failures += 1;
-          commit(peer.id, { failure: { status: res.status, code: body?.code || '' }, failures });
+          // A node no longer trusted keeps nothing it shared.
+          const gone = body?.code === 'not_trusted' ? { snapshot: null, receivedAt: null } : {};
+          commit(peer.id, { failure: { status: res.status, code: body?.code || '' }, failures, ...gone });
         }
       } catch (error) {
         failures += 1;
@@ -124,32 +143,33 @@ function usePeerSnapshots({ active, peers, fetchImpl, timers, now }) {
   return entries;
 }
 
-// MergedGroups is the top-level "Groups · all nodes" view: today's Groups
-// listing over every linked node's groups, named group@node. It is an
-// overview: what a peer shares runs through its peer routes from here, the
-// rest happens in that node's own view, one click on its @node away.
+// MergedGroups is the fused Groups view: today's Groups listing over the
+// ticked nodes' groups, named group@node. It is an overview: what a peer
+// shares runs through its peer routes from here, the rest happens in that
+// node's own view, one click on its @node away. The page's own node (this
+// node, or the peer of a ?node= page) comes from the page's snapshot; every
+// other ticked node is read here.
 export function MergedGroups({
   state, host, snapshot = dashboardState.snapshot, fetchImpl = (...a) => globalThis.fetch(...a),
   timers = globalThis, now = () => Date.now(), toast = shellToast, remote = remoteNodeID(), switchNode = defaultSwitchNode, openTerminal = openRemote,
-  peerActions = peerRoutes, confirm, moveActions = null,
+  peerActions = peerRoutes, confirm, moveActions = null, localFetch = globalThis.__tclaudeRemoteNode?.localFetch || fetchImpl,
 }) {
   const current = state.view.value;
   const fleet = current.fleet;
-  const active = current.fleetActive && !!fleet && !remote;
-  const peers = fleet ? fleet.peers : [];
-  const entries = usePeerSnapshots({ active, peers, fetchImpl, timers, now });
+  const active = current.activeTab === 'groups' && !!current.fused && !!fleet;
+  const pageNode = fleet ? remote || fleet.self.id : '';
+  const ticked = fleet ? tickedNodes(fleet, current.fused) : [];
+  const polled = ticked.filter((n) => n.id !== pageNode);
+  const entries = usePeerSnapshots({ active, peers: polled, fetchImpl, localFetch, timers, now });
   const [peerReq, setPeerReq] = useState(null);
   const [moveDrop, setMoveDrop] = useState(null);
   const fleetActions = useRef(moveActions);
   if (!fleetActions.current) fleetActions.current = createFleetAdminActions({ fetchImpl });
   // The capture handlers below are bound once; they read the latest snapshots.
-  const entriesRef = useRef(entries);
-  entriesRef.current = entries;
-
-  // The merged view merges from this node; a peer's page hands it over.
-  useEffect(() => {
-    if (current.fleetActive && remote) switchNode('', 'fleet');
-  }, [current.fleetActive, remote]);
+  // snapOf reads a node's snapshot, the page's own node included.
+  const snapOf = (id) => (id === pageNode ? snapshot.value : entries[id]?.snapshot) || null;
+  const snapRef = useRef(snapOf);
+  snapRef.current = snapOf;
 
   // Read-only overview: stop node-changing controls before their handlers,
   // and open a group's node from its @node suffix.
@@ -173,7 +193,7 @@ export function MergedGroups({
       }
       const name = group?.dataset.fleetNodeName || '';
       if (instance && instance !== state.view.value.fleet?.self?.id) {
-        const req = peerAction(act, entriesRef.current[instance]?.snapshot?.peer_view, (g) => ownGroup(g, name));
+        const req = peerAction(act, snapRef.current(instance)?.peer_view, (g) => ownGroup(g, name));
         if (req) { setPeerReq({ ...req, node: name || instance.slice(0, 13), nodeId: instance }); return; }
       }
       const where = group ? `${group.dataset.fleetNodeName}'s dashboard` : "the node's own dashboard";
@@ -258,14 +278,14 @@ export function MergedGroups({
     };
   }, [host]);
 
-  if (!fleet) return html`<div class="empty">No linked nodes.</div>`;
-  if (remote) return html`<div class="empty">Opening the all-nodes view on this node…</div>`;
+  if (!current.fused) return null;
+  if (!fleet) return html`<div class="empty">Loading the fused nodes…</div>`;
   const t = now();
-  const nodes = [
-    { node: fleet.self, entry: snapshot.value ? { snapshot: snapshot.value, receivedAt: t } : null },
-    ...peers.map((peer) => ({ node: peer, entry: entries[peer.id] || null })),
-  ];
-  const merged = mergeSnapshots(nodes, t);
+  const nodes = ticked.map((node) => ({
+    node,
+    entry: node.id === pageNode ? (snapshot.value ? { snapshot: snapshot.value, receivedAt: t } : null) : entries[node.id] || null,
+  }));
+  const merged = mergeSnapshots(nodes, t, snapshot.value);
   return html`<div class="skynet-merged">
     <div class="skynet-merged-nodes" aria-label="Nodes in this view">
       ${merged.fleet_nodes.map((n) => html`<span key=${n.node.id} class=${`skynet-merged-node${n.stale ? ' stale' : ''}`} style=${`--nc:${n.node.color}`}
@@ -277,7 +297,7 @@ export function MergedGroups({
     <${GroupsInteractionProvider}>
       <${GroupsNativeList} groups=${merged.groups} snapshot=${merged} actions=${readOnlyActions} />
     <//>
-    ${peerReq && html`<${PeerActionDialog} req=${peerReq} peerView=${entries[peerReq.nodeId]?.snapshot?.peer_view} groups=${entries[peerReq.nodeId]?.snapshot?.groups}
+    ${peerReq && html`<${PeerActionDialog} req=${peerReq} peerView=${snapOf(peerReq.nodeId)?.peer_view} groups=${snapOf(peerReq.nodeId)?.groups}
       actions=${peerActions(peerReq.nodeId)} toast=${toast} timers=${timers} onClose=${() => setPeerReq(null)} ...${confirm ? { confirm } : {}} />`}
     ${moveDrop && html`<${MoveDropDialog} drop=${moveDrop.drop} plan=${moveDrop.plan} actions=${fleetActions.current} peerActions=${peerActions}
       timers=${timers} now=${now} onClose=${() => setMoveDrop(null)} />`}

@@ -33,7 +33,7 @@ import {
 // set ordering.
 const ROUTABLE_TABS = new Set([
   'groups', 'terminals', 'jobs', 'processes', 'plugins', 'access',
-  'messages', 'usage', 'costs', 'audit', 'logs', 'debug', 'config', 'map', 'fleet', 'fleet-admin',
+  'messages', 'usage', 'costs', 'audit', 'logs', 'debug', 'config', 'map', 'fleet-admin',
 ]);
 
 // The virtual stack (see nav-history-core.js). Replaced wholesale on every
@@ -96,7 +96,7 @@ function pendingTerminalAttach(loc) {
 // last per-node tab once that read settles without a fleet, so a /map deep
 // link is decided by the view that knows rather than bounced to Groups.
 function pendingMapLoad(loc) {
-  return loc.tab === 'map' || loc.tab === 'fleet' || loc.tab === 'fleet-admin';
+  return loc.tab === 'map' || loc.tab === 'fleet-admin';
 }
 
 // activeLocationFromDOM reads the current dashboard location out of the live
@@ -239,7 +239,8 @@ function activate(loc) {
 // across a theme toggle desync the URL from the live theme. Everything else —
 // including consumed-on-load legacy deep-link params (?tab=/?access_request=) —
 // is intentionally dropped so the address bar settles to a clean canonical
-// location. Returns "" or "?slop=1"/"?wizard=1", plus node=<id> on a peer view.
+// location. Returns "" or "?slop=1"/"?wizard=1", plus node=<id> on a peer view
+// and nodes=<set> in a fused view.
 function preservedQuery() {
   const out = new URLSearchParams();
   if (document.body.classList.contains('slop')) out.set('slop', '1');
@@ -247,6 +248,9 @@ function preservedQuery() {
   // A peer's per-node view (remote-node.js) is a property of the page, not of
   // a history entry: every location on it stays on that node.
   if (globalThis.__tclaudeRemoteNode?.id) out.set('node', globalThis.__tclaudeRemoteNode.id);
+  // So is a fused view's node set (skynet-island.js mirrors it here).
+  const nodes = document.documentElement.dataset.scopeNodes;
+  if (nodes) out.set('nodes', nodes);
   const s = out.toString();
   return s ? '?' + s : '';
 }
@@ -366,6 +370,10 @@ function onPopstate(e) {
 // that tab, so its lazy-loader must already be wired and snapshot-gated
 // visibility (notably Processes) must no longer be provisional.
 export function initNavHistory() {
+  // /fleet (the old all-nodes view) heals to Groups with every node fused.
+  if (/^\/fleet\/?$/.test(window.location.pathname) && !document.documentElement.dataset.scopeNodes) {
+    document.documentElement.dataset.scopeNodes = new URLSearchParams(window.location.search).get('nodes') || 'all';
+  }
   const urlLoc = fromPath(window.location.pathname);
   // On a RELOAD, history.state still holds the stack we persisted for this
   // entry — reconstruct it (full depth) so native browser navigation retains
