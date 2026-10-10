@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { shortID } from './fleet-admin-model.js';
@@ -73,7 +73,11 @@ export function agentConsequence(peer, offer, preview) {
   const tail = d.teleport || d.move
     ? ` This is a ${d.teleport ? 'teleport' : 'move'}: once it runs here, ${peer} retires its source agent, so this copy becomes the only one.`
     : ` ${peer}'s source agent keeps running there; this is an independent copy.`;
-  return `Starts a new agent ${name} on this node${where}, using this node's harness credentials, tools and files under this node's spawn checks.`
+  const mode = preview?.credentials || d.teleport?.credentials || '';
+  const creds = d.teleport && mode && mode !== 'local'
+    ? `with model access through credential mode ${mode} (arranged with ${peer}, not this node's own harness login), and this node's tools and files`
+    : 'using this node\'s harness credentials, tools and files';
+  return `Starts a new agent ${name} on this node${where}, ${creds}, under this node's spawn checks.`
     + `${preview?.history ? ' It starts from the shared conversation history, which may contain code, file contents and anything pasted into it.' : ' It starts without conversation history.'}`
     + `${(preview?.findings || []).length ? ` The history has suspected credentials: ${preview.findings.map((f) => `${f.kind} ×${f.count}`).join(', ')}.` : ''}`
     + ` Its permissions and ownership from ${peer} are not copied.${tail}`;
@@ -82,7 +86,7 @@ export function agentConsequence(peer, offer, preview) {
 function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) {
   const agent = offer.offer?.type === 'agent';
   const fixedHistory = !!(offer.offer?.move || offer.offer?.teleport);
-  const [opts, setOpts] = useState({ skip: [], values: {}, replace: false, keepPaths: false, cwd: '', worktree: '', group: offer.offer?.group || '', name: '', skipHistory: false });
+  const [opts, setOpts] = useState({ skip: [], values: {}, replace: false, keepPaths: false, cwd: '', worktree: '', group: '', name: '', skipHistory: false });
   const [preview, setPreview] = useState(null);
   // rows keeps every config item seen in any preview: a skipped item drops out
   // of the next preview but stays listed (unticked) so it can be re-included.
@@ -90,10 +94,13 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
   const [stale, setStale] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // version counts option edits: a preview answering older options must not
+  // mark the current ones as previewed.
+  const version = useRef(0);
   const peer = label(offer.peer);
 
-  const show = (p) => {
-    setPreview(p); setStale(false);
+  const show = (p, v = version.current) => {
+    setPreview(p); setStale(v !== version.current);
     setRows((prev) => {
       const by = new Map(prev.map((c) => [c.item, c]));
       for (const c of p?.changes || []) by.set(c.item, c);
@@ -102,13 +109,14 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
   };
   const run = () => {
     setBusy(true); setError('');
+    const v = version.current;
     actions.importOffer(offer, importBody(offer, opts, false))
-      .then(show)
-      .catch((e) => { const p = previewOf(e); if (p) show(p); setError(errText(e)); })
+      .then((p) => show(p, v))
+      .catch((e) => { const p = previewOf(e); if (p) show(p, v); setError(errText(e)); })
       .finally(() => setBusy(false));
   };
   useEffect(run, []);
-  const change = (patch) => { setOpts({ ...opts, ...patch }); setStale(true); };
+  const change = (patch) => { version.current += 1; setOpts({ ...opts, ...patch }); setStale(true); };
   const set = (k) => (e) => change({ [k]: e.currentTarget.type === 'checkbox' ? e.currentTarget.checked : e.currentTarget.value });
   const toggleItem = (item) => (e) => change({ skip: e.currentTarget.checked ? opts.skip.filter((x) => x !== item) : [...opts.skip, item] });
 
@@ -135,7 +143,7 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
     ${agent ? html`
       <div class="fa-of-row"><span class="fa-k">agent</span><span>${preview?.agent?.name || '…'}${preview?.agent?.harness ? html` <span class="muted">(${preview.agent.harness}${preview.agent.role ? `, role ${preview.agent.role}` : ''})</span>` : ''}</span></div>
       <label class="fa-of-row"><span class="fa-k">cwd</span><input id="fleet-offer-cwd" value=${opts.cwd} placeholder=${preview?.cwd || 'directory on this node'} autocomplete="off" spellcheck="false" onInput=${set('cwd')} /></label>
-      <label class="fa-of-row"><span class="fa-k">group</span><input id="fleet-offer-group" value=${opts.group} placeholder="receiving group here" autocomplete="off" onInput=${set('group')} /></label>
+      <label class="fa-of-row"><span class="fa-k">group</span><input id="fleet-offer-group" value=${opts.group} placeholder=${offer.offer?.group ? `the group bound on receipt (${offer.offer.group}); type another to override` : 'receiving group here'} autocomplete="off" onInput=${set('group')} /></label>
       <label class="fa-of-row"><span class="fa-k">name</span><input id="fleet-offer-name" value=${opts.name} placeholder=${preview?.agent?.name || 'keep the offered name'} autocomplete="off" onInput=${set('name')} /></label>
       ${!fixedHistory && html`<label class="fa-of-check"><input id="fleet-offer-skip-history" type="checkbox" checked=${opts.skipHistory} onChange=${set('skipHistory')} /> start without the shared conversation history</label>`}
       ${preview && html`<div class="fa-plan"><ul>
@@ -254,12 +262,16 @@ function OfferProfileDialog({ peers, profiles, actions, confirm, onClose, onDone
     setError('');
     confirm({
       title: `Offer profile ${profile}'s config to ${label}?`,
-      body: `Sends the config and node labels of profile ${profile}, as applied to ${label}, to ${label}'s operator as separate offers. They preview each and choose whether to import it; nothing changes there until they do. Structured credentials are left out.`,
+      body: `Sends the config and node labels of profile ${profile}, as applied to ${label}, to ${label}'s operator as one config offer. They preview it and choose what to import; nothing changes there until they do. Structured credentials are left out.`,
       okLabel: 'Send offer',
       busyLabel: 'Sending…',
       action: () => actions.offerProfile(profile, peer),
-    }).then((r) => { if (r) onDone(`Offered profile ${profile} to ${label}`); })
-      .catch((e) => setError(e?.status === 409 ? `${errText(e)} — apply the profile to ${label} first (Profiles & pools).` : errText(e)));
+    }).then((r) => {
+      if (!r) return;
+      if (r.skipped) setError(`Nothing sent: ${r.reason || 'the profile carries no config or labels'}.`);
+      else if (r.unchanged) setError(`Nothing sent: an identical offer${r.offer_id ? ` (${r.offer_id})` : ''} is still pending or already applied on ${label}.`);
+      else onDone(`Offered profile ${profile} to ${label}`);
+    }).catch((e) => setError(e?.status === 409 ? `${errText(e)} — apply the profile to ${label} first (Profiles & pools).` : errText(e)));
   };
   return html`<${Overlay} id="fleet-offer-profile" labelledby="fleet-offer-profile-title" onClose=${onClose}>
     <h3 id="fleet-offer-profile-title">Offer a profile's config to a peer</h3>
@@ -301,7 +313,9 @@ export function OffersPage({ view, agents, actions, confirm, toast }) {
   const done = (msg) => { setDialog(null); toast(msg, false); setTick((n) => n + 1); };
   const decline = (o) => confirm({
     title: `Decline ${label(o.peer)}'s ${offerKind(o)} offer?`,
-    body: `The downloaded payload is deleted and ${label(o.peer)} is told it was declined. Nothing from it was imported; to get it later, ${label(o.peer)} has to offer it again.`,
+    body: `The downloaded payload is deleted and ${label(o.peer)} is told it was declined; to get it later, ${label(o.peer)} has to offer it again. ${o.import_agent
+      ? `An earlier apply reserved agent ${o.import_agent} and it may already be running: declining does not stop it — check it first.`
+      : o.last_error ? `An earlier attempt failed (${o.last_error}); items it applied before failing stay applied.` : 'Nothing from it was imported.'}`,
     okLabel: 'Decline',
     busyLabel: 'Declining…',
     action: () => actions.declineOffer(o),

@@ -681,7 +681,7 @@ test('offers: preview then apply a config offer item by item, start a moved agen
 
   // Agent move: a placeholder needs a value; the confirm names the move.
   await s.click(s.q('[data-offer="off_mv"] [data-fa="preview"]'));
-  assert.deepEqual(s.log.findLast((l) => l[0] === 'import')[2], { apply: false, group: 'ops' });
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'import')[2], { apply: false }, 'the group bound on receipt applies unless overridden');
   assert.equal(q('#fleet-offer-skip-history'), null, 'a move always carries history');
   assert.match(q('#fleet-offer-import').textContent, /Suspected credentials in the history: api_key ×1/);
   assert.equal(q('#fleet-offer-apply').disabled, true, 'an unresolved placeholder blocks apply');
@@ -689,8 +689,8 @@ test('offers: preview then apply a config offer item by item, start a moved agen
   await s.click(q('#fleet-offer-preview'));
   await s.click(q('#fleet-offer-apply'));
   assert.match(s.confirms.at(-1).title, /Start ada from forge/);
-  assert.match(s.confirms.at(-1).body, /new agent ada on this node in \/srv\/ada in group ops.*shared conversation history.*suspected credentials: api_key ×1.*not copied\. This is a move: once it runs here, forge retires its source agent/);
-  assert.deepEqual(s.log.findLast((l) => l[0] === 'import')[2], { apply: true, values: { REPO: '/srv/repo' }, group: 'ops' });
+  assert.match(s.confirms.at(-1).body, /new agent ada on this node in \/srv\/ada.*shared conversation history.*suspected credentials: api_key ×1.*not copied\. This is a move: once it runs here, forge retires its source agent/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'import')[2], { apply: true, values: { REPO: '/srv/repo' } });
   assert.match(s.toasts.at(-1), /Started agt_new/);
 
   await s.click(s.q('[data-offer="off_cfg"] [data-fa="decline"]'));
@@ -724,6 +724,16 @@ test('offers: preview then apply a config offer item by item, start a moved agen
   await s.click(q('#fleet-offer-profile-send'));
   assert.deepEqual(s.log.findLast((l) => l[0] === 'offerProfile'), ['offerProfile', 'ops-full', 'inst_forge']);
   assert.match(q('#fleet-offer-profile [role=alert]').textContent, /apply the profile to forge first/);
+  assert.match(s.confirms.at(-1).body, /as one config offer/);
+  s.actions.offerProfile = async () => ({ unchanged: true, offer_id: 'off_p' });
+  await s.click(q('#fleet-offer-profile-send'));
+  assert.match(q('#fleet-offer-profile [role=alert]').textContent, /Nothing sent: an identical offer \(off_p\)/);
+  assert.ok(q('#fleet-offer-profile'), 'nothing sent: the dialog stays open');
+
+  const m = await s.harness.importDashboardModule('js/fleet-admin-offers.js');
+  const tp = { offer: { type: 'agent', teleport: { credentials: 'peer-proxy' } } };
+  assert.match(m.agentConsequence('forge', tp, { agent: { name: 'ada' }, credentials: 'peer-proxy' }), /credential mode peer-proxy \(arranged with forge, not this node's own harness login\).*teleport/);
+  assert.match(m.agentConsequence('forge', { offer: { type: 'agent' } }, { agent: { name: 'ada' } }), /this node's harness credentials.*keeps running there/);
 });
 
 test('offer actions address an incoming offer by ID and source peer', async (t) => {
