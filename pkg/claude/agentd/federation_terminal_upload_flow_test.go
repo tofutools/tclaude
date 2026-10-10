@@ -136,7 +136,7 @@ func TestFederationTerminalImageUploadTargetAuthorityAndMime(t *testing.T) {
 			require.Equal(t, proto.AckAccepted, fedAckFor(t, p, prior.ID).Status)
 			d.ID = prior.ID
 			t.Cleanup(func() {
-				rec := fedHuman(t, f, "POST", "/v1/federation/bundle-offers/"+prior.ID+"/preview", nil)
+				rec := fedHuman(t, f, "POST", "/v1/federation/bundle-offers/"+prior.ID+"/import", nil)
 				require.Equal(t, 200, rec.Code, "ready configuration payload survives image-ID reuse: "+rec.Body.String())
 			})
 			kp, err := stream.NewKeyPair()
