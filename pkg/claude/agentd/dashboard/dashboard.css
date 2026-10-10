@@ -18946,6 +18946,13 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .peer-mail-h { margin: 14px 0 4px; font-size: 13px; font-weight: 600; }
 .fa-away-edit select, .fa-away-edit input { font: inherit; font-size: 12px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; padding: 1px 4px; }
 .peer-away-answer { display: inline-flex; gap: 6px; margin-right: 8px; }
+#fleet-node-settings > :not(h3):not(.modal-buttons) { font-size: 13px; font-weight: normal; }
+.fa-ns-h { margin: 12px 0 4px; font-size: 13px; font-weight: 600; }
+.fa-ns-row { display: grid; grid-template-columns: 80px minmax(0, 1fr); align-items: center; gap: 8px; margin: 6px 0; }
+.fa-ns-row input { width: 100%; box-sizing: border-box; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; }
+.fa-ns-check { display: block; margin: 6px 0 6px 88px; }
+.fa-ns-actions { display: flex; align-items: center; gap: 10px; margin: 6px 0 4px 88px; }
+.fa-ns-actions button { flex: none; white-space: nowrap; }
 .fa-sensitive { color: #f0883e; }
 .fa-grant-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 6px; }
 .fa-grant-launch { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 0 0 8px; padding: 8px 10px; border: 1px solid #21262d; border-radius: 6px; }

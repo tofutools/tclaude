@@ -621,7 +621,10 @@ optional end) who, while you are away, receives your agents' access requests
 as they arise (and may answer each once; the first answer wins), every
 message your agents send you, and waiting-session notices; **return…** ends
 it. Peer operators' access requests are never
-forwarded. Every action that widens trust, overwrites state or runs code confirms
+forwarded. **settings…** (or **connect…** before a hub is set) edits the hub
+connection — URL, display name, a single-use invite, a CA file on this node —
+and this node's labels, which automatic placement matches and peers with
+`node.read` see. Every action that widens trust, overwrites state or runs code confirms
 first and says what will happen. Most pages name their CLI.
 
 - **Peers** — trusted peers (level, grants, pools) and hub-visible instances

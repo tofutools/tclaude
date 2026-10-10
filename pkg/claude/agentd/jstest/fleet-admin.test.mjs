@@ -103,6 +103,9 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     profile: async (n) => { log.push(['profile', n]); return { profile: {}, applied_peers: ['inst_forge'] }; },
     createProfile: async (o) => { log.push(['createProfile', o]); return { id: 'prof_new', name: o.name, revision: 1, definition: o.definition }; },
     saveProfile: async (o) => { log.push(['saveProfile', o]); if (o.revision === 99) { const e = new Error('reload the current profile revision'); e.status = 409; e.code = 'stale_profile'; throw e; } return { ...o, revision: o.revision + 1 }; },
+    setHubConfig: async (b) => { log.push(['hubConfig', b]); return { ok: true }; },
+    nodeLabels: async () => ['gpu', 'ci'],
+    setNodeLabels: async (o) => { log.push(['labels', o]); return { ok: true }; },
     applyProfile: async (n, o) => { log.push(['applyProfile', n, o]); return { preview_token: 'ptok', changes: [{ item: 'trust_level', before: 'restricted', after: 'unrestricted', security: true }, { item: 'pool/pool_r', before: false, after: true, security: true }], pools: [{ id: 'pool_r', name: 'rigs', live_grants: [{ slug: 'groups.members.spawn', scope: '' }] }], security_changes: 2, conflicts: [] }; },
   };
   const snapshot = harness.signals.signal({ groups: [{ name: 'ops' }, { name: 'build' }] });
@@ -704,6 +707,48 @@ test('profile editor: create and edit confirm the effect, keep advanced fields, 
   const saved = s.log.findLast((l) => l[0] === 'saveProfile')[1];
   assert.deepEqual(saved, { id: 'prof_1', name: 'test-rig', revision: 3, definition: { trust_level: 'unrestricted', pools: ['pool_r'], labels: ['gpu'],
     peer_grants: [{ slug: 'jobs.run', scope: 'group=7', spawn_policy: { max_live: 3, job_approval: 'manual' } }], worker_permissions: { 'tasks.read': { allow: true } } } }, 'launch settings and advanced fields survive');
+});
+
+test('node settings: moving to another hub and changing labels confirm the consequence and send only changes', async (t) => {
+  const s = await setup(t);
+  await s.show();
+  await s.click(s.q('#fleet-node-settings-open'));
+  const doc = s.harness.document; const q = (x) => doc.querySelector(x);
+  const type = async (sel, v) => { const el = q(sel); el.value = v; await s.harness.act(() => s.harness.fireEvent(el, 'input')); };
+  assert.equal(q('#fleet-hub-url').value, 'wss://hub.example');
+  await s.click(q('#fleet-hub-save'));
+  assert.match(q('#fleet-node-settings [role=alert]').textContent, /Nothing changed/);
+  await type('#fleet-hub-url', 'wss://hub2.example:8470');
+  await type('#fleet-hub-ca', 'certs/ca.pem');
+  await s.click(q('#fleet-hub-save'));
+  assert.match(q('#fleet-node-settings [role=alert]').textContent, /absolute path/);
+  await type('#fleet-hub-ca', '/etc/tclaude/hub-ca.pem');
+  await type('#fleet-hub-invite', 'inv-123');
+  await s.click(q('#fleet-hub-save'));
+  assert.match(s.confirms.at(-1).title, /Move this node to the hub at wss:\/\/hub2\.example:8470/);
+  assert.match(s.confirms.at(-1).body, /nothing here is shared with a peer until you trust it.*current hub connection drops.*single-use.*\/etc\/tclaude\/hub-ca\.pem/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'hubConfig')[1], { hub_url: 'wss://hub2.example:8470', invite: 'inv-123', hub_ca_file: '/etc/tclaude/hub-ca.pem' });
+  await s.click(s.q('#fleet-node-settings-open'));
+  await type('#fleet-hub-url', 'wss://hub3.example');
+  await s.click(q('#fleet-hub-save'));
+  assert.match(s.confirms.at(-1).body, /pinned hub CA file is kept/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'hubConfig')[1], { hub_url: 'wss://hub3.example', invite: '' }, 'a move never resends the old invite');
+  await s.click(s.q('#fleet-node-settings-open'));
+  await type('#fleet-hub-url', 'wss://hub4.example');
+  const clear = q('#fleet-hub-ca-clear'); clear.checked = true;
+  await s.harness.act(() => s.harness.fireEvent(clear, 'change'));
+  await s.click(q('#fleet-hub-save'));
+  assert.match(s.confirms.at(-1).body, /CA file is cleared/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'hubConfig')[1], { hub_url: 'wss://hub4.example', invite: '', hub_ca_file: '' });
+  await s.click(s.q('#fleet-node-settings-open'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  await type('#fleet-node-labels', 'gpu linux, bad label!');
+  await s.click(q('#fleet-labels-save'));
+  assert.match(q('#fleet-node-settings [role=alert]').textContent, /label!/);
+  await type('#fleet-node-labels', 'gpu, linux');
+  await s.click(q('#fleet-labels-save'));
+  assert.match(s.confirms.at(-1).body, /Adds linux\. Removes ci\..*stops landing here/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'labels')[1], { add: ['linux'], remove: ['ci'] });
 });
 
 test('moves: both directions listed, only abandonable outgoing moves offer Abandon, and the teleport freeze confirms', async (t) => {

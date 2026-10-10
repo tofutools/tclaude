@@ -10,6 +10,7 @@ import { HarnessesPage } from './fleet-admin-harnesses.js';
 import { createHarnessActions } from './fleet-harness-actions.js';
 import { NodeUpdateDialog } from './node-update.js';
 import { AwayControl } from './peer-mail.js';
+import { NodeSettingsDialog } from './fleet-admin-node-settings.js';
 import { RunPage } from './fleet-admin-run.js';
 import { MovesPage } from './fleet-admin-moves.js';
 import { createRunActions } from './fleet-run-actions.js';
@@ -92,7 +93,7 @@ function Fingerprint({ value, copy, toast }) {
   return html`<span class="fa-fp"><code>${value}</code> <button type="button" class="fa-link" onClick=${onCopy} title="Copy the fingerprint">copy</button></span>`;
 }
 
-function Identity({ self, actions, confirm, toast, copy, reload, onUpdate }) {
+function Identity({ self, actions, confirm, toast, copy, reload, onUpdate, onSettings }) {
   const disconnect = () => confirm({
     title: 'Disconnect from the hub?',
     body: `${self.name} stops talking to the hub at ${self.hubURL || 'its configured URL'}. Until you reconnect, `
@@ -113,7 +114,7 @@ function Identity({ self, actions, confirm, toast, copy, reload, onUpdate }) {
     <span><span class="fa-k">Fingerprint</span> <${Fingerprint} value=${self.fingerprint} copy=${copy} toast=${toast} /></span>
     <span><span class="fa-k">tclaude</span> <button id="fleet-node-update-open" type="button" class="fa-link" onClick=${onUpdate}>version & updates…</button></span>
     <span><${AwayControl} confirm=${confirm} toast=${toast} /></span>
-    <span><span class="fa-k">Hub</span> ${self.hubURL ? html`<code>${self.hubURL}</code> ` : ''}<span class=${`fa-hub ${hubClass}`} title=${self.hubError || ''}>${self.hubState}</span></span>
+    <span><span class="fa-k">Hub</span> ${self.hubURL ? html`<code>${self.hubURL}</code> ` : ''}<span class=${`fa-hub ${hubClass}`} title=${self.hubError || ''}>${self.hubState}</span>${' '}<button id="fleet-node-settings-open" type="button" class="fa-link" title="Hub connection and node labels" onClick=${onSettings}>${self.hubURL ? 'settings…' : 'connect…'}</button></span>
     ${self.enabled
       ? html`<button type="button" class="fa-danger" onClick=${disconnect}>Disconnect</button>`
       : self.hubURL ? html`<button type="button" onClick=${reconnect}>Reconnect</button>` : ''}
@@ -346,7 +347,7 @@ export function FleetAdmin({
 
   const sub = SUB_PAGES.find((p) => p.id === page) || SUB_PAGES[0];
   return html`<div class="fleet-admin">
-    <${Identity} self=${view.self} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload} onUpdate=${() => setDialog({ kind: 'update' })} />
+    <${Identity} self=${view.self} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload} onUpdate=${() => setDialog({ kind: 'update' })} onSettings=${() => setDialog({ kind: 'settings' })} />
     <div class="fa-subtabs" role="tablist">${SUB_PAGES.map((p) => html`<button type="button" role="tab" key=${p.id} aria-selected=${p.id === sub.id ? 'true' : 'false'}
       class=${`fa-subtab${p.id === sub.id ? ' on' : ''}`} onClick=${() => setPage(p.id)}>${p.label}</button>`)}</div>
     ${sub.id === 'peers'
@@ -369,6 +370,7 @@ export function FleetAdmin({
           target=${grantTarget} setTarget=${setGrantTarget} />`
       : html`<${AuditPage} view=${view} actions=${actions} now=${now()} />`}
     ${dialog?.kind === 'trust' && html`<${TrustDialog} row=${dialog.row} actions=${actions} onClose=${() => setDialog(null)} onDone=${done} />`}
+    ${dialog?.kind === 'settings' && html`<${NodeSettingsDialog} self=${view.self} actions=${actions} confirm=${confirm} toast=${toast} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${dialog?.kind === 'update' && html`<${NodeUpdateDialog} node=${{ id: view.self.id, label: view.self.name, local: true }} actions=${updateActions} confirm=${confirm} toast=${toast} timers=${timers} onClose=${() => setDialog(null)} />`}
     ${dialog?.kind === 'unrestrict' && html`<${UnrestrictDialog} row=${dialog.row} actions=${actions} onClose=${() => setDialog(null)} onDone=${done} />`}
   </div>`;

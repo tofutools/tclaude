@@ -60,6 +60,7 @@ const skynetFederationStubJS = `(function(){
     if (path === '/api/federation/outbox') return json([
       { envelope_id: 'env_7k2q', to: 'operator@lab', from: 'human operator', subject: 'Release window', preview: 'Freeze starts at 18:00', state: 'pending', attempts: 4, last_error: 'peer offline', created_at: '2026-10-10T09:20:00Z', updated_at: '2026-10-10T09:31:00Z' },
       { envelope_id: 'env_5m1x', to: 'operator@forge', from: 'human operator', subject: 'Re: deploy freeze', preview: 'Agreed', state: 'acked', attempts: 1, created_at: '2026-10-10T08:02:00Z', updated_at: '2026-10-10T08:02:01Z' }
+    if (path === '/api/federation/node-labels' && !(init && init.method === 'POST')) return json({ labels: ['gpu', 'ci', 'linux'] });
     if (path === '/api/federation/peers/trust') return json({ instance_id: 'inst_w5zea3nq', fingerprint: 'w5ze-a3nq-7m1p-kd42-xr8c-0fv6', level: 'restricted', profile: null, plan: null, applied: false });
     var hav = function(extra){ return { schema: 1, observed_at: '2026-10-10T09:40:00Z', harnesses: [
       { name: 'claude', display_name: 'Claude Code', installed: true, version: '2.1.4', latest_version: extra ? '2.1.4' : '2.2.0', update_available: !extra, version_status: 'known', credential_present: true, usable: true },
@@ -398,6 +399,21 @@ func skynetStates() []dashsnap.State {
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('#fleet-away-return'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   if (!document.querySelector('#fleet-away-return')) throw new Error('skynet: away state missing');
+})();`,
+			SettleMS: 300,
+		},
+		{
+			Key:     "skynet-fleet-node-settings",
+			Title:   "Node settings: hub and labels",
+			Caption: "Fleet's identity row → settings…: the hub connection (URL, display name, a single-use invite, a CA file on this node, connected or not) and this node's labels, which automatic placement matches and peers with node.read see. Saving either confirms what changes; moving hubs warns that peers reachable only through the old hub drop.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('#fleet-node-settings-open'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-node-settings-open').click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-node-labels'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-node-labels')) throw new Error('skynet: node settings did not open');
 })();`,
 			SettleMS: 300,
 		},

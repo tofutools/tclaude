@@ -36,6 +36,11 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
     trust: (opts) => call('POST', 'peers/trust', trustBody(opts)),
     untrust: (instance) => call('POST', 'peers/untrust', { instance }),
     setHubEnabled: (enabled) => call('POST', 'config', { enabled }),
+    // Hub setup: only the fields sent change (enabled, hub_url, name, invite,
+    // hub_ca_file — a path on this node).
+    setHubConfig: (body) => call('POST', 'config', body),
+    nodeLabels: async () => (await call('GET', 'node-labels'))?.labels || [],
+    setNodeLabels: ({ add = [], remove = [] }) => call('POST', 'node-labels', { add, remove }),
     // target is a peer instance ID or group:<pool name>.
     grants: async (target) => (await call('GET', `grants?peer=${encodeURIComponent(target)}`))?.grants || [],
     grant: (body) => call('POST', 'grants', body),
