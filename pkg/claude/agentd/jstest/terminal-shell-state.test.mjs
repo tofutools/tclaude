@@ -13,7 +13,7 @@ function memoryPrefs(initial = {}) {
   };
 }
 
-test('terminal shell state owns stable pane, active, reveal, and modal descriptors', async (t) => {
+test('terminal shell state owns stable pane, active, and reveal descriptors', async (t) => {
   const harness = await createPreactHarness(t);
   const { createTerminalShellState } = await harness.importDashboardModule('js/terminal-shell-state.js');
   const state = createTerminalShellState();
@@ -265,4 +265,3 @@ test('terminal actions close one, other, and all panes through detach-only seman
   assert.equal(five.widget.disposeCount, 1);
   assert.deepEqual(requests.slice(3).sort(), ['/api/hide/agt_five', '/api/hide/agt_one']);
 });
-

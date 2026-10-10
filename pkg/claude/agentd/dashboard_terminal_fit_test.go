@@ -10,7 +10,7 @@ import (
 // TestDashboardTerminalFitContainerWiring is a narrow source guard for the
 // base terminal rules, not a CSS-cascade simulator. FitAddon measures .xterm's
 // direct parent, so an inner 100%-height box must separate it from the padded
-// visual host on both web-terminal surfaces. The dashboard app shell must also
+// visual host in both dashboard and standalone terminal panes. The dashboard app shell must also
 // inherit the document's scrollbar-adjusted height so horizontal page overflow
 // reduces the space FitAddon receives without any JS scrollbar arithmetic.
 func TestDashboardTerminalFitContainerWiring(t *testing.T) {

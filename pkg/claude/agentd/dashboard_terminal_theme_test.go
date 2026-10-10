@@ -7,7 +7,7 @@ import (
 )
 
 // The wizard terminal treatment spans the shared xterm palette, terminal shell
-// toolbar, pop-out handoff, and fallback modal. These source-shape guards pin
+// toolbar and pop-out handoff. These source-shape guards pin
 // that wiring while the pure preference/theme selection is covered by
 // jstest/terminal-theme.test.mjs.
 func TestDashboardTerminalTheme_Wiring(t *testing.T) {

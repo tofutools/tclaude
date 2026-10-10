@@ -82,7 +82,7 @@ function fakeWidgetFactory(harness) {
   return { factory, widgets };
 }
 
-test('dashboard terminal feature owns three hosts while preserving opaque xterm descendants', async (t) => {
+test('dashboard terminal feature owns its tab and badge hosts while preserving opaque xterm descendants', async (t) => {
   const harness = await createPreactHarness(t);
   const { host, badgeHost, terminals } = installHosts(harness);
   const fake = fakeWidgetFactory(harness);

@@ -42,6 +42,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/agentd/dashsnap"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
 // termSmokeMember is the seeded ONLINE fixture member every state opens its
@@ -142,6 +143,17 @@ func TestDashboardTerminalShellLiveChrome(t *testing.T) {
 
 	f := newFlow(t)
 	seedDashSnapFixture(t, f)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Dashboard == nil {
+		cfg.Dashboard = &config.DashboardConfig{}
+	}
+	cfg.Dashboard.DefaultTerminal = config.DefaultTerminalNative
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
 
 	// Native windows must never pop during the smoke, and forcing the native
 	// path to fail is also what routes the plain "open window" action into the
