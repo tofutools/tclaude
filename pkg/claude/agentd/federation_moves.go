@@ -59,6 +59,9 @@ func reserveIncomingAgentMove(o *db.FederationBundleOffer, raw []byte, agentID s
 		return err
 	}
 	m := db.FederationAgentMove{Direction: "in", Peer: o.Peer, ID: o.Descriptor.ID, State: "awaiting_running", SourceAgent: o.Descriptor.Move.SourceAgent, SourceConv: o.Descriptor.Move.SourceConv, TargetAgent: agentID, SHA256: o.Descriptor.SHA256, Group: o.Descriptor.Group, ExpiresAt: o.Descriptor.ExpiresAt, CodexAppServer: profile.CodexAppServer}
+	if o.Descriptor.Move.DirectIfAllowed {
+		m.Disposition = "checking"
+	}
 	m.MovedFrom = &db.FederationMoveLink{Instance: o.Peer, Agent: m.SourceAgent, Offer: m.ID}
 	old, err := db.GetFederationAgentMove("in", m.Peer, m.ID)
 	if err != nil {
@@ -319,6 +322,19 @@ func reconcileFederationMoves() {
 		return
 	}
 	for _, m := range moves {
+		if m.Direction == "in" && m.State == "awaiting_acceptance" {
+			offer, _ := db.GetFederationBundleOffer("in", m.Peer, m.ID)
+			old := m.State
+			if !m.ExpiresAt.After(time.Now()) || offer != nil && offer.State == "expired" {
+				m.State = "expired"
+			} else if offer != nil && offer.State == "declined" {
+				m.State = "declined"
+			}
+			if m.State != old {
+				_, _ = db.TransitionFederationAgentMove(m, old)
+			}
+			continue
+		}
 		if m.Direction == "in" && m.State == "awaiting_running" {
 			confirmIncomingAgentMove(m)
 			continue
@@ -334,6 +350,10 @@ func reconcileFederationMoves() {
 				state = "expired"
 			} else if offer != nil && offer.State == "declined" {
 				state = "declined"
+			}
+			if outbox, err := db.GetFederationOutbox(m.ID); err == nil && outbox != nil && outbox.State == db.FedOutboxRefused {
+				state = "declined"
+				m.LastError = outbox.LastError
 			}
 			if state != "" {
 				m.State = state

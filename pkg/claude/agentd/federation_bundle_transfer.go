@@ -354,7 +354,7 @@ func (rt *fedRuntime) serveBundleFetch(peer *db.FederationPeer, env *proto.Envel
 }
 func (rt *fedRuntime) acceptBundleResult(peer *db.FederationPeer, env *proto.Envelope) {
 	var res bundletransfer.Result
-	if env.From.Agent != "" || env.To.Agent != "" || env.DecodePayload(&res) != nil || (res.State != "applied" && res.State != "declined" && !(res.State == "pending" && res.Disposition == "pending_acceptance")) {
+	if env.From.Agent != "" || env.To.Agent != "" || env.DecodePayload(&res) != nil || (res.State != "applied" && res.State != "declined" && (res.State != "pending" || res.Disposition != "pending_acceptance")) {
 		return
 	}
 	o, err := db.GetFederationBundleOffer("out", peer.InstanceID, res.Offer)
@@ -388,7 +388,7 @@ func reconcileFederationBundleOffers() {
 	now := time.Now()
 	fedBundleSpool().PruneTemporary(now)
 	for _, o := range offers {
-		if o.Direction == "in" && o.Descriptor.Move != nil && o.Descriptor.Move.DirectIfAllowed && o.State == "ready" && o.ImportAgent == "" && strings.HasPrefix(o.LastError, "Awaiting receiver acceptance:") {
+		if o.Direction == "in" && o.Descriptor.Move != nil && o.Descriptor.Move.DirectIfAllowed && (o.State == "ready" || o.State == "pending") && o.ImportAgent == "" && strings.HasPrefix(o.LastError, "Awaiting receiver acceptance:") {
 			queueDirectMovePending(&o)
 		}
 		if o.Direction == "in" && o.State == "ready" && o.ImportAgent != "" {
