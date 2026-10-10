@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -24,7 +25,11 @@ import (
 type Config struct {
 	// Open admits any instance that proves key possession into
 	// DefaultSpace. Development only.
-	Open bool
+	Open           bool
+	MaxConnections int
+	ConnectionIdle time.Duration
+	// FlagSettings identifies explicit serve flags for precedence reporting.
+	FlagSettings []string
 	// FramesPerMinute and BytesPerMinute bound what one instance may send.
 	FramesPerMinute int
 	BytesPerMinute  int
@@ -50,6 +55,12 @@ type Config struct {
 }
 
 func (c *Config) defaults() {
+	if c.MaxConnections <= 0 {
+		c.MaxConnections = 1024
+	}
+	if c.ConnectionIdle <= 0 {
+		c.ConnectionIdle = 90 * time.Second
+	}
 	if c.IdentityRotationWindow <= 0 {
 		c.IdentityRotationWindow = 10 * time.Minute
 	}
@@ -84,10 +95,15 @@ func (c *Config) defaults() {
 
 // Hub routes envelopes between connected instances.
 type Hub struct {
-	cfg   Config
-	store *Store
-	hubID string
-	log   *slog.Logger
+	cfg        Config
+	effective  atomic.Pointer[Config]
+	adminMu    sync.Mutex
+	settingsMu sync.Mutex
+	started    time.Time
+	logs       *adminLogRing
+	store      *Store
+	hubID      string
+	log        *slog.Logger
 
 	upgrader websocket.Upgrader
 
@@ -108,6 +124,8 @@ type Hub struct {
 // New creates a hub over store and starts its policy refresher.
 func New(store *Store, cfg Config) (*Hub, error) {
 	cfg.defaults()
+	logs := &adminLogRing{}
+	cfg.Logger = slog.New(&adminLogHandler{next: cfg.Logger.Handler(), ring: logs})
 	hubID, err := store.HubID()
 	if err != nil {
 		return nil, err
@@ -117,10 +135,25 @@ func New(store *Store, cfg Config) (*Hub, error) {
 		return nil, err
 	}
 	h := &Hub{
-		cfg: cfg, store: store, hubID: hubID, log: cfg.Logger.With("component", "hub"),
+		cfg: cfg, store: store, hubID: hubID, log: cfg.Logger.With("component", "hub"), started: time.Now(), logs: logs,
 		upgrader: websocket.Upgrader{ReadBufferSize: 16 << 10, WriteBufferSize: 16 << 10},
 		conns:    map[string]*conn{}, policy: snap, stop: make(chan struct{}),
 		limiters: map[string]*bucketPair{},
+	}
+	if _, err = store.AdminGeneration(); err != nil {
+		return nil, err
+	}
+	if err = h.refreshSettings(); err != nil {
+		return nil, err
+	}
+	settings, err := h.Settings()
+	if err != nil {
+		return nil, err
+	}
+	for field, spec := range settings {
+		if spec.Source == "db" {
+			h.log.Warn("serve value overridden by persisted remote setting", "field", field, "serve_value", spec.Boot, "db_value", spec.Effective)
+		}
 	}
 	h.wg.Add(1)
 	go h.refreshLoop()
@@ -177,6 +210,9 @@ func (h *Hub) Close() {
 // connections and re-sending directories. The refresher calls it
 // periodically; tests and admin paths may call it directly.
 func (h *Hub) RefreshPolicy() {
+	if err := h.refreshSettings(); err != nil {
+		h.log.Warn("settings refresh failed", "error", err)
+	}
 	snap, err := h.store.snapshot()
 	if err != nil {
 		h.log.Warn("policy refresh failed", "error", err)
@@ -214,11 +250,11 @@ func (h *Hub) RefreshPolicy() {
 
 func (h *Hub) refreshLoop() {
 	defer h.wg.Done()
-	t := time.NewTicker(h.cfg.PolicyRefresh)
-	defer t.Stop()
 	for {
+		t := time.NewTimer(h.config().PolicyRefresh)
 		select {
 		case <-h.stop:
+			t.Stop()
 			return
 		case <-t.C:
 			h.RefreshPolicy()
@@ -233,6 +269,7 @@ type conn struct {
 	name    string
 	version string
 	pub     []byte
+	nonce   string
 	out     chan *proto.Frame
 	done    chan struct{}
 	once    sync.Once
@@ -278,7 +315,7 @@ func (c *conn) fail(code, msg string) {
 }
 
 func (c *conn) writeLoop() {
-	ping := time.NewTicker(30 * time.Second)
+	ping := time.NewTicker(10 * time.Second)
 	defer ping.Stop()
 	for {
 		select {
@@ -327,7 +364,7 @@ func (r *refusal) Error() string { return r.code + ": " + r.msg }
 
 func (h *Hub) handshake(ws *websocket.Conn) (*conn, error) {
 	nonce := randHex(16)
-	deadline := time.Now().Add(h.cfg.HelloTimeout)
+	deadline := time.Now().Add(h.config().HelloTimeout)
 	_ = ws.SetWriteDeadline(deadline)
 	if err := ws.WriteJSON(&proto.Frame{Type: proto.FrameChallenge, HubID: h.hubID, Nonce: nonce, Proto: proto.ProtocolVersion}); err != nil {
 		_ = ws.Close()
@@ -356,7 +393,7 @@ func (h *Hub) handshake(ws *websocket.Conn) (*conn, error) {
 	id := hello.InstanceID
 	now := time.Now()
 	if len(hello.RotationChain) > 0 {
-		if err := h.store.ObserveRotations(hello.RotationChain, id, now, h.cfg.IdentityRotationWindow); err != nil {
+		if err := h.store.ObserveRotations(hello.RotationChain, id, now, h.config().IdentityRotationWindow); err != nil {
 			return refuse(proto.CodeNotAdmitted, err.Error())
 		}
 		h.RefreshPolicy()
@@ -417,24 +454,28 @@ func (h *Hub) handshake(ws *websocket.Conn) (*conn, error) {
 	h.mu.Lock()
 	spaces := h.policy.spaces[id]
 	h.mu.Unlock()
+	generation, err := h.store.AdminGeneration()
+	if err != nil {
+		return refuse(proto.CodeNotAdmitted, "admin state unavailable")
+	}
 	_ = ws.SetReadDeadline(time.Time{})
 	_ = ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	if err := ws.WriteJSON(&proto.Frame{Type: proto.FrameWelcome, IdentityRotationVersion: 1, HubID: h.hubID, InstanceID: id, Spaces: spaces, Version: h.cfg.Version}); err != nil {
+	if err := ws.WriteJSON(&proto.Frame{Type: proto.FrameWelcome, AdminGeneration: generation, HubAdminVersion: 1, IdentityRotationVersion: 1, HubID: h.hubID, InstanceID: id, Spaces: spaces, Version: h.cfg.Version}); err != nil {
 		_ = ws.Close()
 		return nil, err
 	}
 	_ = ws.SetWriteDeadline(time.Time{})
-	ws.SetPongHandler(func(string) error { _ = ws.SetReadDeadline(time.Now().Add(90 * time.Second)); return nil })
-	_ = ws.SetReadDeadline(time.Now().Add(90 * time.Second))
+	ws.SetPongHandler(func(string) error { _ = ws.SetReadDeadline(time.Now().Add(h.config().ConnectionIdle)); return nil })
+	_ = ws.SetReadDeadline(time.Now().Add(h.config().ConnectionIdle))
 	h.mu.Lock()
 	lim := h.limiters[id]
 	if lim == nil {
-		lim = newBucketPair(h.cfg.FramesPerMinute, h.cfg.BytesPerMinute)
+		lim = newBucketPair(h.config().FramesPerMinute, h.config().BytesPerMinute)
 		h.limiters[id] = lim
 	}
 	h.mu.Unlock()
 	return &conn{
-		hub: h, ws: ws, id: id, name: name, version: hello.Version, pub: hello.PubKey,
+		hub: h, ws: ws, id: id, name: name, version: hello.Version, pub: hello.PubKey, nonce: nonce,
 		out: make(chan *proto.Frame, 256), done: make(chan struct{}),
 		limiter: lim,
 	}, nil
@@ -442,7 +483,7 @@ func (h *Hub) handshake(ws *websocket.Conn) (*conn, error) {
 
 func (h *Hub) register(c *conn) bool {
 	h.mu.Lock()
-	if h.closed {
+	if h.closed || (h.conns[c.id] == nil && len(h.conns) >= h.config().MaxConnections) {
 		h.mu.Unlock()
 		return false
 	}
@@ -483,7 +524,7 @@ func (h *Hub) readLoop(c *conn) {
 		if err != nil {
 			return
 		}
-		_ = c.ws.SetReadDeadline(time.Now().Add(90 * time.Second))
+		_ = c.ws.SetReadDeadline(time.Now().Add(h.config().ConnectionIdle))
 		if err := json.Unmarshal(raw, &f); err != nil {
 			c.fail(proto.CodeBadFrame, "malformed frame")
 			return
@@ -491,6 +532,8 @@ func (h *Hub) readLoop(c *conn) {
 		switch f.Type {
 		case proto.FrameSend:
 			h.route(c, &f, len(raw))
+		case proto.FrameAdminRequest:
+			h.adminRequest(c, &f, len(raw))
 		default:
 			c.send(&proto.Frame{Type: proto.FrameError, Code: proto.CodeBadFrame, Message: "unexpected frame " + f.Type})
 		}

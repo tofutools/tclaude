@@ -119,6 +119,10 @@ func (s *Store) observeRotation(r proto.Rotation, authenticated string, now time
 	if _, err = tx.Exec(`UPDATE instances SET revoked=1 WHERE instance_id=?`, r.OldID); err != nil {
 		return err
 	}
+	// Only accepted dual-signed succession carries admin capabilities forward.
+	if _, err = tx.Exec(`UPDATE hub_admins SET instance_id=?,pubkey=? WHERE instance_id=?`, r.NewID, []byte(r.NewKey), r.OldID); err != nil {
+		return err
+	}
 	if _, err = tx.Exec(`UPDATE identity_rotations SET state='accepted' WHERE old_instance=?`, r.OldID); err != nil {
 		return err
 	}
@@ -192,6 +196,16 @@ func (s *Store) RecoverIdentity(old, next string, now time.Time) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if _, err = tx.Exec(`UPDATE instances SET revoked=revoked WHERE instance_id=?`, old); err != nil {
+		return err
+	}
+	if err = guardAdminLoss(tx, old, false); err != nil {
+		return err
+	}
+	// Key-loss recovery changes admission, not administrator authority.
+	if _, err = tx.Exec(`DELETE FROM hub_admins WHERE instance_id=?`, old); err != nil {
+		return err
+	}
 	var count int
 	if err = tx.QueryRow(`SELECT COUNT(*) FROM instances WHERE instance_id=?`, old).Scan(&count); err != nil {
 		return err
@@ -238,6 +252,15 @@ func (s *Store) RevokeOldIdentity(instance string, now time.Time) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if _, err = tx.Exec(`UPDATE instances SET revoked=revoked WHERE instance_id=?`, instance); err != nil {
+		return err
+	}
+	if err = guardAdminLoss(tx, instance, false); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DELETE FROM hub_admins WHERE instance_id=?`, instance); err != nil {
+		return err
+	}
 	r := proto.Rotation{Version: 1, OldID: instance}
 	raw, _ := json.Marshal(r)
 	if _, err = tx.Exec(`INSERT INTO identity_rotations(old_instance,new_instance,statement,state,received_at,accept_after) VALUES(?,'',?,'revoked',?,?) ON CONFLICT(old_instance) DO UPDATE SET state=CASE WHEN state IN ('accepted','recovered') THEN state ELSE 'revoked' END`, instance, string(raw), ts(now), ts(now)); err != nil {
