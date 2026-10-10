@@ -48,11 +48,15 @@ func (req *approvalRequest) setDeadline(t time.Time) {
 // them lock-free; only deadline is mutated, and dashboardSnapshot reads it
 // under the request mutex.
 type dashboardAccessRequest struct {
-	ID        string `json:"id"`
-	Perm      string `json:"perm"`
-	ConvID    string `json:"conv_id,omitempty"`
-	ConvTitle string `json:"conv_title,omitempty"`
-	AgentID   string `json:"agent_id,omitempty"`
+	OriginPeer      string     `json:"origin_peer,omitempty"`
+	GroupID         int64      `json:"group_id,omitempty"`
+	GrantTTLSeconds int        `json:"grant_ttl_seconds,omitempty"`
+	GrantExpiresAt  *time.Time `json:"grant_expires_at,omitempty"`
+	ID              string     `json:"id"`
+	Perm            string     `json:"perm"`
+	ConvID          string     `json:"conv_id,omitempty"`
+	ConvTitle       string     `json:"conv_title,omitempty"`
+	AgentID         string     `json:"agent_id,omitempty"`
 	// CurrentConvID / caller and title states are display metadata refreshed
 	// from AgentID on every snapshot. ConvID above remains the immutable
 	// request-generation correlation key.
@@ -106,7 +110,7 @@ func toDashboardAccessRequest(req *approvalRequest) dashboardAccessRequest {
 		// request's own createdAt + timeout.
 		deadline = req.createdAt.Add(req.timeout)
 	}
-	return dashboardAccessRequest{
+	out := dashboardAccessRequest{
 		ID:              req.id,
 		Perm:            req.perm,
 		ConvID:          req.convID,
@@ -123,6 +127,12 @@ func toDashboardAccessRequest(req *approvalRequest) dashboardAccessRequest {
 		CreatedAt:       req.createdAt.Format(time.RFC3339),
 		Deadline:        deadline.Format(time.RFC3339),
 	}
+	if req.peerAccess != nil {
+		req.mu.Lock()
+		enrichPeerAccess(&out, *req.peerAccess)
+		req.mu.Unlock()
+	}
+	return out
 }
 
 func accessRequestDB(req *approvalRequest, status string, decidedAt time.Time) *db.AccessRequest {
@@ -161,6 +171,11 @@ func refreshDashboardAccessRequestCallers(requests []dashboardAccessRequest) {
 	}
 	displays := loadApprovalCallerDisplays(agentIDs)
 	for i := range requests {
+		if requests[i].OriginPeer != "" {
+			requests[i].CallerState = "operator"
+			requests[i].TitleStatus = "available"
+			continue
+		}
 		display, ok := displays[requests[i].AgentID]
 		if !ok {
 			requests[i].ConvTitle = approvalTitleMissing
@@ -173,6 +188,13 @@ func refreshDashboardAccessRequestCallers(requests []dashboardAccessRequest) {
 		requests[i].CallerState = display.CallerState
 		requests[i].TitleStatus = display.TitleStatus
 	}
+}
+
+func enrichPeerAccess(out *dashboardAccessRequest, p db.FederationPeerAccessRequest) {
+	out.OriginPeer = p.Peer
+	out.GroupID = p.GrantGroupID
+	out.GrantTTLSeconds = p.GrantTTLSeconds
+	out.GrantExpiresAt = p.ExpiresAt
 }
 
 func dbAccessRequestToDashboard(ar *db.AccessRequest) dashboardAccessRequest {
@@ -190,6 +212,11 @@ func dbAccessRequestToDashboard(ar *db.AccessRequest) dashboardAccessRequest {
 		TargetConvTitle: ar.TargetConvTitle,
 		AutoGrantable:   ar.AutoGrantable,
 		Status:          ar.Status,
+	}
+	if ar.Path == "/api/peer-access-requests" && ar.AgentID == "" {
+		if p, err := db.GetFederationPeerAccessRequest(ar.ID); err == nil && p != nil {
+			enrichPeerAccess(&out, *p)
+		}
 	}
 	if !ar.CreatedAt.IsZero() {
 		out.CreatedAt = ar.CreatedAt.Format(time.RFC3339)
@@ -276,6 +303,10 @@ func handleDashboardAccessRequestDecision(w http.ResponseWriter, r *http.Request
 	if !checkDashboardAuth(w, r) {
 		return
 	}
+	serveAccessRequestDecision(w, r)
+}
+
+func serveAccessRequestDecision(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "missing approval id")
@@ -283,8 +314,10 @@ func handleDashboardAccessRequestDecision(w http.ResponseWriter, r *http.Request
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
 	var body struct {
-		Decision string `json:"decision"`
-		Secs     int    `json:"secs"`
+		Decision        string `json:"decision"`
+		Secs            int    `json:"secs"`
+		GrantTTLSeconds *int   `json:"grant_ttl_seconds"`
+		GroupID         *int64 `json:"group_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid JSON body")
@@ -299,7 +332,12 @@ func handleDashboardAccessRequestDecision(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	switch strings.ToLower(strings.TrimSpace(body.Decision)) {
+	decision := strings.ToLower(strings.TrimSpace(body.Decision))
+	if req.peerAccess != nil && decision != "extend" {
+		servePeerAccessDecision(w, req, decision, body.GrantTTLSeconds, body.GroupID)
+		return
+	}
+	switch decision {
 	case "approve":
 		select {
 		case req.decision <- outcomeApprove:

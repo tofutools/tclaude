@@ -149,6 +149,7 @@ func (o approvalOutcome) approved() bool { return o != outcomeDeny }
 // operator decides or the timeout auto-denies.
 type approvalRequest struct {
 	id              string
+	peerAccess      *db.FederationPeerAccessRequest // immutable origin, decision fields guarded by mu
 	perm            string
 	convID          string // requester
 	agentID         string // requester's stable actor, captured once for display/grant/audit
@@ -406,6 +407,11 @@ func realRequestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 	approvals.mu.Lock()
 	approvals.pending[req.id] = req
 	approvals.mu.Unlock()
+	return waitHumanApproval(req, popupBaseURL)
+}
+
+// waitHumanApproval also serves peer approvals registered atomically with their admission limit.
+func waitHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 	defer func() {
 		approvals.mu.Lock()
 		delete(approvals.pending, req.id)
@@ -468,11 +474,17 @@ func realRequestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 			// return/revoke/expiry cannot leave a queued decision authorized.
 			approved, applied := remote.runtime.applyAwayDecision(req, remote)
 			if applied {
+				if !approved {
+					remote.outcome = outcomeDeny
+				}
 				approvals.recordResolved(req, outcomeLabel(remote.outcome))
 				return approved
 			}
 		case d := <-req.decision:
 			approved := applyApprovalOutcome(req, d)
+			if !approved {
+				d = outcomeDeny
+			}
 			approvals.recordResolved(req, outcomeLabel(d))
 			return approved
 		case d := <-req.extend:
@@ -516,6 +528,9 @@ func newApprovalID() string {
 // reaches here). Both the real waiter and the test stub route through this,
 // so the stub exercises the same audit + persist path as production.
 func applyApprovalOutcome(req *approvalRequest, outcome approvalOutcome) bool {
+	if req.peerAccess != nil {
+		return applyPeerAccessOutcome(req, outcome)
+	}
 	recordApprovalDecision(req, outcome)
 	switch outcome {
 	case outcomeApproveAlways:
@@ -636,6 +651,10 @@ func popupAlwaysGranter(scopeJSON string) string {
 // Best-effort: a logging failure is warned and swallowed so it can never
 // affect the request the agent just made.
 func recordApprovalRequest(req *approvalRequest) {
+	if req.peerAccess != nil {
+		recordFederationAudit("federation.access.request", "operator@"+req.peerAccess.Peer, "", req.targetGroup, req.perm, 200)
+		return
+	}
 	label := strings.TrimSpace(req.convTitle)
 	if label == "" {
 		label = short8(req.convID)

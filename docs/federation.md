@@ -2710,3 +2710,46 @@ an unknown name returns 404. Each link has the existing snapshot shape:
 `peer`, `label`, `level`, `kind`, `direction`, `slugs?`, `pool?`, `remote?`,
 `online`, and `last_seen?`. Peers cannot read this node's other trust links,
 including through unrestricted trust.
+
+### Operator access requests
+
+A trusted peer with an existing active grant can request additional dispatcher
+permissions through `POST /api/peer-access-requests`, using the ordinary local
+proxy `/api/peer/{instance_id}/peer-access-requests`. Trust alone and public node
+summaries do not permit requests. The `permissions.requests` omission names
+`peer_access` when this admission condition is missing. Local-only endpoints
+cannot be opened by a request.
+
+The JSON body is `{permission, group_id?, reason?, grant_ttl_seconds?}`. A
+positive `group_id` identifies an already shared receiving group; zero requests
+an unscoped grant. TTL defaults to one hour; zero means permanent and the maximum
+is 30 days. The receiving operator can narrow an unscoped request to one shared
+group and choose the lifetime. Approval never replaces an existing broader or
+permanent grant or its launch policy. Expired grants stop authorizing every peer
+read and write through the common grant reader.
+
+A request returns HTTP 202 with `{id, origin_peer, perm, group_id,
+grant_group_id, grant_ttl_seconds, status}`. Poll
+`GET /api/peer-access-requests/{id}` through the same proxy for its owned status;
+other peers cannot read it. Requests time out after five minutes unless the
+operator extends them. Pending requests interrupted by a daemon restart are not
+approvable; status reads report `interrupted`. Each peer can have eight pending
+requests. Approval is a grant, so retry the original action explicitly afterwards.
+
+Receiving operators see peer requests in the existing Access requests folder,
+including its away-mode delegated approval flow. Rows add `origin_peer`,
+`group_id`, `grant_ttl_seconds`, and `grant_expires_at` when applicable. The local
+`GET /api/federation/access-requests` lists peer requests and history. Decide via
+`POST /api/federation/access-requests/{id}/decision` (or the existing local
+`/api/access-requests/{id}/decision`) with `{decision:"approve"|"deny"|"extend",
+grant_ttl_seconds?, group_id?, secs?}`. Peer requests do not support agent
+"always allow" decisions. These administration routes remain local-only.
+
+CLI parity uses `tclaude federation access request --node bob
+--permission message.direct --group-id 7 --reason 'Coordinate the task' --ttl 1h`,
+`access status --node bob --id ID`, `access list`, and
+`access approve --id ID --group-id 7 --ttl 1h` (or `deny` / `extend`). The CLI
+administration routes mirror `/v1/federation/access-requests`. Both nodes audit
+requests and terminal decisions without copying the reason into audit logs.
+Agents continue to request missing local cross-node permissions from their own
+operator using the existing `--ask-human` path.

@@ -67,14 +67,15 @@ func PeerViewHandler(instanceID string) http.Handler {
 }
 
 type peerViewRule struct {
-	feature    string
-	requires   string
-	group      bool
-	visible    bool
-	summary    bool
-	publicRead bool
-	serve      func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
-	write      func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
+	feature       string
+	requires      string
+	group         bool
+	visible       bool
+	summary       bool
+	accessRequest bool
+	publicRead    bool
+	serve         func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
+	write         func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
 }
 
 // This single mapping drives endpoint dispatch, refusals and omitted features.
@@ -87,6 +88,15 @@ func peerViewRules() map[string]peerViewRule {
 		rules[pattern] = peerViewRule{feature: "local_dashboard", requires: "local_only"}
 	}
 	rules["/"] = peerViewRule{feature: "local_dashboard", requires: "local_only"}
+	for _, pattern := range []string{"POST /api/peer-access-requests", "GET /api/peer-access-requests/{id}"} {
+		rule := peerViewRule{feature: "permissions.requests", requires: "peer_access", accessRequest: true}
+		if strings.HasPrefix(pattern, "GET ") {
+			rule.serve = servePeerAccessRequest
+		} else {
+			rule.write = servePeerAccessRequest
+		}
+		rules[pattern] = rule
+	}
 	rules["GET /api/snapshot"] = peerViewRule{feature: "agents.status", requires: PermAgentsStatusRead, group: true, serve: servePeerSnapshot}
 	rules["GET /api/groups"] = peerViewRule{feature: "groups", requires: PermGroupsRosterRead, group: true, visible: true, serve: servePeerGroups}
 	rules["GET /api/groups/{name}"] = peerViewRule{feature: "groups", requires: PermGroupsRosterRead, group: true, visible: true, serve: servePeerGroup}
@@ -146,6 +156,9 @@ type peerViewMetadata struct {
 }
 
 func (v *peerView) allows(rule peerViewRule, groupID int64) bool {
+	if v != nil && rule.accessRequest {
+		return peerHasAccess(v.peer.InstanceID)
+	}
 	if v == nil || rule.publicRead {
 		return true
 	}
