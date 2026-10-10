@@ -155,7 +155,7 @@ func TestFederation_ModelGatewayDialectProbeDoesNotConsumeRequestCapacity(t *tes
 }
 
 func TestFederation_ModelGatewayResponseBeforeRequestHalfClose(t *testing.T) {
-	for _, finish := range []string{"half-close", "discovery-body", "deadline", "grace"} {
+	for _, finish := range []string{"half-close", "discovery-body", "discovery-overflow", "deadline", "grace"} {
 		t.Run(finish, func(t *testing.T) {
 			fh := newFedHarness(t)
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -181,11 +181,32 @@ func TestFederation_ModelGatewayResponseBeforeRequestHalfClose(t *testing.T) {
 			require.NoError(t, err)
 			flow := fedModelFlow(t, fh, proto.ModelOpenPayload{Proxy: "model", Session: "immutable-launch", Dialect: "openai"})
 			method, path, input := http.MethodPost, "/v1/responses", `{"model":"test-model","input":"hello"}`
-			if finish == "discovery-body" {
+			if strings.HasPrefix(finish, "discovery-") {
 				method, path, input = http.MethodGet, "/v1/models", strings.Repeat("x", 16<<10)
+				if finish == "discovery-overflow" {
+					input = strings.Repeat("x", (64<<10)+1)
+				}
 			}
 			req, err := http.NewRequest(method, "http://model"+path, strings.NewReader(input))
 			require.NoError(t, err)
+			if finish == "discovery-overflow" {
+				// Leave the framed body incomplete so only the byte cap, rather
+				// than body EOF or the grace timer, can trigger immediate cleanup.
+				req.ContentLength++
+				require.Error(t, req.Write(flow))
+				resp, err := http.ReadResponse(bufio.NewReader(flow), req)
+				require.NoError(t, err)
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+				require.NoError(t, resp.Body.Close())
+				require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+				select {
+				case <-flow.Done():
+				case <-time.After(3 * time.Second):
+					t.Fatal("over-limit drain did not close the stream before its grace")
+				}
+				return
+			}
 			require.NoError(t, req.Write(flow))
 			// Deliberately receive the entire response, including the gateway's
 			// half-close, before sending ours. HTTP body framing already ended the
