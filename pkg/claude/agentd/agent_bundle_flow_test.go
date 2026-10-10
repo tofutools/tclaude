@@ -180,6 +180,8 @@ func TestAgentBundleCredentialCountsAndConfigOnly(t *testing.T) {
 	cx := "ses_portable-config"
 	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: cx, Harness: "opencode", ProjectPath: cwd, FullPath: filepath.Join(cwd, "unused")}))
 	f.HaveMember("source", cx)
+	// Preserve the actual harness in the native launch row, as a real agent does.
+	require.NoError(t, db.SaveSession(&db.SessionRow{ID: "opencode-config", ConvID: cx, Harness: "opencode", Cwd: cwd}))
 	rec = profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+cx+"&history=true", nil)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	b, err = agentbundle.Decode(rec.Body.Bytes())
