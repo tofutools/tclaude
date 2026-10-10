@@ -4,6 +4,7 @@ import { createPreactHarness } from './preact-harness.mjs';
 const FP_FORGE = 'k7q2-mx9d-4hpa-zz31-0e8c';
 const FP_NEW = 'w5ze-a3nq-9c1b-77f0-d2aa';
 let s_transition = null;
+let s_rotation = { hop_count: 1, pending: false };
 const status = () => ({
   enabled: true, instance_id: 'inst_self', name: 'desk', fingerprint: 'self-fp-0000', hub_url: 'wss://hub.example', hub: { state: 'connected' },
   peers: [
@@ -123,6 +124,12 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
       : { presence: true, resources: false, failures: false, debounce_seconds: 15, disk_free_percent: 10, ram_free_percent: 10, memory_seconds: 120, failure_count: 3, failure_window_seconds: 600, cooldown_seconds: 600 }; },
     setHealthPolicy: async (peer, body) => { log.push(['setHealth', peer, body]); return { ...body, presence: body.presence }; },
     setNodeLabels: async (o) => { log.push(['labels', o]); return { ok: true }; },
+    identityRotations: async () => { log.push(['rotations']); return { local: s_rotation.pending
+      ? { pending: true, chain: [{ new_id: 'inst_old' }, { new_id: 'inst_succ', new_fingerprint: 'succ-fp-1111', activate_at: new Date(Date.now() + 26 * 3600e3).toISOString() }] }
+      : { pending: false, chain: [{ new_id: 'inst_old' }] } }; },
+    previewRotateIdentity: async () => { log.push(['rotatePreview']); return { instance_id: 'inst_self', fingerprint: 'self-fp-0000', window_seconds: 172800, hop_count: s_rotation.hop_count, hop_limit: 4, pending: s_rotation.pending,
+      effects: { successor_linked: true, streams_reconnect: true, pending_sealed_mail_requires_resend: true, issued_model_credentials_revoked: true, requester_paid_leases_revoked: true } }; },
+    rotateIdentity: async () => { log.push(['rotate']); s_rotation = { hop_count: s_rotation.hop_count + 1, pending: true }; return { old_id: 'inst_self', new_id: 'inst_succ' }; },
     viewers: async () => s_viewers,
     kickViewer: async (id) => { log.push(['kick', id]); s_viewers = s_viewers.filter((v) => v.id !== id); return { ok: true }; },
     offers: async (dir) => { log.push(['offers', dir]); return dir === 'in' ? [
@@ -1040,7 +1047,7 @@ test('moves: both directions listed, only abandonable outgoing moves offer Aband
   assert.match(s.q('#fleet-teleport').textContent, /frozen/);
 });
 
-test('moves: the move dialog spells out that the source retires, starts focus on Cancel, and surfaces refusals', async (t) => {
+test('moves: the move dialog spells out that the source retires and surfaces refusals', async (t) => {
   const s = await setup(t);
   const doc = s.harness.document; const q = (x) => doc.querySelector(x);
   await s.show();
@@ -1053,7 +1060,6 @@ test('moves: the move dialog spells out that the source retires, starts focus on
   await s.harness.act(() => s.harness.fireEvent(g, 'input'));
   await s.click(q('#fleet-move-agent-send'));
   const c = s.confirms.at(-1);
-  assert.equal(c.focusCancel, true);
   assert.match(c.title, /Move ada \(agt_a1\) to forge\?/);
   assert.match(c.body, /full conversation history.*retired here: it stops running, leaves its groups and loses its grants.*abandon the move.*not withdrawn/);
   assert.match(q('#fleet-move-agent [role=alert]').textContent, /contains credentials/);
@@ -1298,3 +1304,68 @@ test('keyTransition shows only pending and conflict, and recoverCommands refuses
   assert.equal(fleet.peers[0].keyTransition.state, 'pending');
 });
 
+
+test('identity rotation: the consequence names every effect and the hop limit; pending and the limit block it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/fleet-admin-identity.js');
+  const p = { instance_id: 'inst_self', fingerprint: 'fp', window_seconds: 86400, hop_count: 3, hop_limit: 4, effects: { successor_linked: true, streams_reconnect: true, pending_sealed_mail_requires_resend: true, issued_model_credentials_revoked: true, requester_paid_leases_revoked: true } };
+  assert.match(m.rotateConsequence(p), /preview generated nothing.*linking it to this identity.*1 d detection window.*streams.*reconnect.*must be resent.*Model credentials this node issued to peers and requester-paid model leases are revoked.*last linked rotation \(4 of 4\).*re-pairing every peer/);
+  assert.match(m.rotateConsequence({ ...p, hop_count: 0 }), /linked rotation 1 of at most 4; rotation 5 needs re-pairing every peer/);
+  assert.match(m.rotateConsequence({ instance_id: 'i' }), /streams.*resent.*revoked/, 'a missing flag still states the consequence');
+  assert.equal(m.rotateBlock(p), '');
+  assert.match(m.rotateBlock({ ...p, pending: true }), /already pending/);
+  assert.match(m.rotateBlock({ ...p, hop_count: 4 }), /reached 4 linked rotations.*Re-pair/);
+  assert.equal(m.localRotation({ local: { pending: false, chain: [{}] } }), null);
+  assert.equal(m.localRotation({ local: { pending: true, chain: [{ new_id: 'a' }, { new_id: 'b', new_fingerprint: 'f', activate_at: '2026-10-11T00:00:00Z' }] } }).newID, 'b');
+  assert.equal(m.fmtSpan(26 * 3600e3), '1 d 2 h'); assert.equal(m.fmtSpan(90 * 60e3), '1 h 30 min'); assert.equal(m.fmtSpan(5e3), '1 min');
+});
+
+test('node settings: rotate identity previews, confirms every consequence, applies, then shows the pending countdown', async (t) => {
+  s_rotation = { hop_count: 1, pending: false };
+  const s = await setup(t);
+  await s.show();
+  await s.click(s.q('#fleet-node-settings-open'));
+  const doc = s.harness.document; const q = (x) => doc.querySelector(x);
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  assert.match(q('#fleet-identity').textContent, /No rotation pending/);
+  assert.equal(q('#fleet-rotate-open').disabled, false);
+  await s.click(q('#fleet-rotate-open'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  const c = s.confirms.at(-1);
+  assert.equal(c.title, 'Rotate this node\'s identity?');
+  assert.equal(c.okLabel, 'Rotate identity');
+  assert.equal('focusCancel' in c, false, 'Enter confirms, like every other confirm');
+  assert.match(c.body, /inst_self \(self-fp-0000\).*2 d detection window.*reconnect.*resent.*revoked.*linked rotation 2 of at most 4/);
+  assert.deepEqual(s.log.filter((l) => /rotat/.test(l[0])).map((l) => l[0]), ['rotations', 'rotatePreview', 'rotatePreview', 'rotate', 'rotations', 'rotatePreview']);
+  assert.match(s.toasts.at(-1), /inst_succ is pending/);
+  assert.match(q('#fleet-rotation-pending').textContent, /inst_succ.*succ-fp-1111.*no earlier than.*\(in 1 d 2 h\)/);
+  assert.equal(q('#fleet-rotate-open').disabled, true, 'the daemon refuses a second pending rotation');
+});
+
+test('node settings: at the hop limit rotation is disabled with the re-pairing guidance', async (t) => {
+  s_rotation = { hop_count: 4, pending: false };
+  const s = await setup(t);
+  await s.show();
+  await s.click(s.q('#fleet-node-settings-open'));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  const q = (x) => s.harness.document.querySelector(x);
+  assert.match(q('#fleet-rotation-blocked').textContent, /reached 4 linked rotations.*Re-pair offline peers/);
+  assert.equal(q('#fleet-rotate-open').disabled, true);
+  s_rotation = { hop_count: 1, pending: false };
+});
+
+test('fleet dialogs close on Escape', async (t) => {
+  const s = await setup(t);
+  await s.show();
+  const q = (x) => s.harness.document.querySelector(x);
+  const esc = () => s.harness.act(() => s.harness.fireEvent(s.harness.document, 'keydown', { key: 'Escape' }));
+  await s.click(s.q('#fleet-node-settings-open'));
+  assert.ok(q('#fleet-node-settings'));
+  await esc();
+  assert.equal(q('#fleet-node-settings'), null);
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Moves/.test(b.textContent)));
+  await s.click(s.q('#fleet-move-open'));
+  assert.ok(q('#fleet-move-agent'));
+  await esc();
+  assert.equal(q('#fleet-move-agent'), null);
+});

@@ -45,6 +45,11 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
     healthPolicy: (peer = '') => call('GET', `nodes/health?peer=${encodeURIComponent(peer)}`),
     setHealthPolicy: (peer, policy) => call('POST', `nodes/health?peer=${encodeURIComponent(peer || '')}`, policy),
     setNodeLabels: ({ add = [], remove = [] }) => call('POST', 'node-labels', { add, remove }),
+    // This node's identity rotation (tclaude federation identity rotate): the
+    // preview is read-only and generates no key; apply signs the successor.
+    identityRotations: () => call('GET', 'identity/rotations'),
+    previewRotateIdentity: () => call('POST', 'identity/rotate', {}),
+    rotateIdentity: () => call('POST', 'identity/rotate', { apply: true }),
     // Peers viewing this node's agent terminals now; kick closes one view.
     viewers: async () => (await call('GET', 'viewers')) || [],
     kickViewer: (id) => call('POST', `viewers/${encodeURIComponent(id)}/kick`, {}),
