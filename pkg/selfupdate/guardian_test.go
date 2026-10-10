@@ -186,3 +186,46 @@ func (*recoveryHealthChild) Healthy(_ context.Context, version string) error {
 	}
 	return nil
 }
+
+func TestUpdateAdmissionReconcilesOutcomeWhileFinishedCallbackIsBlocked(t *testing.T) {
+	s, _ := fixture(t)
+	finished := make(chan Job, 1)
+	releaseCallback := make(chan struct{})
+	s.hooks.Finished = func(j Job) { finished <- j; <-releaseCallback }
+	defer close(releaseCallback)
+	old, err := s.Start(Request{Action: "check"}, "operator", func() bool { return true })
+	require.NoError(t, err)
+	select {
+	case j := <-finished:
+		require.Equal(t, old.ID, j.ID)
+	case <-time.After(5 * time.Second):
+		t.Fatal("finished callback not reached")
+	}
+	// The old async callback is blocked and has not persisted an outcome. Even
+	// though active is cleared, admission must reconcile it before replacement.
+	blocked := true
+	reconciled := false
+	s.hooks.BeforeStart = func(j Job) error {
+		require.Equal(t, old.ID, j.ID)
+		require.Equal(t, "succeeded", j.State)
+		if blocked {
+			return fmt.Errorf("audit unavailable")
+		}
+		reconciled = true
+		return nil
+	}
+	_, err = s.Start(Request{Action: "check"}, "operator", func() bool { return true })
+	require.ErrorContains(t, err, "audit unavailable")
+	require.Equal(t, old.ID, s.Pending().ID)
+	blocked = false
+	next, err := s.Start(Request{Action: "check"}, "operator", func() bool { return true })
+	require.NoError(t, err)
+	require.True(t, reconciled)
+	require.NotEqual(t, old.ID, next.ID)
+	select {
+	case j := <-finished:
+		require.Equal(t, next.ID, j.ID)
+	case <-time.After(5 * time.Second):
+		t.Fatal("replacement check did not finish")
+	}
+}

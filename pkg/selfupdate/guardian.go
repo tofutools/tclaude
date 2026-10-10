@@ -29,13 +29,17 @@ type Guardian struct {
 
 func NewGuardian(ctx context.Context, dir string, binary Binary, launch func(context.Context, string) (SupervisedChild, error), outcome func(Job), audits ...func(Job) error) (*Guardian, error) {
 	g := &Guardian{fatal: make(chan error, 1), context: ctx, binary: binary, launch: launch, deadline: 60 * time.Second, outcome: outcome}
+	var beforeStart func(Job) error
+	if len(audits) > 1 {
+		beforeStart = audits[1]
+	}
 	var started func(Job) error
 	var progress func(Job)
 	if len(audits) > 0 {
 		started = audits[0]
 		progress = func(j Job) { _ = audits[0](j) }
 	}
-	svc, err := New(dir, []Binary{binary}, Hooks{Started: started, Progress: progress, Supervised: true, ReleaseOnly: true, NoDowngrade: true, Restart: g.restart, Finished: func(j Job) {
+	svc, err := New(dir, []Binary{binary}, Hooks{BeforeStart: beforeStart, Started: started, Progress: progress, Supervised: true, ReleaseOnly: true, NoDowngrade: true, Restart: g.restart, Finished: func(j Job) {
 		if j.State != "restarting" && outcome != nil {
 			outcome(j)
 		}

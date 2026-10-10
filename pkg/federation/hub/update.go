@@ -30,7 +30,7 @@ func (h *Hub) initUpdate() error {
 	if err != nil {
 		binary = selfupdate.Binary{Name: "tclaude-hub", Path: path, Version: h.cfg.Version, Method: "unknown"}
 	}
-	svc, err := selfupdate.New(filepath.Join(filepath.Dir(h.store.path), "hub-update"), []selfupdate.Binary{binary}, selfupdate.Hooks{Supervised: true, ReleaseOnly: true, NoDowngrade: true, Started: h.store.AuditUpdateProgress, Progress: func(j selfupdate.Job) {
+	svc, err := selfupdate.New(filepath.Join(filepath.Dir(h.store.path), "hub-update"), []selfupdate.Binary{binary}, selfupdate.Hooks{Supervised: true, ReleaseOnly: true, NoDowngrade: true, BeforeStart: h.store.AuditUpdateOutcome, Started: h.store.AuditUpdateProgress, Progress: func(j selfupdate.Job) {
 		if err := h.store.AuditUpdateProgress(j); err != nil {
 			h.log.Error("hub update progress audit failed", "job", j.ID)
 		}

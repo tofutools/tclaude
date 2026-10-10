@@ -28,6 +28,7 @@ type Hooks struct {
 	Supervised  bool
 	ReleaseOnly bool
 	NoDowngrade bool
+	BeforeStart func(Job) error // runs under admission lock; must not re-enter Service
 	Started     func(Job) error
 	Progress    func(Job)
 	Finished    func(Job)
@@ -132,6 +133,11 @@ func (s *Service) Start(req Request, actor string, authorize func() bool) (Job, 
 	}
 	if s.active || s.hooks.Supervised && s.status.Job != nil && (s.status.Job.State == "running" || s.status.Job.State == "restarting") {
 		return Job{}, ErrBusy
+	}
+	if s.status.Job != nil && s.hooks.BeforeStart != nil {
+		if err := s.hooks.BeforeStart(*s.status.Job); err != nil {
+			return Job{}, err
+		}
 	}
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {

@@ -58,7 +58,7 @@ func serveSupervised(p *serveParams) error {
 	}
 	g, err := selfupdate.NewGuardian(ctx, dir, binary, func(ctx context.Context, path string) (selfupdate.SupervisedChild, error) {
 		return hubupdate.Launch(ctx, bridge, path, hubupdate.WorkerArgs(os.Args[1:]), id, p.TLSCert != "")
-	}, outcome, st.AuditUpdateProgress)
+	}, outcome, st.AuditUpdateProgress, st.AuditUpdateOutcome)
 	if err != nil {
 		return err
 	}
