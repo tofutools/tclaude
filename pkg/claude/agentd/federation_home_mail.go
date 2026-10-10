@@ -79,8 +79,7 @@ func (rt *fedRuntime) acceptAgentLocation(peer *db.FederationPeer, env *proto.En
 		return
 	}
 	if err := db.UpdateFederationAgentLocation(in.Agent, in.Home, in.Host, in.Nonce, in.Offer, in.Hops); err != nil {
-		p, _ := db.GetAgentFederationPresence(in.Agent)
-		if p != nil && p.State == "here" {
+		if homeDeparturePending(in.Agent, in.Nonce) {
 			ack.Code = "agent_moving"
 			ack.Reason = "home has not confirmed departure"
 		} else {
@@ -93,6 +92,22 @@ func (rt *fedRuntime) acceptAgentLocation(peer *db.FederationPeer, env *proto.En
 		recordFederationAudit("agent.location", peer.InstanceID, in.Agent, "", fmt.Sprintf("host=%s hop=%d", in.Host, in.Hops), 200)
 	}
 	rt.sendControl(peer.InstanceID, proto.KindAck, env.ID, ack)
+}
+
+// An arrival may beat the source's running-confirmation transaction. Only its
+// currently pending departure proof gets a retry; a returned trip stays closed.
+func homeDeparturePending(agent, nonce string) bool {
+	conv, _ := db.CurrentConvForAgent(agent)
+	moves, e := db.ListFederationAgentMoves()
+	if e != nil || nonce == "" {
+		return false
+	}
+	for _, m := range moves {
+		if m.Direction == "out" && m.SourceAgent == agent && m.SourceConv == conv && m.Identity != nil && m.Identity.Home == arrivalNode() && m.Identity.Proofs[arrivalNode()] == nonce && (m.State == "awaiting_confirmation" || m.State == "confirmed" || m.State == "retiring") {
+			return true
+		}
+	}
+	return false
 }
 
 // queueAwayMail is reached only after the ordinary mail size/rate checks.
@@ -162,6 +177,10 @@ func stableMailIngressAuthorized(peer string, env *proto.Envelope, agent string)
 		return true
 	}
 	presence, _ := db.GetAgentFederationPresence(agent)
+	// Home retains live membership; historical grants apply only to departed visitors.
+	if presence == nil || presence.HomeInstance == arrivalNode() {
+		return false
+	}
 	moves, e := db.ListFederationAgentMoves()
 	if e != nil {
 		return false
@@ -183,6 +202,10 @@ func stableMailAttachmentsAllowed(peer, agent string) bool {
 		return true
 	}
 	presence, _ := db.GetAgentFederationPresence(agent)
+	// Home retains live membership; historical grants apply only to departed visitors.
+	if presence == nil || presence.HomeInstance == arrivalNode() {
+		return false
+	}
 	moves, _ := db.ListFederationAgentMoves()
 	for _, m := range moves {
 		if m.Direction == "out" && m.SourceAgent == agent && m.Identity != nil && presence != nil && m.ID == presence.DepartureOffer && m.SourceConv == conv && (m.State == "moved" || m.State == "retiring") {
@@ -242,8 +265,12 @@ func (rt *fedRuntime) acceptHomeMail(peer *db.FederationPeer, env *proto.Envelop
 		}
 		return
 	}
-	if in.Op != "deliver" || peer.InstanceID != in.Home || p.State != "here" || in.Nonce == "" || in.Nonce != p.Transfer.Proofs[in.Home] {
+	if in.Op != "deliver" || peer.InstanceID != in.Home || in.Nonce == "" || in.Nonce != p.Transfer.Proofs[in.Home] {
 		refuse("continuation_refused", "only home may deliver to its current visiting agent")
+		return
+	}
+	if p.State == "away" {
+		refuse("agent_moving", "recipient has departed; home must retry its current location")
 		return
 	}
 	// Ordinary receive checks remain authoritative against home; origin identity
@@ -348,7 +375,7 @@ func (rt *fedRuntime) sendCustodyReceipt(m db.FederationMailCustody) {
 	if old, _ := db.GetFederationOutbox(id); old != nil {
 		return
 	}
-	_, _ = queueFederatedEnvelope(fedOutgoing{envelopeID: id, peer: peer, kind: proto.KindHomeMailReceipt, subject: "home mail result", preview: m.AgentID, ttl: time.Until(m.ExpiresAt), payload: homeMailReceipt{Sender: m.SenderInstance, Envelope: m.EnvelopeID, Agent: m.AgentID, Status: status, Reason: m.State}})
+	_, _ = queueFederatedEnvelope(fedOutgoing{envelopeID: id, peer: peer, kind: proto.KindHomeMailReceipt, subject: "home mail result", preview: m.AgentID, ttl: fedMailTTL, payload: homeMailReceipt{Sender: m.SenderInstance, Envelope: m.EnvelopeID, Agent: m.AgentID, Status: status, Reason: m.State}})
 }
 func (rt *fedRuntime) acceptHomeMailReceipt(peer *db.FederationPeer, env *proto.Envelope) {
 	var r homeMailReceipt
@@ -356,11 +383,17 @@ func (rt *fedRuntime) acceptHomeMailReceipt(peer *db.FederationPeer, env *proto.
 		return
 	}
 	m, e := db.GetFederationMailCustody(r.Sender, r.Envelope, r.Agent)
-	if e != nil || m == nil || m.State != "handoff" {
+	if e != nil || m == nil {
 		return
 	}
 	p, _ := db.GetAgentFederationPresence(r.Agent)
 	if p == nil || p.HomeInstance != peer.InstanceID {
+		return
+	}
+	if m.State != "handoff" {
+		if m.State == "accepted" || m.State == "refused" {
+			rt.sendControl(peer.InstanceID, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckAccepted})
+		}
 		return
 	}
 	if r.Status == proto.AckAccepted {

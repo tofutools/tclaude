@@ -1641,11 +1641,11 @@ A private, single-use continuation travels in the authenticated bundle. Trusted
 intermediate hosts can see it. Returning or recovering a paused backup invalidates
 that departure's continuation; every subsequent departure gets a new one. Live
 or unrelated ID collisions refuse, and explicitly retiring or deleting an away
-home record permanently refuses later return under that ID. Home notifies the
-first-hop visitor when reachable. Until location forwarding is available, the
-home placeholder and Recall action know only that first hop; a multi-hop return
-is accepted from any trusted host holding the valid continuation. Recall uses
-the existing peer move grants and can refuse if that first-hop copy has moved on.
+home record permanently refuses later return under that ID. Home records each confirmed arrival when all participating nodes support home-routed
+mail. The placeholder and Recall use the latest confirmed host; location updates
+retry while home is offline. A multi-hop return is accepted from any trusted host
+holding the valid continuation. Recall still requires the existing peer move grants.
+Older peers retain first-hop location and bounce behavior.
 A superseded roaming copy retained as an independent clone gets a fresh ID.
 
 Every receiving import, move or teleport starts with a short factual arrival
@@ -1653,8 +1653,23 @@ briefing: identity mode, receiver-selected cwd and reason, local Git state,
 source-reported facts, and what was not transferred. Missing facts stay unknown.
 The briefing uses startup context or inbox, never raw pane keystrokes.
 
-Mail forwarding is a separate feature. Credentials and uncommitted working-tree
-changes are not transferred. Permission carry remains an explicit departure
+Mail for an away stable agent is held durably at home and forwarded directly to
+the confirmed current host. An old host hands an envelope to home, preserving
+its original sender, rather than relaying along the travel chain. If home is
+untrusted or lacks the capability, the old host bounces with the home address.
+Offline trusted nodes retry until the original mail TTL expires; this does not
+provide a route around an offline home. Home rechecks the sender's live mail and
+attachment grants, and the current host authorizes delivery against home. Removing
+the agent's home group membership revokes that group's ingress authority.
+
+Custody has the ordinary per-recipient queue cap and mail TTL. Final outcomes
+reach the original sender; a custody acknowledgement is not delivery. Delivery
+markers travel in stable bundles, and inbound dispatch is fenced during departure,
+so a lost acknowledgement followed by another hop cannot duplicate the inbox
+message. Forwarding supports only mail to that stable continuation, never generic
+commands, groups or operator messages. Clones keep independent inbox identities.
+
+Credentials and uncommitted working-tree changes are not transferred. Permission carry remains an explicit departure
 opt-in with receiver-controlled admission; returning home preserves home grants.
 
 Automatic landing requires a group-scoped peer grant `agents.teleport.receive`

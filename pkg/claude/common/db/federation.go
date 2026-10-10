@@ -513,8 +513,21 @@ func PruneFederationSeen(now time.Time) error {
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`DELETE FROM federation_seen WHERE expires_at < ?`, dbTime(now))
-	return err
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, table := range []string{"federation_seen", "federation_agent_mail_deliveries", "federation_agent_mail_fences"} {
+		if _, err = tx.Exec(`DELETE FROM `+table+` WHERE expires_at < ?`, dbTime(now)); err != nil {
+			return err
+		}
+	}
+	// Keep settled results beyond their envelope TTL for duplicate handoffs and receipts.
+	if _, err = tx.Exec(`DELETE FROM federation_mail_custody WHERE state IN ('accepted','refused','handoff') AND expires_at < ? AND updated_at < ?`, dbTime(now.Add(-7*24*time.Hour)), dbTime(now.Add(-7*24*time.Hour))); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func scanFedInbound(row *sql.Row) (*FederationInbound, error) {

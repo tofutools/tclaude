@@ -14,6 +14,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"io"
 	"strings"
+	"time"
 )
 
 const Format = "tclaude-agent-bundle"
@@ -112,6 +113,14 @@ func (b *Bundle) Validate() error {
 	if len(b.MailDeliveries) > 500000 {
 		return errors.New("mail delivery ledger exceeds 500000 entries")
 	}
+	if !m.MailLedger && len(b.MailDeliveries) != 0 {
+		return errors.New("mail delivery ledger is not declared")
+	}
+	for _, r := range b.MailDeliveries {
+		if r.Sender == "" || len(r.Sender) > 128 || r.Envelope == "" || len(r.Envelope) > 128 || r.ExpiresAt.IsZero() || r.ExpiresAt.After(time.Now().Add(9*24*time.Hour)) {
+			return errors.New("invalid mail delivery ledger entry")
+		}
+	}
 	if m.Format != Format {
 		return fmt.Errorf("expected format %q", Format)
 	}
@@ -191,7 +200,7 @@ func (b *Bundle) EncodeTo(out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		if err = json.NewEncoder(w).Encode(b.MailDeliveries); err != nil {
+		if err = json.NewEncoder(&limitWriter{Writer: w, left: MaxMailLedgerBytes}).Encode(b.MailDeliveries); err != nil {
 			return err
 		}
 	}

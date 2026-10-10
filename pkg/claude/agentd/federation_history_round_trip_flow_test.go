@@ -172,6 +172,7 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 			require.NoError(t, cc.AppendTurn(map[string]any{"type": "assistant", "cwd": cwd, "message": map[string]any{"role": "assistant", "content": []map[string]string{{"type": "text", "text": in.Assistant}}}}))
 		}
 		require.NoError(t, db.GrantAgentPermissionWithScope(in.Conv, agentd.PermSelfTeleport, string(mustJSON(t, map[string]any{"peer": []string{in.Peer}})), "test operator"))
+		require.NoError(t, db.GrantAgentPermissionWithScope(in.Conv, agentd.PermMessageDirect, string(mustJSON(t, map[string]any{"peer": []string{in.Peer}})), "test operator"))
 		if name == "gemini" && in.Seed {
 			require.NoError(t, json.NewEncoder(w).Encode(map[string]string{"conv": in.Conv}))
 			return
@@ -310,6 +311,10 @@ func TestFederation_TeleportHistoryRoundTrip(t *testing.T) {
 		t.Run(name, func(t *testing.T) { runHistoryRoundTrip(t, name, false) })
 	}
 }
+func TestFederation_HomeMailNativeRoundTrip(t *testing.T) {
+	runHistoryRoundTrip(t, "claude", false, true)
+}
+
 func TestFederation_LargeTeleportHistoryRoundTrip(t *testing.T) {
 	if os.Getenv("TCLAUDE_LARGE_AGENT_TRANSFER") != "1" {
 		t.Skip("set TCLAUDE_LARGE_AGENT_TRANSFER=1 for the 300 MiB flow")
@@ -328,7 +333,7 @@ func historyTestRequestTimeout() time.Duration {
 	}
 	return 15 * time.Second
 }
-func runHistoryRoundTrip(t *testing.T, name string, large bool) {
+func runHistoryRoundTrip(t *testing.T, name string, large bool, mailChecks ...bool) {
 	sourceConv := moveSourceConv
 	if name == "opencode" {
 		sourceConv = "ses_historysource"
@@ -492,6 +497,11 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 		return result.Spawn.Conv
 	}
 	outward := teleport(a, b, sourceConv, false)
+	t.Cleanup(func() {
+		if t.Failed() {
+			historyMoveDiagnostics(t, a, b, outward.ID)
+		}
+	})
 	remoteConv := land(b, outward)
 	if large {
 		require.True(t, interrupted.Load(), "the third stream chunk must be interrupted before successful resume")
@@ -525,10 +535,27 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 	const addedReply = "The remote tests passed; return home with the patch."
 	code, raw = historyNodeRequest(t, b, "POST", "/test/turn", "", map[string]any{"Conv": remoteConv, "Text": addition, "Assistant": addedReply, "Peer": a.Instance})
 	require.Equal(t, 204, code, string(raw))
+	if len(mailChecks) > 0 && mailChecks[0] {
+		code, raw = historyNodeRequest(t, b, "POST", "/v1/messages", remoteConv, map[string]any{"to": originalIdentity.AgentID + "@" + a.Instance, "subject": "roaming mail", "body": "mail through home"})
+		require.Equal(t, 200, code, string(raw))
+		fedEventuallyWithin(t, "real home forwards to visiting mailbox", 30*time.Second, func() bool {
+			code, raw := historyNodeRequest(t, b, "GET", "/v1/inbox?limit=100", remoteConv, nil)
+			return code == 200 && bytes.Contains(raw, []byte("roaming mail"))
+		})
+	}
 	home := teleport(b, a, remoteConv, true)
 	require.True(t, home.Teleport.Home)
 	require.Equal(t, a.Instance, home.Teleport.OriginInstance)
 	returned := land(a, home)
+	if len(mailChecks) > 0 && mailChecks[0] {
+		code, raw = historyNodeRequest(t, a, "GET", "/v1/federation/bundle-offers/"+home.ID+"/download", "", nil)
+		require.Equal(t, 200, code, string(raw))
+		portable, e := agentbundle.Decode(raw)
+		require.NoError(t, e)
+		require.True(t, portable.Manifest.MailLedger)
+		require.NotEmpty(t, portable.MailDeliveries, "native departure carries the final delivery marker")
+	}
+
 	require.NotEqual(t, sourceConv, returned)
 	require.NotEqual(t, remoteConv, returned)
 	// Export through the production read surface after native SpawnResume has

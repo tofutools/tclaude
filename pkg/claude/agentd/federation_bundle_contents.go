@@ -107,6 +107,8 @@ func bundleEntries(f *os.File, d bundletransfer.Descriptor) ([]bundleContentEntr
 			kind, limit := "json", uint64(agentbundle.MaxManifestBytes)
 			switch entry.Name {
 			case agentbundle.ManifestFile:
+			case agentbundle.MailLedgerFile:
+				kind, limit = "json", agentbundle.MaxMailLedgerBytes
 			case agentbundle.HistoryFile:
 				kind, limit = "jsonl", uint64(agentTransferLimit())
 			default:
