@@ -8,6 +8,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/testharness"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +49,16 @@ func TestPeerAccessProductionAdmissionApprovalExpiry(t *testing.T) {
 		r, e := db.GetFederationPeerAccessRequest(row.ID)
 		return e == nil && r != nil && r.Status == "approved"
 	})
+	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/peer-access-requests/"+row.ID, nil))
+	require.Equal(t, 200, rec.Code)
+	require.Contains(t, rec.Body.String(), `"status":"approved"`)
+	other, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: other.ID(), PubKey: other.Pub}))
+	require.NoError(t, db.UpsertFederationPeerGrant(db.FederationPeerGrant{Peer: other.ID(), Slug: agentd.PermGroupsRosterRead, Scope: db.FederationGroupScope(group.ID)}))
+	rec = testharness.Serve(agentd.PeerViewHandler(other.ID()), testharness.JSONRequest(t, "GET", "/api/peer-access-requests/"+row.ID, nil))
+	require.Equal(t, 404, rec.Code, "another authorized peer cannot read the request")
+
 	grants, err := db.ListEffectiveFederationPeerGrants(fh.peer.id.ID())
 	require.NoError(t, err)
 	require.Len(t, grants, 2)
@@ -165,4 +176,37 @@ func TestPeerAccessModelOnlyAdmission(t *testing.T) {
 		r, e := db.GetFederationPeerAccessRequest(row.ID)
 		return e == nil && r != nil && r.Status == "approved"
 	})
+}
+
+func TestPeerAccessProxyAuditsRequestAndDecision(t *testing.T) {
+	fh := newFedHarness(t)
+	request := func(method, tail string, body any) chan *httptest.ResponseRecorder {
+		ch := make(chan *httptest.ResponseRecorder, 1)
+		go func() { ch <- fedHuman(t, fh.f, method, "/v1/federation/peer/bob/"+tail, body) }()
+		return ch
+	}
+	id := strings.Repeat("b", 32)
+	ch := request("POST", "peer-access-requests", map[string]any{"permission": agentd.PermNodeUpdate, "reason": "private request reason"})
+	c := acceptOutboundPeerView(t, fh.peer, 0)
+	wire := readPeerViewWire(t, c)
+	require.Equal(t, "/api/peer-access-requests", wire.URI)
+	writePeerViewWire(t, c, peerViewWire{Status: 202, Body: []byte(`{"id":"` + id + `","status":"pending"}`)})
+	require.Equal(t, 202, (<-ch).Code)
+	_ = c.Close()
+	ch = request("GET", "peer-access-requests/"+id, nil)
+	c = acceptOutboundPeerView(t, fh.peer, 1)
+	_ = readPeerViewWire(t, c)
+	writePeerViewWire(t, c, peerViewWire{Status: 200, Body: []byte(`{"id":"` + id + `","status":"approved"}`)})
+	require.Equal(t, 200, (<-ch).Code)
+	_ = c.Close()
+	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "federation.access.out", Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	for _, row := range rows {
+		require.NotContains(t, row.Detail, "private request reason")
+	}
+	rows, err = db.ListAuditLog(db.AuditLogFilter{Verb: "federation.access.out.decision", Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Contains(t, rows[0].Detail, "approved")
 }
