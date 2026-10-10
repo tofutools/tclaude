@@ -84,8 +84,8 @@ export function mergeSnapshots(input, now = Date.now(), base = null) {
     }
     for (const a of snap.agents || []) {
       const id = a.agent_id || a.conv_id;
-      if (!id || seenAgents.has(id)) continue;
-      seenAgents.add(id);
+      if (!id || seenAgents.has(`${node.id}/${id}`)) continue;
+      seenAgents.add(`${node.id}/${id}`);
       agents.push(a);
     }
   }

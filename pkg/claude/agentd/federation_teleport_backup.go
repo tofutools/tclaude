@@ -128,6 +128,13 @@ func pauseConfirmedTeleport(m db.FederationAgentMove) bool {
 		return true
 	}
 	if l.State == "pausing" {
+		if m.Identity != nil {
+			if e := db.DepartFederationIdentity(m.SourceConv, arrivalNode(), m.Peer, m.ID, *m.Identity); e != nil {
+				l.LastError = e.Error()
+				_, _ = db.TransitionFederationTeleportLease(*l, "")
+				return true
+			}
+		}
 		if !prepareTeleportShutdown(l, m.SourceConv) {
 			return true
 		}
@@ -350,6 +357,11 @@ func (rt *fedRuntime) beginTeleportRecovery(l *db.FederationTeleportLease, brief
 	rt.resumeTeleportBackup(l)
 }
 func (rt *fedRuntime) resumeTeleportBackup(l *db.FederationTeleportLease) {
+	if err := db.RestoreFederationBackup(l.SourceAgent, l.Offer, arrivalNode()); err != nil {
+		l.LastError = err.Error()
+		_, _ = db.TransitionFederationTeleportLease(*l, "")
+		return
+	}
 	a, err := db.GetAgent(l.SourceAgent)
 	if err != nil || a == nil || !a.Active() || a.CurrentConvID != l.SourceConv {
 		l.LastError = "backup identity was retired or changed"
@@ -481,6 +493,17 @@ func (rt *fedRuntime) acceptTeleportLease(peer *db.FederationPeer, env *proto.En
 		// A fresh response from the pinned origin may only end this exact lease.
 		l.Epoch = f.Epoch
 		if f.Policy == "clone" && l.State == "active" {
+			a, err := db.GetAgent(l.TargetAgent)
+			if err != nil || a == nil {
+				return
+			}
+			clone, err := db.RemintFederationClone(l.TargetAgent, a.CurrentConvID)
+			if err != nil {
+				l.LastError = err.Error()
+				_, _ = db.TransitionFederationTeleportLease(*l, "")
+				return
+			}
+			l.TargetAgent = clone
 			l.State = "clone"
 			if won, e := db.TransitionFederationTeleportLease(*l, ""); e == nil && won {
 				a, _ := db.GetAgent(l.TargetAgent)
@@ -517,6 +540,13 @@ func (rt *fedRuntime) stopSupersededTeleport(l *db.FederationTeleportLease) {
 			return
 		}
 	}
+	if presence, err := db.GetAgentFederationPresence(l.TargetAgent); err != nil {
+		return
+	} else if presence != nil && a != nil {
+		if _, err := db.RetireAgentAuthorizationByConv(a.CurrentConvID, "system:teleport-lease-ended", "roaming lease ended"); err != nil {
+			return
+		}
+	}
 	l.State = "superseded"
 	l.LastError = ""
 	_, _ = db.TransitionFederationTeleportLease(*l, "")
@@ -538,6 +568,13 @@ func (rt *fedRuntime) stopReturningTeleport(l *db.FederationTeleportLease) {
 		}
 		_, _ = db.TransitionFederationTeleportLease(*l, "")
 		return
+	}
+	if presence, err := db.GetAgentFederationPresence(l.TargetAgent); err != nil {
+		return
+	} else if presence != nil && a != nil {
+		if _, err := db.RetireAgentAuthorizationByConv(a.CurrentConvID, "system:teleport-lease-ended", "roaming lease ended"); err != nil {
+			return
+		}
 	}
 	l.State = "stopped"
 	l.LastError = ""

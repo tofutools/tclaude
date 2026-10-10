@@ -2246,6 +2246,9 @@ func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
 		case err != nil:
 			return c, err
 		case current == convID:
+			if err := terminalFederationPresenceTx(tx, agentID); err != nil {
+				return c, err
+			}
 			type actorStep struct {
 				stmt string
 				into *int64
@@ -3642,7 +3645,7 @@ func CancelAgentMessageNudge(id int64, targetAgentID string, now time.Time, reas
 		WHERE id = ? AND delivered_at IS NULL AND read_at IS NULL
 		  AND nudge_claimed_at IS NULL AND nudge_cancelled_at IS NULL
 		  AND NOT EXISTS (
-			SELECT 1 FROM agents WHERE agent_id = ? AND retired_at IS NULL)`,
+			SELECT 1 FROM agents WHERE agent_id = ? AND (retired_at IS NULL OR EXISTS (SELECT 1 FROM agent_federation_presence p WHERE p.agent_id=agents.agent_id AND p.state='away')))`,
 		dbTime(now), reason, id, targetAgentID)
 	if err != nil {
 		return false, err

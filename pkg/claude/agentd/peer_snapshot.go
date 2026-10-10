@@ -129,10 +129,17 @@ func (v *peerView) groups() ([]dashboardGroup, []dashboardAgent, error) {
 				if err != nil {
 					return nil, nil, err
 				}
-				if a == nil || !a.Active() || a.CurrentConvID != m.ConvID {
+				if a == nil || !a.Active() && !db.AgentAway(aid) || a.CurrentConvID != m.ConvID {
 					continue
 				}
 				ar := dashboardMember{AgentID: aid, ConvID: m.ConvID, Title: agent.TitleFor(m.ConvID)}
+				fp, err := db.GetAgentFederationPresence(aid)
+				if err != nil {
+					return nil, nil, err
+				}
+				if fp != nil {
+					ar.FederationPresence = &db.AgentFederationPresence{AgentID: aid, HomeInstance: fp.HomeInstance, State: fp.State, CurrentInstance: fp.CurrentInstance, HopCount: fp.HopCount}
+				}
 				if roster {
 					ar.Role = m.Role
 				}
@@ -143,11 +150,18 @@ func (v *peerView) groups() ([]dashboardGroup, []dashboardAgent, error) {
 					}
 					ar.Online = s.Online
 				}
+				if fp != nil && fp.State == "away" {
+					ar.Online = false
+					ar.State.Status = "away"
+				}
 				if ar.Online {
 					row.Online++
 				}
 				filterPeerFields(reflect.ValueOf(&ar).Elem(), map[string]bool{"identity": true, "roster": roster, "presence": presence || status, "status": status})
 				row.Members = append(row.Members, ar)
+				if !a.Active() {
+					continue
+				}
 				prior, exists := agents[aid]
 				if !exists {
 					prior = dashboardAgent{AgentID: aid, ConvID: m.ConvID, Title: ar.Title, Groups: []string{}, OwnedGroups: []string{}, Effective: []string{}}

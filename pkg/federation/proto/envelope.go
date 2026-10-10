@@ -42,6 +42,7 @@ const (
 	KindBundleResult       = "bundle_result"
 	KindAgentMoveConfirm   = "agent_move_confirm"
 	KindTeleportLease      = "teleport_lease"
+	KindAgentPresence      = "agent_presence"
 	// KindRouteOpen asks the recipient to open one TCP connection to one of
 	// its exported routes; KindRouteAnswer accepts (then both dial the hub
 	// stream relay) or refuses it. These are real-time control envelopes,
@@ -218,17 +219,18 @@ type GroupMailPayload struct {
 
 // CatalogPayload lists what an instance exports to the receiving peer.
 type CatalogPayload struct {
-	AgentBundleChunks bool           `json:"agent_bundle_chunks,omitempty"`
-	RequesterPays     int            `json:"requester_pays,omitempty"`
-	TeleportBackups   bool           `json:"teleport_backups,omitempty"`
-	AgentTeleports    int            `json:"agent_teleports,omitempty"`
-	JobOutput         bool           `json:"job_output,omitempty"`
-	DirectAgentMoves  bool           `json:"direct_agent_moves,omitempty"`
-	AgentMoves        bool           `json:"agent_moves,omitempty"`
-	Node              *NodeMetadata  `json:"node,omitempty"`
-	NodeAt            time.Time      `json:"node_at,omitempty"`
-	NodeReceivedAt    time.Time      `json:"node_received_at,omitempty"` // receiver-owned; overwritten on receipt
-	Groups            []CatalogGroup `json:"groups"`
+	AgentBundleChunks   bool           `json:"agent_bundle_chunks,omitempty"`
+	RequesterPays       int            `json:"requester_pays,omitempty"`
+	TeleportBackups     bool           `json:"teleport_backups,omitempty"`
+	AgentTeleports      int            `json:"agent_teleports,omitempty"`
+	JobOutput           bool           `json:"job_output,omitempty"`
+	DirectAgentMoves    bool           `json:"direct_agent_moves,omitempty"`
+	StableAgentIdentity bool           `json:"stable_agent_identity,omitempty"`
+	AgentMoves          bool           `json:"agent_moves,omitempty"`
+	Node                *NodeMetadata  `json:"node,omitempty"`
+	NodeAt              time.Time      `json:"node_at,omitempty"`
+	NodeReceivedAt      time.Time      `json:"node_received_at,omitempty"` // receiver-owned; overwritten on receipt
+	Groups              []CatalogGroup `json:"groups"`
 }
 
 // CatalogGroup is one exported group as seen by one peer.
@@ -315,12 +317,22 @@ func (g CatalogGroup) HasCap(c string) bool {
 
 // CatalogMember is one member of an exported group. Presence is only set
 // when the group exports CapPresence.
+// FederationAgentPresence is a public location projection; continuation
+// credentials and reservation metadata stay private on each node.
+type FederationAgentPresence struct {
+	HomeInstance    string `json:"home_instance"`
+	State           string `json:"state"`
+	CurrentInstance string `json:"current_instance"`
+	HopCount        int    `json:"hop_count"`
+}
+
 type CatalogMember struct {
-	Agent    string `json:"agent"`
-	Name     string `json:"name"`
-	Role     string `json:"role,omitempty"`
-	Harness  string `json:"harness,omitempty"`
-	Presence string `json:"presence,omitempty"`
+	FederationPresence *FederationAgentPresence `json:"federation_presence,omitempty"`
+	Agent              string                   `json:"agent"`
+	Name               string                   `json:"name"`
+	Role               string                   `json:"role,omitempty"`
+	Harness            string                   `json:"harness,omitempty"`
+	Presence           string                   `json:"presence,omitempty"`
 }
 
 // NewEnvelopeID returns a random 128-bit hex id.

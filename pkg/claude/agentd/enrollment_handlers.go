@@ -142,6 +142,10 @@ func retireAgentConvGuardedWithGeneration(convID, by, reason string, requireOffl
 	out.CronDisabled = retired.CronDisabled
 	out.StandingOrdersDisabled = retired.StandingOrdersDisabled
 	out.Retired = retired.Retired
+	if db.AgentConvAway(convID) {
+		return out, retired.OwnerGroupIDs, nil
+	}
+	notifyAwayAgentTerminal(convID)
 	// Still under the same launch lock as resume. Offline retirement can clean
 	// immediately; an online generation is deliberately deferred until its exit
 	// observer proves the pane is gone.
@@ -253,7 +257,7 @@ func handleAgentRetire(w http.ResponseWriter, r *http.Request, convID string) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	if !live {
+	if !live && !db.AgentConvAway(convID) {
 		state, _ := db.AgentState(convID)
 		writeError(w, http.StatusConflict, "conflict",
 			fmt.Sprintf("conv %s is not a live agent at this generation (state: %s) — nothing to retire", short8(convID), state))

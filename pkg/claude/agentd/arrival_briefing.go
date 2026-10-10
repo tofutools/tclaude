@@ -60,6 +60,9 @@ func arrivalFromOffer(o *db.FederationBundleOffer, d agentbundle.Definition) *ar
 		a.Note = t.Note
 		a.Source.Origin.Agent = t.SourceAgent
 	}
+	if d.Identity != nil && d.Identity.Home == arrivalNode() && db.AgentAway(d.Identity.Agent) {
+		a.Restored = true
+	}
 	return a
 }
 func arrivalNode() string {
@@ -186,6 +189,11 @@ func buildArrivalBriefing(a arrivalContext, agentID, cwd, group, h, model string
 	}
 	if a.LocalClone {
 		permissions = "local permissions inherited; independent inbox"
+	}
+	if a.Source.Identity != nil && !a.Restored {
+		permissions = "stable agent ID retained; receiver-local permissions and inbox"
+	} else if a.Source.Identity == nil && !a.LocalClone && !a.Restored {
+		permissions += "; fresh local agent ID"
 	}
 	if a.Restored {
 		permissions = "restored home identity and inbox; original local permissions retained"

@@ -80,6 +80,11 @@ func retireAgentAuthorizationByConv(convID, by, reason string, requireCurrent bo
 		}
 	}
 
+	if by != "system:federation-move" {
+		if err := terminalFederationPresenceTx(tx, agentID); err != nil {
+			return out, err
+		}
+	}
 	rows, err := tx.Query(`SELECT g.name FROM agent_groups g
 		JOIN agent_group_members m ON m.group_id = g.id
 		WHERE m.agent_id = ? ORDER BY g.name`, agentID)

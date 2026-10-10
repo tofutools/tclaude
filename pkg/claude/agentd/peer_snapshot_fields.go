@@ -23,7 +23,7 @@ var peerSnapshotFields = map[reflect.Type]map[string]string{
 	reflect.TypeFor[dashboardMember](): classifyPeerFields(map[string]string{
 		"identity": "AgentID ConvID Title",
 		"roster":   "Role",
-		"presence": "Online",
+		"presence": "Online FederationPresence",
 		"status":   "State taskRefView",
 		"denied":   "CreatedAt Descr agentLocationView repoLinksView tagsView Waking RouteHealth Owner Notify NotifyEffective",
 	}),

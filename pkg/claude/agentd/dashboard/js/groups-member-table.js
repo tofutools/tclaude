@@ -180,7 +180,7 @@ function BrokerRefusalBadge({ member }) {
   return html`<span class="broker-refusal-badge" role="note" aria-label=${title} title=${title}>🚫</span>`;
 }
 
-export function HarnessLine({ member, snapshot }) {
+export function HarnessLine({ member, snapshot, local = true }) {
   const state = member.state || {};
   const offline = !member.online;
   const metadataClass = `runtime-meta${offline ? ' runtime-meta-offline' : ''}`;
@@ -196,7 +196,7 @@ export function HarnessLine({ member, snapshot }) {
   const remote = html`<${RemoteBadge} member=${member} />`;
   const refused = html`<${BrokerRefusalBadge} member=${member} />`;
   // A peer watching or typing into this agent's pane right now (federation).
-  const viewed = member.online && member.agent_id ? viewersOf(remoteViewers.value, member.agent_id).length > 0 : false;
+  const viewed = local && member.online && member.agent_id ? viewersOf(remoteViewers.value, member.agent_id).length > 0 : false;
   const viewers = viewed ? html`<${ViewersBadge} agentId=${member.agent_id} />` : null;
   const drive = driveTooltip(state);
   if (!model) {
@@ -1066,7 +1066,7 @@ function MemberCell({ column, member, group, snapshot, actions, grants, ungroupe
   switch (column.key) {
     // HarnessLine carries the sandbox/remote indicators itself — they trail its
     // metadata text instead of claiming a line of their own under the cell.
-    case 'ctl': return html`<td><div class="agent-ctl"><${AgentStatusDot} member=${member} /><${MemberActions} member=${member} group=${group} snapshot=${snapshot} actions=${actions} ungrouped=${ungrouped} menuKey=${menuKey} /></div><${HarnessLine} member=${member} snapshot=${snapshot} /></td>`;
+    case 'ctl': return html`<td><div class="agent-ctl"><${AgentStatusDot} member=${member} /><${MemberActions} member=${member} group=${group} snapshot=${snapshot} actions=${actions} ungrouped=${ungrouped} menuKey=${menuKey} /></div><${HarnessLine} member=${member} snapshot=${snapshot} local=${!group?.fleet_node || !!group.fleet_node.local} /></td>`;
     case 'id': return html`<td class="id" title=${idTooltip(member.agent_id, member.conv_id)}>${shortAgentId(member.agent_id, member.conv_id)}</td>`;
     case 'title': return html`<td class="name-cell"><${MemberName} member=${member} snapshot=${snapshot} actions=${actions} grants=${grants} editorKey=${editorKey} /></td>`;
     case 'state': return html`<${StateCell} member=${member} />`;

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/tofutools/tclaude/pkg/claude/common/configbundle"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"io"
 	"strings"
 )
@@ -48,20 +49,21 @@ type Origin struct {
 	Dirty    *bool  `json:"dirty,omitempty"`
 }
 type Definition struct {
-	Origin           *Origin         `json:"origin,omitempty"`
-	CarryPermissions bool            `json:"carry_permissions,omitempty"`
-	Name             string          `json:"name"`
-	Role             string          `json:"role,omitempty"`
-	Description      string          `json:"description,omitempty"`
-	Harness          string          `json:"harness"`
-	ProfileName      string          `json:"profile_name,omitempty"`
-	Profile          json.RawMessage `json:"profile"`
-	Groups           []Group         `json:"groups,omitempty"`
-	StartupContext   string          `json:"startup_context,omitempty"`
-	InitialMessage   string          `json:"initial_message,omitempty"`
-	TaskURL          string          `json:"task_url,omitempty"`
-	TaskLabel        string          `json:"task_label,omitempty"`
-	Paths            Paths           `json:"paths"`
+	Identity         *db.FederationIdentity `json:"identity,omitempty"`
+	Origin           *Origin                `json:"origin,omitempty"`
+	CarryPermissions bool                   `json:"carry_permissions,omitempty"`
+	Name             string                 `json:"name"`
+	Role             string                 `json:"role,omitempty"`
+	Description      string                 `json:"description,omitempty"`
+	Harness          string                 `json:"harness"`
+	ProfileName      string                 `json:"profile_name,omitempty"`
+	Profile          json.RawMessage        `json:"profile"`
+	Groups           []Group                `json:"groups,omitempty"`
+	StartupContext   string                 `json:"startup_context,omitempty"`
+	InitialMessage   string                 `json:"initial_message,omitempty"`
+	TaskURL          string                 `json:"task_url,omitempty"`
+	TaskLabel        string                 `json:"task_label,omitempty"`
+	Paths            Paths                  `json:"paths"`
 	// Permission rows are advisory. Only explicit carry opt-in plus receiver
 	// authorization can promote them to grants; ownership never travels.
 

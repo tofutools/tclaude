@@ -388,6 +388,13 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 		code, raw = historyNodeRequest(t, a, "POST", "/test/large", "", nil)
 		require.Equal(t, 204, code, string(raw))
 	}
+	code, raw = historyNodeRequest(t, a, "GET", "/v1/whoami", sourceConv, nil)
+	require.Equal(t, 200, code, string(raw))
+	var originalIdentity struct {
+		AgentID string `json:"agent_id"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &originalIdentity))
+	require.NotEmpty(t, originalIdentity.AgentID)
 	// Wait for the receiving group and teleport support to be advertised.
 	for _, node := range []historyNode{a, b} {
 		fedEventually(t, "receiving catalog", func() bool {
@@ -448,6 +455,7 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 		}
 		require.NoError(t, json.Unmarshal(raw, &result))
 		require.True(t, result.History)
+		require.Equal(t, originalIdentity.AgentID, result.Spawn.AgentID, "stable ID is retained on every hop and home return")
 		if result.Spawn.Conv == "" {
 			require.NotEmpty(t, result.Spawn.AgentID, string(raw))
 			// Managed native imports may finish after the HTTP inline grace.
