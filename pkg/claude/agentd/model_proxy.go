@@ -360,7 +360,7 @@ func handleModelProxyControl(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "control model gateways") {
 		return
 	}
-	if r.Method == http.MethodGet {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		cfg, err := config.Load()
 		if err != nil {
 			modelError(w, 503, "model gateway configuration unavailable")

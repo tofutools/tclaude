@@ -225,7 +225,7 @@ func handleModelProxyLeases(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "inspect or revoke requester gateway leases") {
 		return
 	}
-	if r.Method == http.MethodGet {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		rows, err := db.ListModelProxyLeases()
 		if err != nil {
 			modelError(w, 503, "model gateway leases unavailable")
