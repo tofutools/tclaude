@@ -155,3 +155,34 @@ func TestSupervisedGuardianFatalRestoredHealthExitsWait(t *testing.T) {
 	require.ErrorContains(t, g.Wait(ctx), "health")
 	require.Equal(t, "failed", g.service.Pending().State)
 }
+
+func TestSupervisedGuardianRecoversDurableRestartAfterGuardianExit(t *testing.T) {
+	s, binaries := fixture(t)
+	s.binaries = s.binaries[:1]
+	s.hooks.Supervised = true
+	s.hooks.ReleaseOnly = true
+	job, err := s.Start(Request{Action: "apply", Version: "v1.1.0"}, "operator", func() bool { return true })
+	require.NoError(t, err)
+	require.Equal(t, "restarting", waitJob(t, s, job.ID).State)
+	binary := binaries[0]
+	binary.Version = "v1.1.0" // the newly installed image starts the next guardian
+	g, err := NewGuardian(context.Background(), s.dir, binary, func(context.Context, string) (SupervisedChild, error) { return &recoveryHealthChild{}, nil }, nil)
+	require.NoError(t, err)
+	defer g.Close()
+	require.NoError(t, g.Start())
+	require.Equal(t, "rolled_back", g.Service().Pending().State)
+	require.Equal(t, "v1.0.0", g.Service().Status().CurrentVersion)
+	raw, err := os.ReadFile(binary.Path)
+	require.NoError(t, err)
+	require.Equal(t, "old-"+binary.Name, string(raw))
+}
+
+type recoveryHealthChild struct{}
+
+func (*recoveryHealthChild) Stop(context.Context) error { return nil }
+func (*recoveryHealthChild) Healthy(_ context.Context, version string) error {
+	if version == "v1.1.0" {
+		return fmt.Errorf("newly started guardian observes unhealthy candidate")
+	}
+	return nil
+}
