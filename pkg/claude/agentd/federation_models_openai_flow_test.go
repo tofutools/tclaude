@@ -192,8 +192,10 @@ func TestFederation_ModelGatewayResponseBeforeRequestHalfClose(t *testing.T) {
 			if finish == "discovery-overflow" {
 				// Leave the framed body incomplete so only the byte cap, rather
 				// than body EOF or the grace timer, can trigger immediate cleanup.
-				req.ContentLength++
-				require.Error(t, req.Write(flow))
+				// Request.Write buffers its last byte on a length mismatch,
+				// so write the incomplete HTTP message directly to the stream.
+				_, err = io.WriteString(flow, "GET /v1/models HTTP/1.1\r\nHost: model\r\nContent-Length: 65538\r\n\r\n"+input)
+				require.NoError(t, err)
 				resp, err := http.ReadResponse(bufio.NewReader(flow), req)
 				require.NoError(t, err)
 				body, err := io.ReadAll(resp.Body)
