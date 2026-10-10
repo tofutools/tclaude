@@ -18,6 +18,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/federation/client"
 	"github.com/tofutools/tclaude/pkg/federation/hub"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
@@ -72,6 +73,10 @@ func TestSkynetPollingInstance(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"cpu_ns": usage.Utime.Nano() + usage.Stime.Nano(), "gathers": gathers.Load(), "dispatch_cpu_ns": dispatchCPU.Load(), "dispatch_wall_ns": dispatchWall.Load(), "requests": requests.Load()})
 	})
 	mux.HandleFunc("POST /polling-reset", func(w http.ResponseWriter, _ *http.Request) { agentd.ResetStatusSnapshotForTest(); w.WriteHeader(204) })
+	mux.HandleFunc("POST /polling-status-write", func(w http.ResponseWriter, _ *http.Request) {
+		require.NoError(t, db.UpdateSessionModel("poll-session-0", "model-after-write"))
+		w.WriteHeader(204)
+	})
 	mux.Handle("/", agentd.BuildDashboardHandlerForTest())
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
@@ -227,8 +232,13 @@ func TestSkynetPollingEfficiency(t *testing.T) {
 		}
 	}
 	afterCPU, afterGather := metrics()
-	require.LessOrEqual(t, afterGather-gather, int64(2), "warm ten-peer reads must reuse the shared gather")
 	t.Logf("warm fan-out: peers=10 agents=20 cpu/request=%.3fms wall/request=%.3fms gathers=%d bytes/request=%d", float64(afterCPU-cpu)/1e7, float64(time.Since(start).Microseconds())/10000, afterGather-gather, bytes/10)
+	require.Equal(t, int64(1), afterGather-gather, "ten peer polls must share one status gather")
+	receiver.call(t, "POST", "/polling-status-write", nil, 204)
+	local := receiver.call(t, "GET", "/api/snapshot", nil, 200)
+	require.Contains(t, fmt.Sprint(local), "model-after-write", "local status remains immediately fresh")
+	_, changedGather := metrics()
+	require.Equal(t, afterGather+1, changedGather, "a real status write invalidates the local cache immediately")
 	for _, scenario := range []struct {
 		name, tail  string
 		interval    time.Duration

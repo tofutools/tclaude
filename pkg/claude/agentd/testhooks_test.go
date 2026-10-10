@@ -2036,6 +2036,9 @@ func SetStatusGatherHookForTest(fn func()) func() {
 	return func() { statusHook.Lock(); statusHook.fn = old; statusHook.Unlock() }
 }
 func ResetStatusSnapshotForTest() {
+	peerStatusCache.mu.Lock()
+	peerStatusCache.value = nil
+	peerStatusCache.mu.Unlock()
 	sharedStatusCache.mu.Lock()
 	sharedStatusCache.value = nil
 	sharedStatusCache.mu.Unlock()
