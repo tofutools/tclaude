@@ -55,6 +55,7 @@ function fakeTimers() {
   return { queue, setTimeout(fn, ms) { const id = ++seq; queue.push({ id, fn, ms }); return id; }, clearTimeout(id) { const i = queue.findIndex((q) => q.id === id); if (i >= 0) queue.splice(i, 1); } };
 }
 
+let s_viewers = [];
 async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP_NEW, level: 'restricted', profile: null, plan: null } } = {}) {
   const harness = await createPreactHarness(t);
   const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/skynet-state.js'), harness.importDashboardModule('js/fleet-admin-island.js')]);
@@ -106,6 +107,8 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     setHubConfig: async (b) => { log.push(['hubConfig', b]); return { ok: true }; },
     nodeLabels: async () => ['gpu', 'ci'],
     setNodeLabels: async (o) => { log.push(['labels', o]); return { ok: true }; },
+    viewers: async () => s_viewers,
+    kickViewer: async (id) => { log.push(['kick', id]); s_viewers = s_viewers.filter((v) => v.id !== id); return { ok: true }; },
     applyProfile: async (n, o) => { log.push(['applyProfile', n, o]); return { preview_token: 'ptok', changes: [{ item: 'trust_level', before: 'restricted', after: 'unrestricted', security: true }, { item: 'pool/pool_r', before: false, after: true, security: true }], pools: [{ id: 'pool_r', name: 'rigs', live_grants: [{ slug: 'groups.members.spawn', scope: '' }] }], security_changes: 2, conflicts: [] }; },
   };
   const snapshot = harness.signals.signal({ groups: [{ name: 'ops' }, { name: 'build' }] });
@@ -160,9 +163,11 @@ test('the admin view reads status only while shown and lists trusted and waiting
   assert.match(s.mounted.container.textContent, /self-fp-0000/, 'this node\'s fingerprint is shown whole');
   assert.equal(s.q('#fleet-trusted').querySelectorAll('tbody tr').length, 2);
   assert.equal(s.q('#fleet-waiting').querySelectorAll('tbody tr').length, 1);
-  assert.equal(s.timers.queue.length, 1);
+  // The status poll; the live-viewers poll (5 s) runs alongside on Peers.
+  assert.equal(s.timers.queue.filter((q) => q.ms !== 5000).length, 1);
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
   await s.harness.act(() => { s.activeTab.value = 'groups'; });
-  assert.equal(s.timers.queue.length, 0, 'leaving the view stops the poll');
+  assert.equal(s.timers.queue.length, 0, 'leaving the view stops both polls');
 });
 
 test('Trust previews, shows the full fingerprint, and needs the out-of-band check; unrestricted repeats the consequence', async (t) => {
@@ -749,6 +754,18 @@ test('node settings: moving to another hub and changing labels confirm the conse
   await s.click(q('#fleet-labels-save'));
   assert.match(s.confirms.at(-1).body, /Adds linux\. Removes ci\..*stops landing here/);
   assert.deepEqual(s.log.findLast((l) => l[0] === 'labels')[1], { add: ['linux'], remove: ['ci'] });
+});
+
+test('live terminal viewers show on Peers only while someone watches, and disconnecting one says it can come back', async (t) => {
+  const s = await setup(t);
+  s_viewers = [{ id: 'v1', peer: 'inst_forge', agent: 'agt_a1', session: 'ada', group: 'ops', read_only: false, started: '2026-10-10T09:00:00Z', incoming: true }];
+  t.after(() => { s_viewers = []; });
+  await s.show();
+  assert.match(s.q('#fleet-viewers').textContent, /forge.*ada.*ops.*interactive/s);
+  await s.click(s.q('[data-viewer="v1"] [data-fa="kick"]'));
+  assert.match(s.confirms.at(-1).body, /interactive session \(it can type, including answering harness prompts\) of ada closes now.*(any sessions\.watch \(read-only\) or sessions\.attach \(typing\) grant covers group ops — direct, all-groups or through a pool)/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'kick'), ['kick', 'v1']);
+  assert.equal(s.q('#fleet-viewers'), null, 'nobody watching: nothing shown');
 });
 
 test('moves: both directions listed, only abandonable outgoing moves offer Abandon, and the teleport freeze confirms', async (t) => {

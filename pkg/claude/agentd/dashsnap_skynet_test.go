@@ -61,6 +61,10 @@ const skynetFederationStubJS = `(function(){
       { envelope_id: 'env_7k2q', to: 'operator@lab', from: 'human operator', subject: 'Release window', preview: 'Freeze starts at 18:00', state: 'pending', attempts: 4, last_error: 'peer offline', created_at: '2026-10-10T09:20:00Z', updated_at: '2026-10-10T09:31:00Z' },
       { envelope_id: 'env_5m1x', to: 'operator@forge', from: 'human operator', subject: 'Re: deploy freeze', preview: 'Agreed', state: 'acked', attempts: 1, created_at: '2026-10-10T08:02:00Z', updated_at: '2026-10-10T08:02:01Z' }
     if (path === '/api/federation/node-labels' && !(init && init.method === 'POST')) return json({ labels: ['gpu', 'ci', 'linux'] });
+    if (path === '/api/federation/viewers') return json(window.__dashsnapViewers ? [
+      { id: 'tv_8k2q', peer: 'inst_hn3cxq7a', agent: 'agt_r8k2m4c1x9', session: 'fe-dev-forms', group: 'frontend-squad', read_only: false, started: new Date(Date.now() - 720000).toISOString(), incoming: true },
+      { id: 'tv_3m1x', peer: 'inst_2p6ym4ke', agent: 'agt_p2w7d0j5n3', session: 'infra-bench', group: 'infra-crew', read_only: true, started: new Date(Date.now() - 95000).toISOString(), incoming: true }
+    ] : []);
     if (path === '/api/federation/peers/trust') return json({ instance_id: 'inst_w5zea3nq', fingerprint: 'w5ze-a3nq-7m1p-kd42-xr8c-0fv6', level: 'restricted', profile: null, plan: null, applied: false });
     var hav = function(extra){ return { schema: 1, observed_at: '2026-10-10T09:40:00Z', harnesses: [
       { name: 'claude', display_name: 'Claude Code', installed: true, version: '2.1.4', latest_version: extra ? '2.1.4' : '2.2.0', update_available: !extra, version_status: 'known', credential_present: true, usable: true },
@@ -414,6 +418,19 @@ func skynetStates() []dashsnap.State {
   document.querySelector('#fleet-node-settings-open').click();
   for (var j = 0; j < 30 && !document.querySelector('#fleet-node-labels'); j++) await new Promise(function(r){ setTimeout(r, 100); });
   if (!document.querySelector('#fleet-node-labels')) throw new Error('skynet: node settings did not open');
+})();`,
+			SettleMS: 300,
+		},
+		{
+			Key:     "skynet-fleet-viewers",
+			Title:   "Who is watching this node's terminals",
+			Caption: "Fleet → Peers shows, while any peer is viewing an agent terminal here, who watches or drives which agent (interactive viewers can type, including answering harness prompts) and for how long; Disconnect… closes one view and says the peer can reopen it while it still holds the grant.",
+			InitJS:  "window.__dashsnapViewers = true;" + skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('#fleet-viewers'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-viewers')) throw new Error('skynet: viewers panel missing');
 })();`,
 			SettleMS: 300,
 		},

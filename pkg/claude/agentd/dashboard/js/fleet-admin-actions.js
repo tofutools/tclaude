@@ -41,6 +41,9 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
     setHubConfig: (body) => call('POST', 'config', body),
     nodeLabels: async () => (await call('GET', 'node-labels'))?.labels || [],
     setNodeLabels: ({ add = [], remove = [] }) => call('POST', 'node-labels', { add, remove }),
+    // Peers viewing this node's agent terminals now; kick closes one view.
+    viewers: async () => (await call('GET', 'viewers')) || [],
+    kickViewer: (id) => call('POST', `viewers/${encodeURIComponent(id)}/kick`, {}),
     // target is a peer instance ID or group:<pool name>.
     grants: async (target) => (await call('GET', `grants?peer=${encodeURIComponent(target)}`))?.grants || [],
     grant: (body) => call('POST', 'grants', body),
