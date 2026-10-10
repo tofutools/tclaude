@@ -25,7 +25,10 @@ import (
 
 var fedTeleportMu sync.Mutex
 
-type teleportLandingAuthority struct{ record *db.FederationTeleport }
+type teleportLandingAuthority struct {
+	record *db.FederationTeleport
+	direct *db.FederationBundleOffer
+}
 type teleportLandingContextKey struct{}
 type teleportOfferContextKey struct{}
 
@@ -140,6 +143,9 @@ func resolveTeleportLanding(peer string, group int64, credentials string) (*db.F
 	return &landing, profile, worker, mode, err
 }
 func (a *teleportLandingAuthority) check() error {
+	if a.direct != nil {
+		return a.checkDirectMove()
+	}
 	t := a.record
 	if teleportFrozen() {
 		return errors.New("teleports are frozen by the operator")
@@ -394,6 +400,9 @@ func teleportBriefing(t *db.FederationTeleport) string {
 }
 func teleportImportBundle(r *http.Request, b *agentbundle.Bundle) error {
 	a := teleportLandingFromRequest(r)
+	if a != nil && a.direct != nil {
+		return a.prepareDirectMoveBundle(b)
+	}
 	if a == nil {
 		o, _ := r.Context().Value(teleportOfferContextKey{}).(*db.FederationBundleOffer)
 		if o == nil || o.Descriptor.Teleport == nil {

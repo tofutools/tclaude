@@ -37,10 +37,14 @@ var Agent = Type{Name: "agent", MaxBytes: 256 << 20, AdmissionSlug: "agents.rece
 var Config = Type{Name: "config", MaxBytes: 16 << 20, AdmissionSlug: "config.offer", PendingLimit: PendingLimit, PendingBytes: PendingBytes}
 
 type MoveIntent struct {
-	SourceAgent string `json:"source_agent"`
-	SourceConv  string `json:"source_conv"`
+	DirectIfAllowed bool   `json:"direct_if_allowed,omitempty"`
+	Cwd             string `json:"cwd,omitempty"`
+	Landing         string `json:"landing,omitempty"`
+	SourceAgent     string `json:"source_agent"`
+	SourceConv      string `json:"source_conv"`
 }
 type MoveConfirmation struct {
+	Cwd         string    `json:"cwd,omitempty"`
 	ObservedAt  time.Time `json:"observed_at"`
 	Offer       string    `json:"offer"`
 	SHA256      string    `json:"sha256"`
@@ -82,6 +86,9 @@ func (d Descriptor) Validate(kind Type, now time.Time) error {
 	}
 	if d.Move != nil && (kind.Name != Agent.Name || !proto.ValidAgentRef(d.Move.SourceAgent) || len(d.Move.SourceConv) != 36) {
 		return errors.New("invalid agent move identity")
+	}
+	if d.Move != nil && (len(d.Move.Cwd) > 4096 || len(d.Move.Landing) > 256 || d.Move.DirectIfAllowed && d.Teleport != nil) {
+		return errors.New("invalid direct move landing request")
 	}
 	if !proto.ValidStreamID(d.ID) || d.Type != kind.Name || d.Bytes <= 0 || d.Bytes > kind.MaxBytes {
 		return errors.New("invalid bundle offer identity, type or size")
@@ -132,8 +139,9 @@ type Answer struct {
 	Reason string `json:"reason,omitempty"`
 }
 type Result struct {
-	Offer string `json:"offer"`
-	State string `json:"state"`
+	Disposition string `json:"disposition,omitempty"`
+	Offer       string `json:"offer"`
+	State       string `json:"state"`
 }
 
 type Spool struct{ Root string }
