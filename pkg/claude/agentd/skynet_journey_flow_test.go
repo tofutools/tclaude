@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/federation/hub"
 	"github.com/tofutools/tclaude/pkg/noderun"
 	"github.com/tofutools/tclaude/pkg/selfupdate"
@@ -37,7 +39,7 @@ func TestSkynetJourneyInstance(t *testing.T) {
 	for _, name := range []string{"shared", "hidden", "receiver"} {
 		f.HaveGroup(name)
 	}
-	for i, name := range []string{"worker", "retiring", "traveler", "secret"} {
+	for i, name := range []string{"worker", "retiring", "traveler", "secret", "boundary"} {
 		conv := fmt.Sprintf("019fe740-43a4-7023-b8ae-1ee64459f2a%d", i+1)
 		f.HaveConvWithTitle(conv, name)
 		f.HaveAliveSession(conv, name, name+"-pane", testutil.CanonicalTempDir(t))
@@ -46,6 +48,11 @@ func TestSkynetJourneyInstance(t *testing.T) {
 			group = "hidden"
 		}
 		f.HaveMember(group, conv)
+		if name == "boundary" {
+			f.HaveMember("hidden", conv)
+		}
+		cc := f.World.CCs.GetByConvID(conv)
+		require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: conv, CustomTitle: name, FullPath: cc.JsonlPath, ProjectPath: cc.Cwd, ProjectDir: filepath.Dir(cc.JsonlPath), Harness: "claude", IndexedAt: time.Now()}))
 	}
 	cleanup, err := agentd.SetNodeRunExecutorForTest(func(_ context.Context, path, _ string, _ int64) noderun.Result {
 		raw, err := os.ReadFile(path)
@@ -149,9 +156,15 @@ func (n *journeyNode) call(t *testing.T, method, path string, body any, status i
 	out, err := io.ReadAll(res.Body)
 	require.NoError(t, err)
 	require.Equal(t, status, res.StatusCode, "%s %s: %s", method, path, out)
-	var decoded map[string]any
+	if len(out) == 0 {
+		return map[string]any{}
+	}
+	var decoded any
 	require.NoError(t, json.Unmarshal(out, &decoded), "%s", out)
-	return decoded
+	if object, ok := decoded.(map[string]any); ok {
+		return object
+	}
+	return map[string]any{"rows": decoded}
 }
 
 // Requests themselves synchronize observable async transitions. No sleep,
@@ -214,7 +227,12 @@ func TestSkynetJourney(t *testing.T) {
 	}{{alice, bobID}, {bob, aliceID}} {
 		pair.node.call(t, "POST", "/api/federation/peers/trust", map[string]any{"instance": pair.peer, "level": "restricted"}, 200)
 		summary := pair.node.call(t, "GET", "/api/federation/status?summary=1", nil, 200)
-		require.Contains(t, fmt.Sprint(summary), pair.peer)
+		peers := journeyRows(t, summary["peers"])
+		require.Len(t, peers, 1)
+		require.Equal(t, pair.peer, peers[0]["instance_id"])
+		require.Equal(t, "restricted", peers[0]["level"])
+		require.Equal(t, true, peers[0]["online"])
+		require.Equal(t, true, peers[0]["trusted"])
 		pair.node.call(t, "GET", "/api/peer/"+pair.peer+"/node-summary", nil, 200)
 	}
 	remote := "/api/peer/" + bobID
@@ -232,16 +250,30 @@ func TestSkynetJourney(t *testing.T) {
 	require.NotNil(t, groupID)
 	omitted := journeyRows(t, snapshot["peer_view"].(map[string]any)["omitted"])
 	require.NotEmpty(t, omitted)
+	requestable := map[string]bool{}
 	for _, entry := range omitted {
 		_, ok := entry["requestable"].(bool)
 		require.True(t, ok, "omission has no requestability: %#v", entry)
+		requestable[entry["feature"].(string)] = entry["requestable"].(bool)
 	}
+	require.True(t, requestable["lifecycle.stop"])
+	require.False(t, requestable["terminals"])
+	require.False(t, requestable["local_dashboard"])
 	agents := journeyRows(t, snapshot["agents"])
 	ids := map[string]string{}
 	for _, agent := range agents {
 		ids[agent["title"].(string)] = agent["agent_id"].(string)
 	}
-	require.Len(t, ids, 3)
+	require.Len(t, ids, 4)
+	require.Empty(t, ids["secret"])
+	localAgents := journeyRows(t, bob.call(t, "GET", "/api/snapshot", nil, 200)["agents"])
+	secretID := ""
+	for _, a := range localAgents {
+		if a["title"] == "secret" {
+			secretID = a["agent_id"].(string)
+		}
+	}
+	require.NotEmpty(t, secretID)
 	alice.call(t, "GET", remote+"/groups/hidden", nil, 404)
 	alice.call(t, "POST", remote+"/agents/"+ids["worker"]+"/stop", nil, 403)
 
@@ -253,18 +285,47 @@ func TestSkynetJourney(t *testing.T) {
 	journeyAwait(t, "access approval", func() bool {
 		return alice.call(t, "GET", remote+"/peer-access-requests/"+requestID, nil, 200)["status"] == "approved"
 	})
+	alice.call(t, "POST", remote+"/agents/"+ids["boundary"]+"/stop", nil, 403)
+	approvedGrants := journeyRows(t, bob.call(t, "GET", "/api/federation/grants?peer="+aliceID, nil, 200)["grants"])
+	for _, row := range approvedGrants {
+		if row["slug"] == agentd.PermGroupsMembersStop {
+			require.NotEmpty(t, row["expires_at"])
+		}
+	}
 	alice.call(t, "POST", remote+"/agents/"+ids["worker"]+"/stop", nil, 200)
 	bob.call(t, "DELETE", "/api/federation/grants", map[string]any{"peer": aliceID, "slug": agentd.PermGroupsMembersStop, "scope": fmt.Sprintf("group_id=%.0f", groupID)}, 200)
 	alice.call(t, "POST", remote+"/agents/"+ids["worker"]+"/stop", nil, 403)
 	for _, slug := range []string{agentd.PermGroupsMembersClone, agentd.PermGroupsMembersRetire, agentd.PermAgentMove} {
 		grant(slug, "group=shared")
 	}
-	cloned := alice.call(t, "POST", remote+"/agents/"+ids["worker"]+"/clone", map[string]any{"no_copy_conv": true}, 200)
+	cloned := alice.call(t, "POST", remote+"/agents/"+ids["retiring"]+"/clone", map[string]any{"no_copy_conv": true}, 200)
 	require.NotEmpty(t, cloned["new_conv"])
 	alice.call(t, "POST", remote+"/agents/"+ids["retiring"]+"/retire", map[string]any{}, 200)
-	alice.call(t, "POST", remote+"/agents/"+ids["traveler"]+"/teleport", map[string]any{"group": "receiver"}, 200)
+	alice.call(t, "POST", "/api/federation/grants", map[string]any{"peer": bobID, "slug": agentd.PermAgentsReceive, "scope": "group=receiver"}, 200)
+	teleport := alice.call(t, "POST", remote+"/agents/"+ids["traveler"]+"/teleport", map[string]any{"group": "receiver"}, 200)
+	offerID := teleport["offer"].(map[string]any)["offer"].(map[string]any)["id"].(string)
+	journeyAwait(t, "incoming teleport", func() bool {
+		offers := alice.call(t, "GET", "/api/federation/bundle-offers?direction=in", nil, 200)
+		return strings.Contains(fmt.Sprint(offers), offerID)
+	})
+	localSnapshot := alice.call(t, "GET", "/api/snapshot", nil, 200)
+	landingCwd := journeyRows(t, localSnapshot["agents"])[0]["startup_dir"]
+	require.NotEmpty(t, landingCwd)
+	importPath := "/api/federation/bundle-offers/" + offerID + "/import?peer=" + bobID
+	alice.call(t, "POST", importPath, map[string]any{"cwd": landingCwd}, 200)
+	alice.call(t, "POST", importPath, map[string]any{"cwd": landingCwd, "apply": true}, 200)
+	journeyAwait(t, "teleport source retirement", func() bool {
+		rows := journeyRows(t, bob.call(t, "GET", "/api/snapshot", nil, 200)["agents"])
+		for _, row := range rows {
+			if row["agent_id"] == ids["traveler"] {
+				return false
+			}
+		}
+		return true
+	})
 	for _, action := range []string{"stop", "retire", "clone", "teleport"} {
-		alice.call(t, "POST", remote+"/agents/secret/"+action, map[string]any{"group": "receiver"}, 404)
+		alice.call(t, "POST", remote+"/agents/"+secretID+"/"+action, map[string]any{"group": "receiver"}, 404)
+		alice.call(t, "POST", remote+"/agents/"+ids["boundary"]+"/"+action, map[string]any{"group": "receiver"}, 403)
 	}
 
 	// Merged views use local plus peer snapshots. Links and grant rows are
@@ -275,6 +336,9 @@ func TestSkynetJourney(t *testing.T) {
 	require.Contains(t, fmt.Sprint(links), aliceID)
 	grants := bob.call(t, "GET", "/api/federation/grants?peer="+aliceID, nil, 200)
 	require.Contains(t, fmt.Sprint(grants), "group_id=")
+	alice.call(t, "GET", remote+"/harnesses/availability", nil, 403)
+	alice.call(t, "POST", remote+"/node/update", map[string]any{"action": "check"}, 403)
+	alice.call(t, "POST", remote+"/node/run", map[string]any{"script": "journey script", "timeout_seconds": 10}, 403)
 	for _, slug := range []string{agentd.PermNodeHarnessesRead, agentd.PermNodeUpdate, agentd.PermNodeExec} {
 		grant(slug, "")
 	}
@@ -290,7 +354,9 @@ func TestSkynetJourney(t *testing.T) {
 	journeyAwait(t, "script completion", func() bool {
 		return alice.call(t, "GET", remote+"/node/run/jobs/"+run["id"].(string), nil, 200)["state"] == "completed"
 	})
-	bob.call(t, "DELETE", "/api/groups/shared", nil, 200)
+	logs := alice.call(t, "GET", remote+"/node/run/jobs/"+run["id"].(string)+"/logs?stream=stdout", nil, 200)
+	require.Equal(t, base64.StdEncoding.EncodeToString([]byte("journey script")), logs["data"])
+	bob.call(t, "DELETE", "/api/groups/shared", nil, 204)
 	remaining := bob.call(t, "GET", "/api/federation/grants?peer="+aliceID, nil, 200)
 	require.NotContains(t, fmt.Sprint(remaining), "group_id=")
 }
