@@ -208,9 +208,12 @@ kill -INT $R; wait $R
 Navigating to another page removes the caption, so set it again after each
 navigation. The recorder follows the tab across navigations, including a
 switch to the other node's dashboard. Frames are scaled to the viewport size
-(`DRIVE_SIZE`, default `1280x800`). `e2e.sh browser start` passes Chrome a
-matching `--screen-info`, because headless Chrome's default 800x600 screen
-distorts screencast frames.
+(`DRIVE_SIZE`, default `1280x800`). `e2e.sh browser start` passes Chrome
+`--window-size` and `--screen-info` of 1280x800, because headless Chrome's
+default 800x600 screen distorts screencast frames. If you change
+`DRIVE_SIZE`, change those two flags to match. The CLI clips need
+asciinema 2.x, which writes the asciicast v2 format the pinned player
+reads.
 
 For CLI clips, record a scripted session with asciinema. Set
 `ASCIINEMA_CONFIG_HOME` to a writable directory when `~/.config` is

@@ -8,13 +8,16 @@
 # Expects `e2e.sh build`, then `e2e.sh up` and `e2e.sh browser start` on a fresh
 # E2E_BASE that has NOT been paired: the pairing clip pairs the nodes on camera.
 # Steps run in the order given; each one needs the steps before it in `all`.
+# A UI step that finds nothing fails the run instead of recording captions over
+# nothing. Needs ffmpeg and asciinema 2.x (asciicast v2, which the pinned
+# asciinema-player 3.8 plays).
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 E=$HERE/../e2e.sh
 BASE=$(realpath -m "${E2E_BASE:-${TMPDIR:-/tmp}/tce2e}")
 export E2E_BASE=$BASE
-D=$BASE/bin/drive
+D=$(realpath -m "${E2E_BIN:-$BASE/bin}")/drive
 OUT=${OUT:-$BASE/demos}
 HTTP_PORT=18499
 A=http://127.0.0.1:18481
@@ -33,12 +36,30 @@ rec_stop() {
 	sleep 1.5
 	kill -INT "$REC_PID" 2>/dev/null || true
 	wait "$REC_PID" || true
+	REC_PID=
 	tail -1 "$OUT/$1.rec.log"
 }
-d() { DRIVE_SHOW=1 "$D" "$@" >/dev/null; }
+cleanup() {
+	if [[ -n ${REC_PID:-} ]]; then
+		kill -INT "$REC_PID" 2>/dev/null || true
+		wait "$REC_PID" 2>/dev/null || true
+	fi
+	[[ -z ${HTTP_PID:-} ]] || kill "$HTTP_PID" 2>/dev/null || true
+}
+trap cleanup EXIT
+# checked <cmd...>: run a drive command; a NOTFOUND result fails the step.
+checked() {
+	local out
+	out=$("$@")
+	if [[ $out == *NOTFOUND* ]]; then
+		echo "step failed: ${*:2}" >&2
+		return 1
+	fi
+}
+d() { DRIVE_SHOW=1 checked "$D" "$@"; }
 cap() { "$D" caption "$*" >/dev/null; sleep "${CAP_HOLD:-2.2}"; }
 nocap() { "$D" caption >/dev/null; }
-js() { "$D" eval "$1" >/dev/null; }
+js() { checked "$D" eval "$1"; }
 js_click() { js "(()=>{const e=$1; if(!e) return 'NOTFOUND'; e.scrollIntoView({block:'center'}); e.click(); return 'ok'})()"; }
 btn() { js_click "[...document.querySelectorAll('button')].find(b=>b.offsetParent&&b.innerText.trim()==='$1')"; }
 label() { js_click "[...document.querySelectorAll('label')].find(l=>l.offsetParent&&l.innerText.trim()==='$1')"; }
@@ -50,11 +71,18 @@ login() { "$D" open "$("$E" dash "$1")" >/dev/null; sleep 2; }
 fleet() { "$D" open "$1/fleet-admin" >/dev/null; sleep 2; d clicktext "$2"; sleep 1.5; }
 serve() {
 	cp "$HERE/player.html" "$HERE/title.html" "$OUT/"
+	if (exec 3<>/dev/tcp/127.0.0.1/"$HTTP_PORT") 2>/dev/null; then
+		echo "port $HTTP_PORT is busy (a stale http.server?)" >&2
+		return 1
+	fi
 	(cd "$OUT" && exec python3 -m http.server "$HTTP_PORT" --bind 127.0.0.1 >/dev/null 2>&1) &
 	HTTP_PID=$!
 	sleep 1
 }
-unserve() { kill "$HTTP_PID" 2>/dev/null || true; }
+unserve() {
+	kill "$HTTP_PID" 2>/dev/null || true
+	HTTP_PID=
+}
 
 # cli_clip <name> <script>: record a scripted CLI session with asciinema, then
 # play the cast in asciinema-player inside the same Chrome and screencast it.
@@ -68,7 +96,7 @@ cli_clip() {
 	local dur
 	dur=$(python3 -c "import json;l=open('$OUT/$1.cast').read().splitlines();print(json.loads(l[-1])[0])")
 	rec_start "$1"
-	js 'window.player.play()'
+	js '(window.player ? (window.player.play(), "ok") : "NOTFOUND")'
 	sleep "$(python3 -c "print($dur+1.5)")"
 	rec_stop "$1"
 	unserve

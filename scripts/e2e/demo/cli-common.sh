@@ -7,6 +7,9 @@ on() { # on <a|b> <tclaude args...>: show the command, then run it as that node'
 	local n=$1
 	shift
 	show "node-$n " "tclaude $*"
-	"$E" run "$n" "$@" 2>&1
+	"$E" run "$n" "$@" 2>&1 || true # refusals are part of the demo
 	sleep 1.6
+}
+need() { # need <var>...: stop the demo when a captured value came back empty
+	for v in "$@"; do [[ -n ${!v} ]] || { echo "demo failed: $v is empty" >&2; exit 1; }; done
 }

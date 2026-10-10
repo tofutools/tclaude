@@ -25,6 +25,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -240,19 +241,25 @@ func record(b *rod.Browser, cur int, args []string) {
 	if v := os.Getenv("DRIVE_SIZE"); v != "" {
 		_, _ = fmt.Sscanf(v, "%dx%d", &w, &h)
 	}
+	w, h = w&^1, h&^1 // libx264 yuv420p needs even dimensions
 	var stopped atomic.Bool
 	var page atomic.Pointer[rod.Page]
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	// A static page sends no frames, so poke repaints to deliver the stop.
+	var cancelAttempt atomic.Pointer[context.CancelFunc]
+	// A static page sends no frames, so poke repaints to deliver the stop. If
+	// none arrives (the screencast died), cancel the attempt so wait() returns.
 	go func() {
 		<-stop
 		stopped.Store(true)
-		for range 20 {
+		for range 30 {
 			if p := page.Load(); p != nil {
 				_, _ = p.Eval(`() => { document.body.style.outline = document.body.style.outline ? '' : '0px solid transparent' }`)
 			}
 			time.Sleep(100 * time.Millisecond)
+		}
+		if c := cancelAttempt.Load(); c != nil {
+			(*c)()
 		}
 	}()
 	fmt.Println("recording into", dir, "(SIGINT/SIGTERM to stop)")
@@ -265,7 +272,9 @@ func record(b *rod.Browser, cur int, args []string) {
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
-		p := pages[cur].Timeout(24 * time.Hour)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancelAttempt.Store(&cancel)
+		p := pages[cur].Context(ctx)
 		wait := p.EachEvent(func(e *proto.PageScreencastFrame) bool {
 			name := fmt.Sprintf("f%06d.jpg", len(frames))
 			if err := os.WriteFile(filepath.Join(dir, name), e.Data, 0o644); err == nil {
@@ -278,6 +287,7 @@ func record(b *rod.Browser, cur int, args []string) {
 		q := 85
 		if p.SetViewport(&proto.EmulationSetDeviceMetricsOverride{Width: w, Height: h, DeviceScaleFactor: 1, ScreenWidth: &sw, ScreenHeight: &sh}) != nil ||
 			(proto.PageStartScreencast{Format: proto.PageStartScreencastFormatJpeg, Quality: &q}).Call(p) != nil {
+			cancel()
 			misses++
 			time.Sleep(200 * time.Millisecond)
 			continue
@@ -285,7 +295,8 @@ func record(b *rod.Browser, cur int, args []string) {
 		page.Store(p)
 		misses = 0
 		wait()
-		_ = proto.PageStopScreencast{}.Call(p)
+		_ = proto.PageStopScreencast{}.Call(pages[cur])
+		cancel()
 	}
 	if len(frames) == 0 {
 		die("no frames captured")
