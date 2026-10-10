@@ -6,6 +6,7 @@ import { SCRIPT_MAX_BYTES, TIMEOUT_DEFAULT_S, TIMEOUT_MAX_S, runActive, runOK, s
 const html = htm.bind(h);
 
 const RUN_POLL_MS = 1000;
+const RUN_POLL_GIVE_UP = 30;
 
 function errText(error) { return error?.message || String(error); }
 
@@ -73,14 +74,34 @@ function Settings({ actions, confirm, toast }) {
     action: () => actions.saveSettings({ accept_remote_scripts: !on }),
   }).then((s) => { if (s) { fill(s); toast(on ? 'Remote scripts are off' : 'Remote scripts are on', false); } })
     .catch((e) => toast(`Saving failed: ${errText(e)}`, true));
+  // Limits replace the saved set as a whole: an empty field removes that
+  // limit (the platform defaults do not come back). Removing or raising one
+  // confirms, since remote scripts may then use more of this machine.
   const saveLimits = () => {
     const limits = {};
+    const cur = settings.resource_limits || {};
     if (memory.trim()) limits.memory = memory.trim();
-    if (cpu.trim()) limits.cpu = Number(cpu);
-    if (pids.trim()) limits.pids = Math.trunc(Number(pids));
-    return actions.saveSettings({ resource_limits: limits })
-      .then((s) => { fill(s); toast('Script limits saved', false); })
-      .catch((e) => toast(`Saving limits failed: ${errText(e)}`, true));
+    if (cpu.trim()) {
+      limits.cpu = Number(cpu);
+      if (!(limits.cpu > 0)) { toast('cpu must be a positive number of cores', true); return Promise.resolve(); }
+    }
+    if (pids.trim()) {
+      limits.pids = Number(pids);
+      if (!Number.isInteger(limits.pids) || limits.pids < 1) { toast('processes must be a positive whole number', true); return Promise.resolve(); }
+    }
+    const removed = [cur.memory && !limits.memory && 'memory', cur.cpu != null && limits.cpu == null && 'cpu', cur.pids != null && limits.pids == null && 'processes'].filter(Boolean);
+    const raised = [cur.cpu != null && limits.cpu > cur.cpu && 'cpu', cur.pids != null && limits.pids > cur.pids && 'processes', cur.memory && limits.memory && limits.memory !== cur.memory && 'memory (changed)'].filter(Boolean);
+    const save = () => actions.saveSettings({ resource_limits: limits });
+    const done = (s) => { if (s) { fill(s); toast('Script limits saved', false); } };
+    const fail = (e) => toast(`Saving limits failed: ${errText(e)}`, true);
+    if (!removed.length && !raised.length) return save().then(done).catch(fail);
+    return confirm({
+      title: 'Loosen the script limits?',
+      body: `Scripts on this node will run with ${limitsText(limits)}${removed.length ? ` — no ${removed.join(', ')} limit any more; the defaults do not come back unless you set them again` : ''}${raised.length ? `${removed.length ? ';' : ' —'} changed: ${raised.join(', ')}` : ''}.${on ? ' This node accepts remote scripts, so peers\' scripts may use that much of this machine.' : ''}`,
+      okLabel: 'Save limits',
+      busyLabel: 'Saving…',
+      action: save,
+    }).then(done).catch(fail);
   };
   return html`<div class="fa-run-settings" id="fleet-run-settings">
     <span class="fa-k">This node</span>
@@ -139,7 +160,6 @@ export function RunPage({ view, actions, confirm, toast, timers = globalThis }) 
   const [script, setScript] = useState('');
   const [timeout, setTimeoutS] = useState(String(TIMEOUT_DEFAULT_S));
   const [runs, setRuns] = useState({});
-  const [lastScript, setLastScript] = useState(null);
   const runsRef = useRef(runs);
   runsRef.current = runs;
 
@@ -155,20 +175,32 @@ export function RunPage({ view, actions, confirm, toast, timers = globalThis }) 
 
   const ready = (n) => readiness(n, probes[n.id]).ok;
   const anyActive = Object.values(runs).some((r) => runActive(r.job));
+  // Poll every running job once a second from one loop that lives while any
+  // job runs. A job that is gone or no longer readable (404/403: grant or
+  // switch removed) stops; one whose node stays unreachable for
+  // RUN_POLL_GIVE_UP reads in a row is marked unreachable so it never blocks
+  // the page.
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
   useEffect(() => {
     if (!anyActive) return undefined;
-    let disposed = false;
-    const t = timers.setTimeout(async () => {
-      await Promise.all(Object.values(runsRef.current).filter((r) => runActive(r.job)).map((r) => actions.job(r.node, r.job.id)
-        .then((job) => { if (!disposed) setRuns((cur) => ({ ...cur, [r.node.id]: { ...cur[r.node.id], job } })); })
-        .catch((e) => {
-          // Gone or no longer readable (grant or switch removed): stop polling.
-          if (!disposed && (e?.status === 404 || e?.status === 403)) setRuns((cur) => ({ ...cur, [r.node.id]: { ...cur[r.node.id], job: { ...r.job, state: 'lost', error: errText(e) } } }));
-        })));
-      if (!disposed) setRuns((cur) => ({ ...cur }));
-    }, RUN_POLL_MS);
-    return () => { disposed = true; timers.clearTimeout(t); };
-  }, [anyActive, runs]);
+    let stopped = false; let t = null;
+    const update = (id, fn) => { if (mounted.current) setRuns((cur) => (cur[id] ? { ...cur, [id]: fn(cur[id]) } : cur)); };
+    const tick = async () => {
+      const active = Object.values(runsRef.current).filter((r) => runActive(r.job));
+      await Promise.all(active.map((r) => actions.job(r.node, r.job.id)
+        .then((job) => update(r.node.id, (e) => (e.job?.id === job.id ? { ...e, job, misses: 0 } : e)))
+        .catch((err) => update(r.node.id, (e) => {
+          if (e.job?.id !== r.job.id) return e;
+          if (err?.status === 404 || err?.status === 403) return { ...e, job: { ...e.job, state: 'lost', error: errText(err) } };
+          const misses = (e.misses || 0) + 1;
+          return misses >= RUN_POLL_GIVE_UP ? { ...e, misses, job: { ...e.job, state: 'unreachable', error: `no answer for ${misses} s: ${errText(err)}` } } : { ...e, misses };
+        }))));
+      if (!stopped) t = timers.setTimeout(tick, RUN_POLL_MS);
+    };
+    t = timers.setTimeout(tick, RUN_POLL_MS);
+    return () => { stopped = true; timers.clearTimeout(t); };
+  }, [anyActive]);
 
   const bytes = scriptBytes(script);
   const timeoutS = Math.trunc(Number(timeout));
@@ -179,25 +211,29 @@ export function RunPage({ view, actions, confirm, toast, timers = globalThis }) 
   const toggle = (id) => setPicked((cur) => { const next = new Set(cur); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const allOnline = () => setPicked(new Set(nodes.filter(ready).map((n) => n.id)));
 
-  const launch = (targets, text, secs) => {
-    setLastScript({ text, secs });
+  // A new run replaces the previous results; a re-run replaces only the
+  // nodes it targets. Each entry keeps the script it ran.
+  const launch = (targets, text, secs, again) => {
     setRuns((cur) => {
-      const next = { ...cur };
-      for (const n of targets) next[n.id] = { node: n, job: null };
+      const next = again ? { ...cur } : {};
+      for (const n of targets) next[n.id] = { node: n, job: null, text, secs };
       return next;
     });
     return Promise.all(targets.map((n) => actions.start(n, text, secs)
-      .then((job) => setRuns((cur) => ({ ...cur, [n.id]: { node: n, job } })))
-      .catch((e) => setRuns((cur) => ({ ...cur, [n.id]: { node: n, job: null, error: e?.code === 'remote_scripts_disabled' ? `${n.label} no longer accepts remote scripts` : errText(e) } })))));
+      .then((job) => { if (mounted.current) setRuns((cur) => ({ ...cur, [n.id]: { node: n, job, text, secs } })); })
+      .catch((e) => { if (mounted.current) setRuns((cur) => ({ ...cur, [n.id]: { node: n, job: null, text, secs, error: e?.code === 'remote_scripts_disabled' ? `${n.label} no longer accepts remote scripts` : errText(e) } })); })));
   };
   const confirmRun = (targets, text, secs, again) => confirm({
     title: `${again ? 'Re-run' : 'Run'} the script on ${targets.length} node${targets.length === 1 ? '' : 's'}?`,
     body: `Runs it with /bin/sh as the tclaude user on ${targets.map((n) => n.label).join(', ')}, with a ${secs} s timeout. It can do anything that user can on those machines. Each node runs it independently; nothing is queued for nodes that are offline.`,
     okLabel: again ? 'Re-run' : 'Run',
-  }).then((ok) => ok && launch(targets, text, secs));
+  }).then((ok) => ok && launch(targets, text, secs, again));
   const run = () => confirmRun(chosen, script, timeoutS, false);
-  const failed = Object.values(runs).filter((r) => r.error || (r.job && !runActive(r.job) && !runOK(r.job))).map((r) => r.node);
-  const rerun = () => confirmRun(failed, lastScript.text, lastScript.secs, true);
+  // Every pane holds the same script (a new run replaces them all), so the
+  // re-run sends that script to the failed nodes that are still ready.
+  const failedRuns = Object.values(runs).filter((r) => r.error || (r.job && !runActive(r.job) && !runOK(r.job)));
+  const failed = failedRuns.map((r) => r.node).filter((n) => ready(n));
+  const rerun = () => confirmRun(failed, failedRuns[0].text, failedRuns[0].secs, true);
 
   return html`<div class="fa-run">
     <${Settings} actions=${actions} confirm=${confirm} toast=${toast} />
@@ -214,7 +250,7 @@ export function RunPage({ view, actions, confirm, toast, timers = globalThis }) 
       <label><span class="fa-k">Timeout</span> <input id="fleet-run-timeout" size="6" value=${timeout} onInput=${(e) => setTimeoutS(e.currentTarget.value)} /> s</label>
       ${!timeoutOK && html`<span class="fa-danger">1–${TIMEOUT_MAX_S} s</span>`}
       <button id="fleet-run-submit" type="button" class="primary" disabled=${!canRun} onClick=${run}>Run on ${chosen.length} node${chosen.length === 1 ? '' : 's'}…</button>
-      ${failed.length > 0 && !anyActive && lastScript && html`<button id="fleet-run-rerun" type="button" onClick=${rerun}>Re-run on ${failed.length} failed…</button>`}
+      ${failed.length > 0 && !anyActive && html`<button id="fleet-run-rerun" type="button" onClick=${rerun}>Re-run on ${failed.length} failed…</button>`}
     </div>
     ${Object.keys(runs).length > 0 && html`<div class="fa-run-results" id="fleet-run-results">
       ${nodes.filter((n) => runs[n.id]).map((n) => html`<${ResultPane} key=${n.id} node=${n} entry=${runs[n.id]} actions=${actions} />`)}

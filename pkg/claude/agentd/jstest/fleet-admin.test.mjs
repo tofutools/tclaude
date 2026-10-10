@@ -588,6 +588,19 @@ test('run scripts: pick ready nodes, run with a confirm, one pane per node, full
   await s.click(s.q('#fleet-run-rerun'));
   assert.match(s.confirms.at(-1).title, /Re-run the script on 1 node/);
   assert.deepEqual(s.runLog.filter((l) => l[0] === 'start').at(-1).slice(1), ['inst_forge', 'echo hello', 3600]);
+  assert.ok(s.q('#fleet-run-results [data-node="inst_self"]'), 'a re-run keeps the other panes');
+  // A new run replaces every pane, so a later re-run never sends it to old failures.
+  const tick2 = s.timers.queue.find((x) => x.ms === 1000);
+  await s.harness.act(async () => { s.timers.queue.splice(s.timers.queue.indexOf(tick2), 1); await tick2.fn(); });
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  const forgeBox = s.q('#fleet-run-nodes [data-node="inst_forge"] input');
+  forgeBox.checked = false;
+  await s.harness.act(() => s.harness.fireEvent(forgeBox, 'change'));
+  area.value = 'uptime';
+  await s.harness.act(() => s.harness.fireEvent(area, 'input'));
+  await s.click(s.q('#fleet-run-submit'));
+  assert.equal(s.q('#fleet-run-results [data-node="inst_forge"]'), null, 'a new run drops the previous panes');
+  assert.deepEqual(s.runLog.filter((l) => l[0] === 'start').at(-1).slice(1), ['inst_self', 'uptime', 3600]);
 });
 
 test('accepting remote scripts confirms full remote code execution; node.exec grants repeat it', async (t) => {
@@ -601,4 +614,16 @@ test('accepting remote scripts confirms full remote code execution; node.exec gr
   assert.match(s.q('#fleet-run-settings').textContent, /accepts remote scripts from peers with node\.exec/);
   const model = await s.harness.importDashboardModule('js/fleet-admin-model.js');
   assert.match(model.slugInfo('node.exec').warning, /Full remote code execution/);
+  const pids = s.q('#fleet-run-pids');
+  pids.value = '';
+  await s.harness.act(() => s.harness.fireEvent(pids, 'input'));
+  await s.click(s.q('#fleet-run-limits'));
+  assert.match(s.confirms.at(-1).body, /no processes limit any more.*peers' scripts may use that much/);
+  assert.deepEqual(s.runLog.filter((l) => l[0] === 'save').at(-1), ['save', { resource_limits: { memory: '1GiB' } }]);
+  const cpu = s.q('#fleet-run-cpu');
+  cpu.value = 'lots';
+  await s.harness.act(() => s.harness.fireEvent(cpu, 'input'));
+  const saves = s.runLog.filter((l) => l[0] === 'save').length;
+  await s.click(s.q('#fleet-run-limits'));
+  assert.equal(s.runLog.filter((l) => l[0] === 'save').length, saves, 'a non-numeric cpu is rejected, never sent');
 });
