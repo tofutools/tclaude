@@ -85,6 +85,42 @@ function PublishDialog({ board, item, actions, confirm, onClose, onDone }) {
   </${Overlay}>`;
 }
 
+// repostTargets are the other boards this node may post to.
+export function repostTargets(board, boards) {
+  return (boards || []).filter((b) => b.id !== board.id && canPost(b) && !b.frozen);
+}
+
+// RepostDialog posts one version, exactly as its author signed it, to another
+// board (tclaude federation boards publish --from-board …).
+function RepostDialog({ board, boards, item, version, by, actions, confirm, onClose, onDone }) {
+  const targets = repostTargets(board, boards);
+  const [dest, setDest] = useState(targets.length === 1 ? targets[0].id : '');
+  const [error, setError] = useState('');
+  const to = targets.find((b) => b.id === dest);
+  const post = () => {
+    setError('');
+    confirm({
+      title: `Post ${item.name} to ${to.name}?`,
+      body: `Posts version ${short(version)} of ${item.name} to ${to.name} exactly as it is here: unchanged, still signed by ${by}, with this node listed as re-posting it. Every member of ${to.name} can read it and import it into their own config; nothing changes on their nodes until they do.`,
+      okLabel: 'Post',
+      busyLabel: 'Posting…',
+      action: () => actions.publishBoardItem(to.id, { source: { board: board.id, item: item.id, version } }),
+    }).then((r) => { if (r) onDone(`Posted ${item.name} to ${to.name}`); }).catch((e) => setError(errText(e)));
+  };
+  return html`<${Overlay} id="fleet-board-repost" labelledby="fleet-board-repost-title" onClose=${onClose}>
+    <h3 id="fleet-board-repost-title">Post ${item.name} to another board</h3>
+    <div class="muted">Version ${short(version)}, from ${board.name}, by ${by}. Posted unchanged; to change it, post your own config instead.</div>
+    <label class="fa-of-row"><span class="fa-k">board</span><select id="fleet-board-repost-dest" value=${dest} onChange=${(e) => setDest(e.currentTarget.value)}>
+      <option value="">pick a board…</option>
+      ${targets.map((b) => html`<option key=${b.id} value=${b.id} selected=${dest === b.id}>${b.name}</option>`)}</select></label>
+    ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
+    <div class="muted fa-cli-note">CLI: <code>tclaude federation boards publish --board ${dest || 'DEST'} --from-board ${board.id} --from-item ${item.id} --from-version ${version}</code></div>
+    <div class="modal-buttons"><span class="spacer"></span>
+      <button type="button" onClick=${onClose}>Cancel</button>
+      <button type="button" class="primary" id="fleet-board-repost-post" disabled=${!to} onClick=${post}>Post…</button></div>
+  </${Overlay}>`;
+}
+
 // ImportDialog previews an item version against this node's config and
 // imports it with the preview's token and the same choices.
 function ImportDialog({ board, item, version, by, actions, confirm, onClose, onDone }) {
@@ -163,7 +199,7 @@ function ImportDialog({ board, item, version, by, actions, confirm, onClose, onD
 }
 
 // VersionsDialog lists an item's versions: open one, or keep (pin) it.
-function VersionsDialog({ board, item, name, actions, confirm, toast, onOpen, onClose, onPinned }) {
+function VersionsDialog({ board, item, name, actions, confirm, toast, onOpen, onRepost, onClose, onPinned }) {
   const [versions, setVersions] = useState(null);
   useEffect(() => {
     let off = false;
@@ -187,14 +223,15 @@ function VersionsDialog({ board, item, name, actions, confirm, toast, onOpen, on
         <td>${v.invalid ? html`<span class="fa-danger">${v.error || 'invalid'}</span>` : postedBy(v, name)}</td>
         <td>${size(v.bytes)}</td>
         <td class="fa-acts">${!v.invalid && html`<button type="button" data-version-act="open" onClick=${() => onOpen(v)}>Open…</button>
-          ${v.version !== item.pinned_version && html`<button type="button" data-version-act="pin" onClick=${() => pin(v)}>Keep…</button>`}`}</td>
+          ${v.version !== item.pinned_version && html`<button type="button" data-version-act="pin" onClick=${() => pin(v)}>Keep…</button>`}
+          ${onRepost && html`<button type="button" data-version-act="repost" onClick=${() => onRepost(v)}>Post to…</button>`}`}</td>
       </tr>`)}</tbody></table>`}
     <div class="modal-buttons"><span class="spacer"></span><button type="button" onClick=${onClose}>Close</button></div>
   </${Overlay}>`;
 }
 
 // BoardItems is a board's item list inside its detail view.
-export function BoardItems({ board, name, actions, confirm, toast }) {
+export function BoardItems({ board, boards = [], name, actions, confirm, toast }) {
   const [items, setItems] = useState(null);
   const [tick, setTick] = useState(0);
   const [dialog, setDialog] = useState(null);
@@ -207,6 +244,8 @@ export function BoardItems({ board, name, actions, confirm, toast }) {
   const done = (msg) => { setDialog(null); toast(msg, false); reload(); };
   const list = Array.isArray(items) ? items : [];
   const poster = canPost(board) && !board.frozen;
+  const reposter = repostTargets(board, boards).length > 0;
+  const withVersion = (it, v) => ({ ...it, digest: v.digest, bytes: v.bytes, publisher: v.publisher, republisher: v.republisher });
   const open = (item, version) => setDialog({ kind: 'inspect', item, version });
   const d = dialog;
   const by = d?.item ? postedBy(d.item, name) : '';
@@ -232,12 +271,15 @@ export function BoardItems({ board, name, actions, confirm, toast }) {
             <button type="button" data-item-act="open" onClick=${() => open(it, it.latest_version || it.version)}>Open…</button>
             <button type="button" data-item-act="versions" onClick=${() => setDialog({ kind: 'versions', item: it })}>Versions…</button>
             ${poster && html`<button type="button" data-item-act="update" onClick=${() => setDialog({ kind: 'publish', item: it })}>New version…</button>`}
+            ${reposter && html`<button type="button" data-item-act="repost" title="Post this item, unchanged, to another board you can post to" onClick=${() => setDialog({ kind: 'repost', item: it, version: it.latest_version || it.version })}>Post to…</button>`}
           </td></tr>`)}</tbody></table>`}
     ${d?.kind === 'publish' && html`<${PublishDialog} board=${board} item=${d.item} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
-    ${d?.kind === 'versions' && html`<${VersionsDialog} board=${board} item=${d.item} name=${name} actions=${actions} confirm=${confirm} toast=${toast} onOpen=${(v) => open({ ...d.item, digest: v.digest, bytes: v.bytes, publisher: v.publisher, republisher: v.republisher }, v.version)} onClose=${() => setDialog(null)} onPinned=${() => { setDialog(null); reload(); }} />`}
+    ${d?.kind === 'versions' && html`<${VersionsDialog} board=${board} item=${d.item} name=${name} actions=${actions} confirm=${confirm} toast=${toast} onOpen=${(v) => open(withVersion(d.item, v), v.version)}
+      onRepost=${reposter ? (v) => setDialog({ kind: 'repost', item: withVersion(d.item, v), version: v.version }) : null} onClose=${() => setDialog(null)} onPinned=${() => { setDialog(null); reload(); }} />`}
     ${d?.kind === 'inspect' && html`<${BundleInspectDialog} offer=${{ offer: { type: 'config', summary: `${d.item.name} · posted by ${by} · sha256 ${d.item.digest || '—'}`, bytes: d.item.bytes }, peer: '' }} label=${() => ''}
       title=${`${d.item.name} (version ${short(d.version)})`} note="verified on this node; nothing is imported until you import it."
       actions=${inspectActions} toast=${toast} onImport=${() => setDialog({ kind: 'import', item: d.item, version: d.version })} onClose=${() => setDialog(null)} />`}
+    ${d?.kind === 'repost' && html`<${RepostDialog} board=${board} boards=${boards} item=${d.item} version=${d.version} by=${by} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${(m) => { setDialog(null); toast(m, false); }} />`}
     ${d?.kind === 'import' && html`<${ImportDialog} board=${board} item=${d.item} version=${d.version} by=${by} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
   </div>`;
 }

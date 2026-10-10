@@ -67,7 +67,7 @@ function limits(b) {
 
 // BoardDetail lists a board's members; an owner also invites, changes roles,
 // removes members and changes the key.
-function BoardDetail({ board, view, actions, confirm, toast, copy, onChanged }) {
+function BoardDetail({ board, boards = [], view, actions, confirm, toast, copy, onChanged }) {
   const [members, setMembers] = useState(null);
   const [tick, setTick] = useState(0);
   const [invite, setInvite] = useState({ role: 'reader', ttl: 3600 });
@@ -126,7 +126,7 @@ function BoardDetail({ board, view, actions, confirm, toast, copy, onChanged }) 
   }).then((r) => { if (r) { toast('Key changed', false); setToken(null); onChanged(); } }).catch(fail('Change key'));
 
   return html`<div class="fa-board-detail" id="fleet-board-detail" data-board=${board.id}>
-    <${BoardItems} board=${board} name=${(id) => memberName(id, view)} actions=${actions} confirm=${confirm} toast=${toast} />
+    <${BoardItems} board=${board} boards=${boards} name=${(id) => memberName(id, view)} actions=${actions} confirm=${confirm} toast=${toast} />
     <div class="fa-row"><b>Members</b></div>
     ${members?.error ? html`<div class="fa-danger">${members.error}</div>` : !members ? html`<div class="muted">Loading members…</div>` : html`<table class="fa-table" id="fleet-board-members">
       <thead><tr><th>Member</th><th>Role</th><th></th></tr></thead>
@@ -213,7 +213,7 @@ export function BoardsPage({ view, actions, confirm, toast, copy }) {
         <td class="muted">${limits(b)}</td>
         <td class="fa-acts"><button type="button" data-board="leave" onClick=${() => leave(b)}>Leave…</button></td>
       </tr>`)}</tbody></table>`}
-    ${list.find((b) => b.id === open) && html`<${BoardDetail} key=${open} board=${list.find((b) => b.id === open)} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} onChanged=${reload} />`}
+    ${list.find((b) => b.id === open) && html`<${BoardDetail} key=${open} board=${list.find((b) => b.id === open)} boards=${list} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} onChanged=${reload} />`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation boards list</code>, <code>join --token …</code>, <code>create --name …</code></div>
   </div>`;
 }
