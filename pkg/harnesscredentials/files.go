@@ -354,3 +354,31 @@ func Presence(home, name string) *bool {
 	}
 	return nil
 }
+
+// StandardSecretPaths is the relative credential-path inventory used by file
+// sharing guards. Keep it next to the credential capture locations.
+func StandardSecretPaths() []string {
+	return []string{".claude/.credentials.json", ".codex/auth.json", ".local/share/opencode/auth.json", ".gemini/oauth_creds.json", ".gemini/google_accounts.json"}
+}
+
+// ConfiguredSecretPaths includes operator-selected credential locations, which
+// may lie inside a project despite not having a standard harness directory name.
+func ConfiguredSecretPaths(home string) []string {
+	var paths []string
+	for _, name := range []string{"claude", "codex", "opencode", "gemini"} {
+		for _, receiving := range []bool{false, true} {
+			dir, files, err := location(home, name, receiving)
+			if err != nil {
+				continue
+			}
+			dir, err = canonicalDirectory(dir)
+			if err != nil {
+				continue
+			}
+			for _, file := range files {
+				paths = append(paths, filepath.Join(dir, file))
+			}
+		}
+	}
+	return paths
+}

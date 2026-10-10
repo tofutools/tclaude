@@ -17,6 +17,7 @@ const (
 	PermSessionsRead       = "sessions.read"
 	PermSessionsWatch      = "sessions.watch"
 	PermSessionsAttach     = "sessions.attach"
+	PermSessionsFilesRead  = "sessions.files.read"
 	PermGroupsRosterRead   = "groups.roster.read"
 	PermGroupsPresenceRead = "groups.presence.read"
 	PermMessageAttachments = "message.attachments"
@@ -31,6 +32,7 @@ var federationPeerSlugs = map[string]string{
 	PermSessionsRead:          proto.CapSessions,
 	PermSessionsWatch:         proto.CapSessionsWatch,
 	PermSessionsAttach:        proto.CapSessionsAttach,
+	PermSessionsFilesRead:     proto.CapSessionsFilesRead,
 	PermGroupsPresenceRead:    proto.CapPresence,
 	PermMessageDirect:         proto.CapMail,
 	PermMessageAttachments:    proto.CapAttachments,

@@ -197,6 +197,7 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `agents.status.read` | dashboard-aligned agent activity, model, task and numeric context summaries |
 | `sessions.watch` | read-only terminal view of a group member agent |
 | `sessions.attach` | terminal view and full keyboard input, including harness approvals |
+| `sessions.files.read` | bounded non-secret project file downloads through a live terminal viewer; default off, independent of watch/attach |
 | `node.read` | platform, harness versions, labels and numeric node resources (unscoped only) |
 | `costs.read` | complete node-wide cost collection in peer UI requests (unscoped only) |
 | `federation.audit.read` | complete node-wide dashboard audit collection in peer UI requests (unscoped only) |
@@ -752,6 +753,37 @@ Explicit credits bound outstanding terminal data to 256 KiB in each direction;
 credits return after terminal output or keyboard input is delivered. Each daemon
 limits attachments to 32 total, 8 per peer, and 30 opens per peer per minute.
 The hub's stream limits and idle timeout also apply.
+
+### Remote terminal file downloads
+
+Grant `sessions.files.read` explicitly on the agent's group to enable browser
+file links. Watch and attach do not imply file access; unrestricted trust does.
+The browser hello reports `viewer_id` and `files`. Clicking a visible output
+path makes a HEAD preflight followed by GET
+`/api/federation/terminal-file?terminal=<remote-socket-path>&viewer=<viewer_id>&path=<path>`.
+OSC 8 links are not used for remote file access. The route is local and human-only.
+
+The target requires the same live terminal viewer and pinned session throughout
+transfer. Reads stay under the working directory recorded when that viewer
+attached. Absolute paths must be inside it; parent traversal and symlinks below
+the root are refused. Home and system directory roots return `root_too_broad`:
+run the agent in a project directory instead. Credential paths (including
+configured harness authentication files), `.env` files and `.git/config` are
+blocked at every depth. Only regular files up to 32 MiB are accepted. Both nodes
+audit reads, and encrypted transfers verify size and SHA-256 before the browser
+receives an attachment with `nosniff` and a CSP sandbox. Transfer time is bounded
+to two minutes and viewer closure or revoked authority cancels it.
+
+CLI parity uses the same pin and target enforcement:
+
+```bash
+tclaude federation file get agt_…@bob reports/build.txt --output build.txt
+```
+
+This opens a temporary watch viewer (or interactive viewer when only attach is
+shared), without sending keyboard input, and refuses existing local output files.
+It needs both terminal authority and the separate file-read grant. Neither API
+accepts a replacement session after the original viewer closes.
 
 ## Delivery
 

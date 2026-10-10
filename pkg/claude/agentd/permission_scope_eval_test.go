@@ -366,6 +366,7 @@ var scopedSlugEnforcementPaths = map[string]string{
 	PermAgentShare:                        "handleFederationShareAgent supplies RemotePeer/RemoteGroup",
 	PermSessionsWatch:                     "handleFederationAttach — permissionAllowsAction with RemotePeer/RemoteGroup",
 	PermSessionsAttach:                    "handleFederationAttach — permissionAllowsAction with RemotePeer/RemoteGroup",
+	PermSessionsFilesRead:                 "fedRuntime.terminalFileAuthorized — live pinned viewer plus fedPeerAllows with its peer and target group; dashboard/CLI file routes are human-only",
 	PermSessionsRead:                      "handleFederationSessions — permissionAllowsAction with RemotePeer/RemoteGroup",
 	PermGroupsRosterRead:                  "federation peer grants — fedPeerAllows evaluates local group scope for catalogs",
 	PermGroupsPresenceRead:                "federation peer grants — fedPeerAllows evaluates local group scope for catalogs",

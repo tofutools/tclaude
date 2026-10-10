@@ -31,6 +31,7 @@ var peerViewLocalRoutes = []string{
 	"GET /api/federation/hub/health",
 	"GET /api/federation/hub/logs",
 	"POST /api/federation/terminal-attachments",
+	"GET /api/federation/terminal-file",
 	"GET /api/federation/terminal",
 	"GET /api/federation/sessions",
 	"/",

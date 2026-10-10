@@ -694,6 +694,8 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		rt.acceptPeerViewOpen(peer, env)
 	case proto.KindPeerViewAnswer:
 		rt.handlePeerViewAnswer(peer, env)
+	case proto.KindTerminalFile:
+		rt.acceptTerminalFile(peer, env)
 	case proto.KindTerminalUpload:
 		rt.acceptTerminalUpload(peer, env)
 	case proto.KindSessionOpen:
