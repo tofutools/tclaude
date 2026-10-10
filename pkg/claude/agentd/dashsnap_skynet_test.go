@@ -41,6 +41,12 @@ const skynetFederationStubJS = `(function(){
     ] });
     if (path === '/api/federation/enrollments') return json({ enrollments: [{ direction: 'issuer', token_id: 'etok_q2v7tn', peer: 'inst_hn3cxq7a', retired: false }] });
     if (path === '/api/federation/enroll/preview') return json({ claims: { master: 'inst_w5zea3nq', profile_name: 'worker', profile_id: 'nprof_c4r0l', profile_revision: 2, trust_level: 'restricted', expires_at: '2026-10-11T09:00:00Z' }, preview_token: 'pv', master_fingerprint: 'w5ze-a3nq-7m1p-kd42-xr8c-0fv6', node_fingerprint: 'q4w7-pjf2-kx3m-z6bt-y5nd-8c1e', consent: 'Running enroll trusts the pinned master at the displayed level. Its profile controls this node\'s authority on the master. No default profile or config offer is applied locally.' });
+    if (path === '/api/federation/moves') return json({ moves: [
+      { id: 'mv3', direction: 'out', teleport: false, peer: 'inst_hn3cxq7a', source_agent: 'agt_7fk2ab01cd23', group: 'ops', state: 'awaiting_confirmation', expires_at: '2099-10-11T09:00:00Z' },
+      { id: 'mv2', direction: 'in', teleport: true, peer: 'inst_hn3cxq7a', source_agent: 'agt_q9m1ee45ff67', target_agent: 'agt_r2d4aa89bb01', group: 'rigs', state: 'complete', expires_at: '2026-10-10T07:00:00Z' },
+      { id: 'mv1', direction: 'out', teleport: true, peer: 'inst_2p6ym4ke', source_agent: 'agt_x8p3cc12dd34', group: 'ops', state: 'blocked', last_error: 'peer offline', expires_at: '2099-10-10T20:00:00Z' }
+    ] });
+    if (path === '/api/federation/teleport') return json({ disabled: false });
     if (path === '/api/federation/audit') return json([
       { id: 'a6', at: '2026-10-10T09:41:12Z', source: 'inbound', direction: 'in', peer: 'inst_hn3cxq7a', kind: 'mail', actor: 'agt_7fk2', target: 'agt_q9m1', group: 'ops', state: 'delivered' },
       { id: 'a5', at: '2026-10-10T09:38:02Z', source: 'outbox', direction: 'out', peer: 'inst_2p6ym4ke', kind: 'mail', actor: 'agt_q9m1', target: 'agt_r2d4', state: 'failed' },
@@ -288,6 +294,21 @@ func skynetStates() []dashsnap.State {
   for (var j = 0; j < 30 && !(document.querySelector('#fleet-profiles') && document.querySelector('#fleet-pools')); j++) await new Promise(function(r){ setTimeout(r, 100); });
   if (!document.querySelector('#fleet-profiles .fa-badge')) throw new Error('skynet: default profile not marked');
   if (!document.querySelector('#fleet-pools [data-pool="rigs"]')) throw new Error('skynet: pool missing');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-moves",
+			Title:   "Agent moves and the teleport switch",
+			Caption: "Fleet → Moves: durable agent moves and teleports in both directions (⇢ leaving, ⇠ arriving) with peer, group, state and expiry; outgoing moves that have not started retiring can be abandoned. The teleport switch at the top freezes teleports leaving or landing on this node.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return /Moves/.test(b.textContent); })[0].click();
+  for (var j = 0; j < 30 && !document.querySelector('#fleet-moves'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (document.querySelectorAll('#fleet-moves [data-fa="abandon"]').length !== 2) throw new Error('skynet: abandon offered on the wrong moves');
 })();`,
 			SettleMS: 400,
 		},
