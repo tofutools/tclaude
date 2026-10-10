@@ -2159,3 +2159,7 @@ func RunAwayLifecycleObserversForTest(conv string) bool {
 	id, _ := db.AgentIDForConv(conv)
 	return !(awbReadyWorker{}).cleanupAfterClose(context.Background(), &db.AWBReadyDispatch{AgentID: id}, awbReadyPRState{})
 }
+
+// SweepPendingMorphsForTest runs one synchronous pass of the pending-morph
+// idle watcher.
+func SweepPendingMorphsForTest() { sweepPendingMorphs(true) }

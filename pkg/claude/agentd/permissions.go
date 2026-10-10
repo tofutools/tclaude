@@ -175,6 +175,14 @@ var permissionRegistry = []PermSlug{
 		Description: "Recreate own recorded startup directory when it has been deleted (tclaude agent dir --repair). The path is daemon-selected and cannot be overridden. Default-granted.",
 	},
 	{
+		Slug: PermSelfMorph, ScopeDims: []ScopeDim{ScopeDimSpawnProfile},
+		Description: "Morph own launch form (model, effort, approval) in place, applied when the current turn ends (tclaude agent morph). Not default-granted and never conferred by group ownership.",
+	},
+	{
+		Slug: PermAgentMorph, GroupSibling: PermGroupsMembersMorph, ScopeDims: []ScopeDim{ScopeDimSpawnProfile},
+		Description: "Morph ANOTHER agent's launch form in place globally (tclaude agent morph <agent>). Group-scoped authority uses groups.members.morph.",
+	},
+	{
 		Slug: PermAgentReincarnate, GroupSibling: PermGroupsMembersReincarnate,
 		Description: "Reincarnate ANOTHER agent globally (tclaude agent reincarnate --target). Group-scoped authority uses groups.members.reincarnate.",
 	},
@@ -218,6 +226,10 @@ var permissionRegistry = []PermSlug{
 		Slug: PermAgentSpawn, GroupSibling: PermGroupsMembersSpawn,
 		ScopeDims:   []ScopeDim{ScopeDimGroup, ScopeDimSpawnProfile, ScopeDimSandboxProfile, ScopeDimPeer},
 		Description: "Spawn a fresh agent into any group globally. Group-scoped authority uses groups.members.spawn.",
+	},
+	{
+		Slug: PermGroupsMembersMorph, OwnerImplied: true, ScopeDims: []ScopeDim{ScopeDimGroup, ScopeDimSpawnProfile},
+		Description: "Morph another agent's launch form when all of its current active group memberships are covered. Never covers the caller itself.",
 	},
 	{
 		Slug: PermGroupsMembersReincarnate, OwnerImplied: true, ScopeDims: []ScopeDim{ScopeDimGroup},

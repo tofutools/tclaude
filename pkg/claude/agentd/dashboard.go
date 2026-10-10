@@ -2044,6 +2044,9 @@ type agentState struct {
 	// between stop and resume so the dashboard never mistakes an unlocked
 	// agent for one using its normal posture.
 	TemporaryHarnessBuiltinMode string `json:"temporary_sandbox_mode,omitempty"`
+	// PendingMorph is a requested morph waiting for the agent to go idle, so
+	// an operator can see why the agent is about to relaunch.
+	PendingMorph *db.AgentPendingMorph `json:"pending_morph,omitempty"`
 	// FastMode is present when a live Codex rollout has reported an authoritative
 	// thread_settings_applied snapshot, or provisionally when tclaude explicitly
 	// selected the tier for this live agent's launch and Codex has not emitted a
