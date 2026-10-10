@@ -224,7 +224,7 @@ func renderSudoGrants(rows []sudoGrantJSON, stdout io.Writer) int {
 
 type sudoRevokeParams struct {
 	ID    int64  `pos:"true" optional:"true" help:"Grant ID to revoke (from sudo ls). Mutually exclusive with --conv / --all."`
-	Conv  string `long:"conv" short:"c" help:"Revoke every active grant for one conv (selector: title / prefix / UUID)"`
+	Conv  string `long:"conv" short:"c" optional:"true" help:"Revoke every active grant for one conv (selector: title / prefix / UUID)"`
 	All   bool   `long:"all" help:"Revoke every active grant daemon-wide (use with care)"`
 	Force bool   `long:"force" short:"f" help:"Skip the confirmation prompt for --all"`
 }
