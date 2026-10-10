@@ -71,6 +71,8 @@ var peerViewLocalRoutes = []string{
 	"POST /api/federation/moves/{id}/abandon",
 	"GET /api/federation/teleport",
 	"PUT /api/federation/teleport",
+	"GET /api/federation/node-labels",
+	"POST /api/federation/node-labels",
 	"GET /api/federation/status",
 	"GET /api/federation/access-requests",
 	"POST /api/federation/access-requests/{id}/decision",

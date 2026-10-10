@@ -2858,6 +2858,16 @@ Import defaults to preview. Its body preserves the CLI fields: `apply`, `only`,
 the same live admission, credential findings, path and launch checks as the CLI.
 Responses retain the existing preview diffs and provenance. Every route is
 local operator administration and is refused through peer views.
+
+### Local dashboard labels and hub setup
+
+`GET /api/federation/node-labels` returns `{labels:[...]}`; POST accepts
+`{add:[...],remove:[...]}` and shares the CLI's label validation and normalized
+label set. GET/HEAD are reads. These cookie-authenticated routes are local-only.
+Hub setup already uses `POST /api/federation/config` with optional
+`enabled`, `hub_url`, `name`, `invite` and `hub_ca_file` fields. Omitted fields
+are preserved; CA file paths refer to this node's filesystem. URL validation,
+configuration writes and client reload are shared with `federation connect`.
 ### Local dashboard away administration
 
 `GET /api/federation/away` reads `{away: null|{cover,since,until}}`;
