@@ -722,12 +722,27 @@ func handleFederationKick(w http.ResponseWriter, r *http.Request) {
 	v.reason = "kicked"
 	v.mu.Unlock()
 	v.cancel()
-	// Preserve the CLI kick contract: a successful response means the viewer
-	// and its indicator/PTY have been removed. The serving worker first sends
-	// its bounded closure notification, then closes done after all cleanup.
-	<-v.done
+	// A normal kick replies after cleanup. A wedged worker must not hold the
+	// operator's HTTP request indefinitely; detach its registry entry and
+	// force-close in the background if the bounded wait is exhausted.
+	rt.waitKickedTerminal(r.Context(), v)
 	fedTerminalAudit("sessions.attach.kick", "", v.Peer, v.Agent, v.Group, "viewer="+v.ID, 200)
 	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (rt *fedRuntime) waitKickedTerminal(ctx context.Context, v *fedTerminalView) {
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	select {
+	case <-v.done:
+		return
+	case <-ctx.Done():
+	case <-timer.C:
+	}
+	rt.terminalsMu.Lock()
+	delete(rt.terminalsLocked().views, v.ID)
+	rt.terminalsMu.Unlock()
+	goBackground(v.close)
 }
 
 type fedTerminalRefusal struct{ reason string }
