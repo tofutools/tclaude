@@ -67,6 +67,17 @@ label() { js_click "[...document.querySelectorAll('label')].find(l=>l.offsetPare
 select_nth() { js "(()=>{const s=[...document.querySelectorAll('select')].filter(s=>s.offsetParent)[$1];s.value='$2';s.dispatchEvent(new Event('input',{bubbles:true}));s.dispatchEvent(new Event('change',{bubbles:true}))})()"; }
 scroll_to() { js "(()=>{const e=[...document.querySelectorAll('*')].find(e=>e.offsetParent&&e.childElementCount===0&&e.textContent.trim()==='$1');if(e)window.scrollTo({top:e.getBoundingClientRect().top+scrollY-90,behavior:'smooth'})})()"; sleep 1.2; }
 map_button() { js_click "[...document.querySelectorAll('button,a')].filter(e=>e.offsetParent&&e.getBoundingClientRect().x>1150&&e.getBoundingClientRect().y<100).pop()"; }
+# drag <agent> <group key>: drag an agent row onto a group in "Groups · all nodes".
+drag() { js "$(grep -v '^//' "$HERE/drag.js")('$1','$2')"; }
+# disarm: an open terminal pane guards page unloads, which would stall `drive open`.
+disarm() { "$D" eval "window.dispatchEvent(new CustomEvent('tclaude:auth-expired'))" >/dev/null; }
+# groups <url>: "Groups · all nodes" with every group expanded.
+groups() {
+	"$D" open "$1/fleet" >/dev/null
+	sleep 3
+	js "(()=>{const g=[...document.querySelectorAll('details[data-group-key]')].filter(d=>d.offsetParent&&d.dataset.groupKey.includes('@'));if(!g.length)return 'NOTFOUND';g.forEach(d=>{d.open=true});return 'ok'})()"
+	sleep 1
+}
 login() { "$D" open "$("$E" dash "$1")" >/dev/null; sleep 2; }
 fleet() { "$D" open "$1/fleet-admin" >/dev/null; sleep 2; d clicktext "$2"; sleep 1.5; }
 serve() {
@@ -157,8 +168,8 @@ step_terminal() {
 	cap "b shares its agents. Open reviewer-2 interactively"
 	js_click "[...document.querySelectorAll('tr,li,div')].filter(e=>e.offsetParent&&e.innerText.startsWith('reviewer-2')).map(e=>e.querySelector('button')).find(Boolean)"
 	sleep 4
-	cap "This is b's live pane, streamed through the hub. b sees REMOTE INPUT a"
-	CAP_HOLD=0.5 cap "Type into it from node a"
+	cap "It opens in a's Terminals tab, next to local panes: b's live pane, streamed through the hub"
+	CAP_HOLD=0.5 cap "Type into it from node a. b sees REMOTE INPUT a"
 	d type '.xterm-helper-textarea' 'Hi from node a - can you check the changelog?'
 	sleep 1.2
 	d key Enter
@@ -167,42 +178,57 @@ step_terminal() {
 	sleep 1.5
 	nocap
 	rec_stop 03-remote-terminal
-	"$D" key Escape >/dev/null
+	disarm
 }
 
 step_move() {
-	fleet "$A" Moves
+	# a restricts b and lets it offer agents into builders, with no landing
+	# policy: b's agents can reach a only as offers a accepts. b keeps trusting
+	# a unrestricted, so a's agents land on b at once.
+	"$E" run a federation trust "$("$E" run b federation identity 2>/dev/null | head -1)" --level restricted --yes --label b >/dev/null
+	"$E" run a federation grant b agents.receive --scope group=builders >/dev/null
+	groups "$A"
 	rec_start 04-move-agent
-	cap "Node a, Fleet → Moves: move an agent to node b"
-	d clicktext "Move an agent to a peer"
-	sleep 1.5
-	CAP_HOLD=1.5 cap "builder-1, to peer b, into b's reviewers group"
-	select_nth 2 reviewers
-	sleep 1.5
-	d clicktext "Move…"
+	cap "Node a, Groups · all nodes: drag an agent onto a group on another node"
+	CAP_HOLD=0.5 cap "Drag a's builder-1 onto b's reviewers"
+	drag builder-1 reviewers@b
 	sleep 1
-	cap "It sends config + conversation history; a retires its copy once b runs it"
+	cap "Confirm where it goes. Its config and full history travel with it"
 	d key Enter
+	sleep 1
+	cap "b trusts a fully, so b takes it in directly"
+	sleep 5
+	cap "Landed on b, in reviewers. a retires its copy"
+	sleep 1.5
+	d click '#skynet-move-drop-close'
 	sleep 2
-	cap "Waiting for b to accept"
-	nocap
-	fleet "$B" Offers
-	cap "Node b, Fleet → Offers: the move is waiting"
+	cap "a restricts b: b's agents may only be offered into builders, for a to accept"
+	CAP_HOLD=0.5 cap "Drag b's reviewer-2 onto a's builders"
+	drag reviewer-2 builders@node-a
+	sleep 1
+	d key Enter
+	sleep 3
+	cap "No landing policy for b here, so it waits for a to accept"
+	d click '[data-move-drop="moves"]'
+	sleep 2
+	cap "Fleet → Offers: the pending move, with why it waits"
+	sleep 1
 	d clicktext "Preview…"
 	sleep 2
-	cap "b decides where it lands: same path, the group's default dir, or any dir b owns"
+	cap "a decides where it lands: same path, the group's default dir, or any dir a owns"
 	sleep 1
-	select_nth 0 group_default
-	sleep 2
-	cap "Pick the reviewers group's default dir"
 	d clicktext "Start agent"
 	sleep 1.5
-	cap "Confirm"
+	cap "Accept. Once it runs here, b retires its source"
 	d key Enter
-	sleep 6
-	"$D" open "$B/" >/dev/null
-	sleep 3
-	cap "builder-1 now runs on b, in reviewers. Its source on a is retired"
+	sleep 4
+	d clicktext Moves
+	sleep 2
+	cap "Fleet → Moves: one move out to b, one move in from b"
+	sleep 1.5
+	nocap
+	groups "$A"
+	cap "reviewer-2 now runs in a's builders, builder-1 in b's reviewers"
 	sleep 2
 	nocap
 	rec_stop 04-move-agent
@@ -286,7 +312,10 @@ step_hub() {
 	scroll_to Admins
 	cap "Admins are instances; each holds explicit capabilities"
 	scroll_to Settings
-	cap "Hub settings, limits, boards and an audit log"
+	cap "Hub settings in readable units: rates, limits and timeouts, each with its range"
+	sleep 2
+	scroll_to "Remote scripts"
+	cap "Boards, remote scripts (off unless the hub host allows them) and an audit log"
 	sleep 1
 	scroll_to "Log tail"
 	cap "Redacted log tail. The hub only relays ciphertext: admin never sees node content"
@@ -311,8 +340,8 @@ step_reel() {
 	card t00 "tclaude skynet" "Two nodes, one hub" "A hub plus two isolated tclaude nodes on one machine, real Claude Code agents against a mock model. Recorded from the E2E runbook." 4
 	card t01 "1 / 7 · CLI" "Pairing" "Hub invites, connect, compare fingerprints, trust"
 	card t02 "2 / 7 · Dashboard" "The skynet map" "Both nodes and their groups in one view"
-	card t03 "3 / 7 · Dashboard" "Remote terminal" "Type into an agent on another node, from the browser"
-	card t04 "4 / 7 · Dashboard" "Move an agent" "a sends it, b chooses where it lands"
+	card t03 "3 / 7 · Dashboard" "Remote terminal" "Type into an agent on another node, from the Terminals tab"
+	card t04 "4 / 7 · Dashboard" "Move an agent" "Drag it to another node: it lands at once, or waits as an offer"
 	card t05 "5 / 7 · Dashboard" "Boards" "Share config through the hub, without peer access"
 	card t06 "6 / 7 · Dashboard" "Hub admin" "Claim and administer the hub from tclaude"
 	card t07 "7 / 7 · CLI" "Remote files" "Read-only downloads, with guard rails"
