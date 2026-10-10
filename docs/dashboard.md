@@ -771,7 +771,9 @@ what you confirm, with any values it needs. Nothing on a board is applied
 automatically. **Versions…** lists older versions and **Keep…** pins one (the
 list then flags newer ones as *update*). Members who can post use
 **Post config…** (whole sections, or named items such as `roles/reviewer`)
-and **New version…**; anything that looks like a credential is refused. An
+and **New version…**; anything that looks like a credential is refused.
+**Post to…** (on an item or one of its versions) posts that version, unchanged
+and still signed by its author, to another board you can post to. An
 item whose signed details cannot be verified shows the error and cannot be
 opened or imported. The hub decides who is a member: a dishonest hub
 operator could block a board or keep a removed member getting new posts, but

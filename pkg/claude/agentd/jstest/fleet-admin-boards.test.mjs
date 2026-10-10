@@ -14,8 +14,8 @@ const ITEMS = [
   { id: 'itm_bad', version: 'vx', name: 'Invalid item metadata', invalid: true, error: 'publisher metadata could not be verified' },
 ];
 
-function boardActions(log, { joinError = null } = {}) {
-  let boards = [{ id: 'brd_ops', name: 'ops notes', role: 'owner', epoch: 2, frozen: false, quota_bytes: 256 << 20, max_members: 100, max_versions: 10 }];
+function boardActions(log, { joinError = null, extraBoards = [] } = {}) {
+  let boards = [{ id: 'brd_ops', name: 'ops notes', role: 'owner', epoch: 2, frozen: false, quota_bytes: 256 << 20, max_members: 100, max_versions: 10 }, ...extraBoards];
   return {
     boards: async () => { log.push(['boards']); return boards; },
     joinBoard: async (token) => {
@@ -238,4 +238,27 @@ test('posting config: sections or named items, new versions carry the parent; ve
   await s.click(s.q('[data-version="v2bbbbbbbbbbbb"] [data-version-act="pin"]'));
   assert.match(s.confirms.at(-1).body, /It is not imported/);
   assert.deepEqual(s.log.find((l) => l[0] === 'pin'), ['pin', 'brd_ops', 'itm_1', 'v2bbbbbbbbbbbb']);
+});
+
+test('re-posting sends one version, unchanged, to another board this node can post to', async (t) => {
+  const s = await mount(t, { extraBoards: [
+    { id: 'brd_team', name: 'team', role: 'publisher' },
+    { id: 'brd_read', name: 'readonly', role: 'reader' },
+    { id: 'brd_ice', name: 'frozen one', role: 'owner', frozen: true },
+  ] });
+  const items = await s.harness.importDashboardModule('js/fleet-admin-board-items.js');
+  assert.deepEqual(items.repostTargets({ id: 'brd_ops' }, [{ id: 'brd_ops', role: 'owner' }, { id: 'brd_team', role: 'publisher' }, { id: 'brd_read', role: 'reader' }, { id: 'x', role: 'owner', frozen: true }]).map((b) => b.id), ['brd_team']);
+  await s.click(s.q('[data-board-id="brd_ops"] [data-board="open"]'));
+  assert.equal(s.q('[data-item-id="itm_bad"] [data-item-act="repost"]'), null);
+  await s.click(s.q('[data-item-id="itm_1"] [data-item-act="repost"]'));
+  const opts = [...s.q('#fleet-board-repost-dest').querySelectorAll('option')].map((o) => o.value);
+  assert.deepEqual(opts, ['', 'brd_team'], 'only boards this node can post to, and not frozen');
+  await s.click(s.q('#fleet-board-repost-post'));
+  assert.match(s.confirms.at(-1).body, /version v2bbbbbbbb of review roles to team exactly as it is here: unchanged, still signed by forge, with this node listed as re-posting it/);
+  assert.deepEqual(s.log.find((l) => l[0] === 'publish'), ['publish', 'brd_team', { source: { board: 'brd_ops', item: 'itm_1', version: 'v2bbbbbbbbbbbb' } }]);
+  assert.match(s.toasts.at(-1)[0], /Posted review roles to team/);
+  await s.click(s.q('[data-item-id="itm_1"] [data-item-act="versions"]'));
+  await s.click(s.q('[data-version="v1aaaaaaaaaaaa"] [data-version-act="repost"]'));
+  await s.click(s.q('#fleet-board-repost-post'));
+  assert.deepEqual(s.log.filter((l) => l[0] === 'publish').at(-1)[2], { source: { board: 'brd_ops', item: 'itm_1', version: 'v1aaaaaaaaaaaa' } });
 });
