@@ -11,6 +11,7 @@ import { HarnessesPage } from './fleet-admin-harnesses.js';
 import { createHarnessActions } from './fleet-harness-actions.js';
 import { NodeUpdateDialog } from './node-update.js';
 import { RunPage } from './fleet-admin-run.js';
+import { MovesPage } from './fleet-admin-moves.js';
 import { createRunActions } from './fleet-run-actions.js';
 import { dashboardState } from './snapshot-store.js';
 import { shellConfirm, shellToast } from './shell-state.js';
@@ -32,6 +33,7 @@ const SUB_PAGES = Object.freeze([
   { id: 'grants', label: 'Peer grants' },
   { id: 'profiles', label: 'Profiles & pools' },
   { id: 'offers', label: 'Offers' },
+  { id: 'moves', label: 'Moves' },
   { id: 'audit', label: 'Audit' },
 ]);
 
@@ -365,6 +367,8 @@ export function FleetAdmin({
       ? html`<${HarnessesPage} view=${view} actions=${harnessActions} confirm=${confirm} toast=${toast} copy=${copy} timers=${timers} />`
       : sub.id === 'run'
       ? html`<${RunPage} view=${view} actions=${runActions} confirm=${confirm} toast=${toast} timers=${timers} />`
+      : sub.id === 'moves'
+      ? html`<${MovesPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} now=${now()} />`
       : sub.id === 'invites'
       ? html`<${InvitesPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} now=${now()} />`
       : sub.id === 'profiles'
