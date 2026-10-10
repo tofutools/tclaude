@@ -435,6 +435,7 @@ func (e *Envelope) DecodePayload(v any) error {
 // SessionOpenPayload requests access to one stable agent's current pane.
 // Session and Incarnation pin discovery to one launch; it cannot follow a restart.
 type SessionOpenPayload struct {
+	FixedSize   bool   `json:"fixed_size,omitempty"`
 	Agent       string `json:"agent"`
 	Session     string `json:"session"`
 	Incarnation string `json:"incarnation"`
@@ -446,6 +447,8 @@ type SessionOpenPayload struct {
 	Rows        int    `json:"rows"`
 }
 type SessionAnswerPayload struct {
+	Cols   int    `json:"cols,omitempty"`
+	Rows   int    `json:"rows,omitempty"`
 	Stream string `json:"stream"`
 	OK     bool   `json:"ok"`
 	Key    []byte `json:"key,omitempty"`
