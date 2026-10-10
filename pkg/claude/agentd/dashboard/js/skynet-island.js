@@ -227,9 +227,9 @@ export function NodeChips({ state, navigate = defaultNavigate, remote = remoteNo
 
 // ScopeSync mirrors the fused set onto the page: the html class the CSS keys
 // on, the ?nodes= value nav-history.js carries across tab pushes, and the
-// primary's colour. It also retires the old /fleet route into the fused
-// Groups view, and drops a fused set once no linked nodes are left.
-function ScopeSync({ state, navigate = defaultNavigate, remote = remoteNodeID() }) {
+// primary's colour. It drops a fused set once a status read says no linked
+// nodes are left (a failed read keeps it).
+export function ScopeSync({ state, navigate = defaultNavigate, remote = remoteNodeID() }) {
   const current = state.view.value;
   const fused = current.fused;
   const fleet = current.fleet;
@@ -244,14 +244,8 @@ function ScopeSync({ state, navigate = defaultNavigate, remote = remoteNodeID() 
     if (primary) document.documentElement.style.setProperty('--scope-primary', primary.color);
   }, [fleet, remote]);
   useEffect(() => {
-    if (current.activeTab !== 'fleet' || !fleet) return;
-    state.setFused('all');
-    writeScopeURL('all');
-    navigate('groups');
-  }, [current.activeTab, !!fleet]);
-  useEffect(() => {
-    if (fused && current.statusLoaded && !fleet) { state.setFused(null); writeScopeURL(null); }
-  }, [!!fused, current.statusLoaded, !!fleet]);
+    if (fused && current.noFleet) { state.setFused(null); writeScopeURL(null); }
+  }, [!!fused, current.noFleet]);
   return null;
 }
 
@@ -369,7 +363,7 @@ export function SkynetMap({ state, actions, navigate = defaultNavigate, timers =
   // without linked nodes (a /map deep link on an unlinked node, or the last
   // peer untrusted while the map is open), return to the per-node tab. Fleet
   // administration stays: it is where the first peer gets trusted.
-  const multiNode = current.mapActive || current.fleetActive;
+  const multiNode = current.mapActive;
   useEffect(() => {
     if (multiNode && current.statusLoaded && !fleet) navigate(state.lastLocalTab());
   }, [multiNode, current.statusLoaded, fleetKey]);

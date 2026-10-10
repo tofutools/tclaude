@@ -3,18 +3,21 @@ import { dashboardState } from './snapshot-store.js';
 import { normalizeFleet } from './skynet-model.js';
 import { parseFused } from './skynet-scope.js';
 
-// TOP_LEVEL_TABS are the multi-node views (the map, the merged Groups view
-// and fleet administration): they hide the per-node tabs and are never a per-node tab to return to.
-export const TOP_LEVEL_TABS = new Set(['map', 'fleet', 'fleet-admin']);
+// TOP_LEVEL_TABS are the multi-node views (the map and fleet administration): they hide the per-node tabs and are never a per-node tab to return to.
+export const TOP_LEVEL_TABS = new Set(['map', 'fleet-admin']);
 
 // createSkynetState holds the chip row's fleet list and the map's per-node
 // summaries. It owns no timers or fetches; skynet-actions.js loads, and the
 // island's effects decide when (only while the map is on screen).
-export function createSkynetState({ activeTab = dashboardState.activeTab, now = () => Date.now(), search = globalThis.location?.search || '' } = {}) {
+export function createSkynetState({ activeTab = dashboardState.activeTab, now = () => Date.now(), search = globalThis.location?.search || '', pathname = globalThis.location?.pathname || '' } = {}) {
   const fleet = signal(null);
   // fused is the node scope's fused set (skynet-scope.js): null shows one
-  // node, else 'all' or the ticked instance IDs. It starts from ?nodes=.
-  const fused = signal(parseFused(search));
+  // node, else 'all' or the ticked instance IDs. It starts from ?nodes=, or
+  // all nodes on the old /fleet address of the fused Groups view.
+  const fused = signal(parseFused(search) || (/^\/fleet\/?$/.test(pathname) ? 'all' : null));
+  // noFleet is set once a status read says there is no fleet (federation off,
+  // or no trusted peer), as opposed to one that failed or has not settled.
+  const noFleet = signal(false);
   // summaries maps instance ID -> { summary, etag, receivedAt, failure, failures }.
   const summaries = signal({});
   const focused = signal('');
@@ -27,7 +30,6 @@ export function createSkynetState({ activeTab = dashboardState.activeTab, now = 
   const stopTracking = effect(() => { const tab = activeTab.value; if (tab && !TOP_LEVEL_TABS.has(tab)) lastLocal = tab; });
   const view = computed(() => ({
     mapActive: activeTab.value === 'map',
-    fleetActive: activeTab.value === 'fleet',
     adminActive: activeTab.value === 'fleet-admin',
     topLevel: TOP_LEVEL_TABS.has(activeTab.value),
     activeTab: activeTab.value,
@@ -36,15 +38,17 @@ export function createSkynetState({ activeTab = dashboardState.activeTab, now = 
     focused: focused.value,
     statusLoaded: statusLoaded.value,
     fused: fused.value,
+    noFleet: noFleet.value,
   }));
   function markStatusLoaded() { statusLoaded.value = true; }
   function setStatus(status) {
     fleet.value = normalizeFleet(status);
+    noFleet.value = !fleet.value;
     return fleet.value;
   }
   // clearFleet hides the chip row, e.g. when the status route is absent on an
   // older daemon or federation is disabled.
-  function clearFleet() { fleet.value = null; }
+  function clearFleet() { fleet.value = null; noFleet.value = true; }
   function entry(id) { return summaries.value[id] || null; }
   function commitSummary(id, summary, etag) {
     const prev = entry(id);

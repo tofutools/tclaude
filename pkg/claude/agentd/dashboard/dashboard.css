@@ -18891,8 +18891,8 @@ html.remote-node #usage.peer-view-na { font-style: italic; color: #7d8590; }
    view like the map, so the per-node tabs give way to the view switch. Its
    anchor exists for routing only. Groups are named group@node, the suffix in
    the node's own colour; an unreachable node's groups read as stale. */
-nav [data-tab="fleet"], nav [data-tab="fleet-admin"] { display: none; }
-nav:has(#node-chips-root .node-chip):has(:is([data-tab="fleet"], [data-tab="fleet-admin"]).active) .nav-inner > [data-tab]:not([data-tab="map"]) { display: none; }
+nav [data-tab="fleet-admin"] { display: none; }
+nav:has(#node-chips-root .node-chip):has([data-tab="fleet-admin"].active) .nav-inner > [data-tab]:not([data-tab="map"]) { display: none; }
 .skynet-seg-btn { border: 0; font: inherit; font-size: 13px; cursor: pointer; }
 .skynet-seg-btn + .skynet-seg-btn { border-left: 1px solid #30363d; }
 .skynet-seg-btn.on { cursor: default; }
@@ -18910,7 +18910,7 @@ nav:has(#node-chips-root .node-chip):has(:is([data-tab="fleet"], [data-tab="flee
 .fleet-node-suffix:hover { text-decoration: underline; }
 .fleet-stale-label { font-size: 11px; font-weight: normal; color: #e3b341; }
 details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
-#skynet-fleet-root [data-act]:not([data-act="copy-generation-id"]):not([data-act="sandbox-details"]):not([data-act="group-menu"]):not([data-act="row-menu"]) { opacity: .45; cursor: not-allowed; }
+#skynet-fused-groups-root [data-act]:not([data-act="copy-generation-id"]):not([data-act="sandbox-details"]):not([data-act="group-menu"]):not([data-act="row-menu"]) { opacity: .45; cursor: not-allowed; }
 /* Fleet administration (js/fleet-admin-island.js): this node's federation
    identity, hub connection and trusted peers. A top-level view like the map. */
 .fleet-admin { font-size: 13px; color: #c9d1d9; }

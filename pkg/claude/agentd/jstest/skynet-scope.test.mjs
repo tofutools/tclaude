@@ -129,3 +129,20 @@ test('the fused URL is written in place, keeping the page\'s other parameters', 
   island.writeScopeURL(null, win);
   assert.equal(writes.length, 1, 'nothing to change');
 });
+
+test('a failed status read keeps the fused set; a fleet that is gone drops it; /fleet opens every node fused', async (t) => {
+  const { harness, stateMod, island } = await load(t);
+  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('groups'), search: '?nodes=all' });
+  const sync = await harness.mount(harness.html`<${island.ScopeSync} state=${state} navigate=${() => {}} remote="" />`);
+  await harness.act(() => { state.markStatusLoaded(); });
+  assert.equal(state.fused.value, 'all', 'status not known yet (or failed): keep the selection');
+  await harness.act(() => { state.setStatus(three); });
+  assert.equal(state.fused.value, 'all');
+  await harness.act(() => { state.clearFleet(); });
+  assert.equal(state.fused.value, null, 'no fleet any more: nothing left to fuse');
+  await sync.unmount(); state.dispose();
+  const legacy = stateMod.createSkynetState({ activeTab: harness.signals.signal('groups'), search: '', pathname: '/fleet' });
+  assert.equal(legacy.fused.value, 'all');
+  legacy.dispose();
+});
+

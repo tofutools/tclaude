@@ -42,7 +42,7 @@ export const KNOWN_TABS = new Set([
   'groups', 'terminals', 'jobs', 'processes', 'plugins',
   'access', 'messages', 'usage', 'costs', 'audit', 'logs', 'debug', 'config', 'vegas',
   'map',
-  'fleet', 'fleet-admin',
+  'fleet-admin',
 ]);
 
 // KNOWN_SUBTABS enumerates the valid second-segment values per tab that has a
@@ -294,6 +294,9 @@ export function fromPath(pathname) {
   // /jobs is retained as a reload-safe legacy alias. toPath always emits the
   // canonical /automations route, so init/popstate heals old URLs in place.
   if (tab === 'automations') tab = 'jobs';
+  // /fleet was the merged all-nodes view; it is now Groups with every node
+  // fused (skynet-state.js reads the path for that), healed in place.
+  if (tab === 'fleet') return defaultLocation();
   // On a tab-level-selection tab there is no subtab, so segment two IS the
   // entity (/terminals/<agent-id>) — mirroring how toPath emits it. Reading it
   // as a subtab would drop it on the floor, since terminals has no

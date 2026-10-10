@@ -33,7 +33,7 @@ import {
 // set ordering.
 const ROUTABLE_TABS = new Set([
   'groups', 'terminals', 'jobs', 'processes', 'plugins', 'access',
-  'messages', 'usage', 'costs', 'audit', 'logs', 'debug', 'config', 'map', 'fleet', 'fleet-admin',
+  'messages', 'usage', 'costs', 'audit', 'logs', 'debug', 'config', 'map', 'fleet-admin',
 ]);
 
 // The virtual stack (see nav-history-core.js). Replaced wholesale on every
@@ -96,7 +96,7 @@ function pendingTerminalAttach(loc) {
 // last per-node tab once that read settles without a fleet, so a /map deep
 // link is decided by the view that knows rather than bounced to Groups.
 function pendingMapLoad(loc) {
-  return loc.tab === 'map' || loc.tab === 'fleet' || loc.tab === 'fleet-admin';
+  return loc.tab === 'map' || loc.tab === 'fleet-admin';
 }
 
 // activeLocationFromDOM reads the current dashboard location out of the live
@@ -370,6 +370,10 @@ function onPopstate(e) {
 // that tab, so its lazy-loader must already be wired and snapshot-gated
 // visibility (notably Processes) must no longer be provisional.
 export function initNavHistory() {
+  // /fleet (the old all-nodes view) heals to Groups with every node fused.
+  if (/^\/fleet\/?$/.test(window.location.pathname) && !document.documentElement.dataset.scopeNodes) {
+    document.documentElement.dataset.scopeNodes = new URLSearchParams(window.location.search).get('nodes') || 'all';
+  }
   const urlLoc = fromPath(window.location.pathname);
   // On a RELOAD, history.state still holds the stack we persisted for this
   // entry — reconstruct it (full depth) so native browser navigation retains

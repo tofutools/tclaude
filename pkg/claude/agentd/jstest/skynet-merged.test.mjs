@@ -197,23 +197,38 @@ test('fused Groups shows only the ticked nodes; on a peer\'s page that peer is t
   // The page shows forge (?node=): its snapshot is the page's.
   const snapshot = harness.signals.signal({ groups: [group('build')], agents: [] });
   const timers = fakeTimers(); const proxied = []; const local = [];
-  let localReply = { ok: true, status: 200, json: async () => ({ groups: [group('ops')], agents: [] }) };
   const fetchImpl = async (url) => { proxied.push(url); return { ok: true, status: 200, json: async () => ({ groups: [], agents: [] }) }; };
-  const localFetch = async (url) => { local.push(url); return localReply; };
+  const localFetch = async (url) => { local.push(url); return { ok: true, status: 200, json: async () => ({ groups: [group('ops')], agents: [] }) }; };
   const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${snapshot} fetchImpl=${fetchImpl} localFetch=${localFetch} timers=${timers} remote="inst_forge" />`);
   assert.equal(timers.queue.length, 1, 'only this node is read: forge is the page, lab is not ticked');
   await harness.act(async () => { await timers.queue.shift().fn(); });
   assert.deepEqual(local, ['/api/snapshot']); assert.deepEqual(proxied, []);
+  const text = mounted.container.textContent;
+  assert.match(text, /ops@desk/); assert.match(text, /build@forge/); assert.doesNotMatch(text, /@lab/);
+  await mounted.unmount(); state.dispose();
+});
+
+test('a fused peer keeps its last groups on a failed read, and loses them with trust', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [stateMod, island] = await Promise.all([harness.importDashboardModule('js/skynet-state.js'), harness.importDashboardModule('js/skynet-merged-island.js')]);
+  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('groups'), search: '?nodes=all' });
+  state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }] });
+  const timers = fakeTimers();
+  let reply = { ok: true, status: 200, json: async () => ({ groups: [group('build')], agents: [] }) };
+  const fetchImpl = async () => reply;
+  const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${harness.signals.signal({ groups: [group('ops')], agents: [] })} fetchImpl=${fetchImpl} timers=${timers} remote="" />`);
   const text = () => mounted.container.textContent;
-  assert.match(text(), /ops@desk/); assert.match(text(), /build@forge/); assert.doesNotMatch(text(), /@lab/);
-  // A failed read keeps the last snapshot (shown stale); lost trust drops it.
-  localReply = { ok: false, status: 502, json: async () => ({ code: 'peer_unreachable', reason: 'peer_offline' }) };
   await harness.act(async () => { await timers.queue.shift().fn(); });
+  assert.match(text(), /build@forge/);
+  reply = { ok: false, status: 502, json: async () => ({ code: 'peer_unreachable', reason: 'peer_offline' }) };
+  await harness.act(async () => { await timers.queue.shift().fn(); });
+  assert.match(text(), /build@forge/, 'an unreachable peer keeps its last rows');
+  reply = { ok: false, status: 403, json: async () => ({ code: 'not_trusted' }) };
+  await harness.act(async () => { await timers.queue.shift().fn(); });
+  assert.doesNotMatch(text(), /build@forge/, 'lost trust drops what the peer shared');
   assert.match(text(), /ops@desk/);
-  localReply = { ok: false, status: 403, json: async () => ({ code: 'not_trusted' }) };
-  await harness.act(async () => { await timers.queue.shift().fn(); });
-  assert.doesNotMatch(text(), /ops@desk/);
   await mounted.unmount(); state.dispose();
 });
 

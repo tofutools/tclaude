@@ -278,7 +278,8 @@ export function MergedGroups({
     };
   }, [host]);
 
-  if (!fleet || !current.fused) return null;
+  if (!current.fused) return null;
+  if (!fleet) return html`<div class="empty">Loading the fused nodes…</div>`;
   const t = now();
   const nodes = ticked.map((node) => ({
     node,
