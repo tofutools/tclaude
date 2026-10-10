@@ -172,7 +172,9 @@ func startHistoryNode(t *testing.T, name, label string) historyNode {
 			t.Logf("%s node log:\n%s", label, raw)
 		}
 	})
-	fedEventuallyWithin(t, label+" node starts", 30*time.Second, func() bool { raw, e := os.ReadFile(infoPath); return e == nil && json.Unmarshal(raw, &node) == nil })
+	// Each fresh process migrates its own SQLite database. Race instrumentation
+	// plus concurrent CPU load can exceed the ordinary 30s startup budget.
+	fedEventuallyWithin(t, label+" node starts", 90*time.Second, func() bool { raw, e := os.ReadFile(infoPath); return e == nil && json.Unmarshal(raw, &node) == nil })
 	return node
 }
 
@@ -229,7 +231,7 @@ func historyTestLifetime() time.Duration {
 	if os.Getenv("TCLAUDE_LARGE_AGENT_TRANSFER") == "1" {
 		return 30 * time.Minute
 	}
-	return 3 * time.Minute
+	return 5 * time.Minute
 }
 func historyTestRequestTimeout() time.Duration {
 	if os.Getenv("TCLAUDE_LARGE_AGENT_TRANSFER") == "1" {
