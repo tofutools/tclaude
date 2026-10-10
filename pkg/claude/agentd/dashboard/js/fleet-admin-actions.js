@@ -57,6 +57,11 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
       if (since) q.set('since', since);
       return call('GET', `audit?${q}`).then((rows) => (Array.isArray(rows) ? rows : []));
     },
+    // Durable agent moves (both directions) and this node's teleport freeze.
+    moves: async () => (await call('GET', 'moves'))?.moves || [],
+    abandonMove: (id) => call('POST', `moves/${encodeURIComponent(id)}/abandon`, {}),
+    teleport: () => call('GET', 'teleport'),
+    setTeleport: (disabled) => call('PUT', 'teleport', { disabled }),
     createPool: (name) => call('POST', 'nodes/groups', { name }),
     deletePool: (name) => call('DELETE', `nodes/groups/${encodeURIComponent(name)}`),
     addPoolMember: (name, peer) => call('POST', `nodes/groups/${encodeURIComponent(name)}/members`, { peer }),

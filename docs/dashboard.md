@@ -384,6 +384,16 @@ remotely, and history survives restarts. Compose paths: a group's cog
 ✉ message (whole group or a ticked subset) and a top-level `+ message`
 operator dialog with role filtering and attachments for offline recipients.
 
+A peer operator's request for access to this node (see
+[Requesting access](#requesting-access-from-a-peer)) lands in the same folder,
+naming the peer, the permission, the scope and how long it asked for, plus
+its reason. Only you decide these — an away cover never does. A group
+permission requested without a group covers every group on this node,
+including future ones. Approve can shorten the grant (never lengthen it) or
+narrow an any-group request to one group the peer already holds grants in,
+and there is no Always-allow for peers. CLI:
+`tclaude federation access list|approve|deny|extend --id … [--ttl …] [--group-id …]`.
+
 ## Usage
 
 Agents and operators can also query quotas and costs through the daemon with
@@ -565,6 +575,20 @@ Terminals in a peer view are not opened in the browser: clicking a terminal cont
 `tclaude federation attach <agent-id>@<instance-id>` to run in your own
 terminal.
 
+#### Requesting access from a peer
+
+Each feature in the pill's "Not shared" list has a **request…** link. It asks
+the peer's operator for the grant that feature needs: how long it lasts (1
+hour to 30 days, or permanent) and a reason. A group permission asked for
+without a group covers every group on the peer, including future ones; the
+peer's operator may narrow it to one group (the CLI's `--group-id` asks for one
+directly). Local-only features such as terminals have no link. The
+dialog follows the request until the peer's operator approves or declines it,
+or it times out after 5 minutes; an approved grant shows up on the view's next
+refresh. A peer only takes requests from nodes it already shares something
+with. CLI: `tclaude federation access request --node <peer> --permission <slug>
+[--group-id …] [--ttl …] [--reason …]`, then `access status`.
+
 ### Groups · all nodes
 
 The merged view lists every group on this node and each peer, named
@@ -628,6 +652,11 @@ first and says what will happen. Most pages name their CLI.
   level, pools and grants: **Apply to peer…** previews the plan, **Make
   default…** applies it to newly trusted peers. Profile definitions are edited
   with `tclaude federation profile`.
+- **Moves** — agent moves and teleports in both directions (⇢ leaving, ⇠
+  arriving) with peer, group, state and expiry. **Abandon…** stops an outgoing
+  move that has not started retiring the agent here; the agent is not retired
+  (a copy the peer already made stays there). **Freeze teleports…** stops teleports leaving or landing
+  on this node until you allow them again; plain moves are not affected.
 - **Audit** — this node's federation activity, newest first: a peer acting
   here (⇠) or this node acting on a peer (⇢), with actor, target, group and
   outcome; refused or failed requests in red. Filter by peer and time window.
