@@ -80,6 +80,9 @@ func TestDashboardBoardItemPullPreviewImportWithoutPairing(t *testing.T) {
 		require.NoError(t, e)
 		v.Metadata, e = proto.SealBoardContent(key, board, 1, v.Version, meta)
 		require.NoError(t, e)
+		if name == "invalid metadata" {
+			v.Metadata[len(v.Metadata)-1] ^= 0xff
+		}
 		v.Sign(publisher)
 		_, e = client.BoardBlob(context.Background(), opts, v, cipher)
 		require.NoError(t, e)
@@ -161,6 +164,25 @@ func TestDashboardBoardItemPullPreviewImportWithoutPairing(t *testing.T) {
 	rejected := call("POST", "/"+board+"/items/"+bad.Item+"/versions/"+bad.Version+"/fetch", map[string]any{})
 	require.NotEqual(t, 200, rejected.Code)
 	require.Contains(t, rejected.Body.String(), "credentials")
+	invalid := publish(raw, "invalid metadata")
+	page := must("GET", "/"+board+"/items", nil)
+	require.Contains(t, page, "next_cursor")
+	foundInvalid, foundValid := false, false
+	for _, entry := range page["items"].([]any) {
+		row := entry.(map[string]any)
+		if row["id"] == invalid.Item {
+			require.Equal(t, true, row["invalid"])
+			foundInvalid = true
+		}
+		if row["id"] == v.Item {
+			foundValid = true
+		}
+	}
+	require.True(t, foundInvalid)
+	require.True(t, foundValid, "invalid publisher metadata must not hide valid neighbors")
+	history := must("GET", "/"+board+"/items/"+invalid.Item+"/versions", nil)
+	require.Equal(t, true, history["versions"].([]any)[0].(map[string]any)["invalid"])
+	require.NotEqual(t, 200, call("POST", "/"+board+"/items/"+invalid.Item+"/versions/"+invalid.Version+"/fetch", map[string]any{}).Code)
 	for _, op := range []struct{ method, tail string }{{"GET", "/" + board + "/items"}, {"POST", "/" + board + "/items"}, {"POST", base + "/import"}, {"GET", base + "/download"}} {
 		require.Equal(t, 403, testharness.Serve(agentd.PeerViewHandler(fh.peer.id.ID()), testharness.JSONRequest(t, op.method, "/api/federation/boards"+op.tail, map[string]any{})).Code)
 	}

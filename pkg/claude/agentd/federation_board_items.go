@@ -308,8 +308,10 @@ func boardItemRoute(op string) http.HandlerFunc {
 			for _, v := range entries {
 				m, e := a.manifest(v)
 				if e != nil {
-					fail(e)
-					return
+					// A publisher's opaque metadata must not hide other items or
+					// prevent continuing the hub's bounded catalog pagination.
+					rows = append(rows, map[string]any{"id": v.Item, "version": v.Version, "name": "Invalid item metadata", "invalid": true, "error": "publisher metadata could not be verified"})
+					continue
 				}
 				rows = append(rows, map[string]any{"id": v.Item, "version": v.Version, "name": m.Name, "kind": m.Kind, "publisher": m.Publisher, "republisher": v.Publisher, "digest": m.SHA256, "bytes": m.Bytes, "provenance": m, "latest_version": v.Version, "pinned_version": pins[v.Item], "update_available": pins[v.Item] != "" && pins[v.Item] != v.Version})
 			}
