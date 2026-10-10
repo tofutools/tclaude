@@ -239,7 +239,7 @@ func startFederation() {
 	}
 	// Expire private payloads on restart even when federation was disabled.
 	reconcileFederationBundleOffers()
-	go reconcileFederationMoves()
+	goBackground(reconcileFederationMoves)
 	fedLifecycleMu.Lock()
 	defer fedLifecycleMu.Unlock()
 	cleanupFedTerminalIndicators()
@@ -363,7 +363,7 @@ func (rt *fedRuntime) kickOutbox() {
 // onDirectory runs on the client's read goroutine: it only records
 // presence and schedules work.
 func (rt *fedRuntime) onDirectory(entries []proto.DirectoryEntry) {
-	go rt.observeIdentityChains(entries)
+	goBackground(func() { rt.observeIdentityChains(entries) })
 	now := map[string]bool{}
 	for _, e := range entries {
 		if e.Online {
@@ -383,7 +383,7 @@ func (rt *fedRuntime) onDirectory(entries []proto.DirectoryEntry) {
 	if len(cameOnline) == 0 {
 		return
 	}
-	go func() {
+	goBackground(func() {
 		peers := []db.FederationPeer{}
 		for _, id := range cameOnline {
 			if p, _ := db.GetFederationPeer(id); p != nil {
@@ -398,7 +398,7 @@ func (rt *fedRuntime) onDirectory(entries []proto.DirectoryEntry) {
 			}
 		}
 		rt.kickOutbox()
-	}()
+	})
 }
 
 func (rt *fedRuntime) isOnline(id string) bool {
@@ -424,7 +424,7 @@ func (rt *fedRuntime) broadcastCatalogs() {
 // broadcastFederationCatalogs is the hook for export/membership changes.
 func broadcastFederationCatalogs() {
 	if rt := currentFederation(); rt != nil {
-		go rt.broadcastCatalogs()
+		goBackground(rt.broadcastCatalogs)
 	}
 }
 
@@ -594,7 +594,7 @@ func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 	reconcileFederationSpawns()
 	reconcileFederationJobs()
 	reconcileFederationBundleOffers()
-	go reconcileFederationMoves()
+	goBackground(reconcileFederationMoves)
 	for {
 		select {
 		case <-ctx.Done():
@@ -610,11 +610,11 @@ func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 			rt.observeAwayWaiting()
 		case <-completion.C:
 			rt.reconcileIdentityRotations()
-			go func() { _ = activateLocalIdentityRotation(time.Now()) }()
+			goBackground(func() { _ = activateLocalIdentityRotation(time.Now()) })
 			reconcileFederationSpawns()
 			reconcileFederationJobs()
 			reconcileFederationBundleOffers()
-			go reconcileFederationMoves()
+			goBackground(reconcileFederationMoves)
 		case <-refresh.C:
 			pruneFederationJobLogs()
 			rt.broadcastCatalogs()
