@@ -13,6 +13,8 @@ import (
 )
 
 const (
+	PermNodeMessagesRead   = "node.messages.read"
+	PermNodeMessagesManage = "node.messages.manage"
 	PermAgentsStatusRead   = "agents.status.read"
 	PermSessionsRead       = "sessions.read"
 	PermSessionsWatch      = "sessions.watch"
@@ -224,7 +226,7 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, groupSlug := federationPeerSlugs[in.Slug]
-	instanceSlug := in.Slug == "config.offer" || in.Slug == PermApprovalsAnswer || in.Slug == PermNodeRead || in.Slug == PermNodeHarnessesRead || in.Slug == PermNodeUpdate || in.Slug == PermNodeHarnessesInstall || in.Slug == PermNodeCredentialsReceive || in.Slug == PermNodeExec || in.Slug == PermCostsRead || in.Slug == PermFederationAuditRead
+	instanceSlug := in.Slug == "config.offer" || in.Slug == PermApprovalsAnswer || in.Slug == PermNodeRead || in.Slug == PermNodeHarnessesRead || in.Slug == PermNodeUpdate || in.Slug == PermNodeHarnessesInstall || in.Slug == PermNodeCredentialsReceive || in.Slug == PermNodeExec || in.Slug == PermCostsRead || in.Slug == PermFederationAuditRead || in.Slug == PermNodeMessagesRead || in.Slug == PermNodeMessagesManage
 	if !groupSlug && !instanceSlug && (in.Slug != PermModelsProxy && in.Slug != PermModelsProxyLeased) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "slug is not supported for peers: "+in.Slug)
 		return

@@ -136,6 +136,8 @@ export const PEER_SLUGS = Object.freeze([
   { slug: 'agents.receive', kind: 'scoped', what: 'move or share agents into the group' },
   { slug: 'agents.teleport.receive', kind: 'scoped', what: 'teleport agents into the group' },
   { slug: 'node.read', kind: 'node', what: 'platform, harness versions, labels and resource numbers' },
+  { slug: 'node.messages.read', kind: 'node', what: 'private human notifications and agent mailbox history across this node', warning: 'Exposes private message bodies across this node, including human notifications and agent-to-agent mail. Default off. Does not allow replies or approval decisions.' },
+  { slug: 'node.messages.manage', kind: 'node', sensitive: true, what: 'explicitly mark agent mailbox messages read or unread across this node; no delete, reply or approval authority' },
   { slug: 'node.harnesses.read', kind: 'node', what: 'harness availability and versions' },
   { slug: 'costs.read', kind: 'node', what: 'the complete node-wide cost collection' },
   { slug: 'federation.audit.read', kind: 'node', what: 'the complete node-wide dashboard audit log' },
