@@ -155,8 +155,8 @@ func TestFederation_ModelGatewayDialectProbeDoesNotConsumeRequestCapacity(t *tes
 }
 
 func TestFederation_ModelGatewayResponseBeforeRequestHalfClose(t *testing.T) {
-	for _, halfClose := range []bool{true, false} {
-		t.Run(map[bool]string{true: "half-close", false: "deadline"}[halfClose], func(t *testing.T) {
+	for _, finish := range []string{"half-close", "deadline", "grace"} {
+		t.Run(finish, func(t *testing.T) {
 			fh := newFedHarness(t)
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = io.WriteString(w, `{"object":"response","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}`)
@@ -170,8 +170,11 @@ func TestFederation_ModelGatewayResponseBeforeRequestHalfClose(t *testing.T) {
 				p := cfg.Agent.HTTPProxies["model"].ModelPolicy
 				p.Dialect = "openai"
 				p.PrecountInput = false
-				if !halfClose {
+				switch finish {
+				case "deadline":
 					p.MaxDurationSeconds = 1
+				case "grace":
+					p.MaxDurationSeconds = 30
 				}
 				return nil
 			})
@@ -185,15 +188,16 @@ func TestFederation_ModelGatewayResponseBeforeRequestHalfClose(t *testing.T) {
 			// request, so this ordering must neither stall the response nor abort us.
 			response, err := io.ReadAll(flow)
 			require.NoError(t, err)
-			if halfClose {
+			if finish == "half-close" {
 				require.NoError(t, flow.CloseWrite())
 			} else {
 				// A peer that never half-closes still receives its response, and
-				// the stream deadline bounds the gateway's wait for the missing FIN.
+				// the earlier of its deadline and the post-response grace bounds
+				// the gateway's wait for the missing FIN.
 				select {
 				case <-flow.Done():
-				case <-time.After(5 * time.Second):
-					t.Fatal("stream remained open after its deadline")
+				case <-time.After(10 * time.Second):
+					t.Fatal("stream remained open after its half-close grace or deadline")
 				}
 			}
 			resp, err := http.ReadResponse(bufio.NewReader(strings.NewReader(string(response))), req)

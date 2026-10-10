@@ -247,7 +247,10 @@ func (rt *fedRuntime) acceptModelOpen(peer *db.FederationPeer, env *proto.Envelo
 		// half-close. Deliver the response immediately, but keep the stream open
 		// until that half-close arrives so a fast response cannot race it and
 		// turn a successful request into a relay-side write error. Only one HTTP
-		// request is allowed on this stream; extra data ends it as well.
+		// request is allowed on this stream; extra data ends it as well. Cap this
+		// post-response grace even when the request's context has a long deadline.
+		grace := time.AfterFunc(5*time.Second, func() { _ = flow.Close() })
+		defer grace.Stop()
 		var extra [1]byte
 		_, _ = flow.Read(extra[:])
 	}()
