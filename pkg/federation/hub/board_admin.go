@@ -55,6 +55,9 @@ func (s *Store) moderateBoard(method string, raw json.RawMessage) (any, error) {
 		if n == 0 {
 			return nil, adminErr(404, "board_unknown", "unknown board")
 		}
+		if err = s.removeDeletedBoardFiles(p.Board); err != nil {
+			return nil, adminErr(503, "board_cleanup", "board deleted but ciphertext cleanup failed: "+err.Error())
+		}
 		return map[string]any{"ok": true}, nil
 	}
 	if method != "boards.patch" {

@@ -464,6 +464,11 @@ func (s *Store) boardCall(instance string, pub []byte, r *proto.BoardRequest, ca
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
+	if r.Method == "boards.delete" {
+		if err = s.removeDeletedBoardFiles(p.Board); err != nil {
+			return nil, adminErr(503, "board_cleanup", "board deleted but ciphertext cleanup failed: "+err.Error())
+		}
+	}
 	return body, nil
 }
 
