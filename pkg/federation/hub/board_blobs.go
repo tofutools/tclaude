@@ -34,7 +34,7 @@ func (s *Store) boardBlobRoot(board string) (*os.Root, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	if err = root.Mkdir(board, 0700); err != nil && !errors.Is(err, os.ErrExist) {
 		return nil, err
 	}
@@ -63,12 +63,16 @@ func (s *Store) StoreBoardBlob(instance, board, id, digest string, size int64, s
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var quota, versions, used, count int64
 	if err = tx.QueryRow(`SELECT b.quota_bytes,b.max_versions FROM boards b JOIN board_members m ON m.board=b.id WHERE b.id=? AND m.instance=? AND m.role IN ('owner','publisher') AND b.frozen=0`, board, instance).Scan(&quota, &versions); err != nil {
 		return adminErr(403, "board_publish", "active publisher required")
 	}
 	if err = tx.QueryRow(`SELECT coalesce(sum(bytes),0),count(*) FROM board_blobs WHERE board=?`, board).Scan(&used, &count); err != nil {
+		return err
+	}
+	used, err = boardStorageUsed(tx, board)
+	if err != nil {
 		return err
 	}
 	if size > quota-used || count >= versions {
@@ -90,13 +94,13 @@ func (s *Store) StoreBoardBlob(instance, board, id, digest string, size int64, s
 	if err != nil {
 		return err
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	temp := "pending-" + proto.NewEnvelopeID()
 	f, err := root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|unix.O_NOFOLLOW, 0600)
 	if err != nil {
 		return err
 	}
-	defer root.Remove(temp)
+	defer func() { _ = root.Remove(temp) }()
 	hash := sha256.New()
 	n, err := io.Copy(io.MultiWriter(f, hash), io.LimitReader(source, size+1))
 	if err == nil && n != size {
@@ -119,7 +123,7 @@ func (s *Store) StoreBoardBlob(instance, board, id, digest string, size int64, s
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var authority int
 	if err = tx.QueryRow(`SELECT count(*) FROM boards b JOIN board_members m ON m.board=b.id WHERE b.id=? AND m.instance=? AND m.role IN ('owner','publisher') AND b.frozen=0`, board, instance).Scan(&authority); err != nil {
 		return err
@@ -133,11 +137,11 @@ func (s *Store) StoreBoardBlob(instance, board, id, digest string, size int64, s
 		return err
 	}
 	if _, err = tx.Exec(`UPDATE board_blobs SET state='ready',expires_at=? WHERE board=? AND id=? AND state='pending'`, ts(time.Now().Add(30*24*time.Hour)), board, id); err != nil {
-		root.Remove(id)
+		_ = root.Remove(id)
 		return err
 	}
 	if err = tx.Commit(); err != nil {
-		root.Remove(id)
+		_ = root.Remove(id)
 		return err
 	}
 	published = true
@@ -156,12 +160,12 @@ func (s *Store) ReadBoardBlob(instance, board, id string, dst io.Writer) error {
 	if err != nil {
 		return err
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	f, err := root.OpenFile(id, os.O_RDONLY|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	st, err := f.Stat()
 	if err != nil {
 		return err
@@ -221,7 +225,7 @@ func (s *Store) SweepBoardBlobs() error {
 			return err
 		}
 		err = root.Remove(b.id)
-		root.Close()
+		_ = root.Close()
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
@@ -237,7 +241,7 @@ func (s *Store) SweepBoardBlobs() error {
 	if err != nil {
 		return err
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	dirs, err := os.ReadDir(base)
 	if err != nil {
 		return err
@@ -252,13 +256,13 @@ func (s *Store) SweepBoardBlobs() error {
 		}
 		f, err := child.Open(".")
 		if err != nil {
-			child.Close()
+			_ = child.Close()
 			return err
 		}
 		entries, err := f.ReadDir(-1)
 		f.Close()
 		if err != nil {
-			child.Close()
+			_ = child.Close()
 			return err
 		}
 		for _, entry := range entries {
@@ -267,25 +271,25 @@ func (s *Store) SweepBoardBlobs() error {
 			}
 			var n int
 			if err = s.db.QueryRow(`SELECT count(*) FROM board_blobs WHERE board=? AND id=?`, dir.Name(), entry.Name()).Scan(&n); err != nil {
-				child.Close()
+				_ = child.Close()
 				return err
 			}
 			if n == 0 {
 				info, e := entry.Info()
 				if e != nil {
-					child.Close()
+					_ = child.Close()
 					return e
 				}
 				if time.Since(info.ModTime()) < time.Hour {
 					continue
 				}
 				if err = child.Remove(entry.Name()); err != nil {
-					child.Close()
+					_ = child.Close()
 					return err
 				}
 			}
 		}
-		child.Close()
+		_ = child.Close()
 	}
 	return nil
 }

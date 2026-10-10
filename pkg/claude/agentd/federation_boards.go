@@ -104,7 +104,7 @@ func boardOperatorRoute(operation string) http.HandlerFunc {
 			if e = json.Unmarshal(raw, &state); e != nil {
 				return 0, nil, e
 			}
-			raw, e = call("keys.get", map[string]any{"board": board})
+			raw, e = call("keys.get", map[string]any{"board": board, "epoch": state.Epoch})
 			if e != nil {
 				return 0, nil, e
 			}
@@ -127,6 +127,7 @@ func boardOperatorRoute(operation string) http.HandlerFunc {
 				if err == nil {
 					payload["board"] = board
 					payload["envelopes"] = map[string]*proto.Encrypted{identity.ID(): box}
+					payload["key_proofs"] = map[string][]byte{identity.ID(): proto.BoardKeyProof(key, board, 1, identity.ID())}
 					body, err = call(operation, payload)
 				}
 			}
@@ -170,7 +171,7 @@ func boardOperatorRoute(operation string) http.HandlerFunc {
 						var box *proto.Encrypted
 						box, err = proto.SealBoardKey(identity.Pub, invitation.Board, reply.Epoch, key)
 						if err == nil {
-							_, err = call("keys.install", map[string]any{"board": invitation.Board, "epoch": reply.Epoch, "envelopes": map[string]*proto.Encrypted{identity.ID(): box}})
+							_, err = call("keys.install", map[string]any{"board": invitation.Board, "epoch": reply.Epoch, "envelopes": map[string]*proto.Encrypted{identity.ID(): box}, "key_proofs": map[string][]byte{identity.ID(): proto.BoardKeyProof(key, invitation.Board, reply.Epoch, identity.ID())}})
 						}
 					}
 				}
@@ -190,6 +191,7 @@ func boardOperatorRoute(operation string) http.HandlerFunc {
 					var cipher []byte
 					cipher, err = proto.SealBoardContent(wrapping, board, epoch, secret, key)
 					if err == nil {
+						payload["epoch"] = epoch
 						payload["token"] = secret
 						payload["key_package"] = base64.RawStdEncoding.EncodeToString(cipher)
 						if _, ok := payload["ttl_seconds"]; !ok {
@@ -213,11 +215,13 @@ func boardOperatorRoute(operation string) http.HandlerFunc {
 			}
 		case "keys.rotate":
 			var epoch int64
-			epoch, _, err = keyForBoard()
+			var oldKey []byte
+			epoch, oldKey, err = keyForBoard()
 			if err == nil {
 				var members []struct {
 					Instance string `json:"instance"`
 					Pub      []byte `json:"pubkey"`
+					Proof    []byte `json:"key_proof"`
 				}
 				cursor := ""
 				for {
@@ -230,6 +234,7 @@ func boardOperatorRoute(operation string) http.HandlerFunc {
 						Members []struct {
 							Instance string `json:"instance"`
 							Pub      []byte `json:"pubkey"`
+							Proof    []byte `json:"key_proof"`
 						} `json:"members"`
 						Cursor string `json:"next_cursor"`
 					}
@@ -247,12 +252,17 @@ func boardOperatorRoute(operation string) http.HandlerFunc {
 					key := make([]byte, 32)
 					_, err = rand.Read(key)
 					boxes := map[string]*proto.Encrypted{}
+					proofs := map[string][]byte{}
 					for _, member := range members {
 						if err != nil {
 							break
 						}
-						var pub []byte
-						pub = member.Pub
+						if !proto.VerifyBoardKeyProof(oldKey, board, epoch, member.Instance, member.Proof) {
+							err = fmt.Errorf("board member has not proved possession of the current key; finish joining or remove that member")
+							break
+						}
+						proofs[member.Instance] = proto.BoardKeyProof(key, board, epoch+1, member.Instance)
+						pub := member.Pub
 						if proto.InstanceID(pub) != member.Instance {
 							err = fmt.Errorf("board member key does not match identity")
 						}
@@ -261,7 +271,7 @@ func boardOperatorRoute(operation string) http.HandlerFunc {
 						}
 					}
 					if err == nil {
-						body, err = call(operation, map[string]any{"board": board, "epoch": epoch + 1, "envelopes": boxes})
+						body, err = call(operation, map[string]any{"board": board, "epoch": epoch + 1, "envelopes": boxes, "key_proofs": proofs})
 					}
 				}
 			}

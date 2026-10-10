@@ -199,7 +199,13 @@ func (h *Hub) Handler() http.Handler {
 func (h *Hub) OnlineCount() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return len(h.conns)
+	count := 0
+	for _, c := range h.conns {
+		if !c.boardOnly {
+			count++
+		}
+	}
+	return count
 }
 
 // Close drops every connection and stops background work.

@@ -20,7 +20,7 @@ func TestBoardCiphertextStorageQuotaIntegrityAndAuthority(t *testing.T) {
 	require.NoError(t, live.Admit(owner.ID()))
 	ws, ch := boardSocket(t, url, owner, "")
 	board := proto.NewEnvelopeID()
-	result := boardCall(t, ws, owner, ch, "boards.create", map[string]any{"board": board, "name": "objects", "envelopes": map[string]any{owner.ID(): map[string]any{"ct": "opaque"}}})
+	result := boardCall(t, ws, owner, ch, "boards.create", map[string]any{"board": board, "name": "objects", "key_proofs": map[string][]byte{owner.ID(): make([]byte, 32)}, "envelopes": map[string]any{owner.ID(): map[string]any{"ct": "opaque"}}})
 	require.Equal(t, 200, result.Status)
 	data := []byte("encrypted ciphertext fixture")
 	sum := sha256.Sum256(data)

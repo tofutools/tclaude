@@ -1,7 +1,9 @@
 package hub_test
 
 import (
+	"context"
 	"encoding/json"
+	"github.com/tofutools/tclaude/pkg/federation/client"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -113,10 +115,10 @@ func TestBoardOnlyConnectionFullInventory(t *testing.T) {
 	require.NoError(t, st.Admit(owner.ID()))
 	ws, ch := boardSocket(t, url, owner, "")
 	board := proto.NewEnvelopeID()
-	result := boardCall(t, ws, owner, ch, "boards.create", map[string]any{"board": board, "name": "shared", "envelopes": map[string]any{owner.ID(): map[string]any{"ct": "sealed"}}})
+	result := boardCall(t, ws, owner, ch, "boards.create", map[string]any{"board": board, "name": "shared", "key_proofs": map[string][]byte{owner.ID(): make([]byte, 32)}, "envelopes": map[string]any{owner.ID(): map[string]any{"ct": "sealed"}}})
 	require.Equal(t, 200, result.Status, result.Error)
 	bearer := proto.NewEnvelopeID()
-	result = boardCall(t, ws, owner, ch, "invites.create", map[string]any{"board": board, "token": bearer, "role": "reader", "ttl_seconds": 120, "key_package": "opaque encrypted package"})
+	result = boardCall(t, ws, owner, ch, "invites.create", map[string]any{"board": board, "token": bearer, "role": "reader", "ttl_seconds": 120, "epoch": 1, "key_package": "opaque encrypted package"})
 	require.Equal(t, 200, result.Status, result.Error)
 	reader, err := proto.NewIdentity()
 	require.NoError(t, err)
@@ -171,4 +173,46 @@ func TestBoardOnlyConnectionFullInventory(t *testing.T) {
 			require.Equal(t, proto.FrameError, refused.Type)
 		})
 	}
+}
+
+func TestBoardConcurrentCallsAndInvitationEpoch(t *testing.T) {
+	_, st, url := newHub(t, hub.Config{FramesPerMinute: 10000, BytesPerMinute: 64 << 20})
+	owner, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, st.Admit(owner.ID()))
+	ws, ch := boardSocket(t, url, owner, "")
+	board := proto.NewEnvelopeID()
+	key := make([]byte, 32)
+	box, err := proto.SealBoardKey(owner.Pub, board, 1, key)
+	require.NoError(t, err)
+	r := boardCall(t, ws, owner, ch, "boards.create", map[string]any{"board": board, "name": "concurrency", "envelopes": map[string]*proto.Encrypted{owner.ID(): box}, "key_proofs": map[string][]byte{owner.ID(): proto.BoardKeyProof(key, board, 1, owner.ID())}})
+	require.Equal(t, 200, r.Status, r.Error)
+	opts := client.Options{URL: url, Identity: owner}
+	result, err := client.BoardCall(context.Background(), opts, "", "boards.list", map[string]any{})
+	require.NoError(t, err)
+	require.Equal(t, 200, result.Status)
+	require.Equal(t, 200, boardCall(t, ws, owner, ch, "boards.get", map[string]any{"board": board}).Status, "another RPC must not replace the existing connection")
+	box, err = proto.SealBoardKey(owner.Pub, board, 2, key)
+	require.NoError(t, err)
+	r = boardCall(t, ws, owner, ch, "keys.rotate", map[string]any{"board": board, "epoch": 2, "envelopes": map[string]*proto.Encrypted{owner.ID(): box}, "key_proofs": map[string][]byte{owner.ID(): proto.BoardKeyProof(key, board, 2, owner.ID())}})
+	require.Equal(t, 200, r.Status, r.Error)
+	r = boardCall(t, ws, owner, ch, "invites.create", map[string]any{"board": board, "epoch": 1, "token": proto.NewEnvelopeID(), "ttl_seconds": 120, "role": "reader", "key_package": "epoch1 ciphertext"})
+	require.Equal(t, 409, r.Status)
+	require.Equal(t, "board_changed", r.Code)
+	for _, epoch := range []int64{0, 1, 2} {
+		r = boardCall(t, ws, owner, ch, "keys.get", map[string]any{"board": board, "epoch": epoch})
+		require.Equal(t, 200, r.Status)
+		var keys struct {
+			Keys map[string]json.RawMessage `json:"keys"`
+		}
+		require.NoError(t, json.Unmarshal(r.Body, &keys))
+		require.Len(t, keys.Keys, 1, "each key read is bounded independent of retained history")
+	}
+	for i := 0; i < 100; i++ {
+		r = boardCall(t, ws, owner, ch, "invites.create", map[string]any{"board": board, "epoch": 2, "token": proto.NewEnvelopeID(), "ttl_seconds": 120, "role": "reader", "key_package": "sealed"})
+		require.Equal(t, 200, r.Status, r.Error)
+	}
+	r = boardCall(t, ws, owner, ch, "invites.create", map[string]any{"board": board, "epoch": 2, "token": proto.NewEnvelopeID(), "ttl_seconds": 120, "role": "reader", "key_package": "sealed"})
+	require.Equal(t, 409, r.Status)
+	require.Equal(t, "board_quota", r.Code)
 }

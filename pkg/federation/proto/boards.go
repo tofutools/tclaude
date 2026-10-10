@@ -2,10 +2,13 @@ package proto
 
 import (
 	"crypto/ed25519"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"golang.org/x/crypto/chacha20poly1305"
@@ -85,4 +88,18 @@ func OpenBoardContent(key []byte, board string, epoch int64, blob string, cipher
 		return nil, errors.New("short board ciphertext")
 	}
 	return a.Open(nil, ciphertext[:a.NonceSize()], ciphertext[a.NonceSize():], []byte(fmt.Sprintf("tclaude-board-blob-v1/%s/%d/%s", board, epoch, blob)))
+}
+
+// BoardKeyProof binds a member's identity to possession of an epoch key. A
+// hub cannot inject a new rotation recipient using unverified roster metadata.
+// Members already know the key and can disclose it: this protects against the
+// storage/relay host, not against a member intentionally sharing its content.
+func BoardKeyProof(key []byte, board string, epoch int64, instance string) []byte {
+	mac := hmac.New(sha256.New, key)
+	raw, _ := json.Marshal([]string{"tclaude-board-member-key-v1", board, strconv.FormatInt(epoch, 10), instance})
+	mac.Write(raw)
+	return mac.Sum(nil)
+}
+func VerifyBoardKeyProof(key []byte, board string, epoch int64, instance string, proof []byte) bool {
+	return len(key) == 32 && ValidStreamID(board) && epoch > 0 && ValidInstanceID(instance) && hmac.Equal(BoardKeyProof(key, board, epoch, instance), proof)
 }

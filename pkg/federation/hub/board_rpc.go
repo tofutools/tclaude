@@ -12,7 +12,7 @@ import (
 // directory. A fleet-admitted key on this endpoint is still board-scoped.
 func (c *conn) registryKey() string {
 	if c.boardOnly {
-		return "board:" + c.id
+		return "board:" + c.id + ":" + c.nonce
 	}
 	return c.id
 }
@@ -27,7 +27,7 @@ func (h *Hub) serveBoardWS(w http.ResponseWriter, r *http.Request) {
 	_ = ws.SetWriteDeadline(deadline)
 	_ = ws.SetReadDeadline(deadline)
 	if err = ws.WriteJSON(&proto.Frame{Type: proto.FrameChallenge, HubID: h.hubID, Nonce: nonce, Proto: proto.ProtocolVersion}); err != nil {
-		ws.Close()
+		_ = ws.Close()
 		return
 	}
 	var hello proto.Frame
@@ -36,7 +36,7 @@ func (h *Hub) serveBoardWS(w http.ResponseWriter, r *http.Request) {
 		_ = ws.Close()
 	}
 	if err = ws.ReadJSON(&hello); err != nil {
-		ws.Close()
+		_ = ws.Close()
 		return
 	}
 	if hello.Type != proto.FrameHello || hello.Proto != proto.ProtocolVersion || !proto.VerifyHello(&hello, h.hubID, nonce) {
@@ -73,7 +73,7 @@ func (h *Hub) serveBoardWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err = ws.WriteJSON(&proto.Frame{Type: proto.FrameWelcome, HubID: h.hubID, InstanceID: hello.InstanceID, AdminGeneration: generation}); err != nil {
-		ws.Close()
+		_ = ws.Close()
 		return
 	}
 	_ = ws.SetReadDeadline(time.Now().Add(h.config().ConnectionIdle))

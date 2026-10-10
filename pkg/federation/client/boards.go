@@ -25,15 +25,15 @@ func BoardCall(ctx context.Context, opts Options, token, method string, payload 
 	if err != nil {
 		return nil, err
 	}
-	defer ws.Close()
+	defer func() { _ = ws.Close() }()
 	ws.SetReadLimit(proto.MaxAdminResult + 16384)
 	deadline := time.Now().Add(30 * time.Second)
 	if v, ok := ctx.Deadline(); ok && v.Before(deadline) {
 		deadline = v
 	}
-	ws.SetReadDeadline(deadline)
-	ws.SetWriteDeadline(deadline)
-	stop := context.AfterFunc(ctx, func() { ws.Close() })
+	_ = ws.SetReadDeadline(deadline)
+	_ = ws.SetWriteDeadline(deadline)
+	stop := context.AfterFunc(ctx, func() { _ = ws.Close() })
 	defer stop()
 	var ch proto.Frame
 	if err = ws.ReadJSON(&ch); err != nil {

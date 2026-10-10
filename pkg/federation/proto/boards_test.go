@@ -29,6 +29,12 @@ func TestBoardEncryptionDomains(t *testing.T) {
 	require.Equal(t, "private context", string(raw))
 	_, err = OpenBoardContent(key, board, 1, NewEnvelopeID(), ciphertext)
 	require.Error(t, err)
+	proof := BoardKeyProof(key, board, 1, id.ID())
+	require.True(t, VerifyBoardKeyProof(key, board, 1, id.ID(), proof))
+	require.False(t, VerifyBoardKeyProof(key, board, 2, id.ID(), proof))
+	other, err := NewIdentity()
+	require.NoError(t, err)
+	require.False(t, VerifyBoardKeyProof(key, board, 1, other.ID(), proof))
 	now := time.Now()
 	r := &BoardRequest{ID: NewEnvelopeID(), HubID: "hub", Nonce: "connection", Method: "boards.list", Payload: json.RawMessage(`{}`), IssuedAt: now, ExpiresAt: now.Add(time.Minute)}
 	r.Sign(id)
