@@ -323,7 +323,7 @@ test('shell confirmation keeps capture-Escape semantics and feedback cleanup', a
   await mounted.unmount();
 });
 
-test('a confirmation starts focus on its action, so Enter confirms and Escape cancels', async (t) => {
+test('a confirmation starts focus on its action (so a plain Enter confirms) and Escape cancels', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createShellState }, { Confirm }] = await Promise.all([
     harness.importDashboardModule('js/shell-state.js'),

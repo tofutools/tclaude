@@ -116,6 +116,7 @@ export function IdentityRotationSection({ actions, confirm, toast, timers = glob
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const load = () => {
+    setNow(Date.now());
     actions.identityRotations().then((r) => setRot(localRotation(r))).catch((e) => setRot({ error: e?.message || String(e) }));
     actions.previewRotateIdentity().then(setPreview).catch(() => setPreview(null));
   };
@@ -146,7 +147,7 @@ export function IdentityRotationSection({ actions, confirm, toast, timers = glob
       if (!r) return;
       toast(`Identity rotated; ${r.new_id || 'the successor'} is pending`, false);
       load();
-    }).catch((e) => { setBusy(false); setError(e?.message || String(e)); });
+    }).catch((e) => { setBusy(false); setError(e?.message || String(e)); load(); });
   };
   const left = pending?.activateAt ? pending.activateAt.getTime() - now : null;
   return html`<div id="fleet-identity">
