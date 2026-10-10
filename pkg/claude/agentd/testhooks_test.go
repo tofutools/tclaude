@@ -2118,3 +2118,11 @@ func RecheckFederationRouteAuthorityForTest() {
 		e.recheckAuthority()
 	}
 }
+
+// RefreshFederationCatalogsForTest runs the production periodic refresh without
+// waiting for its two-minute clock.
+func RefreshFederationCatalogsForTest() {
+	if rt := currentFederation(); rt != nil {
+		rt.broadcastCatalogs()
+	}
+}

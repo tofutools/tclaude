@@ -154,7 +154,8 @@ func defaultFederationName() string {
 
 // fedRuntime is one live hub connection plus its workers.
 type fedRuntime struct {
-	catalogLocks sync.Map // peer instance id -> *sync.Mutex
+	catalogLocks     sync.Map // peer instance id -> *sync.Mutex
+	catalogStructure string   // group/member state last observed by inboundLoop
 
 	peerViewsMu sync.Mutex
 	peerViews   *fedPeerViewState
@@ -602,6 +603,7 @@ func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 		case <-sessions.C:
 			rt.flushFleetHealth(time.Now())
 			rt.revokeStaleModelLeases()
+			rt.pushCatalogStructureChanges()
 			rt.pushSessionTransitions()
 			rt.pushAgentStatuses()
 			rt.observeAwayWaiting()
