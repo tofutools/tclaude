@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { shortID } from './fleet-admin-model.js';
@@ -7,6 +7,9 @@ import { shortID } from './fleet-admin-model.js';
 const html = htm.bind(h);
 
 const POLL_MS = 5000;
+// FOLLOW_MS paces live output reads; OUTPUT_KEEP caps what a stream keeps.
+export const FOLLOW_MS = 2000;
+export const OUTPUT_KEEP = 512 * 1024;
 const TERMINAL = new Set(['completed', 'failed', 'canceled', 'timeout', 'refused', 'interrupted', 'output_unavailable']);
 const BAD = new Set(['failed', 'canceled', 'timeout', 'refused', 'interrupted', 'output_unavailable', 'unknown']);
 const REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -120,16 +123,86 @@ function RunJobDialog({ peers, pools, actions, confirm, onClose, onDone }) {
   </${Overlay}>`;
 }
 
-function LogsDialog({ job, label, actions, onClose }) {
+// appendOutput adds live chunks to the per-stream text, keeping the newest
+// OUTPUT_KEEP characters of each.
+export function appendOutput(out, chunks) {
+  const next = { ...out };
+  for (const c of chunks || []) {
+    const k = c?.stream === 'stderr' ? 'stderr' : 'stdout';
+    let text = next[k] + String(c?.data ?? '');
+    if (text.length > OUTPUT_KEEP) { text = text.slice(-OUTPUT_KEEP); next.trimmed = true; }
+    next[k] = text;
+  }
+  return next;
+}
+
+// canFollow is a job whose output can be read live: one this node sent that
+// has not finished.
+export function canFollow(j) {
+  return !j.incoming && !j.terminal && j.state !== 'unknown';
+}
+
+// OutputDialog shows a job's output: live while it runs (polled only while
+// the dialog is open, Fleet is shown and the browser tab is visible), then the
+// stored logs once it ends.
+function OutputDialog({ job, label, actions, timers, active, onClose }) {
+  const [live, setLive] = useState(!job.terminal);
+  const [out, setOut] = useState({ stdout: '', stderr: '', trimmed: false, skipped: false });
+  const [note, setNote] = useState('');
+  const [failed, setFailed] = useState('');
   const [logs, setLogs] = useState(null);
-  useEffect(() => { actions.jobLogs(job.id).then(setLogs).catch((e) => setLogs({ error: errText(e) })); }, []);
+  const [visible, setVisible] = useState(() => !globalThis.document?.hidden);
+  const [retry, setRetry] = useState(0);
+  const cursor = useRef('');
+  const pre = useRef(null);
+  useEffect(() => {
+    const doc = globalThis.document;
+    if (!doc?.addEventListener) return undefined;
+    const onVis = () => setVisible(!doc.hidden);
+    doc.addEventListener('visibilitychange', onVis);
+    return () => doc.removeEventListener('visibilitychange', onVis);
+  }, []);
+  useEffect(() => {
+    if (live) return undefined;
+    actions.jobLogs(job.id).then(setLogs).catch((e) => setLogs({ error: errText(e) }));
+    return undefined;
+  }, [live]);
+  useEffect(() => {
+    if (!live || !active || !visible || failed) return undefined;
+    let off = false; let t = null;
+    const loop = () => {
+      actions.jobOutput(job.id, cursor.current).then((r) => {
+        if (off) return;
+        setNote('');
+        cursor.current = r?.cursor ?? cursor.current;
+        if ((r?.chunks || []).length || r?.truncated) setOut((o) => ({ ...appendOutput(o, r.chunks), skipped: o.skipped || !!r.truncated }));
+        if (r?.done) { setLive(false); return; }
+        t = timers.setTimeout(loop, FOLLOW_MS);
+      }).catch((e) => {
+        if (off) return;
+        // 409: not running yet (or no longer followable); keep checking.
+        if (e?.status === 409) { setNote(`Waiting for output: ${errText(e)}`); t = timers.setTimeout(loop, FOLLOW_MS); return; }
+        setFailed(errText(e));
+      });
+    };
+    loop();
+    return () => { off = true; timers.clearTimeout(t); };
+  }, [live, active, visible, failed, retry]);
+  useEffect(() => {
+    const el = pre.current;
+    if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 40) el.scrollTop = el.scrollHeight;
+  }, [out]);
+  const shown = live ? out : logs;
   return html`<${Overlay} id="fleet-job-logs" labelledby="fleet-job-logs-title" onClose=${onClose}>
     <h3 id="fleet-job-logs-title">Job ${job.id} ${job.incoming ? 'from' : 'on'} ${label(job.peer)}</h3>
-    <div class="muted">${job.repo}@${job.ref}${job.commit ? ` (${job.commit.slice(0, 12)})` : ''} · ${job.state}${job.exit != null ? ` · exit ${job.exit}` : ''}${job.code ? ` · ${job.code}` : ''}</div>
-    ${logs == null ? html`<div class="empty">Loading…</div>` : logs.error ? html`<div class="fa-danger" role="alert">${logs.error}</div>` : html`
-      <div class="fa-k">stdout</div><pre class="fa-run-out">${logs.stdout || ''}</pre>
-      ${logs.stderr ? html`<div class="fa-k">stderr</div><pre class="fa-run-out err">${logs.stderr}</pre>` : ''}`}
-    <div class="muted fa-cli-note">CLI: <code>tclaude federation job status ${job.id}</code></div>
+    <div class="muted">${job.repo}@${job.ref}${job.commit ? ` (${job.commit.slice(0, 12)})` : ''} · ${live ? html`<span class="fa-jb-live">● live</span>${!visible || !active ? ' (paused while hidden)' : ''}` : `${job.terminal ? job.state : 'finished'}${job.exit != null ? ` · exit ${job.exit}` : ''}${job.code ? ` · ${job.code}` : ''}`}</div>
+    ${live && (out.trimmed || out.skipped) && html`<div class="muted">${out.skipped ? 'Some earlier output was skipped by the node. ' : ''}${out.trimmed ? 'Only the most recent output is kept here; the full output is in the logs once the job ends.' : ''}</div>`}
+    ${live && note && html`<div class="muted" id="fleet-job-wait">${note}</div>`}
+    ${live && failed && html`<div class="fa-danger" role="alert">Live output stopped: ${failed} <button type="button" class="fa-link" onClick=${() => { setFailed(''); setRetry((n) => n + 1); }}>retry</button></div>`}
+    ${shown == null ? html`<div class="empty">Loading…</div>` : shown.error ? html`<div class="fa-danger" role="alert">${shown.error}</div>` : html`
+      <div class="fa-k">stdout</div><pre class="fa-run-out" ref=${pre}>${shown.stdout || ''}</pre>
+      ${shown.stderr ? html`<div class="fa-k">stderr</div><pre class="fa-run-out err">${shown.stderr}</pre>` : ''}`}
+    <div class="muted fa-cli-note">CLI: <code>tclaude federation job status ${job.id}</code>${live ? html`; live output: <code>job run … --follow</code>` : ''}</div>
     <div class="modal-buttons"><span class="spacer"></span><button type="button" onClick=${onClose}>Close</button></div>
   </${Overlay}>`;
 }
@@ -259,6 +332,7 @@ export function JobsPage({ view, pools, groups, actions, confirm, toast, timers,
           ${!j.incoming && j.state === 'submitted' && html`<button type="button" data-fa="retry" onClick=${() => retry(j)}>Resend…</button>`}
           ${j.incoming && j.state === 'unknown' && html`<button type="button" data-fa="ack" onClick=${() => ack(j)}>Acknowledge stopped…</button>`}
           ${j.terminal && j.hasLogs && html`<button type="button" data-fa="logs" onClick=${() => setDialog({ kind: 'logs', job: j })}>Output</button>`}
+          ${canFollow(j) && html`<button type="button" data-fa="follow" onClick=${() => setDialog({ kind: 'logs', job: j })}>Live output</button>`}
         </td>
       </tr>`)}</tbody>
     </table>`}
@@ -275,7 +349,7 @@ export function JobsPage({ view, pools, groups, actions, confirm, toast, timers,
       </tr>`)}</tbody>
     </table>`}
     ${dialog?.kind === 'run' && html`<${RunJobDialog} peers=${view.trusted} pools=${pools} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
-    ${dialog?.kind === 'logs' && html`<${LogsDialog} job=${dialog.job} label=${label} actions=${actions} onClose=${() => setDialog(null)} />`}
+    ${dialog?.kind === 'logs' && html`<${OutputDialog} job=${dialog.job} label=${label} actions=${actions} timers=${timers} active=${active} onClose=${() => setDialog(null)} />`}
     ${dialog?.kind === 'repo' && html`<${RepoDialog} repo=${dialog.repo} groups=${groups} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
   </div>`;
 }
