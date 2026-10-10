@@ -722,6 +722,10 @@ func handleFederationKick(w http.ResponseWriter, r *http.Request) {
 	v.reason = "kicked"
 	v.mu.Unlock()
 	v.cancel()
+	// Preserve the CLI kick contract: a successful response means the viewer
+	// and its indicator/PTY have been removed. The serving worker first sends
+	// its bounded closure notification, then closes done after all cleanup.
+	<-v.done
 	fedTerminalAudit("sessions.attach.kick", "", v.Peer, v.Agent, v.Group, "viewer="+v.ID, 200)
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }

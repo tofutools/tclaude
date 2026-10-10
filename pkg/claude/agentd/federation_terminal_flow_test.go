@@ -201,6 +201,7 @@ func TestFederation_TerminalInputWatchKickAndPin(t *testing.T) {
 	require.Contains(t, rec.Body.String(), o.Stream)
 	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/viewers/"+o.Stream+"/kick", nil)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.Equal(t, 404, fedHuman(t, f, http.MethodPost, "/v1/federation/viewers/"+o.Stream+"/kick", nil).Code, "successful kick waits for viewer removal")
 	fedEventually(t, "indicator restored after kick", func() bool {
 		opts, _, _ := mock.snapshot()
 		return opts["pane-border-format"] == "original" && opts["@tclaude-federation-viewers"] == ""
