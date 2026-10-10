@@ -82,7 +82,7 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 		} else {
 			cc := f.World.CCs.GetByConvID(in.Conv)
 			require.NoError(t, cc.WriteUserTurn(in.Text))
-			require.NoError(t, cc.AppendTurn(map[string]any{"type": "assistant", "cwd": cwd, "message": map[string]any{"role": "assistant", "content": []map[string]string{{"type": "text", "text": "Recorded " + in.Text}}}}))
+			require.NoError(t, cc.AppendTurn(map[string]any{"type": "assistant", "cwd": cwd, "message": map[string]any{"role": "assistant", "content": []map[string]string{{"type": "text", "text": in.Assistant}}}}))
 		}
 		require.NoError(t, db.GrantAgentPermissionWithScope(in.Conv, agentd.PermSelfTeleport, string(mustJSON(t, map[string]any{"peer": []string{in.Peer}})), "test operator"))
 		w.WriteHeader(204)
