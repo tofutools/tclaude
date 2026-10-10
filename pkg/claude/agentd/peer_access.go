@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -279,8 +280,12 @@ func auditPeerAccessProxy(r *http.Request, peer, phase string, status int, body 
 	}
 	if r.Method == http.MethodGet && strings.HasPrefix(tail, "peer-access-requests/") && phase == "result" && status == 200 {
 		var row db.FederationPeerAccessRequest
-		if json.Unmarshal(body, &row) == nil && row.Status != "pending" {
-			recordFederationAudit("federation.access.out.decision", "operator", "", "", fmt.Sprintf("peer=%s request=%s decision=%s", peer, auditClip(row.ID, 40), auditClip(row.Status, 40)), status)
+		if json.Unmarshal(body, &row) == nil {
+			_, idErr := hex.DecodeString(row.ID)
+			terminal := row.Status == "approved" || row.Status == "declined" || row.Status == "timed out" || row.Status == "interrupted"
+			if idErr == nil && len(row.ID) == 32 && terminal {
+				recordFederationAudit("federation.access.out.decision", "operator", "", "", fmt.Sprintf("peer=%s request=%s decision=%s", peer, auditClip(row.ID, 40), auditClip(row.Status, 40)), status)
+			}
 		}
 	}
 }

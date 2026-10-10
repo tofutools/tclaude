@@ -50,7 +50,7 @@ func (req *approvalRequest) setDeadline(t time.Time) {
 type dashboardAccessRequest struct {
 	OriginPeer      string     `json:"origin_peer,omitempty"`
 	GroupID         int64      `json:"group_id,omitempty"`
-	GrantTTLSeconds int        `json:"grant_ttl_seconds,omitempty"`
+	GrantTTLSeconds *int       `json:"grant_ttl_seconds,omitempty"`
 	GrantExpiresAt  *time.Time `json:"grant_expires_at,omitempty"`
 	ID              string     `json:"id"`
 	Perm            string     `json:"perm"`
@@ -193,7 +193,8 @@ func refreshDashboardAccessRequestCallers(requests []dashboardAccessRequest) {
 func enrichPeerAccess(out *dashboardAccessRequest, p db.FederationPeerAccessRequest) {
 	out.OriginPeer = p.Peer
 	out.GroupID = p.GrantGroupID
-	out.GrantTTLSeconds = p.GrantTTLSeconds
+	ttl := p.GrantTTLSeconds
+	out.GrantTTLSeconds = &ttl
 	out.GrantExpiresAt = p.ExpiresAt
 }
 
