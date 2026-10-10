@@ -487,8 +487,14 @@ is a plain inbox entry: it cannot answer a permission prompt, an
 `--ask-human` request or anything else that needs local approval. At most
 100 unread messages per peer are kept; beyond that the sender's outbox
 retries. Untrust the peer to stop it entirely. Agents cannot send operator
-mail yet, and replying from the dashboard is not wired up: answer with
-`tclaude federation notify`.
+mail yet. The local dashboard can compose or reply to the sending operator
+through `POST /api/federation/notify` with `{peer, subject?, body}`; replies use
+the inbox row's stable `instance` and a reply subject. The same operation is
+`tclaude federation notify` in the CLI. `POST /api/federation/send` mirrors
+`federation send` with `{to, role?, subject?, body, attachments?}` for remote
+agent/group mail. `GET /api/federation/inbox` and `/outbox` return the CLI inbox
+and delivery rows. These dashboard routes require the local operator cookie
+and cannot be called through a peer view.
 
 ## Remote spawn requests
 
@@ -2828,3 +2834,14 @@ Import defaults to preview. Its body preserves the CLI fields: `apply`, `only`,
 the same live admission, credential findings, path and launch checks as the CLI.
 Responses retain the existing preview diffs and provenance. Every route is
 local operator administration and is refused through peer views.
+### Local dashboard away administration
+
+`GET /api/federation/away` reads `{away: null|{cover,since,until}}`;
+POST the same path with `{cover,until?}` selects a trusted covering operator and
+returns `{away,warnings}`. `POST /api/federation/return` ends forwarding.
+`POST /api/federation/answer` sends `{ticket,decision:"approve"|"deny"}` using
+the exact ticket supplied in the covering notice, returning `{envelope_id,state}`.
+These local cookie-authenticated routes share the CLI's `/v1/federation` handlers.
+A delegated answer is one-shot and never grants persistent permission. Peer
+access requests remain decidable only by the receiving local operator and are
+never forwarded to an away cover. None of these administration routes is peer-viewable.
