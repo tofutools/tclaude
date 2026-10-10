@@ -19112,3 +19112,12 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 #remote-sessions button[data-open] { background: #21262d; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; cursor: pointer; padding: 2px 10px; font: inherit; font-size: 12px; }
 #remote-sessions button[data-open]:hover { border-color: #58a6ff; }
 #remote-sessions button[data-open="interactive"] { border-color: #9e6a03; color: #d29922; }
+
+/* Other own nodes' human inbox (tcl-99b5ir): unread notifications and pending
+   ask-human requests from nodes this one trusts unrestricted, above the local
+   folders; shown only while there are any. */
+.remote-inbox-item { display: block; width: 100%; text-align: left; background: none; border: 0; font: inherit; color: inherit; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.remote-inbox-item.pending { color: #d29922; }
+.remote-inbox-item:hover { filter: brightness(1.25); }
+.remote-inbox-body { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow: auto; }
+#remote-inbox-reply { width: 100%; box-sizing: border-box; }

@@ -25,6 +25,7 @@ function openPeerMail(detail) {
 }
 import { TTL_CHOICES, ttlText } from './peer-access.js';
 import { slugInfo } from './fleet-admin-model.js';
+import { RemoteInboxSection } from './remote-inbox.js';
 
 const html = htm.bind(h);
 
@@ -664,6 +665,7 @@ export function MailApp({ controller }) {
         hidden=${current.selected === 'human' || current.selected === 'all' || current.selected.startsWith('group:')}>✓ mark all read</button>
     </div>
     <div class="mail-col mail-sidebar-col">
+      <${RemoteInboxSection} />
       <${WipeBar} current=${current} controller=${controller} />
       ${current.mailboxRequest?.phase === 'error' && html`<div class="island-error mail-error" role="alert">
         Mailboxes failed to refresh: ${current.mailboxRequest.error}
