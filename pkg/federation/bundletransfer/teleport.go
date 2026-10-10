@@ -68,7 +68,7 @@ func (t *TeleportIntent) Validate() error {
 	if t.KeepPausedBackup && t.Clone {
 		return errors.New("clone and paused backup are mutually exclusive")
 	}
-	if t.Version != 1 || !proto.ValidStreamID(t.Chain) || !proto.ValidAgentRef(t.OriginAgent) || !proto.ValidAgentRef(t.SourceAgent) || len(t.SourceConv) != 36 || !proto.ValidInstanceID(t.OriginInstance) || len(t.Hops) == 0 || len(t.Hops) > 128 || len(t.Note) > 4096 || !ValidCredentials(t.Credentials) || len(t.GitRef) > 512 || len(t.Require) > 1024 {
+	if t.Version != 1 || !proto.ValidStreamID(t.Chain) || !proto.ValidAgentRef(t.OriginAgent) || !proto.ValidAgentRef(t.SourceAgent) || !proto.ValidConversationRef(t.SourceConv) || !proto.ValidInstanceID(t.OriginInstance) || len(t.Hops) == 0 || len(t.Hops) > 128 || len(t.Note) > 4096 || !ValidCredentials(t.Credentials) || len(t.GitRef) > 512 || len(t.Require) > 1024 {
 		return errors.New("invalid teleport metadata")
 	}
 	if _, err := proto.ParseNodeMatch(t.Require); err != nil {

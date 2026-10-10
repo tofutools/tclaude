@@ -56,6 +56,13 @@ func snapshotAgentHistory(b *agentbundle.Bundle, h *harness.Harness, conv, cwd s
 		}
 	}
 
+	if scoped, ok := h.History.(interface {
+		WithLimits(int64, int) harness.HistoryTransfer
+	}); ok {
+		clone := *h
+		clone.History = scoped.WithLimits(b.Limit(), agentRecordLimit())
+		h = &clone
+	}
 	streaming, ok := h.History.(harness.StreamingHistoryTransfer)
 	if !ok {
 		raw, err := h.History.Export(conv, cwd)

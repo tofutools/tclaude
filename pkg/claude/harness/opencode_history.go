@@ -10,6 +10,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,9 +22,66 @@ import (
 
 // Transfer the supported CLI projection, never OpenCode's private SQLite DB.
 // The wire representation is record-wise so tclaude does not buffer a session.
-type openCodeHistory struct{ environment []string }
+type openCodeHistory struct {
+	environment  []string
+	archiveLimit int64
+	recordLimit  int
+}
 
-// WithEnvironment scopes native I/O to a daemon-validated private XDG store.
+// WithLimits applies the node-configured transfer and record bounds.
+func (h openCodeHistory) WithLimits(archive int64, record int) HistoryTransfer {
+	h.archiveLimit = archive
+	h.recordLimit = record
+	return h
+}
+func (h openCodeHistory) limits() (int64, int) {
+	a, r := h.archiveLimit, h.recordLimit
+	if a <= 0 {
+		a = agentbundle.MaxBytes
+	}
+	if r <= 0 {
+		r = MaxHistoryRecordBytes
+	}
+	return a, r
+}
+
+// Bound native output and each decode before RawMessage can grow to a whole
+// conversation. Decoder lookahead is charged to the next record.
+type openCodeBudgetWriter struct {
+	io.Writer
+	remaining int64
+}
+
+func (w *openCodeBudgetWriter) Write(p []byte) (int, error) {
+	if int64(len(p)) > w.remaining {
+		return 0, fmt.Errorf("OpenCode export exceeds federation.agent_transfer_max_bytes")
+	}
+	n, err := w.Writer.Write(p)
+	w.remaining -= int64(n)
+	return n, err
+}
+
+type openCodeBudgetReader struct {
+	io.Reader
+	remaining int64
+	total     int64
+	limit     int
+}
+
+func (r *openCodeBudgetReader) Read(p []byte) (int, error) {
+	if r.remaining <= 0 {
+		return 0, fmt.Errorf("OpenCode history record exceeds federation.agent_history_record_max_bytes=%d", r.limit)
+	}
+	p = p[:min(int64(len(p)), r.remaining)]
+	n, err := r.Reader.Read(p)
+	r.remaining -= int64(n)
+	r.total += int64(n)
+	return n, err
+}
+func (r *openCodeBudgetReader) reset(d *json.Decoder) {
+	r.remaining = int64(r.limit) - (r.total - d.InputOffset())
+}
+
 func (h openCodeHistory) WithEnvironment(env []string) HistoryTransfer {
 	h.environment = append([]string(nil), env...)
 	return h
@@ -75,9 +135,10 @@ func (h openCodeHistory) Open(id, cwd string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer os.Remove(native.Name())
+	defer func() { _ = os.Remove(native.Name()) }()
 	defer native.Close()
-	if err = h.command(cwd, native, "export", id); err != nil {
+	archiveLimit, recordLimit := h.limits()
+	if err = h.command(cwd, &openCodeBudgetWriter{Writer: native, remaining: archiveLimit}, "export", id); err != nil {
 		return nil, err
 	}
 	if _, err = native.Seek(0, 0); err != nil {
@@ -88,7 +149,8 @@ func (h openCodeHistory) Open(id, cwd string) (io.ReadCloser, error) {
 		return nil, err
 	}
 	fail := func(err error) (io.ReadCloser, error) { _ = wire.Close(); _ = os.Remove(wire.Name()); return nil, err }
-	decoder := json.NewDecoder(native)
+	budget := &openCodeBudgetReader{Reader: native, remaining: int64(recordLimit), limit: recordLimit}
+	decoder := json.NewDecoder(budget)
 	token, err := decoder.Token()
 	if err != nil || token != json.Delim('{') {
 		return fail(errors.New("invalid OpenCode export object"))
@@ -96,6 +158,7 @@ func (h openCodeHistory) Open(id, cwd string) (io.ReadCloser, error) {
 	encoder := json.NewEncoder(wire)
 	infoFound, messagesFound := false, false
 	for decoder.More() {
+		budget.reset(decoder)
 		key, err := decoder.Token()
 		if err != nil {
 			return fail(err)
@@ -107,6 +170,7 @@ func (h openCodeHistory) Open(id, cwd string) (io.ReadCloser, error) {
 			}
 			infoFound = true
 			var info map[string]json.RawMessage
+			budget.reset(decoder)
 			if err = decoder.Decode(&info); err != nil {
 				return fail(err)
 			}
@@ -124,9 +188,11 @@ func (h openCodeHistory) Open(id, cwd string) (io.ReadCloser, error) {
 			}
 			for decoder.More() {
 				var message json.RawMessage
+				budget.reset(decoder)
 				if err = decoder.Decode(&message); err != nil {
 					return fail(err)
 				}
+				budget.reset(decoder)
 				if err = encoder.Encode(map[string]any{"message": message}); err != nil {
 					return fail(err)
 				}
@@ -179,13 +245,34 @@ func validOpenCodeHistoryID(id, prefix string) bool {
 		return false
 	}
 	for _, c := range id[len(prefix):] {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '_' && c != '-' {
 			return false
 		}
 	}
 	return true
 }
-func openCodeID(prefix string) string { return prefix + uuid.NewString() }
+
+var openCodeHistoryIDSequence atomic.Uint64
+
+func openCodeID(prefix string) string {
+	value := uint64(time.Now().UnixMilli())<<12 | openCodeHistoryIDSequence.Add(1)&4095
+	if prefix == "ses_" {
+		value = ^value
+	}
+	return fmt.Sprintf("%s%012x%s", prefix, value&((1<<48)-1), strings.ReplaceAll(uuid.NewString(), "-", "")[:14])
+}
+func remintOpenCodeOrderedID(id, prefix string) string {
+	suffix := strings.TrimPrefix(id, prefix)
+	if len(suffix) == 26 {
+		if _, err := strconv.ParseUint(suffix[:12], 16, 48); err == nil {
+			return prefix + suffix[:12] + strings.ReplaceAll(uuid.NewString(), "-", "")[:14]
+		}
+	}
+	// Compatibility fixtures and older non-time IDs retain traversal order,
+	// before subsequently appended native turns.
+	value := (uint64(time.Now().UnixMilli()-3600000) << 12) + openCodeHistoryIDSequence.Add(1)
+	return fmt.Sprintf("%s%012x%s", prefix, value&((1<<48)-1), strings.ReplaceAll(uuid.NewString(), "-", "")[:14])
+}
 func rawString(m map[string]json.RawMessage, key string) string {
 	var s string
 	_ = json.Unmarshal(m[key], &s)
@@ -217,7 +304,7 @@ func rewriteOpenCodeHistory(r io.Reader, source, newID, cwd string, out io.Write
 		if value := ids[id]; value != "" {
 			return value
 		}
-		value := openCodeID(prefix)
+		value := remintOpenCodeOrderedID(id, prefix)
 		ids[id] = value
 		return value
 	}
@@ -336,7 +423,7 @@ func (h openCodeHistory) ImportReader(r io.Reader, source, cwd string) (string, 
 	if err != nil {
 		return "", nil, err
 	}
-	defer os.Remove(file.Name())
+	defer func() { _ = os.Remove(file.Name()) }()
 	defer file.Close()
 	id := openCodeID("ses_")
 	if err = rewriteOpenCodeHistory(r, source, id, cwd, file); err != nil {

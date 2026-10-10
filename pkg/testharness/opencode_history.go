@@ -1,6 +1,7 @@
 package testharness
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -190,7 +191,18 @@ func serveOpenCodeHistory(root string, args []string) error {
 		}
 		_ = json.NewEncoder(w).Encode(data.Info)
 	})
-	mux.HandleFunc("/tui/publish", func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(true) })
+	mux.HandleFunc("/tui/publish", func(w http.ResponseWriter, r *http.Request) {
+		if endpoint := os.Getenv("TCLAUDE_OPENCODE_HISTORY_EXIT_URL"); endpoint != "" {
+			raw, _ := json.Marshal(map[string]int{"pid": os.Getpid()})
+			resp, err := http.Post(endpoint, "application/json", bytes.NewReader(raw))
+			if err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			_ = resp.Body.Close()
+		}
+		_ = json.NewEncoder(w).Encode(true)
+	})
 	listener, err := net.Listen("tcp", net.JoinHostPort(host, port))
 	if err != nil {
 		return err

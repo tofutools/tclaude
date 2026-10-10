@@ -56,6 +56,12 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 	t.Cleanup(agentd.ResetFederationForTest)
 	cwd := testutil.CanonicalTempDir(t)
 	f.HaveGroup("project")
+	if name == "opencode" {
+		_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "native-history", Harness: "opencode", SandboxImplementation: "off"})
+		require.NoError(t, err)
+		_, err = db.SetAgentGroupDefaultProfile("project", "native-history")
+		require.NoError(t, err)
+	}
 	_, err := db.SetAgentGroupDefaultCwd("project", cwd)
 	require.NoError(t, err)
 	// The operator explicitly permits return-home within the revisit window.
@@ -112,23 +118,56 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 				require.NoError(t, err)
 				row.Harness = "opencode"
 				row.ApprovalPolicy = ""
+				row.SandboxImplementation = "off"
 				require.NoError(t, db.SaveSession(row))
+				// The initial simulator session was Claude; replace its durable
+				// launch facts with the explicitly selected OpenCode posture too.
+				profile, err := db.ConversationResumeProfileForConv(in.Conv)
+				require.NoError(t, err)
+				profile.Harness = "opencode"
+				profile.FallbackRelaunch.SandboxImplementation = &row.SandboxImplementation
+				require.NoError(t, db.SetConversationResumeProfile(in.Conv, *profile))
 			}
 			f.HaveMember("project", in.Conv)
 		}
 		// Append through the same native writer as a harness completing a turn.
-		if name == "opencode" {
+		switch name {
+		case "opencode":
 			require.NoError(t, testharness.AppendOpenCodeHistory(f.World.HomeDir, in.Conv, cwd, in.Text, in.Assistant))
 			_, err := harness.MustGet("opencode").Convs.ListConvs("")
 			require.NoError(t, err)
-		} else if name == "codex" {
+			if in.Seed {
+				require.NoError(t, agentd.StartHistoryOpenCodeRuntimeForTest("traveller", cwd, in.Conv))
+				t.Cleanup(func() { agentd.StopHistoryOpenCodeRuntimeForTest("traveller") })
+			}
+			row, err := db.FindSessionByConvID(in.Conv)
+			require.NoError(t, err)
+			require.NotNil(t, row)
+			row.Status = "idle"
+			require.NoError(t, db.SaveSession(row))
+
+		case "codex":
 			require.NoError(t, f.World.Codexes.GetByConvID(in.Conv).WriteExchange(in.Text, in.Assistant))
-		} else {
+		default:
 			cc := f.World.CCs.GetByConvID(in.Conv)
 			require.NoError(t, cc.WriteUserTurn(in.Text))
 			require.NoError(t, cc.AppendTurn(map[string]any{"type": "assistant", "cwd": cwd, "message": map[string]any{"role": "assistant", "content": []map[string]string{{"type": "text", "text": in.Assistant}}}}))
 		}
 		require.NoError(t, db.GrantAgentPermissionWithScope(in.Conv, agentd.PermSelfTeleport, string(mustJSON(t, map[string]any{"peer": []string{in.Peer}})), "test operator"))
+		w.WriteHeader(204)
+	})
+
+	mux.HandleFunc("/test/opencode-exit", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			PID int `json:"pid"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&in))
+		runtime, err := db.FindOpenCodeRuntimeByPID(in.PID)
+		require.NoError(t, err)
+		require.NotNil(t, runtime)
+		cc := f.World.CCs.GetByConvID(runtime.ConvID)
+		require.NotNil(t, cc)
+		cc.Shutdown()
 		w.WriteHeader(204)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -140,6 +179,10 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 		f.Mux.ServeHTTP(w, r)
 	})
 	srv := httptest.NewServer(mux)
+	if name == "opencode" {
+		t.Setenv("TCLAUDE_OPENCODE_HISTORY_EXIT_URL", srv.URL+"/test/opencode-exit")
+	}
+
 	t.Cleanup(srv.Close)
 	instance := agentd.FederationInstanceIDForTest()
 	identity, err := proto.LoadIdentity(agentd.FederationKeyPath())
@@ -326,8 +369,16 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 	}
 	land := func(node historyNode, d bundletransfer.Descriptor) string {
 		path := "/v1/federation/bundle-offers/" + d.ID + "/import"
+		var lastRaw []byte
+		var lastCode int
+		t.Cleanup(func() {
+			if t.Failed() {
+				t.Logf("last import preview: %d %s", lastCode, lastRaw)
+			}
+		})
 		fedEventuallyWithin(t, "offer received", historyTestRequestTimeout(), func() bool {
-			code, _ := historyNodeRequest(t, node, "POST", path, "", map[string]any{"cwd": node.Cwd})
+			code, raw := historyNodeRequest(t, node, "POST", path, "", map[string]any{"cwd": node.Cwd})
+			lastCode, lastRaw = code, raw
 			return code == 200
 		})
 		code, raw := historyNodeRequest(t, node, "POST", path, "", map[string]any{"apply": true, "cwd": node.Cwd})
@@ -351,8 +402,15 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 		require.Equal(t, int32(2*(chunks+1)), streamJoins.Load(), "completed chunks must not be fetched again after interruption")
 	}
 	require.NotEqual(t, sourceConv, remoteConv)
+	var lastMove []byte
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("last outward move: %s", lastMove)
+		}
+	})
 	fedEventually(t, "A retires only after B is running", func() bool {
 		code, raw := historyNodeRequest(t, a, "GET", "/v1/federation/moves/"+outward.ID, "", nil)
+		lastMove = raw
 		var move struct {
 			State string `json:"state"`
 		}
