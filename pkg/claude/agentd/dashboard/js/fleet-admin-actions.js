@@ -65,5 +65,12 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
     applyProfile: (name, { peer, apply = false, previewToken = '', confirmFingerprint = '' }) => call('POST', `profiles/${encodeURIComponent(name)}/apply`,
       { peer, apply, preview_token: previewToken, confirm_fingerprint: confirmFingerprint }),
     enroll: ({ master, token, previewToken }) => call('POST', 'enroll', { master, token, preview_token: previewToken }),
+    // Model gateways: policy and switches (no provider URLs or credentials),
+    // requester-paid leases, and daily usage (UTC day, '' = today).
+    models: () => call('GET', 'models/control'),
+    setModelSwitch: ({ name = '', peer = '', disabled }) => call('POST', 'models/control', { ...(name ? { name } : {}), ...(peer ? { peer } : {}), disabled }),
+    modelLeases: async () => (await call('GET', 'models/leases')) || [],
+    revokeModelLease: (id) => call('POST', 'models/leases', { id }),
+    modelUsage: async (day = '') => (await call('GET', `models/usage${day ? `?day=${encodeURIComponent(day)}` : ''}`)) || [],
   });
 }

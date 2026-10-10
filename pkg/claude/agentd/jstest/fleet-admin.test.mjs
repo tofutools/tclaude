@@ -92,6 +92,20 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     removePoolMember: async (n, p) => { log.push(['removePoolMember', n, p]); return { ok: true }; },
     setDefaultProfile: async (n) => { log.push(['setDefaultProfile', n]); return { profile_id: n }; },
     deleteProfile: async (n) => { log.push(['deleteProfile', n]); return { ok: true }; },
+    models: async () => { log.push(['models']); return { disabled: false, gateways: {
+      claude: { enabled: true, dialect: 'anthropic', models: ['claude-sonnet-5-5'], daily_requests: 500, daily_tokens: 2000000, peer_daily_tokens: 500000, max_concurrent: 4, blocked_peers: ['inst_lab'] },
+      openai: { enabled: false, models: [] },
+    } }; },
+    setModelSwitch: async (o) => { log.push(['modelSwitch', o]); return o; },
+    modelLeases: async () => [
+      { id: 'lease_aaaaaaaaaaaa1', peer: 'inst_forge', proxy: 'claude', kind: 'requester_paid', worker: 'agt_w1', revoked: false, idle_seconds: 7200, touched_at: '2026-10-10T09:00:00Z' },
+      { id: 'lease_bbbbbbbbbbbb2', peer: 'inst_forge', proxy: 'claude', worker: 'agt_w0', revoked: true, touched_at: '2026-10-09T09:00:00Z' },
+    ],
+    revokeModelLease: async (id) => { log.push(['revokeLease', id]); return { revoked: true }; },
+    modelUsage: async (day) => { log.push(['usage', day]); return [
+      { proxy: 'claude', peer: 'inst_forge', model: 'claude-sonnet-5-5', charged_tokens: 1200, input_tokens: 1000, output_tokens: 200, status: 200, complete: true },
+      { proxy: 'claude', peer: 'inst_forge', model: 'claude-sonnet-5-5', charged_tokens: 300, input_tokens: 300, output_tokens: 0, status: 429, complete: false },
+    ]; },
     applyProfile: async (n, o) => { log.push(['applyProfile', n, o]); return { preview_token: 'ptok', changes: [{ item: 'trust_level', before: 'restricted', after: 'unrestricted', security: true }, { item: 'pool/pool_r', before: false, after: true, security: true }], pools: [{ id: 'pool_r', name: 'rigs', live_grants: [{ slug: 'groups.members.spawn', scope: '' }] }], security_changes: 2, conflicts: [] }; },
   };
   const snapshot = harness.signals.signal({ groups: [{ name: 'ops' }, { name: 'build' }] });
@@ -626,4 +640,33 @@ test('accepting remote scripts confirms full remote code execution; node.exec gr
   const saves = s.runLog.filter((l) => l[0] === 'save').length;
   await s.click(s.q('#fleet-run-limits'));
   assert.equal(s.runLog.filter((l) => l[0] === 'save').length, saves, 'a non-numeric cpu is rejected, never sent');
+});
+
+test('model gateways: switches confirm what they revoke, leases revoke, and usage sums per gateway, peer and model', async (t) => {
+  const s = await setup(t);
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Model gateways/.test(b.textContent)));
+  assert.match(s.q('#fleet-models-master').textContent, /on \(1 of 2 enabled\)/);
+  assert.match(s.q('[data-gateway="claude"]').textContent, /claude-sonnet-5-5.*500 req · 2M tok · 500k tok · unlimited.*4 at once.*lab/s);
+  await s.click(s.q('#fleet-models-master-toggle'));
+  assert.match(s.confirms.at(-1).body, /every active lease is revoked at once/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'modelSwitch'), ['modelSwitch', { disabled: true }]);
+  await s.click(s.q('[data-gateway="openai"] [data-fa="gateway"]'));
+  assert.match(s.confirms.at(-1).body, /charged to this node's provider account/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'modelSwitch'), ['modelSwitch', { name: 'openai', disabled: false }]);
+  await s.click(s.q('[data-gateway="claude"] [data-fa="unblock"]'));
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'modelSwitch'), ['modelSwitch', { name: 'claude', peer: 'inst_lab', disabled: false }]);
+  const sel = s.q('[data-gateway="claude"] .fa-model-block');
+  assert.deepEqual([...sel.querySelectorAll('option')].map((o) => o.textContent), ['block a peer…', 'forge'], 'a blocked peer is not offered again');
+  for (const o of sel.querySelectorAll('option')) { if (o.value === 'inst_forge') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
+  await s.harness.act(() => s.harness.fireEvent(sel, 'change'));
+  await s.click(s.q('[data-gateway="claude"] [data-fa="block"]'));
+  assert.match(s.confirms.at(-1).body, /forge can no longer use claude.*leases on claude are revoked/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'modelSwitch'), ['modelSwitch', { name: 'claude', peer: 'inst_forge', disabled: true }]);
+  assert.equal(s.mounted.container.querySelectorAll('#fleet-model-leases [data-fa="revoke-lease"]').length, 1, 'a revoked lease offers nothing');
+  await s.click(s.q('[data-lease="lease_aaaaaaaaaaaa1"] [data-fa="revoke-lease"]'));
+  assert.match(s.confirms.at(-1).body, /forge worker agt_w1 using this lease loses model access through claude/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'revokeLease'), ['revokeLease', 'lease_aaaaaaaaaaaa1']);
+  const usage = [...s.mounted.container.querySelectorAll('#fleet-model-usage tbody tr')].map((r) => [...r.querySelectorAll('td')].map((c) => c.textContent.trim()).join('|'));
+  assert.deepEqual(usage, ['claude|forge|claude-sonnet-5-5|2 (1 failed)|1.5k|1.3k · 200']);
 });

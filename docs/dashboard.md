@@ -620,6 +620,15 @@ first and says what will happen. Most pages name their CLI.
   allows, **Revoke…** it, or add one: permission, group, cap, **Grant…**.
   Sensitive grants (spawning, attach, `node.exec`, …) say what they let the
   peer do.
+- **Model gateways** — this node's model gateways, which peers with a
+  `models.proxy` grant use to send model requests charged to this node's
+  provider account. See each gateway's models and limits, turn one off or on,
+  block or unblock a peer on it, or **Turn off all…**. Turning anything off
+  revokes the matching leases at once, so requester-paid workers using them
+  lose model access. Below that are the leases (**Revoke…** one) and a day's
+  usage per gateway, peer and model. Gateways themselves (provider,
+  credentials, limits) are configured in config. CLI: `tclaude federation
+  models`.
 - **Profiles & pools** — pools group nodes so one grant covers every member;
   add or remove members and open a pool's grants. Profiles bundle a trust
   level, pools and grants: **Apply to peer…** previews the plan, **Make
