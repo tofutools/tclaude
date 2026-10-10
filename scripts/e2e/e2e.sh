@@ -15,19 +15,20 @@ set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 HERE=$REPO/scripts/e2e
-BASE=${E2E_BASE:-${TMPDIR:-/tmp}/tce2e} # keep SHORT: unix socket paths are limited to ~108 bytes
-BIN=${E2E_BIN:-$BASE/bin}
+BASE=$(realpath -m "${E2E_BASE:-${TMPDIR:-/tmp}/tce2e}") # keep SHORT: unix socket paths are limited to ~108 bytes
+BIN=$(realpath -m "${E2E_BIN:-$BASE/bin}")
 HUB_ADDR=127.0.0.1:18470
 declare -A PORT=([a]=18481 [b]=18482)
 declare -A MOCK=([a]=18491 [b]=18492)
 export DRIVE_PORT=${DRIVE_PORT:-19222}
 
-# Strip what a calling agent session leaks into child processes. Without this,
-# agentd would try to reuse the caller's tmux server and runtime unit.
+# Start every process from an allowlisted environment. A calling agent leaks
+# variables (TCLAUDE_AGENTD_SOCKET, CLAUDE_CONFIG_DIR, TMUX, ...) that would
+# point the nodes at the operator's real daemon, tmux server or credentials.
 clean_env() {
-	${E2E_EXEC:-} env -u TMUX -u TMUX_PANE -u TCLAUDE_SESSION_ID -u TCLAUDE_EXIT_GENERATION \
-		-u TCLAUDE_AGENT_HINT -u TCLAUDE_HOOK_BROKER -u TCLAUDE_RESOURCE_DELEGATION_DIR \
-		-u TCLAUDE_HUMAN_TOKEN "$@"
+	${E2E_EXEC:-} env -i PATH="$BIN:$PATH" TERM="${TERM:-xterm-256color}" LANG="${LANG:-C.UTF-8}" \
+		USER="${USER:-$(id -un)}" LOGNAME="${LOGNAME:-$(id -un)}" SHELL="${SHELL:-/bin/bash}" \
+		TMPDIR="${TMPDIR:-/tmp}" "$@"
 }
 
 node_env() { # node_env <a|b> cmd...
@@ -36,11 +37,18 @@ node_env() { # node_env <a|b> cmd...
 	clean_env HOME="$BASE/$n" TMUX_TMPDIR="$BASE/$n/tmux" XDG_CONFIG_HOME="$BASE/$n/.config" \
 		XDG_CACHE_HOME="$BASE/$n/.cache" XDG_DATA_HOME="$BASE/$n/.local/share" \
 		ANTHROPIC_BASE_URL="http://127.0.0.1:${MOCK[$n]}" ANTHROPIC_API_KEY="sk-ant-e2e-mock-key-0000000000" \
-		CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_AUTOUPDATER=1 \
-		PATH="$BIN:$PATH" "$@"
+		CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_AUTOUPDATER=1 "$@"
 }
 
-hub_env() { clean_env HOME="$BASE/hub" TCLAUDE_HUB_DIR="$BASE/hub/data" PATH="$BIN:$PATH" "$@"; }
+hub_env() { clean_env HOME="$BASE/hub" TCLAUDE_HUB_DIR="$BASE/hub/data" "$@"; }
+
+# alive <name>: the pid file exists and still names one of our processes.
+alive() {
+	local f=$BASE/$1.pid pid
+	[[ -f $f ]] || return 1
+	pid=$(cat "$f")
+	kill -0 "$pid" 2>/dev/null && tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -qE "$BASE|$BIN|mockapi.py"
+}
 
 # Claude Code onboarding, API-key approval (last 20 chars of the key) and
 # folder trust are pre-accepted so agents start without interactive prompts.
@@ -69,6 +77,9 @@ build)
 	ls "$BIN"
 	;;
 up)
+	for x in hub a b mock-a mock-b; do
+		if alive "$x"; then echo "$x is already running; run '$0 down' first" >&2 && exit 1; fi
+	done
 	mkdir -p "$BASE"/{hub/data,logs} "$BASE"/{a,b}/{tmux,proj}
 	(cd "$BASE/hub" && E2E_EXEC=exec hub_env nohup "$BIN/tclaude-hub" serve --listen "$HUB_ADDR" >"$BASE/logs/hub.log" 2>&1 &
 		echo $! >"$BASE/hub.pid")
@@ -96,9 +107,9 @@ pair)
 	"$0" run a federation peers
 	;;
 down)
-	for p in "$BASE"/{hub,a,b,mock-a,mock-b}.pid; do
-		[[ -f $p ]] && kill "$(cat "$p")" 2>/dev/null || true
-		rm -f "$p"
+	for x in hub a b mock-a mock-b; do
+		if alive "$x"; then kill "$(cat "$BASE/$x.pid")"; fi
+		rm -f "$BASE/$x.pid"
 	done
 	for n in a b; do node_env "$n" tmux -L tclaude kill-server 2>/dev/null || true; done
 	"$0" browser stop
@@ -106,7 +117,7 @@ down)
 	;;
 status)
 	for x in hub a b mock-a mock-b chrome; do
-		if [[ -f $BASE/$x.pid ]] && kill -0 "$(cat "$BASE/$x.pid")" 2>/dev/null; then echo "$x: up (pid $(cat "$BASE/$x.pid"))"; else echo "$x: down"; fi
+		if alive "$x"; then echo "$x: up (pid $(cat "$BASE/$x.pid"))"; else echo "$x: down"; fi
 	done
 	;;
 run)
@@ -122,6 +133,7 @@ dash) "$0" run "$2" agent dashboard --print | grep -o 'http[^ ]*' | head -1 ;;
 browser)
 	case ${2:-} in
 	start)
+		if alive chrome; then echo "chrome is already running" >&2 && exit 1; fi
 		# Chrome's crashpad ignores --user-data-dir and aborts when ~/.config is
 		# unwritable (agent sandboxes), so point every XDG dir at a disposable one.
 		c=$BASE/chrome
@@ -134,7 +146,7 @@ browser)
 		echo "chrome on :$DRIVE_PORT (drive with $BIN/drive)"
 		;;
 	stop)
-		[[ -f $BASE/chrome.pid ]] && kill "$(cat "$BASE/chrome.pid")" 2>/dev/null || true
+		if alive chrome; then kill "$(cat "$BASE/chrome.pid")"; fi
 		rm -f "$BASE/chrome.pid"
 		;;
 	*) echo "usage: $0 browser start|stop" >&2 && exit 2 ;;

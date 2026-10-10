@@ -73,9 +73,11 @@ Create some agents to work with. Model-backed agents get replies from the
 mock, `[mock model @ node-b] Received: <your text>`:
 
 ```bash
-$E run a agent groups create builders -d $E2E_BASE/a/proj
+$E run a agent groups create builders
+$E run a agent groups set-default-dir builders $E2E_BASE/a/proj
 $E run a agent spawn builders --name builder-1 --initial-message 'hello from a'
-$E run b agent groups create reviewers -d $E2E_BASE/b/proj
+$E run b agent groups create reviewers
+$E run b agent groups set-default-dir reviewers $E2E_BASE/b/proj
 $E run b agent spawn reviewers --name reviewer-1 -C $E2E_BASE/b/proj --initial-message 'hello from b'
 $E run b agent spawn reviewers --name reviewer-home -C $E2E_BASE/b --initial-message 'rooted in HOME'
 echo 'shared notes' > $E2E_BASE/b/proj/notes.txt
@@ -178,6 +180,43 @@ your report.
 - Run scripts on a peer node (Fleet → Run scripts)
 - Human inbox and answers across nodes
 - Peer mail: `federation export` / `import`, then `agent message <member>@b`
+
+## Recording demos
+
+Browser clips come from Chrome's screencast. Start `drive record` in the
+background, drive the page, then stop the recorder with SIGINT. It encodes
+the frames with ffmpeg, holding each frame on screen for as long as it was
+actually visible:
+
+```bash
+export DRIVE_SHOW=1                            # outline each click/type target first
+$D record /tmp/rec/frames /tmp/rec/demo.mp4 & R=$!
+$D caption 'Node a: opening the skynet map'    # banner at the bottom; no args clears it
+$D clicktext 'Fleet'
+...
+kill -INT $R; wait $R
+```
+
+Navigating to another page removes the caption, so set it again after each
+navigation.
+
+For CLI clips, record a scripted session with asciinema. Set
+`ASCIINEMA_CONFIG_HOME` to a writable directory when `~/.config` is
+read-only. To turn the cast into video, play it in asciinema-player inside
+the same Chrome and record that playback. The page needs to be served over
+HTTP, for example with `python3 -m http.server` in the cast's directory,
+because `file://` cannot fetch the cast:
+
+```bash
+ASCIINEMA_CONFIG_HOME=/tmp/asciinema asciinema rec -q --overwrite --cols 140 --rows 24 -c ./cli-demo.sh /tmp/rec/cli.cast
+```
+
+The player page loads
+`https://cdn.jsdelivr.net/npm/asciinema-player@3.8.0/dist/bundle/asciinema-player.min.js`
+(and its CSS), creates the player with `autoPlay: false`, and exposes it as
+`window.player`. Open it, start `drive record`, run
+`$D eval 'window.player.play()'`, wait for the cast's length, then stop the
+recorder.
 
 ## Single-host caveats
 
