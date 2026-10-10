@@ -37,18 +37,16 @@ import (
 // process does.
 //
 // The turn remains in flight for ~28s after it begins, beyond this whole-run
-// deadline. Keystrokes wait for the first rendered content delta, so slow
+// deadline. Keystrokes wait for the provider to receive the turn request, so slow
 // startup cannot turn a mid-turn cancel into a startup interrupt.
 const softExitDeadline = 18 * time.Second
-
-const softExitTurnMarker = "SOFT_EXIT_TURN_RUNNING"
 
 // softExitBusyTurn holds the TUI mid-turn for the whole scenario: ~40 deltas
 // at 700ms is far longer than the deadline, so the turn is still in flight
 // whenever the keystrokes below arrive.
 func softExitBusyTurn() []copilotfixture.Turn {
 	return []copilotfixture.Turn{{
-		Text:       softExitTurnMarker + " one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twenty-one twenty-two twenty-three twenty-four twenty-five twenty-six twenty-seven twenty-eight twenty-nine thirty thirty-one thirty-two thirty-three thirty-four thirty-five thirty-six thirty-seven thirty-eight thirty-nine forty",
+		Text:       "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twenty-one twenty-two twenty-three twenty-four twenty-five twenty-six twenty-seven twenty-eight twenty-nine thirty thirty-one thirty-two thirty-three thirty-four thirty-five thirty-six thirty-seven thirty-eight thirty-nine forty",
 		ChunkDelay: 700 * time.Millisecond,
 	}}
 }
@@ -58,9 +56,17 @@ func softExitBusyTurn() []copilotfixture.Turn {
 func softExitRun(t *testing.T, keys []copilotfixture.Keystroke) copilotfixture.PTYResult {
 	t.Helper()
 	mock := copilotfixture.NewMockProvider(t, softExitBusyTurn())
+	turnRequested := func() bool {
+		for _, req := range mock.Requests() {
+			if strings.HasSuffix(req.Path, "/chat/completions") {
+				return true
+			}
+		}
+		return false
+	}
 	dirs := copilotfixture.NewSandboxDirs(t)
 	copilotfixture.TrustFolder(t, dirs.Home, dirs.WorkDir)
-	return copilotfixture.RunPTY(t, copilotfixture.PTYOptions{
+	res := copilotfixture.RunPTY(t, copilotfixture.PTYOptions{
 		RunOptions: copilotfixture.RunOptions{
 			Root: dirs.Root, Home: dirs.Home, Cache: dirs.Cache, WorkDir: dirs.WorkDir,
 			BaseURL: mock.BaseURL(),
@@ -69,15 +75,20 @@ func softExitRun(t *testing.T, keys []copilotfixture.Keystroke) copilotfixture.P
 		Deadline:   softExitDeadline,
 		Keystrokes: keys,
 		KeystrokesWhen: func(text string) bool {
-			return strings.Contains(text, softExitTurnMarker)
+			// Provider traffic proves the TUI has initialized and started its
+			// turn. Streamed text is not a reliable transcript marker: the
+			// spinner redraw can interleave control bytes inside every word.
+			return text != "" && turnRequested()
 		},
 	})
+	require.True(t, turnRequested(), "the injection must observe a running turn; transcript=%q", lastLines(res.TranscriptText(), 20))
+	return res
 }
 
 // softExitKeys renders the injection tclaude performs: optional prefix keys,
 // then the command text, then the two settled Enters. The 500ms gaps are the
 // production settle (paneinput.defaultSettleDelay). softExitRun gates the
-// sequence on the first rendered delta, which proves the turn is running.
+// sequence on the provider turn request, which proves the turn is running.
 func softExitKeys(prefix string) []copilotfixture.Keystroke {
 	keys := []copilotfixture.Keystroke{}
 	lead := time.Duration(0)
@@ -99,11 +110,10 @@ func softExitKeys(prefix string) []copilotfixture.Keystroke {
 // The negative claim is only worth as much as its control, which is the next
 // scenario: the same rig, the same bytes, one cancel keystroke in front.
 func TestCopilotSoftExitBareExitIsDiscardedMidTurn(t *testing.T) {
-	// Both arms use the same rendered-turn gate and remain sequential.
+	// Both arms use the same provider-turn gate and remain sequential.
 	requireLab(t)
 
 	res := softExitRun(t, softExitKeys(""))
-	require.True(t, res.Contains(softExitTurnMarker), "the injection must observe a running turn")
 
 	assert.False(t, res.Exited,
 		"1.0.77 discarded a mid-turn /exit; a run that EXITED means the CLI changed "+
@@ -119,12 +129,11 @@ func TestCopilotSoftExitBareExitIsDiscardedMidTurn(t *testing.T) {
 // TestCopilotSoftExitCancelFirstExitsMidTurn is the fix, measured: one cancel
 // keystroke ahead of the identical sequence and the busy pane exits cleanly.
 func TestCopilotSoftExitCancelFirstExitsMidTurn(t *testing.T) {
-	// Both arms use the same rendered-turn gate and remain sequential.
+	// Both arms use the same provider-turn gate and remain sequential.
 	requireSmoke(t)
 
 	// "\x03" is the byte tmux send-keys C-c delivers.
 	res := softExitRun(t, softExitKeys("\x03"))
-	require.True(t, res.Contains(softExitTurnMarker), "the injection must observe a running turn")
 
 	require.True(t, res.Exited,
 		"a cancel before /exit must let a busy pane exit; transcript=%q",
