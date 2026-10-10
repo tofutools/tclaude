@@ -1670,6 +1670,7 @@ type snapshotScopeDimOptions struct {
 }
 
 type dashboardGroup struct {
+	ID                         int64                            `json:"id"`
 	Name                       string                           `json:"name"`
 	Descr                      string                           `json:"descr"`
 	AttachmentURL              string                           `json:"attachment_url,omitempty"`
@@ -3434,7 +3435,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 		})
 		attachment := groupAttachmentViewFor(g)
-		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, AttachmentURL: attachment.URL, AttachmentLabel: attachment.Label, AttachmentLabelOverride: attachment.LabelOverride, DefaultCwd: g.DefaultCwd, DefaultSpawnGroup: g.DefaultSpawnGroup, DefaultContext: g.DefaultContext, Environment: append([]sandboxpolicy.EnvironmentEntry(nil), g.Environment...), DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, PermissionScopes: groupPermissionScopes, UnreadablePermissionScopes: groupUnreadablePermissionScopes, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), ReinjectAfterCompact: g.EffectiveReinjectAfterCompact(), OwnerScopes: ownerScopesWire(g.OwnerScopesJSON), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), RouteGeneration: g.RouteGeneration, Members: []dashboardMember{}}
+		dg := dashboardGroup{ID: g.ID, Name: g.Name, Descr: g.Descr, AttachmentURL: attachment.URL, AttachmentLabel: attachment.Label, AttachmentLabelOverride: attachment.LabelOverride, DefaultCwd: g.DefaultCwd, DefaultSpawnGroup: g.DefaultSpawnGroup, DefaultContext: g.DefaultContext, Environment: append([]sandboxpolicy.EnvironmentEntry(nil), g.Environment...), DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, PermissionScopes: groupPermissionScopes, UnreadablePermissionScopes: groupUnreadablePermissionScopes, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), ReinjectAfterCompact: g.EffectiveReinjectAfterCompact(), OwnerScopes: ownerScopesWire(g.OwnerScopesJSON), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), RouteGeneration: g.RouteGeneration, Members: []dashboardMember{}}
 		if g.ParentGroupID != nil {
 			dg.Parent = groupNameByID[*g.ParentGroupID]
 		}
