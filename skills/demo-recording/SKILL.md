@@ -53,11 +53,11 @@ real credentials.
 
 `drive` is a small CDP client (go-rod) that acts on one long-lived Chrome.
 Each call does one thing and exits, so you can inspect the result between
-steps. Build it with `go build ./scripts/e2e/drive` in the tclaude repo, or
-`go install github.com/tofutools/tclaude/scripts/e2e/drive@latest`.
+steps. In the tclaude repo, `e2e.sh build` puts it at `$E2E_BASE/bin/drive`
+(or build it yourself with `go build ./scripts/e2e/drive`).
 
 ```bash
-D=drive                               # uses DRIVE_PORT, default 19222
+D=$E2E_BASE/bin/drive                 # uses DRIVE_PORT, default 19222
 $D open http://127.0.0.1:8080/        # navigate the current tab
 $D shot /tmp/s.png                    # screenshot; view it before the next step
 $D clicktext 'Save'                   # smallest visible element containing the text
