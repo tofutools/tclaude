@@ -386,12 +386,36 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool) {
 		var result struct {
 			History bool `json:"history"`
 			Spawn   struct {
-				Conv string `json:"conv_id"`
+				Conv    string `json:"conv_id"`
+				AgentID string `json:"agent_id"`
 			} `json:"spawn"`
 		}
 		require.NoError(t, json.Unmarshal(raw, &result))
 		require.True(t, result.History)
-		require.NotEmpty(t, result.Spawn.Conv)
+		if result.Spawn.Conv == "" {
+			require.NotEmpty(t, result.Spawn.AgentID, string(raw))
+			// Managed native imports may finish after the HTTP inline grace.
+			fedEventuallyWithin(t, "imported agent enrolled", 30*time.Second, func() bool {
+				code, raw := historyNodeRequest(t, node, "GET", "/v1/groups/project/members", "", nil)
+				if code != 200 {
+					return false
+				}
+				var members []struct {
+					AgentID string `json:"agent_id"`
+					Conv    string `json:"conv_id"`
+				}
+				if json.Unmarshal(raw, &members) != nil {
+					return false
+				}
+				for _, member := range members {
+					if member.AgentID == result.Spawn.AgentID {
+						result.Spawn.Conv = member.Conv
+					}
+				}
+				return result.Spawn.Conv != ""
+			})
+		}
+		require.NotEmpty(t, result.Spawn.Conv, string(raw))
 		return result.Spawn.Conv
 	}
 	outward := teleport(a, b, sourceConv, false)
