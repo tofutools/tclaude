@@ -76,6 +76,7 @@ func fail(err error) {
 
 type serveParams struct {
 	dbParam
+	AcceptRemoteScripts    bool          `long:"accept-remote-scripts" help:"Allow explicitly granted hub.exec administrators to run scripts as the hub service user (full host code execution)"`
 	Listen                 string        `long:"listen" default:"127.0.0.1:8470" help:"Listen address"`
 	TLSCert                string        `long:"tls-cert" optional:"true" help:"TLS certificate (PEM). Without it the hub serves plain HTTP, which clients only accept on loopback; front it with a TLS proxy otherwise"`
 	TLSKey                 string        `long:"tls-key" optional:"true" help:"TLS private key (PEM)"`
@@ -121,8 +122,13 @@ func serveCmd() *cobra.Command {
 					flags = append(flags, key)
 				}
 			}
+			var scriptSwitch *bool
+			if cmd.Flags().Changed("accept-remote-scripts") {
+				scriptSwitch = &p.AcceptRemoteScripts
+			}
 			h, err := hub.New(st, hub.Config{
-				Open: p.Open, MaxConnections: p.MaxConnections, ConnectionIdle: p.ConnectionIdle, StreamWait: p.StreamWait, HelloTimeout: p.HelloTimeout, FlagSettings: flags, FramesPerMinute: p.FramesPerMinute, BytesPerMinute: p.BytesPerMinute,
+				AcceptRemoteScripts: scriptSwitch,
+				Open:                p.Open, MaxConnections: p.MaxConnections, ConnectionIdle: p.ConnectionIdle, StreamWait: p.StreamWait, HelloTimeout: p.HelloTimeout, FlagSettings: flags, FramesPerMinute: p.FramesPerMinute, BytesPerMinute: p.BytesPerMinute,
 				PolicyRefresh: p.PolicyRefresh, IdentityRotationWindow: p.IdentityRotationWindow, Version: buildversion.AppVersion(),
 				MaxStreams: p.MaxStreams, StreamBytesPerSecond: p.StreamBytes, StreamIdle: p.StreamIdle,
 			})

@@ -14,6 +14,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"github.com/tofutools/tclaude/pkg/federation/hub"
 )
 
 var agentdTestTmuxBase string
@@ -34,6 +35,7 @@ var agentdTestTmuxBase string
 // `package agentd` test files compiled alongside this external
 // package.
 func TestMain(m *testing.M) {
+	hub.RunExecGuardian()
 	// Keep every tmux command in this test binary away from the operator's
 	// live `-L tclaude` server. This belongs here rather than in newFlow:
 	// internal package agentd tests share this binary but cannot call the

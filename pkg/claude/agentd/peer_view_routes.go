@@ -3,6 +3,11 @@ package agentd
 // Dashboard routes deliberately left local-only. The route guard test requires
 // an explicit decision here whenever a dashboard route is added.
 var peerViewLocalRoutes = []string{
+	"GET /api/federation/hub/run",
+	"POST /api/federation/hub/run",
+	"GET /api/federation/hub/run/jobs/{job_id}",
+	"GET /api/federation/hub/run/jobs/{job_id}/logs",
+	"GET /api/federation/hub/audit",
 	"GET /api/federation/hub/status",
 	"POST /api/federation/hub/claim",
 	"GET /api/federation/hub/admins",

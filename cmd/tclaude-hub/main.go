@@ -4,10 +4,12 @@ package main
 
 import (
 	"github.com/tofutools/tclaude/pkg/claude/cli"
+	"github.com/tofutools/tclaude/pkg/federation/hub"
 	"github.com/tofutools/tclaude/pkg/federation/hubcmd"
 )
 
 func main() {
+	hub.RunExecGuardian()
 	cli.Main(version, hubcmd.RootCmd)
 }
 

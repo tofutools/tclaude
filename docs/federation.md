@@ -3035,8 +3035,8 @@ The claim grants the redeeming instance's signing key the explicit capabilities
 `hub.admins.manage`, `hub.admissions.manage`, `hub.invites.manage`,
 `hub.spaces.manage`, `hub.settings.manage`, `hub.identity.manage`,
 `hub.health.read`, and `hub.logs.read`. Additional admins receive only the named
-capabilities you select. Unknown capabilities are refused. `hub.exec` is reserved
-for a future, separately gated feature and is not granted by admin status.
+capabilities you select. Unknown capabilities are refused. `hub.exec` is elevated and never granted by bootstrap or admin status.
+A remote admin can delegate it only if it already holds that capability.
 Removing the last admitted admin with `hub.admins.manage`, stripping that
 capability, revoking its admission, or recovering its lost key is refused. If all
 admin keys are lost, the hub host can run the shell-only command
@@ -3117,3 +3117,67 @@ persists a replay marker before executing/responding and records a bounded audit
 without payloads or tokens. Mutations are never automatically retried: if the
 connection drops after submission, inspect current state before explicitly
 submitting another change.
+
+
+### Scripts on the hub
+
+Hub scripts need **both** `hub.exec` on the calling instance and the hub-local
+`accept_remote_scripts` switch. The switch defaults off and cannot be changed
+through remote settings or any dashboard/CLI RPC. The host enables it with
+`tclaude-hub serve --accept-remote-scripts`, or a private regular `hub-config.json`
+next to the hub database (mode `0600`) containing:
+
+```json
+{"accept_remote_scripts": true}
+```
+
+An explicitly supplied flag wins over the local file, including
+`--accept-remote-scripts=false`. Without the flag, the file is re-read while jobs
+run; disabling it cancels their process groups. Malformed or unsafe config fails
+closed. Scripts are refused when the hub service runs as root.
+
+**Threat:** a script has the non-root hub service user's full host authority and
+can read that user's secrets, alter the hub database, or disrupt connectivity for
+the whole fleet. Pinned instance keys still prevent the hub from reading or
+forging end-to-end node content. Enable this switch only for administrators you
+trust with the hub host itself.
+
+Seed the first elevated grant from the hub host's shell:
+
+```bash
+tclaude-hub admin grant-exec inst_ID --db PATH
+tclaude federation hub run                         # inspect gates and limits
+tclaude federation hub run --file script.sh --timeout 1m
+tclaude federation hub run --file script.sh --no-wait
+tclaude federation hub run --job JOB_ID
+tclaude federation hub run --job JOB_ID --log stdout --offset 0
+tclaude federation hub audit list --max-entries 100
+```
+
+Jobs are durable, never replayed after a restart, and limited to four concurrent
+runs, a 16 KiB script, 1s–24h runtime (default 1h), and 4 MiB per output stream.
+A private child guardian owns the timeout and watches a hub-lifetime pipe, so
+a hub crash also kills the script process group. Terminal outcome audits are
+reconciled idempotently on restart. The waiting CLI shows incremental output,
+exit status, and duration. Revoking
+`hub.exec` or the caller's admission cancels an active run within the authority
+watch interval. A restart records an interrupted job and its outcome.
+
+The local human-only dashboard and CLI APIs share these tails beneath
+`/api/federation/hub/` and `/v1/federation/hub/`:
+
+| Tail | Method | Result |
+| --- | --- | --- |
+| `run` | GET | `{accept_remote_scripts,switch_source,can_exec,service_user,limits,warning}` |
+| `run` | POST | `{script,timeout_seconds?}` → durable job |
+| `run/jobs/{job_id}` | GET | Job metadata; `stdout_tail`, `stderr_tail`, `duration_ms` only with `hub.exec` |
+| `run/jobs/{job_id}/logs?stream=stdout&offset=0` | GET | `{data,next_offset,eof}`; `data` is base64, at most 64 KiB decoded; needs `hub.exec` |
+| `audit?cursor=…&max_entries=100` | GET | `{entries,next_cursor}`; at most 200 entries and 256 KiB; needs `hub.logs.read` |
+
+An empty log chunk while running has `eof:false`; advance by `next_offset` and
+poll again. Job states are `running`, `completed`, `failed`, `timed_out`,
+`cancelled`, or `lost` (restart). The hub audits the full script before execution
+and the outcome afterward. Audit readers without `hub.exec` see the actor,
+script hash/length and result, with `redacted:true` and no script text. The
+ordinary hub log ring never includes scripts or their output. These APIs are
+local-only; peer-view routes cannot reach them, regardless of node trust.
