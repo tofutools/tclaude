@@ -65,6 +65,11 @@ export function createFleetAdminActions({ fetchImpl = (...a) => globalThis.fetch
     removePoolMember: (name, peer) => call('DELETE', `nodes/groups/${encodeURIComponent(name)}/members`, { peer }),
     setDefaultProfile: (profile) => call('PUT', 'default-peer-profile', { profile }),
     deleteProfile: (name) => call('DELETE', `profiles/${encodeURIComponent(name)}`),
+    // One profile with the peers it is applied to; create; save a new
+    // revision of the exact record read (a stale revision is refused).
+    profile: (name) => call('GET', `profiles/${encodeURIComponent(name)}`),
+    createProfile: ({ name, definition }) => call('POST', 'profiles', { name, definition }),
+    saveProfile: (record) => call('PUT', `profiles/${encodeURIComponent(record.name)}`, record),
     // Preview (apply: false) returns the plan and its preview_token; apply
     // commits exactly that plan.
     applyProfile: (name, { peer, apply = false, previewToken = '', confirmFingerprint = '' }) => call('POST', `profiles/${encodeURIComponent(name)}/apply`,

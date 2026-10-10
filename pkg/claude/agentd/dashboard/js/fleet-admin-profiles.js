@@ -1,4 +1,5 @@
 import { h } from 'preact';
+import { ProfileEditor } from './fleet-admin-profile-editor.js';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
@@ -67,8 +68,8 @@ export function ApplyDialog({ profile, peers, actions, poolNames = new Map(), on
 
 // ProfilesPage manages node pools (membership carries the pool's grants) and
 // node profiles (the default for newly trusted peers, applying one to a peer,
-// deleting). Profile definitions are edited with the CLI.
-export function ProfilesPage({ view, pools, actions, confirm, toast, onOpenGrants, reload }) {
+// deleting, creating and editing definitions).
+export function ProfilesPage({ view, pools, groups = [], actions, confirm, toast, onOpenGrants, reload }) {
   const [profiles, setProfiles] = useState(null);
   const [defaultID, setDefaultID] = useState('');
   const [error, setError] = useState('');
@@ -76,6 +77,7 @@ export function ProfilesPage({ view, pools, actions, confirm, toast, onOpenGrant
   const [newPool, setNewPool] = useState('');
   const [adding, setAdding] = useState({});
   const [applying, setApplying] = useState(null);
+  const [editing, setEditing] = useState(null);
   const refresh = () => { setTick((n) => n + 1); reload(); };
 
   useEffect(() => {
@@ -180,7 +182,7 @@ export function ProfilesPage({ view, pools, actions, confirm, toast, onOpenGrant
       <button id="fleet-pool-create" type="button" disabled=${!newPool.trim()} onClick=${createPool}>Create pool</button>
     </div>
     <h4>Node profiles <span class="muted">${summaries ? summaries.length : ''}</span></h4>
-    <div class="muted">A profile bundles a trust level, pools, peer grants and worker defaults for a peer. Create and edit definitions with <code>tclaude federation profile</code>.</div>
+    <div class="muted">A profile bundles a trust level, pools, peer grants and worker defaults for a peer. <button id="fleet-profile-new" type="button" class="fa-link" onClick=${() => setEditing({ profile: null })}>New profile…</button> CLI: <code>tclaude federation profile</code>.</div>
     ${summaries && summaries.length === 0 && html`<div class="empty">No profiles yet.</div>`}
     ${summaries && summaries.length > 0 && html`<table class="fa-table" id="fleet-profiles">
       <thead><tr><th>Profile</th><th>Level</th><th>Pools</th><th>Grants</th><th>Labels</th><th></th></tr></thead>
@@ -191,6 +193,7 @@ export function ProfilesPage({ view, pools, actions, confirm, toast, onOpenGrant
         <td>${p.grants}</td>
         <td>${p.labels.join(', ') || html`<span class="muted">—</span>`}</td>
         <td class="fa-acts">
+          <button type="button" data-fa="edit-profile" onClick=${() => setEditing({ profile: (profiles || []).find((x) => x.id === p.id) })}>Edit…</button>
           <button type="button" data-fa="apply-profile" disabled=${!view.trusted.length} onClick=${() => setApplying(p)}>Apply to peer…</button>
           ${p.id === defaultID
             ? html`<button type="button" data-fa="clear-default" onClick=${() => setDefault(null)}>Clear default…</button>`
@@ -199,6 +202,8 @@ export function ProfilesPage({ view, pools, actions, confirm, toast, onOpenGrant
         </td>
       </tr>`)}</tbody>
     </table>`}
+    ${editing && html`<${ProfileEditor} profile=${editing.profile} pools=${pools} groups=${groups} actions=${actions} confirm=${confirm} toast=${toast}
+      onClose=${() => setEditing(null)} onDone=${(msg) => { setEditing(null); done(msg); }} />`}
     ${applying && html`<${ApplyDialog} profile=${applying} peers=${view.trusted} actions=${actions} poolNames=${poolNames} onClose=${() => setApplying(null)}
       onDone=${(msg) => { setApplying(null); done(msg); }} />`}
   </div>`;

@@ -362,7 +362,7 @@ export function FleetAdmin({
       : sub.id === 'invites'
       ? html`<${InvitesPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} now=${now()} />`
       : sub.id === 'profiles'
-      ? html`<${ProfilesPage} view=${view} pools=${pools} actions=${actions} confirm=${confirm} toast=${toast} reload=${reload}
+      ? html`<${ProfilesPage} view=${view} pools=${pools} groups=${localGroups(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} reload=${reload}
           onOpenGrants=${(target) => { setGrantTarget(target); setPage('grants'); }} />`
       : sub.id === 'models'
       ? html`<${ModelsPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} now=${now()} />`

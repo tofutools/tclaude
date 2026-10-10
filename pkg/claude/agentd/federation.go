@@ -154,6 +154,8 @@ func defaultFederationName() string {
 
 // fedRuntime is one live hub connection plus its workers.
 type fedRuntime struct {
+	catalogLocks sync.Map // peer instance id -> *sync.Mutex
+
 	peerViewsMu sync.Mutex
 	peerViews   *fedPeerViewState
 	healthMu    sync.Mutex
@@ -458,6 +460,14 @@ func (rt *fedRuntime) sendControl(to, kind, inReplyTo string, payload any) bool 
 }
 
 func (rt *fedRuntime) sendCatalog(peer string, status ...*statusSnapshot) {
+	// Catalogs are replacements. Serialize construction through delivery for
+	// each peer so a slow build under old trust cannot arrive after a newer
+	// downgrade/withdrawal and restore the peer's stale view.
+	lock, _ := rt.catalogLocks.LoadOrStore(peer, &sync.Mutex{})
+	mu := lock.(*sync.Mutex)
+	mu.Lock()
+	defer mu.Unlock()
+
 	cat, err := buildFederationCatalog(peer, status...)
 	if err != nil {
 		slog.Warn("federation: build catalog failed", "peer", peer, "error", err)

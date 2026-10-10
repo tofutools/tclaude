@@ -100,6 +100,9 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     removePoolMember: async (n, p) => { log.push(['removePoolMember', n, p]); return { ok: true }; },
     setDefaultProfile: async (n) => { log.push(['setDefaultProfile', n]); return { profile_id: n }; },
     deleteProfile: async (n) => { log.push(['deleteProfile', n]); return { ok: true }; },
+    profile: async (n) => { log.push(['profile', n]); return { profile: {}, applied_peers: ['inst_forge'] }; },
+    createProfile: async (o) => { log.push(['createProfile', o]); return { id: 'prof_new', name: o.name, revision: 1, definition: o.definition }; },
+    saveProfile: async (o) => { log.push(['saveProfile', o]); if (o.revision === 99) { const e = new Error('reload the current profile revision'); e.status = 409; e.code = 'stale_profile'; throw e; } return { ...o, revision: o.revision + 1 }; },
     models: async () => { log.push(['models']); return { disabled: false, gateways: {
       claude: { enabled: true, dialect: 'anthropic', models: ['claude-sonnet-5-5'], daily_requests: 500, daily_tokens: 2000000, peer_daily_requests: 100, peer_daily_tokens: 500000, session_daily_requests: 50, session_daily_tokens: 100000, max_input_tokens: 100000, max_output_tokens: 8000, max_concurrent: 4, requests_per_minute: 30, blocked_peers: ['inst_lab'] },
       openai: { enabled: false, models: [] },
@@ -651,6 +654,91 @@ test('accepting remote scripts confirms full remote code execution; node.exec gr
   assert.equal(s.runLog.filter((l) => l[0] === 'save').length, saves, 'a non-numeric cpu is rejected, never sent');
 });
 
+test('grant launch settings and model gateway scopes reach the grant body and the confirm', async (t) => {
+  const s = await setup(t);
+  await s.show();
+  await s.click(s.q('[data-peer="inst_forge"] [data-fa="grants"]'));
+  const pick = async (sel, value) => {
+    const el = s.q(sel);
+    for (const o of el.querySelectorAll('option')) { if (o.value === value) o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
+    await s.harness.act(() => s.harness.fireEvent(el, 'change'));
+  };
+  const type = async (sel, v) => { const el = s.q(sel); el.value = v; await s.harness.act(() => s.harness.fireEvent(el, 'input')); };
+  await pick('#fleet-grant-slug', 'groups.members.spawn');
+  await pick('#fleet-grant-group', 'ops');
+  await s.click(s.q('#fleet-grant-launch-toggle'));
+  await type('[data-launch="profile"]', 'opus-fast');
+  await type('[data-launch="allowed_profiles"]', 'opus-fast, sonnet-review');
+  await type('[data-launch="cwd"]', '/srv/ops');
+  await pick('[data-launch="requester_pays"]', 'required');
+  await s.click(s.q('#fleet-grant-submit'));
+  // A spawn-only setting typed, then a switch to jobs.run: it is not sent.
+  await pick('[data-launch="requester_pays"]', 'allowed');
+  assert.match(s.confirms.at(-1).body, /Workers start with profile opus-fast; selectable opus-fast, sonnet-review; directory \/srv\/ops; requester pays: required\. Its workers must use its own model gateway/);
+  assert.deepEqual(s.log.filter((l) => l[0] === 'grant').at(-1)[1], { peer: 'inst_forge', slug: 'groups.members.spawn', scope: 'group=ops',
+    spawn_policy: { profile: 'opus-fast', allowed_profiles: ['opus-fast', 'sonnet-review'], cwd: '/srv/ops', requester_pays: 'required', max_live: 2 } });
+  await pick('#fleet-grant-slug', 'jobs.run');
+  assert.equal(s.q('[data-launch="requester_pays"]'), null, 'requester pays is a spawn setting');
+  await pick('[data-launch="job_approval"]', 'manual');
+  await s.click(s.q('#fleet-grant-submit'));
+  assert.match(s.confirms.at(-1).body, /Each job waits for your approval/);
+  assert.equal(s.log.filter((l) => l[0] === 'grant').at(-1)[1].spawn_policy.requester_pays, undefined, 'a spawn-only setting never rides along');
+  await pick('#fleet-grant-slug', 'models.proxy');
+  await type('#fleet-grant-gateway', 'claude');
+  await s.click(s.q('#fleet-grant-submit'));
+  assert.match(s.confirms.at(-1).body, /on gateway claude only/);
+  assert.deepEqual(s.log.filter((l) => l[0] === 'grant').at(-1)[1], { peer: 'inst_forge', slug: 'models.proxy', scope: 'http_proxy=claude' });
+});
+
+test('profile editor: create and edit confirm the effect, keep advanced fields, and explain a stale revision', async (t) => {
+  const s = await setup(t);
+  s.actions.profiles = async () => ({ profiles: [{ id: 'prof_1', name: 'test-rig', revision: 3, definition: { trust_level: 'restricted', pools: ['pool_r'], labels: ['gpu'], peer_grants: [{ slug: 'jobs.run', scope: 'group=7', spawn_policy: { max_live: 3, job_approval: 'manual' } }], worker_permissions: { 'tasks.read': { allow: true } } } }], default: null });
+  await openProfiles(s, [{ id: 'pool_r', name: 'rigs', members: [] }, { id: 'pool_b', name: 'builders', members: [] }]);
+  const doc = s.harness.document; const q = (x) => doc.querySelector(x);
+  const type = async (sel, v) => { const el = q(sel); el.value = v; await s.harness.act(() => s.harness.fireEvent(el, 'input')); };
+  await s.click(s.q('#fleet-profile-new'));
+  await type('#fleet-profile-name', 'Bad Name');
+  await s.click(q('#fleet-profile-save'));
+  assert.match(q('#fleet-profile-editor [role=alert]').textContent, /lowercase/);
+  await type('#fleet-profile-name', 'ci-workers');
+  await type('#fleet-profile-labels', 'ci, linux');
+  await s.check(q('[data-pool="pool_b"]'));
+  await s.click(q('#fleet-profile-add-grant'));
+  await s.click(q('#fleet-profile-save'));
+  assert.match(s.confirms.at(-1).body, /restricted trust, 1 peer grant\(s\) and 1 pool membership.*Nothing changes for any peer until you apply it/);
+  assert.deepEqual(s.log.findLast((l) => l[0] === 'createProfile')[1], { name: 'ci-workers', definition: { trust_level: 'restricted', pools: ['pool_b'], labels: ['ci', 'linux'], peer_grants: [{ slug: 'message.direct', scope: '' }] } });
+  await s.click(s.q('#fleet-profiles [data-profile="test-rig"] [data-fa="edit-profile"]'));
+  assert.match(q('#fleet-profile-grants').textContent, /jobs\.run.*group #7/s);
+  assert.match(q('#fleet-profile-advanced').value, /tasks\.read/);
+  const lvl = q('#fleet-profile-level');
+  for (const o of lvl.querySelectorAll('option')) { if (o.value === 'unrestricted') o.setAttribute('selected', ''); else o.removeAttribute('selected'); }
+  await s.harness.act(() => s.harness.fireEvent(lvl, 'change'));
+  await s.click(q('#fleet-profile-save'));
+  assert.match(s.confirms.at(-1).title, /revision 3 → 4/);
+  assert.match(s.confirms.at(-1).body, /unrestricted trust.*created later.*applied to 1 peer\(s\); they keep their current settings until you apply it again.*Invites already issued for test-rig pin revision 3 and stop working/);
+  const saved = s.log.findLast((l) => l[0] === 'saveProfile')[1];
+  assert.deepEqual(saved, { id: 'prof_1', name: 'test-rig', revision: 3, definition: { trust_level: 'unrestricted', pools: ['pool_r'], labels: ['gpu'],
+    peer_grants: [{ slug: 'jobs.run', scope: 'group=7', spawn_policy: { max_live: 3, job_approval: 'manual' } }], worker_permissions: { 'tasks.read': { allow: true } } } }, 'launch settings and advanced fields survive');
+});
+
+test('moves: both directions listed, only abandonable outgoing moves offer Abandon, and the teleport freeze confirms', async (t) => {
+  const s = await setup(t);
+  await s.show();
+  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Moves/.test(b.textContent)));
+  const rows = [...s.mounted.container.querySelectorAll('#fleet-moves tbody tr')];
+  assert.equal(rows.length, 3);
+  assert.match(s.q('[data-move="m1"]').textContent, /⇢.*move.*forge.*ops.*awaiting_confirmation/s);
+  assert.match(s.q('[data-move="m2"]').textContent, /⇠.*teleport.*→/s);
+  assert.deepEqual(rows.filter((r) => r.querySelector('[data-fa="abandon"]')).map((r) => r.dataset.move), ['m1'], 'arriving and retiring moves cannot be abandoned');
+  await s.click(s.q('[data-move="m1"] [data-fa="abandon"]'));
+  assert.match(s.confirms.at(-1).body, /does not retire it here.*copy stays there as an independent agent/);
+  assert.ok(s.log.some((l) => l[0] === 'abandon' && l[1] === 'm1'));
+  await s.click(s.q('#fleet-teleport-toggle'));
+  assert.match(s.confirms.at(-1).body, /can no longer teleport to a peer, and teleports from peers can no longer land here/);
+  assert.ok(s.log.some((l) => l[0] === 'teleport' && l[1] === true));
+  assert.match(s.q('#fleet-teleport').textContent, /frozen/);
+});
+
 test('model gateways: switches confirm what they revoke, leases revoke, and usage sums per gateway, peer and model', async (t) => {
   const s = await setup(t);
   await s.show();
@@ -679,22 +767,4 @@ test('model gateways: switches confirm what they revoke, leases revoke, and usag
   assert.deepEqual(s.log.findLast((l) => l[0] === 'revokeLease'), ['revokeLease', 'lease_aaaaaaaaaaaa1']);
   const usage = [...s.mounted.container.querySelectorAll('#fleet-model-usage tbody tr')].map((r) => [...r.querySelectorAll('td')].map((c) => c.textContent.trim()).join('|'));
   assert.deepEqual(usage, ['claude|forge|claude-sonnet-5-5|3 (1 in progress) (1 failed)|109.5k|1.3k · 200']);
-});
-
-test('moves: both directions listed, only abandonable outgoing moves offer Abandon, and the teleport freeze confirms', async (t) => {
-  const s = await setup(t);
-  await s.show();
-  await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Moves/.test(b.textContent)));
-  const rows = [...s.mounted.container.querySelectorAll('#fleet-moves tbody tr')];
-  assert.equal(rows.length, 3);
-  assert.match(s.q('[data-move="m1"]').textContent, /⇢.*move.*forge.*ops.*awaiting_confirmation/s);
-  assert.match(s.q('[data-move="m2"]').textContent, /⇠.*teleport.*→/s);
-  assert.deepEqual(rows.filter((r) => r.querySelector('[data-fa="abandon"]')).map((r) => r.dataset.move), ['m1'], 'arriving and retiring moves cannot be abandoned');
-  await s.click(s.q('[data-move="m1"] [data-fa="abandon"]'));
-  assert.match(s.confirms.at(-1).body, /does not retire it here.*copy stays there as an independent agent/);
-  assert.ok(s.log.some((l) => l[0] === 'abandon' && l[1] === 'm1'));
-  await s.click(s.q('#fleet-teleport-toggle'));
-  assert.match(s.confirms.at(-1).body, /can no longer teleport to a peer, and teleports from peers can no longer land here/);
-  assert.ok(s.log.some((l) => l[0] === 'teleport' && l[1] === true));
-  assert.match(s.q('#fleet-teleport').textContent, /frozen/);
 });

@@ -642,8 +642,11 @@ first and says what will happen. Most pages name their CLI.
 - **Peer grants** — pick a peer or a pool, see each grant with where it
   applies (a group, or all groups including future ones, flagged) and what it
   allows, **Revoke…** it, or add one: permission, group, cap, **Grant…**.
-  Sensitive grants (spawning, attach, `node.exec`, …) say what they let the
-  peer do.
+  Spawn and job grants have **launch settings** (profile, selectable
+  profiles, harness, model, directory, requester pays, job approval) that
+  decide how this node starts workers for the peer; `models.proxy` grants
+  take one gateway name or cover them all. Sensitive grants (spawning,
+  attach, `node.exec`, …) say what they let the peer do.
 - **Model gateways** — this node's model gateways, which peers with a
   `models.proxy` (or, for requester-paid workers, `models.proxy.leased`)
   grant use to send model requests charged to this node's provider account.
@@ -658,8 +661,11 @@ first and says what will happen. Most pages name their CLI.
 - **Profiles & pools** — pools group nodes so one grant covers every member;
   add or remove members and open a pool's grants. Profiles bundle a trust
   level, pools and grants: **Apply to peer…** previews the plan, **Make
-  default…** applies it to newly trusted peers. Profile definitions are edited
-  with `tclaude federation profile`.
+  default…** applies it to newly trusted peers. **New profile…** / **Edit…**
+  edits a definition: trust level, pools, labels, requester-pays default and
+  peer grants, with worker permissions, the teleport landing and the config
+  bundle as JSON. Saving makes a new revision; peers it was applied to keep
+  their settings until it is applied again.
 - **Moves** — agent moves and teleports in both directions (⇢ leaving, ⇠
   arriving) with peer, group, state and expiry. **Abandon…** stops an outgoing
   move that has not started retiring the agent here; the agent is not retired

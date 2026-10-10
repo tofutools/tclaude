@@ -137,8 +137,8 @@ export const PEER_SLUGS = Object.freeze([
   { slug: 'node.exec', kind: 'node', sensitive: true, what: 'run any shell script on this node (only while it accepts remote scripts)', warning: 'Full remote code execution: once this node accepts remote scripts (Run scripts page), it can run any command here as the tclaude user — read and change your files, use your logins and keys, and reach whatever this machine can reach.' },
   { slug: 'node.harnesses.install', kind: 'node', sensitive: true, what: 'install and update harnesses on this node' },
   { slug: 'node.credentials.receive', kind: 'node', sensitive: true, what: 'push its harness credentials here — this node\'s agents then act as that operator with the provider' },
-  { slug: 'models.proxy', kind: 'node', what: 'use this node\'s model gateway (gateway scopes: CLI)' },
-  { slug: 'models.proxy.leased', kind: 'node', what: 'leased model gateway access' },
+  { slug: 'models.proxy', kind: 'node', gateway: true, what: 'use this node\'s model gateways (all, or one named gateway)' },
+  { slug: 'models.proxy.leased', kind: 'node', gateway: true, what: 'leased model gateway access for requester-paid workers (all gateways, or one)' },
 ]);
 
 export function slugInfo(slug) {
@@ -168,6 +168,7 @@ export function grantRows(grants, { ownPool = '', groups = null } = {}) {
     return {
       key: `${g.pool_id || ''}|${g.slug}|${g.scope || ''}`,
       slug: g.slug, scope: g.scope || '', group, what: info.what, sensitive: !!info.sensitive,
+      gateway: String(g.scope || '').startsWith('http_proxy=') ? String(g.scope).slice(11) : '',
       allGroups: !g.scope && info.kind === 'group',
       pool: g.pool_name && g.pool_name !== ownPool ? g.pool_name : '',
       deletedGroup,
@@ -185,12 +186,44 @@ export function extraPolicy(policy) {
   return Object.entries(policy || {}).filter(([k, v]) => k !== 'max_live' && v != null && v !== '' && !(Array.isArray(v) && !v.length)).map(([k]) => k);
 }
 
+// LAUNCH_FIELDS are a spawn/job grant's receiver launch settings: what this
+// node uses when it starts a worker for the peer (empty = the group's or
+// profile's default).
+export const LAUNCH_FIELDS = Object.freeze([
+  { key: 'profile', label: 'profile', slugs: ['groups.members.spawn'], hint: 'launch profile' },
+  { key: 'allowed_profiles', label: 'selectable', slugs: ['groups.members.spawn'], hint: 'profiles the peer may pick, comma-separated', list: true },
+  { key: 'harness', label: 'harness', hint: 'worker harness' },
+  { key: 'model', label: 'model', hint: 'worker model' },
+  { key: 'cwd', label: 'directory', hint: 'worker directory' },
+]);
+export const REQUESTER_PAYS = Object.freeze([
+  { value: '', label: 'default' },
+  { value: 'required', label: 'required: the peer must bring its own model gateway' },
+  { value: 'allowed', label: 'allowed: the peer may bring its own gateway' },
+  { value: 'off', label: 'off: workers use this node\'s logins' },
+]);
+
+// launchText lists a policy's launch settings for a confirm.
+export function launchText(policy = {}) {
+  const bits = [];
+  for (const f of LAUNCH_FIELDS) {
+    const v = policy[f.key];
+    if (Array.isArray(v) ? v.length : v) bits.push(`${f.label} ${Array.isArray(v) ? v.join(', ') : v}`);
+  }
+  if (policy.requester_pays) bits.push(`requester pays: ${policy.requester_pays}`);
+  if (policy.job_approval) bits.push(`job approval: ${policy.job_approval}`);
+  return bits.join('; ');
+}
+
 // grantConsequence spells out what a new grant lets the target do.
-export function grantConsequence({ target, slug, group, maxLive }) {
+export function grantConsequence({ target, slug, group, maxLive, gateway = '', policy = null }) {
   const info = slugInfo(slug);
-  const where = info.kind === 'node' ? 'node-wide' : group ? `in group ${group}` : 'in EVERY group on this node — every current group and every group created later';
+  const where = info.gateway ? (gateway ? `on gateway ${gateway} only` : 'on every model gateway of this node, including ones added later') : info.kind === 'node' ? 'node-wide' : group ? `in group ${group}` : 'in EVERY group on this node — every current group and every group created later';
   const cap = info.policy ? ` Live cap: ${maxLive || 2}.` : '';
-  return `${target} gets ${slug} (${info.what}) ${where}.${cap}`;
+  const launch = policy && launchText(policy) ? ` Workers start with ${launchText(policy)}.` : '';
+  const manual = policy?.job_approval === 'manual' ? ' Each job waits for your approval.' : '';
+  const pays = policy?.requester_pays === 'off' ? ' Its workers use this node\'s provider logins (you pay).' : policy?.requester_pays === 'required' ? ' Its workers must use its own model gateway (it pays).' : '';
+  return `${target} gets ${slug} (${info.what}) ${where}.${cap}${launch}${pays}${manual}`;
 }
 
 // TOKEN_TTLS are the invite lifetimes offered (the daemon allows 1s–30d).
