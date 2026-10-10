@@ -539,6 +539,9 @@
          filters) so they stay out of the recipient→message Tab path.
          Explicit grid placement (dashboard.css) maps each child to its
          cell, so DOM order is free. -->
+    <!-- Fused Messages (fused-mail.js): the ticked nodes' mail together. CSS
+         shows it instead of this node's mail client while fused. -->
+    <div id="skynet-fused-messages-root"></div>
     <div id="messages-root">
     <!-- Preact owns the complete Messages client. Keep this host stable so a
          feature-local load failure cannot prevent the dashboard shell from

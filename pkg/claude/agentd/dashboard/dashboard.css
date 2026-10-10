@@ -18755,9 +18755,23 @@ nav [data-tab].node-chip.map.active .node-chip-name { display: inline; }
 #skynet-fused-groups-root { display: none; }
 html.scope-fused #skynet-fused-groups-root { display: block; }
 html.scope-fused #tab-groups > :not(#skynet-fused-groups-root) { display: none !important; }
+/* Fused Messages likewise replaces this node's mail client. */
+#skynet-fused-messages-root { display: none; }
+html.scope-fused #skynet-fused-messages-root { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+html.scope-fused #messages-root { display: none !important; }
+.fused-mail { grid-template-columns: 260px 10px minmax(260px, 1fr) 10px minmax(320px, 1.4fr); }
+.fused-mail .mail-sidebar-filter { grid-column: 1; grid-row: 1; }
+.fused-mail-nodes { display: flex; flex-direction: column; gap: 3px; padding: 2px 4px 8px; margin-bottom: 6px; border-bottom: 1px solid #21262d; font-size: 12px; }
+.fused-mail-section .mailbox-section { margin-top: 10px; }
+.fused-mail .mail-row-top .scope-pill { flex: none; }
+.fused-mail-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.fused-mail-reply { width: 100%; box-sizing: border-box; margin-top: 10px; }
+.fused-mail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.fused-mail-actions .spacer { flex: 1; }
+.fused-mail-more { margin: 8px auto; display: block; }
 /* A per-node tab in a fused view: a dot in the primary's colour on its label,
    and a one-line banner over its content. */
-html.scope-fused nav [data-tab].active:not([data-tab="groups"]):not([data-tab="terminals"]):not(.node-chip):not(.fleet-anchor)::after {
+html.scope-fused nav [data-tab].active:not([data-tab="groups"]):not([data-tab="terminals"]):not([data-tab="messages"]):not(.node-chip):not(.fleet-anchor)::after {
   content: ""; width: 7px; height: 7px; margin-left: 6px; border-radius: 50%; background: var(--scope-primary, #58a6ff);
 }
 .scope-banner-host:empty { display: none; }
