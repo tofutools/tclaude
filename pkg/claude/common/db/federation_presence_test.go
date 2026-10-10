@@ -230,3 +230,25 @@ func TestFederationIdentityBackupReturnRetainsVisitContinuation(t *testing.T) {
 	require.NoError(t, DepartFederationIdentity("home-conv", "home", "visit", "next-offer", identity))
 	require.Error(t, AcceptFederationBackupReturnProof(id, "offer", "visit", "late"))
 }
+
+func TestFederationIdentityFailedFirstArrivalCanRetry(t *testing.T) {
+	setupTestDB(t)
+	identity := FederationIdentity{Agent: NewAgentID(), Home: "origin", Hops: 1, Proofs: map[string]string{"origin": "proof"}}
+	_, e := ReserveFederationIdentity(identity, "visit", "origin", "first")
+	require.NoError(t, e)
+	_, created, e := EnsureAgentForConvWithID("failed", identity.Agent, "visit")
+	require.NoError(t, e)
+	require.True(t, created)
+	_, e = DeleteUnlaunchedAgentByConvID("failed")
+	require.NoError(t, e)
+	_, e = ReserveFederationIdentity(identity, "visit", "origin", "first")
+	require.NoError(t, e)
+	_, _, e = EnsureAgentForConvWithID("retry", identity.Agent, "visit")
+	require.NoError(t, e)
+	_, e = RetireAgentAuthorizationByConv("retry", "human", "done")
+	require.NoError(t, e)
+	_, e = DeleteUnlaunchedAgentByConvID("retry")
+	require.Error(t, e)
+	_, e = ReserveFederationIdentity(identity, "visit", "origin", "again")
+	require.ErrorContains(t, e, "explicitly retired")
+}

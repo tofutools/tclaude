@@ -8822,7 +8822,7 @@ func rollbackSpawnEnrollment(g *db.AgentGroup, convID string, msgID int64, actor
 					"conv", convID, "agent", agentID, "error", err)
 			}
 		}
-		if _, err := db.DeleteAgentByConvID(convID); err != nil {
+		if _, err := db.DeleteUnlaunchedAgentByConvID(convID); err != nil {
 			slog.Warn("spawn: rollback failed to delete stranded actor",
 				"conv", convID, "error", err)
 		}
