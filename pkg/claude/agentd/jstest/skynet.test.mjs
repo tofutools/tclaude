@@ -58,6 +58,10 @@ test('card view distinguishes stale data, unreachable peers and absent summaries
   const peer = { id: 'p', local: false, online: true };
   const ok = model.cardView(peer, { summary: { shared_groups: 2, shared_agents: 4, online_agents: 3, waiting_for_input: 1, peer_view: { omitted: [{ feature: 'costs' }] } }, receivedAt: 1000 }, 2000);
   assert.equal(ok.presence, 'online'); assert.equal(ok.waiting, 1); assert.deepEqual(ok.omitted, ['costs']); assert.equal(ok.stale, false);
+  // Transport features (terminals, file links, inline spawn, the dashboard
+  // shell) work on their own channels: never listed as "not shared".
+  const unrestricted = model.cardView(peer, { summary: { peer_view: { omitted: [{ feature: 'local_dashboard', requires: 'local_only' }, { feature: 'sessions.files.read', requires: 'sessions.files.read', transport: true }, { feature: 'spawn.inline' }, 'terminals', { feature: 'custom.thing', transport: true }] } }, receivedAt: 1000 }, 2000);
+  assert.deepEqual(unrestricted.omitted, []);
   const stale = model.cardView(peer, { summary: { shared_agents: 4 }, receivedAt: 0, failure: model.classifyFailure(502, { code: 'peer_unreachable', reason: 'peer_offline', last_seen: 'x' }) }, 840000);
   assert.equal(stale.presence, 'offline'); assert.equal(stale.stale, true); assert.equal(model.fmtAge(stale.ageMs), '14 min'); assert.equal(stale.lastSeen, 'x');
   assert.equal(model.classifyFailure(504, { code: 'peer_unreachable', reason: 'peer_timeout' }).kind, 'timeout');
@@ -145,6 +149,7 @@ test('remote marker shows the node, what it shares, and stale data honestly', as
   assert.equal(model.remoteHealthView({ ok: false, lastOK: 0, failure: { code: 'peer_unreachable', reason: 'peer_offline' } }, 840000).label, 'offline · data 14 min old');
   assert.equal(model.remoteHealthView({ ok: false, lastOK: null, failure: { code: 'peer_busy' } }).state, 'busy');
   assert.deepEqual(model.peerViewSummary({ included: ['groups'], omitted: [{ feature: 'costs', requires: 'costs.read' }] }).omitted, [{ feature: 'costs', requires: 'costs.read' }]);
+  assert.deepEqual(model.peerViewSummary({ included: ['groups'], omitted: [{ feature: 'terminals', requires: 'sessions.attach', transport: true }, { feature: 'costs', requires: 'costs.read', requestable: true }] }).omitted, [{ feature: 'costs', requires: 'costs.read', requestable: true }]);
   const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('groups') });
   state.setStatus(status([]));
   const snapshot = harness.signals.signal({ peer_view: { peer: 'desk', included: ['groups'], omitted: [{ feature: 'costs', requires: 'costs.read' }] } });

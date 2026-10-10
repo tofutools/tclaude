@@ -2945,7 +2945,11 @@ Peer snapshot and group reads include each visible group's stable numeric `id`,
 which is the `group_id` used in permission requests. Omitted feature entries
 include `requestable: true|false`, derived from the dispatcher's permission and
 transport mapping plus existing-access admission. Local-only features and the
-request mechanism itself are never requestable. An approval may shorten the
+request mechanism itself are never requestable. Features the peer view never
+serves itself (the dashboard shell, terminals and their file links, inline
+spawn, node exec, access requests) also carry `transport: true`: their own
+channel decides whether they work, so the dashboard does not list them as
+"not shared". An approval may shorten the
 requested lifetime, but cannot lengthen it or convert a finite request to a
 permanent grant. A permanent request can be approved with a finite lifetime.
 

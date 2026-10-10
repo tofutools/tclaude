@@ -75,7 +75,8 @@ export function JoinDialog({ masters, actions, onClose, onDone }) {
       </select></label>
     <label class="cron-create-row"><span class="cron-create-label">Token</span>
       <input id="fleet-join-token" class="fa-token-input" type="password" autocomplete="off" spellcheck="false" placeholder="tcle1…" value=${token}
-        onInput=${(e) => { setToken(e.currentTarget.value); reset(); }} /></label>
+        onInput=${(e) => { setToken(e.currentTarget.value); reset(); }}
+        onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (busy) return; if (!preview) { if (master && token.trim()) doPreview(); } else if (checked) enroll(); } }} /></label>
     ${preview && html`<div class="fa-dl">
       <span class="fa-k">Master</span><code class="fa-wrap">${c.master}</code>
       <span class="fa-k">Master fingerprint</span><code class="fa-wrap fa-fp-full">${preview.master_fingerprint}</code>

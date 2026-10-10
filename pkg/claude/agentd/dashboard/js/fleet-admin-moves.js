@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
-import { receiverDecides, sentLanding } from './fleet-admin-landing.js';
+import { sentLanding } from './fleet-admin-landing.js';
 
 const html = htm.bind(h);
 
@@ -43,6 +43,13 @@ export function MoveAgentDialog({ peers, agents, actions, confirm, onClose, onDo
   const [error, setError] = useState('');
   const set = (k) => (e) => { setForm({ ...form, [k]: e.currentTarget.value }); setFindings(null); setAllow(false); };
   const peerLabel = peers.find((p) => p.id === form.peer)?.label || form.peer;
+  // The peer's catalog names the groups that receive agents from this node;
+  // "other" (or none listed) falls back to typing a name.
+  const receiving = peers.find((p) => p.id === form.peer)?.receiving || [];
+  const [typed, setTyped] = useState(false);
+  const picking = receiving.length > 0 && !typed;
+  const pickPeer = (e) => { setForm({ ...form, peer: e.currentTarget.value, group: '' }); setTyped(false); setFindings(null); setAllow(false); };
+  const pickGroup = (e) => { if (e.currentTarget.value === '\u0000other') { setTyped(true); setForm({ ...form, group: '' }); } else set('group')(e); };
   const agentLabel = agents.find((a) => a.id === form.agent)?.label || form.agent;
   const send = () => {
     if (!form.agent || !form.peer) { setError('Pick an agent and a peer.'); return; }
@@ -51,7 +58,7 @@ export function MoveAgentDialog({ peers, agents, actions, confirm, onClose, onDo
     setError('');
     confirm({
       title: `Move ${agentLabel} to ${peerLabel}?`,
-      body: `Sends ${agentLabel}'s configuration and its full conversation history — which may contain code, file contents and anything pasted into it — to ${peerLabel}, whose operator may start it in group ${group}. Once ${peerLabel} confirms its copy is running, ${agentLabel} is retired here: it stops running, leaves its groups and loses its grants on this node (its history and worktree stay), and mail peers send to its old address is refused. Until then you can abandon the move on this page, which keeps the agent here, but the history already offered to ${peerLabel} is not withdrawn and any copy it makes stays there. ${receiverDecides(peerLabel)}${allow ? ` The history includes suspected credentials (${findings.map((f) => `${f.kind} ×${f.count}`).join(', ')}).` : ''}`,
+      body: `Sends ${agentLabel}'s config and full conversation history (it may hold code or pasted secrets) to group ${group} on ${peerLabel}.${allow ? ` The history includes suspected credentials (${findings.map((f) => `${f.kind} ×${f.count}`).join(', ')}).` : ''} Once ${peerLabel} runs its copy, ${agentLabel} is retired here; until then you can abandon the move on this page, but what was sent stays there. ${peerLabel} picks the starting directory.`,
       okLabel: 'Move agent',
       busyLabel: 'Sending…',
       action: () => actions.moveAgent({ agent: form.agent, peer: form.peer, group, allow_flagged: allow }),
@@ -66,9 +73,14 @@ export function MoveAgentDialog({ peers, agents, actions, confirm, onClose, onDo
     ${!agents.length || !peers.length ? html`<div class="muted">${!agents.length ? 'This node has no agent to move.' : 'Trust a peer first.'}</div>` : html`
     <label class="fa-of-row"><span class="fa-k">agent</span><select id="fleet-move-agent-agent" value=${form.agent} onChange=${set('agent')}>
       ${agents.map((a) => html`<option key=${a.id} value=${a.id}>${a.label}</option>`)}</select></label>
-    <label class="fa-of-row"><span class="fa-k">peer</span><select id="fleet-move-agent-peer" value=${form.peer} onChange=${set('peer')}>
+    <label class="fa-of-row"><span class="fa-k">peer</span><select id="fleet-move-agent-peer" value=${form.peer} onChange=${pickPeer}>
       ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}</select></label>
-    <label class="fa-of-row"><span class="fa-k">group</span><input id="fleet-move-agent-group" value=${form.group} placeholder="receiving group on the peer (it must grant agents.receive)" autocomplete="off" onInput=${set('group')} /></label>
+    <label class="fa-of-row"><span class="fa-k">group</span>${picking
+      ? html`<select id="fleet-move-agent-group-pick" value=${form.group} onChange=${pickGroup}>
+          <option value="">pick a group that receives agents…</option>
+          ${receiving.map((g) => html`<option key=${g} value=${g} selected=${form.group === g}>${g}</option>`)}
+          <option value=${'\u0000other'}>another group (type its name)…</option></select>`
+      : html`<input id="fleet-move-agent-group" value=${form.group} placeholder="receiving group on the peer (it must grant agents.receive)" autocomplete="off" onInput=${set('group')} onKeyDown=${(e) => { if (e.key === 'Enter') send(); }} />`}</label>
     <div class="muted">The agent retires here once the peer runs its copy. To keep it running here, offer a copy from Offers instead. Starting directory: the receiver chooses on accept.</div>`}
     ${findings && html`<div class="fa-plan"><ul>${findings.map((f) => html`<li class="fa-warn">${f.kind} ×${f.count}${f.locations?.length ? ` (${f.locations.slice(0, 3).join(', ')})` : ''}</li>`)}</ul></div>
       <label class="fa-of-check"><input id="fleet-move-agent-allow" type="checkbox" checked=${allow} onChange=${(e) => setAllow(e.currentTarget.checked)} /> send the history anyway</label>`}

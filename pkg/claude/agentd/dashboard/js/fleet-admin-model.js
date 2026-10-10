@@ -75,6 +75,10 @@ export function adminView(status, { pools = [] } = {}) {
     keyTransition: keyTransition(p),
   });
   const byLabel = (a, b) => a.label.localeCompare(b.label);
+  // receiving names each peer's catalog groups that take agents from this
+  // node (agents.receive), for the move dialog's group picker.
+  const receiving = new Map((Array.isArray(status.remote) ? status.remote : []).map((r) => [r?.peer,
+    (r?.groups || []).filter((g) => g?.name && (g.caps || []).includes('agents_receive')).map((g) => g.name).sort()]));
   return {
     self: {
       id: status.instance_id,
@@ -85,7 +89,7 @@ export function adminView(status, { pools = [] } = {}) {
       hubState: status.hub?.state || (status.enabled ? 'connecting' : 'disabled'),
       hubError: status.hub?.last_error || '',
     },
-    trusted: peers.filter((p) => p?.trusted && p.instance_id).map(row).sort(byLabel),
+    trusted: peers.filter((p) => p?.trusted && p.instance_id).map((p) => ({ ...row(p), receiving: receiving.get(p.instance_id) || [] })).sort(byLabel),
     waiting: peers.filter((p) => p && !p.trusted && p.instance_id).map(row).sort(byLabel),
   };
 }

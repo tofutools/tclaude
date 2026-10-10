@@ -246,6 +246,9 @@ export async function refresh(options) {
     // a degraded snapshot cannot close panes or consume a later retirement.
     reconcileTerminalsForAgentRoster(data.agents, data.agent_roster_authoritative);
     setLastSnapshot(data);
+    // The access banner goes first: a renderer below that throws must not
+    // leave it showing a request that is long gone.
+    renderAccessRequests(data.access_requests || [], data.access_requests_pending || 0);
     // Groups Route map is a server-owned opt-in surface. Apply its visibility
     // before rendering the Groups island and before publishing the snapshot so
     // deep-link/history restoration never observes a route subview while the
@@ -260,7 +263,6 @@ export async function refresh(options) {
     applyProcessesTabVisibility(data);
     applyDebugTabVisibility(data);
     renderMailTab();
-    renderAccessRequests(data.access_requests || [], data.access_requests_pending || 0);
     renderDashDefaultProfile();
     renderDashSandboxProfile();
     setVegasRegularMode(!!data.vegas_in_regular_mode);

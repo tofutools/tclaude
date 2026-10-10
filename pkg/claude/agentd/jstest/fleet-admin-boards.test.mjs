@@ -37,8 +37,10 @@ function boardActions(log, { joinError = null } = {}) {
     publishBoardItem: async (b, body) => { log.push(['publish', b, body]); return { board: b, item: 'itm_2', version: 'v1', blob: 'x', signature: 'sig' }; },
     pinBoardItem: async (b, i, v) => { log.push(['pin', b, i, v]); return true; },
     fetchBoardItem: async (b, i, v) => { log.push(['fetch', b, i, v]); return { state: 'ready', version: v }; },
-    boardItemContents: async () => ({ type: 'config', entries: [{ path: 'roles/reviewer.json', size: 120, kind: 'json' }] }),
-    boardItemEntry: async (b, i, v, path) => { log.push(['entry', path]); return { kind: 'json', size: 20, text: '{"name":"<b>reviewer</b>"}', truncated: false }; },
+    boardItemContents: async () => ({ type: 'config', entries: [{ path: 'bundle.json', size: 300, kind: 'json' }, { path: 'roles/reviewer.json', size: 120, kind: 'json' }, { path: 'sections/roles.json', size: 80, kind: 'json' }] }),
+    boardItemEntry: async (b, i, v, path) => { log.push(['entry', path]); return path === 'sections/roles.json'
+      ? { kind: 'json', size: 80, text: '[{"name":"reviewer","value":{}},{"name":"writer","value":{}}]', truncated: false }
+      : { kind: 'json', size: 20, text: '{"name":"<b>reviewer</b>"}', truncated: false }; },
     downloadBoardItem: async (b, i, v) => { log.push(['download', b, i, v]); },
     // Like the daemon, a preview leaves skipped items out.
     previewBoardItem: async (b, i, v, c) => { log.push(['preview', c]); return { changes: [{ item: 'roles/reviewer', action: 'replace', security: true }, { item: 'roles/writer', action: 'create' }].filter((x) => !(c.skip || []).includes(x.item)), unresolved: [], applied: [], preview_token: `tok${log.length}` }; },
@@ -230,6 +232,9 @@ test('posting config: sections or named items, new versions carry the parent; ve
   assert.match(s.confirms.at(-1).body, /Shares roles from this node's config with every member of ops notes.*nothing changes on their nodes until they do/);
   assert.deepEqual(s.log.find((l) => l[0] === 'publish'), ['publish', 'brd_ops', { name: 'team roles', only: ['roles'] }]);
   await s.click(s.q('[data-item-id="itm_1"] [data-item-act="update"]'));
+  await s.settle();
+  assert.equal(s.q('#fleet-board-publish-only').value, 'roles/reviewer, roles/writer', 'a new version starts from what the previous one shared');
+  assert.match(s.q('#fleet-board-publish-prefilled').textContent, /version v2bbbbbbbb/);
   await s.type(s.q('#fleet-board-publish-only'), 'roles/reviewer, profiles/fast');
   await s.click(s.q('#fleet-board-publish-post'));
   assert.deepEqual(s.log.filter((l) => l[0] === 'publish').at(-1), ['publish', 'brd_ops', { name: 'review roles', only: ['roles/reviewer', 'profiles/fast'], item: 'itm_1', parent: 'v2bbbbbbbbbbbb' }]);

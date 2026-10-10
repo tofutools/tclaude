@@ -60,7 +60,7 @@ function ApproveDialog({ req, actions, confirm, toast, onClose, onDone }) {
     <div class="fa-spawn-brief">${req.brief}</div>
     <div class="muted">From ${req.from} into group ${req.group}${req.role ? `, role ${req.role}` : ''}. Leave a field empty to keep what was requested or the group's default.</div>
     ${['name', 'profile', 'cwd', 'harness', 'model'].map((k) => html`<label class="fa-spawn-opt" key=${k}>${k}
-      <input id=${`fleet-spawn-${k}`} value=${o[k]} onInput=${set(k)} placeholder=${k === 'cwd' ? 'group default' : k === 'name' || k === 'profile' ? (req[k] || 'default') : 'profile default'} /></label>`)}
+      <input id=${`fleet-spawn-${k}`} value=${o[k]} onInput=${set(k)} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(); } }} placeholder=${k === 'cwd' ? 'group default' : k === 'name' || k === 'profile' ? (req[k] || 'default') : 'profile default'} /></label>`)}
     <div class="modal-buttons"><span class="spacer"></span>
       <button type="button" onClick=${onClose}>Cancel</button>
       <button id="fleet-spawn-approve-go" type="button" class="primary" onClick=${go}>Approve…</button>

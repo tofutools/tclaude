@@ -9,6 +9,8 @@ let s_hubAdmin = true;
 let s_hubRun = { accept_remote_scripts: false, switch_source: 'flag', can_exec: true, service_user: 'tclaude-hub', limits: { max_script_bytes: 16384, max_timeout_seconds: 3600 } };
 const s_hubEcho = () => !!globalThis.window?.__hubEchoOther;
 let s_rotation = { hop_count: 1, pending: false };
+// s_remote, when set, is the peers' catalogs (status.remote).
+let s_remote = null;
 const status = () => ({
   enabled: true, instance_id: 'inst_self', name: 'desk', fingerprint: 'self-fp-0000', hub_url: 'wss://hub.example', hub: { state: 'connected' },
   peers: [
@@ -17,6 +19,7 @@ const status = () => ({
     { instance_id: 'inst_carol', name: 'Carol@Buildbox', fingerprint: FP_NEW, trusted: false, online: true },
   ],
   peer_grants: [{ peer: 'inst_forge', slug: 'message.direct' }, { peer: 'inst_forge', slug: 'groups.roster.read', scope: 'ops' }],
+  ...(s_remote ? { remote: s_remote } : {}),
 });
 
 test('adminView splits trusted from waiting instances, with grants and pools per peer', async (t) => {
@@ -1112,7 +1115,7 @@ test('moves: the move dialog spells out that the source retires and surfaces ref
   await s.click(q('#fleet-move-agent-send'));
   const c = s.confirms.at(-1);
   assert.match(c.title, /Move ada \(agt_a1\) to forge\?/);
-  assert.match(c.body, /full conversation history.*retired here: it stops running, leaves its groups and loses its grants.*abandon the move.*not withdrawn/);
+  assert.match(c.body, /^Sends ada \(agt_a1\)'s config and full conversation history .* to group team on forge\. Once forge runs its copy, ada \(agt_a1\) is retired here; until then you can abandon the move on this page, but what was sent stays there\. forge picks the starting directory\.$/);
   assert.match(q('#fleet-move-agent [role=alert]').textContent, /contains credentials/);
   assert.equal(q('#fleet-move-agent-send').disabled, true, 'flagged history needs an explicit choice');
   await s.check(q('#fleet-move-agent-allow'));
@@ -1122,6 +1125,13 @@ test('moves: the move dialog spells out that the source retires and surfaces ref
   assert.equal(q('#fleet-move-agent'), null, 'closes when the move starts');
   assert.match(s.toasts.at(-1), /Move of ada \(agt_a1\) to forge started/);
 
+  // With the peer's catalog, the group is picked from the groups that receive
+  // agents; "another group" falls back to typing.
+  s_remote = [{ peer: 'inst_forge', groups: [{ name: 'intake', caps: ['mail', 'agents_receive'] }, { name: 'ops', caps: ['mail'] }] }];
+  try {
+    const m = await s.harness.importDashboardModule('js/fleet-admin-model.js');
+    assert.deepEqual(m.adminView({ instance_id: 'x', peers: [{ instance_id: 'inst_forge', trusted: true }], remote: s_remote }).trusted[0].receiving, ['intake']);
+  } finally { s_remote = null; }
   const { moveErrorText } = await s.harness.importDashboardModule('js/fleet-admin-moves.js');
   const e = new Error('peer has not advertised agent move support'); e.code = 'unsupported_peer';
   assert.match(moveErrorText(e, 'forge'), /^forge has not advertised agent move support.*Offer a copy/);
@@ -1439,7 +1449,9 @@ test('hub: a non-admin node claims admin with the pasted token, confirming what 
   assert.match(q('#fleet-hub-claim [role=alert]').textContent, /Paste the claim token/);
   const tok = q('#fleet-hub-claim-token'); tok.value = '  claim-123  ';
   await s.harness.act(() => s.harness.fireEvent(tok, 'input'));
-  await s.click(q('#fleet-hub-claim-send'));
+  // Enter in the token field confirms, like the Claim button.
+  await s.harness.act(() => s.harness.fireEvent(tok, 'keydown', { key: 'Enter' }));
+  await s.harness.act(() => new Promise((r) => setTimeout(r, 10)));
   const c = s.confirms.at(-1);
   assert.match(c.body, /desk \(inst_self, fingerprint self-fp-0000\).*single-use.*no access to any node's content/);
   assert.deepEqual(s.log.findLast((l) => l[0] === 'hubClaim'), ['hubClaim', 'claim-123']);
@@ -1997,4 +2009,26 @@ test('sending an agent says the receiver picks its directory, and names the repo
   await s.click(s.q('#fleet-share-agent-send'));
   assert.match(s.confirms.at(-1).body, /picks the starting directory when it accepts: a matching repo from its own allowlist/);
   assert.match(s.toasts.at(-1), /chooses the directory on accept \(repo hint git@github\.com:tofutools\/tclaude\.git\)/);
+});
+
+test('moves: the group is picked from the peer\'s receiving groups, with typing as the fallback', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { MoveAgentDialog } = await harness.importDashboardModule('js/fleet-admin-moves.js');
+  const sent = []; const confirms = [];
+  const actions = { moveAgent: async (b) => { sent.push(b); return {}; } };
+  const confirm = async (o) => { confirms.push(o); return o.action(); };
+  const peers = [{ id: 'inst_forge', label: 'forge', receiving: ['intake', 'labs'] }, { id: 'inst_lab', label: 'lab', receiving: [] }];
+  const mounted = await harness.mount(harness.html`<${MoveAgentDialog} peers=${peers} agents=${[{ id: 'agt_a1', label: 'ada' }]} actions=${actions} confirm=${confirm} onClose=${() => {}} onDone=${() => {}} />`);
+  const q = (x) => harness.document.querySelector(x);
+  const pick = async (sel, value) => { const el = q(sel); for (const o of el.querySelectorAll('option')) { if (o.value === value) o.setAttribute('selected', ''); else o.removeAttribute('selected'); } await harness.act(() => harness.fireEvent(el, 'change')); };
+  assert.deepEqual([...q('#fleet-move-agent-group-pick').querySelectorAll('option')].map((o) => o.textContent), ['pick a group that receives agents…', 'intake', 'labs', 'another group (type its name)…']);
+  await pick('#fleet-move-agent-group-pick', 'labs');
+  await harness.act(() => q('#fleet-move-agent-send').click());
+  await harness.act(() => new Promise((r) => setTimeout(r, 10)));
+  assert.equal(sent.at(-1).group, 'labs');
+  await pick('#fleet-move-agent-group-pick', '\u0000other');
+  assert.ok(q('#fleet-move-agent-group'), 'typing is the fallback');
+  await pick('#fleet-move-agent-peer', 'inst_lab');
+  assert.equal(q('#fleet-move-agent-group-pick'), null, 'a peer listing no receiving group gets the text field');
+  await mounted.unmount();
 });

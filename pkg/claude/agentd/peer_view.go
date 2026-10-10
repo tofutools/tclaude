@@ -174,6 +174,11 @@ type peerViewOmission struct {
 	Requestable bool   `json:"requestable"`
 	Feature     string `json:"feature"`
 	Requires    string `json:"requires"`
+	// Transport marks a feature the peer view never serves itself (the local
+	// dashboard shell, terminals and their file links, inline spawn, node
+	// exec): whether it works is decided on its own channel, so a UI should
+	// not list it as "not shared".
+	Transport bool `json:"transport,omitempty"`
 }
 type peerViewMetadata struct {
 	Peer     string             `json:"peer"`
@@ -242,7 +247,7 @@ func (v *peerView) metadata() peerViewMetadata {
 		} else {
 			_, requestable := requestablePeerPermission(rule.requires)
 			requestable = requestable && !rule.unrestrictedOnly && !rule.accessRequest && !rule.visible && !rule.publicRead && (rule.serve != nil || rule.write != nil) && hasAccess
-			out.Omitted = append(out.Omitted, peerViewOmission{Feature: rule.feature, Requires: rule.requires, Requestable: requestable})
+			out.Omitted = append(out.Omitted, peerViewOmission{Feature: rule.feature, Requires: rule.requires, Requestable: requestable, Transport: rule.serve == nil && rule.write == nil})
 		}
 	}
 	sort.Strings(out.Included)
