@@ -621,8 +621,10 @@ first and says what will happen. Most pages name their CLI.
   Sensitive grants (spawning, attach, `node.exec`, …) say what they let the
   peer do.
 - **Model gateways** — this node's model gateways, which peers with a
-  `models.proxy` grant use to send model requests charged to this node's
-  provider account. See each gateway's models and limits, turn one off or on,
+  `models.proxy` (or, for requester-paid workers, `models.proxy.leased`)
+  grant use to send model requests charged to this node's provider account.
+  See each gateway's models and limits — a gateway missing a model allowlist,
+  a budget or a cap refuses every request and says so — turn one off or on,
   block or unblock a peer on it, or **Turn off all…**. Turning anything off
   revokes the matching leases at once, so requester-paid workers using them
   lose model access. Below that are the leases (**Revoke…** one) and a day's

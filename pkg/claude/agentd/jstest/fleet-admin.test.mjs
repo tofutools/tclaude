@@ -93,7 +93,7 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     setDefaultProfile: async (n) => { log.push(['setDefaultProfile', n]); return { profile_id: n }; },
     deleteProfile: async (n) => { log.push(['deleteProfile', n]); return { ok: true }; },
     models: async () => { log.push(['models']); return { disabled: false, gateways: {
-      claude: { enabled: true, dialect: 'anthropic', models: ['claude-sonnet-5-5'], daily_requests: 500, daily_tokens: 2000000, peer_daily_tokens: 500000, max_concurrent: 4, blocked_peers: ['inst_lab'] },
+      claude: { enabled: true, dialect: 'anthropic', models: ['claude-sonnet-5-5'], daily_requests: 500, daily_tokens: 2000000, peer_daily_requests: 100, peer_daily_tokens: 500000, session_daily_requests: 50, session_daily_tokens: 100000, max_input_tokens: 100000, max_output_tokens: 8000, max_concurrent: 4, requests_per_minute: 30, blocked_peers: ['inst_lab'] },
       openai: { enabled: false, models: [] },
     } }; },
     setModelSwitch: async (o) => { log.push(['modelSwitch', o]); return o; },
@@ -105,6 +105,7 @@ async function setup(t, { preview = { instance_id: 'inst_carol', fingerprint: FP
     modelUsage: async (day) => { log.push(['usage', day]); return [
       { proxy: 'claude', peer: 'inst_forge', model: 'claude-sonnet-5-5', charged_tokens: 1200, input_tokens: 1000, output_tokens: 200, status: 200, complete: true },
       { proxy: 'claude', peer: 'inst_forge', model: 'claude-sonnet-5-5', charged_tokens: 300, input_tokens: 300, output_tokens: 0, status: 429, complete: false },
+      { proxy: 'claude', peer: 'inst_forge', model: 'claude-sonnet-5-5', charged_tokens: 108000, input_tokens: 0, output_tokens: 0, status: 0, complete: false },
     ]; },
     applyProfile: async (n, o) => { log.push(['applyProfile', n, o]); return { preview_token: 'ptok', changes: [{ item: 'trust_level', before: 'restricted', after: 'unrestricted', security: true }, { item: 'pool/pool_r', before: false, after: true, security: true }], pools: [{ id: 'pool_r', name: 'rigs', live_grants: [{ slug: 'groups.members.spawn', scope: '' }] }], security_changes: 2, conflicts: [] }; },
   };
@@ -647,12 +648,13 @@ test('model gateways: switches confirm what they revoke, leases revoke, and usag
   await s.show();
   await s.click([...s.mounted.container.querySelectorAll('.fa-subtab')].find((b) => /Model gateways/.test(b.textContent)));
   assert.match(s.q('#fleet-models-master').textContent, /on \(1 of 2 enabled\)/);
-  assert.match(s.q('[data-gateway="claude"]').textContent, /claude-sonnet-5-5.*500 req · 2M tok · 500k tok · unlimited.*4 at once.*lab/s);
+  assert.match(s.q('[data-gateway="claude"]').textContent, /claude-sonnet-5-5.*500 req \/ 2M tok · 100 req \/ 500k tok · 50 req \/ 100k tok.*4 at once.*lab/s);
+  assert.match(s.q('[data-gateway="openai"]').textContent, /disabled.*none/s);
   await s.click(s.q('#fleet-models-master-toggle'));
   assert.match(s.confirms.at(-1).body, /every active lease is revoked at once/);
   assert.deepEqual(s.log.findLast((l) => l[0] === 'modelSwitch'), ['modelSwitch', { disabled: true }]);
   await s.click(s.q('[data-gateway="openai"] [data-fa="gateway"]'));
-  assert.match(s.confirms.at(-1).body, /charged to this node's provider account/);
+  assert.match(s.confirms.at(-1).body, /charged to this node's provider account.*missing model allowlist, daily budget.*still refuses every request/);
   assert.deepEqual(s.log.findLast((l) => l[0] === 'modelSwitch'), ['modelSwitch', { name: 'openai', disabled: false }]);
   await s.click(s.q('[data-gateway="claude"] [data-fa="unblock"]'));
   assert.deepEqual(s.log.findLast((l) => l[0] === 'modelSwitch'), ['modelSwitch', { name: 'claude', peer: 'inst_lab', disabled: false }]);
@@ -668,5 +670,5 @@ test('model gateways: switches confirm what they revoke, leases revoke, and usag
   assert.match(s.confirms.at(-1).body, /forge worker agt_w1 using this lease loses model access through claude/);
   assert.deepEqual(s.log.findLast((l) => l[0] === 'revokeLease'), ['revokeLease', 'lease_aaaaaaaaaaaa1']);
   const usage = [...s.mounted.container.querySelectorAll('#fleet-model-usage tbody tr')].map((r) => [...r.querySelectorAll('td')].map((c) => c.textContent.trim()).join('|'));
-  assert.deepEqual(usage, ['claude|forge|claude-sonnet-5-5|2 (1 failed)|1.5k|1.3k · 200']);
+  assert.deepEqual(usage, ['claude|forge|claude-sonnet-5-5|3 (1 in progress) (1 failed)|109.5k|1.3k · 200']);
 });

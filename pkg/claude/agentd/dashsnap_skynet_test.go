@@ -50,7 +50,7 @@ const skynetFederationStubJS = `(function(){
       { id: 'a1', at: '2026-10-10T08:20:00Z', source: 'audit', direction: 'event', peer: 'inst_hn3cxq7a', kind: 'federation.grant', actor: 'operator', target: 'inst_hn3cxq7a groups.roster.read group=ops', status: 200 }
     ]);
     if (path === '/api/federation/models/control' && !(init && init.method === 'POST')) return json({ disabled: false, gateways: {
-      claude: { enabled: true, dialect: 'anthropic', models: ['claude-sonnet-5-5', 'claude-haiku-5-5'], daily_requests: 2000, daily_tokens: 20000000, peer_daily_tokens: 5000000, session_daily_tokens: 1000000, max_output_tokens: 32000, max_concurrent: 4, lease_idle_hours: 8, blocked_peers: ['inst_2p6ym4ke'] },
+      claude: { enabled: true, dialect: 'anthropic', models: ['claude-sonnet-5-5', 'claude-haiku-5-5'], daily_requests: 2000, daily_tokens: 20000000, peer_daily_requests: 500, peer_daily_tokens: 5000000, session_daily_requests: 200, session_daily_tokens: 1000000, max_input_tokens: 200000, max_output_tokens: 32000, max_concurrent: 4, requests_per_minute: 60, lease_idle_hours: 8, blocked_peers: ['inst_2p6ym4ke'] },
       openai: { enabled: false, dialect: 'openai', models: ['gpt-5.6'], daily_requests: 500, daily_tokens: 0 }
     } });
     if (path === '/api/federation/models/leases' && !(init && init.method === 'POST')) return json([
@@ -60,7 +60,8 @@ const skynetFederationStubJS = `(function(){
     if (path === '/api/federation/models/usage') return json([
       { proxy: 'claude', peer: 'inst_hn3cxq7a', model: 'claude-sonnet-5-5', charged_tokens: 812000, input_tokens: 690000, output_tokens: 122000, status: 200, complete: true },
       { proxy: 'claude', peer: 'inst_hn3cxq7a', model: 'claude-sonnet-5-5', charged_tokens: 410000, input_tokens: 380000, output_tokens: 30000, status: 200, complete: true },
-      { proxy: 'claude', peer: 'inst_hn3cxq7a', model: 'claude-haiku-5-5', charged_tokens: 52000, input_tokens: 50000, output_tokens: 2000, status: 429, complete: false }
+      { proxy: 'claude', peer: 'inst_hn3cxq7a', model: 'claude-haiku-5-5', charged_tokens: 52000, input_tokens: 50000, output_tokens: 2000, status: 429, complete: false },
+      { proxy: 'claude', peer: 'inst_hn3cxq7a', model: 'claude-sonnet-5-5', charged_tokens: 232000, input_tokens: 0, output_tokens: 0, status: 0, complete: false }
     ]);
     if (path === '/api/federation/peers/trust') return json({ instance_id: 'inst_w5zea3nq', fingerprint: 'w5ze-a3nq-7m1p-kd42-xr8c-0fv6', level: 'restricted', profile: null, plan: null, applied: false });
     var hav = function(extra){ return { schema: 1, observed_at: '2026-10-10T09:40:00Z', harnesses: [
@@ -251,7 +252,7 @@ func skynetStates() []dashsnap.State {
 		{
 			Key:     "skynet-fleet-models",
 			Title:   "Model gateways",
-			Caption: "Fleet → Model gateways: the all-gateways switch, each gateway's state, models and limits (daily for all peers, per peer, per session; per-request caps), peers blocked on it with unblock and a block picker, requester-paid leases with Revoke, and the day's usage per gateway, peer and model. Turning a gateway or a peer off revokes the matching leases, and each confirm says so.",
+			Caption: "Fleet → Model gateways: the all-gateways switch, each gateway's state (a policy missing an allowlist, budget or cap refuses every request and says so), models and limits (daily for all peers, per peer, per session; per-request caps), peers blocked on it with unblock and a block picker, requester-paid leases with Revoke, and the day's usage per gateway, peer and model. Turning a gateway or a peer off revokes the matching leases, and each confirm says so.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
   for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
