@@ -108,7 +108,7 @@ receiving side.
 | **Sharing** with a peer or on a [Board](federation.md#content-board-membership) | An encrypted PAF addressed to named recipients, published only by a human. | Unencrypted PAF to peers that advertise it, otherwise agent bundle v1; Boards carry configuration and skills only |
 | **Publishing** | A redacted, pseudonymous, signed PAF file for public sharing. tclaude provides no hosting; you choose where the file goes. | Not available yet |
 | **Resilience** | Opt-in periodic encrypted snapshots to another node or Board, from which an agent can be recovered if its host is lost. | Not available yet |
-| **Archival** | Any PAF can be inspected, verified and rendered to readable text without the original harness or model. | Not available yet |
+| **Archival** | Any PAF can be inspected, verified and rendered to readable text without the original harness or model. | [`tclaude paf`](#reading-a-paf) |
 
 The last column says what each operation uses in this release. tclaude keeps
 importing every legacy carrier after an operation switches to PAF; see
@@ -148,6 +148,43 @@ When the original harness or model is unavailable, the importer must name a
 landing harness and model explicitly (or a spawn profile). The preview shows
 the original environment next to the landing one, the expected losses and the
 security posture before anything starts.
+
+## Reading a PAF
+
+`tclaude paf` verifies and reads a PAF on the local machine. It needs no
+daemon, harness, model or network, and never changes the file. Every
+subcommand also accepts a legacy agent bundle, which it converts to PAF in
+memory first.
+
+```bash
+tclaude paf validate reviewer.paf          # exit 1 when invalid
+tclaude paf inspect reviewer.paf           # what it holds, without the conversation
+tclaude paf inspect reviewer.paf --json
+tclaude paf render reviewer.paf > reviewer.md
+tclaude paf render reviewer.paf --out reviewer.html
+```
+
+- **`validate`** runs every check a reader makes: ZIP layout, manifest,
+  schemas, entry hashes and sizes, semantic rules and signatures. A file
+  that requires a feature or extension this tclaude does not understand is
+  valid for reading, with a warning, because an import would refuse it.
+- **`inspect`** shows the format, producer, signatures, extensions and privacy
+  findings, then each agent's harness, model, working directory, sandbox,
+  lineage, native history, neutral context and recorded losses.
+- **`render`** writes a Markdown or HTML document with the same facts, the
+  definition's text and the whole conversation. This is landing rung 4. It
+  shows the full context when the file has one, then the effective context,
+  and otherwise decodes the native history with tclaude's built-in reader for
+  that harness, which does not need the harness installed. `--scope` picks a
+  context. The HTML is one self-contained file: it loads nothing, runs no
+  script, escapes all archive text and embeds only PNG, JPEG, GIF and WebP
+  images.
+
+For each valid signature, tclaude says who holds the key: **this node**, a
+**known peer** by name, or an **unknown key**. It compares the public key
+itself, never the `key_id` the file claims. A valid signature proves the
+file is unchanged since that key signed it; whether to trust the signer is
+your decision.
 
 ## Sharing and publishing
 
@@ -243,8 +280,8 @@ wherever you publish other artifacts, with a licence of your choosing (see
 
 ### Receiving a PAF
 
-- Verify the signature and check who signed it. `tclaude` shows whether the
-  signer is this node, a known peer or unknown.
+- Verify the signature and check who signed it. `tclaude paf validate` shows
+  whether the signer is this node, a known peer or unknown.
 - Land it under a conservative profile. The recorded posture is a hint, not a
   requirement.
 - Read the loss report and the redaction record. A redacted or translated
