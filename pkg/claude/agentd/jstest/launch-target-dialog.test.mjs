@@ -235,6 +235,7 @@ test('provider outage continuation requires an explicit loss checkbox and works 
  const check=s.q('#lt-proceed-without-summary');
  Object.defineProperty(check,'checked',{configurable:true,writable:true,value:true});
  await s.harness.act(()=>s.harness.fireEvent(check,'change'));await s.settle();
+ assert.equal(s.q('#lt-proceed-loss').disabled,false,s.q('#launch-target').textContent);
  await s.click(s.q('#lt-proceed-loss'));
  assert.deepEqual(sent,[{profile:'small',proceed_without_summary:true,now:true}]);
  assert.equal(s.closed(),1);
