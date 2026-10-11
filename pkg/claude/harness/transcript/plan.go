@@ -160,7 +160,10 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 				if strings.TrimSpace(b.Text) == "" {
 					continue
 				}
-				text := b.Text
+				text := withoutPriorMorphNotices(b.Text)
+				if strings.TrimSpace(text) == "" {
+					continue
+				}
 				if e.Author != "" {
 					text = fmt.Sprintf("%smessage from %s%s\n%s", markOpen, e.Author, markClose, text)
 				}
@@ -584,4 +587,37 @@ func (p *Plan) fitBudget(entries []planEntry, opts Options, report *LossReport) 
 		}
 	}
 	return coalesce(out)
+}
+
+// Carried notices are plain native text on the next hop. Replace only our
+// generated notice line, retaining adjacent user instructions and all history
+// wrappers (tool records, summaries and file pointers remain useful context).
+func withoutPriorMorphNotices(text string) string {
+	lines := strings.Split(text, "\n")
+	kept := lines[:0]
+	var fence string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if fence != "" {
+			kept = append(kept, line)
+			if strings.HasPrefix(trimmed, fence) && strings.Trim(trimmed, fence[:1]+" \t") == "" {
+				fence = ""
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			n := 3
+			for n < len(trimmed) && trimmed[n] == trimmed[0] {
+				n++
+			}
+			fence = trimmed[:n]
+			kept = append(kept, line)
+			continue
+		}
+		if strings.HasPrefix(line, "⟦tclaude morph⟧ History carried over from ") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
 }
