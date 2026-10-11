@@ -3051,6 +3051,27 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 }
 .gfm-open:hover { border-color: #58a6ff; }
 .gfm-foot { padding: 6px 10px 2px; color: #6e7681; font-size: 11px; border-top: 1px solid #21262d; }
+/* Cross-node group links (tcl-2ksi0k): the link dialog's This node | Peer
+   node switch, its auto-vs-request note, and the links table's per-side
+   state pills. An offline peer's half is "stale" (dashed), never ok or bad. */
+.link-target-seg { display: inline-flex; border: 1px solid #30363d; border-radius: 4px; overflow: hidden; }
+.link-target-seg button {
+  background: #0d1117; color: #8b949e; border: 0; padding: 4px 12px; font: inherit; font-size: 12px; cursor: pointer;
+}
+.link-target-seg button + button { border-left: 1px solid #30363d; }
+.link-target-seg button.on { background: #1f2a37; color: #58a6ff; }
+.link-target-seg button:disabled { opacity: .45; cursor: not-allowed; }
+.link-peer-note { border-radius: 5px; padding: 8px 10px; font-size: 12px; line-height: 1.4; margin: 6px 0; }
+.link-peer-note.auto { background: #0f2418; border: 1px solid #238636; }
+.link-peer-note.request { background: #2a210b; border: 1px solid #9e6a03; }
+.link-peer-note.off { background: #1c2128; border: 1px solid #30363d; color: #8b949e; }
+.link-peer { color: #79c0ff; }
+.link-state { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; white-space: nowrap; border: 1px solid #30363d; color: #8b949e; }
+.link-state.ok { background: #12301d; color: #3fb950; border-color: #238636; }
+.link-state.wait { background: #3a2a0b; color: #e3b341; border-color: #9e6a03; }
+.link-state.conn { background: #10233d; color: #79c0ff; border-color: #1f4f8f; }
+.link-state.bad { background: #2d1517; color: #f85149; border-color: #8e2a2a; }
+.link-state.stale { border-style: dashed; border-color: #6e7681; }
 .tag {
   display: inline-block; padding: 2px 8px; margin: 1px 2px 1px 0;
   background: #21262d; color: #d4d4d4; border: 1px solid #2a3340;

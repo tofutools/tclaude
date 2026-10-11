@@ -718,6 +718,32 @@ dot: a linked node is live). Click it for the links — a direct or pool grant,
 or a route mirror — with what each allows and a jump to that node's dashboard.
 CLI: `tclaude federation links [--group NAME]`.
 
+### Cross-node group links
+
+The inter-group link dialog's **To** row has a **This node | Peer node 🌐**
+switch on nodes with cross-node links. **Peer node** lists only known peers you
+trust at least *limited* and only the groups they share with you; an older peer
+is listed but unavailable. With no hub connection the switch is greyed out with
+the reason, and local links work as before. The note under the pickers says
+what happens: if the peer granted you `groups.link.accept` for that group, the
+link needs no prompt and shows **connecting** until the peer acknowledges this
+exact edge; otherwise it sends a link request that the peer's operator approves
+or declines within 24 hours. *Also ask for the reverse link* asks for the other
+direction separately.
+
+The Inter-group links list then gets **This node** and **Peer side** columns.
+Each row is one directed edge. A peer that is offline shows its side as
+*unknown*, with what it last reported, never as active or revoked. Deleting a
+cross-node edge stops delivery on this node immediately, including queued
+messages; a pending request reads **cancel request** instead. The 🌐 popover
+lists the same edges.
+
+An incoming request appears in **Messages → Access requests** as a 🌐 link
+request naming the exact edge and mode, with **Approve**, **Approve + allow
+future links into** the group (which also grants that peer `groups.link.accept`
+for it), and **Decline**. Approving authorizes only that edge, never broader
+messaging from the peer.
+
 ### Fleet administration (⚙ Fleet)
 
 **⚙ Fleet** (or "Fleet administration" in the command palette, before any peer

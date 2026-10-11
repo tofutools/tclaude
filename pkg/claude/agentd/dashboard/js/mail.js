@@ -1150,6 +1150,7 @@ function accessOutcome(status) {
     // the operator narrowed the grant, and the history card should say so.
     case 'always (scoped)': return { cls: 'always', txt: wz('★ Always — this scope', '★ Granted ever after, thus bounded') };
     case 'declined': return { cls: 'declined', txt: wz('✕ Declined', '✕ Refused') };
+    case 'expired':
     case 'timed out': return { cls: 'timedout', txt: wz('⏱ Timed out', '⏱ Sands ran out') };
     default: return { cls: 'declined', txt: String(status || '') };
   }
@@ -1178,7 +1179,7 @@ function accessMatchesSearch(r, q) {
     r.id, r.perm, r.conv_id, r.current_conv_id, r.agent_id, r.conv_title,
     r.caller_state, r.title_status, r.path, r.body,
     r.body_label, r.target_group, r.target_conv_id, r.target_conv_title,
-    r.status,
+    r.status, r.link?.source_peer_label, r.link?.source_group, r.link?.dest_group,
   ].some(v => String(v || '').toLowerCase().includes(q));
 }
 
@@ -1188,6 +1189,8 @@ function accessRequestById(id) {
 }
 
 export function accessWho(r) {
+  // A cross-node link request (tcl-2ksi0k) comes from a peer node, not an agent.
+  if (r.purpose === 'group_link') return r.link?.source_peer_label || r.conv_title || r.origin_peer || 'peer';
   const id = shortAgentId(r.agent_id, r.conv_id) || wz('unknown agent', 'unknown familiar');
   // Lead with the human-readable agent name whenever caller refresh found one.
   // The row and reader both carry the stable agent + conversation identifiers
@@ -1205,6 +1208,9 @@ export function accessWho(r) {
 }
 
 function accessSubject(r) {
+  if (r.purpose === 'group_link' && r.link) {
+    return `🌐 Link request · ${r.link.source_peer_label || 'peer'}:${r.link.source_group} → ${r.link.dest_group}`;
+  }
   const parts = [r.perm || wz('Access request', 'Petition')];
   if (r.path) parts.push(r.path);
   return parts.join(' · ');
@@ -1235,7 +1241,7 @@ async function decideAccess(id, decision, extra = {}) {
     if (lastSnapshot && Array.isArray(lastSnapshot.access_requests)) {
       const e = lastSnapshot.access_requests.find(x => x.id === id);
       if (e) {
-        e.status = decision === 'approve' ? 'approved'
+        e.status = decision === 'approve' || decision === 'approve_future' ? 'approved'
           : decision === 'always' ? 'always'
             : decision === 'always_scoped' ? 'always (scoped)' : 'declined';
         e.decided_at = new Date().toISOString();

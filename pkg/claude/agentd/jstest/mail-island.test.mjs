@@ -306,3 +306,28 @@ test('a peer operator\'s access request decides with a TTL and an optional narro
   assert.deepEqual(decided, [['par-1', 'approve', { grant_ttl_seconds: 3600, group_id: 4 }], ['par-1', 'deny']]);
   await mounted.unmount();
 });
+
+test('a cross-node link request names the exact edge and decides approve, approve_future or deny', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
+  const request = { id: 'gl-1', purpose: 'group_link', origin_peer: 'inst_alice1', conv_title: 'alice',
+    link: { source_peer_label: 'alice', source_group: 'alpha', dest_group: 'research', mode: 'members->members', direction: 'in' },
+    created_at: '2026-07-12T00:00:00Z', deadline: '2026-07-13T00:00:00Z' };
+  const state = harness.signals.signal({ ...populated(), selected: 'access-requests', selectedMsgId: 'gl-1', messages: [] });
+  const controller = controllerFor(state);
+  const decided = [];
+  controller.decideAccess = (...a) => decided.push(a);
+  controller.messageView = () => ({ access: true, allAccess: [request], pendingAccess: [request], handledAccess: [], search: '' });
+  controller.messageCountText = () => '1 pending';
+  const mounted = await harness.mount(harness.html`<${MailApp} controller=${controller} />`);
+  const root = mounted.container;
+  assert.match(root.textContent, /Cross-node link request/);
+  assert.match(root.textContent, /alice:alpha → research · members → members/);
+  assert.match(root.textContent, /no broader messaging/);
+  assert.doesNotMatch(root.textContent, /Always allow/);
+  const buttons = [...root.querySelectorAll('.access-reader-actions .access-btn')];
+  assert.deepEqual(buttons.map((b) => b.textContent.trim()), ['Approve + allow future links into research', 'Decline', 'Approve']);
+  for (const b of buttons) await harness.act(() => b.click());
+  assert.deepEqual(decided, [['gl-1', 'approve_future'], ['gl-1', 'deny'], ['gl-1', 'approve']]);
+  await mounted.unmount();
+});

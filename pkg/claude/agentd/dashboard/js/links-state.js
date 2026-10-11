@@ -10,7 +10,9 @@ export function filterLinks(rows, query) {
   return rows.filter((link) =>
     String(link.from || '').toLowerCase().includes(needle) ||
     String(link.to || '').toLowerCase().includes(needle) ||
-    String(link.mode || '').toLowerCase().includes(needle));
+    String(link.mode || '').toLowerCase().includes(needle) ||
+    String(link.peer_label || '').toLowerCase().includes(needle) ||
+    String(link.remote_state || '').toLowerCase().includes(needle));
 }
 
 export function createLinksState({

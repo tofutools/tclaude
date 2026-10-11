@@ -449,8 +449,49 @@ function RecipientNames({ recipients }) {
   </${Fragment}>`)}</${Fragment}>`;
 }
 
+// GroupLinkReader is a peer's cross-node link request (tcl-2ksi0k): one exact
+// directed edge into one of this node's groups. Approving stores only that
+// edge; "allow future" also grants the peer groups.link.accept for the
+// destination group. It never grants the peer broader messaging.
+function GroupLinkReader({ request, controller }) {
+  const link = request.link || {};
+  const peer = link.source_peer_label || request.conv_title || request.origin_peer || 'peer';
+  const handled = !controller.accessIsPending(request);
+  const outcome = handled ? controller.accessOutcome(request.status) : null;
+  const mode = String(link.mode || 'members->members').replace('->', ' → ');
+  const source = `${peer}:${link.source_group || '?'}`;
+  return html`<${Fragment}>
+    <div class="mail-reader-head">
+      <div class="mail-subject">🌐 Cross-node link request <span class="mail-id">#${shortId(request.id)}</span></div>
+      <div class="mail-headers">
+        <${HeaderRow} label="From peer">${peer} ${request.origin_peer && html`<span class="mail-cid">${request.origin_peer}</span>`}</${HeaderRow}>
+        <${HeaderRow} label="Status">${handled
+          ? html`<span class=${`access-outcome ${outcome.cls}`}>${outcome.txt}</span>`
+          : html`<span class="mail-state-pending">pending · auto-declines ${controller.accessCountdown(request.deadline)}</span>`}</${HeaderRow}>
+        <${HeaderRow} label="Created">${request.created_at ? new Date(request.created_at).toLocaleString() : ''}</${HeaderRow}>
+      </div>
+    </div>
+    <div class="mail-reader-body access-reader-body"><div class="access-meta">
+      <div class="access-row"><span class="access-k">Wants</span><span class="access-v">${link.mode === 'owners->members' ? 'owners' : 'members'} of <b>${source}</b> may message members of <b>${link.dest_group || '?'}</b></span></div>
+      <div class="access-row"><span class="access-k">Edge on this node</span><span class="access-v mono">${source} → ${link.dest_group || '?'} · ${mode}</span></div>
+      <div class="access-row"><span class="access-k">Approving authorizes</span><span class="access-v">exactly this edge and mode. ${peer} gets no broader messaging on this node.</span></div>
+      <div class="access-row"><span class="access-k">Revoke</span><span class="access-v">any time from Inter-group links; takes effect on this node immediately</span></div>
+    </div></div>
+    <div class="mail-reader-actions access-reader-actions">
+      ${handled ? html`<${Fragment}><span class=${`access-outcome ${outcome.cls}`}>${outcome.txt}</span>${request.decided_at && html`<span class="access-decided-at">${relTime(request.decided_at)}</span>`}</${Fragment}>`
+        : html`<${Fragment}><span class="access-countdown" title="If you don't decide, this request is automatically declined.">${controller.accessCountdown(request.deadline)}</span>
+          <span class="grow"></span>
+          <button class="access-btn always" title=${`Approve, and let ${peer} link to ${link.dest_group} in future without asking (each link still has to be acknowledged)`}
+            onClick=${() => controller.decideAccess(request.id, 'approve_future')}>Approve + allow future links into ${link.dest_group}</button>
+          <button class="access-btn deny" onClick=${() => controller.decideAccess(request.id, 'deny')}>Decline</button>
+          <button class="access-btn approve" onClick=${() => controller.decideAccess(request.id, 'approve')}>Approve</button></${Fragment}>`}
+    </div>
+  </${Fragment}>`;
+}
+
 function AccessReader({ request, controller }) {
   const wizard = document.body.classList.contains('wizard');
+  if (request?.purpose === 'group_link') return html`<${GroupLinkReader} request=${request} controller=${controller} />`;
   if (!request) return html`<div class="empty">${wizard
     ? 'Choose a petition to weigh its boon.' : 'Select an access request to review its details.'}</div>`;
   const handled = !controller.accessIsPending(request);

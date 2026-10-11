@@ -1,5 +1,5 @@
 import { h, render } from 'preact';
-import { useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
   ManagementOverlay as Overlay,
@@ -69,6 +69,50 @@ export function LinksControls({ state, actions }) {
   `;
 }
 
+// Cross-node rows (tcl-2ksi0k) name the peer side as label:group and report
+// each node's half separately: this node's authorization, and what the peer
+// last told us about its own. An offline peer's half is unknown, not revoked.
+const CROSS_COLS = [
+  { label: 'This node', col: 'local_state' },
+  { label: 'Peer side', col: 'remote_state' },
+];
+
+function remoteName(link, name) {
+  return html`<span class="rowname">🌐 <span class="link-peer">${link.peer_label || String(link.peer).slice(0, 13)}</span>:${name || link.remote_group || '?'}</span>`;
+}
+
+function leftIn(deadline) {
+  const ms = Date.parse(deadline || '') - Date.now();
+  if (!(ms > 0)) return '';
+  const hours = Math.floor(ms / 3600000);
+  return hours >= 1 ? `${hours}h` : `${Math.max(1, Math.floor(ms / 60000))}m`;
+}
+
+function statePill(text, cls, title = '') {
+  return html`<span class=${`link-state ${cls}`} title=${title}>${text}</span>`;
+}
+
+function localState(link) {
+  const state = link.local_state || 'active';
+  return statePill(state, state === 'active' ? 'ok' : state === 'revoked' || state === 'declined' ? 'bad' : 'wait');
+}
+
+function peerState(link) {
+  const state = link.remote_state || 'unknown';
+  const seen = link.remote_state_at ? relTime(link.remote_state_at) : '';
+  if (link.remote_stale || state === 'unknown') {
+    const last = state && state !== 'unknown' ? ` · last: ${state}` : '';
+    return statePill(`unknown · offline${last}`, 'stale', seen ? `${link.peer_label || 'peer'} last reported ${seen}` : 'The peer is offline; its side is not verified');
+  }
+  if (state === 'pending') {
+    const left = leftIn(link.deadline);
+    return statePill(`pending${left ? ` · ${left}` : ''}`, 'wait', 'Waiting for the peer operator to decide');
+  }
+  if (state === 'connecting') return statePill('connecting', 'conn', 'Auto-approved; waiting for the peer to acknowledge this edge');
+  if (state === 'active') return statePill(link.auto ? 'active · auto-approved' : 'active', 'ok');
+  return statePill(state, state === 'declined' || state === 'revoked' || state === 'expired' ? 'bad' : 'wait');
+}
+
 export function LinksList({ state, actions }) {
   const current = state.view.value;
   const [deleting, setDeleting] = useState('');
@@ -76,7 +120,9 @@ export function LinksList({ state, actions }) {
     const key = String(link.id);
     if (deleting) return;
     setDeleting(key);
-    try { await actions.deleteLink({ ...link, scope: link.from || link.to }); }
+    const scope = link.peer && link.direction === 'in' ? link.to : link.from || link.to;
+    const peerFields = link.peer ? { peerLabel: link.peer_label || String(link.peer).slice(0, 13), pending: link.direction !== 'in' && link.remote_state === 'pending' } : {};
+    try { await actions.deleteLink({ ...link, ...peerFields, scope }); }
     finally { setDeleting(''); }
   };
   if (!current.rows.length) {
@@ -85,28 +131,38 @@ export function LinksList({ state, actions }) {
       <span class="theme-copy-wizard">No arcane channels yet. Weave one with the <strong>+ weave channel</strong> button above.</span>
     </div>`;
   }
+  // Local-only nodes keep exactly the columns they always had.
+  const cross = current.rows.some((link) => link.peer);
+  const columns = cross ? [...LINK_COLS.slice(0, 5), ...CROSS_COLS, ...LINK_COLS.slice(5)] : LINK_COLS;
   return html`
     <table aria-busy=${!!deleting}>
-      <thead><tr>${LINK_COLS.map((column, index) => html`
+      <thead><tr>${columns.map((column, index) => html`
         <${SortHeader} key=${column.col || `plain-${index}`} column=${column} state=${state} />
       `)}</tr></thead>
       <tbody>${current.rows.map((link) => {
         const rowBusy = deleting === String(link.id);
+        const remote = !!link.peer;
+        const incoming = remote && link.direction === 'in';
+        const pendingOut = remote && !incoming && link.remote_state === 'pending';
         return html`
-          <tr key=${String(link.id)} data-key=${`link-${link.id}`}>
+          <tr key=${String(link.id)} data-key=${`link-${link.id}`} class=${remote ? 'link-cross' : ''}>
             <td class="id">${link.id}</td>
-            <td><span class="rowname">${link.from || '(deleted)'}</span></td>
+            <td>${incoming ? remoteName(link, link.from) : html`<span class="rowname">${link.from || '(deleted)'}</span>`}</td>
             <td class="muted">→</td>
-            <td><span class="rowname">${link.to || '(deleted)'}</span></td>
+            <td>${remote && !incoming ? remoteName(link, link.to) : html`<span class="rowname">${link.to || '(deleted)'}</span>`}</td>
             <td><span class="id">${link.mode}</span></td>
+            ${cross && html`<td>${remote ? localState(link) : statePill('local', 'local')}</td>`}
+            ${cross && html`<td>${remote ? peerState(link) : null}</td>`}
             <td><span class="muted">${relTime(link.created_at) || ''}</span></td>
             <td><div class="row-actions">
-              <button type="button" disabled=${!!deleting}
+              ${!remote && html`<button type="button" disabled=${!!deleting}
                 onClick=${() => actions.openEdit({ id: link.id, from: link.from || '', to: link.to || '', mode: link.mode || '' })}
-                title="Change this link's mode"><${Words} plain="edit" wizard="rebind" /></button>
+                title="Change this link's mode"><${Words} plain="edit" wizard="rebind" /></button>`}
               <button type="button" class="danger" disabled=${!!deleting}
                 onClick=${() => remove(link)}
-                title="Remove this link"><${Words} plain=${rowBusy ? 'deleting…' : 'delete'} wizard=${rowBusy ? 'severing…' : 'sever'} /></button>
+                title=${pendingOut ? 'Withdraw this link request' : 'Remove this link'}>${pendingOut
+    ? (rowBusy ? 'cancelling…' : 'cancel request')
+    : html`<${Words} plain=${rowBusy ? 'deleting…' : 'delete'} wizard=${rowBusy ? 'severing…' : 'sever'} />`}</button>
             </div></td>
           </tr>
         `;
@@ -143,9 +199,56 @@ function optionsFor(groups, ...selected) {
   return [...new Set([...(groups || []), ...selected.filter(Boolean)])];
 }
 
+// usablePeers keeps the peers a cross-node link can target: the backend
+// already lists only known, mutually usable peers and the groups they share.
+function usablePeers(targets) {
+  return (targets?.peers || []).filter((peer) => peer && peer.peer);
+}
+
+// linkTargetsState loads the cross-node targets once per dialog. A daemon
+// without cross-node links answers null, which keeps the dialog local-only.
+function useLinkTargets(actions, enabled) {
+  const [targets, setTargets] = useState(undefined);
+  useEffect(() => {
+    if (!enabled || typeof actions.loadLinkTargets !== 'function') { setTargets(null); return undefined; }
+    let live = true;
+    actions.loadLinkTargets().then(
+      (value) => { if (live) setTargets(value || null); },
+      () => { if (live) setTargets(null); },
+    );
+    return () => { live = false; };
+  }, [actions, enabled]);
+  return targets;
+}
+
+function PeerOutcome({ peer, group, connected, reason }) {
+  if (!connected) {
+    return html`<div class="link-peer-note off" id="link-modal-peer-note">🌐 Cross-node links need a hub connection.${reason ? ` ${reason}` : ''} Existing cross-node links keep their state.</div>`;
+  }
+  if (!peer) return html`<div class="link-peer-note off" id="link-modal-peer-note">No peer shares a group with you yet.</div>`;
+  if (!peer.link_capable) {
+    return html`<div class="link-peer-note off" id="link-modal-peer-note">${peer.label} runs an older tclaude without group links. Direct messages and grants still work.</div>`;
+  }
+  if (!group) return html`<div class="link-peer-note off" id="link-modal-peer-note">${peer.label} has not shared a group with you.</div>`;
+  if (group.auto) {
+    return html`<div class="link-peer-note auto" id="link-modal-peer-note"><strong>No prompt for ${peer.label}'s operator.</strong> ${peer.label} lets you link to ${group.name}, so the link shows <strong>connecting</strong> until ${peer.label} acknowledges this exact edge; while ${peer.label} is offline it stays queued.</div>`;
+  }
+  return html`<div class="link-peer-note request" id="link-modal-peer-note"><strong>Needs ${peer.label}'s approval.</strong> This sends a link request to ${peer.label}'s operator. The link stays <strong>pending</strong> until they approve, and is declined automatically if nobody decides within 24 hours.</div>`;
+}
+
 function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const edit = descriptor.kind === 'edit';
+  const targets = useLinkTargets(actions, !edit);
+  const peers = usablePeers(targets);
+  const connected = !!targets?.hub_connected;
+  const [target, setTarget] = useState('local');
+  const [peerID, setPeerID] = useState('');
+  const [peerGroupID, setPeerGroupID] = useState('');
+  const peer = peers.find((candidate) => candidate.peer === peerID) || peers.find((candidate) => candidate.link_capable) || null;
+  const peerGroups = peer?.link_capable ? (peer.groups || []) : [];
+  const peerGroup = peerGroups.find((group) => group.id === peerGroupID) || peerGroups[0] || null;
+  const remote = target === 'peer' && connected;
   const preset = edit ? descriptor : descriptor.preset;
   // The keyed editor owns one draft lifetime. Snapshot publishes keep the
   // group options live, but must not move the baseline used for dirty checks:
@@ -166,7 +269,7 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const submitGuard = useRef(false);
-  const dirty = from !== initial.from || to !== initial.to || mode !== initial.mode || bidir;
+  const dirty = from !== initial.from || to !== initial.to || mode !== initial.mode || bidir || target !== 'local';
   const groupOptions = optionsFor(groups, from, to);
 
   const submit = async () => {
@@ -174,6 +277,18 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
     submitGuard.current = true;
     try {
       setError('');
+      if (remote) {
+        if (!from || !peer?.link_capable || !peerGroup) {
+          setError('pick a peer group to link to');
+          return;
+        }
+        setBusy(true);
+        await actions.createLink({
+          from, mode, bidir,
+          peer: { id: peer.peer, label: peer.label || peer.peer, groupID: peerGroup.id, groupName: peerGroup.name },
+        });
+        return;
+      }
       if (!edit && (!from || !to)) {
         setError('from and to are required');
         return;
@@ -215,13 +330,42 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
           ${groupOptions.map((name) => html`<option key=${name} value=${name}>${name}</option>`)}
         </select>
       </label>
-      <label class="cron-create-row">
-        <span class="cron-create-label">To</span>
-        <select id="link-modal-to" value=${to} disabled=${busy || edit}
-          onChange=${(event) => setTo(event.currentTarget.value)}>
-          ${groupOptions.map((name) => html`<option key=${name} value=${name}>${name}</option>`)}
-        </select>
-      </label>
+      ${!edit && targets && html`
+        <div class="cron-create-row" id="link-modal-target-row">
+          <span class="cron-create-label">To</span>
+          <span class="link-target-seg" role="radiogroup" aria-label="Link target">
+            <button type="button" role="radio" aria-checked=${target === 'local'} id="link-modal-target-local"
+              class=${target === 'local' ? 'on' : ''} disabled=${busy} onClick=${() => setTarget('local')}>This node</button>
+            <button type="button" role="radio" aria-checked=${target === 'peer'} id="link-modal-target-peer"
+              class=${target === 'peer' ? 'on' : ''} disabled=${busy || !connected}
+              title=${connected ? 'Link to a group a peer node shares with you' : (targets.reason || 'Not connected to the hub')}
+              onClick=${() => setTarget('peer')}>Peer node 🌐</button>
+          </span>
+        </div>`}
+      ${remote ? html`
+        <label class="cron-create-row">
+          <span class="cron-create-label">Peer node</span>
+          <select id="link-modal-peer" value=${peer?.peer || ''} disabled=${busy}
+            onChange=${(event) => { setPeerID(event.currentTarget.value); setPeerGroupID(''); }}>
+            ${peers.map((candidate) => html`<option key=${candidate.peer} value=${candidate.peer} disabled=${!candidate.link_capable}>
+              ${candidate.label || candidate.peer} · ${candidate.trust}${candidate.link_capable ? '' : ' · group links unsupported'}</option>`)}
+          </select>
+        </label>
+        <label class="cron-create-row">
+          <span class="cron-create-label">Peer group</span>
+          <select id="link-modal-peer-group" value=${peerGroup?.id || ''} disabled=${busy || !peerGroups.length}
+            onChange=${(event) => setPeerGroupID(event.currentTarget.value)}>
+            ${peerGroups.map((group) => html`<option key=${group.id} value=${group.id}>${group.name}</option>`)}
+          </select>
+        </label>` : html`
+        <label class="cron-create-row">
+          <span class="cron-create-label">${!edit && targets ? '' : 'To'}</span>
+          <select id="link-modal-to" value=${to} disabled=${busy || edit}
+            onChange=${(event) => setTo(event.currentTarget.value)}>
+            ${groupOptions.map((name) => html`<option key=${name} value=${name}>${name}</option>`)}
+          </select>
+        </label>`}
+      ${!edit && targets && (target === 'peer' || !connected) && html`<${PeerOutcome} peer=${peer} group=${peerGroup} connected=${connected} reason=${targets.reason} />`}
       <label class="cron-create-row">
         <span class="cron-create-label">Mode</span>
         <select id="link-modal-mode" value=${mode} disabled=${busy}
@@ -234,7 +378,9 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
         <label class="cron-create-enabled" id="link-modal-bidir-row" title="Also create the reverse link (TO → FROM) with the same mode in one call.">
           <input id="link-modal-bidir" type="checkbox" checked=${bidir} disabled=${busy}
             onChange=${(event) => setBidir(event.currentTarget.checked)} />
-          <${Words} plain="Also create reverse link (TO → FROM)" wizard="Also weave a reverse channel (TO → FROM)" />
+          ${remote
+    ? html`Also ask for the reverse link (${peer?.label || 'peer'}:${peerGroup?.name || '…'} → ${from || 'FROM'})`
+    : html`<${Words} plain="Also create reverse link (TO → FROM)" wizard="Also weave a reverse channel (TO → FROM)" />`}
         </label>
       `}
       <${ErrorBanner} error=${error} />
@@ -243,8 +389,8 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
         <span class="spacer"></span>
         <button id="link-modal-submit" class="primary" type="button" disabled=${busy} onClick=${submit}>
           <${Words}
-            plain=${busy ? (edit ? 'Saving…' : 'Creating…') : (edit ? 'Save changes' : 'Create link')}
-            wizard=${busy ? (edit ? 'Rebinding…' : 'Weaving…') : (edit ? 'Rebind channel' : 'Weave channel')}
+            plain=${busy ? (edit ? 'Saving…' : 'Creating…') : (edit ? 'Save changes' : remote && peerGroup && !peerGroup.auto ? 'Send link request' : 'Create link')}
+            wizard=${busy ? (edit ? 'Rebinding…' : 'Weaving…') : (edit ? 'Rebind channel' : remote && peerGroup && !peerGroup.auto ? 'Send link petition' : 'Weave channel')}
           />
         </button>
       </div>
