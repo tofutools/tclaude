@@ -49,11 +49,11 @@ func CanRead(reader, version string) bool {
 }
 
 // versionReadable reports whether a MAJOR.MINOR version can be read by a
-// reader that knows major.minor: the major must match, and while it is 0 a
-// newer minor may have changed the format, so it is refused too.
+// reader that knows major.minor: the major must match, and while it is 0
+// any other minor may differ incompatibly, so only the same one is read.
 func versionReadable(v string, major, minor int) bool {
 	gotMajor, gotMinor, err := ParseVersion(v)
-	return err == nil && gotMajor == major && (major != 0 || gotMinor <= minor)
+	return err == nil && gotMajor == major && (major != 0 || gotMinor == minor)
 }
 
 // ErrNotPAF reports an archive that is not a PAF file.

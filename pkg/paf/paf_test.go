@@ -595,7 +595,7 @@ func TestWriterRefusesContextLineOverRecordLimit(t *testing.T) {
 }
 
 func TestVersionReadable(t *testing.T) {
-	for v, want := range map[string]bool{"0.1": true, "0.0": true, "0.2": false, "1.0": false, "x": false} {
+	for v, want := range map[string]bool{"0.1": true, "0.0": false, "0.2": false, "1.0": false, "x": false} {
 		assert.Equal(t, want, versionReadable(v, 0, 1), v)
 	}
 	// From 1.0, minors only add, so a newer one is readable.

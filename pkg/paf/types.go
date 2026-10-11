@@ -19,7 +19,7 @@ const (
 	// Major is the PAF major version this package reads and writes.
 	Major = 0
 	// Minor is the highest minor version of Major this package knows.
-	// While Major is 0 a minor version may break, so a newer one is refused.
+	// While Major is 0 a minor version may break, so only this one is read.
 	Minor = 1
 	// Version is the version this package stamps on files it writes.
 	Version = "0.1"

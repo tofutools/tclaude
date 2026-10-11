@@ -665,8 +665,8 @@ keyed by its id:
   `com.example.agentlab`.
 - **`version`:** the extension's own format version, `MAJOR.MINOR`, with the
   same rules as `paf_version`. A reader that knows the extension but not that
-  version (another major, or while the major is 0 a newer minor) treats it as
-  unknown.
+  version (another major, or while the major is 0 any other minor) treats it
+  as unknown.
 - **`system` and `system_version`:** which software wrote the data, and which
   version of it.
 - **`spec`:** where the extension is documented. `schema` (optional) points
@@ -740,10 +740,10 @@ The extension is `copy: unsafe`, version `0.1`.
 compares versions.
 
 - **While the major version is 0**, the format is still settling and any
-  minor version may change it incompatibly. A reader refuses a 0.y version
-  newer than the newest it knows, the same way it refuses an unknown major
-  version, and need not read older 0.x versions. The rule below that a minor
-  version only adds applies from 1.0.
+  minor version may change it incompatibly. A 0.x reader reads exactly the
+  0.y versions it implements and refuses every other one, older or newer,
+  the same way it refuses an unknown major version. The rule below that a
+  minor version only adds applies from 1.0.
 - From 1.0, a **minor** version only adds: new optional fields, new optional
   entries, new enum values in fields documented as open (loss kinds, lineage
   ops, redaction kinds), or new `requires` features. A 1.0 reader reads every
