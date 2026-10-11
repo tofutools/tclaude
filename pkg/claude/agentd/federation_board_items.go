@@ -29,16 +29,19 @@ type boardItemRef struct {
 	Version string `json:"version"`
 }
 type boardItemInput struct {
-	Version      string            `json:"version"`
-	Name         string            `json:"name"`
-	Item         string            `json:"item"`
-	Parent       string            `json:"parent"`
-	Source       *boardItemRef     `json:"source,omitempty"`
-	Only         []string          `json:"only"`
-	Skip         []string          `json:"skip"`
-	Values       map[string]string `json:"values"`
-	Replace      bool              `json:"replace"`
-	PreviewToken string            `json:"preview_token"`
+	Version            string            `json:"version"`
+	Name               string            `json:"name"`
+	Item               string            `json:"item"`
+	Parent             string            `json:"parent"`
+	Source             *boardItemRef     `json:"source,omitempty"`
+	Only               []string          `json:"only"`
+	Skip               []string          `json:"skip"`
+	Values             map[string]string `json:"values"`
+	Replace            bool              `json:"replace"`
+	PreviewToken       string            `json:"preview_token"`
+	SkillRoot          string            `json:"skill_root"`
+	SkillTargets       []string          `json:"skill_targets"`
+	PreserveExecutable bool              `json:"preserve_executable"`
 }
 type boardItemAccess struct {
 	opts client.Options
@@ -180,7 +183,7 @@ func (a *boardItemAccess) fetched(v proto.BoardItemVersion, m proto.BoardItemMan
 	if e = m.VerifyPayload(raw); e != nil {
 		return nil, e
 	}
-	_, e = scanBoardConfig(raw)
+	e = scanBoardItem(raw, m.Kind)
 	return raw, e
 }
 func (a *boardItemAccess) fetch(v proto.BoardItemVersion, m proto.BoardItemManifest) error {
@@ -199,7 +202,7 @@ func (a *boardItemAccess) fetch(v proto.BoardItemVersion, m proto.BoardItemManif
 	if e = m.VerifyPayload(raw); e != nil {
 		return e
 	}
-	if _, e = scanBoardConfig(raw); e != nil {
+	if e = scanBoardItem(raw, m.Kind); e != nil {
 		return e
 	}
 	return boardItemSpool().Receive("in", v.Publisher, boardPlainDescriptor(v, m), bytes.NewReader(raw))
@@ -323,7 +326,7 @@ func boardItemRoute(op string) http.HandlerFunc {
 				fail(e)
 				return
 			}
-			recordFederationAudit("boards.publish", "", "", ref.Board, "signed config item", 200)
+			recordFederationAudit("boards.publish", "", "", ref.Board, "signed Board item", 200)
 			var out any
 			_ = json.Unmarshal(body, &out)
 			writeJSON(w, 200, out)
@@ -367,7 +370,11 @@ func boardItemRoute(op string) http.HandlerFunc {
 				return
 			}
 			defer func() { _ = f.Close() }()
-			serveBundleContents(w, r, f, boardPlainDescriptor(v, m))
+			descriptor := boardPlainDescriptor(v, m)
+			if m.Kind == "skill" {
+				descriptor.Type = "skill"
+			}
+			serveBundleContents(w, r, f, descriptor)
 		case "download":
 			w.Header().Set("Content-Type", "application/octet-stream")
 			w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="board-%s.json"`, v.Version))
@@ -377,7 +384,11 @@ func boardItemRoute(op string) http.HandlerFunc {
 				_, _ = w.Write(raw)
 			}
 		case "preview", "import":
-			boardConfigImport(w, r, op, ref, m, raw, in)
+			if m.Kind == "skill" {
+				boardSkillImport(w, r, op, ref, m, raw, in)
+			} else {
+				boardConfigImport(w, r, op, ref, m, raw, in)
+			}
 		}
 	}
 }

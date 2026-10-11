@@ -35,7 +35,7 @@ func (m *BoardItemManifest) Sign(id *Identity) {
 }
 func (m BoardItemManifest) Verify() error {
 	hash, e := hex.DecodeString(m.SHA256)
-	if e != nil || len(hash) != sha256.Size || !ValidStreamID(m.Item) || !ValidStreamID(m.Version) || m.Kind != "config" || m.Name == "" || len(m.Name) > 128 || m.Bytes < 1 || m.Bytes > MaxBoardItemBytes || InstanceID(m.Pub) != m.Publisher || len(m.Pub) != ed25519.PublicKeySize || !ed25519.Verify(m.Pub, m.signingBytes(), m.Signature) {
+	if e != nil || len(hash) != sha256.Size || !ValidStreamID(m.Item) || !ValidStreamID(m.Version) || (m.Kind != "config" && m.Kind != "skill") || m.Name == "" || len(m.Name) > 128 || m.Bytes < 1 || m.Bytes > MaxBoardItemBytes || InstanceID(m.Pub) != m.Publisher || len(m.Pub) != ed25519.PublicKeySize || !ed25519.Verify(m.Pub, m.signingBytes(), m.Signature) {
 		return errors.New("invalid publisher-signed board manifest")
 	}
 	if m.Parent != "" && !ValidStreamID(m.Parent) {

@@ -19,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/configbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/skillbundle"
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
 )
 
@@ -130,6 +131,17 @@ func bundleEntries(f *os.File, d bundletransfer.Descriptor) ([]bundleContentEntr
 		}
 		if int64(len(raw)) > bundletransfer.Config.MaxBytes {
 			return nil, errors.New("config bundle too large")
+		}
+		if d.Type == "skill" {
+			b, e := skillbundle.Decode(raw)
+			if e != nil {
+				return nil, e
+			}
+			for _, file := range b.Files {
+				data := file.Data
+				entries = append(entries, bundleContentEntry{Path: "skills/" + b.Name + "/" + file.Path, Size: int64(len(data)), Kind: "file", open: func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(data)), nil }})
+			}
+			return entries, nil
 		}
 		var b configbundle.Bundle
 		if err = json.Unmarshal(raw, &b); err != nil {

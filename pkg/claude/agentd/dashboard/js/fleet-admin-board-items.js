@@ -58,6 +58,8 @@ export async function parentSelection(actions, board, item, version) {
   try {
     await actions.fetchBoardItem(board, item, version);
     const entries = (await actions.boardItemContents(board, item, version))?.entries || [];
+    const skills = entries.map((e) => /^skills\/([^/]+)\//.exec(e?.path || '')?.[1]).filter(Boolean);
+    if (skills.length) return [...new Set(skills)].map((name) => `skills/${name}`);
     const out = [];
     for (const e of entries) {
       const m = /^sections\/([a-z-]+)\.json$/.exec(e?.path || '');
@@ -78,6 +80,7 @@ function PublishDialog({ board, item, actions, confirm, onClose, onDone }) {
   const [name, setName] = useState(item?.name || '');
   const [sections, setSections] = useState([]);
   const [named, setNamed] = useState('');
+  const [skillRoot, setSkillRoot] = useState('');
   const [error, setError] = useState('');
   const [prefilled, setPrefilled] = useState('');
   // A new version starts from what the previous version shared.
@@ -103,7 +106,7 @@ function PublishDialog({ board, item, actions, confirm, onClose, onDone }) {
       body: `Shares ${only.join(', ')} from this node's config with every member of ${board.name}, signed by this node. Members can read it and import it into their own config; nothing changes on their nodes until they do. Anything that looks like a credential is refused, but free text (role prompts, templates) is shared as written.`,
       okLabel: 'Post',
       busyLabel: 'Posting…',
-      action: () => actions.publishBoardItem(board.id, { name: name.trim(), only, ...(item ? { item: item.id, parent: item.latest_version } : {}) }),
+      action: () => actions.publishBoardItem(board.id, { name: name.trim(), only, ...(skillRoot ? {skill_root:skillRoot}:{}), ...(item ? { item: item.id, parent: item.latest_version } : {}) }),
     }).then((r) => { if (r) onDone(`Posted ${name.trim()} to ${board.name}`); }).catch((e) => setError(errText(e)));
   };
   return html`<${Overlay} id="fleet-board-publish" labelledby="fleet-board-publish-title" onClose=${onClose}>
@@ -112,7 +115,8 @@ function PublishDialog({ board, item, actions, confirm, onClose, onDone }) {
     <div class="fa-cli-note">Share these parts of this node's config:</div>
     <div class="fa-grant-form">${POSTABLE.map((s) => html`<label key=${s}><input type="checkbox" data-section=${s} checked=${sections.includes(s)}
       onChange=${(e) => setSections(e.currentTarget.checked ? [...sections, s] : sections.filter((x) => x !== s))} /> ${s}</label>`)}</div>
-    <label class="fa-of-row"><span class="fa-k">or only</span><input id="fleet-board-publish-only" value=${named} placeholder="roles/reviewer, profiles/fast" autocomplete="off" spellcheck="false" onInput=${(e) => setNamed(e.currentTarget.value)} /></label>
+    <label class="fa-of-row"><span class="fa-k">or only</span><input id="fleet-board-publish-only" value=${named} placeholder="roles/reviewer, profiles/fast, skills/demo-recording" autocomplete="off" spellcheck="false" onInput=${(e) => setNamed(e.currentTarget.value)} /></label>
+    ${only.some((x) => x.startsWith('skills/')) && html`<label class="fa-of-row"><span class="fa-k">skill source</span><select id="fleet-board-skill-source" value=${skillRoot} onChange=${(e) => setSkillRoot(e.currentTarget.value)}><option value="">find in local roots (unique name)</option><option value="claude">Claude Code</option><option value="agents">Codex shared (.agents)</option><option value="codex">Codex home</option></select></label><div class="fa-warn">Post one skills/NAME directory. Skill instructions and scripts are shared as written; suspected credentials are refused.</div>`}
     ${prefilled && html`<div class="muted" id="fleet-board-publish-prefilled">Prefilled with the items version ${short(prefilled)} shares; this node's current config for them is posted. To share a whole section again, including items added since, tick it.</div>`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation boards publish --board ${board.id} --name … --only roles/NAME${item ? ` --item ${item.id} --parent ${item.latest_version}` : ''}</code></div>
@@ -161,7 +165,7 @@ function RepostDialog({ board, boards, item, version, by, actions, confirm, onCl
 // ImportDialog previews an item version against this node's config and
 // imports it with the preview's token and the same choices.
 function ImportDialog({ board, item, version, by, actions, confirm, onClose, onDone }) {
-  const [opts, setOpts] = useState({ skip: [], values: {}, replace: false });
+  const [opts, setOpts] = useState({ skip: [], values: {}, replace: false, skill_targets: [], preserve_executable: false });
   const [preview, setPreview] = useState(null);
   // seen keeps every change and placeholder any preview showed: a re-preview
   // leaves skipped items out, and they must stay on screen to tick again.
@@ -172,7 +176,7 @@ function ImportDialog({ board, item, version, by, actions, confirm, onClose, onD
   const seq = useRef(0);
   const choices = (o) => {
     const values = Object.fromEntries(Object.entries(o.values).filter(([, v]) => String(v).trim() !== ''));
-    return { ...(o.skip.length ? { skip: [...o.skip] } : {}), ...(Object.keys(values).length ? { values } : {}), ...(o.replace ? { replace: true } : {}) };
+    return { ...(o.skip.length ? { skip: [...o.skip] } : {}), ...(Object.keys(values).length ? { values } : {}), ...(o.replace ? { replace: true } : {}), ...(o.skill_targets.length ? {skill_targets:[...o.skill_targets]}:{}), ...(o.preserve_executable ? {preserve_executable:true}:{}) };
   };
   const run = (o = opts) => {
     const mine = ++seq.current;
@@ -192,14 +196,14 @@ function ImportDialog({ board, item, version, by, actions, confirm, onClose, onD
   useEffect(() => run(), []);
   // A change invalidates any preview still in flight, too.
   const change = (patch) => { seq.current += 1; setBusy(false); const next = { ...opts, ...patch }; setOpts(next); setStale(true); return next; };
-  const changes = seen.changes;
+  const changes = preview?.kind === 'skill' ? preview.changes || [] : seen.changes;
   const unresolved = seen.unresolved;
   const conflicts = changes.some((c) => c.action === 'replace' && !opts.skip.includes(c.item));
   const missing = (preview?.unresolved || []).some((u) => !String(opts.values[u.name] || '').trim());
   const nothing = !changes.some((c) => c.action !== 'unchanged' && !opts.skip.includes(c.item));
   const blocked = !preview?.preview_token || stale || busy || missing || nothing || (conflicts && !opts.replace);
   const apply = () => confirm({
-    title: `Import ${item.name} into this node's config?`,
+    title: `Import ${item.name} into this node's ${preview?.kind === 'skill' ? 'skill roots' : 'config'}?`,
     body: importConsequence(item, board, preview, opts.skip, by),
     okLabel: 'Import',
     busyLabel: 'Importing…',
@@ -213,17 +217,21 @@ function ImportDialog({ board, item, version, by, actions, confirm, onClose, onD
   return html`<${Overlay} id="fleet-board-import" labelledby="fleet-board-import-title" onClose=${onClose}>
     <h3 id="fleet-board-import-title">Import ${item.name} <span class="muted">v ${short(version)}</span></h3>
     <div class="muted">From board ${board.name}, posted by ${by}. Nothing changes here until you import.</div>
+    ${preview?.kind === 'skill' && html`<div class="fa-cli-note">Install skills/${preview.skill} into:</div><div class="fa-grant-form">${(preview.skill_roots || []).map((root) => html`<label key=${root.id}><input type="checkbox" data-skill-target=${root.id} checked=${opts.skill_targets.includes(root.id)} onChange=${(e) => change({skill_targets:e.currentTarget.checked ? [...opts.skill_targets,root.id]:opts.skill_targets.filter((id)=>id!==root.id)})} /> ${root.label} <code>${root.path}</code></label>`)}</div>
+      <label class="fa-of-check"><input id="fleet-board-skill-executable" type="checkbox" checked=${opts.preserve_executable} onChange=${(e)=>change({preserve_executable:e.currentTarget.checked})} /> Preserve executable bits: the listed scripts and executables can be run by agents. I have inspected them. Otherwise executable bits are stripped; an interpreter can still run scripts.</label>
+      <div class="fa-cli-note">Files (inspect security-relevant content before importing):</div>
+      ${(preview.files || []).map((file)=>html`<details key=${file.path} data-skill-file=${file.path}><summary><code>${file.path}</code> · ${file.bytes} bytes ${file.security && html`<span class="fa-badge fa-sensitive">security-relevant</span>`} ${file.executable ? '· executable' : ''}</summary>${file.binary && html`<div class="fa-warn">Binary file: use the verified download to inspect its bytes.</div>`}${file.text !== undefined && html`<pre>${file.text}</pre>`}</details>`)}`}
     ${changes.length > 0 && html`<table class="fa-table" id="fleet-board-import-changes"><thead><tr><th></th><th>Item</th><th>Change</th><th></th></tr></thead>
       <tbody>${changes.map((c) => html`<tr key=${c.item} data-item=${c.item}>
-        <td><input type="checkbox" aria-label=${`include ${c.item}`} checked=${!opts.skip.includes(c.item)} disabled=${c.action === 'unchanged'}
+        <td><input type="checkbox" aria-label=${`include ${c.item}`} checked=${!opts.skip.includes(c.item)} disabled=${preview?.kind === 'skill' || c.action === 'unchanged'}
           onChange=${(e) => change({ skip: e.currentTarget.checked ? opts.skip.filter((x) => x !== c.item) : [...opts.skip, c.item] })} /></td>
         <td><code>${c.item}</code></td>
         <td class=${c.action === 'replace' ? 'fa-warn' : c.action === 'unchanged' ? 'muted' : ''}>${c.action === 'replace' ? 'overwrites yours' : c.action === 'create' ? 'new' : 'unchanged'}</td>
         <td>${c.security && c.action !== 'unchanged' ? html`<span class="fa-badge fa-sensitive" title="decides what this node's agents may do">security</span>` : ''}</td>
       </tr>`)}</tbody></table>`}
-    ${preview && !changes.length && html`<div class="muted">This version has nothing to import.</div>`}
+    ${preview && !changes.length && html`<div class="muted">${preview.kind === 'skill' ? 'Select a destination skill root, then preview again.' : 'This version has nothing to import.'}</div>`}
     ${(preview?.warnings || []).map((w) => html`<div class="fa-warn">${w}</div>`)}
-    ${changes.some((c) => c.action === 'replace') && html`<label class="fa-of-check"><input id="fleet-board-import-replace" type="checkbox" checked=${opts.replace} onChange=${(e) => change({ replace: e.currentTarget.checked })} /> overwrite my items that differ (otherwise untick them)</label>`}
+    ${changes.some((c) => c.action === 'replace') && html`<label class="fa-of-check"><input id="fleet-board-import-replace" type="checkbox" checked=${opts.replace} onChange=${(e) => change({ replace: e.currentTarget.checked })} /> overwrite my items that differ ${preview?.kind === 'skill' ? '(or deselect the root)' : '(otherwise untick them)'}</label>`}
     ${unresolved.length > 0 && html`<div class="fa-cli-note">Values this item needs on this node:</div>
       ${unresolved.map((u) => html`<label class="fa-of-row" key=${u.name}><span class="fa-k">${u.name}</span><input data-placeholder=${u.name} value=${opts.values[u.name] || ''} placeholder=${u.original || `${u.item} ${u.field}`} autocomplete="off" spellcheck="false" onInput=${(e) => change({ values: { ...opts.values, [u.name]: e.currentTarget.value } })} /></label>`)}`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
