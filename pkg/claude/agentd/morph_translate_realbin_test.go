@@ -120,11 +120,12 @@ func TestMorphResumeRealCLI(t *testing.T) {
 			args: func(id string) []string {
 				return []string{"exec", "--skip-git-repo-check", "-c", `model="gpt-5.6-luna"`, "-c", `model_reasoning_effort="low"`, "resume", id, ask}
 			}},
-		{src: harness.DefaultName, dst: harness.CopilotName, bin: "copilot", model: "claude-haiku-5.5",
-			// Copilot's GitHub token lives in the OS keyring, not under COPILOT_HOME.
+		{src: harness.DefaultName, dst: harness.CopilotName, bin: "copilot", model: "gpt-5-mini",
+			// Copilot's login does not resolve from an empty COPILOT_HOME;
+			// the case skips when the CLI reports it cannot authenticate.
 			creds: func(*testing.T, string) {},
 			args: func(id string) []string {
-				return []string{"--resume", id, "--model", "claude-haiku-5.5", "-s", "-p", ask}
+				return []string{"--resume", id, "--model", "gpt-5-mini", "-s", "-p", ask}
 			}},
 		{src: harness.DefaultName, dst: harness.OpenCodeName, bin: "opencode", model: "openai/gpt-5.6-luna",
 			creds: func(*testing.T, string) {},
@@ -173,6 +174,9 @@ func TestMorphResumeRealCLI(t *testing.T) {
 			cmd.Stdin = strings.NewReader("")
 			out, err := cmd.CombinedOutput()
 			t.Logf("%s resume output:\n%s", c.bin, out)
+			if err != nil && strings.Contains(string(out), "No authentication information found") {
+				t.Skipf("%s is not logged in under the isolated test HOME", c.bin)
+			}
 			require.NoError(t, err)
 			assert.Contains(t, strings.ToUpper(string(out)), "PELICAN", "the resumed %s session remembers the carried turn", c.dst)
 		})
