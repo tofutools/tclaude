@@ -191,8 +191,12 @@ is explicit about what does not map 1:1:
   counts, not the identities of retained messages, so it requires the existing
   agent-written handoff path instead of guessing which history survived.
 - **Codex compaction summaries** are encrypted in current Codex releases. A
-  Codex conversation that has compacted therefore carries only the retained
-  user messages from before the compaction.
+  Cross-harness morph asks the source for a handoff of its remembered context
+  and carries that alongside the readable tail. The existing pending dialog
+  shows the source and deadline; timeout or cancellation leaves it unchanged.
+  During a provider outage, explicitly confirm `--proceed-without-summary` or
+  the dashboard loss checkbox to continue with readable history, the saved
+  transcript pointer and a clear warning about the unreadable summary.
 
 Every translation produces a loss report (counts and categories only, never
 transcript content) and keeps the full, unclipped transcript as a Markdown

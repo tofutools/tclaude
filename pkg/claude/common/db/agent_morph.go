@@ -65,7 +65,8 @@ type AgentPendingMorph struct {
 	// HandoffRequired marks a handoff morph chosen because the history
 	// cannot be read or a large cut requires a summary: without that response it is
 	// dropped at expiry instead of falling back to the context-file rung.
-	HandoffRequired bool `json:"handoff_required,omitempty"`
+	HandoffRequired bool   `json:"handoff_required,omitempty"`
+	HandoffReason   string `json:"handoff_reason,omitempty"`
 }
 
 // AgentMorphHandoff is the handoff an agent submits for the agent that

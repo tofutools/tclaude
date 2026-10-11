@@ -273,6 +273,9 @@ func printMorphHistory(w io.Writer, r *transcript.LossReport) {
 	if r.BudgetWarning {
 		fmt.Fprintf(w, "  history cut: %d%% kept, %d%% omitted from inline history; %s\n", r.KeptPercent, r.DroppedPercent, r.SelectionReason)
 	}
+	if r.NeedsHandoff {
+		fmt.Fprintln(w, "  compaction summary unreadable; waiting for a source-written handoff beside the readable tail (explicit --proceed-without-summary accepts the loss if the source cannot answer)")
+	}
 	if r.NeedsSummary {
 		fmt.Fprintln(w, "  confirm with --confirm-history-loss; the source writes a summary before departure")
 	}

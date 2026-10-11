@@ -271,7 +271,7 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
     if (!profile || !preview || busy || (preview.history?.needs_summary && !confirmCut && !proceedWithoutSummary)) return;
     setBusy(true); setError('');
     let done;
-    try { done = await api.morph(agent.conv || agent.id, { profile, ...(now && !preview.history?.needs_summary ? { now: true } : {}), ...(confirmCut ? { confirm_history_loss: true } : {}), ...(proceedWithoutSummary ? { proceed_without_summary: true } : {}) }); } catch (e) { setError(errText(e)); setBusy(false); return; }
+    try { done = await api.morph(agent.conv || agent.id, { profile, ...(now && !preview.history?.needs_summary && !preview.history?.needs_handoff ? { now: true } : {}), ...(confirmCut ? { confirm_history_loss: true } : {}), ...(proceedWithoutSummary ? { proceed_without_summary: true } : {}) }); } catch (e) { setError(errText(e)); setBusy(false); return; }
     if (done?.result === 'pending' && done?.pending_morph?.history === 'summary') {
       setWaiting(done.pending_morph); setRemaining(Math.max(0,Math.ceil((Date.parse(done.pending_morph.expires_at)-Date.now())/1000))); setBusy(false); return;
     }
@@ -284,20 +284,21 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
   };
   return html`
     ${waiting && html`<div role="status" data-lt-state="waiting-summary">Waiting for ${agent.name}'s history summary · ${Math.floor(remaining/60)}m ${remaining%60}s left. Timeout leaves it unchanged.<button type="button" onClick=${cancelPending} disabled=${busy}>Cancel pending morph</button><button type="button" onClick=${onClose}>Close</button></div>`}
-    ${(waiting || preview?.history?.needs_summary) && html`<label key="loss-fallback" class="lt-check"><input id="lt-proceed-without-summary" type="checkbox" checked=${proceedWithoutSummary} onChange=${(e) => setProceedWithoutSummary(e.currentTarget.checked)} /> Source cannot answer (for example, provider outage): continue with readable history and the full-transcript pointer. Earlier context may be lost.</label>`}
+    ${(waiting || preview?.history?.needs_summary || preview?.history?.needs_handoff) && html`<label key="loss-fallback" class="lt-check"><input id="lt-proceed-without-summary" type="checkbox" checked=${proceedWithoutSummary} onChange=${(e) => setProceedWithoutSummary(e.currentTarget.checked)} /> Source cannot answer (for example, provider outage): continue with readable history and the full-transcript pointer. Earlier context may be lost.</label>`}
     ${waiting && html`<button type="button" id="lt-proceed-loss" disabled=${!proceedWithoutSummary || busy || !(profile || waiting.target?.profile)} onClick=${continueWithoutSummary}>Continue now without a summary</button>`}
     <label class="lt-row"><span class="lt-k">Stays on</span><span class="muted">this node · ${agent.group || 'its groups'}</span></label>
     <label class="lt-row"><span class="lt-k">Profile</span>${profiles === null ? html`<span class="muted">loading…</span>` : html`<select id="lt-morph-profile" value=${profile} disabled=${busy || !!waiting} onChange=${(e) => { setConfirmCut(false); setProceedWithoutSummary(false); setProfile(e.currentTarget.value); }}>
       <option value="">pick a spawn profile…</option>
       ${profiles.map((p) => html`<option key=${p.name} value=${p.name}>${p.name}${p.harness || p.model ? ` — ${[p.harness, p.model, p.effort && `effort ${p.effort}`].filter(Boolean).join(' · ')}` : ''}</option>`)}</select>`}</label>
     ${preview && html`<div class="lt-morph-preview"><div><span class="lt-k">was</span> ${formLine(preview.before)}</div><div><span class="lt-k">now</span> ${formLine(preview.after)}</div></div>`}
+    ${preview?.history?.needs_handoff && html`<div role="status">Compaction summary unreadable. Ask ${agent.name} for a handoff, carried beside its readable tail. If the source cannot answer, explicitly confirm readable-history-only continuation below.</div>`}
     ${preview?.history?.budget_warning && html`<div role="status">${preview.history.kept_percent}% kept · ${preview.history.dropped_percent}% dropped from inline history. ${preview.history.selection_reason}</div>`}
     ${preview?.history?.needs_summary && html`<label key="summary-confirm" class="lt-check"><input id="lt-confirm-cut" type="checkbox" checked=${confirmCut} disabled=${!!waiting} onChange=${(e) => setConfirmCut(e.currentTarget.checked)} /> Drop ${preview.history.dropped_percent}% of inline history, carry a source-written summary. Original task and latest instructions stay available.</label>`}
-    <label class="lt-check"><input id="lt-morph-now" type="checkbox" checked=${now} disabled=${!!waiting || preview?.history?.needs_summary} onChange=${(e) => setNow(e.currentTarget.checked)} /> now: stop it even if it is busy, and resume it from its last saved history</label>
+    <label class="lt-check"><input id="lt-morph-now" type="checkbox" checked=${now} disabled=${!!waiting || preview?.history?.needs_summary || preview?.history?.needs_handoff} onChange=${(e) => setNow(e.currentTarget.checked)} /> now: stop it even if it is busy, and resume it from its last saved history</label>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="modal-buttons"><span class="spacer"></span>
       <button type="button" id="lt-cancel" onClick=${onClose}>Cancel</button>
-      <button type="button" ref=${okRef} class="primary" id="lt-ok" disabled=${!preview || busy || !!waiting || (preview?.history?.needs_summary && !confirmCut && !proceedWithoutSummary)} onClick=${apply}>${busy ? 'Morphing…' : preview?.history?.needs_summary ? 'Request summary and morph' : now ? 'Morph now' : 'Morph at next idle turn'}</button></div>`;
+      <button type="button" ref=${okRef} class="primary" id="lt-ok" disabled=${!preview || busy || !!waiting || (preview?.history?.needs_summary && !confirmCut && !proceedWithoutSummary)} onClick=${apply}>${busy ? 'Morphing…' : preview?.history?.needs_handoff ? 'Request handoff and morph' : preview?.history?.needs_summary ? 'Request summary and morph' : now ? 'Morph now' : 'Morph at next idle turn'}</button></div>`;
 }
 
 export function formLine(v) {

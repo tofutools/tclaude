@@ -95,6 +95,7 @@ type LossReport struct {
 	KeptPercent        int    `json:"kept_percent"`
 	BudgetWarning      bool   `json:"budget_warning,omitempty"`
 	NeedsSummary       bool   `json:"needs_summary,omitempty"`
+	NeedsHandoff       bool   `json:"needs_handoff,omitempty"`
 	SelectionReason    string `json:"selection_reason,omitempty"`
 	PinnedExternalized bool   `json:"pinned_externalized,omitempty"`
 

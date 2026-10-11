@@ -483,6 +483,9 @@ func (cm *crossMorph) installHistory(agentID, convID string, pending db.AgentPen
 	}
 	if res != nil && pending.History == "summary" && res.Report.Fallback == "native" {
 		res.Report.Fallback = "native_summary"
+		if res.Report.Count(transcript.LossEncryptedSummary) > 0 {
+			res.Report.Fallback = "native_handoff"
+		}
 	}
 	if err == nil {
 		return res, nil
@@ -518,7 +521,7 @@ func applyCrossHarnessMorphUnderLaunchLock(agentID, convID string, pending db.Ag
 		if err != nil {
 			return morphOutcome{status: http.StatusConflict, code: "history_unreadable", detail: err.Error()}
 		}
-		if preflight.NeedsSummary && !pending.ProceedWithoutSummary && (!pending.ConfirmHistoryLoss || pending.Handoff == nil || strings.TrimSpace(pending.Handoff.Body) == "") {
+		if !pending.ProceedWithoutSummary && ((preflight.NeedsSummary && !pending.ConfirmHistoryLoss) || ((preflight.NeedsSummary || preflight.Count(transcript.LossEncryptedSummary) > 0) && (pending.Handoff == nil || strings.TrimSpace(pending.Handoff.Body) == ""))) {
 			return morphOutcome{status: http.StatusConflict, code: "history_confirmation_required", detail: "history grew beyond the confirmed budget or its required summary is missing; source remains unchanged"}
 		}
 	}
@@ -641,6 +644,9 @@ func requestMorphHandoff(convID string, pending db.AgentPendingMorph) {
 		srcName, pending.Target.Harness, by, pending.Target.Harness, pending.ExpiresAt.Format(time.RFC3339))
 	if pending.History == "summary" {
 		body = fmt.Sprintf("You will continue as %s after a large history cut. Write a concise summary of the earlier work: decisions, completed work, open issues, and next steps. The original task and latest user instructions remain pinned. Submit it with `tclaude agent morph-handoff -f <file>`, then end your turn. Deadline: %s. If no summary arrives, the morph is cancelled and you remain here.", pending.Target.Harness, pending.ExpiresAt.Format(time.RFC3339))
+	}
+	if pending.HandoffReason == "encrypted_compaction_summary" {
+		body = "Your native compaction summary is encrypted and cannot be read by the destination harness. Write a handoff of the context you remember: original task, important decisions, completed work, open issues and next steps. Submit with `tclaude agent morph-handoff -f <file>`, then end your turn. It travels alongside the readable history tail. Deadline: " + pending.ExpiresAt.Format(time.RFC3339) + ". Without a handoff, the source remains unchanged unless the operator explicitly confirms the loss fallback."
 	}
 	var groupID int64
 	if groups, err := db.ListGroupsForConv(convID); err == nil && len(groups) > 0 {
