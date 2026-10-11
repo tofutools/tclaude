@@ -33,6 +33,10 @@ func serveBoardArchive(w http.ResponseWriter, r *http.Request, m proto.BoardItem
 	w.Header().Set("Content-Type", "application/gzip")
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
 	w.Header().Set("Cache-Control", "no-store")
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	gz := gzip.NewWriter(w)
 	tw := tar.NewWriter(gz)
 	defer func() { _ = tw.Close(); _ = gz.Close() }()
