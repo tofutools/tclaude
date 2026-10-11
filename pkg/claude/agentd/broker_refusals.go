@@ -37,7 +37,17 @@ import (
 //     - UNPLACEABLE: no row resolved, so there is nothing trustworthy to
 //     attribute to. Counted only.
 //
-//  2. State is in memory and resets with the daemon, like the rate
+//  2. A refusal stops counting once the harness process that made it has
+//     exited. The caller of a brokered request is a short-lived hook or
+//     statusline process, so the recorder notes the nearest harness
+//     ancestor of that caller (a kernel fact, like the caller pid) as the
+//     refusal's owner. When an agent is retired or deleted its pane — and
+//     with it that harness — goes away, and nothing is being lost any
+//     more; keeping the warning up for the rest of the window would send
+//     the operator looking for an agent that no longer exists. A refusal
+//     whose owner could not be determined keeps counting for the window.
+//
+//  3. State is in memory and resets with the daemon, like the rate
 //     limiter's. These are operator hints, not an audit trail; persisting
 //     them would put database writes on the failure path of the very
 //     mechanism that exists because the database is unreachable.
@@ -75,6 +85,30 @@ type brokerRefusal struct {
 	// only because it is a whole-struct copy.
 	lastLogAt  time.Time
 	suppressed int
+	// owners counts this entry's refusals per owning harness pid (0 when
+	// the caller's ancestry crossed no harness). Only refusals whose owner
+	// is still running are shown; see liveCountLocked.
+	owners map[int]int
+}
+
+// noteOwnerLocked records one refusal against the harness that made it.
+func (e *brokerRefusal) noteOwnerLocked(owner int) {
+	if e.owners == nil {
+		e.owners = map[int]int{}
+	}
+	e.owners[owner]++
+}
+
+// liveCountLocked is Count minus the refusals whose owning harness has
+// exited. An unknown owner (0) is assumed live.
+func (e *brokerRefusal) liveCountLocked(alive func(int) bool) int {
+	n := e.Count
+	for pid, c := range e.owners {
+		if pid > 0 && !alive(pid) {
+			n -= c
+		}
+	}
+	return n
 }
 
 // brokerRefusalLogDecision is what a record call tells its caller about
@@ -116,6 +150,9 @@ type brokerRefusalRecorder struct {
 	unplaceableByCaller map[int]*brokerRefusal
 	writes              int
 	now                 func() time.Time
+	// alive reports whether a refusal's owning harness is still running.
+	// nil means procAlive, read at call time so tests can swap it.
+	alive func(int) bool
 }
 
 var brokerRefusals = newBrokerRefusalRecorder(nil)
@@ -128,6 +165,13 @@ func newBrokerRefusalRecorder(now func() time.Time) *brokerRefusalRecorder {
 	}
 }
 
+func (r *brokerRefusalRecorder) ownerAlive(pid int) bool {
+	if r.alive != nil {
+		return r.alive(pid)
+	}
+	return procAlive(pid)
+}
+
 func (r *brokerRefusalRecorder) clock() time.Time {
 	if r.now != nil {
 		return r.now()
@@ -138,8 +182,14 @@ func (r *brokerRefusalRecorder) clock() time.Time {
 // recordClaimMismatch attributes a refusal to the row the daemon itself
 // resolved for the caller. sessionID must come from the ancestry walk.
 func (r *brokerRefusalRecorder) recordClaimMismatch(sessionID, reason string) brokerRefusalLogDecision {
+	return r.recordClaimMismatchOwned(sessionID, 0, reason)
+}
+
+// recordClaimMismatchOwned is recordClaimMismatch with the pid of the
+// harness that made the request (0 when unknown); see brokerCallerOwner.
+func (r *brokerRefusalRecorder) recordClaimMismatchOwned(sessionID string, owner int, reason string) brokerRefusalLogDecision {
 	if sessionID == "" {
-		return r.recordUnplaceable(reason)
+		return r.recordUnplaceableOwned(0, owner, reason)
 	}
 	now := r.clock()
 	r.mu.Lock()
@@ -153,6 +203,7 @@ func (r *brokerRefusalRecorder) recordClaimMismatch(sessionID, reason string) br
 	e.Count++
 	e.Last = now
 	e.Reason = reason
+	e.noteOwnerLocked(owner)
 
 	r.writes++
 	if r.writes%brokerRefusalPruneEvery == 0 {
@@ -165,11 +216,16 @@ func (r *brokerRefusalRecorder) recordUnplaceable(reason string) brokerRefusalLo
 	return r.recordUnplaceableFor(0, reason)
 }
 
-// recordUnplaceableFor is recordUnplaceable with the caller pid the log
-// throttle is keyed by. The dashboard counter stays daemon-wide; only the
-// decision about writing a log line, and the counts that line carries,
-// are per caller. callerPID 0 (unknown) shares one bucket.
 func (r *brokerRefusalRecorder) recordUnplaceableFor(callerPID int, reason string) brokerRefusalLogDecision {
+	return r.recordUnplaceableOwned(callerPID, 0, reason)
+}
+
+// recordUnplaceableOwned is recordUnplaceable with the caller pid the log
+// throttle is keyed by, and the owning harness pid (0 when unknown). The
+// dashboard counter stays daemon-wide; only the decision about writing a
+// log line, and the counts that line carries, are per caller. callerPID 0
+// (unknown) shares one bucket.
+func (r *brokerRefusalRecorder) recordUnplaceableOwned(callerPID, owner int, reason string) brokerRefusalLogDecision {
 	now := r.clock()
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -179,6 +235,7 @@ func (r *brokerRefusalRecorder) recordUnplaceableFor(callerPID int, reason strin
 	r.unplaceable.Count++
 	r.unplaceable.Last = now
 	r.unplaceable.Reason = reason
+	r.unplaceable.noteOwnerLocked(owner)
 
 	if r.unplaceableByCaller == nil {
 		r.unplaceableByCaller = map[int]*brokerRefusal{}
@@ -274,6 +331,31 @@ type brokerRefusalContext struct {
 	Detail string
 	// Event is the hook event name, or "" for the statusline endpoint.
 	Event string
+	// procs is the request's process-table view, used to find the harness
+	// that owns the refusal. nil leaves the owner unknown.
+	procs *brokerProcTable
+}
+
+// brokerCallerOwnerMaxDepth bounds the ancestry walk in brokerCallerOwner.
+const brokerCallerOwnerMaxDepth = 64
+
+// brokerCallerOwner returns the nearest harness process in the caller's
+// ancestry, or 0 when the walk crosses none. That harness outlives the
+// short-lived hook/statusline caller and exits with the agent's pane, so
+// it is what decides whether a refusal still means telemetry is being
+// lost. It is a log and liveness key only, never an attribution.
+func brokerCallerOwner(t *brokerProcTable, callerPID int) int {
+	if t == nil {
+		return 0
+	}
+	cur := callerPID
+	for i := 0; cur > 1 && i < brokerCallerOwnerMaxDepth; i++ {
+		if t.harnessName(cur) != "" {
+			return cur
+		}
+		cur = t.parent(cur)
+	}
+	return 0
 }
 
 // refuseAttributed records a refusal against the daemon-resolved row AND
@@ -282,22 +364,25 @@ type brokerRefusalContext struct {
 // refusal branch used to record for the dashboard and then return silently,
 // so the badge said something was wrong and nothing said what.
 func (r *brokerRefusalRecorder) refuseAttributed(reason string, ctx brokerRefusalContext) {
-	r.logRefusal(r.recordClaimMismatch(ctx.Resolved, reason), reason, ctx)
+	owner := brokerCallerOwner(ctx.procs, ctx.CallerPID)
+	r.logRefusal(r.recordClaimMismatchOwned(ctx.Resolved, owner, reason), reason, owner, ctx)
 }
 
 // refuseUnplaceable is refuseAttributed for a caller no row resolved for.
 func (r *brokerRefusalRecorder) refuseUnplaceable(reason string, ctx brokerRefusalContext) {
 	ctx.Resolved = ""
-	r.logRefusal(r.recordUnplaceableFor(ctx.CallerPID, reason), reason, ctx)
+	owner := brokerCallerOwner(ctx.procs, ctx.CallerPID)
+	r.logRefusal(r.recordUnplaceableOwned(ctx.CallerPID, owner, reason), reason, owner, ctx)
 }
 
-func (r *brokerRefusalRecorder) logRefusal(d brokerRefusalLogDecision, reason string, ctx brokerRefusalContext) {
+func (r *brokerRefusalRecorder) logRefusal(d brokerRefusalLogDecision, reason string, owner int, ctx brokerRefusalContext) {
 	if !d.Log {
 		return
 	}
 	attrs := []any{
 		"endpoint", ctx.Endpoint,
 		"caller_pid", ctx.CallerPID,
+		"caller_harness_pid", owner,
 		"reason", reason,
 		"resolved_session", ctx.Resolved,
 		"claimed_session", auditClip(ctx.Claimed, brokerRefusalLogClip),
@@ -330,7 +415,8 @@ func (r *brokerRefusalRecorder) pruneLocked(now time.Time) {
 }
 
 // forSession reports the live refusal record for a resolved session row,
-// or nil when there is none inside the window.
+// or nil when there is none inside the window. Count is the live count:
+// refusals whose owning harness has exited are left out.
 func (r *brokerRefusalRecorder) forSession(sessionID string) *brokerRefusal {
 	if sessionID == "" {
 		return nil
@@ -342,12 +428,18 @@ func (r *brokerRefusalRecorder) forSession(sessionID string) *brokerRefusal {
 	if e == nil || now.Sub(e.Last) > brokerRefusalWindow {
 		return nil
 	}
+	live := e.liveCountLocked(r.ownerAlive)
+	if live <= 0 {
+		return nil
+	}
 	cp := *e
+	cp.Count = live
+	cp.owners = nil
 	return &cp
 }
 
-// counts reports every refusal inside the window, and the unplaceable
-// subset of it. The snapshot handler wants only these two numbers, and it
+// counts reports every refusal inside the window whose owning harness is
+// still running, and the unplaceable subset of it. The snapshot handler wants only these two numbers, and it
 // runs on the dashboard's 2s poll — no reason to copy the per-session map
 // every tick.
 //
@@ -364,11 +456,11 @@ func (r *brokerRefusalRecorder) counts() (total, unplaceable int) {
 	defer r.mu.Unlock()
 	for _, e := range r.bySession {
 		if now.Sub(e.Last) <= brokerRefusalWindow {
-			total += e.Count
+			total += e.liveCountLocked(r.ownerAlive)
 		}
 	}
 	if r.unplaceable.Count > 0 && now.Sub(r.unplaceable.Last) <= brokerRefusalWindow {
-		unplaceable = r.unplaceable.Count
+		unplaceable = r.unplaceable.liveCountLocked(r.ownerAlive)
 		total += unplaceable
 	}
 	return total, unplaceable

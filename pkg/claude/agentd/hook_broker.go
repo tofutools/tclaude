@@ -193,7 +193,7 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 	if checkBrokerRate(endpoint, preProofKey, brokerPreIdentityRatePerSecond).Reject {
 		if row == nil {
 			brokerRefusals.refuseUnplaceable("hook: caller could not be placed",
-				brokerRefusalContext{Endpoint: endpoint, CallerPID: p.PID})
+				brokerRefusalContext{Endpoint: endpoint, CallerPID: p.PID, procs: procs})
 		}
 		writeError(w, http.StatusTooManyRequests, "rate", "too many requests before identity verification")
 		return
@@ -229,6 +229,7 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 	}
 	refusal := brokerRefusalContext{
 		Endpoint: endpoint, CallerPID: p.PID, Claimed: claimed, Event: req.Input.HookEventName,
+		procs: procs,
 	}
 	if row != nil {
 		refusal.Resolved = row.ID

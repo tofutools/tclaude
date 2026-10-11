@@ -328,6 +328,48 @@ func TestBrokerRefusals_UnplaceableIsCountedNotAttributed(t *testing.T) {
 		"the session the unplaceable caller claimed must not be badged for it")
 }
 
+// Once the harness that made the refusals is gone — the agent was retired or
+// deleted and its pane went with it — nothing is being lost any more, so the
+// machine-level notice must stop counting those refusals instead of pointing
+// the operator at an agent that no longer exists for the rest of the window.
+func TestBrokerRefusals_StopCountingOnceTheCallersHarnessIsGone(t *testing.T) {
+	t.Cleanup(agentd.ResetBrokerRefusalsForTest())
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	haveLayerSession(t, f, brokerLayerConv, brokerLayerLabel, "tmux-broker-layer", brokerPanePID)
+
+	const harnessPID, hookPID = 8310, 8311
+	restore := agentd.SetProcTreeForTest(
+		map[int]string{harnessPID: "claude", hookPID: "node"},
+		map[int]int{hookPID: harnessPID, harnessPID: 1})
+	t.Cleanup(func() { restore() })
+
+	for range 2 {
+		code, _ := postBrokeredHook(t, f, hookPID, session.BrokeredHookRequest{
+			Input: session.HookCallbackInput{
+				ConvID:        brokerLayerConv,
+				HookEventName: "Stop",
+			},
+			ClaimedSessionID: brokerLayerLabel,
+		})
+		require.Equal(t, http.StatusForbidden, code)
+	}
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	require.Equal(t, 2, snap.BrokerRefusalsUnplaceable,
+		"while the caller's harness runs, its refusals are on the notice")
+
+	// The agent is retired: its harness and the hook process are gone.
+	restore()
+	restore = agentd.SetProcTreeForTest(map[int]string{}, map[int]int{})
+
+	snap = fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	assert.Zero(t, snap.BrokerRefusalsUnplaceable,
+		"refusals from a harness that has exited must stop counting")
+	assert.Zero(t, snap.BrokerRefusalsTotal)
+}
+
 // A tclaude-layer row without its tmux launch identity cannot prove a brokered
 // caller, even if the legacy PID resolver would choose that row.
 func TestBrokerIdentity_ANamelessLayerRowFailsClosed(t *testing.T) {
