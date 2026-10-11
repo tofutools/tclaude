@@ -63,6 +63,7 @@ type peerReadEntry struct {
 	reply    fedPeerViewReply // last reply; its ETag makes the next read conditional
 	err      error            // last failure, served until a read succeeds
 	at       time.Time        // when the outcome was last confirmed
+	gen      uint64           // bumped by invalidate: a read begun earlier lands expired
 	every    time.Duration    // shortest interval declared by a recent reader
 	everyAt  time.Time        // last read declaring every
 	lastRead time.Time
@@ -87,6 +88,7 @@ func (c *peerReadCache) invalidate(peer string) {
 	for key, e := range c.entries {
 		if peer == "" || key.peer == peer {
 			e.at = time.Time{}
+			e.gen++
 		}
 	}
 }
@@ -112,7 +114,8 @@ func (c *peerReadCache) read(ctx context.Context, rt *fedRuntime, peer *db.Feder
 	if e.every == 0 || every <= e.every || now.Sub(e.everyAt) > 2*e.every {
 		e.every, e.everyAt = every, now
 	}
-	if e.at.IsZero() || now.Sub(e.at) > e.every+time.Second {
+	// Twice at most: a read invalidated while in flight is read once more.
+	for try := 0; try < 2 && (e.at.IsZero() || now.Sub(e.at) > e.every+time.Second); try++ {
 		if e.inflight == nil {
 			c.startRead(e)
 		}
@@ -124,6 +127,7 @@ func (c *peerReadCache) read(ctx context.Context, rt *fedRuntime, peer *db.Feder
 			return fedPeerViewReply{}, ctx.Err()
 		}
 		c.mu.Lock()
+		now = c.now()
 	}
 	// The refresher ends with the runtime's context; it holds nothing a
 	// runtime stop would have to wait for.
@@ -144,7 +148,11 @@ func (c *peerReadCache) read(ctx context.Context, rt *fedRuntime, peer *db.Feder
 	if tag := reply.Header.Get("ETag"); tag != "" && reply.Status == http.StatusOK && etagMatches(req.Header.Get("If-None-Match"), tag) {
 		reply = fedPeerViewReply{Status: http.StatusNotModified, Header: http.Header{"Etag": {tag}}}
 	}
-	reply.Header.Set("Age", strconv.Itoa(int(c.now().Sub(at)/time.Second)))
+	age := time.Duration(0)
+	if !at.IsZero() {
+		age = c.now().Sub(at)
+	}
+	reply.Header.Set("Age", strconv.Itoa(int(age/time.Second)))
 	return reply, nil
 }
 
@@ -158,7 +166,7 @@ func (c *peerReadCache) startRead(e *peerReadEntry) {
 	if tag := e.reply.Header.Get("ETag"); tag != "" && e.err == nil {
 		req.Header.Set("If-None-Match", tag)
 	}
-	rt, peer := e.rt, e.peer
+	rt, peer, gen := e.rt, e.peer, e.gen
 	go func() {
 		reply, err := c.exchange(context.Background(), rt, peer, req)
 		c.mu.Lock()
@@ -171,7 +179,11 @@ func (c *peerReadCache) startRead(e *peerReadEntry) {
 		default:
 			e.reply, e.err = reply, nil
 		}
-		e.at = c.now()
+		// An invalidation during the read leaves its result expired, so the
+		// next read asks again rather than serving it as fresh.
+		if e.gen == gen {
+			e.at = c.now()
+		}
 		e.inflight = nil
 		close(done)
 	}()

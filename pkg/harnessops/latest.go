@@ -64,7 +64,13 @@ func RefreshLatestAsyncContext(parent context.Context) {
 			}
 		}
 		latest.Lock()
-		latest.versions = versions
+		if parent.Err() != nil {
+			// Cancelled (federation stopped): keep what was known and let the
+			// next start check again rather than waiting out the hour.
+			latest.checked = time.Time{}
+		} else {
+			latest.versions = versions
+		}
 		latest.running = false
 		latest.Unlock()
 	}()

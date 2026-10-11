@@ -39,7 +39,11 @@ func (f *fakePeerReads) at(i int) fedPeerViewRequest {
 	defer f.mu.Unlock()
 	return f.reqs[i]
 }
-func (f *fakePeerReads) advance(d time.Duration) { f.mu.Lock(); f.clock = f.clock.Add(d); f.mu.Unlock() }
+func (f *fakePeerReads) advance(d time.Duration) {
+	f.mu.Lock()
+	f.clock = f.clock.Add(d)
+	f.mu.Unlock()
+}
 
 func testRuntime(t *testing.T) *fedRuntime {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -196,4 +200,31 @@ func TestPeerSnapshotETagIgnoresItsTimestamp(t *testing.T) {
 	same := respond(`{"agents":[],"generated_at":"2026-10-11T10:00:09Z","groups":[]}`, a.Header().Get("ETag"))
 	require.Equal(t, http.StatusNotModified, same.statusCode())
 	require.Zero(t, same.body.Len())
+}
+
+func TestPeerReadsInvalidationDuringAReadIsNotLost(t *testing.T) {
+	f := &fakePeerReads{clock: time.Unix(1000, 0)}
+	release := make(chan struct{})
+	var once sync.Once
+	var c *peerReadCache
+	f.reply = func(n int, _ fedPeerViewRequest) (fedPeerViewReply, error) {
+		if n == 2 {
+			once.Do(func() { c.invalidate("inst_b") })
+			<-release
+		}
+		return snapshotReply(`{}`), nil
+	}
+	c = f.cache()
+	rt := testRuntime(t)
+	peer := &db.FederationPeer{InstanceID: "inst_b"}
+	req := fedPeerViewRequest{Method: "GET", URI: "/api/snapshot", Header: http.Header{}}
+	_, err := c.read(context.Background(), rt, peer, req, 5*time.Second)
+	require.NoError(t, err)
+
+	c.invalidate("inst_b")
+	close(release)
+	reply, err := c.read(context.Background(), rt, peer, req, 5*time.Second)
+	require.NoError(t, err)
+	require.Equal(t, 3, f.count(), "a read invalidated in flight is read once more")
+	require.Equal(t, "0", reply.Header.Get("Age"))
 }

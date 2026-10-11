@@ -100,7 +100,9 @@ func servePeerViewProxyWith(w http.ResponseWriter, r *http.Request, cached bool)
 	}
 	req := fedPeerViewRequest{Method: r.Method, URI: target.RequestURI(), Header: peerViewRequestHeaders(r.Header), Body: body}
 	var reply fedPeerViewReply
-	if poll := peerReadPollInterval(r, body); cached && poll > 0 {
+	poll := peerReadPollInterval(r, body)
+	cachedRead := cached && poll > 0
+	if cachedRead {
 		reply, err = peerReads.read(r.Context(), rt, peer, req, poll)
 	} else {
 		reply, err = exchangePeerView(r.Context(), rt, peer, req)
@@ -124,6 +126,11 @@ func servePeerViewProxyWith(w http.ResponseWriter, r *http.Request, cached bool)
 	}
 	for key, values := range peerViewReplyHeaders(reply.Header) {
 		w.Header()[key] = values
+	}
+	// Only a copy this daemon cached says how old it is; a peer's own Age
+	// header never passes.
+	if age := reply.Header.Get("Age"); cachedRead && age != "" {
+		w.Header().Set("Age", age)
 	}
 	// A restricted or compromised peer must never serve executable content on
 	// the local operator's authenticated origin, even on direct navigation.
