@@ -74,7 +74,7 @@ export async function parentSelection(actions, board, item, version) {
 
 // PublishDialog posts config to a board, as a new item or a new version of
 // one (item + parent).
-function PublishDialog({ board, item, actions, confirm, onClose, onDone }) {
+export function PublishDialog({ board, item, actions, confirm, onClose, onDone }) {
   const [name, setName] = useState(item?.name || '');
   const [sections, setSections] = useState([]);
   const [named, setNamed] = useState('');
@@ -160,7 +160,7 @@ function RepostDialog({ board, boards, item, version, by, actions, confirm, onCl
 
 // ImportDialog previews an item version against this node's config and
 // imports it with the preview's token and the same choices.
-function ImportDialog({ board, item, version, by, actions, confirm, onClose, onDone }) {
+export function ImportDialog({ board, item, version, by, actions, confirm, onClose, onDone }) {
   const [opts, setOpts] = useState({ skip: [], values: {}, replace: false });
   const [preview, setPreview] = useState(null);
   // seen keeps every change and placeholder any preview showed: a re-preview

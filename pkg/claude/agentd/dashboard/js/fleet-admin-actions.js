@@ -260,6 +260,16 @@ const settingRows = (v) => {
       a.href = href; a.download = ''; a.style.display = 'none';
       doc.body.append(a); a.click(); a.remove();
     },
+    // The native archive (a skill directory as tar.gz; config as bundle.json)
+    // of a fetched version. Executable bits are kept only on explicit opt-in.
+    downloadBoardItemArchive: async (board, item, version, { preserveExecutable = false } = {}, doc = globalThis.document) => {
+      const href = `/api/federation/${boardVersion(board, item, version)}/archive${preserveExecutable ? '?preserve_executable=1' : ''}`;
+      const res = await fetchImpl(href, { method: 'HEAD', credentials: 'same-origin', cache: 'no-store' });
+      if (!res.ok) throw new FleetAdminError(res.status, { error: res.status === 404 ? 'this node cannot export archives yet' : res.status === 409 ? 'fetch this version first' : `download unavailable (HTTP ${res.status})` });
+      const a = doc.createElement('a');
+      a.href = href; a.download = ''; a.style.display = 'none';
+      doc.body.append(a); a.click(); a.remove();
+    },
     // Hub moderation (hub.boards.manage): metadata only, never content or keys.
     hubBoards: () => pages('hub/boards', 'boards'),
     patchHubBoard: (board, patch) => done(call('PATCH', `hub/boards/${enc(board)}`, patch)),

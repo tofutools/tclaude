@@ -23,6 +23,31 @@ const skynetFederationStubJS = `(function(){
   window.fetch = function(input, init) {
     var url = typeof input === 'string' ? input : input.url;
     var path = new URL(url, location.href).pathname;
+    // Boards: three boards with config and skill items from a trusted peer,
+    // this node and an untrusted publisher, for the content browser.
+    var bItem = function(id, name, kind, pub, bytes) { return { id: id, version: '7f3c' + id.slice(4) + 'e91a', latest_version: '7f3c' + id.slice(4) + 'e91a', name: name, kind: kind, publisher: pub, republisher: pub, digest: '3e9b0a12c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f', bytes: bytes, provenance: { pubkey: 'UcKOCmQ1x9Lw4tR2vYp8NzEaHs6gJ3fB0kMdT7uWq3c=' } }; };
+    var bItems = {
+      brd_core: [bItem('itm_prr', 'pr-review-checklist', 'skill', 'inst_hn3cxq7a', 6350), bItem('itm_rel', 'release roles', 'config', 'inst_2p6ym4ke', 2210), bItem('itm_sbx', 'sandbox defaults', 'config', 'inst_q4w7pjf2kx3mz6bty5nd', 1830), bItem('itm_go', 'go-table-tests', 'skill', 'inst_2p6ym4ke', 4120)],
+      brd_oss: [bItem('itm_fth', 'flaky-test-hunter', 'skill', 'inst_w5zea3nq', 11670), bItem('itm_sql', 'sqlite-migrations', 'skill', 'inst_hn3cxq7a', 7400), bItem('itm_dml', 'dash-mock-loop', 'skill', 'inst_mx9n2kq4', 3010)],
+      brd_lab: [bItem('itm_tpl', 'bugfix worktree templates', 'config', 'inst_hn3cxq7a', 2950)]
+    };
+    if (path === '/api/federation/boards') return json({ boards: [
+      { id: 'brd_core', name: 'team-core', role: 'publisher', epoch: 3 }, { id: 'brd_oss', name: 'oss-friends', role: 'reader', epoch: 1 }, { id: 'brd_lab', name: 'home-lab', role: 'owner', epoch: 1 }] });
+    if (path === '/api/federation/boards/updates') return json({ notify: false, updates: [] });
+    var bm = /^\/api\/federation\/boards\/([^/]+)\/items(?:\/([^/]+)\/versions\/([^/]+)\/(fetch|contents|preview))?$/.exec(path);
+    if (bm && !bm[4]) return json({ items: bItems[bm[1]] || [] });
+    if (bm && bm[4] === 'fetch') return json({ state: 'ready' });
+    if (bm && bm[4] === 'contents') return json({ entries: [{ path: 'bundle.json', size: 310, kind: 'json' }, { path: 'sections/roles.json', size: 140, kind: 'json' }, { path: 'roles/release-captain.json', size: 980, kind: 'json' }, { path: 'roles/triage-lead.json', size: 770, kind: 'json' }] });
+    if (bm && bm[4] === 'preview') {
+      var choice = init && init.body ? JSON.parse(init.body) : {};
+      var roots = [{ id: 'claude', label: 'Claude Code', path: '/home/you/.claude/skills', kind: 'harness' }, { id: 'agents', label: 'Codex shared (.agents)', path: '/home/you/.agents/skills', kind: 'harness' }, { id: 'codex', label: 'Codex home', path: '/home/you/.codex/skills', kind: 'harness' },
+        { id: 'group:tclaude', label: 'Group tclaude', path: '/home/you/git/tclaude/.claude/skills', kind: 'group' }, { id: 'group:ops', label: 'Group ops', path: '/srv/ops/.claude/skills', kind: 'group' }];
+      var skill = (bItems[bm[1]] || []).filter(function(i){ return i.id === bm[2]; })[0];
+      var name = skill ? skill.name : 'skill';
+      return json({ kind: 'skill', skill: name, skill_roots: roots, preview_token: 'pv_' + Date.now(), warnings: [],
+        files: [{ path: 'SKILL.md', bytes: 3010, text: '---\nname: ' + name + '\ndescription: Reruns a failing Go test until it flakes, then bisects.\n---\n\n# ' + name + '\n' }, { path: 'bin/rerun.sh', bytes: 1210, executable: true, security: true, text: '#!/usr/bin/env bash\n# rerun one go test N times, stop at the first failure\nset -euo pipefail\npkg="$1"; name="$2"; n="${3:-50}"\nfor i in $(seq "$n"); do go test "$pkg" -run "^${name}$" -count=1 || exit 1; done\n' }, { path: 'bisect.py', bytes: 4930, security: true, text: 'import subprocess\n' }, { path: 'notes/patterns.md', bytes: 2110, text: '# Patterns\n' }],
+        changes: (choice.skill_targets || []).map(function(t, i){ var r = roots.filter(function(x){ return x.id === t; })[0]; return { item: t + '/' + name, action: i === 1 ? 'replace' : 'create', path: (r ? r.path : t) + '/' + name }; }) });
+    }
     if (path === '/api/federation/status') return json(status);
     if (path === '/api/federation/nodes/groups') return json({ groups: [{ id: 'pool_1', name: 'rigs', members: [{ instance_id: 'inst_2p6ym4ke', label: 'lab' }] }] });
     if (path === '/api/federation/grants') return json({ grants: [
@@ -381,6 +406,69 @@ func skynetStates() []dashsnap.State {
   if (!document.querySelector('#fleet-waiting [data-fa="trust"]')) throw new Error('skynet: no Trust action for the waiting instance');
   if (document.querySelector('nav [data-tab="groups"]').offsetParent !== null) throw new Error('skynet: per-node tabs still visible in fleet admin');
   if (location.pathname !== '/fleet-admin') throw new Error('skynet: fleet admin not routed to /fleet-admin: ' + location.pathname);
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-boards-list",
+			Title:   "Boards content browser: List",
+			Caption: "Fleet → Boards opens on Browse content: every item on every board this node belongs to. List is a dense table (kind tabs, search with kind:/publisher:/board: filters) with a detail pane: who signed the selected item, a trusted-peer or unknown-publisher badge (the unknown one also gets an amber banner), signing key, digest, credential scan and every file, scripts flagged and readable as text.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  Array.from(document.querySelectorAll('.fa-subtab')).find(function(b){ return b.textContent === 'Boards'; }).click();
+  for (var j = 0; j < 50 && !document.querySelector('[data-view-pick="list"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('[data-view-pick="list"]').click();
+  for (var k = 0; k < 50 && !document.querySelector('[data-row="brd_oss/itm_fth"]'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (document.querySelectorAll('#fleet-cb-table tbody tr').length !== 8) throw new Error('boards: browser rows missing');
+  document.querySelector('[data-row="brd_oss/itm_fth"]').click();
+  for (var f = 0; f < 50 && !document.querySelector('[data-file="bin/rerun.sh"]'); f++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('[data-file="bin/rerun.sh"] button').click();
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-boards-cards",
+			Title:   "Boards content browser: Cards",
+			Caption: "The same content as cards, with facets (kind, board, publisher trust) that count and filter. The List | Cards choice is remembered.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  Array.from(document.querySelectorAll('.fa-subtab')).find(function(b){ return b.textContent === 'Boards'; }).click();
+  for (var j = 0; j < 50 && !document.querySelector('[data-view-pick="cards"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('[data-view-pick="cards"]').click();
+  for (var k = 0; k < 50 && !document.querySelector('[data-card]'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (document.querySelectorAll('[data-card]').length !== 8) throw new Error('boards: cards missing');
+})();`,
+			SettleMS: 400,
+		},
+		{
+			Key:     "skynet-fleet-boards-install",
+			Title:   "Boards: install a skill",
+			Caption: "Install… on a skill: target (harness skill directory, a group's directory as a project skill, a human-only custom directory, or a plain download), then a preview of exactly which paths are written and which overwrite, then Install… with the preview's single-use token. Executable bits and overwriting are opt-in.",
+			InitJS:  skynetFederationStubJS,
+			JS: `return (async function(){
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('nav [data-tab="fleet-admin"]').click();
+  for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  Array.from(document.querySelectorAll('.fa-subtab')).find(function(b){ return b.textContent === 'Boards'; }).click();
+  for (var j = 0; j < 50 && !document.querySelector('[data-view-pick="list"]'); j++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('[data-view-pick="list"]').click();
+  for (var k = 0; k < 50 && !document.querySelector('[data-row="brd_oss/itm_fth"]'); k++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('[data-row="brd_oss/itm_fth"]').click();
+  for (var f = 0; f < 50 && !document.querySelector('[data-cb-act="install"]'); f++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('[data-cb-act="install"]').click();
+  for (var d = 0; d < 50 && !document.querySelector('[data-skill-target="claude"]'); d++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('[data-skill-target="claude"]').click();
+  document.querySelector('[data-skill-target="codex"]').click();
+  await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#fleet-cb-preview-btn').click();
+  for (var p = 0; p < 50 && !document.querySelector('#fleet-cb-preview'); p++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!document.querySelector('#fleet-cb-preview')) throw new Error('boards: install preview missing');
 })();`,
 			SettleMS: 400,
 		},
