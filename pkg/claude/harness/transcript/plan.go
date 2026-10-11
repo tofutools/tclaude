@@ -215,7 +215,7 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 	entries = coalesce(entries)
 	entries = p.fitBudget(entries, opts, report)
 
-	notice := fmt.Sprintf("%stclaude morph%s Carried over from %s to %s. Tool records are history; use your own tools.", markOpen, markClose, describe(t.Source.Harness, t.Source.Model), describe(opts.Target, opts.TargetModel))
+	notice := fmt.Sprintf("%stclaude morph%s History carried over from %s to %s. Tool records are history; use your own tools.", markOpen, markClose, describe(t.Source.Harness, t.Source.Model), describe(opts.Target, opts.TargetModel))
 	if report.TranscriptPath != "" {
 		notice += " Full tool output: " + report.TranscriptPath + "."
 	}

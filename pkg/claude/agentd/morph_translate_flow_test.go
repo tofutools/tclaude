@@ -94,7 +94,7 @@ func TestMorphTranslateClaudeToCodexResumesNatively(t *testing.T) {
 	require.NotNil(t, ref)
 
 	text := historyText(t, codex, res.ConvID, cwd)
-	for _, want := range []string{morphSecret, "⟦tool call · Bash⟧", "README.md\nmain.go", "There are two files.", "Carried over from claude", "What was the secret word?"} {
+	for _, want := range []string{morphSecret, "⟦tool call · Bash⟧", "README.md\nmain.go", "There are two files.", "carried over from claude", "What was the secret word?"} {
 		assert.Contains(t, text, want)
 	}
 	assert.NotContains(t, text, "private reasoning")
@@ -149,7 +149,7 @@ func TestMorphTranslateCodexToClaudeResumesNatively(t *testing.T) {
 	assert.Equal(t, cwd, ref.ProjectPath)
 
 	text := historyText(t, claude, res.ConvID, cwd)
-	for _, want := range []string{morphSecret, "Noted.", "⟦tool call · exec_command⟧", "README.md\nmain.go", "There are two files.", "Carried over from codex", "What was the secret word?"} {
+	for _, want := range []string{morphSecret, "Noted.", "⟦tool call · exec_command⟧", "README.md\nmain.go", "There are two files.", "carried over from codex", "What was the secret word?"} {
 		assert.Contains(t, text, want)
 	}
 	assert.Equal(t, 1, res.Report.Count(transcript.LossReasoningDropped))
