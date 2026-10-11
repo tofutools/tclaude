@@ -174,6 +174,13 @@ type brokerRefusalRecorder struct {
 	// shared broker pane cache (cachedBrokerPanes): one `list-panes -a` per
 	// brokerPaneCacheTTL daemon-wide, shared with the identity proof.
 	panes func() map[string]brokerPaneEntry
+	// panesFailedAt backs off pane-table reads after a failed one, for
+	// brokerPaneCacheTTL. The shared cache keeps no record of a failure, so
+	// without this a wedged tmux would cost every refusal and every
+	// dashboard poll a fresh list-panes of up to the tmux timeout. Guarded
+	// by panesMu, never by mu.
+	panesMu       sync.Mutex
+	panesFailedAt time.Time
 }
 
 var brokerRefusals = newBrokerRefusalRecorder(nil)
@@ -187,10 +194,35 @@ func newBrokerRefusalRecorder(now func() time.Time) *brokerRefusalRecorder {
 }
 
 func (r *brokerRefusalRecorder) paneTable() map[string]brokerPaneEntry {
-	if r.panes != nil {
-		return r.panes()
+	r.panesMu.Lock()
+	backoff := !r.panesFailedAt.IsZero() && time.Since(r.panesFailedAt) < brokerPaneCacheTTL
+	r.panesMu.Unlock()
+	if backoff {
+		return nil
 	}
-	return cachedBrokerPanes()
+	read := cachedBrokerPanes
+	if r.panes != nil {
+		read = r.panes
+	}
+	table := read()
+	if table == nil {
+		r.panesMu.Lock()
+		r.panesFailedAt = time.Now()
+		r.panesMu.Unlock()
+	}
+	return table
+}
+
+// refusalOwner resolves ctx's owner, reading the pane table only when the
+// answer can depend on it: with neither a process table to walk nor a
+// claim to fall back on, the owner is unknown whatever tmux says. The
+// pre-identity rate-limit refusals take that path on purpose — they exist
+// to shed a flood cheaply and must not cost a tmux read.
+func (r *brokerRefusalRecorder) refusalOwner(ctx brokerRefusalContext) string {
+	if ctx.procs == nil && ctx.claimedTmux == "" {
+		return ""
+	}
+	return brokerCallerOwner(ctx.procs, r.paneTable(), ctx.CallerPID, ctx.claimedTmux)
 }
 
 func (r *brokerRefusalRecorder) clock() time.Time {
@@ -416,14 +448,14 @@ func brokerCallerOwner(t *brokerProcTable, panes map[string]brokerPaneEntry, cal
 // refusal branch used to record for the dashboard and then return silently,
 // so the badge said something was wrong and nothing said what.
 func (r *brokerRefusalRecorder) refuseAttributed(reason string, ctx brokerRefusalContext) {
-	owner := brokerCallerOwner(ctx.procs, r.paneTable(), ctx.CallerPID, ctx.claimedTmux)
+	owner := r.refusalOwner(ctx)
 	r.logRefusal(r.recordClaimMismatchOwned(ctx.Resolved, owner, reason), reason, owner, ctx)
 }
 
 // refuseUnplaceable is refuseAttributed for a caller no row resolved for.
 func (r *brokerRefusalRecorder) refuseUnplaceable(reason string, ctx brokerRefusalContext) {
 	ctx.Resolved = ""
-	owner := brokerCallerOwner(ctx.procs, r.paneTable(), ctx.CallerPID, ctx.claimedTmux)
+	owner := r.refusalOwner(ctx)
 	r.logRefusal(r.recordUnplaceableOwned(ctx.CallerPID, owner, reason), reason, owner, ctx)
 }
 
@@ -563,6 +595,9 @@ func (r *brokerRefusalRecorder) resetForTest() {
 	r.unplaceable = brokerRefusal{}
 	r.unplaceableByCaller = map[int]*brokerRefusal{}
 	r.writes = 0
+	r.panesMu.Lock()
+	r.panesFailedAt = time.Time{}
+	r.panesMu.Unlock()
 }
 
 // brokerRefusalLogClip bounds caller-controlled strings in a refusal log

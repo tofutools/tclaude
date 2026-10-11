@@ -344,3 +344,23 @@ func TestBrokerCallerOwner_UsesPanesNotProcessNames(t *testing.T) {
 	assert.Empty(t, brokerCallerOwner(procs, map[string]brokerPaneEntry{}, hook, ""))
 	assert.Empty(t, brokerCallerOwner(procs, nil, hook, "spwn-a"), "unreadable tmux: unknown")
 }
+
+// Refusal-side pane reads back off after a failed one: a wedged tmux must not
+// cost every refusal and every dashboard poll a fresh list-panes. And a
+// refusal whose owner cannot depend on tmux — the cheap pre-identity
+// rate-limit path, with no process table and no claim — never reads it.
+func TestBrokerRefusals_PaneReadsBackOffAndCheapPathSkipsThem(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	r := newTestRefusalRecorder(&now)
+	reads := 0
+	r.panes = func() map[string]brokerPaneEntry { reads++; return nil }
+
+	r.refuseUnplaceable("rate", brokerRefusalContext{Endpoint: "/v1/whoami/hook", CallerPID: 42})
+	assert.Zero(t, reads, "no procs and no claim: owner is unknown without asking tmux")
+
+	ctx := brokerRefusalContext{Endpoint: "/v1/whoami/hook", CallerPID: 42, claimedTmux: "spwn-a"}
+	r.refuseUnplaceable("x", ctx)
+	r.refuseUnplaceable("x", ctx)
+	r.counts()
+	assert.Equal(t, 1, reads, "after a failed read, refusal-side reads back off")
+}
