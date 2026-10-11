@@ -85,13 +85,21 @@ func viewMorphSandbox(convID string, implementation sandboxpolicy.Implementation
 		if implementation == sandboxpolicy.ImplementationResourceOnly {
 			v.Tclaude = "resource limits only, no access boundary"
 		}
-		v.Harness = dst.Name + " " + mode + ", not applied"
+		v.Harness = dst.Name + " " + mode + " (no sandbox)"
 		v.Unsandboxed = true
 	default:
-		v.Tclaude = "not used: the harness's own sandbox confines it"
+		// The harness's own sandbox is the only wall: claim it only when the
+		// validated mode is one that confines (the builtin verdict).
+		v.Tclaude = "not used"
 		v.Harness = dst.Name + " " + mode
-		if off, err := harness.SandboxOffMode(dst); err == nil && off != "" && dstMode == off {
+		verdict, err := harness.BuiltinLaunchOSSandboxForValidatedMode(dst, dstMode)
+		switch {
+		case err != nil || verdict.State == "off":
 			v.Unsandboxed = true
+		case verdict.State == "on":
+			v.Tclaude = "not used: the harness's own sandbox confines it"
+		default:
+			v.Harness += ": depends on " + dst.Name + "'s own settings; tclaude cannot confirm a sandbox"
 		}
 	}
 	if v.Unsandboxed {

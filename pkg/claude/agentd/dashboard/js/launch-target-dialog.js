@@ -282,8 +282,8 @@ function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, o
       else res = await api.teleport(agent.conv || agent.id, mode === 'home'
         ? { home: true, ...(note ? { note } : {}) }
         : { peer: target.node, group: target.group, ...(mode === 'clone' ? { clone: true } : {}), ...(note ? { note } : {}) });
-      if (!alive.current) return;
-      // Close once it is sent; the outcome arrives as toasts. A return to a
+      // Close once it is sent; the outcome arrives as toasts, even when the
+      // dialog was cancelled while sending. A return to a
       // paused home backup answers 202 {state: "returning"} with no move
       // record: its home presence is what to watch then.
       if (res?.move_id && !viaPeer) {
@@ -294,7 +294,7 @@ function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, o
         toast(t.text);
       }
       onClose();
-    } catch (e) { if (alive.current) { setPhase('confirm'); setError(errText(e)); } }
+    } catch (e) { if (alive.current) { setPhase('confirm'); setError(errText(e)); } else toast(`${verb} failed: ${errText(e)}`, true); }
   };
   // progressToast words a move outcome for a toast once the dialog is gone.
   const progressToast = (p) => p.phase === 'landed' ? { text: `✅ ${agent.name} runs on ${dest}${p.agent ? ` as ${p.agent}` : ''}.${mode === 'clone' ? '' : ' Its copy here is being retired.'}` }
