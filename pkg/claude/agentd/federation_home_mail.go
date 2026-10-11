@@ -162,6 +162,11 @@ func (rt *fedRuntime) queueAwayMail(peer *db.FederationPeer, env *proto.Envelope
 	if state == "handoff" {
 		home, _ := db.GetFederationPeer(p.HomeInstance)
 		id := homeMailID("handoff", payload.Sender.Instance, payload.Envelope, payload.Agent)
+		row.AttemptID, row.Destination = id, p.HomeInstance
+		if e := db.UpdateFederationMailCustody(*row); e != nil {
+			refuse(fedCodeInternal, e.Error())
+			return true
+		}
 		if old, e := db.GetFederationOutbox(id); e != nil {
 			refuse(fedCodeInternal, e.Error())
 			return true
@@ -305,7 +310,7 @@ func (rt *fedRuntime) flushHomeMail(now time.Time) {
 		p, _ := db.GetAgentFederationPresence(m.AgentID)
 		origin, _ := db.GetFederationPeer(m.SenderInstance)
 		original := &proto.Envelope{ID: in.Envelope, From: in.Sender, To: proto.Endpoint{Instance: rt.id.ID(), Agent: in.Agent}, InReplyTo: in.InReplyTo}
-		if !m.ExpiresAt.After(now) || p == nil || p.HomeInstance != rt.id.ID() || p.State == "terminal" || !(localHomeMailAuthorized(in, rt.id.ID()) || origin != nil && stableMailIngressAuthorized(m.SenderInstance, original, m.AgentID) && (len(in.Mail.Attachments) == 0 || stableMailAttachmentsAllowed(m.SenderInstance, m.AgentID))) {
+		if !m.ExpiresAt.After(now) || p == nil || p.HomeInstance != rt.id.ID() || p.State == "terminal" || !rt.homeMailOriginAuthorized(m, in) {
 			m.State = "refused"
 			m.NextAttemptAt = now
 			_ = db.UpdateFederationMailCustody(m)
@@ -373,6 +378,13 @@ func (rt *fedRuntime) flushHomeMail(now time.Time) {
 	}
 }
 func (rt *fedRuntime) sendCustodyReceipt(m db.FederationMailCustody) {
+	if m.AttemptID != "" && (m.State == "accepted" || m.State == "refused") {
+		state := db.FedOutboxRefused
+		if m.State == "accepted" {
+			state = db.FedOutboxAccepted
+		}
+		_, _ = db.SettleFederationOutbox(m.AttemptID, state, "home custody "+m.State)
+	}
 	if m.IngressInstance == rt.id.ID() && m.SenderInstance == rt.id.ID() {
 		var in homeMailPayload
 		if json.Unmarshal([]byte(m.Payload), &in) == nil && in.LocalMessage > 0 {
@@ -472,4 +484,39 @@ func (rt *fedRuntime) handleHomeMailAck(row *db.FederationOutboxRow, ack proto.A
 		rt.sendCustodyReceipt(*m)
 		recordFederationAudit("federation.mail.forward.result", row.ToInstance, k.a, "", m.State, 200)
 	}
+}
+
+// A sealed retry must still belong to live custody and the current destination.
+// Outbox retries are independent of the custody timer, so recheck at send time.
+func (rt *fedRuntime) homeMailAttemptCurrent(row db.FederationOutboxRow, now time.Time) bool {
+	m, e := db.FederationMailCustodyForAttempt(row.EnvelopeID)
+	if e != nil || m == nil || (m.State != "queued" && m.State != "handoff") || m.Destination != row.ToInstance || !m.ExpiresAt.After(now) {
+		return false
+	}
+	var in homeMailPayload
+	if json.Unmarshal([]byte(m.Payload), &in) != nil {
+		return false
+	}
+	p, _ := db.GetAgentFederationPresence(m.AgentID)
+	if p == nil || p.State != "away" || p.HomeInstance != in.Home || p.Transfer.Proofs[in.Home] != in.Nonce {
+		return false
+	}
+	if m.State == "queued" {
+		destination, _ := db.FederationMailDestination(m.AgentID, rt.id.ID())
+		if p.HomeInstance != rt.id.ID() || destination != row.ToInstance {
+			return false
+		}
+	} else if p.HomeInstance == rt.id.ID() || row.ToInstance != p.HomeInstance {
+		return false
+	}
+	return rt.homeMailOriginAuthorized(*m, in)
+}
+
+func (rt *fedRuntime) homeMailOriginAuthorized(m db.FederationMailCustody, in homeMailPayload) bool {
+	if localHomeMailAuthorized(in, rt.id.ID()) {
+		return true
+	}
+	origin, _ := db.GetFederationPeer(m.SenderInstance)
+	original := &proto.Envelope{ID: in.Envelope, From: in.Sender, To: proto.Endpoint{Agent: in.Agent}}
+	return origin != nil && stableMailIngressAuthorized(m.SenderInstance, original, m.AgentID) && (len(in.Mail.Attachments) == 0 || stableMailAttachmentsAllowed(m.SenderInstance, m.AgentID))
 }

@@ -865,7 +865,7 @@ func (rt *fedRuntime) acceptMailWithOrigin(peer *db.FederationPeer, env *proto.E
 		return
 	}
 	mp.Subject, mp.Body = proto.StripControls(mp.Subject), proto.StripControls(mp.Body)
-	if len(mp.Body) > proto.MaxMailBody || len(mp.Subject) > 512 || strings.TrimSpace(mp.Body) == "" {
+	if len(mp.Body) > proto.MaxMailBody || len(mp.Subject) > 512 || (strings.TrimSpace(mp.Body) == "" && (origin == nil || len(mp.Attachments) == 0)) {
 		refuse(fedCodeTooLarge, "body empty or too large")
 		return
 	}
@@ -1110,6 +1110,10 @@ func (rt *fedRuntime) flushOutbox(ctx context.Context) {
 		}
 		if row.Kind == proto.KindAwayNotice && !rt.awayNoticeCurrent(row.ToInstance, row.InReplyTo) {
 			_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxExpired, "away coverage ended")
+			continue
+		}
+		if row.Kind == proto.KindHomeMail && !rt.homeMailAttemptCurrent(row, now) {
+			_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxRefused, "forwarding custody or authority changed")
 			continue
 		}
 		if now.After(row.ExpiresAt) {

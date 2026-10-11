@@ -4,17 +4,17 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
-	"github.com/tofutools/tclaude/pkg/claude/agentd"
-	"github.com/tofutools/tclaude/pkg/testharness"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/federation/client"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
+	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
 func homeMailPeer(t *testing.T, fh *fedHarness, name string) *fedPeer {
@@ -171,7 +171,7 @@ func TestFederation_HomeMailFinalHostGrantDedupAndDepartureFence(t *testing.T) {
 	env := homeMailControl(home, proto.KindHomeMail, payload)
 	home.send(env)
 	fedEventually(t, "final host refuses missing recipient grant", func() bool { return homeMailAck(home, env.ID, proto.AckRefused) })
-	rec := fedGrantCaps(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"group": "visit", "peer": "bob", "caps": []string{"mail"}})
+	rec := fedGrantCaps(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"group": "visit", "peer": "bob", "caps": []string{"mail", "attachments"}})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	env = homeMailControl(home, proto.KindHomeMail, payload)
 	home.send(env)
@@ -187,6 +187,19 @@ func TestFederation_HomeMailFinalHostGrantDedupAndDepartureFence(t *testing.T) {
 	var count int
 	require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM federation_inbound WHERE from_instance=? AND envelope_id=?`, home.id.ID(), original).Scan(&count))
 	require.Equal(t, 1, count)
+	payload["envelope"] = "operator-forward"
+	payload["operator"] = true
+	payload["sender"] = proto.Endpoint{Instance: home.id.ID(), Name: "human operator"}
+	payload["mail"] = proto.MailPayload{Subject: "operator attachment", Attachments: []proto.AttachmentPayload{{Name: "note.txt", Data: []byte("operator note")}}}
+	operator := homeMailControl(home, proto.KindHomeMail, payload)
+	home.send(operator)
+	fedEventually(t, "operator delivery keeps trusted operator provenance", func() bool { return homeMailAck(home, operator.ID, proto.AckAccepted) })
+	operatorIn, e := db.FederationInboundByEnvelope(home.id.ID(), "operator-forward")
+	require.NoError(t, e)
+	require.NotNil(t, operatorIn)
+	require.True(t, db.IsOperatorAgentMessage(operatorIn.MessageID))
+	delete(payload, "operator")
+	payload["mail"] = proto.MailPayload{Body: "continue"}
 	require.NoError(t, db.FenceFederationMail(identity.Agent, "departure", time.Now().Add(time.Hour)))
 	payload["envelope"] = "during-departure"
 	fenced := homeMailControl(home, proto.KindHomeMail, payload)
@@ -356,6 +369,9 @@ func TestFederation_HomeMailOfflineCustodySurvivesUntilLiveRevocation(t *testing
 	require.NoError(t, db.RemoveAgentGroupMember(group.ID, "offline-traveler"))
 	require.NoError(t, db.WakeFederationMailCustody(id))
 	fedEventually(t, "live revocation settles offline custody", func() bool { return homeMailAck(sender, mail.ID, proto.AckRefused) })
+	out, e = db.GetFederationOutbox(m.AttemptID)
+	require.NoError(t, e)
+	require.Equal(t, db.FedOutboxRefused, out.State, "offline retry must not survive custody refusal")
 	m, e = db.GetFederationMailCustody(sender.id.ID(), mail.ID, id)
 	require.NoError(t, e)
 	require.Equal(t, "refused", m.State)
@@ -438,4 +454,44 @@ func TestFederation_HomeMailLocalDirectGroupAndOperatorKeepPendingOutbox(t *test
 		out := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, "GET", "/v1/inbox?outbox=true", nil), "home-lead"))
 		return !strings.Contains(out.Body.String(), `"forward_state":"queued"`) && strings.Contains(out.Body.String(), `"delivered":true`)
 	})
+}
+
+func TestFederation_HomeMailLocalArchivedGroupCancelsOfflineAttempt(t *testing.T) {
+	fh := newFedHarness(t)
+	f, host := fh.f, fh.peer
+	offline, e := proto.NewIdentity()
+	require.NoError(t, e)
+	require.NoError(t, db.TrustFederationPeer(db.FederationPeer{InstanceID: offline.ID(), PubKey: offline.Pub, Label: "offline"}))
+	require.NoError(t, db.PutFederationCatalog(offline.ID(), string(mustJSON(t, proto.CatalogPayload{HomeRoutedMail: true})), time.Now()))
+	f.HaveGroup("local-route")
+	f.HaveConvWithTitle("local-sender", "sender")
+	f.HaveMember("local-route", "local-sender")
+	f.HaveConvWithTitle("local-recipient", "recipient")
+	f.HaveMember("local-route", "local-recipient")
+	id, e := db.AgentIDForConv("local-recipient")
+	require.NoError(t, e)
+	identity := db.FederationIdentity{Agent: id, Home: host.agentdID, Hops: 1, Mail: true, Proofs: map[string]string{host.agentdID: "proof"}}
+	require.NoError(t, db.DepartFederationIdentity("local-recipient", host.agentdID, offline.ID(), "left", identity))
+	rec := postMessage(t, f, "local-sender", map[string]any{"to": id, "body": "do not deliver after revocation"})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var custody *db.FederationMailCustody
+	fedEventually(t, "offline local forwarding attempt persisted", func() bool {
+		rows, _ := db.DueFederationMailCustody(time.Now().Add(time.Hour), 100)
+		for _, row := range rows {
+			if row.AgentID == id && row.AttemptID != "" {
+				custody = &row
+				return true
+			}
+		}
+		return false
+	})
+	require.NoError(t, db.ArchiveAgentGroup("local-route"))
+	require.NoError(t, db.WakeFederationMailCustody(id))
+	fedEventually(t, "archived routing group cancels sealed retry", func() bool {
+		row, _ := db.GetFederationOutbox(custody.AttemptID)
+		return row != nil && row.State == db.FedOutboxRefused
+	})
+	row, e := db.GetFederationMailCustody(custody.SenderInstance, custody.EnvelopeID, id)
+	require.NoError(t, e)
+	require.Equal(t, "refused", row.State)
 }

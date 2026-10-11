@@ -102,7 +102,7 @@ func localHomeMailAuthorized(in homeMailPayload, home string) bool {
 		return false
 	}
 	via, _, e := db.CanSenderReachTarget(from, to)
-	return e == nil && via != nil || holdsPermission(from, PermMessageDirect)
+	return e == nil && via != nil && !via.IsArchived() || holdsPermission(from, PermMessageDirect)
 }
 func localHomeMailStatus(id int64) (destination, state string) {
 	m, e := db.LocalHomeMailCustody(id)

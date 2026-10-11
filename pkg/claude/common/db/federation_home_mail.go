@@ -389,3 +389,12 @@ func SetLocalHomeMailOutcome(messageID int64, accepted bool, local bool) error {
 	_, e = d.Exec(`UPDATE agent_messages SET nudge_cancelled_at=?,nudge_cancel_reason='home forwarding refused',processed_at=? WHERE id=?`, dbTime(time.Now()), dbTime(time.Now()), messageID)
 	return e
 }
+
+// FederationMailCustodyForAttempt binds a forwarding retry to current custody.
+func FederationMailCustodyForAttempt(attempt string) (*FederationMailCustody, error) {
+	d, e := Open()
+	if e != nil {
+		return nil, e
+	}
+	return scanHomeMail(d.QueryRow(`SELECT `+homeMailColumns+` FROM federation_mail_custody WHERE attempt_id=? LIMIT 1`, attempt))
+}
