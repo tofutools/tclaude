@@ -23,11 +23,12 @@ func proposalDigest(t *testing.T, p proto.PeerProposalPayload) string {
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
 }
-func sendProposalControl(p *fedPeer, kind string, payload any) {
+func sendProposalControl(p *fedPeer, kind string, payload any) string {
 	env := p.envelope(kind, proto.Endpoint{}, payload)
 	env.From.Agent = ""
 	env.From.Name = "operator"
 	p.send(env)
+	return env.ID
 }
 
 func TestFederation_ProposalVisibilityAndDuplicateReceipt(t *testing.T) {
@@ -72,8 +73,15 @@ func TestFederation_ProposalVisibilityAndDuplicateReceipt(t *testing.T) {
 	removed, err := db.DeleteFederationPeerGrant(p.id.ID(), grants[0].Slug, grants[0].Scope)
 	require.NoError(t, err)
 	require.True(t, removed)
-	sendProposalControl(p, proto.KindPeerProposalDecision, decision)
-	time.Sleep(50 * time.Millisecond)
+	retry := sendProposalControl(p, proto.KindPeerProposalDecision, decision)
+	fedEventually(t, "duplicate decision acknowledged", func() bool {
+		for _, ack := range p.envelopes(proto.KindAck) {
+			if ack.InReplyTo == retry {
+				return true
+			}
+		}
+		return false
+	})
 	grants, err = db.ListFederationPeerGrants(p.id.ID())
 	require.NoError(t, err)
 	require.Empty(t, grants)
@@ -187,4 +195,88 @@ func TestFederation_GroupLinkExactAuthorityAndRevocation(t *testing.T) {
 	})
 	rec = postMessage(t, f, "link-source-00001", map[string]any{"to": "group:builders@bob", "body": "must be refused"})
 	require.NotEqual(t, http.StatusOK, rec.Code)
+}
+
+func TestFederation_ProposalCounterChangesLinkEndpoint(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	source := f.HaveGroup("counter-source")
+	f.HaveConvWithTitle("counter-source-00001", "source-agent")
+	f.HaveMember(source.Name, "counter-source-00001")
+	first := "grp_11111111111111111111111111111111"
+	second := "grp_22222222222222222222222222222222"
+	sendProposalControl(p, proto.KindCatalog, proto.CatalogPayload{PeerProposals: true, Groups: []proto.CatalogGroup{
+		{ID: first, Name: "first", Caps: []string{proto.CapGroupVisibility}},
+		{ID: second, Name: "second", Caps: []string{proto.CapGroupVisibility}},
+	}})
+	fedEventually(t, "counter catalog", func() bool { raw, _, _ := db.GetFederationCatalog(p.id.ID()); return strings.Contains(raw, second) })
+	created := fedHuman(t, f, http.MethodPost, "/v1/groups/"+source.Name+"/links", map[string]any{"to_peer": "bob", "to_group_id": first, "mode": db.LinkModeMembersToMembers})
+	require.Equal(t, http.StatusAccepted, created.Code, created.Body.String())
+	var original proto.PeerProposalPayload
+	fedEventually(t, "original proposal", func() bool {
+		agentd.FlushFederationOutboxForTest()
+		envs := p.envelopes(proto.KindPeerProposal)
+		if len(envs) == 0 {
+			return false
+		}
+		require.NoError(t, envs[len(envs)-1].DecodePayload(&original))
+		return true
+	})
+	counter := original
+	counter.Items = append([]proto.ProposalItem(nil), original.Items...)
+	counter.Author, counter.Revision, counter.PreviousHash = p.id.ID(), 2, proposalDigest(t, original)
+	counter.Items[0].GroupID, counter.Items[0].GroupName = second, "second"
+	sendProposalControl(p, proto.KindPeerProposal, counter)
+	fedEventually(t, "counter received", func() bool { row, _ := db.GetFederationProposal(original.ID); return row != nil && row.Revision == 2 })
+	accepted := fedHuman(t, f, http.MethodPost, "/v1/federation/proposals/"+counter.ID+"/decision", map[string]any{"revision": 2, "decision": "accept", "item_ids": []string{counter.Items[0].ID}})
+	require.Equal(t, http.StatusAccepted, accepted.Code, accepted.Body.String())
+	decision := proto.PeerProposalDecisionPayload{ID: counter.ID, Revision: 2, RevisionHash: proposalDigest(t, counter), Decision: "accept", ItemIDs: []string{counter.Items[0].ID}, AppliedIDs: []string{counter.Items[0].ID}}
+	sendProposalControl(p, proto.KindPeerProposalDecision, decision)
+	fedEventually(t, "revised link active", func() bool {
+		l, _ := db.GetFederationGroupLink("xlink_" + counter.ID + "_" + counter.Items[0].ID)
+		return l != nil && l.LocalState == "active" && l.RemoteState == "active"
+	})
+	rec := postMessage(t, f, "counter-source-00001", map[string]any{"to": "group:first@bob", "body": "unapproved endpoint"})
+	require.NotEqual(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec = postMessage(t, f, "counter-source-00001", map[string]any{"to": "group:second@bob", "body": "approved endpoint"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	fedEventually(t, "mail reaches revised destination", func() bool {
+		agentd.FlushFederationOutboxForTest()
+		for _, env := range p.envelopes(proto.KindGroupMail) {
+			var mail proto.GroupMailPayload
+			require.NoError(t, env.DecodePayload(&mail))
+			if mail.Body == "approved endpoint" {
+				require.Equal(t, second, mail.Link.GroupID)
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func TestFederation_ProposalCounterRetainsPrivateOfferAndTurn(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	local := f.HaveGroup("share-back")
+	sendProposalControl(p, proto.KindCatalog, proto.CatalogPayload{PeerProposals: true})
+	fedEventually(t, "private offer capable peer", func() bool {
+		raw, _, _ := db.GetFederationCatalog(p.id.ID())
+		return strings.Contains(raw, "peer_proposals")
+	})
+	item := proto.ProposalItem{ID: proto.NewEnvelopeID(), Kind: proto.ProposalShareVisibility, Host: p.id.ID(), GroupID: "grp_33333333333333333333333333333333", GroupName: "private-offer", IncludeMembers: true, MemberCount: 7, Status: "pending"}
+	proposal := proto.PeerProposalPayload{ID: proto.NewEnvelopeID(), Origin: p.id.ID(), Author: p.id.ID(), Revision: 1, Deadline: time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), Items: []proto.ProposalItem{item}}
+	sendProposalControl(p, proto.KindPeerProposal, proposal)
+	fedEventually(t, "private offer received", func() bool { row, _ := db.GetFederationProposal(proposal.ID); return row != nil })
+	item.IncludeMembers = false
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/proposals/"+proposal.ID+"/decision", map[string]any{"revision": 1, "decision": "counter", "items": []proto.ProposalItem{item, {Kind: proto.ProposalShareVisibility, Host: "us", GroupID: local.Name}}})
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+	rec = fedHuman(t, f, http.MethodGet, "/v1/federation/proposals/"+proposal.ID, nil)
+	var view map[string]any
+	testharness.DecodeJSON(t, rec, &view)
+	require.Equal(t, "them", view["awaiting"])
+	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/proposals/"+proposal.ID+"/decision", map[string]any{"revision": 2, "decision": "accept", "item_ids": []string{item.ID}})
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	grants, err := db.ListFederationPeerGrants(p.id.ID())
+	require.NoError(t, err)
+	require.Empty(t, grants, "countering must not share anything")
 }

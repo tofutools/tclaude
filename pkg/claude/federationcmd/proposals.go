@@ -21,8 +21,8 @@ type proposalsParams struct {
 	ID             string   `long:"id" optional:"true" help:"Proposal ID (show/decisions)"`
 	Revision       int      `long:"revision" optional:"true" help:"Exact reviewed revision (decisions)"`
 	File           string   `long:"file" optional:"true" help:"JSON array of proposal items (create/counter); - reads stdin"`
-	Items          []string `long:"item" short:"-" optional:"true" help:"Selected item ID (repeat to accept several)"`
-	WithoutMembers []string `long:"without-members" short:"-" optional:"true" help:"Selected visibility item ID whose roster is excluded"`
+	Items          []string `long:"item" short:"I" optional:"true" help:"Selected item ID (repeat to accept several)"`
+	WithoutMembers []string `long:"without-members" short:"W" optional:"true" help:"Selected visibility item ID whose roster is excluded"`
 	Note           string   `long:"note" optional:"true" help:"Proposal note (create)"`
 }
 

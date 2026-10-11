@@ -159,7 +159,7 @@ func renderLinks(links []linkEntry, asJSON bool, stdout io.Writer) int {
 // --- groups link add ---
 
 type groupsLinkAddParams struct {
-	Peer     string `long:"peer" short:"-" optional:"true" help:"Trusted remote node; TO is its shared group name or opaque ID (operator only)"`
+	Peer     string `long:"peer" short:"p" optional:"true" help:"Trusted remote node; TO is its shared group name or opaque ID (operator only)"`
 	From     string `pos:"true" help:"Source group (members of this group can message into 'to')"`
 	To       string `pos:"true" help:"Destination group"`
 	Mode     string `long:"mode" optional:"true" help:"members->members (default) | owners->members"`

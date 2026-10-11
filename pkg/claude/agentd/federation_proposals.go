@@ -229,7 +229,7 @@ func proposalRecord(p proto.PeerProposalPayload, peer, authority, state string) 
 	now := time.Now()
 	return db.FederationPeerProposal{ID: p.ID, Peer: peer, Origin: p.Origin, Revision: p.Revision, Body: string(raw), Authority: authority, State: state, CreatedAt: now, Deadline: deadline, UpdatedAt: now}
 }
-func normalizeProposalAPI(p *proto.PeerProposalPayload, local, peer string) error {
+func normalizeProposalAPI(p *proto.PeerProposalPayload, local, peer string, previous ...proto.PeerProposalPayload) error {
 	cat, _, err := fedCatalogFor(peer)
 	if err != nil {
 		return err
@@ -278,6 +278,20 @@ func normalizeProposalAPI(p *proto.PeerProposalPayload, local, peer string) erro
 			}
 			g := proposalPeerGroup(cat, *id)
 			if g == nil {
+				// An offered private group is known from the signed current
+				// proposal even before its visibility share is accepted.
+				for _, prior := range previous {
+					for _, offered := range prior.Items {
+						if offered.Host == peer && offered.GroupID == *id {
+							*name = offered.GroupName
+							return nil
+						}
+						if offered.Source == peer && offered.SourceGroupID == *id {
+							*name = offered.SourceGroupName
+							return nil
+						}
+					}
+				}
 				return errors.New("peer group is not shared or was deleted")
 			}
 			*name = g.Name
@@ -715,7 +729,7 @@ func handlePeerProposalDecision(w http.ResponseWriter, r *http.Request) {
 		next.Revision++
 		next.PreviousHash = proposalHash(p)
 		next.Items = in.Items
-		if err = normalizeProposalAPI(&next, local, row.Peer); err == nil {
+		if err = normalizeProposalAPI(&next, local, row.Peer, p); err == nil {
 			err = validatePeerProposal(next, local, row.Peer)
 		}
 		if err == nil {
@@ -732,7 +746,12 @@ func handlePeerProposalDecision(w http.ResponseWriter, r *http.Request) {
 		}
 		newRow := proposalRecord(next, row.Peer, proposalAuthority(next, local), "countered")
 		newRow.CreatedAt = row.CreatedAt
-		ok, e := db.SaveFederationProposal(newRow, row.Revision, &event)
+		links, e := proposalLinks(next, local)
+		if e != nil {
+			writeError(w, 400, "invalid_arg", e.Error())
+			return
+		}
+		ok, e := db.SaveFederationProposal(newRow, row.Revision, &event, links...)
 		if e != nil {
 			writeError(w, 500, "io", e.Error())
 			return

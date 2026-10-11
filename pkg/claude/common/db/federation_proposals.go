@@ -97,7 +97,7 @@ func SaveFederationProposal(p FederationPeerProposal, expectedRevision int, even
 	}
 	for _, l := range links {
 		_, err = tx.Exec(`INSERT INTO federation_group_links(id,local_group_id,peer,remote_group_id,remote_group_name,direction,mode,local_state,remote_state,proposal_id,item_id,created_at,updated_at)
- VALUES(?,?,?,?,?,?,?,'pending','unknown',?,?,?,?) ON CONFLICT(proposal_id,item_id) DO UPDATE SET mode=excluded.mode,updated_at=excluded.updated_at WHERE federation_group_links.local_state='pending'`, l.ID, l.LocalGroupID, p.Peer, l.RemoteGroupID, l.RemoteGroupName, l.Direction, l.Mode, p.ID, l.ItemID, dbTime(p.CreatedAt), dbTime(p.UpdatedAt))
+ VALUES(?,?,?,?,?,?,?,'pending','unknown',?,?,?,?) ON CONFLICT(proposal_id,item_id) DO UPDATE SET local_group_id=excluded.local_group_id,remote_group_id=excluded.remote_group_id,remote_group_name=excluded.remote_group_name,direction=excluded.direction,mode=excluded.mode,remote_state='unknown',remote_state_at=NULL,updated_at=excluded.updated_at WHERE federation_group_links.local_state='pending'`, l.ID, l.LocalGroupID, p.Peer, l.RemoteGroupID, l.RemoteGroupName, l.Direction, l.Mode, p.ID, l.ItemID, dbTime(p.CreatedAt), dbTime(p.UpdatedAt))
 		if err != nil {
 			return false, err
 		}
@@ -275,7 +275,7 @@ func ApplyFederationProposal(id, peer string, revision int, decision, state stri
 				return false, nil
 			}
 			_, err = tx.Exec(`INSERT INTO federation_group_links(id,local_group_id,peer,remote_group_id,remote_group_name,direction,mode,local_state,remote_state,proposal_id,item_id,created_at,updated_at)
- VALUES(?,?,?,?,?,?,?,'active','unknown',?,?,?,?) ON CONFLICT(proposal_id,item_id) DO UPDATE SET local_state='active',updated_at=excluded.updated_at`, l.ID, change.GroupID, peer, l.RemoteGroupID, l.RemoteGroupName, l.Direction, l.Mode, id, change.ItemID, dbTime(time.Now()), dbTime(time.Now()))
+ VALUES(?,?,?,?,?,?,?,'active','unknown',?,?,?,?) ON CONFLICT(proposal_id,item_id) DO UPDATE SET local_group_id=excluded.local_group_id,remote_group_id=excluded.remote_group_id,remote_group_name=excluded.remote_group_name,direction=excluded.direction,mode=excluded.mode,local_state='active',updated_at=excluded.updated_at WHERE federation_group_links.local_state!='revoked'`, l.ID, change.GroupID, peer, l.RemoteGroupID, l.RemoteGroupName, l.Direction, l.Mode, id, change.ItemID, dbTime(time.Now()), dbTime(time.Now()))
 			if err != nil {
 				return false, err
 			}
