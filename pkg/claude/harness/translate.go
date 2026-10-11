@@ -95,6 +95,17 @@ func PlanTranslation(src, dst *Harness, convID, cwd string, opts TranslateOption
 	if err != nil {
 		return nil, nil, err
 	}
+	plan, err := PlanTranscript(t, dst, opts)
+	return t, plan, err
+}
+
+// PlanTranscript applies dst's policy to an already decoded transcript, for
+// a history that does not live in an installed conversation (an imported
+// PAF's neutral context, or a native blob decoded on import).
+func PlanTranscript(t *transcript.Transcript, dst *Harness, opts TranslateOptions) (*transcript.Plan, error) {
+	if !dst.SupportsTranscript() {
+		return nil, fmt.Errorf("harness %s cannot install a translated history", dst.Name)
+	}
 	policy := opts.Policy
 	policy.Target = dst.Name
 	resolved, source := MorphContextWindow(dst, policy.TargetModel)
@@ -109,7 +120,7 @@ func PlanTranslation(src, dst *Harness, convID, cwd string, opts TranslateOption
 		policy.MediaDir = filepath.Join(opts.ArtifactDir, "media")
 		policy.TranscriptPath = filepath.Join(opts.ArtifactDir, "transcript.md")
 	}
-	return t, transcript.NewPlan(t, policy), nil
+	return transcript.NewPlan(t, policy), nil
 }
 
 // PreviewTranslation is a dry run: decode, plan, encode and validate the

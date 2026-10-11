@@ -115,6 +115,9 @@ type WriteOptions struct {
 	Context *transcript.Transcript
 	// MaxRecordBytes bounds one context line; 0 uses the PAF default.
 	MaxRecordBytes int
+	// OmitNative leaves the native history out, so the conversation travels
+	// only as the neutral Context, which must then be set.
+	OmitNative bool
 }
 
 // WriteAgentBundle writes an agent bundle as an agent PAF, optionally with
@@ -181,7 +184,10 @@ func WriteAgentBundle(b *agentbundle.Bundle, out io.Writer, opts WriteOptions) e
 		env.Placeholders = append(env.Placeholders, ph)
 	}
 
-	if h := m.History; h != nil {
+	if opts.OmitNative && m.History != nil && opts.Context == nil {
+		return errors.New("legacy: leaving out the native history needs a neutral context to carry instead")
+	}
+	if h := m.History; h != nil && !opts.OmitNative {
 		if !paf.ValidEntryPath(h.Format) || strings.Contains(h.Format, "/") {
 			return fmt.Errorf("legacy: invalid history format %q", h.Format)
 		}

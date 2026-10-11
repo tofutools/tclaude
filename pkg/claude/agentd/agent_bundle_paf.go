@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -66,8 +67,30 @@ func archiveAgentTransfer(b *agentbundle.Bundle, format string, sign bool) (*os.
 // in a harness with a transcript codec, the neutral context travels beside
 // it so a receiver without that harness can still land the agent.
 func archiveAgentPAF(b *agentbundle.Bundle, sign bool) (*os.File, error) {
+	return archiveAgentPAFWith(b, sign, pafHistoryParts{})
+}
+
+// pafHistoryParts selects which forms of the conversation a PAF export
+// carries. By default both travel when the harness can decode its history.
+type pafHistoryParts struct {
+	// NoNative leaves the native history out; the neutral context must
+	// then carry the conversation.
+	NoNative bool
+	// NoContext leaves the neutral context out.
+	NoContext bool
+}
+
+func archiveAgentPAFWith(b *agentbundle.Bundle, sign bool, parts pafHistoryParts) (*os.File, error) {
 	opts := legacy.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}, MaxRecordBytes: pafContextRecordLimit()}
-	opts.Context = neutralContext(b)
+	if !parts.NoContext {
+		opts.Context = neutralContext(b)
+	}
+	if parts.NoNative && b.Manifest.History != nil {
+		if opts.Context == nil {
+			return nil, errors.New("the conversation has no neutral form to carry without its native history")
+		}
+		opts.OmitNative = true
+	}
 	if sign {
 		if id, err := federationIdentity(); err == nil {
 			opts.Keys = []paf.SigningKey{{Key: id.Priv, KeyID: id.ID(), Signer: &paf.Signer{Kind: "instance"}}}
@@ -89,7 +112,7 @@ func archiveAgentPAF(b *agentbundle.Bundle, sign bool) (*os.File, error) {
 		return nil, err
 	}
 	err = legacy.WriteAgentBundle(b, f, opts)
-	if err != nil && opts.Context != nil {
+	if err != nil && opts.Context != nil && !opts.OmitNative {
 		// The neutral context is optional and the native history is
 		// lossless, so a context that does not fit the archive or record
 		// limits is left out rather than failing the transfer.

@@ -99,7 +99,7 @@ receiving side.
 
 | Operation | What PAF carries | Carrier in this release |
 |---|---|---|
-| **Export / import** of an agent | One agent PAF file. Import previews first, then lands the agent on a harness you choose. | [Agent bundle v1](federation.md#portable-local-agent-bundles) by default; PAF with `--format paf` |
+| **Export / import** of an agent | One agent PAF file. Import previews first, then lands the agent on a harness you choose. | PAF with [`tclaude paf export` / `import`](#exporting-and-importing-an-agent); `agent bundle export` still writes [agent bundle v1](federation.md#portable-local-agent-bundles) by default |
 | **Group export / import** | A group PAF: group configuration plus every member. | Group export v5 |
 | **Snapshots** | A named PAF in a local library. Instantiate one or many agents from it, or share it. | Not available yet |
 | **Morph** (model or harness change in place) | The neutral context, losses and full transcript the switch produced. The identity stays in place, so no new agent is created. | Morph artifact directory |
@@ -148,6 +148,54 @@ When the original harness or model is unavailable, the importer must name a
 landing harness and model explicitly (or a spawn profile). The preview shows
 the original environment next to the landing one, the expected losses and the
 security posture before anything starts.
+
+## Exporting and importing an agent
+
+```bash
+tclaude paf export reviewer --file reviewer.paf --history
+tclaude paf import --file reviewer.paf --cwd "$PWD"                      # preview
+tclaude paf import --file reviewer.paf --cwd "$PWD" --group team --apply
+tclaude paf import --file reviewer.paf --cwd "$PWD" --harness codex --model gpt-5.5
+```
+
+`paf export` is `agent bundle export --format paf`, with the same
+permission (`agent.bundle.export`), credential scan and `--allow-flagged`.
+With `--history` the conversation travels twice: as the native history and
+as the harness-neutral context, when tclaude can decode that harness.
+`--no-context` leaves the neutral copy out. `--no-native` leaves the native
+history out, so the conversation travels only in neutral form.
+
+`paf import` is `agent bundle import`, with the same permission
+(`agent.bundle.import`), preview, `--apply`, `--group`, path remapping and
+permission handling. It accepts PAF files and legacy agent bundles. The
+import is a fork: the new agent gets a new identity, and the source's
+permissions and ownership are advisory only.
+
+The agent lands on its own harness unless `--harness` names another. When
+the source harness is not available here, the import says so and asks for
+`--harness`. `--model` picks the landing model. Without it, the landing
+model is the profile's, or on the same harness the model the source last
+ran. A translated conversation is budgeted to that model's context window;
+when no model is known at all, the preview asks for `--model` rather than
+guess. The preview's
+`history_landing` shows the source and landing harness and model and the rung
+the conversation takes:
+
+- **native** when the PAF carries a native history in the landing harness's
+  format;
+- **translated** otherwise: the neutral context, or the native history
+  decoded by tclaude's reader for its harness, is translated for the landing
+  harness and budgeted to the landing model's context window, with the
+  expected losses;
+- **none** when the conversation cannot land, for example on a harness
+  without history import, or when it does not fit the context budget even
+  after trimming. The agent then imports as configuration only, with a
+  warning; `tclaude paf render` still reads the whole conversation.
+
+On another harness the source's launch posture (approval, sandbox and the
+other profile settings) is not applied; the receiver's defaults and normal
+spawn checks apply, and the preview says so. Imports through federation
+offers, moves and teleports keep landing on the source harness.
 
 ## Reading a PAF
 

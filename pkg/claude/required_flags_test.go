@@ -53,6 +53,8 @@ func TestCommandTreeRequiredFlags(t *testing.T) {
 		"claude proxy linear issue link":                "url",
 		"claude agent bundle export":                    "file",
 		"claude agent bundle import":                    "file",
+		"claude paf export":                             "file",
+		"claude paf import":                             "file",
 		"claude agent groups import":                    "into",
 		"claude agent inbox prune":                      "older-than",
 		"claude agent process-templates save":           "file",
