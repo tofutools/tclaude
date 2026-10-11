@@ -265,3 +265,27 @@ func TestEnsureDirTrustedForLaunch_SymlinkedCwd(t *testing.T) {
 		})
 	}
 }
+
+func TestEnsureDirTrustedForLaunch_SymlinkedGeminiDistrustIsAtomic(t *testing.T) {
+	for _, denied := range []string{"project", "project-link"} {
+		t.Run(denied, func(t *testing.T) {
+			root := testutil.CanonicalTempDir(t)
+			real, alias := filepath.Join(root, "project"), filepath.Join(root, "project-link")
+			require.NoError(t, os.Mkdir(real, 0700))
+			require.NoError(t, os.Symlink(real, alias))
+			home := filepath.Join(root, "home")
+			path := filepath.Join(home, ".gemini", "trustedFolders.json")
+			require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
+			before, err := json.Marshal(map[string]string{filepath.Join(root, denied): "DO_NOT_TRUST"})
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, before, 0600))
+			h, err := Resolve(GeminiName)
+			require.NoError(t, err)
+			err = EnsureDirTrustedForLaunch(h, alias, func(string) string { return "" }, home)
+			require.ErrorContains(t, err, "DO_NOT_TRUST")
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, before, after, "refused trust must not alter either spelling")
+		})
+	}
+}

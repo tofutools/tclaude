@@ -127,15 +127,16 @@ func EnsureDirTrustedForLaunch(
 	if !h.SupportsDirTrust() {
 		return nil
 	}
-	// Copilot already handles both spellings in one locked config edit.
-	if h.Name != CopilotName && filepath.IsAbs(projectDir) {
-		if resolved, err := filepath.EvalSymlinks(projectDir); err == nil && filepath.Clean(resolved) != filepath.Clean(projectDir) {
-			if err := ensureDirTrustedForLaunchPath(h, filepath.Clean(resolved), getenv, home); err != nil {
-				return err
-			}
+	// These editors handle both spellings in one locked config edit.
+	if h.Name == CopilotName || h.Name == GeminiName {
+		return ensureDirTrustedForLaunchPath(h, projectDir, getenv, home)
+	}
+	for _, dir := range dirTrustSpellings(projectDir) {
+		if err := ensureDirTrustedForLaunchPath(h, dir, getenv, home); err != nil {
+			return err
 		}
 	}
-	return ensureDirTrustedForLaunchPath(h, projectDir, getenv, home)
+	return nil
 }
 
 func ensureDirTrustedForLaunchPath(h *Harness, projectDir string, getenv func(string) string, home string) error {
@@ -169,4 +170,14 @@ func ensureDirTrustedForLaunchPath(h *Harness, projectDir string, getenv func(st
 		// the point it was introduced.
 		return fmt.Errorf("dir-trust: no trust-store editor for harness %q", h.Name)
 	}
+}
+
+// Keep the physical path first, while retaining the launch's logical spelling.
+func dirTrustSpellings(projectDir string) []string {
+	if filepath.IsAbs(projectDir) {
+		if resolved, err := filepath.EvalSymlinks(projectDir); err == nil && filepath.Clean(resolved) != filepath.Clean(projectDir) {
+			return []string{filepath.Clean(resolved), projectDir}
+		}
+	}
+	return []string{projectDir}
 }
