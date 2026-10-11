@@ -54,31 +54,26 @@ func TestDashboardHTML_MessageFilterAboveList(t *testing.T) {
 	}
 
 	// The message filter is wrapped in .mail-list-filter with only its count
-	// and clear button; the folder-wide actions sit on their own row
-	// (.mail-list-actions) at the top of the list column, so they never
-	// squeeze the filter input.
+	// and clear button; the folder-wide actions moved into the bulk bar
+	// (.mail-folder-actions in MessageBulkBar) so they never squeeze the
+	// filter input.
 	for _, needle := range []string{
 		`<div class="mail-list-filter">`,
-		`<div class="mail-list-actions"`,
+		`'mail-folder-actions'`,
 		`id="mail-mark-all"`,
 		`id="mail-clear-read"`,
 		`>🗑 delete read</button>`,
 		`id="filter-messages-clear"`, // the Messages island wires the clear button
 	} {
 		if !strings.Contains(html, needle) {
-			t.Errorf("mail-island.js missing %q in the message-filter / action rows", needle)
+			t.Errorf("mail-island.js missing %q in the message-filter / bulk-bar rows", needle)
 		}
 	}
 	filterStart := strings.Index(html, `<div class="mail-list-filter">`)
-	listCol := strings.Index(html, `<div class="mail-col mail-list-col">`)
-	actions := strings.Index(html, `<div class="mail-list-actions"`)
-	if filterStart < 0 || listCol < 0 || actions < listCol {
-		t.Error("mail-island.js: .mail-list-actions must live inside .mail-list-col, below the filter row")
-	} else {
-		for _, id := range []string{`id="mail-mark-all"`, `id="mail-peer-compose"`, `id="mail-clear-read"`, `id="mail-agent-mark-all"`} {
-			if i := strings.Index(html, id); i < actions {
-				t.Errorf("mail-island.js: %s must sit in .mail-list-actions, not the filter row", id)
-			}
+	filterEnd := strings.Index(html[max(filterStart, 0):], "</div>") + max(filterStart, 0)
+	for _, id := range []string{`id="mail-mark-all"`, `id="mail-peer-compose"`, `id="mail-clear-read"`, `id="mail-agent-mark-all"`} {
+		if i := strings.Index(html, id); i > filterStart && i < filterEnd {
+			t.Errorf("mail-island.js: %s must sit in the bulk bar, not the filter row", id)
 		}
 	}
 
@@ -93,7 +88,7 @@ func TestDashboardHTML_MessageFilterAboveList(t *testing.T) {
 		".mail-list-col    { grid-column: 3; grid-row: 2; }",
 		".mail-reader      { grid-column: 5; grid-row: 1 / span 2; }",
 		".mail-list-filter {", // the relocated row is styled
-		".mail-list-actions {", // the folder-wide action row is styled
+		".mail-folder-actions {", // the folder-wide actions in the bulk bar are styled
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard.css missing %q — Messages-tab grid layout regressed", needle)

@@ -318,12 +318,39 @@ function MessageList({ current, controller, model }) {
     <${MessageRow} key=${message.id} message=${message} current=${current} aggregate=${model.isAggregate} controller=${controller} />`)}</div>`;
 }
 
+// Folder-wide actions (whole Human folder / whole agent inbox) share the
+// bulk bar with the per-selection actions, after a divider. They stay
+// reachable on an empty folder: the bar then carries only them (✉ peer is
+// still useful with no notifications).
+function FolderActions({ current, controller, solo = false }) {
+  const human = current.selected === 'human';
+  return html`<span class=${solo ? 'mail-folder-actions solo' : 'mail-folder-actions'}>
+    <button id="mail-mark-all" data-act="msg-mark-all-read"
+      title="Mark every human notification read" hidden=${!human}>✓ mark all read</button>
+    <button id="mail-peer-compose" title="Message a peer's operator or agents on a peer (federation)"
+      hidden=${!human || !!remoteNodeID()} onClick=${() => openPeerMail({})}>✉ peer</button>
+    <button class="danger" id="mail-clear-read" data-act="msg-clear"
+      title="Delete every human notification that has been marked read" hidden=${!human}>🗑 delete read</button>
+    <button id="mail-agent-mark-all" data-act="mail-agent-mark-all"
+      title="Mark every message this agent has received as read (on its behalf)"
+      onClick=${controller.markAllAgentRead} hidden=${human}>✓ mark all read</button>
+  </span>`;
+}
+
 function MessageBulkBar({ current, controller, model }) {
-  if (model.access || (!model.messages?.length && !(current.busy && current.progress?.where === 'bulk'))) {
-    return html`<div id="mail-bulk-bar" class="mail-bulk-bar" hidden></div>`;
-  }
+  // "All agent messages" and group folders span many inboxes, so no
+  // folder-wide action applies there.
+  const folderActions = !model.access && current.selected !== 'all' && !current.selected.startsWith('group:');
+  if (model.access) return html`<div id="mail-bulk-bar" class="mail-bulk-bar" hidden></div>`;
   if (current.busy && current.progress?.where === 'bulk') {
     return html`<div id="mail-bulk-bar" class="mail-bulk-bar"><${Progress} progress=${current.progress} /></div>`;
+  }
+  if (!model.messages?.length) {
+    if (!folderActions) return html`<div id="mail-bulk-bar" class="mail-bulk-bar" hidden></div>`;
+    return html`<div id="mail-bulk-bar" class="mail-bulk-bar">
+      <span class="grow"></span>
+      <${FolderActions} current=${current} controller=${controller} solo />
+    </div>`;
   }
   const count = current.selectedMsgs.size;
   const allChecked = model.messages.every(message => current.selectedMsgs.has(message.id));
@@ -337,6 +364,7 @@ function MessageBulkBar({ current, controller, model }) {
         onClick=${() => controller.setMessagesRead([...current.selectedMsgs], false)}>○ unread</button></${Fragment}>`}
     <button class="danger" disabled=${count === 0} title="Delete the selected messages"
       onClick=${controller.deleteSelectedMessages}>🗑 delete selected</button>
+    ${folderActions && html`<${FolderActions} current=${current} controller=${controller} />`}
   </div>`;
 }
 
@@ -681,18 +709,6 @@ export function MailApp({ controller }) {
       </label>
     </div>
     <div class="mail-col mail-list-col">
-      <div class="mail-list-actions" hidden=${current.selected === 'all' || current.selected.startsWith('group:')}>
-        <button class="tool" id="mail-mark-all" data-act="msg-mark-all-read"
-          title="Mark every human notification read" hidden=${current.selected !== 'human'}>✓ mark all read</button>
-        <button class="tool" id="mail-peer-compose" title="Message a peer's operator or agents on a peer (federation)"
-          hidden=${current.selected !== 'human' || !!remoteNodeID()} onClick=${() => openPeerMail({})}>✉ peer</button>
-        <button class="tool" id="mail-clear-read" data-act="msg-clear"
-          title="Delete every human notification that has been marked read" hidden=${current.selected !== 'human'}>🗑 delete read</button>
-        <button class="tool" id="mail-agent-mark-all" data-act="mail-agent-mark-all"
-          title="Mark every message this agent has received as read (on its behalf)"
-          onClick=${controller.markAllAgentRead}
-          hidden=${current.selected === 'human' || current.selected === 'all' || current.selected.startsWith('group:')}>✓ mark all read</button>
-      </div>
       <${MessageBulkBar} current=${current} controller=${controller} model=${messages} />
       <${MessageList} current=${current} controller=${controller} model=${messages} />
       <${MessagePager} current=${current} controller=${controller} model=${messages} />
