@@ -338,6 +338,14 @@ func geminiSimFindSession(chats, convID string) string {
 	return ""
 }
 
+// AppendRecord appends one raw session-file record, for a test that needs a
+// record shape the turn helpers do not write (tool calls, thoughts).
+func (g *GeminiSim) AppendRecord(record map[string]any) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.appendLocked(record)
+}
+
 func (g *GeminiSim) appendLocked(record any) error {
 	raw, err := json.Marshal(record)
 	if err != nil {

@@ -2,7 +2,9 @@ package agentd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -260,6 +262,7 @@ func planCrossHarnessMorph(convID string, dst *harness.Harness, target db.AgentM
 	complete := db.MorphFormOf(&p, target.Profile)
 	complete.Harness = dst.Name
 	complete.HarnessBuiltinMode = &dstMode
+	complete.TrustDir = target.TrustDir
 
 	opts := harness.MorphTranslateOptions()
 	opts.Policy.TargetModel = model
@@ -326,13 +329,22 @@ func morphArtifactDir(agentID string) (string, error) {
 // installCrossHarnessHistory runs the fallback ladder: the translated native
 // history, else a native conversation that points at the history saved as
 // files. The source conversation is only read.
-func (cm *crossMorph) installHistory(agentID, convID string) (*harness.TranslateResult, error) {
+func (cm *crossMorph) installHistory(agentID, convID string, pending db.AgentPendingMorph) (*harness.TranslateResult, error) {
 	opts := cm.opts
 	dir, err := morphArtifactDir(agentID)
 	if err != nil {
 		return nil, fmt.Errorf("prepare the morph artifact directory: %w", err)
 	}
 	opts.ArtifactDir = dir
+	switch pending.History {
+	case "handoff":
+		if pending.Handoff != nil && strings.TrimSpace(pending.Handoff.Body) != "" {
+			return harness.InstallHandoff(cm.src, cm.dst, convID, cm.cwd, pending.Handoff.Body, opts)
+		}
+		opts.ContextFile = true
+	case "context_file":
+		opts.ContextFile = true
+	}
 	res, err := harness.TranslateHistory(cm.src, cm.dst, convID, cm.cwd, opts)
 	if err == nil {
 		return res, nil
@@ -386,7 +398,7 @@ func applyCrossHarnessMorphUnderLaunchLock(agentID, convID string, pending db.Ag
 				detail: "agent generation changed while stopping; it was not morphed: " + err.Error()}
 		}
 	}
-	res, err := cm.installHistory(agentID, convID)
+	res, err := cm.installHistory(agentID, convID, pending)
 	if err != nil {
 		return morphOutcome{status: http.StatusInternalServerError, code: "history_install",
 			detail: "the history could not be installed for " + dst.Name + ": " + err.Error() + restoreSource()}
@@ -396,6 +408,9 @@ func applyCrossHarnessMorphUnderLaunchLock(agentID, convID string, pending db.Ag
 		res.Cleanup()
 		return morphOutcome{status: http.StatusInternalServerError, code: "io",
 			detail: "the agent could not be rebound to its translated conversation: " + err.Error() + restoreSource()}
+	}
+	if pending.Target.TrustDir {
+		cm.trustDirectory(convID)
 	}
 	// The source is now a past generation of the agent, like a reincarnated
 	// predecessor: hidden from the default conversation listing.
@@ -429,4 +444,130 @@ func isCrossHarnessTarget(convID string, f db.AgentMorphForm) bool {
 	}
 	h := harnessForConv(convID)
 	return h == nil || h.Name != harnessOrDefault(f.Harness)
+}
+
+// trustDirectory pre-trusts the working directory in the destination
+// harness's own trust store, through the agent's launch environment so a
+// relocated store (COPILOT_HOME, CLAUDE_CONFIG_DIR) is the one written. Like
+// spawn's trust_dir it is best effort: a failure leaves the pane on the trust
+// dialog for a human to clear, never a failed morph.
+func (cm *crossMorph) trustDirectory(convID string) {
+	var env map[string]string
+	if snapshot, err := db.AgentEffectiveSandboxConfigForConv(convID); err == nil && snapshot != nil {
+		env = map[string]string{}
+		for _, entry := range sandboxpolicy.EnvironmentForLaunch(snapshot) {
+			env[entry.Name] = entry.Value
+		}
+	}
+	getenv := func(name string) string {
+		if v, ok := env[name]; ok {
+			return v
+		}
+		return os.Getenv(name)
+	}
+	if err := harness.EnsureDirTrustedForLaunch(cm.dst, cm.cwd, getenv, ""); err != nil {
+		slog.Warn("morph: could not pre-trust the working directory", "harness", cm.dst.Name, "cwd", cm.cwd, "error", err)
+	}
+}
+
+// morphHandoffMaxBytes bounds a submitted handoff.
+const morphHandoffMaxBytes = 64 << 10
+
+// requestMorphHandoff asks the agent, through its inbox, to write a handoff
+// for the agent that continues its work. Nothing is typed into the pane
+// beyond the ordinary inbox nudge.
+func requestMorphHandoff(convID string, pending db.AgentPendingMorph) {
+	by := pending.Actor
+	if pending.ActorConv != "" && sameActor(pending.ActorConv, convID) {
+		by = "yourself"
+	}
+	src := harnessForConv(convID)
+	srcName := harnessOrDefault("")
+	if src != nil {
+		srcName = src.Name
+	}
+	body := fmt.Sprintf("You are about to be morphed from %s into %s, requested by %s. You will continue in a new "+
+		"%s conversation, so write a handoff for yourself there: the goal, what is done, what is in progress, "+
+		"the decisions made and why, open questions, and the next concrete steps, with the file paths involved.\n\n"+
+		"Submit it with `tclaude agent morph-handoff -f <file>` (or pass the text as the argument), then end your "+
+		"turn. The morph applies once you are idle. If no handoff arrives by %s, the morph goes ahead without one.",
+		srcName, pending.Target.Harness, by, pending.Target.Harness, pending.ExpiresAt.Format(time.RFC3339))
+	var groupID int64
+	if groups, err := db.ListGroupsForConv(convID); err == nil && len(groups) > 0 {
+		groupID = groups[0].ID
+	}
+	if _, err := queueAgentMessage(&db.AgentMessage{
+		GroupID: groupID, ToConv: convID, Subject: "Morph handoff requested", Body: body,
+	}); err != nil {
+		slog.Warn("morph: request handoff failed", "conv", short8(convID), "error", err)
+	}
+}
+
+// handleWhoamiMorphHandoff handles POST /v1/whoami/morph/handoff: the calling
+// agent submits the handoff its pending cross-harness morph is waiting for.
+// It needs no permission slug: it only answers a morph someone with the
+// authority to request it already requested, and only for the caller itself.
+func handleWhoamiMorphHandoff(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+		return
+	}
+	caller, isHuman, ok := authedCaller(w, r)
+	if !ok {
+		return
+	}
+	if isHuman || caller == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "only the agent being morphed can submit its handoff")
+		return
+	}
+	var req struct {
+		Body string `json:"body"`
+	}
+	// JSON escaping can double the text, so the request bound leaves room
+	// for it; the handoff itself is bounded below.
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 2*morphHandoffMaxBytes+4096))
+	if err == nil {
+		err = json.Unmarshal(raw, &req)
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "decode handoff: "+err.Error())
+		return
+	}
+	if strings.TrimSpace(req.Body) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "the handoff is empty")
+		return
+	}
+	if len(req.Body) > morphHandoffMaxBytes {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			fmt.Sprintf("the handoff is %d bytes; keep it under %d and point at files for detail", len(req.Body), morphHandoffMaxBytes))
+		return
+	}
+	agentID, err := db.AgentIDForConv(caller)
+	if err != nil || agentID == "" {
+		writeError(w, http.StatusConflict, "not_agent", "a handoff needs a stable agent identity")
+		return
+	}
+	current, err := db.GetAgent(agentID)
+	if err != nil || current == nil {
+		writeError(w, http.StatusConflict, "not_agent", "a handoff needs an active agent")
+		return
+	}
+	setAuditTargetConv(r, current.CurrentConvID)
+	lock := resumeLaunchLock(current.CurrentConvID)
+	lock.Lock()
+	err = db.SubmitAgentMorphHandoff(current.CurrentConvID, req.Body)
+	lock.Unlock()
+	if errors.Is(err, db.ErrNoHandoffRequested) {
+		writeError(w, http.StatusConflict, "no_handoff_requested", err.Error())
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	setAuditDetail(r, fmt.Sprintf("submitted a %d-byte morph handoff", len(req.Body)))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"result": "submitted",
+		"detail": "handoff recorded; end your turn and the morph applies once you are idle",
+	})
 }

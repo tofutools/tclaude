@@ -159,7 +159,10 @@ file.
 If the translated history cannot be installed natively, the target instead
 gets a native conversation of one turn that points the agent at the history
 saved as files: `briefing.md` (the budgeted history as plain text) and the full
-transcript. The loss report records which of the two was used.
+transcript. A third rung, the handoff, replaces the history with a handoff the
+agent writes for its successor before the switch. It is used on request, and
+automatically when the source history cannot be read. The loss report records
+which rung was used.
 
 A morph keeps these files in a per-agent directory under
 `~/.tclaude/api/morph/`. The agent must be able to read them, and tclaude's

@@ -28,6 +28,7 @@ func Cmd() *cobra.Command {
 			remoteControlCmd(),
 			reincarnateCmd(),
 			morphCmd(),
+			morphHandoffCmd(),
 			cloneCmd(),
 			teleportCmd(),
 			seanceCmd(),
