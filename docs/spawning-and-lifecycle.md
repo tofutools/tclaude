@@ -322,8 +322,30 @@ harness. The daemon rewrites the agent's durable relaunch profile and resumes
 the same conversation, so the agent keeps its id, history, inbox, groups and
 permissions, and gets a short inbox note saying what it was and what it is
 now. Tools, the AskUserQuestion timeout and the auto-compact window are
-morphable too; sandbox settings, working directory, harness, drive and model
-proxy are not. A spawn profile for another harness is refused.
+morphable too; sandbox settings, working directory, drive and model proxy are
+not.
+
+`--harness H` (or a spawn profile for another harness) moves the agent to
+another harness. Its conversation is translated into a new native conversation
+of that harness (see
+[cross-harness history translation](harnesses.md#cross-harness-history-translation)),
+the agent is rebound to it as its next generation, and the new harness resumes
+it. The agent keeps its id, inbox, groups and permissions, and its note
+summarizes what the history kept and lost. `--dry-run` shows that report before
+anything changes. If the translated history cannot be installed natively, the
+new conversation instead points the agent at the history saved as files.
+
+Launch posture does not map across harnesses, so the new form is explicit: the
+approval posture must come from the profile or `--ask-for-approval`, model and
+effort default to the new harness's own, and the drive starts at its defaults.
+tclaude's own sandbox layer (`tclaude-layer`) carries over unchanged. A sandbox
+that is the harness's own has no counterpart elsewhere, so only the operator
+can move such an agent, and its new mode comes from the profile or the new
+harness's default. An agent caller must use a spawn profile for the new harness,
+without overriding its fields, and may not widen the target's sandbox or
+approval posture. An agent with a model proxy route or a temporary sandbox
+unlock cannot change harness. `--back` returns to the previous harness through
+the same translation.
 
 An idle or offline agent is morphed at once. A busy agent gets a pending morph
 (shown in `agent ls`, `whoami` and the dashboard) that applies when it next

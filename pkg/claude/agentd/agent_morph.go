@@ -13,14 +13,17 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
 )
 
-// Morph relaunches an agent in place with a different same-harness launch
-// form: model, effort, approval posture and a few other launch fields. It is a
-// durable relaunch-profile edit followed by the ordinary restart path (stop,
-// then resume the same native conversation), so identity, inbox, groups,
-// permissions and history are untouched and no harness-specific resume code
-// is involved. Sandbox fields, cwd, harness and drive are never morphable.
+// Morph relaunches an agent in place with a different launch form: model,
+// effort, approval posture and a few other launch fields. Within a harness it
+// is a durable relaunch-profile edit followed by the ordinary restart path
+// (stop, then resume the same native conversation), so identity, inbox,
+// groups, permissions and history are untouched and no harness-specific
+// resume code is involved. A morph into another harness translates the
+// history into a new conversation of that harness first (agent_morph_harness.go).
+// Sandbox fields, cwd and drive are never morphable.
 
 // morphPendingTTL bounds how long a requested morph waits for the agent to go
 // idle before it is dropped.
@@ -31,6 +34,7 @@ var morphPendingTTL = 30 * time.Minute
 // named in morphRefusedFields so a caller gets a reason, not a silent drop.
 type morphRequest struct {
 	Profile           string  `json:"profile,omitempty"`
+	Harness           string  `json:"harness,omitempty"`
 	Model             *string `json:"model,omitempty"`
 	Effort            *string `json:"effort,omitempty"`
 	Approval          *string `json:"approval,omitempty"`
@@ -44,7 +48,6 @@ type morphRequest struct {
 }
 
 var morphRefusedFields = map[string]string{
-	"harness":                "a cross-harness morph is not supported yet",
 	"cwd":                    "the working directory is part of the conversation and cannot be morphed",
 	"sandbox":                "sandbox settings cannot be changed by a morph",
 	"sandbox_mode":           "sandbox settings cannot be changed by a morph",
@@ -83,6 +86,7 @@ func decodeMorphRequest(w http.ResponseWriter, r *http.Request) (morphRequest, b
 		}
 	}
 	req.Profile = strings.TrimSpace(req.Profile)
+	req.Harness = strings.TrimSpace(req.Harness)
 	modes := 0
 	for _, on := range []bool{req.Back, req.Cancel, req.hasForm()} {
 		if on {
@@ -116,14 +120,16 @@ func (q morphRequest) hasFieldOverrides() bool {
 }
 
 func (q morphRequest) hasForm() bool {
-	return q.Profile != "" || q.Model != nil || q.Effort != nil || q.Approval != nil ||
+	return q.Profile != "" || q.Harness != "" || q.Model != nil || q.Effort != nil || q.Approval != nil ||
 		q.Tools != nil || q.AskTimeout != nil || q.AutoCompactWindow != nil
 }
 
 // resolveMorphTarget builds and validates the requested form against the
 // target's own harness, with the same validators spawn and resume use. A
 // named profile supplies defaults; explicit fields override it.
-func resolveMorphTarget(h *harness.Harness, req morphRequest, prof *db.SpawnProfile) (db.AgentMorphForm, error) {
+// A cross-harness form may name no field here: its approval requirement and
+// defaults are applied by planCrossHarnessMorph.
+func resolveMorphTarget(h *harness.Harness, req morphRequest, prof *db.SpawnProfile, cross bool) (db.AgentMorphForm, error) {
 	var form db.AgentMorphForm
 	pick := func(explicit *string, fromProfile string) *string {
 		if explicit != nil {
@@ -203,7 +209,7 @@ func resolveMorphTarget(h *harness.Harness, req morphRequest, prof *db.SpawnProf
 		}
 		form.AutoCompactWindow = &validated
 	}
-	if form.Model == nil && form.Effort == nil && form.Approval == nil && form.Tools == nil &&
+	if !cross && form.Model == nil && form.Effort == nil && form.Approval == nil && form.Tools == nil &&
 		form.AskTimeout == nil && form.AutoCompactWindow == nil {
 		return form, errors.New("the profile sets no morphable launch field for this harness")
 	}
@@ -220,6 +226,9 @@ type morphFormView struct {
 	AskTimeout        string `json:"ask_timeout,omitempty"`
 	AutoCompactWindow string `json:"auto_compact_window,omitempty"`
 	Profile           string `json:"profile,omitempty"`
+	// Sandbox is the harness-native sandbox mode, shown only for a
+	// cross-harness morph, where it changes with the harness.
+	Sandbox string `json:"sandbox,omitempty"`
 }
 
 // overlayMorphForm returns base with every non-nil field of f applied.
@@ -293,6 +302,9 @@ func (v morphFormView) String() string {
 	if v.Profile != "" {
 		parts = append(parts, "profile "+v.Profile)
 	}
+	if v.Sandbox != "" {
+		parts = append(parts, "sandbox "+v.Sandbox)
+	}
 	return strings.Join(parts, " · ")
 }
 
@@ -307,6 +319,19 @@ type morphResponse struct {
 	Detail       string                `json:"detail,omitempty"`
 	PendingMorph *db.AgentPendingMorph `json:"pending_morph,omitempty"`
 	Authority    string                `json:"authority,omitempty"`
+	// History is the cross-harness history report: the preview for a dry
+	// run or a pending morph, the applied translation for a morph.
+	History *transcript.LossReport `json:"history,omitempty"`
+}
+
+// morphOutcome is the result of applying one morph.
+type morphOutcome struct {
+	result       string
+	status       int
+	code, detail string
+	// convID is the agent's conversation after a cross-harness morph.
+	convID  string
+	history *transcript.LossReport
 }
 
 func handleWhoamiMorph(w http.ResponseWriter, r *http.Request) {
@@ -375,20 +400,59 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 			writeError(w, http.StatusConflict, "profile_disabled", "spawn profile "+prof.Name+" is disabled")
 			return
 		}
-		if prof.Harness != "" && harnessOrDefault(prof.Harness) != h.Name {
-			writeError(w, http.StatusBadRequest, "cross_harness",
-				fmt.Sprintf("spawn profile %s is for harness %s, but the agent runs %s; a cross-harness morph is not supported yet",
-					prof.Name, harnessOrDefault(prof.Harness), h.Name))
+	}
+	before, previous, err := db.CurrentMorphForm(targetConv)
+	if err != nil {
+		writeError(w, http.StatusConflict, "relaunch_profile", err.Error())
+		return
+	}
+	if req.Back && previous == nil {
+		writeError(w, http.StatusConflict, "no_previous_form", "the agent has not been morphed, so there is no previous form")
+		return
+	}
+
+	// The destination harness: explicit, else the profile's, else (for
+	// --back) the one the previous form was for, else the agent's own.
+	dst := h
+	if req.Harness != "" {
+		if dst, err = harness.Resolve(req.Harness); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "harness: "+err.Error())
 			return
 		}
+	}
+	if prof != nil && prof.Harness != "" {
+		profileHarness := harnessOrDefault(prof.Harness)
+		if req.Harness != "" && profileHarness != dst.Name {
+			writeError(w, http.StatusBadRequest, "invalid_arg",
+				fmt.Sprintf("spawn profile %s is for harness %s, not %s", prof.Name, profileHarness, dst.Name))
+			return
+		}
+		if dst, err = harness.Resolve(profileHarness); err != nil {
+			writeError(w, http.StatusConflict, "invalid_arg", "spawn profile "+prof.Name+": "+err.Error())
+			return
+		}
+	}
+	if req.Back && isCrossHarnessTarget(targetConv, *previous) {
+		if dst, err = harness.Resolve(previous.Harness); err != nil {
+			writeError(w, http.StatusConflict, "relaunch_profile", "previous form: "+err.Error())
+			return
+		}
+	}
+	cross := dst.Name != h.Name
+	if cross && dst.Models == nil {
+		writeError(w, http.StatusConflict, "cross_harness", "harness "+dst.Name+" has no launch-form catalog")
+		return
 	}
 
 	// A spawn_profile-scoped grant covers a morph into that profile only.
 	// Explicit fields on top of the profile make it a free-form morph, which
 	// such a grant must not authorize, so the dimension is left undescribed.
+	// A cross-harness --back is a morph into the profile its form came from.
 	actx := ActionContext{}
 	if prof != nil && !req.hasFieldOverrides() {
 		actx.SpawnProfile = prof.Name
+	} else if cross && req.Back && previous.Profile != "" {
+		actx.SpawnProfile = previous.Profile
 	}
 	var caller string
 	if self {
@@ -412,12 +476,19 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 		writeError(w, http.StatusForbidden, "operator_only", "spawn profile "+prof.Name+" is operator-only")
 		return
 	}
-
-	before, previous, err := db.CurrentMorphForm(targetConv)
-	if err != nil {
-		writeError(w, http.StatusConflict, "relaunch_profile", err.Error())
+	// An agent moves another harness only into an operator-curated form: a
+	// destination spawn profile, with nothing overridden on top.
+	if cross && caller != "" && !req.Cancel && actx.SpawnProfile == "" {
+		writeError(w, http.StatusForbidden, "profile_required",
+			"an agent may morph an agent into another harness only through a "+dst.Name+" spawn profile, without overriding its fields")
 		return
 	}
+	if cross && caller != "" && !req.Back && (prof == nil || prof.Harness == "") {
+		writeError(w, http.StatusForbidden, "profile_required",
+			"an agent may morph an agent into another harness only through a spawn profile for that harness")
+		return
+	}
+
 	resp := morphResponse{AgentID: agentID, ConvID: targetConv, Before: viewMorphForm(h.Name, before), Authority: authority}
 	setAuditTargetConv(r, targetConv)
 
@@ -444,17 +515,13 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 			return
 		}
 		resp.Result, resp.After = "cancelled", resp.Before
-		setAuditDetail(r, "cancelled pending morph to "+viewMorphForm(h.Name, overlayMorphForm(before, pending.Target)).String())
+		setAuditDetail(r, "cancelled pending morph to "+pendingTargetView(targetConv, h.Name, before, pending.Target).String())
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 
 	var target db.AgentMorphForm
 	if req.Back {
-		if previous == nil {
-			writeError(w, http.StatusConflict, "no_previous_form", "the agent has not been morphed, so there is no previous form")
-			return
-		}
 		target = *previous
 		if caller != "" && target.Profile != "" {
 			if back, _ := db.ResolveSpawnProfile(target.Profile); back != nil && back.OperatorOnly {
@@ -463,19 +530,45 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 				return
 			}
 		}
+		if !cross {
+			// A same-harness previous form never moves the sandbox.
+			target.Harness, target.HarnessBuiltinMode = "", nil
+		}
 	} else {
-		target, err = resolveMorphTarget(h, req, prof)
+		target, err = resolveMorphTarget(dst, req, prof, cross)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_form", err.Error())
 			return
 		}
+		if cross {
+			target.Harness = dst.Name
+			if prof != nil && strings.TrimSpace(prof.Sandbox) != "" {
+				mode := strings.TrimSpace(prof.Sandbox)
+				target.HarnessBuiltinMode = &mode
+			}
+		}
 	}
-	after := overlayMorphForm(before, target)
-	resp.After = viewMorphForm(h.Name, after)
+
+	var cm *crossMorph
+	if cross {
+		var fail *spawnFailure
+		cm, fail = planCrossHarnessMorph(targetConv, dst, target, caller)
+		if fail != nil {
+			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			return
+		}
+		target = cm.target
+		resp.Before.Sandbox = cm.sandboxBefore
+		resp.After = viewMorphForm(dst.Name, target)
+		resp.After.Sandbox = cm.sandboxAfter
+	} else {
+		resp.After = viewMorphForm(h.Name, overlayMorphForm(before, target))
+	}
 
 	// Approval lineage: an agent may not morph a target into a broader
-	// approval posture than its own. Unchanged postures need no check.
-	if caller != "" && target.Approval != nil && (before.Approval == nil || *before.Approval != *target.Approval) {
+	// approval posture than its own. Unchanged postures need no check; the
+	// cross-harness plan checked its own destination posture.
+	if !cross && caller != "" && target.Approval != nil && (before.Approval == nil || *before.Approval != *target.Approval) {
 		autoReview := false
 		if rp, perr := db.AgentRelaunchProfileForConv(targetConv); perr == nil && rp != nil && rp.ApprovalAutoReview != nil {
 			autoReview = *rp.ApprovalAutoReview
@@ -493,6 +586,16 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 		}
 	}
 
+	if cm != nil {
+		report, err := cm.preview(targetConv)
+		if err != nil {
+			writeError(w, http.StatusConflict, "history_unreadable",
+				"the agent's "+h.Name+" history cannot be translated: "+err.Error())
+			return
+		}
+		resp.History = report
+	}
+
 	if req.DryRun {
 		resp.Result = "dry_run"
 		writeJSON(w, http.StatusOK, resp)
@@ -506,17 +609,31 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 	pending := db.AgentPendingMorph{
 		Target: target, Back: req.Back, ActorConv: caller, Actor: actorLabel, ConvID: targetConv,
 	}
-	result, status, code, detail := morphOrDefer(agentID, targetConv, pending, req.Now, self)
-	if status != http.StatusOK {
-		writeError(w, status, code, detail)
+	out := morphOrDefer(agentID, targetConv, pending, req.Now, self)
+	if out.status != http.StatusOK {
+		writeError(w, out.status, out.code, out.detail)
 		return
 	}
-	resp.Result, resp.Detail = result, detail
-	if result == "pending" {
+	resp.Result, resp.Detail = out.result, out.detail
+	if out.convID != "" {
+		resp.ConvID = out.convID
+	}
+	if out.history != nil {
+		resp.History = out.history
+	}
+	if out.result == "pending" {
 		resp.PendingMorph, _ = db.PendingMorphForAgent(agentID)
 	}
-	setAuditDetail(r, fmt.Sprintf("%s: %s -> %s", result, resp.Before, resp.After))
+	setAuditDetail(r, fmt.Sprintf("%s: %s -> %s", out.result, resp.Before, resp.After))
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// pendingTargetView renders a pending morph's target for audit text.
+func pendingTargetView(convID, harnessName string, before, target db.AgentMorphForm) morphFormView {
+	if isCrossHarnessTarget(convID, target) {
+		return viewMorphForm(target.Harness, target)
+	}
+	return viewMorphForm(harnessName, overlayMorphForm(before, target))
 }
 
 // pendingMorphOwnedByOther refuses an agent caller that would replace or
@@ -532,84 +649,101 @@ func pendingMorphOwnedByOther(pending *db.AgentPendingMorph, caller string) stri
 // morphOrDefer applies the morph now when the target is offline, idle, or now
 // was requested, and otherwise records it as pending for the idle watcher.
 // A self-morph is always deferred: its own turn is still running.
-func morphOrDefer(agentID, convID string, pending db.AgentPendingMorph, now, self bool) (result string, status int, code, detail string) {
+func morphOrDefer(agentID, convID string, pending db.AgentPendingMorph, now, self bool) morphOutcome {
 	lock := resumeLaunchLock(convID)
 	lock.Lock()
 	defer lock.Unlock()
 	if err := requireCurrentAgentGeneration(agentID, convID); err != nil {
-		return "", http.StatusConflict, "stale_generation", err.Error()
+		return morphOutcome{status: http.StatusConflict, code: "stale_generation", detail: err.Error()}
 	}
 	live := pickAliveSession(convID)
 	if live != nil && (self || (!now && agentRestartIdleFailure(live, time.Now()) != "")) {
 		pending.RequestedAt = time.Now().UTC()
 		pending.ExpiresAt = pending.RequestedAt.Add(morphPendingTTL)
 		if err := db.SetAgentPendingMorphForConv(convID, &pending); err != nil {
-			return "", http.StatusInternalServerError, "io", err.Error()
+			return morphOutcome{status: http.StatusInternalServerError, code: "io", detail: err.Error()}
 		}
-		return "pending", http.StatusOK, "", "the agent is busy; the morph applies when it is next fully idle (expires " +
-			pending.ExpiresAt.Format(time.RFC3339) + ")"
+		return morphOutcome{result: "pending", status: http.StatusOK,
+			detail: "the agent is busy; the morph applies when it is next fully idle (expires " +
+				pending.ExpiresAt.Format(time.RFC3339) + ")"}
 	}
 	return applyMorphUnderLaunchLock(agentID, convID, pending, live)
 }
 
 // applyMorphUnderLaunchLock writes the new form and, for a live agent, stops
 // and resumes the same conversation through the restart path. The caller
-// holds resumeLaunchLock(convID) and has checked the generation.
-func applyMorphUnderLaunchLock(agentID, convID string, pending db.AgentPendingMorph, live *db.SessionRow) (string, int, string, string) {
+// holds resumeLaunchLock(convID) and has checked the generation. A form for
+// another harness takes the cross-harness path instead.
+func applyMorphUnderLaunchLock(agentID, convID string, pending db.AgentPendingMorph, live *db.SessionRow) morphOutcome {
+	if isCrossHarnessTarget(convID, pending.Target) {
+		return applyCrossHarnessMorphUnderLaunchLock(agentID, convID, pending, live)
+	}
+	// A same-harness form never moves the sandbox or the harness.
+	pending.Target.Harness, pending.Target.HarnessBuiltinMode = "", nil
+	fail := func(status int, code, detail string) morphOutcome {
+		return morphOutcome{status: status, code: code, detail: detail}
+	}
 	if live == nil {
 		if _, err := durableRelaunchConfigForConvWith(convID, pending.Target.ApplyTo); err != nil {
-			return "", http.StatusConflict, "relaunch_profile", "the new form cannot be launched: " + err.Error()
+			return fail(http.StatusConflict, "relaunch_profile", "the new form cannot be launched: "+err.Error())
 		}
 		previous, err := db.ApplyAgentMorphForConv(convID, pending.Target)
 		if err != nil {
-			return "", http.StatusInternalServerError, "io", err.Error()
+			return fail(http.StatusInternalServerError, "io", err.Error())
 		}
-		deliverMorphNote(convID, pending, previous)
-		return "morphed", http.StatusOK, "", "the agent is offline; the new form applies when it is next woken"
+		deliverMorphNote(convID, pending, previous, nil)
+		return morphOutcome{result: "morphed", status: http.StatusOK,
+			detail: "the agent is offline; the new form applies when it is next woken"}
 	}
 	// Resolve the full config with the new form applied in memory, so a form
 	// resume would reject fails here, before the agent is stopped.
 	if _, err := durableRelaunchConfigForConvWith(convID, pending.Target.ApplyTo); err != nil {
-		return "", http.StatusConflict, "relaunch_profile", "the new form cannot be launched: " + err.Error()
+		return fail(http.StatusConflict, "relaunch_profile", "the new form cannot be launched: "+err.Error())
 	}
 	clientHandoff := beginAgentRestartTmuxHandoff(live.TmuxSession)
 	defer clientHandoff.finishForConv(convID)
 	stopped := escalateShutdownUnderLaunchLock(convID, shutdownGrace)
 	if stopped.Outcome == shutdownFailed {
-		return "", http.StatusInternalServerError, "shutdown_failed",
-			"could not stop the agent to morph it: " + stopped.Detail
+		return fail(http.StatusInternalServerError, "shutdown_failed",
+			"could not stop the agent to morph it: "+stopped.Detail)
 	}
 	if err := requireCurrentAgentGeneration(agentID, convID); err != nil {
-		return "", http.StatusConflict, "stale_generation",
-			"agent generation changed while stopping; it was not morphed: " + err.Error()
+		return fail(http.StatusConflict, "stale_generation",
+			"agent generation changed while stopping; it was not morphed: "+err.Error())
 	}
 	// Written after the stop so a late hook from the old process cannot
 	// project the old model back over the new form.
 	previous, err := db.ApplyAgentMorphForConv(convID, pending.Target)
 	if err != nil {
-		return "", http.StatusInternalServerError, "io",
-			"the agent stopped, but its new form could not be recorded: " + err.Error() + "; use the normal wake action to resume it"
+		return fail(http.StatusInternalServerError, "io",
+			"the agent stopped, but its new form could not be recorded: "+err.Error()+"; use the normal wake action to resume it")
 	}
 	resume := resumeOneConvUnderLaunchLock(convID, false, nil)
 	clientHandoff.finishForConv(convID)
 	if resume.Action != "resumed" {
-		return "", http.StatusInternalServerError, "restart_failed",
-			"the new form is recorded and the agent stopped, but it could not be resumed: " + resume.Detail +
-				"; use the normal wake action to retry"
+		return fail(http.StatusInternalServerError, "restart_failed",
+			"the new form is recorded and the agent stopped, but it could not be resumed: "+resume.Detail+
+				"; use the normal wake action to retry")
 	}
-	deliverMorphNote(convID, pending, previous)
-	return "morphed", http.StatusOK, "", ""
+	deliverMorphNote(convID, pending, previous, nil)
+	return morphOutcome{result: "morphed", status: http.StatusOK}
 }
 
 // deliverMorphNote tells the morphed agent what changed. It rides the inbox
 // like any message; nothing user-controlled is typed into the pane.
-func deliverMorphNote(convID string, pending db.AgentPendingMorph, previous db.AgentMorphForm) {
+// history is the cross-harness history report (nil within a harness); the
+// note carries its counts and categories only, never transcript content.
+func deliverMorphNote(convID string, pending db.AgentPendingMorph, previous db.AgentMorphForm, history *transcript.LossReport) {
 	h := harnessForConv(convID)
 	harnessName := harnessOrDefault("")
 	if h != nil {
 		harnessName = h.Name
 	}
-	was := viewMorphForm(harnessName, previous)
+	wasHarness := harnessName
+	if previous.Harness != "" {
+		wasHarness = previous.Harness
+	}
+	was := viewMorphForm(wasHarness, previous)
 	now := viewMorphForm(harnessName, overlayMorphForm(previous, pending.Target))
 	verb := "You were morphed"
 	if pending.Back {
@@ -621,6 +755,13 @@ func deliverMorphNote(convID string, pending db.AgentPendingMorph, previous db.A
 	}
 	body := fmt.Sprintf("%s by %s.\n\nWas: %s\nNow: %s\n\nYour conversation history, identity, inbox, groups and permissions are unchanged.",
 		verb, by, was, now)
+	if history != nil {
+		body = fmt.Sprintf("%s by %s.\n\nWas: %s\nNow: %s\n\n"+
+			"Your identity, inbox, groups and permissions are unchanged. Your conversation was carried over "+
+			"into a new %s conversation; tool calls from before appear as ⟦tool call⟧/⟦tool result⟧ records, "+
+			"which are history, not tools you have.\n\n%s",
+			verb, by, was, now, harnessName, history.Summary())
+	}
 	var groupID int64
 	if groups, err := db.ListGroupsForConv(convID); err == nil && len(groups) > 0 {
 		groupID = groups[0].ID
@@ -707,7 +848,8 @@ func applyPendingMorph(row db.AgentWithPendingMorph) {
 	if live != nil && agentRestartIdleFailure(live, time.Now()) != "" {
 		return
 	}
-	result, status, _, detail := applyMorphUnderLaunchLock(row.AgentID, convID, pending, live)
+	out := applyMorphUnderLaunchLock(row.AgentID, convID, pending, live)
+	result, status, detail := out.result, out.status, out.detail
 	if status != http.StatusOK {
 		// A failed pending morph is not retried: drop it, audit it, and tell
 		// the requester and the operator, since the agent may now be stopped.
@@ -715,6 +857,9 @@ func applyPendingMorph(row db.AgentWithPendingMorph) {
 		auditMorphSystem(row.AgentID, convID, "pending morph failed: "+detail, status)
 		reportPendingMorphFailure(row.AgentID, convID, pending, detail)
 		return
+	}
+	if out.convID != "" {
+		convID = out.convID
 	}
 	h := harnessForConv(convID)
 	name := harnessOrDefault("")

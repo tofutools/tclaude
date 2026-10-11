@@ -8,11 +8,20 @@ import (
 	"time"
 )
 
-// AgentMorphForm is the same-harness launch form a morph rewrites. It is a
-// slice of AgentRelaunchProfile, not a parallel policy: applying a form writes
-// these fields into the durable relaunch profile, and the ordinary resume path
+// AgentMorphForm is the launch form a morph rewrites. It is a slice of
+// AgentRelaunchProfile, not a parallel policy: applying a form writes these
+// fields into the durable relaunch profile, and the ordinary resume path
 // replays them. nil = leave the field unchanged.
 type AgentMorphForm struct {
+	// Harness is set only on a cross-harness form: the harness the form is
+	// for. A cross-harness morph translates the conversation into a new one
+	// of that harness instead of resuming the same one, and ApplyTo never
+	// applies a form for another harness. "" = the agent's own harness.
+	Harness string `json:"harness,omitempty"`
+	// HarnessBuiltinMode is the harness-native sandbox mode a cross-harness
+	// form launches under. It is recorded for `morph --back` across
+	// harnesses; a same-harness morph never changes sandbox fields.
+	HarnessBuiltinMode *string `json:"sandbox_mode,omitempty"`
 	// Model is the bare model id (Claude's [1m] suffix lives in
 	// ContextWindowSize, exactly as relaunchProfileForSpawn records it).
 	Model             *string `json:"model,omitempty"`
@@ -67,6 +76,11 @@ func morphFormOf(p *AgentRelaunchProfile, profile string) AgentMorphForm {
 		f.Approval = stringPtr(*p.ApprovalPolicy)
 	}
 	return f
+}
+
+// MorphFormOf captures p's morphable fields as a form, labelled profile.
+func MorphFormOf(p *AgentRelaunchProfile, profile string) AgentMorphForm {
+	return morphFormOf(p, profile)
 }
 
 // ApplyTo writes the form's non-nil fields into p.
@@ -253,4 +267,62 @@ func ListAgentsWithPendingMorph() ([]AgentWithPendingMorph, error) {
 		out = append(out, AgentWithPendingMorph{AgentID: agentID, CurrentConvID: conv, Pending: *p.PendingMorph})
 	}
 	return out, rows.Err()
+}
+
+// ApplyCrossHarnessMorph rebinds the agent from oldConv to newConv, a
+// translated conversation of another harness, in one transaction: the
+// generation rotation (succession edge and live pointer, as reincarnate
+// does), the successor's conversation resume profile, and the agent's
+// relaunch profile rebuilt for that harness. Nothing is committed on error.
+func ApplyCrossHarnessMorph(oldConv, newConv string, conversation ConversationResumeProfile, profile AgentRelaunchProfile) error {
+	oldConv, newConv = strings.TrimSpace(oldConv), strings.TrimSpace(newConv)
+	if oldConv == "" || newConv == "" || oldConv == newConv {
+		return errors.New("ApplyCrossHarnessMorph: two distinct conversations required")
+	}
+	if conversation.Version != RelaunchProfileVersion || profile.Version != RelaunchProfileVersion {
+		return errors.New("ApplyCrossHarnessMorph: unsupported profile version")
+	}
+	agentID, err := AgentIDForConv(oldConv)
+	if err != nil {
+		return err
+	}
+	if agentID == "" {
+		return fmt.Errorf("conversation %s is not an agent", oldConv)
+	}
+	carriedName := resolveCarriedName(oldConv)
+	rawConversation, err := encodeRelaunchProfile(conversation)
+	if err != nil {
+		return err
+	}
+	rawProfile, err := encodeRelaunchProfile(profile)
+	if err != nil {
+		return err
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := rotateAgentConvTx(tx, oldConv, newConv, "morph", carriedName); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO conversation_resume_profiles (conv_id, profile_json, updated_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(conv_id) DO UPDATE SET profile_json = excluded.profile_json, updated_at = excluded.updated_at`,
+		newConv, rawConversation, dbTime(time.Now().UTC())); err != nil {
+		return err
+	}
+	res, err := tx.Exec(`UPDATE agents SET relaunch_profile = ? WHERE agent_id = ? AND current_conv_id = ?`,
+		rawProfile, agentID, newConv)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return fmt.Errorf("agent %s did not advance to %s", agentID, newConv)
+	}
+	return tx.Commit()
 }
