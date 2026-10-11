@@ -222,13 +222,14 @@ test('reopening a summary morph restores its deadline and cancel action', async 
   const cancel=[...s.q('[data-lt-state="waiting-summary"]').querySelectorAll('button')].find(b=>b.textContent.includes('Cancel pending'));
   await s.click(cancel);
   assert.deepEqual(sent,[{cancel:true}]);
-  assert.equal(s.closed(),1);
+  assert.equal(s.closed(),0,'cancelling the wait leaves explicit outage fallback available');
 });
 
 test('provider outage continuation requires an explicit loss checkbox and works from restored pending state',async(t)=>{
  const sent=[];
  const pending={history:'summary',target:{profile:'small'},expires_at:new Date(Date.now()+60000).toISOString()};
- const s=await mountDialog(t,{initialMode:'morph',api:{status:async()=>({}),profiles:async()=>[{name:'small'}],morphStatus:async()=>({conv_id:AGENT.conv,pending_morph:pending}),morph:async(id,b)=>{sent.push(b);return {result:'morphed'};}}});
+ const s=await mountDialog(t,{initialMode:'morph',api:{status:async()=>({}),profiles:async()=>[{name:'small'}],morphStatus:async()=>({conv_id:AGENT.conv,pending_morph:pending}),morph:async(id,b)=>{if(b.dry_run) return {history:{needs_summary:true}};sent.push(b);return {result:'morphed'};}}});
+ await s.settle(); await s.settle();
  assert.equal(s.q('#lt-proceed-loss').disabled,true);
  assert.match(s.q('#launch-target').textContent,/Earlier context may be lost/);
  const check=s.q('#lt-proceed-without-summary');

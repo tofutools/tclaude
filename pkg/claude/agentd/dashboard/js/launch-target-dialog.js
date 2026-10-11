@@ -219,7 +219,7 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
   useEffect(() => {
     let live = true;
     api.morphStatus?.(agent.id).then((status) => {
-      if (live && status?.pending_morph?.history === 'summary') setWaiting(status.pending_morph);
+      if (live && status?.pending_morph?.history === 'summary') { setWaiting(status.pending_morph); if(status.pending_morph.target?.profile) setProfile(status.pending_morph.target.profile); }
     }).catch(() => {});
     return () => { live = false; };
   }, []);
@@ -243,7 +243,7 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
       try {
         const status = await api.morphStatus(agent.id);
         if (!live) return;
-        if (!status?.pending_morph) { setWaiting(null); setPreview(null); setError(status?.conv_id !== agent.conv ? 'Morph completed. Close to see its new terminal.' : 'The pending morph ended; the source was left unchanged.'); return; }
+        if (!status?.pending_morph) { setWaiting(null); if(status?.conv_id !== agent.conv) {setPreview(null); setError('Morph completed. Close to see its new terminal.');} else setError('The wait ended; the source is unchanged. You can explicitly continue without a summary below.'); return; }
         setWaiting(status.pending_morph);
       } catch (e) { if (live) setError(`Could not refresh pending morph: ${errText(e)}`); }
       if (live) timer = setTimeout(tick, 2000);
@@ -253,7 +253,7 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
   }, [!!waiting]);
   const cancelPending = async () => {
     setBusy(true);
-    try { await api.morph(agent.id, { cancel: true }); setWaiting(null); setPreview(null); toast('Pending morph cancelled; the source stays here.'); onClose(); }
+    try { await api.morph(agent.id, { cancel: true }); setWaiting(null); toast('Pending morph cancelled; the source stays here. You can explicitly continue without a summary.'); }
     catch (e) { setError(errText(e)); }
     finally { setBusy(false); }
   };
