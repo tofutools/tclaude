@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/ext/tclaude.schema.json",
+  "title": "PAF tclaude extension 1.x: the value of extensions.tclaude on each object",
+  "description": "Which properties apply depends on the object carrying the extension; see the PAF spec. Unknown properties are allowed.",
+  "type": "object",
+  "properties": {
+    "spawn_profile": {
+      "description": "agent.json: tclaude inline spawn profile, including launch posture.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Informational; receivers never look a profile up by name."
+        },
+        "profile": {
+          "type": "object"
+        }
+      }
+    },
+    "permissions": {
+      "description": "agent.json: advisory permission provenance; never grants.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "slug"
+        ],
+        "properties": {
+          "slug": {
+            "type": "string"
+          },
+          "effect": {
+            "type": "string"
+          },
+          "scope": {},
+          "source": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "teleport": {
+      "description": "agent.json: teleport chain provenance.",
+      "type": "object",
+      "properties": {
+        "chain": {
+          "type": "string"
+        },
+        "hops": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "from_instance": {
+                "type": "string"
+              },
+              "from_agent": {
+                "type": "string"
+              },
+              "to_instance": {
+                "type": "string"
+              },
+              "to_group": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      }
+    },
+    "sandbox": {
+      "description": "environment.json: tclaude sandbox details behind the tclaude layer.",
+      "type": "object",
+      "properties": {
+        "profile": {
+          "type": "string"
+        },
+        "settings": {
+          "type": "object"
+        }
+      }
+    },
+    "harness": {
+      "description": "environment.json: settings only one harness has, keyed by harness name.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "group": {
+      "description": "group.json: group settings such as standing orders and routes.",
+      "type": "object"
+    },
+    "owner": {
+      "description": "group.json member: advisory; ownership never travels.",
+      "type": "boolean"
+    },
+    "transfer": {
+      "description": "agent.json: continuation state for move and teleport.",
+      "type": "object",
+      "properties": {
+        "identity": {
+          "type": "object",
+          "description": "Stable federation identity of a continuation (agent, home, hops, proofs)."
+        },
+        "carry_permissions": {
+          "type": "boolean",
+          "description": "The sender opted in to carrying permissions; the receiver still decides."
+        },
+        "trigger": {
+          "type": "string",
+          "description": "What started the transfer, such as teleport or move."
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "item": {
+      "description": "environment.json placeholder: the configuration item the placeholder stands in.",
+      "type": "string"
+    },
+    "field": {
+      "description": "environment.json placeholder: the field of that item.",
+      "type": "string"
+    },
+    "converted_from": {
+      "description": "manifest root: the legacy carrier this PAF was converted from.",
+      "type": "object",
+      "required": [
+        "format",
+        "format_version"
+      ],
+      "properties": {
+        "format": {
+          "type": "string"
+        },
+        "format_version": {
+          "type": "integer"
+        },
+        "tclaude_version": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

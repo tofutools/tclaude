@@ -722,11 +722,14 @@ own state that other systems are not expected to share:
 | `agent.json` | `spawn_profile` | `name` (informational) and `profile`: tclaude's inline spawn profile, including launch posture. Receivers never look a profile up by name. |
 | `agent.json` | `permissions` | Permission rows (`slug`, `effect`, `scope`, `source`) as advisory provenance. They never become grants unless the receiver's own policy approves them. |
 | `agent.json` | `teleport` | The teleport chain id and hops (`from_instance`, `from_agent`, `to_instance`, `to_group`, `at`). |
+| `agent.json` | `transfer` | Continuation state for move and teleport: the stable federation `identity`, the sender's `carry_permissions` opt-in, the `trigger` and source `warnings`. |
 | `environment.json` | `sandbox` | tclaude sandbox details: the profile name and settings behind the `tclaude` layer. |
+| `environment.json` placeholders | `item`, `field` | The configuration item and field a placeholder stands in. |
 | `environment.json` | `harness.<name>` | Settings only one harness has, such as `harness.claude.auto_compact_window`. |
 | `group.json` | `group` | Group settings: standing orders, routes, auto-join and similar. |
 | `group.json` members | `owner` | The member owned the group (advisory; ownership never travels). |
 | `ext/tclaude/mail-deliveries.json` | entry | The mail delivery ledger a continuation carries. |
+| `manifest.json` | `converted_from` | The legacy carrier a PAF was converted from: `format`, `format_version`, `tclaude_version`, `created_at`. |
 
 The extension is `copy: unsafe`, version `1.0`.
 
