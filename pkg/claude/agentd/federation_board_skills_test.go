@@ -31,3 +31,37 @@ func TestBoardSkillInstallRestoresDirectoryChangedAfterPreview(t *testing.T) {
 	require.NoError(t, e)
 	require.Len(t, entries, 1, "rollback removes private staging and restores the original directory")
 }
+
+func TestBoardSkillGroupInstallAnchorsPreviewedProject(t *testing.T) {
+	for _, mutation := range []string{"symlink", "replace-project", "none"} {
+		t.Run(mutation, func(t *testing.T) {
+			parent := testutil.CanonicalTempDir(t)
+			base := filepath.Join(parent, "project")
+			require.NoError(t, os.Mkdir(base, 0700))
+			info, err := os.Stat(base)
+			require.NoError(t, err)
+			target := boardSkillRoot{ID: "group:test", Kind: "group", Path: filepath.Join(base, ".claude", "skills"), BoundaryIdentity: boardRootIdentity(info)}
+			outside := testutil.CanonicalTempDir(t)
+			switch mutation {
+			case "symlink":
+				require.NoError(t, os.Symlink(outside, filepath.Join(base, ".claude")))
+			case "replace-project":
+				require.NoError(t, os.Rename(base, base+"-old"))
+				require.NoError(t, os.Mkdir(base, 0700))
+			}
+			incoming := skillbundle.Bundle{Format: skillbundle.Format, Name: "demo", Files: []skillbundle.File{{Path: "SKILL.md", Data: []byte("incoming")}}}
+			err = installBoardSkill(incoming, []boardSkillRoot{target}, []configBundleChange{{Action: "create"}}, nil)
+			if mutation == "none" {
+				require.NoError(t, err)
+				data, err := os.ReadFile(filepath.Join(target.Path, "demo", "SKILL.md"))
+				require.NoError(t, err)
+				require.Equal(t, "incoming", string(data))
+			} else {
+				require.Error(t, err)
+				entries, err := os.ReadDir(outside)
+				require.NoError(t, err)
+				require.Empty(t, entries)
+			}
+		})
+	}
+}

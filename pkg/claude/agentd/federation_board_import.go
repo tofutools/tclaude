@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/skillbundle"
 	"github.com/tofutools/tclaude/pkg/federation/client"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
@@ -24,6 +25,7 @@ import (
 func (a *boardItemAccess) publish(r *http.Request, board string, in boardItemInput) (json.RawMessage, error) {
 	var raw []byte
 	var m proto.BoardItemManifest
+	var metadata []byte
 	var e error
 	if in.Source != nil {
 		if len(in.Only) > 0 || len(in.Skip) > 0 || len(in.Values) > 0 || in.SkillRoot != "" {
@@ -41,6 +43,10 @@ func (a *boardItemAccess) publish(r *http.Request, board string, in boardItemInp
 			return nil, e
 		}
 		m = original
+		_, metadata, e = a.metadata(v)
+		if e != nil {
+			return nil, e
+		}
 	} else {
 		if in.Name == "" || len(in.Name) > 128 {
 			return nil, errors.New("name must be 1..128 bytes")
@@ -86,6 +92,22 @@ func (a *boardItemAccess) publish(r *http.Request, board string, in boardItemInp
 		sum := sha256.Sum256(raw)
 		m = proto.BoardItemManifest{Item: proto.NewEnvelopeID(), Version: proto.NewEnvelopeID(), Kind: kind, Name: in.Name, SHA256: hex.EncodeToString(sum[:]), Bytes: int64(len(raw))}
 		m.Sign(a.opts.Identity)
+		meta := proto.BoardItemMetadata{BoardItemManifest: m}
+		if kind == "skill" {
+			b, err := skillbundle.Decode(raw)
+			if err != nil {
+				return nil, err
+			}
+			if description := b.Description(); description != "" {
+				d := &proto.BoardItemDescription{Description: description}
+				d.Sign(m, a.opts.Identity)
+				meta.DescriptionProvenance = d
+			}
+		}
+		metadata, e = json.Marshal(meta)
+		if e != nil {
+			return nil, e
+		}
 	}
 	state, e := a.call("boards.get", map[string]any{"board": board})
 	if e != nil {
@@ -112,10 +134,6 @@ func (a *boardItemAccess) publish(r *http.Request, board string, in boardItemInp
 	sum := sha256.Sum256(ciphertext)
 	v.SHA256 = hex.EncodeToString(sum[:])
 	v.Bytes = int64(len(ciphertext))
-	metadata, e := json.Marshal(m)
-	if e != nil {
-		return nil, e
-	}
 	v.Metadata, e = proto.SealBoardContent(key, board, b.Epoch, v.Version, metadata)
 	if e != nil {
 		return nil, e

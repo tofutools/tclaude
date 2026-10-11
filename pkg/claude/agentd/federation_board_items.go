@@ -41,6 +41,7 @@ type boardItemInput struct {
 	PreviewToken       string            `json:"preview_token"`
 	SkillRoot          string            `json:"skill_root"`
 	SkillTargets       []string          `json:"skill_targets"`
+	CustomDir          string            `json:"custom_dir"`
 	PreserveExecutable bool              `json:"preserve_executable"`
 }
 type boardItemAccess struct {
@@ -106,23 +107,27 @@ func (a *boardItemAccess) key(board string, epoch int64) ([]byte, error) {
 	}
 	return key, e
 }
-func (a *boardItemAccess) manifest(v proto.BoardItemVersion) (proto.BoardItemManifest, error) {
-	var m proto.BoardItemManifest
+func (a *boardItemAccess) metadata(v proto.BoardItemVersion) (proto.BoardItemMetadata, []byte, error) {
+	var metadata proto.BoardItemMetadata
 	if e := v.Verify(); e != nil {
-		return m, e
+		return metadata, nil, e
 	}
 	key, e := a.key(v.Board, v.Epoch)
 	if e != nil {
-		return m, e
+		return metadata, nil, e
 	}
 	raw, e := proto.OpenBoardContent(key, v.Board, v.Epoch, v.Version, v.Metadata)
 	if e != nil {
-		return m, e
+		return metadata, nil, e
 	}
-	if e = json.Unmarshal(raw, &m); e != nil {
-		return m, e
+	if e = json.Unmarshal(raw, &metadata); e != nil {
+		return metadata, nil, e
 	}
-	return m, m.Verify()
+	return metadata, raw, metadata.Verify()
+}
+func (a *boardItemAccess) manifest(v proto.BoardItemVersion) (proto.BoardItemManifest, error) {
+	metadata, _, e := a.metadata(v)
+	return metadata.BoardItemManifest, e
 }
 func (a *boardItemAccess) version(ref boardItemRef) (proto.BoardItemVersion, proto.BoardItemManifest, error) {
 	var v proto.BoardItemVersion
@@ -208,7 +213,7 @@ func (a *boardItemAccess) fetch(v proto.BoardItemVersion, m proto.BoardItemManif
 	return boardItemSpool().Receive("in", v.Publisher, boardPlainDescriptor(v, m), bytes.NewReader(raw))
 }
 func registerBoardItemRoutes(mux *http.ServeMux, prefix string, dashboard bool) {
-	for pattern, op := range map[string]string{"GET /{board}/items": "list", "POST /{board}/items": "publish", "GET /{board}/items/{item}/versions": "versions", "PUT /{board}/items/{item}/pin": "pin", "POST /{board}/items/{item}/versions/{version}/fetch": "fetch", "GET /{board}/items/{item}/versions/{version}/contents": "contents", "GET /{board}/items/{item}/versions/{version}/download": "download", "HEAD /{board}/items/{item}/versions/{version}/download": "download", "POST /{board}/items/{item}/versions/{version}/preview": "preview", "POST /{board}/items/{item}/versions/{version}/import": "import"} {
+	for pattern, op := range map[string]string{"GET /{board}/items": "list", "POST /{board}/items": "publish", "GET /{board}/items/{item}/versions": "versions", "PUT /{board}/items/{item}/pin": "pin", "POST /{board}/items/{item}/versions/{version}/fetch": "fetch", "GET /{board}/items/{item}/versions/{version}/contents": "contents", "GET /{board}/items/{item}/versions/{version}/download": "download", "HEAD /{board}/items/{item}/versions/{version}/download": "download", "GET /{board}/items/{item}/versions/{version}/archive": "archive", "HEAD /{board}/items/{item}/versions/{version}/archive": "archive", "POST /{board}/items/{item}/versions/{version}/preview": "preview", "POST /{board}/items/{item}/versions/{version}/import": "import"} {
 		method, tail, _ := strings.Cut(pattern, " ")
 		handler := boardItemRoute(op)
 		if dashboard {
@@ -264,9 +269,10 @@ func boardItemRoute(op string) http.HandlerFunc {
 				return
 			}
 			var result struct {
-				Items    []proto.BoardItemVersion `json:"items"`
-				Versions []proto.BoardItemVersion `json:"versions"`
-				Cursor   string                   `json:"next_cursor"`
+				Items    []proto.BoardItemVersion              `json:"items"`
+				Versions []proto.BoardItemVersion              `json:"versions"`
+				Cursor   string                                `json:"next_cursor"`
+				Catalog  map[string]proto.BoardCatalogMetadata `json:"catalog_metadata"`
 			}
 			if e = json.Unmarshal(raw, &result); e != nil {
 				fail(e)
@@ -309,14 +315,20 @@ func boardItemRoute(op string) http.HandlerFunc {
 			}
 			rows := []map[string]any{}
 			for _, v := range entries {
-				m, e := a.manifest(v)
+				metadata, _, e := a.metadata(v)
+				m := metadata.BoardItemManifest
 				if e != nil {
 					// A publisher's opaque metadata must not hide other items or
 					// prevent continuing the hub's bounded catalog pagination.
 					rows = append(rows, map[string]any{"id": v.Item, "version": v.Version, "name": "Invalid item metadata", "invalid": true, "error": "publisher metadata could not be verified"})
 					continue
 				}
-				rows = append(rows, map[string]any{"id": v.Item, "version": v.Version, "name": m.Name, "kind": m.Kind, "publisher": m.Publisher, "republisher": v.Publisher, "digest": m.SHA256, "bytes": m.Bytes, "provenance": m, "latest_version": v.Version, "pinned_version": pins[v.Item], "update_available": pins[v.Item] != "" && pins[v.Item] != v.Version})
+				row := map[string]any{"id": v.Item, "version": v.Version, "name": m.Name, "kind": m.Kind, "description": metadata.Description(), "publisher": m.Publisher, "republisher": v.Publisher, "digest": m.SHA256, "bytes": m.Bytes, "provenance": m, "latest_version": v.Version, "pinned_version": pins[v.Item], "update_available": pins[v.Item] != "" && pins[v.Item] != v.Version}
+				if catalog, ok := result.Catalog[v.Item+"/"+v.Version]; ok {
+					row["updated_at"] = catalog.UpdatedAt
+					row["seq"] = catalog.Seq
+				}
+				rows = append(rows, row)
 			}
 			writeJSON(w, 200, map[string]any{key: rows, "next_cursor": result.Cursor})
 			return
@@ -375,6 +387,8 @@ func boardItemRoute(op string) http.HandlerFunc {
 				descriptor.Type = "skill"
 			}
 			serveBundleContents(w, r, f, descriptor)
+		case "archive":
+			serveBoardArchive(w, r, m, raw)
 		case "download":
 			w.Header().Set("Content-Type", "application/octet-stream")
 			w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="board-%s.json"`, v.Version))

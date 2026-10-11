@@ -13,6 +13,7 @@ import (
 )
 
 type boardCommandParams struct {
+	CustomDir          string `long:"custom-dir" optional:"true" help:"Human-only existing absolute skill root (no symlinks)"`
 	SkillRoot          string
 	SkillTargets       []string
 	PreserveExecutable bool
@@ -76,8 +77,8 @@ func boardsCmd() *cobra.Command {
 		{"fetch", "fetch", "Fetch and verify without importing", []string{"board", "item", "version"}, []string{"board", "item", "version"}, nil},
 		{"contents", "contents", "Inspect fetched contents", []string{"board", "item", "version", "path", "offset", "max-bytes"}, []string{"board", "item", "version"}, nil},
 		{"download", "download", "Save a fetched bundle to a new file", []string{"board", "item", "version", "file"}, []string{"board", "item", "version", "file"}, nil},
-		{"preview", "preview", "Preview an explicit import", []string{"board", "item", "version", "only", "skip", "set", "replace", "skill-target", "preserve-executable"}, []string{"board", "item", "version"}, nil},
-		{"import", "import", "Apply the matching reviewed preview", []string{"board", "item", "version", "only", "skip", "set", "replace", "preview-token", "skill-target", "preserve-executable"}, []string{"board", "item", "version", "preview-token"}, nil},
+		{"preview", "preview", "Preview an explicit import", []string{"board", "item", "version", "only", "skip", "set", "replace", "skill-target", "custom-dir", "preserve-executable"}, []string{"board", "item", "version"}, nil},
+		{"import", "import", "Apply the matching reviewed preview", []string{"board", "item", "version", "only", "skip", "set", "replace", "preview-token", "skill-target", "custom-dir", "preserve-executable"}, []string{"board", "item", "version", "preview-token"}, nil},
 	}
 	for _, a := range actions {
 		p := &boardCommandParams{Action: a.dispatch}
@@ -107,6 +108,7 @@ func addBoardFlag(cmd *cobra.Command, p *boardCommandParams, name string) {
 		"role": {&p.Role, "reader, publisher or owner (invite defaults to reader)"}, "ttl": {&p.TTL, "Invitation lifetime, default 1h (1m to 168h)"}, "cursor": {&p.Cursor, "Opaque page cursor"},
 		"item": {&p.Item, "Item ID"}, "version": {&p.Version, "Exact version ID"}, "parent": {&p.Parent, "Latest parent version when updating an item"},
 		"from-board": {&p.FromBoard, "Republish an original signed item from this board"}, "from-item": {&p.FromItem, "Original item ID"}, "from-version": {&p.FromVersion, "Original version ID"},
+		"custom-dir":    {&p.CustomDir, "Human-only existing absolute skill root; select --skill-target custom (no symlinks or parent traversal)"},
 		"skill-root":    {&p.SkillRoot, "Publish source root: claude, agents or codex (required for duplicate skill names)"},
 		"preview-token": {&p.PreviewToken, "Token from a matching explicit preview"}, "path": {&p.Path, "Entry path from contents listing"}, "file": {&p.File, "New local output file"},
 	}
@@ -116,7 +118,7 @@ func addBoardFlag(cmd *cobra.Command, p *boardCommandParams, name string) {
 	}
 	switch name {
 	case "skill-target":
-		f.StringSliceVar(&p.SkillTargets, name, nil, "Import skill into these known roots: claude, agents, codex (repeat/comma-separated)")
+		f.StringSliceVar(&p.SkillTargets, name, nil, "Import skill into roots: claude, agents, codex, group:NAME or custom (repeat/comma-separated)")
 	case "preserve-executable":
 		f.BoolVar(&p.PreserveExecutable, name, false, "Explicitly preserve executable bits after inspecting skill scripts; otherwise strip them")
 	case "notify":

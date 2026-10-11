@@ -54,7 +54,7 @@ func boardItemsCall(tx *sql.Tx, instance, method string, p boardParams, b Board)
 		}
 		return v, nil
 	case "items.list", "items.versions":
-		query := `SELECT v.body FROM board_versions v JOIN board_blobs o ON o.board=v.board AND o.id=v.blob WHERE v.board=? AND o.state='ready' AND (o.pinned=1 OR o.expires_at>?)`
+		query := `SELECT v.body,v.created_at,v.seq FROM board_versions v JOIN board_blobs o ON o.board=v.board AND o.id=v.blob WHERE v.board=? AND o.state='ready' AND (o.pinned=1 OR o.expires_at>?)`
 		args := []any{b.ID, ts(time.Now())}
 		if method == "items.list" {
 			query += ` AND v.item>? AND v.seq=(SELECT max(latest.seq) FROM board_versions latest WHERE latest.board=v.board AND latest.item=v.item) ORDER BY v.item LIMIT 9`
@@ -68,9 +68,11 @@ func boardItemsCall(tx *sql.Tx, instance, method string, p boardParams, b Board)
 			return nil, e
 		}
 		entries := []proto.BoardItemVersion{}
+		catalog := map[string]proto.BoardCatalogMetadata{}
 		for rows.Next() {
-			var raw string
-			if e = rows.Scan(&raw); e != nil {
+			var raw, created string
+			var seq int64
+			if e = rows.Scan(&raw, &created, &seq); e != nil {
 				rows.Close()
 				return nil, e
 			}
@@ -80,6 +82,7 @@ func boardItemsCall(tx *sql.Tx, instance, method string, p boardParams, b Board)
 				return nil, e
 			}
 			entries = append(entries, v)
+			catalog[v.Item+"/"+v.Version] = proto.BoardCatalogMetadata{UpdatedAt: created, Seq: seq}
 		}
 		e = rows.Err()
 		rows.Close()
@@ -88,6 +91,7 @@ func boardItemsCall(tx *sql.Tx, instance, method string, p boardParams, b Board)
 		}
 		cursor := ""
 		if len(entries) > 8 {
+			delete(catalog, entries[8].Item+"/"+entries[8].Version)
 			entries = entries[:8]
 			if method == "items.list" {
 				cursor = entries[7].Item
@@ -99,7 +103,7 @@ func boardItemsCall(tx *sql.Tx, instance, method string, p boardParams, b Board)
 		if method == "items.versions" {
 			key = "versions"
 		}
-		return map[string]any{key: entries, "next_cursor": cursor}, nil
+		return map[string]any{key: entries, "next_cursor": cursor, "catalog_metadata": catalog}, nil
 	case "items.get":
 		var raw string
 		e := tx.QueryRow(`SELECT v.body FROM board_versions v JOIN board_blobs o ON o.board=v.board AND o.id=v.blob WHERE v.board=? AND v.item=? AND v.version=? AND o.state='ready' AND (o.pinned=1 OR o.expires_at>?)`, b.ID, p.Item, p.VersionID, ts(time.Now())).Scan(&raw)
