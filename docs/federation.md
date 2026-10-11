@@ -1231,11 +1231,11 @@ abandoned. An independently created destination clone remains running after
 abandon. Successful retirement stops the source and removes its normal agent
 authority while retaining its conversation and worktree.
 
-Mail to the retired source's old stable address is refused with `agent_moved`
-for senders still authorized through its former group's current peer mail grant.
-The refusal does not disclose the new address. Other senders receive the usual
-unknown-agent or authorization refusal. Mail is never forwarded automatically;
-an operator can share the new destination address and configure its mail grants.
+For fresh-ID moves and older peers, mail to the retired source is refused with
+`agent_moved` for senders still authorized through its former group's current peer
+mail grant. The refusal does not disclose the new address. Other senders receive
+the usual unknown-agent or authorization refusal. Stable-ID moves between peers
+with home-mail support instead use the home custody route described below.
 
 ## Peer nodes
 
@@ -1662,7 +1662,8 @@ provide a route around an offline home. Home rechecks the sender's live mail and
 attachment grants, and the current host authorizes delivery against home. Removing
 the agent's home group membership revokes that group's ingress authority.
 
-Custody has the ordinary per-recipient queue cap and mail TTL. Final outcomes
+Regular custody has the ordinary per-recipient queue cap and mail TTL; daemon
+notes retain their existing queue policy. Final outcomes
 reach the original sender; a custody acknowledgement is not delivery. Delivery
 markers travel in stable bundles, and inbound dispatch is fenced during departure,
 so a lost acknowledgement followed by another hop cannot duplicate the inbox

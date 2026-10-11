@@ -508,7 +508,9 @@ func TestFederation_HomeMailReplyOnlyAuthoritySurvivesCustody(t *testing.T) {
 	id, _, e := db.EnsureAgentForConv("reply-traveler", "test")
 	require.NoError(t, e)
 	// An already delivered outbound message grants this peer reply-only authority.
-	require.NoError(t, db.InsertFederationOutbox(db.FederationOutboxRow{EnvelopeID: "live-original", Kind: proto.KindMail, ToInstance: sender.id.ID(), FromConv: "reply-traveler", FromAgent: id, State: db.FedOutboxAccepted, ExpiresAt: time.Now().Add(time.Hour)}))
+	require.NoError(t, db.InsertFederationOutbox(db.FederationOutboxRow{EnvelopeID: "live-original", Sealed: []byte("already acknowledged"), Kind: proto.KindMail, ToInstance: sender.id.ID(), FromConv: "reply-traveler", FromAgent: id, ExpiresAt: time.Now().Add(time.Hour)}))
+	_, e = db.SettleFederationOutbox("live-original", db.FedOutboxAccepted, "")
+	require.NoError(t, e)
 	identity := db.FederationIdentity{Agent: id, Home: sender.agentdID, Hops: 1, Mail: true, Proofs: map[string]string{sender.agentdID: "proof"}}
 	require.NoError(t, db.DepartFederationIdentity("reply-traveler", sender.agentdID, host.id.ID(), "left", identity))
 	reply := sender.envelope(proto.KindMail, proto.Endpoint{Agent: id}, proto.MailPayload{Body: "reply without an export grant"})
