@@ -52,7 +52,7 @@ func fedCatalogSessions(gid int64) []proto.CatalogSession {
 	if err != nil {
 		return out
 	}
-	alive, err := session.LiveTmuxSessions()
+	alive, err := cachedLiveTmuxSessions()
 	if err != nil {
 		return out
 	}

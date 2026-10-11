@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // handleDashboardPendingFocusAPI opens a terminal window ATTACHED to a
@@ -86,7 +85,7 @@ func handleDashboardPendingFocusAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no tmux pane for pending spawn "+label, http.StatusNotFound)
 		return
 	}
-	alive, _ := session.LiveTmuxSessions()
+	alive, _ := cachedLiveTmuxSessions()
 	if _, ok := alive[sess.TmuxSession]; !ok {
 		http.Error(w, "pending spawn "+label+" has no live tmux pane", http.StatusNotFound)
 		return

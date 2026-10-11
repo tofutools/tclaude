@@ -10,7 +10,6 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/hostmetrics"
 )
 
@@ -94,7 +93,7 @@ func refreshHostMetrics() {
 	hostCache.Unlock()
 }
 func collectHostAgentLoad() (*hostmetrics.AgentLoad, error) {
-	alive, err := session.LiveTmuxSessions()
+	alive, err := cachedLiveTmuxSessions()
 	if err != nil {
 		return nil, fmt.Errorf("tmux: %w", err)
 	}

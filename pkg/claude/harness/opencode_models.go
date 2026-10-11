@@ -17,6 +17,14 @@ import (
 
 const openCodeModelCacheTTL = 5 * time.Minute
 
+// openCodeModelDisclosureTTL is how stale the dashboard's model list may get
+// before a snapshot read refreshes it. Each refresh runs `opencode models`,
+// which rewrites OpenCode's ~5 MB model cache and costs seconds of CPU, and
+// every open dashboard reads the list on each poll (tcl-98ay6q). Launches
+// validate against openCodeModelCacheTTL instead, and their refresh updates
+// the list shown here too.
+const openCodeModelDisclosureTTL = time.Hour
+
 // openCodeModelRefreshMinInterval floors how often a BACKGROUND refresh may be
 // STARTED, independent of whether the last one succeeded. The single-flight
 // flag already guarantees at most one subprocess in flight; this guarantees the
@@ -130,7 +138,7 @@ func (openCodeModels) ValidateEffort(value string) (string, error) {
 //
 // The cost of that: for the first poll or two of a daemon's life the OpenCode
 // model list is empty, and after an `opencode` upgrade it stays stale for up to
-// one TTL. Models are suggestions and ValidateModel deliberately accepts free
+// openCodeModelDisclosureTTL, or until a launch validates an effort. Models are suggestions and ValidateModel deliberately accepts free
 // text; ValidateEffort still refuses unknown variants and loads synchronously.
 func (openCodeModels) Models() []string {
 	return slices.Clone(openCodeCatalogForDisclosure().models)
@@ -153,8 +161,14 @@ func openCodeCatalogForDisclosure() openCodeCatalog {
 	openCodeModelCache.Lock()
 	defer openCodeModelCache.Unlock()
 	value := openCodeModelCache.value
+	// A failed read is retried at the launch TTL, so a passing failure does
+	// not leave the list empty for an hour.
+	ttl := openCodeModelDisclosureTTL
+	if value.err != nil {
+		ttl = openCodeModelCacheTTL
+	}
 	stale := value.at.IsZero() ||
-		time.Since(value.at) >= openCodeModelCacheTTL
+		time.Since(value.at) >= ttl
 	rateAllows := openCodeModelCache.lastRefreshStart.IsZero() ||
 		time.Since(openCodeModelCache.lastRefreshStart) >= openCodeModelRefreshMinInterval
 	if stale && rateAllows {

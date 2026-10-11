@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -231,7 +232,7 @@ func TestOpenCodeModels_RecoversAfterASlowRefresh(t *testing.T) {
 
 	// And the machinery is not wedged: age it out and a further refresh runs.
 	openCodeModelCache.Lock()
-	openCodeModelCache.value.at = time.Now().Add(-2 * openCodeModelCacheTTL)
+	openCodeModelCache.value.at = time.Now().Add(-2 * openCodeModelDisclosureTTL)
 	openCodeModelCache.lastRefreshStart =
 		time.Now().Add(-2 * openCodeModelRefreshMinInterval)
 	openCodeModelCache.Unlock()
@@ -258,7 +259,7 @@ func TestOpenCodeModels_ServesStaleWhileRefreshing(t *testing.T) {
 	// Age the entry past its TTL and wedge the next exec.
 	second.Store(true)
 	openCodeModelCache.Lock()
-	openCodeModelCache.value.at = time.Now().Add(-2 * openCodeModelCacheTTL)
+	openCodeModelCache.value.at = time.Now().Add(-2 * openCodeModelDisclosureTTL)
 	openCodeModelCache.Unlock()
 
 	assert.Equal(t, []string{"openai/gpt-5"}, openCodeModels{}.Models(),
@@ -309,4 +310,34 @@ func TestOpenCodeModels_RefreshRateIsFloored(t *testing.T) {
 	require.Eventually(t, func() bool { return calls.Load() == 2 },
 		2*time.Second, 10*time.Millisecond)
 	assert.Equal(t, int64(2), calls.Load(), "still one at a time")
+}
+
+// The dashboard's list refreshes hourly (each `opencode models` rewrites a
+// ~5 MB cache and costs seconds of CPU), while a launch still validates
+// against a catalog at most openCodeModelCacheTTL old, and that refresh
+// updates the list shown too (tcl-98ay6q).
+func TestOpenCodeModels_DisclosureRefreshesHourlyLaunchesStayFresh(t *testing.T) {
+	var gpt6 atomic.Bool
+	calls := stubOpenCodeModels(t, func(string) ([]byte, error) {
+		if gpt6.Load() {
+			return []byte(strings.Replace(fakeOpenCodeModels, "openai/gpt-5", "openai/gpt-6", 1)), nil
+		}
+		return []byte(fakeOpenCodeModels), nil
+	})
+	require.NoError(t, func() error { _, err := openCodeModels{}.ValidateEffort("high"); return err }())
+	require.Equal(t, int64(1), calls.Load())
+
+	gpt6.Store(true)
+	openCodeModelCache.Lock()
+	openCodeModelCache.value.at = time.Now().Add(-2 * openCodeModelCacheTTL)
+	openCodeModelCache.lastRefreshStart = time.Now().Add(-2 * openCodeModelRefreshMinInterval)
+	openCodeModelCache.Unlock()
+	for range 10 {
+		assert.Equal(t, []string{"openai/gpt-5"}, openCodeModels{}.Models())
+	}
+	assert.Equal(t, int64(1), calls.Load(), "dashboard polls within the hour run no subprocess")
+
+	require.NoError(t, func() error { _, err := openCodeModels{}.ValidateEffort("high"); return err }())
+	assert.Equal(t, int64(2), calls.Load(), "a launch past the short TTL refreshes")
+	assert.Equal(t, []string{"openai/gpt-6"}, openCodeModels{}.Models(), "and the dashboard sees it")
 }
