@@ -106,6 +106,7 @@ func TestMorphResumeRealCLI(t *testing.T) {
 		model         string
 		creds         func(t *testing.T, home string) // seeds the copied credential, or skips
 		args          func(convID string) []string
+		env           []string // added to the child environment
 	}
 	cases := []smokeCase{
 		{src: harness.CodexName, dst: harness.DefaultName, bin: "claude", model: "claude-haiku-5-5",
@@ -120,12 +121,16 @@ func TestMorphResumeRealCLI(t *testing.T) {
 			args: func(id string) []string {
 				return []string{"exec", "--skip-git-repo-check", "-c", `model="gpt-5.6-luna"`, "-c", `model_reasoning_effort="low"`, "resume", id, ask}
 			}},
-		{src: harness.DefaultName, dst: harness.CopilotName, bin: "copilot", model: "gpt-5-mini",
-			// Copilot's login does not resolve from an empty COPILOT_HOME;
-			// the case skips when the CLI reports it cannot authenticate.
+		{src: harness.DefaultName, dst: harness.CopilotName, bin: "copilot",
+			// Copilot's login does not resolve from an empty COPILOT_HOME, so
+			// it falls back to the GitHub CLI's, read as gh reads it (gh tokens
+			// don't rotate). No model is pinned: Copilot's free tier allows no
+			// model choice and auto-assigns one. The case skips when the CLI
+			// reports it cannot authenticate.
 			creds: func(*testing.T, string) {},
+			env:   []string{"GH_CONFIG_DIR=" + ghConfigDir(realHome)},
 			args: func(id string) []string {
-				return []string{"--resume", id, "--model", "gpt-5-mini", "-s", "-p", ask}
+				return []string{"--resume", id, "-s", "-p", ask}
 			}},
 		{src: harness.DefaultName, dst: harness.OpenCodeName, bin: "opencode", model: "openai/gpt-5.6-luna",
 			creds: func(*testing.T, string) {},
@@ -170,7 +175,7 @@ func TestMorphResumeRealCLI(t *testing.T) {
 			defer cancel()
 			cmd := exec.CommandContext(ctx, bin, c.args(res.ConvID)...)
 			cmd.Dir = cwd
-			cmd.Env = smokeEnv()
+			cmd.Env = append(smokeEnv(), c.env...)
 			cmd.Stdin = strings.NewReader("")
 			out, err := cmd.CombinedOutput()
 			t.Logf("%s resume output:\n%s", c.bin, out)
@@ -181,6 +186,17 @@ func TestMorphResumeRealCLI(t *testing.T) {
 			assert.Contains(t, strings.ToUpper(string(out)), "PELICAN", "the resumed %s session remembers the carried turn", c.dst)
 		})
 	}
+}
+
+// ghConfigDir is where the GitHub CLI keeps the operator's login.
+func ghConfigDir(realHome string) string {
+	if dir := os.Getenv("GH_CONFIG_DIR"); dir != "" {
+		return dir
+	}
+	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
+		return filepath.Join(dir, "gh")
+	}
+	return filepath.Join(realHome, ".config", "gh")
 }
 
 // smokeEnv is the test process environment minus the markers of the agent
