@@ -469,5 +469,5 @@ body.wizard .mux-pane-xterm {
   border: 1px solid transparent; border-radius: 3px; color: #e3a008; cursor: pointer;
 }
 .mux-tab-gear .cog-btn:hover, .mux-tab-gear .cog-btn[aria-expanded="true"] { color: #ffb52e; border-color: #6b4f1d; }
-.mux-tab-gear .action-menu { position: fixed; margin-top: 0; z-index: 1000; }
+.mux-tab-gear .action-menu { position: fixed; margin-top: 0; z-index: 1000; overflow-y: auto; }
 .mux-tab-gear .action-menu.opens-up { top: auto; bottom: auto; }

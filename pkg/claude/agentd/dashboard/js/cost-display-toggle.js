@@ -19,6 +19,9 @@ function costToggle(key, bodyClass, fallbackKey = '') {
   };
   return {
     hidden,
+    // refresh re-applies the current value: a toggle still following the
+    // one it falls back to follows it live, not just after a reload.
+    refresh() { if (listeners.size) apply(hidden()); },
     subscribe(listener) {
       listeners.add(listener);
       document.body.classList.toggle(bodyClass, hidden());
@@ -39,7 +42,10 @@ const terminalCosts = costToggle('tclaude.dash.terminalCost.hidden', 'terminal-c
 
 export const agentCostsHidden = groupCosts.hidden;
 export const subscribeAgentCosts = groupCosts.subscribe;
-export const toggleAgentCosts = groupCosts.toggle;
+export function toggleAgentCosts() {
+  groupCosts.toggle();
+  terminalCosts.refresh();
+}
 export const terminalCostsHidden = terminalCosts.hidden;
 export const subscribeTerminalCosts = terminalCosts.subscribe;
 export const toggleTerminalCosts = terminalCosts.toggle;

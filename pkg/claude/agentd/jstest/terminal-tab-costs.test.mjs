@@ -60,6 +60,11 @@ test('terminal costs follow roster updates and keep a toggle of their own, apart
   assert.match(tab.title, /API cost \$2\.41 · ≈\$8\.73 WHAT-IF/);
   harness.document.body.classList.remove('cost-whatif');
 
+  await harness.act(() => harness.fireEvent(groupToggle, 'click'));
+  assert.equal(toggle.getAttribute('aria-pressed'), 'true', 'an untouched Terminals toggle follows Groups live');
+  await harness.act(() => harness.fireEvent(groupToggle, 'click'));
+  assert.equal(toggle.getAttribute('aria-pressed'), 'false');
+
   await harness.act(() => harness.fireEvent(toggle, 'click'));
   assert.equal(toggle.getAttribute('aria-pressed'), 'true');
   assert.equal(groupToggle.getAttribute('aria-pressed'), 'false', 'Groups keeps its own setting');

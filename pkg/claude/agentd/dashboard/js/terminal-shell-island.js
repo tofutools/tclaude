@@ -23,7 +23,7 @@ import { RemoteFilesPanel } from './remote-files-panel.js';
 import { paneScope } from './skynet-scope.js';
 import { nodeColor } from './skynet-model.js';
 import { AgentGearMenu } from './groups-member-table.js';
-import { GroupsInteractionProvider } from './groups-interactions.js';
+import { GroupsInteractionProvider, useGroupsInteractions } from './groups-interactions.js';
 
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
@@ -461,15 +461,21 @@ function tabGearMember(pane, agent, snapshotValue, scope) {
 // switch nor close it.
 function TabGear({ gear, snapshot, menuKey }) {
   const ref = useRef(null);
+  // Reading the interactions context re-renders this on open and close, so
+  // the menu is placed as it opens rather than on the next snapshot publish.
+  const open = useGroupsInteractions().openMenuKey === menuKey;
   useLayoutEffect(() => {
-    const menu = ref.current?.querySelector('.action-menu.open');
+    const menu = ref.current?.querySelector('.action-menu');
     const button = ref.current?.querySelector('.cog-btn');
-    if (!menu || !button) return;
+    if (!open || !menu || !button) return;
     const rect = button.getBoundingClientRect();
     const width = menu.offsetWidth || 0;
-    menu.style.top = `${Math.round(rect.bottom + 4)}px`;
+    const top = Math.round(rect.bottom + 4);
+    menu.style.top = `${top}px`;
     menu.style.left = `${Math.max(4, Math.round(Math.min(rect.left, (globalThis.innerWidth || 0) - width - 8)))}px`;
-  });
+    // A fixed menu cannot be scrolled to: it scrolls itself instead.
+    menu.style.maxHeight = `calc(100vh - ${top + 8}px)`;
+  }, [open]);
   return html`<span ref=${ref} class="mux-tab-gear" draggable="false">
     <${AgentGearMenu} member=${gear.member} node=${gear.node} snapshot=${snapshot?.value} menuKey=${menuKey} />
   </span>`;

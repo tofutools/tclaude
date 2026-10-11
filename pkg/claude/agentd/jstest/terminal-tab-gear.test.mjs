@@ -53,6 +53,7 @@ test('an agent tab carries the Groups ⚙ menu next to its status light; a plain
   assert.equal(active, 'shell');
   await s.harness.act(() => gear.querySelector('.cog-btn').click());
   assert.equal(menu.classList.contains('open'), true);
+  assert.match(menu.style.top, /^\d+px$/, 'placed as it opens, not on the next snapshot');
   assert.equal(s.state.view.value.activeKey, 'shell', 'opening ⚙ does not switch tabs');
   await s.harness.act(() => s.harness.fireEvent(menu.querySelector('.action-menu-filter'), 'keydown', { key: 'Enter' }));
   assert.equal(s.state.view.value.activeKey, 'shell', 'keys in the menu do not reach the tab');
