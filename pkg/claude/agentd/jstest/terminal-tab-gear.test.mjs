@@ -92,6 +92,6 @@ test('the launch dialog styles its fields with the dashboard controls, in both t
   const shared = css.split('\n').filter((l) => l.startsWith(':where(.fleet-admin, [id^="fleet-"], #launch-target) :where(select, textarea'));
   assert.ok(shared.length >= 1, 'selects, inputs and textareas share the Fleet form controls');
   assert.match(css, /#launch-target input\[type="checkbox"\] \{[^}]*color-scheme: dark/, 'checkboxes follow the dark scheme');
-  assert.match(css, /body\.wizard :is\(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target\) :is\(\.cron-create-row, \.lt-row\) :is\(input\[type=text\], select, textarea\)/,
+  assert.match(css, /body\.wizard :is\(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target\) :is\(\.cron-create-row, \.lt-row\) :is\(input\[type=text\], input:not\(\[type\]\), select, textarea\)/,
     'wizard mode gives its fields the Clone dialog family skin');
 });
