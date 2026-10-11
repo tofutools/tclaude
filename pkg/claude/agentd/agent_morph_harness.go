@@ -43,6 +43,85 @@ type crossMorph struct {
 	opts         harness.TranslateOptions
 	// sandboxBefore and sandboxAfter are the harness-native modes, for display.
 	sandboxBefore, sandboxAfter string
+	// sandbox is the whole posture after the morph, both layers, for display.
+	sandbox morphSandboxView
+}
+
+// morphSandboxView says how the agent is confined after a cross-harness
+// morph. It is derived from the implementation and destination mode the morph
+// applies, so a preview cannot claim another posture than the one launched.
+// The harness's own mode alone reads as "sandbox off" for an agent that
+// tclaude's outer sandbox still wraps, so both layers are named.
+type morphSandboxView struct {
+	Implementation string `json:"implementation"`
+	// Tclaude is tclaude's own OS sandbox, which a morph never changes.
+	Tclaude string `json:"tclaude"`
+	// Harness is the destination harness's built-in sandbox.
+	Harness string `json:"harness"`
+	// Unsandboxed is set only when no access boundary confines the agent.
+	Unsandboxed bool   `json:"unsandboxed,omitempty"`
+	Warning     string `json:"warning,omitempty"`
+}
+
+func viewMorphSandbox(convID string, implementation sandboxpolicy.Implementation, dst *harness.Harness, dstMode string) morphSandboxView {
+	v := morphSandboxView{Implementation: string(implementation)}
+	mode := dstMode
+	if mode == "" {
+		mode = "its configured default"
+	}
+	switch {
+	case implementation.UsesTclaudeLayer():
+		v.Tclaude = "on, unchanged"
+		if names := morphSandboxProfiles(convID); names != "" {
+			v.Tclaude = "on (profile " + names + "), unchanged"
+		}
+		if implementation.UsesNestedHarnessSandbox() {
+			v.Harness = dst.Name + " " + mode + ", inside the tclaude sandbox"
+		} else {
+			v.Harness = dst.Name + " " + mode + ", stood down inside the tclaude sandbox"
+		}
+	case implementation.OmitsOSConfinement():
+		v.Tclaude = "off"
+		if implementation == sandboxpolicy.ImplementationResourceOnly {
+			v.Tclaude = "resource limits only, no access boundary"
+		}
+		v.Harness = dst.Name + " " + mode + " (no sandbox)"
+		v.Unsandboxed = true
+	default:
+		// The harness's own sandbox is the only wall: claim it only when the
+		// validated mode is one that confines (the builtin verdict).
+		v.Tclaude = "not used"
+		v.Harness = dst.Name + " " + mode
+		verdict, err := harness.BuiltinLaunchOSSandboxForValidatedMode(dst, dstMode)
+		switch {
+		case err != nil || verdict.State == "off":
+			v.Unsandboxed = true
+		case verdict.State == "on":
+			v.Tclaude = "not used: the harness's own sandbox confines it"
+		default:
+			v.Harness += ": depends on " + dst.Name + "'s own settings; tclaude cannot confirm a sandbox"
+		}
+	}
+	if v.Unsandboxed {
+		v.Warning = "no sandbox confines the agent after this morph"
+	}
+	return v
+}
+
+// morphSandboxProfiles names the tclaude sandbox profiles the agent's launch
+// applies, or "" when none is recorded.
+func morphSandboxProfiles(convID string) string {
+	snapshot, err := db.AgentEffectiveSandboxConfigForConv(convID)
+	if err != nil || snapshot == nil || snapshot.ProfilesOmitted {
+		return ""
+	}
+	names := make([]string, 0, len(snapshot.Applied))
+	for _, p := range snapshot.Applied {
+		if n := strings.TrimSpace(p.Name); n != "" {
+			names = append(names, n)
+		}
+	}
+	return strings.Join(names, " + ")
 }
 
 func cloneRelaunchProfile(p *db.AgentRelaunchProfile) (db.AgentRelaunchProfile, error) {
@@ -287,6 +366,7 @@ func planCrossHarnessMorph(convID string, dst *harness.Harness, target db.AgentM
 		src: src, dst: dst, cwd: current.Cwd, target: complete, previous: previous,
 		conversation: successor, profile: p, opts: opts,
 		sandboxBefore: current.Sandbox, sandboxAfter: dstMode,
+		sandbox: viewMorphSandbox(convID, implementation, dst, dstMode),
 	}, nil
 }
 

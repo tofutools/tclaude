@@ -44,6 +44,20 @@
 .mux-tab-status-unknown { color: #8b949e; }
 .mux-tab-status-waking,
 .mux-tab-status-restarting { color: #d29922; }
+/* Dot-shaped lights are drawn, not typed: a ● or ○ glyph sits wherever the
+   font's metrics put it, a pixel or more below the ⚙ and the title. The glyph
+   stays in the DOM (tests, the pane header) but takes no space; the shape is
+   centred on the box itself, odd-sized so it lands on whole pixels. */
+.mux-tab-status:is(.mux-tab-status-working, .mux-tab-status-idle, .mux-tab-status-waking, .mux-tab-status-offline, .mux-tab-status-unknown) { position: relative; font-size: 0; }
+.mux-tab-status:is(.mux-tab-status-working, .mux-tab-status-idle, .mux-tab-status-waking, .mux-tab-status-offline, .mux-tab-status-unknown)::before {
+  content: ""; position: absolute; inset: 0; margin: auto;
+  box-sizing: border-box; width: 7px; height: 7px; border-radius: 50%;
+}
+.mux-tab-status.mux-tab-status-working::before { background: currentColor; }
+.mux-tab-status.mux-tab-status-idle::before { border: 1.5px solid currentColor; }
+.mux-tab-status.mux-tab-status-waking::before { border: 1.5px dashed currentColor; }
+.mux-tab-status.mux-tab-status-offline::before { width: 7px; height: 1px; border-radius: 0; background: currentColor; }
+.mux-tab-status.mux-tab-status-unknown::before { width: 3px; height: 3px; background: currentColor; }
 .mux-tab-status-working { animation: mux-tab-status-pulse 1.8s ease-in-out infinite; }
 .mux-tab-status-waking,
 .mux-tab-status-restarting { animation: mux-tab-status-pulse 1.2s ease-in-out infinite; }

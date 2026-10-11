@@ -46,23 +46,25 @@ test('modes, targets and what carries over say what is possible and why not', as
   assert.deepEqual(m.carries('teleport', { node: 'forge', home: 'node-a' }).map((r) => r[1]), ['History', 'Identity', 'Permissions', 'Here']);
   const morph = m.carries('morph', { morph: { history: { source: 'claude', target: 'codex', source_entries: 40, carried_entries: 31, items: [{ kind: 'tool_call', count: 9 }] }, after: { sandbox: 'workspace-write' } } });
   assert.match(morph[1][2], /translated claude → codex: 31 of 40 entries carried \(tool_call ×9\)/);
-  assert.match(morph[2][2], /workspace-write/);
+  assert.match(morph[2][2], /workspace-write/, 'an older daemon names only the harness mode');
+  const layered = m.carries('morph', { morph: { sandbox: { tclaude: 'off', harness: 'codex danger-full-access, not applied', unsandboxed: true, warning: 'no sandbox confines the agent after this morph' } } });
+  assert.deepEqual(layered.slice(2).map((row) => row[1]), ['tclaude sandbox', 'Harness sandbox', 'Unsandboxed'], 'a warning only when nothing confines it');
   assert.match(m.carries('morph', {})[1][2], /same conversation/);
 });
 
 async function mountDialog(t, props) {
   const harness = await createPreactHarness(t);
   const m = await harness.importDashboardModule('js/launch-target-dialog.js');
-  const timers = fakeTimers(); let closed = 0;
+  const timers = fakeTimers(); let closed = 0; const toasts = [];
   const mounted = await harness.mount(harness.html`<${m.LaunchTargetDialog} agent=${AGENT} self=${self} fleet=${fleet} timers=${timers} now=${() => 0}
-    onClose=${() => { closed += 1; }} ...${props} />`);
+    onClose=${() => { closed += 1; }} toast=${(text, error) => toasts.push(error ? `error: ${text}` : text)} ...${props} />`);
   const q = (s) => mounted.container.querySelector(s) || harness.document.querySelector(s);
   const settle = () => harness.act(() => new Promise((r) => setTimeout(r, 5)));
   const click = async (el) => { await harness.act(() => el.click()); await settle(); };
   const setValue = (el, value) => Object.defineProperty(el, 'value', { configurable: true, writable: true, value });
   const change = async (el, value) => { setValue(el, value); await harness.act(() => harness.fireEvent(el, 'change')); await settle(); };
   await settle();
-  return { harness, q, click, change, settle, setValue, timers, closed: () => closed };
+  return { harness, q, click, change, settle, setValue, timers, toasts, closed: () => closed };
 }
 
 test('move from the ⚙ menu: pick a node, then a receiving group, then confirm', async (t) => {
@@ -92,7 +94,8 @@ test('morph previews the change with a dry run, then applies it at the next idle
     profiles: async () => [{ name: 'codex-high', harness: 'codex', model: 'gpt-5', effort: 'high' }, { name: 'off', disabled: true }],
     morph: async (id, body) => {
       calls.push([id, body]);
-      if (body.dry_run) return { result: 'dry_run', before: { harness: 'claude', model: 'opus' }, after: { harness: 'codex', model: 'gpt-5', effort: 'high', sandbox: 'workspace-write' }, history: { source: 'claude', target: 'codex', source_entries: 10, carried_entries: 8, source_estimated_tokens: 81495, carried_estimated_tokens: 4980, items: [] } };
+      if (body.dry_run) return { result: 'dry_run', before: { harness: 'claude', model: 'opus' }, after: { harness: 'codex', model: 'gpt-5', effort: 'high', sandbox: 'danger-full-access' }, history: { source: 'claude', target: 'codex', source_entries: 10, carried_entries: 8, source_estimated_tokens: 81495, carried_estimated_tokens: 4980, items: [] },
+        sandbox: { implementation: 'tclaude-layer', tclaude: 'on (profile strict), unchanged', harness: 'codex danger-full-access, stood down inside the tclaude sandbox' } };
       return { result: 'pending', detail: '' };
     },
   };
@@ -105,10 +108,15 @@ test('morph previews the change with a dry run, then applies it at the next idle
   assert.match(s.q('.lt-morph-preview').textContent, /was claude · opus.*now codex · gpt-5 · effort high/);
   assert.match(s.q('[data-lt-carries]').textContent, /translated claude → codex: 8 of 10/);
   assert.match(s.q('[data-lt-carries]').textContent, /estimated tokens: 81495 source → 4980 carried/);
+  const carried = s.q('[data-lt-carries]').textContent;
+  assert.match(carried, /tclaude sandbox\s*on \(profile strict\), unchanged/, 'tclaude\'s own sandbox is named, so "danger-full-access" does not read as off');
+  assert.match(carried, /Harness sandbox\s*codex danger-full-access, stood down inside the tclaude sandbox/);
+  assert.doesNotMatch(carried, /Unsandboxed/, 'no warning while tclaude\'s sandbox wraps it');
   assert.equal(s.q('#lt-ok').textContent, 'Morph at next idle turn');
   await s.click(s.q('#lt-ok'));
   assert.deepEqual(calls[1], ['conv_b1', { profile: 'codex-high' }]);
-  assert.match(s.q('[data-lt-state="pending"]').textContent, /morphs to codex-high when it next goes idle/);
+  assert.equal(s.closed(), 1, 'a submitted morph closes the dialog');
+  assert.match(s.toasts[0], /morphs to codex-high when it next goes idle/);
 });
 
 test('a refused morph preview says why and keeps the button off', async (t) => {
@@ -141,8 +149,10 @@ test('with the teleport routes, teleport follows the move until its copy runs', 
   const n = s.q('#lt-note'); s.setValue(n, 'review 1.1'); await s.harness.act(() => s.harness.fireEvent(n, 'input'));
   await s.click(s.q('#lt-ok'));
   assert.deepEqual(sent, [['conv_b1', { peer: 'inst_forge', group: 'reviewers', note: 'review 1.1' }]]);
+  assert.equal(s.closed(), 1, 'a sent teleport closes the dialog');
+  assert.match(s.toasts[0], /Teleport to forge: sent/);
   await s.harness.act(async () => { await s.timers.queue.shift().fn(); }); await s.settle();
-  assert.match(s.q('[data-lt-state="landed"]').textContent, /builder-1 runs on forge/);
+  assert.match(s.toasts[1], /builder-1 runs on forge/, 'the outcome still arrives once the dialog is gone');
 });
 
 test('recall from its home placeholder sends it straight home', async (t) => {
@@ -157,7 +167,8 @@ test('recall from its home placeholder sends it straight home', async (t) => {
   assert.match(r.q('.lt-consequence').textContent, /straight home to node-a, not back through the nodes it visited/);
   await r.click(r.q('#lt-ok'));
   assert.deepEqual(recalled, ['agt_b1']);
-  assert.ok(r.q('[data-lt-state="returning"]'), 'a paused-backup return has no move record to follow');
+  assert.match(r.toasts[0], /returning to its paused copy on node-a/, 'a paused-backup return has no move record to follow');
+  assert.equal(r.closed(), 1);
 });
 
 test('a peer agent opens on a mode it can use, and a sent move locks the target', async (t) => {
