@@ -296,10 +296,16 @@ func TestFederation_ProposalPartialAutoIngressAndImmediateRevoke(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.UpsertFederationPeerGrant(db.FederationPeerGrant{Peer: p.id.ID(), Slug: agentd.PermGroupsVisibilityRead, Scope: db.FederationGroupScope(g.ID)}))
 	require.NoError(t, db.UpsertFederationPeerGrant(db.FederationPeerGrant{Peer: p.id.ID(), Slug: agentd.PermGroupsLinkAccept, Scope: db.FederationGroupScope(g.ID)}))
+	ungranted := f.HaveGroup("manual-ingress")
+	ungrantedID, err := db.FederationGroupIdentity(ungranted.ID)
+	require.NoError(t, err)
+	require.NoError(t, db.UpsertFederationPeerGrant(db.FederationPeerGrant{Peer: p.id.ID(), Slug: agentd.PermGroupsVisibilityRead, Scope: db.FederationGroupScope(ungranted.ID)}))
 	remote := "grp_44444444444444444444444444444444"
 	incoming := proto.ProposalItem{ID: proto.NewEnvelopeID(), Kind: proto.ProposalGroupLink, Host: p.agentdID, GroupID: gid, GroupName: g.Name, Source: p.id.ID(), SourceGroupID: remote, SourceGroupName: "remote", Mode: db.LinkModeMembersToMembers, Status: "pending"}
 	outgoing := proto.ProposalItem{ID: proto.NewEnvelopeID(), Kind: proto.ProposalGroupLink, Host: p.id.ID(), GroupID: remote, GroupName: "remote", Source: p.agentdID, SourceGroupID: gid, SourceGroupName: g.Name, Mode: db.LinkModeMembersToMembers, Status: "pending"}
-	proposal := proto.PeerProposalPayload{ID: proto.NewEnvelopeID(), Origin: p.id.ID(), Author: p.id.ID(), Revision: 1, Deadline: time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), Items: []proto.ProposalItem{incoming, outgoing}}
+	manual := incoming
+	manual.ID, manual.GroupID, manual.GroupName = proto.NewEnvelopeID(), ungrantedID, ungranted.Name
+	proposal := proto.PeerProposalPayload{ID: proto.NewEnvelopeID(), Origin: p.id.ID(), Author: p.id.ID(), Revision: 1, Deadline: time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), Items: []proto.ProposalItem{incoming, outgoing, manual}}
 	sendProposalControl(p, proto.KindPeerProposal, proposal)
 	fedEventually(t, "only granted ingress auto-applies", func() bool {
 		l, _ := db.GetFederationGroupLink("xlink_" + proposal.ID + "_" + incoming.ID)
@@ -308,6 +314,9 @@ func TestFederation_ProposalPartialAutoIngressAndImmediateRevoke(t *testing.T) {
 	other, err := db.GetFederationGroupLink("xlink_" + proposal.ID + "_" + outgoing.ID)
 	require.NoError(t, err)
 	require.Equal(t, "pending", other.LocalState)
+	manualLink, err := db.GetFederationGroupLink("xlink_" + proposal.ID + "_" + manual.ID)
+	require.NoError(t, err)
+	require.Equal(t, "pending", manualLink.LocalState, "a grant for another destination group must not auto-accept this ingress")
 	decision := proto.PeerProposalDecisionPayload{ID: proposal.ID, Revision: 1, RevisionHash: proposalDigest(t, proposal), Decision: "accept_items", ItemIDs: []string{incoming.ID}, AppliedIDs: []string{incoming.ID}}
 	sendProposalControl(p, proto.KindPeerProposalDecision, decision)
 	fedEventually(t, "ingress acknowledged", func() bool {
