@@ -252,6 +252,9 @@ func printMorphHistory(w io.Writer, r *transcript.LossReport) {
 		rung = r.Fallback
 	}
 	fmt.Fprintf(w, "  history: %d of %d entries carried, %s\n", r.Carried, r.SourceEntries, rung)
+	if r.CarriedEstimatedTokens > 0 {
+		fmt.Fprintf(w, "  estimated history tokens: %d source → %d carried\n", r.SourceEstimatedTokens, r.CarriedEstimatedTokens)
+	}
 	for _, line := range r.Lines() {
 		fmt.Fprintf(w, "    %s\n", line)
 	}

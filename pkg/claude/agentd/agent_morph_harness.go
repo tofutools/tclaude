@@ -397,7 +397,15 @@ func carryLaunchField(explicit, current *string, resolve func(string) (string, e
 // preview is the dry run of the history leg: what would be carried, what is
 // lost, and which rung delivers it. Nothing is written.
 func (cm *crossMorph) preview(convID string) (*transcript.LossReport, error) {
-	return harness.PreviewTranslation(cm.src, cm.dst, convID, cm.cwd, cm.opts)
+	// Preview the installed policy without creating its eventual artifact directory.
+	opts := cm.opts
+	opts.Policy.TranscriptPath = "<morph-artifacts>/transcript.md"
+	report, err := harness.PreviewTranslation(cm.src, cm.dst, convID, cm.cwd, opts)
+	if report != nil {
+		// The actual path is allocated only on apply; never advertise a nonexistent file.
+		report.TranscriptPath = ""
+	}
+	return report, err
 }
 
 // morphArtifactDir is where a cross-harness morph keeps the full neutral

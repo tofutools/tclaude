@@ -112,12 +112,13 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 		report.TranscriptPath = opts.TranscriptPath
 	}
 
-	results := map[string]bool{}
+	recentStart := recentToolStart(t.Entries)
+	results := map[string]Block{}
 	calls := map[string]string{}
 	for _, e := range t.Entries {
 		for _, b := range e.Blocks {
 			if b.Kind == BlockToolResult && b.CallID != "" {
-				results[b.CallID] = true
+				results[b.CallID] = b
 			}
 			if b.Kind == BlockToolCall && b.CallID != "" {
 				calls[b.CallID] = b.Name
@@ -126,7 +127,7 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 	}
 
 	var entries []planEntry
-	for _, e := range t.Entries {
+	for index, e := range t.Entries {
 		out := Entry{Role: e.Role, Origin: e.Origin, Time: e.Time, Model: e.Model}
 		if e.Origin == OriginTool {
 			out.Role = RoleUser
@@ -154,11 +155,23 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 				if !b.Freeform {
 					input = compactJSON(b.Input)
 				}
+				if index < recentStart && opts.TranscriptPath != "" {
+					result, found := results[b.CallID]
+					status := "interrupted"
+					if found {
+						status = toolStatus(result)
+					} else {
+						report.Add(LossInterruptedCall, 1, "")
+					}
+					out.Blocks = append(out.Blocks, Text(toolStub(b.Name, input, status, result.Text, opts.TranscriptPath, index)))
+					report.Add(LossToolRecordsStubbed, 1, "")
+					continue
+				}
 				text := fmt.Sprintf("%stool call · %s%s", markOpen, b.Name, markClose)
 				if input != "" {
 					text += "\n" + p.clipText(input, opts, report)
 				}
-				if b.CallID == "" || !results[b.CallID] {
+				if _, found := results[b.CallID]; b.CallID == "" || !found {
 					report.Add(LossInterruptedCall, 1, "")
 					text += "\n" + markOpen + "no result was recorded for this call (interrupted before the morph)" + markClose
 				}
@@ -171,13 +184,17 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 				if name == "" {
 					name = "tool"
 				}
-				status := "ok"
-				if b.IsError {
-					status = "error"
-				}
+				status := toolStatus(b)
 				text := fmt.Sprintf("%stool result · %s · %s%s", markOpen, name, status, markClose)
-				if b.Text != "" {
-					text += "\n" + p.clipText(b.Text, opts, report)
+				if index < recentStart && opts.TranscriptPath != "" {
+					text = toolStub(name, "", status, b.Text, opts.TranscriptPath, index)
+					report.Add(LossToolRecordsStubbed, 1, "")
+				} else if b.Text != "" {
+					recentOpts := opts
+					if opts.TranscriptPath != "" {
+						recentOpts.ToolResultClipBytes = min(opts.clip(), 4<<10)
+					}
+					text += "\n" + p.clipText(b.Text, recentOpts, report)
 				}
 				out.Blocks = append(out.Blocks, Text(text))
 				for _, m := range b.Media {
@@ -198,11 +215,11 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 	entries = coalesce(entries)
 	entries = p.fitBudget(entries, opts, report)
 
-	notice := fmt.Sprintf("%stclaude morph%s This conversation was carried over from %s", markOpen, markClose, describe(t.Source.Harness, t.Source.Model))
-	notice += fmt.Sprintf(" to %s. Earlier tool calls and results appear as %stool call%s / %stool result%s text records: they are history, not tools you have. Use your own tools to act from here on.", describe(opts.Target, opts.TargetModel), markOpen, markClose, markOpen, markClose)
+	notice := fmt.Sprintf("%stclaude morph%s History carried over from %s to %s. Tool records are history; use your own tools.", markOpen, markClose, describe(t.Source.Harness, t.Source.Model), describe(opts.Target, opts.TargetModel))
 	if report.TranscriptPath != "" {
-		notice += " The full original transcript is at " + report.TranscriptPath + "."
+		notice += " Full tool output: " + report.TranscriptPath + "."
 	}
+	notice += " No need to re-read skills or re-verify the environment unless something looks wrong."
 	entries = append(entries, planEntry{entry: Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text(notice)}}})
 	entries = coalesce(entries)
 	if entries[0].entry.Role != RoleUser {
@@ -213,6 +230,13 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 	for _, e := range entries {
 		report.Carried += e.sources
 		p.Entries = append(p.Entries, e.entry)
+		report.CarriedEstimatedTokens += estimateTokens(e.entry)
+	}
+	for _, e := range t.Entries {
+		report.SourceEstimatedTokens += estimateTokens(e)
+		for _, b := range e.Blocks {
+			report.SourceEstimatedTokens += int64(len(b.Input)) / 4
+		}
 	}
 	report.sort()
 	return p
