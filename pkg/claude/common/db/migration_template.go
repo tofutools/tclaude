@@ -2,9 +2,11 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
+	"testing"
 
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -68,7 +70,7 @@ func maybeSeedFromTemplate(dbPath string) bool {
 	if _, err := os.Stat(dbPath); err == nil {
 		return false // a real db is already present; don't clobber it
 	}
-	if err := os.WriteFile(dbPath, testTemplateBytes, 0644); err != nil {
+	if err := os.WriteFile(dbPath, testTemplateBytes, 0600); err != nil {
 		return false
 	}
 	return true
@@ -103,4 +105,70 @@ func maybeCaptureTemplate(d *sql.DB) {
 	if err == nil {
 		testTemplateBytes = b
 	}
+}
+
+// PrepareMigrationTemplateForTest builds one empty migrated database before
+// m.Run and shares its immutable snapshot with child test binaries. The parent
+// owns cleanup after all child processes have stopped. Production ignores it.
+func PrepareMigrationTemplateForTest() (func(), error) {
+	if !testing.Testing() {
+		return nil, fmt.Errorf("migration templates are test-only")
+	}
+	const env = "TCLAUDE_TEST_DB_TEMPLATE"
+	if path := os.Getenv(env); path != "" {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read inherited test DB template: %w", err)
+		}
+		d, err := sql.Open("sqlite", path+"?mode=ro&immutable=1")
+		if err != nil {
+			return nil, err
+		}
+		version := schemaVersion(d)
+		_ = d.Close()
+		if version != currentVersion {
+			return nil, fmt.Errorf("test DB template schema %d, want %d", version, currentVersion)
+		}
+		testTemplateMu.Lock()
+		testTemplateBytes, testTemplateEnabled = b, true
+		testTemplateMu.Unlock()
+		return func() {}, nil
+	}
+	root, err := os.MkdirTemp("", "tclaude-test-db-")
+	if err != nil {
+		return nil, err
+	}
+	fail := func(err error) (func(), error) { _ = os.RemoveAll(root); return nil, err }
+	home, homeSet := os.LookupEnv("HOME")
+	restoreHome := func() {
+		if homeSet {
+			_ = os.Setenv("HOME", home)
+		} else {
+			_ = os.Unsetenv("HOME")
+		}
+	}
+	if err := os.Setenv("HOME", root); err != nil {
+		return fail(err)
+	}
+	ResetForTest()
+	_, err = Open()
+	Close()
+	restoreHome()
+	if err != nil {
+		return fail(err)
+	}
+	testTemplateMu.Lock()
+	b := append([]byte(nil), testTemplateBytes...)
+	testTemplateMu.Unlock()
+	if len(b) == 0 {
+		return fail(fmt.Errorf("empty migrated test DB template"))
+	}
+	path := filepath.Join(root, "template.sqlite")
+	if err := os.WriteFile(path, b, 0600); err != nil {
+		return fail(err)
+	}
+	if err := os.Setenv(env, path); err != nil {
+		return fail(err)
+	}
+	return func() { _ = os.Unsetenv(env); _ = os.RemoveAll(root) }, nil
 }

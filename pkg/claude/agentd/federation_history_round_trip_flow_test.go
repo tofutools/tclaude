@@ -265,9 +265,9 @@ func startHistoryNode(t *testing.T, name, label string) historyNode {
 			t.Logf("%s node log:\n%s", label, raw)
 		}
 	})
-	// Each fresh process migrates its own SQLite database. Race instrumentation
-	// plus concurrent CPU load can exceed the ordinary 30s startup budget.
-	fedEventuallyWithin(t, label+" node starts", 90*time.Second, func() bool { raw, e := os.ReadFile(infoPath); return e == nil && json.Unmarshal(raw, &node) == nil })
+	// TestMain installs the parent binary's migrated template in each node.
+	// Only ordinary daemon setup remains inside the startup bound.
+	fedEventually(t, label+" node starts", func() bool { raw, e := os.ReadFile(infoPath); return e == nil && json.Unmarshal(raw, &node) == nil })
 	return node
 }
 
