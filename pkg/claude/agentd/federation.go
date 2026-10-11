@@ -82,7 +82,7 @@ const (
 )
 
 func fedRetryableCode(code string) bool {
-	return code == fedCodeRateLimited || code == fedCodeQueueFull || code == fedCodeInternal
+	return code == "agent_moving" || code == fedCodeRateLimited || code == fedCodeQueueFull || code == fedCodeInternal
 }
 
 // FederationKeyPath is where this instance's signing key lives.
@@ -515,7 +515,7 @@ func buildFederationCatalog(peer string, status ...*statusSnapshot) (*proto.Cata
 			delete(caps[group.ID], proto.CapAttachments)
 		}
 	}
-	cat := &proto.CatalogPayload{AgentBundleChunks: true, RequesterPays: 1, TeleportBackups: true, AgentTeleports: 1, AgentMoves: true, StableAgentIdentity: true, DirectAgentMoves: true, JobOutput: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
+	cat := &proto.CatalogPayload{AgentBundleChunks: true, RequesterPays: 1, TeleportBackups: true, AgentTeleports: 1, AgentMoves: true, StableAgentIdentity: true, HomeRoutedMail: true, DirectAgentMoves: true, JobOutput: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
 	if fedPeerReadsNode(peer) {
 		cat.Node = localNodeMetadata()
 	}
@@ -748,6 +748,12 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		go func() { defer rt.wg.Done(); rt.serveBundleFetch(peer, env) }()
 	case proto.KindBundleAnswer:
 		rt.acceptBundleAnswer(peer, env)
+	case proto.KindAgentLocation:
+		rt.acceptAgentLocation(peer, env)
+	case proto.KindHomeMail:
+		rt.acceptHomeMail(peer, env)
+	case proto.KindHomeMailReceipt:
+		rt.acceptHomeMailReceipt(peer, env)
 	case proto.KindAgentPresence:
 		rt.acceptAgentPresence(peer, env)
 	case teleportLeaseKind:
@@ -828,6 +834,9 @@ func fedRemoteBanner(senderName, peer, instance string) string {
 }
 
 func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
+	rt.acceptMailWithOrigin(peer, env, nil)
+}
+func (rt *fedRuntime) acceptMailWithOrigin(peer *db.FederationPeer, env *proto.Envelope, origin *homeMailPayload) {
 	// Everything the peer names itself goes toward pane injection: gate it.
 	senderAgent := ""
 	if proto.ValidAgentRef(env.From.Agent) {
@@ -836,6 +845,14 @@ func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
 	senderName := proto.SafeName(env.From.Name, false)
 	if strings.TrimSpace(env.From.Name) == "" && senderAgent != "" {
 		senderName = senderAgent
+	}
+	senderInstance, senderEnvelope := peer.InstanceID, env.ID
+	senderDisplay := peerDisplay(peer)
+	if origin != nil {
+		senderInstance, senderEnvelope = origin.Sender.Instance, origin.Envelope
+		senderAgent = origin.Sender.Agent
+		senderName = proto.SafeName(origin.Sender.Name, false)
+		senderDisplay = origin.Sender.Instance
 	}
 	refuse := func(code, reason string) {
 		slog.Info("federation: refused inbound mail", "from", env.From.Instance, "to_agent", env.To.Agent, "code", code, "reason", reason)
@@ -866,7 +883,7 @@ func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
 		refuse(fedCodeMalformed, "missing or too distant expiry")
 		return
 	}
-	if seen, _ := db.FederationEnvelopeSeen(peer.InstanceID, env.ID); seen {
+	if seen, _ := db.FederationEnvelopeSeen(senderInstance, senderEnvelope); seen {
 		// A resend after a lost ack (or a replay): acknowledge again,
 		// deliver nothing.
 		rt.sendControl(env.From.Instance, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckAccepted})
@@ -878,6 +895,13 @@ func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
 	}
 	if env.Kind == proto.KindOperatorMail {
 		rt.acceptOperatorMail(peer, env, senderName, mp, refuse)
+		return
+	}
+	if origin == nil && rt.queueAwayMail(peer, env, mp) {
+		return
+	}
+	if origin != nil && db.AgentAway(env.To.Agent) {
+		refuse("agent_moving", "recipient has left; home must use its latest location")
 		return
 	}
 	if movedAgentMailRefusal(peer.InstanceID, env.To.Agent) {
@@ -917,13 +941,14 @@ func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
 		}
 	}
 	m := &db.AgentMessage{
-		GroupID: groupID, FromConv: "", ToConv: conv,
-		Subject:      mp.Subject,
-		Body:         fedRemoteBanner(senderName, peerDisplay(peer), peer.InstanceID) + mp.Body,
-		ToRecipients: []string{conv},
+		GroupID: groupID, ToAgent: env.To.Agent, FromConv: "", ToConv: conv,
+		OperatorAuthored: origin != nil && origin.Operator && origin.Sender.Instance == origin.Home,
+		Subject:          mp.Subject,
+		Body:             fedRemoteBanner(senderName, senderDisplay, senderInstance) + mp.Body,
+		ToRecipients:     []string{conv},
 	}
 	id, err := db.InsertFederationInboundMessage(m, db.FederationInbound{
-		EnvelopeID: env.ID, FromInstance: peer.InstanceID, FromAgent: senderAgent, FromName: senderName,
+		EnvelopeID: senderEnvelope, FromInstance: senderInstance, FromAgent: senderAgent, FromName: senderName,
 	}, env.ExpiresAt, regularAgentMessageQueueLimit, attachments)
 	if err != nil && attachDir != "" {
 		_ = os.RemoveAll(attachDir)
@@ -931,6 +956,9 @@ func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
 	switch {
 	case errors.Is(err, db.ErrFederationDuplicate):
 		rt.sendControl(env.From.Instance, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckAccepted})
+		return
+	case errors.Is(err, db.ErrFederationMailMoving):
+		refuse("agent_moving", err.Error())
 		return
 	case err != nil:
 		if _, full := agentMessageQueueFull(err); full {
@@ -1020,7 +1048,10 @@ func (rt *fedRuntime) handleAck(env *proto.Envelope) {
 	if row.Kind == proto.KindAwayAnswer && row.State != db.FedOutboxAccepted && row.State != db.FedOutboxRefused {
 		recordFederationAudit("federation.away.answer.result", rt.id.ID(), "", "", "decider="+rt.id.ID()+" origin="+env.From.Instance+" request="+row.BodyPreview+" status="+ack.Status+" "+ack.Reason, 200)
 	}
+	rt.handleHomeMailAck(row, ack)
 	switch {
+	case ack.Status == fedAckCustody:
+		_ = db.UpdateFederationOutbox(row.EnvelopeID, db.FedOutboxSent, time.Now().Add(fedAckWait), "queued at agent home", 0)
 	case ack.Status == proto.AckAccepted:
 		note := ""
 		if row.Kind == proto.KindGroupMail && ack.Delivered > 0 {
@@ -1067,6 +1098,7 @@ func (rt *fedRuntime) flushOutbox(ctx context.Context) {
 		return
 	}
 	now := time.Now()
+	rt.flushHomeMail(now)
 	rows, err := db.DueFederationOutbox(now, 50)
 	if err != nil {
 		slog.Warn("federation: outbox read failed", "error", err)

@@ -43,6 +43,9 @@ const (
 	KindAgentMoveConfirm   = "agent_move_confirm"
 	KindTeleportLease      = "teleport_lease"
 	KindAgentPresence      = "agent_presence"
+	KindAgentLocation      = "agent_location"
+	KindHomeMail           = "home_mail"
+	KindHomeMailReceipt    = "home_mail_receipt"
 	// KindRouteOpen asks the recipient to open one TCP connection to one of
 	// its exported routes; KindRouteAnswer accepts (then both dial the hub
 	// stream relay) or refuses it. These are real-time control envelopes,
@@ -225,6 +228,7 @@ type CatalogPayload struct {
 	AgentTeleports      int            `json:"agent_teleports,omitempty"`
 	JobOutput           bool           `json:"job_output,omitempty"`
 	DirectAgentMoves    bool           `json:"direct_agent_moves,omitempty"`
+	HomeRoutedMail      bool           `json:"home_routed_mail,omitempty"`
 	StableAgentIdentity bool           `json:"stable_agent_identity,omitempty"`
 	AgentMoves          bool           `json:"agent_moves,omitempty"`
 	Node                *NodeMetadata  `json:"node,omitempty"`

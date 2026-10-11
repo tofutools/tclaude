@@ -14,6 +14,7 @@ import (
 // Proofs are private continuation credentials for hosts visited by this actor;
 // they never appear in dashboard projections, receipts or audit details.
 type FederationIdentity struct {
+	Mail   bool              `json:"mail,omitempty"`
 	Agent  string            `json:"agent"`
 	Home   string            `json:"home"`
 	Hops   int               `json:"hops"`

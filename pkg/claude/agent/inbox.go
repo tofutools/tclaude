@@ -66,6 +66,8 @@ type inboxEntry struct {
 	Preview          string `json:"preview,omitempty"`
 	CreatedAt        string `json:"created_at"`
 	Read             bool   `json:"read"`
+	ForwardedTo      string `json:"forwarded_to,omitempty"`
+	ForwardState     string `json:"forward_state,omitempty"`
 	Delivered        bool   `json:"delivered,omitempty"`
 	NudgeDiscardedAt string `json:"nudge_discarded_at,omitempty"`
 	ParentID         int64  `json:"parent_id,omitempty"`
@@ -210,6 +212,15 @@ func renderOutbox(p *inboxSentParams, out []inboxEntry, stdout io.Writer) int {
 }
 
 func outboxStatusText(e inboxEntry) string {
+	if e.ForwardState == "queued" || e.ForwardState == "handoff" {
+		return "forwarded to " + e.ForwardedTo
+	}
+	if e.ForwardState == "refused" {
+		return "forwarding refused"
+	}
+	if e.ForwardState == "accepted" {
+		return "delivered"
+	}
 	switch {
 	case e.NudgeDiscardedAt != "" && e.Read:
 		return "discarded offline · read"
