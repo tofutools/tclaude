@@ -2343,8 +2343,7 @@ Polling contract for the node-switching, map and merged-view frontends:
 - A per-node view polls full `/api/snapshot` data only for the displayed node,
   using the existing dashboard cadence. Stop/abort its poll when switching
   away, and discard snapshots from an earlier selected-node generation.
-- The map polls `/api/node-summary` only. Start with a relaxed 10-second
-  interval per node, stagger initial offsets across nodes and add jitter;
+- The map polls `/api/node-summary` only. Poll every 5 seconds per node, stagger initial offsets across nodes and add jitter;
   never trigger a synchronized fleet-wide full snapshot poll.
 - The merged regular view polls full snapshots only for nodes whose groups
   are on screen. Suspend full polls for hidden/collapsed-out nodes and use

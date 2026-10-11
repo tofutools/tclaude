@@ -19,7 +19,7 @@ export const PEER_COLORS = Object.freeze(['#f0883e', '#39c5cf', '#db61a2', '#3fb
 // STATUS_POLL_MS paces the chip row's peer list. Failures back off up to
 // MAX_BACKOFF_MS. JITTER is the ± fraction applied to every delay so nodes never
 // fall into lockstep.
-export const MAP_POLL_MS = 10000;
+export const MAP_POLL_MS = 5000;
 // PEER_POLL_HEADER marks a peer read as a poll at the given interval in ms:
 // the daemon then serves it from a copy it keeps warm (peer_read_cache.go).
 export const PEER_POLL_HEADER = 'X-Tclaude-Poll-Ms';
