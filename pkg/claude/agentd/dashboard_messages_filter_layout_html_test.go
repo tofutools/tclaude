@@ -70,9 +70,13 @@ func TestDashboardHTML_MessageFilterAboveList(t *testing.T) {
 		}
 	}
 	filterStart := strings.Index(html, `<div class="mail-list-filter">`)
-	filterEnd := strings.Index(html[max(filterStart, 0):], "</div>") + max(filterStart, 0)
+	if filterStart < 0 {
+		t.Fatal("mail-island.js: .mail-list-filter row not found")
+	}
+	filterRow := html[filterStart:]
+	filterRow = filterRow[:strings.Index(filterRow, "</div>")]
 	for _, id := range []string{`id="mail-mark-all"`, `id="mail-peer-compose"`, `id="mail-clear-read"`, `id="mail-agent-mark-all"`} {
-		if i := strings.Index(html, id); i > filterStart && i < filterEnd {
+		if strings.Contains(filterRow, id) {
 			t.Errorf("mail-island.js: %s must sit in the bulk bar, not the filter row", id)
 		}
 	}
