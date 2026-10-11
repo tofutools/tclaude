@@ -3493,7 +3493,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		human := classify(peerFromContext(r.Context())) == classHuman
 		// One tmux ls for the listing — per-member online checks below
 		// are map lookups against this snapshot.
-		aliveSessions, _ := session.LiveTmuxSessions()
+		aliveSessions, _ := cachedLiveTmuxSessions()
 		out := make([]groupSummary, 0, len(groups))
 		for _, g := range groups {
 			if !showArchived && g.IsArchived() {
@@ -4485,7 +4485,7 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 	}
 	// One tmux ls for the listing — per-member online checks below are
 	// map lookups against this snapshot.
-	aliveSessions, _ := session.LiveTmuxSessions()
+	aliveSessions, _ := cachedLiveTmuxSessions()
 	// Pre-load the owner set so we can tag any members who are also
 	// owners. Distinct-from-members owners are emitted as their own
 	// rows below so the list stays comprehensive.
@@ -4698,7 +4698,7 @@ func handleGroupOwnersList(w http.ResponseWriter, _ *http.Request, g *db.AgentGr
 	}
 	// One tmux ls for the listing — per-owner online checks below are
 	// map lookups against this snapshot.
-	aliveSessions, _ := session.LiveTmuxSessions()
+	aliveSessions, _ := cachedLiveTmuxSessions()
 	out := make([]ownerJSON, 0, len(owners))
 	for _, o := range owners {
 		entry := ownerJSON{

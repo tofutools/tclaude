@@ -8,7 +8,6 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
-	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // Codex subscription-usage readout for the dashboard top bar (JOH-214). The
@@ -125,7 +124,7 @@ func saveCodexUsageSnapshot(u *harness.CodexUsage, source string) {
 }
 
 func liveCodexConvIDs() []string {
-	alive, err := session.LiveTmuxSessions()
+	alive, err := cachedLiveTmuxSessions()
 	if err != nil {
 		slog.Debug("codex usage poller: tmux liveness unavailable; skipping targeted repair", "error", err)
 		return nil
