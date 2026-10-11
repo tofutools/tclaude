@@ -23,6 +23,12 @@ smoke::error() {
   printf 'ERROR: %s\n' "$*" >&2
 }
 
+# smoke::warn emits a CI warning annotation and the same text on stderr.
+smoke::warn() {
+  printf '::warning::%s\n' "$*"
+  printf 'WARNING: %s\n' "$*" >&2
+}
+
 # smoke::sha256_file FILE — portable SHA-256 for Linux and macOS hosts.
 smoke::sha256_file() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -40,26 +46,56 @@ smoke::sha256_file() {
 # extract its single top-level directory into DEST. The archive path avoids the
 # passt Git server's consistently truncated smart-HTTP response on hosted
 # runners while retaining reproducible source identity through SHA-256.
+#
+# When SMOKE_ARCHIVE_CACHE names a directory (CI restores it with
+# actions/cache), the archive is kept there as SHA256.tar.xz and reused
+# instead of downloaded, so an upstream outage only matters on a cache miss.
+# A cached copy is held to the same checksum as a download: one that does not
+# match is discarded and fetched again, never extracted.
 smoke::download_extract_tar_xz() {
   local url="$1"
   local want_sha="$2"
   local destination="$3"
   local archive="${destination}.tar.xz"
+  local cache="${SMOKE_ARCHIVE_CACHE:-}"
+  local cached=""
   local staging
 
   if [[ -z "$url" || -z "$want_sha" || -z "$destination" || -e "$destination" ]]; then
     smoke::error "downloading a pinned archive requires URL, SHA-256, and a nonexistent destination: ${destination:-<empty>}"
     return 1
   fi
-  curl --fail --silent --show-error --location \
-    --connect-timeout 15 --max-time 120 \
-    --retry 3 --retry-all-errors --retry-delay 2 \
-    --output "$archive" "$url" || return 1
-  local got_sha
-  got_sha="$(smoke::sha256_file "$archive")" || return 1
-  if [[ "$got_sha" != "$want_sha" ]]; then
-    smoke::error "archive checksum mismatch: got $got_sha, wanted $want_sha"
-    return 1
+  if [[ -n "$cache" ]]; then
+    cached="$cache/$want_sha.tar.xz"
+  fi
+  local got_sha=""
+  if [[ -n "$cached" && -f "$cached" ]] && cp -- "$cached" "$archive"; then
+    got_sha="$(smoke::sha256_file "$archive")" || return 1
+    if [[ "$got_sha" == "$want_sha" ]]; then
+      smoke::log "Using cached archive $cached"
+    else
+      smoke::warn "discarding cached archive $cached: checksum $got_sha, wanted $want_sha"
+      rm -f -- "$cached" "$archive"
+      got_sha=""
+    fi
+  fi
+  if [[ -z "$got_sha" ]]; then
+    curl --fail --silent --show-error --location \
+      --connect-timeout 15 --max-time 120 \
+      --retry 3 --retry-all-errors --retry-delay 2 \
+      --output "$archive" "$url" || return 1
+    got_sha="$(smoke::sha256_file "$archive")" || return 1
+    if [[ "$got_sha" != "$want_sha" ]]; then
+      smoke::error "archive checksum mismatch: got $got_sha, wanted $want_sha"
+      return 1
+    fi
+    # Best effort: a cache that cannot be written only costs the next run a
+    # download.
+    if [[ -n "$cached" ]]; then
+      mkdir -p -- "$cache" && cp -- "$archive" "$cached.partial" &&
+        mv -- "$cached.partial" "$cached" ||
+        smoke::warn "could not store $archive in $cache"
+    fi
   fi
   staging="$(mktemp -d "${destination}.extracting.XXXXXX")" || return 1
   tar -xJf "$archive" --strip-components=1 -C "$staging" || return 1

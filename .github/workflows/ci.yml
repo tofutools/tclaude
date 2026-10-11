@@ -54,8 +54,22 @@ jobs:
         with:
           node-version: 24
 
+      # The passt source archive is fetched from passt.top, which intermittently
+      # answers 502/504. Restoring it from the Actions cache means only a cache
+      # miss depends on upstream. The archive is stored under its SHA-256 and
+      # smoke::download_extract_tar_xz verifies it on every use, so correctness
+      # does not rest on the key: a stale or wrong cached copy is discarded and
+      # downloaded again. The key follows the file that pins the passt release.
+      - name: Cache pinned passt source archive
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/smoke-archive-cache
+          key: smoke-passt-source-${{ runner.os }}-${{ hashFiles('scripts/lib/smoke/packet-floor.sh') }}
+
       - name: Install Linux sandbox prerequisites
         shell: bash
+        env:
+          SMOKE_ARCHIVE_CACHE: ${{ runner.temp }}/smoke-archive-cache
         run: |
           source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
           if declare -F smoke::apt_update >/dev/null 2>&1; then
@@ -1266,6 +1280,20 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # The passt source archive is fetched from passt.top, which intermittently
+      # answers 502/504. Restoring it from the Actions cache means only a cache
+      # miss depends on upstream. The archive is stored under its SHA-256 and
+      # smoke::download_extract_tar_xz verifies it on every use, so correctness
+      # does not rest on the key: a stale or wrong cached copy is discarded and
+      # downloaded again. The key follows the file that pins the passt release.
+      - name: Cache pinned passt source archive
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/smoke-archive-cache
+          key: smoke-passt-source-${{ runner.os }}-${{ hashFiles('scripts/lib/smoke/packet-floor.sh') }}
+
       - name: Run end-to-end proxy-posture smokes
         shell: bash
+        env:
+          SMOKE_ARCHIVE_CACHE: ${{ runner.temp }}/smoke-archive-cache
         run: scripts/proxy-posture-e2e/run.sh

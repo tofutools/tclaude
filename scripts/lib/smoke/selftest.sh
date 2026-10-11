@@ -113,6 +113,8 @@ printf 'pinned source\n' > "$work/archive-source/passt-pin/source.txt"
 tar -cJf "$work/archive.fixture.tar.xz" -C "$work/archive-source" passt-pin
 archive_sha="$(smoke::sha256_file "$work/archive.fixture.tar.xz")"
 archive_dest="$work/archive-dest"
+# A CI job may export a real archive cache; these cases must not touch it.
+unset SMOKE_ARCHIVE_CACHE
 (
   curl() {
     printf '%s\n' "$@" > "$work/archive-curl.argv"
@@ -200,6 +202,55 @@ if [[ -e "$broken_extract_dest" ]]; then
   echo 'selftest FAIL: pinned archive helper promoted a partial extraction'
   failures=1
 fi
+
+# SMOKE_ARCHIVE_CACHE: a miss downloads and stores the verified archive, a hit
+# extracts without any network access, and a cached copy with the wrong bytes
+# is discarded and downloaded again rather than trusted.
+archive_cache="$work/archive-cache"
+(
+  export SMOKE_ARCHIVE_CACHE="$archive_cache"
+  curl() {
+    local output=""
+    while (( $# > 0 )); do
+      if [[ "$1" == "--output" ]]; then output="$2"; shift 2; else shift; fi
+    done
+    cp "$work/archive.fixture.tar.xz" "$output"
+  }
+  smoke::download_extract_tar_xz \
+    https://example.invalid/passt.tar.xz "$archive_sha" "$work/archive-cache-miss"
+) >/dev/null 2>&1 &&
+  cmp -s "$work/archive.fixture.tar.xz" "$archive_cache/$archive_sha.tar.xz" || {
+  echo 'selftest FAIL: pinned archive helper did not store a verified download in its cache'
+  failures=1
+}
+(
+  export SMOKE_ARCHIVE_CACHE="$archive_cache"
+  curl() { echo 'network used on a cache hit' >&2; return 1; }
+  smoke::download_extract_tar_xz \
+    https://example.invalid/passt.tar.xz "$archive_sha" "$work/archive-cache-hit"
+) >/dev/null 2>&1 &&
+  [[ "$(cat "$work/archive-cache-hit/source.txt" 2>/dev/null || true)" == "pinned source" ]] || {
+  echo 'selftest FAIL: pinned archive helper did not extract from its cache without downloading'
+  failures=1
+}
+printf 'poisoned\n' > "$archive_cache/$archive_sha.tar.xz"
+(
+  export SMOKE_ARCHIVE_CACHE="$archive_cache"
+  curl() {
+    local output=""
+    while (( $# > 0 )); do
+      if [[ "$1" == "--output" ]]; then output="$2"; shift 2; else shift; fi
+    done
+    cp "$work/archive.fixture.tar.xz" "$output"
+  }
+  smoke::download_extract_tar_xz \
+    https://example.invalid/passt.tar.xz "$archive_sha" "$work/archive-cache-poisoned"
+) >/dev/null 2>&1 &&
+  [[ "$(cat "$work/archive-cache-poisoned/source.txt" 2>/dev/null || true)" == "pinned source" ]] &&
+  cmp -s "$work/archive.fixture.tar.xz" "$archive_cache/$archive_sha.tar.xz" || {
+  echo 'selftest FAIL: pinned archive helper trusted or kept a cached archive with the wrong checksum'
+  failures=1
+}
 
 # expect_verdict WANT(pass|refuse) CASE LOG_CONTENT TEST_NAME...
 expect_verdict() {
