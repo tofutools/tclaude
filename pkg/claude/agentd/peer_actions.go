@@ -204,6 +204,7 @@ func servePeerAgentAction(w http.ResponseWriter, r *http.Request, v *peerView, r
 			Landing          string `json:"landing"`
 			Note             string `json:"note,omitempty"`
 			Clone            bool   `json:"clone,omitempty"`
+			Home             bool   `json:"home,omitempty"`
 			CarryPermissions bool   `json:"carry_permissions,omitempty"`
 		}
 		if !decodePeerAction(w, r, &body) {
@@ -213,8 +214,26 @@ func servePeerAgentAction(w http.ResponseWriter, r *http.Request, v *peerView, r
 			writeError(w, 400, "invalid_arg", "receiving group is required")
 			return
 		}
+		if body.Home && !strings.HasSuffix(r.URL.Path, "/teleport") {
+			writeError(w, 400, "invalid_arg", "home is only valid for teleport")
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "/teleport") {
-			raw, _ := json.Marshal(teleportRequest{Peer: a.peer, Group: body.Group, Note: body.Note, Clone: body.Clone, CarryPermissions: body.CarryPermissions})
+			destination := a.peer
+			if body.Home {
+				presence, err := db.GetAgentFederationPresence(target.AgentID)
+				if err != nil || presence == nil {
+					writeError(w, 409, "no_home", "this agent has no recorded home identity")
+					return
+				}
+				home, err := resolveIdentityContinuation(presence.HomeInstance)
+				if err != nil || home != a.peer || presence.State != "here" {
+					writeError(w, 403, "not_home", "only the recorded home node may recall this agent")
+					return
+				}
+				destination = "" // Home is resolved by the shared teleport path.
+			}
+			raw, _ := json.Marshal(teleportRequest{Peer: destination, Home: body.Home, Group: body.Group, Note: body.Note, Clone: body.Clone, CarryPermissions: body.CarryPermissions})
 			r.Body = io.NopCloser(bytes.NewReader(raw))
 			handleFederationTeleport(w, r)
 		} else {

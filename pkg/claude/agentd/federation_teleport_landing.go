@@ -180,6 +180,12 @@ func incomingTeleportRecord(peer string, sender string, d bundletransfer.Descrip
 	if rt == nil || teleportFrozen() {
 		return nil, errors.New("teleports are frozen or federation is disconnected")
 	}
+	// A signed node envelope with no agent sender is the operator acting on
+	// the named source. Peer/group admission remains the same; only the
+	// source binding comes from the signed teleport payload in that case.
+	if sender == "" {
+		sender = t.SourceAgent
+	}
 	last := t.Hops[len(t.Hops)-1]
 	if last.Offer != d.ID || last.FromInstance != peer || last.FromAgent != sender || last.ToInstance != rt.id.ID() || last.ToGroup != d.Group || t.SourceAgent != sender {
 		return nil, errors.New("teleport immediate sender or destination does not match signed offer")
