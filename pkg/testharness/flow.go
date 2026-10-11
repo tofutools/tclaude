@@ -1250,6 +1250,13 @@ func (f *Flow) Morph(target string, body map[string]any) *httptest.ResponseRecor
 	return f.do(http.MethodPost, path, body)
 }
 
+// MorphHandoff drives POST /v1/whoami/morph/handoff: the calling agent
+// submits the handoff its pending cross-harness morph is waiting for.
+func (f *Flow) MorphHandoff(body string) *httptest.ResponseRecorder {
+	f.T.Helper()
+	return f.do(http.MethodPost, "/v1/whoami/morph/handoff", map[string]any{"body": body})
+}
+
 // ReincarnateWith drives POST /v1/agent/{target}/reincarnate with an
 // arbitrary JSON body and returns the outcome WITHOUT fatal-on-error,
 // so tests can exercise rejection paths (oversized or solo-pane-invalid

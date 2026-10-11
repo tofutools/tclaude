@@ -212,6 +212,7 @@ var auditRoutes = []auditRoute{
 	// gets an explicit row; the handler supplies only predecessor + harness as
 	// safe detail and never records the prompt or subprocess output.
 	{method: http.MethodPost, segs: []string{"whoami", "seance", "run"}, verb: "seance"},
+	{method: http.MethodPost, segs: []string{"whoami", "morph", "handoff"}, verb: "morph-handoff"},
 
 	// Per-agent lifecycle verbs. The CLI is /v1/agent/{sel}/{verb}; the
 	// dashboard is /api/agents/{conv}/{verb} (canonicalised agents→agent).

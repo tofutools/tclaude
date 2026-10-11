@@ -22,6 +22,10 @@ type AgentMorphForm struct {
 	// form launches under. It is recorded for `morph --back` across
 	// harnesses; a same-harness morph never changes sandbox fields.
 	HarnessBuiltinMode *string `json:"sandbox_mode,omitempty"`
+	// TrustDir pre-trusts the working directory in the destination harness
+	// before a cross-harness morph launches it, as spawn's trust_dir does, so
+	// the pane does not stop on that harness's folder-trust dialog.
+	TrustDir bool `json:"trust_dir,omitempty"`
 	// Model is the bare model id (Claude's [1m] suffix lives in
 	// ContextWindowSize, exactly as relaunchProfileForSpawn records it).
 	Model             *string `json:"model,omitempty"`
@@ -46,6 +50,39 @@ type AgentPendingMorph struct {
 	ConvID      string         `json:"conv_id"`
 	RequestedAt time.Time      `json:"requested_at"`
 	ExpiresAt   time.Time      `json:"expires_at"`
+	// History is the requested delivery rung of a cross-harness morph: ""
+	// (native, falling back to a context file), "context_file", or
+	// "handoff" (the agent writes a handoff for its successor first).
+	History string `json:"history,omitempty"`
+	// Handoff is the agent-written handoff a "handoff" morph waits for.
+	Handoff *AgentMorphHandoff `json:"handoff,omitempty"`
+	// HandoffRequired marks a handoff morph chosen because the history
+	// cannot be read: without a handoff there is nothing to carry, so it is
+	// dropped at expiry instead of falling back to the context-file rung.
+	HandoffRequired bool `json:"handoff_required,omitempty"`
+}
+
+// AgentMorphHandoff is the handoff an agent submits for the agent that
+// continues its work after a cross-harness morph.
+type AgentMorphHandoff struct {
+	Body        string    `json:"body,omitempty"`
+	SubmittedAt time.Time `json:"submitted_at,omitempty"`
+}
+
+// ErrNoHandoffRequested is SubmitAgentMorphHandoff's refusal when the agent
+// has no pending morph waiting for a handoff.
+var ErrNoHandoffRequested = errors.New("no pending morph is waiting for a handoff from this agent")
+
+// SubmitAgentMorphHandoff records the agent's handoff on its pending morph.
+// A later submission replaces an earlier one until the morph applies.
+func SubmitAgentMorphHandoff(convID, body string) error {
+	return updateAgentRelaunchProfileForConv(convID, func(_ string, p *AgentRelaunchProfile) error {
+		if p.PendingMorph == nil || p.PendingMorph.History != "handoff" {
+			return ErrNoHandoffRequested
+		}
+		p.PendingMorph.Handoff = &AgentMorphHandoff{Body: body, SubmittedAt: time.Now().UTC()}
+		return nil
+	})
 }
 
 // morphFormOf captures the current values of the morphable fields. Nil string

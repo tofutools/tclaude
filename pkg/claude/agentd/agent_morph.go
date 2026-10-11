@@ -41,10 +41,15 @@ type morphRequest struct {
 	Tools             *string `json:"tools,omitempty"`
 	AskTimeout        *string `json:"ask_timeout,omitempty"`
 	AutoCompactWindow *string `json:"auto_compact_window,omitempty"`
-	Now               bool    `json:"now,omitempty"`
-	Back              bool    `json:"back,omitempty"`
-	Cancel            bool    `json:"cancel,omitempty"`
-	DryRun            bool    `json:"dry_run,omitempty"`
+	TrustDir          *bool   `json:"trust_dir,omitempty"`
+	// History picks the delivery rung of a cross-harness morph: "" or
+	// "auto" (native, else a context file, else a handoff), "context_file",
+	// or "handoff" (the agent writes a handoff for its successor first).
+	History string `json:"history,omitempty"`
+	Now     bool   `json:"now,omitempty"`
+	Back    bool   `json:"back,omitempty"`
+	Cancel  bool   `json:"cancel,omitempty"`
+	DryRun  bool   `json:"dry_run,omitempty"`
 }
 
 var morphRefusedFields = map[string]string{
@@ -87,6 +92,14 @@ func decodeMorphRequest(w http.ResponseWriter, r *http.Request) (morphRequest, b
 	}
 	req.Profile = strings.TrimSpace(req.Profile)
 	req.Harness = strings.TrimSpace(req.Harness)
+	switch req.History = strings.ReplaceAll(strings.TrimSpace(req.History), "-", "_"); req.History {
+	case "", "auto":
+		req.History = ""
+	case "context_file", "handoff":
+	default:
+		writeError(w, http.StatusBadRequest, "invalid_arg", "history must be auto, context_file or handoff")
+		return req, false
+	}
 	modes := 0
 	for _, on := range []bool{req.Back, req.Cancel, req.hasForm()} {
 		if on {
@@ -116,7 +129,7 @@ func readLimitedBody(r *http.Request) ([]byte, error) {
 
 func (q morphRequest) hasFieldOverrides() bool {
 	return q.Model != nil || q.Effort != nil || q.Approval != nil ||
-		q.Tools != nil || q.AskTimeout != nil || q.AutoCompactWindow != nil
+		q.Tools != nil || q.AskTimeout != nil || q.AutoCompactWindow != nil || q.TrustDir != nil
 }
 
 func (q morphRequest) hasForm() bool {
@@ -558,6 +571,29 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 			}
 		}
 	}
+	if !cross && req.History != "" {
+		writeError(w, http.StatusBadRequest, "invalid_form",
+			"history: only a cross-harness morph translates the history")
+		return
+	}
+	if !cross && req.TrustDir != nil {
+		writeError(w, http.StatusBadRequest, "invalid_form",
+			"trust_dir: only a cross-harness morph launches a harness in a directory it may not trust yet")
+		return
+	}
+	if cross {
+		trust := req.TrustDir
+		if trust == nil && prof != nil && !req.Back {
+			trust = prof.TrustDir
+		}
+		target.TrustDir = false
+		if trust != nil {
+			if target.TrustDir, err = harness.ResolveTrustDir(dst, *trust); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_form", "trust_dir: "+err.Error())
+				return
+			}
+		}
+	}
 
 	var cm *crossMorph
 	if cross {
@@ -596,12 +632,36 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 		}
 	}
 
+	history, handoffRequired := req.History, false
 	if cm != nil {
+		live := pickAliveSession(targetConv) != nil
 		report, err := cm.preview(targetConv)
 		if err != nil {
-			writeError(w, http.StatusConflict, "history_unreadable",
-				"the agent's "+h.Name+" history cannot be translated: "+err.Error())
+			// An unreadable history leaves only the handoff rung, which
+			// needs the agent to take one more turn.
+			if history == "context_file" || !live {
+				msg := "the agent's " + h.Name + " history cannot be translated (" + err.Error() + ")"
+				if !live {
+					msg += ", and it is offline, so it cannot write a handoff either"
+				}
+				writeError(w, http.StatusConflict, "history_unreadable", msg)
+				return
+			}
+			history, handoffRequired = "handoff", true
+			report = &transcript.LossReport{Source: h.Name, Target: dst.Name}
+			report.Add(transcript.LossHistoryUndecodable, 1, "")
+		}
+		if history == "handoff" && !live {
+			writeError(w, http.StatusConflict, "agent_offline", "an offline agent cannot write a handoff")
 			return
+		}
+		if history == "handoff" && req.Now {
+			writeError(w, http.StatusBadRequest, "invalid_arg",
+				"a handoff morph cannot use now: the agent has to take a turn to write the handoff")
+			return
+		}
+		if history != "" {
+			report.Fallback = history
 		}
 		resp.History = report
 	}
@@ -617,7 +677,8 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 		actorLabel = auditConvLabel(caller)
 	}
 	pending := db.AgentPendingMorph{
-		Target: target, Back: req.Back, ActorConv: caller, Actor: actorLabel, ConvID: targetConv,
+		Target: target, Back: req.Back, ActorConv: caller, Actor: actorLabel, ConvID: targetConv, History: history,
+		HandoffRequired: handoffRequired,
 	}
 	out := morphOrDefer(agentID, targetConv, pending, req.Now, self)
 	if out.status != http.StatusOK {
@@ -667,11 +728,21 @@ func morphOrDefer(agentID, convID string, pending db.AgentPendingMorph, now, sel
 		return morphOutcome{status: http.StatusConflict, code: "stale_generation", detail: err.Error()}
 	}
 	live := pickAliveSession(convID)
-	if live != nil && (self || (!now && agentRestartIdleFailure(live, time.Now()) != "")) {
+	handoff := pending.History == "handoff"
+	if handoff && live == nil {
+		return morphOutcome{status: http.StatusConflict, code: "agent_offline", detail: "an offline agent cannot write a handoff"}
+	}
+	if live != nil && (self || handoff || (!now && agentRestartIdleFailure(live, time.Now()) != "")) {
 		pending.RequestedAt = time.Now().UTC()
 		pending.ExpiresAt = pending.RequestedAt.Add(morphPendingTTL)
 		if err := db.SetAgentPendingMorphForConv(convID, &pending); err != nil {
 			return morphOutcome{status: http.StatusInternalServerError, code: "io", detail: err.Error()}
+		}
+		if handoff {
+			requestMorphHandoff(convID, pending)
+			return morphOutcome{result: "pending", status: http.StatusOK,
+				detail: "waiting for the agent's handoff; the morph applies once it has submitted one and is idle " +
+					"(by " + pending.ExpiresAt.Format(time.RFC3339) + " it proceeds without one)"}
 		}
 		return morphOutcome{result: "pending", status: http.StatusOK,
 			detail: "the agent is busy; the morph applies when it is next fully idle (expires " +
@@ -842,6 +913,7 @@ func applyPendingMorph(row db.AgentWithPendingMorph) {
 	if err != nil || current == nil || !current.RequestedAt.Equal(pending.RequestedAt) {
 		return // cancelled or replaced meanwhile
 	}
+	pending = *current // carries a handoff submitted since the sweep listed it
 	drop := func(reason string) {
 		_ = db.SetAgentPendingMorphForConv(row.CurrentConvID, nil)
 		auditMorphSystem(row.AgentID, row.CurrentConvID, "dropped pending morph: "+reason, http.StatusConflict)
@@ -850,13 +922,37 @@ func applyPendingMorph(row db.AgentWithPendingMorph) {
 		drop("the agent's conversation generation changed")
 		return
 	}
-	if time.Now().After(pending.ExpiresAt) {
-		drop("it expired before the agent went idle")
-		return
-	}
+	expired := time.Now().After(pending.ExpiresAt)
 	live := pickAliveSession(convID)
-	if live != nil && agentRestartIdleFailure(live, time.Now()) != "" {
-		return
+	if pending.History == "handoff" {
+		// A handoff morph waits for the handoff, then for the agent to go
+		// idle. At expiry it proceeds regardless: without a handoff it
+		// falls back to the context-file rung, and a stuck agent is stopped.
+		submitted := pending.Handoff != nil && strings.TrimSpace(pending.Handoff.Body) != ""
+		if !expired && (!submitted || (live != nil && agentRestartIdleFailure(live, time.Now()) != "")) {
+			return
+		}
+		if !submitted && pending.HandoffRequired {
+			// The history cannot be read, so without a handoff there is
+			// nothing to carry: drop it rather than stop the agent for a
+			// morph that cannot succeed.
+			_ = db.SetAgentPendingMorphForConv(convID, nil)
+			detail := "no handoff arrived before it expired, and the agent's history cannot be translated, so there was nothing to carry; the agent was left as it is"
+			auditMorphSystem(row.AgentID, convID, "dropped pending morph: "+detail, http.StatusConflict)
+			reportPendingMorphFailure(row.AgentID, convID, pending, detail)
+			return
+		}
+		if !submitted {
+			pending.History = "context_file"
+		}
+	} else {
+		if expired {
+			drop("it expired before the agent went idle")
+			return
+		}
+		if live != nil && agentRestartIdleFailure(live, time.Now()) != "" {
+			return
+		}
 	}
 	out := applyMorphUnderLaunchLock(row.AgentID, convID, pending, live)
 	result, status, detail := out.result, out.status, out.detail

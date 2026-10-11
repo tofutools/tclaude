@@ -33,6 +33,7 @@ const (
 	LossTruncatedBudget    LossKind = "truncated_for_budget"
 	LossUnknownRecord      LossKind = "unknown_records"
 	LossNotCarried         LossKind = "not_carried"
+	LossHistoryUndecodable LossKind = "history_undecodable"
 )
 
 var lossSeverity = map[LossKind]Severity{
@@ -50,6 +51,7 @@ var lossSeverity = map[LossKind]Severity{
 	LossTruncatedBudget:    SeverityWarn,
 	LossUnknownRecord:      SeverityWarn,
 	LossNotCarried:         SeverityInfo,
+	LossHistoryUndecodable: SeverityWarn,
 }
 
 var lossText = map[LossKind]string{
@@ -67,6 +69,7 @@ var lossText = map[LossKind]string{
 	LossTruncatedBudget:    "oldest entries omitted to fit the target context budget",
 	LossUnknownRecord:      "unrecognised native records skipped",
 	LossNotCarried:         "metadata not carried",
+	LossHistoryUndecodable: "the conversation history could not be read; only the agent's handoff is carried",
 }
 
 // Loss is one aggregated loss line.

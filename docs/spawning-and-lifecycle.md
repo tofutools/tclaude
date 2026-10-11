@@ -332,8 +332,27 @@ of that harness (see
 the agent is rebound to it as its next generation, and the new harness resumes
 it. The agent keeps its id, inbox, groups and permissions, and its note
 summarizes what the history kept and lost. `--dry-run` shows that report before
-anything changes. If the translated history cannot be installed natively, the
-new conversation instead points the agent at the history saved as files.
+anything changes.
+
+`--history` picks how the conversation is carried:
+
+- `auto` (the default) installs the translated history natively. If that
+  fails, the new conversation points the agent at the history saved as files.
+- `context-file` always uses the files.
+- `handoff` first asks the agent, through its inbox, to write a handoff for its
+  successor and submit it with `tclaude agent morph-handoff -f <file>`. The morph
+  applies once the handoff is in and the agent is idle. The translated
+  transcript is still kept beside the handoff. If no handoff arrives within 30
+  minutes, the morph goes ahead with the files instead, stopping the agent if it
+  is stuck.
+
+A history tclaude cannot read leaves the handoff as the only option, so a live
+agent is asked for one automatically. An offline agent with an unreadable
+history cannot be moved.
+
+`--trust-dir`, or `trust_dir` on the destination spawn profile, seeds the new harness's folder-trust
+record for the working directory, so the relaunched pane does not stop on that
+harness's trust dialog.
 
 Launch posture does not map across harnesses, so the new form is explicit: the
 approval posture must come from the profile or `--ask-for-approval`, model and
