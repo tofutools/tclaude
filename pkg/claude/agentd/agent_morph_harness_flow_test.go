@@ -37,6 +37,13 @@ type crossMorphResp struct {
 		Sandbox  string `json:"sandbox"`
 	} `json:"after"`
 	History *transcript.LossReport `json:"history"`
+	Sandbox *struct {
+		Implementation string `json:"implementation"`
+		Tclaude        string `json:"tclaude"`
+		Harness        string `json:"harness"`
+		Unsandboxed    bool   `json:"unsandboxed"`
+		Warning        string `json:"warning"`
+	} `json:"sandbox"`
 }
 
 func decodeCrossMorph(t *testing.T, code int, raw []byte) crossMorphResp {
@@ -287,6 +294,13 @@ func TestMorphCrossHarnessAgentCarriesTclaudeLayer(t *testing.T) {
 	layerMode, err := harness.TclaudeLayerHarnessBuiltinMode(codex)
 	require.NoError(t, err)
 	assert.Equal(t, layerMode, resp.After.Sandbox, "Codex launches under tclaude's wall with its inner sandbox stood down")
+	require.NotNil(t, resp.Sandbox, "the response names both sandbox layers")
+	assert.Equal(t, "tclaude-layer", resp.Sandbox.Implementation)
+	assert.True(t, strings.HasPrefix(resp.Sandbox.Tclaude, "on"), "tclaude's own sandbox still wraps it: %q", resp.Sandbox.Tclaude)
+	assert.Contains(t, resp.Sandbox.Tclaude, "unchanged")
+	assert.Equal(t, "codex "+layerMode+", stood down inside the tclaude sandbox", resp.Sandbox.Harness)
+	assert.False(t, resp.Sandbox.Unsandboxed, "an agent inside tclaude's sandbox is not reported unsandboxed")
+	assert.Empty(t, resp.Sandbox.Warning)
 	impl, _ := f.World.SpawnSandboxImplementation(resp.ConvID)
 	assert.Equal(t, "tclaude-layer", impl, "tclaude's sandbox layer carries over")
 	model, _ := f.World.SpawnModel(resp.ConvID)
@@ -568,4 +582,30 @@ func TestMorphCrossHarnessTrustDirNeedsOwnershipForAgents(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "trust_dir_restricted")
 	rec = f.AsHuman().Morph(worker.AgentID, map[string]any{"profile": "codex-trusting", "dry_run": true})
 	assert.Equal(t, http.StatusOK, rec.Code, "the operator may; body=%s", rec.Body.String())
+}
+
+// Truncation statistics cannot reconstruct which Copilot context survived.
+// Exercise the production preview and dispatch so the source stays running
+// until it supplies a handoff, rather than resurrecting discarded turns.
+func TestMorphCopilotTruncatedHistoryRequiresHandoff(t *testing.T) {
+	t.Setenv(session.ResourceDelegationDirEnv, "")
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	spawn := spawnMorphSource(t, f, harness.CopilotName, "truncated")
+	c := f.World.Copilots.GetByConvID(spawn.ConvID)
+	require.NotNil(t, c)
+	require.NoError(t, c.AppendEvent(map[string]any{"type": "user.message", "data": map[string]any{"content": "discarded-private-context"}}))
+	require.NoError(t, c.AppendEvent(map[string]any{"type": "session.truncation", "data": map[string]any{"messagesRemovedDuringTruncation": 1, "preTruncationMessagesLength": 3, "postTruncationMessagesLength": 2}}))
+	f.SetSessionStatus(spawn.ConvID, session.StatusIdle)
+	rec := f.AsHuman().Morph(spawn.AgentID, map[string]any{"harness": "claude", "approval": "default", "dry_run": true})
+	dry := decodeCrossMorph(t, rec.Code, rec.Body.Bytes())
+	require.NotNil(t, dry.History)
+	assert.Equal(t, "handoff", dry.History.Fallback)
+	assert.Equal(t, 1, dry.History.Count(transcript.LossHistoryUndecodable))
+	rec = f.AsHuman().Morph(spawn.AgentID, map[string]any{"harness": "claude", "approval": "default"})
+	assert.Equal(t, "pending", decodeCrossMorph(t, rec.Code, rec.Body.Bytes()).Result)
+	a, err := db.GetAgent(spawn.AgentID)
+	require.NoError(t, err)
+	assert.Equal(t, spawn.ConvID, a.CurrentConvID)
 }

@@ -94,7 +94,7 @@ func (v morphFormView) String() string {
 	for _, kv := range [][2]string{
 		{"effort", v.Effort}, {"approval", v.Approval}, {"tools", v.Tools},
 		{"ask timeout", v.AskTimeout}, {"auto-compact", v.AutoCompactWindow}, {"profile", v.Profile},
-		{"sandbox", v.Sandbox},
+		{"harness sandbox", v.Sandbox},
 	} {
 		if kv[1] != "" {
 			parts = append(parts, kv[0]+" "+kv[1])
@@ -115,6 +115,17 @@ type morphResult struct {
 	Authority    string                 `json:"authority,omitempty"`
 	PendingMorph *db.AgentPendingMorph  `json:"pending_morph,omitempty"`
 	History      *transcript.LossReport `json:"history,omitempty"`
+	Sandbox      *morphSandbox          `json:"sandbox,omitempty"`
+}
+
+// morphSandbox is how the agent is confined after a cross-harness morph:
+// tclaude's own sandbox and the harness's, named separately.
+type morphSandbox struct {
+	Implementation string `json:"implementation"`
+	Tclaude        string `json:"tclaude"`
+	Harness        string `json:"harness"`
+	Unsandboxed    bool   `json:"unsandboxed,omitempty"`
+	Warning        string `json:"warning,omitempty"`
 }
 
 func (p *morphParams) body() map[string]any {
@@ -220,6 +231,13 @@ func runMorph(p *morphParams, stdout, stderr io.Writer) int {
 		}
 		if res.History != nil {
 			printMorphHistory(stdout, res.History)
+		}
+		if sb := res.Sandbox; sb != nil && res.Result != "cancelled" {
+			fmt.Fprintf(stdout, "  tclaude sandbox: %s\n", sb.Tclaude)
+			fmt.Fprintf(stdout, "  harness sandbox: %s\n", sb.Harness)
+			if sb.Warning != "" {
+				fmt.Fprintf(stdout, "  warning: %s\n", sb.Warning)
+			}
 		}
 		if res.Result == "dry_run" && res.Authority != "" {
 			fmt.Fprintf(stdout, "  allowed by: %s\n", res.Authority)

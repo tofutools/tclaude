@@ -170,9 +170,11 @@ func TestMorphResumeRealCLI(t *testing.T) {
 				policy.ContextWindowTokens = 32_000
 				cc := f.World.CCs.GetByConvID(spawn.ConvID)
 				require.NotNil(t, cc)
+				parent := "a2"
 				for i := range 5 {
-					require.NoError(t, cc.AppendTurn(map[string]any{"type": "user", "uuid": fmt.Sprintf("budget-u%d", i), "message": map[string]any{"role": "user", "content": strings.Repeat("Recorded project observation: the directory contains ordinary source files. ", 58)}}))
-					require.NoError(t, cc.AppendTurn(map[string]any{"type": "assistant", "uuid": fmt.Sprintf("budget-a%d", i), "message": map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "text", "text": "Noted."}}}}))
+					require.NoError(t, cc.AppendTurn(map[string]any{"type": "user", "uuid": fmt.Sprintf("budget-u%d", i), "parentUuid": parent, "message": map[string]any{"role": "user", "content": strings.Repeat("Recorded project observation: the directory contains ordinary source files. ", 58)}}))
+					require.NoError(t, cc.AppendTurn(map[string]any{"type": "assistant", "uuid": fmt.Sprintf("budget-a%d", i), "parentUuid": fmt.Sprintf("budget-u%d", i), "message": map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "text", "text": "Noted."}}}}))
+					parent = fmt.Sprintf("budget-a%d", i)
 				}
 			}
 
@@ -188,8 +190,8 @@ func TestMorphResumeRealCLI(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(res.Cleanup)
 			if os.Getenv("TCLAUDE_MORPH_NEAR_BUDGET") == "1" {
-				assert.Greater(t, res.Report.CarriedEstimatedTokens, res.Report.BudgetTokens*4/5)
-				assert.LessOrEqual(t, res.Report.CarriedEstimatedTokens, res.Report.BudgetTokens)
+				require.Greater(t, res.Report.CarriedEstimatedTokens, res.Report.BudgetTokens*4/5)
+				require.LessOrEqual(t, res.Report.CarriedEstimatedTokens, res.Report.BudgetTokens)
 				t.Logf("history safety estimate %d / budget %d", res.Report.CarriedEstimatedTokens, res.Report.BudgetTokens)
 			}
 

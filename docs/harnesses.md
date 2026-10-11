@@ -164,6 +164,12 @@ is explicit about what does not map 1:1:
   spends one cheap Codex model call:
   `TCLAUDE_MORPH_RESUME_SMOKE=1 TCLAUDE_MORPH_NEAR_BUDGET=1 scripts/test.sh ./pkg/claude/agentd/ -run TestMorphResumeRealCLI -v -count=1`.
   Do not enable it in CI or copy provider credentials to CI.
+- **Resets and rewinds** carry only the active native history. Gemini compression
+  snapshots are labelled as summaries; clear/checkpoint, OpenCode revert and
+  Codex/Copilot rewind boundaries are applied before carrying turns. Removed
+  history is counted in the loss report. A Copilot truncation event has only
+  counts, not the identities of retained messages, so it requires the existing
+  agent-written handoff path instead of guessing which history survived.
 - **Codex compaction summaries** are encrypted in current Codex releases. A
   Codex conversation that has compacted therefore carries only the retained
   user messages from before the compaction.

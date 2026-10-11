@@ -95,3 +95,13 @@ test('the launch dialog styles its fields with the dashboard controls, in both t
   assert.match(css, /body\.wizard :is\(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target\) :is\(\.cron-create-row, \.lt-row\) :is\(input\[type=text\], input:not\(\[type\]\), select, textarea\)/,
     'wizard mode gives its fields the Clone dialog family skin');
 });
+
+test('dot-shaped status lights are drawn centred on their box, not typed', async () => {
+  const css = await readFile(new URL('../dashboard/mux.css', import.meta.url), 'utf8');
+  // A ● glyph sits wherever the font's metrics put it, below the ⚙ and title.
+  assert.match(css, /\.mux-tab-status-unknown\) \{ position: relative; font-size: 0; \}/, 'the glyph takes no space');
+  assert.match(css, /\.mux-tab-status-unknown\)::before \{\s*content: ""; position: absolute; inset: 0; margin: auto;/, 'the shape centres on the box');
+  for (const state of ['working', 'idle', 'waking', 'offline', 'unknown']) {
+    assert.match(css, new RegExp(`\\.mux-tab-status\\.mux-tab-status-${state}::before \\{`), `${state} draws its own shape`);
+  }
+});

@@ -26,6 +26,7 @@ const (
 	LossMediaExternalized  LossKind = "media_externalized"
 	LossMediaDropped       LossKind = "media_dropped"
 	LossHarnessContext     LossKind = "harness_context_dropped"
+	LossClearedHistory     LossKind = "cleared_history"
 	LossPreCompaction      LossKind = "pre_compaction_history"
 	LossEncryptedSummary   LossKind = "encrypted_compaction_summary"
 	LossInactiveBranch     LossKind = "inactive_branch"
@@ -44,6 +45,7 @@ var lossSeverity = map[LossKind]Severity{
 	LossMediaExternalized:  SeverityWarn,
 	LossMediaDropped:       SeverityWarn,
 	LossHarnessContext:     SeverityInfo,
+	LossClearedHistory:     SeverityInfo,
 	LossPreCompaction:      SeverityInfo,
 	LossEncryptedSummary:   SeverityWarn,
 	LossInactiveBranch:     SeverityInfo,
@@ -62,6 +64,7 @@ var lossText = map[LossKind]string{
 	LossMediaExternalized:  "images/documents saved to files and referenced by path",
 	LossMediaDropped:       "images/documents dropped",
 	LossHarnessContext:     "harness-injected context/system entries not carried",
+	LossClearedHistory:     "entries removed by a conversation clear",
 	LossPreCompaction:      "entries before the last compaction (summary carried instead)",
 	LossEncryptedSummary:   "compaction summaries were encrypted and could not be carried",
 	LossInactiveBranch:     "entries on abandoned branches (rewinds/edits)",

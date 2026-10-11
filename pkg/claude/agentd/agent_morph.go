@@ -257,7 +257,8 @@ type morphFormView struct {
 	AutoCompactWindow string `json:"auto_compact_window,omitempty"`
 	Profile           string `json:"profile,omitempty"`
 	// Sandbox is the harness-native sandbox mode, shown only for a
-	// cross-harness morph, where it changes with the harness.
+	// cross-harness morph, where it changes with the harness. It is one
+	// layer: morphResponse.Sandbox says how the agent is confined.
 	Sandbox string `json:"sandbox,omitempty"`
 }
 
@@ -333,7 +334,7 @@ func (v morphFormView) String() string {
 		parts = append(parts, "profile "+v.Profile)
 	}
 	if v.Sandbox != "" {
-		parts = append(parts, "sandbox "+v.Sandbox)
+		parts = append(parts, "harness sandbox "+v.Sandbox)
 	}
 	return strings.Join(parts, " · ")
 }
@@ -352,6 +353,8 @@ type morphResponse struct {
 	// History is the cross-harness history report: the preview for a dry
 	// run or a pending morph, the applied translation for a morph.
 	History *transcript.LossReport `json:"history,omitempty"`
+	// Sandbox is the cross-harness posture after the morph, both layers.
+	Sandbox *morphSandboxView `json:"sandbox,omitempty"`
 }
 
 // morphOutcome is the result of applying one morph.
@@ -620,6 +623,7 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 		resp.Before.Sandbox = cm.sandboxBefore
 		resp.After = viewMorphForm(dst.Name, target)
 		resp.After.Sandbox = cm.sandboxAfter
+		resp.Sandbox = &cm.sandbox
 	} else {
 		resp.After = viewMorphForm(h.Name, overlayMorphForm(before, target))
 	}
