@@ -546,8 +546,15 @@ dot for its presence; past four they fold into one dropdown that names the node
 on screen, filters as you type and keeps this node first. Click a node to open
 its own dashboard; ⌂ returns to this node. Alt+1 is this node and Alt+2…9 the
 peers in order; the shortcut never fires while you type in a field or a web
-terminal has focus. The row appears only when a peer is trusted and adds no
-height to the page.
+terminal has focus. The row is always there and adds no height to the page, but
+it is greyed out (its tooltip says why: federation is off, or the hub is
+unreachable, still connecting or refused the connection) until this node is
+connected to its federation hub, and greys out again if that connection drops;
+it follows the connection within about ten seconds, without a reload. Once
+connected, ⌂ works with no peers at all; each trusted peer adds a button.
+**nodes ▾** and the map icon stay greyed out until there is a linked node to
+show. ⌂ always works where it leads somewhere: home from a peer's view, and
+back from the map or ⚙ Fleet.
 
 ### Fused nodes
 
