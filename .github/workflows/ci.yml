@@ -64,7 +64,10 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/smoke-archive-cache
-          key: smoke-passt-source-${{ runner.os }}-${{ hashFiles('scripts/lib/smoke/packet-floor.sh') }}
+          # This job pins the archive inline below, so the key also follows
+          # this workflow file; otherwise a bumped inline pin would keep hitting
+          # a cache without its archive and download on every run.
+          key: smoke-passt-source-sandbox-${{ runner.os }}-${{ hashFiles('scripts/lib/smoke/packet-floor.sh', '.github/workflows/ci.yml') }}
 
       - name: Install Linux sandbox prerequisites
         shell: bash
