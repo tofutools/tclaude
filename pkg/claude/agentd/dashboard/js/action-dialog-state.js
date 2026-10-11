@@ -86,6 +86,11 @@ export function createActionDialogState() {
     openSandboxImpl({ conv, label = '', harness = '' }) {
       return !!open({ kind: 'sandbox-impl', conv, label, harness });
     },
+    // launch-target carries the agent and the mode the ⚙ menu picked
+    // (launch-target-dialog.js); the dialog loads targets itself.
+    openLaunchTarget({ mode = 'move', agent }) {
+      return !!open({ kind: 'launch-target', mode, agent });
+    },
     openTerminalDirectory({ label = '' }) {
       return openChoice({ kind: 'terminal-directory', label });
     },

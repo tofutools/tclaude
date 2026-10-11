@@ -57,13 +57,26 @@ function errText(e) { return e?.message || String(e); }
 
 // MoveDropDialog confirms a dropped move and follows it until it lands, waits
 // for acceptance, or fails. Closing it never stops the move.
-export function MoveDropDialog({ drop, plan, actions, peerActions, timers = globalThis, now = () => Date.now(), onClose, openPage = openFleetPage }) {
+export function MoveDropDialog(props) {
+  const okRef = useRef(null);
+  const { drop: { agent, target }, onClose } = props;
+  return html`<${Overlay} id="skynet-move-drop" labelledby="skynet-move-drop-title" onClose=${onClose} initialFocusRef=${okRef}>
+    <h3 id="skynet-move-drop-title">Move ${agent.name} to ${target.group} on ${target.name}?</h3>
+    <${MovePanel} ...${props} okRef=${okRef} />
+  </${Overlay}>`;
+}
+
+// MovePanel is the body of a move: the confirm, the flagged-history choice,
+// and the progress that follows. The launch-target dialog
+// (launch-target-dialog.js) embeds it for its Move mode.
+export function MovePanel({ drop, plan, actions, peerActions, timers = globalThis, now = () => Date.now(), onClose, openPage = openFleetPage, okRef: outerOk }) {
   const [phase, setPhase] = useState('confirm');
   const [findings, setFindings] = useState(null);
   const [allow, setAllow] = useState(false);
   const [error, setError] = useState('');
   const [progress, setProgress] = useState(null);
-  const okRef = useRef(null);
+  const ownOk = useRef(null);
+  const okRef = outerOk || ownOk;
   const timer = useRef(null);
   const push = plan.kind === 'push';
   const { agent, source, target } = drop;
@@ -138,8 +151,7 @@ export function MoveDropDialog({ drop, plan, actions, peerActions, timers = glob
     : progress.phase === 'slow' ? html`<div class="muted" role="status">Still in progress; follow it in ${moves}.</div>`
     : html`<div class="fa-danger" role="alert">Could not follow the move (${progress.error}). Check ${moves}.</div>`;
 
-  return html`<${Overlay} id="skynet-move-drop" labelledby="skynet-move-drop-title" onClose=${onClose} initialFocusRef=${okRef}>
-    <h3 id="skynet-move-drop-title">Move ${agent.name} to ${target.group} on ${target.name}?</h3>
+  return html`
     ${phase !== 'progress' ? html`<p>${push
       ? `Sends ${agent.name} (${agent.id})'s config and full conversation history (it may hold code or pasted secrets) to group ${target.group} on ${target.name}.`
       : `${agent.name} (${agent.id}) leaves ${source.name} with its config and full conversation history, to land in group ${target.group} on this node.`}
@@ -157,6 +169,5 @@ export function MoveDropDialog({ drop, plan, actions, peerActions, timers = glob
         ? html`<button type="button" ref=${okRef} id="skynet-move-drop-close" onClick=${onClose}>${progress?.phase === 'checking' ? 'Close (the move continues)' : 'Close'}</button>`
         : html`<button type="button" id="skynet-move-drop-cancel" onClick=${onClose}>Cancel</button>
           <button type="button" ref=${okRef} class="confirm-danger" id="skynet-move-drop-ok" disabled=${phase === 'sending' || (!!findings && !allow)} onClick=${send}>${phase === 'sending' ? 'Sending…' : 'Move agent'}</button>`}
-    </div>
-  </${Overlay}>`;
+    </div>`;
 }

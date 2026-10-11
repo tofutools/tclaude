@@ -78,8 +78,10 @@ test('a group keeps an away placeholder row but counts it apart from members', a
   assert.equal(placeholder.querySelector('[data-presence="away"]').textContent, 'away → on forge · hop 2');
   assert.equal(placeholder.querySelector('.away-goto').textContent, 'open on forge ↗', 'one node\'s view links to where it runs');
   assert.equal(placeholder.querySelector('.row-actions'), null, 'no menu or terminal on a placeholder');
-  assert.equal(host.querySelector('[data-presence="back"]').textContent, '⌂ back home · from forge · 1 hop');
+  assert.equal(host.querySelector('.presence-badge[data-presence="back"]').textContent, '⌂ back home · from forge · 1 hop');
   assert.ok(host.querySelector('tr.presence-row-back'));
+  const modes = [...host.querySelectorAll('[data-act="send-elsewhere"][data-conv="c1"]')].map((b) => b.dataset.mode);
+  assert.deepEqual(modes, ['move', 'clone', 'morph'], 'the ⚙ menu offers the modes whose routes exist; teleport and recall wait for theirs');
 
   const fused = { ...group, name: 'builders@node-a', fleet_node: { id: 'inst_a', name: 'node-a', color: '#58a6ff', local: true } };
   dashPrefs.setItem('tclaude.dash.group.builders@node-a', '1');

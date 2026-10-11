@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -341,4 +342,37 @@ func TestMorphOtherHarnessesResumeWithNewForm(t *testing.T) {
 	rec := f.AsHuman().Morph(gemini.AgentID, map[string]any{"effort": "high"})
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "Gemini has no effort; body=%s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "invalid_form")
+}
+
+// Scenario: the dashboard's launch-target dialog previews and applies a morph
+// through POST /api/agents/{id}/morph, the same handler as the CLI's route,
+// with the dashboard operator as the actor.
+func TestMorphFromTheDashboard(t *testing.T) {
+	t.Setenv(session.ResourceDelegationDirEnv, "")
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	spawn := spawnMorphWorker(t, f, "crew", "worker", nil)
+	f.SetSessionStatus(spawn.ConvID, session.StatusIdle)
+	mux := agentd.BuildDashboardHandlerForTest()
+	post := func(body map[string]any) *httptest.ResponseRecorder {
+		return testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+spawn.AgentID+"/morph", body))
+	}
+
+	rec := post(map[string]any{"model": "opus", "dry_run": true})
+	dry := decodeMorph(t, rec.Code, rec.Body.Bytes())
+	assert.Equal(t, "dry_run", dry.Result)
+	assert.Equal(t, "sonnet", dry.Before.Model)
+	assert.Equal(t, "opus", dry.After.Model)
+	model, _ := f.World.SpawnModel(spawn.ConvID)
+	assert.Equal(t, "sonnet", model, "a dry run changes nothing")
+
+	rec = post(map[string]any{"model": "opus"})
+	resp := decodeMorph(t, rec.Code, rec.Body.Bytes())
+	assert.Equal(t, "morphed", resp.Result)
+	model, _ = f.World.SpawnModel(spawn.ConvID)
+	assert.Equal(t, "opus", model)
+
+	rec = testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost, "/api/agents/no-such-agent/morph", map[string]any{"model": "opus"}))
+	assert.Equal(t, http.StatusNotFound, rec.Code)
 }

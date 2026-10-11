@@ -384,6 +384,16 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			dashboardCloneAgent(w, r, convSelector)
 			return
+		case "morph":
+			// The operator's morph: the same handler and body as
+			// POST /v1/agent/{sel}/morph, with the dashboard human as actor.
+			res, _, err := agent.ResolveSelector(convSelector)
+			if err != nil {
+				writeError(w, http.StatusNotFound, "not_found", "resolve agent: "+err.Error())
+				return
+			}
+			handleAgentMorph(w, asDashboardHumanPeer(r), res.ConvID)
+			return
 		case "reincarnate":
 			if r.Method != http.MethodPost {
 				http.Error(w, "POST only", http.StatusMethodNotAllowed)

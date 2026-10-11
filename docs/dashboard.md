@@ -646,6 +646,17 @@ and fused views alike:
 The markers come from the agent's federation presence (`tclaude agent whoami`
 shows the same).
 
+To send an agent elsewhere without dragging, use the **send elsewhere** section of
+its row's ⚙ menu (single-node and fused views). Each item opens one dialog with
+a mode bar: **Move** to a group on another node, **Clone** (here, continuing in
+the clone dialog), **Morph** into another spawn profile (a dry run previews the
+change and what happens to the history), and, once this dashboard has the
+operator teleport routes, **Teleport** and **Recall home**. Dropping an agent
+onto another node's group opens the same dialog on Move, pre-filled. Nodes a
+mode cannot use stay listed with the reason; the right-hand panel says what
+carries over. CLI: `tclaude federation move-agent`, `tclaude agent clone`,
+`tclaude agent morph`, `tclaude agent teleport`.
+
 ### Messages on several nodes
 
 In a fused view, Messages shows the ticked nodes' mail in the usual layout.
