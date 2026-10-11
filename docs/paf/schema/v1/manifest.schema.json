@@ -89,7 +89,14 @@
         }
       }
     },
-    "extensions": {
+    "extensions_required": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.schema.json#/$defs/extensionId"
+      }
+    },
+    "extensions_used": {
       "type": "object",
       "propertyNames": {
         "$ref": "common.schema.json#/$defs/extensionId"
@@ -122,17 +129,13 @@
           },
           "copy": {
             "type": "string",
-            "description": "Open set. Known: safe, unsafe (default)."
+            "description": "Open set; unknown values mean unsafe. Known: safe, unsafe (default)."
           }
         }
       }
     },
-    "extensions_required": {
-      "type": "array",
-      "uniqueItems": true,
-      "items": {
-        "$ref": "common.schema.json#/$defs/extensionId"
-      }
+    "extensions": {
+      "$ref": "common.schema.json#/$defs/extensions"
     }
   },
   "if": {

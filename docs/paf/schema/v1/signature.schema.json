@@ -43,9 +43,6 @@
     "signature": {
       "type": "string",
       "contentEncoding": "base64"
-    },
-    "extensions": {
-      "$ref": "common.schema.json#/$defs/extensions"
     }
   }
 }

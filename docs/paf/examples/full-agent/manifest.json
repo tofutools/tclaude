@@ -47,7 +47,8 @@
       "media_type": "application/json"
     }
   ],
-  "extensions": {
+  "extensions_required": [],
+  "extensions_used": {
     "tclaude": {
       "copy": "unsafe",
       "schema": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/ext/tclaude.schema.json",
@@ -57,7 +58,6 @@
       "version": "1.0"
     }
   },
-  "extensions_required": [],
   "format": "paf",
   "kind": "agent",
   "paf_version": "1.0",

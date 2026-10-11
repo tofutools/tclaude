@@ -229,9 +229,11 @@ defaults, a published PAF:
   `native.source_conv_id`, `lineage[].from`), consent `by` names and media
   `path` hints, and signs with a pseudonymous publisher key;
 - replaces absolute paths with placeholders without their original values;
-- carries no native blob, group memberships or mail state, and no extension
-  data unless its extension is declared `copy: safe` and the publisher keeps
-  it explicitly;
+- carries no native blob, group memberships or mail state;
+- carries extension data only for extensions the publishing tool understands
+  and has applied every redaction above to, including identity, paths and
+  stubbed content. All other extension data is dropped, whatever its `copy`
+  flag;
 - is signed, so readers can tell whether two published PAFs come from the same
   publisher.
 
@@ -343,7 +345,7 @@ Schema: [`manifest.schema.json`](paf/schema/v1/manifest.schema.json).
   "created_at": "2026-10-11T19:40:00Z",
   "producer": {"name": "tclaude", "version": "v0.0.2212"},
   "requires": [],
-  "extensions": {
+  "extensions_used": {
     "tclaude": {"version": "1.0", "system": "tclaude", "system_version": "v0.0.2212", "spec": "https://github.com/tofutools/tclaude/blob/main/docs/paf.md#the-tclaude-extension"}
   },
   "extensions_required": [],
@@ -358,7 +360,7 @@ Schema: [`manifest.schema.json`](paf/schema/v1/manifest.schema.json).
 - `agents` lists the agent keys present, in order.
 - `requires` lists [features](#versioning-and-compatibility) a reader must
   understand to resume or import faithfully.
-- `extensions` declares every [extension](#extensions) the file uses.
+- `extensions_used` declares every [extension](#extensions) the file uses.
   `extensions_required` lists the ones a reader must understand to import or
   resume faithfully.
 - `entries` lists every entry other than `manifest.json` and `signatures/*`.
@@ -411,7 +413,8 @@ receiver, never an instruction:
 - `sandbox`: `layers`, the confinement layers the agent ran under, from the
   outermost. Each has a `provider` (for example `tclaude` or the harness
   name) and the `mode` in that provider's own vocabulary. Provider-specific
-  details go in that provider's extension.
+  details go in an extension on the `environment.json` object itself, not on
+  the layer (tclaude writes `extensions.tclaude.sandbox`).
 - `workspace`: `cwd`, `repo_url`, `branch`, `commit`, `dirty`, `worktree`.
 - `placeholders`: named path placeholders the importer remaps. Fields
   elsewhere in the environment and definition may contain `${NAME}`. Each
@@ -640,11 +643,11 @@ later is a minor version change; demoting a base field is a major one.
 
 ### Declaring an extension
 
-Every extension a file uses is declared once in `manifest.extensions`,
+Every extension a file uses is declared once in `manifest.extensions_used`,
 keyed by its id:
 
 ```json
-"extensions": {
+"extensions_used": {
   "tclaude": {
     "version": "1.0",
     "system": "tclaude",
@@ -657,8 +660,9 @@ keyed by its id:
 ```
 
 - **id:** lowercase. Ids with a single label (`tclaude`) are reserved for
-  extensions documented on this page. Anyone else uses a reverse-DNS id they
-  control, such as `com.example.agentlab`.
+  extensions documented on this page, and a reader refuses any other
+  single-label id. Anyone else uses a reverse-DNS id they control, such as
+  `com.example.agentlab`.
 - **`version`:** the extension's own format version, `MAJOR.MINOR`, with the
   same rules as `paf_version`. A reader that knows the extension but not its
   major version treats it as unknown.
@@ -672,17 +676,27 @@ keyed by its id:
   (the default), the data may describe other content, and a tool that
   changes the PAF without understanding the extension must drop it. Changes
   include redacting, translating, re-signing for publishing, and merging
-  agents into a group.
+  agents into a group. An unknown `copy` value means `unsafe`. `copy`
+  governs ordinary edits only; privacy operations follow the stricter rule
+  below.
+
+Dropping an extension removes all of it: its data on every object, its
+`ext/<id>/` entries (and their manifest rows), its `extensions_used`
+declaration and its id in `extensions_required`. Re-signing is then needed,
+because the manifest changed.
 
 `manifest.extensions_required` lists ids without which the content would be
-misunderstood. It follows the same refuse-or-degrade rules as `requires`.
+misunderstood. Every id in it must also be declared in `extensions_used`. It
+follows the same refuse-or-degrade rules as `requires`.
 
 ### Using an extension
 
 - **In JSON:** any object in PAF metadata or in a transcript line may carry
   an `extensions` property: an object keyed by extension id, whose values are
   that extension's objects. The property name `extensions` is reserved for
-  this on every object.
+  this on every object, including the manifest root. Signature files are the
+  exception: they are not covered by the manifest hash, so they carry no
+  extension data.
 
   ```json
   {"name": "fixer", "definition": {}, "extensions": {"tclaude": {"spawn_profile": {"name": "worker-opus", "profile": {}}}}}
@@ -691,8 +705,11 @@ misunderstood. It follows the same refuse-or-degrade rules as `requires`.
 - **As files:** an extension's own entries live under `ext/<id>/`, are listed
   in the manifest like any entry, and are hashed and signed with the rest.
 
-Extension data is scanned for credentials like everything else, and
-`strip_identity` drops every extension that is not `copy: safe`.
+Extension data is scanned for credentials like everything else.
+Redaction, `strip_identity` and publishing keep an extension only when the
+tool understands it and applies the same redactions to its data. Otherwise
+they drop it, whatever its `copy` flag. `copy: safe` never exempts data from
+privacy rules.
 
 ### The tclaude extension
 
@@ -762,8 +779,9 @@ a reader checks them in code:
 - every agent key listed in the manifest has an `agent.json`;
 - `agent.native.path` lies under that agent's own `agents/<key>/native/`;
 - every `attachment` reference resolves to an entry;
-- every extension id used in an `extensions` object or an `ext/` entry is
-  declared in the manifest;
+- every extension id used in an `extensions` object, an `ext/` entry or
+  `extensions_required` is declared in `extensions_used`;
+- no single-label extension id appears other than those this page documents;
 - JSON metadata has no duplicate keys.
 
 ## Legacy formats
@@ -773,8 +791,7 @@ agent bundle for peers that do not advertise PAF support.
 
 | Legacy | Maps to |
 |---|---|
-| Agent bundle v1 (`tclaude-agent-bundle`, `manifest.json` + `history/transcript.jsonl`) | One agent; `agent.definition` from `manifest.agent`; the native blob from `history`; findings into `privacy.scan`; the inline profile and permissions into the
-`tclaude` extension; the mail ledger into `ext/tclaude/`. There is no neutral context, so landing in another harness decodes the native blob first. |
+| Agent bundle v1 (`tclaude-agent-bundle`, `manifest.json` + `history/transcript.jsonl`) | One agent; `agent.definition` from `manifest.agent`; the native blob from `history`; findings into `privacy.scan`; the inline profile and permissions into the `tclaude` extension; the mail ledger into `ext/tclaude/`. There is no neutral context, so landing in another harness decodes the native blob first. |
 | Group export v5 (`manifest.json` + `projects/<conv>.jsonl`) | A group; one agent per conversation with a native Claude Code blob; group settings into the `tclaude` extension. |
 | Morph artifacts (`transcript.md`, `loss-report.json`) | Readable as a context-file landing. `loss-report.json` has the fields of `losses.json`; readers treat `"items": null` as an empty list and map `fallback` to `landing_rung`. |
 
