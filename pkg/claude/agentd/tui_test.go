@@ -1857,6 +1857,9 @@ func TestTUIDashboardAddressRowsCountWrapping(t *testing.T) {
 }
 
 func TestTokenBannerInTUI(t *testing.T) {
+	old := tokenOutputInteractive
+	tokenOutputInteractive = func() bool { return true }
+	t.Cleanup(func() { tokenOutputInteractive = old })
 	t.Run("any console takes the banner, dashboard or not", func(t *testing.T) {
 		// stdout is discarded under --tui, so the console is the only place
 		// the token can be read from.
