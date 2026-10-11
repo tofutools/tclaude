@@ -19,17 +19,20 @@ type openCodeTranscript struct{}
 func (openCodeTranscript) InlineMedia() bool { return true }
 
 type openCodeMessageInfo struct {
-	ID         string `json:"id"`
-	Role       string `json:"role"`
-	ModelID    string `json:"modelID"`
-	ProviderID string `json:"providerID"`
-	Summary    bool   `json:"summary"`
+	ID         string          `json:"id"`
+	Role       string          `json:"role"`
+	ModelID    string          `json:"modelID"`
+	ProviderID string          `json:"providerID"`
+	Summary    bool            `json:"summary"`
+	Finish     string          `json:"finish"`
+	Error      json.RawMessage `json:"error"`
 	Time       struct {
 		Created int64 `json:"created"`
 	} `json:"time"`
 }
 
 type openCodePart struct {
+	ID        string `json:"id"`
 	Type      string `json:"type"`
 	Text      string `json:"text"`
 	Synthetic bool   `json:"synthetic"`
@@ -67,6 +70,10 @@ func openCodeMedia(p openCodePart) transcript.Media {
 func (openCodeTranscript) Decode(r io.Reader, sourceID string) (*transcript.Transcript, error) {
 	t := transcript.New(transcript.Source{Harness: OpenCodeName, Format: "opencode-session-jsonl", ConvID: sourceID})
 	header := false
+	var revert struct {
+		MessageID string `json:"messageID"`
+		PartID    string `json:"partID"`
+	}
 	harness := 0
 	err := scanHistoryRecords(r, func(line int, raw []byte) error {
 		var rec struct {
@@ -81,13 +88,19 @@ func (openCodeTranscript) Decode(r io.Reader, sourceID string) (*transcript.Tran
 		}
 		if rec.Info != nil {
 			var info struct {
-				ID        string `json:"id"`
-				Directory string `json:"directory"`
-				Title     string `json:"title"`
+				ID        string          `json:"id"`
+				Directory string          `json:"directory"`
+				Title     string          `json:"title"`
+				Revert    json.RawMessage `json:"revert"`
 			}
 			_ = json.Unmarshal(*rec.Info, &info)
 			if info.ID != sourceID {
 				return errors.New("OpenCode session identity mismatch")
+			}
+			if len(info.Revert) > 0 {
+				if err := json.Unmarshal(info.Revert, &revert); err != nil {
+					return fmt.Errorf("invalid OpenCode revert boundary")
+				}
 			}
 			header = true
 			t.Source.Cwd, t.Source.Title = info.Directory, info.Title
@@ -97,6 +110,21 @@ func (openCodeTranscript) Decode(r io.Reader, sourceID string) (*transcript.Tran
 			return errors.New("OpenCode history lacks session header")
 		}
 		info, parts := rec.Message.Info, rec.Message.Parts
+		if revert.MessageID != "" {
+			if info.ID > revert.MessageID || info.ID == revert.MessageID && revert.PartID == "" {
+				t.Losses.Add(transcript.LossInactiveBranch, 1, "")
+				return nil
+			}
+			if info.ID == revert.MessageID {
+				for i, p := range parts {
+					if p.ID == revert.PartID {
+						parts = parts[:i]
+						t.Losses.Add(transcript.LossInactiveBranch, 1, "reverted parts")
+						break
+					}
+				}
+			}
+		}
 		at := msTime(info.Time.Created)
 		if info.Role == "assistant" {
 			model := info.ModelID
@@ -106,7 +134,7 @@ func (openCodeTranscript) Decode(r io.Reader, sourceID string) (*transcript.Tran
 			if model != "" {
 				t.Source.Model = model
 			}
-			if info.Summary {
+			if info.Summary && info.Finish != "" && (len(info.Error) == 0 || string(info.Error) == "null") {
 				var texts []string
 				for _, p := range parts {
 					if p.Type == "text" {
@@ -116,6 +144,9 @@ func (openCodeTranscript) Decode(r io.Reader, sourceID string) (*transcript.Tran
 				t.ResetToSummary(strings.Join(texts, "\n"), at)
 				return nil
 			}
+			if info.Summary {
+				return nil
+			} // An unfinished/failed summary never replaces the active context.
 			for _, p := range parts {
 				agent := func(b transcript.Block) {
 					t.Append(transcript.Entry{Role: transcript.RoleAssistant, Origin: transcript.OriginAgent, Time: at, Model: model, Blocks: []transcript.Block{b}})

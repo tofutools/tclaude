@@ -64,7 +64,7 @@ func (codexTranscript) Decode(r io.Reader, sourceID string) (*transcript.Transcr
 	t := transcript.New(transcript.Source{Harness: CodexName, Format: "codex-rollout-jsonl", ConvID: sourceID})
 	harness := 0
 	found := false
-	err := scanHistoryRecords(r, func(line int, raw []byte) error {
+	err := scanCodexTranscriptRecords(r, t.Losses, func(line int, raw []byte) error {
 		var env codexEnvelope
 		if err := json.Unmarshal(raw, &env); err != nil {
 			return fmt.Errorf("invalid Codex rollout JSON at line %d", line)
