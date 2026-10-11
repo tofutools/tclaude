@@ -159,38 +159,49 @@ func TestFederation_GroupLinkExactAuthorityAndRevocation(t *testing.T) {
 		return l != nil && l.LocalState == "active" && l.RemoteState == "active"
 	})
 	// No message.direct grant was minted. Membership in this source is the path.
-	rec := postMessage(t, f, "link-source-00001", map[string]any{"to": "group:builders@bob", "body": "linked group hello"})
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	var sent struct {
-		EnvelopeID string `json:"envelope_id"`
-	}
-	testharness.DecodeJSON(t, rec, &sent)
-	fedEventually(t, "bound group mail", func() bool {
-		agentd.FlushFederationOutboxForTest()
-		for _, env := range p.envelopes(proto.KindGroupMail) {
-			if env.ID == sent.EnvelopeID {
-				var mail proto.GroupMailPayload
-				require.NoError(t, env.DecodePayload(&mail))
-				require.NotNil(t, mail.Link)
-				require.Equal(t, remoteID, mail.Link.GroupID)
-				return true
-			}
+	sendLinkedMail := func(body string) string {
+		rec := postMessage(t, f, "link-source-00001", map[string]any{"to": "group:builders@bob", "body": body})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var sent struct {
+			EnvelopeID string `json:"envelope_id"`
 		}
-		return false
+		testharness.DecodeJSON(t, rec, &sent)
+		fedEventually(t, "bound group mail", func() bool {
+			agentd.FlushFederationOutboxForTest()
+			for _, env := range p.envelopes(proto.KindGroupMail) {
+				if env.ID == sent.EnvelopeID {
+					var mail proto.GroupMailPayload
+					require.NoError(t, env.DecodePayload(&mail))
+					require.NotNil(t, mail.Link)
+					require.Equal(t, remoteID, mail.Link.GroupID)
+					return true
+				}
+			}
+			return false
+		})
+		return sent.EnvelopeID
+	}
+	retryID := sendLinkedMail("linked group hello")
+	deliveredID := sendLinkedMail("delivered original for reply")
+	ack := p.envelope(proto.KindAck, proto.Endpoint{}, proto.AckPayload{Status: proto.AckAccepted})
+	ack.InReplyTo = deliveredID
+	p.send(ack)
+	fedEventually(t, "delivered original settled", func() bool {
+		row, err := db.GetFederationOutbox(deliveredID)
+		return err == nil && row != nil && row.State == db.FedOutboxAccepted
 	})
-	rec = fedHuman(t, f, http.MethodDelete, "/v1/groups/"+source.Name+"/links/"+response.Edges[0].ID, nil)
+	rec := fedHuman(t, f, http.MethodDelete, "/v1/groups/"+source.Name+"/links/"+response.Edges[0].ID, nil)
 	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
-	require.NoError(t, db.UpdateFederationOutbox(sent.EnvelopeID, db.FedOutboxQueued, time.Now().Add(-time.Second), "", 0))
+	require.NoError(t, db.UpdateFederationOutbox(retryID, db.FedOutboxQueued, time.Now().Add(-time.Second), "", 0))
 	agentd.FlushFederationOutboxForTest()
-	row, err := db.GetFederationOutbox(sent.EnvelopeID)
+	row, err := db.GetFederationOutbox(retryID)
 	require.NoError(t, err)
 	require.Equal(t, db.FedOutboxRefused, row.State)
 	// Even a delivered original must not keep reply authority after revocation.
-	require.NoError(t, db.UpdateFederationOutbox(sent.EnvelopeID, db.FedOutboxAccepted, time.Now(), "", 0))
 	aid, err := db.AgentIDForConv("link-source-00001")
 	require.NoError(t, err)
 	reply := p.envelope(proto.KindMail, proto.Endpoint{Agent: aid}, proto.MailPayload{Body: "reply after revocation"})
-	reply.InReplyTo = sent.EnvelopeID
+	reply.InReplyTo = deliveredID
 	p.send(reply)
 	require.Equal(t, proto.AckRefused, fedAckOf(t, p, reply.ID).Status)
 	sendProposalControl(p, proto.KindPeerProposalDecision, decision)
