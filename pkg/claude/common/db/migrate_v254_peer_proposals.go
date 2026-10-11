@@ -56,6 +56,11 @@ UPDATE schema_version SET version=254;`)
 		if _, err = tx.Exec(`INSERT INTO federation_group_identities(group_id,opaque_id) SELECT id,'grp_'||lower(hex(randomblob(16))) FROM agent_groups`); err != nil {
 			return err
 		}
+		if _, err = tx.Exec(`CREATE TRIGGER agent_groups_federation_identity AFTER INSERT ON agent_groups
+ BEGIN INSERT INTO federation_group_identities(group_id,opaque_id) VALUES(NEW.id,'grp_'||lower(hex(randomblob(16)))); END`); err != nil {
+			return err
+		}
+
 	}
 	return tx.Commit()
 }

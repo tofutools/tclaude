@@ -246,6 +246,9 @@ CREATE TRIGGER sandbox_profile_group_ref_update
 CREATE UNIQUE INDEX idx_agent_groups_one_default_spawn
 			ON agent_groups(default_spawn_group) WHERE default_spawn_group = 1;
 
+CREATE TRIGGER agent_groups_federation_identity AFTER INSERT ON agent_groups
+ BEGIN INSERT INTO federation_group_identities(group_id,opaque_id) VALUES(NEW.id,'grp_'||lower(hex(randomblob(16)))); END;
+
 CREATE TABLE "agent_cron_jobs" (
 			id               INTEGER PRIMARY KEY AUTOINCREMENT,
 			name             TEXT NOT NULL DEFAULT '',

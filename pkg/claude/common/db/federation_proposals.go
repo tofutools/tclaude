@@ -6,16 +6,11 @@ import (
 	"time"
 )
 
-// FederationGroupIdentity is stable through rename and is never reused after
-// deletion. Lazy creation covers groups made after the schema migration.
+// FederationGroupIdentity is allocated by the group-insert trigger (or the
+// migration for existing groups). Catalog reads must never write SQLite and
+// invalidate another consumer's in-flight status snapshot.
 func FederationGroupIdentity(groupID int64) (string, error) {
 	d, err := Open()
-	if err != nil {
-		return "", err
-	}
-	_, err = d.Exec(`INSERT INTO federation_group_identities(group_id,opaque_id)
- SELECT id,'grp_'||lower(hex(randomblob(16))) FROM agent_groups WHERE id=?
- ON CONFLICT(group_id) DO NOTHING`, groupID)
 	if err != nil {
 		return "", err
 	}
