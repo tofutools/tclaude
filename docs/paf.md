@@ -99,13 +99,13 @@ receiving side.
 
 | Operation | What PAF carries | Carrier in this release |
 |---|---|---|
-| **Export / import** of an agent | One agent PAF file. Import previews first, then lands the agent on a harness you choose. | [Agent bundle v1](federation.md#portable-local-agent-bundles) |
+| **Export / import** of an agent | One agent PAF file. Import previews first, then lands the agent on a harness you choose. | [Agent bundle v1](federation.md#portable-local-agent-bundles) by default; PAF with `--format paf` |
 | **Group export / import** | A group PAF: group configuration plus every member. | Group export v5 |
 | **Snapshots** | A named PAF in a local library. Instantiate one or many agents from it, or share it. | Not available yet |
 | **Morph** (model or harness change in place) | The neutral context, losses and full transcript the switch produced. The identity stays in place, so no new agent is created. | Morph artifact directory |
 | **Clone** | A local sibling. Clone copies native history directly and shares PAF's history model. | Native copy (no file) |
-| **Move, teleport, recall home** | The agent's state in transit to another node, with provenance hops. Peers that do not advertise PAF receive the legacy agent bundle. | Agent bundle v1 |
-| **Sharing** with a peer or on a [Board](federation.md#content-board-membership) | An encrypted PAF addressed to named recipients, published only by a human. | Agent bundle v1 to peers; Boards carry configuration and skills only |
+| **Move, teleport, recall home** | The agent's state in transit to another node, with provenance hops. Peers that do not advertise PAF receive the legacy agent bundle. | PAF to peers that advertise it, otherwise agent bundle v1 |
+| **Sharing** with a peer or on a [Board](federation.md#content-board-membership) | An encrypted PAF addressed to named recipients, published only by a human. | Unencrypted PAF to peers that advertise it, otherwise agent bundle v1; Boards carry configuration and skills only |
 | **Publishing** | A redacted, pseudonymous, signed PAF file for public sharing. tclaude provides no hosting; you choose where the file goes. | Not available yet |
 | **Resilience** | Opt-in periodic encrypted snapshots to another node or Board, from which an agent can be recovered if its host is lost. | Not available yet |
 | **Archival** | Any PAF can be inspected, verified and rendered to readable text without the original harness or model. | Not available yet |
@@ -796,7 +796,7 @@ agent bundle for peers that do not advertise PAF support.
 |---|---|
 | Agent bundle v1 (`tclaude-agent-bundle`, `manifest.json` + `history/transcript.jsonl`) | One agent; `agent.definition` from `manifest.agent`; the native blob from `history`; findings into `privacy.scan`; the inline profile and permissions into the `tclaude` extension; the mail ledger into `ext/tclaude/`. There is no neutral context, so landing in another harness decodes the native blob first. |
 | Group export v5 (`manifest.json` + `projects/<conv>.jsonl`) | A group; one agent per conversation with a native Claude Code blob; group settings into the `tclaude` extension. |
-| Morph artifacts (`transcript.md`, `loss-report.json`) | Readable as a context-file landing. `loss-report.json` has the fields of `losses.json`; readers treat `"items": null` as an empty list and map `fallback` to `landing_rung`. |
+| Morph artifacts (`transcript.md`, `transcript.jsonl`, `loss-report.json`) | Readable as a context-file landing. `loss-report.json` has the fields of `losses.json`; readers treat `"items": null` as an empty list and map `fallback` to `landing_rung`. |
 
 ## Related pages
 

@@ -58,7 +58,68 @@ func WriteTranscript(w *Writer, key, scope string, t *transcript.Transcript) err
 	return closer.Close()
 }
 
+// WriteContextFile writes t as a standalone context JSON Lines file, outside
+// any archive. Inline media is handed to mediaPath, which stores it and
+// returns the path the line references; media it returns "" for is dropped
+// and recorded in t.Losses.
+func WriteContextFile(w io.Writer, scope string, t *transcript.Transcript, mediaPath func(*transcript.Media) (string, error)) error {
+	if t == nil {
+		return errors.New("paf: nil transcript")
+	}
+	src := Source{Harness: t.Source.Harness, Format: t.Source.Format, ConvID: t.Source.ConvID, Model: t.Source.Model, Cwd: t.Source.Cwd, Title: t.Source.Title}
+	if src.Harness == "" {
+		return errors.New("paf: transcript source has no harness")
+	}
+	paths := map[*transcript.Media]string{}
+	cw, err := NewContextWriter(w, scope, src)
+	if err != nil {
+		return err
+	}
+	for i := range t.Entries {
+		e := &t.Entries[i]
+		for j := range e.Blocks {
+			for k := range e.Blocks[j].Media {
+				m := &e.Blocks[j].Media[k]
+				if len(m.Data) == 0 {
+					continue
+				}
+				p, err := mediaPath(m)
+				if err != nil {
+					return err
+				}
+				paths[m] = p
+			}
+		}
+		l, droppedMedia, ok := lineFromEntryWith(e, func(m *transcript.Media) Media {
+			if p := paths[m]; p != "" {
+				return Media{Path: p}
+			}
+			return Media{}
+		})
+		t.Losses.Add(transcript.LossMediaDropped, droppedMedia, "")
+		if !ok {
+			t.Losses.Add(transcript.LossUnknownRecord, 1, "empty entry")
+			continue
+		}
+		if err := cw.Write(l); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func lineFromEntry(e *transcript.Entry, refs map[*transcript.Media]string) (Line, int, bool) {
+	return lineFromEntryWith(e, func(m *transcript.Media) Media {
+		if r := refs[m]; r != "" {
+			return Media{Attachment: r}
+		}
+		return Media{}
+	})
+}
+
+// lineFromEntryWith converts an entry; stored returns where inline media
+// data went, or a zero Media when it was not stored.
+func lineFromEntryWith(e *transcript.Entry, stored func(*transcript.Media) Media) (Line, int, bool) {
 	dropped := 0
 	l := Line{Type: LineEntry, ID: e.ID, Role: string(e.Role), Origin: string(e.Origin), Time: e.Time, Model: e.Model, Author: e.Author}
 	for j := range e.Blocks {
@@ -72,10 +133,10 @@ func lineFromEntry(e *transcript.Entry, refs map[*transcript.Media]string) (Line
 		}
 		for k := range b.Media {
 			m := &b.Media[k]
-			pm := Media{MediaType: m.MediaType, Name: m.Name}
+			pm := stored(m)
+			pm.MediaType, pm.Name = m.MediaType, m.Name
 			switch {
-			case refs[m] != "":
-				pm.Attachment = refs[m]
+			case pm.Attachment != "" || pm.Path != "":
 			case m.URL != "":
 				pm.URL = m.URL
 			case m.Path != "":

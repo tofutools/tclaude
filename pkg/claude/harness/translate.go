@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
+	"github.com/tofutools/tclaude/pkg/paf"
 )
 
 // TranslateOptions configures a cross-harness history translation.
@@ -347,7 +349,45 @@ func writeTranslationArtifacts(t *transcript.Transcript, plan *transcript.Plan, 
 	if err := transcript.WriteFileExclusive(filepath.Join(dir, "transcript.md"), md.Bytes()); err != nil {
 		return err
 	}
+	if err := writeContextArtifact(t, dir); err != nil {
+		return err
+	}
 	return plan.WriteMedia()
+}
+
+var contextMediaExt = map[string]string{"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "application/pdf": ".pdf"}
+
+// writeContextArtifact writes the full source transcript as a PAF context
+// file, transcript.jsonl, with inline media stored under context-media/ and
+// referenced by path. The loss counts it adds stay on a copy, so the
+// translation's own report is unchanged.
+func writeContextArtifact(t *transcript.Transcript, dir string) error {
+	cp := *t
+	cp.Losses = &transcript.LossReport{}
+	mediaDir := filepath.Join(dir, "context-media")
+	n := 0
+	var buf bytes.Buffer
+	err := paf.WriteContextFile(&buf, paf.ScopeFull, &cp, func(m *transcript.Media) (string, error) {
+		if n == 0 {
+			if err := transcript.EnsureRealDir(mediaDir); err != nil {
+				return "", err
+			}
+		}
+		n++
+		ext := contextMediaExt[m.MediaType]
+		if ext == "" {
+			ext = ".bin"
+			if exts, _ := mime.ExtensionsByType(m.MediaType); len(exts) > 0 {
+				ext = exts[0]
+			}
+		}
+		path := filepath.Join(mediaDir, fmt.Sprintf("media-%03d%s", n, ext))
+		return path, transcript.WriteFileExclusive(path, m.Data)
+	})
+	if err != nil {
+		return err
+	}
+	return transcript.WriteFileExclusive(filepath.Join(dir, "transcript.jsonl"), buf.Bytes())
 }
 
 // writeLossReport replaces loss-report.json through a fresh temp file and a

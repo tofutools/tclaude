@@ -205,7 +205,8 @@ The neutral transcript and loss report are the context of the
 Every translation produces a loss report (counts and categories only, never
 transcript content) and keeps the full, unclipped transcript as a Markdown
 file beside it. Clipping and omission markers point the target agent at that
-file.
+file. The same full transcript is also kept as `transcript.jsonl`, a PAF
+context file, with inline images and documents saved under `context-media/`.
 
 If the translated history cannot be installed natively, the target instead
 gets a native conversation of one turn that points the agent at the history
