@@ -16,6 +16,9 @@ test('Messages delivery state distinguishes offline notification discard', async
   assert.equal(messageDeliveryState({ nudge_discarded_at: '2026-07-16T12:00:00Z', delivered_at: '2026-07-16T12:00:00Z' }), 'discarded while offline');
   assert.equal(messageDeliveryState({ delivered_at: '2026-07-16T12:00:00Z' }), 'delivered');
   assert.equal(messageDeliveryState({ direction: 'out' }), 'undelivered');
+  assert.equal(messageDeliveryState({ forward_state: 'queued', forwarded_to: 'b', delivered_at: '2026-07-16T12:00:00Z' }), 'forwarded to b');
+  assert.equal(messageDeliveryState({ forward_state: 'accepted', forwarded_to: 'b' }), 'delivered');
+  assert.equal(messageDeliveryState({ forward_state: 'refused', forwarded_to: 'b' }), 'forwarding refused');
 });
 
 test('Messages attention prioritizes the oldest pending access request, then the oldest unread notification', async (t) => {

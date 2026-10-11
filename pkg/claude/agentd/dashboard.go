@@ -3476,7 +3476,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			links := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
 				withFreshestPRStates(freshPRStates).
 				withPRChecks(prChecks)
-			presence, _ := db.GetAgentFederationPresence(b.AgentID)
+			presence, _ := db.ProjectedAgentFederationPresence(b.AgentID)
 			online := b.Online
 			if presence != nil && presence.State == "away" {
 				online = false
@@ -3531,7 +3531,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			ownerLinks := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
 				withFreshestPRStates(freshPRStates).
 				withPRChecks(prChecks)
-			presence, _ := db.GetAgentFederationPresence(b.AgentID)
+			presence, _ := db.ProjectedAgentFederationPresence(b.AgentID)
 			ownerOnline := b.Online && (presence == nil || presence.State != "away")
 			dg.Members = append(dg.Members, dashboardMember{
 				AgentID:            b.AgentID,

@@ -49,6 +49,13 @@ var FederationIdentityColumns = []IdentityColumn{
 	{"agent_federation_presence", "predecessor_instance", IdentityHistorical},
 	{"agent_federation_presence", "transfer_json", IdentityHistorical},
 	{"agent_federation_presence", "arrival_rollback_json", IdentityHistorical},
+	{"federation_agent_locations", "home_instance", IdentityHistorical},
+	{"federation_agent_locations", "current_instance", IdentityHistorical},
+	{"federation_mail_custody", "sender_instance", IdentityHistorical},
+	{"federation_mail_custody", "ingress_instance", IdentityHistorical},
+	{"federation_mail_custody", "destination", IdentityClose},
+	{"federation_mail_custody", "payload", IdentityHistorical},
+	{"federation_agent_mail_deliveries", "sender_instance", IdentityHistorical},
 	// Structured and embedded references also need an explicit rule. Frozen
 	// request bodies and origin provenance are never recursively rewritten.
 	{"human_messages", "group_name", IdentityHistorical},

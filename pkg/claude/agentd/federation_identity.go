@@ -17,6 +17,11 @@ func peerSupportsStableIdentity(peer string) bool {
 	var c proto.CatalogPayload
 	return e == nil && json.Unmarshal([]byte(raw), &c) == nil && c.StableAgentIdentity
 }
+func peerSupportsHomeMail(peer string) bool {
+	raw, _, err := db.GetFederationCatalog(peer)
+	var c proto.CatalogPayload
+	return err == nil && json.Unmarshal([]byte(raw), &c) == nil && c.HomeRoutedMail
+}
 func departingFederationIdentity(conv string) (*db.FederationIdentity, error) {
 	a, e := db.GetAgentByConv(conv)
 	if e != nil {
@@ -58,7 +63,13 @@ func catalogFederationPresence(p *db.AgentFederationPresence) *proto.FederationA
 	if p == nil {
 		return nil
 	}
-	return &proto.FederationAgentPresence{HomeInstance: p.HomeInstance, State: p.State, CurrentInstance: p.CurrentInstance, HopCount: p.HopCount}
+	host, hops := p.CurrentInstance, p.HopCount
+	if p.State == "away" && p.HomeInstance == arrivalNode() {
+		if l, e := db.GetFederationAgentLocation(p.AgentID); e == nil && l != nil && l.Epoch == p.ContinuationNonceHash {
+			host, hops = l.CurrentInstance, l.HopCount
+		}
+	}
+	return &proto.FederationAgentPresence{HomeInstance: p.HomeInstance, State: p.State, CurrentInstance: host, HopCount: hops}
 }
 
 type federationIdentityLaunchKey struct{}
@@ -151,7 +162,12 @@ func handleFederationAgentRecall(w http.ResponseWriter, r *http.Request) {
 	inner := r.Clone(r.Context())
 	inner.Body = io.NopCloser(bytes.NewReader(raw))
 	inner.ContentLength = int64(len(raw))
-	inner.SetPathValue("node", p.CurrentPeer)
+	destination, err := db.FederationMailDestination(id, arrivalNode())
+	if err != nil || destination == "" {
+		writeError(w, 409, "location_unavailable", "away host is not known")
+		return
+	}
+	inner.SetPathValue("node", destination)
 	inner.SetPathValue("tail", "agents/"+id+"/move")
 	inner.URL.RawQuery = ""
 	servePeerViewProxy(w, inner)

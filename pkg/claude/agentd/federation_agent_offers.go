@@ -125,6 +125,13 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 	if b.Manifest.Agent.Origin != nil {
 		b.Manifest.Agent.Origin.Trigger = arrivalTrigger(caller, source, human)
 	}
+	mailFenceToken, mailFenceAgent := "", ""
+	mailFenceQueued := false
+	defer func() {
+		if mailFenceToken != "" && !mailFenceQueued {
+			_ = db.ReleaseFederationMailFence(mailFenceAgent, mailFenceToken)
+		}
+	}()
 	if moving && (teleport == nil || !teleport.Clone) && peerSupportsStableIdentity(peer.InstanceID) {
 		identity, err := departingFederationIdentity(source)
 		if err != nil {
@@ -132,6 +139,20 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		b.Manifest.Agent.Identity = identity
+		if peerSupportsHomeMail(peer.InstanceID) && (identity.Home == arrivalNode() || peerSupportsHomeMail(identity.Home)) {
+			identity.Mail = true
+			mailFenceToken, mailFenceAgent = db.NewAgentID(), identity.Agent
+			if err = db.FenceFederationMail(identity.Agent, mailFenceToken, time.Now().Add(bundletransfer.DefaultTTL)); err != nil {
+				writeError(w, 409, "mailbox_moving", err.Error())
+				return
+			}
+			b.MailDeliveries, err = db.ListFederationMailDeliveries(identity.Agent)
+			if err != nil {
+				writeError(w, 500, "mail_ledger", err.Error())
+				return
+			}
+			b.Manifest.MailLedger = true
+		}
 	}
 	archive, err := archiveAgentBundle(b)
 	if err != nil {
@@ -151,6 +172,12 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, 400, "bundle_export", err.Error())
 		return
+	}
+	if mailFenceToken != "" {
+		if err = db.BindFederationMailFence(mailFenceAgent, mailFenceToken, d.ID); err != nil {
+			writeError(w, 500, "mail_fence", err.Error())
+			return
+		}
 	}
 	d.Group = in.Group
 	backupQueued := false
@@ -265,6 +292,7 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 		writeFedErr(w, err)
 		return
 	}
+	mailFenceQueued = true
 	backupQueued = true
 	o.Descriptor.Inline = nil
 	if teleport != nil {
@@ -477,6 +505,13 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 		if identity != nil {
 			if _, err := db.ReserveFederationIdentity(*identity, arrivalNode(), o.Peer, o.Descriptor.ID); err != nil {
 				writeError(w, 409, "identity_conflict", err.Error())
+				return
+			}
+		}
+		if identity != nil && bundle.Manifest.MailLedger {
+			if err := db.ImportFederationMailDeliveries(reserved, bundle.MailDeliveries); err != nil {
+				_ = db.ReleaseFederationIdentity(reserved, o.Descriptor.ID)
+				writeError(w, 503, "mail_ledger", err.Error())
 				return
 			}
 		}
