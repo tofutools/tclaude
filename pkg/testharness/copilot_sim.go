@@ -1082,6 +1082,14 @@ func (c *CopilotSim) writeWorkspaceLocked() error {
 	return os.WriteFile(filepath.Join(dir, "workspace.yaml"), []byte(body), 0o600)
 }
 
+// AppendEvent appends one raw events.jsonl record, for a test that needs an
+// event shape the turn helpers do not write (tool requests, results).
+func (c *CopilotSim) AppendEvent(event map[string]any) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.appendEventLocked(event)
+}
+
 // appendEventLocked appends one line to events.jsonl. A `--resume` APPENDS to
 // the same file rather than starting a new one, which is exactly what Start
 // does on a relaunch.

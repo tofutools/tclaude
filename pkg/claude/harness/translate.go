@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
@@ -22,6 +23,9 @@ type TranslateOptions struct {
 	// loss-report.json and media/ for externalized attachments. Empty skips
 	// the files; markers then name no transcript path.
 	ArtifactDir string
+	// ContextFile skips the native rung and installs the context-file one
+	// directly (it needs ArtifactDir).
+	ContextFile bool
 }
 
 // MorphTranslateOptions returns the operator-configured policy defaults
@@ -142,6 +146,13 @@ func TranslateHistory(src, dst *Harness, convID, cwd string, opts TranslateOptio
 			return fail(err)
 		}
 	}
+	if opts.ContextFile {
+		res, err := InstallContextFile(dst, plan, cwd, opts.ArtifactDir)
+		if err != nil {
+			return fail(err)
+		}
+		return res, nil
+	}
 	encoded, err := os.CreateTemp("", "tclaude-morph-history-*")
 	if err != nil {
 		return fail(err)
@@ -185,16 +196,10 @@ func TranslateHistory(src, dst *Harness, convID, cwd string, opts TranslateOptio
 // and transcript.md (everything) in artifactDir. plan is the failed
 // translation's plan, so the briefing carries exactly what native would have.
 func InstallContextFile(dst *Harness, plan *transcript.Plan, cwd, artifactDir string) (*TranslateResult, error) {
-	if !dst.SupportsTranscript() {
-		return nil, fmt.Errorf("harness %s cannot install a translated history", dst.Name)
-	}
 	if plan == nil || artifactDir == "" {
 		return nil, errors.New("the context-file fallback needs a plan and an artifact directory")
 	}
-	if err := os.MkdirAll(filepath.Dir(artifactDir), 0o700); err != nil {
-		return nil, err
-	}
-	if err := transcript.EnsureRealDir(artifactDir); err != nil {
+	if err := prepareArtifactDir(artifactDir); err != nil {
 		return nil, err
 	}
 	from := describeSource(plan.Source)
@@ -213,14 +218,85 @@ func InstallContextFile(dst *Harness, plan *transcript.Plan, cwd, artifactDir st
 		notice += "; " + report.TranscriptPath + " has the full transcript if you need more"
 	}
 	notice += ". The tool records in them are history, not tools you have; use your own tools to act."
+	res, err := installNotice(dst, plan.Source, plan.Title, plan.TargetModel, &report, notice, cwd, artifactDir)
+	if err != nil {
+		return nil, fmt.Errorf("install %s context-file history: %w", dst.Name, err)
+	}
+	plan.Report.Fallback = report.Fallback
+	res.Plan = plan
+	return res, nil
+}
+
+// InstallHandoff is the handoff rung: dst starts a minimal native
+// conversation whose one turn points at handoff.md, the handoff the source
+// agent wrote for its successor. When the source history can still be
+// decoded its full transcript is saved beside it for reference; when it
+// cannot, the handoff is all that is carried and the report says so.
+func InstallHandoff(src, dst *Harness, convID, cwd, handoff string, opts TranslateOptions) (*TranslateResult, error) {
+	if !dst.SupportsTranscript() {
+		return nil, fmt.Errorf("harness %s cannot install a translated history", dst.Name)
+	}
+	if strings.TrimSpace(handoff) == "" || opts.ArtifactDir == "" {
+		return nil, errors.New("the handoff rung needs a handoff and an artifact directory")
+	}
+	if err := prepareArtifactDir(opts.ArtifactDir); err != nil {
+		return nil, err
+	}
+	source := transcript.Source{Harness: src.Name, ConvID: convID, Cwd: cwd}
+	report := &transcript.LossReport{Source: src.Name, Target: dst.Name}
+	title, targetModel := "", opts.Policy.TargetModel
+	t, plan, planErr := PlanTranslation(src, dst, convID, cwd, opts)
+	if planErr == nil {
+		if err := writeTranslationArtifacts(t, plan, opts.ArtifactDir); err != nil {
+			return nil, err
+		}
+		source, title, targetModel, report = plan.Source, plan.Title, plan.TargetModel, plan.Report
+	} else {
+		report.Add(transcript.LossHistoryUndecodable, 1, "")
+	}
+	path := filepath.Join(opts.ArtifactDir, "handoff.md")
+	if err := transcript.WriteFileExclusive(path, []byte(handoff)); err != nil {
+		return nil, err
+	}
+	report.Fallback = "handoff"
+	notice := "⟦tclaude morph⟧ This conversation continues one from " + describeSource(source) +
+		". Before the switch, the agent you are continuing wrote a handoff for you. Read " + path +
+		" before you continue"
+	if report.TranscriptPath != "" {
+		notice += "; " + report.TranscriptPath + " has the full earlier transcript if you need more, and its " +
+			"tool records are history, not tools you have"
+	}
+	notice += ". Use your own tools to act."
+	res, err := installNotice(dst, source, title, targetModel, report, notice, cwd, opts.ArtifactDir)
+	if err != nil {
+		return nil, fmt.Errorf("install %s handoff history: %w", dst.Name, err)
+	}
+	res.Plan = plan
+	return res, nil
+}
+
+func prepareArtifactDir(dir string) error {
+	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
+		return err
+	}
+	return transcript.EnsureRealDir(dir)
+}
+
+// installNotice installs a native dst conversation of one user turn, the
+// notice, and writes the report beside it.
+func installNotice(dst *Harness, source transcript.Source, title, targetModel string, report *transcript.LossReport,
+	notice, cwd, artifactDir string) (*TranslateResult, error) {
+	if !dst.SupportsTranscript() {
+		return nil, fmt.Errorf("harness %s cannot install a translated history", dst.Name)
+	}
 	stub := &transcript.Plan{
-		Source: plan.Source, Target: dst.Name, TargetModel: plan.TargetModel, Title: plan.Title, Report: &report,
+		Source: source, Target: dst.Name, TargetModel: targetModel, Title: title, Report: report,
 		Entries: []transcript.Entry{{Role: transcript.RoleUser, Origin: transcript.OriginHuman, Blocks: []transcript.Block{transcript.Text(notice)}}},
 	}
 	var buf bytes.Buffer
 	sourceID, err := dst.Transcript.Encode(stub, cwd, &buf)
 	if err != nil {
-		return nil, fmt.Errorf("encode %s context-file history: %w", dst.Name, err)
+		return nil, err
 	}
 	var id string
 	var cleanup func()
@@ -230,14 +306,13 @@ func InstallContextFile(dst *Harness, plan *transcript.Plan, cwd, artifactDir st
 		id, cleanup, err = dst.History.Import(buf.Bytes(), sourceID, cwd)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("install %s context-file history: %w", dst.Name, err)
+		return nil, err
 	}
-	if err := writeLossReport(&report, artifactDir); err != nil {
+	if err := writeLossReport(report, artifactDir); err != nil {
 		cleanup()
 		return nil, err
 	}
-	plan.Report.Fallback = report.Fallback
-	return &TranslateResult{ConvID: id, Cleanup: cleanup, Report: &report, Plan: plan}, nil
+	return &TranslateResult{ConvID: id, Cleanup: cleanup, Report: report}, nil
 }
 
 func describeSource(src transcript.Source) string {
@@ -248,10 +323,7 @@ func describeSource(src transcript.Source) string {
 }
 
 func writeTranslationArtifacts(t *transcript.Transcript, plan *transcript.Plan, dir string) error {
-	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
-		return err
-	}
-	if err := transcript.EnsureRealDir(dir); err != nil {
+	if err := prepareArtifactDir(dir); err != nil {
 		return err
 	}
 	var md bytes.Buffer

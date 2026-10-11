@@ -1295,6 +1295,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/whoami/remote-control", handleWhoamiRemoteControl)
 	mux.HandleFunc("/v1/whoami/reincarnate", handleWhoamiReincarnate)
 	mux.HandleFunc("/v1/whoami/morph", handleWhoamiMorph)
+	mux.HandleFunc("/v1/whoami/morph/handoff", handleWhoamiMorphHandoff)
 	mux.HandleFunc("/v1/whoami/clone", handleWhoamiClone)
 	mux.HandleFunc("/v1/whoami/context", handleWhoamiContext)
 	mux.HandleFunc("/v1/whoami/debug-export", handleWhoamiDebugExport)
