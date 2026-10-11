@@ -4,7 +4,10 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/testharness"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -362,11 +365,18 @@ func TestFederation_HomeMailLocationBeforeSourceConfirmationRetriesOnlyLiveOffer
 	fh := newFedHarness(t)
 	f, host := fh.f, fh.peer
 	f.HaveConvWithTitle("pending-location", "source")
-	id, e := db.AgentIDForConv("pending-location")
+	id, _, e := db.EnsureAgentForConv("pending-location", "test")
 	require.NoError(t, e)
 	identity := db.FederationIdentity{Agent: id, Home: host.agentdID, Hops: 1, Mail: true, Proofs: map[string]string{host.agentdID: "pending-proof"}}
 	require.NoError(t, db.InsertFederationAgentMove(db.FederationAgentMove{Direction: "out", Peer: host.id.ID(), ID: "pending-offer", State: "awaiting_confirmation", SourceAgent: id, SourceConv: "pending-location", Identity: &identity, ExpiresAt: time.Now().Add(time.Hour)}))
 	update := homeMailControl(host, proto.KindAgentLocation, map[string]any{"agent": id, "home": host.agentdID, "host": host.id.ID(), "nonce": "pending-proof", "offer": "pending-offer", "hops": 1})
+	t.Cleanup(func() {
+		if t.Failed() {
+			moves, _ := db.ListFederationAgentMoves()
+			conv, _ := db.CurrentConvForAgent(id)
+			t.Logf("current=%q moves=%+v acks=%+v", conv, moves, host.envelopes(proto.KindAck))
+		}
+	})
 	host.send(update)
 	fedEventually(t, "arrival retries while source is confirming", func() bool {
 		for _, env := range host.envelopes(proto.KindAck) {
@@ -381,4 +391,51 @@ func TestFederation_HomeMailLocationBeforeSourceConfirmationRetriesOnlyLiveOffer
 	require.NoError(t, db.DepartFederationIdentity("pending-location", host.agentdID, host.id.ID(), "pending-offer", identity))
 	host.send(update)
 	fedEventually(t, "pending location accepts after confirmation", func() bool { return homeMailAck(host, update.ID, proto.AckAccepted) })
+}
+
+func TestFederation_HomeMailLocalDirectGroupAndOperatorKeepPendingOutbox(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	fh := newFedHarness(t)
+	f, host := fh.f, fh.peer
+	require.NoError(t, db.PutFederationCatalog(host.id.ID(), string(mustJSON(t, proto.CatalogPayload{HomeRoutedMail: true, StableAgentIdentity: true})), time.Now()))
+	f.HaveGroup("local-team")
+	f.HaveConvWithTitle("home-lead", "lead")
+	f.HaveMember("local-team", "home-lead")
+	f.HaveConvWithTitle("local-worker", "worker")
+	f.HaveMember("local-team", "local-worker")
+	id, e := db.AgentIDForConv("local-worker")
+	require.NoError(t, e)
+	identity := db.FederationIdentity{Agent: id, Home: host.agentdID, Hops: 1, Mail: true, Proofs: map[string]string{host.agentdID: "local-proof"}}
+	require.NoError(t, db.DepartFederationIdentity("local-worker", host.agentdID, host.id.ID(), "local-left", identity))
+	direct := postMessage(t, f, "home-lead", map[string]any{"to": id, "subject": "direct", "body": "follow worker"})
+	require.Equal(t, 200, direct.Code, direct.Body.String())
+	group := postMessage(t, f, "home-lead", map[string]any{"to": "group:local-team", "subject": "group", "body": "group copy"})
+	require.Equal(t, 200, group.Code, group.Body.String())
+	operator := testharness.Serve(agentd.BuildDashboardHandlerForTest(), testharness.JSONRequest(t, http.MethodPost, "/api/operator-message", map[string]any{"to": id, "subject": "operator", "body": "human instruction"}))
+	require.Equal(t, http.StatusAccepted, operator.Code, operator.Body.String())
+	fedEventually(t, "all three local sources reach current host", func() bool { return len(host.envelopes(proto.KindHomeMail)) == 3 })
+	out := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, "GET", "/v1/inbox?outbox=true", nil), "home-lead"))
+	require.Equal(t, 200, out.Code, out.Body.String())
+	require.Contains(t, out.Body.String(), `"forward_state":"queued"`)
+	require.NotContains(t, out.Body.String(), `"delivered":true`)
+	for _, delivery := range host.envelopes(proto.KindHomeMail) {
+		var payload struct {
+			LocalMessage int64 `json:"local_message"`
+			Operator     bool
+			Mail         proto.MailPayload
+		}
+		require.NoError(t, delivery.DecodePayload(&payload))
+		require.Positive(t, payload.LocalMessage)
+		require.Equal(t, payload.Mail.Subject == "operator", payload.Operator)
+		_, claimed, e := db.ClaimAgentMessageNudge(payload.LocalMessage, time.Now())
+		require.NoError(t, e)
+		require.False(t, claimed, "home copy cannot dispatch while custody is pending")
+		ack := homeMailControl(host, proto.KindAck, proto.AckPayload{Status: proto.AckAccepted})
+		ack.InReplyTo = delivery.ID
+		host.send(ack)
+	}
+	fedEventually(t, "outbox confirms final host delivery", func() bool {
+		out := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, "GET", "/v1/inbox?outbox=true", nil), "home-lead"))
+		return !strings.Contains(out.Body.String(), `"forward_state":"queued"`) && strings.Contains(out.Body.String(), `"delivered":true`)
+	})
 }

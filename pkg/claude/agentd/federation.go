@@ -942,9 +942,10 @@ func (rt *fedRuntime) acceptMailWithOrigin(peer *db.FederationPeer, env *proto.E
 	}
 	m := &db.AgentMessage{
 		GroupID: groupID, ToAgent: env.To.Agent, FromConv: "", ToConv: conv,
-		Subject:      mp.Subject,
-		Body:         fedRemoteBanner(senderName, senderDisplay, senderInstance) + mp.Body,
-		ToRecipients: []string{conv},
+		OperatorAuthored: origin != nil && origin.Operator && origin.Sender.Instance == origin.Home,
+		Subject:          mp.Subject,
+		Body:             fedRemoteBanner(senderName, senderDisplay, senderInstance) + mp.Body,
+		ToRecipients:     []string{conv},
 	}
 	id, err := db.InsertFederationInboundMessage(m, db.FederationInbound{
 		EnvelopeID: senderEnvelope, FromInstance: senderInstance, FromAgent: senderAgent, FromName: senderName,

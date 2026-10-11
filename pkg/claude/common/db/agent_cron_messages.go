@@ -11,6 +11,10 @@ import (
 // claimed by a delivery worker is left alone because its pane injection may be
 // in flight; delivered/read rows remain as message history.
 func InsertLatestCronAgentMessage(m *AgentMessage, cronJobID int64) (messageID int64, replaced int64, err error) {
+	return insertLatestCronAgentMessage(m, cronJobID)
+}
+
+func insertLatestCronAgentMessage(m *AgentMessage, cronJobID int64, after ...func(*sql.Tx, int64) error) (messageID int64, replaced int64, err error) {
 	if m == nil || cronJobID <= 0 || m.ToConv == "" {
 		return 0, 0, fmt.Errorf("invalid cron agent message")
 	}
@@ -71,6 +75,11 @@ func InsertLatestCronAgentMessage(m *AgentMessage, cronJobID int64) (messageID i
 	if _, err := tx.Exec(`INSERT INTO agent_cron_messages (message_id, cron_job_id) VALUES (?, ?)`,
 		messageID, cronJobID); err != nil {
 		return 0, 0, err
+	}
+	for _, hook := range after {
+		if err := hook(tx, messageID); err != nil {
+			return 0, 0, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, 0, err

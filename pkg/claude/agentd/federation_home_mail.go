@@ -14,15 +14,17 @@ import (
 const fedAckCustody = "custody"
 
 type homeMailPayload struct {
-	Op        string            `json:"op"`
-	Home      string            `json:"home"`
-	Agent     string            `json:"agent"`
-	Nonce     string            `json:"nonce"`
-	Sender    proto.Endpoint    `json:"sender"`
-	Envelope  string            `json:"envelope"`
-	InReplyTo string            `json:"in_reply_to,omitempty"`
-	ExpiresAt time.Time         `json:"expires_at"`
-	Mail      proto.MailPayload `json:"mail"`
+	LocalMessage int64             `json:"local_message,omitempty"`
+	Operator     bool              `json:"operator,omitempty"`
+	Op           string            `json:"op"`
+	Home         string            `json:"home"`
+	Agent        string            `json:"agent"`
+	Nonce        string            `json:"nonce"`
+	Sender       proto.Endpoint    `json:"sender"`
+	Envelope     string            `json:"envelope"`
+	InReplyTo    string            `json:"in_reply_to,omitempty"`
+	ExpiresAt    time.Time         `json:"expires_at"`
+	Mail         proto.MailPayload `json:"mail"`
 }
 type homeMailReceipt struct {
 	Sender   string `json:"sender"`
@@ -223,7 +225,7 @@ func stableMailAttachmentsAllowed(peer, agent string) bool {
 	return false
 }
 func validHomeMail(in homeMailPayload) bool {
-	return proto.ValidAgentRef(in.Agent) && in.Home != "" && in.Sender.Instance != "" && in.Envelope != "" && len(in.Envelope) <= 128 && len(in.Nonce) <= 128 && in.ExpiresAt.After(time.Now()) && in.ExpiresAt.Before(time.Now().Add(fedMaxInboundTTL)) && len(in.Mail.Body) > 0 && len(in.Mail.Body) <= proto.MaxMailBody && len(in.Mail.Subject) <= 512 && validateFedAttachments(in.Mail.Attachments) == nil
+	return proto.ValidAgentRef(in.Agent) && in.Home != "" && in.Sender.Instance != "" && in.Envelope != "" && len(in.Envelope) <= 128 && len(in.Nonce) <= 128 && in.ExpiresAt.After(time.Now()) && in.ExpiresAt.Before(time.Now().Add(fedMaxInboundTTL)) && (len(in.Mail.Body) > 0 || len(in.Mail.Attachments) > 0) && (!in.Operator || in.Sender.Instance == in.Home) && len(in.Mail.Body) <= proto.MaxMailBody && len(in.Mail.Subject) <= 512 && validateFedAttachments(in.Mail.Attachments) == nil
 }
 func (rt *fedRuntime) acceptHomeMail(peer *db.FederationPeer, env *proto.Envelope) {
 	var in homeMailPayload
@@ -303,7 +305,7 @@ func (rt *fedRuntime) flushHomeMail(now time.Time) {
 		p, _ := db.GetAgentFederationPresence(m.AgentID)
 		origin, _ := db.GetFederationPeer(m.SenderInstance)
 		original := &proto.Envelope{ID: in.Envelope, From: in.Sender, To: proto.Endpoint{Instance: rt.id.ID(), Agent: in.Agent}, InReplyTo: in.InReplyTo}
-		if !m.ExpiresAt.After(now) || p == nil || p.HomeInstance != rt.id.ID() || p.State == "terminal" || origin == nil || !stableMailIngressAuthorized(m.SenderInstance, original, m.AgentID) || len(in.Mail.Attachments) > 0 && !stableMailAttachmentsAllowed(m.SenderInstance, m.AgentID) {
+		if !m.ExpiresAt.After(now) || p == nil || p.HomeInstance != rt.id.ID() || p.State == "terminal" || !(localHomeMailAuthorized(in, rt.id.ID()) || origin != nil && stableMailIngressAuthorized(m.SenderInstance, original, m.AgentID) && (len(in.Mail.Attachments) == 0 || stableMailAttachmentsAllowed(m.SenderInstance, m.AgentID))) {
 			m.State = "refused"
 			m.NextAttemptAt = now
 			_ = db.UpdateFederationMailCustody(m)
@@ -312,6 +314,14 @@ func (rt *fedRuntime) flushHomeMail(now time.Time) {
 		}
 		if delivered, _ := db.FederationMailDelivered(m.AgentID, m.SenderInstance, m.EnvelopeID); delivered {
 			m.State = "accepted"
+			m.NextAttemptAt = now
+			_ = db.UpdateFederationMailCustody(m)
+			rt.sendCustodyReceipt(m)
+			continue
+		}
+		if p.State == "here" && in.LocalMessage > 0 && in.Sender.Instance == rt.id.ID() {
+			m.State = "accepted"
+			m.Destination = rt.id.ID()
 			m.NextAttemptAt = now
 			_ = db.UpdateFederationMailCustody(m)
 			rt.sendCustodyReceipt(m)
@@ -363,6 +373,18 @@ func (rt *fedRuntime) flushHomeMail(now time.Time) {
 	}
 }
 func (rt *fedRuntime) sendCustodyReceipt(m db.FederationMailCustody) {
+	if m.IngressInstance == rt.id.ID() && m.SenderInstance == rt.id.ID() {
+		var in homeMailPayload
+		if json.Unmarshal([]byte(m.Payload), &in) == nil && in.LocalMessage > 0 {
+			local := m.Destination == rt.id.ID()
+			_ = db.SetLocalHomeMailOutcome(in.LocalMessage, m.State == "accepted", local)
+			if local && m.State == "accepted" {
+				conv, _ := db.CurrentConvForAgent(m.AgentID)
+				enqueueDeliveryForConv(conv)
+			}
+		}
+		return
+	}
 	status := proto.AckRefused
 	if m.State == "accepted" {
 		status = proto.AckAccepted

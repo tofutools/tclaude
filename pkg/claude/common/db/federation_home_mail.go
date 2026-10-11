@@ -255,6 +255,14 @@ func QueueFederationMailCustody(m FederationMailCustody, limit int) (bool, error
 		return false, e
 	}
 	defer func() { _ = tx.Rollback() }()
+	fresh, e := queueFederationMailCustodyTx(tx, m, limit)
+	if e != nil {
+		return false, e
+	}
+	return fresh, tx.Commit()
+}
+func queueFederationMailCustodyTx(tx *sql.Tx, m FederationMailCustody, limit int) (bool, error) {
+	var e error
 	// Take the writer lock before quota checks, including when no row exists.
 	if _, e = tx.Exec(`UPDATE federation_mail_custody SET updated_at=updated_at WHERE sender_instance=? AND envelope_id=? AND agent_id=?`, m.SenderInstance, m.EnvelopeID, m.AgentID); e != nil {
 		return false, e
@@ -265,7 +273,7 @@ func QueueFederationMailCustody(m FederationMailCustody, limit int) (bool, error
 		return false, e
 	}
 	if n > 0 {
-		return false, tx.Commit()
+		return false, nil
 	}
 	e = tx.QueryRow(`SELECT COUNT(*) FROM federation_mail_custody WHERE agent_id=? AND state IN ('queued','handoff') AND expires_at>?`, m.AgentID, dbTime(time.Now())).Scan(&n)
 	if e != nil {
@@ -282,7 +290,7 @@ func QueueFederationMailCustody(m FederationMailCustody, limit int) (bool, error
 	if e != nil {
 		return false, e
 	}
-	return true, tx.Commit()
+	return true, nil
 }
 func DueFederationMailCustody(now time.Time, limit int) ([]FederationMailCustody, error) {
 	d, e := Open()
@@ -338,4 +346,46 @@ func ProjectedAgentFederationPresence(id string) (*AgentFederationPresence, erro
 		p.HopCount = l.HopCount
 	}
 	return p, nil
+}
+
+// InsertLocalHomeMail atomically preserves the sender's outbox copy and durable
+// custody. The payload builder only encodes that newly allocated message ID.
+func InsertLocalHomeMail(m *AgentMessage, attachments []AgentMessageAttachment, limit int, makeCustody func(int64) (FederationMailCustody, error), cron ...int64) (int64, int, error) {
+	m.RegularSend = limit > 0
+	hook := func(tx *sql.Tx, id int64) error {
+		custody, e := makeCustody(id)
+		if e != nil {
+			return e
+		}
+		_, e = queueFederationMailCustodyTx(tx, custody, limit)
+		return e
+	}
+	if len(cron) > 0 && cron[0] > 0 {
+		id, _, err := insertLatestCronAgentMessage(m, cron[0], hook)
+		return id, 0, err
+	}
+	return insertAgentMessageWithAttachmentsBounded(m, attachments, limit, hook)
+}
+func LocalHomeMailCustody(messageID int64) (*FederationMailCustody, error) {
+	d, e := Open()
+	if e != nil {
+		return nil, e
+	}
+	return scanHomeMail(d.QueryRow(`SELECT `+homeMailColumns+` FROM federation_mail_custody WHERE json_extract(payload,'$.local_message')=? AND sender_instance=ingress_instance ORDER BY updated_at DESC LIMIT 1`, messageID))
+}
+func SetLocalHomeMailOutcome(messageID int64, accepted bool, local bool) error {
+	d, e := Open()
+	if e != nil {
+		return e
+	}
+	if accepted && local {
+		_, e = d.Exec(`UPDATE agent_messages SET nudge_cancelled_at=NULL,nudge_cancel_reason='' WHERE id=?`, messageID)
+		return e
+	}
+	if accepted {
+		_, e = d.Exec(`UPDATE agent_messages SET delivered_at=?,processed_at=?,nudge_claimed_at=NULL WHERE id=?`, dbTime(time.Now()), dbTime(time.Now()), messageID)
+		return e
+	}
+	_, e = d.Exec(`UPDATE agent_messages SET nudge_cancelled_at=?,nudge_cancel_reason='home forwarding refused',processed_at=? WHERE id=?`, dbTime(time.Now()), dbTime(time.Now()), messageID)
+	return e
 }

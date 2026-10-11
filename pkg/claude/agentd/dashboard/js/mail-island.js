@@ -526,6 +526,9 @@ async function defaultLinks() {
 }
 
 export function messageDeliveryState(message) {
+  if (message.forward_state === 'queued' || message.forward_state === 'handoff') return 'forwarded to ' + message.forwarded_to;
+  if (message.forward_state === 'refused') return 'forwarding refused';
+  if (message.forward_state === 'accepted') return 'delivered';
   if (message.nudge_discarded_at) return 'discarded while offline';
   if (message.delivered_at) return 'delivered';
   if (message.direction === 'out') return 'undelivered';

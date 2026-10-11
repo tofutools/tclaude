@@ -1,6 +1,8 @@
 package db
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -98,4 +100,66 @@ func TestFederationHomeCustodyQuotaAndDuplicateSettlement(t *testing.T) {
 	rows, e = DueFederationMailCustody(time.Now(), 50)
 	require.NoError(t, e)
 	require.Empty(t, rows)
+}
+
+func TestLocalHomeMailAtomicCustodyAndReturnReleasesOriginal(t *testing.T) {
+	setupTestDB(t)
+	id, _, err := EnsureAgentForConv("worker", "test")
+	require.NoError(t, err)
+	identity := FederationIdentity{Agent: id, Home: "home", Hops: 1, Mail: true, Proofs: map[string]string{"home": "proof"}}
+	require.NoError(t, DepartFederationIdentity("worker", "home", "host", "departure", identity))
+	makeCustody := func(mid int64) (FederationMailCustody, error) {
+		return FederationMailCustody{SenderInstance: "home", EnvelopeID: fmt.Sprintf("local:%d", mid), AgentID: id, IngressInstance: "home", IngressEnvelope: fmt.Sprintf("local:%d", mid), Payload: fmt.Sprintf(`{"local_message":%d}`, mid), ExpiresAt: time.Now().Add(time.Hour)}, nil
+	}
+	mid, _, err := InsertLocalHomeMail(&AgentMessage{ToConv: "worker", Body: "original"}, nil, 10, makeCustody)
+	require.NoError(t, err)
+	_, claimed, err := ClaimAgentMessageNudge(mid, time.Now())
+	require.NoError(t, err)
+	require.False(t, claimed)
+	_, _, err = InsertLocalHomeMail(&AgentMessage{ToConv: "worker", Body: "rollback"}, nil, 10, func(int64) (FederationMailCustody, error) {
+		return FederationMailCustody{}, errors.New("custody failed")
+	})
+	require.Error(t, err)
+	identity.Hops++
+	_, err = ReserveFederationIdentity(identity, "home", "host", "return")
+	require.NoError(t, err)
+	_, _, err = EnsureAgentForConvWithID("returned", id, "return")
+	require.NoError(t, err)
+	// A reincarnation/return cannot dispatch the pending original before custody settles.
+	_, claimed, err = ClaimAgentMessageNudge(mid, time.Now())
+	require.NoError(t, err)
+	require.False(t, claimed)
+	custody, err := LocalHomeMailCustody(mid)
+	require.NoError(t, err)
+	require.NotNil(t, custody)
+	custody.State = "accepted"
+	custody.Destination = "home"
+	require.NoError(t, UpdateFederationMailCustody(*custody))
+	require.NoError(t, SetLocalHomeMailOutcome(mid, true, true))
+	_, claimed, err = ClaimAgentMessageNudge(mid, time.Now())
+	require.NoError(t, err)
+	require.True(t, claimed)
+}
+
+func TestLocalHomeCronMailCoalescesAtomically(t *testing.T) {
+	setupTestDB(t)
+	id, _, err := EnsureAgentForConv("worker", "test")
+	require.NoError(t, err)
+	build := func(mid int64) (FederationMailCustody, error) {
+		return FederationMailCustody{SenderInstance: "home", EnvelopeID: fmt.Sprintf("local:%d", mid), AgentID: id, IngressInstance: "home", IngressEnvelope: fmt.Sprintf("local:%d", mid), Payload: fmt.Sprintf(`{"local_message":%d}`, mid), ExpiresAt: time.Now().Add(time.Hour)}, nil
+	}
+	old, _, err := InsertLocalHomeMail(&AgentMessage{ToConv: "worker", Body: "old tick"}, nil, 0, build, 11)
+	require.NoError(t, err)
+	latest, _, err := InsertLocalHomeMail(&AgentMessage{ToConv: "worker", Body: "latest tick"}, nil, 0, build, 11)
+	require.NoError(t, err)
+	oldRow, err := GetAgentMessage(old)
+	require.NoError(t, err)
+	require.Nil(t, oldRow)
+	job, err := AgentMessageCronJobID(latest)
+	require.NoError(t, err)
+	require.EqualValues(t, 11, job)
+	require.NoError(t, err)
+	custody, err := LocalHomeMailCustody(latest)
+	require.NoError(t, err)
+	require.NotNil(t, custody)
 }

@@ -3164,6 +3164,8 @@ type inboxItem struct {
 	Preview          string `json:"preview,omitempty"`
 	CreatedAt        string `json:"created_at"`
 	Read             bool   `json:"read"`
+	ForwardedTo      string `json:"forwarded_to,omitempty"`
+	ForwardState     string `json:"forward_state,omitempty"`
 	Delivered        bool   `json:"delivered,omitempty"`
 	NudgeDiscardedAt string `json:"nudge_discarded_at,omitempty"`
 	ParentID         int64  `json:"parent_id,omitempty"`
@@ -3223,6 +3225,7 @@ func handleInbox(w http.ResponseWriter, r *http.Request) {
 			ParentID:  m.ParentID,
 		}
 		if outbox {
+			item.ForwardedTo, item.ForwardState = localHomeMailStatus(m.ID)
 			item.To = m.ToConv
 			item.ToShort = agent.ShortAgentID(m.ToAgent, m.ToConv)
 			item.Delivered = !m.DeliveredAt.IsZero() && m.NudgeDiscardedAt.IsZero()

@@ -368,6 +368,8 @@ type mailboxMessage struct {
 	Subject          string          `json:"subject,omitempty"`
 	Body             string          `json:"body"`
 	CreatedAt        string          `json:"created_at"`
+	ForwardedTo      string          `json:"forwarded_to,omitempty"`
+	ForwardState     string          `json:"forward_state,omitempty"`
 	DeliveredAt      string          `json:"delivered_at,omitempty"`
 	NudgeDiscardedAt string          `json:"nudge_discarded_at,omitempty"`
 	Read             bool            `json:"read"`
@@ -750,6 +752,7 @@ func (d *mailboxDecorator) toMessage(m *db.AgentMessage, dir string) mailboxMess
 		ParentID:         m.ParentID,
 		OperatorAuthored: d.operatorMsgs[m.ID],
 	}
+	mm.ForwardedTo, mm.ForwardState = localHomeMailStatus(m.ID)
 	if !m.DeliveredAt.IsZero() {
 		mm.DeliveredAt = m.DeliveredAt.Format(time.RFC3339)
 	}

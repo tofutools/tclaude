@@ -1667,7 +1667,11 @@ reach the original sender; a custody acknowledgement is not delivery. Delivery
 markers travel in stable bundles, and inbound dispatch is fenced during departure,
 so a lost acknowledgement followed by another hop cannot duplicate the inbox
 message. Forwarding supports only mail to that stable continuation, never generic
-commands, groups or operator messages. Clones keep independent inbox identities.
+commands or traffic addressed to other recipients. Local direct sends, per-recipient
+group broadcast copies, operator messages and daemon notes addressed to the away
+agent also enter home custody, using normal local sender authority. The sender
+sees “forwarded to <node>” until the final host acknowledges delivery. Clones keep
+independent inbox identities.
 
 Credentials and uncommitted working-tree changes are not transferred. Permission carry remains an explicit departure
 opt-in with receiver-controlled admission; returning home preserves home grants.

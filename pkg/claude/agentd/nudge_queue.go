@@ -62,6 +62,9 @@ var (
 // reincarnate handoffs also insert directly, then enqueue after their ordered
 // post-spawn rename has settled.
 func queueAgentMessage(m *db.AgentMessage) (int64, error) {
+	if id, _, handled, err := queueLocalHomeMail(m, nil, 0); handled || err != nil {
+		return id, err
+	}
 	id, err := db.InsertAgentMessage(m)
 	if err != nil {
 		return 0, err
@@ -75,6 +78,9 @@ func queueAgentMessage(m *db.AgentMessage) (int64, error) {
 // position. The database replacement and provenance insert are atomic; only
 // after commit do we arm the shared delivery worker.
 func queueCronAgentMessage(m *db.AgentMessage, cronJobID int64) (int64, error) {
+	if id, _, handled, err := queueLocalHomeMail(m, nil, cronJobID); handled || err != nil {
+		return id, err
+	}
 	id, _, err := db.InsertLatestCronAgentMessage(m, cronJobID)
 	if err != nil {
 		return 0, err
@@ -88,6 +94,9 @@ func queueCronAgentMessage(m *db.AgentMessage, cronJobID int64) (int64, error) {
 // using queueAgentMessage so queue pressure cannot break correctness. Cron has
 // its own latest-pending-tick policy in queueCronAgentMessage.
 func queueRegularAgentMessage(m *db.AgentMessage) (id int64, pending int, err error) {
+	if id, pending, handled, err := queueLocalHomeMail(m, nil); handled || err != nil {
+		return id, pending, err
+	}
 	id, pending, err = db.InsertAgentMessageBounded(m, regularAgentMessageQueueLimit)
 	if err == nil {
 		enqueueDeliveryForConv(m.ToConv)
@@ -96,6 +105,9 @@ func queueRegularAgentMessage(m *db.AgentMessage) (id int64, pending int, err er
 }
 
 func queueRegularAgentMessageWithAttachments(m *db.AgentMessage, attachments []db.AgentMessageAttachment) (id int64, pending int, err error) {
+	if id, pending, handled, err := queueLocalHomeMail(m, attachments); handled || err != nil {
+		return id, pending, err
+	}
 	id, pending, err = db.InsertAgentMessageWithAttachmentsBounded(m, attachments, regularAgentMessageQueueLimit)
 	if err == nil {
 		enqueueDeliveryForConv(m.ToConv)
