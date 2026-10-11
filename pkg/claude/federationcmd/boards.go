@@ -71,7 +71,7 @@ func boardsCmd() *cobra.Command {
 		{"rotate-key", "rotate-key", "Rotate the board content key", []string{"board"}, []string{"board"}, nil},
 		{"items", "items", "List items and update notices", []string{"board", "cursor"}, []string{"board"}, nil},
 		{"versions", "versions", "List item versions", []string{"board", "item", "cursor"}, []string{"board", "item"}, nil},
-		{"publish", "publish", "Publish selected config or republish a signed item", []string{"board", "name", "item", "parent", "from-board", "from-item", "from-version", "only", "skip", "skill-root"}, []string{"board"}, nil},
+		{"publish", "publish", "Publish selected config/skill or republish a signed item", []string{"board", "name", "item", "parent", "from-board", "from-item", "from-version", "only", "skip", "skill-root"}, []string{"board"}, nil},
 		{"pin", "pin", "Pin an exact item version", []string{"board", "item", "version"}, []string{"board", "item", "version"}, nil},
 		{"fetch", "fetch", "Fetch and verify without importing", []string{"board", "item", "version"}, []string{"board", "item", "version"}, nil},
 		{"contents", "contents", "Inspect fetched contents", []string{"board", "item", "version", "path", "offset", "max-bytes"}, []string{"board", "item", "version"}, nil},

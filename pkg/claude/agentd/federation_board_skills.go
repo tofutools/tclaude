@@ -236,7 +236,7 @@ func boardSkillImport(w http.ResponseWriter, r *http.Request, op string, ref boa
 				return
 			}
 		}
-		if e = installBoardSkill(expected, selected, preview.Changes); e != nil {
+		if e = installBoardSkill(expected, selected, preview.Changes, snapshots); e != nil {
 			writeError(w, 409, "skill_import", e.Error())
 			return
 		}
@@ -270,12 +270,13 @@ func boardSkillImport(w http.ResponseWriter, r *http.Request, op string, ref boa
 	writeJSON(w, 200, preview)
 }
 
-func installBoardSkill(b skillbundle.Bundle, targets []boardSkillRoot, changes []configBundleChange) error {
+func installBoardSkill(b skillbundle.Bundle, targets []boardSkillRoot, changes []configBundleChange, snapshots map[string]string) error {
 	type staged struct {
 		root              *os.Root
 		stage, backup     string
 		installed, backed bool
 		expectedExisting  bool
+		path, snapshot    string
 	}
 	stages := []*staged{}
 	success := false
@@ -309,7 +310,7 @@ func installBoardSkill(b skillbundle.Bundle, targets []boardSkillRoot, changes [
 			return e
 		}
 		token := proto.NewEnvelopeID()
-		s := &staged{root: root, stage: ".tclaude-skill-" + token, backup: ".tclaude-skill-backup-" + token, expectedExisting: changes[i].Action == "replace"}
+		s := &staged{root: root, stage: ".tclaude-skill-" + token, backup: "tclaude-skill-backup-" + token, expectedExisting: changes[i].Action == "replace", path: target.Path, snapshot: snapshots[target.ID]}
 		stages = append(stages, s)
 		if e = root.Mkdir(s.stage, 0700); e != nil {
 			return e
@@ -346,6 +347,17 @@ func installBoardSkill(b skillbundle.Bundle, targets []boardSkillRoot, changes [
 				return e
 			}
 			s.backed = true
+			// Check the directory actually removed from the live name, not a
+			// pathname checked before staging. A concurrent edit is restored by
+			// rollback rather than silently discarded with the backup.
+			old, e := skillbundle.Export(s.path, s.backup)
+			if e != nil {
+				return fmt.Errorf("skill target changed since preview: %w", e)
+			}
+			old.Name = b.Name
+			if boardPreviewHash(old) != s.snapshot {
+				return errors.New("skill target changed since preview; preview again")
+			}
 		} else if !os.IsNotExist(e) {
 			return e
 		} else if s.expectedExisting {
