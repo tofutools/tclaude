@@ -1736,6 +1736,10 @@ type layerProof struct {
 	// layerClaim distinguishes "not a layer claim" (legacy identity may
 	// proceed) from "claimed a layer row but failed proof" (fail closed).
 	layerClaim bool
+	// claimedTmux is the tmux session recorded on the claimed row, when the
+	// claim loaded one. Caller-selected; used only to decide whether a
+	// refusal's owner is still alive (brokerCallerOwner), never to attribute.
+	claimedTmux string
 	// detail spells out why a proof FAILED, for the daemon log. Empty on
 	// success and when layerClaim is false, except for a row-load error,
 	// which the call site wants to distinguish from "no such row".
@@ -1785,6 +1789,9 @@ func proveLaunchPaneCallerIn(t *brokerProcTable, callerPID int, claimedID string
 	}
 	row, err := db.LoadSession(claimedID)
 	lap(&timing.dbDur)
+	if row != nil {
+		timing.claimedTmux = row.TmuxSession
+	}
 	if err != nil || row == nil || (layerOnly && !isTclaudeLayerRow(row)) {
 		// Not a layer claim as far as the proof is concerned, but a LoadSession
 		// error is worth distinguishing at the call site from "no such row":

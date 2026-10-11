@@ -169,6 +169,48 @@ test('the machine-level notice reports refusals a badge may not show', async (t)
     }
   });
 
+  await t.test('the dismiss button silences this instance until the counts change', async () => {
+    const calls = [];
+    let status = 204;
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url, method: init?.method });
+      return new Response(null, { status });
+    };
+    t.after(() => { globalThis.fetch = previousFetch; });
+
+    const snapshot = { broker_refusals_total: 7, broker_refusals_unplaceable: 7 };
+    const mounted = await mount(snapshot);
+    try {
+      const button = mounted.container.querySelector('.broker-refusal-notice-dismiss');
+      assert.ok(button, 'expected a dismiss button');
+      await harness.act(async () => { button.click(); });
+      assertAbsent(mounted.container.querySelector('.broker-refusal-notice'));
+      assert.deepEqual(calls, [{ url: '/api/broker-refusals/dismiss', method: 'POST' }],
+        'the dismissal is kept by the daemon, not this browser');
+
+      // Same counts on the next poll (before the daemon reports zero): still hidden.
+      await mounted.rerender(harness.html`<${BrokerRefusalNotice} snapshot=${{ ...snapshot }} />`);
+      assertAbsent(mounted.container.querySelector('.broker-refusal-notice'));
+      // A newer refusal changes the counts: the notice is back at once.
+      await mounted.rerender(harness.html`<${BrokerRefusalNotice}
+        snapshot=${{ broker_refusals_total: 8, broker_refusals_unplaceable: 8 }} />`);
+      assert.ok(mounted.container.querySelector('.broker-refusal-notice'));
+
+      // A dismissal the daemon refused must not leave the warning hidden.
+      status = 500;
+      await harness.act(async () => {
+        mounted.container.querySelector('.broker-refusal-notice-dismiss').click();
+        // Let the rejected request settle inside act.
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      });
+      assert.ok(mounted.container.querySelector('.broker-refusal-notice'),
+        'a failed dismissal brings the notice back');
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
   await t.test('one unplaceable callback during teardown stays quiet', async () => {
     const mounted = await mount({ broker_refusals_total: 1, broker_refusals_unplaceable: 1 });
     try {
