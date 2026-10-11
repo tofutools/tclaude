@@ -99,6 +99,60 @@
     "owner": {
       "description": "group.json member: advisory; ownership never travels.",
       "type": "boolean"
+    },
+    "transfer": {
+      "description": "agent.json: continuation state for move and teleport.",
+      "type": "object",
+      "properties": {
+        "identity": {
+          "type": "object",
+          "description": "Stable federation identity of a continuation (agent, home, hops, proofs)."
+        },
+        "carry_permissions": {
+          "type": "boolean",
+          "description": "The sender opted in to carrying permissions; the receiver still decides."
+        },
+        "trigger": {
+          "type": "string",
+          "description": "What started the transfer, such as teleport or move."
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "item": {
+      "description": "environment.json placeholder: the configuration item the placeholder stands in.",
+      "type": "string"
+    },
+    "field": {
+      "description": "environment.json placeholder: the field of that item.",
+      "type": "string"
+    },
+    "converted_from": {
+      "description": "manifest root: the legacy carrier this PAF was converted from.",
+      "type": "object",
+      "required": [
+        "format",
+        "format_version"
+      ],
+      "properties": {
+        "format": {
+          "type": "string"
+        },
+        "format_version": {
+          "type": "integer"
+        },
+        "tclaude_version": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string"
+        }
+      }
     }
   }
 }

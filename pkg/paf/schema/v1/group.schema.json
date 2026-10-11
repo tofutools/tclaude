@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/group.schema.json",
+  "title": "PAF group.json",
+  "type": "object",
+  "required": [
+    "name",
+    "members"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "members": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "agent"
+        ],
+        "properties": {
+          "agent": {
+            "$ref": "common.schema.json#/$defs/agentKey"
+          },
+          "role": {
+            "type": "string"
+          },
+          "extensions": {
+            "$ref": "common.schema.json#/$defs/extensions"
+          }
+        }
+      }
+    },
+    "extensions": {
+      "$ref": "common.schema.json#/$defs/extensions"
+    }
+  }
+}

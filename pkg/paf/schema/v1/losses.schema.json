@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/losses.schema.json",
+  "title": "PAF agents/<key>/context/losses.json",
+  "description": "Counts and categories only; never transcript content.",
+  "type": "object",
+  "required": [
+    "source",
+    "items"
+  ],
+  "properties": {
+    "source": {
+      "type": "string"
+    },
+    "target": {
+      "type": "string"
+    },
+    "source_entries": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "carried_entries": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "dropped_percent": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "kept_percent": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "source_estimated_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "carried_estimated_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "context_window_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "context_window_source": {
+      "type": "string"
+    },
+    "budget_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "fallback": {
+      "type": "string",
+      "description": "Legacy morph delivery name. Known: native (meaning translated into a native conversation), context_file, handoff."
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "kind",
+          "severity",
+          "count"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "Open set; readers accept unknown kinds."
+          },
+          "severity": {
+            "type": "string",
+            "description": "Open set; readers accept unknown values. Known: info, warn."
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "landing_rung": {
+      "type": "string",
+      "description": "Open set. Known: native, translated, context_file, archive."
+    },
+    "extensions": {
+      "$ref": "common.schema.json#/$defs/extensions"
+    }
+  }
+}
