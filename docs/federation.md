@@ -2692,7 +2692,10 @@ resume polling the same ID after reconnecting. `tclaude update --no-wait` return
 that ID immediately; `--job <id>` reads it later, including after a restart.
 Node summaries expose cached `version`, optional `latest_version`, nullable
 `update_available`, and optional `update_checked_at` without release requests
-in the polling path. Release metadata is refreshed in the background hourly.
+in the polling path. With federation enabled and a hub URL configured, release
+metadata is refreshed in the background hourly. A standalone daemon does not
+start these Fleet release checks; explicit local update and harness-install
+requests still fetch metadata on demand.
 
 In the dashboard, each Skynet map card shows the node's tclaude version and ↑
 when a newer release is known; its update…/manage… link opens that node's
