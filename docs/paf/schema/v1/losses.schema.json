@@ -87,6 +87,9 @@
     "landing_rung": {
       "type": "string",
       "description": "Open set. Known: native, translated, context_file, archive."
+    },
+    "extensions": {
+      "$ref": "common.schema.json#/$defs/extensions"
     }
   }
 }

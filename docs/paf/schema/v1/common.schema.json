@@ -36,6 +36,9 @@
         },
         "snapshot": {
           "type": "string"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/extensions"
         }
       }
     },
@@ -60,6 +63,22 @@
             "type": "string"
           }
         }
+      }
+    },
+    "extensionId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*(\\.[a-z0-9][a-z0-9-]*)*$",
+      "maxLength": 128,
+      "description": "Single-label ids are reserved for extensions documented in the PAF spec; others use reverse-DNS."
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Extension data keyed by a declared extension id.",
+      "propertyNames": {
+        "$ref": "#/$defs/extensionId"
+      },
+      "additionalProperties": {
+        "type": "object"
       }
     }
   }

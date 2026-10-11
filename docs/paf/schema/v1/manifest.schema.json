@@ -82,9 +82,60 @@
           },
           "media_type": {
             "type": "string"
+          },
+          "extensions": {
+            "$ref": "common.schema.json#/$defs/extensions"
           }
         }
       }
+    },
+    "extensions_required": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.schema.json#/$defs/extensionId"
+      }
+    },
+    "extensions_used": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "common.schema.json#/$defs/extensionId"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "version",
+          "system",
+          "spec"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "pattern": "^[0-9]+\\.[0-9]+$"
+          },
+          "system": {
+            "type": "string",
+            "minLength": 1
+          },
+          "system_version": {
+            "type": "string"
+          },
+          "spec": {
+            "type": "string",
+            "minLength": 1
+          },
+          "schema": {
+            "type": "string"
+          },
+          "copy": {
+            "type": "string",
+            "description": "Open set; unknown values mean unsafe. Known: safe, unsafe (default)."
+          }
+        }
+      }
+    },
+    "extensions": {
+      "$ref": "common.schema.json#/$defs/extensions"
     }
   },
   "if": {

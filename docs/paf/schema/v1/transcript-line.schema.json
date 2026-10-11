@@ -43,8 +43,14 @@
             },
             "title": {
               "type": "string"
+            },
+            "extensions": {
+              "$ref": "common.schema.json#/$defs/extensions"
             }
           }
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/extensions"
         }
       }
     },
@@ -64,6 +70,9 @@
         },
         "time": {
           "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/extensions"
         }
       }
     },
@@ -110,6 +119,9 @@
           "items": {
             "$ref": "#/$defs/block"
           }
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/extensions"
         }
       }
     },
@@ -159,6 +171,9 @@
           "items": {
             "$ref": "#/$defs/media"
           }
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/extensions"
         }
       },
       "allOf": [
@@ -243,6 +258,9 @@
         },
         "name": {
           "type": "string"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/extensions"
         }
       },
       "oneOf": [

@@ -2,34 +2,78 @@
   "id": "agt_ec3610e5242d4dade96f209454f5e9c1",
   "name": "fixer",
   "title": "Fix flaky clone test",
-  "instance": {"id": "inst_3f9a", "name": "laptop"},
-  "conversation": {"id": "4b0c1c6e-0d7e-4a52-9e1e-6a2f5c7d9b10", "title": "Fix flaky clone test", "harness": "claude"},
+  "instance": {
+    "id": "inst_3f9a",
+    "name": "laptop"
+  },
+  "conversation": {
+    "id": "4b0c1c6e-0d7e-4a52-9e1e-6a2f5c7d9b10",
+    "title": "Fix flaky clone test",
+    "harness": "claude"
+  },
   "definition": {
     "role": "worker",
     "startup_context": "Use git worktrees and open PRs against main.",
     "initial_message": "TestCloneCooldown is flaky. Find out why and fix it.",
-    "task": {"url": "https://example.com/issues/42", "label": "issue 42"},
-    "profile_name": "worker-opus",
-    "profile": {
-      "harness": "claude",
-      "model": "opus",
-      "effort": "high",
-      "permission_mode": "default",
-      "sandbox": {"mode": "tclaude-layer"}
+    "task": {
+      "url": "https://example.com/issues/42",
+      "label": "issue 42"
     }
   },
-  "groups": [{"name": "tclaude", "role": "worker"}],
-  "permissions": [{"slug": "self.rename", "effect": "allow", "source": "default"}],
-  "lineage": [
-    {"op": "spawn", "at": "2026-10-11T18:00:00Z", "from": {"instance": "inst_3f9a", "agent": "agt_24d1048d94114372065954bc07ddc1bf"}},
-    {"op": "snapshot", "at": "2026-10-11T19:40:00Z"}
+  "groups": [
+    {
+      "name": "tclaude",
+      "role": "worker"
+    }
   ],
-  "snapshot": {"name": "fixer-root-cause-found", "note": "Root cause identified; fix not started.", "taken_at": "2026-10-11T19:40:00Z", "state": "idle"},
+  "lineage": [
+    {
+      "op": "spawn",
+      "at": "2026-10-11T18:00:00Z",
+      "from": {
+        "instance": "inst_3f9a",
+        "agent": "agt_24d1048d94114372065954bc07ddc1bf"
+      }
+    },
+    {
+      "op": "snapshot",
+      "at": "2026-10-11T19:40:00Z"
+    }
+  ],
+  "snapshot": {
+    "name": "fixer-root-cause-found",
+    "note": "Root cause identified; fix not started.",
+    "taken_at": "2026-10-11T19:40:00Z",
+    "state": "idle"
+  },
   "native": {
     "format": "claude-jsonl",
     "path": "agents/fixer/native/claude-jsonl/history.jsonl",
     "harness": "claude",
     "harness_version": "2.3.0",
     "source_conv_id": "4b0c1c6e-0d7e-4a52-9e1e-6a2f5c7d9b10"
+  },
+  "extensions": {
+    "tclaude": {
+      "spawn_profile": {
+        "name": "worker-opus",
+        "profile": {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "high",
+          "permission_mode": "default",
+          "sandbox": {
+            "mode": "tclaude-layer"
+          }
+        }
+      },
+      "permissions": [
+        {
+          "slug": "self.rename",
+          "effect": "allow",
+          "source": "default"
+        }
+      ]
+    }
   }
 }

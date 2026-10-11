@@ -6,8 +6,8 @@
   "entries": [
     {
       "path": "agents/reviewer/agent.json",
-      "bytes": 664,
-      "sha256": "9daf6a9160bddb044f401a0aad7e276eae1fa067e3b6e33a25cdc1b4780d36a2",
+      "bytes": 731,
+      "sha256": "197362f82a17cd99a8f16e23ae1fd396592688482adeac39c38790da1d4de1b6",
       "media_type": "application/json"
     },
     {
@@ -17,6 +17,17 @@
       "media_type": "application/json"
     }
   ],
+  "extensions_required": [],
+  "extensions_used": {
+    "tclaude": {
+      "copy": "unsafe",
+      "schema": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/ext/tclaude.schema.json",
+      "spec": "https://github.com/tofutools/tclaude/blob/main/docs/paf.md#the-tclaude-extension",
+      "system": "tclaude",
+      "system_version": "v0.0.2212",
+      "version": "1.0"
+    }
+  },
   "format": "paf",
   "kind": "agent",
   "paf_version": "1.0",
