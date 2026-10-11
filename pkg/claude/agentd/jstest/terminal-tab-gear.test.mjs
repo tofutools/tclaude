@@ -96,12 +96,20 @@ test('the launch dialog styles its fields with the dashboard controls, in both t
     'wizard mode gives its fields the Clone dialog family skin');
 });
 
-test('dot-shaped status lights are drawn centred on their box, not typed', async () => {
+test('status lights and the tab ⚙ are drawn, and sit on the title\'s x-height centre', async () => {
   const css = await readFile(new URL('../dashboard/mux.css', import.meta.url), 'utf8');
-  // A ● glyph sits wherever the font's metrics put it, below the ⚙ and title.
-  assert.match(css, /\.mux-tab-status-unknown\) \{ position: relative; font-size: 0; \}/, 'the glyph takes no space');
-  assert.match(css, /\.mux-tab-status-unknown\)::before \{\s*content: ""; position: absolute; inset: 0; margin: auto;/, 'the shape centres on the box');
-  for (const state of ['working', 'idle', 'waking', 'offline', 'unknown']) {
-    assert.match(css, new RegExp(`\\.mux-tab-status\\.mux-tab-status-${state}::before \\{`), `${state} draws its own shape`);
+  // A glyph (●, ?, ⚙) sits wherever the OS's font puts its ink, so it moved
+  // per machine. Every state masks a drawn shape instead; the symbol text is
+  // kept for tests and accessibility but takes no layout.
+  for (const state of ['working', 'idle', 'waking', 'offline', 'unknown', 'awaiting', 'error', 'restarting']) {
+    assert.match(css, new RegExp(`\\.mux-tab-status-${state} \\{ --mux-status-icon: url\\("data:image/svg\\+xml,<svg [^"]*viewBox='0 0 15 15'`), `${state} draws its shape`);
   }
+  assert.match(css, /\.mux-tab-status-exited \{ --mux-status-icon: url\("data:image\/svg\+xml,/, 'crashed/exited draw their shape');
+  assert.match(css, /\.mux-tab-status-symbol \{ position: absolute;/, 'the symbol text takes no space');
+  assert.match(css, /--mux-gear-icon: url\("data:image\/svg\+xml,<svg [^"]*viewBox='0 0 15 15'/, 'the tab ⚙ is drawn too');
+  // Both are 15px boxes placed by vertical-align: middle in the tab's own font,
+  // i.e. on the title's x-height centre, not by flex box centring.
+  assert.match(css, /\.mux-tab-status::before \{\s*content: ""; display: inline-block; vertical-align: middle;\s*width: 15px; height: 15px; margin: -4px 0;/);
+  assert.match(css, /\.mux-tab-gear \.cog-btn \{[^}]*vertical-align: middle;[^}]*width: 15px; height: 15px; margin: -4px 0;/);
+  assert.doesNotMatch(css, /\.mux-tab-status \{[^}]*font-size/, 'the light keeps the tab font, whose x-height places it');
 });

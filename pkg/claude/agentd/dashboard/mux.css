@@ -29,11 +29,14 @@
 }
 .mux-tab:hover { color: #c9d1d9; }
 .mux-tab.active { background: #21262d; color: #c9d1d9; border-color: #3d4451; }
-.mux-tab-status {
-  flex: none; display: inline-grid; place-items: center;
-  width: 13px; height: 13px; border-radius: 50%;
-  font-size: 12px; font-weight: 700; line-height: 1;
+.mux-tab-status { flex: none; display: inline-block; position: relative; width: 15px; }
+.mux-tab-status::before {
+  content: ""; display: inline-block; vertical-align: middle;
+  width: 15px; height: 15px; margin: -4px 0; background: currentColor;
+  -webkit-mask: var(--mux-status-icon) center / 100% 100% no-repeat;
+  mask: var(--mux-status-icon) center / 100% 100% no-repeat;
 }
+.mux-tab-status-symbol { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .mux-tab-status-working { color: #3fb950; }
 .mux-tab-status-idle { color: #d29922; }
 .mux-tab-status-awaiting { color: #58a6ff; }
@@ -44,23 +47,29 @@
 .mux-tab-status-unknown { color: #8b949e; }
 .mux-tab-status-waking,
 .mux-tab-status-restarting { color: #d29922; }
-/* Dot-shaped lights are drawn, not typed: a ● or ○ glyph sits wherever the
-   font's metrics put it, a pixel or more below the ⚙ and the title. The glyph
-   stays in the DOM (tests, the pane header) but takes no space; the shape is
-   centred on the box itself, odd-sized so it lands on whole pixels. */
-.mux-tab-status:is(.mux-tab-status-working, .mux-tab-status-idle, .mux-tab-status-waking, .mux-tab-status-offline, .mux-tab-status-unknown) { position: relative; font-size: 0; }
-.mux-tab-status:is(.mux-tab-status-working, .mux-tab-status-idle, .mux-tab-status-waking, .mux-tab-status-offline, .mux-tab-status-unknown)::before {
-  content: ""; position: absolute; inset: 0; margin: auto;
-  box-sizing: border-box; width: 7px; height: 7px; border-radius: 50%;
-}
-.mux-tab-status.mux-tab-status-working::before { background: currentColor; }
-.mux-tab-status.mux-tab-status-idle::before { border: 1.5px solid currentColor; }
-.mux-tab-status.mux-tab-status-waking::before { border: 1.5px dashed currentColor; }
-.mux-tab-status.mux-tab-status-offline::before { width: 7px; height: 1px; border-radius: 0; background: currentColor; }
-.mux-tab-status.mux-tab-status-unknown::before { width: 3px; height: 3px; background: currentColor; }
-.mux-tab-status-working { animation: mux-tab-status-pulse 1.8s ease-in-out infinite; }
-.mux-tab-status-waking,
-.mux-tab-status-restarting { animation: mux-tab-status-pulse 1.2s ease-in-out infinite; }
+/* Every light is drawn, never typed: a glyph (●, ?, ⚙ …) sits wherever the
+   font — or the fallback font the OS picks for it — puts its ink, so it moved
+   per machine. Each state masks a shape centred on a 15×15 viewBox instead.
+   The light (and the tab ⚙ below, the same way) is then placed by the title's
+   own font, not by box centring: the item keeps the tab's font, so its line box
+   matches the title's, and vertical-align: middle puts the shape's centre on
+   the title's x-height centre — the line a reader sees as the text's middle,
+   whatever font this OS resolves. The -4px block margins keep the 15px box
+   inside that line box, so it never grows it. The symbol stays in the DOM
+   (tests, accessible text) but out of layout. */
+.mux-tab-status-working { --mux-status-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 15 15'><circle cx='7.5' cy='7.5' r='3.5'/></svg>"); }
+.mux-tab-status-idle { --mux-status-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 15 15'><circle cx='7.5' cy='7.5' r='2.75' fill='none' stroke='black' stroke-width='1.5'/></svg>"); }
+.mux-tab-status-waking { --mux-status-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 15 15'><circle cx='7.5' cy='7.5' r='2.75' fill='none' stroke='black' stroke-width='1.5' stroke-dasharray='1.6 1.28'/></svg>"); }
+.mux-tab-status-offline { --mux-status-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 15 15'><rect x='4' y='7' width='7' height='1'/></svg>"); }
+.mux-tab-status-unknown { --mux-status-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 15 15'><circle cx='7.5' cy='7.5' r='1.5'/></svg>"); }
+.mux-tab-status-awaiting { --mux-status-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 15 15'><path d='M5.6 6.4C5.6 5.3 6.4 4.6 7.5 4.6S9.4 5.3 9.4 6.3C9.4 7.7 7.5 7.9 7.5 9.8' stroke='black' stroke-width='1.6' stroke-linecap='round' fill='none'/><circle cx='7.5' cy='12.4' r='1.05'/></svg>"); }
+.mux-tab-status-error { --mux-status-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 15 15'><rect x='6.7' y='3.1' width='1.6' height='6.4' rx='0.8'/><circle cx='7.5' cy='11.5' r='1'/></svg>"); }
+.mux-tab-status-crashed,
+.mux-tab-status-exited { --mux-status-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 15 15'><path d='M4.6 4.6L10.4 10.4M10.4 4.6L4.6 10.4' stroke='black' stroke-width='1.6' stroke-linecap='round' fill='none'/></svg>"); }
+.mux-tab-status-restarting { --mux-status-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 15 15'><path d='M11.1 8.2A3.6 3.6 0 1 1 10.2 5.1' stroke='black' stroke-width='1.6' stroke-linecap='round' fill='none'/><path d='M11.7 2.9V6.4H8.2Z'/></svg>"); }
+.mux-tab-status-working::before { animation: mux-tab-status-pulse 1.8s ease-in-out infinite; }
+.mux-tab-status-waking::before,
+.mux-tab-status-restarting::before { animation: mux-tab-status-pulse 1.2s ease-in-out infinite; }
 .mux-tab.active .mux-tab-status-working { color: #56d364; }
 .mux-pane-agent-status { margin-left: 2px; }
 @keyframes mux-tab-status-pulse {
@@ -68,9 +77,9 @@
   50% { opacity: 1; transform: scale(1.08); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .mux-tab-status-working,
-  .mux-tab-status-waking,
-  .mux-tab-status-restarting { animation: none; }
+  .mux-tab-status-working::before,
+  .mux-tab-status-waking::before,
+  .mux-tab-status-restarting::before { animation: none; }
 }
 .mux-tab-label {
   overflow: hidden; text-overflow: ellipsis; max-width: 200px;
@@ -479,15 +488,26 @@ body.wizard .mux-pane-xterm {
    because .mux-tabs scrolls sideways and would clip it. TabGear places it. */
 /* The wrapper also carries .row-actions, so the menu shares the Groups row
    menu's rules; undo that cluster's hover-to-reveal dimming here. The cog is
-   sized like the status light beside it so the two share a centre line. */
-.mux-tab-gear.row-actions { flex: none; display: inline-flex; align-items: center; opacity: 1; }
+   placed like the status light beside it (see .mux-tab-status): a 15px box on
+   the title's x-height centre, so the two share a centre line by construction. */
+.mux-tab-gear.row-actions { flex: none; display: inline-block; opacity: 1; }
 .mux-tab-gear .cog-btn {
-  display: inline-grid; place-items: center; box-sizing: border-box;
-  width: 16px; height: 16px; padding: 0; font-size: 13px; line-height: 1;
+  display: inline-grid; place-items: center; box-sizing: border-box; vertical-align: middle;
+  width: 15px; height: 15px; margin: -4px 0; padding: 0; font-size: 0; line-height: 1;
   background: none; border: 1px solid transparent; border-radius: 3px;
   color: #e3a008; cursor: pointer;
 }
-.mux-tab-gear .cog-glyph { display: block; line-height: 1; }
+/* The ⚙ is drawn the way the status light is, for the same reason, in a box
+   of the same size: it spills over the button's 1px border (margin: -1px) so
+   both boxes sit on identical fractional offsets and snap together. */
+.mux-tab-gear .cog-glyph {
+  display: block; width: 15px; height: 15px; margin: -1px; background: currentColor;
+  -webkit-mask: var(--mux-gear-icon) center / 100% 100% no-repeat;
+  mask: var(--mux-gear-icon) center / 100% 100% no-repeat;
+  --mux-gear-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 15 15'><path fill-rule='evenodd' transform='translate(7.5 7.5) scale(0.87) translate(-7.5 -7.5)' d='M12.18 6.05L14 6.38V8.62L12.18 8.95L11.83 9.79L12.89 11.31L11.31 12.89L9.79 11.83L8.95 12.18L8.62 14H6.38L6.05 12.18L5.21 11.83L3.69 12.89L2.11 11.31L3.17 9.79L2.82 8.95L1 8.62V6.38L2.82 6.05L3.17 5.21L2.11 3.69L3.69 2.11L5.21 3.17L6.05 2.82L6.38 1H8.62L8.95 2.82L9.79 3.17L11.31 2.11L12.89 3.69L11.83 5.21ZM9.7 7.5A2.2 2.2 0 1 0 5.3 7.5A2.2 2.2 0 1 0 9.7 7.5Z'/></svg>");
+}
 .mux-tab-gear .cog-btn:hover, .mux-tab-gear .cog-btn[aria-expanded="true"] { color: #ffb52e; border-color: #6b4f1d; }
+/* A mask has no text to cast the wizard cogs' text-shadow glow; filter it. */
+body.wizard .mux-tab-gear .cog-glyph { filter: drop-shadow(0 0 3px rgba(169, 123, 214, 0.55)); }
 .mux-tab-gear .action-menu { position: fixed; margin-top: 0; z-index: 1000; overflow-y: auto; }
 .mux-tab-gear .action-menu.opens-up { top: auto; bottom: auto; }

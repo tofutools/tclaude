@@ -277,7 +277,7 @@ function TerminalPane({
               role="img"
               aria-label=${agentStatus.ariaLabel}
               title=${agentStatus.title}
-            >${agentStatus.symbol}</span>
+            ><span class="mux-tab-status-symbol">${agentStatus.symbol}</span></span>
           ` : null}
           <span
             class=${`mux-pane-title mux-pane-title-drag${dragging ? ' dragging' : ''}`}
@@ -577,7 +577,7 @@ function PaneTab({
         class=${`mux-tab-status mux-tab-status-${agentStatus.className}`}
         aria-hidden="true"
         title=${agentStatus.title}
-      >${agentStatus.symbol}</span>
+      ><span class="mux-tab-status-symbol">${agentStatus.symbol}</span></span>
       ${gear ? html`<${TabGear} gear=${gear} snapshot=${snapshot} menuKey=${`tab:${pane.key}`} />` : null}
       <${TabAttention} pane=${pane} snapshot=${snapshot} messages=${unreadMessages} />
       <${NodePill} node=${scope?.node} />
