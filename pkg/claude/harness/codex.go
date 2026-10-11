@@ -41,6 +41,7 @@ func init() {
 		},
 		Convs:            codexConvStore{},
 		History:          jsonlHistory{harness: CodexName},
+		Transcript:       codexTranscript{},
 		Hooks:            codexHookInstaller{},
 		Life:             codexLifecycle{},
 		Sandbox:          codexSandbox{},
