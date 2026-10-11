@@ -103,6 +103,12 @@ func (claudeTranscript) Decode(r io.Reader, sourceID string) (*transcript.Transc
 		if err := json.Unmarshal(raw, &rec); err != nil {
 			return fmt.Errorf("invalid Claude history JSON at line %d", line)
 		}
+		if rec.SessionID != "" && rec.SessionID != sourceID {
+			if rec.Type == "user" || rec.Type == "assistant" {
+				t.Losses.Add(transcript.LossInactiveBranch, 1, "different session")
+			}
+			return nil
+		}
 		switch rec.Type {
 		case "user", "assistant":
 		case "custom-title":

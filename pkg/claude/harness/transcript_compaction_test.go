@@ -155,7 +155,7 @@ func TestOpenCodeAndCopilotDecodeCompaction(t *testing.T) {
 		obj{"info": obj{"id": fixtureOC, "directory": "/src"}},
 		obj{"message": obj{"info": obj{"id": "msg_a1", "sessionID": fixtureOC, "role": "user"}, "parts": []obj{{"id": "prt_a1", "sessionID": fixtureOC, "messageID": "msg_a1", "type": "text", "text": "old"}}}},
 		obj{"message": obj{"info": obj{"id": "msg_a2", "sessionID": fixtureOC, "role": "user"}, "parts": []obj{{"id": "prt_a2", "sessionID": fixtureOC, "messageID": "msg_a2", "type": "compaction"}}}},
-		obj{"message": obj{"info": obj{"id": "msg_a3", "sessionID": fixtureOC, "role": "assistant", "summary": true}, "parts": []obj{{"id": "prt_a3", "sessionID": fixtureOC, "messageID": "msg_a3", "type": "text", "text": "SUMMARY-TEXT"}}}},
+		obj{"message": obj{"info": obj{"id": "msg_a3", "sessionID": fixtureOC, "role": "assistant", "summary": true, "finish": "stop"}, "parts": []obj{{"id": "prt_a3", "sessionID": fixtureOC, "messageID": "msg_a3", "type": "text", "text": "SUMMARY-TEXT"}}}},
 		obj{"message": obj{"info": obj{"id": "msg_a4", "sessionID": fixtureOC, "role": "user"}, "parts": []obj{{"id": "prt_a4", "sessionID": fixtureOC, "messageID": "msg_a4", "type": "text", "text": "next"}}}},
 	)
 	assert.Equal(t, []string{"user|SUMMARY:SUMMARY-TEXT", "user|next"}, entryTexts(decodeFixture(t, openCodeTranscript{}, fixtureOC, oc)))

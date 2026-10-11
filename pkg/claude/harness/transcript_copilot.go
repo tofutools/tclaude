@@ -37,7 +37,8 @@ func (copilotTranscript) Decode(r io.Reader, sourceID string) (*transcript.Trans
 	found := false
 	harness := 0
 	sidechain := 0
-	err := scanHistoryRecords(r, func(line int, raw []byte) error {
+	truncated := false
+	err := scanCopilotTranscriptRecords(r, t.Losses, func(line int, raw []byte) error {
 		var ev struct {
 			Type      string          `json:"type"`
 			Timestamp string          `json:"timestamp"`
@@ -76,7 +77,25 @@ func (copilotTranscript) Decode(r io.Reader, sourceID string) (*transcript.Trans
 			}
 			if json.Unmarshal(ev.Data, &d) == nil && d.Success {
 				t.ResetToSummary(d.SummaryContent, at)
+				truncated = false
 			}
+		case "session.context_cleared":
+			var d struct {
+				InitialMessage string `json:"initialMessage"`
+			}
+			if err := json.Unmarshal(ev.Data, &d); err != nil {
+				return fmt.Errorf("invalid Copilot clear at line %d", line)
+			}
+			t.Losses.Add(transcript.LossClearedHistory, len(t.Entries), "")
+			t.Entries = nil
+			truncated = false
+			if d.InitialMessage != "" {
+				t.Append(transcript.Entry{Role: transcript.RoleUser, Origin: transcript.OriginHuman, Time: at, Blocks: []transcript.Block{transcript.Text(d.InitialMessage)}})
+			}
+		case "session.truncation":
+			// This event records statistics, not the identities of retained
+			// messages. Guessing from counts can resurrect discarded context.
+			truncated = true
 		case "user.message":
 			var d struct {
 				Content          string `json:"content"`
@@ -202,6 +221,9 @@ func (copilotTranscript) Decode(r io.Reader, sourceID string) (*transcript.Trans
 	})
 	if err != nil {
 		return nil, err
+	}
+	if truncated {
+		return nil, errors.New("copilot truncation does not identify retained messages; use the agent-written handoff")
 	}
 	if !found {
 		return nil, errors.New("copilot history has no matching session.start")

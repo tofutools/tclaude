@@ -64,7 +64,7 @@ func (codexTranscript) Decode(r io.Reader, sourceID string) (*transcript.Transcr
 	t := transcript.New(transcript.Source{Harness: CodexName, Format: "codex-rollout-jsonl", ConvID: sourceID})
 	harness := 0
 	found := false
-	err := scanHistoryRecords(r, func(line int, raw []byte) error {
+	err := scanCodexTranscriptRecords(r, t.Losses, func(line int, raw []byte) error {
 		var env codexEnvelope
 		if err := json.Unmarshal(raw, &env); err != nil {
 			return fmt.Errorf("invalid Codex rollout JSON at line %d", line)
@@ -77,10 +77,11 @@ func (codexTranscript) Decode(r io.Reader, sourceID string) (*transcript.Transcr
 				Cwd string `json:"cwd"`
 			}
 			_ = json.Unmarshal(env.Payload, &meta)
-			if meta.ID == sourceID {
-				found = true
-				t.Source.Cwd = meta.Cwd
+			if meta.ID != sourceID {
+				return errors.New("codex history session identity mismatch")
 			}
+			found = true
+			t.Source.Cwd = meta.Cwd
 		case "turn_context":
 			var tc struct {
 				Model string `json:"model"`
