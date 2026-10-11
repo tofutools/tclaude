@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -177,10 +178,21 @@ type brokerRefusalRecorder struct {
 	// panesFailedAt backs off pane-table reads after a failed one, for
 	// brokerPaneCacheTTL. The shared cache keeps no record of a failure, so
 	// without this a wedged tmux would cost every refusal and every
-	// dashboard poll a fresh list-panes of up to the tmux timeout. Guarded
-	// by panesMu, never by mu.
+	// dashboard poll a fresh list-panes of up to the tmux timeout.
+	// panesLoading/panesDone single-flight the read here too: callers
+	// queued behind a hanging read would otherwise each become the next
+	// loader of the shared cache once it fails. Guarded by panesMu, never
+	// by mu.
+	// dismissedAt is when the operator last dismissed the machine-level
+	// notice. counts() reports nothing until a refusal newer than it
+	// arrives, so a dismissal silences the instance on screen without
+	// hiding a later one. Per-row badges are unaffected. Guarded by mu.
+	dismissedAt time.Time
+
 	panesMu       sync.Mutex
 	panesFailedAt time.Time
+	panesLoading  bool
+	panesDone     chan struct{}
 }
 
 var brokerRefusals = newBrokerRefusalRecorder(nil)
@@ -194,23 +206,40 @@ func newBrokerRefusalRecorder(now func() time.Time) *brokerRefusalRecorder {
 }
 
 func (r *brokerRefusalRecorder) paneTable() map[string]brokerPaneEntry {
-	r.panesMu.Lock()
-	backoff := !r.panesFailedAt.IsZero() && time.Since(r.panesFailedAt) < brokerPaneCacheTTL
-	r.panesMu.Unlock()
-	if backoff {
-		return nil
-	}
-	read := cachedBrokerPanes
-	if r.panes != nil {
-		read = r.panes
-	}
-	table := read()
-	if table == nil {
+	for {
 		r.panesMu.Lock()
-		r.panesFailedAt = time.Now()
+		if !r.panesFailedAt.IsZero() && time.Since(r.panesFailedAt) < brokerPaneCacheTTL {
+			r.panesMu.Unlock()
+			return nil
+		}
+		if r.panesLoading {
+			done := r.panesDone
+			r.panesMu.Unlock()
+			<-done
+			// Re-check: a failed read puts every waiter into backoff; a
+			// successful one left a fresh shared cache to read cheaply.
+			continue
+		}
+		r.panesLoading = true
+		r.panesDone = make(chan struct{})
+		done := r.panesDone
 		r.panesMu.Unlock()
+
+		read := cachedBrokerPanes
+		if r.panes != nil {
+			read = r.panes
+		}
+		table := read()
+
+		r.panesMu.Lock()
+		if table == nil {
+			r.panesFailedAt = time.Now()
+		}
+		r.panesLoading = false
+		close(done)
+		r.panesMu.Unlock()
+		return table
 	}
-	return table
 }
 
 // refusalOwner resolves ctx's owner, reading the pane table only when the
@@ -573,16 +602,44 @@ func (r *brokerRefusalRecorder) counts() (total, unplaceable int) {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	var latest time.Time
 	for _, e := range r.bySession {
 		if inWindow(e) {
-			total += e.liveCount(panes)
+			if n := e.liveCount(panes); n > 0 {
+				total += n
+				if e.Last.After(latest) {
+					latest = e.Last
+				}
+			}
 		}
 	}
 	if inWindow(&r.unplaceable) {
 		unplaceable = r.unplaceable.liveCount(panes)
 		total += unplaceable
+		if unplaceable > 0 && r.unplaceable.Last.After(latest) {
+			latest = r.unplaceable.Last
+		}
+	}
+	if !r.dismissedAt.IsZero() && !latest.After(r.dismissedAt) {
+		return 0, 0
 	}
 	return total, unplaceable
+}
+
+// dismiss silences the machine-level notice currently on screen. It comes
+// back with the next refusal recorded after this moment.
+func (r *brokerRefusalRecorder) dismiss() {
+	now := r.clock()
+	r.mu.Lock()
+	r.dismissedAt = now
+	r.mu.Unlock()
+}
+
+// handleDashboardBrokerRefusalsDismiss is the notice's dismiss button. Like
+// every dashboard mutation it rides the dashboard's cookie + Origin gate.
+func handleDashboardBrokerRefusalsDismiss(w http.ResponseWriter, _ *http.Request) {
+	brokerRefusals.dismiss()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // resetForTest clears recorded refusals. The recorder is process-wide
@@ -595,6 +652,7 @@ func (r *brokerRefusalRecorder) resetForTest() {
 	r.unplaceable = brokerRefusal{}
 	r.unplaceableByCaller = map[int]*brokerRefusal{}
 	r.writes = 0
+	r.dismissedAt = time.Time{}
 	r.panesMu.Lock()
 	r.panesFailedAt = time.Time{}
 	r.panesMu.Unlock()

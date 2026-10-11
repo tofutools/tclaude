@@ -1,6 +1,8 @@
 package agentd
 
 import (
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -363,4 +365,52 @@ func TestBrokerRefusals_PaneReadsBackOffAndCheapPathSkipsThem(t *testing.T) {
 	r.refuseUnplaceable("x", ctx)
 	r.counts()
 	assert.Equal(t, 1, reads, "after a failed read, refusal-side reads back off")
+}
+
+// Callers queued behind a hanging pane read must not each run their own read
+// once it fails: they wait for the one in flight and then honour the backoff.
+func TestBrokerRefusals_PaneReadIsSingleFlightAcrossAFailure(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	r := newTestRefusalRecorder(&now)
+	var reads atomic.Int32
+	release := make(chan struct{})
+	r.panes = func() map[string]brokerPaneEntry {
+		reads.Add(1)
+		<-release
+		return nil
+	}
+	var wg sync.WaitGroup
+	for range 10 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			assert.Nil(t, r.paneTable())
+		}()
+	}
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	wg.Wait()
+	assert.EqualValues(t, 1, reads.Load(), "ten concurrent callers share one failed read")
+}
+
+// Dismissing silences the notice on screen until a NEWER refusal arrives;
+// per-row badges are untouched.
+func TestBrokerRefusals_DismissHidesUntilANewerRefusal(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	r := newTestRefusalRecorder(&now)
+	r.recordClaimMismatch("row-a", "x")
+	r.recordUnplaceable("y")
+
+	now = now.Add(time.Second)
+	r.dismiss()
+	total, unplaceable := r.counts()
+	assert.Zero(t, total)
+	assert.Zero(t, unplaceable)
+	assert.NotNil(t, r.forSession("row-a"), "the per-row badge stays")
+
+	now = now.Add(time.Second)
+	r.recordUnplaceable("y")
+	total, unplaceable = r.counts()
+	assert.Equal(t, 3, total, "a newer refusal brings the notice back")
+	assert.Equal(t, 2, unplaceable)
 }
