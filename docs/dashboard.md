@@ -384,6 +384,14 @@ markers, attachment counts, and bulk actions; the reader renders Markdown,
 offers downloadable agent-published attachments with image preview, and can
 reply (human folder), focus the sender's terminal, or toggle read state.
 
+The image and Markdown attachment viewers zoom with the usual inputs: a
+trackpad pinch, Ctrl+scroll, or Ctrl/Cmd and `+` / `-` / `0` (bare `+`, `-`
+and `0` work too). Images zoom around the pointer and pan by dragging; the
+footer offers Fit and 1:1 (actual pixels), and a double-click toggles between
+them. Markdown zoom scales the text and reflows it. Both viewers resize from
+their corner grip, maximize to the window, and go full screen (button or
+`F`).
+
 ![The Messages tab: mailbox tree on the left, thread list and reader on the right](assets/dashboard-messages.png)
 
 *The Messages tab: mailbox tree on the left, thread list and reader on the right*

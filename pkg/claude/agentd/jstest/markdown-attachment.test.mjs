@@ -218,3 +218,34 @@ test('the legacy single-attachment route still backs a document', async (t) => {
   const { requests } = await mount(t, () => okText('# Plan\n'), { ...attachment, url: undefined });
   assert.equal(requests[0].url, '/api/human-messages/42/attachment');
 });
+
+test('pinch, Ctrl+wheel and the zoom keys scale the viewer text', async (t) => {
+  const { harness, mounted } = await mount(t, () => okText(document));
+  await harness.act(() => viewControl(mounted).click());
+  await settle(harness);
+  const dialog = mounted.container.querySelector('.markdown-preview-overlay [role="dialog"]');
+  const zoomBox = () => dialog.querySelector('.markdown-preview-zoom');
+  assert.equal(dialog.querySelector('.markdown-preview-zoom-reset'), null,
+    'the text-size chip only appears once the text is zoomed');
+
+  let event;
+  await harness.act(() => {
+    event = harness.fireEvent(dialog, 'wheel', { deltaY: -30, deltaMode: 0, ctrlKey: true });
+  });
+  assert.equal(event.defaultPrevented, true, 'the browser does not also zoom the page');
+  assert.equal(Number(zoomBox().style.zoom).toFixed(2), Math.exp(0.3).toFixed(2));
+  const chip = dialog.querySelector('.markdown-preview-zoom-reset');
+  assert.equal(chip.textContent, '135%');
+
+  await harness.act(() => chip.click());
+  assert.equal(zoomBox().style.zoom, '');
+  await harness.act(() => { harness.fireEvent(dialog, 'keydown', { key: '+' }); });
+  assert.equal(dialog.querySelector('.markdown-preview-zoom-reset').textContent, '125%');
+  await harness.act(() => { harness.fireEvent(dialog, 'keydown', { key: '0', metaKey: true }); });
+  assert.equal(dialog.querySelector('.markdown-preview-zoom-reset'), null);
+
+  const maximize = dialog.querySelector('.viewer-maximize');
+  await harness.act(() => maximize.click());
+  assert.equal(dialog.getAttribute('data-display'), 'maximized');
+  await mounted.unmount();
+});
