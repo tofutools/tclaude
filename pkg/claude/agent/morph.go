@@ -259,6 +259,9 @@ func printMorphHistory(w io.Writer, r *transcript.LossReport) {
 	if r.ContextWindowTokens > 0 {
 		fmt.Fprintf(w, "  history window: %d tokens (%s), budget %d\n", r.ContextWindowTokens, r.ContextWindowSource, r.BudgetTokens)
 	}
+	if r.CarriedEstimatedTokens > 0 {
+		fmt.Fprintf(w, "  estimated history tokens: %d source → %d carried\n", r.SourceEstimatedTokens, r.CarriedEstimatedTokens)
+	}
 	for _, line := range r.Lines() {
 		fmt.Fprintf(w, "    %s\n", line)
 	}

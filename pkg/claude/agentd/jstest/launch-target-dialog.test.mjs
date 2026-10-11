@@ -94,7 +94,7 @@ test('morph previews the change with a dry run, then applies it at the next idle
     profiles: async () => [{ name: 'codex-high', harness: 'codex', model: 'gpt-5', effort: 'high' }, { name: 'off', disabled: true }],
     morph: async (id, body) => {
       calls.push([id, body]);
-      if (body.dry_run) return { result: 'dry_run', before: { harness: 'claude', model: 'opus' }, after: { harness: 'codex', model: 'gpt-5', effort: 'high', sandbox: 'danger-full-access' }, history: { source: 'claude', target: 'codex', source_entries: 10, carried_entries: 8, context_window_tokens: 32000, context_window_source: "unknown model, assumed 32k", budget_tokens: 19200, items: [] },
+      if (body.dry_run) return { result: 'dry_run', before: { harness: 'claude', model: 'opus' }, after: { harness: 'codex', model: 'gpt-5', effort: 'high', sandbox: 'danger-full-access' }, history: { source: 'claude', target: 'codex', source_entries: 10, carried_entries: 8, context_window_tokens: 32000, context_window_source: "unknown model, assumed 32k", budget_tokens: 19200, source_estimated_tokens: 81495, carried_estimated_tokens: 4980, items: [] },
         sandbox: { implementation: 'tclaude-layer', tclaude: 'on (profile strict), unchanged', harness: 'codex danger-full-access, stood down inside the tclaude sandbox' } };
       return { result: 'pending', detail: '' };
     },
@@ -108,6 +108,7 @@ test('morph previews the change with a dry run, then applies it at the next idle
   assert.match(s.q('.lt-morph-preview').textContent, /was claude · opus.*now codex · gpt-5 · effort high/);
   assert.match(s.q('[data-lt-carries]').textContent, /translated claude → codex: 8 of 10/);
   assert.match(s.q('[data-lt-carries]').textContent, /window 32000.*unknown model, assumed 32k.*budget 19200/);
+  assert.match(s.q('[data-lt-carries]').textContent, /estimated tokens: 81495 source → 4980 carried/);
   const carried = s.q('[data-lt-carries]').textContent;
   assert.match(carried, /tclaude sandbox\s*on \(profile strict\), unchanged/, 'tclaude\'s own sandbox is named, so "danger-full-access" does not read as off');
   assert.match(carried, /Harness sandbox\s*codex danger-full-access, stood down inside the tclaude sandbox/);

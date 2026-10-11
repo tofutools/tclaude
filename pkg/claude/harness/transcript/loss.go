@@ -20,6 +20,7 @@ type LossKind string
 
 const (
 	LossReasoningDropped   LossKind = "reasoning_dropped"
+	LossToolRecordsStubbed LossKind = "tool_records_stubbed"
 	LossToolCallsFlattened LossKind = "tool_calls_flattened"
 	LossToolOutputClipped  LossKind = "tool_output_clipped"
 	LossInterruptedCall    LossKind = "interrupted_tool_call"
@@ -39,6 +40,7 @@ const (
 
 var lossSeverity = map[LossKind]Severity{
 	LossReasoningDropped:   SeverityInfo,
+	LossToolRecordsStubbed: SeverityInfo,
 	LossToolCallsFlattened: SeverityInfo,
 	LossToolOutputClipped:  SeverityWarn,
 	LossInterruptedCall:    SeverityWarn,
@@ -58,6 +60,7 @@ var lossSeverity = map[LossKind]Severity{
 
 var lossText = map[LossKind]string{
 	LossReasoningDropped:   "reasoning/thinking blocks not carried (provider-bound)",
+	LossToolRecordsStubbed: "older tool records shortened (full text in the transcript file)",
 	LossToolCallsFlattened: "tool calls carried as text records",
 	LossToolOutputClipped:  "tool outputs clipped (full text in the transcript file)",
 	LossInterruptedCall:    "tool calls without a recorded result",
@@ -88,6 +91,8 @@ type Loss struct {
 // LossReport is everything a translation did not carry 1:1. It holds counts
 // and categories only, so it is safe to show in notes, previews and audit.
 type LossReport struct {
+	// Estimates use the same coarse byte/media heuristic as the context budget.
+	SourceEstimatedTokens  int64  `json:"source_estimated_tokens"`
 	CarriedEstimatedTokens int64  `json:"carried_estimated_tokens"`
 	ContextWindowTokens    int64  `json:"context_window_tokens"`
 	ContextWindowSource    string `json:"context_window_source"`

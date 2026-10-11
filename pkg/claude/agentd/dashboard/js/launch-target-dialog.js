@@ -109,7 +109,7 @@ export function carries(mode, { node = 'the target', home = 'its home', morph = 
       const hist = morph?.history;
       if (hist && hist.target && hist.source !== hist.target) {
         const lost = (hist.items || []).map((i) => `${i.kind} ×${i.count}`).join(', ');
-        rows.push(['≈', 'History', `translated ${hist.source} → ${hist.target}: ${hist.carried_entries ?? '?'} of ${hist.source_entries ?? '?'} entries carried${hist.context_window_tokens > 0 ? `; window ${hist.context_window_tokens} (${hist.context_window_source}), budget ${hist.budget_tokens}` : ''}${lost ? ` (${lost})` : ''}`]);
+        rows.push(['≈', 'History', `translated ${hist.source} → ${hist.target}: ${hist.carried_entries ?? '?'} of ${hist.source_entries ?? '?'} entries carried${hist.carried_estimated_tokens > 0 ? `; estimated tokens: ${hist.source_estimated_tokens ?? '?'} source → ${hist.carried_estimated_tokens} carried` : ''}${hist.context_window_tokens > 0 ? `; window ${lost ? ` (${hist.context_window_tokens > 0 ? `; window ${lost})` : ''}`]);
       } else rows.push(['✓', 'History', 'kept: it resumes the same conversation']);
       // Both layers, as the daemon resolves them for the launch: the harness's
       // own mode alone reads as "off" for an agent tclaude's sandbox wraps.

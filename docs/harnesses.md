@@ -137,11 +137,16 @@ is explicit about what does not map 1:1:
 
 - **Reasoning** never crosses vendors. Signatures and encrypted reasoning are
   only valid for the provider that issued them.
-- **Tool calls and results** are carried as `⟦tool call · name⟧` /
-  `⟦tool result · name · ok|error⟧` text records, because each harness has
-  different tools. A closing note tells the target agent those records are
-  history, not tools it has. Each record is clipped to
-  `agent.morph.tool_result_clip_bytes` (default 16384).
+- **Tool calls and results** are history, not executable calls. Older than the
+  last three human turns, they become one-line stubs (name, short arguments,
+  status and output preview) pointing to numbered entries in the saved full
+  transcript. Recent results retain up to 4 KiB each, or a smaller configured
+  `agent.morph.tool_result_clip_bytes` cap. Without a saved transcript, existing
+  clipping remains (default 16384 bytes). Attachments keep their normal handling.
+  The CLI and launch preview show approximate source and carried token counts;
+  these are estimates, not a provider tokenizer. The notice tells the successor
+  to read full tool output only when needed and avoid repeating skills or
+  environment checks unless something looks wrong.
 - **Images** stay inline where the target's user turns accept them. Copilot
   references them by a saved path instead.
 - **Context budget.** The carried history fills at most
