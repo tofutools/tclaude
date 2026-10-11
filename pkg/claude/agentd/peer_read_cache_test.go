@@ -67,28 +67,27 @@ func TestPeerReadsServeEveryReaderFromOneConditionalRead(t *testing.T) {
 	rt := testRuntime(t)
 	peer := &db.FederationPeer{InstanceID: "inst_b"}
 	req := fedPeerViewRequest{Method: "GET", URI: "/api/snapshot", Header: http.Header{}}
-	const every = 5 * time.Second
 
-	first, err := c.read(context.Background(), rt, peer, req, every)
+	first, err := c.read(context.Background(), rt, peer, req)
 	require.NoError(t, err)
 	require.Equal(t, `{"groups":[]}`, string(first.Body))
-	f.advance(2 * time.Second)
-	second, err := c.read(context.Background(), rt, peer, req, every)
+	f.advance(500 * time.Millisecond)
+	second, err := c.read(context.Background(), rt, peer, req)
 	require.NoError(t, err)
-	require.Equal(t, 1, f.count(), "a second dashboard within the interval reads the cache")
-	require.Equal(t, "2", second.Header.Get("Age"))
+	require.Equal(t, 1, f.count(), "a second dashboard polling within the fresh window shares the read")
+	require.Equal(t, "0", second.Header.Get("Age"))
 
 	browser := req
 	browser.Header = http.Header{"If-None-Match": {`"v1"`}}
-	notModified, err := c.read(context.Background(), rt, peer, browser, every)
+	notModified, err := c.read(context.Background(), rt, peer, browser)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusNotModified, notModified.Status, "a browser holding the version gets a bodyless 304 here")
 	require.Empty(t, notModified.Body)
 
-	f.advance(5 * time.Second)
-	again, err := c.read(context.Background(), rt, peer, req, every)
+	f.advance(2 * time.Second)
+	again, err := c.read(context.Background(), rt, peer, req)
 	require.NoError(t, err)
-	require.Equal(t, 2, f.count(), "an expired copy is read again")
+	require.Equal(t, 2, f.count(), "a later poll reads the peer again")
 	require.Equal(t, `"v1"`, f.at(1).Header.Get("If-None-Match"), "conditionally")
 	require.Equal(t, `{"groups":[]}`, string(again.Body), "a 304 keeps the body")
 }
@@ -107,62 +106,60 @@ func TestPeerReadsServeFailuresAndExpireOnFederationChanges(t *testing.T) {
 	peer := &db.FederationPeer{InstanceID: "inst_b"}
 	req := fedPeerViewRequest{Method: "GET", URI: "/api/snapshot", Header: http.Header{}}
 
-	_, err := c.read(context.Background(), rt, peer, req, 5*time.Second)
+	_, err := c.read(context.Background(), rt, peer, req)
 	require.NoError(t, err)
 	c.invalidate("inst_other")
-	_, err = c.read(context.Background(), rt, peer, req, 5*time.Second)
+	_, err = c.read(context.Background(), rt, peer, req)
 	require.NoError(t, err)
 	require.Equal(t, 1, f.count(), "another peer's change leaves this copy")
 
 	c.invalidate("inst_b")
-	_, err = c.read(context.Background(), rt, peer, req, 5*time.Second)
+	_, err = c.read(context.Background(), rt, peer, req)
 	require.ErrorIs(t, err, offline, "a failure is served as it came, so the dashboard marks the node")
 	require.Equal(t, 2, f.count())
-	_, err = c.read(context.Background(), rt, peer, req, 5*time.Second)
+	_, err = c.read(context.Background(), rt, peer, req)
 	require.ErrorIs(t, err, offline, "until the next read")
 
 	c.invalidate("")
-	_, err = c.read(context.Background(), rt, peer, req, 5*time.Second)
+	_, err = c.read(context.Background(), rt, peer, req)
 	require.NoError(t, err, "a local federation change expires everything")
 	require.Equal(t, 3, f.count())
 	require.Empty(t, f.at(2).Header.Get("If-None-Match"), "after a failure the read is unconditional")
 
 	other := testRuntime(t)
-	_, err = c.read(context.Background(), other, peer, req, 5*time.Second)
+	_, err = c.read(context.Background(), other, peer, req)
 	require.NoError(t, err)
 	require.Equal(t, 4, f.count(), "a replaced runtime starts afresh")
 }
 
-func TestPeerReadsRefreshWhileReadAndStopWhenIdle(t *testing.T) {
+func TestPeerReadsRunNothingBetweenPollsAndDropIdleEntries(t *testing.T) {
 	f := &fakePeerReads{clock: time.Unix(1000, 0)}
 	f.reply = func(int, fedPeerViewRequest) (fedPeerViewReply, error) { return snapshotReply(`{}`), nil }
 	c := f.cache()
 	rt := testRuntime(t)
 	peer := &db.FederationPeer{InstanceID: "inst_b"}
 	req := fedPeerViewRequest{Method: "GET", URI: "/api/snapshot", Header: http.Header{}}
+	summary := fedPeerViewRequest{Method: "GET", URI: "/api/node-summary", Header: http.Header{}}
 
-	_, err := c.read(context.Background(), rt, peer, req, 20*time.Millisecond)
+	_, err := c.read(context.Background(), rt, peer, req)
 	require.NoError(t, err)
-	require.Eventually(t, func() bool { return f.count() >= 3 }, 2*time.Second, 5*time.Millisecond, "the refresher keeps it warm")
+	time.Sleep(50 * time.Millisecond)
+	require.Equal(t, 1, f.count(), "no background reads between polls")
 
-	f.advance(time.Minute)
-	require.Eventually(t, func() bool {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		return len(c.entries) == 0
-	}, 2*time.Second, 5*time.Millisecond, "nobody reading: the refresher stops and drops it")
-	settled := f.count()
-	time.Sleep(60 * time.Millisecond)
-	require.Equal(t, settled, f.count())
-
-	_, err = c.read(context.Background(), rt, peer, req, 20*time.Millisecond)
+	f.advance(3 * time.Minute)
+	_, err = c.read(context.Background(), rt, peer, summary)
 	require.NoError(t, err)
+	c.mu.Lock()
+	_, kept := c.entries[peerReadKey{"inst_b", "/api/snapshot"}]
+	c.mu.Unlock()
+	require.False(t, kept, "an entry nobody polls is dropped")
+
 	rt.cancel()
-	require.Eventually(t, func() bool {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		return len(c.entries) == 0
-	}, 2*time.Second, 5*time.Millisecond, "federation stopping stops the refresher")
+	_, _ = c.read(context.Background(), testRuntime(t), peer, req)
+	c.mu.Lock()
+	_, kept = c.entries[peerReadKey{"inst_b", "/api/node-summary"}]
+	c.mu.Unlock()
+	require.False(t, kept, "a stopped runtime's entries are dropped")
 }
 
 func TestPeerReadPollIntervalOnlyForDeclaredPolls(t *testing.T) {
@@ -218,12 +215,12 @@ func TestPeerReadsInvalidationDuringAReadIsNotLost(t *testing.T) {
 	rt := testRuntime(t)
 	peer := &db.FederationPeer{InstanceID: "inst_b"}
 	req := fedPeerViewRequest{Method: "GET", URI: "/api/snapshot", Header: http.Header{}}
-	_, err := c.read(context.Background(), rt, peer, req, 5*time.Second)
+	_, err := c.read(context.Background(), rt, peer, req)
 	require.NoError(t, err)
 
 	c.invalidate("inst_b")
 	close(release)
-	reply, err := c.read(context.Background(), rt, peer, req, 5*time.Second)
+	reply, err := c.read(context.Background(), rt, peer, req)
 	require.NoError(t, err)
 	require.Equal(t, 3, f.count(), "a read invalidated in flight is read once more")
 	require.Equal(t, "0", reply.Header.Get("Age"))

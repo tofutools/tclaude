@@ -11,37 +11,40 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
-// peerReads keeps the dashboard's peer polls warm (tcl-qamqg7). Fused Groups
+// peerReads coalesces the dashboard's peer polls (tcl-qamqg7). Fused Groups
 // and the Map poll every ticked peer from every open dashboard; each poll used
 // to be a full peer-view exchange through the hub (a sealed open and answer,
-// then a relayed stream), and a peer snapshot is tens of KB. Here one
-// background refresher per peer and URL serves every dashboard and tab, and
-// asks conditionally, so an unchanged peer answers 304 without a body.
+// then a relayed stream), and a peer snapshot is tens of KB. Here a poll reads
+// through: polls that arrive within peerReadFresh of the last read share it
+// (concurrent ones wait on the one in flight), and every read asks the peer
+// conditionally, so an unchanged peer answers 304 without a body. There is no
+// background refresher: nothing runs while nobody polls, and what a dashboard
+// shows is at most one of its own intervals old, as without the cache.
 //
-// Only reads a dashboard poll opts into are cached: it declares its interval
-// in peerReadPollHeader, which also sets how often the refresher reads. The
-// refresher stops once nobody has read for a while, so nothing runs without an
-// open dashboard, and it lives on the federation runtime, so nothing runs
-// without federation. Failures are served as they came, so the dashboard's
-// offline and stale handling is unchanged. Federation changes expire entries
-// so the next read asks again: this node's catalog broadcasts (trust, grants,
-// group shares) expire all, a peer's inbound catalog expires that peer's. The
-// proxy still rechecks trust on each request, so nothing outlives a
-// revocation, and a replaced runtime starts its entries afresh.
+// Only reads a dashboard poll opts into are coalesced: it declares its
+// interval in peerReadPollHeader. Failures are served as they came, so the
+// dashboard's offline and stale handling is unchanged. Federation changes
+// expire entries so the next read asks again: this node's catalog broadcasts
+// (trust, grants, group shares) expire all, a peer's inbound catalog expires
+// that peer's. The proxy still rechecks trust on each request, so nothing
+// outlives a revocation, and a replaced runtime starts its entries afresh.
 
 const peerReadPollHeader = "X-Tclaude-Poll-Ms"
 
 const (
 	peerReadMinEvery = 2 * time.Second
 	peerReadMaxEvery = time.Minute
-	peerReadIdleMin  = 30 * time.Second
+	// peerReadFresh is how long a read is shared with later polls.
+	peerReadFresh = time.Second
+	// peerReadIdle drops an entry (and its ETag) nobody has polled for a while.
+	peerReadIdle = 2 * time.Minute
 )
 
-// peerReadTails are the peer GETs a poll may cache: idempotent reads whose
+// peerReadTails are the peer GETs a poll may share: idempotent reads whose
 // reply depends only on the peer's authority over this node.
 var peerReadTails = map[string]bool{"snapshot": true, "node-summary": true}
 
-// peerReadPollInterval is the declared poll interval of a cacheable read, or
+// peerReadPollInterval is the declared poll interval of a shareable read, or
 // zero when the request is not one.
 func peerReadPollInterval(r *http.Request, body []byte) time.Duration {
 	if r.Method != http.MethodGet || len(body) != 0 || !peerReadTails[r.PathValue("tail")] {
@@ -64,10 +67,7 @@ type peerReadEntry struct {
 	err      error            // last failure, served until a read succeeds
 	at       time.Time        // when the outcome was last confirmed
 	gen      uint64           // bumped by invalidate: a read begun earlier lands expired
-	every    time.Duration    // shortest interval declared by a recent reader
-	everyAt  time.Time        // last read declaring every
 	lastRead time.Time
-	running  bool          // a refresher owns this entry
 	inflight chan struct{} // closed when the current read completes
 }
 
@@ -93,29 +93,21 @@ func (c *peerReadCache) invalidate(peer string) {
 	}
 }
 
-func peerReadIdle(every time.Duration) time.Duration {
-	return max(peerReadIdleMin, 3*every)
-}
-
-// read serves req from the cache, reading the peer first when the cached
-// outcome is older than every (or absent).
-func (c *peerReadCache) read(ctx context.Context, rt *fedRuntime, peer *db.FederationPeer, req fedPeerViewRequest, every time.Duration) (fedPeerViewReply, error) {
+// read serves req, reading the peer first unless a read completed within
+// peerReadFresh.
+func (c *peerReadCache) read(ctx context.Context, rt *fedRuntime, peer *db.FederationPeer, req fedPeerViewRequest) (fedPeerViewReply, error) {
 	key := peerReadKey{peer.InstanceID, req.URI}
 	c.mu.Lock()
+	now := c.now()
+	c.sweep(now)
 	e := c.entries[key]
 	if e == nil || e.rt != rt {
 		e = &peerReadEntry{rt: rt, uri: req.URI}
 		c.entries[key] = e
 	}
-	now := c.now()
 	e.peer, e.lastRead = peer, now
-	// The shortest interval wins; a longer one takes over once the reader
-	// that asked for the shorter has gone quiet.
-	if e.every == 0 || every <= e.every || now.Sub(e.everyAt) > 2*e.every {
-		e.every, e.everyAt = every, now
-	}
 	// Twice at most: a read invalidated while in flight is read once more.
-	for try := 0; try < 2 && (e.at.IsZero() || now.Sub(e.at) > e.every+time.Second); try++ {
+	for try := 0; try < 2 && (e.at.IsZero() || now.Sub(e.at) > peerReadFresh); try++ {
 		if e.inflight == nil {
 			c.startRead(e)
 		}
@@ -128,12 +120,6 @@ func (c *peerReadCache) read(ctx context.Context, rt *fedRuntime, peer *db.Feder
 		}
 		c.mu.Lock()
 		now = c.now()
-	}
-	// The refresher ends with the runtime's context; it holds nothing a
-	// runtime stop would have to wait for.
-	if !e.running && c.entries[key] == e && rt.ctx.Err() == nil {
-		e.running = true
-		go c.refresh(key, e)
 	}
 	reply, err, at := e.reply, e.err, e.at
 	c.mu.Unlock()
@@ -156,9 +142,19 @@ func (c *peerReadCache) read(ctx context.Context, rt *fedRuntime, peer *db.Feder
 	return reply, nil
 }
 
-// startRead reads e's peer in the background; callers wait on e.inflight.
-// The read is not tied to any one request: a dashboard that goes away does
-// not fail the others waiting on it. Called with c.mu held.
+// sweep drops entries nobody has polled for peerReadIdle, and entries of a
+// runtime that has stopped. Called with c.mu held.
+func (c *peerReadCache) sweep(now time.Time) {
+	for key, e := range c.entries {
+		if e.inflight == nil && (now.Sub(e.lastRead) > peerReadIdle || e.rt.ctx.Err() != nil) {
+			delete(c.entries, key)
+		}
+	}
+}
+
+// startRead reads e's peer; callers wait on e.inflight. The read is not tied
+// to any one request, so a dashboard that goes away does not fail the others
+// waiting on it; it ends with the federation runtime. Called with c.mu held.
 func (c *peerReadCache) startRead(e *peerReadEntry) {
 	done := make(chan struct{})
 	e.inflight = done
@@ -168,7 +164,7 @@ func (c *peerReadCache) startRead(e *peerReadEntry) {
 	}
 	rt, peer, gen := e.rt, e.peer, e.gen
 	go func() {
-		reply, err := c.exchange(context.Background(), rt, peer, req)
+		reply, err := c.exchange(rt.ctx, rt, peer, req)
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		switch {
@@ -187,41 +183,6 @@ func (c *peerReadCache) startRead(e *peerReadEntry) {
 		e.inflight = nil
 		close(done)
 	}()
-}
-
-// refresh keeps e warm while it is read, reading the peer every e.every.
-func (c *peerReadCache) refresh(key peerReadKey, e *peerReadEntry) {
-	for {
-		c.mu.Lock()
-		every := e.every
-		c.mu.Unlock()
-		timer := time.NewTimer(every)
-		select {
-		case <-e.rt.ctx.Done():
-			timer.Stop()
-			c.mu.Lock()
-			e.running = false
-			if c.entries[key] == e {
-				delete(c.entries, key)
-			}
-			c.mu.Unlock()
-			return
-		case <-timer.C:
-		}
-		c.mu.Lock()
-		if c.entries[key] != e || c.now().Sub(e.lastRead) > peerReadIdle(e.every) {
-			e.running = false
-			if c.entries[key] == e {
-				delete(c.entries, key)
-			}
-			c.mu.Unlock()
-			return
-		}
-		if e.inflight == nil {
-			c.startRead(e)
-		}
-		c.mu.Unlock()
-	}
 }
 
 // etagMatches reports whether an If-None-Match header names tag (weak

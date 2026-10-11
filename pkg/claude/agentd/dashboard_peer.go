@@ -100,10 +100,9 @@ func servePeerViewProxyWith(w http.ResponseWriter, r *http.Request, cached bool)
 	}
 	req := fedPeerViewRequest{Method: r.Method, URI: target.RequestURI(), Header: peerViewRequestHeaders(r.Header), Body: body}
 	var reply fedPeerViewReply
-	poll := peerReadPollInterval(r, body)
-	cachedRead := cached && poll > 0
+	cachedRead := cached && peerReadPollInterval(r, body) > 0
 	if cachedRead {
-		reply, err = peerReads.read(r.Context(), rt, peer, req, poll)
+		reply, err = peerReads.read(r.Context(), rt, peer, req)
 	} else {
 		reply, err = exchangePeerView(r.Context(), rt, peer, req)
 	}

@@ -2460,16 +2460,16 @@ and bounded concurrent streams. The proxy does not retry or fan out requests.
 Clients should keep their last successful view, mark it stale, and back off.
 
 A dashboard poll of `snapshot` or `node-summary` may declare its interval in
-`X-Tclaude-Poll-Ms`. The local daemon then serves it from one copy per peer and
-URL, shared by every dashboard and tab, which a background refresher keeps
-warm at the shortest declared interval while it is read (at least every 2
-seconds, at most every minute). The refresher asks the peer with
-`If-None-Match`, stops 30 seconds (or three intervals) after the last read and
-stops with federation. The served copy carries `Age` in seconds; the browser's
-own `If-None-Match` is answered locally. A failed refresh is served as the same
-error a direct request would get. This node's catalog broadcasts (trust,
-grants, group shares) expire every copy and a peer's inbound catalog expires
-its own, so the next read asks again; trust is still checked on every request.
+`X-Tclaude-Poll-Ms`. The local daemon then reads through one copy per peer and
+URL, shared by every dashboard and tab: polls within a second of the last read
+share it (concurrent ones wait for the read in flight), later ones ask the peer
+again with `If-None-Match`, so an unchanged peer answers without a body.
+Nothing runs between polls, and a copy nobody polls for two minutes is dropped.
+The served copy carries `Age` in seconds; the browser's own `If-None-Match` is
+answered locally. A failed read is served as the same error a direct request
+would get. This node's catalog broadcasts (trust, grants, group shares) expire
+every copy and a peer's inbound catalog expires its own, so the next poll asks
+again; trust is still checked on every request.
 Requests without the header are proxied as one exchange each, as above.
 
 The stable `peer_view.included` / `peer_view.omitted[].feature` concept keys are
