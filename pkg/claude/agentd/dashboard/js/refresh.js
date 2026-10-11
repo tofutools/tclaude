@@ -387,6 +387,8 @@ function bindTabs() {
   const bindings = [];
   $$('nav [data-tab]').forEach(b => {
     const onClick = e => {
+      // A greyed-out tab (the map without linked nodes) goes nowhere.
+      if (b.getAttribute('aria-disabled') === 'true') { e.preventDefault(); return; }
       // The tabs are real <a href> anchors: a modified/middle click is left to
       // the browser, which opens the location in a new tab (this view untouched).
       // A plain left-click (including a synthetic element.click() from the
@@ -445,7 +447,8 @@ function bindTabs() {
 // two keeps the cycler correct if more conditional tabs appear later.
 function visibleTabButtons() {
   // A peer view skips the tabs the peer does not offer (peer-view-limits.js).
-  return $$('nav [data-tab]').filter(b => b.offsetParent !== null && peerViewTabUsable(b.dataset.tab));
+  // A greyed-out tab (the map without linked nodes) is skipped too.
+  return $$('nav [data-tab]').filter(b => b.offsetParent !== null && b.getAttribute('aria-disabled') !== 'true' && peerViewTabUsable(b.dataset.tab));
 }
 
 // cyclingTabs is true only while cycleTab() is dispatching its synthetic

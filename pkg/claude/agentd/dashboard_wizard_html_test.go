@@ -1854,10 +1854,10 @@ func TestDashboardHTML_WizardActionDialogs(t *testing.T) {
 		}
 	}
 
-	const actionDialogs = "body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal)"
+	const actionDialogs = "body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target)"
 	must(actionDialogs+" .cron-create-modal", "all three action-dialog surfaces get scoped wizard chrome")
 	must(actionDialogs+" .cron-create-modal h3", "all three action-dialog titles get the fantasy type treatment")
-	must(actionDialogs+" .cron-create-row :is(input[type=text], select, textarea)", "the action-dialog fields and dropdowns get the violet-void skin")
+	must(actionDialogs+" :is(.cron-create-row, .lt-row) :is(input[type=text], input:not([type]), select, textarea)", "the action-dialog fields and dropdowns get the violet-void skin")
 	must(actionDialogs+" .modal-buttons button.primary", "the primary action buttons get the gilded lever treatment")
 	must("body.wizard #reincarnate-agent-modal .reincarnate-mode", "the reincarnate mode selector gets wizard panel chrome")
 	must("body.wizard #reincarnate-agent-modal .reincarnate-mode label", "the reincarnate mode labels override their explicit plain-mode color")

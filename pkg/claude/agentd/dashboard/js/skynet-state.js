@@ -1,6 +1,6 @@
 import { computed, effect, signal } from '@preact/signals';
 import { dashboardState } from './snapshot-store.js';
-import { normalizeFleet } from './skynet-model.js';
+import { normalizeFleet, normalizeNode } from './skynet-model.js';
 import { parseFused } from './skynet-scope.js';
 
 // TOP_LEVEL_TABS are the multi-node views (the map and fleet administration): they hide the per-node tabs and are never a per-node tab to return to.
@@ -11,6 +11,9 @@ export const TOP_LEVEL_TABS = new Set(['map', 'fleet-admin']);
 // island's effects decide when (only while the map is on screen).
 export function createSkynetState({ activeTab = dashboardState.activeTab, now = () => Date.now(), search = globalThis.location?.search || '', pathname = globalThis.location?.pathname || '' } = {}) {
   const fleet = signal(null);
+  // node is this node and its hub connection, known with or without peers:
+  // the chip row renders from it and is greyed out until the hub is up.
+  const node = signal(null);
   // fused is the node scope's fused set (skynet-scope.js): null shows one
   // node, else 'all' or the ticked instance IDs. It starts from ?nodes=, or
   // all nodes on the old /fleet address of the fused Groups view.
@@ -34,6 +37,7 @@ export function createSkynetState({ activeTab = dashboardState.activeTab, now = 
     topLevel: TOP_LEVEL_TABS.has(activeTab.value),
     activeTab: activeTab.value,
     fleet: fleet.value,
+    node: node.value,
     summaries: summaries.value,
     focused: focused.value,
     statusLoaded: statusLoaded.value,
@@ -42,13 +46,14 @@ export function createSkynetState({ activeTab = dashboardState.activeTab, now = 
   }));
   function markStatusLoaded() { statusLoaded.value = true; }
   function setStatus(status) {
+    node.value = normalizeNode(status);
     fleet.value = normalizeFleet(status);
     noFleet.value = !fleet.value;
     return fleet.value;
   }
-  // clearFleet hides the chip row, e.g. when the status route is absent on an
-  // older daemon or federation is disabled.
-  function clearFleet() { fleet.value = null; noFleet.value = true; }
+  // clearFleet drops the fleet and this node's hub state, e.g. when the status
+  // route is absent on an older daemon: the chip row stays, greyed out.
+  function clearFleet() { fleet.value = null; node.value = null; noFleet.value = true; }
   function entry(id) { return summaries.value[id] || null; }
   function commitSummary(id, summary, etag) {
     const prev = entry(id);
@@ -61,7 +66,7 @@ export function createSkynetState({ activeTab = dashboardState.activeTab, now = 
   function setFused(value) { fused.value = value || null; }
   function setFocused(id) { focused.value = id || ''; }
   function lastLocalTab() { return lastLocal; }
-  return Object.freeze({ fleet, fused, setFused, summaries, focused, view, statusLoaded, markStatusLoaded, setStatus, clearFleet, entry, commitSummary, failSummary, setFocused, lastLocalTab, dispose: stopTracking });
+  return Object.freeze({ fleet, node, fused, setFused, summaries, focused, view, statusLoaded, markStatusLoaded, setStatus, clearFleet, entry, commitSummary, failSummary, setFocused, lastLocalTab, dispose: stopTracking });
 }
 
 export const skynetState = createSkynetState();

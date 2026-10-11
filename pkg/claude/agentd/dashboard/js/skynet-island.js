@@ -6,7 +6,7 @@ import { RequestAccessDialog } from './peer-access.js';
 import { RemoteSessionsDialog } from './remote-terminal.js';
 import { PeerActionHost } from './peer-action.js';
 import { shellConfirm, shellToast } from './shell-state.js';
-import { STATUS_POLL_MS, cardView, fmtAge, nodeColor, nodeHref, peerViewSummary, pollDelay, remoteHealthView, remoteNodeID, staggerOffset, switchOrder } from './skynet-model.js';
+import { LOCAL_COLOR, STATUS_POLL_MS, cardView, fmtAge, hubOffReason, nodeColor, nodeHref, peerViewSummary, pollDelay, remoteHealthView, remoteNodeID, staggerOffset, switchOrder } from './skynet-model.js';
 import { FUSED_TABS, filterNodes, fleetNodes, fusedParam, isTicked, selectorKind, tickedNodes, toggleNode, withFused } from './skynet-scope.js';
 import { dashboardState } from './snapshot-store.js';
 import { TOP_LEVEL_TABS } from './skynet-state.js';
@@ -65,15 +65,18 @@ export function writeScopeURL(fused, win = globalThis) {
 
 // pickNode shows one node on its own: it leaves any fused view, then shows
 // that node's per-node view (a page load for another node, as before).
+// Without a fleet only this node can be picked: ⌂ still leaves a top-level
+// view or a peer's view.
 function pickNode(state, id, { navigate, remote, switchNode }) {
   const fleet = state.fleet.value;
-  if (!fleet) return;
+  const selfID = fleet?.self.id ?? state.node.value?.self.id ?? '';
+  if (!fleet && id !== selfID) return;
   const wasFused = !!state.fused.value;
   state.setFused(null);
   writeScopeURL(null);
-  if (id === (remote || fleet.self.id)) {
+  if (id === (remote || selfID)) {
     if (state.view.value.topLevel || !wasFused) navigate(state.lastLocalTab());
-  } else switchNode(id === fleet.self.id ? '' : id);
+  } else switchNode(id === selfID ? '' : id);
 }
 
 // usePopover closes a popover on a click outside it or Escape. The popover is
@@ -185,17 +188,68 @@ function FusedDropdown({ state, fleet, fused, pageNode, onPick, onFuse }) {
   </span>`;
 }
 
+// NO_PEERS says why the fused view and the map are greyed out on a connected
+// node that has no linked nodes yet.
+const NO_PEERS = 'No linked nodes yet: trust a peer in ⚙ Fleet';
+
+// MapGate greys out the static map anchor (it is not ours to render) when
+// there is no map to show: hub not connected, or no linked nodes.
+function MapGate({ reason, doc = globalThis.document }) {
+  useEffect(() => {
+    const anchor = doc?.querySelector?.('nav [data-tab="map"]');
+    if (!anchor) return;
+    anchor.classList.toggle('node-chip-off', !!reason);
+    if (reason) {
+      anchor.setAttribute('aria-disabled', 'true');
+      anchor.setAttribute('tabindex', '-1');
+      anchor.title = reason;
+    } else {
+      anchor.removeAttribute('aria-disabled');
+      anchor.removeAttribute('tabindex');
+      anchor.title = 'Skynet map: every linked node';
+    }
+  }, [reason]);
+  return null;
+}
+
+// IdleChips is the chip row before there is a fleet to pick from: this node's
+// ⌂ and a greyed-out fused button. ⌂ is usable once the hub is connected, and
+// always where it leads somewhere: home from a peer's view, or back from the
+// map or Fleet administration.
+function IdleChips({ state, node, off, remote, onPick }) {
+  const current = state.view.value;
+  const self = node?.self || { id: '', name: 'this node', color: LOCAL_COLOR, local: true };
+  const homeOff = off && !remote && !current.topLevel;
+  const isCurrent = !remote && !current.topLevel;
+  return html`<span class=${`node-chips${off ? ' hub-off' : ''}`} role="group" aria-label="Nodes" title=${off || undefined}>
+    <button type="button" class=${`node-chip local${isCurrent ? ' active' : ''}`} style=${`--nc:${self.color}`} disabled=${homeOff}
+      aria-current=${isCurrent ? 'page' : undefined} aria-label=${`${self.name} (this node)${homeOff ? `. ${off}` : ''}`}
+      title=${homeOff ? off : `${self.name}: this node · Alt+1`} onClick=${() => onPick(self.id)}>
+      <span class="node-chip-home" aria-hidden="true">⌂</span><span class="node-chip-name">${self.name}</span>
+    </button>
+    <span class="node-chips-sep" aria-hidden="true"></span>
+    <button type="button" class="node-chip node-fuse" disabled aria-label=${`Show several nodes together. ${off || NO_PEERS}`} title=${off || NO_PEERS}>
+      <span class="node-chip-name">nodes</span><span class="node-pick-caret" aria-hidden="true">▾</span>
+    </button>
+  </span>`;
+}
+
 // NodeChips is the tab-bar node selector: a button per node (or one node
-// dropdown past BUTTON_LIMIT nodes), then the fused-view dropdown. The map
-// entry is the static nav[data-tab="map"] anchor right after this host, so tab
-// routing keeps one owner.
+// dropdown past BUTTON_LIMIT nodes), then the fused-view dropdown. The row is
+// always there, greyed out until this node's hub connection is up (and again
+// when it drops); peers only add buttons. The map entry is the static
+// nav[data-tab="map"] anchor right after this host, so tab routing keeps one
+// owner; MapGate greys it out by the same rule.
 export function NodeChips({ state, navigate = defaultNavigate, remote = remoteNodeID(), switchNode = defaultSwitchNode }) {
   const current = state.view.value;
   const fleet = current.fleet;
-  if (!fleet) return null;
+  const off = hubOffReason(current.node);
+  const onPick = (id) => pickNode(state, id, { navigate, remote, switchNode });
+  const gate = html`<${MapGate} reason=${off || (fleet ? '' : NO_PEERS)} />`;
+  // A fused view already on keeps its row, so it can be left.
+  if (!fleet || (off && !current.fused)) return html`${gate}<${IdleChips} state=${state} node=${current.node} off=${off} remote=${remote} onPick=${onPick} />`;
   const fused = current.fused;
   const pageNode = remote || fleet.self.id;
-  const onPick = (id) => pickNode(state, id, { navigate, remote, switchNode });
   const onFuse = (value) => {
     state.setFused(value);
     writeScopeURL(value);
@@ -207,7 +261,7 @@ export function NodeChips({ state, navigate = defaultNavigate, remote = remoteNo
   const cls = (node) => `node-chip${node.local ? ' local' : ''}${node.local || node.online ? '' : ' offline'}${isCurrent(node.id) ? ' active' : ''}${fused && isTicked(fused, node.id) ? ' ticked' : ''}`;
   const self = fleet.self;
   const buttons = selectorKind(fleet) === 'buttons';
-  return html`<span class="node-chips" role="group" aria-label="Nodes">
+  return html`${gate}<span class="node-chips has-fleet" role="group" aria-label="Nodes">
     ${buttons ? html`
     <button type="button" class=${cls(self)} style=${`--nc:${self.color}`}
       aria-current=${isCurrent(self.id) ? 'page' : undefined} aria-label=${`${self.name} (this node)`}
@@ -517,17 +571,24 @@ export function RemoteMarker({ state, remote = remoteNodeID(), snapshot = dashbo
   </span>`;
 }
 
+// HUB_POLL_MS is the status cadence while federation is on, so the chips follow
+// a hub connecting or dropping within seconds.
+const HUB_POLL_MS = 10000;
+
 // StatusPoller keeps the chip row's node list fresh at a relaxed cadence and
 // pauses while the page is hidden. It renders nothing.
-function StatusPoller({ actions, timers = globalThis }) {
+function StatusPoller({ state, actions, timers = globalThis }) {
   useEffect(() => {
     let disposed = false; let timer = null;
     const loop = async () => {
       if (disposed) return;
       const fleet = globalThis.document?.hidden ? undefined : await actions.loadStatus();
-      // A node without linked peers (or an older daemon without the route)
-      // rechecks rarely; a linked one keeps the chips fresh.
-      if (!disposed) timer = timers.setTimeout(loop, pollDelay({ base: fleet === null ? STATUS_POLL_MS * 4 : STATUS_POLL_MS }));
+      // The read is local. A node with federation on keeps the chips fresh,
+      // so they follow the hub connection; federation off (or an older daemon
+      // without the route) rechecks rarely.
+      const hub = state.node.value?.hub;
+      const live = hub ? hub !== 'off' : !!fleet;
+      if (!disposed) timer = timers.setTimeout(loop, pollDelay({ base: live ? HUB_POLL_MS : fleet === undefined ? STATUS_POLL_MS : STATUS_POLL_MS * 4 }));
     };
     loop();
     return () => { disposed = true; timers.clearTimeout(timer); };
@@ -536,7 +597,7 @@ function StatusPoller({ actions, timers = globalThis }) {
 }
 
 export function mountSkynetIsland({ chipsHost, barHost, mapHost, remoteHost, bannerHost, state, actions, registerCleanup, navigate, timers }) {
-  render(html`<${Fragment}><${StatusPoller} actions=${actions} timers=${timers} /><${NodeSwitchKeys} state=${state} navigate=${navigate} /><${ScopeSync} state=${state} navigate=${navigate} /><${NodeChips} state=${state} navigate=${navigate} /></${Fragment}>`, chipsHost);
+  render(html`<${Fragment}><${StatusPoller} state=${state} actions=${actions} timers=${timers} /><${NodeSwitchKeys} state=${state} navigate=${navigate} /><${ScopeSync} state=${state} navigate=${navigate} /><${NodeChips} state=${state} navigate=${navigate} /></${Fragment}>`, chipsHost);
   if (bannerHost) render(html`<${ScopeBanner} state=${state} />`, bannerHost);
   // A peer view also hosts the peer action dialog (stop/retire/clone/move/
   // teleport/spawn through the peer's action routes).

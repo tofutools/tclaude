@@ -284,8 +284,8 @@ const skynetRemoteViewJS = `history.replaceState(null, '', location.pathname + '
 // and the first group sit at the same offsets with the row shown and removed.
 const skynetZeroHeightJS = `return (async function(){
   var host = document.querySelector('#node-chips-root');
-  for (var i = 0; i < 50 && !host.querySelector('.node-chip'); i++) await new Promise(function(r){ setTimeout(r, 100); });
-  if (!host.querySelector('.node-chip')) throw new Error('skynet: node chips did not render');
+  for (var i = 0; i < 50 && !host.querySelector('.has-fleet .node-chip'); i++) await new Promise(function(r){ setTimeout(r, 100); });
+  if (!host.querySelector('.has-fleet .node-chip')) throw new Error('skynet: node chips did not render');
   function geom() {
     var nav = document.querySelector('nav').getBoundingClientRect();
     var main = document.querySelector('main').getBoundingClientRect();
@@ -326,7 +326,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "The top-level map: this node's card, a reachable restricted peer with omitted concepts, and an unreachable unrestricted peer, joined by measured link edges. The tab strip becomes the top-level view switch in the same row.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="map"]').click();
   for (var i = 0; i < 80 && document.querySelectorAll('.skynet-card .skynet-card-body').length < 2; i++) await new Promise(function(r){ setTimeout(r, 100); });
   if (!document.querySelector('.skynet-edge')) throw new Error('skynet: no map edges');
@@ -340,7 +340,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Each map card shows the node's tclaude version and ↑ when a newer release is known; update…/manage… opens the node's update dialog: version and install method, latest release and when it was checked, the binaries, version-skew warnings, Check now, Update to the latest (confirms the binary swap and daemon restart) and Roll back.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="map"]').click();
   for (var i = 0; i < 80 && !document.querySelector('.skynet-card.local [data-skynet="node-update"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('.skynet-card.local [data-skynet="node-update"]').click();
@@ -355,8 +355,8 @@ func skynetStates() []dashsnap.State {
 			Caption: "nodes ▾ fuses every node: the Groups tab lists every linked node's groups, named group@node with the node's colour on the suffix (a click opens that node's dashboard). forge answers through the proxy; lab is unreachable, so its node reads stale. The tab strip stays; the ticked nodes' buttons are outlined.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-fuse'); w++) await new Promise(function(r){ setTimeout(r, 100); });
-  document.querySelector('#node-chips-root .node-fuse').click();
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-fuse'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  document.querySelector('#node-chips-root .has-fleet .node-fuse').click();
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
   for (var i = 0; i < 80 && !document.querySelector('#skynet-fused-groups-root .fleet-node-suffix[data-fleet-open="inst_hn3cxq7a"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   if (!document.querySelector('#skynet-fused-groups-root .fleet-node-suffix[data-fleet-open="inst_hn3cxq7a"]')) throw new Error('skynet: no forge groups in the fused view');
@@ -372,7 +372,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "The top-level ⚙ Fleet view: this node's identity (fingerprint in full, copyable), the hub connection with Disconnect, and the peer tables — trusted peers with level, grants and pools, and hub-visible instances waiting to be trusted. Sub-pages not yet in the dashboard name their CLI.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="map"]').click();
   for (var s = 0; s < 30 && !document.querySelectorAll('.skynet-seg-btn')[2]; s++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelectorAll('.skynet-seg-btn')[2].click();
@@ -390,7 +390,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet → Peer grants for forge: each permission with where it applies (a group, or all groups including future ones, flagged), what it allows, and Revoke; a pool-inherited grant is revoked on its pool. The add row picks a permission, a group scope and, for spawning, the live cap; Grant… confirms with the consequence spelled out.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('#fleet-trusted [data-fa="grants"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('#fleet-trusted [data-fa="grants"]').click();
@@ -406,7 +406,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet → Spawn requests: workers peers asked this node to start in its groups, with who asked, the group, requested name/role/profile (requester-paid flagged), the brief and its state. Pending requests can be approved (optionally overriding name, profile, cwd, harness or model) or denied with a reason; an unconfirmed launch can be abandoned, warning that the original worker may still appear. Request a worker on a peer… asks a peer (or automatic placement) for one. The outbox shows delivery of what this node sent.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   Array.from(document.querySelectorAll('.fa-subtab')).find(function(b){ return /Spawn requests/.test(b.textContent); }).click();
@@ -424,7 +424,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet → Profiles & pools → Edit…: a profile's trust level, pool memberships, labels, requester-pays default and peer grants (scope and live cap per grant; add or remove), with worker permission overrides, the teleport landing and the config bundle as JSON. Saving makes a new revision and confirms what a peer it is applied to gets; peers it was already applied to keep their settings until it is applied again.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   Array.from(document.querySelectorAll('.fa-subtab')).find(function(b){ return /Profiles/.test(b.textContent); }).click();
@@ -441,7 +441,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet → Peer grants with groups.members.spawn picked: launch settings opens the receiver settings this node uses when it starts a worker for the peer — profile, selectable profiles, harness, model, directory and requester pays (jobs.run gets job approval instead). models.proxy grants take a gateway name or cover every gateway.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('#fleet-trusted [data-fa="grants"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('#fleet-trusted [data-fa="grants"]').click();
@@ -460,7 +460,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet → Invites & joining: issue an invite token for a node profile (uses, lifetime, and the trust the joining node grants back), the issued tokens with use counts and state (only active ones revocable), joining a master with a token, and completed enrollments.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return /Invites/.test(b.textContent); })[0].click();
@@ -475,7 +475,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Joining with an invite token previews before anything changes: the master's instance and full fingerprint, this node's fingerprint, the profile that sets this node's authority on the master, expiry, and the trust this node would grant it. Enroll stays disabled until the fingerprint check is ticked.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return /Invites/.test(b.textContent); })[0].click();
@@ -497,7 +497,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet → Profiles & pools: node pools with their members (× removes, the picker adds behind a confirm naming the grants gained), Grants… for the pool's grants and Delete; node profiles with trust level, pools, grant count and labels, the default marked, and Apply to peer… / Make default… / Delete… — each previewed or confirmed. Definitions are edited with the CLI.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return /Profiles/.test(b.textContent); })[0].click();
@@ -513,7 +513,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet → Moves: durable agent moves and teleports in both directions (⇢ leaving, ⇠ arriving) with peer, group, state and expiry; outgoing moves that have not started retiring can be abandoned. The teleport switch at the top freezes teleports leaving or landing on this node.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return /Moves/.test(b.textContent); })[0].click();
@@ -528,7 +528,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet → Audit: this node's federation activity, newest first — direction (⇠ a peer acting here, ⇢ this node acting on a peer), peer, kind, actor, target, group and outcome, refused or failed requests in red. Filter by peer and time window.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return /Audit/.test(b.textContent); })[0].click();
@@ -543,7 +543,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet → Hub: the hub's status and health, admissions with their spaces, open invites, admins, settings (effective value, source, and a marker where a remote setting overrides a serve flag) and an escaped log tail. Every change goes through a confirmation; a node that is not a hub admin sees only the claim.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Hub'; })[0].click();
@@ -578,7 +578,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet's identity row shows away cover: here, with away… to pick a trusted peer's operator (and an optional end time) who answers your agents' access requests once each while you are away, or — as here — away with forge covering and return…. Peer operators' access requests are never forwarded.",
 			InitJS:  "window.__dashsnapAway = true;" + skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('#fleet-away-return'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   if (!document.querySelector('#fleet-away-return')) throw new Error('skynet: away state missing');
@@ -591,7 +591,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet's identity row → settings…: the hub connection (URL, display name, a single-use invite, a CA file on this node, connected or not) and this node's labels, which automatic placement matches and peers with node.read see. Saving either confirms what changes; moving hubs warns that peers reachable only through the old hub drop.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('#fleet-node-settings-open'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('#fleet-node-settings-open').click();
@@ -606,7 +606,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Node settings → Identity → Rotate identity… fetches the read-only preview and confirms every consequence before anything is generated: the successor ID is linked to this one, the detection window, streams reconnect, pending sealed mail must be resent, issued model credentials and requester-paid leases are revoked, and the hop limit. Enter confirms and Escape cancels, like every confirm.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('#fleet-node-settings-open'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('#fleet-node-settings-open').click();
@@ -623,7 +623,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "After a rotation, node settings shows the successor and when peers accept it at the earliest (the detection window countdown); Rotate is disabled while one is pending, and recovery stays in the CLI.",
 			InitJS:  "window.__dashsnapRotationPending = true;" + skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('#fleet-node-settings-open'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('#fleet-node-settings-open').click();
@@ -640,7 +640,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Offers → Inspect… fetches and verifies the payload on this node, lists its entries (bundle.json and sections/*.json for config; manifest.json and the transcript for agents) and shows any of them as plain text, JSON pretty-printed and transcripts paged; Download saves the bundle, Import… continues to the import preview, Decline… refuses it.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Offers'; })[0].click();
@@ -659,7 +659,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Map → a peer card → Terminals…: that peer's sessions from the cached catalog, each opening interactive (sessions.attach) or watch-only (sessions.watch) as the peer shares it, unshared ones marked, and the CLI attach command kept as the native-terminal option.",
 			InitJS:  skynetRemoteTerminalJS + skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="map"]').click();
   for (var i = 0; i < 80 && !document.querySelector('.skynet-card-terms'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('.skynet-card-terms').click();
@@ -674,7 +674,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Opening a watch-only session: the same browser terminal as a local one, rendered at the peer's pinned size, with a watch-only badge naming the peer; keystrokes and image paste are not sent.",
 			InitJS:  skynetRemoteTerminalJS + skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="map"]').click();
   for (var i = 0; i < 80 && !document.querySelector('.skynet-card-terms'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('.skynet-card-terms').click();
@@ -691,7 +691,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Opening a session the peer lets this node type into (sessions.attach): the badge turns amber, keystrokes and image paste reach the peer's agent, and the peer shows REMOTE INPUT on its pane.",
 			InitJS:  skynetRemoteTerminalJS + skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="map"]').click();
   for (var i = 0; i < 80 && !document.querySelector('.skynet-card-terms'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('.skynet-card-terms').click();
@@ -708,7 +708,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet → Peers shows, while any peer is viewing an agent terminal here, who watches or drives which agent (interactive viewers can type, including answering harness prompts) and for how long; Disconnect… closes one view and says the peer can reopen it while it still holds the grant.",
 			InitJS:  "window.__dashsnapViewers = true;" + skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('#fleet-viewers'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   if (!document.querySelector('#fleet-viewers')) throw new Error('skynet: viewers panel missing');
@@ -748,7 +748,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet → Peers marks a peer whose signing key is changing in its fingerprint cell: forge's new key is pending (information only), lab has competing successors. The dialog shows both fingerprints in full and, for the conflict, the recover-peer preview and the apply to run only after verifying the fingerprint with the peer's operator; recovery stays in the CLI.",
 			InitJS:  "window.__dashsnapKeyConflict = true; window.__dashsnapKeyPending = true;" + skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('[data-peer="inst_2p6ym4ke"] [data-fa="key"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   if (!document.querySelector('[data-peer="inst_hn3cxq7a"] [data-fa="key"]')) throw new Error('skynet: pending key marker missing');
@@ -764,7 +764,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "The map notes a pending new signing key (amber, not yet accepted) and competing keys that need recovery (red) on the peer cards, pointing to Fleet → Peers.",
 			InitJS:  "window.__dashsnapKeyConflict = true; window.__dashsnapKeyPending = true;" + skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="map"]').click();
   for (var i = 0; i < 80 && document.querySelectorAll('.skynet-card-key').length < 2; i++) await new Promise(function(r){ setTimeout(r, 100); });
   if (document.querySelectorAll('.skynet-card-key').length !== 2) throw new Error('skynet: key transition notes missing on the map');
@@ -777,7 +777,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet → Moves → Move an agent to a peer…: pick a local agent, a trusted peer and the peer's receiving group; the confirm spells out that the agent retires here once the peer runs its copy, and starts focus on Cancel.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return /Moves/.test(b.textContent); })[0].click();
@@ -794,7 +794,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet → Jobs & repos → Live output on a running job this node sent: stdout and stderr as they arrive, read every 2 s only while the dialog is open, Fleet is shown and the tab is visible; the stored output replaces it once the job ends.",
 			InitJS:  "window.__dashsnapLiveJob = true;" + skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Jobs & repos'; })[0].click();
@@ -811,7 +811,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet → Offers: config and agent bundles peers offered this node (from, kind — moves and teleports flagged —, summary, size, expiry, state; Preview… and Decline…) and the ones this node sent with their outcome, plus Offer my config… / Offer an agent… / Offer a profile's config….",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Offers'; })[0].click();
@@ -826,7 +826,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet → Offers → Preview…: the offer's size, expiry and full sha256, one row per item (new, overwrites yours, unchanged; security-relevant items marked) with a tick to include it, the values the offer needs on this node, and Apply… — blocked until conflicts are unticked or overwriting is chosen and the placeholders are filled, and confirmed with what changes.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Offers'; })[0].click();
@@ -843,7 +843,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Previewing an agent offer (clone, move or teleport): Will start in names the directory this node resolved and why — here a matching Fleet repo, as a new isolated checkout — with the other valid candidates to choose from, a free path field, and the sender's path and repo URL shown as hints only.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Offers'; })[0].click();
@@ -860,7 +860,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet → Jobs & repos: jobs peers sent here (⇠) and jobs this node sent (⇢) with repo@ref, group, command and state — Approve… for jobs a manual-approval grant holds, Cancel…, Resend… for uncertain delivery, Acknowledge stopped… for a job this node lost track of, Output for finished ones — plus Run a job… and the repositories peers may run jobs in here (Allow…, Edit…, Disable…).",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Jobs & repos'; })[0].click();
@@ -875,7 +875,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet → Model gateways: the all-gateways switch, each gateway's state (a policy missing an allowlist, budget or cap refuses every request and says so), models and limits (daily for all peers, per peer, per session; per-request caps), peers blocked on it with unblock and a block picker, requester-paid leases with Revoke, and the day's usage per gateway, peer and model. Turning a gateway or a peer off revokes the matching leases, and each confirm says so.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   Array.from(document.querySelectorAll('.fa-subtab')).find(function(b){ return /Model gateways/.test(b.textContent); }).click();
@@ -891,7 +891,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet → Hub → run a script on the hub…: with the host-set accept switch on and hub.exec held, the hub is a target on the Run page, preselected; it runs as the hub's service user, the confirm adds the hub threat note, and the pane shows its live output tail and exit status.",
 			InitJS:  "window.__dashsnapHubRun = true;" + skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Hub'; })[0].click();
@@ -916,7 +916,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet → Hub → update…: the hub's version, its supervisor and the update job restarting into its health check, with the deadline after which it rolls back on its own.",
 			InitJS:  "window.__dashsnapHubUpdate = 'running';" + skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Hub'; })[0].click();
@@ -933,7 +933,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "A hub update whose candidate failed its health check: the hub restored the previous version and the outcome stays visible with the reason.",
 			InitJS:  "window.__dashsnapHubUpdate = 'rolled_back';" + skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Hub'; })[0].click();
@@ -950,7 +950,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "A hub that is not running under systemd or launchd cannot restart itself or roll back safely, so update is refused with the reason and the update button is disabled.",
 			InitJS:  "window.__dashsnapHubUpdate = 'unsupervised';" + skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return b.textContent === 'Hub'; })[0].click();
@@ -967,7 +967,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet → Run scripts: this node's receiving switch (off, with its limits), the node picker (a peer must grant node.exec and accept remote scripts; offline peers are skipped), the script editor with its size and timeout, and one result pane per node with state, exit code, duration and output tail; failed nodes can be re-run.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return /Run scripts/.test(b.textContent); })[0].click();
@@ -992,7 +992,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Fleet → Harnesses: every node's harnesses in one table (version, ↑ when an update is available, whether a login is present), this node plus each trusted peer through the peer proxy; an offline or unshared peer says why. Each cell opens install/update and the login push/backup/restore controls.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return /Harnesses/.test(b.textContent); })[0].click();
@@ -1007,7 +1007,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Opening a harness on a peer: install or update with the exact command it runs, and the login files: push my login (warns that agents there act as you), back up now, and restore a backup.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('.fa-subtab'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   [].slice.call(document.querySelectorAll('.fa-subtab')).filter(function(b){ return /Harnesses/.test(b.textContent); })[0].click();
@@ -1024,7 +1024,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Trusting a waiting instance previews first: the instance ID and the fingerprint the daemon will pin, in full, and an out-of-band check the operator must tick. Choosing Unrestricted repeats what it implies — every peer permission on all groups, including ones created later.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('#fleet-waiting [data-fa="trust"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('#fleet-waiting [data-fa="trust"]').click();
@@ -1042,7 +1042,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Raising a trusted peer to unrestricted shows its full fingerprint, repeats what unrestricted grants (every peer permission on all groups, including later ones) and needs the out-of-band check before the button enables.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('#fleet-trusted [data-fa="unrestrict"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('#fleet-trusted [data-fa="unrestrict"]').click();
@@ -1057,7 +1057,7 @@ func skynetStates() []dashsnap.State {
 			Caption: "Untrust… goes through the shared confirm, which says what the peer loses — every grant, pool grants, catalog and access — before anything changes.",
 			InitJS:  skynetFederationStubJS,
 			JS: `return (async function(){
-  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
+  for (var w = 0; w < 50 && !document.querySelector('#node-chips-root .has-fleet .node-chip'); w++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('nav [data-tab="fleet-admin"]').click();
   for (var i = 0; i < 50 && !document.querySelector('#fleet-trusted [data-fa="unrestrict"]'); i++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('#fleet-trusted [data-fa="untrust"]').click();
