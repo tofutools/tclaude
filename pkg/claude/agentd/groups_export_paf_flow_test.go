@@ -276,3 +276,29 @@ func TestGroupImport_UnknownMemberOverrideRefused(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), `no member \"nobody\"`)
 }
+
+// A member whose conversation does not travel still records its harness,
+// so it resumes there; an override naming an unknown harness is refused.
+func TestGroupImport_ConfigOnlyMemberKeepsItsHarness(t *testing.T) {
+	f := newFlow(t)
+	var buf bytes.Buffer
+	w := paf.NewWriter(&buf, paf.KindGroup, paf.Limits{})
+	require.NoError(t, w.AddAgent("cody", paf.Agent{Name: "cody", Conversation: &paf.Conversation{ID: "ffffffff-1111-2222-3333-444444444444"}}, paf.Environment{Harness: paf.Harness{Name: "codex"}}))
+	require.NoError(t, w.WriteJSON(paf.GroupPath, paf.Group{Name: "cfg", Members: []paf.GroupMember{{Agent: "cody", Role: "dev"}}}))
+	_, err := w.Close(paf.Producer{Name: "other-tool"})
+	require.NoError(t, err)
+
+	rec, _ := importGroupWith(t, f, buf.Bytes(), url.Values{"into": {f.TestCwd("dst")}, "member_harness": {"cody=bogus"}})
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+
+	rec, landings := importGroupWith(t, f, buf.Bytes(), url.Values{"into": {f.TestCwd("dst")}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Len(t, landings, 1)
+	assert.Equal(t, "codex", landings[0].Harness)
+	assert.Equal(t, "none", landings[0].Rung)
+	row, err := db.GetConvIndex("ffffffff-1111-2222-3333-444444444444")
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, "codex", row.Harness)
+	assert.Equal(t, "cody", row.CustomTitle)
+}

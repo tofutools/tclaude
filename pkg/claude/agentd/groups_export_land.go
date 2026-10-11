@@ -125,7 +125,22 @@ func planGroupLandings(exp *groupexport.Export, a *paf.Archive, opts groupLandin
 		if c.Missing {
 			// No conversation travelled: the member imports as
 			// configuration, as a zip's missing conversation always has.
-			l.fileLanding = true
+			// Off Claude Code it still records its harness, so it resumes
+			// there.
+			if dstName == harness.DefaultName {
+				l.fileLanding = true
+				continue
+			}
+			dst, err := harness.Resolve(dstName)
+			if err != nil || dst.UsesCommandInput() {
+				if explicit {
+					return fail(fmt.Errorf("member %q: unsupported landing harness %q", c.Title, dstName))
+				}
+				l.fileLanding, l.Harness = true, harness.DefaultName
+				l.Warnings = append(l.Warnings, fmt.Sprintf("harness %q is unknown here; imports as Claude Code configuration", src))
+				continue
+			}
+			l.dst, l.Harness = dst, dst.Name
 			continue
 		}
 		neutral := memberNeutralContext(a, c.AgentKey)
@@ -142,6 +157,12 @@ func planGroupLandings(exp *groupexport.Export, a *paf.Archive, opts groupLandin
 			return fail(fmt.Errorf("member %q uses harness %q, which is not available here; choose a landing harness with --harness or --member-harness %s=<harness>", c.Title, src, c.Title))
 		}
 		l.dst, l.Harness = dst, dst.Name
+		if dst.Name == harness.OpenCodeName {
+			// OpenCode keeps history in per-agent state that only a spawn
+			// prepares; installing into the shared store would strand it.
+			l.Warnings = append(l.Warnings, "group import cannot install OpenCode history yet; importing config only")
+			continue
+		}
 		b := &agentbundle.Bundle{}
 		b.Manifest.Agent.Harness = src
 		if c.Content != nil && format != "" {

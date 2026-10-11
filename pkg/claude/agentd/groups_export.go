@@ -797,12 +797,23 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 			delete(retitled, prev)
 		}
 		if l.history == nil {
-			// Configuration only: the member's rows import without history.
+			// Configuration only: the member's rows import without history,
+			// and its conv_index row records the landing harness so it
+			// resumes there.
 			c.Missing, c.Content = true, nil
-			convRemap[c.ConvID] = c.ConvID
+			finalID, title := c.ConvID, c.Title
 			if convExistsLocally(c.ConvID) {
-				convRemap[c.ConvID] = uuid.NewString()
+				finalID = uuid.NewString()
+				title = uniqueImportTitle(c.Title, usedTitles)
+				usedTitles[title] = true
+				retitled[finalID] = title
 			}
+			convRemap[c.ConvID] = finalID
+			if err := db.SetConvIndexCustomTitle(finalID, title, l.Harness); err != nil {
+				return nil, http.StatusInternalServerError, fmt.Errorf("import: index %s: %w", c.Title, err)
+			}
+			uninstall = append(uninstall, func() { _ = db.DeleteConvIndex(finalID) })
+			installed[finalID] = true
 			continue
 		}
 		newID, undo, installErr := installGroupLanding(l, targetCwd)
