@@ -95,6 +95,20 @@ func SaveFederationProposal(p FederationPeerProposal, expectedRevision int, even
 	if err != nil || n == 0 {
 		return false, err
 	}
+	if expectedRevision > 0 {
+		// Applied items cannot be changed by a counter. Carry their receipts
+		// into the next revision without reapplying grants or retired edges.
+		_, err = tx.Exec(`INSERT INTO federation_proposal_item_decisions(proposal_id,revision,item_id,accepted,applied_here,applied_remote)
+ SELECT proposal_id,?,item_id,accepted,applied_here,applied_remote FROM federation_proposal_item_decisions WHERE proposal_id=? AND revision=?`, p.Revision, p.ID, expectedRevision)
+		if err != nil {
+			return false, err
+		}
+		_, err = tx.Exec(`UPDATE federation_group_links SET local_state='revoked',updated_at=? WHERE proposal_id=? AND local_state='pending'
+ AND item_id NOT IN (SELECT json_extract(value,'$.id') FROM json_each(?,'$.items') WHERE json_extract(value,'$.kind')='group_link')`, dbTime(p.UpdatedAt), p.ID, p.Body)
+		if err != nil {
+			return false, err
+		}
+	}
 	for _, l := range links {
 		_, err = tx.Exec(`INSERT INTO federation_group_links(id,local_group_id,peer,remote_group_id,remote_group_name,direction,mode,local_state,remote_state,proposal_id,item_id,created_at,updated_at)
  VALUES(?,?,?,?,?,?,?,'pending','unknown',?,?,?,?) ON CONFLICT(proposal_id,item_id) DO UPDATE SET local_group_id=excluded.local_group_id,remote_group_id=excluded.remote_group_id,remote_group_name=excluded.remote_group_name,direction=excluded.direction,mode=excluded.mode,remote_state='unknown',remote_state_at=NULL,updated_at=excluded.updated_at WHERE federation_group_links.local_state='pending'`, l.ID, l.LocalGroupID, p.Peer, l.RemoteGroupID, l.RemoteGroupName, l.Direction, l.Mode, p.ID, l.ItemID, dbTime(p.CreatedAt), dbTime(p.UpdatedAt))
@@ -282,6 +296,13 @@ func ApplyFederationProposal(id, peer string, revision int, decision, state stri
 		}
 		_, err = tx.Exec(`INSERT INTO federation_proposal_item_decisions(proposal_id,revision,item_id,accepted,applied_here) VALUES(?,?,?,1,1)
  ON CONFLICT(proposal_id,revision,item_id) DO UPDATE SET accepted=1,applied_here=1`, id, revision, change.ItemID)
+		if err != nil {
+			return false, err
+		}
+	}
+	if decision != "{}" {
+		_, err = tx.Exec(`UPDATE federation_group_links SET local_state='revoked',updated_at=? WHERE proposal_id=? AND local_state='pending'
+ AND item_id NOT IN (SELECT value FROM json_each(?,'$.item_ids'))`, dbTime(time.Now()), id, decision)
 		if err != nil {
 			return false, err
 		}

@@ -1063,7 +1063,7 @@ func federationInboundAuthorized(peer string, env *proto.Envelope, conv string) 
 		// confers nothing.
 		if row, _ := db.GetFederationOutbox(env.InReplyTo); row != nil &&
 			(row.Kind == proto.KindMail || row.Kind == proto.KindGroupMail) && row.ToInstance == peer && row.FromAgent != "" && row.FromAgent == env.To.Agent &&
-			(row.State == db.FedOutboxSent || row.State == db.FedOutboxAccepted) && time.Now().Before(row.ExpiresAt) {
+			(row.State == db.FedOutboxSent || row.State == db.FedOutboxAccepted) && time.Now().Before(row.ExpiresAt) && groupLinkMailCurrent(*row) {
 			return 0, true
 		}
 	}
@@ -1143,7 +1143,7 @@ func (rt *fedRuntime) flushOutbox(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if (row.Kind == proto.KindMail || row.Kind == proto.KindGroupMail) && !rt.groupLinkMailCurrent(row) {
+		if (row.Kind == proto.KindMail || row.Kind == proto.KindGroupMail) && !groupLinkMailCurrent(row) {
 			_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxRefused, "group link or sender authority revoked")
 			continue
 		}

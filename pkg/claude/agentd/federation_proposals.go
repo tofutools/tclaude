@@ -533,7 +533,15 @@ func proposalChanges(p proto.PeerProposalPayload, row db.FederationPeerProposal,
 		case proto.ProposalGroupLink:
 			// Ingress remains constrained to groups currently shared with this peer.
 			if direction == "in" && fedPeerGroupGrant(row.Peer, g.ID, "") == nil {
-				return nil, errors.New("destination group is no longer shared")
+				sharingNow := false
+				for _, share := range p.Items {
+					if selected[share.ID] && share.Kind == proto.ProposalShareVisibility && share.Host == local && share.GroupID == item.GroupID && (human || authority[share.ID] == proposalItemHash(share)) {
+						sharingNow = true
+					}
+				}
+				if !sharingNow {
+					return nil, errors.New("destination group is no longer shared")
+				}
 			}
 			change.Link = &db.FederationGroupLink{ID: "xlink_" + p.ID + "_" + item.ID, RemoteGroupID: remoteID, RemoteGroupName: remoteName, Direction: direction, Mode: item.Mode}
 		}

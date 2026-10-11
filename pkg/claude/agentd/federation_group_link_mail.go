@@ -1,6 +1,8 @@
 package agentd
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -63,7 +65,7 @@ func inboundGroupLink(peer string, a *proto.GroupLinkMailAuthority) *db.AgentGro
 	}
 	return g
 }
-func (rt *fedRuntime) groupLinkMailCurrent(row db.FederationOutboxRow) bool {
+func groupLinkMailCurrent(row db.FederationOutboxRow) bool {
 	// Unbound mail keeps the existing permission path unchanged.
 	d, err := db.Open()
 	if err != nil {
@@ -71,9 +73,11 @@ func (rt *fedRuntime) groupLinkMailCurrent(row db.FederationOutboxRow) bool {
 	}
 	var id string
 	err = d.QueryRow(`SELECT link_id FROM federation_link_mail WHERE envelope_id=?`, row.EnvelopeID).Scan(&id)
-	if err != nil { // Distinguish a legacy/unbound row from a broken read.
-		l, e := db.FederationMailLink(row.EnvelopeID)
-		return e == nil && l == nil
+	if errors.Is(err, sql.ErrNoRows) {
+		return true // Existing mail without a link binding keeps its authority.
+	}
+	if err != nil {
+		return false
 	}
 	l, err := db.GetFederationGroupLink(id)
 	return err == nil && l != nil && l.Peer == row.ToInstance && groupLinkSenderAllowed(nil, row.FromConv, *l)
@@ -126,7 +130,18 @@ func handleCanMessageFederated(w http.ResponseWriter, r *http.Request, conv, to 
 			writeJSON(w, 200, canMessageResp{Allowed: true, Reason: "via-peer-link", ViaGroup: via, LinkID: l.ID, Message: "Exact directed link; peer rechecks live ingress at delivery"})
 			return true
 		}
-		writeJSON(w, 200, canMessageResp{Allowed: false, Message: "No active directed link from your current groups reaches this peer group"})
+		cat, _, err := fedCatalogFor(peer.InstanceID)
+		if err == nil && cat != nil {
+			for _, g := range cat.Groups {
+				if strings.EqualFold(g.Name, group) && g.HasCap(proto.CapMail) {
+					if allowed, _, _ := permissionAllowsAction(r, conv, PermMessageDirect, ActionContext{RemotePeer: peer.InstanceID, RemoteGroup: g.Name}); allowed {
+						writeJSON(w, 200, canMessageResp{Allowed: true, Reason: "peer-grant", ViaGroup: g.Name})
+						return true
+					}
+				}
+			}
+		}
+		writeJSON(w, 200, canMessageResp{Allowed: false, Message: "No peer-scoped mail grant or active directed link reaches this peer group"})
 		return true
 	}
 	if !isFederatedAddress(to) {

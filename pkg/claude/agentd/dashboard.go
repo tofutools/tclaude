@@ -4053,7 +4053,8 @@ func collectLinksSnapshot(names map[int64]string) []dashboardLink {
 		if l.Direction == "in" {
 			from, to = to, from
 		}
-		row := dashboardLink{ID: l.ID, From: from, To: to, Mode: l.Mode, Peer: l.Peer, PeerLabel: label, RemoteGroup: l.RemoteGroupName, RemoteGroupID: l.RemoteGroupID, Direction: l.Direction, LocalState: l.LocalState, RemoteState: l.RemoteState, RemoteStale: !fedConnected(), RequestID: l.ProposalID, CreatedAt: l.CreatedAt.UTC().Format(time.RFC3339)}
+		rt := currentFederation()
+		row := dashboardLink{ID: l.ID, From: from, To: to, Mode: l.Mode, Peer: l.Peer, PeerLabel: label, RemoteGroup: l.RemoteGroupName, RemoteGroupID: l.RemoteGroupID, Direction: l.Direction, LocalState: l.LocalState, RemoteState: l.RemoteState, RemoteStale: rt == nil || !rt.sessionPeerOnline(l.Peer), RequestID: l.ProposalID, CreatedAt: l.CreatedAt.UTC().Format(time.RFC3339)}
 		if !l.RemoteStateAt.IsZero() {
 			row.RemoteStateAt = l.RemoteStateAt.UTC().Format(time.RFC3339)
 		}

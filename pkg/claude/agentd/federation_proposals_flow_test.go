@@ -188,6 +188,14 @@ func TestFederation_GroupLinkExactAuthorityAndRevocation(t *testing.T) {
 	row, err := db.GetFederationOutbox(sent.EnvelopeID)
 	require.NoError(t, err)
 	require.Equal(t, db.FedOutboxRefused, row.State)
+	// Even a delivered original must not keep reply authority after revocation.
+	require.NoError(t, db.UpdateFederationOutbox(sent.EnvelopeID, db.FedOutboxAccepted, time.Now(), "", 0))
+	aid, err := db.AgentIDForConv("link-source-00001")
+	require.NoError(t, err)
+	reply := p.envelope(proto.KindMail, proto.Endpoint{Agent: aid}, proto.MailPayload{Body: "reply after revocation"})
+	reply.InReplyTo = sent.EnvelopeID
+	p.send(reply)
+	require.Equal(t, proto.AckRefused, fedAckOf(t, p, reply.ID).Status)
 	sendProposalControl(p, proto.KindPeerProposalDecision, decision)
 	fedEventually(t, "revocation retained", func() bool {
 		l, _ := db.GetFederationGroupLink(response.Edges[0].ID)
@@ -279,4 +287,125 @@ func TestFederation_ProposalCounterRetainsPrivateOfferAndTurn(t *testing.T) {
 	grants, err := db.ListFederationPeerGrants(p.id.ID())
 	require.NoError(t, err)
 	require.Empty(t, grants, "countering must not share anything")
+}
+
+func TestFederation_ProposalPartialAutoIngressAndImmediateRevoke(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	g := f.HaveGroup("partial-ingress")
+	f.HaveConvWithTitle("partial-recipient-0001", "recipient")
+	f.HaveMember(g.Name, "partial-recipient-0001")
+	gid, err := db.FederationGroupIdentity(g.ID)
+	require.NoError(t, err)
+	require.NoError(t, db.UpsertFederationPeerGrant(db.FederationPeerGrant{Peer: p.id.ID(), Slug: agentd.PermGroupsVisibilityRead, Scope: db.FederationGroupScope(g.ID)}))
+	require.NoError(t, db.UpsertFederationPeerGrant(db.FederationPeerGrant{Peer: p.id.ID(), Slug: agentd.PermGroupsLinkAccept, Scope: db.FederationGroupScope(g.ID)}))
+	remote := "grp_44444444444444444444444444444444"
+	incoming := proto.ProposalItem{ID: proto.NewEnvelopeID(), Kind: proto.ProposalGroupLink, Host: p.agentdID, GroupID: gid, GroupName: g.Name, Source: p.id.ID(), SourceGroupID: remote, SourceGroupName: "remote", Mode: db.LinkModeMembersToMembers, Status: "pending"}
+	outgoing := proto.ProposalItem{ID: proto.NewEnvelopeID(), Kind: proto.ProposalGroupLink, Host: p.id.ID(), GroupID: remote, GroupName: "remote", Source: p.agentdID, SourceGroupID: gid, SourceGroupName: g.Name, Mode: db.LinkModeMembersToMembers, Status: "pending"}
+	proposal := proto.PeerProposalPayload{ID: proto.NewEnvelopeID(), Origin: p.id.ID(), Author: p.id.ID(), Revision: 1, Deadline: time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), Items: []proto.ProposalItem{incoming, outgoing}}
+	sendProposalControl(p, proto.KindPeerProposal, proposal)
+	fedEventually(t, "only granted ingress auto-applies", func() bool {
+		l, _ := db.GetFederationGroupLink("xlink_" + proposal.ID + "_" + incoming.ID)
+		return l != nil && l.LocalState == "active"
+	})
+	other, err := db.GetFederationGroupLink("xlink_" + proposal.ID + "_" + outgoing.ID)
+	require.NoError(t, err)
+	require.Equal(t, "pending", other.LocalState)
+	decision := proto.PeerProposalDecisionPayload{ID: proposal.ID, Revision: 1, RevisionHash: proposalDigest(t, proposal), Decision: "accept_items", ItemIDs: []string{incoming.ID}, AppliedIDs: []string{incoming.ID}}
+	sendProposalControl(p, proto.KindPeerProposalDecision, decision)
+	fedEventually(t, "ingress acknowledged", func() bool {
+		l, _ := db.GetFederationGroupLink("xlink_" + proposal.ID + "_" + incoming.ID)
+		return l != nil && l.RemoteState == "active"
+	})
+	authority := &proto.GroupLinkMailAuthority{ProposalID: proposal.ID, ItemID: incoming.ID, SourceGroupID: remote, GroupID: gid}
+	mail := p.envelope(proto.KindGroupMail, proto.Endpoint{}, proto.GroupMailPayload{Group: g.Name, Link: authority, Body: "exact ingress works"})
+	p.send(mail)
+	require.Equal(t, proto.AckAccepted, fedAckOf(t, p, mail.ID).Status)
+	require.Len(t, fedRemoteBodies(t, "partial-recipient-0001"), 1)
+	rec := fedHuman(t, f, http.MethodDelete, "/v1/groups/"+g.Name+"/links/xlink_"+proposal.ID+"_"+incoming.ID, nil)
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	late := p.envelope(proto.KindGroupMail, proto.Endpoint{}, proto.GroupMailPayload{Group: g.Name, Link: authority, Body: "revoked ingress"})
+	p.send(late)
+	require.Equal(t, proto.AckRefused, fedAckOf(t, p, late.ID).Status)
+	require.Len(t, fedRemoteBodies(t, "partial-recipient-0001"), 1)
+}
+
+func TestFederation_ProposalAcceptShareAndLinkTogether(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	g := f.HaveGroup("share-and-link")
+	gid, err := db.FederationGroupIdentity(g.ID)
+	require.NoError(t, err)
+	share := proto.ProposalItem{ID: proto.NewEnvelopeID(), Kind: proto.ProposalShareVisibility, Host: p.agentdID, GroupID: gid, GroupName: g.Name, Status: "pending"}
+	link := proto.ProposalItem{ID: proto.NewEnvelopeID(), Kind: proto.ProposalGroupLink, Host: p.agentdID, GroupID: gid, GroupName: g.Name, Source: p.id.ID(), SourceGroupID: "grp_55555555555555555555555555555555", SourceGroupName: "remote", Mode: db.LinkModeMembersToMembers, Status: "pending"}
+	proposal := proto.PeerProposalPayload{ID: proto.NewEnvelopeID(), Origin: p.id.ID(), Author: p.id.ID(), Revision: 1, Deadline: time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), Items: []proto.ProposalItem{link, share}}
+	sendProposalControl(p, proto.KindPeerProposal, proposal)
+	fedEventually(t, "combined offer", func() bool { row, _ := db.GetFederationProposal(proposal.ID); return row != nil })
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/proposals/"+proposal.ID+"/decision", map[string]any{"revision": 1, "decision": "accept", "item_ids": []string{link.ID, share.ID}})
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+	grants, err := db.ListFederationPeerGrants(p.id.ID())
+	require.NoError(t, err)
+	require.Len(t, grants, 1)
+	require.Equal(t, agentd.PermGroupsVisibilityRead, grants[0].Slug)
+	l, err := db.GetFederationGroupLink("xlink_" + proposal.ID + "_" + link.ID)
+	require.NoError(t, err)
+	require.Equal(t, "active", l.LocalState)
+}
+
+func TestFederation_ProposalWithdrawRetainsAppliedEdge(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	g := f.HaveGroup("withdraw-group")
+	gid, err := db.FederationGroupIdentity(g.ID)
+	require.NoError(t, err)
+	remote := "grp_66666666666666666666666666666666"
+	sendProposalControl(p, proto.KindCatalog, proto.CatalogPayload{PeerProposals: true, Groups: []proto.CatalogGroup{{ID: remote, Name: "remote", Caps: []string{proto.CapGroupVisibility}}}})
+	fedEventually(t, "withdraw catalog", func() bool { raw, _, _ := db.GetFederationCatalog(p.id.ID()); return strings.Contains(raw, remote) })
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/proposals", map[string]any{"peer": "bob", "items": []proto.ProposalItem{
+		{Kind: proto.ProposalGroupLink, Host: "them", GroupID: remote, Source: "us", SourceGroupID: gid, Mode: db.LinkModeMembersToMembers},
+		{Kind: proto.ProposalShareVisibility, Host: "us", GroupID: gid},
+	}})
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+	var proposal proto.PeerProposalPayload
+	fedEventually(t, "withdraw offer", func() bool {
+		agentd.FlushFederationOutboxForTest()
+		envs := p.envelopes(proto.KindPeerProposal)
+		if len(envs) == 0 {
+			return false
+		}
+		require.NoError(t, envs[len(envs)-1].DecodePayload(&proposal))
+		return true
+	})
+	decision := proto.PeerProposalDecisionPayload{ID: proposal.ID, Revision: 1, RevisionHash: proposalDigest(t, proposal), Decision: "accept_items", ItemIDs: []string{proposal.Items[0].ID}, AppliedIDs: []string{proposal.Items[0].ID}}
+	sendProposalControl(p, proto.KindPeerProposalDecision, decision)
+	fedEventually(t, "partial edge active", func() bool {
+		l, _ := db.GetFederationGroupLink("xlink_" + proposal.ID + "_" + proposal.Items[0].ID)
+		return l != nil && l.RemoteState == "active"
+	})
+	counter := proposal
+	counter.Author, counter.Revision, counter.PreviousHash = p.id.ID(), 2, proposalDigest(t, proposal)
+	counter.Note = "retaining the approved edge, negotiating the share"
+	sendProposalControl(p, proto.KindPeerProposal, counter)
+	fedEventually(t, "counter retains applied receipts", func() bool {
+		row, _ := db.GetFederationProposal(proposal.ID)
+		if row == nil || row.Revision != 2 {
+			return false
+		}
+		here, remote, err := db.FederationProposalApplied(proposal.ID, 2)
+		require.NoError(t, err)
+		return len(here) == 1 && len(remote) == 1
+	})
+	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/proposals/"+proposal.ID+"/decision", map[string]any{"revision": 2, "decision": "withdraw"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	l, err := db.GetFederationGroupLink("xlink_" + proposal.ID + "_" + proposal.Items[0].ID)
+	require.NoError(t, err)
+	require.Equal(t, "active", l.LocalState)
+	rec = fedHuman(t, f, http.MethodGet, "/v1/federation/proposals/"+proposal.ID, nil)
+	var view map[string]any
+	testharness.DecodeJSON(t, rec, &view)
+	require.Equal(t, "withdrawn", view["state"])
+	require.Empty(t, view["awaiting"])
+	grants, err := db.ListFederationPeerGrants(p.id.ID())
+	require.NoError(t, err)
+	require.Empty(t, grants)
 }

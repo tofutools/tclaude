@@ -13,8 +13,6 @@ CREATE TABLE federation_group_identities (
  group_id INTEGER PRIMARY KEY REFERENCES agent_groups(id) ON DELETE CASCADE,
  opaque_id TEXT NOT NULL UNIQUE
 ) STRICT;
-INSERT INTO federation_group_identities(group_id,opaque_id)
- SELECT id,'grp_'||lower(hex(randomblob(16))) FROM agent_groups;
 CREATE TABLE federation_peer_proposals (
  id TEXT PRIMARY KEY, peer TEXT NOT NULL, origin_instance TEXT NOT NULL,
  revision INTEGER NOT NULL, body TEXT NOT NULL, decision TEXT NOT NULL DEFAULT '{}', authority TEXT NOT NULL DEFAULT '{}', state TEXT NOT NULL,
@@ -47,6 +45,17 @@ CREATE TABLE federation_link_mail (
 UPDATE schema_version SET version=254;`)
 	if err != nil {
 		return err
+	}
+	// Historical recovery fixtures can omit the group table. As in earlier
+	// group migrations, seed identities only when that source table exists.
+	var haveGroups int
+	if err = tx.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='agent_groups'`).Scan(&haveGroups); err != nil {
+		return err
+	}
+	if haveGroups != 0 {
+		if _, err = tx.Exec(`INSERT INTO federation_group_identities(group_id,opaque_id) SELECT id,'grp_'||lower(hex(randomblob(16))) FROM agent_groups`); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
