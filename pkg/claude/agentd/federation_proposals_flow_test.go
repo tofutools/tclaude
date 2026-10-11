@@ -406,3 +406,29 @@ func TestFederation_ProposalWithdrawRetainsAppliedEdge(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, grants)
 }
+
+func TestGroupLinksRemainLocalWithoutFederation(t *testing.T) {
+	f := newFlow(t)
+	a := f.HaveGroup("local-source")
+	b := f.HaveGroup("local-destination")
+	f.HaveConvWithTitle("local-source-001", "sender")
+	f.HaveConvWithTitle("local-destination-001", "receiver")
+	f.HaveMember(a.Name, "local-source-001")
+	f.HaveMember(b.Name, "local-destination-001")
+	rec := fedHuman(t, f, http.MethodPost, "/v1/groups/"+a.Name+"/links", map[string]any{"to": b.Name, "mode": db.LinkModeMembersToMembers})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var link map[string]any
+	testharness.DecodeJSON(t, rec, &link)
+	require.IsType(t, float64(0), link["id"], "local IDs retain their numeric wire type")
+	rec = fedHuman(t, f, http.MethodGet, "/v1/can-message?from=local-source-001&to=local-destination-001", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var why map[string]any
+	testharness.DecodeJSON(t, rec, &why)
+	require.Equal(t, true, why["allowed"])
+	require.Equal(t, "via-link", why["reason"])
+	rec = postMessage(t, f, "local-source-001", map[string]any{"to": "local-destination-001", "body": "ordinary local message"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	proposals, err := db.ListFederationProposals()
+	require.NoError(t, err)
+	require.Empty(t, proposals)
+}
