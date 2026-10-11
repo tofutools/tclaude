@@ -882,6 +882,15 @@ automatically. **Versions…** lists older versions and **Keep…** pins one (th
 list then flags newer ones as *update*). Members who can post use
 **Post config…** (whole sections, or named items such as `roles/reviewer`)
 and **New version…**; anything that looks like a credential is refused.
+Skills can also be posted as `skills/NAME`: one directory containing `SKILL.md`
+and its supporting files. **Post config…** lets you select its local source
+(Claude Code, Codex shared skills, or Codex home). The import preview lists every
+file, marks scripts and executables **security-relevant**, and shows their
+contents as text. Choose the destination skill root(s), preview again, and
+confirm. Existing skills require overwrite confirmation. Executable bits are
+removed unless you explicitly confirm preserving them; scripts can still be
+invoked through an interpreter. Symlinks and special files are refused.
+
 **Post to…** (on an item or one of its versions) posts that version, unchanged
 and still signed by its author, to another board you can post to. An
 item whose signed details cannot be verified shows the error and cannot be

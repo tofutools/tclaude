@@ -13,33 +13,36 @@ import (
 )
 
 type boardCommandParams struct {
-	JSON         bool
-	Item         string   `long:"item" optional:"true" help:"Board item ID"`
-	Version      string   `long:"version" optional:"true" help:"Exact version ID"`
-	Parent       string   `long:"parent" optional:"true" help:"Current parent version for an update"`
-	FromBoard    string   `long:"from-board" optional:"true" help:"Republish an original signed item from this board"`
-	FromItem     string   `long:"from-item" optional:"true" help:"Original item ID"`
-	FromVersion  string   `long:"from-version" optional:"true" help:"Original exact version"`
-	Only         []string `long:"only" optional:"true" help:"Portable sections/items to publish or import"`
-	Skip         []string `long:"skip" optional:"true" help:"Excluded sections/items"`
-	Set          []string `long:"set" optional:"true" help:"Placeholder name=value"`
-	Replace      bool     `long:"replace" optional:"true" help:"Explicitly replace conflicts"`
-	PreviewToken string   `long:"preview-token" optional:"true" help:"Token from an explicit matching preview"`
-	Path         string   `long:"path" optional:"true" help:"Entry from contents listing"`
-	Offset       int64    `long:"offset" optional:"true" help:"Text entry offset"`
-	MaxBytes     int64    `long:"max-bytes" optional:"true" help:"Bound text inspection"`
-	File         string   `long:"file" optional:"true" help:"New output file for download"`
-	Action       string   `pos:"true" help:"list, create, join, show, leave, members, invite, revoke-invite, set-member, remove-member, rotate-key"`
-	Board        string   `long:"board" optional:"true" help:"Immutable board ID"`
-	Name         string   `long:"name" optional:"true" help:"Board display name"`
-	Token        string   `long:"token" optional:"true" help:"One-time board invitation (keep private)"`
-	TokenID      string   `long:"token-id" optional:"true" help:"Invitation hash to revoke"`
-	Instance     string   `long:"instance" optional:"true" help:"Member instance ID"`
-	Role         string   `long:"role" optional:"true" help:"reader, publisher or owner"`
-	TTL          string   `long:"ttl" optional:"true" help:"Invitation lifetime (default 1h; 1m to 7d)"`
-	Cursor       string   `long:"cursor" optional:"true" help:"Opaque page cursor"`
-	Notify       string   `long:"notify" optional:"true" help:"on or off: leave a Messages note when a kept item gets a newer version"`
-	Refresh      bool     `long:"refresh" optional:"true" help:"Check the boards now instead of using a recent result"`
+	SkillRoot          string
+	SkillTargets       []string
+	PreserveExecutable bool
+	JSON               bool
+	Item               string   `long:"item" optional:"true" help:"Board item ID"`
+	Version            string   `long:"version" optional:"true" help:"Exact version ID"`
+	Parent             string   `long:"parent" optional:"true" help:"Current parent version for an update"`
+	FromBoard          string   `long:"from-board" optional:"true" help:"Republish an original signed item from this board"`
+	FromItem           string   `long:"from-item" optional:"true" help:"Original item ID"`
+	FromVersion        string   `long:"from-version" optional:"true" help:"Original exact version"`
+	Only               []string `long:"only" optional:"true" help:"Portable sections/items to publish or import"`
+	Skip               []string `long:"skip" optional:"true" help:"Excluded sections/items"`
+	Set                []string `long:"set" optional:"true" help:"Placeholder name=value"`
+	Replace            bool     `long:"replace" optional:"true" help:"Explicitly replace conflicts"`
+	PreviewToken       string   `long:"preview-token" optional:"true" help:"Token from an explicit matching preview"`
+	Path               string   `long:"path" optional:"true" help:"Entry from contents listing"`
+	Offset             int64    `long:"offset" optional:"true" help:"Text entry offset"`
+	MaxBytes           int64    `long:"max-bytes" optional:"true" help:"Bound text inspection"`
+	File               string   `long:"file" optional:"true" help:"New output file for download"`
+	Action             string   `pos:"true" help:"list, create, join, show, leave, members, invite, revoke-invite, set-member, remove-member, rotate-key"`
+	Board              string   `long:"board" optional:"true" help:"Immutable board ID"`
+	Name               string   `long:"name" optional:"true" help:"Board display name"`
+	Token              string   `long:"token" optional:"true" help:"One-time board invitation (keep private)"`
+	TokenID            string   `long:"token-id" optional:"true" help:"Invitation hash to revoke"`
+	Instance           string   `long:"instance" optional:"true" help:"Member instance ID"`
+	Role               string   `long:"role" optional:"true" help:"reader, publisher or owner"`
+	TTL                string   `long:"ttl" optional:"true" help:"Invitation lifetime (default 1h; 1m to 7d)"`
+	Cursor             string   `long:"cursor" optional:"true" help:"Opaque page cursor"`
+	Notify             string   `long:"notify" optional:"true" help:"on or off: leave a Messages note when a kept item gets a newer version"`
+	Refresh            bool     `long:"refresh" optional:"true" help:"Check the boards now instead of using a recent result"`
 }
 
 // Each action registers only its own flags; required markers reflect that
@@ -68,13 +71,13 @@ func boardsCmd() *cobra.Command {
 		{"rotate-key", "rotate-key", "Rotate the board content key", []string{"board"}, []string{"board"}, nil},
 		{"items", "items", "List items and update notices", []string{"board", "cursor"}, []string{"board"}, nil},
 		{"versions", "versions", "List item versions", []string{"board", "item", "cursor"}, []string{"board", "item"}, nil},
-		{"publish", "publish", "Publish selected config or republish a signed item", []string{"board", "name", "item", "parent", "from-board", "from-item", "from-version", "only", "skip"}, []string{"board"}, nil},
+		{"publish", "publish", "Publish selected config/skill or republish a signed item", []string{"board", "name", "item", "parent", "from-board", "from-item", "from-version", "only", "skip", "skill-root"}, []string{"board"}, nil},
 		{"pin", "pin", "Pin an exact item version", []string{"board", "item", "version"}, []string{"board", "item", "version"}, nil},
 		{"fetch", "fetch", "Fetch and verify without importing", []string{"board", "item", "version"}, []string{"board", "item", "version"}, nil},
 		{"contents", "contents", "Inspect fetched contents", []string{"board", "item", "version", "path", "offset", "max-bytes"}, []string{"board", "item", "version"}, nil},
 		{"download", "download", "Save a fetched bundle to a new file", []string{"board", "item", "version", "file"}, []string{"board", "item", "version", "file"}, nil},
-		{"preview", "preview", "Preview an explicit import", []string{"board", "item", "version", "only", "skip", "set", "replace"}, []string{"board", "item", "version"}, nil},
-		{"import", "import", "Apply the matching reviewed preview", []string{"board", "item", "version", "only", "skip", "set", "replace", "preview-token"}, []string{"board", "item", "version", "preview-token"}, nil},
+		{"preview", "preview", "Preview an explicit import", []string{"board", "item", "version", "only", "skip", "set", "replace", "skill-target", "preserve-executable"}, []string{"board", "item", "version"}, nil},
+		{"import", "import", "Apply the matching reviewed preview", []string{"board", "item", "version", "only", "skip", "set", "replace", "preview-token", "skill-target", "preserve-executable"}, []string{"board", "item", "version", "preview-token"}, nil},
 	}
 	for _, a := range actions {
 		p := &boardCommandParams{Action: a.dispatch}
@@ -104,6 +107,7 @@ func addBoardFlag(cmd *cobra.Command, p *boardCommandParams, name string) {
 		"role": {&p.Role, "reader, publisher or owner (invite defaults to reader)"}, "ttl": {&p.TTL, "Invitation lifetime, default 1h (1m to 168h)"}, "cursor": {&p.Cursor, "Opaque page cursor"},
 		"item": {&p.Item, "Item ID"}, "version": {&p.Version, "Exact version ID"}, "parent": {&p.Parent, "Latest parent version when updating an item"},
 		"from-board": {&p.FromBoard, "Republish an original signed item from this board"}, "from-item": {&p.FromItem, "Original item ID"}, "from-version": {&p.FromVersion, "Original version ID"},
+		"skill-root":    {&p.SkillRoot, "Publish source root: claude, agents or codex (required for duplicate skill names)"},
 		"preview-token": {&p.PreviewToken, "Token from a matching explicit preview"}, "path": {&p.Path, "Entry path from contents listing"}, "file": {&p.File, "New local output file"},
 	}
 	if v, ok := strings[name]; ok {
@@ -111,6 +115,10 @@ func addBoardFlag(cmd *cobra.Command, p *boardCommandParams, name string) {
 		return
 	}
 	switch name {
+	case "skill-target":
+		f.StringSliceVar(&p.SkillTargets, name, nil, "Import skill into these known roots: claude, agents, codex (repeat/comma-separated)")
+	case "preserve-executable":
+		f.BoolVar(&p.PreserveExecutable, name, false, "Explicitly preserve executable bits after inspecting skill scripts; otherwise strip them")
 	case "notify":
 		f.StringVar(&p.Notify, name, "", "on or off: leave a Messages note when a kept item gets a newer version")
 	case "refresh":
