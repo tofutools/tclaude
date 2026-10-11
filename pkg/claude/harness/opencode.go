@@ -18,6 +18,7 @@ func init() {
 		ApprovalsReviewer:        false,
 		Convs:                    openCodeConvStore{},
 		History:                  openCodeHistory{},
+		Transcript:               openCodeTranscript{},
 		Life:                     openCodeLifecycle{},
 		TmuxScrollback:           true,
 		LaunchEnrollment:         true,

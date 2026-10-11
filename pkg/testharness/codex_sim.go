@@ -738,6 +738,13 @@ func (c *CodexSim) writeSessionMetaLocked() error {
 	})
 }
 
+// AppendResponseItem appends one raw `response_item` (a tool call, tool
+// output, reasoning item, …): the shapes a real Codex turn records beyond the
+// plain exchange WriteExchange models.
+func (c *CodexSim) AppendResponseItem(payload map[string]any) error {
+	return c.appendLine("response_item", payload)
+}
+
 // appendLine wraps payload in the {timestamp,type,payload} envelope and
 // appends it. Takes the lock; handler-facing.
 func (c *CodexSim) appendLine(typ string, payload map[string]any) error {

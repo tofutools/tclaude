@@ -109,6 +109,9 @@ type Harness struct {
 	Convs ConvStore
 	// History installs a reviewed portable transcript for native resume.
 	History HistoryTransfer
+	// Transcript converts History's wire format to and from the neutral
+	// transcript for cross-harness morph. nil = no translation support.
+	Transcript TranscriptCodec
 	// Hooks installs/checks/repairs the tclaude callback in the harness's
 	// config target (+ any trust step). nil = this build can't install
 	// hooks for the harness; `tclaude setup` skips it with a message.
