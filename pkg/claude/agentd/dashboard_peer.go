@@ -105,6 +105,10 @@ func servePeerViewProxyWith(w http.ResponseWriter, r *http.Request, cached bool)
 		reply, err = peerReads.read(r.Context(), rt, peer, req)
 	} else {
 		reply, err = exchangePeerView(r.Context(), rt, peer, req)
+		// An action on the peer may change what its polls read next.
+		if err == nil && r.Method != http.MethodGet && r.Method != http.MethodHead {
+			peerReads.invalidate(peer.InstanceID)
+		}
 	}
 	if err != nil {
 		fail(err)

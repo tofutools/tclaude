@@ -115,9 +115,9 @@ function usePeerSnapshots({ active, peers, fetchImpl, localFetch, timers, now })
       let empty = false;
       let failures = entriesRef.current[peer.id]?.failures || 0;
       try {
-        // A peer read declares this poll's interval, so this node keeps the
-        // peer's snapshot warm for every dashboard (peer_read_cache.go); Age
-        // says how old the served copy is.
+        // A peer read declares this poll's interval, so this node shares one
+        // conditional peer read among polls within a second (peer_read_cache.go);
+        // Age says how old the served copy is.
         const init = { credentials: 'same-origin', cache: 'no-store', ...(peer.local ? {} : { headers: { [PEER_POLL_HEADER]: String(MERGED_POLL_MS) } }) };
         const res = await (peer.local ? localFetch : fetchImpl)(snapshotURL(peer), init);
         if (res.ok) {
