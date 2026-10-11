@@ -100,7 +100,7 @@ receiving side.
 | Operation | What PAF carries | Carrier in this release |
 |---|---|---|
 | **Export / import** of an agent | One agent PAF file. Import previews first, then lands the agent on a harness you choose. | PAF with [`tclaude paf export` / `import`](#exporting-and-importing-an-agent); `agent bundle export` still writes [agent bundle v1](federation.md#portable-local-agent-bundles) by default |
-| **Group export / import** | A group PAF: group configuration plus every member. | Group export v5 |
+| **Group export / import** | A group PAF: group configuration plus every member. | Group export v5 by default; a group PAF with [`groups export --format paf`](#exporting-and-importing-a-group) |
 | **Snapshots** | A named PAF in a local library. Instantiate one or many agents from it, or share it. | Not available yet |
 | **Morph** (model or harness change in place) | The neutral context, losses and full transcript the switch produced. The identity stays in place, so no new agent is created. | Morph artifact directory |
 | **Clone** | A local sibling. Clone copies native history directly and shares PAF's history model. | Native copy (no file) |
@@ -196,6 +196,32 @@ On another harness the source's launch posture (approval, sandbox and the
 other profile settings) is not applied; the receiver's defaults and normal
 spawn checks apply, and the preview says so. Imports through federation
 offers, moves and teleports keep landing on the source harness.
+
+## Exporting and importing a group
+
+```bash
+tclaude agent groups export team --format paf --out team.paf
+tclaude agent groups import team.paf --dry-run
+tclaude agent groups import team.paf --into "$PWD" --as team-copy
+```
+
+`groups export --format paf` writes the same data as the default `.zip` as a
+group PAF. `group.json` holds the group's name, description and members with
+their roles. Each member is an agent with its Claude Code history as the
+native blob. tclaude's own group state (settings, owners, permissions,
+enrollment, cron jobs, messages and audit trail) travels in the `tclaude`
+extension. The export is signed when this node has a federation identity.
+The permission (`groups.export`) is the same as for the zip.
+
+`groups import` and the dashboard import accept either file, with the same
+permission (`groups.import`), preview, `--into`, `--as` and collision
+handling. A group PAF is verified before anything is written. A group PAF
+tclaude wrote imports exactly like its zip. One written by another tool
+imports the group's name, description and members, each with its Claude Code
+history. Members in other harnesses are refused for now.
+
+`tclaude paf inspect`, `validate` and `render` also read group export zips,
+converting them on read.
 
 ## Reading a PAF
 
@@ -819,9 +845,10 @@ own state that other systems are not expected to share:
 | `environment.json` | `sandbox` | tclaude sandbox details: the profile name and settings behind the `tclaude` layer. |
 | `environment.json` placeholders | `item`, `field` | The configuration item and field a placeholder stands in. |
 | `environment.json` | `harness.<name>` | Settings only one harness has, such as `harness.claude.auto_compact_window`. |
-| `group.json` | `group` | Group settings: standing orders, routes, auto-join and similar. |
+| `group.json` | `group` | Group settings: description, standing orders, environment, group permissions, member limit and similar. |
 | `group.json` members | `owner` | The member owned the group (advisory; ownership never travels). |
 | `ext/tclaude/mail-deliveries.json` | entry | The mail delivery ledger a continuation carries. |
+| `ext/tclaude/group-state.json` | entry | A group's tclaude state in the group export's shape: members, owners, permissions, enrollment, cron jobs, messages, audit trail and per-conversation metadata. |
 | `manifest.json` | `converted_from` | The legacy carrier a PAF was converted from: `format`, `format_version`, `tclaude_version`, `created_at`. |
 
 The extension is `copy: unsafe`, version `0.1`.
@@ -897,7 +924,7 @@ agent bundle for peers that do not advertise PAF support.
 | Legacy | Maps to |
 |---|---|
 | Agent bundle v1 (`tclaude-agent-bundle`, `manifest.json` + `history/transcript.jsonl`) | One agent; `agent.definition` from `manifest.agent`; the native blob from `history`; findings into `privacy.scan`; the inline profile and permissions into the `tclaude` extension; the mail ledger into `ext/tclaude/`. There is no neutral context, so landing in another harness decodes the native blob first. |
-| Group export v5 (`manifest.json` + `projects/<conv>.jsonl`) | A group; one agent per conversation with a native Claude Code blob; group settings into the `tclaude` extension. |
+| Group export v5 (`manifest.json` + `projects/<conv>.jsonl`) | A group; one agent per conversation with a native Claude Code blob; the group row into `group.json`'s `tclaude` extension and the other tables into `ext/tclaude/group-state.json`. |
 | Morph artifacts (`transcript.md`, `transcript.jsonl`, `loss-report.json`) | Readable as a context-file landing. `loss-report.json` has the fields of `losses.json`; readers treat `"items": null` as an empty list and map `fallback` to `landing_rung`. |
 
 ## Related pages

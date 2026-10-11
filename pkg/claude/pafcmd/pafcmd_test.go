@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
+	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/paf"
 	"github.com/tofutools/tclaude/pkg/paf/legacy"
@@ -239,4 +240,35 @@ func TestRenderRefusesToOverwriteItsInput(t *testing.T) {
 	after, err := os.ReadFile(file)
 	require.NoError(t, err)
 	assert.Equal(t, buf.Bytes(), after)
+}
+
+func TestInspectAndRenderGroupExport(t *testing.T) {
+	isolate(t)
+	dir := testutil.CanonicalTempDir(t)
+	exp := &groupexport.Export{FormatVersion: groupexport.FormatVersion, ExportedAt: "2026-10-11T10:00:00Z", SourceGroup: "team",
+		Members: []groupexport.Member{{ConvID: "conv-1", Role: "lead"}},
+		Convs:   []groupexport.Conv{{ConvID: "conv-1", Title: "reviewer", SourceCwd: "/w", Content: []byte(claudeHistory)}}}
+	raw, err := groupexport.Marshal(exp)
+	require.NoError(t, err)
+	file := writeFile(t, dir, "team.zip", raw)
+
+	var out bytes.Buffer
+	require.Equal(t, 0, runValidate(&out, &validateParams{File: file}), out.String())
+	assert.Contains(t, out.String(), legacy.SourceGroupExport)
+	out.Reset()
+	require.NoError(t, runInspect(&out, &inspectParams{File: file, JSON: true}))
+	var s struct {
+		Kind  string `json:"kind"`
+		Group struct {
+			Name    string   `json:"name"`
+			Members []string `json:"members"`
+		} `json:"group"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &s))
+	assert.Equal(t, paf.KindGroup, s.Kind)
+	assert.Equal(t, "team", s.Group.Name)
+	assert.Equal(t, []string{"reviewer"}, s.Group.Members)
+	out.Reset()
+	require.NoError(t, runRender(&out, &renderParams{File: file}))
+	assert.Contains(t, out.String(), "hello from native history")
 }

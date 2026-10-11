@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +22,10 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
 	"github.com/tofutools/tclaude/pkg/claude/common/reflink"
+	"github.com/tofutools/tclaude/pkg/common/buildversion"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
+	"github.com/tofutools/tclaude/pkg/paf"
+	"github.com/tofutools/tclaude/pkg/paf/legacy"
 )
 
 // groups_export.go is the daemon half of per-group export / import. It
@@ -77,12 +82,26 @@ func handleGroupExport(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	if _, ok := requirePermission(w, r, PermGroupsExport); !ok {
 		return
 	}
-	serveGroupExport(w, g.Name)
+	format := r.URL.Query().Get("format")
+	if format == "" {
+		format = groupArchiveZip
+	}
+	if format != groupArchiveZip && format != groupArchivePAF {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "format must be zip or paf")
+		return
+	}
+	serveGroupExport(w, g.Name, format)
 }
 
+// Archive formats a group export can be written in.
+const (
+	groupArchiveZip = "zip"
+	groupArchivePAF = "paf"
+)
+
 // serveGroupExport builds the archive and writes it as a file download.
-func serveGroupExport(w http.ResponseWriter, groupName string) {
-	archive, err := buildGroupExport(groupName)
+func serveGroupExport(w http.ResponseWriter, groupName, format string) {
+	archive, err := buildGroupExportAs(groupName, format)
 	if err != nil {
 		if errors.Is(err, db.ErrGroupNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
@@ -91,11 +110,15 @@ func serveGroupExport(w http.ResponseWriter, groupName string) {
 		writeError(w, http.StatusInternalServerError, "io", "export: "+err.Error())
 		return
 	}
+	ext, contentType := groupexport.FileExtension, groupexport.ContentType
+	if format == groupArchivePAF {
+		ext, contentType = ".paf", paf.MediaType
+	}
 	filename := fmt.Sprintf("group-%s-%s%s",
 		sanitizeFilenamePart(groupName),
 		time.Now().Format("20060102-150405"),
-		groupexport.FileExtension)
-	w.Header().Set("Content-Type", groupexport.ContentType)
+		ext)
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 	w.Header().Set("X-Tclaude-Export-Filename", filename)
 	w.WriteHeader(http.StatusOK)
@@ -109,6 +132,12 @@ func serveGroupExport(w http.ResponseWriter, groupName string) {
 // zip archive. A member whose .jsonl cannot be located is flagged
 // Missing — its DB rows still export.
 func buildGroupExport(groupName string) ([]byte, error) {
+	return buildGroupExportAs(groupName, groupArchiveZip)
+}
+
+// buildGroupExportAs is buildGroupExport in the given archive format: the
+// v5 zip, or a group PAF carrying the same data.
+func buildGroupExportAs(groupName, format string) ([]byte, error) {
 	exp, err := db.CollectGroupExport(groupName)
 	if err != nil {
 		return nil, err
@@ -138,7 +167,12 @@ func buildGroupExport(groupName string) ([]byte, error) {
 		}
 	}
 
-	archive, err := groupexport.Marshal(exp)
+	var archive []byte
+	if format == groupArchivePAF {
+		archive, err = groupExportPAF(exp)
+	} else {
+		archive, err = groupexport.Marshal(exp)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +182,7 @@ func buildGroupExport(groupName string) ([]byte, error) {
 	if _, err := db.InsertTransferLog(db.TransferLogEntry{
 		Kind:          db.TransferKindExport,
 		At:            time.Now().UTC(),
-		FormatVersion: exp.FormatVersion,
+		FormatVersion: groupexport.FormatVersion,
 		SourceGroup:   exp.SourceGroup,
 		SourceHome:    exp.SourceHome,
 		SourceOS:      exp.SourceOS,
@@ -159,6 +193,37 @@ func buildGroupExport(groupName string) ([]byte, error) {
 		slog.Warn("group export: audit log write failed", "group", groupName, "error", err)
 	}
 	return archive, nil
+}
+
+// groupExportPAF writes exp as a group PAF, signed when this node already
+// has a federation identity (exporting never creates one).
+func groupExportPAF(exp *groupexport.Export) ([]byte, error) {
+	opts := legacy.GroupWriteOptions{Producer: paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}, MaxArchiveBytes: maxImportArchiveBytes}
+	if id, err := proto.LoadIdentity(FederationKeyPath()); err == nil {
+		opts.Keys = []paf.SigningKey{{Key: id.Priv, KeyID: id.ID(), Signer: &paf.Signer{Kind: "instance"}}}
+	}
+	var buf bytes.Buffer
+	if err := legacy.WriteGroupExport(exp, &buf, opts); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// decodeGroupArchive reads an import archive: a group PAF, verified and
+// read into the group export model, or a group export zip. source is
+// paf.Format or legacy.SourceGroupExport.
+func decodeGroupArchive(archive []byte) (exp *groupexport.Export, source string, err error) {
+	r := bytes.NewReader(archive)
+	if !legacy.IsPAF(r, int64(len(archive))) {
+		exp, err := groupexport.Unmarshal(archive)
+		return exp, legacy.SourceGroupExport, err
+	}
+	a, err := paf.Open(r, int64(len(archive)), paf.Options{Purpose: paf.PurposeImport, Limits: paf.Limits{MaxArchiveBytes: maxImportArchiveBytes}})
+	if err != nil {
+		return nil, "", err
+	}
+	exp, err = legacy.ToGroupExport(a, maxImportArchiveBytes)
+	return exp, paf.Format, err
 }
 
 // --- import ---
@@ -289,7 +354,9 @@ func handleGroupImport(w http.ResponseWriter, r *http.Request) {
 // blind action — and `tclaude agent groups import --dry-run` prints it.
 // Producing it writes nothing.
 type importInspection struct {
-	// Manifest summary — what the archive declares it holds.
+	// Manifest summary — what the archive declares it holds. Source is
+	// "paf" for a group PAF, "group-export" for a zip.
+	Source        string `json:"source"`
 	SourceGroup   string `json:"source_group"`
 	FormatVersion int    `json:"format_version"`
 	SchemaVersion int    `json:"schema_version,omitempty"`
@@ -329,7 +396,7 @@ type convCollision struct {
 //     manifest, malformed, or a format version this tclaude predates.
 //     There is nothing safe to preview; the caller blocks the import.
 func inspectGroupImport(archive []byte, asName string) (*importInspection, int, error) {
-	exp, err := groupexport.Unmarshal(archive)
+	exp, source, err := decodeGroupArchive(archive)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
@@ -347,6 +414,7 @@ func inspectGroupImport(archive []byte, asName string) (*importInspection, int, 
 	}
 
 	insp := &importInspection{
+		Source:         source,
 		SourceGroup:    exp.SourceGroup,
 		FormatVersion:  exp.FormatVersion,
 		SchemaVersion:  exp.SchemaVersion,
@@ -569,7 +637,7 @@ func canonicalImportedPermissionScopeForSlug(slug, raw string) (string, error) {
 }
 
 func runGroupImport(archive []byte, into, asName, caller string) (*importResponse, int, error) {
-	exp, err := groupexport.Unmarshal(archive)
+	exp, _, err := decodeGroupArchive(archive)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}

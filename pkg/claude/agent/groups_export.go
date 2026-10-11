@@ -27,19 +27,22 @@ import (
 
 type groupsExportParams struct {
 	Name string `pos:"true" help:"Group to export"`
-	Out  string `long:"out" short:"o" optional:"true" help:"Write the .zip archive here. Default: group-<name>-<timestamp>.zip in the current directory. Pass '-' to stream the archive to stdout."`
+	Out    string `long:"out" short:"o" optional:"true" help:"Write the archive here. Default: group-<name>-<timestamp>.zip (or .paf) in the current directory. Pass '-' to stream the archive to stdout."`
+	Format string `long:"format" optional:"true" alts:"zip,paf" help:"Archive format: zip (the group export archive, default) or paf (a group Portable Agent Format file carrying the same data)"`
 }
 
 func groupsExportCmd() *cobra.Command {
 	return boa.CmdT[groupsExportParams]{
 		Use:   "export",
-		Short: "Export a whole group to a portable .zip archive",
+		Short: "Export a whole group to a portable .zip or .paf archive",
 		Long: "Export a group — the group row, its members and owners, " +
 			"permissions, enrollment, cron jobs, message history and audit " +
 			"trail, plus every member's conversation .jsonl — into a single " +
 			"self-contained .zip. The archive is portable across machines, " +
 			"users and OSes (Linux <-> macOS); import it elsewhere with " +
-			"`tclaude agent groups import`. It contains full conversation " +
+			"`tclaude agent groups import`. --format paf writes the same data " +
+			"as a group Portable Agent Format file instead, which " +
+			"`tclaude paf inspect|render` can read. It contains full conversation " +
 			"content, so treat it as sensitive. Gated server-side on the " +
 			"groups.export permission (default human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -61,7 +64,15 @@ func runGroupsExport(p *groupsExportParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	archive, headers, err := DaemonGetRaw("/v1/groups/" + url.PathEscape(p.Name) + "/export")
+	format := p.Format
+	if format == "" {
+		format = "zip"
+	}
+	if format != "zip" && format != "paf" {
+		fmt.Fprintf(stderr, "Error: --format must be zip or paf\n")
+		return rcInvalidArg
+	}
+	archive, headers, err := DaemonGetRaw("/v1/groups/" + url.PathEscape(p.Name) + "/export?format=" + format)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
@@ -81,7 +92,7 @@ func runGroupsExport(p *groupsExportParams, stdout, stderr io.Writer) int {
 		// Prefer the server-suggested filename; fall back to a local one.
 		outPath = headers.Get("X-Tclaude-Export-Filename")
 		if outPath == "" {
-			outPath = fmt.Sprintf("group-%s-%s.zip", p.Name, time.Now().Format("20060102-150405"))
+			outPath = fmt.Sprintf("group-%s-%s.%s", p.Name, time.Now().Format("20060102-150405"), format)
 		}
 	}
 	if err := os.WriteFile(outPath, archive, 0o600); err != nil {
@@ -96,7 +107,7 @@ func runGroupsExport(p *groupsExportParams, stdout, stderr io.Writer) int {
 // --- groups import ---
 
 type groupsImportParams struct {
-	File   string `pos:"true" help:"Path to the .zip export archive"`
+	File   string `pos:"true" help:"Path to the export archive: a .zip or a group .paf"`
 	Into   string `long:"into" help:"Target working directory the imported agents are bound to. Required — on a different machine the source path will not exist, so you choose where the group lives now."`
 	As     string `long:"as" optional:"true" help:"Import the group under this name instead of its exported name. Required when a group with the exported name already exists locally."`
 	DryRun bool   `long:"dry-run" help:"Inspect the archive and report what would be imported — manifest summary plus group-name and conv-id collisions — WITHOUT importing anything. --into is not needed with --dry-run."`
@@ -106,10 +117,12 @@ type groupsImportParams struct {
 func groupsImportCmd() *cobra.Command {
 	return boa.CmdT[groupsImportParams]{
 		Use:   "import",
-		Short: "Import a group from a .zip archive produced by `groups export`",
+		Short: "Import a group from a .zip or .paf archive produced by `groups export`",
 		Long: "Recreate a group from an export archive: the group, its agents, " +
 			"permissions, ownership, enrollment, cron jobs, messages and every " +
-			"conversation .jsonl. Imported agents land OFFLINE — no tmux " +
+			"conversation .jsonl. A group .paf is verified first; one written by " +
+			"another tool imports its group, members and their Claude Code " +
+			"histories. Imported agents land OFFLINE — no tmux " +
 			"session is started; wake them with the usual resume tooling.\n\n" +
 			"--into picks the local working directory the imported agents are " +
 			"bound to (their conversation files and any embedded paths are " +
@@ -221,6 +234,7 @@ func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr
 		path += "?as=" + url.QueryEscape(p.As)
 	}
 	var insp struct {
+		Source          string `json:"source"`
 		SourceGroup     string `json:"source_group"`
 		FormatVersion   int    `json:"format_version"`
 		SchemaVersion   int    `json:"schema_version"`
@@ -256,6 +270,9 @@ func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr
 
 	fmt.Fprintf(stdout, "Dry run — nothing was imported.\n\n")
 	fmt.Fprintf(stdout, "Archive contents:\n")
+	if insp.Source == "paf" {
+		fmt.Fprintf(stdout, "  archive:        group PAF\n")
+	}
 	fmt.Fprintf(stdout, "  source group:   %s\n", insp.SourceGroup)
 	fmt.Fprintf(stdout, "  agents:         %d\n", insp.AgentCount)
 	fmt.Fprintf(stdout, "  messages:       %d\n", insp.MessageCount)
