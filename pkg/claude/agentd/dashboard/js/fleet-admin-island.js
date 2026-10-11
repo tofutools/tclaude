@@ -25,6 +25,7 @@ import { FLEET_PAGE_EVENT, takeFleetPage } from './skynet-move-drop.js';
 import { MovesPage } from './fleet-admin-moves.js';
 import { createRunActions } from './fleet-run-actions.js';
 import { dashboardState } from './snapshot-store.js';
+import { openProposalComposer } from './links-controller.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { fmtAge, nodeHref, pollDelay, remoteNodeID } from './skynet-model.js';
 import { LABEL_RE, UNRESTRICTED_CONSEQUENCE, adminView, shortFingerprint, shortID } from './fleet-admin-model.js';
@@ -270,7 +271,7 @@ function grantsCell(g) {
   return html`<span title=${parts}>${g.total} <span class="muted">(${parts})</span></span>`;
 }
 
-function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust, onGrants, onKey }) {
+function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust, onGrants, onKey, onPropose }) {
   return html`<div class="fa-peers">
     <h4>This node</h4>
     <table class="fa-table" id="fleet-self">
@@ -297,6 +298,7 @@ function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust, on
           <td>${r.pools.length ? r.pools.join(', ') : html`<span class="muted">—</span>`}</td>
           <td class="fa-acts">
             <button type="button" data-fa="grants" onClick=${() => onGrants(r)}>Grants…</button>
+            ${onPropose && html`<button type="button" data-fa="propose" title=${`Offer ${r.label} groups to see and cross-node links; nothing changes until their operator accepts`} onClick=${() => onPropose(r)}>Propose…</button>`}
             ${r.level === 'unrestricted'
               ? html`<button type="button" data-fa="restrict" onClick=${() => onRestrict(r)}>Restrict…</button>`
               : html`<button type="button" data-fa="unrestrict" onClick=${() => onUnrestrict(r)}>Make unrestricted…</button>`}
@@ -405,7 +407,7 @@ export function FleetAdmin({
       class=${`fa-subtab${p.id === sub.id ? ' on' : ''}`} onClick=${() => { if (p.id !== sub.id) { setRunPreselect(''); setPage(p.id); } }}>${p.label}${p.id === 'boards' && boardUpdates?.updates?.length > 0
         ? html` <span class="fa-badge" id="fleet-boards-update-count" title="Items you keep have a newer version">${boardUpdates.updates.length}</span>` : ''}</button>`)}</div>
     ${sub.id === 'peers'
-      ? html`${active && html`<${ViewersPanel} view=${view} actions=${actions} confirm=${confirm} toast=${toast} timers=${timers} />`}<${PeersPage} view=${view} now=${now()} onKey=${(r) => setDialog({ kind: 'key', row: r })} onTrust=${(r) => setDialog({ kind: 'trust', row: r })}
+      ? html`${active && html`<${ViewersPanel} view=${view} actions=${actions} confirm=${confirm} toast=${toast} timers=${timers} />`}<${PeersPage} view=${view} now=${now()} onPropose=${remote ? null : (r) => { try { openProposalComposer(r.id); } catch (e) { toast(`Propose: ${e?.message || e}`, true); } }} onKey=${(r) => setDialog({ kind: 'key', row: r })} onTrust=${(r) => setDialog({ kind: 'trust', row: r })}
           onUnrestrict=${(r) => setDialog({ kind: 'unrestrict', row: r })} onRestrict=${restrict} onUntrust=${untrust}
           onGrants=${(r) => { setGrantTarget(r.id); setPage('grants'); }} />`
       : sub.id === 'harnesses'

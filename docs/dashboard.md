@@ -742,7 +742,28 @@ An incoming request appears in **Messages → Access requests** as a 🌐 link
 request naming the exact edge and mode, with **Approve**, **Approve + allow
 future links into** the group (which also grants that peer `groups.link.accept`
 for it), and **Decline**. Approving authorizes only that edge, never broader
-messaging from the peer.
+messaging from the peer. A request this node sent shows read-only, waiting for
+the peer's operator.
+
+### Peer proposals
+
+A proposal offers a peer several items in one go: groups of yours they may see
+(name, description and member count; the member list only when you tick
+*include member list*) and link edges between your groups and theirs, one
+direction or both (each direction is a separate edge). Open it with
+**Propose…** on a trusted peer in **⚙ Fleet**, or **Propose several items…**
+in the link dialog's Peer node mode. A preview lists exactly what is offered.
+Nothing changes on either node until the peer's operator accepts.
+
+The proposal appears on both nodes in **Messages → Access requests**. The
+receiver ticks what to accept and gets **Accept all**, **Accept selected**
+or **Decline all**. Unticking *member list* on a share keeps only its name,
+description and count. Changing a link mode or sharing some of your own groups
+back sends a **counter-proposal** instead, and the turn passes to the other
+side. While the peer decides, the sender can **Withdraw**. When some edges were
+already accepted, the button reads **Withdraw pending items**: accepted edges
+stay until they are removed in Inter-group links. Each node applies only its own
+items. Accepting grants nothing beyond them.
 
 ### Fleet administration (⚙ Fleet)
 

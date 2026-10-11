@@ -41,6 +41,7 @@ export function createLinksActions({
     openCreate: state.openCreate,
     openEdit: state.openEdit,
     closeEditor: state.closeEditor,
+    openPropose: state.openPropose,
 
     // loadLinkTargets lists the peers and peer-shared groups a cross-node
     // link may target. null means this daemon has no cross-node links (an
@@ -64,6 +65,19 @@ export function createLinksActions({
       state.closeEditor();
       if (peer) notify(crossNodeLinkNotice(from, peer, out?.edges));
       else notify(`linked: ${from} → ${to}${bidir ? ' (+reverse)' : ''}`);
+      await refresh();
+    },
+
+    // createProposal sends a multi-item peer proposal (tcl-hj04jt). Nothing
+    // changes on either node until the peer's operator accepts.
+    async createProposal({ peer, peerLabel = '', note = '', items }) {
+      await request(fetchImpl, '/api/federation/proposals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ peer, note, items }),
+      });
+      state.closeEditor();
+      notify(`Proposal sent to ${peerLabel || peer}. It shows under Messages → Requests until their operator decides.`);
       await refresh();
     },
 

@@ -508,3 +508,41 @@ test('the cross-node toast distinguishes connecting from a sent request', async 
   assert.match(crossNodeLinkNotice('alpha', peer, [{ direction: 'out', state: 'pending' }, { direction: 'in', state: 'pending' }]),
     /^link request sent to bob: alpha → bob:builders · pending \(reverse asked separately\)$/);
 });
+
+test('the link dialog hands a peer over to the proposal composer, which sends shares and edge pairs', async (t) => {
+  const view = await mountLinks(t, { actions: { loadLinkTargets: async () => crossTargets } });
+  const { harness, host, state, calls } = view;
+  view.actions.openPropose = state.openPropose;
+  view.actions.createProposal = async (value) => { calls.push(['propose', value]); };
+  await harness.act(() => state.publish({ ...sample, groups: [{ name: 'alpha', members: [{}, {}] }, { name: 'beta', members: [{}] }] }));
+  const dialog = await openCreateDialog(view);
+  await harness.act(() => dialog.querySelector('#link-modal-target-peer').click());
+  await harness.act(() => dialog.querySelector('#link-modal-propose').click());
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const composer = host.querySelector('#proposal-modal');
+  assert.ok(composer, 'composer replaced the link dialog');
+  assertAbsent(host.querySelector('#link-modal'));
+  assert.match(composer.querySelector('#proposal-modal-title').textContent, /Propose to bob/);
+  assert.deepEqual([...composer.querySelectorAll('#proposal-peer option')].map((o) => o.value), ['inst_bob'], 'only proposal-capable peers');
+  assert.equal(composer.querySelector('#proposal-submit').disabled, true, 'nothing to send yet');
+  const alpha = composer.querySelector('[data-group="alpha"]');
+  assert.match(alpha.textContent, /alpha · 2 members/);
+  const share = alpha.querySelector('.proposal-share');
+  share.checked = true;
+  await harness.act(() => harness.fireEvent(share, 'change'));
+  const members = composer.querySelector('[data-group="alpha"] .proposal-share-members');
+  assert.notEqual(members.checked, true, 'member list is opt-in');
+  members.checked = true;
+  await harness.act(() => harness.fireEvent(members, 'change'));
+  await harness.act(() => composer.querySelector('#proposal-add-pair').click());
+  await choose(harness, composer.querySelector('.proposal-pair-theirs'), 'grp_b2');
+  assert.match(composer.querySelector('#proposal-preview').textContent, /bob sees the name and description of alpha, plus the member list of alpha/);
+  assert.match(composer.querySelector('#proposal-preview').textContent, /link alpha ⇄ bob:docs/);
+  await harness.act(() => composer.querySelector('#proposal-submit').click());
+  assert.deepEqual(calls.at(-1), ['propose', { peer: 'inst_bob', peerLabel: 'bob', note: '', items: [
+    { kind: 'share_visibility', host: 'us', group_id: 'alpha', include_members: true },
+    { kind: 'group_link', host: 'them', group_id: 'grp_b2', source: 'us', source_group_id: 'alpha', mode: 'members->members' },
+    { kind: 'group_link', host: 'us', group_id: 'alpha', source: 'them', source_group_id: 'grp_b2', mode: 'members->members' },
+  ] }]);
+  await view.cleanup();
+});

@@ -17,6 +17,8 @@ import { MarkdownAttachment } from './markdown-attachment.js';
 import { AwayAnswer, PEER_MAIL_EVENT, PeerMailHost, awayTicket, peerLabelOf, peerOfMessage, replySubject } from './peer-mail.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { remoteNodeID } from './skynet-model.js';
+import { ProposalReader } from './proposal-reader.js';
+import { proposalTurn } from './proposals-model.js';
 
 // openPeerMail opens the peer mail dialog (peer operator mail goes out
 // through this node, so it is offered only on this node's own view).
@@ -457,7 +459,8 @@ function GroupLinkReader({ request, controller }) {
   const link = request.link || {};
   const peer = link.source_peer_label || request.conv_title || request.origin_peer || 'peer';
   // The feed also lists requests this node sent; those only show their state.
-  const sent = link.direction === 'out' || !!request.proposal?.ours;
+  const sent = request.proposal ? proposalTurn(request.proposal) === 'them' || (!!request.proposal.ours && !proposalTurn(request.proposal))
+    : link.direction === 'out';
   const handled = !controller.accessIsPending(request) || sent;
   const outcome = handled ? controller.accessOutcome(request.status) : null;
   const mode = String(link.mode || 'members->members').replace('->', ' → ');
@@ -467,7 +470,7 @@ function GroupLinkReader({ request, controller }) {
       <div class="mail-subject">🌐 Cross-node link request${sent ? ' (sent)' : ''} <span class="mail-id">#${shortId(request.id)}</span></div>
       <div class="mail-headers">
         <${HeaderRow} label=${sent ? 'To peer' : 'From peer'}>${peer} ${request.origin_peer && html`<span class="mail-cid">${request.origin_peer}</span>`}</${HeaderRow}>
-        <${HeaderRow} label="Status">${sent && controller.accessIsPending(request)
+        <${HeaderRow} label="Status">${sent && request.status === 'pending'
           ? html`<span class="mail-state-pending">waiting for ${peer}'s operator · ${controller.accessCountdown(request.deadline)}</span>`
           : handled
           ? html`<span class=${`access-outcome ${outcome.cls}`}>${outcome.txt}</span>`
@@ -499,6 +502,7 @@ function GroupLinkReader({ request, controller }) {
 function AccessReader({ request, controller }) {
   const wizard = document.body.classList.contains('wizard');
   if (request?.purpose === 'group_link') return html`<${GroupLinkReader} request=${request} controller=${controller} />`;
+  if (request?.purpose === 'peer_proposal') return html`<${ProposalReader} key=${`${request.id}:${request.proposal?.revision}`} request=${request} controller=${controller} />`;
   if (!request) return html`<div class="empty">${wizard
     ? 'Choose a petition to weigh its boon.' : 'Select an access request to review its details.'}</div>`;
   const handled = !controller.accessIsPending(request);

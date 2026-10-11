@@ -3072,6 +3072,25 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .link-state.conn { background: #10233d; color: #79c0ff; border-color: #1f4f8f; }
 .link-state.bad { background: #2d1517; color: #f85149; border-color: #8e2a2a; }
 .link-state.stale { border-style: dashed; border-color: #6e7681; }
+
+/* Peer proposals (tcl-hj04jt): composer in the links island, reader card in
+   Messages → Requests. Items are tickable rows; shares show member counts. */
+.proposal-sec { display: flex; justify-content: space-between; gap: 12px; margin: 12px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #7d8590; }
+.proposal-item { display: flex; gap: 8px; align-items: center; padding: 6px 9px; margin: 4px 0; border: 1px solid #2a3340; border-radius: 5px; background: #0f1419; font-size: 12.5px; }
+.proposal-item.off { opacity: .6; }
+.proposal-item .grow { flex: 1; min-width: 0; }
+.proposal-members { display: inline-flex; gap: 4px; align-items: center; font-size: 11.5px; color: #8b949e; white-space: nowrap; }
+.proposal-pair select { min-width: 0; }
+.proposal-hint { font-size: 11.5px; color: #8b949e; margin: 6px 0; line-height: 1.4; }
+.proposal-preview { border: 1px solid #2a3340; border-radius: 5px; padding: 6px 10px; margin: 8px 0; font-size: 12.5px; }
+.proposal-preview ul, .proposal-summary ul { margin: 4px 0 0; padding-left: 18px; }
+.proposal-summary { border: 1px solid #1f4f8f; background: #0d1a2b; border-radius: 5px; padding: 8px 11px; margin-bottom: 8px; font-size: 12.5px; }
+.proposal-shareback { margin: 8px 0; font-size: 12.5px; }
+.proposal-shareback summary { cursor: pointer; color: #58a6ff; }
+.proposal-pill { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid #30363d; color: #8b949e; white-space: nowrap; }
+.proposal-pill.ok { background: #12301d; color: #3fb950; border-color: #238636; }
+.proposal-pill.off { color: #8b949e; }
+.proposal-mode-text { font-family: ui-monospace, monospace; font-size: 11.5px; color: #8b949e; }
 .tag {
   display: inline-block; padding: 2px 8px; margin: 1px 2px 1px 0;
   background: #21262d; color: #d4d4d4; border: 1px solid #2a3340;
