@@ -1534,7 +1534,8 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 			"snapshot ownerships: "+err.Error())
 		return
 	}
-	// The clone inherits both memberships and ownerships. Build the union of
+	// The clone inherits memberships, and ownerships when copy_ownership asks
+	// for them. Build the union of
 	// those destination groups so an owner-only relationship cannot evade a
 	// group-local deny. Keep oldGroups unchanged because membership copy and
 	// handoff routing intentionally use membership rows only.

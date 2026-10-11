@@ -97,7 +97,7 @@ export function carries(mode, { node = 'the target', home = 'its home', morph = 
     ];
     case 'clone': return local ? [
       ['✓', 'History', 'copied (or a fresh context: choose in the next step)'],
-      ['↻', 'Identity', 'a new sibling that inherits its groups, permissions and ownership'],
+      ['↻', 'Identity', 'a new sibling that inherits its groups and permissions (ownership only if you ask)'],
       ['✓', 'Here', 'the original keeps running'],
     ] : [
       ['✓', 'History', 'the full conversation history is copied'],
