@@ -70,6 +70,10 @@ test('search filters: kind:, publisher: and board: tokens, toggled by facets and
   assert.equal(m.withToken('hunter', 'kind', 'skill'), 'kind:skill hunter');
   assert.equal(m.withToken('kind:skill hunter', 'kind', 'skill'), 'hunter', 'the same facet again clears it');
   assert.equal(m.withToken('kind:skill hunter', 'kind', 'config'), 'kind:config hunter');
+  assert.equal(m.withToken('x', 'board', 'oss friends'), 'board:"oss friends" x', 'a name with spaces is quoted');
+  assert.deepEqual(m.parseQuery('board:"oss friends" x'), { kind: '', publisher: '', board: 'oss friends', text: ['x'] });
+  assert.equal(m.withToken('board:"oss friends" x', 'board', 'oss friends'), 'x', 'and clears again');
+  assert.equal(m.withToken('board:"oss friends" x', 'board', 'ops notes'), 'board:"ops notes" x');
   assert.equal(m.trustOf('inst_forge', view), 'trusted');
   assert.equal(m.trustOf('inst_self', view), 'mine');
   assert.equal(m.trustOf('inst_mx', view), 'unknown');
@@ -98,6 +102,12 @@ test('Cards remembers the choice; facets filter; a card opens the detail', async
   assert.equal(s.qa('[data-card]').length, 3);
   await s.click(s.q('[data-facet="board:oss friends"]'));
   assert.deepEqual(s.qa('[data-card]').map((c) => c.dataset.card), ['brd_oss/itm_hunter']);
+  assert.ok(s.q('[data-facet="board:oss friends"]').classList.contains('on'), 'the facet shows as active');
+  await s.click(s.q('[data-facet="board:ops notes"]'));
+  assert.deepEqual(s.qa('[data-card]').map((c) => c.dataset.card), ['brd_ops/itm_roles', 'brd_ops/itm_mine'], 'another board replaces it');
+  await s.click(s.q('[data-facet="board:ops notes"]'));
+  assert.equal(s.q('#fleet-cb-search').value, '', 'and clicking it again clears the search');
+  await s.click(s.q('[data-facet="board:oss friends"]'));
   await s.click(s.q('[data-card="brd_oss/itm_hunter"]'));
   await s.settle(300);
   assert.ok(document.querySelector('#fleet-cb-detail [data-detail="brd_oss/itm_hunter"]'));

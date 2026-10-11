@@ -47,14 +47,19 @@ export function peerName(id, view) {
   return (view?.trusted || []).find((p) => p.id === id)?.label || '';
 }
 
+// TOKEN is one search word: a filter (its value quoted when it has spaces,
+// as board names may) or free text.
+const TOKEN = /(\w+):"([^"]*)"?|(\w+):(\S+)|(\S+)/g;
+const tokens = (q) => [...String(q || '').matchAll(TOKEN)].map((m) => (m[1] ? { key: m[1].toLowerCase(), value: m[2], raw: m[0] }
+  : m[3] ? { key: m[3].toLowerCase(), value: m[4], raw: m[0] } : { raw: m[5] }));
+
 // parseQuery splits the search box into kind:/publisher:/board: filters and
 // free text. Unknown prefixes stay free text.
 export function parseQuery(q) {
   const out = { kind: '', publisher: '', board: '', text: [] };
-  for (const tok of String(q || '').trim().split(/\s+/).filter(Boolean)) {
-    const m = /^(kind|publisher|board):(.*)$/i.exec(tok);
-    if (m && m[2]) out[m[1].toLowerCase()] = m[2].toLowerCase();
-    else out.text.push(tok.toLowerCase());
+  for (const t of tokens(q)) {
+    if (['kind', 'publisher', 'board'].includes(t.key) && t.value) out[t.key] = t.value.toLowerCase();
+    else out.text.push(t.raw.toLowerCase());
   }
   return out;
 }
@@ -62,15 +67,18 @@ export function parseQuery(q) {
 // withToken sets (or, when it is already set to value, clears) one filter in
 // the query text, so facets, tabs and typing all edit the same search.
 export function withToken(q, key, value) {
-  const rest = String(q || '').trim().split(/\s+/).filter((t) => t && !t.toLowerCase().startsWith(`${key}:`));
+  const rest = tokens(q).filter((t) => t.key !== key).map((t) => t.raw);
   const had = parseQuery(q)[key] === String(value).toLowerCase();
-  return [...(value && !had ? [`${key}:${value}`] : []), ...rest].join(' ');
+  const v = String(value || '');
+  return [...(v && !had ? [/[\s"]/.test(v) ? `${key}:"${v.replace(/"/g, '')}"` : `${key}:${v}`] : []), ...rest].join(' ');
 }
 
 // matches applies a parsed query to one browser row.
-export function matches(row, f) {
+export function matches(row, f, exact = false) {
   if (f.kind && row.kind !== f.kind) return false;
-  if (f.board && !row.board.name.toLowerCase().includes(f.board)) return false;
+  // A board's exact name picks that board alone; otherwise any board whose
+  // name contains the text.
+  if (f.board && (exact ? row.board.name.toLowerCase() !== f.board : !row.board.name.toLowerCase().includes(f.board))) return false;
   if (f.publisher) {
     const known = ['trusted', 'unknown', 'mine'].includes(f.publisher);
     if (known ? row.trust !== f.publisher : !`${row.by} ${row.publisher}`.toLowerCase().includes(f.publisher)) return false;
@@ -112,25 +120,26 @@ function useItemFiles(row, actions) {
   useEffect(() => {
     if (!row || row.invalid) { setState(null); return undefined; }
     let off = false;
-    setState({ loading: true });
+    setState({ key: row.key, loading: true });
     // Arrowing through the list should not fetch every row it passes.
     const timer = setTimeout(async () => {
       try {
         await actions.fetchBoardItem(row.board.id, row.id, row.version);
         if (row.kind === 'skill') {
           const p = await actions.previewBoardItem(row.board.id, row.id, row.version, {});
-          if (!off) setState({ files: (p?.files || []).map((f) => ({ path: f.path, bytes: f.bytes, security: !!f.security, executable: !!f.executable, text: f.text, binary: !!f.binary })) });
+          if (!off) setState({ key: row.key, files: (p?.files || []).map((f) => ({ path: f.path, bytes: f.bytes, security: !!f.security, executable: !!f.executable, text: f.text, binary: !!f.binary })) });
         } else {
           const c = await actions.boardItemContents(row.board.id, row.id, row.version);
-          if (!off) setState({ files: (c?.entries || []).map((e) => ({ path: e.path, bytes: e.size, entry: true })) });
+          if (!off) setState({ key: row.key, files: (c?.entries || []).map((e) => ({ path: e.path, bytes: e.size, entry: true })) });
         }
       } catch (e) {
-        if (!off) setState({ error: errText(e) });
+        if (!off) setState({ key: row.key, error: errText(e) });
       }
     }, 250);
     return () => { off = true; clearTimeout(timer); };
   }, [row?.key, row?.version]);
-  return state;
+  // Until the effect runs for a new row, the old row's files are not its own.
+  return state && state.key === row?.key ? state : { loading: true };
 }
 
 // FileList shows every file; scripts and executables are flagged, and any
@@ -351,7 +360,8 @@ export function ContentBrowser({ boards, view, actions, confirm, toast, onOpenBo
   const setMode = (m) => { setModeState(m); prefs.setItem(VIEW_PREF, m); };
   const rows = useMemo(() => browserRows(perBoard || [], view), [perBoard, view]);
   const f = parseQuery(query);
-  const shown = rows.filter((r) => matches(r, f));
+  const exactBoard = (boards || []).some((b) => b.name.toLowerCase() === f.board);
+  const shown = rows.filter((r) => matches(r, f, exactBoard));
   const sel = shown.find((r) => r.key === selected) || null;
   const failed = (perBoard || []).filter((p) => p.error);
   const posters = (boards || []).filter((b) => canPost(b) && !b.frozen);
