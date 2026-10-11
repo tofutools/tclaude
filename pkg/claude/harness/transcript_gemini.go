@@ -139,17 +139,37 @@ func (geminiTranscript) Decode(r io.Reader, sourceID string) (*transcript.Transc
 		}
 		byID[rec.ID] = rec
 	}
-	putAll := func(raw json.RawMessage) {
-		var msgs []geminiRecord
-		if json.Unmarshal(raw, &msgs) != nil {
-			return
+	recordRemoved := func(previous []string) {
+		kind := transcript.LossInactiveBranch
+		if len(order) == 0 {
+			kind = transcript.LossClearedHistory
 		}
+		for _, id := range order {
+			if geminiCompactionSummary(byID[id]) {
+				kind = transcript.LossPreCompaction
+				break
+			}
+		}
+		for _, id := range previous {
+			if _, ok := byID[id]; !ok {
+				t.Losses.Add(kind, 1, "")
+			}
+		}
+	}
+	putAll := func(raw json.RawMessage) error {
+		var msgs []geminiRecord
+		if err := json.Unmarshal(raw, &msgs); err != nil {
+			return errors.New("invalid Gemini messages checkpoint")
+		}
+		previous := append([]string(nil), order...)
 		order, byID = nil, map[string]geminiRecord{}
 		for _, m := range msgs {
 			if m.ID != "" {
 				put(m)
 			}
 		}
+		recordRemoved(previous)
+		return nil
 	}
 	found := false
 	rewound := 0
@@ -158,13 +178,14 @@ func (geminiTranscript) Decode(r io.Reader, sourceID string) (*transcript.Transc
 		if err := json.Unmarshal(raw, &rec); err != nil {
 			return fmt.Errorf("invalid Gemini history record at line %d", line)
 		}
-		meta := func(m map[string]json.RawMessage) {
+		meta := func(m map[string]json.RawMessage) error {
 			if title := geminiHistoryRawString(m, "summary"); title != "" {
 				t.Source.Title = title
 			}
 			if msgs, ok := m["messages"]; ok {
-				putAll(msgs)
+				return putAll(msgs)
 			}
+			return nil
 		}
 		switch {
 		case !found:
@@ -172,7 +193,7 @@ func (geminiTranscript) Decode(r io.Reader, sourceID string) (*transcript.Transc
 				return errors.New("gemini history has no matching session metadata")
 			}
 			found = true
-			meta(rec)
+			return meta(rec)
 		case geminiHistoryRawString(rec, "$rewindTo") != "":
 			id := geminiHistoryRawString(rec, "$rewindTo")
 			at := -1
@@ -190,10 +211,93 @@ func (geminiTranscript) Decode(r io.Reader, sourceID string) (*transcript.Transc
 			}
 			rewound += len(order) - at
 			order = order[:at]
+		case rec["$patch"] != nil:
+			var patch struct {
+				ID        string          `json:"id"`
+				Content   json.RawMessage `json:"content"`
+				ToolCalls []struct {
+					ID     string          `json:"id"`
+					Result json.RawMessage `json:"result"`
+				} `json:"toolCalls"`
+				Updates   []json.RawMessage `json:"updates"`
+				RemoveIDs []string          `json:"removeIds"`
+				OrderIDs  []string          `json:"orderIds"`
+			}
+			if err := json.Unmarshal(rec["$patch"], &patch); err != nil {
+				return errors.New("invalid Gemini message patch")
+			}
+			previous := append([]string(nil), order...)
+			apply := func(raw json.RawMessage) error {
+				var update struct {
+					ID        string          `json:"id"`
+					Content   json.RawMessage `json:"content"`
+					ToolCalls []struct {
+						ID     string          `json:"id"`
+						Result json.RawMessage `json:"result"`
+					} `json:"toolCalls"`
+				}
+				if err := json.Unmarshal(raw, &update); err != nil {
+					return errors.New("invalid Gemini message patch update")
+				}
+				msg, ok := byID[update.ID]
+				if !ok {
+					return nil
+				}
+				if len(update.Content) > 0 {
+					msg.Content = update.Content
+				}
+				for _, p := range update.ToolCalls {
+					for i := range msg.ToolCalls {
+						if msg.ToolCalls[i].ID == p.ID && len(p.Result) > 0 {
+							msg.ToolCalls[i].Result = p.Result
+						}
+					}
+				}
+				byID[update.ID] = msg
+				return nil
+			}
+			if patch.ID != "" {
+				if err := apply(rec["$patch"]); err != nil {
+					return err
+				}
+			}
+			for _, u := range patch.Updates {
+				if err := apply(u); err != nil {
+					return err
+				}
+			}
+			for _, id := range patch.RemoveIDs {
+				delete(byID, id)
+			}
+			kept := order[:0]
+			for _, id := range order {
+				if _, ok := byID[id]; ok {
+					kept = append(kept, id)
+				}
+			}
+			order = kept
+			if patch.OrderIDs != nil {
+				selected := map[string]bool{}
+				var suffix []string
+				for _, id := range patch.OrderIDs {
+					if _, ok := byID[id]; ok && !selected[id] {
+						selected[id] = true
+						suffix = append(suffix, id)
+					}
+				}
+				var prefix []string
+				for _, id := range order {
+					if !selected[id] {
+						prefix = append(prefix, id)
+					}
+				}
+				order = append(prefix, suffix...)
+			}
+			recordRemoved(previous)
 		case rec["$set"] != nil:
 			var m map[string]json.RawMessage
 			_ = json.Unmarshal(rec["$set"], &m)
-			meta(m)
+			return meta(m)
 		case geminiHistoryRawString(rec, "id") != "":
 			var msg geminiRecord
 			if err := json.Unmarshal(raw, &msg); err != nil {
@@ -201,7 +305,7 @@ func (geminiTranscript) Decode(r io.Reader, sourceID string) (*transcript.Transc
 			}
 			put(msg)
 		default:
-			meta(rec)
+			return meta(rec)
 		}
 		return nil
 	})
@@ -231,7 +335,11 @@ func (geminiTranscript) Decode(r io.Reader, sourceID string) (*transcript.Transc
 					text, isErr := geminiResponseText(p.FunctionResponse.Response)
 					tool.Blocks = append(tool.Blocks, transcript.Block{Kind: transcript.BlockToolResult, CallID: p.FunctionResponse.ID, Name: p.FunctionResponse.Name, Text: text, IsError: isErr})
 				case p.Text != "":
-					e.Blocks = append(e.Blocks, transcript.Text(p.Text))
+					kind := transcript.BlockText
+					if geminiCompactionSummary(msg) {
+						kind = transcript.BlockSummary
+					}
+					e.Blocks = append(e.Blocks, transcript.Block{Kind: kind, Text: p.Text})
 				default:
 					if m, ok := geminiMedia(p); ok {
 						e.Blocks = append(e.Blocks, transcript.Block{Kind: transcript.BlockMedia, Media: []transcript.Media{m}})
@@ -373,4 +481,18 @@ func (geminiTranscript) Encode(p *transcript.Plan, cwd string, w io.Writer) (str
 		out.write(map[string]any{"id": uuid.NewString(), "timestamp": rfc3339ms(times[i]), "type": kind, "content": parts})
 	}
 	return id, out.err
+}
+
+// Compression emits a synthetic user state_snapshot. Metadata.summary is only
+// the conversation title and must never be substituted for model context.
+func geminiCompactionSummary(rec geminiRecord) bool {
+	if rec.Type != "user" {
+		return false
+	}
+	for _, p := range geminiParts(rec.Content) {
+		if strings.HasPrefix(strings.TrimSpace(p.Text), "<state_snapshot>") {
+			return true
+		}
+	}
+	return false
 }
