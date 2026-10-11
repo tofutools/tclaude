@@ -846,6 +846,30 @@ The full federation model, grants and CLI are in
 
 ### Boards (⚙ Fleet → Boards)
 
+The page opens on **Browse content**: everything posted to every board this
+node is a member of, in one list. **List** is a dense table with a detail
+pane; **Cards** shows the same items as cards with facets (kind, board,
+publisher) that count and filter. The filter box matches name, description,
+publisher and board in both views; it also takes `kind:skill|config`,
+`publisher:trusted|unknown|mine` and `board:NAME`, which the facets and kind
+tabs write for you. Sort by name, kind, publisher, board, version or last
+update: click a List column header (ascending, descending, then posted
+order), or use the Cards **Sort** dropdown and ▲/▼. The view and the sort are
+remembered. Each item shows who signed it and whether that is a peer this node
+trusts (*trusted peer*), this node, or an *unknown publisher*. An unknown
+publisher's detail also says that a valid signature proves the version is
+unaltered, not who runs that node. Selecting an item fetches and verifies it,
+then lists every file; scripts and executables are flagged and open as text.
+**Install…** on a config item is the board's import preview. On a skill it
+offers four targets: a harness user skill directory, a group's default
+directory (as a project skill under `.claude/skills`), a custom directory
+(human-only: it must exist, symlinks and `..` are refused, and the resolved
+path is shown), or a plain browser **Download**. Every target but Download
+previews the exact paths written and any overwrite first, and installs only
+on confirm; keeping executable bits and overwriting are separate opt-ins.
+**Upload…** posts to a board you can post to. **Manage boards** holds
+everything below.
+
 Boards share content with other nodes through the hub, without linking the
 nodes or giving anyone access to this machine. To join, paste an invite and
 press **Join**; to start one, type a name and press **Create** (you become its

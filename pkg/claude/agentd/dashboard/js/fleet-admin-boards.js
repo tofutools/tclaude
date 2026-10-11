@@ -2,6 +2,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { BoardItems } from './fleet-admin-board-items.js';
+import { ContentBrowser } from './fleet-admin-board-browser.js';
 
 const html = htm.bind(h);
 
@@ -225,6 +226,8 @@ export function BoardsPage({ view, actions, confirm, toast, copy, updates = null
   const [busy, setBusy] = useState(false);
   const [joinFail, setJoinFail] = useState('');
   const [open, setOpen] = useState('');
+  // Browse content across every board, or manage the boards themselves.
+  const [mode, setMode] = useState('browse');
   useEffect(() => {
     let off = false;
     actions.boards().then((b) => { if (!off) setBoards(b); }).catch((e) => { if (!off) setBoards({ error: errText(e) }); });
@@ -267,7 +270,12 @@ export function BoardsPage({ view, actions, confirm, toast, copy, updates = null
   }).then((r) => { if (r) { toast(`Deleted ${b.name}`, false); if (open === b.id) setOpen(''); reloadAll(); } }).catch((e) => toast(`Delete failed: ${errText(e)}`, true));
 
   const list = Array.isArray(boards) ? boards : [];
+  // With no boards there is nothing to browse: joining or creating comes first.
+  const browsing = mode === 'browse' && list.length > 0;
   return html`<div class="fa-boards" id="fleet-boards">
+    ${list.length > 0 && html`<div class="fa-subtabs" role="tablist" id="fleet-boards-mode">${[['browse', 'Browse content'], ['manage', 'Manage boards']].map(([id, label]) => html`<button type="button" role="tab" key=${id} data-boards-mode=${id}
+      aria-selected=${(browsing ? 'browse' : 'manage') === id ? 'true' : 'false'} class=${`fa-subtab${(browsing ? 'browse' : 'manage') === id ? ' on' : ''}`} onClick=${() => setMode(id)}>${label}</button>`)}</div>`}
+    ${browsing ? html`${updates?.updates?.length > 0 && html`<${BoardUpdates} updates=${updates} actions=${actions} toast=${toast} loadUpdates=${loadUpdates} onOpen=${(id) => { setOpen(id); setMode('manage'); }} />`}<${ContentBrowser} boards=${list} view=${view} actions=${actions} confirm=${confirm} toast=${toast} onOpenBoard=${(id) => { setOpen(id); setMode('manage'); }} />` : html`
     <div class="muted fa-wrap">Boards share content with other nodes through the hub, without linking the nodes or giving anyone access to this machine. ${HUB_TRUST}</div>
     <div class="fa-row" id="fleet-board-join">
       <input id="fleet-board-token" class="fa-grow" placeholder="Paste an invite to join a board" autocomplete="off" spellcheck="false" value=${token}
@@ -289,7 +297,7 @@ export function BoardsPage({ view, actions, confirm, toast, copy, updates = null
       // The open board's details sit directly under its own row.
       open === b.id && html`<tr key=${`${b.id}:detail`} class="fa-board-detail-row"><td colspan="4">
         <${BoardDetail} key=${open} board=${b} boards=${list} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} onChanged=${reloadAll} /></td></tr>`])}</tbody></table>`}
-    <div class="muted fa-cli-note">CLI: <code>tclaude federation boards list</code>, <code>join --token …</code>, <code>create --name …</code>, <code>delete --board …</code>, <code>updates [--notify on|off]</code></div>
+    <div class="muted fa-cli-note">CLI: <code>tclaude federation boards list</code>, <code>join --token …</code>, <code>create --name …</code>, <code>delete --board …</code>, <code>updates [--notify on|off]</code></div>`}
   </div>`;
 }
 

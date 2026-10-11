@@ -69,6 +69,8 @@ async function mount(t, opts = {}) {
   const click = async (el) => { await harness.act(() => el.click()); await settle(); };
   const type = async (el, value) => { el.value = value; await harness.act(() => harness.fireEvent(el, 'input')); };
   await settle();
+  // The page opens on the content browser; these cases manage boards.
+  if (!opts.browse && q('[data-boards-mode="manage"]')) await click(q('[data-boards-mode="manage"]'));
   return { harness, mod, mounted, q, log, toasts, confirms, click, type, settle };
 }
 
