@@ -156,3 +156,22 @@ test('recall from its home placeholder sends it straight home', async (t) => {
   assert.deepEqual(recalled, ['agt_b1']);
   assert.ok(r.q('[data-lt-state="returning"]'), 'a paused-backup return has no move record to follow');
 });
+
+test('a peer agent opens on a mode it can use, and a sent move locks the target', async (t) => {
+  const peerAgent = { ...AGENT, node: 'inst_forge', nodeName: 'forge' };
+  const s = await mountDialog(t, {
+    agent: peerAgent, initialMode: 'morph', localGroups: ['builders'],
+    api: { status: async () => ({}) },
+    peerActions: () => ({ moveDirect: async () => ({ move_id: 'mv_p', disposition: 'checking' }) }),
+    actions: { moveDetail: async () => ({ state: 'awaiting_running', disposition: 'checking' }) },
+  });
+  assert.equal(s.q('[data-lt-mode="move"]').getAttribute('aria-selected'), 'true', 'morph is not possible from here, so it opens on Move');
+  assert.equal(s.q('#lt-morph-profile'), null);
+  assert.equal(s.q('[data-lt-mode="morph"]').disabled, true);
+  await s.click(s.q('[data-lt-node="inst_a"]'));
+  await s.change(s.q('#lt-group'), 'builders');
+  await s.click(s.q('#skynet-move-drop-ok'));
+  assert.equal(s.q('#lt-group').disabled, true, 'the group is frozen once the move is sent');
+  assert.equal(s.q('[data-lt-node="inst_forge"]').disabled, true);
+  assert.equal(s.q('[data-lt-mode="clone"]').disabled, true);
+});

@@ -638,7 +638,7 @@ export async function handleRowAction(action) {
       case 'send-elsewhere': {
         // The ⚙ "Send elsewhere" items: one launch-target dialog per mode.
         const fleet = skynetState.fleet.value;
-        openLaunchTargetDialog({ mode: data.mode || 'move', agent: launchAgent(data, fleet?.self || { id: '', name: 'this node' }) });
+        openLaunchTargetDialog({ mode: data.mode || 'move', agent: launchAgent(data, fleet?.self || { id: 'local', name: 'this node' }) });
         return;
       }
       case 'clone': {

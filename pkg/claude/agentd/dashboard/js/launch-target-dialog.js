@@ -66,6 +66,7 @@ export function nodeTargets({ mode, fleet, self, source, status, localGroups = [
     const here = n.id === source.node;
     const isSelf = n.id === self.id;
     const row = { id: n.id, name: isSelf ? `${n.name} (this node)` : n.name, plain: n.name, color: n.color, local: isSelf, ok: true, why: '', groups: [] };
+    if (here && mode === 'clone' && !isSelf) return { ...row, ok: false, why: `clone it from ${source.name}'s dashboard` };
     if (here) return { ...row, ok: mode === 'clone', why: mode === 'clone' ? '' : 'it is already here — drag it onto another group to move it within this node', groups: [] };
     if (!isSelf && n.online === false) return { ...row, ok: false, why: 'offline' };
     if (source.node !== self.id) {
@@ -161,29 +162,31 @@ function Carries({ rows, title }) {
 
 // NodePicker lists every node, greying the ones this mode cannot use with
 // the reason beside them.
-function NodePicker({ targets, value, onPick }) {
+function NodePicker({ targets, value, onPick, locked }) {
   return html`<div class="lt-nodes" role="radiogroup" aria-label="Target node">
     ${targets.map((n) => html`<button key=${n.id} type="button" role="radio" aria-checked=${n.id === value ? 'true' : 'false'}
-      class=${`lt-node${n.id === value ? ' sel' : ''}`} disabled=${!n.ok} data-lt-node=${n.id}
+      class=${`lt-node${n.id === value ? ' sel' : ''}`} disabled=${!n.ok || locked} data-lt-node=${n.id}
       title=${n.ok ? `Send it to ${n.plain}` : n.why} onClick=${() => onPick(n.id)}>
       <i style=${n.color ? `--nc:${n.color}` : undefined}></i><span class="lt-node-name">${n.name}</span><span class="lt-node-why">${n.ok ? '' : n.why}</span></button>`)}
   </div>`;
 }
 
-function GroupPicker({ groups, value, onChange, idPrefix }) {
+function GroupPicker({ groups, value, onChange, idPrefix, disabled }) {
   const [typed, setTyped] = useState(false);
-  if (groups.length && !typed) {
-    return html`<select id=${`${idPrefix}-group`} value=${value} onChange=${(e) => { if (e.currentTarget.value === '\u0000other') { setTyped(true); onChange(''); } else onChange(e.currentTarget.value); }}>
+  // A dropped group the catalog does not list stays as typed text, so what
+  // is shown is what is sent.
+  if (groups.length && !typed && (!value || groups.includes(value))) {
+    return html`<select id=${`${idPrefix}-group`} value=${value} disabled=${disabled} onChange=${(e) => { if (e.currentTarget.value === '\u0000other') { setTyped(true); onChange(''); } else onChange(e.currentTarget.value); }}>
       <option value="">pick a receiving group…</option>
       ${groups.map((g) => html`<option key=${g} value=${g} selected=${value === g}>${g}</option>`)}
       <option value=${'\u0000other'}>another group (type its name)…</option></select>`;
   }
-  return html`<input id=${`${idPrefix}-group`} value=${value} placeholder="receiving group there (it must grant agents.receive)" autocomplete="off" onInput=${(e) => onChange(e.currentTarget.value)} />`;
+  return html`<input id=${`${idPrefix}-group`} value=${value} disabled=${disabled} placeholder="receiving group there (it must grant agents.receive)" autocomplete="off" onInput=${(e) => onChange(e.currentTarget.value)} />`;
 }
 
 // MorphPanel picks a spawn profile, previews the change with a dry run and
 // applies it at the agent's next idle turn (or now).
-function MorphPanel({ agent, api, onClose, setCarry, okRef }) {
+function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase }) {
   const [profiles, setProfiles] = useState(null);
   const [profile, setProfile] = useState('');
   const [now, setNow] = useState(false);
@@ -191,6 +194,7 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(null);
+  useEffect(() => { onPhase?.(busy || done ? 'busy' : 'confirm'); }, [busy, done]);
   useEffect(() => {
     let live = true;
     api.profiles().then((list) => { if (live) setProfiles((list || []).filter((p) => p?.name && !p.disabled)); })
@@ -221,7 +225,7 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef }) {
   }
   return html`
     <label class="lt-row"><span class="lt-k">Stays on</span><span class="muted">this node · ${agent.group || 'its groups'}</span></label>
-    <label class="lt-row"><span class="lt-k">Profile</span>${profiles === null ? html`<span class="muted">loading…</span>` : html`<select id="lt-morph-profile" value=${profile} onChange=${(e) => setProfile(e.currentTarget.value)}>
+    <label class="lt-row"><span class="lt-k">Profile</span>${profiles === null ? html`<span class="muted">loading…</span>` : html`<select id="lt-morph-profile" value=${profile} disabled=${busy} onChange=${(e) => setProfile(e.currentTarget.value)}>
       <option value="">pick a spawn profile…</option>
       ${profiles.map((p) => html`<option key=${p.name} value=${p.name}>${p.name}${p.harness || p.model ? ` — ${[p.harness, p.model, p.effort && `effort ${p.effort}`].filter(Boolean).join(' · ')}` : ''}</option>`)}</select>`}</label>
     ${preview && html`<div class="lt-morph-preview"><div><span class="lt-k">was</span> ${formLine(preview.before)}</div><div><span class="lt-k">now</span> ${formLine(preview.after)}</div></div>`}
@@ -239,9 +243,10 @@ export function formLine(v) {
 
 // TeleportPanel sends it (Teleport, Clone to a peer, Recall home) and
 // follows the move record until its copy runs there.
-function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, onClose, openPage, okRef, viaPeer }) {
+function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, onClose, openPage, okRef, viaPeer, onPhase }) {
   const [note, setNote] = useState('');
   const [phase, setPhase] = useState('confirm');
+  useEffect(() => { onPhase?.(phase); }, [phase]);
   const [error, setError] = useState('');
   const [progress, setProgress] = useState(null);
   const alive = useRef(true);
@@ -314,7 +319,14 @@ export function LaunchTargetDialog({
   api = createLaunchTargetApi(), actions, peerActions, localGroups = [], onClose, onLocalClone,
   timers = globalThis, now = () => Date.now(), openPage = openFleetPage, teleport = TELEPORT_ROUTES,
 }) {
-  const [mode, setMode] = useState(initialMode);
+  const firstCtx = { local: agent.node === self.id, presence: agent.presence || '', homeIsSelf: agent.homeNode === self.id, source: agent.nodeName || self.name, teleport };
+  // A mode this agent cannot use here never opens: fall back to the first
+  // one it can (Move always can).
+  const [mode, setMode] = useState(modeState(initialMode, firstCtx).ok ? initialMode : (MODES.find((m) => modeState(m.key, firstCtx).ok)?.key || 'move'));
+  // locked freezes the mode, node and group once a panel has left its
+  // confirm step, so a second send cannot start from the same dialog.
+  const [locked, setLocked] = useState(false);
+  const onPhase = (phase) => setLocked(phase !== 'confirm');
   const [node, setNode] = useState(initialTarget?.node || '');
   const [group, setGroup] = useState(initialTarget?.group || '');
   const [status, setStatus] = useState(null);
@@ -332,7 +344,7 @@ export function LaunchTargetDialog({
   const targets = needsNode ? nodeTargets({ mode, fleet, self, source, status, localGroups, teleport }) : [];
   const picked = targets.find((n) => n.id === node && n.ok) || null;
   const pick = (id) => { setNode(id); if (id !== node) setGroup(''); };
-  const switchMode = (key) => { setMode(key); setCarry(null); if (!targets.length) return; };
+  const switchMode = (key) => { if (locked) return; setMode(key); setCarry(null); };
   const targetRef = picked ? { node: picked.id, name: picked.plain, group: group.trim() } : null;
   const plan = targetRef && targetRef.group ? dropPlan({ source, target: targetRef, self: self.id }) : null;
   const titleVerb = { move: 'Move', teleport: 'Teleport', clone: 'Clone', morph: 'Morph', home: 'Recall' }[mode];
@@ -341,27 +353,28 @@ export function LaunchTargetDialog({
   const cloneHere = mode === 'clone' && picked?.id === source.node;
 
   let body;
-  if (mode === 'morph') body = html`<${MorphPanel} key="morph" agent=${agent} api=${api} onClose=${onClose} setCarry=${setCarry} okRef=${okRef} />`;
-  else if (mode === 'home') body = html`<${TeleportPanel} key="home" mode="home" agent=${agent} home=${agent.homeName || 'its home'} viaPeer=${!local || agent.presence === 'away'} api=${api} actions=${actions} timers=${timers} now=${now} onClose=${onClose} openPage=${openPage} okRef=${okRef} />`;
+  if (mode === 'morph') body = html`<${MorphPanel} key="morph" agent=${agent} api=${api} onClose=${onClose} setCarry=${setCarry} okRef=${okRef} onPhase=${onPhase} />`;
+  else if (mode === 'home') body = html`<${TeleportPanel} key="home" mode="home" agent=${agent} home=${agent.homeName || 'its home'} viaPeer=${!local || agent.presence === 'away'} api=${api} actions=${actions} timers=${timers} now=${now} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase} />`;
   else if (cloneHere) body = html`<p class="lt-consequence">A sibling of ${agent.name} starts on this node. The next step picks its working directory or worktree, its first message, and whether it copies the conversation.</p>
     <div class="modal-buttons"><span class="spacer"></span><button type="button" id="lt-cancel" onClick=${onClose}>Cancel</button>
       <button type="button" ref=${okRef} class="primary" id="lt-ok" onClick=${() => onLocalClone?.()}>Clone here…</button></div>`;
-  else if (mode === 'move' && plan && (plan.kind === 'push' || plan.kind === 'pull')) body = html`<${MovePanel} key=${`${targetRef.node}/${targetRef.group}`} drop=${{ agent: { id: agent.id, name: agent.name }, source, target: targetRef }} plan=${plan} actions=${actions} peerActions=${peerActions} timers=${timers} now=${now} onClose=${onClose} openPage=${openPage} okRef=${okRef} />`;
-  else if ((mode === 'teleport' || mode === 'clone') && targetRef?.group) body = html`<${TeleportPanel} key=${`${mode}/${targetRef.node}/${targetRef.group}`} mode=${mode} agent=${agent} target=${targetRef} api=${api} actions=${actions} timers=${timers} now=${now} onClose=${onClose} openPage=${openPage} okRef=${okRef} />`;
+  else if (mode === 'move' && plan && (plan.kind === 'push' || plan.kind === 'pull')) body = html`<${MovePanel} key=${`${targetRef.node}/${targetRef.group}`} drop=${{ agent: { id: agent.id, name: agent.name }, source, target: targetRef }} plan=${plan} actions=${actions} peerActions=${peerActions} timers=${timers} now=${now} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase} />`;
+  else if ((mode === 'teleport' || mode === 'clone') && targetRef?.group) body = html`<${TeleportPanel} key=${`${mode}/${targetRef.node}/${targetRef.group}`} mode=${mode} agent=${agent} target=${targetRef} api=${api} actions=${actions} timers=${timers} now=${now} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase} />`;
   else body = html`<div class="muted lt-hint">${picked ? 'Pick the receiving group there.' : 'Pick the node to send it to.'}</div>
     <div class="modal-buttons"><span class="spacer"></span><button type="button" ref=${okRef} id="lt-cancel" onClick=${onClose}>Cancel</button></div>`;
 
-  return html`<${Overlay} id="launch-target" labelledby="launch-target-title" onClose=${onClose} initialFocusRef=${okRef}>
+  const enter = () => { const b = okRef.current; if (b && !b.disabled) b.click(); };
+  return html`<${Overlay} id="launch-target" labelledby="launch-target-title" onClose=${onClose} initialFocusRef=${okRef} onSubmitEnter=${enter}>
     <h3 id="launch-target-title">${title}</h3>
     <div class="lt-modes" role="tablist" aria-label="What to do">
       ${MODES.map((m) => { const st = modeState(m.key, ctx); return html`<button key=${m.key} type="button" role="tab" aria-selected=${m.key === mode ? 'true' : 'false'}
-        class=${`lt-mode${m.key === mode ? ' sel' : ''}`} disabled=${!st.ok} title=${st.ok ? '' : st.why} data-lt-mode=${m.key} onClick=${() => switchMode(m.key)}>${m.label}</button>`; })}
+        class=${`lt-mode${m.key === mode ? ' sel' : ''}`} disabled=${!st.ok || (locked && m.key !== mode)} title=${st.ok ? '' : st.why} data-lt-mode=${m.key} onClick=${() => switchMode(m.key)}>${m.label}</button>`; })}
     </div>
     ${fromDrop && html`<div class="muted lt-drop-note">↓ Opened by dragging ${agent.name} onto ${initialTarget?.group}@${initialTarget?.name}: node and group are pre-filled.</div>`}
     <div class="lt-body">
       <div class="lt-fields">
-        ${needsNode && html`<div class="lt-row"><span class="lt-k">Target node</span><${NodePicker} targets=${targets} value=${node} onPick=${pick} /></div>`}
-        ${needsNode && picked && !cloneHere && html`<label class="lt-row"><span class="lt-k">Group</span><${GroupPicker} key=${picked.id} groups=${picked.groups} value=${group} onChange=${setGroup} idPrefix="lt" /></label>`}
+        ${needsNode && html`<div class="lt-row"><span class="lt-k">Target node</span><${NodePicker} targets=${targets} value=${node} onPick=${pick} locked=${locked} /></div>`}
+        ${needsNode && picked && !cloneHere && html`<label class="lt-row"><span class="lt-k">Group</span><${GroupPicker} key=${picked.id} groups=${picked.groups} value=${group} onChange=${setGroup} idPrefix="lt" disabled=${locked} /></label>`}
         ${body}
       </div>
       <${Carries} title=${`What carries over${picked ? ` to ${picked.plain}` : ''}`} rows=${carries(mode, { node: picked?.plain, home: agent.homeName, morph: carry, local: cloneHere || mode !== 'clone' })} />

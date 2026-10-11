@@ -849,7 +849,11 @@ function SandboxImplMenuItem({ member }) {
 // peer's single-node view has no such routes, so it shows none.
 function SendElsewhereItems({ member, group, snapshot }) {
   if (snapshot?.peer_view || !member.agent_id) return null;
-  const view = presenceView(member, skynetState.fleet.value);
+  const fleet = skynetState.fleet.value;
+  // Another node's row in a fused view can only be pulled here by a move;
+  // without a fleet there is nowhere to move or clone to but here.
+  const peerRow = !!group?.fleet_node && !group.fleet_node.local;
+  const view = presenceView(member, fleet);
   const kind = view?.kind || '';
   const label = member.title || member.conv_id;
   const attrs = (mode) => ({
@@ -858,11 +862,11 @@ function SendElsewhereItems({ member, group, snapshot }) {
   });
   const item = (mode, regular, wizard, title) => html`<${MenuButton} member=${member} group=${group} act="send-elsewhere" attrs=${attrs(mode)} regular=${regular} wizard=${wizard} title=${title} />`;
   return html`<div class="menu-section-label" role="presentation">send elsewhere</div>
-    ${item('move', 'move to…', 'relocate familiar…', `Move ${label} to a group on another node, with its history; it retires here once its copy runs there`)}
-    ${TELEPORT_ROUTES ? item('teleport', 'teleport to…', 'teleport familiar…', `Teleport ${label} to another node; its home keeps its place for Recall home`) : null}
-    ${item('clone', 'clone to…', 'mirror familiar to…', `Clone ${label} here or onto another node; the original keeps running`)}
-    ${item('morph', 'morph…', 'shapeshift familiar…', `Relaunch ${label} in place with another spawn profile (model, effort, harness); it keeps its identity`)}
-    ${TELEPORT_ROUTES && kind === 'visiting' ? item('home', '⌂ recall home…', '⌂ recall familiar home…', `Send ${label} straight home to ${view.home.name}`) : null}`;
+    ${fleet ? item('move', peerRow ? 'move here…' : 'move to…', 'relocate familiar…', peerRow ? `Move ${label} to a group on this node, with its history` : `Move ${label} to a group on another node, with its history; it retires here once its copy runs there`) : null}
+    ${TELEPORT_ROUTES && fleet && !peerRow ? item('teleport', 'teleport to…', 'teleport familiar…', `Teleport ${label} to another node; its home keeps its place for Recall home`) : null}
+    ${!peerRow ? item('clone', fleet ? 'clone to…' : 'clone…', 'mirror familiar to…', `Clone ${label} here or onto another node; the original keeps running`) : null}
+    ${!peerRow ? item('morph', 'morph…', 'shapeshift familiar…', `Relaunch ${label} in place with another spawn profile (model, effort, harness); it keeps its identity`) : null}
+    ${TELEPORT_ROUTES && kind === 'visiting' && (!peerRow || view.home.local) ? item('home', '⌂ recall home…', '⌂ recall familiar home…', `Send ${label} straight home to ${view.home.name}`) : null}`;
 }
 
 function MenuSeparator() {

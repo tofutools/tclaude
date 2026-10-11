@@ -582,7 +582,7 @@ function GroupSettingsDialog({ descriptor, snapshot, actions, confirmDiscard }) 
 // choices.
 function LaunchTargetGate({ descriptor, actions, snapshot }) {
   const fleet = skynetState.fleet.value;
-  const self = fleet?.self || { id: descriptor.agent.node || '', name: 'this node' };
+  const self = fleet?.self || { id: descriptor.agent.node || 'local', name: 'this node' };
   const fleetActions = useMemo(() => createFleetAdminActions(), []);
   const close = () => actions.close(descriptor);
   const localGroups = (snapshot?.value?.groups || []).map((g) => g.name).filter(Boolean).sort();

@@ -88,4 +88,10 @@ test('a group keeps an away placeholder row but counts it apart from members', a
   const host2 = harness.document.body.appendChild(harness.document.createElement('div'));
   await harness.mount(harness.html`<${GroupsInteractionProvider}><${GroupsNativeList} groups=${[fused]} snapshot=${{ activity_bots: { regular: 'emoji', slop: 'off', wizard: 'off' }, links: [] }} actions=${{}} /><//>`, host2);
   assert.equal(host2.querySelector('tr.away-placeholder .away-goto').textContent, '↓ show', 'a fused view scrolls to the visiting row');
+
+  const peerGroup = { ...group, name: 'builders@forge', fleet_node: { id: 'inst_forge', name: 'forge', color: '#f0883e', local: false } };
+  dashPrefs.setItem('tclaude.dash.group.builders@forge', '1');
+  const host3 = harness.document.body.appendChild(harness.document.createElement('div'));
+  await harness.mount(harness.html`<${GroupsInteractionProvider}><${GroupsNativeList} groups=${[peerGroup]} snapshot=${{ activity_bots: { regular: 'emoji', slop: 'off', wizard: 'off' }, links: [] }} actions=${{}} /><//>`, host3);
+  assert.deepEqual([...host3.querySelectorAll('[data-act="send-elsewhere"][data-conv="c1"]')].map((b) => b.dataset.mode), ['move'], 'another node\'s agent can only be moved here');
 });

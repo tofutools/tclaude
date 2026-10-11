@@ -69,8 +69,9 @@ export function MoveDropDialog(props) {
 // MovePanel is the body of a move: the confirm, the flagged-history choice,
 // and the progress that follows. The launch-target dialog
 // (launch-target-dialog.js) embeds it for its Move mode.
-export function MovePanel({ drop, plan, actions, peerActions, timers = globalThis, now = () => Date.now(), onClose, openPage = openFleetPage, okRef: outerOk }) {
+export function MovePanel({ drop, plan, actions, peerActions, timers = globalThis, now = () => Date.now(), onClose, openPage = openFleetPage, okRef: outerOk, onPhase }) {
   const [phase, setPhase] = useState('confirm');
+  useEffect(() => { onPhase?.(phase); }, [phase]);
   const [findings, setFindings] = useState(null);
   const [allow, setAllow] = useState(false);
   const [error, setError] = useState('');
