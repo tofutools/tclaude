@@ -45,7 +45,8 @@ type serveParams struct {
 	DashboardBind                string `long:"dashboard-bind" optional:"true" help:"Additional host/interface the dashboard + approval server binds to (host only; set the port via --dashboard-port). The 127.0.0.1 loopback endpoint remains available when a concrete non-loopback interface is selected. Set e.g. 0.0.0.0 or :: to expose the dashboard on the network — ONLY behind your own auth (reverse proxy / VPN / mesh), since its own gate is just a cookie + operator token. Overrides agent.dashboard_bind in config.json."`
 	PersistOperatorToken         bool   `long:"persist-operator-token" help:"Persist the operator token across restarts in a 0600 ~/.tclaude/data/operator_token file instead of minting a fresh in-memory one each start. ORs with agent.persist_operator_token in config.json. Default: off (fresh token every boot)."`
 	PersistOperatorTokenKeychain bool   `long:"persist-operator-token-keychain" help:"Explicitly persist the operator token in the OS keychain instead of the private file. Implies persistence and ORs with agent.persist_operator_token_keychain in config.json. Existing tokens are not migrated between stores."`
-	NoPrintHumanToken            bool   `long:"no-print-human-token" help:"Skip printing the operator token (TCLAUDE_HUMAN_TOKEN) banner on startup, and keep the --tui console's dashboard sign-in link off the screen with it. The token is still minted and honored — this only suppresses what is shown. Useful with -p / non-interactive launches where the startup output is scraped or logged."`
+	PrintHumanToken              string `long:"print-human-token" short:"-" default:"auto" help:"Operator token and TUI sign-in link output: auto (only when stdout and stderr are terminals), always (including logs), or never."`
+	NoPrintHumanToken            bool   `long:"no-print-human-token" help:"Alias for --print-human-token=never; conflicts with always. The token is still minted and honored."`
 	TUI                          bool   `long:"tui" help:"Run a terminal UI in this window — a simplified dashboard that lists agents, starts new ones, and goes to an agent's tmux session with enter. On its own it REPLACES the web dashboard: no loopback dashboard listener is started, so browser deep links and human-approval requests are unavailable (grant access with 'tclaude agent permissions grant' instead). Pass --dashboard-port, --dashboard-bind or --auto-launch-dashboard alongside it to run the web dashboard as well. Startup output other than schema migrations goes to output.log instead of stdout, which the UI owns, and the operator token is shown inside the UI. Quitting the TUI shuts the daemon down. Pass --own-tmux-server to tie the tclaude tmux server's lifetime to this daemon as well."`
 	OwnTmuxServer                bool   `long:"own-tmux-server" help:"With --tui, own the tclaude tmux server for this daemon's lifetime WHEN IT STARTS ONE: with no server running it starts an empty one (with exit-empty off, so it stays up with no agents on it) and kills it on exit IF IT IS STILL EMPTY, reporting on exit whether it was shut down or left running with sessions on it. A server that was already running — from an earlier daemon, a session started outside it, or an external resource-delegation unit — is left alone in both directions. Default: off, leaving the tmux server to come and go as tmux itself decides, and leaving agent panes running for the next daemon to pick up. Has no effect without --tui."`
 }
@@ -316,19 +317,17 @@ func serveStdout(p *serveParams) io.Writer {
 	return os.Stdout
 }
 
-// tokenBannerInTUI reports whether the operator-token banner belongs inside
-// the terminal console instead of on stdout. It always does when the console
-// is running: stdout is discarded there (see serveStdout), so the console is
-// the only place the operator can read the token — to sign in to the web
-// dashboard when one is up, or to export for a CLI in another window when one
-// is not.
-//
-// --no-print-human-token still means what it says: no banner anywhere.
+// tokenBannerInTUI moves the banner into the console only when the shared
+// output policy allows secrets. Otherwise neither the TUI banner nor its
+// credential-bearing dashboard sign-in link is shown.
 func tokenBannerInTUI(p *serveParams) bool {
-	return p.TUI && !p.NoPrintHumanToken
+	return p.TUI && humanTokenSecretsAllowed(p)
 }
 
 func runServe(p *serveParams) error {
+	if _, err := humanTokenOutputMode(p); err != nil {
+		return err
+	}
 	// Startup narration target. Under --tui this is io.Discard: the console
 	// owns the terminal, so every fmt.Fprintf below goes nowhere while slog
 	// still records the same events in output.log.
@@ -870,7 +869,7 @@ func runServe(p *serveParams) error {
 	// tokenBannerInTUI): stdout is discarded there, so this banner would go
 	// nowhere.
 	if !tokenBannerInTUI(p) {
-		printOperatorTokenBanner(operatorTok, tokenSrc, p.NoPrintHumanToken)
+		printOperatorTokenBanner(operatorTok, tokenSrc, p)
 	}
 	for _, ln := range listeners {
 		ln := ln
@@ -934,7 +933,7 @@ func runServe(p *serveParams) error {
 	if p.TUI {
 		startup := tuiStartup{
 			dashboardURL:    popupBaseURL,
-			suppressSecrets: p.NoPrintHumanToken,
+			suppressSecrets: !humanTokenSecretsAllowed(p),
 			ownsTmuxServer:  ownsTmuxServer,
 		}
 		if tokenBannerInTUI(p) {

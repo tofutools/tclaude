@@ -76,13 +76,22 @@ Every request lands on one of three verdicts:
 - **Refused** — anything else. There is no "assume human" path.
 
 The operator token (`tclo_` prefix) is minted fresh at each daemon start,
-held in memory only, and printed only to a real TTY on the startup banner;
+held in memory only, and by default printed only when both stdout and stderr
+are real terminals;
 you export it as `TCLAUDE_HUMAN_TOKEN`. There is nothing durable for an
 agent to steal, and a harness ancestor always beats a token: an agent that
 somehow obtains the operator token still authenticates as an agent (the
 daemon also strips the variable from sessions it spawns). Opt-in
 persistence exists (a 0600 `~/.tclaude/data/operator_token` file the CLI
 auto-reads, or the OS keychain), but the default is ephemeral.
+
+`agentd serve --print-human-token=auto|always|never` controls the startup
+banner and the `--tui` dashboard sign-in link. The default `auto` hides secrets
+when either output stream is redirected. `never` suppresses them even in a
+terminal; the legacy `--no-print-human-token` is an alias for `never` and
+conflicts with `always`. `always` explicitly prints even to redirected output:
+under systemd this puts the bearer token in the journal, where local users may
+read it. Token generation and authentication are unaffected.
 
 `TCLAUDE_SESSION_ID` is a routing key, never authentication.
 

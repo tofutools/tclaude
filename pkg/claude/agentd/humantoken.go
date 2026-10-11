@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/zalando/go-keyring"
 )
 
@@ -349,26 +350,46 @@ func spawnEnvWithoutOperatorToken() []string {
 	return out
 }
 
-// printOperatorTokenBanner writes the operator token to the daemon's
-// startup banner. It prints a ready-to-paste `export` line when stdout is a
-// real terminal.
-//
-// When stdout is NOT a TTY (the daemon was backgrounded or its output
-// redirected, e.g. into ~/.tclaude/output.log) it must never print the
-// token — it could land in a log file. For an ephemeral token that means
-// the token is unretrievable, so it tells the operator to relaunch attached
-// to a terminal. For a PERSISTED token it instead points at where the token
-// lives (keychain, or the 0600 file path — never the secret itself), since
-// a stable token can be retrieved there and only needs exporting once.
-// printOperatorTokenBanner is the printing form; noPrint (the
-// --no-print-human-token flag) suppresses it entirely — the token is still
-// minted and honored, only the banner is silenced.
-func printOperatorTokenBanner(tok string, src tokenSource, noPrint bool) {
-	isTTY := false
-	if fi, err := os.Stdout.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
-		isTTY = true
+// tokenOutputInteractive is shared with the hub claim-token policy. Tests can
+// inject terminal status without requiring a real terminal.
+var tokenOutputInteractive = common.TokenOutputIsInteractive
+
+func humanTokenOutputMode(p *serveParams) (string, error) {
+	mode := p.PrintHumanToken
+	if mode == "" {
+		mode = "auto"
 	}
-	maybeWriteOperatorTokenBanner(os.Stdout, tok, src, isTTY, noPrint)
+	switch mode {
+	case "auto", "always", "never":
+	default:
+		return "", fmt.Errorf("--print-human-token must be auto, always, or never")
+	}
+	if p.NoPrintHumanToken {
+		if mode == "always" {
+			return "", fmt.Errorf("--no-print-human-token conflicts with --print-human-token=always")
+		}
+		mode = "never"
+	}
+	return mode, nil
+}
+
+func humanTokenSecretsAllowed(p *serveParams) bool {
+	mode, err := humanTokenOutputMode(p)
+	if err != nil {
+		return false
+	}
+	interactive := tokenOutputInteractive()
+	return common.ShouldPrintToken(mode, interactive, interactive)
+}
+
+// printOperatorTokenBanner never writes through slog. Auto reveals the secret
+// only on two real terminals; always is the operator's explicit logging opt-in.
+func printOperatorTokenBanner(tok string, src tokenSource, p *serveParams) {
+	mode, err := humanTokenOutputMode(p)
+	if err != nil || mode == "never" {
+		return
+	}
+	writeOperatorTokenBanner(os.Stdout, tok, src, humanTokenSecretsAllowed(p))
 }
 
 // maybeWriteOperatorTokenBanner writes the banner unless noPrint is set. Split

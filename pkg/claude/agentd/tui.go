@@ -75,10 +75,10 @@ type tuiStartup struct {
 	dashboardURL string
 	// operatorToken is set only when the console has taken over the startup
 	// banner (see tokenBannerInTUI); empty means stdout printed it, or that
-	// --no-print-human-token suppressed it entirely.
+	// the token-output policy suppressed it entirely.
 	operatorToken string
 	tokenSource   tokenSource
-	// suppressSecrets is --no-print-human-token: the operator has said this
+	// suppressSecrets follows the token-output policy: the operator has said this
 	// terminal's output is scraped or logged, so nothing the console can put on
 	// the screen may be a credential. It already covers the token banner by
 	// leaving operatorToken empty; it covers the dashboard sign-in link too.
@@ -665,7 +665,7 @@ type tuiModel struct {
 	// may not put a credential on the screen — see canMintDashboardLink.
 	dashboardLink       string
 	dashboardLinkMinted time.Time
-	// suppressSecrets is --no-print-human-token: this terminal's output is
+	// suppressSecrets follows the token-output policy: this terminal's output is
 	// scraped or logged, so the console shows no credential of any kind.
 	suppressSecrets bool
 	// ownsTmuxServer means quitting kills the tmux server this daemon started,
@@ -959,8 +959,8 @@ const tuiDashboardLinkRotate = 40 * time.Second
 //     minting there would hand it, via tmux capture-pane, the very authority
 //     the permission system exists to withhold. Such a console still gets the
 //     dashboard's address, just no token on it.
-//   - not --no-print-human-token, whose whole point is that this terminal's
-//     output is scraped or logged, so no credential may appear on it.
+//   - secret output allowed by the token-output policy: auto requires a
+//     terminal, always opts in explicitly, and never excludes credentials.
 //
 // A remote console is excluded for a different reason: mintInitToken writes
 // this process's in-memory store, which is the dashboard's store exactly when
