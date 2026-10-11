@@ -13,6 +13,7 @@ import (
 
 func TestMorphHistoryWindowCatalogAndExplicitOverride(t *testing.T) {
 	t.Setenv(session.ResourceDelegationDirEnv, "")
+	t.Setenv("CODEX_HOME", "")
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	spawn := spawnMorphWorker(t, f, "crew", "worker", nil)
@@ -51,6 +52,7 @@ func TestMorphHistoryWindowCatalogAndExplicitOverride(t *testing.T) {
 
 func TestMorphHistoryWindowRespectsProfileAndExtendedClaude(t *testing.T) {
 	t.Setenv(session.ResourceDelegationDirEnv, "")
+	t.Setenv("CODEX_HOME", "")
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	spawn := spawnMorphWorker(t, f, "crew", "worker", nil)
@@ -64,6 +66,7 @@ func TestMorphHistoryWindowRespectsProfileAndExtendedClaude(t *testing.T) {
 
 	codex := spawnMorphSource(t, f, "codex", "other")
 	seedMorphHistory(t, f, "codex", codex.ConvID)
+	f.SetSessionStatus(codex.ConvID, session.StatusIdle)
 	for _, body := range []map[string]any{
 		{"harness": "claude", "model": "sonnet[1m]", "approval": "default", "dry_run": true},
 		{"harness": "claude", "model": "sonnet[1m]", "approval": "default", "history_window_tokens": 500_000, "dry_run": true},
