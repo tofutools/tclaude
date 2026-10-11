@@ -1155,6 +1155,12 @@ function accessOutcome(status) {
     // the operator narrowed the grant, and the history card should say so.
     case 'always (scoped)': return { cls: 'always', txt: wz('★ Always — this scope', '★ Granted ever after, thus bounded') };
     case 'declined': return { cls: 'declined', txt: wz('✕ Declined', '✕ Refused') };
+    // Peer proposal and cross-node link states (tcl-hj04jt).
+    case 'accepted': return { cls: 'approved', txt: '✓ Accepted' };
+    case 'partially_accepted': return { cls: 'approved', txt: '✓ Partly accepted' };
+    case 'applying': return { cls: 'always', txt: '… Applying' };
+    case 'withdrawn': return { cls: 'timedout', txt: '↩ Withdrawn' };
+    case 'pending': return { cls: 'always', txt: '… Waiting for peer' };
     case 'expired':
     case 'timed out': return { cls: 'timedout', txt: wz('⏱ Timed out', '⏱ Sands ran out') };
     default: return { cls: 'declined', txt: String(status || '') };
@@ -1216,7 +1222,13 @@ export function accessWho(r) {
 
 function accessSubject(r) {
   if (r.purpose === 'group_link' && r.link) {
-    return `🌐 Link request · ${r.link.source_peer_label || 'peer'}:${r.link.source_group} → ${r.link.dest_group}`;
+    // direction is relative to this node: "in" lands on our group, "out" on
+    // the peer's (source_group is then ours).
+    const peer = r.link.source_peer_label || 'peer';
+    const edge = r.link.direction === 'out'
+      ? `${r.link.source_group} → ${peer}:${r.link.dest_group}`
+      : `${peer}:${r.link.source_group} → ${r.link.dest_group}`;
+    return `🌐 Link request${r.proposal?.ours ? ' (sent)' : ''} · ${edge}`;
   }
   if (r.purpose === 'peer_proposal' && r.proposal) {
     const n = (r.proposal.items || []).length;
@@ -1246,7 +1258,10 @@ async function decideProposal(id, body) {
       body: JSON.stringify(body),
     });
     if (r.status === 409) {
-      toast((await r.text().catch(() => '')) || 'The proposal changed or was already decided; refreshing.', true);
+      const raw = await r.text().catch(() => '');
+      let why = '';
+      try { why = JSON.parse(raw)?.error || ''; } catch { why = raw; }
+      toast(`${why || 'The proposal changed or was already decided.'} The card updates with the next refresh.`, true);
       return;
     }
     if (!r.ok) throw new Error(await r.text());

@@ -97,7 +97,7 @@ export function createLinksActions({
       const accepted = await confirm(peerLabel ? {
         title: pending ? 'Cancel this link request?' : 'Remove this cross-node link?',
         body: pending
-          ? `The request to ${peerLabel} is withdrawn. Nothing was linked yet.`
+          ? `This node drops the pending link now. ${peerLabel} is told when reachable. Nothing was linked yet.`
           : `This node stops delivering over this edge immediately, including messages already queued. ${peerLabel} is told when reachable. Other links are unaffected.`,
         meta: `#${id} · ${from} → ${to}`,
         okLabel: pending ? 'Cancel request' : 'Remove link',

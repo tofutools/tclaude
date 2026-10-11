@@ -546,3 +546,15 @@ test('the link dialog hands a peer over to the proposal composer, which sends sh
   ] }]);
   await view.cleanup();
 });
+
+test('the proposal composer never swaps a preset peer that cannot receive proposals for another', async (t) => {
+  const view = await mountLinks(t, { actions: { loadLinkTargets: async () => crossTargets } });
+  const { harness, host, state } = view;
+  await harness.act(() => state.openPropose({ peer: 'inst_old' }));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const composer = host.querySelector('#proposal-modal');
+  assert.match(composer.querySelector('#proposal-no-peer').textContent, /old cannot receive proposals/);
+  assert.doesNotMatch(composer.querySelector('#proposal-modal-title').textContent, /bob/);
+  assert.equal(composer.querySelector('#proposal-submit').disabled, true);
+  await view.cleanup();
+});

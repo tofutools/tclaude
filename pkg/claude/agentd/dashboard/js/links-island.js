@@ -412,8 +412,12 @@ function ProposalComposer({ descriptor, groups, actions, confirmDiscard }) {
   const connected = !!targets?.hub_connected;
   const peers = usablePeers(targets).filter((candidate) => candidate.link_capable);
   const [peerID, setPeerID] = useState(descriptor.peer || '');
-  const peer = peers.find((candidate) => candidate.peer === peerID) || peers[0] || null;
-  const label = peer?.label || peer?.peer || 'the peer';
+  // A peer handed in by Fleet or the link dialog is never silently swapped
+  // for another one; without a preset the first capable peer is offered.
+  const peer = peers.find((candidate) => candidate.peer === peerID) || (peerID ? null : peers[0]) || null;
+  const missing = !!peerID && targets && !peer
+    ? (usablePeers(targets).find((candidate) => candidate.peer === peerID)?.label || peerID) : '';
+  const label = peer?.label || peer?.peer || missing || 'the peer';
   const peerGroups = peer?.groups || [];
   const [shares, setShares] = useState([]);
   const [pairs, setPairs] = useState([]);
@@ -429,16 +433,19 @@ function ProposalComposer({ descriptor, groups, actions, confirmDiscard }) {
   const addPair = () => setPairs([...pairs, { ours: groups[0]?.name || '', theirs: peerGroups[0]?.id || '', dir: 'both', mode: 'members->members' }]);
   const peerGroupName = (id) => peerGroups.find((group) => group.id === id)?.name || id;
   const summary = composerSummary({ peer: label, shares, pairs, peerGroupName });
+  const submitGuard = useRef(false);
 
   const submit = async () => {
-    if (busy) return;
+    // A hotkey and a click can both land before the busy re-render.
+    if (submitGuard.current) return;
     if (!peer) { setError('pick a peer'); return; }
     if (!items.length) { setError('tick a group to share or add a link'); return; }
+    submitGuard.current = true;
     setBusy(true);
     setError('');
     try {
       await actions.createProposal({ peer: peer.peer, peerLabel: label, note: note.trim(), items });
-    } catch (cause) { setError(errorMessage(cause)); } finally { setBusy(false); }
+    } catch (cause) { setError(errorMessage(cause)); } finally { submitGuard.current = false; setBusy(false); }
   };
 
   return html`
@@ -448,6 +455,7 @@ function ProposalComposer({ descriptor, groups, actions, confirmDiscard }) {
       <div class="modal-meta">Nothing changes on either node until ${label}'s operator accepts. You can withdraw it until then.</div>
       ${targets === undefined ? html`<div class="empty">Loading peers…</div>`
         : !connected ? html`<div class="link-peer-note off" id="proposal-offline">🌐 Proposals need a hub connection.${targets?.reason ? ` ${targets.reason}` : ''}</div>`
+        : missing ? html`<div class="link-peer-note off" id="proposal-no-peer">${missing} cannot receive proposals: it runs an older tclaude or has not shared its catalog with you.</div>`
         : !peers.length ? html`<div class="link-peer-note off" id="proposal-no-peer">No trusted peer runs a tclaude that supports proposals yet.</div>`
         : html`
         <label class="cron-create-row">

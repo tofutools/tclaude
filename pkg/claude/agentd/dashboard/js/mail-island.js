@@ -464,7 +464,12 @@ function GroupLinkReader({ request, controller }) {
   const handled = !controller.accessIsPending(request) || sent;
   const outcome = handled ? controller.accessOutcome(request.status) : null;
   const mode = String(link.mode || 'members->members').replace('->', ' → ');
-  const source = `${peer}:${link.source_group || '?'}`;
+  // direction is relative to this node: "in" lands on our group (source is
+  // the peer's), "out" lands on the peer's group (source is ours).
+  const into = link.direction !== 'out';
+  const src = into ? `${peer}:${link.source_group || '?'}` : (link.source_group || '?');
+  const dst = into ? (link.dest_group || '?') : `${peer}:${link.dest_group || '?'}`;
+  const who = link.mode === 'owners->members' ? 'owners' : 'members';
   return html`<${Fragment}>
     <div class="mail-reader-head">
       <div class="mail-subject">🌐 Cross-node link request${sent ? ' (sent)' : ''} <span class="mail-id">#${shortId(request.id)}</span></div>
@@ -480,19 +485,19 @@ function GroupLinkReader({ request, controller }) {
     </div>
     <div class="mail-reader-body access-reader-body"><div class="access-meta">
       ${sent ? html`
-        <div class="access-row"><span class="access-k">You asked</span><span class="access-v">${link.mode === 'owners->members' ? 'owners' : 'members'} of <b>${link.source_group || '?'}</b> to message members of <b>${peer}:${link.dest_group || '?'}</b> (${mode})</span></div>
+        <div class="access-row"><span class="access-k">You asked</span><span class="access-v">${who} of <b>${src}</b> to message members of <b>${dst}</b> (${mode})</span></div>
         <div class="access-row"><span class="access-k">Cancel</span><span class="access-v">from Inter-group links (cancel request)</span></div>` : html`
-        <div class="access-row"><span class="access-k">Wants</span><span class="access-v">${link.mode === 'owners->members' ? 'owners' : 'members'} of <b>${source}</b> may message members of <b>${link.dest_group || '?'}</b></span></div>
-        <div class="access-row"><span class="access-k">Edge on this node</span><span class="access-v mono">${source} → ${link.dest_group || '?'} · ${mode}</span></div>
-        <div class="access-row"><span class="access-k">Approving authorizes</span><span class="access-v">exactly this edge and mode. ${peer} gets no broader messaging on this node.</span></div>
+        <div class="access-row"><span class="access-k">Wants</span><span class="access-v">${who} of <b>${src}</b> may message members of <b>${dst}</b></span></div>
+        <div class="access-row"><span class="access-k">Edge</span><span class="access-v mono">${src} → ${dst} · ${mode}</span></div>
+        <div class="access-row"><span class="access-k">Approving authorizes</span><span class="access-v">exactly this edge and mode, nothing broader.</span></div>
         <div class="access-row"><span class="access-k">Revoke</span><span class="access-v">any time from Inter-group links; takes effect on this node immediately</span></div>`}
     </div></div>
     <div class="mail-reader-actions access-reader-actions">
       ${handled ? html`<${Fragment}><span class=${`access-outcome ${outcome.cls}`}>${outcome.txt}</span>${request.decided_at && html`<span class="access-decided-at">${relTime(request.decided_at)}</span>`}</${Fragment}>`
         : html`<${Fragment}><span class="access-countdown" title="If you don't decide, this request is automatically declined.">${controller.accessCountdown(request.deadline)}</span>
           <span class="grow"></span>
-          <button class="access-btn always" title=${`Approve, and let ${peer} link to ${link.dest_group} in future without asking (each link still has to be acknowledged)`}
-            onClick=${() => controller.decideAccess(request.id, 'approve_future')}>Approve + allow future links into ${link.dest_group}</button>
+          ${into && html`<button class="access-btn always" title=${`Approve, and let ${peer} link to ${link.dest_group} in future without asking (each link still has to be acknowledged)`}
+            onClick=${() => controller.decideAccess(request.id, 'approve_future')}>Approve + allow future links into ${link.dest_group}</button>`}
           <button class="access-btn deny" onClick=${() => controller.decideAccess(request.id, 'deny')}>Decline</button>
           <button class="access-btn approve" onClick=${() => controller.decideAccess(request.id, 'approve')}>Approve</button></${Fragment}>`}
     </div>

@@ -1,5 +1,5 @@
 import { Fragment, h } from 'preact';
-import { useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { relTime, shortId } from './helpers.js';
 import { dashboardState } from './snapshot-store.js';
@@ -73,10 +73,12 @@ export function ProposalReader({ request, controller }) {
   const open = turn === 'us';
   const [draft, setDraft] = useState(() => initialDraft(view));
   const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false);
   const decide = async (body) => {
-    if (busy) return;
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
-    try { await controller.decideProposal(request.id, body); } finally { setBusy(false); }
+    try { await controller.decideProposal(request.id, body); } finally { inFlight.current = false; setBusy(false); }
   };
   const primary = open ? decisionFor(view, draft) : null;
   const lines = proposalLines(view);

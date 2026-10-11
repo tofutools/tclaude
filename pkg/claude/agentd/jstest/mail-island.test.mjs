@@ -323,7 +323,7 @@ test('a cross-node link request names the exact edge and decides approve, approv
   const root = mounted.container;
   assert.match(root.textContent, /Cross-node link request/);
   assert.match(root.textContent, /alice:alpha → research · members → members/);
-  assert.match(root.textContent, /no broader messaging/);
+  assert.match(root.textContent, /nothing broader/);
   assert.doesNotMatch(root.textContent, /Always allow/);
   const buttons = [...root.querySelectorAll('.access-reader-actions .access-btn')];
   assert.deepEqual(buttons.map((b) => b.textContent.trim()), ['Approve + allow future links into research', 'Decline', 'Approve']);
@@ -431,5 +431,23 @@ test('our own proposal waits on the peer and offers withdraw, naming accepted ed
   assert.equal(withdraw.textContent.trim(), 'Withdraw pending items');
   await harness.act(() => withdraw.click());
   assert.deepEqual(decided.at(-1), ['pp-1', { revision: 1, decision: 'withdraw' }]);
+  await mounted.unmount();
+});
+
+test('an incoming link into the peer group reads from our group and offers no approve-future', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
+  const request = { id: 'gl-3', purpose: 'group_link', origin_peer: 'inst_alice1', status: 'pending',
+    proposal: { id: 'gl-3', ours: false, awaiting: 'us', state: 'sent', items: [] },
+    link: { source_peer_label: 'alice', source_group: 'builders', dest_group: 'research', mode: 'members->members', direction: 'out' },
+    created_at: '2026-07-12T00:00:00Z', deadline: '2026-07-13T00:00:00Z' };
+  const state = harness.signals.signal({ ...populated(), selected: 'access-requests', selectedMsgId: 'gl-3', messages: [] });
+  const controller = controllerFor(state);
+  controller.messageView = () => ({ access: true, allAccess: [request], pendingAccess: [request], handledAccess: [], search: '' });
+  controller.messageCountText = () => '1 pending';
+  const mounted = await harness.mount(harness.html`<${MailApp} controller=${controller} />`);
+  const root = mounted.container;
+  assert.match(root.textContent, /builders → alice:research · members → members/);
+  assert.deepEqual([...root.querySelectorAll('.access-reader-actions .access-btn')].map((b) => b.textContent.trim()), ['Decline', 'Approve']);
   await mounted.unmount();
 });

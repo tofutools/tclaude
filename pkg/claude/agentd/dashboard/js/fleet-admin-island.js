@@ -271,7 +271,7 @@ function grantsCell(g) {
   return html`<span title=${parts}>${g.total} <span class="muted">(${parts})</span></span>`;
 }
 
-function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust, onGrants, onKey, onPropose }) {
+function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust, onGrants, onKey, onPropose, proposable }) {
   return html`<div class="fa-peers">
     <h4>This node</h4>
     <table class="fa-table" id="fleet-self">
@@ -298,7 +298,7 @@ function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust, on
           <td>${r.pools.length ? r.pools.join(', ') : html`<span class="muted">—</span>`}</td>
           <td class="fa-acts">
             <button type="button" data-fa="grants" onClick=${() => onGrants(r)}>Grants…</button>
-            ${onPropose && html`<button type="button" data-fa="propose" title=${`Offer ${r.label} groups to see and cross-node links; nothing changes until their operator accepts`} onClick=${() => onPropose(r)}>Propose…</button>`}
+            ${onPropose && proposable?.has(r.id) && html`<button type="button" data-fa="propose" title=${`Offer ${r.label} groups to see and cross-node links; nothing changes until their operator accepts`} onClick=${() => onPropose(r)}>Propose…</button>`}
             ${r.level === 'unrestricted'
               ? html`<button type="button" data-fa="restrict" onClick=${() => onRestrict(r)}>Restrict…</button>`
               : html`<button type="button" data-fa="unrestrict" onClick=${() => onUnrestrict(r)}>Make unrestricted…</button>`}
@@ -320,6 +320,13 @@ function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust, on
         </tr>`)}</tbody>
       </table>`}
   </div>`;
+}
+
+async function loadProposable() {
+  const response = await fetch('/api/federation/link-targets', { credentials: 'same-origin' });
+  if (!response.ok) return null;
+  const body = await response.json();
+  return new Set((body?.peers || []).filter((peer) => peer?.link_capable).map((peer) => peer.peer));
 }
 
 // FleetAdmin is the top-level "Fleet" view: this node's federation identity,
@@ -347,6 +354,15 @@ export function FleetAdmin({
 
   useEffect(() => { if (active && remote) switchHome(); }, [active, remote]);
   useEffect(() => { if (active && !remote) loadBoardUpdates().catch(() => {}); }, [active, remote, tick]);
+  // Propose… shows only for peers that can receive proposals. A daemon
+  // without them answers 404 and the button never appears.
+  const [proposable, setProposable] = useState(null);
+  useEffect(() => {
+    if (!active || remote) return undefined;
+    let live = true;
+    loadProposable().then((value) => { if (live) setProposable(value); }, () => { if (live) setProposable(null); });
+    return () => { live = false; };
+  }, [active, remote, tick]);
 
   useEffect(() => {
     if (!active || remote) return undefined;
@@ -407,7 +423,7 @@ export function FleetAdmin({
       class=${`fa-subtab${p.id === sub.id ? ' on' : ''}`} onClick=${() => { if (p.id !== sub.id) { setRunPreselect(''); setPage(p.id); } }}>${p.label}${p.id === 'boards' && boardUpdates?.updates?.length > 0
         ? html` <span class="fa-badge" id="fleet-boards-update-count" title="Items you keep have a newer version">${boardUpdates.updates.length}</span>` : ''}</button>`)}</div>
     ${sub.id === 'peers'
-      ? html`${active && html`<${ViewersPanel} view=${view} actions=${actions} confirm=${confirm} toast=${toast} timers=${timers} />`}<${PeersPage} view=${view} now=${now()} onPropose=${remote ? null : (r) => { try { openProposalComposer(r.id); } catch (e) { toast(`Propose: ${e?.message || e}`, true); } }} onKey=${(r) => setDialog({ kind: 'key', row: r })} onTrust=${(r) => setDialog({ kind: 'trust', row: r })}
+      ? html`${active && html`<${ViewersPanel} view=${view} actions=${actions} confirm=${confirm} toast=${toast} timers=${timers} />`}<${PeersPage} view=${view} now=${now()} proposable=${proposable} onPropose=${remote ? null : (r) => { try { openProposalComposer(r.id); } catch (e) { toast(`Propose: ${e?.message || e}`, true); } }} onKey=${(r) => setDialog({ kind: 'key', row: r })} onTrust=${(r) => setDialog({ kind: 'trust', row: r })}
           onUnrestrict=${(r) => setDialog({ kind: 'unrestrict', row: r })} onRestrict=${restrict} onUntrust=${untrust}
           onGrants=${(r) => { setGrantTarget(r.id); setPage('grants'); }} />`
       : sub.id === 'harnesses'
