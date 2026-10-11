@@ -944,7 +944,9 @@ transfer as local files; these commands do not send anything to a peer.
 
 ## Portable local agent bundles
 
-Agent transfer uses a ZIP archive, separate from the existing export jobs:
+Agent transfer uses a ZIP archive, separate from the existing export jobs.
+The [Portable Agent Format](paf.md) supersedes this archive; tclaude keeps
+importing it, and keeps sending it to peers that do not support PAF.
 
 ```bash
 tclaude agent bundle export reviewer --file reviewer.zip --history

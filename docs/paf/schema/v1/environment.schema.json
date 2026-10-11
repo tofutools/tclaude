@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/environment.schema.json",
+  "title": "PAF agents/<key>/environment.json",
+  "description": "The original environment. Every field is a hint for the receiver, never an instruction.",
+  "type": "object",
+  "required": ["harness"],
+  "properties": {
+    "harness": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {"name": {"type": "string", "minLength": 1}, "version": {"type": "string"}}
+    },
+    "model": {
+      "type": "object",
+      "properties": {
+        "id": {"type": "string"},
+        "provider": {"type": "string"},
+        "effort": {"type": "string"},
+        "context_window_tokens": {"type": "integer", "minimum": 0},
+        "context_window_source": {"type": "string"},
+        "usage": {
+          "type": "object",
+          "properties": {
+            "at": {"$ref": "common.schema.json#/$defs/timestamp"},
+            "context_tokens": {"type": "integer", "minimum": 0},
+            "input_tokens": {"type": "integer", "minimum": 0},
+            "output_tokens": {"type": "integer", "minimum": 0},
+            "cache_read_tokens": {"type": "integer", "minimum": 0},
+            "cache_write_tokens": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    },
+    "approval": {"type": "string"},
+    "modes": {"type": "object", "additionalProperties": {"type": ["string", "boolean", "number"]}},
+    "sandbox": {
+      "type": "object",
+      "properties": {
+        "tclaude_layer": {"$ref": "#/$defs/sandboxLayer"},
+        "harness": {"$ref": "#/$defs/sandboxLayer"}
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "properties": {
+        "cwd": {"type": "string"},
+        "repo_url": {"type": "string", "maxLength": 4096},
+        "branch": {"type": "string"},
+        "commit": {"type": "string"},
+        "dirty": {"type": "boolean"},
+        "worktree": {"type": "string"}
+      }
+    },
+    "placeholders": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {"name": {"type": "string"}, "original": {"type": "string", "description": "The source-side value the placeholder replaced."}, "description": {"type": "string"}}
+      }
+    },
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {"type": "string"},
+          "source": {"type": "string"},
+          "version": {"type": "string"},
+          "sha256": {"$ref": "common.schema.json#/$defs/sha256"}
+        }
+      }
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {"type": "string"},
+          "kind": {"enum": ["builtin", "mcp", "custom"]},
+          "server": {"type": "string"}
+        }
+      }
+    },
+    "mcp_servers": {
+      "description": "References only: never commands, environment, headers or credentials.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {"name": {"type": "string"}, "transport": {"type": "string"}, "version": {"type": "string"}}
+      }
+    },
+    "harness_specific": {"type": "object", "additionalProperties": {"type": "object"}}
+  },
+  "$defs": {
+    "sandboxLayer": {
+      "type": "object",
+      "properties": {"mode": {"type": "string"}, "details": {"type": "object"}}
+    }
+  }
+}

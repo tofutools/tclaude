@@ -1,0 +1,6 @@
+{
+  "harness": {"name": "codex"},
+  "model": {"id": "gpt-5.5", "effort": "high"},
+  "approval": "on-request",
+  "skills": [{"name": "agent-coord", "source": "tclaude"}]
+}

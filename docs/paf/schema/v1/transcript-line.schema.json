@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/transcript-line.schema.json",
+  "title": "One line of a PAF context JSON Lines file (transcript.jsonl, full.jsonl)",
+  "oneOf": [
+    {"$ref": "#/$defs/header"},
+    {"$ref": "#/$defs/entry"},
+    {"$ref": "#/$defs/boundary"}
+  ],
+  "$defs": {
+    "header": {
+      "type": "object",
+      "required": ["type", "scope", "source"],
+      "properties": {
+        "type": {"const": "header"},
+        "scope": {"enum": ["effective", "full"]},
+        "source": {
+          "type": "object",
+          "required": ["harness"],
+          "properties": {
+            "harness": {"type": "string"},
+            "format": {"type": "string"},
+            "conv_id": {"type": "string"},
+            "model": {"type": "string"},
+            "cwd": {"type": "string"},
+            "title": {"type": "string"}
+          }
+        }
+      }
+    },
+    "boundary": {
+      "type": "object",
+      "required": ["type", "kind"],
+      "properties": {
+        "type": {"const": "boundary"},
+        "kind": {"type": "string", "description": "Open set. Known: compaction, clear, rewind, branch."},
+        "time": {"$ref": "common.schema.json#/$defs/timestamp"}
+      }
+    },
+    "entry": {
+      "type": "object",
+      "required": ["type", "role", "origin", "blocks"],
+      "properties": {
+        "type": {"const": "entry"},
+        "id": {"type": "string"},
+        "role": {"enum": ["user", "assistant"]},
+        "origin": {"enum": ["human", "agent", "tool"]},
+        "time": {"$ref": "common.schema.json#/$defs/timestamp"},
+        "model": {"type": "string"},
+        "author": {"type": "string"},
+        "blocks": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/block"}}
+      }
+    },
+    "block": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {"enum": ["text", "thinking", "tool_call", "tool_result", "media", "summary"]},
+        "text": {"type": "string"},
+        "opaque": {
+          "type": "object",
+          "required": ["vendor", "data"],
+          "properties": {"vendor": {"type": "string"}, "data": {"type": "string"}}
+        },
+        "call_id": {"type": "string"},
+        "name": {"type": "string"},
+        "input": {},
+        "freeform": {"type": "boolean"},
+        "is_error": {"type": "boolean"},
+        "media": {"type": "array", "items": {"$ref": "#/$defs/media"}}
+      },
+      "allOf": [
+        {"if": {"properties": {"kind": {"const": "tool_call"}}}, "then": {"required": ["call_id", "name"]}},
+        {"if": {"properties": {"kind": {"const": "tool_result"}}}, "then": {"required": ["call_id"]}},
+        {"if": {"properties": {"kind": {"const": "media"}}}, "then": {"required": ["media"]}},
+        {"if": {"properties": {"kind": {"enum": ["text", "summary"]}}}, "then": {"required": ["text"]}}
+      ]
+    },
+    "media": {
+      "type": "object",
+      "properties": {
+        "media_type": {"type": "string"},
+        "attachment": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "url": {"type": "string"},
+        "path": {"type": "string", "description": "Where the file lived on the source machine. A hint, not an archive reference."},
+        "name": {"type": "string"}
+      },
+      "oneOf": [
+        {"required": ["attachment"]},
+        {"required": ["url"]},
+        {"required": ["path"]}
+      ]
+    }
+  }
+}

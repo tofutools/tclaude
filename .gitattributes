@@ -4,3 +4,6 @@ pkg/claude/agentd/jstest/third_party/linkedom.mjs -text -whitespace
 pkg/claude/agentd/jstest/third_party/preact-test-utils.mjs -text
 pkg/claude/agentd/jstest/third_party/testUtils.module.js.map -text
 pkg/claude/agentd/jstest/third_party/LICENSE-linkedom.txt -text
+
+# PAF examples are hashed and signed byte for byte.
+docs/paf/examples/** -text -whitespace

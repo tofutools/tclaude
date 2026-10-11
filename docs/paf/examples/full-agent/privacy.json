@@ -1,0 +1,32 @@
+{
+  "audience": {
+    "kind": "recipients",
+    "recipients": [
+      "inst_7c21"
+    ]
+  },
+  "consent": [
+    {
+      "at": "2026-10-11T19:40:30Z",
+      "audience": "recipients",
+      "by": "operator",
+      "content_digest": "5a7296d702bd1cde04cd2e56a8e044b4a12b2c7fb10254d769ee0c0e9afb2d75"
+    }
+  ],
+  "redactions": [
+    {
+      "count": 3,
+      "detail": "PROJECT",
+      "kind": "paths_to_placeholders"
+    }
+  ],
+  "retention": {
+    "expires_at": "2026-10-25T19:40:00Z"
+  },
+  "scan": {
+    "at": "2026-10-11T19:40:01Z",
+    "findings": [],
+    "scanner": "tclaude-credential/1"
+  },
+  "sensitivity": "shared"
+}

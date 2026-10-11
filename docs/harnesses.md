@@ -199,6 +199,9 @@ is explicit about what does not map 1:1:
   the dashboard loss checkbox to continue with readable history, the saved
   transcript pointer and a clear warning about the unreadable summary.
 
+The neutral transcript and loss report are the context of the
+[Portable Agent Format](paf.md), which specifies their file form.
+
 Every translation produces a loss report (counts and categories only, never
 transcript content) and keeps the full, unclipped transcript as a Markdown
 file beside it. Clipping and omission markers point the target agent at that
