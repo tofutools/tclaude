@@ -37,15 +37,16 @@ import (
 //     - UNPLACEABLE: no row resolved, so there is nothing trustworthy to
 //     attribute to. Counted only.
 //
-//  2. A refusal stops counting once the harness process that made it has
-//     exited. The caller of a brokered request is a short-lived hook or
-//     statusline process, so the recorder notes the nearest harness
-//     ancestor of that caller (a kernel fact, like the caller pid) as the
-//     refusal's owner. When an agent is retired or deleted its pane — and
-//     with it that harness — goes away, and nothing is being lost any
-//     more; keeping the warning up for the rest of the window would send
-//     the operator looking for an agent that no longer exists. A refusal
-//     whose owner could not be determined keeps counting for the window.
+//  2. A refusal stops counting once the agent that made it is gone. The
+//     recorder notes the tmux session that owns the refusal and counts it
+//     only while tmux still lists that session with a live pane. When an
+//     agent is retired or deleted its session goes away and nothing is
+//     being lost any more; keeping the warning up for the rest of the
+//     window would send the operator looking for an agent that no longer
+//     exists. A refusal whose owner could not be determined keeps counting
+//     for the window. See brokerCallerOwner for how the owner is found —
+//     deliberately without matching process names, which differ per
+//     harness and change with every harness version.
 //
 //  3. State is in memory and resets with the daemon, like the rate
 //     limiter's. These are operator hints, not an audit trail; persisting
@@ -85,27 +86,45 @@ type brokerRefusal struct {
 	// only because it is a whole-struct copy.
 	lastLogAt  time.Time
 	suppressed int
-	// owners counts this entry's refusals per owning harness pid (0 when
-	// the caller's ancestry crossed no harness). Only refusals whose owner
-	// is still running are shown; see liveCountLocked.
-	owners map[int]int
+	// owners counts this entry's refusals per owning tmux session ("" when
+	// no owner could be determined). Only refusals whose owner is still
+	// live are shown; see liveCount.
+	owners map[string]int
 }
 
-// noteOwnerLocked records one refusal against the harness that made it.
-func (e *brokerRefusal) noteOwnerLocked(owner int) {
+// noteOwnerLocked records one refusal against the session that owns it.
+func (e *brokerRefusal) noteOwnerLocked(owner string) {
 	if e.owners == nil {
-		e.owners = map[int]int{}
+		e.owners = map[string]int{}
 	}
 	e.owners[owner]++
 }
 
-// liveCountLocked is Count minus the refusals whose owning harness has
-// exited (or was already gone, brokerOrphanedOwner). An unknown owner (0)
-// is assumed live.
-func (e *brokerRefusal) liveCountLocked(alive func(int) bool) int {
+// hasOwnersLocked reports whether any refusal of e has a known owner, i.e.
+// whether liveCount needs the pane table at all.
+func (e *brokerRefusal) hasOwnersLocked() bool {
+	for owner := range e.owners {
+		if owner != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// liveCount is Count minus the refusals whose owning tmux session is gone
+// or whose pane is dead in panes. An unknown owner ("") is assumed live, and
+// so is every owner when panes is nil (tmux could not be read): a failed
+// read must not hide a real condition.
+func (e *brokerRefusal) liveCount(panes map[string]brokerPaneEntry) int {
 	n := e.Count
-	for pid, c := range e.owners {
-		if pid == brokerOrphanedOwner || (pid > 0 && !alive(pid)) {
+	if panes == nil {
+		return n
+	}
+	for owner, c := range e.owners {
+		if owner == "" {
+			continue
+		}
+		if p, ok := panes[owner]; !ok || p.dead {
 			n -= c
 		}
 	}
@@ -151,9 +170,10 @@ type brokerRefusalRecorder struct {
 	unplaceableByCaller map[int]*brokerRefusal
 	writes              int
 	now                 func() time.Time
-	// alive reports whether a refusal's owning harness is still running.
-	// nil means procAlive, read at call time so tests can swap it.
-	alive func(int) bool
+	// panes reads tmux's pane table for owner liveness. nil means the
+	// shared broker pane cache (cachedBrokerPanes): one `list-panes -a` per
+	// brokerPaneCacheTTL daemon-wide, shared with the identity proof.
+	panes func() map[string]brokerPaneEntry
 }
 
 var brokerRefusals = newBrokerRefusalRecorder(nil)
@@ -166,11 +186,11 @@ func newBrokerRefusalRecorder(now func() time.Time) *brokerRefusalRecorder {
 	}
 }
 
-func (r *brokerRefusalRecorder) ownerAlive(pid int) bool {
-	if r.alive != nil {
-		return r.alive(pid)
+func (r *brokerRefusalRecorder) paneTable() map[string]brokerPaneEntry {
+	if r.panes != nil {
+		return r.panes()
 	}
-	return procAlive(pid)
+	return cachedBrokerPanes()
 }
 
 func (r *brokerRefusalRecorder) clock() time.Time {
@@ -183,12 +203,12 @@ func (r *brokerRefusalRecorder) clock() time.Time {
 // recordClaimMismatch attributes a refusal to the row the daemon itself
 // resolved for the caller. sessionID must come from the ancestry walk.
 func (r *brokerRefusalRecorder) recordClaimMismatch(sessionID, reason string) brokerRefusalLogDecision {
-	return r.recordClaimMismatchOwned(sessionID, 0, reason)
+	return r.recordClaimMismatchOwned(sessionID, "", reason)
 }
 
-// recordClaimMismatchOwned is recordClaimMismatch with the pid of the
-// harness that made the request (0 when unknown); see brokerCallerOwner.
-func (r *brokerRefusalRecorder) recordClaimMismatchOwned(sessionID string, owner int, reason string) brokerRefusalLogDecision {
+// recordClaimMismatchOwned is recordClaimMismatch with the tmux session
+// that owns the refusal ("" when unknown); see brokerCallerOwner.
+func (r *brokerRefusalRecorder) recordClaimMismatchOwned(sessionID, owner, reason string) brokerRefusalLogDecision {
 	if sessionID == "" {
 		return r.recordUnplaceableOwned(0, owner, reason)
 	}
@@ -218,15 +238,15 @@ func (r *brokerRefusalRecorder) recordUnplaceable(reason string) brokerRefusalLo
 }
 
 func (r *brokerRefusalRecorder) recordUnplaceableFor(callerPID int, reason string) brokerRefusalLogDecision {
-	return r.recordUnplaceableOwned(callerPID, 0, reason)
+	return r.recordUnplaceableOwned(callerPID, "", reason)
 }
 
 // recordUnplaceableOwned is recordUnplaceable with the caller pid the log
-// throttle is keyed by, and the owning harness pid (0 when unknown). The
+// throttle is keyed by, and the owning tmux session ("" when unknown). The
 // dashboard counter stays daemon-wide; only the decision about writing a
 // log line, and the counts that line carries, are per caller. callerPID 0
 // (unknown) shares one bucket.
-func (r *brokerRefusalRecorder) recordUnplaceableOwned(callerPID, owner int, reason string) brokerRefusalLogDecision {
+func (r *brokerRefusalRecorder) recordUnplaceableOwned(callerPID int, owner, reason string) brokerRefusalLogDecision {
 	now := r.clock()
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -332,44 +352,62 @@ type brokerRefusalContext struct {
 	Detail string
 	// Event is the hook event name, or "" for the statusline endpoint.
 	Event string
-	// procs is the request's process-table view, used to find the harness
-	// that owns the refusal. nil leaves the owner unknown.
+	// procs is the request's process-table view, used to find the pane
+	// that owns the refusal. nil leaves the owner to the claim alone.
 	procs *brokerProcTable
+	// claimedTmux is the tmux session recorded on the CLAIMED row, or ""
+	// when the claim loaded no row. Like Claimed it is caller-selected, so
+	// it is only ever an owner for liveness; see brokerCallerOwner.
+	claimedTmux string
 }
 
 // brokerCallerOwnerMaxDepth bounds the ancestry walk in brokerCallerOwner.
 const brokerCallerOwnerMaxDepth = 64
 
-// brokerOrphanedOwner marks a refusal from a caller that had already been
-// orphaned when it was refused: its harness is gone, so it never counts.
-const brokerOrphanedOwner = -1
-
-// brokerCallerOwner returns the nearest harness process in the caller's
-// ancestry, or 0 when the walk crosses none. That harness outlives the
-// short-lived hook/statusline caller and exits with the agent's pane, so
-// it is what decides whether a refusal still means telemetry is being
-// lost. It is a log and liveness key only, never an attribution.
+// brokerCallerOwner names the tmux session whose lifetime bounds a refusal:
+// once tmux no longer lists it with a live pane, the agent behind the
+// refusal is gone and the refusal stops counting. "" means unknown, which
+// keeps counting for the window.
 //
-// A retired agent's harness can exit before its last hook or statusline
-// child reaches the daemon; that child is then re-parented to init or the
-// user's systemd subreaper. Such a caller is reported as
-// brokerOrphanedOwner rather than unknown, so a teardown burst does not
-// keep the notice up for the whole window.
-func brokerCallerOwner(t *brokerProcTable, callerPID int) int {
-	if t == nil {
-		return 0
+// Nothing here matches process names. A sandboxed Claude Code runs as its
+// version string (e.g. "2.1.295"), every harness names itself differently,
+// and versions change constantly; the identity proof stopped relying on
+// names for the same reason. The facts used instead:
+//
+//  1. The nearest ancestor of the caller that tmux reports as a pane pid.
+//     That is the agent's own pane, whatever runs inside it.
+//  2. Failing that, the tmux session of the row the caller CLAIMED. This
+//     is the teardown case: a retired agent's last SessionEnd hook arrives
+//     after its tmux session was killed, so no live pane is in its
+//     ancestry. The claim is caller-chosen, but here it can only decide
+//     whether the caller's OWN refusal keeps counting — never which row is
+//     badged — and a caller that wanted to hide could simply stay silent.
+//     A live agent whose claim names a live session still counts.
+//
+// Cost: the walk reads the request's own process table, which the identity
+// walk has already filled for these pids (on macOS from the shared ps
+// snapshot), and the pane table is the shared list-panes cache the proof
+// itself reads. It runs only on a refusal.
+func brokerCallerOwner(t *brokerProcTable, panes map[string]brokerPaneEntry, callerPID int, claimedTmux string) string {
+	if panes == nil {
+		return ""
 	}
-	if parent := t.parent(callerPID); parent == 1 || (parent > 1 && t.entry(parent).name == "systemd") {
-		return brokerOrphanedOwner
-	}
-	cur := callerPID
-	for i := 0; cur > 1 && i < brokerCallerOwnerMaxDepth; i++ {
-		if t.harnessName(cur) != "" {
-			return cur
+	if t != nil {
+		byPID := make(map[int]string, len(panes))
+		for name, p := range panes {
+			if p.panePID > 1 {
+				byPID[p.panePID] = name
+			}
 		}
-		cur = t.parent(cur)
+		cur := callerPID
+		for i := 0; cur > 1 && i < brokerCallerOwnerMaxDepth; i++ {
+			if name, ok := byPID[cur]; ok {
+				return name
+			}
+			cur = t.parent(cur)
+		}
 	}
-	return 0
+	return claimedTmux
 }
 
 // refuseAttributed records a refusal against the daemon-resolved row AND
@@ -378,25 +416,25 @@ func brokerCallerOwner(t *brokerProcTable, callerPID int) int {
 // refusal branch used to record for the dashboard and then return silently,
 // so the badge said something was wrong and nothing said what.
 func (r *brokerRefusalRecorder) refuseAttributed(reason string, ctx brokerRefusalContext) {
-	owner := brokerCallerOwner(ctx.procs, ctx.CallerPID)
+	owner := brokerCallerOwner(ctx.procs, r.paneTable(), ctx.CallerPID, ctx.claimedTmux)
 	r.logRefusal(r.recordClaimMismatchOwned(ctx.Resolved, owner, reason), reason, owner, ctx)
 }
 
 // refuseUnplaceable is refuseAttributed for a caller no row resolved for.
 func (r *brokerRefusalRecorder) refuseUnplaceable(reason string, ctx brokerRefusalContext) {
 	ctx.Resolved = ""
-	owner := brokerCallerOwner(ctx.procs, ctx.CallerPID)
+	owner := brokerCallerOwner(ctx.procs, r.paneTable(), ctx.CallerPID, ctx.claimedTmux)
 	r.logRefusal(r.recordUnplaceableOwned(ctx.CallerPID, owner, reason), reason, owner, ctx)
 }
 
-func (r *brokerRefusalRecorder) logRefusal(d brokerRefusalLogDecision, reason string, owner int, ctx brokerRefusalContext) {
+func (r *brokerRefusalRecorder) logRefusal(d brokerRefusalLogDecision, reason, owner string, ctx brokerRefusalContext) {
 	if !d.Log {
 		return
 	}
 	attrs := []any{
 		"endpoint", ctx.Endpoint,
 		"caller_pid", ctx.CallerPID,
-		"caller_harness_pid", owner,
+		"owner_tmux_session", owner,
 		"reason", reason,
 		"resolved_session", ctx.Resolved,
 		"claimed_session", auditClip(ctx.Claimed, brokerRefusalLogClip),
@@ -430,25 +468,37 @@ func (r *brokerRefusalRecorder) pruneLocked(now time.Time) {
 
 // forSession reports the live refusal record for a resolved session row,
 // or nil when there is none inside the window. Count is the live count:
-// refusals whose owning harness has exited are left out.
+// refusals whose owning agent is gone are left out.
 func (r *brokerRefusalRecorder) forSession(sessionID string) *brokerRefusal {
 	if sessionID == "" {
 		return nil
 	}
 	now := r.clock()
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	e := r.bySession[sessionID]
 	if e == nil || now.Sub(e.Last) > brokerRefusalWindow {
-		return nil
-	}
-	live := e.liveCountLocked(r.ownerAlive)
-	if live <= 0 {
+		r.mu.Unlock()
 		return nil
 	}
 	cp := *e
-	cp.Count = live
+	cp.owners = make(map[string]int, len(e.owners))
+	for k, v := range e.owners {
+		cp.owners[k] = v
+	}
+	needPanes := e.hasOwnersLocked()
+	r.mu.Unlock()
+
+	// The pane table is read outside the lock: a refresh is a tmux call,
+	// and refusal recording must never wait behind one.
+	var panes map[string]brokerPaneEntry
+	if needPanes {
+		panes = r.paneTable()
+	}
+	cp.Count = cp.liveCount(panes)
 	cp.owners = nil
+	if cp.Count <= 0 {
+		return nil
+	}
 	return &cp
 }
 
@@ -464,17 +514,40 @@ func (r *brokerRefusalRecorder) forSession(sessionID string) *brokerRefusal {
 // silence this feature exists to break. A machine-level total cannot say
 // WHICH agent — that would need the attribution the rulings forbid — but
 // it can say the condition is happening, which is enough to go looking.
+//
+// The pane table is only read when a refusal with a known owner is inside
+// the window, so a quiet daemon's poll costs no tmux call; when one is, it
+// is the shared cache (at most one list-panes per brokerPaneCacheTTL), read
+// outside the lock.
 func (r *brokerRefusalRecorder) counts() (total, unplaceable int) {
 	now := r.clock()
+	inWindow := func(e *brokerRefusal) bool {
+		return e.Count > 0 && now.Sub(e.Last) <= brokerRefusalWindow
+	}
+	r.mu.Lock()
+	needPanes := inWindow(&r.unplaceable) && r.unplaceable.hasOwnersLocked()
+	for _, e := range r.bySession {
+		if needPanes {
+			break
+		}
+		needPanes = inWindow(e) && e.hasOwnersLocked()
+	}
+	r.mu.Unlock()
+
+	var panes map[string]brokerPaneEntry
+	if needPanes {
+		panes = r.paneTable()
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, e := range r.bySession {
-		if now.Sub(e.Last) <= brokerRefusalWindow {
-			total += e.liveCountLocked(r.ownerAlive)
+		if inWindow(e) {
+			total += e.liveCount(panes)
 		}
 	}
-	if r.unplaceable.Count > 0 && now.Sub(r.unplaceable.Last) <= brokerRefusalWindow {
-		unplaceable = r.unplaceable.liveCountLocked(r.ownerAlive)
+	if inWindow(&r.unplaceable) {
+		unplaceable = r.unplaceable.liveCount(panes)
 		total += unplaceable
 	}
 	return total, unplaceable

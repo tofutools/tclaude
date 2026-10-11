@@ -330,62 +330,76 @@ func TestBrokerRefusals_UnplaceableIsCountedNotAttributed(t *testing.T) {
 		"the session the unplaceable caller claimed must not be badged for it")
 }
 
-// Once the harness that made the refusals is gone — the agent was retired or
-// deleted and its pane went with it — nothing is being lost any more, so the
-// machine-level notice must stop counting those refusals instead of pointing
-// the operator at an agent that no longer exists for the rest of the window.
-func TestBrokerRefusals_StopCountingOnceTheCallersHarnessIsGone(t *testing.T) {
+// Once the agent that made the refusals is gone — retired or deleted, its
+// tmux session killed — nothing is being lost any more, so the machine-level
+// notice must stop counting those refusals instead of pointing the operator
+// at an agent that no longer exists for the rest of the window. The tree is
+// a sandboxed Claude Code, which runs as its version string: nothing may
+// depend on recognising a process name.
+func TestBrokerRefusals_StopCountingOnceTheAgentIsGone(t *testing.T) {
 	t.Cleanup(agentd.ResetBrokerRefusalsForTest())
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(agentd.ResetBrokerLimiterForTest())
+	t.Cleanup(agentd.EnableBrokerPaneCacheForTest())
 
 	f := newFlow(t)
 	haveLayerSession(t, f, brokerLayerConv, brokerLayerLabel, "tmux-broker-layer", brokerPanePID)
+	const (
+		convB  = "b0000000-1111-2222-3333-bbbbbbbbbbbb"
+		labelB = "spwn-broker-b"
+		tmuxB  = "tmux-broker-b"
+		paneB  = 9200
+		bwrapB = 9201
+		harnB  = 9202
+		hookB  = 9203
+	)
+	haveLayerSession(t, f, convB, labelB, tmuxB, paneB)
 
-	const harnessPID, hookPID = 8310, 8311
+	// Agent B's hook misconfigured to claim A: refused, unplaceable (no name
+	// matches a harness, and A's pane is not its ancestor).
 	restore := agentd.SetProcTreeForTest(
-		map[int]string{harnessPID: "claude", hookPID: "sh"},
-		map[int]int{hookPID: harnessPID, harnessPID: 1})
+		map[int]string{paneB: "tclaude", bwrapB: "bwrap", harnB: "2.1.295", hookB: "sh", brokerPanePID: "tclaude"},
+		map[int]int{hookB: harnB, harnB: bwrapB, bwrapB: paneB})
 	t.Cleanup(func() { restore() })
-
 	for range 2 {
-		code, _ := postBrokeredHook(t, f, hookPID, session.BrokeredHookRequest{
-			Input: session.HookCallbackInput{
-				ConvID:        brokerLayerConv,
-				HookEventName: "Stop",
-			},
+		code, _ := postBrokeredHook(t, f, hookB, session.BrokeredHookRequest{
+			Input:            session.HookCallbackInput{ConvID: brokerLayerConv, HookEventName: "Stop"},
 			ClaimedSessionID: brokerLayerLabel,
 		})
 		require.Equal(t, http.StatusForbidden, code)
 	}
+	total, unplaceable := snapshotRefusalCounts(t)
+	require.Equal(t, 2, unplaceable, "while agent B runs, its refusals are on the notice")
+	require.Equal(t, 2, total)
 
-	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
-	require.Equal(t, 2, snap.BrokerRefusalsUnplaceable,
-		"while the caller's harness runs, its refusals are on the notice")
+	// Agent B is retired: its tmux session is killed.
+	f.World.Tmux.KillBySignalForTest(tmuxB)
+	agentd.ResetBrokerPaneCacheForTest()
+	total, _ = snapshotRefusalCounts(t)
+	assert.Zero(t, total, "refusals owned by a killed tmux session must stop counting")
 
-	// The agent is retired: its harness and the hook process are gone.
-	restore()
-	restore = agentd.SetProcTreeForTest(map[int]string{}, map[int]int{})
-
-	snap = fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
-	assert.Zero(t, snap.BrokerRefusalsUnplaceable,
-		"refusals from a harness that has exited must stop counting")
-	assert.Zero(t, snap.BrokerRefusalsTotal)
-
-	// Teardown race: the harness exited first and its last hook child was
-	// re-parented to init before its callback reached the daemon.
-	restore()
-	const orphanedHookPID = 8312
-	restore = agentd.SetProcTreeForTest(map[int]string{orphanedHookPID: "node"}, map[int]int{orphanedHookPID: 1})
+	// Teardown race: B's harness is still running its SessionEnd hook after
+	// the session was killed, so no live pane is in the caller's ancestry
+	// and the claimed row's pane cannot be probed.
 	for range 3 {
-		code, _ := postBrokeredHook(t, f, orphanedHookPID, session.BrokeredHookRequest{
-			Input:            session.HookCallbackInput{ConvID: brokerLayerConv, HookEventName: "SessionEnd"},
-			ClaimedSessionID: brokerLayerLabel,
+		code, _ := postBrokeredHook(t, f, hookB, session.BrokeredHookRequest{
+			Input:            session.HookCallbackInput{ConvID: convB, HookEventName: "SessionEnd"},
+			ClaimedSessionID: labelB,
 		})
 		require.Equal(t, http.StatusForbidden, code)
 	}
-	snap = fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
-	assert.Zero(t, snap.BrokerRefusalsTotal,
-		"refusals from a caller orphaned by its harness's exit must not count")
+	total, _ = snapshotRefusalCounts(t)
+	assert.Zero(t, total, "a dead agent's teardown callbacks must not raise the notice")
+
+	// ...but a caller outside any pane that claims a LIVE session is still
+	// news: something is posting for A and being refused.
+	code, _ := postBrokeredHook(t, f, hookB, session.BrokeredHookRequest{
+		Input:            session.HookCallbackInput{ConvID: brokerLayerConv, HookEventName: "Stop"},
+		ClaimedSessionID: brokerLayerLabel,
+	})
+	require.Equal(t, http.StatusForbidden, code)
+	total, _ = snapshotRefusalCounts(t)
+	assert.Equal(t, 1, total)
 }
 
 // A tclaude-layer row without its tmux launch identity cannot prove a brokered

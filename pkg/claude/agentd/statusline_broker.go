@@ -139,6 +139,7 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 	timing.mark("proof")
 	proofDetail := proof.detail
 	refusal.Detail = proofDetail
+	refusal.claimedTmux = proof.claimedTmux
 	layerClaim := proof.layerClaim
 	switch {
 	case proof.callerGone:

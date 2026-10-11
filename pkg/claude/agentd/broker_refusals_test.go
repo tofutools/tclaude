@@ -265,32 +265,82 @@ func TestBrokerClaimReason(t *testing.T) {
 		brokerClaimReason("statusline: caller could not be placed", "spwn-x", "err"))
 }
 
-// A refusal stops counting once the harness that made it has exited, on both
-// the per-row badge and the machine-level counts; an unknown owner (0) keeps
-// counting for the window.
-func TestBrokerRefusals_DeadOwnersStopCounting(t *testing.T) {
+// A refusal stops counting once tmux no longer lists its owning session with
+// a live pane, on both the per-row badge and the machine-level counts; an
+// unknown owner ("") keeps counting for the window, and so does everything
+// when tmux could not be read.
+func TestBrokerRefusals_GoneOwnersStopCounting(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	r := newTestRefusalRecorder(&now)
-	alive := map[int]bool{100: true, 200: true}
-	r.alive = func(pid int) bool { return alive[pid] }
+	panes := map[string]brokerPaneEntry{
+		"spwn-a": {panePID: 100, panes: 1},
+		"spwn-b": {panePID: 200, panes: 1},
+	}
+	r.panes = func() map[string]brokerPaneEntry { return panes }
 
-	r.recordClaimMismatchOwned("spwn-a", 100, "x")
-	r.recordClaimMismatchOwned("spwn-a", 200, "x")
-	r.recordUnplaceableOwned(11, 100, "y")
-	r.recordUnplaceableOwned(12, 0, "y")
+	r.recordClaimMismatchOwned("row-x", "spwn-a", "x")
+	r.recordClaimMismatchOwned("row-x", "spwn-b", "x")
+	r.recordUnplaceableOwned(11, "spwn-a", "y")
+	r.recordUnplaceableOwned(12, "", "y")
 
 	total, unplaceable := r.counts()
 	assert.Equal(t, 4, total)
 	assert.Equal(t, 2, unplaceable)
 
-	alive[100] = false
+	panes = map[string]brokerPaneEntry{"spwn-b": {panePID: 200, panes: 1}}
 	total, unplaceable = r.counts()
 	assert.Equal(t, 2, total)
 	assert.Equal(t, 1, unplaceable, "an unknown owner keeps counting")
-	got := r.forSession("spwn-a")
+	got := r.forSession("row-x")
 	require.NotNil(t, got)
 	assert.Equal(t, 1, got.Count)
 
-	alive[200] = false
-	assert.Nil(t, r.forSession("spwn-a"), "a row whose refusing harnesses all exited is not badged")
+	panes = map[string]brokerPaneEntry{"spwn-b": {panePID: 200, dead: true, panes: 1}}
+	assert.Nil(t, r.forSession("row-x"), "a dead pane counts as gone")
+
+	panes = nil
+	total, _ = r.counts()
+	assert.Equal(t, 4, total, "an unreadable tmux must not hide anything")
+}
+
+// The dashboard polls counts() every 2s. With no owned refusal on record it
+// must not touch tmux at all.
+func TestBrokerRefusals_QuietPollReadsNoPaneTable(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	r := newTestRefusalRecorder(&now)
+	reads := 0
+	r.panes = func() map[string]brokerPaneEntry { reads++; return nil }
+
+	r.counts()
+	r.forSession("row-x")
+	r.recordUnplaceableOwned(11, "", "y")
+	r.counts()
+	assert.Zero(t, reads, "nothing owned on record: no pane-table read")
+
+	r.recordUnplaceableOwned(11, "spwn-a", "y")
+	r.counts()
+	assert.Equal(t, 1, reads)
+}
+
+// The owner is found from tmux and kernel facts only: the nearest ancestor
+// tmux reports as a pane pid, else the claimed row's session. Process names
+// play no part — the harness here runs as a version string, as a sandboxed
+// Claude Code does.
+func TestBrokerCallerOwner_UsesPanesNotProcessNames(t *testing.T) {
+	const hook, harness, bwrap, pane = 9301, 9300, 9299, 9200
+	t.Cleanup(SetProcTreeForTest(
+		map[int]string{hook: "sh", harness: "2.1.295", bwrap: "bwrap", pane: "tclaude"},
+		map[int]int{hook: harness, harness: bwrap, bwrap: pane}))
+	procs := newBrokerProcTable()
+	panes := map[string]brokerPaneEntry{
+		"spwn-b": {panePID: pane, panes: 1},
+		"spwn-a": {panePID: 7104, panes: 1},
+	}
+
+	assert.Equal(t, "spwn-b", brokerCallerOwner(procs, panes, hook, "spwn-a"),
+		"the caller's own pane wins over whatever it claimed")
+	assert.Equal(t, "spwn-gone", brokerCallerOwner(procs, map[string]brokerPaneEntry{}, hook, "spwn-gone"),
+		"no pane in the ancestry: the claimed row's session decides")
+	assert.Empty(t, brokerCallerOwner(procs, map[string]brokerPaneEntry{}, hook, ""))
+	assert.Empty(t, brokerCallerOwner(procs, nil, hook, "spwn-a"), "unreadable tmux: unknown")
 }
