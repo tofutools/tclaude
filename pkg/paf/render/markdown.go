@@ -16,15 +16,15 @@ import (
 func Markdown(w io.Writer, a *paf.Archive, source string, opts Options) error {
 	s := Summarize(a, source)
 	bw := bufio.NewWriter(w)
-	fmt.Fprintf(bw, "# %s\n\n", oneLine(documentTitle(s)))
-	fmt.Fprintf(bw, "%s\n\n## Archive\n\n", provenanceNote(s))
+	fmt.Fprintf(bw, "# %s\n\n", mdLine(documentTitle(s)))
+	fmt.Fprintf(bw, "%s\n\n## Archive\n\n", mdLine(provenanceNote(s)))
 	for _, f := range archiveFacts(s) {
-		fmt.Fprintf(bw, "- %s: %s\n", f[0], oneLine(f[1]))
+		fmt.Fprintf(bw, "- %s: %s\n", f[0], mdLine(f[1]))
 	}
 	for _, ag := range s.Agents {
-		fmt.Fprintf(bw, "\n## Agent: %s\n\n", oneLine(ag.Name))
+		fmt.Fprintf(bw, "\n## Agent: %s\n\n", mdLine(ag.Name))
 		for _, f := range agentFacts(ag) {
-			fmt.Fprintf(bw, "- %s: %s\n", f[0], oneLine(f[1]))
+			fmt.Fprintf(bw, "- %s: %s\n", f[0], mdLine(f[1]))
 		}
 		for _, f := range definitionTexts(ag.Definition) {
 			fmt.Fprintf(bw, "\n### %s\n\n%s\n", f[0], fence(f[1]))
@@ -32,22 +32,22 @@ func Markdown(w io.Writer, a *paf.Archive, source string, opts Options) error {
 		if ag.LandingRung != "" || len(ag.Losses) > 0 {
 			fmt.Fprintf(bw, "\n### Losses\n\n")
 			if ag.LandingRung != "" {
-				fmt.Fprintf(bw, "Landing rung when written: %s\n\n", oneLine(ag.LandingRung))
+				fmt.Fprintf(bw, "Landing rung when written: %s\n\n", mdLine(ag.LandingRung))
 			}
 			for _, l := range ag.Losses {
-				fmt.Fprintf(bw, "- %s\n", oneLine(lossLine(l)))
+				fmt.Fprintf(bw, "- %s\n", mdLine(lossLine(l)))
 			}
 		}
 		t, from, err := Transcript(a, ag.Key, opts)
 		if err != nil {
-			fmt.Fprintf(bw, "\n### Conversation\n\n_Not shown: %s._\n", oneLine(err.Error()))
+			fmt.Fprintf(bw, "\n### Conversation\n\n_Not shown: %s._\n", mdLine(err.Error()))
 			continue
 		}
 		fmt.Fprintf(bw, "\n### Conversation\n\nFrom the %s, %d entries.\n", from, len(t.Entries))
 		if err := bw.Flush(); err != nil {
 			return err
 		}
-		if err := transcript.WriteMarkdownEntries(t, w, 4); err != nil {
+		if err := transcript.WriteMarkdownEntries(inertMarkdown(t), w, 4); err != nil {
 			return err
 		}
 	}
@@ -68,6 +68,9 @@ func provenanceNote(s Summary) string {
 	note := "Rendered by tclaude from a verified PAF, without running any harness or model."
 	if s.Source != paf.Format {
 		note = "Rendered by tclaude from a " + s.Source + " archive, converted to PAF on read and verified, without running any harness or model."
+	}
+	if SignatureInvalid(s.Signatures) {
+		note += " Warning: a signature is invalid, so the manifest may have been changed after it was signed."
 	}
 	if len(s.Unsupported) > 0 {
 		note += " This reader does not understand: " + strings.Join(s.Unsupported, ", ") + "; parts of the content may be misread."
@@ -134,19 +137,53 @@ func signaturesLine(sigs []SignatureSummary) string {
 	}
 	var parts []string
 	for _, s := range sigs {
-		p := s.Status + " " + s.Alg + " key " + s.KeyID
-		if s.Signer != "" {
-			p += " (" + s.Signer + ")"
-		}
-		if s.Trust != "" {
-			p += ", " + s.Trust
-		}
-		if s.Error != "" {
-			p += ": " + s.Error
-		}
-		parts = append(parts, p)
+		parts = append(parts, SignatureLine(s))
 	}
-	return strings.Join(parts, "; ") + ". A valid signature proves the archive is unchanged since that key signed it, not who holds the key."
+	note := ". A valid signature proves the archive is unchanged since that key signed it, not who holds the key."
+	if !Verifiable(sigs) {
+		note = ". None of them can be verified by this tclaude, so the archive is effectively unsigned."
+	}
+	return strings.Join(parts, "; ") + note
+}
+
+// SignatureLine describes one signature. Its status and who holds the key
+// come first; key_id and signer are claims the signature does not cover,
+// so they are quoted and marked as such.
+func SignatureLine(s SignatureSummary) string {
+	p := s.Status + " " + s.Alg
+	if s.Trust != "" {
+		p += ", " + s.Trust
+	}
+	p += fmt.Sprintf(" (claims key_id %q", s.KeyID)
+	if s.Signer != "" {
+		p += fmt.Sprintf(", signer %q", s.Signer)
+	}
+	p += ")"
+	if s.Error != "" {
+		p += ": " + s.Error
+	}
+	return p
+}
+
+// Verifiable reports whether any signature is valid or invalid, rather
+// than all being in algorithms this reader does not support.
+func Verifiable(sigs []SignatureSummary) bool {
+	for _, s := range sigs {
+		if s.Status != string(paf.SignatureUnsupported) {
+			return true
+		}
+	}
+	return false
+}
+
+// SignatureInvalid reports whether any signature failed to verify.
+func SignatureInvalid(sigs []SignatureSummary) bool {
+	for _, s := range sigs {
+		if s.Status == string(paf.SignatureInvalid) {
+			return true
+		}
+	}
+	return false
 }
 
 func agentFacts(ag AgentSummary) [][2]string {
@@ -232,6 +269,45 @@ func humanBytes(n int64) string {
 		return fmt.Sprintf("%.1f KiB", float64(n)/(1<<10))
 	}
 	return fmt.Sprintf("%d bytes", n)
+}
+
+// mdLine keeps an archive-supplied value on its line and inert: raw HTML
+// cannot load anything in a previewer that renders it.
+func mdLine(s string) string {
+	return strings.ReplaceAll(oneLine(s), "<", "&lt;")
+}
+
+// inertMarkdown copies t with its prose made inert for Markdown: raw HTML
+// is escaped, and a line that would start a heading is escaped, so archive
+// text cannot load anything or pose as another entry. Code-fenced tool
+// input and output are left as they are.
+func inertMarkdown(t *transcript.Transcript) *transcript.Transcript {
+	cp := *t
+	cp.Entries = make([]transcript.Entry, len(t.Entries))
+	for i, e := range t.Entries {
+		e.Author = mdLine(e.Author)
+		blocks := make([]transcript.Block, len(e.Blocks))
+		for j, b := range e.Blocks {
+			switch b.Kind {
+			case transcript.BlockText, transcript.BlockSummary, transcript.BlockThinking:
+				b.Text = inertProse(b.Text)
+			}
+			blocks[j] = b
+		}
+		e.Blocks = blocks
+		cp.Entries[i] = e
+	}
+	return &cp
+}
+
+func inertProse(s string) string {
+	lines := strings.Split(strings.ReplaceAll(s, "<", "&lt;"), "\n")
+	for i, l := range lines {
+		if strings.HasPrefix(strings.TrimLeft(l, " \t"), "#") {
+			lines[i] = "\\" + strings.TrimLeft(l, " \t")
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // oneLine keeps an archive-supplied value on its list line.

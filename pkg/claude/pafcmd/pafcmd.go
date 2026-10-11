@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -92,22 +93,23 @@ func runValidate(out io.Writer, p *validateParams) int {
 	if p.JSON {
 		writeJSON(out, res)
 	} else if res.Valid {
-		fmt.Fprintf(out, "valid: %s (%s)\n", p.File, sourceLabel(res.Source))
+		fmt.Fprintf(out, "valid: %s (%s)\n", termSafe(p.File), sourceLabel(res.Source))
 		if len(res.Unsupported) > 0 {
-			fmt.Fprintf(out, "warning: requires features this tclaude does not understand: %s; it can be read but not imported\n", strings.Join(res.Unsupported, ", "))
+			fmt.Fprintf(out, "warning: requires features this tclaude does not understand: %s; it can be read but not imported\n", termSafe(strings.Join(res.Unsupported, ", ")))
 		}
-		if len(res.Signatures) == 0 {
+		switch {
+		case len(res.Signatures) == 0:
 			fmt.Fprintln(out, "unsigned")
-		}
-		for _, sig := range res.Signatures {
-			fmt.Fprintf(out, "signature %s: %s %s key %s", sig.Path, sig.Status, sig.Alg, sig.KeyID)
-			if sig.Trust != "" {
-				fmt.Fprintf(out, ", %s", sig.Trust)
-			}
-			fmt.Fprintln(out)
+		case !render.Verifiable(res.Signatures):
+			fmt.Fprintln(out, "unsigned: no signature uses an algorithm this tclaude can verify")
 		}
 	} else {
-		fmt.Fprintf(out, "invalid: %s: %s\n", p.File, res.Error)
+		fmt.Fprintf(out, "invalid: %s: %s\n", termSafe(p.File), termSafe(res.Error))
+	}
+	if !p.JSON {
+		for _, sig := range res.Signatures {
+			fmt.Fprintf(out, "signature %s: %s\n", termSafe(sig.Path), termSafe(render.SignatureLine(sig)))
+		}
 	}
 	if !res.Valid {
 		return 1
@@ -149,20 +151,23 @@ func runInspect(out io.Writer, p *inspectParams) error {
 		writeJSON(out, s)
 		return nil
 	}
-	fmt.Fprintf(out, "%s (%s)\n", p.File, sourceLabel(s.Source))
+	fmt.Fprintf(out, "%s (%s)\n", termSafe(p.File), sourceLabel(s.Source))
+	if render.SignatureInvalid(s.Signatures) {
+		fmt.Fprintln(out, "  warning: a signature is invalid; the manifest may have been changed after it was signed")
+	}
 	for _, f := range render.ArchiveFacts(s) {
-		fmt.Fprintf(out, "  %-19s %s\n", f[0]+":", f[1])
+		fmt.Fprintf(out, "  %-19s %s\n", f[0]+":", termSafe(f[1]))
 	}
 	for _, ag := range s.Agents {
-		fmt.Fprintf(out, "\nagent %s (%s)\n", ag.Name, ag.Key)
+		fmt.Fprintf(out, "\nagent %s (%s)\n", termSafe(ag.Name), termSafe(ag.Key))
 		for _, f := range render.AgentFacts(ag) {
-			fmt.Fprintf(out, "  %-19s %s\n", f[0]+":", f[1])
+			fmt.Fprintf(out, "  %-19s %s\n", f[0]+":", termSafe(f[1]))
 		}
 		if ag.LandingRung != "" {
-			fmt.Fprintf(out, "  %-19s %s\n", "Landing rung:", ag.LandingRung)
+			fmt.Fprintf(out, "  %-19s %s\n", "Landing rung:", termSafe(ag.LandingRung))
 		}
 		for _, l := range ag.Losses {
-			fmt.Fprintf(out, "  %-19s %s\n", "Loss:", render.LossLine(l))
+			fmt.Fprintf(out, "  %-19s %s\n", "Loss:", termSafe(render.LossLine(l)))
 		}
 	}
 	return nil
@@ -216,6 +221,13 @@ func runRender(stdout io.Writer, p *renderParams) error {
 	defer func() { _ = o.Close() }()
 	out, finish := stdout, func() error { return nil }
 	if p.Out != "" {
+		// The archive is read lazily from its file, so writing over it
+		// would destroy the input mid-render.
+		if in, err := os.Stat(p.File); err == nil {
+			if dst, err := os.Stat(p.Out); err == nil && os.SameFile(in, dst) {
+				return errors.New("--out is the input file")
+			}
+		}
 		f, err := os.OpenFile(p.Out, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 		if err != nil {
 			return err
@@ -249,7 +261,12 @@ func summarize(o *legacy.Opened) render.Summary {
 	if id, err := proto.LoadIdentity(filepath.Join(config.DataDir(), "federation", "instance.key")); err == nil {
 		self = id.ID()
 	}
-	peers, _ := db.ListFederationPeers()
+	// Peer lookup reads an existing database only; a read-only command
+	// never creates one.
+	var peers []db.FederationPeer
+	if _, err := os.Stat(db.DBPath()); err == nil {
+		peers, _ = db.ListFederationPeers()
+	}
 	for i, r := range o.Signatures {
 		if r.Status != paf.SignatureValid || r.Signature.Alg != paf.AlgEd25519 {
 			continue
@@ -292,6 +309,18 @@ func decodeNative(n paf.Native, r io.Reader) (*transcript.Transcript, error) {
 		return nil, fmt.Errorf("tclaude cannot read %s native history", h.Name)
 	}
 	return h.Transcript.Decode(r, n.SourceConvID)
+}
+
+// termSafe keeps archive text from controlling the terminal: control
+// characters (including ESC and C1) and bidirectional overrides become
+// U+FFFD, so a value prints on its own line exactly as it reads.
+func termSafe(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || (r >= 0x202A && r <= 0x202E) || (r >= 0x2066 && r <= 0x2069) || r == 0x2028 || r == 0x2029 {
+			return '\uFFFD'
+		}
+		return r
+	}, s)
 }
 
 func sourceLabel(source string) string {

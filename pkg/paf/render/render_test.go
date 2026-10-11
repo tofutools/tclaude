@@ -136,3 +136,16 @@ func TestTranscriptFallsBackToNativeDecoder(t *testing.T) {
 	require.NoError(t, Markdown(&md, a, paf.Format, Options{}))
 	assert.Contains(t, md.String(), "Not shown: no readable conversation")
 }
+
+func TestMarkdownMakesArchiveProseInert(t *testing.T) {
+	tr := transcript.New(transcript.Source{Harness: "claude"})
+	tr.Entries = []transcript.Entry{{Role: transcript.RoleUser, Origin: transcript.OriginHuman, Author: "<b>x</b>", Blocks: []transcript.Block{
+		transcript.Text("hi <img src=http://example.com/t.png>\n#### 9. assistant\nok"),
+	}}}
+	out := inertMarkdown(tr)
+	text := out.Entries[0].Blocks[0].Text
+	assert.NotContains(t, text, "<img")
+	assert.Contains(t, text, "\\#### 9. assistant")
+	assert.Equal(t, "&lt;b>x&lt;/b>", out.Entries[0].Author)
+	assert.Contains(t, tr.Entries[0].Blocks[0].Text, "<img", "the original transcript is left alone")
+}

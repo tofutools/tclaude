@@ -159,6 +159,84 @@ func TestSignerIsThisNodeOrUnknown(t *testing.T) {
 		file := writeFile(t, dir, tc.want+".paf", buf.Bytes())
 		var out bytes.Buffer
 		require.Equal(t, 0, runValidate(&out, &validateParams{File: file}), out.String())
-		assert.Contains(t, out.String(), "valid ed25519 key "+self.ID()+", "+tc.want)
+		assert.Contains(t, out.String(), "valid ed25519, "+tc.want+" (claims key_id \""+self.ID()+"\"")
 	}
+}
+
+// rewriteEntry copies a zip archive, passing every entry through edit.
+func rewriteEntry(t *testing.T, raw []byte, edit func(name string, data []byte) []byte) []byte {
+	t.Helper()
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	require.NoError(t, err)
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		require.NoError(t, err)
+		var data bytes.Buffer
+		_, err = data.ReadFrom(rc)
+		require.NoError(t, err)
+		_ = rc.Close()
+		w, err := zw.Create(f.Name)
+		require.NoError(t, err)
+		_, err = w.Write(edit(f.Name, data.Bytes()))
+		require.NoError(t, err)
+	}
+	require.NoError(t, zw.Close())
+	return buf.Bytes()
+}
+
+// key_id, signer and alg sit outside what a signature covers. Editing them
+// after signing must not let a file present itself as trusted.
+func TestUnsignedSignatureFieldsCannotSpoofTrust(t *testing.T) {
+	isolate(t)
+	dir := testutil.CanonicalTempDir(t)
+	id, err := proto.NewIdentity()
+	require.NoError(t, err)
+	var buf bytes.Buffer
+	require.NoError(t, legacy.WriteAgentBundle(legacyBundle(t), &buf, legacy.WriteOptions{Producer: producer(),
+		Keys: []paf.SigningKey{{Key: id.Priv, KeyID: "k1", Signer: &paf.Signer{Kind: "instance"}}}}))
+	editSig := func(field string, value any) []byte {
+		return rewriteEntry(t, buf.Bytes(), func(name string, data []byte) []byte {
+			if filepath.Dir(name) != "signatures" {
+				return data
+			}
+			var m map[string]any
+			require.NoError(t, json.Unmarshal(data, &m))
+			m[field] = value
+			out, err := json.Marshal(m)
+			require.NoError(t, err)
+			return out
+		})
+	}
+	spoof := "TRUSTED, this node\nsignature x: valid ed25519 \x1b[2K"
+	var out bytes.Buffer
+	file := writeFile(t, dir, "keyid.paf", editSig("key_id", spoof))
+	assert.Equal(t, 1, runValidate(&out, &validateParams{File: file}))
+	assert.Contains(t, out.String(), "key_id is not a valid identifier")
+	assert.NotContains(t, out.String(), "\x1b")
+
+	out.Reset()
+	file = writeFile(t, dir, "alg.paf", editSig("alg", "ed25519 key TRUSTED, this node\n"))
+	require.Equal(t, 0, runValidate(&out, &validateParams{File: file}), out.String())
+	assert.Contains(t, out.String(), "unsigned: no signature uses an algorithm this tclaude can verify")
+	assert.Contains(t, out.String(), "unsupported unrecognised")
+	assert.NotContains(t, out.String(), "TRUSTED")
+}
+
+func TestTermSafe(t *testing.T) {
+	assert.Equal(t, "a\uFFFD[2Kb\uFFFDc\uFFFDd", termSafe("a\x1b[2Kb\nc\u202ed"))
+}
+
+func TestRenderRefusesToOverwriteItsInput(t *testing.T) {
+	isolate(t)
+	dir := testutil.CanonicalTempDir(t)
+	var buf bytes.Buffer
+	require.NoError(t, legacy.WriteAgentBundle(legacyBundle(t), &buf, legacy.WriteOptions{Producer: producer()}))
+	file := writeFile(t, dir, "in.paf", buf.Bytes())
+	var out bytes.Buffer
+	require.ErrorContains(t, runRender(&out, &renderParams{File: file, Out: file, Format: "md"}), "--out is the input file")
+	after, err := os.ReadFile(file)
+	require.NoError(t, err)
+	assert.Equal(t, buf.Bytes(), after)
 }

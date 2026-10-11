@@ -572,6 +572,9 @@ func (a *Archive) readSignatures() error {
 		if err := json.Unmarshal(raw, &alg); err == nil && alg.Alg != AlgEd25519 {
 			res.Status = SignatureUnsupported
 			res.Signature.Alg = alg.Alg
+			if !algRE.MatchString(alg.Alg) {
+				res.Signature.Alg = "unrecognised"
+			}
 		} else if err := decodeStrict(raw, &s); err != nil {
 			res.Status, res.Err = SignatureInvalid, err
 		} else {

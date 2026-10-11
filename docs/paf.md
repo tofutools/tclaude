@@ -178,13 +178,20 @@ tclaude paf render reviewer.paf --out reviewer.html
   that harness, which does not need the harness installed. `--scope` picks a
   context. The HTML is one self-contained file: it loads nothing, runs no
   script, escapes all archive text and embeds only PNG, JPEG, GIF and WebP
-  images.
+  images. In Markdown, raw HTML in the archive's prose is escaped and lines
+  that would start a heading are escaped, so the text cannot load anything in
+  a previewer or pose as another entry. Tool input and output stay in code
+  fences. Terminal output from `validate` and `inspect` replaces control
+  characters, so archive text cannot move the cursor or rewrite a line.
 
 For each valid signature, tclaude says who holds the key: **this node**, a
 **known peer** by name, or an **unknown key**. It compares the public key
-itself, never the `key_id` the file claims. A valid signature proves the
-file is unchanged since that key signed it; whether to trust the signer is
-your decision.
+itself, never the `key_id` the file claims. The signature does not cover
+`key_id` or `signer`, so tclaude prints them quoted, as claims, after the
+verdict, and treats a signature whose `key_id` is not a plain identifier as
+invalid. A file whose only signatures use algorithms tclaude does not
+support counts as unsigned. A valid signature proves the file is unchanged
+since that key signed it; whether to trust the signer is your decision.
 
 ## Sharing and publishing
 
