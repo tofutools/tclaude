@@ -331,3 +331,21 @@ test('a cross-node link request names the exact edge and decides approve, approv
   assert.deepEqual(decided, [['gl-1', 'approve_future'], ['gl-1', 'deny'], ['gl-1', 'approve']]);
   await mounted.unmount();
 });
+
+test('a cross-node link request this node sent is read-only and waits on the peer operator', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
+  const request = { id: 'gl-2', purpose: 'group_link', origin_peer: 'inst_bob1', conv_title: 'bob', status: 'pending',
+    link: { source_peer_label: 'bob', source_group: 'alpha', dest_group: 'research', mode: 'members->members', direction: 'out' },
+    created_at: '2026-07-12T00:00:00Z', deadline: '2026-07-13T00:00:00Z' };
+  const state = harness.signals.signal({ ...populated(), selected: 'access-requests', selectedMsgId: 'gl-2', messages: [] });
+  const controller = controllerFor(state);
+  controller.messageView = () => ({ access: true, allAccess: [request], pendingAccess: [request], handledAccess: [], search: '' });
+  controller.messageCountText = () => '1 pending';
+  const mounted = await harness.mount(harness.html`<${MailApp} controller=${controller} />`);
+  const root = mounted.container;
+  assert.match(root.textContent, /You asked/);
+  assert.match(root.textContent, /waiting for bob's operator/);
+  assert.equal(root.querySelectorAll('.access-reader-actions .access-btn').length, 0, 'no decision buttons on our own request');
+  await mounted.unmount();
+});

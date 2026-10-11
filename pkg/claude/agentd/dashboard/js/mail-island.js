@@ -456,26 +456,33 @@ function RecipientNames({ recipients }) {
 function GroupLinkReader({ request, controller }) {
   const link = request.link || {};
   const peer = link.source_peer_label || request.conv_title || request.origin_peer || 'peer';
-  const handled = !controller.accessIsPending(request);
+  // The feed also lists requests this node sent; those only show their state.
+  const sent = link.direction === 'out' || !!request.proposal?.ours;
+  const handled = !controller.accessIsPending(request) || sent;
   const outcome = handled ? controller.accessOutcome(request.status) : null;
   const mode = String(link.mode || 'members->members').replace('->', ' → ');
   const source = `${peer}:${link.source_group || '?'}`;
   return html`<${Fragment}>
     <div class="mail-reader-head">
-      <div class="mail-subject">🌐 Cross-node link request <span class="mail-id">#${shortId(request.id)}</span></div>
+      <div class="mail-subject">🌐 Cross-node link request${sent ? ' (sent)' : ''} <span class="mail-id">#${shortId(request.id)}</span></div>
       <div class="mail-headers">
-        <${HeaderRow} label="From peer">${peer} ${request.origin_peer && html`<span class="mail-cid">${request.origin_peer}</span>`}</${HeaderRow}>
-        <${HeaderRow} label="Status">${handled
+        <${HeaderRow} label=${sent ? 'To peer' : 'From peer'}>${peer} ${request.origin_peer && html`<span class="mail-cid">${request.origin_peer}</span>`}</${HeaderRow}>
+        <${HeaderRow} label="Status">${sent && controller.accessIsPending(request)
+          ? html`<span class="mail-state-pending">waiting for ${peer}'s operator · ${controller.accessCountdown(request.deadline)}</span>`
+          : handled
           ? html`<span class=${`access-outcome ${outcome.cls}`}>${outcome.txt}</span>`
           : html`<span class="mail-state-pending">pending · auto-declines ${controller.accessCountdown(request.deadline)}</span>`}</${HeaderRow}>
         <${HeaderRow} label="Created">${request.created_at ? new Date(request.created_at).toLocaleString() : ''}</${HeaderRow}>
       </div>
     </div>
     <div class="mail-reader-body access-reader-body"><div class="access-meta">
-      <div class="access-row"><span class="access-k">Wants</span><span class="access-v">${link.mode === 'owners->members' ? 'owners' : 'members'} of <b>${source}</b> may message members of <b>${link.dest_group || '?'}</b></span></div>
-      <div class="access-row"><span class="access-k">Edge on this node</span><span class="access-v mono">${source} → ${link.dest_group || '?'} · ${mode}</span></div>
-      <div class="access-row"><span class="access-k">Approving authorizes</span><span class="access-v">exactly this edge and mode. ${peer} gets no broader messaging on this node.</span></div>
-      <div class="access-row"><span class="access-k">Revoke</span><span class="access-v">any time from Inter-group links; takes effect on this node immediately</span></div>
+      ${sent ? html`
+        <div class="access-row"><span class="access-k">You asked</span><span class="access-v">${link.mode === 'owners->members' ? 'owners' : 'members'} of <b>${link.source_group || '?'}</b> to message members of <b>${peer}:${link.dest_group || '?'}</b> (${mode})</span></div>
+        <div class="access-row"><span class="access-k">Cancel</span><span class="access-v">from Inter-group links (cancel request)</span></div>` : html`
+        <div class="access-row"><span class="access-k">Wants</span><span class="access-v">${link.mode === 'owners->members' ? 'owners' : 'members'} of <b>${source}</b> may message members of <b>${link.dest_group || '?'}</b></span></div>
+        <div class="access-row"><span class="access-k">Edge on this node</span><span class="access-v mono">${source} → ${link.dest_group || '?'} · ${mode}</span></div>
+        <div class="access-row"><span class="access-k">Approving authorizes</span><span class="access-v">exactly this edge and mode. ${peer} gets no broader messaging on this node.</span></div>
+        <div class="access-row"><span class="access-k">Revoke</span><span class="access-v">any time from Inter-group links; takes effect on this node immediately</span></div>`}
     </div></div>
     <div class="mail-reader-actions access-reader-actions">
       ${handled ? html`<${Fragment}><span class=${`access-outcome ${outcome.cls}`}>${outcome.txt}</span>${request.decided_at && html`<span class="access-decided-at">${relTime(request.decided_at)}</span>`}</${Fragment}>`
