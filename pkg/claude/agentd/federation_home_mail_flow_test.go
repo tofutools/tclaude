@@ -490,13 +490,11 @@ func TestFederation_HomeMailLocalArchivedGroupCancelsOfflineAttempt(t *testing.T
 	require.NoError(t, db.SetAgentPermissionOverride("local-sender", agentd.PermMessageDirect, db.PermEffectGrant, "test"))
 	require.NoError(t, db.ArchiveAgentGroup("local-route"))
 	require.NoError(t, db.WakeFederationMailCustody(id))
-	fedEventually(t, "archived routing group cancels sealed retry", func() bool {
+	fedEventually(t, "archived routing group cancels sealed retry and settles custody", func() bool {
 		row, _ := db.GetFederationOutbox(custody.AttemptID)
-		return row != nil && row.State == db.FedOutboxRefused
+		queued, _ := db.GetFederationMailCustody(custody.SenderInstance, custody.EnvelopeID, id)
+		return row != nil && row.State == db.FedOutboxRefused && queued != nil && queued.State == "refused"
 	})
-	row, e := db.GetFederationMailCustody(custody.SenderInstance, custody.EnvelopeID, id)
-	require.NoError(t, e)
-	require.Equal(t, "refused", row.State)
 }
 
 func TestFederation_HomeMailReplyOnlyAuthoritySurvivesCustody(t *testing.T) {
