@@ -479,18 +479,8 @@ func (cm *crossMorph) trustDirectory(convID string) {
 		}
 		return os.Getenv(name)
 	}
-	// Harnesses resolve their cwd before the trust lookup (Codex keys on the
-	// real path), so an entry under a symlink alias would not match and the
-	// dialog would still appear. Trust the canonical path, and the recorded
-	// one too when it differs, for harnesses that key on the logical path.
-	dirs := []string{cm.cwd}
-	if resolved, err := filepath.EvalSymlinks(cm.cwd); err == nil && filepath.Clean(resolved) != filepath.Clean(cm.cwd) {
-		dirs = []string{filepath.Clean(resolved), cm.cwd}
-	}
-	for _, dir := range dirs {
-		if err := harness.EnsureDirTrustedForLaunch(cm.dst, dir, getenv, ""); err != nil {
-			slog.Warn("morph: could not pre-trust the working directory", "harness", cm.dst.Name, "cwd", dir, "error", err)
-		}
+	if err := harness.EnsureDirTrustedForLaunch(cm.dst, cm.cwd, getenv, ""); err != nil {
+		slog.Warn("morph: could not pre-trust the working directory", "harness", cm.dst.Name, "cwd", cm.cwd, "error", err)
 	}
 }
 
