@@ -84,7 +84,7 @@ func DecodeFile(f *os.File, limit int64, dir string) (bundle *Bundle, err error)
 	if err != nil {
 		return nil, fmt.Errorf("invalid agent bundle ZIP: %w", err)
 	}
-	if len(zr.File) > 2 {
+	if len(zr.File) > 3 {
 		return nil, errors.New("unexpected archive entries")
 	}
 	defer func() {
@@ -99,6 +99,8 @@ func DecodeFile(f *os.File, limit int64, dir string) (bundle *Bundle, err error)
 		case ManifestFile:
 			cap = MaxManifestBytes
 		case HistoryFile:
+		case MailLedgerFile:
+			cap = MaxMailLedgerBytes
 		default:
 			return nil, fmt.Errorf("unexpected archive entry %q", entry.Name)
 		}
@@ -113,7 +115,8 @@ func DecodeFile(f *os.File, limit int64, dir string) (bundle *Bundle, err error)
 		if e != nil {
 			return nil, e
 		}
-		if entry.Name == ManifestFile {
+		switch entry.Name {
+		case ManifestFile:
 			raw, e := io.ReadAll(io.LimitReader(r, cap+1))
 			ce := r.Close()
 			if e != nil {
@@ -128,7 +131,22 @@ func DecodeFile(f *os.File, limit int64, dir string) (bundle *Bundle, err error)
 			if e = json.Unmarshal(raw, &b.Manifest); e != nil {
 				return nil, e
 			}
-		} else {
+		case MailLedgerFile:
+			raw, e := io.ReadAll(io.LimitReader(r, cap+1))
+			ce := r.Close()
+			if e != nil {
+				return nil, e
+			}
+			if ce != nil {
+				return nil, ce
+			}
+			if int64(len(raw)) > cap {
+				return nil, errors.New("mail ledger exceeds 64 MiB")
+			}
+			if e = json.Unmarshal(raw, &b.MailDeliveries); e != nil {
+				return nil, e
+			}
+		default:
 			tmp, e := os.CreateTemp(dir, ".agent-history-")
 			if e != nil {
 				_ = r.Close()
@@ -155,6 +173,9 @@ func DecodeFile(f *os.File, limit int64, dir string) (bundle *Bundle, err error)
 	}
 	if !seen[ManifestFile] {
 		return nil, errors.New("archive has no manifest.json")
+	}
+	if b.Manifest.MailLedger != seen[MailLedgerFile] {
+		return nil, errors.New("mail ledger declaration does not match archive")
 	}
 	if b.Manifest.History != nil && !seen[HistoryFile] {
 		return nil, errors.New("declared history entry is missing")

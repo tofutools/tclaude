@@ -6,6 +6,10 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
+	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/testutil"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -77,4 +81,29 @@ func TestArchiveUnknownV1FieldsAndManifestBound(t *testing.T) {
 			require.NoError(t, err)
 		}
 	}
+}
+
+func TestStableMailLedgerRoundTripMemoryAndDisk(t *testing.T) {
+	b := fixtureBundle()
+	b.Manifest.Agent.Identity = &db.FederationIdentity{Agent: db.NewAgentID(), Home: "home", Hops: 1, Mail: true, Proofs: map[string]string{"home": "proof"}}
+	b.Manifest.MailLedger = true
+	b.SetHistory("claude-jsonl", "source", []byte("native history\n"))
+	b.MailDeliveries = []db.FederationMailDelivery{{Sender: "sender", Envelope: "delivered", ExpiresAt: time.Now().Add(time.Hour).UTC()}}
+	raw, e := b.Encode()
+	require.NoError(t, e)
+	got, e := Decode(raw)
+	require.NoError(t, e)
+	require.Equal(t, b.MailDeliveries, got.MailDeliveries)
+	path := testutil.CanonicalTempDir(t) + "/bundle.zip"
+	require.NoError(t, os.WriteFile(path, raw, 0600))
+	archive, e := os.Open(path)
+	require.NoError(t, e)
+	defer archive.Close()
+	got, e = DecodeFile(archive, MaxBytes, testutil.CanonicalTempDir(t))
+	require.NoError(t, e)
+	defer got.Close()
+	require.Equal(t, b.MailDeliveries, got.MailDeliveries)
+	b.MailDeliveries[0].Envelope = string(bytes.Repeat([]byte("x"), 129))
+	_, e = b.Encode()
+	require.ErrorContains(t, e, "ledger entry")
 }

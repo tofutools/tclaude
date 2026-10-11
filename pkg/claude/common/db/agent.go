@@ -3473,6 +3473,7 @@ func ClaimAgentMessageNudge(id int64, now time.Time) (token AgentMessageNudgeCla
 		`UPDATE agent_messages
 		 SET nudge_claimed_at = ?, nudge_attempted_at = ?, nudge_attempts = nudge_attempts + 1
 		 WHERE id = ? AND delivered_at IS NULL AND read_at IS NULL AND nudge_claimed_at IS NULL AND nudge_cancelled_at IS NULL
+		 AND NOT EXISTS (SELECT 1 FROM federation_mail_custody c WHERE json_extract(c.payload,'$.local_message')=agent_messages.id AND c.state IN ('queued','handoff'))
 		 RETURNING nudge_attempts`,
 		claimedNS, claimedNS, id).Scan(&token.Attempt)
 	if errors.Is(err, sql.ErrNoRows) {

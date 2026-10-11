@@ -19,3 +19,9 @@ func TestOutboxStatusTextDistinguishesOfflineDiscard(t *testing.T) {
 	assert.Equal(t, "delivered · read", outboxStatusText(inboxEntry{Delivered: true, Read: true}))
 	assert.Equal(t, "pending", outboxStatusText(inboxEntry{}))
 }
+
+func TestOutboxStatusTextWaitsForForwardingReceipt(t *testing.T) {
+	assert.Equal(t, "forwarded to b", outboxStatusText(inboxEntry{ForwardState: "queued", ForwardedTo: "b", Delivered: true}))
+	assert.Equal(t, "delivered", outboxStatusText(inboxEntry{ForwardState: "accepted", ForwardedTo: "b"}))
+	assert.Equal(t, "forwarding refused", outboxStatusText(inboxEntry{ForwardState: "refused", ForwardedTo: "b"}))
+}

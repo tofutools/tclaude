@@ -14,12 +14,15 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"io"
 	"strings"
+	"time"
 )
 
 const Format = "tclaude-agent-bundle"
 const MaxBytes = 2 << 30
 const MaxManifestBytes = 1 << 20
 const ManifestFile = "manifest.json"
+const MailLedgerFile = "continuation/mail-deliveries.json"
+const MaxMailLedgerBytes = 64 << 20
 const HistoryFile = "history/transcript.jsonl"
 
 type Group struct {
@@ -81,6 +84,7 @@ type Finding struct {
 	Locations []string `json:"locations"`
 }
 type Manifest struct {
+	MailLedger     bool                       `json:"mail_ledger,omitempty"`
 	Placeholders   []configbundle.Placeholder `json:"placeholders,omitempty"`
 	Format         string                     `json:"format"`
 	FormatVersion  int                        `json:"format_version"`
@@ -92,8 +96,9 @@ type Manifest struct {
 	Warnings       []string                   `json:"warnings,omitempty"`
 }
 type Bundle struct {
-	Manifest   Manifest
-	Transcript []byte
+	MailDeliveries []db.FederationMailDelivery
+	Manifest       Manifest
+	Transcript     []byte
 	// TranscriptPath is local-only; it is never an archive entry or a wire path.
 	TranscriptPath  string
 	MaxBytes        int64
@@ -102,6 +107,20 @@ type Bundle struct {
 
 func (b *Bundle) Validate() error {
 	m := b.Manifest
+	if m.MailLedger && m.Agent.Identity == nil {
+		return errors.New("mail ledger requires a stable continuation")
+	}
+	if len(b.MailDeliveries) > 500000 {
+		return errors.New("mail delivery ledger exceeds 500000 entries")
+	}
+	if !m.MailLedger && len(b.MailDeliveries) != 0 {
+		return errors.New("mail delivery ledger is not declared")
+	}
+	for _, r := range b.MailDeliveries {
+		if r.Sender == "" || len(r.Sender) > 128 || r.Envelope == "" || len(r.Envelope) > 128 || r.ExpiresAt.IsZero() || r.ExpiresAt.After(time.Now().Add(9*24*time.Hour)) {
+			return errors.New("invalid mail delivery ledger entry")
+		}
+	}
 	if m.Format != Format {
 		return fmt.Errorf("expected format %q", Format)
 	}
@@ -174,6 +193,17 @@ func (b *Bundle) EncodeTo(out io.Writer) error {
 	if _, err = w.Write(raw); err != nil {
 		return err
 	}
+	if b.Manifest.MailLedger {
+		hdr = &zip.FileHeader{Name: MailLedgerFile, Method: zip.Deflate}
+		hdr.SetMode(0600)
+		w, err = zw.CreateHeader(hdr)
+		if err != nil {
+			return err
+		}
+		if err = json.NewEncoder(&limitWriter{Writer: w, left: MaxMailLedgerBytes}).Encode(b.MailDeliveries); err != nil {
+			return err
+		}
+	}
 	if b.Manifest.History != nil {
 		hdr = &zip.FileHeader{Name: HistoryFile, Method: zip.Deflate}
 		hdr.SetMode(0600)
@@ -207,7 +237,7 @@ func Decode(raw []byte) (*Bundle, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid agent bundle ZIP: %w", err)
 	}
-	if len(zr.File) > 2 {
+	if len(zr.File) > 3 {
 		return nil, errors.New("unexpected archive entries")
 	}
 	b := &Bundle{}
@@ -218,6 +248,8 @@ func Decode(raw []byte) (*Bundle, error) {
 		case ManifestFile:
 			limit = MaxManifestBytes
 		case HistoryFile:
+		case MailLedgerFile:
+			limit = MaxMailLedgerBytes
 		default:
 			return nil, fmt.Errorf("unexpected archive entry %q", f.Name)
 		}
@@ -243,16 +275,24 @@ func Decode(raw []byte) (*Bundle, error) {
 		if len(data) > limit {
 			return nil, errors.New("uncompressed entry is too large")
 		}
-		if f.Name == ManifestFile {
+		switch f.Name {
+		case ManifestFile:
 			if err := json.Unmarshal(data, &b.Manifest); err != nil {
 				return nil, err
 			}
-		} else {
+		case MailLedgerFile:
+			if err := json.Unmarshal(data, &b.MailDeliveries); err != nil {
+				return nil, err
+			}
+		default:
 			b.Transcript = data
 		}
 	}
 	if !seen[ManifestFile] {
 		return nil, errors.New("archive has no manifest.json")
+	}
+	if b.Manifest.MailLedger != seen[MailLedgerFile] {
+		return nil, errors.New("mail ledger declaration does not match archive")
 	}
 	if b.Manifest.History != nil && !seen[HistoryFile] {
 		return nil, errors.New("declared history entry is missing")

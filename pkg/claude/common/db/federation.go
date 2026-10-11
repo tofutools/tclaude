@@ -355,6 +355,22 @@ func InsertFederationInboundMessage(m *AgentMessage, in FederationInbound, expir
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if m.ToAgent != "" {
+		fenced, err := federationMailFencedTx(tx, m.ToAgent)
+		if err != nil {
+			return 0, err
+		}
+		if fenced {
+			return 0, ErrFederationMailMoving
+		}
+		res, err := tx.Exec(`INSERT OR IGNORE INTO federation_agent_mail_deliveries(agent_id,sender_instance,envelope_id,expires_at) VALUES(?,?,?,?)`, m.ToAgent, in.FromInstance, in.EnvelopeID, dbTime(expiresAt))
+		if err != nil {
+			return 0, err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return 0, ErrFederationDuplicate
+		}
+	}
 	res, err := tx.Exec(`INSERT OR IGNORE INTO federation_seen(from_instance, envelope_id, expires_at) VALUES(?,?,?)`,
 		in.FromInstance, in.EnvelopeID, dbTime(expiresAt))
 	if err != nil {
@@ -376,6 +392,11 @@ func InsertFederationInboundMessage(m *AgentMessage, in FederationInbound, expir
 	id, err := insertAgentMessage(tx, m)
 	if err != nil {
 		return 0, err
+	}
+	if m.OperatorAuthored {
+		if _, err := tx.Exec(`INSERT INTO operator_agent_messages(message_id) VALUES(?)`, id); err != nil {
+			return 0, err
+		}
 	}
 	if err := insertAgentMessageAttachments(tx, id, attachments); err != nil {
 		return 0, err
@@ -497,8 +518,21 @@ func PruneFederationSeen(now time.Time) error {
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`DELETE FROM federation_seen WHERE expires_at < ?`, dbTime(now))
-	return err
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, table := range []string{"federation_seen", "federation_agent_mail_deliveries", "federation_agent_mail_fences"} {
+		if _, err = tx.Exec(`DELETE FROM `+table+` WHERE expires_at < ?`, dbTime(now)); err != nil {
+			return err
+		}
+	}
+	// Keep settled results beyond their envelope TTL for duplicate handoffs and receipts.
+	if _, err = tx.Exec(`DELETE FROM federation_mail_custody WHERE state IN ('accepted','refused','handoff') AND expires_at < ? AND updated_at < ?`, dbTime(now.Add(-7*24*time.Hour)), dbTime(now.Add(-7*24*time.Hour))); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func scanFedInbound(row *sql.Row) (*FederationInbound, error) {
