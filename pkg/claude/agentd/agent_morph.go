@@ -145,7 +145,11 @@ func resolveMorphTarget(h *harness.Harness, req morphRequest, prof *db.SpawnProf
 	var p db.SpawnProfile
 	if prof != nil {
 		p = *prof
-		form.Profile = prof.Name
+		// The label claims the form IS that profile; a later morph --back
+		// is authorized by it, so a form with overrides carries none.
+		if !req.hasFieldOverrides() {
+			form.Profile = prof.Name
+		}
 	}
 	model := pick(req.Model, p.Model)
 	effort := pick(req.Effort, p.Effort)
@@ -524,9 +528,15 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 	if req.Back {
 		target = *previous
 		if caller != "" && target.Profile != "" {
-			if back, _ := db.ResolveSpawnProfile(target.Profile); back != nil && back.OperatorOnly {
+			back, _ := db.ResolveSpawnProfile(target.Profile)
+			if back != nil && back.OperatorOnly {
 				writeError(w, http.StatusForbidden, "operator_only",
 					"the previous form came from operator-only spawn profile "+back.Name)
+				return
+			}
+			if cross && (back == nil || back.Disabled) {
+				writeError(w, http.StatusForbidden, "profile_required",
+					"the previous form's spawn profile "+target.Profile+" is gone or disabled")
 				return
 			}
 		}

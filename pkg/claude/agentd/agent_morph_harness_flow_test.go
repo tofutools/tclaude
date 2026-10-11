@@ -288,3 +288,33 @@ func TestMorphCrossHarnessAgentCarriesTclaudeLayer(t *testing.T) {
 	model, _ := f.World.SpawnModel(resp.ConvID)
 	assert.Equal(t, "gpt-5.4", model)
 }
+
+// A form labelled with a profile authorizes a scoped --back, so a form with
+// overrides on top of the profile must not carry the label.
+func TestMorphCrossHarnessBackScopeNeedsAnExactProfileForm(t *testing.T) {
+	t.Setenv(session.ResourceDelegationDirEnv, "")
+	t.Setenv("CODEX_HOME", "")
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	worker := spawnMorphWorker(t, f, "crew", "worker", nil)
+	outsider := spawnMorphWorker(t, f, "crew", "outsider", nil)
+	seedClaudeHistory(t, f, worker.ConvID)
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "cheap", Harness: "claude", Model: "haiku", Effort: "low"})
+	require.NoError(t, err)
+	require.NoError(t, db.GrantAgentPermissionWithScope(outsider.ConvID, agentd.PermAgentMorph,
+		`{"spawn_profile":["cheap"]}`, "<test>"))
+
+	f.SetSessionStatus(worker.ConvID, session.StatusIdle)
+	rec := f.AsHuman().Morph(worker.AgentID, map[string]any{"profile": "cheap", "effort": "max"})
+	require.Equal(t, "morphed", decodeCrossMorph(t, rec.Code, rec.Body.Bytes()).Result)
+	f.SetSessionStatus(worker.ConvID, session.StatusIdle)
+	rec = f.AsHuman().Morph(worker.AgentID, map[string]any{"harness": "codex", "model": "gpt-5.4", "approval": "on-request"})
+	moved := decodeCrossMorph(t, rec.Code, rec.Body.Bytes())
+	require.Equal(t, "morphed", moved.Result)
+
+	f.SetSessionStatus(moved.ConvID, session.StatusIdle)
+	rec = f.AsAgent(outsider.ConvID).Morph(worker.AgentID, map[string]any{"back": true, "dry_run": true})
+	assert.Equal(t, http.StatusForbidden, rec.Code,
+		"the previous form was cheap plus an override, which the cheap-scoped grant does not cover; body=%s", rec.Body.String())
+}

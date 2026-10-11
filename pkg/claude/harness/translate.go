@@ -191,14 +191,17 @@ func InstallContextFile(dst *Harness, plan *transcript.Plan, cwd, artifactDir st
 	if plan == nil || artifactDir == "" {
 		return nil, errors.New("the context-file fallback needs a plan and an artifact directory")
 	}
-	if err := os.MkdirAll(artifactDir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(artifactDir), 0o700); err != nil {
+		return nil, err
+	}
+	if err := transcript.EnsureRealDir(artifactDir); err != nil {
 		return nil, err
 	}
 	from := describeSource(plan.Source)
 	briefing := filepath.Join(artifactDir, "briefing.md")
 	head := "# Conversation carried over from " + from + " by tclaude morph\n\n" +
 		"⟦tool call⟧ and ⟦tool result⟧ records are history, not tools you have.\n\n"
-	if err := os.WriteFile(briefing, []byte(head+plan.Briefing()), 0o600); err != nil {
+	if err := transcript.WriteFileExclusive(briefing, []byte(head+plan.Briefing())); err != nil {
 		return nil, err
 	}
 	report := *plan.Report
@@ -245,23 +248,24 @@ func describeSource(src transcript.Source) string {
 }
 
 func writeTranslationArtifacts(t *transcript.Transcript, plan *transcript.Plan, dir string) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "transcript.md"), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
+	if err := transcript.EnsureRealDir(dir); err != nil {
 		return err
 	}
-	if err := transcript.WriteMarkdown(t, f); err != nil {
-		_ = f.Close()
+	var md bytes.Buffer
+	if err := transcript.WriteMarkdown(t, &md); err != nil {
 		return err
 	}
-	if err := f.Close(); err != nil {
+	if err := transcript.WriteFileExclusive(filepath.Join(dir, "transcript.md"), md.Bytes()); err != nil {
 		return err
 	}
 	return plan.WriteMedia()
 }
 
+// writeLossReport replaces loss-report.json through a fresh temp file and a
+// rename, which replaces a planted symlink rather than following it.
 func writeLossReport(r *transcript.LossReport, dir string) error {
 	if r == nil {
 		return errors.New("no loss report")
@@ -270,5 +274,19 @@ func writeLossReport(r *transcript.LossReport, dir string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "loss-report.json"), append(raw, '\n'), 0o600)
+	tmp, err := os.CreateTemp(dir, ".loss-report-*")
+	if err != nil {
+		return err
+	}
+	_, writeErr := tmp.Write(append(raw, '\n'))
+	closeErr := tmp.Close()
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Rename(tmp.Name(), filepath.Join(dir, "loss-report.json")); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	return nil
 }

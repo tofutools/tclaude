@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -80,6 +81,10 @@ func planCrossHarnessMorph(convID string, dst *harness.Harness, target db.AgentM
 	if current.TemporaryHarnessBuiltinMode {
 		return nil, crossMorphFailure(http.StatusConflict, "sandbox_override_active",
 			"the agent runs under a temporary sandbox unlock; restore its sandbox before a cross-harness morph")
+	}
+	if missing, err := launchDirMissing(current.Cwd); err != nil || missing {
+		return nil, crossMorphFailure(http.StatusConflict, "missing_cwd",
+			"the agent's working directory "+current.Cwd+" is missing; wake it with the directory recreated first")
 	}
 	if current.ModelProxy != "" && current.ModelProxy != "off" {
 		return nil, crossMorphFailure(http.StatusConflict, "model_proxy",
@@ -309,7 +314,13 @@ func morphArtifactDir(agentID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(root, time.Now().UTC().Format("20060102T150405.000Z")), nil
+	// The agent can write its own directory, so the per-morph directory is
+	// created fresh (Mkdir, not MkdirAll): nothing it planted is reused.
+	dir := filepath.Join(root, time.Now().UTC().Format("20060102T150405.000Z"))
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
 }
 
 // installCrossHarnessHistory runs the fallback ladder: the translated native
@@ -398,6 +409,9 @@ func applyCrossHarnessMorphUnderLaunchLock(agentID, convID string, pending db.Ag
 		resume := resumeOneConvUnderLaunchLock(newConv, false, nil)
 		clientHandoff.finishForConv(newConv)
 		if resume.Action != "resumed" {
+			// The rebind is committed: the note must be waiting whenever the
+			// translated conversation is next woken.
+			deliverMorphNote(newConv, pending, cm.previous, res.Report)
 			return morphOutcome{status: http.StatusInternalServerError, code: "restart_failed", convID: newConv, history: res.Report,
 				detail: "the agent was morphed to " + dst.Name + " but could not be resumed: " + resume.Detail +
 					"; use the normal wake action to retry"}
