@@ -62,6 +62,8 @@ func TestOverBudgetDaemonNudgeDoesNotReplaceLatestInstruction(t *testing.T) {
 	tr.Append(Entry{Role: RoleAssistant, Origin: OriginAgent, Blocks: []Block{Text(strings.Repeat("huge last work ", 2000))}})
 	tr.Append(Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text("[system: new agent message #123; delivery: inline; subject: Morph handoff requested] Write the summary now.")}})
 	tr.Append(Entry{Role: RoleAssistant, Origin: OriginAgent, Blocks: []Block{Text(strings.Repeat("writing summary ", 2000))}})
+	tr.Append(Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text("[system: new agent message #124 for you. fetch with: tclaude agent inbox read 124; subject: Morph handoff requested]")}})
+	tr.Append(Entry{Role: RoleAssistant, Origin: OriginAgent, Blocks: []Block{Text(strings.Repeat("retrieved summary request ", 2000))}})
 	p := NewPlan(tr, Options{Target: "codex", ContextWindowTokens: 4096, TranscriptPath: "/m/transcript.md", Summary: "Earlier parser work is done."})
 	assert.Contains(t, p.Briefing(), "ORIGINAL: repair checkout")
 	assert.Contains(t, p.Briefing(), "LATEST: preserve backward compatibility")

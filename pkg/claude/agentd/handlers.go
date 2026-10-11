@@ -1457,6 +1457,9 @@ func messageNudgeTextFor(m *db.AgentMessage) (text string, consumed bool) {
 	if sender := agent.MessageSenderLabel(m.FromConv, m.FromAgent); sender != "" {
 		return fmt.Sprintf("[system: new agent message #%d from %s for you. fetch with: tclaude agent inbox read %d]", m.ID, sender, m.ID), false
 	}
+	if m.Subject == "Morph handoff requested" {
+		return fmt.Sprintf("[system: new agent message #%d for you. fetch with: tclaude agent inbox read %d; subject: Morph handoff requested]", m.ID, m.ID), false
+	}
 	return fmt.Sprintf("[system: new agent message #%d for you. fetch with: tclaude agent inbox read %d]", m.ID, m.ID), false
 }
 

@@ -206,3 +206,12 @@ func TestHandleMessages_UnknownCC_RejectsBeforeAnyInsert(t *testing.T) {
 	msgs, _ := db.ListAgentMessagesForConv(primaryConv, 0)
 	assert.Empty(t, msgs, "primary should have 0 rows after a rejected multi-recipient send")
 }
+
+func TestMorphRequestPointerKeepsControlSubject(t *testing.T) {
+	setupTestDB(t)
+	// Empty body uses the pointer path even when inline delivery is enabled.
+	text, consumed := messageNudgeTextFor(&db.AgentMessage{ID: 123, Subject: "Morph handoff requested"})
+	assert.False(t, consumed)
+	assert.Contains(t, text, "fetch with: tclaude agent inbox read 123")
+	assert.Contains(t, text, "; subject: Morph handoff requested]")
+}
