@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"regexp"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -269,16 +269,26 @@ func servePeerSummary(w http.ResponseWriter, _ *http.Request, v *peerView, _ pee
 }
 
 func peerSummaryETag(w *peerViewResponse, r *http.Request) {
-	tag := fmt.Sprintf(`"%x"`, sha256.Sum256(w.body.Bytes()))
+	peerETag(w, r, w.body.Bytes())
+}
+
+// peerSnapshotGeneratedAt matches the snapshot's own timestamp, which changes
+// on every build and so stays out of its ETag.
+var peerSnapshotGeneratedAt = regexp.MustCompile(`"generated_at":"[^"]*"`)
+
+// peerSnapshotETag lets a polling peer ask conditionally (tcl-qamqg7): an
+// unchanged projection answers 304 without its tens of KB.
+func peerSnapshotETag(w *peerViewResponse, r *http.Request) {
+	peerETag(w, r, peerSnapshotGeneratedAt.ReplaceAll(w.body.Bytes(), nil))
+}
+
+func peerETag(w *peerViewResponse, r *http.Request, content []byte) {
+	tag := fmt.Sprintf(`"%x"`, sha256.Sum256(content))
 	w.Header().Set("ETag", tag)
-	for _, candidate := range strings.Split(r.Header.Get("If-None-Match"), ",") {
-		candidate = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(candidate), "W/"))
-		if candidate == tag || candidate == "*" {
-			w.status = http.StatusNotModified
-			w.body.Reset()
-			w.Header().Del("Content-Length")
-			return
-		}
+	if etagMatches(r.Header.Get("If-None-Match"), tag) {
+		w.status = http.StatusNotModified
+		w.body.Reset()
+		w.Header().Del("Content-Length")
 	}
 }
 

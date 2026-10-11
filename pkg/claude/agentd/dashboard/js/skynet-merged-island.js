@@ -5,7 +5,7 @@ import { GroupsNativeList } from './groups-list.js';
 import { GroupsInteractionProvider } from './groups-interactions.js';
 import { dashboardState } from './snapshot-store.js';
 import { shellToast } from './shell-state.js';
-import { nodeHref, pollDelay, remoteNodeID, staggerOffset } from './skynet-model.js';
+import { PEER_POLL_HEADER, nodeHref, pollDelay, remoteNodeID, staggerOffset } from './skynet-model.js';
 import { tickedNodes, withFused } from './skynet-scope.js';
 import { MERGED_IDLE_POLL_MS, MERGED_POLL_MS, mergeSnapshots } from './skynet-merged-model.js';
 import { peerAction } from './peer-view-limits.js';
@@ -115,10 +115,15 @@ function usePeerSnapshots({ active, peers, fetchImpl, localFetch, timers, now })
       let empty = false;
       let failures = entriesRef.current[peer.id]?.failures || 0;
       try {
-        const res = await (peer.local ? localFetch : fetchImpl)(snapshotURL(peer), { credentials: 'same-origin', cache: 'no-store' });
+        // A peer read declares this poll's interval, so this node keeps the
+        // peer's snapshot warm for every dashboard (peer_read_cache.go); Age
+        // says how old the served copy is.
+        const init = { credentials: 'same-origin', cache: 'no-store', ...(peer.local ? {} : { headers: { [PEER_POLL_HEADER]: String(MERGED_POLL_MS) } }) };
+        const res = await (peer.local ? localFetch : fetchImpl)(snapshotURL(peer), init);
         if (res.ok) {
           const snapshot = await res.json();
-          commit(peer.id, { snapshot, receivedAt: now(), failure: null, failures: 0 });
+          const age = Number(res.headers?.get?.('Age')) || 0;
+          commit(peer.id, { snapshot, receivedAt: now() - age * 1000, failure: null, failures: 0 });
           failures = 0;
           ok = true;
           empty = !(snapshot?.groups || []).length;

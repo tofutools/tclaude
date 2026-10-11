@@ -59,7 +59,8 @@ test('the merged view polls peers only while shown, renders group@node, and stay
   state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }] });
   const snapshot = harness.signals.signal({ groups: [group('ops')], agents: [] });
   const timers = fakeTimers(); const calls = []; const toasts = []; const switched = []; const opened = [];
-  const fetchImpl = async (url) => { calls.push(url); return { ok: true, status: 200, json: async () => ({ groups: [group('build')], agents: [], peer_view: { included: ['agents.status'] } }) }; };
+  const inits = [];
+  const fetchImpl = async (url, init) => { calls.push(url); inits.push(init); return { ok: true, status: 200, json: async () => ({ groups: [group('build')], agents: [], peer_view: { included: ['agents.status'] } }) }; };
   const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${snapshot} fetchImpl=${fetchImpl} timers=${timers} remote="" toast=${(m) => toasts.push(m)} switchNode=${(id) => switched.push(id)} openTerminal=${(o) => opened.push(o)} />`);
   assert.equal(timers.queue.length, 0, 'one node shown: polls nothing');
@@ -67,6 +68,7 @@ test('the merged view polls peers only while shown, renders group@node, and stay
   assert.equal(timers.queue.length, 1);
   await harness.act(async () => { await timers.queue.shift().fn(); });
   assert.deepEqual(calls, ['/api/peer/inst_forge/snapshot']);
+  assert.equal(inits[0].headers['X-Tclaude-Poll-Ms'], '5000', 'a peer poll declares its interval, so the daemon keeps it warm');
   const text = mounted.container.textContent;
   assert.match(text, /ops@desk/); assert.match(text, /build@forge/);
   const suffix = [...mounted.container.querySelectorAll('[data-fleet-open]')].find((el) => el.textContent === '@forge');

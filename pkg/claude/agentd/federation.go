@@ -424,6 +424,7 @@ func (rt *fedRuntime) broadcastCatalogs() {
 
 // broadcastFederationCatalogs is the hook for export/membership changes.
 func broadcastFederationCatalogs() {
+	peerReads.invalidate("")
 	if rt := currentFederation(); rt != nil {
 		goBackground(rt.broadcastCatalogs)
 	}
@@ -660,6 +661,7 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 			return
 		}
 		proto.SanitizeCatalog(&cat)
+		peerReads.invalidate(from)
 		previous, _, _ := fedCatalogFor(from)
 		mergeNodePublication(&cat, previous, cat.NodeAt, env.CreatedAt)
 		mergeCatalogAgentStatuses(&cat, previous, env.CreatedAt)
