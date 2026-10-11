@@ -242,6 +242,13 @@ func permissionRun(
 		RunOptions:   opts,
 		Deadline:     permissionDeadline,
 		BlockedAfter: blockedQuiet,
+		BlockedAfterReady: func(text string) bool {
+			// A banner may precede a long silent startup. The turn is ready
+			// once it reaches the provider; an explicit trust dialog is the
+			// legitimate block that can occur before any provider request.
+			return len(mock.Requests()) > 0 || strings.Contains(
+				strings.ToLower(text), strings.ToLower(copilotfixture.TrustPromptMarker))
+		},
 		// The follow-up request is conclusive: it can only exist if the tool
 		// executed and produced a result to post back.
 		SettledWhen: func() bool { return len(mock.Requests()) >= 2 },
