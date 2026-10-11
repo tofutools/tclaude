@@ -1,6 +1,8 @@
 package agentd
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -413,4 +415,26 @@ func TestBrokerRefusals_DismissHidesUntilANewerRefusal(t *testing.T) {
 	total, unplaceable = r.counts()
 	assert.Equal(t, 3, total, "a newer refusal brings the notice back")
 	assert.Equal(t, 2, unplaceable)
+}
+
+// The dismiss route is a dashboard mutation: without the dashboard cookie +
+// Origin it must refuse and leave the notice alone.
+func TestBrokerRefusals_DismissRouteRequiresDashboardAuth(t *testing.T) {
+	withDashboardAuth(t)
+	brokerRefusals.resetForTest()
+	t.Cleanup(brokerRefusals.resetForTest)
+	brokerRefusals.recordUnplaceable("y")
+	brokerRefusals.recordUnplaceable("y")
+
+	rec := httptest.NewRecorder()
+	handleDashboardBrokerRefusalsDismiss(rec, httptest.NewRequest(http.MethodPost, "/api/broker-refusals/dismiss", nil))
+	assert.GreaterOrEqual(t, rec.Code, 400, "an unauthenticated dismiss must be refused")
+	total, _ := brokerRefusals.counts()
+	assert.Equal(t, 2, total, "...and must not silence the notice")
+
+	rec = httptest.NewRecorder()
+	handleDashboardBrokerRefusalsDismiss(rec, dashboardRequest(http.MethodPost, "/api/broker-refusals/dismiss", ""))
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	total, _ = brokerRefusals.counts()
+	assert.Zero(t, total)
 }

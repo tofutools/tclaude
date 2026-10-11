@@ -224,13 +224,14 @@ func (r *brokerRefusalRecorder) paneTable() map[string]brokerPaneEntry {
 		r.panesDone = make(chan struct{})
 		done := r.panesDone
 		r.panesMu.Unlock()
+		return r.loadPaneTable(done)
+	}
+}
 
-		read := cachedBrokerPanes
-		if r.panes != nil {
-			read = r.panes
-		}
-		table := read()
-
+// loadPaneTable runs the single-flighted read and releases its waiters,
+// even if the read panics, so no later caller blocks on done forever.
+func (r *brokerRefusalRecorder) loadPaneTable(done chan struct{}) (table map[string]brokerPaneEntry) {
+	defer func() {
 		r.panesMu.Lock()
 		if table == nil {
 			r.panesFailedAt = time.Now()
@@ -238,8 +239,12 @@ func (r *brokerRefusalRecorder) paneTable() map[string]brokerPaneEntry {
 		r.panesLoading = false
 		close(done)
 		r.panesMu.Unlock()
-		return table
+	}()
+	read := cachedBrokerPanes
+	if r.panes != nil {
+		read = r.panes
 	}
+	return read()
 }
 
 // refusalOwner resolves ctx's owner, reading the pane table only when the
@@ -636,8 +641,13 @@ func (r *brokerRefusalRecorder) dismiss() {
 }
 
 // handleDashboardBrokerRefusalsDismiss is the notice's dismiss button. Like
-// every dashboard mutation it rides the dashboard's cookie + Origin gate.
-func handleDashboardBrokerRefusalsDismiss(w http.ResponseWriter, _ *http.Request) {
+// every dashboard mutation it enforces the dashboard's cookie + Origin gate
+// itself: a bodyless POST is a CORS simple request, so without it any page
+// the operator visits could silence the warning.
+func handleDashboardBrokerRefusalsDismiss(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
 	brokerRefusals.dismiss()
 	w.WriteHeader(http.StatusNoContent)
 }
