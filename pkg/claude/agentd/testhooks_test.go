@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/tofutools/tclaude/pkg/federation/client"
 	"net/http"
 	"slices"
 	"strconv"
@@ -2178,3 +2179,11 @@ func RunAwayLifecycleObserversForTest(conv string) bool {
 // SweepPendingMorphsForTest runs one synchronous pass of the pending-morph
 // idle watcher.
 func SweepPendingMorphsForTest() { sweepPendingMorphs(true) }
+
+// SetFederationReconnectBackoffForTest must be called before starting federation,
+// and restored after stopping it. It preserves all production callbacks.
+func SetFederationReconnectBackoffForTest(backoff time.Duration) func() {
+	previous := newFederationClient
+	newFederationClient = func(opts client.Options) (*client.Client, error) { opts.MaxBackoff = backoff; return previous(opts) }
+	return func() { newFederationClient = previous }
+}

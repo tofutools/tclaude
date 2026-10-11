@@ -287,6 +287,9 @@ func stopFederationLocked() {
 	}
 }
 
+// Construction seam allows flow tests to shrink retry delays without changing reconnect behavior.
+var newFederationClient = client.New
+
 func startFederationWith(fc *config.FederationConfig) error {
 	id, err := federationIdentity()
 	if err != nil {
@@ -320,7 +323,7 @@ func startFederationWith(fc *config.FederationConfig) error {
 	if fc.Away != nil {
 		rt.away = &fedAwayState{FederationAwayConfig: *fc.Away, Epoch: newApprovalID()}
 	}
-	cl, err := client.New(client.Options{
+	cl, err := newFederationClient(client.Options{
 		RotationChain: journal.Chain,
 		URL:           fc.HubURL, Identity: id, Name: name, Version: buildversion.AppVersion(),
 		Invite: fc.Invite, TLS: tlsCfg, Logger: slog.Default(),

@@ -55,6 +55,9 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 	}
 
 	agentd.ResetFederationForTest()
+	if os.Getenv("TCLAUDE_TEST_FAST_RECONNECT") == "1" {
+		t.Cleanup(agentd.SetFederationReconnectBackoffForTest(20 * time.Millisecond))
+	}
 	t.Cleanup(agentd.ResetFederationForTest)
 	cwd := testutil.CanonicalTempDir(t)
 	f.HaveGroup("project")
@@ -226,7 +229,7 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 
 type historyNode struct{ URL, Instance, Cwd, Fingerprint string }
 
-func startHistoryNode(t *testing.T, name, label string) historyNode {
+func startHistoryNode(t *testing.T, name, label string, extraEnv ...string) historyNode {
 	t.Helper()
 	root := testutil.CanonicalTempDir(t)
 	infoPath := filepath.Join(root, "node.json")
@@ -234,6 +237,7 @@ func startHistoryNode(t *testing.T, name, label string) historyNode {
 	require.NoError(t, err)
 	cmd := exec.Command(os.Args[0], "-test.run=^TestFederation_HistoryRoundTripNode$", "-test.v", "-test.timeout="+(historyTestLifetime()+10*time.Second).String())
 	cmd.Env = append(os.Environ(), "TCLAUDE_TEST_HISTORY_NODE="+infoPath, "TCLAUDE_TEST_HISTORY_HARNESS="+name)
+	cmd.Env = append(cmd.Env, extraEnv...)
 	cmd.Stdout, cmd.Stderr = log, log
 	require.NoError(t, cmd.Start())
 	var node historyNode
