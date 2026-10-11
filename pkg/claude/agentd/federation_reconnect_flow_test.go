@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,8 +27,13 @@ func TestFederation_ReconnectStartupAndHubOutageDrainsOutbox(t *testing.T) {
 	require.NoError(t, listener.Close())
 	var runningHub *hub.Hub
 	var server *httptest.Server
+	var activeListener *outageHubListener
 	stop := func() {
 		if runningHub != nil {
+			// Abruptly sever hijacked WebSockets before graceful Close can send a
+			// shutting_down refusal (which intentionally backs off for 30s).
+			_ = activeListener.Close()
+			activeListener.closeConnections()
 			runningHub.Close()
 			server.Close()
 			runningHub = nil
@@ -44,7 +50,8 @@ func TestFederation_ReconnectStartupAndHubOutageDrainsOutbox(t *testing.T) {
 		require.NoError(t, err)
 		server = httptest.NewUnstartedServer(runningHub.Handler())
 		require.NoError(t, server.Listener.Close())
-		server.Listener = listener
+		activeListener = &outageHubListener{Listener: listener}
+		server.Listener = activeListener
 		server.Start()
 	}
 	a := startHistoryNode(t, "claude", "A", "TCLAUDE_TEST_FAST_RECONNECT=1")
@@ -106,9 +113,9 @@ func TestFederation_ReconnectStartupAndHubOutageDrainsOutbox(t *testing.T) {
 		require.Equal(t, "queued", result.State)
 		ids[node.Instance] = result.ID
 	}
-	// The first failed retry waits 1s. Staying down longer than that and many
-	// subsequent 20ms capped retries covers sustained outage without a 60s wait.
-	time.Sleep(1200 * time.Millisecond)
+	// Startup failure has already reached the 20ms retry cap. Keep the hub
+	// down for multiple capped retries, rather than sleeping for a real 60s.
+	time.Sleep(150 * time.Millisecond)
 	for _, node := range nodes {
 		code, raw := historyNodeRequest(t, node, "GET", "/v1/federation/outbox", "", nil)
 		require.Equal(t, 200, code, string(raw))
@@ -134,6 +141,8 @@ func TestFederation_ReconnectStartupAndHubOutageDrainsOutbox(t *testing.T) {
 			require.NoError(t, json.Unmarshal(raw, &rows))
 			return len(rows) == 1 && rows[0].ID == ids[node.Instance] && rows[0].State == "accepted"
 		})
+	}
+	for _, node := range nodes {
 		code, raw := historyNodeRequest(t, node, "GET", "/v1/federation/inbox", "", nil)
 		require.Equal(t, 200, code, string(raw))
 		var inbox []fedInboxRow
@@ -143,4 +152,36 @@ func TestFederation_ReconnectStartupAndHubOutageDrainsOutbox(t *testing.T) {
 		require.Contains(t, inbox[0].Body, "queued during hub outage")
 	}
 	connected()
+}
+
+// httptest.CloseClientConnections excludes hijacked WebSockets. Track the real
+// accepted sockets to simulate a crash, not the hub's graceful refusal path.
+type outageHubListener struct {
+	net.Listener
+	mu          sync.Mutex
+	connections []net.Conn
+	closed      bool
+}
+
+func (l *outageHubListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err == nil {
+		l.mu.Lock()
+		if l.closed {
+			_ = conn.Close()
+		} else {
+			l.connections = append(l.connections, conn)
+		}
+		l.mu.Unlock()
+	}
+	return conn, err
+}
+func (l *outageHubListener) closeConnections() {
+	l.mu.Lock()
+	l.closed = true
+	connections := append([]net.Conn(nil), l.connections...)
+	l.mu.Unlock()
+	for _, conn := range connections {
+		_ = conn.Close()
+	}
 }
