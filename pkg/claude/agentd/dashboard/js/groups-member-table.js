@@ -856,9 +856,12 @@ function SendElsewhereItems({ member, group, snapshot }) {
   const view = presenceView(member, fleet);
   const kind = view?.kind || '';
   const label = member.title || member.conv_id;
+  // A peer row names its node, for a dialog opened outside the fused Groups
+  // view (a Terminals tab's ⚙), which has no group row to read it from.
   const attrs = (mode) => ({
     'data-mode': mode, 'data-presence': kind, 'data-home-node': view?.home?.id || '', 'data-home-name': view?.home?.name || '',
     'data-cwd': member.state?.cwd || member.cwd || '',
+    ...(peerRow ? { 'data-node': group.fleet_node.id, 'data-node-name': group.fleet_node.name || '' } : {}),
   });
   const item = (mode, regular, wizard, title) => html`<${MenuButton} member=${member} group=${group} act="send-elsewhere" attrs=${attrs(mode)} regular=${regular} wizard=${wizard} title=${title} />`;
   return html`<div class="menu-section-label" role="presentation">send elsewhere</div>
@@ -923,6 +926,18 @@ function MemberActions({ member, group, snapshot, actions, ungrouped, menuKey })
     <button class="icon-btn warn" data-act="retire-agent" data-conv=${member.conv_id} data-stable-agent=${member.agent_id || ''} data-label=${member.title || member.conv_id} title="Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored)." aria-label="Retire agent"><${TrashIcon} /></button>
     <${ActionMenu} menuKey=${menuKey} kind="row-menu"><${MemberMenu} member=${member} group=${group} snapshot=${snapshot} actions=${actions} ungrouped=${ungrouped} /><//>
   </div>`;
+}
+
+// AgentGearMenu is the agent's ⚙ menu outside a Groups row: on a Terminals
+// tab (tcl-xy5wkp). An agent on this node gets the row menu at agent level
+// (no group, as for an ungrouped agent). One on another node, which this
+// node's roster does not carry, gets what a fused Groups view offers its
+// rows: moving it here. It needs a GroupsInteractionProvider above it.
+export function AgentGearMenu({ member, node = null, snapshot, menuKey }) {
+  if (node && !node.local) {
+    return html`<${ActionMenu} menuKey=${menuKey} kind="row-menu"><${SendElsewhereItems} member=${member} group=${{ fleet_node: node }} snapshot=${snapshot} /><//>`;
+  }
+  return html`<${ActionMenu} menuKey=${menuKey} kind="row-menu"><${MemberMenu} member=${member} group=${null} snapshot=${snapshot} actions=${{}} ungrouped=${true} /><//>`;
 }
 
 function SudoBadge({ grants, conv }) {

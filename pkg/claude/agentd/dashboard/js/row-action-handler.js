@@ -637,8 +637,10 @@ export async function handleRowAction(action) {
       }
       case 'send-elsewhere': {
         // The ⚙ "Send elsewhere" items: one launch-target dialog per mode.
+        // data-node names another node's agent (a Terminals tab's ⚙).
         const fleet = skynetState.fleet.value;
-        openLaunchTargetDialog({ mode: data.mode || 'move', agent: launchAgent(data, fleet?.self || { id: 'local', name: 'this node' }) });
+        const node = data.node ? { id: data.node, name: data.nodeName || data.node.slice(0, 13) } : fleet?.self || { id: 'local', name: 'this node' };
+        openLaunchTargetDialog({ mode: data.mode || 'move', agent: launchAgent(data, node) });
         return;
       }
       case 'clone': {

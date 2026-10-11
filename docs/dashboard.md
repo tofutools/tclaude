@@ -288,10 +288,19 @@ experimental Copilot API and Codex app-server drives.
 ## Terminals
 
 The 💲 toggle after the last terminal tab shows or hides session costs next to
-agent names, sharing the Groups tab's visibility preference. API spend is green;
-subscription WHAT-IF estimates use muted italic `≈$…` and follow the existing
-WHAT-IF setting. Hover a cost for its exact value and explanation. Terminals
-without reported costs show no amount.
+agent names. It is independent of the Groups tab's 💲 (until first used it
+starts from that one's setting). API spend is green; subscription WHAT-IF
+estimates use muted italic `≈$…` and follow the existing WHAT-IF setting.
+Hover a cost for its exact value and explanation. Hovering a tab shows its
+session cost in the tab's tooltip whether or not the toggle shows it.
+Terminals without reported costs show no amount.
+
+Each agent's tab has a ⚙ next to its status glyph: the same menu as the
+agent's ⚙ in Groups (agent-level, so no group-specific items). It's a
+shortcut to morph, move, clone, and so on without finding the agent in
+Groups. A tab attached to an agent on another node offers moving it here.
+Plain shells have no ⚙, and opening or using it never switches or closes the
+tab.
 
 
 The Terminals tab is the in-dashboard terminal multiplexer. It stays hidden
