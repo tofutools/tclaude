@@ -62,11 +62,18 @@ export function zoomKeyAction(event) {
 // client point to keep still — null for keyboard zoom, which zooms about the
 // middle. onKey(action) gets the keyboard actions, so a viewer can make
 // 'reset' mean its own default.
-export function useZoomGestures({ targetRef, enabled, onZoom, onKey }) {
+//
+// The keys are heard on the document, gated by shouldHandle (the viewer being
+// the topmost overlay), not on the dialog: clicking a control that then
+// unmounts or disables itself drops focus to <body>, and a dialog-scoped
+// listener would hand the next Ctrl/Cmd + back to the browser's page zoom.
+export function useZoomGestures({ targetRef, enabled, onZoom, onKey, shouldHandle = () => true }) {
   const zoomRef = useRef(onZoom);
   const keyRef = useRef(onKey);
+  const handleRef = useRef(shouldHandle);
   zoomRef.current = onZoom;
   keyRef.current = onKey;
+  handleRef.current = shouldHandle;
 
   useEffect(() => {
     const node = targetRef.current;
@@ -89,7 +96,7 @@ export function useZoomGestures({ targetRef, enabled, onZoom, onKey }) {
     };
     const onGestureEnd = (event) => { event.preventDefault(); };
     const onKeyDown = (event) => {
-      if (event.defaultPrevented) return;
+      if (event.defaultPrevented || !handleRef.current()) return;
       const action = zoomKeyAction(event);
       if (!action) return;
       event.preventDefault(); // Ctrl/Cmd + = would otherwise zoom the page
@@ -100,13 +107,13 @@ export function useZoomGestures({ targetRef, enabled, onZoom, onKey }) {
     node.addEventListener('gesturestart', onGestureStart);
     node.addEventListener('gesturechange', onGestureChange);
     node.addEventListener('gestureend', onGestureEnd);
-    node.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keydown', onKeyDown);
     return () => {
       node.removeEventListener('wheel', onWheel, { passive: false });
       node.removeEventListener('gesturestart', onGestureStart);
       node.removeEventListener('gesturechange', onGestureChange);
       node.removeEventListener('gestureend', onGestureEnd);
-      node.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('keydown', onKeyDown);
     };
   }, [enabled, targetRef]);
 }
@@ -121,7 +128,10 @@ function fullscreenSupported() {
 // `display` is what the dialog's data-display attribute carries, which is all
 // the stylesheet needs; fullscreen state is read back from the document, so a
 // browser-initiated exit (Escape, F11) is reflected without our involvement.
-export function useViewerDisplay({ dialogRef, open }) {
+// The F key is heard on the document for the reason useZoomGestures gives.
+export function useViewerDisplay({ dialogRef, open, shouldHandle = () => true }) {
+  const handleRef = useRef(shouldHandle);
+  handleRef.current = shouldHandle;
   const [maximized, setMaximized] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const canFullscreen = fullscreenSupported();
@@ -135,16 +145,16 @@ export function useViewerDisplay({ dialogRef, open }) {
     const onKeyDown = (event) => {
       if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
       if (event.key !== 'f' && event.key !== 'F') return;
-      if (!canFullscreen) return;
+      if (!canFullscreen || !handleRef.current()) return;
       event.preventDefault();
       if (document.fullscreenElement === node) document.exitFullscreen?.().catch(() => {});
       else node.requestFullscreen?.().catch(() => {});
     };
     document.addEventListener('fullscreenchange', sync);
-    node.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keydown', onKeyDown);
     return () => {
       document.removeEventListener('fullscreenchange', sync);
-      node.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('keydown', onKeyDown);
       if (document.fullscreenElement === node) document.exitFullscreen?.().catch(() => {});
       setFullscreen(false);
     };

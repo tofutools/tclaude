@@ -116,7 +116,8 @@ export function ImageAttachmentPreview({ messageID, attachment, surface = 'attac
     dialogRef,
     prefKey: 'tclaude.dash.attachmentViewer.image.size',
   });
-  const view = useViewerDisplay({ dialogRef, open });
+  const topmost = () => isTopmostOverlay(overlayRef.current);
+  const view = useViewerDisplay({ dialogRef, open, shouldHandle: topmost });
   const stageBox = useStageBox(stageRef, open);
 
   const fitScale = natural && stageBox && stageBox.w > 0 && stageBox.h > 0
@@ -170,6 +171,7 @@ export function ImageAttachmentPreview({ messageID, attachment, surface = 'attac
   useZoomGestures({
     targetRef: dialogRef,
     enabled: open && loadState === 'ready',
+    shouldHandle: topmost,
     onZoom: (factor, point) => zoomTo((value) => value * factor, point),
     onKey: (action) => {
       if (action === 'in') zoomTo((value) => value * ZOOM_STEP);
@@ -211,6 +213,10 @@ export function ImageAttachmentPreview({ messageID, attachment, surface = 'attac
     const stage = stageRef.current;
     if (event.button !== 0 || event.pointerType !== 'mouse' || !stage) return;
     if (stage.scrollWidth <= stage.clientWidth && stage.scrollHeight <= stage.clientHeight) return;
+    // A press on the stage's own scrollbar belongs to the scrollbar: panning
+    // from it would drag the content against the thumb.
+    const rect = stage.getBoundingClientRect();
+    if (event.clientX - rect.left >= stage.clientWidth || event.clientY - rect.top >= stage.clientHeight) return;
     event.preventDefault();
     stage.focus?.({ preventScroll: true });
     const startX = event.clientX, startY = event.clientY;

@@ -239,7 +239,9 @@ test('pinch, Ctrl+wheel and the zoom keys scale the viewer text', async (t) => {
 
   await harness.act(() => chip.click());
   assert.equal(zoomBox().style.zoom, '');
-  await harness.act(() => { harness.fireEvent(dialog, 'keydown', { key: '+' }); });
+  // The chip unmounted under the click, so focus is no longer in the dialog;
+  // the zoom keys must still reach the viewer rather than the page.
+  await harness.act(() => { harness.fireEvent(harness.document.body, 'keydown', { key: '+' }); });
   assert.equal(dialog.querySelector('.markdown-preview-zoom-reset').textContent, '125%');
   await harness.act(() => { harness.fireEvent(dialog, 'keydown', { key: '0', metaKey: true }); });
   assert.equal(dialog.querySelector('.markdown-preview-zoom-reset'), null);

@@ -1754,8 +1754,12 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 /* Maximized fills the window up to the same margin the resize ceiling keeps;
    fullscreen is the whole screen. Both outrank the remembered drag size, and
    neither has a corner to drag. */
-:is(.image-preview-dialog, .markdown-preview-dialog)[data-display="maximized"] {
-  width: calc(100vw - 32px); height: calc(100vh - 32px);
+@media (min-width: 721px) {
+  /* Narrow screens are already full-bleed and hide the maximize toggle, so a
+     maximized state carried over from a wider window must not apply there. */
+  :is(.image-preview-dialog, .markdown-preview-dialog)[data-display="maximized"] {
+    width: calc(100vw - 32px); height: calc(100vh - 32px);
+  }
 }
 :is(.image-preview-dialog, .markdown-preview-dialog):fullscreen {
   width: 100vw; height: 100vh; border: 0; border-radius: 0; box-shadow: none;
@@ -1844,7 +1848,10 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   font-size: 14px; text-overflow: ellipsis; white-space: nowrap;
 }
 .markdown-preview-heading span { color: #8b949e; font-size: 11px; white-space: nowrap; }
-.markdown-preview-header-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.markdown-preview-header-actions {
+  display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center;
+  gap: 6px 8px; margin-left: auto; padding: 6px 0;
+}
 .markdown-preview-download, .markdown-preview-close {
   border: 1px solid #30363d; border-radius: 4px; background: #21262d;
   color: #c9d1d9; cursor: pointer; font: inherit; font-size: 12px;
@@ -2010,7 +2017,7 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   .markdown-preview-heading { min-width: 0; flex: 1; display: block; overflow: hidden; }
   .markdown-preview-heading h2 { max-width: 100%; }
   .markdown-preview-heading span { display: block; overflow: hidden; margin-top: 2px; text-overflow: ellipsis; }
-  .markdown-preview-header-actions { flex: 0 0 auto; }
+  .markdown-preview-header-actions { flex: 0 1 auto; }
   .markdown-preview-download { padding: 5px 7px; font-size: 11px; }
   .markdown-preview-mode { padding: 5px 7px; font-size: 11px; }
   .markdown-preview-stage { padding: 18px 18px 24px; }

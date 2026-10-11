@@ -95,7 +95,8 @@ export function MarkdownAttachment({ messageID, attachment, siblings, surface = 
     dialogRef,
     prefKey: 'tclaude.dash.attachmentViewer.markdown.size',
   });
-  const view = useViewerDisplay({ dialogRef, open: viewerOpen });
+  const topmost = () => isTopmostOverlay(overlayRef.current);
+  const view = useViewerDisplay({ dialogRef, open: viewerOpen, shouldHandle: topmost });
 
   const zoomText = useCallback((compute, point = null) => {
     const from = textZoomRef.current;
@@ -127,6 +128,7 @@ export function MarkdownAttachment({ messageID, attachment, siblings, surface = 
   useZoomGestures({
     targetRef: dialogRef,
     enabled: viewerOpen,
+    shouldHandle: topmost,
     onZoom: (factor, point) => zoomText((value) => value * factor, point),
     onKey: (action) => {
       if (action === 'in') zoomText((value) => value * ZOOM_STEP);
