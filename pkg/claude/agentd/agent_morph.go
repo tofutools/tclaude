@@ -45,11 +45,12 @@ type morphRequest struct {
 	// History picks the delivery rung of a cross-harness morph: "" or
 	// "auto" (native, else a context file, else a handoff), "context_file",
 	// or "handoff" (the agent writes a handoff for its successor first).
-	History string `json:"history,omitempty"`
-	Now     bool   `json:"now,omitempty"`
-	Back    bool   `json:"back,omitempty"`
-	Cancel  bool   `json:"cancel,omitempty"`
-	DryRun  bool   `json:"dry_run,omitempty"`
+	History             string `json:"history,omitempty"`
+	HistoryWindowTokens *int64 `json:"history_window_tokens,omitempty"`
+	Now                 bool   `json:"now,omitempty"`
+	Back                bool   `json:"back,omitempty"`
+	Cancel              bool   `json:"cancel,omitempty"`
+	DryRun              bool   `json:"dry_run,omitempty"`
 }
 
 var morphRefusedFields = map[string]string{
@@ -129,12 +130,12 @@ func readLimitedBody(r *http.Request) ([]byte, error) {
 
 func (q morphRequest) hasFieldOverrides() bool {
 	return q.Model != nil || q.Effort != nil || q.Approval != nil ||
-		q.Tools != nil || q.AskTimeout != nil || q.AutoCompactWindow != nil || q.TrustDir != nil
+		q.Tools != nil || q.AskTimeout != nil || q.AutoCompactWindow != nil || q.TrustDir != nil || q.HistoryWindowTokens != nil
 }
 
 func (q morphRequest) hasForm() bool {
 	return q.Profile != "" || q.Harness != "" || q.Model != nil || q.Effort != nil || q.Approval != nil ||
-		q.Tools != nil || q.AskTimeout != nil || q.AutoCompactWindow != nil
+		q.Tools != nil || q.AskTimeout != nil || q.AutoCompactWindow != nil || q.HistoryWindowTokens != nil
 }
 
 // resolveMorphTarget builds and validates the requested form against the
@@ -144,6 +145,15 @@ func (q morphRequest) hasForm() bool {
 // defaults are applied by planCrossHarnessMorph.
 func resolveMorphTarget(h *harness.Harness, req morphRequest, prof *db.SpawnProfile, cross bool) (db.AgentMorphForm, error) {
 	var form db.AgentMorphForm
+	if req.HistoryWindowTokens != nil {
+		if !cross {
+			return form, errors.New("history_window_tokens is only for cross-harness morphs")
+		}
+		if *req.HistoryWindowTokens < 1024 || *req.HistoryWindowTokens > 10_000_000 {
+			return form, errors.New("history_window_tokens must be between 1024 and 10000000")
+		}
+		form.HistoryWindowTokens = req.HistoryWindowTokens
+	}
 	pick := func(explicit *string, fromProfile string) *string {
 		if explicit != nil {
 			v := strings.TrimSpace(*explicit)
@@ -162,6 +172,11 @@ func resolveMorphTarget(h *harness.Harness, req morphRequest, prof *db.SpawnProf
 		// is authorized by it, so a form with overrides carries none.
 		if !req.hasFieldOverrides() {
 			form.Profile = prof.Name
+		}
+	}
+	if cross && h.Name == harness.CopilotName && p.ContextWindowMax > 0 {
+		if form.HistoryWindowTokens == nil || *form.HistoryWindowTokens > p.ContextWindowMax {
+			form.HistoryWindowTokens = &p.ContextWindowMax
 		}
 	}
 	model := pick(req.Model, p.Model)

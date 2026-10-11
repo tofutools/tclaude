@@ -245,7 +245,7 @@ func TestMorphCrossHarnessPendingAppliesWhenIdle(t *testing.T) {
 	spawn := spawnMorphWorker(t, f, "crew", "busy", nil)
 	seedClaudeHistory(t, f, spawn.ConvID)
 
-	rec := f.AsHuman().Morph(spawn.AgentID, map[string]any{"harness": "codex", "model": "gpt-5.4", "approval": "on-request"})
+	rec := f.AsHuman().Morph(spawn.AgentID, map[string]any{"harness": "codex", "model": "gpt-5.4", "approval": "on-request", "history_window_tokens": 64_000})
 	resp := decodeCrossMorph(t, rec.Code, rec.Body.Bytes())
 	require.Equal(t, "pending", resp.Result)
 	require.NotNil(t, resp.History, "a pending cross-harness morph shows the history preview")
@@ -253,6 +253,9 @@ func TestMorphCrossHarnessPendingAppliesWhenIdle(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, pending)
 	assert.Equal(t, "codex", pending.Target.Harness)
+	require.NotNil(t, pending.Target.HistoryWindowTokens)
+	assert.EqualValues(t, 64_000, *pending.Target.HistoryWindowTokens)
+	assert.EqualValues(t, 64_000, resp.History.ContextWindowTokens)
 
 	agentd.SweepPendingMorphsForTest()
 	agent, err := db.GetAgent(spawn.AgentID)

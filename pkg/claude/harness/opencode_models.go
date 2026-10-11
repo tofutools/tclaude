@@ -39,6 +39,7 @@ const openCodeModelRefreshMinInterval = time.Minute
 const openCodeModelsExecTimeout = 10 * time.Second
 
 type openCodeCatalog struct {
+	windows map[string]int64
 	models  []string
 	efforts []string
 	err     error
@@ -243,7 +244,8 @@ func computeOpenCodeCatalog() openCodeCatalog {
 		err = fmt.Errorf("`opencode models --verbose` returned no models")
 	}
 	return openCodeCatalog{
-		models: models, efforts: efforts, err: err, at: time.Now(),
+		windows: parseOpenCodeModelWindows(string(output)),
+		models:  models, efforts: efforts, err: err, at: time.Now(),
 	}
 }
 
