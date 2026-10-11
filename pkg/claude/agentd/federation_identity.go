@@ -132,6 +132,7 @@ func handleFederationAgentRecall(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		Group string `json:"group"`
+		Note  string `json:"note,omitempty"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in) != nil {
 		writeError(w, 400, "invalid_arg", "invalid recall body")
@@ -158,7 +159,7 @@ func handleFederationAgentRecall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, "group_required", "choose a receiving home group for recall")
 		return
 	}
-	raw, _ := json.Marshal(map[string]any{"group": in.Group, "direct_if_allowed": true})
+	raw, _ := json.Marshal(map[string]any{"group": in.Group, "home": true, "note": in.Note})
 	inner := r.Clone(r.Context())
 	inner.Body = io.NopCloser(bytes.NewReader(raw))
 	inner.ContentLength = int64(len(raw))
@@ -168,7 +169,7 @@ func handleFederationAgentRecall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	inner.SetPathValue("node", destination)
-	inner.SetPathValue("tail", "agents/"+id+"/move")
+	inner.SetPathValue("tail", "agents/"+id+"/teleport")
 	inner.URL.RawQuery = ""
 	servePeerViewProxy(w, inner)
 }

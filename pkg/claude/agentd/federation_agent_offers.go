@@ -90,7 +90,7 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if teleport != nil && source != caller {
+	if teleport != nil && source != caller && !human {
 		writeError(w, 403, "self_only", "teleport can only transfer the caller")
 		return
 	}

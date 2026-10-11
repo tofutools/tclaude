@@ -1629,6 +1629,26 @@ When both nodes advertise stable agent identity, move and teleport keep the
 its existing fresh-ID behavior. Older peers fall back to fresh IDs, and the
 arrival briefing names which mode was used.
 
+The local dashboard operator can teleport an active agent with
+`POST /api/agents/{conv-or-agent_id}/teleport` (the local CLI/API equivalent is
+`POST /v1/agents/{conv-or-agent_id}/teleport`). The body accepts
+`{peer?, group?, note?, clone?, home?, carry_permissions?}`; `home` excludes
+`peer`. This retains the human actor and does not borrow the agent's
+`self.teleport` grants. Freeze, quotas, receiver landing authority and credential
+scanning still apply. Export starts immediately, and the source remains active
+until the destination-running confirmation; teleport does not wait for idle.
+Local progress is available at `GET /api/federation/moves/{move_id}`.
+Recall from home can use `POST /api/federation/agents/{agent_id}/recall`, with an
+optional `group` (defaulting to a retained home group) and `note`. It requests
+`home: true` from the current host. The returned `move_id` belongs to that host;
+home watches its placeholder's presence become `here` for completion, since
+remote move administration remains unavailable.
+For a visitor with a retained paused backup, Send home and Recall instead use
+the durable report-return path and respond with HTTP 202
+`{state, return_id, offer}`. The home group is not a new landing choice in this
+case: the original backup and memberships resume. Home still watches presence
+become `here`.
+
 The home record becomes an inactive **away** placeholder in its groups. Its
 memberships, ownership, permanent permissions, scheduled intent and inbox remain
 at home; they confer no authority on the visiting node. Ordinary visiting
@@ -2922,8 +2942,10 @@ peer grant on every affected active group; clone/retire/move also cover owned gr
   `{follow_up, no_copy_conv}` and receiver-owned source defaults.
 - `POST /api/agents/{id}/move`: `{group}`; `agent.move` plus source
   `groups.members.retire`. The destination is always the requesting peer.
-- `POST /api/agents/{id}/teleport`: `{group, note?, clone?}` with the same
-  source authority and existing teleport landing/confirmation policy.
+- `POST /api/agents/{id}/teleport`: `{group, note?, clone?, home?, carry_permissions?}`
+  with the same source authority and existing teleport landing/confirmation policy.
+  A `home: true` recall is accepted only when the requesting node is the
+  agent's recorded home; the normal return-home policy applies.
 - `POST /api/operator-message` retains the existing scoped messaging contract.
 
 IDs are stable remote agent IDs, and `group` on move/teleport names the
