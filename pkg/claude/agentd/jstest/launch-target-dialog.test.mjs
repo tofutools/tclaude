@@ -92,7 +92,7 @@ test('morph previews the change with a dry run, then applies it at the next idle
     profiles: async () => [{ name: 'codex-high', harness: 'codex', model: 'gpt-5', effort: 'high' }, { name: 'off', disabled: true }],
     morph: async (id, body) => {
       calls.push([id, body]);
-      if (body.dry_run) return { result: 'dry_run', before: { harness: 'claude', model: 'opus' }, after: { harness: 'codex', model: 'gpt-5', effort: 'high', sandbox: 'workspace-write' }, history: { source: 'claude', target: 'codex', source_entries: 10, carried_entries: 8, items: [] } };
+      if (body.dry_run) return { result: 'dry_run', before: { harness: 'claude', model: 'opus' }, after: { harness: 'codex', model: 'gpt-5', effort: 'high', sandbox: 'workspace-write' }, history: { source: 'claude', target: 'codex', source_entries: 10, carried_entries: 8, source_estimated_tokens: 81495, carried_estimated_tokens: 4980, items: [] } };
       return { result: 'pending', detail: '' };
     },
   };
@@ -104,6 +104,7 @@ test('morph previews the change with a dry run, then applies it at the next idle
   assert.deepEqual(calls[0], ['conv_b1', { profile: 'codex-high', dry_run: true }]);
   assert.match(s.q('.lt-morph-preview').textContent, /was claude · opus.*now codex · gpt-5 · effort high/);
   assert.match(s.q('[data-lt-carries]').textContent, /translated claude → codex: 8 of 10/);
+  assert.match(s.q('[data-lt-carries]').textContent, /estimated tokens: 81495 source → 4980 carried/);
   assert.equal(s.q('#lt-ok').textContent, 'Morph at next idle turn');
   await s.click(s.q('#lt-ok'));
   assert.deepEqual(calls[1], ['conv_b1', { profile: 'codex-high' }]);
