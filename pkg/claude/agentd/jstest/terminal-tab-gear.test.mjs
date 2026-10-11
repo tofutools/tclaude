@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const fleet = {
@@ -42,6 +43,7 @@ test('an agent tab carries the Groups ⚙ menu next to its status light; a plain
   const tab = s.tab('one');
   const gear = tab.querySelector('.mux-tab-gear');
   assert.ok(gear, 'agent tab has a ⚙');
+  assert.ok(gear.classList.contains('row-actions'), 'the menu takes the Groups row menu styling (and its wizard theme)');
   assert.equal(gear.previousElementSibling.classList.contains('mux-tab-status'), true, 'it sits next to the status light');
   assert.equal(s.tab('shell').querySelector('.mux-tab-gear'), null, 'a plain shell has no ⚙');
   const menu = gear.querySelector('.action-menu');
@@ -83,4 +85,13 @@ test('without a hub, local terminal gear keeps clone/morph and omits move/telepo
   assert.ok(menu);
   assert.deepEqual([...menu.querySelectorAll('[data-act="send-elsewhere"]')].map((b) => b.dataset.mode), ['clone', 'morph']);
   assert.ok(menu.querySelector('[data-act="term"]'));
+});
+
+test('the launch dialog styles its fields with the dashboard controls, in both themes', async () => {
+  const css = await readFile(new URL('../dashboard/dashboard.css', import.meta.url), 'utf8');
+  const shared = css.split('\n').filter((l) => l.startsWith(':where(.fleet-admin, [id^="fleet-"], #launch-target) :where(select, textarea'));
+  assert.ok(shared.length >= 1, 'selects, inputs and textareas share the Fleet form controls');
+  assert.match(css, /#launch-target input\[type="checkbox"\] \{[^}]*color-scheme: dark/, 'checkboxes follow the dark scheme');
+  assert.match(css, /body\.wizard :is\(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target\) :is\(\.cron-create-row, \.lt-row\) :is\(input\[type=text\], select, textarea\)/,
+    'wizard mode gives its fields the Clone dialog family skin');
 });

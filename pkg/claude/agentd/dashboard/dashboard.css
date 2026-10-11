@@ -11334,40 +11334,40 @@ body.wizard #agent-spawn-modal #agent-spawn-submit:disabled::before { content: "
    but share the same violet-void, gold-frame, and parchment-control treatment
    as the other wizard forms. Keep this scoped to the three action-dialog
    overlays: .cron-create-modal is also used by several unrelated dialogs. */
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .cron-create-modal {
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .cron-create-modal {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
   border: 1px solid #7a5db0;
   box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
   color: #e7d9f5;
 }
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .cron-create-modal h3 {
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .cron-create-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .modal-meta {
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .modal-meta {
   background: #140f28;
   border-left-color: #d9b45a;
   color: #b39ddb;
 }
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) :is(.cron-create-label, .modal-hint) {
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) :is(.cron-create-label, .modal-hint) {
   color: #b39ddb;
 }
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .cron-create-enabled { color: #e7d9f5; }
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .cron-create-row :is(input[type=text], select, textarea) {
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .cron-create-enabled { color: #e7d9f5; }
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) :is(.cron-create-row, .lt-row) :is(input[type=text], select, textarea) {
   background: #140f28;
   border-color: rgba(122, 93, 176, 0.5);
   color: #f3e6c0;
 }
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .cron-create-row :is(input[type=text], select, textarea):focus {
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) :is(.cron-create-row, .lt-row) :is(input[type=text], select, textarea):focus {
   border-color: #a97bd6;
 }
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .cron-create-row select option {
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) :is(.cron-create-row, .lt-row) select option {
   color: #1a1330;
   background: #e7d9f5;
 }
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) :is(input[type=checkbox], input[type=radio]) {
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) :is(input[type=checkbox], input[type=radio]) {
   accent-color: #d9b45a;
 }
 body.wizard #reincarnate-agent-modal .reincarnate-mode {
@@ -11377,18 +11377,18 @@ body.wizard #reincarnate-agent-modal .reincarnate-mode {
 }
 body.wizard #reincarnate-agent-modal .reincarnate-mode label { color: #e7d9f5; }
 body.wizard #reincarnate-agent-modal .reincarnate-mode .opt-note { color: #b39ddb; }
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .modal-buttons {
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .modal-buttons {
   border-top-color: rgba(122, 93, 176, 0.4);
 }
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .modal-buttons button:not(.primary) {
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .modal-buttons button:not(.primary) {
   background: #241b3d;
   border: 1px solid #d9b45a;
   color: #f3e6c0;
 }
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .modal-buttons button:not(.primary):hover {
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .modal-buttons button:not(.primary):hover {
   background: #3a2a63;
 }
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .modal-buttons button.primary {
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .modal-buttons button.primary {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   border: 2px solid #d9b45a;
   border-radius: 6px;
@@ -11400,15 +11400,15 @@ body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal)
   position: relative;
   transition: transform 0.08s ease;
 }
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .modal-buttons button.primary:hover {
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .modal-buttons button.primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
   box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
 }
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .modal-buttons button.primary:active {
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .modal-buttons button.primary:active {
   transform: translateY(2px);
   box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
 }
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .modal-buttons button:disabled {
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .modal-buttons button:disabled {
   opacity: 0.7;
 }
 
@@ -18953,7 +18953,7 @@ tr.away-placeholder .away-recall { font-style: normal; margin-left: 8px; font-si
 .lt-body { display: flex; gap: 14px; align-items: flex-start; }
 .lt-fields { flex: 1.4; min-width: 0; }
 .lt-row { display: flex; gap: 10px; align-items: flex-start; margin: 6px 0; }
-.lt-row > select, .lt-row > input, .lt-row > textarea { flex: 1; }
+.lt-row > select, .lt-row > input, .lt-row > textarea { flex: 1; min-width: 0; }
 .lt-k { flex: 0 0 90px; color: #8b949e; font-size: 12px; padding-top: 3px; }
 .lt-nodes { flex: 1; display: flex; flex-direction: column; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
 .lt-node { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border: 0; border-bottom: 1px solid #21262d; background: transparent; color: #c9d1d9; text-align: left; cursor: pointer; font: inherit; font-size: 12px; }
@@ -18972,6 +18972,15 @@ tr.away-placeholder .away-recall { font-style: normal; margin-left: 8px; font-si
 .lt-check { display: block; margin: 6px 0; font-size: 12px; color: #8b949e; }
 .lt-hint { margin: 8px 0; }
 @media (max-width: 720px) { .lt-body { flex-direction: column; } .lt-carries { width: 100%; box-sizing: border-box; } }
+body.wizard #launch-target :is(.lt-modes, .lt-nodes, .lt-carries) { border-color: rgba(122, 93, 176, 0.5); }
+body.wizard #launch-target .lt-mode { background: #140f28; border-right-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
+body.wizard #launch-target .lt-mode.sel { background: #3a2a63; color: #f3e6c0; box-shadow: inset 0 -2px 0 #d9b45a; }
+body.wizard #launch-target .lt-mode:disabled { color: #6b5a8a; }
+body.wizard #launch-target .lt-node { color: #e7d9f5; border-bottom-color: rgba(122, 93, 176, 0.3); }
+body.wizard #launch-target .lt-node.sel { background: #3a2a63; }
+body.wizard #launch-target .lt-carries { background: #140f28; }
+body.wizard #launch-target :is(.lt-k, .lt-carries-title, .lt-carry-v, .lt-node-why, .lt-check) { color: #b39ddb; }
+body.wizard #launch-target :is(.lt-carry-k, .lt-consequence) { color: #e7d9f5; }
 details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 #skynet-fused-groups-root [data-act]:not([data-act="copy-generation-id"]):not([data-act="sandbox-details"]):not([data-act="send-elsewhere"]):not([data-act="group-menu"]):not([data-act="row-menu"]) { opacity: .45; cursor: not-allowed; }
 /* Fleet administration (js/fleet-admin-island.js): this node's federation
@@ -18981,10 +18990,15 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
    keeps it below every class rule (subtabs, cells, links, modal buttons). */
 :where(.fleet-admin, [id^="fleet-"]) button { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 5px; padding: 3px 10px; font: 12px system-ui, sans-serif; cursor: pointer; }
 :where(.fleet-admin, [id^="fleet-"]) button:where(:hover:not(:disabled)) { border-color: #58a6ff; }
-:where(.fleet-admin, [id^="fleet-"]) :where(select, textarea, input:not([type="checkbox"]):not([type="radio"])) { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 2px 6px; font: inherit; color-scheme: dark; }
-:where(.fleet-admin, [id^="fleet-"]) :where(select, textarea, input):where(:disabled) { opacity: 0.6; }
-:where(.fleet-admin, [id^="fleet-"]) :where(button, select, textarea, input, a):where(:focus-visible) { outline: 2px solid #58a6ff; outline-offset: 1px; }
+:where(.fleet-admin, [id^="fleet-"], #launch-target) :where(select, textarea, input:not([type="checkbox"]):not([type="radio"])) { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 2px 6px; font: inherit; color-scheme: dark; }
+:where(.fleet-admin, [id^="fleet-"], #launch-target) :where(select, textarea, input):where(:disabled) { opacity: 0.6; }
+:where(.fleet-admin, [id^="fleet-"], #launch-target) :where(button, select, textarea, input, a):where(:focus-visible) { outline: 2px solid #58a6ff; outline-offset: 1px; }
 #fleet-harness-run { align-self: flex-start; width: auto; }
+/* The launch-target dialog (Move / Teleport / Clone / Morph / Recall home)
+   shares the Fleet form controls above; its checkboxes follow the dark scheme
+   with the dashboard accent. Under wizard it takes the Clone dialog family's
+   arcane skin (the :is(#clone-agent-modal, …, #launch-target) rules). */
+#launch-target input[type="checkbox"] { accent-color: #58a6ff; color-scheme: dark; vertical-align: middle; margin: 0 4px 0 0; }
 :where(.fleet-admin, [id^="fleet-"]) button:where(:disabled) { opacity: .5; cursor: default; }
 :where(.fleet-admin, [id^="fleet-"]) button:where(.primary) { background: #1f6feb; border-color: #1f6feb; color: #fff; }
 :where(.fleet-admin, [id^="fleet-"]) button:where(.danger) { background: #21262d; border-color: #f8514966; color: #ffa198; }
