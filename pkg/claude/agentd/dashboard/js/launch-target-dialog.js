@@ -13,10 +13,10 @@ import { MovePanel, dropPlan, moveProgress, MOVE_POLL_MS, openFleetPage } from '
 const html = htm.bind(h);
 
 // TELEPORT_ROUTES gates Teleport, Clone to a peer and Recall home on the
-// operator teleport routes (POST /api/agents/{id}/teleport and the peer
-// teleport's home flag, tcl-hocp2h backend). Until they ship, the modes stay
-// visible but greyed with the reason, and out of the ⚙ menu.
-export const TELEPORT_ROUTES = false;
+// operator teleport routes (POST /api/agents/{id}/teleport and the recall
+// route's home return, #2883). Off, the modes stay visible but greyed with the
+// reason, and out of the ⚙ menu; it stays a switch for tests and rollbacks.
+export const TELEPORT_ROUTES = true;
 
 export const MODES = Object.freeze([
   { key: 'move', label: 'Move' },

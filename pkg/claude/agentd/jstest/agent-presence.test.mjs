@@ -81,7 +81,9 @@ test('a group keeps an away placeholder row but counts it apart from members', a
   assert.equal(host.querySelector('.presence-badge[data-presence="back"]').textContent, '⌂ back home · from forge · 1 hop');
   assert.ok(host.querySelector('tr.presence-row-back'));
   const modes = [...host.querySelectorAll('[data-act="send-elsewhere"][data-conv="c1"]')].map((b) => b.dataset.mode);
-  assert.deepEqual(modes, ['move', 'clone', 'morph'], 'the ⚙ menu offers the modes whose routes exist; teleport and recall wait for theirs');
+  assert.deepEqual(modes, ['move', 'teleport', 'clone', 'morph'], 'recall home shows only on a visiting agent');
+  const recall = [...host.querySelectorAll('tr.away-placeholder [data-act="send-elsewhere"]')].map((b) => b.dataset.mode);
+  assert.deepEqual(recall, ['home'], 'the away placeholder offers recall home');
 
   const fused = { ...group, name: 'builders@node-a', fleet_node: { id: 'inst_a', name: 'node-a', color: '#58a6ff', local: true } };
   dashPrefs.setItem('tclaude.dash.group.builders@node-a', '1');

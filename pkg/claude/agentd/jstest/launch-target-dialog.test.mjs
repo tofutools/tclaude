@@ -21,8 +21,9 @@ function fakeTimers() {
 test('modes, targets and what carries over say what is possible and why not', async (t) => {
   const harness = await createPreactHarness(t);
   const m = await harness.importDashboardModule('js/launch-target-dialog.js');
-  assert.equal(m.TELEPORT_ROUTES, false, 'teleport modes stay gated until the operator routes ship');
-  assert.deepEqual(m.modeState('teleport', { local: true }), { ok: false, why: 'Needs the operator teleport routes, which this dashboard does not have yet.' });
+  assert.equal(m.TELEPORT_ROUTES, true, 'the operator teleport routes have shipped');
+  assert.deepEqual(m.modeState('teleport', { local: true, teleport: false }), { ok: false, why: 'Needs the operator teleport routes, which this dashboard does not have yet.' });
+  assert.equal(m.modeState('teleport', { local: true }).ok, true);
   assert.equal(m.modeState('morph', { local: true }).ok, true);
   assert.match(m.modeState('morph', { local: false, source: 'forge' }).why, /forge's dashboard/);
   assert.equal(m.modeState('move', { local: false }).ok, true, 'a peer agent can be pulled here');
@@ -37,7 +38,8 @@ test('modes, targets and what carries over say what is possible and why not', as
   assert.deepEqual(by.inst_forge.groups, ['reviewers'], 'only groups that receive agents are offered');
   assert.equal(by.inst_ci.why, 'offline', 'an unavailable node stays listed with the reason');
   assert.equal(m.nodeTargets({ mode: 'clone', fleet, self, source, status: STATUS })[0].ok, true, 'clone here is fine');
-  assert.match(m.nodeTargets({ mode: 'clone', fleet, self, source, status: STATUS })[1].why, /teleport routes/);
+  assert.match(m.nodeTargets({ mode: 'clone', fleet, self, source, status: STATUS, teleport: false })[1].why, /teleport routes/);
+  assert.equal(m.nodeTargets({ mode: 'clone', fleet, self, source, status: STATUS })[1].ok, true, 'a peer clone goes through teleport');
   const pull = m.nodeTargets({ mode: 'move', fleet, self, source: { node: 'inst_forge', name: 'forge' }, status: STATUS, localGroups: ['builders'] });
   assert.deepEqual(pull.find((n) => n.id === 'inst_a').groups, ['builders'], 'a peer agent is pulled into this node\'s groups');
 
@@ -66,12 +68,12 @@ async function mountDialog(t, props) {
 test('move from the ⚙ menu: pick a node, then a receiving group, then confirm', async (t) => {
   const sent = [];
   const s = await mountDialog(t, {
-    initialMode: 'move',
+    initialMode: 'move', teleport: false,
     api: { status: async () => STATUS },
     actions: { moveAgent: async (b) => { sent.push(b); return { move_id: 'mv_1', disposition: 'pending_acceptance' }; }, moveDetail: async () => ({}) },
   });
   assert.match(s.q('#launch-target').textContent, /Move builder-1 to…/);
-  assert.equal(s.q('[data-lt-mode="teleport"]').disabled, true, 'teleport is greyed until its routes ship');
+  assert.equal(s.q('[data-lt-mode="teleport"]').disabled, true, 'teleport is greyed on a dashboard without its routes');
   assert.equal(s.q('[data-lt-node="inst_a"]').disabled, true);
   assert.equal(s.q('[data-lt-node="inst_ci"]').disabled, true);
   await s.click(s.q('[data-lt-node="inst_forge"]'));
