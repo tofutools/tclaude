@@ -11355,12 +11355,12 @@ body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal,
   color: #b39ddb;
 }
 body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) .cron-create-enabled { color: #e7d9f5; }
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) :is(.cron-create-row, .lt-row) :is(input[type=text], select, textarea) {
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) :is(.cron-create-row, .lt-row) :is(input[type=text], input:not([type]), select, textarea) {
   background: #140f28;
   border-color: rgba(122, 93, 176, 0.5);
   color: #f3e6c0;
 }
-body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) :is(.cron-create-row, .lt-row) :is(input[type=text], select, textarea):focus {
+body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) :is(.cron-create-row, .lt-row) :is(input[type=text], input:not([type]), select, textarea):focus {
   border-color: #a97bd6;
 }
 body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target) :is(.cron-create-row, .lt-row) select option {
@@ -18978,6 +18978,7 @@ body.wizard #launch-target .lt-mode.sel { background: #3a2a63; color: #f3e6c0; b
 body.wizard #launch-target .lt-mode:disabled { color: #6b5a8a; }
 body.wizard #launch-target .lt-node { color: #e7d9f5; border-bottom-color: rgba(122, 93, 176, 0.3); }
 body.wizard #launch-target .lt-node.sel { background: #3a2a63; }
+body.wizard #launch-target .lt-node:disabled { color: #6b5a8a; }
 body.wizard #launch-target .lt-carries { background: #140f28; }
 body.wizard #launch-target :is(.lt-k, .lt-carries-title, .lt-carry-v, .lt-node-why, .lt-check) { color: #b39ddb; }
 body.wizard #launch-target :is(.lt-carry-k, .lt-consequence) { color: #e7d9f5; }
