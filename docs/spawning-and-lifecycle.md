@@ -393,9 +393,7 @@ by default (`--no-copy-conv` for a blank-context sibling). The copy works for
 every harness with portable history: Claude Code copies its transcript and
 side files natively, and Codex, OpenCode, Copilot and Gemini go through the
 same history export/import as a cross-node move, landing in the clone's own
-harness state (a private `CODEX_HOME` or OpenCode state included). An
-OpenCode clone always copies its conversation; `--no-copy-conv` is refused for
-it.
+harness state (a private `CODEX_HOME` or OpenCode state included).
 
 The identity copy is all-or-nothing: if any membership, grant or ownership
 cannot be written, the clone is stopped and the command fails, so a clone never

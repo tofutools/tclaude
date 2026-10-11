@@ -229,15 +229,6 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			Msg: "clone is not supported for command-input harness " + relaunch.Harness,
 		}
 	}
-	if h, resolveErr := harness.Resolve(relaunch.Harness); resolveErr == nil && noCopyConv && h.UsesAuthoritativeServer() {
-		// A fresh OpenCode launch needs a daemon-started server, which only the
-		// spawn and resume paths provide. Say so up front instead of failing
-		// inside the detached launch.
-		return cloneSpawnResult{}, &cloneSpawnError{
-			Status: http.StatusUnprocessableEntity, Code: "unsupported_harness",
-			Msg: "a fresh-context (--no-copy-conv) clone is not supported for " + h.Name + "; clone with the conversation copied, or spawn a new agent",
-		}
-	}
 	effort, model = relaunch.Effort, relaunch.Model
 	var fastModeAtLaunch *bool
 	if relaunch.Harness == harness.CodexName && relaunch.CodexStateRoot != "" {

@@ -101,7 +101,7 @@ warning. Model and effort are remembered by the harness itself.
 | Sessions: spawn / resume | ✅ | ✅ | ✅ managed server + attach | ✅ | ✅ | ✅ spawn only |
 | One-shot [`ask`](ask.md) | ✅ live-streamed | ✅ buffered | ✅ buffered | ✅ buffered | ✅ buffered | ❌ |
 | Portable agent-bundle history | ✅ JSONL | ✅ rollout JSONL | ✅ native export/import | ✅ native event log | ✅ native chat JSONL | ❌ |
-| Clone with conversation copy | ✅ native copy | ✅ rollout JSONL; app-server forks the thread | ✅ native export/import; fresh-context clone refused | ✅ native event log | ✅ native chat JSONL | ❌ |
+| Clone with conversation copy | ✅ native copy | ✅ rollout JSONL; app-server forks the thread | ✅ native export/import | ✅ native event log | ✅ native chat JSONL | ❌ |
 | [Cross-harness history translation](#cross-harness-history-translation) | ✅ | ✅ | ✅ | ✅ images by path | ✅ | ❌ |
 | [Conversation](conversations.md) list & search | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only | ⚠️ send-keys only, not yet exercised against a live pane | ⚠️ durable inbox only; never injected into the shell |

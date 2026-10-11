@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 func cloneGroupsOf(t *testing.T, conv string) []string {
@@ -83,24 +82,4 @@ func TestClone_ExtraGroupIsGatedLikeAddingAMember(t *testing.T) {
 	require.Equal(t, http.StatusOK, ok.Code, "body=%s", ok.Raw)
 	assert.ElementsMatch(t, []string{"alpha", "beta"}, cloneGroupsOf(t, ok.NewConv))
 	assert.Equal(t, []string{"alpha"}, cloneGroupsOf(t, src), "the source is untouched")
-}
-
-// Scenario: OpenCode needs a daemon-started server, which a fresh-context
-// clone launch never had; the clone says so up front instead of failing inside
-// the detached launch.
-func TestClone_OpenCodeFreshContextIsRefusedClearly(t *testing.T) {
-	f := newFlow(t)
-	const src = "ocd-aaaa-bbbb-cccc-1111"
-	f.HaveConvWithTitle(src, "oc")
-	f.HaveAliveSession(src, "spwn-ocd", "tclaude-spwn-ocd", f.TestCwd("ocd"))
-	row, err := db.LoadSession("spwn-ocd")
-	require.NoError(t, err)
-	row.Harness = harness.OpenCodeName
-	row.ApprovalPolicy = "ask"
-	require.NoError(t, db.SaveSession(row))
-
-	resp := f.AsHuman().CloneWith(src, map[string]any{"no_copy_conv": true})
-	assert.Equal(t, http.StatusUnprocessableEntity, resp.Code, "body=%s", resp.Raw)
-	assert.Contains(t, string(resp.Raw), "not supported")
-	assert.Empty(t, resp.NewConv)
 }
