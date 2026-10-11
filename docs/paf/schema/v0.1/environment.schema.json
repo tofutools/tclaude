@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/environment.schema.json",
+  "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v0.1/environment.schema.json",
   "title": "PAF agents/<key>/environment.json",
   "description": "The original environment. Every field is a hint for the receiver, never an instruction.",
   "type": "object",

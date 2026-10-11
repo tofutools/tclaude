@@ -50,7 +50,7 @@ func decodeAgentArchiveBytes(raw []byte) (*agentbundle.Bundle, error) {
 func peerSupportsPAFBundles(peer string) bool {
 	raw, _, err := db.GetFederationCatalog(peer)
 	var cat proto.CatalogPayload
-	return err == nil && json.Unmarshal([]byte(raw), &cat) == nil && cat.PAFAgentBundles
+	return err == nil && json.Unmarshal([]byte(raw), &cat) == nil && cat.PAFAgentBundles != "" && paf.CanRead(cat.PAFAgentBundles, paf.Version)
 }
 
 // archiveAgentTransfer writes b in the requested format to a private

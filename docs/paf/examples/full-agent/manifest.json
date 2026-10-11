@@ -51,16 +51,16 @@
   "extensions_used": {
     "tclaude": {
       "copy": "unsafe",
-      "schema": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/ext/tclaude.schema.json",
+      "schema": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v0.1/ext/tclaude.schema.json",
       "spec": "https://github.com/tofutools/tclaude/blob/main/docs/paf.md#the-tclaude-extension",
       "system": "tclaude",
       "system_version": "v0.0.2212",
-      "version": "1.0"
+      "version": "0.1"
     }
   },
   "format": "paf",
   "kind": "agent",
-  "paf_version": "1.0",
+  "paf_version": "0.1",
   "producer": {
     "name": "tclaude",
     "version": "v0.0.2212"

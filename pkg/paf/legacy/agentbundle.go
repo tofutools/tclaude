@@ -30,7 +30,7 @@ const MailLedgerPath = paf.ExtDir + paf.ExtTclaude + "/mail-deliveries.json"
 // TclaudeExtension is the declaration tclaude writes for its extension.
 func TclaudeExtension(systemVersion string) paf.ExtensionDecl {
 	return paf.ExtensionDecl{
-		Version:       "1.0",
+		Version:       "0.1",
 		System:        "tclaude",
 		SystemVersion: systemVersion,
 		Spec:          "https://github.com/tofutools/tclaude/blob/main/docs/paf.md#the-tclaude-extension",

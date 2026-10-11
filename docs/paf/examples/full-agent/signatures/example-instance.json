@@ -1,9 +1,9 @@
 {
   "alg": "ed25519",
   "key_id": "example-instance",
-  "manifest_sha256": "d182adae94718e1eb98d9b4afc5bc003c147a1bbf3b8d43394bb81650ca9eac9",
+  "manifest_sha256": "c6101291652c18e77cbba151dda9eb3c439b604cc7e893071cf3ceafd1404d93",
   "public_key": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w=",
-  "signature": "nHkeciWaLMrPUrTjPyaA1pFHYtNBFq+oDoVjrelARxcfBp3FY7LEJYbeS1iQ24u96tfPgTMyKesT0+tXUBlWCg==",
+  "signature": "BBb7NObxeIbQJsQwn268AUluZJI2XjGP6CssGjPiB33k5uHY0lnf8qdafeGirET+pd04Bll8jl3p2VGYeol+AQ==",
   "signer": {
     "kind": "instance",
     "name": "laptop"

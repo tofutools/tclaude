@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/manifest.schema.json",
+  "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v0.1/manifest.schema.json",
   "title": "PAF manifest.json",
   "type": "object",
   "required": [
@@ -18,7 +18,7 @@
     },
     "paf_version": {
       "type": "string",
-      "pattern": "^1\\.[0-9]+$"
+      "pattern": "^0\\.1$"
     },
     "kind": {
       "enum": [
