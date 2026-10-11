@@ -62,9 +62,10 @@ func handleFederatedGroupSend(w http.ResponseWriter, r *http.Request, fromConv s
 		writeFedErr(w, newFedErr(http.StatusNotFound, "no_catalog", "no catalog received from %s yet", peerDisplay(peer)))
 		return
 	}
+	link := groupLinkByRemoteName(r, fromConv, peer, group)
 	remote, roster := "", false
 	for _, g := range cat.Groups {
-		if strings.EqualFold(g.Name, group) && g.HasCap(proto.CapMail) {
+		if strings.EqualFold(g.Name, group) && (g.HasCap(proto.CapMail) || link != nil && link.RemoteGroupID == g.ID) {
 			remote, roster = g.Name, g.HasCap(proto.CapRoster)
 		}
 	}
@@ -90,16 +91,27 @@ func handleFederatedGroupSend(w http.ResponseWriter, r *http.Request, fromConv s
 		return
 	}
 	via := ""
-	if fromConv != "" {
+	if fromConv != "" && link == nil {
 		if _, ok := requirePermission(w, r, PermMessageDirect, ActionContext{RemotePeer: peer.InstanceID, RemoteGroup: remote}); !ok {
 			return
 		}
 		via = remote
 	}
+	var authority *proto.GroupLinkMailAuthority
+	linkID := ""
+	if link != nil {
+		authority, err = linkMailAuthority(link)
+		if err != nil {
+			writeError(w, 500, "io", err.Error())
+			return
+		}
+		linkID = link.ID
+	}
 	row, err := queueFederatedEnvelope(fedOutgoing{
+		linkID:   linkID,
 		fromConv: fromConv, peer: peer, kind: proto.KindGroupMail, toLabel: label,
 		subject: req.Subject, preview: req.Body, ttl: fedMailTTL,
-		payload: proto.GroupMailPayload{Group: remote, Role: strings.TrimSpace(req.Role), Subject: req.Subject, Body: req.Body},
+		payload: proto.GroupMailPayload{Link: authority, Group: remote, Role: strings.TrimSpace(req.Role), Subject: req.Subject, Body: req.Body},
 	})
 	if err != nil {
 		writeFedErr(w, err)
@@ -154,6 +166,12 @@ func (rt *fedRuntime) acceptGroupMail(peer *db.FederationPeer, env *proto.Envelo
 		return
 	}
 	g, roster := fedPeerMailGroup(peer.InstanceID, gp.Group)
+	if gp.Link != nil {
+		g = inboundGroupLink(peer.InstanceID, gp.Link)
+		if g != nil {
+			roster = fedPeerAllows(peer.InstanceID, g.ID, PermGroupsRosterRead)
+		}
+	}
 	if g == nil {
 		// Same answer for "not exported" and "no such group".
 		refuse(fedCodeNotExported, "no group by that name is exported to this instance with mail")

@@ -26,6 +26,8 @@ import (
 // The links describe this node's other trust relationships, so they are never
 // served to a peer, not even an unrestricted one (see peerSnapshotCtxKey).
 type groupFederationLink struct {
+	Mode      string     `json:"mode,omitempty"`
+	State     string     `json:"state,omitempty"`
 	Peer      string     `json:"peer"`
 	Label     string     `json:"label"`
 	Level     string     `json:"level"`
@@ -133,6 +135,19 @@ func gatherGroupFederationLinks() map[int64][]groupFederationLink {
 				l.Remote = m.RemoteRoute
 			}
 			out[m.GroupID] = append(out[m.GroupID], l)
+		}
+	}
+	if edges, err := db.ListFederationGroupLinks(0); err == nil {
+		for _, edge := range edges {
+			if p := byID[edge.Peer]; p != nil {
+				l := base(p)
+				l.Kind = "link"
+				l.Direction = edge.Direction
+				l.Remote = edge.RemoteGroupName
+				l.Mode = edge.Mode
+				l.State = edge.LocalState
+				out[edge.LocalGroupID] = append(out[edge.LocalGroupID], l)
+			}
 		}
 	}
 	for id := range out {

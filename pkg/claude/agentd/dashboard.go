@@ -1583,11 +1583,23 @@ func buildHarnessCatalog() []dashboardHarness {
 // Group names are pre-resolved so the renderer doesn't need to do a
 // second lookup.
 type dashboardLink struct {
-	ID        int64  `json:"id"`
-	From      string `json:"from"`
-	To        string `json:"to"`
-	Mode      string `json:"mode"`
-	CreatedAt string `json:"created_at,omitempty"`
+	ID            any    `json:"id"`
+	Peer          string `json:"peer,omitempty"`
+	PeerLabel     string `json:"peer_label,omitempty"`
+	RemoteGroup   string `json:"remote_group,omitempty"`
+	RemoteGroupID string `json:"remote_group_id,omitempty"`
+	Direction     string `json:"direction,omitempty"`
+	LocalState    string `json:"local_state,omitempty"`
+	RemoteState   string `json:"remote_state,omitempty"`
+	RemoteStateAt string `json:"remote_state_at,omitempty"`
+	RemoteStale   bool   `json:"remote_stale,omitempty"`
+	RequestID     string `json:"request_id,omitempty"`
+	Deadline      string `json:"deadline,omitempty"`
+	Auto          bool   `json:"auto,omitempty"`
+	From          string `json:"from"`
+	To            string `json:"to"`
+	Mode          string `json:"mode"`
+	CreatedAt     string `json:"created_at,omitempty"`
 }
 
 // dashboardCronJob is the snapshot view of one agent_cron_jobs row.
@@ -4029,6 +4041,27 @@ func collectLinksSnapshot(names map[int64]string) []dashboardLink {
 			Mode:      l.Mode,
 			CreatedAt: l.CreatedAt.Format(time.RFC3339),
 		})
+	}
+	remote, _ := db.ListFederationGroupLinks(0)
+	for _, l := range remote {
+		peer, _ := db.GetFederationPeer(l.Peer)
+		label := l.Peer
+		if peer != nil {
+			label = peerDisplay(peer)
+		}
+		from, to := names[l.LocalGroupID], l.RemoteGroupName
+		if l.Direction == "in" {
+			from, to = to, from
+		}
+		rt := currentFederation()
+		row := dashboardLink{ID: l.ID, From: from, To: to, Mode: l.Mode, Peer: l.Peer, PeerLabel: label, RemoteGroup: l.RemoteGroupName, RemoteGroupID: l.RemoteGroupID, Direction: l.Direction, LocalState: l.LocalState, RemoteState: l.RemoteState, RemoteStale: rt == nil || !rt.sessionPeerOnline(l.Peer), RequestID: l.ProposalID, CreatedAt: l.CreatedAt.UTC().Format(time.RFC3339)}
+		if !l.RemoteStateAt.IsZero() {
+			row.RemoteStateAt = l.RemoteStateAt.UTC().Format(time.RFC3339)
+		}
+		if p, _ := db.GetFederationProposal(l.ProposalID); p != nil {
+			row.Deadline = p.Deadline.UTC().Format(time.RFC3339)
+		}
+		out = append(out, row)
 	}
 	return out
 }

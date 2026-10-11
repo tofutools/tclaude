@@ -814,6 +814,10 @@ func registerDashboardGroupRoutes(mux *http.ServeMux) {
 		dashboardUpdateLink(w, r, g, r.PathValue("id"))
 	}))
 	mux.HandleFunc("DELETE /api/groups/{name}/links/{id}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		if strings.HasPrefix(r.PathValue("id"), "xlink_") {
+			handleRemoteGroupLinkRemove(w, asDashboardHumanPeer(r), g, r.PathValue("id"))
+			return
+		}
 		dashboardRemoveLink(w, g, r.PathValue("id"))
 	}))
 }
@@ -846,13 +850,13 @@ func groupRoute(fn func(http.ResponseWriter, *http.Request, *db.AgentGroup)) htt
 // side, but trusts the cookie-auth caller (the dashboard is human-only)
 // and writes through the DB helpers directly. Body: {to, mode?, bidir?}.
 func dashboardAddLink(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	var body struct {
-		To    string `json:"to"`
-		Mode  string `json:"mode"`
-		Bidir bool   `json:"bidir"`
-	}
+	var body linkAddBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.ToPeer != "" {
+		handleRemoteGroupLinkAdd(w, asDashboardHumanPeer(r), g, body)
 		return
 	}
 	body.To = strings.TrimSpace(body.To)
