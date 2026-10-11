@@ -16,15 +16,25 @@
 // media type, a size, a download link — has no width to spare for it.
 
 import { Fragment, h } from 'preact';
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { useDialogFocus } from './dialog-focus.js';
 import { isTopmostOverlay } from './overlay-stack.js';
 import { attachmentHrefByID, attachmentSize } from './human-attachments.js';
 import { MarkdownDocument } from './markdown-document.js';
 import { DialogResizer, useDialogResize } from './dialog-resize.js';
+import {
+  ViewerDisplayButtons, ZOOM_STEP, clamp, useViewerDisplay, useZoomGestures,
+} from './viewer-controls.js';
 
 const html = htm.bind(h);
+
+// Text zoom in the viewer: pinch, Ctrl+wheel and the zoom keys scale the
+// document with CSS `zoom`, which reflows it to the dialog width (a transform
+// would only magnify it off the side). The document's type is set in px, so
+// this is the one knob that scales all of it together.
+const MIN_TEXT_ZOOM = 0.5;
+const MAX_TEXT_ZOOM = 3;
 
 function safeIDPart(value) {
   return String(value ?? '').replace(/[^a-zA-Z0-9_-]/g, '-');
@@ -67,6 +77,12 @@ export function MarkdownAttachment({ messageID, attachment, siblings, surface = 
   // dialog's labelling ids unique.
   const titleID = `markdown-source-title-${surface}-${safeIDPart(messageID)}-${safeIDPart(attachment?.id ?? 0)}`;
   const viewerOpen = viewMode !== null;
+  const [textZoom, setTextZoom] = useState(1);
+  const textZoomRef = useRef(1);
+  textZoomRef.current = textZoom;
+  const stageRef = useRef(null);
+  // The stage point a pending zoom must keep still, restored after layout.
+  const anchorRef = useRef(null);
 
   const close = useCallback(() => setViewMode(null), []);
   const { dialogRef } = useDialogFocus({
@@ -78,6 +94,47 @@ export function MarkdownAttachment({ messageID, attachment, siblings, surface = 
   const { dialogStyle, resizerProps } = useDialogResize({
     dialogRef,
     prefKey: 'tclaude.dash.attachmentViewer.markdown.size',
+  });
+  const topmost = () => isTopmostOverlay(overlayRef.current);
+  const view = useViewerDisplay({ dialogRef, open: viewerOpen, shouldHandle: topmost });
+
+  const zoomText = useCallback((compute, point = null) => {
+    const from = textZoomRef.current;
+    const to = clamp(compute(from), MIN_TEXT_ZOOM, MAX_TEXT_ZOOM);
+    if (Math.abs(to - from) < 1e-3) return;
+    const stage = stageRef.current;
+    if (stage && !anchorRef.current) {
+      const rect = stage.getBoundingClientRect();
+      const px = point ? clamp(point.x - rect.left, 0, stage.clientWidth) : 0;
+      const py = point ? clamp(point.y - rect.top, 0, stage.clientHeight) : 0;
+      anchorRef.current = { px, py, x: stage.scrollLeft + px, y: stage.scrollTop + py, from };
+    }
+    textZoomRef.current = to;
+    setTextZoom(to);
+  }, []);
+
+  // Keep the anchored point of the document under the pointer (or the top of
+  // the view, for keys and buttons) as the text reflows.
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current;
+    anchorRef.current = null;
+    const stage = stageRef.current;
+    if (!anchor || !stage) return;
+    const ratio = textZoom / anchor.from;
+    stage.scrollLeft = anchor.x * ratio - anchor.px;
+    stage.scrollTop = anchor.y * ratio - anchor.py;
+  }, [textZoom]);
+
+  useZoomGestures({
+    targetRef: dialogRef,
+    enabled: viewerOpen,
+    shouldHandle: topmost,
+    onZoom: (factor, point) => zoomText((value) => value * factor, point),
+    onKey: (action) => {
+      if (action === 'in') zoomText((value) => value * ZOOM_STEP);
+      else if (action === 'out') zoomText((value) => value / ZOOM_STEP);
+      else zoomText(() => 1);
+    },
   });
 
   // Fetched when the message is shown rather than on demand: the document is
@@ -124,7 +181,7 @@ export function MarkdownAttachment({ messageID, attachment, siblings, surface = 
         }
       }}>
       <div ref=${dialogRef} class="markdown-preview-dialog" role="dialog" aria-modal="true"
-        aria-labelledby=${titleID} style=${dialogStyle}>
+        aria-labelledby=${titleID} style=${dialogStyle} data-display=${view.display}>
         <header class="markdown-preview-header">
           <div class="markdown-preview-heading">
             <h2 id=${titleID}>${filename}</h2>
@@ -139,18 +196,24 @@ export function MarkdownAttachment({ messageID, attachment, siblings, surface = 
                 aria-pressed=${viewMode === 'source'}
                 onClick=${() => setViewMode('source')}>Source</button>
             </div>
+            ${textZoom !== 1 && html`<button type="button" class="markdown-preview-zoom-reset"
+              onClick=${() => zoomText(() => 1)} aria-label=${`Text size ${Math.round(textZoom * 100)}%; reset to 100%`}
+              title="Reset text size (0)">${Math.round(textZoom * 100)}%</button>`}
             <a class="markdown-preview-download" href=${href} download=${filename}
               title="Download this agent-published file">Download</a>
+            <${ViewerDisplayButtons} ...${view} />
             <button ref=${closeRef} type="button" class="markdown-preview-close"
               onClick=${close} aria-label="Close the document viewer" title="Close (Esc)">×</button>
           </div>
         </header>
-        <div class="markdown-preview-stage" tabIndex="0" role="region"
+        <div ref=${stageRef} class="markdown-preview-stage" tabIndex="0" role="region"
           aria-label=${viewMode === 'source' ? `${filename} source` : filename}>
-          ${viewMode === 'source'
-            ? html`<pre class="markdown-preview-source">${source}</pre>`
-            : html`<${MarkdownDocument} source=${source} attachments=${siblings}
-                className="markdown-document markdown-preview-document" />`}
+          <div class="markdown-preview-zoom" style=${textZoom !== 1 ? { zoom: textZoom } : undefined}>
+            ${viewMode === 'source'
+              ? html`<pre class="markdown-preview-source">${source}</pre>`
+              : html`<${MarkdownDocument} source=${source} attachments=${siblings}
+                  className="markdown-document markdown-preview-document" />`}
+          </div>
         </div>
         <${DialogResizer} ...${resizerProps} label="Resize the document viewer" />
       </div>

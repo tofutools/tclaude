@@ -125,3 +125,88 @@ test('a published file is previewed through its own per-file URL', async (t) => 
   assert.equal(requests[0].url, '/api/human-messages/42/attachments/9');
   await mounted.unmount();
 });
+
+async function openLoadedPreview(t, harness, natural = { w: 1600, h: 900 }) {
+  const { ImageAttachmentPreview } = await harness.importDashboardModule(
+    'js/image-preview-overlay.js',
+  );
+  const savedFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 200 });
+  t.after(() => { globalThis.fetch = savedFetch; });
+  const mounted = await harness.mount(harness.html`
+    <${ImageAttachmentPreview} messageID=${3} attachment=${attachment} />
+  `);
+  await harness.act(() => mounted.container.querySelector('.human-attachment-preview-trigger').click());
+  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  const image = mounted.container.querySelector('.image-preview-image');
+  Object.defineProperty(image, 'naturalWidth', { value: natural.w });
+  Object.defineProperty(image, 'naturalHeight', { value: natural.h });
+  await harness.act(() => { harness.fireEvent(image, 'load'); });
+  return { mounted, dialog: mounted.container.querySelector('[role="dialog"]') };
+}
+
+const zoomLabel = (dialog) => dialog.querySelector('.image-preview-zoom-value').textContent;
+
+test('Ctrl+wheel and a trackpad pinch zoom the image and cancel page zoom', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mounted, dialog } = await openLoadedPreview(t, harness);
+  // linkedom has no layout, so "fit" falls back to actual size.
+  assert.equal(zoomLabel(dialog), '100%');
+
+  await harness.act(() => { harness.fireEvent(dialog, 'wheel', { deltaY: -30, deltaMode: 0 }); });
+  assert.equal(zoomLabel(dialog), '100%', 'a plain wheel scrolls rather than zooms');
+
+  let event;
+  await harness.act(() => {
+    event = harness.fireEvent(dialog, 'wheel', { deltaY: -30, deltaMode: 0, ctrlKey: true });
+  });
+  assert.equal(event.defaultPrevented, true, 'the browser does not also zoom the page');
+  assert.equal(zoomLabel(dialog), '135%');
+  const image = dialog.querySelector('.image-preview-image');
+  assert.equal(image.style.width, `${1600 * Math.exp(0.3)}px`, 'zoom resizes the image in layout');
+
+  await harness.act(() => {
+    harness.fireEvent(dialog, 'gesturestart', { scale: 1 });
+    harness.fireEvent(dialog, 'gesturechange', { scale: 0.5 });
+  });
+  assert.equal(zoomLabel(dialog), '67%', 'Safari pinch applies its scale ratio');
+  await mounted.unmount();
+});
+
+test('zoom keys, Fit and 1:1 drive the image scale', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mounted, dialog } = await openLoadedPreview(t, harness);
+
+  let event;
+  await harness.act(() => { event = harness.fireEvent(dialog, 'keydown', { key: '=', ctrlKey: true }); });
+  assert.equal(event.defaultPrevented, true);
+  assert.equal(zoomLabel(dialog), '125%');
+  await harness.act(() => { harness.fireEvent(dialog, 'keydown', { key: '-' }); });
+  await harness.act(() => { harness.fireEvent(dialog, 'keydown', { key: '-' }); });
+  assert.equal(zoomLabel(dialog), '80%');
+
+  const fit = [...dialog.querySelectorAll('.image-preview-footer button')].find((b) => b.textContent === 'Fit');
+  assert.equal(fit.getAttribute('aria-pressed'), 'false');
+  await harness.act(() => { harness.fireEvent(dialog, 'keydown', { key: '0' }); });
+  assert.equal(fit.getAttribute('aria-pressed'), 'true', '0 returns to fit');
+
+  const actual = dialog.querySelector('[aria-label="Actual size"]');
+  await harness.act(() => { harness.fireEvent(dialog, 'keydown', { key: '+' }); });
+  await harness.act(() => actual.click());
+  assert.equal(zoomLabel(dialog), '100%');
+  assert.equal(actual.getAttribute('aria-pressed'), 'true');
+  await mounted.unmount();
+});
+
+test('the viewer can be maximized to the window', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mounted, dialog } = await openLoadedPreview(t, harness);
+  assert.equal(dialog.getAttribute('data-display'), 'normal');
+  const maximize = dialog.querySelector('.viewer-maximize');
+  await harness.act(() => maximize.click());
+  assert.equal(dialog.getAttribute('data-display'), 'maximized');
+  assert.equal(maximize.getAttribute('aria-pressed'), 'true');
+  await harness.act(() => maximize.click());
+  assert.equal(dialog.getAttribute('data-display'), 'normal');
+  await mounted.unmount();
+});
