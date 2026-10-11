@@ -99,6 +99,29 @@ export function normalizeFleet(status) {
   };
 }
 
+// normalizeNode reads this node and its hub connection from the same status
+// read, peers or not: the chip row is always shown, and is usable once the
+// hub connection is up (tcl-lt1fyt). Hub state is 'off' (federation disabled
+// or no hub configured), 'connecting', 'refused', 'disconnected' or
+// 'connected'.
+export function normalizeNode(status) {
+  if (!status || typeof status !== 'object' || !status.instance_id) return null;
+  const hub = !status.enabled || (!status.hub_url && !status.hub) ? 'off' : (status.hub?.state || 'connecting');
+  return {
+    self: { id: status.instance_id, name: status.name || 'this node', color: LOCAL_COLOR, local: true, online: true },
+    hub,
+  };
+}
+
+// hubOffReason says why the chip row is greyed out, or '' when it is usable.
+export function hubOffReason(node) {
+  if (!node) return 'Not connected to a federation hub';
+  if (node.hub === 'connected') return '';
+  if (node.hub === 'off') return 'Not connected to a federation hub: federation is off (tclaude federation connect)';
+  if (node.hub === 'refused') return 'Not connected to a federation hub: the hub refused this node';
+  return 'Not connected to a federation hub: connecting…';
+}
+
 // summaryURL addresses a node's summary: the local route for this node and the
 // peer proxy (keyed by the stable instance ID) for everyone else.
 export function summaryURL(node) {

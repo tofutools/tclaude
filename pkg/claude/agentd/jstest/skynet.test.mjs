@@ -94,14 +94,38 @@ test('actions send If-None-Match and keep the body on 304; a missing status rout
   assert.equal(state.fleet.value.peers.length, 2);
 });
 
-test('chip row renders only with trusted peers; peer chips switch the whole UI to that node', async (t) => {
+test('chip row is always there, greyed out until the hub connects; peer chips switch the whole UI to that node', async (t) => {
   const { harness, stateMod, island } = await load(t);
   const activeTab = harness.signals.signal('access');
   const state = stateMod.createSkynetState({ activeTab });
   const nav = []; const switched = [];
+  const map = harness.document.createElement('nav'); map.innerHTML = '<a data-tab="map" class="node-chip map">map</a>'; harness.document.body.appendChild(map);
+  const anchor = map.firstChild;
   const mounted = await harness.mount(harness.html`<${island.NodeChips} state=${state} navigate=${(tab) => nav.push(tab)} remote="" switchNode=${(id) => switched.push(id)} />`);
-  assert.equal(mounted.container.textContent, '', 'no fleet: nothing rendered');
+  const home = () => getByRole(mounted.container, 'button', { name: /this node/ });
+  const fuse = () => getByRole(mounted.container, 'button', { name: /Show several nodes together/ });
+  assert.equal(home().disabled, true, 'before any status read: ⌂ shown, disabled');
+  assert.equal(anchor.getAttribute('aria-disabled'), 'true');
+
+  await harness.act(() => { state.setStatus({ enabled: false, instance_id: 'inst_self', name: 'desk', peers: [] }); });
+  assert.equal(home().disabled, true, 'federation off');
+  assert.match(home().title, /federation is off/);
+  assert.equal(fuse().disabled, true);
+  assert.match(anchor.title, /federation is off/);
+
+  await harness.act(() => { state.setStatus({ ...status([]), hub: { state: 'connecting' } }); });
+  assert.equal(home().disabled, true, 'a hub not connected yet greys the row out, peers or not');
+  assert.match(home().title, /connecting/);
+  assert.equal(mounted.container.querySelectorAll('button.node-chip').length, 2, 'peers only appear once connected');
+
+  await harness.act(() => { state.setStatus({ ...status([]), peers: [] }); });
+  assert.equal(home().disabled, false, 'connected without peers: ⌂ usable');
+  assert.equal(fuse().disabled, true, 'nothing to fuse yet');
+  assert.match(anchor.title, /No linked nodes yet/);
+
   await harness.act(() => { state.setStatus(status([])); });
+  assert.equal(anchor.hasAttribute('aria-disabled'), false, 'connected with peers: the map opens');
+  assert.equal(fuse().disabled, false);
   const local = getByRole(mounted.container, 'button', { name: 'desk (this node)' });
   assert.equal(local.getAttribute('aria-current'), 'page');
   await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: 'forge, online, restricted peer' }), 'click'));
@@ -110,7 +134,10 @@ test('chip row renders only with trusted peers; peer chips switch the whole UI t
   assert.equal(local.getAttribute('aria-current'), null);
   await harness.act(() => harness.fireEvent(local, 'click'));
   assert.deepEqual(nav, ['access'], 'the ⌂ chip returns to the tab left for the map');
-  await mounted.unmount(); state.dispose();
+  await harness.act(() => { activeTab.value = 'access'; state.setStatus({ ...status([]), hub: { state: 'disconnected' } }); });
+  assert.equal(home().disabled, true, 'a hub drop greys the row out again, live');
+  assert.equal(anchor.getAttribute('aria-disabled'), 'true');
+  await mounted.unmount(); state.dispose(); map.remove();
 });
 
 test('on a peer view the peer chip is current and ⌂ switches back to this node', async (t) => {

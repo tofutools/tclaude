@@ -18686,8 +18686,11 @@ body.wizard .git-repos-concurrency select:focus-visible { outline-color: #bb86fc
      and growing the bar. Padding keeps the status dots inside the clip box. */
   flex: 0 1000 auto; overflow: hidden; padding: 4px 4px 4px 2px;
 }
+/* The row is always there (tcl-lt1fyt); :empty only covers the first paint. */
 .node-chips-host:empty { display: none; }
-nav:has(#node-chips-root:empty) [data-tab="map"] { display: none; }
+.node-chip:disabled, nav [data-tab].node-chip.node-chip-off { opacity: 0.45; cursor: not-allowed; }
+.node-chip:disabled:hover { border-color: #2a3340; color: #c9d1d9; }
+nav [data-tab].node-chip.node-chip-off { pointer-events: none; }
 .node-chips { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
 .node-chip, nav [data-tab].node-chip {
   position: relative; box-sizing: border-box; height: 24px; min-width: 24px; align-self: center;
