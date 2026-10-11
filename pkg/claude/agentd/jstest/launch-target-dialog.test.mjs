@@ -245,13 +245,14 @@ test('encrypted compaction requests a handoff using the summary wait without a l
  const sent=[];
  const pending={history:'summary',handoff_reason:'encrypted_compaction_summary',expires_at:new Date(Date.now()+60000).toISOString()};
  const s=await mountDialog(t,{initialMode:'morph',api:{status:async()=>({}),profiles:async()=>[{name:'small'}],morphStatus:async()=>({}),morph:async(id,b)=>{if(b.dry_run)return {history:{needs_handoff:true,needs_summary:false}};sent.push(b);return {result:'pending',pending_morph:pending};}}});
- await s.waitFor(()=>s.q('#lt-ok')?.textContent.includes('Request handoff'));
+ await s.change(s.q('#lt-morph-profile'),'small');
+ assert.match(s.q('#lt-ok').textContent,/Request handoff/);
  assert.match(s.q('#launch-target').textContent,/Compaction summary unreadable/);
  assert.equal(s.q('#lt-morph-now').disabled,true);
  assert.equal(s.q('#lt-confirm-cut'),null);
  assert.ok(s.q('#lt-proceed-without-summary'));
- s.q('#lt-ok').click();
- await s.waitFor(()=>s.q('[data-lt-state="waiting-summary"]'));
+ await s.click(s.q('#lt-ok'));
+ assert.ok(s.q('[data-lt-state="waiting-summary"]'));
  assert.equal(sent.length,1);
  assert.equal(sent[0].now,undefined);
  assert.equal(s.closed(),0);
