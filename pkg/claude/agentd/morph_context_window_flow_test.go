@@ -48,3 +48,34 @@ func TestMorphHistoryWindowCatalogAndExplicitOverride(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, spawn.ConvID, agent.CurrentConvID, "preview and rejected overrides leave the source running")
 }
+
+func TestMorphHistoryWindowRespectsProfileAndExtendedClaude(t *testing.T) {
+	t.Setenv(session.ResourceDelegationDirEnv, "")
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	spawn := spawnMorphWorker(t, f, "crew", "worker", nil)
+	seedClaudeHistory(t, f, spawn.ConvID)
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "small", Harness: "copilot", Model: "auto", Approval: "yolo", ContextWindowMax: 16_000})
+	require.NoError(t, err)
+	rec := f.AsHuman().Morph(spawn.AgentID, map[string]any{"profile": "small", "history_window_tokens": 64_000, "dry_run": true})
+	r := decodeCrossMorph(t, rec.Code, rec.Body.Bytes())
+	require.NotNil(t, r.History)
+	assert.EqualValues(t, 16_000, r.History.ContextWindowTokens)
+
+	codex := spawnMorphSource(t, f, "codex", "other")
+	seedMorphHistory(t, f, "codex", codex.ConvID)
+	for _, body := range []map[string]any{
+		{"harness": "claude", "model": "sonnet[1m]", "approval": "default", "dry_run": true},
+		{"harness": "claude", "model": "sonnet[1m]", "approval": "default", "history_window_tokens": 500_000, "dry_run": true},
+	} {
+		rec = f.AsHuman().Morph(codex.AgentID, body)
+		r = decodeCrossMorph(t, rec.Code, rec.Body.Bytes())
+		require.NotNil(t, r.History)
+		want := int64(1_000_000)
+		if body["history_window_tokens"] != nil {
+			want = 500_000
+		}
+		assert.Equal(t, want, r.History.ContextWindowTokens)
+		assert.Equal(t, want*60/100, r.History.BudgetTokens)
+	}
+}

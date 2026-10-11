@@ -70,3 +70,20 @@ func TestMorphOpenCodeWindowsUseProviderSpecificInputLimit(t *testing.T) {
 	assert.Equal(t, int64(6144), n)
 	assert.Contains(t, source, "cached")
 }
+
+func TestMorphCodexCustomRouteDoesNotReusePublicModelWindow(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CODEX_HOME", dir)
+	raw, err := json.Marshal(map[string]any{"fetched_at": time.Now(), "models": []map[string]any{{"slug": "gpt-5", "context_window": 272000}}})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "models_cache.json"), raw, 0600))
+	for _, config := range []string{"model_provider = 'local'\n", "[model_providers.openai]\nbase_url = 'http://localhost:1234'\n", "profile = 'local'\n[profiles.local]\nmodel_provider = 'proxy'\n"} {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(config), 0600))
+		n, source := MorphContextWindow(MustGet(CodexName), "gpt-5")
+		assert.EqualValues(t, 32000, n)
+		assert.Equal(t, "unknown model, assumed 32k", source)
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte("model_provider = 'local'\nmodel_context_window = 8192\n"), 0600))
+	n, _ := MorphContextWindow(MustGet(CodexName), "gpt-5")
+	assert.EqualValues(t, 8192, n, "an explicit native limit remains usable on custom providers")
+}

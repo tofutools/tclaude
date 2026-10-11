@@ -30,6 +30,9 @@ type Options struct {
 	// ContextWindowTokens is the destination model's window; zero uses
 	// DefaultContextWindowTokens.
 	ContextWindowTokens int64
+	// NativeContextWindowTokens is a launch-selected native limit (Claude 1M).
+	// It is independent of an explicit carried-history budget override.
+	NativeContextWindowTokens int64
 	// ContextWindowSource describes the resolved limit, shown in the preview.
 	ContextWindowSource string
 	// BudgetPercent of the window the carried history may fill. The rest is

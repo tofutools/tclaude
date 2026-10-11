@@ -33,11 +33,14 @@ func MorphContextWindow(h *Harness, model string) (int64, string) {
 		}
 	case CodexName:
 		if dir, err := CodexConfigDir(); err == nil {
-			configuredModel, cap := codexConfiguredMorphWindow(filepath.Join(dir, "config.toml"))
+			configuredModel, cap, publicRoute := codexConfiguredMorphWindow(filepath.Join(dir, "config.toml"))
 			if model == "" {
 				model = configuredModel
 			}
-			n := codexCachedMorphWindow(filepath.Join(dir, "models_cache.json"), model, time.Now())
+			var n int64
+			if publicRoute {
+				n = codexCachedMorphWindow(filepath.Join(dir, "models_cache.json"), model, time.Now())
+			}
 			if cap > 0 && (n <= 0 || cap < n) {
 				return cap, "Codex configured context window"
 			}
@@ -137,25 +140,33 @@ func parseOpenCodeModelWindows(output string) map[string]int64 {
 	}
 }
 
-func codexConfiguredMorphWindow(path string) (string, int64) {
+func codexConfiguredMorphWindow(path string) (string, int64, bool) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", 0
+		return "", 0, os.IsNotExist(err)
 	}
 	defer f.Close()
 	var config struct {
+		Provider  string `toml:"model_provider"`
+		Providers map[string]struct {
+			BaseURL string `toml:"base_url"`
+		} `toml:"model_providers"`
 		Model    string `toml:"model"`
 		Window   int64  `toml:"model_context_window"`
 		Profile  string `toml:"profile"`
 		Profiles map[string]struct {
-			Model  string `toml:"model"`
-			Window int64  `toml:"model_context_window"`
+			Provider string `toml:"model_provider"`
+			Model    string `toml:"model"`
+			Window   int64  `toml:"model_context_window"`
 		} `toml:"profiles"`
 	}
 	if toml.NewDecoder(io.LimitReader(f, 1<<20)).Decode(&config) != nil {
-		return "", 0
+		return "", 0, false
 	}
 	if profile, ok := config.Profiles[config.Profile]; ok {
+		if profile.Provider != "" {
+			config.Provider = profile.Provider
+		}
 		if profile.Model != "" {
 			config.Model = profile.Model
 		}
@@ -166,5 +177,6 @@ func codexConfiguredMorphWindow(path string) (string, int64) {
 	if config.Window < 0 || config.Window > 10_000_000 {
 		config.Window = 0
 	}
-	return config.Model, config.Window
+	publicRoute := (config.Provider == "" || config.Provider == "openai") && config.Providers["openai"].BaseURL == ""
+	return config.Model, config.Window, publicRoute
 }

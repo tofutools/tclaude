@@ -174,8 +174,10 @@ func resolveMorphTarget(h *harness.Harness, req morphRequest, prof *db.SpawnProf
 			form.Profile = prof.Name
 		}
 	}
-	if cross && form.HistoryWindowTokens == nil && h.Name == harness.CopilotName && p.ContextWindowMax > 0 {
-		form.HistoryWindowTokens = &p.ContextWindowMax
+	if cross && h.Name == harness.CopilotName && p.ContextWindowMax > 0 {
+		if form.HistoryWindowTokens == nil || *form.HistoryWindowTokens > p.ContextWindowMax {
+			form.HistoryWindowTokens = &p.ContextWindowMax
+		}
 	}
 	model := pick(req.Model, p.Model)
 	effort := pick(req.Effort, p.Effort)

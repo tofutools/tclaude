@@ -363,6 +363,7 @@ func planCrossHarnessMorph(convID string, dst *harness.Harness, target db.AgentM
 	opts.Policy.TargetModel = model
 	if window > 0 {
 		opts.Policy.ContextWindowTokens = window
+		opts.Policy.NativeContextWindowTokens = window
 		opts.Policy.ContextWindowSource = "Claude extended-context selection"
 	}
 	if target.HistoryWindowTokens != nil {
