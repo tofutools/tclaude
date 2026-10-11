@@ -23,9 +23,14 @@ const (
 	agentArchivePAF    = "paf"
 )
 
+// neutralContextMaxHistory is the largest native history a transfer decodes
+// into a neutral context.
+const neutralContextMaxHistory = 256 << 20
+
 // pafContextRecordLimit bounds one PAF context line on import. Validating a
 // line costs several times its size, so it is held below the native
-// history record limit that the bundle itself enforces.
+// history record limit that the bundle itself enforces. Senders hold their
+// context lines to the same bound.
 func pafContextRecordLimit() int { return min(agentRecordLimit(), 64<<20) }
 
 // decodeAgentArchive reads an agent bundle v1 or an agent PAF into the
@@ -61,7 +66,7 @@ func archiveAgentTransfer(b *agentbundle.Bundle, format string, sign bool) (*os.
 // in a harness with a transcript codec, the neutral context travels beside
 // it so a receiver without that harness can still land the agent.
 func archiveAgentPAF(b *agentbundle.Bundle, sign bool) (*os.File, error) {
-	opts := legacy.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}}
+	opts := legacy.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}, MaxRecordBytes: pafContextRecordLimit()}
 	opts.Context = neutralContext(b)
 	if sign {
 		if id, err := federationIdentity(); err == nil {
@@ -83,7 +88,20 @@ func archiveAgentPAF(b *agentbundle.Bundle, sign bool) (*os.File, error) {
 		_ = os.Remove(f.Name())
 		return nil, err
 	}
-	if err := legacy.WriteAgentBundle(b, f, opts); err != nil {
+	err = legacy.WriteAgentBundle(b, f, opts)
+	if err != nil && opts.Context != nil {
+		// The neutral context is optional and the native history is
+		// lossless, so a context that does not fit the archive or record
+		// limits is left out rather than failing the transfer.
+		slog.Warn("paf: neutral context left out", "error", err)
+		opts.Context = nil
+		if err = f.Truncate(0); err == nil {
+			if _, err = f.Seek(0, io.SeekStart); err == nil {
+				err = legacy.WriteAgentBundle(b, f, opts)
+			}
+		}
+	}
+	if err != nil {
 		return fail(fmt.Errorf("archive exceeds or cannot be encoded within federation.agent_transfer_max_bytes=%d: %w", b.Limit(), err))
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
@@ -96,7 +114,10 @@ func archiveAgentPAF(b *agentbundle.Bundle, sign bool) (*os.File, error) {
 // transcript, or returns nil when the harness has no codec or the history
 // cannot be decoded. The native blob still travels either way.
 func neutralContext(b *agentbundle.Bundle) *transcript.Transcript {
-	if b.Manifest.History == nil {
+	// The decoded transcript is held in memory and travels beside the
+	// native history, so it is carried only for histories well inside the
+	// transfer limit.
+	if b.Manifest.History == nil || b.Manifest.History.Bytes > min(b.Limit()/3, neutralContextMaxHistory) {
 		return nil
 	}
 	h, err := harness.Resolve(b.Manifest.Agent.Harness)

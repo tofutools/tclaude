@@ -272,21 +272,29 @@ func (w *Writer) CreateContext(key, scope string, src Source) (*ContextWriter, i
 	if err != nil {
 		return nil, nil, err
 	}
-	cw, err := NewContextWriter(&extScanWriter{w: ew, seen: w.extSeen}, scope, src)
+	cw, err := NewContextWriter(&extScanWriter{w: ew, seen: w.extSeen, max: w.limits.MaxRecordBytes}, scope, src)
 	if err != nil {
 		return nil, nil, err
 	}
 	return cw, ew, nil
 }
 
-// extScanWriter records extension ids used on context lines. Each Write from
+// extScanWriter records extension ids used on context lines and refuses a
+// line over the record limit a reader would apply. Each Write from
 // json.Encoder is one complete line.
 type extScanWriter struct {
 	w    io.Writer
 	seen map[string]bool
+	max  int
 }
 
+// ErrRecordTooLarge reports a context line over Limits.MaxRecordBytes.
+var ErrRecordTooLarge = errors.New("paf: context line exceeds the record limit")
+
 func (e *extScanWriter) Write(p []byte) (int, error) {
+	if len(p) > e.max {
+		return 0, ErrRecordTooLarge
+	}
 	if bytes.Contains(p, []byte(`"extensions"`)) {
 		if err := collectExtensionIDs(bytes.TrimSpace(p), e.seen); err != nil {
 			return 0, err

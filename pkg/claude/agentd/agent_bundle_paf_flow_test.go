@@ -106,3 +106,47 @@ func TestFederation_AgentSharingFormatFollowsPeerCatalog(t *testing.T) {
 	assert.Equal(t, paf.SignatureValid, info.Signatures[0].Status)
 	assert.True(t, info.HasContext)
 }
+
+// An agent offer that arrives as a PAF is accepted and can be inspected
+// entry by entry before anyone imports it.
+func TestFederation_PAFAgentOfferContents(t *testing.T) {
+	fh := newFedHarness(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://localhost:12345"))
+	fh.f.HaveGroup("receiver")
+	fedReceiveAgents(t, fh, "receiver")
+	b := fedAgentBundle(t)
+	b.SetHistory("jsonl", "source-conversation", []byte("{\"text\":\"hello from the source\"}\n"))
+	var buf bytes.Buffer
+	require.NoError(t, legacy.WriteAgentBundle(b, &buf, legacy.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: "test"}}))
+	d := bundletransfer.New(bundletransfer.Agent, buf.Bytes(), "Shared agent", time.Now().Add(time.Hour))
+	d.Group = "receiver"
+	env := fh.peer.envelope(proto.KindBundleOffer, proto.Endpoint{}, d)
+	env.ID = d.ID
+	fh.peer.send(env)
+	require.Equal(t, proto.AckAccepted, fedAckFor(t, fh.peer, d.ID).Status)
+
+	h := agentd.BuildDashboardHandlerForTest()
+	base := "/api/federation/bundle-offers/" + d.ID + "/contents?peer=" + fh.peer.id.ID()
+	rec := testharness.Serve(h, testharness.JSONRequest(t, http.MethodGet, base, nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var listing struct {
+		Entries []struct {
+			Path string `json:"path"`
+			Kind string `json:"kind"`
+		} `json:"entries"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &listing))
+	native := ""
+	paths := map[string]string{}
+	for _, e := range listing.Entries {
+		paths[e.Path] = e.Kind
+		if e.Kind == "jsonl" {
+			native = e.Path
+		}
+	}
+	assert.Equal(t, "json", paths[paf.ManifestPath])
+	require.NotEmpty(t, native)
+	rec = testharness.Serve(h, testharness.JSONRequest(t, http.MethodGet, base+"&path="+url.QueryEscape(native), nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "hello from the source")
+}

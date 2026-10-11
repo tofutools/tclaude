@@ -73,6 +73,12 @@ func DecodeBundleFile(f *os.File, lim DecodeLimits, dir string) (*agentbundle.Bu
 }
 
 // DecodeBundleBytes is DecodeBundleFile for an in-memory archive.
+// IsPAF reports whether the ZIP archive's manifest declares the PAF format.
+func IsPAF(r io.ReaderAt, size int64) bool {
+	format, err := manifestFormat(r, size)
+	return err == nil && format == paf.Format
+}
+
 func DecodeBundleBytes(raw []byte, lim DecodeLimits, dir string) (*agentbundle.Bundle, Info, error) {
 	if format, err := manifestFormat(bytes.NewReader(raw), int64(len(raw))); err == nil && format == agentbundle.Format {
 		b, err := agentbundle.Decode(raw)

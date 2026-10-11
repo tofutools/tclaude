@@ -1147,7 +1147,10 @@ most three locations per kind; sharing refuses unless `--allow-flagged` is
 explicit. Structured credential fields are omitted and history stays verbatim.
 A peer that advertises PAF support receives the offer as a PAF signed with
 this node's federation key; any other peer receives agent bundle version 1.
-Move and teleport follow the same rule.
+Move and teleport follow the same rule. The neutral copy of the conversation
+is left out of the PAF when the native history is large (over 256 MiB or a
+third of `federation.agent_transfer_max_bytes`) or would not fit the
+transfer's limits; the native history always travels.
 
 Agent callers need `agent.share` with `peer=bob` or
 `peer=bob/reviewers` scope. They may share themselves using `self`; sharing
@@ -3102,12 +3105,14 @@ local operator administration and is refused through peer views.
 After fetching, `state: "ready"` means the private payload is verified.
 `GET /api/federation/bundle-offers/{id}/contents?peer=INSTANCE_ID` returns
 `{type,entries:[{path,size,kind}]}`. Agent entries are `manifest.json` and optional
-`history/transcript.jsonl`; config entries are `bundle.json` and
+`history/transcript.jsonl`, or for an agent PAF its `manifest.json` and every
+entry that manifest lists; config entries are `bundle.json` and
 `sections/<section>.json`. Entries are data labels, never host paths.
 Add `path`, optional byte `offset` and `max_bytes` to read one entry:
 `{path,kind,size,text,truncated,offset,next_offset?}`. Reads default to 256 KiB
 and accept at most 1 MiB; invalid UTF-8 is replaced. `next_offset` is the next
-byte offset when more text remains. All current entries are JSON or JSONL.
+byte offset when more text remains. Entries are JSON or JSONL, except PAF
+attachments, which have kind `file`.
 `GET` or `HEAD` `/{id}/download?peer=INSTANCE_ID` returns the original payload
 as an attachment with octet-stream, sandbox, nosniff and private/no-store
 headers. Neither read fetches implicitly: pending returns 409 `not_fetched`,

@@ -113,6 +113,8 @@ type WriteOptions struct {
 	// Context, when set, is written as the agent's neutral context beside
 	// the native blob, with its loss report.
 	Context *transcript.Transcript
+	// MaxRecordBytes bounds one context line; 0 uses the PAF default.
+	MaxRecordBytes int
 }
 
 // WriteAgentBundle writes an agent bundle as an agent PAF, optionally with
@@ -121,7 +123,7 @@ func WriteAgentBundle(b *agentbundle.Bundle, out io.Writer, opts WriteOptions) e
 	producer, keys := opts.Producer, opts.Keys
 	m := b.Manifest
 	d := m.Agent
-	w := paf.NewWriter(out, paf.KindAgent, paf.Limits{MaxArchiveBytes: ConvertedLimit(b.Limit())})
+	w := paf.NewWriter(out, paf.KindAgent, paf.Limits{MaxArchiveBytes: ConvertedLimit(b.Limit()), MaxRecordBytes: opts.MaxRecordBytes})
 	if t, err := time.Parse(time.RFC3339, m.CreatedAt); err == nil {
 		w.SetCreatedAt(t)
 	}

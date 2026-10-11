@@ -579,3 +579,12 @@ func TestWriteContextFileStoresMediaByPath(t *testing.T) {
 	assert.Equal(t, "a.png", m.Name)
 	assert.Empty(t, m.Attachment)
 }
+
+func TestWriterRefusesContextLineOverRecordLimit(t *testing.T) {
+	tr := transcript.New(transcript.Source{Harness: "claude"})
+	tr.Entries = []transcript.Entry{{Role: transcript.RoleUser, Origin: transcript.OriginHuman, Blocks: []transcript.Block{transcript.Text(strings.Repeat("x", 4096))}}}
+	var buf bytes.Buffer
+	w := NewWriter(&buf, KindAgent, Limits{MaxRecordBytes: 1024})
+	require.NoError(t, w.AddAgent("a", Agent{Name: "a"}, Environment{Harness: Harness{Name: "claude"}}))
+	require.ErrorIs(t, WriteTranscript(w, "a", ScopeEffective, tr), ErrRecordTooLarge)
+}
