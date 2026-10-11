@@ -278,7 +278,10 @@ func startCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 	if !args.CodexAppServer || args.CodexAppServerGeneration == "" {
 		return
 	}
-	go runCodexAppServerBootstrap(args)
+	// Bootstrap may still record a failure after the foreground readiness
+	// check returns. Include that final write in the background drain before
+	// test database and HOME teardown.
+	goBackground(func() { runCodexAppServerBootstrap(args) })
 }
 
 func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
