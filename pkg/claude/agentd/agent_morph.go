@@ -699,6 +699,15 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 			report = &transcript.LossReport{Source: h.Name, Target: dst.Name}
 			report.Add(transcript.LossHistoryUndecodable, 1, "")
 		}
+		if report.Count(transcript.LossEncryptedSummary) > 0 {
+			report.NeedsHandoff = true
+			report.Fallback = "native_handoff"
+			report.SelectionReason = "compaction summary unreadable; ask the source for a handoff and carry it alongside the readable tail"
+			if history != "handoff" {
+				history = "summary"
+			}
+			handoffRequired = true
+		}
 		if report.NeedsSummary {
 			report.Fallback = "native_summary"
 			if !req.DryRun && !req.ConfirmHistoryLoss && !req.ProceedWithoutSummary {
@@ -716,7 +725,7 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 			report.SelectionReason = "source could not write a summary; proceed explicitly with readable history and the full-transcript pointer"
 		}
 		if history == "summary" && !req.DryRun && !live {
-			writeError(w, http.StatusConflict, "agent_offline", "the source agent is offline, so it cannot write the required history summary")
+			writeError(w, http.StatusConflict, "agent_offline", "the source agent is offline, so it cannot write the required handoff or summary; explicitly confirm proceed_without_summary to carry only readable history with its full-transcript pointer")
 			return
 		}
 		if history == "handoff" && !live {
@@ -747,6 +756,9 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 	pending := db.AgentPendingMorph{
 		ConfirmHistoryLoss: req.ConfirmHistoryLoss || req.ProceedWithoutSummary, ProceedWithoutSummary: req.ProceedWithoutSummary, Target: target, Back: req.Back, ActorConv: caller, Actor: actorLabel, ConvID: targetConv, History: history,
 		HandoffRequired: handoffRequired,
+	}
+	if resp.History != nil && resp.History.NeedsHandoff {
+		pending.HandoffReason = "encrypted_compaction_summary"
 	}
 	out := morphOrDefer(agentID, targetConv, pending, req.Now, self)
 	if out.status != http.StatusOK {

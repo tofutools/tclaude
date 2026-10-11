@@ -243,7 +243,12 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 	if opts.SummaryUnavailable {
 		report.Add(LossNotCarried, 1, "source could not write a history summary; explicitly continued with readable history and the full-transcript pointer")
 		report.SelectionReason = "source could not write a summary; readable history only, full transcript saved"
-		notice += " Source could not write a summary; earlier context may be missing. Read the full transcript when needed."
+		if report.Count(LossEncryptedSummary) > 0 {
+			report.SelectionReason = "compaction summary unreadable; source could not write a handoff; readable history only, full transcript saved"
+			notice += " Compaction summary unreadable; source could not write a handoff. Earlier context may be missing. Read the full transcript when needed."
+		} else {
+			notice += " Source could not write a summary; earlier context may be missing. Read the full transcript when needed."
+		}
 	}
 	notice += " No need to re-read skills or re-verify the environment unless something looks wrong."
 	entries = append(entries, planEntry{entry: Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text(notice)}}})
