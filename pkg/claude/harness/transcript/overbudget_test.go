@@ -58,9 +58,9 @@ func TestOverBudgetDaemonNudgeDoesNotReplaceLatestInstruction(t *testing.T) {
 		tr.Append(Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text(fmt.Sprintf("instruction %d", i))}})
 	}
 	tr.Append(Entry{Role: RoleAssistant, Origin: OriginAgent, Blocks: []Block{Text(strings.Repeat("work ", 400))}})
-	tr.Append(Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text("LATEST: preserve backward compatibility")}})
+	tr.Append(Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text("[system: new agent message #122 from the human operator; delivery: inline; subject: Preserve the API] LATEST: preserve backward compatibility")}})
 	tr.Append(Entry{Role: RoleAssistant, Origin: OriginAgent, Blocks: []Block{Text(strings.Repeat("huge last work ", 2000))}})
-	tr.Append(Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text("[system: new agent message #123] Write the summary now.")}})
+	tr.Append(Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text("[system: new agent message #123; delivery: inline; subject: Morph handoff requested] Write the summary now.")}})
 	tr.Append(Entry{Role: RoleAssistant, Origin: OriginAgent, Blocks: []Block{Text(strings.Repeat("writing summary ", 2000))}})
 	p := NewPlan(tr, Options{Target: "codex", ContextWindowTokens: 4096, TranscriptPath: "/m/transcript.md", Summary: "Earlier parser work is done."})
 	assert.Contains(t, p.Briefing(), "ORIGINAL: repair checkout")

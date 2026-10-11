@@ -385,14 +385,16 @@ func WriteFileExclusive(path string, data []byte) error {
 
 // coalesce merges adjacent same-role entries so every encoder can rely on
 // strict user/assistant alternation.
-// Daemon inbox nudges arrive as native user turns, but they must not replace
-// the operator's task/latest instruction pins while the source writes a summary.
+// The daemon's own morph request arrives as a native user turn. It must
+// not replace task/latest pins. Human and peer inbox instructions still count.
 func daemonControlTurn(e Entry) bool {
 	if len(e.Blocks) == 0 {
 		return false
 	}
 	for _, b := range e.Blocks {
-		if b.Kind != BlockText || !strings.HasPrefix(strings.TrimSpace(b.Text), "[system: new agent message") {
+		text := strings.TrimSpace(b.Text)
+		header, _, found := strings.Cut(text, "]")
+		if b.Kind != BlockText || !found || !strings.HasPrefix(header, "[system: new agent message") || strings.Contains(header, " from ") || !strings.HasSuffix(header, "; subject: Morph handoff requested") {
 			return false
 		}
 	}

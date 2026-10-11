@@ -67,7 +67,7 @@ func TestMorphOverBudgetSummaryFlow(t *testing.T) {
 			switch action {
 			case "submit", "busy_timeout":
 				// The real inbox path injects a native user nudge before the agent answers.
-				require.NoError(t, cc.AppendTurn(map[string]any{"type": "user", "uuid": "summary-nudge", "parentUuid": parent, "cwd": cc.Cwd, "message": map[string]any{"role": "user", "content": "[system: new agent message #123; delivery: inline] Write a history summary."}}))
+				require.NoError(t, cc.AppendTurn(map[string]any{"type": "user", "uuid": "summary-nudge", "parentUuid": parent, "cwd": cc.Cwd, "message": map[string]any{"role": "user", "content": "[system: new agent message #123; delivery: inline; subject: Morph handoff requested] Write a history summary."}}))
 				require.NoError(t, cc.AppendTurn(map[string]any{"type": "assistant", "uuid": "summary-response", "parentUuid": "summary-nudge", "cwd": cc.Cwd, "message": map[string]any{"role": "assistant", "content": strings.Repeat("Preparing the requested summary. ", 800)}}))
 				convops.ScanAndUpsertFile(cc.JsonlPath)
 				rec = f.AsAgent(spawn.ConvID).MorphHandoff("Earlier work summary: parser migration complete; preserve compatibility; next verify deployment.")
