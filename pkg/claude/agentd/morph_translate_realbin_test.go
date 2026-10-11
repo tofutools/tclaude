@@ -95,6 +95,10 @@ func TestMorphResumeRealCLI(t *testing.T) {
 	}
 	realHome, err := os.UserHomeDir()
 	require.NoError(t, err)
+	realOpenCodeData := os.Getenv("XDG_DATA_HOME")
+	if realOpenCodeData == "" {
+		realOpenCodeData = filepath.Join(realHome, ".local", "share")
+	}
 	const ask = "What is the secret word I asked you to remember earlier in this conversation? Reply with only that word."
 
 	type smokeCase struct {
@@ -138,7 +142,7 @@ func TestMorphResumeRealCLI(t *testing.T) {
 			if c.dst == harness.OpenCodeName {
 				// OpenCode's OAuth credential refreshes on use; a copy would
 				// rotate the operator's refresh token out from under them.
-				t.Setenv("XDG_DATA_HOME", filepath.Join(realHome, ".local", "share"))
+				t.Setenv("XDG_DATA_HOME", realOpenCodeData)
 				t.Setenv("XDG_CONFIG_HOME", "")
 				t.Setenv("XDG_STATE_HOME", "")
 				t.Setenv("XDG_CACHE_HOME", "")
@@ -150,15 +154,14 @@ func TestMorphResumeRealCLI(t *testing.T) {
 			profile, err := db.ConversationResumeProfileForConv(spawn.ConvID)
 			require.NoError(t, err)
 			require.NotNil(t, profile)
-			cwd := profile.Cwd
+			// The CLIs key their stores on the resolved cwd.
+			cwd, err := filepath.EvalSymlinks(profile.Cwd)
+			require.NoError(t, err)
 
 			res, err := harness.TranslateHistory(mustGetHarness(t, c.src), mustGetHarness(t, c.dst), spawn.ConvID, cwd,
 				harness.TranslateOptions{Policy: transcript.Options{TargetModel: c.model}})
 			require.NoError(t, err)
 			t.Cleanup(res.Cleanup)
-			if c.dst == harness.OpenCodeName {
-				t.Cleanup(func() { _ = exec.Command(bin, "session", "delete", res.ConvID).Run() })
-			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 			defer cancel()
@@ -175,12 +178,21 @@ func TestMorphResumeRealCLI(t *testing.T) {
 }
 
 // smokeEnv is the test process environment minus the markers of the agent
-// session running the test, so a nested CLI starts as a plain one.
+// session running the test, so a nested CLI starts as a plain one. Store
+// relocations are dropped too: a tclaude pane exports CLAUDE_CONFIG_DIR at the
+// operator's real config, which would send the CLI past the test HOME. Empty
+// values are dropped rather than passed, since a CLI may read an empty
+// COPILOT_HOME as a relative path instead of unset.
 func smokeEnv() []string {
 	var env []string
 	for _, kv := range os.Environ() {
-		name, _, _ := strings.Cut(kv, "=")
-		if name == "CLAUDECODE" || strings.HasPrefix(name, "CLAUDE_CODE_") || strings.HasPrefix(name, "TCLAUDE_") || name == "TMUX" || name == "TMUX_PANE" {
+		name, value, _ := strings.Cut(kv, "=")
+		switch {
+		case value == "",
+			name == "CLAUDECODE", strings.HasPrefix(name, "CLAUDE_CODE_"), name == "CLAUDE_CONFIG_DIR",
+			strings.HasPrefix(name, "CODEX_"), name == "COPILOT_HOME", name == "GEMINI_CLI_HOME",
+			strings.HasPrefix(name, "OPENCODE_"), strings.HasPrefix(name, "TCLAUDE_"),
+			name == "TMUX", name == "TMUX_PANE":
 			continue
 		}
 		env = append(env, kv)
@@ -222,8 +234,14 @@ func codexTokenExpiry(data []byte) (time.Time, bool) {
 		Tokens struct {
 			AccessToken string `json:"access_token"`
 		} `json:"tokens"`
+		LastRefresh time.Time `json:"last_refresh"`
 	}
 	if json.Unmarshal(data, &v) != nil {
+		return time.Time{}, false
+	}
+	// Codex also refreshes on age (about eight days since last_refresh), not
+	// only near the token's own expiry; stay well inside that window.
+	if v.LastRefresh.IsZero() || time.Since(v.LastRefresh) > 6*24*time.Hour {
 		return time.Time{}, false
 	}
 	parts := strings.Split(v.Tokens.AccessToken, ".")
