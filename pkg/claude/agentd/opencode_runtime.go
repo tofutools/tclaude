@@ -1979,6 +1979,11 @@ func buildOpenCodeTclaudeLayerLaunchSpec(
 			Current: tclcommon.SpawnAttachmentsPrivateDir(privateSessionIDs[0]),
 		})
 	}
+	if dir := tclcommon.ExistingMorphArtifactsDir(agentID); dir != "" {
+		privateWriteDirs = append(privateWriteDirs, session.TclaudeLayerPrivateWriteDir{
+			Parent: tclcommon.MorphArtifactsBase(), Current: dir,
+		})
+	}
 	input := session.TclaudeLayerLaunchInput{
 		HarnessName:      harness.OpenCodeName,
 		Cwd:              cwd,

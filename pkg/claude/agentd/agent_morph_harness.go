@@ -5,16 +5,15 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
 // Cross-harness morph. The agent keeps its identity, inbox, groups and
@@ -300,21 +299,17 @@ func (cm *crossMorph) preview(convID string) (*transcript.LossReport, error) {
 }
 
 // morphArtifactDir is where a cross-harness morph keeps the full neutral
-// transcript, the loss report and any externalized media. The agent must be
-// able to read them, and tclaude's own data directory is walled off from a
-// sandboxed agent, so they live in the agent's working directory, under a
-// directory that git ignores by itself. If cwd cannot take it, the private
-// data directory still keeps them for the operator.
-func morphArtifactDir(agentID, cwd string) string {
-	stamp := time.Now().UTC().Format("20060102T150405.000Z")
-	root := filepath.Join(cwd, ".tclaude-morph")
-	if err := os.MkdirAll(root, 0o700); err == nil {
-		ignore := filepath.Join(root, ".gitignore")
-		if _, statErr := os.Stat(ignore); statErr == nil || os.WriteFile(ignore, []byte("*\n"), 0o600) == nil {
-			return filepath.Join(root, short8(strings.TrimPrefix(agentID, "agt_"))+"-"+stamp)
-		}
+// transcript, briefing, loss report and any externalized media. The agent is
+// pointed at these files, so they live in its own agent-readable directory
+// under ~/.tclaude/api/morph: every later tclaude-layer launch of the agent
+// reopens that directory (and only it) the way spawn attachments are, and
+// tclaude's private data directory is walled off from a sandboxed agent.
+func morphArtifactDir(agentID string) (string, error) {
+	root, err := tclcommon.PrepareMorphArtifactsDir(agentID)
+	if err != nil {
+		return "", err
 	}
-	return filepath.Join(config.DataDir(), "morph", agentID, stamp)
+	return filepath.Join(root, time.Now().UTC().Format("20060102T150405.000Z")), nil
 }
 
 // installCrossHarnessHistory runs the fallback ladder: the translated native
@@ -322,7 +317,11 @@ func morphArtifactDir(agentID, cwd string) string {
 // files. The source conversation is only read.
 func (cm *crossMorph) installHistory(agentID, convID string) (*harness.TranslateResult, error) {
 	opts := cm.opts
-	opts.ArtifactDir = morphArtifactDir(agentID, cm.cwd)
+	dir, err := morphArtifactDir(agentID)
+	if err != nil {
+		return nil, fmt.Errorf("prepare the morph artifact directory: %w", err)
+	}
+	opts.ArtifactDir = dir
 	res, err := harness.TranslateHistory(cm.src, cm.dst, convID, cm.cwd, opts)
 	if err == nil {
 		return res, nil

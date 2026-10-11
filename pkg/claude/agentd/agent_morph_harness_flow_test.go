@@ -16,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -112,14 +113,15 @@ func TestMorphCrossHarnessClaudeToCodexAndBack(t *testing.T) {
 	require.NotEmpty(t, resp.History.TranscriptPath)
 	_, err = os.Stat(resp.History.TranscriptPath)
 	assert.NoError(t, err, "the full transcript is kept")
-	cwdProfile, err := db.ConversationResumeProfileForConv(resp.ConvID)
-	require.NoError(t, err)
-	morphRoot := filepath.Join(cwdProfile.Cwd, ".tclaude-morph")
+	morphRoot := tclcommon.MorphArtifactsDir(spawn.AgentID)
 	assert.True(t, strings.HasPrefix(resp.History.TranscriptPath, morphRoot+string(filepath.Separator)),
-		"the transcript is kept where the agent can read it: %s", resp.History.TranscriptPath)
-	ignore, err := os.ReadFile(filepath.Join(morphRoot, ".gitignore"))
+		"the transcript is kept in the agent's own agent-readable directory: %s", resp.History.TranscriptPath)
+	assert.Equal(t, morphRoot, tclcommon.ExistingMorphArtifactsDir(spawn.AgentID),
+		"later launches of the agent find the directory to reopen")
+	profileForCwd, err := db.ConversationResumeProfileForConv(resp.ConvID)
 	require.NoError(t, err)
-	assert.Equal(t, "*\n", string(ignore), "the morph directory ignores itself")
+	_, err = os.Stat(filepath.Join(profileForCwd.Cwd, ".tclaude-morph"))
+	assert.True(t, os.IsNotExist(err), "nothing is written into the agent's working directory")
 
 	// Same agent, now on its Codex generation.
 	agent, err = db.GetAgent(spawn.AgentID)
