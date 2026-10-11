@@ -10,16 +10,10 @@
       "at": "2026-10-11T19:40:30Z",
       "audience": "recipients",
       "by": "operator",
-      "content_digest": "5a7296d702bd1cde04cd2e56a8e044b4a12b2c7fb10254d769ee0c0e9afb2d75"
+      "content_digest": "4a2f7e9c6adb92a5e2e3c1c5d32bec26bf31d39c3285d4a7d336062d17fe23fb"
     }
   ],
-  "redactions": [
-    {
-      "count": 3,
-      "detail": "PROJECT",
-      "kind": "paths_to_placeholders"
-    }
-  ],
+  "redactions": [],
   "retention": {
     "expires_at": "2026-10-25T19:40:00Z"
   },

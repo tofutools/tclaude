@@ -3,49 +3,127 @@
   "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/agent.schema.json",
   "title": "PAF agents/<key>/agent.json",
   "type": "object",
-  "required": ["name", "definition"],
+  "required": [
+    "name",
+    "definition"
+  ],
   "properties": {
-    "id": {"type": "string", "description": "Source agent id. Informational; imports always mint a new id."},
-    "name": {"type": "string", "minLength": 1},
-    "title": {"type": "string"},
+    "id": {
+      "type": "string",
+      "description": "Source agent id. Informational; imports always mint a new id."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string"
+    },
     "instance": {
       "type": "object",
-      "properties": {"id": {"type": "string"}, "name": {"type": "string"}}
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      }
     },
     "conversation": {
       "type": "object",
-      "properties": {"id": {"type": "string"}, "title": {"type": "string"}, "harness": {"type": "string"}}
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "harness": {
+          "type": "string"
+        }
+      }
     },
     "definition": {
       "type": "object",
       "properties": {
-        "role": {"type": "string"},
-        "description": {"type": "string"},
-        "role_guidance": {"type": "string"},
-        "startup_context": {"type": "string"},
-        "initial_message": {"type": "string"},
-        "task": {"type": "object", "properties": {"url": {"type": "string"}, "label": {"type": "string"}}},
-        "license": {"type": "string", "description": "SPDX expression for published PAFs."},
-        "profile_name": {"type": "string", "description": "Informational; receivers never look a profile up by this name."},
-        "profile": {"type": "object", "description": "tclaude inline spawn profile, including launch posture."}
+        "role": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "role_guidance": {
+          "type": "string"
+        },
+        "startup_context": {
+          "type": "string"
+        },
+        "initial_message": {
+          "type": "string"
+        },
+        "task": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            }
+          }
+        },
+        "license": {
+          "type": "string",
+          "description": "SPDX expression for published PAFs."
+        },
+        "profile_name": {
+          "type": "string",
+          "description": "Informational; receivers never look a profile up by this name."
+        },
+        "profile": {
+          "type": "object",
+          "description": "tclaude inline spawn profile, including launch posture."
+        }
       }
     },
     "groups": {
       "description": "Advisory provenance; never grants.",
       "type": "array",
-      "items": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}, "role": {"type": "string"}}}
+      "items": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          }
+        }
+      }
     },
     "permissions": {
       "description": "Advisory provenance; never grants.",
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["slug"],
+        "required": [
+          "slug"
+        ],
         "properties": {
-          "slug": {"type": "string"},
-          "effect": {"type": "string"},
+          "slug": {
+            "type": "string"
+          },
+          "effect": {
+            "type": "string"
+          },
           "scope": {},
-          "source": {"type": "string"}
+          "source": {
+            "type": "string"
+          }
         }
       }
     },
@@ -53,37 +131,74 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["op", "at"],
+        "required": [
+          "op",
+          "at"
+        ],
         "properties": {
           "op": {
             "type": "string",
             "description": "Open set. Known: spawn, clone, morph, reincarnate, move, teleport, recall, snapshot, import, recover, publish."
           },
-          "at": {"$ref": "common.schema.json#/$defs/timestamp"},
-          "from": {"$ref": "common.schema.json#/$defs/ref"},
-          "detail": {"type": "string", "maxLength": 4096}
+          "at": {
+            "$ref": "common.schema.json#/$defs/timestamp"
+          },
+          "from": {
+            "$ref": "common.schema.json#/$defs/ref"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 4096
+          }
         }
       }
     },
     "snapshot": {
       "type": "object",
-      "required": ["name", "taken_at"],
+      "required": [
+        "name",
+        "taken_at"
+      ],
       "properties": {
-        "name": {"type": "string", "minLength": 1},
-        "note": {"type": "string"},
-        "taken_at": {"$ref": "common.schema.json#/$defs/timestamp"},
-        "state": {"enum": ["idle", "last_complete_turn"]}
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "note": {
+          "type": "string"
+        },
+        "taken_at": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "state": {
+          "type": "string",
+          "description": "Open set; readers accept unknown values. Known: idle, last_complete_turn."
+        }
       }
     },
     "native": {
       "type": "object",
-      "required": ["format", "path"],
+      "required": [
+        "format",
+        "path"
+      ],
       "properties": {
-        "format": {"type": "string"},
-        "path": {"$ref": "common.schema.json#/$defs/entryPath"},
-        "harness": {"type": "string"},
-        "harness_version": {"type": "string"},
-        "source_conv_id": {"type": "string"}
+        "format": {
+          "type": "string"
+        },
+        "path": {
+          "$ref": "common.schema.json#/$defs/entryPath",
+          "description": "Must lie under this agent's agents/<key>/native/ (checked by readers)."
+        },
+        "harness": {
+          "type": "string"
+        },
+        "harness_version": {
+          "type": "string"
+        },
+        "source_conv_id": {
+          "type": "string"
+        }
       }
     }
   }

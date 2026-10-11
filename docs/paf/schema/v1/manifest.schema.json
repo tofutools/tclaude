@@ -3,33 +3,102 @@
   "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/manifest.schema.json",
   "title": "PAF manifest.json",
   "type": "object",
-  "required": ["format", "paf_version", "kind", "created_at", "producer", "agents", "entries"],
+  "required": [
+    "format",
+    "paf_version",
+    "kind",
+    "created_at",
+    "producer",
+    "agents",
+    "entries"
+  ],
   "properties": {
-    "format": {"const": "paf"},
-    "paf_version": {"type": "string", "pattern": "^1\\.[0-9]+$"},
-    "kind": {"enum": ["agent", "group"]},
-    "created_at": {"$ref": "common.schema.json#/$defs/timestamp"},
+    "format": {
+      "const": "paf"
+    },
+    "paf_version": {
+      "type": "string",
+      "pattern": "^1\\.[0-9]+$"
+    },
+    "kind": {
+      "enum": [
+        "agent",
+        "group"
+      ]
+    },
+    "created_at": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
     "producer": {
       "type": "object",
-      "required": ["name"],
-      "properties": {"name": {"type": "string", "minLength": 1}, "version": {"type": "string"}}
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string"
+        }
+      }
     },
-    "requires": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"}},
-    "agents": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "common.schema.json#/$defs/agentKey"}},
+    "requires": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9.-]*$"
+      }
+    },
+    "agents": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.schema.json#/$defs/agentKey"
+      }
+    },
     "entries": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["path", "bytes", "sha256"],
+        "required": [
+          "path",
+          "bytes",
+          "sha256"
+        ],
         "properties": {
-          "path": {"$ref": "common.schema.json#/$defs/entryPath"},
-          "bytes": {"type": "integer", "minimum": 0},
-          "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
-          "media_type": {"type": "string"}
+          "path": {
+            "$ref": "common.schema.json#/$defs/entryPath"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sha256": {
+            "$ref": "common.schema.json#/$defs/sha256"
+          },
+          "media_type": {
+            "type": "string"
+          }
         }
       }
     }
   },
-  "if": {"properties": {"kind": {"const": "agent"}}},
-  "then": {"properties": {"agents": {"maxItems": 1}}}
+  "if": {
+    "properties": {
+      "kind": {
+        "const": "agent"
+      }
+    }
+  },
+  "then": {
+    "properties": {
+      "agents": {
+        "maxItems": 1
+      }
+    }
+  }
 }

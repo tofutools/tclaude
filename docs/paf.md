@@ -1,11 +1,12 @@
 # Portable Agent Format (PAF)
 
 The Portable Agent Format is an open, versioned file format for the state of a
-coding agent. A `.paf` file holds what an agent needs to resume work: its conversation, its
-definition and identity, the environment it ran in and, optionally, the
-harness's own native history. You can resume that agent on another machine or
-in another harness, possibly long after the original harness or model has
-gone.
+coding agent. A `.paf` file holds what an agent needs to resume work: its
+conversation history in a harness-neutral form, its definition and identity,
+and the environment it ran in. It can also hold a second copy of the history
+in the original harness's own native format, so the same harness can resume it
+without any loss. You can resume that agent on another machine or in another
+harness, possibly long after the original harness or model has gone.
 
 This page is both the specification and the user guide. It covers why the
 format exists, how tclaude uses it, how to share agent state safely, and the
@@ -119,9 +120,10 @@ A consumer lands a PAF on the first rung that works and records which rung it
 used. The rungs run from most faithful to most robust:
 
 1. **Native.** The PAF carries a native blob in a format the target harness
-   accepts, and that harness is available. The history is installed byte for
-   byte (only identity and working-directory metadata are reminted) and
-   resumed. Nothing is lost.
+   accepts, and that harness is available. The native history is installed
+   through that harness's own import path, which only remints the
+   conversation id and remaps working-directory metadata, and resumed.
+   Message and tool content is not changed, so nothing is lost.
 2. **Translated.** The neutral context is encoded into the target harness's
    native history, budgeted to the target model's context window, as in
    [cross-harness translation](harnesses.md#cross-harness-history-translation).
@@ -181,6 +183,15 @@ prepared it for a wider audience.
   The preview shows what will change. The applied redactions are recorded in
   [`privacy.json`](#privacy) and the loss report, so a receiver knows the
   history is incomplete.
+
+  A redaction applies to **every copy** of the content it touches: the
+  context, the full history, text attachments, the definition and the
+  environment. A copy that cannot be rewritten safely is dropped instead and
+  the drop is recorded. tclaude never edits a native blob, so any redaction
+  of conversation content or paths also drops the native blob
+  (`drop_native`), and the PAF then lands through the translated rung.
+  `paths_to_placeholders` records placeholder names without their `original`
+  values.
 - **Consent before it leaves the node.** Sharing with a peer, posting to a
   Board or publishing requires an explicit human confirmation. The confirmation
   shows size, time range, turn count, findings and redactions, and is recorded
@@ -189,9 +200,11 @@ prepared it for a wider audience.
 - **Encrypted when stored off-node.** A PAF with context that is stored
   anywhere other than its own node (another node, a Board, a backup target)
   is [encrypted](#encryption) to named recipients.
-- **Retention.** A PAF can carry an expiry. Shared snapshots default to a
-  short retention, and deleting a Board version removes its ciphertext from
-  the hub. Copies that recipients already fetched cannot be recalled.
+- **Retention.** A PAF can carry an expiry (`retention.expires_at`), which a
+  receiving tclaude honours for the copies it keeps. Shared snapshots default
+  to a short retention. Copies that recipients already fetched cannot be
+  recalled, and an expiry cannot force another implementation to delete its
+  copy.
 
 ### Checklist before sharing an agent
 
@@ -211,9 +224,12 @@ Publishing produces a PAF meant for anyone to read. Beyond the sharing
 defaults, a published PAF:
 
 - requires the scan, the redaction preview and an explicit consent step;
-- replaces instance and agent identity with a pseudonymous publisher key;
-- replaces absolute paths with placeholders;
-- carries no permissions, group memberships or mail state;
+- applies `strip_identity`: it removes the agent and instance ids, the
+  conversation title, conversation ids (transcript headers,
+  `native.source_conv_id`, `lineage[].from`), consent `by` names and media
+  `path` hints, and signs with a pseudonymous publisher key;
+- replaces absolute paths with placeholders without their original values;
+- carries no native blob, permissions, group memberships or mail state;
 - is signed, so readers can tell whether two published PAFs come from the same
   publisher.
 
@@ -382,8 +398,11 @@ receiver, never an instruction:
 - `workspace`: `cwd`, `repo_url`, `branch`, `commit`, `dirty`, `worktree`.
 - `placeholders`: named path placeholders the importer remaps. Fields
   elsewhere in the environment and definition may contain `${NAME}`. Each
-  placeholder has a `name`, the source-side `original` value and an optional
-  `description`.
+  placeholder has a `name`, the source-side `original` value (omitted when
+  paths were redacted) and an optional `description`. Placeholders are
+  substituted only in the definition and environment. Transcript and native
+  content is history and is never rewritten on import, so a `${NAME}` there
+  is either redaction output (recorded in `privacy.json`) or literal text.
 - `skills`: skills the agent knew, by `name`, `source` and optional `version`
   or `sha256`. These are references, never payloads.
 - `tools`: tools available to the agent: `name`, `kind` (`builtin`, `mcp`,
@@ -440,7 +459,13 @@ Schema: [`losses.schema.json`](paf/schema/v1/losses.schema.json). This is the
 loss report of whatever produced the context. It records:
 
 - source and carried entry counts and estimated tokens, and the budget;
-- the delivery `fallback` rung;
+- `landing_rung`: `native`, `translated`, `context_file` or `archive`, as
+  [above](#landing-a-paf), when the report describes a landing;
+- `fallback`: the legacy morph delivery name, kept for compatibility. Its
+  `native` means the history was translated into a native conversation
+  (rung `translated`), *not* a byte-for-byte install.
+  `context_file` maps to `context_file`, and `handoff` maps to
+  `context_file` with an agent-written handoff;
 - an `items` list of `{kind, severity, count, detail}`.
 
 Loss kinds include:
@@ -504,7 +529,7 @@ root `privacy.json` records:
 
 The `content_digest` binds consent to content without a circular hash. It is
 the lowercase hex SHA-256 of the lines `<sha256>  <path>\n` for every manifest
-entry except `privacy.json`, sorted by path.
+entry except `privacy.json`, sorted by path in byte order.
 
 ### Signatures
 
@@ -527,15 +552,43 @@ by the lowercase hex SHA-256 of `manifest.json`. tclaude signs with the
 producing instance's federation key; a published PAF uses a pseudonymous
 publisher key instead (`signer.kind`: `publisher`). Verifying a signature
 proves the manifest, and so every hashed entry, is unchanged since signing.
-Whether to trust the signer is the reader's decision.
+
+Rules for verifiers:
+
+- **Trust is decided by `public_key` alone.** `key_id`, `signer` and the
+  file name are self-asserted labels. A reader shows a signer as this node or
+  a known peer only when the public key matches that node's key.
+- **Recompute the manifest hash.** `manifest_sha256` is informational; a
+  verifier hashes the manifest bytes itself.
+- **Judge each signature on its own.** A signature with an unknown `alg` is
+  skipped, and an invalid one is reported as invalid. Neither invalidates
+  the archive or the other signatures. An unsigned PAF is valid but
+  unverified.
+
+So that every reader parses the same signed content, readers also refuse:
+
+- JSON objects with duplicate keys in any PAF metadata file;
+- ZIP local file headers whose name, sizes or method disagree with the
+  central directory;
+- entries whose actual decompressed size differs from the declared one.
+
+Readers locate entries through the central directory only.
 
 ### Encryption
 
 An encrypted PAF is the whole `.paf` file encrypted with
 [age](https://age-encryption.org/v1) to one or more recipients, with
-extension `.paf.age`. tclaude encrypts to recipients' X25519 keys. Any age
-implementation can decrypt the file, and the decrypted bytes are an ordinary
-PAF. tclaude always includes the sender's own key as a recipient, so the
+extension `.paf.age`, using age's standard X25519 recipient type. The
+decrypted bytes are an ordinary PAF.
+
+A tclaude instance's federation identity is an Ed25519 key. Its age recipient
+is the X25519 public key obtained by the standard birational map from that
+Ed25519 public key. Its age identity is the X25519 scalar derived the way
+Ed25519 derives its signing scalar (the low 32 bytes of SHA-512 of the seed,
+clamped). This is the same derivation tclaude's federation already uses for
+sealed payloads. Any age implementation can then decrypt a PAF addressed to a
+tclaude instance, given that instance's identity in age's `AGE-SECRET-KEY-1`
+encoding. tclaude always includes the sender's own key as a recipient, so the
 sender can read back what it sent.
 
 ## Versioning and compatibility
@@ -549,9 +602,21 @@ sender can read back what it sent.
 - A **major** version may change anything. A reader refuses an unknown major
   version, but still shows `format`, `paf_version` and `producer` so the user
   knows what to upgrade.
-- Readers **ignore unknown fields** and unknown entries under `x/`. Writers
-  must not rely on readers understanding a field unless it is listed in
-  `requires`.
+- Readers **ignore unknown fields** and any listed entry they do not
+  understand, wherever it sits. Writers must not rely on readers understanding
+  a field or entry unless it is listed in `requires`.
+- **Open enumerations** may gain values in a minor version, and readers
+  accept unknown values. These are block `kind`, JSON Lines `type`, loss
+  `kind` and `severity`, lineage `op`, boundary `kind`, redaction `kind`,
+  audience `kind`, `sensitivity`, snapshot `state`, tool `kind`, `signer.kind`
+  and signature `alg`. The schemas list the known values without restricting
+  them. A reader renders an unknown block kind or line type as a visible
+  "unsupported content" placeholder that keeps its `text` when present, and
+  never drops it silently. A writer that needs a reader to understand a new
+  value lists a feature in `requires`.
+- **Closed enumerations** change only in a major version: `format`, `kind`
+  (`agent`, `group`), entry `role` (`user`, `assistant`) and `origin`
+  (`human`, `agent`, `tool`), and the transcript `scope`.
 - **`requires`** names features without which the content would be
   misunderstood, not merely incomplete (for example, a context stored as a
   delta against an earlier snapshot). A reader that does not know a required
@@ -572,7 +637,9 @@ a reader checks them in code:
 - entry hashes and sizes match the manifest;
 - no entry name contains a `.` or `..` segment;
 - every agent key listed in the manifest has an `agent.json`;
-- every `attachment` reference resolves to an entry.
+- `agent.native.path` lies under that agent's own `agents/<key>/native/`;
+- every `attachment` reference resolves to an entry;
+- JSON metadata has no duplicate keys.
 
 ## Legacy formats
 
@@ -583,7 +650,7 @@ agent bundle for peers that do not advertise PAF support.
 |---|---|
 | Agent bundle v1 (`tclaude-agent-bundle`, `manifest.json` + `history/transcript.jsonl`) | One agent; `agent.definition` from `manifest.agent`; the native blob from `history`; findings into `privacy.scan`; the mail ledger into `x/tclaude/`. There is no neutral context, so landing in another harness decodes the native blob first. |
 | Group export v5 (`manifest.json` + `projects/<conv>.jsonl`) | A group; one agent per conversation with a native Claude Code blob. |
-| Morph artifacts (`transcript.md`, `loss-report.json`) | Readable as a context-file landing; `loss-report.json` has the same fields as `losses.json`. |
+| Morph artifacts (`transcript.md`, `loss-report.json`) | Readable as a context-file landing. `loss-report.json` has the fields of `losses.json`; readers treat `"items": null` as an empty list and map `fallback` to `landing_rung`. |
 
 ## Related pages
 

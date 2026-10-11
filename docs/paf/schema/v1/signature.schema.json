@@ -3,16 +3,46 @@
   "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/signature.schema.json",
   "title": "PAF signatures/<key-id>.json",
   "type": "object",
-  "required": ["alg", "public_key", "key_id", "manifest_sha256", "signature"],
+  "required": [
+    "alg",
+    "public_key",
+    "key_id",
+    "manifest_sha256",
+    "signature"
+  ],
   "properties": {
-    "alg": {"const": "ed25519"},
-    "public_key": {"type": "string", "contentEncoding": "base64"},
-    "key_id": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$"},
+    "alg": {
+      "type": "string",
+      "description": "Open set; verifiers skip signatures with an unknown alg. Known: ed25519."
+    },
+    "public_key": {
+      "type": "string",
+      "contentEncoding": "base64"
+    },
+    "key_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,128}$",
+      "description": "Self-asserted label; trust is decided by public_key only."
+    },
     "signer": {
       "type": "object",
-      "properties": {"kind": {"enum": ["instance", "publisher"]}, "name": {"type": "string"}}
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "Open set; readers accept unknown values. Known: instance, publisher."
+        },
+        "name": {
+          "type": "string"
+        }
+      }
     },
-    "manifest_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
-    "signature": {"type": "string", "contentEncoding": "base64"}
+    "manifest_sha256": {
+      "$ref": "common.schema.json#/$defs/sha256",
+      "description": "Informational; verifiers recompute it."
+    },
+    "signature": {
+      "type": "string",
+      "contentEncoding": "base64"
+    }
   }
 }
