@@ -147,14 +147,14 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const [followUp, setFollowUp] = useState('');
   const [copyConversation, setCopyConversation] = useState(true);
-  const [copyOwnership, setCopyOwnership] = useState(true);
+  const [copyOwnership, setCopyOwnership] = useState(false);
   const [worktree, setWorktree] = useState('');
   const [branch, setBranch] = useState('');
   const [base, setBase] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const source = descriptor.label || shortID(descriptor.conv);
-  const dirty = !!followUp || !copyConversation || !copyOwnership || !!worktree || !!branch;
+  const dirty = !!followUp || !copyConversation || copyOwnership || !!worktree || !!branch;
 
   const submit = async () => {
     if (busy) return;
@@ -216,7 +216,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
           onChange=${(event) => setCopyConversation(event.currentTarget.checked)}
         /> Copy conversation history
       </label>
-      <label class="cron-create-enabled" title="When checked, the clone also owns every group the source owns. Uncheck to give the clone the source's memberships and permissions but no group ownership.">
+      <label class="cron-create-enabled" title="When checked, the clone also owns every group the source owns. Unchecked (the default), the clone gets the source's memberships and permissions but no group ownership.">
         <input
           id="clone-agent-copy-ownership"
           type="checkbox"

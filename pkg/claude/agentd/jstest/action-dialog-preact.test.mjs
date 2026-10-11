@@ -175,7 +175,7 @@ test('clone dialog owns worktree state, dirty discard, and exact submit payload'
   await harness.act(() => Promise.resolve());
   assert.deepEqual(calls[0], ['clone', {
     conv: 'abcdefgh-1234', label: 'worker', followUp: 'continue\ncarefully',
-    copyConversation: true, copyOwnership: true, cwd: '/repo-wt',
+    copyConversation: true, copyOwnership: false, cwd: '/repo-wt',
   }]);
   await mounted.cleanup();
 });
@@ -333,7 +333,7 @@ test('action mutations preserve endpoint payloads, notifications, and refresh bo
   const cloneOwner = state.dialog.value;
   await actions.cloneAgent({ conv: 'source', label: 'worker', followUp: 'one\ntwo', copyConversation: false, cwd: '/wt' }, cloneOwner);
   assert.equal(requests[0][0], '/api/agents/source/clone');
-  assert.deepEqual(JSON.parse(requests[0][1].body), { follow_up: 'one two', no_copy_conv: true, copy_ownership: true, cwd: '/wt' });
+  assert.deepEqual(JSON.parse(requests[0][1].body), { follow_up: 'one two', no_copy_conv: true, copy_ownership: false, cwd: '/wt' });
   assert.deepEqual(notices[0], ['cloned worker → 12345678 (warning: late status)', true]);
   assert.equal(state.dialog.value, null);
 

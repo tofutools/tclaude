@@ -387,7 +387,7 @@ may not morph a target into a broader approval posture than its own.
 ### clone
 
 `clone [follow-up]` forks an agent into a sibling that inherits its
-identity (groups, grants, ownerships) while the original keeps running.
+identity (groups and roles, grants) while the original keeps running.
 The sibling is renamed `<title>-c-<N>` and gets a copy of the conversation
 by default (`--no-copy-conv` for a blank-context sibling). The copy works for
 every harness with portable history: Claude Code copies its transcript and
@@ -397,9 +397,8 @@ harness state (a private `CODEX_HOME` or OpenCode state included).
 
 The identity copy is all-or-nothing: if any membership, grant or ownership
 cannot be written, the clone is stopped and the command fails, so a clone never
-runs with only part of its source's identity. `--no-copy-ownership` leaves the
-source's group ownerships off the clone (memberships and grants are still
-copied). `--group <name>` also adds the clone to one more group in the same
+runs with only part of its source's identity. Group ownerships are not copied
+unless you pass `--copy-ownership` (memberships, roles and grants always are). `--group <name>` also adds the clone to one more group in the same
 request; an agent caller needs `groups.members.add` for that group, just as
 for adding a member directly. `--cwd <dir>` starts the clone in another
 directory, typically a git worktree; an agent caller must prove it can write

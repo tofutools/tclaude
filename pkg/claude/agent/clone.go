@@ -26,14 +26,14 @@ import (
 // action onto a peer (manager pattern).
 
 type cloneParams struct {
-	FollowUp        string `pos:"true" optional:"true" help:"Optional first-turn prompt for the clone (quote multi-word strings)."`
-	File            string `long:"file" short:"f" optional:"true" help:"Read the follow-up from this file instead of the positional argument ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing follow-ups. Mutually exclusive with the positional argument."`
-	Target          string `long:"target" optional:"true" help:"Clone ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.clone permission, or being an owner of a group containing the target."`
-	NoCopyConv      bool   `long:"no-copy-conv" help:"Spawn the clone with a fresh context (default: copy the original's jsonl so the clone starts with the same conversation history)."`
-	AskHuman        string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny. Self-target only."`
-	Cwd             string `long:"cwd" short:"C" optional:"true" help:"Spawn the clone in this directory (e.g. a git worktree) instead of the original's cwd. An agent caller must be able to write there."`
-	Group           string `long:"group" optional:"true" help:"Also add the clone to this group, on top of the groups it inherits. Requires the groups.members.add permission for that group."`
-	NoCopyOwnership bool   `long:"no-copy-ownership" help:"Do not copy the original's group ownerships onto the clone (default: the clone owns the same groups the original owns)."`
+	FollowUp      string `pos:"true" optional:"true" help:"Optional first-turn prompt for the clone (quote multi-word strings)."`
+	File          string `long:"file" short:"f" optional:"true" help:"Read the follow-up from this file instead of the positional argument ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing follow-ups. Mutually exclusive with the positional argument."`
+	Target        string `long:"target" optional:"true" help:"Clone ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.clone permission, or being an owner of a group containing the target."`
+	NoCopyConv    bool   `long:"no-copy-conv" help:"Spawn the clone with a fresh context (default: copy the original's jsonl so the clone starts with the same conversation history)."`
+	AskHuman      string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny. Self-target only."`
+	Cwd           string `long:"cwd" short:"C" optional:"true" help:"Spawn the clone in this directory (e.g. a git worktree) instead of the original's cwd. An agent caller must be able to write there."`
+	Group         string `long:"group" optional:"true" help:"Also add the clone to this group, on top of the groups it inherits. Requires the groups.members.add permission for that group."`
+	CopyOwnership bool   `long:"copy-ownership" help:"Also make the clone an owner of every group the original owns (default: off — the clone gets the original's memberships, roles and permissions, but no group ownership)."`
 }
 
 func cloneCmd() *cobra.Command {
@@ -41,7 +41,7 @@ func cloneCmd() *cobra.Command {
 		Use:   "clone",
 		Short: "Fork this agent (or another, with --target) into a sibling that inherits its identity",
 		Long: "Spawns a fresh CC instance that inherits the target agent's identity " +
-			"(group memberships, per-conv permission grants, group ownerships). The " +
+			"(group memberships and roles, per-conv permission grants). The " +
 			"clone is renamed to `<original-title>-c-<N>`. The ORIGINAL keeps running " +
 			"— that's the difference vs reincarnate. " +
 			"\n\n" +
@@ -56,8 +56,8 @@ func cloneCmd() *cobra.Command {
 			"\n\n" +
 			"--cwd <dir> spawns the clone in another directory (typically a git " +
 			"worktree). --group <name> also adds the clone to that group in the same " +
-			"request. --no-copy-ownership leaves the original's group ownerships " +
-			"off the clone. " +
+			"request. --copy-ownership also copies the original's group ownerships " +
+			"(off by default). " +
 			"\n\n" +
 			"Cross-agent: --target <selector> clones ANOTHER agent (requires the " +
 			"agent.clone permission, or being an owner of a group containing the target). " +
@@ -128,8 +128,8 @@ func runClone(p *cloneParams, stdin io.Reader, stdout, stderr io.Writer) int {
 	if group := strings.TrimSpace(p.Group); group != "" {
 		body["group"] = group
 	}
-	if p.NoCopyOwnership {
-		body["copy_ownership"] = false
+	if p.CopyOwnership {
+		body["copy_ownership"] = true
 	}
 	path := "/v1/whoami/clone"
 	if target != "" {

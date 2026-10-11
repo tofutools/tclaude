@@ -109,7 +109,7 @@ export function createActionDialogActions({
         body: JSON.stringify({ repo, branch, from_branch: fromBranch || '' }),
       });
     },
-    async cloneAgent({ conv, label, followUp, copyConversation, copyOwnership = true, cwd }, owner) {
+    async cloneAgent({ conv, label, followUp, copyConversation, copyOwnership = false, cwd }, owner) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), CLONE_TIMEOUT_MS);
       try {
@@ -118,7 +118,7 @@ export function createActionDialogActions({
           body: JSON.stringify({
             follow_up: normaliseFollowUp(followUp),
             no_copy_conv: !copyConversation,
-            copy_ownership: copyOwnership !== false,
+            copy_ownership: !!copyOwnership,
             cwd: cwd || '',
           }),
           signal: controller.signal,
