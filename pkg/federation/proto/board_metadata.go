@@ -20,6 +20,26 @@ type BoardItemMetadata struct {
 	DescriptionProvenance *BoardItemDescription `json:"description_provenance,omitempty"`
 }
 
+// UnmarshalJSON keeps optional extension errors independent of the base manifest.
+func (m *BoardItemMetadata) UnmarshalJSON(raw []byte) error {
+	var base BoardItemManifest
+	if err := json.Unmarshal(raw, &base); err != nil {
+		return err
+	}
+	var extension struct {
+		Description json.RawMessage `json:"description_provenance"`
+	}
+	if err := json.Unmarshal(raw, &extension); err != nil {
+		return err
+	}
+	*m = BoardItemMetadata{BoardItemManifest: base}
+	var description *BoardItemDescription
+	if json.Unmarshal(extension.Description, &description) == nil {
+		m.DescriptionProvenance = description
+	}
+	return nil
+}
+
 type BoardItemDescription struct {
 	Description string `json:"description"`
 	Signature   []byte `json:"signature"`

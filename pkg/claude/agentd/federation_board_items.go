@@ -123,7 +123,7 @@ func (a *boardItemAccess) metadata(v proto.BoardItemVersion) (proto.BoardItemMet
 	if e = json.Unmarshal(raw, &metadata); e != nil {
 		return metadata, nil, e
 	}
-	return metadata, raw, metadata.BoardItemManifest.Verify()
+	return metadata, raw, metadata.Verify()
 }
 func (a *boardItemAccess) manifest(v proto.BoardItemVersion) (proto.BoardItemManifest, error) {
 	metadata, _, e := a.metadata(v)
@@ -323,7 +323,12 @@ func boardItemRoute(op string) http.HandlerFunc {
 					rows = append(rows, map[string]any{"id": v.Item, "version": v.Version, "name": "Invalid item metadata", "invalid": true, "error": "publisher metadata could not be verified"})
 					continue
 				}
-				rows = append(rows, map[string]any{"id": v.Item, "version": v.Version, "name": m.Name, "kind": m.Kind, "description": metadata.Description(), "updated_at": result.Catalog[v.Item+"/"+v.Version].UpdatedAt, "seq": result.Catalog[v.Item+"/"+v.Version].Seq, "publisher": m.Publisher, "republisher": v.Publisher, "digest": m.SHA256, "bytes": m.Bytes, "provenance": m, "latest_version": v.Version, "pinned_version": pins[v.Item], "update_available": pins[v.Item] != "" && pins[v.Item] != v.Version})
+				row := map[string]any{"id": v.Item, "version": v.Version, "name": m.Name, "kind": m.Kind, "description": metadata.Description(), "publisher": m.Publisher, "republisher": v.Publisher, "digest": m.SHA256, "bytes": m.Bytes, "provenance": m, "latest_version": v.Version, "pinned_version": pins[v.Item], "update_available": pins[v.Item] != "" && pins[v.Item] != v.Version}
+				if catalog, ok := result.Catalog[v.Item+"/"+v.Version]; ok {
+					row["updated_at"] = catalog.UpdatedAt
+					row["seq"] = catalog.Seq
+				}
+				rows = append(rows, row)
 			}
 			writeJSON(w, 200, map[string]any{key: rows, "next_cursor": result.Cursor})
 			return

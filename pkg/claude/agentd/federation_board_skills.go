@@ -160,7 +160,8 @@ func boardSkillImport(w http.ResponseWriter, r *http.Request, op string, ref boa
 		if err != nil || !info.IsDir() {
 			continue
 		}
-		path, err := boardSkillCanonicalRoot(filepath.Join(base, ".claude", "skills"))
+		path := filepath.Join(base, ".claude", "skills")
+		err = boardGroupSkillPath(path)
 		if err != nil {
 			continue
 		}
@@ -189,7 +190,7 @@ func boardSkillImport(w http.ResponseWriter, r *http.Request, op string, ref boa
 		}
 		seen[id] = true
 		target := roots[i]
-		if target.Kind != "custom" {
+		if target.Kind == "harness" {
 			target.Path, e = boardSkillCanonicalRoot(target.Path)
 		}
 		if e != nil {
@@ -348,10 +349,7 @@ func installBoardSkill(b skillbundle.Bundle, targets []boardSkillRoot, changes [
 		if changes[i].Action == "unchanged" {
 			continue
 		}
-		if e := os.MkdirAll(target.Path, 0700); e != nil {
-			return e
-		}
-		root, e := os.OpenRoot(target.Path)
+		root, e := openBoardSkillRoot(target)
 		if e != nil {
 			return e
 		}

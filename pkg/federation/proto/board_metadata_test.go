@@ -76,10 +76,32 @@ func TestBoardDescriptionExtensionAcceptedByLegacyVerifier(t *testing.T) {
 	require.Equal(t, d.Description, metadata.Description())
 	metadata.DescriptionProvenance.Description = "forged description"
 	require.Empty(t, metadata.Description(), "never project unverified description")
-	require.NoError(t, metadata.BoardItemManifest.Verify(), "bad optional description cannot hide valid content")
+	require.NoError(t, metadata.Verify(), "bad optional description cannot hide valid content")
 	d.Description = "A useful skill."
 	other := m
 	other.Item = NewEnvelopeID()
 	other.Sign(id)
 	require.Error(t, d.Verify(other), "sidecar cannot be attached to another signed item")
+}
+
+func TestBoardDescriptionMalformedExtensionDoesNotHideManifest(t *testing.T) {
+	id, err := NewIdentity()
+	require.NoError(t, err)
+	m := BoardItemManifest{Item: NewEnvelopeID(), Version: NewEnvelopeID(), Kind: "skill", Name: "Demo", SHA256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", Bytes: 3}
+	m.Sign(id)
+	raw, err := json.Marshal(m)
+	require.NoError(t, err)
+	var fields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &fields))
+	for _, invalid := range []string{`"bad"`, `{"description":"fake","signature":123}`, `{"description":4}`, `["x"]`, `null`} {
+		t.Run(invalid, func(t *testing.T) {
+			fields["description_provenance"] = json.RawMessage(invalid)
+			raw, err := json.Marshal(fields)
+			require.NoError(t, err)
+			var decoded BoardItemMetadata
+			require.NoError(t, json.Unmarshal(raw, &decoded))
+			require.NoError(t, decoded.Verify())
+			require.Empty(t, decoded.Description())
+		})
+	}
 }

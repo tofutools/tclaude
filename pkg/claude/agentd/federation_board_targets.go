@@ -54,3 +54,61 @@ func boardRootIdentity(info os.FileInfo) string {
 	}
 	return fmt.Sprintf("%d:%d", stat.Dev, stat.Ino)
 }
+
+// Group skill roots must remain beneath the project, including on first install.
+func boardGroupSkillPath(path string) error {
+	for _, dir := range []string{filepath.Dir(path), path} {
+		info, err := os.Lstat(dir)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("group skill root cannot contain symlinks")
+		}
+	}
+	return nil
+}
+
+func openBoardSkillRoot(target boardSkillRoot) (*os.Root, error) {
+	if target.Kind != "group" {
+		if target.Kind != "custom" {
+			if err := os.MkdirAll(target.Path, 0700); err != nil {
+				return nil, err
+			}
+		}
+		return os.OpenRoot(target.Path)
+	}
+	base := filepath.Dir(filepath.Dir(target.Path))
+	fd, err := unix.Open(base, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = unix.Close(fd) }()
+	var info unix.Stat_t
+	if err := unix.Fstat(fd, &info); err != nil {
+		return nil, err
+	}
+	if fmt.Sprintf("%d:%d", info.Dev, info.Ino) != target.BoundaryIdentity {
+		return nil, errors.New("group directory changed since preview; preview again")
+	}
+	for _, part := range []string{".claude", "skills"} {
+		next, err := unix.Openat(fd, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if errors.Is(err, unix.ENOENT) {
+			if err := unix.Mkdirat(fd, part, 0700); err != nil && !errors.Is(err, unix.EEXIST) {
+				return nil, err
+			}
+			next, err = unix.Openat(fd, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("group skill directory changed or contains a symlink: %w", err)
+		}
+		_ = unix.Close(fd)
+		fd = next
+	}
+	// /dev/fd exists on both supported platforms and opens this anchored descriptor,
+	// rather than resolving the mutable project path a second time.
+	return os.OpenRoot(fmt.Sprintf("/dev/fd/%d", fd))
+}
