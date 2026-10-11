@@ -157,7 +157,10 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 				if strings.TrimSpace(b.Text) == "" {
 					continue
 				}
-				text := b.Text
+				text := withoutPriorMorphNotices(b.Text)
+				if strings.TrimSpace(text) == "" {
+					continue
+				}
 				if e.Author != "" {
 					text = fmt.Sprintf("%smessage from %s%s\n%s", markOpen, e.Author, markClose, text)
 				}
@@ -489,4 +492,19 @@ func (p *Plan) fitBudget(entries []planEntry, opts Options, report *LossReport) 
 	lead := planEntry{entry: Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text(marker)}}}
 	out := append(append(append([]planEntry{}, pinned...), lead), rest[cut:]...)
 	return coalesce(out)
+}
+
+// Carried notices are plain native text on the next hop. Replace only our
+// generated notice line, retaining adjacent user instructions and all history
+// wrappers (tool records, summaries and file pointers remain useful context).
+func withoutPriorMorphNotices(text string) string {
+	lines := strings.Split(text, "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		if strings.HasPrefix(line, "⟦tclaude morph⟧ History carried over from ") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
 }
