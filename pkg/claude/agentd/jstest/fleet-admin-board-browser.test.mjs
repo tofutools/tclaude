@@ -13,8 +13,8 @@ const BOARDS = [
 ];
 const item = (id, name, kind, publisher, extra = {}) => ({ ...extra, id, version: `v_${id}`, latest_version: `v_${id}`, name, kind, publisher, republisher: publisher, digest: 'ab'.repeat(32), bytes: 2048, provenance: { pubkey: 'PUBKEYPUBKEYPUBKEY0123456789' } });
 const ITEMS = {
-  brd_ops: [item('itm_roles', 'review roles', 'config', 'inst_forge', { updated_at: '2026-10-09T09:00:00Z' }), item('itm_mine', 'sandbox defaults', 'config', 'inst_self')],
-  brd_oss: [item('itm_hunter', 'flaky-test-hunter', 'skill', 'inst_mx', { description: 'Reruns a failing test and bisects the flake', updated_at: '2026-10-11T09:00:00Z' })],
+  brd_ops: [item('itm_roles', 'review roles', 'config', 'inst_forge', { updated_at: '2026-10-11T09:00:00Z', seq: 9 }), item('itm_mine', 'sandbox defaults', 'config', 'inst_self')],
+  brd_oss: [item('itm_hunter', 'flaky-test-hunter', 'skill', 'inst_mx', { description: 'Reruns a failing test and bisects the flake', updated_at: '2026-10-11T09:00:00.5Z', seq: 10 })],
 };
 const SKILL_FILES = [
   { path: 'SKILL.md', bytes: 300, text: '# hunter' },
@@ -243,8 +243,11 @@ test('List sorts by header click (asc, desc, off) and remembers it; filter text 
   assert.deepEqual(order(), ['itm_roles', 'itm_hunter', 'itm_mine'], 'undated rows sort last');
   assert.deepEqual(s.log.filter((l) => l[0] === 'sort').at(-1), ['sort', 'boardContent', { col: 'updated', dir: 'asc' }]);
   await s.click(s.q('th[data-sort-col="updated"]'));
+  assert.deepEqual(order(), ['itm_hunter', 'itm_roles', 'itm_mine'], 'newest first, by instant not text; undated still last');
   await s.click(s.q('th[data-sort-col="updated"]'));
   assert.deepEqual(order(), ['itm_roles', 'itm_mine', 'itm_hunter'], 'a third click is unsorted again');
+  await s.click(s.q('th[data-sort-col="version"]'));
+  assert.deepEqual(order(), ['itm_roles', 'itm_hunter', 'itm_mine'], 'versions order by sequence number (9 before 10); unnumbered last');
   await s.type(s.q('#fleet-cb-search'), 'bisects');
   assert.deepEqual(order(), ['itm_hunter']);
 });

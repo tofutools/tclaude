@@ -4,7 +4,7 @@ import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { ImportDialog, PublishDialog, canPost, postedBy } from './fleet-admin-board-items.js';
 import { dashPrefs } from './prefs.js';
-import { applySortState, persistTableSort, persistedTableSort } from './sort.js';
+import { applySortState, persistTableSort, persistedTableSort, timestampSortValue } from './sort.js';
 
 const html = htm.bind(h);
 
@@ -33,9 +33,9 @@ export const SORT_ACCESSORS = Object.freeze({
   kind: (r) => r.kind,
   publisher: (r) => r.by,
   board: (r) => r.board.name,
-  version: (r) => (typeof r.seq === 'number' ? r.seq : r.version),
-  // RFC3339 UTC from the hub, so text order is time order.
-  updated: (r) => r.updated_at || null,
+  // Version IDs are random: only the hub's sequence number orders them.
+  version: (r) => (typeof r.seq === 'number' ? r.seq : null),
+  updated: (r) => timestampSortValue(r.updated_at),
 });
 
 // nextSort is the dashboard tables' header cycle: asc, desc, then unsorted.

@@ -383,7 +383,7 @@ const PENDING_ACCESSORS = {
 };
 
 export {
-  cycleSort, sortHead, applySort, applySortState, tableSortState, loadSortState,
+  cycleSort, sortHead, applySort, applySortState, tableSortState, loadSortState, timestampSortValue,
   persistedTableSort, persistTableSort,
   MEMBER_COLS, MEMBER_ACCESSORS, JOBS_COLS, JOBS_ACCESSORS,
   LINK_COLS, LINK_ACCESSORS,
