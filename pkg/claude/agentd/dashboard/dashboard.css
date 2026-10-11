@@ -590,9 +590,9 @@ body.mail-col-resizing, body.mail-col-resizing * { user-select: none; }
 
 /* Message filter — heads the list column (row 1), the twin of the
    recipient filter above the sidebar. A flex row: the input grows to fill
-   the column, with the match count, clear button, and the human-folder
-   bulk actions (#mail-mark-all / #mail-clear-read, shown only on the Human
-   folder) trailing on the right. */
+   the column, with the match count and clear button trailing on the right.
+   The folder-wide actions live on their own row (.mail-list-actions) at the
+   top of the list column so the filter keeps the full width. */
 .mail-list-filter {
   display: flex; align-items: center; gap: 6px; min-width: 0;
 }
@@ -609,7 +609,7 @@ body.mail-col-resizing, body.mail-col-resizing * { user-select: none; }
 }
 .mail-list-filter button.clear-filter:hover { color: #d4d4d4; }
 /* JOH-364: global FALLBACK skin for `.tool` buttons. Most .tool buttons live in
-   a scoped toolbar (.filter-bar / .mail-list-filter / …) or another container
+   a scoped toolbar (.filter-bar / .mail-list-actions / …) or another container
    whose `container button` rule out- or ties-and-follows this one — but many do
    NOT (template / profile / role cards, the starter list, the template-editor
    rows, the group-create template picker) and had no rule at all, so they fell
@@ -624,17 +624,25 @@ button.tool {
   cursor: pointer; font-family: inherit;
 }
 /* Hover sets ONLY border-color: every scoped `.tool` hover (filter-bar /
-   mail-list-filter) and the tied .modal-buttons button:hover already set
+   mail-list-actions) and the tied .modal-buttons button:hover already set
    border-color to this same value, so this fallback introduces no property they
    don't — it can't leak a background/text change onto a do-not-touch button. */
 button.tool:hover { border-color: #58a6ff; }
-.mail-list-filter button.tool {
+/* Folder-wide actions (#mail-mark-all / #mail-peer-compose /
+   #mail-clear-read on the Human folder, #mail-agent-mark-all on an agent
+   folder): a right-aligned row above the bulk bar, wrapping when the
+   column is narrow rather than squeezing the message filter. */
+.mail-list-actions {
+  flex: 0 0 auto; display: flex; flex-wrap: wrap; justify-content: flex-end;
+  align-items: center; gap: 6px;
+}
+.mail-list-actions button.tool {
   flex: 0 0 auto;
   background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
   border-radius: 4px; padding: 4px 8px; font-size: 12px;
   cursor: pointer; font-family: inherit; white-space: nowrap;
 }
-.mail-list-filter button.tool:hover { border-color: #58a6ff; color: #d4d4d4; }
+.mail-list-actions button.tool:hover { border-color: #58a6ff; color: #d4d4d4; }
 
 /* Bulk-action bars above each column's scrolling pane: a count/label on
    the left, action buttons on the right. */
@@ -15893,8 +15901,8 @@ body.wizard .mail-list-filter input:focus { border-color: #a97bd6; }
 body.wizard .mail-list-filter .filter-count { color: #b39ddb; }
 body.wizard .mail-list-filter button.clear-filter { color: #b39ddb; }
 body.wizard .mail-list-filter button.clear-filter:hover { color: #f3e6c0; }
-body.wizard .mail-list-filter button.tool { border-color: #d9b45a; color: #b39ddb; }
-body.wizard .mail-list-filter button.tool:hover { border-color: #a97bd6; color: #f3e6c0; }
+body.wizard .mail-list-actions button.tool { border-color: #d9b45a; color: #b39ddb; }
+body.wizard .mail-list-actions button.tool:hover { border-color: #a97bd6; color: #f3e6c0; }
 body.wizard .mail-gutter:hover,
 body.wizard .mail-gutter.dragging { background: #a97bd6; }
 

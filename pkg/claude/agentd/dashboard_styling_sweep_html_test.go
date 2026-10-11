@@ -34,7 +34,7 @@ func TestDashboardCSS_StylingSweep(t *testing.T) {
 	// Group 1 — global FALLBACK skin for `.tool` buttons (A1 colors + the
 	// template / profile / role card, starter-list and template-editor tools).
 	// Anchored at line start so it does not match the scoped `.filter-bar
-	// button.tool {` / `.mail-list-filter button.tool {` rules that share the
+	// button.tool {` / `.mail-list-actions button.tool {` rules that share the
 	// `button.tool {` suffix.
 	must("\nbutton.tool {", "the global fallback button.tool skin exists")
 	// Hover sets ONLY border-color so it can't leak a bg/text change onto the

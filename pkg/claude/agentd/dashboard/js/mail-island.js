@@ -656,16 +656,6 @@ export function MailApp({ controller }) {
           controller.setMessageQuery('');
           document.querySelector('#filter-messages')?.focus();
         }}>×</button>
-      <button class="tool" id="mail-mark-all" data-act="msg-mark-all-read"
-        title="Mark every human notification read" hidden=${current.selected !== 'human'}>✓ mark all read</button>
-      <button class="tool" id="mail-peer-compose" title="Message a peer's operator or agents on a peer (federation)"
-        hidden=${current.selected !== 'human' || !!remoteNodeID()} onClick=${() => openPeerMail({})}>✉ peer</button>
-      <button class="tool" id="mail-clear-read" data-act="msg-clear"
-        title="Delete every human notification that has been marked read" hidden=${current.selected !== 'human'}>🗑 delete read</button>
-      <button class="tool" id="mail-agent-mark-all" data-act="mail-agent-mark-all"
-        title="Mark every message this agent has received as read (on its behalf)"
-        onClick=${controller.markAllAgentRead}
-        hidden=${current.selected === 'human' || current.selected === 'all' || current.selected.startsWith('group:')}>✓ mark all read</button>
     </div>
     <div class="mail-col mail-sidebar-col">
       <${RemoteInboxSection} />
@@ -691,6 +681,18 @@ export function MailApp({ controller }) {
       </label>
     </div>
     <div class="mail-col mail-list-col">
+      <div class="mail-list-actions" hidden=${current.selected === 'all' || current.selected.startsWith('group:')}>
+        <button class="tool" id="mail-mark-all" data-act="msg-mark-all-read"
+          title="Mark every human notification read" hidden=${current.selected !== 'human'}>✓ mark all read</button>
+        <button class="tool" id="mail-peer-compose" title="Message a peer's operator or agents on a peer (federation)"
+          hidden=${current.selected !== 'human' || !!remoteNodeID()} onClick=${() => openPeerMail({})}>✉ peer</button>
+        <button class="tool" id="mail-clear-read" data-act="msg-clear"
+          title="Delete every human notification that has been marked read" hidden=${current.selected !== 'human'}>🗑 delete read</button>
+        <button class="tool" id="mail-agent-mark-all" data-act="mail-agent-mark-all"
+          title="Mark every message this agent has received as read (on its behalf)"
+          onClick=${controller.markAllAgentRead}
+          hidden=${current.selected === 'human' || current.selected === 'all' || current.selected.startsWith('group:')}>✓ mark all read</button>
+      </div>
       <${MessageBulkBar} current=${current} controller=${controller} model=${messages} />
       <${MessageList} current=${current} controller=${controller} model=${messages} />
       <${MessagePager} current=${current} controller=${controller} model=${messages} />
