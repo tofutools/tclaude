@@ -1,0 +1,13 @@
+{
+  "source": "claude",
+  "source_entries": 5,
+  "carried_entries": 5,
+  "dropped_percent": 0,
+  "kept_percent": 100,
+  "source_estimated_tokens": 410,
+  "carried_estimated_tokens": 410,
+  "items": [
+    {"kind": "pre_compaction_history", "severity": "info", "count": 42},
+    {"kind": "harness_context_dropped", "severity": "info", "count": 3}
+  ]
+}

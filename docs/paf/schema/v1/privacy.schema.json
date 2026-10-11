@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/privacy.schema.json",
+  "title": "PAF privacy.json",
+  "type": "object",
+  "properties": {
+    "sensitivity": {
+      "type": "string",
+      "description": "Open set; readers accept unknown values. Known: private, shared, public."
+    },
+    "audience": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "Open set; readers accept unknown values. Known: self, recipients, board, public."
+        },
+        "recipients": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "board": {
+          "type": "string"
+        }
+      }
+    },
+    "scan": {
+      "type": "object",
+      "required": [
+        "scanner",
+        "findings"
+      ],
+      "properties": {
+        "scanner": {
+          "type": "string"
+        },
+        "at": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/finding"
+          }
+        },
+        "allowed": {
+          "type": "boolean",
+          "description": "A human explicitly allowed the findings."
+        }
+      }
+    },
+    "redactions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "Open set. Known: mask_spans, stub_tool_results, drop_media, drop_reasoning, drop_native, paths_to_placeholders, strip_identity."
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "consent": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "by",
+          "at",
+          "audience",
+          "content_digest"
+        ],
+        "properties": {
+          "by": {
+            "type": "string"
+          },
+          "at": {
+            "$ref": "common.schema.json#/$defs/timestamp"
+          },
+          "audience": {
+            "type": "string",
+            "description": "Open set; readers accept unknown values. Known: self, recipients, board, public."
+          },
+          "content_digest": {
+            "$ref": "common.schema.json#/$defs/sha256"
+          }
+        }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "properties": {
+        "expires_at": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        }
+      }
+    }
+  }
+}

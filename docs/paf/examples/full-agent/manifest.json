@@ -1,0 +1,58 @@
+{
+  "agents": [
+    "fixer"
+  ],
+  "created_at": "2026-10-11T19:40:00Z",
+  "entries": [
+    {
+      "path": "agents/fixer/agent.json",
+      "bytes": 1487,
+      "sha256": "9e96fbe78bf5f84782491fc3254c98205162c009481e1af4ea0e1167101a9ba2",
+      "media_type": "application/json"
+    },
+    {
+      "path": "agents/fixer/context/losses.json",
+      "bytes": 351,
+      "sha256": "baaa8a9e9056c8946d0baf44498c79f36d1d9692ed4bd789469e390487e363e4",
+      "media_type": "application/json"
+    },
+    {
+      "path": "agents/fixer/context/transcript.jsonl",
+      "bytes": 1767,
+      "sha256": "92666e04ff69f7b6362d7fa6573f52f1e7db6135bea5d1714ad275d6efe8983f",
+      "media_type": "application/jsonl"
+    },
+    {
+      "path": "agents/fixer/environment.json",
+      "bytes": 1415,
+      "sha256": "fa2131a4705455c4ebe8fcf43cae0012f7963deaa2039d067fd19f57a5152cac",
+      "media_type": "application/json"
+    },
+    {
+      "path": "agents/fixer/native/claude-jsonl/history.jsonl",
+      "bytes": 508,
+      "sha256": "7fcb4ceda24ced69e6c1123c56a8fec7b5fa958f38e795abed9fd1b4caa76512",
+      "media_type": "application/jsonl"
+    },
+    {
+      "path": "attachments/c06303dd848a80e9e774747ca5f185ba68129bb55e4842c72ed477340fc8100c",
+      "bytes": 69,
+      "sha256": "c06303dd848a80e9e774747ca5f185ba68129bb55e4842c72ed477340fc8100c",
+      "media_type": "image/png"
+    },
+    {
+      "path": "privacy.json",
+      "bytes": 528,
+      "sha256": "ad19b4e314993490b71870386320fbe7bad20deba88fc550465486b0dd0bfd78",
+      "media_type": "application/json"
+    }
+  ],
+  "format": "paf",
+  "kind": "agent",
+  "paf_version": "1.0",
+  "producer": {
+    "name": "tclaude",
+    "version": "v0.0.2212"
+  },
+  "requires": []
+}

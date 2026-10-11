@@ -1,0 +1,11 @@
+{
+  "alg": "ed25519",
+  "key_id": "example-instance",
+  "manifest_sha256": "89511a78df1ca25ab769d1f7ff8944edf709f42aed26058f6d5f78fca4f5337e",
+  "public_key": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w=",
+  "signature": "dV1HGopNr/2EdCbFGd2lN2ZP4g7govC7/RyRdIaDr5iywRHnSrOTNbWgdbvlvKzVS/LMGb7q+DvabiHNk509Cw==",
+  "signer": {
+    "kind": "instance",
+    "name": "laptop"
+  }
+}
