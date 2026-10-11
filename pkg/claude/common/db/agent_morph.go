@@ -18,6 +18,9 @@ type AgentMorphForm struct {
 	// of that harness instead of resuming the same one, and ApplyTo never
 	// applies a form for another harness. "" = the agent's own harness.
 	Harness string `json:"harness,omitempty"`
+	// HistoryWindowTokens overrides only the cross-harness history budget, not
+	// the destination model or its native context capacity. Persisted for idle apply.
+	HistoryWindowTokens *int64 `json:"history_window_tokens,omitempty"`
 	// HarnessBuiltinMode is the harness-native sandbox mode a cross-harness
 	// form launches under. It is recorded for `morph --back` across
 	// harnesses; a same-harness morph never changes sandbox fields.

@@ -101,6 +101,8 @@ type LossReport struct {
 	// Estimates use the same coarse byte/media heuristic as the context budget.
 	SourceEstimatedTokens  int64  `json:"source_estimated_tokens"`
 	CarriedEstimatedTokens int64  `json:"carried_estimated_tokens"`
+	ContextWindowTokens    int64  `json:"context_window_tokens"`
+	ContextWindowSource    string `json:"context_window_source"`
 	BudgetTokens           int64  `json:"budget_tokens"`
 	Source                 string `json:"source"`
 	Target                 string `json:"target,omitempty"`

@@ -151,7 +151,25 @@ is explicit about what does not map 1:1:
   references them by a saved path instead.
 - **Context budget.** The carried history fills at most
   `agent.morph.history_budget_percent` (default 60) of the target model's
-  context window. The original task and latest user instructions stay pinned,
+  context window. The preview shows the window, its source, and the history
+  budget. It uses fresh local Codex/OpenCode model metadata, Copilot prompt
+  limits, or the known Claude/Gemini model limits; it does not fetch metadata.
+  Unknown or automatic models show **unknown model, assumed 32k**.
+  `agent morph --history-window-tokens N` overrides that assumption (1024 to
+  10000000); a verified smaller destination limit still wins. A Copilot
+  profile's explicit context limit and a Claude auto-compact ceiling also
+  bound the budget. This option persists when the morph waits for idle and
+  changes only the carried-history budget, not the model's native capacity.
+  The estimate charges three tokens per four UTF-8 bytes plus message/media
+  overhead. Calibration covers prose, code, logs, JSON, Unicode and identifiers;
+  it is a conservative safety estimate, not a provider billing count.
+
+  Local near-budget resume verification is opt-in, skips by default, and
+  spends one cheap Codex model call:
+  `TCLAUDE_MORPH_RESUME_SMOKE=1 TCLAUDE_MORPH_NEAR_BUDGET=1 scripts/test.sh ./pkg/claude/agentd/ -run TestMorphResumeRealCLI -v -count=1`.
+  Do not enable it in CI or copy provider credentials to CI.
+
+  The original task and latest user instructions stay pinned,
   followed by the newest complete turns that fit. A giant pinned turn stays
   in the full transcript with a clear read-before-continuing pointer instead
   of overflowing the native window. The preview shows kept/dropped entry

@@ -17,12 +17,21 @@ import (
 
 const openCodeModelCacheTTL = 5 * time.Minute
 
+// openCodeModelDisclosureTTL is how stale the dashboard's model list may get
+// before a snapshot read refreshes it. Each refresh runs `opencode models`,
+// which rewrites OpenCode's ~5 MB model cache and costs seconds of CPU, and
+// every open dashboard reads the list on each poll (tcl-98ay6q). Launches
+// validate against openCodeModelCacheTTL instead, and their refresh updates
+// the list shown here too.
+const openCodeModelDisclosureTTL = time.Hour
+
 // openCodeModelRefreshMinInterval floors how often a BACKGROUND refresh may be
 // STARTED, independent of whether the last one succeeded. The single-flight
 // flag already guarantees at most one subprocess in flight; this guarantees the
 // rate as well, so a permanently failing or permanently slow `opencode models`
 // cannot turn into back-to-back forks (each one starting the moment the last
-// gave up). Belt and braces: the 5-minute TTL is the binding constraint on the
+// gave up). Belt and braces: the TTLs (an hour for the dashboard list, 5 minutes
+// for launch validation) are the binding constraint on the
 // happy path, and this floor only matters when refreshes keep failing.
 const openCodeModelRefreshMinInterval = time.Minute
 
@@ -30,6 +39,7 @@ const openCodeModelRefreshMinInterval = time.Minute
 const openCodeModelsExecTimeout = 10 * time.Second
 
 type openCodeCatalog struct {
+	windows map[string]int64
 	models  []string
 	efforts []string
 	err     error
@@ -130,7 +140,7 @@ func (openCodeModels) ValidateEffort(value string) (string, error) {
 //
 // The cost of that: for the first poll or two of a daemon's life the OpenCode
 // model list is empty, and after an `opencode` upgrade it stays stale for up to
-// one TTL. Models are suggestions and ValidateModel deliberately accepts free
+// openCodeModelDisclosureTTL, or until a launch validates an effort. Models are suggestions and ValidateModel deliberately accepts free
 // text; ValidateEffort still refuses unknown variants and loads synchronously.
 func (openCodeModels) Models() []string {
 	return slices.Clone(openCodeCatalogForDisclosure().models)
@@ -153,8 +163,14 @@ func openCodeCatalogForDisclosure() openCodeCatalog {
 	openCodeModelCache.Lock()
 	defer openCodeModelCache.Unlock()
 	value := openCodeModelCache.value
+	// A failed read is retried at the launch TTL, so a passing failure does
+	// not leave the list empty for an hour.
+	ttl := openCodeModelDisclosureTTL
+	if value.err != nil {
+		ttl = openCodeModelCacheTTL
+	}
 	stale := value.at.IsZero() ||
-		time.Since(value.at) >= openCodeModelCacheTTL
+		time.Since(value.at) >= ttl
 	rateAllows := openCodeModelCache.lastRefreshStart.IsZero() ||
 		time.Since(openCodeModelCache.lastRefreshStart) >= openCodeModelRefreshMinInterval
 	if stale && rateAllows {
@@ -228,7 +244,8 @@ func computeOpenCodeCatalog() openCodeCatalog {
 		err = fmt.Errorf("`opencode models --verbose` returned no models")
 	}
 	return openCodeCatalog{
-		models: models, efforts: efforts, err: err, at: time.Now(),
+		windows: parseOpenCodeModelWindows(string(output)),
+		models:  models, efforts: efforts, err: err, at: time.Now(),
 	}
 }
 

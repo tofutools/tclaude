@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -356,11 +357,31 @@ func planCrossHarnessMorph(convID string, dst *harness.Harness, target db.AgentM
 	complete.Harness = dst.Name
 	complete.HarnessBuiltinMode = &dstMode
 	complete.TrustDir = target.TrustDir
+	complete.HistoryWindowTokens = target.HistoryWindowTokens
 
 	opts := harness.MorphTranslateOptions()
 	opts.Policy.TargetModel = model
 	if window > 0 {
 		opts.Policy.ContextWindowTokens = window
+		opts.Policy.NativeContextWindowTokens = window
+		opts.Policy.ContextWindowSource = "Claude extended-context selection"
+	}
+	if target.HistoryWindowTokens != nil {
+		opts.Policy.ContextWindowTokens = *target.HistoryWindowTokens
+		opts.Policy.ContextWindowSource = "explicit history window"
+	}
+	if dst.Name == harness.DefaultName && p.AutoCompactWindow != nil && *p.AutoCompactWindow != "" {
+		if compact, err := harness.ParseAutoCompactWindow(*p.AutoCompactWindow); err == nil {
+			if cap, err := strconv.ParseInt(compact, 10, 64); err == nil {
+				if opts.Policy.ContextWindowTokens <= 0 {
+					opts.Policy.ContextWindowTokens, opts.Policy.ContextWindowSource = harness.MorphContextWindow(dst, model)
+				}
+				if cap < opts.Policy.ContextWindowTokens {
+					opts.Policy.ContextWindowTokens = cap
+					opts.Policy.ContextWindowSource = "Claude auto-compact ceiling"
+				}
+			}
+		}
 	}
 	return &crossMorph{
 		src: src, dst: dst, cwd: current.Cwd, target: complete, previous: previous,

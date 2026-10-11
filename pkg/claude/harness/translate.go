@@ -95,6 +95,13 @@ func PlanTranslation(src, dst *Harness, convID, cwd string, opts TranslateOption
 	}
 	policy := opts.Policy
 	policy.Target = dst.Name
+	resolved, source := MorphContextWindow(dst, policy.TargetModel)
+	if dst.Name == DefaultName && policy.NativeContextWindowTokens == 1_000_000 {
+		resolved, source = 1_000_000, "Claude extended-context selection"
+	}
+	if policy.ContextWindowTokens <= 0 || (!strings.HasPrefix(source, "unknown model") && resolved < policy.ContextWindowTokens) {
+		policy.ContextWindowTokens, policy.ContextWindowSource = resolved, source
+	}
 	policy.InlineMedia = dst.Transcript.InlineMedia()
 	if opts.ArtifactDir != "" {
 		policy.MediaDir = filepath.Join(opts.ArtifactDir, "media")

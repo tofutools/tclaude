@@ -11,7 +11,6 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // The dashboard mail client — an introspection + cleanup view over
@@ -205,7 +204,7 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	groupsByConv, _ := db.GroupNamesByConv()
-	aliveSessions, _ := session.LiveTmuxSessions()
+	aliveSessions, _ := cachedLiveTmuxSessions()
 
 	// The conv set = every conv that has mail ∪ every active agent (so a
 	// freshly-spawned agent with an empty mailbox still gets a folder).

@@ -16,7 +16,7 @@ import (
 const (
 	DefaultBudgetPercent       = 60
 	DefaultToolResultClipBytes = 16 << 10
-	DefaultContextWindowTokens = 200_000
+	DefaultContextWindowTokens = 32_000
 	// mediaTokenCost is a coarse per-image estimate for the context budget.
 	mediaTokenCost = 1600
 )
@@ -33,6 +33,11 @@ type Options struct {
 	// ContextWindowTokens is the destination model's window; zero uses
 	// DefaultContextWindowTokens.
 	ContextWindowTokens int64
+	// NativeContextWindowTokens is a launch-selected native limit (Claude 1M).
+	// It is independent of an explicit carried-history budget override.
+	NativeContextWindowTokens int64
+	// ContextWindowSource describes the resolved limit, shown in the preview.
+	ContextWindowSource string
 	// BudgetPercent of the window the carried history may fill. The rest is
 	// headroom so the target does not compact on its first turn.
 	BudgetPercent int
@@ -110,6 +115,19 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 	if t.Losses != nil {
 		report.Items = append(report.Items, t.Losses.Items...)
 	}
+	report.ContextWindowTokens = opts.ContextWindowTokens
+	if report.ContextWindowTokens <= 0 {
+		report.ContextWindowTokens = DefaultContextWindowTokens
+	}
+	report.ContextWindowSource = opts.ContextWindowSource
+	if report.ContextWindowSource == "" {
+		if opts.ContextWindowTokens > 0 {
+			report.ContextWindowSource = "explicit history window"
+		} else {
+			report.ContextWindowSource = "unknown model, assumed 32k"
+		}
+	}
+	report.BudgetTokens = opts.budgetTokens()
 	p := &Plan{Source: t.Source, Target: opts.Target, TargetModel: opts.TargetModel, Title: t.Source.Title, Report: report}
 	if opts.TranscriptPath != "" {
 		report.TranscriptPath = opts.TranscriptPath
@@ -243,7 +261,7 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 	for _, e := range t.Entries {
 		report.SourceEstimatedTokens += estimateTokens(e)
 		for _, b := range e.Blocks {
-			report.SourceEstimatedTokens += int64(len(b.Input)) / 4
+			report.SourceEstimatedTokens += (int64(len(b.Input))*3 + 3) / 4
 		}
 	}
 	report.sort()
@@ -432,10 +450,10 @@ func coalesce(in []planEntry) []planEntry {
 func estimateTokens(e Entry) int64 {
 	var n int64
 	for _, b := range e.Blocks {
-		n += int64(len(b.Text)) / 4
+		n += (int64(len(b.Text))*3 + 3) / 4
 		n += int64(len(b.Media)) * mediaTokenCost
 	}
-	return n + 8
+	return n + 32
 }
 
 // fitBudget pins the task and latest instructions, then selects the newest

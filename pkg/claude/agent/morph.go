@@ -36,6 +36,7 @@ type morphParams struct {
 	Cancel                bool   `long:"cancel" help:"Cancel a pending morph"`
 	DryRun                bool   `long:"dry-run" help:"Show the before -> after form and whether you may apply it, without changing anything"`
 	JSON                  bool   `long:"json" help:"Print the per-agent results as JSON"`
+	HistoryWindowTokens   int64  `long:"history-window-tokens" optional:"true" help:"Cross-harness history budget window in tokens (1024–10000000), overriding the unknown-model 32k assumption; verified smaller model limits still win"`
 }
 
 func morphCmd() *cobra.Command {
@@ -144,6 +145,9 @@ func (p *morphParams) body() map[string]any {
 	}
 	if p.ConfirmHistoryLoss {
 		body["confirm_history_loss"] = true
+	}
+	if p.HistoryWindowTokens != 0 {
+		body["history_window_tokens"] = p.HistoryWindowTokens
 	}
 	set("model", p.Model)
 	set("effort", p.Effort)
@@ -260,6 +264,9 @@ func printMorphHistory(w io.Writer, r *transcript.LossReport) {
 		rung = r.Fallback
 	}
 	fmt.Fprintf(w, "  history: %d of %d entries carried, %s\n", r.Carried, r.SourceEntries, rung)
+	if r.ContextWindowTokens > 0 {
+		fmt.Fprintf(w, "  history window: %d tokens (%s), budget %d\n", r.ContextWindowTokens, r.ContextWindowSource, r.BudgetTokens)
+	}
 	if r.CarriedEstimatedTokens > 0 {
 		fmt.Fprintf(w, "  estimated history tokens: %d source → %d carried\n", r.SourceEstimatedTokens, r.CarriedEstimatedTokens)
 	}
