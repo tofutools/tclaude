@@ -975,8 +975,9 @@ function PresenceBadge({ member }) {
 // showVisitingRow scrolls to the agent's live row elsewhere in a fused view
 // and flashes it; without one it opens the node where the agent runs.
 function showVisitingRow(member, at) {
-  const rows = [...document.querySelectorAll('tr[data-dnd-agent]')]
-    .filter((row) => row.dataset.dndAgent === member.agent_id && !row.classList.contains('away-placeholder'));
+  const root = document.getElementById('skynet-fused-groups-root') || document;
+  const rows = [...root.querySelectorAll('tr[data-dnd-agent]')]
+    .filter((row) => row.dataset.dndAgent === member.agent_id && !row.classList.contains('away-placeholder') && row.getClientRects().length);
   if (rows.length) {
     rows[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
     rows[0].classList.remove('presence-flash');
@@ -984,7 +985,7 @@ function showVisitingRow(member, at) {
     rows[0].classList.add('presence-flash');
     return;
   }
-  if (at.id && !at.local) void import('./skynet-island.js').then((m) => m.openNodeView(at.id)).catch(() => {});
+  if (at.id) void import('./skynet-island.js').then((m) => m.openNodeView(at.local ? '' : at.id)).catch(() => {});
 }
 
 // AwayRow is the dimmed placeholder an away agent leaves in its home groups:
@@ -1001,7 +1002,7 @@ function AwayRow({ member, view, columns, group }) {
         <button type="button" class="fa-link away-goto" data-away-goto=${member.agent_id || ''}
           title=${visiting ? `Scroll to ${member.title || 'it'} on ${view.at.name}` : `Open ${view.at.name}'s dashboard`}
           onClick=${(event) => { event.preventDefault(); event.stopPropagation(); showVisitingRow(member, view.at); }}
-        >${visiting ? '↓ show' : `open on ${view.at.name} ↗`}</button></div></td>`;
+        >${visiting ? '↓ show' : view.at.local ? 'open on this node ↗' : `open on ${view.at.name} ↗`}</button></div></td>`;
       default: return html`<td></td>`;
     }
   };

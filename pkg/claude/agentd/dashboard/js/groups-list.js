@@ -424,13 +424,14 @@ function RealGroupSummary({ group, activity, membersView, snapshot, actions }) {
   const interactions = useGroupsInteractions();
   const { members, hiddenOffline, away } = membersView;
   const online = group.online || 0;
-  const full = !!group.max_members && members.length >= group.max_members;
+  // An away agent keeps its home membership, so it still takes a cap slot.
+  const full = !!group.max_members && members.length + (away || 0) >= group.max_members;
   const cap = group.max_members || '∞';
   const count = online === members.length ? `${members.length}/${cap}` : `${online}/${members.length}/${cap}`;
   const titleParts = [`${members.length} member${members.length === 1 ? '' : 's'} (${online} online)`, group.max_members ? `cap ${group.max_members}` : 'no cap'];
   if (full) titleParts.push('group is full, spawns refused');
   if (hiddenOffline) titleParts.push(`${hiddenOffline} offline hidden in this view`);
-  if (away) titleParts.push(`${away} away on another node, not counted`);
+  if (away) titleParts.push(`${away} away on another node, not counted (still holding a cap slot)`);
   const groupEditing = interactions.editorKey.startsWith(`group:${group.name}:`);
   const renameKey = `group:${group.name}:name`;
   const maxValue = group.max_members || 0;
