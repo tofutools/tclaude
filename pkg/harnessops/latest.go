@@ -24,6 +24,12 @@ var versionPattern = regexp.MustCompile(`\b([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z
 
 // RefreshLatestAsync is a bounded metadata read; polling never waits for npm.
 func RefreshLatestAsync() {
+	RefreshLatestAsyncContext(context.Background())
+}
+
+// RefreshLatestAsyncContext is RefreshLatestAsync bounded by parent as well,
+// so a caller's cancellation (federation stopping) ends an in-flight read.
+func RefreshLatestAsyncContext(parent context.Context) {
 	latest.Lock()
 	if latest.running || time.Since(latest.checked) < time.Hour {
 		latest.Unlock()
@@ -33,7 +39,7 @@ func RefreshLatestAsync() {
 	latest.checked = time.Now()
 	latest.Unlock()
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		ctx, cancel := context.WithTimeout(parent, 8*time.Second)
 		defer cancel()
 		client := &http.Client{Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 		versions := map[string]string{}
@@ -58,7 +64,13 @@ func RefreshLatestAsync() {
 			}
 		}
 		latest.Lock()
-		latest.versions = versions
+		if parent.Err() != nil {
+			// Cancelled (federation stopped): keep what was known and let the
+			// next start check again rather than waiting out the hour.
+			latest.checked = time.Time{}
+		} else {
+			latest.versions = versions
+		}
 		latest.running = false
 		latest.Unlock()
 	}()

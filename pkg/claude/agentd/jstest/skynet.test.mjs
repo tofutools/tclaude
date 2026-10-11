@@ -46,10 +46,10 @@ test('fleet model keeps trusted peers only, hides the row without peers, and nev
 test('polling contract: staggered starts, relaxed jittered interval, capped backoff', async (t) => {
   const { model } = await load(t);
   assert.deepEqual([0, 1, 2, 3].map((i) => model.staggerOffset(i, 4, 10000)), [0, 2500, 5000, 7500]);
-  assert.equal(model.pollDelay({ random: () => 0.5 }), 10000);
-  assert.equal(model.pollDelay({ random: () => 0 }), 8000);
-  assert.equal(model.pollDelay({ random: () => 1 }), 12000);
-  assert.equal(model.pollDelay({ failures: 2, random: () => 0.5 }), 40000);
+  assert.equal(model.pollDelay({ random: () => 0.5 }), 5000);
+  assert.equal(model.pollDelay({ random: () => 0 }), 4000);
+  assert.equal(model.pollDelay({ random: () => 1 }), 6000);
+  assert.equal(model.pollDelay({ failures: 2, random: () => 0.5 }), 20000);
   assert.equal(model.pollDelay({ failures: 9, random: () => 0.5 }), model.MAX_BACKOFF_MS);
 });
 
@@ -234,7 +234,7 @@ test('map polls only while active, staggered, and stops on leave', async (t) => 
   const mounted = await harness.mount(harness.html`<${island.SkynetMap} state=${state} actions=${actions} timers=${timers} />`);
   assert.equal(timers.queue.length, 0, 'inactive map schedules nothing');
   await harness.act(() => { activeTab.value = 'map'; });
-  assert.deepEqual(timers.queue.map((q) => q.ms), [0, 3333, 6667], 'three nodes, staggered over one interval');
+  assert.deepEqual(timers.queue.map((q) => q.ms), [0, 1667, 3333], 'three nodes, staggered over one interval');
   await harness.act(async () => { await timers.queue.shift().fn(); });
   assert.deepEqual(loaded, ['inst_self']);
   assert.ok(mounted.container.querySelector('[aria-label="desk node"]'));

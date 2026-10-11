@@ -33,7 +33,7 @@ const html = htm.bind(h);
 
 // ADMIN_POLL_MS paces the status re-read while the admin view is on screen,
 // so a peer coming online or a CLI-side change shows without a reload.
-const ADMIN_POLL_MS = 10000;
+const ADMIN_POLL_MS = 5000;
 
 // SUB_PAGES are the admin sections.
 const SUB_PAGES = Object.freeze([

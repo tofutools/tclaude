@@ -879,13 +879,9 @@ func runServe(p *serveParams) error {
 
 	quit := newQuitter()
 	configureSelfUpdateRestart(quit.signal)
-	// Fleet metadata polling must not add startup network traffic for a
-	// standalone daemon. Explicit local update/install requests still work.
-	if cfg != nil && cfg.Federation != nil && cfg.Federation.Enabled && cfg.Federation.HubURL != "" {
-		startBackgroundNodeUpdates(quit.ch)
-		harnessops.RefreshLatestAsync()
-		startBackgroundHarnessOperations(quit.ch)
-	}
+	// Fleet release metadata polling belongs to the federation runtime
+	// (fleet_metadata.go): a standalone daemon adds no network traffic, and
+	// explicit local update/install requests still work.
 	defer stopHarnessOperations()
 	defer stopNodeRuns()
 	if home, err := canonicalOperatorHome(); err == nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -21,11 +22,17 @@ func handleDashboardPeer(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
-	servePeerViewProxy(w, r)
+	servePeerViewProxyWith(w, r, true)
 }
 
 // Both local operator surfaces use the same pinned peer transport.
 func servePeerViewProxy(w http.ResponseWriter, r *http.Request) {
+	servePeerViewProxyWith(w, r, false)
+}
+
+// cached lets the dashboard's declared polls read through peerReads
+// (peer_read_cache.go); every other request is one exchange, as before.
+func servePeerViewProxyWith(w http.ResponseWriter, r *http.Request, cached bool) {
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; frame-ancestors 'none'")
@@ -50,14 +57,13 @@ func servePeerViewProxy(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	fail := func(err error, ctx context.Context) {
-		status, reason := http.StatusBadGateway, "peer_offline"
+	fail := func(err error) {
 		if errors.Is(err, errPeerViewBusy) {
 			writeError(w, 503, "peer_busy", "peer view concurrency limit reached")
 			return
 		}
-		deadline, hasDeadline := ctx.Deadline()
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) || (hasDeadline && !time.Now().Before(deadline)) {
+		status, reason := http.StatusBadGateway, "peer_offline"
+		if errors.Is(err, errPeerViewTimeout) {
 			status, reason = http.StatusGatewayTimeout, "peer_timeout"
 		}
 		out := map[string]any{"error": "peer is unreachable", "code": "peer_unreachable", "reason": reason}
@@ -67,7 +73,7 @@ func servePeerViewProxy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, out)
 	}
 	if rt == nil {
-		fail(errPeerViewOffline, r.Context())
+		fail(errPeerViewOffline)
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, fedPeerViewBodyLimit+1))
@@ -92,32 +98,23 @@ func servePeerViewProxy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 414, "request_too_large", "peer request URI exceeds limit")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), fedPeerViewTimeout)
-	defer cancel()
-	stopRuntime := context.AfterFunc(rt.ctx, cancel)
-	defer stopRuntime()
-	conn, err := rt.openPeerView(ctx, peer)
-	if err != nil {
-		fail(err, ctx)
-		return
-	}
-	defer func() { _ = conn.Close() }()
-	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
-	defer stop()
-	deadline, _ := ctx.Deadline()
-	_ = conn.SetDeadline(deadline)
-	err = writePeerViewFrame(conn, fedPeerViewRequestLimit, fedPeerViewRequest{Method: r.Method, URI: target.RequestURI(), Header: peerViewRequestHeaders(r.Header), Body: body})
-	if err != nil {
-		fail(err, ctx)
-		return
-	}
+	req := fedPeerViewRequest{Method: r.Method, URI: target.RequestURI(), Header: peerViewRequestHeaders(r.Header), Body: body}
 	var reply fedPeerViewReply
-	if err = readPeerViewFrame(conn, fedPeerViewResponseLimit, &reply); err != nil {
-		fail(err, ctx)
+	cachedRead := cached && peerReadPollInterval(r, body) > 0
+	if cachedRead {
+		reply, err = peerReads.read(r.Context(), rt, peer, req)
+	} else {
+		reply, err = exchangePeerView(r.Context(), rt, peer, req)
+		// An action on the peer may change what its polls read next.
+		if err == nil && r.Method != http.MethodGet && r.Method != http.MethodHead {
+			peerReads.invalidate(peer.InstanceID)
+		}
+	}
+	if err != nil {
+		fail(err)
 		return
 	}
-	if reply.Status < 200 || reply.Status > 599 || len(reply.Body) > fedPeerViewResponseBodyLimit ||
-		(len(reply.Body) != 0 && (!json.Valid(reply.Body) || reply.Status == http.StatusNoContent || reply.Status == http.StatusNotModified)) {
+	if !validPeerViewReply(reply) {
 		writeError(w, 502, "peer_invalid_response", "peer returned an invalid response")
 		return
 	}
@@ -133,6 +130,11 @@ func servePeerViewProxy(w http.ResponseWriter, r *http.Request) {
 	for key, values := range peerViewReplyHeaders(reply.Header) {
 		w.Header()[key] = values
 	}
+	// Only a copy this daemon cached says how old it is; a peer's own Age
+	// header never passes.
+	if age := reply.Header.Get("Age"); cachedRead && age != "" {
+		w.Header().Set("Age", age)
+	}
 	// A restricted or compromised peer must never serve executable content on
 	// the local operator's authenticated origin, even on direct navigation.
 	w.Header().Set("Content-Type", "application/json")
@@ -140,4 +142,47 @@ func servePeerViewProxy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodHead {
 		_, _ = w.Write(reply.Body)
 	}
+}
+
+var errPeerViewTimeout = errors.New("peer view timed out")
+
+// exchangePeerView runs one request/reply with peer over a fresh relayed
+// stream. Timeouts come back as errPeerViewTimeout, busy as errPeerViewBusy.
+func exchangePeerView(parent context.Context, rt *fedRuntime, peer *db.FederationPeer, req fedPeerViewRequest) (fedPeerViewReply, error) {
+	ctx, cancel := context.WithTimeout(parent, fedPeerViewTimeout)
+	defer cancel()
+	stopRuntime := context.AfterFunc(rt.ctx, cancel)
+	defer stopRuntime()
+	classify := func(err error) error {
+		if errors.Is(err, errPeerViewBusy) {
+			return err
+		}
+		deadline, hasDeadline := ctx.Deadline()
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) || (hasDeadline && !time.Now().Before(deadline)) {
+			return fmt.Errorf("%w: %v", errPeerViewTimeout, err)
+		}
+		return err
+	}
+	conn, err := rt.openPeerView(ctx, peer)
+	if err != nil {
+		return fedPeerViewReply{}, classify(err)
+	}
+	defer func() { _ = conn.Close() }()
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+	deadline, _ := ctx.Deadline()
+	_ = conn.SetDeadline(deadline)
+	if err := writePeerViewFrame(conn, fedPeerViewRequestLimit, req); err != nil {
+		return fedPeerViewReply{}, classify(err)
+	}
+	var reply fedPeerViewReply
+	if err := readPeerViewFrame(conn, fedPeerViewResponseLimit, &reply); err != nil {
+		return fedPeerViewReply{}, classify(err)
+	}
+	return reply, nil
+}
+
+func validPeerViewReply(reply fedPeerViewReply) bool {
+	return reply.Status >= 200 && reply.Status <= 599 && len(reply.Body) <= fedPeerViewResponseBodyLimit &&
+		(len(reply.Body) == 0 || (json.Valid(reply.Body) && reply.Status != http.StatusNoContent && reply.Status != http.StatusNotModified))
 }

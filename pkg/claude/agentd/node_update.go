@@ -1,12 +1,10 @@
 package agentd
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -183,35 +181,4 @@ func performSelfUpdateRestart() error {
 		}
 	}
 	return err
-}
-
-func startBackgroundNodeUpdates(stop <-chan struct{}) {
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		select {
-		case <-stop:
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
-	go func() {
-		defer cancel()
-		service, err := localUpdateService()
-		if err != nil {
-			slog.Debug("self-update metadata unavailable", "error", err)
-			return
-		}
-		ticker := time.NewTicker(time.Hour)
-		defer ticker.Stop()
-		for {
-			if err := service.RefreshMetadata(ctx); err != nil && ctx.Err() == nil {
-				slog.Debug("self-update release check failed", "error", err)
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-			}
-		}
-	}()
 }

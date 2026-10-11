@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -1940,6 +1941,20 @@ func RegisterHookAckForTest(sessionID string) (string, error) {
 // brokerLivePaneProbe to specific answers, and a cache fed by the simulator
 // would answer ahead of it. Tests of the cache itself opt back in with
 // EnableBrokerPaneCacheForTest.
+// DisableFleetMetadataForTest keeps federation runtimes started by tests
+// from reading release metadata from the internet.
+func DisableFleetMetadataForTest() {
+	startFleetMetadata = func(context.Context, *sync.WaitGroup) {}
+}
+
+// SetFleetMetadataStartForTest observes the federation runtime starting its
+// release metadata loop: fn gets the runtime's context.
+func SetFleetMetadataStartForTest(fn func(context.Context)) func() {
+	prev := startFleetMetadata
+	startFleetMetadata = func(ctx context.Context, _ *sync.WaitGroup) { fn(ctx) }
+	return func() { startFleetMetadata = prev }
+}
+
 func DisableBrokerPaneCacheForTest() {
 	brokerPaneListFn = func() (map[string]brokerPaneEntry, error) { return nil, errDisabledForTest }
 	resetBrokerPaneCache()

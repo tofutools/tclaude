@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -228,27 +227,6 @@ func prepareHarnessCredentialPush(r *http.Request, body []byte) ([]byte, error) 
 		return nil, fmt.Errorf("credential request exceeds encrypted peer transport limit")
 	}
 	return out, nil
-}
-
-func startBackgroundHarnessOperations(stop <-chan struct{}) {
-	go func() {
-		ticker := time.NewTicker(time.Hour)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-stop:
-				harnessOperations.Lock()
-				svc := harnessOperations.service
-				harnessOperations.Unlock()
-				if svc != nil {
-					svc.Close()
-				}
-				return
-			case <-ticker.C:
-				harnessops.RefreshLatestAsync()
-			}
-		}
-	}()
 }
 
 func stopHarnessOperations() {

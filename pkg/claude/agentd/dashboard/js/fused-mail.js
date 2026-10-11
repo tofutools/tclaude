@@ -24,7 +24,7 @@ import {
 
 const html = htm.bind(h);
 
-export const MAIL_POLL_MS = 10000;
+export const MAIL_POLL_MS = 5000;
 const ROSTER_EVERY = 3; // mailboxes refresh every third page read
 const MAX_IN_FLIGHT = 4;
 

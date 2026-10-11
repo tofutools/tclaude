@@ -550,7 +550,7 @@ terminal has focus. The row is always there and adds no height to the page, but
 it is greyed out (its tooltip says why: federation is off, or the hub is
 unreachable, still connecting or refused the connection) until this node is
 connected to its federation hub, and greys out again if that connection drops;
-it follows the connection within about ten seconds, without a reload. Once
+it follows the connection within about five seconds, without a reload. Once
 connected, ⌂ works with no peers at all; each trusted peer adds a button.
 **nodes ▾** and the map icon stay greyed out until there is a linked node to
 show. ⌂ always works where it leads somewhere: home from a peer's view, and

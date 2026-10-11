@@ -62,6 +62,8 @@ func PeerViewHandler(instanceID string) http.Handler {
 			}
 			if rule.summary && out.statusCode() == 200 {
 				peerSummaryETag(out, r)
+			} else if pattern == "GET /api/snapshot" && out.statusCode() == 200 {
+				peerSnapshotETag(out, r)
 			}
 			if out.Header().Get("Cache-Control") == "" {
 				out.Header().Set("Cache-Control", "no-store")

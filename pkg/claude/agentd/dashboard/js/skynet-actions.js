@@ -1,4 +1,4 @@
-import { classifyFailure, summaryURL } from './skynet-model.js';
+import { MAP_POLL_MS, PEER_POLL_HEADER, classifyFailure, summaryURL } from './skynet-model.js';
 
 async function readJSON(response) {
   try { return await response.json(); } catch (_) { return null; }
@@ -32,6 +32,7 @@ export function createSkynetActions({ state, fetchImpl = globalThis.fetch } = {}
   async function loadSummary(node) {
     const prev = state.entry(node.id);
     const headers = prev?.etag ? { 'If-None-Match': prev.etag } : {};
+    if (!node.local) headers[PEER_POLL_HEADER] = String(MAP_POLL_MS);
     try {
       const response = await fetchImpl(summaryURL(node), { credentials: 'same-origin', headers });
       if (response.status === 304) { state.commitSummary(node.id, null, prev?.etag); return true; }

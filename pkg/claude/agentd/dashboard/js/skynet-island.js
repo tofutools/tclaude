@@ -573,7 +573,7 @@ export function RemoteMarker({ state, remote = remoteNodeID(), snapshot = dashbo
 
 // HUB_POLL_MS is the status cadence while federation is on, so the chips follow
 // a hub connecting or dropping within seconds.
-const HUB_POLL_MS = 10000;
+const HUB_POLL_MS = 5000;
 
 // StatusPoller keeps the chip row's node list fresh at a relaxed cadence and
 // pauses while the page is hidden. It renders nothing.
