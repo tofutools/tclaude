@@ -234,7 +234,9 @@ Each member of a group PAF lands like an
   conversation is budgeted for.
 - **History:** it lands natively when the landing harness reads its format,
   and is translated otherwise, with the losses shown. A member whose
-  conversation cannot land imports as configuration, with a warning.
+  conversation cannot land imports as configuration, with a warning. Its
+  record still names its landing harness, so it resumes there.
+- **OpenCode:** a member landing on OpenCode imports as configuration for now.
 
 A Claude Code member landing on Claude Code takes the group import's own
 path, which rewrites embedded paths and keeps its conversation id unless it
