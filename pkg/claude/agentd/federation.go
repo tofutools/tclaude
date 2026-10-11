@@ -345,6 +345,7 @@ func startFederationWith(fc *config.FederationConfig) error {
 	go func() { defer rt.wg.Done(); rt.inboundLoop(ctx) }()
 	go func() { defer rt.wg.Done(); rt.outboxLoop(ctx) }()
 	go func() { defer rt.wg.Done(); rt.nodeLoop(ctx) }()
+	startFleetMetadata(ctx, &rt.wg)
 
 	fedMu.Lock()
 	fedCurrent = rt

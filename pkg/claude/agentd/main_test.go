@@ -71,6 +71,7 @@ func TestMain(m *testing.M) {
 
 	agentd.InstallBrokerProcTableTestDefaults()
 	agentd.DisableBrokerPaneCacheForTest()
+	agentd.DisableFleetMetadataForTest()
 	agentd.SetOpenTerminalForTest(func(string) error {
 		return errors.New("agentd tests: terminal spawn suppressed by default (TCL-584); swap agentd.SetOpenTerminalForTest to observe the open path")
 	})
