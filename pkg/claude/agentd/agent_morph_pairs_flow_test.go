@@ -2,6 +2,8 @@ package agentd_test
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -120,6 +122,11 @@ func TestMorphCrossHarnessPairMatrix(t *testing.T) {
 					assert.Contains(t, text, want)
 				}
 				require.Len(t, morphNotes(t, resp.ConvID), 1)
+				if dst == harness.CodexName {
+					store, err := os.ReadFile(filepath.Join(f.World.HomeDir, ".codex", "config.toml"))
+					require.NoError(t, err, "trust_dir seeded Codex's trust store")
+					assert.Contains(t, string(store), profile.Cwd)
+				}
 				if dst == harness.CopilotName {
 					c := f.World.Copilots.GetByConvID(resp.ConvID)
 					require.NotNil(t, c)

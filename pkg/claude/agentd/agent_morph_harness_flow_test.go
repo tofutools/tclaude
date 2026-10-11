@@ -411,6 +411,7 @@ func TestMorphCrossHarnessHandoffTimeoutFallsBackToContextFile(t *testing.T) {
 	f.HaveGroup("crew")
 	spawn := spawnMorphWorker(t, f, "crew", "silent", nil)
 	seedClaudeHistory(t, f, spawn.ConvID)
+	f.SetSessionStatus(spawn.ConvID, session.StatusWorking)
 
 	rec := f.AsHuman().Morph(spawn.AgentID, map[string]any{"harness": "codex", "approval": "on-request", "history": "handoff"})
 	require.Equal(t, "pending", decodeCrossMorph(t, rec.Code, rec.Body.Bytes()).Result)
@@ -422,7 +423,8 @@ func TestMorphCrossHarnessHandoffTimeoutFallsBackToContextFile(t *testing.T) {
 	agentd.SweepPendingMorphsForTest()
 	agent, err := db.GetAgent(spawn.AgentID)
 	require.NoError(t, err)
-	require.NotEqual(t, spawn.ConvID, agent.CurrentConvID, "an unanswered handoff does not hold the morph forever")
+	require.NotEqual(t, spawn.ConvID, agent.CurrentConvID,
+		"an unanswered handoff does not hold the morph forever, even for an agent still busy")
 	notes := morphNotes(t, agent.CurrentConvID)
 	require.Len(t, notes, 1)
 	assert.Contains(t, notes[0].Body, "via context file")
@@ -435,6 +437,10 @@ func TestMorphCrossHarnessHandoffRefusals(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	spawn := spawnMorphWorker(t, f, "crew", "w", nil)
+	// A same-harness morph first, so a --back has a previous form.
+	f.SetSessionStatus(spawn.ConvID, session.StatusIdle)
+	rec := f.AsHuman().Morph(spawn.AgentID, map[string]any{"model": "opus"})
+	require.Equal(t, "morphed", decodeCrossMorph(t, rec.Code, rec.Body.Bytes()).Result)
 	for name, tc := range map[string]struct {
 		body map[string]any
 		code int
@@ -444,13 +450,15 @@ func TestMorphCrossHarnessHandoffRefusals(t *testing.T) {
 		"history within harness":   {map[string]any{"model": "opus", "history": "handoff"}, http.StatusBadRequest, "invalid_form"},
 		"unknown history":          {map[string]any{"harness": "codex", "approval": "on-request", "history": "telepathy"}, http.StatusBadRequest, "invalid_arg"},
 		"trust_dir within harness": {map[string]any{"model": "opus", "trust_dir": true}, http.StatusBadRequest, "invalid_form"},
+		"history on a same-harness back": {map[string]any{"back": true, "history": "handoff"}, http.StatusBadRequest, "invalid_form"},
 	} {
 		rec := f.AsHuman().Morph(spawn.AgentID, tc.body)
 		assert.Equalf(t, tc.code, rec.Code, "%s: body=%s", name, rec.Body.String())
 		assert.Containsf(t, rec.Body.String(), tc.want, "%s", name)
 	}
-	f.MarkOffline(spawn.TmuxSession)
-	rec := f.AsHuman().Morph(spawn.AgentID, map[string]any{"harness": "codex", "approval": "on-request", "history": "handoff"})
+	offline := spawnMorphWorker(t, f, "crew", "offline", nil)
+	f.MarkOffline(offline.TmuxSession)
+	rec = f.AsHuman().Morph(offline.AgentID, map[string]any{"harness": "codex", "approval": "on-request", "history": "handoff"})
 	assert.Equal(t, http.StatusConflict, rec.Code, "an offline agent cannot write a handoff; body=%s", rec.Body.String())
 	rec = f.AsHuman().MorphHandoff("x")
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "only the agent itself submits a handoff")
@@ -494,4 +502,67 @@ func TestMorphCrossHarnessUnreadableHistoryChoosesHandoff(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, spawn.ConvID, agent.CurrentConvID)
 	assert.Contains(t, morphNotes(t, agent.CurrentConvID)[0].Body, "only the agent's handoff is carried")
+}
+
+// When the history cannot be read and no handoff arrives, there is nothing to
+// carry: the morph is dropped and the agent is left running, not stopped for
+// a morph that cannot succeed.
+func TestMorphCrossHarnessRequiredHandoffExpiryDropsWithoutStopping(t *testing.T) {
+	t.Setenv(session.ResourceDelegationDirEnv, "")
+	t.Setenv("CODEX_HOME", "")
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	spawn := spawnMorphWorker(t, f, "crew", "garbled", nil)
+	cc := f.World.CCs.GetByConvID(spawn.ConvID)
+	require.NotNil(t, cc)
+	file, err := os.OpenFile(cc.JsonlPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	require.NoError(t, err)
+	_, err = file.WriteString("{not json\n")
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+
+	rec := f.AsHuman().Morph(spawn.AgentID, map[string]any{"harness": "codex", "approval": "on-request"})
+	require.Equal(t, "pending", decodeCrossMorph(t, rec.Code, rec.Body.Bytes()).Result)
+	pending, err := db.PendingMorphForAgent(spawn.AgentID)
+	require.NoError(t, err)
+	require.True(t, pending.HandoffRequired)
+	pending.ExpiresAt = pending.RequestedAt.Add(-time.Minute)
+	require.NoError(t, db.SetAgentPendingMorphForConv(spawn.ConvID, pending))
+
+	agentd.SweepPendingMorphsForTest()
+	agent, err := db.GetAgent(spawn.AgentID)
+	require.NoError(t, err)
+	assert.Equal(t, spawn.ConvID, agent.CurrentConvID)
+	assert.True(t, f.World.Tmux.IsAlive(spawn.TmuxSession), "the agent was not stopped")
+	left, err := db.PendingMorphForAgent(spawn.AgentID)
+	require.NoError(t, err)
+	assert.Nil(t, left)
+	audit, err := db.ListAuditLog(db.AuditLogFilter{Verb: "morph", Search: "nothing to carry"})
+	require.NoError(t, err)
+	assert.Len(t, audit, 1)
+}
+
+// trust_dir from a profile does not let an agent seed another agent's
+// directory into a harness trust store: spawn's ownership rule applies.
+func TestMorphCrossHarnessTrustDirNeedsOwnershipForAgents(t *testing.T) {
+	t.Setenv(session.ResourceDelegationDirEnv, "")
+	t.Setenv("CODEX_HOME", "")
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	g := f.HaveGroup("crew")
+	walled := map[string]any{"sandbox_implementation": "tclaude-layer"}
+	manager := spawnMorphWorker(t, f, "crew", "manager", walled)
+	worker := spawnMorphWorker(t, f, "crew", "worker", walled)
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, manager.ConvID, "<test>"))
+	trusted := true
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "codex-trusting", Harness: "codex", Model: "gpt-5.4",
+		Approval: "on-request", TrustDir: &trusted})
+	require.NoError(t, err)
+
+	rec := f.AsAgent(manager.ConvID).Morph(worker.AgentID, map[string]any{"profile": "codex-trusting", "dry_run": true})
+	assert.Equal(t, http.StatusForbidden, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "trust_dir_restricted")
+	rec = f.AsHuman().Morph(worker.AgentID, map[string]any{"profile": "codex-trusting", "dry_run": true})
+	assert.Equal(t, http.StatusOK, rec.Code, "the operator may; body=%s", rec.Body.String())
 }

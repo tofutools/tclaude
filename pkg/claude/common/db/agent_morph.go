@@ -56,6 +56,10 @@ type AgentPendingMorph struct {
 	History string `json:"history,omitempty"`
 	// Handoff is the agent-written handoff a "handoff" morph waits for.
 	Handoff *AgentMorphHandoff `json:"handoff,omitempty"`
+	// HandoffRequired marks a handoff morph chosen because the history
+	// cannot be read: without a handoff there is nothing to carry, so it is
+	// dropped at expiry instead of falling back to the context-file rung.
+	HandoffRequired bool `json:"handoff_required,omitempty"`
 }
 
 // AgentMorphHandoff is the handoff an agent submits for the agent that

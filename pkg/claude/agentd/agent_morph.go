@@ -569,24 +569,29 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 				mode := strings.TrimSpace(prof.Sandbox)
 				target.HarnessBuiltinMode = &mode
 			}
-			trust := req.TrustDir
-			if trust == nil && prof != nil {
-				trust = prof.TrustDir
+		}
+	}
+	if !cross && req.History != "" {
+		writeError(w, http.StatusBadRequest, "invalid_form",
+			"history: only a cross-harness morph translates the history")
+		return
+	}
+	if !cross && req.TrustDir != nil {
+		writeError(w, http.StatusBadRequest, "invalid_form",
+			"trust_dir: only a cross-harness morph launches a harness in a directory it may not trust yet")
+		return
+	}
+	if cross {
+		trust := req.TrustDir
+		if trust == nil && prof != nil && !req.Back {
+			trust = prof.TrustDir
+		}
+		target.TrustDir = false
+		if trust != nil {
+			if target.TrustDir, err = harness.ResolveTrustDir(dst, *trust); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_form", "trust_dir: "+err.Error())
+				return
 			}
-			if trust != nil {
-				if target.TrustDir, err = harness.ResolveTrustDir(dst, *trust); err != nil {
-					writeError(w, http.StatusBadRequest, "invalid_form", "trust_dir: "+err.Error())
-					return
-				}
-			}
-		} else if req.History != "" {
-			writeError(w, http.StatusBadRequest, "invalid_form",
-				"history: only a cross-harness morph translates the history")
-			return
-		} else if req.TrustDir != nil {
-			writeError(w, http.StatusBadRequest, "invalid_form",
-				"trust_dir: only a cross-harness morph launches a harness in a directory it may not trust yet")
-			return
 		}
 	}
 
@@ -627,7 +632,7 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 		}
 	}
 
-	history := req.History
+	history, handoffRequired := req.History, false
 	if cm != nil {
 		live := pickAliveSession(targetConv) != nil
 		report, err := cm.preview(targetConv)
@@ -642,7 +647,7 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 				writeError(w, http.StatusConflict, "history_unreadable", msg)
 				return
 			}
-			history = "handoff"
+			history, handoffRequired = "handoff", true
 			report = &transcript.LossReport{Source: h.Name, Target: dst.Name}
 			report.Add(transcript.LossHistoryUndecodable, 1, "")
 		}
@@ -673,6 +678,7 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 	}
 	pending := db.AgentPendingMorph{
 		Target: target, Back: req.Back, ActorConv: caller, Actor: actorLabel, ConvID: targetConv, History: history,
+		HandoffRequired: handoffRequired,
 	}
 	out := morphOrDefer(agentID, targetConv, pending, req.Now, self)
 	if out.status != http.StatusOK {
@@ -924,6 +930,16 @@ func applyPendingMorph(row db.AgentWithPendingMorph) {
 		// falls back to the context-file rung, and a stuck agent is stopped.
 		submitted := pending.Handoff != nil && strings.TrimSpace(pending.Handoff.Body) != ""
 		if !expired && (!submitted || (live != nil && agentRestartIdleFailure(live, time.Now()) != "")) {
+			return
+		}
+		if !submitted && pending.HandoffRequired {
+			// The history cannot be read, so without a handoff there is
+			// nothing to carry: drop it rather than stop the agent for a
+			// morph that cannot succeed.
+			_ = db.SetAgentPendingMorphForConv(convID, nil)
+			detail := "no handoff arrived before it expired, and the agent's history cannot be translated, so there was nothing to carry; the agent was left as it is"
+			auditMorphSystem(row.AgentID, convID, "dropped pending morph: "+detail, http.StatusConflict)
+			reportPendingMorphFailure(row.AgentID, convID, pending, detail)
 			return
 		}
 		if !submitted {

@@ -166,6 +166,20 @@ func planCrossHarnessMorph(convID string, dst *harness.Harness, target db.AgentM
 		}
 	}
 
+	// Seeding a harness trust store makes that harness load the directory's
+	// own project config, so an agent caller gets it under spawn's rule: only
+	// for a directory it owns and has proven it can write. Morph carries no
+	// write proof, so only a proof-exempt owner qualifies.
+	if caller != "" && target.TrustDir {
+		owned, err := callerOwnedDirTrustProved(caller, current.Cwd, "", nil)
+		if err != nil {
+			return nil, crossMorphFailure(http.StatusInternalServerError, "io", err.Error())
+		}
+		if !owned {
+			return nil, crossMorphFailure(http.StatusForbidden, "trust_dir_restricted", trustDirRestrictedMessage)
+		}
+	}
+
 	previous := db.MorphFormOf(&base, agentProfile.MorphProfile)
 	previous.Harness = src.Name
 	previous.HarnessBuiltinMode = &current.NormalSandbox
@@ -349,7 +363,7 @@ func (cm *crossMorph) installHistory(agentID, convID string, pending db.AgentPen
 	if err == nil {
 		return res, nil
 	}
-	if res == nil || res.Plan == nil {
+	if res == nil || res.Plan == nil || opts.ContextFile {
 		return nil, err
 	}
 	slog.Warn("morph: native history install failed; using the context-file fallback",
@@ -523,9 +537,9 @@ func handleWhoamiMorphHandoff(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Body string `json:"body"`
 	}
-	// JSON escaping can double the text, so the request bound leaves room
-	// for it; the handoff itself is bounded below.
-	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 2*morphHandoffMaxBytes+4096))
+	// JSON escaping can grow text up to sixfold (\u003c for <), so the
+	// request bound leaves room for it; the handoff itself is bounded below.
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 6*morphHandoffMaxBytes+4096))
 	if err == nil {
 		err = json.Unmarshal(raw, &req)
 	}
