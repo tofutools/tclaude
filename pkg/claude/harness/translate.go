@@ -112,6 +112,10 @@ func PreviewTranslation(src, dst *Harness, convID, cwd string, opts TranslateOpt
 		return nil, err
 	}
 	var buf bytes.Buffer
+	if plan.Report.CarriedEstimatedTokens > plan.Report.BudgetTokens {
+		plan.Report.Fallback = "context_file"
+		return plan.Report, nil
+	}
 	plan.Report.Fallback = "native"
 	sourceID, err := dst.Transcript.Encode(plan, cwd, &buf)
 	if err == nil {
@@ -145,6 +149,9 @@ func TranslateHistory(src, dst *Harness, convID, cwd string, opts TranslateOptio
 		if err := writeTranslationArtifacts(t, plan, opts.ArtifactDir); err != nil {
 			return fail(err)
 		}
+	}
+	if plan.Report.CarriedEstimatedTokens > plan.Report.BudgetTokens {
+		opts.ContextFile = true
 	}
 	if opts.ContextFile {
 		res, err := InstallContextFile(dst, plan, cwd, opts.ArtifactDir)

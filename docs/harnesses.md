@@ -151,7 +151,18 @@ is explicit about what does not map 1:1:
   references them by a saved path instead.
 - **Context budget.** The carried history fills at most
   `agent.morph.history_budget_percent` (default 60) of the target model's
-  context window. Older turns beyond that are omitted with a marker.
+  context window. The original task and latest user instructions stay pinned,
+  followed by the newest complete turns that fit. A giant pinned turn stays
+  in the full transcript with a clear read-before-continuing pointer instead
+  of overflowing the native window. The preview shows kept/dropped entry
+  percentages and explains the selection. A cut of at least 10% warns; at
+  25% the operator must confirm `--confirm-history-loss` (or the launch
+  dialog checkbox). The source then writes one summary of the earlier work,
+  carried with the pins and whatever native tail fits. No model call runs
+  behind the operator's back. The dialog shows the source name, deadline
+  and cancellation while waiting, and restores that state when reopened.
+  Timeout, cancellation or a refusal leave the source unchanged. A history
+  cut that grows past the confirmed percentage requires a fresh preview.
 - **Resets and rewinds** carry only the active native history. Gemini compression
   snapshots are labelled as summaries; clear/checkpoint, OpenCode revert and
   Codex/Copilot rewind boundaries are applied before carrying turns. Removed
