@@ -14,16 +14,14 @@ import (
 )
 
 // Scenario: the dashboard's Ctrl-drag handler clones a member of
-// group A and drops the clone into group B. The JS issues:
+// group A and drops the clone into group B. The JS issues ONE call:
 //
-//	POST /api/agents/{conv}/clone           # daemon-side fork
-//	POST /api/groups/{B}/members            # add clone to drop target
+//	POST /api/agents/{conv}/clone {"group":"B"}
 //
-// This flow test pins the daemon-side guarantee: after both calls,
-// the new conv-id is a member of B and the original is untouched in
-// A. Mirrors the shape of the existing v1 clone tests but routes
-// through the dashboard cookie endpoint twin.
-func TestDashboardDnDClone_PostsCloneThenAddsToTargetGroup(t *testing.T) {
+// so the clone and its drop-target membership land together. This flow
+// test pins the daemon-side guarantee: after the call, the new conv-id is
+// a member of B (and of A, inherited) and the original is untouched in A.
+func TestDashboardDnDClone_JoinsTargetGroupInOneRequest(t *testing.T) {
 	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
 	t.Cleanup(restoreURL)
 
@@ -33,16 +31,14 @@ func TestDashboardDnDClone_PostsCloneThenAddsToTargetGroup(t *testing.T) {
 	f.HaveConvWithTitle(oldConv, "worker")
 	f.HaveAliveSession(oldConv, "spwn-clon", "tmux-clon", f.TestCwd("clon"))
 	srcGroup := f.HaveGroup("alpha")
-	tgtGroup := f.HaveGroup("beta")
-	_ = tgtGroup
+	f.HaveGroup("beta")
 	f.HaveMember("alpha", oldConv)
 
 	mux := agentd.BuildDashboardHandlerForTest()
 
-	// Step 1: clone via the dashboard endpoint (the Ctrl-drag
-	// handler's first call). no_copy_conv: true skips the .jsonl
-	// copy path, matching CloneFresh in the existing v1 tests.
-	cloneBody := strings.NewReader(`{"no_copy_conv":true}`)
+	// no_copy_conv: true skips the history copy, matching CloneFresh in the
+	// existing v1 tests.
+	cloneBody := strings.NewReader(`{"no_copy_conv":true,"group":"beta"}`)
 	cloneReq, _ := http.NewRequest(http.MethodPost,
 		"/api/agents/"+oldConv+"/clone", cloneBody)
 	cloneReq.Header.Set("Content-Type", "application/json")
@@ -57,19 +53,9 @@ func TestDashboardDnDClone_PostsCloneThenAddsToTargetGroup(t *testing.T) {
 	require.NotEmpty(t, cloneResp.NewConv, "clone resp missing new_conv: body=%s", cloneRec.Body.String())
 	assert.Equal(t, oldConv, cloneResp.OldConv, "clone resp old_conv")
 
-	// Step 2: add the new conv to the drop target group (the second
-	// call the Ctrl-drag handler issues).
-	addBody := strings.NewReader(`{"conv":"` + cloneResp.NewConv + `"}`)
-	addReq, _ := http.NewRequest(http.MethodPost,
-		"/api/groups/beta/members", addBody)
-	addReq.Header.Set("Content-Type", "application/json")
-	rec := testharness.Serve(mux, addReq)
-	require.Equal(t, http.StatusOK, rec.Code,
-		"POST /api/groups/beta/members body=%s", rec.Body.String())
-
 	// Daemon-side state: original untouched in alpha; clone in BOTH
 	// groups (alpha because it inherited the source's memberships,
-	// beta because we just added it). Verify against the production
+	// beta because the request named it). Verify against the production
 	// read path.
 	srcMembers, _ := db.ListAgentGroupMembers(srcGroup.ID)
 	{
@@ -106,8 +92,8 @@ func TestDashboardDnDClone_PostsCloneThenAddsToTargetGroup(t *testing.T) {
 // follow-up needed because the clone already inherited the source
 // group; the alpha group ends up with original + clone.
 //
-// The dashboard endpoint is identical to the previous test's first
-// call; we just don't fire the second add. Pins the
+// The JS sends the drop group here too; naming a group the source is
+// already in must not duplicate the membership. Pins the
 // "clone-onto-source-is-not-a-no-op" branch the JS depends on.
 func TestDashboardDnDClone_OntoSourceGroupYieldsSibling(t *testing.T) {
 	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
@@ -123,7 +109,7 @@ func TestDashboardDnDClone_OntoSourceGroupYieldsSibling(t *testing.T) {
 
 	mux := agentd.BuildDashboardHandlerForTest()
 
-	cloneBody := strings.NewReader(`{"no_copy_conv":true}`)
+	cloneBody := strings.NewReader(`{"no_copy_conv":true,"group":"alpha"}`)
 	cloneReq, _ := http.NewRequest(http.MethodPost,
 		"/api/agents/"+oldConv+"/clone", cloneBody)
 	cloneReq.Header.Set("Content-Type", "application/json")
@@ -135,7 +121,7 @@ func TestDashboardDnDClone_OntoSourceGroupYieldsSibling(t *testing.T) {
 	_ = json.Unmarshal(cloneRec.Body.Bytes(), &resp)
 	require.NotEmpty(t, resp.NewConv, "missing new_conv: %s", cloneRec.Body.String())
 
-	// Group alpha now has original + clone, no second add-step needed.
+	// Group alpha now has original + clone, once each.
 	members, _ := db.ListAgentGroupMembers(srcGroup.ID)
 	require.Len(t, members, 2, "alpha members; want 2 (original + sibling clone); got %+v", members)
 }

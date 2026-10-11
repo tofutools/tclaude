@@ -28,7 +28,7 @@ You have three commands for managing your own context window:
 | `tclaude agent context-info`                       | Print the current context % + an absolute token breakdown + the model (self by default; `--target <peer>` reads one agent, `--group <name>` lists a whole team) |
 | `tclaude agent compact [follow-up]`                | Inject `/compact` into your own pane; identity preserved. Optional follow-up prompt is queued. |
 | `tclaude agent reincarnate <follow-up>`            | Replace yourself with a fresh successor that inherits your identity (groups, permissions, ownership). Follow-up is REQUIRED.              |
-| `tclaude agent clone [follow-up] [--no-copy-conv]` | Fork yourself into a SIBLING. Original keeps running; clone inherits identity (renamed `<title>-c-<N>`) and, by default, conv history. |
+| `tclaude agent clone [follow-up] [--no-copy-conv]` | Fork yourself into a SIBLING. Original keeps running; clone inherits identity (renamed `<title>-c-<N>`) and, by default, conv history. `--cwd <dir>` starts it elsewhere (e.g. a worktree), `--group <name>` adds one more group, `--no-copy-ownership` keeps group ownerships off it. |
 | `tclaude agent morph --model M [--effort E]`       | Relaunch yourself in place with another same-harness model/effort/approval (needs `self.morph`; applies when your turn ends). History and identity are kept. |
 
 `context-info` on **yourself** is read-only and needs no slug. Reading
@@ -137,8 +137,9 @@ off work, the charset/delivery rules, and the manager pattern.
   - You're at (or near) the tail of the context window.
 - `clone` — fork instead of replace. Original keeps running; the
   clone spawns alongside as a sibling that inherits identity (renamed
-  to a `<title>-c-<N>` title suffix) and, by default, the same
-  conv jsonl. Use when:
+  to a `<title>-c-<N>` title suffix) and, by default, a copy of the
+  conversation (any harness except shell). If the identity copy fails,
+  the clone is stopped and the command errors. Use when:
   - You want to **try a parallel approach** without losing the
     current one — the original keeps your line of investigation, the
     clone explores the alternative.

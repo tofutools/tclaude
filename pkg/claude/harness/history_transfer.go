@@ -43,7 +43,20 @@ const MaxHistoryRecordBytes = 256 << 20
 
 func (h *Harness) SupportsHistoryTransfer() bool { return h != nil && h.History != nil }
 
-type jsonlHistory struct{ harness string }
+type jsonlHistory struct {
+	harness string
+	// codexHome, when set, is the Codex state root an imported rollout lands
+	// under instead of the daemon's own $CODEX_HOME / ~/.codex. A clone whose
+	// source runs with a private CODEX_HOME must resume from that root.
+	codexHome string
+}
+
+// WithCodexHome returns a copy that imports Codex rollouts under root.
+// Claude Code transfers ignore it.
+func (j jsonlHistory) WithCodexHome(root string) HistoryTransfer {
+	j.codexHome = root
+	return j
+}
 
 func (j jsonlHistory) Format() string {
 	if j.harness == CodexName {
@@ -219,9 +232,12 @@ func (j jsonlHistory) ImportReader(reader io.Reader, sourceID, cwd string) (stri
 	id := uuid.NewString()
 	var path string
 	if j.harness == CodexName {
-		root, err := codexConfigDir()
-		if err != nil {
-			return "", nil, err
+		root := j.codexHome
+		if root == "" {
+			var err error
+			if root, err = codexConfigDir(); err != nil {
+				return "", nil, err
+			}
 		}
 		now := time.Now().UTC()
 		path = filepath.Join(root, "sessions", now.Format("2006/01/02"), "rollout-"+now.Format("2006-01-02T15-04-05")+"-"+id+".jsonl")

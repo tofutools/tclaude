@@ -327,11 +327,15 @@ func runExportClone(jobID int64, originalConv, cwd, effort, model string, sameGr
 	// administrative control over the group. Done only after the pane is alive so
 	// a clone that never comes up is never briefly a (dead) group member.
 	if sameGroup {
-		if _, _, err := db.EnsureAgentForConv(newConv, "export-clone"); err != nil {
+		agentID, _, err := db.EnsureAgentForConv(newConv, "export-clone")
+		if err != nil {
 			slog.Warn("export clone: ensure actor failed", "job", jobID, "conv", newConv, "error", err)
+		} else {
+			members, perms := snapshotConvIdentity(originalConv)
+			if _, err := applyClonedIdentity(agentID, "system:export-clone", members, perms, nil /* never inherit ownership */); err != nil {
+				slog.Warn("export clone: identity copy failed", "job", jobID, "conv", newConv, "error", err)
+			}
 		}
-		members, perms := snapshotConvIdentity(originalConv)
-		applyClonedIdentity(newConv, "system:export-clone", members, perms, nil /* never inherit ownership */)
 	}
 
 	// 4. Rename the clone so it is identifiable as the throwaway summary writer —

@@ -13,6 +13,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -267,9 +268,9 @@ func TestExportFlow_CodexCopyUsesInheritedCwdWithoutCallerProof(t *testing.T) {
 	dash := agentd.BuildDashboardHandlerForTest()
 	const source = "f93c855a-72fe-4caa-8052-731c68ca753b"
 	repo, _ := initRepoOnMain(t)
-	f.HaveAliveSession(source, "spwn-export-copy", "tclaude-spwn-export-copy", repo)
-	markSessionAsCodex(t, "spwn-export-copy")
-	installCodexCopyCompatSpawner(t)
+	f.HaveAliveCodexSession(source, "spwn-export-copy", "tclaude-spwn-export-copy", repo)
+	// The export dialog resolves the source through the conversation index.
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: source, Harness: harness.CodexName, ProjectDir: repo, ProjectPath: repo}))
 
 	jobID := requestExport(t, dash, source, map[string]any{"preset": "summary"})
 	workerConv, _ := awaitExportClone(t, jobID, 10*time.Second)

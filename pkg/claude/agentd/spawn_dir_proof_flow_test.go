@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -36,42 +35,6 @@ type writeProofChallengeResp struct {
 		Filename string   `json:"filename"`
 		Dirs     []string `json:"dirs"`
 	} `json:"write_proof"`
-}
-
-// codexCopyCompatSpawner lets copy-path tests use the existing Claude
-// conversation-copy fixture while still asserting the Codex launch args. The
-// production args are recorded unchanged; only the simulator delegate sees a
-// Claude harness so it can reopen the copied Claude-format fixture.
-type codexCopyCompatSpawner struct {
-	inner agentd.Spawner
-}
-
-func (s codexCopyCompatSpawner) SpawnNew(args clcommon.SpawnArgs) error {
-	return s.inner.SpawnNew(args)
-}
-
-func (s codexCopyCompatSpawner) SpawnResume(args clcommon.SpawnArgs) error {
-	delegated := args
-	delegated.Harness = harness.DefaultName
-	delegated.Sandbox = harness.ClaudeSandboxInherit
-	delegated.Approval = ""
-	return s.inner.SpawnResume(delegated)
-}
-
-func installCodexCopyCompatSpawner(t *testing.T) {
-	t.Helper()
-	prev := agentd.Spawn
-	agentd.Spawn = codexCopyCompatSpawner{inner: prev}
-	t.Cleanup(func() { agentd.Spawn = prev })
-}
-
-func markSessionAsCodex(t *testing.T, label string) {
-	t.Helper()
-	row, err := db.LoadSession(label)
-	require.NoError(t, err)
-	require.NotNil(t, row)
-	row.Harness = harness.CodexName
-	require.NoError(t, db.SaveSession(row))
 }
 
 // decodeWriteProofChallenge asserts rec is a write_proof_required 403 and
@@ -779,9 +742,7 @@ func TestSpawnDirProof_CodexCloneCopyForwardsPinnedGitCommonDirOnResume(t *testi
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", caller)
 	sourceCwd := t.TempDir()
-	f.HaveAliveSession(caller, "spwn-codex-copy", "tclaude-spwn-codex-copy", sourceCwd)
-	markSessionAsCodex(t, "spwn-codex-copy")
-	installCodexCopyCompatSpawner(t)
+	f.HaveAliveCodexSession(caller, "spwn-codex-copy", "tclaude-spwn-codex-copy", sourceCwd)
 	require.NoError(t, db.GrantAgentPermission(caller, agentd.PermSelfClone, "test"))
 	repo, repoParent := initRepoOnMain(t)
 	commonDir, err := harness.CodexGitCommonDir(repo)
