@@ -108,7 +108,7 @@ export function carries(mode, { node = 'the target', home = 'its home', morph = 
       const hist = morph?.history;
       if (hist && hist.target && hist.source !== hist.target) {
         const lost = (hist.items || []).map((i) => `${i.kind} ×${i.count}`).join(', ');
-        rows.push(['≈', 'History', `translated ${hist.source} → ${hist.target}: ${hist.carried_entries ?? '?'} of ${hist.source_entries ?? '?'} entries carried${lost ? ` (${lost})` : ''}`]);
+        rows.push(['≈', 'History', `translated ${hist.source} → ${hist.target}: ${hist.carried_entries ?? '?'} of ${hist.source_entries ?? '?'} entries carried${hist.carried_estimated_tokens > 0 ? `; estimated tokens: ${hist.source_estimated_tokens ?? '?'} source → ${hist.carried_estimated_tokens} carried` : ''}${lost ? ` (${lost})` : ''}`]);
       } else rows.push(['✓', 'History', 'kept: it resumes the same conversation']);
       rows.push(morph?.after?.sandbox ? ['↻', 'Sandbox', `${morph.after.sandbox} (the new harness's own mode)`] : ['✗', 'Sandbox', 'unchanged (operator-only)']);
       return rows;

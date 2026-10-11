@@ -47,7 +47,7 @@ func TestPlanFlattensAndAlternates(t *testing.T) {
 	assert.NotContains(t, s, "hmm", "reasoning is not carried")
 	last := p.Entries[len(p.Entries)-1]
 	assert.Equal(t, RoleUser, last.Role)
-	assert.Contains(t, planTextOf(last), "carried over from claude (claude-x) to codex (gpt-x)")
+	assert.Contains(t, planTextOf(last), "Carried over from claude (claude-x) to codex (gpt-x)")
 
 	r := p.Report
 	assert.Equal(t, 4, r.SourceEntries)

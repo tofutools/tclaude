@@ -32,7 +32,7 @@ func WriteMarkdown(t *Transcript, w io.Writer) error {
 		if e.Author != "" {
 			heading += " — " + e.Author
 		}
-		fmt.Fprintf(bw, "\n## %d. %s", i+1, heading)
+		fmt.Fprintf(bw, "\n<a id=\"entry-%d\"></a>\n\n## %d. %s", i+1, i+1, heading)
 		if !e.Time.IsZero() {
 			fmt.Fprintf(bw, " (%s)", e.Time.UTC().Format("2006-01-02 15:04:05Z"))
 		}
