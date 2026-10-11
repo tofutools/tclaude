@@ -223,9 +223,11 @@ func handleGroupLinksList(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 // the reverse edge in the same call (failures on the reverse don't
 // roll back the forward edge — the caller can retry).
 type linkAddBody struct {
-	To    string `json:"to"`
-	Mode  string `json:"mode,omitempty"`
-	Bidir bool   `json:"bidir,omitempty"`
+	ToPeer    string `json:"to_peer,omitempty"`
+	ToGroupID string `json:"to_group_id,omitempty"`
+	To        string `json:"to"`
+	Mode      string `json:"mode,omitempty"`
+	Bidir     bool   `json:"bidir,omitempty"`
 }
 
 func handleGroupLinksAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
@@ -239,6 +241,10 @@ func handleGroupLinksAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGrou
 	var body linkAddBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	if body.ToPeer != "" {
+		handleRemoteGroupLinkAdd(w, r, g, body)
 		return
 	}
 	toGroup, err := resolveGroupSelector(body.To)
@@ -357,6 +363,10 @@ func handleGroupLinksUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentG
 }
 
 func handleGroupLinksRemove(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, idStr string) {
+	if strings.HasPrefix(idStr, "xlink_") {
+		handleRemoteGroupLinkRemove(w, r, g, idStr)
+		return
+	}
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "link id must be integer")

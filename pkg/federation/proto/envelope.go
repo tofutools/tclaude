@@ -94,7 +94,7 @@ const (
 )
 
 // AllCaps lists every known capability in canonical order.
-var AllCaps = []string{CapJobs, CapAgentStatus, CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes, CapSessions, CapSessionsWatch, CapSessionsAttach, CapSessionsFilesRead, CapAgentsReceive, CapAgentsReceivePermissions, CapTeleportReceive}
+var AllCaps = []string{CapGroupVisibility, CapGroupLinkAccept, CapJobs, CapAgentStatus, CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes, CapSessions, CapSessionsWatch, CapSessionsAttach, CapSessionsFilesRead, CapAgentsReceive, CapAgentsReceivePermissions, CapTeleportReceive}
 
 // MaxMailBody caps a mail envelope's body in bytes.
 const MaxMailBody = 16 * 1024
@@ -144,9 +144,10 @@ type Sealed struct {
 
 // MailPayload is the payload of a KindMail envelope.
 type MailPayload struct {
-	Subject     string              `json:"subject,omitempty"`
-	Body        string              `json:"body"`
-	Attachments []AttachmentPayload `json:"attachments,omitempty"`
+	Link        *GroupLinkMailAuthority `json:"link,omitempty"`
+	Subject     string                  `json:"subject,omitempty"`
+	Body        string                  `json:"body"`
+	Attachments []AttachmentPayload     `json:"attachments,omitempty"`
 }
 
 // AttachmentPayload is one file carried by a mail. The receiver derives
@@ -214,14 +215,16 @@ type AckPayload struct {
 
 // GroupMailPayload is mail to an exported group's members.
 type GroupMailPayload struct {
-	Group   string `json:"group"`
-	Role    string `json:"role,omitempty"`
-	Subject string `json:"subject,omitempty"`
-	Body    string `json:"body"`
+	Link    *GroupLinkMailAuthority `json:"link,omitempty"`
+	Group   string                  `json:"group"`
+	Role    string                  `json:"role,omitempty"`
+	Subject string                  `json:"subject,omitempty"`
+	Body    string                  `json:"body"`
 }
 
 // CatalogPayload lists what an instance exports to the receiving peer.
 type CatalogPayload struct {
+	PeerProposals       bool           `json:"peer_proposals,omitempty"`
 	AgentBundleChunks   bool           `json:"agent_bundle_chunks,omitempty"`
 	RequesterPays       int            `json:"requester_pays,omitempty"`
 	TeleportBackups     bool           `json:"teleport_backups,omitempty"`
@@ -239,6 +242,8 @@ type CatalogPayload struct {
 
 // CatalogGroup is one exported group as seen by one peer.
 type CatalogGroup struct {
+	ID                      string                `json:"id,omitempty"`
+	MemberCount             *int                  `json:"member_count,omitempty"`
 	SpawnProfiles           []CatalogSpawnProfile `json:"spawn_profiles,omitempty"`
 	AgentStatuses           []AgentStatus         `json:"agent_statuses,omitempty"`
 	AgentStatusesUpdatedAt  time.Time             `json:"agent_statuses_updated_at,omitempty"`

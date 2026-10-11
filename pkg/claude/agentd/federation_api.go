@@ -109,6 +109,7 @@ func isFederatedAddress(to string) bool {
 
 // fedTarget is a resolved remote recipient.
 type fedTarget struct {
+	link    *db.FederationGroupLink
 	peer    *db.FederationPeer
 	agentID string
 	name    string
@@ -162,7 +163,7 @@ func resolveFederatedTarget(fromConv, addr string) (*fedTarget, error) {
 	}
 	t := &fedTarget{peer: peer}
 	for _, g := range cat.Groups {
-		if !g.HasCap(proto.CapMail) || (len(grantedGroups) != 0 && !grantedGroups[g.Name]) {
+		if !g.HasCap(proto.CapMail) && outboundGroupLink(nil, fromConv, peer.InstanceID, g.ID) == nil || (len(grantedGroups) != 0 && !grantedGroups[g.Name]) {
 			continue
 		}
 		for _, m := range g.Members {
@@ -213,10 +214,21 @@ func queueFederatedMail(fromConv string, t *fedTarget, subject, body, inReplyTo 
 	if t.operator {
 		kind = proto.KindOperatorMail
 	}
+	var authority *proto.GroupLinkMailAuthority
+	linkID := ""
+	if t.link != nil {
+		var err error
+		authority, err = linkMailAuthority(t.link)
+		if err != nil {
+			return nil, err
+		}
+		linkID = t.link.ID
+	}
 	return queueFederatedEnvelope(fedOutgoing{
+		linkID:   linkID,
 		fromConv: fromConv, peer: t.peer, kind: kind, toAgent: t.agentID, toLabel: t.label(),
 		subject: subject, preview: body, inReplyTo: inReplyTo, ttl: fedMailTTL,
-		payload: proto.MailPayload{Subject: subject, Body: body, Attachments: atts},
+		payload: proto.MailPayload{Link: authority, Subject: subject, Body: body, Attachments: atts},
 	})
 }
 
@@ -225,6 +237,7 @@ const fedMaxSubject = 512
 
 // fedOutgoing describes one envelope for the outbox.
 type fedOutgoing struct {
+	linkID     string
 	envelopeID string
 	fromConv   string // "" = the human operator
 	peer       *db.FederationPeer
@@ -273,7 +286,7 @@ func queueFederatedEnvelope(o fedOutgoing) (*db.FederationOutboxRow, error) {
 		FromConv: o.fromConv, FromAgent: fromAgent, InReplyTo: o.inReplyTo, Subject: o.subject, BodyPreview: preview(o.preview),
 		Sealed: packSealed(sealed), ExpiresAt: env.ExpiresAt,
 	}
-	if err := db.InsertFederationOutbox(row); err != nil {
+	if err := db.InsertFederationOutbox(row, o.linkID); err != nil {
 		return nil, err
 	}
 	if rt := currentFederation(); rt != nil {
@@ -347,6 +360,12 @@ func handleFederatedAgentSend(w http.ResponseWriter, r *http.Request, fromConv s
 // authorizeFederatedTarget requires mail authority for a catalog group
 // containing the recipient. One-shot approval describes one concrete group.
 func authorizeFederatedTarget(w http.ResponseWriter, r *http.Request, fromConv string, t *fedTarget) (string, bool) {
+	for _, g := range t.remoteGroup {
+		if link := groupLinkByRemoteName(r, fromConv, t.peer, g); link != nil {
+			t.link = link
+			return g, true
+		}
+	}
 	for _, group := range t.remoteGroup {
 		if allowed, _, err := permissionAllowsAction(r, fromConv, PermMessageDirect, ActionContext{RemotePeer: t.peer.InstanceID, RemoteGroup: group}); err == nil && allowed {
 			return group, true
@@ -1223,6 +1242,7 @@ func registerFederationRoutes(mux *http.ServeMux) {
 
 	registerFederationPeerViewRoutes(mux)
 	registerFederationAccessRequestRoutes(mux)
+	registerFederationProposalRoutes(mux)
 	registerFederationNodeGroupRoutes(mux)
 	registerFederationNodeProfileRoutes(mux)
 	registerFederationRepoRoutes(mux)
