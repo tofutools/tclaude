@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
@@ -80,6 +81,9 @@ func teleportMoveAuthority(m db.FederationAgentMove) error {
 	if teleportFrozen() {
 		return errors.New("teleports are frozen by the operator")
 	}
+	if m.Human {
+		return nil
+	}
 	if m.Initiator != m.SourceAgent {
 		return errors.New("teleport initiator must be the source identity")
 	}
@@ -106,6 +110,29 @@ func handleFederationTeleport(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	handleFederationTeleportForSource(w, r, caller)
+}
+
+// Operator selection is local-only; the original human actor is retained
+// throughout export and retirement rather than borrowing source permissions.
+func handleOperatorAgentTeleport(w http.ResponseWriter, r *http.Request) {
+	if !requireHuman(w, r, "teleport a local agent") {
+		return
+	}
+	selected, _, err := agent.ResolveSelector(r.PathValue("id"))
+	if err != nil || selected == nil {
+		writeError(w, 404, "source", "no active local agent matches the target")
+		return
+	}
+	a, err := db.GetAgentByConv(selected.ConvID)
+	if err != nil || a == nil || !a.Active() || a.CurrentConvID != selected.ConvID {
+		writeError(w, 404, "source", "no active local agent matches the target")
+		return
+	}
+	handleFederationTeleportForSource(w, r, a.CurrentConvID)
+}
+
+func handleFederationTeleportForSource(w http.ResponseWriter, r *http.Request, caller string) {
 	if teleportFrozen() {
 		writeError(w, 409, "teleport_off", "teleports are frozen by the operator")
 		return
@@ -155,6 +182,16 @@ func handleFederationTeleport(w http.ResponseWriter, r *http.Request) {
 		}
 		if lease.State != "clone" {
 			if in.Home && !in.KeepPausedBackup && !in.Clone {
+				_, human, ok := authedCaller(w, r)
+				if !ok {
+					return
+				}
+				if human || peerActionFromRequest(r) != nil {
+					// Operator recall carries the home group for normal imports.
+					// A leased return resumes the existing backup and memberships;
+					// it cannot choose a new receiving group.
+					in.Group = ""
+				}
 				if in.Peer != "" || in.Node != "" || in.Group != "" || in.Require != "" || in.Prefer != "" || in.Credentials != "" || in.GitRef != "" {
 					writeError(w, 400, "invalid_arg", "return to a paused backup accepts only --home and --note")
 					return
@@ -180,12 +217,23 @@ func handleFederationTeleport(w http.ResponseWriter, r *http.Request) {
 		intent.OriginAgent = previous.Intent.OriginAgent
 		intent.Hops = append([]bundletransfer.TeleportHop(nil), previous.Intent.Hops...)
 	}
+	presence, err := db.GetAgentFederationPresence(actor.AgentID)
+	if err != nil {
+		writeError(w, 503, "provenance", "could not read home identity")
+		return
+	}
+	// Ordinary stable-ID moves also establish a home, even without prior
+	// teleport provenance. Preserve that home when first teleporting a visitor.
+	visitor := presence != nil && presence.State == "here" && presence.HomeInstance != rt.id.ID()
+	if visitor {
+		intent.OriginInstance, intent.OriginAgent = presence.HomeInstance, actor.AgentID
+	}
 	if in.Home {
 		if in.Peer != "" || in.Node != "" {
 			writeError(w, 400, "invalid_arg", "--home cannot be combined with a destination")
 			return
 		}
-		if previous == nil {
+		if previous == nil && !visitor {
 			writeError(w, 409, "no_home", "this agent has no teleport origin")
 			return
 		}
@@ -289,7 +337,7 @@ func handleFederationTeleport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, "teleport_limit", err.Error())
 		return
 	}
-	body, _ := json.Marshal(fedShareAgentRequest{Agent: "self", Peer: p.InstanceID, Group: in.Group, History: true, CarryPermissions: in.CarryPermissions})
+	body, _ := json.Marshal(fedShareAgentRequest{Agent: actor.AgentID, Peer: p.InstanceID, Group: in.Group, History: true, CarryPermissions: in.CarryPermissions})
 	inner := r.Clone(context.WithValue(r.Context(), teleportSourceContextKey{}, &intent))
 	path := "/v1/federation/move-agent"
 	if in.Clone {

@@ -314,6 +314,10 @@ func TestFederation_TeleportHistoryRoundTrip(t *testing.T) {
 		t.Run(name, func(t *testing.T) { runHistoryRoundTrip(t, name, false) })
 	}
 }
+func TestFederation_OperatorTeleportRecallRoundTrip(t *testing.T) {
+	runHistoryRoundTrip(t, "claude", false, false, true)
+}
+
 func TestFederation_HomeMailNativeRoundTrip(t *testing.T) {
 	runHistoryRoundTrip(t, "claude", false, true)
 }
@@ -424,7 +428,18 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool, mailChecks ...bo
 		if home {
 			input = map[string]any{"home": true, "group": "project"}
 		}
-		code, raw := historyNodeRequest(t, from, "POST", "/v1/whoami/teleport", conv, input)
+		path, requestConv := "/v1/whoami/teleport", conv
+		if len(mailChecks) > 1 && mailChecks[1] {
+			path, requestConv = "/v1/agents/"+conv+"/teleport", ""
+			if home {
+				// The home operator requests recall through the real peer proxy,
+				// rather than impersonating the roaming agent.
+				from = to
+				path = "/v1/federation/agents/" + originalIdentity.AgentID + "/recall"
+				input = map[string]any{"group": "project", "note": "Come home"}
+			}
+		}
+		code, raw := historyNodeRequest(t, from, "POST", path, requestConv, input)
 		require.Equal(t, 200, code, string(raw))
 		var result struct {
 			Offer struct {

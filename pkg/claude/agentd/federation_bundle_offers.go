@@ -338,6 +338,7 @@ func registerFederationBundleRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/federation/agents/{id}/recall", handleFederationAgentRecall)
 	mux.HandleFunc("POST /v1/federation/move-agent", handleFederationShareAgent)
 	mux.HandleFunc("POST /v1/whoami/teleport", handleFederationTeleport)
+	mux.HandleFunc("POST /v1/agents/{id}/teleport", handleOperatorAgentTeleport)
 	mux.HandleFunc("POST /v1/whoami/teleport/report", handleTeleportReport)
 	mux.HandleFunc("POST /v1/teleport/recover", handleTeleportRecover)
 	mux.HandleFunc("GET /v1/whoami/teleports", handleSelfTeleports)
