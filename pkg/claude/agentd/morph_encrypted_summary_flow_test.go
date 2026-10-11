@@ -16,7 +16,7 @@ import (
 )
 
 func TestMorphEncryptedSummaryHandoffFlow(t *testing.T) {
-	for _, action := range []string{"submit", "timeout", "cancel", "offline", "outage"} {
+	for _, action := range []string{"submit", "timeout", "cancel", "offline", "outage", "explicit_submit", "explicit_offline"} {
 		t.Run(action, func(t *testing.T) {
 			t.Setenv(session.ResourceDelegationDirEnv, "")
 			t.Setenv("CODEX_HOME", "")
@@ -40,13 +40,16 @@ func TestMorphEncryptedSummaryHandoffFlow(t *testing.T) {
 			require.NoError(t, cx.WriteExchange("Latest readable instructions", "Readable recent answer"))
 			f.SetSessionStatus(source.ConvID, session.StatusIdle)
 			body := map[string]any{"harness": "claude", "approval": "default", "trust_dir": true, "dry_run": true}
+			if action == "explicit_submit" || action == "explicit_offline" {
+				body["history"] = "handoff"
+			}
 			preview := f.AsHuman().Morph(source.AgentID, body)
 			report := decodeCrossMorph(t, preview.Code, preview.Body.Bytes()).History
 			require.True(t, report.NeedsHandoff)
 			require.False(t, report.NeedsSummary, "encrypted context uses the same wait without requiring a large-cut checkbox")
 			assert.Equal(t, "native_handoff", report.Fallback)
 			delete(body, "dry_run")
-			if action == "offline" {
+			if action == "offline" || action == "explicit_offline" {
 				f.MarkOffline(source.TmuxSession)
 				refused := f.AsHuman().Morph(source.AgentID, body)
 				require.Equal(t, http.StatusConflict, refused.Code, refused.Body.String())
@@ -55,7 +58,7 @@ func TestMorphEncryptedSummaryHandoffFlow(t *testing.T) {
 			}
 			result := f.AsHuman().Morph(source.AgentID, body)
 			response := decodeCrossMorph(t, result.Code, result.Body.Bytes())
-			if action != "offline" {
+			if action != "offline" && action != "explicit_offline" {
 				require.Equal(t, "pending", response.Result)
 				pending, err := db.PendingMorphForAgent(source.AgentID)
 				require.NoError(t, err)
@@ -67,7 +70,7 @@ func TestMorphEncryptedSummaryHandoffFlow(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, source.ConvID, unchanged.CurrentConvID)
 				switch action {
-				case "submit":
+				case "submit", "explicit_submit":
 					submitted := f.AsAgent(source.ConvID).MorphHandoff("Remembered handoff: the lost decision was to retain API compatibility.")
 					require.Equal(t, http.StatusOK, submitted.Code, submitted.Body.String())
 					f.SetSessionStatus(source.ConvID, session.StatusIdle)
@@ -96,7 +99,7 @@ func TestMorphEncryptedSummaryHandoffFlow(t *testing.T) {
 			text := historyText(t, mustGetHarness(t, harness.DefaultName), agent.CurrentConvID, profile.Cwd)
 			assert.Contains(t, text, "Latest readable instructions")
 			assert.Contains(t, text, "Readable recent answer")
-			if action == "submit" {
+			if action == "submit" || action == "explicit_submit" {
 				assert.Contains(t, text, "Remembered handoff")
 			} else {
 				assert.Contains(t, text, "Compaction summary unreadable; source could not write a handoff")

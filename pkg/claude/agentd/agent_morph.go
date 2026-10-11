@@ -703,9 +703,9 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 			report.NeedsHandoff = true
 			report.Fallback = "native_handoff"
 			report.SelectionReason = "compaction summary unreadable; ask the source for a handoff and carry it alongside the readable tail"
-			if history != "handoff" {
-				history = "summary"
-			}
+			// The readable tail remains useful even when the operator selected
+			// handoff explicitly. Use the shared handoff-plus-tail path.
+			history = "summary"
 			handoffRequired = true
 		}
 		if report.NeedsSummary {
