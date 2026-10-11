@@ -28,7 +28,7 @@ You have three commands for managing your own context window:
 | `tclaude agent context-info`                       | Print the current context % + an absolute token breakdown + the model (self by default; `--target <peer>` reads one agent, `--group <name>` lists a whole team) |
 | `tclaude agent compact [follow-up]`                | Inject `/compact` into your own pane; identity preserved. Optional follow-up prompt is queued. |
 | `tclaude agent reincarnate <follow-up>`            | Replace yourself with a fresh successor that inherits your identity (groups, permissions, ownership). Follow-up is REQUIRED.              |
-| `tclaude agent clone [follow-up] [--no-copy-conv]` | Fork yourself into a SIBLING. Original keeps running; clone inherits identity (renamed `<title>-c-<N>`) and, by default, conv history. `--cwd <dir>` starts it elsewhere (e.g. a worktree), `--group <name>` adds one more group, `--no-copy-ownership` keeps group ownerships off it. |
+| `tclaude agent clone [follow-up] [--no-copy-conv]` | Fork yourself into a SIBLING. Original keeps running; clone inherits identity (renamed `<title>-c-<N>`) and, by default, conv history. `--cwd <dir>` starts it elsewhere (e.g. a worktree), `--group <name>` adds one more group, `--copy-ownership` also copies group ownerships (off by default). |
 | `tclaude agent morph --model M [--effort E]`       | Relaunch yourself in place with another same-harness model/effort/approval (needs `self.morph`; applies when your turn ends). History and identity are kept. |
 
 `context-info` on **yourself** is read-only and needs no slug. Reading

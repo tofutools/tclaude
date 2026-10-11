@@ -12,6 +12,8 @@ import (
 // FederationSpawnPolicy contains receiver-owned launch settings. Empty fields
 // inherit ordinary operator group-spawn defaults.
 type FederationSpawnPolicy struct {
+	// IncludeMembers narrows the roster opt-in on groups.visibility.read.
+	IncludeMembers bool `json:"include_members,omitempty"`
 	// PermissionSlugs is the optional receiver allowlist for agents.receive.permissions.
 	PermissionSlugs []string `json:"permission_slugs,omitempty"`
 	AllowedProfiles []string `json:"allowed_profiles,omitempty"`
@@ -26,7 +28,7 @@ type FederationSpawnPolicy struct {
 
 // Equal includes selectable profiles in inherited-policy conflict checks.
 func (p FederationSpawnPolicy) Equal(other FederationSpawnPolicy) bool {
-	return slices.Equal(p.PermissionSlugs, other.PermissionSlugs) && slices.Equal(p.AllowedProfiles, other.AllowedProfiles) &&
+	return p.IncludeMembers == other.IncludeMembers && slices.Equal(p.PermissionSlugs, other.PermissionSlugs) && slices.Equal(p.AllowedProfiles, other.AllowedProfiles) &&
 		p.RequesterPays == other.RequesterPays && p.JobApproval == other.JobApproval &&
 		p.Profile == other.Profile && p.Cwd == other.Cwd && p.Harness == other.Harness &&
 		p.Model == other.Model && p.MaxLive == other.MaxLive

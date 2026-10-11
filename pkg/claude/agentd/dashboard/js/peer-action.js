@@ -111,7 +111,7 @@ export function consequence(action, { agent, node, force, group, clone, directio
     case 'sandbox-restart': return direction === 'unlock'
       ? `${agent} is restarted on ${node} with its sandbox OFF: full access to ${node}'s machine — its files, logins, keys and network — until its sandbox is restored. ${node} allows this only for a peer it trusts unrestricted, and refuses unless the agent is fully idle.`
       : `${agent} is restarted on ${node} under its normal sandbox configuration. ${node} refuses unless the agent is fully idle.`;
-    case 'clone': return `A sibling of ${agent} starts on ${node}, inheriting its identity (groups, permissions, ownership). The original keeps running.`;
+    case 'clone': return `A sibling of ${agent} starts on ${node}, inheriting its groups and permissions. The original keeps running.`;
     case 'move': return `${agent} leaves ${node} and is offered to this node with its history, to land in group ${group}. Once it lands, the original on ${node} is retired. ${MOVE_LANDS}`;
     case 'teleport': return `${agent} teleports from ${node} to this node, continuing its history in group ${group}${clone ? '; the original keeps running on ' + node : '; the original on ' + node + ' is retired'}. ${TELEPORT_LANDS}`;
     default: return '';

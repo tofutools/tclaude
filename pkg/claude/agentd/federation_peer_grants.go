@@ -14,22 +14,26 @@ import (
 )
 
 const (
-	PermNodeMessagesRead   = "node.messages.read"
-	PermNodeMessagesManage = "node.messages.manage"
-	PermAgentsStatusRead   = "agents.status.read"
-	PermSessionsRead       = "sessions.read"
-	PermSessionsWatch      = "sessions.watch"
-	PermSessionsAttach     = "sessions.attach"
-	PermSessionsFilesRead  = "sessions.files.read"
-	PermGroupsRosterRead   = "groups.roster.read"
-	PermGroupsPresenceRead = "groups.presence.read"
-	PermMessageAttachments = "message.attachments"
-	PermAgentsReceive      = "agents.receive"
-	PermJobsRun            = "jobs.run"
+	PermGroupsVisibilityRead = "groups.visibility.read"
+	PermGroupsLinkAccept     = "groups.link.accept"
+	PermNodeMessagesRead     = "node.messages.read"
+	PermNodeMessagesManage   = "node.messages.manage"
+	PermAgentsStatusRead     = "agents.status.read"
+	PermSessionsRead         = "sessions.read"
+	PermSessionsWatch        = "sessions.watch"
+	PermSessionsAttach       = "sessions.attach"
+	PermSessionsFilesRead    = "sessions.files.read"
+	PermGroupsRosterRead     = "groups.roster.read"
+	PermGroupsPresenceRead   = "groups.presence.read"
+	PermMessageAttachments   = "message.attachments"
+	PermAgentsReceive        = "agents.receive"
+	PermJobsRun              = "jobs.run"
 )
 
 // Wire capabilities stay stable while authority lives in regular peer slugs.
 var federationPeerSlugs = map[string]string{
+	PermGroupsVisibilityRead:     proto.CapGroupVisibility,
+	PermGroupsLinkAccept:         proto.CapGroupLinkAccept,
 	PermAgentsStatusRead:         proto.CapAgentStatus,
 	PermGroupsRosterRead:         proto.CapRoster,
 	PermSessionsRead:             proto.CapSessions,
@@ -53,6 +57,11 @@ var federationPeerSlugs = map[string]string{
 }
 
 func fedPeerGroupGrant(peer string, groupID int64, slug string) *db.FederationPeerGrant {
+	if slug == PermGroupsRosterRead {
+		if grant := fedPeerGroupGrant(peer, groupID, PermGroupsVisibilityRead); grant != nil && grant.SpawnPolicy.IncludeMembers {
+			return grant
+		}
+	}
 	g, err := db.GetAgentGroupByID(groupID)
 	if err != nil || g == nil || g.IsArchived() {
 		return nil
@@ -109,7 +118,7 @@ func fedPeerExplicitGroupGrant(peer string, groupID int64, slug string) *db.Fede
 			best = g
 		}
 	}
-	if slug == PermGroupsMembersSpawn || slug == PermJobsRun || slug == PermAgentsReceivePermissions {
+	if slug == PermGroupsMembersSpawn || slug == PermJobsRun || slug == PermAgentsReceivePermissions || slug == PermGroupsVisibilityRead {
 		for _, g := range candidates {
 			if rank(g) == rank(best) && !g.SpawnPolicy.Equal(best.SpawnPolicy) {
 				return nil

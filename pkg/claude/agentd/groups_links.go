@@ -31,6 +31,7 @@ func handleLinksAll(w http.ResponseWriter, r *http.Request) {
 	for _, l := range links {
 		out = append(out, toLinkJSON(l, names))
 	}
+	out = append(out, remoteLinkJSON(0, "", names)...)
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -39,7 +40,7 @@ type canMessageResp struct {
 	Allowed  bool   `json:"allowed"`
 	Reason   string `json:"reason,omitempty"`
 	ViaGroup string `json:"via_group,omitempty"`
-	LinkID   int64  `json:"link_id,omitempty"`
+	LinkID   any    `json:"link_id,omitempty"`
 	Message  string `json:"message,omitempty"`
 }
 
@@ -74,6 +75,9 @@ func handleCanMessage(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found",
 			fmt.Sprintf("from: %s", err.Error()))
+		return
+	}
+	if handleCanMessageFederated(w, r, fromRes.ConvID, toSel) {
 		return
 	}
 	toRes, _, err := agent.ResolveSelector(toSel)
@@ -122,11 +126,15 @@ func handleCanMessage(w http.ResponseWriter, r *http.Request) {
 // are denormalised onto the response so the CLI / dashboard don't
 // need to do a second hop to translate ids → names.
 type linkJSON struct {
-	ID        int64  `json:"id"`
-	From      string `json:"from"`
-	To        string `json:"to"`
-	Mode      string `json:"mode"`
-	CreatedAt string `json:"created_at"`
+	Peer        string `json:"peer,omitempty"`
+	Direction   string `json:"direction,omitempty"`
+	LocalState  string `json:"local_state,omitempty"`
+	RemoteState string `json:"remote_state,omitempty"`
+	ID          any    `json:"id"`
+	From        string `json:"from"`
+	To          string `json:"to"`
+	Mode        string `json:"mode"`
+	CreatedAt   string `json:"created_at"`
 	// ByAgent is the stable agent_id of the creator (the actor); ByConv is
 	// the conv-id snapshot kept for forensics. ByAgent is "" for a
 	// human/un-enrolled creator (then only ByConv is meaningful).
@@ -215,6 +223,7 @@ func handleGroupLinksList(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 	for _, l := range links {
 		out = append(out, toLinkJSON(l, names))
 	}
+	out = append(out, remoteLinkJSON(g.ID, string(dir), names)...)
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -223,9 +232,11 @@ func handleGroupLinksList(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 // the reverse edge in the same call (failures on the reverse don't
 // roll back the forward edge — the caller can retry).
 type linkAddBody struct {
-	To    string `json:"to"`
-	Mode  string `json:"mode,omitempty"`
-	Bidir bool   `json:"bidir,omitempty"`
+	ToPeer    string `json:"to_peer,omitempty"`
+	ToGroupID string `json:"to_group_id,omitempty"`
+	To        string `json:"to"`
+	Mode      string `json:"mode,omitempty"`
+	Bidir     bool   `json:"bidir,omitempty"`
 }
 
 func handleGroupLinksAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
@@ -239,6 +250,10 @@ func handleGroupLinksAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGrou
 	var body linkAddBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	if body.ToPeer != "" {
+		handleRemoteGroupLinkAdd(w, r, g, body)
 		return
 	}
 	toGroup, err := resolveGroupSelector(body.To)
@@ -357,6 +372,10 @@ func handleGroupLinksUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentG
 }
 
 func handleGroupLinksRemove(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, idStr string) {
+	if strings.HasPrefix(idStr, "xlink_") {
+		handleRemoteGroupLinkRemove(w, r, g, idStr)
+		return
+	}
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "link id must be integer")

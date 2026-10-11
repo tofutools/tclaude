@@ -297,9 +297,19 @@ export function GroupsList({ host, state, actions }) {
 // the daemon just declined to identify — the same reason it is never allowed
 // to decide which row gets a badge. So the notice says only that it is
 // happening and where to go looking, which is all the daemon honestly knows.
+//
+// The × dismisses the instance on screen. The daemon keeps the dismissal (not
+// localStorage, whose origin changes with the dashboard port) and brings the
+// notice back as soon as a newer refusal is recorded; per-row badges stay.
 export function BrokerRefusalNotice({ snapshot }) {
   const total = Number(snapshot?.broker_refusals_total || 0);
   const unplaceable = Number(snapshot?.broker_refusals_unplaceable || 0);
+  // Hide at once on click rather than waiting for the next 2s poll; cleared
+  // when the counts change, so a newer refusal shows without delay.
+  const [dismissedAt, setDismissedAt] = useState(null);
+  const key = `${total}/${unplaceable}`;
+  if (dismissedAt !== null && dismissedAt !== key) setDismissedAt(null);
+  if (dismissedAt === key) return null;
   // A harness can race one final callback against teardown after its session
   // row has gone away. That caller is necessarily unplaceable, and one lost
   // teardown event is not evidence that a live agent's telemetry is stuck.
@@ -321,9 +331,21 @@ export function BrokerRefusalNotice({ snapshot }) {
     : unplaceable > 0
       ? ` (${unplaceable} from callers it could not place at all)`
       : '';
+  const dismiss = async () => {
+    setDismissedAt(key);
+    try {
+      const r = await fetch('/api/broker-refusals/dismiss', { method: 'POST', credentials: 'same-origin' });
+      if (!r.ok) throw new Error(await r.text());
+    } catch (err) {
+      console.warn('dismissing the broker refusal notice failed', err);
+      setDismissedAt(null);
+    }
+  };
   return html`<div class="broker-refusal-notice" role="status" title=${title}>
     <span class="broker-refusal-notice-glyph" aria-hidden="true">🚫</span>
     <span>agentd refused ${total} brokered callback${plural}${detail} in the last 15 minutes — telemetry for at least one agent is being lost. Look for a 🚫 on an agent row; if there is none, the affected row is hidden or unplaceable, and the daemon log has the caller pid.</span>
+    <button type="button" class="broker-refusal-notice-dismiss" aria-label="Dismiss this warning"
+      title="Dismiss this warning. It comes back if agentd refuses another callback." onClick=${dismiss}>×</button>
   </div>`;
 }
 

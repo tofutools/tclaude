@@ -261,6 +261,7 @@ var peerViewLocalRoutes = []string{
 	"PATCH /api/groups/{name}/links/{id}",
 	"PATCH /api/groups/{name}/members/{conv}",
 	"POST /api/access-requests/{id}/decision",
+	"POST /api/broker-refusals/dismiss",
 	"POST /api/groups",
 	"POST /api/groups/import",
 	"POST /api/groups/import/inspect",

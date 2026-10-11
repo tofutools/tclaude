@@ -133,6 +133,8 @@ var permissionRegistry = []PermSlug{
 	{Slug: PermSelfTeleportPermissions, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Opt in to carrying permissions on self-initiated teleport; requires peer scope and receiver approval. Default off."},
 	{Slug: PermAgentsReceivePermissions, Description: "Peer-only: allow opt-in permission carry into a receiving group, optionally limited to permission slugs. Does not transfer ownership or sensitive authority."},
 	{Slug: PermAgentsReceive, Description: "Peer-only admission for agent bundle offers into an explicitly granted receiving group. Configure through federation peer grants; ordinary agent grants do not authorize receipt."},
+	{Slug: PermGroupsVisibilityRead, Description: "Share group name, description and member count; roster is an explicit peer-grant option.", ScopeDims: []ScopeDim{ScopeDimGroup}},
+	{Slug: PermGroupsLinkAccept, Description: "Accept exact directed peer links into a shared group.", ScopeDims: []ScopeDim{ScopeDimGroup}},
 	{Slug: PermGroupsRosterRead, Description: "Read group member names and roles.", ScopeDims: []ScopeDim{ScopeDimGroup}},
 	{Slug: PermGroupsPresenceRead, Description: "Read group member presence.", ScopeDims: []ScopeDim{ScopeDimGroup}},
 	{Slug: PermMessageAttachments, Description: "Send message attachments.", ScopeDims: []ScopeDim{ScopeDimGroup}},

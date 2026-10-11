@@ -99,9 +99,19 @@ func TestSpawnHarnessPolicyCloneIncludesOwnerOnlyDestinationGroups(t *testing.T)
 		Decision: db.SpawnHarnessDeny, Reason: "owner-only group stays on Codex",
 	}}))
 
-	resp := f.AsAgent(caller).CloneWith(target, map[string]any{"no_copy_conv": true})
+	// Copying ownership makes the owner-only group a destination, so its
+	// policy applies.
+	resp := f.AsAgent(caller).CloneWith(target, map[string]any{"no_copy_conv": true, "copy_ownership": true})
 	require.Equal(t, http.StatusForbidden, resp.Code, "body=%s", resp.Raw)
 	assert.Empty(t, resp.NewConv, "policy denial must happen before clone spawn")
 	assert.Contains(t, string(resp.Raw), `group \"owner-only\" policy`)
 	assert.Contains(t, string(resp.Raw), "owner-only group stays on Codex")
+
+	// A default clone does not take the ownership, so that group is not one
+	// of its destinations and its policy does not apply.
+	resp = f.AsAgent(caller).CloneWith(target, map[string]any{"no_copy_conv": true})
+	require.Equal(t, http.StatusOK, resp.Code, "body=%s", resp.Raw)
+	owned, err := db.ListGroupsOwnedBy(resp.NewConv)
+	require.NoError(t, err)
+	assert.Empty(t, owned)
 }

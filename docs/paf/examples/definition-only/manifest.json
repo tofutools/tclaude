@@ -1,0 +1,39 @@
+{
+  "agents": [
+    "reviewer"
+  ],
+  "created_at": "2026-10-11T19:40:00Z",
+  "entries": [
+    {
+      "path": "agents/reviewer/agent.json",
+      "bytes": 731,
+      "sha256": "197362f82a17cd99a8f16e23ae1fd396592688482adeac39c38790da1d4de1b6",
+      "media_type": "application/json"
+    },
+    {
+      "path": "agents/reviewer/environment.json",
+      "bytes": 171,
+      "sha256": "0e8b208d93adbffebdefa348f0141ea87a1dce506d13f8995b5e5e05ae54277b",
+      "media_type": "application/json"
+    }
+  ],
+  "extensions_required": [],
+  "extensions_used": {
+    "tclaude": {
+      "copy": "unsafe",
+      "schema": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/ext/tclaude.schema.json",
+      "spec": "https://github.com/tofutools/tclaude/blob/main/docs/paf.md#the-tclaude-extension",
+      "system": "tclaude",
+      "system_version": "v0.0.2212",
+      "version": "1.0"
+    }
+  },
+  "format": "paf",
+  "kind": "agent",
+  "paf_version": "1.0",
+  "producer": {
+    "name": "tclaude",
+    "version": "v0.0.2212"
+  },
+  "requires": []
+}

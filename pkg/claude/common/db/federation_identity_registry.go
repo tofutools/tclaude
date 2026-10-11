@@ -16,6 +16,12 @@ const (
 )
 
 var FederationIdentityColumns = []IdentityColumn{
+	{"federation_peer_proposals", "peer", IdentityClose},
+	{"federation_peer_proposals", "origin_instance", IdentityHistorical},
+	{"federation_peer_proposals", "body", IdentityHistorical},
+	{"federation_group_links", "peer", IdentityClose},
+	{"federation_proposal_events", "peer", IdentityClose},
+	{"federation_proposal_events", "payload", IdentityHistorical},
 	{"federation_peers", "instance_id", IdentityRebind},
 	{"federation_catalogs", "peer", IdentityClose},
 	{"federation_outbox", "to_instance", IdentityClose},

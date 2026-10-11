@@ -1067,7 +1067,7 @@ func buildCloneLaunchPrompt(title, handoffAuthor string, msgID int64, followUp s
 		welcome += " named " + strconv.Quote(title)
 	}
 	welcome += " of another agent: a sibling that inherits its identity" +
-		" (groups, permissions, ownerships) and now runs alongside it, independently."
+		" (groups and permissions) and now runs alongside it, independently."
 	if handoffAuthor != "" {
 		welcome += " The follow-up below was written by " + handoffAuthor + "."
 	}
@@ -1133,8 +1133,8 @@ func isHumanCloneCaller(caller string) bool {
 }
 
 // `tclaude agent clone` — fork the calling agent into a sibling that
-// inherits its identity (groups, permissions, ownerships) but
-// continues running independently. Unlike reincarnate, the original
+// inherits its identity (groups and permissions; group ownerships only on
+// request) but continues running independently. Unlike reincarnate, the original
 // is NOT shut down and its identity rows are NOT removed.
 //
 // Two modes:
@@ -1332,7 +1332,8 @@ type cloneBody struct {
 	// adding a member to that group.
 	Group string `json:"group"`
 	// CopyOwnership copies the source's group ownerships onto the clone.
-	// nil means the historical default: copy.
+	// Off unless set: ownership is administrative authority over a group,
+	// and a clone should not multiply it by default.
 	CopyOwnership *bool `json:"copy_ownership"`
 }
 
@@ -1492,7 +1493,7 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 		}
 		extraGroup = g
 	}
-	copyOwnership := body.CopyOwnership == nil || *body.CopyOwnership
+	copyOwnership := body.CopyOwnership != nil && *body.CopyOwnership
 
 	// Snapshot group membership up-front — before the rate-limit claim and
 	// spawn — so the clone can inherit the source's identity consistently.
@@ -1533,7 +1534,8 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 			"snapshot ownerships: "+err.Error())
 		return
 	}
-	// The clone inherits both memberships and ownerships. Build the union of
+	// The clone inherits memberships, and ownerships when copy_ownership asks
+	// for them. Build the union of
 	// those destination groups so an owner-only relationship cannot evade a
 	// group-local deny. Keep oldGroups unchanged because membership copy and
 	// handoff routing intentionally use membership rows only.
@@ -1752,7 +1754,7 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	// 3. Copy identity to the new conv. Crucially, this is ADD-only —
 	// the original keeps every membership / permission / ownership it
 	// had. All-or-nothing: a failure stops the clone. Ownerships are copied
-	// unless the caller turned that off. No lineage edge is recorded: lineage
+	// only when the caller asked for them. No lineage edge is recorded: lineage
 	// is authorization state (@self-spawned / @descendants), and a clone must
 	// not gain or confer authority that way.
 	granter := "system:clone"

@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/common.schema.json",
+  "title": "PAF 1.x shared definitions",
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "entryPath": {
+      "type": "string",
+      "maxLength": 255,
+      "pattern": "^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+      "description": "Relative archive entry name. Readers additionally refuse '.' and '..' segments."
+    },
+    "agentKey": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]{1,64}$"
+    },
+    "ref": {
+      "description": "A reference to an agent or conversation on some instance. All fields are informational.",
+      "type": "object",
+      "properties": {
+        "instance": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "conversation": {
+          "type": "string"
+        },
+        "snapshot": {
+          "type": "string"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/extensions"
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "required": [
+        "kind",
+        "count"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "locations": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "extensionId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*(\\.[a-z0-9][a-z0-9-]*)*$",
+      "maxLength": 128,
+      "description": "Single-label ids are reserved for extensions documented in the PAF spec; others use reverse-DNS."
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Extension data keyed by a declared extension id.",
+      "propertyNames": {
+        "$ref": "#/$defs/extensionId"
+      },
+      "additionalProperties": {
+        "type": "object"
+      }
+    }
+  }
+}

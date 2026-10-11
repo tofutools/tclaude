@@ -48,15 +48,18 @@ func (req *approvalRequest) setDeadline(t time.Time) {
 // them lock-free; only deadline is mutated, and dashboardSnapshot reads it
 // under the request mutex.
 type dashboardAccessRequest struct {
-	OriginPeer      string     `json:"origin_peer,omitempty"`
-	GroupID         int64      `json:"group_id,omitempty"`
-	GrantTTLSeconds *int       `json:"grant_ttl_seconds,omitempty"`
-	GrantExpiresAt  *time.Time `json:"grant_expires_at,omitempty"`
-	ID              string     `json:"id"`
-	Perm            string     `json:"perm"`
-	ConvID          string     `json:"conv_id,omitempty"`
-	ConvTitle       string     `json:"conv_title,omitempty"`
-	AgentID         string     `json:"agent_id,omitempty"`
+	Purpose         string         `json:"purpose,omitempty"`
+	Proposal        map[string]any `json:"proposal,omitempty"`
+	Link            map[string]any `json:"link,omitempty"`
+	OriginPeer      string         `json:"origin_peer,omitempty"`
+	GroupID         int64          `json:"group_id,omitempty"`
+	GrantTTLSeconds *int           `json:"grant_ttl_seconds,omitempty"`
+	GrantExpiresAt  *time.Time     `json:"grant_expires_at,omitempty"`
+	ID              string         `json:"id"`
+	Perm            string         `json:"perm"`
+	ConvID          string         `json:"conv_id,omitempty"`
+	ConvTitle       string         `json:"conv_title,omitempty"`
+	AgentID         string         `json:"agent_id,omitempty"`
 	// CurrentConvID / caller and title states are display metadata refreshed
 	// from AgentID on every snapshot. ConvID above remains the immutable
 	// request-generation correlation key.
@@ -267,6 +270,7 @@ func (a *approvalRegistry) dashboardSnapshot() []dashboardAccessRequest {
 		out = append(out, dbAccessRequestToDashboard(ar))
 	}
 	refreshDashboardAccessRequestCallers(out)
+	out = append(out, proposalAccessRequests()...)
 	return out
 }
 
@@ -311,6 +315,10 @@ func serveAccessRequestDecision(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "missing approval id")
+		return
+	}
+	if proposal, err := db.GetFederationProposal(id); err == nil && proposal != nil {
+		serveProposalAccessDecision(w, r, *proposal)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)

@@ -1,0 +1,26 @@
+{
+  "audience": {
+    "kind": "recipients",
+    "recipients": [
+      "inst_7c21"
+    ]
+  },
+  "consent": [
+    {
+      "at": "2026-10-11T19:40:30Z",
+      "audience": "recipients",
+      "by": "operator",
+      "content_digest": "4c3425b567b01cf8816075213d1547a2e9c88adf2f68053cf2474b49ca77a6fa"
+    }
+  ],
+  "redactions": [],
+  "retention": {
+    "expires_at": "2026-10-25T19:40:00Z"
+  },
+  "scan": {
+    "at": "2026-10-11T19:40:01Z",
+    "findings": [],
+    "scanner": "tclaude-credential/1"
+  },
+  "sensitivity": "shared"
+}

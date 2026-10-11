@@ -684,8 +684,8 @@ carries over. CLI: `tclaude federation move-agent`, `tclaude agent clone`,
 
 Cloning on this node has one entry: **send elsewhere → clone…**, whose
 **Clone** mode continues in the clone dialog. The dialog can start the clone in
-another worktree, skip the conversation copy, and keep the source's group
-ownerships off the clone (**Copy group ownership**, on by default).
+another worktree, skip the conversation copy, and also copy the source's group
+ownerships (**Copy group ownership**, off by default).
 Ctrl/⌘-dragging an agent onto a group clones it into that group in one
 request: the clone and its new membership land together or not at all. In a
 peer's single-node view, the ⚙ **clone** item asks the peer instead.

@@ -1,0 +1,69 @@
+{
+  "agents": [
+    "fixer"
+  ],
+  "created_at": "2026-10-11T19:40:00Z",
+  "entries": [
+    {
+      "path": "agents/fixer/agent.json",
+      "bytes": 1831,
+      "sha256": "2545cf5c3eee33c03e500e9f27cbe976f62e54e9eb6b9c6f222b6768d205e6e0",
+      "media_type": "application/json"
+    },
+    {
+      "path": "agents/fixer/context/losses.json",
+      "bytes": 351,
+      "sha256": "baaa8a9e9056c8946d0baf44498c79f36d1d9692ed4bd789469e390487e363e4",
+      "media_type": "application/json"
+    },
+    {
+      "path": "agents/fixer/context/transcript.jsonl",
+      "bytes": 1767,
+      "sha256": "92666e04ff69f7b6362d7fa6573f52f1e7db6135bea5d1714ad275d6efe8983f",
+      "media_type": "application/jsonl"
+    },
+    {
+      "path": "agents/fixer/environment.json",
+      "bytes": 1882,
+      "sha256": "7a083c008d1f7f2a2f427421ccd3b0507625d6d7cbdd50cce0cf58061a19a5fa",
+      "media_type": "application/json"
+    },
+    {
+      "path": "agents/fixer/native/claude-jsonl/history.jsonl",
+      "bytes": 508,
+      "sha256": "7fcb4ceda24ced69e6c1123c56a8fec7b5fa958f38e795abed9fd1b4caa76512",
+      "media_type": "application/jsonl"
+    },
+    {
+      "path": "attachments/c06303dd848a80e9e774747ca5f185ba68129bb55e4842c72ed477340fc8100c",
+      "bytes": 69,
+      "sha256": "c06303dd848a80e9e774747ca5f185ba68129bb55e4842c72ed477340fc8100c",
+      "media_type": "image/png"
+    },
+    {
+      "path": "privacy.json",
+      "bytes": 528,
+      "sha256": "e00cccdfe8df5832c2abe4bed22c37fbd25df09a49c18ebf585e058c5299db9a",
+      "media_type": "application/json"
+    }
+  ],
+  "extensions_required": [],
+  "extensions_used": {
+    "tclaude": {
+      "copy": "unsafe",
+      "schema": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/ext/tclaude.schema.json",
+      "spec": "https://github.com/tofutools/tclaude/blob/main/docs/paf.md#the-tclaude-extension",
+      "system": "tclaude",
+      "system_version": "v0.0.2212",
+      "version": "1.0"
+    }
+  },
+  "format": "paf",
+  "kind": "agent",
+  "paf_version": "1.0",
+  "producer": {
+    "name": "tclaude",
+    "version": "v0.0.2212"
+  },
+  "requires": []
+}

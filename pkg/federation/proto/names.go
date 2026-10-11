@@ -69,6 +69,12 @@ func SanitizeCatalog(c *CatalogPayload) {
 	c.Node = SanitizeNode(c.Node)
 	for gi := range c.Groups {
 		g := &c.Groups[gi]
+		if !ValidGroupIdentity(g.ID) {
+			g.ID = ""
+		}
+		if g.MemberCount != nil && (*g.MemberCount < 0 || *g.MemberCount > 1000000) {
+			g.MemberCount = nil
+		}
 		g.Name = SafeName(g.Name, false)
 		g.Description = safeOptional(g.Description)
 		var caps []string
@@ -219,6 +225,21 @@ func ValidConversationRef(id string) bool {
 	for _, c := range id[4:] {
 		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '_' && c != '-' {
 			return false
+		}
+	}
+	return true
+}
+
+// ValidGroupIdentity accepts opaque group identities, never numeric local IDs.
+func ValidGroupIdentity(id string) bool {
+	if len(id) != 36 || !strings.HasPrefix(id, "grp_") {
+		return false
+	}
+	for _, c := range id[4:] {
+		if c < '0' || c > '9' {
+			if c < 'a' || c > 'f' {
+				return false
+			}
 		}
 	}
 	return true
