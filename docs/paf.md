@@ -11,15 +11,15 @@ harness, possibly long after the original harness or model has gone.
 This page is both the specification and the user guide. It covers why the
 format exists, how tclaude uses it, how to share agent state safely, and the
 exact file layout. Every PAF wire structure also has a JSON Schema
-under [`docs/paf/schema/v1/`](https://github.com/tofutools/tclaude/tree/main/docs/paf/schema/v1), and [`docs/paf/examples/`](https://github.com/tofutools/tclaude/tree/main/docs/paf/examples)
+under [`docs/paf/schema/v0.1/`](https://github.com/tofutools/tclaude/tree/main/docs/paf/schema/v0.1), and [`docs/paf/examples/`](https://github.com/tofutools/tclaude/tree/main/docs/paf/examples)
 holds complete example archives in unpacked form: zip a directory's contents
 to get a `.paf` file. The examples are hashed and signed byte for byte; their
 signature uses a published example key (an Ed25519 seed of 32 `0x01` bytes)
 that must never be trusted for real content.
 
-**Format version:** PAF 1.0. The specification is a draft until the first
-tclaude release that writes it, but the compatibility rules
-[below](#versioning-and-compatibility) already apply to the 1.0 wire format.
+**Format version:** PAF 0.1. While the major version is 0 the format is
+still settling, and a new 0.y version may change it incompatibly; see
+[Versioning and compatibility](#versioning-and-compatibility).
 
 ## Background
 
@@ -335,18 +335,18 @@ no history.
 
 ### manifest.json
 
-Schema: [`manifest.schema.json`](paf/schema/v1/manifest.schema.json).
+Schema: [`manifest.schema.json`](paf/schema/v0.1/manifest.schema.json).
 
 ```json
 {
   "format": "paf",
-  "paf_version": "1.0",
+  "paf_version": "0.1",
   "kind": "agent",
   "created_at": "2026-10-11T19:40:00Z",
   "producer": {"name": "tclaude", "version": "v0.0.2212"},
   "requires": [],
   "extensions_used": {
-    "tclaude": {"version": "1.0", "system": "tclaude", "system_version": "v0.0.2212", "spec": "https://github.com/tofutools/tclaude/blob/main/docs/paf.md#the-tclaude-extension"}
+    "tclaude": {"version": "0.1", "system": "tclaude", "system_version": "v0.0.2212", "spec": "https://github.com/tofutools/tclaude/blob/main/docs/paf.md#the-tclaude-extension"}
   },
   "extensions_required": [],
   "agents": ["reviewer"],
@@ -367,7 +367,7 @@ Schema: [`manifest.schema.json`](paf/schema/v1/manifest.schema.json).
 
 ### agent.json
 
-Schema: [`agent.schema.json`](paf/schema/v1/agent.schema.json). This file holds
+Schema: [`agent.schema.json`](paf/schema/v0.1/agent.schema.json). This file holds
 who the agent was and how it was defined:
 
 - `id`, `name`, `title`: the source identity. The id is informational only;
@@ -397,7 +397,7 @@ who the agent was and how it was defined:
 
 ### environment.json
 
-Schema: [`environment.schema.json`](paf/schema/v1/environment.schema.json). This
+Schema: [`environment.schema.json`](paf/schema/v0.1/environment.schema.json). This
 file holds where and how the agent ran. Every field is a hint for the
 receiver, never an instruction:
 
@@ -434,7 +434,7 @@ writes them under `extensions.tclaude.harness.<name>`.
 
 ### Context: transcript.jsonl
 
-Schema: [`transcript-line.schema.json`](paf/schema/v1/transcript-line.schema.json),
+Schema: [`transcript-line.schema.json`](paf/schema/v0.1/transcript-line.schema.json),
 one JSON object per line. The first line is a header:
 
 ```json
@@ -475,7 +475,7 @@ effective context diverges from the full history.
 
 ### Context: losses.json
 
-Schema: [`losses.schema.json`](paf/schema/v1/losses.schema.json). This is the
+Schema: [`losses.schema.json`](paf/schema/v0.1/losses.schema.json). This is the
 loss report of whatever produced the context. It records:
 
 - source and carried entry counts and estimated tokens, and the budget;
@@ -524,7 +524,7 @@ attachments are stored once.
 
 ### group.json
 
-Schema: [`group.schema.json`](paf/schema/v1/group.schema.json). The group's
+Schema: [`group.schema.json`](paf/schema/v0.1/group.schema.json). The group's
 `name` and `description`, and its `members`, each pointing at an agent key
 with an advisory `role`. System-specific group settings, such as tclaude's
 standing orders, routes and ownership, live in that system's extension and
@@ -532,7 +532,7 @@ are advisory, like everything else about authority.
 
 ### Privacy
 
-Schema: [`privacy.schema.json`](paf/schema/v1/privacy.schema.json). The optional
+Schema: [`privacy.schema.json`](paf/schema/v0.1/privacy.schema.json). The optional
 root `privacy.json` records:
 
 - `sensitivity`: `private`, `shared` or `public`. A missing file means
@@ -554,7 +554,7 @@ entry except `privacy.json`, sorted by path in byte order.
 ### Signatures
 
 Each file under `signatures/` is a detached signature over the exact bytes of
-`manifest.json`. Schema: [`signature.schema.json`](paf/schema/v1/signature.schema.json).
+`manifest.json`. Schema: [`signature.schema.json`](paf/schema/v0.1/signature.schema.json).
 
 ```json
 {
@@ -649,11 +649,11 @@ keyed by its id:
 ```json
 "extensions_used": {
   "tclaude": {
-    "version": "1.0",
+    "version": "0.1",
     "system": "tclaude",
     "system_version": "v0.0.2212",
     "spec": "https://github.com/tofutools/tclaude/blob/main/docs/paf.md#the-tclaude-extension",
-    "schema": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/ext/tclaude.schema.json",
+    "schema": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v0.1/ext/tclaude.schema.json",
     "copy": "unsafe"
   }
 }
@@ -664,8 +664,9 @@ keyed by its id:
   single-label id. Anyone else uses a reverse-DNS id they control, such as
   `com.example.agentlab`.
 - **`version`:** the extension's own format version, `MAJOR.MINOR`, with the
-  same rules as `paf_version`. A reader that knows the extension but not its
-  major version treats it as unknown.
+  same rules as `paf_version`. A reader that knows the extension but not that
+  version (another major, or while the major is 0 a newer minor) treats it as
+  unknown.
 - **`system` and `system_version`:** which software wrote the data, and which
   version of it.
 - **`spec`:** where the extension is documented. `schema` (optional) points
@@ -714,7 +715,7 @@ privacy rules.
 ### The tclaude extension
 
 tclaude writes the `tclaude` extension (schema:
-[`ext/tclaude.schema.json`](paf/schema/v1/ext/tclaude.schema.json)) for its
+[`ext/tclaude.schema.json`](paf/schema/v0.1/ext/tclaude.schema.json)) for its
 own state that other systems are not expected to share:
 
 | Where | Field | Meaning |
@@ -728,16 +729,22 @@ own state that other systems are not expected to share:
 | `group.json` members | `owner` | The member owned the group (advisory; ownership never travels). |
 | `ext/tclaude/mail-deliveries.json` | entry | The mail delivery ledger a continuation carries. |
 
-The extension is `copy: unsafe`, version `1.0`.
+The extension is `copy: unsafe`, version `0.1`.
 
 ## Versioning and compatibility
 
-`paf_version` is `MAJOR.MINOR`.
+`paf_version` is `MAJOR.MINOR`, compared the way semantic versioning
+compares versions.
 
-- A **minor** version only adds: new optional fields, new optional entries,
-  new enum values in fields documented as open (loss kinds, lineage ops,
-  redaction kinds), or new `requires` features. A 1.0 reader reads every 1.x
-  file.
+- **While the major version is 0**, the format is still settling and any
+  minor version may change it incompatibly. A reader refuses a 0.y version
+  newer than the newest it knows, the same way it refuses an unknown major
+  version, and need not read older 0.x versions. The rule below that a minor
+  version only adds applies from 1.0.
+- From 1.0, a **minor** version only adds: new optional fields, new optional
+  entries, new enum values in fields documented as open (loss kinds, lineage
+  ops, redaction kinds), or new `requires` features. A 1.0 reader reads every
+  1.x file.
 - A **major** version may change anything. A reader refuses an unknown major
   version, but still shows `format`, `paf_version` and `producer` so the user
   knows what to upgrade.
@@ -753,7 +760,8 @@ The extension is `copy: unsafe`, version `1.0`.
   "unsupported content" placeholder that keeps its `text` when present, and
   never drops it silently. A writer that needs a reader to understand a new
   value lists a feature in `requires`.
-- **Closed enumerations** change only in a major version: `format`, `kind`
+- **Closed enumerations** change only in a major version (or, while the
+  major version is 0, in any minor version): `format`, `kind`
   (`agent`, `group`), entry `role` (`user`, `assistant`) and `origin`
   (`human`, `agent`, `tool`), and the transcript `scope`.
 - **`requires`** names features without which the content would be
@@ -769,9 +777,11 @@ The extension is `copy: unsafe`, version `1.0`.
   is ignored.
 - Writers stamp the lowest version that expresses the content.
 
-The schemas for major version 1 live under `docs/paf/schema/v1/`, and their
-`$id`s include `v1`. A 1.x schema validates every 1.x file, because unknown
-properties are allowed. A few rules are semantic rather than structural, and
+The schemas for version 0.1 live under `docs/paf/schema/v0.1/`, and their
+`$id`s include `v0.1`. While the major version is 0, each minor version gets
+its own schema directory. From 1.0, one directory per major version (`v1/`)
+validates every file of that major version, because unknown properties are
+allowed. A few rules are semantic rather than structural, and
 a reader checks them in code:
 
 - entry hashes and sizes match the manifest;

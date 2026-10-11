@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/common.schema.json",
+  "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v0.1/common.schema.json",
   "title": "PAF 1.x shared definitions",
   "$defs": {
     "sha256": {

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/ext/tclaude.schema.json",
+  "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v0.1/ext/tclaude.schema.json",
   "title": "PAF tclaude extension 1.x: the value of extensions.tclaude on each object",
   "description": "Which properties apply depends on the object carrying the extension; see the PAF spec. Unknown properties are allowed.",
   "type": "object",
