@@ -28,8 +28,14 @@ type productionInterpreterAllowance struct {
 
 // Every entry is a reviewed exception to TCL-783's production invariant.
 // Match the complete unquoted string literal and explain why agentd can never
-// execute it. The list is intentionally empty at introduction.
-var productionInterpreterAllowlist = []productionInterpreterAllowance{}
+// execute it. Keep exceptions scoped to one path and complete literal.
+var productionInterpreterAllowlist = []productionInterpreterAllowance{
+	{
+		Path:   "pkg/claude/common/skillbundle/bundle.go",
+		Value:  ".py",
+		Reason: "SecurityRelevant classifies a filename extension for import warnings; it never chooses or executes an interpreter or file.",
+	},
+}
 
 var productionInterpreterPattern = regexp.MustCompile(
 	`(?i)(^|[^a-z0-9_])python(?:[0-9.]*)?([^a-z0-9_]|$)|` +
