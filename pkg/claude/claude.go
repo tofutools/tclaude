@@ -15,6 +15,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/federationcmd"
 	"github.com/tofutools/tclaude/pkg/claude/host"
 	"github.com/tofutools/tclaude/pkg/claude/memoryfiles"
+	"github.com/tofutools/tclaude/pkg/claude/pafcmd"
 	"github.com/tofutools/tclaude/pkg/claude/pickup"
 	"github.com/tofutools/tclaude/pkg/claude/processcmd"
 	"github.com/tofutools/tclaude/pkg/claude/proxy"
@@ -70,6 +71,7 @@ func Cmd() *cobra.Command {
 		memoryfiles.Cmd(),
 		processcmd.Cmd(),
 		dbcmd.Cmd(),
+		pafcmd.Cmd(),
 		ask.Cmd(),
 		remoteaccess.Cmd(),
 		federationcmd.Cmd(),

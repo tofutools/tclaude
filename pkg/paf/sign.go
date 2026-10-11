@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"unicode"
 )
 
 // AlgEd25519 is the only signature algorithm PAF 0.1 defines.
@@ -64,6 +65,14 @@ func Verify(manifest []byte, s Signature) (SignatureStatus, error) {
 	if s.Alg != AlgEd25519 {
 		return SignatureUnsupported, nil
 	}
+	// key_id and signer sit outside what the signature covers, so a reader
+	// shows them only when they are plain identifiers and names.
+	if !keyIDRE.MatchString(s.KeyID) {
+		return SignatureInvalid, errors.New("key_id is not a valid identifier")
+	}
+	if s.Signer != nil && (!plainText(s.Signer.Kind, 64) || !plainText(s.Signer.Name, 128)) {
+		return SignatureInvalid, errors.New("signer has control characters or is too long")
+	}
 	if len(s.PublicKey) != ed25519.PublicKeySize {
 		return SignatureInvalid, errors.New("public key has the wrong size")
 	}
@@ -72,6 +81,23 @@ func Verify(manifest []byte, s Signature) (SignatureStatus, error) {
 	}
 	return SignatureValid, nil
 }
+
+// plainText reports whether s is at most max bytes with no control
+// characters.
+func plainText(s string, max int) bool {
+	if len(s) > max {
+		return false
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return false
+		}
+	}
+	return true
+}
+
+// algRE bounds an unsupported algorithm name a reader repeats back.
+var algRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,32}$`)
 
 // SignedBy reports whether a valid signature in results carries pub.
 func SignedBy(results []SignatureResult, pub ed25519.PublicKey) bool {
