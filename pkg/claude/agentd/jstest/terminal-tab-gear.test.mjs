@@ -7,7 +7,7 @@ const fleet = {
   peers: [{ id: 'inst_forge', name: 'forge', color: '#f0883e', local: false }],
 };
 
-async function mountTabs(t) {
+async function mountTabs(t, nodeFleet = fleet) {
   const harness = await createPreactHarness(t);
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const [{ createTerminalShellState }, { createTerminalShellActions }, { TerminalTabs }, { skynetState }] = await Promise.all([
@@ -16,7 +16,7 @@ async function mountTabs(t) {
     harness.importDashboardModule('js/terminal-shell-island.js'),
     harness.importDashboardModule('js/skynet-state.js'),
   ]);
-  skynetState.fleet.value = fleet;
+  skynetState.fleet.value = nodeFleet;
   const state = createTerminalShellState({ persistPresentation: false });
   const actions = createTerminalShellActions({
     state, fetchImpl: async () => ({ ok: true }), windowRef: harness.window, documentRef: harness.document,
@@ -74,4 +74,13 @@ test('a peer agent tab offers moving it here, naming its node; a peer view shows
 
   await s.harness.act(() => { s.snapshot.value = { ...s.snapshot.value, peer_view: true }; });
   assert.equal(s.host.querySelector('.mux-tab-gear'), null);
+});
+
+
+test('without a hub, local terminal gear keeps clone/morph and omits move/teleport', async (t) => {
+  const s = await mountTabs(t, null);
+  const menu = s.tab('one').querySelector('.mux-tab-gear .action-menu');
+  assert.ok(menu);
+  assert.deepEqual([...menu.querySelectorAll('[data-act="send-elsewhere"]')].map((b) => b.dataset.mode), ['clone', 'morph']);
+  assert.ok(menu.querySelector('[data-act="term"]'));
 });
