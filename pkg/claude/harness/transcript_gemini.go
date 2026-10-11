@@ -219,12 +219,7 @@ func (geminiTranscript) Decode(r io.Reader, sourceID string) (*transcript.Transc
 		parts := geminiParts(msg.Content)
 		switch msg.Type {
 		case "user":
-			var text strings.Builder
-			for _, p := range parts {
-				text.WriteString(p.Text)
-			}
-			if trimmed := strings.TrimSpace(text.String()); trimmed == "" || strings.HasPrefix(trimmed, "/") || strings.HasPrefix(trimmed, "?") ||
-				strings.HasPrefix(trimmed, "<session_context>") || strings.HasPrefix(trimmed, "<hook_context>") {
+			if geminiIgnoredUserRecord(parts) {
 				harness++
 				continue
 			}
@@ -318,6 +313,30 @@ func (geminiTranscript) Decode(r io.Reader, sourceID string) (*transcript.Transc
 	}
 	t.Losses.Add(transcript.LossHarnessContext, harness, "")
 	return t, nil
+}
+
+// geminiIgnoredUserRecord matches the scaffolding gemini-cli itself skips on
+// resume: an empty prompt, a slash or "?" command, and injected
+// session/hook context. Only text-only records qualify, so a record carrying
+// a function response or a pasted image is never dropped, and a prompt that
+// merely starts with a path ("/src/x.go fails") is kept.
+func geminiIgnoredUserRecord(parts []geminiPart) bool {
+	var text strings.Builder
+	for _, p := range parts {
+		if p.FunctionResponse != nil || p.FunctionCall != nil || p.InlineData != nil || p.FileData != nil {
+			return false
+		}
+		text.WriteString(p.Text)
+	}
+	trimmed := strings.TrimSpace(text.String())
+	if trimmed == "" || strings.HasPrefix(trimmed, "<session_context>") || strings.HasPrefix(trimmed, "<hook_context>") {
+		return true
+	}
+	first, _, _ := strings.Cut(trimmed, " ")
+	if cmd, ok := strings.CutPrefix(first, "/"); ok {
+		return cmd != "" && !strings.ContainsAny(cmd, "/.")
+	}
+	return first == "?"
 }
 
 func (geminiTranscript) Encode(p *transcript.Plan, cwd string, w io.Writer) (string, error) {

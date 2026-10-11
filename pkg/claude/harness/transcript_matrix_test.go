@@ -285,7 +285,7 @@ func TestTranscriptMatrixRoundTrip(t *testing.T) {
 				tr, err := src.Transcript.Decode(bytes.NewReader(fx.raw(t)), fx.id)
 				require.NoError(t, err)
 				mediaDir := t.TempDir()
-				plan := transcript.NewPlan(tr, transcript.Options{Target: dstName, InlineMedia: dst.Transcript.InlineMedia(), MediaDir: mediaDir})
+				plan := transcript.NewPlan(tr, transcript.Options{Target: dstName, TargetModel: "anthropic/claude-sonnet-5-5", InlineMedia: dst.Transcript.InlineMedia(), MediaDir: mediaDir})
 				var buf bytes.Buffer
 				sid, err := dst.Transcript.Encode(plan, "/dst", &buf)
 				require.NoError(t, err)

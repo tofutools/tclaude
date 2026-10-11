@@ -102,10 +102,18 @@ func (codexTranscript) Decode(r io.Reader, sourceID string) (*transcript.Transcr
 			if err := json.Unmarshal(env.Payload, &c); err != nil {
 				return fmt.Errorf("invalid Codex compaction at line %d", line)
 			}
-			t.ResetToSummary(c.Message, at)
+			if len(c.Replacement) == 0 {
+				t.ResetToSummary(c.Message, at)
+				return nil
+			}
+			// A local compaction's replacement history already ends with
+			// the summary as a user message: mark it rather than adding it
+			// a second time.
+			t.ResetToSummary("", at)
 			for _, item := range c.Replacement {
 				harness += codexDecodeItem(t, item, at)
 			}
+			codexMarkSummary(t, c.Message)
 		case "event_msg", "token_usage_record", "world_state", "inter_agent_communication_metadata":
 		default:
 			t.Losses.Add(transcript.LossUnknownRecord, 1, "codex:"+env.Type)
@@ -215,6 +223,28 @@ func codexDecodeItem(t *transcript.Transcript, item codexItem, at time.Time) int
 		t.Losses.Add(transcript.LossUnknownRecord, 1, "codex-item:"+item.Type)
 	}
 	return 0
+}
+
+// codexMarkSummary turns the replacement history's summary turn into a
+// summary block, or adds the summary first when the history lacks it.
+func codexMarkSummary(t *transcript.Transcript, summary string) {
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return
+	}
+	for i := range t.Entries {
+		e := &t.Entries[i]
+		if e.Role != transcript.RoleUser || e.Origin != transcript.OriginHuman {
+			continue
+		}
+		for j := range e.Blocks {
+			if e.Blocks[j].Kind == transcript.BlockText && strings.Contains(e.Blocks[j].Text, summary) {
+				e.Blocks[j] = transcript.Block{Kind: transcript.BlockSummary, Text: e.Blocks[j].Text}
+				return
+			}
+		}
+	}
+	t.Entries = append([]transcript.Entry{{Role: transcript.RoleUser, Origin: transcript.OriginHuman, Blocks: []transcript.Block{{Kind: transcript.BlockSummary, Text: summary}}}}, t.Entries...)
 }
 
 func codexImage(url string) transcript.Block {

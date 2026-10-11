@@ -188,16 +188,14 @@ func (openCodeTranscript) Decode(r io.Reader, sourceID string) (*transcript.Tran
 // follows (verified with `opencode import`/`export` 1.18).
 const openCodeTranscriptVersion = "1.18.35"
 
-// openCodeModel splits "provider/model"; resume uses the launch model, so
-// an unqualified or empty target only labels the carried messages.
-func openCodeModel(target string) (string, string) {
+// openCodeModel splits a qualified "provider/model". OpenCode's import
+// requires a model on every user message and resumes with the last one's, so
+// a placeholder would break the next prompt: the target must be qualified.
+func openCodeModel(target string) (provider, model string, err error) {
 	if provider, model, ok := strings.Cut(target, "/"); ok && provider != "" && model != "" {
-		return provider, model
+		return provider, model, nil
 	}
-	if target != "" {
-		return "tclaude", target
-	}
-	return "tclaude", "morph"
+	return "", "", fmt.Errorf("an OpenCode target needs a provider/model, got %q", target)
 }
 
 func (openCodeTranscript) Encode(p *transcript.Plan, cwd string, w io.Writer) (string, error) {
@@ -207,7 +205,10 @@ func (openCodeTranscript) Encode(p *transcript.Plan, cwd string, w io.Writer) (s
 	id := openCodeID("ses_")
 	out := newJSONLWriter(w)
 	times := encodeTimes(p)
-	provider, model := openCodeModel(p.TargetModel)
+	provider, model, err := openCodeModel(p.TargetModel)
+	if err != nil {
+		return "", err
+	}
 	title := p.Title
 	if title == "" {
 		title = "Morphed from " + p.Source.Harness

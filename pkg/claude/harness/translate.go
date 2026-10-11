@@ -121,30 +121,38 @@ func PreviewTranslation(src, dst *Harness, convID, cwd string, opts TranslateOpt
 
 // TranslateHistory installs src's conversation as a new native dst
 // conversation in cwd. The source history is only read. On error nothing is
-// left installed; artifact files (transcript, report) are kept for the
-// fallback rungs.
+// left installed, and the returned result still carries the loss report
+// (Fallback "context_file") so the caller can take the next rung; the
+// artifact files (transcript, report) are kept for it.
 func TranslateHistory(src, dst *Harness, convID, cwd string, opts TranslateOptions) (*TranslateResult, error) {
 	t, plan, err := PlanTranslation(src, dst, convID, cwd, opts)
 	if err != nil {
 		return nil, err
 	}
-	plan.Report.Fallback = "native"
+	res := &TranslateResult{Report: plan.Report, Plan: plan}
+	fail := func(err error) (*TranslateResult, error) {
+		plan.Report.Fallback = "context_file"
+		if opts.ArtifactDir != "" {
+			_ = writeLossReport(plan.Report, opts.ArtifactDir)
+		}
+		return res, err
+	}
 	if opts.ArtifactDir != "" {
 		if err := writeTranslationArtifacts(t, plan, opts.ArtifactDir); err != nil {
-			return nil, err
+			return fail(err)
 		}
 	}
 	encoded, err := os.CreateTemp("", "tclaude-morph-history-*")
 	if err != nil {
-		return nil, err
+		return fail(err)
 	}
 	defer func() { _ = encoded.Close(); _ = os.Remove(encoded.Name()) }()
 	sourceID, err := dst.Transcript.Encode(plan, cwd, encoded)
 	if err != nil {
-		return nil, fmt.Errorf("encode %s history: %w", dst.Name, err)
+		return fail(fmt.Errorf("encode %s history: %w", dst.Name, err))
 	}
 	if _, err := encoded.Seek(0, io.SeekStart); err != nil {
-		return nil, err
+		return fail(err)
 	}
 	var id string
 	var cleanup func()
@@ -153,20 +161,22 @@ func TranslateHistory(src, dst *Harness, convID, cwd string, opts TranslateOptio
 	} else {
 		raw, readErr := io.ReadAll(encoded)
 		if readErr != nil {
-			return nil, readErr
+			return fail(readErr)
 		}
 		id, cleanup, err = dst.History.Import(raw, sourceID, cwd)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("install translated %s history: %w", dst.Name, err)
+		return fail(fmt.Errorf("install translated %s history: %w", dst.Name, err))
 	}
+	plan.Report.Fallback = "native"
 	if opts.ArtifactDir != "" {
 		if err := writeLossReport(plan.Report, opts.ArtifactDir); err != nil {
 			cleanup()
-			return nil, err
+			return fail(err)
 		}
 	}
-	return &TranslateResult{ConvID: id, Cleanup: cleanup, Report: plan.Report, Plan: plan}, nil
+	res.ConvID, res.Cleanup = id, cleanup
+	return res, nil
 }
 
 func writeTranslationArtifacts(t *transcript.Transcript, plan *transcript.Plan, dir string) error {
@@ -184,10 +194,7 @@ func writeTranslationArtifacts(t *transcript.Transcript, plan *transcript.Plan, 
 	if err := f.Close(); err != nil {
 		return err
 	}
-	if err := plan.WriteMedia(); err != nil {
-		return err
-	}
-	return writeLossReport(plan.Report, dir)
+	return plan.WriteMedia()
 }
 
 func writeLossReport(r *transcript.LossReport, dir string) error {

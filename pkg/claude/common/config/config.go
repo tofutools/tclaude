@@ -1977,17 +1977,6 @@ func (c *Config) ResolvedLogRotation() (maxSizeBytes int64, keep int) {
 // branch→PR mapping lands. The branch re-scan and the PostToolUse hook
 // append run regardless of this flag — neither ever shells out to gh;
 // only the PR stamp is gated. See branchlinks.go.
-// MorphConfig tunes how a cross-harness morph carries history.
-type MorphConfig struct {
-	// HistoryBudgetPercent is the share of the target model's context window
-	// the translated history may fill (default 60); the oldest turns beyond
-	// it are left to the transcript file.
-	HistoryBudgetPercent int `json:"history_budget_percent,omitempty"`
-	// ToolResultClipBytes bounds each carried tool call input and result
-	// (default 16384); the full text stays in the transcript file.
-	ToolResultClipBytes int `json:"tool_result_clip_bytes,omitempty"`
-}
-
 type AgentConfig struct {
 	DefaultPermissions              []string            `json:"default_permissions,omitempty"`
 	Sudo                            *SudoConfig         `json:"sudo,omitempty"`
@@ -2186,6 +2175,17 @@ type AgentConfig struct {
 	// through proxy.http grants (optionally scoped by http_proxy name).
 	HTTPProxies        map[string]HTTPProxyConfig `json:"http_proxies,omitempty"`
 	ModelProxyDisabled bool                       `json:"model_proxy_disabled,omitempty"`
+}
+
+// MorphConfig tunes how a cross-harness morph carries history.
+type MorphConfig struct {
+	// HistoryBudgetPercent is the share of the target model's context window
+	// the translated history may fill (default 60); the oldest turns beyond
+	// it are left to the transcript file.
+	HistoryBudgetPercent int `json:"history_budget_percent,omitempty"`
+	// ToolResultClipBytes bounds each carried tool call input and result
+	// (default 16384); the full text stays in the transcript file.
+	ToolResultClipBytes int `json:"tool_result_clip_bytes,omitempty"`
 }
 
 // AWBProxyConfig is the operator's policy for the daemon-mediated AWB proxy —

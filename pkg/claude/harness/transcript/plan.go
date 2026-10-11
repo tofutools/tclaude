@@ -181,11 +181,11 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 				}
 				out.Blocks = append(out.Blocks, Text(text))
 				for _, m := range b.Media {
-					out.Blocks = append(out.Blocks, p.media(m, opts, report)...)
+					out.Blocks = append(out.Blocks, p.media(m, out.Role, opts, report)...)
 				}
 			case BlockMedia:
 				for _, m := range b.Media {
-					out.Blocks = append(out.Blocks, p.media(m, opts, report)...)
+					out.Blocks = append(out.Blocks, p.media(m, out.Role, opts, report)...)
 				}
 			}
 		}
@@ -263,8 +263,12 @@ func (p *Plan) clipText(s string, opts Options, report *LossReport) string {
 	return h + marker + " …" + markClose + "\n" + tl
 }
 
-func (p *Plan) media(m Media, opts Options, report *LossReport) []Block {
-	if opts.InlineMedia && len(m.Data) > 0 && strings.HasPrefix(m.MediaType, "image/") {
+// inlineImageTypes are the image types every inline-capable target's model
+// API accepts. Anything else would be rejected on every later turn.
+var inlineImageTypes = map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true}
+
+func (p *Plan) media(m Media, role Role, opts Options, report *LossReport) []Block {
+	if opts.InlineMedia && role == RoleUser && len(m.Data) > 0 && inlineImageTypes[m.MediaType] {
 		return []Block{{Kind: BlockMedia, Media: []Media{m}}}
 	}
 	label := m.Name
@@ -332,6 +336,7 @@ func coalesce(in []planEntry) []planEntry {
 			last.entry.Blocks = append(last.entry.Blocks, e.entry.Blocks...)
 			last.sources += e.sources
 			last.summary = last.summary || e.summary
+			last.turn = last.turn || e.turn
 			if last.entry.Model == "" {
 				last.entry.Model = e.entry.Model
 			}

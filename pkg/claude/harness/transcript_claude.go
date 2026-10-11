@@ -37,6 +37,17 @@ type claudeRecord struct {
 	IsAPIError       bool            `json:"isApiErrorMessage"`
 	CustomTitle      string          `json:"customTitle"`
 	Message          json.RawMessage `json:"message"`
+	CompactMetadata  *struct {
+		PreservedSegment *struct {
+			HeadUUID   string `json:"headUuid"`
+			AnchorUUID string `json:"anchorUuid"`
+			TailUUID   string `json:"tailUuid"`
+		} `json:"preservedSegment"`
+		PreservedMessages *struct {
+			AnchorUUID string   `json:"anchorUuid"`
+			UUIDs      []string `json:"uuids"`
+		} `json:"preservedMessages"`
+	} `json:"compactMetadata"`
 }
 
 type claudeMessage struct {
@@ -87,7 +98,6 @@ func (claudeTranscript) Decode(r io.Reader, sourceID string) (*transcript.Transc
 	t := transcript.New(transcript.Source{Harness: DefaultName, Format: "claude-jsonl", ConvID: sourceID})
 	var records []claudeRecord
 	byUUID := map[string]int{}
-	skipped := map[string]int{}
 	err := scanHistoryRecords(r, func(line int, raw []byte) error {
 		var rec claudeRecord
 		if err := json.Unmarshal(raw, &rec); err != nil {
@@ -95,20 +105,13 @@ func (claudeTranscript) Decode(r io.Reader, sourceID string) (*transcript.Transc
 		}
 		switch rec.Type {
 		case "user", "assistant":
-		case "system":
-			if rec.Subtype != "compact_boundary" {
-				skipped["system"]++
-			}
 		case "custom-title":
 			if rec.CustomTitle != "" {
 				t.Source.Title = rec.CustomTitle
 			}
-		case "summary", "attachment", "file-history-snapshot", "file-history-delta", "queue-operation",
+		case "system", "summary", "attachment", "file-history-snapshot", "file-history-delta", "queue-operation",
 			"mode", "permission-mode", "pr-link", "cost-state", "agent-name", "last-prompt",
 			"atis-latch", "bridge-session", "progress":
-			if rec.Type == "attachment" {
-				skipped["attachment"]++
-			}
 		default:
 			t.Losses.Add(transcript.LossUnknownRecord, 1, "claude:"+rec.Type)
 		}
@@ -123,9 +126,6 @@ func (claudeTranscript) Decode(r io.Reader, sourceID string) (*transcript.Transc
 	})
 	if err != nil {
 		return nil, err
-	}
-	if n := skipped["attachment"] + skipped["system"]; n > 0 {
-		t.Losses.Add(transcript.LossHarnessContext, n, "")
 	}
 
 	isMessage := func(rec claudeRecord) bool {
@@ -149,23 +149,33 @@ func (claudeTranscript) Decode(r io.Reader, sourceID string) (*transcript.Transc
 	}
 	var chain []int
 	compacted := false
+	harnessDropped := 0
+	scaffold := func(rec claudeRecord) bool {
+		return rec.Type == "attachment" || (rec.Type == "system" && rec.Subtype != "compact_boundary")
+	}
 	if records[leaf].UUID == "" {
 		for i, rec := range records {
 			if isMessage(rec) {
 				chain = append(chain, i)
+			} else if scaffold(rec) {
+				harnessDropped++
 			}
 		}
 	} else {
 		seen := map[int]bool{}
+		boundary := -1
 		for at, ok := leaf, true; ok && !seen[at]; {
 			seen[at] = true
 			rec := records[at]
 			if rec.Type == "system" && rec.Subtype == "compact_boundary" {
 				compacted = true
+				boundary = at
 				break
 			}
 			if isMessage(rec) {
 				chain = append(chain, at)
+			} else if scaffold(rec) && !rec.IsSidechain {
+				harnessDropped++
 			}
 			if rec.ParentUUID == nil || *rec.ParentUUID == "" {
 				break
@@ -175,6 +185,10 @@ func (claudeTranscript) Decode(r io.Reader, sourceID string) (*transcript.Transc
 		for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
 			chain[i], chain[j] = chain[j], chain[i]
 		}
+		if boundary >= 0 {
+			chain = claudeSplicePreserved(records, byUUID, boundary, chain, isMessage)
+		}
+		chain = claudeRecoverParallelResults(records, chain, isMessage)
 	}
 	if off := mainMessages - len(chain); off > 0 {
 		if compacted {
@@ -184,10 +198,11 @@ func (claudeTranscript) Decode(r io.Reader, sourceID string) (*transcript.Transc
 		}
 	}
 
-	harnessDropped := 0
 	for _, at := range chain {
 		rec := records[at]
-		if rec.IsVisibleOnly || rec.IsAPIError {
+		// The compact summary is transcript-only in the TUI but is model
+		// context; other transcript-only records are not.
+		if (rec.IsVisibleOnly && !rec.IsCompactSummary) || rec.IsAPIError {
 			harnessDropped++
 			continue
 		}
@@ -283,6 +298,155 @@ func (claudeTranscript) Decode(r io.Reader, sourceID string) (*transcript.Transc
 	}
 	t.Losses.Add(transcript.LossHarnessContext, harnessDropped, "")
 	return t, nil
+}
+
+// claudeRecoverParallelResults re-attaches tool results that sit on a side
+// branch. Claude Code records parallel tool calls as a chain of assistant
+// records, and each result's parent is its own call, so a walk from the leaf
+// sees only the last call's result; Claude Code pairs the others back in on
+// load, and so does this.
+func claudeRecoverParallelResults(records []claudeRecord, chain []int, isMessage func(claudeRecord) bool) []int {
+	onChain := map[int]bool{}
+	calls := map[string]int{} // tool_use id -> chain position
+	have := map[string]bool{}
+	ids := func(rec claudeRecord, kind string) []string {
+		var msg claudeMessage
+		var blocks []claudeBlock
+		if json.Unmarshal(rec.Message, &msg) != nil || json.Unmarshal(msg.Content, &blocks) != nil {
+			return nil
+		}
+		var out []string
+		for _, b := range blocks {
+			if b.Type == kind {
+				if kind == "tool_use" {
+					out = append(out, b.ID)
+				} else {
+					out = append(out, b.ToolUseID)
+				}
+			}
+		}
+		return out
+	}
+	for pos, at := range chain {
+		onChain[at] = true
+		switch records[at].Type {
+		case "assistant":
+			for _, id := range ids(records[at], "tool_use") {
+				calls[id] = pos
+			}
+		case "user":
+			for _, id := range ids(records[at], "tool_result") {
+				have[id] = true
+			}
+		}
+	}
+	insertAt := map[int][]int{} // chain position -> orphan records to insert before it
+	for at, rec := range records {
+		if onChain[at] || rec.Type != "user" || !isMessage(rec) {
+			continue
+		}
+		results := ids(rec, "tool_result")
+		if len(results) == 0 {
+			continue
+		}
+		pos, ok := -1, true
+		for _, id := range results {
+			p, found := calls[id]
+			if !found || have[id] {
+				ok = false
+				break
+			}
+			pos = max(pos, p)
+		}
+		if !ok {
+			continue
+		}
+		for _, id := range results {
+			have[id] = true
+		}
+		// Group with the next results on the chain, after the last call.
+		before := len(chain)
+		for p := pos + 1; p < len(chain); p++ {
+			if records[chain[p]].Type == "user" {
+				before = p
+				break
+			}
+		}
+		insertAt[before] = append(insertAt[before], at)
+	}
+	if len(insertAt) == 0 {
+		return chain
+	}
+	out := make([]int, 0, len(chain)+len(insertAt))
+	for p := 0; p <= len(chain); p++ {
+		out = append(out, insertAt[p]...)
+		if p < len(chain) {
+			out = append(out, chain[p])
+		}
+	}
+	return out
+}
+
+// claudeSplicePreserved re-inserts the messages a partial compaction kept
+// verbatim. Claude Code records them before the boundary and anchors them
+// after the compact summary (preservedMessages / preservedSegment), so a
+// plain parentUuid walk from the leaf stops short of them.
+func claudeSplicePreserved(records []claudeRecord, byUUID map[string]int, boundary int, chain []int, isMessage func(claudeRecord) bool) []int {
+	meta := records[boundary].CompactMetadata
+	if meta == nil {
+		return chain
+	}
+	var anchor string
+	var uuids []string
+	switch {
+	case meta.PreservedMessages != nil && len(meta.PreservedMessages.UUIDs) > 0:
+		anchor, uuids = meta.PreservedMessages.AnchorUUID, meta.PreservedMessages.UUIDs
+	case meta.PreservedSegment != nil && meta.PreservedSegment.HeadUUID != "":
+		// Older boundaries name only the segment: follow it forward from
+		// the head through the pre-boundary records.
+		anchor = meta.PreservedSegment.AnchorUUID
+		children := map[string]string{}
+		for i := 0; i < boundary; i++ {
+			if p := records[i].ParentUUID; p != nil && *p != "" && records[i].UUID != "" {
+				children[*p] = records[i].UUID
+			}
+		}
+		for id, n := meta.PreservedSegment.HeadUUID, 0; id != "" && n < len(records); n++ {
+			uuids = append(uuids, id)
+			if id == meta.PreservedSegment.TailUUID {
+				break
+			}
+			id = children[id]
+		}
+	default:
+		return chain
+	}
+	onChain := map[int]bool{}
+	for _, at := range chain {
+		onChain[at] = true
+	}
+	var preserved []int
+	for _, id := range uuids {
+		if at, ok := byUUID[id]; ok && !onChain[at] && isMessage(records[at]) {
+			preserved = append(preserved, at)
+			onChain[at] = true
+		}
+	}
+	if len(preserved) == 0 {
+		return chain
+	}
+	insert := 0
+	if at, ok := byUUID[anchor]; ok {
+		for i, c := range chain {
+			if c == at {
+				insert = i + 1
+				break
+			}
+		}
+	}
+	out := append([]int{}, chain[:insert]...)
+	out = append(out, preserved...)
+	return append(out, chain[insert:]...)
 }
 
 func claudeMedia(b claudeBlock) (transcript.Media, bool) {

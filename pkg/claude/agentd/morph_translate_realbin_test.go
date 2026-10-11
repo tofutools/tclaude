@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
@@ -48,7 +49,7 @@ func TestMorphTranslateRealBinary(t *testing.T) {
 		convops.ScanAndUpsertFile(cc.JsonlPath)
 
 		claude, opencode := mustGetHarness(t, harness.DefaultName), mustGetHarness(t, harness.OpenCodeName)
-		res, err := harness.TranslateHistory(claude, opencode, source, cwd, harness.TranslateOptions{})
+		res, err := harness.TranslateHistory(claude, opencode, source, cwd, harness.TranslateOptions{Policy: transcript.Options{TargetModel: "anthropic/claude-sonnet-5-5"}})
 		require.NoError(t, err, "the real `opencode import` accepts the translated session")
 		t.Cleanup(res.Cleanup)
 		text := historyText(t, opencode, res.ConvID, cwd)
