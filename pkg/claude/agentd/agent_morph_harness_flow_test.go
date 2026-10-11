@@ -446,10 +446,10 @@ func TestMorphCrossHarnessHandoffRefusals(t *testing.T) {
 		code int
 		want string
 	}{
-		"handoff with now":         {map[string]any{"harness": "codex", "approval": "on-request", "history": "handoff", "now": true}, http.StatusBadRequest, "cannot use now"},
-		"history within harness":   {map[string]any{"model": "opus", "history": "handoff"}, http.StatusBadRequest, "invalid_form"},
-		"unknown history":          {map[string]any{"harness": "codex", "approval": "on-request", "history": "telepathy"}, http.StatusBadRequest, "invalid_arg"},
-		"trust_dir within harness": {map[string]any{"model": "opus", "trust_dir": true}, http.StatusBadRequest, "invalid_form"},
+		"handoff with now":               {map[string]any{"harness": "codex", "approval": "on-request", "history": "handoff", "now": true}, http.StatusBadRequest, "cannot use now"},
+		"history within harness":         {map[string]any{"model": "opus", "history": "handoff"}, http.StatusBadRequest, "invalid_form"},
+		"unknown history":                {map[string]any{"harness": "codex", "approval": "on-request", "history": "telepathy"}, http.StatusBadRequest, "invalid_arg"},
+		"trust_dir within harness":       {map[string]any{"model": "opus", "trust_dir": true}, http.StatusBadRequest, "invalid_form"},
 		"history on a same-harness back": {map[string]any{"back": true, "history": "handoff"}, http.StatusBadRequest, "invalid_form"},
 	} {
 		rec := f.AsHuman().Morph(spawn.AgentID, tc.body)
