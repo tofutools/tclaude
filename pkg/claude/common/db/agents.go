@@ -241,6 +241,11 @@ func EnsureAgentForConvWithID(convID, requestedAgentID, via string) (agentID str
 	err = tx.QueryRow(`SELECT current_conv_id FROM agents WHERE agent_id = ?`, requestedAgentID).Scan(&occupiedConv)
 	switch {
 	case err == nil:
+		if bound, e := bindFederationArrivalTx(tx, requestedAgentID, convID, via); e != nil {
+			return "", false, e
+		} else if bound {
+			return requestedAgentID, false, tx.Commit()
+		}
 		return "", false, fmt.Errorf("EnsureAgentForConvWithID: agent %s already heads conv %s", requestedAgentID, occupiedConv)
 	case !errors.Is(err, sql.ErrNoRows):
 		return "", false, err
@@ -250,6 +255,9 @@ func EnsureAgentForConvWithID(convID, requestedAgentID, via string) (agentID str
 	}
 	if err := linkConvTx(tx, convID, requestedAgentID, ConvRoleHead, via, time.Now()); err != nil {
 		return resolveRace(err)
+	}
+	if _, err := bindFederationArrivalTx(tx, requestedAgentID, convID, via); err != nil {
+		return "", false, err
 	}
 	if err := tx.Commit(); err != nil {
 		// A concurrent generic ensure may have won after our initial read. It is
@@ -708,6 +716,9 @@ func RetireAgentByID(agentID, by, reason string) (bool, error) {
 		return false, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := terminalFederationPresenceTx(tx, agentID); err != nil {
+		return false, err
+	}
 	byAgent, _ := agentIDForConvTx(tx, by)
 	res, err := tx.Exec(`UPDATE agents
 		SET retired_at = ?, retired_by = ?, retire_reason = ?, retired_by_agent = ?
@@ -755,6 +766,12 @@ func ReinstateAgentByID(agentID string) (bool, error) {
 		return false, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var presenceState string
+	if e := tx.QueryRow(`SELECT state FROM agent_federation_presence WHERE agent_id=?`, agentID).Scan(&presenceState); e == nil && (presenceState == "away" || presenceState == "reserved" || presenceState == "terminal") {
+		return false, errors.New("federated agent must return through its continuation; ordinary reinstate is refused")
+	} else if e != nil && !errors.Is(e, sql.ErrNoRows) {
+		return false, e
+	}
 	res, err := tx.Exec(`UPDATE agents
 		SET retired_at = NULL, retired_by = '', retire_reason = '', retired_by_agent = ''
 		WHERE agent_id = ? AND retired_at IS NOT NULL`, agentID)
@@ -790,7 +807,9 @@ func ListActiveAgents() ([]*Agent, error) { return listAgents(`retired_at IS NUL
 
 // ListRetiredAgents returns the retired actors (the dashboard reinstate
 // candidates).
-func ListRetiredAgents() ([]*Agent, error) { return listAgents(`retired_at IS NOT NULL`) }
+func ListRetiredAgents() ([]*Agent, error) {
+	return listAgents(`retired_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM agent_federation_presence p WHERE p.agent_id=agents.agent_id AND p.state='away')`)
+}
 
 // ListAgentRosterState returns the active actors' current conversation ids and
 // the retired actor count in one lightweight scan. Snapshot callers need only

@@ -49,8 +49,11 @@ func fedStartMove(t *testing.T, fh *fedHarness) bundletransfer.Descriptor {
 	return v.Offer.D
 }
 func fedMoveConfirm(t *testing.T, fh *fedHarness, d bundletransfer.Descriptor, hash string) *proto.Envelope {
+	return fedMoveConfirmTarget(t, fh, d, hash, "agt_bobremote0000000000000000")
+}
+func fedMoveConfirmTarget(t *testing.T, fh *fedHarness, d bundletransfer.Descriptor, hash, target string) *proto.Envelope {
 	t.Helper()
-	env := fh.peer.envelope(proto.KindAgentMoveConfirm, proto.Endpoint{}, bundletransfer.MoveConfirmation{ObservedAt: time.Now().UTC(), Offer: d.ID, SHA256: hash, SourceAgent: d.Move.SourceAgent, SourceConv: d.Move.SourceConv, TargetAgent: "agt_bobremote0000000000000000", TargetConv: "019fe740-43a4-7023-b8ae-1ee64459f2a2"})
+	env := fh.peer.envelope(proto.KindAgentMoveConfirm, proto.Endpoint{}, bundletransfer.MoveConfirmation{ObservedAt: time.Now().UTC(), Offer: d.ID, SHA256: hash, SourceAgent: d.Move.SourceAgent, SourceConv: d.Move.SourceConv, TargetAgent: target, TargetConv: "019fe740-43a4-7023-b8ae-1ee64459f2a2"})
 	env.From.Agent = ""
 	fh.peer.send(env)
 	return env
@@ -136,6 +139,9 @@ func TestFederation_MoveReceiverConfirmsReservedRunningIdentity(t *testing.T) {
 	fh := newFedHarness(t)
 	fh.f.HaveGroup("receiver")
 	fedReceiveAgents(t, fh, "receiver")
+	landingCwd := testutil.CanonicalTempDir(t)
+	_, err := db.SetAgentGroupDefaultCwd("receiver", landingCwd)
+	require.NoError(t, err)
 	b := fedAgentBundle(t)
 	b.SetHistory("claude-jsonl", moveSourceConv, []byte(`{"type":"user","sessionId":"`+moveSourceConv+`","cwd":"/source","message":{"content":"move history"}}`+"\n"))
 	raw, err := b.Encode()
@@ -153,8 +159,9 @@ func TestFederation_MoveReceiverConfirmsReservedRunningIdentity(t *testing.T) {
 	rec = fedHuman(t, fh.f, http.MethodPost, path, map[string]any{"cwd": testutil.CanonicalTempDir(t)})
 	require.Equal(t, 200, rec.Code)
 	require.Empty(t, fh.peer.envelopes(proto.KindAgentMoveConfirm))
-	rec = fedHuman(t, fh.f, http.MethodPost, path, map[string]any{"cwd": testutil.CanonicalTempDir(t), "apply": true})
+	rec = fedHuman(t, fh.f, http.MethodPost, path, map[string]any{"apply": true})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"reason":"group_default"`)
 	fedEventually(t, "move running confirmation", func() bool { return len(fh.peer.envelopes(proto.KindAgentMoveConfirm)) > 0 })
 	var c bundletransfer.MoveConfirmation
 	require.NoError(t, fh.peer.envelopes(proto.KindAgentMoveConfirm)[0].DecodePayload(&c))

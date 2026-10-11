@@ -1,6 +1,7 @@
 package federationcmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,11 +10,11 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/configbundle"
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
@@ -91,11 +92,14 @@ type offerIDParams struct {
 	Peer string `long:"peer" optional:"true" help:"Select source peer when an offer ID is ambiguous."`
 }
 type offerImportParams struct {
-	Cwd         string `long:"cwd" optional:"true" help:"Remap an agent offer's working directory."`
-	Worktree    string `long:"worktree" optional:"true" help:"Remap an agent offer's worktree hint."`
-	Group       string `long:"group" optional:"true" help:"Choose a receiving group with agents.receive (default offered group)."`
-	Name        string `long:"name" optional:"true" help:"Name the new receiving agent."`
-	SkipHistory bool   `long:"skip-history" help:"Import only configuration from an agent offer."`
+	DropPermissions           bool   `long:"drop-permissions" help:"Discard requested permission carry and use receiver defaults only."`
+	AllowSensitivePermissions bool   `long:"allow-sensitive-permissions" help:"Explicitly allow permission administration, sandbox, human interaction and federation administration grants; requires unrestricted trust."`
+	Cwd                       string `long:"cwd" optional:"true" help:"Remap an agent offer's working directory."`
+	Worktree                  string `long:"worktree" optional:"true" help:"Remap an agent offer's worktree hint."`
+	Group                     string `long:"group" optional:"true" help:"Choose a receiving group with agents.receive (default offered group)."`
+	Landing                   string `long:"landing" optional:"true" help:"Select a receiver landing candidate from the preview."`
+	Name                      string `long:"name" optional:"true" help:"Name the new receiving agent."`
+	SkipHistory               bool   `long:"skip-history" help:"Import only configuration from an agent offer."`
 
 	ID        string   `pos:"true" help:"Offer ID from the inbox or offers listing."`
 	Peer      string   `long:"peer" optional:"true" help:"Select source peer when an offer ID is ambiguous."`
@@ -147,6 +151,8 @@ func offersCmd() *cobra.Command {
 			fmt.Println("no bundle offers")
 		}
 	}, SubCmds: []*cobra.Command{
+		offerContentsCmd(),
+		offerDownloadCmd(),
 		boa.CmdT[offerImportParams]{Use: "import", Short: "Preview a received config or agent offer; --apply imports it", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *offerImportParams, _ *cobra.Command, _ []string) {
 			os.Exit(runOfferImport(p, os.Stdout, os.Stderr))
 		}}.ToCobra(),
@@ -173,13 +179,16 @@ func runOfferImport(p *offerImportParams, out, stderr io.Writer) int {
 		}
 		values[name] = value
 	}
-	in := map[string]any{"only": p.Only, "skip": p.Skip, "values": values, "apply": p.Apply, "replace": p.Replace, "keep_paths": p.KeepPaths, "cwd": p.Cwd, "worktree": p.Worktree, "group": p.Group, "name": p.Name, "skip_history": p.SkipHistory}
+	in := map[string]any{"only": p.Only, "skip": p.Skip, "values": values, "apply": p.Apply, "replace": p.Replace, "keep_paths": p.KeepPaths, "cwd": p.Cwd, "landing": p.Landing, "worktree": p.Worktree, "group": p.Group, "name": p.Name, "skip_history": p.SkipHistory, "drop_permissions": p.DropPermissions, "allow_sensitive_permissions": p.AllowSensitivePermissions}
 	var response map[string]any
 	if rc := offerPost(stderr, offerPath(p.ID, p.Peer, "import"), in, &response); rc != 0 {
 		return rc
 	}
 	if p.JSON {
 		return printJSON(out, response)
+	}
+	if landing, ok := response["landing"].(map[string]any); ok {
+		fmt.Fprintf(out, "Will start in %s (%s)\n", summaryCell(fmt.Sprint(landing["cwd"])), summaryCell(fmt.Sprint(landing["reason"])))
 	}
 	// The full existing import diff includes security tags and provenance.
 	if rc := printJSON(out, response); rc != 0 {
@@ -200,7 +209,7 @@ func offerPost(stderr io.Writer, path string, in, out any) int {
 	if rc := agent.RequireDaemonOrExit(stderr); rc != 0 {
 		return rc
 	}
-	if err := agent.DaemonRequest(http.MethodPost, path, in, out, agent.DaemonOpts{Timeout: 6 * time.Minute}); err != nil {
+	if err := agent.DaemonRequest(http.MethodPost, path, in, out, agent.DaemonOpts{Timeout: bundletransfer.DefaultTTL}); err != nil {
 		var de *agent.DaemonError
 		if errors.As(err, &de) {
 			var detail map[string]any
@@ -209,6 +218,77 @@ func offerPost(stderr io.Writer, path string, in, out any) int {
 			}
 		}
 		return fail(stderr, err)
+	}
+	return 0
+}
+
+type offerContentsParams struct {
+	ID       string `pos:"true" help:"Received offer ID (fetch it first)."`
+	Peer     string `long:"peer" optional:"true" help:"Source peer."`
+	Path     string `long:"path" optional:"true" help:"Entry path from the contents listing."`
+	Offset   int64  `long:"offset" optional:"true" help:"Byte offset within the entry."`
+	MaxBytes int64  `long:"max-bytes" default:"262144" help:"Bounded bytes to read, at most 1048576."`
+}
+
+func offerContentsCmd() *cobra.Command {
+	return boa.CmdT[offerContentsParams]{Use: "contents", Short: "Inspect a verified offer's entries or bounded text", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *offerContentsParams, _ *cobra.Command, _ []string) {
+		os.Exit(runOfferContents(p, os.Stdout, os.Stderr))
+	}}.ToCobra()
+}
+func runOfferContents(p *offerContentsParams, out, stderr io.Writer) int {
+	if rc := agent.RequireDaemonOrExit(stderr); rc != 0 {
+		return rc
+	}
+	path := offerPath(p.ID, p.Peer, "contents")
+	if p.Path != "" {
+		path += "&path=" + url.QueryEscape(p.Path) + fmt.Sprintf("&offset=%d&max_bytes=%d", p.Offset, p.MaxBytes)
+	}
+	var response any
+	if err := agent.DaemonGet(path, &response); err != nil {
+		return fail(stderr, err)
+	}
+	return printJSON(out, response)
+}
+
+type offerDownloadParams struct {
+	ID   string `pos:"true" help:"Received offer ID (fetch it first)."`
+	File string `pos:"true" help:"New output file; existing files are refused."`
+	Peer string `long:"peer" optional:"true" help:"Source peer."`
+}
+
+func offerDownloadCmd() *cobra.Command {
+	return boa.CmdT[offerDownloadParams]{Use: "download", Short: "Save a verified offer without importing it", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *offerDownloadParams, _ *cobra.Command, _ []string) { os.Exit(runOfferDownload(p, os.Stderr)) }}.ToCobra()
+}
+func runOfferDownload(p *offerDownloadParams, stderr io.Writer) int {
+	if rc := agent.RequireDaemonOrExit(stderr); rc != 0 {
+		return rc
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), bundletransfer.DefaultTTL)
+	defer cancel()
+	body, err := agent.DaemonStreamGet(ctx, offerPath(p.ID, p.Peer, "download"))
+	if err != nil {
+		return fail(stderr, err)
+	}
+	defer body.Close()
+	f, err := os.OpenFile(p.File, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	limit := bundletransfer.Agent.MaxBytes
+	if cfg, e := config.Load(); e == nil && cfg.Federation != nil && cfg.Federation.AgentTransferMaxBytes > 0 {
+		limit = cfg.Federation.AgentTransferMaxBytes
+	}
+	n, copyErr := io.Copy(f, io.LimitReader(body, limit+1))
+	closeErr := f.Close()
+	if copyErr == nil {
+		copyErr = closeErr
+	}
+	if copyErr == nil && n > limit {
+		copyErr = fmt.Errorf("archive exceeds federation.agent_transfer_max_bytes=%d; raise that node setting", limit)
+	}
+	if copyErr != nil {
+		_ = os.Remove(p.File)
+		return fail(stderr, copyErr)
 	}
 	return 0
 }

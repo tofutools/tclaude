@@ -25,6 +25,7 @@ const (
 	// KindSpawnReq asks the recipient to spawn a worker into one of its
 	// exported groups. The recipient's operator decides; KindSpawnRes
 	// (InReplyTo = the request) reports the decision.
+	KindJobOutput       = "job_output"
 	KindJobFollow       = "job_follow"
 	KindJobFollowAnswer = "job_follow_answer"
 	KindJobRequest      = "job_request"
@@ -41,6 +42,10 @@ const (
 	KindBundleResult       = "bundle_result"
 	KindAgentMoveConfirm   = "agent_move_confirm"
 	KindTeleportLease      = "teleport_lease"
+	KindAgentPresence      = "agent_presence"
+	KindAgentLocation      = "agent_location"
+	KindHomeMail           = "home_mail"
+	KindHomeMailReceipt    = "home_mail_receipt"
 	// KindRouteOpen asks the recipient to open one TCP connection to one of
 	// its exported routes; KindRouteAnswer accepts (then both dial the hub
 	// stream relay) or refuses it. These are real-time control envelopes,
@@ -54,6 +59,8 @@ const (
 	KindAwayNotice       = "away_notice"
 	KindAwayAnswer       = "away_answer"
 	KindSessionsUpdate   = "sessions_update"
+	KindTerminalUpload   = "terminal_upload"
+	KindTerminalFile     = "terminal_file"
 	KindSessionOpen      = "session_open"
 	KindSessionAnswer    = "session_answer"
 	KindModelOpen        = "model_open"
@@ -76,16 +83,18 @@ const (
 	CapJobs  = "jobs"
 	// CapRoutes lists the group's ready routes in the catalog and lets the
 	// peer open connections to them through the hub stream relay.
-	CapRoutes          = "routes"
-	CapSessions        = "sessions"
-	CapSessionsWatch   = "sessions_watch"
-	CapSessionsAttach  = "sessions_attach"
-	CapAgentsReceive   = "agents_receive"
-	CapTeleportReceive = "teleport_receive"
+	CapRoutes                   = "routes"
+	CapSessions                 = "sessions"
+	CapSessionsWatch            = "sessions_watch"
+	CapSessionsAttach           = "sessions_attach"
+	CapSessionsFilesRead        = "sessions_files_read"
+	CapAgentsReceivePermissions = "agents_receive_permissions"
+	CapAgentsReceive            = "agents_receive"
+	CapTeleportReceive          = "teleport_receive"
 )
 
 // AllCaps lists every known capability in canonical order.
-var AllCaps = []string{CapJobs, CapAgentStatus, CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes, CapSessions, CapSessionsWatch, CapSessionsAttach, CapAgentsReceive, CapTeleportReceive}
+var AllCaps = []string{CapJobs, CapAgentStatus, CapRoster, CapPresence, CapMail, CapAttachments, CapSpawn, CapRoutes, CapSessions, CapSessionsWatch, CapSessionsAttach, CapSessionsFilesRead, CapAgentsReceive, CapAgentsReceivePermissions, CapTeleportReceive}
 
 // MaxMailBody caps a mail envelope's body in bytes.
 const MaxMailBody = 16 * 1024
@@ -213,14 +222,19 @@ type GroupMailPayload struct {
 
 // CatalogPayload lists what an instance exports to the receiving peer.
 type CatalogPayload struct {
-	RequesterPays   int            `json:"requester_pays,omitempty"`
-	TeleportBackups bool           `json:"teleport_backups,omitempty"`
-	AgentTeleports  int            `json:"agent_teleports,omitempty"`
-	AgentMoves      bool           `json:"agent_moves,omitempty"`
-	Node            *NodeMetadata  `json:"node,omitempty"`
-	NodeAt          time.Time      `json:"node_at,omitempty"`
-	NodeReceivedAt  time.Time      `json:"node_received_at,omitempty"` // receiver-owned; overwritten on receipt
-	Groups          []CatalogGroup `json:"groups"`
+	AgentBundleChunks   bool           `json:"agent_bundle_chunks,omitempty"`
+	RequesterPays       int            `json:"requester_pays,omitempty"`
+	TeleportBackups     bool           `json:"teleport_backups,omitempty"`
+	AgentTeleports      int            `json:"agent_teleports,omitempty"`
+	JobOutput           bool           `json:"job_output,omitempty"`
+	DirectAgentMoves    bool           `json:"direct_agent_moves,omitempty"`
+	HomeRoutedMail      bool           `json:"home_routed_mail,omitempty"`
+	StableAgentIdentity bool           `json:"stable_agent_identity,omitempty"`
+	AgentMoves          bool           `json:"agent_moves,omitempty"`
+	Node                *NodeMetadata  `json:"node,omitempty"`
+	NodeAt              time.Time      `json:"node_at,omitempty"`
+	NodeReceivedAt      time.Time      `json:"node_received_at,omitempty"` // receiver-owned; overwritten on receipt
+	Groups              []CatalogGroup `json:"groups"`
 }
 
 // CatalogGroup is one exported group as seen by one peer.
@@ -307,12 +321,22 @@ func (g CatalogGroup) HasCap(c string) bool {
 
 // CatalogMember is one member of an exported group. Presence is only set
 // when the group exports CapPresence.
+// FederationAgentPresence is a public location projection; continuation
+// credentials and reservation metadata stay private on each node.
+type FederationAgentPresence struct {
+	HomeInstance    string `json:"home_instance"`
+	State           string `json:"state"`
+	CurrentInstance string `json:"current_instance"`
+	HopCount        int    `json:"hop_count"`
+}
+
 type CatalogMember struct {
-	Agent    string `json:"agent"`
-	Name     string `json:"name"`
-	Role     string `json:"role,omitempty"`
-	Harness  string `json:"harness,omitempty"`
-	Presence string `json:"presence,omitempty"`
+	FederationPresence *FederationAgentPresence `json:"federation_presence,omitempty"`
+	Agent              string                   `json:"agent"`
+	Name               string                   `json:"name"`
+	Role               string                   `json:"role,omitempty"`
+	Harness            string                   `json:"harness,omitempty"`
+	Presence           string                   `json:"presence,omitempty"`
 }
 
 // NewEnvelopeID returns a random 128-bit hex id.
@@ -433,6 +457,7 @@ func (e *Envelope) DecodePayload(v any) error {
 // SessionOpenPayload requests access to one stable agent's current pane.
 // Session and Incarnation pin discovery to one launch; it cannot follow a restart.
 type SessionOpenPayload struct {
+	FixedSize   bool   `json:"fixed_size,omitempty"`
 	Agent       string `json:"agent"`
 	Session     string `json:"session"`
 	Incarnation string `json:"incarnation"`
@@ -444,6 +469,9 @@ type SessionOpenPayload struct {
 	Rows        int    `json:"rows"`
 }
 type SessionAnswerPayload struct {
+	Files  bool   `json:"files,omitempty"`
+	Cols   int    `json:"cols,omitempty"`
+	Rows   int    `json:"rows,omitempty"`
 	Stream string `json:"stream"`
 	OK     bool   `json:"ok"`
 	Key    []byte `json:"key,omitempty"`

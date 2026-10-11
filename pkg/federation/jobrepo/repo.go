@@ -339,3 +339,36 @@ func FullCommit(ref string) bool {
 	_, e := hex.DecodeString(ref)
 	return e == nil
 }
+
+// Head resolves only the receiver-owned checkout, never a sender's branch hint.
+func Head(ctx context.Context, d Definition) (string, error) {
+	if err := Revalidate(ctx, d); err != nil {
+		return "", err
+	}
+	ref, err := git(ctx, d.Clone, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil || !objectID.MatchString(ref) {
+		return "", errors.New("receiver checkout HEAD is unavailable")
+	}
+	return ref, nil
+}
+
+// OriginHint reads local metadata only. Credentials and unsupported URLs are
+// discarded rather than embedded in a transferable agent bundle.
+func OriginHint(ctx context.Context, cwd string) string {
+	raw, err := git(ctx, cwd, "config", "--get", "remote.origin.url")
+	if err != nil || len(raw) > 4096 || ValidateURL(raw) != nil {
+		return ""
+	}
+	if strings.Contains(raw, "://") {
+		u, err := url.Parse(raw)
+		if err != nil || u.Scheme == "file" {
+			return ""
+		}
+		if u.User != nil {
+			if _, password := u.User.Password(); password || u.Scheme != "ssh" {
+				return ""
+			}
+		}
+	}
+	return raw
+}

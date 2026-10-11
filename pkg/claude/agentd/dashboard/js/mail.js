@@ -1218,14 +1218,14 @@ function accessStatusText(r) {
 // Access-request rows are rendered by the Preact island. Details and decision
 // buttons live in the reader pane, matching the Human / All mail split:
 // middle pane for scanning, right pane for the selected item.
-async function decideAccess(id, decision) {
+async function decideAccess(id, decision, extra = {}) {
   if (!id) return;
   try {
     const r = await fetch(`/api/access-requests/${encodeURIComponent(id)}/decision`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ decision }),
+      body: JSON.stringify({ decision, ...extra }),
     });
     if (!r.ok) throw new Error(await r.text());
     if (decision === 'extend') {
@@ -1289,7 +1289,10 @@ function renderAccessRequests(list, pending) {
   resolveArmedAccessAutoSelect(list);
   const banner = $('#access-banner');
   if (!banner) return;
-  const n = pending || 0;
+  // Count what Review will show: the list's pending rows when the snapshot
+  // carries the list, so the banner never promises a request the Access
+  // folder does not have.
+  const n = Array.isArray(list) && list.length ? list.filter(accessIsPending).length : (Array.isArray(list) ? 0 : pending || 0);
   banner.classList.toggle('show', n > 0);
   banner.setAttribute('aria-hidden', n > 0 ? 'false' : 'true');
   const label = $('#access-banner-text');

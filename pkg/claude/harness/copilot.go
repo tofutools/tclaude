@@ -32,12 +32,13 @@ const CopilotName = "copilot"
 // left nil for a later, fixture-backed wave (TCL-965 phases 2-5).
 func init() {
 	Register(&Harness{
-		Name:               CopilotName,
-		DisplayName:        "GitHub Copilot CLI",
-		ModelProxyProtocol: "openai-responses-v1",
-		Spawn:              copilotSpawner{},
-		Models:             copilotModels{},
-		Life:               copilotLifecycle{},
+		Name:                      CopilotName,
+		DisplayName:               "GitHub Copilot CLI",
+		AvailabilityCredentialEnv: []string{"COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"},
+		ModelProxyProtocol:        "openai-responses-v1",
+		Spawn:                     copilotSpawner{},
+		Models:                    copilotModels{},
+		Life:                      copilotLifecycle{},
 
 		// TCL-994: the one-shot `tclaude ask` surface, buffered only. The
 		// headless `-p` form was measured to put the answer ALONE on stdout, to
@@ -55,7 +56,9 @@ func init() {
 		// The cold conversation store reads only Copilot's own per-session
 		// files under <COPILOT_HOME>/session-state — see copilot_convstore.go
 		// for why that needs no SQLite access at all.
-		Convs: copilotConvStore{},
+		Convs:      copilotConvStore{},
+		History:    copilotHistory{},
+		Transcript: copilotTranscript{},
 
 		// TCL-978 promotes the sandbox contracts out of the
 		// documentation-only wave, on the same terms as Hooks and Convs below:

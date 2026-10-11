@@ -2035,7 +2035,21 @@ func SetStatusGatherHookForTest(fn func()) func() {
 	statusHook.Unlock()
 	return func() { statusHook.Lock(); statusHook.fn = old; statusHook.Unlock() }
 }
+
+// SetPeerStatusGatherHookForTest counts only gathers initiated by peer polling,
+// separately from local/background consumers sharing the receiving process.
+func SetPeerStatusGatherHookForTest(fn func()) func() {
+	statusHook.Lock()
+	old := statusHook.peerFn
+	statusHook.peerFn = fn
+	statusHook.Unlock()
+	return func() { statusHook.Lock(); statusHook.peerFn = old; statusHook.Unlock() }
+}
+
 func ResetStatusSnapshotForTest() {
+	peerStatusCache.mu.Lock()
+	peerStatusCache.value = nil
+	peerStatusCache.mu.Unlock()
 	sharedStatusCache.mu.Lock()
 	sharedStatusCache.value = nil
 	sharedStatusCache.mu.Unlock()
@@ -2104,3 +2118,48 @@ func RecheckFederationRouteAuthorityForTest() {
 		e.recheckAuthority()
 	}
 }
+
+// RefreshFederationCatalogsForTest runs the production periodic refresh without
+// waiting for its two-minute clock.
+func RefreshFederationCatalogsForTest() {
+	if rt := currentFederation(); rt != nil {
+		rt.broadcastCatalogs()
+	}
+}
+
+// ResetBoardUpdatesForTest gives the test a fresh board-update state
+// (nothing checked, nothing announced) and restores the previous one.
+func ResetBoardUpdatesForTest(notesPath string) func() {
+	prev, prevPath := boardUpdates, boardUpdateNotesPath
+	boardUpdates = &boardUpdateState{}
+	boardUpdateNotesPath = func() string { return notesPath }
+	return func() { boardUpdates, boardUpdateNotesPath = prev, prevPath }
+}
+
+// RestartBoardUpdatesForTest forgets the in-memory state, as a daemon
+// restart does, keeping the notes file.
+func RestartBoardUpdatesForTest() { boardUpdates = &boardUpdateState{} }
+
+// ExpireBoardUpdatesForTest makes the next board-update read scan again.
+func ExpireBoardUpdatesForTest() { boardUpdates.expire() }
+
+// Source fixture uses the real managed-server launch on its seeded native ID;
+// the OpenCode executable is the external subprocess simulator on PATH.
+func StartHistoryOpenCodeRuntimeForTest(label, cwd, id string) error {
+	_, err := startOpenCodeRuntimeForSpawn(label, cwd, "traveller", id, `[]`, "off", nil, "")
+	return err
+}
+func StopHistoryOpenCodeRuntimeForTest(label string) { _ = stopOpenCodeRuntime(label) }
+
+// Exercise the destructive lifecycle observers against a dormant home record.
+// The AWB monitor's guard runs before any subprocess or tracker request.
+func RunAwayLifecycleObserversForTest(conv string) bool {
+	cleanupRetiredCodexNativeProfiles(conv)
+	cleanupAgentDirectoriesAfterRetire(conv, false)
+	id, _ := db.AgentIDForConv(conv)
+	return !(awbReadyWorker{}).cleanupAfterClose(context.Background(), &db.AWBReadyDispatch{AgentID: id}, awbReadyPRState{})
+}
+
+// SweepPendingMorphsForTest runs one synchronous pass of the pending-morph
+// idle watcher.
+func SweepPendingMorphsForTest() { sweepPendingMorphs(true) }

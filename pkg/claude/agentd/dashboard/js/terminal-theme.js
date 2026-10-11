@@ -90,7 +90,7 @@ export function initTerminalThemeSync(
 }
 
 // setArcanePaletteEnabled updates the synchronous dashPrefs mirror first, then
-// broadcasts so every mounted mux and the fallback singleton modal repaint in
+// broadcasts so every mounted terminal pane repaints in
 // the same turn. The debounced server write follows through prefs.js.
 export function setArcanePaletteEnabled(enabled, prefs = dashPrefs, target = document) {
   prefs.setItem(ARCANE_PALETTE_PREF, enabled ? '1' : '0');

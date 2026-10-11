@@ -1582,7 +1582,7 @@ CREATE TABLE federation_peer_grants (
  slug TEXT NOT NULL,
  scope TEXT NOT NULL DEFAULT '',
  spawn_policy TEXT NOT NULL DEFAULT '{}',
- created_at INTEGER NOT NULL,
+ created_at INTEGER NOT NULL, expires_at INTEGER,
  PRIMARY KEY(peer, slug, scope)
  ) STRICT;
 
@@ -1714,4 +1714,37 @@ CREATE TABLE federation_identity_rotations (
  old_instance TEXT PRIMARY KEY,new_instance TEXT NOT NULL,statement TEXT NOT NULL,
  state TEXT NOT NULL CHECK(state IN ('pending','accepted','conflict','revoked','recovered')),
  received_at INTEGER NOT NULL,accept_after INTEGER NOT NULL,reason TEXT NOT NULL DEFAULT ''
+) STRICT;
+
+CREATE TABLE federation_peer_access_requests (
+ id TEXT PRIMARY KEY, peer TEXT NOT NULL, slug TEXT NOT NULL, group_id INTEGER NOT NULL,
+ grant_group_id INTEGER NOT NULL, grant_ttl_seconds INTEGER NOT NULL, expires_at INTEGER) STRICT;
+
+CREATE TABLE agent_federation_presence (
+ agent_id TEXT PRIMARY KEY, home_instance TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('here','away','reserved','terminal')),
+ current_instance TEXT NOT NULL, current_peer TEXT NOT NULL, predecessor_instance TEXT NOT NULL,
+ departure_offer TEXT NOT NULL, arrival_offer TEXT NOT NULL, hop_count INTEGER NOT NULL, visit_epoch INTEGER NOT NULL,
+ independent_clone TEXT NOT NULL DEFAULT '', arrival_rollback_json TEXT NOT NULL DEFAULT '', continuation_nonce_hash TEXT NOT NULL, transfer_json TEXT NOT NULL, departed_at INTEGER, arrived_at INTEGER, updated_at INTEGER NOT NULL
+ ) STRICT;
+
+CREATE TABLE federation_agent_locations (
+ agent_id TEXT PRIMARY KEY, home_instance TEXT NOT NULL, current_instance TEXT NOT NULL,
+ epoch TEXT NOT NULL, hop_count INTEGER NOT NULL, arrival_offer TEXT NOT NULL, updated_at INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE federation_mail_custody (
+ sender_instance TEXT NOT NULL, envelope_id TEXT NOT NULL, agent_id TEXT NOT NULL,
+ ingress_instance TEXT NOT NULL, ingress_envelope TEXT NOT NULL, payload TEXT NOT NULL,
+ state TEXT NOT NULL, destination TEXT NOT NULL DEFAULT '', attempt_id TEXT NOT NULL DEFAULT '',
+ next_attempt_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+ PRIMARY KEY(sender_instance,envelope_id,agent_id)
+) STRICT;
+
+CREATE TABLE federation_agent_mail_deliveries (
+ agent_id TEXT NOT NULL, sender_instance TEXT NOT NULL, envelope_id TEXT NOT NULL, expires_at INTEGER NOT NULL,
+ PRIMARY KEY(agent_id,sender_instance,envelope_id)
+) STRICT;
+
+CREATE TABLE federation_agent_mail_fences (
+ agent_id TEXT PRIMARY KEY, token TEXT NOT NULL, offer TEXT NOT NULL DEFAULT '', expires_at INTEGER NOT NULL
 ) STRICT;

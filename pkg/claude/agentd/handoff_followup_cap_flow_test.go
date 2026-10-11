@@ -153,8 +153,9 @@ func TestClone_GroupedHandoffAcceptsLargeMultiLineBrief(t *testing.T) {
 	require.NoError(t, err, "ListAgentMessagesForConv")
 	require.Len(t, rows, 1, "clone should have exactly one inbox message (the handoff)")
 	assert.Equal(t, "clone handoff", rows[0].Subject, "handoff subject")
-	assert.Equal(t, followUp, rows[0].Body,
-		"handoff body must survive verbatim — length and newlines intact")
+	assert.True(t, strings.HasSuffix(rows[0].Body, "\n\n"+followUp),
+		"handoff body must survive verbatim after the arrival briefing — length and newlines intact")
+	assert.Contains(t, rows[0].Body, "Arrival briefing — local clone")
 }
 
 // Scenario: a solo (groupless) agent is cloned with a multi-line
@@ -188,8 +189,9 @@ func TestClone_SoloHandoffRidesInbox(t *testing.T) {
 	require.NoError(t, err, "ListAgentMessagesForConv")
 	require.Len(t, rows, 1, "solo clone should have exactly one inbox message (the handoff)")
 	assert.Equal(t, "clone handoff", rows[0].Subject, "handoff subject")
-	assert.Equal(t, followUp, rows[0].Body,
-		"handoff body must survive verbatim — length and newlines intact")
+	assert.True(t, strings.HasSuffix(rows[0].Body, "\n\n"+followUp),
+		"handoff body must survive verbatim after the arrival briefing — length and newlines intact")
+	assert.Contains(t, rows[0].Body, "Arrival briefing — local clone")
 	assert.Equal(t, int64(0), rows[0].GroupID,
 		"a solo handoff is a direct message — group_id 0")
 }

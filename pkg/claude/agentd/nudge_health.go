@@ -98,7 +98,7 @@ func nudgeTargetGoneReason(m *db.AgentMessage, agents map[string]*db.Agent) (age
 	if a == nil {
 		return agentID, "target agent deleted"
 	}
-	if !a.Active() {
+	if !a.Active() && !db.AgentAway(agentID) {
 		return agentID, "target agent retired"
 	}
 	return agentID, ""
@@ -116,7 +116,19 @@ func warnStaleNudgeQueues(now time.Time) {
 		return
 	}
 	queues := map[string]*staleNudgeQueue{}
+	away := map[string]bool{}
 	for _, m := range msgs {
+		id := m.ToAgent
+		if id == "" {
+			id, _ = db.AgentIDForConv(m.ToConv)
+		}
+		if _, ok := away[id]; !ok {
+			away[id] = db.AgentAway(id)
+		}
+		if away[id] {
+			continue
+		} // Waiting at home is intentional, not stuck delivery.
+
 		if m.CreatedAt.IsZero() || now.Sub(m.CreatedAt) < staleNudgeThreshold {
 			continue
 		}

@@ -28,6 +28,8 @@ import { setVegasRegularMode } from './slop.js';
 import { setHScrollFollow } from './hscroll.js';
 import { noteConnected, noteDisconnected } from './connection.js';
 import { syncDashDefaultProfile } from './profiles.js';
+import { claimViewersRead, noteViewersRead } from './remote-viewers.js';
+import { claimRemoteInboxRead, readRemoteInboxes } from './remote-inbox.js';
 import { dashboardState } from './snapshot-store.js';
 import { featureState } from './feature-state-registry.js';
 import {
@@ -39,6 +41,7 @@ import {
 import { disclosurePreference } from './group-tree-activity.js';
 import { checkAssetsVersion } from './assets-version.js';
 import { setTerminalAttachConfig } from './terminal-attach-config.js';
+import { peerViewTabUsable } from './peer-view-limits.js';
 
 // groupsTabActive reports whether the Groups tab is the visible one — used to
 // skip the (default-hidden, expensive) conversations/replaced sub-fetches when
@@ -136,7 +139,14 @@ export async function refresh(options) {
     const [retiredRequest, convRequest, replacedRequest] = fetchVisibleGroupListPages(
       groups, onGroups, groupsQ, get,
     );
-    const [snapR, retiredR, convR, replacedR, jobsR] = await Promise.all([
+    // Peers viewing this node's terminals ride the same tick, at most every
+    // VIEWERS_EVERY_MS and only on a federated node's own dashboard, so the
+    // per-agent viewer badges cost no request or timer of their own.
+    const readViewers = claimViewersRead();
+    // Other own nodes' human inboxes: relaxed cadence, never holds the tick.
+    const inboxPeers = claimRemoteInboxRead();
+    if (inboxPeers.length) void readRemoteInboxes(inboxPeers);
+    const [snapR, retiredR, convR, replacedR, jobsR, viewersR] = await Promise.all([
       fetch('/api/snapshot' + (staticVersion
         ? '?static_version=' + encodeURIComponent(staticVersion)
         : ''), { credentials: 'same-origin', cache: 'no-store', signal: abort.signal }),
@@ -144,7 +154,13 @@ export async function refresh(options) {
       convRequest,
       replacedRequest,
       jobsActive ? get('/api/jobs?' + jobs.params.value) : Promise.resolve(undefined),
+      readViewers ? get('/api/federation/viewers') : Promise.resolve(undefined),
     ]);
+    if (readViewers) {
+      // The read rides this tick's fetches; a failed or unparsable one keeps
+      // the last list.
+      Promise.resolve(viewersR?.ok ? viewersR.json() : null).catch(() => null).then((rows) => noteViewersRead(rows));
+    }
     // agentd answered this poll (any HTTP status) — we're connected. Clear the
     // disconnect banner + resume music if it had been raised. Done before the
     // stale-request bail below so even a superseded run registers the reconnect.
@@ -230,6 +246,9 @@ export async function refresh(options) {
     // a degraded snapshot cannot close panes or consume a later retirement.
     reconcileTerminalsForAgentRoster(data.agents, data.agent_roster_authoritative);
     setLastSnapshot(data);
+    // The access banner goes first: a renderer below that throws must not
+    // leave it showing a request that is long gone.
+    renderAccessRequests(data.access_requests || [], data.access_requests_pending || 0);
     // Groups Route map is a server-owned opt-in surface. Apply its visibility
     // before rendering the Groups island and before publishing the snapshot so
     // deep-link/history restoration never observes a route subview while the
@@ -244,7 +263,6 @@ export async function refresh(options) {
     applyProcessesTabVisibility(data);
     applyDebugTabVisibility(data);
     renderMailTab();
-    renderAccessRequests(data.access_requests || [], data.access_requests_pending || 0);
     renderDashDefaultProfile();
     renderDashSandboxProfile();
     setVegasRegularMode(!!data.vegas_in_regular_mode);
@@ -426,7 +444,8 @@ function bindTabs() {
 // body.hide-costs) drop out. Checking visibility instead of naming those
 // two keeps the cycler correct if more conditional tabs appear later.
 function visibleTabButtons() {
-  return $$('nav [data-tab]').filter(b => b.offsetParent !== null);
+  // A peer view skips the tabs the peer does not offer (peer-view-limits.js).
+  return $$('nav [data-tab]').filter(b => b.offsetParent !== null && peerViewTabUsable(b.dataset.tab));
 }
 
 // cyclingTabs is true only while cycleTab() is dispatching its synthetic
@@ -453,6 +472,15 @@ export function isCyclingTabs() { return cyclingTabs; }
 function cycleTab(dir) {
   const tabs = visibleTabButtons();
   if (!tabs.length) return null;
+  // The Skynet map is a top-level view that hides the per-node tabs, so it is
+  // the only visible tab while open. Cycling hands off to its island, which
+  // returns to the per-node tab the operator left for the map.
+  // Fleet administration is top-level too; its anchor is never visible.
+  if (document.querySelector('nav [data-tab="fleet-admin"].active')
+    || (tabs.length === 1 && tabs[0].dataset.tab === 'map' && tabs[0].classList.contains('active'))) {
+    document.dispatchEvent(new CustomEvent('tclaude:leave-map', { detail: { dir } }));
+    return null;
+  }
   const active = tabs.findIndex(b => b.classList.contains('active'));
   // active < 0 ⇒ the current tab is itself hidden (e.g. you were on Vegas
   // and slop just turned off); start the step from the first visible tab.

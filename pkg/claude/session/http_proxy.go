@@ -27,6 +27,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/common/harnesspath"
 )
 
 const HTTPProxyEnvPrefix = "TCLAUDE_HTTP_PROXY_"
@@ -492,6 +493,9 @@ func (t *httpProxyRuntimeTransport) CloseIdleConnections() {
 // gateway. Codex receives a compile-time argument marker at a known offset;
 // only that marker is replaced at runtime, never user prompt or command text.
 func HTTPProxySpawnCommand(sessionID string, h *harness.Harness, spec harness.SpawnSpec, cliPath ...string) string {
+	if spec.ExecutablePath == "" && spec.ShellEnvironment["PATH"] == "" && spec.PreLaunchScript == "" {
+		spec.ExecutablePath = harnesspath.ManagedExecutable(h.Spawn.Binary())
+	}
 	filteredEnvironment := map[string]string{}
 	for name, value := range spec.ShellEnvironment {
 		if !httpProxyReservedEnvironment(name) && !config.IsHTTPProxyGatewayURL(value) && (spec.ModelProxy == "" || !modelProxyCompetingEnvironmentForHarness(name, h.Name)) {

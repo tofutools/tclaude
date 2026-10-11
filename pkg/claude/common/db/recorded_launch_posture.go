@@ -108,6 +108,17 @@ func ComposeAgentRelaunchProfile(base, overlay *AgentRelaunchProfile) *AgentRela
 	if overlay.ContextFeatures != nil {
 		merged.ContextFeatures = overlay.ContextFeatures
 	}
+	// Morph bookkeeping is agent state. The fallback never carries it in
+	// practice, but the overlay rule is the same as for launch fields.
+	if overlay.PreviousMorphForm != nil {
+		merged.PreviousMorphForm = overlay.PreviousMorphForm
+	}
+	if overlay.PendingMorph != nil {
+		merged.PendingMorph = overlay.PendingMorph
+	}
+	if overlay.MorphProfile != "" {
+		merged.MorphProfile = overlay.MorphProfile
+	}
 	return &merged
 }
 

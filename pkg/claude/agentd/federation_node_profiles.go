@@ -68,7 +68,7 @@ func normalizeFederationNodeProfile(p *db.FederationNodeProfile) error {
 	seen = map[string]bool{}
 	for i, g := range s.PeerGrants {
 		_, groupSlug := federationPeerSlugs[g.Slug]
-		instanceSlug := g.Slug == "config.offer" || g.Slug == PermApprovalsAnswer || g.Slug == PermNodeRead
+		instanceSlug := g.Slug == "config.offer" || g.Slug == PermApprovalsAnswer || g.Slug == PermNodeRead || g.Slug == PermNodeHarnessesRead || g.Slug == PermNodeUpdate || g.Slug == PermNodeHarnessesInstall || g.Slug == PermNodeCredentialsReceive || g.Slug == PermNodeExec || g.Slug == PermCostsRead || g.Slug == PermFederationAuditRead || g.Slug == PermNodeMessagesRead || g.Slug == PermNodeMessagesManage
 		if !groupSlug && !instanceSlug && (g.Slug != PermModelsProxy && g.Slug != PermModelsProxyLeased) {
 			return fmt.Errorf("unsupported peer slug %s", g.Slug)
 		}
@@ -166,13 +166,14 @@ func handleFederationNodeProfiles(w http.ResponseWriter, r *http.Request) {
 	}
 	// Serialize definition changes with preview/apply, trust-time selection and
 	// offer publication so their security checks use one profile revision.
-	if r.Method != http.MethodGet {
+	// GET route patterns also accept HEAD, which must stay read-only.
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		fedNodeGroupsMu.Lock()
 		defer fedNodeGroupsMu.Unlock()
 	}
 
 	ref := r.PathValue("name")
-	if r.Method == http.MethodGet {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		if ref == "" {
 			ps, e := db.ListFederationNodeProfiles()
 			if e != nil {

@@ -186,6 +186,7 @@
       <span class="theme-mode-badge" aria-hidden="true"></span>
     </button>
     <span class="dashboard-title">tclaude</span>
+    <span id="remote-node-root" class="remote-node-host"></span>
   </h1>
   <!-- Global activity pulse — a deduped row of status "bots" aggregated
        across every group + the ungrouped bucket by the Preact shell's
@@ -278,6 +279,10 @@
 </div>
 <nav title="Tip: cycle tabs with [ and ] (or ←/→ while the tab bar is focused)" aria-keyshortcuts="[ ]">
   <div class="bar-inner nav-inner">
+  <!-- Skynet: while the map (a multi-node, top-level view) is open, this host
+       shows the top-level view switch and CSS hides the per-node tabs, keeping
+       the row's height. Empty and invisible otherwise. -->
+  <span id="skynet-toplevel-root" class="skynet-toplevel"></span>
   <!-- Every tab label carries a plain/wizard span pair (like the Vegas/Tavern
        button below and the "+ new group"/"⚔ Form a party" primary): the plain
        name shows normally, an arcane "chamber of the Tower" name under
@@ -305,10 +310,23 @@
        dashboard.css); vegas.js owns the player inside it. The label swaps to
        "🍺 The Tavern" in wizard mode (CSS body.wizard). -->
   <button data-tab="vegas"><span class="tab-label-vegas">🎰 Vegas</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🍺</span> <span class="tab-title">The Tavern</span></span></button>
+  <!-- Skynet node row (js/skynet-island.js): this node and its trusted
+       federation peers, right-aligned in the tab bar so it costs no height.
+       Empty when federation is off or has no trusted peers; the map anchor
+       below is CSS-hidden while the host is empty. -->
+  <span id="node-chips-root" class="node-chips-host"></span>
+  <a data-tab="map" href="/map" class="node-chip map" title="Skynet map: every linked node" aria-label="Skynet map"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="3" cy="3.5" r="2"/><circle cx="11" cy="3" r="2"/><circle cx="7" cy="11" r="2"/><path d="M4.8 4.3 5.9 9.3M9.4 4.3 7.9 9.3M5 3.4 9 3.1"/></svg><span class="node-chip-name">map</span></a>
+  <a data-tab="fleet-admin" href="/fleet-admin" class="fleet-anchor" aria-label="Fleet administration">Fleet</a>
   </div>
 </nav>
 <main>
+  <!-- Node scope banner (skynet-island.js): while a fused view is on, a
+       per-node tab says which node it shows. Empty otherwise. -->
+  <div id="skynet-scope-banner-root" class="scope-banner-host"></div>
   <section id="tab-groups" class="active">
+    <!-- Fused Groups (skynet-merged-island.js): the ticked nodes' groups
+         together. CSS shows it instead of this node's roster while fused. -->
+    <div id="skynet-fused-groups-root"></div>
     <!-- Groups keeps the compact roster as the default view; the dedicated
          Route map island owns its read-only graph/list/detail surface. -->
     <div id="groups-route-map-root"></div>
@@ -484,6 +502,10 @@
   </section>
   <!-- Preact owns the Audit query, filtering, paging, slow snapshot-triggered
        refresh, and stable keyed command rows inside this feature host. -->
+    <section id="tab-fleet-admin"><div id="fleet-admin-root"></div></section>
+  <section id="tab-map">
+    <div id="skynet-map-root"></div>
+  </section>
   <section id="tab-audit">
     <div id="audit-root"></div>
   </section>
@@ -517,6 +539,9 @@
          filters) so they stay out of the recipient→message Tab path.
          Explicit grid placement (dashboard.css) maps each child to its
          cell, so DOM order is free. -->
+    <!-- Fused Messages (fused-mail.js): the ticked nodes' mail together. CSS
+         shows it instead of this node's mail client while fused. -->
+    <div id="skynet-fused-messages-root"></div>
     <div id="messages-root">
     <!-- Preact owns the complete Messages client. Keep this host stable so a
          feature-local load failure cannot prevent the dashboard shell from
@@ -652,9 +677,6 @@
   <button class="access-banner-review" id="access-banner-review" type="button">Review</button>
 </div>
 <div id="shell-confirm-root"></div>
-<!-- Preact owns the fallback browser-terminal modal shell. Its xterm host is
-     created as a stable opaque ref inside the mounted component. -->
-<div id="terminal-session-root"></div>
 <!-- Preact-owned combined member editor. Its local draft remains mounted
      across snapshot polling while the Groups rows reconcile independently. -->
 <div id="groups-member-dialog-root"></div>
@@ -746,6 +768,9 @@
      window.fetch. When agentd says the HttpOnly session is no longer valid,
      the top-level page reloads into the server-rendered sign-in screen. -->
 <script src="/static/js/auth-session.js"></script>
+<!-- A ?node=<instance_id> page is a peer's per-node view: route the per-node
+     API through the local peer proxy before any feature captures fetch. -->
+<script src="/static/js/remote-node.js"></script>
 <script src="/static/third_party/xterm/addon-fit.min.js"></script>
 <script src="/static/third_party/xterm/addon-web-links.min.js"></script>
 <!-- The import map lives in <head>, ahead of the modulepreload block, because a

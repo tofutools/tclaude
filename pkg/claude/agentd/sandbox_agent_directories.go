@@ -370,7 +370,7 @@ func removeAgentDirectoriesForConv(convID string) (int, error) {
 func cleanupAgentDirectoriesAfterRetire(convID string, shutdownRequested bool) {
 	cleanupLocked := func() {
 		state, err := db.AgentState(convID)
-		if err != nil || state != db.AgentStateRetired {
+		if err != nil || state != db.AgentStateRetired || db.AgentConvAway(convID) {
 			return
 		}
 		removed, cleanupErr := removeAgentDirectoriesForConv(convID)

@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	utilityskills "github.com/tofutools/tclaude/skills"
 	"gopkg.in/yaml.v3"
 )
 
@@ -184,4 +185,43 @@ func skillFrontmatter(data []byte) (string, error) {
 		return "", fmt.Errorf("missing closing frontmatter marker")
 	}
 	return rest[:end], nil
+}
+
+func TestInstallUtilitySkillsInstallsOnlyUtilitySkills(t *testing.T) {
+	home := t.TempDir()
+	codexHome := filepath.Join(home, "custom-codex")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CODEX_HOME", codexHome)
+
+	installed, err := InstallUtilitySkills(true)
+	require.NoError(t, err)
+	require.Len(t, installed, len(utilityskills.Names))
+	codexInstalled, err := InstallCodexUtilitySkills(true)
+	require.NoError(t, err)
+	assert.Len(t, codexInstalled, len(utilityskills.Names)*2)
+
+	for _, root := range []string{filepath.Join(home, ".claude", "skills"), filepath.Join(home, ".agents", "skills"), filepath.Join(codexHome, "skills")} {
+		assert.FileExists(t, filepath.Join(root, "demo-recording", "SKILL.md"))
+		assert.NoDirExists(t, filepath.Join(root, "agent-coord"))
+	}
+}
+
+func TestUtilitySkillFrontmatterIsValidYAML(t *testing.T) {
+	for _, name := range utilityskills.Names {
+		t.Run(name, func(t *testing.T) {
+			data, err := utilityskills.FS.ReadFile(name + "/SKILL.md")
+			require.NoError(t, err)
+			raw, err := skillFrontmatter(data)
+			require.NoError(t, err)
+			var got struct {
+				Name        string `yaml:"name"`
+				Description string `yaml:"description"`
+			}
+			require.NoError(t, yaml.Unmarshal([]byte(raw), &got))
+			assert.Equal(t, name, got.Name)
+			assert.NotEmpty(t, got.Description)
+			assert.LessOrEqual(t, utf8.RuneCountInString(got.Description), 1024)
+		})
+	}
 }

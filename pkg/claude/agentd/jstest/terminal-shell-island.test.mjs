@@ -29,9 +29,7 @@ function installHosts(harness) {
   host.id = 'terminals-root';
   const badgeHost = nav.appendChild(harness.document.createElement('span'));
   badgeHost.id = 'terminals-badge-root';
-  const modalHost = harness.document.body.appendChild(harness.document.createElement('div'));
-  modalHost.id = 'terminal-session-root';
-  return { host, badgeHost, modalHost, terminals };
+  return { host, badgeHost, terminals };
 }
 
 function fakeWidgetFactory(harness) {
@@ -84,9 +82,9 @@ function fakeWidgetFactory(harness) {
   return { factory, widgets };
 }
 
-test('dashboard terminal feature owns three hosts while preserving opaque xterm descendants', async (t) => {
+test('dashboard terminal feature owns its tab and badge hosts while preserving opaque xterm descendants', async (t) => {
   const harness = await createPreactHarness(t);
-  const { host, badgeHost, modalHost, terminals } = installHosts(harness);
+  const { host, badgeHost, terminals } = installHosts(harness);
   const fake = fakeWidgetFactory(harness);
   const requests = [];
   const composed = [];
@@ -104,7 +102,6 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
 
   assert.equal(host.dataset.islandOwner, 'terminals');
   assert.equal(badgeHost.dataset.islandOwner, 'terminals');
-  assert.equal(modalHost.dataset.islandOwner, 'terminals');
   assert.equal(harness.document.body.classList.contains('hide-terminals'), true);
 
   await harness.act(async () => {
@@ -276,35 +273,17 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   assert.equal(fake.widgets[0].disposeCount, 1);
   assert.equal(badgeHost.querySelector('#terminals-badge').textContent, '1');
 
-  await harness.act(() => controller.openTermModal({
-    wsPath: '/modal-live', label: 'agent one', hideConv: 'agt_one',
-  }));
-  assert.equal(modalHost.querySelector('#term-session-title').textContent, 'Terminal — agent one');
-  assert.ok(modalHost.querySelector('#term-session-detach'));
-  assert.equal(fake.widgets.length, 3);
-  const modalOpaque = fake.widgets[2].child;
-  await harness.act(() => fake.widgets[2].options.onStatus('connected'));
-  assert.equal(fake.widgets[2].child, modalOpaque);
-  await harness.act(async () => {
-    harness.fireEvent(modalHost.querySelector('#term-session-close'), 'click');
-    await Promise.resolve();
-    await Promise.resolve();
-  });
-  assert.equal(modalHost.childElementCount, 0);
-  assert.equal(fake.widgets[2].disposeCount, 1);
-  assert.deepEqual(requests, ['/api/hide/agt_one']);
 
   cleanup();
   cleanup();
   assert.equal(fake.widgets[1].disposeCount, 1, 'feature cleanup disposes the remaining pane once');
   assert.equal(host.childElementCount, 0);
   assert.equal(badgeHost.childElementCount, 0);
-  assert.equal(modalHost.childElementCount, 0);
 });
 
 test('a disconnected active pane gets a terminal-area notice while keeping Reconnect in the header', async (t) => {
   const harness = await createPreactHarness(t);
-  const { host, badgeHost, modalHost } = installHosts(harness);
+  const { host, badgeHost } = installHosts(harness);
   const fake = fakeWidgetFactory(harness);
   const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
   const controller = await harness.importDashboardModule('js/terminals-tab.js');
@@ -336,7 +315,6 @@ test('a disconnected active pane gets a terminal-area notice while keeping Recon
     'reconnecting removes the terminal-area notice');
   cleanup();
   assert.equal(badgeHost.childElementCount, 0);
-  assert.equal(modalHost.childElementCount, 0);
 });
 
 test('background pane open and focus leave the current dashboard tab visible', async (t) => {
@@ -558,33 +536,6 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
   cleanup();
 });
 
-test('throwaway modal omits Detach, ignores Escape, and confirms backdrop close', async (t) => {
-  const harness = await createPreactHarness(t);
-  const { modalHost } = installHosts(harness);
-  const fake = fakeWidgetFactory(harness);
-  const confirmations = [];
-  const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
-  const { openTermModal } = await harness.importDashboardModule('js/terminals-tab.js');
-  const cleanup = await mountTerminalsFeature({
-    widgetFactory: fake.factory,
-    confirm: async (options) => { confirmations.push(options); return true; },
-    fetchImpl: async () => { throw new Error('throwaway close must not detach'); },
-  });
-  await harness.act(() => openTermModal({ wsPath: '/scratch', label: 'scratch' }));
-  assertAbsent(modalHost.querySelector('#term-session-detach'));
-  const overlay = modalHost.querySelector('#term-session-modal');
-  const escape = harness.fireEvent(overlay, 'keydown', { key: 'Escape' });
-  assert.equal(escape.defaultPrevented, false, 'Escape remains terminal input, not a shell close key');
-  assert.ok(modalHost.querySelector('#term-session-modal'));
-  await harness.act(async () => {
-    harness.fireEvent(overlay, 'click');
-    await Promise.resolve();
-    await Promise.resolve();
-  });
-  assert.equal(confirmations[0].okLabel, 'Close terminal');
-  assert.equal(modalHost.childElementCount, 0);
-  cleanup();
-});
 
 test('terminal button and shortcut route through the mounted Preact operator composer', async (t) => {
   const harness = await createPreactHarness(t);
@@ -769,4 +720,75 @@ test('dragging a terminal tab clear of the strip detaches it into its own window
   assert.deepEqual(labels(), ['one', 'three'], 'a cancelled drag reports no end point and detaches nothing');
   assert.equal(opened.length, 1);
   cleanup();
+});
+
+test('a local agent pane header names the peer watching its terminal, also when opened by conversation ID', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host } = installHosts(harness);
+  const fake = fakeWidgetFactory(harness);
+  const rv = await harness.importDashboardModule('js/remote-viewers.js');
+  const { dashboardState } = await harness.importDashboardModule('js/snapshot-store.js');
+  const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
+  const controller = await harness.importDashboardModule('js/terminals-tab.js');
+  const cleanup = await mountTerminalsFeature({ widgetFactory: fake.factory });
+  t.after(() => { rv.resetViewersForTest(); dashboardState.snapshot.value = null; });
+  await harness.act(async () => {
+    rv.remoteViewers.value = [{ id: 'v1', peer: 'inst_forge', agent: 'agt_one', session: 'one', read_only: true, incoming: true }];
+    // A palette jump keys the pane by conversation ID; the snapshot maps it.
+    dashboardState.snapshot.value = { agents: [{ conv_id: 'c-one', agent_id: 'agt_one' }] };
+    controller.openTerminalPane({ ws: '/one', key: 'one', label: 'one', agent: 'c-one' });
+    await Promise.resolve();
+  });
+  const badge = host.querySelector('.mux-pane.active .remote-viewers-badge.term-viewers-badge');
+  assert.ok(badge, 'the pane header shows the viewer');
+  assert.equal(badge.textContent, '👁 inst_forge', 'an unlabelled peer shows its instance ID');
+  await harness.act(() => { rv.remoteViewers.value = []; });
+  assertAbsent(host.querySelector('.remote-viewers-badge'), 'the badge goes when the viewer leaves');
+  cleanup();
+});
+
+test('a fused node scope labels panes by node and keeps unticked nodes\' panes out of sight', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host } = installHosts(harness);
+  const fake = fakeWidgetFactory(harness);
+  const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
+  const controller = await harness.importDashboardModule('js/terminals-tab.js');
+  const { skynetState } = await harness.importDashboardModule('js/skynet-state.js');
+  skynetState.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [
+    { instance_id: 'inst_forge', label: 'forge', trusted: true, online: true },
+    { instance_id: 'inst_lab', label: 'lab', trusted: true, online: true },
+  ] });
+  const cleanup = await mountTerminalsFeature({ widgetFactory: fake.factory });
+  await harness.act(async () => {
+    controller.openTerminalPane({ ws: '/local', key: 'local', label: 'builder-1' });
+    controller.openTerminalPane({ ws: '/forge', key: 'forge', label: 'reviewer-2 @ forge', remote: { peer: 'inst_forge', peerLabel: 'forge', agent: 'agt_r2' } });
+    controller.openTerminalPane({ ws: '/lab', key: 'lab', label: 'qa-1 @ lab', remote: { peer: 'inst_lab', peerLabel: 'lab', agent: 'agt_q1' } });
+    await Promise.resolve();
+  });
+  const tabs = () => [...host.querySelectorAll('.mux-tab')];
+  assert.equal(host.querySelectorAll('.mux-node-pill').length, 0, 'one node shown: no node labels');
+  await harness.act(() => { skynetState.setFused(['inst_self', 'inst_forge']); });
+  const shown = tabs().filter((tab) => !tab.classList.contains('scope-hidden'));
+  assert.deepEqual(shown.map((tab) => tab.querySelector('.mux-node-pill').textContent), ['⌂ desk', 'forge']);
+  assert.ok(tabs().find((tab) => tab.textContent.includes('qa-1')).classList.contains('scope-hidden'), 'lab is not ticked');
+  assert.ok(host.querySelector('.mux-pane.active:not(.scope-hidden)'), 'the active pane is on a ticked node');
+  assert.match(host.querySelector('.mux-pane.active .mux-pane-header').textContent, /forge|desk/);
+  // Keyboard reorder steps over hidden tabs: desk's tab passes lab (hidden)
+  // and forge in one press.
+  const deskTab = tabs().find((tab) => tab.textContent.includes('builder-1'));
+  await harness.act(() => harness.fireEvent(deskTab, 'keydown', { key: 'ArrowRight', altKey: true, shiftKey: true }));
+  assert.deepEqual(tabs().filter((tab) => !tab.classList.contains('scope-hidden')).map((tab) => tab.querySelector('.mux-tab-label').textContent),
+    ['reviewer-2 @ forge', 'builder-1']);
+  // Unticking the active pane's node hands over quietly: the dashboard stays
+  // on the tab the operator is on.
+  harness.document.querySelector('nav [data-tab="groups"]').click();
+  const activeLabel = host.querySelector('.mux-pane.active .mux-pane-title').textContent;
+  await harness.act(() => { skynetState.setFused(activeLabel.includes('forge') ? ['inst_self', 'inst_lab'] : ['inst_lab', 'inst_forge']); });
+  assert.equal(host.querySelector('.mux-pane.active').classList.contains('scope-hidden'), false,
+    'an active pane leaving the scope hands over to one in it');
+  assert.equal(harness.document.getElementById('tab-terminals').classList.contains('active'), false, 'without switching to Terminals');
+  await harness.act(() => { skynetState.setFused(null); });
+  assert.equal(host.querySelectorAll('.scope-hidden').length, 0);
+  cleanup();
+  skynetState.clearFleet();
 });

@@ -10,21 +10,33 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
 
 	"github.com/tofutools/tclaude/pkg/federation/proto"
+	"github.com/tofutools/tclaude/pkg/noderun"
+	"github.com/tofutools/tclaude/pkg/selfupdate"
 )
 
 // Config tunes a Hub. Zero values pick defaults.
 type Config struct {
+	AcceptRemoteScripts *bool
+
+	UpdateBackend UpdateBackend
+	OnListen      func(string) error
 	// Open admits any instance that proves key possession into
 	// DefaultSpace. Development only.
-	Open bool
+	Open           bool
+	MaxConnections int
+	ConnectionIdle time.Duration
+	// FlagSettings identifies explicit serve flags for precedence reporting.
+	FlagSettings []string
 	// FramesPerMinute and BytesPerMinute bound what one instance may send.
 	FramesPerMinute int
 	BytesPerMinute  int
@@ -50,14 +62,20 @@ type Config struct {
 }
 
 func (c *Config) defaults() {
+	if c.MaxConnections <= 0 {
+		c.MaxConnections = 1024
+	}
+	if c.ConnectionIdle <= 0 {
+		c.ConnectionIdle = 90 * time.Second
+	}
 	if c.IdentityRotationWindow <= 0 {
 		c.IdentityRotationWindow = 10 * time.Minute
 	}
 	if c.FramesPerMinute <= 0 {
-		c.FramesPerMinute = 120
+		c.FramesPerMinute = 600
 	}
 	if c.BytesPerMinute <= 0 {
-		c.BytesPerMinute = 8 << 20
+		c.BytesPerMinute = 100 << 20
 	}
 	if c.PolicyRefresh <= 0 {
 		c.PolicyRefresh = 15 * time.Second
@@ -69,7 +87,7 @@ func (c *Config) defaults() {
 		c.MaxStreams = 16
 	}
 	if c.StreamBytesPerSecond <= 0 {
-		c.StreamBytesPerSecond = 1 << 20
+		c.StreamBytesPerSecond = 10 << 20
 	}
 	if c.StreamWait <= 0 {
 		c.StreamWait = 30 * time.Second
@@ -84,10 +102,18 @@ func (c *Config) defaults() {
 
 // Hub routes envelopes between connected instances.
 type Hub struct {
-	cfg   Config
-	store *Store
-	hubID string
-	log   *slog.Logger
+	runs *noderun.Service
+
+	updates    *selfupdate.Service
+	cfg        Config
+	effective  atomic.Pointer[Config]
+	adminMu    sync.Mutex
+	settingsMu sync.Mutex
+	started    time.Time
+	logs       *adminLogRing
+	store      *Store
+	hubID      string
+	log        *slog.Logger
 
 	upgrader websocket.Upgrader
 
@@ -108,6 +134,11 @@ type Hub struct {
 // New creates a hub over store and starts its policy refresher.
 func New(store *Store, cfg Config) (*Hub, error) {
 	cfg.defaults()
+	if err := store.SweepBoardBlobs(); err != nil {
+		return nil, err
+	}
+	logs := &adminLogRing{}
+	cfg.Logger = slog.New(&adminLogHandler{next: cfg.Logger.Handler(), ring: logs})
 	hubID, err := store.HubID()
 	if err != nil {
 		return nil, err
@@ -117,10 +148,31 @@ func New(store *Store, cfg Config) (*Hub, error) {
 		return nil, err
 	}
 	h := &Hub{
-		cfg: cfg, store: store, hubID: hubID, log: cfg.Logger.With("component", "hub"),
+		cfg: cfg, store: store, hubID: hubID, log: cfg.Logger.With("component", "hub"), started: time.Now(), logs: logs,
 		upgrader: websocket.Upgrader{ReadBufferSize: 16 << 10, WriteBufferSize: 16 << 10},
 		conns:    map[string]*conn{}, policy: snap, stop: make(chan struct{}),
 		limiters: map[string]*bucketPair{},
+	}
+	if _, err = store.AdminGeneration(); err != nil {
+		return nil, err
+	}
+	if err = h.refreshSettings(); err != nil {
+		return nil, err
+	}
+	settings, err := h.Settings()
+	if err != nil {
+		return nil, err
+	}
+	for field, spec := range settings {
+		if spec.Source == "db" {
+			h.log.Warn("serve value overridden by persisted remote setting", "field", field, "serve_value", spec.Boot, "db_value", spec.Effective)
+		}
+	}
+	if err = h.initExec(); err != nil {
+		return nil, err
+	}
+	if err = h.initUpdate(); err != nil {
+		return nil, err
 	}
 	h.wg.Add(1)
 	go h.refreshLoop()
@@ -134,10 +186,12 @@ func (h *Hub) ID() string { return h.hubID }
 func (h *Hub) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc(proto.WSPath, h.serveWS)
+	mux.HandleFunc(proto.BoardWSPath, h.serveBoardWS)
+	mux.HandleFunc(proto.BoardStreamPath, h.serveBoardWS)
 	mux.HandleFunc(proto.StreamPath, h.serveStream)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "hub_id": h.hubID, "online": h.OnlineCount()})
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "hub_id": h.hubID, "version": h.cfg.Version, "online": h.OnlineCount()})
 	})
 	return mux
 }
@@ -146,7 +200,13 @@ func (h *Hub) Handler() http.Handler {
 func (h *Hub) OnlineCount() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return len(h.conns)
+	count := 0
+	for _, c := range h.conns {
+		if !c.boardOnly {
+			count++
+		}
+	}
+	return count
 }
 
 // Close drops every connection and stops background work.
@@ -164,6 +224,9 @@ func (h *Hub) Close() {
 	streams := h.streamsToDropLocked(func(string) bool { return false })
 	h.mu.Unlock()
 	close(h.stop)
+	if h.runs != nil {
+		h.runs.Close()
+	}
 	for _, c := range conns {
 		c.fail(proto.CodeShuttingDown, "hub shutting down")
 	}
@@ -177,6 +240,9 @@ func (h *Hub) Close() {
 // connections and re-sending directories. The refresher calls it
 // periodically; tests and admin paths may call it directly.
 func (h *Hub) RefreshPolicy() {
+	if err := h.refreshSettings(); err != nil {
+		h.log.Warn("settings refresh failed", "error", err)
+	}
 	snap, err := h.store.snapshot()
 	if err != nil {
 		h.log.Warn("policy refresh failed", "error", err)
@@ -186,7 +252,7 @@ func (h *Hub) RefreshPolicy() {
 	h.policy = snap
 	var drop []*conn
 	for id, c := range h.conns {
-		if !snap.admitted[id] {
+		if !c.boardOnly && !snap.admitted[id] {
 			drop = append(drop, c)
 		}
 	}
@@ -214,11 +280,11 @@ func (h *Hub) RefreshPolicy() {
 
 func (h *Hub) refreshLoop() {
 	defer h.wg.Done()
-	t := time.NewTicker(h.cfg.PolicyRefresh)
-	defer t.Stop()
 	for {
+		t := time.NewTimer(h.config().PolicyRefresh)
 		select {
 		case <-h.stop:
+			t.Stop()
 			return
 		case <-t.C:
 			h.RefreshPolicy()
@@ -227,16 +293,19 @@ func (h *Hub) refreshLoop() {
 }
 
 type conn struct {
-	hub     *Hub
-	ws      *websocket.Conn
-	id      string
-	name    string
-	version string
-	pub     []byte
-	out     chan *proto.Frame
-	done    chan struct{}
-	once    sync.Once
-	limiter *bucketPair
+	boardOnly   bool
+	boardStream bool
+	hub         *Hub
+	ws          *websocket.Conn
+	id          string
+	name        string
+	version     string
+	pub         []byte
+	nonce       string
+	out         chan *proto.Frame
+	done        chan struct{}
+	once        sync.Once
+	limiter     *bucketPair
 	// wmu serialises writes: gorilla/websocket allows one concurrent
 	// writer, and fail may run alongside writeLoop.
 	wmu sync.Mutex
@@ -269,7 +338,7 @@ func (c *conn) send(f *proto.Frame) bool {
 
 func (c *conn) fail(code, msg string) {
 	c.once.Do(func() {
-		if code != "" {
+		if code != "" && !c.boardStream {
 			_ = c.write(&proto.Frame{Type: proto.FrameError, Code: code, Message: msg}, 2*time.Second)
 		}
 		close(c.done)
@@ -278,7 +347,7 @@ func (c *conn) fail(code, msg string) {
 }
 
 func (c *conn) writeLoop() {
-	ping := time.NewTicker(30 * time.Second)
+	ping := time.NewTicker(10 * time.Second)
 	defer ping.Stop()
 	for {
 		select {
@@ -327,7 +396,7 @@ func (r *refusal) Error() string { return r.code + ": " + r.msg }
 
 func (h *Hub) handshake(ws *websocket.Conn) (*conn, error) {
 	nonce := randHex(16)
-	deadline := time.Now().Add(h.cfg.HelloTimeout)
+	deadline := time.Now().Add(h.config().HelloTimeout)
 	_ = ws.SetWriteDeadline(deadline)
 	if err := ws.WriteJSON(&proto.Frame{Type: proto.FrameChallenge, HubID: h.hubID, Nonce: nonce, Proto: proto.ProtocolVersion}); err != nil {
 		_ = ws.Close()
@@ -353,10 +422,13 @@ func (h *Hub) handshake(ws *websocket.Conn) (*conn, error) {
 	if !proto.VerifyHello(&hello, h.hubID, nonce) {
 		return refuse(proto.CodeBadAuth, "hello signature does not verify")
 	}
+	if hello.BoardToken != "" {
+		return refuse(proto.CodeBoardOnly, "board invitations are accepted only on the board endpoint")
+	}
 	id := hello.InstanceID
 	now := time.Now()
 	if len(hello.RotationChain) > 0 {
-		if err := h.store.ObserveRotations(hello.RotationChain, id, now, h.cfg.IdentityRotationWindow); err != nil {
+		if err := h.store.ObserveRotations(hello.RotationChain, id, now, h.config().IdentityRotationWindow); err != nil {
 			return refuse(proto.CodeNotAdmitted, err.Error())
 		}
 		h.RefreshPolicy()
@@ -394,7 +466,7 @@ func (h *Hub) handshake(ws *websocket.Conn) (*conn, error) {
 			if err := h.store.RedeemInvite(hello.Invite, id, now); err != nil {
 				return refuse(proto.CodeNotAdmitted, err.Error())
 			}
-		case h.cfg.Open:
+		case h.cfg.Open && !h.store.hasBoardMembership(id):
 			if err := h.store.Admit(id); err != nil {
 				return refuse(proto.CodeNotAdmitted, err.Error())
 			}
@@ -417,24 +489,28 @@ func (h *Hub) handshake(ws *websocket.Conn) (*conn, error) {
 	h.mu.Lock()
 	spaces := h.policy.spaces[id]
 	h.mu.Unlock()
+	generation, err := h.store.AdminGeneration()
+	if err != nil {
+		return refuse(proto.CodeNotAdmitted, "admin state unavailable")
+	}
 	_ = ws.SetReadDeadline(time.Time{})
 	_ = ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	if err := ws.WriteJSON(&proto.Frame{Type: proto.FrameWelcome, IdentityRotationVersion: 1, HubID: h.hubID, InstanceID: id, Spaces: spaces, Version: h.cfg.Version}); err != nil {
+	if err := ws.WriteJSON(&proto.Frame{Type: proto.FrameWelcome, AdminGeneration: generation, HubAdminVersion: 1, IdentityRotationVersion: 1, HubID: h.hubID, InstanceID: id, Spaces: spaces, Version: h.cfg.Version}); err != nil {
 		_ = ws.Close()
 		return nil, err
 	}
 	_ = ws.SetWriteDeadline(time.Time{})
-	ws.SetPongHandler(func(string) error { _ = ws.SetReadDeadline(time.Now().Add(90 * time.Second)); return nil })
-	_ = ws.SetReadDeadline(time.Now().Add(90 * time.Second))
+	ws.SetPongHandler(func(string) error { _ = ws.SetReadDeadline(time.Now().Add(h.config().ConnectionIdle)); return nil })
+	_ = ws.SetReadDeadline(time.Now().Add(h.config().ConnectionIdle))
 	h.mu.Lock()
 	lim := h.limiters[id]
 	if lim == nil {
-		lim = newBucketPair(h.cfg.FramesPerMinute, h.cfg.BytesPerMinute)
+		lim = newBucketPair(h.config().FramesPerMinute, h.config().BytesPerMinute)
 		h.limiters[id] = lim
 	}
 	h.mu.Unlock()
 	return &conn{
-		hub: h, ws: ws, id: id, name: name, version: hello.Version, pub: hello.PubKey,
+		hub: h, ws: ws, id: id, name: name, version: hello.Version, pub: hello.PubKey, nonce: nonce,
 		out: make(chan *proto.Frame, 256), done: make(chan struct{}),
 		limiter: lim,
 	}, nil
@@ -442,21 +518,37 @@ func (h *Hub) handshake(ws *websocket.Conn) (*conn, error) {
 
 func (h *Hub) register(c *conn) bool {
 	h.mu.Lock()
-	if h.closed {
+	if h.closed || (h.conns[c.registryKey()] == nil && len(h.conns) >= h.config().MaxConnections) {
 		h.mu.Unlock()
 		return false
+	}
+	if c.boardStream {
+		streams := 0
+		for _, live := range h.conns {
+			if live.id == c.id && live.boardStream {
+				streams++
+			}
+		}
+		if streams >= h.config().MaxStreams {
+			h.mu.Unlock()
+			return false
+		}
 	}
 	// Publish the connection and count its writer under the same lock Close
 	// uses to stop admission and snapshot connections. A completed handshake
 	// must not leave an untracked connection alive after that snapshot.
 	h.wg.Add(1)
-	old := h.conns[c.id]
-	h.conns[c.id] = c
+	old := h.conns[c.registryKey()]
+	h.conns[c.registryKey()] = c
 	h.mu.Unlock()
 	if old != nil {
 		old.fail(proto.CodeReplaced, "replaced by a newer connection from the same instance")
 	}
-	h.log.Info("instance connected", "instance", c.id, "name", c.name)
+	if c.boardOnly {
+		h.log.Debug("board connection opened", "instance", c.id, "name", c.name)
+	} else {
+		h.log.Info("instance connected", "instance", c.id, "name", c.name)
+	}
 	h.broadcastDirectories()
 	return true
 }
@@ -464,13 +556,19 @@ func (h *Hub) register(c *conn) bool {
 func (h *Hub) unregister(c *conn) {
 	c.fail("", "")
 	h.mu.Lock()
-	if h.conns[c.id] == c {
-		delete(h.conns, c.id)
+	if h.conns[c.registryKey()] == c {
+		delete(h.conns, c.registryKey())
 	}
 	closed := h.closed
 	h.mu.Unlock()
-	_ = h.store.RecordSeen(c.id, c.pub, c.name, c.version, time.Now())
-	h.log.Info("instance disconnected", "instance", c.id)
+	if !c.boardOnly {
+		_ = h.store.RecordSeen(c.id, c.pub, c.name, c.version, time.Now())
+	}
+	if c.boardOnly {
+		h.log.Debug("board connection closed", "instance", c.id, "name", c.name)
+	} else {
+		h.log.Info("instance disconnected", "instance", c.id)
+	}
 	if !closed {
 		h.broadcastDirectories()
 	}
@@ -483,14 +581,22 @@ func (h *Hub) readLoop(c *conn) {
 		if err != nil {
 			return
 		}
-		_ = c.ws.SetReadDeadline(time.Now().Add(90 * time.Second))
+		_ = c.ws.SetReadDeadline(time.Now().Add(h.config().ConnectionIdle))
 		if err := json.Unmarshal(raw, &f); err != nil {
 			c.fail(proto.CodeBadFrame, "malformed frame")
 			return
 		}
+		if c.boardOnly && !boardFrameAllowed(f.Type) {
+			c.send(&proto.Frame{Type: proto.FrameError, Code: proto.CodeBoardOnly, Message: "board membership permits board RPCs only"})
+			continue
+		}
 		switch f.Type {
+		case proto.FrameBoardRequest:
+			h.boardRequest(c, &f, len(raw))
 		case proto.FrameSend:
 			h.route(c, &f, len(raw))
+		case proto.FrameAdminRequest:
+			h.adminRequest(c, &f, len(raw))
 		default:
 			c.send(&proto.Frame{Type: proto.FrameError, Code: proto.CodeBadFrame, Message: "unexpected frame " + f.Type})
 		}
@@ -498,6 +604,10 @@ func (h *Hub) readLoop(c *conn) {
 }
 
 func (h *Hub) route(c *conn, f *proto.Frame, size int) {
+	if c.boardOnly {
+		c.send(&proto.Frame{Type: proto.FrameError, Code: proto.CodeBoardOnly, Message: "board connection cannot relay"})
+		return
+	}
 	result := func(status, code, msg string) {
 		c.send(&proto.Frame{Type: proto.FrameSendResult, Ref: f.Ref, To: f.To, Status: status, Code: code, Message: msg})
 	}
@@ -537,10 +647,15 @@ func (h *Hub) broadcastDirectories() {
 	h.mu.Lock()
 	conns := make([]*conn, 0, len(h.conns))
 	for _, c := range h.conns {
-		conns = append(conns, c)
+		if !c.boardOnly {
+			conns = append(conns, c)
+		}
 	}
 	online := map[string]bool{}
-	for id := range h.conns {
+	for id, c := range h.conns {
+		if c.boardOnly {
+			continue
+		}
 		online[id] = true
 	}
 	policy := h.policy
@@ -576,12 +691,24 @@ func truncate(s string, n int) string {
 // ListenAndServe serves h on srv until ctx is done.
 func ListenAndServe(ctx context.Context, srv *http.Server, h *Hub, certFile, keyFile string) error {
 	srv.Handler = h.Handler()
+	listener, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		h.Close()
+		return err
+	}
+	defer listener.Close()
+	if h.cfg.OnListen != nil {
+		if err := h.cfg.OnListen(listener.Addr().String()); err != nil {
+			h.Close()
+			return err
+		}
+	}
 	errc := make(chan error, 1)
 	go func() {
 		if certFile != "" {
-			errc <- srv.ListenAndServeTLS(certFile, keyFile)
+			errc <- srv.ServeTLS(listener, certFile, keyFile)
 		} else {
-			errc <- srv.ListenAndServe()
+			errc <- srv.Serve(listener)
 		}
 	}()
 	select {

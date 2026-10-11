@@ -37,6 +37,7 @@ const (
 // Status is a snapshot of the connection.
 type Status struct {
 	IdentityRotationVersion int
+	HubAdminVersion         int
 	State                   State
 	HubID                   string
 	Spaces                  []string
@@ -96,13 +97,15 @@ type Client struct {
 	u    *url.URL
 	log  *slog.Logger
 
-	mu        sync.Mutex
-	ws        *websocket.Conn
-	wmu       sync.Mutex
-	status    Status
-	directory []proto.DirectoryEntry
-	pending   map[string]chan *proto.Frame
-	refSeq    uint64
+	mu              sync.Mutex
+	ws              *websocket.Conn
+	wmu             sync.Mutex
+	status          Status
+	directory       []proto.DirectoryEntry
+	pending         map[string]chan *proto.Frame
+	refSeq          uint64
+	adminNonce      string
+	adminGeneration string
 }
 
 // New validates opts and returns an idle client; call Run.
@@ -251,8 +254,13 @@ func (c *Client) runOnce(ctx context.Context) error {
 
 	c.mu.Lock()
 	c.ws = ws
+	c.adminNonce = ch.Nonce
+	c.adminGeneration = welcome.AdminGeneration
 	c.mu.Unlock()
 	c.setState(StateConnected, welcome.HubID, welcome.Spaces, "", welcome.IdentityRotationVersion)
+	c.mu.Lock()
+	c.status.HubAdminVersion = welcome.HubAdminVersion
+	c.mu.Unlock()
 	c.log.Info("connected to hub", "hub", welcome.HubID, "spaces", welcome.Spaces)
 
 	stop := context.AfterFunc(ctx, func() { _ = ws.Close() })
@@ -291,6 +299,20 @@ func (c *Client) readLoop(ws *websocket.Conn) error {
 		case proto.FrameDeliver:
 			if f.Sealed != nil && c.opts.OnDeliver != nil {
 				c.opts.OnDeliver(f.From, f.Sealed)
+			}
+		case proto.FrameAdminResult:
+			if f.AdminResult != nil && proto.ValidStreamID(f.AdminResult.ID) {
+				c.mu.Lock()
+				chn := c.pending[f.AdminResult.ID]
+				delete(c.pending, f.AdminResult.ID)
+				if c.ws == ws {
+					c.adminGeneration = f.AdminResult.Generation
+				}
+				c.mu.Unlock()
+				if chn != nil {
+					fc := f
+					chn <- &fc
+				}
 			}
 		case proto.FrameSendResult:
 			c.mu.Lock()

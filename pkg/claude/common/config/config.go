@@ -841,8 +841,23 @@ type FederationHealthConfig struct {
 	Peers map[string]FederationHealthPolicy `json:"peers,omitempty"`
 }
 
+type NodeScriptsConfig struct {
+	AcceptRemoteScripts bool     `json:"accept_remote_scripts"`
+	Memory              string   `json:"memory,omitempty"`
+	CPU                 *float64 `json:"cpu,omitempty"`
+	PIDs                *uint64  `json:"pids,omitempty"`
+}
+
 type FederationConfig struct {
-	Health *FederationHealthConfig `json:"health,omitempty"`
+	// BoardUpdateNotify leaves a Messages note when a kept content-board item
+	// gets a newer version. Off by default; the dashboard badge works regardless.
+	BoardUpdateNotify bool `json:"board_update_notify,omitempty"`
+	// AgentTransferMaxBytes caps agent archives and uncompressed history; zero defaults to 2 GiB.
+	AgentTransferMaxBytes int64 `json:"agent_transfer_max_bytes,omitempty"`
+	// AgentHistoryRecordMaxBytes is the JSONL record memory bound; zero defaults to256 MiB.
+	AgentHistoryRecordMaxBytes int                     `json:"agent_history_record_max_bytes,omitempty"`
+	Scripts                    *NodeScriptsConfig      `json:"scripts,omitempty"`
+	Health                     *FederationHealthConfig `json:"health,omitempty"`
 
 	// IdentityRotationSeconds is the local successor detection window; default 600.
 	IdentityRotationSeconds int                       `json:"identity_rotation_seconds,omitempty"`
@@ -1981,6 +1996,9 @@ type AgentConfig struct {
 	SpawnAllowedGroups    []string `json:"spawn_allowed_groups,omitempty"`
 	SpawnMaxPerHour       *int     `json:"spawn_max_per_hour,omitempty"`
 
+	// Morph tunes cross-harness morph history translation.
+	Morph *MorphConfig `json:"morph,omitempty"`
+
 	// RetiredCleanup is the opt-in long-horizon auto-cleanup that fully
 	// DELETES agents/conversations that have been retired for a very long
 	// time (JOH-269). Absent / disabled (the default) keeps today's
@@ -2157,6 +2175,17 @@ type AgentConfig struct {
 	// through proxy.http grants (optionally scoped by http_proxy name).
 	HTTPProxies        map[string]HTTPProxyConfig `json:"http_proxies,omitempty"`
 	ModelProxyDisabled bool                       `json:"model_proxy_disabled,omitempty"`
+}
+
+// MorphConfig tunes how a cross-harness morph carries history.
+type MorphConfig struct {
+	// HistoryBudgetPercent is the share of the target model's context window
+	// the translated history may fill (default 60); the oldest turns beyond
+	// it are left to the transcript file.
+	HistoryBudgetPercent int `json:"history_budget_percent,omitempty"`
+	// ToolResultClipBytes bounds each carried tool call input and result
+	// (default 16384); the full text stays in the transcript file.
+	ToolResultClipBytes int `json:"tool_result_clip_bytes,omitempty"`
 }
 
 // AWBProxyConfig is the operator's policy for the daemon-mediated AWB proxy —

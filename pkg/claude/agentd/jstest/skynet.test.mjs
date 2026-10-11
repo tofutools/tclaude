@@ -1,0 +1,275 @@
+import test from 'node:test'; import assert from 'node:assert/strict';
+import { createPreactHarness, getByRole } from './preact-harness.mjs';
+
+const status = (peers) => ({
+  enabled: true, instance_id: 'inst_self', name: 'desk', hub_url: 'wss://hub', hub: { state: 'connected' },
+  peers: [
+    { instance_id: 'inst_forge', label: 'forge', trusted: true, online: true, level: 'restricted' },
+    { instance_id: 'inst_lab', label: 'lab', trusted: true, online: false, level: 'unrestricted', last_seen: '2026-10-09T20:37:00Z' },
+    { instance_id: 'inst_stranger', name: 'carol', trusted: false, online: true },
+    ...peers,
+  ],
+});
+
+async function load(t) {
+  const harness = await createPreactHarness(t);
+  const [model, stateMod, actionsMod, island] = await Promise.all([
+    harness.importDashboardModule('js/skynet-model.js'), harness.importDashboardModule('js/skynet-state.js'),
+    harness.importDashboardModule('js/skynet-actions.js'), harness.importDashboardModule('js/skynet-island.js'),
+  ]);
+  return { harness, model, stateMod, actionsMod, island };
+}
+
+function fakeTimers() {
+  const queue = []; let seq = 0;
+  return {
+    queue,
+    setTimeout(fn, ms) { const id = ++seq; queue.push({ id, fn, ms }); return id; },
+    clearTimeout(id) { const i = queue.findIndex((q) => q.id === id); if (i >= 0) queue.splice(i, 1); },
+  };
+}
+
+test('fleet model keeps trusted peers only, hides the row without peers, and never uses purple', async (t) => {
+  const { model } = await load(t);
+  const fleet = model.normalizeFleet(status([]));
+  assert.deepEqual(fleet.peers.map((p) => p.name), ['forge', 'lab']);
+  assert.equal(fleet.self.name, 'desk');
+  assert.equal(fleet.peers[1].level, 'unrestricted');
+  assert.equal(model.normalizeFleet({ instance_id: 'inst_self', peers: [] }), null, 'no trusted peers: no chip row');
+  assert.equal(model.normalizeFleet(null), null);
+  assert.equal(model.nodeColor('inst_forge'), model.nodeColor('inst_forge'), 'colour is stable');
+  for (const c of model.PEER_COLORS) assert.doesNotMatch(c, /#(bc8cff|a371f7|8957e5|d2a8ff)/i);
+  assert.equal(model.summaryURL({ id: 'inst_a/b', local: false }), '/api/peer/inst_a%2Fb/node-summary');
+  assert.equal(model.summaryURL({ id: 'inst_self', local: true }), '/api/node-summary');
+});
+
+test('polling contract: staggered starts, relaxed jittered interval, capped backoff', async (t) => {
+  const { model } = await load(t);
+  assert.deepEqual([0, 1, 2, 3].map((i) => model.staggerOffset(i, 4, 10000)), [0, 2500, 5000, 7500]);
+  assert.equal(model.pollDelay({ random: () => 0.5 }), 10000);
+  assert.equal(model.pollDelay({ random: () => 0 }), 8000);
+  assert.equal(model.pollDelay({ random: () => 1 }), 12000);
+  assert.equal(model.pollDelay({ failures: 2, random: () => 0.5 }), 40000);
+  assert.equal(model.pollDelay({ failures: 9, random: () => 0.5 }), model.MAX_BACKOFF_MS);
+});
+
+test('card view distinguishes stale data, unreachable peers and absent summaries', async (t) => {
+  const { model } = await load(t);
+  const peer = { id: 'p', local: false, online: true };
+  const ok = model.cardView(peer, { summary: { shared_groups: 2, shared_agents: 4, online_agents: 3, waiting_for_input: 1, peer_view: { omitted: [{ feature: 'costs' }] } }, receivedAt: 1000 }, 2000);
+  assert.equal(ok.presence, 'online'); assert.equal(ok.waiting, 1); assert.deepEqual(ok.omitted, ['costs']); assert.equal(ok.stale, false);
+  // Transport features (terminals, file links, inline spawn, the dashboard
+  // shell) work on their own channels: never listed as "not shared".
+  const unrestricted = model.cardView(peer, { summary: { peer_view: { omitted: [{ feature: 'local_dashboard', requires: 'local_only' }, { feature: 'sessions.files.read', requires: 'sessions.files.read', transport: true }, { feature: 'spawn.inline' }, 'terminals', { feature: 'custom.thing', transport: true }] } }, receivedAt: 1000 }, 2000);
+  assert.deepEqual(unrestricted.omitted, []);
+  // A requestable or non-transport entry always shows, whatever its name.
+  const restricted = model.cardView(peer, { summary: { peer_view: { omitted: [{ feature: 'node.exec', requires: 'node.exec', requestable: true, transport: false }, { feature: 'terminals', requestable: true }, { feature: 'spawn.inline', transport: false }] } }, receivedAt: 1000 }, 2000);
+  assert.deepEqual(restricted.omitted, ['node.exec', 'terminals', 'spawn.inline']);
+  const stale = model.cardView(peer, { summary: { shared_agents: 4 }, receivedAt: 0, failure: model.classifyFailure(502, { code: 'peer_unreachable', reason: 'peer_offline', last_seen: 'x' }) }, 840000);
+  assert.equal(stale.presence, 'offline'); assert.equal(stale.stale, true); assert.equal(model.fmtAge(stale.ageMs), '14 min'); assert.equal(stale.lastSeen, 'x');
+  assert.equal(model.classifyFailure(504, { code: 'peer_unreachable', reason: 'peer_timeout' }).kind, 'timeout');
+  assert.equal(model.classifyFailure(404, null).kind, 'unavailable');
+  assert.equal(model.classifyFailure(403, { code: 'not_trusted' }).kind, 'not_trusted');
+  assert.deepEqual(model.resourceView({ cpu: { logical_cores: 4, load_average: [2, 1, 1] }, ram: { total_bytes: 100, available_bytes: 25 } }), { cpu: 50, mem: 75 });
+});
+
+test('actions send If-None-Match and keep the body on 304; a missing status route hides the row', async (t) => {
+  const { harness, stateMod, actionsMod } = await load(t);
+  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('groups'), now: () => 5 });
+  const calls = [];
+  let reply = { status: 200, body: { shared_agents: 2 }, etag: '"a"' };
+  const fetchImpl = async (url, init) => { calls.push({ url, init }); return { ok: reply.status < 400, status: reply.status, headers: { get: () => reply.etag }, json: async () => reply.body }; };
+  const actions = actionsMod.createSkynetActions({ state, fetchImpl });
+  const node = { id: 'inst_forge', local: false };
+  await actions.loadSummary(node);
+  reply = { status: 304, body: null, etag: '' };
+  await actions.loadSummary(node);
+  assert.equal(calls[1].init.headers['If-None-Match'], '"a"');
+  assert.equal(state.entry('inst_forge').summary.shared_agents, 2);
+  reply = { status: 404, body: null };
+  await actions.loadStatus();
+  assert.equal(state.fleet.value, null);
+  reply = { status: 200, body: status([]) };
+  await actions.loadStatus();
+  assert.equal(state.fleet.value.peers.length, 2);
+});
+
+test('chip row renders only with trusted peers; peer chips switch the whole UI to that node', async (t) => {
+  const { harness, stateMod, island } = await load(t);
+  const activeTab = harness.signals.signal('access');
+  const state = stateMod.createSkynetState({ activeTab });
+  const nav = []; const switched = [];
+  const mounted = await harness.mount(harness.html`<${island.NodeChips} state=${state} navigate=${(tab) => nav.push(tab)} remote="" switchNode=${(id) => switched.push(id)} />`);
+  assert.equal(mounted.container.textContent, '', 'no fleet: nothing rendered');
+  await harness.act(() => { state.setStatus(status([])); });
+  const local = getByRole(mounted.container, 'button', { name: 'desk (this node)' });
+  assert.equal(local.getAttribute('aria-current'), 'page');
+  await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: 'forge, online, restricted peer' }), 'click'));
+  assert.deepEqual(switched, ['inst_forge']);
+  await harness.act(() => { activeTab.value = 'map'; });
+  assert.equal(local.getAttribute('aria-current'), null);
+  await harness.act(() => harness.fireEvent(local, 'click'));
+  assert.deepEqual(nav, ['access'], 'the ⌂ chip returns to the tab left for the map');
+  await mounted.unmount(); state.dispose();
+});
+
+test('on a peer view the peer chip is current and ⌂ switches back to this node', async (t) => {
+  const { harness, stateMod, island } = await load(t);
+  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('groups') });
+  state.setStatus(status([]));
+  const nav = []; const switched = [];
+  const mounted = await harness.mount(harness.html`<${island.NodeChips} state=${state} navigate=${(tab) => nav.push(tab)} remote="inst_forge" switchNode=${(id) => switched.push(id)} />`);
+  const forge = getByRole(mounted.container, 'button', { name: 'forge, online, restricted peer' });
+  assert.equal(forge.getAttribute('aria-current'), 'page');
+  assert.equal(getByRole(mounted.container, 'button', { name: 'desk (this node)' }).getAttribute('aria-current'), null);
+  await harness.act(() => harness.fireEvent(forge, 'click'));
+  assert.deepEqual(nav, ['groups'], 're-picking the shown node stays on it');
+  await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: 'desk (this node)' }), 'click'));
+  assert.deepEqual(switched, ['']);
+  await mounted.unmount(); state.dispose();
+});
+
+test('node switching: URLs keep the tab and theme; Alt+digit never fires in a terminal or a field', async (t) => {
+  const { harness, model, island } = await load(t);
+  assert.equal(model.nodeHref('inst_forge', { pathname: '/costs', search: '?wizard=1' }), '/costs?wizard=1&node=inst_forge');
+  assert.equal(model.nodeHref('', { pathname: '/costs', search: '?node=inst_forge&wizard=1' }), '/costs?wizard=1');
+  const fleet = model.normalizeFleet(status([]));
+  assert.deepEqual(model.switchOrder(fleet).map((n) => n.name), ['desk', 'forge', 'lab']);
+  const doc = harness.document;
+  const term = doc.createElement('div'); term.className = 'xterm'; const inner = doc.createElement('textarea'); term.appendChild(inner); doc.body.appendChild(term);
+  const plain = doc.createElement('div'); doc.body.appendChild(plain);
+  const ev = (target, extra = {}) => ({ altKey: true, code: 'Digit2', target, ...extra });
+  assert.equal(island.switchKeyAllowed(ev(plain)), true);
+  assert.equal(island.switchKeyAllowed(ev(inner)), false, 'a focused web terminal owns Alt+digit');
+  assert.equal(island.switchKeyAllowed(ev(plain, { ctrlKey: true })), false);
+  assert.equal(island.switchKeyAllowed(ev(plain, { code: 'Digit0' })), false);
+  assert.equal(island.switchKeyAllowed(ev(plain, { altKey: false })), false);
+});
+
+test('remote marker shows the node, what it shares, and stale data honestly', async (t) => {
+  const { harness, model, stateMod, island } = await load(t);
+  assert.deepEqual(model.remoteHealthView({ ok: true }), { state: 'live', label: '' });
+  assert.equal(model.remoteHealthView({ ok: false, lastOK: 0, failure: { code: 'peer_unreachable', reason: 'peer_offline' } }, 840000).label, 'offline · data 14 min old');
+  assert.equal(model.remoteHealthView({ ok: false, lastOK: null, failure: { code: 'peer_busy' } }).state, 'busy');
+  assert.deepEqual(model.peerViewSummary({ included: ['groups'], omitted: [{ feature: 'costs', requires: 'costs.read' }] }).omitted, [{ feature: 'costs', requires: 'costs.read' }]);
+  assert.deepEqual(model.peerViewSummary({ included: ['groups'], omitted: [{ feature: 'terminals', requires: 'sessions.attach', transport: true }, { feature: 'costs', requires: 'costs.read', requestable: true }] }).omitted, [{ feature: 'costs', requires: 'costs.read', requestable: true }]);
+  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('groups') });
+  state.setStatus(status([]));
+  const snapshot = harness.signals.signal({ peer_view: { peer: 'desk', included: ['groups'], omitted: [{ feature: 'costs', requires: 'costs.read' }] } });
+  const switched = [];
+  const mounted = await harness.mount(harness.html`<${island.RemoteMarker} state=${state} remote="inst_forge" snapshot=${snapshot} switchNode=${(id) => switched.push(id)} />`);
+  assert.match(mounted.container.textContent, /forge/);
+  await harness.act(() => harness.window.dispatchEvent(new harness.window.CustomEvent('tclaude:remote-health', { detail: { ok: false, lastOK: Date.now() - 120000, failure: { code: 'peer_unreachable', reason: 'peer_offline' } } })));
+  const pill = getByRole(mounted.container, 'button', { name: /peer view/ });
+  assert.match(pill.textContent, /offline · data 2 min old/);
+  await harness.act(() => harness.fireEvent(pill, 'click'));
+  const pop = mounted.container.querySelector('[role="dialog"]');
+  assert.match(pop.textContent, /Shared groups/); assert.match(pop.textContent, /Not shared costs/);
+  await harness.act(() => harness.fireEvent(getByRole(pop, 'button', { name: /Back to desk/ }), 'click'));
+  assert.deepEqual(switched, ['']);
+  await mounted.unmount();
+  const none = await harness.mount(harness.html`<${island.RemoteMarker} state=${state} remote="" />`);
+  assert.equal(none.container.innerHTML, '', 'this node: no marker');
+  await none.unmount(); state.dispose();
+});
+
+test('map polls only while active, staggered, and stops on leave', async (t) => {
+  const { harness, stateMod, island } = await load(t);
+  const activeTab = harness.signals.signal('groups');
+  const state = stateMod.createSkynetState({ activeTab });
+  state.setStatus(status([]));
+  const timers = fakeTimers(); const loaded = [];
+  const actions = { loadSummary: async (node) => { loaded.push(node.id); state.commitSummary(node.id, { shared_groups: 1, shared_agents: 2, online_agents: 2, waiting_for_input: 0 }, ''); } };
+  const mounted = await harness.mount(harness.html`<${island.SkynetMap} state=${state} actions=${actions} timers=${timers} />`);
+  assert.equal(timers.queue.length, 0, 'inactive map schedules nothing');
+  await harness.act(() => { activeTab.value = 'map'; });
+  assert.deepEqual(timers.queue.map((q) => q.ms), [0, 3333, 6667], 'three nodes, staggered over one interval');
+  await harness.act(async () => { await timers.queue.shift().fn(); });
+  assert.deepEqual(loaded, ['inst_self']);
+  assert.ok(mounted.container.querySelector('[aria-label="desk node"]'));
+  assert.ok(mounted.container.querySelector('[aria-label="lab node"].stale'), 'an offline peer renders as stale');
+  await harness.act(() => { activeTab.value = 'groups'; });
+  assert.equal(timers.queue.length, 0, 'leaving the map cancels every pending poll');
+  await mounted.unmount(); state.dispose();
+});
+
+test('the map never strands the operator: no fleet or a cycle key returns to the last per-node tab', async (t) => {
+  const { harness, stateMod, island } = await load(t);
+  const activeTab = harness.signals.signal('costs');
+  const state = stateMod.createSkynetState({ activeTab });
+  state.setStatus(status([]));
+  const nav = []; const timers = fakeTimers();
+  const mounted = await harness.mount(harness.html`<${island.SkynetMap} state=${state} actions=${{ loadSummary: async () => true }} timers=${timers} navigate=${(tab) => nav.push(tab)} />`);
+  await harness.act(() => { activeTab.value = 'map'; });
+  await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:leave-map', { detail: { dir: 1 } })));
+  assert.deepEqual(nav, ['costs'], 'cycling out of the map returns to the tab it was opened from');
+  await harness.act(() => { state.clearFleet(); });
+  assert.deepEqual(nav, ['costs'], 'before the first status read settles, a deep link waits');
+  await harness.act(() => { state.markStatusLoaded(); });
+  assert.deepEqual(nav, ['costs', 'costs'], 'no linked nodes after loading: leave the map');
+  await mounted.unmount(); state.dispose();
+});
+
+test('a 5xx status read keeps the known fleet; 404 clears it', async (t) => {
+  const { harness, stateMod, actionsMod } = await load(t);
+  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('map') });
+  let code = 200;
+  const actions = actionsMod.createSkynetActions({ state, fetchImpl: async () => ({ ok: code < 400, status: code, json: async () => status([]) }) });
+  await actions.loadStatus(); assert.equal(state.fleet.value.peers.length, 2); assert.equal(state.statusLoaded.value, true);
+  code = 502; await actions.loadStatus(); assert.ok(state.fleet.value, 'transient failure keeps the chips and map');
+  code = 404; await actions.loadStatus(); assert.equal(state.fleet.value, null);
+  state.dispose();
+});
+
+test('node self-update: the card shows the version and an available update; the dialog confirms, applies and follows the job across the restart', async (t) => {
+  const { harness, stateMod, island } = await load(t);
+  const upd = await harness.importDashboardModule('js/node-update.js');
+  assert.equal(upd.updateBase({ local: true }), '/api/node/update');
+  assert.equal(upd.updateBase({ id: 'inst_a/b' }), '/api/peer/inst_a%2Fb/node/update');
+  assert.deepEqual(upd.versionView({ version: 'v1.2.0', latest_version: 'v1.3.0', update_available: null }), { current: 'v1.2.0', latest: 'v1.3.0', update: false });
+  const activeTab = harness.signals.signal('map');
+  const state = stateMod.createSkynetState({ activeTab });
+  state.setStatus(status([]));
+  state.commitSummary('inst_self', { version: 'v1.2.0', latest_version: 'v1.3.0', update_available: true, shared_groups: 1, shared_agents: 2, online_agents: 2, waiting_for_input: 0 }, '');
+  state.commitSummary('inst_forge', { version: 'v1.3.0', update_available: false, shared_groups: 1, shared_agents: 1, online_agents: 1, waiting_for_input: 0 }, '');
+  const timers = fakeTimers(); const confirms = []; const calls = [];
+  let job = null; let reads = 0;
+  const updateActions = {
+    status: async (node) => {
+      calls.push(['status', node.id]);
+      if (node.id === 'inst_forge') { const e = new Error('node.update is not shared'); e.status = 403; throw e; }
+      reads++;
+      if (job && reads === 3) throw new Error('daemon restarting');
+      if (job && reads >= 4) job = { ...job, state: 'succeeded', phase: 'restarted' };
+      return { current_version: job?.state === 'succeeded' ? 'v1.3.0' : 'v1.2.0', install_method: 'release', latest_version: 'v1.3.0', update_available: job?.state !== 'succeeded', rollback_available: !!job, warnings: [], binaries: [{ name: 'tclaude', version: 'v1.2.0', path: '/bin/tclaude' }], job };
+    },
+    start: async (node, action, version) => { calls.push(['start', node.id, action, version]); job = { id: 'u1', action, version, state: 'running', phase: 'downloading' }; return job; },
+  };
+  const confirm = async (o) => { confirms.push(o); return true; };
+  const mounted = await harness.mount(harness.html`<${island.SkynetMap} state=${state} actions=${{ loadSummary: async () => true }} timers=${timers} confirm=${confirm} toast=${() => {}} updateActions=${updateActions} />`);
+  const q = (s) => mounted.container.ownerDocument.querySelector(s);
+  const selfCard = mounted.container.querySelector('[aria-label="desk node"]');
+  assert.match(selfCard.textContent, /v1\.2\.0 ↑ v1\.3\.0 update…/);
+  assert.match(mounted.container.querySelector('[aria-label="forge node"]').textContent, /v1\.3\.0 manage…/);
+  const settle = () => harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  await harness.act(() => selfCard.querySelector('[data-skynet="node-update"]').click());
+  await settle();
+  assert.match(q('#fleet-node-update-modal').textContent, /Version\s*v1\.2\.0/);
+  await harness.act(() => q('#fleet-node-update-apply').click());
+  await settle();
+  assert.match(confirms[0].body, /replaces its tclaude binaries .*restarts its daemon\. Its agent sessions keep running/);
+  assert.deepEqual(calls.find((c) => c[0] === 'start'), ['start', 'inst_self', 'apply', 'v1.3.0']);
+  for (let i = 0; i < 4 && /running|restarting/.test(q('#fleet-node-update-job')?.textContent || 'running'); i++) {
+    const tick = timers.queue.find((x) => x.ms === 1000);
+    assert.ok(tick, 'an active job is re-read every second');
+    await harness.act(() => { timers.queue.splice(timers.queue.indexOf(tick), 1); tick.fn(); });
+    await settle();
+  }
+  assert.match(q('#fleet-node-update-job').textContent, /succeeded/);
+  assert.ok(q('#fleet-node-update-rollback'), 'rollback is offered once a backup exists');
+  await harness.act(() => [...q('#fleet-node-update-modal').querySelectorAll('button')].find((b) => b.textContent === 'Close').click());
+  await harness.act(() => mounted.container.querySelector('[aria-label="forge node"] [data-skynet="node-update"]').click());
+  await settle();
+  assert.match(q('#fleet-node-update-modal').textContent, /forge does not let you manage its updates \(needs node\.update\)/);
+  await mounted.unmount(); state.dispose();
+});

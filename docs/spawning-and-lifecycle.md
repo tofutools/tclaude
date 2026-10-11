@@ -314,6 +314,73 @@ no permission slug. It is primarily a Claude Code tool for context
 pressure; Codex agents should run on and let native auto-compaction do its
 job. Cross-agent handoffs record the caller as the originator.
 
+### morph
+
+`morph [agent] --model M --effort E --ask-for-approval A` (or `--profile P`)
+relaunches an agent in place with a different launch form within the same
+harness. The daemon rewrites the agent's durable relaunch profile and resumes
+the same conversation, so the agent keeps its id, history, inbox, groups and
+permissions, and gets a short inbox note saying what it was and what it is
+now. Tools, the AskUserQuestion timeout and the auto-compact window are
+morphable too; sandbox settings, working directory, drive and model proxy are
+not.
+
+`--harness H` (or a spawn profile for another harness) moves the agent to
+another harness. Its conversation is translated into a new native conversation
+of that harness (see
+[cross-harness history translation](harnesses.md#cross-harness-history-translation)),
+the agent is rebound to it as its next generation, and the new harness resumes
+it. The agent keeps its id, inbox, groups and permissions, and its note
+summarizes what the history kept and lost. `--dry-run` shows that report before
+anything changes.
+
+`--history` picks how the conversation is carried:
+
+- `auto` (the default) installs the translated history natively. If that
+  fails, the new conversation points the agent at the history saved as files.
+- `context-file` always uses the files.
+- `handoff` first asks the agent, through its inbox, to write a handoff for its
+  successor and submit it with `tclaude agent morph-handoff -f <file>`. The morph
+  applies once the handoff is in and the agent is idle. The translated
+  transcript is still kept beside the handoff. If no handoff arrives within 30
+  minutes, the morph goes ahead with the files instead, stopping the agent if it
+  is stuck.
+
+A history tclaude cannot read leaves the handoff as the only option, so a live
+agent is asked for one automatically. An offline agent with an unreadable
+history cannot be moved.
+
+`--trust-dir`, or `trust_dir` on the destination spawn profile, seeds the new harness's folder-trust
+record for the working directory, so the relaunched pane does not stop on that
+harness's trust dialog.
+
+Launch posture does not map across harnesses, so the new form is explicit: the
+approval posture must come from the profile or `--ask-for-approval`, model and
+effort default to the new harness's own, and the drive starts at its defaults.
+tclaude's own sandbox layer (`tclaude-layer`) carries over unchanged. A sandbox
+that is the harness's own has no counterpart elsewhere, so only the operator
+can move such an agent, and its new mode comes from the profile or the new
+harness's default. An agent caller must use a spawn profile for the new harness,
+without overriding its fields, and may not widen the target's sandbox or
+approval posture. An agent with a model proxy route or a temporary sandbox
+unlock cannot change harness. `--back` returns to the previous harness through
+the same translation.
+
+An idle or offline agent is morphed at once. A busy agent gets a pending morph
+(shown in `agent ls`, `whoami` and the dashboard) that applies when it next
+goes fully idle, or expires after 30 minutes. `--now` stops a busy or stuck
+agent immediately and resumes it from its last durable history. `--back`
+restores the form the last morph replaced, `--cancel` drops a pending morph,
+`--dry-run` previews the change, and `group:<name>` morphs every other member
+of a group with per-agent results.
+
+Morphing yourself needs `self.morph` (not default-granted, not conferred by
+ownership) and always waits for your current turn to end. Morphing another
+agent needs `agent.morph`, or `groups.members.morph` covering every group of
+the target, which group ownership contributes. A grant scoped to
+`spawn_profile` allows only `--profile` morphs into those profiles. An agent
+may not morph a target into a broader approval posture than its own.
+
 ### clone
 
 `clone [follow-up]` forks an agent into a sibling that inherits its

@@ -133,6 +133,23 @@ func handleFederationBundleOffers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, offers)
 }
 func receivingBundleOffer(w http.ResponseWriter, r *http.Request, requireAdmission bool) *db.FederationBundleOffer {
+	found := lookupReceivingBundleOffer(w, r)
+	if found == nil {
+		return nil
+	}
+	if found.State != "pending" && found.State != "ready" {
+		writeError(w, 409, "offer_state", "offer is "+found.State)
+		return nil
+	}
+	kind, ok := federationBundleKind(found.Descriptor.Type)
+	peer, err := db.GetFederationPeer(found.Peer)
+	if requireAdmission && (err != nil || peer == nil || !ok || !fedBundleOfferAdmitted(found, kind.Type)) {
+		writeError(w, 403, "admission", "peer trust or bundle receive grant revoked")
+		return nil
+	}
+	return found
+}
+func lookupReceivingBundleOffer(w http.ResponseWriter, r *http.Request) *db.FederationBundleOffer {
 	reconcileFederationBundleOffers()
 	id := r.PathValue("id")
 	if !proto.ValidStreamID(id) {
@@ -171,16 +188,6 @@ func receivingBundleOffer(w http.ResponseWriter, r *http.Request, requireAdmissi
 	}
 	if found == nil {
 		writeError(w, 404, "offer", "no such receiving offer")
-		return nil
-	}
-	if found.State != "pending" && found.State != "ready" {
-		writeError(w, 409, "offer_state", "offer is "+found.State)
-		return nil
-	}
-	kind, ok := federationBundleKind(found.Descriptor.Type)
-	peer, err := db.GetFederationPeer(found.Peer)
-	if requireAdmission && (err != nil || peer == nil || !ok || !fedBundleOfferAdmitted(found, kind.Type)) {
-		writeError(w, 403, "admission", "peer trust or bundle receive grant revoked")
 		return nil
 	}
 	return found
@@ -328,17 +335,22 @@ func handleFederationBundleDecline(w http.ResponseWriter, r *http.Request) {
 }
 func registerFederationBundleRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/federation/share-agent", handleFederationShareAgent)
+	mux.HandleFunc("POST /v1/federation/agents/{id}/recall", handleFederationAgentRecall)
 	mux.HandleFunc("POST /v1/federation/move-agent", handleFederationShareAgent)
 	mux.HandleFunc("POST /v1/whoami/teleport", handleFederationTeleport)
+	mux.HandleFunc("POST /v1/agents/{id}/teleport", handleOperatorAgentTeleport)
 	mux.HandleFunc("POST /v1/whoami/teleport/report", handleTeleportReport)
 	mux.HandleFunc("POST /v1/teleport/recover", handleTeleportRecover)
 	mux.HandleFunc("GET /v1/whoami/teleports", handleSelfTeleports)
+	mux.HandleFunc("GET /v1/federation/teleport", handleFederationTeleportSwitch)
 	mux.HandleFunc("PUT /v1/federation/teleport", handleFederationTeleportSwitch)
 	mux.HandleFunc("GET /v1/federation/moves", handleFederationMoves)
 	mux.HandleFunc("GET /v1/federation/moves/{id}", handleFederationMoves)
 	mux.HandleFunc("POST /v1/federation/moves/{id}/abandon", handleFederationMoveAbandon)
 	mux.HandleFunc("POST /v1/federation/offer-config", handleFederationOfferConfig)
 	mux.HandleFunc("GET /v1/federation/bundle-offers", handleFederationBundleOffers)
+	mux.HandleFunc("GET /v1/federation/bundle-offers/{id}/contents", handleFederationBundleContents)
+	mux.HandleFunc("GET /v1/federation/bundle-offers/{id}/download", handleFederationBundleDownload)
 	mux.HandleFunc("POST /v1/federation/bundle-offers/{id}/fetch", handleFederationBundleFetch)
 	mux.HandleFunc("POST /v1/federation/bundle-offers/{id}/import", handleFederationBundleImport)
 	mux.HandleFunc("POST /v1/federation/bundle-offers/{id}/decline", handleFederationBundleDecline)

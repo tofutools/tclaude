@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -20,7 +21,15 @@ import (
 // job. The terminal receipt and verified completed artifact remain authoritative.
 func (rt *fedRuntime) serveJobFollow(peer *db.FederationPeer, env *proto.Envelope) {
 	var req bundletransfer.Request
-	if env.From.Agent != "" || env.To.Agent != "" || env.DecodePayload(&req) != nil || !proto.ValidStreamID(req.Offer) || !proto.ValidStreamID(req.Stream) || len(req.Key) != 32 {
+	var output fedJobOutputRequest
+	var decodeErr error
+	if env.Kind == proto.KindJobOutput {
+		decodeErr = env.DecodePayload(&output)
+		req = output.Request
+	} else {
+		decodeErr = env.DecodePayload(&req)
+	}
+	if env.From.Agent != "" || env.To.Agent != "" || decodeErr != nil || !proto.ValidStreamID(req.Offer) || !proto.ValidStreamID(req.Stream) || len(req.Key) != 32 {
 		return
 	}
 	a := bundletransfer.Answer{Request: req}
@@ -39,6 +48,10 @@ func (rt *fedRuntime) serveJobFollow(peer *db.FederationPeer, env *proto.Envelop
 	j, e := db.GetFederationJob(req.Offer)
 	if e != nil || j.Direction != "in" || j.Peer != peer.InstanceID || j.Fingerprint != req.SHA256 || !j.ExpiresAt.After(time.Now()) {
 		refuse("job unavailable")
+		return
+	}
+	if env.Kind == proto.KindJobOutput && !output.valid(j) {
+		refuse("invalid output cursor or limit")
 		return
 	}
 	key := "job-follow-out/" + peer.InstanceID + "/" + req.Stream
@@ -71,7 +84,11 @@ func (rt *fedRuntime) serveJobFollow(peer *db.FederationPeer, env *proto.Envelop
 	if !rt.sendControl(peer.InstanceID, proto.KindJobFollowAnswer, env.ID, a) {
 		return
 	}
-	ctx, cancel := context.WithTimeout(rt.ctx, 25*time.Hour)
+	duration := 25 * time.Hour
+	if env.Kind == proto.KindJobOutput {
+		duration = 15 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(rt.ctx, duration)
 	defer cancel()
 	conn, e := rt.joinStream(ctx, peer.InstanceID, req.Stream, kp, req.Key, false)
 	if e != nil {
@@ -80,7 +97,19 @@ func (rt *fedRuntime) serveJobFollow(peer *db.FederationPeer, env *proto.Envelop
 	defer func() { _ = conn.Close() }()
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
-	_ = conn.SetDeadline(time.Now().Add(25 * time.Hour))
+	_ = conn.SetDeadline(time.Now().Add(duration))
+	if env.Kind == proto.KindJobOutput {
+		result, err := readFederationJobOutput(f, j, output.Cursor, output.MaxBytes)
+		if err == nil {
+			// Authority is rechecked immediately before exposing the bounded reply.
+			if p, err := db.GetFederationPeer(j.Peer); err == nil && p != nil {
+				if json.NewEncoder(conn).Encode(result) == nil {
+					_ = conn.CloseWrite()
+				}
+			}
+		}
+		return
+	}
 	// The initiator sends no payload. Detect disconnect while the job is idle.
 	go func() { var b [1]byte; _, _ = conn.Read(b[:]); cancel() }()
 	if tailJobFrames(ctx, f, j, conn) == nil {
@@ -133,6 +162,10 @@ func tailJobFrames(ctx context.Context, f *os.File, j *db.FederationJob, out io.
 }
 
 func (rt *fedRuntime) openJobFollow(parent context.Context, j *db.FederationJob) (io.ReadCloser, error) {
+	return rt.openJobFollowRequest(parent, j, nil)
+}
+
+func (rt *fedRuntime) openJobFollowRequest(parent context.Context, j *db.FederationJob, output *fedJobOutputRequest) (io.ReadCloser, error) {
 	key := "job-follow-in/" + j.Peer + "/" + j.ID
 	if !rt.reserveBundleTransfer(key) {
 		return nil, errors.New("follow busy")
@@ -156,7 +189,15 @@ func (rt *fedRuntime) openJobFollow(parent context.Context, j *db.FederationJob)
 	rt.bundleWaiters[sid] = fedBundleWaiter{Peer: j.Peer, Offer: j.ID, Digest: j.Fingerprint, Answer: ch}
 	rt.bundleMu.Unlock()
 	defer func() { rt.bundleMu.Lock(); delete(rt.bundleWaiters, sid); rt.bundleMu.Unlock() }()
-	if !rt.sendControl(j.Peer, proto.KindJobFollow, "", bundletransfer.Request{Offer: j.ID, Stream: sid, SHA256: j.Fingerprint, Key: kp.Pub}) {
+	request := bundletransfer.Request{Offer: j.ID, Stream: sid, SHA256: j.Fingerprint, Key: kp.Pub}
+	kind := proto.KindJobFollow
+	var payload any = request
+	if output != nil {
+		output.Request = request
+		payload = output
+		kind = proto.KindJobOutput
+	}
+	if !rt.sendControl(j.Peer, kind, "", payload) {
 		return nil, errors.New("job peer offline")
 	}
 	var a bundletransfer.Answer

@@ -73,7 +73,8 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		// Userinfo renders as the victim host right up to the '@'.
 		"if (url.username || url.password) return null;",
 		"host.addEventListener('paste', onPaste, true)",
-		"`/api/terminal-attachments?terminal=${encodeURIComponent(terminalPath)}`",
+		"`${base}?terminal=${encodeURIComponent(terminalPath)}`",
+		"'/api/federation/terminal-attachments' : '/api/terminal-attachments'",
 		"term.paste(paths.join(' ') + ' ')",
 		"if (controller.signal.aborted || generation !== myGeneration) return",
 		"uploadController.abort()",
@@ -142,9 +143,6 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 	if !strings.Contains(actions, "'/api/operator-message'") {
 		t.Error("operator message action is not wired to /api/operator-message")
 	}
-	if !strings.Contains(shell, "<span class=\"terminal-interaction-hint\">${INTERACTION_HINT}</span>") {
-		t.Error("fallback terminal modal missing persistent selection/copy guidance")
-	}
 
 	for _, name := range []string{"dashboard.html", "terminals.html"} {
 		data, err := fs.ReadFile(dashboardAssetsFS, name)
@@ -157,12 +155,6 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 	}
 	if data, err := fs.ReadFile(dashboardAssetsFS, "third_party/xterm/addon-web-links.min.js"); err != nil || len(data) < 1000 {
 		t.Errorf("vendored web-links addon missing or unexpectedly small: bytes=%d err=%v", len(data), err)
-	}
-	if !strings.Contains(shell, `id="term-session-copy"`) {
-		t.Error("fallback terminal modal has no visible Copy action")
-	}
-	if !strings.Contains(shell, `class="term-session-status" id="term-session-status" role="status" aria-live="polite" aria-atomic="true"`) {
-		t.Error("fallback terminal status must be a polite atomic live region")
 	}
 	for _, jsAttr := range []string{
 		`class="mux-pane-status" role="status" aria-live="polite" aria-atomic="true"`,

@@ -110,10 +110,10 @@ func runTriggersShow(stdout, stderr io.Writer, selector string) int {
 
 type triggersExplainParams struct {
 	Source string `long:"source" optional:"true" default:"pr.opened" help:"Event source to simulate."`
-	URL    string `long:"pr-url" help:"PR URL to simulate."`
+	URL    string `long:"pr-url" optional:"true" help:"PR URL to simulate."`
 	Number int    `long:"pr-number" optional:"true"`
 	Branch string `long:"pr-branch" optional:"true"`
-	Author string `long:"author-agent" help:"Stable author agent id."`
+	Author string `long:"author-agent" optional:"true" help:"Stable author agent id."`
 	Agent  string `long:"agent-id" optional:"true" help:"Stable selected agent id for agent state sources."`
 	Group  string `long:"group" optional:"true" help:"Group name or numeric id at open time."`
 	Draft  bool   `long:"draft" optional:"true"`

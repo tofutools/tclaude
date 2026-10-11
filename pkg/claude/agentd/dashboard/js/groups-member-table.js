@@ -1,4 +1,4 @@
-import { h, render } from 'preact';
+import { Fragment, h, render } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { applySortState, tableSortState, MEMBER_ACCESSORS } from './sort.js';
@@ -19,6 +19,10 @@ import { HarnessMark } from './harness-mark.js';
 import { fmtCredits, fmtExactUSD, fmtUSD } from './costs-model.js';
 import { isPendingWake, clearPendingWake } from './waking-state.js';
 import { PRChecksBadge } from './pr-checks-hover.js';
+import { ViewersBadge, remoteViewers, viewersOf } from './remote-viewers.js';
+import { skynetState } from './skynet-state.js';
+import { presenceView } from './agent-presence.js';
+import { TELEPORT_ROUTES } from './launch-target-dialog.js';
 
 const html = htm.bind(h);
 
@@ -179,7 +183,7 @@ function BrokerRefusalBadge({ member }) {
   return html`<span class="broker-refusal-badge" role="note" aria-label=${title} title=${title}>🚫</span>`;
 }
 
-export function HarnessLine({ member, snapshot }) {
+export function HarnessLine({ member, snapshot, local = true }) {
   const state = member.state || {};
   const offline = !member.online;
   const metadataClass = `runtime-meta${offline ? ' runtime-meta-offline' : ''}`;
@@ -194,6 +198,9 @@ export function HarnessLine({ member, snapshot }) {
   const fastMode = html`<${FastModeBadge} member=${member} />`;
   const remote = html`<${RemoteBadge} member=${member} />`;
   const refused = html`<${BrokerRefusalBadge} member=${member} />`;
+  // A peer watching or typing into this agent's pane right now (federation).
+  const viewed = local && member.online && member.agent_id ? viewersOf(remoteViewers.value, member.agent_id).length > 0 : false;
+  const viewers = viewed ? html`<${ViewersBadge} agentId=${member.agent_id} />` : null;
   const drive = driveTooltip(state);
   if (!model) {
     // A pre-tick row has no metadata text to trail, but an armed indicator is
@@ -206,13 +213,14 @@ export function HarnessLine({ member, snapshot }) {
     if (!harness || harness === 'claude') {
       const indicated = (member.online && state.remote_control)
         || !!sandboxIndicator(member)
-        || Number(state.broker_refusals || 0) > 0;
-      return indicated ? html`<div class="agent-harness">${sandbox}${remote}${refused}</div>` : null;
+        || Number(state.broker_refusals || 0) > 0
+        || viewed;
+      return indicated ? html`<div class="agent-harness">${sandbox}${remote}${viewers}${refused}</div>` : null;
     }
     let title = `${offline ? 'Last used harness' : 'Harness'}: ${labels.long}`;
     if (drive) title += ` — ${drive}`;
     return html`<div class="agent-harness" title=${title} tabindex=${drive ? '0' : null}
-      data-full-metadata=${drive ? title : null}><span class=${metadataClass} role="note" aria-label=${title}><${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} tooltip=${drive ? title : labels.long} /></span>${sandbox}${remote}${refused}</div>`;
+      data-full-metadata=${drive ? title : null}><span class=${metadataClass} role="note" aria-label=${title}><${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} tooltip=${drive ? title : labels.long} /></span>${sandbox}${remote}${viewers}${refused}</div>`;
   }
   const effort = state.effort_level || '';
   const cost = Number(state.cost_usd || 0);
@@ -237,7 +245,7 @@ export function HarnessLine({ member, snapshot }) {
       ${effort ? html`<span class="harness-effort" title=${effort}>${shortEffort(effort)}</span>` : null}
       ${cost > 0 ? html`<span class="harness-cost">${fmtUSD(cost)}</span>` : null}
       ${virtualCost > 0 ? html`<span class="harness-cost harness-cost-whatif" title=${virtualTitle}>≈${fmtUSD(virtualCost)}</span>` : null}
-    </span>${sandbox}${fastMode}${remote}${refused}
+    </span>${sandbox}${fastMode}${remote}${viewers}${refused}
   </div>`;
 }
 
@@ -835,6 +843,35 @@ function SandboxImplMenuItem({ member }) {
   />`;
 }
 
+// SendElsewhereItems is the ⚙ menu's "Send elsewhere" section (tcl-o9d5d9):
+// each item opens the launch-target dialog on its mode, alongside drag and
+// drop. Modes whose routes this dashboard lacks stay out of the menu. A
+// peer's single-node view has no such routes, so it shows none.
+function SendElsewhereItems({ member, group, snapshot }) {
+  if (snapshot?.peer_view || !member.agent_id) return null;
+  const fleet = skynetState.fleet.value;
+  // Another node's row in a fused view can only be pulled here by a move;
+  // without a fleet there is nowhere to move or clone to but here.
+  const peerRow = !!group?.fleet_node && !group.fleet_node.local;
+  const view = presenceView(member, fleet);
+  const kind = view?.kind || '';
+  const label = member.title || member.conv_id;
+  // A peer row names its node, for a dialog opened outside the fused Groups
+  // view (a Terminals tab's ⚙), which has no group row to read it from.
+  const attrs = (mode) => ({
+    'data-mode': mode, 'data-presence': kind, 'data-home-node': view?.home?.id || '', 'data-home-name': view?.home?.name || '',
+    'data-cwd': member.state?.cwd || member.cwd || '',
+    ...(peerRow ? { 'data-node': group.fleet_node.id, 'data-node-name': group.fleet_node.name || '' } : {}),
+  });
+  const item = (mode, regular, wizard, title) => html`<${MenuButton} member=${member} group=${group} act="send-elsewhere" attrs=${attrs(mode)} regular=${regular} wizard=${wizard} title=${title} />`;
+  return html`<div class="menu-section-label" role="presentation">send elsewhere</div>
+    ${fleet ? item('move', peerRow ? 'move here…' : 'move to…', 'relocate familiar…', peerRow ? `Move ${label} to a group on this node, with its history` : `Move ${label} to a group on another node, with its history; it retires here once its copy runs there`) : null}
+    ${TELEPORT_ROUTES && fleet && !peerRow ? item('teleport', 'teleport to…', 'teleport familiar…', `Teleport ${label} to another node; its home keeps its place for Recall home`) : null}
+    ${!peerRow ? item('clone', fleet ? 'clone to…' : 'clone…', 'mirror familiar to…', `Clone ${label} here or onto another node; the original keeps running`) : null}
+    ${!peerRow ? item('morph', 'morph…', 'shapeshift familiar…', `Relaunch ${label} in place with another spawn profile (model, effort, harness); it keeps its identity`) : null}
+    ${TELEPORT_ROUTES && kind === 'visiting' && (!peerRow || view.home.local) ? item('home', '⌂ recall home…', '⌂ recall familiar home…', `Send ${label} straight home to ${view.home.name}`) : null}`;
+}
+
 function MenuSeparator() {
   return html`<div class="menu-sep" role="separator"></div>`;
 }
@@ -873,6 +910,8 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
     <${SandboxRestartMenuItem} member=${member} />
     <${SandboxImplMenuItem} member=${member} />
     <${MenuSeparator} />
+    <${SendElsewhereItems} member=${member} group=${ungrouped ? null : group} snapshot=${snapshot} />
+    <${MenuSeparator} />
     ${ungrouped
       ? html`<${MenuButton} member=${member} selector="conv" act="retire-agent" className="warn" regular="retire" wizard="banish" title=${wizardCopy('Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).', 'Banish this familiar — return it to a plain conversation, revoking its party memberships and boons. Reversible via reinstate.')} /><${MenuButton} member=${member} act="delete-agent" className="danger" regular="delete" wizard="erase familiar" title=${wizardCopy('Permanently delete this agent and conversation', 'Permanently erase this familiar and its conversation scroll')} />`
       : html`<${MenuButton} member=${member} group=${group} act="remove-member" className="danger" regular="remove" wizard="dismiss from party" title=${wizardCopy('Remove this agent from the group', 'Remove this familiar from the party')} /><${MenuButton} member=${member} selector="conv" act="retire-agent" className="warn" regular="retire" wizard="banish" title=${wizardCopy('Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).', 'Banish this familiar — return it to a plain conversation, revoking its party memberships and boons. Reversible via reinstate.')} />`}
@@ -884,9 +923,21 @@ function MemberActions({ member, group, snapshot, actions, ungrouped, menuKey })
   return html`<div class="row-actions">
     <button class="icon-btn" data-act="jump" ...${memberAttrs(member)} disabled=${!member.online} title=${`Focus this agent's terminal window; when using web terminals, Ctrl/Cmd-click keeps this tab open${offlineWhy}`} aria-label="Focus window"><${EyeIcon} /></button>
     <button class="icon-btn" data-act="hide" ...${memberAttrs(member)} disabled=${!member.online} title=${`Hide this agent's terminal window — detaches its tmux client. The agent keeps running.${offlineWhy}`} aria-label="Hide window"><${EyeIcon} hidden=${true} /></button>
-    <button class="icon-btn warn" data-act="retire-agent" data-conv=${member.conv_id} data-label=${member.title || member.conv_id} title="Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored)." aria-label="Retire agent"><${TrashIcon} /></button>
+    <button class="icon-btn warn" data-act="retire-agent" data-conv=${member.conv_id} data-stable-agent=${member.agent_id || ''} data-label=${member.title || member.conv_id} title="Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored)." aria-label="Retire agent"><${TrashIcon} /></button>
     <${ActionMenu} menuKey=${menuKey} kind="row-menu"><${MemberMenu} member=${member} group=${group} snapshot=${snapshot} actions=${actions} ungrouped=${ungrouped} /><//>
   </div>`;
+}
+
+// AgentGearMenu is the agent's ⚙ menu outside a Groups row: on a Terminals
+// tab (tcl-xy5wkp). An agent on this node gets the row menu at agent level
+// (no group, as for an ungrouped agent). One on another node, which this
+// node's roster does not carry, gets what a fused Groups view offers its
+// rows: moving it here. It needs a GroupsInteractionProvider above it.
+export function AgentGearMenu({ member, node = null, snapshot, menuKey }) {
+  if (node && !node.local) {
+    return html`<${ActionMenu} menuKey=${menuKey} kind="row-menu"><${SendElsewhereItems} member=${member} group=${{ fleet_node: node }} snapshot=${snapshot} /><//>`;
+  }
+  return html`<${ActionMenu} menuKey=${menuKey} kind="row-menu"><${MemberMenu} member=${member} group=${null} snapshot=${snapshot} actions=${{}} ungrouped=${true} /><//>`;
 }
 
 function SudoBadge({ grants, conv }) {
@@ -954,7 +1005,56 @@ function MemberName({ member, snapshot, actions, grants, editorKey }) {
       ...memberAttrs(member), 'data-current': member.title || '', 'data-editor-key': editorKey,
       title: `${idPrefix}Click to rename this agent — Enter saves, Esc cancels`,
     }}
-  >${member.title || '(unnamed)'}<//><${SudoBadge} grants=${grants} conv=${member.conv_id} /></div>`;
+  >${member.title || '(unnamed)'}<//><${PresenceBadge} member=${member} /><${SudoBadge} grants=${grants} conv=${member.conv_id} /></div>`;
+}
+
+// PresenceBadge marks a visiting agent with its home, and a returned one with
+// a short-lived "back home" tag, both in the home node's colour (tcl-hocp2h).
+function PresenceBadge({ member }) {
+  const view = presenceView(member, skynetState.fleet.value);
+  if (!view || view.kind === 'away') return null;
+  return html`<span class=${`presence-badge presence-${view.kind}`} style=${view.home.color ? `--nc:${view.home.color}` : undefined} title=${view.title} data-presence=${view.kind}>⌂ ${view.label}</span>`;
+}
+
+// showVisitingRow scrolls to the agent's live row elsewhere in a fused view
+// and flashes it; without one it opens the node where the agent runs.
+function showVisitingRow(member, at) {
+  const root = document.getElementById('skynet-fused-groups-root') || document;
+  const rows = [...root.querySelectorAll('tr[data-dnd-agent]')]
+    .filter((row) => row.dataset.dndAgent === member.agent_id && !row.classList.contains('away-placeholder') && row.getClientRects().length);
+  if (rows.length) {
+    rows[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
+    rows[0].classList.remove('presence-flash');
+    void rows[0].offsetWidth;
+    rows[0].classList.add('presence-flash');
+    return;
+  }
+  if (at.id) void import('./skynet-island.js').then((m) => m.openNodeView(at.local ? '' : at.id)).catch(() => {});
+}
+
+// AwayRow is the dimmed placeholder an away agent leaves in its home groups:
+// no status, terminal or menu, just where it is now and a way to get there.
+function AwayRow({ member, view, columns, group }) {
+  // Only a fused view can hold the visiting row; one node's view links out.
+  const visiting = !!group?.fleet_node && !!member.agent_id;
+  const cell = (column) => {
+    switch (column.key) {
+      case 'ctl': return html`<td><span class="away-dot" aria-hidden="true">○</span></td>`;
+      case 'id': return html`<td class="id" title=${idTooltip(member.agent_id, member.conv_id)}>${shortAgentId(member.agent_id, member.conv_id)}</td>`;
+      case 'title': return html`<td class="name-cell"><div class="rowname"><span class="rowname-text rowname-fixed">${member.title || '(unnamed)'}</span>
+        <span class="presence-badge presence-away" style=${view.at.color ? `--nc:${view.at.color}` : undefined} title=${view.title} data-presence="away">${view.label}</span>
+        <button type="button" class="fa-link away-goto" data-away-goto=${member.agent_id || ''}
+          title=${visiting ? `Scroll to ${member.title || 'it'} on ${view.at.name}` : `Open ${view.at.name}'s dashboard`}
+          onClick=${(event) => { event.preventDefault(); event.stopPropagation(); showVisitingRow(member, view.at); }}
+        >${visiting ? '↓ show' : view.at.local ? 'open on this node ↗' : `open on ${view.at.name} ↗`}</button>
+        ${TELEPORT_ROUTES ? html`<button type="button" class="away-recall" data-act="send-elsewhere" data-mode="home" data-presence="away"
+          data-agent=${member.agent_id} data-conv=${member.conv_id} data-label=${member.title || member.conv_id} data-group=${group?.name || ''}
+          data-home-node=${view.home.id} data-home-name=${view.home.name}
+          title=${`Recall ${member.title || 'it'} straight home from ${view.at.name}`}>⌂ recall home…</button>` : null}</div></td>`;
+      default: return html`<td></td>`;
+    }
+  };
+  return html`<tr class="away-placeholder" data-key=${member.conv_id} data-dnd-agent=${member.agent_id || member.conv_id}>${columns.map((column) => html`<${Fragment} key=${column.key}>${cell(column)}<//>`)}</tr>`;
 }
 
 function openMemberCellEditor(event, actions, member, group, focus) {
@@ -1061,7 +1161,7 @@ function MemberCell({ column, member, group, snapshot, actions, grants, ungroupe
   switch (column.key) {
     // HarnessLine carries the sandbox/remote indicators itself — they trail its
     // metadata text instead of claiming a line of their own under the cell.
-    case 'ctl': return html`<td><div class="agent-ctl"><${AgentStatusDot} member=${member} /><${MemberActions} member=${member} group=${group} snapshot=${snapshot} actions=${actions} ungrouped=${ungrouped} menuKey=${menuKey} /></div><${HarnessLine} member=${member} snapshot=${snapshot} /></td>`;
+    case 'ctl': return html`<td><div class="agent-ctl"><${AgentStatusDot} member=${member} /><${MemberActions} member=${member} group=${group} snapshot=${snapshot} actions=${actions} ungrouped=${ungrouped} menuKey=${menuKey} /></div><${HarnessLine} member=${member} snapshot=${snapshot} local=${!group?.fleet_node || !!group.fleet_node.local} /></td>`;
     case 'id': return html`<td class="id" title=${idTooltip(member.agent_id, member.conv_id)}>${shortAgentId(member.agent_id, member.conv_id)}</td>`;
     case 'title': return html`<td class="name-cell"><${MemberName} member=${member} snapshot=${snapshot} actions=${actions} grants=${grants} editorKey=${editorKey} /></td>`;
     case 'state': return html`<${StateCell} member=${member} />`;
@@ -1082,8 +1182,10 @@ function MemberRow({ member, group, ungrouped, snapshot, actions, columns, table
   const menuKey = `member:${tableKey}:${memberKey}:menu`;
   const editorKey = `member:${tableKey}:${memberKey}:name`;
   const grants = (snapshot?.sudo || []).filter((grant) => grant.conv_id === member.conv_id);
+  const presence = presenceView(member, skynetState.fleet.value);
+  if (presence?.kind === 'away') return html`<${AwayRow} member=${member} view=${presence} columns=${columns} group=${group} />`;
   return html`<tr
-    class="dnd-draggable" draggable=${interactions.editorKey !== editorKey} data-key=${member.conv_id}
+    class=${`dnd-draggable${presence ? ` presence-row-${presence.kind}` : ''}`} draggable=${interactions.editorKey !== editorKey} data-key=${member.conv_id}
     data-dnd-source-ungrouped=${ungrouped ? '1' : undefined}
     data-dnd-source-group=${ungrouped ? undefined : group.name}
     data-dnd-conv=${member.conv_id} data-dnd-agent=${member.agent_id || member.conv_id}

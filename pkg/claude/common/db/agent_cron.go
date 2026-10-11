@@ -468,7 +468,7 @@ func getLiveOwnerAgentCronJob(id int64, afterLiveMiss func()) (*AgentCronJob, er
 		var retiredOwner int
 		if lookupErr := tx.QueryRow(`SELECT COUNT(*) FROM agent_cron_jobs j
 			JOIN agents a ON a.agent_id = j.owner_agent AND a.retired_at IS NOT NULL
-			WHERE j.id = ?`, id).Scan(&retiredOwner); lookupErr != nil {
+			WHERE j.id = ? AND NOT EXISTS (SELECT 1 FROM agent_federation_presence p WHERE p.agent_id=a.agent_id AND p.state='away')`, id).Scan(&retiredOwner); lookupErr != nil {
 			return nil, lookupErr
 		}
 		if retiredOwner > 0 {

@@ -34,11 +34,6 @@ func TestDashboardSmallDialogsPreactOwnership(t *testing.T) {
 			t.Errorf("static dashboard markup still owns migrated dialog %s", retired)
 		}
 	}
-	for _, kept := range []string{`id="terminal-session-root"`} {
-		if !strings.Contains(html, kept) {
-			t.Errorf("explicit xterm exclusion was removed: %s", kept)
-		}
-	}
 
 	for _, path := range []string{"js/modal-clone.js", "js/modal-export.js"} {
 		if _, err := fs.ReadFile(dashboardAssetsFS, path); err == nil {

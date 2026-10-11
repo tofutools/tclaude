@@ -29,6 +29,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/terminal"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
+	"github.com/tofutools/tclaude/pkg/harnessops"
 )
 
 type serveParams struct {
@@ -57,6 +58,10 @@ func serveCmd() *cobra.Command {
 		RunFunc: func(p *serveParams, _ *cobra.Command, _ []string) {
 			if err := runServe(p); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			if err := performSelfUpdateRestart(); err != nil {
+				fmt.Fprintf(os.Stderr, "Restart failed: %v\n", err)
 				os.Exit(1)
 			}
 		},
@@ -654,6 +659,8 @@ func runServe(p *serveParams) error {
 	cronStop := make(chan struct{})
 	defer close(cronStop)
 	startFederation()
+	startBoardUpdateChecker(cronStop)
+	startMorphWatcher(cronStop)
 	startCronScheduler(cronStop)
 	startStandingOrderDebounceScheduler(cronStop)
 	startTriggerScheduler(cronStop)
@@ -871,6 +878,21 @@ func runServe(p *serveParams) error {
 	}
 
 	quit := newQuitter()
+	configureSelfUpdateRestart(quit.signal)
+	// Fleet metadata polling must not add startup network traffic for a
+	// standalone daemon. Explicit local update/install requests still work.
+	if cfg != nil && cfg.Federation != nil && cfg.Federation.Enabled && cfg.Federation.HubURL != "" {
+		startBackgroundNodeUpdates(quit.ch)
+		harnessops.RefreshLatestAsync()
+		startBackgroundHarnessOperations(quit.ch)
+	}
+	defer stopHarnessOperations()
+	defer stopNodeRuns()
+	if home, err := canonicalOperatorHome(); err == nil {
+		if err := harnessops.EnableUserPath(home); err != nil {
+			return err
+		}
+	}
 
 	// Translate any of: SIGINT/SIGTERM, the socket server dying,
 	// "Quit" from the tray menu, into a single shutdown signal.
@@ -1276,6 +1298,8 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/whoami/interrupt", handleWhoamiInterrupt)
 	mux.HandleFunc("/v1/whoami/remote-control", handleWhoamiRemoteControl)
 	mux.HandleFunc("/v1/whoami/reincarnate", handleWhoamiReincarnate)
+	mux.HandleFunc("/v1/whoami/morph", handleWhoamiMorph)
+	mux.HandleFunc("/v1/whoami/morph/handoff", handleWhoamiMorphHandoff)
 	mux.HandleFunc("/v1/whoami/clone", handleWhoamiClone)
 	mux.HandleFunc("/v1/whoami/context", handleWhoamiContext)
 	mux.HandleFunc("/v1/whoami/debug-export", handleWhoamiDebugExport)

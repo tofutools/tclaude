@@ -35,7 +35,7 @@ func InsertAgentMessageWithAttachmentsBounded(m *AgentMessage, attachments []Age
 	return insertAgentMessageWithAttachmentsBounded(m, attachments, limit)
 }
 
-func insertAgentMessageWithAttachmentsBounded(m *AgentMessage, attachments []AgentMessageAttachment, limit int) (id int64, pending int, err error) {
+func insertAgentMessageWithAttachmentsBounded(m *AgentMessage, attachments []AgentMessageAttachment, limit int, after ...func(*sql.Tx, int64) error) (id int64, pending int, err error) {
 	d, err := Open()
 	if err != nil {
 		return 0, 0, err
@@ -65,6 +65,11 @@ func insertAgentMessageWithAttachmentsBounded(m *AgentMessage, attachments []Age
 	}
 	if err := insertAgentMessageAttachments(tx, id, attachments); err != nil {
 		return 0, 0, err
+	}
+	for _, hook := range after {
+		if err := hook(tx, id); err != nil {
+			return 0, 0, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, 0, err

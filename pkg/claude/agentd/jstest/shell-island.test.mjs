@@ -323,6 +323,26 @@ test('shell confirmation keeps capture-Escape semantics and feedback cleanup', a
   await mounted.unmount();
 });
 
+test('a confirmation starts focus on its action (so a plain Enter confirms) and Escape cancels', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createShellState }, { Confirm }] = await Promise.all([
+    harness.importDashboardModule('js/shell-state.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const feedback = createShellState();
+  const mounted = await harness.mount(harness.html`<${Confirm} feedback=${feedback} />`);
+  let answered;
+  await harness.act(() => { answered = feedback.confirm({ title: 'Move?', okLabel: 'Move agent' }); });
+  assertSameNode(harness.document.activeElement, mounted.container.querySelector('#confirm-ok'));
+  await harness.act(() => { harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }); });
+  assert.equal(await answered, false);
+  await harness.act(() => { answered = feedback.confirm({ title: 'Rotate?', okLabel: 'Rotate identity' }); });
+  assertSameNode(harness.document.activeElement, mounted.container.querySelector('#confirm-ok'));
+  await harness.act(() => mounted.container.querySelector('#confirm-ok').click());
+  assert.equal(await answered, true);
+  await mounted.unmount();
+});
+
 test('global activity keeps keyed native bot identity across polls and wizard changes', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, { GlobalActivity }] = await Promise.all([

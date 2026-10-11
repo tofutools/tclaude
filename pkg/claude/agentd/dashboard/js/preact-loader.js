@@ -269,7 +269,7 @@ export function mountDockFeature(dependencies = {}) {
 }
 
 // Terminal chrome and open state are one ownership unit across the nav badge,
-// dashboard pane stack and fallback session modal. xterm itself remains behind
+// dashboard pane stack. xterm itself remains behind
 // the opaque host adapter loaded by terminal-shell-island.js.
 const terminalsDescriptor = createIslandDescriptor({
   name: 'terminals',
@@ -277,10 +277,9 @@ const terminalsDescriptor = createIslandDescriptor({
   hosts: {
     host: '#terminals-root',
     badgeHost: '#terminals-badge-root',
-    modalHost: '#terminal-session-root',
   },
   failureClass: 'terminals-error',
-  load: async ({ hosts: { host, badgeHost, modalHost }, dependencies }) => {
+  load: async ({ hosts: { host, badgeHost }, dependencies }) => {
     const islandModule = import('./terminal-shell-island.js');
     const stateModule = import('./terminal-shell-state.js');
     const actionsModule = import('./terminal-shell-actions.js');
@@ -288,16 +287,19 @@ const terminalsDescriptor = createIslandDescriptor({
     // unread human notifications. The standalone pop-out shell mounts without
     // it and simply draws no attention glyph.
     const snapshotStoreModule = import('./snapshot-store.js');
+    // The node scope: a fused view shows only the ticked nodes' panes.
+    const scopeModule = import('./skynet-state.js');
     const [
       { mountTerminalShellIsland }, { terminalShellState }, { createTerminalShellActions },
-      { dashboardState },
-    ] = await Promise.all([islandModule, stateModule, actionsModule, snapshotStoreModule]);
+      { dashboardState }, { skynetState },
+    ] = await Promise.all([islandModule, stateModule, actionsModule, snapshotStoreModule, scopeModule]);
     const actions = createTerminalShellActions({ state: terminalShellState, ...dependencies });
     return {
       state: terminalShellState,
       mount: (registerCleanup) => mountTerminalShellIsland({
-        host, badgeHost, modalHost, state: terminalShellState, actions, registerCleanup,
+        host, badgeHost, state: terminalShellState, actions, registerCleanup,
         snapshot: dashboardState.snapshot,
+        scope: skynetState,
         widgetFactory: dependencies.widgetFactory,
         onComposeMessage: dependencies.onComposeMessage,
         composeMessageDialogKind: dependencies.composeMessageDialogKind,
@@ -539,6 +541,83 @@ export async function mountLogsFeature(actionDependencies = {}) {
       };
     },
   });
+}
+
+// The Skynet island owns four hosts: the tab-bar node chips, the top-level
+// bar that stands in for the tab strip while the map is open, the map tab, and
+// the header marker of a peer's per-node view.
+const skynetDescriptor = createIslandDescriptor({
+  name: 'skynet', label: 'Skynet nodes',
+  // mapHost is listed first: a load failure renders into the first host, and it
+  // belongs in the map section, never in the tab bar.
+  hosts: { mapHost: '#skynet-map-root', chipsHost: '#node-chips-root', barHost: '#skynet-toplevel-root', remoteHost: '#remote-node-root', bannerHost: '#skynet-scope-banner-root' },
+  failureClass: 'skynet-error',
+  load: async ({ hosts: { chipsHost, barHost, mapHost, remoteHost, bannerHost }, dependencies }) => {
+    const islandModule = import('./skynet-island.js');
+    const stateModule = import('./skynet-state.js');
+    const actionsModule = import('./skynet-actions.js');
+    const [{ mountSkynetIsland }, { skynetState }, { createSkynetActions }] = await Promise.all([islandModule, stateModule, actionsModule]);
+    const actions = createSkynetActions({ state: skynetState, ...dependencies });
+    return { state: skynetState, mount: (registerCleanup) => mountSkynetIsland({ chipsHost, barHost, mapHost, remoteHost, bannerHost, state: skynetState, actions, registerCleanup, navigate: dependencies.navigate, timers: dependencies.timers }) };
+  },
+});
+
+export function mountSkynetFeature(dependencies = {}) {
+  return mountIslandDescriptor(skynetDescriptor, dependencies);
+}
+
+// The fused Groups view is its own island: it pulls in the Groups renderer,
+// and a failure there must not take the node chips down.
+const skynetFleetDescriptor = createIslandDescriptor({
+  name: 'skynet-fleet', label: 'Groups on several nodes',
+  hosts: { host: '#skynet-fused-groups-root' },
+  failureClass: 'skynet-error',
+  load: async ({ hosts: { host } }) => {
+    const islandModule = import('./skynet-merged-island.js');
+    const stateModule = import('./skynet-state.js');
+    const [{ mountMergedGroupsIsland }, { skynetState }] = await Promise.all([islandModule, stateModule]);
+    return { state: skynetState, mount: (registerCleanup) => mountMergedGroupsIsland({ host, state: skynetState, registerCleanup }) };
+  },
+});
+
+export function mountSkynetFleetFeature(dependencies = {}) {
+  return mountIslandDescriptor(skynetFleetDescriptor, dependencies);
+}
+
+// Fused Messages: the ticked nodes' mail in the Messages layout.
+const fusedMessagesDescriptor = createIslandDescriptor({
+  name: 'fused-messages', label: 'Messages on several nodes',
+  hosts: { host: '#skynet-fused-messages-root' },
+  failureClass: 'skynet-error',
+  load: async ({ hosts: { host } }) => {
+    const islandModule = import('./fused-mail.js');
+    const stateModule = import('./skynet-state.js');
+    const [{ mountFusedMailIsland }, { skynetState }] = await Promise.all([islandModule, stateModule]);
+    return { state: skynetState, mount: (registerCleanup) => mountFusedMailIsland({ host, state: skynetState, registerCleanup }) };
+  },
+});
+
+export function mountFusedMessagesFeature(dependencies = {}) {
+  return mountIslandDescriptor(fusedMessagesDescriptor, dependencies);
+}
+
+// Fleet administration (trust, hub connection) is its own island too.
+const fleetAdminDescriptor = createIslandDescriptor({
+  name: 'fleet-admin', label: 'Fleet administration',
+  hosts: { host: '#fleet-admin-root' },
+  failureClass: 'skynet-error',
+  load: async ({ hosts: { host } }) => {
+    const islandModule = import('./fleet-admin-island.js');
+    const actionsModule = import('./fleet-admin-actions.js');
+    const stateModule = import('./skynet-state.js');
+    const [{ mountFleetAdminIsland }, { createFleetAdminActions }, { skynetState }] = await Promise.all([islandModule, actionsModule, stateModule]);
+    const actions = createFleetAdminActions();
+    return { state: skynetState, mount: (registerCleanup) => mountFleetAdminIsland({ host, state: skynetState, actions, registerCleanup }) };
+  },
+});
+
+export function mountFleetAdminFeature(dependencies = {}) {
+  return mountIslandDescriptor(fleetAdminDescriptor, dependencies);
 }
 
 export async function mountAuditFeature(actionDependencies = {}) {

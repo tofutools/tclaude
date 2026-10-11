@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -26,7 +25,10 @@ import (
 
 var fedTeleportMu sync.Mutex
 
-type teleportLandingAuthority struct{ record *db.FederationTeleport }
+type teleportLandingAuthority struct {
+	record *db.FederationTeleport
+	direct *db.FederationBundleOffer
+}
 type teleportLandingContextKey struct{}
 type teleportOfferContextKey struct{}
 
@@ -141,6 +143,9 @@ func resolveTeleportLanding(peer string, group int64, credentials string) (*db.F
 	return &landing, profile, worker, mode, err
 }
 func (a *teleportLandingAuthority) check() error {
+	if a.direct != nil {
+		return a.checkDirectMove()
+	}
 	t := a.record
 	if teleportFrozen() {
 		return errors.New("teleports are frozen by the operator")
@@ -174,6 +179,12 @@ func incomingTeleportRecord(peer string, sender string, d bundletransfer.Descrip
 	rt := currentFederation()
 	if rt == nil || teleportFrozen() {
 		return nil, errors.New("teleports are frozen or federation is disconnected")
+	}
+	// A signed node envelope with no agent sender is the operator acting on
+	// the named source. Peer/group admission remains the same; only the
+	// source binding comes from the signed teleport payload in that case.
+	if sender == "" {
+		sender = t.SourceAgent
 	}
 	last := t.Hops[len(t.Hops)-1]
 	if last.Offer != d.ID || last.FromInstance != peer || last.FromAgent != sender || last.ToInstance != rt.id.ID() || last.ToGroup != d.Group || t.SourceAgent != sender {
@@ -312,21 +323,10 @@ func processTeleportLanding(rt *fedRuntime, t *db.FederationTeleport) {
 	if err != nil || !won {
 		return
 	}
-	cwd := t.Landing.Cwd
-	if t.Intent.GitRef != "" {
-		checkout, err := prepareTeleportCheckout(rt.ctx, t, o.GroupID)
-		if err != nil {
-			t.State, t.TargetAgent = "pending", ""
-			_, _ = db.TransitionFederationTeleport(*t, "admitting")
-			_ = db.SetFederationBundleOfferState("in", o.Peer, o.Descriptor.ID, o.State, err.Error())
-			return
-		}
-		cwd = checkout.Path
-	}
 	request := httptest.NewRequest(http.MethodPost, "/internal/teleport-landing", nil)
 	request = request.WithContext(context.WithValue(rt.ctx, teleportLandingContextKey{}, authority))
 	rec := httptest.NewRecorder()
-	importFederationAgentOffer(rec, request, o, &fedBundleImportRequest{Group: t.Landing.Group, Cwd: cwd, configBundleRequest: configBundleRequest{Apply: true}})
+	importFederationAgentOffer(rec, request, o, &fedBundleImportRequest{Group: t.Landing.Group, configBundleRequest: configBundleRequest{Apply: true}})
 	if rec.Code == 200 {
 		t.State = "landed"
 	} else {
@@ -358,6 +358,7 @@ func teleportPeerCapacity(peer string, limit int) error {
 		reserved[p.AgentID] = true
 	}
 	used := 0
+	counted := map[string]bool{}
 	for _, t := range rows {
 		currentPeer, err := db.ResolveFederationIdentitySuccessor(t.Peer)
 		if err != nil {
@@ -366,6 +367,7 @@ func teleportPeerCapacity(peer string, limit int) error {
 		if t.Direction != "in" || currentPeer != peer || t.TargetAgent == "" {
 			continue
 		}
+		counted[t.TargetAgent] = true
 		if t.State == "admitting" || t.State == "uncertain" || reserved[t.TargetAgent] || nodeAdmission.launches[t.TargetAgent] == config.DataDir() {
 			used++
 			continue
@@ -382,6 +384,40 @@ func teleportPeerCapacity(peer string, limit int) error {
 			if isConvOnlineInSessions(sessions, alive) {
 				used++
 			}
+		}
+	}
+	// A landing policy's worker budget is shared with direct operator moves.
+	// Teleport receipts are already counted above; deduplicate by stable agent.
+	offers, err := db.ListFederationBundleOffers("in")
+	if err != nil {
+		return err
+	}
+	for _, o := range offers {
+		currentPeer, err := db.ResolveFederationIdentitySuccessor(o.Peer)
+		if err != nil {
+			return err
+		}
+		if currentPeer != peer || o.ImportAgent == "" || counted[o.ImportAgent] {
+			continue
+		}
+		counted[o.ImportAgent] = true
+		if reserved[o.ImportAgent] || nodeAdmission.launches[o.ImportAgent] == config.DataDir() {
+			used++
+			continue
+		}
+		a, err := db.GetAgent(o.ImportAgent)
+		if err != nil {
+			return err
+		}
+		if a == nil || !a.Active() {
+			continue
+		}
+		sessions, err := db.FindSessionsByConvID(a.CurrentConvID)
+		if err != nil {
+			return err
+		}
+		if isConvOnlineInSessions(sessions, alive) {
+			used++
 		}
 	}
 	if used >= limit {
@@ -406,6 +442,9 @@ func teleportBriefing(t *db.FederationTeleport) string {
 }
 func teleportImportBundle(r *http.Request, b *agentbundle.Bundle) error {
 	a := teleportLandingFromRequest(r)
+	if a != nil && a.direct != nil {
+		return a.prepareDirectMoveBundle(b)
+	}
 	if a == nil {
 		o, _ := r.Context().Value(teleportOfferContextKey{}).(*db.FederationBundleOffer)
 		if o == nil || o.Descriptor.Teleport == nil {
@@ -545,35 +584,6 @@ func checkTeleportRepo(t *db.FederationTeleport, group int64) error {
 	}
 	return jobrepo.Revalidate(context.Background(), repo.Definition)
 }
-func prepareTeleportCheckout(ctx context.Context, t *db.FederationTeleport, group int64) (*jobrepo.Checkout, error) {
-	if err := checkTeleportRepo(t, group); err != nil {
-		return nil, err
-	}
-	if t.Checkout != nil {
-		return nil, errors.New("teleport checkout already reserved; inspect the prior launch")
-	}
-	root := filepath.Join(config.DataDir(), "federation", "teleport-checkouts", t.Peer, t.Offer)
-	if err := os.MkdirAll(filepath.Dir(root), 0700); err != nil {
-		return nil, err
-	}
-	checkout, err := jobrepo.Prepare(ctx, t.Repo.Definition, root, t.Intent.GitRef)
-	if err != nil {
-		return nil, err
-	}
-	if err := checkTeleportRepo(t, group); err != nil {
-		_ = os.RemoveAll(root)
-		return nil, err
-	}
-	t.Checkout = checkout
-	won, err := db.TransitionFederationTeleport(*t, t.State)
-	if err != nil || !won {
-		_ = os.RemoveAll(root)
-		return nil, errors.New("teleport changed while preparing checkout")
-	}
-	// Keep successful checkouts across restart and agent exit: their native
-	// history may still resume here. Never remove a possibly running agent's cwd.
-	return checkout, nil
-}
 
 // Caller has positively released the unlaunched import reservation. Never call
 // this for a dispatched or uncertain launch, whose cwd may still be in use.
@@ -581,7 +591,7 @@ func cleanupUnlaunchedTeleportCheckout(t *db.FederationTeleport) {
 	if t.Checkout == nil {
 		return
 	}
-	root := filepath.Join(config.DataDir(), "federation", "teleport-checkouts", t.Peer, t.Offer)
+	root := t.Checkout.Root
 	if os.RemoveAll(root) == nil {
 		t.Checkout = nil
 	}

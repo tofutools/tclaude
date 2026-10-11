@@ -613,7 +613,7 @@ func resolveSweepAgent(convID string) sweepAgent {
 			ConvID:  current,
 			Title:   agent.FreshTitle(current),
 			Online:  isConvOnline(convID) || (current != convID && isConvOnline(current)),
-			Retired: !a.Active(),
+			Retired: !a.Active() && !db.AgentAway(a.AgentID),
 		}
 	}
 	return sweepAgent{

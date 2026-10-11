@@ -15,6 +15,7 @@
 
 import { $, $$, isModifiedClick } from './helpers.js';
 import { featureState } from './feature-state-registry.js';
+import { peerViewTabUsable } from './peer-view-limits.js';
 import {
   DEFAULT_TAB, normalizeLocation, initialState, current, locEquals,
   push, replaceCurrent, toPath, fromPath, resolvePopstate,
@@ -32,7 +33,7 @@ import {
 // set ordering.
 const ROUTABLE_TABS = new Set([
   'groups', 'terminals', 'jobs', 'processes', 'plugins', 'access',
-  'messages', 'usage', 'costs', 'audit', 'logs', 'debug', 'config',
+  'messages', 'usage', 'costs', 'audit', 'logs', 'debug', 'config', 'map', 'fleet-admin',
 ]);
 
 // The virtual stack (see nav-history-core.js). Replaced wholesale on every
@@ -87,6 +88,15 @@ function locationAvailable(loc) {
 // later.
 function pendingTerminalAttach(loc) {
   return loc.tab === 'terminals' && !!loc.selection;
+}
+
+// pendingMapLoad is the Skynet map's equivalent: its nav anchor stays hidden
+// until the island's first federation status read shows linked nodes, which
+// usually lands after this router boots. The island leaves the map for the
+// last per-node tab once that read settles without a fleet, so a /map deep
+// link is decided by the view that knows rather than bounced to Groups.
+function pendingMapLoad(loc) {
+  return loc.tab === 'map' || loc.tab === 'fleet-admin';
 }
 
 // activeLocationFromDOM reads the current dashboard location out of the live
@@ -170,6 +180,9 @@ function requestGroupsLocation(loc) {
 // data. A non-routable or unknown tab is left as-is.
 function activate(loc) {
   if (!ROUTABLE_TABS.has(loc.tab)) return;
+  // A peer view routes a tab the peer does not offer (a pasted /costs?node=,
+  // Back across a revoked grant) to Groups, and says so in the URL.
+  if (!peerViewTabUsable(loc.tab)) { correct({ tab: 'groups' }); loc = { tab: 'groups' }; }
   applying = true;
   try {
     const navBtn = $$('nav [data-tab]').find(b => b.dataset.tab === loc.tab);
@@ -226,11 +239,18 @@ function activate(loc) {
 // across a theme toggle desync the URL from the live theme. Everything else —
 // including consumed-on-load legacy deep-link params (?tab=/?access_request=) —
 // is intentionally dropped so the address bar settles to a clean canonical
-// location. Returns "" or "?slop=1"/"?wizard=1".
+// location. Returns "" or "?slop=1"/"?wizard=1", plus node=<id> on a peer view
+// and nodes=<set> in a fused view.
 function preservedQuery() {
   const out = new URLSearchParams();
   if (document.body.classList.contains('slop')) out.set('slop', '1');
   else if (document.body.classList.contains('wizard')) out.set('wizard', '1');
+  // A peer's per-node view (remote-node.js) is a property of the page, not of
+  // a history entry: every location on it stays on that node.
+  if (globalThis.__tclaudeRemoteNode?.id) out.set('node', globalThis.__tclaudeRemoteNode.id);
+  // So is a fused view's node set (skynet-island.js mirrors it here).
+  const nodes = document.documentElement.dataset.scopeNodes;
+  if (nodes) out.set('nodes', nodes);
   const s = out.toString();
   return s ? '?' + s : '';
 }
@@ -332,7 +352,8 @@ function onPopstate(e) {
   // the default in place, mirroring the init-time guard.
   if (!locationAvailable(current(stack))
     && !(current(stack).tab === DEFAULT_TAB && !current(stack).subtab)
-    && !pendingTerminalAttach(current(stack))) {
+    && !pendingTerminalAttach(current(stack))
+    && !pendingMapLoad(current(stack))) {
     stack = replaceCurrent(stack, normalizeLocation({ tab: DEFAULT_TAB }));
   }
   activate(current(stack));
@@ -349,6 +370,10 @@ function onPopstate(e) {
 // that tab, so its lazy-loader must already be wired and snapshot-gated
 // visibility (notably Processes) must no longer be provisional.
 export function initNavHistory() {
+  // /fleet (the old all-nodes view) heals to Groups with every node fused.
+  if (/^\/fleet\/?$/.test(window.location.pathname) && !document.documentElement.dataset.scopeNodes) {
+    document.documentElement.dataset.scopeNodes = new URLSearchParams(window.location.search).get('nodes') || 'all';
+  }
   const urlLoc = fromPath(window.location.pathname);
   // On a RELOAD, history.state still holds the stack we persisted for this
   // entry — reconstruct it (full depth) so native browser navigation retains
@@ -379,7 +404,8 @@ export function initNavHistory() {
   // the Terminal Shell island set the visibility classes.
   if (!locationAvailable(loc)
     && !(loc.tab === DEFAULT_TAB && !loc.subtab)
-    && !pendingTerminalAttach(loc)) {
+    && !pendingTerminalAttach(loc)
+    && !pendingMapLoad(loc)) {
     loc = normalizeLocation({ tab: DEFAULT_TAB });
     stack = initialState(loc);
   }

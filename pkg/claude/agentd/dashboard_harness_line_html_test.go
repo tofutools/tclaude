@@ -24,13 +24,13 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	}
 
 	// The native components are defined and read state.model.
-	must("function HarnessLine({ member, snapshot })", "HarnessLine component is defined")
+	must("function HarnessLine({ member, snapshot, local = true })", "HarnessLine component is defined")
 	must("function AgentStatusDot({ member })", "status-dot component is defined")
 	must("state.model", "the line reads the model off the agent's state")
 
 	// MemberCell wires it into the member control cell — same column as the
 	// dot/actions, NOT a new <td>.
-	must("<${HarnessLine} member=${member} snapshot=${snapshot} /></td>", "HarnessLine renders in the agent-ctl cell")
+	must("<${HarnessLine} member=${member} snapshot=${snapshot} local=${!group?.fleet_node || !!group.fleet_node.local} /></td>", "HarnessLine renders in the agent-ctl cell")
 
 	// The always-visible model is displayModel()-normalised; the harness uses a
 	// compact product mark while both FULL names stay in tooltips/accessibility
@@ -159,9 +159,12 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	// never GETS a model (the status line is what stamps one, and it is
 	// exactly what is being refused), so the pre-tick branch is the only one
 	// it ever renders through. Behaviour: jstest/broker-refusal-badge.test.mjs.
-	must("|| Number(state.broker_refusals || 0) > 0;",
+	must("|| Number(state.broker_refusals || 0) > 0",
 		"a starved agent must be badged on the branch it is stuck on")
-	must("return indicated ? html`<div class=\"agent-harness\">${sandbox}${remote}${refused}</div>` : null;",
+	// tcl-yuju57: a peer watching or typing into the terminal is live
+	// knowledge too. Behaviour: jstest/remote-viewers.test.mjs.
+	must("|| viewed;", "a viewed agent is badged before its first tick")
+	must("return indicated ? html`<div class=\"agent-harness\">${sandbox}${remote}${viewers}${refused}</div>` : null;",
 		"the pre-tick line carries every armed indicator")
 
 	// The sandbox badge component reads state.sandbox_mode and special-cases

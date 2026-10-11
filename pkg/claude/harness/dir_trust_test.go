@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 // Unit coverage for the harness-agnostic dir-trust layer: the ResolveTrustDir
@@ -227,4 +228,64 @@ func TestEnsureDirTrusted_DispatchesToCodexEditor(t *testing.T) {
 
 	_, statErr := os.Stat(filepath.Join(home, ".claude.json"))
 	assert.True(t, os.IsNotExist(statErr), "codex dispatch must not write the claude config")
+}
+
+func TestEnsureDirTrustedForLaunch_SymlinkedCwd(t *testing.T) {
+	for _, name := range []string{DefaultName, CodexName, CopilotName, GeminiName} {
+		t.Run(name, func(t *testing.T) {
+			root := testutil.CanonicalTempDir(t)
+			home := filepath.Join(root, "home")
+			real := filepath.Join(root, "project")
+			alias := filepath.Join(root, "project-link")
+			require.NoError(t, os.MkdirAll(home, 0700))
+			require.NoError(t, os.MkdirAll(real, 0700))
+			require.NoError(t, os.Symlink(real, alias))
+			t.Setenv("HOME", home)
+			h, err := Resolve(name)
+			require.NoError(t, err)
+			require.NoError(t, EnsureDirTrustedForLaunch(h, alias, func(string) string { return "" }, home))
+			var path string
+			switch name {
+			case DefaultName:
+				path = filepath.Join(home, ".claude.json")
+			case CodexName:
+				path = filepath.Join(home, ".codex", "config.toml")
+			case CopilotName:
+				path = filepath.Join(home, ".copilot", "config.json")
+			case GeminiName:
+				path = filepath.Join(home, ".gemini", "trustedFolders.json")
+			}
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			for _, cwd := range []string{real, alias} {
+				encoded, err := json.Marshal(cwd)
+				require.NoError(t, err)
+				assert.Contains(t, string(data), string(encoded), "trust must match both physical and recorded cwd")
+			}
+		})
+	}
+}
+
+func TestEnsureDirTrustedForLaunch_SymlinkedGeminiDistrustIsAtomic(t *testing.T) {
+	for _, denied := range []string{"project", "project-link"} {
+		t.Run(denied, func(t *testing.T) {
+			root := testutil.CanonicalTempDir(t)
+			real, alias := filepath.Join(root, "project"), filepath.Join(root, "project-link")
+			require.NoError(t, os.Mkdir(real, 0700))
+			require.NoError(t, os.Symlink(real, alias))
+			home := filepath.Join(root, "home")
+			path := filepath.Join(home, ".gemini", "trustedFolders.json")
+			require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
+			before, err := json.Marshal(map[string]string{filepath.Join(root, denied): "DO_NOT_TRUST"})
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, before, 0600))
+			h, err := Resolve(GeminiName)
+			require.NoError(t, err)
+			err = EnsureDirTrustedForLaunch(h, alias, func(string) string { return "" }, home)
+			require.ErrorContains(t, err, "DO_NOT_TRUST")
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, before, after, "refused trust must not alter either spelling")
+		})
+	}
 }

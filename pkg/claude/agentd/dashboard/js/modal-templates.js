@@ -5,7 +5,7 @@
 import { lastSnapshot } from './dashboard.js';
 import { managementController } from './management-controller.js';
 import { openGroupCloneModal as openUnifiedGroupCloneModal } from './group-create-controller.js';
-import { openTermModal } from './terminals-tab.js';
+import { openTerminalPane } from './terminals-tab.js';
 import { toast } from './refresh.js';
 import {
   templateReadbackBadges, templateRosterRowsHTML,
@@ -116,11 +116,12 @@ async function summonScribe(brief) {
     const result = await response.json().catch(() => ({}));
     const name = result.name || SCRIBE_NAME;
     if (result.focus_mode === 'browser' && result.focus_ws) {
-      openTermModal({ wsPath: result.focus_ws, label: name, hideConv: result.conv_id || null });
+      openTerminalPane({ ws: result.focus_ws, label: name, hideConv: result.conv_id || null, agent: result.agent_id || result.conv_id || null });
       toast(`summoned scribe ${name} — opened in-browser terminal`);
     } else {
       toast(`summoned scribe ${name} — opening its terminal`);
     }
+    return result;
   } catch (error) {
     toast(error?.message || String(error), true);
   }

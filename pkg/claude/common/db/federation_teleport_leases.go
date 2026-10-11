@@ -71,7 +71,7 @@ func listFederationTeleportLeases(active bool) ([]FederationTeleportLease, error
 	}
 	query := "SELECT snapshot FROM federation_teleport_leases"
 	if active {
-		query += " WHERE state NOT IN ('recovered','released','superseded','clone')"
+		query += " WHERE state NOT IN ('recovered','released','superseded','clone') OR (direction='in' AND state='superseded')"
 	}
 	query += " ORDER BY direction,peer,offer"
 	rows, err := d.Query(query)

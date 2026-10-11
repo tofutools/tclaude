@@ -1,12 +1,14 @@
 package agentd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
@@ -50,6 +52,8 @@ func (e *cloneSpawnError) write(w http.ResponseWriter) {
 // cloneSpawnOnce); every other field is launch authority the clone inherits
 // from its source.
 type cloneSpawnParams struct {
+	Arrival      bool
+	ArrivalGroup string
 	// SourceConv is the conversation being cloned; Cwd is where the clone runs.
 	SourceConv string
 	Cwd        string
@@ -79,7 +83,7 @@ type cloneSpawnParams struct {
 	// still injects it post-connect.
 	Title string
 	// FollowUp is the clone's first-turn handoff, "" for none. It is also what
-	// makes a clone eligible for launch enrollment at all (see cloneSpawnOnce).
+	// makes a clone eligible for launch enrollment along with Arrival (see cloneSpawnOnce).
 	// When the clone is enrolled, cloneSpawnOnce inserts the inbox row BEFORE
 	// the fork — so the launch prompt can name it by id — and reports that id
 	// in the result; the caller must not enqueue it a second time.
@@ -425,19 +429,57 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	// keep the inject-after-connect flow in runClonePostInit, unchanged, as
 	// does the agent.spawn_legacy_injection revert.
 	//
-	// A follow-up is REQUIRED to enroll, and that is load-bearing rather than
-	// incidental. `claude --session-id <id> --name <n>` with no positional
-	// prompt applies the name to the running TUI but writes no transcript at
-	// all (verified against claude 2.1.220): the conversation materialises on
-	// its FIRST TURN. A name-only enrollment would therefore leave a clone with
-	// no .jsonl — showing as "(unknown)" and unrecoverable when never used —
-	// which is the very trap runClonePostInit's /rename exists to avoid. It
-	// also costs nothing to require: with no follow-up there is only ONE
-	// injected stream, so the two-streams-merge-into-one-line bug this fixes
-	// cannot arise in the first place.
+	// Public clones always have an arrival briefing, which also materializes a
+	// no-task conversation without typing an orientation into its pane. Internal
+	// throwaway/export clones retain the existing optional-follow-up behavior.
 	cloneHarness, _ := harness.Resolve(srcHarness)
-	launchEnroll := cloneSupportsArgvEnrollment(cloneHarness) && !spawnUsesLegacyInjection() && p.FollowUp != ""
+	launchEnroll := cloneSupportsArgvEnrollment(cloneHarness) && !spawnUsesLegacyInjection() && (p.FollowUp != "" || p.Arrival)
 	res := cloneSpawnResult{LaunchEnrolled: launchEnroll}
+	arrival := arrivalContext{Operation: "local clone", LocalClone: true, Reason: "inherited source cwd"}
+	if p.Arrival {
+		arrival.Source.Harness = srcHarness
+		arrival.Source.Paths.Cwd = relaunch.Cwd
+		arrival.Source.Paths.Worktree = relaunch.Cwd
+		probeCtx, probeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		arrival.Source.Paths.Branch, _ = arrivalGit(probeCtx, relaunch.Cwd, "symbolic-ref", "--short", "HEAD")
+		probeCancel()
+		arrival.Source.Origin = arrivalOrigin(sourceConv, relaunch.Cwd, relaunch.Model)
+		arrival.Source.Origin.Trigger = arrivalTrigger(p.HandoffFrom, sourceConv, isHumanCloneCaller(p.HandoffFrom))
+		sourceCwd, sourceErr := filepath.EvalSymlinks(relaunch.Cwd)
+		arrivalCwd, arrivalErr := filepath.EvalSymlinks(cwd)
+		if cwd != relaunch.Cwd && (sourceErr != nil || arrivalErr != nil || sourceCwd != arrivalCwd) {
+			arrival.Reason = "explicit clone cwd"
+		}
+		if p.ArrivalGroup == "" {
+			if groups, err := db.ListGroupsForConv(sourceConv); err == nil {
+				var names []string
+				for _, g := range groups {
+					names = append(names, g.Name)
+				}
+				p.ArrivalGroup = strings.Join(names, ", ")
+			}
+		}
+	}
+	arrivalDelivered := false
+	var arrivalActorConv string
+	var arrivalActorCreated bool
+	defer func() {
+		if cerr != nil {
+			if arrivalActorCreated {
+				_, _ = db.DeleteAgentByConvID(arrivalActorConv)
+			}
+			return
+		}
+		if p.Arrival && !arrivalDelivered && spawned.NewConv != "" {
+			id, _, err := db.EnsureAgentForConv(spawned.NewConv, "clone")
+			if err != nil {
+				slog.Warn("clone arrival: identity unavailable", "error", err)
+				return
+			}
+			insertCloneHandoff(p.HandoffGroupID, p.HandoffFrom, spawned.NewConv, buildArrivalBriefing(arrival, id, cwd, p.ArrivalGroup, srcHarness, model), false)
+		}
+	}()
+
 	routeHelperPrepared := false
 	routeHelperCommitted := false
 	defer func() {
@@ -488,6 +530,17 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		// decision and the prompt build (spawn and reincarnate do the same):
 		// config.Load is uncached, so two reads could disagree and leave a row
 		// born delivered+read whose launch prompt only pointed at the inbox.
+
+		if p.Arrival {
+			id, created, err := db.EnsureAgentForConv(convID, "clone")
+			if err == nil {
+				arrivalActorConv, arrivalActorCreated = convID, created
+				p.FollowUp = buildArrivalBriefing(arrival, id, cwd, p.ArrivalGroup, srcHarness, model) + "\n\n" + p.FollowUp
+				arrivalDelivered = true
+			} else {
+				slog.Warn("clone arrival: identity unavailable", "error", err)
+			}
+		}
 		inlineCap := spawnInlineMaxChars()
 		res.HandoffInlined = spawnBriefingFitsLaunch(p.FollowUp, inlineCap)
 		res.HandoffMsgID = insertCloneHandoff(p.HandoffGroupID, p.HandoffFrom, convID, p.FollowUp, res.HandoffInlined)
@@ -1540,6 +1593,7 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	// model + effort; "" falls back to the harness default.
 	effort, model := relaunch.Effort, relaunch.Model
 	spawned, spawnErr := cloneSpawnOnce(cloneSpawnParams{
+		Arrival:             true,
 		SourceConv:          target,
 		Cwd:                 cwd,
 		NoCopyConv:          noCopyConv,

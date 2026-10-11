@@ -1,6 +1,8 @@
 package federationcmd
 
 import (
+	"fmt"
+	"io"
 	"net/http"
 	"os"
 
@@ -12,14 +14,28 @@ import (
 
 func teleportControlCmd() *cobra.Command {
 	children := []*cobra.Command{}
-	for _, mode := range []string{"on", "off"} {
-		children = append(children, boa.CmdT[struct{}]{Use: mode, Short: "Set this instance's teleport freeze", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
-			var out any
-			if err := agent.DaemonRequest(http.MethodPut, "/v1/federation/teleport", map[string]bool{"disabled": mode == "off"}, &out, agent.DaemonOpts{}); err != nil {
-				os.Exit(fail(os.Stderr, err))
-			}
-			os.Exit(printJSON(os.Stdout, out))
+	for _, mode := range []string{"status", "on", "off"} {
+		children = append(children, boa.CmdT[struct{}]{Use: mode, Short: "Inspect or set this instance's teleport freeze", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
+			os.Exit(runTeleportControl(mode, os.Stdout, os.Stderr))
 		}}.ToCobra())
 	}
 	return boa.CmdT[struct{}]{Use: "teleport", Short: "Enable or freeze teleports on this instance (operator only)", ParamEnrich: common.DefaultParamEnricher(), SubCmds: children}.ToCobra()
+}
+
+func runTeleportControl(mode string, stdout, stderr io.Writer) int {
+	method := http.MethodPut
+	var body any
+	switch mode {
+	case "status":
+		method = http.MethodGet
+	case "on", "off":
+		body = map[string]bool{"disabled": mode == "off"}
+	default:
+		return fail(stderr, fmt.Errorf("unknown teleport mode %q", mode))
+	}
+	var out any
+	if err := agent.DaemonRequest(method, "/v1/federation/teleport", body, &out, agent.DaemonOpts{}); err != nil {
+		return fail(stderr, err)
+	}
+	return printJSON(stdout, out)
 }

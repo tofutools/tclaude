@@ -4,7 +4,6 @@ import (
 	"io/fs"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 	"unicode"
@@ -512,44 +511,6 @@ func TestDashboardCSS_SandboxProfileSelectLayouts(t *testing.T) {
 	}
 	if !strings.Contains(css, ".sbx-row .sbx-inc-name {\n  flex: 0 1 auto; min-width: 0; width: auto; max-width: 100%;") {
 		t.Error("dashboard.css included-profile selector must retain intrinsic width")
-	}
-}
-
-// TestDashboardCSS_TerminalStacksAboveEditors guards the browser-terminal
-// fallback used by modal actions such as sandbox profiles' "configure with
-// agent". The terminal must cover the editor that launched it, while the
-// shared confirmation dialog must still cover the terminal.
-func TestDashboardCSS_TerminalStacksAboveEditors(t *testing.T) {
-	cssBytes, err := fs.ReadFile(dashboardAssetsFS, "dashboard.css")
-	if err != nil {
-		t.Fatalf("reading embedded dashboard.css: %v", err)
-	}
-	css := string(cssBytes)
-	zIndexOf := func(selector string) int {
-		t.Helper()
-		re := regexp.MustCompile(regexp.QuoteMeta(selector) + `\s*\{[^}]*z-index:\s*(\d+)`)
-		m := re.FindStringSubmatch(css)
-		if m == nil {
-			t.Fatalf("no z-index rule found for %s", selector)
-		}
-		n, err := strconv.Atoi(m[1])
-		if err != nil {
-			t.Fatalf("bad z-index for %s: %v", selector, err)
-		}
-		return n
-	}
-
-	terminal := zIndexOf("#term-session-modal")
-	for _, editor := range []string{"#sandbox-profile-editor-modal", "#perm-edit-modal"} {
-		if editorZ := zIndexOf(editor); terminal <= editorZ {
-			t.Errorf("#term-session-modal z-index (%d) must be strictly above %s (%d)", terminal, editor, editorZ)
-		}
-	}
-	if toast := zIndexOf(".toast"); terminal >= toast {
-		t.Errorf("#term-session-modal z-index (%d) must stay below .toast (%d)", terminal, toast)
-	}
-	if confirm := zIndexOf("#confirm-modal"); terminal >= confirm {
-		t.Errorf("#term-session-modal z-index (%d) must stay below #confirm-modal (%d)", terminal, confirm)
 	}
 }
 

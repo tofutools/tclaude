@@ -1,5 +1,5 @@
 import { Fragment, h, render } from 'preact';
-import { useEffect } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { registerMailController } from './mail-bridge.js';
 import {
@@ -14,6 +14,18 @@ import { attachmentHref, bodilessNotice, messageAttachments } from './human-atta
 import { dashboardState } from './snapshot-store.js';
 import { ImageAttachmentPreview } from './image-preview-overlay.js';
 import { MarkdownAttachment } from './markdown-attachment.js';
+import { AwayAnswer, PEER_MAIL_EVENT, PeerMailHost, awayTicket, peerLabelOf, peerOfMessage, replySubject } from './peer-mail.js';
+import { shellConfirm, shellToast } from './shell-state.js';
+import { remoteNodeID } from './skynet-model.js';
+
+// openPeerMail opens the peer mail dialog (peer operator mail goes out
+// through this node, so it is offered only on this node's own view).
+function openPeerMail(detail) {
+  document.dispatchEvent(new CustomEvent(PEER_MAIL_EVENT, { detail }));
+}
+import { TTL_CHOICES, ttlText } from './peer-access.js';
+import { slugInfo } from './fleet-admin-model.js';
+import { RemoteInboxSection } from './remote-inbox.js';
 
 const html = htm.bind(h);
 
@@ -443,11 +455,15 @@ function AccessReader({ request, controller }) {
       ${request.target_conv_id && html`<div class="access-row"><span class="access-k">${wizard ? 'Quarry' : 'Target'}</span><span class="access-v">${request.target_conv_title || request.target_conv_id}</span></div>`}
       ${request.scope_display && html`<div class="access-row"><span class="access-k">${wizard ? 'Bounds' : 'Scope'}</span><span class="access-v mono"
         title="What a scoped “always allow” would be limited to — the typed context this gate evaluates grants against">${request.scope_display}</span></div>`}
+      ${request.origin_peer && html`<div class="access-row"><span class="access-k">Peer</span><span class="access-v">${request.conv_title || request.origin_peer} <span class="mail-cid">${request.origin_peer}</span></span></div>
+        <div class="access-row"><span class="access-k">Asks for</span><span class="access-v">${request.group_id ? `group ${request.target_group || `#${request.group_id}`}` : slugInfo(request.perm)?.kind === 'node' ? 'node-wide' : 'every group on this node, including future ones'} · ${ttlText(request.grant_ttl_seconds) || 'permanent'}</span></div>
+        ${request.grant_expires_at && html`<div class="access-row"><span class="access-k">Grant expires</span><span class="access-v">${new Date(request.grant_expires_at).toLocaleString()}</span></div>`}`}
       ${request.body && html`<div class="access-row access-body-row"><span class="access-k">${request.body_label || 'Body'}</span><pre class="access-body">${request.body}</pre></div>`}
     </div></div>
     <div class="mail-reader-actions access-reader-actions">
       ${handled ? html`<${Fragment}><span class=${`access-outcome ${outcome.cls}`}>${outcome.txt}</span>${request.decided_at && html`<span class="access-decided-at">${relTime(request.decided_at)}</span>`}</${Fragment}>`
-        : html`<${Fragment}><span class="access-countdown" title="If you don't decide, this request is automatically declined.">${controller.accessCountdown(request.deadline)}</span>
+        : request.origin_peer ? html`<${PeerAccessDecision} request=${request} controller=${controller} />`
+                : html`<${Fragment}><span class="access-countdown" title="If you don't decide, this request is automatically declined.">${controller.accessCountdown(request.deadline)}</span>
           <span class="grow"></span><button class="access-btn extend" title="Push the auto-decline back 5 minutes"
             onClick=${() => controller.decideAccess(request.id, 'extend')}>+5m</button>
           ${request.auto_grantable && request.scope_display && html`<button class="access-btn always scoped"
@@ -467,7 +483,52 @@ function AccessReader({ request, controller }) {
   </${Fragment}>`;
 }
 
+// PeerAccessDecision decides a peer operator's request for a peer grant on
+// this node. Only the local operator decides these (never an away cover);
+// approval can shorten the grant or narrow an any-group request to one shared
+// group, never widen it, and there is no "always" for peers.
+function PeerAccessDecision({ request, controller, loadLinks = defaultLinks }) {
+  const [ttl, setTtl] = useState(String(request.grant_ttl_seconds ?? 3600));
+  const [group, setGroup] = useState('');
+  const [groups, setGroups] = useState([]);
+  const info = slugInfo(request.perm);
+  const kind = info?.kind || 'node';
+  // Approval may shorten the grant, never lengthen it: offer the requested
+  // lifetime and the shorter choices (all of them when permanent was asked).
+  const asked = Number(request.grant_ttl_seconds ?? 3600);
+  const ttlChoices = [...TTL_CHOICES.filter((c) => asked === 0 || (c.s !== 0 && c.s <= asked)),
+    ...(TTL_CHOICES.some((c) => c.s === asked) ? [] : [{ s: asked, label: ttlText(asked) }])].sort((a, b) => (a.s || Infinity) - (b.s || Infinity));
+  const narrowable = !request.group_id && kind === 'group';
+  useEffect(() => {
+    if (!narrowable) return;
+    loadLinks().then((rows) => setGroups(rows.filter((g) => (g.federation_links || []).some((l) => l?.peer === request.origin_peer && l.kind === 'grant')).map((g) => ({ id: g.group_id, name: g.name }))))
+      .catch(() => setGroups([]));
+  }, [request.id]);
+  const peer = request.conv_title || request.origin_peer;
+  const where = request.group_id ? `in group ${request.target_group || `#${request.group_id}`}` : group ? `in group ${groups.find((g) => String(g.id) === group)?.name || group}` : kind === 'node' ? 'node-wide' : 'in every group on this node, including future ones';
+  const approve = () => controller.decideAccess(request.id, 'approve', { grant_ttl_seconds: Number(ttl), ...(group ? { group_id: Number(group) } : {}) });
+  return html`<${Fragment}><span class="access-countdown" title="If you don't decide, this request is automatically declined.">${controller.accessCountdown(request.deadline)}</span>
+    <span class="access-peer-consequence">Approving lets ${peer} use <code>${request.perm}</code> (${info?.what || 'see the slug registry'}) ${where} ${Number(ttl) ? `for ${ttlText(Number(ttl))}` : 'permanently'}.${info?.warning ? html` <b class="fa-danger">${info.warning}</b>` : ''}</span>
+    <span class="grow"></span>
+    ${narrowable && groups.length > 0 && html`<select class="access-peer-group" title="Narrow to one shared group" value=${group} onChange=${(e) => setGroup(e.currentTarget.value)}>
+      <option value="">every group, including future ones</option>${groups.map((g) => html`<option key=${g.id} value=${String(g.id)}>${g.name}</option>`)}</select>`}
+    <select class="access-peer-ttl" title="How long the grant lasts" value=${ttl} onChange=${(e) => setTtl(e.currentTarget.value)}>
+      ${ttlChoices.map((c) => html`<option key=${c.s} value=${String(c.s)}>${c.label}</option>`)}</select>
+    <button class="access-btn extend" title="Push the auto-decline back 5 minutes" onClick=${() => controller.decideAccess(request.id, 'extend')}>+5m</button>
+    <button class="access-btn deny" onClick=${() => controller.decideAccess(request.id, 'deny')}>Decline</button>
+    <button class="access-btn approve" onClick=${approve}>Approve</button></${Fragment}>`;
+}
+
+async function defaultLinks() {
+  const r = await fetch('/api/federation/links', { credentials: 'same-origin' });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return (await r.json())?.groups || [];
+}
+
 export function messageDeliveryState(message) {
+  if (message.forward_state === 'queued' || message.forward_state === 'handoff') return 'forwarded to ' + message.forwarded_to;
+  if (message.forward_state === 'refused') return 'forwarding refused';
+  if (message.forward_state === 'accepted') return 'delivered';
   if (message.nudge_discarded_at) return 'discarded while offline';
   if (message.delivered_at) return 'delivered';
   if (message.direction === 'out') return 'undelivered';
@@ -505,6 +566,8 @@ function MessageReader({ current, controller, model }) {
   const stateBits = html`<${Fragment}>${message.read ? 'read' : html`<span class="mail-state-unread">unread</span>`}${deliveryState
     ? html`<${Fragment}> · <span class=${deliveryState === 'delivered' ? '' : 'mail-state-pending'}>${deliveryState}</span></${Fragment}>` : null}</${Fragment}>`;
   const human = current.selected === 'human';
+  const peer = human && !remoteNodeID() ? peerOfMessage(message) : '';
+  const ticket = peer ? awayTicket(message) : '';
   const fromTarget = message.from_agent || message.from_conv;
   const senderLive = controller.senderOnline(message.from_agent, message.from_conv);
   return html`<div class="mail-reader" id="mail-reader" data-kind=${controller.msgKind(message)}
@@ -526,6 +589,9 @@ function MessageReader({ current, controller, model }) {
       : html`<${LinkifiedBody} text=${message.body || ''} />`}</div>
     ${human && html`<${HumanAttachment} message=${message} />`}
     <div class="mail-reader-actions">
+      ${ticket && html`<${AwayAnswer} ticket=${ticket} peerLabel=${peerLabelOf(message)} confirm=${shellConfirm} toast=${shellToast} />`}
+      ${peer && html`<button data-act="peer-mail-reply" title="Reply to this peer's operator"
+        onClick=${() => openPeerMail({ peer, subject: replySubject(message.subject) })}>reply</button>`}
       ${human && message.from_conv && html`<${Fragment}><button data-act="msg-reply" data-id=${message.id} data-agent=${message.from_agent || ''}
         data-conv=${message.from_conv} data-label=${message.from_title || message.from_conv} data-subject=${message.subject || ''}
         title="Reply to this agent — opens a dialog to send your answer back">reply</button>
@@ -572,6 +638,7 @@ export function MailApp({ controller }) {
     });
   };
   return html`<div class="mail-client" onKeyDown=${(event) => movePaneFocus(event, controller)}>
+    <${PeerMailHost} toast=${shellToast} />
     <input id="filter-mailboxes" type="text" class="mail-sidebar-filter"
       placeholder=${wizard ? 'Seek a familiar…' : 'Filter mailboxes (name / id)'}
       autocomplete="off" spellcheck=${false} value=${current.boxQuery}
@@ -591,6 +658,8 @@ export function MailApp({ controller }) {
         }}>×</button>
       <button class="tool" id="mail-mark-all" data-act="msg-mark-all-read"
         title="Mark every human notification read" hidden=${current.selected !== 'human'}>✓ mark all read</button>
+      <button class="tool" id="mail-peer-compose" title="Message a peer's operator or agents on a peer (federation)"
+        hidden=${current.selected !== 'human' || !!remoteNodeID()} onClick=${() => openPeerMail({})}>✉ peer</button>
       <button class="tool" id="mail-clear-read" data-act="msg-clear"
         title="Delete every human notification that has been marked read" hidden=${current.selected !== 'human'}>🗑 delete read</button>
       <button class="tool" id="mail-agent-mark-all" data-act="mail-agent-mark-all"
@@ -599,6 +668,7 @@ export function MailApp({ controller }) {
         hidden=${current.selected === 'human' || current.selected === 'all' || current.selected.startsWith('group:')}>✓ mark all read</button>
     </div>
     <div class="mail-col mail-sidebar-col">
+      <${RemoteInboxSection} />
       <${WipeBar} current=${current} controller=${controller} />
       ${current.mailboxRequest?.phase === 'error' && html`<div class="island-error mail-error" role="alert">
         Mailboxes failed to refresh: ${current.mailboxRequest.error}

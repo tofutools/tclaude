@@ -19,21 +19,6 @@ export function registerTerminalShellController(next, runtimeLoader = null) {
   };
 }
 
-export function openTermModal(options) {
-  const current = controller;
-  if (!current) return null;
-  if (!normalizeSeed({ ws: options?.wsPath || options?.ws })) return null;
-  const descriptor = { ...options, initialRetry: options?.initialRetry !== false };
-  if (!prepareRuntime) return current.openModal(descriptor);
-  return prepareRuntime().then(
-    () => controller === current ? current.openModal(descriptor) : null,
-    (error) => {
-      console.error('terminal runtime load failed:', error);
-      return null;
-    },
-  );
-}
-
 export function openTerminalPane(seedOrPromise, { reveal = true } = {}) {
   return Promise.resolve(seedOrPromise).then((rawSeed) => {
     const normalized = normalizeSeed(rawSeed);

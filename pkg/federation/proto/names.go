@@ -1,6 +1,7 @@
 package proto
 
 import (
+	"github.com/google/uuid"
 	"strings"
 	"time"
 )
@@ -204,4 +205,21 @@ func sanitizeSpawnProfiles(profiles []CatalogSpawnProfile) []CatalogSpawnProfile
 		out = append(out, p)
 	}
 	return out
+}
+
+// ValidConversationRef accepts the native identity formats used by harnesses.
+// This is an explanatory reference, never an agent principal.
+func ValidConversationRef(id string) bool {
+	if _, err := uuid.Parse(id); err == nil {
+		return true
+	}
+	if !strings.HasPrefix(id, "ses_") || len(id) <= 4 || len(id) > 160 {
+		return false
+	}
+	for _, c := range id[4:] {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '_' && c != '-' {
+			return false
+		}
+	}
+	return true
 }

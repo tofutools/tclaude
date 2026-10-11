@@ -23,6 +23,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common/buildversion"
+	"github.com/tofutools/tclaude/pkg/federation/jobrepo"
 )
 
 const PermAgentBundleExport = "agent.bundle.export"
@@ -32,6 +33,7 @@ const PermAgentBundleImport = "agent.bundle.import"
 // route, never through a user-controlled SpawnRequest resume/id parameter.
 type bundleHistoryContextKey struct{}
 type bundleHistoryLaunch struct {
+	Path     string
 	Raw      []byte
 	SourceID string
 	Format   string
@@ -54,6 +56,13 @@ func collectAgentBundle(convID string, withHistory bool) (*agentbundle.Bundle, e
 	}
 	if h.UsesCommandInput() {
 		return nil, errors.New("command-input harnesses cannot be bundled as agents")
+	}
+	historyWarning := ""
+	if withHistory && h.Name == harness.OpenCodeName {
+		if _, err := harness.OpenCodeExecutable(); err != nil {
+			withHistory = false
+			historyWarning = "OpenCode executable unavailable; exporting config only (no conversation history)"
+		}
 	}
 	seed, err := seedProfileFromConv(convID)
 	if err != nil {
@@ -162,6 +171,12 @@ func collectAgentBundle(convID string, withHistory bool) (*agentbundle.Bundle, e
 			d.Paths.Cwd = ref.ProjectPath
 		}
 	}
+	d.Origin = arrivalOrigin(convID, d.Paths.Cwd, seed.Model)
+	if filepath.IsAbs(d.Paths.Cwd) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		d.Paths.RepoURL = jobrepo.OriginHint(ctx, d.Paths.Cwd)
+		cancel()
+	}
 	groups, err := db.ListGroupsForConv(convID)
 	if err != nil {
 		return nil, err
@@ -265,7 +280,10 @@ func collectAgentBundle(convID string, withHistory bool) (*agentbundle.Bundle, e
 		return nil, err
 	}
 	d.Profile = safe.Sections["profiles"][0].Value
-	b := &agentbundle.Bundle{Manifest: agentbundle.Manifest{Format: agentbundle.Format, FormatVersion: 1, CreatedAt: time.Now().UTC().Format(time.RFC3339), TclaudeVersion: buildversion.AppVersion(), Agent: d, Placeholders: safe.Placeholders}}
+	b := &agentbundle.Bundle{MaxBytes: agentTransferLimit(), Manifest: agentbundle.Manifest{Format: agentbundle.Format, FormatVersion: 1, CreatedAt: time.Now().UTC().Format(time.RFC3339), TclaudeVersion: buildversion.AppVersion(), Agent: d, Placeholders: safe.Placeholders}}
+	if historyWarning != "" {
+		b.Manifest.Warnings = append(b.Manifest.Warnings, historyWarning)
+	}
 	if len(safe.Omitted) > 0 {
 		b.Manifest.Warnings = append(b.Manifest.Warnings, "Structured credential fields omitted: "+strings.Join(safe.Omitted, ", "))
 	}
@@ -283,20 +301,23 @@ func collectAgentBundle(convID string, withHistory bool) (*agentbundle.Bundle, e
 		if !h.SupportsHistoryTransfer() {
 			b.Manifest.Warnings = append(b.Manifest.Warnings, h.DisplayName+" does not support imported history; exporting config only")
 		} else {
-			transcript, err := h.History.Export(convID, d.Paths.Cwd)
-			if err != nil {
+			if err := snapshotAgentHistory(b, h, convID, d.Paths.Cwd); err != nil {
+				_ = b.Close()
 				return nil, err
 			}
-			b.SetHistory(h.History.Format(), convID, transcript)
 		}
 	}
-	b.Manifest.Findings = scanAgentBundle(b)
+	b.Manifest.Findings, err = scanAgentBundle(b)
+	if err != nil {
+		_ = b.Close()
+		return nil, err
+	}
 	return b, nil
 }
 
 // Counts are grouped by kind with at most three locations each, including for
 // large tool-output transcripts. Suspected values never reach diagnostics.
-func scanAgentBundle(b *agentbundle.Bundle) []agentbundle.Finding {
+func scanAgentBundle(b *agentbundle.Bundle) ([]agentbundle.Finding, error) {
 	byKind := map[string]*agentbundle.Finding{}
 	scan := func(text, location string) {
 		for kind, count := range configbundle.CredentialKinds(text) {
@@ -344,8 +365,13 @@ func scanAgentBundle(b *agentbundle.Bundle) []agentbundle.Finding {
 	var meta any
 	_ = json.Unmarshal(metadata, &meta)
 	walk(meta, "manifest")
-	scanner := bufio.NewScanner(bytes.NewReader(b.Transcript))
-	scanner.Buffer(make([]byte, 64<<10), 10<<20)
+	history, err := b.OpenHistory()
+	if err != nil {
+		return nil, err
+	}
+	defer history.Close()
+	scanner := bufio.NewScanner(history)
+	scanner.Buffer(make([]byte, min(64<<10, agentRecordLimit())), agentRecordLimit())
 	line := 0
 	for scanner.Scan() {
 		line++
@@ -353,6 +379,9 @@ func scanAgentBundle(b *agentbundle.Bundle) []agentbundle.Finding {
 		if json.Unmarshal(scanner.Bytes(), &record) == nil {
 			walk(record, fmt.Sprintf("history line %d", line))
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan history within federation.agent_history_record_max_bytes=%d: %w", agentRecordLimit(), err)
 	}
 	kinds := make([]string, 0, len(byKind))
 	for kind := range byKind {
@@ -363,7 +392,7 @@ func scanAgentBundle(b *agentbundle.Bundle) []agentbundle.Finding {
 	for _, kind := range kinds {
 		findings = append(findings, *byKind[kind])
 	}
-	return findings
+	return findings, nil
 }
 
 func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
@@ -381,11 +410,19 @@ func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "bundle_export", err.Error())
 		return
 	}
+	defer func() { _ = b.Close() }()
+	b.Manifest.Agent.CarryPermissions = r.URL.Query().Get("carry_permissions") == "true"
+	if b.Manifest.Agent.CarryPermissions {
+		b.Manifest.Agent.Permissions = standingCarryRows(b.Manifest.Agent.Permissions)
+	}
 	if len(b.Manifest.Findings) > 0 && r.URL.Query().Get("allow_flagged") != "true" {
 		writeJSON(w, 422, map[string]any{"error": "suspected credentials: use --allow-flagged or export without --history", "code": "flagged_credentials", "findings": b.Manifest.Findings})
 		return
 	}
-	raw, err := b.Encode()
+	if caller, human, ok := authedCaller(w, r); ok && b.Manifest.Agent.Origin != nil {
+		b.Manifest.Agent.Origin.Trigger = arrivalTrigger(caller, res.ConvID, human)
+	}
+	archive, err := archiveAgentBundle(b)
 	if err != nil {
 		writeError(w, 400, "bundle_export", err.Error())
 		return
@@ -393,21 +430,23 @@ func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", `attachment; filename="agent.bundle.zip"`)
 	w.WriteHeader(200)
-	_, _ = w.Write(raw)
+	defer func() { _ = archive.Close(); _ = os.Remove(archive.Name()) }()
+	_, _ = io.Copy(w, archive)
 }
 
 type agentBundlePreview struct {
-	Agent      agentbundle.Definition     `json:"agent"`
-	Cwd        string                     `json:"cwd"`
-	Worktree   string                     `json:"worktree,omitempty"`
-	Group      string                     `json:"group,omitempty"`
-	History    bool                       `json:"history"`
-	Unresolved []configbundle.Placeholder `json:"unresolved,omitempty"`
-	Warnings   []string                   `json:"warnings"`
-	Security   string                     `json:"security"`
-	Findings   []agentbundle.Finding      `json:"findings,omitempty"`
-	Applied    bool                       `json:"applied"`
-	Spawn      *agent.SpawnResponse       `json:"spawn,omitempty"`
+	Permissions []carriedPermissionDecision `json:"permissions,omitempty"`
+	Agent       agentbundle.Definition      `json:"agent"`
+	Cwd         string                      `json:"cwd"`
+	Worktree    string                      `json:"worktree,omitempty"`
+	Group       string                      `json:"group,omitempty"`
+	History     bool                        `json:"history"`
+	Unresolved  []configbundle.Placeholder  `json:"unresolved,omitempty"`
+	Warnings    []string                    `json:"warnings"`
+	Security    string                      `json:"security"`
+	Findings    []agentbundle.Finding       `json:"findings,omitempty"`
+	Applied     bool                        `json:"applied"`
+	Spawn       *agent.SpawnResponse        `json:"spawn,omitempty"`
 }
 
 func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
@@ -420,15 +459,30 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	} else if _, ok := requirePermission(w, r, PermAgentBundleImport); !ok {
 		return
 	}
-	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, agentbundle.MaxBytes+1))
-	if err != nil {
-		writeError(w, 400, "archive", err.Error())
-		return
+	b, _ := r.Context().Value(agentBundleDataContextKey{}).(*agentbundle.Bundle)
+	if b == nil {
+		file, err := os.CreateTemp("", ".agent-import-archive-")
+		if err != nil {
+			writeError(w, 500, "archive", err.Error())
+			return
+		}
+		defer func() { _ = file.Close(); _ = os.Remove(file.Name()) }()
+		n, err := io.Copy(file, http.MaxBytesReader(w, r.Body, agentTransferLimit()+1))
+		if err != nil || n > agentTransferLimit() {
+			writeError(w, 400, "archive", fmt.Sprintf("archive exceeds or cannot be read within federation.agent_transfer_max_bytes=%d", agentTransferLimit()))
+			return
+		}
+		b, err = agentbundle.DecodeFile(file, agentTransferLimit(), "")
+		if err != nil {
+			writeError(w, 400, "archive", err.Error())
+			return
+		}
+		defer func() { _ = b.Close() }()
 	}
-	b, err := agentbundle.Decode(raw)
-	if err != nil {
-		writeError(w, 400, "archive", err.Error())
-		return
+	arrival, _ := r.Context().Value(arrivalContextKey{}).(*arrivalContext)
+	if arrival == nil {
+		arrival = &arrivalContext{Operation: "bundle import", Source: b.Manifest.Agent, Reason: "explicit import path"}
+		r = r.WithContext(context.WithValue(r.Context(), arrivalContextKey{}, arrival))
 	}
 	if err := teleportImportBundle(r, b); err != nil {
 		writeError(w, 409, "teleport_landing", err.Error())
@@ -492,7 +546,37 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	preview := agentBundlePreview{Findings: scanAgentBundle(b), Agent: d, Cwd: q.Get("cwd"), Worktree: q.Get("worktree"), Group: q.Get("group"), Unresolved: missing, Warnings: append([]string{}, b.Manifest.Warnings...), Security: "Permissions and ownership are advisory only; none will be copied. Launch posture uses normal receiver spawn checks."}
+	findings, err := scanAgentBundle(b)
+	if err != nil {
+		writeError(w, 400, "history", err.Error())
+		return
+	}
+	carryPolicy, hasCarryPolicy := r.Context().Value(permissionCarryContextKey{}).(permissionCarryPolicy)
+	if !hasCarryPolicy {
+		carryPolicy = permissionCarryPolicy{Group: q.Get("group"), Enabled: d.CarryPermissions && q.Get("carry_permissions") == "true", AllowSensitive: q.Get("allow_sensitive_permissions") == "true"}
+		if apply && carryPolicy.Enabled {
+			if _, ok := requirePermission(w, r, PermPermissionsGrant); !ok {
+				return
+			}
+		}
+	}
+	if carryPolicy.Enabled && len(d.Permissions) > 512 {
+		writeError(w, 400, "permissions", "permission carry exceeds 512 rows")
+		return
+	}
+	carryDecisions, carryOverrides := planCarriedPermissions(d.Permissions, carryPolicy)
+	if authority != nil && authority.record.WorkerDefaults != nil {
+		for i := range carryDecisions {
+			d := &carryDecisions[i]
+			if authority.record.WorkerDefaults.Permissions[d.Slug].Effect == "deny" && d.Effect != "deny" && d.Decision != "drop" {
+				d.Decision, d.Reason = "drop", "receiver worker policy deny wins"
+			}
+		}
+	}
+	preview := agentBundlePreview{Permissions: carryDecisions, Findings: findings, Agent: d, Cwd: q.Get("cwd"), Worktree: q.Get("worktree"), Group: q.Get("group"), Unresolved: missing, Warnings: append([]string{}, b.Manifest.Warnings...), Security: "Permissions and ownership are advisory only; none will be copied. Launch posture uses normal receiver spawn checks."}
+	if carryPolicy.Enabled {
+		preview.Security = permissionCarrySummary(preview.Permissions) + " Launch posture uses normal receiver spawn checks."
+	}
 	if preview.Cwd == "" && q.Get("keep_paths") == "true" {
 		preview.Cwd = d.Paths.Cwd
 		if preview.Worktree == "" {
@@ -531,7 +615,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		} else if b.Manifest.History.Format != h.History.Format() {
 			writeError(w, 400, "history", "history format does not match harness")
 			return
-		} else if err := h.History.Validate(b.Transcript, b.Manifest.History.SourceConvID); err != nil {
+		} else if err := validateBundleHistory(h, b); err != nil {
 			writeError(w, 400, "history", err.Error())
 			return
 		} else {
@@ -571,18 +655,52 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	if authority != nil {
 		var shape map[string]any
 		_ = json.Unmarshal(wire, &shape)
-		shape["profile"] = authority.record.Profile.Name
+		if authority.record.Profile != nil {
+			shape["profile"] = authority.record.Profile.Name
+		}
 		if authority.record.WorkerDefaults != nil {
 			shape["permission_overrides"] = authority.record.WorkerDefaults.Permissions
 		}
 		wire, _ = json.Marshal(shape)
 	}
-	inner := r.Clone(r.Context())
+	var launchShape map[string]any
+	_ = json.Unmarshal(wire, &launchShape)
+	var receiverOverrides map[string]db.PermissionOverride
+	if raw, err := json.Marshal(launchShape["permission_overrides"]); err == nil {
+		_ = json.Unmarshal(raw, &receiverOverrides)
+	}
+	if receiverOverrides == nil {
+		receiverOverrides = map[string]db.PermissionOverride{}
+	}
+	for slug, override := range carryOverrides {
+		if receiverOverrides[slug].Effect == "deny" && override.Effect != "deny" {
+			for i := range preview.Permissions {
+				if preview.Permissions[i].Slug == slug && preview.Permissions[i].Effect != "deny" {
+					preview.Permissions[i].Decision = "drop"
+					preview.Permissions[i].Reason = "receiver worker policy deny wins"
+				}
+			}
+			continue
+		}
+		receiverOverrides[slug] = override
+	}
+	launchShape["permission_overrides"] = receiverOverrides
+	if carryPolicy.Enabled {
+		brief, _ := launchShape["initial_message"].(string)
+		launchShape["initial_message"] = permissionCarrySummary(preview.Permissions) + "\n\n" + brief
+	}
+	wire, _ = json.Marshal(launchShape)
+	inner := r.Clone(context.WithValue(r.Context(), permissionCarryLaunchContextKey{}, permissionCarryLaunch{Policy: carryPolicy, Rows: d.Permissions, Expected: carryOverrides}))
+	if a := arrivalFromRequest(inner); a != nil && carryPolicy.Enabled {
+		copy := *a
+		copy.PermissionSummary = permissionCarrySummary(preview.Permissions)
+		inner = inner.WithContext(context.WithValue(inner.Context(), arrivalContextKey{}, &copy))
+	}
 	inner.Method = http.MethodPost
 	inner.Body = io.NopCloser(bytes.NewReader(wire))
 	inner.ContentLength = int64(len(wire))
 	if preview.History {
-		inner = inner.WithContext(context.WithValue(inner.Context(), bundleHistoryContextKey{}, &bundleHistoryLaunch{Raw: b.Transcript, SourceID: b.Manifest.History.SourceConvID, Format: b.Manifest.History.Format}))
+		inner = inner.WithContext(context.WithValue(inner.Context(), bundleHistoryContextKey{}, &bundleHistoryLaunch{Raw: b.Transcript, Path: b.TranscriptPath, SourceID: b.Manifest.History.SourceConvID, Format: b.Manifest.History.Format}))
 	}
 	rec := httptest.NewRecorder()
 	handleGroupSpawn(rec, inner, group)
@@ -596,6 +714,10 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &spawned); err != nil {
 		writeError(w, 500, "spawn", err.Error())
 		return
+	}
+	if carryPolicy.Enabled {
+		auditDecisions, _ := json.Marshal(preview.Permissions)
+		recordFederationAudit("agent.permissions.carry", carryPolicy.Peer, spawned.AgentID, preview.Group, string(auditDecisions), 200)
 	}
 	preview.Applied = true
 	preview.Spawn = &spawned

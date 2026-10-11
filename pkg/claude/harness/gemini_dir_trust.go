@@ -89,10 +89,22 @@ func EnsureGeminiDirTrustedForLaunch(getenv func(string) string, home, projectDi
 	if err != nil {
 		return err
 	}
-	dir := filepath.Clean(projectDir)
+	dirs := dirTrustSpellings(filepath.Clean(projectDir))
 	return editHarnessConfigFile("Gemini trusted folders", path, 0o600,
 		func(data []byte) (bool, []byte, error) {
-			return planGeminiDirTrust(data, dir)
+			// Plan both spellings before committing either. An explicit distrust
+			// of the alias must not leave its physical target newly trusted.
+			changed := false
+			for _, dir := range dirs {
+				added, next, err := planGeminiDirTrust(data, dir)
+				if err != nil {
+					return false, nil, err
+				}
+				if added {
+					data, changed = next, true
+				}
+			}
+			return changed, data, nil
 		}, prepareAtomicWriteFile)
 }
 

@@ -16,8 +16,9 @@ const GeminiPinnedVersion = "0.62.0"
 // The first Gemini wave was the MINIMUM BAR from docs/adding-a-harness.md: a
 // Spawner, a ModelCatalog and the lifecycle tokens, plus LaunchEnrollment. The
 // second adds the cold ConvStore and the Ask surface, both read from the CLI's
-// own storage and headless code paths; the third adds hooks. Every other
-// contract stays nil until a later wave backs it.
+// own storage and headless code paths; the third adds hooks. Native portable
+// history is verified by the pinned CLI resume smoke and federation round-trip.
+// Other contracts stay nil until backed by evidence.
 //
 // The bar is the same one the Copilot adapter started from, and for the same
 // reason: a launch flag read from the CLI's own argument parser is a contract,
@@ -27,11 +28,12 @@ const GeminiPinnedVersion = "0.62.0"
 // detect one that is present and wrong.
 func init() {
 	Register(&Harness{
-		Name:        GeminiName,
-		DisplayName: "Gemini CLI",
-		Spawn:       geminiSpawner{},
-		Models:      geminiModels{},
-		Life:        geminiLifecycle{},
+		Name:                      GeminiName,
+		DisplayName:               "Gemini CLI",
+		AvailabilityCredentialEnv: []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"},
+		Spawn:                     geminiSpawner{},
+		Models:                    geminiModels{},
+		Life:                      geminiLifecycle{},
 
 		// The cold conversation store reads Gemini's own per-project chat
 		// files (see gemini_convstore.go for the layout and the "what counts
@@ -39,7 +41,9 @@ func init() {
 		// title store, so SetTitle writes tclaude's conv_index overlay —
 		// which is also what makes rename deliverable (CanRename) without an
 		// in-pane command.
-		Convs: geminiConvStore{},
+		Convs:      geminiConvStore{},
+		History:    geminiHistory{},
+		Transcript: geminiTranscript{},
 
 		// One-shot `tclaude ask`, buffered only. Headless `--prompt=` writes
 		// the answer to stdout and turns every ask_user approval into a deny,

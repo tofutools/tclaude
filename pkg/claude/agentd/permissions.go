@@ -126,8 +126,12 @@ func init() { initPermissionRegistry() }
 var permissionRegistry = []PermSlug{
 	{Slug: PermJobsRun, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Request and inspect remote one-shot jobs in an allowed repository. Requires peer= scope. Peer grants independently require a receiving group and launch policy."},
 	{Slug: PermHostRead, Description: "Read cached host CPU, RAM, disk and live agent/session load, including configured local work-directory paths. Not default-granted."},
+	{Slug: PermHumanInboxRead, Description: "Peer-only: read this node's human notifications and pending ask-human requests. Held only through unrestricted federation trust; not grantable, not requestable."},
+	{Slug: PermHumanInboxAnswer, Description: "Peer-only: reply to this node's agents' human notifications and answer their ask-human requests once (approve or deny). Held only through unrestricted federation trust; not grantable, not requestable."},
 	{Slug: PermApprovalsAnswer, Description: "Peer-only one-shot access-request answers while selected as away cover. Configure as an unscoped federation peer grant; ordinary agent grants do not authorize answers."},
 	{Slug: PermModelsProxyLeased, Description: "Peer-only access to requester-issued model gateway leases. Configure through federation peer grants."},
+	{Slug: PermSelfTeleportPermissions, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Opt in to carrying permissions on self-initiated teleport; requires peer scope and receiver approval. Default off."},
+	{Slug: PermAgentsReceivePermissions, Description: "Peer-only: allow opt-in permission carry into a receiving group, optionally limited to permission slugs. Does not transfer ownership or sensitive authority."},
 	{Slug: PermAgentsReceive, Description: "Peer-only admission for agent bundle offers into an explicitly granted receiving group. Configure through federation peer grants; ordinary agent grants do not authorize receipt."},
 	{Slug: PermGroupsRosterRead, Description: "Read group member names and roles.", ScopeDims: []ScopeDim{ScopeDimGroup}},
 	{Slug: PermGroupsPresenceRead, Description: "Read group member presence.", ScopeDims: []ScopeDim{ScopeDimGroup}},
@@ -169,6 +173,14 @@ var permissionRegistry = []PermSlug{
 	{
 		Slug:        PermSelfDirRepair,
 		Description: "Recreate own recorded startup directory when it has been deleted (tclaude agent dir --repair). The path is daemon-selected and cannot be overridden. Default-granted.",
+	},
+	{
+		Slug: PermSelfMorph, ScopeDims: []ScopeDim{ScopeDimSpawnProfile},
+		Description: "Morph own launch form (model, effort, approval) in place, applied when the current turn ends (tclaude agent morph). Not default-granted and never conferred by group ownership.",
+	},
+	{
+		Slug: PermAgentMorph, GroupSibling: PermGroupsMembersMorph, ScopeDims: []ScopeDim{ScopeDimSpawnProfile},
+		Description: "Morph ANOTHER agent's launch form in place globally (tclaude agent morph <agent>). Group-scoped authority uses groups.members.morph.",
 	},
 	{
 		Slug: PermAgentReincarnate, GroupSibling: PermGroupsMembersReincarnate,
@@ -214,6 +226,10 @@ var permissionRegistry = []PermSlug{
 		Slug: PermAgentSpawn, GroupSibling: PermGroupsMembersSpawn,
 		ScopeDims:   []ScopeDim{ScopeDimGroup, ScopeDimSpawnProfile, ScopeDimSandboxProfile, ScopeDimPeer},
 		Description: "Spawn a fresh agent into any group globally. Group-scoped authority uses groups.members.spawn.",
+	},
+	{
+		Slug: PermGroupsMembersMorph, OwnerImplied: true, ScopeDims: []ScopeDim{ScopeDimGroup, ScopeDimSpawnProfile},
+		Description: "Morph another agent's launch form when all of its current active group memberships are covered. Never covers the caller itself.",
 	},
 	{
 		Slug: PermGroupsMembersReincarnate, OwnerImplied: true, ScopeDims: []ScopeDim{ScopeDimGroup},
@@ -615,10 +631,18 @@ var permissionRegistry = []PermSlug{
 		Slug:        PermSettingsDefaultModel,
 		Description: "Set or clear the user-level default Claude model — the \"model\" key in ~/.claude/settings.json, which every claude launched without --model falls back to. Rewrites a config file in the human's home, so not default-granted (effectively human-only).",
 	},
+	{Slug: PermSessionsFilesRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Download bounded non-secret project files through a live remote terminal viewer. Independent of watch/attach; default off."},
 	{Slug: PermSessionsWatch, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Watch a shared remote agent pane. Requires peer= scope."},
 	{Slug: PermSessionsAttach, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Full keyboard access to a shared remote agent pane, including approval prompts. Requires peer= scope."},
 	{Slug: PermAgentsStatusRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Read a peer group’s shared agent runtime status, task links and numeric context. Requires peer= scope; no terminal authority."},
 	{Slug: PermFederationAuditRead, Description: "Read local federation activity metadata across peers. No payloads or credential values are exposed."},
+	{Slug: PermNodeUpdate, Description: "Permit trusted peers to replace installed tclaude binaries and restart agentd. High trust, default off; instance-wide peer grant."},
+	{Slug: PermNodeHarnessesInstall, Description: "Install/update harnesses on this node; high trust, runs official installers as the daemon user"},
+	{Slug: PermNodeExec, Description: nodeExecWarning},
+	{Slug: PermNodeMessagesRead, Description: "Read private human notifications and agent message bodies across this node. Default off; instance-wide peer grant. No reply or approval authority."},
+	{Slug: PermNodeMessagesManage, Description: "Explicitly change agent mailbox read state across this node. Default off; no delete, reply or approval authority."},
+	{Slug: PermNodeCredentialsReceive, Description: "Receive operator harness credentials; high trust, agents can act as the sender"},
+	{Slug: PermNodeHarnessesRead, Description: "Share detailed installed harness paths, versions and credential presence with trusted peers. Default off; instance-wide peer grant."},
 	{Slug: PermNodeRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Read shared peer platform, harnesses, labels and numeric resource summaries. Requires peer= scope."},
 	{Slug: PermSessionsRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Read a peer's shared live agent sessions and waiting states. Requires peer= scope; no local session authority."},
 	{

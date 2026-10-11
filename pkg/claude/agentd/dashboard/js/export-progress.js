@@ -12,6 +12,7 @@
 // step that was actually in flight (see renderExportChecklist's failedAt).
 
 import { esc } from './helpers.js';
+import { refuseInPeerView } from './peer-view-guard.js';
 
 // The steps, in ladder order. `label` is the modal checklist line; `short` is
 // the Jobs-tab stepper chip. The first three are activities keyed by the job
@@ -84,6 +85,7 @@ function exportChecklistSteps(status, failedAt) {
 // Shared by the export modal (auto-download + "Download again" + history) and
 // the Jobs tab's per-row download button.
 function triggerExportDownload(jobId) {
+  if (refuseInPeerView('Export download')) return;
   const a = document.createElement('a');
   a.href = `/api/export-jobs/${encodeURIComponent(jobId)}/artifact`;
   a.download = '';

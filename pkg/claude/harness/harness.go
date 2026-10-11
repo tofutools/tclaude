@@ -74,6 +74,11 @@ type Harness struct {
 	Name string
 	// DisplayName is the human-facing label (e.g. "Claude Code").
 	DisplayName string
+	// AvailabilityCredentialEnv lists ambient credential variables whose
+	// presence is a cheap diagnostic. Absence cannot rule out native login.
+	AvailabilityCredentialEnv []string
+	// UsableWithoutCredentials identifies credential-free harnesses.
+	UsableWithoutCredentials bool
 
 	// Spawn builds the in-tmux launch command + resume form.
 	Spawn Spawner
@@ -104,6 +109,9 @@ type Harness struct {
 	Convs ConvStore
 	// History installs a reviewed portable transcript for native resume.
 	History HistoryTransfer
+	// Transcript converts History's wire format to and from the neutral
+	// transcript for cross-harness morph. nil = no translation support.
+	Transcript TranscriptCodec
 	// Hooks installs/checks/repairs the tclaude callback in the harness's
 	// config target (+ any trust step). nil = this build can't install
 	// hooks for the harness; `tclaude setup` skips it with a message.

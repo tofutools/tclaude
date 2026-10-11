@@ -20,6 +20,7 @@ import {
 } from './groups-view-model.js';
 import { ActionMenu, InlineEditor, useGroupsInteractions } from './groups-interactions.js';
 import { MemberTable } from './groups-member-table.js';
+import { GroupFederationMarker } from './group-federation-marker.js';
 import { groupHasUnreadHumanNotifications } from './human-notification-attention.js';
 
 const html = htm.bind(h);
@@ -409,16 +410,28 @@ function GroupLinkChips({ group, snapshot }) {
   return html`<span class="group-link-chips" tabindex="0" role="button" data-act="links-manage" title="Inter-group links — click to manage">🔗<span class="qo-text">${outgoing.map((link) => chip(link, 'out'))}${incoming.map((link) => chip(link, 'in'))}</span></span>`;
 }
 
+// FleetGroupName renders a merged-view (skynet-merged-island.js) group as
+// group@node: the suffix in the node's own colour opens that node's view.
+function FleetGroupName({ group }) {
+  const node = group.fleet_node;
+  const at = `@${node.name}`;
+  const base = group.name.endsWith(at) ? group.name.slice(0, -at.length) : group.name;
+  return html`${base}<span class="fleet-node-suffix" style=${`--nc:${node.color}`} data-fleet-open=${node.local ? '' : node.id}
+    title=${node.local ? 'This node — open its dashboard' : `Open ${node.name}'s dashboard`}>${at}</span>${node.stale ? html` <span class="fleet-stale-label">${node.label}</span>` : null}`;
+}
+
 function RealGroupSummary({ group, activity, membersView, snapshot, actions }) {
   const interactions = useGroupsInteractions();
-  const { members, hiddenOffline } = membersView;
+  const { members, hiddenOffline, away } = membersView;
   const online = group.online || 0;
-  const full = !!group.max_members && members.length >= group.max_members;
+  // An away agent keeps its home membership, so it still takes a cap slot.
+  const full = !!group.max_members && members.length + (away || 0) >= group.max_members;
   const cap = group.max_members || '∞';
   const count = online === members.length ? `${members.length}/${cap}` : `${online}/${members.length}/${cap}`;
   const titleParts = [`${members.length} member${members.length === 1 ? '' : 's'} (${online} online)`, group.max_members ? `cap ${group.max_members}` : 'no cap'];
   if (full) titleParts.push('group is full, spawns refused');
   if (hiddenOffline) titleParts.push(`${hiddenOffline} offline hidden in this view`);
+  if (away) titleParts.push(`${away} away on another node, not counted (still holding a cap slot)`);
   const groupEditing = interactions.editorKey.startsWith(`group:${group.name}:`);
   const renameKey = `group:${group.name}:name`;
   const maxValue = group.max_members || 0;
@@ -427,7 +440,7 @@ function RealGroupSummary({ group, activity, membersView, snapshot, actions }) {
       editorKey=${renameKey} value=${group.name} className="group-rename-input"
       onCommit=${(value) => actions.renameGroup(group, value)}
       triggerProps=${{}}
-    >${group.name}<//>` : html`<strong class="group-name" data-group-name=${group.name}>${group.name}</strong>`}
+    >${group.name}<//>` : html`<strong class="group-name" data-group-name=${group.name}>${group.fleet_node ? html`<${FleetGroupName} group=${group} />` : group.name}</strong>`}
     ${snapshot?.group_attachments_mode === 'float'
       ? html`<${GroupAttachment} group=${group} actions=${actions} placement="float" />`
       : null}
@@ -467,9 +480,11 @@ function RealGroupSummary({ group, activity, membersView, snapshot, actions }) {
       title=${`${titleParts.join(' · ')}${group.max_members ? ' — click to edit cap' : ' — click to set a cap'}`}
       message=${(value) => value > 0 ? `${group.name}: member cap → ${value}` : `${group.name}: member cap cleared`}
     >👥 ${count}<//>
+    ${away ? html`<span class="group-away-hint" title=${`${away} member${away === 1 ? ' is' : 's are'} away on another node. ${away === 1 ? 'Its row stays' : 'Their rows stay'} here, dimmed, but ${away === 1 ? 'is' : 'are'} not counted as members.`}>+${away} away</span>` : null}
     <${GroupProfileChip} group=${group} actions=${actions} kind="profile" />
     <${GroupProfileChip} group=${group} actions=${actions} kind="sandbox" />
     <${GroupLinkChips} group=${group} snapshot=${snapshot} />
+    <${GroupFederationMarker} group=${group} />
     ${snapshot?.group_attachments_mode === 'fixed'
       ? html`<${GroupAttachment} group=${group} actions=${actions} placement="fixed" />`
       : null}
@@ -574,8 +589,10 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
     quickPinned ? 'quick-pinned' : '',
     !quickPinned && hoveredGroupKey === group.name ? 'quick-hover' : '',
   ].filter(Boolean).join(' ');
+  const fleet = group.fleet_node;
   return html`<details
-    class=${classes || undefined} data-group-key=${group.name} data-dnd-target-group=${group.name}
+    class=${[classes, fleet?.stale ? 'fleet-stale' : ''].filter(Boolean).join(' ') || undefined} data-group-key=${group.name} data-dnd-target-group=${fleet ? undefined : group.name}
+    data-fleet-node=${fleet?.id} data-fleet-node-name=${fleet?.name}
     open=${realGroupOpen(group, dashPrefs)}
   >
     <${RealGroupSummary} group=${group} activity=${node.activity} membersView=${view} snapshot=${snapshot} actions=${actions} />
@@ -585,7 +602,7 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
       <div class="group-header-actions"><${GroupActions} group=${group} actions=${actions} /></div>
       <${ForceBlock} group=${group} />
       <${GroupTriggersSection} group=${group} triggers=${triggers} />
-      ${!view.members.length
+      ${!view.members.length && !view.away
         ? html`<div class="muted">(no members yet)</div>`
         : !view.visible.length
           ? html`<div class="muted">(${view.hiddenOffline} offline member${view.hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${view.hiddenOffline === 1 ? 'it' : 'them'})</div>`

@@ -17,28 +17,31 @@ import (
 )
 
 type bundleExportParams struct {
-	Agent        string `pos:"true" help:"Agent selector to export."`
-	File         string `long:"file" short:"f" help:"Destination ZIP archive."`
-	History      bool   `long:"history" help:"Include native conversation history when supported."`
-	AllowFlagged bool   `long:"allow-flagged" help:"Explicitly allow credential-shaped text; inspect before sharing."`
+	CarryPermissions bool   `long:"carry-permissions" help:"Request receiver-approved permission carry; off by default."`
+	Agent            string `pos:"true" help:"Agent selector to export."`
+	File             string `long:"file" short:"f" help:"Destination ZIP archive."`
+	History          bool   `long:"history" help:"Include native conversation history when supported."`
+	AllowFlagged     bool   `long:"allow-flagged" help:"Explicitly allow credential-shaped text; inspect before sharing."`
 }
 type bundleImportParams struct {
-	File        string   `long:"file" short:"f" help:"Bundle ZIP archive; '-' reads stdin."`
-	Apply       bool     `long:"apply" help:"Create a fresh local agent through normal spawn checks."`
-	Group       string   `long:"group" optional:"true" help:"Receiving group (required with --apply). Source memberships are advisory."`
-	Name        string   `long:"name" optional:"true" help:"Override the imported agent name."`
-	Cwd         string   `long:"cwd" optional:"true" help:"Remap the working directory."`
-	Worktree    string   `long:"worktree" optional:"true" help:"Remap an optional worktree hint."`
-	KeepPaths   bool     `long:"keep-paths" help:"Reuse recorded paths that exist locally; --cwd and --set override them."`
-	Set         []string `long:"set" optional:"true" help:"Resolve profile path placeholder with name=value (repeatable)."`
-	SkipHistory bool     `long:"skip-history" help:"Import configuration without native history."`
-	JSON        bool     `long:"json" help:"Print the full machine-readable preview or result."`
+	CarryPermissions          bool     `long:"carry-permissions" help:"Request receiver-approved permission carry; off by default."`
+	AllowSensitivePermissions bool     `long:"allow-sensitive-permissions" help:"Explicitly allow permission administration, sandbox, human interaction and federation administration grants; requires unrestricted trust."`
+	File                      string   `long:"file" short:"f" help:"Bundle ZIP archive; '-' reads stdin."`
+	Apply                     bool     `long:"apply" help:"Create a fresh local agent through normal spawn checks."`
+	Group                     string   `long:"group" optional:"true" help:"Receiving group (required with --apply). Source memberships are advisory."`
+	Name                      string   `long:"name" optional:"true" help:"Override the imported agent name."`
+	Cwd                       string   `long:"cwd" optional:"true" help:"Remap the working directory."`
+	Worktree                  string   `long:"worktree" optional:"true" help:"Remap an optional worktree hint."`
+	KeepPaths                 bool     `long:"keep-paths" help:"Reuse recorded paths that exist locally; --cwd and --set override them."`
+	Set                       []string `long:"set" optional:"true" help:"Resolve profile path placeholder with name=value (repeatable)."`
+	SkipHistory               bool     `long:"skip-history" help:"Import configuration without native history."`
+	JSON                      bool     `long:"json" help:"Print the full machine-readable preview or result."`
 }
 
 func bundleCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{Use: "bundle", Short: "Transfer portable agent configuration and optional history", ParamEnrich: common.DefaultParamEnricher(), SubCmds: []*cobra.Command{
 		boa.CmdT[bundleExportParams]{Use: "export", Short: "Export an agent to a portable ZIP archive", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleExportParams, _ *cobra.Command, _ []string) { os.Exit(runBundleExport(p, os.Stderr)) }}.ToCobra(),
-		boa.CmdT[bundleImportParams]{Use: "import", Short: "Preview an agent bundle, or spawn it with --apply", Long: "Preview by default. --apply creates a fresh agent in --group through normal spawn checks. Permissions, ownership and source group memberships are advisory only. Claude and Codex support imported native history; other harnesses import configuration only.", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleImportParams, _ *cobra.Command, _ []string) {
+		boa.CmdT[bundleImportParams]{Use: "import", Short: "Preview an agent bundle, or spawn it with --apply", Long: "Preview by default. --apply creates a fresh agent in --group through normal spawn checks. Permission carry requires --carry-permissions on export and import, and receiver authorization. Ownership and source memberships never travel. Native history support depends on the harness.", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleImportParams, _ *cobra.Command, _ []string) {
 			os.Exit(runBundleImport(p, os.Stdin, os.Stdout, os.Stderr))
 		}}.ToCobra(),
 	}}.ToCobra()
@@ -69,22 +72,32 @@ func runBundleExport(p *bundleExportParams, stderr io.Writer) int {
 		return rc
 	}
 	q := url.Values{"agent": {p.Agent}}
+	if p.CarryPermissions {
+		q.Set("carry_permissions", "true")
+	}
 	if p.History {
 		q.Set("history", "true")
 	}
 	if p.AllowFlagged {
 		q.Set("allow_flagged", "true")
 	}
-	raw, _, err := DaemonGetRaw("/v1/agent-bundle/export?" + q.Encode())
-	if err != nil {
-		printBundleError(stderr, err)
-		return MapDaemonErrorToRC(err)
-	}
-	b, err := agentbundle.Decode(raw)
+	archive, err := os.CreateTemp("", ".agent-cli-export-")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return rcIOFailure
 	}
+	defer func() { _ = archive.Close(); _ = os.Remove(archive.Name()) }()
+	err = downloadAgentArchive("/v1/agent-bundle/export?"+q.Encode(), archive)
+	if err != nil {
+		printBundleError(stderr, err)
+		return MapDaemonErrorToRC(err)
+	}
+	b, err := agentbundle.DecodeFile(archive, localAgentBundleLimit(), "")
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return rcIOFailure
+	}
+	defer func() { _ = b.Close() }()
 	for _, warning := range b.Manifest.Warnings {
 		fmt.Fprintln(stderr, "Warning:", warning)
 	}
@@ -96,7 +109,10 @@ func runBundleExport(p *bundleExportParams, stderr io.Writer) int {
 	}
 	err = file.Chmod(0600)
 	if err == nil {
-		_, err = file.Write(raw)
+		_, err = archive.Seek(0, io.SeekStart)
+		if err == nil {
+			_, err = io.Copy(file, archive)
+		}
 	}
 	closeErr := file.Close()
 	if err == nil {
@@ -120,19 +136,34 @@ func runBundleImport(p *bundleImportParams, stdin io.Reader, out, stderr io.Writ
 		defer f.Close()
 		reader = f
 	}
-	raw, err := io.ReadAll(io.LimitReader(reader, agentbundle.MaxBytes+1))
+	archive, err := os.CreateTemp("", ".agent-cli-import-")
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return rcIOFailure
+	}
+	defer func() { _ = archive.Close(); _ = os.Remove(archive.Name()) }()
+	limit := localAgentBundleLimit()
+	n, err := io.Copy(archive, io.LimitReader(reader, limit+1))
+	if err != nil || n > limit {
+		fmt.Fprintf(stderr, "archive exceeds or cannot be read within federation.agent_transfer_max_bytes=%d\n", limit)
+		return rcInvalidArg
+	}
+	b, err := agentbundle.DecodeFile(archive, limit, "")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return rcInvalidArg
 	}
-	if _, err = agentbundle.Decode(raw); err != nil {
-		fmt.Fprintln(stderr, err)
-		return rcInvalidArg
-	}
+	_ = b.Close()
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
 	q := url.Values{}
+	if p.CarryPermissions {
+		q.Set("carry_permissions", "true")
+	}
+	if p.AllowSensitivePermissions {
+		q.Set("allow_sensitive_permissions", "true")
+	}
 	for key, value := range map[string]string{"group": p.Group, "name": p.Name, "cwd": p.Cwd, "worktree": p.Worktree} {
 		if value != "" {
 			q.Set(key, value)
@@ -151,7 +182,7 @@ func runBundleImport(p *bundleImportParams, stdin io.Reader, out, stderr io.Writ
 		q.Set("skip_history", "true")
 	}
 	var result json.RawMessage
-	if err := DaemonPostRawWithOptions("/v1/agent-bundle/import?"+q.Encode(), "application/zip", raw, nil, &result, DaemonOpts{}); err != nil {
+	if err := uploadAgentArchive("/v1/agent-bundle/import?"+q.Encode(), archive, &result); err != nil {
 		printBundleError(stderr, err)
 		return MapDaemonErrorToRC(err)
 	}

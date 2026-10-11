@@ -83,6 +83,55 @@ export function createAgentRosterReconciler() {
 // normalizeSeed accepts a seed only if its ws is a same-origin absolute path
 // (leading "/"), so neither a crafted hash nor a caller can point the socket at
 // an arbitrary host. Returns the seed or null.
+// A remote terminal is a peer's agent pane, bridged by this node's daemon over
+// the federation terminal stream (the path `tclaude federation attach` uses).
+// It keeps the local framing (binary output and input) and adds JSON text
+// control frames: hello (mode and the target's pinned size), size, and closed
+// (a reason, sent just before the socket closes). The viewer renders at the
+// pinned size and never resizes the target; watch mode sends no input. Each
+// binary output frame is acknowledged with {type:'credit', bytes} once xterm
+// has written it, which is what refills the stream's flow-control window.
+export const REMOTE_TERMINAL_PATH = '/api/federation/terminal';
+// A peer's pinned size beyond these is refused rather than rendered: a hostile
+// peer must not be able to make this tab allocate a huge grid.
+const MAX_REMOTE_COLS = 500;
+// A remote pane keeps the peer's size, so its font shrinks (to a readable
+// floor) until the whole grid fits; past the floor the host scrolls.
+const REMOTE_FONT_MAX = 13;
+const REMOTE_FONT_MIN = 9;
+const MAX_REMOTE_ROWS = 200;
+
+export function remoteTerminalPath({ peer, agent, mode = 'watch' }) {
+  return `${REMOTE_TERMINAL_PATH}?${new URLSearchParams({ peer, agent, mode: mode === 'interactive' ? 'interactive' : 'watch' })}`;
+}
+
+export function isRemoteTerminalPath(path) {
+  return typeof path === 'string' && path.startsWith(`${REMOTE_TERMINAL_PATH}?`);
+}
+
+// REMOTE_CLOSE says why a remote terminal closed; final reasons offer no
+// reconnect, since reopening would be refused the same way.
+export const REMOTE_CLOSE = Object.freeze({
+  exit: { text: 'the agent exited', final: false },
+  reincarnated: { text: 'the session restarted on the peer; reopen to follow it', final: false },
+  revoked: { text: 'the peer revoked your access to this terminal', final: true },
+  untrusted: { text: 'the peer is no longer trusted', final: true },
+  kicked: { text: "the peer's operator disconnected this view", final: false },
+  denied: { text: "the peer does not share this terminal with you", final: true },
+  limit: { text: 'the peer has too many terminal views open; try again shortly', final: false },
+  offline: { text: 'the peer is unreachable', final: false },
+  error: { text: 'the connection failed', final: false },
+});
+
+// remoteCloseText words a closure from its reason; the peer's own message is
+// shown only as a short, control-free detail next to a known reason.
+export function remoteCloseText(closed) {
+  const known = REMOTE_CLOSE[closed?.reason];
+  if (!known) return 'the remote terminal closed';
+  const detail = String(closed?.message || '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').trim().slice(0, 160);
+  return detail ? `${known.text} (${detail})` : known.text;
+}
+
 export function normalizeSeed(seed) {
   return (seed && typeof seed.ws === 'string' && seed.ws.startsWith('/')) ? seed : null;
 }
@@ -110,6 +159,8 @@ export function mountTerminalWidget({
   onComposeMessage = null,
   applicationClipboardShortcuts = false,
   onDisconnect = () => {},
+  // Remote terminals report {mode, closed} as the control frames arrive.
+  onRemoteChange = () => {},
   initialRetry = false,
   initialRetryDelays = INITIAL_RETRY_DELAYS_MS,
   initialRetryStabilityMs = INITIAL_RETRY_STABILITY_MS,
@@ -119,10 +170,6 @@ export function mountTerminalWidget({
   preAttachDelayMs = POST_ATTACH_RESIZE_DELAY_MS,
   postAttachResizeNudgeMs = POST_ATTACH_RESIZE_NUDGE_MS,
   restartWatcher = sharedRestartWatcher,
-  // Off for a surface that answers its own disconnect. The modal terminal
-  // raises a blocking "reconnect or close?" dialog, and a reattach landing
-  // silently behind it would leave the operator answering a stale question —
-  // "Close terminal" would then kill a session that had already come back.
   autoReattach = true,
   setTimeoutImpl = globalThis.setTimeout,
   clearTimeoutImpl = globalThis.clearTimeout,
@@ -165,6 +212,13 @@ export function mountTerminalWidget({
   // outstanding "tell me if that changes" registration.
   let instanceBaseline = null;
   let cancelRestartWatch = null;
+  const remote = isRemoteTerminalPath(wsPath);
+  let remoteState = { mode: '', closed: null, files: false, viewer: '' };
+  function setRemote(next) {
+    if (disposed) return;
+    remoteState = Object.freeze({ ...remoteState, ...next });
+    onRemoteChange(remoteState);
+  }
   const disposables = [];
 
   const term = new TerminalCtor({
@@ -182,6 +236,7 @@ export function mountTerminalWidget({
   const fitAddon = new FitAddonCtor();
   term.loadAddon(fitAddon);
   term.open(host);
+  if (remote) host.classList?.add('term-remote');
 
   function setStatus(next) {
     if (disposed) return;
@@ -204,7 +259,29 @@ export function mountTerminalWidget({
 
   function fit() {
     if (disposed) return;
+    if (remote) { fitRemote(); return; }
     try { fitAddon.fit(); } catch (_) { /* host may not be laid out yet */ }
+  }
+
+  // fitRemote scales the font so the peer's grid fits the host, never
+  // resizing the grid itself.
+  function fitRemote() {
+    // Reads xterm's own grid box; the core never writes shell DOM.
+    const screen = host.getElementsByClassName?.('xterm-screen')[0];
+    const width = host.clientWidth; const height = host.clientHeight;
+    if (!screen || !width || !height) return;
+    const box = () => screen.getBoundingClientRect();
+    let r = box();
+    if (!r.width || !r.height) return;
+    const font = term.options.fontSize;
+    const next = Math.max(REMOTE_FONT_MIN, Math.min(REMOTE_FONT_MAX, Math.floor(font * Math.min(width / r.width, height / r.height) * 2) / 2));
+    if (next !== font) term.options.fontSize = next;
+    // Cell sizes round to device pixels; step down until it really fits.
+    for (let i = 0; i < 4 && term.options.fontSize > REMOTE_FONT_MIN; i++) {
+      r = box();
+      if (r.width <= width && r.height <= height) break;
+      term.options.fontSize = Math.max(REMOTE_FONT_MIN, term.options.fontSize - 0.5);
+    }
   }
 
   function focus() {
@@ -501,6 +578,7 @@ export function mountTerminalWidget({
     if (disposed || mine !== generation) return false;
     const proto = locationRef.protocol === 'https:' ? 'wss:' : 'ws:';
     const socket = new WebSocketCtor(proto + '//' + locationRef.host + wsPath);
+    if (remote) setRemote({ mode: '', closed: null, files: false, viewer: '' });
     socket.binaryType = 'arraybuffer';
     ws = socket;
     let openedAt = null;
@@ -509,12 +587,24 @@ export function mountTerminalWidget({
       if (disposed || mine !== generation || ws !== socket) return;
       openedAt = now();
       captureInstanceBaseline(mine);
-      setStatus('connected');
       setReconnectAvailable(false);
+      if (remote) { setStatus('connecting to the peer…'); return; }
+      setStatus('connected');
       scheduleInitialResize(mine, socket);
     };
     socket.onmessage = (event) => {
       if (disposed || mine !== generation || ws !== socket) return;
+      if (remote && typeof event.data === 'string') { remoteControl(event.data); return; }
+      if (remote) {
+        // Credit flows back only once xterm has consumed the bytes, so the
+        // federation stream's window stays bounded through the renderer.
+        const bytes = event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : new TextEncoder().encode(String(event.data));
+        term.write(bytes, () => {
+          if (disposed || mine !== generation || ws !== socket || socket.readyState !== WebSocketCtor.OPEN || !bytes.byteLength) return;
+          socket.send(JSON.stringify({ type: 'credit', bytes: bytes.byteLength }));
+        });
+        return;
+      }
       term.write(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data);
       // WebSocket open precedes PTY creation on the server. The first output is
       // the browser's earliest proof that the command/tmux attach is actually
@@ -527,6 +617,15 @@ export function mountTerminalWidget({
       if (disposed || mine !== generation || ws !== socket) return;
       cancelPostAttachResize();
       cancelInitialResize();
+      if (remote) {
+        // The pinned viewer is gone with the socket: no more file links.
+        setRemote({ files: false, viewer: '' });
+        const closed = remoteState.closed;
+        setStatus(closed ? `closed: ${remoteCloseText(closed)}` : 'disconnected');
+        setReconnectAvailable(!(closed && REMOTE_CLOSE[closed.reason]?.final));
+        onDisconnect();
+        return;
+      }
       const unstable = openedAt === null || now() - openedAt < initialRetryStabilityMs;
       if (unstable && scheduleInitialRetry()) return;
       setStatus('disconnected');
@@ -539,6 +638,34 @@ export function mountTerminalWidget({
       try { socket.close(); } catch (_) { /* onclose handles it */ }
     };
     return true;
+  }
+
+  // remoteControl applies a remote terminal's JSON control frame. Unparseable
+  // text is dropped, never written to the terminal.
+  function remoteControl(text) {
+    let msg = null;
+    try { msg = JSON.parse(text); } catch (_) { return; }
+    const size = () => {
+      const cols = Number(msg.cols); const rows = Number(msg.rows);
+      if (Number.isInteger(cols) && Number.isInteger(rows) && cols > 0 && rows > 0 && cols <= MAX_REMOTE_COLS && rows <= MAX_REMOTE_ROWS && (cols !== term.cols || rows !== term.rows)) {
+        term.resize(cols, rows);
+        if (typeof requestAnimationFrameImpl === 'function') requestAnimationFrameImpl(fit);
+      }
+    };
+    if (msg?.type === 'hello') {
+      const mode = msg.mode === 'interactive' ? 'interactive' : 'watch';
+      term.options.disableStdin = mode !== 'interactive';
+      size();
+      // files says the peer shares this terminal's files with us
+      // (sessions.files.read); viewer_id pins downloads to this very view.
+      const viewer = typeof msg.viewer_id === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(msg.viewer_id) ? msg.viewer_id : '';
+      setRemote({ mode, files: msg.files === true && !!viewer, viewer });
+      setStatus(mode === 'interactive' ? 'connected · interactive' : 'connected · watch-only');
+    } else if (msg?.type === 'size') {
+      size();
+    } else if (msg?.type === 'closed') {
+      setRemote({ closed: { reason: String(msg.reason || ''), message: String(msg.message || '') } });
+    }
   }
 
   function connect() {
@@ -557,9 +684,16 @@ export function mountTerminalWidget({
     onComposeMessage,
     applicationClipboardShortcuts,
     onSelectionChange: (selected) => { if (!disposed) onSelectionChange(selected); },
+    canInput: () => !remote || remoteState.mode === 'interactive',
+    fileDownloads: !remote,
+    // A remote terminal's visible paths download from the peer only while
+    // the live view holds sessions.files.read.
+    remoteFileViewer: remote ? () => (remoteState.files ? remoteState.viewer : '') : null,
+    oscClipboard: !remote,
   });
 
   disposables.push(term.onData((data) => {
+    if (remote && remoteState.mode !== 'interactive') return;
     if (!disposed && ws && ws.readyState === WebSocketCtor.OPEN) {
       ws.send(new TextEncoder().encode(data));
     }
@@ -587,6 +721,7 @@ export function mountTerminalWidget({
       }
     },
     status: () => status,
+    remoteState: () => (remote ? remoteState : null),
     reconnectAvailable: () => reconnectAvailable,
     isDisposed: () => disposed,
     dispose() {

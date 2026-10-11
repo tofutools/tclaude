@@ -12,6 +12,8 @@ import (
 // FederationSpawnPolicy contains receiver-owned launch settings. Empty fields
 // inherit ordinary operator group-spawn defaults.
 type FederationSpawnPolicy struct {
+	// PermissionSlugs is the optional receiver allowlist for agents.receive.permissions.
+	PermissionSlugs []string `json:"permission_slugs,omitempty"`
 	AllowedProfiles []string `json:"allowed_profiles,omitempty"`
 	RequesterPays   string   `json:"requester_pays,omitempty"`
 	JobApproval     string   `json:"job_approval,omitempty"` // jobs.run only: auto (default) or manual
@@ -24,7 +26,7 @@ type FederationSpawnPolicy struct {
 
 // Equal includes selectable profiles in inherited-policy conflict checks.
 func (p FederationSpawnPolicy) Equal(other FederationSpawnPolicy) bool {
-	return slices.Equal(p.AllowedProfiles, other.AllowedProfiles) &&
+	return slices.Equal(p.PermissionSlugs, other.PermissionSlugs) && slices.Equal(p.AllowedProfiles, other.AllowedProfiles) &&
 		p.RequesterPays == other.RequesterPays && p.JobApproval == other.JobApproval &&
 		p.Profile == other.Profile && p.Cwd == other.Cwd && p.Harness == other.Harness &&
 		p.Model == other.Model && p.MaxLive == other.MaxLive
@@ -38,6 +40,7 @@ type FederationPeerGrant struct {
 	Scope       string                `json:"scope"`
 	SpawnPolicy FederationSpawnPolicy `json:"spawn_policy,omitempty"`
 	CreatedAt   time.Time             `json:"created_at"`
+	ExpiresAt   *time.Time            `json:"expires_at,omitempty"`
 }
 
 func FederationGroupScope(groupID int64) string { return "group=" + strconv.FormatInt(groupID, 10) }
@@ -51,8 +54,12 @@ func UpsertFederationPeerGrant(g FederationPeerGrant) error {
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`INSERT INTO federation_peer_grants(peer,slug,scope,spawn_policy,created_at) VALUES(?,?,?,?,?)
- ON CONFLICT(peer,slug,scope) DO UPDATE SET spawn_policy=excluded.spawn_policy`, g.Peer, g.Slug, g.Scope, string(policy), dbTime(time.Now()))
+	var expires any
+	if g.ExpiresAt != nil {
+		expires = dbTime(*g.ExpiresAt)
+	}
+	_, err = d.Exec(`INSERT INTO federation_peer_grants(peer,slug,scope,spawn_policy,created_at,expires_at) VALUES(?,?,?,?,?,?)
+ ON CONFLICT(peer,slug,scope) DO UPDATE SET spawn_policy=excluded.spawn_policy,expires_at=excluded.expires_at`, g.Peer, g.Slug, g.Scope, string(policy), dbTime(time.Now()), expires)
 	return err
 }
 
@@ -74,7 +81,7 @@ func ListFederationPeerGrants(peer string) ([]FederationPeerGrant, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT peer,slug,scope,spawn_policy,created_at FROM federation_peer_grants WHERE (?='' OR peer=?) ORDER BY peer,slug,scope`, peer, peer)
+	rows, err := d.Query(`SELECT peer,slug,scope,spawn_policy,created_at,expires_at FROM federation_peer_grants WHERE (?='' OR peer=?) AND (expires_at IS NULL OR expires_at>?) ORDER BY peer,slug,scope`, peer, peer, dbTime(time.Now()))
 	if err != nil {
 		return nil, err
 	}
@@ -83,14 +90,18 @@ func ListFederationPeerGrants(peer string) ([]FederationPeerGrant, error) {
 	for rows.Next() {
 		var g FederationPeerGrant
 		var policy string
-		var at dbTimestamp
-		if err := rows.Scan(&g.Peer, &g.Slug, &g.Scope, &policy, &at); err != nil {
+		var at, expires dbTimestamp
+		if err := rows.Scan(&g.Peer, &g.Slug, &g.Scope, &policy, &at, &expires); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(policy), &g.SpawnPolicy); err != nil {
 			return nil, err
 		}
 		g.CreatedAt = at.Time()
+		if !expires.Time().IsZero() {
+			at := expires.Time()
+			g.ExpiresAt = &at
+		}
 		out = append(out, g)
 	}
 	return out, rows.Err()

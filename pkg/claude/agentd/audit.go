@@ -212,6 +212,7 @@ var auditRoutes = []auditRoute{
 	// gets an explicit row; the handler supplies only predecessor + harness as
 	// safe detail and never records the prompt or subprocess output.
 	{method: http.MethodPost, segs: []string{"whoami", "seance", "run"}, verb: "seance"},
+	{method: http.MethodPost, segs: []string{"whoami", "morph", "handoff"}, verb: "morph-handoff"},
 
 	// Per-agent lifecycle verbs. The CLI is /v1/agent/{sel}/{verb}; the
 	// dashboard is /api/agents/{conv}/{verb} (canonicalised agents→agent).
@@ -1106,6 +1107,7 @@ func describeSpawn(c *auditCtx) {
 // (head aliases) — would be recorded with a bogus verb. An unknown verb
 // blanks the row out (recordAuditRow drops a verbless row).
 var auditedAgentVerbs = map[string]bool{
+	"morph":          true,
 	"reincarnate":    true,
 	"compact":        true,
 	"interrupt":      true,
@@ -1147,6 +1149,7 @@ func describeAgentVerb(c *auditCtx) {
 // reads the mutating-method gate already drops, but the allowlist keeps
 // the audited set explicit so a future POST sibling isn't mis-recorded.
 var auditedWhoamiVerbs = map[string]bool{
+	"morph":          true,
 	"reincarnate":    true,
 	"clone":          true,
 	"rename":         true,

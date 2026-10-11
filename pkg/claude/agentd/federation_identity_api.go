@@ -17,6 +17,17 @@ type fedIdentityAction struct {
 	Apply       bool   `json:"apply"`
 }
 
+// Fingerprints are display metadata; the embedded signed rotation is unchanged.
+type fedIdentityRotationJSON struct {
+	proto.Rotation
+	OldFingerprint string `json:"old_fingerprint"`
+	NewFingerprint string `json:"new_fingerprint"`
+}
+
+func identityRotationJSON(r proto.Rotation) fedIdentityRotationJSON {
+	return fedIdentityRotationJSON{r, proto.Fingerprint(r.OldKey), proto.Fingerprint(r.NewKey)}
+}
+
 func readIdentityAction(w http.ResponseWriter, r *http.Request) (*fedIdentityAction, bool) {
 	if r.Method != http.MethodPost {
 		writeError(w, 405, "method", "POST only")
@@ -43,7 +54,23 @@ func handleFederationIdentityRotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !req.Apply {
-		writeJSON(w, 200, map[string]any{"instance_id": old.ID(), "fingerprint": proto.Fingerprint(old.Pub), "window_seconds": rotationWindow().Seconds(), "effect": "creates linked successor; closes sealed sessions/routes and revokes model capabilities; pending encrypted mail requires resending", "apply": "federation identity rotate --apply"})
+		journal, err := loadIdentityJournal()
+		if err != nil {
+			writeFedErr(w, err)
+			return
+		}
+		// Preview never generates or stages a successor key. The dashboard can
+		// explain the consequences before the operator confirms the apply.
+		writeJSON(w, 200, map[string]any{
+			"instance_id": old.ID(), "fingerprint": proto.Fingerprint(old.Pub),
+			"window_seconds": rotationWindow().Seconds(), "hop_count": len(journal.Chain),
+			"hop_limit": proto.MaxRotationHops, "pending": journal.Pending,
+			"effects": map[string]bool{"successor_linked": true, "streams_reconnect": true,
+				"pending_sealed_mail_requires_resend": true, "issued_model_credentials_revoked": true,
+				"requester_paid_leases_revoked": true},
+			"effect": "creates linked successor; closes sealed sessions/routes and revokes model capabilities; pending encrypted mail requires resending",
+			"apply":  "federation identity rotate --apply",
+		})
 		return
 	}
 	rt := currentFederation()
@@ -71,7 +98,7 @@ func handleFederationIdentityRotate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "rotation_pending", "rotation is staged; reconnect federation to publish it: "+err.Error())
 		return
 	}
-	writeJSON(w, 200, statement)
+	writeJSON(w, 200, identityRotationJSON(statement))
 }
 func handleFederationIdentityRotations(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "read identity rotation state") {
@@ -87,7 +114,14 @@ func handleFederationIdentityRotations(w http.ResponseWriter, r *http.Request) {
 		writeFedErr(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"peers": rows, "local": local})
+	var chain []fedIdentityRotationJSON
+	for _, rotation := range local.Chain {
+		chain = append(chain, identityRotationJSON(rotation))
+	}
+	writeJSON(w, 200, map[string]any{"peers": rows, "local": struct {
+		Chain   []fedIdentityRotationJSON `json:"chain"`
+		Pending bool                      `json:"pending"`
+	}{chain, local.Pending}})
 }
 func handleFederationIdentityRecover(w http.ResponseWriter, r *http.Request) {
 	req, ok := readIdentityAction(w, r)

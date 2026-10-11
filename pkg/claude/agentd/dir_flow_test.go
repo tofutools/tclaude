@@ -510,8 +510,7 @@ func TestDir_WorktreeFallsBackToStart(t *testing.T) {
 // terminal emulator installed, whatever the reason.
 //
 // Expected: POST /api/term/{conv} degrades to the in-browser terminal
-// fallback (200, mode:"browser", a ws path the dashboard can open
-// modal-term.js against) instead of failing outright.
+// fallback (200, mode:"browser", a ws path the Terminals tab can open) instead of failing outright.
 func TestDir_DashboardTermButtonFallsBackToBrowser(t *testing.T) {
 	f := newFlow(t)
 

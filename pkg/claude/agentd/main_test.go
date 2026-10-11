@@ -12,8 +12,10 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"github.com/tofutools/tclaude/pkg/federation/hub"
 )
 
 var agentdTestTmuxBase string
@@ -34,6 +36,11 @@ var agentdTestTmuxBase string
 // `package agentd` test files compiled alongside this external
 // package.
 func TestMain(m *testing.M) {
+	hub.RunExecGuardian()
+	cleanupTemplate, err := db.PrepareMigrationTemplateForTest()
+	if err != nil {
+		panic(fmt.Sprintf("prepare flow-test database template: %v", err))
+	}
 	// Keep every tmux command in this test binary away from the operator's
 	// live `-L tclaude` server. This belongs here rather than in newFlow:
 	// internal package agentd tests share this binary but cannot call the
@@ -52,7 +59,6 @@ func TestMain(m *testing.M) {
 			panic(fmt.Sprintf("create isolated agentd test tmux base: short root: %v; ambient root: %v", shortRootErr, ambientErr))
 		}
 	}
-	var err error
 	tmuxBase, err = filepath.EvalSymlinks(tmuxBase)
 	if err != nil {
 		panic(fmt.Sprintf("canonicalize isolated agentd test tmux base: %v", err))
@@ -141,6 +147,7 @@ func TestMain(m *testing.M) {
 	// than trusting teardown-time environment; no server is the normal case.
 	_ = exec.Command("tmux", "-S", tmuxSocketPath, "kill-server").Run()
 	_ = os.RemoveAll(tmuxBase)
+	cleanupTemplate()
 	os.Exit(code)
 }
 

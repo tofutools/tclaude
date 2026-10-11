@@ -80,6 +80,9 @@ func (w awbReadyWorker) cleanupAfterClose(ctx context.Context, dispatch *db.AWBR
 		}
 		return pending == nil
 	}
+	if db.AgentAway(agentID) {
+		return false
+	}
 	if a.CurrentConvID == "" {
 		return true
 	}

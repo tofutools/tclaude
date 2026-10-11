@@ -260,7 +260,7 @@ func handleFederationNodeLabels(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "manage local node labels") {
 		return
 	}
-	if r.Method == http.MethodGet {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		cfg, err := config.Load()
 		if err != nil {
 			writeFedErr(w, err)

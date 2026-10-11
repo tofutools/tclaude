@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -82,11 +83,15 @@ func runRolesLs(stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "(no roles)")
 		return rcOK
 	}
-	fmt.Fprintf(stdout, "%-16s  %-7s  %s\n", "NAME", "PERMS", "DESCR")
+	nameWidth := 16
+	for _, role := range roles {
+		nameWidth = max(nameWidth, utf8.RuneCountInString(role.Name))
+	}
+	fmt.Fprintf(stdout, "%-*s  %-7s  %s\n", nameWidth, "NAME", "PERMS", "DESCR")
 	fmt.Fprintln(stdout, strings.Repeat("─", 80))
 	for _, rl := range roles {
-		fmt.Fprintf(stdout, "%-16s  %-7d  %s\n",
-			rl.Name, len(rl.Permissions), truncate(rl.Descr, 40))
+		fmt.Fprintf(stdout, "%-*s  %-7d  %s\n",
+			nameWidth, rl.Name, len(rl.Permissions), truncate(rl.Descr, 40))
 	}
 	return rcOK
 }

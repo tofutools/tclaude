@@ -529,7 +529,7 @@ func loadProfileFile(file string, stdin io.Reader, stderr io.Writer) (*profileJS
 
 type profilesDisableParams struct {
 	Name   string `pos:"true" help:"Profile name or alias to disable."`
-	Reason string `long:"reason" help:"Why this profile is disabled. Shown by listings and spawn errors."`
+	Reason string `long:"reason" optional:"true" help:"Why this profile is disabled. Shown by listings and spawn errors."`
 }
 
 func profilesDisableCmd() *cobra.Command {

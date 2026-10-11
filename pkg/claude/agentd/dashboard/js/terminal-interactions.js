@@ -1,6 +1,7 @@
 // terminal-interactions.js — shared native-terminal affordances for every
 // dashboard xterm surface: selection/copy, safe links, and clipboard images.
 
+import { downloadRemoteFile as downloadRemoteFileVia } from './remote-files.js';
 import {
   isCommandPaletteShortcut,
   requestCommandPalette,
@@ -436,7 +437,10 @@ async function uploadImages(files, signal, terminalPath) {
     const ext = IMAGE_TYPES.get(file.type);
     fd.append('file', file, `pasted-image-${stamp}-${i + 1}.${ext}`);
   });
-  const endpoint = `/api/terminal-attachments?terminal=${encodeURIComponent(terminalPath)}`;
+  // A remote terminal's upload is proxied to the peer under /api/federation/,
+  // which a peer-view page keeps local (remote-node.js rewrites other /api/).
+  const base = terminalPath.startsWith('/api/federation/terminal?') ? '/api/federation/terminal-attachments' : '/api/terminal-attachments';
+  const endpoint = `${base}?terminal=${encodeURIComponent(terminalPath)}`;
   const res = await fetch(endpoint, {
     method: 'POST', credentials: 'same-origin', body: fd, signal,
   });
@@ -455,6 +459,20 @@ export function attachTerminalInteractions({
   requestPalette = requestCommandPalette,
   fetchImpl = globalThis.fetch,
   downloadFile = null,
+  // A watch-only remote terminal takes no input, so no image upload either;
+  // file downloads from a remote node are not offered (a separate grant).
+  canInput = () => true,
+  fileDownloads = true,
+  // remoteFileViewer, on a remote terminal, returns the live viewer ID while
+  // the peer shares this terminal's files (sessions.files.read), else ''.
+  // Only paths visible in the output download: an OSC 8 link's label need not
+  // match its target, and the peer controls the whole byte stream.
+  remoteFileViewer = null,
+  // OSC 52 clipboard writes are trusted only from the local tmux, which
+  // filters pane applications. A peer controls a remote terminal's whole byte
+  // stream, so there the clipboard is never written from it: copy uses
+  // xterm's own selection (Shift-drag) instead.
+  oscClipboard = true,
 }) {
   let statusTimer = null;
   let uploadPending = false;
@@ -514,6 +532,7 @@ export function attachTerminalInteractions({
   }
 
   function armTmuxClipboardFromGesture() {
+    if (!oscClipboard) return;
     if (activeTmuxClipboardCopy) activeTmuxClipboardCopy.cancel();
     const deferred = beginGestureClipboardWrite();
     debugCopy('armed', {
@@ -599,6 +618,11 @@ export function attachTerminalInteractions({
   }
 
   async function downloadHostFile(path) {
+    // remote-node.js routes fetch only; this anchor download would read this
+    // node's agentd under a peer's marker.
+    if (globalThis.__tclaudeRemoteNode?.id) { flash('download not available in a peer view yet'); return; }
+    if (remoteFileViewer) { await downloadRemoteFile(path); return; }
+    if (!fileDownloads) { flash('downloading files from a remote node is not available yet'); return; }
     if (downloadFile) {
       downloadFile(path);
       return;
@@ -624,8 +648,25 @@ export function attachTerminalInteractions({
     anchor.remove();
   }
 
-  const activateLink = (event, raw) => {
+  // downloadRemoteFile fetches a path from the peer through this node's
+  // pinned viewer (remote-files.js owns the preflight and refusal wording).
+  function downloadRemoteFile(path) {
+    return downloadRemoteFileVia({ terminal: terminalPath, viewer: remoteFileViewer(), path, fetchImpl, documentRef: ownerDocument });
+  }
+
+  // A file link names a path on the terminal's host. On a remote terminal that
+  // host is the peer: only a visible path, and only while the live view holds
+  // the peer's file grant, is offered (no download hint otherwise).
+  const linkFor = (raw, visible = false) => {
     const link = safeTerminalLink(raw);
+    if (!link || link.kind !== 'file') return link;
+    // A remote path downloads exactly as shown: no percent-decoding, which
+    // could make the target differ from the visible text.
+    if (remoteFileViewer) return visible && remoteFileViewer() && !String(raw).includes('%') ? link : null;
+    return fileDownloads ? link : null;
+  };
+  const activateLink = (event, raw, visible = false) => {
+    const link = linkFor(raw, visible);
     if (!link) { flash('blocked unsafe link'); return; }
     if (!event || (!event.ctrlKey && !event.metaKey)) {
       // Keep the destination in the hint. This flash replaces whatever the
@@ -654,10 +695,10 @@ export function attachTerminalInteractions({
   // Ctrl/Cmd-click is never a blind gesture. The same linkHandler is handed to
   // the web-links addon below, so plain URL matches get the reveal too; there
   // the text already IS the target, and it costs nothing to be consistent.
-  const showLinkTarget = (raw) => {
+  const showLinkTarget = (raw, visible = false) => {
     if (!setStatus) return;
     if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
-    const link = safeTerminalLink(raw);
+    const link = linkFor(raw, visible);
     if (!link) {
       setStatus('blocked unsafe link');
       return;
@@ -687,9 +728,25 @@ export function attachTerminalInteractions({
       (event, uri) => activateLink(event, uri), linkHandler,
     ));
   }
-  disposables.push(term.registerLinkProvider(
-    visibleLocalFileLinkProvider(term, linkHandler),
-  ));
+  if (fileDownloads) {
+    disposables.push(term.registerLinkProvider(
+      visibleLocalFileLinkProvider(term, linkHandler),
+    ));
+  } else if (remoteFileViewer) {
+    // Visible paths link only while the peer shares files with this view.
+    const visibleHandler = {
+      activate: (event, text) => activateLink(event, text, true),
+      hover: (event, text) => showLinkTarget(text, true),
+      leave: () => clearLinkTarget(),
+    };
+    const provider = visibleLocalFileLinkProvider(term, visibleHandler);
+    disposables.push(term.registerLinkProvider({
+      provideLinks(y, callback) {
+        if (!remoteFileViewer()) { callback([]); return; }
+        provider.provideLinks(y, callback);
+      },
+    }));
+  }
 
   disposables.push(term.onSelectionChange(updateCopyButton));
   // tmux's normal mouse/copy-mode path stores the text in a tmux buffer and
@@ -697,6 +754,7 @@ export function attachTerminalInteractions({
   // a browser clipboard write gives unmodified drag the same end result as a
   // native terminal, without polling tmux or adding a second server protocol.
   disposables.push(term.parser.registerOscHandler(52, (payload) => {
+    if (!oscClipboard) return true;
     const text = decodeOSC52(payload);
     debugCopy('osc52', {
       valid: text !== null,
@@ -789,6 +847,7 @@ export function attachTerminalInteractions({
     }
     event.preventDefault();
     event.stopPropagation();
+    if (!canInput()) { flash('watch-only: this terminal takes no input'); return; }
     if (uploadPending) return;
     const key = files.map(f => `${f.size}|${f.type}`).join(',');
     const now = performance.now();
@@ -802,9 +861,8 @@ export function attachTerminalInteractions({
     flash(files.length === 1 ? 'uploading image…' : `uploading ${files.length} images…`, 30000);
     try {
       const paths = await uploadImages(files, controller.signal, terminalPath);
-      // The fallback modal reuses one xterm across sessions. close/reopen calls
-      // invalidate(), so a slow upload from the old session can never paste its
-      // path through the replacement session's WebSocket.
+      // Session changes invalidate pending uploads, so an old upload cannot
+      // paste its path through a replacement session's WebSocket.
       if (controller.signal.aborted || generation !== myGeneration) return;
       if (!paths.length) throw new Error('upload returned no file path');
       term.paste(paths.join(' ') + ' ');

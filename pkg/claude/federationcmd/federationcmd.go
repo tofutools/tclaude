@@ -55,9 +55,9 @@ func Cmd() *cobra.Command {
 		Long:        long,
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
-			statusCmd(), identityCmd(), connectCmd(), disconnectCmd(), auditCmd(),
+			boardsCmd(), hubCmd(), accessCmd(), actionCmd(), linksCmd(), statusCmd(), nodeRunCmd(), nodeScriptSettingsCmd(), identityCmd(), connectCmd(), disconnectCmd(), auditCmd(),
 			jobsCmd(), reposCmd(), modelsCmd(), peersCmd(), trustCmd(), untrustCmd(), nodeProfilesCmd(), enrollTokenCmd(), enrollCmd(), enrollmentsCmd(),
-			grantCmd(), revokeCmd(), grantsCmd(), remoteCmd(), nodesCmd(), nodeLabelsCmd(), sessionsCmd(), attachCmd(), viewersCmd(), kickCmd(),
+			grantCmd(), revokeCmd(), grantsCmd(), remoteCmd(), peerViewCmd(), nodesCmd(), nodeLabelsCmd(), sessionsCmd(), fileCmd(), humanInboxCmd(), attachCmd(), viewersCmd(), kickCmd(),
 			sendCmd(), outboxCmd(), notifyCmd(), inboxCmd(), awayCmd(), returnCmd(), answerCmd(),
 			spawnRequestCmd(), requestsCmd(), offerConfigCmd(), offersCmd(), shareAgentCmd(), moveAgentCmd(), movesCmd(), teleportControlCmd(),
 		},
@@ -79,17 +79,7 @@ type status struct {
 		LastError string    `json:"last_error"`
 		Since     time.Time `json:"since"`
 	} `json:"hub"`
-	Peers []struct {
-		Level       string    `json:"level"`
-		InstanceID  string    `json:"instance_id"`
-		Fingerprint string    `json:"fingerprint"`
-		Label       string    `json:"label"`
-		Name        string    `json:"name"`
-		Trusted     bool      `json:"trusted"`
-		Online      bool      `json:"online"`
-		LastSeen    time.Time `json:"last_seen"`
-		Version     string    `json:"version"`
-	} `json:"peers"`
+	Peers      []statusPeer   `json:"peers"`
 	PeerGrants []peerGrant    `json:"peer_grants"`
 	Outbox     map[string]int `json:"outbox"`
 	Remote     []struct {
@@ -114,6 +104,25 @@ type status struct {
 			} `json:"routes"`
 		} `json:"groups"`
 	} `json:"remote"`
+}
+
+type statusPeer struct {
+	Level       string    `json:"level"`
+	InstanceID  string    `json:"instance_id"`
+	Fingerprint string    `json:"fingerprint"`
+	Label       string    `json:"label"`
+	Name        string    `json:"name"`
+	Trusted     bool      `json:"trusted"`
+	Online      bool      `json:"online"`
+	LastSeen    time.Time `json:"last_seen"`
+	Version     string    `json:"version"`
+
+	Self bool `json:"self,omitempty"`
+}
+
+func (st *status) displayPeers() []statusPeer {
+	self := statusPeer{InstanceID: st.InstanceID, Fingerprint: st.Fingerprint, Name: st.Name, Label: "this node", Level: "self", Online: true, Self: true}
+	return append([]statusPeer{self}, st.Peers...)
 }
 
 func fail(stderr io.Writer, err error) int {
@@ -182,12 +191,12 @@ type jsonParam struct {
 // --- status / identity ---
 
 func statusCmd() *cobra.Command {
-	return boa.CmdT[jsonParam]{
+	return boa.CmdT[statusParams]{
 		Use:         "status",
 		Short:       "Show identity, hub connection, peers, peer grants",
 		ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *jsonParam, _ *cobra.Command, _ []string) {
-			os.Exit(runStatus(p, os.Stdout, os.Stderr))
+		RunFunc: func(p *statusParams, _ *cobra.Command, _ []string) {
+			os.Exit(runStatusOptions(p, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
 }
@@ -225,6 +234,7 @@ func runStatus(p *jsonParam, stdout, stderr io.Writer) int {
 			visible++
 		}
 	}
+	fmt.Fprintf(stdout, "  %s: this node (%s)\n", st.InstanceID, proto.StripControls(st.Name))
 	fmt.Fprintf(stdout, "Peers:       %d trusted, %d visible untrusted\n", trusted, visible)
 	for _, pe := range st.Peers {
 		if pe.Trusted {
@@ -331,25 +341,33 @@ func peersCmd() *cobra.Command {
 			if st == nil {
 				os.Exit(rc)
 			}
-			if p.JSON {
-				os.Exit(printJSON(os.Stdout, st.Peers))
-			}
-			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-			_, _ = fmt.Fprintln(tw, "INSTANCE\tLABEL\tNAME\tTRUSTED\tLEVEL\tONLINE\tLAST SEEN\tFINGERPRINT")
-			for _, pe := range st.Peers {
-				online := "no"
-				if pe.Online {
-					online = "yes"
-				}
-				trusted := "no"
-				if pe.Trusted {
-					trusted = "yes"
-				}
-				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", pe.InstanceID, dash(pe.Label), dash(pe.Name), trusted, dash(pe.Level), online, ago(pe.LastSeen), pe.Fingerprint)
-			}
-			_ = tw.Flush()
+			os.Exit(printPeers(p, st, os.Stdout))
 		},
 	}.ToCobra()
+}
+
+func printPeers(p *jsonParam, st *status, stdout io.Writer) int {
+	if p.JSON {
+		return printJSON(stdout, st.displayPeers())
+	}
+	tw := tabwriter.NewWriter(stdout, 0, 2, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "INSTANCE\tLABEL\tNAME\tTRUSTED\tLEVEL\tONLINE\tLAST SEEN\tFINGERPRINT")
+	for _, pe := range st.displayPeers() {
+		online := "no"
+		if pe.Online {
+			online = "yes"
+		}
+		trusted := "no"
+		if pe.Self {
+			trusted = "—"
+		}
+		if pe.Trusted {
+			trusted = "yes"
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", pe.InstanceID, dash(pe.Label), dash(pe.Name), trusted, dash(pe.Level), online, ago(pe.LastSeen), pe.Fingerprint)
+	}
+	_ = tw.Flush()
+	return 0
 }
 
 func dash(s string) string {
@@ -437,12 +455,15 @@ func untrustCmd() *cobra.Command {
 
 // --- peer grants ---
 type peerGrant struct {
-	PoolID      string `json:"pool_id,omitempty"`
-	PoolName    string `json:"pool_name,omitempty"`
-	Peer        string `json:"peer"`
-	Slug        string `json:"slug"`
-	Scope       string `json:"scope"`
-	SpawnPolicy struct {
+	PoolID       string `json:"pool_id,omitempty"`
+	PoolName     string `json:"pool_name,omitempty"`
+	Peer         string `json:"peer"`
+	Slug         string `json:"slug"`
+	Scope        string `json:"scope"`
+	GroupName    string `json:"group_name,omitempty"`
+	GroupDeleted bool   `json:"group_deleted,omitempty"`
+	SpawnPolicy  struct {
+		PermissionSlugs []string `json:"permission_slugs,omitempty"`
 		AllowedProfiles []string `json:"allowed_profiles,omitempty"`
 		RequesterPays   string   `json:"requester_pays,omitempty"`
 		JobApproval     string   `json:"job_approval,omitempty"`
@@ -454,12 +475,13 @@ type peerGrant struct {
 	} `json:"spawn_policy,omitempty"`
 }
 type grantParams struct {
+	PermissionSlugs []string `long:"permission-slug" optional:"true" help:"agents.receive.permissions only: allowed carried permission slug (repeatable); omitted allows ordinary slugs."`
 	AllowedProfiles []string `long:"allow-profile" optional:"true" help:"Selectable receiver profile (repeatable); groups.members.spawn only"`
 	RequesterPays   string   `long:"requester-pays" optional:"true" help:"Receiving spawn policy: required, allowed or off"`
 	JobApproval     string   `long:"job-approval" optional:"true" help:"jobs.run only: auto (default) or manual"`
 	Peer            string   `pos:"true" help:"Trusted peer label or instance id"`
 	Slug            string   `pos:"true" help:"Permission slug to grant"`
-	Scope           string   `long:"scope" optional:"true" help:"group=<local group>; omitted covers all current and future groups"`
+	Scope           string   `long:"scope" optional:"true" help:"group=<local name> or group_id=<ID>; omitted covers all current and future groups"`
 	Profile         string   `long:"profile" optional:"true" help:"Receiver launch profile for groups.members.spawn"`
 	Cwd             string   `long:"cwd" optional:"true" help:"Receiver worker directory"`
 	Harness         string   `long:"harness" optional:"true" help:"Receiver worker harness"`
@@ -470,6 +492,7 @@ type grantParams struct {
 func grantCmd() *cobra.Command {
 	return boa.CmdT[grantParams]{Use: "grant", Short: "Grant a trusted peer group or instance permission (human only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *grantParams, _ *cobra.Command, _ []string) {
 		grant := peerGrant{Peer: p.Peer, Slug: p.Slug, Scope: p.Scope}
+		grant.SpawnPolicy.PermissionSlugs = p.PermissionSlugs
 		grant.SpawnPolicy.AllowedProfiles = p.AllowedProfiles
 		grant.SpawnPolicy.Profile = p.Profile
 		grant.SpawnPolicy.Cwd = p.Cwd
@@ -494,7 +517,7 @@ func grantCmd() *cobra.Command {
 type revokeParams struct {
 	Peer  string `pos:"true" help:"Trusted peer label or instance id"`
 	Slug  string `pos:"true" help:"Permission slug to revoke"`
-	Scope string `long:"scope" optional:"true" help:"group=<local group>; omitted revokes the unscoped grant"`
+	Scope string `long:"scope" optional:"true" help:"group=<local name> or group_id=<ID> from grants listing; omitted revokes the unscoped grant"`
 }
 
 func revokeCmd() *cobra.Command {
@@ -527,6 +550,11 @@ func grantsCmd() *cobra.Command {
 		}
 		for _, g := range resp.Grants {
 			fmt.Printf("%s %s %s", g.Peer, g.Slug, g.Scope)
+			if g.GroupDeleted {
+				fmt.Print(" [group deleted]")
+			} else if g.GroupName != "" {
+				fmt.Printf(" [group %s]", g.GroupName)
+			}
 			if g.PoolName != "" && g.Peer != "group:"+g.PoolName {
 				fmt.Printf(" [inherited from group:%s]", g.PoolName)
 			}

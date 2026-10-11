@@ -18,6 +18,11 @@ import {
   confirmDiscard, confirmModal, isCyclingTabs, refresh, toast,
 } from './refresh.js';
 import { openWorktreeCleanup } from './dashboard-operations.js';
+import { installPeerViewLimits } from './peer-view-limits.js';
+
+// A peer's per-node view greys what the peer does not offer. Installed before
+// any feature binds its listeners so its capture-phase click guard runs first.
+installPeerViewLimits();
 
 // Cosmetic re-skins — slop (?slop=1) and wizard (?wizard=1), mutually
 // exclusive (see `tclaude agent dashboard --slop|--wizard`). Run before any
@@ -64,11 +69,12 @@ import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import {
-  mountAccessFeature, mountActionDialogsFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountDebugFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupCreateFeature, mountGroupsFeature, mountHumanNotificationsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountSpawnHarnessPolicyFeature, mountTerminalsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountUsageHistoryFeature, mountWorktreeCleanupFeature, mountGitRepositoriesFeature,
+  mountAccessFeature, mountActionDialogsFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountSkynetFeature, mountSkynetFleetFeature, mountFusedMessagesFeature, mountFleetAdminFeature, mountCostsFeature, mountDebugFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupCreateFeature, mountGroupsFeature, mountHumanNotificationsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountSpawnHarnessPolicyFeature, mountTerminalsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountUsageHistoryFeature, mountWorktreeCleanupFeature, mountGitRepositoriesFeature,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
 import { startSnapshotPoll, waitForInitialSnapshot } from './snapshot-poll.js';
+import { onSkynetOverviewChange, skynetOverviewShown } from './snapshot-store.js';
 import { startBrowserNotifyPoll } from './browser-notify.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
@@ -136,7 +142,6 @@ async function settleInitialLayout() {
   // independent and are started concurrently at the Promise.all.
   const featureMounts = [
     () => mountTerminalsFeature({
-      confirm: confirmModal,
       onComposeMessage: (seed) => openOperatorMessageDialog(seed),
       composeMessageDialogKind: activeMessageAccessDialogKind,
     }),
@@ -185,6 +190,10 @@ async function settleInitialLayout() {
     () => mountLogsFeature(),
     () => mountMessagesFeature(),
     () => mountAuditFeature(),
+    () => mountSkynetFeature(),
+    () => mountSkynetFleetFeature(),
+    () => mountFusedMessagesFeature(),
+    () => mountFleetAdminFeature(),
     () => mountDebugFeature(),
     () => mountConfigFeature({ toast, isCyclingTabs }),
     () => mountProcessesFeature({ confirm: confirmModal, confirmDiscard, notify: toast }),
@@ -443,6 +452,8 @@ async function settleInitialLayout() {
     immediate: true,
     bootOptions: { includeLists: false },
     bootUntil: bootFinished,
+    quiet: skynetOverviewShown,
+    subscribeQuiet: onSkynetOverviewChange,
   }));
   // Independent of the snapshot cadence on purpose — see browser-notify.js.
   // Self-gating: it costs one no-op function call per tick until the human

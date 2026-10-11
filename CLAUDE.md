@@ -62,6 +62,8 @@ features around native Windows behavior unless the operator explicitly asks.
 - Sessions, conversations, worktrees, tasks, status bar, notifications:
   corresponding files under `docs/`.
 - Flow-test helpers and simulators: `pkg/testharness/`.
+- Manual two-node + hub E2E runbook (operator-requested only):
+  `docs/e2e-manual-verification.md`, tooling in `scripts/e2e/`.
 - Contributing and flow-test style: `CONTRIBUTING.md`.
 
 Avoid maintaining exhaustive package inventories here. They drift quickly; use

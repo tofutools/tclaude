@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 type codexResumeRecordingSpawner struct {
@@ -957,4 +959,56 @@ func nextCodexAppServerMessage(t *testing.T, sim *testharness.CodexAppServerSim)
 		t.Fatal("timed out waiting for fake Codex app-server message")
 		return testharness.CodexAppServerMessage{}
 	}
+}
+
+// A failed launch may return to its caller before bootstrap has finished.
+// Teardown must wait for the bootstrap's final SQLite write, not merely for
+// the foreground readiness check.
+func TestCodexAppServerBootstrapDrainWaitsForFinalWrite(t *testing.T) {
+	setupTestDB(t)
+	runtime := db.CodexAppServerRuntime{
+		Generation: "drain-generation", LaunchID: "drain-launch", ConvID: "drain-conv",
+		AgentID: "drain-agent", SocketPath: filepath.Join(testutil.CanonicalTempDir(t), "app.sock"),
+		CodexVersion: "0.147.0", State: db.CodexAppServerWarming,
+	}
+	require.NoError(t, db.UpsertCodexAppServerRuntime(runtime))
+	entered, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	previousPID := codexAppServerServerPID
+	codexAppServerServerPID = func(context.Context, string, string) (int, error) {
+		close(entered)
+		<-release
+		return 0, errors.New("injected bootstrap failure after drain begins")
+	}
+	finalWrite := func() bool {
+		r, err := db.GetCodexAppServerRuntime(runtime.Generation)
+		return err == nil && r != nil && r.State == db.CodexAppServerUnavailable && strings.Contains(r.Detail, "injected bootstrap failure")
+	}
+	t.Cleanup(func() {
+		defer func() { codexAppServerServerPID = previousPID }()
+		unblock()
+		WaitForBackgroundForTest()
+		require.Eventually(t, finalWrite, 3*time.Second, time.Millisecond)
+	})
+	startCodexAppServerBootstrap(clcommon.SpawnArgs{CodexAppServer: true, CodexAppServerGeneration: runtime.Generation})
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("bootstrap did not reach PID discovery")
+	}
+	drained := make(chan struct{})
+	go func() { WaitForBackgroundForTest(); close(drained) }()
+	select {
+	case <-drained:
+		t.Fatal("background drain returned before bootstrap's final database write")
+	case <-time.After(100 * time.Millisecond):
+	}
+	unblock()
+	select {
+	case <-drained:
+	case <-time.After(3 * time.Second):
+		t.Fatal("background drain did not finish after bootstrap failed")
+	}
+	require.True(t, finalWrite(), "drain must include the failure-state write")
 }

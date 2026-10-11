@@ -149,6 +149,7 @@ func (o approvalOutcome) approved() bool { return o != outcomeDeny }
 // operator decides or the timeout auto-denies.
 type approvalRequest struct {
 	id              string
+	peerAccess      *db.FederationPeerAccessRequest // immutable origin, decision fields guarded by mu
 	perm            string
 	convID          string // requester
 	agentID         string // requester's stable actor, captured once for display/grant/audit
@@ -182,13 +183,14 @@ type approvalRequest struct {
 	// clicks. Set by the waiter (realRequestHumanApproval) at start and on
 	// each extend; read by the snapshot under mu. Zero until the waiter
 	// runs — the snapshot then falls back to createdAt+timeout.
-	deadline          time.Time
-	delegated         chan fedAwayDecision
-	delegatedEpoch    string
-	delegatedDeadline time.Time
-	originalDeadline  time.Time
-	delegatedDecider  string
-	delegatedEnvelope string
+	peerDecisionQueued bool
+	deadline           time.Time
+	delegated          chan fedAwayDecision
+	delegatedEpoch     string
+	delegatedDeadline  time.Time
+	originalDeadline   time.Time
+	delegatedDecider   string
+	delegatedEnvelope  string
 }
 
 // approvalRegistry holds pending approvals keyed by ID. Browser
@@ -215,6 +217,9 @@ func (a *approvalRegistry) pendingCount() int {
 // Called by the approval waiter at each terminal outcome (human decision or
 // timeout) so the dashboard can show what was chosen.
 func (a *approvalRegistry) recordResolved(req *approvalRequest, outcome string) {
+	if req.peerAccess != nil && outcome == "timed out" {
+		recordFederationAudit("federation.access.timeout", "system", "", req.targetGroup, req.perm, 403)
+	}
 	if err := db.UpsertAccessRequest(accessRequestDB(req, outcome, time.Now())); err != nil {
 		slog.Warn("access request: failed to persist resolved request",
 			"id", req.id, "perm", req.perm, "outcome", outcome, "err", err)
@@ -377,7 +382,12 @@ func (a *approvalRegistry) snapshot() []pendingApprovalSummary {
 // without spawning a browser. Production assigns realRequestHumanApproval
 // (the inline body below); tests replace it via t.Cleanup-restored
 // assignment.
-var RequestHumanApprovalImpl = realRequestHumanApproval
+// The dispatcher now reaches shared action cores which can themselves ask for
+// local approval. Assign after variable initialization to avoid a Go dependency
+// cycle through the dispatcher mapping; the runtime seam stays unchanged.
+var RequestHumanApprovalImpl func(*approvalRequest, string) bool
+
+func init() { RequestHumanApprovalImpl = realRequestHumanApproval }
 
 var (
 	approvalBrowserOpener = openBrowser
@@ -406,6 +416,11 @@ func realRequestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 	approvals.mu.Lock()
 	approvals.pending[req.id] = req
 	approvals.mu.Unlock()
+	return waitHumanApproval(req, popupBaseURL)
+}
+
+// waitHumanApproval also serves peer approvals registered atomically with their admission limit.
+func waitHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 	defer func() {
 		approvals.mu.Lock()
 		delete(approvals.pending, req.id)
@@ -468,11 +483,17 @@ func realRequestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 			// return/revoke/expiry cannot leave a queued decision authorized.
 			approved, applied := remote.runtime.applyAwayDecision(req, remote)
 			if applied {
+				if !approved {
+					remote.outcome = outcomeDeny
+				}
 				approvals.recordResolved(req, outcomeLabel(remote.outcome))
 				return approved
 			}
 		case d := <-req.decision:
 			approved := applyApprovalOutcome(req, d)
+			if !approved {
+				d = outcomeDeny
+			}
 			approvals.recordResolved(req, outcomeLabel(d))
 			return approved
 		case d := <-req.extend:
@@ -516,6 +537,9 @@ func newApprovalID() string {
 // reaches here). Both the real waiter and the test stub route through this,
 // so the stub exercises the same audit + persist path as production.
 func applyApprovalOutcome(req *approvalRequest, outcome approvalOutcome) bool {
+	if req.peerAccess != nil {
+		return applyPeerAccessOutcome(req, outcome)
+	}
 	recordApprovalDecision(req, outcome)
 	switch outcome {
 	case outcomeApproveAlways:
@@ -636,6 +660,10 @@ func popupAlwaysGranter(scopeJSON string) string {
 // Best-effort: a logging failure is warned and swallowed so it can never
 // affect the request the agent just made.
 func recordApprovalRequest(req *approvalRequest) {
+	if req.peerAccess != nil {
+		recordFederationAudit("federation.access.request", "operator@"+req.peerAccess.Peer, "", req.targetGroup, req.perm, 200)
+		return
+	}
 	label := strings.TrimSpace(req.convTitle)
 	if label == "" {
 		label = short8(req.convID)

@@ -1002,6 +1002,10 @@ func fedGrantCaps(t *testing.T, f *testharness.Flow, method, path string, in map
 	t.Helper()
 	peer := in["peer"].(string)
 	scope := "group=" + in["group"].(string)
+	group, err := db.GetAgentGroupByName(in["group"].(string))
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	listedScope := fmt.Sprintf("group_id=%d", group.ID)
 	list := fedHuman(t, f, http.MethodGet, path+"?peer="+peer, nil)
 	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
 	var existing struct {
@@ -1009,8 +1013,8 @@ func fedGrantCaps(t *testing.T, f *testharness.Flow, method, path string, in map
 	}
 	testharness.DecodeJSON(t, list, &existing)
 	for _, grant := range existing.Grants {
-		if grant.Scope == scope {
-			rec := fedHuman(t, f, http.MethodDelete, path, map[string]any{"peer": peer, "slug": grant.Slug, "scope": scope})
+		if grant.Scope == listedScope {
+			rec := fedHuman(t, f, http.MethodDelete, path, map[string]any{"peer": peer, "slug": grant.Slug, "scope": grant.Scope})
 			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		}
 	}

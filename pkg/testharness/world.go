@@ -170,6 +170,10 @@ func New(t *testing.T) *World {
 	// chain is hermetic.
 	t.Cleanup(harness.SetClaudeManagedSettingsRootForTest(t.TempDir()))
 	db.ResetForTest()
+	// The owning flow fixture drains daemon work before this cleanup runs.
+	// Close SQLite connections before HOME restoration and TempDir removal,
+	// including the WAL sidecars held by idle pooled connections.
+	t.Cleanup(db.ResetForTest)
 	return &World{
 		HomeDir:             home,
 		Tmux:                newTmuxSim(),

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -289,4 +290,22 @@ func TestHTTPProxyCodexPrivateHandoffPreservesShellExpansions(t *testing.T) {
 	assert.Contains(t, string(output), literal)
 	assert.NotContains(t, string(output), "invalid Codex gateway environment marker")
 	assert.NoFileExists(t, sentinel, "handoff must not execute prompt or environment substitutions")
+}
+
+func TestHTTPProxySpawnCommandPinsManagedHarness(t *testing.T) {
+	home := testutil.CanonicalTempDir(t)
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".local", "share", "tclaude", "harnesses", "npm", "bin")
+	require.NoError(t, os.MkdirAll(dir, 0700))
+	path := filepath.Join(dir, "claude")
+	require.NoError(t, os.WriteFile(path, []byte("#!/bin/sh\n"), 0700))
+	t.Setenv("PATH", dir)
+	h := harness.MustGet(harness.DefaultName)
+	command := HTTPProxySpawnCommand("managed-path-test", h, harness.SpawnSpec{})
+	require.Contains(t, command, clcommon.ShellQuoteArg(path))
+	command = HTTPProxySpawnCommand("managed-path-test", h, harness.SpawnSpec{ExecutablePath: "/explicit/claude"})
+	require.Contains(t, command, "/explicit/claude")
+	require.NotContains(t, command, path)
+	command = HTTPProxySpawnCommand("managed-path-test", h, harness.SpawnSpec{PreLaunchScript: "export PATH=/custom/bin; "})
+	require.NotContains(t, command, path)
 }

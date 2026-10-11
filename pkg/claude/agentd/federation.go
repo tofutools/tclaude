@@ -82,7 +82,7 @@ const (
 )
 
 func fedRetryableCode(code string) bool {
-	return code == fedCodeRateLimited || code == fedCodeQueueFull || code == fedCodeInternal
+	return code == "agent_moving" || code == fedCodeRateLimited || code == fedCodeQueueFull || code == fedCodeInternal
 }
 
 // FederationKeyPath is where this instance's signing key lives.
@@ -154,10 +154,13 @@ func defaultFederationName() string {
 
 // fedRuntime is one live hub connection plus its workers.
 type fedRuntime struct {
-	catalogLocks sync.Map // peer instance id -> *sync.Mutex
+	catalogLocks     sync.Map          // peer instance id -> *sync.Mutex
+	catalogStructure map[string]string // successfully published structure per peer, owned by inboundLoop
 
-	healthMu sync.Mutex
-	health   *fleetHealthState
+	peerViewsMu sync.Mutex
+	peerViews   *fedPeerViewState
+	healthMu    sync.Mutex
+	health      *fleetHealthState
 
 	modelsMu          sync.Mutex
 	models            *fedModelState
@@ -236,7 +239,7 @@ func startFederation() {
 	}
 	// Expire private payloads on restart even when federation was disabled.
 	reconcileFederationBundleOffers()
-	go reconcileFederationMoves()
+	goBackground(reconcileFederationMoves)
 	fedLifecycleMu.Lock()
 	defer fedLifecycleMu.Unlock()
 	cleanupFedTerminalIndicators()
@@ -360,7 +363,7 @@ func (rt *fedRuntime) kickOutbox() {
 // onDirectory runs on the client's read goroutine: it only records
 // presence and schedules work.
 func (rt *fedRuntime) onDirectory(entries []proto.DirectoryEntry) {
-	go rt.observeIdentityChains(entries)
+	goBackground(func() { rt.observeIdentityChains(entries) })
 	now := map[string]bool{}
 	for _, e := range entries {
 		if e.Online {
@@ -380,7 +383,7 @@ func (rt *fedRuntime) onDirectory(entries []proto.DirectoryEntry) {
 	if len(cameOnline) == 0 {
 		return
 	}
-	go func() {
+	goBackground(func() {
 		peers := []db.FederationPeer{}
 		for _, id := range cameOnline {
 			if p, _ := db.GetFederationPeer(id); p != nil {
@@ -395,7 +398,7 @@ func (rt *fedRuntime) onDirectory(entries []proto.DirectoryEntry) {
 			}
 		}
 		rt.kickOutbox()
-	}()
+	})
 }
 
 func (rt *fedRuntime) isOnline(id string) bool {
@@ -421,7 +424,7 @@ func (rt *fedRuntime) broadcastCatalogs() {
 // broadcastFederationCatalogs is the hook for export/membership changes.
 func broadcastFederationCatalogs() {
 	if rt := currentFederation(); rt != nil {
-		go rt.broadcastCatalogs()
+		goBackground(rt.broadcastCatalogs)
 	}
 }
 
@@ -457,7 +460,7 @@ func (rt *fedRuntime) sendControl(to, kind, inReplyTo string, payload any) bool 
 	return true
 }
 
-func (rt *fedRuntime) sendCatalog(peer string, status ...*statusSnapshot) {
+func (rt *fedRuntime) sendCatalog(peer string, status ...*statusSnapshot) bool {
 	// Catalogs are replacements. Serialize construction through delivery for
 	// each peer so a slow build under old trust cannot arrive after a newer
 	// downgrade/withdrawal and restore the peer's stale view.
@@ -469,9 +472,9 @@ func (rt *fedRuntime) sendCatalog(peer string, status ...*statusSnapshot) {
 	cat, err := buildFederationCatalog(peer, status...)
 	if err != nil {
 		slog.Warn("federation: build catalog failed", "peer", peer, "error", err)
-		return
+		return false
 	}
-	rt.sendControl(peer, proto.KindCatalog, "", cat)
+	delivered := rt.sendControl(peer, proto.KindCatalog, "", cat)
 	// Catalog requests must not turn a 30s node heartbeat into fanout traffic.
 	// Wake only to populate the initial static probe; later catalogs read cache.
 	rt.nodeMu.RLock()
@@ -480,6 +483,7 @@ func (rt *fedRuntime) sendCatalog(peer string, status ...*statusSnapshot) {
 	if needsProbe {
 		rt.wakeNodes()
 	}
+	return delivered
 }
 
 // buildFederationCatalog lists what this instance exports to peer: groups
@@ -511,7 +515,7 @@ func buildFederationCatalog(peer string, status ...*statusSnapshot) (*proto.Cata
 			delete(caps[group.ID], proto.CapAttachments)
 		}
 	}
-	cat := &proto.CatalogPayload{RequesterPays: 1, TeleportBackups: true, AgentTeleports: 1, AgentMoves: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
+	cat := &proto.CatalogPayload{AgentBundleChunks: true, RequesterPays: 1, TeleportBackups: true, AgentTeleports: 1, AgentMoves: true, StableAgentIdentity: true, HomeRoutedMail: true, DirectAgentMoves: true, JobOutput: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
 	if fedPeerReadsNode(peer) {
 		cat.Node = localNodeMetadata()
 	}
@@ -538,15 +542,20 @@ func buildFederationCatalog(peer string, status ...*statusSnapshot) (*proto.Cata
 				if agentID == "" {
 					continue
 				}
-				if a, _ := db.GetAgent(agentID); a == nil || !a.Active() {
+				if a, _ := db.GetAgent(agentID); a == nil || !a.Active() && !db.AgentAway(agentID) {
 					continue
 				}
+				presence, _ := db.GetAgentFederationPresence(agentID)
 				cm := proto.CatalogMember{Agent: agentID, Name: agent.TitleFor(m.ConvID), Role: m.Role}
 				if g.HasCap(proto.CapPresence) {
+					cm.FederationPresence = catalogFederationPresence(presence)
 					cm.Presence = "offline"
 					if isConvOnline(m.ConvID) {
 						cm.Presence = "online"
 					}
+				}
+				if g.HasCap(proto.CapPresence) && presence != nil && presence.State == "away" {
+					cm.Presence = "away"
 				}
 				g.Members = append(g.Members, cm)
 			}
@@ -590,7 +599,7 @@ func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 	reconcileFederationSpawns()
 	reconcileFederationJobs()
 	reconcileFederationBundleOffers()
-	go reconcileFederationMoves()
+	goBackground(reconcileFederationMoves)
 	for {
 		select {
 		case <-ctx.Done():
@@ -600,16 +609,17 @@ func (rt *fedRuntime) inboundLoop(ctx context.Context) {
 		case <-sessions.C:
 			rt.flushFleetHealth(time.Now())
 			rt.revokeStaleModelLeases()
+			rt.pushCatalogStructureChanges()
 			rt.pushSessionTransitions()
 			rt.pushAgentStatuses()
 			rt.observeAwayWaiting()
 		case <-completion.C:
 			rt.reconcileIdentityRotations()
-			go func() { _ = activateLocalIdentityRotation(time.Now()) }()
+			goBackground(func() { _ = activateLocalIdentityRotation(time.Now()) })
 			reconcileFederationSpawns()
 			reconcileFederationJobs()
 			reconcileFederationBundleOffers()
-			go reconcileFederationMoves()
+			goBackground(reconcileFederationMoves)
 		case <-refresh.C:
 			pruneFederationJobLogs()
 			rt.broadcastCatalogs()
@@ -688,6 +698,14 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		rt.acceptModelOpen(peer, env)
 	case proto.KindModelAnswer:
 		rt.handleModelAnswer(peer, env)
+	case proto.KindPeerViewOpen:
+		rt.acceptPeerViewOpen(peer, env)
+	case proto.KindPeerViewAnswer:
+		rt.handlePeerViewAnswer(peer, env)
+	case proto.KindTerminalFile:
+		rt.acceptTerminalFile(peer, env)
+	case proto.KindTerminalUpload:
+		rt.acceptTerminalUpload(peer, env)
 	case proto.KindSessionOpen:
 		rt.acceptSessionOpen(peer, env)
 	case proto.KindSessionAnswer:
@@ -706,7 +724,7 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		rt.acceptGroupMail(peer, env)
 	case proto.KindAck:
 		rt.handleAck(env)
-	case proto.KindJobFollow:
+	case proto.KindJobFollow, proto.KindJobOutput:
 		rt.wg.Add(1)
 		go func() { defer rt.wg.Done(); rt.serveJobFollow(peer, env) }()
 	case proto.KindJobFollowAnswer:
@@ -730,6 +748,14 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		go func() { defer rt.wg.Done(); rt.serveBundleFetch(peer, env) }()
 	case proto.KindBundleAnswer:
 		rt.acceptBundleAnswer(peer, env)
+	case proto.KindAgentLocation:
+		rt.acceptAgentLocation(peer, env)
+	case proto.KindHomeMail:
+		rt.acceptHomeMail(peer, env)
+	case proto.KindHomeMailReceipt:
+		rt.acceptHomeMailReceipt(peer, env)
+	case proto.KindAgentPresence:
+		rt.acceptAgentPresence(peer, env)
 	case teleportLeaseKind:
 		rt.acceptTeleportLease(peer, env)
 	case proto.KindAgentMoveConfirm:
@@ -808,6 +834,9 @@ func fedRemoteBanner(senderName, peer, instance string) string {
 }
 
 func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
+	rt.acceptMailWithOrigin(peer, env, nil)
+}
+func (rt *fedRuntime) acceptMailWithOrigin(peer *db.FederationPeer, env *proto.Envelope, origin *homeMailPayload) {
 	// Everything the peer names itself goes toward pane injection: gate it.
 	senderAgent := ""
 	if proto.ValidAgentRef(env.From.Agent) {
@@ -816,6 +845,14 @@ func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
 	senderName := proto.SafeName(env.From.Name, false)
 	if strings.TrimSpace(env.From.Name) == "" && senderAgent != "" {
 		senderName = senderAgent
+	}
+	senderInstance, senderEnvelope := peer.InstanceID, env.ID
+	senderDisplay := peerDisplay(peer)
+	if origin != nil {
+		senderInstance, senderEnvelope = origin.Sender.Instance, origin.Envelope
+		senderAgent = origin.Sender.Agent
+		senderName = proto.SafeName(origin.Sender.Name, false)
+		senderDisplay = origin.Sender.Instance
 	}
 	refuse := func(code, reason string) {
 		slog.Info("federation: refused inbound mail", "from", env.From.Instance, "to_agent", env.To.Agent, "code", code, "reason", reason)
@@ -828,7 +865,7 @@ func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
 		return
 	}
 	mp.Subject, mp.Body = proto.StripControls(mp.Subject), proto.StripControls(mp.Body)
-	if len(mp.Body) > proto.MaxMailBody || len(mp.Subject) > 512 || strings.TrimSpace(mp.Body) == "" {
+	if len(mp.Body) > proto.MaxMailBody || len(mp.Subject) > 512 || (strings.TrimSpace(mp.Body) == "" && (origin == nil || len(mp.Attachments) == 0)) {
 		refuse(fedCodeTooLarge, "body empty or too large")
 		return
 	}
@@ -846,7 +883,7 @@ func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
 		refuse(fedCodeMalformed, "missing or too distant expiry")
 		return
 	}
-	if seen, _ := db.FederationEnvelopeSeen(peer.InstanceID, env.ID); seen {
+	if seen, _ := db.FederationEnvelopeSeen(senderInstance, senderEnvelope); seen {
 		// A resend after a lost ack (or a replay): acknowledge again,
 		// deliver nothing.
 		rt.sendControl(env.From.Instance, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckAccepted})
@@ -858,6 +895,13 @@ func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
 	}
 	if env.Kind == proto.KindOperatorMail {
 		rt.acceptOperatorMail(peer, env, senderName, mp, refuse)
+		return
+	}
+	if origin == nil && rt.queueAwayMail(peer, env, mp) {
+		return
+	}
+	if origin != nil && db.AgentAway(env.To.Agent) {
+		refuse("agent_moving", "recipient has left; home must use its latest location")
 		return
 	}
 	if movedAgentMailRefusal(peer.InstanceID, env.To.Agent) {
@@ -897,13 +941,14 @@ func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
 		}
 	}
 	m := &db.AgentMessage{
-		GroupID: groupID, FromConv: "", ToConv: conv,
-		Subject:      mp.Subject,
-		Body:         fedRemoteBanner(senderName, peerDisplay(peer), peer.InstanceID) + mp.Body,
-		ToRecipients: []string{conv},
+		GroupID: groupID, ToAgent: env.To.Agent, FromConv: "", ToConv: conv,
+		OperatorAuthored: origin != nil && origin.Operator && origin.Sender.Instance == origin.Home,
+		Subject:          mp.Subject,
+		Body:             fedRemoteBanner(senderName, senderDisplay, senderInstance) + mp.Body,
+		ToRecipients:     []string{conv},
 	}
 	id, err := db.InsertFederationInboundMessage(m, db.FederationInbound{
-		EnvelopeID: env.ID, FromInstance: peer.InstanceID, FromAgent: senderAgent, FromName: senderName,
+		EnvelopeID: senderEnvelope, FromInstance: senderInstance, FromAgent: senderAgent, FromName: senderName,
 	}, env.ExpiresAt, regularAgentMessageQueueLimit, attachments)
 	if err != nil && attachDir != "" {
 		_ = os.RemoveAll(attachDir)
@@ -911,6 +956,9 @@ func (rt *fedRuntime) acceptMail(peer *db.FederationPeer, env *proto.Envelope) {
 	switch {
 	case errors.Is(err, db.ErrFederationDuplicate):
 		rt.sendControl(env.From.Instance, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckAccepted})
+		return
+	case errors.Is(err, db.ErrFederationMailMoving):
+		refuse("agent_moving", err.Error())
 		return
 	case err != nil:
 		if _, full := agentMessageQueueFull(err); full {
@@ -1000,7 +1048,10 @@ func (rt *fedRuntime) handleAck(env *proto.Envelope) {
 	if row.Kind == proto.KindAwayAnswer && row.State != db.FedOutboxAccepted && row.State != db.FedOutboxRefused {
 		recordFederationAudit("federation.away.answer.result", rt.id.ID(), "", "", "decider="+rt.id.ID()+" origin="+env.From.Instance+" request="+row.BodyPreview+" status="+ack.Status+" "+ack.Reason, 200)
 	}
+	rt.handleHomeMailAck(row, ack)
 	switch {
+	case ack.Status == fedAckCustody:
+		_ = db.UpdateFederationOutbox(row.EnvelopeID, db.FedOutboxSent, time.Now().Add(fedAckWait), "queued at agent home", 0)
 	case ack.Status == proto.AckAccepted:
 		note := ""
 		if row.Kind == proto.KindGroupMail && ack.Delivered > 0 {
@@ -1047,6 +1098,7 @@ func (rt *fedRuntime) flushOutbox(ctx context.Context) {
 		return
 	}
 	now := time.Now()
+	rt.flushHomeMail(now)
 	rows, err := db.DueFederationOutbox(now, 50)
 	if err != nil {
 		slog.Warn("federation: outbox read failed", "error", err)
@@ -1058,6 +1110,10 @@ func (rt *fedRuntime) flushOutbox(ctx context.Context) {
 		}
 		if row.Kind == proto.KindAwayNotice && !rt.awayNoticeCurrent(row.ToInstance, row.InReplyTo) {
 			_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxExpired, "away coverage ended")
+			continue
+		}
+		if row.Kind == proto.KindHomeMail && !rt.homeMailAttemptCurrent(row, now) {
+			_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxRefused, "forwarding custody or authority changed")
 			continue
 		}
 		if now.After(row.ExpiresAt) {

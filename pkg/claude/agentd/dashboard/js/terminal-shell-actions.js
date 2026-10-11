@@ -6,7 +6,6 @@ import { terminalAttachConfig } from './terminal-attach-config.js';
 
 export function createTerminalShellActions({
   state,
-  confirm = async () => false,
   fetchImpl = globalThis.fetch,
   windowRef = globalThis.window,
   documentRef = globalThis.document,
@@ -15,7 +14,6 @@ export function createTerminalShellActions({
 } = {}) {
   if (!state) throw new TypeError('terminal shell actions require state');
   const widgets = new Map();
-  let confirmOpen = false;
   let disposed = false;
 
   function registerWidget(id, widget) {
@@ -64,8 +62,8 @@ export function createTerminalShellActions({
     return openPane(seed);
   }
 
-  function activatePane(key) {
-    return !disposed && state.activatePane(key);
+  function activatePane(key, options) {
+    return !disposed && state.activatePane(key, options);
   }
 
   function reorderPane(key, targetKey, options) {
@@ -199,6 +197,7 @@ export function createTerminalShellActions({
       hideConv: pane.seed.hideConv,
       agent: pane.seed.agent,
       harness: pane.seed.harness,
+      remote: pane.seed.remote || undefined,
       initialRetry: true,
       wizard: documentRef.body.classList.contains('wizard'),
       terminalAttach: terminalAttachConfig(),
@@ -213,89 +212,6 @@ export function createTerminalShellActions({
     if (disposed || typeof onReattachPane !== 'function') return Promise.resolve(false);
     const pane = state.panes.value.find((candidate) => candidate.key === key);
     return pane ? Promise.resolve(onReattachPane(pane)) : Promise.resolve(false);
-  }
-
-  function openModal(descriptor) {
-    if (disposed) return null;
-    return state.openModal(descriptor);
-  }
-
-  async function closeModal(id, { detach = false } = {}) {
-    const descriptor = state.modal.value;
-    if (!descriptor || (id && descriptor.id !== id)) return;
-    widgetFor(descriptor.id)?.dispose();
-    state.closeModal(descriptor.id);
-    if (detach) await hideSeed(descriptor.seed);
-  }
-
-  async function promptModalReconnect(id) {
-    if (disposed || confirmOpen || state.modal.value?.id !== id) return;
-    confirmOpen = true;
-    let reconnect = false;
-    try {
-      reconnect = await confirm({
-        title: 'Terminal disconnected',
-        body: 'The connection to the terminal was closed. The underlying session keeps running — reconnect to it, or close this terminal?',
-        okLabel: 'Reconnect',
-        cancelLabel: 'Close terminal',
-      });
-    } finally {
-      confirmOpen = false;
-    }
-    if (disposed || state.modal.value?.id !== id) return;
-    if (reconnect) void widgetFor(id)?.connect();
-    else await closeModal(id);
-  }
-
-  function onModalDisconnect(id) {
-    void promptModalReconnect(id);
-  }
-
-  async function confirmModalClose(id) {
-    const descriptor = state.modal.value;
-    if (disposed || confirmOpen || !descriptor || descriptor.id !== id) return;
-    confirmOpen = true;
-    let close = false;
-    try {
-      close = await confirm(descriptor.seed.hideConv ? {
-        title: 'Detach terminal?',
-        body: 'This only drops your view — the agent keeps running, and you can reopen it to reattach.',
-        okLabel: 'Detach',
-        cancelLabel: 'Keep open',
-      } : {
-        title: 'Close terminal?',
-        body: 'The underlying session keeps running — you can reopen it to reattach.',
-        okLabel: 'Close terminal',
-        cancelLabel: 'Keep open',
-      });
-    } finally {
-      confirmOpen = false;
-    }
-    if (disposed || state.modal.value?.id !== id) return;
-    if (close) {
-      await closeModal(id, { detach: true });
-      return;
-    }
-    if (widgetFor(id)?.status() === 'disconnected') void promptModalReconnect(id);
-  }
-
-  function detachModal(id) {
-    return closeModal(id, { detach: true });
-  }
-
-  async function moveModalToPane(id) {
-    const descriptor = state.modal.value;
-    if (!descriptor || descriptor.id !== id) return;
-    const seed = {
-      ws: descriptor.seed.ws,
-      label: descriptor.label,
-      hideConv: descriptor.seed.hideConv,
-      agent: descriptor.seed.hideConv,
-      harness: descriptor.seed.harness,
-      initialRetry: descriptor.seed.initialRetry,
-    };
-    await closeModal(id, { detach: true });
-    openPane(seed);
   }
 
   function dispose() {
@@ -333,13 +249,6 @@ export function createTerminalShellActions({
     focusForSelectors,
     popOutPane,
     reattachPane,
-    openModal,
-    closeModal,
-    promptModalReconnect,
-    onModalDisconnect,
-    confirmModalClose,
-    detachModal,
-    moveModalToPane,
     setArcanePaletteEnabled,
     dispose,
   });

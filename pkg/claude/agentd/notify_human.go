@@ -1323,6 +1323,12 @@ func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
+	serveHumanMessagesReply(w, r)
+}
+
+// serveHumanMessagesReply is the reply core shared by the local dashboard and
+// an unrestricted peer's human-inbox answer route (peer_human_inbox.go).
+func serveHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return

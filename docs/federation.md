@@ -16,7 +16,8 @@ laptops behind NAT or a corporate network work as-is.
     CLI only. Built: discovery, mail with attachments, mail to remote
     groups, operator mail, automatic or operator-approved remote spawn, and
     cross-instance group routes, remote session state, and remote terminal
-    watch and interactive attach. A federation dashboard view is not built yet.
+    watch and interactive attach. The dashboard shows and manages linked
+    nodes too; see [Skynet UI](dashboard.md#skynet-ui-linked-nodes).
 
 For a step-by-step first setup, including the hub's TLS certificate, see
 the [setup walkthrough](federation-setup.md).
@@ -110,7 +111,7 @@ tclaude-hub revoke inst_…                   # drop it (live within ~15s)
 Instances see each other only if they share a **space**. Admin commands edit
 the database directly. A running hub picks up changes at its next policy
 refresh (`--policy-refresh`, default 15s). Per-instance send limits are
-`--frames-per-minute` (default 120) and `--bytes-per-minute` (default 8 MiB).
+`--frames-per-minute` (default 600) and `--bytes-per-minute` (default 100 MiB).
 `--open` admits anyone who proves key possession and is for development only.
 
 ## Joining
@@ -196,7 +197,10 @@ tclaude federation revoke bob message.direct --scope group=builders
 | `agents.status.read` | dashboard-aligned agent activity, model, task and numeric context summaries |
 | `sessions.watch` | read-only terminal view of a group member agent |
 | `sessions.attach` | terminal view and full keyboard input, including harness approvals |
+| `sessions.files.read` | bounded non-secret project file downloads through a live terminal viewer; default off, independent of watch/attach |
 | `node.read` | platform, harness versions, labels and numeric node resources (unscoped only) |
+| `costs.read` | complete node-wide cost collection in peer UI requests (unscoped only) |
+| `federation.audit.read` | complete node-wide dashboard audit collection in peer UI requests (unscoped only) |
 | `approvals.answer` | one-shot access-request answer while selected as away cover (unscoped only) |
 
 Prefer `--scope group=<local group>` to limit access. For the same slug, a
@@ -484,8 +488,16 @@ is a plain inbox entry: it cannot answer a permission prompt, an
 `--ask-human` request or anything else that needs local approval. At most
 100 unread messages per peer are kept; beyond that the sender's outbox
 retries. Untrust the peer to stop it entirely. Agents cannot send operator
-mail yet, and replying from the dashboard is not wired up: answer with
-`tclaude federation notify`.
+mail yet. Reply with `tclaude federation notify`, or with **reply** on the
+message in the dashboard's Messages tab.
+mail yet. The local dashboard can compose or reply to the sending operator
+through `POST /api/federation/notify` with `{peer, subject?, body}`; replies use
+the inbox row's stable `instance` and a reply subject. The same operation is
+`tclaude federation notify` in the CLI. `POST /api/federation/send` mirrors
+`federation send` with `{to, role?, subject?, body, attachments?}` for remote
+agent/group mail. `GET /api/federation/inbox` and `/outbox` return the CLI inbox
+and delivery rows. These dashboard routes require the local operator cookie
+and cannot be called through a peer view.
 
 ## Remote spawn requests
 
@@ -539,6 +551,20 @@ as it does for the receiving teleport landing profile. Placement considers
 only groups advertising the selected profile.
 
 A visible group without a spawn grant queues the request for human approval.
+
+The local dashboard mirrors the CLI handlers at `/api/federation/spawn-requests`:
+GET returns the incoming request array; POST queues an outgoing request with the
+same `{peer, group, brief, name?, role?, profile?, credentials?, node?, require?,
+prefer?}` body as `/v1/federation/spawn-requests`. POST `/{id}/approve` accepts
+optional name, profile, cwd, harness and model overrides; POST `/{id}/deny`
+accepts an optional reason. POST `/{id}/abandon` requires
+`{"acknowledge_late_worker":true}` before returning an unconfirmed incoming
+launch to pending. A late worker may still appear.
+`GET /api/federation/outbox?limit=100` returns the same outgoing delivery rows
+as `/v1/federation/outbox`, including spawn requests and operator mail. This is
+delivery status; the remote operator's spawn result arrives in the local inbox.
+All these dashboard routes require the local operator cookie and are refused
+through peer views.
 An automatic spawn with a definite failure, including a worker cap or rate limit, also
 leaves the request pending and notifies the operator; it is not retried
 without a human decision. Every automatic spawn notifies the operator inbox.
@@ -650,7 +676,7 @@ an ephemeral X25519 key travel in sealed control envelopes. The two
 instances derive per-direction ChaCha20-Poly1305 keys, so the hub relays
 ciphertext it cannot read, and a truncated stream is detected, not mistaken
 for a clean end. The hub limits each instance to 16 concurrent streams and
-1 MiB/s by default (`tclaude-hub serve --max-streams`,
+10 MiB/s by default (`tclaude-hub serve --max-streams`,
 `--stream-bytes-per-second`).
 
 Remote route connections are [flow-controlled](group-routes.md#flow-control)
@@ -727,6 +753,37 @@ Explicit credits bound outstanding terminal data to 256 KiB in each direction;
 credits return after terminal output or keyboard input is delivered. Each daemon
 limits attachments to 32 total, 8 per peer, and 30 opens per peer per minute.
 The hub's stream limits and idle timeout also apply.
+
+### Remote terminal file downloads
+
+Grant `sessions.files.read` explicitly on the agent's group to enable browser
+file links. Watch and attach do not imply file access; unrestricted trust does.
+The browser hello reports `viewer_id` and `files`. Clicking a visible output
+path makes a HEAD preflight followed by GET
+`/api/federation/terminal-file?terminal=<remote-socket-path>&viewer=<viewer_id>&path=<path>`.
+OSC 8 links are not used for remote file access. The route is local and human-only.
+
+The target requires the same live terminal viewer and pinned session throughout
+transfer. Reads stay under the working directory recorded when that viewer
+attached. Absolute paths must be inside it; parent traversal and symlinks below
+the root are refused. Home and system directory roots return `root_too_broad`:
+run the agent in a project directory instead. Credential paths (including
+configured harness authentication files), `.env` files and `.git/config` are
+blocked at every depth. Only regular files up to 32 MiB are accepted. Both nodes
+audit reads, and encrypted transfers verify size and SHA-256 before the browser
+receives an attachment with `nosniff` and a CSP sandbox. Transfer time is bounded
+to two minutes and viewer closure or revoked authority cancels it.
+
+CLI parity uses the same pin and target enforcement:
+
+```bash
+tclaude federation file get agt_…@bob reports/build.txt --output build.txt
+```
+
+This opens a temporary watch viewer (or interactive viewer when only attach is
+shared), without sending keyboard input, and refuses existing local output files.
+It needs both terminal authority and the separate file-read grant. Neither API
+accepts a replacement session after the original viewer closes.
 
 ## Delivery
 
@@ -817,7 +874,7 @@ is by inspecting the caller's process tree.
   sender that outruns the hub's bandwidth for longer resets its
   connection.
 - Each remote route connection costs one sealed control frame from each
-  instance against the hub's per-instance frame budget (120 a minute by
+  instance against the hub's per-instance frame budget (600 a minute by
   default, shared with mail). A peer accepts at most 240 opens a minute.
 - Mirror routes cannot be shared onward to another peer.
 - Attachments ride inline and are capped at 512 KiB per message; operator
@@ -827,7 +884,9 @@ is by inspecting the caller's process tree.
 - Operator mail is sent from the CLI only; agents cannot reach a remote
   operator.
 - One hub per instance. Hub-to-hub federation is a later step.
-- CLI only; the dashboard does not show federation yet.
+- Some capabilities are still CLI-only in the dashboard (away cover,
+  sending operator mail, spawn requests, remote jobs, offers, moves); see
+  [Skynet UI](dashboard.md#skynet-ui-linked-nodes) for what it covers.
 
 ## Portable local setup bundles
 
@@ -906,10 +965,11 @@ placeholders use the same `--set name=value` and `--keep-paths` conventions as
 setup bundles. Working directories, branches and paths inside prompts or tool
 output are hints, not filesystem contents; no repository or worktree is copied.
 
-`--history` includes Claude Code JSONL or a Codex rollout through the harness's
+`--history` includes Claude Code JSONL, a Codex rollout, OpenCode native export or Gemini
+native chat JSONL through the harness's
 `HistoryTransfer` capability. Import remints native conversation identity and
 remaps known cwd metadata before resuming it as a new local agent. Message and
-tool-output text is preserved. OpenCode, Copilot and Gemini currently export
+tool-output text is preserved. Copilot currently exports
 configuration only with a warning; `--skip-history` also requests configuration
 only on import. Sidecar databases, credentials, hooks and artifacts are excluded.
 Credential detection uses the setup-bundle boundary, reporting counts per kind
@@ -1061,7 +1121,7 @@ tclaude federation share-agent reviewer bob --group reviewers --history
 
 The default shares configuration only. `--history` includes the native
 conversation when the harness supports `HistoryTransfer` (currently Claude
-Code and Codex); other harnesses warn and share configuration only. The original
+Code, Codex, OpenCode and Gemini); other harnesses warn and share configuration only. The original
 agent and transcript remain in place. Credential findings report counts and at
 most three locations per kind; sharing refuses unless `--allow-flagged` is
 explicit. Structured credential fields are omitted and history stays verbatim.
@@ -1094,8 +1154,25 @@ Configuration selectors (`--only`, `--skip`, `--replace`) do not apply to agent
 offers. Missing paths or unresolved placeholders refuse apply. Group identity
 and admission are rechecked after transfer and immediately before import.
 
-Agent archives are limited to 256 MiB, with ten active offers and at most
-512 MiB of archived payload per peer per direction. The shared 72-hour expiry,
+Agent archives and uncompressed native history default to a 2 GiB limit, with
+ ten active offers and at most twice that limit of archived payload per peer
+ per direction. Set `federation.agent_transfer_max_bytes` in the node's
+ `~/.tclaude/config.json` to raise it (both the source and receiver enforce their
+ own limit). The human-only federation config API accepts
+ `{"agent_transfer_max_bytes":4294967296}` for a 4 GiB limit; zero restores the
+ default. Individual JSONL records default to 256 MiB, including image and tool
+ output records; `federation.agent_history_record_max_bytes` can raise that
+ limit too. Over-limit exports fail before the source is paused or retired,
+ naming the setting to change.
+
+ Agent archives and history are streamed through private files. Updated peers
+ fetch 16 MiB chunks, verify each chunk's SHA-256 and the final archive digest,
+ and retain completed chunks across interrupted fetches and daemon restarts.
+ Retrying fetch resumes at the verified prefix. A chunk uses an idle timeout,
+ rather than a five-minute total-transfer deadline; the offer still expires
+ after 72 hours. Older peers retain the existing single-stream protocol.
+ Move status includes `transfer.{bytes_done,bytes_total,state}` as verified
+ chunks arrive, where state is `transferring` or `downloaded`. The shared 72-hour expiry,
 inline threshold, verification and decline behavior apply. If an apply is
 interrupted after dispatching a launch, its reserved agent ID stays visible;
 inspect that identity before requesting another offer. Pre-launch failures can
@@ -1106,7 +1183,7 @@ it does not stop an already dispatched agent.
 
 A move clones native conversation history to a new destination agent, then
 retires the source after the destination confirms that its reserved launch is
-running. Claude and Codex history are supported. A peer must advertise move
+running. Claude, Codex, OpenCode and Gemini history are supported. A peer must advertise move
 support; an older peer cannot complete a move with an ordinary import receipt.
 
 ```bash
@@ -1119,6 +1196,11 @@ tclaude federation moves ls
 tclaude federation moves show OFFER_ID
 tclaude federation moves abandon OFFER_ID
 ```
+
+The local dashboard uses the same responses at `GET /api/federation/moves`,
+`GET /api/federation/moves/{id}` and `POST /api/federation/moves/{id}/abandon`.
+These cookie-authenticated routes are local operator administration and are
+refused through peer views.
 
 Moves require history; `--skip-history` is refused. Paths, group membership and
 permissions follow the agent-offer import rules. The receiving agent has a new
@@ -1149,11 +1231,11 @@ abandoned. An independently created destination clone remains running after
 abandon. Successful retirement stops the source and removes its normal agent
 authority while retaining its conversation and worktree.
 
-Mail to the retired source's old stable address is refused with `agent_moved`
-for senders still authorized through its former group's current peer mail grant.
-The refusal does not disclose the new address. Other senders receive the usual
-unknown-agent or authorization refusal. Mail is never forwarded automatically;
-an operator can share the new destination address and configure its mail grants.
+For fresh-ID moves and older peers, mail to the retired source is refused with
+`agent_moved` for senders still authorized through its former group's current peer
+mail grant. The refusal does not disclose the new address. Other senders receive
+the usual unknown-agent or authorization refusal. Stable-ID moves between peers
+with home-mail support instead use the home custody route described below.
 
 ## Peer nodes
 
@@ -1534,7 +1616,7 @@ tclaude agent teleport status
 tclaude agent teleport --home --group helpers
 ```
 
-Teleport transfers native Claude Code or Codex conversation history using the
+Teleport transfers native Claude Code, Codex, OpenCode or Gemini conversation history using the
 existing agent-offer transport. Move mode keeps the source running until the
 receiver confirms that the imported generation is running. `--clone` keeps the
 source running. There is no destination retry after an offer might have been
@@ -1542,12 +1624,78 @@ delivered. Selection failures include candidate reasons; missing or stale node
 metrics exclude a candidate. Automatic selection also needs peer-scoped
 `node.read` authority. Agent-visible candidate information follows that scope.
 
-The destination gets a fresh agent identity and inbox. Its continuation briefing
-includes the origin, predecessor, current instance, hop count and note. `agent ls`
-and `agent whoami` show its predecessor. The old inbox remains at the source;
-after a completed teleport, mail to the old address bounces with the destination
-address. Teleport does not forward mail or transfer permissions, credentials or
-uncommitted working-tree changes.
+When both nodes advertise stable agent identity, move and teleport keep the
+`agent_id`; each arrival still remints the harness conversation ID. Clone keeps
+its existing fresh-ID behavior. Older peers fall back to fresh IDs, and the
+arrival briefing names which mode was used.
+
+The local dashboard operator can teleport an active agent with
+`POST /api/agents/{conv-or-agent_id}/teleport` (the local CLI/API equivalent is
+`POST /v1/agents/{conv-or-agent_id}/teleport`). The body accepts
+`{peer?, group?, note?, clone?, home?, carry_permissions?}`; `home` excludes
+`peer`. This retains the human actor and does not borrow the agent's
+`self.teleport` grants. Freeze, quotas, receiver landing authority and credential
+scanning still apply. Export starts immediately, and the source remains active
+until the destination-running confirmation; teleport does not wait for idle.
+Local progress is available at `GET /api/federation/moves/{move_id}`.
+Recall from home can use `POST /api/federation/agents/{agent_id}/recall`, with an
+optional `group` (defaulting to a retained home group) and `note`. It requests
+`home: true` from the current host. The returned `move_id` belongs to that host;
+home watches its placeholder's presence become `here` for completion, since
+remote move administration remains unavailable.
+For a visitor with a retained paused backup, Send home and Recall instead use
+the durable report-return path and respond with HTTP 202
+`{state, return_id, offer}`. The home group is not a new landing choice in this
+case: the original backup and memberships resume. Home still watches presence
+become `here`.
+
+The home record becomes an inactive **away** placeholder in its groups. Its
+memberships, ownership, permanent permissions, scheduled intent and inbox remain
+at home; they confer no authority on the visiting node. Ordinary visiting
+copies lose their local grants when they depart. An explicitly retained paused
+backup keeps its dormant local state until recovery or deletion. Returning with
+`teleport --home` goes directly home from any hop and restores the original home
+record with the new history. The receiver still controls admission and landing.
+
+A private, single-use continuation travels in the authenticated bundle. Trusted
+intermediate hosts can see it. Returning or recovering a paused backup invalidates
+that departure's continuation; every subsequent departure gets a new one. Live
+or unrelated ID collisions refuse, and explicitly retiring or deleting an away
+home record permanently refuses later return under that ID. Home records each confirmed arrival when all participating nodes support home-routed
+mail. The placeholder and Recall use the latest confirmed host; location updates
+retry while home is offline. A multi-hop return is accepted from any trusted host
+holding the valid continuation. Recall still requires the existing peer move grants.
+Older peers retain first-hop location and bounce behavior.
+A superseded roaming copy retained as an independent clone gets a fresh ID.
+
+Every receiving import, move or teleport starts with a short factual arrival
+briefing: identity mode, receiver-selected cwd and reason, local Git state,
+source-reported facts, and what was not transferred. Missing facts stay unknown.
+The briefing uses startup context or inbox, never raw pane keystrokes.
+
+Mail for an away stable agent is held durably at home and forwarded directly to
+the confirmed current host. An old host hands an envelope to home, preserving
+its original sender, rather than relaying along the travel chain. If home is
+untrusted or lacks the capability, the old host bounces with the home address.
+Offline trusted nodes retry until the original mail TTL expires; this does not
+provide a route around an offline home. Home rechecks the sender's live mail and
+attachment grants, and the current host authorizes delivery against home. Removing
+the agent's home group membership revokes that group's ingress authority.
+
+Regular custody has the ordinary per-recipient queue cap and mail TTL; daemon
+notes retain their existing queue policy. Final outcomes
+reach the original sender; a custody acknowledgement is not delivery. Delivery
+markers travel in stable bundles, and inbound dispatch is fenced during departure,
+so a lost acknowledgement followed by another hop cannot duplicate the inbox
+message. Forwarding supports only mail to that stable continuation, never generic
+commands or traffic addressed to other recipients. Local direct sends, per-recipient
+group broadcast copies, operator messages and daemon notes addressed to the away
+agent also enter home custody, using normal local sender authority. The sender
+sees “forwarded to <node>” until the final host acknowledges delivery. Clones keep
+independent inbox identities.
+
+Credentials and uncommitted working-tree changes are not transferred. Permission carry remains an explicit departure
+opt-in with receiver-controlled admission; returning home preserves home grants.
 
 Automatic landing requires a group-scoped peer grant `agents.teleport.receive`
 and an applied node profile with `teleport_landing`. Its `group` and
@@ -1602,6 +1750,11 @@ limits. `allow_return` on both the node and landing policy permits an explicit
 are explanatory, not authority to act as another principal.
 
 An operator can run `tclaude federation teleport off` (and `on` to restore it).
+`tclaude federation teleport status` reads the current switch as
+`{"disabled": true|false}`. The local dashboard has the same read and write
+contract at `GET` and `PUT /api/federation/teleport`; the CLI uses
+`GET` and `PUT /v1/federation/teleport`. The dashboard routes require the local
+operator cookie and are refused through peer views.
 This freezes new incoming/outgoing teleports and prevents uncommitted launch or
 retirement on that instance. Apply it on each node to freeze a fleet; disconnected
 nodes cannot be changed by a local switch. Existing agents and backup leases keep running.
@@ -1679,6 +1832,15 @@ An ordinary `--home` without a paused backup still uses the normal teleport
 policy, group selection and revisit limits above.
 
 ### Model gateways (Claude Code)
+
+Local dashboard administration mirrors the CLI's `/v1/models` handlers at
+`/api/federation/models`: GET/POST `/control` for policy and switches,
+GET/POST `/leases` to list or revoke a lease (`{"id":"LEASE_ID"}`), and GET
+`/usage?day=YYYY-MM-DD` for daily usage. Control reads return `{disabled,
+gateways}` without provider URLs, headers or credentials; writes accept
+`{name?, peer?, disabled}`. Lease and usage reads return arrays. These dashboard
+routes require the local operator cookie and are refused through peer views.
+
 
 A trusted machine can provide a named gateway to Claude Code or Codex workers
 on another machine. Claude Code uses Anthropic Messages; Codex uses OpenAI Responses. The provider key stays on the gateway machine;
@@ -2060,3 +2222,1456 @@ Important notices remain in the operator inbox, and identity/teleport audits
 retain their existing durable records. Watch survives an in-process federation
 reload, including an accepted identity rotation. Revoked peers are checked again
 before event delivery.
+
+### Peer UI request contract
+
+The receiving daemon's `agentd.PeerViewHandler(instanceID)` accepts requests
+from an authenticated federation transport. The transport supplies the pinned
+calling instance ID; browser parameters and HTTP headers cannot select it.
+This handler is separate from the local dashboard, whose cookie authentication
+and response shape remain unchanged. Proxy transport and remote actions are
+separate features.
+
+Peer reads carry a `peer_view` object with the peer label, `included` concept
+names and `omitted` entries (`feature`, `requires`). These describe capabilities,
+never hidden object names or counts. A restricted `/api/snapshot` contains only
+visible groups and agents, using roster, presence and status grants to select
+fields. Status comes from the same shared cached gather as the local dashboard.
+The peer projection uses the normal dashboard snapshot and row types, including
+`conv_id`, `state.status`, `state.model`, `state.effort_level`, numeric context
+fields and `task_ref_url` / `task_ref_label`. Lists and maps for withheld
+concepts are empty, unsupported scalars are blank/zero, and optional private
+fields are omitted. Paths, worktrees, permissions, spawn configuration,
+account usage and local notification/approval content are not shared through
+roster/presence/status grants. The harness spawn catalog is empty for restricted
+peers: local provider model suggestions and readiness diagnostics are private
+configuration. Group roles require roster access; online fields
+require presence or status access. Status granted on one visible group does
+not populate an agent's row in another group without that grant. The deduped
+`agents` list combines only authorized data and lists only visible groups.
+Task URLs have query strings and fragments stripped. A field classification
+guard and final deny filter cover snapshot, group, member, agent, task and
+state fields; newly added fields default to withheld until classified.
+
+Single-group and single-agent reads use `/api/groups/{name}` and
+`/api/agents/{id}` in the same row schema; invisible objects return 404.
+Restricted snapshots always send their small registry fields, with
+`static_unchanged` false, regardless of a supplied `static_version`. A client
+must not reuse registry blobs from a local, different-peer or older-authority
+snapshot. Unrestricted peers get the complete dashboard snapshot plus metadata.
+
+`GET /api/harnesses/availability` exposes detailed installed harness paths,
+versions and boolean credential presence under the instance-wide
+`node.harnesses.read` peer grant. This permission defaults off and is implied
+only by unrestricted trust. `node.read`, group grants, and unrelated node
+permissions do not imply it. Node profiles and node pools may carry this
+unscoped grant; group scopes are rejected.
+
+`GET /api/instance` exposes node metadata under `node.read`. Costs and audit
+collections require their own instance grants above. Those grants default off,
+are never implied by group access, and can also be supplied by node profiles
+or pools. Only unrestricted trust implies them. Without a grant, a collection
+read succeeds with no rows and reports the omitted concept in metadata. An
+audit grant exposes the entire node's audit collection, including local actions.
+
+`POST /api/operator-message` accepts `{to, subject, body}`, where `to` is a
+visible stable agent ID. It requires `message.direct` in a live group containing
+the recipient. A visible recipient without that grant yields 403 naming the
+missing permission and visible group. No attachment, agent impersonation or
+all-live broadcast is accepted. Mail is persisted with federation sender
+identity and the attempt is recorded in `federation audit` as the calling peer's
+operator.
+
+Every dashboard route is classified in the peer mapping. Other routes and
+methods are local-only and return the default-deny 403, including for
+unrestricted peers. Local-only features cannot be enabled by a grant through
+this handler; their `omitted.requires` identifies the related federation grant
+where one exists, or `local_only`. A route guard test requires an explicit
+classification when a dashboard route is added.
+
+### Node summaries and polling
+
+`GET /api/node-summary` is the lightweight map-card endpoint on both the local
+dashboard and the authenticated peer dispatcher. It returns:
+
+```json
+{
+  "presence": "online",
+  "shared_groups": 2,
+  "shared_agents": 4,
+  "online_agents": 3,
+  "waiting_for_input": 1,
+  "peer_view": {"peer": "laptop", "included": [], "omitted": []}
+}
+```
+
+Counts describe only identifiable shared agents, deduplicated across visible
+groups. Online counts need presence or status permission; attention counts
+need status permission and count online `awaiting_input` and
+`awaiting_permission` agents (idle agents are not attention). An unrestricted
+peer, or the local operator, also counts loose active agents. `resources` and
+`health` are optional and require `node.read` for peers. Health is the cached
+resource observation status (`current`, `stale`, or `warming`), not an inferred
+all-clear for all agents. Host-wide agent totals are removed from resources;
+the card uses the authorized shared counts. A successful response means the
+receiving daemon is online; transport failure/offline/staleness is marked by
+the frontend using its own receive time. Local responses have no `peer_view`.
+
+Summaries reuse the shared status gather and cached host readings; they do not
+build full dashboard snapshots or launch resource probes. They return a strong
+`ETag` over the filtered response plus `Cache-Control: private, no-cache`.
+Clients can send `If-None-Match` to get a bodyless 304 for an unchanged summary.
+Trust and grants are reevaluated before the validator, so a scope/permission
+change changes the authorized response/ETag rather than retaining old data.
+A 304 keeps the previously received body and its metadata. Transport caches
+must key representations by receiving node and authenticated calling peer,
+never share them across callers, and forward validators through to agentd.
+Full snapshots continue to return `Cache-Control: no-store`.
+
+Peer snapshot and summary reads share an immutable private status gather for
+up to 1.5 seconds, independently of persisted replay markers. Trust, grants,
+visibility and response projection are checked on every request, including
+conditional summary reads. Local dashboard/CLI status reads still invalidate
+immediately on database writes. Disabling the status cache also disables this
+peer coalescing window.
+
+Polling contract for the node-switching, map and merged-view frontends:
+
+- A per-node view polls full `/api/snapshot` data only for the displayed node,
+  using the existing dashboard cadence. Stop/abort its poll when switching
+  away, and discard snapshots from an earlier selected-node generation.
+- The map polls `/api/node-summary` only. Start with a relaxed 10-second
+  interval per node, stagger initial offsets across nodes and add jitter;
+  never trigger a synchronized fleet-wide full snapshot poll.
+- The merged regular view polls full snapshots only for nodes whose groups
+  are on screen. Suspend full polls for hidden/collapsed-out nodes and use
+  summary data when only a map card is being shown.
+- Avoid overlapping polls to a node. Back off on failures, stop polling when
+  the view is hidden, and distinguish cached/stale data from an offline node.
+  Recheck omitted features after every new authorized response.
+
+### Local dashboard Fleet status
+
+`GET /api/federation/status` is the cookie-authenticated local dashboard wrapper
+for `GET /v1/federation/status`. Federation administration is local-only;
+trusted peers, including unrestricted peers, cannot call this route through
+the peer-view dispatcher.
+
+For the Fleet chip row, use `GET /api/federation/status?summary=1`. The same
+query also works on the CLI API. It returns the local identity (`instance_id`,
+`name`, `fingerprint`), configuration (`enabled`, optional `hub_url`), optional
+cached `hub` connection state, and `peers`. Summary peers include only trusted
+linked instances, with their stable `instance_id`, `label`, `name`, trust
+`level`, `trusted`, `online`, and `last_seen` fields (plus fingerprint, version,
+and trust time). An empty peer list is `[]`. Presence comes from the cached
+hub directory; no remote requests or status probes run during this read.
+
+Summary responses omit `peer_grants`, `outbox`, and `remote`, and avoid loading
+those records or remote catalogs. The full status response still includes
+hub-visible untrusted instances and the administration fields. Responses are
+private and uncached. Poll this local list at a relaxed interval, pause when
+the dashboard is hidden, and poll each visible remote map card separately.
+
+The rest of the local Fleet administration API mirrors the CLI API: replace
+`/v1/federation/` with `/api/federation/`, retaining the HTTP method, JSON
+request/response, query parameters, and path variables. Every wrapper checks
+the local dashboard session before calling the shared handler as the local
+human. Peer-view transport refuses all of these administration routes,
+including for unrestricted peers. `HEAD` reads on enrollment-token and profile
+GET routes preserve read-only semantics on both API surfaces.
+
+| Method | Tail under `/api/federation/` | Existing `tclaude federation` CLI |
+| --- | --- | --- |
+| GET | `status`, `audit` | `status`, `audit` |
+| POST | `config` | `connect`, `disconnect` |
+| GET / POST | `enroll-tokens` | `enroll-token ls`, `enroll-token create` |
+| POST | `enroll-tokens/{id}/revoke` | `enroll-token revoke` |
+| GET | `enrollments` | `enrollments` |
+| POST | `enroll/preview`, `enroll` | `enroll --preview`, `enroll` |
+| POST | `peers/trust`, `peers/untrust` | `trust`, `untrust` |
+| GET / POST / DELETE | `grants` | `grants`, `grant`, `revoke` |
+| GET / POST | `profiles` | `profile ls`, `profile create` |
+| GET / PUT / DELETE | `profiles/{name}` | `profile show`, `profile update`, `profile rm` |
+| POST | `profiles/{name}/apply` | `profile apply` |
+| PUT | `default-peer-profile` | `profile default` |
+| GET / POST | `nodes/groups` | `nodes groups ls`, `nodes groups create` |
+| DELETE | `nodes/groups/{name}` | `nodes groups rm` |
+| POST / DELETE | `nodes/groups/{name}/members` | `nodes groups add`, `nodes groups rm` |
+
+Important shared request shapes for dashboard clients:
+
+- Trust uses `instance`, optional `label`, `level`, `profile`,
+  `no_default_profile`, `preview`, `preview_token`, and
+  `confirm_fingerprint`. Changing to unrestricted requires the exact displayed
+  fingerprint; selecting a profile preserves the CLI preview/apply contract.
+  Untrust uses `instance`.
+- Grants use `peer`, `slug`, optional `scope` and `spawn_policy`. Read a peer's
+  grants with `?peer=<instance_id>`; a local pool selector is `group:<name>`.
+- Profiles are `{name, revision, definition}` with the existing definition
+  schema. Updates must send the current revision. Applying a profile uses
+  `{peer, apply, preview_token, confirm_fingerprint}`: first preview with
+  `apply: false`, then commit using the returned token. The default-profile
+  request is `{profile}` (an empty string clears it).
+- Pool creation uses `{name}`; adding or removing a member uses `{peer}`.
+- Enrollment token creation uses `{profile, uses, ttl_seconds, trust_level}`.
+  The bearer is returned only at creation; token listings expose public
+  metadata. Revoke by public token ID. Joining uses `{master, token}` for
+  preview, then adds `preview_token` for enrollment. Responses preserve the
+  existing consent and fingerprint fields.
+
+Full status exposes hub-visible untrusted instances for the trust screen.
+There is no separate incoming trust-request queue: trusting one of these
+instances pins its identity through the existing trust operation. Summary
+status intentionally lists only linked trusted peers for the chip row.
+
+### Dashboard peer proxy
+
+The browser uses its local dashboard session for
+`/api/peer/{instance_id}/<same tail>`: for example,
+`GET /api/peer/inst_.../snapshot` or
+`GET /api/peer/inst_.../node-summary`. Select peers by their stable pinned
+instance ID from the local Fleet status response; labels are display names.
+The local daemon opens a single encrypted federation stream to the selected
+instance, which serves the request through its peer-view dispatcher using
+the authenticated sender's instance ID. Browser cookies, authorization tokens,
+and caller identity headers are removed before transport. No local-human
+wrapper runs on behalf of a peer.
+
+Supported JSON reads are `snapshot`, `groups/{group}`, `agents/{agent}`,
+`instance`, `costs`, `audit`, and `node-summary`; `POST operator-message`
+uses the same scoped messaging permission as a direct peer-view request.
+Other routes are refused by the receiving dispatcher. Nested peer proxies and
+Fleet administration remain local-only. `If-None-Match` and `ETag` pass through, including bodyless 304 responses.
+The local proxy keeps its private/no-store cache policy. Errors such as a
+receiving node's 403 or a hidden agent's 404 retain their status and JSON body.
+Responses are validated as JSON and served with a fixed JSON content type,
+`nosniff`, and a sandbox CSP. A peer cannot publish executable content under
+the local dashboard origin.
+
+An unknown or no longer trusted selector returns 403 with `code: not_trusted`.
+Unavailable peers return 502 with `code: peer_unreachable` and
+`reason: peer_offline`; deadlines return 504 with the same code and
+`reason: peer_timeout`. These errors include `last_seen` when the cached hub
+directory has an observation. Concurrency saturation returns 503 with
+`code: peer_busy`. Requests have a 15-second deadline, bounded JSON bodies,
+and bounded concurrent streams. The proxy does not retry or fan out requests.
+Clients should keep their last successful view, mark it stale, and back off.
+
+The stable `peer_view.included` / `peer_view.omitted[].feature` concept keys are
+`agents.status`, `groups`, `groups.roster`, `groups.presence`, `messaging`,
+`node.summary`, `health`, `costs`, `audit`, `terminals`, `spawn`, and
+`local_dashboard`, `node.harnesses`, and `node.exec`. `local_dashboard` covers local administration, registries,
+and lifecycle controls. An omitted concept carries a `requires` permission or
+`local_only`. Clients must tolerate additive concept keys; absence of an
+omission is not a grant for an unknown endpoint.
+
+Poll full snapshots only for nodes whose regular dashboard views are visible.
+Map cards use relaxed, staggered summary polls. Merged views poll the nodes
+that contribute visible groups. Pause hidden dashboards, avoid overlapping
+requests to one node, and back off on failure.
+
+Remote browser terminals use the local-only dashboard WebSocket
+`GET /api/federation/terminal?peer=<instance_id>&agent=<agent_id>&mode=watch|interactive`.
+The local dashboard cookie and origin checks protect the browser endpoint;
+peers cannot call it or chain an attach through another node. It opens the same
+encrypted, incarnation-pinned terminal stream as CLI federation attach, with
+unchanged target-side watch/attach grants, indicators, viewer limits and audit.
+`GET /api/federation/sessions?peer=<instance_id>` returns the existing CLI session
+array, adding `watch` and `attach` flags; `instance` is the stable peer ID and
+`peer` its display label. Cached catalogs may be stale; the target authorizes
+both initial opens and every ongoing session.
+
+The socket sends a JSON `hello` first (`mode`, `peer`, `agent`, `cols`, `rows`),
+then binary output. Its dimensions come from the pinned target pane. Later JSON
+`size` frames report changes; browser `resize` messages never resize the target.
+Interactive binary input passes through the existing fixed-key/literal-text
+encoder; watch input is discarded. After xterm consumes each output frame,
+the browser sends `{"type":"credit","bytes":N}` with its exact byte count.
+Credits cannot exceed outstanding output, keeping the 256 KiB window bounded
+through the browser renderer. Operational refusals use a hello-less JSON
+`closed` frame after upgrade; authentication/origin failures remain HTTP errors.
+Established sockets close with a reason: `exit`, `reincarnated`, `revoked`,
+`untrusted`, `kicked`, `offline`, or `error`; initial opens also use `denied` and
+`limit`. A stalled connection can be aborted without delaying viewer cleanup.
+Detach closes the viewer and never stops the agent.
+
+Image paste uses local-only `POST /api/federation/terminal-attachments?terminal=`
+with the encoded remote socket path and the same multipart `file` fields and
+JSON response as local terminal uploads. It requires interactive attach. Image
+bodies travel over the shared authenticated bundle stream, not control frames.
+The receiver validates the pinned attach authority during transfer and before
+and after staging, verifies length/digest/FIN, then reapplies PNG/JPEG/WebP MIME
+and extension checks and the existing file/count/total caps. It returns paths
+on the target, including its existing sandbox attachment root where needed.
+Remote `/api/terminal-file` downloads remain refused with `403 not_shared`;
+file download needs a separate future permission.
+
+
+### Harness availability
+
+Inspect the daemon's registered harnesses, including missing binaries and the
+shell harness, with:
+
+```bash
+tclaude harness ls
+tclaude harness ls --refresh --json
+tclaude harness ls --node bob --json
+tclaude federation grant bob node.harnesses.read
+```
+
+The local dashboard reads `GET /api/harnesses/availability`; the operator CLI
+reads `GET /v1/harnesses/availability`. Remote reads use the same peer-view
+proxy with tail `harnesses/availability`. These are operator reads locally;
+remote peers need `node.harnesses.read` or unrestricted trust. Existing
+`node.read` catalog harness versions remain a coarse capability summary and
+do not reveal binary paths or credential presence.
+
+Responses contain `schema: 1`, `observed_at`, `refresh_after`, and `harnesses`.
+Each harness row includes `name`, `display_name`, `binary`, `installed`,
+optional `path` and `version`, `version_status`, nullable `credential_present`,
+and nullable `usable`. Version status is `known`, `unknown`, `not_installed`,
+`not_spawnable`, or `path_unavailable`. Remote responses also include the
+normal `peer_view` metadata with concept `node.harnesses`.
+
+Paths resolve against agentd's PATH. Version subprocesses use fixed
+`--version` arguments, bounded output, and deadlines. Credential presence is
+only a boolean check for descriptor-declared ambient credential variables;
+credential values are never returned. Presence does not prove that a key is
+valid. Missing ambient credentials mean unknown, since native login and
+provider configuration may still work. The probe does not read credential
+files, run login commands, or contact authentication services. Missing
+binaries are unusable; installed credential-free shell is usable; other
+installed harnesses report unknown usability.
+
+Results cache for five minutes. `--refresh` or `?refresh=1` requests a fresh
+probe, with a ten-second minimum between probes and a single shared probe at
+a time. The first uncached read can take up to eight seconds. Do not put this
+probe on the fast snapshot or map-summary poll; request it when opening a
+node's harness details or explicitly refreshing them.
+
+### Live peer views from the CLI
+
+The operator CLI uses the same pinned peer transport and authorization as the
+per-node dashboard. It does not introduce remote administrator authority.
+
+```bash
+tclaude federation status --summary --json
+tclaude federation nodes --summary --json
+tclaude federation nodes --node bob --json
+tclaude federation nodes --node self --json
+tclaude federation view snapshot --node bob
+tclaude federation view 'node-summary' --node bob
+tclaude federation view 'costs?page=1' --node bob
+tclaude federation view 'audit?page=1' --node bob
+tclaude agent ls --node bob --json
+tclaude agent ls --node bob --group builders --json
+tclaude agent groups ls --node bob --json
+tclaude agent groups ls --all-nodes --json
+```
+
+`--node` accepts a pinned instance ID, an unambiguous ID prefix of at least
+8 characters, or a locally assigned peer label. Summary listings additionally
+accept `self` for the local instance. Hub-reported names do not select peers.
+Normal `federation nodes` still reads the cached node capability catalog under
+its existing `node.read` policy; live summaries and live peer views are
+operator reads. The local daemon APIs are `GET /v1/federation/node-summary`
+and `GET /v1/federation/peer/{node}/{tail...}`.
+
+A summary listing explicitly fetches self and trusted peers in the CLI, with
+at most four concurrent requests, no retries, and deterministic output order.
+Peers without `node.read` still supply their authorized shared-group counts;
+resource health remains withheld. Each JSON row contains identity, local
+label, trust level, directory presence and last-seen time, and either `summary`
+(including the peer's omission metadata) or `error` (including its stable code,
+reason, and last-seen when supplied). Partial failures return a nonzero exit
+status while preserving successful rows. A successful live read marks the
+row online even if the cached directory has not caught up.
+
+`agent groups ls --all-nodes` is the CLI side of the dashboard's
+fused Groups view with every node ticked: this node's groups and every trusted peer's shared
+groups, named `group@node`. Peers are read like a summary listing (at most four
+at a time, no retries). JSON carries `nodes` (an `error` on any unreachable
+peer) and `groups` rows with `group`, `node`, `node_id`, `members` and
+`online`. An unreachable peer keeps the other rows and makes the exit status
+nonzero.
+
+For a how-to tour of the dashboard side, see
+[Skynet UI](dashboard.md#skynet-ui-linked-nodes).
+
+The dashboard's **⚙ Fleet** view (beside Map and Groups · all nodes, or
+"Fleet administration" in the command palette before any peer is trusted)
+covers `federation status`, `peers`, `trust`, `untrust` and `disconnect`:
+this node's identity and hub connection, the trusted peers with their level,
+grants and pools, and the hub-visible instances waiting to be trusted. Trust
+previews first and shows the fingerprint the daemon will pin in full; the
+operator confirms the out-of-band comparison before it applies. Granting
+unrestricted trust repeats what it implies and sends the fingerprint as the
+daemon's confirmation. Its Peer grants page covers `federation grants`,
+`grant` and `revoke` for a trusted peer or a node pool: each grant shows where
+it applies (an unscoped group grant is flagged as covering future groups too),
+and granting confirms with that consequence spelled out. Its Invites & joining
+page covers `enroll-token create/ls/revoke`, `enroll` and `enrollments`: an
+invite confirms its terms (uses, lifetime, the profile's trust here and the
+trust the joining node grants back) and shows the bearer once; joining
+previews both fingerprints, the profile and the trust level before Enroll.
+Its Profiles & pools page covers pools (`nodes/groups`: create, delete, add
+and remove members — adding names the pool grants the member gains) and node
+profiles: making one the default for newly trusted peers, applying one to a
+trusted peer after previewing its plan (unrestricted confirms the peer's
+fingerprint), and deleting. Its Audit page reads `federation audit` (filtered
+by peer and time window, newest first, up to 1000 rows). Its Harnesses page
+shows every harness on this node and each trusted peer (through the peer
+proxy, so a peer needs `node.harnesses.read`): version, available update and
+whether a login is present. A cell installs or updates that harness (busy
+workers ask whether to run now or when idle), and for login-file harnesses
+pushes your login to a peer, backs up or restores the node's login files —
+the same operations as `tclaude harness install|update|credentials`. Its Run
+scripts page is `federation run` and `federation scripts`: this node's
+local-only accept-remote-scripts switch (turning it on confirms the full
+remote-code-execution consequence) and script limits; a node picker (this
+node plus peers that granted `node.exec` and accept remote scripts, with an
+all-online shortcut; offline peers are skipped); and one result pane per node
+with state, exit code, duration, output tails and the full logs on demand.
+Failed nodes can be re-run alone. Profile definitions,
+receiver launch settings beyond the live cap and model gateway scopes are
+managed with their `tclaude federation` commands.
+
+`federation view` returns the full JSON response, including `peer_view`, and
+preserves structured failure JSON on stderr. The `agent ls --node` and
+`agent groups ls --node` JSON outputs are envelopes with `agents` or `groups`
+and `peer_view`; local listing output retains its existing schema. Remote
+text listings describe reported status rather than treating withheld fields
+as offline. Remote listings reject `--state`, since permissions can withhold
+presence for individual groups. `--archived`, `--no-cache`, and `--remote`
+retain their existing local meanings and cannot combine with the remote
+listing flags. The peer dashboard audit is read with `federation view audit`;
+`federation audit` continues to read the local federation activity ledger.
+
+Proxied responses always keep the local `private, no-store` cache policy.
+Peers cannot replace it with a public or long-lived policy. ETag validators
+continue to pass through for client-managed revalidation.
+
+### Updating local and linked nodes
+
+`tclaude update` checks the latest stable release. Use `--apply` to install it,
+`--version vX.Y.Z` to pin a release, or `--rollback` to restore the preceding
+binaries. `--node <label-or-instance-id>` performs the same operation on a
+trusted node; that node downloads its own update. Installed `tclaude`,
+`tclaude-agentd`, and `tclaude-hub` binaries are included. Agentd gracefully
+restarts and reconnects; existing tmux sessions continue running. A running
+standalone hub needs its own service restart after its binary is replaced.
+
+Official release binaries report their real release version and the `release`
+install marker. Release archives must match the official SHA-256 checksums.
+Go-installed binaries use `go install` at the selected version. Source/dev or
+unmarked builds report their method explicitly and warn that updating replaces
+local modifications; their default is `go install @latest`. A staged binary
+must report the expected release version and the same federation protocol before
+any installed binary is replaced. Unknown current versions have a nullable
+update-available hint rather than a guessed ordering. A new update creates a
+verified backup; rollback refuses to overwrite files changed outside the updater.
+
+`node.update` is an **instance-wide**, default-off peer permission. Neither
+`node.read` nor `node.harnesses.read` implies it; only unrestricted trust implies
+it automatically. It allows reading updater status/jobs as well as checking,
+applying and rolling back updates. Permission is checked again before each
+replacement. Update requests and results appear in the federation audit.
+
+The local dashboard API is `GET /api/node/update` (status), `POST
+/api/node/update` with `{ "action": "check" | "apply" | "rollback", "version":
+"vX.Y.Z" }` (optional version, never with rollback), and `GET
+/api/node/update/jobs/{id}`. Starting a job returns HTTP 202 and its durable ID;
+concurrent jobs return HTTP 409 `update_busy`. The corresponding operator-only
+CLI API uses `/v1/node/update`; remote dashboard calls use
+`/api/peer/{instance_id}/node/update` and its `/jobs/{id}` suffix.
+
+Poll a started job about once per second. Its states are `running`, `restarting`,
+`succeeded` and `failed`; `phase`, `warnings`, and optional `error` explain its
+progress. During `restarting`, tolerate the normal daemon/peer disconnect and
+resume polling the same ID after reconnecting. `tclaude update --no-wait` returns
+that ID immediately; `--job <id>` reads it later, including after a restart.
+Node summaries expose cached `version`, optional `latest_version`, nullable
+`update_available`, and optional `update_checked_at` without release requests
+in the polling path. With federation enabled and a hub URL configured, release
+metadata is refreshed in the background hourly. A standalone daemon does not
+start these Fleet release checks; explicit local update and harness-install
+requests still fetch metadata on demand.
+
+In the dashboard, each Skynet map card shows the node's tclaude version and ↑
+when a newer release is known; its update…/manage… link opens that node's
+update dialog (the Fleet page's identity bar opens it for this node). The
+dialog shows the version, install method, latest release, binaries and
+warnings, and offers Check now, Update to the latest and Roll back; update and
+rollback confirm that the binaries are replaced and the daemon restarts. It
+follows the job through the status read, so the restart does not lose it. A
+peer that has not granted you `node.update` says so.
+
+### Installing and updating harnesses
+
+`tclaude harness install <name> [--node <peer>]` runs a fixed official npm
+package recipe as the daemon user, with no sudo. New installs live under
+`~/.local/share/tclaude/harnesses/npm`; the daemon includes its `bin` directory
+in subsequent probes and launches. The supported names are `claude`, `codex`,
+`opencode`, `copilot`, and `gemini`, using their vendors' latest stable npm
+packages. The recipes link to the official vendor instructions.
+
+`tclaude harness update <name|--all> [--node <peer>|--all-nodes]` updates
+recognized npm installations in their existing prefix, or uses the native
+Claude/OpenCode updater for user-owned installations. Other installation methods,
+missing npm, root execution, and unwritable prefixes require a manual command;
+the daemon never elevates privileges. `--all-nodes` includes this node and trusted
+linked nodes, and reports failures per node. Cached npm metadata adds optional
+`latest_version` and nullable `update_available` fields to harness availability.
+
+Active sessions require an explicit choice: `--now` acknowledges the warning,
+or `--when-idle` waits until the selected harness has no busy sessions. With
+neither option, a busy harness returns HTTP 409 `harness_workers_busy`. A node
+runs one harness job at a time. `--no-wait` returns the job ID; `--job <id>` reads
+it later. Jobs contain stored phase/result logs, never vendor stdout, environment
+values or credential contents. An interrupted job is marked failed after daemon
+restart; inspect availability before retrying it.
+
+Remote installs and updates require the instance-wide `node.harnesses.install`
+permission, default off and implied only by unrestricted trust. This grant does
+not follow from `node.harnesses.read`, and it does not authorize credential drops.
+Both grants can be assigned through node profiles/pools. Operations are audited.
+
+For a **single remote install**, `--copy-credentials` explicitly pushes the
+operator's own file credentials to the installing node. Its agents can then act
+as the operator with that provider. Copy is never enabled by default, never pulls
+from a peer, and additionally requires `node.credentials.receive` on the receiver.
+That receiving grant is also instance-wide and default off except unrestricted
+trust. Existing credentials require `--overwrite-credentials`; every write first
+creates a private, owner-only backup and reports its ID/location. Symlink targets
+are refused and new auth files have mode 0600.
+
+File copy supports Claude's `.credentials.json`, Codex's `auth.json`, OpenCode's
+`auth.json`, and Gemini's OAuth/account files in their standard directories.
+Configured Codex/Gemini/XDG directories on each node are respected. Claude capture
+honors the sender configuration; receiving uses tclaude's pinned `~/.claude` state root. Keychain-only,
+Copilot, and environment-only credentials need the target's own login flow;
+secret stores and ambient environment variables are never exported. Bundles are
+bounded to 18 KiB. The local daemon captures files only after explicit operator
+opt-in and sends them over the existing end-to-end encrypted peer transport.
+The browser, CLI output, job records, and audit never receive credential contents.
+Availability checks report file presence without reading those contents;
+provider usability remains unknown until the harness authenticates.
+
+The dashboard API uses `GET /api/harnesses/operations` for recipes/options,
+`POST /api/harnesses/operations` with `action`, either `harness` or update `all`,
+optional `mode` (`now` or `when_idle`), and opt-in `copy_credentials` /
+`overwrite_credentials`. POST returns HTTP 202 with a job; poll `GET
+/api/harnesses/operations/jobs/{id}` about once per second until `succeeded` or
+`failed` (intermediate states: `running`, `waiting_idle`). A job includes
+`results`, safe `log`, `warnings`, and final `availability`. Concurrent requests
+return HTTP 409 `harness_operation_busy`. Operator CLI routes mirror these under
+`/v1`; remote dashboard calls use `/api/peer/{instance_id}/harnesses/operations`.
+
+Credential copy during install is a third way to prepare a teleport target,
+alongside the target's own login and a model gateway. It does not change teleport's
+credential choice or defaults.
+
+### Standalone credential push and restore
+
+An operator can refresh an existing node's file-based harness login without
+installing a harness:
+
+```sh
+tclaude harness credentials push codex --node laptop --confirm-share
+tclaude harness credentials push claude,gemini --node laptop --confirm-share
+tclaude harness credentials ls codex --node laptop
+tclaude harness credentials restore codex --node laptop --backup BACKUP_ID
+tclaude harness credentials backup codex
+tclaude harness credentials restore codex
+```
+
+`--confirm-share` explicitly acknowledges that the remote node's agents will act
+as you with those providers. The authenticated local daemon captures only your
+selected standard auth files and sends them over the encrypted federation
+channel. Clients cannot supply credential contents or arbitrary paths. Locally configured
+HOME and harness-directory symlinks are resolved once before opening a pinned
+canonical directory; credential-file symlinks are refused. There is
+no API for pulling a peer's credentials. Copilot, keychain logins, and environment
+secrets require the target harness's own login flow.
+
+Standalone operations require only `node.credentials.receive` on the receiving
+node, independently of `node.harnesses.install`. This node-wide grant defaults
+off and is implied only by unrestricted trust. Each push writes a timestamped,
+owner-only backup before replacement; a failed backup refuses the replacement.
+Restore also backs up the current files first. Omitting `--backup` selects the
+newest matching backup, including backups created by install-copy. Restore
+removes a copied file if that file was absent in the selected backup. Backup and
+restore work locally when `--node` is omitted; push requires a remote node.
+Chosen-set pushes run separately per harness and report individual failures.
+
+The dashboard API uses `GET /api/harnesses/credentials/backups?harness=codex`,
+`POST /api/harnesses/credentials/push`, `POST /api/harnesses/credentials/backup`,
+and `POST /api/harnesses/credentials/restore`. Use
+`/api/peer/{instance_id}/harnesses/credentials/{action}` for a remote node.
+Local CLI routes have the same tails under `/v1`; remote CLI routes use
+`/v1/federation/peer/{node}/harnesses/credentials/{action}`.
+
+POST bodies contain `harness`; push also requires `confirm_share: true`, and
+restore optionally accepts `backup` (the opaque 32-character backup ID).
+Success returns `receipt` with `backup_id`, `backup_location`, and `copied`;
+restore adds `restored_from` and `restored`. It also returns fresh `availability`.
+Backup listings return `backups` containing `id`, `harness`, `created_at`, and
+`location`, plus `credential_share_warning`. Failed file operations return a
+409 `credential_operation_failed` and any safety-backup receipt. Credential
+contents never appear in responses, logs, or audits. Audits record the harness,
+operator/peer, backup ID, action, and result. File presence can update after a
+push; usability remains unknown until the harness actually authenticates.
+
+### Stable group grant identities
+
+Grant listings (`tclaude federation grants`, `GET /v1/federation/grants`, and
+`GET /api/federation/grants`) return group scopes as `group_id=<id>`, with
+`group_id`, `group_name` for a live group, and `group_deleted: true` for an
+orphan left by an older version. Use the returned scope unchanged to revoke:
+
+```sh
+tclaude federation revoke laptop groups.roster.read --scope group_id=12
+```
+
+`group=<name>` explicitly selects a current local group by name, even if that
+name is numeric. `group_id=<id>` explicitly selects its stable identity. Grant
+creation accepts either form and requires an active group; revocation by ID
+also works after deletion. Deleting a group now removes its direct peer and
+inherited node-group grants transactionally. Legacy orphaned rows remain
+listed and can be revoked by ID. Display names are separate from identity so
+renames and numeric-name collisions cannot retarget a listed grant's revoke.
+
+### Operator scripts on nodes
+
+`node.exec` grants full remote code execution as the agentd user. It is an
+unscoped node permission, default off and implied by unrestricted trust.
+Remote execution additionally requires the receiving node's local
+`accept_remote_scripts` setting, **including for unrestricted peers**. Enable
+that switch locally; peers cannot change it. Local operator runs require the
+usual dashboard/CLI authority and neither remote lock.
+
+```sh
+tclaude federation scripts --accept-remote on
+tclaude federation scripts --memory 1GiB --pids 256
+tclaude federation run --node laptop --node desktop --file maintenance.sh --timeout 2m
+tclaude federation run --all -- echo 'hello from the fleet'
+tclaude federation run -- printf '%s\n' 'local only'
+tclaude federation run --node laptop --job JOB_ID
+tclaude federation run --node laptop --job JOB_ID --log stdout
+```
+
+Scripts are bounded to 16 KiB and their encoded request to 32 KiB. They run as
+private script files passed as argv to `/bin/sh` in a detached one-shot tmux
+session on Linux (a managed one-shot subprocess on macOS), with the existing
+process-group cleanup, timeout (exit 124), output
+limit (4 MiB per stream, exit 125 on overflow), and Linux cgroup resource-limit
+runner. This is code execution, not a filesystem/network sandbox. Root daemon
+execution is refused. Default Linux limits are 1 GiB memory and 256 processes;
+configured limits require working cgroup delegation and fail closed if it is
+unavailable. macOS uses process-group and deadline cleanup, with no cgroups.
+The local operator can change receiver-owned limits in settings. Jobs execute
+in the daemon user's canonical HOME, never a peer-selected working directory.
+
+`--all` selects this node and trusted linked nodes, reporting offline nodes as
+skipped; explicit nodes that are offline are also skipped. No offline queue is
+created. `--no-wait` returns durable per-node job IDs; later `--job` reads one.
+The CLI collects result summaries and bounded output tails. Failed, canceled,
+interrupted, or skipped outcomes return a nonzero command status. Re-run only
+failed nodes by selecting their `--node` values again.
+
+Dashboard/API routes (same tails under `/v1` for local CLI) are:
+
+- `GET /api/node/run`: settings/availability including the receiving switch.
+- `POST /api/node/run`: `{script, timeout_seconds?}`, returns 202 job metadata.
+- `GET /api/node/run/jobs/{id}`: durable result with state, exit code,
+  duration_ms, stdout_tail and stderr_tail (8 KiB each), hash and size.
+- `GET /api/node/run/jobs/{id}/logs?stream=stdout&offset=0`: bounded 64 KiB
+  chunks, `{data, next_offset, eof}` (`data` is base64); stderr is analogous.
+- Local-only `GET/PUT /api/node/run/settings`: `{accept_remote_scripts?,
+  resource_limits?: {memory?, cpu?, pids?}}`, with the full-code-execution warning.
+
+Remote data routes use `/api/peer/{instance_id}/node/run...`, or
+`/v1/federation/peer/{node}/node/run...` for CLI. The UI can fan out the same
+per-node requests for checked nodes and poll their jobs independently. Active
+jobs are canceled when either receiving lock is withdrawn. Peer jobs/logs are
+readable only by their initiating peer and the receiving local operator.
+Scripts and bounded logs remain private on the receiver; audits on each side
+record operator, peer/node, script hash and size, job ID and result. The sender
+records results when they are observed through job polling. After daemon
+restart, unfinished jobs are marked interrupted and never replayed.
+
+### Per-group federation links
+
+`tclaude federation links [--group NAME] [--json]` reads the same aggregation as
+local dashboard groups' `federation_links`: group-scoped direct/pool grants,
+route mirrors, and peer trust/online/last-seen. Unscoped grants and unrestricted
+trust are not per-group links. Groups without links have an empty array.
+
+The local-only `GET /api/federation/links?group=NAME` (CLI:
+`GET /v1/federation/links`) returns `{groups: [{group_id, name,
+federation_links: [...]}]}`. The optional filter is an exact local group name;
+an unknown name returns 404. Each link has the existing snapshot shape:
+`peer`, `label`, `level`, `kind`, `direction`, `slugs?`, `pool?`, `remote?`,
+`online`, and `last_seen?`. Peers cannot read this node's other trust links,
+including through unrestricted trust.
+
+Additional stable action concept keys are `spawn.inline`, `lifecycle.stop`, `lifecycle.resume`, `lifecycle.restart`, `lifecycle.sandbox-restart`, `lifecycle.retire`, `lifecycle.clone`, `lifecycle.move`, `lifecycle.teleport`.
+
+### Remote operator actions
+
+Remote actions use the peer-view dispatcher and the existing dashboard proxy.
+The receiver authorizes every request and rechecks durable move authority before
+retiring a source. It never gives the requester local human identity or the
+source agent's own grants. Whole-agent stop/retire/clone/move actions need their
+peer grant on every affected active group; clone/retire/move also cover owned groups.
+
+- `POST /api/groups/{name}/spawn`: `{brief, name?, role?, profile?}` under
+  `groups.members.spawn` and receiver-owned launch policy. Arbitrary cwd,
+  harness, model, permissions and launch overrides are refused. Returns a
+  durable spawn-request row (202); `GET /api/spawn-requests/{id}` reads only
+  that initiating peer's request while its grant remains valid.
+- `POST /api/agents/{id}/stop[?force=1]`: `groups.members.stop`.
+- `POST /api/agents/{id}/resume`: `groups.members.resume`. No options:
+  recreating a missing launch directory and switching a Codex drive stay
+  with the local operator.
+- `POST /api/agents/{id}/restart`: `groups.members.resume` plus
+  `groups.members.stop`; refused unless the agent is fully idle.
+- `POST /api/agents/{id}/sandbox-restart`: `{action: "restore"|"unlock"}`
+  under the same grants. `unlock` restarts the agent with its sandbox off and
+  is accepted only from an unrestricted peer.
+- `POST /api/agents/{id}/retire`: `groups.members.retire`; worktree deletion
+  and its options are not exposed remotely.
+- `POST /api/agents/{id}/clone`: `groups.members.clone`, with optional
+  `{follow_up, no_copy_conv}` and receiver-owned source defaults.
+- `POST /api/agents/{id}/move`: `{group}`; `agent.move` plus source
+  `groups.members.retire`. The destination is always the requesting peer.
+- `POST /api/agents/{id}/teleport`: `{group, note?, clone?, home?, carry_permissions?}`
+  with the same source authority and existing teleport landing/confirmation policy.
+  A `home: true` recall is accepted only when the requesting node is the
+  agent's recorded home; the normal return-home policy applies.
+- `POST /api/operator-message` retains the existing scoped messaging contract.
+
+IDs are stable remote agent IDs, and `group` on move/teleport names the
+receiving group on the requesting node. No third-node delegation is accepted.
+Use `/api/peer/{instance_id}/<tail>` or the CLI's
+`/v1/federation/peer/{node}/<tail>` proxy. The CLI equivalent is
+`tclaude federation action ACTION --node PEER --agent ID` (ACTION includes
+`resume`, `restart` and `sandbox-restart --sandbox unlock|restore`), adding
+`--group GROUP --brief TEXT` for spawn, `--group GROUP` for move/teleport,
+or `spawn-status --job ID` to inspect a remote launch. Message uses
+`--body TEXT [--subject TEXT]`; clone uses `--follow-up`/`--no-copy-conv`.
+The action command never retries mutations automatically.
+### Human inbox across your own nodes
+
+An operator running several nodes of their own can read and answer each node's
+human inbox from one dashboard. A node serves `GET /api/human-inbox` (the
+newest 50 unread human notifications and the pending ask-human requests of its own
+agents) and the answers `POST /api/human-inbox/reply {id, body}`,
+`POST /api/human-inbox/read {id}` and
+`POST /api/human-inbox/access/{id} {decision: approve|deny}` only to a peer it
+trusts unrestricted (`human.inbox.read` / `human.inbox.answer`); these slugs
+cannot be granted or requested. Decisions are one-shot: "always allow" and
+extending a deadline stay with the node's own operator, as do peer access
+requests, away-cover forwards, process obligations and attachments. An
+approval lets the blocked call run with all its effects (a `sudo.*` request
+grants what it names for the time it asked); it writes no standing rule. A
+reply reaches the agent with the remote-operator banner, and the approval
+history names the deciding node (`operator@INSTANCE`). The requesting node
+reaches the routes only through its dashboard peer proxy or the operator-only
+CLI, and both nodes audit each answer.
+
+The dashboard's Messages tab lists the other nodes' unread notifications and
+pending requests under **Other nodes**, read every minute (every five while
+hidden). CLI: `tclaude federation human-inbox PEER`,
+`tclaude federation human-inbox reply PEER ID --body TEXT` and
+`tclaude federation human-inbox decide PEER ID approve|deny`.
+
+### Operator access requests
+
+A trusted peer with an existing active grant can request additional dispatcher
+permissions through `POST /api/peer-access-requests`, using the ordinary local
+proxy `/api/peer/{instance_id}/peer-access-requests`. Trust alone and public node
+summaries do not permit requests. The `permissions.requests` omission names
+`peer_access` when this admission condition is missing. Local-only endpoints
+cannot be opened by a request.
+
+The JSON body is `{permission, group_id?, reason?, grant_ttl_seconds?}`. A
+positive `group_id` identifies an already shared receiving group; zero requests
+an unscoped grant. TTL defaults to one hour; zero means permanent and the maximum
+is 30 days. The receiving operator can narrow an unscoped request to one shared
+group and choose the lifetime. Approval never replaces an existing broader or
+permanent grant or its launch policy. Expired grants stop authorizing every peer
+read and write through the common grant reader.
+
+A request returns HTTP 202 with `{id, origin_peer, perm, group_id,
+grant_group_id, grant_ttl_seconds, status}`. Poll
+`GET /api/peer-access-requests/{id}` through the same proxy for its owned status;
+other peers cannot read it. Requests time out after five minutes unless the
+operator extends them. Pending requests interrupted by a daemon restart are not
+approvable; status reads report `interrupted`. Each peer can have eight pending
+requests. Approval is a grant, so retry the original action explicitly afterwards.
+
+Receiving operators see peer requests in the existing Access requests folder,
+with decisions reserved to the local operator; away-cover peers cannot answer
+these trust-administration requests. Rows add `origin_peer`,
+`group_id`, `grant_ttl_seconds`, and `grant_expires_at` when applicable. The local
+`GET /api/federation/access-requests` lists peer requests and history. Decide via
+`POST /api/federation/access-requests/{id}/decision` (or the existing local
+`/api/access-requests/{id}/decision`) with `{decision:"approve"|"deny"|"extend",
+grant_ttl_seconds?, group_id?, secs?}`. Peer requests do not support agent
+"always allow" decisions. These administration routes remain local-only.
+
+CLI parity uses `tclaude federation access request --node bob
+--permission message.direct --group-id 7 --reason 'Coordinate the task' --ttl 1h`,
+`access status --node bob --id ID`, `access list`, and
+`access approve --id ID --group-id 7 --ttl 1h` (or `deny` / `extend`). The CLI
+administration routes mirror `/v1/federation/access-requests`. Both nodes audit
+requests and terminal decisions without copying the reason into audit logs.
+Agents continue to request missing local cross-node permissions from their own
+operator using the existing `--ask-human` path.
+
+Peer snapshot and group reads include each visible group's stable numeric `id`,
+which is the `group_id` used in permission requests. Omitted feature entries
+include `requestable: true|false`, derived from the dispatcher's permission and
+transport mapping plus existing-access admission. Local-only features and the
+request mechanism itself are never requestable. Features the peer view never
+serves itself (the dashboard shell, terminals and their file links, inline
+spawn, access requests) carry `transport: true` (others `false`): their own
+channel decides whether they work, so the dashboard does not list them as
+"not shared". An approval may shorten the
+requested lifetime, but cannot lengthen it or convert a finite request to a
+permanent grant. A permanent request can be approved with a finite lifetime.
+
+### Local dashboard bundle offers
+
+Local cookie-authenticated routes mirror the offer CLI handlers:
+`POST /api/federation/offer-config` accepts `{peer,bundle?,only?,skip?,allow_flagged?}`;
+`POST /api/federation/share-agent` accepts `{agent,peer,group,history?,allow_flagged?}`;
+`POST /api/federation/profiles/{name}/offer` accepts `{peer}` after the profile
+revision has been applied. `GET /api/federation/bundle-offers?direction=in|out`
+returns offer rows. POST `/{id}/fetch`, `/{id}/import` and `/{id}/decline` act on
+an incoming offer; add `?peer=INSTANCE_ID` to disambiguate its source.
+Import defaults to preview. Its body preserves the CLI fields: `apply`, `only`,
+`skip`, `replace`, `values`, `keep_paths`; agent offers also accept `cwd`,
+`worktree`, `group`, `name`, `skip_history` and `set`. Apply is explicit and uses
+the same live admission, credential findings, path and launch checks as the CLI.
+Responses retain the existing preview diffs and provenance. Every route is
+local operator administration and is refused through peer views.
+
+After fetching, `state: "ready"` means the private payload is verified.
+`GET /api/federation/bundle-offers/{id}/contents?peer=INSTANCE_ID` returns
+`{type,entries:[{path,size,kind}]}`. Agent entries are `manifest.json` and optional
+`history/transcript.jsonl`; config entries are `bundle.json` and
+`sections/<section>.json`. Entries are data labels, never host paths.
+Add `path`, optional byte `offset` and `max_bytes` to read one entry:
+`{path,kind,size,text,truncated,offset,next_offset?}`. Reads default to 256 KiB
+and accept at most 1 MiB; invalid UTF-8 is replaced. `next_offset` is the next
+byte offset when more text remains. All current entries are JSON or JSONL.
+`GET` or `HEAD` `/{id}/download?peer=INSTANCE_ID` returns the original payload
+as an attachment with octet-stream, sandbox, nosniff and private/no-store
+headers. Neither read fetches implicitly: pending returns 409 `not_fetched`,
+expired/declined/applied returns 410 `offer_state`, unknown entry paths return
+404 `path`, and revoked receiving admission returns 403 `admission`.
+
+The matching CLI commands use the same human-only `/v1` handlers:
+`federation offers contents ID --peer PEER` lists entries; add
+`--path history/transcript.jsonl --offset 0 --max-bytes 262144` to read text.
+`federation offers download ID OUTPUT --peer PEER` saves the original verified
+bundle without importing and refuses an existing output file. Both require a
+ready offer and preserve current trust/receive admission.
+
+### Local dashboard labels and hub setup
+
+`GET /api/federation/node-labels` returns `{labels:[...]}`; POST accepts
+`{add:[...],remove:[...]}` and shares the CLI's label validation and normalized
+label set. GET/HEAD are reads. These cookie-authenticated routes are local-only.
+Hub setup already uses `POST /api/federation/config` with optional
+`enabled`, `hub_url`, `name`, `invite` and `hub_ca_file` fields. Omitted fields
+are preserved; CA file paths refer to this node's filesystem. URL validation,
+configuration writes and client reload are shared with `federation connect`.
+
+### Local dashboard jobs, repositories and viewers
+
+Local cookie-authenticated `/api/federation/jobs` mirrors the CLI:
+POST submits `{peer|node|nodes,repo,ref,group,harness?,command,timeout_seconds,
+require?,prefer?}`, GET returns `{jobs:[...]}`, and GET `/{id}` returns the durable
+job row. POST `/{id}/cancel`, `/approve`, `/retry` and `/acknowledge-stopped`
+share the CLI handlers; the last requires `{acknowledge_stopped:true}` and a
+confirmed stopped, uncertain local job. GET `/{id}/logs` returns completed output
+JSON. GET `/{id}/follow` streams `application/vnd.tclaude.job-frames` using the
+CLI frame contract. Job actions use this local route with an explicit trusted
+peer selection, including when the dashboard is displaying a remote node.
+
+GET `/api/federation/repos` returns `{repos:[...]}`; POST accepts
+`{name,url,clone,groups:[...]}`, PUT `/{name}` also carries the current `revision`,
+and DELETE `/{name}` disables it. Repository aliases, inspected canonical local
+paths, receiving groups and revisions retain the CLI validation and checks.
+GET/HEAD list requests never mutate the allowlist. Each repository row also carries
+`group_names`, the current names in `definition.groups` order, omitting deleted
+groups while preserving the relative order of surviving names. Create and update
+responses carry this field too; the stored group IDs remain the authority.
+
+GET `/api/federation/viewers?session=...` lists incoming terminal viewer rows
+(`id`, `peer`, `agent`, `session`, `group`, `read_only`, `started`, `incoming`).
+The optional session filter matches an agent ID or session name. POST
+`/viewers/{id}/kick` disconnects the named incoming viewer and returns `{ok:true}`.
+All these routes are local operator administration and are refused through peer views.
+### Local dashboard away administration
+
+`GET /api/federation/away` reads `{away: null|{cover,since,until}}`;
+POST the same path with `{cover,until?}` selects a trusted covering operator and
+returns `{away,warnings}`. `POST /api/federation/return` ends forwarding.
+`POST /api/federation/answer` sends `{ticket,decision:"approve"|"deny"}` using
+the exact ticket supplied in the covering notice, returning `{envelope_id,state}`.
+These local cookie-authenticated routes share the CLI's `/v1/federation` handlers.
+A delegated answer is one-shot and never grants persistent permission. Peer
+access requests remain decidable only by the receiving local operator and are
+never forwarded to an away cover. None of these administration routes is peer-viewable.
+
+### Dashboard incremental job output and identity transitions
+
+The local dashboard can poll `GET /api/federation/jobs/{id}/output` for a
+submitted outbound job. The corresponding CLI API is
+`GET /v1/federation/jobs/{id}/output`; CLI live follow remains available.
+Both use the existing job ownership authorization. These dashboard routes
+are local-only, including for unrestricted peers.
+
+Output accepts an opaque `cursor` (omit it to start at the beginning) and
+`max_bytes`, default 65536, range 32768–262144. Replies contain `chunks`
+(`{stream:"stdout"|"stderr",data:string,encoding:"base64"}`), the next `cursor`, `state`,
+`done`, and optionally `truncated` when more output remains. Each read is
+bounded and closes its authenticated stream; it does not wait for future
+output. Decode base64 into bytes and use a separate streaming UTF-8 decoder per channel
+across polls, preserving characters split between frames. `max_bytes` counts
+original bytes. Poll only while the output panel is visible. When `done` becomes
+true, fetch the verified terminal `/logs` result. Inbound or unstarted jobs
+return 409, as do peers without incremental-output support. A simultaneous
+CLI follow may occupy the same per-job stream slot.
+
+Trusted rows in `/api/federation/status`, including `?summary=1`, carry
+`identity_transition` while a signed identity successor is `pending` or
+`conflict`. Its fields are `state`, `old_id`, `new_id`, `new_fingerprint`,
+`received_at`, `accept_after`, and an optional `reason`. Pending means the
+local detection window has started; `accept_after` is the earliest possible
+acceptance, not confirmation that acceptance succeeded. Conflict means
+competing signed successors require explicit operator recovery. Completed
+history is available through the read-only, human-only
+`GET /api/federation/identity/rotations`, mirroring `/v1`.
+
+`tclaude federation identity recover-peer OLD_ID NEW_ID` previews recovery without
+changing authority. Applying recovery requires independently checking the
+replacement fingerprint with that node's operator, then passing
+`--fingerprint NEW_FINGERPRINT --apply`. The dashboard exposes no identity
+recovery actions.
+
+The local dashboard also supports identity rotation through
+`POST /api/federation/identity/rotate`, using `{}` for preview and
+`{"apply":true}` after operator confirmation. This mirrors the human-only CLI
+handler and is refused on every peer path. Preview includes the current
+identity and fingerprint, `window_seconds`, `hop_count`, `hop_limit`, `pending`,
+and consequence flags in `effects`. It generates no successor key. Apply
+returns the signed rotation plus `old_fingerprint` and `new_fingerprint`;
+the same fingerprint fields appear on `local.chain` in the rotations read.
+A pending rotation refuses another apply, and four retained hops refuse a
+fifth rotation until explicit re-pairing. Recovery and old-key revocation
+remain CLI-only.
+
+### Remote hub administration
+
+A node operator can administer its connected hub with `tclaude federation hub`
+(or Fleet → Hub). This is separate from peer trust and node grants: these routes
+are local human-only, and peers cannot proxy them. The hub must already admit the
+claiming instance, either through its normal admission list or a hub invite.
+
+On an unclaimed hub, `tclaude-hub serve` prints a one-use claim token and writes
+`admin-claim.token` next to the hub database with mode `0600`. Redeem it using
+`tclaude federation hub claim TOKEN`. It expires after 24 hours. Restarting a hub
+with no admins retains a valid claim, or regenerates a lost/expired claim. The
+hub stores only the token hash and deletes the token file after redemption.
+Treat this token as a credential; do not paste it into shared messages.
+
+The claim grants the redeeming instance's signing key the explicit capabilities
+`hub.admins.manage`, `hub.admissions.manage`, `hub.invites.manage`,
+`hub.spaces.manage`, `hub.settings.manage`, `hub.identity.manage`,
+`hub.health.read`, and `hub.logs.read`. Additional admins receive only the named
+capabilities you select. Unknown capabilities are refused. `hub.exec` is elevated and never granted by bootstrap or admin status.
+A remote admin can delegate it only if it already holds that capability.
+Removing the last admitted admin with `hub.admins.manage`, stripping that
+capability, revoking its admission, or recovering its lost key is refused. If all
+admin keys are lost, the hub host can run the shell-only command
+`tclaude-hub admin reset --db PATH` to clear admin authority and create a fresh
+claim. There is no remote reset endpoint.
+
+Commands (all return JSON):
+
+```bash
+tclaude federation hub status
+tclaude federation hub admins list
+tclaude federation hub admins add --instance inst_ID --capabilities hub.health.read,hub.logs.read
+tclaude federation hub admins remove --instance inst_ID
+tclaude federation hub admissions list
+tclaude federation hub admissions admit --instance inst_ID --spaces team
+tclaude federation hub admissions revoke --instance inst_ID
+tclaude federation hub invites create --space team --ttl 1h
+tclaude federation hub invites list
+tclaude federation hub invites revoke --token-hash HASH
+tclaude federation hub spaces list
+tclaude federation hub spaces set --instance inst_ID --spaces team,other
+tclaude federation hub settings get
+tclaude federation hub settings set --key max_connections --value 1024
+tclaude federation hub settings reset --key max_connections
+tclaude federation hub identity recover --old inst_OLD --new inst_NEW
+tclaude federation hub identity recover --old inst_OLD --new inst_NEW --fingerprint FP --apply
+tclaude federation hub identity revoke-old --instance inst_OLD
+tclaude federation hub identity revoke-old --instance inst_OLD --fingerprint FP --apply
+tclaude federation hub health
+tclaude federation hub logs tail --max-entries 100
+```
+
+Built-in hub rate limits are 600 frames/minute, 100 MiB/minute of sent data,
+and 10 MiB/second of relayed stream bandwidth per instance. Existing explicit
+DB settings are preserved when upgrading.
+
+Settings precedence is **built-in defaults < serve flags < persisted hub DB
+settings**, independently per field. Startup logs report each DB override with
+both its boot and effective value. Status lists explicitly overridden flags;
+setting descriptors include `effective`, `boot`, `source` (`default`, `flag`, or
+`db`), `flag_overridden`, bounds/unit, and `restart_required:false`. Resetting a
+setting removes its DB override and restores the boot flag/default. Changes apply
+live; reducing a capacity prevents new connections/streams without killing
+unrelated existing streams. Rotation-window changes affect new statements and
+never change an already promised activation time. Host security settings such as
+listen address, TLS, open admission, and script acceptance are not writable.
+
+The local `/api/federation/hub/` dashboard routes and matching
+`/v1/federation/hub/` CLI routes are:
+
+| Tail | Methods | Body / result |
+| --- | --- | --- |
+| `status` | GET | Connected hub, admin capabilities, overridden flags |
+| `claim` | POST | `{token}` → `{claimed:true}` |
+| `admins` | GET, POST | `{admins:[...]}`; POST `{instance,capabilities}` |
+| `admins/{instance}` | DELETE | Remove an admin |
+| `admissions` | GET, POST | `{admissions:[...]}`; POST `{instance,spaces}` |
+| `admissions/{instance}` | DELETE | Revoke admission |
+| `invites` | GET, POST | `{invites:[...]}`; POST `{space,ttl_seconds}` returns bearer once |
+| `invites/{token_hash}` | DELETE | Revoke invitation |
+| `spaces` | GET, PUT | `{spaces:[...]}`; PUT `{instance,spaces}` |
+| `settings` | GET, PATCH | `{settings:{key:descriptor}}`; PATCH `{overrides:{key:integer_or_null}}` |
+| `identity/recover` | POST | `{old,new,apply?,fingerprint?}` |
+| `identity/revoke-old` | POST | `{instance,apply?,fingerprint?}` |
+| `health` | GET | Counts, portable runtime load, uptime, recent errors |
+| `logs` | GET | `{entries:[{at,level,message}],next_cursor}` |
+
+Admission/invite/space lists accept opaque `cursor` and `max_entries` (default
+100, maximum 250), returning `next_cursor` when more rows remain. Logs use an
+opaque cursor with a maximum of 200 entries per response, from a bounded,
+redacted in-memory event ring. They expose no arbitrary files or node content.
+Errors use `{code,error}`. Identity operations preview by default; apply requires
+the exact displayed fingerprint. Key-loss recovery inherits the predecessor's
+spaces, revokes its admission and admin authority, and does **not** automatically
+grant the replacement admin capabilities. Accepted dual-signed key rotation
+preserves the predecessor's exact capability set.
+
+RPC requests use the existing authenticated hub connection. Each signature binds
+the hub identity, connection challenge, persistent admin generation, request ID,
+method, payload digest, and a validity period of at most one minute. The hub
+persists a replay marker before executing/responding and records a bounded audit
+without payloads or tokens. Mutations are never automatically retried: if the
+connection drops after submission, inspect current state before explicitly
+submitting another change.
+
+
+### Scripts on the hub
+
+Hub scripts need **both** `hub.exec` on the calling instance and the hub-local
+`accept_remote_scripts` switch. The switch defaults off and cannot be changed
+through remote settings or any dashboard/CLI RPC. The host enables it with
+`tclaude-hub serve --accept-remote-scripts`, or a private regular `hub-config.json`
+next to the hub database (mode `0600`) containing:
+
+```json
+{"accept_remote_scripts": true}
+```
+
+An explicitly supplied flag wins over the local file, including
+`--accept-remote-scripts=false`. Without the flag, the file is re-read while jobs
+run; disabling it cancels their process groups. Malformed or unsafe config fails
+closed. Scripts are refused when the hub service runs as root.
+
+**Threat:** a script has the non-root hub service user's full host authority and
+can read that user's secrets, alter the hub database, or disrupt connectivity for
+the whole fleet. Pinned instance keys still prevent the hub from reading or
+forging end-to-end node content. Enable this switch only for administrators you
+trust with the hub host itself.
+
+Seed the first elevated grant from the hub host's shell:
+
+```bash
+tclaude-hub admin grant-exec inst_ID --db PATH
+tclaude federation hub run                         # inspect gates and limits
+tclaude federation hub run --file script.sh --timeout 1m
+tclaude federation hub run --file script.sh --no-wait
+tclaude federation hub run --job JOB_ID
+tclaude federation hub run --job JOB_ID --log stdout --offset 0
+tclaude federation hub audit list --max-entries 100
+```
+
+Jobs are durable, never replayed after a restart, and limited to four concurrent
+runs, a 16 KiB script, 1s–24h runtime (default 1h), and 4 MiB per output stream.
+A private child guardian owns the timeout and watches a hub-lifetime pipe, so
+a hub crash also kills the script process group. Terminal outcome audits are
+reconciled idempotently on restart. The waiting CLI shows incremental output,
+exit status, and duration. Revoking
+`hub.exec` or the caller's admission cancels an active run within the authority
+watch interval. A restart records an interrupted job and its outcome.
+
+The local human-only dashboard and CLI APIs share these tails beneath
+`/api/federation/hub/` and `/v1/federation/hub/`:
+
+| Tail | Method | Result |
+| --- | --- | --- |
+| `run` | GET | `{accept_remote_scripts,switch_source,can_exec,service_user,limits,warning}` |
+| `run` | POST | `{script,timeout_seconds?}` → durable job |
+| `run/jobs/{job_id}` | GET | Job metadata; `stdout_tail`, `stderr_tail`, `duration_ms` only with `hub.exec` |
+| `run/jobs/{job_id}/logs?stream=stdout&offset=0` | GET | `{data,next_offset,eof}`; `data` is base64, at most 64 KiB decoded; needs `hub.exec` |
+| `audit?cursor=…&max_entries=100` | GET | `{entries,next_cursor}`; at most 200 entries and 256 KiB; needs `hub.logs.read` |
+
+An empty log chunk while running has `eof:false`; advance by `next_offset` and
+poll again. Job states are `running`, `completed`, `failed`, `timed_out`,
+`cancelled`, or `lost` (restart). The hub audits the full script before execution
+and the outcome afterward. Audit readers without `hub.exec` see the actor,
+script hash/length and result, with `redacted:true` and no script text. The
+ordinary hub log ring never includes scripts or their output. These APIs are
+local-only; peer-view routes cannot reach them, regardless of node trust.
+
+### Supervised hub updates
+
+Hub self-update requires the explicit `hub.update` capability. Bootstrap admins
+can grant it through the admin editor; it does not grant `hub.exec`. The dashboard
+and `tclaude federation hub update` use the same signed hub-admin connection.
+Use `update check`, `update apply [--version vX.Y.Z]`, or `update rollback`.
+`--no-wait` returns the durable job; `--job ID` reads it later. Explicit and
+resolved release downgrades are refused. Rollback restores only the verified
+previous binary in the journal, never an arbitrary release or path.
+
+A host operator must first enable guardian mode in the service definition.
+Plain `serve` allows status/check but refuses apply/rollback with
+`not_supervised`. For systemd, run the hub directly as the service MainPID:
+
+```ini
+[Service]
+User=tclaude-hub
+ExecStart=/usr/local/bin/tclaude-hub serve --supervised --db /var/lib/tclaude-hub/hub.sqlite
+Restart=on-failure
+```
+
+The service user needs write access to the installed hub binary's directory and
+its private database/update directory. Do not wrap ExecStart in a shell. The
+hub verifies its own MainPID and an `always` or `on-failure` restart policy;
+unverifiable supervision refuses guardian startup. A user systemd unit works
+with the equivalent permissions and restart policy.
+
+On macOS, the LaunchAgent/LaunchDaemon must directly run
+`tclaude-hub serve --supervised --supervisor-label YOUR.LABEL`, with `Label`
+matching that argument and unconditional boolean `KeepAlive=true`. Conditional
+KeepAlive policies are refused. The hub verifies the loaded job's PID and its
+host-owned plist. Restart/reload the unit once after enabling guardian mode.
+
+The guardian remains the supervisor's main process and starts a serving child.
+Only verified official release artifacts with matching version and federation
+protocol are staged; source/dev builds with an unknown release version cannot
+apply an update. Readiness uses a private per-child channel created with 0700
+and 0600 permissions, followed by a probe of that child's actual bound listener
+and expected hub ID/version. The health deadline is 60 seconds. If the candidate
+exits, reports wrong health, or misses the deadline, the guardian verifies the
+backup and installed hashes, restores the prior binary, restarts it, and records
+`rolled_back`. A failed manual rollback likewise restores the pre-rollback
+working release. The journal survives guardian restarts; a serving worker never
+infers successful health from an executable hash alone. Federation connections
+reconnect during each serving-child restart. Update starts, progress, and final
+outcomes are recorded in the hub audit.
+
+The local, human-only routes are `GET/POST /api/federation/hub/update` and
+`GET /api/federation/hub/update/jobs/{job_id}`, with identical `/v1` tails.
+Status adds `supervisor`, a `blocked` reason when unsupervised, and a durable
+`job` containing the phase/deadline/outcome. Poll the selected job while it is
+`running` or `restarting`; temporary read failures during restart do not imply
+failure. Never retry an apply submission automatically.
+
+### Receiving agent working directories
+
+Clone, move and teleport imports resolve the working directory on the receiving
+node. The source's `paths.cwd` and optional `paths.repo_url` are hints, not
+permission to fetch a repository or create a source-selected directory.
+The first available receiver-owned choice wins:
+
+1. An explicit `--cwd` or `--landing` candidate selected by the operator.
+2. An enabled `federation repos` entry allowing the receiving group whose URL
+   matches the source hint. The receiver creates an isolated checkout of its
+   own clone's HEAD commit; source branches, hooks and Git configuration are
+   not copied. Explicit teleport `--git-ref` still requires its configured
+   allowlisted repo and isolated checkout.
+3. The source cwd, if it exists locally. HOME, `/` and system directories remain
+   visible choices but are skipped automatically.
+4. The receiving group's default directory.
+5. The automatic teleport landing policy directory.
+
+If none resolves, import refuses with `landing_unresolved` and the candidate
+list. There is no implicit HOME fallback. `--keep-paths` explicitly selects the
+source path and refuses if it is unavailable; it does not fall through to a
+repo or group default. Missing paths and paths not owned by the receiving
+service user are refused. An explicit broad directory or a broad group default
+is allowed when owned by that user; remote terminal file downloads retain their
+independent `root_too_broad` restriction.
+
+The import preview and result include `landing` with `cwd`, `reason`, `exists`,
+`source_cwd`, `source_repo` and `candidates`. Reasons are `explicit`, `repo_match`,
+`same_path`, `group_default`, `landing_policy` and `none`. Repo candidates also
+carry `checkout_required: true` and `repo: {id, name, ref}`; the planned path
+need not exist until apply. Preview never creates a checkout. Candidate IDs are
+`repo:<stable repo ID>`, `same_path`, `group_default` and `landing_policy`.
+Send `landing` in the import body or use `federation offers import --landing`;
+`cwd` takes precedence. Apply recomputes the selection and rechecks the repo,
+receiving grant and directory before dispatch. Results and audits record the
+resolved cwd and reason. Sender responses include `receiver_decides: true` and
+`source_repo`; the sender cannot promise a receiver filesystem path.
+
+### Content board membership
+
+Content boards use a separate hub connection at `/v1/boards/connect`. Joining
+with a board invitation binds membership to the joining instance's key; it does
+not admit that instance to the fleet, assign peer-visible spaces, pair it with
+other members, or grant access to any member's machine. Board connections accept
+only signed board RPCs. Hub administration, envelopes, directories and relay
+streams remain unavailable, even when the hub uses open fleet admission.
+
+Owners manage membership and invitations; publishers may publish and readers
+may browse and pull. Removing or demoting the last owner is refused. Invitations
+are single-use, expire after at most seven days, and may grant only reader or
+publisher membership. Keep the invitation private: its token includes the
+secret needed to unwrap the board key. Neither bearer tokens nor plaintext
+board keys are stored by the hub. A consumed invitation can recover an
+interrupted join only for the same instance while its membership still exists.
+
+The hub stores encrypted key envelopes and ciphertext. A key rotation wraps a
+new epoch key separately to each current member's instance key, after verifying
+that member's proof of the current key, and invalidates
+unused invitations from the previous epoch. Removed members immediately lose
+hub access; rotation protects future publications. Previously obtained keys or
+plaintext cannot be revoked. Remaining members keep access to retained older
+key epochs. Lost owner keys require another owner or a new board; hub admins
+cannot recover content keys. A dishonest hub operator could deny service or
+keep a removed member in the loop for new content; it cannot read content or
+forge publisher-signed items, so pick a hub you trust.
+
+Use `tclaude federation boards ls` (with `list` retained as an alias), `create --name NAME`, `join --token TOKEN`,
+`show --board ID`, `members --board ID`, `invite --board ID --role reader --ttl 1h`,
+`revoke-invite --board ID --token-id HASH`, `set-member --board ID --instance ID
+--role publisher`, `remove-member --board ID --instance ID`, `rotate-key --board
+ID`, and `leave --board ID`. Configure the invitation's hub URL first; joining
+never enables a peer connection. Dashboard and CLI routes under
+`/api/federation/boards` and `/v1/federation/boards` require local human authority
+and are never forwarded through peer view.
+
+Hub admins with `hub.boards.manage` can list, freeze, limit or delete boards using
+`tclaude federation hub boards list|set|delete --board ID`. This capability does
+not reveal keys or plaintext. Default limits are 100 boards per hub, 100 members
+per board, 100 outstanding invitations, 256 MiB of ciphertext plus encrypted
+key/invitation metadata, and 1,000 blobs per board. Ciphertext objects are
+bounded at 16 MiB plus encryption overhead. Pending uploads consume quota;
+failed uploads release their reservation. Ready, unpinned blobs expire after
+30 days, and abandoned upload reservations after one hour; startup cleanup
+reaps expired objects and old orphan files. A quota reduction never silently
+ejects members or removes pinned objects. Publication/import surfaces follow
+in the item slice: membership alone never installs content or runs commands.
+
+Board items are immutable, publisher-signed configuration versions. The hub
+stores only encrypted payloads and encrypted descriptive metadata; re-publishing
+an unchanged version preserves its original publisher signature. Phase 1 shares
+portable configuration sections such as roles, profiles and process templates,
+not broad local config or default permissions. Credential scanning runs before
+publication and again after decryption on the receiver. Suspected credentials
+must be excluded before publication.
+
+Use `federation boards publish --board ID --name NAME --only roles/NAME`,
+`items --board ID`, and `versions --board ID --item ITEM`. Updates use
+`publish --item ITEM --parent VERSION`; a stale parent is refused. `pin --board
+ID --item ITEM --version VERSION` keeps a selected version through retention;
+item listings show `latest_version`, `pinned_version` and `update_available`.
+`boards updates` (GET `/api/federation/boards/updates`, `/v1` alike) lists
+every kept item, across this node's boards, whose latest version differs from
+its pin: `{updates:[{board,board_name,item,name,pinned_version,latest_version}],
+notify,checked_at,error}`. It reuses a check up to five minutes old; `--refresh`
+(`?refresh=1`) checks again, at most every 30 seconds. `boards updates --notify
+on|off` (PUT `{notify}`, stored as `federation.board_update_notify`, default off)
+makes the daemon check every 15 minutes and leave one Messages note per newly
+seen version. The very first check on a node only records what it finds;
+after that every new version gets one note, including versions posted while
+the daemon was down (announced versions are kept in the data directory for 180
+days). A failed check is retried after 30 seconds rather than cached, one
+unreadable board does not hide the others, and keeping a version, leaving or
+deleting a board refreshes the list. The check reads catalogs and pins only:
+nothing is fetched or imported. These routes
+are human-only and never served through peer view.
+Re-publication uses `publish --board DEST --from-board SOURCE --from-item ITEM
+--from-version VERSION` and retains exact original bytes and provenance.
+
+`fetch`, `contents`, `download`, `preview` and `import` take `--board ID --item
+ITEM --version VERSION`. Fetch verifies and scans into a private spool; it never
+imports. Contents accepts `--path`, `--offset` and `--max-bytes` for bounded
+inspection. Download requires `--file PATH` and never overwrites an existing
+file. Preview accepts the existing `--only`, `--skip`, `--set NAME=VALUE` and
+`--replace` choices. Import requires the preview's `--preview-token` with the
+same choices. Tokens expire after ten minutes and are single-use; changed local
+configuration requires a fresh preview. There is no automatic apply.
+
+The matching human-only `/api/federation/boards/{board}/items` and `/v1` routes
+provide list/publish, `/{item}/versions`, `/{item}/pin`, and
+`/{item}/versions/{version}/{fetch,contents,download,preview,import}`. Downloads
+support HEAD and use attachment disposition, nosniff and a sandbox CSP. Board
+blob transfer uses the separate `/v1/boards/stream` connection with the existing
+authenticated stream framing, shared hub bandwidth limits, bounded sizes and a
+five-minute deadline. Board-only connections remain refused at every fleet and
+hub-admin entry point, including on this stream endpoint.
+
+
+`federation boards --help` lists action subcommands. Each action's help shows
+only its applicable flags and marks the required ones. `boards invites --board
+ID` lists owner-visible invitation IDs, roles, epochs, expiry times and redeemed
+instances; it never returns bearer tokens or sealed key packages. The matching
+human-only local GET `/api/federation/boards/{board}/invites` and `/v1` routes
+return `{invites:[...],next_cursor}` with at most 50 rows per page.
+
+`federation moves ls` prints a table; use `--json` for the full response.
+Remote file downloads require the stable `agt_…@peer` address shown by
+`federation sessions`, rather than a session display name.
+
+### Board cleanup and project file browsing
+
+Owners can permanently delete a board with `tclaude federation boards delete --board ID` (dashboard API: `DELETE /api/federation/boards/ID`). Deletion removes hub membership, invitations, keys and item metadata; it cannot erase copies members already pulled. The dashboard should confirm deletion before calling it.
+
+`tclaude federation file ls agt_…@peer [dir]` lists one project directory level through a temporary pinned terminal viewer, with the same watch/attach and `sessions.files.read` checks as `file get`. It examines at most 100 entries, omits secret paths, symlinks, special files and files above the download cap, and reports when the listing is capped. Use a narrower directory to see more. No recursive scan is performed. A browser with a live viewer uses `GET /api/federation/terminal-file?terminal=…&viewer=…&path=DIR&list=true`; the JSON response contains `entries` (`path`, `kind`, `size`) and `truncated`.
+
+`federation boards ls`, `items`, `invites`, `federation file ls` and `federation hub status` show compact tables by default; pass `--json` for the unchanged structured response. Short-lived board RPC connections are deliberately isolated from fleet pairing and appear only in hub Debug logs.
+
+### Direct operator moves
+
+Dashboard moves may request `direct_if_allowed: true` on
+`POST /api/federation/move-agent` (the `/v1` route accepts the same body).
+The receiver decides whether to launch automatically: unrestricted trust needs
+an available landing directory; a restricted peer needs `agents.receive` for
+the receiving group and an applied landing policy. Explicit directory or candidate hints from restricted senders are ignored on
+the automatic path; the receiver uses its own landing resolution.
+Automatic moves otherwise use the same repository, source-path, group-default
+and policy fallback order as offer imports. Permission and policy are checked
+again before launch. If automatic landing is unavailable, the offer remains
+available for the receiving operator to inspect and accept.
+
+The initial response includes `move_id` and `disposition: "checking"`.
+Poll `GET /api/federation/moves/{move_id}` for `pending_acceptance`, or `landed`
+with `target_agent` and `cwd`. Existing move state and error fields describe
+refusal, expiry or abandonment. The source stays active until the receiver
+confirms that its successor is running. Receivers without direct-move support
+continue to receive ordinary pending offers. Pulling an agent uses the existing
+peer action endpoint and always moves toward the requester; moves between two
+other nodes must be issued from the source node's dashboard.
+
+Direct operator moves remain ordinary moves: the self-service teleport freeze
+and per-chain/hour/day teleport limits do not apply. Node capacity, admission
+and the applied policy's live-worker limit still apply.
+
+### Message history across nodes
+
+The dashboard peer proxy can read `GET /api/peer/INSTANCE/mailboxes` and
+`GET /api/peer/INSTANCE/mailbox?id=all|human|CONV|group:NAME&q=&sender=&page=&page_size=`.
+These reuse the local Messages sidebar and newest-first page shapes, including
+`messages`, `page`, `page_size`, `total` and `total_unfiltered`. Pages default to
+50 messages and are capped at 500. Prefix each message ID with its owning node
+when merging pages from several nodes; send any action back to that node.
+
+Both reads require the instance-wide peer grant `node.messages.read`, which is
+off by default and is never implied by `message.direct`. **This grant exposes
+private message bodies across the entire node**, including human notifications
+and agent-to-agent mail. It is not group-scoped. Unrestricted trust includes it.
+Reading a page does not change any message's read state.
+
+`POST /api/peer/INSTANCE/mailbox/mark-read` accepts `{ids:[ID],read:true|false}`
+or `{conv:CONV,read:true}` under the separate, off-by-default instance-wide
+`node.messages.manage` grant. It changes agent mail read state only. Delete,
+wipe, attachment downloads and human message mutations are not shared through
+these routes. Attachment metadata is display data, not download authority.
+
+Neither grant authorizes replies or approval decisions. Reply delivery to an
+agent uses the existing `operator-message` route and its group-scoped
+`message.direct` permission. Human notification replies, marking human
+notifications read, and one-shot ask-human decisions keep the unrestricted-only
+human-inbox routes described above. Peer access decisions, away cover,
+permanent approvals and process obligations remain local.
+
+A fused view retains each selected node's last successful page and its receipt
+time during an outage. The peer proxy returns `peer_unreachable` with reason
+`peer_offline` or `peer_timeout` and optional `last_seen`; a missing history
+grant returns HTTP 403 `permission`. Show those states instead of treating them
+as an empty mailbox. Stop using retained pages after local trust is removed.
+
+
+The optional large-history flow moves more than 300 MiB through a hub and then
+returns home with the destination's added turns. It is deliberately outside
+normal CI. Run it with:
+
+```bash
+TCLAUDE_LARGE_AGENT_TRANSFER=1 scripts/test.sh ./pkg/claude/agentd -run '^TestFederation_LargeTeleportHistoryRoundTrip$' -count=1 -timeout 1200s
+```
+
+The test uses private simulated nodes and elevated test-hub bandwidth; it does
+not change a running operator's nodes or settings. The ordinary chunk-spool
+regression also interrupts a chunk, reopens the spool, and resumes from the
+verified prefix.
+
+OpenCode history uses its supported `export`/`import` CLI projection, not a copy
+of the native SQLite database. Session, message and part IDs are reminted, native
+cwd metadata is remapped, and message/tool text is preserved. Import does not
+carry session permissions or sharing state; the receiving managed server
+reapplies its own permission policy. Private agent XDG stores remain private.
+
+Copilot portable history uses its native append-only event log. The receiver
+remints the session and event identities, writes fresh workspace metadata, and
+resumes with the native CLI. Databases, checkpoints, rewind files, permissions,
+and other executable artifacts are not transferred. Full conversation events
+remain available to the native resume path.
+
+### Receiver-approved permission carry
+
+Permission carry is off by default. Add `--carry-permissions` to
+`federation share-agent`, `federation move-agent`, or `agent teleport` (including
+`--clone`) to request it. Agent callers additionally need the peer-scoped
+`self.teleport.permissions` permission. Ownership and temporary sudo leases
+never travel.
+
+The receiver previews each permission as applied, remapped, or dropped with a
+reason. Unrestricted trust allows ordinary grants. A restricted peer needs a
+receiving-group grant such as:
+
+```sh
+tclaude federation grant node-a agents.receive.permissions --scope group=support --permission-slug groups.members.spawn
+```
+
+Omit `--permission-slug` to allow ordinary known slugs. Group scopes are remapped
+to the landing group; unmapped source-local agent, target, profile, peer or path
+selectors are dropped. Restricted group capabilities are narrowed to the landing
+group. Source denies carry and receiver policy denies win.
+
+Permission administration, sandbox administration, `human.*`, and federation
+administration grants require unrestricted trust **and** explicit receiving
+operator approval (`federation offers import --allow-sensitive-permissions`, or
+the import dialog's explicit opt-in). Automatic landing never opts into them.
+`--drop-permissions` discards all requested carry. The receiving policy is checked
+again immediately before dispatch; a changed decision refuses the launch.
+The visiting copy's grants are retired with it on departure. Returning-home
+identity and grant restoration are separate from this fresh-ID import path.
+
+Local archive export and import both need `--carry-permissions`; applying carried
+grants additionally requires normal permission-administration authority. The
+arrival message and federation audit summarize receiver decisions.
+

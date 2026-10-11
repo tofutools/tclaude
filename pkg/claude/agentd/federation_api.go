@@ -401,6 +401,18 @@ type fedStatusResp struct {
 	Remote      []fedRemoteSystem        `json:"remote"`
 }
 
+// fedStatusSummaryResp is the local Fleet chip-row projection. It avoids
+// loading grants, the outbox, or remote catalogs.
+type fedStatusSummaryResp struct {
+	Enabled     bool          `json:"enabled"`
+	InstanceID  string        `json:"instance_id"`
+	Fingerprint string        `json:"fingerprint"`
+	Name        string        `json:"name"`
+	HubURL      string        `json:"hub_url,omitempty"`
+	Hub         *fedHubStatus `json:"hub,omitempty"`
+	Peers       []fedPeerJSON `json:"peers"`
+}
+
 type fedHubStatus struct {
 	State     string    `json:"state"`
 	HubID     string    `json:"hub_id,omitempty"`
@@ -409,17 +421,28 @@ type fedHubStatus struct {
 	Since     time.Time `json:"since"`
 }
 
+type fedIdentityTransition struct {
+	State          string    `json:"state"`
+	OldID          string    `json:"old_id"`
+	NewID          string    `json:"new_id"`
+	NewFingerprint string    `json:"new_fingerprint"`
+	ReceivedAt     time.Time `json:"received_at"`
+	AcceptAfter    time.Time `json:"accept_after"`
+	Reason         string    `json:"reason,omitempty"`
+}
+
 type fedPeerJSON struct {
-	Level       string    `json:"level,omitempty"`
-	InstanceID  string    `json:"instance_id"`
-	Fingerprint string    `json:"fingerprint"`
-	Label       string    `json:"label,omitempty"`
-	Name        string    `json:"name,omitempty"`
-	Trusted     bool      `json:"trusted"`
-	Online      bool      `json:"online"`
-	LastSeen    time.Time `json:"last_seen,omitempty"`
-	Version     string    `json:"version,omitempty"`
-	TrustedAt   time.Time `json:"trusted_at,omitempty"`
+	IdentityTransition *fedIdentityTransition `json:"identity_transition,omitempty"`
+	Level              string                 `json:"level,omitempty"`
+	InstanceID         string                 `json:"instance_id"`
+	Fingerprint        string                 `json:"fingerprint"`
+	Label              string                 `json:"label,omitempty"`
+	Name               string                 `json:"name,omitempty"`
+	Trusted            bool                   `json:"trusted"`
+	Online             bool                   `json:"online"`
+	LastSeen           time.Time              `json:"last_seen,omitempty"`
+	Version            string                 `json:"version,omitempty"`
+	TrustedAt          time.Time              `json:"trusted_at,omitempty"`
 }
 
 // fedRemoteSystem is what one trusted peer exports to us (discovery).
@@ -466,19 +489,37 @@ func handleFederationStatus(w http.ResponseWriter, r *http.Request) {
 		writeFedErr(w, err)
 		return
 	}
+	transitions := map[string]*fedIdentityTransition{}
+	rotations, err := db.ListFederationIdentityRotations()
+	if err != nil {
+		writeFedErr(w, err)
+		return
+	}
+	for _, rotation := range rotations {
+		if rotation.State != "pending" && rotation.State != "conflict" {
+			continue
+		}
+		transitions[rotation.Statement.OldID] = &fedIdentityTransition{
+			State: rotation.State, OldID: rotation.Statement.OldID, NewID: rotation.Statement.NewID,
+			NewFingerprint: proto.Fingerprint(rotation.Statement.NewKey), ReceivedAt: rotation.ReceivedAt,
+			AcceptAfter: rotation.AcceptAfter, Reason: rotation.Reason,
+		}
+	}
 	labels := map[string]string{}
 	seen := map[string]bool{}
 	for _, p := range trusted {
 		labels[p.InstanceID] = peerDisplay(&p)
 		e := dir[p.InstanceID]
 		resp.Peers = append(resp.Peers, fedPeerJSON{
-			InstanceID: p.InstanceID, Fingerprint: proto.Fingerprint(p.PubKey), Label: p.Label, Name: fedFirst(e.Name, p.Name),
+			IdentityTransition: transitions[p.InstanceID],
+			InstanceID:         p.InstanceID, Fingerprint: proto.Fingerprint(p.PubKey), Label: p.Label, Name: fedFirst(e.Name, p.Name),
 			Level: p.TrustLevel, Trusted: true, Online: e.Online, LastSeen: e.LastSeen, Version: e.Version, TrustedAt: p.TrustedAt,
 		})
 		seen[p.InstanceID] = true
 	}
+	summary := r.URL.Query().Get("summary") == "1"
 	for _, e := range dir {
-		if seen[e.InstanceID] {
+		if summary || seen[e.InstanceID] {
 			continue
 		}
 		resp.Peers = append(resp.Peers, fedPeerJSON{
@@ -492,6 +533,17 @@ func handleFederationStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		return resp.Peers[i].InstanceID < resp.Peers[j].InstanceID
 	})
+	if resp.Peers == nil {
+		resp.Peers = []fedPeerJSON{}
+	}
+	if summary {
+		w.Header().Set("Cache-Control", "private, no-store")
+		writeJSON(w, http.StatusOK, fedStatusSummaryResp{
+			Enabled: resp.Enabled, InstanceID: resp.InstanceID, Fingerprint: resp.Fingerprint,
+			Name: resp.Name, HubURL: resp.HubURL, Hub: resp.Hub, Peers: resp.Peers,
+		})
+		return
+	}
 	grants, _ := db.ListFederationPeerGrants("")
 	for _, grant := range grants {
 		resp.PeerGrants = append(resp.PeerGrants, fedDisplayPeerGrant(grant))
@@ -516,11 +568,13 @@ func handleFederationStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 type fedConfigReq struct {
-	Enabled   *bool   `json:"enabled,omitempty"`
-	HubURL    *string `json:"hub_url,omitempty"`
-	Name      *string `json:"name,omitempty"`
-	Invite    *string `json:"invite,omitempty"`
-	HubCAFile *string `json:"hub_ca_file,omitempty"`
+	AgentTransferMaxBytes      *int64  `json:"agent_transfer_max_bytes,omitempty"`
+	AgentHistoryRecordMaxBytes *int    `json:"agent_history_record_max_bytes,omitempty"`
+	Enabled                    *bool   `json:"enabled,omitempty"`
+	HubURL                     *string `json:"hub_url,omitempty"`
+	Name                       *string `json:"name,omitempty"`
+	Invite                     *string `json:"invite,omitempty"`
+	HubCAFile                  *string `json:"hub_ca_file,omitempty"`
 }
 
 // handleFederationConfig updates the federation config block and restarts
@@ -538,6 +592,14 @@ func handleFederationConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
+	if req.AgentTransferMaxBytes != nil && (*req.AgentTransferMaxBytes < 0 || *req.AgentTransferMaxBytes > 1<<62-1) {
+		writeError(w, 400, "invalid_arg", "agent_transfer_max_bytes must be zero (default) or a positive byte limit below 2^62")
+		return
+	}
+	if req.AgentHistoryRecordMaxBytes != nil && *req.AgentHistoryRecordMaxBytes < 0 {
+		writeError(w, 400, "invalid_arg", "agent_history_record_max_bytes must be zero (default) or a positive byte limit")
+		return
+	}
 	if req.HubURL != nil && *req.HubURL != "" {
 		if _, err := client.ValidateURL(*req.HubURL); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -552,6 +614,12 @@ func handleFederationConfig(w http.ResponseWriter, r *http.Request) {
 			cfg.Federation = &config.FederationConfig{}
 		}
 		f := cfg.Federation
+		if req.AgentTransferMaxBytes != nil {
+			f.AgentTransferMaxBytes = *req.AgentTransferMaxBytes
+		}
+		if req.AgentHistoryRecordMaxBytes != nil {
+			f.AgentHistoryRecordMaxBytes = *req.AgentHistoryRecordMaxBytes
+		}
 		if req.Enabled != nil {
 			f.Enabled = *req.Enabled
 		}
@@ -1134,17 +1202,41 @@ func fedFirst(a, b string) string {
 }
 
 func registerFederationRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /v1/node/run", handleLocalNodeRun)
+	mux.HandleFunc("POST /v1/node/run", handleLocalNodeRun)
+	mux.HandleFunc("GET /v1/node/run/jobs/{id}", handleLocalNodeRun)
+	mux.HandleFunc("GET /v1/node/run/jobs/{id}/logs", handleLocalNodeRun)
+	mux.HandleFunc("GET /v1/node/run/settings", handleLocalNodeRunSettings)
+	mux.HandleFunc("PUT /v1/node/run/settings", handleLocalNodeRunSettings)
+	mux.HandleFunc("GET /v1/node/update", handleLocalNodeUpdate)
+	mux.HandleFunc("POST /v1/node/update", handleLocalNodeUpdate)
+	mux.HandleFunc("GET /v1/node/update/jobs/{id}", handleLocalNodeUpdate)
+	mux.HandleFunc("GET /v1/harnesses/availability", handleLocalHarnessAvailability)
+	mux.HandleFunc("GET /v1/harnesses/operations", handleLocalHarnessOperations)
+	mux.HandleFunc("POST /v1/harnesses/operations", handleLocalHarnessOperations)
+	mux.HandleFunc("POST /v1/harnesses/credentials", handleLocalHarnessOperations)
+	mux.HandleFunc("GET /v1/harnesses/credentials/backups", handleLocalHarnessCredentials)
+	mux.HandleFunc("POST /v1/harnesses/credentials/push", handleLocalHarnessCredentials)
+	mux.HandleFunc("POST /v1/harnesses/credentials/backup", handleLocalHarnessCredentials)
+	mux.HandleFunc("POST /v1/harnesses/credentials/restore", handleLocalHarnessCredentials)
+	mux.HandleFunc("GET /v1/harnesses/operations/jobs/{id}", handleLocalHarnessOperations)
+
+	registerFederationPeerViewRoutes(mux)
+	registerFederationAccessRequestRoutes(mux)
 	registerFederationNodeGroupRoutes(mux)
 	registerFederationNodeProfileRoutes(mux)
 	registerFederationRepoRoutes(mux)
 	registerFederationJobRoutes(mux)
 	registerFederationEnrollmentRoutes(mux)
 	registerFederationBundleRoutes(mux)
+	registerFederationHubRoutes(mux)
+	registerBoardRoutes(mux, "/v1/federation/boards", false)
 	mux.HandleFunc("GET /v1/federation/away", handleFederationAway)
 	mux.HandleFunc("POST /v1/federation/away", handleFederationAway)
 	mux.HandleFunc("POST /v1/federation/return", handleFederationReturn)
 	mux.HandleFunc("POST /v1/federation/answer", handleFederationAwayAnswer)
 	mux.HandleFunc("GET /v1/federation/status", handleFederationStatus)
+	mux.HandleFunc("GET /v1/federation/links", handleFederationLinks)
 	mux.HandleFunc("GET /v1/federation/audit", handleFederationAudit)
 	mux.HandleFunc("/v1/federation/notify", handleFederationNotify)
 	mux.HandleFunc("GET /v1/federation/inbox", handleFederationInbox)
@@ -1156,6 +1248,7 @@ func registerFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/federation/nodes/health", handleFleetHealthConfig)
 	mux.HandleFunc("GET /v1/federation/node-labels", handleFederationNodeLabels)
 	mux.HandleFunc("POST /v1/federation/node-labels", handleFederationNodeLabels)
+	mux.HandleFunc("GET /v1/federation/file", handleFederationFileGet)
 	mux.HandleFunc("GET /v1/federation/attach", handleFederationAttach)
 	mux.HandleFunc("GET /v1/federation/viewers", handleFederationViewers)
 	mux.HandleFunc("POST /v1/federation/viewers/{id}/kick", handleFederationKick)

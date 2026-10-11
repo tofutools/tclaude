@@ -146,7 +146,7 @@ func cleanupRetiredCodexNativeProfilesUnderLaunchLock(convID string) {
 		return
 	}
 	actor, err := db.GetAgentByConv(convID)
-	if err != nil || actor == nil || actor.Active() {
+	if err != nil || actor == nil || actor.Active() || db.AgentAway(actor.AgentID) {
 		return
 	}
 	generations, err := db.ListCodexNativePermissionProfileGenerationsForAgent(actor.AgentID)

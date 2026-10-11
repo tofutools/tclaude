@@ -20,6 +20,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/common/buildversion"
 	"github.com/tofutools/tclaude/pkg/federation/hub"
+	"github.com/tofutools/tclaude/pkg/federation/hubupdate"
 )
 
 const long = `tclaude-hub relays messages between federated tclaude agentd instances.
@@ -41,7 +42,7 @@ func RootCmd() *cobra.Command {
 		Long:        long,
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
-			serveCmd(), identityCmd(), admitCmd(), revokeCmd(), spacesCmd(), inviteCmd(), lsCmd(), invitesCmd(),
+			serveCmd(), adminCmd(), identityCmd(), admitCmd(), revokeCmd(), spacesCmd(), inviteCmd(), lsCmd(), invitesCmd(),
 		},
 	}.ToCobra()
 	cli.ConfigureRoot(cmd)
@@ -57,11 +58,12 @@ func DefaultDBPath() string {
 	return filepath.Join(home, ".tclaude-hub", "hub.sqlite")
 }
 
-type dbParam struct {
+// DBParam exposes the shared database flag to Boa when embedded in command parameters.
+type DBParam struct {
 	DB string `long:"db" optional:"true" help:"Hub database path (default $TCLAUDE_HUB_DIR/hub.sqlite or ~/.tclaude-hub/hub.sqlite)"`
 }
 
-func (p dbParam) open() (*hub.Store, error) {
+func (p DBParam) open() (*hub.Store, error) {
 	path := p.DB
 	if path == "" {
 		path = DefaultDBPath()
@@ -75,36 +77,102 @@ func fail(err error) {
 }
 
 type serveParams struct {
-	dbParam
+	Supervised      bool   `long:"supervised" help:"Run a health-checking update guardian under systemd/launchd"`
+	SupervisorLabel string `long:"supervisor-label" optional:"true" help:"launchd label for supervised mode"`
+	GuardianWorker  bool   `long:"guardian-worker" hidden:"true"`
+	DBParam
+	AcceptRemoteScripts    bool          `long:"accept-remote-scripts" help:"Allow explicitly granted hub.exec administrators to run scripts as the hub service user (full host code execution)"`
 	Listen                 string        `long:"listen" default:"127.0.0.1:8470" help:"Listen address"`
 	TLSCert                string        `long:"tls-cert" optional:"true" help:"TLS certificate (PEM). Without it the hub serves plain HTTP, which clients only accept on loopback; front it with a TLS proxy otherwise"`
 	TLSKey                 string        `long:"tls-key" optional:"true" help:"TLS private key (PEM)"`
 	Open                   bool          `long:"open" help:"Admit any instance that proves key possession (development only)"`
-	FramesPerMinute        int           `long:"frames-per-minute" default:"120" help:"Per-instance send rate limit (frames)"`
-	BytesPerMinute         int           `long:"bytes-per-minute" default:"8388608" help:"Per-instance send rate limit (bytes)"`
+	MaxConnections         int           `long:"max-connections" default:"1024" help:"Maximum concurrent instance connections"`
+	ConnectionIdle         time.Duration `long:"connection-idle" default:"90s" help:"Instance control connection idle timeout"`
+	StreamWait             time.Duration `long:"stream-wait" default:"30s" help:"How long a stream waits for its peer"`
+	HelloTimeout           time.Duration `long:"hello-timeout" default:"10s" help:"Authentication handshake timeout"`
+	FramesPerMinute        int           `long:"frames-per-minute" default:"600" help:"Per-instance send rate limit (frames)"`
+	BytesPerMinute         int           `long:"bytes-per-minute" default:"104857600" help:"Per-instance send rate limit (bytes)"`
 	IdentityRotationWindow time.Duration `long:"identity-rotation-window" default:"10m" help:"Detection window before signed key succession is admitted"`
 	PolicyRefresh          time.Duration `long:"policy-refresh" default:"15s" help:"How often admin edits are re-read"`
 	MaxStreams             int           `long:"max-streams" default:"16" help:"Per-instance limit on concurrent relayed route streams"`
-	StreamBytes            int           `long:"stream-bytes-per-second" default:"1048576" help:"Per-instance relayed stream bandwidth (bytes/second)"`
+	StreamBytes            int           `long:"stream-bytes-per-second" default:"10485760" help:"Per-instance relayed stream bandwidth (bytes/second)"`
 	StreamIdle             time.Duration `long:"stream-idle" default:"90s" help:"How long a relayed route stream may sit idle, or blocked on a receiver that is not reading, before it is closed"`
 }
 
 func serveCmd() *cobra.Command {
+	return serveDefinition().ToCobra()
+}
+
+func serveDefinition() boa.CmdT[serveParams] {
 	return boa.CmdT[serveParams]{
 		Use:         "serve",
 		Short:       "Run the hub",
 		ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *serveParams, _ *cobra.Command, _ []string) {
+		RunFunc: func(p *serveParams, cmd *cobra.Command, _ []string) {
 			if (p.TLSCert == "") != (p.TLSKey == "") {
 				fail(fmt.Errorf("--tls-cert and --tls-key go together"))
+			}
+			if p.Supervised && !p.GuardianWorker {
+				if err := serveSupervised(p); err != nil {
+					fail(err)
+				}
+				return
+			}
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			var backend hub.UpdateBackend
+			var onListen func(string) error
+			var worker hubupdate.Client
+			if p.GuardianWorker {
+				config, err := hubupdate.ReadWorkerConfig()
+				if err != nil {
+					fail(err)
+				}
+				stop()
+				ctx, stop, err = workerContext()
+				if err != nil {
+					fail(err)
+				}
+				defer stop()
+				worker = hubupdate.Client(config)
+				backend = worker
 			}
 			st, err := p.open()
 			if err != nil {
 				fail(err)
 			}
 			defer func() { _ = st.Close() }()
+			token, err := st.PrepareAdminClaim(false, time.Now())
+			if err != nil {
+				fail(err)
+			}
+			if token != "" {
+				fmt.Fprintf(os.Stderr, "Hub admin claim token (single-use, valid 24h): %s\nPrivate claim file: %s\n", token, st.ClaimPath())
+			}
+			flags := []string{}
+			flagKeys := map[string]string{"identity-rotation-window": "identity_rotation_window_seconds", "frames-per-minute": "frames_per_minute", "bytes-per-minute": "bytes_per_minute", "max-connections": "max_connections", "max-streams": "max_streams", "stream-bytes-per-second": "stream_bytes_per_second", "stream-wait": "stream_wait_seconds", "stream-idle": "stream_idle_seconds", "connection-idle": "connection_idle_seconds", "hello-timeout": "hello_timeout_seconds", "policy-refresh": "policy_refresh_seconds"}
+			for flag, key := range flagKeys {
+				if cmd.Flags().Changed(flag) {
+					flags = append(flags, key)
+				}
+			}
+			var scriptSwitch *bool
+			if cmd.Flags().Changed("accept-remote-scripts") {
+				scriptSwitch = &p.AcceptRemoteScripts
+			}
+			if p.GuardianWorker {
+				id, err := st.HubID()
+				if err != nil {
+					fail(err)
+				}
+				onListen = func(address string) error {
+					return worker.Ready(ctx, hubupdate.Ready{HubID: id, Version: buildversion.AppVersion(), Address: address})
+				}
+			}
 			h, err := hub.New(st, hub.Config{
-				Open: p.Open, FramesPerMinute: p.FramesPerMinute, BytesPerMinute: p.BytesPerMinute,
+				UpdateBackend: backend, OnListen: onListen,
+				AcceptRemoteScripts: scriptSwitch,
+				Open:                p.Open, MaxConnections: p.MaxConnections, ConnectionIdle: p.ConnectionIdle, StreamWait: p.StreamWait, HelloTimeout: p.HelloTimeout, FlagSettings: flags, FramesPerMinute: p.FramesPerMinute, BytesPerMinute: p.BytesPerMinute,
 				PolicyRefresh: p.PolicyRefresh, IdentityRotationWindow: p.IdentityRotationWindow, Version: buildversion.AppVersion(),
 				MaxStreams: p.MaxStreams, StreamBytesPerSecond: p.StreamBytes, StreamIdle: p.StreamIdle,
 			})
@@ -116,18 +184,16 @@ func serveCmd() *cobra.Command {
 				scheme = "wss"
 			}
 			fmt.Fprintf(os.Stderr, "tclaude-hub %s listening on %s://%s (open=%v)\n", h.ID(), scheme, p.Listen, p.Open)
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
 			srv := &http.Server{Addr: p.Listen, ReadHeaderTimeout: 10 * time.Second}
 			if err := hub.ListenAndServe(ctx, srv, h, p.TLSCert, p.TLSKey); err != nil {
 				fail(err)
 			}
 		},
-	}.ToCobra()
+	}
 }
 
 type admitParams struct {
-	dbParam
+	DBParam
 	Instance string   `pos:"true" help:"Instance id (inst_…) as printed by 'tclaude federation identity'"`
 	Space    []string `long:"space" optional:"true" help:"Space(s) to admit into (default: default)"`
 }
@@ -152,7 +218,7 @@ func admitCmd() *cobra.Command {
 }
 
 type instanceParams struct {
-	dbParam
+	DBParam
 	Instance string `pos:"true" help:"Instance id (inst_…)"`
 }
 
@@ -176,7 +242,7 @@ func revokeCmd() *cobra.Command {
 }
 
 type spacesParams struct {
-	dbParam
+	DBParam
 	Instance string `pos:"true" help:"Instance id (inst_…)"`
 	Spaces   string `pos:"true" help:"Comma-separated spaces that replace the current set"`
 }
@@ -207,7 +273,7 @@ func spacesCmd() *cobra.Command {
 }
 
 type inviteParams struct {
-	dbParam
+	DBParam
 	Space string        `long:"space" default:"default" help:"Space the invitee joins"`
 	TTL   time.Duration `long:"ttl" default:"24h" help:"Invite validity"`
 }
@@ -233,11 +299,11 @@ func inviteCmd() *cobra.Command {
 }
 
 func lsCmd() *cobra.Command {
-	return boa.CmdT[dbParam]{
+	return boa.CmdT[DBParam]{
 		Use:         "ls",
 		Short:       "List known instances",
 		ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *dbParam, _ *cobra.Command, _ []string) {
+		RunFunc: func(p *DBParam, _ *cobra.Command, _ []string) {
 			st, err := p.open()
 			if err != nil {
 				fail(err)
@@ -266,11 +332,11 @@ func lsCmd() *cobra.Command {
 }
 
 func invitesCmd() *cobra.Command {
-	return boa.CmdT[dbParam]{
+	return boa.CmdT[DBParam]{
 		Use:         "invites",
 		Short:       "List invites (hashes only)",
 		ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *dbParam, _ *cobra.Command, _ []string) {
+		RunFunc: func(p *DBParam, _ *cobra.Command, _ []string) {
 			st, err := p.open()
 			if err != nil {
 				fail(err)

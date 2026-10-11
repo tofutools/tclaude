@@ -100,7 +100,8 @@ warning. Model and effort are remembered by the harness itself.
 | Federated model gateway (`--model-proxy`) | Yes, ordinary workers | Yes, TUI and app-server | No: provider isolation | Yes, HTTP Responses BYOK | No: native Gemini dialect | No |
 | Sessions: spawn / resume | ✅ | ✅ | ✅ managed server + attach | ✅ | ✅ | ✅ spawn only |
 | One-shot [`ask`](ask.md) | ✅ live-streamed | ✅ buffered | ✅ buffered | ✅ buffered | ✅ buffered | ❌ |
-| Portable agent-bundle history | ✅ JSONL | ✅ rollout JSONL | ⚠️ config only | ⚠️ config only | ⚠️ config only | ❌ |
+| Portable agent-bundle history | ✅ JSONL | ✅ rollout JSONL | ✅ native export/import | ✅ native event log | ✅ native chat JSONL | ❌ |
+| [Cross-harness history translation](#cross-harness-history-translation) | ✅ | ✅ | ✅ | ✅ images by path | ✅ | ❌ |
 | [Conversation](conversations.md) list & search | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only | ⚠️ send-keys only, not yet exercised against a live pane | ⚠️ durable inbox only; never injected into the shell |
 | Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` | ✅ tclaude title overlay | ❌ |
@@ -117,6 +118,57 @@ warning. Model and effort are remembered by the harness itself.
 | Tool governance (`--tools`) | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
 | Fast mode | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | API/RPC drive | — n/a | ⚠️ experimental `--codex-app-server` | ✅ inherent | ⚠️ experimental `--copilot-api` | — | — n/a |
+
+### Cross-harness history translation
+
+An agent that changes harness (cross-harness morph) keeps its conversation:
+tclaude decodes the source harness's native history into a neutral
+transcript and installs it as a native conversation of the target harness,
+which then resumes it like any of its own. The install goes through the
+same import path as portable agent-bundle history, so the target's identity
+reminting, cwd remapping and indexing apply unchanged. The source history is
+only read.
+
+Only the *effective model context* is carried: the active branch, from the
+last compaction on (the compaction summary stands in for what came before),
+without scaffolding the target harness injects itself (system and developer
+prompts, environment and instruction-file blocks, hook context). Translation
+is explicit about what does not map 1:1:
+
+- **Reasoning** never crosses vendors. Signatures and encrypted reasoning are
+  only valid for the provider that issued them.
+- **Tool calls and results** are carried as `⟦tool call · name⟧` /
+  `⟦tool result · name · ok|error⟧` text records, because each harness has
+  different tools. A closing note tells the target agent those records are
+  history, not tools it has. Each record is clipped to
+  `agent.morph.tool_result_clip_bytes` (default 16384).
+- **Images** stay inline where the target's user turns accept them. Copilot
+  references them by a saved path instead.
+- **Context budget.** The carried history fills at most
+  `agent.morph.history_budget_percent` (default 60) of the target model's
+  context window. Older turns beyond that are omitted with a marker.
+- **Codex compaction summaries** are encrypted in current Codex releases. A
+  Codex conversation that has compacted therefore carries only the retained
+  user messages from before the compaction.
+
+Every translation produces a loss report (counts and categories only, never
+transcript content) and keeps the full, unclipped transcript as a Markdown
+file beside it. Clipping and omission markers point the target agent at that
+file.
+
+If the translated history cannot be installed natively, the target instead
+gets a native conversation of one turn that points the agent at the history
+saved as files: `briefing.md` (the budgeted history as plain text) and the full
+transcript. A third rung, the handoff, replaces the history with a handoff the
+agent writes for its successor before the switch. It is used on request, and
+automatically when the source history cannot be read. The loss report records
+which rung was used.
+
+A morph keeps these files in a per-agent directory under
+`~/.tclaude/api/morph/`. The agent must be able to read them, and tclaude's
+private data directory is walled off from a sandboxed agent. Under tclaude's
+sandbox the parent is hidden and each launch reopens only its own agent's
+directory, the same way spawn attachments are granted.
 
 The rest of this page walks each harness: setup, maturity, models, sandbox
 and approval knobs, and the extras only that harness has.
@@ -483,6 +535,11 @@ legacy whole-file `.json` sessions included. A session counts as a
 conversation exactly when Gemini's own `--resume` would offer it: it has real
 content and is not a subagent session. Resume is scoped to the project
 directory, as in the CLI.
+
+**Portable history.** Gemini portable history preserves native chat messages, metadata updates and rewind
+records. Import remints session and message IDs, maps the receiver project, and resumes
+through Gemini’s own session store. Legacy JSON sessions are converted to JSONL.
+Settings, trust decisions, credentials and filesystem checkpoints do not travel.
 
 **Ask.** `tclaude ask --harness gemini` runs headless `gemini --prompt` and
 returns the buffered answer. In headless mode Gemini denies any tool call

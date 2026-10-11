@@ -8,6 +8,10 @@ import {
 import { normaliseFollowUp } from './action-dialog-actions.js';
 import { registerActionDialogController } from './action-dialog-controller.js';
 import { shortCwd } from './helpers.js';
+import { LaunchTargetDialog } from './launch-target-dialog.js';
+import { createFleetAdminActions } from './fleet-admin-actions.js';
+import { createPeerActionActions } from './peer-action.js';
+import { skynetState } from './skynet-state.js';
 import { HelpDisclosure } from './help-field.js';
 import {
   AgentExportDialog, PresetCloneDialog, SandboxImplDialog, TerminalDirectoryDialog,
@@ -572,6 +576,22 @@ function GroupSettingsDialog({ descriptor, snapshot, actions, confirmDiscard }) 
   </${Overlay}>`;
 }
 
+// LaunchTargetGate opens the launch-target dialog (Move / Teleport / Clone /
+// Morph / Recall home) for a row's ⚙ "Send elsewhere" item. A local clone
+// hands over to the clone dialog, which owns the worktree and first-message
+// choices.
+function LaunchTargetGate({ descriptor, actions, snapshot }) {
+  const fleet = skynetState.fleet.value;
+  const self = fleet?.self || { id: descriptor.agent.node || 'local', name: 'this node' };
+  const fleetActions = useMemo(() => createFleetAdminActions(), []);
+  const close = () => actions.close(descriptor);
+  const localGroups = (snapshot?.value?.groups || []).map((g) => g.name).filter(Boolean).sort();
+  return html`<${LaunchTargetDialog} agent=${descriptor.agent} self=${self} fleet=${fleet} initialMode=${descriptor.mode}
+    actions=${fleetActions} peerActions=${(node) => createPeerActionActions({ node })} localGroups=${localGroups}
+    onClose=${close}
+    onLocalClone=${() => { close(); actions.openClone({ conv: descriptor.agent.conv, label: descriptor.agent.name, cwd: descriptor.agent.cwd || '' }); }} />`;
+}
+
 export function ActionDialogApp({ state, actions, confirmDiscard, snapshot }) {
   const descriptor = state.view.value.dialog;
   if (!descriptor) return null;
@@ -590,6 +610,7 @@ export function ActionDialogApp({ state, actions, confirmDiscard, snapshot }) {
   if (descriptor.kind === 'preset-clone') return html`<${PresetCloneDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   if (descriptor.kind === 'agent-export') return html`<${AgentExportDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   if (descriptor.kind === 'sandbox-impl') return html`<${SandboxImplDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
+  if (descriptor.kind === 'launch-target') return html`<${LaunchTargetGate} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} snapshot=${snapshot} />`;
   if (descriptor.kind === 'terminal-directory') return html`<${TerminalDirectoryDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   return null;
 }

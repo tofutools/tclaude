@@ -23,6 +23,7 @@ import (
 
 type fedPanePin struct {
 	agent, conv, session, tmux, pane, window, serverSession, incarnation string
+	cwd                                                                  string
 	group                                                                int64
 	created                                                              time.Time
 }
@@ -82,6 +83,7 @@ func resolveFedPane(peer string, p proto.SessionOpenPayload) (*fedPanePin, error
 		if err != nil {
 			return nil, err
 		}
+		pin.cwd = r.Cwd
 		pin.agent, pin.conv, pin.session, pin.tmux, pin.group, pin.created, pin.incarnation = p.Agent, a.CurrentConvID, r.ID, r.TmuxSession, g.ID, r.CreatedAt, incarnation
 		return pin, nil
 	}
@@ -403,3 +405,48 @@ func cleanupFedTerminalIndicators() {
 }
 
 var _ io.ReadCloser = (*fedPaneTerminal)(nil)
+
+// size queries the pinned pane; a browser renderer never chooses target size.
+func (pin *fedPanePin) size() (int, int, error) {
+	raw, err := clcommon.TmuxCommand("display-message", "-p", "-t", pin.pane, "#{pane_width} #{pane_height}").Output()
+	if err != nil {
+		return 0, 0, err
+	}
+	var cols, rows int
+	if _, err = fmt.Sscan(string(raw), &cols, &rows); err != nil || cols < 1 || rows < 1 || cols > 1000 || rows > 1000 {
+		return 0, 0, errors.New("invalid pinned pane dimensions")
+	}
+	return cols, rows, nil
+}
+
+func (pin *fedPanePin) closureReason(peer string, p proto.SessionOpenPayload) string {
+	trusted, _ := db.GetFederationPeer(peer)
+	if trusted == nil {
+		return "untrusted"
+	}
+	if !fedPeerAllows(peer, pin.group, fedTerminalSlug(p.ReadOnly)) {
+		return "revoked"
+	}
+	a, err := db.GetAgent(pin.agent)
+	if err != nil || a == nil || !a.Active() {
+		return "exit"
+	}
+	if a.CurrentConvID != pin.conv {
+		return "reincarnated"
+	}
+	row, err := db.LoadSession(pin.session)
+	if err != nil || row == nil || row.Status == session.StatusExited || !session.IsTmuxSessionAlive(pin.tmux) {
+		return "exit"
+	}
+	if fedSessionIncarnation(row) != pin.incarnation {
+		return "reincarnated"
+	}
+	current, err := fedPaneIdentity(pin.tmux)
+	if err != nil {
+		return "exit"
+	}
+	if current.pane != pin.pane || current.serverSession != pin.serverSession {
+		return "reincarnated"
+	}
+	return "revoked"
+}

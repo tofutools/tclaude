@@ -286,6 +286,10 @@ nav { background: #161b22; border-bottom: 1px solid #2a3340; }
 body.hscroll-overflow.hscroll-follow .bar-inner { position: sticky; left: 0; }
 body.hscroll-overflow.hscroll-follow header .bar-inner { z-index: 2; }
 body.hscroll-overflow.hscroll-follow nav .bar-inner { z-index: 1; }
+/* The peer-view marker opens its popover and request dialog inside the header;
+   while one is open, lift the sticky header layer over the dock (45) so the
+   sticky context doesn't trap the dialog underneath it. */
+body.hscroll-overflow.hscroll-follow header .bar-inner:has(.remote-node-pop, .modal-overlay.show) { z-index: 100; }
 /* The tab controls are real <a href> anchors (so hover previews the URL and
    Cmd/Ctrl/middle-click open the location in a new tab), except Vegas which
    stays a <button> (not URL-routed). The [data-tab] selector styles both, and
@@ -2970,6 +2974,41 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
    between individual chips. Space adjacent chips directly so they don't butt
    together — applies in every mode, fold or not. */
 .group-link-chip + .group-link-chip { margin-left: 4px; }
+/* Federation marker: a group linked to peer nodes (peer grants scoped to it,
+   directly or via a node pool, or a route mirror). Green dot = at least one
+   linked node is live; grey = all offline. The popover lists each link. */
+.group-federation-marker { position: relative; display: inline-flex; margin-left: 8px; }
+.group-federation-chip {
+  position: relative; cursor: pointer; font: inherit; font-size: 11px; padding: 1px 6px;
+  border-radius: 4px; border: 1px solid transparent; white-space: nowrap; background: transparent; color: inherit;
+}
+.group-federation-chip:hover { border-color: #58a6ff; }
+.group-federation-chip:focus-visible { outline: 1px solid #58a6ff; outline-offset: 1px; }
+.gfm-dot, .gfm-state {
+  display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #6e7681;
+}
+.gfm-dot { position: absolute; right: 2px; bottom: 1px; box-shadow: 0 0 0 1px #0d1117; }
+.group-federation-chip.live .gfm-dot, .gfm-state.live { background: #3fb950; }
+.group-federation-pop {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 50; min-width: 340px; max-width: 440px;
+  background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 6px 0;
+  box-shadow: 0 8px 24px rgba(0,0,0,.45); font-size: 12px; font-weight: normal; color: #d4d4d4;
+  cursor: default; white-space: normal;
+}
+.gfm-head { padding: 2px 10px 6px; color: #7d8590; font-size: 11px; border-bottom: 1px solid #21262d; }
+.gfm-row { display: flex; align-items: flex-start; gap: 8px; padding: 6px 10px; }
+.gfm-row + .gfm-row { border-top: 1px solid #21262d; }
+.gfm-state { margin-top: 5px; flex: none; }
+.gfm-main { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.gfm-target { color: #e6edf3; }
+.gfm-tag { font-size: 10px; color: #e3b341; border: 1px solid #5a4a1a; border-radius: 3px; padding: 0 4px; }
+.gfm-how, .gfm-can { color: #7d8590; font-size: 11px; overflow-wrap: anywhere; }
+.gfm-open {
+  flex: none; background: transparent; color: #58a6ff; border: 1px solid #30363d; border-radius: 4px;
+  font: inherit; font-size: 11px; padding: 1px 6px; cursor: pointer;
+}
+.gfm-open:hover { border-color: #58a6ff; }
+.gfm-foot { padding: 6px 10px 2px; color: #6e7681; font-size: 11px; border-top: 1px solid #21262d; }
 .tag {
   display: inline-block; padding: 2px 8px; margin: 1px 2px 1px 0;
   background: #21262d; color: #d4d4d4; border: 1px solid #2a3340;
@@ -4074,6 +4113,13 @@ tr:hover .agent-harness { color: #c9d1d9; }
    cursor and a subtle hover lift, mirroring the .cwd-link click affordance. */
 .remote-badge { margin-left: 5px; cursor: pointer; }
 .remote-badge:hover { filter: brightness(1.25); }
+/* Per-agent "a peer is watching / typing into this terminal right now"
+   indicator (tcl-yuju57): a bare glyph plus the peer label trailing the same
+   harness line, so it costs no row. Typing (an interactive view) is amber.
+   Clicking opens Fleet → Peers with the viewers panel filtered to the agent. */
+.remote-viewers-badge { margin-left: 5px; padding: 0; border: 0; background: none; font: inherit; color: #8b949e; cursor: pointer; white-space: nowrap; max-width: 14em; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+.remote-viewers-badge.typing { color: #d29922; }
+.remote-viewers-badge:hover { filter: brightness(1.25); text-decoration: underline; }
 /* Per-agent "agentd is refusing this agent's brokered telemetry" indicator
    (TCL-761) — a bare 🚫 trailing the same harness line, styled like its
    neighbours so it costs no extra row. It is deliberately NOT clickable:
@@ -5457,77 +5503,20 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 .modal .field input:focus,
 .modal .field textarea:focus { border-color: #58a6ff; outline: none; }
 .modal .field textarea { resize: vertical; min-height: 60px; }
-/* term-session-modal — the in-browser xterm.js terminal (js/modal-term.js),
-   opened when /api/term or /api/open-window reports mode:"browser"
-   (no native window available). A plain .modal is sized for a form;
-   this needs real screen real estate for a usable terminal, hence its
-   own class rather than reusing .modal.
-
-   The terminal can be opened by a control inside another modal (notably the
-   sandbox-profile editor's "configure with agent" action). Keep its overlay
-   above every normal editor (currently capped by #perm-edit-modal at 160),
-   while leaving toasts (200) and the shared confirmation dialog (1000) above
-   it. Without this explicit layer it inherits .modal-overlay's 100 and paints
-   behind the editor that launched it. */
-#term-session-modal { z-index: 190; }
-.term-session-modal {
-  background: #0d1117; border: 1px solid #2a3340; border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-  width: min(960px, calc(100vw - 32px)); height: min(640px, calc(100vh - 64px));
-  display: flex; flex-direction: column; overflow: hidden;
-}
-.term-session-header {
-  display: flex; align-items: center; gap: 10px;
-  padding: 6px 10px; border-bottom: 1px solid #2a3340; background: #161b22;
-  flex: none;
-}
-.term-session-header h3 {
-  margin: 0; font-size: 13px; color: #d4d4d4; font-family: ui-monospace, monospace;
-}
-.term-session-status {
-  font-size: 11px; color: #7d8590; flex: 1; min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-/* "⧉ tab" — hand this modal terminal to the dashboard's Terminals tab
-   (js/terminals-tab.js). Themed dark: a bare <button> would render with
-   the browser's white default. */
-.term-session-pop,
-.term-session-action {
-  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
-  border-radius: 5px; padding: 3px 8px; font-size: 12px; cursor: pointer;
-}
-.term-session-pop:hover,
-.term-session-action:hover { background: #2d333b; border-color: #3d4451; }
-.term-session-action[data-has-selection="false"] { opacity: 0.65; }
-.term-session-close {
-  background: none; border: none; color: #7d8590; cursor: pointer;
-  font-size: 20px; line-height: 1; padding: 0 4px;
-}
-.term-session-close:hover { color: #c9d1d9; }
-/* Detach: a small bordered pill, deliberately distinct from the borderless ×
-   glyph so the two close affordances read as different actions (Detach is the
-   instant, no-confirm path; × asks first). Explicit dark-theme colours — an
-   inline dashboard <button> otherwise renders with the browser's white
-   default. */
-.term-session-detach {
-  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
-  color: #c9d1d9; cursor: pointer;
-  font-size: 11px; line-height: 1; padding: 4px 9px;
-  font-family: ui-monospace, monospace;
-}
-.term-session-detach:hover { background: #2d333b; border-color: #3d4450; }
-.term-session-xterm { flex: 1; padding: 6px 6px 0; overflow: hidden; min-height: 0; }
-/* FitAddon measures .xterm's direct parent. Size that inner parent to the
-   padded host's content box so the modal keeps its top/side visual inset while
-   fitting only rows and columns that are actually drawable. The whole-row
-   remainder supplies the bottom spacing, so the host adds none there. */
-.term-session-xterm-fit,
-.term-session-xterm-fit .xterm { height: 100%; }
-/* modal-term.js disables xterm scrollback; hide the still-created scrollbar
-   DOM so its inactive edge cannot leak into the modal. */
-.term-session-xterm .xterm-viewport { scrollbar-width: none; }
-.term-session-xterm .xterm-viewport::-webkit-scrollbar { display: none; }
-.term-session-xterm .xterm-scrollable-element > .scrollbar { display: none; }
+.term-remote { overflow: auto; }
+/* The remote terminal's file browser (remote-files-panel.js): a strip above
+   the terminal, never taller than half the pane. */
+.term-files { flex: none; max-height: 50%; overflow: auto; padding: 6px 10px; border-bottom: 1px solid #2a3340; background: #11161d; color: #c9d1d9; font-size: 12px; }
+.term-files-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.term-files-spacer { flex: 1; }
+.term-files-muted { color: #7d8590; }
+.term-files-error { color: #f85149; margin: 4px 0; }
+.term-files-link { background: none; border: none; color: #58a6ff; cursor: pointer; padding: 0 2px; font: inherit; }
+.term-files-link:hover { text-decoration: underline; }
+.term-files-table { width: 100%; border-collapse: collapse; }
+.term-files-table td { padding: 2px 6px; border-bottom: 1px solid #1c222a; }
+.term-files-acts { text-align: right; white-space: nowrap; }
+.term-files-text { margin: 0; max-height: 40vh; overflow: auto; white-space: pre; font-size: 12px; color: #d4d4d4; }
 /* The "auto" self-rename checkbox sits under the Title input in the
    same .field — strip the text-input styling .modal .field input
    would otherwise smear onto a checkbox. The selectors carry the
@@ -18685,3 +18674,525 @@ body.wizard .git-repos-concurrency select:focus-visible { outline-color: #bb86fc
 .cost-factor-reset button.tool:focus-visible { outline: 2px solid #79c0ff; outline-offset: 2px; }
 .cost-factor-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding-top: 12px; border-top: 1px solid #293440; font-size: 11px; }
 .cfg-cost-factors { max-width: 440px; }
+
+/* Skynet node row (js/skynet-island.js). The chips sit right-aligned in the
+   existing tab bar and are shorter than the tabs, so the bar keeps its height.
+   The host is empty when federation is off or has no trusted peers; the static
+   map anchor hides with it, leaving today's tab bar untouched. */
+.node-chips-host {
+  margin-left: auto; display: inline-flex; align-items: center; min-width: 0;
+  /* Give way before the tabs do: when the bar is tight (the wizard skin's longer
+     tab names at 1280 px) the peer chips clip instead of wrapping a tab label
+     and growing the bar. Padding keeps the status dots inside the clip box. */
+  flex: 0 1000 auto; overflow: hidden; padding: 4px 4px 4px 2px;
+}
+.node-chips-host:empty { display: none; }
+nav:has(#node-chips-root:empty) [data-tab="map"] { display: none; }
+.node-chips { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.node-chip, nav [data-tab].node-chip {
+  position: relative; box-sizing: border-box; height: 24px; min-width: 24px; align-self: center;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 0 7px;
+  border-radius: 6px; border: 1px solid #2a3340; background: #0d1117; color: #c9d1d9;
+  font: 500 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; text-decoration: none;
+}
+.node-chip:hover, nav [data-tab].node-chip:hover { border-color: #3a4553; color: #f0f6fc; }
+.node-chip:focus-visible { outline: 2px solid #79c0ff; outline-offset: 1px; }
+.node-chip-name { max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-chip-home { color: var(--nc); font-size: 12px; }
+.node-chip-dot { position: absolute; right: -3px; bottom: -3px; width: 8px; height: 8px; border-radius: 50%; border: 2px solid #161b22; box-sizing: border-box; background: #3fb950; }
+.node-chip.offline { color: #7d8590; }
+.node-chip.offline .node-chip-dot { background: #6e7681; }
+.node-chip.active, nav [data-tab].node-chip.active {
+  border-color: var(--nc, #c9d1d9); background: color-mix(in srgb, var(--nc, #c9d1d9) 18%, #0d1117);
+  box-shadow: 0 0 0 1px var(--nc, #c9d1d9) inset; color: #f0f6fc;
+}
+.node-chip.more { color: #8b949e; }
+nav [data-tab].node-chip.map { color: #8b949e; margin-left: 0; flex: 0 1000 auto; min-width: 0; overflow: hidden; }
+nav [data-tab].node-chip.map .node-chip-name { display: none; }
+nav [data-tab].node-chip.map.active .node-chip-name { display: inline; }
+.node-chips-sep { width: 1px; height: 16px; background: #2a3340; margin: 0 3px; }
+
+/* Node scope (tcl-sb4grp): fused-view outlines, the node and fused dropdowns. */
+.node-chip.ticked { border-color: color-mix(in srgb, var(--nc, #c9d1d9) 55%, #2a3340); }
+.node-pick { position: relative; display: inline-flex; }
+.node-pick-caret { color: #8b949e; font-size: 9px; }
+.node-chip.node-fuse { --nc: #58a6ff; gap: 4px; }
+.node-chip.node-fuse.active .node-pick-caret { color: #c9d1d9; }
+.node-fuse-stack { display: inline-flex; padding-left: 2px; }
+.node-fuse-stack b { width: 7px; height: 7px; border-radius: 50%; background: var(--c); margin-left: -2px; border: 1px solid #0d1117; }
+.node-fuse-stack b.off { background: #30363d; }
+/* The fused control never clips: the node buttons' names give way first. */
+.node-chips > button.node-chip { flex-shrink: 1; }
+.node-pick { flex: none; }
+/* Fixed, placed under its button by the island: the chip host clips. */
+.node-pop {
+  position: fixed; z-index: 60; width: 290px; max-height: 60vh; overflow-y: auto;
+  background: #161b22; border: 1px solid #30363d; border-radius: 8px; box-shadow: 0 10px 28px rgba(0, 0, 0, .55);
+  padding: 6px; font: 13px/1.3 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; text-align: left;
+}
+.node-pop-head { display: flex; align-items: center; color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 6px 8px 4px; }
+.node-pop-link { margin-left: auto; background: none; border: 0; padding: 0; color: #58a6ff; font-size: 11px; text-transform: none; letter-spacing: 0; cursor: pointer; }
+.node-pop-filter { display: block; margin: 2px 2px 6px; }
+.node-pop-filter input { box-sizing: border-box; width: 100%; padding: 5px 8px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; color: #e6edf3; font-size: 12px; }
+.node-pop-filter input:focus { outline: none; border-color: #1f6feb; }
+.node-pop-row { display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; padding: 6px 8px; border: 0; border-radius: 6px; background: none; color: #c9d1d9; font: inherit; text-align: left; cursor: pointer; }
+.node-pop-row:hover, .node-pop-row.hl { background: #1f6feb33; color: #f0f6fc; }
+.node-pop-row.sel { box-shadow: inset 2px 0 0 #58a6ff; }
+.node-pop-row.offline { color: #7d8590; }
+.node-pop-row input[type=checkbox] { margin: 0; accent-color: #1f6feb; cursor: pointer; }
+.node-pop-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #3fb950; flex: none; margin-right: 4px; vertical-align: 0; }
+.node-pop-row.offline .node-pop-dot { background: #6e7681; }
+.node-pop-swatch { width: 10px; height: 10px; border-radius: 3px; background: var(--nc); flex: none; }
+.node-pop-name { background: none; border: 0; padding: 0; color: inherit; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.node-pop-only { background: none; border: 0; padding: 0; color: #58a6ff; font-size: 11px; cursor: pointer; visibility: hidden; }
+.node-pop-row:hover .node-pop-only { visibility: visible; }
+.node-pop-meta { margin-left: auto; color: #7d8590; font-size: 11px; white-space: nowrap; }
+.node-pop-sep { border: 0; border-top: 1px solid #21262d; margin: 4px 2px; }
+.node-pop-foot { border-top: 1px solid #21262d; margin-top: 4px; padding: 7px 8px 3px; color: #7d8590; font-size: 11.5px; line-height: 1.45; }
+.node-pop-foot b { color: #c9d1d9; font-weight: 500; }
+
+/* Fused Groups replaces this node's roster in the Groups tab. */
+#skynet-fused-groups-root { display: none; }
+html.scope-fused #skynet-fused-groups-root { display: block; }
+html.scope-fused #tab-groups > :not(#skynet-fused-groups-root) { display: none !important; }
+/* Fused Messages likewise replaces this node's mail client. */
+#skynet-fused-messages-root { display: none; }
+html.scope-fused #skynet-fused-messages-root { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+html.scope-fused #messages-root { display: none !important; }
+.fused-mail { grid-template-columns: 260px 10px minmax(260px, 1fr) 10px minmax(320px, 1.4fr); }
+.fused-mail .mail-sidebar-filter { grid-column: 1; grid-row: 1; }
+.fused-mail-nodes { display: flex; flex-direction: column; gap: 3px; padding: 2px 4px 8px; margin-bottom: 6px; border-bottom: 1px solid #21262d; font-size: 12px; }
+.fused-mail-section .mailbox-section { margin-top: 10px; text-transform: none; }
+.fused-mail .mail-row-top .scope-pill { flex: none; }
+.fused-mail-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.fused-mail-reply { width: 100%; box-sizing: border-box; margin-top: 10px; }
+.fused-mail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.fused-mail-actions .spacer { flex: 1; }
+.fused-mail-more { margin: 8px auto; display: block; }
+/* A per-node tab in a fused view: a dot in the primary's colour on its label,
+   and a one-line banner over its content. */
+html.scope-fused nav [data-tab].active:not([data-tab="groups"]):not([data-tab="terminals"]):not([data-tab="messages"]):not(.node-chip):not(.fleet-anchor)::after {
+  content: ""; width: 7px; height: 7px; margin-left: 6px; border-radius: 50%; background: var(--scope-primary, #58a6ff);
+}
+.scope-banner-host:empty { display: none; }
+.scope-banner { display: flex; align-items: center; gap: 10px; padding: 7px 12px; margin-bottom: 12px; border: 1px solid #30363d; border-left: 3px solid var(--nc); border-radius: 6px; background: #161b22; font-size: 13px; }
+.scope-pill { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 10px; font: 500 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: #f0f6fc; background: color-mix(in srgb, var(--nc) 22%, #0d1117); border: 1px solid color-mix(in srgb, var(--nc) 60%, #0d1117); }
+.scope-banner-seg { display: inline-flex; margin-left: auto; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
+.scope-banner-seg button { padding: 3px 10px; border: 0; background: #0d1117; color: #8b949e; font: 500 11px ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; }
+.scope-banner-seg button.on { background: #1f6feb33; color: #f0f6fc; cursor: default; }
+
+/* Top-level mode: the map replaces the per-node tab strip with its own view
+   switch in the same row, so nothing below moves. */
+.skynet-toplevel { display: inline-flex; align-items: center; }
+.skynet-toplevel:empty { display: none; }
+/* Keyed on rendered chips: if the fleet disappears while the map is open, the
+   per-node tabs come back rather than leaving an empty bar. */
+nav:has(#node-chips-root .node-chip):has([data-tab="map"].active) .nav-inner > [data-tab]:not([data-tab="map"]) { display: none; }
+.skynet-toplevel-bar { display: inline-flex; align-items: center; height: 41px; gap: 16px; }
+.skynet-seg { display: inline-flex; height: 28px; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
+.skynet-seg-btn { display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; color: #8b949e; font-size: 13px; background: #0d1117; }
+.skynet-seg-btn.on { background: #1f6feb33; color: #f0f6fc; }
+.skynet-toplevel-note { color: #7d8590; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Skynet map: node cards with measured link edges. */
+#tab-map.active { margin: -16px -24px; }
+.skynet-map {
+  position: relative; min-height: calc(100vh - 99px - var(--footer-h)); box-sizing: border-box; padding: 32px 40px 56px;
+  display: grid; grid-template-columns: minmax(280px, 340px) minmax(120px, 1fr) auto; align-items: center; column-gap: 0;
+  background: radial-gradient(circle at 1px 1px, #21262d 1px, transparent 1.2px) 0 0 / 22px 22px, #0d1117;
+}
+.skynet-map-local { grid-column: 1; z-index: 1; }
+.skynet-map-peers { grid-column: 3; display: grid; grid-template-columns: minmax(300px, 340px); gap: 28px; z-index: 1; justify-content: end; }
+.skynet-map-peers.wide { grid-template-columns: repeat(2, minmax(300px, 340px)); }
+.skynet-edges { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.skynet-edge { fill: none; stroke-width: 2; }
+.skynet-edge.live { stroke: #3fb950; }
+.skynet-edge.stale { stroke: #6e7681; stroke-dasharray: 6 5; }
+.skynet-edge-label { position: absolute; transform: translate(-50%, -50%); background: #0d1117; border: 1px solid #30363d; border-radius: 10px; padding: 1px 8px; font-size: 11px; color: #c9d1d9; white-space: nowrap; z-index: 1; }
+.skynet-card { box-sizing: border-box; background: #161b22; border: 1px solid #2a3340; border-top: 3px solid var(--nc); border-radius: 8px; color: #c9d1d9; font-size: 12px; line-height: 1.45; box-shadow: 0 6px 18px rgba(0,0,0,.35); }
+.skynet-card.stale { border-style: dashed; border-top-style: solid; opacity: .85; }
+.skynet-card.focused { box-shadow: 0 0 0 2px var(--nc), 0 6px 18px rgba(0,0,0,.35); }
+.skynet-card-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px 7px; border-bottom: 1px solid #21262d; }
+.skynet-card-name { font-size: 15px; font-weight: 600; color: #f0f6fc; }
+.skynet-card-kind { color: #7d8590; font-size: 11px; border: 1px solid #30363d; border-radius: 9px; padding: 0 7px; white-space: nowrap; }
+.skynet-card-kind.unrestricted { color: #e3b341; border-color: #9e6a03; }
+.skynet-card-presence { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; white-space: nowrap; color: #8b949e; }
+.skynet-card-presence i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block; }
+.skynet-card-presence.online { color: #3fb950; }
+.skynet-card-presence.error { color: #f85149; }
+.skynet-card-body { margin: 0; padding: 8px 12px 10px; display: grid; grid-template-columns: 80px 1fr; row-gap: 5px; column-gap: 8px; align-items: center; }
+.skynet-card-body dt { color: #7d8590; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.skynet-card-body dd { margin: 0; }
+.skynet-card-empty { padding: 10px 12px; color: #8b949e; font-style: italic; }
+.skynet-attn { color: #d29922; }
+.skynet-health.stale, .skynet-health.warming { color: #d29922; }
+.skynet-health.current { color: #3fb950; }
+.skynet-meter { display: inline-flex; align-items: center; gap: 3px; margin-right: 10px; white-space: nowrap; }
+.skynet-meter-bar { display: inline-block; width: 46px; height: 6px; border-radius: 3px; background: #21262d; overflow: hidden; }
+.skynet-meter-bar b { display: block; height: 100%; background: var(--nc, #58a6ff); }
+.skynet-card-foot { display: flex; gap: 6px; padding: 0 12px 10px; }
+.skynet-card-key { padding: 0 12px 8px; font-size: 12px; }
+.skynet-card-key.pending { color: #e3b341; }
+.skynet-card-key.conflict { color: #f85149; }
+.skynet-legend { position: absolute; left: 16px; bottom: 12px; display: flex; gap: 16px; align-items: center; color: #7d8590; font-size: 11px; }
+.skynet-legend i { display: inline-block; width: 24px; height: 0; border-top: 2px solid #3fb950; margin-right: 5px; vertical-align: middle; }
+.skynet-legend i.stale { border-top: 2px dashed #6e7681; }
+.skynet-card-foot button { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 5px; padding: 3px 10px; font: 12px system-ui, sans-serif; cursor: pointer; }
+.skynet-card-foot button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+/* The wizard skin's longer tab names fill the bar at ~1280 px. While the node
+   row is shown, trim only the tabs' side padding there so the row fits without
+   wrapping a tab label (the bar's height never changes). */
+body.wizard nav:has(#node-chips-root .node-chip) .nav-inner > [data-tab]:not(.node-chip) { padding-left: 12px; padding-right: 12px; }
+/* Tabs never shrink while the row is shown: a tab squeezed by even a pixel
+   wraps its label and grows the bar, so the node row absorbs all the slack.
+   Below 1200 px the tabs no longer fit anyway and keep today's behaviour. */
+@media (min-width: 1200px) {
+  nav:has(#node-chips-root .node-chip) .nav-inner > [data-tab]:not(.node-chip) { flex-shrink: 0; }
+}
+/* Remote per-node view (?node=, js/remote-node.js): the peer's name stands in
+   for the dashboard title, a 3px line in the node's own colour runs along the
+   top edge (fixed overlay: no layout change), and a "peer view" pill opens what
+   the peer shares. No colour means "remote" in general — only that node. */
+html.remote-node .dashboard-title { display: none; }
+html.remote-node body::before {
+  content: ''; position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 10000;
+  background: var(--remote-node-color, #8b949e); pointer-events: none;
+}
+.remote-node-host:empty { display: none; }
+.remote-node-marker { position: relative; display: inline-flex; align-items: center; gap: 8px; }
+.remote-node-title { color: var(--nc); font-weight: 600; white-space: nowrap; max-width: 14ch; overflow: hidden; text-overflow: ellipsis; }
+.remote-node-pill {
+  font: inherit; font-size: 11px; font-weight: normal; line-height: 1.4; padding: 1px 8px; border-radius: 10px; cursor: pointer;
+  color: #c9d1d9; background: transparent; border: 1px solid var(--nc); white-space: nowrap;
+}
+.remote-node-pill:hover { background: #161b22; }
+.remote-node-pill:not(.live) { border-style: dashed; color: #e3b341; }
+.remote-node-health { color: #e3b341; }
+.remote-node-pop {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 60; width: 340px;
+  background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 6px 0;
+  box-shadow: 0 8px 24px rgba(0,0,0,.45); font-size: 12px; font-weight: normal; color: #d4d4d4; white-space: normal;
+}
+.rnp-head { padding: 2px 10px 6px; border-bottom: 1px solid #21262d; color: #7d8590; font-size: 11px; }
+.rnp-head b { color: var(--nc); }
+.rnp-row { padding: 5px 10px; overflow-wrap: anywhere; }
+.rnp-k { color: #7d8590; margin-right: 4px; }
+.rnp-foot { padding: 6px 10px 2px; border-top: 1px solid #21262d; }
+.rnp-foot button {
+  font: inherit; font-size: 11px; color: #58a6ff; background: transparent; border: 1px solid #30363d; border-radius: 4px; padding: 1px 8px; cursor: pointer;
+}
+.rnp-foot button:hover { border-color: #58a6ff; }
+.rnp-ask {
+  background: none; border: 0; padding: 0 2px; color: #58a6ff; font: inherit; font-size: 11px; cursor: pointer;
+}
+.rnp-ask:hover { text-decoration: underline; }
+/* Peer access requests (js/peer-access.js). */
+#peer-access-modal > :not(h3):not(.modal-buttons) { font-size: 13px; font-weight: normal; }
+.peer-access-opt { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.peer-access-opt select, .peer-access-opt textarea { flex: 1; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; }
+.peer-access-reason { align-items: flex-start; }
+.access-peer-consequence { font-size: 12px; color: #c9d1d9; }
+.access-peer-ttl, .access-peer-group { font-size: 12px; }
+/* Peer view limits (js/peer-view-limits.js): what the peer does not offer
+   stays in place, greyed, with the reason on hover and on click. */
+html.remote-node nav [data-tab].pv-off { opacity: .4; }
+html.remote-node [data-act]:not([data-act="copy-generation-id"]):not([data-act="sandbox-details"]):not([data-act="group-menu"]):not([data-act="row-menu"]),
+html.remote-node :is(#group-create-open, #group-import-open, #cleanup-all-open, #delete-retired-open, #profiles-manage-open, #templates-manage-open, #roles-manage-open, #sandbox-profiles-manage-open, #spawn-harness-policy-open) {
+  opacity: .45; cursor: not-allowed;
+}
+html.remote-node #usage.peer-view-na { font-style: italic; color: #7d8590; }
+/* Merged "Groups · all nodes" view (js/skynet-merged-island.js): a top-level
+   view like the map, so the per-node tabs give way to the view switch. Its
+   anchor exists for routing only. Groups are named group@node, the suffix in
+   the node's own colour; an unreachable node's groups read as stale. */
+nav [data-tab="fleet-admin"] { display: none; }
+nav:has(#node-chips-root .node-chip):has([data-tab="fleet-admin"].active) .nav-inner > [data-tab]:not([data-tab="map"]) { display: none; }
+.skynet-seg-btn { border: 0; font: inherit; font-size: 13px; cursor: pointer; }
+.skynet-seg-btn + .skynet-seg-btn { border-left: 1px solid #30363d; }
+.skynet-seg-btn.on { cursor: default; }
+.skynet-merged-nodes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 0 12px; font-size: 12px; color: #c9d1d9; }
+.skynet-merged-node { display: inline-flex; align-items: center; gap: 6px; }
+.skynet-merged-node i { width: 8px; height: 8px; border-radius: 50%; background: var(--nc); }
+.skynet-merged-node.stale { color: #7d8590; }
+.skynet-merged-node.stale i { background: transparent; border: 1px dashed var(--nc); }
+.skynet-merged-note { color: #6e7681; margin-left: auto; }
+/* Drag an agent onto another node's group (skynet-move-drop.js): the group
+   under the pointer says whether the drop can move it from here. */
+.skynet-merged details.skynet-drop-ok > summary { outline: 2px dashed #3fb950; outline-offset: -2px; background: rgba(63, 185, 80, 0.08); }
+.skynet-merged details.skynet-drop-no > summary { outline: 2px dashed #f85149; outline-offset: -2px; }
+.fleet-node-suffix { color: var(--nc); font-weight: 600; cursor: pointer; }
+.fleet-node-suffix:hover { text-decoration: underline; }
+.fleet-stale-label { font-size: 11px; font-weight: normal; color: #e3b341; }
+/* Away marker (agent-presence.js, tcl-hocp2h): a visiting agent's badge and a
+   returned agent's short-lived tag use its home node's colour (--nc); the
+   placeholder it leaves at home is dimmed and outlined in the colour of the
+   node it is on now. */
+.presence-badge { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 0 6px; border-radius: 9px; font-size: 11px; line-height: 16px; white-space: nowrap; color: var(--nc, #8b949e); border: 1px solid var(--nc, #8b949e); background: rgba(110, 118, 129, 0.12); }
+.presence-badge.presence-away { border-style: dashed; background: transparent; }
+.presence-badge.presence-back { color: #3fb950; border-color: #3fb950; background: rgba(63, 185, 80, 0.1); }
+tr.presence-row-back > td { background: rgba(63, 185, 80, 0.06); }
+tr.presence-row-visiting > td { background: rgba(110, 118, 129, 0.06); }
+tr.away-placeholder > td { opacity: .6; font-style: italic; }
+tr.away-placeholder .away-dot { color: #6e7681; margin-left: 4px; }
+tr.away-placeholder .away-goto { font-style: normal; margin-left: 8px; font-size: 11px; }
+.group-away-hint { margin-left: 4px; font-size: 11px; color: #8b949e; }
+@keyframes presence-flash { from { background: rgba(88, 166, 255, 0.35); } to { background: transparent; } }
+tr.presence-flash > td { animation: presence-flash 1.6s ease-out; }
+tr.away-placeholder .away-recall { font-style: normal; margin-left: 8px; font-size: 11px; padding: 0 6px; border: 1px solid #3fb950; border-radius: 4px; background: transparent; color: #3fb950; cursor: pointer; }
+/* ⚙ menu section label ("send elsewhere", tcl-o9d5d9). */
+.action-menu .menu-section-label { padding: 4px 10px 2px; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: #6e7681; }
+/* Launch-target dialog (launch-target-dialog.js): a mode segment, the fields
+   on the left and what carries over on the right. */
+#launch-target { min-width: min(760px, 94vw); }
+.lt-modes { display: flex; margin: 6px 0 10px; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
+.lt-mode { flex: 1; padding: 5px 8px; border: 0; border-right: 1px solid #30363d; background: #161b22; color: #c9d1d9; cursor: pointer; font: inherit; font-size: 12px; }
+.lt-mode:last-child { border-right: 0; }
+.lt-mode.sel { background: #1f6feb33; color: #58a6ff; box-shadow: inset 0 -2px 0 #58a6ff; }
+.lt-mode:disabled { color: #484f58; cursor: not-allowed; }
+.lt-drop-note { margin-bottom: 8px; font-size: 12px; }
+.lt-body { display: flex; gap: 14px; align-items: flex-start; }
+.lt-fields { flex: 1.4; min-width: 0; }
+.lt-row { display: flex; gap: 10px; align-items: flex-start; margin: 6px 0; }
+.lt-row > select, .lt-row > input, .lt-row > textarea { flex: 1; }
+.lt-k { flex: 0 0 90px; color: #8b949e; font-size: 12px; padding-top: 3px; }
+.lt-nodes { flex: 1; display: flex; flex-direction: column; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
+.lt-node { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border: 0; border-bottom: 1px solid #21262d; background: transparent; color: #c9d1d9; text-align: left; cursor: pointer; font: inherit; font-size: 12px; }
+.lt-node:last-child { border-bottom: 0; }
+.lt-node i { width: 8px; height: 8px; border-radius: 50%; background: var(--nc, #8b949e); flex: none; }
+.lt-node.sel { background: #1f6feb33; }
+.lt-node:disabled { color: #6e7681; cursor: not-allowed; }
+.lt-node-why { margin-left: auto; font-size: 11px; color: #6e7681; }
+.lt-carries { flex: 1; border: 1px solid #30363d; border-radius: 6px; padding: 8px 10px; background: #0d1117; font-size: 12px; }
+.lt-carries-title { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: #8b949e; margin-bottom: 6px; }
+.lt-carry { display: grid; grid-template-columns: 16px 80px 1fr; gap: 4px; margin: 4px 0; }
+.lt-mark-ok { color: #3fb950; } .lt-mark-no { color: #f85149; } .lt-mark-chg { color: #e3b341; }
+.lt-carry-k { color: #c9d1d9; } .lt-carry-v { color: #8b949e; }
+.lt-consequence { font-size: 12px; color: #c9d1d9; }
+.lt-morph-preview { margin: 6px 0; font-size: 12px; }
+.lt-check { display: block; margin: 6px 0; font-size: 12px; color: #8b949e; }
+.lt-hint { margin: 8px 0; }
+@media (max-width: 720px) { .lt-body { flex-direction: column; } .lt-carries { width: 100%; box-sizing: border-box; } }
+details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
+#skynet-fused-groups-root [data-act]:not([data-act="copy-generation-id"]):not([data-act="sandbox-details"]):not([data-act="send-elsewhere"]):not([data-act="group-menu"]):not([data-act="row-menu"]) { opacity: .45; cursor: not-allowed; }
+/* Fleet administration (js/fleet-admin-island.js): this node's federation
+   identity, hub connection and trusted peers. A top-level view like the map. */
+.fleet-admin { font-size: 13px; color: #c9d1d9; }
+/* Themed base for plain buttons on the Fleet pages and their dialogs; :where
+   keeps it below every class rule (subtabs, cells, links, modal buttons). */
+:where(.fleet-admin, [id^="fleet-"]) button { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 5px; padding: 3px 10px; font: 12px system-ui, sans-serif; cursor: pointer; }
+:where(.fleet-admin, [id^="fleet-"]) button:where(:hover:not(:disabled)) { border-color: #58a6ff; }
+:where(.fleet-admin, [id^="fleet-"]) :where(select, textarea, input:not([type="checkbox"]):not([type="radio"])) { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 2px 6px; font: inherit; color-scheme: dark; }
+:where(.fleet-admin, [id^="fleet-"]) :where(select, textarea, input):where(:disabled) { opacity: 0.6; }
+:where(.fleet-admin, [id^="fleet-"]) :where(button, select, textarea, input, a):where(:focus-visible) { outline: 2px solid #58a6ff; outline-offset: 1px; }
+#fleet-harness-run { align-self: flex-start; width: auto; }
+:where(.fleet-admin, [id^="fleet-"]) button:where(:disabled) { opacity: .5; cursor: default; }
+:where(.fleet-admin, [id^="fleet-"]) button:where(.primary) { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+:where(.fleet-admin, [id^="fleet-"]) button:where(.danger) { background: #21262d; border-color: #f8514966; color: #ffa198; }
+.fa-identity { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; padding: 8px 12px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; }
+.fa-identity > button { margin-left: auto; }
+.fa-k { color: #7d8590; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; margin-right: 4px; }
+.fa-hub.ok { color: #3fb950; }
+.fa-hub.warn { color: #e3b341; }
+.fa-hub.off { color: #7d8590; }
+.fa-link { border: 0; background: none; padding: 0; color: #58a6ff; cursor: pointer; font: inherit; font-size: 12px; }
+.fa-subtabs { display: flex; gap: 2px; margin: 12px 0 8px; border-bottom: 1px solid #30363d; }
+.fa-subtab { border: 0; border-bottom: 2px solid transparent; background: none; color: #8b949e; padding: 6px 10px; font: inherit; cursor: pointer; }
+.fa-subtab.on { color: #f0f6fc; border-bottom-color: #1f6feb; }
+.fleet-admin h4 { margin: 14px 0 6px; font-size: 13px; }
+.fa-table { width: 100%; border-collapse: collapse; }
+.fa-table th { text-align: left; font-weight: 600; color: #7d8590; font-size: 11px; padding: 4px 8px; border-bottom: 1px solid #30363d; }
+.fa-table td { padding: 5px 8px; border-bottom: 1px solid #21262d; vertical-align: middle; }
+.fa-acts { text-align: right; white-space: nowrap; }
+.fa-acts button + button { margin-left: 6px; }
+.fa-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #484f58; }
+.fa-dot.on { background: #3fb950; }
+.fa-level.unrestricted { color: #f0883e; font-weight: 600; }
+.fa-danger { color: #f85149; }
+.fa-dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; align-items: baseline; margin: 6px 0 10px; }
+/* Long IDs, fingerprints and paths break anywhere; prose still wraps at spaces. */
+.fa-wrap { overflow-wrap: anywhere; }
+.fa-fp-full { font-size: 14px; color: #f0f6fc; }
+.fa-levels, .fa-profile { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.fa-consequence { margin: 8px 0; padding: 8px 10px; border: 1px solid #f8514966; border-radius: 6px; background: #f851491a; color: #ffa198; }
+.fa-ack { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0 4px; }
+.fa-grants-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 4px 0 10px; }
+.fa-warn { color: #e3b341; }
+/* Peer operator mail and away cover (js/peer-mail.js). */
+#peer-mail-modal > :not(h3):not(.modal-buttons) { font-size: 13px; font-weight: normal; }
+.peer-mail-kind { display: flex; gap: 14px; margin: 4px 0 8px; }
+.peer-mail-opt { display: grid; grid-template-columns: 70px minmax(0, 1fr); align-items: center; gap: 8px; margin: 6px 0; }
+.peer-mail-opt input, .peer-mail-opt select, .peer-mail-opt textarea { width: 100%; box-sizing: border-box; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; }
+.peer-mail-top { align-items: start; }
+.peer-mail-h { margin: 14px 0 4px; font-size: 13px; font-weight: 600; }
+.fa-away-edit select, .fa-away-edit input { font: inherit; font-size: 12px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; padding: 1px 4px; }
+.peer-away-answer { display: inline-flex; gap: 6px; margin-right: 8px; }
+#fleet-node-settings > :not(h3):not(.modal-buttons) { font-size: 13px; font-weight: normal; }
+.fa-ns-h { margin: 12px 0 4px; font-size: 13px; font-weight: 600; }
+.fa-ns-row { display: grid; grid-template-columns: 80px minmax(0, 1fr); align-items: center; gap: 8px; margin: 6px 0; }
+.fa-ns-row input { width: 100%; box-sizing: border-box; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; }
+.fa-ns-check { display: block; margin: 6px 0 6px 88px; }
+.fa-ns-actions { display: flex; align-items: center; gap: 10px; margin: 6px 0 4px 88px; }
+.fa-ns-actions button { flex: none; white-space: nowrap; }
+.fa-hp-signals { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.fa-hp-rows { margin: 6px 0 6px 88px; display: grid; gap: 6px; }
+.fa-hp-rows input { width: 64px; box-sizing: border-box; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 2px 6px; font: inherit; }
+.fa-models .fa-h { margin: 16px 0 6px; font-size: 13px; font-weight: 600; }
+.fa-models .fa-h input[type=date] { font: inherit; font-size: 12px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; padding: 1px 4px; }
+.fa-chip { display: inline-block; padding: 0 6px; border: 1px solid #30363d; border-radius: 10px; font-size: 12px; white-space: nowrap; }
+.fa-model-block { font-size: 12px; }
+#fleet-spawn-approve > :not(h3):not(.modal-buttons), #fleet-spawn-deny > :not(h3):not(.modal-buttons), #fleet-spawn-send > :not(h3):not(.modal-buttons) { font-size: 13px; font-weight: normal; }
+.fa-spawn-opt { display: grid; grid-template-columns: 90px minmax(0, 1fr); align-items: center; gap: 8px; margin: 6px 0; }
+.fa-spawn-opt input, .fa-spawn-opt select, .fa-spawn-opt textarea { width: 100%; max-width: none; box-sizing: border-box; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; }
+.fa-spawn-top { align-items: flex-start; }
+.fa-spawn-brief { white-space: pre-wrap; background: #0d1117; border: 1px solid #21262d; border-radius: 4px; padding: 6px 8px; margin: 6px 0; max-height: 160px; overflow: auto; }
+.fa-spawn-brief-cell { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fa-spawns .fa-h { margin: 16px 0 6px; font-size: 13px; font-weight: 600; }
+.fa-sensitive { color: #f0883e; }
+.fa-grant-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 6px; }
+.fa-grant-launch { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 0 0 8px; padding: 8px 10px; border: 1px solid #21262d; border-radius: 6px; }
+.fa-grant-launch > .muted { flex-basis: 100%; }
+#fleet-profile-editor > :not(h3):not(.modal-buttons) { font-size: 13px; font-weight: normal; }
+.fa-pe-row { display: grid; grid-template-columns: 110px minmax(0, 1fr); align-items: center; gap: 8px; margin: 6px 0; }
+.fa-pe-top { align-items: start; }
+.fa-pe-row input:not([type=checkbox]):not([type=number]), .fa-pe-row select, .fa-pe-advanced textarea { width: 100%; box-sizing: border-box; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; }
+.fa-pe-check { margin-right: 12px; white-space: nowrap; }
+.fa-pe-advanced { margin: 8px 0; }
+.fa-pe-advanced textarea { font-family: ui-monospace, monospace; font-size: 12px; margin-top: 4px; }
+.fa-grant-launch input, .fa-grant-launch select { font: inherit; font-size: 12px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; padding: 2px 6px; }
+.fa-cli-note { font-size: 12px; }
+.fa-bearer { width: 100%; box-sizing: border-box; font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; margin: 8px 0; }
+.fa-token-input { flex: 1; min-width: 0; font-family: ui-monospace, monospace; }
+.fa-member { display: inline-flex; align-items: center; gap: 2px; margin-right: 10px; }
+.fa-badge { font-size: 11px; padding: 0 6px; border: 1px solid #1f6feb; border-radius: 8px; color: #58a6ff; }
+.fa-plan ul { margin: 6px 0; padding-left: 18px; max-height: 240px; overflow: auto; }
+.fa-pool-grants { margin: 4px 0; }
+.fa-nowrap { white-space: nowrap; }
+.fa-cell { border: 1px solid #30363d; border-radius: 4px; background: #0d1117; color: #c9d1d9; padding: 1px 8px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.fa-cell.update { border-color: #9e6a03; }
+.fa-cell.broken { border-color: #f8514966; color: #ffa198; }
+.fa-up { color: #e3b341; font-weight: 600; }
+/* Node self-update (js/node-update.js): the map card's version row. */
+.skynet-update { color: #d29922; }
+.skynet-link { border: 0; background: none; padding: 0; color: #58a6ff; cursor: pointer; font: inherit; font-size: 12px; }
+.skynet-link:hover { text-decoration: underline; }
+#fleet-node-update-job { margin: 8px 0; }
+/* Fleet → Run scripts (js/fleet-admin-run.js). */
+.fa-run-settings { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 12px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; }
+.fa-run-settings input, .fa-run-bar input { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 2px 6px; font: inherit; }
+.fa-run-nodes { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; margin: 6px 0; }
+.fa-run-script { display: block; width: 100%; box-sizing: border-box; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; padding: 8px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+.fa-run-script:focus { border-color: #58a6ff; outline: none; }
+.fa-run-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 6px 0 10px; }
+.fa-run-bar .primary { margin-left: auto; }
+.fa-run-results { margin-bottom: 10px; display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 10px; }
+.fa-run-pane { border: 1px solid #30363d; border-radius: 6px; padding: 8px 10px; background: #0d1117; min-width: 0; }
+.fa-run-pane.bad { border-color: #f8514966; }
+.fa-run-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.fa-run-logs { margin-left: auto; }
+.fa-run-logs .fa-link + .fa-link { margin-left: 8px; }
+.fa-run-full { flex-basis: 100%; }
+.fa-run-out { margin: 6px 0 0; max-height: 240px; overflow: auto; padding: 6px 8px; background: #010409; border-radius: 4px; font-size: 11px; white-space: pre-wrap; word-break: break-word; }
+.fa-run-out.err { color: #ffa198; }
+.fa-offers h4 { margin: 14px 0 4px; font-size: 13px; }
+.fa-of-row { display: grid; grid-template-columns: 80px minmax(0, 1fr); align-items: center; gap: 8px; margin: 6px 0; }
+.fa-of-row input, .fa-of-row select { width: 100%; box-sizing: border-box; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; }
+.fa-of-check { display: block; margin: 6px 0 6px 88px; }
+#fleet-offer-import .modal-buttons button, #fleet-offer-config .modal-buttons button, #fleet-share-agent .modal-buttons button, #fleet-offer-profile .modal-buttons button { flex: none; white-space: nowrap; }
+.fa-jobs h4 { margin: 14px 0 4px; font-size: 13px; }
+.fa-jb-live { color: #3fb950; }
+.fa-jb-row { display: grid; grid-template-columns: 80px minmax(0, 1fr); align-items: center; gap: 8px; margin: 6px 0; }
+.fa-jb-row input, .fa-jb-row select, .fa-jb-row textarea { width: 100%; box-sizing: border-box; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; }
+.fa-jb-row textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+.fa-jb-nodes { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 6px 0 6px 88px; }
+.fa-jb-row .fa-jb-nodes { margin: 0; }
+#fleet-job-logs pre { max-height: 50vh; overflow: auto; }
+#fleet-run-job .modal-buttons button, #fleet-repo .modal-buttons button { flex: none; white-space: nowrap; }
+/* Peer actions on a peer view (js/peer-action.js). */
+.peer-action-choices { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 6px 0 10px; }
+.peer-action-opt { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.peer-action-opt input:not([type]), .peer-action-opt select, .peer-action-opt textarea { flex: 1; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 3px 6px; font: inherit; }
+.peer-action-brief { align-items: flex-start; }
+.peer-action-consequence { margin: 8px 0; }
+#peer-spawn-status { margin: 6px 0 10px; }
+#peer-action-modal .peer-action-choices, #peer-action-modal .peer-action-opt, #peer-action-modal .peer-action-consequence,
+#peer-spawn-modal .peer-action-opt, #peer-spawn-modal #peer-spawn-status { font-size: 13px; font-weight: normal; }
+#fleet-key-transition > :not(h3):not(.modal-buttons) { font-size: 13px; font-weight: normal; }
+#fleet-key-transition .fa-table th { text-align: left; white-space: nowrap; padding-right: 12px; vertical-align: top; }
+.fa-kt-cmd { margin: 6px 0; }
+.fa-kt-cmd code { word-break: break-all; }
+.fa-kt-cmd button { margin-left: 6px; }
+
+/* Phone widths. The skynet dialogs use the shared .cron-create-modal, whose
+   520px min-width clips them on a phone; let them shrink to the viewport and
+   wrap long CLI lines. The map stacks its cards instead of laying peers out to
+   the right of this node, and drops the edges (each card already names its
+   link level). */
+@media (max-width: 560px) {
+  :where([id^="fleet-"], #peer-mail-modal, #peer-access-modal, #peer-action-modal, #peer-spawn-modal) .cron-create-modal { min-width: 0; padding: 14px; }
+  :where([id^="fleet-"], #peer-mail-modal, #peer-access-modal, #peer-action-modal, #peer-spawn-modal) .cron-create-modal code { overflow-wrap: anywhere; }
+  .fa-ns-check, .fa-ns-actions, .fa-hp-rows, .fa-jb-nodes, .fa-of-check { margin-left: 0; }
+  .fa-ns-actions { flex-wrap: wrap; }
+  /* Stack the profile editor's label column, and let each grant row wrap
+     its cells instead of squeezing the slug to one character per line. */
+  .fa-pe-row { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  #fleet-profile-grants tr { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; border-bottom: 1px solid #21262d; padding: 4px 0; }
+  #fleet-profile-grants td { display: block; border: 0; padding: 0; }
+  #fleet-profile-grants code { overflow-wrap: normal; }
+}
+@media (max-width: 720px) {
+  .skynet-map { grid-template-columns: minmax(0, 1fr); row-gap: 20px; padding: 16px 12px 56px; align-items: start; }
+  .skynet-map-local, .skynet-map-peers, .skynet-map-peers.wide { grid-column: 1; }
+  .skynet-map-peers, .skynet-map-peers.wide { grid-template-columns: minmax(0, 1fr); gap: 16px; justify-content: stretch; }
+  .skynet-edges, .skynet-edge-label { display: none; }
+}
+
+
+/* Fleet → Hub. */
+.fa-hub-head, .fa-hub-health { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; margin: 6px 0 10px; }
+.fa-hub-errors { flex-basis: 100%; margin: 4px 0 0; padding-left: 18px; }
+.fa-hub-claim { margin: 10px 0; }
+.fa-hub-token { margin: 6px 0 10px; padding: 6px 10px; border: 1px solid #9e6a03; border-radius: 6px; overflow-wrap: anywhere; }
+/* Content boards (fleet-admin-boards.js). */
+.fa-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0; }
+.fa-row .spacer { flex: 1; }
+.fa-grow { flex: 1 1 260px; min-width: 0; }
+.fa-num { width: 64px; }
+.fa-warn-chip { font-size: 11px; padding: 0 6px; border: 1px solid #9e6a03; border-radius: 8px; color: #d29922; }
+.fa-boards .fa-table tr.on td { background: rgba(56, 139, 253, 0.08); }
+.fa-boards .fa-table tr.fa-board-detail-row > td { padding: 0 8px; }
+.fa-board-detail { margin: 4px 0 12px; padding: 6px 10px; border-left: 2px solid #1f6feb; }
+.fa-hub-spaces { width: 14em; font: inherit; font-size: 12px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; padding: 2px 6px; }
+#fleet-hub-settings input, #fleet-hub-settings select { width: 8em; font: inherit; font-size: 12px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; padding: 2px 6px; }
+.fa-hub-log { max-height: 50vh; }
+/* Bundle inspect: the entry list beside a scrolling text view. Content is a
+   peer's data, always shown as plain text. */
+#fleet-bundle-inspect .cron-create-modal { width: min(1100px, 94vw); }
+.fa-bi { display: grid; grid-template-columns: minmax(180px, 260px) minmax(0, 1fr); gap: 12px; margin: 10px 0; }
+.fa-bi-list { list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow: auto; }
+.fa-bi-list li { padding: 3px 0; overflow-wrap: anywhere; }
+.fa-bi-list .fa-link.active { font-weight: 600; text-decoration: underline; }
+.fa-bi-view { min-width: 0; }
+.fa-bi-text { margin: 0; max-height: 60vh; overflow: auto; padding: 8px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.fa-bi-more { margin-top: 6px; }
+@media (max-width: 720px) { .fa-bi { grid-template-columns: minmax(0, 1fr); } }
+.fa-bi-list li .muted { display: block; font-size: 11px; }
+/* A peer's agent terminal: whose it is and whether this view can type. Amber
+   for interactive (your keys reach the peer's agent), neutral for watch-only. */
+.term-remote-badge { flex: none; font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid #30363d; color: #8b949e; white-space: nowrap; }
+.term-remote-badge.interactive { border-color: #9e6a03; color: #d29922; }
+.term-remote-badge.watch { border-color: #3d444d; color: #c9d1d9; }
+.remote-viewers-badge.term-viewers-badge { flex: none; margin-left: 0; font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid #30363d; }
+.remote-viewers-badge.term-viewers-badge.typing { border-color: #9e6a03; }
+.skynet-card-terms { margin-left: 6px; }
+#remote-sessions button[data-open] { background: #21262d; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; cursor: pointer; padding: 2px 10px; font: inherit; font-size: 12px; }
+#remote-sessions button[data-open]:hover { border-color: #58a6ff; }
+#remote-sessions button[data-open="interactive"] { border-color: #9e6a03; color: #d29922; }
+
+/* Other own nodes' human inbox (tcl-99b5ir): unread notifications and pending
+   ask-human requests from nodes this one trusts unrestricted, above the local
+   folders; shown only while there are any. */
+.remote-inbox-item { display: block; width: 100%; text-align: left; background: none; border: 0; font: inherit; color: inherit; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.remote-inbox-item.pending { color: #d29922; }
+.remote-inbox-item:hover { filter: brightness(1.25); }
+.remote-inbox-body { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow: auto; }
+#remote-inbox-reply { width: 100%; box-sizing: border-box; }

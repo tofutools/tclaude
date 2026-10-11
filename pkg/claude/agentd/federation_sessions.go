@@ -238,6 +238,8 @@ func (rt *fedRuntime) acceptSessionUpdate(peer string, env *proto.Envelope) {
 }
 
 type fedRemoteSession struct {
+	Watch  bool `json:"watch"`
+	Attach bool `json:"attach"`
 	proto.CatalogSession
 	Address    string    `json:"address"`
 	Peer       string    `json:"peer"`
@@ -286,6 +288,8 @@ func handleFederationSessions(w http.ResponseWriter, r *http.Request) {
 			for _, s := range g.Sessions {
 				if idx, exists := indices[s.Agent]; exists {
 					out[idx].Groups = append(out[idx].Groups, g.Name)
+					out[idx].Watch = out[idx].Watch || g.HasCap(proto.CapSessionsWatch)
+					out[idx].Attach = out[idx].Attach || g.HasCap(proto.CapSessionsAttach)
 					if g.SessionsAt.After(out[idx].ObservedAt) {
 						out[idx].CatalogSession = s
 						out[idx].ObservedAt = g.SessionsAt
@@ -294,7 +298,7 @@ func handleFederationSessions(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				indices[s.Agent] = len(out)
-				out = append(out, fedRemoteSession{CatalogSession: s, Address: s.Agent + "@" + fedFirst(p.Label, p.InstanceID), Peer: peerDisplay(&p), Instance: p.InstanceID, Groups: []string{g.Name}, ObservedAt: g.SessionsAt, Stale: rt == nil || !rt.sessionPeerOnline(p.InstanceID) || time.Since(g.SessionsAt) > fedStaleAfter})
+				out = append(out, fedRemoteSession{Watch: g.HasCap(proto.CapSessionsWatch), Attach: g.HasCap(proto.CapSessionsAttach), CatalogSession: s, Address: s.Agent + "@" + fedFirst(p.Label, p.InstanceID), Peer: peerDisplay(&p), Instance: p.InstanceID, Groups: []string{g.Name}, ObservedAt: g.SessionsAt, Stale: rt == nil || !rt.sessionPeerOnline(p.InstanceID) || time.Since(g.SessionsAt) > fedStaleAfter})
 			}
 		}
 	}

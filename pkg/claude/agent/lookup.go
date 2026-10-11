@@ -776,12 +776,13 @@ func runWhoami(stdout, stderr io.Writer) int {
 
 func runWhoamiDaemon(stdout, stderr io.Writer) int {
 	var resp struct {
-		Predecessor *db.FederationMoveLink `json:"predecessor,omitempty"`
-		IsHuman     bool                   `json:"is_human"`
-		AgentID     string                 `json:"agent_id"`
-		ConvID      string                 `json:"conv_id"`
-		Title       string                 `json:"title"`
-		Phases      []string               `json:"phases"`
+		Predecessor  *db.FederationMoveLink `json:"predecessor,omitempty"`
+		IsHuman      bool                   `json:"is_human"`
+		AgentID      string                 `json:"agent_id"`
+		ConvID       string                 `json:"conv_id"`
+		Title        string                 `json:"title"`
+		Phases       []string               `json:"phases"`
+		PendingMorph *db.AgentPendingMorph  `json:"pending_morph,omitempty"`
 	}
 	if err := DaemonGet("/v1/whoami", &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -809,6 +810,9 @@ func runWhoamiDaemon(stdout, stderr io.Writer) int {
 	// its current phase.
 	for _, ph := range resp.Phases {
 		fmt.Fprintf(stdout, "  %s\n", ph)
+	}
+	if resp.PendingMorph != nil {
+		fmt.Fprintf(stdout, "  %s\n", pendingMorphLine(resp.PendingMorph))
 	}
 	return rcOK
 }
@@ -917,6 +921,7 @@ func lookupID(agentID, convID string) string {
 // --- ls (peers in my groups) ---
 
 type lsParams struct {
+	Node    string `long:"node" optional:"true" help:"Read a live peer view by pinned instance ID or local label (operator only)"`
 	NoCache bool   `long:"no-cache" help:"Force a fresh local status gather (debugging escape hatch; rate limited)"`
 	Group   string `long:"group" optional:"true" help:"Only show agents in this group (name or numeric ID). Groups you cannot reach are never matchable, even when named explicitly."`
 	State   string `long:"state" optional:"true" help:"Filter: online | offline"`
@@ -943,8 +948,9 @@ func lsCmd() *cobra.Command {
 }
 
 type peerEntry struct {
-	TeleportPaused string                 `json:"teleport_paused,omitempty"`
-	Predecessor    *db.FederationMoveLink `json:"predecessor,omitempty"`
+	FederationPresence *db.AgentFederationPresence `json:"federation_presence,omitempty"`
+	TeleportPaused     string                      `json:"teleport_paused,omitempty"`
+	Predecessor        *db.FederationMoveLink      `json:"predecessor,omitempty"`
 	// AgentID is the stable, rotation-immune actor key — what `agent ls`
 	// shows as the canonical ID. ConvID is the live generation behind it.
 	AgentID string `json:"agent_id,omitempty"`
@@ -960,6 +966,8 @@ type peerEntry struct {
 	Online bool      `json:"online"`
 	Groups []string  `json:"groups"`
 	State  peerState `json:"state"`
+	// PendingMorph is a requested morph waiting for the agent to go idle.
+	PendingMorph *db.AgentPendingMorph `json:"pending_morph,omitempty"`
 }
 
 // peerState mirrors the deliberately narrow runtime summary returned by
@@ -991,6 +999,13 @@ func runLs(p *lsParams, stdout, stderr io.Writer) int {
 }
 
 func runLsDaemon(p *lsParams, stdout, stderr io.Writer) int {
+	if p.Node != "" {
+		if p.NoCache || p.Remote || p.State != "" {
+			fmt.Fprintln(stderr, "Error: --node cannot be combined with --no-cache, --remote or --state")
+			return rcInvalidArg
+		}
+		return runPeerListing(p.Node, "agents", p.Group, p.JSON, stdout, stderr)
+	}
 	path := "/v1/peers"
 	if g := strings.TrimSpace(p.Group); g != "" {
 		path += "?group=" + url.QueryEscape(g)
@@ -1246,8 +1261,14 @@ func renderPeersAtWidth(p *lsParams, peers []*peerEntry, stdout io.Writer, termi
 		if pe.TeleportPaused != "" {
 			fmt.Fprintf(stdout, "  %s %s\n", shortAgentID(pe.AgentID, pe.ConvID), pe.TeleportPaused)
 		}
+		if pe.FederationPresence != nil {
+			fmt.Fprintf(stdout, "  %s %s home=%s current=%s\n", shortAgentID(pe.AgentID, pe.ConvID), pe.FederationPresence.State, pe.FederationPresence.HomeInstance, pe.FederationPresence.CurrentInstance)
+		}
 		if pe.Predecessor != nil {
 			fmt.Fprintf(stdout, "  %s predecessor: %s@%s\n", shortAgentID(pe.AgentID, pe.ConvID), pe.Predecessor.Agent, pe.Predecessor.Instance)
+		}
+		if pe.PendingMorph != nil {
+			fmt.Fprintf(stdout, "  %s %s\n", shortAgentID(pe.AgentID, pe.ConvID), pendingMorphLine(pe.PendingMorph))
 		}
 	}
 	return rcOK

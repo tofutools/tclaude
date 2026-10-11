@@ -52,3 +52,7 @@ export function openSandboxImplDialog({ conv, label, harness }) {
 export function chooseTerminalDirectory(label) {
   return requireController().openTerminalDirectory({ label });
 }
+
+export function openLaunchTargetDialog({ mode, agent }) {
+  return requireController().openLaunchTarget({ mode, agent });
+}

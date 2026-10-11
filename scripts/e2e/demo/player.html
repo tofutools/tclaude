@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/asciinema-player@3.8.0/dist/bundle/asciinema-player.css">
+<style>html,body{margin:0;background:#0d1117;height:100%}#p{padding:24px}</style></head>
+<body><div id="p"></div>
+<script src="https://cdn.jsdelivr.net/npm/asciinema-player@3.8.0/dist/bundle/asciinema-player.min.js"></script>
+<script>
+const q=new URLSearchParams(location.search);
+window.player=AsciinemaPlayer.create({url:q.get('cast'),parse:undefined},document.getElementById('p'),{autoPlay:false,fit:'width',theme:'monokai',terminalFontSize:'16px',idleTimeLimit:1.5,controls:false});
+</script></body></html>

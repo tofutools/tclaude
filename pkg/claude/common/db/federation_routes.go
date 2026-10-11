@@ -13,6 +13,9 @@ type FederationRouteMirror struct {
 	Peer        string
 	RemoteRoute string
 	RemoteLabel string
+	// GroupID is the local group holding the mirror route. Only
+	// ListFederationRouteMirrors fills it.
+	GroupID int64
 }
 
 // CreateFederationRouteMirror creates the mirror route row and its marker in
@@ -73,7 +76,7 @@ func ListFederationRouteMirrors() ([]FederationRouteMirror, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT m.route_id, m.peer, m.remote_route, m.remote_label FROM federation_route_mirrors m
+	rows, err := d.Query(`SELECT m.route_id, m.peer, m.remote_route, m.remote_label, r.group_id FROM federation_route_mirrors m
 		JOIN agent_routes r ON r.id = m.route_id WHERE r.state = ?`, RouteStateReady)
 	if err != nil {
 		return nil, err
@@ -82,7 +85,7 @@ func ListFederationRouteMirrors() ([]FederationRouteMirror, error) {
 	var out []FederationRouteMirror
 	for rows.Next() {
 		var m FederationRouteMirror
-		if err := rows.Scan(&m.RouteID, &m.Peer, &m.RemoteRoute, &m.RemoteLabel); err != nil {
+		if err := rows.Scan(&m.RouteID, &m.Peer, &m.RemoteRoute, &m.RemoteLabel, &m.GroupID); err != nil {
 			return nil, err
 		}
 		out = append(out, m)

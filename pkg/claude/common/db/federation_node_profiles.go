@@ -204,6 +204,40 @@ func RecordFederationWorkerDefaults(agentID string, w *FederationWorkerDefaults)
 	_, e = d.Exec(`INSERT INTO federation_worker_defaults(agent_id,snapshot) VALUES(?,?)`, agentID, string(raw))
 	return e
 }
+
+// ReplaceFederationArrivalWorkerDefaults replaces a prior visit's snapshot only
+// after the stable identity has been reserved for this exact offer.
+func ReplaceFederationArrivalWorkerDefaults(agentID, offer string, w *FederationWorkerDefaults) error {
+	d, e := Open()
+	if e != nil {
+		return e
+	}
+	tx, e := d.Begin()
+	if e != nil {
+		return e
+	}
+	defer func() { _ = tx.Rollback() }()
+	var n int
+	if e = tx.QueryRow(`SELECT COUNT(*) FROM agent_federation_presence WHERE agent_id=? AND state='reserved' AND arrival_offer=?`, agentID, offer).Scan(&n); e != nil {
+		return e
+	}
+	if n != 1 {
+		return errors.New("stable arrival is not reserved")
+	}
+	if _, e = tx.Exec(`DELETE FROM federation_worker_defaults WHERE agent_id=?`, agentID); e != nil {
+		return e
+	}
+	if w != nil {
+		raw, err := json.Marshal(w)
+		if err != nil {
+			return err
+		}
+		if _, e = tx.Exec(`INSERT INTO federation_worker_defaults(agent_id,snapshot) VALUES(?,?)`, agentID, string(raw)); e != nil {
+			return e
+		}
+	}
+	return tx.Commit()
+}
 func GetFederationWorkerDefaults(agentID string) (*FederationWorkerDefaults, error) {
 	d, e := Open()
 	if e != nil {
@@ -292,7 +326,7 @@ func nodeProfileReadState(tx *sql.Tx, peer string) (nodeProfileState, error) {
 	if e != nil {
 		return s, e
 	}
-	rows, e = tx.Query(`SELECT slug,scope,spawn_policy FROM federation_peer_grants WHERE peer=? ORDER BY slug,scope`, peer)
+	rows, e = tx.Query(`SELECT slug,scope,spawn_policy FROM federation_peer_grants WHERE peer=? AND (expires_at IS NULL OR expires_at>?) ORDER BY slug,scope`, peer, dbTime(time.Now()))
 	if e != nil {
 		return s, e
 	}
@@ -561,7 +595,7 @@ func planFederationNodeProfileTx(tx *sql.Tx, profileID, peer, token string, newP
 			key := c.Item[6:]
 			if g, ok := desiredGrants[key]; ok {
 				raw, _ := json.Marshal(g.SpawnPolicy)
-				_, e = tx.Exec(`INSERT INTO federation_peer_grants(peer,slug,scope,spawn_policy,created_at) VALUES(?,?,?,?,?) ON CONFLICT(peer,slug,scope) DO UPDATE SET spawn_policy=excluded.spawn_policy`, peer, g.Slug, g.Scope, string(raw), dbTime(time.Now()))
+				_, e = tx.Exec(`INSERT INTO federation_peer_grants(peer,slug,scope,spawn_policy,created_at) VALUES(?,?,?,?,?) ON CONFLICT(peer,slug,scope) DO UPDATE SET spawn_policy=excluded.spawn_policy,expires_at=NULL`, peer, g.Slug, g.Scope, string(raw), dbTime(time.Now()))
 			} else {
 				g := oldGrants[key]
 				_, e = tx.Exec(`DELETE FROM federation_peer_grants WHERE peer=? AND slug=? AND scope=?`, peer, g.Slug, g.Scope)

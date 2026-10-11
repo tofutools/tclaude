@@ -14,10 +14,16 @@ import { MAX_TERMINAL_GROUP_NAME_LENGTH } from './terminal-shell-state.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { terminalTabStatus } from './terminal-tab-status.js';
 import { fmtCredits, fmtExactUSD, fmtUSD } from './costs-model.js';
-import { agentCostsHidden, subscribeAgentCosts, toggleAgentCosts } from './cost-display-toggle.js';
+import { terminalCostsHidden, subscribeTerminalCosts, toggleTerminalCosts } from './cost-display-toggle.js';
 import {
   memberHumanMessages, openHumanNotificationReader,
 } from './human-notification-attention.js';
+import { ViewersBadge } from './remote-viewers.js';
+import { RemoteFilesPanel } from './remote-files-panel.js';
+import { paneScope } from './skynet-scope.js';
+import { nodeColor } from './skynet-model.js';
+import { AgentGearMenu } from './groups-member-table.js';
+import { GroupsInteractionProvider, useGroupsInteractions } from './groups-interactions.js';
 
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
@@ -137,6 +143,7 @@ function OpaqueTerminalHost({
   onSelectionChange,
   onComposeMessage,
   onDisconnect,
+  onRemoteChange,
   disconnectNotice = null,
 }) {
   const hostRef = useRef(null);
@@ -155,6 +162,7 @@ function OpaqueTerminalHost({
       onComposeMessage,
       applicationClipboardShortcuts: descriptor.seed.harness === 'copilot',
       onDisconnect,
+      onRemoteChange,
       initialRetry: descriptor.seed.initialRetry === true,
     });
     widgetRef.current = widget;
@@ -200,13 +208,30 @@ function TerminalDisconnectNotice() {
   `;
 }
 
+// RemoteBadge marks a peer's terminal: whose it is and whether this view can
+// type (interactive) or only watch, as the peer granted it.
+function RemoteBadge({ seed, remote }) {
+  if (!seed.remote) return null;
+  const peer = seed.remote.peerLabel || seed.remote.peer;
+  const mode = remote?.mode;
+  const text = mode === 'interactive' ? `⌨ interactive · ${peer}` : mode === 'watch' ? `👁 watch-only · ${peer}` : `remote · ${peer}`;
+  const title = mode === 'interactive'
+    ? `${peer}'s agent: your keystrokes reach it. The peer shows REMOTE INPUT on the pane and can disconnect you.`
+    : mode === 'watch' ? `${peer}'s agent, read-only: you see the pane but cannot type. The peer shows REMOTE WATCH on the pane.`
+    : `${peer}'s agent, through this node`;
+  return html`<span class=${`term-remote-badge${mode ? ` ${mode}` : ''}`} title=${title}>${text}</span>`;
+}
+
 function TerminalPane({
   pane, active, activationToken, solo, manageTitle, actions, widgetFactory, onComposeMessage,
-  snapshot = null,
+  snapshot = null, scope = null,
 }) {
   const [status, setStatus] = useState('disconnected');
   const [reconnect, setReconnect] = useState(false);
   const [hasSelection, setHasSelection] = useState(false);
+  const [remote, setRemote] = useState(null);
+  const [files, setFiles] = useState(false);
+  const filesOK = !!(pane.seed.remote && remote?.files && remote?.viewer && !remote?.closed);
   const [dragging, setDragging] = useState(false);
   // Dashboard panes get their status from PaneTab. Only the solo title needs
   // to subscribe to the standalone snapshot signal; keeping this null in the
@@ -240,7 +265,7 @@ function TerminalPane({
   }, [active, agentStatus?.symbol, manageTitle, pane.label, snapshotReady]);
   return html`
     <div
-      class=${`mux-pane${active ? ' active' : ''}${theme.wizard && theme.palette ? ' arcane-palette' : ''}`}
+      class=${`mux-pane${active ? ' active' : ''}${theme.wizard && theme.palette ? ' arcane-palette' : ''}${scope?.hidden ? ' scope-hidden' : ''}`}
       id=${pane.id}
       role=${solo ? null : 'tabpanel'}
     >
@@ -262,10 +287,13 @@ function TerminalPane({
             onDragEnd=${endTitleDrag}
           >${pane.label}</span>
           ${reattachArmed ? html`<span class="mux-drag-out-hint">Release anywhere — even outside the browser — to send this terminal back to the dashboard</span>` : null}
-        ` : html`<span class="mux-pane-title">${pane.label}</span>`}
+        ` : html`<${NodePill} node=${scope?.node} /><span class="mux-pane-title">${pane.label}</span>`}
+        <${RemoteBadge} seed=${pane.seed} remote=${remote} />
+        ${!pane.seed.remote && pane.seed.agent ? html`<${ViewersBadge} agentId=${pane.seed.agent} className="term-viewers-badge" />` : null}
         <span class="mux-pane-status" role="status" aria-live="polite" aria-atomic="true">${status}</span>
         <span class="terminal-interaction-hint">${INTERACTION_HINT}</span>
         ${reconnect ? html`<button type="button" class="mux-btn" onClick=${() => void actions.widgetFor(pane.id)?.connect()}>Reconnect</button>` : null}
+        ${filesOK ? html`<button type="button" class="mux-btn" data-term-files aria-pressed=${files ? 'true' : 'false'} title="Browse the agent's project files on the peer: preview or download" onClick=${() => setFiles(!files)}>Files</button>` : null}
         <${CopyButton} className="mux-btn" hasSelection=${hasSelection} actions=${actions} runtimeID=${pane.id} />
         ${composeMessage ? html`
           <button type="button" class="mux-btn" title="Send a queued message to this agent (Ctrl/Cmd+M)" onClick=${composeMessage}>✉ Message</button>
@@ -289,6 +317,8 @@ function TerminalPane({
           <button type="button" class="mux-btn" title="Move this terminal to its own browser tab" onClick=${() => void actions.popOutPane(pane.key)}>⧉ tab</button>
         `}
       </div>
+      ${files && filesOK ? html`<${RemoteFilesPanel} terminal=${pane.seed.ws} viewer=${remote.viewer}
+        peer=${pane.seed.remote.peerLabel || pane.seed.remote.peer} onClose=${() => setFiles(false)} />` : null}
       <${OpaqueTerminalHost}
         descriptor=${pane}
         runtimeID=${pane.id}
@@ -302,6 +332,7 @@ function TerminalPane({
         onStatus=${setStatus}
         onReconnectChange=${setReconnect}
         onSelectionChange=${setHasSelection}
+        onRemoteChange=${setRemote}
         onComposeMessage=${composeMessage}
         disconnectNotice=${status === 'disconnected' && reconnect ? html`<${TerminalDisconnectNotice} />` : null}
       />
@@ -369,12 +400,12 @@ function TabAttention({ pane, snapshot, messages: suppliedMessages = null }) {
 }
 
 function TerminalCostToggle() {
-  const [hidden, setHidden] = useState(agentCostsHidden);
-  useLayoutEffect(() => subscribeAgentCosts(setHidden), []);
+  const [hidden, setHidden] = useState(terminalCostsHidden);
+  useLayoutEffect(() => subscribeTerminalCosts(setHidden), []);
   return html`<button type="button" class=${`cost-toggle mux-cost-toggle${hidden ? ' off' : ''}`}
     aria-label="Show agent costs" aria-pressed=${!hidden}
-    title="Show or hide per-agent costs, in Terminals and Groups"
-    onClick=${toggleAgentCosts}>$</button>`;
+    title="Show or hide per-agent costs on these tabs (Groups has its own toggle); hovering a tab shows its cost either way"
+    onClick=${toggleTerminalCosts}>$</button>`;
 }
 
 function TerminalCosts({ agent }) {
@@ -395,15 +426,82 @@ function TerminalCosts({ agent }) {
   `;
 }
 
+// costTooltip is the cost line of a tab's hover title, shown whatever the $
+// toggle says. Nothing when cost tracking is off (body.hide-costs) or the
+// agent has no cost yet; the WHAT-IF figure only where the dashboard shows it.
+function costTooltip(agent) {
+  const body = globalThis.document?.body;
+  if (!agent || body?.classList.contains('hide-costs')) return '';
+  const state = agent.state || {};
+  const cost = Number(state.cost_usd || 0);
+  const virtualCost = Number(state.virtual_cost_usd || 0);
+  const parts = [];
+  if (cost > 0) parts.push(`API cost ${fmtExactUSD(cost)}`);
+  if (virtualCost > 0 && body?.classList.contains('cost-whatif')) parts.push(`≈${fmtExactUSD(virtualCost)} WHAT-IF (hypothetical)`);
+  return parts.length ? `Cost this session: ${parts.join(' · ')}` : '';
+}
+
+// tabGearMember is who a tab's ⚙ acts on: the agent this node's roster
+// matched to the pane, or the peer agent a remote pane attaches to. Plain
+// shells, and a peer's own view (whose roster is not this browser's panes),
+// get none.
+function tabGearMember(pane, agent, snapshotValue, scope) {
+  if (snapshotValue?.peer_view) return null;
+  const remote = pane?.seed?.remote;
+  if (remote?.agent) {
+    const node = scope?.node || { id: remote.peer, name: remote.peerLabel || remote.peer.slice(0, 13), local: false };
+    return { member: { agent_id: remote.agent, conv_id: '', title: pane.label || remote.agent, state: {} }, node };
+  }
+  return agent?.conv_id ? { member: agent, node: null } : null;
+}
+
+// TabGear holds a tab's ⚙ menu. The strip scrolls sideways and so clips
+// anything hanging below it: an open menu is pinned to the viewport under its
+// button instead. Clicks and keys inside never reach the tab, so they neither
+// switch nor close it.
+function TabGear({ gear, snapshot, menuKey }) {
+  const ref = useRef(null);
+  // Reading the interactions context re-renders this on open and close, so
+  // the menu is placed as it opens rather than on the next snapshot publish.
+  const open = useGroupsInteractions().openMenuKey === menuKey;
+  useLayoutEffect(() => {
+    const menu = ref.current?.querySelector('.action-menu');
+    const button = ref.current?.querySelector('.cog-btn');
+    if (!open || !menu || !button) return;
+    const rect = button.getBoundingClientRect();
+    const width = menu.offsetWidth || 0;
+    const top = Math.round(rect.bottom + 4);
+    menu.style.top = `${top}px`;
+    menu.style.left = `${Math.max(4, Math.round(Math.min(rect.left, (globalThis.innerWidth || 0) - width - 8)))}px`;
+    // A fixed menu cannot be scrolled to: it scrolls itself instead.
+    menu.style.maxHeight = `calc(100vh - ${top + 8}px)`;
+  }, [open]);
+  return html`<span ref=${ref} class="mux-tab-gear" draggable="false">
+    <${AgentGearMenu} member=${gear.member} node=${gear.node} snapshot=${snapshot?.value} menuKey=${menuKey} />
+  </span>`;
+}
+
+const inTabGear = (event) => !!event.target?.closest?.('.mux-tab-gear');
+
+// NodePill names a pane's node in a fused view (skynet-scope.js), in that
+// node's colour.
+function NodePill({ node }) {
+  if (!node) return null;
+  return html`<span class="mux-node-pill" style=${`--nc:${node.color}`} title=${node.local ? 'This node' : `On ${node.name}`}>${node.local ? '⌂ ' : ''}${node.name}</span>`;
+}
+
 function PaneTab({
   pane, active, menuOpen, groupId = null, actions, openMenu, dragging, dropSide,
-  onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onReordered, snapshot = null,
+  onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onReordered, snapshot = null, scope = null,
 }) {
   const agentStatus = terminalTabStatus(pane, snapshot?.value);
   const unreadMessages = paneUnreadNotifications(pane, snapshot?.value);
   const notificationLabel = unreadNotificationLabel(pane, unreadMessages.length);
   const ariaLabel = [agentStatus.ariaLabel, notificationLabel].filter(Boolean).join('. ');
+  const costLine = costTooltip(agentStatus.agent);
+  const gear = tabGearMember(pane, agentStatus.agent, snapshot?.value, scope);
   const activate = (event) => {
+    if (inTabGear(event)) return;
     if (event.type === 'keydown' && event.target.closest('button')) return;
     const reorderOffset = terminalTabReorderOffset(event);
     if (reorderOffset !== null) {
@@ -418,6 +516,7 @@ function PaneTab({
     actions.activatePane(pane.key);
   };
   const openContextMenu = (event) => {
+    if (inTabGear(event)) return false;
     const keyboard = event.type === 'keydown';
     if (keyboard && event.key !== 'ContextMenu' && !(event.key === 'F10' && event.shiftKey)) return false;
     event.preventDefault();
@@ -441,7 +540,7 @@ function PaneTab({
   // the full tab. A drag that starts on the close button is cancelled, so the ×
   // stays a click target and never begins a tab drag.
   const startDrag = (event) => {
-    if (tabDragStartedOnClose(event.target)) {
+    if (tabDragStartedOnClose(event.target) || inTabGear(event)) {
       event.preventDefault();
       return;
     }
@@ -449,7 +548,7 @@ function PaneTab({
   };
   return html`
     <div
-      class=${`mux-tab${active ? ' active' : ''}${dragging ? ' dragging' : ''}${dropSide ? ` drop-${dropSide}` : ''}`}
+      class=${`mux-tab${active ? ' active' : ''}${dragging ? ' dragging' : ''}${dropSide ? ` drop-${dropSide}` : ''}${scope?.hidden ? ' scope-hidden' : ''}`}
       role="tab"
       data-pane-key=${pane.key}
       data-agent-status=${agentStatus.key}
@@ -462,7 +561,7 @@ function PaneTab({
       aria-describedby="terminal-tab-reorder-help"
       aria-haspopup="menu"
       aria-expanded=${menuOpen ? 'true' : 'false'}
-      title=${`${agentStatus.title}. Drag to reorder · drop onto another tab to group them · drag off the strip to detach · Alt+Shift+Left/Right to move · Right-click or Shift+F10 for actions`}
+      title=${`${agentStatus.title}.${costLine ? ` ${costLine}.` : ''} Drag to reorder · drop onto another tab to group them · drag off the strip to detach · Alt+Shift+Left/Right to move · Right-click or Shift+F10 for actions`}
       onClick=${activate}
       onKeyDown=${onKeyDown}
       onContextMenu=${openContextMenu}
@@ -477,7 +576,9 @@ function PaneTab({
         aria-hidden="true"
         title=${agentStatus.title}
       >${agentStatus.symbol}</span>
+      ${gear ? html`<${TabGear} gear=${gear} snapshot=${snapshot} menuKey=${`tab:${pane.key}`} />` : null}
       <${TabAttention} pane=${pane} snapshot=${snapshot} messages=${unreadMessages} />
+      <${NodePill} node=${scope?.node} />
       <span class="mux-tab-label">${pane.label}</span>
       <${TerminalCosts} agent=${agentStatus.agent} />
       <button
@@ -803,9 +904,45 @@ function PaneContextMenu({
 function TerminalTabs({
   state, actions, widgetFactory, onComposeMessage, composeMessageReady = null,
   composeMessageDialogKind = () => '',
-  solo = false, manageTitle = false, empty = false, snapshot = null,
+  solo = false, manageTitle = false, empty = false, snapshot = null, scope = null,
 }) {
   const current = state.view.value;
+  // A fused node scope (skynet-scope.js) shows the ticked nodes' panes, each
+  // labelled with its node; the rest stay open, just out of sight.
+  const scopeView = scope?.view.value;
+  const scopeOf = (pane) => paneScope(scopeView?.fleet, scopeView?.fused, pane.seed, nodeColor);
+  const shownPanes = current.panes.filter((pane) => !scopeOf(pane).hidden);
+  const activeHidden = current.activeKey && scopeOf(current.panes.find((p) => p.key === current.activeKey) || {}).hidden;
+  // Quietly: unticking a node must not pull the operator into this tab.
+  useEffect(() => {
+    if (activeHidden && shownPanes.length) actions.activatePane(shownPanes[0].key, { reveal: false });
+  }, [activeHidden, shownPanes[0]?.key]);
+  // skipHidden makes a keyboard move step over tabs the scope hides: one
+  // press moves past the next visible neighbour, never only past unseen ones.
+  const skipHidden = (move, movedKeys) => (id, offset) => {
+    if (!scopeView?.fused) return move(id, offset);
+    const dir = offset > 0 ? 1 : -1;
+    let moved = null;
+    for (let guard = state.view.value.panes.length; guard >= 0; guard -= 1) {
+      const before = state.view.value.panes.map((p) => p.key);
+      const out = move(id, dir);
+      if (!out) break;
+      moved = out;
+      const after = state.view.value.panes;
+      const own = new Set(movedKeys(id));
+      const at = (keys, k) => keys.indexOf(k);
+      const firstOwn = (keys) => keys.findIndex((k) => own.has(k));
+      const afterKeys = after.map((p) => p.key);
+      const passed = after.filter((p) => !own.has(p.key)
+        && (at(before, p.key) < firstOwn(before)) !== (at(afterKeys, p.key) < firstOwn(afterKeys)));
+      if (!passed.length || passed.some((p) => !scopeOf(p).hidden)) break;
+    }
+    return moved;
+  };
+  const scopedActions = scopeView?.fused
+    ? { ...actions, movePaneByOffset: skipHidden(actions.movePaneByOffset, (key) => [key]) }
+    : actions;
+  const moveGroupScoped = skipHidden(actions.moveGroupByOffset, (gid) => (current.segments.find((sg) => sg.type === 'group' && sg.group.id === gid)?.panes || []).map((p) => p.key));
   const composeMessageAvailable = Boolean(onComposeMessage) &&
     (composeMessageReady === null || composeMessageReady.value);
   const hasPanes = current.panes.length > 0;
@@ -905,7 +1042,7 @@ function TerminalTabs({
     queueMicrotask(() => focusGroupPill(moved.group.id));
   };
   const moveGroupKeyboard = (groupID, offset) => {
-    const moved = actions.moveGroupByOffset(groupID, offset);
+    const moved = moveGroupScoped(groupID, offset);
     if (moved) announceGroupAndRefocus(moved);
   };
   const startGroupDrag = (event, groupID) => {
@@ -1322,7 +1459,7 @@ function TerminalTabs({
           Drag this pill, or press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow, to move the whole group among the other tabs.
         </span>
         <span class="mux-tab-a11y" role="status" aria-live="polite" aria-atomic="true">${reorderAnnouncement}</span>
-        <div ref=${tabsRef} class=${`mux-tabs${detachArmed ? ' drag-out-armed' : ''}`} role="tablist" aria-label="Open terminals">
+        <${GroupsInteractionProvider}><div ref=${tabsRef} class=${`mux-tabs${detachArmed ? ' drag-out-armed' : ''}`} role="tablist" aria-label="Open terminals">
           ${current.segments.map((segment) => {
             const renderTab = (pane) => html`
               <${PaneTab}
@@ -1331,7 +1468,7 @@ function TerminalTabs({
                 active=${current.activeKey === pane.key}
                 menuOpen=${tabMenu?.kind !== 'group' && tabMenu?.key === pane.key}
                 groupId=${segment.type === 'group' ? segment.group.id : null}
-                actions=${actions}
+                actions=${scopedActions}
                 openMenu=${setTabMenu}
                 dragging=${dragKey === pane.key}
                 dropSide=${dropTarget?.key === pane.key ? dropTarget.side : ''}
@@ -1342,9 +1479,12 @@ function TerminalTabs({
                 onDrop=${dropTab}
                 onReordered=${announceAndRefocus}
                 snapshot=${snapshot}
+                scope=${scopeOf(pane)}
               />
             `;
             if (segment.type !== 'group') return renderTab(segment.pane);
+            // A stack none of whose panes are on a ticked node is out of sight too.
+            if (segment.panes.every((pane) => scopeOf(pane).hidden)) return null;
             const gid = segment.group.id;
             const dragging = Boolean(dragKey) || Boolean(dragGroupId);
             // A leading gap is only reachable — and only needed — when this
@@ -1401,7 +1541,7 @@ function TerminalTabs({
               onDragLeave=${endZoneDragLeave}
               onDrop=${dropOnEnd}
             />` : null}
-        </div>
+        </div><//>
         ${detachArmed ? html`<div class="mux-drag-out-hint">Release anywhere — even outside the browser — to detach this terminal into its own window</div>` : null}
       ` : null}
       ${tabMenu ? html`<${PaneContextMenu} menu=${tabMenu} actions=${actions} groups=${current.groups}
@@ -1421,9 +1561,13 @@ function TerminalTabs({
               widgetFactory=${widgetFactory}
               onComposeMessage=${composeMessageAvailable ? onComposeMessage : null}
               snapshot=${manageTitle ? snapshot : null}
+              scope=${scopeOf(pane)}
             />
           `)}
         </div>
+      ` : null}
+      ${hasPanes && !shownPanes.length ? html`
+        <div class="mux-scope-empty">None of your open terminals is on the ticked nodes. Tick more nodes in <b>nodes ▾</b> to see them.</div>
       ` : null}
       ${empty && !hasPanes ? html`
         <div id="mux-empty">
@@ -1441,62 +1585,10 @@ function TerminalBadge({ state }) {
   return html`<span id="terminals-badge" class="tab-badge count" hidden=${count === 0}>${count}</span>`;
 }
 
-function TerminalModalSession({ descriptor, actions, widgetFactory }) {
-  const [status, setStatus] = useState('disconnected');
-  const [hasSelection, setHasSelection] = useState(false);
-  const title = descriptor.label ? `Terminal — ${descriptor.label}` : 'Terminal';
-  // Escape is NOT a close key here: it is terminal input for vim, less and the
-  // agent TUIs. Only the shared confirmation overlay consumes Escape while it
-  // is above this shell.
-  return html`
-    <div
-      class="modal-overlay show"
-      id="term-session-modal"
-      onClick=${(event) => { if (event.currentTarget === event.target) void actions.confirmModalClose(descriptor.id); }}
-    >
-      <div class="term-session-modal" role="dialog" aria-modal="true" aria-labelledby="term-session-title">
-        <div class="term-session-header">
-          <h3 id="term-session-title">${title}</h3>
-          <span class="term-session-status" id="term-session-status" role="status" aria-live="polite" aria-atomic="true">${status}</span>
-          <span class="terminal-interaction-hint">${INTERACTION_HINT}</span>
-          <${CopyButton} className="term-session-action" id="term-session-copy" hasSelection=${hasSelection} actions=${actions} runtimeID=${descriptor.id} />
-          ${descriptor.seed.hideConv ? html`
-            <button type="button" class="term-session-detach" id="term-session-detach" aria-label="Detach" title="Detach — drop this view now; the agent keeps running, reopen to reattach" onClick=${() => void actions.detachModal(descriptor.id)}>Detach</button>
-          ` : null}
-          <button type="button" class="term-session-pop" id="term-session-pop" title="Move this terminal to the dashboard's Terminals tab, where several can be open at once" onClick=${() => void actions.moveModalToPane(descriptor.id)}>⧉ tab</button>
-          <button type="button" class="term-session-close" id="term-session-close" aria-label="Close" title="Close — asks first; the agent keeps running, reopen to reattach" onClick=${() => void actions.confirmModalClose(descriptor.id)}>×</button>
-        </div>
-        <${OpaqueTerminalHost}
-          descriptor=${descriptor}
-          runtimeID=${descriptor.id}
-          active=${true}
-          authenticate=${false}
-          autoReattach=${false}
-          className="term-session-xterm"
-          fitClassName="term-session-xterm-fit"
-          actions=${actions}
-          widgetFactory=${widgetFactory}
-          onStatus=${setStatus}
-          onReconnectChange=${() => {}}
-          onSelectionChange=${setHasSelection}
-          onDisconnect=${() => actions.onModalDisconnect(descriptor.id)}
-        />
-      </div>
-    </div>
-  `;
-}
-
-function TerminalModal({ state, actions, widgetFactory }) {
-  const descriptor = state.view.value.modal;
-  return descriptor
-    ? html`<${TerminalModalSession} key=${descriptor.id} descriptor=${descriptor} actions=${actions} widgetFactory=${widgetFactory} />`
-    : null;
-}
 
 export function mountTerminalShellIsland({
   host,
   badgeHost,
-  modalHost,
   state,
   actions,
   registerCleanup,
@@ -1504,10 +1596,11 @@ export function mountTerminalShellIsland({
   onComposeMessage = null,
   composeMessageDialogKind = () => '',
   snapshot = null,
+  scope = null,
 }) {
   // A custom widget factory (tests or another embedding) owns its own runtime.
   // The production xterm adapter asks the facade to load the classic core
-  // before it lets the first pane/modal enter Preact state.
+  // before it lets the first pane enter Preact state.
   const runtimeLoader = widgetFactory === mountTerminalWidget ? loadXtermRuntime : null;
   const unregisterController = registerTerminalShellController(actions, runtimeLoader);
   const unbindHandoff = bindTerminalHandoffReceiver({
@@ -1530,14 +1623,12 @@ export function mountTerminalShellIsland({
   });
   render(html`<${TerminalTabs} state=${state} actions=${actions} widgetFactory=${widgetFactory}
     onComposeMessage=${onComposeMessage} composeMessageDialogKind=${composeMessageDialogKind}
-    snapshot=${snapshot} />`, host);
+    snapshot=${snapshot} scope=${scope} />`, host);
   render(html`<${TerminalBadge} state=${state} />`, badgeHost);
-  render(html`<${TerminalModal} state=${state} actions=${actions} widgetFactory=${widgetFactory} />`, modalHost);
   registerCleanup(() => {
     unbindNavRouting();
     unbindHandoff();
     unregisterController();
-    render(null, modalHost);
     render(null, badgeHost);
     render(null, host);
     actions.dispose();
@@ -1579,5 +1670,5 @@ export function mountStandaloneTerminalShell({
 
 export {
   GroupStack, OpaqueTerminalHost, PaneContextMenu, PaneTab, TabAttention, TerminalBadge,
-  TerminalModal, TerminalModalSession, TerminalPane, TerminalTabs,
+  TerminalPane, TerminalTabs,
 };

@@ -80,6 +80,8 @@ func groupsCmd() *cobra.Command {
 // --- groups ls ---
 
 type groupsLsParams struct {
+	Node     string `long:"node" optional:"true" help:"Read a live peer view by pinned instance ID or local label (operator only)"`
+	AllNodes bool   `long:"all-nodes" help:"List this node's groups and every trusted peer's shared groups as group@node (operator only)"`
 	State    string `long:"state" optional:"true" help:"Filter: online (any member online) | offline (no member online)"`
 	Archived bool   `long:"archived" help:"Include archived (soft-deleted) groups in the listing"`
 	JSON     bool   `long:"json" help:"Output JSON"`
@@ -124,6 +126,20 @@ func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
 	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
+	}
+	if p.AllNodes {
+		if p.Node != "" || p.Archived || p.State != "" {
+			fmt.Fprintln(stderr, "Error: --all-nodes cannot be combined with --node, --archived or --state")
+			return rcInvalidArg
+		}
+		return runGroupsLsAllNodes(p.JSON, stdout, stderr)
+	}
+	if p.Node != "" {
+		if p.Archived || p.State != "" {
+			fmt.Fprintln(stderr, "Error: --node cannot be combined with --archived or --state")
+			return rcInvalidArg
+		}
+		return runPeerListing(p.Node, "groups", "", p.JSON, stdout, stderr)
 	}
 	path := "/v1/groups"
 	if p.Archived {

@@ -12,14 +12,14 @@ import (
 )
 
 type identityRecoveryParams struct {
-	dbParam
+	DBParam
 	Old         string `pos:"true" help:"Previous admitted instance ID"`
 	New         string `pos:"true" help:"Replacement key-derived instance ID"`
 	Fingerprint string `long:"fingerprint" optional:"true" help:"Verified replacement fingerprint; required with --apply"`
 	Apply       bool   `long:"apply" help:"Replace admission and spaces (default: preview)"`
 }
 type revokeOldParams struct {
-	dbParam
+	DBParam
 	Instance string `pos:"true" help:"Retired or compromised key-derived instance ID"`
 	Apply    bool   `long:"apply" help:"Revoke predecessor and pending successors (default: preview)"`
 }

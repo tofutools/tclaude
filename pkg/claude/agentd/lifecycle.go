@@ -270,6 +270,12 @@ var errAgentStillRunning = errors.New("agent is still running after the full sto
 // investigates. An already-offline conv returns immediately with no error,
 // which is the overwhelmingly common case for a delete.
 func stopBeforePurge(convID, relatedEventID string) (memberOpResult, error) {
+	if db.AgentConvAway(convID) {
+		if _, err := db.RetireAgentAuthorizationByConv(convID, "human", "deleted while away"); err != nil {
+			return memberOpResult{}, err
+		}
+		notifyAwayAgentTerminal(convID)
+	}
 	res, outcome := stopOneConvAndWait(
 		convID, false /* soft exit first */, db.AgentExitActionForceStop, relatedEventID, 0)
 	switch outcome {
@@ -2476,7 +2482,7 @@ func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool,
 		res.Detail = "agent-state lookup: " + serr.Error()
 		return res, nil
 	}
-	if !live {
+	if !live && !db.AgentConvAway(convID) {
 		state, _ := db.AgentState(convID)
 		res.Action = "skipped:not_active_agent"
 		res.Detail = "state: " + state
@@ -2559,8 +2565,10 @@ func finishRetiredConv(convID string, shutdown, deleteWorktree bool, wt agentWor
 			td.Notes = append(td.Notes, "session shutdown failed: "+td.Stop.Detail)
 		}
 	}
-	cleanupAgentDirectoriesAfterRetire(convID, shutdown)
-	cleanupRetiredCodexNativeProfiles(convID)
+	if !db.AgentConvAway(convID) {
+		cleanupAgentDirectoriesAfterRetire(convID, shutdown)
+		cleanupRetiredCodexNativeProfiles(convID)
+	}
 	if deleteWorktree {
 		plan := scheduleRetireWorktreeCleanup(convID, wt, shutdown)
 		td.Worktree = &plan
@@ -2828,6 +2836,14 @@ func handleAgentDelete(w http.ResponseWriter, r *http.Request, targetConv string
 		writeError(w, http.StatusConflict, "alive",
 			"target had a live tmux session; sent /exit. Re-run with ?force=1 to delete now, or wait for the pane to exit and retry.")
 		return
+	}
+
+	if db.AgentConvAway(targetConv) {
+		if _, err := db.RetireAgentAuthorizationByConv(targetConv, "human", "deleted while away"); err != nil {
+			writeError(w, 500, "retire", err.Error())
+			return
+		}
+		notifyAwayAgentTerminal(targetConv)
 	}
 
 	// Comprehensive cleanup: DB purge + filesystem + sync tombstone +
@@ -4870,6 +4886,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// same function in a loop. handleGroupSpawn keeps only the HTTP
 	// shape — decode + validate above, error/JSON mapping below.
 	p := spawnParams{
+		Arrival:                    arrivalFromRequest(r),
 		AgentID:                    reservedAgentIDFromContext(r.Context()),
 		EffectiveSandbox:           &effectiveSandbox,
 		Name:                       body.Name,
@@ -4973,6 +4990,28 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 				return err
 			}
 			return checkTeleportRepo(row, g.ID)
+		}
+	}
+	if carry, ok := r.Context().Value(permissionCarryLaunchContextKey{}).(permissionCarryLaunch); ok && carry.Policy.Enabled {
+		priorCheck := p.launchAuthority
+		p.launchAuthority = func() error {
+			if priorCheck != nil {
+				if err := priorCheck(); err != nil {
+					return err
+				}
+			}
+			return carry.check()
+		}
+	}
+	if identity, ok := r.Context().Value(federationIdentityLaunchKey{}).(federationIdentityLaunch); ok {
+		prior := p.launchAuthority
+		p.launchAuthority = func() error {
+			if prior != nil {
+				if e := prior(); e != nil {
+					return e
+				}
+			}
+			return db.ValidateFederationArrival(identity.Agent, identity.Offer)
 		}
 	}
 	// An omitted include_group_context flag means opt-in — every spawn
@@ -5114,6 +5153,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 // length/charset-checked, reply-to resolved to a conv-id — so the
 // shared core does no HTTP-shaped validation of its own.
 type spawnParams struct {
+	Arrival         *arrivalContext
 	RemoteJob       *federationJobLaunch // trusted internal remote job boundary
 	launchAuthority func() error
 	BundleHistory   *bundleHistoryLaunch // trusted internal bundle route only
@@ -6965,6 +7005,29 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		}
 	}()
 
+	var importedID string
+	importedCleanup := func() {}
+	importedLaunched := false
+	defer func() {
+		if failure != nil && !importedLaunched {
+			importedCleanup()
+		}
+	}()
+	installHistory := func() *spawnFailure {
+		if p.BundleHistory == nil || importedID != "" {
+			return nil
+		}
+		if !spawnHarness.SupportsHistoryTransfer() || spawnHarness.History.Format() != p.BundleHistory.Format {
+			return &spawnFailure{http.StatusBadRequest, "history", "resolved harness cannot resume this history format"}
+		}
+		var err error
+		importedID, importedCleanup, err = importBundleHistory(spawnHarness, p.BundleHistory, p.Cwd)
+		if err != nil {
+			importedCleanup = func() {}
+			return &spawnFailure{http.StatusBadRequest, "history", "install imported history: " + err.Error()}
+		}
+		return nil
+	}
 	var openCodeLaunch *openCodeLaunch
 	if spawnHarness.UsesAuthoritativeServer() {
 		rememberHTTPProxyLaunchGroup(label, g, p.PermissionOverrides)
@@ -7012,8 +7075,24 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			return nil, &spawnFailure{http.StatusUnprocessableEntity,
 				"unsupported_sandbox_profile_resource_limits", resourceErr.Error()}
 		}
+
+		if p.BundleHistory != nil {
+			if err = prepareOpenCodeTclaudeLayerState(sandboxSpec); err != nil {
+				resourceCleanup()
+				return nil, &spawnFailure{http.StatusInternalServerError, "history", err.Error()}
+			}
+			spawnHarness, err = openCodeHistoryForAgent(spawnHarness, p.AgentID)
+			if err != nil {
+				resourceCleanup()
+				return nil, &spawnFailure{http.StatusInternalServerError, "history", err.Error()}
+			}
+			if fail := installHistory(); fail != nil {
+				resourceCleanup()
+				return nil, fail
+			}
+		}
 		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
-			label, p.Cwd, p.Name, "", permissionJSON,
+			label, p.Cwd, p.Name, importedID, permissionJSON,
 			p.SandboxImplementation, sandboxSpec, resourceCgroupDir)
 		if err != nil && resourceCgroupDir != "" &&
 			errors.Is(err, errOpenCodeResourceCgroup) &&
@@ -7022,7 +7101,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			resourceCleanup()
 			resourceCgroupDir = ""
 			openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
-				label, p.Cwd, p.Name, "", permissionJSON,
+				label, p.Cwd, p.Name, importedID, permissionJSON,
 				p.SandboxImplementation, sandboxSpec, "")
 		}
 		if err != nil {
@@ -7071,25 +7150,10 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		}
 	}
 
-	var importedID string
-	importedCleanup := func() {}
-	importedLaunched := false
-	if p.BundleHistory != nil {
-		if !spawnHarness.SupportsHistoryTransfer() || spawnHarness.History.Format() != p.BundleHistory.Format {
-			return nil, &spawnFailure{http.StatusBadRequest, "history", "resolved harness cannot resume this history format"}
-		}
-		var cleanup func()
-		var err error
-		importedID, cleanup, err = spawnHarness.History.Import(p.BundleHistory.Raw, p.BundleHistory.SourceID, p.Cwd)
-		if err != nil {
-			return nil, &spawnFailure{http.StatusBadRequest, "history", "install imported history: " + err.Error()}
-		}
-		importedCleanup = cleanup
-		defer func() {
-			if failure != nil && !importedLaunched {
-				importedCleanup()
-			}
-		}()
+	if fail := installHistory(); fail != nil {
+		return nil, fail
+	}
+	if importedID != "" {
 		launchEnroll = true
 	}
 	if p.DarwinRouteCapable && !launchEnroll {
@@ -7106,6 +7170,13 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		if routeEnabled && (!layeredLaunch || !launchEnroll) {
 			return nil, &spawnFailure{http.StatusUnprocessableEntity, "unsupported_group_route_launch", "Linux group routes require a pre-enrolled pane-authoritative launch with tclaude’s sandbox"}
 		}
+	}
+	if p.Arrival != nil {
+		if p.AgentID == "" {
+			p.AgentID = db.NewAgentID()
+		}
+		p.InitialMessage = buildArrivalBriefing(*p.Arrival, p.AgentID, p.Cwd, groupName, spawnHarness.Name, p.Model) + "\n\n" + p.InitialMessage
+		p.Arrival = nil // an async continuation must not add a second briefing
 	}
 	var preConvID string
 	var preMsgID int64
@@ -8445,10 +8516,20 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 		taskRefBound = true
 	}
 
+	returnHome := false
+	if presence, err := db.GetAgentFederationPresence(agentID); err != nil {
+		return 0, actorCreated, &spawnFailure{500, "identity", err.Error()}
+	} else if presence != nil {
+		returnHome = presence.State == "here" && presence.HomeInstance == presence.CurrentInstance && presence.ArrivalOffer != ""
+	}
+	if returnHome {
+		p.PermissionOverrides = nil
+		p.IsOwner = false
+	}
 	// Membership is optional for process-owned v1 agents. Ordinary spawn
 	// callers still pass a group and retain the existing fatal membership
 	// contract.
-	if g != nil {
+	if g != nil && !returnHome {
 		if err := db.AddAgentGroupMember(&db.AgentGroupMember{
 			GroupID: g.ID,
 			ConvID:  convID,
@@ -8566,7 +8647,7 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 	if workerErr != nil {
 		return 0, actorCreated, &spawnFailure{http.StatusInternalServerError, "worker_defaults", workerErr.Error()}
 	}
-	if workerDefaults != nil && len(workerDefaults.Permissions) > 0 {
+	if !returnHome && workerDefaults != nil && len(workerDefaults.Permissions) > 0 {
 		provenance := fmt.Sprintf("peer:%s node-profile:%s id:%s revision:%d", workerDefaults.Peer, workerDefaults.ProfileName, workerDefaults.ProfileID, workerDefaults.Revision)
 		for _, slug := range db.SortedOverrideSlugs(workerDefaults.Permissions) {
 			override := workerDefaults.Permissions[slug]
@@ -8707,6 +8788,12 @@ func rollbackSpawnEnrollment(g *db.AgentGroup, convID string, msgID int64, actor
 				"conv", convID, "msg_id", msgID, "error", err)
 		}
 	}
+	if restored, err := db.RollbackFederationArrival(convID); err != nil {
+		slog.Warn("spawn: stable arrival rollback failed; retaining actor for inspection", "conv", convID, "error", err)
+		return
+	} else if restored {
+		return
+	}
 	if g != nil {
 		if err := db.RemoveAgentGroupMember(g.ID, convID); err != nil {
 			slog.Warn("spawn: rollback failed to remove group member",
@@ -8735,7 +8822,7 @@ func rollbackSpawnEnrollment(g *db.AgentGroup, convID string, msgID int64, actor
 					"conv", convID, "agent", agentID, "error", err)
 			}
 		}
-		if _, err := db.DeleteAgentByConvID(convID); err != nil {
+		if _, err := db.DeleteUnlaunchedAgentByConvID(convID); err != nil {
 			slog.Warn("spawn: rollback failed to delete stranded actor",
 				"conv", convID, "error", err)
 		}

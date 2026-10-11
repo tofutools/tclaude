@@ -25,6 +25,7 @@ var FederationIdentityColumns = []IdentityColumn{
 	{"federation_route_mirrors", "peer", IdentityClose},
 	{"federation_route_proxies", "peer", IdentityClose},
 	{"federation_peer_grants", "peer", IdentityRebind},
+	{"federation_peer_access_requests", "peer", IdentityRebind},
 	{"federation_auto_workers", "peer", IdentityRebind},
 	{"federation_bundle_offers", "peer", IdentityClose},
 	{"federation_agent_moves", "peer", IdentityRebind},
@@ -39,6 +40,22 @@ var FederationIdentityColumns = []IdentityColumn{
 	{"model_proxy_worker_leases", "gateway", IdentityClose},
 	{"federation_identity_rotations", "old_instance", IdentityHistorical},
 	{"federation_identity_rotations", "new_instance", IdentityHistorical},
+	// Continuations pin the original host identities and proof-map keys. They
+	// retain those identities across rotation, just like bundle provenance;
+	// rewriting them would invalidate a returning agent's continuation.
+	{"agent_federation_presence", "home_instance", IdentityHistorical},
+	{"agent_federation_presence", "current_instance", IdentityHistorical},
+	{"agent_federation_presence", "current_peer", IdentityHistorical},
+	{"agent_federation_presence", "predecessor_instance", IdentityHistorical},
+	{"agent_federation_presence", "transfer_json", IdentityHistorical},
+	{"agent_federation_presence", "arrival_rollback_json", IdentityHistorical},
+	{"federation_agent_locations", "home_instance", IdentityHistorical},
+	{"federation_agent_locations", "current_instance", IdentityHistorical},
+	{"federation_mail_custody", "sender_instance", IdentityHistorical},
+	{"federation_mail_custody", "ingress_instance", IdentityHistorical},
+	{"federation_mail_custody", "destination", IdentityClose},
+	{"federation_mail_custody", "payload", IdentityHistorical},
+	{"federation_agent_mail_deliveries", "sender_instance", IdentityHistorical},
 	// Structured and embedded references also need an explicit rule. Frozen
 	// request bodies and origin provenance are never recursively rewritten.
 	{"human_messages", "group_name", IdentityHistorical},

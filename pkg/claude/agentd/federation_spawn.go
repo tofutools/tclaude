@@ -635,6 +635,9 @@ var federationAutoSpawnLocks sync.Map // trusted peer id -> *sync.Mutex
 type federationSpawnRateKey struct{}
 
 func autoApproveFederationSpawn(req *db.FederationSpawnRequest, p *db.FederationPeer) {
+	autoApproveFederationSpawnWithPeerAction(req, p, false)
+}
+func autoApproveFederationSpawnWithPeerAction(req *db.FederationSpawnRequest, p *db.FederationPeer, peerAction bool) {
 	lock, _ := federationAutoSpawnLocks.LoadOrStore(p.InstanceID, &sync.Mutex{})
 	peerLock := lock.(*sync.Mutex)
 	peerLock.Lock()
@@ -706,7 +709,11 @@ func autoApproveFederationSpawn(req *db.FederationSpawnRequest, p *db.Federation
 		// path. A remote request can select only an allowlisted profile, never
 		// supply an operator token or arbitrary launch settings.
 		r := httptest.NewRequest(http.MethodPost, "/internal/federation-auto-spawn", nil)
-		r = r.WithContext(context.WithValue(r.Context(), peerKey{}, &peer{PID: 1, HumanTokenValid: true}))
+		if peerAction {
+			r = r.WithContext(context.WithValue(r.Context(), peerActionKey{}, &peerActionAuthority{peer: p.InstanceID, groupID: g.ID, permission: PermGroupsMembersSpawn}))
+		} else {
+			r = r.WithContext(context.WithValue(r.Context(), peerKey{}, &peer{PID: 1, HumanTokenValid: true}))
+		}
 		r = r.WithContext(context.WithValue(r.Context(), federationSpawnRateKey{}, "federation:"+p.InstanceID))
 		rec := httptest.NewRecorder()
 		executeFederationSpawn(rec, r, req, p, g, fedSpawnApproveReq{Profile: fedFirst(req.Profile, policy.Profile), Cwd: policy.Cwd, Harness: policy.Harness, Model: policy.Model}, true)

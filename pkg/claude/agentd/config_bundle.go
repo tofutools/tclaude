@@ -285,6 +285,12 @@ func handleConfigBundleImport(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if in.Apply {
+		if expected, ok := r.Context().Value(boardPreviewHashKey{}).(string); ok && expected != boardPreviewHash(preview) {
+			writeError(w, 409, "preview_changed", "local configuration changed; preview again")
+			return
+		}
+	}
 	if !in.Apply {
 		writeJSON(w, 200, preview)
 		return

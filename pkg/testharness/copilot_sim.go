@@ -283,6 +283,7 @@ func newCopilotSim(t copilotSimT, capture copilotfixture.HookCapture,
 		launch:     launch,
 		capture:    capture,
 		createdAt:  time.Now().UTC(),
+		launched:   launch.ResumeID != "",
 	}
 	if c.Model == "" {
 		c.Model = "claude-sonnet-4.5"
@@ -447,14 +448,11 @@ func (c *CopilotSim) Start() error {
 	if c.launched {
 		event = "session.resume"
 	}
-	if err := c.appendEventLocked(map[string]any{
-		"type": event,
-		"data": map[string]any{
-			"sessionId":      c.ConvID,
-			"copilotVersion": c.CliVersion,
-			"selectedModel":  c.Model,
-		},
-	}); err != nil {
+	data := map[string]any{"copilotVersion": c.CliVersion, "selectedModel": c.Model}
+	if event == "session.start" {
+		data["sessionId"] = c.ConvID
+	}
+	if err := c.appendEventLocked(map[string]any{"type": event, "data": data}); err != nil {
 		return err
 	}
 	c.alive = true
@@ -1082,6 +1080,14 @@ func (c *CopilotSim) writeWorkspaceLocked() error {
 			"name: %s\nuser_named: %t\nsummary_count: 0\ncreated_at: %s\nupdated_at: %s\n",
 		c.ConvID, c.Cwd, c.title, c.userNamed, stamp, time.Now().UTC().Format(time.RFC3339))
 	return os.WriteFile(filepath.Join(dir, "workspace.yaml"), []byte(body), 0o600)
+}
+
+// AppendEvent appends one raw events.jsonl record, for a test that needs an
+// event shape the turn helpers do not write (tool requests, results).
+func (c *CopilotSim) AppendEvent(event map[string]any) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.appendEventLocked(event)
 }
 
 // appendEventLocked appends one line to events.jsonl. A `--resume` APPENDS to

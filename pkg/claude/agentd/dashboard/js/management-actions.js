@@ -10,6 +10,7 @@ import {
 import { loadRoles, createRole, updateRole, deleteRole } from './roles.js';
 import { ambientLaunchDecisions } from './management-model.js';
 import { fetchUnsandboxedAutonomy } from './unsandboxed-autonomy.js';
+import { refuseInPeerView } from './peer-view-guard.js';
 import {
   loadSandboxProfiles,
   loadSandboxCommonRules,
@@ -489,6 +490,7 @@ export function createManagementActions({
     state.openDialog({ kind: 'template-duplicate', source });
   }
   function exportTemplate(name) {
+    if (refuseInPeerView('Template export')) return;
     const anchor = document.createElement('a');
     anchor.href = `/api/templates/${encodeURIComponent(name)}/export`;
     anchor.download = `${name}.task-force.json`;
@@ -720,11 +722,15 @@ export function createManagementActions({
     await refresh();
     return result;
   }
-  function editTemplatesWithAgent() {
-    return summonTemplateScribe({ scope: 'library' });
+  async function editTemplatesWithAgent() {
+    const result = await summonTemplateScribe({ scope: 'library' });
+    if (result?.focus_mode === 'browser' && result.focus_ws) state.closeTemplateManager();
+    return result;
   }
-  function editTemplateWithAgent(name) {
-    return summonTemplateScribe({ scope: 'template', name });
+  async function editTemplateWithAgent(name) {
+    const result = await summonTemplateScribe({ scope: 'template', name });
+    if (result?.focus_mode === 'browser' && result.focus_ws) state.closeTemplateManager();
+    return result;
   }
 
   async function saveProfile({ draft, original, options, payload }) {
@@ -971,12 +977,14 @@ export function createManagementActions({
   async function configureSandboxWithAgent(seed, options = {}) {
     const editExisting = options.editExisting !== false
       && !!(options.targetName || seed?.name);
-    await summonSandboxScribe(
+    const result = await summonSandboxScribe(
       seed,
       editExisting ? options.targetName || seed?.name || '' : '',
       options.onCreate || null,
       { editExisting, cloneSourceName: options.cloneSourceName || '' },
     );
+    if (result?.focus_mode === 'browser' && result.focus_ws) state.closeManager();
+    return result;
   }
   function inspectDirectories(filesystem) {
     return sandbox.inspectSandboxDirectories({

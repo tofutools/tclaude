@@ -56,6 +56,9 @@ In order across the top:
 | Debug | Poll-latency self-diagnostics (hidden by default) |
 | Config | Visual editor for `~/.tclaude/config.json` |
 
+With trusted federation peers, node chips and the Map / Groups · all nodes /
+⚙ Fleet views join the tab bar; see [Skynet UI](#skynet-ui-linked-nodes).
+
 `[` and `]` cycle tabs; Ctrl/Cmd-K opens a command palette covering tab
 navigation, window focus, spawn, retire, power, and every manager dialog.
 Type `spawn luna` to find saved profiles by partial name or alias. Add `fast`
@@ -224,6 +227,9 @@ Row actions:
   when `dashboard.default_terminal` is `"native"`; the crossed-eye variant
   hides the native window (detaches the tmux client; the agent keeps running).
 
+Browser terminal actions open panes in the **Terminals** tab, including native-window
+fallbacks and scribe launches.
+
 Web terminals are fully interactive attached PTYs (xterm.js over WebSocket,
 backed by a real tmux client) — there is no read-only mode; what you type
 lands in the agent's session. Ctrl/Cmd-click opens a pane in the background.
@@ -282,10 +288,19 @@ experimental Copilot API and Codex app-server drives.
 ## Terminals
 
 The 💲 toggle after the last terminal tab shows or hides session costs next to
-agent names, sharing the Groups tab's visibility preference. API spend is green;
-subscription WHAT-IF estimates use muted italic `≈$…` and follow the existing
-WHAT-IF setting. Hover a cost for its exact value and explanation. Terminals
-without reported costs show no amount.
+agent names. It is independent of the Groups tab's 💲 (until first used it
+starts from that one's setting). API spend is green; subscription WHAT-IF
+estimates use muted italic `≈$…` and follow the existing WHAT-IF setting.
+Hover a cost for its exact value and explanation. Hovering a tab shows its
+session cost in the tab's tooltip whether or not the toggle shows it.
+Terminals without reported costs show no amount.
+
+Each agent's tab has a ⚙ next to its status glyph: the same menu as the
+agent's ⚙ in Groups (agent-level, so no group-specific items). It's a
+shortcut to morph, move, clone, and so on without finding the agent in
+Groups. A tab attached to an agent on another node offers moving it here.
+Plain shells have no ⚙, and opening or using it never switches or closes the
+tab.
 
 
 The Terminals tab is the in-dashboard terminal multiplexer. It stays hidden
@@ -380,6 +395,23 @@ blinking badge surface pending requests from any tab, requests are actionable
 remotely, and history survives restarts. Compose paths: a group's cog
 ✉ message (whole group or a ticked subset) and a top-level `+ message`
 operator dialog with role filtering and attachments for offline recipients.
+
+Federation mail: in Human notifications, **✉ peer** writes to a peer's
+operator, or to agents on a peer (`agent@peer`, or `group:<group>@peer`
+optionally by role), with the recent outbox and its delivery state below.
+Mail from a peer's operator (it starts with the remote-message banner) gets a **reply** button. While a peer's operator
+is away with you as their cover, the requests they forward arrive here with
+**Approve once** / **Deny**: one answer for that one request, nothing lasting.
+CLI: `tclaude federation notify|send|outbox|answer`.
+A peer operator's request for access to this node (see
+[Requesting access](#requesting-access-from-a-peer)) lands in the same folder,
+naming the peer, the permission, the scope and how long it asked for, plus
+its reason. Only you decide these — an away cover never does. A group
+permission requested without a group covers every group on this node,
+including future ones. Approve can shorten the grant (never lengthen it) or
+narrow an any-group request to one group the peer already holds grants in,
+and there is no Always-allow for peers. CLI:
+`tclaude federation access list|approve|deny|extend --id … [--ttl …] [--group-id …]`.
 
 ## Usage
 
@@ -497,6 +529,343 @@ features, and the remote-access panel described in
 The **Debug** tab (enable `dashboard.show_debug_tab`) shows in-memory
 poll-latency self-diagnostics per endpoint — p50/p90/p99/max, sparkline,
 per-phase breakdown — reset on daemon restart.
+
+## Skynet UI: linked nodes
+
+Once this node trusts at least one federation peer (see
+[Federation](federation.md) and its [setup walkthrough](federation-setup.md)),
+the dashboard can show and manage the whole fleet. A peer only ever shows what
+it shares with you: the peer grants it gave you decide what its cards, views
+and pages can read or change.
+
+### Node chips and switching
+
+The right end of the tab bar picks the nodes the dashboard shows. With up to
+four nodes there is a button for this node (⌂) and one per trusted peer, with a
+dot for its presence; past four they fold into one dropdown that names the node
+on screen, filters as you type and keeps this node first. Click a node to open
+its own dashboard; ⌂ returns to this node. Alt+1 is this node and Alt+2…9 the
+peers in order; the shortcut never fires while you type in a field or a web
+terminal has focus. The row appears only when a peer is trusted and adds no
+height to the page.
+
+### Fused nodes
+
+**nodes ▾**, after the node buttons, shows several nodes together: tick the
+nodes (all by default), and **Groups** lists the ticked nodes' groups as one
+tree (see [Groups on several nodes](#groups-on-several-nodes)),
+**Terminals** shows the open terminals on the ticked nodes, each tab and pane
+labelled with its node (the others stay open, out of sight), and **Messages**
+their mail (see [Messages on several nodes](#messages-on-several-nodes)); the
+button reads e.g. `2/3`. Clicking a node's name (or its **only**) shows that node
+alone, as does unticking all but one. Every other tab still shows one node, the
+primary: the node of the page you fused from. It says so in a strip at the top,
+whose buttons switch the primary without leaving the fused view, and the tab
+label carries a dot in the primary's colour. The fused set is part of the
+address (`?nodes=all`, or the ticked instance IDs), so a reload keeps it.
+
+### The map
+
+The map icon at the end of the node row opens the top-level views, and the tab
+strip turns into their switch: **Map**, **Groups · all nodes** (the fused
+Groups view of every node) and **⚙ Fleet**.
+`[` / `]` step back to the tab you came from.
+
+The map draws this node and each peer as a card joined by link edges (solid:
+reachable; dashed: unreachable or stale). A card shows the shared agents and
+how many are online, agents waiting for input, cpu/mem/disk, the tclaude
+version (↑ when a newer release is known), health, and what the peer does not
+share. **Open dashboard** opens that node's view. Cards are polled only while
+the map is on screen; an unreachable peer keeps its last data, marked with its
+age.
+
+To update a node: click **update…** (or **manage…**) on its card, check the
+version and warnings, then **Update to vX…** and confirm. The node replaces its
+binaries (keeping the old ones for **Roll back…**) and restarts its daemon;
+agent sessions keep running and the dialog follows the job through the
+restart. Updating a peer needs its `node.update` grant. CLI:
+`tclaude update [--node PEER] --check|--apply|--rollback`.
+
+### A peer's dashboard (remote node view)
+
+Opening a peer shows the normal per-node dashboard, served through this
+daemon's peer proxy (the URL carries `?node=inst_…`). The peer's name replaces
+the title, a thin line in its colour runs along the top, its chip is current,
+and a peer-view pill lists what it shares.
+
+Greyed-out tabs, buttons and menu items are ones the peer does not offer you.
+They stay in place so the layout does not jump; hover or click one to see why.
+The peer-view pill lists what is not shared and the grant each needs. Usage
+and costs say when they are not shared.
+
+If the peer granted you lifecycle actions, its agents' stop (the status dot),
+retire and clone controls open a peer action dialog instead of the local one.
+It lists only what the peer allows — Stop (optionally force kill), Retire
+(its session exits; its worktree is kept), Clone, **Move here** and **Teleport here** (always to
+a group on this node; groups that receive agents from that peer are listed
+first) — and confirms what will happen. A group's spawn button
+asks the peer to spawn an agent from your brief under the peer's own launch
+policy and shows the request until the peer decides. CLI:
+`tclaude federation action <action> --node PEER --agent ID`.
+
+Terminals in a peer view are not opened in the browser: clicking a terminal control copies
+`tclaude federation attach <agent-id>@<instance-id>` to run in your own
+terminal.
+
+#### Requesting access from a peer
+
+Each feature in the pill's "Not shared" list has a **request…** link. It asks
+the peer's operator for the grant that feature needs: how long it lasts (1
+hour to 30 days, or permanent) and a reason. A group permission asked for
+without a group covers every group on the peer, including future ones; the
+peer's operator may narrow it to one group (the CLI's `--group-id` asks for one
+directly). Local-only features such as terminals have no link. The
+dialog follows the request until the peer's operator approves or declines it,
+or it times out after 5 minutes; an approved grant shows up on the view's next
+refresh. A peer only takes requests from nodes it already shares something
+with. CLI: `tclaude federation access request --node <peer> --permission <slug>
+[--group-id …] [--ttl …] [--reason …]`, then `access status`.
+
+### Groups on several nodes
+
+In a fused view, Groups lists every group on the ticked nodes, named
+`group@node` with the node's colour on the suffix. On a peer's rows, the
+controls that peer shares with you run through its peer routes, exactly as on
+its per-node view: the status dot (stop, or wake a stopped agent), restart,
+sandbox restart, retire, clone, the group's spawn button and its ✉ message
+button (one agent at a time). Everything else — and every control on this
+node's own rows — stays an overview: click a group's `@node` suffix to act on
+it in that node's dashboard. An unreachable node keeps its last rows, marked
+stale; a node no longer trusted drops them. The old `/fleet` address opens this
+view with every node ticked. CLI: `tclaude agent groups ls --all-nodes`; actions are
+`tclaude federation action ... --node NODE`.
+
+An agent that teleported off its home node is marked on both ends, in single-node
+and fused views alike:
+- **Where it runs now:** its row carries an `away from <home> · hop N` badge in
+  the home node's colour.
+- **At home:** it leaves a dimmed `away → on <node>` placeholder in each of its
+  groups, with no controls. The placeholder is not counted in the group's
+  member count; the header shows `+N away` instead. In a fused view, `↓ show`
+  scrolls to its live row; in a single-node view, `open on <node> ↗` opens that
+  node.
+- **Back home:** once it returns, its row shows a `back home` tag for ten
+  minutes.
+
+The markers come from the agent's federation presence (`tclaude agent whoami`
+shows the same).
+
+To send an agent elsewhere without dragging, use the **send elsewhere** section of
+its row's ⚙ menu (single-node and fused views). Each item opens one dialog with
+a mode bar: **Move** to a group on another node, **Clone** (here, continuing in
+the clone dialog), **Morph** into another spawn profile (a dry run previews the
+change and what happens to the history), **Teleport** to another node (its home
+keeps a placeholder), and **Recall home** (from the placeholder at home, or ⌂
+send home where it runs: straight to its origin, retaking its home identity). Dropping an agent
+onto another node's group opens the same dialog on Move, pre-filled. Nodes a
+mode cannot use stay listed with the reason; the right-hand panel says what
+carries over. CLI: `tclaude federation move-agent`, `tclaude agent clone`,
+`tclaude agent morph`, `tclaude agent teleport`.
+
+### Messages on several nodes
+
+In a fused view, Messages shows the ticked nodes' mail in the usual layout.
+**All agent messages**, **Human notifications** and **Access requests** span
+every ticked node, newest first (access requests oldest first), each row
+carrying its node's pill; under that, each node lists its own groups and
+agents. The filter searches every ticked node. A peer's mail is shown only if
+it grants you `node.messages.read`; otherwise the sidebar says "not shared"
+next to it. An unreachable node keeps its last page, marked with its age; a
+node no longer trusted drops it. Bodies are shown as text.
+
+Actions go to the node that owns the message. Mark read/unread on an agent
+message needs that node's `node.messages.manage`; a reply to an agent goes
+through its `operator-message` route (`message.direct`). Human notifications
+(mark read, reply) and access requests (approve once, deny) are answered here
+on this node and on peers that trust you unrestricted; approving says exactly
+what it lets through on that node. Anything a node does not allow from here
+says so, and **Open on NODE** shows that node's own Messages. CLI:
+`tclaude federation human-inbox PEER` (with `reply` and `decide`) and
+`tclaude federation action message --node NODE --agent ID --body TEXT`.
+
+### The 🌐 marker
+
+A group linked to federation peers carries a 🌐 after its header chips (a green
+dot: a linked node is live). Click it for the links — a direct or pool grant,
+or a route mirror — with what each allows and a jump to that node's dashboard.
+CLI: `tclaude federation links [--group NAME]`.
+
+### Fleet administration (⚙ Fleet)
+
+**⚙ Fleet** (or "Fleet administration" in the command palette, before any peer
+is trusted) manages this node's federation. The identity bar at the top shows
+this node's instance ID and full fingerprint (copy it to compare out of band),
+the hub connection with **Disconnect**, **version & updates…** for this
+node, and away cover: **away…** picks a trusted peer's operator (and an
+optional end) who, while you are away, receives your agents' access requests
+as they arise (and may answer each once; the first answer wins), every
+message your agents send you, and waiting-session notices; **return…** ends
+it. Peer operators' access requests are never
+forwarded. **settings…** (or **connect…** before a hub is set) edits the hub
+connection — URL, display name, a single-use invite, a CA file on this node —
+and this node's labels, which automatic placement matches and peers with
+`node.read` see. It also holds the fleet health notice policy
+(`tclaude federation nodes health`): the defaults, or one trusted peer's own
+policy, with offline/back, resource and failure notices and their thresholds
+(empty = built-in default). Saving a peer's policy stops it following the
+defaults. Every action that widens trust, overwrites state or runs code confirms
+first and says what will happen. Most pages name their CLI.
+
+- **Peers** — while a peer views an agent terminal here, a panel on top shows
+  who watches or drives which agent; **Disconnect…** closes that view (the peer
+  can reopen it while any sessions.watch/attach grant covers that group, or at
+  once if it is unrestricted). Below: trusted peers (level, grants, pools) and hub-visible instances
+  waiting to be trusted. To trust one: **Trust…**, compare the fingerprint
+  shown in full with the other operator, tick the check, pick the level and
+  confirm. Unrestricted repeats that it grants every peer permission on all
+  groups, including ones created later. Restrict, unrestrict and untrust from
+  the row. A peer whose signing key is changing is marked next to
+  its fingerprint (and on its map card): **new key pending** is information
+  only — the successor waits out this node's detection window and is not yet
+  accepted; **⚠ competing keys** needs explicit recovery, and its dialog shows
+  both fingerprints in full plus the `tclaude federation identity recover-peer`
+  preview and the apply to run only after verifying the new fingerprint with
+  the peer's operator. Key rotation and recovery stay in the CLI.
+- **Harnesses** — each node's harnesses in one table: version, ↑ when an
+  update exists, 🔑 when a login is present. Click a cell to install or update
+  (if workers are busy, choose to run now or when they are idle), or, for
+  login-file harnesses, to push your login to a peer (agents there then act as
+  you), back up or restore the node's login files. **Update all…** updates a
+  node's harnesses when its workers are idle. A peer needs to share
+  `node.harnesses.read` (and `.install`, `node.credentials.receive` to change
+  anything).
+- **Run scripts** — run one shell script on several nodes. Tick nodes (or
+  **all online**), write the script, set the timeout, **Run** and confirm. Each
+  node gets a pane with state, exit code, duration and output; **full stdout**
+  / **full stderr** load the whole log, and **Re-run on N failed…** repeats it
+  only where it failed. A peer runs your script only if it granted you
+  `node.exec` and turned on **Accept remote scripts** on its own Run scripts
+  page — that switch is full remote code execution as the tclaude user, and the
+  limits beside it cap each script's memory, cpu and processes.
+- **Spawn requests** — workers peers asked this node to start in its groups.
+  **Approve…** starts the worker in that group as you (optionally overriding
+  name, profile, cwd, harness or model); **Deny…** declines with an optional
+  reason. A launch that never confirmed can be abandoned back to pending, but
+  the original worker may still appear late. **Request a worker on a peer…**
+  sends a brief to a peer's exported group, or to automatic placement (any
+  trusted node or a pool, with requirements; the dialog shows why each
+  candidate was chosen or skipped). A peer that granted you
+  `groups.members.spawn` on the group starts the worker right away. The outbox below shows delivery
+  of the spawn requests and operator mail this node sent; decisions arrive in
+  Messages. CLI: `tclaude federation spawn-request`, `requests`, `outbox`.
+- **Invites & joining** — **Create invite…** issues an enrollment token for a
+  node profile (uses, lifetime, the trust the joining node grants back) and
+  shows it once; revoke active tokens from the list. To join a master:
+  **Join with a token…**, pick the master, paste the token, check both
+  fingerprints in the preview, tick the check and **Enroll**.
+- **Peer grants** — pick a peer or a pool, see each grant with where it
+  applies (a group, or all groups including future ones, flagged) and what it
+  allows, **Revoke…** it, or add one: permission, group, cap, **Grant…**.
+  Spawn and job grants have **launch settings** (profile, selectable
+  profiles, harness, model, directory, requester pays, job approval) that
+  decide how this node starts workers for the peer; `models.proxy` grants
+  take one gateway name or cover them all. Sensitive grants (spawning,
+  attach, `node.exec`, …) say what they let the peer do.
+- **Model gateways** — this node's model gateways, which peers with a
+  `models.proxy` (or, for requester-paid workers, `models.proxy.leased`)
+  grant use to send model requests charged to this node's provider account.
+  See each gateway's models and limits — a gateway missing a model allowlist,
+  a budget or a cap refuses every request and says so — turn one off or on,
+  block or unblock a peer on it, or **Turn off all…**. Turning anything off
+  revokes the matching leases at once, so requester-paid workers using them
+  lose model access. Below that are the leases (**Revoke…** one) and a day's
+  usage per gateway, peer and model. Gateways themselves (provider,
+  credentials, limits) are configured in config. CLI: `tclaude federation
+  models`.
+- **Profiles & pools** — pools group nodes so one grant covers every member;
+  add or remove members and open a pool's grants. Profiles bundle a trust
+  level, pools and grants: **Apply to peer…** previews the plan, **Make
+  default…** applies it to newly trusted peers. **New profile…** / **Edit…**
+  edits a definition: trust level, pools, labels, requester-pays default and
+  peer grants, with worker permissions, the teleport landing and the config
+  bundle as JSON. Saving makes a new revision; peers it was applied to keep
+  their settings until it is applied again.
+- **Offers** — config and agent bundles peers offered this node, and the ones
+  it sent. **Preview…** shows what an incoming offer would change: per config
+  item new / overwrites yours / unchanged with security-relevant items marked
+  and a tick to leave each out, or for an agent its name, history and any
+  suspected credentials in it, plus placement and the values it needs here.
+  **Apply…** / **Start agent…** confirm what changes (a move or teleport says
+  the peer retires its source); **Decline…** deletes the payload. **Offer my
+  config…**, **Offer an agent…** and **Offer a profile's config…** send new
+  ones; flagged credentials are listed and need an explicit send-anyway.
+  CLI: `tclaude federation offers`, `offer-config`, `share-agent`.
+- **Jobs & repos** — remote jobs: those peers sent here (⇠) and those this
+  node sent (⇢), with repo@ref, group, command and state. **Approve…** runs a
+  job a manual-approval `jobs.run` grant holds (jobs otherwise run on
+  arrival); **Cancel…**, **Resend…** (same job ID, never runs twice),
+  **Acknowledge stopped…** for a job this node lost track of, and **Output**
+  once finished — each confirm says what happens. **Run a job…** sends one to
+  picked nodes or an automatically placed one. Below, the repositories peers
+  may run jobs in here: **Allow…**, **Edit…**, **Disable…**. **Live output**
+  on a running job this node sent shows its output as it arrives (like
+  `job run --follow`), read every 2 s only while the dialog is open, Fleet is
+  shown and the browser tab is visible; once the job ends it shows the stored
+  output. CLI: `tclaude federation job`, `repos`.
+- **Moves** — agent moves and teleports in both directions (⇢ leaving, ⇠
+  arriving) with peer, group, state and expiry. **Abandon…** stops an outgoing
+  move that has not started retiring the agent here; the agent is not retired
+  (a copy the peer already made stays there). **Freeze teleports…** stops teleports leaving or landing
+  on this node until you allow them again; plain moves are not affected.
+  **Move an agent to a peer…** is `tclaude federation move-agent`: it sends a
+  local agent with its conversation history to a peer's receiving group, and
+  the agent retires here once the peer confirms its copy is running (it leaves
+  its groups and loses its grants here). The confirm says so, and keyboard
+  focus starts on Cancel.
+- **Audit** — this node's federation activity, newest first: a peer acting
+  here (⇠) or this node acting on a peer (⇢), with actor, target, group and
+  outcome; refused or failed requests in red. Filter by peer and time window.
+
+The full federation model, grants and CLI are in
+[Federation](federation.md).
+
+### Boards (⚙ Fleet → Boards)
+
+Boards share content with other nodes through the hub, without linking the
+nodes or giving anyone access to this machine. To join, paste an invite and
+press **Join**; to start one, type a name and press **Create** (you become its
+owner). Each board lists your role in plain words — owner, can post, can read —
+and its limits. Open a board to see its members. An owner can also invite
+someone who can read or post (the invite is shown once, with **cancel
+invite…**), change members' roles, remove members, and **Change key…** so that
+members removed earlier cannot read anything posted afterwards. **Leave…**
+ends this node's membership.
+
+An open board also lists its **shared config**: signed, versioned roles,
+profiles, sandbox profiles, templates and process templates its members
+posted. **Open…** fetches and verifies a version on this node and shows its
+files as text (or **Download**); **Import…** previews what would change in
+this node's config — new, overwritten, security-relevant — and applies only
+what you confirm, with any values it needs. Nothing on a board is applied
+automatically. **Versions…** lists older versions and **Keep…** pins one (the
+list then flags newer ones as *update*). Members who can post use
+**Post config…** (whole sections, or named items such as `roles/reviewer`)
+and **New version…**; anything that looks like a credential is refused.
+**Post to…** (on an item or one of its versions) posts that version, unchanged
+and still signed by its author, to another board you can post to. An
+item whose signed details cannot be verified shows the error and cannot be
+opened or imported. The hub decides who is a member: a dishonest hub
+operator could block a board or keep a removed member getting new posts, but
+cannot read anything or fake a post, so use a hub you trust. Hub admins
+holding `hub.boards.manage` see **Boards** on the Hub page to freeze, limit
+or delete boards; they never see content or keys. CLI:
+`tclaude federation boards …` and `tclaude federation hub boards …`.
+
+When an item you keep has a newer version on its board, the **Boards** tab
+shows a count, and the page lists those items with **Open board**. Tick
+"Also leave a note in Messages…" to get one Messages note per new version
+(off by default). Neither fetches nor imports anything. CLI:
+`tclaude federation boards updates [--refresh] [--notify on|off]`.
 
 ## Shared behavior
 

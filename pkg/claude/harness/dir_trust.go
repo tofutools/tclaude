@@ -3,6 +3,7 @@ package harness
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -103,7 +104,10 @@ func EnsureDirTrusted(h *Harness, projectDir string) error {
 }
 
 // EnsureDirTrustedForLaunch is EnsureDirTrusted with the LAUNCH's environment
-// supplied, for the harnesses whose trust store can move with it.
+// supplied, for the harnesses whose trust store can move with it. It trusts
+// both the canonical cwd and its recorded spelling, since harnesses can
+// resolve symlinks before looking up folder trust. Unresolvable paths retain
+// the recorded-path behavior.
 //
 // Codex keys its trust record on a fixed path under the operator's home, so
 // its editor ignores both arguments. Copilot's store lives under COPILOT_HOME,
@@ -123,6 +127,19 @@ func EnsureDirTrustedForLaunch(
 	if !h.SupportsDirTrust() {
 		return nil
 	}
+	// These editors handle both spellings in one locked config edit.
+	if h.Name == CopilotName || h.Name == GeminiName {
+		return ensureDirTrustedForLaunchPath(h, projectDir, getenv, home)
+	}
+	for _, dir := range dirTrustSpellings(projectDir) {
+		if err := ensureDirTrustedForLaunchPath(h, dir, getenv, home); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureDirTrustedForLaunchPath(h *Harness, projectDir string, getenv func(string) string, home string) error {
 	switch h.Name {
 	case CodexName:
 		return EnsureCodexDirTrusted(projectDir)
@@ -153,4 +170,14 @@ func EnsureDirTrustedForLaunch(
 		// the point it was introduced.
 		return fmt.Errorf("dir-trust: no trust-store editor for harness %q", h.Name)
 	}
+}
+
+// Keep the physical path first, while retaining the launch's logical spelling.
+func dirTrustSpellings(projectDir string) []string {
+	if filepath.IsAbs(projectDir) {
+		if resolved, err := filepath.EvalSymlinks(projectDir); err == nil && filepath.Clean(resolved) != filepath.Clean(projectDir) {
+			return []string{filepath.Clean(resolved), projectDir}
+		}
+	}
+	return []string{projectDir}
 }

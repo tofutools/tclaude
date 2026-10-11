@@ -277,6 +277,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.Handle("/api/tui/", http.StripPrefix(tuiHTTPPrefix, buildTUIHTTPHandler()))
 	mux.HandleFunc("/api/auth/session", handleDashboardAuthSession)
 	mux.HandleFunc("/api/instance", handleDashboardInstance)
+	mux.HandleFunc("GET /api/node-summary", handleDashboardNodeSummary)
 	mux.HandleFunc("/api/snapshot", withGzip(withPerfTiming("/api/snapshot", handleDashboardSnapshot)))
 	mux.HandleFunc("/api/perf", withGzip(handleDashboardPerf))
 	mux.HandleFunc("/api/perf/reset", handleDashboardPerfReset)
@@ -296,6 +297,12 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /v1/process/templates/{id}", dashboardProcessRoute(handleProcessTemplate))
 	mux.HandleFunc("POST /v1/process/validate", dashboardProcessRoute(handleProcessValidate))
 	mux.Handle("/static/", handleDashboardStatic())
+	registerDashboardFederationRoutes(mux)
+	registerNodeUpdateRoutes(mux)
+	registerNodeRunRoutes(mux)
+	registerHarnessAvailabilityRoutes(mux)
+	registerHarnessOperationsRoutes(mux)
+	registerDashboardPeerRoutes(mux)
 	registerDashboardEditRoutes(mux)
 }
 
@@ -370,7 +377,7 @@ func handleDashboardStatic() http.Handler {
 var dashboardAppTabs = map[string]bool{
 	"groups": true, "automations": true, "jobs": true, "processes": true, "plugins": true, "access": true,
 	"messages": true, "usage": true, "costs": true, "audit": true, "logs": true, "config": true,
-	"debug": true,
+	"debug": true, "map": true, "fleet": true, "fleet-admin": true,
 }
 
 // isDashboardAppPath reports whether a path should serve the dashboard SPA
@@ -1663,6 +1670,7 @@ type snapshotScopeDimOptions struct {
 }
 
 type dashboardGroup struct {
+	ID                         int64                            `json:"id"`
 	Name                       string                           `json:"name"`
 	Descr                      string                           `json:"descr"`
 	AttachmentURL              string                           `json:"attachment_url,omitempty"`
@@ -1721,9 +1729,13 @@ type dashboardGroup struct {
 	// The Groups tab always surfaces these while at least one member is online;
 	// dormant scribe groups remain behind the "show offline scribes" toggle.
 	// The flag is the discriminator, so the client need not match a name.
-	Scribe  bool              `json:"scribe,omitempty"`
-	Members []dashboardMember `json:"members"`
-	Online  int               `json:"online"`
+	Scribe bool `json:"scribe,omitempty"`
+	// FederationLinks lists how this local group is connected to federation
+	// peers (group-scoped peer grants, opened remote routes), for the Groups
+	// tab's linked-group marker. Local operator data only.
+	FederationLinks []groupFederationLink `json:"federation_links,omitempty"`
+	Members         []dashboardMember     `json:"members"`
+	Online          int                   `json:"online"`
 }
 
 type dashboardRouteMap struct {
@@ -1777,6 +1789,7 @@ type dashboardRouteConsumer struct {
 //   - true on a row with Role=="owner" and no descr → a pure owner
 //     who isn't a member (so the list stays comprehensive).
 type dashboardMember struct {
+	FederationPresence *db.AgentFederationPresence `json:"federation_presence,omitempty"`
 	// AgentID is the member's stable actor key — the canonical, rotation-immune
 	// ID the roster leads with; ConvID is the live generation behind it (still
 	// the internal drag-and-drop / routing key).
@@ -2031,6 +2044,9 @@ type agentState struct {
 	// between stop and resume so the dashboard never mistakes an unlocked
 	// agent for one using its normal posture.
 	TemporaryHarnessBuiltinMode string `json:"temporary_sandbox_mode,omitempty"`
+	// PendingMorph is a requested morph waiting for the agent to go idle, so
+	// an operator can see why the agent is about to relaunch.
+	PendingMorph *db.AgentPendingMorph `json:"pending_morph,omitempty"`
 	// FastMode is present when a live Codex rollout has reported an authoritative
 	// thread_settings_applied snapshot, or provisionally when tclaude explicitly
 	// selected the tier for this live agent's launch and Codex has not emitted a
@@ -3402,6 +3418,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// GROUP plus a per-conv row assembly, and nothing said which of them
 	// stalled. gt accumulates each part so /api/perf can name the culprit.
 	gt := newGroupsPhaseTimer(rc)
+	var groupFedLinks map[int64][]groupFederationLink
+	if !isPeerSnapshot(r) {
+		groupFedLinks = gatherGroupFederationLinks()
+	}
 	for _, g := range groups {
 		groupMark := gt.begin()
 		groupPermissions := []string{}
@@ -3419,10 +3439,11 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 		})
 		attachment := groupAttachmentViewFor(g)
-		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, AttachmentURL: attachment.URL, AttachmentLabel: attachment.Label, AttachmentLabelOverride: attachment.LabelOverride, DefaultCwd: g.DefaultCwd, DefaultSpawnGroup: g.DefaultSpawnGroup, DefaultContext: g.DefaultContext, Environment: append([]sandboxpolicy.EnvironmentEntry(nil), g.Environment...), DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, PermissionScopes: groupPermissionScopes, UnreadablePermissionScopes: groupUnreadablePermissionScopes, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), ReinjectAfterCompact: g.EffectiveReinjectAfterCompact(), OwnerScopes: ownerScopesWire(g.OwnerScopesJSON), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), RouteGeneration: g.RouteGeneration, Members: []dashboardMember{}}
+		dg := dashboardGroup{ID: g.ID, Name: g.Name, Descr: g.Descr, AttachmentURL: attachment.URL, AttachmentLabel: attachment.Label, AttachmentLabelOverride: attachment.LabelOverride, DefaultCwd: g.DefaultCwd, DefaultSpawnGroup: g.DefaultSpawnGroup, DefaultContext: g.DefaultContext, Environment: append([]sandboxpolicy.EnvironmentEntry(nil), g.Environment...), DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, PermissionScopes: groupPermissionScopes, UnreadablePermissionScopes: groupUnreadablePermissionScopes, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), ReinjectAfterCompact: g.EffectiveReinjectAfterCompact(), OwnerScopes: ownerScopesWire(g.OwnerScopesJSON), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), RouteGeneration: g.RouteGeneration, Members: []dashboardMember{}}
 		if g.ParentGroupID != nil {
 			dg.Parent = groupNameByID[*g.ParentGroupID]
 		}
+		dg.FederationLinks = groupFedLinks[g.ID]
 		// Advisory process state (JOH-242): attach the current phase + phase map
 		// + transition log so the group view can render a phase chip + advance
 		// control. nil for a group with no process.
@@ -3458,26 +3479,32 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			links := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
 				withFreshestPRStates(freshPRStates).
 				withPRChecks(prChecks)
+			presence, _ := db.ProjectedAgentFederationPresence(b.AgentID)
+			online := b.Online
+			if presence != nil && presence.State == "away" {
+				online = false
+			}
 			dg.Members = append(dg.Members, dashboardMember{
-				AgentID:           b.AgentID,
-				ConvID:            m.ConvID,
-				Title:             b.Title,
-				CreatedAt:         b.Created,
-				Role:              m.Role,
-				Descr:             m.Descr,
-				agentLocationView: b.Loc,
-				repoLinksView:     links,
-				taskRefView:       taskRefFor(b.AgentID),
-				tagsView:          tagsFor(b.AgentID),
-				Online:            b.Online,
-				Waking:            !b.Online && isConvWaking(m.ConvID),
-				Owner:             ownerSet[m.ConvID],
-				State:             b.State,
-				Notify:            notifyPrefs[m.ConvID],
-				NotifyEffective:   notifyEffective(m.ConvID),
-				RouteHealth:       routeHealth,
+				FederationPresence: presence,
+				AgentID:            b.AgentID,
+				ConvID:             m.ConvID,
+				Title:              b.Title,
+				CreatedAt:          b.Created,
+				Role:               m.Role,
+				Descr:              m.Descr,
+				agentLocationView:  b.Loc,
+				repoLinksView:      links,
+				taskRefView:        taskRefFor(b.AgentID),
+				tagsView:           tagsFor(b.AgentID),
+				Online:             online,
+				Waking:             !b.Online && isConvWaking(m.ConvID),
+				Owner:              ownerSet[m.ConvID],
+				State:              b.State,
+				Notify:             notifyPrefs[m.ConvID],
+				NotifyEffective:    notifyEffective(m.ConvID),
+				RouteHealth:        routeHealth,
 			})
-			if b.Online {
+			if online {
 				dg.Online++
 			}
 			// addAgent returns nil for a retired/superseded member (TCL-369):
@@ -3507,23 +3534,26 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			ownerLinks := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
 				withFreshestPRStates(freshPRStates).
 				withPRChecks(prChecks)
+			presence, _ := db.ProjectedAgentFederationPresence(b.AgentID)
+			ownerOnline := b.Online && (presence == nil || presence.State != "away")
 			dg.Members = append(dg.Members, dashboardMember{
-				AgentID:           b.AgentID,
-				ConvID:            ownerConv,
-				Title:             b.Title,
-				CreatedAt:         b.Created,
-				Role:              "owner",
-				agentLocationView: b.Loc,
-				repoLinksView:     ownerLinks,
-				taskRefView:       taskRefFor(b.AgentID),
-				tagsView:          tagsFor(b.AgentID),
-				Online:            b.Online,
-				Waking:            !b.Online && isConvWaking(ownerConv),
-				Owner:             true,
-				State:             b.State,
-				Notify:            notifyPrefs[ownerConv],
-				NotifyEffective:   notifyEffective(ownerConv),
-				RouteHealth:       routeHealth,
+				AgentID:            b.AgentID,
+				ConvID:             ownerConv,
+				Title:              b.Title,
+				CreatedAt:          b.Created,
+				Role:               "owner",
+				agentLocationView:  b.Loc,
+				repoLinksView:      ownerLinks,
+				taskRefView:        taskRefFor(b.AgentID),
+				tagsView:           tagsFor(b.AgentID),
+				Online:             ownerOnline,
+				FederationPresence: presence,
+				Waking:             !b.Online && isConvWaking(ownerConv),
+				Owner:              true,
+				State:              b.State,
+				Notify:             notifyPrefs[ownerConv],
+				NotifyEffective:    notifyEffective(ownerConv),
+				RouteHealth:        routeHealth,
 			})
 			// Pure-owners are reachable via this group too — surface
 			// the group on the agent's row in the Agents view so

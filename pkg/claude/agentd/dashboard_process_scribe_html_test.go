@@ -63,7 +63,7 @@ func TestDashboardProcessScribeAssets(t *testing.T) {
 		"delete_worktree: '0'",
 		"Check the agent daemon and Ask & scribe defaults, then retry.",
 		"result.reused ? 'Reopened' : 'Summoned'",
-		"openTermModal({ wsPath: result.focus_ws",
+		"openTerminalPane({ ws: result.focus_ws",
 	)
 	island := read("js/processes-island.js")
 	must("processes-island.js", island,

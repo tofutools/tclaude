@@ -61,8 +61,15 @@ const (
 // Frame is the single JSON shape of every hub WebSocket message; Type
 // selects which fields are meaningful.
 type Frame struct {
-	Type                    string `json:"type"`
-	IdentityRotationVersion int    `json:"identity_rotation_version,omitempty"`
+	Type                    string           `json:"type"`
+	BoardRequest            *BoardRequest    `json:"board_request,omitempty"`
+	BoardResult             *HubAdminResult  `json:"board_result,omitempty"`
+	BoardToken              string           `json:"board_token,omitempty"`
+	AdminRequest            *HubAdminRequest `json:"admin_request,omitempty"`
+	AdminResult             *HubAdminResult  `json:"admin_result,omitempty"`
+	HubAdminVersion         int              `json:"hub_admin_version,omitempty"`
+	AdminGeneration         string           `json:"admin_generation,omitempty"`
+	IdentityRotationVersion int              `json:"identity_rotation_version,omitempty"`
 
 	// challenge
 	HubID string `json:"hub_id,omitempty"`

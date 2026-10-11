@@ -7,10 +7,12 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -20,6 +22,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/probehelper"
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/common/buildversion"
+	"github.com/tofutools/tclaude/pkg/common/harnesspath"
 )
 
 // Main runs a tclaude binary end to end and never returns: it dispatches
@@ -29,6 +32,11 @@ import (
 // version is the value stamped into the binary's own main.version at build
 // time via -ldflags; it is empty for a plain `go build`.
 func Main(version string, newRoot func() *cobra.Command) {
+	buildversion.SetStampedVersion(version)
+	if len(os.Args) == 2 && os.Args[1] == "--tclaude-build-info" {
+		_ = json.NewEncoder(os.Stdout).Encode(buildversion.BuildInfo())
+		return
+	}
 	if handled, code := probehelper.Dispatch(os.Args); handled {
 		os.Exit(code)
 	}
@@ -40,6 +48,14 @@ func Main(version string, newRoot func() *cobra.Command) {
 
 func run(version string, newRoot func() *cobra.Command) int {
 	buildversion.SetStampedVersion(version)
+	if home, err := os.UserHomeDir(); err == nil {
+		if home, err = filepath.EvalSymlinks(home); err == nil {
+			if err := harnesspath.Enable(home); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+		}
+	}
 	cmd := newRoot()
 	cmd.Version = buildversion.AppVersion()
 	if err := execute(os.Stderr, cmd); err != nil {
