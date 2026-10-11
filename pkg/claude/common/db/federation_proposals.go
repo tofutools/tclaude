@@ -375,3 +375,34 @@ func CompleteFederationProposal(id string, revision int, state string) error {
 	_, err = d.Exec(`UPDATE federation_peer_proposals SET state=?,updated_at=? WHERE id=? AND revision=? AND state='applying'`, state, dbTime(time.Now()), id, revision)
 	return err
 }
+
+// Withdrawal cancels undecided items. Already applied items remain explicit
+// grants/edges and can be revoked separately; it never revokes an older grant.
+func WithdrawFederationProposal(id, peer string, revision int, event *FederationProposalEvent) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.Exec(`UPDATE federation_peer_proposals SET state='withdrawn',updated_at=? WHERE id=? AND peer=? AND revision=? AND state IN ('sent','countered') AND deadline_at>?`, dbTime(time.Now()), id, peer, revision, dbTime(time.Now()))
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil || n == 0 {
+		return false, err
+	}
+	if _, err = tx.Exec(`UPDATE federation_group_links SET local_state='revoked',updated_at=? WHERE proposal_id=? AND local_state='pending'`, dbTime(time.Now()), id); err != nil {
+		return false, err
+	}
+	if event != nil {
+		if err = insertProposalEvent(tx, *event); err != nil {
+			return false, err
+		}
+	}
+	return true, tx.Commit()
+}

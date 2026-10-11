@@ -39,7 +39,7 @@ func TestFederation_ProposalVisibilityAndDuplicateReceipt(t *testing.T) {
 	// A capability advertisement reveals no remote group or roster.
 	sendProposalControl(p, proto.KindCatalog, proto.CatalogPayload{PeerProposals: true})
 	fedEventually(t, "proposal capability", func() bool {
-		rec := fedHuman(t, f, http.MethodPost, "/api/federation/proposals", map[string]any{"peer": "bob", "items": []map[string]any{{"kind": proto.ProposalShareVisibility, "host": "us", "group_id": g.Name, "include_members": true}}})
+		rec := fedHuman(t, f, http.MethodPost, "/v1/federation/proposals", map[string]any{"peer": "bob", "items": []map[string]any{{"kind": proto.ProposalShareVisibility, "host": "us", "group_id": g.Name, "include_members": true}}})
 		if rec.Code != http.StatusAccepted {
 			return false
 		}
@@ -86,7 +86,7 @@ func TestFederation_ProposalRequiresHumanAndDurableDeadline(t *testing.T) {
 	gid, err := db.FederationGroupIdentity(g.ID)
 	require.NoError(t, err)
 	item := proto.ProposalItem{ID: proto.NewEnvelopeID(), Kind: proto.ProposalShareVisibility, Host: p.agentdID, GroupID: gid, GroupName: g.Name, Status: "pending"}
-	proposal := proto.PeerProposalPayload{ID: proto.NewEnvelopeID(), Origin: p.id.ID(), Revision: 1, Deadline: time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), Items: []proto.ProposalItem{item}}
+	proposal := proto.PeerProposalPayload{ID: proto.NewEnvelopeID(), Origin: p.id.ID(), Author: p.id.ID(), Revision: 1, Deadline: time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), Items: []proto.ProposalItem{item}}
 	p.send(p.envelope(proto.KindPeerProposal, proto.Endpoint{}, proposal))
 	fedEventually(t, "agent proposal refusal", func() bool {
 		for _, e := range p.envelopes(proto.KindAck) {
@@ -103,13 +103,13 @@ func TestFederation_ProposalRequiresHumanAndDurableDeadline(t *testing.T) {
 	require.Nil(t, row)
 	sendProposalControl(p, proto.KindPeerProposal, proposal)
 	fedEventually(t, "durable incoming proposal", func() bool { row, _ = db.GetFederationProposal(proposal.ID); return row != nil })
-	rec := fedHuman(t, f, http.MethodGet, "/api/federation/proposals/"+proposal.ID, nil)
+	rec := fedHuman(t, f, http.MethodGet, "/v1/federation/proposals/"+proposal.ID, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var view map[string]any
 	testharness.DecodeJSON(t, rec, &view)
 	require.Equal(t, proposal.Deadline, view["deadline"])
 	require.NoError(t, db.ExpireFederationProposals(time.Now().Add(2*time.Hour)))
-	rec = fedHuman(t, f, http.MethodPost, "/api/federation/proposals/"+proposal.ID+"/decision", map[string]any{"revision": 1, "decision": "accept", "item_ids": []string{item.ID}})
+	rec = fedHuman(t, f, http.MethodPost, "/v1/federation/proposals/"+proposal.ID+"/decision", map[string]any{"revision": 1, "decision": "accept", "item_ids": []string{item.ID}})
 	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 	grants, err := db.ListFederationPeerGrants(p.id.ID())
 	require.NoError(t, err)

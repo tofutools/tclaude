@@ -31,6 +31,7 @@ type ProposalItem struct {
 type PeerProposalPayload struct {
 	ID           string         `json:"id"`
 	Origin       string         `json:"origin"`
+	Author       string         `json:"author"`
 	Revision     int            `json:"revision"`
 	PreviousHash string         `json:"previous_hash,omitempty"`
 	Deadline     string         `json:"deadline"`

@@ -35,7 +35,7 @@ func validatePeerProposal(p proto.PeerProposalPayload, local, peer string) error
 	if err != nil || !deadline.After(time.Now()) || deadline.After(time.Now().Add(peerProposalTTL+time.Minute)) {
 		return errors.New("proposal expired or deadline too distant")
 	}
-	if !proto.ValidStreamID(p.ID) || p.Revision < 1 || p.Revision > 32 || len(p.Note) > 4096 || len(p.Items) < 1 || len(p.Items) > maxProposalItems || p.Origin != local && p.Origin != peer {
+	if !proto.ValidStreamID(p.ID) || p.Revision < 1 || p.Revision > 32 || len(p.Note) > 4096 || len(p.Items) < 1 || len(p.Items) > maxProposalItems || p.Origin != local && p.Origin != peer || p.Author != local && p.Author != peer {
 		return errors.New("invalid proposal")
 	}
 	ids := map[string]bool{}
@@ -147,12 +147,18 @@ func handleFederationLinkTargets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, result)
 }
 
-func registerFederationProposalRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/federation/link-targets", handleFederationLinkTargets)
-	mux.HandleFunc("POST /api/federation/proposals", handlePeerProposalCreate)
-	mux.HandleFunc("POST /api/federation/proposals/{id}/decision", handlePeerProposalDecision)
-	mux.HandleFunc("GET /api/federation/proposals", handlePeerProposalList)
-	mux.HandleFunc("GET /api/federation/proposals/{id}", handlePeerProposalList)
+func registerFederationProposalRoutes(mux *http.ServeMux, prefix string, dashboard bool) {
+	register := func(pattern string, handler http.HandlerFunc) {
+		if dashboard {
+			handler = dashboardFederationRoute(handler)
+		}
+		mux.HandleFunc(pattern, handler)
+	}
+	register("GET "+prefix+"/link-targets", handleFederationLinkTargets)
+	register("POST "+prefix+"/proposals", handlePeerProposalCreate)
+	register("GET "+prefix+"/proposals", handlePeerProposalList)
+	register("GET "+prefix+"/proposals/{id}", handlePeerProposalList)
+	register("POST "+prefix+"/proposals/{id}/decision", handlePeerProposalDecision)
 }
 
 // proposalOwnedGroups refreshes local descriptions/counts from authoritative
@@ -315,7 +321,7 @@ func handlePeerProposalCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "identity", err.Error())
 		return
 	}
-	p := proto.PeerProposalPayload{ID: proto.NewEnvelopeID(), Origin: local, Revision: 1, Deadline: time.Now().Add(peerProposalTTL).UTC().Format(time.RFC3339Nano), Note: in.Note, Items: in.Items}
+	p := proto.PeerProposalPayload{ID: proto.NewEnvelopeID(), Origin: local, Author: local, Revision: 1, Deadline: time.Now().Add(peerProposalTTL).UTC().Format(time.RFC3339Nano), Note: in.Note, Items: in.Items}
 	if err = normalizeProposalAPI(&p, local, peer.InstanceID); err == nil {
 		err = validatePeerProposal(p, local, peer.InstanceID)
 	}
@@ -435,7 +441,14 @@ func proposalView(row db.FederationPeerProposal, local string) map[string]any {
 		}
 		items = append(items, v)
 	}
-	return map[string]any{"id": row.ID, "peer": row.Peer, "peer_label": label, "revision": row.Revision, "state": row.State, "deadline": row.Deadline.UTC().Format(time.RFC3339Nano), "note": p.Note, "ours": row.Origin == local, "items": items}
+	awaiting := ""
+	if row.State == "sent" || row.State == "countered" {
+		awaiting = "us"
+		if p.Author == local {
+			awaiting = "them"
+		}
+	}
+	return map[string]any{"id": row.ID, "peer": row.Peer, "peer_label": label, "revision": row.Revision, "state": row.State, "deadline": row.Deadline.UTC().Format(time.RFC3339Nano), "note": p.Note, "ours": row.Origin == local, "awaiting": awaiting, "items": items}
 }
 
 func proposalSelection(p proto.PeerProposalPayload, ids, without []string) (map[string]bool, map[string]bool, error) {
@@ -665,8 +678,40 @@ func handlePeerProposalDecision(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "identity", err.Error())
 		return
 	}
+	if in.Decision == "withdraw" {
+		if p.Origin != local {
+			writeError(w, 403, "auth", "only the originator can withdraw this proposal")
+			return
+		}
+		d := proto.PeerProposalDecisionPayload{ID: p.ID, Revision: p.Revision, RevisionHash: proposalHash(p), Decision: "withdraw"}
+		event, e := proposalEvent(p, row.Peer, proto.KindPeerProposalDecision, d)
+		if e != nil {
+			writeError(w, 500, "io", e.Error())
+			return
+		}
+		ok, e := db.WithdrawFederationProposal(p.ID, row.Peer, p.Revision, &event)
+		if e != nil {
+			writeError(w, 500, "io", e.Error())
+			return
+		}
+		if !ok {
+			writeError(w, 409, "proposal_refused", "proposal is already decided or expired")
+			return
+		}
+		if rt := currentFederation(); rt != nil {
+			rt.kickOutbox()
+		}
+		row.State = "withdrawn"
+		writeJSON(w, 200, proposalView(*row, local))
+		return
+	}
+	if p.Author == local {
+		writeError(w, 409, "awaiting_peer", "waiting for the peer to decide this revision")
+		return
+	}
 	if in.Decision == "counter" {
 		next := p
+		next.Author = local
 		next.Revision++
 		next.PreviousHash = proposalHash(p)
 		next.Items = in.Items
@@ -730,6 +775,10 @@ func (rt *fedRuntime) acceptPeerProposal(peer *db.FederationPeer, env *proto.Env
 	}
 	local, err := proposalLocalID()
 	if err != nil {
+		return
+	}
+	if p.Author != peer.InstanceID {
+		refuse("revision author does not match signed sender")
 		return
 	}
 	if err = validatePeerProposal(p, local, peer.InstanceID); err != nil {
@@ -844,6 +893,17 @@ func (rt *fedRuntime) acceptPeerProposalDecision(peer *db.FederationPeer, env *p
 	}
 	if d.Revision != p.Revision || d.RevisionHash != proposalHash(p) {
 		refuse("stale decision")
+		return
+	}
+	if d.Decision == "withdraw" {
+		if p.Origin != peer.InstanceID || len(d.ItemIDs) > 0 || len(d.AppliedIDs) > 0 || len(d.WithoutMembers) > 0 {
+			refuse("invalid withdrawal")
+			return
+		}
+		if _, err = db.WithdrawFederationProposal(p.ID, peer.InstanceID, p.Revision, nil); err != nil {
+			return
+		}
+		rt.sendControl(peer.InstanceID, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckAccepted})
 		return
 	}
 	selected, _, err := proposalSelection(p, d.ItemIDs, d.WithoutMembers)
@@ -962,7 +1022,7 @@ func handleRemoteGroupLinkAdd(w http.ResponseWriter, r *http.Request, g *db.Agen
 		writeError(w, 500, "io", err.Error())
 		return
 	}
-	p := proto.PeerProposalPayload{ID: proto.NewEnvelopeID(), Origin: local, Revision: 1, Deadline: time.Now().Add(peerProposalTTL).UTC().Format(time.RFC3339Nano), Items: []proto.ProposalItem{{Kind: proto.ProposalGroupLink, Host: peer.InstanceID, GroupID: in.ToGroupID, Source: local, SourceGroupID: gid, Mode: mode}}}
+	p := proto.PeerProposalPayload{ID: proto.NewEnvelopeID(), Origin: local, Author: local, Revision: 1, Deadline: time.Now().Add(peerProposalTTL).UTC().Format(time.RFC3339Nano), Items: []proto.ProposalItem{{Kind: proto.ProposalGroupLink, Host: peer.InstanceID, GroupID: in.ToGroupID, Source: local, SourceGroupID: gid, Mode: mode}}}
 	if in.Bidir {
 		p.Items = append(p.Items, proto.ProposalItem{Kind: proto.ProposalGroupLink, Host: local, GroupID: gid, Source: peer.InstanceID, SourceGroupID: in.ToGroupID, Mode: mode})
 	}
@@ -1101,6 +1161,15 @@ func serveProposalAccessDecision(w http.ResponseWriter, r *http.Request, row db.
 	}
 	if len(p.Items) != 1 || p.Items[0].Kind != proto.ProposalGroupLink {
 		writeError(w, 400, "invalid_arg", "use the proposal decision route to select items")
+		return
+	}
+	local, err := proposalLocalID()
+	if err != nil {
+		writeError(w, 503, "identity", err.Error())
+		return
+	}
+	if p.Author == local {
+		writeError(w, 409, "awaiting_peer", "waiting for the peer to decide this revision")
 		return
 	}
 	d := proto.PeerProposalDecisionPayload{ID: p.ID, Revision: p.Revision, RevisionHash: proposalHash(p), Decision: "accept", ItemIDs: []string{p.Items[0].ID}}

@@ -17,11 +17,15 @@ import (
 
 // linkEntry mirrors the daemon's linkJSON payload.
 type linkEntry struct {
-	ID        int64  `json:"id"`
-	From      string `json:"from"`
-	To        string `json:"to"`
-	Mode      string `json:"mode"`
-	CreatedAt string `json:"created_at"`
+	Peer        string `json:"peer,omitempty"`
+	Direction   string `json:"direction,omitempty"`
+	LocalState  string `json:"local_state,omitempty"`
+	RemoteState string `json:"remote_state,omitempty"`
+	ID          any    `json:"id"`
+	From        string `json:"from"`
+	To          string `json:"to"`
+	Mode        string `json:"mode"`
+	CreatedAt   string `json:"created_at"`
 	// ByAgent is the stable agent_id of the creator (the actor); ByConv is the
 	// conv-id snapshot. Surfaced on `--json`; "" for a human/un-enrolled creator.
 	ByAgent string `json:"by_agent,omitempty"`
@@ -144,7 +148,7 @@ func renderLinks(links []linkEntry, asJSON bool, stdout io.Writer) int {
 	tbl.SetTerminalWidth(table.GetTerminalWidth())
 	for _, l := range links {
 		tbl.AddRow(table.Row{Cells: []string{
-			fmt.Sprintf("%d", l.ID),
+			fmt.Sprint(l.ID),
 			l.From, l.To, l.Mode, l.CreatedAt,
 		}})
 	}
@@ -155,6 +159,7 @@ func renderLinks(links []linkEntry, asJSON bool, stdout io.Writer) int {
 // --- groups link add ---
 
 type groupsLinkAddParams struct {
+	Peer     string `long:"peer" short:"-" optional:"true" help:"Trusted remote node; TO is its shared group name or opaque ID (operator only)"`
 	From     string `pos:"true" help:"Source group (members of this group can message into 'to')"`
 	To       string `pos:"true" help:"Destination group"`
 	Mode     string `long:"mode" optional:"true" help:"members->members (default) | owners->members"`
@@ -184,6 +189,43 @@ func runGroupsLinkAdd(p *groupsLinkAddParams, stdout, stderr io.Writer) int {
 		return rc
 	}
 	body := map[string]any{"to": p.To}
+	if p.Peer != "" {
+		var targets struct {
+			Peers []struct {
+				Peer        string `json:"peer"`
+				Label       string `json:"label"`
+				LinkCapable bool   `json:"link_capable"`
+				Groups      []struct {
+					ID   string `json:"id"`
+					Name string `json:"name"`
+				} `json:"groups"`
+			} `json:"peers"`
+		}
+		if err := DaemonGet("/v1/federation/link-targets", &targets); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return MapDaemonErrorToRC(err)
+		}
+		found := false
+		for _, peer := range targets.Peers {
+			if peer.Peer != p.Peer && peer.Label != p.Peer {
+				continue
+			}
+			if !peer.LinkCapable {
+				continue
+			}
+			for _, g := range peer.Groups {
+				if g.ID == p.To || g.Name == p.To {
+					body = map[string]any{"to_peer": peer.Peer, "to_group_id": g.ID}
+					found = true
+				}
+			}
+		}
+		if !found {
+			fmt.Fprintln(stderr, "Error: no link-capable peer shared that group; use federation proposals targets")
+			return rcInvalidArg
+		}
+	}
+
 	if mode := strings.TrimSpace(p.Mode); mode != "" {
 		body["mode"] = mode
 	}
@@ -208,6 +250,10 @@ func runGroupsLinkAdd(p *groupsLinkAddParams, stdout, stderr io.Writer) int {
 		if err := enc.Encode(resp); err != nil {
 			return rcIOFailure
 		}
+		return rcOK
+	}
+	if edges, ok := resp["edges"]; ok {
+		fmt.Fprintf(stdout, "cross-node link proposal: %v\n", edges)
 		return rcOK
 	}
 	fmt.Fprintf(stdout, "linked %v → %v (link id %v)\n", resp["from"], resp["to"], resp["id"])
@@ -307,9 +353,10 @@ func runGroupsLinkRm(p *groupsLinkRmParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	id, err := strconv.ParseInt(strings.TrimSpace(p.ID), 10, 64)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: link id must be numeric, got %q\n", p.ID)
+	idString := strings.TrimSpace(p.ID)
+	_, err := strconv.ParseInt(idString, 10, 64)
+	if err != nil && !strings.HasPrefix(idString, "xlink_") {
+		fmt.Fprintf(stderr, "Error: link id must be numeric or xlink_…, got %q\n", p.ID)
 		return rcInvalidArg
 	}
 	dur, err := ParseAskHuman(p.AskHuman)
@@ -318,12 +365,12 @@ func runGroupsLinkRm(p *groupsLinkRmParams, stdout, stderr io.Writer) int {
 		return rcInvalidArg
 	}
 	opts := DaemonOpts{AskHuman: dur}
-	path := "/v1/groups/" + url.PathEscape(p.Group) + "/links/" + strconv.FormatInt(id, 10)
+	path := "/v1/groups/" + url.PathEscape(p.Group) + "/links/" + url.PathEscape(idString)
 	if err := DaemonRequest("DELETE", path, nil, nil, opts); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	fmt.Fprintf(stdout, "removed link %d\n", id)
+	fmt.Fprintf(stdout, "removed link %s\n", idString)
 	return rcOK
 }
 
@@ -350,7 +397,7 @@ type canMessageResp struct {
 	Allowed  bool   `json:"allowed"`
 	Reason   string `json:"reason,omitempty"`
 	ViaGroup string `json:"via_group,omitempty"`
-	LinkID   int64  `json:"link_id,omitempty"`
+	LinkID   any    `json:"link_id,omitempty"`
 	Message  string `json:"message,omitempty"`
 }
 
@@ -386,8 +433,8 @@ func runWhyCanMessage(p *whyCanMessageParams, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stdout, "allowed: yes")
 	fmt.Fprintf(stdout, "reason:  %s\n", resp.Reason)
 	fmt.Fprintf(stdout, "via:     %s\n", resp.ViaGroup)
-	if resp.LinkID != 0 {
-		fmt.Fprintf(stdout, "link:    #%d\n", resp.LinkID)
+	if resp.LinkID != nil && fmt.Sprint(resp.LinkID) != "0" {
+		fmt.Fprintf(stdout, "link:    #%v\n", resp.LinkID)
 	}
 	return rcOK
 }

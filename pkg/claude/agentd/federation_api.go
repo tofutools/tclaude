@@ -1242,7 +1242,7 @@ func registerFederationRoutes(mux *http.ServeMux) {
 
 	registerFederationPeerViewRoutes(mux)
 	registerFederationAccessRequestRoutes(mux)
-	registerFederationProposalRoutes(mux)
+	registerFederationProposalRoutes(mux, "/v1/federation", false)
 	registerFederationNodeGroupRoutes(mux)
 	registerFederationNodeProfileRoutes(mux)
 	registerFederationRepoRoutes(mux)

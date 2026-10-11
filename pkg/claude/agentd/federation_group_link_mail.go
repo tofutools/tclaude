@@ -90,3 +90,68 @@ func groupLinkByRemoteName(r *http.Request, conv string, peer *db.FederationPeer
 	}
 	return nil
 }
+
+func remoteLinkJSON(groupID int64, dir string, names map[int64]string) []linkJSON {
+	out := []linkJSON{}
+	links, err := db.ListFederationGroupLinks(groupID)
+	if err != nil {
+		return out
+	}
+	for _, l := range links {
+		if dir != "" && dir != "both" && dir != l.Direction {
+			continue
+		}
+		peer, _ := db.GetFederationPeer(l.Peer)
+		label := l.Peer
+		if peer != nil {
+			label = peerDisplay(peer)
+		}
+		from, to := names[l.LocalGroupID], l.RemoteGroupName+"@"+label
+		if l.Direction == "in" {
+			from, to = to, from
+		}
+		out = append(out, linkJSON{ID: l.ID, From: from, To: to, Mode: l.Mode, CreatedAt: l.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"), Peer: l.Peer, Direction: l.Direction, LocalState: l.LocalState, RemoteState: l.RemoteState})
+	}
+	return out
+}
+
+func handleCanMessageFederated(w http.ResponseWriter, r *http.Request, conv, to string) bool {
+	if group, peer, ok := splitFederatedGroup(to); ok {
+		if l := groupLinkByRemoteName(r, conv, peer, group); l != nil {
+			g, _ := db.GetAgentGroupByID(l.LocalGroupID)
+			via := ""
+			if g != nil {
+				via = g.Name
+			}
+			writeJSON(w, 200, canMessageResp{Allowed: true, Reason: "via-peer-link", ViaGroup: via, LinkID: l.ID, Message: "Exact directed link; peer rechecks live ingress at delivery"})
+			return true
+		}
+		writeJSON(w, 200, canMessageResp{Allowed: false, Message: "No active directed link from your current groups reaches this peer group"})
+		return true
+	}
+	if !isFederatedAddress(to) {
+		return false
+	}
+	target, err := resolveFederatedTarget(conv, to)
+	if err != nil {
+		writeJSON(w, 200, canMessageResp{Allowed: false, Message: err.Error()})
+		return true
+	}
+	for _, group := range target.remoteGroup {
+		if l := groupLinkByRemoteName(r, conv, target.peer, group); l != nil {
+			g, _ := db.GetAgentGroupByID(l.LocalGroupID)
+			via := ""
+			if g != nil {
+				via = g.Name
+			}
+			writeJSON(w, 200, canMessageResp{Allowed: true, Reason: "via-peer-link", ViaGroup: via, LinkID: l.ID})
+			return true
+		}
+		if allowed, _, _ := permissionAllowsAction(r, conv, PermMessageDirect, ActionContext{RemotePeer: target.peer.InstanceID, RemoteGroup: group}); allowed {
+			writeJSON(w, 200, canMessageResp{Allowed: true, Reason: "peer-grant", ViaGroup: group})
+			return true
+		}
+	}
+	writeJSON(w, 200, canMessageResp{Allowed: false, Message: "No peer-scoped mail grant or active directed link reaches this target"})
+	return true
+}
