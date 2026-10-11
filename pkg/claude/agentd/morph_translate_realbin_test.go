@@ -123,7 +123,9 @@ func TestMorphResumeRealCLI(t *testing.T) {
 		{src: harness.DefaultName, dst: harness.CopilotName, bin: "copilot", model: "claude-haiku-5.5",
 			// Copilot's GitHub token lives in the OS keyring, not under COPILOT_HOME.
 			creds: func(*testing.T, string) {},
-			args:  func(id string) []string { return []string{"--resume", id, "--model", "claude-haiku-5.5", "-s", "-p", ask} }},
+			args: func(id string) []string {
+				return []string{"--resume", id, "--model", "claude-haiku-5.5", "-s", "-p", ask}
+			}},
 		{src: harness.DefaultName, dst: harness.OpenCodeName, bin: "opencode", model: "openai/gpt-5.6-luna",
 			creds: func(*testing.T, string) {},
 			args:  func(id string) []string { return []string{"run", "--session", id, "-m", "openai/gpt-5.6-luna", ask} }},
