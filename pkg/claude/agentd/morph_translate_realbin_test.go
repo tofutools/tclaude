@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -137,6 +138,9 @@ func TestMorphResumeRealCLI(t *testing.T) {
 			args:  func(id string) []string { return []string{"run", "--session", id, "-m", "openai/gpt-5.6-luna", ask} }},
 	}
 	for _, c := range cases {
+		if os.Getenv("TCLAUDE_MORPH_NEAR_BUDGET") == "1" && c.dst != harness.CodexName {
+			continue // One cheap local call; never enabled in CI.
+		}
 		t.Run(c.src+"->"+c.dst, func(t *testing.T) {
 			bin, err := exec.LookPath(c.bin)
 			if err != nil {
@@ -159,6 +163,19 @@ func TestMorphResumeRealCLI(t *testing.T) {
 			f.HaveGroup("crew")
 			spawn := spawnMorphSource(t, f, c.src, "smoke")
 			seedMorphHistory(t, f, c.src, spawn.ConvID)
+			policy := transcript.Options{TargetModel: c.model}
+			if os.Getenv("TCLAUDE_MORPH_NEAR_BUDGET") == "1" {
+				// Exercise a realistic configured unknown-model budget, using
+				// harmless factual history. The first task still carries PELICAN.
+				policy.ContextWindowTokens = 32_000
+				cc := f.World.CCs.GetByConvID(spawn.ConvID)
+				require.NotNil(t, cc)
+				for i := range 5 {
+					require.NoError(t, cc.AppendTurn(map[string]any{"type": "user", "uuid": fmt.Sprintf("budget-u%d", i), "message": map[string]any{"role": "user", "content": strings.Repeat("Recorded project observation: the directory contains ordinary source files. ", 58)}}))
+					require.NoError(t, cc.AppendTurn(map[string]any{"type": "assistant", "uuid": fmt.Sprintf("budget-a%d", i), "message": map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "text", "text": "Noted."}}}}))
+				}
+			}
+
 			profile, err := db.ConversationResumeProfileForConv(spawn.ConvID)
 			require.NoError(t, err)
 			require.NotNil(t, profile)
@@ -167,9 +184,14 @@ func TestMorphResumeRealCLI(t *testing.T) {
 			require.NoError(t, err)
 
 			res, err := harness.TranslateHistory(mustGetHarness(t, c.src), mustGetHarness(t, c.dst), spawn.ConvID, cwd,
-				harness.TranslateOptions{Policy: transcript.Options{TargetModel: c.model}})
+				harness.TranslateOptions{Policy: policy})
 			require.NoError(t, err)
 			t.Cleanup(res.Cleanup)
+			if os.Getenv("TCLAUDE_MORPH_NEAR_BUDGET") == "1" {
+				assert.Greater(t, res.Report.CarriedEstimatedTokens, res.Report.BudgetTokens*4/5)
+				assert.LessOrEqual(t, res.Report.CarriedEstimatedTokens, res.Report.BudgetTokens)
+				t.Logf("history safety estimate %d / budget %d", res.Report.CarriedEstimatedTokens, res.Report.BudgetTokens)
+			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 			defer cancel()

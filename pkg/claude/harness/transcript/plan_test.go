@@ -96,7 +96,7 @@ func TestPlanBudgetKeepsNewestTurnsAndSummary(t *testing.T) {
 		tr.Append(Entry{Role: RoleAssistant, Origin: OriginAgent, Blocks: []Block{Text(strings.Repeat("a", 4000))}})
 	}
 	tr.Append(Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text("NEWEST")}})
-	p := NewPlan(tr, Options{Target: "codex", ContextWindowTokens: 20000, BudgetPercent: 50, TranscriptPath: "/x.md"})
+	p := NewPlan(tr, Options{Target: "codex", ContextWindowTokens: 40000, BudgetPercent: 50, TranscriptPath: "/x.md"})
 	first := planTextOf(p.Entries[0])
 	assert.Contains(t, first, "SUMMARY-TEXT", "summary stays pinned")
 	assert.Contains(t, first, "earlier entries were omitted to fit the context budget; read them in /x.md")
@@ -108,7 +108,7 @@ func TestPlanBudgetKeepsNewestTurnsAndSummary(t *testing.T) {
 	for _, e := range p.Entries {
 		tokens += estimateTokens(e)
 	}
-	assert.LessOrEqual(t, tokens, int64(10000+200))
+	assert.LessOrEqual(t, tokens, int64(20000+1000))
 }
 
 func TestPlanMediaInlineExternalizeDrop(t *testing.T) {

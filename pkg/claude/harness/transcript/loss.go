@@ -85,11 +85,15 @@ type Loss struct {
 // LossReport is everything a translation did not carry 1:1. It holds counts
 // and categories only, so it is safe to show in notes, previews and audit.
 type LossReport struct {
-	Source        string `json:"source"`
-	Target        string `json:"target,omitempty"`
-	SourceEntries int    `json:"source_entries"`
-	Carried       int    `json:"carried_entries"`
-	Items         []Loss `json:"items"`
+	CarriedEstimatedTokens int64  `json:"carried_estimated_tokens"`
+	ContextWindowTokens    int64  `json:"context_window_tokens"`
+	ContextWindowSource    string `json:"context_window_source"`
+	BudgetTokens           int64  `json:"budget_tokens"`
+	Source                 string `json:"source"`
+	Target                 string `json:"target,omitempty"`
+	SourceEntries          int    `json:"source_entries"`
+	Carried                int    `json:"carried_entries"`
+	Items                  []Loss `json:"items"`
 	// Fallback is the delivery rung: "native", "context_file" or "handoff".
 	Fallback string `json:"fallback,omitempty"`
 	// TranscriptPath is the full neutral transcript written beside the morph.
