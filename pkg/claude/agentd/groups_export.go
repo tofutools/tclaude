@@ -127,16 +127,10 @@ func serveGroupExport(w http.ResponseWriter, groupName, format string) {
 	}
 }
 
-// buildGroupExport collects every DB row for the group, reads each
-// member's conversation .jsonl, and serializes the whole thing into a
-// zip archive. A member whose .jsonl cannot be located is flagged
-// Missing — its DB rows still export.
-func buildGroupExport(groupName string) ([]byte, error) {
-	return buildGroupExportAs(groupName, groupArchiveZip)
-}
-
-// buildGroupExportAs is buildGroupExport in the given archive format: the
-// v5 zip, or a group PAF carrying the same data.
+// buildGroupExportAs collects every DB row for the group, reads each
+// member's conversation .jsonl, and serializes the whole thing as the v5
+// zip or a group PAF carrying the same data. A member whose .jsonl cannot
+// be located is flagged Missing — its DB rows still export.
 func buildGroupExportAs(groupName, format string) ([]byte, error) {
 	exp, err := db.CollectGroupExport(groupName)
 	if err != nil {
