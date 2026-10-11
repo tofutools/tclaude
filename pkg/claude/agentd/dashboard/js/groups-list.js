@@ -422,14 +422,16 @@ function FleetGroupName({ group }) {
 
 function RealGroupSummary({ group, activity, membersView, snapshot, actions }) {
   const interactions = useGroupsInteractions();
-  const { members, hiddenOffline } = membersView;
+  const { members, hiddenOffline, away } = membersView;
   const online = group.online || 0;
-  const full = !!group.max_members && members.length >= group.max_members;
+  // An away agent keeps its home membership, so it still takes a cap slot.
+  const full = !!group.max_members && members.length + (away || 0) >= group.max_members;
   const cap = group.max_members || '∞';
   const count = online === members.length ? `${members.length}/${cap}` : `${online}/${members.length}/${cap}`;
   const titleParts = [`${members.length} member${members.length === 1 ? '' : 's'} (${online} online)`, group.max_members ? `cap ${group.max_members}` : 'no cap'];
   if (full) titleParts.push('group is full, spawns refused');
   if (hiddenOffline) titleParts.push(`${hiddenOffline} offline hidden in this view`);
+  if (away) titleParts.push(`${away} away on another node, not counted (still holding a cap slot)`);
   const groupEditing = interactions.editorKey.startsWith(`group:${group.name}:`);
   const renameKey = `group:${group.name}:name`;
   const maxValue = group.max_members || 0;
@@ -478,6 +480,7 @@ function RealGroupSummary({ group, activity, membersView, snapshot, actions }) {
       title=${`${titleParts.join(' · ')}${group.max_members ? ' — click to edit cap' : ' — click to set a cap'}`}
       message=${(value) => value > 0 ? `${group.name}: member cap → ${value}` : `${group.name}: member cap cleared`}
     >👥 ${count}<//>
+    ${away ? html`<span class="group-away-hint" title=${`${away} member${away === 1 ? ' is' : 's are'} away on another node. ${away === 1 ? 'Its row stays' : 'Their rows stay'} here, dimmed, but ${away === 1 ? 'is' : 'are'} not counted as members.`}>+${away} away</span>` : null}
     <${GroupProfileChip} group=${group} actions=${actions} kind="profile" />
     <${GroupProfileChip} group=${group} actions=${actions} kind="sandbox" />
     <${GroupLinkChips} group=${group} snapshot=${snapshot} />
@@ -599,7 +602,7 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
       <div class="group-header-actions"><${GroupActions} group=${group} actions=${actions} /></div>
       <${ForceBlock} group=${group} />
       <${GroupTriggersSection} group=${group} triggers=${triggers} />
-      ${!view.members.length
+      ${!view.members.length && !view.away
         ? html`<div class="muted">(no members yet)</div>`
         : !view.visible.length
           ? html`<div class="muted">(${view.hiddenOffline} offline member${view.hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${view.hiddenOffline === 1 ? 'it' : 'them'})</div>`

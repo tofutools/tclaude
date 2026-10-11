@@ -138,7 +138,7 @@ func (v *peerView) groups() ([]dashboardGroup, []dashboardAgent, error) {
 					return nil, nil, err
 				}
 				if fp != nil {
-					ar.FederationPresence = &db.AgentFederationPresence{AgentID: aid, HomeInstance: fp.HomeInstance, State: fp.State, CurrentInstance: fp.CurrentInstance, HopCount: fp.HopCount}
+					ar.FederationPresence = &db.AgentFederationPresence{AgentID: aid, HomeInstance: fp.HomeInstance, State: fp.State, CurrentInstance: fp.CurrentInstance, HopCount: fp.HopCount, ArrivedAt: fp.ArrivedAt, PredecessorInstance: fp.PredecessorInstance}
 				}
 				if roster {
 					ar.Role = m.Role
