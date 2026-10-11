@@ -65,15 +65,18 @@ export function writeScopeURL(fused, win = globalThis) {
 
 // pickNode shows one node on its own: it leaves any fused view, then shows
 // that node's per-node view (a page load for another node, as before).
+// Without a fleet only this node can be picked: ⌂ still leaves a top-level
+// view or a peer's view.
 function pickNode(state, id, { navigate, remote, switchNode }) {
   const fleet = state.fleet.value;
-  if (!fleet) return;
+  const selfID = fleet?.self.id ?? state.node.value?.self.id ?? '';
+  if (!fleet && id !== selfID) return;
   const wasFused = !!state.fused.value;
   state.setFused(null);
   writeScopeURL(null);
-  if (id === (remote || fleet.self.id)) {
+  if (id === (remote || selfID)) {
     if (state.view.value.topLevel || !wasFused) navigate(state.lastLocalTab());
-  } else switchNode(id === fleet.self.id ? '' : id);
+  } else switchNode(id === selfID ? '' : id);
 }
 
 // usePopover closes a popover on a click outside it or Escape. The popover is
@@ -211,11 +214,12 @@ function MapGate({ reason, doc = globalThis.document }) {
 
 // IdleChips is the chip row before there is a fleet to pick from: this node's
 // ⌂ and a greyed-out fused button. ⌂ is usable once the hub is connected, and
-// always on a peer view, where it is the way home.
+// always where it leads somewhere: home from a peer's view, or back from the
+// map or Fleet administration.
 function IdleChips({ state, node, off, remote, onPick }) {
   const current = state.view.value;
   const self = node?.self || { id: '', name: 'this node', color: LOCAL_COLOR, local: true };
-  const homeOff = off && !remote;
+  const homeOff = off && !remote && !current.topLevel;
   const isCurrent = !remote && !current.topLevel;
   return html`<span class=${`node-chips${off ? ' hub-off' : ''}`} role="group" aria-label="Nodes" title=${off || undefined}>
     <button type="button" class=${`node-chip local${isCurrent ? ' active' : ''}`} style=${`--nc:${self.color}`} disabled=${homeOff}
@@ -257,7 +261,7 @@ export function NodeChips({ state, navigate = defaultNavigate, remote = remoteNo
   const cls = (node) => `node-chip${node.local ? ' local' : ''}${node.local || node.online ? '' : ' offline'}${isCurrent(node.id) ? ' active' : ''}${fused && isTicked(fused, node.id) ? ' ticked' : ''}`;
   const self = fleet.self;
   const buttons = selectorKind(fleet) === 'buttons';
-  return html`${gate}<span class="node-chips" role="group" aria-label="Nodes">
+  return html`${gate}<span class="node-chips has-fleet" role="group" aria-label="Nodes">
     ${buttons ? html`
     <button type="button" class=${cls(self)} style=${`--nc:${self.color}`}
       aria-current=${isCurrent(self.id) ? 'page' : undefined} aria-label=${`${self.name} (this node)`}
@@ -583,7 +587,7 @@ function StatusPoller({ state, actions, timers = globalThis }) {
       // so they follow the hub connection; federation off (or an older daemon
       // without the route) rechecks rarely.
       const hub = state.node.value?.hub;
-      const live = fleet || (hub && hub !== 'off');
+      const live = hub ? hub !== 'off' : !!fleet;
       if (!disposed) timer = timers.setTimeout(loop, pollDelay({ base: live ? HUB_POLL_MS : fleet === undefined ? STATUS_POLL_MS : STATUS_POLL_MS * 4 }));
     };
     loop();

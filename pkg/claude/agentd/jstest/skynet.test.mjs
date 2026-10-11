@@ -122,6 +122,14 @@ test('chip row is always there, greyed out until the hub connects; peer chips sw
   assert.equal(home().disabled, false, 'connected without peers: ⌂ usable');
   assert.equal(fuse().disabled, true, 'nothing to fuse yet');
   assert.match(anchor.title, /No linked nodes yet/);
+  await harness.act(() => { activeTab.value = 'fleet-admin'; });
+  await harness.act(() => harness.fireEvent(home(), 'click'));
+  assert.deepEqual(nav, ['access'], 'with no peers ⌂ still leaves Fleet administration');
+  nav.length = 0;
+  await harness.act(() => { activeTab.value = 'access'; state.setStatus({ enabled: false, instance_id: 'inst_self', name: 'desk', peers: [] }); });
+  await harness.act(() => { activeTab.value = 'fleet-admin'; });
+  assert.equal(home().disabled, false, 'federation off, but ⌂ is the way out of Fleet administration');
+  await harness.act(() => { activeTab.value = 'access'; state.setStatus({ ...status([]), peers: [] }); });
 
   await harness.act(() => { state.setStatus(status([])); });
   assert.equal(anchor.hasAttribute('aria-disabled'), false, 'connected with peers: the map opens');
@@ -136,8 +144,24 @@ test('chip row is always there, greyed out until the hub connects; peer chips sw
   assert.deepEqual(nav, ['access'], 'the ⌂ chip returns to the tab left for the map');
   await harness.act(() => { activeTab.value = 'access'; state.setStatus({ ...status([]), hub: { state: 'disconnected' } }); });
   assert.equal(home().disabled, true, 'a hub drop greys the row out again, live');
+  assert.match(home().title, /hub unreachable/);
+  await harness.act(() => { state.setStatus({ ...status([]), hub: { state: 'refused', last_error: 'hub refused: shutting_down: hub shutting down' } }); });
+  assert.match(home().title, /shutting down/, 'a refusal shows the hub\'s reason');
   assert.equal(anchor.getAttribute('aria-disabled'), 'true');
   await mounted.unmount(); state.dispose(); map.remove();
+});
+
+test('on a peer view without a local fleet ⌂ still goes home', async (t) => {
+  const { harness, stateMod, island } = await load(t);
+  const state = stateMod.createSkynetState({ activeTab: harness.signals.signal('groups') });
+  state.clearFleet();
+  const switched = [];
+  const mounted = await harness.mount(harness.html`<${island.NodeChips} state=${state} navigate=${() => {}} remote="inst_forge" switchNode=${(id) => switched.push(id)} />`);
+  const home = getByRole(mounted.container, 'button', { name: /this node/ });
+  assert.equal(home.disabled, false);
+  await harness.act(() => harness.fireEvent(home, 'click'));
+  assert.deepEqual(switched, ['']);
+  await mounted.unmount(); state.dispose();
 });
 
 test('on a peer view the peer chip is current and ⌂ switches back to this node', async (t) => {
