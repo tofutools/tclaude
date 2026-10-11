@@ -631,6 +631,21 @@ stale; a node no longer trusted drops them. The old `/fleet` address opens this
 view with every node ticked. CLI: `tclaude agent groups ls --all-nodes`; actions are
 `tclaude federation action ... --node NODE`.
 
+An agent that teleported off its home node is marked on both ends, in single-node
+and fused views alike:
+- **Where it runs now:** its row carries an `away from <home> · hop N` badge in
+  the home node's colour.
+- **At home:** it leaves a dimmed `away → on <node>` placeholder in each of its
+  groups, with no controls. The placeholder is not counted in the group's
+  member count; the header shows `+N away` instead. In a fused view, `↓ show`
+  scrolls to its live row; in a single-node view, `open on <node> ↗` opens that
+  node.
+- **Back home:** once it returns, its row shows a `back home` tag for ten
+  minutes.
+
+The markers come from the agent's federation presence (`tclaude agent whoami`
+shows the same).
+
 ### Messages on several nodes
 
 In a fused view, Messages shows the ticked nodes' mail in the usual layout.

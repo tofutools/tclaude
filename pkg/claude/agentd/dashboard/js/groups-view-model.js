@@ -1,4 +1,5 @@
 import { groupActivityPlacement } from './group-tree-activity.js';
+import { isAwayPlaceholder } from './agent-presence.js';
 
 // Build the defensive Groups tree without creating markup. The incoming order
 // is already the operator's persisted order. Missing/filtered parents become
@@ -53,8 +54,13 @@ export function virtualGroupOpen(group, prefs) {
   return group.pending ? saved !== '0' : saved === '1';
 }
 
+// groupMembersView splits a group's rows. An away agent (tcl-hocp2h) keeps a
+// placeholder row at home that is always shown but never counted as a member:
+// members excludes it, visible keeps it, away counts it.
 export function groupMembersView(group, showOffline) {
-  const members = group.members || [];
-  const visible = showOffline ? members : members.filter((member) => member.online);
-  return { members, visible, hiddenOffline: members.length - visible.length };
+  const all = group.members || [];
+  const members = all.filter((member) => !isAwayPlaceholder(member));
+  const away = all.length - members.length;
+  const visible = showOffline ? all : all.filter((member) => member.online || isAwayPlaceholder(member));
+  return { members, visible, away, hiddenOffline: all.length - visible.length };
 }
