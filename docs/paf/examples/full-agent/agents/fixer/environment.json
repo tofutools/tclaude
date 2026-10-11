@@ -1,18 +1,38 @@
 {
-  "harness": {"name": "claude", "version": "2.3.0"},
+  "harness": {
+    "name": "claude",
+    "version": "2.3.0"
+  },
   "model": {
     "id": "claude-opus-5-5",
     "provider": "anthropic",
     "effort": "high",
     "context_window_tokens": 1000000,
     "context_window_source": "Claude extended-context selection",
-    "usage": {"at": "2026-10-11T19:40:00Z", "context_tokens": 48210, "input_tokens": 312400, "output_tokens": 9120, "cache_read_tokens": 280000}
+    "usage": {
+      "at": "2026-10-11T19:40:00Z",
+      "context_tokens": 48210,
+      "input_tokens": 312400,
+      "output_tokens": 9120,
+      "cache_read_tokens": 280000
+    }
   },
   "approval": "default",
-  "modes": {"fast": false, "plan": false},
+  "modes": {
+    "fast": false,
+    "plan": false
+  },
   "sandbox": {
-    "tclaude_layer": {"mode": "workspace-write"},
-    "harness": {"mode": "off"}
+    "layers": [
+      {
+        "provider": "tclaude",
+        "mode": "workspace-write"
+      },
+      {
+        "provider": "claude",
+        "mode": "off"
+      }
+    ]
   },
   "workspace": {
     "cwd": "${PROJECT}/tclaude-fix-clone",
@@ -22,16 +42,58 @@
     "dirty": true,
     "worktree": "${PROJECT}/tclaude-fix-clone"
   },
-  "placeholders": [{"name": "PROJECT", "original": "/home/me/git", "description": "Directory holding the project checkouts"}],
-  "skills": [{"name": "agent-coord", "source": "tclaude"}, {"name": "reincarnate", "source": "tclaude"}],
-  "tools": [
-    {"name": "Bash", "kind": "builtin"},
-    {"name": "Read", "kind": "builtin"},
-    {"name": "Edit", "kind": "builtin"},
-    {"name": "mcp__linear__get_issue", "kind": "mcp", "server": "linear"}
+  "placeholders": [
+    {
+      "name": "PROJECT",
+      "original": "/home/me/git",
+      "description": "Directory holding the project checkouts"
+    }
   ],
-  "mcp_servers": [{"name": "linear", "transport": "http"}],
-  "harness_specific": {
-    "claude": {"auto_compact_window": 200000}
+  "skills": [
+    {
+      "name": "agent-coord",
+      "source": "tclaude"
+    },
+    {
+      "name": "reincarnate",
+      "source": "tclaude"
+    }
+  ],
+  "tools": [
+    {
+      "name": "Bash",
+      "kind": "builtin"
+    },
+    {
+      "name": "Read",
+      "kind": "builtin"
+    },
+    {
+      "name": "Edit",
+      "kind": "builtin"
+    },
+    {
+      "name": "mcp__linear__get_issue",
+      "kind": "mcp",
+      "server": "linear"
+    }
+  ],
+  "mcp_servers": [
+    {
+      "name": "linear",
+      "transport": "http"
+    }
+  ],
+  "extensions": {
+    "tclaude": {
+      "harness": {
+        "claude": {
+          "auto_compact_window": 200000
+        }
+      },
+      "sandbox": {
+        "profile": "default-worker"
+      }
+    }
   }
 }

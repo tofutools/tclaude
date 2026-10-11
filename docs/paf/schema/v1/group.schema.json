@@ -29,16 +29,14 @@
           "role": {
             "type": "string"
           },
-          "owner": {
-            "type": "boolean",
-            "description": "Advisory; ownership never travels."
+          "extensions": {
+            "$ref": "common.schema.json#/$defs/extensions"
           }
         }
       }
     },
-    "config": {
-      "type": "object",
-      "description": "Group settings such as standing orders and routes."
+    "extensions": {
+      "$ref": "common.schema.json#/$defs/extensions"
     }
   }
 }

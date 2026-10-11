@@ -110,6 +110,9 @@
           "$ref": "common.schema.json#/$defs/timestamp"
         }
       }
+    },
+    "extensions": {
+      "$ref": "common.schema.json#/$defs/extensions"
     }
   }
 }

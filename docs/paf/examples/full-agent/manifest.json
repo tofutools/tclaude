@@ -6,8 +6,8 @@
   "entries": [
     {
       "path": "agents/fixer/agent.json",
-      "bytes": 1487,
-      "sha256": "9e96fbe78bf5f84782491fc3254c98205162c009481e1af4ea0e1167101a9ba2",
+      "bytes": 1831,
+      "sha256": "2545cf5c3eee33c03e500e9f27cbe976f62e54e9eb6b9c6f222b6768d205e6e0",
       "media_type": "application/json"
     },
     {
@@ -24,8 +24,8 @@
     },
     {
       "path": "agents/fixer/environment.json",
-      "bytes": 1415,
-      "sha256": "fa2131a4705455c4ebe8fcf43cae0012f7963deaa2039d067fd19f57a5152cac",
+      "bytes": 1882,
+      "sha256": "7a083c008d1f7f2a2f427421ccd3b0507625d6d7cbdd50cce0cf58061a19a5fa",
       "media_type": "application/json"
     },
     {
@@ -43,10 +43,21 @@
     {
       "path": "privacy.json",
       "bytes": 528,
-      "sha256": "ad19b4e314993490b71870386320fbe7bad20deba88fc550465486b0dd0bfd78",
+      "sha256": "e00cccdfe8df5832c2abe4bed22c37fbd25df09a49c18ebf585e058c5299db9a",
       "media_type": "application/json"
     }
   ],
+  "extensions": {
+    "tclaude": {
+      "copy": "unsafe",
+      "schema": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/ext/tclaude.schema.json",
+      "spec": "https://github.com/tofutools/tclaude/blob/main/docs/paf.md#the-tclaude-extension",
+      "system": "tclaude",
+      "system_version": "v0.0.2212",
+      "version": "1.0"
+    }
+  },
+  "extensions_required": [],
   "format": "paf",
   "kind": "agent",
   "paf_version": "1.0",

@@ -70,6 +70,9 @@
             },
             "label": {
               "type": "string"
+            },
+            "extensions": {
+              "$ref": "common.schema.json#/$defs/extensions"
             }
           }
         },
@@ -77,18 +80,13 @@
           "type": "string",
           "description": "SPDX expression for published PAFs."
         },
-        "profile_name": {
-          "type": "string",
-          "description": "Informational; receivers never look a profile up by this name."
-        },
-        "profile": {
-          "type": "object",
-          "description": "tclaude inline spawn profile, including launch posture."
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/extensions"
         }
       }
     },
     "groups": {
-      "description": "Advisory provenance; never grants.",
+      "description": "Teams the agent belonged to. Advisory provenance; never grants.",
       "type": "array",
       "items": {
         "type": "object",
@@ -101,28 +99,9 @@
           },
           "role": {
             "type": "string"
-          }
-        }
-      }
-    },
-    "permissions": {
-      "description": "Advisory provenance; never grants.",
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": [
-          "slug"
-        ],
-        "properties": {
-          "slug": {
-            "type": "string"
           },
-          "effect": {
-            "type": "string"
-          },
-          "scope": {},
-          "source": {
-            "type": "string"
+          "extensions": {
+            "$ref": "common.schema.json#/$defs/extensions"
           }
         }
       }
@@ -149,6 +128,9 @@
           "detail": {
             "type": "string",
             "maxLength": 4096
+          },
+          "extensions": {
+            "$ref": "common.schema.json#/$defs/extensions"
           }
         }
       }
@@ -200,6 +182,9 @@
           "type": "string"
         }
       }
+    },
+    "extensions": {
+      "$ref": "common.schema.json#/$defs/extensions"
     }
   }
 }

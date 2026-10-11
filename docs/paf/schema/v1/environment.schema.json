@@ -69,6 +69,9 @@
               "minimum": 0
             }
           }
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/extensions"
         }
       }
     },
@@ -88,11 +91,31 @@
     "sandbox": {
       "type": "object",
       "properties": {
-        "tclaude_layer": {
-          "$ref": "#/$defs/sandboxLayer"
+        "layers": {
+          "type": "array",
+          "description": "Confinement layers, outermost first.",
+          "items": {
+            "type": "object",
+            "required": [
+              "provider",
+              "mode"
+            ],
+            "properties": {
+              "provider": {
+                "type": "string",
+                "minLength": 1
+              },
+              "mode": {
+                "type": "string"
+              },
+              "extensions": {
+                "$ref": "common.schema.json#/$defs/extensions"
+              }
+            }
+          }
         },
-        "harness": {
-          "$ref": "#/$defs/sandboxLayer"
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/extensions"
         }
       }
     },
@@ -117,6 +140,9 @@
         },
         "worktree": {
           "type": "string"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/extensions"
         }
       }
     },
@@ -137,6 +163,9 @@
           },
           "description": {
             "type": "string"
+          },
+          "extensions": {
+            "$ref": "common.schema.json#/$defs/extensions"
           }
         }
       }
@@ -160,6 +189,9 @@
           },
           "sha256": {
             "$ref": "common.schema.json#/$defs/sha256"
+          },
+          "extensions": {
+            "$ref": "common.schema.json#/$defs/extensions"
           }
         }
       }
@@ -181,6 +213,9 @@
           },
           "server": {
             "type": "string"
+          },
+          "extensions": {
+            "$ref": "common.schema.json#/$defs/extensions"
           }
         }
       }
@@ -202,28 +237,15 @@
           },
           "version": {
             "type": "string"
+          },
+          "extensions": {
+            "$ref": "common.schema.json#/$defs/extensions"
           }
         }
       }
     },
-    "harness_specific": {
-      "type": "object",
-      "additionalProperties": {
-        "type": "object"
-      }
-    }
-  },
-  "$defs": {
-    "sandboxLayer": {
-      "type": "object",
-      "properties": {
-        "mode": {
-          "type": "string"
-        },
-        "details": {
-          "type": "object"
-        }
-      }
+    "extensions": {
+      "$ref": "common.schema.json#/$defs/extensions"
     }
   }
 }
