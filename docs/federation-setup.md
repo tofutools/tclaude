@@ -50,7 +50,9 @@ change, regenerate the certificate, restart the hub and copy the new
 tclaude-hub serve --listen 0.0.0.0:8470 --tls-cert hub.crt --tls-key hub.key
 ```
 
-The hub's state lives in `$TCLAUDE_HUB_DIR` (default `~/.tclaude-hub/`). To
+The hub's state lives in `$TCLAUDE_HUB_DIR` (default `~/.tclaude/data/hub/`
+for the user running the hub). Existing `~/.tclaude-hub/` directories stay in
+use with a migration hint; no state is moved automatically. To
 keep it running, use the systemd unit in
 [Running a hub](federation.md#running-a-hub).
 

@@ -49,24 +49,39 @@ func RootCmd() *cobra.Command {
 	return cmd
 }
 
-// DefaultDBPath is $TCLAUDE_HUB_DIR/hub.sqlite, else ~/.tclaude-hub/hub.sqlite.
+// DefaultDBPath honors explicit configuration and existing legacy state before
+// using the running user's sandbox-protected private data directory.
 func DefaultDBPath() string {
+	path, _ := defaultDBPath()
+	return path
+}
+
+func defaultDBPath() (string, bool) {
 	if d := os.Getenv("TCLAUDE_HUB_DIR"); d != "" {
-		return filepath.Join(d, "hub.sqlite")
+		return filepath.Join(d, "hub.sqlite"), false
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".tclaude-hub", "hub.sqlite")
+	legacy := filepath.Join(home, ".tclaude-hub")
+	if info, err := os.Stat(legacy); err == nil && info.IsDir() {
+		return filepath.Join(legacy, "hub.sqlite"), true
+	}
+	return filepath.Join(home, ".tclaude", "data", "hub", "hub.sqlite"), false
 }
 
 // DBParam exposes the shared database flag to Boa when embedded in command parameters.
 type DBParam struct {
-	DB string `long:"db" optional:"true" help:"Hub database path (default $TCLAUDE_HUB_DIR/hub.sqlite or ~/.tclaude-hub/hub.sqlite)"`
+	DB string `long:"db" optional:"true" help:"Hub database path (default $TCLAUDE_HUB_DIR/hub.sqlite or ~/.tclaude/data/hub/hub.sqlite; existing ~/.tclaude-hub is retained)"`
 }
 
 func (p DBParam) open() (*hub.Store, error) {
 	path := p.DB
 	if path == "" {
-		path = DefaultDBPath()
+		var legacy bool
+		path, legacy = defaultDBPath()
+		if legacy {
+			home, _ := os.UserHomeDir()
+			fmt.Fprintf(os.Stderr, "Hub state remains at %q; move it to %q while stopped for sandbox protection (no automatic migration).\n", filepath.Dir(path), filepath.Join(home, ".tclaude", "data", "hub"))
+		}
 	}
 	return hub.OpenStore(path)
 }
@@ -77,6 +92,7 @@ func fail(err error) {
 }
 
 type serveParams struct {
+	ClaimOutputParams
 	Supervised      bool   `long:"supervised" help:"Run a health-checking update guardian under systemd/launchd"`
 	SupervisorLabel string `long:"supervisor-label" optional:"true" help:"launchd label for supervised mode"`
 	GuardianWorker  bool   `long:"guardian-worker" hidden:"true"`
@@ -109,6 +125,9 @@ func serveDefinition() boa.CmdT[serveParams] {
 		Short:       "Run the hub",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *serveParams, cmd *cobra.Command, _ []string) {
+			if err := validateClaimOutput(p.PrintClaimToken); err != nil {
+				fail(err)
+			}
 			if (p.TLSCert == "") != (p.TLSKey == "") {
 				fail(fmt.Errorf("--tls-cert and --tls-key go together"))
 			}
@@ -147,7 +166,7 @@ func serveDefinition() boa.CmdT[serveParams] {
 				fail(err)
 			}
 			if token != "" {
-				fmt.Fprintf(os.Stderr, "Hub admin claim token (single-use, valid 24h): %s\nPrivate claim file: %s\n", token, st.ClaimPath())
+				printClaimOutput(os.Stderr, token, st.ClaimPath(), p.PrintClaimToken)
 			}
 			flags := []string{}
 			flagKeys := map[string]string{"identity-rotation-window": "identity_rotation_window_seconds", "frames-per-minute": "frames_per_minute", "bytes-per-minute": "bytes_per_minute", "max-connections": "max_connections", "max-streams": "max_streams", "stream-bytes-per-second": "stream_bytes_per_second", "stream-wait": "stream_wait_seconds", "stream-idle": "stream_idle_seconds", "connection-idle": "connection_idle_seconds", "hello-timeout": "hello_timeout_seconds", "policy-refresh": "policy_refresh_seconds"}

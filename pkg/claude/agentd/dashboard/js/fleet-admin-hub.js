@@ -167,7 +167,7 @@ function ClaimDialog({ self, actions, confirm, onClose, onDone }) {
   };
   return html`<${Overlay} id="fleet-hub-claim" labelledby="fleet-hub-claim-title" onClose=${onClose}>
     <h3 id="fleet-hub-claim-title">Claim hub admin</h3>
-    <p>The hub prints a one-time admin claim token on its first start and writes it to a file only the hub user can read. Paste it here. It works once and expires after 24 hours.</p>
+    <p>The hub writes a one-time admin claim token to a file only the hub user can read. Its startup output shows the file path and how to read it on the hub host. Paste the token here. It works once and expires after 24 hours.</p>
     <label class="fa-pe-row"><span class="fa-k">claim token</span><input id="fleet-hub-claim-token" type="password" value=${token} autocomplete="off" spellcheck="false" onInput=${(e) => setToken(e.currentTarget.value)} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); claim(); } }} /></label>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation hub claim TOKEN</code>. Lost every admin key? Only <code>tclaude-hub admin reset</code> on the hub host recovers it.</div>
@@ -561,7 +561,7 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
       <span>${status.admin ? html`<b>you are a hub admin</b> <span class="muted">(${status.admin_count} admin${status.admin_count === 1 ? '' : 's'})</span>` : html`<span class="muted">not a hub admin</span>`}</span>
     </div>
     ${!status.admin ? html`<div class="fa-hub-claim">
-        <p>${status.bootstrap_claimable ? 'This hub has no admin yet. Claim it with the one-time token the hub printed on its first start.' : 'Only a hub admin can manage the hub. An existing admin can add this node, or redeem a claim token if the hub has none.'}</p>
+        <p>${status.bootstrap_claimable ? 'This hub has no admin yet. Claim it with the one-time token from the private claim file on the hub host.' : 'Only a hub admin can manage the hub. An existing admin can add this node, or redeem a claim token if the hub has none.'}</p>
         <button type="button" class="primary" id="fleet-hub-claim-open" disabled=${!status.connected} onClick=${() => setDialog('claim')}>Claim hub admin…</button>
       </div>`
     : html`
