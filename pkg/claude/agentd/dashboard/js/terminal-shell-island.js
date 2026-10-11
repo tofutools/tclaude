@@ -476,7 +476,9 @@ function TabGear({ gear, snapshot, menuKey }) {
     // A fixed menu cannot be scrolled to: it scrolls itself instead.
     menu.style.maxHeight = `calc(100vh - ${top + 8}px)`;
   }, [open]);
-  return html`<span ref=${ref} class="mux-tab-gear" draggable="false">
+  // row-actions gives the menu the Groups row menu's styling (and its wizard
+  // theme) from the same rules, rather than a copy of them.
+  return html`<span ref=${ref} class="mux-tab-gear row-actions" draggable="false">
     <${AgentGearMenu} member=${gear.member} node=${gear.node} snapshot=${snapshot?.value} menuKey=${menuKey} />
   </span>`;
 }
