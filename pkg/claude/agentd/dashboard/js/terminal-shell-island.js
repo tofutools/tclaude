@@ -14,7 +14,7 @@ import { MAX_TERMINAL_GROUP_NAME_LENGTH } from './terminal-shell-state.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { terminalTabStatus } from './terminal-tab-status.js';
 import { fmtCredits, fmtExactUSD, fmtUSD } from './costs-model.js';
-import { agentCostsHidden, subscribeAgentCosts, toggleAgentCosts } from './cost-display-toggle.js';
+import { terminalCostsHidden, subscribeTerminalCosts, toggleTerminalCosts } from './cost-display-toggle.js';
 import {
   memberHumanMessages, openHumanNotificationReader,
 } from './human-notification-attention.js';
@@ -22,6 +22,8 @@ import { ViewersBadge } from './remote-viewers.js';
 import { RemoteFilesPanel } from './remote-files-panel.js';
 import { paneScope } from './skynet-scope.js';
 import { nodeColor } from './skynet-model.js';
+import { AgentGearMenu } from './groups-member-table.js';
+import { GroupsInteractionProvider, useGroupsInteractions } from './groups-interactions.js';
 
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
@@ -398,12 +400,12 @@ function TabAttention({ pane, snapshot, messages: suppliedMessages = null }) {
 }
 
 function TerminalCostToggle() {
-  const [hidden, setHidden] = useState(agentCostsHidden);
-  useLayoutEffect(() => subscribeAgentCosts(setHidden), []);
+  const [hidden, setHidden] = useState(terminalCostsHidden);
+  useLayoutEffect(() => subscribeTerminalCosts(setHidden), []);
   return html`<button type="button" class=${`cost-toggle mux-cost-toggle${hidden ? ' off' : ''}`}
     aria-label="Show agent costs" aria-pressed=${!hidden}
-    title="Show or hide per-agent costs, in Terminals and Groups"
-    onClick=${toggleAgentCosts}>$</button>`;
+    title="Show or hide per-agent costs on these tabs (Groups has its own toggle); hovering a tab shows its cost either way"
+    onClick=${toggleTerminalCosts}>$</button>`;
 }
 
 function TerminalCosts({ agent }) {
@@ -424,6 +426,63 @@ function TerminalCosts({ agent }) {
   `;
 }
 
+// costTooltip is the cost line of a tab's hover title, shown whatever the $
+// toggle says. Nothing when cost tracking is off (body.hide-costs) or the
+// agent has no cost yet; the WHAT-IF figure only where the dashboard shows it.
+function costTooltip(agent) {
+  const body = globalThis.document?.body;
+  if (!agent || body?.classList.contains('hide-costs')) return '';
+  const state = agent.state || {};
+  const cost = Number(state.cost_usd || 0);
+  const virtualCost = Number(state.virtual_cost_usd || 0);
+  const parts = [];
+  if (cost > 0) parts.push(`API cost ${fmtExactUSD(cost)}`);
+  if (virtualCost > 0 && body?.classList.contains('cost-whatif')) parts.push(`≈${fmtExactUSD(virtualCost)} WHAT-IF (hypothetical)`);
+  return parts.length ? `Cost this session: ${parts.join(' · ')}` : '';
+}
+
+// tabGearMember is who a tab's ⚙ acts on: the agent this node's roster
+// matched to the pane, or the peer agent a remote pane attaches to. Plain
+// shells, and a peer's own view (whose roster is not this browser's panes),
+// get none.
+function tabGearMember(pane, agent, snapshotValue, scope) {
+  if (snapshotValue?.peer_view) return null;
+  const remote = pane?.seed?.remote;
+  if (remote?.agent) {
+    const node = scope?.node || { id: remote.peer, name: remote.peerLabel || remote.peer.slice(0, 13), local: false };
+    return { member: { agent_id: remote.agent, conv_id: '', title: pane.label || remote.agent, state: {} }, node };
+  }
+  return agent?.conv_id ? { member: agent, node: null } : null;
+}
+
+// TabGear holds a tab's ⚙ menu. The strip scrolls sideways and so clips
+// anything hanging below it: an open menu is pinned to the viewport under its
+// button instead. Clicks and keys inside never reach the tab, so they neither
+// switch nor close it.
+function TabGear({ gear, snapshot, menuKey }) {
+  const ref = useRef(null);
+  // Reading the interactions context re-renders this on open and close, so
+  // the menu is placed as it opens rather than on the next snapshot publish.
+  const open = useGroupsInteractions().openMenuKey === menuKey;
+  useLayoutEffect(() => {
+    const menu = ref.current?.querySelector('.action-menu');
+    const button = ref.current?.querySelector('.cog-btn');
+    if (!open || !menu || !button) return;
+    const rect = button.getBoundingClientRect();
+    const width = menu.offsetWidth || 0;
+    const top = Math.round(rect.bottom + 4);
+    menu.style.top = `${top}px`;
+    menu.style.left = `${Math.max(4, Math.round(Math.min(rect.left, (globalThis.innerWidth || 0) - width - 8)))}px`;
+    // A fixed menu cannot be scrolled to: it scrolls itself instead.
+    menu.style.maxHeight = `calc(100vh - ${top + 8}px)`;
+  }, [open]);
+  return html`<span ref=${ref} class="mux-tab-gear" draggable="false">
+    <${AgentGearMenu} member=${gear.member} node=${gear.node} snapshot=${snapshot?.value} menuKey=${menuKey} />
+  </span>`;
+}
+
+const inTabGear = (event) => !!event.target?.closest?.('.mux-tab-gear');
+
 // NodePill names a pane's node in a fused view (skynet-scope.js), in that
 // node's colour.
 function NodePill({ node }) {
@@ -439,7 +498,10 @@ function PaneTab({
   const unreadMessages = paneUnreadNotifications(pane, snapshot?.value);
   const notificationLabel = unreadNotificationLabel(pane, unreadMessages.length);
   const ariaLabel = [agentStatus.ariaLabel, notificationLabel].filter(Boolean).join('. ');
+  const costLine = costTooltip(agentStatus.agent);
+  const gear = tabGearMember(pane, agentStatus.agent, snapshot?.value, scope);
   const activate = (event) => {
+    if (inTabGear(event)) return;
     if (event.type === 'keydown' && event.target.closest('button')) return;
     const reorderOffset = terminalTabReorderOffset(event);
     if (reorderOffset !== null) {
@@ -454,6 +516,7 @@ function PaneTab({
     actions.activatePane(pane.key);
   };
   const openContextMenu = (event) => {
+    if (inTabGear(event)) return false;
     const keyboard = event.type === 'keydown';
     if (keyboard && event.key !== 'ContextMenu' && !(event.key === 'F10' && event.shiftKey)) return false;
     event.preventDefault();
@@ -477,7 +540,7 @@ function PaneTab({
   // the full tab. A drag that starts on the close button is cancelled, so the ×
   // stays a click target and never begins a tab drag.
   const startDrag = (event) => {
-    if (tabDragStartedOnClose(event.target)) {
+    if (tabDragStartedOnClose(event.target) || inTabGear(event)) {
       event.preventDefault();
       return;
     }
@@ -498,7 +561,7 @@ function PaneTab({
       aria-describedby="terminal-tab-reorder-help"
       aria-haspopup="menu"
       aria-expanded=${menuOpen ? 'true' : 'false'}
-      title=${`${agentStatus.title}. Drag to reorder · drop onto another tab to group them · drag off the strip to detach · Alt+Shift+Left/Right to move · Right-click or Shift+F10 for actions`}
+      title=${`${agentStatus.title}.${costLine ? ` ${costLine}.` : ''} Drag to reorder · drop onto another tab to group them · drag off the strip to detach · Alt+Shift+Left/Right to move · Right-click or Shift+F10 for actions`}
       onClick=${activate}
       onKeyDown=${onKeyDown}
       onContextMenu=${openContextMenu}
@@ -513,6 +576,7 @@ function PaneTab({
         aria-hidden="true"
         title=${agentStatus.title}
       >${agentStatus.symbol}</span>
+      ${gear ? html`<${TabGear} gear=${gear} snapshot=${snapshot} menuKey=${`tab:${pane.key}`} />` : null}
       <${TabAttention} pane=${pane} snapshot=${snapshot} messages=${unreadMessages} />
       <${NodePill} node=${scope?.node} />
       <span class="mux-tab-label">${pane.label}</span>
@@ -1395,7 +1459,7 @@ function TerminalTabs({
           Drag this pill, or press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow, to move the whole group among the other tabs.
         </span>
         <span class="mux-tab-a11y" role="status" aria-live="polite" aria-atomic="true">${reorderAnnouncement}</span>
-        <div ref=${tabsRef} class=${`mux-tabs${detachArmed ? ' drag-out-armed' : ''}`} role="tablist" aria-label="Open terminals">
+        <${GroupsInteractionProvider}><div ref=${tabsRef} class=${`mux-tabs${detachArmed ? ' drag-out-armed' : ''}`} role="tablist" aria-label="Open terminals">
           ${current.segments.map((segment) => {
             const renderTab = (pane) => html`
               <${PaneTab}
@@ -1477,7 +1541,7 @@ function TerminalTabs({
               onDragLeave=${endZoneDragLeave}
               onDrop=${dropOnEnd}
             />` : null}
-        </div>
+        </div><//>
         ${detachArmed ? html`<div class="mux-drag-out-hint">Release anywhere — even outside the browser — to detach this terminal into its own window</div>` : null}
       ` : null}
       ${tabMenu ? html`<${PaneContextMenu} menu=${tabMenu} actions=${actions} groups=${current.groups}

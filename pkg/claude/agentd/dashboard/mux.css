@@ -67,7 +67,7 @@
 .mux-tab-cost { flex: none; color: #6e9c7d; font-size: 12px; font-variant-numeric: tabular-nums; }
 .mux-tab-cost-whatif { color: #8a8f6e; font-style: italic; display: none; }
 body.cost-whatif .mux-tab-cost-whatif { display: inline; }
-body.agent-cost-hidden .mux-tab-cost,
+body.terminal-cost-hidden .mux-tab-cost,
 body.hide-costs .mux-tab-cost,
 body.hide-costs .mux-cost-toggle { display: none; }
 .mux-cost-toggle {
@@ -461,3 +461,13 @@ body.wizard .mux-pane-xterm {
   background: color-mix(in srgb, var(--nc) 22%, #0d1117); border: 1px solid color-mix(in srgb, var(--nc) 60%, #0d1117);
 }
 .mux-scope-empty { padding: 24px; color: #8b949e; }
+/* A tab's ⚙ (tcl-xy5wkp): the Groups row menu, pinned to the viewport
+   because .mux-tabs scrolls sideways and would clip it. TabGear places it. */
+.mux-tab-gear { flex: none; display: inline-flex; align-items: center; }
+.mux-tab-gear .cog-btn {
+  padding: 0 3px; font-size: 13px; line-height: 1; background: none;
+  border: 1px solid transparent; border-radius: 3px; color: #e3a008; cursor: pointer;
+}
+.mux-tab-gear .cog-btn:hover, .mux-tab-gear .cog-btn[aria-expanded="true"] { color: #ffb52e; border-color: #6b4f1d; }
+.mux-tab-gear .action-menu { position: fixed; margin-top: 0; z-index: 1000; overflow-y: auto; }
+.mux-tab-gear .action-menu.opens-up { top: auto; bottom: auto; }
