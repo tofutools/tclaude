@@ -75,7 +75,12 @@ tclaude-hub serve --listen 0.0.0.0:8470 --tls-cert hub.crt --tls-key hub.key
 Without `--tls-cert` it serves plain HTTP, which clients accept only over
 loopback. Otherwise front it with a TLS-terminating proxy or use the flags
 above. Its state is a SQLite file under `$TCLAUDE_HUB_DIR` (default
-`~/.tclaude-hub/`). It stores admitted instances, spaces and invites, never
+`~/.tclaude/data/hub/` for the user running the hub). This private subtree
+is denied to tclaude agent sandboxes. An existing `~/.tclaude-hub/` directory
+keeps working, with a hint to move its contents while the hub is stopped; it is
+never moved automatically. Explicit `--db` and `TCLAUDE_HUB_DIR` keep their
+existing behavior. A dedicated systemd hub user remains supported.
+It stores admitted instances, spaces and invites, never
 messages.
 
 As a systemd service:
@@ -3201,8 +3206,19 @@ A node operator can administer its connected hub with `tclaude federation hub`
 are local human-only, and peers cannot proxy them. The hub must already admit the
 claiming instance, either through its normal admission list or a hub invite.
 
-On an unclaimed hub, `tclaude-hub serve` prints a one-use claim token and writes
-`admin-claim.token` next to the hub database with mode `0600`. Redeem it using
+On an unclaimed hub, `tclaude-hub serve` writes a one-use claim token to
+`admin-claim.token` next to the hub database with mode `0600`. Startup and
+`tclaude-hub admin reset` print the private file path and a shell-quoted
+`sudo cat -- 'PATH'` command to retrieve it on the hub host.
+
+Both commands accept `--print-claim-token=auto|always|never` (default `auto`).
+Auto prints the token only when **both stdout and stderr are terminals**.
+Never prints only private-file guidance. Always explicitly forces the token
+into the output, including redirected output: **under systemd this puts the
+bearer secret in the journal, readable by local users and their agents**.
+Use auto or never for services and captured output.
+
+Redeem it using
 `tclaude federation hub claim TOKEN`. It expires after 24 hours. Restarting a hub
 with no admins retains a valid claim, or regenerates a lost/expired claim. The
 hub stores only the token hash and deletes the token file after redemption.

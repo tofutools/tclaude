@@ -15,6 +15,11 @@ type grantExecParams struct {
 	Instance string `pos:"true" help:"Existing hub administrator immutable instance ID"`
 }
 
+type resetParams struct {
+	DBParam
+	ClaimOutputParams
+}
+
 func adminCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{Use: "admin", Short: "Host-only hub administrator recovery", ParamEnrich: common.DefaultParamEnricher(), SubCmds: []*cobra.Command{
 		boa.CmdT[grantExecParams]{Use: "grant-exec", Short: "Host-only: seed elevated hub.exec on an existing administrator", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *grantExecParams, _ *cobra.Command, _ []string) {
@@ -28,7 +33,10 @@ func adminCmd() *cobra.Command {
 			}
 			fmt.Fprintln(os.Stdout, "Granted hub.exec. Scripts still require the hub-local accept_remote_scripts switch; they run with the hub service user's full authority.")
 		}}.ToCobra(),
-		boa.CmdT[DBParam]{Use: "reset", Short: "Break-glass: remove all admins and issue a new private claim token", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *DBParam, _ *cobra.Command, _ []string) {
+		boa.CmdT[resetParams]{Use: "reset", Short: "Break-glass: remove all admins and issue a new private claim token", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *resetParams, _ *cobra.Command, _ []string) {
+			if err := validateClaimOutput(p.PrintClaimToken); err != nil {
+				fail(err)
+			}
 			st, err := p.open()
 			if err != nil {
 				fail(err)
@@ -38,7 +46,8 @@ func adminCmd() *cobra.Command {
 			if err != nil {
 				fail(err)
 			}
-			fmt.Fprintf(os.Stdout, "All hub admins cleared. Claim token (single-use, valid 24h): %s\nPrivate claim file: %s\n", token, st.ClaimPath())
+			fmt.Fprintln(os.Stdout, "All hub admins cleared.")
+			printClaimOutput(os.Stdout, token, st.ClaimPath(), p.PrintClaimToken)
 		}}.ToCobra(),
 	}}.ToCobra()
 }
