@@ -2326,7 +2326,10 @@ change changes the authorized response/ETag rather than retaining old data.
 A 304 keeps the previously received body and its metadata. Transport caches
 must key representations by receiving node and authenticated calling peer,
 never share them across callers, and forward validators through to agentd.
-Full snapshots continue to return `Cache-Control: no-store`.
+Full snapshots continue to return `Cache-Control: no-store`. A peer's
+snapshot also carries an `ETag` over its authorized projection, excluding its
+`generated_at` timestamp, so a conditional read of an unchanged snapshot is a
+bodyless 304.
 
 Peer snapshot and summary reads share an immutable private status gather for
 up to 1.5 seconds, independently of persisted replay markers. Trust, grants,
@@ -2456,6 +2459,19 @@ directory has an observation. Concurrency saturation returns 503 with
 `code: peer_busy`. Requests have a 15-second deadline, bounded JSON bodies,
 and bounded concurrent streams. The proxy does not retry or fan out requests.
 Clients should keep their last successful view, mark it stale, and back off.
+
+A dashboard poll of `snapshot` or `node-summary` may declare its interval in
+`X-Tclaude-Poll-Ms`. The local daemon then serves it from one copy per peer and
+URL, shared by every dashboard and tab, which a background refresher keeps
+warm at the shortest declared interval while it is read (at least every 2
+seconds, at most every minute). The refresher asks the peer with
+`If-None-Match`, stops 30 seconds (or three intervals) after the last read and
+stops with federation. The served copy carries `Age` in seconds; the browser's
+own `If-None-Match` is answered locally. A failed refresh is served as the same
+error a direct request would get. This node's catalog broadcasts (trust,
+grants, group shares) expire every copy and a peer's inbound catalog expires
+its own, so the next read asks again; trust is still checked on every request.
+Requests without the header are proxied as one exchange each, as above.
 
 The stable `peer_view.included` / `peer_view.omitted[].feature` concept keys are
 `agents.status`, `groups`, `groups.roster`, `groups.presence`, `messaging`,
@@ -2692,10 +2708,13 @@ resume polling the same ID after reconnecting. `tclaude update --no-wait` return
 that ID immediately; `--job <id>` reads it later, including after a restart.
 Node summaries expose cached `version`, optional `latest_version`, nullable
 `update_available`, and optional `update_checked_at` without release requests
-in the polling path. With federation enabled and a hub URL configured, release
-metadata is refreshed in the background hourly. A standalone daemon does not
-start these Fleet release checks; explicit local update and harness-install
-requests still fetch metadata on demand.
+in the polling path. While federation runs, release metadata is refreshed in
+the background hourly: the federation runtime starts the check when it starts
+(at daemon start or on a later `tclaude federation connect`) and stops it when
+federation is disabled or disconnected. After a failed check, restarts of the
+runtime wait 10 minutes before checking again. A standalone daemon never starts
+these Fleet release checks; explicit local update and harness-install requests
+still fetch metadata on demand.
 
 In the dashboard, each Skynet map card shows the node's tclaude version and ↑
 when a newer release is known; its update…/manage… link opens that node's
