@@ -30,7 +30,8 @@ const openCodeModelDisclosureTTL = time.Hour
 // flag already guarantees at most one subprocess in flight; this guarantees the
 // rate as well, so a permanently failing or permanently slow `opencode models`
 // cannot turn into back-to-back forks (each one starting the moment the last
-// gave up). Belt and braces: the 5-minute TTL is the binding constraint on the
+// gave up). Belt and braces: the TTLs (an hour for the dashboard list, 5 minutes
+// for launch validation) are the binding constraint on the
 // happy path, and this floor only matters when refreshes keep failing.
 const openCodeModelRefreshMinInterval = time.Minute
 
