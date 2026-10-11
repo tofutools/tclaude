@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { MovePanel, dropPlan, moveProgress, MOVE_POLL_MS, openFleetPage } from './skynet-move-drop.js';
+import { shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
 
@@ -110,7 +111,15 @@ export function carries(mode, { node = 'the target', home = 'its home', morph = 
         const lost = (hist.items || []).map((i) => `${i.kind} ×${i.count}`).join(', ');
         rows.push(['≈', 'History', `translated ${hist.source} → ${hist.target}: ${hist.carried_entries ?? '?'} of ${hist.source_entries ?? '?'} entries carried${lost ? ` (${lost})` : ''}`]);
       } else rows.push(['✓', 'History', 'kept: it resumes the same conversation']);
-      rows.push(morph?.after?.sandbox ? ['↻', 'Sandbox', `${morph.after.sandbox} (the new harness's own mode)`] : ['✗', 'Sandbox', 'unchanged (operator-only)']);
+      // Both layers, as the daemon resolves them for the launch: the harness's
+      // own mode alone reads as "off" for an agent tclaude's sandbox wraps.
+      const sb = morph?.sandbox;
+      if (sb) {
+        rows.push([sb.unsandboxed ? '⚠' : '✓', 'tclaude sandbox', sb.tclaude]);
+        rows.push(['↻', 'Harness sandbox', sb.harness]);
+        if (sb.warning) rows.push(['⚠', 'Unsandboxed', sb.warning]);
+      } else if (morph?.after?.sandbox) rows.push(['↻', 'Harness sandbox', `${morph.after.harness ? `${morph.after.harness} ` : ''}${morph.after.sandbox}`]);
+      else rows.push(['✓', 'Sandbox', 'unchanged']);
       return rows;
     }
     case 'home': return [
@@ -186,15 +195,14 @@ function GroupPicker({ groups, value, onChange, idPrefix, disabled }) {
 
 // MorphPanel picks a spawn profile, previews the change with a dry run and
 // applies it at the agent's next idle turn (or now).
-function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase }) {
+function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = shellToast }) {
   const [profiles, setProfiles] = useState(null);
   const [profile, setProfile] = useState('');
   const [now, setNow] = useState(false);
   const [preview, setPreview] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState(null);
-  useEffect(() => { onPhase?.(busy || done ? 'busy' : 'confirm'); }, [busy, done]);
+  useEffect(() => { onPhase?.(busy ? 'busy' : 'confirm'); }, [busy]);
   useEffect(() => {
     let live = true;
     api.profiles().then((list) => { if (live) setProfiles((list || []).filter((p) => p?.name && !p.disabled)); })
@@ -214,15 +222,15 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase }) {
   const apply = async () => {
     if (!profile || !preview || busy) return;
     setBusy(true); setError('');
-    try { setDone(await api.morph(agent.conv || agent.id, { profile, ...(now ? { now: true } : {}) })); } catch (e) { setError(errText(e)); }
-    setBusy(false);
-  };
-  if (done) {
-    return html`<div role="status" data-lt-state=${done.result}>${done.result === 'pending'
+    let done;
+    try { done = await api.morph(agent.conv || agent.id, { profile, ...(now ? { now: true } : {}) }); } catch (e) { setError(errText(e)); setBusy(false); return; }
+    // Close on success so the operator sees the agent (and, from Terminals,
+    // its new terminal); the toast keeps the result.
+    toast(`${done?.result === 'pending'
       ? `${agent.name} morphs to ${profile} when it next goes idle (within 30 minutes, or the request lapses). Its row shows the pending morph.`
-      : `${agent.name} is now ${profile}. It got a short inbox note saying what changed.`}${done.detail ? ` ${done.detail}` : ''}</div>
-      <div class="modal-buttons"><span class="spacer"></span><button type="button" ref=${okRef} id="lt-close" onClick=${onClose}>Close</button></div>`;
-  }
+      : `${agent.name} is now ${profile}. It got a short inbox note saying what changed.`}${done?.detail ? ` ${done.detail}` : ''}`);
+    onClose();
+  };
   return html`
     <label class="lt-row"><span class="lt-k">Stays on</span><span class="muted">this node · ${agent.group || 'its groups'}</span></label>
     <label class="lt-row"><span class="lt-k">Profile</span>${profiles === null ? html`<span class="muted">loading…</span>` : html`<select id="lt-morph-profile" value=${profile} disabled=${busy} onChange=${(e) => setProfile(e.currentTarget.value)}>
@@ -241,32 +249,30 @@ export function formLine(v) {
   return [v.harness, v.model || 'default model', v.effort && `effort ${v.effort}`, v.approval && `approval ${v.approval}`, v.profile && `profile ${v.profile}`].filter(Boolean).join(' · ');
 }
 
-// TeleportPanel sends it (Teleport, Clone to a peer, Recall home) and
-// follows the move record until its copy runs there.
-function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, onClose, openPage, okRef, viaPeer, onPhase }) {
+// followMove polls a move record until its copy runs there (or fails, or two
+// minutes pass), reporting each outcome to onProgress. It is not tied to the
+// dialog, which closes as soon as the move is sent.
+export function followMove({ id, actions, timers = globalThis, now = () => Date.now(), onProgress }) {
+  const started = now();
+  const tick = async () => {
+    let rec;
+    try { rec = await actions.moveDetail(id); } catch (e) { onProgress({ phase: 'unknown', error: errText(e) }); return; }
+    const p = moveProgress(rec);
+    if (p.phase === 'checking' && now() - started < 120000) timers.setTimeout(tick, MOVE_POLL_MS);
+    else onProgress(p.phase === 'checking' ? { phase: 'slow' } : p);
+  };
+  timers.setTimeout(tick, MOVE_POLL_MS);
+}
+
+// TeleportPanel sends it (Teleport, Clone to a peer, Recall home), then closes;
+// followMove reports how the move ends.
+function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, onClose, openPage, okRef, viaPeer, onPhase, toast = shellToast }) {
   const [note, setNote] = useState('');
   const [phase, setPhase] = useState('confirm');
   useEffect(() => { onPhase?.(phase); }, [phase]);
   const [error, setError] = useState('');
-  const [progress, setProgress] = useState(null);
   const alive = useRef(true);
-  const timer = useRef(null);
-  useEffect(() => () => { alive.current = false; if (timer.current) timers.clearTimeout(timer.current); }, []);
-  const follow = (id) => {
-    const started = now();
-    const tick = async () => {
-      timer.current = null;
-      if (!alive.current) return;
-      let rec;
-      try { rec = await actions.moveDetail(id); } catch (e) { if (alive.current) setProgress({ phase: 'unknown', error: errText(e) }); return; }
-      if (!alive.current) return;
-      const p = moveProgress(rec);
-      setProgress(p);
-      if (p.phase === 'checking' && now() - started < 120000) timer.current = timers.setTimeout(tick, MOVE_POLL_MS);
-      else if (p.phase === 'checking') setProgress({ phase: 'slow' });
-    };
-    timer.current = timers.setTimeout(tick, MOVE_POLL_MS);
-  };
+  useEffect(() => () => { alive.current = false; }, []);
   const send = async () => {
     if (phase !== 'confirm') return;
     setPhase('sending'); setError('');
@@ -276,38 +282,42 @@ function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, o
       else res = await api.teleport(agent.conv || agent.id, mode === 'home'
         ? { home: true, ...(note ? { note } : {}) }
         : { peer: target.node, group: target.group, ...(mode === 'clone' ? { clone: true } : {}), ...(note ? { note } : {}) });
-      if (!alive.current) return;
-      setPhase('progress');
-      // A return to a paused home backup answers 202 {state: "returning"}
-      // with no move record: its home presence is what to watch then.
-      if (res?.move_id && !viaPeer) { setProgress({ phase: 'checking' }); follow(res.move_id); } else setProgress({ phase: res?.state === 'returning' ? 'returning' : res?.teleport_state === 'offered' ? 'offered' : 'sent' });
-    } catch (e) { if (alive.current) { setPhase('confirm'); setError(errText(e)); } }
+      // Close once it is sent; the outcome arrives as toasts, even when the
+      // dialog was cancelled while sending. A return to a
+      // paused home backup answers 202 {state: "returning"} with no move
+      // record: its home presence is what to watch then.
+      if (res?.move_id && !viaPeer) {
+        toast(`${verb}: sent. Waiting for ${dest} to run its copy…`);
+        followMove({ id: res.move_id, actions, timers, now, onProgress: (p) => { const t = progressToast(p); if (t) toast(t.text, t.error); } });
+      } else {
+        const t = progressToast({ phase: res?.state === 'returning' ? 'returning' : res?.teleport_state === 'offered' ? 'offered' : 'sent' });
+        toast(t.text);
+      }
+      onClose();
+    } catch (e) { if (alive.current) { setPhase('confirm'); setError(errText(e)); } else toast(`${verb} failed: ${errText(e)}`, true); }
   };
+  // progressToast words a move outcome for a toast once the dialog is gone.
+  const progressToast = (p) => p.phase === 'landed' ? { text: `✅ ${agent.name} runs on ${dest}${p.agent ? ` as ${p.agent}` : ''}.${mode === 'clone' ? '' : ' Its copy here is being retired.'}` }
+    : p.phase === 'waiting' ? { text: `⏸ ${agent.name} waits for ${dest} to accept it; it keeps running here until then.` }
+    : p.phase === 'failed' ? { text: `${verb} ${p.state}${p.error ? `: ${p.error}` : ''}. ${agent.name} is still here.`, error: true }
+    : p.phase === 'returning' ? { text: `${agent.name} is returning to its paused copy on ${home || 'its home'}; its home row shows it back when it runs.` }
+    : p.phase === 'offered' ? { text: `Offered to ${dest}: the copy starts there once ${dest} takes it in (${dest}'s ⚙ Fleet → Offers).` }
+    : p.phase === 'sent' ? { text: `${verb}: requested. Its row here turns back into ${agent.name} when it arrives.` }
+    : p.phase === 'checking' ? null
+    : { text: `${verb} is still in progress; follow it in ⚙ Fleet → Moves.` };
   const dest = mode === 'home' ? home : target.name;
   const verb = mode === 'home' ? (viaPeer ? 'Recall home' : 'Send home') : mode === 'clone' ? `Clone to ${target.name}` : `Teleport to ${target.name}`;
-  const status = !progress ? null
-    : progress.phase === 'checking' ? html`<div class="muted" role="status">⏳ Sent. Waiting for ${dest} to run its copy…</div>`
-    : progress.phase === 'landed' ? html`<div role="status" data-lt-state="landed">✅ ${agent.name} runs on ${dest}${progress.agent ? html` as <code>${progress.agent}</code>` : ''}.${mode === 'clone' ? '' : ' Its copy here is being retired.'}</div>`
-    : progress.phase === 'waiting' ? html`<div role="status" data-lt-state="waiting">⏸ It waits for ${dest} to accept it. ${agent.name} keeps running here until then.</div>`
-    : progress.phase === 'failed' ? html`<div class="fa-danger" role="alert" data-lt-state="failed">It ${progress.state}${progress.error ? `: ${progress.error}` : ''}. ${agent.name} is still here.</div>`
-    : progress.phase === 'returning' ? html`<div role="status" data-lt-state="returning">${agent.name} is returning to its paused copy on ${home || 'its home'}, which resumes with the history from this trip. Its home row shows it back when it runs.</div>`
-    : progress.phase === 'offered' ? html`<div role="status" data-lt-state="offered">Offered to ${dest}: the copy starts there once ${dest} takes it in (${dest}'s ⚙ Fleet → Offers). ${agent.name} keeps running here.</div>`
-    : progress.phase === 'sent' ? html`<div role="status" data-lt-state="sent">Requested. Its row here turns back into ${agent.name} when it arrives.</div>`
-    : html`<div class="muted" role="status">Still in progress; follow it in <button type="button" class="fa-link" onClick=${() => { onClose(); openPage('moves'); }}>⚙ Fleet → Moves</button>.</div>`;
   return html`
-    ${phase !== 'progress' ? html`<p class="lt-consequence">${mode === 'home'
+    ${html`<p class="lt-consequence">${mode === 'home'
       ? `${agent.name} goes straight home to ${home}, not back through the nodes it visited. It leaves at once: it keeps running ${viaPeer ? `on ${agent.nodeName}` : 'here'} until its copy runs at home, then that copy is retired.`
       : mode === 'clone'
         ? `Sends a copy of ${agent.name} with its full conversation history (it may hold code or pasted secrets) to ${target.group} on ${target.name}. The original keeps running here.`
         : `Sends ${agent.name} with its full conversation history (it may hold code or pasted secrets) to ${target.group} on ${target.name}. It leaves at once: it keeps running here until its copy runs there, then stops here; its groups keep a placeholder row.`}</p>
-      ${viaPeer ? '' : html`<label class="lt-row"><span class="lt-k">Note</span><textarea id="lt-note" rows="2" placeholder="Optional: told to the agent on arrival" value=${note} onInput=${(e) => setNote(e.currentTarget.value)}></textarea></label>`}` : ''}
+      ${viaPeer ? '' : html`<label class="lt-row"><span class="lt-k">Note</span><textarea id="lt-note" rows="2" placeholder="Optional: told to the agent on arrival" value=${note} onInput=${(e) => setNote(e.currentTarget.value)}></textarea></label>`}`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
-    ${status}
     <div class="modal-buttons"><span class="spacer"></span>
-      ${phase === 'progress'
-        ? html`<button type="button" ref=${okRef} id="lt-close" onClick=${onClose}>Close</button>`
-        : html`<button type="button" id="lt-cancel" onClick=${onClose}>Cancel</button>
-          <button type="button" ref=${okRef} class="primary" id="lt-ok" disabled=${phase === 'sending' || (mode !== 'home' && (!target?.node || !target?.group))} onClick=${send}>${phase === 'sending' ? 'Sending…' : verb}</button>`}
+      <button type="button" id="lt-cancel" onClick=${onClose}>Cancel</button>
+      <button type="button" ref=${okRef} class="primary" id="lt-ok" disabled=${phase === 'sending' || (mode !== 'home' && (!target?.node || !target?.group))} onClick=${send}>${phase === 'sending' ? 'Sending…' : verb}</button>
     </div>`;
 }
 
@@ -317,7 +327,7 @@ function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, o
 export function LaunchTargetDialog({
   agent, self, fleet, initialMode = 'move', target: initialTarget = null, fromDrop = false,
   api = createLaunchTargetApi(), actions, peerActions, localGroups = [], onClose, onLocalClone,
-  timers = globalThis, now = () => Date.now(), openPage = openFleetPage, teleport = TELEPORT_ROUTES,
+  timers = globalThis, now = () => Date.now(), openPage = openFleetPage, teleport = TELEPORT_ROUTES, toast = shellToast,
 }) {
   const firstCtx = { local: agent.node === self.id, presence: agent.presence || '', homeIsSelf: agent.homeNode === self.id, source: agent.nodeName || self.name, teleport };
   // A mode this agent cannot use here never opens: fall back to the first
@@ -353,13 +363,13 @@ export function LaunchTargetDialog({
   const cloneHere = mode === 'clone' && picked?.id === source.node;
 
   let body;
-  if (mode === 'morph') body = html`<${MorphPanel} key="morph" agent=${agent} api=${api} onClose=${onClose} setCarry=${setCarry} okRef=${okRef} onPhase=${onPhase} />`;
-  else if (mode === 'home') body = html`<${TeleportPanel} key="home" mode="home" agent=${agent} home=${agent.homeName || 'its home'} viaPeer=${!local || agent.presence === 'away'} api=${api} actions=${actions} timers=${timers} now=${now} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase} />`;
+  if (mode === 'morph') body = html`<${MorphPanel} key="morph" agent=${agent} api=${api} toast=${toast} onClose=${onClose} setCarry=${setCarry} okRef=${okRef} onPhase=${onPhase} />`;
+  else if (mode === 'home') body = html`<${TeleportPanel} key="home" mode="home" agent=${agent} home=${agent.homeName || 'its home'} viaPeer=${!local || agent.presence === 'away'} api=${api} actions=${actions} timers=${timers} now=${now} toast=${toast} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase} />`;
   else if (cloneHere) body = html`<p class="lt-consequence">A sibling of ${agent.name} starts on this node. The next step picks its working directory or worktree, its first message, and whether it copies the conversation.</p>
     <div class="modal-buttons"><span class="spacer"></span><button type="button" id="lt-cancel" onClick=${onClose}>Cancel</button>
       <button type="button" ref=${okRef} class="primary" id="lt-ok" onClick=${() => onLocalClone?.()}>Clone here…</button></div>`;
   else if (mode === 'move' && plan && (plan.kind === 'push' || plan.kind === 'pull')) body = html`<${MovePanel} key=${`${targetRef.node}/${targetRef.group}`} drop=${{ agent: { id: agent.id, name: agent.name }, source, target: targetRef }} plan=${plan} actions=${actions} peerActions=${peerActions} timers=${timers} now=${now} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase} />`;
-  else if ((mode === 'teleport' || mode === 'clone') && targetRef?.group) body = html`<${TeleportPanel} key=${`${mode}/${targetRef.node}/${targetRef.group}`} mode=${mode} agent=${agent} target=${targetRef} api=${api} actions=${actions} timers=${timers} now=${now} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase} />`;
+  else if ((mode === 'teleport' || mode === 'clone') && targetRef?.group) body = html`<${TeleportPanel} key=${`${mode}/${targetRef.node}/${targetRef.group}`} mode=${mode} agent=${agent} target=${targetRef} api=${api} actions=${actions} timers=${timers} now=${now} toast=${toast} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase} />`;
   else body = html`<div class="muted lt-hint">${picked ? 'Pick the receiving group there.' : 'Pick the node to send it to.'}</div>
     <div class="modal-buttons"><span class="spacer"></span><button type="button" ref=${okRef} id="lt-cancel" onClick=${onClose}>Cancel</button></div>`;
 

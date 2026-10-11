@@ -360,11 +360,14 @@ effort default to the new harness's own, and the drive starts at its defaults.
 tclaude's own sandbox layer (`tclaude-layer`) carries over unchanged. A sandbox
 that is the harness's own has no counterpart elsewhere, so only the operator
 can move such an agent, and its new mode comes from the profile or the new
-harness's default. An agent caller must use a spawn profile for the new harness,
-without overriding its fields, and may not widen the target's sandbox or
-approval posture. An agent with a model proxy route or a temporary sandbox
+harness's default. An agent caller must use a spawn profile for the new
+harness, without overriding its fields, and may not widen the target's sandbox
+or approval posture. An agent with a model proxy route or a temporary sandbox
 unlock cannot change harness. `--back` returns to the previous harness through
-the same translation.
+the same translation. The preview (`--dry-run`, and the dashboard's Morph
+dialog) names both sandbox layers: tclaude's own sandbox, which a morph never
+changes, and the new harness's built-in mode, which under tclaude's layer runs
+inside it. It warns only when nothing confines the agent after the morph.
 
 An idle or offline agent is morphed at once. A busy agent gets a pending morph
 (shown in `agent ls`, `whoami` and the dashboard) that applies when it next

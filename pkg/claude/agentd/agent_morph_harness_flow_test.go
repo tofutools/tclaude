@@ -37,6 +37,13 @@ type crossMorphResp struct {
 		Sandbox  string `json:"sandbox"`
 	} `json:"after"`
 	History *transcript.LossReport `json:"history"`
+	Sandbox *struct {
+		Implementation string `json:"implementation"`
+		Tclaude        string `json:"tclaude"`
+		Harness        string `json:"harness"`
+		Unsandboxed    bool   `json:"unsandboxed"`
+		Warning        string `json:"warning"`
+	} `json:"sandbox"`
 }
 
 func decodeCrossMorph(t *testing.T, code int, raw []byte) crossMorphResp {
@@ -284,6 +291,13 @@ func TestMorphCrossHarnessAgentCarriesTclaudeLayer(t *testing.T) {
 	layerMode, err := harness.TclaudeLayerHarnessBuiltinMode(codex)
 	require.NoError(t, err)
 	assert.Equal(t, layerMode, resp.After.Sandbox, "Codex launches under tclaude's wall with its inner sandbox stood down")
+	require.NotNil(t, resp.Sandbox, "the response names both sandbox layers")
+	assert.Equal(t, "tclaude-layer", resp.Sandbox.Implementation)
+	assert.True(t, strings.HasPrefix(resp.Sandbox.Tclaude, "on"), "tclaude's own sandbox still wraps it: %q", resp.Sandbox.Tclaude)
+	assert.Contains(t, resp.Sandbox.Tclaude, "unchanged")
+	assert.Equal(t, "codex "+layerMode+", stood down inside the tclaude sandbox", resp.Sandbox.Harness)
+	assert.False(t, resp.Sandbox.Unsandboxed, "an agent inside tclaude's sandbox is not reported unsandboxed")
+	assert.Empty(t, resp.Sandbox.Warning)
 	impl, _ := f.World.SpawnSandboxImplementation(resp.ConvID)
 	assert.Equal(t, "tclaude-layer", impl, "tclaude's sandbox layer carries over")
 	model, _ := f.World.SpawnModel(resp.ConvID)
