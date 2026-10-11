@@ -18,7 +18,7 @@ import (
 )
 
 type morphParams struct {
-	ProceedWithoutSummary bool   `long:"proceed-without-summary" help:"Explicitly continue without a source-written summary (provider outage): carry readable history and the full-transcript pointer, accepting history loss"`
+	ProceedWithoutSummary bool   `long:"proceed-without-summary" short:"-" help:"Explicitly continue without a source-written summary (provider outage): carry readable history and the full-transcript pointer, accepting history loss"`
 	ConfirmHistoryLoss    bool   `long:"confirm-history-loss" help:"Confirm a large history cut and wait for the source agent to write a summary before morphing"`
 	Agent                 string `pos:"true" optional:"true" help:"Agent to morph: title, agent_id, conv-id or prefix, or group:<name> for every other member of a group. Default: yourself"`
 	Profile               string `long:"profile" short:"p" optional:"true" help:"Take the new launch form from this spawn profile; a profile for another harness makes it a cross-harness morph. Explicit flags override it"`
