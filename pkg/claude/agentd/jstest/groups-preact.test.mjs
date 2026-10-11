@@ -1081,7 +1081,7 @@ test('native member rows preserve the legacy field, capability and selector matr
   assert.equal(menu.querySelector('[data-act="cron-new"]').hasAttribute('data-conv'), false);
   assert.equal(menu.querySelector('[data-act="cron-new"]').hasAttribute('data-agent'), false);
   assert.match(menu.querySelector('[data-act="cron-new"]').dataset.prefill, /"target":"agt-rich"/);
-  assert.equal(menu.querySelectorAll('.menu-sep').length, 3);
+  assert.equal(menu.querySelectorAll('.menu-sep').length, 4, 'includes the send-elsewhere section');
 
   assert.equal(fixedRow.querySelector('.rowname-fixed').textContent, 'Fixed agent');
   assertAbsent(fixedRow.querySelector('[data-act="rename-name"]'));
