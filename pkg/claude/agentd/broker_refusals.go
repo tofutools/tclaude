@@ -100,11 +100,12 @@ func (e *brokerRefusal) noteOwnerLocked(owner int) {
 }
 
 // liveCountLocked is Count minus the refusals whose owning harness has
-// exited. An unknown owner (0) is assumed live.
+// exited (or was already gone, brokerOrphanedOwner). An unknown owner (0)
+// is assumed live.
 func (e *brokerRefusal) liveCountLocked(alive func(int) bool) int {
 	n := e.Count
 	for pid, c := range e.owners {
-		if pid > 0 && !alive(pid) {
+		if pid == brokerOrphanedOwner || (pid > 0 && !alive(pid)) {
 			n -= c
 		}
 	}
@@ -339,14 +340,27 @@ type brokerRefusalContext struct {
 // brokerCallerOwnerMaxDepth bounds the ancestry walk in brokerCallerOwner.
 const brokerCallerOwnerMaxDepth = 64
 
+// brokerOrphanedOwner marks a refusal from a caller that had already been
+// orphaned when it was refused: its harness is gone, so it never counts.
+const brokerOrphanedOwner = -1
+
 // brokerCallerOwner returns the nearest harness process in the caller's
 // ancestry, or 0 when the walk crosses none. That harness outlives the
 // short-lived hook/statusline caller and exits with the agent's pane, so
 // it is what decides whether a refusal still means telemetry is being
 // lost. It is a log and liveness key only, never an attribution.
+//
+// A retired agent's harness can exit before its last hook or statusline
+// child reaches the daemon; that child is then re-parented to init or the
+// user's systemd subreaper. Such a caller is reported as
+// brokerOrphanedOwner rather than unknown, so a teardown burst does not
+// keep the notice up for the whole window.
 func brokerCallerOwner(t *brokerProcTable, callerPID int) int {
 	if t == nil {
 		return 0
+	}
+	if parent := t.parent(callerPID); parent == 1 || (parent > 1 && t.entry(parent).name == "systemd") {
+		return brokerOrphanedOwner
 	}
 	cur := callerPID
 	for i := 0; cur > 1 && i < brokerCallerOwnerMaxDepth; i++ {

@@ -302,8 +302,10 @@ func TestBrokerRefusals_UnplaceableIsCountedNotAttributed(t *testing.T) {
 	f := newFlow(t)
 	haveLayerSession(t, f, brokerLayerConv, brokerLayerLabel, "tmux-broker-layer", brokerPanePID)
 
-	const orphanPID = 8300
-	t.Cleanup(agentd.SetProcTreeForTest(map[int]string{orphanPID: "node"}, map[int]int{}))
+	// Unplaceable but not orphaned: still under a live (non-harness) shell.
+	const orphanPID, shellPID = 8300, 8299
+	t.Cleanup(agentd.SetProcTreeForTest(
+		map[int]string{orphanPID: "node", shellPID: "bash"}, map[int]int{orphanPID: shellPID}))
 
 	for range 2 {
 		code, _ := postBrokeredHook(t, f, orphanPID, session.BrokeredHookRequest{
@@ -341,7 +343,7 @@ func TestBrokerRefusals_StopCountingOnceTheCallersHarnessIsGone(t *testing.T) {
 
 	const harnessPID, hookPID = 8310, 8311
 	restore := agentd.SetProcTreeForTest(
-		map[int]string{harnessPID: "claude", hookPID: "node"},
+		map[int]string{harnessPID: "claude", hookPID: "sh"},
 		map[int]int{hookPID: harnessPID, harnessPID: 1})
 	t.Cleanup(func() { restore() })
 
@@ -368,6 +370,22 @@ func TestBrokerRefusals_StopCountingOnceTheCallersHarnessIsGone(t *testing.T) {
 	assert.Zero(t, snap.BrokerRefusalsUnplaceable,
 		"refusals from a harness that has exited must stop counting")
 	assert.Zero(t, snap.BrokerRefusalsTotal)
+
+	// Teardown race: the harness exited first and its last hook child was
+	// re-parented to init before its callback reached the daemon.
+	restore()
+	const orphanedHookPID = 8312
+	restore = agentd.SetProcTreeForTest(map[int]string{orphanedHookPID: "node"}, map[int]int{orphanedHookPID: 1})
+	for range 3 {
+		code, _ := postBrokeredHook(t, f, orphanedHookPID, session.BrokeredHookRequest{
+			Input:            session.HookCallbackInput{ConvID: brokerLayerConv, HookEventName: "SessionEnd"},
+			ClaimedSessionID: brokerLayerLabel,
+		})
+		require.Equal(t, http.StatusForbidden, code)
+	}
+	snap = fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	assert.Zero(t, snap.BrokerRefusalsTotal,
+		"refusals from a caller orphaned by its harness's exit must not count")
 }
 
 // A tclaude-layer row without its tmux launch identity cannot prove a brokered
@@ -526,8 +544,10 @@ func TestBrokerRefusals_AreLoggedWithTheCallerPidAndReason(t *testing.T) {
 
 	// An orphan caller: no row resolves, the layer claim cannot be proved
 	// because the pane pid is not among its ancestors.
-	const orphanPID = 8300
-	t.Cleanup(agentd.SetProcTreeForTest(map[int]string{orphanPID: "node"}, map[int]int{}))
+	// Unplaceable but not orphaned: still under a live (non-harness) shell.
+	const orphanPID, shellPID = 8300, 8299
+	t.Cleanup(agentd.SetProcTreeForTest(
+		map[int]string{orphanPID: "node", shellPID: "bash"}, map[int]int{orphanPID: shellPID}))
 
 	code, _ := postBrokeredHook(t, f, orphanPID, session.BrokeredHookRequest{
 		Input:            session.HookCallbackInput{ConvID: brokerLayerConv, HookEventName: "Stop"},
