@@ -113,3 +113,75 @@ func TestCopilotTruncationRequiresHandoff(t *testing.T) {
 	_, err := (copilotTranscript{}).Decode(bytes.NewReader(raw), fixtureCop)
 	require.ErrorContains(t, err, "truncation")
 }
+
+func TestNativeNewSessionIdentityIsolation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		codec   TranscriptCodec
+		id      string
+		records []any
+	}{
+		{"codex", codexTranscript{}, fixtureCodex, []any{obj{"type": "session_meta", "payload": obj{"id": fixtureClaude}}, obj{"type": "response_item", "payload": obj{"type": "message", "role": "user", "content": []obj{{"type": "input_text", "text": "SECRET FOREIGN"}}}}}},
+		{"opencode", openCodeTranscript{}, fixtureOC, []any{obj{"info": obj{"id": "ses_foreign"}}}},
+		{"copilot", copilotTranscript{}, fixtureCop, []any{obj{"type": "session.start", "data": obj{"sessionId": fixtureClaude}}}},
+		{"gemini", geminiTranscript{}, fixtureGemini, []any{obj{"sessionId": fixtureClaude}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := tc.codec.Decode(bytes.NewReader(jsonl(t, tc.records...)), tc.id)
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestOpenCodeFailedSummaryAndPartRevert(t *testing.T) {
+	message := func(id, text string, info obj) obj {
+		fields := obj{"id": id, "role": "user", "sessionID": fixtureOC}
+		for k, v := range info {
+			fields[k] = v
+		}
+		return obj{"message": obj{"info": fields, "parts": []obj{{"id": "prt_1", "type": "text", "text": text}}}}
+	}
+	for _, info := range []obj{{"role": "assistant", "summary": true}, {"role": "assistant", "summary": true, "finish": "stop", "error": obj{"name": "APIError"}}} {
+		raw := jsonl(t, obj{"info": obj{"id": fixtureOC}}, message("msg_1", "TASK", nil), message("msg_2", "FAILED SUMMARY", info), message("msg_3", "TAIL", nil))
+		assert.Equal(t, []string{"user|TASK", "user|TAIL"}, entryTexts(decodeFixture(t, openCodeTranscript{}, fixtureOC, raw)))
+	}
+	raw := jsonl(t, obj{"info": obj{"id": fixtureOC, "revert": obj{"messageID": "msg_1", "partID": "prt_2"}}}, obj{"message": obj{"info": obj{"id": "msg_1", "role": "user"}, "parts": []obj{{"id": "prt_1", "type": "text", "text": "TASK"}, {"id": "prt_2", "type": "text", "text": "SECRET REWOUND"}}}}, message("msg_2", "SECRET LATER", nil))
+	assert.Equal(t, []string{"user|TASK"}, entryTexts(decodeFixture(t, openCodeTranscript{}, fixtureOC, raw)))
+}
+
+func TestRewindDiscardsCompactionAndPreservesUnlistedEvents(t *testing.T) {
+	msg := func(text string) obj {
+		return obj{"type": "response_item", "payload": obj{"type": "message", "role": "user", "content": []obj{{"type": "input_text", "text": text}}}}
+	}
+	raw := jsonl(t, obj{"type": "session_meta", "payload": obj{"id": fixtureCodex}}, msg("TASK"), msg("SECRET REWOUND"), obj{"type": "compacted", "payload": obj{"message": "SECRET REWOUND SUMMARY"}}, obj{"type": "event_msg", "payload": obj{"type": "thread_rolled_back", "num_turns": 1}})
+	assert.Equal(t, []string{"user|TASK"}, entryTexts(decodeFixture(t, codexTranscript{}, fixtureCodex, raw)))
+	raw = jsonl(t, obj{"type": "session.start", "data": obj{"sessionId": fixtureCop}}, obj{"id": "u1", "type": "user.message", "data": obj{"content": "TASK"}}, obj{"id": "u2", "type": "user.message", "data": obj{"content": "SECRET REWOUND"}}, obj{"id": "u3", "type": "user.message", "data": obj{"content": "TAIL"}}, obj{"type": "session.snapshot_rewind", "data": obj{"upToEventId": "u2", "eventIds": []string{"u2"}}})
+	assert.Equal(t, []string{"user|TASK", "user|TAIL"}, entryTexts(decodeFixture(t, copilotTranscript{}, fixtureCop, raw)))
+}
+
+func TestCodexRollbackIncompleteCompactingTurn(t *testing.T) {
+	event := func(kind string, extra obj) obj {
+		p := obj{"type": kind}
+		for k, v := range extra {
+			p[k] = v
+		}
+		return obj{"type": "event_msg", "payload": p}
+	}
+	msg := func(text string) obj {
+		return obj{"type": "response_item", "payload": obj{"type": "message", "role": "user", "content": []obj{{"type": "input_text", "text": text}}}}
+	}
+	raw := jsonl(t, obj{"type": "session_meta", "payload": obj{"id": fixtureCodex}}, event("task_started", nil), event("user_message", obj{"message": "TASK"}), msg("TASK"), event("task_complete", nil), event("task_started", nil), event("user_message", obj{"message": "SECRET INCOMPLETE"}), obj{"type": "compacted", "payload": obj{"message": "SECRET INCOMPLETE SUMMARY"}}, event("thread_rolled_back", obj{"num_turns": 1}), msg("TAIL"))
+	assert.Equal(t, []string{"user|TASK", "user|TAIL"}, entryTexts(decodeFixture(t, codexTranscript{}, fixtureCodex, raw)))
+}
+func TestCopilotLaterResetResolvesTruncation(t *testing.T) {
+	for _, tc := range []struct {
+		reset obj
+		want  []string
+	}{
+		{obj{"type": "session.context_cleared", "data": obj{"messagesCleared": 1, "initialMessage": "TASK"}}, []string{"user|TASK", "user|TAIL"}},
+		{obj{"type": "session.compaction_complete", "data": obj{"success": true, "summaryContent": "SUMMARY FINAL"}}, []string{"user|SUMMARY:SUMMARY FINAL", "user|TAIL"}},
+	} {
+		raw := jsonl(t, obj{"type": "session.start", "data": obj{"sessionId": fixtureCop}}, obj{"type": "user.message", "data": obj{"content": "SECRET OLD"}}, obj{"type": "session.truncation", "data": obj{"messagesRemovedDuringTruncation": 1}}, tc.reset, obj{"type": "user.message", "data": obj{"content": "TAIL"}})
+		assert.Equal(t, tc.want, entryTexts(decodeFixture(t, copilotTranscript{}, fixtureCop, raw)))
+	}
+}

@@ -77,10 +77,11 @@ func (codexTranscript) Decode(r io.Reader, sourceID string) (*transcript.Transcr
 				Cwd string `json:"cwd"`
 			}
 			_ = json.Unmarshal(env.Payload, &meta)
-			if meta.ID == sourceID {
-				found = true
-				t.Source.Cwd = meta.Cwd
+			if meta.ID != sourceID {
+				return errors.New("codex history session identity mismatch")
 			}
+			found = true
+			t.Source.Cwd = meta.Cwd
 		case "turn_context":
 			var tc struct {
 				Model string `json:"model"`

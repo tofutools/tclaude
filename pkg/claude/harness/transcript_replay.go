@@ -24,6 +24,7 @@ func scanCodexTranscriptRecords(r io.Reader, losses *transcript.LossReport, visi
 		user bool
 	}
 	var records []record
+	turnStart := -1
 	err = scanHistoryRecords(r, func(line int, raw []byte) error {
 		var env codexEnvelope
 		if err := json.Unmarshal(raw, &env); err != nil {
@@ -44,6 +45,27 @@ func scanCodexTranscriptRecords(r io.Reader, losses *transcript.LossReport, visi
 			}
 		}
 		if env.Type == "event_msg" {
+			var event struct {
+				Type string `json:"type"`
+			}
+			_ = json.Unmarshal(env.Payload, &event)
+			switch event.Type {
+			case "task_started", "turn_started":
+				turnStart = len(records)
+			case "user_message":
+				// Accepted input can precede its response_item, especially
+				// when compaction interrupts the turn. Both identify the
+				// same turn, whose compaction metadata must be discarded.
+				if turnStart >= 0 && turnStart < len(records) {
+					records[turnStart].user = true
+				}
+			}
+		}
+		if user && turnStart >= 0 && turnStart < len(records) {
+			records[turnStart].user = true
+			user = false
+		}
+		if env.Type == "event_msg" {
 			var ev struct {
 				Type  string `json:"type"`
 				Turns int    `json:"num_turns"`
@@ -58,11 +80,12 @@ func scanCodexTranscriptRecords(r io.Reader, losses *transcript.LossReport, visi
 						at--
 					}
 					if at < 0 {
-						return fmt.Errorf("Codex rollback has no recorded user boundary at line %d; use the agent-written handoff", line)
+						return fmt.Errorf("codex rollback has no recorded user boundary at line %d; use the agent-written handoff", line)
 					}
 					losses.Add(transcript.LossInactiveBranch, len(records)-at, "codex rollback records")
 					records = records[:at]
 				}
+				turnStart = -1
 				return nil
 			}
 		}
@@ -146,7 +169,7 @@ func scanCopilotTranscriptRecords(r io.Reader, losses *transcript.LossReport, vi
 				kept = append(kept, rec)
 			}
 			if !found && d.IDs == nil {
-				return fmt.Errorf("Copilot rewind target is absent at line %d; use the agent-written handoff", line)
+				return fmt.Errorf("copilot rewind target is absent at line %d; use the agent-written handoff", line)
 			}
 			records = kept
 			return nil

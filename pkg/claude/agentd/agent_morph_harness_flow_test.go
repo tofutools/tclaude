@@ -566,3 +566,29 @@ func TestMorphCrossHarnessTrustDirNeedsOwnershipForAgents(t *testing.T) {
 	rec = f.AsHuman().Morph(worker.AgentID, map[string]any{"profile": "codex-trusting", "dry_run": true})
 	assert.Equal(t, http.StatusOK, rec.Code, "the operator may; body=%s", rec.Body.String())
 }
+
+// Truncation statistics cannot reconstruct which Copilot context survived.
+// Exercise the production preview and dispatch so the source stays running
+// until it supplies a handoff, rather than resurrecting discarded turns.
+func TestMorphCopilotTruncatedHistoryRequiresHandoff(t *testing.T) {
+	t.Setenv(session.ResourceDelegationDirEnv, "")
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	spawn := spawnMorphSource(t, f, harness.CopilotName, "truncated")
+	c := f.World.Copilots.GetByConvID(spawn.ConvID)
+	require.NotNil(t, c)
+	require.NoError(t, c.AppendEvent(map[string]any{"type": "user.message", "data": map[string]any{"content": "discarded-private-context"}}))
+	require.NoError(t, c.AppendEvent(map[string]any{"type": "session.truncation", "data": map[string]any{"messagesRemovedDuringTruncation": 1, "preTruncationMessagesLength": 3, "postTruncationMessagesLength": 2}}))
+	f.SetSessionStatus(spawn.ConvID, session.StatusIdle)
+	rec := f.AsHuman().Morph(spawn.AgentID, map[string]any{"harness": "claude", "approval": "default", "dry_run": true})
+	dry := decodeCrossMorph(t, rec.Code, rec.Body.Bytes())
+	require.NotNil(t, dry.History)
+	assert.Equal(t, "handoff", dry.History.Fallback)
+	assert.Equal(t, 1, dry.History.Count(transcript.LossHistoryUndecodable))
+	rec = f.AsHuman().Morph(spawn.AgentID, map[string]any{"harness": "claude", "approval": "default"})
+	assert.Equal(t, "pending", decodeCrossMorph(t, rec.Code, rec.Body.Bytes()).Result)
+	a, err := db.GetAgent(spawn.AgentID)
+	require.NoError(t, err)
+	assert.Equal(t, spawn.ConvID, a.CurrentConvID)
+}
