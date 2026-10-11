@@ -727,9 +727,6 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 		ConfirmHistoryLoss: req.ConfirmHistoryLoss, Target: target, Back: req.Back, ActorConv: caller, Actor: actorLabel, ConvID: targetConv, History: history,
 		HandoffRequired: handoffRequired,
 	}
-	if req.ConfirmHistoryLoss && resp.History != nil {
-		pending.ConfirmedDropPercent = resp.History.DroppedPercent
-	}
 	out := morphOrDefer(agentID, targetConv, pending, req.Now, self)
 	if out.status != http.StatusOK {
 		writeError(w, out.status, out.code, out.detail)
@@ -985,12 +982,15 @@ func applyPendingMorph(row db.AgentWithPendingMorph) {
 		if !expired && (!submitted || (live != nil && agentRestartIdleFailure(live, time.Now()) != "")) {
 			return
 		}
-		if !submitted && pending.HandoffRequired {
+		if (expired && pending.History == "summary") || (!submitted && pending.HandoffRequired) {
 			// The history cannot be read, so without a handoff there is
 			// nothing to carry: drop it rather than stop the agent for a
 			// morph that cannot succeed.
 			_ = db.SetAgentPendingMorphForConv(convID, nil)
-			detail := "the required handoff or history summary did not arrive before expiry; the agent was left unchanged"
+			detail := "the required handoff did not arrive before expiry; nothing to carry, so the agent was left unchanged"
+			if pending.History == "summary" {
+				detail = "the history summary was not ready to apply before expiry; the agent was left unchanged"
+			}
 			auditMorphSystem(row.AgentID, convID, "dropped pending morph: "+detail, http.StatusConflict)
 			reportPendingMorphFailure(row.AgentID, convID, pending, detail)
 			return

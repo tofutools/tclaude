@@ -493,7 +493,7 @@ func applyCrossHarnessMorphUnderLaunchLock(agentID, convID string, pending db.Ag
 		if err != nil {
 			return morphOutcome{status: http.StatusConflict, code: "history_unreadable", detail: err.Error()}
 		}
-		if preflight.NeedsSummary && (!pending.ConfirmHistoryLoss || preflight.DroppedPercent > pending.ConfirmedDropPercent || pending.Handoff == nil || strings.TrimSpace(pending.Handoff.Body) == "") {
+		if preflight.NeedsSummary && (!pending.ConfirmHistoryLoss || pending.Handoff == nil || strings.TrimSpace(pending.Handoff.Body) == "") {
 			return morphOutcome{status: http.StatusConflict, code: "history_confirmation_required", detail: "history grew beyond the confirmed budget or its required summary is missing; source remains unchanged"}
 		}
 	}

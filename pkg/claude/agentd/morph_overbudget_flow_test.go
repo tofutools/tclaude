@@ -18,7 +18,7 @@ import (
 )
 
 func TestMorphOverBudgetSummaryFlow(t *testing.T) {
-	for _, action := range []string{"submit", "timeout", "cancel"} {
+	for _, action := range []string{"submit", "timeout", "cancel", "busy_timeout"} {
 		t.Run(action, func(t *testing.T) {
 			t.Setenv(session.ResourceDelegationDirEnv, "")
 			t.Setenv("CODEX_HOME", "")
@@ -65,10 +65,21 @@ func TestMorphOverBudgetSummaryFlow(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, spawn.ConvID, agent.CurrentConvID)
 			switch action {
-			case "submit":
+			case "submit", "busy_timeout":
+				// The real inbox path injects a native user nudge before the agent answers.
+				require.NoError(t, cc.AppendTurn(map[string]any{"type": "user", "uuid": "summary-nudge", "parentUuid": parent, "cwd": cc.Cwd, "message": map[string]any{"role": "user", "content": "[system: new agent message #123; delivery: inline] Write a history summary."}}))
+				require.NoError(t, cc.AppendTurn(map[string]any{"type": "assistant", "uuid": "summary-response", "parentUuid": "summary-nudge", "cwd": cc.Cwd, "message": map[string]any{"role": "assistant", "content": strings.Repeat("Preparing the requested summary. ", 800)}}))
+				convops.ScanAndUpsertFile(cc.JsonlPath)
 				rec = f.AsAgent(spawn.ConvID).MorphHandoff("Earlier work summary: parser migration complete; preserve compatibility; next verify deployment.")
 				require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 				f.SetSessionStatus(spawn.ConvID, session.StatusIdle)
+				if action == "busy_timeout" {
+					f.SetSessionStatus(spawn.ConvID, session.StatusWorking)
+					pending, err = db.PendingMorphForAgent(spawn.AgentID)
+					require.NoError(t, err)
+					pending.ExpiresAt = time.Now().Add(-time.Minute)
+					require.NoError(t, db.SetAgentPendingMorphForConv(spawn.ConvID, pending))
+				}
 			case "timeout":
 				pending.ExpiresAt = time.Now().Add(-time.Minute)
 				require.NoError(t, db.SetAgentPendingMorphForConv(spawn.ConvID, pending))

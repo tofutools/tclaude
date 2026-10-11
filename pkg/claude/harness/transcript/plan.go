@@ -211,7 +211,7 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 		if len(out.Blocks) == 0 {
 			continue
 		}
-		entries = append(entries, planEntry{entry: out, sources: 1, turn: e.Origin == OriginHuman, summary: summary})
+		entries = append(entries, planEntry{entry: out, sources: 1, turn: e.Origin == OriginHuman && !daemonControlTurn(e), summary: summary})
 	}
 
 	entries = coalesce(entries)
@@ -385,6 +385,20 @@ func WriteFileExclusive(path string, data []byte) error {
 
 // coalesce merges adjacent same-role entries so every encoder can rely on
 // strict user/assistant alternation.
+// Daemon inbox nudges arrive as native user turns, but they must not replace
+// the operator's task/latest instruction pins while the source writes a summary.
+func daemonControlTurn(e Entry) bool {
+	if len(e.Blocks) == 0 {
+		return false
+	}
+	for _, b := range e.Blocks {
+		if b.Kind != BlockText || !strings.HasPrefix(strings.TrimSpace(b.Text), "[system: new agent message") {
+			return false
+		}
+	}
+	return true
+}
+
 func coalesce(in []planEntry) []planEntry {
 	var out []planEntry
 	for _, e := range in {
@@ -469,11 +483,12 @@ func (p *Plan) fitBudget(entries []planEntry, opts Options, report *LossReport) 
 	var summary *planEntry
 	if opts.Summary != "" {
 		e := planEntry{entry: Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text("⟦Source-written summary of earlier history⟧\n" + opts.Summary)}}}
-		if estimateTokens(e.entry) > available-used && opts.TranscriptPath != "" {
+		// The summary uses a reserved slot rather than displacing the tail
+		// shown in the confirmed preview. A larger summary stays in its file.
+		if estimateTokens(e.entry) > reserve/2 && opts.TranscriptPath != "" {
 			e.entry.Blocks = []Block{Text("⟦Read the source-written summary in " + filepath.Join(filepath.Dir(opts.TranscriptPath), "summary.md") + " before continuing; it is too large to inline safely.⟧")}
 		}
 		summary = &e
-		used += estimateTokens(e.entry)
 	}
 	// Keep the newest complete human-turn groups that fit after the pins.
 	keep := map[int]bool{}

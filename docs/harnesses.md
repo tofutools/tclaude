@@ -161,8 +161,7 @@ is explicit about what does not map 1:1:
   carried with the pins and whatever native tail fits. No model call runs
   behind the operator's back. The dialog shows the source name, deadline
   and cancellation while waiting, and restores that state when reopened.
-  Timeout, cancellation or a refusal leave the source unchanged. A history
-  cut that grows past the confirmed percentage requires a fresh preview.
+  Timeout, cancellation or a refusal leave the source unchanged. The budget is checked again before applying the morph.
 - **Resets and rewinds** carry only the active native history. Gemini compression
   snapshots are labelled as summaries; clear/checkpoint, OpenCode revert and
   Codex/Copilot rewind boundaries are applied before carrying turns. Removed

@@ -49,3 +49,21 @@ func TestOverBudgetGiantPinnedTurnsStayInFile(t *testing.T) {
 	assert.Contains(t, full.String(), strings.Repeat("ORIGINAL", 20000))
 	assert.Contains(t, full.String(), strings.Repeat("LATEST", 20000))
 }
+
+func TestOverBudgetDaemonNudgeDoesNotReplaceLatestInstruction(t *testing.T) {
+	tr := New(Source{Harness: "claude"})
+	tr.Append(Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text("ORIGINAL: repair checkout")}})
+	for i := 0; i < 40; i++ {
+		tr.Append(Entry{Role: RoleAssistant, Origin: OriginAgent, Blocks: []Block{Text(strings.Repeat("detail ", 400))}})
+		tr.Append(Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text(fmt.Sprintf("instruction %d", i))}})
+	}
+	tr.Append(Entry{Role: RoleAssistant, Origin: OriginAgent, Blocks: []Block{Text(strings.Repeat("work ", 400))}})
+	tr.Append(Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text("LATEST: preserve backward compatibility")}})
+	tr.Append(Entry{Role: RoleAssistant, Origin: OriginAgent, Blocks: []Block{Text(strings.Repeat("huge last work ", 2000))}})
+	tr.Append(Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text("[system: new agent message #123] Write the summary now.")}})
+	tr.Append(Entry{Role: RoleAssistant, Origin: OriginAgent, Blocks: []Block{Text(strings.Repeat("writing summary ", 2000))}})
+	p := NewPlan(tr, Options{Target: "codex", ContextWindowTokens: 4096, TranscriptPath: "/m/transcript.md", Summary: "Earlier parser work is done."})
+	assert.Contains(t, p.Briefing(), "ORIGINAL: repair checkout")
+	assert.Contains(t, p.Briefing(), "LATEST: preserve backward compatibility")
+	assert.LessOrEqual(t, p.Report.CarriedEstimatedTokens, p.Report.BudgetTokens)
+}
