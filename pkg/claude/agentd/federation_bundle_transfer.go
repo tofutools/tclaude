@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -38,12 +37,18 @@ func federationBundleKind(name string) (fedBundleKind, bool) {
 	}
 	if name == bundletransfer.Agent.Name {
 		return fedBundleKind{Type: agentTransferType(), ValidateFile: func(f *os.File) error {
-			b, err := agentbundle.DecodeFile(f, agentTransferLimit(), "")
+			b, err := decodeAgentArchive(f)
 			if err == nil {
 				_ = b.Close()
 			}
 			return err
-		}, Validate: func(raw []byte) error { _, err := agentbundle.Decode(raw); return err }}, true
+		}, Validate: func(raw []byte) error {
+			b, err := decodeAgentArchiveBytes(raw)
+			if err == nil {
+				_ = b.Close()
+			}
+			return err
+		}}, true
 	}
 	return fedBundleKind{}, false
 }

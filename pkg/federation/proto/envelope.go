@@ -222,19 +222,22 @@ type GroupMailPayload struct {
 
 // CatalogPayload lists what an instance exports to the receiving peer.
 type CatalogPayload struct {
-	AgentBundleChunks   bool           `json:"agent_bundle_chunks,omitempty"`
-	RequesterPays       int            `json:"requester_pays,omitempty"`
-	TeleportBackups     bool           `json:"teleport_backups,omitempty"`
-	AgentTeleports      int            `json:"agent_teleports,omitempty"`
-	JobOutput           bool           `json:"job_output,omitempty"`
-	DirectAgentMoves    bool           `json:"direct_agent_moves,omitempty"`
-	HomeRoutedMail      bool           `json:"home_routed_mail,omitempty"`
-	StableAgentIdentity bool           `json:"stable_agent_identity,omitempty"`
-	AgentMoves          bool           `json:"agent_moves,omitempty"`
-	Node                *NodeMetadata  `json:"node,omitempty"`
-	NodeAt              time.Time      `json:"node_at,omitempty"`
-	NodeReceivedAt      time.Time      `json:"node_received_at,omitempty"` // receiver-owned; overwritten on receipt
-	Groups              []CatalogGroup `json:"groups"`
+	AgentBundleChunks   bool `json:"agent_bundle_chunks,omitempty"`
+	RequesterPays       int  `json:"requester_pays,omitempty"`
+	TeleportBackups     bool `json:"teleport_backups,omitempty"`
+	AgentTeleports      int  `json:"agent_teleports,omitempty"`
+	JobOutput           bool `json:"job_output,omitempty"`
+	DirectAgentMoves    bool `json:"direct_agent_moves,omitempty"`
+	HomeRoutedMail      bool `json:"home_routed_mail,omitempty"`
+	StableAgentIdentity bool `json:"stable_agent_identity,omitempty"`
+	AgentMoves          bool `json:"agent_moves,omitempty"`
+	// PAFAgentBundles says agent transfers may be sent as Portable Agent
+	// Format archives; peers without it receive agent bundle v1.
+	PAFAgentBundles bool           `json:"paf_agent_bundles,omitempty"`
+	Node            *NodeMetadata  `json:"node,omitempty"`
+	NodeAt          time.Time      `json:"node_at,omitempty"`
+	NodeReceivedAt  time.Time      `json:"node_received_at,omitempty"` // receiver-owned; overwritten on receipt
+	Groups          []CatalogGroup `json:"groups"`
 }
 
 // CatalogGroup is one exported group as seen by one peer.

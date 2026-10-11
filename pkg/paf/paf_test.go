@@ -556,3 +556,35 @@ func TestWriterRefusesWhatReaderRejects(t *testing.T) {
 		assert.ErrorContains(t, err, `group member "b"`)
 	})
 }
+
+func TestWriteContextFileStoresMediaByPath(t *testing.T) {
+	tr := sampleTranscript()
+	var stored [][]byte
+	var buf bytes.Buffer
+	require.NoError(t, WriteContextFile(&buf, ScopeFull, tr, func(m *transcript.Media) (string, error) {
+		stored = append(stored, m.Data)
+		return "/artifacts/media-" + string(rune('0'+len(stored))), nil
+	}))
+	require.NotEmpty(t, stored)
+	cr, err := NewContextReader(&buf, 0)
+	require.NoError(t, err)
+	assert.Equal(t, "codex", cr.Header.Source.Harness)
+	l, err := cr.Next()
+	require.NoError(t, err)
+	require.Len(t, l.Blocks, 2)
+	require.Len(t, l.Blocks[1].Media, 1)
+	m := l.Blocks[1].Media[0]
+	assert.Equal(t, "/artifacts/media-1", m.Path)
+	assert.Equal(t, "image/png", m.MediaType)
+	assert.Equal(t, "a.png", m.Name)
+	assert.Empty(t, m.Attachment)
+}
+
+func TestWriterRefusesContextLineOverRecordLimit(t *testing.T) {
+	tr := transcript.New(transcript.Source{Harness: "claude"})
+	tr.Entries = []transcript.Entry{{Role: transcript.RoleUser, Origin: transcript.OriginHuman, Blocks: []transcript.Block{transcript.Text(strings.Repeat("x", 4096))}}}
+	var buf bytes.Buffer
+	w := NewWriter(&buf, KindAgent, Limits{MaxRecordBytes: 1024})
+	require.NoError(t, w.AddAgent("a", Agent{Name: "a"}, Environment{Harness: Harness{Name: "claude"}}))
+	require.ErrorIs(t, WriteTranscript(w, "a", ScopeEffective, tr), ErrRecordTooLarge)
+}

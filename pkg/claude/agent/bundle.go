@@ -14,6 +14,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/configbundle"
 	"github.com/tofutools/tclaude/pkg/common"
+	"github.com/tofutools/tclaude/pkg/paf/legacy"
 )
 
 type bundleExportParams struct {
@@ -22,11 +23,12 @@ type bundleExportParams struct {
 	File             string `long:"file" short:"f" help:"Destination ZIP archive."`
 	History          bool   `long:"history" help:"Include native conversation history when supported."`
 	AllowFlagged     bool   `long:"allow-flagged" help:"Explicitly allow credential-shaped text; inspect before sharing."`
+	Format           string `long:"format" optional:"true" help:"Archive format: bundle (the default, readable by every tclaude) or paf (Portable Agent Format, see docs/paf.md)."`
 }
 type bundleImportParams struct {
 	CarryPermissions          bool     `long:"carry-permissions" help:"Request receiver-approved permission carry; off by default."`
 	AllowSensitivePermissions bool     `long:"allow-sensitive-permissions" help:"Explicitly allow permission administration, sandbox, human interaction and federation administration grants; requires unrestricted trust."`
-	File                      string   `long:"file" short:"f" help:"Bundle ZIP archive; '-' reads stdin."`
+	File                      string   `long:"file" short:"f" help:"Agent bundle ZIP or .paf archive; '-' reads stdin."`
 	Apply                     bool     `long:"apply" help:"Create a fresh local agent through normal spawn checks."`
 	Group                     string   `long:"group" optional:"true" help:"Receiving group (required with --apply). Source memberships are advisory."`
 	Name                      string   `long:"name" optional:"true" help:"Override the imported agent name."`
@@ -78,6 +80,9 @@ func runBundleExport(p *bundleExportParams, stderr io.Writer) int {
 	if p.History {
 		q.Set("history", "true")
 	}
+	if p.Format != "" {
+		q.Set("format", p.Format)
+	}
 	if p.AllowFlagged {
 		q.Set("allow_flagged", "true")
 	}
@@ -92,7 +97,7 @@ func runBundleExport(p *bundleExportParams, stderr io.Writer) int {
 		printBundleError(stderr, err)
 		return MapDaemonErrorToRC(err)
 	}
-	b, err := agentbundle.DecodeFile(archive, localAgentBundleLimit(), "")
+	b, _, err := legacy.DecodeBundleFile(archive, legacy.DecodeLimits{MaxBytes: localAgentBundleLimit()}, "")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return rcIOFailure
@@ -148,7 +153,7 @@ func runBundleImport(p *bundleImportParams, stdin io.Reader, out, stderr io.Writ
 		fmt.Fprintf(stderr, "archive exceeds or cannot be read within federation.agent_transfer_max_bytes=%d\n", limit)
 		return rcInvalidArg
 	}
-	b, err := agentbundle.DecodeFile(archive, limit, "")
+	b, _, err := legacy.DecodeBundleFile(archive, legacy.DecodeLimits{MaxBytes: limit}, "")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return rcInvalidArg

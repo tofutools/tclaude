@@ -16,6 +16,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
 	"github.com/tofutools/tclaude/pkg/paf"
 )
 
@@ -102,9 +103,27 @@ func AgentKey(name string) string {
 // extension for the rest, and the native history byte for byte. A v1 bundle
 // has no neutral context; a cross-harness landing decodes the native blob.
 func FromAgentBundle(b *agentbundle.Bundle, out io.Writer, producer paf.Producer, keys ...paf.SigningKey) error {
+	return WriteAgentBundle(b, out, WriteOptions{Producer: producer, Keys: keys})
+}
+
+// WriteOptions configures WriteAgentBundle.
+type WriteOptions struct {
+	Producer paf.Producer
+	Keys     []paf.SigningKey
+	// Context, when set, is written as the agent's neutral context beside
+	// the native blob, with its loss report.
+	Context *transcript.Transcript
+	// MaxRecordBytes bounds one context line; 0 uses the PAF default.
+	MaxRecordBytes int
+}
+
+// WriteAgentBundle writes an agent bundle as an agent PAF, optionally with
+// a neutral context.
+func WriteAgentBundle(b *agentbundle.Bundle, out io.Writer, opts WriteOptions) error {
+	producer, keys := opts.Producer, opts.Keys
 	m := b.Manifest
 	d := m.Agent
-	w := paf.NewWriter(out, paf.KindAgent, paf.Limits{MaxArchiveBytes: ConvertedLimit(b.Limit())})
+	w := paf.NewWriter(out, paf.KindAgent, paf.Limits{MaxArchiveBytes: ConvertedLimit(b.Limit()), MaxRecordBytes: opts.MaxRecordBytes})
 	if t, err := time.Parse(time.RFC3339, m.CreatedAt); err == nil {
 		w.SetCreatedAt(t)
 	}
@@ -197,6 +216,14 @@ func FromAgentBundle(b *agentbundle.Bundle, out io.Writer, producer paf.Producer
 	}
 	if m.MailLedger {
 		if err := w.WriteJSON(MailLedgerPath, b.MailDeliveries); err != nil {
+			return err
+		}
+	}
+	if opts.Context != nil {
+		if err := paf.WriteTranscript(w, key, paf.ScopeEffective, opts.Context); err != nil {
+			return err
+		}
+		if err := w.WriteJSON(paf.AgentPath(key, "context/losses.json"), paf.LossesFromReport(opts.Context.Losses)); err != nil {
 			return err
 		}
 	}

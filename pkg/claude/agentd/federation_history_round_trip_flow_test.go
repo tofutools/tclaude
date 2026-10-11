@@ -29,6 +29,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
 	"github.com/tofutools/tclaude/pkg/federation/hub"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
+	"github.com/tofutools/tclaude/pkg/paf"
+	"github.com/tofutools/tclaude/pkg/paf/legacy"
 	"github.com/tofutools/tclaude/pkg/testharness"
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
@@ -474,8 +476,9 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool, mailChecks ...bo
 		if len(mailChecks) > 0 && mailChecks[0] && d.Teleport.Home {
 			code, raw := historyNodeRequest(t, node, "GET", "/v1/federation/bundle-offers/"+d.ID+"/download", "", nil)
 			require.Equal(t, 200, code, string(raw))
-			portable, e := agentbundle.Decode(raw)
+			portable, info, e := legacy.DecodeBundleBytes(raw, legacy.DecodeLimits{MaxBytes: 1 << 30}, "")
 			require.NoError(t, e)
+			require.Equal(t, paf.Format, info.Source, "both nodes advertise PAF, so the transfer is a PAF")
 			require.True(t, portable.Manifest.MailLedger)
 			require.NotEmpty(t, portable.MailDeliveries, "native departure carries the final delivery marker")
 		}

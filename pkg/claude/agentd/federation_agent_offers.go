@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
-	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
@@ -154,7 +153,11 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 			b.Manifest.MailLedger = true
 		}
 	}
-	archive, err := archiveAgentBundle(b)
+	format := agentArchiveBundle
+	if peerSupportsPAFBundles(peer.InstanceID) {
+		format = agentArchivePAF
+	}
+	archive, err := archiveAgentTransfer(b, format, true)
 	if err != nil {
 		writeError(w, 400, "bundle_export", err.Error())
 		return
@@ -390,7 +393,7 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 			return
 		}
 	}
-	bundle, err := agentbundle.DecodeFile(archive, agentTransferLimit(), "")
+	bundle, err := decodeAgentArchive(archive)
 	if err != nil {
 		writeError(w, 400, "bundle", err.Error())
 		return

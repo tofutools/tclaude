@@ -24,6 +24,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common/buildversion"
 	"github.com/tofutools/tclaude/pkg/federation/jobrepo"
+	"github.com/tofutools/tclaude/pkg/paf"
 )
 
 const PermAgentBundleExport = "agent.bundle.export"
@@ -422,13 +423,26 @@ func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
 	if caller, human, ok := authedCaller(w, r); ok && b.Manifest.Agent.Origin != nil {
 		b.Manifest.Agent.Origin.Trigger = arrivalTrigger(caller, res.ConvID, human)
 	}
-	archive, err := archiveAgentBundle(b)
+	format := r.URL.Query().Get("format")
+	if format == "" {
+		format = agentArchiveBundle
+	}
+	if format != agentArchiveBundle && format != agentArchivePAF {
+		writeError(w, 400, "format", "format must be bundle or paf")
+		return
+	}
+	archive, err := archiveAgentTransfer(b, format, false)
 	if err != nil {
 		writeError(w, 400, "bundle_export", err.Error())
 		return
 	}
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", `attachment; filename="agent.bundle.zip"`)
+	if format == agentArchivePAF {
+		w.Header().Set("Content-Type", paf.MediaType)
+		w.Header().Set("Content-Disposition", `attachment; filename="agent.paf"`)
+	} else {
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", `attachment; filename="agent.bundle.zip"`)
+	}
 	w.WriteHeader(200)
 	defer func() { _ = archive.Close(); _ = os.Remove(archive.Name()) }()
 	_, _ = io.Copy(w, archive)
@@ -472,7 +486,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, "archive", fmt.Sprintf("archive exceeds or cannot be read within federation.agent_transfer_max_bytes=%d", agentTransferLimit()))
 			return
 		}
-		b, err = agentbundle.DecodeFile(file, agentTransferLimit(), "")
+		b, err = decodeAgentArchive(file)
 		if err != nil {
 			writeError(w, 400, "archive", err.Error())
 			return

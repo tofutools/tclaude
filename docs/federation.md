@@ -945,14 +945,19 @@ transfer as local files; these commands do not send anything to a peer.
 ## Portable local agent bundles
 
 Agent transfer uses a ZIP archive, separate from the existing export jobs.
-The [Portable Agent Format](paf.md) is specified as this archive's
-successor; tclaude will keep importing it, and sending it to peers that do not
-support PAF.
+The default is agent bundle version 1. `--format paf` writes a
+[Portable Agent Format](paf.md) file instead, which carries the same
+configuration and native history plus a harness-neutral copy of the
+conversation when the harness can decode it. A PAF export is signed with the
+node's federation key when one exists; exporting never creates a key. Import
+accepts either format and tells them apart by content, not file name.
 
 ```bash
 tclaude agent bundle export reviewer --file reviewer.zip --history
 tclaude agent bundle import --file reviewer.zip --cwd "$PWD" --group team
 tclaude agent bundle import --file reviewer.zip --cwd "$PWD" --group team --apply
+tclaude agent bundle export reviewer --file reviewer.paf --history --format paf
+tclaude agent bundle import --file reviewer.paf --cwd "$PWD" --group team
 ```
 
 Preview is the default. `--apply` creates a fresh local agent through the normal
@@ -984,6 +989,13 @@ Credential detection uses the setup-bundle boundary, reporting counts per kind
 and the first three locations. Export refuses flagged text unless
 `--allow-flagged` is explicit; history is never sanitized or silently rewritten.
 Inspect archives before sharing them.
+
+A PAF import is fully verified before preview: hashes, schemas, signatures
+and ZIP layout. A PAF that requires a feature or extension this tclaude does
+not support is refused. One line of its neutral context may be at most
+64 MiB. A PAF from another tool that carries only the neutral context, with no
+native history, currently imports as configuration only, with a warning. A
+group PAF is not an agent bundle and is refused here.
 
 The version 1 `manifest.json` records format/version, creation time, tclaude
 version, configuration and optional transcript length/checksum. Unknown fields
@@ -1133,6 +1145,12 @@ Code, Codex, OpenCode and Gemini); other harnesses warn and share configuration 
 agent and transcript remain in place. Credential findings report counts and at
 most three locations per kind; sharing refuses unless `--allow-flagged` is
 explicit. Structured credential fields are omitted and history stays verbatim.
+A peer that advertises PAF support receives the offer as a PAF signed with
+this node's federation key; any other peer receives agent bundle version 1.
+Move and teleport follow the same rule. The neutral copy of the conversation
+is left out of the PAF when the native history is large (over 256 MiB or a
+third of `federation.agent_transfer_max_bytes`) or would not fit the
+transfer's limits; the native history always travels.
 
 Agent callers need `agent.share` with `peer=bob` or
 `peer=bob/reviewers` scope. They may share themselves using `self`; sharing
@@ -3087,12 +3105,14 @@ local operator administration and is refused through peer views.
 After fetching, `state: "ready"` means the private payload is verified.
 `GET /api/federation/bundle-offers/{id}/contents?peer=INSTANCE_ID` returns
 `{type,entries:[{path,size,kind}]}`. Agent entries are `manifest.json` and optional
-`history/transcript.jsonl`; config entries are `bundle.json` and
+`history/transcript.jsonl`, or for an agent PAF its `manifest.json` and every
+entry that manifest lists; config entries are `bundle.json` and
 `sections/<section>.json`. Entries are data labels, never host paths.
 Add `path`, optional byte `offset` and `max_bytes` to read one entry:
 `{path,kind,size,text,truncated,offset,next_offset?}`. Reads default to 256 KiB
 and accept at most 1 MiB; invalid UTF-8 is replaced. `next_offset` is the next
-byte offset when more text remains. All current entries are JSON or JSONL.
+byte offset when more text remains. Entries are JSON or JSONL, except PAF
+attachments, which have kind `file`.
 `GET` or `HEAD` `/{id}/download?peer=INSTANCE_ID` returns the original payload
 as an attachment with octet-stream, sandbox, nosniff and private/no-store
 headers. Neither read fetches implicitly: pending returns 409 `not_fetched`,
