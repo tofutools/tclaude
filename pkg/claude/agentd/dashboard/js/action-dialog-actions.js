@@ -84,6 +84,7 @@ export function createActionDialogActions({
     },
     openExport: state.openExport,
     openSandboxImpl: state.openSandboxImpl,
+    openLaunchTarget: state.openLaunchTarget,
     openTerminalDirectory: state.openTerminalDirectory,
     finishChoice: state.finishChoice,
     close: state.close,

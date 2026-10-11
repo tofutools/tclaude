@@ -10,7 +10,9 @@ import { tickedNodes, withFused } from './skynet-scope.js';
 import { MERGED_IDLE_POLL_MS, MERGED_POLL_MS, mergeSnapshots } from './skynet-merged-model.js';
 import { peerAction } from './peer-view-limits.js';
 import { PeerActionDialog, createPeerActionActions } from './peer-action.js';
-import { MoveDropDialog, dropPlan } from './skynet-move-drop.js';
+import { dropPlan } from './skynet-move-drop.js';
+import { LaunchTargetDialog, createLaunchTargetApi, launchAgent } from './launch-target-dialog.js';
+import { openCloneAgentDialog } from './action-dialog-controller.js';
 import { createFleetAdminActions } from './fleet-admin-actions.js';
 
 const html = htm.bind(h);
@@ -162,9 +164,13 @@ export function MergedGroups({
   const polled = ticked.filter((n) => n.id !== pageNode);
   const entries = usePeerSnapshots({ active, peers: polled, fetchImpl, localFetch, timers, now });
   const [peerReq, setPeerReq] = useState(null);
-  const [moveDrop, setMoveDrop] = useState(null);
+  // launch is the open launch-target dialog: from a drop (pre-filled
+  // target) or from a row's ⚙ "Send elsewhere" item.
+  const [launch, setLaunch] = useState(null);
   const fleetActions = useRef(moveActions);
   if (!fleetActions.current) fleetActions.current = createFleetAdminActions({ fetchImpl });
+  const launchApi = useRef(null);
+  if (!launchApi.current) launchApi.current = createLaunchTargetApi({ fetchImpl: localFetch });
   // The capture handlers below are bound once; they read the latest snapshots.
   // snapOf reads a node's snapshot, the page's own node included.
   const snapOf = (id) => (id === pageNode ? snapshot.value : entries[id]?.snapshot) || null;
@@ -187,6 +193,13 @@ export function MergedGroups({
       event.preventDefault(); event.stopImmediatePropagation();
       const group = act.closest('details[data-fleet-node]');
       const instance = group?.dataset.fleetNode || '';
+      // ⚙ "Send elsewhere" opens the same launch-target dialog as a drop.
+      if (act.dataset.act === 'send-elsewhere' && group) {
+        const name = group.dataset.fleetNodeName || '';
+        const data = { ...act.dataset, ownGroup: ownGroup(act.dataset.group || '', name) };
+        setLaunch({ mode: act.dataset.mode || 'move', agent: launchAgent(data, { id: instance, name }) });
+        return;
+      }
       if (TERMINAL_ACTS.has(act.dataset.act) && act.dataset.agent && instance && instance !== state.view.value.fleet?.self?.id) {
         void openTerminal({ instance, agent: act.dataset.agent, peerLabel: group.dataset.fleetNodeName || '', toast });
         return;
@@ -257,7 +270,10 @@ export function MergedGroups({
       const plan = dropPlan({ source: src.source, target, self: self() });
       if (plan.kind === 'same') { toast(`To move ${src.agent.name} between groups on ${src.source.name}, use ${src.source.name}'s own Groups view`, true); return; }
       if (plan.kind === 'third') { toast(`Neither ${src.source.name} nor ${target.name} is this node: move ${src.agent.name} from ${src.source.name}'s dashboard`, true); return; }
-      if (plan.kind === 'push' || plan.kind === 'pull') setMoveDrop({ drop: { agent: src.agent, source: src.source, target }, plan });
+      if (plan.kind === 'push' || plan.kind === 'pull') {
+        setLaunch({ mode: 'move', fromDrop: true, target: { node: target.node, name: target.name, group: target.group },
+          agent: { id: src.agent.id, conv: '', name: src.agent.name, node: src.source.node, nodeName: src.source.name, group: src.source.group } });
+      }
     };
     const onDragEnd = () => { dragging = null; unmark(); };
     host.addEventListener('click', onClick, true);
@@ -299,8 +315,11 @@ export function MergedGroups({
     <//>
     ${peerReq && html`<${PeerActionDialog} req=${peerReq} peerView=${snapOf(peerReq.nodeId)?.peer_view} groups=${snapOf(peerReq.nodeId)?.groups}
       actions=${peerActions(peerReq.nodeId)} toast=${toast} timers=${timers} onClose=${() => setPeerReq(null)} ...${confirm ? { confirm } : {}} />`}
-    ${moveDrop && html`<${MoveDropDialog} drop=${moveDrop.drop} plan=${moveDrop.plan} actions=${fleetActions.current} peerActions=${peerActions}
-      timers=${timers} now=${now} onClose=${() => setMoveDrop(null)} />`}
+    ${launch && html`<${LaunchTargetDialog} agent=${launch.agent} initialMode=${launch.mode} target=${launch.target || null} fromDrop=${!!launch.fromDrop}
+      self=${fleet.self} fleet=${fleet} api=${launchApi.current} actions=${fleetActions.current} peerActions=${peerActions} timers=${timers} now=${now}
+      localGroups=${(snapOf(fleet.self.id)?.groups || []).map((g) => g.name).filter(Boolean).sort()}
+      onClose=${() => setLaunch(null)}
+      onLocalClone=${() => { const a = launch.agent; setLaunch(null); openCloneAgentDialog(a.conv || a.id, a.name, a.cwd || ''); }} />`}
   </div>`;
 }
 

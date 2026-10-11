@@ -22,6 +22,7 @@ import { PRChecksBadge } from './pr-checks-hover.js';
 import { ViewersBadge, remoteViewers, viewersOf } from './remote-viewers.js';
 import { skynetState } from './skynet-state.js';
 import { presenceView } from './agent-presence.js';
+import { TELEPORT_ROUTES } from './launch-target-dialog.js';
 
 const html = htm.bind(h);
 
@@ -842,6 +843,32 @@ function SandboxImplMenuItem({ member }) {
   />`;
 }
 
+// SendElsewhereItems is the ⚙ menu's "Send elsewhere" section (tcl-o9d5d9):
+// each item opens the launch-target dialog on its mode, alongside drag and
+// drop. Modes whose routes this dashboard lacks stay out of the menu. A
+// peer's single-node view has no such routes, so it shows none.
+function SendElsewhereItems({ member, group, snapshot }) {
+  if (snapshot?.peer_view || !member.agent_id) return null;
+  const fleet = skynetState.fleet.value;
+  // Another node's row in a fused view can only be pulled here by a move;
+  // without a fleet there is nowhere to move or clone to but here.
+  const peerRow = !!group?.fleet_node && !group.fleet_node.local;
+  const view = presenceView(member, fleet);
+  const kind = view?.kind || '';
+  const label = member.title || member.conv_id;
+  const attrs = (mode) => ({
+    'data-mode': mode, 'data-presence': kind, 'data-home-node': view?.home?.id || '', 'data-home-name': view?.home?.name || '',
+    'data-cwd': member.state?.cwd || member.cwd || '',
+  });
+  const item = (mode, regular, wizard, title) => html`<${MenuButton} member=${member} group=${group} act="send-elsewhere" attrs=${attrs(mode)} regular=${regular} wizard=${wizard} title=${title} />`;
+  return html`<div class="menu-section-label" role="presentation">send elsewhere</div>
+    ${fleet ? item('move', peerRow ? 'move here…' : 'move to…', 'relocate familiar…', peerRow ? `Move ${label} to a group on this node, with its history` : `Move ${label} to a group on another node, with its history; it retires here once its copy runs there`) : null}
+    ${TELEPORT_ROUTES && fleet && !peerRow ? item('teleport', 'teleport to…', 'teleport familiar…', `Teleport ${label} to another node; its home keeps its place for Recall home`) : null}
+    ${!peerRow ? item('clone', fleet ? 'clone to…' : 'clone…', 'mirror familiar to…', `Clone ${label} here or onto another node; the original keeps running`) : null}
+    ${!peerRow ? item('morph', 'morph…', 'shapeshift familiar…', `Relaunch ${label} in place with another spawn profile (model, effort, harness); it keeps its identity`) : null}
+    ${TELEPORT_ROUTES && kind === 'visiting' && (!peerRow || view.home.local) ? item('home', '⌂ recall home…', '⌂ recall familiar home…', `Send ${label} straight home to ${view.home.name}`) : null}`;
+}
+
 function MenuSeparator() {
   return html`<div class="menu-sep" role="separator"></div>`;
 }
@@ -879,6 +906,8 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
     <${RestartMenuItem} member=${member} />
     <${SandboxRestartMenuItem} member=${member} />
     <${SandboxImplMenuItem} member=${member} />
+    <${MenuSeparator} />
+    <${SendElsewhereItems} member=${member} group=${ungrouped ? null : group} snapshot=${snapshot} />
     <${MenuSeparator} />
     ${ungrouped
       ? html`<${MenuButton} member=${member} selector="conv" act="retire-agent" className="warn" regular="retire" wizard="banish" title=${wizardCopy('Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).', 'Banish this familiar — return it to a plain conversation, revoking its party memberships and boons. Reversible via reinstate.')} /><${MenuButton} member=${member} act="delete-agent" className="danger" regular="delete" wizard="erase familiar" title=${wizardCopy('Permanently delete this agent and conversation', 'Permanently erase this familiar and its conversation scroll')} />`
@@ -1002,7 +1031,11 @@ function AwayRow({ member, view, columns, group }) {
         <button type="button" class="fa-link away-goto" data-away-goto=${member.agent_id || ''}
           title=${visiting ? `Scroll to ${member.title || 'it'} on ${view.at.name}` : `Open ${view.at.name}'s dashboard`}
           onClick=${(event) => { event.preventDefault(); event.stopPropagation(); showVisitingRow(member, view.at); }}
-        >${visiting ? '↓ show' : view.at.local ? 'open on this node ↗' : `open on ${view.at.name} ↗`}</button></div></td>`;
+        >${visiting ? '↓ show' : view.at.local ? 'open on this node ↗' : `open on ${view.at.name} ↗`}</button>
+        ${TELEPORT_ROUTES ? html`<button type="button" class="away-recall" data-act="send-elsewhere" data-mode="home" data-presence="away"
+          data-agent=${member.agent_id} data-conv=${member.conv_id} data-label=${member.title || member.conv_id} data-group=${group?.name || ''}
+          data-home-node=${view.home.id} data-home-name=${view.home.name}
+          title=${`Recall ${member.title || 'it'} straight home from ${view.at.name}`}>⌂ recall home…</button>` : null}</div></td>`;
       default: return html`<td></td>`;
     }
   };

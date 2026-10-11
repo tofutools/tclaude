@@ -20,8 +20,9 @@ import {
 import {
   chooseTerminalDirectory, openAgentExportDialog, openCloneAgentDialog,
   openGroupSettingsDialog, openNestGroupDialog, openReincarnateAgentDialog, openSandboxImplDialog,
-  openTaskLinkDialog,
-} from './action-dialog-controller.js';
+  openTaskLinkDialog, openLaunchTargetDialog } from './action-dialog-controller.js';
+import { launchAgent } from './launch-target-dialog.js';
+import { skynetState } from './skynet-state.js';
 import {
   openDeleteAgentDialog, openRetireAgentDialog, openShutdownAgentDialog,
 } from './transaction-dialog-controller.js';
@@ -632,6 +633,12 @@ export async function handleRowAction(action) {
       case 'create-subgroup': {
         // Reuse the standard group form, pinned to this group as parent.
         openGroupCreateModal(undefined, group);
+        return;
+      }
+      case 'send-elsewhere': {
+        // The ⚙ "Send elsewhere" items: one launch-target dialog per mode.
+        const fleet = skynetState.fleet.value;
+        openLaunchTargetDialog({ mode: data.mode || 'move', agent: launchAgent(data, fleet?.self || { id: 'local', name: 'this node' }) });
         return;
       }
       case 'clone': {

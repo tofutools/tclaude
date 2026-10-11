@@ -176,15 +176,18 @@ test('dragging an agent onto another node\'s group opens the move; other drops s
   assert.equal(harness.fireEvent(groupEl('builders@desk').querySelector('summary'), 'dragstart').defaultPrevented, true, 'group headers do not drag here');
   const over = await drag(row('agt_b1'), groupEl('reviewers@forge'));
   assert.equal(over.defaultPrevented, true, 'another node\'s group accepts the drop');
-  const dialog = harness.document.querySelector('#skynet-move-drop');
-  assert.ok(dialog, 'the move dialog opens');
-  assert.match(dialog.textContent, /Move builder-1 to reviewers on forge\?/);
+  const dialog = harness.document.querySelector('#launch-target');
+  assert.ok(dialog, 'the drop opens the launch-target dialog');
+  assert.match(dialog.textContent, /Move builder-1 to…/);
+  assert.match(dialog.textContent, /Opened by dragging builder-1 onto reviewers@forge/);
+  assert.match(dialog.textContent, /from.*desk · builders.*to.*forge · reviewers/, 'node and group are pre-filled from the drop');
+  assert.equal(harness.document.activeElement?.id, 'skynet-move-drop-ok', 'Enter confirms the move');
   await harness.act(() => harness.document.querySelector('#skynet-move-drop-cancel').click());
   await drag(row('agt_r1'), groupEl('qa@lab'));
   assert.match(toasts.at(-1), /Neither forge nor lab is this node: move reviewer-1 from forge's dashboard/);
   await drag(row('agt_b1'), groupEl('other@desk'));
   assert.match(toasts.at(-1), /use desk's own Groups view/);
-  assert.equal(harness.document.querySelector('#skynet-move-drop'), null);
+  assert.equal(harness.document.querySelector('#launch-target'), null);
   await mounted.unmount(); state.dispose();
 });
 
