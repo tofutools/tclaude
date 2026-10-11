@@ -34,6 +34,15 @@ func populatedRelaunchProfile(seed string) AgentRelaunchProfile {
 			elem.Elem().SetInt(int64(seed[0]))
 		case reflect.Map:
 			elem.Elem().Set(reflect.ValueOf(map[string]string{seed: "off"}))
+		case reflect.Struct:
+			// Morph bookkeeping: seed the first string field so base and
+			// overlay differ.
+			for k := range elem.Elem().NumField() {
+				if f := elem.Elem().Field(k); f.Kind() == reflect.String {
+					f.SetString(seed)
+					break
+				}
+			}
 		default:
 			panic("populatedRelaunchProfile: unhandled field kind " + elem.Elem().Kind().String())
 		}

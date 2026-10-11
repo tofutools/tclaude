@@ -1239,6 +1239,17 @@ func (f *Flow) Reincarnate(target, followUp string) ReincarnateResp {
 	return resp
 }
 
+// Morph drives POST /v1/agent/{target}/morph, or /v1/whoami/morph when
+// target is empty, and returns the raw outcome without failing on errors.
+func (f *Flow) Morph(target string, body map[string]any) *httptest.ResponseRecorder {
+	f.T.Helper()
+	path := "/v1/whoami/morph"
+	if target != "" {
+		path = "/v1/agent/" + target + "/morph"
+	}
+	return f.do(http.MethodPost, path, body)
+}
+
 // ReincarnateWith drives POST /v1/agent/{target}/reincarnate with an
 // arbitrary JSON body and returns the outcome WITHOUT fatal-on-error,
 // so tests can exercise rejection paths (oversized or solo-pane-invalid
@@ -1545,13 +1556,14 @@ type MemberView struct {
 // `tclaude agent ls` renders. Like MemberView, Title is refreshed from
 // the .jsonl by the handler (agent.FreshTitle).
 type PeerView struct {
-	ConvID string   `json:"conv_id"`
-	Title  string   `json:"title"`
-	Role   string   `json:"role,omitempty"`
-	Descr  string   `json:"descr,omitempty"`
-	Online bool     `json:"online"`
-	Groups []string `json:"groups"`
-	State  struct {
+	PendingMorph *db.AgentPendingMorph `json:"pending_morph,omitempty"`
+	ConvID       string                `json:"conv_id"`
+	Title        string                `json:"title"`
+	Role         string                `json:"role,omitempty"`
+	Descr        string                `json:"descr,omitempty"`
+	Online       bool                  `json:"online"`
+	Groups       []string              `json:"groups"`
+	State        struct {
 		Harness       string `json:"harness,omitempty"`
 		Model         string `json:"model,omitempty"`
 		EffortLevel   string `json:"effort_level,omitempty"`

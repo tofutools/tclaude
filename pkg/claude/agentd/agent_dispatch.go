@@ -73,6 +73,8 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch verb {
+	case "morph":
+		handleAgentMorph(w, r, convID)
 	case "reincarnate":
 		handleAgentReincarnate(w, r, convID)
 	case "compact":

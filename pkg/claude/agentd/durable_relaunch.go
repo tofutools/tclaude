@@ -221,6 +221,13 @@ func composeAgentRelaunchProfile(fallback, agent *db.AgentRelaunchProfile) *db.A
 }
 
 func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error) {
+	return durableRelaunchConfigForConvWith(convID, nil)
+}
+
+// durableRelaunchConfigForConvWith resolves the config with adjust applied to
+// the agent's durable profile first, without writing it. Morph uses it to
+// validate a new form before it stops the agent.
+func durableRelaunchConfigForConvWith(convID string, adjust func(*db.AgentRelaunchProfile)) (*durableRelaunchConfig, error) {
 	conversation, err := db.ConversationResumeProfileForConv(convID)
 	if err != nil {
 		return nil, fmt.Errorf("load durable conversation resume profile: %w", err)
@@ -253,6 +260,9 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		if err != nil {
 			return nil, fmt.Errorf("reload durable agent relaunch profile: %w", err)
 		}
+	}
+	if agentProfile != nil && adjust != nil {
+		adjust(agentProfile)
 	}
 	var temporaryHarnessBuiltinMode *string
 	if agentProfile != nil {

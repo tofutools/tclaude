@@ -1106,6 +1106,7 @@ func describeSpawn(c *auditCtx) {
 // (head aliases) — would be recorded with a bogus verb. An unknown verb
 // blanks the row out (recordAuditRow drops a verbless row).
 var auditedAgentVerbs = map[string]bool{
+	"morph":          true,
 	"reincarnate":    true,
 	"compact":        true,
 	"interrupt":      true,
@@ -1147,6 +1148,7 @@ func describeAgentVerb(c *auditCtx) {
 // reads the mutating-method gate already drops, but the allowlist keeps
 // the audited set explicit so a future POST sibling isn't mis-recorded.
 var auditedWhoamiVerbs = map[string]bool{
+	"morph":          true,
 	"reincarnate":    true,
 	"clone":          true,
 	"rename":         true,

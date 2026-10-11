@@ -120,6 +120,12 @@ const (
 // launch parameter forces a decision here instead of letting it drift.
 var launchCarryoverExcused = map[string]string{
 	"Version": "profile bookkeeping, not a launch parameter",
+	"MorphProfile": "morph bookkeeping (the label of the profile the last morph applied), " +
+		"not a launch parameter",
+	"PreviousMorphForm": "morph bookkeeping for `agent morph --back`; the form it records is " +
+		"replayed only by writing it back into the profile's own launch fields",
+	"PendingMorph": "a requested morph waiting for the idle watcher; agentd applies it by " +
+		"rewriting the launch fields before a relaunch, never as a session-new flag",
 	"ModelID": "Claude Code and Codex both remember which model a conversation runs on " +
 		"across a resume, and the status line re-records it on every render, so an " +
 		"omitted --model resumes on the same model instead of reverting",

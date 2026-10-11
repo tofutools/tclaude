@@ -395,8 +395,10 @@ type ConvAgent struct {
 	// means normal posture. It rides this existing dashboard batch so the
 	// two-second snapshot poll does not add a per-agent JSON query.
 	TemporaryHarnessBuiltinMode string
-	Retired                     bool
-	Superseded                  bool
+	// PendingMorph is a requested morph waiting for the agent to go idle.
+	PendingMorph *AgentPendingMorph
+	Retired      bool
+	Superseded   bool
 	// CreatedAt is the actor's immutable birth timestamp (agents.created_at),
 	// stamped at spawn/enrollment BEFORE the harness writes its first .jsonl
 	// event. It is the dashboard member Age source: available the instant the
@@ -588,6 +590,7 @@ func AgentsByConv(convIDs []string) (map[string]ConvAgent, error) {
 				if profile.TemporaryHarnessBuiltinMode != nil {
 					ca.TemporaryHarnessBuiltinMode = strings.TrimSpace(*profile.TemporaryHarnessBuiltinMode)
 				}
+				ca.PendingMorph = profile.PendingMorph
 				ca.FastMode = profile.FastMode
 				if ca.FastMode == nil {
 					ca.FastMode = profile.FastModeAtLaunch
