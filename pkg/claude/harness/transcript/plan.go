@@ -505,13 +505,17 @@ func withoutPriorMorphNotices(text string) string {
 		trimmed := strings.TrimSpace(line)
 		if fence != "" {
 			kept = append(kept, line)
-			if strings.HasPrefix(trimmed, fence) {
+			if strings.HasPrefix(trimmed, fence) && strings.Trim(trimmed, fence[:1]+" \t") == "" {
 				fence = ""
 			}
 			continue
 		}
 		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
-			fence = trimmed[:3]
+			n := 3
+			for n < len(trimmed) && trimmed[n] == trimmed[0] {
+				n++
+			}
+			fence = trimmed[:n]
 			kept = append(kept, line)
 			continue
 		}

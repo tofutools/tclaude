@@ -18,3 +18,10 @@ func TestPriorMorphNoticePreservesFencedLiteral(t *testing.T) {
 		assert.Equal(t, input, withoutPriorMorphNotices(input))
 	}
 }
+
+func TestPriorMorphNoticePreservesLongFenceAndInnerFence(t *testing.T) {
+	input := "````markdown\n```text\n⟦tclaude morph⟧ History carried over from claude to codex. Tool records are history; use your own tools.\n```\n````\n"
+	assert.Equal(t, input, withoutPriorMorphNotices(input))
+	input = "```text\n```not a closing fence\n⟦tclaude morph⟧ History carried over from claude to codex. Tool records are history; use your own tools.\n```"
+	assert.Equal(t, input, withoutPriorMorphNotices(input))
+}
