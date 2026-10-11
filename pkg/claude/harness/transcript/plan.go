@@ -500,7 +500,21 @@ func (p *Plan) fitBudget(entries []planEntry, opts Options, report *LossReport) 
 func withoutPriorMorphNotices(text string) string {
 	lines := strings.Split(text, "\n")
 	kept := lines[:0]
+	var fence string
 	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if fence != "" {
+			kept = append(kept, line)
+			if strings.HasPrefix(trimmed, fence) {
+				fence = ""
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			fence = trimmed[:3]
+			kept = append(kept, line)
+			continue
+		}
 		if strings.HasPrefix(line, "⟦tclaude morph⟧ History carried over from ") {
 			continue
 		}
