@@ -41,10 +41,7 @@ func TestFederation_ProposalVisibilityAndDuplicateReceipt(t *testing.T) {
 	sendProposalControl(p, proto.KindCatalog, proto.CatalogPayload{PeerProposals: true})
 	fedEventually(t, "proposal capability", func() bool {
 		rec := fedHuman(t, f, http.MethodPost, "/v1/federation/proposals", map[string]any{"peer": "bob", "items": []map[string]any{{"kind": proto.ProposalShareVisibility, "host": "us", "group_id": g.Name, "include_members": true}}})
-		if rec.Code != http.StatusAccepted {
-			return false
-		}
-		return true
+		return rec.Code == http.StatusAccepted
 	})
 	var offered proto.PeerProposalPayload
 	fedEventually(t, "signed proposal", func() bool {
