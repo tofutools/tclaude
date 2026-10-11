@@ -718,6 +718,53 @@ dot: a linked node is live). Click it for the links — a direct or pool grant,
 or a route mirror — with what each allows and a jump to that node's dashboard.
 CLI: `tclaude federation links [--group NAME]`.
 
+### Cross-node group links
+
+The inter-group link dialog's **To** row has a **This node | Peer node 🌐**
+switch on nodes with cross-node links. **Peer node** lists only known peers you
+trust at least *limited* and only the groups they share with you; an older peer
+is listed but unavailable. With no hub connection the switch is greyed out with
+the reason, and local links work as before. The note under the pickers says
+what happens: if the peer granted you `groups.link.accept` for that group, the
+link needs no prompt and shows **connecting** until the peer acknowledges this
+exact edge; otherwise it sends a link request that the peer's operator approves
+or declines within 24 hours. *Also ask for the reverse link* asks for the other
+direction separately.
+
+The Inter-group links list then gets **This node** and **Peer side** columns.
+Each row is one directed edge. A peer that is offline shows its side as
+*unknown*, with what it last reported, never as active or revoked. Deleting a
+cross-node edge stops delivery on this node immediately, including queued
+messages; a pending request reads **cancel request** instead. The 🌐 popover
+lists the same edges.
+
+An incoming request appears in **Messages → Access requests** as a 🌐 link
+request naming the exact edge and mode, with **Approve**, **Approve + allow
+future links into** the group (which also grants that peer `groups.link.accept`
+for it), and **Decline**. Approving authorizes only that edge, never broader
+messaging from the peer. A request this node sent shows read-only, waiting for
+the peer's operator.
+
+### Peer proposals
+
+A proposal offers a peer several items in one go: groups of yours they may see
+(name, description and member count; the member list only when you tick
+*include member list*) and link edges between your groups and theirs, one
+direction or both (each direction is a separate edge). Open it with
+**Propose…** on a trusted peer in **⚙ Fleet**, or **Propose several items…**
+in the link dialog's Peer node mode. A preview lists exactly what is offered.
+Nothing changes on either node until the peer's operator accepts.
+
+The proposal appears on both nodes in **Messages → Access requests**. The
+receiver ticks what to accept and gets **Accept all**, **Accept selected**
+or **Decline all**. Unticking *member list* on a share keeps only its name,
+description and count. Changing a link mode or sharing some of your own groups
+back sends a **counter-proposal** instead, and the turn passes to the other
+side. While the peer decides, the sender can **Withdraw**. When some edges were
+already accepted, the button reads **Withdraw pending items**: accepted edges
+stay until they are removed in Inter-group links. Each node applies only its own
+items. Accepting grants nothing beyond them.
+
 ### Fleet administration (⚙ Fleet)
 
 **⚙ Fleet** (or "Fleet administration" in the command palette, before any peer

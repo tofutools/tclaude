@@ -3775,3 +3775,44 @@ Local archive export and import both need `--carry-permissions`; applying carrie
 grants additionally requires normal permission-administration authority. The
 arrival message and federation audit summarize receiver decisions.
 
+
+### Group links and peer proposals
+
+Cross-node group links are exact directed edges between two shared groups. They
+allow the source group's current members (or owners, with `owners->members`) to
+message the destination group without a broader `message.direct` grant. They
+are not transitive. A two-way link has two independent approvals and receipts;
+one direction can be active while the other is still pending. The receiving
+operator can pre-authorize ingress with `groups.link.accept` scoped to a local
+group. Otherwise the proposal appears in Messages > Access requests for 24
+hours. Revoking an edge takes effect immediately on that node, including mail
+still waiting in its outbox. An offline peer's displayed state is last known.
+
+An operator can create a link with
+`tclaude agent groups link add SOURCE REMOTE_GROUP --peer NODE [--bidir]`.
+`tclaude agent groups links` lists the edge IDs; use
+`tclaude agent groups link rm LOCAL_GROUP xlink_…` to revoke one.
+`tclaude agent groups why-can-i-message group:REMOTE_GROUP@NODE` explains the
+current path. Older daemons keep their existing local links and federation mail;
+new links and proposals require a peer advertising proposal support.
+
+`tclaude federation proposals targets` lists shared groups and their opaque
+identities. `proposals create --peer NODE --file items.json` offers a JSON array
+of `share_visibility` or `group_link` items; `--file -` reads standard input.
+`proposals list` and `proposals show --id ID` show each revision and whose turn
+it is. Decisions require the exact `--revision`: `accept --item ITEM_ID`
+(repeatable), `decline`, or `counter --file replacement-items.json`. A counter
+replaces all items, preserves the original deadline, and requires new approval
+for changed authority. Applied items cannot be changed by a counter. The
+originator can `withdraw` pending items; already applied shares or edges must be
+revoked separately.
+
+A visibility share grants `groups.visibility.read` for that exact group: name,
+description and member count, with no message, presence, launch or roster grant.
+Proposal counts are snapshots; proposal payloads never contain member names.
+`include_members` defaults to false and enables the roster only after acceptance.
+The receiver can narrow an accepted share with `--without-members ITEM_ID`.
+A share item uses `host: "us"` or `"them"` and `group_id`; a link additionally
+uses `source`, `source_group_id` and `mode`, with `host` naming the receiving
+node. Local group names are accepted on input; wire identities survive renames
+and cannot select a replacement group after deletion.

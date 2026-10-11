@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertSameNode } from './assertions.mjs';
+import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 function message(id, overrides = {}) {
@@ -304,5 +304,150 @@ test('a peer operator\'s access request decides with a TTL and an optional narro
   await harness.act(() => root.querySelector('.access-btn.approve').click());
   await harness.act(() => root.querySelector('.access-btn.deny').click());
   assert.deepEqual(decided, [['par-1', 'approve', { grant_ttl_seconds: 3600, group_id: 4 }], ['par-1', 'deny']]);
+  await mounted.unmount();
+});
+
+test('a cross-node link request names the exact edge and decides approve, approve_future or deny', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
+  const request = { id: 'gl-1', purpose: 'group_link', origin_peer: 'inst_alice1', conv_title: 'alice',
+    link: { source_peer_label: 'alice', source_group: 'alpha', dest_group: 'research', mode: 'members->members', direction: 'in' },
+    created_at: '2026-07-12T00:00:00Z', deadline: '2026-07-13T00:00:00Z' };
+  const state = harness.signals.signal({ ...populated(), selected: 'access-requests', selectedMsgId: 'gl-1', messages: [] });
+  const controller = controllerFor(state);
+  const decided = [];
+  controller.decideAccess = (...a) => decided.push(a);
+  controller.messageView = () => ({ access: true, allAccess: [request], pendingAccess: [request], handledAccess: [], search: '' });
+  controller.messageCountText = () => '1 pending';
+  const mounted = await harness.mount(harness.html`<${MailApp} controller=${controller} />`);
+  const root = mounted.container;
+  assert.match(root.textContent, /Cross-node link request/);
+  assert.match(root.textContent, /alice:alpha → research · members → members/);
+  assert.match(root.textContent, /nothing broader/);
+  assert.doesNotMatch(root.textContent, /Always allow/);
+  const buttons = [...root.querySelectorAll('.access-reader-actions .access-btn')];
+  assert.deepEqual(buttons.map((b) => b.textContent.trim()), ['Approve + allow future links into research', 'Decline', 'Approve']);
+  for (const b of buttons) await harness.act(() => b.click());
+  assert.deepEqual(decided, [['gl-1', 'approve_future'], ['gl-1', 'deny'], ['gl-1', 'approve']]);
+  await mounted.unmount();
+});
+
+test('a cross-node link request this node sent is read-only and waits on the peer operator', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
+  const request = { id: 'gl-2', purpose: 'group_link', origin_peer: 'inst_bob1', conv_title: 'bob', status: 'pending',
+    link: { source_peer_label: 'bob', source_group: 'alpha', dest_group: 'research', mode: 'members->members', direction: 'out' },
+    created_at: '2026-07-12T00:00:00Z', deadline: '2026-07-13T00:00:00Z' };
+  const state = harness.signals.signal({ ...populated(), selected: 'access-requests', selectedMsgId: 'gl-2', messages: [] });
+  const controller = controllerFor(state);
+  controller.messageView = () => ({ access: true, allAccess: [request], pendingAccess: [request], handledAccess: [], search: '' });
+  controller.messageCountText = () => '1 pending';
+  const mounted = await harness.mount(harness.html`<${MailApp} controller=${controller} />`);
+  const root = mounted.container;
+  assert.match(root.textContent, /You asked/);
+  assert.match(root.textContent, /waiting for bob's operator/);
+  assert.equal(root.querySelectorAll('.access-reader-actions .access-btn').length, 0, 'no decision buttons on our own request');
+  await mounted.unmount();
+});
+
+function proposalRequest(proposal) {
+  return { id: proposal.id, purpose: 'peer_proposal', origin_peer: 'inst_alice1', status: 'pending', proposal,
+    created_at: '2026-07-12T00:00:00Z', deadline: '2026-07-13T00:00:00Z' };
+}
+
+const aliceProposal = {
+  id: 'pp-1', peer: 'inst_alice1', peer_label: 'alice', revision: 1, state: 'sent', awaiting: 'us', ours: false,
+  deadline: '2026-07-13T00:00:00Z', note: 'same release',
+  items: [
+    { id: 'i1', kind: 'share_visibility', host: 'them', group_id: 'g_a', group_name: 'alpha', member_count: 5, include_members: true, status: 'pending' },
+    { id: 'i2', kind: 'share_visibility', host: 'us', group_id: 'g_b', group_name: 'builders', member_count: 4, include_members: false, status: 'pending' },
+    { id: 'i3', kind: 'group_link', host: 'us', group_id: 'g_b', group_name: 'builders', direction: 'in', mode: 'members->members',
+      peer_group_id: 'g_a', peer_group_name: 'alpha', status: 'pending' },
+  ],
+};
+
+async function mountProposal(t, proposal) {
+  const harness = await createPreactHarness(t);
+  const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
+  const request = proposalRequest(proposal);
+  const state = harness.signals.signal({ ...populated(), selected: 'access-requests', selectedMsgId: request.id, messages: [] });
+  const controller = controllerFor(state);
+  const decided = [];
+  controller.decideProposal = async (...a) => { decided.push(a); };
+  controller.messageView = () => ({ access: true, allAccess: [request], pendingAccess: [request], handledAccess: [], search: '' });
+  controller.messageCountText = () => '1 pending';
+  const mounted = await harness.mount(harness.html`<${MailApp} controller=${controller} />`);
+  return { harness, mounted, root: mounted.container, decided };
+}
+
+test('a peer proposal shows member counts, never names, and accepts a ticked subset with the member list narrowed', async (t) => {
+  const { harness, mounted, root, decided } = await mountProposal(t, aliceProposal);
+  assert.match(root.textContent, /Proposal from alice/);
+  assert.match(root.textContent, /you see alice:alpha \(5 members\)/);
+  assert.match(root.textContent, /alice sees your builders \(4 members\)/);
+  assert.match(root.textContent, /alice:alpha → your builders/);
+  assert.equal(root.querySelector('#proposal-primary').textContent.trim(), 'Accept all');
+  const membersTick = root.querySelector('[data-item="i1"] .proposal-members-tick');
+  assert.ok(membersTick, 'a share including the member list can be narrowed');
+  assertAbsent(root.querySelector('[data-item="i2"] .proposal-members-tick'));
+  membersTick.checked = false;
+  await harness.act(() => harness.fireEvent(membersTick, 'change'));
+  const linkTick = root.querySelector('[data-item="i3"] .proposal-tick');
+  linkTick.checked = false;
+  await harness.act(() => harness.fireEvent(linkTick, 'change'));
+  assert.equal(root.querySelector('#proposal-primary').textContent.trim(), 'Accept selected (2 of 3)');
+  await harness.act(() => root.querySelector('#proposal-primary').click());
+  assert.deepEqual(decided.at(-1), ['pp-1', { revision: 1, decision: 'accept', item_ids: ['i1', 'i2'], without_members: ['i1'] }]);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  await harness.act(() => [...root.querySelectorAll('.access-btn.deny')].at(-1).click());
+  assert.deepEqual(decided.at(-1), ['pp-1', { revision: 1, decision: 'decline' }]);
+  await mounted.unmount();
+});
+
+test('changing a link mode turns the reply into a counter-proposal with the full item list', async (t) => {
+  const { harness, mounted, root, decided } = await mountProposal(t, aliceProposal);
+  const mode = root.querySelector('[data-item="i3"] .proposal-mode');
+  [...mode.options].forEach((option) => option.removeAttribute('selected'));
+  [...mode.options].find((option) => option.value === 'owners->members').setAttribute('selected', '');
+  await harness.act(() => harness.fireEvent(mode, 'change'));
+  assert.match(root.querySelector('#proposal-primary').textContent, /Send counter-proposal \(3 items\)/);
+  await harness.act(() => root.querySelector('#proposal-primary').click());
+  assert.deepEqual(decided.at(-1), ['pp-1', { revision: 1, decision: 'counter', items: [
+    { id: 'i1', kind: 'share_visibility', host: 'them', group_id: 'g_a', include_members: true },
+    { id: 'i2', kind: 'share_visibility', host: 'us', group_id: 'g_b', include_members: false },
+    { id: 'i3', kind: 'group_link', host: 'us', group_id: 'g_b', source: 'them', source_group_id: 'g_a', mode: 'owners->members' },
+  ] }]);
+  await mounted.unmount();
+});
+
+test('our own proposal waits on the peer and offers withdraw, naming accepted edges as staying', async (t) => {
+  const ours = { ...aliceProposal, ours: true, awaiting: 'them',
+    items: aliceProposal.items.map((item) => item.id === 'i3' ? { ...item, status: 'accepted' } : item) };
+  const { mounted, root, decided, harness } = await mountProposal(t, ours);
+  assert.match(root.textContent, /Proposal to alice/);
+  assert.match(root.textContent, /waiting for alice's operator/);
+  assertAbsent(root.querySelector('#proposal-primary'));
+  const withdraw = root.querySelector('#proposal-withdraw');
+  assert.equal(withdraw.textContent.trim(), 'Withdraw pending items');
+  await harness.act(() => withdraw.click());
+  assert.deepEqual(decided.at(-1), ['pp-1', { revision: 1, decision: 'withdraw' }]);
+  await mounted.unmount();
+});
+
+test('an incoming link into the peer group reads from our group and offers no approve-future', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
+  const request = { id: 'gl-3', purpose: 'group_link', origin_peer: 'inst_alice1', status: 'pending',
+    proposal: { id: 'gl-3', ours: false, awaiting: 'us', state: 'sent', items: [] },
+    link: { source_peer_label: 'alice', source_group: 'builders', dest_group: 'research', mode: 'members->members', direction: 'out' },
+    created_at: '2026-07-12T00:00:00Z', deadline: '2026-07-13T00:00:00Z' };
+  const state = harness.signals.signal({ ...populated(), selected: 'access-requests', selectedMsgId: 'gl-3', messages: [] });
+  const controller = controllerFor(state);
+  controller.messageView = () => ({ access: true, allAccess: [request], pendingAccess: [request], handledAccess: [], search: '' });
+  controller.messageCountText = () => '1 pending';
+  const mounted = await harness.mount(harness.html`<${MailApp} controller=${controller} />`);
+  const root = mounted.container;
+  assert.match(root.textContent, /builders → alice:research · members → members/);
+  assert.deepEqual([...root.querySelectorAll('.access-reader-actions .access-btn')].map((b) => b.textContent.trim()), ['Decline', 'Approve']);
   await mounted.unmount();
 });

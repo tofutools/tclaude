@@ -50,3 +50,13 @@ test('groups without federation links render no marker', async (t) => {
   assert.equal(mounted.container.innerHTML, '');
   await mounted.unmount();
 });
+
+test('a cross-node group link reads as one directed edge with its known state', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/group-federation-marker.js');
+  const live = mod.linkView({ peer: 'inst_bob', label: 'bob', kind: 'link', direction: 'out', remote: 'builders', mode: 'members->members', state: 'active', online: true });
+  assert.equal(live.how, 'group link → builders · members → members');
+  assert.equal(live.can, 'link active');
+  const offline = mod.linkView({ peer: 'inst_bob', label: 'bob', kind: 'link', direction: 'in', remote: 'builders', state: 'active', online: false });
+  assert.equal(offline.can, 'link active (peer offline: last known)');
+});

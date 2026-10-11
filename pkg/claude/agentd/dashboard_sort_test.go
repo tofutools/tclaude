@@ -37,7 +37,10 @@ func TestDashboardHTML_SortableColumnsWired(t *testing.T) {
 		must(`SortHead} table="`+table+`"`, table+" table renders a sortable header")
 	}
 	must("shortAgentId(row.agent_id, '') || row.label", "pending ID cell leads with its reserved stable id and preserves the full legacy label")
-	must("LINK_COLS.map(", "Links island uses the shared Links column specification")
+	// Cross-node rows splice the This node / Peer side columns into the same
+	// shared spec; local-only nodes render LINK_COLS unchanged.
+	must(": LINK_COLS;", "Links island uses the shared Links column specification")
+	must("columns.map(", "Links island renders its header from that specification")
 	// Jobs is the Preact pilot: its component maps the same JOBS_COLS spec to
 	// interactive keyed headers instead of emitting legacy sortHead HTML.
 	must("function SortHead(", "Jobs island renders its sortable header component")

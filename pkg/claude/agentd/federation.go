@@ -520,12 +520,25 @@ func buildFederationCatalog(peer string, status ...*statusSnapshot) (*proto.Cata
 			delete(caps[group.ID], proto.CapAttachments)
 		}
 	}
-	cat := &proto.CatalogPayload{AgentBundleChunks: true, RequesterPays: 1, TeleportBackups: true, AgentTeleports: 1, AgentMoves: true, PAFAgentBundles: true, StableAgentIdentity: true, HomeRoutedMail: true, DirectAgentMoves: true, JobOutput: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
+	cat := &proto.CatalogPayload{PeerProposals: true, AgentBundleChunks: true, RequesterPays: 1, TeleportBackups: true, AgentTeleports: 1, AgentMoves: true, PAFAgentBundles: true, StableAgentIdentity: true, HomeRoutedMail: true, DirectAgentMoves: true, JobOutput: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
 	if fedPeerReadsNode(peer) {
 		cat.Node = localNodeMetadata()
 	}
 	for gid, cs := range caps {
 		g := proto.CatalogGroup{Name: names[gid]}
+		opaque, err := db.FederationGroupIdentity(gid)
+		if err != nil {
+			return nil, err
+		}
+		g.ID = opaque
+		if cs[proto.CapGroupVisibility] {
+			members, err := db.ListAgentGroupMembers(gid)
+			if err != nil {
+				return nil, err
+			}
+			n := len(members)
+			g.MemberCount = &n
+		}
 		if cs[proto.CapSpawn] {
 			g.SpawnProfiles = selectableSpawnProfiles(peer, gid)
 		}
@@ -722,6 +735,12 @@ func (rt *fedRuntime) handleInbound(from string, sealed *proto.Sealed) {
 		rt.acceptNodeUpdate(from, env)
 	case proto.KindSessionsUpdate:
 		rt.acceptSessionUpdate(from, env)
+	case proto.KindPeerProposal:
+		rt.acceptPeerProposal(peer, env)
+	case proto.KindGroupLinkRevoke:
+		rt.acceptGroupLinkRevoke(peer, env)
+	case proto.KindPeerProposalDecision:
+		rt.acceptPeerProposalDecision(peer, env)
 	case proto.KindCatalogReq:
 		rt.sendCatalog(from)
 	case proto.KindMail, proto.KindOperatorMail:
@@ -1022,6 +1041,15 @@ func (rt *fedRuntime) acceptOperatorMail(peer *db.FederationPeer, env *proto.Env
 // very agent to that peer. Returns the group to file the message under (0
 // for a reply).
 func federationInboundAuthorized(peer string, env *proto.Envelope, conv string) (int64, bool) {
+	var mp proto.MailPayload
+	if env.DecodePayload(&mp) == nil && mp.Link != nil {
+		g := inboundGroupLink(peer, mp.Link)
+		if g == nil {
+			return 0, false
+		}
+		member, err := db.FindMemberInGroup(g.ID, conv)
+		return g.ID, err == nil && member != nil
+	}
 	if groups, err := db.ListGroupsForConv(conv); err == nil {
 		for _, g := range groups {
 			if fedPeerAllows(peer, g.ID, PermMessageDirect) {
@@ -1035,7 +1063,7 @@ func federationInboundAuthorized(peer string, env *proto.Envelope, conv string) 
 		// confers nothing.
 		if row, _ := db.GetFederationOutbox(env.InReplyTo); row != nil &&
 			(row.Kind == proto.KindMail || row.Kind == proto.KindGroupMail) && row.ToInstance == peer && row.FromAgent != "" && row.FromAgent == env.To.Agent &&
-			(row.State == db.FedOutboxSent || row.State == db.FedOutboxAccepted) && time.Now().Before(row.ExpiresAt) {
+			(row.State == db.FedOutboxSent || row.State == db.FedOutboxAccepted) && time.Now().Before(row.ExpiresAt) && groupLinkMailCurrent(*row) {
 			return 0, true
 		}
 	}
@@ -1104,6 +1132,7 @@ func (rt *fedRuntime) flushOutbox(ctx context.Context) {
 		return
 	}
 	now := time.Now()
+	rt.flushProposalEvents(now)
 	rt.flushHomeMail(now)
 	rows, err := db.DueFederationOutbox(now, 50)
 	if err != nil {
@@ -1113,6 +1142,10 @@ func (rt *fedRuntime) flushOutbox(ctx context.Context) {
 	for _, row := range rows {
 		if ctx.Err() != nil {
 			return
+		}
+		if (row.Kind == proto.KindMail || row.Kind == proto.KindGroupMail) && !groupLinkMailCurrent(row) {
+			_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxRefused, "group link or sender authority revoked")
+			continue
 		}
 		if row.Kind == proto.KindAwayNotice && !rt.awayNoticeCurrent(row.ToInstance, row.InReplyTo) {
 			_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxExpired, "away coverage ended")

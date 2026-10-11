@@ -289,6 +289,8 @@ const LINK_ACCESSORS = {
   to:      l => l.to,
   mode:    l => l.mode,
   created: l => l.created_at,
+  local_state: l => l.local_state || '',
+  remote_state: l => (l.remote_stale ? 'unknown' : l.remote_state || ''),
 };
 
 // The virtual "Replaced generations" sub-table (groups-list.js). Lowercase

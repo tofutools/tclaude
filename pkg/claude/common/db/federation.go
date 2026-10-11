@@ -204,18 +204,37 @@ type FederationOutboxRow struct {
 }
 
 // InsertFederationOutbox queues an envelope.
-func InsertFederationOutbox(r FederationOutboxRow) error {
+func InsertFederationOutbox(r FederationOutboxRow, linkIDs ...string) error {
 	d, err := Open()
 	if err != nil {
 		return err
 	}
+	var tx *sql.Tx
+	exec := d.Exec
+	if len(linkIDs) > 0 && linkIDs[0] != "" {
+		tx, err = d.Begin()
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback() }()
+		exec = tx.Exec
+	}
 	now := time.Now()
-	_, err = d.Exec(`INSERT INTO federation_outbox(envelope_id, kind, to_instance, to_agent, to_label, from_conv, from_agent,
+	_, err = exec(`INSERT INTO federation_outbox(envelope_id, kind, to_instance, to_agent, to_label, from_conv, from_agent,
 		in_reply_to, subject, body_preview, sealed, state, attempts, next_attempt_at, last_error, created_at, expires_at, updated_at)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,0,?,'',?,?,?)`,
 		r.EnvelopeID, r.Kind, r.ToInstance, r.ToAgent, r.ToLabel, r.FromConv, r.FromAgent,
 		r.InReplyTo, r.Subject, r.BodyPreview, r.Sealed, FedOutboxQueued, dbTime(now), dbTime(now), dbTime(r.ExpiresAt), dbTime(now))
-	return err
+	if err != nil {
+		return err
+	}
+	if tx != nil {
+		if _, err = tx.Exec(`INSERT INTO federation_link_mail(envelope_id,link_id) VALUES(?,?)`, r.EnvelopeID, linkIDs[0]); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	return nil
 }
 
 const fedOutboxCols = `envelope_id, kind, to_instance, to_agent, to_label, from_conv, from_agent, in_reply_to, subject, body_preview,

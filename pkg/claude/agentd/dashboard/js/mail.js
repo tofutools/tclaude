@@ -74,6 +74,7 @@ import { initMailResize } from './mail-resize.js';
 // nothing here reads them at module top level — only inside handlers —
 // and refresh.js's confirmModal/toast are hoisted function declarations.
 import { lastSnapshot } from './dashboard.js';
+import { proposalTurn } from './proposals-model.js';
 import { confirmModal, toast } from './refresh.js';
 import { fetchListFull } from './list-paging.js';
 import { suppressNextMessagesAttention } from './mail-bridge.js';
@@ -1138,7 +1139,11 @@ function accessCountdown(deadlineISO) {
 
 // accessIsPending reports whether a request is still awaiting a decision (vs a
 // handled one kept in the folder as history).
-function accessIsPending(r) { return !r.status || r.status === 'pending'; }
+function accessIsPending(r) {
+  // A proposal waiting on the peer's operator needs nothing from this one.
+  if (r.proposal && proposalTurn(r.proposal) === 'them') return false;
+  return !r.status || r.status === 'pending';
+}
 
 // accessOutcome maps a handled status to its display chip — an icon + label + a
 // css modifier class. wz() supplies the wizard wording.
@@ -1150,6 +1155,13 @@ function accessOutcome(status) {
     // the operator narrowed the grant, and the history card should say so.
     case 'always (scoped)': return { cls: 'always', txt: wz('★ Always — this scope', '★ Granted ever after, thus bounded') };
     case 'declined': return { cls: 'declined', txt: wz('✕ Declined', '✕ Refused') };
+    // Peer proposal and cross-node link states (tcl-hj04jt).
+    case 'accepted': return { cls: 'approved', txt: '✓ Accepted' };
+    case 'partially_accepted': return { cls: 'approved', txt: '✓ Partly accepted' };
+    case 'applying': return { cls: 'always', txt: '… Applying' };
+    case 'withdrawn': return { cls: 'timedout', txt: '↩ Withdrawn' };
+    case 'pending': return { cls: 'always', txt: '… Waiting for peer' };
+    case 'expired':
     case 'timed out': return { cls: 'timedout', txt: wz('⏱ Timed out', '⏱ Sands ran out') };
     default: return { cls: 'declined', txt: String(status || '') };
   }
@@ -1178,7 +1190,8 @@ function accessMatchesSearch(r, q) {
     r.id, r.perm, r.conv_id, r.current_conv_id, r.agent_id, r.conv_title,
     r.caller_state, r.title_status, r.path, r.body,
     r.body_label, r.target_group, r.target_conv_id, r.target_conv_title,
-    r.status,
+    r.status, r.link?.source_peer_label, r.link?.source_group, r.link?.dest_group,
+    r.proposal?.peer_label, r.proposal?.note, ...(r.proposal?.items || []).map(item => item.group_name),
   ].some(v => String(v || '').toLowerCase().includes(q));
 }
 
@@ -1188,6 +1201,9 @@ function accessRequestById(id) {
 }
 
 export function accessWho(r) {
+  // A cross-node link request (tcl-2ksi0k) comes from a peer node, not an agent.
+  if (r.purpose === 'group_link') return r.link?.source_peer_label || r.conv_title || r.origin_peer || 'peer';
+  if (r.purpose === 'peer_proposal') return r.proposal?.peer_label || r.origin_peer || 'peer';
   const id = shortAgentId(r.agent_id, r.conv_id) || wz('unknown agent', 'unknown familiar');
   // Lead with the human-readable agent name whenever caller refresh found one.
   // The row and reader both carry the stable agent + conversation identifiers
@@ -1205,14 +1221,70 @@ export function accessWho(r) {
 }
 
 function accessSubject(r) {
+  if (r.purpose === 'group_link' && r.link) {
+    // direction is relative to this node: "in" lands on our group, "out" on
+    // the peer's (source_group is then ours).
+    const peer = r.link.source_peer_label || 'peer';
+    const edge = r.link.direction === 'out'
+      ? `${r.link.source_group} → ${peer}:${r.link.dest_group}`
+      : `${peer}:${r.link.source_group} → ${r.link.dest_group}`;
+    return `🌐 Link request${r.proposal?.ours ? ' (sent)' : ''} · ${edge}`;
+  }
+  if (r.purpose === 'peer_proposal' && r.proposal) {
+    const n = (r.proposal.items || []).length;
+    return `🤝 Proposal ${r.proposal.ours ? 'to' : 'from'} ${r.proposal.peer_label || r.origin_peer || 'peer'} · ${n} item${n === 1 ? '' : 's'}`;
+  }
   const parts = [r.perm || wz('Access request', 'Petition')];
   if (r.path) parts.push(r.path);
   return parts.join(' · ');
 }
 
 function accessStatusText(r) {
+  if (r.proposal && proposalTurn(r.proposal) === 'them') return 'waiting for peer';
   if (accessIsPending(r)) return wz('pending', 'awaiting judgement');
   return accessOutcome(r.status).txt;
+}
+
+// decideProposal sends a peer-proposal decision (accept / decline / counter /
+// withdraw, tcl-hj04jt) and swaps the returned view into the snapshot so the
+// card reflects it before the next snapshot push.
+async function decideProposal(id, body) {
+  if (!id) return;
+  try {
+    const r = await fetch(`/api/federation/proposals/${encodeURIComponent(id)}/decision`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (r.status === 409) {
+      const raw = await r.text().catch(() => '');
+      let why = '';
+      try { why = JSON.parse(raw)?.error || ''; } catch { why = raw; }
+      toast(`${why || 'The proposal changed or was already decided.'} The card updates with the next refresh.`, true);
+      return;
+    }
+    if (!r.ok) throw new Error(await r.text());
+    const view = await r.json().catch(() => null);
+    const done = { accept: 'Accepted', decline: 'Declined', counter: 'Counter-proposal sent', withdraw: 'Withdrawn' }[body?.decision] || 'Sent';
+    toast(`${done}.`);
+    if (view && lastSnapshot && Array.isArray(lastSnapshot.access_requests)) {
+      const e = lastSnapshot.access_requests.find(x => x.id === id);
+      if (e) {
+        e.proposal = view;
+        e.status = view.state === 'sent' || view.state === 'countered' ? 'pending' : view.state;
+      }
+      lastSnapshot.access_requests_pending = lastSnapshot.access_requests.filter(accessIsPending).length;
+      renderAccessRequests(lastSnapshot.access_requests, lastSnapshot.access_requests_pending);
+    }
+    paintSidebar();
+    if (mail.selected === ACCESS_ID) {
+      paintList();
+      paintReader();
+    }
+  } catch (error) {
+    toast(`That decision could not be recorded: ${error?.message || error}`, true);
+  }
 }
 
 // Access-request rows are rendered by the Preact island. Details and decision
@@ -1235,7 +1307,7 @@ async function decideAccess(id, decision, extra = {}) {
     if (lastSnapshot && Array.isArray(lastSnapshot.access_requests)) {
       const e = lastSnapshot.access_requests.find(x => x.id === id);
       if (e) {
-        e.status = decision === 'approve' ? 'approved'
+        e.status = decision === 'approve' || decision === 'approve_future' ? 'approved'
           : decision === 'always' ? 'always'
             : decision === 'always_scoped' ? 'always (scoped)' : 'declined';
         e.decided_at = new Date().toISOString();
@@ -1676,7 +1748,7 @@ export const mailController = Object.freeze({
   messageView, messageCountText, counterparty, senderLabel, allRecipientLabel,
   msgPreview, msgKind, selectMessage, toggleMessageSelection, togglePageSelection,
   deleteOneMessage, deleteSelectedMessages, setMessagesRead, markAllAgentRead,
-  goToPage, setPageSize, decideAccess, accessWho, accessSubject,
+  goToPage, setPageSize, decideAccess, decideProposal, accessWho, accessSubject,
   accessStatusText, accessIsPending, accessOutcome, accessCountdown,
   highlightedAccessRequest, consumeAccessHighlight,
   reloadMessagesPage, reloadMail,

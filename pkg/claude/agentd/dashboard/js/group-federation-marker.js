@@ -22,7 +22,12 @@ export function linkView(link) {
   const name = link.label || String(link.peer || '').slice(0, 13) || 'peer';
   let how;
   let can;
-  if (link.kind === 'route') {
+  if (link.kind === 'link') {
+    // A cross-node group link (tcl-2ksi0k): one directed edge. Its state is
+    // what this node knows; offline makes the peer's half last-known only.
+    how = `group link ${link.direction === 'out' ? '→' : '←'} ${link.remote || 'remote group'}${link.mode ? ` · ${link.mode.replace('->', ' → ')}` : ''}`;
+    can = link.state ? `link ${link.state}${link.online ? '' : ' (peer offline: last known)'}` : 'group link';
+  } else if (link.kind === 'route') {
     how = `route → ${link.remote || 'remote group'}`;
     can = 'members message the remote group through a private mirror';
   } else {

@@ -337,6 +337,16 @@ func rebindIdentityScopesTx(tx *sql.Tx, old, next string) error {
 }
 
 func closeIdentityCapabilitiesTx(tx *sql.Tx, old string, now time.Time) error {
+	for _, q := range []string{
+		`UPDATE federation_group_links SET local_state='revoked',remote_state='revoked',updated_at=? WHERE peer=?`,
+		`UPDATE federation_peer_proposals SET state='withdrawn',updated_at=? WHERE peer=? AND state IN ('sent','countered','applying')`,
+		`UPDATE federation_proposal_events SET queued=1 WHERE expires_at>=? AND peer=?`,
+	} {
+		if _, err := tx.Exec(q, dbTime(now), old); err != nil {
+			return err
+		}
+	}
+
 	// Live execution reservations deliberately remain charged until existing
 	// lifecycle reconciliation proves the worker ended. No capacity is freed
 	// merely because a peer's key changed.

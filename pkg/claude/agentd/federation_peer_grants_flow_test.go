@@ -35,7 +35,7 @@ func TestFederation_PeerGrantScopes(t *testing.T) {
 	}
 	fedEventually(t, "empty initial catalog", func() bool { return len(p.envelopes(proto.KindCatalog)) > 0 })
 	require.Empty(t, latest().Groups)
-	grant(agentd.PermGroupsRosterRead, "group=one")
+	grant(agentd.PermGroupsVisibilityRead, "group=one")
 	fedEventually(t, "scoped catalog", func() bool { cat := latest(); return len(cat.Groups) == 1 && cat.Groups[0].Name == "one" })
 	grant(agentd.PermGroupsPresenceRead, "")
 	fedEventually(t, "unscoped discovery", func() bool { return len(latest().Groups) == 2 })

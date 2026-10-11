@@ -10,7 +10,9 @@ export function filterLinks(rows, query) {
   return rows.filter((link) =>
     String(link.from || '').toLowerCase().includes(needle) ||
     String(link.to || '').toLowerCase().includes(needle) ||
-    String(link.mode || '').toLowerCase().includes(needle));
+    String(link.mode || '').toLowerCase().includes(needle) ||
+    String(link.peer_label || '').toLowerCase().includes(needle) ||
+    String(link.remote_state || '').toLowerCase().includes(needle));
 }
 
 export function createLinksState({
@@ -32,6 +34,7 @@ export function createLinksState({
     return {
       rows: applySortState(filtered, LINK_ACCESSORS, sort.value),
       groups: (snapshot.value?.groups || []).map((group) => group.name),
+      groupInfo: (snapshot.value?.groups || []).map((group) => ({ name: group.name, members: (group.members || []).length })),
       filtered: filtered.length,
       total: all.length,
       query: query.value,
@@ -110,6 +113,14 @@ export function createLinksState({
     return true;
   }
 
+  // openPropose opens the peer proposal composer (tcl-hj04jt). replace lets
+  // the link dialog hand its peer over to the composer in place.
+  function openPropose({ peer = '', replace = false } = {}) {
+    if (editor.value && !replace) return false;
+    editor.value = { kind: 'propose', key: ++editorKey, peer: String(peer || '') };
+    return true;
+  }
+
   function closeEditor() {
     editor.value = null;
   }
@@ -117,7 +128,7 @@ export function createLinksState({
   return Object.freeze({
     snapshot, query, sort, managerOpen, editor, view,
     initialize, publish, setQuery, cycleSort,
-    openManager, closeManager, openCreate, openEdit, closeEditor,
+    openManager, closeManager, openCreate, openEdit, openPropose, closeEditor,
   });
 }
 

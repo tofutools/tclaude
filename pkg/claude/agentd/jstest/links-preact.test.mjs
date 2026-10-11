@@ -410,3 +410,151 @@ test('plain Links actions preserve mutation payloads, refresh and deletion feedb
   assert.equal(refreshes, 3);
   assert.match(notices.at(-1)[0], /channel severed/);
 });
+
+const crossTargets = {
+  hub_connected: true,
+  peers: [
+    { peer: 'inst_bob', label: 'bob', trust: 'trusted', link_capable: true, groups: [
+      { id: 'grp_b1', name: 'builders', auto: true }, { id: 'grp_b2', name: 'docs', auto: false }] },
+    { peer: 'inst_old', label: 'old', trust: 'limited', link_capable: false, groups: [] },
+  ],
+};
+
+async function openCreateDialog(view) {
+  const { harness, host, state } = view;
+  await harness.act(() => state.openCreate());
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  return host.querySelector('#link-modal');
+}
+
+test('a node without cross-node links keeps the local-only dialog and columns', async (t) => {
+  const view = await mountLinks(t, { actions: { loadLinkTargets: async () => null } });
+  const dialog = await openCreateDialog(view);
+  assertAbsent(dialog.querySelector('#link-modal-target-row'));
+  assert.ok(dialog.querySelector('#link-modal-to'));
+  await view.harness.act(() => view.state.closeEditor());
+  await view.harness.act(() => view.state.openManager());
+  const headers = [...view.host.querySelectorAll('#links-list th')].map((th) => th.textContent.replace(/[▾▲▼]/g, '').trim());
+  assert.deepEqual(headers, ['ID', 'From', '', 'To', 'Mode', 'Created', '']);
+  await view.cleanup();
+});
+
+test('the peer target is disabled with its reason while the hub is disconnected', async (t) => {
+  const view = await mountLinks(t, { actions: { loadLinkTargets: async () => ({ hub_connected: false, reason: 'Connect in Fleet administration.', peers: [] }) } });
+  const dialog = await openCreateDialog(view);
+  const peerButton = dialog.querySelector('#link-modal-target-peer');
+  assert.equal(peerButton.disabled, true);
+  assert.equal(peerButton.title, 'Connect in Fleet administration.');
+  assert.match(dialog.querySelector('#link-modal-peer-note').textContent, /need a hub connection/);
+  assert.ok(dialog.querySelector('#link-modal-to'), 'local links still work');
+  await view.cleanup();
+});
+
+test('a cross-node link picks a shared peer group and says auto vs request', async (t) => {
+  const view = await mountLinks(t, { actions: { loadLinkTargets: async () => crossTargets } });
+  const { harness, calls } = view;
+  const dialog = await openCreateDialog(view);
+  await harness.act(() => dialog.querySelector('#link-modal-target-peer').click());
+  const peers = [...dialog.querySelectorAll('#link-modal-peer option')];
+  assert.deepEqual(peers.map((o) => o.hasAttribute('disabled')), [false, true], 'an older peer is listed but not selectable');
+  assert.match(peers[1].textContent, /group links unsupported/);
+  assert.deepEqual([...dialog.querySelectorAll('#link-modal-peer-group option')].map((o) => o.textContent), ['builders', 'docs']);
+  assert.match(dialog.querySelector('#link-modal-peer-note').textContent, /No prompt for bob's operator.*connecting/);
+  assert.equal(dialog.querySelector('#link-modal-submit .theme-copy-regular').textContent.trim(), 'Create link');
+  await choose(harness, dialog.querySelector('#link-modal-peer-group'), 'grp_b2');
+  assert.match(dialog.querySelector('#link-modal-peer-note').textContent, /Needs bob's approval.*24 hours/);
+  assert.equal(dialog.querySelector('#link-modal-submit .theme-copy-regular').textContent.trim(), 'Send link request');
+  await harness.act(() => dialog.querySelector('#link-modal-submit').click());
+  assert.deepEqual(calls.at(-1), ['create', { from: 'alpha', mode: 'members->members', bidir: false,
+    peer: { id: 'inst_bob', label: 'bob', groupID: 'grp_b2', groupName: 'docs' } }]);
+  await view.cleanup();
+});
+
+test('cross-node rows show each side, never call an offline peer revoked, and cancel instead of edit', async (t) => {
+  const view = await mountLinks(t);
+  const { harness, host, state, calls } = view;
+  const future = new Date(Date.now() + 23.5 * 3600000).toISOString();
+  await harness.act(() => state.publish({ ...sample, links: [
+    sample.links[0],
+    { id: 'xlink_1', from: 'alpha', to: 'builders', mode: 'members->members', peer: 'inst_bob', peer_label: 'bob', direction: 'out', local_state: 'active', remote_state: 'connecting' },
+    { id: 'xlink_2', from: 'alpha', to: 'docs', mode: 'members->members', peer: 'inst_bob', peer_label: 'bob', direction: 'out', local_state: 'active', remote_state: 'pending', deadline: future },
+    { id: 'xlink_3', from: 'ops', to: 'beta', mode: 'owners->members', peer: 'inst_dave', peer_label: 'dave', direction: 'in', local_state: 'active', remote_state: 'active', remote_stale: true, remote_state_at: '2026-07-12T00:00:00Z' },
+  ] }));
+  await harness.act(() => state.openManager());
+  const headers = [...host.querySelectorAll('#links-list th')].map((th) => th.textContent.replace(/[▾▲▼]/g, '').trim());
+  assert.deepEqual(headers, ['ID', 'From', '', 'To', 'Mode', 'This node', 'Peer side', 'Created', '']);
+  const row = (id) => host.querySelector(`[data-key="link-${id}"]`);
+  assert.match(row('xlink_1').textContent, /🌐 bob:builders/);
+  assert.match(row('xlink_1').textContent, /connecting/);
+  assert.match(row('xlink_2').textContent, /pending · 23h/);
+  assert.match(row('xlink_3').textContent, /🌐 dave:ops/, 'an incoming edge names the peer on the FROM side');
+  assert.match(row('xlink_3').textContent, /unknown · offline · last: active/);
+  assert.doesNotMatch(row('xlink_3').textContent, /revoked/);
+  assert.equal(row('xlink_1').querySelectorAll('button').length, 1, 'no mode edit for a cross-node edge');
+  const cancel = row('xlink_2').querySelector('button.danger');
+  assert.equal(cancel.textContent.trim(), 'cancel request');
+  await harness.act(() => cancel.click());
+  assert.deepEqual(calls.at(-1)[1].peerLabel, 'bob');
+  assert.equal(calls.at(-1)[1].pending, true);
+  await view.cleanup();
+});
+
+test('the cross-node toast distinguishes connecting from a sent request', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { crossNodeLinkNotice } = await harness.importDashboardModule('js/links-actions.js');
+  const peer = { label: 'bob', groupName: 'builders' };
+  assert.equal(crossNodeLinkNotice('alpha', peer, [{ direction: 'out', state: 'connecting' }]),
+    'linking alpha → bob:builders: connecting, waiting for bob to acknowledge');
+  assert.match(crossNodeLinkNotice('alpha', peer, [{ direction: 'out', state: 'pending' }, { direction: 'in', state: 'pending' }]),
+    /^link request sent to bob: alpha → bob:builders · pending \(reverse asked separately\)$/);
+});
+
+test('the link dialog hands a peer over to the proposal composer, which sends shares and edge pairs', async (t) => {
+  const view = await mountLinks(t, { actions: { loadLinkTargets: async () => crossTargets } });
+  const { harness, host, state, calls } = view;
+  view.actions.openPropose = state.openPropose;
+  view.actions.createProposal = async (value) => { calls.push(['propose', value]); };
+  await harness.act(() => state.publish({ ...sample, groups: [{ name: 'alpha', members: [{}, {}] }, { name: 'beta', members: [{}] }] }));
+  const dialog = await openCreateDialog(view);
+  await harness.act(() => dialog.querySelector('#link-modal-target-peer').click());
+  await harness.act(() => dialog.querySelector('#link-modal-propose').click());
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const composer = host.querySelector('#proposal-modal');
+  assert.ok(composer, 'composer replaced the link dialog');
+  assertAbsent(host.querySelector('#link-modal'));
+  assert.match(composer.querySelector('#proposal-modal-title').textContent, /Propose to bob/);
+  assert.deepEqual([...composer.querySelectorAll('#proposal-peer option')].map((o) => o.value), ['inst_bob'], 'only proposal-capable peers');
+  assert.equal(composer.querySelector('#proposal-submit').disabled, true, 'nothing to send yet');
+  const alpha = composer.querySelector('[data-group="alpha"]');
+  assert.match(alpha.textContent, /alpha · 2 members/);
+  const share = alpha.querySelector('.proposal-share');
+  share.checked = true;
+  await harness.act(() => harness.fireEvent(share, 'change'));
+  const members = composer.querySelector('[data-group="alpha"] .proposal-share-members');
+  assert.notEqual(members.checked, true, 'member list is opt-in');
+  members.checked = true;
+  await harness.act(() => harness.fireEvent(members, 'change'));
+  await harness.act(() => composer.querySelector('#proposal-add-pair').click());
+  await choose(harness, composer.querySelector('.proposal-pair-theirs'), 'grp_b2');
+  assert.match(composer.querySelector('#proposal-preview').textContent, /bob sees the name and description of alpha, plus the member list of alpha/);
+  assert.match(composer.querySelector('#proposal-preview').textContent, /link alpha ⇄ bob:docs/);
+  await harness.act(() => composer.querySelector('#proposal-submit').click());
+  assert.deepEqual(calls.at(-1), ['propose', { peer: 'inst_bob', peerLabel: 'bob', note: '', items: [
+    { kind: 'share_visibility', host: 'us', group_id: 'alpha', include_members: true },
+    { kind: 'group_link', host: 'them', group_id: 'grp_b2', source: 'us', source_group_id: 'alpha', mode: 'members->members' },
+    { kind: 'group_link', host: 'us', group_id: 'alpha', source: 'them', source_group_id: 'grp_b2', mode: 'members->members' },
+  ] }]);
+  await view.cleanup();
+});
+
+test('the proposal composer never swaps a preset peer that cannot receive proposals for another', async (t) => {
+  const view = await mountLinks(t, { actions: { loadLinkTargets: async () => crossTargets } });
+  const { harness, host, state } = view;
+  await harness.act(() => state.openPropose({ peer: 'inst_old' }));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const composer = host.querySelector('#proposal-modal');
+  assert.match(composer.querySelector('#proposal-no-peer').textContent, /old cannot receive proposals/);
+  assert.doesNotMatch(composer.querySelector('#proposal-modal-title').textContent, /bob/);
+  assert.equal(composer.querySelector('#proposal-submit').disabled, true);
+  await view.cleanup();
+});

@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -163,11 +164,12 @@ func (rt *fedRuntime) acceptTerminalFile(peer *db.FederationPeer, env *proto.Env
 	rt.wg.Add(1)
 	go func() {
 		defer rt.wg.Done()
-		defer rt.releaseBundleTransfer(key)
-		rt.sendTerminalFile(peer, env, req, v, answer)
+		release := sync.OnceFunc(func() { rt.releaseBundleTransfer(key) })
+		defer release()
+		rt.sendTerminalFile(peer, env, req, v, answer, release)
 	}()
 }
-func (rt *fedRuntime) sendTerminalFile(peer *db.FederationPeer, env *proto.Envelope, req fedTerminalFileRequest, v *fedTerminalView, answer bundletransfer.Answer) {
+func (rt *fedRuntime) sendTerminalFile(peer *db.FederationPeer, env *proto.Envelope, req fedTerminalFileRequest, v *fedTerminalView, answer bundletransfer.Answer, release func()) {
 	ctx, cancel := context.WithTimeout(v.ctx, terminalUploadTimeout)
 	defer cancel()
 	stop := terminalFileObserve(ctx, cancel, rt, v)
@@ -185,7 +187,14 @@ func (rt *fedRuntime) sendTerminalFile(peer *db.FederationPeer, env *proto.Envel
 	if err != nil {
 		return
 	}
-	defer func() { _ = conn.CloseWrite(); _ = conn.Close() }()
+	finish := func() error {
+		// EOF lets the receiver start its next download. Release the transfer
+		// slot first, so sequential requests cannot race sender cleanup.
+		// release is idempotent: cleanup must not release a later transfer.
+		release()
+		return conn.CloseWrite()
+	}
+	defer func() { _ = finish(); _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(terminalUploadTimeout))
 	closeOnCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer closeOnCancel()
@@ -241,7 +250,7 @@ func (rt *fedRuntime) sendTerminalFile(peer *db.FederationPeer, env *proto.Envel
 	if req.Head {
 		auditedBytes = info.Size()
 		status = 502
-		if writeTerminalFileHeader(conn, fedTerminalFileHeader{Status: 200, Bytes: info.Size()}) == nil && conn.CloseWrite() == nil {
+		if writeTerminalFileHeader(conn, fedTerminalFileHeader{Status: 200, Bytes: info.Size()}) == nil && finish() == nil {
 			status = 200
 		}
 		return
@@ -298,7 +307,7 @@ func (rt *fedRuntime) sendTerminalFile(peer *db.FederationPeer, env *proto.Envel
 		status = 403
 		return
 	}
-	if conn.CloseWrite() == nil {
+	if finish() == nil {
 		status = 200
 	}
 }
