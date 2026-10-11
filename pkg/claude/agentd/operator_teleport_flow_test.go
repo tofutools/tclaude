@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -114,6 +115,39 @@ func TestPeerRecallHomeRequiresRecordedOrigin(t *testing.T) {
 			require.True(t, result.Offer.D.Teleport.Home)
 			require.Equal(t, home, result.Offer.D.Teleport.OriginInstance)
 			require.Equal(t, aid, result.Offer.D.Move.SourceAgent)
+		})
+	}
+}
+
+func TestOperatorRecallPausedBackupUsesExistingLease(t *testing.T) {
+	for _, actor := range []string{"local", "home"} {
+		t.Run(actor, func(t *testing.T) {
+			fh := newFedHarness(t)
+			fedBackupPolicy(t, "auto")
+			identity := db.FederationIdentity{Agent: "agt_bobremote0000000000000000", Home: fh.peer.id.ID(), Hops: 1, Proofs: map[string]string{fh.peer.id.ID(): "home-proof"}}
+			d, a := fedLandedBackupIdentity(t, fh, &identity)
+			body := map[string]any{"home": true, "group": "receiver", "note": "Work completed; return to the original backup."}
+			var rec *httptest.ResponseRecorder
+			if actor == "local" {
+				rec = fedHuman(t, fh.f, "POST", "/v1/agents/"+a.AgentID+"/teleport", body)
+			} else {
+				denied := testharness.Serve(agentd.PeerViewHandler(fh.peer.id.ID()), testharness.JSONRequest(t, "POST", "/api/agents/"+a.AgentID+"/teleport", body))
+				require.Equal(t, 403, denied.Code, denied.Body.String())
+				for _, slug := range []string{agentd.PermAgentMove, agentd.PermGroupsMembersRetire} {
+					grant := fedHuman(t, fh.f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": slug, "scope": "group=receiver"})
+					require.Equal(t, 200, grant.Code, grant.Body.String())
+				}
+				rec = testharness.Serve(agentd.PeerViewHandler(fh.peer.id.ID()), testharness.JSONRequest(t, "POST", "/api/agents/"+a.AgentID+"/teleport", body))
+			}
+			require.Equal(t, 202, rec.Code, rec.Body.String())
+			require.Contains(t, rec.Body.String(), "return_id")
+			fedEventually(t, "operator recall uses durable backup return", func() bool {
+				l, _ := db.GetFederationTeleportLease("in", fh.peer.id.ID(), d.ID)
+				return l != nil && l.State == "stopped" && l.Findings == body["note"]
+			})
+			p, err := db.GetAgentFederationPresence(a.AgentID)
+			require.NoError(t, err)
+			require.Equal(t, "away", p.State)
 		})
 	}
 }

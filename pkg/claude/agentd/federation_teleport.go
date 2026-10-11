@@ -182,6 +182,16 @@ func handleFederationTeleportForSource(w http.ResponseWriter, r *http.Request, c
 		}
 		if lease.State != "clone" {
 			if in.Home && !in.KeepPausedBackup && !in.Clone {
+				_, human, ok := authedCaller(w, r)
+				if !ok {
+					return
+				}
+				if human || peerActionFromRequest(r) != nil {
+					// Operator recall carries the home group for normal imports.
+					// A leased return resumes the existing backup and memberships;
+					// it cannot choose a new receiving group.
+					in.Group = ""
+				}
 				if in.Peer != "" || in.Node != "" || in.Group != "" || in.Require != "" || in.Prefer != "" || in.Credentials != "" || in.GitRef != "" {
 					writeError(w, 400, "invalid_arg", "return to a paused backup accepts only --home and --note")
 					return

@@ -1643,6 +1643,11 @@ optional `group` (defaulting to a retained home group) and `note`. It requests
 `home: true` from the current host. The returned `move_id` belongs to that host;
 home watches its placeholder's presence become `here` for completion, since
 remote move administration remains unavailable.
+For a visitor with a retained paused backup, Send home and Recall instead use
+the durable report-return path and respond with HTTP 202
+`{state, return_id, offer}`. The home group is not a new landing choice in this
+case: the original backup and memberships resume. Home still watches presence
+become `here`.
 
 The home record becomes an inactive **away** placeholder in its groups. Its
 memberships, ownership, permanent permissions, scheduled intent and inbox remain
