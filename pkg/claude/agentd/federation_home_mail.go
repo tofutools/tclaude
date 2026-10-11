@@ -517,6 +517,6 @@ func (rt *fedRuntime) homeMailOriginAuthorized(m db.FederationMailCustody, in ho
 		return true
 	}
 	origin, _ := db.GetFederationPeer(m.SenderInstance)
-	original := &proto.Envelope{ID: in.Envelope, From: in.Sender, To: proto.Endpoint{Agent: in.Agent}}
+	original := &proto.Envelope{ID: in.Envelope, From: in.Sender, To: proto.Endpoint{Agent: in.Agent}, InReplyTo: in.InReplyTo}
 	return origin != nil && stableMailIngressAuthorized(m.SenderInstance, original, m.AgentID) && (len(in.Mail.Attachments) == 0 || stableMailAttachmentsAllowed(m.SenderInstance, m.AgentID))
 }

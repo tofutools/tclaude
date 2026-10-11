@@ -15,6 +15,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/federation/client"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/testharness"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 func homeMailPeer(t *testing.T, fh *fedHarness, name string) *fedPeer {
@@ -155,6 +156,7 @@ func TestFederation_HomeMailRetargetsAfterHopAndReturnsLocally(t *testing.T) {
 }
 
 func TestFederation_HomeMailFinalHostGrantDedupAndDepartureFence(t *testing.T) {
+	t.Cleanup(agentd.SetOperatorMessageAttachmentBasesForTest(testutil.CanonicalTempDir(t), testutil.CanonicalTempDir(t)))
 	fh := newFedHarness(t)
 	require.NoError(t, db.PutFederationCatalog(fh.peer.id.ID(), string(mustJSON(t, proto.CatalogPayload{HomeRoutedMail: true, StableAgentIdentity: true})), time.Now()))
 	f, home := fh.f, fh.peer
@@ -485,6 +487,7 @@ func TestFederation_HomeMailLocalArchivedGroupCancelsOfflineAttempt(t *testing.T
 		}
 		return false
 	})
+	require.NoError(t, db.SetAgentPermissionOverride("local-sender", agentd.PermMessageDirect, db.PermEffectGrant, "test"))
 	require.NoError(t, db.ArchiveAgentGroup("local-route"))
 	require.NoError(t, db.WakeFederationMailCustody(id))
 	fedEventually(t, "archived routing group cancels sealed retry", func() bool {
@@ -494,4 +497,23 @@ func TestFederation_HomeMailLocalArchivedGroupCancelsOfflineAttempt(t *testing.T
 	row, e := db.GetFederationMailCustody(custody.SenderInstance, custody.EnvelopeID, id)
 	require.NoError(t, e)
 	require.Equal(t, "refused", row.State)
+}
+
+func TestFederation_HomeMailReplyOnlyAuthoritySurvivesCustody(t *testing.T) {
+	fh := newFedHarness(t)
+	f, sender := fh.f, fh.peer
+	require.NoError(t, db.PutFederationCatalog(sender.id.ID(), string(mustJSON(t, proto.CatalogPayload{HomeRoutedMail: true})), time.Now()))
+	host := homeMailPeer(t, fh, "visitor-host")
+	f.HaveConvWithTitle("reply-traveler", "traveler")
+	id, _, e := db.EnsureAgentForConv("reply-traveler", "test")
+	require.NoError(t, e)
+	// An already delivered outbound message grants this peer reply-only authority.
+	require.NoError(t, db.InsertFederationOutbox(db.FederationOutboxRow{EnvelopeID: "live-original", Kind: proto.KindMail, ToInstance: sender.id.ID(), FromConv: "reply-traveler", FromAgent: id, State: db.FedOutboxAccepted, ExpiresAt: time.Now().Add(time.Hour)}))
+	identity := db.FederationIdentity{Agent: id, Home: sender.agentdID, Hops: 1, Mail: true, Proofs: map[string]string{sender.agentdID: "proof"}}
+	require.NoError(t, db.DepartFederationIdentity("reply-traveler", sender.agentdID, host.id.ID(), "left", identity))
+	reply := sender.envelope(proto.KindMail, proto.Endpoint{Agent: id}, proto.MailPayload{Body: "reply without an export grant"})
+	reply.InReplyTo = "live-original"
+	sender.send(reply)
+	fedEventually(t, "reply-only mail enters home custody", func() bool { return homeMailAck(sender, reply.ID, "custody") })
+	fedEventually(t, "reply-only authority remains valid while forwarding", func() bool { return len(host.envelopes(proto.KindHomeMail)) > 0 })
 }
