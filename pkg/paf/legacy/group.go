@@ -74,19 +74,29 @@ func WriteGroupExport(exp *groupexport.Export, out io.Writer, opts GroupWriteOpt
 		}
 		key := uniqueKey(AgentKey(name), used)
 		keys[c.ConvID] = key
+		harnessName, format := c.Harness, c.HistoryFormat
+		if harnessName == "" {
+			harnessName = "claude"
+		}
+		if format == "" {
+			format = ClaudeHistoryFormat
+		}
+		if !paf.ValidEntryPath(format) || strings.Contains(format, "/") {
+			return fmt.Errorf("legacy: invalid history format %q", format)
+		}
 		ag := paf.Agent{
 			Name:         name,
-			Conversation: &paf.Conversation{ID: c.ConvID, Harness: "claude"},
+			Conversation: &paf.Conversation{ID: c.ConvID, Harness: harnessName},
 		}
 		if _, member := roles[c.ConvID]; member {
 			ag.Groups = []paf.GroupRef{{Name: exp.SourceGroup, Role: roles[c.ConvID]}}
 		}
-		env := paf.Environment{Harness: paf.Harness{Name: "claude"}}
+		env := paf.Environment{Harness: paf.Harness{Name: harnessName}}
 		if c.SourceCwd != "" {
 			env.Workspace = &paf.Workspace{Cwd: c.SourceCwd}
 		}
 		if !c.Missing {
-			ag.Native = &paf.Native{Format: ClaudeHistoryFormat, Path: paf.AgentPath(key, "native/"+ClaudeHistoryFormat+"/history.jsonl"), Harness: "claude", SourceConvID: c.ConvID}
+			ag.Native = &paf.Native{Format: format, Path: paf.AgentPath(key, "native/"+format+"/history.jsonl"), Harness: harnessName, SourceConvID: c.ConvID}
 		}
 		if err := w.AddAgent(key, ag, env); err != nil {
 			return err
@@ -167,8 +177,9 @@ func uniqueKey(key string, used map[string]bool) string {
 // ToGroupExport reads a group PAF into the group export model the group
 // import uses. A PAF tclaude wrote comes back exactly. A group PAF from
 // another producer imports its base fields: the group's name, description
-// and members, each with its Claude Code history. Members in other harnesses
-// are refused for now.
+// and members, each with its native history or neutral context. Each Conv
+// records its harness, native format and agent key; the importer decides
+// where each lands.
 func ToGroupExport(a *paf.Archive, stateLimit int64) (*groupexport.Export, error) {
 	if a.Manifest.Kind != paf.KindGroup {
 		return nil, errors.New("a group import needs a group PAF")
@@ -209,11 +220,9 @@ func ToGroupExport(a *paf.Archive, stateLimit int64) (*groupexport.Export, error
 			if !ok {
 				return nil, fmt.Errorf("tclaude group state lists conversation %s, which no agent in the archive carries", c.ConvID)
 			}
-			content, err := nativeClaudeHistory(a, key)
-			if err != nil {
+			if err := readConversation(a, key, c); err != nil {
 				return nil, err
 			}
-			c.Content = content
 		}
 		return &exp, nil
 	}
@@ -237,14 +246,10 @@ func foreignGroup(a *paf.Archive, g *paf.Group) (*groupexport.Export, error) {
 		seenKey[mem.Agent] = true
 		ag, _ := a.Agent(mem.Agent)
 		env, _ := a.Environment(mem.Agent)
-		if ag.Native == nil || ag.Native.Format != ClaudeHistoryFormat {
-			return nil, fmt.Errorf("group member %q has no Claude Code history; importing a group whose members use %s is not supported yet", mem.Agent, env.Harness.Name)
+		convID := ""
+		if ag.Native != nil {
+			convID = ag.Native.SourceConvID
 		}
-		content, err := nativeClaudeHistory(a, mem.Agent)
-		if err != nil {
-			return nil, err
-		}
-		convID := ag.Native.SourceConvID
 		if convID == "" && ag.Conversation != nil {
 			convID = ag.Conversation.ID
 		}
@@ -259,11 +264,13 @@ func foreignGroup(a *paf.Archive, g *paf.Group) (*groupexport.Export, error) {
 		if title == "" {
 			title = mem.Agent
 		}
-		c := groupexport.Conv{ConvID: convID, Title: title}
+		c := groupexport.Conv{ConvID: convID, Title: title, Harness: env.Harness.Name}
 		if env.Workspace != nil {
 			c.SourceCwd = env.Workspace.Cwd
 		}
-		c.Content = content
+		if err := readConversation(a, mem.Agent, &c); err != nil {
+			return nil, err
+		}
 		exp.Convs = append(exp.Convs, c)
 		exp.Members = append(exp.Members, groupexport.Member{ConvID: convID, Role: mem.Role, Descr: ag.Definition.Description, JoinedAt: now})
 		exp.Enrollments = append(exp.Enrollments, groupexport.Enrollment{ConvID: convID, EnrolledAt: now, EnrolledVia: "paf-import"})
@@ -272,20 +279,35 @@ func foreignGroup(a *paf.Archive, g *paf.Group) (*groupexport.Export, error) {
 	return exp, nil
 }
 
-func nativeClaudeHistory(a *paf.Archive, key string) ([]byte, error) {
+// readConversation fills c from agent key: its native history when it has
+// one, else a pointer at its neutral context, else Missing (configuration
+// only).
+func readConversation(a *paf.Archive, key string, c *groupexport.Conv) error {
 	ag, _ := a.Agent(key)
+	env, _ := a.Environment(key)
+	c.AgentKey = key
+	if env != nil && c.Harness == "" {
+		c.Harness = env.Harness.Name
+	}
 	if ag == nil || ag.Native == nil {
-		return nil, fmt.Errorf("agent %q has no native history", key)
+		c.Missing = !a.HasContext(key, paf.ScopeEffective)
+		return nil
 	}
-	if ag.Native.Format != ClaudeHistoryFormat {
-		return nil, fmt.Errorf("agent %q: native history is %s, not %s", key, ag.Native.Format, ClaudeHistoryFormat)
+	if ag.Native.Harness != "" {
+		c.Harness = ag.Native.Harness
 	}
+	c.HistoryFormat = ag.Native.Format
 	rc, err := a.OpenEntry(ag.Native.Path)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer func() { _ = rc.Close() }()
-	return io.ReadAll(rc)
+	content, err := io.ReadAll(rc)
+	if err != nil {
+		return err
+	}
+	c.Content = content
+	return nil
 }
 
 // newConvID returns a random UUIDv4 for a conversation that arrived

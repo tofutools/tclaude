@@ -606,6 +606,10 @@ type GroupImportPlan struct {
 	// exact destinations before this transaction. A live conv monitor may have
 	// indexed such a path already; no other indexed path is accepted.
 	ClaimedConversationPaths map[string]string // final conv-id → exact O_EXCL-created destination path
+	// InstalledConversations are final conv-ids a harness's own history
+	// import minted and indexed for this import, so their conv_index rows
+	// are this import's, not a collision.
+	InstalledConversations map[string]bool
 	ByConv                   string            // caller conv-id for the audit log ("" = human)
 	// CanonicalizePermissionScope is supplied by the daemon, which owns the
 	// permission registry. ImportGroup requires it for every non-empty archived
@@ -753,7 +757,7 @@ func (c *importCtx) checkConversationCollision(conv string) (string, error) {
 			return "", fmt.Errorf("check conversation index for %s: %w", conv, err)
 		}
 		claimedPath, claimed := c.plan.ClaimedConversationPaths[conv]
-		if err == nil && (!claimed || indexedPath != claimedPath) {
+		if err == nil && !c.plan.InstalledConversations[conv] && (!claimed || indexedPath != claimedPath) {
 			return "", fmt.Errorf("%w: indexed conv %s", ErrImportConversationCollision, conv)
 		}
 	}

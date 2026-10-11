@@ -67,20 +67,40 @@ func TestGroupExportRoundTripsThroughPAF(t *testing.T) {
 
 	got, err := ToGroupExport(a, 1<<20)
 	require.NoError(t, err)
+	// Reading records where each conversation came from.
+	for i, key := range []string{"fixer", "fixer-2"} {
+		c := got.Convs[i]
+		assert.Equal(t, key, c.AgentKey)
+		assert.Equal(t, "claude", c.Harness)
+		assert.Equal(t, ClaudeHistoryFormat, c.HistoryFormat)
+		got.Convs[i].AgentKey, got.Convs[i].Harness, got.Convs[i].HistoryFormat = "", "", ""
+	}
 	assert.Equal(t, exp, got)
 }
 
-func TestForeignGroupPAFRefusesOtherHarnesses(t *testing.T) {
+// A foreign member in another harness keeps its harness and native
+// history; one with no conversation imports as configuration.
+func TestForeignGroupPAFKeepsEachMembersHarness(t *testing.T) {
 	var buf bytes.Buffer
 	w := paf.NewWriter(&buf, paf.KindGroup, paf.Limits{})
-	require.NoError(t, w.AddAgent("cody", paf.Agent{Name: "cody"}, paf.Environment{Harness: paf.Harness{Name: "codex"}}))
-	require.NoError(t, w.WriteJSON(paf.GroupPath, paf.Group{Name: "g", Members: []paf.GroupMember{{Agent: "cody"}}}))
+	native := paf.AgentPath("cody", "native/codex-rollout-jsonl/history.jsonl")
+	require.NoError(t, w.AddAgent("cody", paf.Agent{Name: "cody", Native: &paf.Native{Format: "codex-rollout-jsonl", Path: native, Harness: "codex", SourceConvID: convA}}, paf.Environment{Harness: paf.Harness{Name: "codex"}}))
+	require.NoError(t, w.WriteFile(native, "application/jsonl", []byte("{}\n")))
+	require.NoError(t, w.AddAgent("gem", paf.Agent{Name: "gem"}, paf.Environment{Harness: paf.Harness{Name: "gemini"}}))
+	require.NoError(t, w.WriteJSON(paf.GroupPath, paf.Group{Name: "g", Members: []paf.GroupMember{{Agent: "cody"}, {Agent: "gem"}}}))
 	_, err := w.Close(paf.Producer{Name: "other"})
 	require.NoError(t, err)
 	a, err := paf.Open(bytes.NewReader(buf.Bytes()), int64(buf.Len()), paf.Options{Purpose: paf.PurposeImport})
 	require.NoError(t, err)
-	_, err = ToGroupExport(a, 1<<20)
-	assert.ErrorContains(t, err, `group member "cody" has no Claude Code history`)
+	exp, err := ToGroupExport(a, 1<<20)
+	require.NoError(t, err)
+	require.Len(t, exp.Convs, 2)
+	assert.Equal(t, convA, exp.Convs[0].ConvID)
+	assert.Equal(t, "codex", exp.Convs[0].Harness)
+	assert.Equal(t, "codex-rollout-jsonl", exp.Convs[0].HistoryFormat)
+	assert.Equal(t, "{}\n", string(exp.Convs[0].Content))
+	assert.Equal(t, "gemini", exp.Convs[1].Harness)
+	assert.True(t, exp.Convs[1].Missing)
 }
 
 func TestOpenFileReadsGroupExportZip(t *testing.T) {
