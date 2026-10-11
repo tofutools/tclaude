@@ -492,7 +492,9 @@ func (c *CCSim) MarkDead() {
 // shutdown as the typed /exit default handler (a transcript marker turn, then
 // MarkDead). Called with the lock released, mirroring dispatch's handlers.
 func (c *CCSim) signalExit() {
-	_ = c.WriteUserTurn("[ctrl-c-exit]")
+	// Shutdown is harness control, not a new instruction from the user.
+	// Keep the observable marker while matching native control-turn provenance.
+	_ = c.AppendTurn(map[string]any{"type": "user", "isMeta": true, "cwd": c.Cwd, "timestamp": now(), "message": map[string]any{"role": "user", "content": "[ctrl-c-exit]"}})
 	c.MarkDead()
 }
 

@@ -91,6 +91,13 @@ type Loss struct {
 // LossReport is everything a translation did not carry 1:1. It holds counts
 // and categories only, so it is safe to show in notes, previews and audit.
 type LossReport struct {
+	DroppedPercent     int    `json:"dropped_percent"`
+	KeptPercent        int    `json:"kept_percent"`
+	BudgetWarning      bool   `json:"budget_warning,omitempty"`
+	NeedsSummary       bool   `json:"needs_summary,omitempty"`
+	SelectionReason    string `json:"selection_reason,omitempty"`
+	PinnedExternalized bool   `json:"pinned_externalized,omitempty"`
+
 	// Estimates use the same coarse byte/media heuristic as the context budget.
 	SourceEstimatedTokens  int64  `json:"source_estimated_tokens"`
 	CarriedEstimatedTokens int64  `json:"carried_estimated_tokens"`

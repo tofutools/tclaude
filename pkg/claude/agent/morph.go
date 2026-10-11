@@ -18,23 +18,25 @@ import (
 )
 
 type morphParams struct {
-	HistoryWindowTokens int64  `long:"history-window-tokens" optional:"true" help:"Cross-harness history budget window in tokens (1024–10000000), overriding the unknown-model 32k assumption; verified smaller model limits still win"`
-	Agent               string `pos:"true" optional:"true" help:"Agent to morph: title, agent_id, conv-id or prefix, or group:<name> for every other member of a group. Default: yourself"`
-	Profile             string `long:"profile" short:"p" optional:"true" help:"Take the new launch form from this spawn profile; a profile for another harness makes it a cross-harness morph. Explicit flags override it"`
-	Harness             string `long:"harness" optional:"true" help:"Morph into another harness: the history is translated into a new conversation of that harness. Needs --ask-for-approval (or a profile that sets one); an agent caller must use --profile"`
-	History             string `long:"history" optional:"true" help:"Cross-harness only: how the conversation is carried. auto (native history, else saved to files the agent reads) | context-file | handoff (the agent first writes a handoff for its successor; needs a live agent)"`
-	Model               string `long:"model" optional:"true" help:"New model (validated for the agent's harness)"`
-	Effort              string `long:"effort" optional:"true" help:"New reasoning effort (per-harness; Gemini has none)"`
-	Approval            string `long:"ask-for-approval" optional:"true" help:"New launch approval posture (per-harness values, as for spawn). An agent caller may not grant a posture broader than its own"`
-	Tools               string `long:"tools" optional:"true" help:"New OpenCode tool governance: allow | ask | deny"`
-	AskTimeout          string `long:"ask-user-question-timeout" optional:"true" help:"New Claude Code AskUserQuestion idle-timeout: inherit | never | 60s | 5m | 10m"`
-	AutoCompactWindow   string `long:"auto-compact-window" optional:"true" help:"New Claude Code auto-compact window in tokens"`
-	TrustDir            bool   `long:"trust-dir" help:"Cross-harness only: pre-trust the working directory in the new harness so its pane does not stop on the folder-trust dialog (edits that harness's trust store, as spawn --trust-dir does)"`
-	Now                 bool   `long:"now" help:"Stop and relaunch immediately even if the agent is busy or stuck, resuming from its last durable history. Not available for a self-morph"`
-	Back                bool   `long:"back" help:"Morph back to the form the last morph replaced"`
-	Cancel              bool   `long:"cancel" help:"Cancel a pending morph"`
-	DryRun              bool   `long:"dry-run" help:"Show the before -> after form and whether you may apply it, without changing anything"`
-	JSON                bool   `long:"json" help:"Print the per-agent results as JSON"`
+	ProceedWithoutSummary bool   `long:"proceed-without-summary" short:"-" help:"Explicitly continue without a source-written summary (provider outage): carry readable history and the full-transcript pointer, accepting history loss"`
+	ConfirmHistoryLoss    bool   `long:"confirm-history-loss" help:"Confirm a large history cut and wait for the source agent to write a summary before morphing"`
+	Agent                 string `pos:"true" optional:"true" help:"Agent to morph: title, agent_id, conv-id or prefix, or group:<name> for every other member of a group. Default: yourself"`
+	Profile               string `long:"profile" short:"p" optional:"true" help:"Take the new launch form from this spawn profile; a profile for another harness makes it a cross-harness morph. Explicit flags override it"`
+	Harness               string `long:"harness" optional:"true" help:"Morph into another harness: the history is translated into a new conversation of that harness. Needs --ask-for-approval (or a profile that sets one); an agent caller must use --profile"`
+	History               string `long:"history" optional:"true" help:"Cross-harness only: how the conversation is carried. auto (native history, else saved to files the agent reads) | context-file | handoff (the agent first writes a handoff for its successor; needs a live agent)"`
+	Model                 string `long:"model" optional:"true" help:"New model (validated for the agent's harness)"`
+	Effort                string `long:"effort" optional:"true" help:"New reasoning effort (per-harness; Gemini has none)"`
+	Approval              string `long:"ask-for-approval" optional:"true" help:"New launch approval posture (per-harness values, as for spawn). An agent caller may not grant a posture broader than its own"`
+	Tools                 string `long:"tools" optional:"true" help:"New OpenCode tool governance: allow | ask | deny"`
+	AskTimeout            string `long:"ask-user-question-timeout" optional:"true" help:"New Claude Code AskUserQuestion idle-timeout: inherit | never | 60s | 5m | 10m"`
+	AutoCompactWindow     string `long:"auto-compact-window" optional:"true" help:"New Claude Code auto-compact window in tokens"`
+	TrustDir              bool   `long:"trust-dir" help:"Cross-harness only: pre-trust the working directory in the new harness so its pane does not stop on the folder-trust dialog (edits that harness's trust store, as spawn --trust-dir does)"`
+	Now                   bool   `long:"now" help:"Stop and relaunch immediately even if the agent is busy or stuck, resuming from its last durable history. Not available for a self-morph"`
+	Back                  bool   `long:"back" help:"Morph back to the form the last morph replaced"`
+	Cancel                bool   `long:"cancel" help:"Cancel a pending morph"`
+	DryRun                bool   `long:"dry-run" help:"Show the before -> after form and whether you may apply it, without changing anything"`
+	JSON                  bool   `long:"json" help:"Print the per-agent results as JSON"`
+	HistoryWindowTokens   int64  `long:"history-window-tokens" optional:"true" help:"Cross-harness history budget window in tokens (1024–10000000), overriding the unknown-model 32k assumption; verified smaller model limits still win"`
 }
 
 func morphCmd() *cobra.Command {
@@ -138,6 +140,12 @@ func (p *morphParams) body() map[string]any {
 	set("profile", p.Profile)
 	set("harness", p.Harness)
 	set("history", p.History)
+	if p.ProceedWithoutSummary {
+		body["proceed_without_summary"] = true
+	}
+	if p.ConfirmHistoryLoss {
+		body["confirm_history_loss"] = true
+	}
 	if p.HistoryWindowTokens != 0 {
 		body["history_window_tokens"] = p.HistoryWindowTokens
 	}
@@ -261,6 +269,12 @@ func printMorphHistory(w io.Writer, r *transcript.LossReport) {
 	}
 	if r.CarriedEstimatedTokens > 0 {
 		fmt.Fprintf(w, "  estimated history tokens: %d source → %d carried\n", r.SourceEstimatedTokens, r.CarriedEstimatedTokens)
+	}
+	if r.BudgetWarning {
+		fmt.Fprintf(w, "  history cut: %d%% kept, %d%% omitted from inline history; %s\n", r.KeptPercent, r.DroppedPercent, r.SelectionReason)
+	}
+	if r.NeedsSummary {
+		fmt.Fprintln(w, "  confirm with --confirm-history-loss; the source writes a summary before departure")
 	}
 	for _, line := range r.Lines() {
 		fmt.Fprintf(w, "    %s\n", line)

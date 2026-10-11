@@ -190,3 +190,53 @@ test('a peer agent opens on a mode it can use, and a sent move locks the target'
   assert.equal(s.q('[data-lt-node="inst_forge"]').disabled, true);
   assert.equal(s.q('[data-lt-mode="clone"]').disabled, true);
 });
+
+test('large morph cut confirms once and waits visibly for the source summary; cancellation leaves the dialog responsive', async (t) => {
+  const sent=[];
+  const pending={history:'summary', expires_at:new Date(Date.now()+60000).toISOString()};
+  const s=await mountDialog(t, {
+    initialMode:'morph',
+    api:{status:async()=>({}),profiles:async()=>[{name:'small',harness:'codex'}], morphStatus:async()=>({conv_id:AGENT.conv,pending_morph:null}),
+      morph:async(id,body)=>{ sent.push(body); return body.dry_run ? {history:{budget_warning:true, needs_summary:true, dropped_percent:60,kept_percent:40,selection_reason:'summary with task and latest instructions'}} : body.cancel ? {} : {result:'pending',pending_morph:pending}; }},
+  });
+  await s.change(s.q('#lt-morph-profile'),'small');
+  assert.equal(s.q('#lt-ok').disabled,true);
+  assert.match(s.q('#launch-target').textContent,/60%.*summary/);
+  const confirm=s.q('#lt-confirm-cut');
+  Object.defineProperty(confirm,'checked',{configurable:true,writable:true,value:true});
+  await s.harness.act(()=>s.harness.fireEvent(confirm,'change'));
+  await s.settle();
+  await s.click(s.q('#lt-ok'));
+  assert.equal(sent.at(-1).confirm_history_loss,true);
+  assert.equal(s.closed(),0,'summary submission keeps the pending state visible');
+  // The status fake ends the pending job; no second morph is sent by polling.
+  await s.settle();
+  assert.equal(sent.filter(b=>!b.dry_run).length,1);
+});
+
+test('reopening a summary morph restores its deadline and cancel action', async (t)=>{
+  const sent=[];
+  const pending={history:'summary',expires_at:new Date(Date.now()+60000).toISOString()};
+  const s=await mountDialog(t,{initialMode:'morph',api:{status:async()=>({}),profiles:async()=>[],morphStatus:async()=>({conv_id:AGENT.conv,pending_morph:pending}),morph:async(id,b)=>{sent.push(b);return {};}}});
+  assert.match(s.q('[data-lt-state="waiting-summary"]').textContent,/builder-1.*summary.*left/);
+  const cancel=[...s.q('[data-lt-state="waiting-summary"]').querySelectorAll('button')].find(b=>b.textContent.includes('Cancel pending'));
+  await s.click(cancel);
+  assert.deepEqual(sent,[{cancel:true}]);
+  assert.equal(s.closed(),0,'cancelling the wait leaves explicit outage fallback available');
+});
+
+test('provider outage continuation requires an explicit loss checkbox and works from restored pending state',async(t)=>{
+ const sent=[];
+ const pending={history:'summary',target:{profile:'small'},expires_at:new Date(Date.now()+60000).toISOString()};
+ const s=await mountDialog(t,{initialMode:'morph',api:{status:async()=>({}),profiles:async()=>[{name:'small'}],morphStatus:async()=>({conv_id:AGENT.conv,pending_morph:pending}),morph:async(id,b)=>{if(b.dry_run) return {history:{needs_summary:true}};sent.push(b);return {result:'morphed'};}}});
+ await s.settle(); await s.settle();
+ assert.equal(s.q('#lt-proceed-loss').disabled,true);
+ assert.match(s.q('#launch-target').textContent,/Earlier context may be lost/);
+ const check=s.q('#lt-proceed-without-summary');
+ Object.defineProperty(check,'checked',{configurable:true,writable:true,value:true});
+ await s.harness.act(()=>s.harness.fireEvent(check,'change'));await s.settle();
+ assert.equal(s.q('#lt-proceed-loss').disabled,false,s.q('#launch-target').textContent);
+ await s.click(s.q('#lt-proceed-loss'));
+ assert.deepEqual(sent,[{profile:'small',proceed_without_summary:true,now:true}]);
+ assert.equal(s.closed(),1);
+});

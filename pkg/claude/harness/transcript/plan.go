@@ -27,6 +27,9 @@ type Options struct {
 	Target string
 	// TargetModel is the destination model, used only in the notice.
 	TargetModel string
+	// Summary is source-written context requested before a large budget cut.
+	SummaryUnavailable bool
+	Summary            string
 	// ContextWindowTokens is the destination model's window; zero uses
 	// DefaultContextWindowTokens.
 	ContextWindowTokens int64
@@ -108,7 +111,7 @@ type planEntry struct {
 
 // NewPlan applies target policy to a transcript. It never mutates t.
 func NewPlan(t *Transcript, opts Options) *Plan {
-	report := &LossReport{Source: t.Source.Harness, Target: opts.Target, SourceEntries: len(t.Entries)}
+	report := &LossReport{Source: t.Source.Harness, Target: opts.Target, SourceEntries: len(t.Entries), BudgetTokens: opts.budgetTokens()}
 	if t.Losses != nil {
 		report.Items = append(report.Items, t.Losses.Items...)
 	}
@@ -227,7 +230,7 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 		if len(out.Blocks) == 0 {
 			continue
 		}
-		entries = append(entries, planEntry{entry: out, sources: 1, turn: e.Origin == OriginHuman, summary: summary})
+		entries = append(entries, planEntry{entry: out, sources: 1, turn: e.Origin == OriginHuman && !daemonControlTurn(e), summary: summary})
 	}
 
 	entries = coalesce(entries)
@@ -236,6 +239,11 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 	notice := fmt.Sprintf("%stclaude morph%s History carried over from %s to %s. Tool records are history; use your own tools.", markOpen, markClose, describe(t.Source.Harness, t.Source.Model), describe(opts.Target, opts.TargetModel))
 	if report.TranscriptPath != "" {
 		notice += " Full tool output: " + report.TranscriptPath + "."
+	}
+	if opts.SummaryUnavailable {
+		report.Add(LossNotCarried, 1, "source could not write a history summary; explicitly continued with readable history and the full-transcript pointer")
+		report.SelectionReason = "source could not write a summary; readable history only, full transcript saved"
+		notice += " Source could not write a summary; earlier context may be missing. Read the full transcript when needed."
 	}
 	notice += " No need to re-read skills or re-verify the environment unless something looks wrong."
 	entries = append(entries, planEntry{entry: Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text(notice)}}})
@@ -401,6 +409,22 @@ func WriteFileExclusive(path string, data []byte) error {
 
 // coalesce merges adjacent same-role entries so every encoder can rely on
 // strict user/assistant alternation.
+// The daemon's own morph request arrives as a native user turn. It must
+// not replace task/latest pins. Human and peer inbox instructions still count.
+func daemonControlTurn(e Entry) bool {
+	if len(e.Blocks) == 0 {
+		return false
+	}
+	for _, b := range e.Blocks {
+		text := strings.TrimSpace(b.Text)
+		header, _, found := strings.Cut(text, "]")
+		if b.Kind != BlockText || !found || !strings.HasPrefix(header, "[system: new agent message") || strings.Contains(header, " from ") || !strings.HasSuffix(header, "; subject: Morph handoff requested") {
+			return false
+		}
+	}
+	return true
+}
+
 func coalesce(in []planEntry) []planEntry {
 	var out []planEntry
 	for _, e := range in {
@@ -432,61 +456,127 @@ func estimateTokens(e Entry) int64 {
 	return n + 32
 }
 
-// fitBudget drops the oldest entries, at a human-turn boundary, until the
-// rest fits. A leading compaction summary is kept when it fits.
+// fitBudget pins the task and latest instructions, then selects the newest
+// complete human turns that fit beside a requested source-written summary.
 func (p *Plan) fitBudget(entries []planEntry, opts Options, report *LossReport) []planEntry {
+	// Reserve room for the notice and omission markers. Never intentionally
+	// overflow the destination just because a single user turn is enormous.
 	budget := opts.budgetTokens()
+	reserve := min(int64(1024), budget/4)
+	available := budget - reserve
 	var total int64
 	for _, e := range entries {
 		total += estimateTokens(e.entry)
 	}
-	if total <= budget || len(entries) == 0 {
+	report.KeptPercent = 100
+	if total <= available && opts.Summary == "" {
 		return entries
 	}
-	var pinned []planEntry
-	rest := entries
-	if entries[0].summary && estimateTokens(entries[0].entry) < budget/4 {
-		pinned, rest = entries[:1], entries[1:]
-		budget -= estimateTokens(entries[0].entry)
-	}
-	cut := -1
-	var suffix int64
-	for i := len(rest) - 1; i >= 0; i-- {
-		suffix += estimateTokens(rest[i].entry)
-		if suffix > budget {
-			break
-		}
-		if rest[i].turn && rest[i].entry.Role == RoleUser {
-			cut = i
+
+	first, last := -1, -1
+	for i, e := range entries {
+		if e.turn && e.entry.Role == RoleUser {
+			if first < 0 {
+				first = i
+			}
+			last = i
 		}
 	}
-	if cut < 0 {
-		// Not even the newest turn fits: keep from the last human turn and
-		// let the target compact.
-		for i := len(rest) - 1; i >= 0; i-- {
-			if rest[i].turn && rest[i].entry.Role == RoleUser {
-				cut = i
-				break
+	// Pin the original task and latest user instructions. If too large for
+	// the inline budget, keep an explicit pointer to their full file record.
+	pin := func(i int) planEntry {
+		e := entries[i]
+		if estimateTokens(e.entry) > max(int64(64), available/3) && opts.TranscriptPath != "" {
+			label := "original task"
+			if i == last {
+				label = "latest user instructions"
+			}
+			e.entry.Blocks = []Block{Text("⟦Read the full " + label + " in " + opts.TranscriptPath + " before continuing; it is too large to inline safely.⟧")}
+			report.PinnedExternalized = true
+		}
+		return e
+	}
+	pinned := map[int]planEntry{}
+	for _, i := range []int{first, last} {
+		if i >= 0 {
+			pinned[i] = pin(i)
+		}
+	}
+	used := int64(0)
+	for _, e := range pinned {
+		used += estimateTokens(e.entry)
+	}
+	var summary *planEntry
+	if opts.Summary != "" {
+		e := planEntry{entry: Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text("⟦Source-written summary of earlier history⟧\n" + opts.Summary)}}}
+		// The summary uses a reserved slot rather than displacing the tail
+		// shown in the confirmed preview. A larger summary stays in its file.
+		if estimateTokens(e.entry) > reserve/2 && opts.TranscriptPath != "" {
+			e.entry.Blocks = []Block{Text("⟦Read the source-written summary in " + filepath.Join(filepath.Dir(opts.TranscriptPath), "summary.md") + " before continuing; it is too large to inline safely.⟧")}
+		}
+		summary = &e
+	}
+	// Keep the newest complete human-turn groups that fit after the pins.
+	keep := map[int]bool{}
+	for i := range pinned {
+		keep[i] = true
+	}
+	for end := len(entries); end > 0; {
+		start := end - 1
+		for start > 0 && !entries[start].turn {
+			start--
+		}
+		cost := int64(0)
+		for i := start; i < end; i++ {
+			if !keep[i] {
+				cost += estimateTokens(entries[i].entry)
 			}
 		}
-		if cut < 0 {
-			cut = 0
+		if used+cost > available {
+			break
 		}
+		for i := start; i < end; i++ {
+			keep[i] = true
+		}
+		used += cost
+		end = start
 	}
 	omitted := 0
-	for _, e := range rest[:cut] {
-		omitted += e.sources
+	for i, e := range entries {
+		if !keep[i] {
+			omitted += e.sources
+		}
 	}
-	if omitted == 0 {
-		return entries
+	if omitted > 0 {
+		report.Add(LossTruncatedBudget, omitted, "")
+		report.DroppedPercent = int((int64(omitted)*100 + int64(report.SourceEntries) - 1) / max(int64(1), int64(report.SourceEntries)))
+		report.KeptPercent = max(0, 100-report.DroppedPercent)
 	}
-	report.Add(LossTruncatedBudget, omitted, "")
-	marker := fmt.Sprintf("%s%d earlier entries were omitted to fit the context budget", markOpen, omitted)
-	if report.TranscriptPath != "" {
-		marker += "; read them in " + report.TranscriptPath
+	report.BudgetWarning = report.DroppedPercent >= 10 || report.PinnedExternalized
+	report.NeedsSummary = report.DroppedPercent >= 25 || report.PinnedExternalized
+	if report.NeedsSummary {
+		report.SelectionReason = "large history cut: carry a source-written summary with the original task and latest instructions"
+	} else if report.BudgetWarning {
+		report.SelectionReason = "older history cut to fit the destination budget"
 	}
-	marker += markClose
-	lead := planEntry{entry: Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text(marker)}}}
-	out := append(append(append([]planEntry{}, pinned...), lead), rest[cut:]...)
+	var out []planEntry
+	if summary != nil {
+		out = append(out, *summary)
+	}
+	if omitted > 0 {
+		marker := fmt.Sprintf("⟦%d earlier entries were omitted to fit the context budget", omitted)
+		if opts.TranscriptPath != "" {
+			marker += "; read them in " + opts.TranscriptPath
+		}
+		out = append(out, planEntry{entry: Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text(marker + "⟧")}}})
+	}
+	for i, e := range entries {
+		if keep[i] {
+			if v, ok := pinned[i]; ok {
+				e = v
+			}
+			out = append(out, e)
+		}
+	}
 	return coalesce(out)
 }

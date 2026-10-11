@@ -454,12 +454,21 @@ func morphArtifactDir(agentID string) (string, error) {
 // files. The source conversation is only read.
 func (cm *crossMorph) installHistory(agentID, convID string, pending db.AgentPendingMorph) (*harness.TranslateResult, error) {
 	opts := cm.opts
+	opts.Policy.SummaryUnavailable = pending.ProceedWithoutSummary
 	dir, err := morphArtifactDir(agentID)
 	if err != nil {
 		return nil, fmt.Errorf("prepare the morph artifact directory: %w", err)
 	}
 	opts.ArtifactDir = dir
 	switch pending.History {
+	case "summary":
+		if pending.Handoff == nil || strings.TrimSpace(pending.Handoff.Body) == "" {
+			return nil, errors.New("required history summary has not arrived; source remains unchanged")
+		}
+		opts.Policy.Summary = pending.Handoff.Body
+		if err := transcript.WriteFileExclusive(filepath.Join(dir, "summary.md"), []byte(pending.Handoff.Body)); err != nil {
+			return nil, err
+		}
 	case "handoff":
 		if pending.Handoff != nil && strings.TrimSpace(pending.Handoff.Body) != "" {
 			return harness.InstallHandoff(cm.src, cm.dst, convID, cm.cwd, pending.Handoff.Body, opts)
@@ -469,6 +478,12 @@ func (cm *crossMorph) installHistory(agentID, convID string, pending db.AgentPen
 		opts.ContextFile = true
 	}
 	res, err := harness.TranslateHistory(cm.src, cm.dst, convID, cm.cwd, opts)
+	if res != nil && pending.ProceedWithoutSummary && res.Report.Fallback == "native" {
+		res.Report.Fallback = "native_without_summary"
+	}
+	if res != nil && pending.History == "summary" && res.Report.Fallback == "native" {
+		res.Report.Fallback = "native_summary"
+	}
 	if err == nil {
 		return res, nil
 	}
@@ -497,6 +512,15 @@ func applyCrossHarnessMorphUnderLaunchLock(agentID, convID string, pending db.Ag
 	cm, fail := planCrossHarnessMorph(convID, dst, pending.Target, pending.ActorConv)
 	if fail != nil {
 		return morphOutcome{status: fail.Status, code: fail.Kind, detail: fail.Msg}
+	}
+	if pending.History != "handoff" {
+		preflight, err := cm.preview(convID)
+		if err != nil {
+			return morphOutcome{status: http.StatusConflict, code: "history_unreadable", detail: err.Error()}
+		}
+		if preflight.NeedsSummary && !pending.ProceedWithoutSummary && (!pending.ConfirmHistoryLoss || pending.Handoff == nil || strings.TrimSpace(pending.Handoff.Body) == "") {
+			return morphOutcome{status: http.StatusConflict, code: "history_confirmation_required", detail: "history grew beyond the confirmed budget or its required summary is missing; source remains unchanged"}
+		}
 	}
 	var clientHandoff *agentRestartTmuxHandoff
 	restoreSource := func() string { return "" }
@@ -615,6 +639,9 @@ func requestMorphHandoff(convID string, pending db.AgentPendingMorph) {
 		"Submit it with `tclaude agent morph-handoff -f <file>` (or pass the text as the argument), then end your "+
 		"turn. The morph applies once you are idle. If no handoff arrives by %s, the morph goes ahead without one.",
 		srcName, pending.Target.Harness, by, pending.Target.Harness, pending.ExpiresAt.Format(time.RFC3339))
+	if pending.History == "summary" {
+		body = fmt.Sprintf("You will continue as %s after a large history cut. Write a concise summary of the earlier work: decisions, completed work, open issues, and next steps. The original task and latest user instructions remain pinned. Submit it with `tclaude agent morph-handoff -f <file>`, then end your turn. Deadline: %s. If no summary arrives, the morph is cancelled and you remain here.", pending.Target.Harness, pending.ExpiresAt.Format(time.RFC3339))
+	}
 	var groupID int64
 	if groups, err := db.ListGroupsForConv(convID); err == nil && len(groups) > 0 {
 		groupID = groups[0].ID

@@ -46,21 +46,24 @@ type AgentMorphForm struct {
 // the relaunch-profile JSON so it survives daemon restarts. ConvID pins the
 // generation it was requested against; a reincarnation or move drops it.
 type AgentPendingMorph struct {
-	Target      AgentMorphForm `json:"target"`
-	Back        bool           `json:"back,omitempty"`
-	ActorConv   string         `json:"actor_conv,omitempty"`
-	Actor       string         `json:"actor"`
-	ConvID      string         `json:"conv_id"`
-	RequestedAt time.Time      `json:"requested_at"`
-	ExpiresAt   time.Time      `json:"expires_at"`
+	ConfirmHistoryLoss    bool           `json:"confirm_history_loss,omitempty"`
+	ProceedWithoutSummary bool           `json:"proceed_without_summary,omitempty"`
+	Target                AgentMorphForm `json:"target"`
+	Back                  bool           `json:"back,omitempty"`
+	ActorConv             string         `json:"actor_conv,omitempty"`
+	Actor                 string         `json:"actor"`
+	ConvID                string         `json:"conv_id"`
+	RequestedAt           time.Time      `json:"requested_at"`
+	ExpiresAt             time.Time      `json:"expires_at"`
 	// History is the requested delivery rung of a cross-harness morph: ""
 	// (native, falling back to a context file), "context_file", or
-	// "handoff" (the agent writes a handoff for its successor first).
+	// "handoff" (the agent writes a handoff for its successor first), or
+	// "summary" (a confirmed large cut waits for a source-written summary).
 	History string `json:"history,omitempty"`
-	// Handoff is the agent-written handoff a "handoff" morph waits for.
+	// Handoff is the source-written handoff or summary a pending morph waits for.
 	Handoff *AgentMorphHandoff `json:"handoff,omitempty"`
 	// HandoffRequired marks a handoff morph chosen because the history
-	// cannot be read: without a handoff there is nothing to carry, so it is
+	// cannot be read or a large cut requires a summary: without that response it is
 	// dropped at expiry instead of falling back to the context-file rung.
 	HandoffRequired bool `json:"handoff_required,omitempty"`
 }
@@ -80,7 +83,7 @@ var ErrNoHandoffRequested = errors.New("no pending morph is waiting for a handof
 // A later submission replaces an earlier one until the morph applies.
 func SubmitAgentMorphHandoff(convID, body string) error {
 	return updateAgentRelaunchProfileForConv(convID, func(_ string, p *AgentRelaunchProfile) error {
-		if p.PendingMorph == nil || p.PendingMorph.History != "handoff" {
+		if p.PendingMorph == nil || (p.PendingMorph.History != "handoff" && p.PendingMorph.History != "summary") {
 			return ErrNoHandoffRequested
 		}
 		p.PendingMorph.Handoff = &AgentMorphHandoff{Body: body, SubmittedAt: time.Now().UTC()}
