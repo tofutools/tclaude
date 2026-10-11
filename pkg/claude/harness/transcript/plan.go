@@ -313,17 +313,48 @@ func mediaExt(mediaType string) string {
 }
 
 // WriteMedia writes externalized media files. Call it only when the plan is
-// applied, never for a preview.
+// applied, never for a preview. The artifact directory may be writable by
+// the agent, so no existing path is followed or reused.
 func (p *Plan) WriteMedia() error {
 	for _, m := range p.pendingMedia {
-		if err := os.MkdirAll(filepath.Dir(m.path), 0o700); err != nil {
+		if err := EnsureRealDir(filepath.Dir(m.path)); err != nil {
 			return err
 		}
-		if err := os.WriteFile(m.path, m.data, 0o600); err != nil {
+		if err := WriteFileExclusive(m.path, m.data); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// EnsureRealDir creates dir (its parent must exist) or accepts it only when
+// it already is a real directory, never a symlink.
+func EnsureRealDir(dir string) error {
+	if err := os.Mkdir(dir, 0o700); err == nil || !os.IsExist(err) {
+		return err
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("%s is not a real directory", dir)
+	}
+	return nil
+}
+
+// WriteFileExclusive creates path and writes data. O_EXCL refuses an
+// existing file and does not follow a symlink planted at path.
+func WriteFileExclusive(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // coalesce merges adjacent same-role entries so every encoder can rely on

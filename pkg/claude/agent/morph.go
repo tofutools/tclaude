@@ -13,12 +13,14 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
 type morphParams struct {
 	Agent             string `pos:"true" optional:"true" help:"Agent to morph: title, agent_id, conv-id or prefix, or group:<name> for every other member of a group. Default: yourself"`
-	Profile           string `long:"profile" short:"p" optional:"true" help:"Take the new launch form from this spawn profile (same harness only; its sandbox fields are not applied). Explicit flags override it"`
+	Profile           string `long:"profile" short:"p" optional:"true" help:"Take the new launch form from this spawn profile; a profile for another harness makes it a cross-harness morph. Explicit flags override it"`
+	Harness           string `long:"harness" optional:"true" help:"Morph into another harness: the history is translated into a new conversation of that harness. Needs --ask-for-approval (or a profile that sets one); an agent caller must use --profile"`
 	Model             string `long:"model" optional:"true" help:"New model (validated for the agent's harness)"`
 	Effort            string `long:"effort" optional:"true" help:"New reasoning effort (per-harness; Gemini has none)"`
 	Approval          string `long:"ask-for-approval" optional:"true" help:"New launch approval posture (per-harness values, as for spawn). An agent caller may not grant a posture broader than its own"`
@@ -35,12 +37,19 @@ type morphParams struct {
 func morphCmd() *cobra.Command {
 	return boa.CmdT[morphParams]{
 		Use:   "morph",
-		Short: "Relaunch an agent in place with a different model, effort or approval posture",
+		Short: "Relaunch an agent in place with a different model, effort, approval posture or harness",
 		Long: "Morph changes an agent's launch form within its harness and relaunches it by " +
 			"resuming the same conversation. The agent keeps its agent_id, history, inbox, " +
 			"groups and permissions, and gets a short inbox note saying what it was and what " +
-			"it is now. Sandbox settings, working directory, harness and drive cannot be " +
-			"morphed.\n\n" +
+			"it is now. Sandbox settings, working directory and drive cannot be morphed.\n\n" +
+			"With --harness (or a profile for another harness) the agent moves to another " +
+			"harness: its conversation is translated into a new native conversation of that " +
+			"harness, which it resumes. Reasoning is not carried and tool calls become text " +
+			"records; --dry-run shows what would be carried and lost. The full transcript is " +
+			"kept under the tclaude data directory. Approval values do not map across " +
+			"harnesses, so the new posture must be given; tclaude's own sandbox layer carries " +
+			"over, and an agent whose sandbox is its harness's own can only be moved by the " +
+			"operator.\n\n" +
 			"By default the morph applies at once when the agent is fully idle (or offline), " +
 			"and otherwise waits until it next goes idle (at most 30 minutes). --now stops a " +
 			"busy or stuck agent immediately. A self-morph always waits for the current turn " +
@@ -69,6 +78,7 @@ type morphFormView struct {
 	AskTimeout        string `json:"ask_timeout,omitempty"`
 	AutoCompactWindow string `json:"auto_compact_window,omitempty"`
 	Profile           string `json:"profile,omitempty"`
+	Sandbox           string `json:"sandbox,omitempty"`
 }
 
 func (v morphFormView) String() string {
@@ -81,6 +91,7 @@ func (v morphFormView) String() string {
 	for _, kv := range [][2]string{
 		{"effort", v.Effort}, {"approval", v.Approval}, {"tools", v.Tools},
 		{"ask timeout", v.AskTimeout}, {"auto-compact", v.AutoCompactWindow}, {"profile", v.Profile},
+		{"sandbox", v.Sandbox},
 	} {
 		if kv[1] != "" {
 			parts = append(parts, kv[0]+" "+kv[1])
@@ -90,16 +101,17 @@ func (v morphFormView) String() string {
 }
 
 type morphResult struct {
-	Agent        string                `json:"agent"`
-	AgentID      string                `json:"agent_id,omitempty"`
-	ConvID       string                `json:"conv_id,omitempty"`
-	Result       string                `json:"result"`
-	Before       *morphFormView        `json:"before,omitempty"`
-	After        *morphFormView        `json:"after,omitempty"`
-	Detail       string                `json:"detail,omitempty"`
-	Error        string                `json:"error,omitempty"`
-	Authority    string                `json:"authority,omitempty"`
-	PendingMorph *db.AgentPendingMorph `json:"pending_morph,omitempty"`
+	Agent        string                 `json:"agent"`
+	AgentID      string                 `json:"agent_id,omitempty"`
+	ConvID       string                 `json:"conv_id,omitempty"`
+	Result       string                 `json:"result"`
+	Before       *morphFormView         `json:"before,omitempty"`
+	After        *morphFormView         `json:"after,omitempty"`
+	Detail       string                 `json:"detail,omitempty"`
+	Error        string                 `json:"error,omitempty"`
+	Authority    string                 `json:"authority,omitempty"`
+	PendingMorph *db.AgentPendingMorph  `json:"pending_morph,omitempty"`
+	History      *transcript.LossReport `json:"history,omitempty"`
 }
 
 func (p *morphParams) body() map[string]any {
@@ -110,6 +122,7 @@ func (p *morphParams) body() map[string]any {
 		}
 	}
 	set("profile", p.Profile)
+	set("harness", p.Harness)
 	set("model", p.Model)
 	set("effort", p.Effort)
 	set("approval", p.Approval)
@@ -198,11 +211,31 @@ func runMorph(p *morphParams, stdout, stderr io.Writer) int {
 		if res.Detail != "" {
 			fmt.Fprintf(stdout, "  %s\n", res.Detail)
 		}
+		if res.History != nil {
+			printMorphHistory(stdout, res.History)
+		}
 		if res.Result == "dry_run" && res.Authority != "" {
 			fmt.Fprintf(stdout, "  allowed by: %s\n", res.Authority)
 		}
 	}
 	return rc
+}
+
+func printMorphHistory(w io.Writer, r *transcript.LossReport) {
+	rung := map[string]string{
+		"native":       "installed as a native conversation",
+		"context_file": "saved to files the agent is told to read (it cannot be installed natively)",
+	}[r.Fallback]
+	if rung == "" {
+		rung = r.Fallback
+	}
+	fmt.Fprintf(w, "  history: %d of %d entries carried, %s\n", r.Carried, r.SourceEntries, rung)
+	for _, line := range r.Lines() {
+		fmt.Fprintf(w, "    %s\n", line)
+	}
+	if r.TranscriptPath != "" {
+		fmt.Fprintf(w, "  full transcript: %s\n", r.TranscriptPath)
+	}
 }
 
 // pendingMorphLine renders a pending morph for agent ls / whoami.
@@ -211,6 +244,9 @@ func pendingMorphLine(pm *db.AgentPendingMorph) string {
 		return ""
 	}
 	var parts []string
+	if pm.Target.Harness != "" {
+		parts = append(parts, "harness "+pm.Target.Harness)
+	}
 	add := func(k string, v *string) {
 		if v != nil && *v != "" {
 			parts = append(parts, k+" "+*v)

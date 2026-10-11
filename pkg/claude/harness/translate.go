@@ -179,24 +179,93 @@ func TranslateHistory(src, dst *Harness, convID, cwd string, opts TranslateOptio
 	return res, nil
 }
 
-func writeTranslationArtifacts(t *transcript.Transcript, plan *transcript.Plan, dir string) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+// InstallContextFile is the context-file rung: when the translated history
+// cannot be installed natively, dst starts a minimal native conversation
+// whose one turn points at briefing.md (the budgeted history as plain text)
+// and transcript.md (everything) in artifactDir. plan is the failed
+// translation's plan, so the briefing carries exactly what native would have.
+func InstallContextFile(dst *Harness, plan *transcript.Plan, cwd, artifactDir string) (*TranslateResult, error) {
+	if !dst.SupportsTranscript() {
+		return nil, fmt.Errorf("harness %s cannot install a translated history", dst.Name)
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "transcript.md"), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if plan == nil || artifactDir == "" {
+		return nil, errors.New("the context-file fallback needs a plan and an artifact directory")
+	}
+	if err := os.MkdirAll(filepath.Dir(artifactDir), 0o700); err != nil {
+		return nil, err
+	}
+	if err := transcript.EnsureRealDir(artifactDir); err != nil {
+		return nil, err
+	}
+	from := describeSource(plan.Source)
+	briefing := filepath.Join(artifactDir, "briefing.md")
+	head := "# Conversation carried over from " + from + " by tclaude morph\n\n" +
+		"⟦tool call⟧ and ⟦tool result⟧ records are history, not tools you have.\n\n"
+	if err := transcript.WriteFileExclusive(briefing, []byte(head+plan.Briefing())); err != nil {
+		return nil, err
+	}
+	report := *plan.Report
+	report.Fallback = "context_file"
+	notice := "⟦tclaude morph⟧ This conversation continues one from " + from + ". Its history could not be " +
+		"installed natively, so it was saved to files instead. Before you continue, read " + briefing +
+		" (the recent history)"
+	if report.TranscriptPath != "" {
+		notice += "; " + report.TranscriptPath + " has the full transcript if you need more"
+	}
+	notice += ". The tool records in them are history, not tools you have; use your own tools to act."
+	stub := &transcript.Plan{
+		Source: plan.Source, Target: dst.Name, TargetModel: plan.TargetModel, Title: plan.Title, Report: &report,
+		Entries: []transcript.Entry{{Role: transcript.RoleUser, Origin: transcript.OriginHuman, Blocks: []transcript.Block{transcript.Text(notice)}}},
+	}
+	var buf bytes.Buffer
+	sourceID, err := dst.Transcript.Encode(stub, cwd, &buf)
 	if err != nil {
+		return nil, fmt.Errorf("encode %s context-file history: %w", dst.Name, err)
+	}
+	var id string
+	var cleanup func()
+	if streaming, ok := dst.History.(StreamingHistoryTransfer); ok {
+		id, cleanup, err = streaming.ImportReader(&buf, sourceID, cwd)
+	} else {
+		id, cleanup, err = dst.History.Import(buf.Bytes(), sourceID, cwd)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("install %s context-file history: %w", dst.Name, err)
+	}
+	if err := writeLossReport(&report, artifactDir); err != nil {
+		cleanup()
+		return nil, err
+	}
+	plan.Report.Fallback = report.Fallback
+	return &TranslateResult{ConvID: id, Cleanup: cleanup, Report: &report, Plan: plan}, nil
+}
+
+func describeSource(src transcript.Source) string {
+	if src.Model != "" {
+		return src.Harness + " (" + src.Model + ")"
+	}
+	return src.Harness
+}
+
+func writeTranslationArtifacts(t *transcript.Transcript, plan *transcript.Plan, dir string) error {
+	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
 		return err
 	}
-	if err := transcript.WriteMarkdown(t, f); err != nil {
-		_ = f.Close()
+	if err := transcript.EnsureRealDir(dir); err != nil {
 		return err
 	}
-	if err := f.Close(); err != nil {
+	var md bytes.Buffer
+	if err := transcript.WriteMarkdown(t, &md); err != nil {
+		return err
+	}
+	if err := transcript.WriteFileExclusive(filepath.Join(dir, "transcript.md"), md.Bytes()); err != nil {
 		return err
 	}
 	return plan.WriteMedia()
 }
 
+// writeLossReport replaces loss-report.json through a fresh temp file and a
+// rename, which replaces a planted symlink rather than following it.
 func writeLossReport(r *transcript.LossReport, dir string) error {
 	if r == nil {
 		return errors.New("no loss report")
@@ -205,5 +274,19 @@ func writeLossReport(r *transcript.LossReport, dir string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "loss-report.json"), append(raw, '\n'), 0o600)
+	tmp, err := os.CreateTemp(dir, ".loss-report-*")
+	if err != nil {
+		return err
+	}
+	_, writeErr := tmp.Write(append(raw, '\n'))
+	closeErr := tmp.Close()
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Rename(tmp.Name(), filepath.Join(dir, "loss-report.json")); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	return nil
 }

@@ -162,3 +162,42 @@ func mustGetHarness(t *testing.T, name string) *harness.Harness {
 	require.True(t, ok)
 	return h
 }
+
+// The context-file rung: when a translated history cannot be installed
+// natively, the destination still gets a native conversation, whose one turn
+// points at the history saved as files.
+func TestMorphTranslateContextFileFallbackResumes(t *testing.T) {
+	f := newFlow(t)
+	t.Setenv("CODEX_HOME", "")
+	const source = "0f0e0d0c-0b0a-4908-8706-050403020102"
+	cwd := testutil.CanonicalTempDir(t)
+	f.HaveAliveSession(source, "ctx-src", "ctx-pane", cwd)
+	cc := f.World.CCs.GetByLabel("ctx-src")
+	require.NotNil(t, cc)
+	require.NoError(t, cc.AppendTurn(map[string]any{"type": "user", "uuid": "u1", "parentUuid": "", "cwd": cwd,
+		"timestamp": "2026-10-01T10:00:00.000Z", "message": map[string]any{"role": "user", "content": morphSecret}}))
+	convops.ScanAndUpsertFile(cc.JsonlPath)
+
+	claude, codex := mustGetHarness(t, harness.DefaultName), mustGetHarness(t, harness.CodexName)
+	artifacts := filepath.Join(testutil.CanonicalTempDir(t), "morph")
+	opts := harness.TranslateOptions{ArtifactDir: artifacts}
+	_, plan, err := harness.PlanTranslation(claude, codex, source, cwd, opts)
+	require.NoError(t, err)
+	res, err := harness.InstallContextFile(codex, plan, cwd, artifacts)
+	require.NoError(t, err)
+	assert.Equal(t, "context_file", res.Report.Fallback)
+
+	briefing, err := os.ReadFile(filepath.Join(artifacts, "briefing.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(briefing), morphSecret, "the briefing carries the budgeted history")
+	cx := testharness.HydrateCodexSim(t, f.World.HomeDir, res.ConvID, cwd)
+	require.NoError(t, cx.Start())
+	text := historyText(t, codex, res.ConvID, cwd)
+	assert.Contains(t, text, filepath.Join(artifacts, "briefing.md"), "the one native turn points at the briefing")
+	assert.NotContains(t, text, morphSecret, "the history itself stays in the files")
+	var report transcript.LossReport
+	raw, err := os.ReadFile(filepath.Join(artifacts, "loss-report.json"))
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(raw, &report))
+	assert.Equal(t, "context_file", report.Fallback)
+}

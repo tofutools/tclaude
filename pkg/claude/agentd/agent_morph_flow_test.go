@@ -240,11 +240,11 @@ func TestMorphOwnerScopeAndRefusals(t *testing.T) {
 		code int
 		want string
 	}{
-		"sandbox field":         {map[string]any{"sandbox": "off"}, http.StatusBadRequest, "not_morphable"},
-		"cross-harness profile": {map[string]any{"profile": "codexy"}, http.StatusBadRequest, "cross_harness"},
-		"bad model":             {map[string]any{"model": "no such model!"}, http.StatusBadRequest, "invalid_form"},
-		"broader approval":      {map[string]any{"approval": "bypassPermissions"}, http.StatusForbidden, "approval_restricted"},
-		"nothing to change":     {map[string]any{}, http.StatusBadRequest, "invalid_arg"},
+		"sandbox field":                          {map[string]any{"sandbox": "off"}, http.StatusBadRequest, "not_morphable"},
+		"cross-harness profile without approval": {map[string]any{"profile": "codexy"}, http.StatusBadRequest, "invalid_form"},
+		"bad model":                              {map[string]any{"model": "no such model!"}, http.StatusBadRequest, "invalid_form"},
+		"broader approval":                       {map[string]any{"approval": "bypassPermissions"}, http.StatusForbidden, "approval_restricted"},
+		"nothing to change":                      {map[string]any{}, http.StatusBadRequest, "invalid_arg"},
 	} {
 		rec := asManager.Morph(worker.AgentID, tc.body)
 		assert.Equalf(t, tc.code, rec.Code, "%s: body=%s", name, rec.Body.String())

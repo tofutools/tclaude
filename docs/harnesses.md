@@ -156,6 +156,17 @@ transcript content) and keeps the full, unclipped transcript as a Markdown
 file beside it. Clipping and omission markers point the target agent at that
 file.
 
+If the translated history cannot be installed natively, the target instead
+gets a native conversation of one turn that points the agent at the history
+saved as files: `briefing.md` (the budgeted history as plain text) and the full
+transcript. The loss report records which of the two was used.
+
+A morph keeps these files in a per-agent directory under
+`~/.tclaude/api/morph/`. The agent must be able to read them, and tclaude's
+private data directory is walled off from a sandboxed agent. Under tclaude's
+sandbox the parent is hidden and each launch reopens only its own agent's
+directory, the same way spawn attachments are granted.
+
 The rest of this page walks each harness: setup, maturity, models, sandbox
 and approval knobs, and the extras only that harness has.
 

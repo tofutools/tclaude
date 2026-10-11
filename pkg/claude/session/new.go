@@ -2334,6 +2334,17 @@ func runNew(params *NewParams) error {
 			Parent:  common.SpawnAttachmentsPrivateBase(),
 			Current: privateAttachmentDir,
 		})
+		// A cross-harness morph left this agent's translated history there,
+		// and the agent is pointed at it on every later launch.
+		if rowConvID != "" {
+			if agentID, err := db.AgentIDForConv(rowConvID); err == nil {
+				if dir := common.ExistingMorphArtifactsDir(agentID); dir != "" {
+					privateWriteDirs = append(privateWriteDirs, TclaudeLayerPrivateWriteDir{
+						Parent: common.MorphArtifactsBase(), Current: dir,
+					})
+				}
+			}
+		}
 	}
 	var stackedProof *StackedSandboxProof
 	defer func() {
