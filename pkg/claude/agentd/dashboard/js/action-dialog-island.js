@@ -147,13 +147,14 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const [followUp, setFollowUp] = useState('');
   const [copyConversation, setCopyConversation] = useState(true);
+  const [copyOwnership, setCopyOwnership] = useState(true);
   const [worktree, setWorktree] = useState('');
   const [branch, setBranch] = useState('');
   const [base, setBase] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const source = descriptor.label || shortID(descriptor.conv);
-  const dirty = !!followUp || !copyConversation || !!worktree || !!branch;
+  const dirty = !!followUp || !copyConversation || !copyOwnership || !!worktree || !!branch;
 
   const submit = async () => {
     if (busy) return;
@@ -173,6 +174,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
         label: source,
         followUp,
         copyConversation,
+        copyOwnership,
         cwd,
       }, descriptor);
     } catch (cause) { setError(errorMessage(cause)); }
@@ -206,13 +208,21 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
           onInput=${(event) => setFollowUp(event.currentTarget.value)}
         ></textarea>
       </label>
-      <label class="cron-create-enabled" title="When checked, copies the source conv.jsonl onto the clone so it starts with the full history. Uncheck for a fresh CC instance that only inherits identity.">
+      <label class="cron-create-enabled" title="When checked, copies the source's conversation onto the clone so it starts with the full history. Uncheck for a fresh agent that only inherits identity.">
         <input
           id="clone-agent-copy-conv"
           type="checkbox"
           checked=${copyConversation}
           onChange=${(event) => setCopyConversation(event.currentTarget.checked)}
-        /> Copy conversation history (jsonl)
+        /> Copy conversation history
+      </label>
+      <label class="cron-create-enabled" title="When checked, the clone also owns every group the source owns. Uncheck to give the clone the source's memberships and permissions but no group ownership.">
+        <input
+          id="clone-agent-copy-ownership"
+          type="checkbox"
+          checked=${copyOwnership}
+          onChange=${(event) => setCopyOwnership(event.currentTarget.checked)}
+        /> Copy group ownership
       </label>
       <${WorktreeFields}
         repo=${descriptor.cwd}

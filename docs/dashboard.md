@@ -682,6 +682,14 @@ mode cannot use stay listed with the reason; the right-hand panel says what
 carries over. CLI: `tclaude federation move-agent`, `tclaude agent clone`,
 `tclaude agent morph`, `tclaude agent teleport`.
 
+Cloning on this node has one entry: **send elsewhere → clone…**, whose
+**Clone** mode continues in the clone dialog. The dialog can start the clone in
+another worktree, skip the conversation copy, and keep the source's group
+ownerships off the clone (**Copy group ownership**, on by default).
+Ctrl/⌘-dragging an agent onto a group clones it into that group in one
+request: the clone and its new membership land together or not at all. In a
+peer's single-node view, the ⚙ **clone** item asks the peer instead.
+
 ### Messages on several nodes
 
 In a fused view, Messages shows the ticked nodes' mail in the usual layout.

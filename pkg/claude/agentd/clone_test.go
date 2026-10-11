@@ -1,6 +1,8 @@
 package agentd
 
 import (
+	"bufio"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -323,4 +325,12 @@ func TestUniqueCloneTitle_NumericSuffixInBaseName(t *testing.T) {
 	upsertCustomTitle(t, "c", "worker-2")
 	got = uniqueCloneTitle("worker-2")
 	assert.Equal(t, "worker-2-c-1", got, "worker-2 first clone")
+}
+
+// A live source may be mid-append; the copy stops at the last whole record.
+func TestCompleteLinesReaderDropsTrailingFragment(t *testing.T) {
+	r := &completeLinesReader{r: bufio.NewReader(strings.NewReader("{\"a\":1}\n{\"b\":2}\n{\"c\":"))}
+	got, err := io.ReadAll(r)
+	require.NoError(t, err)
+	assert.Equal(t, "{\"a\":1}\n{\"b\":2}\n", string(got))
 }

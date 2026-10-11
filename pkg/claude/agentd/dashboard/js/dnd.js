@@ -526,17 +526,15 @@ function bindDnd() {
   };
 }
 
-// runDndClone forks the source conv via POST /api/agents/{conv}/clone,
-// then adds the new conv to the target group with POST
-// /api/groups/{target}/members. The clone inherits all source
-// memberships (including the source group) — the target-group POST
-// is the differentiator: it ensures the clone is in the dropped-on
-// group even when source wasn't already there.
+// runDndClone forks the source conv via POST /api/agents/{conv}/clone with
+// the drop target as `group`. The clone inherits all source memberships
+// (including the source group) and joins the dropped-on group in the same
+// request, so the clone and its new membership succeed or fail together.
 //
 // No optimistic UI: the new conv-id isn't known until the response
 // lands, and inventing a placeholder row would confuse the user
 // when the real conv-id replaces it on the next poll. Just await
-// both calls and refresh.
+// the call and refresh.
 async function runDndClone(payload, targetGroup) {
   const {conv, label} = payload;
   // sel = the rotation-immune selector (agent_id, conv-id fallback) the
@@ -556,7 +554,7 @@ async function runDndClone(payload, targetGroup) {
     const cloneRes = await fetch(`/api/agents/${encodeURIComponent(sel)}/clone`, {
       method: 'POST', credentials: 'same-origin',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({}),
+      body: JSON.stringify({group: targetGroup}),
     });
     if (!cloneRes.ok) {
       toast(`clone failed: ${await cloneRes.text()}`, true);
@@ -566,18 +564,6 @@ async function runDndClone(payload, targetGroup) {
     const newConv = out.new_conv;
     if (!newConv) {
       toast(`clone: response missing new_conv`, true);
-      return;
-    }
-    // Add the new conv to the drop target group. Idempotent if the
-    // clone already inherited that group from the source's
-    // memberships.
-    const addRes = await fetch(`/api/groups/${encodeURIComponent(targetGroup)}/members`, {
-      method: 'POST', credentials: 'same-origin',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({conv: newConv}),
-    });
-    if (!addRes.ok) {
-      toast(`clone add-to-${targetGroup} failed: ${await addRes.text()}`, true);
       return;
     }
     toast(`cloned ${label} → ${targetGroup} (new ${newConv.slice(0,8)})`);

@@ -230,9 +230,7 @@ func TestGroupsClone_CodexCopyUsesInheritedCwdWithoutCallerProof(t *testing.T) {
 	f := newFlow(t)
 	const source = "92e452c0-eef5-4fa3-beb9-51f4f8722336"
 	repo, _ := initRepoOnMain(t)
-	f.HaveAliveSession(source, "spwn-group-copy", "tclaude-spwn-group-copy", repo)
-	markSessionAsCodex(t, "spwn-group-copy")
-	installCodexCopyCompatSpawner(t)
+	f.HaveAliveCodexSession(source, "spwn-group-copy", "tclaude-spwn-group-copy", repo)
 	f.HaveGroup("codex-team")
 	f.HaveMember("codex-team", source)
 

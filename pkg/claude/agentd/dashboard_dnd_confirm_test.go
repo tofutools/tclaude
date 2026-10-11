@@ -156,3 +156,16 @@ func TestDashboardHTML_DndOperationsConfirm(t *testing.T) {
 		t.Error("runDndRetire: cancel/dangling failure must reconcile drag presentation")
 	}
 }
+
+// A drag-to-group clone is ONE request naming the drop group, so the clone and
+// its new membership succeed or fail together; a second members POST would let
+// a clone exist outside the group it was dropped on.
+func TestDashboardDnDClone_SendsDropGroupInCloneRequest(t *testing.T) {
+	body := dndFuncBody(t, "runDndClone")
+	if !strings.Contains(body, "JSON.stringify({group: targetGroup})") {
+		t.Fatalf("runDndClone must send the drop group in the clone request:\n%s", body)
+	}
+	if strings.Contains(body, "/members") {
+		t.Fatalf("runDndClone must not add the clone to the group in a second request:\n%s", body)
+	}
+}

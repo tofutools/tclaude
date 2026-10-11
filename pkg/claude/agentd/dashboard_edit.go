@@ -1260,11 +1260,8 @@ func dashboardStopAgent(w http.ResponseWriter, r *http.Request, convSelector str
 // path.
 //
 // The dashboard's Ctrl-drag handler uses this to clone a member into
-// a target group: it fires this endpoint, parses the response for
-// `new_conv`, then fires `POST /api/groups/{target}/members` to add
-// the clone to the drop target group (idempotent). Keeping the
-// target-group join client-side keeps the daemon endpoint identical
-// to the v1 surface.
+// a target group, naming the drop group as `group` so the clone and its
+// new membership land in one request.
 func dashboardCloneAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
 	res, _, err := agent.ResolveSelector(convSelector)
 	if err != nil {

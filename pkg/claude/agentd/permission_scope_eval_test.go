@@ -473,7 +473,10 @@ func TestApplyClonedIdentityPreservesGrantScopes(t *testing.T) {
 
 	perms, err := db.ListAgentPermissionOverrideRowsForConv(src)
 	require.NoError(t, err)
-	applyClonedIdentity(dst, "test", nil, perms, nil)
+	dstAgent, _, err := db.EnsureAgentForConv(dst, "clone")
+	require.NoError(t, err)
+	_, err = applyClonedIdentity(dstAgent, "test", nil, perms, nil)
+	require.NoError(t, err)
 
 	rows, err := db.ListAgentPermissionOverrideRowsForConv(dst)
 	require.NoError(t, err)

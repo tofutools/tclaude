@@ -2,11 +2,14 @@ package harness
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 const historySource = "019fe740-43a4-7023-b8ae-1ee64459f2a1"
@@ -53,3 +56,26 @@ type historyLimitedReader struct {
 }
 
 func (r historyLimitedReader) HistoryRecordLimit() int { return r.limit }
+
+// A clone whose source runs with a private CODEX_HOME must find its imported
+// rollout under that root, not under the daemon's own Codex home.
+func TestCodexHistoryImportHonoursExplicitStateRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, "daemon-codex"))
+	db.ResetForTest()
+	root := filepath.Join(home, "agent-codex")
+	h, _ := Get(CodexName)
+	scoped := h.History.(interface {
+		WithCodexHome(string) HistoryTransfer
+	}).WithCodexHome(root)
+	raw := `{"type":"session_meta","payload":{"id":"` + historySource + `","cwd":"/original"}}` + "\n"
+	id, cleanup, err := scoped.Import([]byte(raw), historySource, "/receiving")
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	matches, err := filepath.Glob(filepath.Join(root, "sessions", "*", "*", "*", "rollout-*-"+id+".jsonl"))
+	require.NoError(t, err)
+	assert.Len(t, matches, 1, "rollout lands under the explicit root")
+	_, err = os.Stat(filepath.Join(home, "daemon-codex", "sessions"))
+	assert.True(t, os.IsNotExist(err), "nothing lands under the daemon's own CODEX_HOME")
+}

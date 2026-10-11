@@ -18,7 +18,7 @@ import {
   deleteLink, openLinkCreate, openLinkEdit, openLinksManager,
 } from './links-controller.js';
 import {
-  chooseTerminalDirectory, openAgentExportDialog, openCloneAgentDialog,
+  chooseTerminalDirectory, openAgentExportDialog,
   openGroupSettingsDialog, openNestGroupDialog, openReincarnateAgentDialog, openSandboxImplDialog,
   openTaskLinkDialog, openLaunchTargetDialog } from './action-dialog-controller.js';
 import { launchAgent } from './launch-target-dialog.js';
@@ -641,13 +641,6 @@ export async function handleRowAction(action) {
         const fleet = skynetState.fleet.value;
         const node = data.node ? { id: data.node, name: data.nodeName || data.node.slice(0, 13) } : fleet?.self || { id: 'local', name: 'this node' };
         openLaunchTargetDialog({ mode: data.mode || 'move', agent: launchAgent(data, node) });
-        return;
-      }
-      case 'clone': {
-        // Open the clone modal pre-populated with this agent. The
-        // modal handles the POST + refresh. data-cwd seeds the
-        // worktree picker with the source agent's repo.
-        openCloneAgentDialog(agent, label, data.cwd || '');
         return;
       }
       case 'reincarnate': {
