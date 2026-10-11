@@ -161,7 +161,11 @@ is explicit about what does not map 1:1:
   carried with the pins and whatever native tail fits. No model call runs
   behind the operator's back. The dialog shows the source name, deadline
   and cancellation while waiting, and restores that state when reopened.
-  Timeout, cancellation or a refusal leave the source unchanged. The budget is checked again before applying the morph.
+  Timeout, cancellation or a refusal leave the source unchanged. During a
+  provider outage, an explicit `--proceed-without-summary` or the dialog's
+  loss-confirmation checkbox instead carries readable history with its full
+  transcript pointer. The destination is warned that earlier context may be
+  missing. The fallback never runs without that confirmation. The budget is checked again before applying the morph.
 - **Resets and rewinds** carry only the active native history. Gemini compression
   snapshots are labelled as summaries; clear/checkpoint, OpenCode revert and
   Codex/Copilot rewind boundaries are applied before carrying turns. Removed

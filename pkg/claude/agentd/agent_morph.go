@@ -33,16 +33,17 @@ var morphPendingTTL = 30 * time.Minute
 // Unknown fields are rejected, and the fields morph refuses by design are
 // named in morphRefusedFields so a caller gets a reason, not a silent drop.
 type morphRequest struct {
-	ConfirmHistoryLoss bool    `json:"confirm_history_loss,omitempty"`
-	Profile            string  `json:"profile,omitempty"`
-	Harness            string  `json:"harness,omitempty"`
-	Model              *string `json:"model,omitempty"`
-	Effort             *string `json:"effort,omitempty"`
-	Approval           *string `json:"approval,omitempty"`
-	Tools              *string `json:"tools,omitempty"`
-	AskTimeout         *string `json:"ask_timeout,omitempty"`
-	AutoCompactWindow  *string `json:"auto_compact_window,omitempty"`
-	TrustDir           *bool   `json:"trust_dir,omitempty"`
+	ConfirmHistoryLoss    bool    `json:"confirm_history_loss,omitempty"`
+	ProceedWithoutSummary bool    `json:"proceed_without_summary,omitempty"`
+	Profile               string  `json:"profile,omitempty"`
+	Harness               string  `json:"harness,omitempty"`
+	Model                 *string `json:"model,omitempty"`
+	Effort                *string `json:"effort,omitempty"`
+	Approval              *string `json:"approval,omitempty"`
+	Tools                 *string `json:"tools,omitempty"`
+	AskTimeout            *string `json:"ask_timeout,omitempty"`
+	AutoCompactWindow     *string `json:"auto_compact_window,omitempty"`
+	TrustDir              *bool   `json:"trust_dir,omitempty"`
 	// History picks the delivery rung of a cross-harness morph: "" or
 	// "auto" (native, else a context file, else a handoff), "context_file",
 	// or "handoff" (the agent writes a handoff for its successor first).
@@ -685,7 +686,7 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 		}
 		if report.NeedsSummary {
 			report.Fallback = "native_summary"
-			if !req.DryRun && !req.ConfirmHistoryLoss {
+			if !req.DryRun && !req.ConfirmHistoryLoss && !req.ProceedWithoutSummary {
 				writeError(w, http.StatusConflict, "history_confirmation_required", fmt.Sprintf("drop %d%% of inline history, carry a source-written summary; confirm_history_loss is required", report.DroppedPercent))
 				return
 			}
@@ -693,6 +694,11 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 				history = "summary"
 			}
 			handoffRequired = true
+		}
+		if req.ProceedWithoutSummary && history == "summary" {
+			history, handoffRequired = "", false
+			report.Fallback = "native_without_summary"
+			report.SelectionReason = "source could not write a summary; proceed explicitly with readable history and the full-transcript pointer"
 		}
 		if history == "summary" && !req.DryRun && !live {
 			writeError(w, http.StatusConflict, "agent_offline", "the source agent is offline, so it cannot write the required history summary")
@@ -724,7 +730,7 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 		actorLabel = auditConvLabel(caller)
 	}
 	pending := db.AgentPendingMorph{
-		ConfirmHistoryLoss: req.ConfirmHistoryLoss, Target: target, Back: req.Back, ActorConv: caller, Actor: actorLabel, ConvID: targetConv, History: history,
+		ConfirmHistoryLoss: req.ConfirmHistoryLoss || req.ProceedWithoutSummary, ProceedWithoutSummary: req.ProceedWithoutSummary, Target: target, Back: req.Back, ActorConv: caller, Actor: actorLabel, ConvID: targetConv, History: history,
 		HandoffRequired: handoffRequired,
 	}
 	out := morphOrDefer(agentID, targetConv, pending, req.Now, self)

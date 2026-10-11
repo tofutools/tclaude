@@ -43,14 +43,15 @@ type AgentMorphForm struct {
 // the relaunch-profile JSON so it survives daemon restarts. ConvID pins the
 // generation it was requested against; a reincarnation or move drops it.
 type AgentPendingMorph struct {
-	ConfirmHistoryLoss bool           `json:"confirm_history_loss,omitempty"`
-	Target             AgentMorphForm `json:"target"`
-	Back               bool           `json:"back,omitempty"`
-	ActorConv          string         `json:"actor_conv,omitempty"`
-	Actor              string         `json:"actor"`
-	ConvID             string         `json:"conv_id"`
-	RequestedAt        time.Time      `json:"requested_at"`
-	ExpiresAt          time.Time      `json:"expires_at"`
+	ConfirmHistoryLoss    bool           `json:"confirm_history_loss,omitempty"`
+	ProceedWithoutSummary bool           `json:"proceed_without_summary,omitempty"`
+	Target                AgentMorphForm `json:"target"`
+	Back                  bool           `json:"back,omitempty"`
+	ActorConv             string         `json:"actor_conv,omitempty"`
+	Actor                 string         `json:"actor"`
+	ConvID                string         `json:"conv_id"`
+	RequestedAt           time.Time      `json:"requested_at"`
+	ExpiresAt             time.Time      `json:"expires_at"`
 	// History is the requested delivery rung of a cross-harness morph: ""
 	// (native, falling back to a context file), "context_file", or
 	// "handoff" (the agent writes a handoff for its successor first), or

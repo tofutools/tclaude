@@ -201,6 +201,7 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
   const [profile, setProfile] = useState('');
   const [now, setNow] = useState(false);
   const [confirmCut, setConfirmCut] = useState(false);
+  const [proceedWithoutSummary, setProceedWithoutSummary] = useState(false);
   const [waiting, setWaiting] = useState(null);
   const [remaining, setRemaining] = useState(0);
   const [preview, setPreview] = useState(null);
@@ -221,7 +222,7 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
     return () => { live = false; };
   }, []);
   useEffect(() => {
-    setPreview(null); setCarry(null); setConfirmCut(false);
+    setPreview(null); setCarry(null); setConfirmCut(false); setProceedWithoutSummary(false);
     if (!profile) return undefined;
     let live = true;
     setError('');
@@ -254,11 +255,21 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
     catch (e) { setError(errText(e)); }
     finally { setBusy(false); }
   };
+  const continueWithoutSummary = async () => {
+    const targetProfile = profile || waiting?.target?.profile;
+    if (!proceedWithoutSummary || !targetProfile || busy) return;
+    setBusy(true); setError('');
+    try {
+      await api.morph(agent.id, {profile:targetProfile, proceed_without_summary:true, now:true});
+      toast('Morphing with readable history only; the full transcript is saved.'); onClose();
+    } catch(e) { setError(errText(e)); }
+    finally { setBusy(false); }
+  };
   const apply = async () => {
-    if (!profile || !preview || busy || (preview.history?.needs_summary && !confirmCut)) return;
+    if (!profile || !preview || busy || (preview.history?.needs_summary && !confirmCut && !proceedWithoutSummary)) return;
     setBusy(true); setError('');
     let done;
-    try { done = await api.morph(agent.conv || agent.id, { profile, ...(now && !preview.history?.needs_summary ? { now: true } : {}), ...(confirmCut ? { confirm_history_loss: true } : {}) }); } catch (e) { setError(errText(e)); setBusy(false); return; }
+    try { done = await api.morph(agent.conv || agent.id, { profile, ...(now && !preview.history?.needs_summary ? { now: true } : {}), ...(confirmCut ? { confirm_history_loss: true } : {}), ...(proceedWithoutSummary ? { proceed_without_summary: true } : {}) }); } catch (e) { setError(errText(e)); setBusy(false); return; }
     if (done?.result === 'pending' && done?.pending_morph?.history === 'summary') {
       setWaiting(done.pending_morph); setRemaining(Math.max(0,Math.ceil((Date.parse(done.pending_morph.expires_at)-Date.now())/1000))); setBusy(false); return;
     }
@@ -271,6 +282,8 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
   };
   return html`
     ${waiting && html`<div role="status" data-lt-state="waiting-summary">Waiting for ${agent.name}'s history summary · ${Math.floor(remaining/60)}m ${remaining%60}s left. Timeout leaves it unchanged.<button type="button" onClick=${cancelPending} disabled=${busy}>Cancel pending morph</button><button type="button" onClick=${onClose}>Close</button></div>`}
+    ${(waiting || preview?.history?.needs_summary) && html`<label class="lt-check"><input id="lt-proceed-without-summary" type="checkbox" checked=${proceedWithoutSummary} onChange=${(e) => setProceedWithoutSummary(e.currentTarget.checked)} /> Source cannot answer (for example, provider outage): continue with readable history and the full-transcript pointer. Earlier context may be lost.</label>`}
+    ${waiting && html`<button type="button" id="lt-proceed-loss" disabled=${!proceedWithoutSummary || busy || !(profile || waiting.target?.profile)} onClick=${continueWithoutSummary}>Continue now without a summary</button>`}
     <label class="lt-row"><span class="lt-k">Stays on</span><span class="muted">this node · ${agent.group || 'its groups'}</span></label>
     <label class="lt-row"><span class="lt-k">Profile</span>${profiles === null ? html`<span class="muted">loading…</span>` : html`<select id="lt-morph-profile" value=${profile} disabled=${busy || !!waiting} onChange=${(e) => setProfile(e.currentTarget.value)}>
       <option value="">pick a spawn profile…</option>
@@ -282,7 +295,7 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="modal-buttons"><span class="spacer"></span>
       <button type="button" id="lt-cancel" onClick=${onClose}>Cancel</button>
-      <button type="button" ref=${okRef} class="primary" id="lt-ok" disabled=${!preview || busy || !!waiting || (preview?.history?.needs_summary && !confirmCut)} onClick=${apply}>${busy ? 'Morphing…' : preview?.history?.needs_summary ? 'Request summary and morph' : now ? 'Morph now' : 'Morph at next idle turn'}</button></div>`;
+      <button type="button" ref=${okRef} class="primary" id="lt-ok" disabled=${!preview || busy || !!waiting || (preview?.history?.needs_summary && !confirmCut && !proceedWithoutSummary)} onClick=${apply}>${busy ? 'Morphing…' : preview?.history?.needs_summary ? 'Request summary and morph' : now ? 'Morph now' : 'Morph at next idle turn'}</button></div>`;
 }
 
 export function formLine(v) {

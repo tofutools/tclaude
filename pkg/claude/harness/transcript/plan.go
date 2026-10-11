@@ -28,7 +28,8 @@ type Options struct {
 	// TargetModel is the destination model, used only in the notice.
 	TargetModel string
 	// Summary is source-written context requested before a large budget cut.
-	Summary string
+	SummaryUnavailable bool
+	Summary            string
 	// ContextWindowTokens is the destination model's window; zero uses
 	// DefaultContextWindowTokens.
 	ContextWindowTokens int64
@@ -220,6 +221,11 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 	notice := fmt.Sprintf("%stclaude morph%s History carried over from %s to %s. Tool records are history; use your own tools.", markOpen, markClose, describe(t.Source.Harness, t.Source.Model), describe(opts.Target, opts.TargetModel))
 	if report.TranscriptPath != "" {
 		notice += " Full tool output: " + report.TranscriptPath + "."
+	}
+	if opts.SummaryUnavailable {
+		report.Add(LossNotCarried, 1, "source could not write a history summary; explicitly continued with readable history and the full-transcript pointer")
+		report.SelectionReason = "source could not write a summary; readable history only, full transcript saved"
+		notice += " Source could not write a summary; earlier context may be missing. Read the full transcript when needed."
 	}
 	notice += " No need to re-read skills or re-verify the environment unless something looks wrong."
 	entries = append(entries, planEntry{entry: Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text(notice)}}})

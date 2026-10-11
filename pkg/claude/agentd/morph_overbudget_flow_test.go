@@ -18,7 +18,7 @@ import (
 )
 
 func TestMorphOverBudgetSummaryFlow(t *testing.T) {
-	for _, action := range []string{"submit", "timeout", "cancel", "busy_timeout"} {
+	for _, action := range []string{"submit", "timeout", "cancel", "busy_timeout", "outage_fallback", "offline_fallback"} {
 		t.Run(action, func(t *testing.T) {
 			t.Setenv(session.ResourceDelegationDirEnv, "")
 			t.Setenv("CODEX_HOME", "")
@@ -83,6 +83,13 @@ func TestMorphOverBudgetSummaryFlow(t *testing.T) {
 			case "timeout":
 				pending.ExpiresAt = time.Now().Add(-time.Minute)
 				require.NoError(t, db.SetAgentPendingMorphForConv(spawn.ConvID, pending))
+			case "outage_fallback", "offline_fallback":
+				if action == "offline_fallback" {
+					f.MarkOffline(spawn.TmuxSession)
+				}
+				body["proceed_without_summary"] = true
+				rec = f.AsHuman().Morph(spawn.AgentID, body)
+				require.Equal(t, "morphed", decodeCrossMorph(t, rec.Code, rec.Body.Bytes()).Result)
 			case "cancel":
 				rec = f.AsHuman().Morph(spawn.AgentID, map[string]any{"cancel": true})
 				require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -93,7 +100,7 @@ func TestMorphOverBudgetSummaryFlow(t *testing.T) {
 			pending, err = db.PendingMorphForAgent(spawn.AgentID)
 			require.NoError(t, err)
 			require.Nil(t, pending)
-			if action != "submit" {
+			if action != "submit" && action != "outage_fallback" && action != "offline_fallback" {
 				assert.Equal(t, spawn.ConvID, agent.CurrentConvID, "cancel or timeout leaves the source unchanged")
 				return
 			}
@@ -103,7 +110,13 @@ func TestMorphOverBudgetSummaryFlow(t *testing.T) {
 			text := historyText(t, mustGetHarness(t, harness.CodexName), agent.CurrentConvID, profile.Cwd)
 			assert.Contains(t, text, morphSecret)
 			assert.Contains(t, text, "Task update 39")
-			assert.Contains(t, text, "Earlier work summary")
+			if action == "submit" {
+				assert.Contains(t, text, "Earlier work summary")
+			} else {
+				assert.NotContains(t, text, "Earlier work summary")
+				assert.Contains(t, text, "Source could not write a summary")
+				assert.Contains(t, text, "transcript.md")
+			}
 		})
 	}
 }

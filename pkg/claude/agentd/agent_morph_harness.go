@@ -433,6 +433,7 @@ func morphArtifactDir(agentID string) (string, error) {
 // files. The source conversation is only read.
 func (cm *crossMorph) installHistory(agentID, convID string, pending db.AgentPendingMorph) (*harness.TranslateResult, error) {
 	opts := cm.opts
+	opts.Policy.SummaryUnavailable = pending.ProceedWithoutSummary
 	dir, err := morphArtifactDir(agentID)
 	if err != nil {
 		return nil, fmt.Errorf("prepare the morph artifact directory: %w", err)
@@ -456,6 +457,9 @@ func (cm *crossMorph) installHistory(agentID, convID string, pending db.AgentPen
 		opts.ContextFile = true
 	}
 	res, err := harness.TranslateHistory(cm.src, cm.dst, convID, cm.cwd, opts)
+	if res != nil && pending.ProceedWithoutSummary && res.Report.Fallback == "native" {
+		res.Report.Fallback = "native_without_summary"
+	}
 	if res != nil && pending.History == "summary" && res.Report.Fallback == "native" {
 		res.Report.Fallback = "native_summary"
 	}
@@ -493,7 +497,7 @@ func applyCrossHarnessMorphUnderLaunchLock(agentID, convID string, pending db.Ag
 		if err != nil {
 			return morphOutcome{status: http.StatusConflict, code: "history_unreadable", detail: err.Error()}
 		}
-		if preflight.NeedsSummary && (!pending.ConfirmHistoryLoss || pending.Handoff == nil || strings.TrimSpace(pending.Handoff.Body) == "") {
+		if preflight.NeedsSummary && !pending.ProceedWithoutSummary && (!pending.ConfirmHistoryLoss || pending.Handoff == nil || strings.TrimSpace(pending.Handoff.Body) == "") {
 			return morphOutcome{status: http.StatusConflict, code: "history_confirmation_required", detail: "history grew beyond the confirmed budget or its required summary is missing; source remains unchanged"}
 		}
 	}
