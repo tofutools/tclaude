@@ -3527,6 +3527,30 @@ flagging shebangs, script extensions and executable bits as security-relevant.
 Executable bits are stripped unless `--preserve-executable` is explicitly set.
 Existing skills require `--replace`. Import requires the preview token with
 exactly the same roots and confirmations; target changes invalidate it.
+Group targets use `--skill-target group:NAME` and install project skills into
+the group's current default directory at `.claude/skills/NAME`. The preview
+shows the resolved destination. A custom skill root uses `--skill-target custom
+--custom-dir /absolute/existing/directory`; it must exist, with no `..` or
+symlink in any path component. Custom targets are human-only. Target paths and
+root identities are bound to the single-use preview token; a changed group
+default directory or custom root requires another preview.
+
+After fetching, GET `/api/federation/boards/BOARD/items/ITEM/versions/VERSION/archive`
+(or `/v1/federation/boards/.../archive`) streams a verified tar.gz download.
+Skills contain `NAME/SKILL.md` and supporting files; config items contain
+`bundle.json`. Executable bits are stripped unless `?preserve_executable=1`
+is explicitly requested. The existing `/download` still returns the JSON
+transfer bundle.
+
+Catalog rows expose `updated_at` (UTC) and `seq` as hub-reported sorting data,
+outside signed receipts. An optional description from skill frontmatter is
+independently publisher-signed inside the existing encrypted metadata, bound
+to the item, version and payload hash. Older daemons ignore this extension and
+continue verifying the original manifest and receipt unchanged. Missing or
+invalid descriptions are omitted without hiding valid content. New re-posts
+preserve the description; older re-posters may omit it. Older hubs omit the
+sorting fields, so newer clients display them as unknown.
+
 Installing a skill does not execute any of its files. Agents may later follow
 its instructions or run scripts, including through an interpreter without an
 executable bit, so inspect them before confirming.

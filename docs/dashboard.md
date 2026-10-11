@@ -865,7 +865,13 @@ file, marks scripts and executables **security-relevant**, and shows their
 contents as text. Choose the destination skill root(s), preview again, and
 confirm. Existing skills require overwrite confirmation. Executable bits are
 removed unless you explicitly confirm preserving them; scripts can still be
-invoked through an interpreter. Symlinks and special files are refused.
+invoked through an interpreter. Symlinks and special files are refused. Group destinations
+install project skills under the group's default directory at
+`.claude/skills/NAME`; custom destinations must be existing absolute directories
+without symlink components or parent traversal. The preview shows the resolved
+path before confirmation. A verified archive download contains the skill files
+(or `bundle.json` for configuration items), with executable bits stripped
+unless explicitly confirmed.
 
 **Post to…** (on an item or one of its versions) posts that version, unchanged
 and still signed by its author, to another board you can post to. An

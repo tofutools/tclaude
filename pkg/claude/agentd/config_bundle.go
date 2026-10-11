@@ -161,6 +161,7 @@ type configBundleRequest struct {
 }
 type configBundleChange struct {
 	Item     string          `json:"item"`
+	Path     string          `json:"path,omitempty"`
 	Action   string          `json:"action"`
 	Security bool            `json:"security,omitempty"`
 	Before   json.RawMessage `json:"before,omitempty"`

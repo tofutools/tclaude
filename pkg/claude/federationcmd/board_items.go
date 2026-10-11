@@ -25,7 +25,7 @@ func runBoardItemCommand(p *boardCommandParams, stdout, stderr io.Writer) int {
 	}
 	path := "/v1/federation/boards/" + url.PathEscape(p.Board) + "/items"
 	method := "GET"
-	body := map[string]any{"skill_root": p.SkillRoot, "skill_targets": p.SkillTargets, "preserve_executable": p.PreserveExecutable, "name": p.Name, "item": p.Item, "parent": p.Parent, "only": p.Only, "skip": p.Skip, "replace": p.Replace, "preview_token": p.PreviewToken}
+	body := map[string]any{"custom_dir": p.CustomDir, "skill_root": p.SkillRoot, "skill_targets": p.SkillTargets, "preserve_executable": p.PreserveExecutable, "name": p.Name, "item": p.Item, "parent": p.Parent, "only": p.Only, "skip": p.Skip, "replace": p.Replace, "preview_token": p.PreviewToken}
 	if p.FromBoard != "" {
 		if p.FromItem == "" || p.FromVersion == "" {
 			return invalid("--from-item and --from-version required")

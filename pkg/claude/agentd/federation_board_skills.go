@@ -16,15 +16,20 @@ import (
 	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/skillbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/skillroots"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 type boardSkillRoot struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
-	Path  string `json:"path"`
+	ID               string `json:"id"`
+	Label            string `json:"label"`
+	Path             string `json:"path"`
+	Kind             string `json:"kind"`
+	GroupID          int64  `json:"group_id,omitempty"`
+	Identity         string `json:"root_identity,omitempty"`
+	BoundaryIdentity string `json:"boundary_identity,omitempty"`
 }
 
 func boardSkillRoots() ([]boardSkillRoot, error) {
@@ -36,9 +41,9 @@ func boardSkillRoots() ([]boardSkillRoot, error) {
 	if e != nil {
 		return nil, e
 	}
-	out := []boardSkillRoot{{"claude", "Claude Code", claude}, {"agents", "Codex shared (.agents)", codex[0]}}
+	out := []boardSkillRoot{{ID: "claude", Label: "Claude Code", Path: claude, Kind: "harness"}, {ID: "agents", Label: "Codex shared (.agents)", Path: codex[0], Kind: "harness"}}
 	if len(codex) > 1 {
-		out = append(out, boardSkillRoot{"codex", "Codex home", codex[1]})
+		out = append(out, boardSkillRoot{ID: "codex", Label: "Codex home", Path: codex[1], Kind: "harness"})
 	}
 	return out, nil
 }
@@ -138,24 +143,64 @@ func boardSkillImport(w http.ResponseWriter, r *http.Request, op string, ref boa
 		writeError(w, 400, "skill_roots", e.Error())
 		return
 	}
+	groups, e := db.ListAgentGroups()
+	if e != nil {
+		writeError(w, 500, "skill_roots", e.Error())
+		return
+	}
+	for _, group := range groups {
+		if group.DefaultCwd == "" || group.IsArchived() {
+			continue
+		}
+		base, err := filepath.EvalSymlinks(group.DefaultCwd)
+		if err != nil {
+			continue
+		}
+		info, err := os.Stat(base)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		path, err := boardSkillCanonicalRoot(filepath.Join(base, ".claude", "skills"))
+		if err != nil {
+			continue
+		}
+		roots = append(roots, boardSkillRoot{ID: "group:" + group.Name, Label: "Group " + group.Name, Path: path, Kind: "group", GroupID: group.ID, BoundaryIdentity: boardRootIdentity(info)})
+	}
+	if in.CustomDir != "" {
+		custom, err := boardCustomRoot(in.CustomDir)
+		if err != nil {
+			writeError(w, 400, "custom_dir", err.Error())
+			return
+		}
+		roots = append(roots, custom)
+	}
 	selected := []boardSkillRoot{}
 	physical := map[string]bool{}
 	seen := map[string]bool{}
 	for _, id := range in.SkillTargets {
 		i := slices.IndexFunc(roots, func(root boardSkillRoot) bool { return root.ID == id })
+		if id == "custom" && in.CustomDir == "" {
+			writeError(w, 400, "custom_dir", "enter an existing absolute custom directory")
+			return
+		}
 		if i < 0 || seen[id] {
 			writeError(w, 400, "skill_targets", "select distinct known skill roots")
 			return
 		}
 		seen[id] = true
 		target := roots[i]
-		target.Path, e = boardSkillCanonicalRoot(target.Path)
+		if target.Kind != "custom" {
+			target.Path, e = boardSkillCanonicalRoot(target.Path)
+		}
 		if e != nil {
 			writeError(w, 409, "skill_target", e.Error())
 			return
 		}
 		if physical[target.Path] {
 			continue
+		}
+		if info, err := os.Stat(target.Path); err == nil && target.Kind != "custom" {
+			target.Identity = boardRootIdentity(info)
 		}
 		physical[target.Path] = true
 		selected = append(selected, target)
@@ -184,7 +229,7 @@ func boardSkillImport(w http.ResponseWriter, r *http.Request, op string, ref boa
 		if snapshot == desired {
 			action = "unchanged"
 		}
-		preview.Changes = append(preview.Changes, configBundleChange{Item: "skills/" + b.Name + "@" + target.ID, Action: action, Security: true})
+		preview.Changes = append(preview.Changes, configBundleChange{Item: "skills/" + b.Name + "@" + target.ID, Action: action, Security: true, Path: filepath.Join(target.Path, b.Name)})
 	}
 	for _, f := range b.Files {
 		file := boardSkillFile{Path: f.Path, Bytes: len(f.Data), Executable: f.Executable, Security: skillbundle.SecurityRelevant(f)}
@@ -211,7 +256,8 @@ func boardSkillImport(w http.ResponseWriter, r *http.Request, op string, ref boa
 		Manifest      proto.BoardItemManifest
 		Targets       []boardSkillRoot
 		Replace, Exec bool
-	}{ref, m, selected, in.Replace, in.PreserveExecutable})
+		CustomDir     string
+	}{ref, m, selected, in.Replace, in.PreserveExecutable, in.CustomDir})
 	current := boardPreviewHash(snapshots)
 	if op == "import" {
 		boardPreviewPermits.Lock()
@@ -308,6 +354,21 @@ func installBoardSkill(b skillbundle.Bundle, targets []boardSkillRoot, changes [
 		root, e := os.OpenRoot(target.Path)
 		if e != nil {
 			return e
+		}
+		// Verify the actual opened directory before any staging write. Custom
+		// directory replacement/retargeting cannot turn validation into an escape.
+		if target.Identity != "" {
+			dir, err := root.Open(".")
+			if err != nil {
+				_ = root.Close()
+				return err
+			}
+			info, err := dir.Stat()
+			_ = dir.Close()
+			if err != nil || boardRootIdentity(info) != target.Identity {
+				_ = root.Close()
+				return errors.New("skill root changed since preview; preview again")
+			}
 		}
 		token := proto.NewEnvelopeID()
 		s := &staged{root: root, stage: ".tclaude-skill-" + token, backup: "tclaude-skill-backup-" + token, expectedExisting: changes[i].Action == "replace", path: target.Path, snapshot: snapshots[target.ID]}
