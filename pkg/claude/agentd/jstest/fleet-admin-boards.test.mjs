@@ -60,7 +60,7 @@ async function mount(t, opts = {}) {
   const mod = await harness.importDashboardModule('js/fleet-admin-boards.js');
   const log = []; const toasts = []; const confirms = [];
   const confirm = async (o) => { confirms.push(o); return o.action(); };
-  const actions = boardActions(log, opts);
+  const actions = { ...boardActions(log, opts), ...(opts.actions || {}) };
   const extra = opts.updates ? { updates: opts.updates, loadUpdates: (refresh) => { log.push(['loadUpdates', refresh]); return Promise.resolve(opts.updates); } } : {};
   actions.setBoardUpdateNotify = async (on) => { log.push(['notify', on]); return { notify: on }; };
   const mounted = await harness.mount(harness.html`<${mod.BoardsPage} view=${view} actions=${actions} confirm=${confirm} toast=${(m, e) => toasts.push([m, e])} copy=${async () => {}} ...${extra} />`);
@@ -363,4 +363,37 @@ test('the board client reads updates and sets the opt-in', async (t) => {
     ['GET', '/api/federation/boards/updates?refresh=1', null],
     ['PUT', '/api/federation/boards/updates', { notify: false }],
   ]);
+});
+
+
+test('skill import shows script text and binds roots and executable confirmation to a fresh preview', async (t) => {
+  const script = "#!/bin/sh\necho '<img src=x onerror=alert(1)>'";
+  const previews = []; const imports = [];
+  const s = await mount(t, { actions: {
+    previewBoardItem: async (_b,_i,_v,c) => { previews.push(c); return {
+      kind:'skill', skill:'demo', preview_token:'skill-token',
+      skill_roots:[{id:'claude',label:'Claude Code',path:'/home/test/.claude/skills'}],
+      files:[{path:'scripts/run.sh',bytes:script.length,security:true,executable:true,text:script}],
+      changes:(c.skill_targets || []).map(id=>({item:`skills/demo@${id}`,action:'create',security:true})),
+    }; },
+    importBoardItem: async (_b,_i,_v,tok,c) => { imports.push([tok,c]); return {applied:['skills/demo@claude']}; },
+  } });
+  await s.click(s.q('[data-board-id="brd_ops"] [data-board="open"]'));
+  await s.click(s.q('[data-item-id="itm_1"] [data-item-act="open"]'));
+  await s.click(s.q('#fleet-bundle-import'));
+  const detail = s.q('[data-skill-file="scripts/run.sh"]');
+  assert.match(detail.textContent,/security-relevant/);
+  assert.equal(detail.querySelector('pre').textContent,script);
+  assert.equal(detail.querySelector('img'),null);
+  assert.equal(Boolean(s.q('#fleet-board-skill-executable').checked),false);
+  assert.equal(s.q('#fleet-board-import-apply').disabled,true);
+  const target = s.q('[data-skill-target="claude"]'); target.checked = true;
+  await s.harness.act(() => s.harness.fireEvent(target, 'change'));
+  const exec = s.q('#fleet-board-skill-executable'); exec.checked = true;
+  await s.harness.act(() => s.harness.fireEvent(exec, 'change'));
+  assert.equal(s.q('#fleet-board-import-apply').disabled,true);
+  await s.click(s.q('#fleet-board-import-preview'));
+  assert.deepEqual(previews.at(-1),{skill_targets:['claude'],preserve_executable:true});
+  await s.click(s.q('#fleet-board-import-apply'));
+  assert.deepEqual(imports,[['skill-token',{skill_targets:['claude'],preserve_executable:true}]]);
 });

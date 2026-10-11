@@ -3512,6 +3512,25 @@ not broad local config or default permissions. Credential scanning runs before
 publication and again after decryption on the receiver. Suspected credentials
 must be excluded before publication.
 
+Skills are a separate signed item kind. Publish one directory with
+`tclaude federation boards publish --board ID --name NAME --only skills/NAME`.
+The source must contain `SKILL.md` under a known user skill root:
+`~/.claude/skills`, `~/.agents/skills`, or `$CODEX_HOME/skills` (default
+`~/.codex/skills`). If several roots contain that name, select
+`--skill-root claude|agents|codex`. Symlinks and special files are refused;
+there are at most 512 files and the encoded bundle must fit the existing
+16 MiB Board item limit. Credential scanning covers every file.
+
+Skill preview/import use `--skill-target claude,agents,codex` (select the roots
+you want) instead of config selectors. Preview lists files and script text,
+flagging shebangs, script extensions and executable bits as security-relevant.
+Executable bits are stripped unless `--preserve-executable` is explicitly set.
+Existing skills require `--replace`. Import requires the preview token with
+exactly the same roots and confirmations; target changes invalidate it.
+Installing a skill does not execute any of its files. Agents may later follow
+its instructions or run scripts, including through an interpreter without an
+executable bit, so inspect them before confirming.
+
 Use `federation boards publish --board ID --name NAME --only roles/NAME`,
 `items --board ID`, and `versions --board ID --item ITEM`. Updates use
 `publish --item ITEM --parent VERSION`; a stale parent is refused. `pin --board

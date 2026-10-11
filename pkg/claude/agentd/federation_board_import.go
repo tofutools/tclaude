@@ -11,6 +11,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,7 +26,7 @@ func (a *boardItemAccess) publish(r *http.Request, board string, in boardItemInp
 	var m proto.BoardItemManifest
 	var e error
 	if in.Source != nil {
-		if len(in.Only) > 0 || len(in.Skip) > 0 || len(in.Values) > 0 {
+		if len(in.Only) > 0 || len(in.Skip) > 0 || len(in.Values) > 0 || in.SkillRoot != "" {
 			return nil, errors.New("republication preserves exact original payload; export edits as a new item")
 		}
 		v, original, e := a.version(*in.Source)
@@ -43,37 +45,46 @@ func (a *boardItemAccess) publish(r *http.Request, board string, in boardItemInp
 		if in.Name == "" || len(in.Name) > 128 {
 			return nil, errors.New("name must be 1..128 bytes")
 		}
-		b, e := collectConfigBundle(r)
-		if e != nil {
-			return nil, e
-		}
-		delete(b.Sections, "config")
-		delete(b.Sections, "default-permissions")
-		if e = b.Select(in.Only, in.Skip); e != nil {
-			return nil, e
-		}
-		if e = b.Prepare(); e != nil {
-			return nil, e
-		}
-		if len(b.Flags) > 0 {
-			return nil, errors.New("suspected credentials must be excluded before board publication")
-		}
-		count := 0
-		for _, items := range b.Sections {
-			count += len(items)
-		}
-		if count == 0 {
-			return nil, errors.New("select at least one portable config item")
-		}
-		raw, e = json.Marshal(b)
-		if e != nil {
-			return nil, e
-		}
-		if _, e = scanBoardConfig(raw); e != nil {
-			return nil, e
+		kind := "config"
+		if slices.ContainsFunc(in.Only, func(selector string) bool { return strings.HasPrefix(selector, "skills/") }) {
+			kind = "skill"
+			raw, e = boardSkillPublish(in)
+			if e != nil {
+				return nil, e
+			}
+		} else {
+			b, e := collectConfigBundle(r)
+			if e != nil {
+				return nil, e
+			}
+			delete(b.Sections, "config")
+			delete(b.Sections, "default-permissions")
+			if e = b.Select(in.Only, in.Skip); e != nil {
+				return nil, e
+			}
+			if e = b.Prepare(); e != nil {
+				return nil, e
+			}
+			if len(b.Flags) > 0 {
+				return nil, errors.New("suspected credentials must be excluded before board publication")
+			}
+			count := 0
+			for _, items := range b.Sections {
+				count += len(items)
+			}
+			if count == 0 {
+				return nil, errors.New("select at least one portable config item")
+			}
+			raw, e = json.Marshal(b)
+			if e != nil {
+				return nil, e
+			}
+			if _, e = scanBoardConfig(raw); e != nil {
+				return nil, e
+			}
 		}
 		sum := sha256.Sum256(raw)
-		m = proto.BoardItemManifest{Item: proto.NewEnvelopeID(), Version: proto.NewEnvelopeID(), Kind: "config", Name: in.Name, SHA256: hex.EncodeToString(sum[:]), Bytes: int64(len(raw))}
+		m = proto.BoardItemManifest{Item: proto.NewEnvelopeID(), Version: proto.NewEnvelopeID(), Kind: kind, Name: in.Name, SHA256: hex.EncodeToString(sum[:]), Bytes: int64(len(raw))}
 		m.Sign(a.opts.Identity)
 	}
 	state, e := a.call("boards.get", map[string]any{"board": board})
