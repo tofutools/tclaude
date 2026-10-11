@@ -5,6 +5,7 @@ package legacy
 
 import (
 	"archive/zip"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
 	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
 	"github.com/tofutools/tclaude/pkg/paf"
 )
@@ -261,7 +263,7 @@ func ConvertedLimit(bundleLimit int64) int64 {
 // Opened is an archive opened by OpenFile.
 type Opened struct {
 	*paf.Archive
-	// Source is "paf" or SourceAgentBundleV1.
+	// Source is "paf", SourceAgentBundleV1 or SourceGroupExport.
 	Source string
 	close  func() error
 }
@@ -274,9 +276,9 @@ func (o *Opened) Close() error {
 	return o.close()
 }
 
-// OpenFile opens a .paf or a legacy agent bundle v1 as a verified PAF. A
-// legacy bundle is validated by its own decoder, converted into a private
-// temporary PAF under dir, and opened from there.
+// OpenFile opens a .paf, a legacy agent bundle v1 or a group export as a
+// verified PAF. A legacy file is validated by its own decoder, converted into
+// a private temporary PAF under dir, and opened from there.
 func OpenFile(path, dir string, producer paf.Producer, opts paf.Options) (*Opened, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -315,33 +317,67 @@ func OpenFile(path, dir string, producer paf.Producer, opts paf.Options) (*Opene
 			return nil, err
 		}
 		defer func() { _ = b.Close() }()
-		tmp, err := os.CreateTemp(dir, ".paf-legacy-")
+		return convertedOpen(dir, opts, ConvertedLimit(limit), SourceAgentBundleV1, func(w io.Writer) error {
+			return FromAgentBundle(b, w, producer)
+		})
+	case "":
+		// A group export's manifest has no format marker, only its
+		// format_version.
+		limit := opts.Limits.MaxArchiveBytes
+		if limit <= 0 {
+			limit = paf.DefaultLimits().MaxArchiveBytes
+		}
+		if st.Size() > limit {
+			return nil, fmt.Errorf("legacy: archive is %d bytes, over the %d byte limit", st.Size(), limit)
+		}
+		raw := make([]byte, st.Size())
+		if _, err := f.ReadAt(raw, 0); err != nil {
+			return nil, err
+		}
+		// The zip reader refuses an entry that inflates past its declared
+		// size, so bounding the declared total bounds the decompression.
+		if err := checkUncompressed(raw, limit); err != nil {
+			return nil, err
+		}
+		exp, err := groupexport.Unmarshal(raw)
 		if err != nil {
 			return nil, err
 		}
-		cleanup := func() error {
-			tmp.Close()
-			return os.Remove(tmp.Name())
-		}
-		if err := FromAgentBundle(b, tmp, producer); err != nil {
-			_ = cleanup()
-			return nil, err
-		}
-		size, err := tmp.Seek(0, io.SeekCurrent)
-		if err != nil {
-			_ = cleanup()
-			return nil, err
-		}
-		convOpts := opts
-		convOpts.Limits.MaxArchiveBytes = ConvertedLimit(limit)
-		a, err := paf.Open(tmp, size, convOpts)
-		if err != nil {
-			_ = cleanup()
-			return nil, err
-		}
-		return &Opened{Archive: a, Source: SourceAgentBundleV1, close: cleanup}, nil
+		return convertedOpen(dir, opts, ConvertedLimit(limit), SourceGroupExport, func(w io.Writer) error {
+			return WriteGroupExport(exp, w, GroupWriteOptions{Producer: producer, MaxArchiveBytes: ConvertedLimit(limit)})
+		})
 	}
 	return nil, fmt.Errorf("legacy: unrecognised archive format %q", format)
+}
+
+// convertedOpen writes a converted PAF into a private temporary file under
+// dir and opens it from there.
+func convertedOpen(dir string, opts paf.Options, limit int64, source string, write func(io.Writer) error) (*Opened, error) {
+	tmp, err := os.CreateTemp(dir, ".paf-legacy-")
+	if err != nil {
+		return nil, err
+	}
+	cleanup := func() error {
+		tmp.Close()
+		return os.Remove(tmp.Name())
+	}
+	if err := write(tmp); err != nil {
+		_ = cleanup()
+		return nil, err
+	}
+	size, err := tmp.Seek(0, io.SeekCurrent)
+	if err != nil {
+		_ = cleanup()
+		return nil, err
+	}
+	convOpts := opts
+	convOpts.Limits.MaxArchiveBytes = limit
+	a, err := paf.Open(tmp, size, convOpts)
+	if err != nil {
+		_ = cleanup()
+		return nil, err
+	}
+	return &Opened{Archive: a, Source: source, close: cleanup}, nil
 }
 
 // manifestFormat reads manifest.json's format marker.
@@ -355,7 +391,9 @@ func manifestFormat(r io.ReaderAt, size int64) (string, error) {
 			continue
 		}
 		if f.UncompressedSize64 > uint64(paf.DefaultLimits().MaxMetadataBytes) {
-			return "", errors.New("manifest.json is too large")
+			// Too large for a PAF or agent bundle manifest; a group
+			// export's can be this large, and it has no format marker.
+			return "", nil
 		}
 		rc, err := f.Open()
 		if err != nil {
@@ -371,4 +409,21 @@ func manifestFormat(r io.ReaderAt, size int64) (string, error) {
 		return head.Format, nil
 	}
 	return "", errors.New("archive has no manifest.json")
+}
+
+// checkUncompressed refuses a ZIP archive whose entries declare more than
+// limit bytes in total.
+func checkUncompressed(raw []byte, limit int64) error {
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		return fmt.Errorf("not a ZIP archive: %w", err)
+	}
+	var total uint64
+	for _, f := range zr.File {
+		total += f.UncompressedSize64
+		if total > uint64(limit) {
+			return fmt.Errorf("legacy: archive expands past the %d byte limit", limit)
+		}
+	}
+	return nil
 }

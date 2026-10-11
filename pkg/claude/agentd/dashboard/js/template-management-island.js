@@ -935,7 +935,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard }) {
         ><input
           id="group-import-file"
           type="file"
-          accept=".zip,application/zip"
+          accept=".zip,.paf,application/zip,application/vnd.tclaude.paf+zip"
           onChange=${(event) => setFile(event.currentTarget.files?.[0] || null)}
           autofocus /></label
       ><label class="cron-create-row"
@@ -966,7 +966,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard }) {
         <div class="gi-head">Archive</div>
         <div class="gi-verdict gi-bad">✗ ${error}</div>
         <div class="gi-bad">
-          This file is not an importable group archive — pick a .zip produced by
+          This file is not an importable group archive — pick a .zip or .paf produced by
           the ⤓ export button.
         </div>
       </div>`}${inspection &&
