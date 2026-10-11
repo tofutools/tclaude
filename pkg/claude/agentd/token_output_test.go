@@ -42,3 +42,13 @@ func TestHumanTokenOutputPolicy(t *testing.T) {
 		require.Error(t, runServe(p))
 	}
 }
+
+func TestHumanTokenOutputFlags(t *testing.T) {
+	cmd := serveCmd()
+	flag := cmd.Flags().Lookup("print-human-token")
+	require.NotNil(t, flag)
+	require.Equal(t, "auto", flag.DefValue)
+	require.Empty(t, flag.Shorthand)
+	require.NoError(t, cmd.ParseFlags([]string{"--print-human-token=never", "--no-print-human-token"}))
+	require.NotNil(t, cmd.Flags().Lookup("no-print-human-token"))
+}
