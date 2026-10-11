@@ -21,10 +21,10 @@ func cloneGroupsOf(t *testing.T, conv string) []string {
 	return names
 }
 
-// Scenario: a clone inherits memberships, permission overrides and — by
-// default, as before — group ownerships. copy_ownership:false keeps the
-// memberships and permissions but leaves ownership behind.
-func TestClone_OwnershipCopiedByDefaultAndSwitchable(t *testing.T) {
+// Scenario: a clone inherits memberships and permission overrides, but group
+// ownership only when asked for: ownership is administrative authority over a
+// group, and a clone must not multiply it by default.
+func TestClone_OwnershipIsOptIn(t *testing.T) {
 	f := newFlow(t)
 	const src = "own-aaaa-bbbb-cccc-1111"
 	f.HaveConvWithTitle(src, "lead")
@@ -37,18 +37,18 @@ func TestClone_OwnershipCopiedByDefaultAndSwitchable(t *testing.T) {
 	byDefault := f.AsHuman().CloneFresh(src)
 	owned, err := db.ListGroupsOwnedBy(byDefault.NewConv)
 	require.NoError(t, err)
-	assert.Equal(t, []int64{grp.ID}, owned, "default clone keeps today's behaviour: ownership copied")
-
-	without := f.AsHuman().CloneWith(src, map[string]any{"no_copy_conv": true, "copy_ownership": false})
-	require.Equal(t, http.StatusOK, without.Code, "body=%s", without.Raw)
-	owned, err = db.ListGroupsOwnedBy(without.NewConv)
-	require.NoError(t, err)
-	assert.Empty(t, owned, "copy_ownership:false must not copy ownership")
-	assert.Equal(t, []string{"alpha"}, cloneGroupsOf(t, without.NewConv), "memberships are still copied")
-	perms, err := db.ListAgentPermissionOverrideRowsForConv(without.NewConv)
+	assert.Empty(t, owned, "a default clone must not own the source's groups")
+	assert.Equal(t, []string{"alpha"}, cloneGroupsOf(t, byDefault.NewConv), "memberships are still copied")
+	perms, err := db.ListAgentPermissionOverrideRowsForConv(byDefault.NewConv)
 	require.NoError(t, err)
 	require.Len(t, perms, 1)
 	assert.Equal(t, agentd.PermHumanClipboard, perms[0].Slug, "permission overrides are still copied")
+
+	withOwnership := f.AsHuman().CloneWith(src, map[string]any{"no_copy_conv": true, "copy_ownership": true})
+	require.Equal(t, http.StatusOK, withOwnership.Code, "body=%s", withOwnership.Raw)
+	owned, err = db.ListGroupsOwnedBy(withOwnership.NewConv)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{grp.ID}, owned, "copy_ownership:true copies ownership")
 }
 
 // Scenario: `group` adds the clone to one more group in the same request. An
