@@ -5,6 +5,7 @@ package legacy
 
 import (
 	"archive/zip"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -333,6 +334,11 @@ func OpenFile(path, dir string, producer paf.Producer, opts paf.Options) (*Opene
 		if _, err := f.ReadAt(raw, 0); err != nil {
 			return nil, err
 		}
+		// The zip reader refuses an entry that inflates past its declared
+		// size, so bounding the declared total bounds the decompression.
+		if err := checkUncompressed(raw, limit); err != nil {
+			return nil, err
+		}
 		exp, err := groupexport.Unmarshal(raw)
 		if err != nil {
 			return nil, err
@@ -385,7 +391,9 @@ func manifestFormat(r io.ReaderAt, size int64) (string, error) {
 			continue
 		}
 		if f.UncompressedSize64 > uint64(paf.DefaultLimits().MaxMetadataBytes) {
-			return "", errors.New("manifest.json is too large")
+			// Too large for a PAF or agent bundle manifest; a group
+			// export's can be this large, and it has no format marker.
+			return "", nil
 		}
 		rc, err := f.Open()
 		if err != nil {
@@ -401,4 +409,21 @@ func manifestFormat(r io.ReaderAt, size int64) (string, error) {
 		return head.Format, nil
 	}
 	return "", errors.New("archive has no manifest.json")
+}
+
+// checkUncompressed refuses a ZIP archive whose entries declare more than
+// limit bytes in total.
+func checkUncompressed(raw []byte, limit int64) error {
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		return fmt.Errorf("not a ZIP archive: %w", err)
+	}
+	var total uint64
+	for _, f := range zr.File {
+		total += f.UncompressedSize64
+		if total > uint64(limit) {
+			return fmt.Errorf("legacy: archive expands past the %d byte limit", limit)
+		}
+	}
+	return nil
 }

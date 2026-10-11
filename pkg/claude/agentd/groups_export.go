@@ -198,7 +198,9 @@ func buildGroupExportAs(groupName, format string) ([]byte, error) {
 // groupExportPAF writes exp as a group PAF, signed when this node already
 // has a federation identity (exporting never creates one).
 func groupExportPAF(exp *groupexport.Export) ([]byte, error) {
-	opts := legacy.GroupWriteOptions{Producer: paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}, MaxArchiveBytes: maxImportArchiveBytes}
+	// A PAF bounds its uncompressed size; the PAF default (2 GiB) leaves the
+	// same headroom the zip's 512 MiB compressed upload cap does.
+	opts := legacy.GroupWriteOptions{Producer: paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}}
 	if id, err := proto.LoadIdentity(FederationKeyPath()); err == nil {
 		opts.Keys = []paf.SigningKey{{Key: id.Priv, KeyID: id.ID(), Signer: &paf.Signer{Kind: "instance"}}}
 	}
@@ -218,11 +220,11 @@ func decodeGroupArchive(archive []byte) (exp *groupexport.Export, source string,
 		exp, err := groupexport.Unmarshal(archive)
 		return exp, legacy.SourceGroupExport, err
 	}
-	a, err := paf.Open(r, int64(len(archive)), paf.Options{Purpose: paf.PurposeImport, Limits: paf.Limits{MaxArchiveBytes: maxImportArchiveBytes}})
+	a, err := paf.Open(r, int64(len(archive)), paf.Options{Purpose: paf.PurposeImport})
 	if err != nil {
 		return nil, "", err
 	}
-	exp, err = legacy.ToGroupExport(a, maxImportArchiveBytes)
+	exp, err = legacy.ToGroupExport(a, paf.DefaultLimits().MaxArchiveBytes)
 	return exp, paf.Format, err
 }
 

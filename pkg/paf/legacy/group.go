@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
@@ -68,7 +69,7 @@ func WriteGroupExport(exp *groupexport.Export, out io.Writer, opts GroupWriteOpt
 	used := map[string]bool{}
 	for _, c := range exp.Convs {
 		name := c.Title
-		if name == "" {
+		if strings.TrimSpace(name) == "" {
 			name = c.ConvID
 		}
 		key := uniqueKey(AgentKey(name), used)
@@ -228,7 +229,12 @@ func foreignGroup(a *paf.Archive, g *paf.Group) (*groupexport.Export, error) {
 		SourceGroup:   g.Name,
 		Group:         groupexport.Group{Descr: g.Description, CreatedAt: now},
 	}
+	seenKey, seenConv := map[string]bool{}, map[string]bool{}
 	for _, mem := range g.Members {
+		if seenKey[mem.Agent] {
+			return nil, fmt.Errorf("group member %q is listed twice", mem.Agent)
+		}
+		seenKey[mem.Agent] = true
 		ag, _ := a.Agent(mem.Agent)
 		env, _ := a.Environment(mem.Agent)
 		if ag.Native == nil || ag.Native.Format != ClaudeHistoryFormat {
@@ -245,6 +251,10 @@ func foreignGroup(a *paf.Archive, g *paf.Group) (*groupexport.Export, error) {
 		if convID == "" {
 			convID = newConvID()
 		}
+		if seenConv[convID] {
+			return nil, fmt.Errorf("group members share conversation %s", convID)
+		}
+		seenConv[convID] = true
 		title := ag.Name
 		if title == "" {
 			title = mem.Agent

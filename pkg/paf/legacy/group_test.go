@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -95,4 +96,40 @@ func TestOpenFileReadsGroupExportZip(t *testing.T) {
 	assert.Equal(t, SourceGroupExport, o.Source)
 	assert.Equal(t, paf.KindGroup, o.Manifest.Kind)
 	assert.Len(t, o.Manifest.Agents, 3)
+}
+
+func TestForeignGroupPAFRefusesDuplicateMembers(t *testing.T) {
+	var buf bytes.Buffer
+	w := paf.NewWriter(&buf, paf.KindGroup, paf.Limits{})
+	native := paf.AgentPath("a", "native/claude-jsonl/history.jsonl")
+	require.NoError(t, w.AddAgent("a", paf.Agent{Name: "a", Native: &paf.Native{Format: ClaudeHistoryFormat, Path: native, SourceConvID: convA}}, paf.Environment{Harness: paf.Harness{Name: "claude"}}))
+	require.NoError(t, w.WriteFile(native, "application/jsonl", []byte("{}\n")))
+	require.NoError(t, w.WriteJSON(paf.GroupPath, paf.Group{Name: "g", Members: []paf.GroupMember{{Agent: "a"}, {Agent: "a"}}}))
+	_, err := w.Close(paf.Producer{Name: "other"})
+	require.NoError(t, err)
+	a, err := paf.Open(bytes.NewReader(buf.Bytes()), int64(buf.Len()), paf.Options{Purpose: paf.PurposeImport})
+	require.NoError(t, err)
+	_, err = ToGroupExport(a, 1<<20)
+	assert.ErrorContains(t, err, "listed twice")
+}
+
+func TestGroupExportBlankTitleAndLargeManifest(t *testing.T) {
+	exp := sampleGroupExport()
+	exp.Convs[0].Title = "  "
+	// Message history larger than the metadata bound.
+	exp.Messages = append(exp.Messages, groupexport.Message{ID: 8, FromConv: convA, ToConv: convB, Body: strings.Repeat("x", 2<<20)})
+	dir := testutil.CanonicalTempDir(t)
+	raw, err := groupexport.Marshal(exp)
+	require.NoError(t, err)
+	file := filepath.Join(dir, "team.zip")
+	require.NoError(t, os.WriteFile(file, raw, 0o600))
+	o, err := OpenFile(file, dir, paf.Producer{Name: "tclaude"}, paf.Options{Purpose: paf.PurposeInspect})
+	require.NoError(t, err)
+	defer func() { _ = o.Close() }()
+	got, err := ToGroupExport(o.Archive, 64<<20)
+	require.NoError(t, err)
+	assert.Len(t, got.Messages, 2)
+
+	_, err = OpenFile(file, dir, paf.Producer{Name: "tclaude"}, paf.Options{Purpose: paf.PurposeInspect, Limits: paf.Limits{MaxArchiveBytes: 1 << 20}})
+	assert.ErrorContains(t, err, "expands past")
 }
