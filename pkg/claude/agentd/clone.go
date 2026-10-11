@@ -803,8 +803,22 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	// Copy path: copy the conversation onto a fresh native id first, then
 	// resume into it.
 	historyCleanup := func() {}
+	var reservedAgentID string
+	// Any failure from here on leaves no clone running, so drop the copied
+	// conversation and the actor reserved for its private state with it.
+	defer func() {
+		if cerr == nil {
+			return
+		}
+		historyCleanup()
+		if reservedAgentID != "" {
+			if _, err := db.RetireAgentByID(reservedAgentID, "system:clone", "clone launch failed"); err != nil {
+				slog.Warn("clone: retiring reserved actor failed", "agent", reservedAgentID, "error", err)
+			}
+		}
+	}()
 	if !codexThreadForked {
-		copiedConv, reservedAgentID, cleanup, err := cloneHistory(sourceConv, cwd, relaunch, gitWriteDirs, effectiveSandbox)
+		copiedConv, reserved, cleanup, err := cloneHistory(sourceConv, cwd, relaunch, gitWriteDirs, effectiveSandbox)
 		if err != nil {
 			rollbackHandoff()
 			return cloneSpawnResult{}, &cloneSpawnError{
@@ -813,17 +827,17 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			}
 		}
 		newConv, historyCleanup = copiedConv, cleanup
-		if reservedAgentID != "" {
+		if reserved != "" {
 			// The history landed in state private to this actor; the resume
 			// derives the same state from the conv's actor, so bind it first.
-			if _, _, err := db.EnsureAgentForConvWithID(newConv, reservedAgentID, "clone"); err != nil {
-				historyCleanup()
+			if _, _, err := db.EnsureAgentForConvWithID(newConv, reserved, "clone"); err != nil {
 				rollbackHandoff()
 				return cloneSpawnResult{}, &cloneSpawnError{
 					Status: http.StatusInternalServerError, Code: "io",
 					Msg: "bind clone identity: " + err.Error(),
 				}
 			}
+			reservedAgentID = reserved
 		}
 	}
 	// The forked jsonl fixes the conv-id before the launch, so that is what
@@ -892,7 +906,6 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	// spawnDetachedTclaudeResumeAs.
 	if err := spawnDetachedTclaudeResumeAs(proofArgs, copilotAPILaunchFresh); err != nil {
 		agentDirectoryCleanup()
-		historyCleanup()
 		rollbackHandoff()
 		return cloneSpawnResult{}, &cloneSpawnError{
 			Status: http.StatusInternalServerError, Code: "spawn",
@@ -1702,10 +1715,16 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	// an agent missing some of its source's groups or permissions is worse
 	// than no clone, so the caller gets an error and nothing keeps running.
 	failClone := func(agentID, code, msg string) {
-		if newTmux != "" {
-			if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(newTmux)).Run(); err != nil {
-				slog.Warn("clone: stopping failed clone", "session", newTmux, "error", err)
-			}
+		// A pane that never registered is still addressed by its launch label.
+		tmuxToKill := newTmux
+		if tmuxToKill == "" {
+			tmuxToKill = label
+		}
+		stopped := "; the clone was stopped"
+		if tmuxToKill == "" {
+			stopped = "; the clone's actor was retired, but its pane never registered — check `tclaude session ls` for a stray launch"
+		} else if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxToKill)).Run(); err != nil {
+			slog.Warn("clone: stopping failed clone", "session", tmuxToKill, "error", err)
 		}
 		if spawned.HandoffMsgID > 0 {
 			if _, err := db.DeleteAgentMessagesByIDs([]int64{spawned.HandoffMsgID}); err != nil {
@@ -1717,7 +1736,7 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 				slog.Warn("clone: retiring failed clone", "agent", agentID, "error", err)
 			}
 		}
-		writeError(w, http.StatusInternalServerError, code, msg+"; the clone was stopped")
+		writeError(w, http.StatusInternalServerError, code, msg+stopped)
 	}
 	newAgentID, _, err := db.EnsureAgentForConv(newConv, "clone")
 	if err != nil {
