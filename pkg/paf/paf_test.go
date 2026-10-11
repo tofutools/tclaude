@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"crypto/ed25519"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -326,7 +327,7 @@ func TestBadEntryNames(t *testing.T) {
 	for _, name := range []string{"../evil", "a/../b", "/abs", "a//b", `a\b`, "./x"} {
 		raw := zipFiles(t, map[string][]byte{name: []byte("x"), ManifestPath: []byte(`{}`)})
 		_, err := open(t, raw, PurposeInspect)
-		assert.Error(t, err, name)
+		assert.ErrorContains(t, err, "invalid entry name", name)
 	}
 }
 
@@ -411,4 +412,147 @@ func TestLandingRungFromFallback(t *testing.T) {
 	assert.Equal(t, RungTranslated, LandingRungFromFallback("native"))
 	assert.Equal(t, RungContextFile, LandingRungFromFallback("handoff"))
 	assert.Equal(t, "", LandingRungFromFallback("other"))
+}
+
+// rezip rebuilds an archive from its entries, letting edit adjust each
+// header (and so the local header Go writes).
+func rezip(t *testing.T, raw []byte, edit func(h *zip.FileHeader)) []byte {
+	t.Helper()
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	require.NoError(t, err)
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		require.NoError(t, err)
+		var b bytes.Buffer
+		_, err = b.ReadFrom(rc)
+		require.NoError(t, err)
+		h := &zip.FileHeader{Name: f.Name, Method: f.Method}
+		edit(h)
+		w, err := zw.CreateHeader(h)
+		require.NoError(t, err)
+		_, err = w.Write(b.Bytes())
+		require.NoError(t, err)
+	}
+	require.NoError(t, zw.Close())
+	return buf.Bytes()
+}
+
+// A forged local header planted at the end of a large extra field must not
+// stand in for the real one: the reader reads the header at its real offset.
+func TestLocalHeaderForgedInsideLargeExtraRefused(t *testing.T) {
+	fake := make([]byte, 30+len(ManifestPath))
+	binary.LittleEndian.PutUint32(fake, sigLocal)
+	binary.LittleEndian.PutUint16(fake[6:], 0x8)
+	binary.LittleEndian.PutUint16(fake[8:], zip.Deflate)
+	binary.LittleEndian.PutUint16(fake[26:], uint16(len(ManifestPath)))
+	copy(fake[30:], ManifestPath)
+	body := append(make([]byte, 5000-len(fake)), fake...)
+	extra := append([]byte{0xfe, 0xca, 0, 0}, body...)
+	binary.LittleEndian.PutUint16(extra[2:], uint16(len(body)))
+	raw := rezip(t, writeSample(t, nil), func(h *zip.FileHeader) {
+		if h.Name == ManifestPath {
+			h.Extra = extra
+		}
+	})
+	// Unchanged, the large extra field is legal.
+	_, err := open(t, raw, PurposeImport)
+	require.NoError(t, err)
+	// Rename the real local header; only the planted one still says manifest.json.
+	real := -1
+	for i := 0; i+30+len(ManifestPath) <= len(raw); i++ {
+		if binary.LittleEndian.Uint32(raw[i:]) == sigLocal && string(raw[i+30:i+30+len(ManifestPath)]) == ManifestPath && int(binary.LittleEndian.Uint16(raw[i+28:])) == len(extra) {
+			real = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, real, 0)
+	copy(raw[real+30:], "evil_____.txt")
+	_, err = open(t, raw, PurposeInspect)
+	assert.ErrorContains(t, err, "local header does not match")
+}
+
+func TestDataDescriptorMismatchRefused(t *testing.T) {
+	raw := writeSample(t, nil)
+	i := bytes.Index(raw, []byte{0x50, 0x4b, 7, 8})
+	require.Positive(t, i, "Go writes data descriptors")
+	raw[i+4] ^= 0xff // corrupt the descriptor CRC
+	_, err := open(t, raw, PurposeInspect)
+	assert.ErrorContains(t, err, "local header does not match")
+}
+
+func TestReadTranscriptSharesAttachmentsWithinBudget(t *testing.T) {
+	png := bytes.Repeat([]byte{7}, 1000)
+	tr := transcript.New(transcript.Source{Harness: "claude"})
+	for range 50 {
+		tr.Entries = append(tr.Entries, transcript.Entry{Role: transcript.RoleUser, Origin: transcript.OriginHuman, Blocks: []transcript.Block{{Kind: transcript.BlockMedia, Media: []transcript.Media{{MediaType: "image/png", Data: png}}}}})
+	}
+	var buf bytes.Buffer
+	w := NewWriter(&buf, KindAgent, Limits{})
+	require.NoError(t, w.AddAgent("a", Agent{Name: "a"}, Environment{Harness: Harness{Name: "claude"}}))
+	require.NoError(t, WriteTranscript(w, "a", ScopeEffective, tr))
+	require.NoError(t, w.WriteJSON(AgentPath("a", "context/losses.json"), LossesFromReport(tr.Losses)))
+	_, err := w.Close(Producer{Name: "test"})
+	require.NoError(t, err)
+	a, err := open(t, buf.Bytes(), PurposeImport)
+	require.NoError(t, err)
+
+	got, err := ReadTranscript(a, "a", ScopeEffective, ReadOptions{})
+	require.NoError(t, err)
+	first := got.Entries[0].Blocks[0].Media[0].Data
+	last := got.Entries[49].Blocks[0].Media[0].Data
+	assert.Equal(t, png, last)
+	assert.Same(t, &first[0], &last[0], "one attachment is loaded once and shared")
+
+	got, err = ReadTranscript(a, "a", ScopeEffective, ReadOptions{MaxMediaBytes: 999})
+	require.NoError(t, err)
+	assert.Equal(t, 50, got.Losses.Count(transcript.LossMediaDropped), "over the per-item budget")
+}
+
+func TestWriteTranscriptRecordsDrops(t *testing.T) {
+	tr := transcript.New(transcript.Source{Harness: "claude"})
+	tr.Entries = []transcript.Entry{
+		{Role: transcript.RoleUser, Origin: transcript.OriginHuman, Blocks: []transcript.Block{transcript.Text("hi"), {Kind: transcript.BlockMedia, Media: []transcript.Media{{MediaType: "image/png"}}}}},
+		{Role: transcript.RoleAssistant, Origin: transcript.OriginAgent, Blocks: []transcript.Block{transcript.Text("")}},
+	}
+	var buf bytes.Buffer
+	w := NewWriter(&buf, KindAgent, Limits{})
+	require.NoError(t, w.AddAgent("a", Agent{Name: "a"}, Environment{Harness: Harness{Name: "claude"}}))
+	require.NoError(t, WriteTranscript(w, "a", ScopeEffective, tr))
+	assert.Equal(t, 1, tr.Losses.Count(transcript.LossMediaDropped))
+	assert.Equal(t, 1, tr.Losses.Count(transcript.LossUnknownRecord))
+}
+
+func TestWriterRefusesWhatReaderRejects(t *testing.T) {
+	newW := func() (*Writer, *bytes.Buffer) {
+		var buf bytes.Buffer
+		return NewWriter(&buf, KindAgent, Limits{}), &buf
+	}
+	t.Run("context without losses", func(t *testing.T) {
+		w, _ := newW()
+		require.NoError(t, w.AddAgent("a", Agent{Name: "a"}, Environment{Harness: Harness{Name: "claude"}}))
+		require.NoError(t, WriteTranscript(w, "a", ScopeEffective, sampleTranscript()))
+		_, err := w.Close(Producer{Name: "t"})
+		assert.ErrorContains(t, err, "no losses.json")
+	})
+	t.Run("native declared but not written", func(t *testing.T) {
+		w, _ := newW()
+		require.NoError(t, w.AddAgent("a", Agent{Name: "a", Native: &Native{Format: "claude-jsonl", Path: AgentPath("a", "native/claude-jsonl/h.jsonl")}}, Environment{Harness: Harness{Name: "claude"}}))
+		_, err := w.Close(Producer{Name: "t"})
+		assert.ErrorContains(t, err, "not written")
+	})
+	t.Run("schema-invalid metadata", func(t *testing.T) {
+		w, _ := newW()
+		err := w.WriteJSON(PrivacyPath, map[string]any{"consent": []any{map[string]any{"by": "x"}}})
+		assert.Error(t, err)
+	})
+	t.Run("group member missing", func(t *testing.T) {
+		var buf bytes.Buffer
+		w := NewWriter(&buf, KindGroup, Limits{})
+		require.NoError(t, w.AddAgent("a", Agent{Name: "a"}, Environment{Harness: Harness{Name: "claude"}}))
+		require.NoError(t, w.WriteJSON(GroupPath, Group{Name: "g", Members: []GroupMember{{Agent: "b"}}}))
+		_, err := w.Close(Producer{Name: "t"})
+		assert.ErrorContains(t, err, `group member "b"`)
+	})
 }

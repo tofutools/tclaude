@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash"
@@ -43,6 +44,8 @@ type Writer struct {
 	extReq   []string
 	extSeen  map[string]bool
 	manExt   Extensions
+	natives  []string
+	members  []string
 }
 
 // NewWriter starts an archive of the given kind (KindAgent or KindGroup).
@@ -189,8 +192,22 @@ func (w *Writer) WriteJSON(path string, v any) error {
 	if int64(len(b)) > w.limits.MaxMetadataBytes {
 		return fmt.Errorf("paf: %s exceeds %d bytes", path, w.limits.MaxMetadataBytes)
 	}
+	if schema := metadataSchema(path); schema != "" {
+		if err := validateJSON(schema, b); err != nil {
+			return fmt.Errorf("paf: %s: %w", path, err)
+		}
+	}
 	if err := collectExtensionIDs(b, w.extSeen); err != nil {
 		return fmt.Errorf("paf: %s: %w", path, err)
+	}
+	if path == GroupPath {
+		var g Group
+		if err := json.Unmarshal(b, &g); err != nil {
+			return err
+		}
+		for _, m := range g.Members {
+			w.members = append(w.members, m.Agent)
+		}
 	}
 	return w.WriteFile(path, "application/json", b)
 }
@@ -235,6 +252,9 @@ func (w *Writer) AddAgent(key string, a Agent, env Environment) error {
 		return err
 	}
 	w.agents = append(w.agents, key)
+	if a.Native != nil {
+		w.natives = append(w.natives, a.Native.Path)
+	}
 	return nil
 }
 
@@ -289,6 +309,29 @@ func (w *Writer) Close(producer Producer, keys ...SigningKey) ([]byte, error) {
 	}
 	if w.kind == KindGroup && !w.seen[GroupPath] {
 		return nil, errors.New("paf: group PAF has no group.json")
+	}
+	if w.kind != KindGroup && w.seen[GroupPath] {
+		return nil, errors.New("paf: group.json in an agent PAF")
+	}
+	for _, key := range w.agents {
+		if w.seen[AgentPath(key, "context/transcript.jsonl")] && !w.seen[AgentPath(key, "context/losses.json")] {
+			return nil, fmt.Errorf("paf: agent %q has context but no losses.json", key)
+		}
+	}
+	for _, p := range w.natives {
+		if !w.seen[p] {
+			return nil, fmt.Errorf("paf: native blob %q was declared but not written", p)
+		}
+	}
+	for _, m := range w.members {
+		if !slices.Contains(w.agents, m) {
+			return nil, fmt.Errorf("paf: group member %q is not an agent in the archive", m)
+		}
+	}
+	for p := range w.seen {
+		if key, _, ok := splitAgentPath(p); ok && !slices.Contains(w.agents, key) {
+			return nil, fmt.Errorf("paf: entry %q belongs to an agent that was not added", p)
+		}
 	}
 	if w.manExt != nil {
 		raw, err := marshalJSON(map[string]any{"extensions": w.manExt})

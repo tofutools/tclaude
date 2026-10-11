@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -91,7 +90,7 @@ func Open(r io.ReaderAt, size int64, opts Options) (*Archive, error) {
 		return nil, fmt.Errorf("paf: invalid ZIP: %w", err)
 	}
 	a := &Archive{limits: lim, files: map[string]*zip.File{}, agents: map[string]*Agent{}, envs: map[string]*Environment{}, losses: map[string]*Losses{}}
-	if err := a.indexFiles(r, zr.File); err != nil {
+	if err := a.indexFiles(r, size, zr.File); err != nil {
 		return nil, err
 	}
 	if err := a.readManifest(opts.Purpose); err != nil {
@@ -109,9 +108,13 @@ func Open(r io.ReaderAt, size int64, opts Options) (*Archive, error) {
 	return a, nil
 }
 
-func (a *Archive) indexFiles(ra io.ReaderAt, files []*zip.File) error {
+func (a *Archive) indexFiles(ra io.ReaderAt, size int64, files []*zip.File) error {
 	if len(files) > a.limits.MaxEntries+1+64 {
 		return errors.New("paf: too many archive entries")
+	}
+	offsets, err := localHeaderOffsets(ra, size)
+	if err != nil {
+		return err
 	}
 	var total uint64
 	for _, f := range files {
@@ -130,68 +133,22 @@ func (a *Archive) indexFiles(ra io.ReaderAt, files []*zip.File) error {
 		if f.Method != zip.Store && f.Method != zip.Deflate {
 			return fmt.Errorf("paf: entry %q uses an unsupported compression method", f.Name)
 		}
-		total += f.UncompressedSize64
-		if total > uint64(a.limits.MaxArchiveBytes) {
-			return fmt.Errorf("paf: uncompressed content exceeds %d bytes", a.limits.MaxArchiveBytes)
+		// The manifest and signatures are bounded by the metadata limit
+		// instead, matching what the writer counts.
+		if f.Name != ManifestPath && !strings.HasPrefix(f.Name, SignaturesDir) {
+			total += f.UncompressedSize64
+			if total > uint64(a.limits.MaxArchiveBytes) {
+				return fmt.Errorf("paf: uncompressed content exceeds %d bytes", a.limits.MaxArchiveBytes)
+			}
 		}
-		if err := checkLocalHeader(ra, f); err != nil {
+		off, ok := offsets[f.Name]
+		if !ok {
+			return fmt.Errorf("paf: entry %q: local header does not match the central directory", f.Name)
+		}
+		if err := checkLocalHeader(ra, size, f, off); err != nil {
 			return err
 		}
 		a.files[f.Name] = f
-	}
-	return nil
-}
-
-// maxLocalExtra bounds the local header extra field this reader searches
-// past. Writers put little or nothing there.
-const maxLocalExtra = 4096
-
-// checkLocalHeader refuses an entry whose local file header disagrees with
-// the central directory, so readers that stream local headers see the same
-// archive this one does.
-func checkLocalHeader(ra io.ReaderAt, f *zip.File) error {
-	data, err := f.DataOffset()
-	if err != nil {
-		return fmt.Errorf("paf: entry %q: %w", f.Name, err)
-	}
-	n := int64(len(f.Name))
-	start := max(0, data-30-n-maxLocalExtra)
-	buf := make([]byte, data-start)
-	if _, err := ra.ReadAt(buf, start); err != nil {
-		return fmt.Errorf("paf: entry %q: %w", f.Name, err)
-	}
-	bad := fmt.Errorf("paf: entry %q: local header does not match the central directory", f.Name)
-	found := false
-	for p := len(buf) - 30 - int(n); p >= 0; p-- {
-		if binary.LittleEndian.Uint32(buf[p:]) != 0x04034b50 {
-			continue
-		}
-		hdr := buf[p:]
-		nameLen := int(binary.LittleEndian.Uint16(hdr[26:]))
-		extraLen := int(binary.LittleEndian.Uint16(hdr[28:]))
-		if p+30+nameLen+extraLen != len(buf) {
-			continue
-		}
-		if found {
-			return bad
-		}
-		found = true
-		flags := binary.LittleEndian.Uint16(hdr[6:])
-		method := binary.LittleEndian.Uint16(hdr[8:])
-		if string(hdr[30:30+nameLen]) != f.Name || method != f.Method {
-			return bad
-		}
-		if flags&0x8 == 0 {
-			crc := binary.LittleEndian.Uint32(hdr[14:])
-			csize := binary.LittleEndian.Uint32(hdr[18:])
-			usize := binary.LittleEndian.Uint32(hdr[22:])
-			if crc != f.CRC32 || (csize != 0xffffffff && uint64(csize) != f.CompressedSize64) || (usize != 0xffffffff && uint64(usize) != f.UncompressedSize64) {
-				return bad
-			}
-		}
-	}
-	if !found {
-		return bad
 	}
 	return nil
 }

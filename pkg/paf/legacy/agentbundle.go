@@ -104,7 +104,7 @@ func AgentKey(name string) string {
 func FromAgentBundle(b *agentbundle.Bundle, out io.Writer, producer paf.Producer, keys ...paf.SigningKey) error {
 	m := b.Manifest
 	d := m.Agent
-	w := paf.NewWriter(out, paf.KindAgent, paf.Limits{MaxArchiveBytes: b.Limit()})
+	w := paf.NewWriter(out, paf.KindAgent, paf.Limits{MaxArchiveBytes: ConvertedLimit(b.Limit())})
 	if t, err := time.Parse(time.RFC3339, m.CreatedAt); err == nil {
 		w.SetCreatedAt(t)
 	}
@@ -218,6 +218,13 @@ func FromAgentBundle(b *agentbundle.Bundle, out io.Writer, producer paf.Producer
 	return err
 }
 
+// ConvertedLimit is the archive limit for a PAF converted from a bundle
+// whose own limit is bundleLimit: the history may use the whole bundle
+// limit, so the PAF gets headroom for the mail ledger and metadata.
+func ConvertedLimit(bundleLimit int64) int64 {
+	return bundleLimit + agentbundle.MaxMailLedgerBytes + 16<<20
+}
+
 // Opened is an archive opened by OpenFile.
 type Opened struct {
 	*paf.Archive
@@ -292,7 +299,9 @@ func OpenFile(path, dir string, producer paf.Producer, opts paf.Options) (*Opene
 			_ = cleanup()
 			return nil, err
 		}
-		a, err := paf.Open(tmp, size, opts)
+		convOpts := opts
+		convOpts.Limits.MaxArchiveBytes = ConvertedLimit(limit)
+		a, err := paf.Open(tmp, size, convOpts)
 		if err != nil {
 			_ = cleanup()
 			return nil, err
