@@ -945,7 +945,8 @@ transfer as local files; these commands do not send anything to a peer.
 ## Portable local agent bundles
 
 Agent transfer uses a ZIP archive, separate from the existing export jobs.
-The default is agent bundle version 1. `--format paf` writes a
+The default is agent bundle version 1. `--format paf` (or
+[`tclaude paf export`](paf.md#exporting-and-importing-an-agent)) writes a
 [Portable Agent Format](paf.md) file instead, which carries the same
 configuration and native history plus a harness-neutral copy of the
 conversation when the harness can decode it. A PAF export is signed with the
@@ -993,8 +994,11 @@ Inspect archives before sharing them.
 A PAF import is fully verified before preview: hashes, schemas, signatures
 and ZIP layout. A PAF that requires a feature or extension this tclaude does
 not support is refused. One line of its neutral context may be at most
-64 MiB. A PAF from another tool that carries only the neutral context, with no
-native history, currently imports as configuration only, with a warning. A
+64 MiB. `--harness` and `--model` land the agent on another harness or model; the
+conversation is then translated, as described in
+[Exporting and importing an agent](paf.md#exporting-and-importing-an-agent).
+A PAF that carries only the neutral context, with no native history, is
+translated the same way. A
 group PAF is not an agent bundle and is refused here.
 
 The version 1 `manifest.json` records format/version, creation time, tclaude

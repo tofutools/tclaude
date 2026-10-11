@@ -12,12 +12,15 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/configbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
 	"github.com/tofutools/tclaude/pkg/paf"
 )
 
 // WarningContextOnly is the bundle warning for a PAF whose history arrived
-// only in neutral form, which this release imports as configuration only.
-const WarningContextOnly = "conversation history arrived only in harness-neutral PAF form; it is not imported by this tclaude release"
+// only in neutral form. Paths that lower to a bundle without the archive
+// (offers, moves) import it as configuration only; a direct import
+// translates it.
+const WarningContextOnly = "conversation history arrived only in harness-neutral PAF form; only a direct `tclaude paf import` can land it, so this path imports configuration only"
 
 // Info describes what DecodeBundleFile read.
 type Info struct {
@@ -27,6 +30,9 @@ type Info struct {
 	Signatures []paf.SignatureResult
 	// HasContext reports a neutral context in the PAF.
 	HasContext bool
+	// Context reads the neutral context while the decoded file stays open.
+	// It is nil when there is none.
+	Context func(paf.ReadOptions) (*transcript.Transcript, error)
 }
 
 // DecodeLimits bounds DecodeBundleFile.
@@ -67,7 +73,13 @@ func DecodeBundleFile(f *os.File, lim DecodeLimits, dir string) (*agentbundle.Bu
 			return nil, Info{}, err
 		}
 		key := a.Manifest.Agents[0]
-		return b, Info{Source: paf.Format, Signatures: a.Signatures, HasContext: a.HasContext(key, paf.ScopeEffective)}, nil
+		info := Info{Source: paf.Format, Signatures: a.Signatures, HasContext: a.HasContext(key, paf.ScopeEffective)}
+		if info.HasContext {
+			info.Context = func(opts paf.ReadOptions) (*transcript.Transcript, error) {
+				return paf.ReadTranscript(a, key, paf.ScopeEffective, opts)
+			}
+		}
+		return b, info, nil
 	}
 	return nil, Info{}, fmt.Errorf("invalid agent bundle: unrecognised archive format %q", format)
 }

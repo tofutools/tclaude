@@ -17,6 +17,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -35,12 +36,13 @@ type Params struct{}
 func Cmd() *cobra.Command {
 	return boa.CmdT[Params]{
 		Use:   "paf",
-		Short: "Verify, inspect and render Portable Agent Format files",
-		Long: "Read-only tools for Portable Agent Format (PAF) files and legacy agent\n" +
-			"bundles. They run locally, need no daemon, harness, model or network, and\n" +
+		Short: "Export, import, verify, inspect and render Portable Agent Format files",
+		Long: "Export and import agents as Portable Agent Format (PAF) files, and verify,\n" +
+			"inspect and render them. validate, inspect and render also read legacy agent\n" +
+			"bundles; they run locally, need no daemon, harness, model or network, and\n" +
 			"never change the file. See docs/paf.md.",
 		ParamEnrich: common.DefaultParamEnricher(),
-		SubCmds:     []*cobra.Command{validateCmd(), inspectCmd(), renderCmd()},
+		SubCmds:     []*cobra.Command{agent.PAFExportCmd(), agent.PAFImportCmd(), validateCmd(), inspectCmd(), renderCmd()},
 		RunFunc: func(_ *Params, cmd *cobra.Command, _ []string) {
 			_ = cmd.Help()
 		},
