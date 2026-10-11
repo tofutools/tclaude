@@ -264,3 +264,33 @@ func TestBrokerClaimReason(t *testing.T) {
 	assert.Equal(t, "statusline: claimed session could not be loaded to check the claim",
 		brokerClaimReason("statusline: caller could not be placed", "spwn-x", "err"))
 }
+
+// A refusal stops counting once the harness that made it has exited, on both
+// the per-row badge and the machine-level counts; an unknown owner (0) keeps
+// counting for the window.
+func TestBrokerRefusals_DeadOwnersStopCounting(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	r := newTestRefusalRecorder(&now)
+	alive := map[int]bool{100: true, 200: true}
+	r.alive = func(pid int) bool { return alive[pid] }
+
+	r.recordClaimMismatchOwned("spwn-a", 100, "x")
+	r.recordClaimMismatchOwned("spwn-a", 200, "x")
+	r.recordUnplaceableOwned(11, 100, "y")
+	r.recordUnplaceableOwned(12, 0, "y")
+
+	total, unplaceable := r.counts()
+	assert.Equal(t, 4, total)
+	assert.Equal(t, 2, unplaceable)
+
+	alive[100] = false
+	total, unplaceable = r.counts()
+	assert.Equal(t, 2, total)
+	assert.Equal(t, 1, unplaceable, "an unknown owner keeps counting")
+	got := r.forSession("spwn-a")
+	require.NotNil(t, got)
+	assert.Equal(t, 1, got.Count)
+
+	alive[200] = false
+	assert.Nil(t, r.forSession("spwn-a"), "a row whose refusing harnesses all exited is not badged")
+}

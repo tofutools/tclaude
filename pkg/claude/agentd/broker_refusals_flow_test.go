@@ -302,8 +302,10 @@ func TestBrokerRefusals_UnplaceableIsCountedNotAttributed(t *testing.T) {
 	f := newFlow(t)
 	haveLayerSession(t, f, brokerLayerConv, brokerLayerLabel, "tmux-broker-layer", brokerPanePID)
 
-	const orphanPID = 8300
-	t.Cleanup(agentd.SetProcTreeForTest(map[int]string{orphanPID: "node"}, map[int]int{}))
+	// Unplaceable but not orphaned: still under a live (non-harness) shell.
+	const orphanPID, shellPID = 8300, 8299
+	t.Cleanup(agentd.SetProcTreeForTest(
+		map[int]string{orphanPID: "node", shellPID: "bash"}, map[int]int{orphanPID: shellPID}))
 
 	for range 2 {
 		code, _ := postBrokeredHook(t, f, orphanPID, session.BrokeredHookRequest{
@@ -326,6 +328,64 @@ func TestBrokerRefusals_UnplaceableIsCountedNotAttributed(t *testing.T) {
 	require.NotNil(t, row)
 	assert.Zero(t, row.State.BrokerRefusals,
 		"the session the unplaceable caller claimed must not be badged for it")
+}
+
+// Once the harness that made the refusals is gone — the agent was retired or
+// deleted and its pane went with it — nothing is being lost any more, so the
+// machine-level notice must stop counting those refusals instead of pointing
+// the operator at an agent that no longer exists for the rest of the window.
+func TestBrokerRefusals_StopCountingOnceTheCallersHarnessIsGone(t *testing.T) {
+	t.Cleanup(agentd.ResetBrokerRefusalsForTest())
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	haveLayerSession(t, f, brokerLayerConv, brokerLayerLabel, "tmux-broker-layer", brokerPanePID)
+
+	const harnessPID, hookPID = 8310, 8311
+	restore := agentd.SetProcTreeForTest(
+		map[int]string{harnessPID: "claude", hookPID: "sh"},
+		map[int]int{hookPID: harnessPID, harnessPID: 1})
+	t.Cleanup(func() { restore() })
+
+	for range 2 {
+		code, _ := postBrokeredHook(t, f, hookPID, session.BrokeredHookRequest{
+			Input: session.HookCallbackInput{
+				ConvID:        brokerLayerConv,
+				HookEventName: "Stop",
+			},
+			ClaimedSessionID: brokerLayerLabel,
+		})
+		require.Equal(t, http.StatusForbidden, code)
+	}
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	require.Equal(t, 2, snap.BrokerRefusalsUnplaceable,
+		"while the caller's harness runs, its refusals are on the notice")
+
+	// The agent is retired: its harness and the hook process are gone.
+	restore()
+	restore = agentd.SetProcTreeForTest(map[int]string{}, map[int]int{})
+
+	snap = fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	assert.Zero(t, snap.BrokerRefusalsUnplaceable,
+		"refusals from a harness that has exited must stop counting")
+	assert.Zero(t, snap.BrokerRefusalsTotal)
+
+	// Teardown race: the harness exited first and its last hook child was
+	// re-parented to init before its callback reached the daemon.
+	restore()
+	const orphanedHookPID = 8312
+	restore = agentd.SetProcTreeForTest(map[int]string{orphanedHookPID: "node"}, map[int]int{orphanedHookPID: 1})
+	for range 3 {
+		code, _ := postBrokeredHook(t, f, orphanedHookPID, session.BrokeredHookRequest{
+			Input:            session.HookCallbackInput{ConvID: brokerLayerConv, HookEventName: "SessionEnd"},
+			ClaimedSessionID: brokerLayerLabel,
+		})
+		require.Equal(t, http.StatusForbidden, code)
+	}
+	snap = fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	assert.Zero(t, snap.BrokerRefusalsTotal,
+		"refusals from a caller orphaned by its harness's exit must not count")
 }
 
 // A tclaude-layer row without its tmux launch identity cannot prove a brokered
@@ -484,8 +544,10 @@ func TestBrokerRefusals_AreLoggedWithTheCallerPidAndReason(t *testing.T) {
 
 	// An orphan caller: no row resolves, the layer claim cannot be proved
 	// because the pane pid is not among its ancestors.
-	const orphanPID = 8300
-	t.Cleanup(agentd.SetProcTreeForTest(map[int]string{orphanPID: "node"}, map[int]int{}))
+	// Unplaceable but not orphaned: still under a live (non-harness) shell.
+	const orphanPID, shellPID = 8300, 8299
+	t.Cleanup(agentd.SetProcTreeForTest(
+		map[int]string{orphanPID: "node", shellPID: "bash"}, map[int]int{orphanPID: shellPID}))
 
 	code, _ := postBrokeredHook(t, f, orphanPID, session.BrokeredHookRequest{
 		Input:            session.HookCallbackInput{ConvID: brokerLayerConv, HookEventName: "Stop"},

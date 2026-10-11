@@ -87,7 +87,7 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 	if checkBrokerRate(endpoint, preProofKey, brokerPreIdentityRatePerSecond).Reject {
 		if row == nil {
 			brokerRefusals.refuseUnplaceable("statusline: caller could not be placed",
-				brokerRefusalContext{Endpoint: endpoint, CallerPID: p.PID})
+				brokerRefusalContext{Endpoint: endpoint, CallerPID: p.PID, procs: procs})
 		}
 		writeError(w, http.StatusTooManyRequests, "rate", "too many requests before identity verification")
 		return
@@ -122,7 +122,7 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
 		return
 	}
-	refusal := brokerRefusalContext{Endpoint: endpoint, CallerPID: p.PID, Claimed: claimed}
+	refusal := brokerRefusalContext{Endpoint: endpoint, CallerPID: p.PID, Claimed: claimed, procs: procs}
 	if row != nil {
 		refusal.Resolved = row.ID
 	}
