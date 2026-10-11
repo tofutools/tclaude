@@ -8,7 +8,7 @@ import (
 	"regexp"
 )
 
-// AlgEd25519 is the only signature algorithm PAF 1.0 defines.
+// AlgEd25519 is the only signature algorithm PAF 0.1 defines.
 const AlgEd25519 = "ed25519"
 
 const signatureContext = "paf-manifest-signature-v1\n"

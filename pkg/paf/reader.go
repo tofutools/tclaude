@@ -37,8 +37,24 @@ type Options struct {
 var knownFeatures = map[string]bool{}
 
 // knownExtensions are the extensions this package understands, by id and
-// major version.
-var knownExtensions = map[string]int{ExtTclaude: 1}
+// the newest version it knows.
+var knownExtensions = map[string][2]int{ExtTclaude: {0, 1}}
+
+// CanRead reports whether a reader of version reader (MAJOR.MINOR) can
+// read a file stamped version: the rule a sender applies to a peer's
+// advertised PAF version.
+func CanRead(reader, version string) bool {
+	major, minor, err := ParseVersion(reader)
+	return err == nil && versionReadable(version, major, minor)
+}
+
+// versionReadable reports whether a MAJOR.MINOR version can be read by a
+// reader that knows major.minor: the major must match, and while it is 0 a
+// newer minor may have changed the format, so it is refused too.
+func versionReadable(v string, major, minor int) bool {
+	gotMajor, gotMinor, err := ParseVersion(v)
+	return err == nil && gotMajor == major && (major != 0 || gotMinor <= minor)
+}
 
 // ErrNotPAF reports an archive that is not a PAF file.
 var ErrNotPAF = errors.New("paf: not a PAF archive")
@@ -55,7 +71,11 @@ func (e *VersionError) Error() string {
 	if e.Producer.Version != "" {
 		p += " " + e.Producer.Version
 	}
-	return fmt.Sprintf("paf: unsupported PAF version %s (written by %s; this reader supports %d.x)", e.PafVersion, p, Major)
+	supports := fmt.Sprintf("%d.x", Major)
+	if Major == 0 {
+		supports = fmt.Sprintf("0.%d", Minor)
+	}
+	return fmt.Sprintf("paf: unsupported PAF version %s (written by %s; this reader supports %s)", e.PafVersion, p, supports)
 }
 
 // Archive is a verified, opened PAF.
@@ -194,8 +214,7 @@ func (a *Archive) readManifest(purpose Purpose) error {
 	if err := json.Unmarshal(raw, &head); err != nil || head.Format != Format {
 		return ErrNotPAF
 	}
-	major, _, err := ParseVersion(head.PafVersion)
-	if err != nil || major != Major {
+	if !versionReadable(head.PafVersion, Major, Minor) {
 		return &VersionError{PafVersion: head.PafVersion, Producer: head.Producer}
 	}
 	if err := validateJSON(SchemaManifest, raw); err != nil {
@@ -246,8 +265,8 @@ func (a *Archive) UnderstandsExtension(id string) bool {
 	if !ok {
 		return false
 	}
-	major, _, err := ParseVersion(d.Version)
-	return err == nil && knownExtensions[id] == major
+	known, ok := knownExtensions[id]
+	return ok && versionReadable(d.Version, known[0], known[1])
 }
 
 func (a *Archive) verifyEntries() error {

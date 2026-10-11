@@ -45,6 +45,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/common/buildversion"
 	"github.com/tofutools/tclaude/pkg/federation/client"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
+	"github.com/tofutools/tclaude/pkg/paf"
 )
 
 const (
@@ -520,7 +521,7 @@ func buildFederationCatalog(peer string, status ...*statusSnapshot) (*proto.Cata
 			delete(caps[group.ID], proto.CapAttachments)
 		}
 	}
-	cat := &proto.CatalogPayload{PeerProposals: true, AgentBundleChunks: true, RequesterPays: 1, TeleportBackups: true, AgentTeleports: 1, AgentMoves: true, PAFAgentBundles: true, StableAgentIdentity: true, HomeRoutedMail: true, DirectAgentMoves: true, JobOutput: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
+	cat := &proto.CatalogPayload{PeerProposals: true, AgentBundleChunks: true, RequesterPays: 1, TeleportBackups: true, AgentTeleports: 1, AgentMoves: true, PAFAgentBundles: paf.Version, StableAgentIdentity: true, HomeRoutedMail: true, DirectAgentMoves: true, JobOutput: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
 	if fedPeerReadsNode(peer) {
 		cat.Node = localNodeMetadata()
 	}

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/transcript-line.schema.json",
+  "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v0.1/transcript-line.schema.json",
   "title": "One line of a PAF context JSON Lines file (transcript.jsonl, full.jsonl)",
   "$defs": {
     "header": {

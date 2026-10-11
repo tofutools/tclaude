@@ -234,9 +234,9 @@ type CatalogPayload struct {
 	HomeRoutedMail      bool `json:"home_routed_mail,omitempty"`
 	StableAgentIdentity bool `json:"stable_agent_identity,omitempty"`
 	AgentMoves          bool `json:"agent_moves,omitempty"`
-	// PAFAgentBundles says agent transfers may be sent as Portable Agent
-	// Format archives; peers without it receive agent bundle v1.
-	PAFAgentBundles bool           `json:"paf_agent_bundles,omitempty"`
+	// PAFAgentBundles is the newest PAF version (MAJOR.MINOR) this peer
+	// imports agent transfers in; peers without it receive agent bundle v1.
+	PAFAgentBundles string         `json:"paf_agent_bundles,omitempty"`
 	Node            *NodeMetadata  `json:"node,omitempty"`
 	NodeAt          time.Time      `json:"node_at,omitempty"`
 	NodeReceivedAt  time.Time      `json:"node_received_at,omitempty"` // receiver-owned; overwritten on receipt

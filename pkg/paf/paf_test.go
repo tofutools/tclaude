@@ -71,9 +71,9 @@ func exampleKey() ed25519.PrivateKey {
 }
 
 func TestBundledSchemasMatchDocs(t *testing.T) {
-	docs := readDir(t, filepath.Join(docsDir, "schema/v1"))
-	bundled := readDir(t, "schema/v1")
-	assert.Equal(t, docs, bundled, "pkg/paf/schema/v1 must be a byte-for-byte copy of docs/paf/schema/v1")
+	docs := readDir(t, filepath.Join(docsDir, "schema/v0.1"))
+	bundled := readDir(t, "schema/v0.1")
+	assert.Equal(t, docs, bundled, "pkg/paf/schema/v0.1 must be a byte-for-byte copy of docs/paf/schema/v0.1")
 }
 
 func TestSpecExamplesOpen(t *testing.T) {
@@ -151,7 +151,7 @@ func writeSample(t *testing.T, mutate func(w *Writer)) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	w := NewWriter(&buf, KindAgent, Limits{})
-	require.NoError(t, w.DeclareExtension(ExtTclaude, ExtensionDecl{Version: "1.0", System: "tclaude", Spec: "https://example.com/spec"}, false))
+	require.NoError(t, w.DeclareExtension(ExtTclaude, ExtensionDecl{Version: "0.1", System: "tclaude", Spec: "https://example.com/spec"}, false))
 	ag := Agent{Name: "worker", Definition: Definition{Role: "worker"}, Native: &Native{Format: "codex-rollout-jsonl", Path: AgentPath("w", "native/codex-rollout-jsonl/history.jsonl"), Harness: "codex"}}
 	require.NoError(t, ag.Extensions.Set(ExtTclaude, map[string]any{"spawn_profile": map[string]any{"profile": map[string]any{"harness": "codex"}}}))
 	require.NoError(t, w.AddAgent("w", ag, Environment{Harness: Harness{Name: "codex"}}))
@@ -292,7 +292,11 @@ func TestOpenRefuses(t *testing.T) {
 			remanifest(t, f, nil)
 		},
 		"unknown major version": func(f map[string][]byte) {
-			f[ManifestPath] = bytes.Replace(f[ManifestPath], []byte(`"paf_version": "1.0"`), []byte(`"paf_version": "2.0"`), 1)
+			f[ManifestPath] = bytes.Replace(f[ManifestPath], []byte(`"paf_version": "0.1"`), []byte(`"paf_version": "1.0"`), 1)
+		},
+		// While the major version is 0, a newer minor may break the format.
+		"newer 0.x minor version": func(f map[string][]byte) {
+			f[ManifestPath] = bytes.Replace(f[ManifestPath], []byte(`"paf_version": "0.1"`), []byte(`"paf_version": "0.2"`), 1)
 		},
 	}
 	want := map[string]string{
@@ -307,7 +311,8 @@ func TestOpenRefuses(t *testing.T) {
 		"attachment not in archive":         "is not in the archive",
 		"closed enum value":                 `unknown role "system"`,
 		"context without losses":            "no losses.json",
-		"unknown major version":             "unsupported PAF version 2.0",
+		"unknown major version":             "unsupported PAF version 1.0",
+		"newer 0.x minor version":           "unsupported PAF version 0.2 (written by test; this reader supports 0.1)",
 	}
 	for name, edit := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -587,4 +592,13 @@ func TestWriterRefusesContextLineOverRecordLimit(t *testing.T) {
 	w := NewWriter(&buf, KindAgent, Limits{MaxRecordBytes: 1024})
 	require.NoError(t, w.AddAgent("a", Agent{Name: "a"}, Environment{Harness: Harness{Name: "claude"}}))
 	require.ErrorIs(t, WriteTranscript(w, "a", ScopeEffective, tr), ErrRecordTooLarge)
+}
+
+func TestVersionReadable(t *testing.T) {
+	for v, want := range map[string]bool{"0.1": true, "0.0": true, "0.2": false, "1.0": false, "x": false} {
+		assert.Equal(t, want, versionReadable(v, 0, 1), v)
+	}
+	// From 1.0, minors only add, so a newer one is readable.
+	assert.True(t, versionReadable("1.7", 1, 0))
+	assert.False(t, versionReadable("2.0", 1, 0))
 }

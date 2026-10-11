@@ -12,14 +12,14 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
-// The schemas are a byte-for-byte copy of docs/paf/schema/v1; a test keeps
+// The schemas are a byte-for-byte copy of docs/paf/schema/v0.1; a test keeps
 // them in sync.
 //
-//go:embed schema/v1
+//go:embed schema/v0.1
 var schemaFS embed.FS
 
-// SchemaBaseURI is the $id prefix of the v1 schemas.
-const SchemaBaseURI = "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v1/"
+// SchemaBaseURI is the $id prefix of the v0.1 schemas.
+const SchemaBaseURI = "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v0.1/"
 
 // Schema names, relative to SchemaBaseURI.
 const (
@@ -41,7 +41,7 @@ var (
 )
 
 func loadSchema(name string) (*jsonschema.Schema, error) {
-	b, err := schemaFS.ReadFile(path.Join("schema/v1", name))
+	b, err := schemaFS.ReadFile(path.Join("schema/v0.1", name))
 	if err != nil {
 		return nil, err
 	}

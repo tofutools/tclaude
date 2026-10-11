@@ -73,7 +73,7 @@ func TestAgentBundlePAFExportImport(t *testing.T) {
 	assert.Contains(t, string(imported), dest)
 }
 
-// A peer that advertises paf_agent_bundles receives agent transfers as a
+// A peer that advertises a paf_agent_bundles version it can read receives agent transfers as a
 // signed PAF; every other peer keeps receiving bundle v1.
 func TestFederation_AgentSharingFormatFollowsPeerCatalog(t *testing.T) {
 	fh := newFedHarness(t)
@@ -99,7 +99,7 @@ func TestFederation_AgentSharingFormatFollowsPeerCatalog(t *testing.T) {
 	require.NoError(t, db.PutFederationCatalog(p.id.ID(), `{}`, time.Now()))
 	assert.Equal(t, legacy.SourceAgentBundleV1, offer(1).Source)
 
-	require.NoError(t, db.PutFederationCatalog(p.id.ID(), `{"paf_agent_bundles":true}`, time.Now()))
+	require.NoError(t, db.PutFederationCatalog(p.id.ID(), `{"paf_agent_bundles":"`+paf.Version+`"}`, time.Now()))
 	info := offer(2)
 	assert.Equal(t, paf.Format, info.Source)
 	require.Len(t, info.Signatures, 1)
