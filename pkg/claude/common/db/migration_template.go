@@ -117,6 +117,12 @@ func PrepareMigrationTemplateForTest() (func(), error) {
 	const env = "TCLAUDE_TEST_DB_TEMPLATE"
 	if path := os.Getenv(env); path != "" {
 		b, err := os.ReadFile(path)
+		if os.IsNotExist(err) || os.IsPermission(err) {
+			// Sandbox helpers can hide the parent's private temporary directory.
+			// Leave their cache lazy: their first DB open migrates and captures
+			// a template inside their own namespace, if they need a DB at all.
+			return func() {}, nil
+		}
 		if err != nil {
 			return nil, fmt.Errorf("read inherited test DB template: %w", err)
 		}
