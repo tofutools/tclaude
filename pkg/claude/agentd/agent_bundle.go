@@ -493,6 +493,9 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	b, _ := r.Context().Value(agentBundleDataContextKey{}).(*agentbundle.Bundle)
 	// neutral reads a PAF's neutral context while the archive file is open.
 	var neutral func(paf.ReadOptions) (*transcript.Transcript, error)
+	// direct is a file import by the caller, as opposed to a federation
+	// offer, move or teleport handing over an already decoded bundle.
+	direct := b == nil
 	if b == nil {
 		file, err := os.CreateTemp("", ".agent-import-archive-")
 		if err != nil {
@@ -538,7 +541,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	h, err := harness.ResolveSpawnable(landingName)
 	if err != nil || h.UsesCommandInput() {
 		msg := "unsupported agent harness"
-		if q.Get("harness") == "" {
+		if q.Get("harness") == "" && direct {
 			msg = fmt.Sprintf("harness %q is not available here; choose a landing harness with --harness", d.Harness)
 		}
 		writeError(w, 400, "harness", msg)
@@ -677,7 +680,17 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		preview.Warnings = append(preview.Warnings, pathError)
 	}
 	preview.Warnings = append(preview.Warnings, landingWarnings...)
-	landing, warnings, err := planHistoryLanding(b, h, model, preview.Cwd, neutral, q.Get("skip_history") == "true")
+	// Budget the conversation for the model the agent will launch with: the
+	// requested one, else the profile's, else on the same harness the model
+	// the source last ran.
+	landingModel := model
+	if landingModel == "" {
+		landingModel = profile.Model
+	}
+	if landingModel == "" && !crossHarness && d.Origin != nil {
+		landingModel = d.Origin.Model
+	}
+	landing, warnings, err := planHistoryLanding(b, h, landingModel, preview.Cwd, neutral, q.Get("skip_history") == "true")
 	if err != nil {
 		writeError(w, 400, "history", err.Error())
 		return
@@ -685,7 +698,9 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	defer landing.close()
 	preview.Landing, preview.History = landing, landing.history != nil
 	preview.Warnings = append(preview.Warnings, warnings...)
-	if landing.Rung == landingTranslated {
+	if direct {
+		// A direct import already tried to land the neutral context; the
+		// landing warnings say why when it did not.
 		preview.Warnings = slices.DeleteFunc(preview.Warnings, func(s string) bool { return s == legacy.WarningContextOnly })
 	}
 	preview.Warnings = append(preview.Warnings, "Source groups are advisory; only --group selects receiving membership. Source profile names and role references do not confer grants.")

@@ -173,7 +173,11 @@ permissions and ownership are advisory only.
 
 The agent lands on its own harness unless `--harness` names another. When
 the source harness is not available here, the import says so and asks for
-`--harness`. `--model` picks the landing model. The preview's
+`--harness`. `--model` picks the landing model. Without it, the landing
+model is the profile's, or on the same harness the model the source last
+ran. A translated conversation is budgeted to that model's context window;
+when no model is known at all, the preview asks for `--model` rather than
+guess. The preview's
 `history_landing` shows the source and landing harness and model and the rung
 the conversation takes:
 

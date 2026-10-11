@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -91,7 +92,7 @@ func TestAgentImportLandsOnAnotherHarness(t *testing.T) {
 	assert.Equal(t, "codex", preview.Agent.Harness)
 	assert.Contains(t, preview.Warnings[0], "launch posture recorded for claude is not applied on codex")
 
-	applied := importAgentArchive(t, f, raw, url.Values{"harness": {"codex"}, "cwd": {dest}, "apply": {"true"}, "group": {"receiver"}, "name": {"landed"}})
+	applied := importAgentArchive(t, f, raw, url.Values{"harness": {"codex"}, "model": {"gpt-5.5"}, "cwd": {dest}, "apply": {"true"}, "group": {"receiver"}, "name": {"landed"}})
 	require.True(t, applied.Applied)
 	require.NotEmpty(t, applied.Spawn.ConvID)
 	text := historyText(t, mustGetHarness(t, harness.CodexName), applied.Spawn.ConvID, dest)
@@ -129,11 +130,19 @@ func TestAgentImportLandsContextOnlyPAF(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 
 	dest := testutil.CanonicalTempDir(t)
-	preview := importAgentArchive(t, f, buf.Bytes(), url.Values{"cwd": {dest}})
+	// With no model at all the budget would be a guess, so the conversation
+	// does not land and the preview says how to fix it.
+	unbudgeted := importAgentArchive(t, f, buf.Bytes(), url.Values{"cwd": {dest}})
+	assert.Equal(t, "none", unbudgeted.Landing.Rung)
+	assert.False(t, unbudgeted.History)
+	assert.Contains(t, strings.Join(unbudgeted.Warnings, "\n"), "name one with --model")
+
+	const model = "claude-opus-5-5[1m]"
+	preview := importAgentArchive(t, f, buf.Bytes(), url.Values{"cwd": {dest}, "model": {model}})
 	assert.Equal(t, "translated", preview.Landing.Rung)
 	assert.NotContains(t, preview.Warnings, legacy.WarningContextOnly)
 
-	applied := importAgentArchive(t, f, buf.Bytes(), url.Values{"cwd": {dest}, "apply": {"true"}, "group": {"receiver"}, "name": {"from-context"}})
+	applied := importAgentArchive(t, f, buf.Bytes(), url.Values{"cwd": {dest}, "model": {model}, "apply": {"true"}, "group": {"receiver"}, "name": {"from-context"}})
 	require.True(t, applied.Applied)
 	assert.Contains(t, historyText(t, claude, applied.Spawn.ConvID, dest), morphSecret)
 }

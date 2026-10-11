@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -70,6 +71,11 @@ func planHistoryLanding(b *agentbundle.Bundle, dst *harness.Harness, model, cwd 
 	t, err := importedTranscript(b, neutral)
 	if err != nil {
 		return l, []string{"the conversation could not be read (" + err.Error() + "); importing config only"}, nil
+	}
+	// With no model at all the budget would be a blind guess; a named model
+	// whose window is unknown is budgeted conservatively, as morph does.
+	if _, source := harness.MorphContextWindow(dst, model); model == "" && strings.HasPrefix(source, "unknown model") {
+		return l, []string{fmt.Sprintf("no landing model is known for %s, so the conversation cannot be budgeted; name one with --model, or it imports as config only", dst.DisplayName)}, nil
 	}
 	opts := harness.MorphTranslateOptions()
 	opts.Policy.TargetModel = model
