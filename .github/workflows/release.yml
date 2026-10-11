@@ -41,8 +41,25 @@ jobs:
         with:
           node-version: 24
 
+      # The passt source archive is fetched from passt.top, which intermittently
+      # answers 502/504. Restoring it from the Actions cache means only a cache
+      # miss depends on upstream. The archive is stored under its SHA-256 and
+      # smoke::download_extract_tar_xz verifies it on every use, so correctness
+      # does not rest on the key: a stale or wrong cached copy is discarded and
+      # downloaded again. The key follows the file that pins the passt release.
+      - name: Cache pinned passt source archive
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/smoke-archive-cache
+          # This job pins the archive inline below, so the key also follows
+          # this workflow file; otherwise a bumped inline pin would keep hitting
+          # a cache without its archive and download on every run.
+          key: smoke-passt-source-sandbox-${{ runner.os }}-${{ hashFiles('scripts/lib/smoke/packet-floor.sh', '.github/workflows/release.yml') }}
+
       - name: Install Linux sandbox prerequisites
         shell: bash
+        env:
+          SMOKE_ARCHIVE_CACHE: ${{ runner.temp }}/smoke-archive-cache
         run: |
           source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
           if declare -F smoke::apt_update >/dev/null 2>&1; then
