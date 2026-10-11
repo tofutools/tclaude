@@ -17,6 +17,8 @@ import { MarkdownAttachment } from './markdown-attachment.js';
 import { AwayAnswer, PEER_MAIL_EVENT, PeerMailHost, awayTicket, peerLabelOf, peerOfMessage, replySubject } from './peer-mail.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { remoteNodeID } from './skynet-model.js';
+import { ProposalReader } from './proposal-reader.js';
+import { proposalTurn } from './proposals-model.js';
 
 // openPeerMail opens the peer mail dialog (peer operator mail goes out
 // through this node, so it is offered only on this node's own view).
@@ -449,8 +451,63 @@ function RecipientNames({ recipients }) {
   </${Fragment}>`)}</${Fragment}>`;
 }
 
+// GroupLinkReader is a peer's cross-node link request (tcl-2ksi0k): one exact
+// directed edge into one of this node's groups. Approving stores only that
+// edge; "allow future" also grants the peer groups.link.accept for the
+// destination group. It never grants the peer broader messaging.
+function GroupLinkReader({ request, controller }) {
+  const link = request.link || {};
+  const peer = link.source_peer_label || request.conv_title || request.origin_peer || 'peer';
+  // The feed also lists requests this node sent; those only show their state.
+  const sent = request.proposal ? proposalTurn(request.proposal) === 'them' || (!!request.proposal.ours && !proposalTurn(request.proposal))
+    : link.direction === 'out';
+  const handled = !controller.accessIsPending(request) || sent;
+  const outcome = handled ? controller.accessOutcome(request.status) : null;
+  const mode = String(link.mode || 'members->members').replace('->', ' → ');
+  // direction is relative to this node: "in" lands on our group (source is
+  // the peer's), "out" lands on the peer's group (source is ours).
+  const into = link.direction !== 'out';
+  const src = into ? `${peer}:${link.source_group || '?'}` : (link.source_group || '?');
+  const dst = into ? (link.dest_group || '?') : `${peer}:${link.dest_group || '?'}`;
+  const who = link.mode === 'owners->members' ? 'owners' : 'members';
+  return html`<${Fragment}>
+    <div class="mail-reader-head">
+      <div class="mail-subject">🌐 Cross-node link request${sent ? ' (sent)' : ''} <span class="mail-id">#${shortId(request.id)}</span></div>
+      <div class="mail-headers">
+        <${HeaderRow} label=${sent ? 'To peer' : 'From peer'}>${peer} ${request.origin_peer && html`<span class="mail-cid">${request.origin_peer}</span>`}</${HeaderRow}>
+        <${HeaderRow} label="Status">${sent && request.status === 'pending'
+          ? html`<span class="mail-state-pending">waiting for ${peer}'s operator · ${controller.accessCountdown(request.deadline)}</span>`
+          : handled
+          ? html`<span class=${`access-outcome ${outcome.cls}`}>${outcome.txt}</span>`
+          : html`<span class="mail-state-pending">pending · auto-declines ${controller.accessCountdown(request.deadline)}</span>`}</${HeaderRow}>
+        <${HeaderRow} label="Created">${request.created_at ? new Date(request.created_at).toLocaleString() : ''}</${HeaderRow}>
+      </div>
+    </div>
+    <div class="mail-reader-body access-reader-body"><div class="access-meta">
+      ${sent ? html`
+        <div class="access-row"><span class="access-k">You asked</span><span class="access-v">${who} of <b>${src}</b> to message members of <b>${dst}</b> (${mode})</span></div>
+        <div class="access-row"><span class="access-k">Cancel</span><span class="access-v">from Inter-group links (cancel request)</span></div>` : html`
+        <div class="access-row"><span class="access-k">Wants</span><span class="access-v">${who} of <b>${src}</b> may message members of <b>${dst}</b></span></div>
+        <div class="access-row"><span class="access-k">Edge</span><span class="access-v mono">${src} → ${dst} · ${mode}</span></div>
+        <div class="access-row"><span class="access-k">Approving authorizes</span><span class="access-v">exactly this edge and mode, nothing broader.</span></div>
+        <div class="access-row"><span class="access-k">Revoke</span><span class="access-v">any time from Inter-group links; takes effect on this node immediately</span></div>`}
+    </div></div>
+    <div class="mail-reader-actions access-reader-actions">
+      ${handled ? html`<${Fragment}><span class=${`access-outcome ${outcome.cls}`}>${outcome.txt}</span>${request.decided_at && html`<span class="access-decided-at">${relTime(request.decided_at)}</span>`}</${Fragment}>`
+        : html`<${Fragment}><span class="access-countdown" title="If you don't decide, this request is automatically declined.">${controller.accessCountdown(request.deadline)}</span>
+          <span class="grow"></span>
+          ${into && html`<button class="access-btn always" title=${`Approve, and let ${peer} link to ${link.dest_group} in future without asking (each link still has to be acknowledged)`}
+            onClick=${() => controller.decideAccess(request.id, 'approve_future')}>Approve + allow future links into ${link.dest_group}</button>`}
+          <button class="access-btn deny" onClick=${() => controller.decideAccess(request.id, 'deny')}>Decline</button>
+          <button class="access-btn approve" onClick=${() => controller.decideAccess(request.id, 'approve')}>Approve</button></${Fragment}>`}
+    </div>
+  </${Fragment}>`;
+}
+
 function AccessReader({ request, controller }) {
   const wizard = document.body.classList.contains('wizard');
+  if (request?.purpose === 'group_link') return html`<${GroupLinkReader} request=${request} controller=${controller} />`;
+  if (request?.purpose === 'peer_proposal') return html`<${ProposalReader} key=${`${request.id}:${request.proposal?.revision}`} request=${request} controller=${controller} />`;
   if (!request) return html`<div class="empty">${wizard
     ? 'Choose a petition to weigh its boon.' : 'Select an access request to review its details.'}</div>`;
   const handled = !controller.accessIsPending(request);

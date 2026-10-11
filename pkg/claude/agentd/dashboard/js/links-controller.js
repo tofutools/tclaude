@@ -28,3 +28,7 @@ export function openLinkEdit({ id, from, to, mode }) {
 export function deleteLink(value) {
   return requireController().deleteLink(value);
 }
+
+export function openProposalComposer(peer = '') {
+  return requireController().openPropose({ peer });
+}
