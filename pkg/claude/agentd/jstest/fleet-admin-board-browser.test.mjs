@@ -11,10 +11,10 @@ const BOARDS = [
   { id: 'brd_ops', name: 'ops notes', role: 'publisher', epoch: 2 },
   { id: 'brd_oss', name: 'oss friends', role: 'reader', epoch: 1 },
 ];
-const item = (id, name, kind, publisher) => ({ id, version: `v_${id}`, latest_version: `v_${id}`, name, kind, publisher, republisher: publisher, digest: 'ab'.repeat(32), bytes: 2048, provenance: { pubkey: 'PUBKEYPUBKEYPUBKEY0123456789' } });
+const item = (id, name, kind, publisher, extra = {}) => ({ ...extra, id, version: `v_${id}`, latest_version: `v_${id}`, name, kind, publisher, republisher: publisher, digest: 'ab'.repeat(32), bytes: 2048, provenance: { pubkey: 'PUBKEYPUBKEYPUBKEY0123456789' } });
 const ITEMS = {
-  brd_ops: [item('itm_roles', 'review roles', 'config', 'inst_forge'), item('itm_mine', 'sandbox defaults', 'config', 'inst_self')],
-  brd_oss: [item('itm_hunter', 'flaky-test-hunter', 'skill', 'inst_mx')],
+  brd_ops: [item('itm_roles', 'review roles', 'config', 'inst_forge', { updated_at: '2026-10-09T09:00:00Z' }), item('itm_mine', 'sandbox defaults', 'config', 'inst_self')],
+  brd_oss: [item('itm_hunter', 'flaky-test-hunter', 'skill', 'inst_mx', { description: 'Reruns a failing test and bisects the flake', updated_at: '2026-10-11T09:00:00Z' })],
 };
 const SKILL_FILES = [
   { path: 'SKILL.md', bytes: 300, text: '# hunter' },
@@ -46,13 +46,16 @@ function browserActions(log) {
   };
 }
 
-async function mount(t, { pref = null } = {}) {
+async function mount(t, { pref = null, sort = null } = {}) {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/fleet-admin-board-browser.js');
   const log = []; const toasts = []; const confirms = []; const prefs = { v: pref, getItem() { return this.v; }, setItem(k, v) { log.push(['pref', k, v]); this.v = v; } };
   const confirm = async (o) => { confirms.push(o); return o.action(); };
   const actions = browserActions(log);
-  const mounted = await harness.mount(harness.html`<${mod.ContentBrowser} boards=${BOARDS} view=${view} actions=${actions} confirm=${confirm} toast=${(m, e) => toasts.push([m, e])} prefs=${prefs} />`);
+  const sorts = { boardContent: sort };
+  const readSort = (k) => sorts[k] || null;
+  const writeSort = (k, v) => { log.push(['sort', k, v]); sorts[k] = v; };
+  const mounted = await harness.mount(harness.html`<${mod.ContentBrowser} boards=${BOARDS} view=${view} actions=${actions} confirm=${confirm} toast=${(m, e) => toasts.push([m, e])} prefs=${prefs} readSort=${readSort} writeSort=${writeSort} />`);
   const q = (sel) => mounted.container.querySelector(sel);
   const qa = (sel) => [...mounted.container.querySelectorAll(sel)];
   const settle = (ms = 10) => harness.act(() => new Promise((r) => setTimeout(r, ms)));
@@ -223,4 +226,41 @@ test('the archive download asks for executable bits only when opted in', async (
     ['HEAD', '/api/federation/boards/b%201/items/i/versions/v/archive'],
     ['HEAD', '/api/federation/boards/b%201/items/i/versions/v/archive?preserve_executable=1'],
   ]);
+});
+
+test('List sorts by header click (asc, desc, off) and remembers it; filter text matches descriptions', async (t) => {
+  const s = await mount(t);
+  const order = () => s.qa('#fleet-cb-table tbody tr').map((r) => r.dataset.row.split('/')[1]);
+  assert.deepEqual(order(), ['itm_roles', 'itm_mine', 'itm_hunter'], 'posted order first');
+  await s.click(s.q('th[data-sort-col="name"]'));
+  assert.deepEqual(order(), ['itm_hunter', 'itm_roles', 'itm_mine']);
+  assert.equal(s.q('th[data-sort-col="name"]').getAttribute('aria-sort'), 'ascending');
+  assert.equal(s.q('th[data-sort-col="name"] .sort-arrow').textContent, '▲');
+  await s.click(s.q('th[data-sort-col="name"]'));
+  assert.deepEqual(order(), ['itm_mine', 'itm_roles', 'itm_hunter']);
+  assert.equal(s.q('th[data-sort-col="name"] .sort-arrow').textContent, '▼');
+  await s.click(s.q('th[data-sort-col="updated"]'));
+  assert.deepEqual(order(), ['itm_roles', 'itm_hunter', 'itm_mine'], 'undated rows sort last');
+  assert.deepEqual(s.log.filter((l) => l[0] === 'sort').at(-1), ['sort', 'boardContent', { col: 'updated', dir: 'asc' }]);
+  await s.click(s.q('th[data-sort-col="updated"]'));
+  await s.click(s.q('th[data-sort-col="updated"]'));
+  assert.deepEqual(order(), ['itm_roles', 'itm_mine', 'itm_hunter'], 'a third click is unsorted again');
+  await s.type(s.q('#fleet-cb-search'), 'bisects');
+  assert.deepEqual(order(), ['itm_hunter']);
+});
+
+test('Cards sorts from a dropdown with a direction toggle, sharing the List sort', async (t) => {
+  const s = await mount(t, { pref: 'cards', sort: { col: 'board', dir: 'desc' } });
+  const order = () => s.qa('[data-card]').map((c) => c.dataset.card.split('/')[1]);
+  assert.deepEqual(order(), ['itm_hunter', 'itm_roles', 'itm_mine'], 'the remembered sort applies');
+  const sel = s.q('#fleet-cb-sort-col');
+  [...sel.options].forEach((o) => o.removeAttribute('selected'));
+  sel.querySelector('option[value="name"]').setAttribute('selected', '');
+  await s.harness.act(() => s.harness.fireEvent(sel, 'change'));
+  await s.settle();
+  assert.deepEqual(order(), ['itm_mine', 'itm_roles', 'itm_hunter'], 'a new field keeps the direction');
+  await s.click(s.q('#fleet-cb-sort-dir'));
+  assert.deepEqual(order(), ['itm_hunter', 'itm_roles', 'itm_mine']);
+  assert.deepEqual(s.log.filter((l) => l[0] === 'sort').at(-1), ['sort', 'boardContent', { col: 'name', dir: 'asc' }]);
+  assert.match(s.q('[data-card="brd_oss/itm_hunter"]').textContent, /bisects the flake/);
 });

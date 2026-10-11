@@ -841,10 +841,13 @@ The full federation model, grants and CLI are in
 The page opens on **Browse content**: everything posted to every board this
 node is a member of, in one list. **List** is a dense table with a detail
 pane; **Cards** shows the same items as cards with facets (kind, board,
-publisher) that count and filter. The choice is remembered. The search box
-takes free text plus `kind:skill|config`, `publisher:trusted|unknown|mine`
-(or part of a name) and `board:NAME`; facets and the kind tabs edit the same
-search. Each item shows who signed it and whether that is a peer this node
+publisher) that count and filter. The filter box matches name, description,
+publisher and board in both views; it also takes `kind:skill|config`,
+`publisher:trusted|unknown|mine` and `board:NAME`, which the facets and kind
+tabs write for you. Sort by name, kind, publisher, board, version or last
+update: click a List column header (ascending, descending, then posted
+order), or use the Cards **Sort** dropdown and ▲/▼. The view and the sort are
+remembered. Each item shows who signed it and whether that is a peer this node
 trusts (*trusted peer*), this node, or an *unknown publisher*. An unknown
 publisher's detail also says that a valid signature proves the version is
 unaltered, not who runs that node. Selecting an item fetches and verifies it,

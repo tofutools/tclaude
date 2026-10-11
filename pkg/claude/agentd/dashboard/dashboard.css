@@ -19183,6 +19183,8 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 /* Board content browser: List (dense table + detail pane) or Cards (facets +
    grid). Trust is a badge on every item; an unknown publisher also gets the
    amber banner in the detail. Item text is a peer's data, shown as plain text. */
+.fa-cb-sort { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.fa-cb-sort select, .fa-cb-sort button { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; padding: 2px 6px; font: inherit; font-size: 12px; }
 .fa-cb-views { display: inline-flex; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
 .fa-cb-views button { border: 0; background: #0d1117; color: #8b949e; padding: 3px 12px; font: inherit; font-size: 12px; cursor: pointer; }
 .fa-cb-views button + button { border-left: 1px solid #30363d; }
@@ -19234,6 +19236,8 @@ details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
 .fa-cb-card b { color: #f0f6fc; overflow-wrap: anywhere; }
 .fa-cb-card-meta { display: flex; gap: 6px; align-items: center; font-size: 12px; }
 .fa-cb-card-foot { display: flex; justify-content: space-between; align-items: center; gap: 6px; border-top: 1px solid #21262d; padding-top: 6px; font-size: 12px; }
+.fa-cb-desc { font-size: 12px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.fa-cb-desc-full { margin: 4px 0; color: #c9d1d9; font-size: 13px; }
 .fa-cb-by { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #fleet-cb-detail .cron-create-modal { width: min(820px, 94vw); }
 #fleet-cb-install .cron-create-modal { width: min(680px, 94vw); }

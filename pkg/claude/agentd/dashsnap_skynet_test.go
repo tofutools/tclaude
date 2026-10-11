@@ -25,7 +25,9 @@ const skynetFederationStubJS = `(function(){
     var path = new URL(url, location.href).pathname;
     // Boards: three boards with config and skill items from a trusted peer,
     // this node and an untrusted publisher, for the content browser.
-    var bItem = function(id, name, kind, pub, bytes) { return { id: id, version: '7f3c' + id.slice(4) + 'e91a', latest_version: '7f3c' + id.slice(4) + 'e91a', name: name, kind: kind, publisher: pub, republisher: pub, digest: '3e9b0a12c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f', bytes: bytes, provenance: { pubkey: 'UcKOCmQ1x9Lw4tR2vYp8NzEaHs6gJ3fB0kMdT7uWq3c=' } }; };
+    var bDesc = { itm_prr: 'Runs the repo cold-review checklist before marking a PR ready.', itm_rel: 'Lead and triage roles for a release train.', itm_go: 'Writes table-driven Go tests with subtests and golden files.', itm_fth: 'Reruns a failing Go test until it flakes, then bisects.', itm_sql: 'Forward-only SQLite migrations with rollback notes.' };
+    var bAge = { itm_prr: 2, itm_rel: 30, itm_sbx: 6, itm_go: 70, itm_fth: 1, itm_sql: 200, itm_dml: 12, itm_tpl: 400 };
+    var bItem = function(id, name, kind, pub, bytes) { return { description: bDesc[id], updated_at: new Date(Date.UTC(2026, 9, 11, 12) - bAge[id] * 3600e3).toISOString(), id: id, version: '7f3c' + id.slice(4) + 'e91a', latest_version: '7f3c' + id.slice(4) + 'e91a', name: name, kind: kind, publisher: pub, republisher: pub, digest: '3e9b0a12c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f', bytes: bytes, provenance: { pubkey: 'UcKOCmQ1x9Lw4tR2vYp8NzEaHs6gJ3fB0kMdT7uWq3c=' } }; };
     var bItems = {
       brd_core: [bItem('itm_prr', 'pr-review-checklist', 'skill', 'inst_hn3cxq7a', 6350), bItem('itm_rel', 'release roles', 'config', 'inst_2p6ym4ke', 2210), bItem('itm_sbx', 'sandbox defaults', 'config', 'inst_q4w7pjf2kx3mz6bty5nd', 1830), bItem('itm_go', 'go-table-tests', 'skill', 'inst_2p6ym4ke', 4120)],
       brd_oss: [bItem('itm_fth', 'flaky-test-hunter', 'skill', 'inst_w5zea3nq', 11670), bItem('itm_sql', 'sqlite-migrations', 'skill', 'inst_hn3cxq7a', 7400), bItem('itm_dml', 'dash-mock-loop', 'skill', 'inst_mx9n2kq4', 3010)],
@@ -423,6 +425,8 @@ func skynetStates() []dashsnap.State {
   document.querySelector('[data-view-pick="list"]').click();
   for (var k = 0; k < 50 && !document.querySelector('[data-row="brd_oss/itm_fth"]'); k++) await new Promise(function(r){ setTimeout(r, 100); });
   if (document.querySelectorAll('#fleet-cb-table tbody tr').length !== 8) throw new Error('boards: browser rows missing');
+  document.querySelector('th[data-sort-col="updated"]').click();
+  document.querySelector('th[data-sort-col="updated"]').click();
   document.querySelector('[data-row="brd_oss/itm_fth"]').click();
   for (var f = 0; f < 50 && !document.querySelector('[data-file="bin/rerun.sh"]'); f++) await new Promise(function(r){ setTimeout(r, 100); });
   document.querySelector('[data-file="bin/rerun.sh"] button').click();

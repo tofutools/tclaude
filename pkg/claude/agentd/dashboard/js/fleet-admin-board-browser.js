@@ -4,6 +4,7 @@ import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { ImportDialog, PublishDialog, canPost, postedBy } from './fleet-admin-board-items.js';
 import { dashPrefs } from './prefs.js';
+import { applySortState, persistTableSort, persistedTableSort } from './sort.js';
 
 const html = htm.bind(h);
 
@@ -19,6 +20,30 @@ const html = htm.bind(h);
 export const VIEW_PREF = 'tclaude.dash.boards.contentView';
 export const VIEWS = Object.freeze([{ id: 'list', label: 'List' }, { id: 'cards', label: 'Cards' }]);
 
+// SORT_TABLE is this browser's key in the dashboard's shared sort prefs; List
+// headers and the Cards dropdown read and write the same {col, dir}.
+export const SORT_TABLE = 'boardContent';
+export const SORT_COLS = Object.freeze([
+  { col: 'name', label: 'Name' }, { col: 'kind', label: 'Kind' }, { col: 'publisher', label: 'Posted by' },
+  { col: 'board', label: 'Board' }, { col: 'version', label: 'Version' }, { col: 'updated', label: 'Updated' },
+]);
+// Rows the daemon cannot date or number yet sort last (applySortState).
+export const SORT_ACCESSORS = Object.freeze({
+  name: (r) => r.name,
+  kind: (r) => r.kind,
+  publisher: (r) => r.by,
+  board: (r) => r.board.name,
+  version: (r) => (typeof r.seq === 'number' ? r.seq : r.version),
+  // RFC3339 UTC from the hub, so text order is time order.
+  updated: (r) => r.updated_at || null,
+});
+
+// nextSort is the dashboard tables' header cycle: asc, desc, then unsorted.
+export function nextSort(cur, col) {
+  if (!cur || cur.col !== col) return { col, dir: 'asc' };
+  return cur.dir === 'asc' ? { col, dir: 'desc' } : null;
+}
+
 export const KINDS = Object.freeze([{ id: 'skill', label: 'Skills' }, { id: 'config', label: 'Config' }]);
 export const TRUST = Object.freeze({
   mine: { label: 'this node', cls: 'fa-cb-t-me', title: 'Posted by this node' },
@@ -28,6 +53,7 @@ export const TRUST = Object.freeze({
 
 function errText(error) { return error?.message || String(error); }
 const short = (v) => String(v || '').slice(0, 10);
+const when = (iso) => { const t = Date.parse(iso || ''); return Number.isFinite(t) ? new Date(t).toLocaleDateString() : '—'; };
 function size(n) {
   if (!(n >= 0)) return '—';
   return n < 1024 ? `${n} B` : n < 1 << 20 ? `${(n / 1024).toFixed(1)} KiB` : `${(n / (1 << 20)).toFixed(1)} MiB`;
@@ -83,7 +109,7 @@ export function matches(row, f, exact = false) {
     const known = ['trusted', 'unknown', 'mine'].includes(f.publisher);
     if (known ? row.trust !== f.publisher : !`${row.by} ${row.publisher}`.toLowerCase().includes(f.publisher)) return false;
   }
-  const hay = `${row.name} ${row.by} ${row.board.name}`.toLowerCase();
+  const hay = `${row.name} ${row.description || ''} ${row.by} ${row.publisher} ${row.board.name}`.toLowerCase();
   return f.text.every((t) => hay.includes(t));
 }
 
@@ -177,6 +203,7 @@ export function ItemDetail({ row, view, actions, onInstall, onOpenBoard }) {
   return html`<div class="fa-cb-detail" data-detail=${row.key}>
     <div class="fa-row"><b class="fa-cb-title">${row.name}</b><${KindChip} kind=${row.kind} /><span class="muted">v ${short(row.version)} · ${row.board.name}</span><span class="spacer"></span>
       <button type="button" class="primary" data-cb-act="install" onClick=${() => onInstall(row)}>Install…</button></div>
+    ${row.description && html`<div class="fa-cb-desc-full">${row.description}</div>`}
     ${row.trust === 'unknown' && html`<div class="fa-cb-banner" role="note"><b>Unknown publisher.</b> This node has not trusted <code>${row.publisher}</code>. The signature proves this version came from that node's key, unchanged; it does not tell you who runs that node.</div>`}
     <div class="fa-cb-kv">
       <span>Posted by</span><span>${row.by} <${TrustBadge} trust=${row.trust} /></span>
@@ -336,19 +363,27 @@ function Card({ row, selected, onSelect }) {
   return html`<button type="button" class=${`fa-cb-card${selected ? ' sel' : ''}`} data-card=${row.key} onClick=${() => onSelect(row)}>
     <span class="fa-cb-card-meta">${row.invalid ? html`<span class="fa-danger">invalid</span>` : html`<${KindChip} kind=${row.kind} />`}<span class="muted">v ${short(row.version)} · ${row.board.name}</span></span>
     <b>${row.name}</b>
+    ${row.description && html`<span class="muted fa-cb-desc">${row.description}</span>`}
     <span class="fa-cb-card-foot"><span class="fa-cb-by" title=${row.by}>${row.by}</span>${!row.invalid && html`<${TrustBadge} trust=${row.trust} />`}</span>
   </button>`;
 }
 
 // ContentBrowser lists every item on every board this node belongs to, as a
 // dense list with a detail pane or as cards with facets.
-export function ContentBrowser({ boards, view, actions, confirm, toast, onOpenBoard = null, prefs = dashPrefs }) {
+export function ContentBrowser({ boards, view, actions, confirm, toast, onOpenBoard = null, prefs = dashPrefs, readSort = persistedTableSort, writeSort = persistTableSort }) {
   const [perBoard, setPerBoard] = useState(null);
   const [tick, setTick] = useState(0);
   const [query, setQuery] = useState('');
   const [mode, setModeState] = useState(() => (prefs.getItem(VIEW_PREF) === 'cards' ? 'cards' : 'list'));
   const [selected, setSelected] = useState('');
   const [dialog, setDialog] = useState(null);
+  const [sort, setSortState] = useState(() => readSort(SORT_TABLE));
+  // Updates go through the current value, so two quick clicks cycle twice.
+  const setSort = (next) => setSortState((cur) => {
+    const v = typeof next === 'function' ? next(cur) : next;
+    writeSort(SORT_TABLE, v);
+    return v;
+  });
   const boardKey = (boards || []).map((b) => `${b.id}:${b.epoch ?? ''}`).join(',');
   useEffect(() => {
     let off = false;
@@ -361,7 +396,7 @@ export function ContentBrowser({ boards, view, actions, confirm, toast, onOpenBo
   const rows = useMemo(() => browserRows(perBoard || [], view), [perBoard, view]);
   const f = parseQuery(query);
   const exactBoard = (boards || []).some((b) => b.name.toLowerCase() === f.board);
-  const shown = rows.filter((r) => matches(r, f, exactBoard));
+  const shown = applySortState(rows.filter((r) => matches(r, f, exactBoard)), SORT_ACCESSORS, sort);
   const sel = shown.find((r) => r.key === selected) || null;
   const failed = (perBoard || []).filter((p) => p.error);
   const posters = (boards || []).filter((b) => canPost(b) && !b.frozen);
@@ -377,7 +412,12 @@ export function ContentBrowser({ boards, view, actions, confirm, toast, onOpenBo
   const d = dialog;
   return html`<div class="fa-cb" id="fleet-content-browser" data-view=${mode}>
     <div class="fa-row">
-      <input id="fleet-cb-search" class="fa-grow" placeholder="Search…  kind:skill  publisher:trusted  board:NAME" value=${query} autocomplete="off" spellcheck="false" onInput=${(e) => setQuery(e.currentTarget.value)} />
+      <input id="fleet-cb-search" class="fa-grow" placeholder="Filter by name, description, publisher or board" title="Also: kind:skill, publisher:trusted|unknown|mine, board:NAME" value=${query} autocomplete="off" spellcheck="false" onInput=${(e) => setQuery(e.currentTarget.value)} />
+      ${mode === 'cards' && html`<span class="fa-cb-sort"><label for="fleet-cb-sort-col" class="muted">Sort</label>
+        <select id="fleet-cb-sort-col" onChange=${(e) => setSort(e.currentTarget.value ? { col: e.currentTarget.value, dir: sort?.dir || 'asc' } : null)}>
+          <option value="" selected=${!sort}>posted order</option>${SORT_COLS.map((c) => html`<option key=${c.col} value=${c.col} selected=${sort?.col === c.col}>${c.label}</option>`)}</select>
+        <button type="button" id="fleet-cb-sort-dir" disabled=${!sort} title=${sort?.dir === 'desc' ? 'Descending: click for ascending' : 'Ascending: click for descending'}
+          onClick=${() => setSort((cur) => cur && { ...cur, dir: cur.dir === 'asc' ? 'desc' : 'asc' })}>${sort?.dir === 'desc' ? '▼' : '▲'}</button></span>`}
       <span class="fa-cb-views" role="group" aria-label="View">${VIEWS.map((v) => html`<button type="button" key=${v.id} data-view-pick=${v.id} aria-pressed=${mode === v.id ? 'true' : 'false'} class=${mode === v.id ? 'on' : ''} onClick=${() => setMode(v.id)}>${v.label}</button>`)}</span>
       ${posters.length > 0 && html`<button type="button" class="primary" id="fleet-cb-upload-btn" onClick=${upload}>Upload…</button>`}
     </div>
@@ -392,10 +432,14 @@ export function ContentBrowser({ boards, view, actions, confirm, toast, onOpenBo
             <div class="fa-cb-tabs" role="tablist">${[{ id: '', label: 'All' }, ...KINDS].map((k) => html`<button type="button" role="tab" key=${k.id || 'all'} data-kind-tab=${k.id || 'all'} aria-selected=${f.kind === k.id ? 'true' : 'false'} class=${f.kind === k.id ? 'on' : ''}
               onClick=${() => setQuery(withToken(query, 'kind', k.id || f.kind))}>${k.label} <span class="muted">${k.id ? rows.filter((r) => r.kind === k.id).length : rows.length}</span></button>`)}</div>
             <table class="fa-table" id="fleet-cb-table" tabindex="0" onKeyDown=${(e) => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); move(e.key === 'ArrowDown' ? 1 : -1); } }}>
-              <thead><tr><th>Name</th><th>Kind</th><th>Posted by</th><th>Board</th><th>Ver</th></tr></thead>
+              <thead><tr>${SORT_COLS.map((c) => {
+                const on = sort?.col === c.col;
+                return html`<th key=${c.col} class=${on ? 'sortable sort-active' : 'sortable'} data-sort-col=${c.col} title=${`Sort by ${c.label}`}
+                  aria-sort=${on ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'} onClick=${() => setSort((cur) => nextSort(cur, c.col))}>${c.label}<span class="sort-arrow">${on ? (sort.dir === 'asc' ? '▲' : '▼') : '▾'}</span></th>`;
+              })}</tr></thead>
               <tbody>${shown.map((r) => html`<tr key=${r.key} data-row=${r.key} class=${r.key === selected ? 'on' : ''} onClick=${() => setSelected(r.key)}>
                 <td>${r.name || 'Invalid item'}</td><td>${r.invalid ? html`<span class="fa-danger">invalid</span>` : html`<${KindChip} kind=${r.kind} />`}</td>
-                <td>${!r.invalid && html`<${TrustBadge} trust=${r.trust} compact=${true} />`} ${r.by}</td><td class="muted">${r.board.name}</td><td class="muted"><code>${short(r.version)}</code></td></tr>`)}</tbody></table>
+                <td>${!r.invalid && html`<${TrustBadge} trust=${r.trust} compact=${true} />`} ${r.by}</td><td class="muted">${r.board.name}</td><td class="muted"><code>${short(r.version)}</code></td><td class="muted">${when(r.updated_at)}</td></tr>`)}</tbody></table>
             ${!shown.length && html`<div class="muted">No items match.</div>`}
           </div>
           <div class="fa-cb-pane">${detail(sel)}</div>
