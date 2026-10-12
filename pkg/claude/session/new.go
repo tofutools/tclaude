@@ -559,8 +559,9 @@ func runNew(params *NewParams) error {
 	// The spawn command, model/effort validation and resume form all come
 	// from the selected harness behind the seam (pkg/claude/harness).
 	// --harness picks it (default "claude"); an unknown value errors here
-	// rather than silently launching Claude Code.
-	h, err := harness.Resolve(params.Harness)
+	// rather than silently launching Claude Code, as does an experimental
+	// harness the operator has not opted into.
+	h, err := harness.ResolveSpawnable(params.Harness)
 	if err != nil {
 		return err
 	}

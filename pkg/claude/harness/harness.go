@@ -33,6 +33,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
 // DefaultName is the harness tclaude assumes when none is recorded. It
@@ -69,6 +71,11 @@ const (
 type Harness struct {
 	// ModelProxyProtocol declares an explicitly supported model gateway contract.
 	ModelProxyProtocol string
+	// Experimental marks a registered harness whose tclaude support is still
+	// incomplete. It resolves for existing conversations, but cannot be
+	// spawned, and spawn surfaces leave it out of their default lists, until
+	// the operator opts in. See ExperimentalHarnessEnabled.
+	Experimental bool
 	// Name is the stable identifier persisted in the DB `harness` column
 	// and accepted by `--harness`. Lower-case, no spaces (e.g. "claude").
 	Name string
@@ -824,6 +831,11 @@ func ResolveSpawnable(name string) (*Harness, error) {
 	}
 	if h.Spawn == nil || h.Models == nil {
 		return nil, fmt.Errorf("harness %q is not spawnable (no spawner/model catalog)", h.Name)
+	}
+	if !h.Spawnable() {
+		return nil, fmt.Errorf("harness %q is experimental and not enabled; add %q to "+
+			"\"experimental_harnesses\" in %s (or set %s=%s) to opt in",
+			h.Name, h.Name, config.ConfigPath(), ExperimentalHarnessesEnvVar, h.Name)
 	}
 	return h, nil
 }

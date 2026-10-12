@@ -59,6 +59,9 @@ func ValidateLaunchExtraArgs(h *Harness, args []string) error {
 	if h != nil && h.Name == GeminiName && len(args) > 0 {
 		return validateGeminiExtraArgs(args)
 	}
+	if h != nil && h.Name == PiName && len(args) > 0 {
+		return validatePiExtraArgs(args)
+	}
 	if h == nil || h.Name != CopilotName || len(args) == 0 {
 		return nil
 	}

@@ -35,6 +35,12 @@ type Config struct {
 	RateLimit     *RateLimitConfig `json:"ratelimit,omitempty"`
 	Agent         *AgentConfig     `json:"agent,omitempty"`
 
+	// ExperimentalHarnesses opts in to registered harnesses whose tclaude
+	// support is still incomplete (Harness.Experimental, e.g. "pi"). Such a
+	// harness cannot be spawned and is left out of spawn surfaces' default
+	// lists until it is named here.
+	ExperimentalHarnesses []string `json:"experimental_harnesses,omitempty"`
+
 	// Broker configures agentd's brokered hook/statusline endpoints —
 	// the path a `tclaude-layer` agent uses to reach the conversation
 	// database its mount namespace hides. Absent → limits measured and

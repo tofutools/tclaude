@@ -37,7 +37,7 @@ func validateLocalPlacementRequirements(require, effectiveHarness string) error 
 	} else {
 		for _, name := range harness.Names() {
 			h, _ := harness.Get(name)
-			if h.Spawn != nil {
+			if h.Spawn != nil && h.Spawnable() {
 				if _, err := exec.LookPath(h.Spawn.Binary()); err == nil {
 					n.Harnesses = append(n.Harnesses, proto.NodeHarness{Name: name})
 				}

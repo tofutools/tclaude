@@ -19,6 +19,7 @@ func TestLaunchIdentityDeclaredForEveryHarness(t *testing.T) {
 		CopilotName:  {preset: PresetSessionIDUUID},
 		GeminiName:   {preset: PresetSessionIDUUID, mintFresh: true, resumeID: true},
 		ShellName:    {preset: PresetSessionIDUUID},
+		PiName:       {preset: PresetSessionIDUUID, mintFresh: true, resumeID: true},
 	}
 	for _, name := range Names() {
 		w, ok := want[name]

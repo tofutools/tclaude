@@ -52,7 +52,7 @@ func ResolveTrustDir(h *Harness, requested bool) (bool, error) {
 			name = h.Name
 		}
 		return false, fmt.Errorf("--trust-dir applies only to a harness with a directory-trust dialog "+
-			"(claude, codex, copilot, gemini); %s has no directory-trust prompt", name)
+			"(claude, codex, copilot, gemini, pi); %s has no directory-trust prompt", name)
 	}
 	return true, nil
 }
@@ -80,6 +80,8 @@ func DirTrustStore(h *Harness) string {
 		return "$COPILOT_HOME/config.json"
 	case GeminiName:
 		return geminiTrustStoreUI
+	case PiName:
+		return piTrustStoreUI
 	default:
 		return ""
 	}
@@ -128,7 +130,7 @@ func EnsureDirTrustedForLaunch(
 		return nil
 	}
 	// These editors handle both spellings in one locked config edit.
-	if h.Name == CopilotName || h.Name == GeminiName {
+	if h.Name == CopilotName || h.Name == GeminiName || h.Name == PiName {
 		return ensureDirTrustedForLaunchPath(h, projectDir, getenv, home)
 	}
 	for _, dir := range dirTrustSpellings(projectDir) {
@@ -164,6 +166,10 @@ func ensureDirTrustedForLaunchPath(h *Harness, projectDir string, getenv func(st
 		// Gemini's store follows GEMINI_CLI_HOME (or an explicit
 		// GEMINI_CLI_TRUSTED_FOLDERS_PATH), so the launch environment picks it.
 		return EnsureGeminiDirTrustedForLaunch(getenv, home, projectDir)
+	case PiName:
+		// pi's store follows PI_CODING_AGENT_DIR, so the launch environment
+		// picks it.
+		return EnsurePiDirTrustedForLaunch(getenv, projectDir)
 	default:
 		// A harness declared DirTrust but has no editor wired here. Refuse
 		// rather than silently pretend it was trusted, so the gap surfaces at
