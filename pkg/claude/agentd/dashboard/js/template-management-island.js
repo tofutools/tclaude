@@ -870,7 +870,14 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
   const [phase, setPhase] = useState('idle');
   const [error, setError] = useState('');
   const request = useRef(0);
+  // detected is set when the fallback already fetched the agent preview, so
+  // the kind change does not upload the file again.
+  const detected = useRef(false);
   useEffect(() => {
+    if (detected.current) {
+      detected.current = false;
+      return undefined;
+    }
     const token = ++request.current;
     if (!file) {
       setInspection(null);
@@ -903,14 +910,17 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
             try {
               const preview = await actions.importAgentPAF(file, agentImportParams(choices));
               if (!live()) return;
+              detected.current = true;
               setKind('agent');
               setAgentPreview(preview);
               setPhase('ready');
               setError('');
-            } catch {
+            } catch (agentErr) {
               if (!live()) return;
               setPhase('error');
-              setError(message(err));
+              // An agent PAF the group importer refused: the agent error
+              // (say, a harness that is not available here) says more.
+              setError(message(/group PAF/.test(message(err)) ? agentErr : err));
             }
             return;
           }
@@ -950,7 +960,8 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
     kind === 'agent' &&
     !!agentPreview &&
     !!choices.group &&
-    (choices.keepPaths || !!choices.cwd.trim() || !(agentPreview.unresolved || []).length);
+    // apply refuses without a working dir unless the recorded paths are kept.
+    (choices.keepPaths || !!choices.cwd.trim());
   const busy = phase === 'importing' || phase === 'loading' || phase === 'refreshing';
   const submit = async () => {
     setError('');

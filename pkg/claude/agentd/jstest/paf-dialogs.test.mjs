@@ -175,3 +175,28 @@ test('a group preview offers per-member harness and model and re-inspects with t
   assert.equal(imported[0][1], '/tmp/app');
   assert.deepEqual(imported[0][3].members, { c2: { harness: 'codex', model: '' } });
 });
+
+test('a dropped .paf opens the import dialog unless a drop zone took it or a dialog is open', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { bindPAFDrop } = await harness.importDashboardModule('js/paf-drop.js');
+  const opened = [];
+  t.after(bindPAFDrop({ open: (file) => opened.push(file.name), doc: harness.document }));
+  const { document, window } = harness;
+  const drop = (name, { prevented = false } = {}) => {
+    const event = new window.Event('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', { value: { types: ['Files'], files: [{ name }] } });
+    if (prevented) event.preventDefault();
+    document.body.dispatchEvent(event);
+  };
+  drop('notes.txt');
+  drop('logs.zip', { prevented: true });
+  assert.deepEqual(opened, [], 'other files and handled drops are left alone');
+  drop('reviewer.paf');
+  assert.deepEqual(opened, ['reviewer.paf']);
+  const dialog = document.body.appendChild(document.createElement('div'));
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+  drop('other.paf');
+  assert.deepEqual(opened, ['reviewer.paf'], 'an open dialog is not replaced');
+  dialog.remove();
+});
