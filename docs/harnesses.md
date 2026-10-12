@@ -790,8 +790,9 @@ your own `~/.pi/agent`: its providers, logins, settings and telemetry choice.
 tclaude passes no credentials into pi.
 
 **Live status needs no setup.** pi has no hook configuration, so tclaude ships
-a small pi extension inside its binary, writes it read-only under its cache
-directory, and loads it per launch with `--extension`. It reports turns, tools,
+a small pi extension inside its binary, writes it read-only under its private
+data directory (`~/.tclaude/data/pi-extension`, which sandboxed agents cannot
+reach), and loads it per launch with `--extension`. It reports turns, tools,
 dialogs, compaction, `/clone`/`/new` session switches and exit to tclaude the
 way other harnesses' hooks do. Nothing is written to `~/.pi`, and a slow or
 missing tclaude never stalls pi.

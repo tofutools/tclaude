@@ -1211,6 +1211,8 @@ jobs:
   # payloads PiSim feeds the flow tests, and pi's session flags must behave as
   # the spawner assumes.
   pi-smoke:
+    needs: changes
+    if: needs.changes.outputs.docs_only == 'false'
     name: pi smoke
     runs-on: ubuntu-latest
     steps:
