@@ -137,6 +137,8 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	must("window.addEventListener('resize', positionDetails)", "open details follow viewport geometry changes")
 	must("clipHost?.addEventListener('scroll', positionDetails", "open details follow dock scrolling")
 	must(".dock-card-details.open", "the complete details float without resizing the card")
+	must(".dock-card-details.open { visibility: visible; opacity: 1; }", "open details stay pointer-transparent so leaving the card closes them")
+	mustNot(".dock-card-details.open { visibility: visible; opacity: 1; pointer-events: auto; }", "hovering the details popover must not keep its card hovered")
 	must("const left = Math.max(8, cardRect.left - cardRect.width)", "details open to the left of the hovered card")
 	must("width: Math.max(0, cardRect.left - left)", "details never overlap the profile-item column")
 	must("detailsPosition?.width", "details remeasure their height after a viewport-width change")
