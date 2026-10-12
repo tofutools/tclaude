@@ -310,7 +310,7 @@ func TestDashboardHTML_GlobalMenuCommandsHavePaletteActions(t *testing.T) {
 		label  string
 		run    string
 	}{
-		{"group-import-open", "wiz('Import a group archive…', 'Unseal a party archive…')", "run: () => openGroupImport()"},
+		{"group-import-open", "wiz('Import an agent or group…', 'Unseal a party archive…')", "run: () => openGroupImport()"},
 		{"cleanup-all-open", "wiz('Clean up agents and conversations…', 'Tidy familiars and scrolls…')", "run: () => openCleanupModal({ mode: 'agents' })"},
 		{"delete-retired-open", "wiz('Delete retired agents…', 'Dispel banished familiars…')", "run: () => openDeleteRetiredPreview()"},
 		{"profiles-manage-open", "wiz('Manage spawn profiles…', 'Manage familiar patterns…')", "run: () => openProfilesManageModal()"},
@@ -341,7 +341,7 @@ func TestDashboardHTML_GlobalMenuCommandsHavePaletteActions(t *testing.T) {
 			t.Errorf("%s: expected %q before %q", why, first, second)
 		}
 	}
-	requireBefore("label: wiz('Create new group…'", "label: wiz('Import a group archive…'",
+	requireBefore("label: wiz('Create new group…'", "label: wiz('Import an agent or group…'",
 		"broad group/party queries should keep create-group as their first result")
 	requireBefore("label: wiz('Clean up agents and conversations…'", "label: wiz('Delete retired agents…'",
 		"broad cleanup queries should prefer the all-categories tool to delete-retired")

@@ -1824,7 +1824,8 @@ func TestDashboardHTML_WizardGroupDialogs(t *testing.T) {
 	// Import: surface + honest-text gilded submit (disabled ≠ busy here, so
 	// no ::before copy swap — same reasoning as the reply dialog's Send).
 	must("body.wizard #group-import-modal .cron-create-modal", "the import dialog surface is re-skinned")
-	must(`<${Words} plain="Import a group from a .zip archive" wizard="⤒ Unseal a party archive"/>`, "the import title ships both voices")
+	must(`plain=${kind === 'agent' ? 'Import an agent' : kind === 'group' ? 'Import a group' : 'Import an agent or a group'}`, "the import title follows the file kind")
+	must(`wizard="⤒ Unseal an archive"`, "the import title ships both voices")
 	must("body.wizard #group-import-modal #group-import-submit", "the Import button gets the gilded chrome (label kept honest)")
 
 	// Startup context. Wizard mode names it "party lore", not "standing

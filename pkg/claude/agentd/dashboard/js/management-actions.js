@@ -11,6 +11,7 @@ import { loadRoles, createRole, updateRole, deleteRole } from './roles.js';
 import { ambientLaunchDecisions } from './management-model.js';
 import { fetchUnsandboxedAutonomy } from './unsandboxed-autonomy.js';
 import { refuseInPeerView } from './peer-view-guard.js';
+import { exportParams, landingParams, queryString } from './paf-model.js';
 import {
   loadSandboxProfiles,
   loadSandboxCommonRules,
@@ -259,11 +260,11 @@ export function createManagementActions({
     ...templateAPI,
   };
   const groups = {
-    async inspectImport(file, as = '') {
+    async inspectImport(file, as = '', landing = {}) {
       const form = new FormData();
       form.append('archive', file);
       if (as) form.append('as', as);
-      const response = await fetch('/api/groups/import/inspect', {
+      const response = await fetch(`/api/groups/import/inspect${queryString(landingParams(landing))}`, {
         method: 'POST',
         credentials: 'same-origin',
         body: form,
@@ -273,12 +274,12 @@ export function createManagementActions({
         throw new Error(body?.error || `HTTP ${response.status}`);
       return body;
     },
-    async importGroup(file, into, as = '') {
+    async importGroup(file, into, as = '', landing = {}) {
       const form = new FormData();
       form.append('archive', file);
       form.append('into', into);
       if (as) form.append('as', as);
-      const response = await fetch('/api/groups/import', {
+      const response = await fetch(`/api/groups/import${queryString(landingParams(landing))}`, {
         method: 'POST',
         credentials: 'same-origin',
         body: form,
@@ -612,8 +613,11 @@ export function createManagementActions({
     await refresh();
     return result;
   }
-  function openGroupImport() {
-    state.openDialog({ kind: 'group-import' });
+  // openGroupImport opens the one ⤒ import… dialog; file preloads a
+  // dropped .paf or .zip.
+  let importKey = 0;
+  function openGroupImport(file = null) {
+    state.openDialog({ kind: 'group-import', file, key: ++importKey });
   }
   function openGroupContext(name) {
     const group = (getSnapshot()?.groups || []).find(
@@ -625,11 +629,11 @@ export function createManagementActions({
       context: group?.default_context || '',
     });
   }
-  async function inspectGroupImport(file, as) {
-    return groups.inspectImport(file, as);
+  async function inspectGroupImport(file, as, landing) {
+    return groups.inspectImport(file, as, landing);
   }
-  async function importGroup(file, into, as) {
-    const result = await groups.importGroup(file, into, as);
+  async function importGroup(file, into, as, landing) {
+    const result = await groups.importGroup(file, into, as, landing);
     state.closeDialog();
     let summary = `Imported group "${result.group}" — ${result.agent_count} agent(s), ${result.message_count} message(s)`;
     const remaps = Object.keys(result.conv_remaps || {}).length;
@@ -644,6 +648,57 @@ export function createManagementActions({
     await refresh();
     return result;
   }
+  // PAF export / redact / agent import (tcl-jkmitn). Each goes through the
+  // dashboard's /api twin of the human-only /v1 route.
+  async function pafError(response) {
+    const body = await response.json().catch(() => null);
+    const error = new Error(body?.error || `HTTP ${response.status}`);
+    error.status = response.status;
+    error.body = body;
+    return error;
+  }
+  // exportAgentPAF fetches the agent's PAF. A 422 with code
+  // flagged_credentials carries the findings, for the dialog to show.
+  async function exportAgentPAF(choices) {
+    const response = await fetch(`/api/agent-bundle/export${queryString(exportParams(choices))}`, { credentials: 'same-origin' });
+    if (!response.ok) throw await pafError(response);
+    return response.blob();
+  }
+  async function exportGroupArchive(group, format, allowFlagged = false) {
+    const response = await fetch(`/api/groups/${encodeURIComponent(group)}/export${queryString({ format, allow_flagged: allowFlagged })}`, { credentials: 'same-origin' });
+    if (!response.ok) throw await pafError(response);
+    return { blob: await response.blob(), filename: response.headers.get('X-Tclaude-Export-Filename') || `group-${group}.${format}` };
+  }
+  async function redactPAF(blob, options, preview) {
+    const response = await fetch(`/api/paf/redact${queryString({ ...options, preview })}`, {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/vnd.tclaude.paf+zip' }, body: blob,
+    });
+    if (!response.ok) throw await pafError(response);
+    return preview ? response.json() : response.blob();
+  }
+  // importAgentPAF previews (apply false) or lands and starts the agent.
+  async function importAgentPAF(file, params) {
+    const response = await fetch(`/api/agent-bundle/import${queryString(params)}`, {
+      method: 'POST', credentials: 'same-origin', body: file,
+    });
+    if (!response.ok) throw await pafError(response);
+    const result = await response.json();
+    if (params.apply) {
+      state.closeDialog();
+      notify(`Imported agent "${result.agent?.name || params.name || 'agent'}" into ${params.group} and started it`);
+      await refresh();
+    }
+    return result;
+  }
+  function openAgentExport({ agent, label }) {
+    if (refuseInPeerView('Agent export')) return;
+    state.openDialog({ kind: 'paf-export', agent, label });
+  }
+  function openGroupExport(group) {
+    if (refuseInPeerView('Group export')) return;
+    state.openDialog({ kind: 'group-export', group });
+  }
+
   async function saveGroupContext(name, context) {
     await groups.saveContext(name, context.trim());
     state.closeDialog();
@@ -1055,6 +1110,12 @@ export function createManagementActions({
     openGroupImport,
     inspectGroupImport,
     importGroup,
+    exportAgentPAF,
+    exportGroupArchive,
+    redactPAF,
+    importAgentPAF,
+    openAgentExport,
+    openGroupExport,
     openGroupContext,
     saveGroupContext,
     inspectProfiles,

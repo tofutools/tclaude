@@ -26,6 +26,7 @@ import { useDialogFocus } from './dialog-focus.js';
 import { wizWord } from './slop.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import { GroupContextDialog, GroupImportDialog, TemplateDeployDialog, TemplateDuplicateDialog, TemplateEditor, TemplateFromGroupDialog, TemplateImportDialog, TemplateManager, TemplateStartersDialog } from './template-management-island.js';
+import { AgentExportDialog, GroupExportDialog } from './paf-dialogs.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
 import { HelpDisclosure, HelpField } from './help-field.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
@@ -2272,7 +2273,11 @@ function DialogSlot({ state, actions, confirmDiscard, openProfilePermissions, op
     case 'template-starters':
       return html`<${TemplateStartersDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'group-import':
-      return html`<${GroupImportDialog} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+      return html`<${GroupImportDialog} key=${descriptor.key || ''} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} initialFile=${descriptor.file || null}/>`;
+    case 'paf-export':
+      return html`<${AgentExportDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+    case 'group-export':
+      return html`<${GroupExportDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'group-context':
       return html`<${GroupContextDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'template-deploy': {
@@ -2309,6 +2314,7 @@ export function mountManagementIsland({ host, state, actions, confirm, confirmDi
     openTemplateImport: actions.openTemplateImport, openTemplateStarters: actions.openTemplateStarters,
     openTemplateDeploy: actions.openTemplateDeploy,
     openGroupImport: actions.openGroupImport, openGroupContext: actions.openGroupContext,
+    openAgentExport: actions.openAgentExport, openGroupExport: actions.openGroupExport,
   };
   const unregister = registerManagementController(controller);
   render(html`<${ManagementApp} state=${state} actions=${actions} confirm=${confirm} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions} openProfileContextFeatures=${openProfileContextFeatures}/>` , host);

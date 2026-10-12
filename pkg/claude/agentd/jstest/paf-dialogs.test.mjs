@@ -1,0 +1,202 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { assertAbsent } from './assertions.mjs';
+import { createPreactHarness } from './preact-harness.mjs';
+
+const SNAPSHOT = {
+  groups: [{ name: 'team', members: [] }, { name: 'ops', members: [] }],
+  harnesses: [
+    { name: 'claude', display_name: 'Claude Code', models: ['claude-opus-5-5'] },
+    { name: 'codex', display_name: 'Codex', models: ['gpt-5.5'] },
+    { name: 'shell', display_name: 'Shell', models: [] },
+  ],
+};
+
+async function mountManagement(t, actions, descriptor) {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }, { dashboardState }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/management-island.js'),
+    harness.importDashboardModule('js/snapshot-store.js'),
+  ]);
+  dashboardState.publishLocalEdit(SNAPSHOT);
+  const state = createManagementState();
+  state.openDialog(descriptor);
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const cleanups = [];
+  await harness.act(() => mountManagementIsland({
+    host, state, actions,
+    confirm: async () => true, confirmDiscard: async () => true, openProfilePermissions() {},
+    registerCleanup: (fn) => cleanups.push(fn),
+  }));
+  const settle = () => harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  const choose = async (select, value) => {
+    [...select.options].forEach((option) => option.removeAttribute('selected'));
+    [...select.options].find((option) => option.value === value).setAttribute('selected', '');
+    await harness.act(() => harness.fireEvent(select, 'change'));
+  };
+  const tick = async (input, checked) => {
+    input.checked = checked;
+    await harness.act(() => harness.fireEvent(input, 'change'));
+  };
+  // The harness tears the DOM down in its own after hook; unmount first when
+  // it is still there.
+  t.after(() => { if (globalThis.document) cleanups.forEach((fn) => fn()); });
+  return { harness, host, state, settle, choose, tick };
+}
+
+test('PAF model builds the export, landing and query shapes the routes take', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/paf-model.js');
+  assert.equal(model.queryString(model.exportParams({ agent: 'agt_1', native: false })),
+    '?agent=agt_1&format=paf&history=true&no_native=true');
+  assert.equal(model.queryString(model.exportParams({ agent: 'agt_1', history: false })), '?agent=agt_1&format=paf');
+  assert.equal(model.queryString(model.landingParams({ harness: 'codex', members: { c1: { harness: 'claude', model: 'claude-opus-5-5' }, c2: { harness: '' } } })),
+    '?harness=codex&member_harness=c1%3Dclaude&member_model=c1%3Dclaude-opus-5-5');
+  assert.equal(model.rungBadge('none').text, 'config only');
+  assert.match(model.lossSummary({ source_entries: 412, carried_entries: 371, items: [{ kind: 'provider_reasoning', count: 41 }] }),
+    /carries 371 \/ 412 entries · losses: 41 provider reasoning/);
+  assert.deepEqual(model.spawnableHarnesses(SNAPSHOT).map((h) => h.name), ['claude', 'codex'], 'shell cannot host an import');
+});
+
+test('a flagged agent export shows the findings and downloads only after acknowledging or redacting', async (t) => {
+  const calls = [];
+  const exportBlob = { size: 10 };
+  const actions = {
+    async exportAgentPAF(choices) {
+      calls.push(['export', choices]);
+      if (!choices.allowFlagged) {
+        const error = new Error('suspected credentials');
+        error.status = 422;
+        error.body = { code: 'flagged_credentials', findings: [{ kind: 'github_token', count: 1, locations: ['history line 3'] }] };
+        throw error;
+      }
+      return exportBlob;
+    },
+    async redactPAF(blob, opts, preview) {
+      calls.push(['redact', blob === exportBlob, opts, preview]);
+      return preview ? { redactions: [{ kind: 'mask_flagged', count: 1 }], findings: [] } : { size: 5 };
+    },
+  };
+  const { harness, host, tick, settle } = await mountManagement(t, actions, { kind: 'paf-export', agent: 'agt_1', label: 'reviewer' });
+  const URLs = [];
+  harness.window.URL.createObjectURL = () => { URLs.push('blob:x'); return 'blob:x'; };
+  harness.window.URL.revokeObjectURL = () => {};
+  globalThis.URL.createObjectURL = harness.window.URL.createObjectURL;
+  globalThis.URL.revokeObjectURL = () => {};
+  assert.match(host.querySelector('#paf-export-title').textContent, /Export reviewer as PAF/);
+  await tick(host.querySelector('#paf-export-native'), false);
+  await harness.act(() => host.querySelector('#paf-export-download').click());
+  await settle();
+  assert.deepEqual(calls[0], ['export', { agent: 'agt_1', history: true, native: false, neutral: true, allowFlagged: false }]);
+  assert.match(host.querySelector('#paf-findings').textContent, /github_token \(history line 3\)/);
+  assert.equal(host.querySelector('#paf-export-download').disabled, true, 'download waits for the acknowledgement');
+  await harness.act(() => host.querySelector('#paf-export-redact').click());
+  assert.equal(host.querySelector('#paf-redact-download').disabled, true, 'redacted download waits for a preview');
+  await harness.act(() => host.querySelector('#paf-redact-preview').click());
+  await settle();
+  assert.equal(calls.at(-1)[0], 'redact');
+  assert.equal(calls.at(-1)[1], true, 'redacts the flagged export');
+  assert.deepEqual(calls.at(-1)[2], { mask_flagged: true, paths_to_placeholders: true, stub_tool_results: false, drop_reasoning: false, drop_media: false });
+  assert.equal(calls.at(-1)[3], true);
+  assert.match(host.querySelector('#paf-redact-report').textContent, /mask flagged: 1[\s\S]*No suspected credentials remain/);
+  await harness.act(() => host.querySelector('#paf-redact-download').click());
+  await settle();
+  assert.equal(calls.at(-1)[3], false);
+  assert.equal(URLs.length, 1, 'the redacted copy was downloaded');
+});
+
+test('the import dialog previews an agent file that is not a group, then imports and starts it', async (t) => {
+  const calls = [];
+  const preview = {
+    agent: { name: 'reviewer', harness: 'claude', origin: { instance: 'inst_lab', model: 'claude-opus-5-5' }, paths: { cwd: '/home/me/app' } },
+    security: 'Permissions and ownership are advisory only; none will be copied.',
+    warnings: [], unresolved: [{ name: 'CWD' }],
+    history_landing: { source_harness: 'claude', harness: 'codex', model: 'gpt-5.5', rung: 'translated', losses: { source_entries: 10, carried_entries: 9, items: [] } },
+  };
+  const actions = {
+    async inspectGroupImport() { throw new Error('a group import needs a group PAF'); },
+    async importAgentPAF(file, params) { calls.push(params); return preview; },
+  };
+  const file = { name: 'reviewer.paf' };
+  const { host, settle, choose, tick } = await mountManagement(t, actions, { kind: 'group-import', file });
+  await settle();
+  assert.match(host.querySelector('#group-import-title').textContent, /Import an agent/);
+  assertAbsent(host.querySelector('#group-import-into'), 'group-only fields are hidden for an agent');
+  assert.match(host.querySelector('#agent-import-preview').textContent, /From node\s*inst_lab/);
+  assert.match(host.querySelector('#paf-history-landing').textContent, /translated/);
+  assert.match(host.querySelector('#agent-import-unresolved').textContent, /1 recorded path/);
+  const submit = host.querySelector('#group-import-submit');
+  assert.equal(submit.textContent.trim(), 'Import & start');
+  assert.equal(submit.disabled, true, 'needs a group and a working dir');
+  await choose(host.querySelector('#agent-import-group'), 'team');
+  await tick(host.querySelector('#agent-import-keep-paths'), true);
+  await settle();
+  assert.equal(host.querySelector('#group-import-submit').disabled, false);
+  host.querySelector('#group-import-submit').click();
+  await settle();
+  const applied = calls.at(-1);
+  assert.equal(applied.apply, true);
+  assert.equal(applied.group, 'team');
+  assert.equal(applied.keep_paths, true);
+});
+
+test('a group preview offers per-member harness and model and re-inspects with them', async (t) => {
+  const inspected = [];
+  const imported = [];
+  const inspection = {
+    source: 'paf', source_group: 'crew', format_version: 5, agent_count: 2, message_count: 3, conv_count: 2, missing_convs: 0,
+    target_name: 'crew', target_name_valid: true, group_name_taken: false, conv_collisions: [], findings: [],
+    landings: [
+      { conv_id: 'c1', title: 'alice', source_harness: 'claude', harness: 'claude', rung: 'native' },
+      { conv_id: 'c2', title: 'cody', source_harness: 'opencode', harness: 'opencode', rung: 'none', warnings: ['config only'] },
+    ],
+  };
+  const actions = {
+    async inspectGroupImport(file, as, landing) { inspected.push(landing); return inspection; },
+    async importGroup(...args) { imported.push(args); },
+    async importAgentPAF() { throw new Error('should not be tried for a group'); },
+  };
+  const { host, settle, choose } = await mountManagement(t, actions, { kind: 'group-import', file: { name: 'crew.paf' } });
+  await settle();
+  assert.match(host.querySelector('#group-import-title').textContent, /Import a group/);
+  const rows = [...host.querySelectorAll('#group-import-landings tbody tr')];
+  assert.deepEqual(rows.map((row) => row.dataset.member), ['alice', 'cody']);
+  assert.match(rows[1].textContent, /config only/);
+  await choose(host.querySelector('#group-import-member-c2-harness'), 'codex');
+  await settle();
+  assert.deepEqual(inspected.at(-1).members, { c2: { harness: 'codex', model: '' } });
+  const into = host.querySelector('#group-import-into');
+  into.value = '/tmp/app';
+  into.dispatchEvent(new host.ownerDocument.defaultView.Event('input', { bubbles: true }));
+  await settle();
+  host.querySelector('#group-import-submit').click();
+  await settle();
+  assert.equal(imported[0][1], '/tmp/app');
+  assert.deepEqual(imported[0][3].members, { c2: { harness: 'codex', model: '' } });
+});
+
+test('a dropped .paf opens the import dialog unless a drop zone took it or a dialog is open', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { bindPAFDrop } = await harness.importDashboardModule('js/paf-drop.js');
+  const opened = [];
+  t.after(bindPAFDrop({ open: (file) => opened.push(file.name), doc: harness.document }));
+  const { document, window } = harness;
+  const drop = (name, { prevented = false } = {}) => {
+    const event = new window.Event('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', { value: { types: ['Files'], files: [{ name }] } });
+    if (prevented) event.preventDefault();
+    document.body.dispatchEvent(event);
+  };
+  drop('notes.txt');
+  drop('logs.zip', { prevented: true });
+  assert.deepEqual(opened, [], 'other files and handled drops are left alone');
+  drop('reviewer.paf');
+  assert.deepEqual(opened, ['reviewer.paf']);
+  const dialog = document.body.appendChild(document.createElement('div'));
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+  drop('other.paf');
+  assert.deepEqual(opened, ['reviewer.paf'], 'an open dialog is not replaced');
+  dialog.remove();
+});

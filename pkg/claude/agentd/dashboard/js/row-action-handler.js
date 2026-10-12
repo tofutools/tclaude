@@ -13,7 +13,7 @@ import {
   openGroupPermEditor, openHumanReplyModal, openMessageCreateModal,
   openPermEditModal, openSudoGrantModal,
 } from './message-access-dialog-controller.js';
-import { openGroupContextModal, openGroupCloneModal, openFromGroupModal } from './modal-templates.js';
+import { openGroupContextModal, openGroupCloneModal, openFromGroupModal, openAgentExport, openGroupExport } from './modal-templates.js';
 import {
   deleteLink, openLinkCreate, openLinkEdit, openLinksManager,
 } from './links-controller.js';
@@ -643,6 +643,12 @@ export async function handleRowAction(action) {
         openLaunchTargetDialog({ mode: data.mode || 'move', agent: launchAgent(data, node) });
         return;
       }
+      case 'export-paf': {
+        // Agent ⚙ → export (PAF)…: a dialog with the history choices and
+        // the credential scan, then a file download (tcl-jkmitn).
+        openAgentExport({ agent, label });
+        return;
+      }
       case 'reincarnate': {
         // Open the reincarnate modal pre-populated with this
         // agent. The modal enforces the required follow_up and
@@ -778,19 +784,9 @@ export async function handleRowAction(action) {
         return;
       }
       case 'export-group': {
-        // Export is a file download, not a mutation. Trigger it via
-        // a transient anchor so the browser saves the .zip (the
-        // endpoint sets Content-Disposition); the cookie rides along
-        // on the same-origin GET. Return so the default toast +
-        // refresh do not fire — nothing changed.
-        if (refuseInPeerView('Group export')) return;
-        const a = document.createElement('a');
-        a.href = `/api/groups/${encodeURIComponent(group)}/export`;
-        a.download = '';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        toast(`Exporting group "${group}"…`);
+        // The format dialog (.zip or .paf) fetches the archive, so a
+        // flagged export shows its findings instead of saving an error.
+        openGroupExport(group);
         return;
       }
       case 'cleanup-group': {
