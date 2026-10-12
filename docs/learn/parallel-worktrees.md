@@ -7,8 +7,9 @@ this tutorial you start two agents, each in a fresh worktree, and clean up
 when they are done.
 
 **You need:** [Your first agent](first-agent.md) completed, with the `hello`
-group pointing at a git repository. A repository with at least one commit on
-`main` (or `master`) works best.
+group pointing at a git repository with at least one commit on `main` (or
+`master`). The dialog fetches the base branch before cutting a worktree; if
+your repository has no remote, untick **Fetch latest worktree base**.
 
 ## 1. Start an agent on a new branch
 
@@ -17,17 +18,17 @@ msg** to a small task, for example:
 
 > Add a short greeting to the README and commit it.
 
-Then, under **Worktree**, choose **+ create new worktree…**. Set
-**New branch** to `feat/greeting`, and keep **Base branch** at `main`. Click
-**Spawn**.
+**Sync worktree branch with name** is on by default, so naming the agent
+already chose **+ create new worktree…** under **Worktree**, with a
+**New branch** called `greeter`. Change **New branch** to `feat/greeting`,
+keep **Base branch** at `main`, and click **Spawn**.
 
 tclaude creates the branch and a separate checkout for it next to your
 project, and starts `greeter` there. Its row shows the worktree under
 **CWD** and the branch under **Branch**.
 
 !!! tip "Name and branch in one go"
-    Tick **Sync worktree branch with name** and the new branch takes the
-    agent's name.
+    Leave **New branch** as it is, and the branch takes the agent's name.
 
 ## 2. Start a second one in parallel
 
@@ -43,12 +44,14 @@ request, its row's **Branch** column shows PR and CI pills.
 
 When a branch has been merged, retire its agent with the bin button. The
 retire dialog offers **Also delete the git worktree + branch**, ticked by
-default when it is safe: the main checkout, and worktrees another agent
-still uses, are never removed.
+default. It force-deletes the branch and any uncommitted changes in the
+worktree, so retire only after merging, or untick it. The main checkout, and
+worktrees another agent still uses, are never removed.
 
 For leftovers, such as worktrees from agents you retired without deleting,
 open the group's **⚙** menu and choose **🧹 cleanup worktrees…**. It lists
-the stale worktrees in the group's repository and removes the ones you pick.
+the stale worktrees in the group's repository and removes the ones you pick,
+together with their branches unless you untick that.
 
 !!! info "Go deeper"
     [Spawning and lifecycle → Spawning an agent](../spawning-and-lifecycle.md#spawning-an-agent)
@@ -56,14 +59,16 @@ the stale worktrees in the group's repository and removes the ones you pick.
 
 ## From the terminal
 
-tclaude also manages worktrees from the shell, with or without the daemon:
+The same from the shell, run inside your project. `agent spawn` needs the
+daemon; the `worktree` commands work without it:
 
 ```bash
-tclaude agent spawn hello --name greeter --worktree feat/greeting \
+cd ~/code/my-project
+tclaude agent spawn hello --name docs-bot --worktree feat/docs \
   --initial-message "Add a short greeting to the README and commit it."
-tclaude worktree add fix/typo        # a worktree and a session in one step
+tclaude worktree add fix/readme      # a worktree and a session in one step
 tclaude worktree ls
-tclaude worktree rm fix/typo -D      # remove it and its merged branch
+tclaude worktree rm fix/readme -D    # remove it and its merged branch
 ```
 
 [Worktrees](../worktrees.md) covers these, including a shell wrapper that
