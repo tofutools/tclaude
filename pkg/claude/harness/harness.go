@@ -33,6 +33,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
 // DefaultName is the harness tclaude assumes when none is recorded. It
@@ -69,6 +71,11 @@ const (
 type Harness struct {
 	// ModelProxyProtocol declares an explicitly supported model gateway contract.
 	ModelProxyProtocol string
+	// Experimental marks a registered harness whose tclaude support is still
+	// incomplete. It resolves for existing conversations, but cannot be
+	// spawned, and spawn surfaces leave it out of their default lists, until
+	// the operator opts in. See ExperimentalHarnessEnabled.
+	Experimental bool
 	// Name is the stable identifier persisted in the DB `harness` column
 	// and accepted by `--harness`. Lower-case, no spaces (e.g. "claude").
 	Name string
@@ -841,6 +848,23 @@ func Resolve(name string) (*Harness, error) {
 // not-yet-spawnable harness fails fast with a clear message instead of a
 // silent conv-id-poll timeout once the forked session exits.
 func ResolveSpawnable(name string) (*Harness, error) {
+	h, err := ResolveSpawnCatalog(name)
+	if err != nil {
+		return nil, err
+	}
+	if !h.Spawnable() {
+		return nil, fmt.Errorf("harness %q is experimental and not enabled; add %q to "+
+			"\"experimental_harnesses\" in %s (or set %s=%s) to opt in",
+			h.Name, h.Name, config.ConfigPath(), ExperimentalHarnessesEnvVar, h.Name)
+	}
+	return h, nil
+}
+
+// ResolveSpawnCatalog is ResolveSpawnable without the experimental opt-in. It
+// is for client-side pre-validation of a spawn the daemon will still gate: a
+// sandboxed agent may not see the operator's config, so its own view of the
+// opt-in is not authoritative.
+func ResolveSpawnCatalog(name string) (*Harness, error) {
 	h, err := Resolve(name)
 	if err != nil {
 		return nil, err

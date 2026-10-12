@@ -162,7 +162,7 @@ func newNameInput() textinput.Model {
 func spawnableHarnessNames() []string {
 	var out []string
 	for _, name := range harness.Names() {
-		if h, ok := harness.Get(name); ok && h.Spawn != nil {
+		if h, ok := harness.Get(name); ok && h.Spawn != nil && h.Spawnable() {
 			out = append(out, name)
 		}
 	}

@@ -301,7 +301,7 @@ func firstInstalledHarness(lookPath func(string) (string, error)) string {
 		}
 		seen[name] = true
 		h, ok := harness.Get(name)
-		if !ok || h.Spawn == nil || h.Models == nil {
+		if !ok || h.Spawn == nil || h.Models == nil || !h.Spawnable() {
 			continue
 		}
 		if _, err := lookPath(h.Spawn.Binary()); err == nil {

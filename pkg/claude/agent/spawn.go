@@ -1527,7 +1527,9 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		validateMergedProfile = true
 	}
 	if validationHarness != "" {
-		h, resolveErr := harness.ResolveSpawnable(validationHarness)
+		// The daemon enforces the experimental opt-in; this process may not
+		// see the operator's config from inside a sandbox.
+		h, resolveErr := harness.ResolveSpawnCatalog(validationHarness)
 		if resolveErr != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", resolveErr)
 			return nil, rcInvalidArg
