@@ -175,6 +175,25 @@ func TestRedactPreviewAndNoOp(t *testing.T) {
 	rep, err := Redact(a, io.Discard, RedactOptions{MaskFlagged: true}, paf.Producer{Name: "test"})
 	require.NoError(t, err)
 	assert.Positive(t, redactionKinds(rep.Redactions)[RedactMaskSpans])
+
+	// Fewer human turns than kept: no tool result is old enough to stub.
+	rep, err = Redact(a, io.Discard, RedactOptions{StubToolResults: true, KeepTurns: 5}, paf.Producer{Name: "test"})
+	require.NoError(t, err)
+	assert.Zero(t, redactionKinds(rep.Redactions)[RedactStubToolResults])
+}
+
+func TestRedactKeepsGroupMemberKeys(t *testing.T) {
+	var buf bytes.Buffer
+	w := paf.NewWriter(&buf, paf.KindGroup, paf.Limits{})
+	key := "alice-helper"
+	require.NoError(t, w.AddAgent(key, paf.Agent{Name: key}, paf.Environment{Harness: paf.Harness{Name: "claude"}, Workspace: &paf.Workspace{Cwd: project}}))
+	require.NoError(t, w.WriteJSON(paf.GroupPath, paf.Group{Name: "team", Members: []paf.GroupMember{{Agent: key}}}))
+	_, err := w.Close(paf.Producer{Name: "test"})
+	require.NoError(t, err)
+	a, err := paf.Open(bytes.NewReader(buf.Bytes()), int64(buf.Len()), paf.Options{})
+	require.NoError(t, err)
+	b, _, _ := redactAndOpen(t, a, RedactOptions{PathsToPlaceholders: true})
+	assert.Equal(t, key, b.Group().Members[0].Agent, "an agent key is an identifier, not redacted text")
 }
 
 func TestMaskSpans(t *testing.T) {
@@ -183,6 +202,10 @@ func TestMaskSpans(t *testing.T) {
 	out := Mask("a "+pem+" b AKIAIOSFODNN7EXAMPLE c", true, counts)
 	assert.Equal(t, "a [REDACTED:private-key] b [REDACTED:aws-access-key] c", out)
 	assert.Equal(t, map[string]int{"private-key": 1, KindAWSAccessKey: 1}, counts)
+
+	// A key cut off before its END line is masked through its body.
+	cut := "$ head -n 3 id_rsa\n-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu\nVTLw7onLRnrq0/abc\n$ echo done"
+	assert.Equal(t, "$ head -n 3 id_rsa\n[REDACTED:private-key]\n$ echo done", Mask(cut, false, map[string]int{}))
 }
 
 func TestReplacePathsBoundaries(t *testing.T) {

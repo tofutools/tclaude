@@ -57,18 +57,45 @@ func spans(text string, entropy bool) []span {
 	return merged
 }
 
-// pemEnd returns the end of the PEM block whose header ends at from, or
-// from when there is no END line.
+// pemEnd returns the end of the PEM block whose header ends at from. A
+// block cut off before its END line (truncated output) ends after the run
+// of base64 lines that follows the header.
 func pemEnd(text string, from int) int {
-	i := strings.Index(text[from:], "-----END ")
-	if i < 0 {
-		return from
+	if i := strings.Index(text[from:], "-----END "); i >= 0 {
+		if j := strings.Index(text[from+i+len("-----END "):], "-----"); j >= 0 {
+			return from + i + len("-----END ") + j + len("-----")
+		}
 	}
-	j := strings.Index(text[from+i+len("-----END "):], "-----")
-	if j < 0 {
-		return from
+	end, pos := from, from
+	for pos < len(text) {
+		nl := strings.IndexByte(text[pos:], '\n')
+		line := text[pos:]
+		if nl >= 0 {
+			line = text[pos : pos+nl]
+		}
+		if t := strings.TrimSpace(line); t != "" {
+			if !base64Line(t) {
+				break
+			}
+			end = pos + len(line)
+		}
+		if nl < 0 {
+			break
+		}
+		pos += nl + 1
 	}
-	return from + i + len("-----END ") + j + len("-----")
+	return end
+}
+
+const base64Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
+
+func base64Line(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if !strings.ContainsRune(base64Chars, rune(s[i])) {
+			return false
+		}
+	}
+	return true
 }
 
 // Mask replaces suspected credentials with [REDACTED:<kind>] and counts the

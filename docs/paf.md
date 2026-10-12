@@ -378,7 +378,7 @@ tclaude paf redact reviewer.paf --mask-flagged --stub-tool-results -o reviewer.r
 | `--drop-media` | `drop_media` | Replaces images and documents with a stub. |
 | `--drop-reasoning` | `drop_reasoning` | Removes thinking blocks and provider reasoning state. |
 | `--drop-native` | `drop_native` | Drops the native blob only. |
-| `--paths-to-placeholders` | `paths_to_placeholders` | Replaces recorded placeholder paths, each working directory and worktree, the home directory above them and the user name it is named after with `${PROJECT}`, `${HOME}` and `${USER}`. A path matches only as a whole path, the user name only as a whole word, and a user name shorter than four characters is left alone. |
+| `--paths-to-placeholders` | `paths_to_placeholders` | Replaces recorded placeholder paths, each working directory and worktree, the home directory above them and the user name it is named after with `${PROJECT}`, `${HOME}` and `${USER}`. A path matches only as a whole path, the user name only as a whole word, and a user name shorter than four characters is left alone. Agent keys are identifiers and are kept as they are. |
 
 The copy is a new file:
 

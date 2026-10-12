@@ -310,6 +310,11 @@ func decodeJSON(raw []byte) (any, error) {
 func (r *redactor) walk(v any, key string, pafObject bool) any {
 	switch x := v.(type) {
 	case string:
+		if pafObject && key == "agent" {
+			// An agent key names agents/<key>/ and the manifest's agent
+			// list; it is an identifier, kept as is.
+			return x
+		}
 		return r.text(x, structuralKeys[key])
 	case map[string]any:
 		for k, child := range x {
@@ -661,8 +666,9 @@ func (r *redactor) context(a *paf.Archive, key, scope string) error {
 				cutoff = i
 			}
 		}
-		if r.opts.KeepTurns <= 0 {
-			cutoff = len(lines)
+		if r.opts.KeepTurns > 0 && seen < r.opts.KeepTurns {
+			// Fewer human turns than kept: nothing is old enough.
+			cutoff = 0
 		}
 	}
 	h := *cr.Header.Source
