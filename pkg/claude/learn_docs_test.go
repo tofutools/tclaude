@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // TestLearnDocsCommandsResolve keeps the Learn tutorials honest: every
@@ -58,8 +59,10 @@ func learnDocCommands(t *testing.T, path string) []learnDocCommand {
 	for n := 1; sc.Scan(); n++ {
 		line := sc.Text()
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") {
-			inBash = !inBash && (trimmed == "```bash" || trimmed == "```sh" || trimmed == "```shell")
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			lang, _, _ := strings.Cut(strings.ToLower(strings.TrimLeft(trimmed, "`~")), " ")
+			inBash = !inBash && (lang == "bash" || lang == "sh" || lang == "shell" || lang == "console")
+			pending = ""
 			continue
 		}
 		if !inBash {
@@ -72,9 +75,14 @@ func learnDocCommands(t *testing.T, path string) []learnDocCommand {
 			pending += strings.TrimSuffix(trimmed, "\\") + " "
 			continue
 		}
-		full := pending + trimmed
+		full := strings.TrimPrefix(pending+trimmed, "$ ")
+		full = strings.ReplaceAll(full, "$(", " ")
+		full = strings.ReplaceAll(full, ")", " ")
 		pending = ""
 		for _, segment := range shellWords(full) {
+			for len(segment) > 0 && strings.Contains(segment[0], "=") { // VAR=… prefix
+				segment = segment[1:]
+			}
 			if len(segment) > 0 && segment[0] == "tclaude" {
 				out = append(out, learnDocCommand{line: pendingLine, text: full, args: segment[1:]})
 			}
@@ -142,10 +150,13 @@ func checkLearnCommand(root *cobra.Command, args []string) string {
 	}
 	// root.Find leaves an unknown subcommand as a positional arg of its parent.
 	// A parent with subcommands whose usage line declares no arguments (no
-	// "<arg>" or "[arg]") does not take one, so that word is a typo.
-	if cmd != root && cmd.HasSubCommands() && len(rest) > 0 && !strings.HasPrefix(rest[0], "-") &&
-		!strings.ContainsAny(cmd.Use, "<[") {
-		return "unknown subcommand " + rest[0] + " of " + cmd.CommandPath()
+	// "<arg>" or "[arg]") does not take one, so that word is a typo. The root
+	// accepts arbitrary args (passthrough to the harness), but no tutorial
+	// gives it one, so a stray word there is a misspelled command.
+	if cmd.HasSubCommands() && (cmd == root || !strings.ContainsAny(cmd.Use, "<[")) {
+		if word := firstPositional(cmd, rest); word != "" {
+			return "unknown subcommand " + word + " of " + cmd.CommandPath()
+		}
 	}
 	for _, a := range rest {
 		if a == "--" {
@@ -163,6 +174,39 @@ func checkLearnCommand(root *cobra.Command, args []string) string {
 					return "unknown flag -" + string(short) + " for " + cmd.CommandPath()
 				}
 			}
+		}
+	}
+	return ""
+}
+
+// firstPositional returns the first argument that is neither a flag nor the
+// value of a preceding flag that takes one.
+func firstPositional(cmd *cobra.Command, args []string) string {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			return ""
+		}
+		if !strings.HasPrefix(a, "-") || a == "-" {
+			return a
+		}
+		if strings.Contains(a, "=") {
+			continue
+		}
+		var f *pflag.Flag
+		if strings.HasPrefix(a, "--") {
+			name := strings.TrimPrefix(a, "--")
+			if f = cmd.Flags().Lookup(name); f == nil {
+				f = cmd.InheritedFlags().Lookup(name)
+			}
+		} else {
+			last := a[len(a)-1:]
+			if f = cmd.Flags().ShorthandLookup(last); f == nil {
+				f = cmd.InheritedFlags().ShorthandLookup(last)
+			}
+		}
+		if f != nil && f.NoOptDefVal == "" {
+			i++ // the flag consumes the next word as its value
 		}
 	}
 	return ""
