@@ -1,7 +1,7 @@
 # Ask
 
 !!! tip "New to tclaude?"
-    Start with the [Learn path](learn/index.md). [Find and resume your work](learn/find-and-resume.md#from-the-terminal) shows ask next to the conversation commands.
+    Start with the [Learn path](learn/index.md).
 
 
 `tclaude ask` puts a one-shot question to a coding harness without creating

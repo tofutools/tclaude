@@ -86,7 +86,8 @@ answer is there, and what you type reaches the agent. Ask a follow-up
 question.
 
 Use focus whenever you want to see an agent or answer it. Ctrl/Cmd-click
-opens the terminal without leaving **Groups**.
+opens the terminal without leaving **Groups**. Focus and **✉ Message**,
+next, are the two things you will do most with any agent.
 
 ## 5. Send it a message
 
@@ -130,6 +131,7 @@ covers the spawn options.
 - The spawn button on a group starts an agent with a first task.
 - A row shows the agent's status, model, cost and context.
 - **focus** opens the agent's live terminal; **✉ Message** writes to it.
+  You will use these two all the time.
 - The status dot stops and wakes an agent.
 
 **Next:** [Set up your team](team-setup.md).

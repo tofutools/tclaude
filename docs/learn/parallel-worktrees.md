@@ -39,6 +39,12 @@ Both agents now work at the same time, each in its own directory and branch.
 Neither sees the other's uncommitted changes. When an agent opens a pull
 request, its row's **Branch** column shows PR and CI pills.
 
+!!! tip "Let the lead do it"
+    A lead prepares worktrees for its workers itself. Ask it to give each
+    worker its own worktree, as `alice` did in
+    [Run a team through a lead](team-lead.md#2-give-the-lead-a-task). Starting
+    worktree agents by hand, as here, suits one-off tasks.
+
 ## 3. Clean up
 
 When a branch has been merged, retire its agent with the bin button. The

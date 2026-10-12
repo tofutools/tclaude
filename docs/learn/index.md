@@ -35,10 +35,9 @@ want it.
 | 2 | [Your first agent](first-agent.md) | Create a group, start an agent, watch it, open its terminal and message it | 15 min |
 | 3 | [Set up your team](team-setup.md) | Give a group a startup context, save a spawn profile, and start agents from it | 10 min |
 | 4 | [Run a team through a lead](team-lead.md) | Make an agent the lead, let it run workers, follow their mail and pull requests, and answer its notifications | 25 min |
-| 5 | [Find and resume your work](find-and-resume.md) | Wake stopped agents, bring back retired ones, and turn past conversations into agents | 10 min |
-| 6 | [Keep agents going](keep-agents-going.md) | Watch an agent's context, clone or reincarnate it, and change its model in place | 20 min |
-| 7 | [Work in parallel with worktrees](parallel-worktrees.md) | Start agents on their own branches and checkouts, and clean up after merging | 15 min |
-| 8 | [Link two machines](../federation-setup.md) | Connect two tclaude instances through a hub so agents on each can mail each other. Start with a group and an agent on each machine, as in step 4 | 45 min |
+| 5 | [Keep agents going](keep-agents-going.md) | Watch an agent's context, schedule check-ins, stop and wake it, clone, reincarnate or morph it, and bring back earlier work | 25 min |
+| 6 | [Work in parallel with worktrees](parallel-worktrees.md) | Start agents on their own branches and checkouts, and clean up after merging | 15 min |
+| 7 | [Link two machines](../federation-setup.md) | Connect two tclaude instances through a hub so agents on each can mail each other. Start with a group and an agent on each machine, as in step 4 | 45 min |
 
 The last step is optional and more advanced: it needs a second machine,
 and it uses [permissions](../permissions-and-audit.md) the earlier steps did

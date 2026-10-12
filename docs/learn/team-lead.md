@@ -112,7 +112,7 @@ Start with these:
 
 The bin button on a row retires that agent. Retiring stops its session and
 removes it from the team, and keeps its conversation: the next tutorial
-brings a retired agent back.
+shows how to bring a retired agent back.
 
 !!! info "Go deeper"
     [Agents and groups → Ownership](../agents-and-groups.md#ownership),
@@ -143,4 +143,4 @@ to agents.
 - **Messages** holds the team's mail, your notifications with their
   attachments, and access requests.
 
-**Next:** [Find and resume your work](find-and-resume.md).
+**Next:** [Keep agents going](keep-agents-going.md).
