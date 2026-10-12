@@ -295,9 +295,24 @@ func (b *Bundle) KeepPaths(values map[string]string) map[string]string {
 // Both bundle types use the same deliberately limited detection boundary.
 func CredentialKinds(text string) map[string]int {
 	kinds := map[string]int{}
-	for _, match := range credential.FindAllString(text, -1) {
+	for _, m := range CredentialSpans(text) {
+		kinds[m.Kind]++
+	}
+	return kinds
+}
+
+// CredentialSpan is one suspected credential: its kind and byte range.
+type CredentialSpan struct {
+	Kind       string
+	Start, End int
+}
+
+// CredentialSpans locates suspected credentials, for callers that mask them.
+func CredentialSpans(text string) []CredentialSpan {
+	var out []CredentialSpan
+	for _, loc := range credential.FindAllStringIndex(text, -1) {
 		key := "credential-assignment"
-		lower := strings.ToLower(match)
+		lower := strings.ToLower(text[loc[0]:loc[1]])
 		switch {
 		case strings.HasPrefix(lower, "sk-"):
 			key = "api-token"
@@ -308,7 +323,7 @@ func CredentialKinds(text string) map[string]int {
 		case strings.HasPrefix(lower, "keychain://"):
 			key = "keychain-reference"
 		}
-		kinds[key]++
+		out = append(out, CredentialSpan{Kind: key, Start: loc[0], End: loc[1]})
 	}
-	return kinds
+	return out
 }

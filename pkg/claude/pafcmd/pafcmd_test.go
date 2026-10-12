@@ -287,3 +287,33 @@ func TestInspectScanRescans(t *testing.T) {
 	assert.Contains(t, out.String(), "aws-access-key: 1")
 	assert.NotContains(t, out.String(), "AKIAIOSFODNN7EXAMPLE")
 }
+
+func TestRedactPreviewsAndWritesARedactedCopy(t *testing.T) {
+	isolate(t)
+	dir := testutil.CanonicalTempDir(t)
+	history := `{"type":"user","uuid":"u1","sessionId":"conv-1","timestamp":"2026-10-11T10:00:00Z","cwd":"/w","message":{"role":"user","content":"key AKIAIOSFODNN7EXAMPLE"}}` + "\n"
+	exp := &groupexport.Export{FormatVersion: groupexport.FormatVersion, ExportedAt: "2026-10-11T10:00:00Z", SourceGroup: "team",
+		Members: []groupexport.Member{{ConvID: "conv-1", Role: "lead"}},
+		Convs:   []groupexport.Conv{{ConvID: "conv-1", Title: "reviewer", SourceCwd: "/w", Content: []byte(history)}}}
+	raw, err := groupexport.Marshal(exp)
+	require.NoError(t, err)
+	file := writeFile(t, dir, "team.zip", raw)
+	dst := filepath.Join(dir, "team.redacted.paf")
+
+	var out bytes.Buffer
+	require.Error(t, runRedact(&out, &redactParams{File: file, MaskFlagged: true}), "needs --out or --preview")
+	require.Error(t, runRedact(&out, &redactParams{File: file, Preview: true}), "needs a redaction")
+	require.NoError(t, runRedact(&out, &redactParams{File: file, Preview: true, MaskFlagged: true}))
+	assert.Contains(t, out.String(), "mask_spans: 1")
+	assert.NoFileExists(t, dst)
+
+	out.Reset()
+	require.NoError(t, runRedact(&out, &redactParams{File: file, Out: dst, MaskFlagged: true}))
+	assert.Contains(t, out.String(), "no suspected credentials remain")
+	out.Reset()
+	require.Equal(t, 0, runValidate(&out, &validateParams{File: dst}), out.String())
+	out.Reset()
+	require.NoError(t, runRender(&out, &renderParams{File: dst}))
+	assert.Contains(t, out.String(), "[REDACTED:aws-access-key]", "the native-only history is carried as a redacted context")
+	assert.NotContains(t, out.String(), "AKIAIOSFODNN7EXAMPLE")
+}
