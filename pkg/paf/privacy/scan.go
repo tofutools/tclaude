@@ -4,6 +4,7 @@ package privacy
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/configbundle"
 	"github.com/tofutools/tclaude/pkg/paf"
@@ -261,11 +263,23 @@ func (c *Collector) Findings() []paf.Finding {
 // and binary attachments.
 func ScanArchive(a *paf.Archive, recordLimit int) ([]paf.Finding, error) {
 	c := NewCollector()
+	if len(a.Manifest.Extensions) > 0 {
+		raw, err := json.Marshal(a.Manifest.Extensions)
+		if err != nil {
+			return nil, err
+		}
+		c.JSON(raw, "manifest.json extensions")
+	}
 	for _, e := range a.Manifest.Entries {
 		if e.Path == paf.PrivacyPath || strings.HasPrefix(e.Path, paf.SignaturesDir) {
 			continue
 		}
 		if strings.HasPrefix(e.Path, paf.AttachmentsDir) && !textual(e.MediaType) {
+			// The declared media type is the producer's claim; scan any
+			// attachment whose bytes are text.
+			if err := c.sniffedAttachment(a, e.Path); err != nil {
+				return nil, err
+			}
 			continue
 		}
 		if err := c.entry(a, e, recordLimit); err != nil {
@@ -273,6 +287,38 @@ func ScanArchive(a *paf.Archive, recordLimit int) ([]paf.Finding, error) {
 		}
 	}
 	return c.Findings(), nil
+}
+
+// sniffLen is how much of an attachment decides whether it is text.
+const sniffLen = 8 << 10
+
+func (c *Collector) sniffedAttachment(a *paf.Archive, path string) error {
+	rc, err := a.OpenEntry(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rc.Close() }()
+	br := bufio.NewReaderSize(rc, sniffLen)
+	head, err := br.Peek(sniffLen)
+	if err != nil && err != io.EOF && err != bufio.ErrBufferFull {
+		return err
+	}
+	if !looksText(head) {
+		return nil
+	}
+	return c.chunks(br, path)
+}
+
+// looksText reports bytes that read as UTF-8 text: no NUL bytes and valid
+// UTF-8, allowing a rune cut off at the end of the sample.
+func looksText(b []byte) bool {
+	if bytes.IndexByte(b, 0) >= 0 {
+		return false
+	}
+	for i := 0; i < 3 && len(b) > 0 && !utf8.Valid(b); i++ {
+		b = b[:len(b)-1]
+	}
+	return utf8.Valid(b)
 }
 
 func (c *Collector) entry(a *paf.Archive, e paf.Entry, recordLimit int) error {
@@ -292,23 +338,51 @@ func (c *Collector) entry(a *paf.Archive, e paf.Entry, recordLimit int) error {
 		c.JSON(raw, e.Path)
 		return nil
 	default:
-		return c.lines(rc, e.Path, recordLimit)
+		return c.chunks(rc, e.Path)
 	}
 }
 
-// lines scans plain text line by line.
-func (c *Collector) lines(r io.Reader, name string, recordLimit int) error {
-	s := bufio.NewScanner(r)
-	s.Buffer(make([]byte, min(64<<10, recordLimit)), recordLimit)
-	line := 0
-	for s.Scan() {
-		line++
-		c.Text(s.Text(), fmt.Sprintf("%s line %d", name, line))
+// chunkLen bounds one plain-text scan window; chunkOverlap carries the tail
+// of each window into the next, so a token across the boundary is seen.
+const (
+	chunkLen     = 1 << 20
+	chunkOverlap = 512
+)
+
+// chunks scans plain text in bounded windows, so no line length can fail
+// a scan. Locations name the line a window starts on.
+func (c *Collector) chunks(r io.Reader, name string) error {
+	buf := make([]byte, chunkLen+chunkOverlap)
+	carry, line := 0, 1
+	for {
+		n, err := io.ReadFull(r, buf[carry:])
+		if n > 0 || carry > 0 {
+			window := buf[:carry+n]
+			end := len(window)
+			if err == nil {
+				// Cut at the last newline so a window holds whole lines
+				// where it can.
+				if i := bytes.LastIndexByte(window[carry:], '\n'); i >= 0 {
+					end = carry + i + 1
+				}
+			}
+			c.Text(string(window[:end]), fmt.Sprintf("%s line %d", name, line))
+			line += bytes.Count(window[:end], []byte{'\n'})
+			rest := window[end:]
+			if len(rest) == 0 && end == len(window) && err == nil {
+				// No newline in the window: keep an overlap so a token
+				// across the cut is still seen. It may be counted twice.
+				rest = window[max(0, end-chunkOverlap):]
+			}
+			carry = copy(buf, rest)
+		}
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("scan %s: %w", name, err)
+		}
 	}
-	if err := s.Err(); err != nil {
-		return fmt.Errorf("scan %s within %d byte records: %w", name, recordLimit, err)
-	}
-	return nil
 }
 
 func textual(mediaType string) bool {
