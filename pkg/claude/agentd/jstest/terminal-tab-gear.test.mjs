@@ -79,12 +79,24 @@ test('a peer agent tab offers moving it here, naming its node; a peer view shows
 });
 
 
-test('without a hub, local terminal gear keeps clone/morph and omits move/teleport', async (t) => {
+test('without a hub, local terminal gear shows move/teleport greyed out with the reason', async (t) => {
   const s = await mountTabs(t, null);
   const menu = s.tab('one').querySelector('.mux-tab-gear .action-menu');
   assert.ok(menu);
-  assert.deepEqual([...menu.querySelectorAll('[data-act="send-elsewhere"]')].map((b) => b.dataset.mode), ['clone', 'morph']);
+  const items = [...menu.querySelectorAll('[data-act="send-elsewhere"]')];
+  assert.deepEqual(items.map((b) => b.dataset.mode), ['move', 'teleport', 'clone', 'morph']);
+  assert.deepEqual(items.map((b) => b.disabled), [true, true, false, false]);
+  assert.match(items[0].title, /Connect this node to a tclaude hub \(Fleet → Hub\) to move or teleport agents/);
+  assert.equal(items[1].title, items[0].title);
   assert.ok(menu.querySelector('[data-act="term"]'));
+});
+
+test('connected to a hub with no linked node, move/teleport say a peer is needed', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { sendElsewhereOffReason } = await harness.importDashboardModule('js/groups-member-table.js');
+  assert.match(sendElsewhereOffReason({ hub: 'connected' }), /No linked nodes .* trust a peer in ⚙ Fleet/);
+  assert.match(sendElsewhereOffReason({ hub: 'off' }), /Connect this node to a tclaude hub[\s\S]*federation is off/);
+  assert.match(sendElsewhereOffReason(null), /Connect this node to a tclaude hub/);
 });
 
 test('the launch dialog styles its fields with the dashboard controls, in both themes', async () => {

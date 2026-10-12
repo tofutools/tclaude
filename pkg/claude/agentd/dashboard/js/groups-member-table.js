@@ -22,6 +22,7 @@ import { PRChecksBadge } from './pr-checks-hover.js';
 import { ViewersBadge, remoteViewers, viewersOf } from './remote-viewers.js';
 import { skynetState } from './skynet-state.js';
 import { presenceView } from './agent-presence.js';
+import { hubOffReason } from './skynet-model.js';
 import { TELEPORT_ROUTES } from './launch-target-dialog.js';
 
 const html = htm.bind(h);
@@ -847,6 +848,15 @@ function SandboxImplMenuItem({ member }) {
 // each item opens the launch-target dialog on its mode, alongside drag and
 // drop. Modes whose routes this dashboard lacks stay out of the menu. A
 // peer's single-node view has no such routes, so it shows none.
+// sendElsewhereOffReason says why move and teleport are greyed out when
+// there is no fleet: this node is not on a hub, or no peer is linked yet.
+export function sendElsewhereOffReason(node) {
+  const hubOff = hubOffReason(node);
+  return hubOff
+    ? `Connect this node to a tclaude hub (Fleet → Hub) to move or teleport agents. ${hubOff}`
+    : 'No linked nodes to move or teleport agents to yet: trust a peer in ⚙ Fleet.';
+}
+
 function SendElsewhereItems({ member, group, snapshot }) {
   if (snapshot?.peer_view || !member.agent_id) return null;
   const fleet = skynetState.fleet.value;
@@ -863,10 +873,13 @@ function SendElsewhereItems({ member, group, snapshot }) {
     'data-cwd': member.state?.cwd || member.cwd || '',
     ...(peerRow ? { 'data-node': group.fleet_node.id, 'data-node-name': group.fleet_node.name || '' } : {}),
   });
-  const item = (mode, regular, wizard, title) => html`<${MenuButton} member=${member} group=${group} act="send-elsewhere" attrs=${attrs(mode)} regular=${regular} wizard=${wizard} title=${title} />`;
+  const item = (mode, regular, wizard, title, disabled = false) => html`<${MenuButton} member=${member} group=${group} act="send-elsewhere" attrs=${attrs(mode)} regular=${regular} wizard=${wizard} title=${title} disabled=${disabled} />`;
+  // Without a fleet (no hub connection, or no linked node yet) move and
+  // teleport stay in the menu, greyed out with the reason, as the node chips do.
+  const off = fleet ? '' : sendElsewhereOffReason(skynetState.node.value);
   return html`<div class="menu-section-label" role="presentation">send elsewhere</div>
-    ${fleet ? item('move', peerRow ? 'move here…' : 'move to…', 'relocate familiar…', peerRow ? `Move ${label} to a group on this node, with its history` : `Move ${label} to a group on another node, with its history; it retires here once its copy runs there`) : null}
-    ${TELEPORT_ROUTES && fleet && !peerRow ? item('teleport', 'teleport to…', 'teleport familiar…', `Teleport ${label} to another node; its home keeps its place for Recall home`) : null}
+    ${item('move', peerRow ? 'move here…' : 'move to…', 'relocate familiar…', off || (peerRow ? `Move ${label} to a group on this node, with its history` : `Move ${label} to a group on another node, with its history; it retires here once its copy runs there`), !!off)}
+    ${TELEPORT_ROUTES && !peerRow ? item('teleport', 'teleport to…', 'teleport familiar…', off || `Teleport ${label} to another node; its home keeps its place for Recall home`, !!off) : null}
     ${!peerRow ? item('clone', fleet ? 'clone to…' : 'clone…', 'mirror familiar to…', `Clone ${label} here or onto another node; the original keeps running`) : null}
     ${!peerRow ? item('morph', 'morph…', 'shapeshift familiar…', `Relaunch ${label} in place with another spawn profile (model, effort, harness); it keeps its identity`) : null}
     ${TELEPORT_ROUTES && kind === 'visiting' && (!peerRow || view.home.local) ? item('home', '⌂ recall home…', '⌂ recall familiar home…', `Send ${label} straight home to ${view.home.name}`) : null}`;
