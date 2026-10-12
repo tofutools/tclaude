@@ -235,3 +235,27 @@ func TestWantsTmuxScrollback(t *testing.T) {
 		t.Fatalf("nil harness must not request tmux scrollback")
 	}
 }
+
+func TestRegisterForTestRestoresRegistry(t *testing.T) {
+	original := Default()
+	t.Run("replacement", func(t *testing.T) {
+		t.Cleanup(RegisterForTest(&Harness{Name: DefaultName, DisplayName: "Replacement"}))
+		got, ok := Get(DefaultName)
+		if !ok || got == original {
+			t.Fatal("temporary replacement was not registered")
+		}
+	})
+	if got, ok := Get(DefaultName); !ok || got != original {
+		t.Fatal("prior registration was not restored")
+	}
+	const fakeName = "cleanup-test-harness"
+	t.Run("new registration", func(t *testing.T) {
+		t.Cleanup(RegisterForTest(&Harness{Name: fakeName}))
+		if _, ok := Get(fakeName); !ok {
+			t.Fatal("temporary harness was not registered")
+		}
+	})
+	if _, ok := Get(fakeName); ok {
+		t.Fatal("temporary harness leaked after cleanup")
+	}
+}
