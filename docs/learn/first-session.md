@@ -79,7 +79,8 @@ These are the statuses that setup's hooks report.
 Use the arrow keys to select your session and press **Enter** to attach
 again. The agent's answer is waiting.
 
-![Watch mode](../assets/term-session-watch.png)
+<!-- Regenerate the images on this page with scripts/docs/learn-images.sh -->
+![tclaude session watch listing three sessions. The highlighted row is working, one is idle, and one in red is awaiting permission. The key hints at the bottom include enter to attach.](../assets/learn-session-watch.png)
 
 You can also attach directly when you know the session id from
 `tclaude session ls`:
