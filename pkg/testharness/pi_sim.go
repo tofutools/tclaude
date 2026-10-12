@@ -169,9 +169,7 @@ func ParsePiLaunch(cmd string) (PiLaunch, error) {
 func PiAgentDirFor(home string) string { return filepath.Join(home, ".pi", "agent") }
 
 // PiSessionDirName is pi's per-cwd session directory name.
-func PiSessionDirName(cwd string) string {
-	return "--" + strings.ReplaceAll(strings.TrimPrefix(filepath.Clean(cwd), "/"), "/", "-") + "--"
-}
+func PiSessionDirName(cwd string) string { return harness.PiSessionDirName(cwd) }
 
 func NewPiSim(t *testing.T, agentDir, cwd, cmd string) (*PiSim, error) {
 	launch, err := ParsePiLaunch(cmd)

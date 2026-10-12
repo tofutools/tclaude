@@ -194,9 +194,9 @@ func planCrossHarnessMorph(convID string, dst *harness.Harness, target db.AgentM
 	if target.Model != nil {
 		model = *target.Model
 	}
-	if dst.Name == harness.OpenCodeName && !strings.Contains(model, "/") {
+	if (dst.Name == harness.OpenCodeName || dst.Name == harness.PiName) && !strings.Contains(model, "/") {
 		return nil, crossMorphFailure(http.StatusBadRequest, "invalid_form",
-			"model: an OpenCode morph needs a provider/model, because OpenCode resumes with the model its history names")
+			"model: a morph to "+dst.DisplayName+" needs a provider/model, because "+dst.DisplayName+" resumes with the model its history names")
 	}
 
 	// Sandbox. The implementation never changes. Under tclaude's own layer

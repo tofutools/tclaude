@@ -1,6 +1,7 @@
 package pifixture
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -10,8 +11,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
 	"github.com/tofutools/tclaude/pkg/testharness"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 func materializedExtension(t *testing.T) string {
@@ -183,4 +187,37 @@ func TestPiExtensionLifecycleFidelity(t *testing.T) {
 func strconvQuote(s string) string {
 	raw, _ := json.Marshal(s)
 	return string(raw)
+}
+
+// A history translated from another harness lands where pi looks for the
+// project's sessions, and resuming it by id sends the carried turns to the
+// model.
+func TestPiLandedTranscriptResumes(t *testing.T) {
+	w := NewWorld(t)
+	t.Setenv("HOME", testutil.CanonicalTempDir(t))
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+	t.Setenv(harness.PiAgentDirEnvVar, w.AgentDir)
+	t.Setenv(harness.PiSessionDirEnvVar, "")
+
+	src := transcript.New(transcript.Source{Harness: harness.DefaultName, ConvID: "source-conv"})
+	src.Append(transcript.Entry{Role: transcript.RoleUser, Origin: transcript.OriginHuman, Blocks: []transcript.Block{transcript.Text("Remember the secret word: PELICAN.")}})
+	src.Append(transcript.Entry{Role: transcript.RoleAssistant, Origin: transcript.OriginAgent, Blocks: []transcript.Block{transcript.Text("Noted, I will remember it.")}})
+	pi := harness.MustGet(harness.PiName)
+	plan := transcript.NewPlan(src, transcript.Options{Target: harness.PiName, TargetModel: MockModel, InlineMedia: true})
+	var encoded bytes.Buffer
+	sourceID, err := pi.Transcript.Encode(plan, w.Project, &encoded)
+	require.NoError(t, err)
+	id, cleanup, err := pi.History.Import(encoded.Bytes(), sourceID, w.Project)
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+
+	out, err := w.Run(w.Project, "-p", "What was the secret word?", "--session-id", id, "--model", MockModel)
+	require.NoError(t, err, "pi failed:\n%s", out)
+	sent := w.Mock.LastMessages()
+	assert.Contains(t, sent, "PELICAN", "the carried turn reaches the model")
+	assert.Contains(t, sent, "Noted, I will remember it.")
+	assert.Contains(t, sent, "What was the secret word?")
+	matches, _ := filepath.Glob(filepath.Join(w.AgentDir, "sessions", "*", "*_"+id+".jsonl"))
+	require.Len(t, matches, 1, "pi resumed the landed session rather than starting another")
 }

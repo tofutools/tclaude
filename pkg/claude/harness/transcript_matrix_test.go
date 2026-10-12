@@ -29,6 +29,7 @@ const (
 	fixtureCop    = "3c1f0b8e-5d2a-4e8b-9f61-2a7c0d4e5b6a"
 	fixtureGemini = "7d2e4f6a-8b9c-4d0e-a1f2-3b4c5d6e7f80"
 	fixtureOC     = "ses_fixturesource"
+	fixturePi     = "8e3f5a7b-9c0d-4e1f-a2b3-4c5d6e7f8091"
 )
 
 func jsonl(t *testing.T, records ...any) []byte {
@@ -167,6 +168,35 @@ func geminiFixture(t *testing.T) []byte {
 	)
 }
 
+func piFixture(t *testing.T) []byte {
+	entry := func(typ, id string, parent any, fields obj) obj {
+		r := obj{"type": typ, "id": id, "parentId": parent, "timestamp": "2026-10-01T10:00:00.000Z"}
+		for k, v := range fields {
+			r[k] = v
+		}
+		return r
+	}
+	msg := func(id string, parent any, m obj) obj { return entry("message", id, parent, obj{"message": m}) }
+	asst := func(stop string, content ...obj) obj {
+		return obj{"role": "assistant", "content": content, "provider": "anthropic", "model": "claude-opus-5-5", "stopReason": stop,
+			"usage": obj{"input": 10, "output": 5, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 15, "cost": obj{"total": 0.001}}}
+	}
+	return jsonl(t,
+		obj{"type": "session", "version": 3, "id": fixturePi, "timestamp": "2026-10-01T10:00:00.000Z", "cwd": "/src"},
+		entry("model_change", "m0", nil, obj{"provider": "anthropic", "modelId": "claude-opus-5-5"}),
+		msg("s0", "m0", obj{"role": "system", "content": "You are pi", "sections": obj{"cwd": "<cwd>/src</cwd>"}}),
+		msg("u1", "s0", obj{"role": "user", "content": []obj{{"type": "text", "text": fixtureSecret}}}),
+		msg("a2", "u1", asst("toolUse", obj{"type": "thinking", "thinking": "private", "thinkingSignature": "sig"},
+			obj{"type": "toolCall", "id": "call_1", "name": "bash", "arguments": obj{"command": "ls"}})),
+		msg("r3", "a2", obj{"role": "toolResult", "toolCallId": "call_1", "toolName": "bash", "content": []obj{{"type": "text", "text": fixtureOutput}}, "isError": false}),
+		msg("a4", "r3", asst("stop", obj{"type": "text", "text": fixtureAnswer})),
+		msg("b1", "a4", obj{"role": "user", "content": "abandoned prompt"}),
+		msg("u5", "a4", obj{"role": "user", "content": []obj{{"type": "text", "text": fixtureImageQ}, {"type": "image", "data": base64.StdEncoding.EncodeToString(fixturePNG), "mimeType": "image/png"}}}),
+		msg("a6", "u5", asst("stop", obj{"type": "text", "text": fixtureImageA})),
+		entry("session_info", "n7", "a6", obj{"name": "Secret demo"}),
+	)
+}
+
 type nativeFixture struct {
 	harness string
 	id      string
@@ -181,6 +211,7 @@ var nativeFixtures = []nativeFixture{
 	{OpenCodeName, fixtureOC, openCodeFixture, map[transcript.LossKind]int{transcript.LossHarnessContext: 1}},
 	{CopilotName, fixtureCop, copilotFixture, map[transcript.LossKind]int{transcript.LossHarnessContext: 1}},
 	{GeminiName, fixtureGemini, geminiFixture, map[transcript.LossKind]int{transcript.LossHarnessContext: 1, transcript.LossInactiveBranch: 1}},
+	{PiName, fixturePi, piFixture, map[transcript.LossKind]int{transcript.LossHarnessContext: 1, transcript.LossInactiveBranch: 1}},
 }
 
 func mustHarness(t *testing.T, name string) *Harness {

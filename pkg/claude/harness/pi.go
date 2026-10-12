@@ -21,8 +21,14 @@ func init() {
 		// until live status and the context meter land for it.
 		Experimental: true,
 
-		Spawn:             piSpawner{},
-		Models:            piModels{},
+		Spawn:  piSpawner{},
+		Models: piModels{},
+		// Conversations are pi's session files; a transfer carries one as
+		// is, and the transcript codec translates it for a cross-harness
+		// morph. See pi_convstore.go, pi_history.go and transcript_pi.go.
+		Convs:             piConvStore{},
+		History:           piHistory{},
+		Transcript:        piTranscript{},
 		StatusExtension:   MaterializePiExtension,
 		ConfinedApprovals: []string{PiApprovalAuto},
 		CheckVersion:      CheckPiVersion,

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // pi's on-disk layout, observed at PiMinimumVersion:
@@ -40,25 +41,63 @@ func piAgentDir(getenv func(string) string) (string, error) {
 
 // piSessionsDir resolves where pi stores sessions for a process started in cwd.
 func piSessionsDir(getenv func(string) string, cwd string) (string, error) {
+	dir, _, err := piConfiguredSessionsDir(getenv, cwd)
+	return dir, err
+}
+
+// piConfiguredSessionsDir is piSessionsDir, also reporting whether the
+// directory was configured (environment or settings) rather than the agent
+// directory's default.
+func piConfiguredSessionsDir(getenv func(string) string, cwd string) (string, bool, error) {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
 	if dir := strings.TrimSpace(getenv(PiSessionDirEnvVar)); dir != "" {
-		return piResolveDir(dir, cwd)
+		dir, err := piResolveDir(dir, cwd)
+		return dir, true, err
 	}
 	agentDir, err := piAgentDir(getenv)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if raw, err := os.ReadFile(filepath.Join(agentDir, "settings.json")); err == nil {
 		var settings struct {
 			SessionDir string `json:"sessionDir"`
 		}
 		if json.Unmarshal(raw, &settings) == nil && strings.TrimSpace(settings.SessionDir) != "" {
-			return piResolveDir(settings.SessionDir, cwd)
+			dir, err := piResolveDir(settings.SessionDir, cwd)
+			return dir, true, err
 		}
 	}
-	return filepath.Join(agentDir, "sessions"), nil
+	return filepath.Join(agentDir, "sessions"), false, nil
+}
+
+// piNewSessionDir is the directory pi starts a new session in for a process
+// in cwd: a configured session directory as is, otherwise the default store's
+// per-cwd subdirectory (session-manager getDefaultSessionDir).
+func piNewSessionDir(getenv func(string) string, cwd string) (string, error) {
+	dir, configured, err := piConfiguredSessionsDir(getenv, cwd)
+	if err != nil || configured {
+		return dir, err
+	}
+	return filepath.Join(dir, PiSessionDirName(cwd)), nil
+}
+
+// PiSessionDirName is the default store's subdirectory for a working
+// directory: the path without its leading separator, with every separator
+// and colon turned into a dash, between double dashes.
+func PiSessionDirName(cwd string) string {
+	trimmed := filepath.Clean(cwd)
+	if strings.HasPrefix(trimmed, "/") || strings.HasPrefix(trimmed, `\`) {
+		trimmed = trimmed[1:]
+	}
+	return "--" + strings.NewReplacer("/", "-", `\`, "-", ":", "-").Replace(trimmed) + "--"
+}
+
+// piSessionFileName is the name pi gives a session file: its creation time
+// with ':' and '.' as dashes, then the id.
+func piSessionFileName(created time.Time, id string) string {
+	return strings.NewReplacer(":", "-", ".", "-").Replace(rfc3339ms(created)) + "_" + id + ".jsonl"
 }
 
 func piResolveDir(dir, cwd string) (string, error) {

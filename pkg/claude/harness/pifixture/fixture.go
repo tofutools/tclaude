@@ -146,9 +146,10 @@ func (w *World) RecordedPayloads() []map[string]any {
 // message containing TOOL is answered with one bash tool call; anything else,
 // including a tool result, with a short text reply.
 type Mock struct {
-	URL   string
-	mu    sync.Mutex
-	calls int
+	URL      string
+	mu       sync.Mutex
+	calls    int
+	messages []string
 }
 
 func NewMock(t *testing.T) *Mock {
@@ -164,6 +165,17 @@ func (m *Mock) Calls() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.calls
+}
+
+// LastMessages returns the messages array of the latest completion request,
+// as JSON: what pi sent the model.
+func (m *Mock) LastMessages() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.messages) == 0 {
+		return ""
+	}
+	return m.messages[len(m.messages)-1]
 }
 
 // ToolCommand is the command the mock's tool call runs.
@@ -187,6 +199,7 @@ func (m *Mock) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	m.mu.Lock()
 	m.calls++
+	m.messages = append(m.messages, mustJSON(body.Messages))
 	m.mu.Unlock()
 	last := body.Messages[len(body.Messages)-1]
 	w.Header().Set("Content-Type", "text/event-stream")
