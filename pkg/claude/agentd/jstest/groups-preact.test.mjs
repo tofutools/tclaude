@@ -1510,3 +1510,23 @@ test('member editor actions keep independent endpoint and stable-selector bounda
   assert.equal(refreshes, 1);
   assert.equal(notices.length, 3, 'successful fields retain independent user feedback');
 });
+
+test('a pending morph shows on the row beside the state pill', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { StatePill } = await harness.importDashboardModule('js/groups-member-table.js');
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const pending = { target: { profile: 'sonnet' }, expires_at: '2026-07-15T12:30:00Z' };
+  const mounted = await harness.mount(harness.html`<${StatePill} state=${{ status: 'working', pending_morph: pending }} online=${true} conv="c1" />`, host);
+  const badge = host.querySelector('[data-morph-pending]');
+  assert.ok(badge, 'the row says a morph is pending');
+  assert.match(badge.title, /Morph pending to sonnet: it applies when the agent next goes idle, or lapses at/);
+  await mounted.unmount();
+
+  const back = await harness.mount(harness.html`<${StatePill} state=${{ status: 'working', pending_morph: { back: true, target: {} } }} online=${true} conv="c1" />`, host);
+  assert.match(host.querySelector('[data-morph-pending]').title, /previous launch settings/);
+  await back.unmount();
+
+  const none = await harness.mount(harness.html`<${StatePill} state=${{ status: 'idle' }} online=${true} conv="c1" />`, host);
+  assert.equal(host.querySelector('[data-morph-pending]'), null);
+  await none.unmount();
+});

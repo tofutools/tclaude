@@ -590,7 +590,22 @@ export function StatePill({ state, online, conv, waking }) {
     <span class=${`state-pill ${className}`} aria-hidden="true">${label}</span>
     <${SlopMachine} state=${state} online=${online} conv=${conv} />
     <${WizardPill} state=${state} online=${online} conv=${conv} />
+    <${MorphPendingBadge} pending=${state?.pending_morph} />
   </span>`;
+}
+
+// MorphPendingBadge marks a requested morph that waits for the agent's next
+// idle turn (or lapses at its expiry), so the row shows what the morph
+// dialog's toast promises.
+export function MorphPendingBadge({ pending }) {
+  if (!pending) return null;
+  const target = pending.target || {};
+  const to = pending.back
+    ? 'its previous launch settings'
+    : target.profile || [target.harness, target.model, target.effort].filter(Boolean).join(' · ') || 'new launch settings';
+  const until = pending.expires_at ? new Date(pending.expires_at).toLocaleTimeString() : '';
+  const title = `Morph pending to ${to}: it applies when the agent next goes idle${until ? `, or lapses at ${until}` : ''}`;
+  return html`<span class="morph-pending-pill" data-morph-pending="1" title=${title} aria-label=${title}>⇢ morph</span>`;
 }
 
 const SLOP_STOPPED = {

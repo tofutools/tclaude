@@ -428,3 +428,42 @@ func TestFetchTargetForBranchInRecognizesRemoteQualifiedPickerBranch(t *testing.
 	assert.Equal(t, "topic", branch)
 	assert.Equal(t, "refs/remotes/upstream/topic", tracking)
 }
+
+// UnmergedCommitsIn counts the work a branch would lose: zero once the trunk
+// reaches its tip, the commit count while it does not, and an error (keep the
+// branch) when there is nothing to compare against.
+func TestUnmergedCommitsIn(t *testing.T) {
+	repoPath, _ := setupTestRepo(t)
+	git := func(args ...string) {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", repoPath}, args...)...).CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+	}
+	trunk, err := DefaultBranchIn(repoPath)
+	require.NoError(t, err)
+
+	git("branch", "feat")
+	n, err := UnmergedCommitsIn(repoPath, "feat")
+	require.NoError(t, err)
+	assert.Equal(t, 0, n, "a branch at the trunk tip loses nothing")
+
+	git("checkout", "-q", "feat")
+	git("commit", "-q", "--allow-empty", "-m", "one")
+	git("commit", "-q", "--allow-empty", "-m", "two")
+	n, err = UnmergedCommitsIn(repoPath, "feat")
+	require.NoError(t, err)
+	assert.Equal(t, 2, n, "commits only the branch has are unmerged")
+
+	git("checkout", "-q", trunk)
+	git("merge", "-q", "--no-edit", "feat")
+	n, err = UnmergedCommitsIn(repoPath, "feat")
+	require.NoError(t, err)
+	assert.Equal(t, 0, n, "merged into the trunk")
+
+	_, err = UnmergedCommitsIn(repoPath, "no-such-branch")
+	assert.Error(t, err, "an unknown answer is an error, so the caller keeps the branch")
+
+	git("branch", "-m", trunk, "trunkless")
+	_, err = UnmergedCommitsIn(repoPath, "feat")
+	assert.Error(t, err, "no main or master to compare against")
+}

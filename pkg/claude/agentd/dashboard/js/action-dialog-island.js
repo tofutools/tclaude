@@ -317,8 +317,8 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
       ` : html`
         <div id="reincarnate-force-fields">
           <p class="modal-hint"><${Words}
-            plain=${html`Spawns a fresh CC instance that inherits identity (groups, perms, ownership). The original is soft-exited. The successor's title is auto-renamed to <code>${'<prev>-r-<N>'}</code>.`}
-            wizard=${html`Summons a fresh familiar that inherits identity (parties, boons, ownership). The original is dismissed. The successor's title is auto-renamed to <code>${'<prev>-r-<N>'}</code>.`}
+            plain=${html`Spawns a fresh session that inherits identity (groups, perms, ownership). The original is soft-exited. The successor keeps the agent's name; the replaced session is kept as <code>${'<name>-x'}</code> (see ▾ view → show replaced generations).`}
+            wizard=${html`Summons a fresh familiar that inherits identity (parties, boons, ownership). The original is dismissed. The successor keeps the familiar's name; the replaced vessel is kept as <code>${'<name>-x'}</code>.`}
           /></p>
           <label class="cron-create-row">
             <span class="cron-create-label">Follow-up</span>

@@ -1159,7 +1159,7 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
           }}
         />
         <span><${Words} plain="Also delete each agent’s git worktree + branch" wizard="Also dissolve each familiar’s git worktree + branch" />
-          <span class="wt-note">The main worktree is never removed; a worktree shared with a surviving agent is kept. Removal happens only after its agent exits and requires shutdown; deleting a linked worktree also deletes its branch.</span>
+          <span class="wt-note">The main worktree is never removed; a worktree shared with a surviving agent is kept. Removal happens only after its agent exits and requires shutdown; a branch is deleted with its worktree only if it is merged, so unmerged commits are kept.</span>
         </span>
       </label>
     `}
@@ -1383,8 +1383,8 @@ function DeleteRetiredDialog({ descriptor, actions, confirmDiscard }) {
           disabled=${busy}
           onChange=${(event) => setDeleteWorktrees(event.currentTarget.checked)}
         />
-        <span>Also delete each agent's git worktree + branch
-          <span class="wt-note">removes the worktree directory and force-deletes its branch — the main repo and worktrees shared with a surviving agent are always kept</span>
+        <span>Also delete each agent's git worktree
+          <span class="wt-note">removes the worktree directory; the branch and its commits are kept — the main repo and worktrees shared with a surviving agent are always kept</span>
         </span>
       </label>
     `}
@@ -1414,7 +1414,7 @@ function RetireWorktreeChoice({ worktree, shutdown, checked, disabled, onChange 
     `;
   }
   const note = shutdown
-    ? html`${path} — removed after the agent exits`
+    ? html`${path} — removed after the agent exits; the branch is deleted only if it is merged, so unmerged commits are kept`
     : html`${path} — requires shutting down the session first`;
   return html`
     <label class=${`delete-agent-wt${disabled ? ' disabled' : ''}`} id="retire-wt-row">
