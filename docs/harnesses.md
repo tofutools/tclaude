@@ -809,3 +809,20 @@ that cannot fall back to saved Google OAuth, Vertex settings or `.env` inputs.
 See [Gemini configuration](https://geminicli.com/docs/reference/configuration/).
 Both harnesses refuse a gateway request with the reason before launching.
 Non-interactive one-shot runs also refuse a proxy choice.
+
+### tclaude-managed instructions
+
+Group/user managed rules and skills are scoped to each managed agent launch,
+never installed into the user's harness HOME. Rules use the startup briefing and
+are re-injected after compaction/clear from the frozen launch snapshot.
+
+| Harness | Managed skill loading |
+| --- | --- |
+| Claude Code | Per-launch `--plugin-dir` when the installed CLI advertises it; briefing paths otherwise |
+| Codex | Agent-private SKILL.md paths in the briefing |
+| OpenCode | Agent-private SKILL.md paths in the briefing |
+| Copilot | Agent-private SKILL.md paths in the briefing |
+| Gemini | Agent-private SKILL.md paths in the briefing |
+
+The fallback lists instructions to read on demand; it does not claim native
+slash-command registration. See [Managed skills and rules](agents-and-groups.md#managed-skills-and-rules).

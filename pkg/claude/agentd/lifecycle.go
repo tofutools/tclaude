@@ -1846,32 +1846,48 @@ func resumeOneConvUnderLaunchLockForTeleport(convID string, recreateMissingDir b
 	if harnessName == harness.CodexName {
 		fastModeAtLaunch = codexFastModeAtLaunch(launchConfig.FastMode, launchConfig.CodexStateRoot)
 	}
+	managedAgentID, managedErr := db.AgentIDForConv(convID)
+	if managedErr != nil {
+		res.Action = "error"
+		res.Detail = "managed instructions: " + managedErr.Error()
+		return res
+	}
+	managedParams := spawnParams{AgentID: managedAgentID, Harness: harnessName}
+	cleanupManaged, managedFail := prepareManagedInstructions(nil, &managedParams)
+	if managedFail != nil {
+		res.Action = "error"
+		res.Detail = managedFail.Msg
+		return res
+	}
+	defer func() { cleanupManaged(!strings.HasPrefix(res.Action, "error")) }()
 	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
-		EffectiveSandbox:       effectiveSandbox,
-		AgentID:                persistedAgentID,
-		ConvID:                 convID,
-		Cwd:                    cwd,
-		Effort:                 launchConfig.Effort,
-		Model:                  launchConfig.Model,
-		ModelProxy:             launchConfig.ModelProxy,
-		Harness:                harnessName,
-		Sandbox:                relaunchSandbox,
-		SandboxImplementation:  relaunchSandboxImplementation,
-		SandboxChosenBy:        launchConfig.HarnessBuiltinModeSource,
-		Approval:               approval,
-		AutoReview:             autoReview,
-		AskUserQuestionTimeout: launchConfig.AskUserQuestionTimeout,
-		ToolGovernance:         launchConfig.ToolGovernance,
-		RemoteControl:          remoteControl,
-		AutoMemory:             launchConfig.AutoMemory,
-		PeerMessaging:          launchConfig.PeerMessaging,
-		ContextFeatures:        launchConfig.ContextFeatures,
-		AutoCompactWindow:      launchConfig.AutoCompactWindow,
-		ContextWindowMax:       launchConfig.ContextWindowMax,
-		CopilotAPI:             launchConfig.CopilotAPI,
-		CodexAppServer:         launchConfig.CodexAppServer,
-		CodexStateRoot:         launchConfig.CodexStateRoot,
-		FastMode:               launchConfig.FastMode,
+		ManagedInstructionsRoot: managedParams.ManagedInstructionsRoot,
+		InitialPrompt:           managedInstructionResumePrompt(managedParams),
+		EffectiveSandbox:        effectiveSandbox,
+		AgentID:                 persistedAgentID,
+		ConvID:                  convID,
+		Cwd:                     cwd,
+		Effort:                  launchConfig.Effort,
+		Model:                   launchConfig.Model,
+		ModelProxy:              launchConfig.ModelProxy,
+		Harness:                 harnessName,
+		Sandbox:                 relaunchSandbox,
+		SandboxImplementation:   relaunchSandboxImplementation,
+		SandboxChosenBy:         launchConfig.HarnessBuiltinModeSource,
+		Approval:                approval,
+		AutoReview:              autoReview,
+		AskUserQuestionTimeout:  launchConfig.AskUserQuestionTimeout,
+		ToolGovernance:          launchConfig.ToolGovernance,
+		RemoteControl:           remoteControl,
+		AutoMemory:              launchConfig.AutoMemory,
+		PeerMessaging:           launchConfig.PeerMessaging,
+		ContextFeatures:         launchConfig.ContextFeatures,
+		AutoCompactWindow:       launchConfig.AutoCompactWindow,
+		ContextWindowMax:        launchConfig.ContextWindowMax,
+		CopilotAPI:              launchConfig.CopilotAPI,
+		CodexAppServer:          launchConfig.CodexAppServer,
+		CodexStateRoot:          launchConfig.CodexStateRoot,
+		FastMode:                launchConfig.FastMode,
 	}); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
@@ -1913,6 +1929,12 @@ func resumeOneConvUnderLaunchLockForTeleport(convID string, recreateMissingDir b
 		}
 	} else {
 		res.Action = "resumed"
+		if managedParams.ManagedInstructionsBody != "" {
+			if _, err := db.InsertAgentMessage(&db.AgentMessage{ToConv: convID, Subject: "Managed instructions (launch)", Body: managedParams.ManagedInstructionsBody}); err != nil {
+				res.Warnings = append(res.Warnings, "Managed instructions inbox copy could not be saved: "+err.Error())
+			}
+		}
+
 		if harnessName == harness.CodexName {
 			persistCodexFastModeAtLaunch(convID, fastModeAtLaunch)
 		}
@@ -5191,10 +5213,12 @@ type spawnParams struct {
 	// "Attached files" section, so the agent can Read them on its first turn.
 	// Already sanitised at the spawn boundary (handleGroupSpawn); empty for a
 	// spawn with no attachments.
-	Attachments    []string
-	Cwd            string // resolved absolute directory
-	WorktreePath   string // resolved absolute directory, or ""
-	WorktreeBranch string
+	ManagedInstructionsRoot string
+	ManagedInstructionsBody string
+	Attachments             []string
+	Cwd                     string // resolved absolute directory
+	WorktreePath            string // resolved absolute directory, or ""
+	WorktreeBranch          string
 	// DirWriteProofDirs are the symlink-resolved directories a dir write-proof
 	// (spawn_dir_proof.go) verified for this spawn — the launch cwd and, when
 	// present, the worktree. executeSpawn re-asserts each is still canonical
@@ -6976,6 +7000,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	}
 
 	spawnArgs := clcommon.SpawnArgs{
+		ManagedInstructionsRoot:    p.ManagedInstructionsRoot,
 		EffectiveSandbox:           p.EffectiveSandbox,
 		Label:                      label,
 		AgentID:                    p.AgentID,
@@ -7020,6 +7045,14 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		}
 	}()
 
+	cleanupManaged, managedFail := prepareManagedInstructions(g, &p)
+	if managedFail != nil {
+		return nil, managedFail
+	}
+	spawnArgs.AgentID = p.AgentID
+	spawnArgs.ManagedInstructionsRoot = p.ManagedInstructionsRoot
+	managedStarted := false
+	defer func() { cleanupManaged(failure == nil || managedStarted) }()
 	var importedID string
 	importedCleanup := func() {}
 	importedLaunched := false
@@ -7213,7 +7246,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		// An inlined copy must be born delivered + read in the same INSERT;
 		// inserting it unread and fixing it up after launch leaves a window where
 		// the online-message flush can claim and inject a redundant nudge.
-		spawnContextBody := buildSpawnContextBody(groupName, p.GroupContext, p.ProfileContext, p.InitialMessage, p.Attachments)
+		spawnContextBody := buildSpawnContextBody(groupName, p.GroupContext, p.ProfileContext, p.InitialMessage, p.Attachments, p.ManagedInstructionsBody)
 		inlineCap := spawnInlineMaxChars()
 		// An offline landing has no launch prompt to inline into: its briefing
 		// stays queued and is delivered when the agent first comes online.
@@ -7298,7 +7331,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		// once the inbox row + id exist. No conv-id is known here, so the welcome
 		// carries no inbox-message id (msgID 0). (CC on the legacy-injection
 		// revert reports its id via hook and needs no seed, so it is excluded.)
-		spawnContextBody := buildSpawnContextBody(groupName, p.GroupContext, p.ProfileContext, p.InitialMessage, p.Attachments)
+		spawnContextBody := buildSpawnContextBody(groupName, p.GroupContext, p.ProfileContext, p.InitialMessage, p.Attachments, p.ManagedInstructionsBody)
 		spawnArgs.InitialPrompt = buildSpawnSeedPrompt(p.Name, p.Role, p.Descr, groupName,
 			p.InitialMessage != "", spawnContextBody, p.WorktreePath, p.WorktreeBranch,
 			resolveSpawnerTitle(p.SpawnedByConv, p.SpawnedByAgent), spawnInlineMaxChars())
@@ -7464,6 +7497,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		return launchFailed(err)
 	}
 	importedLaunched = true
+	managedStarted = true
 	timing("session_wrapper_dispatched", "label", label)
 	agentDirectoriesLaunched = true
 	privateAttachmentsLaunched = true
@@ -8394,7 +8428,7 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 	// to an operator-induced, recoverable, cosmetic window.
 	h := harnessForConv(convID)
 	groupName := spawnGroupName(g)
-	contextBody := buildSpawnContextBody(groupName, p.GroupContext, p.ProfileContext, p.InitialMessage, p.Attachments)
+	contextBody := buildSpawnContextBody(groupName, p.GroupContext, p.ProfileContext, p.InitialMessage, p.Attachments, p.ManagedInstructionsBody)
 	welcomeInSeed := h.NeedsSpawnSeed() && spawnBriefingFitsLaunch(contextBody, spawnInlineMaxChars())
 	briefingInlined := contextBody != "" && welcomeInSeed
 	// actorCreated is deliberately dropped here: this path runs post-connect
@@ -8701,7 +8735,7 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 	// verbatim regardless. The welcome line points the agent at the
 	// message; the spawn path marks it delivered once the welcome lands.
 	groupName := spawnGroupName(g)
-	spawnContext := buildSpawnContextBody(groupName, p.GroupContext, p.ProfileContext, p.InitialMessage, p.Attachments)
+	spawnContext := buildSpawnContextBody(groupName, p.GroupContext, p.ProfileContext, p.InitialMessage, p.Attachments, p.ManagedInstructionsBody)
 	var spawnContextMsgID int64
 	if spawnContext != "" {
 		// Address the briefing FROM the reply-to actor's LIVE generation. On the
@@ -9179,8 +9213,17 @@ func recordStartupSnapshot(agentID string, g *db.AgentGroup, p spawnParams, brie
 // buildSpawnContextBody assembles the startup briefing body for a
 // freshly-spawned agent's inbox. See startupctx.ContextBody, which owns the
 // rendering so the post-compaction re-injection cannot drift from it.
-func buildSpawnContextBody(groupName, groupContext, profileContext, initialMessage string, attachments []string) string {
-	return startupctx.ContextBody(groupName, groupContext, profileContext, initialMessage, attachments)
+func buildSpawnContextBody(groupName, groupContext, profileContext, initialMessage string, attachments []string, managed ...string) string {
+	body := startupctx.ContextBody(groupName, groupContext, profileContext, initialMessage, attachments)
+	for _, section := range managed {
+		if section != "" {
+			if body != "" {
+				body += "\n\n---\n\n"
+			}
+			body += section
+		}
+	}
+	return body
 }
 
 // buildSpawnAttachmentsSection renders the briefing's "Attached files" block.
@@ -9538,6 +9581,9 @@ func spawnDetachedTclaudeResumeAs(args clcommon.SpawnArgs, kind copilotAPILaunch
 // subprocess.
 func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	args := []string{"session", "new", "--managed-launch", "-d", "--global", "--label", a.Label}
+	if a.ManagedInstructionsRoot != "" {
+		args = append(args, "--managed-instructions-root", a.ManagedInstructionsRoot)
+	}
 	if a.ModelProxy != "" {
 		args = append(args, "--model-proxy", a.ModelProxy)
 	}
@@ -9796,6 +9842,9 @@ func appendRemoteControlFlag(args []string, remoteControl bool) []string {
 // can be unit-tested without forking a subprocess.
 func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	args := []string{"session", "new", "--managed-launch", "-r", a.ConvID, "-d", "--global"}
+	if a.ManagedInstructionsRoot != "" {
+		args = append(args, "--managed-instructions-root", a.ManagedInstructionsRoot)
+	}
 	if a.Label != "" {
 		args = append(args, "--label", a.Label)
 	}

@@ -26,6 +26,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/managedinstructions"
 	"github.com/tofutools/tclaude/pkg/claude/common/ratelimit"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -34,6 +35,7 @@ import (
 )
 
 type NewParams struct {
+	ManagedInstructionsRoot string `long:"managed-instructions-root" optional:"true" help:"Internal: registered managed instruction launch directory"`
 	// ManagedLaunch marks agentd's forked session wrapper. The daemon already
 	// resolved profile precedence, so the child must use the exact passed shape.
 	ManagedLaunch bool `long:"managed-launch" help:"Internal: launch parameters were resolved by agentd"`
@@ -405,6 +407,7 @@ func NewCmd() *cobra.Command {
 	// Allow arbitrary args so post-'--' args pass through to claude without cobra rejecting them.
 	cmd.Args = cobra.ArbitraryArgs
 	_ = cmd.Flags().MarkHidden("managed-launch")
+	_ = cmd.Flags().MarkHidden("managed-instructions-root")
 	_ = cmd.Flags().MarkHidden("allow-unenforced-sandbox")
 	_ = cmd.Flags().MarkHidden("sandbox-continuation")
 	_ = cmd.Flags().MarkHidden("cwd-write-proof")
@@ -1108,6 +1111,14 @@ func runNew(params *NewParams) error {
 		return JoinGroupHandler(params)
 	}
 	extraArgs := clcommon.ExtractClaudeExtraArgs()
+	if params.ManagedInstructionsRoot != "" {
+		if err := managedinstructions.VerifyLaunchRoot(params.ManagedInstructionsRoot); err != nil {
+			return fmt.Errorf("managed instructions: %w", err)
+		}
+		if h.Name == harness.DefaultName && managedinstructions.HasNativeSkills(params.ManagedInstructionsRoot) && managedinstructions.ClaudeNativeAvailable() {
+			extraArgs = append(extraArgs, "--plugin-dir", params.ManagedInstructionsRoot)
+		}
+	}
 
 	// Pass-through mode: --help, --version etc. — run the harness binary
 	// directly, no tmux.
@@ -2133,6 +2144,9 @@ func runNew(params *NewParams) error {
 	executablePath := ""
 	executableInterpreter := ""
 	var harnessReadPaths []string
+	if params.ManagedInstructionsRoot != "" {
+		harnessReadPaths = append(harnessReadPaths, params.ManagedInstructionsRoot)
+	}
 	if launchCodexSplitCapability != nil {
 		executablePath = launchCodexSplitCapability.ExecutablePath
 	} else if tclaudeLayerOnly && h.Name == harness.CodexName && runtime.GOOS == "linux" {

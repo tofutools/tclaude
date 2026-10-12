@@ -14,6 +14,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/dbcmd"
 	"github.com/tofutools/tclaude/pkg/claude/federationcmd"
 	"github.com/tofutools/tclaude/pkg/claude/host"
+	"github.com/tofutools/tclaude/pkg/claude/instructionscmd"
 	"github.com/tofutools/tclaude/pkg/claude/memoryfiles"
 	"github.com/tofutools/tclaude/pkg/claude/pafcmd"
 	"github.com/tofutools/tclaude/pkg/claude/pickup"
@@ -70,6 +71,7 @@ func Cmd() *cobra.Command {
 	subCmds = append(subCmds,
 		agentd.Cmd(),
 		hubcmd.Cmd(),
+		instructionscmd.Cmd("skill"), instructionscmd.Cmd("rule"),
 		memoryfiles.Cmd(),
 		processcmd.Cmd(),
 		dbcmd.Cmd(),
@@ -92,6 +94,7 @@ func Cmd() *cobra.Command {
 		},
 	}.ToCobra()
 	_ = cmd.Flags().MarkHidden("managed-launch")
+	_ = cmd.Flags().MarkHidden("managed-instructions-root")
 	cli.ConfigureRoot(cmd)
 	cmd.Args = cobra.ArbitraryArgs
 	session.RegisterJoinGroupCompletion(cmd)
