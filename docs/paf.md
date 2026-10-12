@@ -190,8 +190,8 @@ guess. The preview's
 the conversation takes:
 
 - **native** when the PAF carries a native history in the landing harness's
-  format and, when it lands on a model other than the one it ran on, it fits
-  that model's context budget. A native history that does not fit, and that
+  format and, when it lands on a smaller context window than it ran in, it
+  fits that window's budget. A native history that does not fit, and that
   no trimmed translation fits either, still lands as it is, with a warning;
 - **translated** otherwise: the neutral context, or the native history
   decoded by tclaude's reader for its harness, is translated for the landing
@@ -219,10 +219,11 @@ tclaude paf import --file big.paf --cwd "$PWD" --model sonnet --group team --app
 - **The budget.** The carried conversation may fill 60% of the landing
   window (`agent.morph.history_budget_percent`, as for a morph), here about
   120k tokens; the rest is headroom so the agent does not compact on its
-  first turn. A native history landing on a different model is installed as
-  it is only when it fits that budget. This one does not, so it lands
+  first turn. A native history landing on a smaller window than it ran in
+  (here 1M onto 200k; `opus[1m]` onto `opus` counts too) is installed as it
+  is only when it fits that budget. This one does not, so it lands
   translated and trimmed instead, and the preview says so. A fork or recover
-  onto the model the agent ran on keeps its native history unchecked.
+  onto an equal or larger window keeps its native history unchecked.
 - **What is kept.** The original task and the latest instructions are
   pinned, as are the compaction summaries the harness wrote when it
   compacted. Then come the newest complete turns that fit. Long tool

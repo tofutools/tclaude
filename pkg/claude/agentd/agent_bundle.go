@@ -694,7 +694,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	if landingModel == "" && !crossHarness && d.Origin != nil {
 		landingModel = d.Origin.Model
 	}
-	landing, warnings, err := planHistoryLanding(b, h, landingModel, preview.Cwd, neutral, landingOptions{Skip: q.Get("skip_history") == "true", BudgetNative: direct && (d.Origin == nil || landingModel != d.Origin.Model), Summary: handoff})
+	landing, warnings, err := planHistoryLanding(b, h, landingModel, preview.Cwd, neutral, landingOptions{Skip: q.Get("skip_history") == "true", BudgetNative: direct && landsOnSmallerWindow(h, d.Origin, landingModel), Summary: handoff})
 	if err != nil {
 		writeError(w, 400, "history", err.Error())
 		return

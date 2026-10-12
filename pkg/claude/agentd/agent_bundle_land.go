@@ -238,6 +238,27 @@ func nativeOverBudget(b *agentbundle.Bundle, dst *harness.Harness, model string,
 	return fmt.Sprintf("the native history (about %dk tokens) exceeds the %s context budget (%dk of a %dk-token window), so it lands translated and trimmed instead of as it is", r.SourceEstimatedTokens/1000, landingModelLabel(dst, model), r.BudgetTokens/1000, r.ContextWindowTokens/1000)
 }
 
+// landsOnSmallerWindow says whether a native history should be budgeted:
+// it lands on a context window smaller than the one it ran in, for example
+// opus[1m] onto opus at 200k. Equal windows keep native fidelity, as does
+// the same model when a window is unknown; a different model whose source
+// window is unknown is budgeted, to be safe.
+func landsOnSmallerWindow(dst *harness.Harness, origin *agentbundle.Origin, model string) bool {
+	source := ""
+	if origin != nil {
+		source = origin.Model
+	}
+	landing, lsrc := harness.MorphContextWindow(dst, model)
+	from, fsrc := harness.MorphContextWindow(dst, source)
+	if source == "" || strings.HasPrefix(fsrc, "unknown model") {
+		return source != model
+	}
+	if strings.HasPrefix(lsrc, "unknown model") {
+		return false
+	}
+	return landing < from
+}
+
 func landingModelLabel(dst *harness.Harness, model string) string {
 	if model == "" {
 		return dst.DisplayName

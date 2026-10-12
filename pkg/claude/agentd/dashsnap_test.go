@@ -1481,6 +1481,24 @@ setTimeout(function(){
 			SettleMS: 700,
 		},
 		{
+			Key:      "paf-agent-import-history-cut",
+			Title:    "PAF — agent import that cuts the conversation",
+			Caption:  "A 1M-window agent landing on a smaller window: the trimmed rung, the cut, and the checkbox an apply needs from 25% on.",
+			Width:    1280,
+			Height:   1000,
+			JS:       pafAgentImportCutDashSnapJS(),
+			SettleMS: 700,
+		},
+		{
+			Key:      "paf-snapshot-spawn",
+			Title:    "PAF — spawn from a snapshot",
+			Caption:  "The snapshot library's spawn panel, with the landing selects and the checkbox that allows cutting the conversation.",
+			Width:    1280,
+			Height:   1000,
+			JS:       pafSnapshotSpawnDashSnapJS(),
+			SettleMS: 700,
+		},
+		{
 			Key:      "management-sandbox-import-preview",
 			Title:    "Management — review a sandbox-profile import",
 			Caption:  "The normalized import preview exposes exact policy rows, local portability warnings, collision status, and the resulting import count before commit.",
@@ -4774,4 +4792,70 @@ func dashSnapSize(v string) (int, int, error) {
 		return 0, 0, fmt.Errorf("want WxH (at least 320x240), got %q", v)
 	}
 	return width, height, nil
+}
+
+// pafAgentImportCutDashSnapJS renders the agent import preview for a landing
+// that cuts about three quarters of the conversation, with the confirmation
+// checkbox ticked.
+func pafAgentImportCutDashSnapJS() string {
+	return `return (async function(){
+  var preact = await import('preact');
+  var hooks = await import('preact/hooks');
+  var html = (await import('htm')).default.bind(preact.h);
+  var overlay = await import('/static/js/management-overlay.js');
+  var paf = await import('/static/js/paf-dialogs.js');
+  var preview = {
+    agent: { name: 'big-agent', role: 'dev', harness: 'claude' },
+    history: true,
+    history_landing: { source_harness: 'claude', source_model: 'claude-opus-5-5[1m]', harness: 'codex', model: 'gpt-5.5', rung: 'translated',
+      losses: { dropped_percent: 74, kept_percent: 26, needs_summary: true, budget_warning: true, source_entries: 1200, carried_entries: 310,
+        source_estimated_tokens: 500000, carried_estimated_tokens: 118000, budget_tokens: 120000, context_window_tokens: 200000 } },
+    security: 'Imported as a new agent with the receiver defaults.',
+    warnings: ['landing on Codex CLI gpt-5.5 cuts about 74% of the conversation to fit its context budget: the pinned start, compaction summaries and the newest turns are kept, with the agent\'s own summary standing in for the rest. The full history stays in the PAF and is saved beside the agent.',
+      'Cutting 74% of the conversation needs confirmation: --confirm-history-loss.']
+  };
+  function Host() {
+    var st = hooks.useState({ name: '', group: '', cwd: '', keepPaths: false, harness: 'codex', model: 'gpt-5.5', confirmHistoryLoss: true });
+    var g = overlay.useGuardedOverlayClose();
+    return html` + "`" + `<${overlay.ManagementOverlay} id="paf-import-snap" labelledby="paf-import-snap-title" onClose=${function(){}} dirty=${false} blocked=${false} confirmDiscard=${function(){ return Promise.resolve(true); }} registerClose=${g.registerClose}>
+      <h3 id="paf-import-snap-title">⤒ Import</h3>
+      <${paf.AgentImportPreview} preview=${preview} choices=${st[0]} setChoices=${st[1]} /></${overlay.ManagementOverlay}>` + "`" + `;
+  }
+  var root = document.createElement('div');
+  document.body.appendChild(root);
+  preact.render(html` + "`" + `<${Host} />` + "`" + `, root);
+  var deadline = Date.now() + 3000;
+  while (!document.querySelector('#agent-import-confirm-loss') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (!document.querySelector('#agent-import-confirm-loss')) throw new Error('history-cut checkbox did not render');
+})();`
+}
+
+// pafSnapshotSpawnDashSnapJS opens the snapshot library on one snapshot and
+// its spawn panel.
+func pafSnapshotSpawnDashSnapJS() string {
+	return `return (async function(){
+  var preact = await import('preact');
+  var html = (await import('htm')).default.bind(preact.h);
+  var dialog = await import('/static/js/snapshots-dialog.js');
+  var snap = { name: 'big-agent-20261012', agent_name: 'big-agent', harness: 'claude', model: 'claude-opus-5-5[1m]', history: true,
+    created_at: new Date(Date.now() - 3600e3).toISOString(), bytes: 4200000, state: 'idle', note: 'before the migration' };
+  var actions = { fleet: { boards: function(){ return Promise.resolve([]); } },
+    snapshots: { list: function(){ return Promise.resolve([snap]); }, policies: function(){ return Promise.resolve([]); } } };
+  var root = document.createElement('div');
+  document.body.appendChild(root);
+  preact.render(html` + "`" + `<${dialog.SnapshotsDialog} descriptor=${{}} state=${{ closeDialog: function(){} }} actions=${actions}
+    confirm=${function(){ return Promise.resolve(false); }} confirmDiscard=${function(){ return Promise.resolve(true); }} />` + "`" + `, root);
+  var deadline = Date.now() + 3000;
+  while (!document.querySelector('[data-snap="spawn"]') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  document.querySelector('[data-snap="spawn"]').click();
+  deadline = Date.now() + 3000;
+  while (!document.querySelector('#snapshot-spawn-confirm-loss') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (!document.querySelector('#snapshot-spawn-confirm-loss')) throw new Error('snapshot spawn checkbox did not render');
+})();`
 }
