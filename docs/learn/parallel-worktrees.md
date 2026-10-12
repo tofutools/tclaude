@@ -77,7 +77,7 @@ Open a new terminal, then jump around:
 
 ```bash
 tclaude worktree switch feat/greeting
-tclaude worktree switch main
+tclaude worktree switch main      # or master, whichever your main checkout is on
 ```
 
 The zsh and fish wrappers sit next to it in the repository's `scripts/`
@@ -102,14 +102,21 @@ picks it up in the right worktree.
 
 ## 6. Clean up
 
-Once the fix is merged, remove its worktree and branch:
+Once the fix is merged, exit its session, then step back to the main
+checkout (use `master` if that is your default branch). You cannot remove
+the worktree your shell is standing in. Pull, so git can see the merge,
+then remove the worktree and its branch:
 
 ```bash
+tclaude worktree switch main
+git pull
 tclaude worktree rm fix/typo -D
 ```
 
-`rm` refuses if the worktree has uncommitted changes, so you cannot lose
-work by accident. `-D` also deletes the branch.
+`rm` asks for confirmation, and refuses if the worktree has uncommitted
+changes, so you cannot lose work by accident. `-D` deletes the branch only
+if it is merged into your current branch. After a squash merge, git cannot
+tell; add `-f` to force it (this also skips the uncommitted-changes check).
 
 ## What you learned
 
