@@ -13,6 +13,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/snapshotlib"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -261,4 +262,65 @@ func downloadSnapshot(name, dest string) error {
 		return err
 	}
 	return os.Rename(tmp, dest)
+}
+
+// snapshotSpawnFlags are the spawn flags --from-snapshot applies. Every
+// other launch flag would be silently ignored, so it is refused instead:
+// the snapshot carries the launch shape.
+var snapshotSpawnFlags = map[string]bool{"from-snapshot": true, "count": true, "name": true, "cwd": true, "harness": true, "model": true}
+
+func runSpawnFromSnapshot(p *SpawnParams, cmd *cobra.Command, stdout, stderr io.Writer) int {
+	if p.FromSnapshot == "" {
+		fmt.Fprintln(stderr, "Error: --count needs --from-snapshot")
+		return rcInvalidArg
+	}
+	var refused []string
+	cmd.Flags().Visit(func(f *pflag.Flag) {
+		if !snapshotSpawnFlags[f.Name] {
+			refused = append(refused, "--"+f.Name)
+		}
+	})
+	if len(refused) > 0 {
+		fmt.Fprintf(stderr, "Error: --from-snapshot takes its launch shape from the snapshot; %s cannot be combined with it\n", strings.Join(refused, ", "))
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	group := p.Group
+	if group == "" {
+		var rc int
+		if group, rc = implicitSpawnGroup(stderr); rc != rcOK {
+			return rc
+		}
+	}
+	body := map[string]any{"group": group, "name": p.Name, "count": p.Count, "harness": p.Harness, "model": p.Model}
+	if p.Cwd != "" {
+		cwd, err := filepath.Abs(p.Cwd)
+		if err != nil {
+			fmt.Fprintln(stderr, "Error:", err)
+			return rcInvalidArg
+		}
+		body["cwd"] = cwd
+	} else {
+		// Recorded paths are reused when the operator names none, as
+		// `paf import --keep-paths` does.
+		body["keep_paths"] = true
+	}
+	var res struct {
+		Snapshot string          `json:"snapshot"`
+		Spawned  []SpawnResponse `json:"spawned"`
+		Warnings []string        `json:"warnings"`
+	}
+	if err := DaemonPost("/v1/snapshots/"+url.PathEscape(p.FromSnapshot)+"/spawn", body, &res); err != nil {
+		printBundleError(stderr, err)
+		return MapDaemonErrorToRC(err)
+	}
+	for _, w := range res.Warnings {
+		fmt.Fprintln(stderr, "Warning:", w)
+	}
+	for _, s := range res.Spawned {
+		fmt.Fprintf(stdout, "Spawned %s (%s) from snapshot %s in group %s; attach: %s\n", s.Label, s.AgentID, res.Snapshot, s.Group, s.AttachCmd)
+	}
+	return rcOK
 }

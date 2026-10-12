@@ -244,6 +244,35 @@ tclaude agent snapshot prune
   recorded rather than refused. Redact and consent before sharing an exported
   snapshot.
 
+### Spawning from a snapshot
+
+```bash
+tclaude agent spawn team --from-snapshot before-refactor
+tclaude agent spawn team --from-snapshot before-refactor --count 3 --name trial --cwd "$PWD" --harness codex
+```
+
+Each spawned agent is an import of the snapshot's PAF, landed the way
+`tclaude paf import --apply` lands one: the same landing harness and model,
+history translation, path remapping and spawn checks. Each gets a new
+identity and continues from the snapshot's conversation; the original agent
+is untouched.
+
+- `--count` (1 to 20) spawns several agents. With a count above one, each
+  name gets a `-1`, `-2`, ... suffix. The name defaults to the snapshotted
+  agent's name.
+- Without `--cwd`, agents land at the recorded working directory.
+- Only the group argument, `--count`, `--name`, `--cwd`, `--harness` and
+  `--model` combine with `--from-snapshot`; other spawn flags are refused.
+- **Who may.** The caller needs access to the snapshot's content (the human,
+  or `agent.bundle.export` on the snapshotted agent) plus what an import with
+  `--apply` needs in the receiving group.
+- **Provenance.** Each new agent's arrival briefing names the snapshot and
+  when it was taken, and the audit log records a `snapshot.spawn` entry with
+  `from_snapshot <name>`. The link is provenance only: it grants no authority
+  over or from the original agent.
+- If a later agent in a `--count` run fails, the agents already spawned are
+  kept and reported with the error.
+
 ## Exporting and importing a group
 
 ```bash
