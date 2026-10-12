@@ -35,6 +35,7 @@ func TestDashboardHubAdminClaimAndManagement(t *testing.T) {
 	require.Equal(t, fh.url, before["hub_url"])
 	denied := call("GET", "admins", nil)
 	require.Equal(t, 403, denied.Code, denied.Body.String())
+	require.Equal(t, 403, call("POST", "admissions/cleanup", map[string]any{"days": 30}).Code)
 	token, err := fh.store.PrepareAdminClaim(false, time.Now())
 	require.NoError(t, err)
 	// A newly generated token changes the generation: learn it from status first.
@@ -50,6 +51,16 @@ func TestDashboardHubAdminClaimAndManagement(t *testing.T) {
 	require.Equal(t, true, status["admin"])
 	local := status["instance"].(string)
 	require.Equal(t, "private, no-store", call("GET", "status", nil).Header().Get("Cache-Control"))
+	// Browser and CLI use the signed operator cleanup path with an exact cleanupPreview.
+	stale, err := proto.NewIdentity()
+	require.NoError(t, err)
+	require.NoError(t, fh.store.Admit(stale.ID()))
+	require.NoError(t, fh.store.RecordSeen(stale.ID(), stale.Pub, "old laptop", "test", time.Now().Add(-45*24*time.Hour)))
+	cleanupPreview := must("POST", "admissions/cleanup", map[string]any{"days": 30})
+	require.Len(t, cleanupPreview["instances"], 1)
+	require.Equal(t, stale.ID(), cleanupPreview["instances"].([]any)[0].(map[string]any)["instance"])
+	appliedCleanup := must("POST", "admissions/cleanup", map[string]any{"days": 30, "cutoff": cleanupPreview["cutoff"], "instances": []string{stale.ID()}, "apply": true})
+	require.Equal(t, []any{stale.ID()}, appliedCleanup["revoked"])
 	// List/add/remove, including a live remote admin and last-manager guard.
 	require.Len(t, must("GET", "admins", nil)["admins"], 1)
 	last := call("DELETE", "admins/"+local, nil)
@@ -123,7 +134,7 @@ func TestDashboardHubAdminRoutesNeverReachPeersOrAgents(t *testing.T) {
 	handler := agentd.BuildDashboardHandlerForTest()
 	routes := []struct{ method, tail string }{
 		{"GET", "status"}, {"POST", "claim"}, {"GET", "admins"}, {"POST", "admins"}, {"DELETE", "admins/" + fh.peer.id.ID()},
-		{"GET", "admissions"}, {"POST", "admissions"}, {"DELETE", "admissions/" + fh.peer.id.ID()},
+		{"POST", "admissions/cleanup"}, {"GET", "admissions"}, {"POST", "admissions"}, {"DELETE", "admissions/" + fh.peer.id.ID()},
 		{"GET", "invites"}, {"POST", "invites"}, {"DELETE", "invites/hash"}, {"GET", "spaces"}, {"PUT", "spaces"},
 		{"GET", "settings"}, {"PATCH", "settings"}, {"POST", "identity/recover"}, {"POST", "identity/revoke-old"}, {"GET", "health"}, {"GET", "logs"},
 	}

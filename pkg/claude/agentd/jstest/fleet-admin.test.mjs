@@ -2125,3 +2125,19 @@ test('permission carry decisions are text, with explicit receiver options and co
   assert.match(s.confirms.at(-1).body, /explicitly authorize carried permission administration, sandbox administration, human interaction and federation administration/);
   assert.deepEqual(s.log.findLast((l) => l[0] === 'carry')[1], { apply: true, allow_sensitive_permissions: true });
 });
+
+test('hub: stale cleanup previews exact IDs before applying, defaults to 30 days', async (t) => {
+  s_hubAdmin = true;
+  const s = await setup(t);
+  const calls = [];
+  s.actions.cleanupHubAdmissions = async (body) => {
+    calls.push(body);
+    return body.apply ? { revoked: ['inst_old'], skipped: [] } : { days: 30, cutoff: '2026-09-01T00:00:00Z', instances: [{ instance: 'inst_old', name: 'old laptop', last_seen: '2026-08-01T00:00:00Z' }], more: false };
+  };
+  await openHub(s);
+  await s.click(s.harness.document.querySelector('#fleet-hub-stale-preview'));
+  assert.deepEqual(calls, [{ days: 30 }, { days: 30, cutoff: '2026-09-01T00:00:00Z', instances: ['inst_old'], apply: true }]);
+  assert.match(s.confirms.at(-1).body, /old laptop inst_old/);
+  assert.match(s.confirms.at(-1).body, /Admins, this node and connected instances are excluded/);
+  assert.equal(s.confirms.at(-1).preformatted, true);
+});

@@ -22,6 +22,7 @@ func registerDashboardFederationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/federation/hub/admins", dashboardFederationRoute(hubOperatorRoute("admins.list")))
 	mux.HandleFunc("POST /api/federation/hub/admins", dashboardFederationRoute(hubOperatorRoute("admins.add")))
 	mux.HandleFunc("DELETE /api/federation/hub/admins/{instance}", dashboardFederationRoute(hubOperatorRoute("admins.remove")))
+	mux.HandleFunc("POST /api/federation/hub/admissions/cleanup", dashboardFederationRoute(hubOperatorRoute("admissions.cleanup")))
 	mux.HandleFunc("GET /api/federation/hub/admissions", dashboardFederationRoute(hubOperatorRoute("admissions.list")))
 	mux.HandleFunc("POST /api/federation/hub/admissions", dashboardFederationRoute(hubOperatorRoute("admissions.admit")))
 	mux.HandleFunc("DELETE /api/federation/hub/admissions/{instance}", dashboardFederationRoute(hubOperatorRoute("admissions.revoke")))

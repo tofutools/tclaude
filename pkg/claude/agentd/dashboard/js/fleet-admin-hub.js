@@ -451,6 +451,8 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
   const [data, setData] = useState({});
   const [dialog, setDialog] = useState(null);
   const [tick, setTick] = useState(0);
+  const [staleDays, setStaleDays] = useState('30');
+  const [staleBusy, setStaleBusy] = useState(false);
   const [invite, setInvite] = useState({ space: '', ttl: '24' });
   const [newToken, setNewToken] = useState(null);
   const retried = useRef(false);
@@ -488,6 +490,25 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
   const ok = (v) => Array.isArray(v);
   const listOr = (v, render) => (v?.error ? html`<div class="fa-danger">${v.error}</div>` : !v ? html`<div class="muted">Loading…</div>` : render(v));
 
+  const cleanupStale = async () => {
+    const days = Number(staleDays);
+    if (!Number.isInteger(days) || days < 1 || days > 36500) { toast('Days must be a whole number between 1 and 36500', true); return; }
+    setStaleBusy(true);
+    try {
+      const preview = await actions.cleanupHubAdmissions({ days });
+      const rows = preview.instances || [];
+      if (!rows.length) { toast('No stale admissions to remove. Admins and this node are excluded.', false); return; }
+      const result = await confirm({
+        title: `Remove ${rows.length} stale hub admission(s)?`,
+        body: `Not seen for ${days} days. Admins, this node and connected instances are excluded. These instances lose hub access until admitted again; node trust is unchanged.\n\n${rows.map((a) => `${a.name || ''} ${a.instance} · seen ${when(a.last_seen)}`).join('\n')}\n\n${preview.more ? 'First 250 shown. Run cleanup again for the remainder. ' : ''}Instances that became active or admins since this preview are skipped.`,
+        preformatted: true,
+        okLabel: 'Revoke these admissions', busyLabel: 'Revoking…',
+        action: () => actions.cleanupHubAdmissions({ days: preview.days, cutoff: preview.cutoff, instances: rows.map((a) => a.instance), apply: true }),
+      });
+      if (result) done(`${result.revoked?.length || 0} admission(s) revoked; ${result.skipped?.length || 0} skipped`);
+    } catch (e) { fail('Stale cleanup')(e); }
+    finally { setStaleBusy(false); }
+  };
   const revokeAdmission = (a) => confirm({
     title: `Revoke ${a.name || a.instance}'s hub admission?`,
     body: `${a.instance} (fingerprint ${a.fingerprint || 'unknown'}) is disconnected from the hub and can no longer reach any node through it until admitted again. Its trust relationships on each node are unchanged.`,
@@ -575,6 +596,8 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
         ${(hl.recent_errors || []).length ? html`<ul class="fa-hub-errors">${hl.recent_errors.map((e, i) => html`<li key=${i} class="fa-danger">${when(e.at)} ${e.code ? html`<code>${e.code}</code> ` : ''}${e.message || ''}</li>`)}</ul>` : html`<span class="muted">no recent errors</span>`}
       </div>`)}
       ${h4('Admissions', html` <button type="button" class="fa-link" id="fleet-hub-admit-open" onClick=${() => setDialog('admit')}>admit…</button> <button type="button" class="fa-link" id="fleet-hub-identity-open" onClick=${() => setDialog('identity')}>identity recovery…</button>`)}
+      <div class="fa-grant-form"><label>Remove instances not seen for <input aria-label="Stale admission days" inputmode="numeric" style="width:4em" value=${staleDays} onInput=${(e) => setStaleDays(e.currentTarget.value)} /> days</label>
+        <button type="button" id="fleet-hub-stale-preview" disabled=${staleBusy || !status.connected} onClick=${cleanupStale}>${staleBusy ? 'Preparing…' : 'Preview cleanup…'}</button></div>
       ${listOr(data.admissions, (rows) => html`<table class="fa-table" id="fleet-hub-admissions">
         <thead><tr><th>Instance</th><th>Fingerprint</th><th>Spaces</th><th>Seen</th><th></th></tr></thead>
         <tbody>${rows.map((a) => (a.revoked ? html`<tr key=${a.instance} data-instance=${a.instance} data-revoked class="muted">
