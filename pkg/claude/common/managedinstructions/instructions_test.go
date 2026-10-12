@@ -86,3 +86,46 @@ func TestManagedInstructionImportExactDirectory(t *testing.T) {
 	_, err = Import("skill", "release", skill)
 	require.ErrorContains(t, err, "symlink")
 }
+
+func TestManagedInstructionHookApprovalParsesFrontmatter(t *testing.T) {
+	for _, metadata := range []string{"hooks: {}", `"hooks": {}`, "hooks : {}", "base: &hooks {hooks: {}}\n<<: *hooks", "hooks: [invalid", "description: safe\n---missing"} {
+		t.Run(metadata, func(t *testing.T) {
+			require.True(t, RequiresCodeApproval(skillbundle.File{Path: "SKILL.md", Data: []byte("---\n" + metadata + "\n---\nGuidance")}))
+		})
+	}
+	require.False(t, RequiresCodeApproval(skillbundle.File{Path: "SKILL.md", Data: []byte("---\ndescription: Safe prose\n---\nGuidance")}))
+}
+
+func TestManagedInstructionReceiverPrecedenceAndCarriedDedup(t *testing.T) {
+	receiver := []db.ManagedInstruction{{Kind: "rule", Name: "safety", Scope: "user", Content: []byte("Receiver instruction")}}
+	carried := []db.ManagedInstruction{{Kind: "rule", Name: "old", Scope: "carried", Content: []byte("Carried instruction")}}
+	merged, err := Merge(receiver, carried)
+	require.NoError(t, err)
+	repeated, err := Merge(receiver, merged)
+	require.NoError(t, err)
+	require.Len(t, repeated, 2)
+	launch, err := Materialize(repeated)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(launch.Root) })
+	require.Contains(t, launch.Body, "win every conflict with carried guidance")
+	require.Contains(t, launch.Body, "Receiver instruction")
+	require.Contains(t, launch.Body, "Carried instruction")
+}
+
+func TestManagedInstructionDedupKeepsLocalAuthorityAndCarriedLifetime(t *testing.T) {
+	local := db.ManagedInstruction{Kind: "rule", Name: "local", Scope: "user", Content: []byte("same guidance")}
+	carried := db.ManagedInstruction{Kind: "rule", Name: "remote", Scope: "carried", Content: []byte("same guidance"), Carried: true}
+	merged, err := Merge([]db.ManagedInstruction{local}, []db.ManagedInstruction{carried})
+	require.NoError(t, err)
+	require.Len(t, merged, 1)
+	require.Equal(t, "user", merged[0].Scope, "deduplication must not demote the receiver's authority")
+	require.True(t, merged[0].Carried, "the identical carried bytes must survive a later local edit")
+	previous := merged[0]
+	previous.Scope = "carried"
+	local.Content = []byte("updated receiver guidance")
+	refreshed, err := Merge([]db.ManagedInstruction{local}, []db.ManagedInstruction{previous})
+	require.NoError(t, err)
+	require.Len(t, refreshed, 2)
+	require.Equal(t, "user", refreshed[0].Scope)
+	require.Equal(t, "carried", refreshed[1].Scope)
+}

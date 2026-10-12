@@ -24,6 +24,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/managedinstructions"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -54,8 +55,9 @@ func (e *cloneSpawnError) write(w http.ResponseWriter) {
 // cloneSpawnOnce); every other field is launch authority the clone inherits
 // from its source.
 type cloneSpawnParams struct {
-	Arrival      bool
-	ArrivalGroup string
+	ManagedGroups []*db.AgentGroup
+	Arrival       bool
+	ArrivalGroup  string
 	// SourceConv is the conversation being cloned; Cwd is where the clone runs.
 	SourceConv string
 	Cwd        string
@@ -187,9 +189,13 @@ func refreshCloneLaunchEnvironment(convID string, current, previous *sandboxpoli
 // reuse the same race handling without duplicating it.
 func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSpawnError) {
 	sourceConv, cwd, noCopyConv := p.SourceConv, p.Cwd, p.NoCopyConv
-	if err := refuseManagedContinuation(sourceConv); err != nil {
-		return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusConflict, Code: "managed_instructions", Msg: err.Error()}
+	managedResources, managedErr := managedCloneResources(sourceConv, p.ManagedGroups)
+	if managedErr != nil {
+		return cloneSpawnResult{}, &cloneSpawnError{Status: 409, Code: "managed_instructions", Msg: managedErr.Error()}
 	}
+	cleanupManagedClone := func(bool) {}
+	managedCloneStarted := false
+	defer func() { cleanupManagedClone(cerr == nil || managedCloneStarted) }()
 	effort, model := p.Effort, p.Model
 	proofToken, proofCwd, proofDirs := p.ProofToken, p.ProofCwd, p.ProofDirs
 	codexGitCommonDir, gitWriteDirs := p.CodexGitCommonDir, p.GitWriteDirs
@@ -518,6 +524,53 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	// enrollLaunch stamps the clone's name and first-turn handoff onto the
 	// launch args once its conv-id is known — preset by the caller on the
 	// no-copy branch, minted by the jsonl fork on the copy branch.
+	prepareCloneManaged := func(args *clcommon.SpawnArgs, convID string) *cloneSpawnError {
+		if len(managedResources) == 0 {
+			return nil
+		}
+		if convID == "" {
+			return &cloneSpawnError{Status: 409, Code: "managed_instructions", Msg: "this harness cannot bind a launch-scoped instruction overlay on a no-copy clone; use a history-copy clone"}
+		}
+		id, created, err := db.EnsureAgentForConv(convID, "clone")
+		if err != nil {
+			return &cloneSpawnError{Status: 500, Code: "managed_instructions", Msg: err.Error()}
+		}
+		launch, err := managedinstructions.Materialize(managedResources)
+		if err != nil {
+			if created {
+				_, _ = db.DeleteAgentByConvID(convID)
+			}
+			return &cloneSpawnError{Status: 500, Code: "managed_instructions", Msg: err.Error()}
+		}
+		raw, err := json.Marshal(managedResources)
+		if err == nil {
+			err = db.SaveManagedInstructionLaunch(db.ManagedInstructionLaunch{AgentID: id, Root: launch.Root, Body: launch.Body, Resources: string(raw)})
+		}
+		if err != nil {
+			_ = managedinstructions.RemoveLaunchRoot(launch.Root)
+			if created {
+				_, _ = db.DeleteAgentByConvID(convID)
+			}
+			return &cloneSpawnError{Status: 500, Code: "managed_instructions", Msg: err.Error()}
+		}
+		managedParams := spawnParams{ManagedInstructionsRoot: launch.Root, ManagedInstructionsBody: launch.Body}
+		cleanupManagedClone = func(success bool) {
+			if !success {
+				_ = managedinstructions.RemoveLaunchRoot(launch.Root)
+				_ = db.DeleteManagedInstructionLaunch(id)
+				if created {
+					_, _ = db.DeleteAgentByConvID(convID)
+				}
+			}
+		}
+
+		args.AgentID = id
+		args.ManagedInstructionsRoot = managedParams.ManagedInstructionsRoot
+		if guidance := managedInstructionResumePrompt(managedParams); guidance != "" {
+			args.InitialPrompt += "\n\n" + guidance
+		}
+		return nil
+	}
 	enrollLaunch := func(args *clcommon.SpawnArgs, convID string) {
 		if !launchEnroll {
 			return
@@ -559,6 +612,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	// happened, so a failed clone cannot strand an orphan inbox message
 	// addressed to a conv-id that will never exist.
 	rollbackHandoff := func() {
+		managedCloneStarted = false
 		if res.HandoffMsgID <= 0 {
 			return
 		}
@@ -665,6 +719,11 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			return cloneSpawnResult{}, routeErr
 		}
 		enrollLaunch(&proofArgs, newConv)
+		if failure := prepareCloneManaged(&proofArgs, newConv); failure != nil {
+			agentDirectoryCleanup()
+			rollbackHandoff()
+			return cloneSpawnResult{}, failure
+		}
 		// A wrapper that dies before the pane exists (a bad executable, a
 		// rejected launch flag) would otherwise only surface as the poll
 		// timeout below. Watch for it so a failed launch rolls its pre-fork
@@ -679,6 +738,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 				Msg: "failed to launch tclaude session new: " + err.Error(),
 			}
 		}
+		managedCloneStarted = true
 		deadline := time.Now().Add(reincarnateSpawnTimeout)
 		for time.Now().Before(deadline) {
 			select {
@@ -895,6 +955,11 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	// The forked jsonl already fixes the clone's conv-id, so the copy path needs
 	// no --session-id: the name and handoff ride the resume argv directly.
 	enrollLaunch(&proofArgs, newConv)
+	if failure := prepareCloneManaged(&proofArgs, newConv); failure != nil {
+		agentDirectoryCleanup()
+		rollbackHandoff()
+		return cloneSpawnResult{}, failure
+	}
 	// A resume in argv shape, a FRESH conversation in fact: the id was minted
 	// above by forking a conversation file, so no harness has ever seen it. See
 	// spawnDetachedTclaudeResumeAs.
@@ -906,6 +971,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			Msg: "failed to launch tclaude session new -r: " + err.Error(),
 		}
 	}
+	managedCloneStarted = true
 	// Persist the launch snapshot before waiting for the session row. The copy
 	// path already knows its conversation ID, and may return success with a
 	// warning if registration times out; retaining the snapshot here prevents a
@@ -1668,7 +1734,12 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	// duplicating it. The clone is launched with the source agent's durable
 	// model + effort; "" falls back to the harness default.
 	effort, model := relaunch.Effort, relaunch.Model
+	managedGroups := append([]*db.AgentGroup(nil), oldGroups...)
+	if extraGroup != nil {
+		managedGroups = append(managedGroups, extraGroup)
+	}
 	spawned, spawnErr := cloneSpawnOnce(cloneSpawnParams{
+		ManagedGroups:       managedGroups,
 		Arrival:             true,
 		SourceConv:          target,
 		Cwd:                 cwd,

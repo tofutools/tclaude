@@ -18,29 +18,31 @@ import (
 )
 
 type bundleExportParams struct {
-	CarryPermissions bool   `long:"carry-permissions" help:"Request receiver-approved permission carry; off by default."`
-	Agent            string `pos:"true" help:"Agent selector to export."`
-	File             string `long:"file" short:"f" help:"Destination file: a .paf, or with --format v1 an agent bundle ZIP."`
-	History          bool   `long:"history" help:"Include native conversation history when supported."`
-	AllowFlagged     bool   `long:"allow-flagged" help:"Explicitly allow credential-shaped text; inspect before sharing."`
-	Format           string `long:"format" optional:"true" alts:"paf,v1" help:"Archive format: paf (the default; Portable Agent Format, see docs/paf.md) or v1 (agent bundle v1, for importing into an older tclaude)."`
-	NoNative         bool   `long:"no-native" help:"PAF only: leave the native history out and carry the conversation in harness-neutral form only."`
-	NoContext        bool   `long:"no-context" help:"PAF only: leave the harness-neutral copy of the conversation out."`
-	WithSummary      bool   `long:"with-summary" help:"PAF only: first ask the agent to write a summary of its earlier work and carry it, so a landing on a smaller context window keeps it. Costs the agent a turn; waits up to --summary-wait."`
-	SummaryWait      string `long:"summary-wait" optional:"true" help:"With --with-summary: how long to wait for the agent's summary (default 10m)."`
+	OmitManagedInstructions bool   `long:"omit-managed-instructions" help:"Human only: omit managed skills and rules from this export."`
+	CarryPermissions        bool   `long:"carry-permissions" help:"Request receiver-approved permission carry; off by default."`
+	Agent                   string `pos:"true" help:"Agent selector to export."`
+	File                    string `long:"file" short:"f" help:"Destination file: a .paf, or with --format v1 an agent bundle ZIP."`
+	History                 bool   `long:"history" help:"Include native conversation history when supported."`
+	AllowFlagged            bool   `long:"allow-flagged" help:"Explicitly allow credential-shaped text; inspect before sharing."`
+	Format                  string `long:"format" optional:"true" alts:"paf,v1" help:"Archive format: paf (the default; Portable Agent Format, see docs/paf.md) or v1 (agent bundle v1, for importing into an older tclaude)."`
+	NoNative                bool   `long:"no-native" help:"PAF only: leave the native history out and carry the conversation in harness-neutral form only."`
+	NoContext               bool   `long:"no-context" help:"PAF only: leave the harness-neutral copy of the conversation out."`
+	WithSummary             bool   `long:"with-summary" help:"PAF only: first ask the agent to write a summary of its earlier work and carry it, so a landing on a smaller context window keeps it. Costs the agent a turn; waits up to --summary-wait."`
+	SummaryWait             string `long:"summary-wait" optional:"true" help:"With --with-summary: how long to wait for the agent's summary (default 10m)."`
 }
 
 // pafExportParams are bundleExportParams for `tclaude paf export`, which
 // always writes a PAF.
 type pafExportParams struct {
-	Agent        string `pos:"true" help:"Agent selector to export."`
-	File         string `long:"file" short:"f" help:"Destination .paf file."`
-	History      bool   `long:"history" help:"Include the conversation history."`
-	NoNative     bool   `long:"no-native" help:"Leave the native history out and carry the conversation in harness-neutral form only."`
-	NoContext    bool   `long:"no-context" help:"Leave the harness-neutral copy of the conversation out; only the native history travels."`
-	AllowFlagged bool   `long:"allow-flagged" help:"Explicitly allow credential-shaped text; inspect before sharing."`
-	WithSummary  bool   `long:"with-summary" help:"First ask the agent to write a summary of its earlier work and carry it, so a landing on a smaller context window keeps it. Costs the agent a turn; waits up to --summary-wait."`
-	SummaryWait  string `long:"summary-wait" optional:"true" help:"With --with-summary: how long to wait for the agent's summary (default 10m)."`
+	OmitManagedInstructions bool   `long:"omit-managed-instructions" help:"Human only: omit managed skills and rules from this export."`
+	Agent                   string `pos:"true" help:"Agent selector to export."`
+	File                    string `long:"file" short:"f" help:"Destination .paf file."`
+	History                 bool   `long:"history" help:"Include the conversation history."`
+	NoNative                bool   `long:"no-native" help:"Leave the native history out and carry the conversation in harness-neutral form only."`
+	NoContext               bool   `long:"no-context" help:"Leave the harness-neutral copy of the conversation out; only the native history travels."`
+	AllowFlagged            bool   `long:"allow-flagged" help:"Explicitly allow credential-shaped text; inspect before sharing."`
+	WithSummary             bool   `long:"with-summary" help:"First ask the agent to write a summary of its earlier work and carry it, so a landing on a smaller context window keeps it. Costs the agent a turn; waits up to --summary-wait."`
+	SummaryWait             string `long:"summary-wait" optional:"true" help:"With --with-summary: how long to wait for the agent's summary (default 10m)."`
 }
 
 // PAFExportCmd is `tclaude paf export`: agent bundle export writing PAF.
@@ -50,7 +52,7 @@ func PAFExportCmd() *cobra.Command {
 			"The conversation travels as the native history plus a harness-neutral copy, so it can land on any harness. " +
 			"Credential-shaped text refuses the export unless --allow-flagged. Needs agent.bundle.export.",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *pafExportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runBundleExport(&bundleExportParams{Agent: p.Agent, File: p.File, History: p.History, AllowFlagged: p.AllowFlagged, Format: "paf", NoNative: p.NoNative, NoContext: p.NoContext, WithSummary: p.WithSummary, SummaryWait: p.SummaryWait}, os.Stderr))
+			os.Exit(runBundleExport(&bundleExportParams{OmitManagedInstructions: p.OmitManagedInstructions, Agent: p.Agent, File: p.File, History: p.History, AllowFlagged: p.AllowFlagged, Format: "paf", NoNative: p.NoNative, NoContext: p.NoContext, WithSummary: p.WithSummary, SummaryWait: p.SummaryWait}, os.Stderr))
 		}}.ToCobra()
 }
 
@@ -68,6 +70,8 @@ func PAFImportCmd() *cobra.Command {
 }
 
 type bundleImportParams struct {
+	ApproveManagedScripts     string   `long:"approve-managed-scripts" optional:"true" help:"Human only: approve this transfer's script files using managed_instruction_digest from its preview."`
+	OmitManagedInstructions   bool     `long:"omit-managed-instructions" help:"Human only: omit the carried skills and rules; receiver rules still apply."`
 	CarryPermissions          bool     `long:"carry-permissions" help:"Request receiver-approved permission carry; off by default."`
 	AllowSensitivePermissions bool     `long:"allow-sensitive-permissions" help:"Explicitly allow permission administration, sandbox, human interaction and federation administration grants; requires unrestricted trust."`
 	File                      string   `long:"file" short:"f" help:"Agent bundle ZIP or .paf archive; '-' reads stdin."`
@@ -131,6 +135,9 @@ func runBundleExport(p *bundleExportParams, stderr io.Writer) int {
 			return rc
 		}
 		q.Set("summary", id)
+	}
+	if p.OmitManagedInstructions {
+		q.Set("omit_managed_instructions", "true")
 	}
 	if p.CarryPermissions {
 		q.Set("carry_permissions", "true")
@@ -262,6 +269,12 @@ func runBundleImport(p *bundleImportParams, stdin io.Reader, out, stderr io.Writ
 	}
 	if p.ConfirmHistoryLoss {
 		q.Set("confirm_history_loss", "true")
+	}
+	if p.OmitManagedInstructions {
+		q.Set("omit_managed_instructions", "true")
+	}
+	if p.ApproveManagedScripts != "" {
+		q.Set("approve_managed_scripts", p.ApproveManagedScripts)
 	}
 	var result json.RawMessage
 	if err := uploadAgentArchive("/v1/agent-bundle/import?"+q.Encode(), archive, &result); err != nil {

@@ -667,3 +667,23 @@ func TestLossesKeepPrior(t *testing.T) {
 	require.Len(t, l.Prior, 1)
 	assert.Equal(t, 40, l.Prior[0].DroppedPercent)
 }
+
+func TestManagedInstructionsOlderReaderRefusesOnlyRequiredArchives(t *testing.T) {
+	const extension = "org.tclaude.managed-instructions"
+	var out bytes.Buffer
+	writer := NewWriter(&out, KindAgent, Limits{})
+	require.NoError(t, writer.DeclareExtension(extension, ExtensionDecl{Version: "1.0", System: "tclaude", Spec: "https://example.invalid/managed", Copy: "unsafe"}, true))
+	require.NoError(t, writer.AddAgent("worker", Agent{Name: "worker"}, Environment{Harness: Harness{Name: "claude"}}))
+	_, closeErr := writer.Close(Producer{Name: "test"})
+	require.NoError(t, closeErr)
+	_, err := Open(bytes.NewReader(out.Bytes()), int64(out.Len()), Options{})
+	require.NoError(t, err)
+	capability := knownExtensions[extension]
+	delete(knownExtensions, extension)
+	t.Cleanup(func() { knownExtensions[extension] = capability })
+	_, err = Open(bytes.NewReader(out.Bytes()), int64(out.Len()), Options{Purpose: PurposeImport})
+	require.ErrorContains(t, err, "ext:"+extension)
+	inspect, err := Open(bytes.NewReader(out.Bytes()), int64(out.Len()), Options{Purpose: PurposeInspect})
+	require.NoError(t, err)
+	require.Contains(t, inspect.Unsupported, "ext:"+extension)
+}

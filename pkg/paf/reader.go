@@ -37,7 +37,7 @@ var knownFeatures = map[string]bool{}
 
 // knownExtensions are the extensions this package understands, by id and
 // the newest version it knows.
-var knownExtensions = map[string][2]int{ExtTclaude: {0, 1}}
+var knownExtensions = map[string][2]int{ExtTclaude: {0, 1}, "org.tclaude.managed-instructions": {1, 0}}
 
 // versionReadable reports whether a MAJOR.MINOR version can be read by a
 // reader of the given major version. Minor versions only add, from 0.1 on

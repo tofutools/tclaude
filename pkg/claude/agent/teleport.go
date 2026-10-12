@@ -16,19 +16,20 @@ import (
 )
 
 type teleportParams struct {
-	CarryPermissions bool   `long:"carry-permissions" help:"Request receiver-approved permission carry; off by default."`
-	Target           string `pos:"true" optional:"true" help:"Trusted peer or group:<node pool>"`
-	Node             string `long:"node" optional:"true" help:"auto or group:<node pool>"`
-	Group            string `long:"group" optional:"true" help:"Receiving group; automatic only when exactly one is authorized"`
-	Require          string `long:"require" optional:"true" help:"Required node metadata matches"`
-	Prefer           string `long:"prefer" optional:"true" help:"least-loaded or most-free-ram"`
-	KeepPausedBackup bool   `long:"keep-paused-backup" help:"Keep a stopped origin backup with lease-loss recovery"`
-	Clone            bool   `long:"clone" help:"Keep this agent running after the history clone lands"`
-	Home             bool   `long:"home" help:"Return to the recorded origin, subject to live permissions and policy"`
-	Note             string `long:"note" optional:"true" help:"Continuation briefing on the destination"`
-	Credentials      string `long:"credentials" optional:"true" help:"local or proxy:<name>@<peer>; proxy refuses until available"`
-	GitRef           string `long:"git-ref" optional:"true" help:"Allowlisted repo/ref checkout (requires receiver support)"`
-	JSON             bool   `long:"json" help:"Output JSON"`
+	OmitManagedInstructions bool   `long:"omit-managed-instructions" help:"Human only: omit managed skills and rules for this teleport."`
+	CarryPermissions        bool   `long:"carry-permissions" help:"Request receiver-approved permission carry; off by default."`
+	Target                  string `pos:"true" optional:"true" help:"Trusted peer or group:<node pool>"`
+	Node                    string `long:"node" optional:"true" help:"auto or group:<node pool>"`
+	Group                   string `long:"group" optional:"true" help:"Receiving group; automatic only when exactly one is authorized"`
+	Require                 string `long:"require" optional:"true" help:"Required node metadata matches"`
+	Prefer                  string `long:"prefer" optional:"true" help:"least-loaded or most-free-ram"`
+	KeepPausedBackup        bool   `long:"keep-paused-backup" help:"Keep a stopped origin backup with lease-loss recovery"`
+	Clone                   bool   `long:"clone" help:"Keep this agent running after the history clone lands"`
+	Home                    bool   `long:"home" help:"Return to the recorded origin, subject to live permissions and policy"`
+	Note                    string `long:"note" optional:"true" help:"Continuation briefing on the destination"`
+	Credentials             string `long:"credentials" optional:"true" help:"local or proxy:<name>@<peer>; proxy refuses until available"`
+	GitRef                  string `long:"git-ref" optional:"true" help:"Allowlisted repo/ref checkout (requires receiver support)"`
+	JSON                    bool   `long:"json" help:"Output JSON"`
 }
 
 func teleportCmd() *cobra.Command {
@@ -69,7 +70,7 @@ func runTeleport(p *teleportParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != 0 {
 		return rc
 	}
-	request := map[string]any{"peer": peer, "node": node, "group": p.Group, "require": p.Require, "prefer": p.Prefer, "keep_paused_backup": p.KeepPausedBackup, "clone": p.Clone, "home": p.Home, "note": p.Note, "credentials": p.Credentials, "git_ref": p.GitRef, "carry_permissions": p.CarryPermissions}
+	request := map[string]any{"peer": peer, "node": node, "group": p.Group, "require": p.Require, "prefer": p.Prefer, "keep_paused_backup": p.KeepPausedBackup, "clone": p.Clone, "home": p.Home, "note": p.Note, "credentials": p.Credentials, "git_ref": p.GitRef, "omit_managed_instructions": p.OmitManagedInstructions, "carry_permissions": p.CarryPermissions}
 	var response map[string]any
 	if err := DaemonRequest(http.MethodPost, "/v1/whoami/teleport", request, &response, DaemonOpts{Timeout: bundletransfer.DefaultTTL}); err != nil {
 		var de *DaemonError

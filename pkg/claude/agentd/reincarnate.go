@@ -342,10 +342,6 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	launchLock := resumeLaunchLock(target)
 	launchLock.Lock()
 	defer launchLock.Unlock()
-	if err := refuseManagedContinuation(target); err != nil {
-		writeError(w, http.StatusConflict, "managed_instructions", err.Error())
-		return
-	}
 
 	actor, actorErr := db.GetAgentByConv(target)
 	if actorErr != nil {
@@ -597,6 +593,36 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// Harnesses that cannot preset a conv-id (Codex generates it at first turn
 	// and renames out-of-band through ConvStore) keep the inject-after-connect
 	// flow in runReincarnatePostSpawn below, unchanged.
+	managedID, managedErr := db.AgentIDForConv(target)
+	if managedErr != nil {
+		rollbackSandbox(true)
+		writeError(w, 500, "managed_instructions", managedErr.Error())
+		return
+	}
+	previousManaged, managedErr := db.GetManagedInstructionLaunch(managedID)
+	if managedErr != nil {
+		rollbackSandbox(true)
+		writeError(w, 500, "managed_instructions", managedErr.Error())
+		return
+	}
+	managedParams := spawnParams{AgentID: managedID, Harness: relaunch.Harness, ManagedPreviousConv: target}
+	cleanupManaged, managedFailure := prepareManagedInstructions(nil, &managedParams)
+	if managedFailure != nil {
+		rollbackSandbox(true)
+		writeError(w, managedFailure.Status, managedFailure.Kind, managedFailure.Msg)
+		return
+	}
+	managedDisposition := 0 // rollback until identity rotation commits; 2 keeps an orphan's files
+	defer func() {
+		if managedDisposition != 2 {
+			cleanupManaged(managedDisposition == 1)
+		}
+	}()
+	spawnArgs.AgentID = managedID
+	spawnArgs.ManagedInstructionsRoot = managedParams.ManagedInstructionsRoot
+	if guidance := managedInstructionResumePrompt(managedParams); guidance != "" {
+		followUp += "\n\n" + guidance
+	}
 	successorHarness, _ := harness.Resolve(relaunch.Harness)
 	launchEnroll := successorHarness.SupportsLaunchEnrollment()
 	var preConvID string
@@ -814,6 +840,15 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		// restore only the predecessor actor's durable snapshot. Removing paths
 		// here would pull them out from under the orphan successor.
 		rollbackSandbox(false)
+		// Both panes remain live after a failed identity rotation. Restore the
+		// predecessor's frozen snapshot while retaining the orphan overlay.
+		if previousManaged != nil {
+			_ = db.SaveManagedInstructionLaunch(*previousManaged)
+		} else {
+			_ = db.DeleteManagedInstructionLaunch(managedID)
+		}
+		managedDisposition = 2
+
 		// db.RotateAgentConv is atomic and fail-closed: an error means NOTHING
 		// committed (no generation link, no pointer advance, no succession edge),
 		// including the case where the actor's pointer could not advance onto the
@@ -828,6 +863,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 			"failed to advance agent identity to successor conversation: "+err.Error())
 		return
 	}
+	managedDisposition = 1
 	if relaunch.Harness == harness.CodexName {
 		persistCodexFastModeAtLaunch(newConv, fastModeAtLaunch)
 	}

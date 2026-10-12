@@ -211,6 +211,9 @@ func WriteAgentBundle(b *agentbundle.Bundle, out io.Writer, opts WriteOptions) e
 	if ag.Conversation == nil && m.History != nil {
 		ag.Conversation = &paf.Conversation{ID: m.History.SourceConvID, Harness: d.Harness}
 	}
+	if err := writeManagedInstructions(w, &ag, &env, b.ManagedInstructions); err != nil {
+		return err
+	}
 	if err := w.AddAgent(key, ag, env); err != nil {
 		return err
 	}

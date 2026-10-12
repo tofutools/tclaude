@@ -93,6 +93,8 @@ type offerIDParams struct {
 }
 type offerImportParams struct {
 	DropPermissions           bool   `long:"drop-permissions" help:"Discard requested permission carry and use receiver defaults only."`
+	ApproveManagedScripts     string `long:"approve-managed-scripts" optional:"true" help:"Human only: approve the preview's managed_instruction_digest for carried script files."`
+	OmitManagedInstructions   bool   `long:"omit-managed-instructions" help:"Human only: omit carried skills and rules; receiver rules still apply."`
 	AllowSensitivePermissions bool   `long:"allow-sensitive-permissions" help:"Explicitly allow permission administration, sandbox, human interaction and federation administration grants; requires unrestricted trust."`
 	Cwd                       string `long:"cwd" optional:"true" help:"Remap an agent offer's working directory."`
 	Worktree                  string `long:"worktree" optional:"true" help:"Remap an agent offer's worktree hint."`
@@ -179,7 +181,7 @@ func runOfferImport(p *offerImportParams, out, stderr io.Writer) int {
 		}
 		values[name] = value
 	}
-	in := map[string]any{"only": p.Only, "skip": p.Skip, "values": values, "apply": p.Apply, "replace": p.Replace, "keep_paths": p.KeepPaths, "cwd": p.Cwd, "landing": p.Landing, "worktree": p.Worktree, "group": p.Group, "name": p.Name, "skip_history": p.SkipHistory, "drop_permissions": p.DropPermissions, "allow_sensitive_permissions": p.AllowSensitivePermissions}
+	in := map[string]any{"approve_managed_scripts": p.ApproveManagedScripts, "omit_managed_instructions": p.OmitManagedInstructions, "only": p.Only, "skip": p.Skip, "values": values, "apply": p.Apply, "replace": p.Replace, "keep_paths": p.KeepPaths, "cwd": p.Cwd, "landing": p.Landing, "worktree": p.Worktree, "group": p.Group, "name": p.Name, "skip_history": p.SkipHistory, "drop_permissions": p.DropPermissions, "allow_sensitive_permissions": p.AllowSensitivePermissions}
 	var response map[string]any
 	if rc := offerPost(stderr, offerPath(p.ID, p.Peer, "import"), in, &response); rc != 0 {
 		return rc
