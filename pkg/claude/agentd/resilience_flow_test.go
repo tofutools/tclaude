@@ -119,6 +119,12 @@ func TestResilience_PeerHoldsSnapshotsUnderGrantWithRetention(t *testing.T) {
 	// Custody is the operator's to inspect.
 	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/resilience/held", nil), "agent-caller"))
 	require.Equal(t, 403, rec.Code)
+	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodDelete, "/v1/resilience/held/bob", nil), "agent-caller"))
+	require.Equal(t, 403, rec.Code)
+	rec = fedHuman(t, f, http.MethodDelete, "/v1/resilience/held/bob", nil)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"removed":2`)
+	require.Empty(t, fedHeld(t, f).Held)
 }
 
 type resiliencePoliciesView struct {

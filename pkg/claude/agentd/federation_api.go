@@ -14,6 +14,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
 	"github.com/tofutools/tclaude/pkg/federation/client"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
@@ -1039,7 +1040,11 @@ func handleFederationInbox(w http.ResponseWriter, r *http.Request) {
 		if p, _ := db.GetFederationPeer(o.Peer); p != nil {
 			label = peerDisplay(p)
 		}
-		out = append(out, fedInboxJSON{OfferID: o.Descriptor.ID, OfferState: o.State, From: label, Instance: o.Peer, Subject: o.Descriptor.Type + " bundle offer", Body: proto.StripControls(o.Descriptor.Summary) + "\nPreview: tclaude federation offers import " + o.Descriptor.ID + " --peer " + o.Peer, CreatedAt: o.CreatedAt, Read: o.State != "pending" && o.State != "ready"})
+		hint := "\nPreview: tclaude federation offers import " + o.Descriptor.ID + " --peer " + o.Peer
+		if o.Descriptor.Type == bundletransfer.Snapshot.Name {
+			hint = "\nKept encrypted for the sender: tclaude agent snapshot held"
+		}
+		out = append(out, fedInboxJSON{OfferID: o.Descriptor.ID, OfferState: o.State, From: label, Instance: o.Peer, Subject: o.Descriptor.Type + " bundle offer", Body: proto.StripControls(o.Descriptor.Summary) + hint, CreatedAt: o.CreatedAt, Read: o.State != "pending" && o.State != "ready"})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

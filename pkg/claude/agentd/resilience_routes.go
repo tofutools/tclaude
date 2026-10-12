@@ -19,6 +19,7 @@ func registerResilienceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /v1/resilience/policies/{id}", handleResiliencePolicyRemove)
 	mux.HandleFunc("POST /v1/resilience/policies/{id}/run", handleResiliencePolicyRun)
 	mux.HandleFunc("GET /v1/resilience/held", handleResilienceHeld)
+	mux.HandleFunc("DELETE /v1/resilience/held/{peer}", handleResilienceHeldRemove)
 }
 
 type resiliencePolicySetRequest struct {
@@ -236,4 +237,26 @@ func handleResilienceHeld(w http.ResponseWriter, r *http.Request) {
 		held = []heldSnapshot{}
 	}
 	writeJSON(w, 200, map[string]any{"held": held})
+}
+
+// handleResilienceHeldRemove deletes the snapshots this node keeps for a
+// peer, for example after revoking its snapshots.receive grant.
+//
+//	DELETE /v1/resilience/held/{peer}
+func handleResilienceHeldRemove(w http.ResponseWriter, r *http.Request) {
+	if !requireHuman(w, r, "remove held resilience snapshots") {
+		return
+	}
+	peer := r.PathValue("peer")
+	if !proto.ValidInstanceID(peer) {
+		if p, err := resolveFederationPeerOpt(peer, false); err == nil && p != nil {
+			peer = p.InstanceID
+		} else {
+			writeError(w, 400, "peer", "peer must be an instance id or a trusted peer's label")
+			return
+		}
+	}
+	n := removeHeldPeer(peer)
+	recordFederationAudit("resilience.held.remove", peer, "", "", fmt.Sprintf("removed=%d", n), 200)
+	writeJSON(w, 200, map[string]any{"peer": peer, "removed": n})
 }

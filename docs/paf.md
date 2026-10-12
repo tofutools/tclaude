@@ -348,6 +348,7 @@ tclaude agent snapshot policy ls
 tclaude agent snapshot policy run POLICY
 tclaude agent snapshot policy rm POLICY
 tclaude agent snapshot held            # on the peer: what it keeps for others
+tclaude agent snapshot held --rm-peer alice
 ```
 
 A resilience policy sends snapshots of an agent, or of every agent in a
@@ -358,8 +359,11 @@ you, so a copy survives if this node is lost.
   Setting one is your consent to send those agents' conversations to that
   peer, encrypted.
 - **Encryption.** Each snapshot is sealed with [age](#encryption) to the
-  peer's and this node's instance keys. The peer stores the ciphertext and
-  cannot read, preview or import it; the generic offer routes refuse it.
+  peer's and this node's instance keys, so that it can be recovered when
+  this node is lost. The peer's operator can therefore decrypt it, as with
+  any recipient: choose a peer you would trust with the conversations.
+  tclaude on the peer stores the ciphertext and never previews or imports
+  it; the generic offer routes refuse it.
 - **When.** At most every `--every` (at least 10 minutes), only while the
   agent is idle, and only when its conversation changed since the last
   snapshot the peer kept. A busy agent is tried again on the next check.
@@ -377,10 +381,11 @@ you, so a copy survives if this node is lost.
 
   It keeps the newest `--keep` snapshots (1 to 20, default 5) of each agent
   for at most `--max-age-days` (default 30, at most 365), and at most 2 GiB
-  for one sender, dropping the oldest first. A snapshot is at most 64 MiB
-  once encrypted. Revoking the grant stops new custody. Removing a policy
-  stops the schedule; the peer's copies stay until its retention removes
-  them.
+  for one sender, dropping the oldest first, and snapshots of at most 200
+  agents per sender. A snapshot is at most 65 MiB. Revoking the grant stops
+  new custody; `tclaude agent snapshot held --rm-peer alice` deletes what
+  is already kept. Removing a policy stops the schedule; the peer's copies
+  stay until its retention removes them.
 
 Recovering an agent from a held snapshot is not available yet.
 

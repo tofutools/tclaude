@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -52,7 +53,14 @@ const (
 	resilienceDefaultMaxAgeDays = 30
 	// resilienceHeldPeerBytes bounds what this node keeps for one peer.
 	resilienceHeldPeerBytes int64 = 2 << 30
+	// resilienceHeldPeerAgents bounds how many source agents one peer may
+	// have snapshots kept for, so tiny snapshots cannot pile up files.
+	resilienceHeldPeerAgents = 200
 )
+
+// resilienceReceiving keeps one custody retry pass at a time, off the
+// scheduler goroutine: a slow sender must not stall our own snapshots.
+var resilienceReceiving atomic.Bool
 
 type resilienceDest struct {
 	// Kind is "peer"; boards come later.
@@ -197,7 +205,12 @@ func startResilienceScheduler(stop <-chan struct{}) {
 			case <-ticker.C:
 			}
 			resilienceTickOnce(time.Now(), "")
-			resilienceReceiveRetry()
+			if resilienceReceiving.CompareAndSwap(false, true) {
+				go func() {
+					defer resilienceReceiving.Store(false)
+					resilienceReceiveRetry()
+				}()
+			}
 		}
 	}()
 }
@@ -313,6 +326,10 @@ func resilienceRun(f *resilienceFile, p resiliencePolicy, s *resilienceState, no
 		return
 	}
 	defer snap.close()
+	if snap.size > bundletransfer.Snapshot.MaxBytes {
+		resilienceFail(p, s, now, fmt.Sprintf("the snapshot is %d bytes; at most %d are sent", snap.size, bundletransfer.Snapshot.MaxBytes))
+		return
+	}
 	s.Findings = snap.findings
 	if snap.findings > 0 && !f.FindingsNotified[p.ID] {
 		f.FindingsNotified[p.ID] = true
@@ -357,6 +374,7 @@ func resilienceRun(f *resilienceFile, p resiliencePolicy, s *resilienceState, no
 
 type resilienceCapture struct {
 	file     *os.File
+	size     int64
 	digest   string
 	findings int
 	name     string
@@ -405,7 +423,7 @@ func captureResilienceSnapshot(conv string, now time.Time) (*resilienceCapture, 
 		_ = os.Remove(archive.Name())
 		return nil, fmt.Errorf("validate: %w", err)
 	}
-	return &resilienceCapture{file: archive, digest: conversationDigest(a), findings: findings, name: b.Manifest.Agent.Name, harness: b.Manifest.Agent.Harness}, nil
+	return &resilienceCapture{file: archive, size: st.Size(), digest: conversationDigest(a), findings: findings, name: b.Manifest.Agent.Name, harness: b.Manifest.Agent.Harness}, nil
 }
 
 // conversationDigest identifies what a snapshot carries apart from when it
@@ -543,19 +561,45 @@ func resilienceCommit(o *db.FederationBundleOffer) error {
 		maxAge = resilienceDefaultMaxAgeDays
 	}
 	held := heldSnapshot{Peer: o.Peer, SourceAgent: r.SourceAgent, AgentName: r.AgentName, Harness: r.Harness, TakenAt: r.TakenAt, ReceivedAt: now, ExpiresAt: now.Add(time.Duration(maxAge) * 24 * time.Hour), Bytes: d.Bytes, SHA256: d.SHA256, Offer: d.ID}
-	// Make room: this agent's copies beyond keep-1 and anything expired
-	// go first, then the peer's oldest copies until the new one fits.
-	pruneHeld(o.Peer, r.SourceAgent, r.Keep-1, now)
-	if d.Bytes > resilienceHeldPeerBytes {
-		if db.SetFederationBundleOfferState("in", o.Peer, d.ID, "declined", "snapshot exceeds what this node keeps for a peer") == nil {
+	decline := func(msg string) error {
+		if db.SetFederationBundleOfferState("in", o.Peer, d.ID, "declined", msg) == nil {
 			queueBundleResult(current, "declined")
 		}
-		return errors.New("snapshot too large to keep")
+		return errors.New(msg)
 	}
-	for heldBytes(o.Peer)+d.Bytes > resilienceHeldPeerBytes {
-		if !dropOldestHeld(o.Peer) {
-			break
+	if d.Bytes > resilienceHeldPeerBytes {
+		return decline("snapshot exceeds what this node keeps for a peer")
+	}
+	// Make room from one listing, newest first: expired copies and this
+	// agent's copies beyond keep-1 go first, then the peer's oldest copies
+	// until the new one fits.
+	var kept []heldSnapshot
+	var total int64
+	agents := map[string]bool{}
+	n := 0
+	for _, h := range listHeld(o.Peer) {
+		if !now.Before(h.ExpiresAt) {
+			removeHeld(h)
+			continue
 		}
+		if h.SourceAgent == r.SourceAgent {
+			if n++; n > r.Keep-1 {
+				removeHeld(h)
+				continue
+			}
+		}
+		kept = append(kept, h)
+		total += h.Bytes
+		agents[h.SourceAgent] = true
+	}
+	if !agents[r.SourceAgent] && len(agents) >= resilienceHeldPeerAgents {
+		return decline(fmt.Sprintf("this node keeps snapshots of at most %d agents for a peer", resilienceHeldPeerAgents))
+	}
+	for len(kept) > 0 && total+d.Bytes > resilienceHeldPeerBytes {
+		oldest := kept[len(kept)-1]
+		removeHeld(oldest)
+		total -= oldest.Bytes
+		kept = kept[:len(kept)-1]
 	}
 	path := resilienceHeldPath(o.Peer, r.SourceAgent, d.ID)
 	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -623,38 +667,6 @@ func removeHeld(h heldSnapshot) {
 	_ = os.Remove(strings.TrimSuffix(path, ".paf.age") + ".json")
 }
 
-// pruneHeld keeps an agent's newest keep copies that have not expired.
-func pruneHeld(peer, agentID string, keep int, now time.Time) {
-	n := 0
-	for _, h := range listHeld(peer) {
-		if h.SourceAgent != agentID {
-			continue
-		}
-		if !now.Before(h.ExpiresAt) || n >= keep {
-			removeHeld(h)
-			continue
-		}
-		n++
-	}
-}
-
-func heldBytes(peer string) int64 {
-	var n int64
-	for _, h := range listHeld(peer) {
-		n += h.Bytes
-	}
-	return n
-}
-
-func dropOldestHeld(peer string) bool {
-	held := listHeld(peer)
-	if len(held) == 0 {
-		return false
-	}
-	removeHeld(held[len(held)-1])
-	return true
-}
-
 // resilienceReceive takes custody of an accepted snapshot offer, fetching
 // it from the sender first when it was not sent inline.
 func (rt *fedRuntime) resilienceReceive(o *db.FederationBundleOffer) {
@@ -695,4 +707,16 @@ func resilienceReceiveRetry() {
 			rt.resilienceReceive(&o)
 		}
 	}
+}
+
+// removeHeldPeer deletes everything this node keeps for one peer.
+func removeHeldPeer(peer string) int {
+	resilienceHeldMu.Lock()
+	defer resilienceHeldMu.Unlock()
+	held := listHeld(peer)
+	for _, h := range held {
+		removeHeld(h)
+	}
+	_ = os.RemoveAll(filepath.Join(resilienceHeldDir(), peer))
+	return len(held)
 }

@@ -1020,9 +1020,12 @@ the peer-only, unscoped `snapshots.receive` permission:
 tclaude federation grant alice snapshots.receive
 ```
 
-Snapshots stay encrypted here, are never imported, and are listed by
-`tclaude agent snapshot held`. Retention follows the sender's policy and is
-bounded at 2 GiB per peer.
+Snapshots are sealed to this node's key as well as the sender's, so this
+node could decrypt them; tclaude stores them encrypted and never previews or
+imports them. `tclaude agent snapshot held` lists them, and
+`tclaude agent snapshot held --rm-peer alice` deletes a peer's copies, for
+example after revoking the grant. Retention follows the sender's policy and
+is bounded at 2 GiB and 200 agents per peer.
 
 ## Offering configuration to a peer
 

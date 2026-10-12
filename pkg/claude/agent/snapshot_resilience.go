@@ -188,14 +188,16 @@ func snapshotPolicyRunCmd() *cobra.Command {
 }
 
 type snapshotHeldParams struct {
-	JSON bool `long:"json" help:"Print as JSON."`
+	RemovePeer string `long:"rm-peer" optional:"true" help:"Delete every snapshot kept for this peer (instance id or label)."`
+	JSON       bool   `long:"json" help:"Print as JSON."`
 }
 
 func snapshotHeldCmd() *cobra.Command {
 	return boa.CmdT[snapshotHeldParams]{Use: "held", Short: "List resilience snapshots this node keeps for peers (human only)",
 		Long: "Peers with the snapshots.receive grant send this node encrypted resilience snapshots of their agents.\n" +
-			"They stay encrypted here: this node cannot read or import them. Each is removed when its sender's keep\n" +
-			"count or maximum age says so, and a peer may hold at most 2 GiB.",
+			"They are sealed to this node's key too, so it could decrypt them, but tclaude stores them encrypted and\n" +
+			"never previews or imports them. Each is removed when its sender's keep count or maximum age says so; a\n" +
+			"peer may use at most 2 GiB. --rm-peer deletes a peer's copies, for example after revoking the grant.",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *snapshotHeldParams, _ *cobra.Command, _ []string) {
 			os.Exit(runSnapshotHeld(p, os.Stdout, os.Stderr))
 		}}.ToCobra()
@@ -204,6 +206,21 @@ func snapshotHeldCmd() *cobra.Command {
 func runSnapshotHeld(p *snapshotHeldParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
+	}
+	if p.RemovePeer != "" {
+		var out struct {
+			Peer    string `json:"peer"`
+			Removed int    `json:"removed"`
+		}
+		if err := DaemonDelete("/v1/resilience/held/"+url.PathEscape(p.RemovePeer), &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return MapDaemonErrorToRC(err)
+		}
+		if p.JSON {
+			return printJSON(stdout, out)
+		}
+		fmt.Fprintf(stdout, "Removed %d snapshot(s) kept for %s\n", out.Removed, out.Peer)
+		return rcOK
 	}
 	var resp struct {
 		Held []struct {
