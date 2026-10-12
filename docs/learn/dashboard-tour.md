@@ -60,13 +60,15 @@ group to make it a member.
 ## 3. Look inside an agent
 
 Open the row's **⚙** menu and choose **web window**. The agent's live
-terminal opens in a new **Terminals** tab. It is the real session, not a
-copy, so what you type there reaches the agent. Switch back to **Groups**
-when you are done; the agent keeps running.
+terminal opens as a pane in the **Terminals** tab, which appears once a
+terminal is open. It is the real session, not a copy, so what you type there
+reaches the agent. Switch back to **Groups** when you are done; the agent
+keeps running.
 
-To get the same view in a terminal window instead, choose **open window**.
-**web term** and **term** open a fresh shell in the agent's directory rather
-than the agent itself.
+**web term** opens a fresh shell in the agent's directory instead of the
+agent itself. **open window** and **term** do the same as their **web**
+twins, in the browser by default, or in a native terminal window if you set
+`dashboard.default_terminal` to `"native"`.
 
 !!! info "Go deeper"
     [Dashboard → Zooming into a terminal](../dashboard.md#zooming-into-a-terminal)
@@ -78,8 +80,11 @@ Open the **Messages** tab. The left side lists mailboxes: all messages, one
 folder per group and agent, and a folder for notifications sent to you. Pick
 your group to read its mail, including each agent's first task brief.
 
-To write to an agent, use **+ message**, pick the agent, and send. The
-message lands in its inbox and appears in its terminal.
+To write to an agent, go back to the pane you opened in step 3 and press
+**✉ Message** (Ctrl/Cmd+M). This queues a message for the agent rather than
+typing into its terminal. To write to several agents at once, use a group's
+**⚙** menu → **✉ message** in **Groups** and tick the members. Either way,
+the message lands in the agent's inbox and appears in its terminal.
 
 !!! info "Go deeper"
     [Dashboard → Messages](../dashboard.md#messages).
@@ -123,7 +128,8 @@ harness.
 - **Groups** shows every agent's status, harness, cost, context and branch.
   Sessions outside any group appear under **Ungrouped**.
 - An agent's **⚙** menu opens its live terminal and manages it.
-- **Messages** shows all mail, and **+ message** writes to an agent.
+- **Messages** shows all mail. **✉ Message** on a pane, or a group's
+  **✉ message**, writes to agents.
 
 **Next:** the [Dashboard](../dashboard.md) reference covers every other tab,
 including **Usage** and **Costs** for your quota and spend.
