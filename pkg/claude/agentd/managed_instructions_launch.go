@@ -48,7 +48,7 @@ func prepareManagedInstructions(g *db.AgentGroup, p *spawnParams) (func(bool), *
 			return noop, &spawnFailure{Status: 500, Kind: "managed_instructions", Msg: err.Error()}
 		}
 		for _, item := range priorItems {
-			if item.Scope == "carried" {
+			if item.Scope == "carried" || item.Carried {
 				carried = append(carried, item)
 			}
 		}
@@ -56,6 +56,7 @@ func prepareManagedInstructions(g *db.AgentGroup, p *spawnParams) (func(bool), *
 	for i := range carried {
 		carried[i].Scope = "carried"
 		carried[i].GroupID = 0
+		carried[i].Carried = true
 	}
 	resources, err = managedinstructions.Merge(resources, carried)
 	if err != nil {

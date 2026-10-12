@@ -88,14 +88,16 @@ func omitManagedInstructions(w http.ResponseWriter, r *http.Request, items *[]db
 	return true
 }
 
-func managedCloneResources(source string) ([]db.ManagedInstruction, error) {
+func managedCloneResources(source string, groups []*db.AgentGroup) ([]db.ManagedInstruction, error) {
 	carried, err := managedInstructionsForExport(source)
 	if err != nil {
 		return nil, err
 	}
-	groups, err := db.ListGroupsForConv(source)
-	if err != nil {
-		return nil, err
+	if groups == nil {
+		groups, err = db.ListGroupsForConv(source)
+		if err != nil {
+			return nil, err
+		}
 	}
 	receiver, err := managedinstructions.Resolve(groups)
 	if err != nil {
@@ -104,6 +106,7 @@ func managedCloneResources(source string) ([]db.ManagedInstruction, error) {
 	for i := range carried {
 		carried[i].Scope = "carried"
 		carried[i].GroupID = 0
+		carried[i].Carried = true
 	}
 	return managedinstructions.Merge(receiver, carried)
 }

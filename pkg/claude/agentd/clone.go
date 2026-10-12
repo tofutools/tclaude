@@ -24,6 +24,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/managedinstructions"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -54,8 +55,9 @@ func (e *cloneSpawnError) write(w http.ResponseWriter) {
 // cloneSpawnOnce); every other field is launch authority the clone inherits
 // from its source.
 type cloneSpawnParams struct {
-	Arrival      bool
-	ArrivalGroup string
+	ManagedGroups []*db.AgentGroup
+	Arrival       bool
+	ArrivalGroup  string
 	// SourceConv is the conversation being cloned; Cwd is where the clone runs.
 	SourceConv string
 	Cwd        string
@@ -187,7 +189,7 @@ func refreshCloneLaunchEnvironment(convID string, current, previous *sandboxpoli
 // reuse the same race handling without duplicating it.
 func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSpawnError) {
 	sourceConv, cwd, noCopyConv := p.SourceConv, p.Cwd, p.NoCopyConv
-	managedResources, managedErr := managedCloneResources(sourceConv)
+	managedResources, managedErr := managedCloneResources(sourceConv, p.ManagedGroups)
 	if managedErr != nil {
 		return cloneSpawnResult{}, &cloneSpawnError{Status: 409, Code: "managed_instructions", Msg: managedErr.Error()}
 	}
@@ -533,20 +535,35 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		if err != nil {
 			return &cloneSpawnError{Status: 500, Code: "managed_instructions", Msg: err.Error()}
 		}
-		managedParams := spawnParams{AgentID: id, Harness: srcHarness, ManagedInstructionResources: managedResources}
-		cleanup, fail := prepareManagedInstructions(nil, &managedParams)
-		if fail != nil {
+		launch, err := managedinstructions.Materialize(managedResources)
+		if err != nil {
 			if created {
 				_, _ = db.DeleteAgentByConvID(convID)
 			}
-			return &cloneSpawnError{Status: fail.Status, Code: fail.Kind, Msg: fail.Msg}
+			return &cloneSpawnError{Status: 500, Code: "managed_instructions", Msg: err.Error()}
 		}
-		cleanupManagedClone = func(success bool) {
-			cleanup(success)
-			if !success && created {
+		raw, err := json.Marshal(managedResources)
+		if err == nil {
+			err = db.SaveManagedInstructionLaunch(db.ManagedInstructionLaunch{AgentID: id, Root: launch.Root, Body: launch.Body, Resources: string(raw)})
+		}
+		if err != nil {
+			_ = managedinstructions.RemoveLaunchRoot(launch.Root)
+			if created {
 				_, _ = db.DeleteAgentByConvID(convID)
 			}
+			return &cloneSpawnError{Status: 500, Code: "managed_instructions", Msg: err.Error()}
 		}
+		managedParams := spawnParams{ManagedInstructionsRoot: launch.Root, ManagedInstructionsBody: launch.Body}
+		cleanupManagedClone = func(success bool) {
+			if !success {
+				_ = managedinstructions.RemoveLaunchRoot(launch.Root)
+				_ = db.DeleteManagedInstructionLaunch(id)
+				if created {
+					_, _ = db.DeleteAgentByConvID(convID)
+				}
+			}
+		}
+
 		args.AgentID = id
 		args.ManagedInstructionsRoot = managedParams.ManagedInstructionsRoot
 		if guidance := managedInstructionResumePrompt(managedParams); guidance != "" {
@@ -1717,7 +1734,12 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	// duplicating it. The clone is launched with the source agent's durable
 	// model + effort; "" falls back to the harness default.
 	effort, model := relaunch.Effort, relaunch.Model
+	managedGroups := append([]*db.AgentGroup(nil), oldGroups...)
+	if extraGroup != nil {
+		managedGroups = append(managedGroups, extraGroup)
+	}
 	spawned, spawnErr := cloneSpawnOnce(cloneSpawnParams{
+		ManagedGroups:       managedGroups,
 		Arrival:             true,
 		SourceConv:          target,
 		Cwd:                 cwd,

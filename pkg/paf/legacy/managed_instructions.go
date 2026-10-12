@@ -127,7 +127,7 @@ func readManagedInstructions(a *paf.Archive, agent paf.Agent) ([]db.ManagedInstr
 		if err := managedinstructions.Validate(item.Kind, item.Name, raw); err != nil {
 			return nil, err
 		}
-		resources = append(resources, db.ManagedInstruction{Kind: item.Kind, Name: item.Name, Digest: item.SHA256, Content: raw, Scope: "carried"})
+		resources = append(resources, db.ManagedInstruction{Kind: item.Kind, Name: item.Name, Digest: item.SHA256, Content: raw, Scope: "carried", Carried: true})
 	}
 	return resources, nil
 }

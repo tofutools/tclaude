@@ -321,6 +321,7 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		// so it can ride the launch argv when the clone is launch-enrolled.
 		newTitle := uniqueCloneTitle(agent.FreshTitle(m.ConvID))
 		spawned, spawnErr := cloneSpawnOnce(cloneSpawnParams{
+			ManagedGroups:       []*db.AgentGroup{newGroup},
 			Arrival:             true,
 			ArrivalGroup:        newName,
 			HandoffFrom:         caller,

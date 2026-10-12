@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/skillbundle"
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
+	"github.com/tofutools/tclaude/pkg/paf"
 	"github.com/tofutools/tclaude/pkg/paf/legacy"
 	"github.com/tofutools/tclaude/pkg/testharness"
 	"github.com/tofutools/tclaude/pkg/testutil"
@@ -94,6 +96,24 @@ func TestManagedInstructionsImportApprovalAndReceiverRules(t *testing.T) {
 	require.NotNil(t, landed)
 	t.Cleanup(func() { _ = os.RemoveAll(landed.Root) })
 	require.NotEqual(t, original.Root, landed.Root)
+	info, err := os.Stat(filepath.Join(landed.Root, "skills", "review", "check.sh"))
+	require.NoError(t, err)
+	require.NotZero(t, info.Mode()&0111)
+	rows, err := db.FindSessionsByConvID(result.Spawn.ConvID)
+	require.NoError(t, err)
+	for _, row := range rows {
+		f.MarkOffline(row.TmuxSession)
+	}
+	resumed := f.AsHuman().Resume(result.Spawn.ConvID)
+	require.Equal(t, "resumed", resumed.Action, string(resumed.Raw))
+	refreshed, err := db.GetManagedInstructionLaunch(id)
+	require.NoError(t, err)
+	require.NotNil(t, refreshed)
+	t.Cleanup(func() { _ = os.RemoveAll(refreshed.Root) })
+	require.Contains(t, refreshed.Body, "SOURCE RULE")
+	require.Contains(t, refreshed.Body, "RECEIVER RULE")
+	require.FileExists(t, filepath.Join(refreshed.Root, "skills", "review", "check.sh"))
+
 	require.Contains(t, landed.Body, "SOURCE RULE")
 	require.Contains(t, landed.Body, "RECEIVER RULE")
 	receiverLibrary, err := db.ListManagedInstructions(receiverGroup.ID, "skill")
@@ -142,4 +162,54 @@ func TestManagedInstructionsPeerCapabilityRefusalAndExplicitOmission(t *testing.
 	defer decodedWithItems.Close()
 	require.Len(t, decodedWithItems.ManagedInstructions, 1)
 	require.Equal(t, "PEER CARRIED RULE", string(decodedWithItems.ManagedInstructions[0].Content))
+}
+
+func TestManagedInstructionsIncomingOfferRequiresHumanScriptApproval(t *testing.T) {
+	fh := newFedHarness(t)
+	fh.f.HaveGroup("receiver")
+	fedReceiveAgents(t, fh, "receiver")
+	bundle := fedAgentBundle(t)
+	// A quoted hook key must be treated as code even without a script asset.
+	content, err := json.Marshal(skillbundle.Bundle{Format: skillbundle.Format, Name: "review", Files: []skillbundle.File{{Path: "SKILL.md", Data: []byte("---\nname: review\ndescription: Review\n\"hooks\": {}\n---\nReview carefully")}}})
+	require.NoError(t, err)
+	bundle.ManagedInstructions = []db.ManagedInstruction{{Kind: "skill", Name: "review", Content: content}}
+	var archive bytes.Buffer
+	require.NoError(t, legacy.WriteAgentBundle(bundle, &archive, legacy.WriteOptions{Producer: paf.Producer{Name: "test"}}))
+	descriptor := bundletransfer.New(bundletransfer.Agent, archive.Bytes(), "Managed skill", time.Now().Add(time.Hour))
+	descriptor.Group = "receiver"
+	envelope := fh.peer.envelope(proto.KindBundleOffer, proto.Endpoint{}, descriptor)
+	envelope.ID = descriptor.ID
+	fh.peer.send(envelope)
+	require.Equal(t, proto.AckAccepted, fedAckFor(t, fh.peer, descriptor.ID).Status)
+	path := "/v1/federation/bundle-offers/" + descriptor.ID + "/import"
+	cwd := testutil.CanonicalTempDir(t)
+	input := map[string]any{"cwd": cwd}
+	preview := fedHuman(t, fh.f, http.MethodPost, path, input)
+	require.Equal(t, 200, preview.Code, preview.Body.String())
+	var view struct {
+		Digest   string `json:"managed_instruction_digest"`
+		Required bool   `json:"managed_script_approval_required"`
+	}
+	require.NoError(t, json.Unmarshal(preview.Body.Bytes(), &view))
+	require.True(t, view.Required)
+	input["apply"] = true
+	denied := fedHuman(t, fh.f, http.MethodPost, path, input)
+	require.Equal(t, 409, denied.Code, denied.Body.String())
+	require.Contains(t, denied.Body.String(), "managed_script_approval_required")
+	stored, err := db.GetFederationBundleOffer("in", fh.peer.id.ID(), descriptor.ID)
+	require.NoError(t, err)
+	require.Empty(t, stored.ImportAgent, "a consent refusal must leave the offer retryable")
+	input["approve_managed_scripts"] = view.Digest
+	applied := fedHuman(t, fh.f, http.MethodPost, path, input)
+	require.Equal(t, 200, applied.Code, applied.Body.String())
+	var result struct {
+		Spawn struct {
+			AgentID string `json:"agent_id"`
+		} `json:"spawn"`
+	}
+	require.NoError(t, json.Unmarshal(applied.Body.Bytes(), &result))
+	snapshot, err := db.GetManagedInstructionLaunch(result.Spawn.AgentID)
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+	t.Cleanup(func() { _ = os.RemoveAll(snapshot.Root) })
 }

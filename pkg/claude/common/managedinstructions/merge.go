@@ -26,8 +26,10 @@ func Merge(receiver, carried []db.ManagedInstruction) ([]db.ManagedInstruction, 
 				if index, ok := seenRules[digest]; !ok {
 					seenRules[digest] = len(rules)
 					rules = append(rules, item)
-				} else if item.Scope == "carried" {
-					rules[index] = item
+				} else if item.Scope == "carried" || item.Carried {
+					// Preserve local authority while retaining the carried bytes
+					// across a later library refresh.
+					rules[index].Carried = true
 				}
 			} else {
 				skills[item.Name] = item

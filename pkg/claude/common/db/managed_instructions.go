@@ -17,6 +17,7 @@ const ManagedInstructionAgentLimit = 16 << 20
 // ManagedInstruction's payload is a validated skill bundle or a UTF-8 rule.
 // Blobs are content-addressed inside the private SQLite store, never harness HOME.
 type ManagedInstruction struct {
+	Carried bool   `json:"carried,omitempty"`
 	Scope   string `json:"scope"`
 	GroupID int64  `json:"group_id,omitempty"`
 	Kind    string `json:"kind"`

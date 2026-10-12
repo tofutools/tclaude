@@ -148,6 +148,12 @@ func TestManagedRulesCloneAndReincarnationOwnOverlays(t *testing.T) {
 	require.NotEqual(t, snapshot.Root, successor.Root)
 	require.Contains(t, successor.Body, "CONTINUATION RULE")
 	require.DirExists(t, copy.Root, "reincarnating the source must not remove the clone's independent overlay")
+	f.MarkOffline(reincarnate.TmuxSession)
+	retired := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/agent/"+reincarnate.NewConv+"/retire?shutdown=0&delete_worktree=0", nil)))
+	require.Equal(t, http.StatusOK, retired.Code, retired.Body.String())
+	require.NoDirExists(t, successor.Root)
+	require.DirExists(t, copy.Root, "retiring the source must not remove its clone's overlay")
+
 }
 
 type managedDyingSpawner struct{ args clcommon.SpawnArgs }

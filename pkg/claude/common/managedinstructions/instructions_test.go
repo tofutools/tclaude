@@ -111,3 +111,21 @@ func TestManagedInstructionReceiverPrecedenceAndCarriedDedup(t *testing.T) {
 	require.Contains(t, launch.Body, "Receiver instruction")
 	require.Contains(t, launch.Body, "Carried instruction")
 }
+
+func TestManagedInstructionDedupKeepsLocalAuthorityAndCarriedLifetime(t *testing.T) {
+	local := db.ManagedInstruction{Kind: "rule", Name: "local", Scope: "user", Content: []byte("same guidance")}
+	carried := db.ManagedInstruction{Kind: "rule", Name: "remote", Scope: "carried", Content: []byte("same guidance"), Carried: true}
+	merged, err := Merge([]db.ManagedInstruction{local}, []db.ManagedInstruction{carried})
+	require.NoError(t, err)
+	require.Len(t, merged, 1)
+	require.Equal(t, "user", merged[0].Scope, "deduplication must not demote the receiver's authority")
+	require.True(t, merged[0].Carried, "the identical carried bytes must survive a later local edit")
+	previous := merged[0]
+	previous.Scope = "carried"
+	local.Content = []byte("updated receiver guidance")
+	refreshed, err := Merge([]db.ManagedInstruction{local}, []db.ManagedInstruction{previous})
+	require.NoError(t, err)
+	require.Len(t, refreshed, 2)
+	require.Equal(t, "user", refreshed[0].Scope)
+	require.Equal(t, "carried", refreshed[1].Scope)
+}
