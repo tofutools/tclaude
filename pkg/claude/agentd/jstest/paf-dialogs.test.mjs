@@ -109,6 +109,7 @@ test('a flagged agent export shows the findings and downloads only after acknowl
 test('the import dialog previews an agent file that is not a group, then imports and starts it', async (t) => {
   const calls = [];
   const preview = {
+    history: true,
     agent: { name: 'reviewer', harness: 'claude', origin: { instance: 'inst_lab', model: 'claude-opus-5-5' }, paths: { cwd: '/home/me/app' } },
     security: 'Permissions and ownership are advisory only; none will be copied.',
     warnings: [], unresolved: [{ name: 'CWD' }],
@@ -127,8 +128,10 @@ test('the import dialog previews an agent file that is not a group, then imports
   assert.match(host.querySelector('#paf-history-landing').textContent, /translated/);
   assert.match(host.querySelector('#agent-import-unresolved').textContent, /1 recorded path/);
   const submit = host.querySelector('#group-import-submit');
-  assert.equal(submit.textContent.trim(), 'Import & start');
+  assert.equal(submit.textContent.trim(), 'Import (offline)');
+  assert.equal(host.querySelector('#agent-import-start').textContent.trim(), 'Import & start');
   assert.equal(submit.disabled, true, 'needs a group and a working dir');
+  assert.equal(host.querySelector('#agent-import-start').disabled, true);
   await choose(host.querySelector('#agent-import-group'), 'team');
   await tick(host.querySelector('#agent-import-keep-paths'), true);
   await settle();
@@ -139,6 +142,24 @@ test('the import dialog previews an agent file that is not a group, then imports
   assert.equal(applied.apply, true);
   assert.equal(applied.group, 'team');
   assert.equal(applied.keep_paths, true);
+  assert.equal(applied.start, 'false', 'the default lands it offline');
+  host.querySelector('#agent-import-start').click();
+  await settle();
+  assert.equal(calls.at(-1).apply, true);
+  assert.equal(calls.at(-1).start, '', 'Import & start starts it');
+});
+
+test('offline import is offered only when a conversation lands on a harness that can take it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { offlineImportBlocker, agentImportParams } = await harness.importDashboardModule('js/paf-dialogs.js');
+  const base = { history: true, agent: { harness: 'claude' }, history_landing: { harness: 'claude' } };
+  assert.equal(offlineImportBlocker(base, { harness: '' }), '');
+  assert.match(offlineImportBlocker({ ...base, history: false }, { harness: '' }), /No conversation lands/);
+  assert.match(offlineImportBlocker(base, { harness: 'opencode' }), /OpenCode/);
+  assert.match(offlineImportBlocker({ ...base, history_landing: { harness: 'opencode' } }, { harness: '' }), /OpenCode/);
+  const choices = { group: 'team', name: '', harness: '', model: '', cwd: '', keepPaths: true };
+  assert.equal(agentImportParams(choices).start, '', 'a preview never sends start');
+  assert.equal(agentImportParams(choices, true, false).start, 'false');
 });
 
 test('a group preview offers per-member harness and model and re-inspects with them', async (t) => {

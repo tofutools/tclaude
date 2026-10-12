@@ -19,7 +19,7 @@ import {
 } from './template-management-model.js';
 import { harnessBuiltinModeLabel } from './resolved-defaults.js';
 
-import { AgentImportPreview, MemberLandings, agentImportParams } from './paf-dialogs.js';
+import { AgentImportPreview, MemberLandings, agentImportParams, offlineImportBlocker } from './paf-dialogs.js';
 
 const html = htm.bind(h);
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -963,11 +963,12 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
     // apply refuses without a working dir unless the recorded paths are kept.
     (choices.keepPaths || !!choices.cwd.trim());
   const busy = phase === 'importing' || phase === 'loading' || phase === 'refreshing';
-  const submit = async () => {
+  const offlineBlocker = kind === 'agent' ? offlineImportBlocker(agentPreview, choices) : '';
+  const submit = async (start = false) => {
     setError('');
     setPhase('importing');
     try {
-      if (kind === 'agent') await actions.importAgentPAF(file, agentImportParams(choices, true));
+      if (kind === 'agent') await actions.importAgentPAF(file, agentImportParams(choices, true, start));
       else await actions.importGroup(file, into.trim(), as.trim(), landing);
     } catch (err) {
       setError(
@@ -985,7 +986,9 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
       id: 'group-import-modal',
       labelledby: 'group-import-title',
       onClose: state.closeDialog,
-      onSubmitHotkey: ready && !busy ? submit : null,
+      // The hotkey takes the primary action: offline, or start when offline
+      // is not possible for this agent.
+      onSubmitHotkey: ready && !busy ? () => submit(!!offlineBlocker) : null,
       dirty: !!(file || into || as),
       blocked: phase === 'importing',
       confirmDiscard,
@@ -1056,14 +1059,22 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
         >
           Cancel</button
         ><span class="spacer"></span
-        ><button
+        >${kind === 'agent' &&
+        html`<button
+          id="agent-import-start"
+          disabled=${!ready || busy}
+          title="Import the agent and start it now"
+          onClick=${() => submit(true)}
+        >
+          Import & start
+        </button>`}<button
           id="group-import-submit"
           class="primary"
-          disabled=${!ready || busy}
-          title=${kind === 'agent' && !choices.group ? 'Pick the group the agent joins' : ''}
-          onClick=${submit}
+          disabled=${!ready || busy || !!offlineBlocker}
+          title=${kind === 'agent' && !choices.group ? 'Pick the group the agent joins' : offlineBlocker || (kind === 'agent' ? 'Import the agent offline with its conversation; wake it to start' : '')}
+          onClick=${() => submit(false)}
         >
-          ${phase === 'importing' ? 'Importing…' : kind === 'agent' ? 'Import & start' : 'Import'}
+          ${phase === 'importing' ? 'Importing…' : kind === 'agent' ? 'Import (offline)' : 'Import'}
         </button>
       </div>`,
   );
