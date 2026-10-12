@@ -81,10 +81,13 @@ type pafHistoryParts struct {
 	// AllowedFindings records a human's explicit allowance of the scan
 	// findings in privacy.json.
 	AllowedFindings bool
+	// Snapshot and Lineage mark a snapshot capture in agent.json.
+	Snapshot *paf.Snapshot
+	Lineage  []paf.LineageStep
 }
 
 func archiveAgentPAFWith(b *agentbundle.Bundle, sign bool, parts pafHistoryParts) (*os.File, error) {
-	opts := legacy.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}, MaxRecordBytes: pafContextRecordLimit(), AllowedFindings: parts.AllowedFindings}
+	opts := legacy.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}, MaxRecordBytes: pafContextRecordLimit(), AllowedFindings: parts.AllowedFindings, Snapshot: parts.Snapshot, Lineage: parts.Lineage}
 	if !parts.NoContext {
 		opts.Context = neutralContext(b)
 	}

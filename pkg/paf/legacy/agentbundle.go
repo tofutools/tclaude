@@ -124,6 +124,10 @@ type WriteOptions struct {
 	// AllowedFindings records that a human explicitly allowed the scan
 	// findings.
 	AllowedFindings bool
+	// Snapshot marks the PAF as a named snapshot (agent.json snapshot).
+	Snapshot *paf.Snapshot
+	// Lineage is appended to agent.json lineage.
+	Lineage []paf.LineageStep
 }
 
 // WriteAgentBundle writes an agent bundle as an agent PAF, optionally with
@@ -147,6 +151,8 @@ func WriteAgentBundle(b *agentbundle.Bundle, out io.Writer, opts WriteOptions) e
 		StartupContext: d.StartupContext,
 		InitialMessage: d.InitialMessage,
 	}}
+	ag.Snapshot = opts.Snapshot
+	ag.Lineage = append(ag.Lineage, opts.Lineage...)
 	if d.TaskURL != "" || d.TaskLabel != "" {
 		ag.Definition.Task = &paf.Task{URL: d.TaskURL, Label: d.TaskLabel}
 	}
