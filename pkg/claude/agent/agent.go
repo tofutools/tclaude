@@ -12,7 +12,7 @@ import (
 func Cmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:         "agent",
-		Short:       "Coordinate between Claude Code conversations",
+		Short:       "Coordinate between coding agents",
 		Long:        "Look up other agents (named conversations), send messages, and manage allow-listed groups.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
