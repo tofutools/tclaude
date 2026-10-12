@@ -44,3 +44,20 @@ func TestValidatePresetSessionIDPerHarness(t *testing.T) {
 		}
 	}
 }
+
+// TestResolveResumeConvFullIDWithoutStore pins the resume call site of
+// ResumeFullIDWithoutStore: Gemini resumes an unknown full UUID straight from
+// the caller's cwd, while a non-UUID still has to resolve through the store.
+func TestResolveResumeConvFullIDWithoutStore(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const uuid = "0b9d9a6e-3c8c-4f43-9d0c-2b8b6f1e7a10"
+	cwd := t.TempDir()
+	gemini := harness.MustGet(harness.GeminiName)
+	id, project, err := resolveResumeConv(gemini, uuid, false, cwd)
+	if err != nil || id != uuid || project != cwd {
+		t.Fatalf("gemini full-id resume = (%q, %q, %v), want (%q, %q, nil)", id, project, err, uuid, cwd)
+	}
+	if _, _, err := resolveResumeConv(gemini, "0b9d9a6e", false, cwd); err == nil {
+		t.Fatal("a gemini id prefix must resolve through the store, not pass through")
+	}
+}
