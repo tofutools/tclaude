@@ -282,7 +282,7 @@ tclaude agent snapshot board ls --board BOARD
 tclaude agent snapshot board fetch --board BOARD --item ITEM --version VERSION
 tclaude agent snapshot board preview --board BOARD --item ITEM --version VERSION --group team
 tclaude agent snapshot board import --board BOARD --item ITEM --version VERSION --group team --preview-token TOKEN
-tclaude agent snapshot board rm --board BOARD --item ITEM --version VERSION
+tclaude agent snapshot board rm --board BOARD --item ITEM --version VERSION [--local]
 ```
 
 A snapshot goes on a [Board](federation.md#content-board-membership) as an
@@ -302,7 +302,7 @@ A snapshot goes on a [Board](federation.md#content-board-membership) as an
   confirmation is recorded as a consent record for those recipients
   ([Consenting to share](#consenting-to-share)).
 - **Credentials.** A snapshot with suspected credentials is refused. Export
-  it, run `tclaude paf redact`, and share the redacted file with `--file`.
+  it, run `tclaude paf redact`, and share the redacted file with `--file`. A shared file is named after its agent unless you pass `--name`.
 - **Size.** At most 64 MiB once encrypted, stored as up to four Board blobs.
   Each blob counts toward the board's blob and byte quotas, and snapshots
   together may use at most half of the board's byte quota.
@@ -325,6 +325,11 @@ Receiving:
   node, validates the PAF and scans it for credentials again. A snapshot with
   findings is not kept. A member who is not a recipient is told so and gets
   nothing to import.
+- A fetched snapshot is kept decrypted under
+  `~/.tclaude/data/federation/board-snapshots/` (mode 0700) until it is
+  imported, it expires, or you remove it with `board rm --local` (which
+  leaves the snapshot on the board). `board rm` without `--local` removes
+  the local copy too.
 - `board preview` shows the agent the import would create and prints a
   single-use preview token, valid for ten minutes. `board import` needs that
   token with the same options. The PAF is scanned again just before it lands.

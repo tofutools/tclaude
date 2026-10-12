@@ -133,6 +133,7 @@ type snapshotBoardParams struct {
 	PreviewToken string   `long:"preview-token" optional:"true" help:"import: the token from a matching preview."`
 	Set          []string `long:"set" optional:"true" help:"preview/import: placeholder name=value."`
 	Cursor       string   `long:"cursor" optional:"true" help:"ls: page cursor."`
+	Local        bool     `long:"local" help:"rm: only remove this node's fetched copy, not the snapshot on the board."`
 	JSON         bool     `long:"json" help:"Print raw JSON."`
 }
 
@@ -141,7 +142,8 @@ func snapshotBoardCmd() *cobra.Command {
 		Long: "ls lists a board's snapshots and which are addressed to this node. fetch downloads, decrypts, validates and\n" +
 			"rescans one; it never imports. preview shows the agent it would create and prints a preview token; import\n" +
 			"needs that token with the same options and creates a new agent, briefed that the received history is\n" +
-			"untrusted. rm deletes a snapshot from the board (its publisher or a board owner).",
+			"untrusted. rm deletes a snapshot from the board (its publisher or a board owner) and this node's fetched\n" +
+			"copy; rm --local removes only the fetched copy. Fetched copies are also removed when the snapshot expires.",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *snapshotBoardParams, _ *cobra.Command, _ []string) {
 			os.Exit(runSnapshotBoard(p, os.Stdout, os.Stderr))
 		}}.ToCobra()
@@ -252,7 +254,11 @@ func runSnapshotBoard(p *snapshotBoardParams, stdout, stderr io.Writer) int {
 		if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 			return rc
 		}
-		err = DaemonRequest(http.MethodDelete, ref, nil, &out, opts)
+		path := ref
+		if p.Local {
+			path += "?local=true"
+		}
+		err = DaemonRequest(http.MethodDelete, path, nil, &out, opts)
 	default:
 		fmt.Fprintln(stderr, "Error: action must be ls, fetch, preview, import or rm")
 		return rcInvalidArg

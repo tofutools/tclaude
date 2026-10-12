@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -108,6 +109,15 @@ func TestBoardSnapshotShareFetchImportDelete(t *testing.T) {
 	stale := url.Values{"snapshot": {"shared"}, "to": {member.ID()}, "content_digest": {strings.Repeat("0", 64)}}
 	assert.Equal(t, http.StatusConflict, share(stale).Code)
 
+	// A PAF file shared without --name is named after its agent.
+	exported := human("GET", "/v1/snapshots/shared/export", nil)
+	require.Equal(t, http.StatusOK, exported.Code)
+	var fromFile struct {
+		Name string `json:"name"`
+	}
+	decode(testharness.Serve(f.Mux, agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost, base+"?to="+member.ID(), bytes.NewReader(exported.Body.Bytes())))), &fromFile)
+	assert.NotEmpty(t, fromFile.Name)
+
 	q.Set("content_digest", preview.Summary.Digest)
 	decode(share(q), &preview)
 	require.True(t, preview.Published)
@@ -161,6 +171,11 @@ func TestBoardSnapshotShareFetchImportDelete(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 
 	// Import needs a fetch, then a preview token for the same options.
+	rec = human("POST", base+"/"+ours+"/preview", map[string]any{"group": "receiver", "keep_paths": true})
+	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	decode(human("POST", base+"/"+ours+"/fetch", map[string]any{}), &struct{}{})
+	// A recipient can discard its fetched copy without touching the board.
+	decode(human("DELETE", base+"/"+ours+"?local=true", nil), &struct{}{})
 	rec = human("POST", base+"/"+ours+"/preview", map[string]any{"group": "receiver", "keep_paths": true})
 	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 	decode(human("POST", base+"/"+ours+"/fetch", map[string]any{}), &struct{}{})

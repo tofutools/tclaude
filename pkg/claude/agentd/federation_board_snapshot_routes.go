@@ -72,6 +72,7 @@ func boardSnapshotRoute(op string) http.HandlerFunc {
 			writeError(w, 409, "board_unavailable", e.Error())
 			return
 		}
+		sweepBoardSnapshotSpool(time.Now())
 		var err error
 		switch op {
 		case "list":
@@ -83,10 +84,17 @@ func boardSnapshotRoute(op string) http.HandlerFunc {
 		case "preview", "import":
 			err = a.snapshotImport(w, r, op, ref)
 		case "delete":
+			// The local copy goes first and always: a recipient can
+			// discard what it fetched even when only the publisher or an
+			// owner may delete the snapshot from the board.
+			removeBoardSnapshotSpool(ref)
+			if r.URL.Query().Get("local") == "true" {
+				writeJSON(w, 200, map[string]any{"deleted": false, "local_removed": true})
+				break
+			}
 			if _, err = a.call("items.delete", map[string]any{"board": ref.Board, "item": ref.Item, "version_id": ref.Version}); err == nil {
-				_ = os.Remove(boardSnapshotSpoolPath(ref))
 				recordFederationAudit("boards.snapshot.delete", "", "", ref.Board, "item="+ref.Item+" version="+ref.Version, 200)
-				writeJSON(w, 200, map[string]any{"deleted": true})
+				writeJSON(w, 200, map[string]any{"deleted": true, "local_removed": true})
 			}
 		}
 		if err != nil {
@@ -210,6 +218,10 @@ func (a *boardItemAccess) snapshotShare(w http.ResponseWriter, r *http.Request, 
 	}
 	if n := q.Get("name"); n != "" {
 		name = n
+	} else if name == "" {
+		if ag, ok := arch.Agent(arch.Manifest.Agents[0]); ok {
+			name = ag.Name
+		}
 	}
 	if name == "" || len(name) > 128 {
 		return &boardHTTPError{400, "name", "name must be 1..128 bytes"}
@@ -431,9 +443,83 @@ func boardSnapshotSpoolDir() string {
 }
 
 // boardSnapshotSpoolPath is where a fetched, decrypted snapshot waits for
-// import. The ids are validated hex, so the name cannot escape the spool.
+// import, keyed by board, item and version (a publisher picks its version
+// ids, so a version id alone is not unique). The ids are validated hex,
+// so the name cannot escape the spool.
 func boardSnapshotSpoolPath(ref boardItemRef) string {
-	return filepath.Join(boardSnapshotSpoolDir(), ref.Board+"-"+ref.Version+".paf")
+	return filepath.Join(boardSnapshotSpoolDir(), ref.Board+"-"+ref.Item+"-"+ref.Version+".paf")
+}
+
+// boardSnapshotSpoolRecord binds a spooled snapshot to the receipt it was
+// fetched under, and carries its expiry so the local copy is removed then.
+type boardSnapshotSpoolRecord struct {
+	PayloadSHA256 string    `json:"payload_sha256"`
+	Publisher     string    `json:"publisher"`
+	ExpiresAt     time.Time `json:"expires_at"`
+}
+
+func boardSnapshotRecordPath(ref boardItemRef) string {
+	return strings.TrimSuffix(boardSnapshotSpoolPath(ref), ".paf") + ".json"
+}
+
+func removeBoardSnapshotSpool(ref boardItemRef) {
+	_ = os.Remove(boardSnapshotSpoolPath(ref))
+	_ = os.Remove(boardSnapshotRecordPath(ref))
+}
+
+// writeSpoolFile writes a private file beside its destination, syncs it
+// and renames it into place.
+func writeSpoolFile(path string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".record-")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(f.Name()) }()
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Chmod(0o600)
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
+}
+
+// sweepBoardSnapshotSpool removes local copies whose snapshot has expired,
+// copies without a record, and leftovers of interrupted fetches.
+func sweepBoardSnapshotSpool(now time.Time) {
+	dir := boardSnapshotSpoolDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		path := filepath.Join(dir, e.Name())
+		switch {
+		case strings.HasPrefix(e.Name(), "."):
+			if info, err := e.Info(); err == nil && now.Sub(info.ModTime()) > time.Hour {
+				_ = os.Remove(path)
+			}
+		case strings.HasSuffix(e.Name(), ".paf"):
+			record := strings.TrimSuffix(path, ".paf") + ".json"
+			raw, err := os.ReadFile(record)
+			var rec boardSnapshotSpoolRecord
+			if err != nil || json.Unmarshal(raw, &rec) != nil || !now.Before(rec.ExpiresAt) {
+				_ = os.Remove(path)
+				_ = os.Remove(record)
+			}
+		case strings.HasSuffix(e.Name(), ".json"):
+			if _, err := os.Stat(strings.TrimSuffix(path, ".json") + ".paf"); os.IsNotExist(err) {
+				_ = os.Remove(path)
+			}
+		}
+	}
 }
 
 // snapshotFetch downloads, verifies and decrypts a snapshot addressed to
@@ -509,6 +595,13 @@ func (a *boardItemAccess) snapshotFetch(w http.ResponseWriter, ref boardItemRef)
 	if err = out.Chmod(0o600); err != nil {
 		return err
 	}
+	record, err := json.Marshal(boardSnapshotSpoolRecord{PayloadSHA256: v.PayloadSHA256, Publisher: v.Publisher, ExpiresAt: v.ExpiresAt})
+	if err != nil {
+		return err
+	}
+	if err = writeSpoolFile(boardSnapshotRecordPath(ref), record); err != nil {
+		return err
+	}
 	if err = os.Rename(out.Name(), boardSnapshotSpoolPath(ref)); err != nil {
 		return err
 	}
@@ -565,10 +658,24 @@ func (a *boardItemAccess) snapshotImport(w http.ResponseWriter, r *http.Request,
 		return &boardHTTPError{400, "group", "group is required: the receiving group"}
 	}
 	v, m, err := a.snapshotVersion(ref)
+	var be *boardHTTPError
+	if errors.As(err, &be) && be.Status == http.StatusNotFound {
+		removeBoardSnapshotSpool(ref)
+		return &boardHTTPError{410, "gone", "this snapshot is no longer on the board (expired or deleted); the local copy was removed"}
+	}
 	if err != nil {
 		return err
 	}
 	path := boardSnapshotSpoolPath(ref)
+	var spooled boardSnapshotSpoolRecord
+	raw, err := os.ReadFile(boardSnapshotRecordPath(ref))
+	if err != nil || json.Unmarshal(raw, &spooled) != nil {
+		return &boardHTTPError{409, "not_fetched", "fetch the snapshot first"}
+	}
+	if spooled.PayloadSHA256 != v.PayloadSHA256 || spooled.Publisher != v.Publisher || !spooled.ExpiresAt.Equal(v.ExpiresAt) {
+		removeBoardSnapshotSpool(ref)
+		return &boardHTTPError{409, "not_fetched", "the local copy does not match this snapshot; fetch it again"}
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return &boardHTTPError{409, "not_fetched", "fetch the snapshot first"}
@@ -579,7 +686,7 @@ func (a *boardItemAccess) snapshotImport(w http.ResponseWriter, r *http.Request,
 		return err
 	}
 	if !time.Now().Before(v.ExpiresAt) {
-		_ = os.Remove(path)
+		removeBoardSnapshotSpool(ref)
 		return &boardHTTPError{410, "expired", "this snapshot has expired"}
 	}
 	summary, err := scanReceivedSnapshot(f, st.Size())
@@ -671,7 +778,7 @@ func (a *boardItemAccess) snapshotImport(w http.ResponseWriter, r *http.Request,
 		boardPreviewPermits.Unlock()
 		response["preview_token"] = token
 	} else {
-		_ = os.Remove(path)
+		removeBoardSnapshotSpool(ref)
 		recordFederationAudit("boards.snapshot.import", m.Publisher, "", ref.Board, "item="+ref.Item+" version="+ref.Version, 200)
 	}
 	writeJSON(w, 200, response)
