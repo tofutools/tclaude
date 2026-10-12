@@ -17030,7 +17030,12 @@ body.wizard #agent-dock .dock-card-details::-webkit-scrollbar-thumb {
   box-shadow: 0 8px 24px rgba(1, 4, 9, 0.85);
   transition: opacity .08s ease;
 }
-.dock-card-details.open { visibility: visible; opacity: 1; pointer-events: auto; }
+/* The details popover is a DOM child of its card, so if it took the pointer,
+   hovering it would keep the card "hovered" and the popover would linger over
+   whatever it covers. It has nothing to click, so it stays pointer-transparent
+   even while open: leaving the card closes it. Keyboard focus still reaches it
+   (tabIndex) for scrolling long details. */
+.dock-card-details.open { visibility: visible; opacity: 1; }
 .dock-card-details:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
 .dock-card-details-description {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
