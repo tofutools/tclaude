@@ -1,169 +1,107 @@
 # Your first agent team
 
-So far every session has been one agent working alone with you. In this
-tutorial you start the tclaude daemon, put two agents in a group, and watch
-them message each other. That is the foundation for everything else tclaude
-does with teams: groups, mail, the dashboard, and permissions.
+So far `alice` has worked alone. In this tutorial you add a second agent to
+her group and watch the two message each other. Then you read their mail,
+write to them yourself, and manage them from the **⚙** menu. That is the
+foundation for everything tclaude does with teams.
 
-**You need:** [Your first agent](first-agent.md) completed. Use the same
-project directory as there: your harness has already asked you to trust it,
-and agents spawned in the background cannot answer that question.
+**You need:** [Your first agent](first-agent.md) completed, with `alice`
+online in the `hello` group.
 
-If you followed [Get started](get-started.md) and
-[Your first agent](first-agent.md), steps 1 to 4 are done and `alice`
-already exists: wake her with her status dot if she is stopped, and in step 5
-spawn only `bob`.
+## 1. Add a second agent
 
-## 1. Install the agent extras
+A group is also the list of agents allowed to talk to each other. Click
+`hello`'s spawn button again and start `bob`:
 
-Agents learn how to message each other from small bundled skills. Install
-them, along with the low-risk default permissions those skills use:
+- **Name**: `bob`;
+- **Initial msg**: `When a teammate messages you, answer in one or two sentences with tclaude agent reply.`
 
-```bash
-tclaude setup --install-agent-skills --install-default-agent-permissions
-```
+`bob` reads the project, then waits for mail. Agents know the
+`tclaude agent` commands from the skills that setup installed in
+[Get started](get-started.md).
 
-!!! info "Go deeper"
-    [Installation → Run setup](../index.md#2-run-setup) lists every extra.
+Teams can mix harnesses: pick another **Harness** for `bob` if you have one
+installed.
 
-## 2. Start the daemon
+## 2. Get them talking
 
-Everything multi-agent goes through one daemon, `agentd`. It spawns agents,
-knows who is who, decides what each agent may do, and delivers mail. Agents
-may run sandboxed, but the daemon must not be. Open a **separate terminal**,
-outside any sandbox, and start it:
+Give `alice` a task that needs `bob`. Open the `hello` group's **⚙** menu,
+next to the group name, and choose **✉ message**. Tick `alice` and write:
 
-```bash
-tclaude agentd serve
-```
+> Ask your teammate bob, with tclaude agent message, what this project's main
+> entry point is. When bob replies, tell me his answer.
 
-Leave it running. Its startup banner prints a line like
-`export TCLAUDE_HUMAN_TOKEN="tclo_…"`. That token is how the daemon knows a
-command comes from you, the operator, rather than from an agent. Copy that
-line and run it in the terminal where you will type the rest of this
-tutorial.
+The message lands in `alice`'s inbox and appears in her terminal. Watch the
+two rows in **Groups**: `alice` goes `working`, then `bob`, then `alice`
+again.
 
-The token is new each time the daemon starts. After a restart, export the new
-one.
+## 3. Read their mail
 
-!!! info "Go deeper"
-    [Agents and groups → The agentd daemon](../agents-and-groups.md#the-agentd-daemon)
-    and [Identity](../agents-and-groups.md#identity-who-is-calling) explain the
-    daemon and the token.
-
-## 3. Open the dashboard
-
-```bash
-tclaude agent dashboard
-```
-
-Your browser opens the dashboard. It is empty for now. Keep it open next to
-your terminal; you will watch the team appear in it.
-
-## 4. Create a group
-
-A **group** is a team: a list of agents that are allowed to talk to each
-other. From your project directory:
-
-```bash
-cd ~/code/my-project
-tclaude agent groups create hello --descr "my first team"
-```
-
-## 5. Spawn two agents
-
-`agent spawn` starts a new agent session in the background, adds it to the
-group and hands it a first task. Start with `bob`, who answers questions:
-
-```bash
-tclaude agent spawn hello --name bob \
-  --initial-message "When a teammate messages you, answer in one or two sentences with tclaude agent reply."
-```
-
-Then `alice`, who asks one:
-
-```bash
-tclaude agent spawn hello --name alice \
-  --initial-message "Ask your teammate bob, with tclaude agent message, what this project's main entry point is. When bob replies, tell me his answer."
-```
-
-Each agent starts in the current directory, using your default harness.
-If an agent sits still and never starts working, it is probably waiting on
-the harness's "trust this folder?" prompt: attach to it (step 6) and accept
-it, or spawn again with `--trust-dir`.
-
-Teams can mix harnesses: add `--harness codex` (or `opencode`, `copilot`,
-`gemini`) to either spawn.
-
-!!! info "Go deeper"
-    [Spawning and lifecycle → Spawning an agent](../spawning-and-lifecycle.md#spawning-an-agent)
-    covers names, roles, profiles and worktrees.
-
-## 6. Watch them work
-
-In the dashboard, the `hello` group now shows both agents with a live
-status. Open the **Messages** tab to see alice's question and bob's reply
-arrive as mail.
+Open the **Messages** tab. The left side lists mailboxes: all messages, one
+folder per group and agent, and a folder for notifications sent to you. Pick
+`hello` to see `alice`'s question and `bob`'s reply.
 
 <!-- Regenerate the images on this page with scripts/docs/learn-images.sh -->
 ![The dashboard's Messages tab with the hello group selected. The list shows alice's question to bob and bob's reply, and the reader shows bob's answer about the project's entry point.](../assets/learn-dashboard-messages.png)
 
-From the terminal you can see the same:
-
-```bash
-tclaude agent groups members hello
-tclaude agent inbox ls --target alice    # bob's reply
-tclaude agent inbox ls --target bob      # alice's question
-```
-
-To see an agent's own terminal, attach to its session. `tclaude session
-watch` lists both agents next to your other sessions. Select `alice`, press
-**Enter**, and read her summary of bob's answer. Detach with **Ctrl+B D** as
-usual.
+Agents answer you in their terminal, not by mail: open `alice` with
+**focus** to read her summary of `bob`'s answer. An agent can write to you
+only through `notify-human`, a permission-gated channel whose messages land
+in the notifications folder.
 
 !!! info "Go deeper"
-    [Agents and groups → Messaging](../agents-and-groups.md#messaging) explains
-    delivery and the inbox. [Dashboard](../dashboard.md) tours every tab.
+    [Dashboard → Messages](../dashboard.md#messages) and
+    [Agents and groups → Messaging](../agents-and-groups.md#messaging).
 
-## 7. Send an agent a message yourself
+## 4. Manage an agent from the ⚙ menu
 
-You can mail any agent from the dashboard. In **Groups**, open the `hello`
-group's **⚙** menu (next to the group name), choose **✉ message**, tick
-`alice`, and write:
+Back in **Groups**, open an agent's **⚙** menu:
 
-> Thanks! Now ask bob where the tests live.
+![alice's ⚙ menu open in the Groups view. It lists view messages, term, web term, open window and web window at the top, then edit, permissions and more.](../assets/learn-dashboard-agent-menu.png)
 
-(`tclaude agent message` is the agents' own command; it does not work from
-your shell.) The message lands in alice's inbox and pops into her terminal. She answers in
-her terminal, not by mail: agents can't reply to the operator's mail directly.
-Mail to you goes through `notify-human`, a permission-gated channel covered
-in the reference.
+Start with these:
 
-## 8. Clean up
+- **view messages**: that agent's mail only;
+- **edit**: its name, role and description;
+- **permissions**: what the agent is allowed to do.
 
-Retiring an agent stops its session and removes it from the team. The
-conversation is kept and can be resumed or reinstated later.
+You can also rename an agent by clicking its name in the row.
+
+The rest of the menu (clone, reincarnate, morph, snapshot, schedule) manages
+an agent's lifecycle; see [Lifecycle verbs](../spawning-and-lifecycle.md#lifecycle-verbs).
+
+!!! info "Go deeper"
+    [Dashboard → The member row](../dashboard.md#the-member-row) and
+    [Permissions and audit](../permissions-and-audit.md).
+
+## 5. Retire an agent
+
+`bob` has done his job. Click the bin button on his row and confirm.
+Retiring stops his session and removes him from the team. His conversation
+is kept: the next tutorial brings him back.
+
+Keep `alice`; the later tutorials use her.
+
+## From the terminal
 
 ```bash
-tclaude agent retire alice
+tclaude agent spawn hello --name bob \
+  --initial-message "When a teammate messages you, answer in one or two sentences with tclaude agent reply."
+tclaude agent groups members hello
+tclaude agent inbox ls --target bob
 tclaude agent retire bob
-tclaude agent groups archive hello
 ```
 
-You can stop the daemon with **Ctrl+C** when you are done. Solo sessions keep
-working without it.
+`tclaude agent message` is the agents' own command. It does not work from
+your shell; use the dashboard to write to agents.
 
 ## What you learned
 
-- `agentd` runs outside any sandbox and is the single place teams go
-  through. You talk to it as the operator through `TCLAUDE_HUMAN_TOKEN`.
 - A group is the list of agents allowed to talk to each other.
-- `agent spawn` starts an agent with a task. Agents mail each other with
-  `agent message` and `agent reply`.
-- The dashboard shows the team's status and mail.
-- `agent retire` ends an agent but keeps its conversation.
+- Agents mail each other with `agent message` and `agent reply`. You write to
+  them with a group's **✉ message** or a pane's **✉ Message**.
+- **Messages** shows all mail.
+- An agent's **⚙** menu manages it. The bin button retires it and keeps its
+  conversation.
 
-**Next:** [Tour the dashboard](dashboard-tour.md). Agents are also the
-starting point for permissions, sandboxing, templates and more. [Permissions and audit](../permissions-and-audit.md)
-explains what agents may do, and [Teams at scale](../teams-at-scale.md) shows
-how to deploy whole teams at once.
+**Next:** [Find and resume your work](find-and-resume.md).

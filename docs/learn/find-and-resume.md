@@ -1,114 +1,82 @@
 # Find and resume your work
 
-In [Your first agent](first-agent.md) you stopped an agent, but its
-conversation was kept. Here you find that conversation again, continue it,
-and learn a lighter way to ask quick questions without starting a session.
+Agents come and go, but tclaude keeps their conversations. In this tutorial
+you find past work in the dashboard and pick it up again: a stopped agent, a
+retired one, and a conversation you had outside any group.
 
-**You need:** at least one finished conversation, for example `alice`'s from
-[Your first agent](first-agent.md).
+**You need:** [Your first agent team](first-team.md) completed: `alice` in
+`hello`, and `bob` retired.
 
-## 1. List your conversations
+## 1. Wake a stopped agent
 
-From the same project directory:
+A stopped agent stays in its group with an empty status dot, `○`. Stop
+`alice` from her status dot (**Soft exit**), then click the dot again to
+wake her. She resumes the same conversation, through the harness she ran
+on.
 
-```bash
-tclaude conv ls
-```
+To wake every stopped agent in a group at once, use the green power button
+under the group's name.
 
-This lists the conversations started in this project, newest first. tclaude
-indexes the transcripts of every harness in one list, so Claude Code, Codex
-and other conversations appear side by side, each tagged with its harness.
+Stopped agents are shown by default. If a group hides them, the **▾ view**
+menu at the top of **Groups** has **show offline**.
 
-To see conversations from every project:
+## 2. Bring back a retired agent
 
-```bash
-tclaude conv ls -g
-```
-
-## 2. Browse them interactively
-
-```bash
-tclaude conv watch -g
-```
-
-This is a searchable picker over the same list. Press **/** and type part of
-your first prompt (for example `three sentences`) to filter, then press
-**Enter** to leave the filter box. Pick the conversation with the arrow keys
-and press **Enter** again: tclaude starts a new session that continues it.
-Detach with **Ctrl+B D** as before.
+Retired agents leave their groups. Open **▾ view** and tick
+**show retired**. A **Retired** block appears at the bottom of **Groups**,
+listing `bob`.
 
 <!-- Regenerate the images on this page with scripts/docs/learn-images.sh -->
-![tclaude conv watch -g listing six conversations from two projects and three harnesses, newest first. Each row shows the harness, the project path and the title or first prompt.](../assets/learn-conv-watch.png)
+![The Groups view with show retired and show conversations ticked. The Retired block lists bob with a reinstate button, and the Conversations block lists a past conversation, "fix the flaky login test", with a promote button.](../assets/learn-dashboard-resume.png)
+
+Click **reinstate** on `bob`'s row. He becomes an agent again and appears in
+**Ungrouped**. Drag his row onto `hello`, then click his status dot to wake
+him. His old permissions do not come back.
+
+## 3. Turn a past conversation into an agent
+
+Conversations you had outside the dashboard, for example with bare `tclaude`
+in a terminal, are not agents. **▾ view** → **show conversations** lists the
+recent ones in a **Conversations** block. **promote** turns one into an
+agent, which you can then drag onto a group and wake like `bob`.
+
+## 4. Filter the view
+
+With many agents, type in the filter box at the top of **Groups**. It
+matches group names and each agent's name, role, description, directory and
+branch.
 
 !!! info "Go deeper"
-    [Conversations → Watch mode](../conversations.md#watch-mode) lists every
-    key, including worktree creation and semantic search.
+    [Spawning and lifecycle → retire, reinstate, delete](../spawning-and-lifecycle.md#retire-reinstate-delete)
+    and [Promote](../spawning-and-lifecycle.md#promote).
 
-## 3. Search and resume from the shell
+## From the terminal
 
-When you remember a word but not where you used it:
-
-```bash
-tclaude conv search -g "three sentences"
-```
-
-Each match starts with the first eight characters of its conversation id.
-Those eight characters are enough to resume it:
+The dashboard lists recent conversations, but it cannot search inside them.
+For that, use the CLI. It indexes every harness's transcripts in one list:
 
 ```bash
-tclaude conv resume -g <conv-id>
+tclaude conv ls -g                        # every conversation, newest first
+tclaude conv search -g "three sentences"  # search inside them
+tclaude conv resume -g <conv-id>          # continue one in a new session
 ```
 
-`-g` looks the id up across all projects, so this works from any directory.
-Without it, `conv resume` only looks in the current project. You never say
-which harness to use. tclaude recorded it when the
-conversation started and relaunches through the same one, in the
-conversation's own project directory.
-
-!!! info "Go deeper"
-    [Conversations → Searching](../conversations.md#searching) covers
-    full-transcript search and time filters.
-    [Resuming](../conversations.md#resuming) explains what a resume carries
-    over.
-
-## 4. Ask a quick question without a session
-
-Not every question needs a session. `tclaude ask` runs the harness, prints
-the answer and returns to your shell:
+`conv resume` relaunches through the harness that recorded the conversation,
+in its own project directory. `tclaude ask` answers a quick question in the
+shell without starting a session:
 
 ```bash
 tclaude ask "what does the main function in this project do?"
 ```
 
-Ask again from the same terminal and directory, and it continues the same
-thread:
-
-```bash
-tclaude ask "and where is it tested?"
-```
-
-Piped input is attached to the question:
-
-```bash
-git diff | tclaude ask "spot correctness risks in this diff"
-```
-
-Start a fresh thread with `-n`:
-
-```bash
-tclaude ask -n "new topic: summarize the README"
-```
-
-!!! info "Go deeper"
-    [Ask](../ask.md) covers thread continuity, choosing the harness and
-    model, and using ask in scripts.
+[Conversations](../conversations.md) and [Ask](../ask.md) cover both.
 
 ## What you learned
 
-- `tclaude conv ls`, `conv watch` and `conv search` find past conversations
-  across every harness.
-- `tclaude conv resume` continues one through the harness that recorded it.
-- `tclaude ask` answers quick questions without a session, and keeps a thread
-  per terminal and directory.
+- The status dot and the group's power button wake stopped agents.
+- **▾ view** shows retired agents (**reinstate**) and plain conversations
+  (**promote**).
+- The CLI searches inside conversations: `tclaude conv search`.
 
-**Next:** [Your first agent team](first-team.md).
+**Next:** keep your agents running smoothly in long tasks:
+[Spawning and lifecycle → Lifecycle verbs](../spawning-and-lifecycle.md#lifecycle-verbs).
