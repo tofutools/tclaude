@@ -240,6 +240,8 @@ export function AgentImportPreview({ preview, choices, setChoices }) {
       <${LandingSelects} idPrefix="agent-import" harness=${choices.harness} model=${choices.model}
         onChange=${(patch) => setChoices({ ...choices, ...patch })} sameLabel=${`${agent.harness || 'own harness'} (as exported)`} /></div>
     <${HistoryLanding} landing=${preview.history_landing} />
+    ${historyCutNeedsConfirm(preview) && html`<${Check} id="agent-import-confirm-loss" checked=${!!choices.confirmHistoryLoss} onChange=${set('confirmHistoryLoss')}
+      hint="The full history stays in the file and is saved beside the agent, which is told where. A model with a larger window keeps more.">Accept cutting about ${preview.history_landing.losses.dropped_percent}% of the conversation to fit the landing model</${Check}>`}
     ${(preview.findings || []).length > 0 && html`<${FindingsPanel} findings=${preview.findings} title="This node's scan" />`}
     ${unresolved.length > 0 && html`<div class="gi-warn" id="agent-import-unresolved">⚠ ${unresolved.length} recorded path${unresolved.length === 1 ? '' : 's'} need a value here: set a working dir or keep the recorded paths.</div>`}
     <div class="paf-box"><b>Security posture</b><div>${preview.security}</div>
@@ -254,7 +256,15 @@ export function agentImportParams(choices, apply = false, start = true) {
     apply, group: choices.group, name: choices.name.trim(), harness: choices.harness, model: choices.model,
     cwd: choices.keepPaths ? '' : choices.cwd.trim(), keep_paths: choices.keepPaths,
     start: apply && !start ? 'false' : '',
+    confirm_history_loss: apply && choices.confirmHistoryLoss ? 'true' : '',
   };
+}
+
+// historyCutNeedsConfirm says the landing cuts so much of the conversation
+// (25% or more) that the import needs the importer's confirmation, as the
+// route does (history_confirmation_required).
+export function historyCutNeedsConfirm(preview) {
+  return !!(preview?.history && preview.history_landing?.losses?.needs_summary);
 }
 
 // offlineImportBlocker says why an agent cannot land offline, or '' when it

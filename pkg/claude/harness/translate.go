@@ -349,6 +349,20 @@ func describeSource(src transcript.Source) string {
 	return src.Harness
 }
 
+// WriteHistoryArtifacts writes a whole conversation into dir as
+// transcript.md and transcript.jsonl (a PAF context file, media under
+// context-media/), the same files a morph keeps beside its target.
+func WriteHistoryArtifacts(t *transcript.Transcript, dir string) error {
+	var md bytes.Buffer
+	if err := transcript.WriteMarkdown(t, &md); err != nil {
+		return err
+	}
+	if err := transcript.WriteFileExclusive(filepath.Join(dir, "transcript.md"), md.Bytes()); err != nil {
+		return err
+	}
+	return writeContextArtifact(t, dir)
+}
+
 func writeTranslationArtifacts(t *transcript.Transcript, plan *transcript.Plan, dir string) error {
 	if err := prepareArtifactDir(dir); err != nil {
 		return err

@@ -17,22 +17,23 @@ import (
 )
 
 type recoverParams struct {
-	Held         string   `long:"held" optional:"true" help:"Recover a held snapshot: its offer id from tclaude agent snapshot held."`
-	Recall       string   `long:"recall" optional:"true" help:"Ask the peer in --from to return its newest snapshot of this agent id (agt_…)."`
-	Offer        string   `long:"offer" optional:"true" help:"With --recall: ask for this held snapshot instead of the newest."`
-	RecallID     string   `long:"recall-id" optional:"true" help:"Recover the snapshot a recall returned: its id from tclaude agent snapshot recalls."`
-	From         string   `long:"from" optional:"true" help:"With --held or --recall: the peer, peer:<instance id or label>."`
-	Group        string   `long:"group" optional:"true" help:"The group the recovered agent joins."`
-	AgentName    string   `long:"agent-name" optional:"true" help:"Name for the recovered agent."`
-	Cwd          string   `long:"cwd" optional:"true" help:"Working directory; without it the recorded one is kept."`
-	Harness      string   `long:"harness" optional:"true" help:"Landing harness."`
-	Model        string   `long:"model" optional:"true" help:"Landing model."`
-	Set          []string `long:"set" optional:"true" help:"Placeholder name=value."`
-	SkipHistory  bool     `long:"skip-history" help:"Recover the definition only, without the conversation."`
-	NewID        bool     `long:"new-id" help:"Recover as a new agent with a fresh id instead of keeping the agent's id."`
-	ForceKeepID  bool     `long:"force-keep-id" help:"Keep the agent's id despite the conflicts a preview showed."`
-	PreviewToken string   `long:"preview-token" optional:"true" help:"Recover: the token from a preview with the same options."`
-	JSON         bool     `long:"json" help:"Print the daemon's response as JSON."`
+	Held               string   `long:"held" optional:"true" help:"Recover a held snapshot: its offer id from tclaude agent snapshot held."`
+	Recall             string   `long:"recall" optional:"true" help:"Ask the peer in --from to return its newest snapshot of this agent id (agt_…)."`
+	Offer              string   `long:"offer" optional:"true" help:"With --recall: ask for this held snapshot instead of the newest."`
+	RecallID           string   `long:"recall-id" optional:"true" help:"Recover the snapshot a recall returned: its id from tclaude agent snapshot recalls."`
+	From               string   `long:"from" optional:"true" help:"With --held or --recall: the peer, peer:<instance id or label>."`
+	Group              string   `long:"group" optional:"true" help:"The group the recovered agent joins."`
+	AgentName          string   `long:"agent-name" optional:"true" help:"Name for the recovered agent."`
+	Cwd                string   `long:"cwd" optional:"true" help:"Working directory; without it the recorded one is kept."`
+	Harness            string   `long:"harness" optional:"true" help:"Landing harness."`
+	Model              string   `long:"model" optional:"true" help:"Landing model."`
+	Set                []string `long:"set" optional:"true" help:"Placeholder name=value."`
+	SkipHistory        bool     `long:"skip-history" help:"Recover the definition only, without the conversation."`
+	NewID              bool     `long:"new-id" help:"Recover as a new agent with a fresh id instead of keeping the agent's id."`
+	ForceKeepID        bool     `long:"force-keep-id" help:"Keep the agent's id despite the conflicts a preview showed."`
+	PreviewToken       string   `long:"preview-token" optional:"true" help:"Recover: the token from a preview with the same options."`
+	ConfirmHistoryLoss bool     `long:"confirm-history-loss" help:"Recover: accept a landing that cuts 25% or more of the conversation to fit the landing model."`
+	JSON               bool     `long:"json" help:"Print the daemon's response as JSON."`
 }
 
 func recoverCmd() *cobra.Command {
@@ -88,7 +89,7 @@ func runRecover(p *recoverParams, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "Error: choose one of --new-id and --force-keep-id")
 		return rcInvalidArg
 	}
-	body := map[string]any{"group": p.Group, "name": p.AgentName, "harness": p.Harness, "model": p.Model, "set": p.Set, "skip_history": p.SkipHistory, "preview_token": p.PreviewToken, "new_id": p.NewID, "force_keep_id": p.ForceKeepID}
+	body := map[string]any{"group": p.Group, "name": p.AgentName, "harness": p.Harness, "model": p.Model, "set": p.Set, "skip_history": p.SkipHistory, "preview_token": p.PreviewToken, "new_id": p.NewID, "force_keep_id": p.ForceKeepID, "confirm_history_loss": p.ConfirmHistoryLoss}
 	if p.Cwd != "" {
 		body["cwd"] = p.Cwd
 	} else {

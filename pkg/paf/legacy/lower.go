@@ -37,7 +37,13 @@ type Info struct {
 	// Scan rescans everything the PAF carries for suspected credentials
 	// while the decoded file stays open. It is nil for a v1 bundle.
 	Scan func(recordLimit int) ([]paf.Finding, error)
+	// Handoff is the agent-written handoff (context/handoff.md), a summary
+	// of earlier work that stands in for history a landing has to cut.
+	Handoff string
 }
+
+// MaxHandoffBytes bounds the handoff an import reads.
+const MaxHandoffBytes = 64 << 10
 
 // DecodeLimits bounds DecodeBundleFile.
 type DecodeLimits struct {
@@ -79,6 +85,13 @@ func DecodeBundleFile(f *os.File, lim DecodeLimits, dir string) (*agentbundle.Bu
 		key := a.Manifest.Agents[0]
 		info := Info{Source: paf.Format, Signatures: a.Signatures, HasContext: a.HasContext(key, paf.ScopeEffective)}
 		info.Scan = func(recordLimit int) ([]paf.Finding, error) { return privacy.ScanArchive(a, recordLimit) }
+		if p := paf.AgentPath(key, "context/handoff.md"); a.HasEntry(p) {
+			raw, err := a.ReadEntry(p, MaxHandoffBytes)
+			if err != nil {
+				return nil, Info{}, fmt.Errorf("read handoff: %w", err)
+			}
+			info.Handoff = string(raw)
+		}
 		if info.HasContext {
 			info.Context = func(opts paf.ReadOptions) (*transcript.Transcript, error) {
 				return paf.ReadTranscript(a, key, paf.ScopeEffective, opts)

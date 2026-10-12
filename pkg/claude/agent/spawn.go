@@ -943,6 +943,9 @@ type SpawnParams struct {
 	// library instead of a fresh launch (see 'tclaude agent snapshot').
 	FromSnapshot string `long:"from-snapshot" optional:"true" help:"Instantiate new agents from this snapshot: its definition, launch shape and conversation, each with a new identity. Combines with --name, --cwd, --harness, --model and --count only"`
 	Count        int    `long:"count" optional:"true" help:"With --from-snapshot: how many independent agents to create (1-20; names get a -N suffix)"`
+	// ConfirmHistoryLoss accepts a snapshot landing that cuts much of the
+	// conversation to fit the landing model.
+	ConfirmHistoryLoss bool `long:"confirm-history-loss" help:"With --from-snapshot: accept a landing that cuts 25% or more of the conversation to fit the landing model"`
 }
 
 // spawnCmd starts a fresh CC session and registers it in an existing

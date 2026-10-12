@@ -720,6 +720,12 @@ func handleWhoamiMorphHandoff(w http.ResponseWriter, r *http.Request) {
 	err = db.SubmitAgentMorphHandoff(current.CurrentConvID, req.Body)
 	lock.Unlock()
 	if errors.Is(err, db.ErrNoHandoffRequested) {
+		// The same command answers an export's request for a summary.
+		if submitExportSummary(agentID, req.Body) {
+			setAuditDetail(r, fmt.Sprintf("submitted a %d-byte summary for an export", len(req.Body)))
+			writeJSON(w, http.StatusOK, map[string]any{"result": "submitted", "detail": "summary recorded for the export; end your turn"})
+			return
+		}
 		writeError(w, http.StatusConflict, "no_handoff_requested", err.Error())
 		return
 	}

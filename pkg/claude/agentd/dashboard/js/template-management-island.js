@@ -19,7 +19,7 @@ import {
 } from './template-management-model.js';
 import { harnessBuiltinModeLabel } from './resolved-defaults.js';
 
-import { AgentImportPreview, MemberLandings, agentImportParams, offlineImportBlocker } from './paf-dialogs.js';
+import { AgentImportPreview, MemberLandings, agentImportParams, historyCutNeedsConfirm, offlineImportBlocker } from './paf-dialogs.js';
 
 const html = htm.bind(h);
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -866,7 +866,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
   const [kind, setKind] = useState('');
   const [inspection, setInspection] = useState(null);
   const [agentPreview, setAgentPreview] = useState(null);
-  const [choices, setChoices] = useState({ name: '', group: '', cwd: '', keepPaths: false, harness: '', model: '' });
+  const [choices, setChoices] = useState({ name: '', group: '', cwd: '', keepPaths: false, harness: '', model: '', confirmHistoryLoss: false });
   const [phase, setPhase] = useState('idle');
   const [error, setError] = useState('');
   const request = useRef(0);
@@ -961,7 +961,9 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
     !!agentPreview &&
     !!choices.group &&
     // apply refuses without a working dir unless the recorded paths are kept.
-    (choices.keepPaths || !!choices.cwd.trim());
+    (choices.keepPaths || !!choices.cwd.trim()) &&
+    // and a large history cut until the importer accepts it.
+    (!historyCutNeedsConfirm(agentPreview) || !!choices.confirmHistoryLoss);
   const busy = phase === 'importing' || phase === 'loading' || phase === 'refreshing';
   const offlineBlocker = kind === 'agent' ? offlineImportBlocker(agentPreview, choices) : '';
   const submit = async (start = false) => {

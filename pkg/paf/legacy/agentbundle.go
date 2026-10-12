@@ -128,6 +128,9 @@ type WriteOptions struct {
 	Snapshot *paf.Snapshot
 	// Lineage is appended to agent.json lineage.
 	Lineage []paf.LineageStep
+	// Handoff, when set, is written as context/handoff.md: the agent's own
+	// summary of its earlier work, for a landing that has to cut history.
+	Handoff string
 }
 
 // WriteAgentBundle writes an agent bundle as an agent PAF, optionally with
@@ -234,6 +237,11 @@ func WriteAgentBundle(b *agentbundle.Bundle, out io.Writer, opts WriteOptions) e
 	}
 	if m.MailLedger {
 		if err := w.WriteJSON(MailLedgerPath, b.MailDeliveries); err != nil {
+			return err
+		}
+	}
+	if opts.Handoff != "" {
+		if err := w.WriteFile(paf.AgentPath(key, "context/handoff.md"), "text/markdown", []byte(opts.Handoff)); err != nil {
 			return err
 		}
 	}

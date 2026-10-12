@@ -35,6 +35,8 @@ type snapshotSpawnRequest struct {
 	Set       []string `json:"set,omitempty"`
 	// SkipHistory lands the definition only.
 	SkipHistory bool `json:"skip_history,omitempty"`
+	// ConfirmHistoryLoss accepts a landing that cuts much of the conversation.
+	ConfirmHistoryLoss bool `json:"confirm_history_loss,omitempty"`
 }
 
 type snapshotSpawnResult struct {
@@ -152,6 +154,9 @@ func spawnOneFromSnapshot(r *http.Request, path string, req snapshotSpawnRequest
 	}
 	if req.SkipHistory {
 		q.Set("skip_history", "true")
+	}
+	if req.ConfirmHistoryLoss {
+		q.Set("confirm_history_loss", "true")
 	}
 	q["set"] = req.Set
 	arrival := &arrivalContext{Operation: "snapshot spawn", Source: source, Reason: "--cwd or recorded path",

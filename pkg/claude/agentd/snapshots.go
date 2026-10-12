@@ -62,6 +62,9 @@ type snapshotCreateRequest struct {
 	Expires string `json:"expires,omitempty"`
 	// NoHistory captures the definition only.
 	NoHistory bool `json:"no_history,omitempty"`
+	// Summary is the id of a summary the agent wrote for this capture
+	// (POST /v1/agent-bundle/summary); it travels as context/handoff.md.
+	Summary string `json:"summary,omitempty"`
 }
 
 // handleSnapshotCreate captures a named snapshot of an agent into the local
@@ -147,7 +150,16 @@ func handleSnapshotCreate(w http.ResponseWriter, r *http.Request) {
 	for _, f := range b.Manifest.Findings {
 		meta.Findings = append(meta.Findings, paf.Finding{Kind: f.Kind, Count: f.Count, Locations: f.Locations})
 	}
+	var handoff string
+	if req.Summary != "" {
+		caller, _, _ := authedCaller(w, r)
+		if handoff, err = takeExportSummary(req.Summary, caller, res.ConvID); err != nil {
+			writeError(w, 409, "summary", err.Error())
+			return
+		}
+	}
 	parts := pafHistoryParts{
+		Handoff:  handoff,
 		Snapshot: &paf.Snapshot{Name: name, Note: req.Note, TakenAt: now, State: state},
 		Lineage:  []paf.LineageStep{{Op: paf.OpSnapshot, At: now, From: from, Detail: "snapshot " + name}},
 	}

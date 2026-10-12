@@ -121,20 +121,21 @@ func printBoardSnapshotPreview(out io.Writer, s boardSnapshotShare) {
 }
 
 type snapshotBoardParams struct {
-	Action       string   `pos:"true" help:"ls, fetch, preview, import or rm"`
-	Board        string   `long:"board" help:"Board ID."`
-	Item         string   `long:"item" optional:"true" help:"Snapshot item ID."`
-	Version      string   `long:"version" optional:"true" help:"Snapshot version ID."`
-	Group        string   `long:"group" optional:"true" help:"preview/import: the receiving group."`
-	AgentName    string   `long:"agent-name" optional:"true" help:"preview/import: name for the new agent."`
-	Cwd          string   `long:"cwd" optional:"true" help:"preview/import: working directory; without it the recorded one is kept."`
-	Harness      string   `long:"harness" optional:"true" help:"preview/import: landing harness."`
-	Model        string   `long:"model" optional:"true" help:"preview/import: landing model."`
-	PreviewToken string   `long:"preview-token" optional:"true" help:"import: the token from a matching preview."`
-	Set          []string `long:"set" optional:"true" help:"preview/import: placeholder name=value."`
-	Cursor       string   `long:"cursor" optional:"true" help:"ls: page cursor."`
-	Local        bool     `long:"local" help:"rm: only remove this node's fetched copy, not the snapshot on the board."`
-	JSON         bool     `long:"json" help:"Print raw JSON."`
+	Action             string   `pos:"true" help:"ls, fetch, preview, import or rm"`
+	Board              string   `long:"board" help:"Board ID."`
+	Item               string   `long:"item" optional:"true" help:"Snapshot item ID."`
+	Version            string   `long:"version" optional:"true" help:"Snapshot version ID."`
+	Group              string   `long:"group" optional:"true" help:"preview/import: the receiving group."`
+	AgentName          string   `long:"agent-name" optional:"true" help:"preview/import: name for the new agent."`
+	Cwd                string   `long:"cwd" optional:"true" help:"preview/import: working directory; without it the recorded one is kept."`
+	Harness            string   `long:"harness" optional:"true" help:"preview/import: landing harness."`
+	Model              string   `long:"model" optional:"true" help:"preview/import: landing model."`
+	PreviewToken       string   `long:"preview-token" optional:"true" help:"import: the token from a matching preview."`
+	ConfirmHistoryLoss bool     `long:"confirm-history-loss" help:"import: accept a landing that cuts 25% or more of the conversation to fit the landing model."`
+	Set                []string `long:"set" optional:"true" help:"preview/import: placeholder name=value."`
+	Cursor             string   `long:"cursor" optional:"true" help:"ls: page cursor."`
+	Local              bool     `long:"local" help:"rm: only remove this node's fetched copy, not the snapshot on the board."`
+	JSON               bool     `long:"json" help:"Print raw JSON."`
 }
 
 func snapshotBoardCmd() *cobra.Command {
@@ -237,7 +238,7 @@ func runSnapshotBoard(p *snapshotBoardParams, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "Error: --preview-token from a matching preview is required")
 			return rcInvalidArg
 		}
-		body := map[string]any{"group": p.Group, "name": p.AgentName, "harness": p.Harness, "model": p.Model, "set": p.Set, "preview_token": p.PreviewToken}
+		body := map[string]any{"group": p.Group, "name": p.AgentName, "harness": p.Harness, "model": p.Model, "set": p.Set, "preview_token": p.PreviewToken, "confirm_history_loss": p.ConfirmHistoryLoss}
 		if p.Cwd != "" {
 			body["cwd"] = p.Cwd
 		} else {

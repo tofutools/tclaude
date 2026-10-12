@@ -23,6 +23,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/common/buildversion"
 	"github.com/tofutools/tclaude/pkg/federation/jobrepo"
 	"github.com/tofutools/tclaude/pkg/paf"
@@ -401,6 +402,25 @@ func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "format", "no_native and no_context apply only to format=paf")
 		return
 	}
+	if id := r.URL.Query().Get("summary"); id != "" {
+		if format != agentArchivePAF {
+			writeError(w, 400, "format", "a summary travels only in a PAF: use --format paf")
+			return
+		}
+		caller, _, _ := authedCaller(w, r)
+		if parts.Handoff, err = takeExportSummary(id, caller, res.ConvID); err != nil {
+			writeError(w, 409, "summary", err.Error())
+			return
+		}
+		// The summary is the agent's own text: it is scanned like the
+		// conversation it summarizes.
+		c := privacy.NewCollector()
+		c.Text(parts.Handoff, "context/handoff.md")
+		if privacy.Blocking(c.Findings()) && r.URL.Query().Get("allow_flagged") != "true" {
+			writeJSON(w, 422, map[string]any{"error": "suspected credentials in the agent's summary: use --allow-flagged, or export without --with-summary", "code": "flagged_credentials", "findings": c.Findings()})
+			return
+		}
+	}
 	if parts.NoNative && parts.NoContext && b.Manifest.History != nil {
 		writeError(w, 400, "format", "leaving out both the native history and the neutral context exports no conversation; export without history instead")
 		return
@@ -465,6 +485,8 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	// direct is a file import by the caller, as opposed to a federation
 	// offer, move or teleport handing over an already decoded bundle.
 	direct := b == nil
+	// handoff is the agent-written summary a PAF may carry.
+	var handoff string
 	if b == nil {
 		file, err := os.CreateTemp("", ".agent-import-archive-")
 		if err != nil {
@@ -484,7 +506,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer func() { _ = b.Close() }()
-		neutral, rescan = info.Context, info.Scan
+		neutral, rescan, handoff = info.Context, info.Scan, info.Handoff
 	}
 	arrival, _ := r.Context().Value(arrivalContextKey{}).(*arrivalContext)
 	if arrival == nil {
@@ -669,7 +691,7 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	if landingModel == "" && !crossHarness && d.Origin != nil {
 		landingModel = d.Origin.Model
 	}
-	landing, warnings, err := planHistoryLanding(b, h, landingModel, preview.Cwd, neutral, q.Get("skip_history") == "true")
+	landing, warnings, err := planHistoryLanding(b, h, landingModel, preview.Cwd, neutral, landingOptions{Skip: q.Get("skip_history") == "true", BudgetNative: direct, Summary: handoff})
 	if err != nil {
 		writeError(w, 400, "history", err.Error())
 		return
@@ -683,8 +705,20 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		preview.Warnings = slices.DeleteFunc(preview.Warnings, func(s string) bool { return s == legacy.WarningContextOnly })
 	}
 	preview.Warnings = append(preview.Warnings, "Source groups are advisory; only --group selects receiving membership. Source profile names and role references do not confer grants.")
+	// A large cut of a file import needs the importer's confirmation, as a
+	// morph's does. The full history is never lost: it stays in the file
+	// and is saved beside the agent.
+	needsConfirm := direct && landing.Losses != nil && landing.Losses.NeedsSummary && preview.History
+	if needsConfirm {
+		preview.Warnings = append(preview.Warnings, fmt.Sprintf("Cutting %d%% of the conversation needs confirmation: --confirm-history-loss.", landing.cutPercent()))
+	}
 	if !apply {
 		writeJSON(w, 200, preview)
+		return
+	}
+	if needsConfirm && q.Get("confirm_history_loss") != "true" {
+		writeJSON(w, 409, map[string]any{"code": "history_confirmation_required", "preview": preview,
+			"error": fmt.Sprintf("landing on %s cuts about %d%% of the conversation. Confirm the cut with --confirm-history-loss (the full history stays in the file and is saved beside the agent), choose a model with a larger context window with --model, or import without the conversation with --skip-history.", landingModelLabel(h, landingModel), landing.cutPercent())})
 		return
 	}
 	if pathError != "" || len(missing) > 0 {
@@ -786,6 +820,9 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		auditDecisions, _ := json.Marshal(preview.Permissions)
 		recordFederationAudit("agent.permissions.carry", carryPolicy.Peer, spawned.AgentID, preview.Group, string(auditDecisions), 200)
 	}
+	if landing.full != nil {
+		saveLandedHistory(spawned, landing, group)
+	}
 	preview.Applied = true
 	preview.Offline = noStart
 	preview.Spawn = &spawned
@@ -855,4 +892,49 @@ func landSpawnOffline(p spawnParams, h *harness.Harness, convID string) (*spawnO
 		agentID, _ = db.AgentIDForConv(convID)
 	}
 	return &spawnOutcome{AgentID: agentID, ConvID: convID, Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
+}
+
+// saveLandedHistory saves the whole conversation of a landing that cut it
+// beside the landed agent, where morph keeps its artifacts, and tells the
+// agent where it is. Best effort: the full history also stays in the file
+// that was imported.
+func saveLandedHistory(spawned agent.SpawnResponse, l *historyLanding, g *db.AgentGroup) {
+	agentID := spawned.AgentID
+	if agentID == "" {
+		agentID, _ = db.AgentIDForConv(spawned.ConvID)
+	}
+	if agentID == "" || spawned.ConvID == "" {
+		return
+	}
+	root, err := tclcommon.PrepareMorphArtifactsDir(agentID)
+	if err != nil {
+		slog.Warn("import: save full history", "agent", agentID, "error", err)
+		return
+	}
+	dir := filepath.Join(root, "import-"+time.Now().UTC().Format("20060102T150405.000Z"))
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		slog.Warn("import: save full history", "agent", agentID, "error", err)
+		return
+	}
+	if err := harness.WriteHistoryArtifacts(l.full, dir); err != nil {
+		slog.Warn("import: save full history", "agent", agentID, "error", err)
+		return
+	}
+	body := fmt.Sprintf("Your imported conversation was cut by about %d%% to fit %s's context window: the pinned start, compaction summaries and the newest turns are what you see. The whole conversation is saved at %s (Markdown) and %s (PAF context, JSON lines). Read the parts you need from there rather than assuming what was in them.",
+		l.cutPercent(), landingModelLabel(mustHarness(l.Harness), l.Model), filepath.Join(dir, "transcript.md"), filepath.Join(dir, "transcript.jsonl"))
+	var groupID int64
+	if g != nil {
+		groupID = g.ID
+	}
+	if _, err := queueAgentMessage(&db.AgentMessage{GroupID: groupID, ToConv: spawned.ConvID, Subject: "Your full imported history", Body: body}); err != nil {
+		slog.Warn("import: tell the agent where its full history is", "agent", agentID, "error", err)
+	}
+}
+
+func mustHarness(name string) *harness.Harness {
+	h, err := harness.Resolve(name)
+	if err != nil || h == nil {
+		return &harness.Harness{Name: name, DisplayName: name}
+	}
+	return h
 }

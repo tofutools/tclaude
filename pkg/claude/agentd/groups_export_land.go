@@ -168,7 +168,7 @@ func planGroupLandings(exp *groupexport.Export, a *paf.Archive, opts groupLandin
 		if c.Content != nil && format != "" {
 			b.SetHistory(format, c.ConvID, c.Content)
 		}
-		landing, warnings, err := planHistoryLanding(b, dst, model, cwd, neutral, false)
+		landing, warnings, err := planHistoryLanding(b, dst, model, cwd, neutral, landingOptions{BudgetNative: true})
 		if err != nil {
 			return fail(fmt.Errorf("member %q: %w", c.Title, err))
 		}

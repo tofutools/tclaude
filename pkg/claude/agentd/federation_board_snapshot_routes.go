@@ -655,6 +655,9 @@ type boardSnapshotImportInput struct {
 	Set          []string `json:"set,omitempty"`
 	SkipHistory  bool     `json:"skip_history,omitempty"`
 	PreviewToken string   `json:"preview_token,omitempty"`
+	// ConfirmHistoryLoss accepts a large cut of the conversation at import;
+	// it is not part of what a preview token binds.
+	ConfirmHistoryLoss bool `json:"confirm_history_loss,omitempty"`
 }
 
 // snapshotImport previews or imports a fetched snapshot as a new agent.
@@ -725,8 +728,8 @@ func (a *boardItemAccess) snapshotImport(w http.ResponseWriter, r *http.Request,
 // key names the source, so a token never carries over to another snapshot.
 // snapshot is added to the response; landed reports an import.
 func landSnapshotAsAgent(w http.ResponseWriter, r *http.Request, op string, f *os.File, size int64, in boardSnapshotImportInput, key any, keep *recoveryIdentity, summary *privacy.ConsentSummary, arrival *arrivalContext, snapshot map[string]any) (bool, error) {
-	token := in.PreviewToken
-	in.PreviewToken = ""
+	token, confirm := in.PreviewToken, in.ConfirmHistoryLoss
+	in.PreviewToken, in.ConfirmHistoryLoss = "", false
 	options := boardPreviewHash(struct {
 		Key     any
 		Keep    *recoveryIdentity `json:",omitempty"`
@@ -771,6 +774,9 @@ func landSnapshotAsAgent(w http.ResponseWriter, r *http.Request, op string, f *o
 	}
 	if in.SkipHistory {
 		q.Set("skip_history", "true")
+	}
+	if confirm {
+		q.Set("confirm_history_loss", "true")
 	}
 	q["set"] = in.Set
 	inner := r.Clone(context.WithValue(r.Context(), arrivalContextKey{}, arrival))

@@ -33,12 +33,14 @@ func snapshotCmd() *cobra.Command {
 }
 
 type snapshotCreateParams struct {
-	Agent     string `pos:"true" help:"Agent selector to snapshot."`
-	Name      string `long:"name" optional:"true" help:"Snapshot name: 1-64 of a-z, 0-9, '.', '_', '-'. Defaults to <agent>-<timestamp>."`
-	Note      string `long:"note" optional:"true" help:"A short note stored with the snapshot."`
-	Expires   string `long:"expires" optional:"true" help:"Expiry: a duration (72h, 30d), an RFC 3339 time, or never. Defaults to snapshots.default_retention."`
-	NoHistory bool   `long:"no-history" help:"Capture the definition only, without the conversation."`
-	JSON      bool   `long:"json" help:"Print the snapshot as JSON."`
+	Agent       string `pos:"true" help:"Agent selector to snapshot."`
+	Name        string `long:"name" optional:"true" help:"Snapshot name: 1-64 of a-z, 0-9, '.', '_', '-'. Defaults to <agent>-<timestamp>."`
+	Note        string `long:"note" optional:"true" help:"A short note stored with the snapshot."`
+	Expires     string `long:"expires" optional:"true" help:"Expiry: a duration (72h, 30d), an RFC 3339 time, or never. Defaults to snapshots.default_retention."`
+	NoHistory   bool   `long:"no-history" help:"Capture the definition only, without the conversation."`
+	WithSummary bool   `long:"with-summary" help:"First ask the agent to write a summary of its earlier work and keep it with the snapshot, so a landing on a smaller context window keeps it. Costs the agent a turn; waits up to --summary-wait."`
+	SummaryWait string `long:"summary-wait" optional:"true" help:"With --with-summary: how long to wait for the agent's summary (default 10m)."`
+	JSON        bool   `long:"json" help:"Print the snapshot as JSON."`
 }
 
 func snapshotCreateCmd() *cobra.Command {
@@ -58,6 +60,13 @@ func runSnapshotCreate(p *snapshotCreateParams, stdout, stderr io.Writer) int {
 	}
 	var meta snapshotlib.Meta
 	body := map[string]any{"agent": p.Agent, "name": p.Name, "note": p.Note, "expires": p.Expires, "no_history": p.NoHistory}
+	if p.WithSummary {
+		id, rc := awaitAgentSummary(p.Agent, p.SummaryWait, stderr)
+		if rc != rcOK {
+			return rc
+		}
+		body["summary"] = id
+	}
 	if err := DaemonPost("/v1/snapshots", body, &meta); err != nil {
 		fmt.Fprintln(stderr, err)
 		return MapDaemonErrorToRC(err)
@@ -269,7 +278,7 @@ func downloadSnapshot(name, dest string) error {
 // snapshotSpawnFlags are the spawn flags --from-snapshot applies. Every
 // other launch flag would be silently ignored, so it is refused instead:
 // the snapshot carries the launch shape.
-var snapshotSpawnFlags = map[string]bool{"from-snapshot": true, "count": true, "name": true, "cwd": true, "harness": true, "model": true}
+var snapshotSpawnFlags = map[string]bool{"from-snapshot": true, "count": true, "name": true, "cwd": true, "harness": true, "model": true, "confirm-history-loss": true}
 
 func runSpawnFromSnapshot(p *SpawnParams, cmd *cobra.Command, stdout, stderr io.Writer) int {
 	if p.FromSnapshot == "" {
@@ -297,7 +306,7 @@ func runSpawnFromSnapshot(p *SpawnParams, cmd *cobra.Command, stdout, stderr io.
 			return rc
 		}
 	}
-	body := map[string]any{"group": group, "name": p.Name, "count": p.Count, "harness": p.Harness, "model": p.Model}
+	body := map[string]any{"group": group, "name": p.Name, "count": p.Count, "harness": p.Harness, "model": p.Model, "confirm_history_loss": p.ConfirmHistoryLoss}
 	if p.Cwd != "" {
 		cwd, err := filepath.Abs(p.Cwd)
 		if err != nil {

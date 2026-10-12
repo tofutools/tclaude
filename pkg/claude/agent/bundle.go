@@ -26,6 +26,8 @@ type bundleExportParams struct {
 	Format           string `long:"format" optional:"true" help:"Archive format: bundle (the default, readable by every tclaude) or paf (Portable Agent Format, see docs/paf.md)."`
 	NoNative         bool   `long:"no-native" help:"PAF only: leave the native history out and carry the conversation in harness-neutral form only."`
 	NoContext        bool   `long:"no-context" help:"PAF only: leave the harness-neutral copy of the conversation out."`
+	WithSummary      bool   `long:"with-summary" help:"PAF only: first ask the agent to write a summary of its earlier work and carry it, so a landing on a smaller context window keeps it. Costs the agent a turn; waits up to --summary-wait."`
+	SummaryWait      string `long:"summary-wait" optional:"true" help:"With --with-summary: how long to wait for the agent's summary (default 10m)."`
 }
 
 // pafExportParams are bundleExportParams for `tclaude paf export`, which
@@ -37,6 +39,8 @@ type pafExportParams struct {
 	NoNative     bool   `long:"no-native" help:"Leave the native history out and carry the conversation in harness-neutral form only."`
 	NoContext    bool   `long:"no-context" help:"Leave the harness-neutral copy of the conversation out; only the native history travels."`
 	AllowFlagged bool   `long:"allow-flagged" help:"Explicitly allow credential-shaped text; inspect before sharing."`
+	WithSummary  bool   `long:"with-summary" help:"First ask the agent to write a summary of its earlier work and carry it, so a landing on a smaller context window keeps it. Costs the agent a turn; waits up to --summary-wait."`
+	SummaryWait  string `long:"summary-wait" optional:"true" help:"With --with-summary: how long to wait for the agent's summary (default 10m)."`
 }
 
 // PAFExportCmd is `tclaude paf export`: agent bundle export writing PAF.
@@ -46,7 +50,7 @@ func PAFExportCmd() *cobra.Command {
 			"The conversation travels as the native history plus a harness-neutral copy, so it can land on any harness. " +
 			"Credential-shaped text refuses the export unless --allow-flagged. Needs agent.bundle.export.",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *pafExportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runBundleExport(&bundleExportParams{Agent: p.Agent, File: p.File, History: p.History, AllowFlagged: p.AllowFlagged, Format: "paf", NoNative: p.NoNative, NoContext: p.NoContext}, os.Stderr))
+			os.Exit(runBundleExport(&bundleExportParams{Agent: p.Agent, File: p.File, History: p.History, AllowFlagged: p.AllowFlagged, Format: "paf", NoNative: p.NoNative, NoContext: p.NoContext, WithSummary: p.WithSummary, SummaryWait: p.SummaryWait}, os.Stderr))
 		}}.ToCobra()
 }
 
@@ -76,6 +80,7 @@ type bundleImportParams struct {
 	KeepPaths                 bool     `long:"keep-paths" help:"Reuse recorded paths that exist locally; --cwd and --set override them."`
 	Set                       []string `long:"set" optional:"true" help:"Resolve profile path placeholder with name=value (repeatable)."`
 	SkipHistory               bool     `long:"skip-history" help:"Import configuration without native history."`
+	ConfirmHistoryLoss        bool     `long:"confirm-history-loss" help:"Accept a landing that cuts 25% or more of the conversation to fit the landing model; the full history stays in the file and is saved beside the agent."`
 	Harness                   string   `long:"harness" optional:"true" help:"Land on this harness instead of the source one; the conversation is translated."`
 	Model                     string   `long:"model" optional:"true" help:"Landing model; the conversation is budgeted to its context window."`
 	JSON                      bool     `long:"json" help:"Print the full machine-readable preview or result."`
@@ -115,6 +120,17 @@ func runBundleExport(p *bundleExportParams, stderr io.Writer) int {
 		return rc
 	}
 	q := url.Values{"agent": {p.Agent}}
+	if p.WithSummary {
+		if p.Format != "paf" {
+			fmt.Fprintln(stderr, "Error: --with-summary needs --format paf")
+			return rcInvalidArg
+		}
+		id, rc := awaitAgentSummary(p.Agent, p.SummaryWait, stderr)
+		if rc != rcOK {
+			return rc
+		}
+		q.Set("summary", id)
+	}
 	if p.CarryPermissions {
 		q.Set("carry_permissions", "true")
 	}
@@ -242,6 +258,9 @@ func runBundleImport(p *bundleImportParams, stdin io.Reader, out, stderr io.Writ
 	}
 	if p.SkipHistory {
 		q.Set("skip_history", "true")
+	}
+	if p.ConfirmHistoryLoss {
+		q.Set("confirm_history_loss", "true")
 	}
 	var result json.RawMessage
 	if err := uploadAgentArchive("/v1/agent-bundle/import?"+q.Encode(), archive, &result); err != nil {

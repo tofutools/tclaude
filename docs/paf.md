@@ -190,7 +190,7 @@ guess. The preview's
 the conversation takes:
 
 - **native** when the PAF carries a native history in the landing harness's
-  format;
+  format and it fits the landing model's context budget;
 - **translated** otherwise: the neutral context, or the native history
   decoded by tclaude's reader for its harness, is translated for the landing
   harness and budgeted to the landing model's context window, with the
@@ -204,6 +204,59 @@ On another harness the source's launch posture (approval, sandbox and the
 other profile settings) is not applied; the receiver's defaults and normal
 spawn checks apply, and the preview says so. Imports through federation
 offers, moves and teleports keep landing on the source harness.
+
+### Landing on a smaller context window
+
+Take an agent that ran on a model with a 1M-token window and had used half
+of it, about 500k tokens, imported onto a model with a 200k window:
+
+```bash
+tclaude paf import --file big.paf --cwd "$PWD" --model sonnet --group team --apply
+```
+
+- **The budget.** The carried conversation may fill 60% of the landing
+  window (`agent.morph.history_budget_percent`, as for a morph), here about
+  120k tokens; the rest is headroom so the agent does not compact on its
+  first turn. A native history is installed as it is only when it fits that
+  budget. This one does not, so it lands translated and trimmed instead, and
+  the preview says so.
+- **What is kept.** The original task and the latest instructions are
+  pinned, as are the compaction summaries the harness wrote when it
+  compacted. Then come the newest complete turns that fit. Long tool
+  inputs and results are clipped, and media the landing harness cannot
+  carry is left out. The rest, here roughly three quarters of the
+  conversation, is left out, and markers say where.
+- **Confirmation.** The preview reports how much is cut. From 10% it warns.
+  From 25% `--apply` refuses until you choose:
+  - `--confirm-history-loss` to accept the cut;
+  - `--model` for a model with a larger window;
+  - `--skip-history` to import the agent without its conversation.
+
+  `agent spawn --from-snapshot`, `snapshot board import` and `agent
+  recover` take `--confirm-history-loss` too. Group import shows the cut
+  per member in its dry run.
+- **Where the full history is.** It is never lost. It stays in the PAF,
+  which `tclaude paf render` reads whole. It is also saved beside the landed
+  agent as `transcript.md` and `transcript.jsonl` (a PAF context file), in
+  its morph artifact directory, and the agent gets an inbox message naming
+  both, so it can read what was cut instead of guessing.
+- **A better result.** A model with a larger window keeps more. Or export
+  with a summary:
+
+  ```bash
+  tclaude paf export big-agent --history --with-summary --file big.paf
+  tclaude agent snapshot create big-agent --with-summary
+  ```
+
+  `--with-summary` first asks the agent to write a summary of its earlier
+  work: the goal, decisions, completed work, open issues and next steps. The
+  agent submits it with `tclaude agent morph-handoff`, as a morph's source
+  does. The PAF carries it as `context/handoff.md`. A landing that has to cut
+  then keeps the pinned start, that summary and the newest turns. Asking
+  costs the agent a turn, so it is opt-in and never happens on its own. The
+  export waits up to `--summary-wait` (default 10 minutes) and is not made
+  without the summary. The summary is scanned for credentials like the
+  conversation, and an agent cannot ask for its own.
 
 ## Snapshots
 
