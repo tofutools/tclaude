@@ -689,6 +689,52 @@ export function createManagementActions({
     }
     return result;
   }
+  // Snapshot library (4d, tcl-3hjdm1) through the dashboard /api twins.
+  async function snapshotCall(method, path, body) {
+    const response = await fetch(`/api/${path}`, {
+      method, credentials: 'same-origin',
+      ...(body !== undefined ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}),
+    });
+    if (!response.ok) throw await pafError(response);
+    return response.json();
+  }
+  const snapshots = {
+    list: async () => (await snapshotCall('GET', 'snapshots')).snapshots || [],
+    create: (body) => snapshotCall('POST', 'snapshots', body),
+    remove: (name) => snapshotCall('DELETE', `snapshots/${encodeURIComponent(name)}`),
+    prune: () => snapshotCall('POST', 'snapshots/prune', {}),
+    spawn: (name, body) => snapshotCall('POST', `snapshots/${encodeURIComponent(name)}/spawn`, body),
+    policies: async () => (await snapshotCall('GET', 'resilience/policies')).policies || [],
+    async exportBlob(name) {
+      const response = await fetch(`/api/snapshots/${encodeURIComponent(name)}/export`, { credentials: 'same-origin' });
+      if (!response.ok) throw await pafError(response);
+      return response.blob();
+    },
+    // share previews (no digest) or publishes (digest) a snapshot on a
+    // board; blob, when given, shares that file (a redacted copy) instead.
+    async share(board, { snapshot = '', name = '', to = [], expires = '', digest = '', blob = null }) {
+      const query = queryString({ snapshot: blob ? '' : snapshot, name, to, expires, content_digest: digest });
+      const response = await fetch(`/api/federation/boards/${encodeURIComponent(board)}/snapshots${query}`, {
+        method: 'POST', credentials: 'same-origin',
+        ...(blob ? { headers: { 'Content-Type': 'application/vnd.tclaude.paf+zip' }, body: blob } : {}),
+      });
+      if (!response.ok) throw await pafError(response);
+      return response.json();
+    },
+    // publish previews (no digest) or returns the signed public PAF.
+    async publish(blob, options, digest = '') {
+      const response = await fetch(`/api/paf/publish${queryString({ ...options, content_digest: digest })}`, {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/vnd.tclaude.paf+zip' }, body: blob,
+      });
+      if (!response.ok) throw await pafError(response);
+      return digest ? response.blob() : response.json();
+    },
+  };
+  function openSnapshots(preset = {}) {
+    if (refuseInPeerView('Snapshots')) return;
+    state.openDialog({ kind: 'snapshots', ...preset });
+  }
+
   function openAgentExport({ agent, label }) {
     if (refuseInPeerView('Agent export')) return;
     state.openDialog({ kind: 'paf-export', agent, label });
@@ -1115,6 +1161,8 @@ export function createManagementActions({
     importAgentPAF,
     openAgentExport,
     openGroupExport,
+    snapshots,
+    openSnapshots,
     openGroupContext,
     saveGroupContext,
     inspectProfiles,
