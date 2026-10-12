@@ -145,6 +145,8 @@ func markSnapshotDeleted(tx *sql.Tx, board, item, version, publisher string) err
 // Revocation commits before filesystem cleanup. Failed cleanup keeps its ledger
 // and quota reservation, so a repeated delete or a later sweep can finish it.
 func (s *Store) cleanupSnapshotDeletions(board, item, version string) error {
+	s.boardCleanupMu.Lock()
+	defer s.boardCleanupMu.Unlock()
 	query := `SELECT board,blob FROM board_snapshot_cleanup`
 	args := []any{}
 	if board != "" {

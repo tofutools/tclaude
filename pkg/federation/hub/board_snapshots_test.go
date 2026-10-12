@@ -30,13 +30,16 @@ type snapshotFixture struct {
 }
 
 func newSnapshotFixture(t *testing.T) *snapshotFixture {
+	return newSnapshotFixtureWithConfig(t, hub.Config{FramesPerMinute: 10000})
+}
+func newSnapshotFixtureWithConfig(t *testing.T, cfg hub.Config) *snapshotFixture {
 	t.Helper()
 	f := &snapshotFixture{dir: testutil.CanonicalTempDir(t), board: proto.NewEnvelopeID(), key: make([]byte, 32)}
 	f.now.Store(time.Now().UTC().Truncate(time.Second).UnixNano())
 	var e error
 	f.store, e = hub.OpenStoreWithClock(filepath.Join(f.dir, "hub.sqlite"), func() time.Time { return time.Unix(0, f.now.Load()).UTC() })
 	require.NoError(t, e)
-	h, e := hub.New(f.store, hub.Config{FramesPerMinute: 10000})
+	h, e := hub.New(f.store, cfg)
 	require.NoError(t, e)
 	srv := httptest.NewServer(h.Handler())
 	f.url = "ws" + strings.TrimPrefix(srv.URL, "http")
@@ -197,4 +200,84 @@ func TestBoardSnapshotValidationDeleteAndCleanupRetry(t *testing.T) {
 		require.ErrorIs(t, e, os.ErrNotExist)
 	}
 	require.Equal(t, 409, f.call(t, f.owner, "snapshots.publish", map[string]any{"snapshot": v}).Status)
+}
+
+func TestBoardSnapshotLiveSweeperUsesInjectedTime(t *testing.T) {
+	f := newSnapshotFixtureWithConfig(t, hub.Config{FramesPerMinute: 10000, BoardSweepInterval: 10 * time.Millisecond})
+	expiry := time.Unix(0, f.now.Load()).UTC().Add(time.Hour)
+	v, raw := f.version(t, expiry)
+	f.upload(t, v, raw)
+	f.publish(t, v)
+	require.Equal(t, 200, f.call(t, f.owner, "pins.set", map[string]any{"item": v.Item, "version_id": v.Version}).Status)
+	f.now.Store(expiry.UnixNano())
+	require.Eventually(t, func() bool {
+		for _, c := range v.Chunks {
+			if _, e := os.Stat(filepath.Join(f.dir, "board-blobs", f.board, c.Blob)); !os.IsNotExist(e) {
+				return false
+			}
+		}
+		return true
+	}, time.Second, 5*time.Millisecond)
+}
+
+func TestBoardSnapshotMixedCatalogPaginationKeepsLegacyReadersWorking(t *testing.T) {
+	f := newSnapshotFixture(t)
+	for range 9 {
+		v, raw := f.version(t, time.Unix(0, f.now.Load()).UTC().Add(time.Hour))
+		f.upload(t, v, raw)
+		f.publish(t, v)
+	}
+	for range 8 {
+		blob := proto.NewEnvelopeID()
+		data, e := proto.SealBoardContent(f.key, f.board, 1, blob, []byte("legacy config"))
+		require.NoError(t, e)
+		sum := sha256.Sum256(data)
+		v := proto.BoardItemVersion{Board: f.board, Item: proto.NewEnvelopeID(), Version: proto.NewEnvelopeID(), Epoch: 1, Blob: blob, SHA256: hex.EncodeToString(sum[:]), Bytes: int64(len(data)), Metadata: []byte("legacy encrypted metadata")}
+		v.Sign(f.owner)
+		_, e = client.BoardBlob(context.Background(), client.Options{URL: f.url, Identity: f.owner}, v, data)
+		require.NoError(t, e)
+		require.Equal(t, 200, f.call(t, f.owner, "items.publish", map[string]any{"version": v}).Status)
+	}
+	var page struct {
+		Items     []proto.BoardItemVersion     `json:"items"`
+		Snapshots []proto.BoardSnapshotVersion `json:"snapshots"`
+		Cursor    string                       `json:"next_cursor"`
+	}
+	r := f.call(t, f.owner, "items.list", nil)
+	require.Equal(t, 200, r.Status)
+	require.NoError(t, json.Unmarshal(r.Body, &page))
+	require.Len(t, page.Items, 8)
+	require.Empty(t, page.Snapshots)
+	for _, v := range page.Items {
+		require.NoError(t, v.Verify())
+	}
+	cursor := ""
+	seen := map[string]bool{}
+	snapshots := 0
+	for {
+		r = f.call(t, f.owner, "items.list", map[string]any{"include_snapshots": true, "cursor": cursor})
+		require.Equal(t, 200, r.Status)
+		page.Items = nil
+		page.Snapshots = nil
+		require.NoError(t, json.Unmarshal(r.Body, &page))
+		require.LessOrEqual(t, len(page.Items)+len(page.Snapshots), 8)
+		for _, v := range page.Items {
+			require.False(t, seen[v.Item])
+			seen[v.Item] = true
+			require.NoError(t, v.Verify())
+		}
+		for _, v := range page.Snapshots {
+			require.False(t, seen[v.Item])
+			seen[v.Item] = true
+			require.NoError(t, v.Verify())
+			snapshots++
+		}
+		if page.Cursor == "" {
+			break
+		}
+		require.Greater(t, page.Cursor, cursor)
+		cursor = page.Cursor
+	}
+	require.Len(t, seen, 17)
+	require.Equal(t, 9, snapshots)
 }
