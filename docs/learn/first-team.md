@@ -5,9 +5,12 @@ tutorial you start the tclaude daemon, put two agents in a group, and watch
 them message each other. That is the foundation for everything else tclaude
 does with teams: groups, mail, the dashboard, and permissions.
 
-**You need:** [Your first session](first-session.md) completed. Use the same
+**You need:** [Your first agent](first-agent.md) completed. Use the same
 project directory as there: your harness has already asked you to trust it,
 and agents spawned in the background cannot answer that question.
+
+If you followed [Get started](get-started.md), steps 1 and 2 are done
+already: skip to step 3.
 
 ## 1. Install the agent extras
 

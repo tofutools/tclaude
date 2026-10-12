@@ -22,10 +22,10 @@ MIT-licensed; the models are the only external part.
 
 ## What it adds
 
-- **Durable sessions and history**: detach, reattach and resume any harness,
-  and search every conversation across all of them.
-- **Fleet dashboard**: status, cost, context, branch, PR and CI for every
-  agent, down to its live terminal.
+- **Fleet dashboard**: start, watch and steer every agent from the browser:
+  status, cost, context, branch, PR and CI, down to its live terminal.
+- **Durable sessions and history**: agents keep running when you look away;
+  resume any harness, and search every conversation across all of them.
 - **Agent mail and teams**: groups of agents that message each other,
   deployable from reusable templates.
 - **Identity, permissions and audit**: kernel-verified callers, scoped grants,
@@ -67,15 +67,20 @@ every option, including the standalone `tclaude-agentd` daemon.
 ## Quick start
 
 ```bash
-tclaude                       # start your default harness in a session
-                              # (Ctrl+B D detaches; it keeps running)
-tclaude session watch         # find running sessions and reattach
-tclaude conv watch -g         # browse and resume past conversations
-tclaude ask "what does this package do?"
+tclaude agentd serve          # start the daemon; keep it running
+                              # (copy the TCLAUDE_HUMAN_TOKEN export it prints)
+tclaude agent dashboard       # open the dashboard in your browser
 ```
 
+In the dashboard, **+ new group** sets a working directory, and the group's
+spawn button starts an agent with a first task. Watch its status, open its
+terminal with **focus**, and read the team's mail under **Messages**.
+
+Prefer the shell? Bare `tclaude` starts your harness in a tmux session, and
+`tclaude ask "…"` answers a quick question.
+
 **New here? Follow the [Learn path](https://tofutools.github.io/tclaude/learn/):**
-short hands-on tutorials from your first session to your first agent team.
+short hands-on tutorials from installing to running your first agent team.
 
 ## Documentation
 
