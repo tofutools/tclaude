@@ -102,7 +102,7 @@ type NewParams struct {
 	// rest of runNew stays harness-agnostic. Direct `--harness shell` keeps the
 	// lightweight session path; agentd's managed form uses the registered shell
 	// pseudo-harness so profiles and tclaude's sandbox still apply. See shell.go.
-	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude | codex | opencode | copilot | gemini | shell. Unset = global profile, then an installed harness (claude preferred)"`
+	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude | codex | opencode | copilot | gemini | shell | pi (experimental: opt in with experimental_harnesses). Unset = global profile, then an installed harness (claude preferred)"`
 
 	// Shell is shorthand for --harness shell: it sets Harness to
 	// ShellHarnessName in runNew before any harness resolution happens.
@@ -906,6 +906,14 @@ func runNew(params *NewParams) error {
 	if h.Name == harness.GeminiName && recordedApprovalPolicy == "" {
 		// And for Gemini: no --approval-mode IS the inherit posture.
 		recordedApprovalPolicy = harness.GeminiApprovalInherit
+	}
+	if h.Name == harness.PiName && recordedApprovalPolicy == "" {
+		// And for pi: no tool restriction IS its native auto posture.
+		recordedApprovalPolicy = harness.PiApprovalAuto
+	}
+	if err := RequireConfinementForApproval(h, recordedApprovalPolicy, outerLayer,
+		params.AllowUnenforcedSandbox, launchIsSandboxContinuation(params)); err != nil {
+		return err
 	}
 	params.Approval = approvalPolicy
 
@@ -2156,6 +2164,17 @@ func runNew(params *NewParams) error {
 			return err
 		}
 	}
+	if h.CheckVersion != nil {
+		binary := executablePath
+		if binary == "" {
+			if binary, err = exec.LookPath(h.Spawn.Binary()); err != nil {
+				return fmt.Errorf("find %s executable: %w", h.DisplayName, err)
+			}
+		}
+		if err := h.CheckVersion(binary); err != nil {
+			return err
+		}
+	}
 	codexRuntimeDir, err := codexAppServerPrivateWriteDir(params)
 	if err != nil {
 		return err
@@ -2289,6 +2308,17 @@ func runNew(params *NewParams) error {
 		RemoteControl:                  remoteControl,
 		CopilotAPIPort:                 params.CopilotAPIPort,
 		InitialPrompt:                  params.InitialPrompt,
+	}
+	if h.StatusExtension != nil {
+		// The extension is the harness's only status channel. Failing to
+		// write it costs live status, not the launch: say so plainly.
+		path, err := h.StatusExtension()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: %s live status is unavailable for this session: %v\n", h.DisplayName, err)
+			slog.Warn("status extension unavailable", "harness", h.Name, "error", err, "module", "session")
+		} else {
+			spawnSpec.StatusExtensionPath = path
+		}
 	}
 	if stacked {
 		spawnSpec = h.NestedSandbox.PrepareLaunch(spawnSpec)

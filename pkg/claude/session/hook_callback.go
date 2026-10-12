@@ -450,7 +450,7 @@ func migrateClearedIdentity(state *SessionState, newConv string) bool {
 	// once); inject /rename so the new conversation also regains a real
 	// customTitle turn — durable, visible in CC's own UI, and on every other
 	// surface.
-	restoreClearedTitle(state.TmuxSession, carriedName)
+	restoreClearedTitle(state.TmuxSession, carriedName, clearedTitleRenameCommand(state.Harness))
 	return true
 }
 
@@ -537,7 +537,18 @@ var clearInjectReadyDelay = 1 * time.Second
 // from .jsonl files) or pending_name (stored even when invalid by
 // lifecycle.go) — neither is pre-checked by the strict gate, so the
 // gate runs here.
-func restoreClearedTitle(tmuxSession, title string) {
+// clearedTitleRenameCommand is the in-pane rename the harness declares (pi's
+// is /name). A harness that declares none keeps the historical /rename.
+func clearedTitleRenameCommand(harnessName string) string {
+	if h, ok := harness.Get(harnessName); ok && h.Life != nil {
+		if command := h.Life.RenameCommand(); command != "" {
+			return command
+		}
+	}
+	return "/rename"
+}
+
+func restoreClearedTitle(tmuxSession, title, renameCommand string) {
 	if tmuxSession == "" || title == "" {
 		return
 	}
@@ -556,7 +567,7 @@ func restoreClearedTitle(tmuxSession, title string) {
 			"tmux", tmuxSession, "module", "hooks")
 		return
 	}
-	if err := paneinput.InjectTextAndSubmit(tmuxSession+":0.0", "/rename "+title, paneinput.Options{}); err != nil {
+	if err := paneinput.InjectTextAndSubmit(tmuxSession+":0.0", renameCommand+" "+title, paneinput.Options{}); err != nil {
 		slog.Warn("clear-migrate: /rename injection failed; relying on pending_name",
 			"error", err, "module", "hooks")
 	}

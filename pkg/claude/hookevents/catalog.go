@@ -15,6 +15,7 @@ const (
 	HarnessOpenCode = "opencode"
 	HarnessGemini   = "gemini"
 	HarnessCopilot  = "copilot"
+	HarnessPi       = "pi"
 )
 
 // Selector is one exact harness-native hook branch. A standing order with
@@ -103,6 +104,19 @@ var definitions = []Definition{
 	def(HarnessCopilot, "PostToolUse", true, false),
 	def(HarnessCopilot, "Stop", true, false),
 	def(HarnessCopilot, "SessionEnd", true, false),
+
+	// pi reports through tclaude's own extension, which speaks Claude Code's
+	// event names. It acts on no callback output except PreCompact's block,
+	// so orders use durable next-turn messages.
+	def(HarnessPi, "SessionStart", true, false),
+	def(HarnessPi, "UserPromptSubmit", true, false),
+	def(HarnessPi, "PreToolUse", true, false),
+	def(HarnessPi, "PostToolUse", true, false),
+	def(HarnessPi, "Notification", true, false),
+	def(HarnessPi, "Stop", true, false),
+	def(HarnessPi, "PreCompact", true, false),
+	def(HarnessPi, "PostCompact", true, false),
+	def(HarnessPi, "SessionEnd", true, false),
 
 	// OpenCode. These are native event-stream/plugin names. The question.* and
 	// permission.v2.* spellings are emitted by released servers even though

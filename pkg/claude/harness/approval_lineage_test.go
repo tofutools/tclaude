@@ -174,6 +174,21 @@ func TestApprovalLineageAllowedMatrix(t *testing.T) {
 		{"gemini yolo cannot mint gemini inherit", GeminiName, GeminiApprovalYolo, false, GeminiName, GeminiApprovalInherit, false, false},
 		{"claude bypass can mint gemini inherit", DefaultName, claudePermBypass, false, GeminiName, GeminiApprovalInherit, false, true},
 		{"gemini inherit parent is credited the baseline", GeminiName, GeminiApprovalInherit, false, GeminiName, GeminiApprovalDefault, false, true},
+
+		// --- pi: auto is unattended shell (Gemini yolo's shape); read-only acts on nothing ---
+		{"claude auto can mint pi auto", DefaultName, claudePermAuto, false, PiName, PiApprovalAuto, false, true},
+		{"gemini yolo can mint pi auto", GeminiName, GeminiApprovalYolo, false, PiName, PiApprovalAuto, false, true},
+		{"pi auto can mint gemini yolo", PiName, PiApprovalAuto, false, GeminiName, GeminiApprovalYolo, false, true},
+		{"pi auto continues pi auto", PiName, PiApprovalAuto, false, PiName, PiApprovalAuto, false, true},
+		{"pi auto cannot mint claude bypass", PiName, PiApprovalAuto, false, DefaultName, claudePermBypass, false, false},
+		{"pi auto cannot mint a codex guardian", PiName, PiApprovalAuto, false, CodexName, ApprovalOnRequest, true, false},
+		{"claude default cannot mint pi auto", DefaultName, claudePermDefault, false, PiName, PiApprovalAuto, false, false},
+		{"claude inherit cannot mint pi auto", DefaultName, claudePermInherit, false, PiName, PiApprovalAuto, false, false},
+		{"claude default can mint pi read-only", DefaultName, claudePermDefault, false, PiName, PiApprovalReadOnly, false, true},
+		{"pi read-only cannot mint pi auto", PiName, PiApprovalReadOnly, false, PiName, PiApprovalAuto, false, false},
+		{"pi read-only can mint gemini default", PiName, PiApprovalReadOnly, false, GeminiName, GeminiApprovalDefault, false, true},
+		{"pi with auto-review is malformed", PiName, PiApprovalAuto, true, PiName, PiApprovalReadOnly, false, false},
+		{"blank pi policy fails closed", PiName, "", false, PiName, PiApprovalReadOnly, false, false},
 		{"gemini inherit parent cannot mint gemini yolo", GeminiName, GeminiApprovalInherit, false, GeminiName, GeminiApprovalYolo, false, false},
 		{"legacy blank gemini child fails closed", DefaultName, claudePermBypass, false, GeminiName, "", false, false},
 		{"gemini auto-review child is malformed", DefaultName, claudePermBypass, false, GeminiName, GeminiApprovalDefault, true, false},
@@ -327,5 +342,19 @@ func TestCopilotApprovalLineageDenialHint(t *testing.T) {
 		if !strings.Contains(yolo, want) {
 			t.Fatalf("the yolo hint must contain %q, got %q", want, yolo)
 		}
+	}
+}
+
+func TestPiApprovalLineageDenialHint(t *testing.T) {
+	hint := ApprovalLineageDenialHint(DefaultName, claudePermDefault, false, PiName, PiApprovalAuto)
+	if !strings.Contains(hint, `"read-only"`) {
+		t.Fatalf("a parent that can delegate read-only should be pointed at it: %q", hint)
+	}
+	hint = ApprovalLineageDenialHint(PiName, "", false, PiName, PiApprovalAuto)
+	if !strings.Contains(hint, "or by a human") || strings.Contains(hint, "pass") {
+		t.Fatalf("a parent that can delegate nothing should be told a human must spawn: %q", hint)
+	}
+	if hint := ApprovalLineageDenialHint(DefaultName, claudePermDefault, false, PiName, PiApprovalReadOnly); hint != "" {
+		t.Fatalf("read-only is the narrowest posture; no hint expected, got %q", hint)
 	}
 }

@@ -132,6 +132,9 @@ var autoNameUnsupported = map[string]string{
 	harness.CopilotName:  "Copilot has no tested host-control sandbox posture for unattended naming",
 	harness.OpenCodeName: "OpenCode has no tested host-control sandbox posture for unattended naming",
 	harness.ShellName:    "shell has no model",
+	// Not inherent: pi can launch with no acting tools. P6 adds pi's one-shot
+	// ask path, and auto-naming with it.
+	harness.PiName: "pi auto-naming waits for its one-shot ask path (until P6)",
 }
 
 func runAutoName(agentID, convID, harnessName, cwd, fallback, prompt string) {

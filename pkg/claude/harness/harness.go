@@ -123,6 +123,19 @@ type Harness struct {
 	// config target (+ any trust step). nil = this build can't install
 	// hooks for the harness; `tclaude setup` skips it with a message.
 	Hooks HookInstaller
+	// StatusExtension materializes a per-launch status bridge that the
+	// harness loads itself (pi's extension), returning its path for
+	// SpawnSpec.StatusExtensionPath. It is the alternative to Hooks for a
+	// harness with no hook configuration; nil means none.
+	StatusExtension func() (string, error)
+	// ConfinedApprovals lists the approval postures that may launch only
+	// inside tclaude's own sandbox, because they run commands unattended
+	// and the harness has no sandbox of its own (pi's auto). Outside it, a
+	// fresh launch needs the human's explicit allow-unenforced decision.
+	ConfinedApprovals []string
+	// CheckVersion refuses a launch binary older than the version the
+	// harness's contracts were verified against. nil means no gate.
+	CheckVersion func(binary string) error
 	// Sandbox names the launch-time harness-builtin sandbox modes this harness accepts
 	// (Codex's --sandbox) and its secure default. nil for harnesses whose
 	// sandbox is configured out of band (Claude Code → settings.json), in

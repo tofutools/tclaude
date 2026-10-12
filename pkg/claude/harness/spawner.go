@@ -48,6 +48,10 @@ type SpawnSpec struct {
 	OpenCodeControlSocketDevice int64
 	OpenCodeControlSocketInode  int64
 	OpenCodeServerPID           int
+	// StatusExtensionPath is the harness's materialized tclaude status
+	// extension (Harness.StatusExtension). Empty launches without it, and
+	// therefore without live status.
+	StatusExtensionPath string
 	// EnvExports is a pre-built `export K=V; …` prefix prepended verbatim
 	// to the command. The caller assembles it (tclaude identity env +
 	// any pass-through), so the Spawner stays agnostic about which vars
