@@ -34,13 +34,24 @@ func TestAddConsentBindsTheContent(t *testing.T) {
 	assert.Equal(t, &paf.Audience{Kind: AudienceRecipients, Recipients: []string{"inst_7c21"}}, p.Audience)
 	assert.Equal(t, []ConsentCheck{{Consent: paf.Consent{By: "operator", At: at, Audience: AudienceRecipients, ContentDigest: digest}, Current: true}}, CheckConsent(b))
 
-	// A second consent keeps the first current: the content is unchanged.
-	c := consent(t, b, ConsentRequest{By: "operator", Audience: AudiencePublic})
-	checks := CheckConsent(c)
+	// A trusted file keeps its consent for the same audience: the content
+	// is unchanged, so it stays current.
+	same := consent(t, b, ConsentRequest{By: "operator", Audience: AudienceRecipients, Recipients: []string{"inst_7c21"}, KeepExisting: true})
+	checks := CheckConsent(same)
 	require.Len(t, checks, 2)
 	assert.True(t, checks[0].Current)
 	assert.True(t, checks[1].Current)
+
+	// Without trust, or for another audience, earlier records are dropped:
+	// every record in a file is for privacy.audience, and re-signing never
+	// vouches for records this node did not sign.
+	assert.Len(t, CheckConsent(consent(t, same, ConsentRequest{By: "operator", Audience: AudienceRecipients, Recipients: []string{"inst_7c21"}})), 1)
+	c := consent(t, same, ConsentRequest{By: "operator", Audience: AudiencePublic, KeepExisting: true})
+	require.Len(t, CheckConsent(c), 1)
+	assert.Equal(t, AudiencePublic, CheckConsent(c)[0].Audience)
 	assert.Equal(t, "public", c.Privacy().Sensitivity)
+	assert.Len(t, CheckConsent(consent(t, b, ConsentRequest{By: "operator", Audience: AudienceRecipients, Recipients: []string{"inst_other"}, KeepExisting: true})), 1,
+		"consent for one recipient does not carry over to another")
 
 	// Consent does not survive a change of content.
 	var out bytes.Buffer
@@ -69,6 +80,8 @@ func TestConsentRequestChecks(t *testing.T) {
 		{By: "operator", Audience: "everyone"},
 		{By: "operator", Audience: AudienceRecipients},
 		{By: "operator", Audience: AudienceBoard},
+		{By: "operator", Audience: AudienceBoard, Board: "  "},
+		{By: "operator", Audience: AudienceRecipients, Recipients: []string{""}},
 	} {
 		_, err := AddConsent(a, &bytes.Buffer{}, c, paf.Limits{}, paf.Producer{Name: "test"})
 		assert.Error(t, err, "%+v", c)

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
@@ -105,12 +106,33 @@ type PrivacySummary struct {
 }
 
 // ConsentLine is one consent record. Current is true when it binds the
-// archive's content as it is now.
+// archive's content as it is now. A consent record is only the signer's
+// claim: Vouched is true when a signature the caller trusts (this node or
+// a known peer, see SignatureSummary.Trust) covers it.
 type ConsentLine struct {
 	Audience string    `json:"audience"`
 	By       string    `json:"by"`
 	At       time.Time `json:"at"`
 	Current  bool      `json:"current"`
+	Vouched  bool      `json:"vouched"`
+}
+
+// VouchConsent marks the consent records vouched for when a valid
+// signature is from this node or a known peer. Call it after setting
+// SignatureSummary.Trust.
+func (s *Summary) VouchConsent() {
+	if s.Privacy == nil {
+		return
+	}
+	vouched := false
+	for _, sig := range s.Signatures {
+		if sig.Status == string(paf.SignatureValid) && (sig.Trust == "this node" || strings.HasPrefix(sig.Trust, "known peer")) {
+			vouched = true
+		}
+	}
+	for i := range s.Privacy.Consent {
+		s.Privacy.Consent[i].Vouched = vouched
+	}
 }
 
 // Summarize describes a verified archive. source names the file's own

@@ -129,8 +129,11 @@ func archiveFacts(s Summary) [][2]string {
 		}
 		for _, c := range p.Consent {
 			state := "current"
-			if !c.Current {
+			switch {
+			case !c.Current:
 				state = "stale: the content changed after consent"
+			case !c.Vouched:
+				state = "unverified: no signature from this node or a known peer vouches for it"
 			}
 			f = append(f, [2]string{"Consent", fmt.Sprintf("%s by %s at %s (%s)", c.Audience, c.By, c.At.Format(time.RFC3339), state)})
 		}

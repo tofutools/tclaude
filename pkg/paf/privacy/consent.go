@@ -30,6 +30,11 @@ type ConsentRequest struct {
 	Board      string
 	// At defaults to now.
 	At time.Time
+	// KeepExisting keeps the file's consent records when they are for the
+	// same audience. Set it only when the file is signed by a key the
+	// caller trusts (this node): otherwise the records are the producer's
+	// claims, and re-signing them would vouch for them.
+	KeepExisting bool
 }
 
 func (c ConsentRequest) check() error {
@@ -42,8 +47,13 @@ func (c ConsentRequest) check() error {
 		if len(c.Recipients) == 0 {
 			return errors.New("consent for recipients needs at least one recipient")
 		}
+		for _, r := range c.Recipients {
+			if strings.TrimSpace(r) == "" {
+				return errors.New("a recipient is blank")
+			}
+		}
 	case AudienceBoard:
-		if c.Board == "" {
+		if strings.TrimSpace(c.Board) == "" {
 			return errors.New("consent for a board needs the board")
 		}
 	default:
@@ -53,9 +63,11 @@ func (c ConsentRequest) check() error {
 }
 
 // AddConsent writes a copy of a with a consent record bound to its content
-// digest. The audience and sensitivity are set to match. Content entries are
-// copied byte for byte, so earlier consent for the same content stays
-// valid; the copy is signed by keys.
+// digest. privacy.audience is set to the consented audience, and every
+// consent record in the copy is for that audience: earlier records are
+// kept only with KeepExisting and when they were for the same audience.
+// Content entries are copied byte for byte, so a kept consent stays
+// current; the copy is signed by keys.
 func AddConsent(a *paf.Archive, out io.Writer, c ConsentRequest, limits paf.Limits, producer paf.Producer, keys ...paf.SigningKey) (paf.Consent, error) {
 	if err := c.check(); err != nil {
 		return paf.Consent{}, err
@@ -69,8 +81,15 @@ func AddConsent(a *paf.Archive, out io.Writer, c ConsentRequest, limits paf.Limi
 	if old := a.Privacy(); old != nil {
 		p = *old
 	}
-	p.Consent = append(slices.Clone(p.Consent), rec)
-	p.Audience = &paf.Audience{Kind: c.Audience, Recipients: c.Recipients, Board: c.Board}
+	aud := &paf.Audience{Kind: c.Audience, Recipients: slices.Clone(c.Recipients), Board: c.Board}
+	slices.Sort(aud.Recipients)
+	aud.Recipients = slices.Compact(aud.Recipients)
+	var kept []paf.Consent
+	if c.KeepExisting && sameAudience(p.Audience, aud) {
+		kept = slices.Clone(p.Consent)
+	}
+	p.Consent = append(kept, rec)
+	p.Audience = aud
 	switch c.Audience {
 	case AudiencePublic:
 		p.Sensitivity = "public"
@@ -85,6 +104,15 @@ func AddConsent(a *paf.Archive, out io.Writer, c ConsentRequest, limits paf.Limi
 		return paf.Consent{}, err
 	}
 	return rec, nil
+}
+
+func sameAudience(a, b *paf.Audience) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	ra := slices.Clone(a.Recipients)
+	slices.Sort(ra)
+	return a.Kind == b.Kind && a.Board == b.Board && slices.Equal(slices.Compact(ra), b.Recipients)
 }
 
 // ConsentCheck is one consent record and whether it binds this content.
@@ -123,6 +151,8 @@ type ConsentSummary struct {
 	Findings   []paf.Finding   `json:"findings"`
 	Redactions []paf.Redaction `json:"redactions"`
 	Digest     string          `json:"content_digest"`
+	// Existing are the consent records the file already carries.
+	Existing []ConsentCheck `json:"existing,omitempty"`
 }
 
 // SummarizeForConsent describes a for a consent prompt. Turns are human
@@ -157,6 +187,7 @@ func SummarizeForConsent(a *paf.Archive, recordLimit int) (*ConsentSummary, erro
 	if p := a.Privacy(); p != nil {
 		s.Redactions = append(s.Redactions, p.Redactions...)
 	}
+	s.Existing = CheckConsent(a)
 	return s, nil
 }
 

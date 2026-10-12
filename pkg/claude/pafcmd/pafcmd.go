@@ -307,6 +307,7 @@ func summarize(o *legacy.Opened) render.Summary {
 			}
 		}
 	}
+	s.VouchConsent()
 	return s
 }
 

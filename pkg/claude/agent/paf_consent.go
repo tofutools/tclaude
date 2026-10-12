@@ -90,7 +90,7 @@ func runPAFConsent(p *pafConsentParams, stdin io.Reader, stdout, stderr io.Write
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	q := url.Values{"audience": {p.Audience}, "recipient": p.Recipient}
+	q := url.Values{"audience": {p.Audience}, "recipient": p.Recipient, "content_digest": {s.Digest}}
 	if p.Board != "" {
 		q.Set("board", p.Board)
 	}
@@ -138,6 +138,14 @@ func printConsentSummary(out io.Writer, p *pafConsentParams, s *privacy.ConsentS
 		fmt.Fprintf(out, "  %-12s %s: %d\n", "Redactions:", consentSafe(r.Kind), r.Count)
 	}
 	fmt.Fprintf(out, "  %-12s %s\n", "Digest:", s.Digest)
+	for _, c := range s.Existing {
+		state := "current"
+		if !c.Current {
+			state = "stale"
+		}
+		fmt.Fprintf(out, "  %-12s %s by %s at %s (%s; kept only if this node signed the file and for the same audience)\n", "Existing:",
+			consentSafe(c.Audience), consentSafe(c.By), c.At.Format(time.RFC3339), state)
+	}
 }
 
 // consentSafe keeps file text from controlling the terminal.

@@ -20,12 +20,15 @@ const pafConsentBy = "operator"
 // handlePAFConsent records a human's consent on an uploaded PAF and returns
 // the re-signed copy.
 //
-//	POST /v1/paf/consent?audience=self|recipients|board|public[&recipient=<id>...][&board=<name>]
+//	POST /v1/paf/consent?content_digest=<hex>&audience=self|recipients|board|public[&recipient=<id>...][&board=<name>]
 //
 // Consent is the human confirmation sharing and publishing require, so the
 // route is human-only: an agent can never consent on its own authority.
-// The content entries are copied byte for byte; only privacy.json, the
-// manifest and the signature change.
+// content_digest must match the uploaded content: it is the digest the
+// human reviewed. The content entries are copied byte for byte; only
+// privacy.json, the manifest and the signature change. Earlier consent
+// records survive only when this node signed the upload and they were for
+// the same audience.
 func handlePAFConsent(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "consent to sharing a PAF") {
 		return
@@ -51,11 +54,22 @@ func handlePAFConsent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "archive", err.Error())
 		return
 	}
+	// The human consented to the content they reviewed; refuse any other.
+	if want := q.Get("content_digest"); want == "" {
+		writeError(w, 400, "consent", "content_digest is required: the digest of the content the human reviewed")
+		return
+	} else if got := paf.ContentDigest(a.Manifest.Entries); got != want {
+		writeError(w, 409, "consent", "the file changed after it was reviewed (content digest "+got+", reviewed "+want+")")
+		return
+	}
 	var keys []paf.SigningKey
 	// Signed only when this node already has a federation identity, as a
 	// local export is; consenting never creates one.
 	if id, err := proto.LoadIdentity(FederationKeyPath()); err == nil {
 		keys = []paf.SigningKey{{Key: id.Priv, KeyID: id.ID(), Signer: &paf.Signer{Kind: "instance"}}}
+		// Earlier consent records are this node's only when this node
+		// signed them; anyone else's would be laundered by re-signing.
+		req.KeepExisting = paf.SignedBy(a.Signatures, id.Pub)
 	}
 	out, err := os.CreateTemp("", ".paf-consent-out-")
 	if err != nil {
