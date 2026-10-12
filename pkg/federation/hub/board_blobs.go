@@ -187,8 +187,8 @@ func (s *Store) ReadBoardBlob(instance, board, id string, dst io.Writer) error {
 		return adminErr(400, "blob", "invalid blob ID")
 	}
 	var size int64
-	var digest string
-	if err := s.db.QueryRow(`SELECT x.bytes,x.digest FROM board_blobs x JOIN board_members m ON m.board=x.board WHERE x.board=? AND x.id=? AND x.state='ready' AND m.instance=? AND (x.pinned=1 OR x.expires_at>? OR EXISTS(SELECT 1 FROM board_snapshot_blobs c WHERE c.board=x.board AND c.blob=x.id AND c.expires_at>?)) AND NOT EXISTS(SELECT 1 FROM board_snapshot_blobs c WHERE c.board=x.board AND c.blob=x.id AND c.expires_at<=?) AND NOT EXISTS(SELECT 1 FROM board_snapshot_cleanup d WHERE d.board=x.board AND d.blob=x.id)`, board, id, instance, ts(s.now()), snapshotTS(s.now()), snapshotTS(s.now())).Scan(&size, &digest); err != nil {
+	var digest, hardExpiry string
+	if err := s.db.QueryRow(`SELECT x.bytes,x.digest,coalesce((SELECT c.expires_at FROM board_snapshot_blobs c WHERE c.board=x.board AND c.blob=x.id),'') FROM board_blobs x JOIN board_members m ON m.board=x.board WHERE x.board=? AND x.id=? AND x.state='ready' AND m.instance=? AND (x.pinned=1 OR x.expires_at>? OR EXISTS(SELECT 1 FROM board_snapshot_blobs c WHERE c.board=x.board AND c.blob=x.id AND c.expires_at>?)) AND NOT EXISTS(SELECT 1 FROM board_snapshot_blobs c WHERE c.board=x.board AND c.blob=x.id AND c.expires_at<=?) AND NOT EXISTS(SELECT 1 FROM board_snapshot_cleanup d WHERE d.board=x.board AND d.blob=x.id)`, board, id, instance, ts(s.now()), snapshotTS(s.now()), snapshotTS(s.now())).Scan(&size, &digest, &hardExpiry); err != nil {
 		return adminErr(404, "blob_unknown", "blob not available")
 	}
 	root, err := s.boardBlobRoot(board)
@@ -226,6 +226,9 @@ func (s *Store) ReadBoardBlob(instance, board, id string, dst io.Writer) error {
 	if authorized != 1 {
 		return adminErr(403, "board_member", "board membership removed")
 	}
+	if hardExpiry != "" {
+		dst = snapshotTTLWriter{dst: dst, now: s.now, expiry: parseTS(hardExpiry)}
+	}
 	_, err = io.CopyN(dst, f, size)
 	return err
 }
@@ -235,6 +238,8 @@ func (s *Store) ReadBoardBlob(instance, board, id string, dst io.Writer) error {
 // uploads. Only expired reservations and hour-old orphans are removed; another
 // live hub process may still be using fresh files in the same state directory.
 func (s *Store) SweepBoardBlobs() error {
+	s.boardSweepMu.Lock()
+	defer s.boardSweepMu.Unlock()
 	if err := s.expireSnapshots(); err != nil {
 		return err
 	}
@@ -353,4 +358,18 @@ func (s *Store) removeDeletedBoardFiles(board string) error {
 	}
 	defer func() { _ = root.Close() }()
 	return root.RemoveAll(board)
+}
+
+// A long download cannot keep releasing new ciphertext after hard expiry.
+type snapshotTTLWriter struct {
+	dst    io.Writer
+	now    func() time.Time
+	expiry time.Time
+}
+
+func (w snapshotTTLWriter) Write(p []byte) (int, error) {
+	if !w.now().Before(w.expiry) {
+		return 0, adminErr(404, "blob_unknown", "snapshot expired")
+	}
+	return w.dst.Write(p)
 }

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite" // database/sql driver "sqlite"
@@ -24,9 +25,11 @@ const DefaultSpace = "default"
 // that scope their visibility, and single-use invites. The hub never stores
 // messages.
 type Store struct {
-	db    *sql.DB
-	path  string
-	clock func() time.Time
+	db             *sql.DB
+	path           string
+	clock          func() time.Time
+	boardSweepMu   sync.Mutex
+	boardCleanupMu sync.Mutex
 }
 
 // Instance is one admitted (or revoked) instance.
