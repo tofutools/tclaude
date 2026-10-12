@@ -19,6 +19,8 @@ import {
 } from './template-management-model.js';
 import { harnessBuiltinModeLabel } from './resolved-defaults.js';
 
+import { AgentImportPreview, MemberLandings, agentImportParams } from './paf-dialogs.js';
+
 const html = htm.bind(h);
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const message = (error) => error?.message || String(error);
@@ -851,68 +853,128 @@ function GroupImportPreview({ inspection, into }) {
   </div>`;
 }
 
-export function GroupImportDialog({ state, actions, confirmDiscard }) {
+// GroupImportDialog is the one ⤒ import… dialog (tcl-jkmitn): the file
+// decides whether it previews a group (.zip or group PAF) or an agent (agent
+// PAF or legacy agent bundle). The group path is tried first, since that is
+// what the dialog always imported; anything it refuses is tried as an agent.
+export function GroupImportDialog({ state, actions, confirmDiscard, initialFile = null }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
-  const [file, setFile] = useState(null);
+  const [file, setFile] = useState(initialFile);
   const [into, setInto] = useState('');
   const [as, setAs] = useState('');
+  const [landing, setLanding] = useState({ harness: '', model: '', members: {} });
+  const [kind, setKind] = useState('');
   const [inspection, setInspection] = useState(null);
+  const [agentPreview, setAgentPreview] = useState(null);
+  const [choices, setChoices] = useState({ name: '', group: '', cwd: '', keepPaths: false, harness: '', model: '' });
   const [phase, setPhase] = useState('idle');
   const [error, setError] = useState('');
   const request = useRef(0);
   useEffect(() => {
     const token = ++request.current;
-    setInspection(null);
     if (!file) {
+      setInspection(null);
+      setAgentPreview(null);
+      setKind('');
       setPhase('idle');
       return undefined;
     }
-    setPhase('loading');
+    setPhase((current) => (current === 'ready' ? 'refreshing' : 'loading'));
     const timer = setTimeout(
       async () => {
-        try {
-          const result = await actions.inspectGroupImport(file, as.trim());
-          if (token === request.current) {
+        const live = () => token === request.current;
+        if (kind !== 'agent') {
+          try {
+            const result = await actions.inspectGroupImport(file, as.trim(), landing);
+            if (!live()) return;
+            setKind('group');
             setInspection(result);
             setPhase('ready');
             setError('');
-          }
-        } catch (err) {
-          if (token === request.current) {
-            setPhase('error');
-            setError(message(err));
+            return;
+          } catch (err) {
+            if (!live()) return;
+            if (kind === 'group' || typeof actions.importAgentPAF !== 'function') {
+              setPhase('error');
+              setError(message(err));
+              return;
+            }
+            // Not a group archive: try it as an agent.
+            try {
+              const preview = await actions.importAgentPAF(file, agentImportParams(choices));
+              if (!live()) return;
+              setKind('agent');
+              setAgentPreview(preview);
+              setPhase('ready');
+              setError('');
+            } catch {
+              if (!live()) return;
+              setPhase('error');
+              setError(message(err));
+            }
+            return;
           }
         }
+        try {
+          const preview = await actions.importAgentPAF(file, agentImportParams(choices));
+          if (!live()) return;
+          setAgentPreview(preview);
+          setPhase('ready');
+          setError('');
+        } catch (err) {
+          if (!live()) return;
+          setPhase('ready');
+          setError(message(err));
+        }
       },
-      as ? 350 : 0,
+      as || kind ? 350 : 0,
     );
     return () => {
       clearTimeout(timer);
     };
-  }, [file, as]);
-  const ready =
+  }, [file, as, landing, kind === 'agent' ? JSON.stringify({ ...choices, name: '', group: '' }) : '']);
+  const pickFile = (next) => {
+    setPhase('idle');
+    setKind('');
+    setInspection(null);
+    setAgentPreview(null);
+    setLanding({ harness: '', model: '', members: {} });
+    setFile(next);
+  };
+  const groupReady =
+    kind === 'group' &&
     inspection?.target_name_valid &&
     !inspection?.group_name_taken &&
     !!into.trim();
+  const agentReady =
+    kind === 'agent' &&
+    !!agentPreview &&
+    !!choices.group &&
+    (choices.keepPaths || !!choices.cwd.trim() || !(agentPreview.unresolved || []).length);
+  const busy = phase === 'importing' || phase === 'loading' || phase === 'refreshing';
   const submit = async () => {
     setError('');
     setPhase('importing');
     try {
-      await actions.importGroup(file, into.trim(), as.trim());
+      if (kind === 'agent') await actions.importAgentPAF(file, agentImportParams(choices, true));
+      else await actions.importGroup(file, into.trim(), as.trim(), landing);
     } catch (err) {
       setError(
-        `Import failed: ${message(err)} — nothing was written. The import is all-or-nothing, so the group, its agents and conversations are exactly as before.`,
+        kind === 'agent'
+          ? `Import failed: ${message(err)}`
+          : `Import failed: ${message(err)} — nothing was written. The import is all-or-nothing, so the group, its agents and conversations are exactly as before.`,
       );
       setPhase('ready');
     }
   };
+  const ready = kind === 'agent' ? agentReady : groupReady;
   return h(
     Overlay,
     {
       id: 'group-import-modal',
       labelledby: 'group-import-title',
       onClose: state.closeDialog,
-      onSubmitHotkey: ready && phase !== 'importing' ? submit : null,
+      onSubmitHotkey: ready && !busy ? submit : null,
       dirty: !!(file || into || as),
       blocked: phase === 'importing',
       confirmDiscard,
@@ -920,25 +982,24 @@ export function GroupImportDialog({ state, actions, confirmDiscard }) {
     },
     html`<h3 id="group-import-title">
         <${Words}
-          plain="Import a group from a .zip archive"
-          wizard="⤒ Unseal a party archive"
+          plain=${kind === 'agent' ? 'Import an agent' : kind === 'group' ? 'Import a group' : 'Import an agent or a group'}
+          wizard="⤒ Unseal an archive"
         />
       </h3>
       <div class="modal-meta">
-        Recreates a group exported with ⤓ export — its members, roles, owners,
-        permissions, cron jobs, message history and every conversation. Imported
-        agents land offline. The import is transactional: if anything fails,
-        nothing is written.
+        ${kind === 'agent'
+          ? 'Imports the agent as a new one (a fork): a new identity, landed on the harness you choose. Its permissions and ownership are advisory only.'
+          : 'Recreates a group exported with ⤓ export — its members, roles, owners, permissions, cron jobs, message history and every conversation. Imported agents land offline. The import is transactional: if anything fails, nothing is written. An agent .paf previews as an agent.'}
       </div>
       <label class="cron-create-row"
-        ><span class="cron-create-label">Archive</span
+        ><span class="cron-create-label">File</span
         ><input
           id="group-import-file"
           type="file"
           accept=".zip,.paf,application/zip,application/vnd.tclaude.paf+zip"
-          onChange=${(event) => setFile(event.currentTarget.files?.[0] || null)}
-          autofocus /></label
-      ><label class="cron-create-row"
+          onChange=${(event) => pickFile(event.currentTarget.files?.[0] || null)}
+          autofocus />${file && initialFile === file && html`<span class="paf-hint" id="group-import-dropped">${file.name}</span>`}</label
+      >${kind !== 'agent' && html`<label class="cron-create-row"
         ><span class="cron-create-label">Into dir</span
         ><input
           id="group-import-into"
@@ -958,19 +1019,21 @@ export function GroupImportDialog({ state, actions, confirmDiscard }) {
           placeholder="optional — import under a different group name (required when the exported name is already taken)"
           autocomplete="off"
           spellcheck="false" /></label
-      >${phase === 'loading' &&
+      >`}${phase === 'loading' &&
       html`<div class="group-import-preview" id="group-import-preview">
-        <div class="gi-head">Inspecting archive…</div>
+        <div class="gi-head">Inspecting file…</div>
       </div>`}${phase === 'error' &&
       html`<div class="group-import-preview" id="group-import-preview">
-        <div class="gi-head">Archive</div>
+        <div class="gi-head">File</div>
         <div class="gi-verdict gi-bad">✗ ${error}</div>
         <div class="gi-bad">
-          This file is not an importable group archive — pick a .zip or .paf produced by
-          the ⤓ export button.
+          This file is not an importable group or agent — pick a .zip or .paf
+          produced by ⤓ export.
         </div>
-      </div>`}${inspection &&
-      html`<${GroupImportPreview} inspection=${inspection} into=${into} />`}
+      </div>`}${kind === 'group' && inspection &&
+      html`<${GroupImportPreview} inspection=${inspection} into=${into} />
+        <${MemberLandings} landings=${inspection.landings} landing=${landing} setLanding=${setLanding} />`}${kind === 'agent' && agentPreview &&
+      html`<${AgentImportPreview} preview=${agentPreview} choices=${choices} setChoices=${setChoices} />`}
       <div class="cron-create-error" id="group-import-error" role="alert">
         ${phase === 'error' ? '' : error}
       </div>
@@ -985,10 +1048,11 @@ export function GroupImportDialog({ state, actions, confirmDiscard }) {
         ><button
           id="group-import-submit"
           class="primary"
-          disabled=${!ready || phase === 'importing'}
+          disabled=${!ready || busy}
+          title=${kind === 'agent' && !choices.group ? 'Pick the group the agent joins' : ''}
           onClick=${submit}
         >
-          ${phase === 'importing' ? 'Importing…' : 'Import'}
+          ${phase === 'importing' ? 'Importing…' : kind === 'agent' ? 'Import & start' : 'Import'}
         </button>
       </div>`,
   );

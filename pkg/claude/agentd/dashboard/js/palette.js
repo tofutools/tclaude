@@ -317,10 +317,10 @@ export function buildCommands(snapshot) {
   //     cleanup actions below so a broad "cleanup" / "tidy" query opens the
   //     all-categories tool.
   cmds.push({
-    icon: wiz('⤒', '📜'), label: wiz('Import a group archive…', 'Unseal a party archive…'),
-    hint: wiz('recreate an exported group, its agents, permissions, messages, and conversations',
+    icon: wiz('⤒', '📜'), label: wiz('Import an agent or group…', 'Unseal a party archive…'),
+    hint: wiz('preview and import an agent .paf, or recreate an exported group with its agents, permissions, messages, and conversations',
       'unseal an exported party archive with its familiars, wards, missives, and scrolls'),
-    keywords: 'import group archive zip restore recreate upload'
+    keywords: 'import group agent paf archive zip restore recreate upload'
       + ' unseal party archive familiar wards missives scrolls',
     run: () => openGroupImport(),
   });

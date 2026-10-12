@@ -1,3 +1,4 @@
+import { refuseInPeerView } from './peer-view-guard.js';
 // Compatibility entry points and shared readback helpers for the Preact-owned
 // template/group management feature. The feature owns all dialog rendering and
 // state; callers elsewhere in the dashboard retain these small stable APIs.
@@ -25,8 +26,8 @@ export function openTemplatesManageModal(options) {
   return managementController().openTemplatesManageModal(options);
 }
 
-export function openGroupImport() {
-  return managementController().openGroupImport();
+export function openGroupImport(file = null) {
+  return managementController().openGroupImport(file);
 }
 
 export function openTemplateEditor(template, options = {}) {
@@ -68,8 +69,34 @@ export function bindTemplatesUI() {
   document.querySelector('#templates-manage-open')?.addEventListener('click', openTemplatesManageModal);
 }
 
+export function openAgentExport(value) {
+  return managementController().openAgentExport(value);
+}
+
+export function openGroupExport(group) {
+  return managementController().openGroupExport(group);
+}
+
 export function bindGroupImportModal() {
-  document.querySelector('#group-import-open')?.addEventListener('click', openGroupImport);
+  document.querySelector('#group-import-open')?.addEventListener('click', () => openGroupImport());
+  bindPAFDrop();
+}
+
+// A .paf or .zip dropped onto the page opens the same import preview. Only
+// file drags are taken; agent and group drag-and-drop are left alone.
+function bindPAFDrop() {
+  const isFileDrag = (event) => [...(event.dataTransfer?.types || [])].includes('Files');
+  document.addEventListener('dragover', (event) => {
+    if (isFileDrag(event)) event.preventDefault();
+  });
+  document.addEventListener('drop', (event) => {
+    if (!isFileDrag(event)) return;
+    const file = [...(event.dataTransfer?.files || [])].find((f) => /\.(paf|zip)$/i.test(f.name));
+    if (!file) return;
+    event.preventDefault();
+    if (refuseInPeerView('Import')) return;
+    openGroupImport(file);
+  });
 }
 
 const SCRIBE_NAME = 'circle-scribe';
