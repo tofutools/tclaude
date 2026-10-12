@@ -202,13 +202,6 @@ func (rt *fedRuntime) acceptBundleOffer(peer *db.FederationPeer, env *proto.Enve
 			return
 		}
 	}
-	if d.Return != nil {
-		// Single use: the recall is bound to this one offer.
-		if err := bindResilienceRecall(peer.InstanceID, d); err != nil {
-			refuse(fedCodeNotExported, err.Error())
-			return
-		}
-	}
 	o := db.FederationBundleOffer{Descriptor: d, Peer: peer.InstanceID, Direction: "in", State: "pending", GroupID: groupID, SenderAgent: env.From.Agent}
 	if _, err := db.InsertFederationBundleOffer(o, kind.Type); err != nil {
 		code := fedCodeInternal
@@ -225,6 +218,15 @@ func (rt *fedRuntime) acceptBundleOffer(peer *db.FederationPeer, env *proto.Enve
 			return
 		}
 		_ = db.SetFederationBundleOfferState("in", peer.InstanceID, d.ID, "ready", "")
+	}
+	if d.Return != nil {
+		// Single use: the recall is bound to this one stored offer.
+		if err := bindResilienceRecall(peer.InstanceID, d); err != nil {
+			_ = fedBundleSpool().Remove("in", peer.InstanceID, d.ID)
+			_ = db.DeleteFederationBundleOffer("in", peer.InstanceID, d.ID)
+			refuse(fedCodeNotExported, err.Error())
+			return
+		}
 	}
 	if d.Move != nil && d.Move.DirectIfAllowed {
 		_ = db.InsertFederationAgentMove(db.FederationAgentMove{Direction: "in", Peer: peer.InstanceID, ID: d.ID, State: "awaiting_acceptance", Disposition: "checking", SourceAgent: d.Move.SourceAgent, SourceConv: d.Move.SourceConv, SHA256: d.SHA256, Group: d.Group, ExpiresAt: d.ExpiresAt})

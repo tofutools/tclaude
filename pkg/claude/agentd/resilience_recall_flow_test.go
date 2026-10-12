@@ -115,7 +115,8 @@ func TestResilience_OriginRecallsAndRecovers(t *testing.T) {
 
 	sendReturn := func(recallID, agent string, raw []byte) bundletransfer.Descriptor {
 		d := bundletransfer.New(bundletransfer.SnapshotReturn, raw, "Returned", time.Now().Add(time.Hour))
-		d.Return = &bundletransfer.ReturnIntent{Recall: recallID, SourceAgent: agent, Offer: sent.ID, TakenAt: sent.Resilience.TakenAt}
+		// The custodian's claimed time is not trusted; the signed one is.
+		d.Return = &bundletransfer.ReturnIntent{Recall: recallID, SourceAgent: agent, Offer: sent.ID, TakenAt: time.Now().Add(48 * time.Hour)}
 		env := p.envelope(proto.KindBundleOffer, proto.Endpoint{}, d)
 		env.From.Agent = ""
 		env.ID = d.ID
@@ -156,9 +157,13 @@ func TestResilience_OriginRecallsAndRecovers(t *testing.T) {
 	rec = fedHuman(t, f, http.MethodPost, path+"preview", body)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	var preview struct {
-		Token string `json:"preview_token"`
+		Token    string `json:"preview_token"`
+		Snapshot struct {
+			TakenAt time.Time `json:"taken_at"`
+		} `json:"snapshot"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &preview))
+	require.True(t, preview.Snapshot.TakenAt.Equal(sent.Resilience.TakenAt), "taken at %s, signed %s", preview.Snapshot.TakenAt, sent.Resilience.TakenAt)
 	body["preview_token"] = preview.Token
 	rec = fedHuman(t, f, http.MethodPost, path+"import", body)
 	require.Equal(t, 200, rec.Code, rec.Body.String())

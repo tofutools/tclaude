@@ -38,6 +38,8 @@ const (
 	// resilienceRecallKeep is how long finished recalls stay listed.
 	resilienceRecallKeep = 7 * 24 * time.Hour
 	resilienceMaxRecalls = 50
+	// resilienceRecoveringStale is how long an import may hold a recall.
+	resilienceRecoveringStale = 30 * time.Minute
 )
 
 type resilienceRecall struct {
@@ -46,8 +48,10 @@ type resilienceRecall struct {
 	SourceAgent string `json:"source_agent"`
 	Offer       string `json:"offer,omitempty"`
 	// State is requested, offered (a return offer is bound), ready (the
-	// returned snapshot is here), recovering, recovered or expired.
+	// returned snapshot is here), recovering, recovered, interrupted (a
+	// recovery that did not finish; recall again) or expired.
 	State     string    `json:"state"`
+	ClaimedAt time.Time `json:"claimed_at,omitempty"`
 	Bound     string    `json:"bound_offer,omitempty"`
 	HeldOffer string    `json:"held_offer,omitempty"`
 	SHA256    string    `json:"sha256,omitempty"`
@@ -86,7 +90,19 @@ func loadRecalls(now time.Time) ([]resilienceRecall, error) {
 		if (r.State == "requested" || r.State == "offered") && !now.Before(r.ExpiresAt) {
 			r.State = "expired"
 		}
-		if (r.State == "expired" || r.State == "recovered") && now.Sub(r.ExpiresAt) > resilienceRecallKeep {
+		// A returned snapshot waits a while for its recovery, not forever.
+		if r.State == "ready" && now.Sub(r.CreatedAt) > resilienceRecallKeep {
+			r.State = "expired"
+			_ = os.Remove(resilienceReturnedPath(r.ID))
+		}
+		// A recovery cut short (the daemon stopped mid-import) may or may
+		// not have landed; it is never retried from this copy, so it can
+		// never land twice. Recall again to recover.
+		if r.State == "recovering" && now.Sub(r.ClaimedAt) > resilienceRecoveringStale {
+			r.State = "interrupted"
+			_ = os.Remove(resilienceReturnedPath(r.ID))
+		}
+		if (r.State == "expired" || r.State == "recovered" || r.State == "interrupted") && now.Sub(r.ExpiresAt) > resilienceRecallKeep {
 			_ = os.Remove(resilienceReturnedPath(r.ID))
 			continue
 		}
@@ -328,7 +344,7 @@ func handleResilienceRecallCreate(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		active := 0
 		for _, x := range all {
-			if x.State != "expired" && x.State != "recovered" {
+			if x.State == "requested" || x.State == "offered" || x.State == "ready" || x.State == "recovering" {
 				active++
 			}
 		}
@@ -420,7 +436,7 @@ func resilienceRecallRecover(w http.ResponseWriter, r *http.Request, op string) 
 			return &boardHTTPError{409, "recall_state", "recall is " + x.State + "; a returned snapshot is recovered once, after it arrives"}
 		}
 		if op == "import" {
-			x.State = "recovering"
+			x.State, x.ClaimedAt = "recovering", time.Now().UTC()
 		}
 		return nil
 	})
@@ -463,9 +479,15 @@ func resilienceRecallRecover(w http.ResponseWriter, r *http.Request, op string) 
 	if !signedByInstance(arch.Signatures, self.ID()) {
 		return &boardHTTPError{422, "provenance", "the returned snapshot is not signed by this node"}
 	}
-	if ag, ok := arch.Agent(arch.Manifest.Agents[0]); !ok || (ag.ID != "" && ag.ID != rec.SourceAgent) {
+	ag, ok := arch.Agent(arch.Manifest.Agents[0])
+	if !ok || (ag.ID != "" && ag.ID != rec.SourceAgent) {
 		return &boardHTTPError{422, "provenance", "the returned snapshot is not of agent " + rec.SourceAgent}
 	}
+	// When it was taken comes from the signed snapshot, not the custodian.
+	if ag.Snapshot == nil || ag.Snapshot.TakenAt.IsZero() {
+		return &boardHTTPError{422, "provenance", "the returned snapshot records no time it was taken"}
+	}
+	rec.TakenAt = ag.Snapshot.TakenAt
 	summary, err := privacy.SummarizeForConsent(arch, pafContextRecordLimit())
 	if err != nil {
 		return &boardHTTPError{422, "archive", err.Error()}
