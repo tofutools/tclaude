@@ -1,3 +1,5 @@
+import { refuseInPeerView } from './peer-view-guard.js';
+import { bindPAFDrop } from './paf-drop.js';
 // Compatibility entry points and shared readback helpers for the Preact-owned
 // template/group management feature. The feature owns all dialog rendering and
 // state; callers elsewhere in the dashboard retain these small stable APIs.
@@ -25,8 +27,8 @@ export function openTemplatesManageModal(options) {
   return managementController().openTemplatesManageModal(options);
 }
 
-export function openGroupImport() {
-  return managementController().openGroupImport();
+export function openGroupImport(file = null) {
+  return managementController().openGroupImport(file);
 }
 
 export function openTemplateEditor(template, options = {}) {
@@ -68,9 +70,24 @@ export function bindTemplatesUI() {
   document.querySelector('#templates-manage-open')?.addEventListener('click', openTemplatesManageModal);
 }
 
-export function bindGroupImportModal() {
-  document.querySelector('#group-import-open')?.addEventListener('click', openGroupImport);
+export function openAgentExport(value) {
+  return managementController().openAgentExport(value);
 }
+
+export function openSnapshots(preset = {}) {
+  return managementController().openSnapshots(preset);
+}
+
+export function openGroupExport(group) {
+  return managementController().openGroupExport(group);
+}
+
+export function bindGroupImportModal() {
+  document.querySelector('#group-import-open')?.addEventListener('click', () => openGroupImport());
+  document.querySelector('#snapshots-open')?.addEventListener('click', () => openSnapshots());
+  bindPAFDrop({ open: openGroupImport, refuse: () => refuseInPeerView('Import') });
+}
+
 
 const SCRIBE_NAME = 'circle-scribe';
 const SCRIBE_SLUGS = ['templates.manage'];

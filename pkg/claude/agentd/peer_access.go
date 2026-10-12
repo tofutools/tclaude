@@ -319,7 +319,7 @@ func peerAccessCatalog() (meaningful, groupSlugs []string) {
 			meaningful = append(meaningful, rule.requires)
 		}
 	}
-	meaningful = append(meaningful, "config.offer", PermApprovalsAnswer, PermModelsProxy, PermModelsProxyLeased)
+	meaningful = append(meaningful, "config.offer", PermSnapshotsReceive, PermApprovalsAnswer, PermModelsProxy, PermModelsProxyLeased)
 	return meaningful, groupSlugs
 }
 

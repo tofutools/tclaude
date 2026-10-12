@@ -1481,6 +1481,33 @@ setTimeout(function(){
 			SettleMS: 700,
 		},
 		{
+			Key:      "paf-agent-import-history-cut",
+			Title:    "PAF — agent import that cuts the conversation",
+			Caption:  "A 1M-window agent landing on a smaller window: the trimmed rung, the cut, and the checkbox an apply needs from 25% on.",
+			Width:    1280,
+			Height:   1000,
+			JS:       pafAgentImportCutDashSnapJS(),
+			SettleMS: 700,
+		},
+		{
+			Key:      "paf-snapshot-spawn",
+			Title:    "PAF — spawn from a snapshot",
+			Caption:  "The snapshot library's spawn panel, with the landing selects and the checkbox that allows cutting the conversation.",
+			Width:    1280,
+			Height:   1000,
+			JS:       pafSnapshotSpawnDashSnapJS(),
+			SettleMS: 700,
+		},
+		{
+			Key:      "paf-group-export",
+			Title:    "PAF — export a group",
+			Caption:  "The group export dialog defaults to a group .paf; the legacy .zip stays available for an older tclaude.",
+			Width:    1280,
+			Height:   800,
+			JS:       pafGroupExportDashSnapJS(),
+			SettleMS: 500,
+		},
+		{
 			Key:      "management-sandbox-import-preview",
 			Title:    "Management — review a sandbox-profile import",
 			Caption:  "The normalized import preview exposes exact policy rows, local portability warnings, collision status, and the resulting import count before commit.",
@@ -4774,4 +4801,89 @@ func dashSnapSize(v string) (int, int, error) {
 		return 0, 0, fmt.Errorf("want WxH (at least 320x240), got %q", v)
 	}
 	return width, height, nil
+}
+
+// pafAgentImportCutDashSnapJS opens the real ⤒ import dialog on an agent PAF
+// whose landing cuts about three quarters of the conversation, and ticks the
+// confirmation checkbox the import buttons wait on.
+func pafAgentImportCutDashSnapJS() string {
+	return `return (async function(){
+  var preact = await import('preact');
+  var html = (await import('htm')).default.bind(preact.h);
+  var dialog = await import('/static/js/template-management-island.js');
+  var preview = {
+    agent: { name: 'big-agent', role: 'dev', harness: 'claude' },
+    history: true,
+    history_landing: { source_harness: 'claude', source_model: 'claude-opus-5-5[1m]', harness: 'codex', model: 'gpt-5.5', rung: 'translated',
+      losses: { dropped_percent: 74, kept_percent: 26, needs_summary: true, budget_warning: true, source_entries: 1200, carried_entries: 310,
+        source_estimated_tokens: 500000, carried_estimated_tokens: 118000, budget_tokens: 120000, context_window_tokens: 200000 } },
+    security: 'Imported as a new agent with the receiver defaults.',
+    warnings: ['landing on Codex CLI gpt-5.5 cuts about 74% of the conversation to fit its context budget: the pinned start, compaction summaries and the newest turns are kept, with the agent\'s own summary standing in for the rest. The full history stays in the PAF and is saved beside the agent.',
+      'Cutting 74% of the conversation needs confirmation: --confirm-history-loss.']
+  };
+  var actions = {
+    inspectGroupImport: function(){ return Promise.reject(new Error('not a group PAF')); },
+    importAgentPAF: function(){ return Promise.resolve(preview); },
+    importGroup: function(){ return Promise.reject(new Error('dashsnap: no import')); }
+  };
+  var file = new File(['PK'], 'big-agent.paf', { type: 'application/vnd.tclaude.paf+zip' });
+  var root = document.createElement('div');
+  document.body.appendChild(root);
+  preact.render(html` + "`" + `<${dialog.GroupImportDialog} state=${{ closeDialog: function(){} }} actions=${actions}
+    confirmDiscard=${function(){ return Promise.resolve(true); }} initialFile=${file} />` + "`" + `, root);
+  var deadline = Date.now() + 3000;
+  while (!document.querySelector('#agent-import-confirm-loss') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  var box = document.querySelector('#agent-import-confirm-loss input') || document.querySelector('input#agent-import-confirm-loss');
+  if (!box) throw new Error('history-cut checkbox did not render');
+  box.click();
+  if (!document.querySelector('#group-import-modal .modal-buttons')) throw new Error('import dialog buttons did not render');
+})();`
+}
+
+// pafSnapshotSpawnDashSnapJS opens the snapshot library on one snapshot and
+// its spawn panel.
+func pafGroupExportDashSnapJS() string {
+	return `return (async function(){
+  var preact = await import('preact');
+  var html = (await import('htm')).default.bind(preact.h);
+  var dialog = await import('/static/js/paf-dialogs.js');
+  var root = document.createElement('div');
+  document.body.appendChild(root);
+  preact.render(html` + "`" + `<${dialog.GroupExportDialog} descriptor=${{ group: 'team' }} state=${{ closeDialog: function(){} }} actions=${{}}
+    confirmDiscard=${function(){ return Promise.resolve(true); }} />` + "`" + `, root);
+  var deadline = Date.now() + 3000;
+  while (!document.querySelector('#group-export-paf') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (!document.querySelector('#group-export-paf') || !document.querySelector('#group-export-paf').checked) throw new Error('group export does not default to .paf');
+  if (!/Download \.paf/.test(document.querySelector('#group-export-download').textContent)) throw new Error('group export button does not offer .paf');
+})();`
+}
+
+func pafSnapshotSpawnDashSnapJS() string {
+	return `return (async function(){
+  var preact = await import('preact');
+  var html = (await import('htm')).default.bind(preact.h);
+  var dialog = await import('/static/js/snapshots-dialog.js');
+  var snap = { name: 'big-agent-20261012', agent_name: 'big-agent', harness: 'claude', model: 'claude-opus-5-5[1m]', history: true,
+    created_at: new Date(Date.now() - 3600e3).toISOString(), bytes: 4200000, state: 'idle', note: 'before the migration' };
+  var actions = { fleet: { boards: function(){ return Promise.resolve([]); } },
+    snapshots: { list: function(){ return Promise.resolve([snap]); }, policies: function(){ return Promise.resolve([]); } } };
+  var root = document.createElement('div');
+  document.body.appendChild(root);
+  preact.render(html` + "`" + `<${dialog.SnapshotsDialog} descriptor=${{}} state=${{ closeDialog: function(){} }} actions=${actions}
+    confirm=${function(){ return Promise.resolve(false); }} confirmDiscard=${function(){ return Promise.resolve(true); }} />` + "`" + `, root);
+  var deadline = Date.now() + 3000;
+  while (!document.querySelector('[data-snap="spawn"]') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  document.querySelector('[data-snap="spawn"]').click();
+  deadline = Date.now() + 3000;
+  while (!document.querySelector('#snapshot-spawn-confirm-loss') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (!document.querySelector('#snapshot-spawn-confirm-loss')) throw new Error('snapshot spawn checkbox did not render');
+})();`
 }

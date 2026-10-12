@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,6 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
+	"github.com/tofutools/tclaude/pkg/paf"
+	"github.com/tofutools/tclaude/pkg/paf/legacy"
 )
 
 // TestRewritePathPrefix pins the boundary rules of the import path
@@ -69,9 +72,15 @@ func TestDashboardGroupExport(t *testing.T) {
 		GroupID: gID, ConvID: "worker-conv",
 	}))
 
+	// The dashboard export defaults to a group PAF.
 	w := httptest.NewRecorder()
 	serveDashboardGroups(w, dashboardRequest(http.MethodGet, "/api/groups/team/export", ""))
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	assert.Equal(t, paf.MediaType, w.Header().Get("Content-Type"))
+	assert.True(t, legacy.IsPAF(bytes.NewReader(w.Body.Bytes()), int64(w.Body.Len())))
 
+	w = httptest.NewRecorder()
+	serveDashboardGroups(w, dashboardRequest(http.MethodGet, "/api/groups/team/export?format=zip", ""))
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	assert.Equal(t, groupexport.ContentType, w.Header().Get("Content-Type"))
 

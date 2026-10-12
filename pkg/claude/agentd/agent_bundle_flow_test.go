@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -20,6 +21,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/paf"
+	"github.com/tofutools/tclaude/pkg/paf/legacy"
 	"github.com/tofutools/tclaude/pkg/testharness"
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
@@ -38,6 +41,28 @@ func postAgentBundle(t *testing.T, f *testharness.Flow, b *agentbundle.Bundle, q
 	f.Mux.ServeHTTP(rec, r)
 	return rec
 }
+// decodeAgentExport reads an agent export made without a format into the
+// bundle model, after checking it is a PAF: exports default to PAF. The
+// history is read into memory, so the bundle can be re-encoded as v1.
+func decodeAgentExport(t *testing.T, raw []byte) (*agentbundle.Bundle, error) {
+	t.Helper()
+	b, info, err := legacy.DecodeBundleBytes(raw, legacy.DecodeLimits{MaxBytes: 1 << 30}, "")
+	if err != nil {
+		return nil, err
+	}
+	require.Equal(t, paf.Format, info.Source, "an export without a format is a PAF")
+	if b.TranscriptPath != "" {
+		r, err := b.OpenHistory()
+		require.NoError(t, err)
+		b.Transcript, err = io.ReadAll(r)
+		require.NoError(t, err)
+		_ = r.Close()
+		_ = b.Close()
+		b.TranscriptPath = ""
+	}
+	return b, nil
+}
+
 func TestAgentBundleNativeRoundTrip(t *testing.T) {
 	for _, name := range []string{"claude", "codex"} {
 		t.Run(name, func(t *testing.T) {
@@ -56,7 +81,7 @@ func TestAgentBundleNativeRoundTrip(t *testing.T) {
 			require.NoError(t, db.GrantAgentPermission(source, "config.import", "human"))
 			rec := profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+source+"&history=true", nil)
 			require.Equal(t, 200, rec.Code, rec.Body.String())
-			b, err := agentbundle.Decode(rec.Body.Bytes())
+			b, err := decodeAgentExport(t, rec.Body.Bytes())
 			require.NoError(t, err)
 			require.NotNil(t, b.Manifest.History)
 			assert.Equal(t, name, b.Manifest.Agent.Harness)
@@ -172,7 +197,7 @@ func TestAgentBundleCredentialCountsAndConfigOnly(t *testing.T) {
 	assert.Len(t, report.Findings[0].Locations, 3)
 	rec = profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+source+"&history=true&allow_flagged=true", nil)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
-	b, err := agentbundle.Decode(rec.Body.Bytes())
+	b, err := decodeAgentExport(t, rec.Body.Bytes())
 	require.NoError(t, err)
 	assert.Equal(t, 8, strings.Count(string(b.Transcript), "keepverbatim123456789"))
 	// Missing optional native tools carry the complete config with a visible warning.
@@ -184,12 +209,13 @@ func TestAgentBundleCredentialCountsAndConfigOnly(t *testing.T) {
 	require.NoError(t, db.SaveSession(&db.SessionRow{ID: "opencode-config", ConvID: cx, Harness: "opencode", Cwd: cwd}))
 	rec = profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+cx+"&history=true", nil)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
-	b, err = agentbundle.Decode(rec.Body.Bytes())
+	b, err = decodeAgentExport(t, rec.Body.Bytes())
 	require.NoError(t, err)
 	assert.Nil(t, b.Manifest.History)
 	assert.Contains(t, strings.Join(b.Manifest.Warnings, " "), "config only")
 	// Skipping history also works with no OpenCode binary installed.
-	rec = profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+cx, nil)
+	// The legacy agent bundle v1 is still written on request.
+	rec = profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+cx+"&format=v1", nil)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	b, err = agentbundle.Decode(rec.Body.Bytes())
 	require.NoError(t, err)

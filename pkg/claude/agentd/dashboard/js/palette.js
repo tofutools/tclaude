@@ -58,7 +58,7 @@ import { buildProfileSpawnCommands } from './palette-spawn.js';
 import { openAgentSpawnModal } from './agent-spawn-controller.js';
 import { openProfilesManageModal } from './modal-profiles.js';
 import { openRolesManageModal } from './modal-roles.js';
-import { openGroupImport, openTemplatesManageModal } from './modal-templates.js';
+import { openGroupImport, openSnapshots, openTemplatesManageModal } from './modal-templates.js';
 import { openSandboxProfilesManageModal } from './sandbox-profiles.js';
 import { openSpawnHarnessPolicy } from './spawn-harness-policy-controller.js';
 import { openLinksManager } from './links-controller.js';
@@ -317,12 +317,19 @@ export function buildCommands(snapshot) {
   //     cleanup actions below so a broad "cleanup" / "tidy" query opens the
   //     all-categories tool.
   cmds.push({
-    icon: wiz('⤒', '📜'), label: wiz('Import a group archive…', 'Unseal a party archive…'),
-    hint: wiz('recreate an exported group, its agents, permissions, messages, and conversations',
+    icon: wiz('⤒', '📜'), label: wiz('Import an agent or group…', 'Unseal a party archive…'),
+    hint: wiz('preview and import an agent .paf, or recreate an exported group with its agents, permissions, messages, and conversations',
       'unseal an exported party archive with its familiars, wards, missives, and scrolls'),
-    keywords: 'import group archive zip restore recreate upload'
+    keywords: 'import group agent paf archive zip restore recreate upload'
       + ' unseal party archive familiar wards missives scrolls',
     run: () => openGroupImport(),
+  });
+  cmds.push({
+    icon: '📸', label: wiz('Snapshots…', 'Captured familiars…'),
+    hint: wiz("this node's agent snapshot library: take, spawn from, share or publish snapshots",
+      'the library of captured familiars: capture, summon from, share or publish them'),
+    keywords: 'snapshot snapshots library paf fork spawn share board publish resilience capture',
+    run: () => openSnapshots(),
   });
   cmds.push({
     icon: '🧹', label: wiz('Clean up agents and conversations…', 'Tidy familiars and scrolls…'),

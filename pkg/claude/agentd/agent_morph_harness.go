@@ -597,11 +597,19 @@ func isCrossHarnessTarget(convID string, f db.AgentMorphForm) bool {
 }
 
 // trustDirectory pre-trusts the working directory in the destination
-// harness's own trust store, through the agent's launch environment so a
-// relocated store (COPILOT_HOME, CLAUDE_CONFIG_DIR) is the one written. Like
-// spawn's trust_dir it is best effort: a failure leaves the pane on the trust
-// dialog for a human to clear, never a failed morph.
+// harness's own trust store. Like spawn's trust_dir it is best effort: a
+// failure leaves the pane on the trust dialog for a human to clear, never a
+// failed morph.
 func (cm *crossMorph) trustDirectory(convID string) {
+	if err := trustAgentDirectory(cm.dst, convID, cm.cwd); err != nil {
+		slog.Warn("morph: could not pre-trust the working directory", "harness", cm.dst.Name, "cwd", cm.cwd, "error", err)
+	}
+}
+
+// trustAgentDirectory pre-trusts cwd in h's own trust store through the
+// agent's launch environment, so a relocated store (COPILOT_HOME,
+// CLAUDE_CONFIG_DIR) is the one written.
+func trustAgentDirectory(h *harness.Harness, convID, cwd string) error {
 	var env map[string]string
 	if snapshot, err := db.AgentEffectiveSandboxConfigForConv(convID); err == nil && snapshot != nil {
 		env = map[string]string{}
@@ -615,9 +623,7 @@ func (cm *crossMorph) trustDirectory(convID string) {
 		}
 		return os.Getenv(name)
 	}
-	if err := harness.EnsureDirTrustedForLaunch(cm.dst, cm.cwd, getenv, ""); err != nil {
-		slog.Warn("morph: could not pre-trust the working directory", "harness", cm.dst.Name, "cwd", cm.cwd, "error", err)
-	}
+	return harness.EnsureDirTrustedForLaunch(h, cwd, getenv, "")
 }
 
 // morphHandoffMaxBytes bounds a submitted handoff.
@@ -714,6 +720,12 @@ func handleWhoamiMorphHandoff(w http.ResponseWriter, r *http.Request) {
 	err = db.SubmitAgentMorphHandoff(current.CurrentConvID, req.Body)
 	lock.Unlock()
 	if errors.Is(err, db.ErrNoHandoffRequested) {
+		// The same command answers an export's request for a summary.
+		if submitExportSummary(agentID, req.Body) {
+			setAuditDetail(r, fmt.Sprintf("submitted a %d-byte summary for an export", len(req.Body)))
+			writeJSON(w, http.StatusOK, map[string]any{"result": "submitted", "detail": "summary recorded for the export; end your turn"})
+			return
+		}
 		writeError(w, http.StatusConflict, "no_handoff_requested", err.Error())
 		return
 	}

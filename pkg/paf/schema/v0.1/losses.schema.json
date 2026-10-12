@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v0.1/losses.schema.json",
+  "title": "PAF agents/<key>/context/losses.json",
+  "description": "Counts and categories only; never transcript content.",
+  "type": "object",
+  "required": [
+    "source",
+    "items"
+  ],
+  "properties": {
+    "source": {
+      "type": "string",
+      "description": "The harness the conversation was decoded from."
+    },
+    "target": {
+      "type": "string",
+      "description": "The harness the conversation was written for, when the report describes a translation or landing."
+    },
+    "source_entries": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "carried_entries": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "dropped_percent": {
+      "type": "integer",
+      "description": "Share of source entries left out, rounded up; with kept_percent it sums to 100.",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "kept_percent": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "source_estimated_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "carried_estimated_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "context_window_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "context_window_source": {
+      "type": "string"
+    },
+    "budget_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "fallback": {
+      "type": "string",
+      "description": "Legacy morph delivery name. Known: native (meaning translated into a native conversation), context_file, handoff."
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "kind",
+          "severity",
+          "count"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "Open set; readers accept unknown kinds."
+          },
+          "severity": {
+            "type": "string",
+            "description": "Open set; readers accept unknown values. Known: info, warn."
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "prior": {
+      "type": "array",
+      "description": "Reports of earlier translations of the same conversation, oldest first. Each has the fields of losses.json, without its own prior.",
+      "items": {
+        "type": "object",
+        "required": [
+          "source",
+          "items"
+        ]
+      }
+    },
+    "landing_rung": {
+      "type": "string",
+      "description": "Open set. Known: native, translated, context_file, archive."
+    },
+    "extensions": {
+      "$ref": "common.schema.json#/$defs/extensions"
+    }
+  }
+}

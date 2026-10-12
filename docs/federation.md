@@ -953,15 +953,22 @@ transfer as local files; these commands do not send anything to a peer.
 
 ## Portable local agent bundles
 
-Agent transfer uses a ZIP archive, separate from the existing export jobs.
-The [Portable Agent Format](paf.md) is specified as this archive's
-successor; tclaude will keep importing it, and sending it to peers that do not
-support PAF.
+Agent transfer uses a single archive file, separate from the existing export
+jobs. Export writes a [Portable Agent Format](paf.md) file by default (as does
+[`tclaude paf export`](paf.md#exporting-and-importing-an-agent)), which carries
+the agent's configuration and native history plus a harness-neutral copy of
+the conversation when the harness can decode it. `--format v1` writes the
+legacy agent bundle version 1 ZIP instead, for importing into an older
+tclaude. A PAF export is signed with the
+node's federation key when one exists; exporting never creates a key. Import
+accepts either format and tells them apart by content, not file name.
 
 ```bash
-tclaude agent bundle export reviewer --file reviewer.zip --history
+tclaude agent bundle export reviewer --file reviewer.paf --history
+tclaude agent bundle import --file reviewer.paf --cwd "$PWD" --group team
+tclaude agent bundle import --file reviewer.paf --cwd "$PWD" --group team --apply
+tclaude agent bundle export reviewer --file reviewer.zip --history --format v1
 tclaude agent bundle import --file reviewer.zip --cwd "$PWD" --group team
-tclaude agent bundle import --file reviewer.zip --cwd "$PWD" --group team --apply
 ```
 
 Preview is the default. `--apply` creates a fresh local agent through the normal
@@ -994,6 +1001,16 @@ and the first three locations. Export refuses flagged text unless
 `--allow-flagged` is explicit; history is never sanitized or silently rewritten.
 Inspect archives before sharing them.
 
+A PAF import is fully verified before preview: hashes, schemas, signatures
+and ZIP layout. A PAF that requires a feature or extension this tclaude does
+not support is refused. One line of its neutral context may be at most
+64 MiB. `--harness` and `--model` land the agent on another harness or model; the
+conversation is then translated, as described in
+[Exporting and importing an agent](paf.md#exporting-and-importing-an-agent).
+A PAF that carries only the neutral context, with no native history, is
+translated the same way. A
+group PAF is not an agent bundle and is refused here.
+
 The version 1 `manifest.json` records format/version, creation time, tclaude
 version, configuration and optional transcript length/checksum. Unknown fields
 within version 1 are ignored; unknown versions refuse. Archives accept only
@@ -1002,6 +1019,25 @@ and uncompressed sizes, no symlinks, duplicate entries or arbitrary extraction.
 Agents need explicit `agent.bundle.export` / `agent.bundle.import` grants;
 neither is default-granted or implied by ownership. Import also requires normal
 spawn authority. These commands operate on local files and do not contact peers.
+
+## Keeping resilience snapshots for a peer
+
+A peer's [resilience policy](paf.md#resilience-snapshots) sends encrypted
+snapshots of its agents to this node for safekeeping. Accept them by granting
+the peer-only, unscoped `snapshots.receive` permission. Custody takes no
+operator step per snapshot, so even an unrestricted peer needs this explicit
+grant:
+
+```bash
+tclaude federation grant alice snapshots.receive
+```
+
+Snapshots are sealed to this node's key as well as the sender's, so this
+node could decrypt them; tclaude stores them encrypted and never previews or
+imports them. `tclaude agent snapshot held` lists them, and
+`tclaude agent snapshot held --rm-peer alice` deletes a peer's copies, for
+example after revoking the grant. Retention follows the sender's policy and
+is bounded at 2 GiB and 200 agents per peer.
 
 ## Offering configuration to a peer
 
@@ -1142,6 +1178,14 @@ Code, Codex, OpenCode and Gemini); other harnesses warn and share configuration 
 agent and transcript remain in place. Credential findings report counts and at
 most three locations per kind; sharing refuses unless `--allow-flagged` is
 explicit. Structured credential fields are omitted and history stays verbatim.
+Each instance advertises the PAF versions it reads in its catalog
+(`paf_versions`). A peer that shares a PAF version with this node receives
+the offer as a PAF in the newest version both read, signed with this node's
+federation key; any other peer receives agent bundle version 1.
+Move and teleport follow the same rule. The neutral copy of the conversation
+is left out of the PAF when the native history is large (over 256 MiB or a
+third of `federation.agent_transfer_max_bytes`) or would not fit the
+transfer's limits; the native history always travels.
 
 Agent callers need `agent.share` with `peer=bob` or
 `peer=bob/reviewers` scope. They may share themselves using `self`; sharing
@@ -3096,12 +3140,14 @@ local operator administration and is refused through peer views.
 After fetching, `state: "ready"` means the private payload is verified.
 `GET /api/federation/bundle-offers/{id}/contents?peer=INSTANCE_ID` returns
 `{type,entries:[{path,size,kind}]}`. Agent entries are `manifest.json` and optional
-`history/transcript.jsonl`; config entries are `bundle.json` and
+`history/transcript.jsonl`, or for an agent PAF its `manifest.json` and every
+entry that manifest lists; config entries are `bundle.json` and
 `sections/<section>.json`. Entries are data labels, never host paths.
 Add `path`, optional byte `offset` and `max_bytes` to read one entry:
 `{path,kind,size,text,truncated,offset,next_offset?}`. Reads default to 256 KiB
 and accept at most 1 MiB; invalid UTF-8 is replaced. `next_offset` is the next
-byte offset when more text remains. All current entries are JSON or JSONL.
+byte offset when more text remains. Entries are JSON or JSONL, except PAF
+attachments, which have kind `file`.
 `GET` or `HEAD` `/{id}/download?peer=INSTANCE_ID` returns the original payload
 as an attachment with octet-stream, sandbox, nosniff and private/no-store
 headers. Neither read fetches implicitly: pending returns 409 `not_fetched`,
@@ -3608,6 +3654,12 @@ sorting fields, so newer clients display them as unknown.
 Installing a skill does not execute any of its files. Agents may later follow
 its instructions or run scripts, including through an interpreter without an
 executable bit, so inspect them before confirming.
+
+Agent snapshots are a third item kind, `agent-snapshot`: a snapshot PAF
+encrypted to named members only, with a hard expiry (7 days by default, at
+most 30) and up to four blobs. Use `tclaude agent snapshot share` and
+`tclaude agent snapshot board ls|fetch|preview|import|rm`; see
+[PAF: Sharing a snapshot on a Board](paf.md#sharing-a-snapshot-on-a-board).
 
 Use `federation boards publish --board ID --name NAME --only roles/NAME`,
 `items --board ID`, and `versions --board ID --item ITEM`. Updates use

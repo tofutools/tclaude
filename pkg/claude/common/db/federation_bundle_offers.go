@@ -112,6 +112,18 @@ func ListFederationBundleOffers(direction string) ([]FederationBundleOffer, erro
 	}
 	return out, rows.Err()
 }
+
+// HasOpenInboundBundleOffers reports whether any inbound offer is still
+// pending or ready, so a periodic retry can skip listing them when none is.
+func HasOpenInboundBundleOffers() (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	var open bool
+	err = d.QueryRow(`SELECT EXISTS(SELECT 1 FROM federation_bundle_offers WHERE direction='in' AND state IN ('pending','ready'))`).Scan(&open)
+	return open, err
+}
 func SetFederationBundleOfferState(direction, peer, id, state, detail string) error {
 	d, err := Open()
 	if err != nil {

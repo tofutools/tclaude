@@ -1,13 +1,13 @@
 package agentd
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,8 +22,13 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/configbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/common/buildversion"
 	"github.com/tofutools/tclaude/pkg/federation/jobrepo"
+	"github.com/tofutools/tclaude/pkg/paf"
+	"github.com/tofutools/tclaude/pkg/paf/legacy"
+	"github.com/tofutools/tclaude/pkg/paf/privacy"
 )
 
 const PermAgentBundleExport = "agent.bundle.export"
@@ -318,81 +323,43 @@ func collectAgentBundle(convID string, withHistory bool) (*agentbundle.Bundle, e
 // Counts are grouped by kind with at most three locations each, including for
 // large tool-output transcripts. Suspected values never reach diagnostics.
 func scanAgentBundle(b *agentbundle.Bundle) ([]agentbundle.Finding, error) {
-	byKind := map[string]*agentbundle.Finding{}
-	scan := func(text, location string) {
-		for kind, count := range configbundle.CredentialKinds(text) {
-			f := byKind[kind]
-			if f == nil {
-				f = &agentbundle.Finding{Kind: kind}
-				byKind[kind] = f
-			}
-			f.Count += count
-			if len(f.Locations) < 3 {
-				f.Locations = append(f.Locations, location)
-			}
-		}
-	}
-	var walk func(any, string)
-	walk = func(value any, location string) {
-		switch v := value.(type) {
-		case string:
-			scan(v, location)
-		case map[string]any:
-			keys := make([]string, 0, len(v))
-			for key := range v {
-				keys = append(keys, key)
-			}
-			slices.Sort(keys)
-			for _, key := range keys {
-				walk(v[key], location+"."+key)
-			}
-		case []any:
-			for i, child := range v {
-				walk(child, fmt.Sprintf("%s[%d]", location, i))
-			}
-		}
-	}
+	c := privacy.NewCollector()
 	raw, _ := json.Marshal(b.Manifest.Agent)
-	var definition any
-	_ = json.Unmarshal(raw, &definition)
-	walk(definition, "manifest.agent")
+	c.JSON(raw, "manifest.agent")
 	metadata, _ := json.Marshal(struct {
 		Placeholders []configbundle.Placeholder `json:"placeholders"`
 		CreatedAt    string                     `json:"created_at"`
 		Version      string                     `json:"tclaude_version"`
 		Warnings     []string                   `json:"warnings"`
 	}{b.Manifest.Placeholders, b.Manifest.CreatedAt, b.Manifest.TclaudeVersion, b.Manifest.Warnings})
-	var meta any
-	_ = json.Unmarshal(metadata, &meta)
-	walk(meta, "manifest")
+	c.JSON(metadata, "manifest")
 	history, err := b.OpenHistory()
 	if err != nil {
 		return nil, err
 	}
 	defer history.Close()
-	scanner := bufio.NewScanner(history)
-	scanner.Buffer(make([]byte, min(64<<10, agentRecordLimit())), agentRecordLimit())
-	line := 0
-	for scanner.Scan() {
-		line++
-		var record any
-		if json.Unmarshal(scanner.Bytes(), &record) == nil {
-			walk(record, fmt.Sprintf("history line %d", line))
-		}
+	if err := c.JSONLines(history, "history", agentRecordLimit()); err != nil {
+		return nil, fmt.Errorf("federation.agent_history_record_max_bytes=%d: %w", agentRecordLimit(), err)
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan history within federation.agent_history_record_max_bytes=%d: %w", agentRecordLimit(), err)
+	return bundleFindings(c.Findings()), nil
+}
+
+func bundleFindings(fs []paf.Finding) []agentbundle.Finding {
+	out := []agentbundle.Finding{}
+	for _, f := range fs {
+		out = append(out, agentbundle.Finding{Kind: f.Kind, Count: f.Count, Locations: f.Locations})
 	}
-	kinds := make([]string, 0, len(byKind))
-	for kind := range byKind {
-		kinds = append(kinds, kind)
+	return out
+}
+
+// flaggedCredentials reports findings an export refuses unless a human
+// allows them: any credential kind. High-entropy strings alone are advisory.
+func flaggedCredentials(fs []agentbundle.Finding) bool {
+	pf := make([]paf.Finding, 0, len(fs))
+	for _, f := range fs {
+		pf = append(pf, paf.Finding{Kind: f.Kind, Count: f.Count})
 	}
-	slices.Sort(kinds)
-	findings := []agentbundle.Finding{}
-	for _, kind := range kinds {
-		findings = append(findings, *byKind[kind])
-	}
-	return findings, nil
+	return privacy.Blocking(pf)
 }
 
 func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
@@ -415,20 +382,73 @@ func handleAgentBundleExport(w http.ResponseWriter, r *http.Request) {
 	if b.Manifest.Agent.CarryPermissions {
 		b.Manifest.Agent.Permissions = standingCarryRows(b.Manifest.Agent.Permissions)
 	}
-	if len(b.Manifest.Findings) > 0 && r.URL.Query().Get("allow_flagged") != "true" {
+	if flaggedCredentials(b.Manifest.Findings) && r.URL.Query().Get("allow_flagged") != "true" {
 		writeJSON(w, 422, map[string]any{"error": "suspected credentials: use --allow-flagged or export without --history", "code": "flagged_credentials", "findings": b.Manifest.Findings})
 		return
 	}
 	if caller, human, ok := authedCaller(w, r); ok && b.Manifest.Agent.Origin != nil {
 		b.Manifest.Agent.Origin.Trigger = arrivalTrigger(caller, res.ConvID, human)
 	}
-	archive, err := archiveAgentBundle(b)
+	// An export writes PAF unless asked for the legacy agent bundle v1,
+	// which an older tclaude reads ("bundle" is its earlier name).
+	format := r.URL.Query().Get("format")
+	switch format {
+	case "", agentArchivePAF:
+		format = agentArchivePAF
+	case agentArchiveV1, agentArchiveBundle:
+		format = agentArchiveBundle
+	default:
+		writeError(w, 400, "format", "format must be paf (the default) or v1")
+		return
+	}
+	parts := pafHistoryParts{NoNative: r.URL.Query().Get("no_native") == "true", NoContext: r.URL.Query().Get("no_context") == "true", AllowedFindings: classify(peerFromContext(r.Context())) == classHuman && flaggedCredentials(b.Manifest.Findings)}
+	if (parts.NoNative || parts.NoContext) && format != agentArchivePAF {
+		writeError(w, 400, "format", "no_native and no_context apply only to format=paf")
+		return
+	}
+	if id := r.URL.Query().Get("summary"); id != "" {
+		if format != agentArchivePAF {
+			writeError(w, 400, "format", "a summary travels only in a PAF: drop --format v1")
+			return
+		}
+		caller, _, _ := authedCaller(w, r)
+		if parts.Handoff, err = takeExportSummary(id, caller, res.ConvID); err != nil {
+			writeError(w, 409, "summary", err.Error())
+			return
+		}
+		// The summary is the agent's own text: it is scanned like the
+		// conversation it summarizes.
+		c := privacy.NewCollector()
+		c.Text(parts.Handoff, "context/handoff.md")
+		if privacy.Blocking(c.Findings()) && r.URL.Query().Get("allow_flagged") != "true" {
+			writeJSON(w, 422, map[string]any{"error": "suspected credentials in the agent's summary: use --allow-flagged, or export without --with-summary", "code": "flagged_credentials", "findings": c.Findings()})
+			return
+		}
+	}
+	if parts.NoNative && parts.NoContext && b.Manifest.History != nil {
+		writeError(w, 400, "format", "leaving out both the native history and the neutral context exports no conversation; export without history instead")
+		return
+	}
+	var archive *os.File
+	if format == agentArchivePAF {
+		archive, err = archiveAgentPAFWith(b, false, parts)
+	} else {
+		archive, err = archiveAgentTransfer(b, format, false)
+	}
 	if err != nil {
 		writeError(w, 400, "bundle_export", err.Error())
 		return
 	}
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", `attachment; filename="agent.bundle.zip"`)
+	if id := r.URL.Query().Get("summary"); id != "" {
+		dropExportSummary(id)
+	}
+	if format == agentArchivePAF {
+		w.Header().Set("Content-Type", paf.MediaType)
+		w.Header().Set("Content-Disposition", `attachment; filename="agent.paf"`)
+	} else {
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", `attachment; filename="agent.bundle.zip"`)
+	}
 	w.WriteHeader(200)
 	defer func() { _ = archive.Close(); _ = os.Remove(archive.Name()) }()
 	_, _ = io.Copy(w, archive)
@@ -445,8 +465,12 @@ type agentBundlePreview struct {
 	Warnings    []string                    `json:"warnings"`
 	Security    string                      `json:"security"`
 	Findings    []agentbundle.Finding       `json:"findings,omitempty"`
+	Landing     *historyLanding             `json:"history_landing,omitempty"`
 	Applied     bool                        `json:"applied"`
-	Spawn       *agent.SpawnResponse        `json:"spawn,omitempty"`
+	// Offline reports an applied import that landed without starting
+	// (start=false); resume starts it.
+	Offline bool                 `json:"offline,omitempty"`
+	Spawn   *agent.SpawnResponse `json:"spawn,omitempty"`
 }
 
 func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
@@ -460,6 +484,16 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b, _ := r.Context().Value(agentBundleDataContextKey{}).(*agentbundle.Bundle)
+	// neutral reads a PAF's neutral context while the archive file is open.
+	var neutral func(paf.ReadOptions) (*transcript.Transcript, error)
+	// rescan scans a PAF's whole content, including the neutral context and
+	// attachments a lowered bundle does not carry.
+	var rescan func(int) ([]paf.Finding, error)
+	// direct is a file import by the caller, as opposed to a federation
+	// offer, move or teleport handing over an already decoded bundle.
+	direct := b == nil
+	// handoff is the agent-written summary a PAF may carry.
+	var handoff string
 	if b == nil {
 		file, err := os.CreateTemp("", ".agent-import-archive-")
 		if err != nil {
@@ -472,12 +506,14 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, "archive", fmt.Sprintf("archive exceeds or cannot be read within federation.agent_transfer_max_bytes=%d", agentTransferLimit()))
 			return
 		}
-		b, err = agentbundle.DecodeFile(file, agentTransferLimit(), "")
+		var info legacy.Info
+		b, info, err = legacy.DecodeBundleFile(file, legacy.DecodeLimits{MaxBytes: agentTransferLimit(), MaxRecordBytes: pafContextRecordLimit()}, "")
 		if err != nil {
 			writeError(w, 400, "archive", err.Error())
 			return
 		}
 		defer func() { _ = b.Close() }()
+		neutral, rescan, handoff = info.Context, info.Scan, info.Handoff
 	}
 	arrival, _ := r.Context().Value(arrivalContextKey{}).(*arrivalContext)
 	if arrival == nil {
@@ -490,15 +526,30 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	apply := q.Get("apply") == "true"
+	// start=false lands the applied agent offline: enrolled with its
+	// conversation installed, started later by resume.
+	noStart := q.Get("start") == "false"
 	d := b.Manifest.Agent
 	if name := q.Get("name"); name != "" {
 		d.Name = name
 	}
-	h, err := harness.ResolveSpawnable(d.Harness)
+	// The agent lands on its own harness unless the importer names another;
+	// the conversation then translates (see planHistoryLanding).
+	landingName, model := q.Get("harness"), q.Get("model")
+	if landingName == "" {
+		landingName = d.Harness
+	}
+	h, err := harness.ResolveSpawnable(landingName)
 	if err != nil || h.UsesCommandInput() {
-		writeError(w, 400, "harness", "unsupported agent harness")
+		msg := "unsupported agent harness"
+		if q.Get("harness") == "" && direct {
+			msg = fmt.Sprintf("harness %q is not available here; choose a landing harness with --harness", d.Harness)
+		}
+		writeError(w, 400, "harness", msg)
 		return
 	}
+	src, _ := harness.Resolve(d.Harness)
+	crossHarness := src == nil || src.Name != h.Name
 	// Decode only the existing profile shape, then force every access-bearing
 	// field out even for a malicious hand-edited manifest.
 	var profile spawnProfileJSON
@@ -536,6 +587,26 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.Profile = safe.Sections["profiles"][0].Value
+	var landingWarnings []string
+	if crossHarness || model != "" {
+		if err := json.Unmarshal(d.Profile, &profile); err != nil {
+			writeError(w, 400, "profile", err.Error())
+			return
+		}
+		if crossHarness {
+			// Launch posture is harness specific: on another harness the
+			// receiver's defaults and normal spawn checks apply instead.
+			landingWarnings = append(landingWarnings, fmt.Sprintf("The launch posture recorded for %s is not applied on %s; receiver defaults and normal spawn checks apply.", d.Harness, h.Name))
+			profile = spawnProfileJSON{Name: "agent"}
+			missing = nil
+		}
+		profile.Harness = h.Name
+		if model != "" {
+			profile.Model = model
+		}
+		d.Profile, _ = json.Marshal(profile)
+	}
+	d.Harness = h.Name
 	if len(missing) == 0 {
 		if err := json.Unmarshal(d.Profile, &profile); err != nil {
 			writeError(w, 400, "profile", err.Error())
@@ -546,7 +617,14 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	findings, err := scanAgentBundle(b)
+	var findings []agentbundle.Finding
+	if rescan != nil {
+		var fs []paf.Finding
+		fs, err = rescan(agentRecordLimit())
+		findings = bundleFindings(fs)
+	} else {
+		findings, err = scanAgentBundle(b)
+	}
 	if err != nil {
 		writeError(w, 400, "history", err.Error())
 		return
@@ -609,22 +687,45 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	if pathError != "" {
 		preview.Warnings = append(preview.Warnings, pathError)
 	}
-	if b.Manifest.History != nil && q.Get("skip_history") != "true" {
-		if !h.SupportsHistoryTransfer() {
-			preview.Warnings = append(preview.Warnings, h.DisplayName+" cannot resume imported history; importing config only")
-		} else if b.Manifest.History.Format != h.History.Format() {
-			writeError(w, 400, "history", "history format does not match harness")
-			return
-		} else if err := validateBundleHistory(h, b); err != nil {
-			writeError(w, 400, "history", err.Error())
-			return
-		} else {
-			preview.History = true
-		}
+	preview.Warnings = append(preview.Warnings, landingWarnings...)
+	// Budget the conversation for the model the agent will launch with: the
+	// requested one, else the profile's, else on the same harness the model
+	// the source last ran.
+	landingModel := model
+	if landingModel == "" {
+		landingModel = profile.Model
+	}
+	if landingModel == "" && !crossHarness && d.Origin != nil {
+		landingModel = d.Origin.Model
+	}
+	landing, warnings, err := planHistoryLanding(b, h, landingModel, preview.Cwd, neutral, landingOptions{Skip: q.Get("skip_history") == "true", BudgetNative: direct && landsOnSmallerWindow(h, d.Origin, landingModel), Summary: handoff})
+	if err != nil {
+		writeError(w, 400, "history", err.Error())
+		return
+	}
+	defer landing.close()
+	preview.Landing, preview.History = landing, landing.history != nil
+	preview.Warnings = append(preview.Warnings, warnings...)
+	if direct {
+		// A direct import already tried to land the neutral context; the
+		// landing warnings say why when it did not.
+		preview.Warnings = slices.DeleteFunc(preview.Warnings, func(s string) bool { return s == legacy.WarningContextOnly })
 	}
 	preview.Warnings = append(preview.Warnings, "Source groups are advisory; only --group selects receiving membership. Source profile names and role references do not confer grants.")
+	// A large cut of a file import needs the importer's confirmation, as a
+	// morph's does. The full history is never lost: it stays in the file
+	// and is saved beside the agent.
+	needsConfirm := direct && landing.Losses != nil && landing.Losses.NeedsSummary && preview.History
+	if needsConfirm {
+		preview.Warnings = append(preview.Warnings, fmt.Sprintf("Cutting %d%% of the conversation needs confirmation: --confirm-history-loss.", landing.cutPercent()))
+	}
 	if !apply {
 		writeJSON(w, 200, preview)
+		return
+	}
+	if needsConfirm && q.Get("confirm_history_loss") != "true" {
+		writeJSON(w, 409, map[string]any{"code": "history_confirmation_required", "preview": preview,
+			"error": fmt.Sprintf("landing on %s cuts about %d%% of the conversation. Confirm the cut with --confirm-history-loss (the full history stays in the file and is saved beside the agent), choose a model with a larger context window with --model, or import without the conversation with --skip-history.", landingModelLabel(h, landingModel), landing.cutPercent())})
 		return
 	}
 	if pathError != "" || len(missing) > 0 {
@@ -633,6 +734,10 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	}
 	if preview.Group == "" {
 		writeError(w, 400, "group", "--apply requires --group naming an existing receiving group, as with agent spawn")
+		return
+	}
+	if noStart && (!preview.History || h.UsesAuthoritativeServer()) {
+		writeError(w, 400, "no_start", "only an agent whose conversation lands can be imported without starting, and not yet on OpenCode; import and start it instead")
 		return
 	}
 	var group *db.AgentGroup
@@ -700,7 +805,10 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 	inner.Body = io.NopCloser(bytes.NewReader(wire))
 	inner.ContentLength = int64(len(wire))
 	if preview.History {
-		inner = inner.WithContext(context.WithValue(inner.Context(), bundleHistoryContextKey{}, &bundleHistoryLaunch{Raw: b.Transcript, Path: b.TranscriptPath, SourceID: b.Manifest.History.SourceConvID, Format: b.Manifest.History.Format}))
+		inner = inner.WithContext(context.WithValue(inner.Context(), bundleHistoryContextKey{}, landing.history))
+	}
+	if noStart {
+		inner = inner.WithContext(context.WithValue(inner.Context(), bundleNoLaunchContextKey{}, true))
 	}
 	rec := httptest.NewRecorder()
 	handleGroupSpawn(rec, inner, group)
@@ -719,7 +827,11 @@ func handleAgentBundleImport(w http.ResponseWriter, r *http.Request) {
 		auditDecisions, _ := json.Marshal(preview.Permissions)
 		recordFederationAudit("agent.permissions.carry", carryPolicy.Peer, spawned.AgentID, preview.Group, string(auditDecisions), 200)
 	}
+	if landing.full != nil {
+		saveLandedHistory(spawned, landing, group)
+	}
 	preview.Applied = true
+	preview.Offline = noStart
 	preview.Spawn = &spawned
 	writeJSON(w, 200, preview)
 }
@@ -758,4 +870,83 @@ func agentBundleSpawnWire(d agentbundle.Definition, p spawnProfileJSON, preview 
 	wire["task_ref_url"] = d.TaskURL
 	wire["task_ref_label"] = d.TaskLabel
 	return json.Marshal(wire)
+}
+
+// bundleNoLaunchContextKey marks an agent import that lands offline
+// (start=false). Only handleAgentBundleImport sets it.
+type bundleNoLaunchContextKey struct{}
+
+// landSpawnOffline finishes an enrolled, history-installed spawn without
+// starting a session. The conversation has no resume profile until resume
+// rebuilds it from the harness's own store, as for a group import member;
+// the agent's relaunch profile was bound at enrollment.
+func landSpawnOffline(p spawnParams, h *harness.Harness, convID string) (*spawnOutcome, *spawnFailure) {
+	// Resume never pre-trusts, so keep the launch's trust_dir promise now:
+	// otherwise the resumed pane stops on the trust dialog, and a Copilot API
+	// drive refuses to resume at all.
+	if p.TrustDir {
+		if err := trustAgentDirectory(h, convID, p.Cwd); err != nil {
+			slog.Warn("import: could not pre-trust the offline agent's directory", "harness", h.Name, "cwd", p.Cwd, "error", err)
+		}
+	}
+	if p.Name != "" && isValidRenameTitle(p.Name) {
+		if err := db.SetConvIndexCustomTitle(convID, p.Name, h.Name); err != nil {
+			slog.Warn("import: offline landing title not recorded", "conv", short8(convID), "error", err)
+		}
+	}
+	agentID := p.AgentID
+	if agentID == "" {
+		agentID, _ = db.AgentIDForConv(convID)
+	}
+	return &spawnOutcome{AgentID: agentID, ConvID: convID, Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
+}
+
+// saveLandedHistory saves the whole conversation of a landing that cut it
+// beside the landed agent, where morph keeps its artifacts, and tells the
+// agent where it is. Best effort: the full history also stays in the file
+// that was imported.
+func saveLandedHistory(spawned agent.SpawnResponse, l *historyLanding, g *db.AgentGroup) {
+	agentID := spawned.AgentID
+	if agentID == "" {
+		agentID, _ = db.AgentIDForConv(spawned.ConvID)
+	}
+	if agentID == "" || spawned.ConvID == "" {
+		return
+	}
+	root, err := tclcommon.PrepareMorphArtifactsDir(agentID)
+	if err != nil {
+		slog.Warn("import: save full history", "agent", agentID, "error", err)
+		return
+	}
+	dir := filepath.Join(root, "import-"+time.Now().UTC().Format("20060102T150405.000Z"))
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		slog.Warn("import: save full history", "agent", agentID, "error", err)
+		return
+	}
+	if err := harness.WriteHistoryArtifacts(l.full, dir); err != nil {
+		slog.Warn("import: save full history", "agent", agentID, "error", err)
+		return
+	}
+	saved := filepath.Join(dir, "transcript.md") + " (Markdown)"
+	// The PAF context copy is best effort; name it only when it was written.
+	if _, err := os.Lstat(filepath.Join(dir, "transcript.jsonl")); err == nil {
+		saved += " and " + filepath.Join(dir, "transcript.jsonl") + " (PAF context, JSON lines)"
+	}
+	body := fmt.Sprintf("Your imported conversation was cut by about %d%% to fit %s's context window: the pinned start, compaction summaries and the newest turns are what you see. The whole conversation is saved at %s. Read the parts you need from there rather than assuming what was in them.",
+		l.cutPercent(), landingModelLabel(mustHarness(l.Harness), l.Model), saved)
+	var groupID int64
+	if g != nil {
+		groupID = g.ID
+	}
+	if _, err := queueAgentMessage(&db.AgentMessage{GroupID: groupID, ToConv: spawned.ConvID, Subject: "Your full imported history", Body: body}); err != nil {
+		slog.Warn("import: tell the agent where its full history is", "agent", agentID, "error", err)
+	}
+}
+
+func mustHarness(name string) *harness.Harness {
+	h, err := harness.Resolve(name)
+	if err != nil || h == nil {
+		return &harness.Harness{Name: name, DisplayName: name}
+	}
+	return h
 }

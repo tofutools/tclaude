@@ -286,3 +286,34 @@ func TestFederationPresenceTimestampBoundary(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(123456789), int64(got.DepartedAt.Nanosecond()))
 }
+
+// A reserved arrival with no local agent row yet binds its launch as the
+// head conversation, through either enrollment path.
+func TestFederationArrivalBindsNewConvAsHead(t *testing.T) {
+	setupTestDB(t)
+	role := func(conv string) string {
+		d, e := Open()
+		require.NoError(t, e)
+		var r string
+		require.NoError(t, d.QueryRow(`SELECT role FROM agent_conversations WHERE conv_id=?`, conv).Scan(&r))
+		return r
+	}
+	identity := FederationIdentity{Agent: NewAgentID(), Home: "origin", Hops: 1, Proofs: map[string]string{"origin": "homeproof"}}
+	_, e := ReserveFederationIdentity(identity, "visit", "origin", "in")
+	require.NoError(t, e)
+	_, _, e = EnsureAgentForConvWithID("arrived", identity.Agent, "visit")
+	require.NoError(t, e)
+	require.Equal(t, ConvRoleHead, role("arrived"))
+
+	claimed := FederationIdentity{Agent: NewAgentID(), Home: "origin", Hops: 1, Proofs: map[string]string{"origin": "homeproof"}}
+	_, e = ReserveFederationIdentity(claimed, "visit", "origin", "in2")
+	require.NoError(t, e)
+	require.NoError(t, InsertPendingSpawn(&PendingSpawn{Label: "spwn-arrival", AgentID: claimed.Agent, GroupID: 1}))
+	ok, e := ClaimPendingSpawnAndBindAgent("spwn-arrival", "arrived-claim", claimed.Agent, "visit")
+	require.NoError(t, e)
+	require.True(t, ok)
+	require.Equal(t, ConvRoleHead, role("arrived-claim"))
+	a, e := GetAgent(claimed.Agent)
+	require.NoError(t, e)
+	require.Equal(t, "arrived-claim", a.CurrentConvID)
+}

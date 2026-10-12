@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -36,14 +35,43 @@ func federationBundleKind(name string) (fedBundleKind, bool) {
 	if name == bundletransfer.Config.Name {
 		return fedBundleKind{Type: bundletransfer.Config, Validate: validateOfferedConfig}, true
 	}
+	if name == bundletransfer.Snapshot.Name {
+		// Opaque custody: only the envelope shape is checked; a snapshot
+		// is never decoded or imported here.
+		return fedBundleKind{Type: bundletransfer.Snapshot, Validate: validResilienceSnapshot, ValidateFile: func(f *os.File) error {
+			head := make([]byte, 64)
+			n, err := io.ReadFull(f, head)
+			if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
+				return err
+			}
+			return validResilienceSnapshot(head[:n])
+		}}, true
+	}
+	if name == bundletransfer.SnapshotReturn.Name {
+		// Opaque until the operator recovers it: never imported here.
+		return fedBundleKind{Type: bundletransfer.SnapshotReturn, Validate: validResilienceSnapshot, ValidateFile: func(f *os.File) error {
+			head := make([]byte, 64)
+			n, err := io.ReadFull(f, head)
+			if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
+				return err
+			}
+			return validResilienceSnapshot(head[:n])
+		}}, true
+	}
 	if name == bundletransfer.Agent.Name {
 		return fedBundleKind{Type: agentTransferType(), ValidateFile: func(f *os.File) error {
-			b, err := agentbundle.DecodeFile(f, agentTransferLimit(), "")
+			b, err := decodeAgentArchive(f)
 			if err == nil {
 				_ = b.Close()
 			}
 			return err
-		}, Validate: func(raw []byte) error { _, err := agentbundle.Decode(raw); return err }}, true
+		}, Validate: func(raw []byte) error {
+			b, err := decodeAgentArchiveBytes(raw)
+			if err == nil {
+				_ = b.Close()
+			}
+			return err
+		}}, true
 	}
 	return fedBundleKind{}, false
 }
@@ -60,7 +88,13 @@ func fedBundleAdmitted(peer string, kind bundletransfer.Type, d bundletransfer.D
 		g, err := db.GetAgentGroupByName(d.Group)
 		return err == nil && g != nil && (fedPeerAllows(peer, g.ID, kind.AdmissionSlug) || d.Teleport != nil && fedPeerAllows(peer, g.ID, PermAgentsTeleportReceive))
 	}
-	if db.FederationPeerUnrestricted(peer) {
+	if kind.Name == bundletransfer.SnapshotReturn.Name {
+		// No standing grant: only an answer to this node's own recall.
+		return resilienceRecallAdmits(peer, d)
+	}
+	// Custody stores another node's data with no operator step, so it
+	// takes the explicit grant even from an unrestricted peer.
+	if kind.Name != bundletransfer.Snapshot.Name && db.FederationPeerUnrestricted(peer) {
 		return true
 	}
 	grants, err := db.ListEffectiveFederationPeerGrants(peer)
@@ -187,12 +221,37 @@ func (rt *fedRuntime) acceptBundleOffer(peer *db.FederationPeer, env *proto.Enve
 		}
 		_ = db.SetFederationBundleOfferState("in", peer.InstanceID, d.ID, "ready", "")
 	}
+	if d.Return != nil {
+		// Single use: the recall is bound to this one stored offer.
+		if err := bindResilienceRecall(peer.InstanceID, d); err != nil {
+			_ = fedBundleSpool().Remove("in", peer.InstanceID, d.ID)
+			_ = db.DeleteFederationBundleOffer("in", peer.InstanceID, d.ID)
+			refuse(fedCodeNotExported, err.Error())
+			return
+		}
+	}
 	if d.Move != nil && d.Move.DirectIfAllowed {
 		_ = db.InsertFederationAgentMove(db.FederationAgentMove{Direction: "in", Peer: peer.InstanceID, ID: d.ID, State: "awaiting_acceptance", Disposition: "checking", SourceAgent: d.Move.SourceAgent, SourceConv: d.Move.SourceConv, SHA256: d.SHA256, Group: d.Group, ExpiresAt: d.ExpiresAt})
 	}
 	// The durable offer itself appears in federation inbox and offers listings;
 	// no prompt/content from it is delivered to an agent.
 	recordFederationAudit("federation.bundle.in", peerDisplay(peer), "", "", d.Type+" offer "+d.ID, 200)
+	if d.Type == bundletransfer.Snapshot.Name {
+		// Custody needs no operator step: the snapshots.receive grant is
+		// the operator's standing decision. It runs after the ack.
+		stored := o
+		if len(d.Inline) > 0 {
+			stored.State = "ready"
+		}
+		defer func() { go rt.resilienceReceive(&stored) }()
+	}
+	if d.Type == bundletransfer.SnapshotReturn.Name {
+		stored := o
+		if len(d.Inline) > 0 {
+			stored.State = "ready"
+		}
+		defer func() { go rt.resilienceReturnReceive(&stored) }()
+	}
 	if teleport != nil {
 		recordFederationAudit("teleport.receive", peer.InstanceID, teleport.Intent.SourceAgent, d.Group, fmt.Sprintf("offer=%s chain=%s hop=%d credentials=%s state=%s", d.ID, teleport.Intent.Chain, len(teleport.Intent.Hops), teleport.Credentials, teleport.State), 200)
 	}

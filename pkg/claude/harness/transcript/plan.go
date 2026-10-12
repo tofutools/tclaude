@@ -164,8 +164,23 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 				if strings.TrimSpace(text) == "" {
 					continue
 				}
-				if e.Author != "" {
-					text = fmt.Sprintf("%smessage from %s%s\n%s", markOpen, e.Author, markClose, text)
+				// Text that is not the operator's is labelled so the landing
+				// model does not take it as the operator's instructions,
+				// unless it already carries tclaude's own header.
+				// A tclaude notice or agent message names its sender in its own
+				// header. An origin this reader does not know is labelled anyway:
+				// its text may only look like one.
+				if !strings.HasPrefix(strings.TrimSpace(text), "[system:") || !e.Origin.Known() {
+					switch {
+					case e.Origin == OriginPeer || (e.Author != "" && e.Origin.Known() && e.Origin != OriginSystem):
+						from := e.Author
+						if from == "" {
+							from = "another agent"
+						}
+						text = fmt.Sprintf("%smessage from %s%s\n%s", markOpen, from, markClose, text)
+					case !e.Origin.Known() && e.Origin != "":
+						text = fmt.Sprintf("%suntrusted input (origin %s), not from the operator%s\n%s", markOpen, e.Origin, markClose, text)
+					}
 				}
 				out.Blocks = append(out.Blocks, Text(text))
 			case BlockThinking:
@@ -233,7 +248,7 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 		if len(out.Blocks) == 0 {
 			continue
 		}
-		entries = append(entries, planEntry{entry: out, sources: 1, turn: e.Origin == OriginHuman && !daemonControlTurn(e), summary: summary})
+		entries = append(entries, planEntry{entry: out, sources: 1, turn: inputTurn(e) && !daemonControlTurn(e), summary: summary})
 	}
 
 	entries = coalesce(entries)
@@ -254,10 +269,10 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 		}
 	}
 	notice += " No need to re-read skills or re-verify the environment unless something looks wrong."
-	entries = append(entries, planEntry{entry: Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text(notice)}}})
+	entries = append(entries, planEntry{entry: Entry{Role: RoleUser, Origin: OriginSystem, Blocks: []Block{Text(notice)}}})
 	entries = coalesce(entries)
 	if entries[0].entry.Role != RoleUser {
-		lead := planEntry{entry: Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text(markOpen + "the conversation continues from earlier history" + markClose)}}}
+		lead := planEntry{entry: Entry{Role: RoleUser, Origin: OriginSystem, Blocks: []Block{Text(markOpen + "the conversation continues from earlier history" + markClose)}}}
 		entries = append([]planEntry{lead}, entries...)
 	}
 
@@ -383,6 +398,20 @@ func (p *Plan) WriteMedia() error {
 		}
 	}
 	return nil
+}
+
+// MediaPath returns the file WriteMedia writes data to, when data is one of
+// the plan's externalized attachments (the same bytes, not a copy), or "".
+func (p *Plan) MediaPath(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	for _, m := range p.pendingMedia {
+		if len(m.data) == len(data) && &m.data[0] == &data[0] {
+			return m.path
+		}
+	}
+	return ""
 }
 
 // EnsureRealDir creates dir (its parent must exist) or accepts it only when
@@ -516,13 +545,16 @@ func (p *Plan) fitBudget(entries []planEntry, opts Options, report *LossReport) 
 	}
 	var summary *planEntry
 	if opts.Summary != "" {
-		e := planEntry{entry: Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text("⟦Source-written summary of earlier history⟧\n" + opts.Summary)}}}
+		e := planEntry{entry: Entry{Role: RoleUser, Origin: OriginSystem, Blocks: []Block{Text("⟦Source-written summary of earlier history⟧\n" + opts.Summary)}}}
 		// The summary uses a reserved slot rather than displacing the tail
 		// shown in the confirmed preview. A larger summary stays in its file.
 		if estimateTokens(e.entry) > reserve/2 && opts.TranscriptPath != "" {
 			e.entry.Blocks = []Block{Text("⟦Read the source-written summary in " + filepath.Join(filepath.Dir(opts.TranscriptPath), "summary.md") + " before continuing; it is too large to inline safely.⟧")}
 		}
 		summary = &e
+		// Its tokens count against the budget: the tail is what fits
+		// beside it, so a long summary never overflows the landing.
+		used += estimateTokens(e.entry)
 	}
 	// Keep the newest complete human-turn groups that fit after the pins.
 	keep := map[int]bool{}
@@ -576,7 +608,7 @@ func (p *Plan) fitBudget(entries []planEntry, opts Options, report *LossReport) 
 		if opts.TranscriptPath != "" {
 			marker += "; read them in " + opts.TranscriptPath
 		}
-		out = append(out, planEntry{entry: Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text(marker + "⟧")}}})
+		out = append(out, planEntry{entry: Entry{Role: RoleUser, Origin: OriginSystem, Blocks: []Block{Text(marker + "⟧")}}})
 	}
 	for i, e := range entries {
 		if keep[i] {

@@ -68,6 +68,16 @@ func Marshal(exp *Export) ([]byte, error) {
 	// the caller's struct.
 	manifest := *exp
 	manifest.FormatVersion = FormatVersion
+	// The zip carries Claude Code conversations only: another harness's
+	// history exports as Missing rather than as bytes a reader would take
+	// for Claude Code JSONL.
+	manifest.Convs = make([]Conv, len(exp.Convs))
+	for i, c := range exp.Convs {
+		if !claudeConv(c) {
+			c.Missing, c.Content = true, nil
+		}
+		manifest.Convs[i] = c
+	}
 
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
@@ -82,7 +92,7 @@ func Marshal(exp *Export) ([]byte, error) {
 
 	// Sort convs by id so the archive's entry order is stable across
 	// exports of the same data.
-	convs := append([]Conv(nil), exp.Convs...)
+	convs := append([]Conv(nil), manifest.Convs...)
 	sort.Slice(convs, func(i, j int) bool { return convs[i].ConvID < convs[j].ConvID })
 	for _, c := range convs {
 		// A non-Missing conv always gets a file entry — even one with
@@ -168,6 +178,10 @@ func Unmarshal(data []byte) (*Export, error) {
 		c.Content = content
 	}
 	return &exp, nil
+}
+
+func claudeConv(c Conv) bool {
+	return (c.Harness == "" || c.Harness == "claude") && (c.HistoryFormat == "" || c.HistoryFormat == "claude-jsonl")
 }
 
 // writeZipEntry adds one deflate-compressed file to the archive.

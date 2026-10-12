@@ -183,6 +183,18 @@ tclaude db schema --relations  # identity audit: conv-id vs agent-id keying
 The command operates on the live database and migrates it to the current
 schema version first.
 
+## tclaude paf
+
+Verifies, describes and renders [Portable Agent Format](paf.md) files and
+legacy agent bundles, locally and read-only. See
+[Reading a PAF](paf.md#reading-a-paf).
+
+```bash
+tclaude paf validate reviewer.paf
+tclaude paf inspect reviewer.paf
+tclaude paf render reviewer.paf --out reviewer.html
+```
+
 ## Startup-context trimming
 
 Claude Code loads a fixed body of startup context into every session —

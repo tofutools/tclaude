@@ -127,7 +127,7 @@ func TestFederation_PermissionCarrySourceGateAndLiveExport(t *testing.T) {
 	require.Equal(t, 200, request())
 	rec := profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+source+"&carry_permissions=true", nil)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
-	b, err := agentbundle.Decode(rec.Body.Bytes())
+	b, err := decodeAgentExport(t, rec.Body.Bytes())
 	require.NoError(t, err)
 	defer func() { _ = b.Close() }()
 	require.True(t, b.Manifest.Agent.CarryPermissions)

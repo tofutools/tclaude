@@ -29,6 +29,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
 	"github.com/tofutools/tclaude/pkg/federation/hub"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
+	"github.com/tofutools/tclaude/pkg/paf"
+	"github.com/tofutools/tclaude/pkg/paf/legacy"
 	"github.com/tofutools/tclaude/pkg/testharness"
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
@@ -474,8 +476,9 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool, mailChecks ...bo
 		if len(mailChecks) > 0 && mailChecks[0] && d.Teleport.Home {
 			code, raw := historyNodeRequest(t, node, "GET", "/v1/federation/bundle-offers/"+d.ID+"/download", "", nil)
 			require.Equal(t, 200, code, string(raw))
-			portable, e := agentbundle.Decode(raw)
+			portable, info, e := legacy.DecodeBundleBytes(raw, legacy.DecodeLimits{MaxBytes: 1 << 30}, "")
 			require.NoError(t, e)
+			require.Equal(t, paf.Format, info.Source, "both nodes advertise PAF, so the transfer is a PAF")
 			require.True(t, portable.Manifest.MailLedger)
 			require.NotEmpty(t, portable.MailDeliveries, "native departure carries the final delivery marker")
 		}
@@ -590,14 +593,15 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool, mailChecks ...bo
 		require.NoError(t, e)
 		defer resp.Body.Close()
 		require.Equal(t, 200, resp.StatusCode)
-		archive, e := os.CreateTemp(testutil.CanonicalTempDir(t), "returned.zip")
+		archive, e := os.CreateTemp(testutil.CanonicalTempDir(t), "returned.paf")
 		require.NoError(t, e)
 		defer archive.Close()
 		_, e = io.Copy(archive, resp.Body)
 		require.NoError(t, e)
-		bundle, e := agentbundle.DecodeFile(archive, agentbundle.MaxBytes, testutil.CanonicalTempDir(t))
+		bundle, info, e := legacy.DecodeBundleFile(archive, legacy.DecodeLimits{MaxBytes: agentbundle.MaxBytes}, testutil.CanonicalTempDir(t))
 		require.NoError(t, e)
 		defer bundle.Close()
+		require.Equal(t, paf.Format, info.Source, "an export without a format is a PAF")
 		history, e := bundle.OpenHistory()
 		require.NoError(t, e)
 		defer history.Close()
@@ -618,7 +622,7 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool, mailChecks ...bo
 	}
 	code, raw = historyNodeRequest(t, a, "GET", "/v1/agent-bundle/export?agent="+returned+"&history=true", "", nil)
 	require.Equal(t, 200, code, string(raw))
-	bundle, err := agentbundle.Decode(raw)
+	bundle, err := decodeAgentExport(t, raw)
 	require.NoError(t, err)
 	require.Contains(t, string(bundle.Transcript), original)
 	require.Contains(t, string(bundle.Transcript), addition)

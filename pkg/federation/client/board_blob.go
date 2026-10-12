@@ -22,6 +22,23 @@ func BoardBlob(ctx context.Context, opts Options, v proto.BoardItemVersion, uplo
 	if e := v.Verify(); e != nil {
 		return nil, e
 	}
+	return boardBlob(ctx, opts, v.Board, v.Blob, v.SHA256, v.Bytes, "", time.Time{}, upload)
+}
+
+// BoardSnapshotBlob transfers one verified ciphertext chunk using the existing
+// authenticated board stream, with immutable snapshot reservation attributes.
+func BoardSnapshotBlob(ctx context.Context, opts Options, v proto.BoardSnapshotVersion, chunkIndex int, upload []byte) ([]byte, error) {
+	if err := v.Verify(); err != nil {
+		return nil, err
+	}
+	if chunkIndex < 0 || chunkIndex >= len(v.Chunks) {
+		return nil, errors.New("invalid snapshot chunk index")
+	}
+	c := v.Chunks[chunkIndex]
+	return boardBlob(ctx, opts, v.Board, c.Blob, c.SHA256, c.Bytes, "agent-snapshot", v.ExpiresAt, upload)
+}
+
+func boardBlob(ctx context.Context, opts Options, board, blob, digest string, size int64, kind string, expiresAt time.Time, upload []byte) ([]byte, error) {
 	u, e := ValidateURL(opts.URL)
 	if e != nil {
 		return nil, e
@@ -72,11 +89,16 @@ func BoardBlob(ctx context.Context, opts Options, v proto.BoardItemVersion, uplo
 	if upload != nil {
 		method = "blobs.put"
 		sum := sha256.Sum256(upload)
-		if int64(len(upload)) != v.Bytes || hex.EncodeToString(sum[:]) != v.SHA256 {
+		if int64(len(upload)) != size || hex.EncodeToString(sum[:]) != digest {
 			return nil, errors.New("board ciphertext descriptor mismatch")
 		}
 	}
-	raw, _ := json.Marshal(map[string]any{"board": v.Board, "blob": v.Blob, "digest": v.SHA256, "bytes": v.Bytes, "key": kp.Pub})
+	params := map[string]any{"board": board, "blob": blob, "digest": digest, "bytes": size, "key": kp.Pub}
+	if kind != "" {
+		params["kind"] = kind
+		params["expires_at"] = expiresAt
+	}
+	raw, _ := json.Marshal(params)
 	now := time.Now()
 	req := proto.BoardRequest{ID: proto.NewEnvelopeID(), HubID: ch.HubID, Nonce: ch.Nonce, Generation: welcome.AdminGeneration, Method: method, Payload: raw, IssuedAt: now, ExpiresAt: now.Add(time.Minute)}
 	req.Sign(opts.Identity)
@@ -126,12 +148,12 @@ func BoardBlob(ctx context.Context, opts Options, v proto.BoardItemVersion, uplo
 		}
 		return nil, nil
 	}
-	data, e := io.ReadAll(io.LimitReader(conn, v.Bytes+1))
+	data, e := io.ReadAll(io.LimitReader(conn, size+1))
 	if e != nil {
 		return nil, e
 	}
 	sum := sha256.Sum256(data)
-	if int64(len(data)) != v.Bytes || hex.EncodeToString(sum[:]) != v.SHA256 {
+	if int64(len(data)) != size || hex.EncodeToString(sum[:]) != digest {
 		return nil, errors.New("board ciphertext size or digest mismatch")
 	}
 	return data, nil

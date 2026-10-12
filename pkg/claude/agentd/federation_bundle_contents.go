@@ -21,6 +21,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/skillbundle"
 	"github.com/tofutools/tclaude/pkg/federation/bundletransfer"
+	"github.com/tofutools/tclaude/pkg/paf"
+	"github.com/tofutools/tclaude/pkg/paf/legacy"
 )
 
 type bundleContentEntry struct {
@@ -38,6 +40,10 @@ func openInspectableBundle(w http.ResponseWriter, r *http.Request) (*db.Federati
 	}
 	o := lookupReceivingBundleOffer(w, r)
 	if o == nil {
+		return nil, nil
+	}
+	if isResilienceType(o.Descriptor.Type) {
+		writeError(w, 409, "resilience_snapshot", resilienceOfferRefusal)
 		return nil, nil
 	}
 	fedBundleMu.Lock()
@@ -95,6 +101,9 @@ func bundleContentsHeaders(w http.ResponseWriter) {
 
 func bundleEntries(f *os.File, d bundletransfer.Descriptor) ([]bundleContentEntry, error) {
 	entries := []bundleContentEntry{}
+	if d.Type == bundletransfer.Agent.Name && legacy.IsPAF(f, d.Bytes) {
+		return pafBundleEntries(f, d)
+	}
 	if d.Type == bundletransfer.Agent.Name {
 		z, err := zip.NewReader(f, d.Bytes)
 		if err != nil {
@@ -260,4 +269,30 @@ func handleFederationBundleDownload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodHead {
 		_, _ = io.Copy(w, f)
 	}
+}
+
+// pafBundleEntries lists a verified agent PAF's manifest and the entries it
+// lists. Reading for inspection still verifies every hash and schema, and
+// tolerates features this node cannot import so they can be looked at.
+func pafBundleEntries(f *os.File, d bundletransfer.Descriptor) ([]bundleContentEntry, error) {
+	a, err := paf.Open(f, d.Bytes, paf.Options{Purpose: paf.PurposeInspect, Limits: paf.Limits{MaxArchiveBytes: legacy.ConvertedLimit(agentTransferLimit()), MaxRecordBytes: pafContextRecordLimit()}})
+	if err != nil {
+		return nil, err
+	}
+	entries := []bundleContentEntry{{Path: paf.ManifestPath, Size: int64(len(a.ManifestRaw)), Kind: "json", open: func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(a.ManifestRaw)), nil
+	}}}
+	for _, e := range a.Manifest.Entries {
+		kind := "file"
+		switch {
+		case strings.HasSuffix(e.Path, ".jsonl"):
+			kind = "jsonl"
+		case strings.HasSuffix(e.Path, ".json"):
+			kind = "json"
+		}
+		path := e.Path
+		entries = append(entries, bundleContentEntry{Path: path, Size: e.Bytes, Kind: kind, open: func() (io.ReadCloser, error) { return a.OpenEntry(path) }})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
+	return entries, nil
 }

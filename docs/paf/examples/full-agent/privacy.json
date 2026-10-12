@@ -20,7 +20,7 @@
   "scan": {
     "at": "2026-10-11T19:40:01Z",
     "findings": [],
-    "scanner": "tclaude-credential/1"
+    "scanner": "tclaude-privacy/1"
   },
   "sensitivity": "shared"
 }

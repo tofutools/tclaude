@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v0.1/agent.schema.json",
+  "title": "PAF agents/<key>/agent.json",
+  "type": "object",
+  "required": [
+    "name",
+    "definition"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Source agent id. Informational; imports always mint a new id."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string"
+    },
+    "instance": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "conversation": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "harness": {
+          "type": "string"
+        }
+      }
+    },
+    "definition": {
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "role_guidance": {
+          "type": "string"
+        },
+        "startup_context": {
+          "type": "string"
+        },
+        "initial_message": {
+          "type": "string"
+        },
+        "task": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "extensions": {
+              "$ref": "common.schema.json#/$defs/extensions"
+            }
+          }
+        },
+        "license": {
+          "type": "string",
+          "description": "SPDX expression for published PAFs."
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/extensions"
+        }
+      }
+    },
+    "groups": {
+      "description": "Teams the agent belonged to. Advisory provenance; never grants.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "extensions": {
+            "$ref": "common.schema.json#/$defs/extensions"
+          }
+        }
+      }
+    },
+    "lineage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "op",
+          "at"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "description": "Open set. Known: spawn, clone, morph, reincarnate, move, teleport, recall, snapshot, import, recover, publish."
+          },
+          "at": {
+            "$ref": "common.schema.json#/$defs/timestamp"
+          },
+          "from": {
+            "$ref": "common.schema.json#/$defs/ref"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "extensions": {
+            "$ref": "common.schema.json#/$defs/extensions"
+          }
+        }
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "required": [
+        "name",
+        "taken_at"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "note": {
+          "type": "string"
+        },
+        "taken_at": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "state": {
+          "type": "string",
+          "description": "Open set; readers accept unknown values. Known: idle, last_complete_turn."
+        }
+      }
+    },
+    "native": {
+      "type": "object",
+      "required": [
+        "format",
+        "path"
+      ],
+      "properties": {
+        "format": {
+          "type": "string"
+        },
+        "path": {
+          "$ref": "common.schema.json#/$defs/entryPath",
+          "description": "Must lie under this agent's agents/<key>/native/ (checked by readers)."
+        },
+        "harness": {
+          "type": "string"
+        },
+        "harness_version": {
+          "type": "string"
+        },
+        "source_conv_id": {
+          "type": "string"
+        }
+      }
+    },
+    "extensions": {
+      "$ref": "common.schema.json#/$defs/extensions"
+    }
+  }
+}

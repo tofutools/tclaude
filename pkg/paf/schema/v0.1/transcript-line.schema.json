@@ -1,0 +1,335 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/tofutools/tclaude/main/docs/paf/schema/v0.1/transcript-line.schema.json",
+  "title": "One line of a PAF context JSON Lines file (transcript.jsonl, full.jsonl)",
+  "$defs": {
+    "header": {
+      "type": "object",
+      "required": [
+        "type",
+        "scope",
+        "source"
+      ],
+      "properties": {
+        "type": {
+          "const": "header"
+        },
+        "scope": {
+          "enum": [
+            "effective",
+            "full"
+          ]
+        },
+        "source": {
+          "type": "object",
+          "required": [
+            "harness"
+          ],
+          "properties": {
+            "harness": {
+              "type": "string"
+            },
+            "format": {
+              "type": "string"
+            },
+            "conv_id": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "cwd": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "extensions": {
+              "$ref": "common.schema.json#/$defs/extensions"
+            }
+          }
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/extensions"
+        }
+      }
+    },
+    "boundary": {
+      "type": "object",
+      "required": [
+        "type",
+        "kind"
+      ],
+      "properties": {
+        "type": {
+          "const": "boundary"
+        },
+        "kind": {
+          "type": "string",
+          "description": "Open set. Known: compaction, clear, rewind, branch."
+        },
+        "parent": {
+          "type": "string",
+          "description": "Optional: the id of the entry the history continues from after this boundary, so a reader can rebuild branches. Absent means the entry just before the boundary."
+        },
+        "time": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/extensions"
+        }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "required": [
+        "type",
+        "role",
+        "origin",
+        "blocks"
+      ],
+      "properties": {
+        "type": {
+          "const": "entry"
+        },
+        "id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "user",
+            "assistant"
+          ]
+        },
+        "origin": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Who produced the entry: human (text the operator typed, only), agent, tool, system (harness- or orchestrator-injected text, compaction summaries, tclaude notices) or peer (another agent's message; author names it). Open: a reader treats an unknown origin as untrusted input that is not the operator's."
+        },
+        "time": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "model": {
+          "type": "string"
+        },
+        "author": {
+          "type": "string"
+        },
+        "blocks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/block"
+          }
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/extensions"
+        }
+      }
+    },
+    "block": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "Open set; readers render unknown kinds as unsupported content. Known: text, thinking, tool_call, tool_result, media, summary."
+        },
+        "text": {
+          "type": "string"
+        },
+        "opaque": {
+          "type": "object",
+          "required": [
+            "vendor",
+            "data"
+          ],
+          "properties": {
+            "vendor": {
+              "type": "string"
+            },
+            "data": {
+              "type": "string"
+            }
+          }
+        },
+        "call_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "input": {},
+        "freeform": {
+          "type": "boolean"
+        },
+        "is_error": {
+          "type": "boolean"
+        },
+        "media": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/media"
+          }
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/extensions"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "tool_call"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "call_id",
+              "name"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "tool_result"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "call_id"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "media"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "media"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "text",
+                  "summary"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "text"
+            ]
+          }
+        }
+      ]
+    },
+    "media": {
+      "type": "object",
+      "properties": {
+        "media_type": {
+          "type": "string"
+        },
+        "attachment": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "url": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string",
+          "description": "Where the file lived on the source machine. A hint, not an archive reference."
+        },
+        "name": {
+          "type": "string"
+        },
+        "extensions": {
+          "$ref": "common.schema.json#/$defs/extensions"
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "attachment"
+          ]
+        },
+        {
+          "required": [
+            "url"
+          ]
+        },
+        {
+          "required": [
+            "path"
+          ]
+        }
+      ]
+    }
+  },
+  "type": "object",
+  "required": [
+    "type"
+  ],
+  "properties": {
+    "type": {
+      "type": "string",
+      "description": "Open set; readers render unknown line types as unsupported content. Known: header, entry, boundary."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "header"
+          }
+        }
+      },
+      "then": {
+        "$ref": "#/$defs/header"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "entry"
+          }
+        }
+      },
+      "then": {
+        "$ref": "#/$defs/entry"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "boundary"
+          }
+        }
+      },
+      "then": {
+        "$ref": "#/$defs/boundary"
+      }
+    }
+  ]
+}

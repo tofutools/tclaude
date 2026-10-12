@@ -27,19 +27,24 @@ import (
 
 type groupsExportParams struct {
 	Name string `pos:"true" help:"Group to export"`
-	Out  string `long:"out" short:"o" optional:"true" help:"Write the .zip archive here. Default: group-<name>-<timestamp>.zip in the current directory. Pass '-' to stream the archive to stdout."`
+	Out    string `long:"out" short:"o" optional:"true" help:"Write the archive here. Default: group-<name>-<timestamp>.paf (or .zip) in the current directory. Pass '-' to stream the archive to stdout."`
+	Format string `long:"format" optional:"true" alts:"paf,zip" help:"Archive format: paf (the default; a group Portable Agent Format file) or zip (the legacy group export archive, for importing into an older tclaude)"`
+
+	AllowFlagged bool `long:"allow-flagged" help:"Export a PAF even when the credential scan flags suspected credentials; inspect before sharing."`
 }
 
 func groupsExportCmd() *cobra.Command {
 	return boa.CmdT[groupsExportParams]{
 		Use:   "export",
-		Short: "Export a whole group to a portable .zip archive",
+		Short: "Export a whole group to a portable .paf (or legacy .zip) archive",
 		Long: "Export a group — the group row, its members and owners, " +
 			"permissions, enrollment, cron jobs, message history and audit " +
 			"trail, plus every member's conversation .jsonl — into a single " +
-			"self-contained .zip. The archive is portable across machines, " +
-			"users and OSes (Linux <-> macOS); import it elsewhere with " +
-			"`tclaude agent groups import`. It contains full conversation " +
+			"self-contained group Portable Agent Format (.paf) file. The archive is " +
+			"portable across machines, users and OSes (Linux <-> macOS); import it " +
+			"elsewhere with `tclaude agent groups import`, or read it with " +
+			"`tclaude paf inspect|render`. --format zip writes the legacy .zip " +
+			"archive instead, for importing into an older tclaude. It contains full conversation " +
 			"content, so treat it as sensitive. Gated server-side on the " +
 			"groups.export permission (default human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -61,9 +66,22 @@ func runGroupsExport(p *groupsExportParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	archive, headers, err := DaemonGetRaw("/v1/groups/" + url.PathEscape(p.Name) + "/export")
+	format := p.Format
+	if format == "" {
+		format = "paf"
+	}
+	if format != "zip" && format != "paf" {
+		fmt.Fprintf(stderr, "Error: --format must be paf or zip\n")
+		return rcInvalidArg
+	}
+	path := "/v1/groups/" + url.PathEscape(p.Name) + "/export?format=" + format
+	if p.AllowFlagged {
+		path += "&allow_flagged=true"
+	}
+	archive, headers, err := DaemonGetRaw(path)
 	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
+		fmt.Fprint(stderr, "Error: ")
+		printBundleError(stderr, err)
 		return MapDaemonErrorToRC(err)
 	}
 
@@ -81,7 +99,7 @@ func runGroupsExport(p *groupsExportParams, stdout, stderr io.Writer) int {
 		// Prefer the server-suggested filename; fall back to a local one.
 		outPath = headers.Get("X-Tclaude-Export-Filename")
 		if outPath == "" {
-			outPath = fmt.Sprintf("group-%s-%s.zip", p.Name, time.Now().Format("20060102-150405"))
+			outPath = fmt.Sprintf("group-%s-%s.%s", p.Name, time.Now().Format("20060102-150405"), format)
 		}
 	}
 	if err := os.WriteFile(outPath, archive, 0o600); err != nil {
@@ -96,20 +114,50 @@ func runGroupsExport(p *groupsExportParams, stdout, stderr io.Writer) int {
 // --- groups import ---
 
 type groupsImportParams struct {
-	File   string `pos:"true" help:"Path to the .zip export archive"`
+	File   string `pos:"true" help:"Path to the export archive: a .zip or a group .paf"`
 	Into   string `long:"into" help:"Target working directory the imported agents are bound to. Required — on a different machine the source path will not exist, so you choose where the group lives now."`
 	As     string `long:"as" optional:"true" help:"Import the group under this name instead of its exported name. Required when a group with the exported name already exists locally."`
 	DryRun bool   `long:"dry-run" help:"Inspect the archive and report what would be imported — manifest summary plus group-name and conv-id collisions — WITHOUT importing anything. --into is not needed with --dry-run."`
 	JSON   bool   `long:"json" help:"Output the import (or --dry-run inspection) as JSON"`
+
+	Harness       string   `long:"harness" optional:"true" help:"Land every member on this harness instead of its own (a group .paf only; conversations translate where needed)"`
+	Model         string   `long:"model" optional:"true" help:"Landing model every member is budgeted for when its conversation translates"`
+	MemberHarness []string `long:"member-harness" optional:"true" help:"Land one member on a harness: member=harness, where member is its title or agent key (repeatable)"`
+	MemberModel   []string `long:"member-model" optional:"true" help:"Landing model for one member: member=model (repeatable)"`
+}
+
+// landingQuery encodes the landing choices as query parameters.
+func (p *groupsImportParams) landingQuery() string {
+	q := url.Values{}
+	if p.Harness != "" {
+		q.Set("harness", p.Harness)
+	}
+	if p.Model != "" {
+		q.Set("model", p.Model)
+	}
+	for _, v := range p.MemberHarness {
+		q.Add("member_harness", v)
+	}
+	for _, v := range p.MemberModel {
+		q.Add("member_model", v)
+	}
+	if len(q) == 0 {
+		return ""
+	}
+	return "&" + q.Encode()
 }
 
 func groupsImportCmd() *cobra.Command {
 	return boa.CmdT[groupsImportParams]{
 		Use:   "import",
-		Short: "Import a group from a .zip archive produced by `groups export`",
+		Short: "Import a group from a .zip or .paf archive produced by `groups export`",
 		Long: "Recreate a group from an export archive: the group, its agents, " +
 			"permissions, ownership, enrollment, cron jobs, messages and every " +
-			"conversation .jsonl. Imported agents land OFFLINE — no tmux " +
+			"conversation .jsonl. A group .paf is verified first; one written by " +
+			"another tool imports its group, members and their Claude Code " +
+			"histories, and its members may use any harness: each lands on its " +
+			"own harness, or the one --harness / --member-harness names, its " +
+			"conversation translated when the formats differ. Imported agents land OFFLINE — no tmux " +
 			"session is started; wake them with the usual resume tooling.\n\n" +
 			"--into picks the local working directory the imported agents are " +
 			"bound to (their conversation files and any embedded paths are " +
@@ -166,6 +214,7 @@ func runGroupsImport(p *groupsImportParams, stdout, stderr io.Writer) int {
 	if p.As != "" {
 		path += "&as=" + url.QueryEscape(p.As)
 	}
+	path += p.landingQuery()
 
 	var resp struct {
 		Group          string            `json:"group"`
@@ -216,11 +265,14 @@ func runGroupsImport(p *groupsImportParams, stdout, stderr io.Writer) int {
 // conv-id collisions the human would hit. The dashboard's import preview
 // calls the very same endpoint.
 func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr io.Writer) int {
-	path := "/v1/groups/import/inspect"
-	if p.As != "" {
-		path += "?as=" + url.QueryEscape(p.As)
+	path := "/v1/groups/import/inspect?as=" + url.QueryEscape(p.As) + p.landingQuery()
+	if p.Into != "" {
+		if into, err := filepath.Abs(p.Into); err == nil {
+			path += "&into=" + url.QueryEscape(into)
+		}
 	}
 	var insp struct {
+		Source          string `json:"source"`
 		SourceGroup     string `json:"source_group"`
 		FormatVersion   int    `json:"format_version"`
 		SchemaVersion   int    `json:"schema_version"`
@@ -239,6 +291,19 @@ func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr
 			ConvID string `json:"conv_id"`
 			Title  string `json:"title"`
 		} `json:"conv_collisions"`
+		Findings []struct {
+			Kind      string   `json:"kind"`
+			Count     int      `json:"count"`
+			Locations []string `json:"locations"`
+		} `json:"findings"`
+		Landings []struct {
+			Title         string   `json:"title"`
+			SourceHarness string   `json:"source_harness"`
+			Harness       string   `json:"harness"`
+			Model         string   `json:"model"`
+			Rung          string   `json:"rung"`
+			Warnings      []string `json:"warnings"`
+		} `json:"landings"`
 	}
 	if err := DaemonPostRaw(path, "application/zip", archive, &insp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -256,6 +321,9 @@ func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr
 
 	fmt.Fprintf(stdout, "Dry run — nothing was imported.\n\n")
 	fmt.Fprintf(stdout, "Archive contents:\n")
+	if insp.Source == "paf" {
+		fmt.Fprintf(stdout, "  archive:        group PAF\n")
+	}
 	fmt.Fprintf(stdout, "  source group:   %s\n", insp.SourceGroup)
 	fmt.Fprintf(stdout, "  agents:         %d\n", insp.AgentCount)
 	fmt.Fprintf(stdout, "  messages:       %d\n", insp.MessageCount)
@@ -271,6 +339,29 @@ func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr
 		fmt.Fprintf(stdout, "  exported at:    %s\n", insp.ExportedAt)
 	}
 	fmt.Fprintf(stdout, "  format version: %d\n", insp.FormatVersion)
+
+	if len(insp.Findings) > 0 {
+		fmt.Fprintf(stdout, "\nCredential scan (this node):\n")
+		for _, f := range insp.Findings {
+			fmt.Fprintf(stdout, "  %s: %d occurrence(s); first locations: %s\n", f.Kind, f.Count, strings.Join(f.Locations, ", "))
+		}
+	}
+	if len(insp.Landings) > 0 {
+		fmt.Fprintf(stdout, "\nMembers land:\n")
+		for _, l := range insp.Landings {
+			where := l.Harness
+			if l.SourceHarness != "" && l.SourceHarness != l.Harness {
+				where = l.SourceHarness + " -> " + l.Harness
+			}
+			if l.Model != "" {
+				where += " (" + l.Model + ")"
+			}
+			fmt.Fprintf(stdout, "  %s: %s, history %s\n", l.Title, where, l.Rung)
+			for _, w := range l.Warnings {
+				fmt.Fprintf(stdout, "    warning: %s\n", w)
+			}
+		}
+	}
 
 	fmt.Fprintf(stdout, "\nWould import as: %s\n", insp.TargetName)
 	switch {

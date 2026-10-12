@@ -108,6 +108,9 @@ type Config struct {
 	// FederationConfig and docs/federation.md.
 	Federation *FederationConfig `json:"federation,omitempty"`
 
+	// Snapshots configures the local agent snapshot library.
+	Snapshots *SnapshotsConfig `json:"snapshots,omitempty"`
+
 	// Routes tunes the group-route data plane — see RoutesConfig. Absent →
 	// defaults (flow control on).
 	Routes *RoutesConfig `json:"routes,omitempty"`
@@ -846,6 +849,14 @@ type NodeScriptsConfig struct {
 	Memory              string   `json:"memory,omitempty"`
 	CPU                 *float64 `json:"cpu,omitempty"`
 	PIDs                *uint64  `json:"pids,omitempty"`
+}
+
+// SnapshotsConfig configures the local agent snapshot library.
+type SnapshotsConfig struct {
+	// DefaultRetention is how long a snapshot is kept when created without
+	// an explicit expiry, as a duration such as "720h" or "30d". Empty
+	// keeps snapshots until removed.
+	DefaultRetention string `json:"default_retention,omitempty"`
 }
 
 type FederationConfig struct {

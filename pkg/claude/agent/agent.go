@@ -48,6 +48,8 @@ func Cmd() *cobra.Command {
 			clipboardCmd(),
 			exportCmd(),
 			bundleCmd(),
+			snapshotCmd(),
+			recoverCmd(),
 			debugExportCmd(),
 			groupsCmd(),
 			aliasCmd(),

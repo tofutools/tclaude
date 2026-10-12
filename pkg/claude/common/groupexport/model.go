@@ -304,4 +304,17 @@ type Conv struct {
 	Title     string `json:"title"`
 	Missing   bool   `json:"missing,omitempty"`
 	Content   []byte `json:"-"`
+
+	// The fields below travel only in a group PAF, which records each
+	// conversation's harness. The zip container carries Claude Code
+	// conversations only; there they are always empty.
+	//
+	// Harness is the conversation's harness ("" means Claude Code) and
+	// HistoryFormat the native format of Content ("" means Claude Code
+	// JSONL).
+	Harness       string `json:"-"`
+	HistoryFormat string `json:"-"`
+	// AgentKey is the conversation's agent in the group PAF it was read
+	// from, so an importer can also reach its neutral context.
+	AgentKey string `json:"-"`
 }

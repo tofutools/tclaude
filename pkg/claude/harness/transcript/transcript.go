@@ -12,6 +12,7 @@ package transcript
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -24,14 +25,108 @@ const (
 )
 
 // Origin says who produced an entry. Tool results travel on the user side of
-// every native format, so they are user-role entries with OriginTool.
+// every native format, so they are user-role entries with OriginTool; so do
+// system text and other agents' messages.
+//
+// The set is open: a reader treats an origin it does not know as untrusted
+// input that is not the operator's.
 type Origin string
 
 const (
+	// OriginHuman is text the operator typed, and nothing else.
 	OriginHuman Origin = "human"
 	OriginAgent Origin = "agent"
 	OriginTool  Origin = "tool"
+	// OriginSystem is text a harness or orchestrator injected: compaction
+	// summaries, tclaude notices and the like.
+	OriginSystem Origin = "system"
+	// OriginPeer is another agent's message; Author names it.
+	OriginPeer Origin = "peer"
 )
+
+// Known reports whether o is an origin this package defines.
+func (o Origin) Known() bool {
+	switch o {
+	case OriginHuman, OriginAgent, OriginTool, OriginSystem, OriginPeer:
+		return true
+	}
+	return false
+}
+
+// ClassifyUserText sorts user-side text a harness recorded as the user's:
+// a tclaude agent message is a peer's, or the operator's when the operator
+// sent it, or the system's when it names no sender; other tclaude notices
+// are the system's, and the rest is the operator's.
+func ClassifyUserText(text string) (Origin, string) {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "[system:") {
+		return OriginHuman, ""
+	}
+	header, _, _ := strings.Cut(text, "]")
+	if strings.HasPrefix(header, "[system: new agent message") {
+		if _, from, ok := strings.Cut(header, " from "); ok {
+			// The operator's own messages come through the same inbox.
+			if strings.HasPrefix(from, "the human operator") {
+				return OriginHuman, ""
+			}
+			name, _, _ := strings.Cut(from, ";")
+			name, _, _ = strings.Cut(name, " (")
+			name, _, _ = strings.Cut(name, " for you")
+			return OriginPeer, strings.TrimSpace(name)
+		}
+	}
+	return OriginSystem, ""
+}
+
+// classifyHumanEntry narrows an entry a codec recorded as the operator's:
+// a compaction summary is the system's, and tclaude's agent messages and
+// notices are a peer's or the system's.
+func classifyHumanEntry(e Entry) (Origin, string) {
+	for _, b := range e.Blocks {
+		if b.Kind == BlockSummary {
+			return OriginSystem, e.Author
+		}
+	}
+	for _, b := range e.Blocks {
+		if b.Kind != BlockText {
+			continue
+		}
+		o, author := ClassifyUserText(b.Text)
+		if author == "" {
+			author = e.Author
+		}
+		return o, author
+	}
+	return OriginHuman, e.Author
+}
+
+// inputTurn reports whether e is user-side input that starts a turn: the
+// operator's text, another agent's message or a system notice, but not a
+// tool result. Budgeting cuts and pins at turns whoever wrote them; trust is
+// a separate question, answered by the origin label.
+func inputTurn(e Entry) bool {
+	return e.Role == RoleUser && e.Origin != OriginTool
+}
+
+// Heading is how a reader labels an entry: its role, or what produced it
+// when that is not the operator or the agent itself.
+func (e Entry) Heading() string {
+	h := string(e.Role)
+	switch {
+	case e.Origin == OriginTool:
+		h = "tool results"
+	case e.Origin == OriginSystem:
+		h = "system"
+	case e.Origin == OriginPeer:
+		h = "peer agent"
+	case e.Origin != "" && !e.Origin.Known():
+		h = string(e.Role) + " (" + string(e.Origin) + ", untrusted)"
+	}
+	if e.Author != "" {
+		h += " — " + e.Author
+	}
+	return h
+}
 
 // BlockKind discriminates Block.
 type BlockKind string
@@ -123,6 +218,9 @@ func New(src Source) *Transcript {
 func (t *Transcript) Append(e Entry) {
 	if len(e.Blocks) == 0 {
 		return
+	}
+	if e.Origin == OriginHuman {
+		e.Origin, e.Author = classifyHumanEntry(e)
 	}
 	if n := len(t.Entries); n > 0 {
 		last := &t.Entries[n-1]

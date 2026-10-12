@@ -8630,6 +8630,47 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
   margin: 2px 0 0; padding-left: 18px; color: #c9d1d9;
 }
 .group-import-preview .gi-collide-list li { word-break: break-word; }
+/* PAF export / redact / agent import (tcl-jkmitn). */
+.paf-check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin: 6px 0; cursor: pointer; }
+.paf-check input { margin-top: 3px; }
+.paf-check > span { display: flex; flex-direction: column; }
+.paf-hint { color: #7d8590; font-size: 11.5px; }
+.paf-sub { margin-left: 22px; }
+.paf-sec { color: #7d8590; text-transform: uppercase; letter-spacing: 0.04em; font-size: 10px; margin: 8px 0 2px; }
+.paf-findings { border: 1px solid #9e6a03; background: #2a210b; border-radius: 5px; padding: 7px 10px; margin: 8px 0; font-size: 12.5px; }
+.paf-findings-head { color: #e3b341; font-weight: 600; }
+.paf-findings ul { margin: 4px 0 0; padding-left: 18px; }
+.paf-flagged-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.paf-redact, .paf-box { border: 1px solid #2a3340; background: #0d1117; border-radius: 5px; padding: 7px 10px; margin: 8px 0; font-size: 12.5px; }
+.paf-report { margin: 6px 0; }
+.paf-ok { color: #3fb950; }
+.paf-row-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.paf-preview { display: flex; flex-direction: column; gap: 2px; }
+.paf-preview .gi-row { display: flex; gap: 8px; }
+.paf-preview .gi-k { flex: 0 0 110px; color: #7d8590; }
+.paf-preview .gi-warn, .paf-members .gi-warn { color: #f0883e; }
+.paf-landing-selects { display: inline-flex; gap: 6px; }
+.paf-rung { display: inline-block; font-size: 11px; padding: 0 7px; border-radius: 10px; border: 1px solid #30363d; white-space: nowrap; }
+.paf-rung.native { background: #12301d; color: #3fb950; border-color: #238636; }
+.paf-rung.translated { background: #10233d; color: #79c0ff; border-color: #1f4f8f; }
+.paf-rung.none { background: #3a2a0b; color: #e3b341; border-color: #9e6a03; }
+.paf-member-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+.paf-member-table th { text-align: left; color: #7d8590; font-weight: normal; border-bottom: 1px solid #2a3340; padding: 3px 6px; }
+.paf-member-table td { border-bottom: 1px solid #1c2128; padding: 4px 6px; vertical-align: top; }
+/* The id names the overlay; size the dialog inside it, so the backdrop
+   still covers the whole viewport. */
+#paf-export-modal .cron-create-modal, #group-import-modal .cron-create-modal { max-width: 760px; }
+/* Snapshots view (tcl-3hjdm1): library table with inline panels. */
+#snapshots-modal .cron-create-modal { width: min(920px, 94vw); max-width: 920px; max-height: 90vh; overflow-y: auto; }
+.snap-trunc { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.snap-trunc.paf-hint { max-width: 190px; }
+.snap-toolbar { display: flex; gap: 8px; margin: 6px 0; }
+.snap-panel { border: 1px solid #2a3340; background: #0d1117; border-radius: 5px; padding: 8px 11px; margin: 8px 0; }
+.snap-acts { white-space: nowrap; text-align: right; }
+.snap-acts button { padding: 1px 7px; margin-left: 3px; }
+#snapshots-list tr.active td { background: #111d2b; }
+.snap-recipients { display: flex; flex-direction: column; gap: 2px; }
+.snap-recipients .paf-check { margin: 2px 0; }
 /* Group templates — the Templates tab list + the editor / instantiate
    / from-group modals. The modals reuse .cron-create-modal for the
    shell + rows; these rules add the template-specific surfaces. */

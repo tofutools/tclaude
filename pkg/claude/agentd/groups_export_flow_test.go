@@ -19,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
+	"github.com/tofutools/tclaude/pkg/paf/legacy"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -39,8 +40,17 @@ type importResult struct {
 // returns the raw .zip bytes.
 func exportGroup(t *testing.T, f *testharness.Flow, group string) []byte {
 	t.Helper()
-	r := agentd.AsHumanPeer(httptest.NewRequest(http.MethodGet,
-		"/v1/groups/"+url.PathEscape(group)+"/export", nil))
+	return exportGroupAs(t, f, group, "")
+}
+
+// exportGroupAs is exportGroup in an archive format ("" for the default).
+func exportGroupAs(t *testing.T, f *testharness.Flow, group, format string) []byte {
+	t.Helper()
+	path := "/v1/groups/" + url.PathEscape(group) + "/export"
+	if format != "" {
+		path += "?format=" + format
+	}
+	r := agentd.AsHumanPeer(httptest.NewRequest(http.MethodGet, path, nil))
 	rec := testharness.Serve(f.Mux, r)
 	require.Equal(t, http.StatusOK, rec.Code,
 		"export %q: body=%s", group, rec.Body.String())
@@ -117,6 +127,12 @@ func TestGroupImport_CanonicalizesLegacyPermissionSlugs(t *testing.T) {
 // intact, and — because nothing collides on the now-clean machine — the
 // original conv-ids are preserved.
 func TestGroupExportImport_RoundTripPreservesEverything(t *testing.T) {
+	for _, format := range []string{"", "zip", "paf"} {
+		t.Run("format="+format, func(t *testing.T) { groupRoundTripPreservesEverything(t, format) })
+	}
+}
+
+func groupRoundTripPreservesEverything(t *testing.T, format string) {
 	f := newFlow(t)
 	home := f.World.HomeDir
 	const aConv = "aaaaaaaa-1111-2222-3333-444444444444"
@@ -162,8 +178,10 @@ func TestGroupExportImport_RoundTripPreservesEverything(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	archive := exportGroup(t, f, "team")
+	archive := exportGroupAs(t, f, "team", format)
 	require.NotEmpty(t, archive)
+	// A group export is a PAF unless the legacy zip is asked for.
+	assert.Equal(t, format != "zip", legacy.IsPAF(bytes.NewReader(archive), int64(len(archive))))
 
 	// Capture the source .jsonl content, then wipe the machine clean.
 	srcContentA, err := os.ReadFile(convJSONLPath(home, srcCwd, aConv))

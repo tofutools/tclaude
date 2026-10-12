@@ -14,20 +14,65 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/configbundle"
 	"github.com/tofutools/tclaude/pkg/common"
+	"github.com/tofutools/tclaude/pkg/paf/legacy"
 )
 
 type bundleExportParams struct {
 	CarryPermissions bool   `long:"carry-permissions" help:"Request receiver-approved permission carry; off by default."`
 	Agent            string `pos:"true" help:"Agent selector to export."`
-	File             string `long:"file" short:"f" help:"Destination ZIP archive."`
+	File             string `long:"file" short:"f" help:"Destination file: a .paf, or with --format v1 an agent bundle ZIP."`
 	History          bool   `long:"history" help:"Include native conversation history when supported."`
 	AllowFlagged     bool   `long:"allow-flagged" help:"Explicitly allow credential-shaped text; inspect before sharing."`
+	Format           string `long:"format" optional:"true" alts:"paf,v1" help:"Archive format: paf (the default; Portable Agent Format, see docs/paf.md) or v1 (agent bundle v1, for importing into an older tclaude)."`
+	NoNative         bool   `long:"no-native" help:"PAF only: leave the native history out and carry the conversation in harness-neutral form only."`
+	NoContext        bool   `long:"no-context" help:"PAF only: leave the harness-neutral copy of the conversation out."`
+	WithSummary      bool   `long:"with-summary" help:"PAF only: first ask the agent to write a summary of its earlier work and carry it, so a landing on a smaller context window keeps it. Costs the agent a turn; waits up to --summary-wait."`
+	SummaryWait      string `long:"summary-wait" optional:"true" help:"With --with-summary: how long to wait for the agent's summary (default 10m)."`
 }
+
+// pafExportParams are bundleExportParams for `tclaude paf export`, which
+// always writes a PAF.
+type pafExportParams struct {
+	Agent        string `pos:"true" help:"Agent selector to export."`
+	File         string `long:"file" short:"f" help:"Destination .paf file."`
+	History      bool   `long:"history" help:"Include the conversation history."`
+	NoNative     bool   `long:"no-native" help:"Leave the native history out and carry the conversation in harness-neutral form only."`
+	NoContext    bool   `long:"no-context" help:"Leave the harness-neutral copy of the conversation out; only the native history travels."`
+	AllowFlagged bool   `long:"allow-flagged" help:"Explicitly allow credential-shaped text; inspect before sharing."`
+	WithSummary  bool   `long:"with-summary" help:"First ask the agent to write a summary of its earlier work and carry it, so a landing on a smaller context window keeps it. Costs the agent a turn; waits up to --summary-wait."`
+	SummaryWait  string `long:"summary-wait" optional:"true" help:"With --with-summary: how long to wait for the agent's summary (default 10m)."`
+}
+
+// PAFExportCmd is `tclaude paf export`: agent bundle export writing PAF.
+func PAFExportCmd() *cobra.Command {
+	return boa.CmdT[pafExportParams]{Use: "export <agent>", Short: "Export an agent as a PAF file",
+		Long: "Export an agent's definition, environment and, with --history, its conversation as a Portable Agent Format file. " +
+			"The conversation travels as the native history plus a harness-neutral copy, so it can land on any harness. " +
+			"Credential-shaped text refuses the export unless --allow-flagged. Needs agent.bundle.export.",
+		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *pafExportParams, _ *cobra.Command, _ []string) {
+			os.Exit(runBundleExport(&bundleExportParams{Agent: p.Agent, File: p.File, History: p.History, AllowFlagged: p.AllowFlagged, Format: "paf", NoNative: p.NoNative, NoContext: p.NoContext, WithSummary: p.WithSummary, SummaryWait: p.SummaryWait}, os.Stderr))
+		}}.ToCobra()
+}
+
+// PAFImportCmd is `tclaude paf import`: agent bundle import, which reads PAF
+// and legacy bundles alike.
+func PAFImportCmd() *cobra.Command {
+	return boa.CmdT[bundleImportParams]{Use: "import", Short: "Preview a PAF, or land it as a new agent with --apply",
+		Long: "Preview by default: the agent, the landing harness and model, how its conversation lands (native, translated or not at all) " +
+			"with the expected losses, and the security posture. --apply creates a fresh agent in --group through normal spawn checks. " +
+			"--harness and --model land it somewhere other than where it came from; the conversation is then translated within the " +
+			"landing model's context budget. Needs agent.bundle.import.",
+		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleImportParams, _ *cobra.Command, _ []string) {
+			os.Exit(runBundleImport(p, os.Stdin, os.Stdout, os.Stderr))
+		}}.ToCobra()
+}
+
 type bundleImportParams struct {
 	CarryPermissions          bool     `long:"carry-permissions" help:"Request receiver-approved permission carry; off by default."`
 	AllowSensitivePermissions bool     `long:"allow-sensitive-permissions" help:"Explicitly allow permission administration, sandbox, human interaction and federation administration grants; requires unrestricted trust."`
-	File                      string   `long:"file" short:"f" help:"Bundle ZIP archive; '-' reads stdin."`
+	File                      string   `long:"file" short:"f" help:"Agent bundle ZIP or .paf archive; '-' reads stdin."`
 	Apply                     bool     `long:"apply" help:"Create a fresh local agent through normal spawn checks."`
+	NoStart                   bool     `long:"no-start" help:"With --apply, land the agent offline with its conversation; tclaude agent resume starts it."`
 	Group                     string   `long:"group" optional:"true" help:"Receiving group (required with --apply). Source memberships are advisory."`
 	Name                      string   `long:"name" optional:"true" help:"Override the imported agent name."`
 	Cwd                       string   `long:"cwd" optional:"true" help:"Remap the working directory."`
@@ -35,12 +80,15 @@ type bundleImportParams struct {
 	KeepPaths                 bool     `long:"keep-paths" help:"Reuse recorded paths that exist locally; --cwd and --set override them."`
 	Set                       []string `long:"set" optional:"true" help:"Resolve profile path placeholder with name=value (repeatable)."`
 	SkipHistory               bool     `long:"skip-history" help:"Import configuration without native history."`
+	ConfirmHistoryLoss        bool     `long:"confirm-history-loss" help:"Accept a landing that cuts 25% or more of the conversation to fit the landing model; the full history stays in the file and is saved beside the agent."`
+	Harness                   string   `long:"harness" optional:"true" help:"Land on this harness instead of the source one; the conversation is translated."`
+	Model                     string   `long:"model" optional:"true" help:"Landing model; the conversation is budgeted to its context window."`
 	JSON                      bool     `long:"json" help:"Print the full machine-readable preview or result."`
 }
 
 func bundleCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{Use: "bundle", Short: "Transfer portable agent configuration and optional history", ParamEnrich: common.DefaultParamEnricher(), SubCmds: []*cobra.Command{
-		boa.CmdT[bundleExportParams]{Use: "export", Short: "Export an agent to a portable ZIP archive", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleExportParams, _ *cobra.Command, _ []string) { os.Exit(runBundleExport(p, os.Stderr)) }}.ToCobra(),
+		boa.CmdT[bundleExportParams]{Use: "export", Short: "Export an agent to a portable .paf file (or a legacy v1 ZIP with --format v1)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleExportParams, _ *cobra.Command, _ []string) { os.Exit(runBundleExport(p, os.Stderr)) }}.ToCobra(),
 		boa.CmdT[bundleImportParams]{Use: "import", Short: "Preview an agent bundle, or spawn it with --apply", Long: "Preview by default. --apply creates a fresh agent in --group through normal spawn checks. Permission carry requires --carry-permissions on export and import, and receiver authorization. Ownership and source memberships never travel. Native history support depends on the harness.", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleImportParams, _ *cobra.Command, _ []string) {
 			os.Exit(runBundleImport(p, os.Stdin, os.Stdout, os.Stderr))
 		}}.ToCobra(),
@@ -72,14 +120,35 @@ func runBundleExport(p *bundleExportParams, stderr io.Writer) int {
 		return rc
 	}
 	q := url.Values{"agent": {p.Agent}}
+	legacyFormat := p.Format == "v1" || p.Format == "bundle"
+	if p.WithSummary {
+		if legacyFormat {
+			fmt.Fprintln(stderr, "Error: --with-summary needs a PAF export; agent bundle v1 cannot carry a summary")
+			return rcInvalidArg
+		}
+		id, rc := awaitAgentSummary(p.Agent, p.SummaryWait, stderr)
+		if rc != rcOK {
+			return rc
+		}
+		q.Set("summary", id)
+	}
 	if p.CarryPermissions {
 		q.Set("carry_permissions", "true")
 	}
 	if p.History {
 		q.Set("history", "true")
 	}
+	if p.Format != "" {
+		q.Set("format", p.Format)
+	}
 	if p.AllowFlagged {
 		q.Set("allow_flagged", "true")
+	}
+	if p.NoNative {
+		q.Set("no_native", "true")
+	}
+	if p.NoContext {
+		q.Set("no_context", "true")
 	}
 	archive, err := os.CreateTemp("", ".agent-cli-export-")
 	if err != nil {
@@ -92,13 +161,16 @@ func runBundleExport(p *bundleExportParams, stderr io.Writer) int {
 		printBundleError(stderr, err)
 		return MapDaemonErrorToRC(err)
 	}
-	b, err := agentbundle.DecodeFile(archive, localAgentBundleLimit(), "")
+	b, _, err := legacy.DecodeBundleFile(archive, legacy.DecodeLimits{MaxBytes: localAgentBundleLimit()}, "")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return rcIOFailure
 	}
 	defer func() { _ = b.Close() }()
 	for _, warning := range b.Manifest.Warnings {
+		if p.NoNative && warning == legacy.WarningContextOnly {
+			continue // asked for; `tclaude paf import` lands it
+		}
 		fmt.Fprintln(stderr, "Warning:", warning)
 	}
 	printBundleFindings(stderr, b.Manifest.Findings)
@@ -148,7 +220,7 @@ func runBundleImport(p *bundleImportParams, stdin io.Reader, out, stderr io.Writ
 		fmt.Fprintf(stderr, "archive exceeds or cannot be read within federation.agent_transfer_max_bytes=%d\n", limit)
 		return rcInvalidArg
 	}
-	b, err := agentbundle.DecodeFile(archive, limit, "")
+	b, _, err := legacy.DecodeBundleFile(archive, legacy.DecodeLimits{MaxBytes: limit}, "")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return rcInvalidArg
@@ -164,7 +236,7 @@ func runBundleImport(p *bundleImportParams, stdin io.Reader, out, stderr io.Writ
 	if p.AllowSensitivePermissions {
 		q.Set("allow_sensitive_permissions", "true")
 	}
-	for key, value := range map[string]string{"group": p.Group, "name": p.Name, "cwd": p.Cwd, "worktree": p.Worktree} {
+	for key, value := range map[string]string{"group": p.Group, "name": p.Name, "cwd": p.Cwd, "worktree": p.Worktree, "harness": p.Harness, "model": p.Model} {
 		if value != "" {
 			q.Set(key, value)
 		}
@@ -172,14 +244,24 @@ func runBundleImport(p *bundleImportParams, stdin io.Reader, out, stderr io.Writ
 	for _, v := range p.Set {
 		q.Add("set", v)
 	}
+	if p.NoStart && !p.Apply {
+		fmt.Fprintln(stderr, "Error: --no-start applies only with --apply")
+		return rcInvalidArg
+	}
 	if p.Apply {
 		q.Set("apply", "true")
+	}
+	if p.NoStart {
+		q.Set("start", "false")
 	}
 	if p.KeepPaths {
 		q.Set("keep_paths", "true")
 	}
 	if p.SkipHistory {
 		q.Set("skip_history", "true")
+	}
+	if p.ConfirmHistoryLoss {
+		q.Set("confirm_history_loss", "true")
 	}
 	var result json.RawMessage
 	if err := uploadAgentArchive("/v1/agent-bundle/import?"+q.Encode(), archive, &result); err != nil {

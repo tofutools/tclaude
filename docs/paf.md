@@ -99,16 +99,16 @@ receiving side.
 
 | Operation | What PAF carries | Carrier in this release |
 |---|---|---|
-| **Export / import** of an agent | One agent PAF file. Import previews first, then lands the agent on a harness you choose. | [Agent bundle v1](federation.md#portable-local-agent-bundles) |
-| **Group export / import** | A group PAF: group configuration plus every member. | Group export v5 |
-| **Snapshots** | A named PAF in a local library. Instantiate one or many agents from it, or share it. | Not available yet |
+| **Export / import** of an agent | One agent PAF file. Import previews first, then lands the agent on a harness you choose. | PAF by default, from [`tclaude paf export`](#exporting-and-importing-an-agent) or `agent bundle export`; [agent bundle v1](federation.md#portable-local-agent-bundles) with `--format v1` |
+| **Group export / import** | A group PAF: group configuration plus every member. | A [group PAF](#exporting-and-importing-a-group) by default; group export v5 with `--format zip` |
+| **Snapshots** | A named PAF in a local library. Instantiate one or many agents from it, or share it. | PAF in the [snapshot library](#snapshots) |
 | **Morph** (model or harness change in place) | The neutral context, losses and full transcript the switch produced. The identity stays in place, so no new agent is created. | Morph artifact directory |
 | **Clone** | A local sibling. Clone copies native history directly and shares PAF's history model. | Native copy (no file) |
-| **Move, teleport, recall home** | The agent's state in transit to another node, with provenance hops. Peers that do not advertise PAF receive the legacy agent bundle. | Agent bundle v1 |
-| **Sharing** with a peer or on a [Board](federation.md#content-board-membership) | An encrypted PAF addressed to named recipients, published only by a human. | Agent bundle v1 to peers; Boards carry configuration and skills only |
-| **Publishing** | A redacted, pseudonymous, signed PAF file for public sharing. tclaude provides no hosting; you choose where the file goes. | Not available yet |
-| **Resilience** | Opt-in periodic encrypted snapshots to another node or Board, from which an agent can be recovered if its host is lost. | Not available yet |
-| **Archival** | Any PAF can be inspected, verified and rendered to readable text without the original harness or model. | Not available yet |
+| **Move, teleport, recall home** | The agent's state in transit to another node, with provenance hops. Peers that do not advertise PAF receive the legacy agent bundle. | PAF to peers that advertise it, otherwise agent bundle v1 |
+| **Sharing** with a peer or on a [Board](federation.md#content-board-membership) | An encrypted PAF addressed to named recipients, published only by a human. | Unencrypted PAF to peers that advertise it, otherwise agent bundle v1; [snapshots on Boards](#sharing-a-snapshot-on-a-board) as an encrypted PAF |
+| **Publishing** | A redacted, pseudonymous, signed PAF file for public sharing. tclaude provides no hosting; you choose where the file goes. | PAF with [`tclaude paf publish` / `agent snapshot publish`](#publishing) |
+| **Resilience** | Opt-in periodic encrypted snapshots to another node or Board, from which an agent can be recovered if its host is lost. | Encrypted PAF to a [federation peer or a Board](#resilience-snapshots), [recovered](#recovering-an-agent) under its agent id |
+| **Archival** | Any PAF can be inspected, verified and rendered to readable text without the original harness or model. | [`tclaude paf`](#reading-a-paf) |
 
 The last column says what each operation uses in this release. tclaude keeps
 importing every legacy carrier after an operation switches to PAF; see
@@ -149,6 +149,492 @@ landing harness and model explicitly (or a spawn profile). The preview shows
 the original environment next to the landing one, the expected losses and the
 security posture before anything starts.
 
+## Exporting and importing an agent
+
+```bash
+tclaude paf export reviewer --file reviewer.paf --history
+tclaude paf import --file reviewer.paf --cwd "$PWD"                      # preview
+tclaude paf import --file reviewer.paf --cwd "$PWD" --group team --apply
+tclaude paf import --file reviewer.paf --cwd "$PWD" --group team --apply --no-start
+tclaude paf import --file reviewer.paf --cwd "$PWD" --harness codex --model gpt-5.5
+```
+
+`paf export` is `agent bundle export`, which writes a PAF by default, with the same
+permission (`agent.bundle.export`), credential scan and `--allow-flagged`.
+With `--history` the conversation travels twice: as the native history and
+as the harness-neutral context, when tclaude can decode that harness.
+`--no-context` leaves the neutral copy out. `--no-native` leaves the native
+history out, so the conversation travels only in neutral form.
+
+`paf import` is `agent bundle import`, with the same permission
+(`agent.bundle.import`), preview, `--apply`, `--group`, path remapping and
+permission handling. It accepts PAF files and legacy agent bundles. The
+import is a fork: the new agent gets a new identity, and the source's
+permissions and ownership are advisory only.
+
+`--apply` starts the imported agent. With `--no-start` it lands offline
+instead: it joins the group with its conversation installed and its
+briefing queued, and `tclaude agent resume` starts it later on its landing
+harness. Landing offline needs a conversation that lands (not
+`--skip-history` or a configuration-only import) and is not yet available
+on OpenCode.
+
+The agent lands on its own harness unless `--harness` names another. When
+the source harness is not available here, the import says so and asks for
+`--harness`. `--model` picks the landing model. Without it, the landing
+model is the profile's, or on the same harness the model the source last
+ran. A translated conversation is budgeted to that model's context window;
+when no model is known at all, the preview asks for `--model` rather than
+guess. The preview's
+`history_landing` shows the source and landing harness and model and the rung
+the conversation takes:
+
+- **native** when the PAF carries a native history in the landing harness's
+  format and, when it lands on a smaller context window than it ran in, it
+  fits that window's budget. A native history that does not fit, and that
+  no trimmed translation fits either, still lands as it is, with a warning;
+- **translated** otherwise: the neutral context, or the native history
+  decoded by tclaude's reader for its harness, is translated for the landing
+  harness and budgeted to the landing model's context window, with the
+  expected losses;
+- **none** when the conversation cannot land, for example on a harness
+  without history import, or when it does not fit the context budget even
+  after trimming. The agent then imports as configuration only, with a
+  warning; `tclaude paf render` still reads the whole conversation.
+
+On another harness the source's launch posture (approval, sandbox and the
+other profile settings) is not applied; the receiver's defaults and normal
+spawn checks apply, and the preview says so. Imports through federation
+offers, moves and teleports keep landing on the source harness.
+
+### Landing on a smaller context window
+
+Take an agent that ran on a model with a 1M-token window and had used half
+of it, about 500k tokens, imported onto a model with a 200k window:
+
+```bash
+tclaude paf import --file big.paf --cwd "$PWD" --model sonnet --group team --apply
+```
+
+- **The budget.** The carried conversation may fill 60% of the landing
+  window (`agent.morph.history_budget_percent`, as for a morph), here about
+  120k tokens; the rest is headroom so the agent does not compact on its
+  first turn. A native history landing on a smaller window than it ran in
+  (here 1M onto 200k; `opus[1m]` onto `opus` counts too) is installed as it
+  is only when it fits that budget. This one does not, so it lands
+  translated and trimmed instead, and the preview says so. A fork or recover
+  onto an equal or larger window keeps its native history unchecked.
+- **What is kept.** The original task and the latest instructions are
+  pinned, as are the compaction summaries the harness wrote when it
+  compacted. Then come the newest complete turns that fit. Long tool
+  inputs and results are clipped, and media the landing harness cannot
+  carry is left out. The rest, here roughly three quarters of the
+  conversation, is left out, and markers say where.
+- **Confirmation.** The preview reports how much is cut. From 10% it warns.
+  From 25% `--apply` refuses until you choose:
+  - `--confirm-history-loss` to accept the cut;
+  - `--model` for a model with a larger window;
+  - `--skip-history` to import the agent without its conversation.
+
+  `agent spawn --from-snapshot`, `snapshot board import` and `agent
+  recover` take `--confirm-history-loss` too; the dashboard's import and
+  snapshot spawn have a checkbox for it. Group import shows the cut per
+  member in its dry run but neither asks for confirmation nor saves the full
+  history beside each member.
+- **Where the full history is.** It is never lost. It stays in the PAF,
+  which `tclaude paf render` reads whole. When an agent import cuts it, it
+  is also saved beside the landed agent as `transcript.md` and `transcript.jsonl` (a PAF context file), in
+  its morph artifact directory, and the agent gets an inbox message naming
+  both, so it can read what was cut instead of guessing.
+- **A better result.** A model with a larger window keeps more. Or export
+  with a summary:
+
+  ```bash
+  tclaude paf export big-agent --history --with-summary --file big.paf
+  tclaude agent snapshot create big-agent --with-summary
+  ```
+
+  `--with-summary` first asks the agent to write a summary of its earlier
+  work: the goal, decisions, completed work, open issues and next steps. The
+  agent submits it with `tclaude agent morph-handoff`, as a morph's source
+  does. The PAF carries it as `context/handoff.md`. A landing that has to cut
+  then keeps the pinned start, that summary and the newest turns that fit
+  beside it; a summary too large for the budget is left out, with a
+  warning, and stays in the PAF. Asking
+  costs the agent a turn, so it is opt-in and never happens on its own. The
+  export waits up to `--summary-wait` (default 10 minutes) and is not made
+  without the summary. An export's summary is scanned for credentials like
+  the conversation; a snapshot's is scanned with the rest of the archive
+  when it is shared or imported. An agent cannot ask for its own.
+
+## Snapshots
+
+A snapshot is a named, point-in-time PAF of an agent, kept in this node's
+library. It is a fork point: the agent carries on, and the snapshot stays as
+it was captured.
+
+```bash
+tclaude agent snapshot create reviewer --name before-refactor --note "known good" --expires 30d
+tclaude agent snapshot ls
+tclaude agent snapshot show before-refactor
+tclaude agent snapshot export before-refactor -f before-refactor.paf
+tclaude agent snapshot rm before-refactor
+tclaude agent snapshot prune
+```
+
+- **What it holds.** The agent's definition, environment and conversation:
+  the native history plus a harness-neutral context, as `tclaude paf export
+  --history` writes them. `--no-history` captures the definition only.
+  `agent.json` carries `snapshot` (`name`, `note`, `taken_at`, `state`) and a
+  `snapshot` lineage step that names the source agent and conversation.
+- **Consistency.** An idle agent is captured whole (`state: idle`). A busy
+  agent is captured up to its last complete turn (`state:
+  last_complete_turn`): the history export writes only finished records.
+- **Names.** 1 to 64 characters of `a-z`, `0-9`, `.`, `_` and `-`, starting
+  with a letter or digit. The default is `<agent>-<UTC timestamp>`.
+- **Storage.** Each snapshot is a directory under `~/.tclaude/data/snapshots/`
+  (mode 0700) holding `snapshot.paf` and a `snapshot.json` listing record
+  (files 0600). The PAF is the source of truth. A snapshot is written to a
+  hidden temporary directory, synced, and renamed into place, so a
+  half-written one never appears.
+- **Retention.** `--expires` takes a duration (`72h`, `30d`), an RFC 3339
+  time or `never`. Without it, the config key `snapshots.default_retention`
+  applies; when that is unset, snapshots are kept until removed. Expired
+  snapshots are removed when the library is listed, when a snapshot is
+  created and by `snapshot prune`. Removal and pruning are ordered with
+  creation under one lock, so retention never races a create.
+- **Who may.** Creating a snapshot needs `agent.bundle.export` on the agent,
+  as an export does. Because only the human removes snapshots, an agent's
+  snapshots expire within 30 days, and an agent cannot add to a library of
+  200 or more. Listing and showing need only an identified caller; agents
+  see neither the note nor where in the history findings are.
+  Exporting a snapshot's PAF needs the human or `agent.bundle.export` on the
+  snapshotted agent. Removing and pruning are human-only.
+- **Credentials.** A snapshot stays on this node, so scan findings are
+  recorded rather than refused. Redact and consent before sharing an exported
+  snapshot.
+
+### Spawning from a snapshot
+
+```bash
+tclaude agent spawn team --from-snapshot before-refactor
+tclaude agent spawn team --from-snapshot before-refactor --count 3 --name trial --cwd "$PWD" --harness codex
+```
+
+Each spawned agent is an import of the snapshot's PAF, landed the way
+`tclaude paf import --apply` lands one: the same landing harness and model,
+history translation, path remapping and spawn checks. Each gets a new
+identity and continues from the snapshot's conversation; the original agent
+is untouched.
+
+- `--count` (1 to 20) spawns several agents. With a count above one, each
+  name gets a `-1`, `-2`, ... suffix. The name defaults to the snapshotted
+  agent's name.
+- Without `--cwd`, agents land at the recorded working directory.
+- Only the group argument, `--count`, `--name`, `--cwd`, `--harness` and
+  `--model` combine with `--from-snapshot`; other spawn flags are refused.
+- **Who may.** The caller needs access to the snapshot's content (the human,
+  or `agent.bundle.export` on the snapshotted agent) plus what an import with
+  `--apply` needs in the receiving group.
+- **Provenance.** Each new agent's arrival briefing names the snapshot and
+  when it was taken, and the audit log records a `snapshot.spawn` entry with
+  `from_snapshot <name>`. The link is provenance only: it grants no authority
+  over or from the original agent.
+- If a later agent in a `--count` run fails, the agents already spawned are
+  kept and reported with the error.
+
+### Sharing a snapshot on a Board
+
+```bash
+tclaude agent snapshot share before-refactor --board BOARD --to lab --to inst_7c21… --expires 3d
+tclaude agent snapshot share --file reviewer.redacted.paf --board BOARD --to lab
+tclaude agent snapshot board ls --board BOARD
+tclaude agent snapshot board fetch --board BOARD --item ITEM --version VERSION
+tclaude agent snapshot board preview --board BOARD --item ITEM --version VERSION --group team
+tclaude agent snapshot board import --board BOARD --item ITEM --version VERSION --group team --preview-token TOKEN
+tclaude agent snapshot board rm --board BOARD --item ITEM --version VERSION [--local]
+```
+
+A snapshot goes on a [Board](federation.md#content-board-membership) as an
+`agent-snapshot` item, encrypted to named members only.
+
+- **Recipients.** `--to` names board members by instance id or by the label
+  of a trusted peer; names the hub reports are never used. This node is
+  always a recipient. The snapshot is sealed with
+  [age](#encryption) to those members' instance keys, then stored under the
+  board's own encryption. Every member sees that it exists, who published it
+  and for whom; only the recipients can open it. Joining the board or a key
+  rotation later never adds a recipient.
+- **Confirmation.** Only the human operator can share. `share` shows the size,
+  turn count, time range, credential scan, redactions, recipients and expiry,
+  and publishes only after you type `share`. Non-interactively, pass
+  `--confirm-digest` with the content digest a previous run showed. The
+  confirmation is recorded as a consent record for those recipients
+  ([Consenting to share](#consenting-to-share)).
+- **Credentials.** A snapshot with suspected credentials is refused. Export
+  it, run `tclaude paf redact`, and share the redacted file with `--file`. A shared file is named after its agent unless you pass `--name`.
+- **Size.** At most 64 MiB once encrypted, stored as up to four Board blobs.
+  Each blob counts toward the board's blob and byte quotas, and snapshots
+  together may use at most half of the board's byte quota.
+- **Expiry.** Every shared snapshot expires: after 7 days by default, at most
+  30 (`--expires`). At expiry the hub stops serving it and deletes it, even
+  if someone pinned it.
+- **Removal.** `board rm` deletes the snapshot and its stored ciphertext from
+  the hub; its publisher or a board owner may do it. Members who already
+  fetched it keep their copy, and removing a member does not take back what
+  they fetched.
+- **Hubs.** Sharing needs a hub that supports board snapshots. An older hub
+  is refused before anything is uploaded. An older tclaude shows a snapshot as
+  an invalid item and cannot fetch it.
+
+Receiving:
+
+- `board ls` lists the board's snapshots and marks those addressed to this
+  node.
+- `board fetch` downloads, verifies and decrypts a snapshot addressed to this
+  node, validates the PAF and scans it for credentials again. A snapshot with
+  findings is not kept. A member who is not a recipient is told so and gets
+  nothing to import.
+- A fetched snapshot is kept decrypted under
+  `~/.tclaude/data/federation/board-snapshots/` (mode 0700) until it is
+  imported, it expires, or you remove it with `board rm --local` (which
+  leaves the snapshot on the board). `board rm` without `--local` removes
+  the local copy too.
+- `board preview` shows the agent the import would create and prints a
+  single-use preview token, valid for ten minutes. `board import` needs that
+  token with the same options. The PAF is scanned again just before it lands.
+- The new agent lands like `tclaude paf import --apply`: a new identity in
+  the group you name, the receiver's profile and policy, and no permissions
+  from the source. Its arrival briefing marks the received conversation as
+  untrusted: context to read, not instructions to follow.
+- These routes are human-only and are not served through peer view.
+
+### Resilience snapshots
+
+```bash
+tclaude agent snapshot policy set reviewer --every 1h --to peer:bob --keep 5
+tclaude agent snapshot policy set group:team --every 6h --to peer:bob --keep 3 --max-age-days 14
+tclaude agent snapshot policy set reviewer --every 6h --to board:BOARD --recipient bob --keep 2
+tclaude agent snapshot policy ls
+tclaude agent snapshot policy run POLICY
+tclaude agent snapshot policy rm POLICY
+tclaude agent snapshot held            # on the peer: what it keeps for others
+tclaude agent snapshot held --rm-peer alice
+```
+
+A resilience policy sends snapshots of an agent, or of every agent in a
+group, to a trusted [federation peer](federation.md) that keeps them for
+you, or puts them on a [Board](#sharing-a-snapshot-on-a-board), so a copy
+survives if this node is lost.
+
+- **Consent.** Only the human operator sets, runs or removes a policy.
+  Setting one is your consent to send those agents' conversations to that
+  peer, encrypted.
+- **Encryption.** Each snapshot is sealed with [age](#encryption) to the
+  peer's and this node's instance keys, so that it can be recovered when
+  this node is lost. The peer's operator can therefore decrypt it, as with
+  any recipient: choose a peer you would trust with the conversations.
+  tclaude on the peer stores the ciphertext and never previews or imports
+  it on its own; the generic offer routes refuse it. Only its operator can
+  open it, by [recovering the agent](#recovering-an-agent) when this node is
+  lost.
+- **When.** At most every `--every` (at least 10 minutes), only while the
+  agent is idle, and only when its conversation changed since the last
+  snapshot the peer kept, or that snapshot is halfway to its maximum age, so
+  an unchanged agent still has a copy that has not expired. A busy agent is
+  tried again on the next check. tclaude does not learn when the peer drops
+  a copy early (`held --rm-peer`, its size cap, a lost disk).
+- **Credentials.** Suspected credentials are not removed or refused. Their
+  count shows in `policy ls`, and you are told once per policy.
+- **Failures.** A failed snapshot is retried with growing delays, up to six
+  hours apart. `policy ls` shows the error; after three failures in a row
+  you are told once, and again only after a snapshot succeeds and fails again.
+- **The peer.** It must run a tclaude that advertises resilience snapshots
+  and grant this node `snapshots.receive`, even when it trusts this node as
+  unrestricted:
+
+  ```bash
+  tclaude federation grant alice snapshots.receive
+  ```
+
+  It keeps the newest `--keep` snapshots (1 to 20, default 5) of each agent
+  for at most `--max-age-days` (default 30, at most 365), and at most 2 GiB
+  for one sender, dropping the oldest first, and snapshots of at most 200
+  agents per sender. A snapshot is at most 65 MiB. Revoking the grant stops
+  new custody; `tclaude agent snapshot held --rm-peer alice` deletes what
+  is already kept. Removing a policy stops the schedule; the peer's copies
+  stay until its retention removes them.
+
+- **A Board.** `--to board:BOARD` puts each snapshot on the board as a
+  [shared snapshot](#sharing-a-snapshot-on-a-board), sealed to the members
+  named with `--recipient` (at least one besides this node, which is always
+  added) and published under the policy's consent. The board's rules hold:
+  a snapshot with suspected credentials is not put on it (the policy reports
+  a failure until they are gone from the conversation), it is at most 64 MiB
+  once encrypted, and it expires after `--max-age-days`, at most 30 (the
+  default for a board). After each snapshot, this agent's older snapshots
+  beyond `--keep` are deleted from the board. Recipients fetch and import
+  them like any shared snapshot.
+
+#### Recovering an agent
+
+```bash
+tclaude agent snapshot held
+tclaude agent recover --held OFFER --from peer:alice --group team [--cwd DIR]
+tclaude agent recover --held OFFER --from peer:alice --group team [--cwd DIR] --preview-token TOKEN
+tclaude agent recover --held OFFER --from peer:alice --group team --new-id
+```
+
+When a node that sent you resilience snapshots is lost, recover one of its
+agents from a snapshot you hold. A board recipient recovers with
+[`snapshot board fetch`, `preview` and `import`](#sharing-a-snapshot-on-a-board).
+
+- **Human-only.** Only the operator previews or recovers.
+- **Checks.** The held copy is decrypted with this node's key, must be a
+  valid one-agent PAF signed by the instance that sent it, and is
+  summarized again; suspected credentials are shown in the preview.
+- **Preview first.** Without `--preview-token`, `recover` shows the agent
+  that would land and prints a single-use token, valid for ten minutes and
+  only for the same snapshot and options.
+- **The agent keeps its id.** As with a teleport, the recovered agent keeps
+  its agent id and this node becomes its home. It gets the group's policy and
+  profile, no permissions from the source, and an arrival briefing that marks
+  the conversation as received context, not instructions. `--new-id`
+  recovers it as a new agent with a fresh id instead.
+- **Conflicts are your call.** When keeping the id conflicts with this
+  node's records, the preview lists why and recovers nothing until you
+  choose `--new-id` or `--force-keep-id`. Conflicts are:
+  - the agent exists here, or was retired here;
+  - this node's records place it elsewhere (away, or with another home);
+  - a newer snapshot of it is held.
+
+  With `--force-keep-id` an existing agent's id heads the recovered
+  conversation, and its earlier conversations become past generations. A
+  running agent is never taken over: stop it first, or use `--new-id`.
+  tclaude cannot tell whether the original still runs on a node it cannot
+  reach. If that node comes back, two agents share the id until you retire
+  one.
+- The held copy stays until its retention removes it.
+
+**Recalling snapshots to a rebuilt node.** A node rebuilt with its old
+federation identity (for example from a backup of `~/.tclaude`) can ask a
+peer for the snapshots it holds of this node's agents:
+
+```bash
+tclaude agent recover --recall agt_… --from peer:bob [--offer OFFER]
+tclaude agent snapshot recalls
+tclaude agent recover --recall-id RECALL --group team [--new-id | --force-keep-id] [--preview-token TOKEN]
+```
+
+- The peer returns a snapshot only to the instance it holds it for, and only
+  one it holds: the newest of that agent, or the one `--offer` names. The
+  peer must run a tclaude that can return snapshots.
+- A recall is bound to the peer asked, the agent named, the snapshot asked
+  for and an expiry of an hour. The first matching return binds it to that
+  snapshot's digest. Any other return is refused, and a recall recovers at
+  most one agent.
+- The returned snapshot must be signed by this node and be of the agent
+  recalled. Recovery then works as above: preview first, the id kept by
+  default, and conflicts left to you. On a node whose records survived, an
+  agent that still exists is a conflict, as is a newer snapshot this node
+  sent.
+
+## Exporting and importing a group
+
+```bash
+tclaude agent groups export team --out team.paf
+tclaude agent groups import team.paf --dry-run --into "$PWD"
+tclaude agent groups import team.paf --into "$PWD" --as team-copy
+tclaude agent groups import team.paf --into "$PWD" --harness codex --model gpt-5.5 \
+  --member-harness reviewer=claude --member-model reviewer=claude-opus-5-5
+```
+
+`groups export` writes the group as a group PAF.
+- `group.json` holds the group's name, description and members with their
+  roles.
+- Each member is an agent carrying its own harness's native history.
+- tclaude's own group state (settings, owners, permissions, enrollment, cron
+  jobs, messages and audit trail) travels in the `tclaude` extension.
+
+`--format zip` writes the legacy group export v5 instead, for importing into
+an older tclaude. It carries Claude Code conversations only; members on other
+harnesses export without history. The export is signed when this node has a
+federation identity. Both formats need the same permission
+(`groups.export`).
+
+`groups import` and the dashboard import accept either file, with the same
+permission (`groups.import`), preview, `--into`, `--as` and collision
+handling. A group PAF is verified before anything is written. One written by
+another tool imports the group's name, description and members, each with
+its native history or neutral context.
+
+Each member of a group PAF lands like an
+[imported agent](#exporting-and-importing-an-agent):
+- **Harness:** it lands on its own harness, unless `--harness` (every member)
+  or `--member-harness <member>=<harness>` names another. A member is named
+  by its title or agent key.
+- **Model:** `--model` and `--member-model` set the landing model the
+  conversation is budgeted for.
+- **History:** it lands natively when the landing harness reads its format,
+  and is translated otherwise, with the losses shown. A member whose
+  conversation cannot land imports as configuration, with a warning. Its
+  record still names its landing harness, so it resumes there.
+- **OpenCode:** a member landing on OpenCode imports as configuration for now.
+
+A Claude Code member landing on Claude Code takes the group import's own
+path, which rewrites embedded paths and keeps its conversation id unless it
+collides. Every other landing goes through the harness's own history import,
+which mints a new conversation id that the group's rows then follow. The
+dry run shows each member's landing harness, model and rung. Imported
+members land offline and resume on their landing harness.
+
+`tclaude paf inspect`, `validate` and `render` also read group export zips,
+converting them on read.
+
+## Reading a PAF
+
+`tclaude paf` verifies and reads a PAF on the local machine. It needs no
+daemon, harness, model or network, and never changes the file. Every
+subcommand also accepts a legacy agent bundle, which it converts to PAF in
+memory first.
+
+```bash
+tclaude paf validate reviewer.paf          # exit 1 when invalid
+tclaude paf inspect reviewer.paf           # what it holds, without the conversation
+tclaude paf inspect reviewer.paf --json
+tclaude paf render reviewer.paf > reviewer.md
+tclaude paf render reviewer.paf --out reviewer.html
+```
+
+- **`validate`** runs every check a reader makes: ZIP layout, manifest,
+  schemas, entry hashes and sizes, semantic rules and signatures. A file
+  that requires a feature or extension this tclaude does not understand is
+  valid for reading, with a warning, because an import would refuse it.
+- **`inspect`** shows the format, producer, signatures, extensions and privacy
+  findings, then each agent's harness, model, working directory, sandbox,
+  lineage, native history, neutral context and recorded losses.
+- **`render`** writes a Markdown or HTML document with the same facts, the
+  definition's text and the whole conversation. This is landing rung 4. It
+  shows the full context when the file has one, then the effective context,
+  and otherwise decodes the native history with tclaude's built-in reader for
+  that harness, which does not need the harness installed. `--scope` picks a
+  context. The HTML is one self-contained file: it loads nothing, runs no
+  script, escapes all archive text and embeds only PNG, JPEG, GIF and WebP
+  images. In Markdown, raw HTML in the archive's prose is escaped and lines
+  that would start a heading are escaped, so the text cannot load anything in
+  a previewer or pose as another entry. Tool input and output stay in code
+  fences. Terminal output from `validate` and `inspect` replaces control
+  characters, so archive text cannot move the cursor or rewrite a line.
+
+For each valid signature, tclaude says who holds the key: **this node**, a
+**known peer** by name, or an **unknown key**. It compares the public key
+itself, never the `key_id` the file claims. The signature does not cover
+`key_id` or `signer`, so tclaude prints them quoted, as claims, after the
+verdict, and treats a signature whose `key_id` is not a plain identifier as
+invalid. A file whose only signatures use algorithms tclaude does not
+support counts as unsigned. A valid signature proves the file is unchanged
+since that key signed it; whether to trust the signer is your decision.
+
 ## Sharing and publishing
 
 A transcript is the most sensitive thing tclaude handles. It can hold:
@@ -166,10 +652,21 @@ prepared it for a wider audience.
 ### Defaults
 
 - **Scan on export and on import.** tclaude scans the definition, environment,
-  context, native blob and text attachments for suspected credentials. Findings
-  are counts and locations, never the matched text. Export refuses findings
-  unless you explicitly allow them. Import scans again and shows the findings
-  in the preview.
+  context, native blob, text attachments and extension data for suspected
+  credentials. Findings are counts and locations, never the matched text.
+  - **Detectors:** API and GitHub tokens, private keys, keychain references,
+    `token=`/`password=`-style assignments, AWS access key ids, and long
+    random-looking tokens (`high-entropy-string`).
+  - **Advisory kind:** `high-entropy-string` is reported but does not block
+    anything on its own. Identifiers, hex digests, UUIDs and encoded media are
+    not counted.
+  - **Export:** findings of any other kind refuse the export unless you
+    explicitly allow them (`--allow-flagged`). The allowance is recorded as
+    `scan.allowed`. A group PAF export scans every member's history and the
+    group's messages and settings too.
+  - **Import:** import never trusts the producer's recorded scan. It scans
+    again and shows its own findings in the preview.
+  - **Inspect:** `tclaude paf inspect --scan` runs the same scan on any file.
 - **No silent rewriting.** History is carried verbatim unless you ask for
   redaction.
 - **Redaction is opt-in, previewed and recorded.** The available redactions
@@ -192,19 +689,106 @@ prepared it for a wider audience.
   (`drop_native`), and the PAF then lands through the translated rung.
   `paths_to_placeholders` records placeholder names without their `original`
   values.
-- **Consent before it leaves the node.** Sharing with a peer, posting to a
-  Board or publishing requires an explicit human confirmation. The confirmation
-  shows size, time range, turn count, findings and redactions, and is recorded
-  against the content digest. An agent can never share or publish history on
-  its own authority.
-- **Encrypted when stored off-node.** A PAF with context that is stored
-  anywhere other than its own node (another node, a Board, a backup target)
-  is [encrypted](#encryption) to named recipients.
+- **Consent before it leaves the node.** Posting a snapshot to a Board,
+  publishing, consenting with `tclaude paf consent` and setting a resilience
+  policy are human-only, after an explicit confirmation. The confirmation
+  shows size, time range, turn count, findings and redactions, and is
+  recorded against the content digest. An agent can never post history to a
+  Board or publish it on its own authority. Federation share, move and
+  teleport keep their own [authority model](federation.md): the human, or an
+  agent holding the grant (`agent.share`, `agent.move`, `self.teleport`),
+  with the same credential scan and `--allow-flagged`.
+- **Encrypted when stored off-node.** Snapshots stored on a Board or with a
+  resilience peer are [encrypted](#encryption) to named recipients. A share,
+  move or teleport hands the agent to a trusted peer over the authenticated
+  federation link and is not separately encrypted; the receiving node holds
+  it as it would any agent it imports.
 - **Retention.** A PAF can carry an expiry (`retention.expires_at`), which a
   receiving tclaude honours for the copies it keeps. Shared snapshots default
   to a short retention. Copies that recipients already fetched cannot be
   recalled, and an expiry cannot force another implementation to delete its
   copy.
+
+### Redacting a PAF
+
+`tclaude paf redact` writes a redacted copy of a PAF, or a legacy agent
+bundle or group export, and `--preview` shows what it would change without
+writing anything:
+
+```bash
+tclaude paf redact reviewer.paf --mask-flagged --paths-to-placeholders --preview
+tclaude paf redact reviewer.paf --mask-flagged --stub-tool-results -o reviewer.redacted.paf
+```
+
+| Flag | Redaction | What it does |
+|---|---|---|
+| `--mask-flagged` | `mask_spans` | Replaces every span the scan flags with `[REDACTED:<kind>]`. A PEM private key is masked from its header to its `END` line. |
+| `--stub-tool-results` | `stub_tool_results` | Replaces tool results older than the last `--keep-turns` human turns (default 3) with a stub, and drops their media. |
+| `--drop-media` | `drop_media` | Replaces images and documents with a stub. |
+| `--drop-reasoning` | `drop_reasoning` | Removes thinking blocks and provider reasoning state. |
+| `--drop-native` | `drop_native` | Drops the native blob only. |
+| `--paths-to-placeholders` | `paths_to_placeholders` | Replaces recorded placeholder paths, each working directory and worktree, the home directory above them and the user name it is named after with `${PROJECT}`, `${HOME}` and `${USER}`. A path matches only as a whole path, the user name only as a whole word, and a user name shorter than four characters is left alone. Agent keys are identifiers and are kept as they are. |
+
+The copy is a new file:
+
+- Every redaction drops the native blob. An agent whose history exists only as
+  a native blob first gets a neutral context decoded from it, so its history
+  survives as the redacted context.
+- Extension data other than tclaude's own, unknown context line types, and
+  files that are neither JSON nor text are dropped and recorded as
+  `drop_unredactable`.
+- A thinking block whose text a redaction changed loses its reasoning
+  signature, which no longer matches the text.
+- The scan is redone on the output and recorded in `privacy.json` with the
+  applied redactions. Each agent's loss report gets a `redacted` item per
+  redaction applied to it, with the redaction kind as `detail`.
+- Sensitivity, audience and retention carry over. Consent records and
+  signatures do not: the copy is signed by this node when it has a
+  federation identity.
+- Rewriting needs every required feature and extension, as import does.
+
+### Consenting to share
+
+`tclaude paf consent` records your confirmation that a PAF may go to an
+audience:
+
+```bash
+tclaude paf consent reviewer.paf --audience recipients --recipient inst_7c21 -o reviewer.paf
+```
+
+It first shows what would be shared, then asks you to confirm:
+
+- the size and number of agents;
+- the conversation's human turn count and time range;
+- this node's own credential scan, not the producer's recorded one;
+- the redactions already applied;
+- the content digest.
+
+Without a terminal, review the summary and pass `--yes`. The audience is
+`self`, `recipients` (with one or more `--recipient` instance ids), `board`
+(with `--board`) or `public`.
+
+The consent record (`by`, `at`, `audience`, `content_digest`) is added to
+`privacy.json`, and the audience and sensitivity are set to match. Every
+consent record in a file is for its `privacy.audience`. The content entries
+are copied byte for byte and the file is re-signed by this node. Any later
+change to the content makes the consent stale. Redacting produces new
+content, so consent never carries over to a redacted copy.
+
+- **Bound to what you reviewed.** The daemon refuses the request when the
+  file's content digest is not the one the summary showed you, for example
+  because it was rewritten while you were reading.
+- **Earlier records are kept only when this node vouches for them.** The
+  summary lists any consent the file already carries. Those records are kept
+  only when this node signed the file and they are for the same audience.
+  Records anyone else wrote are dropped rather than re-signed.
+- **Only the human operator can consent.** The daemon refuses the request
+  from an agent, so an agent can never consent on its own authority.
+  tclaude records the confirmer as `operator`.
+
+A consent record is only as trustworthy as the signature over the manifest.
+`tclaude paf inspect` shows each consent as current, as stale, or as
+unverified when no signature from this node or a known peer covers it.
 
 ### Checklist before sharing an agent
 
@@ -219,6 +803,11 @@ prepared it for a wider audience.
    and anything the operator typed.
 
 ### Publishing
+
+```bash
+tclaude agent snapshot publish before-refactor --drop-reasoning -o reviewer.public.paf
+tclaude paf publish reviewer.paf --stub-tool-results --keep-turns 5 -o reviewer.public.paf
+```
 
 Publishing produces a PAF meant for anyone to read. Beyond the sharing
 defaults, a published PAF:
@@ -241,10 +830,42 @@ The output is a file. tclaude runs no public index or registry; publish it
 wherever you publish other artifacts, with a licence of your choosing (see
 `definition.license`).
 
+How tclaude publishes:
+
+- Only the human operator can publish; agents are refused. You see the
+  redactions, the placeholders and the summary of what remains (size, turns,
+  time range, scan), then type `publish`. Non-interactively, pass
+  `--confirm-digest` with the content digest a previous run showed. Your
+  consent is recorded for a `public` audience, naming `publisher` rather
+  than you.
+- Credentials the scan flags are masked. If the scan still finds any in the
+  redacted copy, nothing is published.
+- Identity goes in two steps. First the identifying fields are cleared: the
+  agent's name becomes `agent` (tclaude names an agent after its
+  conversation's title) and so does its key in entry paths; ids and titles,
+  the instance, groups, lineage sources, the task (`definition.task`) and
+  the workspace repository, branch, commit and worktree go. Then the ids,
+  the original name and titles, the instance name and the group names are
+  replaced with `[REDACTED:identity]` wherever they appear in text. The
+  source must hold exactly one agent.
+- Optional extra redactions: `--stub-tool-results` (with `--keep-turns`),
+  `--drop-media` and `--drop-reasoning`.
+- The publisher key is created on first use under
+  `~/.tclaude/data/paf/publisher.key`, separate from the federation key.
+  Every publication from this node is signed with it (`signer.kind`:
+  `publisher`, `key_id` `pub_…`), so readers can link your publications to
+  each other but not to your node. Delete the file to start a new
+  pseudonym.
+- What is not removed: the conversation text itself, apart from the
+  credentials, paths, ids and names above. Ids of other agents and nodes
+  mentioned in it stay. Names, hostnames, URLs, customer details
+  or anything else you discussed are published as written. Read the
+  redacted copy with `tclaude paf render` before you share it.
+
 ### Receiving a PAF
 
-- Verify the signature and check who signed it. `tclaude` shows whether the
-  signer is this node, a known peer or unknown.
+- Verify the signature and check who signed it. `tclaude paf validate` shows
+  whether the signer is this node, a known peer or unknown.
 - Land it under a conservative profile. The recorded posture is a hint, not a
   requirement.
 - Read the loss report and the redaction record. A redacted or translated
@@ -302,9 +923,16 @@ must enforce these rules and refuse an archive that breaks them:
   segments, a leading `/`, backslashes or empty segments.
 - Entries are regular files. Directory entries are ignored, and symlinks or
   other special files are refused.
-- Sizes are bounded: tclaude defaults to 1 MiB for each JSON metadata entry,
-  256 MiB for a single JSON Lines record and 2 GiB for the archive (configurable
-  per node). Readers check both compressed and uncompressed sizes.
+- Sizes are bounded. Every reader **must** accept at least 1 MiB for each
+  JSON metadata entry, 16 MiB for a single JSON Lines record, 10,000
+  entries and 1 GiB of uncompressed content; a writer that wants its file
+  read everywhere stays within these. A reader may accept more: tclaude
+  defaults to 1 MiB, 256 MiB, 100,000 entries and 2 GiB (configurable per
+  node). Readers check both compressed and uncompressed sizes.
+- ZIP64 is allowed and readers must support it: an archive with more than
+  65,535 entries needs it. Readers bound the entry count the central
+  directory declares by what it can actually hold before allocating
+  anything, and refuse a mismatch.
 - An entry is data. A reader never writes an entry to a path derived from its
   name.
 
@@ -416,13 +1044,23 @@ receiver, never an instruction:
   details go in an extension on the `environment.json` object itself, not on
   the layer (tclaude writes `extensions.tclaude.sandbox`).
 - `workspace`: `cwd`, `repo_url`, `branch`, `commit`, `dirty`, `worktree`.
-- `placeholders`: named path placeholders the importer remaps. Fields
-  elsewhere in the environment and definition may contain `${NAME}`. Each
-  placeholder has a `name`, the source-side `original` value (omitted when
-  paths were redacted) and an optional `description`. Placeholders are
-  substituted only in the definition and environment. Transcript and native
-  content is history and is never rewritten on import, so a `${NAME}` there
-  is either redaction output (recorded in `privacy.json`) or literal text.
+- `placeholders`: named path placeholders the importer remaps. Each has a
+  `name`, the source-side `original` value (omitted when paths were
+  redacted) and an optional `description`. Substitution follows these
+  rules:
+  - A token is `${NAME}`, where `NAME` is one or more of `A-Z`, `a-z`, `0-9`
+    and `_`.
+  - Tokens are substituted only inside JSON string values (never keys or
+    JSON syntax) of `agent.json` and `environment.json`, including their
+    extension data.
+  - `HOME` always resolves to the importing user's home directory. Any other
+    name resolves only when `placeholders` declares it; an undeclared token
+    is reported to the importer as unresolved rather than guessed.
+  - There is no escape sequence in 0.1, so writers must not put literal
+    `${NAME}` text in those fields.
+  - Transcript and native content is history and is never rewritten on
+    import, so a `${NAME}` there is either redaction output (recorded in
+    `privacy.json`) or literal text.
 - `skills`: skills the agent knew, by `name`, `source` and optional `version`
   or `sha256`. These are references, never payloads.
 - `tools`: tools available to the agent: `name`, `kind` (`builtin`, `mcp`,
@@ -447,11 +1085,22 @@ Every following line is an entry, in conversation order:
 {"type": "entry", "id": "e1", "role": "user", "origin": "human", "time": "2026-10-11T19:00:00Z", "blocks": [{"kind": "text", "text": "Review PR 123."}]}
 ```
 
-- `role` is `user` or `assistant`. `origin` is `human`, `agent` or `tool`.
-  Tool results travel as `user` entries with origin `tool`, as in every native
-  format.
+- `role` is `user` or `assistant`.
+- `origin` says who produced the entry:
+  - `human`: text the operator typed, and nothing else;
+  - `agent`: the agent itself;
+  - `tool`: tool results, which travel as `user` entries as in every native
+    format;
+  - `system`: text a harness or orchestrator injected, such as compaction
+    summaries and tclaude notices;
+  - `peer`: another agent's message, with `author` naming it.
+
+  `origin` is an open set. A reader treats an origin it does not know as
+  untrusted input that is not the operator's, and when it lands the
+  conversation it labels such text so the model does not take it as the
+  operator's instructions. tclaude does the same for `peer` text.
 - `model` names the model that produced an assistant entry. `author` names a
-  non-primary speaker, such as a sub-agent.
+  non-primary speaker, such as another agent or a sub-agent.
 - `blocks` have a `kind`:
 
 | Kind | Fields |
@@ -463,15 +1112,22 @@ Every following line is an entry, in conversation order:
 | `media` | `media` |
 | `summary` | `text`: a compaction summary standing in for earlier history |
 
-A media item has a `media_type` and exactly one of `attachment`
-(`sha256:<hex>`, naming `attachments/<hex>`), `url` or `path`. A `path` is a
-hint about where the file lived on the source machine, not a reference into
-the archive. A `name` is optional.
+A media item has exactly one of `attachment` (`sha256:<hex>`, naming
+`attachments/<hex>`), `url` or `path`. A `path` is a hint about where the
+file lived on the source machine, not a reference into the archive.
+`media_type` is optional but writers should set it; a reader that needs it
+and finds none sniffs the bytes or treats the item as an opaque file. A
+`name` is optional. Writers should embed media as attachments rather than
+`url` or `path`: a URL may stop resolving and a path names another machine,
+so neither keeps the conversation readable on its own.
 
 `scope` is `effective` for `transcript.jsonl`. `full.jsonl` uses the same
 line schema with scope `full`. It may also contain `boundary` lines
 (`kind`: `compaction`, `clear`, `rewind` or `branch`) marking where the
-effective context diverges from the full history.
+effective context diverges from the full history. A boundary may name a
+`parent`: the `id` of the entry the history continues from after it, so a
+reader can rebuild the branches. Without `parent`, the history continues
+from the entry just before the boundary.
 
 ### Context: losses.json
 
@@ -486,7 +1142,19 @@ loss report of whatever produced the context. It records:
   (rung `translated`), *not* a byte-for-byte install.
   `context_file` maps to `context_file`, and `handoff` maps to
   `context_file` with an agent-written handoff;
-- an `items` list of `{kind, severity, count, detail}`.
+- an `items` list of `{kind, severity, count, detail}`;
+- `source` and `target`: the harness the conversation was decoded from and,
+  when the report describes a landing or translation, the harness it was
+  written for;
+- `dropped_percent` and `kept_percent`: the share of source entries left out
+  and carried. They are whole percentages that sum to 100 when both are
+  present, with `dropped_percent` rounded up so that any loss shows;
+- `prior`: the reports of earlier translations of the same conversation,
+  oldest first, so successive morphs and imports add a report rather than
+  overwrite the last one. Each item has the fields of `losses.json` itself,
+  without its own `prior`. A writer that replaces a context with a new
+  translation moves the old report into `prior`; tclaude keeps `prior` when
+  it rewrites a PAF, for example when redacting.
 
 Loss kinds include:
 
@@ -542,14 +1210,23 @@ root `privacy.json` records:
 - `scan`: the scanner name and version, when it ran, and `findings`
   (`kind`, `count`, up to three `locations`), plus `allowed: true` when a
   human explicitly allowed findings.
-- `redactions`: applied redactions as `{kind, count, detail}`.
+- `redactions`: applied redactions as `{kind, count, detail}`. Kinds are an
+  open set; tclaude writes `mask_spans`, `stub_tool_results`, `drop_media`,
+  `drop_reasoning`, `drop_native`, `paths_to_placeholders`, `strip_identity`
+  and `drop_unredactable` (content dropped because it could not be rewritten
+  safely).
 - `consent`: human confirmations, each with `by`, `at`, `audience` and
   `content_digest`.
 - `retention`: `expires_at`.
 
 The `content_digest` binds consent to content without a circular hash. It is
 the lowercase hex SHA-256 of the lines `<sha256>  <path>\n` for every manifest
-entry except `privacy.json`, sorted by path in byte order.
+entry except `privacy.json`, sorted by path in byte order. It covers the
+content of every entry, and so all extension data inside entries and every
+`ext/` entry. It does not cover `manifest.json` itself, so the manifest's own
+`extensions` object and other manifest fields are outside it; a signature
+covers those. Content that consent must bind belongs in an entry, not in
+the manifest's extensions.
 
 ### Signatures
 
@@ -568,7 +1245,12 @@ Each file under `signatures/` is a detached signature over the exact bytes of
 ```
 
 The signed message is the ASCII string `paf-manifest-signature-v1\n` followed
-by the lowercase hex SHA-256 of `manifest.json`. tclaude signs with the
+by the lowercase hex SHA-256 of `manifest.json`. `public_key` and `signature`
+are standard base64 with padding (RFC 4648 section 4, not the URL-safe
+alphabet). `key_id` is a label of 1 to 128 characters from `A-Z`, `a-z`,
+`0-9`, `.`, `_` and `-`, chosen by the signer and not derived from the key:
+tclaude uses the instance id for an instance key and `pub_` plus the first
+16 hex digits of the SHA-256 of the public key for a publisher key. tclaude signs with the
 producing instance's federation key; a published PAF uses a pseudonymous
 publisher key instead (`signer.kind`: `publisher`). Verifying a signature
 proves the manifest, and so every hashed entry, is unchanged since signing.
@@ -611,6 +1293,24 @@ tclaude instance, given that instance's identity in age's `AGE-SECRET-KEY-1`
 encoding. tclaude always includes the sender's own key as a recipient, so the
 sender can read back what it sent.
 
+```bash
+tclaude paf encrypt reviewer.paf --to lab -o reviewer.paf.age   # a trusted peer by id, name or label
+tclaude paf encrypt reviewer.paf --to age1… -o reviewer.paf.age  # any age recipient
+tclaude paf decrypt reviewer.paf.age -o reviewer.paf
+```
+
+- **`encrypt`** encrypts a valid PAF to each `--to` recipient and to this
+  node. It needs this node's federation identity.
+- **`decrypt`** decrypts with this node's identity and verifies the result.
+  A file this node is not a recipient of is refused.
+- `validate`, `inspect`, `render` and `redact` read an encrypted PAF
+  addressed to this node directly. Decrypt a file before importing it. Their
+  output (a rendered document, a redacted PAF) is plaintext; encrypt a
+  redacted copy again before it leaves the node.
+- `--to` names a trusted peer by instance id or the label you gave it, never
+  by the name the peer advertises, so a peer cannot claim a name meant for
+  another.
+
 ## Extensions
 
 The base format holds what any tool that reads or writes agent state could
@@ -641,6 +1341,15 @@ mechanisms.
 When in doubt, a new field starts in an extension. Promoting it to the base
 later is a minor version change; demoting a base field is a major one.
 
+PAF does not carry, by design:
+
+- tool definitions and their schemas: the landing harness brings its own
+  tools, and a tool is named only by reference;
+- system prompts and instruction files (`CLAUDE.md`, `AGENTS.md` and the
+  like): they belong to the workspace or the harness, not to the agent, and
+  the landing harness loads its own. The agent's own role guidance and
+  startup context travel in `agent.json`.
+
 ### Declaring an extension
 
 Every extension a file uses is declared once in `manifest.extensions_used`,
@@ -660,13 +1369,14 @@ keyed by its id:
 ```
 
 - **id:** lowercase. Ids with a single label (`tclaude`) are reserved for
-  extensions documented on this page, and a reader refuses any other
+  extensions documented on this page, and a writer must not mint any other
   single-label id. Anyone else uses a reverse-DNS id they control, such as
-  `com.example.agentlab`.
+  `com.example.agentlab`. A reader treats an undocumented single-label id
+  like any unknown extension: it ignores it, and refuses the file only when
+  `extensions_required` lists it.
 - **`version`:** the extension's own format version, `MAJOR.MINOR`, with the
-  same rules as `paf_version`. A reader that knows the extension but not that
-  version (another major, or while the major is 0 any other minor) treats it
-  as unknown.
+  same rules as `paf_version`: minor versions only add. A reader that knows
+  the extension but not its major version treats it as unknown.
 - **`system` and `system_version`:** which software wrote the data, and which
   version of it.
 - **`spec`:** where the extension is documented. `schema` (optional) points
@@ -723,11 +1433,15 @@ own state that other systems are not expected to share:
 | `agent.json` | `spawn_profile` | `name` (informational) and `profile`: tclaude's inline spawn profile, including launch posture. Receivers never look a profile up by name. |
 | `agent.json` | `permissions` | Permission rows (`slug`, `effect`, `scope`, `source`) as advisory provenance. They never become grants unless the receiver's own policy approves them. |
 | `agent.json` | `teleport` | The teleport chain id and hops (`from_instance`, `from_agent`, `to_instance`, `to_group`, `at`). |
+| `agent.json` | `transfer` | Continuation state for move and teleport: the stable federation `identity`, the sender's `carry_permissions` opt-in, the `trigger` and source `warnings`. |
 | `environment.json` | `sandbox` | tclaude sandbox details: the profile name and settings behind the `tclaude` layer. |
+| `environment.json` placeholders | `item`, `field` | The configuration item and field a placeholder stands in. |
 | `environment.json` | `harness.<name>` | Settings only one harness has, such as `harness.claude.auto_compact_window`. |
-| `group.json` | `group` | Group settings: standing orders, routes, auto-join and similar. |
+| `group.json` | `group` | Group settings: description, standing orders, environment, group permissions, member limit and similar. |
 | `group.json` members | `owner` | The member owned the group (advisory; ownership never travels). |
 | `ext/tclaude/mail-deliveries.json` | entry | The mail delivery ledger a continuation carries. |
+| `ext/tclaude/group-state.json` | entry | A group's tclaude state in the group export's shape: members, owners, permissions, enrollment, cron jobs, messages, audit trail and per-conversation metadata. Each conversation's harness and history live in its agent. |
+| `manifest.json` | `converted_from` | The legacy carrier a PAF was converted from: `format`, `format_version`, `tclaude_version`, `created_at`. |
 
 The extension is `copy: unsafe`, version `0.1`.
 
@@ -736,34 +1450,57 @@ The extension is `copy: unsafe`, version `0.1`.
 `paf_version` is `MAJOR.MINOR`, compared the way semantic versioning
 compares versions.
 
-- **While the major version is 0**, the format is still settling and any
-  minor version may change it incompatibly. A 0.x reader reads exactly the
-  0.y versions it implements and refuses every other one, older or newer,
-  the same way it refuses an unknown major version. The rule below that a
-  minor version only adds applies from 1.0.
-- From 1.0, a **minor** version only adds: new optional fields, new optional
-  entries, new enum values in fields documented as open (loss kinds, lineage
-  ops, redaction kinds), or new `requires` features. A 1.0 reader reads every
-  1.x file.
-- A **major** version may change anything. A reader refuses an unknown major
-  version, but still shows `format`, `paf_version` and `producer` so the user
-  knows what to upgrade.
+### Compatibility policy
+
+PAF aims to stay backward and forward compatible from 0.1 on. Until 1.0 this
+is best effort rather than a guarantee, and any break is marked clearly.
+
+- **Minor versions only add**, from 0.1 on: new optional fields, new
+  optional entries, new values in enumerations documented as open, or new
+  `requires` features. A reader reads every minor version of its major
+  version, older or newer, ignoring what it does not know and still
+  honouring `requires` and `extensions_required`.
+- **A deliberate break is marked with `min_reader_version`** in the
+  manifest: the oldest PAF version whose reader can import the file. A
+  writer sets it only when the file cannot be read correctly by an older
+  reader. A reader older than that refuses to import or resume the file,
+  with a message that names the version it needs ("this file needs PAF >=
+  0.3"). Inspection and rendering still read it best effort and warn that
+  parts may be missing or misread.
+- **A major version** may change anything. A reader refuses to import a
+  file of another major version. Inspection and rendering read it best
+  effort, with the same warning, and always show `format`, `paf_version` and
+  `producer` so the user knows what to upgrade.
+- **Read retention.** Once a version is published, later tclaude releases
+  keep reading it: natively, or by converting it to the current model on
+  read. A newer tclaude never drops the ability to open a file an older one
+  wrote.
+- **Federation** sends PAF only in a version both sides read: each instance
+  advertises the list of PAF versions it reads (`paf_versions`), the sender
+  writes the highest version both share, and falls back to the legacy
+  carrier when they share none.
+
+| Version | Breaking? | Changes |
+| --- | --- | --- |
+| 0.1 | (first version) | The initial format. |
+
 - Readers **ignore unknown fields** and any listed entry they do not
   understand, wherever it sits. Writers must not rely on readers understanding
   a field or entry unless it is listed in `requires`.
 - **Open enumerations** may gain values in a minor version, and readers
   accept unknown values. These are block `kind`, JSON Lines `type`, loss
   `kind` and `severity`, lineage `op`, boundary `kind`, redaction `kind`,
-  audience `kind`, `sensitivity`, snapshot `state`, tool `kind`, `signer.kind`
+  audience `kind`, `sensitivity`, snapshot `state`, tool `kind`, entry
+  `origin` (with the reading rule above), `signer.kind`
   and signature `alg`. The schemas list the known values without restricting
   them. A reader renders an unknown block kind or line type as a visible
   "unsupported content" placeholder that keeps its `text` when present, and
   never drops it silently. A writer that needs a reader to understand a new
   value lists a feature in `requires`.
-- **Closed enumerations** change only in a major version (or, while the
-  major version is 0, in any minor version): `format`, `kind`
-  (`agent`, `group`), entry `role` (`user`, `assistant`) and `origin`
-  (`human`, `agent`, `tool`), and the transcript `scope`.
+- **Closed enumerations** change only in a major version, or in a minor
+  version that sets `min_reader_version`: `format`, `kind`
+  (`agent`, `group`), entry `role` (`user`, `assistant`), and the
+  transcript `scope`.
 - **`requires`** names features without which the content would be
   misunderstood, not merely incomplete (for example, a context stored as a
   delta against an earlier snapshot). A reader that does not know a required
@@ -777,9 +1514,29 @@ compares versions.
   is ignored.
 - Writers stamp the lowest version that expresses the content.
 
+### requires and extensions_required
+
+`requires` names base-format features a reader must support, and
+`extensions_required` names vendor extensions that change the meaning of
+base data. Either belongs on a file only when a reader that ignored it would
+silently produce a wrong result, not merely a poorer one. For example:
+
+- the context is stored as a delta against an earlier snapshot (a `requires`
+  feature): read on its own, it looks like a short conversation;
+- the context is encoded or encrypted inside an extension, and the base
+  context is a placeholder;
+- the real history lives in an extension, and the base holds only a stub.
+
+Writers should almost never set either. tclaude's own extension never does:
+everything in it is additional, and a reader that ignores it loses only
+tclaude-specific state. A reader refuses to import, resume or rewrite a file
+that lists something it does not know, but can still inspect and render it,
+with a warning.
+
 The schemas for version 0.1 live under `docs/paf/schema/v0.1/`, and their
-`$id`s include `v0.1`. While the major version is 0, each minor version gets
-its own schema directory. From 1.0, one directory per major version (`v1/`)
+`$id`s include `v0.1`. They allow unknown properties, so they validate later
+0.y files too; a later minor version that needs new schemas adds a
+directory. From 1.0, one directory per major version (`v1/`)
 validates every file of that major version, because unknown properties are
 allowed. A few rules are semantic rather than structural, and
 a reader checks them in code:
@@ -790,8 +1547,9 @@ a reader checks them in code:
 - `agent.native.path` lies under that agent's own `agents/<key>/native/`;
 - every `attachment` reference resolves to an entry;
 - every extension id used in an `extensions` object, an `ext/` entry or
-  `extensions_required` is declared in `extensions_used`;
-- no single-label extension id appears other than those this page documents;
+  `extensions_required` is declared in `extensions_used`, found by decoding
+  the JSON (a key spelled with escapes counts) rather than by searching its
+  bytes;
 - JSON metadata has no duplicate keys.
 
 ## Legacy formats
@@ -802,8 +1560,8 @@ agent bundle for peers that do not advertise PAF support.
 | Legacy | Maps to |
 |---|---|
 | Agent bundle v1 (`tclaude-agent-bundle`, `manifest.json` + `history/transcript.jsonl`) | One agent; `agent.definition` from `manifest.agent`; the native blob from `history`; findings into `privacy.scan`; the inline profile and permissions into the `tclaude` extension; the mail ledger into `ext/tclaude/`. There is no neutral context, so landing in another harness decodes the native blob first. |
-| Group export v5 (`manifest.json` + `projects/<conv>.jsonl`) | A group; one agent per conversation with a native Claude Code blob; group settings into the `tclaude` extension. |
-| Morph artifacts (`transcript.md`, `loss-report.json`) | Readable as a context-file landing. `loss-report.json` has the fields of `losses.json`; readers treat `"items": null` as an empty list and map `fallback` to `landing_rung`. |
+| Group export v5 (`manifest.json` + `projects/<conv>.jsonl`) | A group; one agent per conversation with a native Claude Code blob; the group row into `group.json`'s `tclaude` extension and the other tables into `ext/tclaude/group-state.json`. |
+| Morph artifacts (`transcript.md`, `transcript.jsonl`, `loss-report.json`) | Readable as a context-file landing. `loss-report.json` has the fields of `losses.json`; readers treat `"items": null` as an empty list and map `fallback` to `landing_rung`. |
 
 ## Related pages
 

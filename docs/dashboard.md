@@ -89,8 +89,8 @@ agents, one row per agent. An optional read-only route-map island
 
 The filter bar holds query/visibility/column controls, a `💲` toggle for
 per-row cost badges, default spawn- and sandbox-profile pickers, `+ new
-group`, and a `⚙` actions menu (type-to-filter) with import group (.zip from
-export, with preview and collision handling), clean up (bulk unjoin / retire /
+group`, and a `⚙` actions menu (type-to-filter) with **import…** (an agent or a
+group, see [Exporting and importing](#exporting-and-importing)), clean up (bulk unjoin / retire /
 delete / reinstate), delete retired, and managers for profiles, templates,
 roles, sandbox profiles, cross-harness spawns, and **links** — links is a
 modal opened from here, not a tab. Drag and drop works throughout: nest and
@@ -132,6 +132,61 @@ Columns are hide/showable via "▾ view" (persisted server-side):
 
 The status dot is clickable: `●` online (click to turn off — soft exit or
 force kill), `○` offline (click to wake), with error and waking variants.
+
+### Exporting and importing
+
+An agent's `⚙` menu has **⤓ export (PAF)…**: choose whether the conversation
+travels and in which copies (native history, harness-neutral context), then
+download a [PAF](paf.md). When the credential scan flags something, the
+download waits until you either tick *Export anyway; I have checked the
+findings* or choose **Redact…**. The redact step previews what it masks or drops
+and what the scan still finds, then downloads a redacted copy. Nothing is
+written on this node. A group's `⚙` **⤓ export…** offers a group `.paf` (the
+default) or a legacy `.zip` for importing into an older tclaude.
+
+**⤒ import…** in the toolbar `⚙` menu takes either. The file decides which
+preview opens. Dropping a `.paf` or `.zip` onto the page opens the same dialog.
+- **Agent:** shows the agent's provenance and lets you choose:
+  - the group it joins;
+  - its working directory, or keep the recorded paths;
+  - the harness and model it lands on.
+
+  It also shows how its history lands (native, translated with the expected
+  losses, or configuration only), this node's credential scan and the security
+  posture. **Import (offline)** lands the agent with its conversation without starting
+  it; wake it (or `tclaude agent resume`) to start it. It needs a conversation
+  that lands and is not yet available on OpenCode. **Import & start** also
+  starts it. An import is always a fork.
+- **Group:** keeps the collision preview and adds a per-member table.
+  - Each member can land on another harness or model, or all members can be
+    changed at once.
+  - Each member shows its history rung and expected losses.
+  - Imported members land offline.
+
+### Snapshots
+
+**📸 Snapshots…** in the toolbar `⚙` menu (or the command palette) opens this
+node's snapshot library. An agent's `⚙` **📸 snapshot…** opens the same view
+with the create form filled in for that agent. Each row lists the snapshot's
+agent, harness, size, expiry and credential findings. From a row you can:
+
+- **spawn** a new agent from it into a group, with a working directory (or the
+  recorded paths) and an optional harness and model;
+- **export** it as a [PAF](paf.md) download;
+- **share** it on a Board for named members. **Review** shows the consent
+  summary (size, turns, recipients, findings, expiry) first, and the share
+  needs the word `share` typed. A snapshot with suspected credentials cannot
+  go on a board as it is: **Redact…** masks the findings and path names and
+  shares that copy instead;
+- **publish** a public copy. Publishing always masks suspected credentials,
+  replaces paths with placeholders and strips identity; the copy is previewed
+  and needs an acknowledgement before the `.public.paf` downloads;
+- **remove** it. **prune expired** removes every expired snapshot.
+
+When resilience policies exist, a read-only table shows each policy's agents
+with the last good snapshot, whether it is deferred or failing, and when the
+next one is due. Policies are managed with `tclaude agent snapshot policy`.
+Snapshots and their routes are local-only; peer view hides the menu item.
 
 ### Badge glossary
 

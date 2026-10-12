@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
+	"github.com/tofutools/tclaude/pkg/paf"
 	"github.com/tofutools/tclaude/pkg/testharness"
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
@@ -106,6 +108,27 @@ func TestMorphTranslateClaudeToCodexResumesNatively(t *testing.T) {
 	md, err := os.ReadFile(filepath.Join(artifacts, "transcript.md"))
 	require.NoError(t, err)
 	assert.Contains(t, string(md), "private reasoning", "the kept transcript file is complete")
+	// The same full transcript is kept in PAF context form.
+	jf, err := os.Open(filepath.Join(artifacts, "transcript.jsonl"))
+	require.NoError(t, err)
+	defer func() { _ = jf.Close() }()
+	cr, err := paf.NewContextReader(jf, 0)
+	require.NoError(t, err)
+	assert.Equal(t, paf.ScopeFull, cr.Header.Scope)
+	assert.Equal(t, "claude", cr.Header.Source.Harness)
+	var kinds []string
+	for {
+		l, err := cr.Next()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		for _, b := range l.Blocks {
+			kinds = append(kinds, b.Kind)
+		}
+	}
+	assert.Contains(t, kinds, paf.BlockThinking)
+	assert.Contains(t, kinds, paf.BlockToolCall)
 	var report transcript.LossReport
 	raw, err := os.ReadFile(filepath.Join(artifacts, "loss-report.json"))
 	require.NoError(t, err)

@@ -40,12 +40,15 @@ const (
 	KindBundleFetch        = "bundle_fetch"
 	KindBundleAnswer       = "bundle_answer"
 	KindBundleResult       = "bundle_result"
-	KindAgentMoveConfirm   = "agent_move_confirm"
-	KindTeleportLease      = "teleport_lease"
-	KindAgentPresence      = "agent_presence"
-	KindAgentLocation      = "agent_location"
-	KindHomeMail           = "home_mail"
-	KindHomeMailReceipt    = "home_mail_receipt"
+	// KindResilienceRecall asks a custodian to return a resilience
+	// snapshot it holds for the sender (ResilienceRecallPayload).
+	KindResilienceRecall = "resilience_recall"
+	KindAgentMoveConfirm = "agent_move_confirm"
+	KindTeleportLease    = "teleport_lease"
+	KindAgentPresence    = "agent_presence"
+	KindAgentLocation    = "agent_location"
+	KindHomeMail         = "home_mail"
+	KindHomeMailReceipt  = "home_mail_receipt"
 	// KindRouteOpen asks the recipient to open one TCP connection to one of
 	// its exported routes; KindRouteAnswer accepts (then both dial the hub
 	// stream relay) or refuses it. These are real-time control envelopes,
@@ -222,22 +225,38 @@ type GroupMailPayload struct {
 	Body    string                  `json:"body"`
 }
 
+// ResilienceRecallPayload asks for a held snapshot of SourceAgent back:
+// the one with offer id Offer, or the newest when Offer is empty.
+type ResilienceRecallPayload struct {
+	Recall      string `json:"recall"`
+	SourceAgent string `json:"source_agent"`
+	Offer       string `json:"offer,omitempty"`
+}
+
 // CatalogPayload lists what an instance exports to the receiving peer.
 type CatalogPayload struct {
-	PeerProposals       bool           `json:"peer_proposals,omitempty"`
-	AgentBundleChunks   bool           `json:"agent_bundle_chunks,omitempty"`
-	RequesterPays       int            `json:"requester_pays,omitempty"`
-	TeleportBackups     bool           `json:"teleport_backups,omitempty"`
-	AgentTeleports      int            `json:"agent_teleports,omitempty"`
-	JobOutput           bool           `json:"job_output,omitempty"`
-	DirectAgentMoves    bool           `json:"direct_agent_moves,omitempty"`
-	HomeRoutedMail      bool           `json:"home_routed_mail,omitempty"`
-	StableAgentIdentity bool           `json:"stable_agent_identity,omitempty"`
-	AgentMoves          bool           `json:"agent_moves,omitempty"`
-	Node                *NodeMetadata  `json:"node,omitempty"`
-	NodeAt              time.Time      `json:"node_at,omitempty"`
-	NodeReceivedAt      time.Time      `json:"node_received_at,omitempty"` // receiver-owned; overwritten on receipt
-	Groups              []CatalogGroup `json:"groups"`
+	PeerProposals     bool `json:"peer_proposals,omitempty"`
+	AgentBundleChunks bool `json:"agent_bundle_chunks,omitempty"`
+	RequesterPays     int  `json:"requester_pays,omitempty"`
+	TeleportBackups   bool `json:"teleport_backups,omitempty"`
+	AgentTeleports    int  `json:"agent_teleports,omitempty"`
+	// ResilienceSnapshots is the resilience snapshot custody version this
+	// node accepts (bundle type "snapshot"); 0 means none, 2 adds
+	// returning held snapshots on a resilience_recall.
+	ResilienceSnapshots int  `json:"resilience_snapshots,omitempty"`
+	JobOutput           bool `json:"job_output,omitempty"`
+	DirectAgentMoves    bool `json:"direct_agent_moves,omitempty"`
+	HomeRoutedMail      bool `json:"home_routed_mail,omitempty"`
+	StableAgentIdentity bool `json:"stable_agent_identity,omitempty"`
+	AgentMoves          bool `json:"agent_moves,omitempty"`
+	// PAFVersions lists the PAF versions (MAJOR.MINOR) this peer imports
+	// agent transfers in. A sender writes the newest version both share
+	// (paf.NegotiateVersion), and agent bundle v1 when they share none.
+	PAFVersions    []string       `json:"paf_versions,omitempty"`
+	Node           *NodeMetadata  `json:"node,omitempty"`
+	NodeAt         time.Time      `json:"node_at,omitempty"`
+	NodeReceivedAt time.Time      `json:"node_received_at,omitempty"` // receiver-owned; overwritten on receipt
+	Groups         []CatalogGroup `json:"groups"`
 }
 
 // CatalogGroup is one exported group as seen by one peer.

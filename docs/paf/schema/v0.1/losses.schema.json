@@ -10,10 +10,12 @@
   ],
   "properties": {
     "source": {
-      "type": "string"
+      "type": "string",
+      "description": "The harness the conversation was decoded from."
     },
     "target": {
-      "type": "string"
+      "type": "string",
+      "description": "The harness the conversation was written for, when the report describes a translation or landing."
     },
     "source_entries": {
       "type": "integer",
@@ -25,6 +27,7 @@
     },
     "dropped_percent": {
       "type": "integer",
+      "description": "Share of source entries left out, rounded up; with kept_percent it sums to 100.",
       "minimum": 0,
       "maximum": 100
     },
@@ -82,6 +85,17 @@
             "type": "string"
           }
         }
+      }
+    },
+    "prior": {
+      "type": "array",
+      "description": "Reports of earlier translations of the same conversation, oldest first. Each has the fields of losses.json, without its own prior.",
+      "items": {
+        "type": "object",
+        "required": [
+          "source",
+          "items"
+        ]
       }
     },
     "landing_rung": {

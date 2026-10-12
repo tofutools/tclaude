@@ -18,7 +18,13 @@
     },
     "paf_version": {
       "type": "string",
-      "pattern": "^0\\.1$"
+      "pattern": "^0\\.(0|[1-9][0-9]*)$",
+      "description": "The version the file was written as. A 0.x reader reads every 0.y: minor versions only add."
+    },
+    "min_reader_version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+      "description": "Set only by a writer that deliberately breaks compatibility: the oldest PAF version whose reader can import the file. An older reader refuses to import it and inspects it best effort."
     },
     "kind": {
       "enum": [

@@ -107,3 +107,23 @@ func TestStableMailLedgerRoundTripMemoryAndDisk(t *testing.T) {
 	_, e = b.Encode()
 	require.ErrorContains(t, e, "ledger entry")
 }
+
+// Older releases flag every v1 finding as a suspected credential, so the
+// advisory high-entropy kind never reaches a v1 manifest.
+func TestEncodeOmitsAdvisoryFindings(t *testing.T) {
+	b := fixtureBundle()
+	b.Manifest.Findings = []Finding{{Kind: AdvisoryHighEntropy, Count: 2, Locations: []string{"history"}}, {Kind: "github-token", Count: 1, Locations: []string{"history"}}}
+	raw, err := b.Encode()
+	require.NoError(t, err)
+	got, err := Decode(raw)
+	require.NoError(t, err)
+	assert.Equal(t, []Finding{{Kind: "github-token", Count: 1, Locations: []string{"history"}}}, got.Manifest.Findings)
+	assert.Len(t, b.Manifest.Findings, 2, "the local scan result is unchanged")
+
+	b.Manifest.Findings = []Finding{{Kind: AdvisoryHighEntropy, Count: 1}}
+	raw, err = b.Encode()
+	require.NoError(t, err)
+	got, err = Decode(raw)
+	require.NoError(t, err)
+	assert.Empty(t, got.Manifest.Findings)
+}

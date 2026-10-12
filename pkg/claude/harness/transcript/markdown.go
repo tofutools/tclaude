@@ -24,15 +24,24 @@ func WriteMarkdown(t *Transcript, w io.Writer) error {
 		fmt.Fprintf(bw, "- Title: %s\n", t.Source.Title)
 	}
 	fmt.Fprintf(bw, "\nThis is the effective conversation context at the time of the morph (active branch, from the last compaction on). Tool records are history.\n")
+	writeMarkdownEntries(bw, t, 2)
+	return bw.Flush()
+}
+
+// WriteMarkdownEntries renders only the transcript's entries, each under a
+// heading of the given level with an entry-N anchor, for documents that
+// write their own header.
+func WriteMarkdownEntries(t *Transcript, w io.Writer, level int) error {
+	bw := bufio.NewWriter(w)
+	writeMarkdownEntries(bw, t, level)
+	return bw.Flush()
+}
+
+func writeMarkdownEntries(bw *bufio.Writer, t *Transcript, level int) {
+	hashes := strings.Repeat("#", max(level, 1))
 	for i, e := range t.Entries {
-		heading := string(e.Role)
-		if e.Origin == OriginTool {
-			heading = "tool results"
-		}
-		if e.Author != "" {
-			heading += " — " + e.Author
-		}
-		fmt.Fprintf(bw, "\n<a id=\"entry-%d\"></a>\n\n## %d. %s", i+1, i+1, heading)
+		heading := e.Heading()
+		fmt.Fprintf(bw, "\n<a id=\"entry-%d\"></a>\n\n%s %d. %s", i+1, hashes, i+1, heading)
 		if !e.Time.IsZero() {
 			fmt.Fprintf(bw, " (%s)", e.Time.UTC().Format("2006-01-02 15:04:05Z"))
 		}
@@ -41,7 +50,6 @@ func WriteMarkdown(t *Transcript, w io.Writer) error {
 			writeMarkdownBlock(bw, b)
 		}
 	}
-	return bw.Flush()
 }
 
 func writeMarkdownBlock(w *bufio.Writer, b Block) {

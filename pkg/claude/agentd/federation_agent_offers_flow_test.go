@@ -215,7 +215,7 @@ func TestFederation_AgentOfferHistoryResumesFreshIdentity(t *testing.T) {
 			f.HaveMember("source", source)
 			rec := profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+source+"&history=true", nil)
 			require.Equal(t, 200, rec.Code, rec.Body.String())
-			b, err := agentbundle.Decode(rec.Body.Bytes())
+			b, err := decodeAgentExport(t, rec.Body.Bytes())
 			require.NoError(t, err)
 			original := append([]byte{}, b.Transcript...)
 			d := fedAgentOffer(t, p, "receiver", b)
@@ -348,7 +348,7 @@ func TestFederation_AgentOfferPreparationFailureIsRetryable(t *testing.T) {
 				f.HaveMember("source", source)
 				rec := profileReq(t, f, http.MethodGet, "/v1/agent-bundle/export?agent="+source+"&history=true", nil)
 				require.Equal(t, 200, rec.Code, rec.Body.String())
-				exported, err := agentbundle.Decode(rec.Body.Bytes())
+				exported, err := decodeAgentExport(t, rec.Body.Bytes())
 				require.NoError(t, err)
 				b.SetHistory(exported.Manifest.History.Format, source, exported.Transcript)
 			}

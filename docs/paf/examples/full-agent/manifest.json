@@ -42,8 +42,8 @@
     },
     {
       "path": "privacy.json",
-      "bytes": 528,
-      "sha256": "e00cccdfe8df5832c2abe4bed22c37fbd25df09a49c18ebf585e058c5299db9a",
+      "bytes": 525,
+      "sha256": "1373a44a007d0530b5652b47891298d465ad61ab8eb50787f58edf15aaef98d3",
       "media_type": "application/json"
     }
   ],

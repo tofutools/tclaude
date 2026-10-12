@@ -6,12 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"mime"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
+	"github.com/tofutools/tclaude/pkg/paf"
 )
 
 // TranslateOptions configures a cross-harness history translation.
@@ -93,6 +96,17 @@ func PlanTranslation(src, dst *Harness, convID, cwd string, opts TranslateOption
 	if err != nil {
 		return nil, nil, err
 	}
+	plan, err := PlanTranscript(t, dst, opts)
+	return t, plan, err
+}
+
+// PlanTranscript applies dst's policy to an already decoded transcript, for
+// a history that does not live in an installed conversation (an imported
+// PAF's neutral context, or a native blob decoded on import).
+func PlanTranscript(t *transcript.Transcript, dst *Harness, opts TranslateOptions) (*transcript.Plan, error) {
+	if !dst.SupportsTranscript() {
+		return nil, fmt.Errorf("harness %s cannot install a translated history", dst.Name)
+	}
 	policy := opts.Policy
 	policy.Target = dst.Name
 	resolved, source := MorphContextWindow(dst, policy.TargetModel)
@@ -107,7 +121,7 @@ func PlanTranslation(src, dst *Harness, convID, cwd string, opts TranslateOption
 		policy.MediaDir = filepath.Join(opts.ArtifactDir, "media")
 		policy.TranscriptPath = filepath.Join(opts.ArtifactDir, "transcript.md")
 	}
-	return t, transcript.NewPlan(t, policy), nil
+	return transcript.NewPlan(t, policy), nil
 }
 
 // PreviewTranslation is a dry run: decode, plan, encode and validate the
@@ -305,7 +319,7 @@ func installNotice(dst *Harness, source transcript.Source, title, targetModel st
 	}
 	stub := &transcript.Plan{
 		Source: source, Target: dst.Name, TargetModel: targetModel, Title: title, Report: report,
-		Entries: []transcript.Entry{{Role: transcript.RoleUser, Origin: transcript.OriginHuman, Blocks: []transcript.Block{transcript.Text(notice)}}},
+		Entries: []transcript.Entry{{Role: transcript.RoleUser, Origin: transcript.OriginSystem, Blocks: []transcript.Block{transcript.Text(notice)}}},
 	}
 	var buf bytes.Buffer
 	sourceID, err := dst.Transcript.Encode(stub, cwd, &buf)
@@ -336,6 +350,21 @@ func describeSource(src transcript.Source) string {
 	return src.Harness
 }
 
+// WriteHistoryArtifacts writes a whole conversation into dir as
+// transcript.md and transcript.jsonl (a PAF context file, media under
+// context-media/), the same files a morph keeps beside its target.
+func WriteHistoryArtifacts(t *transcript.Transcript, dir string) error {
+	var md bytes.Buffer
+	if err := transcript.WriteMarkdown(t, &md); err != nil {
+		return err
+	}
+	if err := transcript.WriteFileExclusive(filepath.Join(dir, "transcript.md"), md.Bytes()); err != nil {
+		return err
+	}
+	writeContextArtifactBestEffort(t, dir, nil)
+	return nil
+}
+
 func writeTranslationArtifacts(t *transcript.Transcript, plan *transcript.Plan, dir string) error {
 	if err := prepareArtifactDir(dir); err != nil {
 		return err
@@ -347,7 +376,62 @@ func writeTranslationArtifacts(t *transcript.Transcript, plan *transcript.Plan, 
 	if err := transcript.WriteFileExclusive(filepath.Join(dir, "transcript.md"), md.Bytes()); err != nil {
 		return err
 	}
-	return plan.WriteMedia()
+	if err := plan.WriteMedia(); err != nil {
+		return err
+	}
+	writeContextArtifactBestEffort(t, dir, plan.MediaPath)
+	return nil
+}
+
+// writeContextArtifactBestEffort writes transcript.jsonl beside the
+// readable transcript.md. It is an extra copy, so a failure only logs: the
+// morph or landing that wrote the artifacts goes on without it.
+func writeContextArtifactBestEffort(t *transcript.Transcript, dir string, written func([]byte) string) {
+	if err := writeContextArtifact(t, dir, written); err != nil {
+		slog.Warn("transcript.jsonl context artifact not written", "dir", dir, "error", err)
+		_ = os.RemoveAll(filepath.Join(dir, "context-media"))
+	}
+}
+
+var contextMediaExt = map[string]string{"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "application/pdf": ".pdf"}
+
+// writeContextArtifact writes the full source transcript as a PAF context
+// file, transcript.jsonl, with inline media stored under context-media/ and
+// referenced by path. Media the translation already wrote (written returns
+// its path) is referenced there rather than copied again. The loss counts it
+// adds stay on a copy, so the translation's own report is unchanged.
+func writeContextArtifact(t *transcript.Transcript, dir string, written func([]byte) string) error {
+	cp := *t
+	cp.Losses = &transcript.LossReport{}
+	mediaDir := filepath.Join(dir, "context-media")
+	n := 0
+	var buf bytes.Buffer
+	err := paf.WriteContextFile(&buf, paf.ScopeFull, &cp, func(m *transcript.Media) (string, error) {
+		if written != nil {
+			if path := written(m.Data); path != "" {
+				return path, nil
+			}
+		}
+		if n == 0 {
+			if err := transcript.EnsureRealDir(mediaDir); err != nil {
+				return "", err
+			}
+		}
+		n++
+		ext := contextMediaExt[m.MediaType]
+		if ext == "" {
+			ext = ".bin"
+			if exts, _ := mime.ExtensionsByType(m.MediaType); len(exts) > 0 {
+				ext = exts[0]
+			}
+		}
+		path := filepath.Join(mediaDir, fmt.Sprintf("media-%03d%s", n, ext))
+		return path, transcript.WriteFileExclusive(path, m.Data)
+	})
+	if err != nil {
+		return err
+	}
+	return transcript.WriteFileExclusive(filepath.Join(dir, "transcript.jsonl"), buf.Bytes())
 }
 
 // writeLossReport replaces loss-report.json through a fresh temp file and a
