@@ -34,7 +34,8 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           git fetch --no-tags --depth=1 origin "$BASE_SHA"
-          echo "docs_only=$(python3 scripts/ci/docs-only.py "$BASE_SHA")" >> "$GITHUB_OUTPUT"
+          docs_only=$(python3 scripts/ci/docs-only.py "$BASE_SHA")
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
 
   docs:
     name: mkdocs --strict
