@@ -868,6 +868,7 @@ function SendElsewhereItems({ member, group, snapshot }) {
     ${fleet ? item('move', peerRow ? 'move here…' : 'move to…', 'relocate familiar…', peerRow ? `Move ${label} to a group on this node, with its history` : `Move ${label} to a group on another node, with its history; it retires here once its copy runs there`) : null}
     ${TELEPORT_ROUTES && fleet && !peerRow ? item('teleport', 'teleport to…', 'teleport familiar…', `Teleport ${label} to another node; its home keeps its place for Recall home`) : null}
     ${!peerRow ? item('clone', fleet ? 'clone to…' : 'clone…', 'mirror familiar to…', `Clone ${label} here or onto another node; the original keeps running`) : null}
+    ${!peerRow ? html`<${MenuButton} member=${member} group=${group} act="snapshot-agent" regular="📸 snapshot…" wizard="📸 capture familiar…" title=${`Keep a named snapshot of ${label} on this node; spawn from it, share or publish it later`} />` : null}
     ${!peerRow ? html`<${MenuButton} member=${member} group=${group} act="export-paf" regular="⤓ export (PAF)…" wizard="⤓ seal familiar (PAF)…" title=${`Export ${label} as a portable PAF file; importing it anywhere creates a new agent`} />` : null}
     ${!peerRow ? item('morph', 'morph…', 'shapeshift familiar…', `Relaunch ${label} in place with another spawn profile (model, effort, harness); it keeps its identity`) : null}
     ${TELEPORT_ROUTES && kind === 'visiting' && (!peerRow || view.home.local) ? item('home', '⌂ recall home…', '⌂ recall familiar home…', `Send ${label} straight home to ${view.home.name}`) : null}`;

@@ -161,6 +161,31 @@ preview opens. Dropping a `.paf` or `.zip` onto the page opens the same dialog.
   - Each member shows its history rung and expected losses.
   - Imported members land offline.
 
+### Snapshots
+
+**📸 Snapshots…** in the toolbar `⚙` menu (or the command palette) opens this
+node's snapshot library. An agent's `⚙` **📸 snapshot…** opens the same view
+with the create form filled in for that agent. Each row lists the snapshot's
+agent, harness, size, expiry and credential findings. From a row you can:
+
+- **spawn** a new agent from it into a group, with a working directory (or the
+  recorded paths) and an optional harness and model;
+- **export** it as a [PAF](paf.md) download;
+- **share** it on a Board for named members. **Review** shows the consent
+  summary (size, turns, recipients, findings, expiry) first, and the share
+  needs the word `share` typed. A snapshot with suspected credentials cannot
+  go on a board as it is: **Redact…** masks the findings and path names and
+  shares that copy instead;
+- **publish** a public copy. Publishing always masks suspected credentials,
+  replaces paths with placeholders and strips identity; the copy is previewed
+  and needs an acknowledgement before the `.public.paf` downloads;
+- **remove** it. **prune expired** removes every expired snapshot.
+
+When resilience policies exist, a read-only table shows each policy's agents
+with the last good snapshot, whether it is deferred or failing, and when the
+next one is due. Policies are managed with `tclaude agent snapshot policy`.
+Snapshots and their routes are local-only; peer view hides the menu item.
+
 ### Badge glossary
 
 Badges appear on rows only while relevant (activity badges only while online

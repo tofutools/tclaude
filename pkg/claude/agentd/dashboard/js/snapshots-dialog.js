@@ -266,7 +266,9 @@ function PolicyStatus({ policies }) {
 // SnapshotsDialog is the Snapshots view (4d, tcl-3hjdm1): this node's
 // snapshot library with create, spawn-from, export, share-on-Board, publish
 // and remove, plus the status of resilience policies.
-export function SnapshotsDialog({ descriptor, state, actions, confirm, confirmDiscard, fleet = createFleetAdminActions() }) {
+export function SnapshotsDialog({ descriptor, state, actions, confirm, confirmDiscard }) {
+  // Boards and their members come from the Fleet actions; tests inject them.
+  const [fleet] = useState(() => actions.fleet || createFleetAdminActions());
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const [list, setList] = useState(null);
   const [policies, setPolicies] = useState([]);
