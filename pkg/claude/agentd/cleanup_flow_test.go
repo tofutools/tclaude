@@ -351,6 +351,9 @@ func installFakeWorktrees(t *testing.T, byDir map[string]worktree.WorktreeStatus
 	t.Cleanup(agentd.SetWorktreeFnsForTest(fw.inspect, fw.remove))
 	t.Cleanup(agentd.SetRetireWorktreeFnForTest(fw.removeBranch))
 	t.Cleanup(agentd.SetRegisteredWorktreeFnForTest(fw.removeRegistered))
+	// Branches count as merged unless a test says otherwise, so retire's
+	// branch deletion is exercised as it was before the unmerged check.
+	t.Cleanup(agentd.SetUnmergedCommitsFnForTest(func(string, string) (int, error) { return 0, nil }))
 	return fw
 }
 

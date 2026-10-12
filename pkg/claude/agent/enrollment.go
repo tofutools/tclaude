@@ -89,7 +89,7 @@ type retireParams struct {
 	Selector         string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
 	Reason           string `long:"reason" short:"r" optional:"true" help:"Why the agent is being retired (recorded in the audit trail)"`
 	NoShutdown       bool   `long:"no-shutdown" help:"Leave the agent's running session alive. By default retire also soft-exits the running tmux session (sends /exit); pass this to keep the process running."`
-	NoDeleteWorktree bool   `long:"no-delete-worktree" help:"Keep the agent's git worktree + branch. By default retire also removes a removable linked worktree (never the main repo or one shared with a live agent) and force-deletes its branch; pass this to leave the worktree untouched."`
+	NoDeleteWorktree bool   `long:"no-delete-worktree" help:"Keep the agent's git worktree + branch. By default retire also removes a removable linked worktree (never the main repo or one shared with a live agent) and deletes its branch if it is merged (a branch with unmerged commits is kept); pass this to leave the worktree untouched."`
 	AskHuman         string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
@@ -110,9 +110,11 @@ func retireCmd() *cobra.Command {
 			"retired agent with no live session is a no-op either way. " +
 			"\n\n" +
 			"By default retire ALSO cleans up the agent's git worktree: it " +
-			"removes the linked worktree and force-deletes its branch, so a " +
-			"retired feature agent leaves no git footprint behind. This is " +
-			"safe — the repo's main worktree, and any worktree a surviving " +
+			"removes the linked worktree and deletes its branch once merged, " +
+			"so a retired feature agent leaves no git footprint behind. A " +
+			"branch with commits main or master does not reach (or one that " +
+			"cannot be checked) is kept, so unmerged work survives. The " +
+			"repo's main worktree, and any worktree a surviving " +
 			"agent is still working in, are always kept. Because the agent's " +
 			"cwd IS the worktree, removal waits until its pane exits; with " +
 			"--no-shutdown a still-running agent keeps its worktree. Pass " +

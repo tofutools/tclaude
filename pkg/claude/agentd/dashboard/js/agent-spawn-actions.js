@@ -175,6 +175,7 @@ export function createAgentSpawnActions({
         });
         if (!response.ok) throw new Error((await responseText(response)) || `HTTP ${response.status}`);
         const payload = await response.json();
+        if (payload.note) notify(payload.note);
         if (payload.tracking_fallback) onProgress('Worktree created without tracking; spawning agent…');
         else onProgress('Worktree ready; spawning agent…');
         return { path: payload.path || '', branch: payload.branch || branch };

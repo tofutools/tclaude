@@ -1569,6 +1569,15 @@ func SetRetireWorktreeAtFnForTest(
 	return func() { removeWorktreeAtFn = prev }
 }
 
+// SetUnmergedCommitsFnForTest swaps the count of commits a retire-time
+// branch deletion would lose (unmergedCommitsFn). Returns a restore func
+// for t.Cleanup.
+func SetUnmergedCommitsFnForTest(count func(dir, branch string) (int, error)) func() {
+	prev := unmergedCommitsFn
+	unmergedCommitsFn = count
+	return func() { unmergedCommitsFn = prev }
+}
+
 // SetSweepWorktreeFnsForTest swaps the repo-wide worktree-janitor seams
 // — repo listing, repo-root resolution and dirty detection — so the
 // worktree-sweep discovery/cleanup flow tests run without real git repos.

@@ -157,6 +157,17 @@ func dashboardCreateWorktree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	base := strings.TrimSpace(body.FromBranch)
+	// A fresh local repository has no remote to fetch from. That is not a
+	// reason to fail a first spawn: cut from the local base and say so.
+	note := ""
+	if body.FetchLatest && !worktree.HasRemoteIn(root) {
+		body.FetchLatest = false
+		from := "default branch"
+		if base != "" {
+			from = base
+		}
+		note = "This repository has no git remote, so the worktree was cut from the local " + from + " without fetching."
+	}
 	if body.FetchLatest && worktree.HasCommitsIn(root) && !worktree.BranchExistsIn(root, body.Branch) {
 		if base == "" {
 			base, err = worktree.DefaultBranchIn(root)
@@ -192,6 +203,7 @@ func dashboardCreateWorktree(w http.ResponseWriter, r *http.Request) {
 		"branch":            strings.TrimSpace(body.Branch),
 		"tracking_retries":  retries,
 		"tracking_fallback": fallback,
+		"note":              note,
 	})
 }
 
