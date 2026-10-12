@@ -460,8 +460,9 @@ The **🔐 Access requests** folder is where blocked permission requests
 cards with an auto-decline countdown and a "+5m" extend button. A banner and
 blinking badge surface pending requests from any tab, requests are actionable
 remotely, and history survives restarts. Compose paths: a group's cog
-✉ message (whole group or a ticked subset) and a top-level `+ message`
-operator dialog with role filtering and attachments for offline recipients.
+✉ message (whole group or a ticked subset, with role filtering and
+attachments for offline recipients), and ✉ Message (Ctrl/Cmd+M) on an
+agent's pane in the Terminals tab.
 
 Federation mail: in Human notifications, **✉ peer** writes to a peer's
 operator, or to agents on a peer (`agent@peer`, or `group:<group>@peer`

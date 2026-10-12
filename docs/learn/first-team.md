@@ -119,8 +119,9 @@ usual.
 
 ## 7. Send an agent a message yourself
 
-You can mail any agent from the dashboard. Use the **+ message** button in
-the **Messages** tab, pick `alice`, and write:
+You can mail any agent from the dashboard. In **Groups**, open the `hello`
+group's **⚙** menu (next to the group name), choose **✉ message**, tick
+`alice`, and write:
 
 > Thanks! Now ask bob where the tests live.
 
