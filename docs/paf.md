@@ -201,24 +201,49 @@ offers, moves and teleports keep landing on the source harness.
 
 ```bash
 tclaude agent groups export team --format paf --out team.paf
-tclaude agent groups import team.paf --dry-run
+tclaude agent groups import team.paf --dry-run --into "$PWD"
 tclaude agent groups import team.paf --into "$PWD" --as team-copy
+tclaude agent groups import team.paf --into "$PWD" --harness codex --model gpt-5.5 \
+  --member-harness reviewer=claude --member-model reviewer=claude-opus-5-5
 ```
 
-`groups export --format paf` writes the same data as the default `.zip` as a
-group PAF. `group.json` holds the group's name, description and members with
-their roles. Each member is an agent with its Claude Code history as the
-native blob. tclaude's own group state (settings, owners, permissions,
-enrollment, cron jobs, messages and audit trail) travels in the `tclaude`
-extension. The export is signed when this node has a federation identity.
-The permission (`groups.export`) is the same as for the zip.
+`groups export --format paf` writes the group as a group PAF.
+- `group.json` holds the group's name, description and members with their
+  roles.
+- Each member is an agent carrying its own harness's native history.
+- tclaude's own group state (settings, owners, permissions, enrollment, cron
+  jobs, messages and audit trail) travels in the `tclaude` extension.
+
+The default `.zip` carries Claude Code conversations only; members on other
+harnesses export without history. The export is signed when this node has a
+federation identity. Both formats need the same permission
+(`groups.export`).
 
 `groups import` and the dashboard import accept either file, with the same
 permission (`groups.import`), preview, `--into`, `--as` and collision
-handling. A group PAF is verified before anything is written. A group PAF
-tclaude wrote imports exactly like its zip. One written by another tool
-imports the group's name, description and members, each with its Claude Code
-history. Members in other harnesses are refused for now.
+handling. A group PAF is verified before anything is written. One written by
+another tool imports the group's name, description and members, each with
+its native history or neutral context.
+
+Each member of a group PAF lands like an
+[imported agent](#exporting-and-importing-an-agent):
+- **Harness:** it lands on its own harness, unless `--harness` (every member)
+  or `--member-harness <member>=<harness>` names another. A member is named
+  by its title or agent key.
+- **Model:** `--model` and `--member-model` set the landing model the
+  conversation is budgeted for.
+- **History:** it lands natively when the landing harness reads its format,
+  and is translated otherwise, with the losses shown. A member whose
+  conversation cannot land imports as configuration, with a warning. Its
+  record still names its landing harness, so it resumes there.
+- **OpenCode:** a member landing on OpenCode imports as configuration for now.
+
+A Claude Code member landing on Claude Code takes the group import's own
+path, which rewrites embedded paths and keeps its conversation id unless it
+collides. Every other landing goes through the harness's own history import,
+which mints a new conversation id that the group's rows then follow. The
+dry run shows each member's landing harness, model and rung. Imported
+members land offline and resume on their landing harness.
 
 `tclaude paf inspect`, `validate` and `render` also read group export zips,
 converting them on read.
@@ -848,7 +873,7 @@ own state that other systems are not expected to share:
 | `group.json` | `group` | Group settings: description, standing orders, environment, group permissions, member limit and similar. |
 | `group.json` members | `owner` | The member owned the group (advisory; ownership never travels). |
 | `ext/tclaude/mail-deliveries.json` | entry | The mail delivery ledger a continuation carries. |
-| `ext/tclaude/group-state.json` | entry | A group's tclaude state in the group export's shape: members, owners, permissions, enrollment, cron jobs, messages, audit trail and per-conversation metadata. |
+| `ext/tclaude/group-state.json` | entry | A group's tclaude state in the group export's shape: members, owners, permissions, enrollment, cron jobs, messages, audit trail and per-conversation metadata. Each conversation's harness and history live in its agent. |
 | `manifest.json` | `converted_from` | The legacy carrier a PAF was converted from: `format`, `format_version`, `tclaude_version`, `created_at`. |
 
 The extension is `copy: unsafe`, version `0.1`.

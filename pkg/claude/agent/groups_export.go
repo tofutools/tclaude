@@ -112,6 +112,32 @@ type groupsImportParams struct {
 	As     string `long:"as" optional:"true" help:"Import the group under this name instead of its exported name. Required when a group with the exported name already exists locally."`
 	DryRun bool   `long:"dry-run" help:"Inspect the archive and report what would be imported — manifest summary plus group-name and conv-id collisions — WITHOUT importing anything. --into is not needed with --dry-run."`
 	JSON   bool   `long:"json" help:"Output the import (or --dry-run inspection) as JSON"`
+
+	Harness       string   `long:"harness" optional:"true" help:"Land every member on this harness instead of its own (a group .paf only; conversations translate where needed)"`
+	Model         string   `long:"model" optional:"true" help:"Landing model every member is budgeted for when its conversation translates"`
+	MemberHarness []string `long:"member-harness" optional:"true" help:"Land one member on a harness: member=harness, where member is its title or agent key (repeatable)"`
+	MemberModel   []string `long:"member-model" optional:"true" help:"Landing model for one member: member=model (repeatable)"`
+}
+
+// landingQuery encodes the landing choices as query parameters.
+func (p *groupsImportParams) landingQuery() string {
+	q := url.Values{}
+	if p.Harness != "" {
+		q.Set("harness", p.Harness)
+	}
+	if p.Model != "" {
+		q.Set("model", p.Model)
+	}
+	for _, v := range p.MemberHarness {
+		q.Add("member_harness", v)
+	}
+	for _, v := range p.MemberModel {
+		q.Add("member_model", v)
+	}
+	if len(q) == 0 {
+		return ""
+	}
+	return "&" + q.Encode()
 }
 
 func groupsImportCmd() *cobra.Command {
@@ -122,7 +148,9 @@ func groupsImportCmd() *cobra.Command {
 			"permissions, ownership, enrollment, cron jobs, messages and every " +
 			"conversation .jsonl. A group .paf is verified first; one written by " +
 			"another tool imports its group, members and their Claude Code " +
-			"histories. Imported agents land OFFLINE — no tmux " +
+			"histories, and its members may use any harness: each lands on its " +
+			"own harness, or the one --harness / --member-harness names, its " +
+			"conversation translated when the formats differ. Imported agents land OFFLINE — no tmux " +
 			"session is started; wake them with the usual resume tooling.\n\n" +
 			"--into picks the local working directory the imported agents are " +
 			"bound to (their conversation files and any embedded paths are " +
@@ -179,6 +207,7 @@ func runGroupsImport(p *groupsImportParams, stdout, stderr io.Writer) int {
 	if p.As != "" {
 		path += "&as=" + url.QueryEscape(p.As)
 	}
+	path += p.landingQuery()
 
 	var resp struct {
 		Group          string            `json:"group"`
@@ -229,9 +258,11 @@ func runGroupsImport(p *groupsImportParams, stdout, stderr io.Writer) int {
 // conv-id collisions the human would hit. The dashboard's import preview
 // calls the very same endpoint.
 func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr io.Writer) int {
-	path := "/v1/groups/import/inspect"
-	if p.As != "" {
-		path += "?as=" + url.QueryEscape(p.As)
+	path := "/v1/groups/import/inspect?as=" + url.QueryEscape(p.As) + p.landingQuery()
+	if p.Into != "" {
+		if into, err := filepath.Abs(p.Into); err == nil {
+			path += "&into=" + url.QueryEscape(into)
+		}
 	}
 	var insp struct {
 		Source          string `json:"source"`
@@ -253,6 +284,14 @@ func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr
 			ConvID string `json:"conv_id"`
 			Title  string `json:"title"`
 		} `json:"conv_collisions"`
+		Landings []struct {
+			Title         string   `json:"title"`
+			SourceHarness string   `json:"source_harness"`
+			Harness       string   `json:"harness"`
+			Model         string   `json:"model"`
+			Rung          string   `json:"rung"`
+			Warnings      []string `json:"warnings"`
+		} `json:"landings"`
 	}
 	if err := DaemonPostRaw(path, "application/zip", archive, &insp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -288,6 +327,23 @@ func runGroupsImportDryRun(p *groupsImportParams, archive []byte, stdout, stderr
 		fmt.Fprintf(stdout, "  exported at:    %s\n", insp.ExportedAt)
 	}
 	fmt.Fprintf(stdout, "  format version: %d\n", insp.FormatVersion)
+
+	if len(insp.Landings) > 0 {
+		fmt.Fprintf(stdout, "\nMembers land:\n")
+		for _, l := range insp.Landings {
+			where := l.Harness
+			if l.SourceHarness != "" && l.SourceHarness != l.Harness {
+				where = l.SourceHarness + " -> " + l.Harness
+			}
+			if l.Model != "" {
+				where += " (" + l.Model + ")"
+			}
+			fmt.Fprintf(stdout, "  %s: %s, history %s\n", l.Title, where, l.Rung)
+			for _, w := range l.Warnings {
+				fmt.Fprintf(stdout, "    warning: %s\n", w)
+			}
+		}
+	}
 
 	fmt.Fprintf(stdout, "\nWould import as: %s\n", insp.TargetName)
 	switch {

@@ -22,6 +22,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
 	"github.com/tofutools/tclaude/pkg/claude/common/reflink"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common/buildversion"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/paf"
@@ -143,6 +144,17 @@ func buildGroupExportAs(groupName, format string) ([]byte, error) {
 			c.Title = agent.FreshTitle(c.ConvID)
 		}
 		path, ok := findConvJSONL(c.ConvID)
+		if !ok && format == groupArchivePAF {
+			// A group PAF records each conversation's harness, so a member
+			// on another harness carries its own native history.
+			exported, err := exportMemberHistory(c)
+			if err != nil {
+				slog.Warn("group export: read conv history failed", "group", groupName, "conv", c.ConvID, "error", err)
+			}
+			if exported {
+				continue
+			}
+		}
 		if !ok {
 			c.Missing = true
 			slog.Warn("group export: conv .jsonl not found", "group", groupName, "conv", c.ConvID)
@@ -205,21 +217,35 @@ func groupExportPAF(exp *groupexport.Export) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// decodeGroupArchive reads an import archive: a group PAF, verified and
-// read into the group export model, or a group export zip. source is
+// decodedGroupArchive is an import archive read into the group export
+// model. Archive is the verified group PAF, nil for a zip; Source is
 // paf.Format or legacy.SourceGroupExport.
-func decodeGroupArchive(archive []byte) (exp *groupexport.Export, source string, err error) {
+type decodedGroupArchive struct {
+	Export  *groupexport.Export
+	Archive *paf.Archive
+	Source  string
+}
+
+// decodeGroupArchive reads an import archive: a group PAF, verified and
+// read into the group export model, or a group export zip.
+func decodeGroupArchive(archive []byte) (*decodedGroupArchive, error) {
 	r := bytes.NewReader(archive)
 	if !legacy.IsPAF(r, int64(len(archive))) {
 		exp, err := groupexport.Unmarshal(archive)
-		return exp, legacy.SourceGroupExport, err
+		if err != nil {
+			return nil, err
+		}
+		return &decodedGroupArchive{Export: exp, Source: legacy.SourceGroupExport}, nil
 	}
 	a, err := paf.Open(r, int64(len(archive)), paf.Options{Purpose: paf.PurposeImport})
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	exp, err = legacy.ToGroupExport(a, paf.DefaultLimits().MaxArchiveBytes)
-	return exp, paf.Format, err
+	exp, err := legacy.ToGroupExport(a, paf.DefaultLimits().MaxArchiveBytes)
+	if err != nil {
+		return nil, err
+	}
+	return &decodedGroupArchive{Export: exp, Archive: a, Source: paf.Format}, nil
 }
 
 // --- import ---
@@ -235,6 +261,8 @@ type importResponse struct {
 	Retitled       map[string]string `json:"retitled,omitempty"`
 	SkippedAliases []string          `json:"skipped_head_aliases,omitempty"`
 	FileWarnings   []string          `json:"file_warnings,omitempty"`
+	// Landings says where each conversation landed.
+	Landings []*groupMemberLanding `json:"landings,omitempty"`
 }
 
 // readImportUpload extracts the .zip archive and the into / as
@@ -327,7 +355,12 @@ func handleGroupImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, status, err := runGroupImport(archive, into, asName, caller)
+	landing, err := parseGroupLandingOptions(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "import: "+err.Error())
+		return
+	}
+	resp, status, err := runGroupImport(archive, into, asName, caller, landing)
 	if err != nil {
 		code := "io"
 		switch status {
@@ -370,6 +403,9 @@ type importInspection struct {
 	TargetNameError string          `json:"target_name_error,omitempty"`
 	GroupNameTaken  bool            `json:"group_name_taken"`
 	ConvCollisions  []convCollision `json:"conv_collisions"`
+	// Landings says where each conversation lands: its harness and model
+	// and the rung its history takes.
+	Landings []*groupMemberLanding `json:"landings"`
 }
 
 // convCollision is one imported conversation whose conv-id already
@@ -391,11 +427,12 @@ type convCollision struct {
 //   - (nil, 400, err) — the archive itself is unusable: not a zip, no
 //     manifest, malformed, or a format version this tclaude predates.
 //     There is nothing safe to preview; the caller blocks the import.
-func inspectGroupImport(archive []byte, asName string) (*importInspection, int, error) {
-	exp, source, err := decodeGroupArchive(archive)
+func inspectGroupImport(archive []byte, asName, into string, landing groupLandingOptions) (*importInspection, int, error) {
+	decoded, err := decodeGroupArchive(archive)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
+	exp, source := decoded.Export, decoded.Source
 	if err := canonicalizeImportedPermissionScopes(exp); err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
@@ -422,6 +459,16 @@ func inspectGroupImport(archive []byte, asName string) (*importInspection, int, 
 		ConvCount:      len(exp.Convs),
 		ConvCollisions: []convCollision{},
 	}
+	cwd := ""
+	if into != "" {
+		cwd, _ = filepath.Abs(expandTilde(into))
+	}
+	landings, err := planGroupLandings(exp, decoded.Archive, landing, cwd)
+	if err != nil {
+		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
+	}
+	closeGroupLandings(landings)
+	insp.Landings = landings
 
 	// The effective target name: --as when given, else the exported name.
 	targetName := asName
@@ -495,11 +542,16 @@ func handleGroupImportInspect(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePermission(w, r, PermGroupsImport); !ok {
 		return
 	}
-	archive, _, asName, ok := readImportUpload(w, r)
+	archive, into, asName, ok := readImportUpload(w, r)
 	if !ok {
 		return
 	}
-	insp, status, err := inspectGroupImport(archive, asName)
+	landing, err := parseGroupLandingOptions(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "import: "+err.Error())
+		return
+	}
+	insp, status, err := inspectGroupImport(archive, asName, into, landing)
 	if err != nil {
 		code := "io"
 		if status == http.StatusBadRequest {
@@ -632,11 +684,12 @@ func canonicalImportedPermissionScopeForSlug(slug, raw string) (string, error) {
 	return canonical, nil
 }
 
-func runGroupImport(archive []byte, into, asName, caller string) (*importResponse, int, error) {
-	exp, _, err := decodeGroupArchive(archive)
+func runGroupImport(archive []byte, into, asName, caller string, landing groupLandingOptions) (resp *importResponse, status int, err error) {
+	decoded, err := decodeGroupArchive(archive)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
+	exp := decoded.Export
 	if err := canonicalizeImportedPermissionScopes(exp); err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
@@ -717,12 +770,80 @@ func runGroupImport(archive []byte, into, asName, caller string) (*importRespons
 			convRemap[convID] = convID
 		}
 	}
+	// Members landing through a harness's own history import get the
+	// conversation id that import mints; the rest take the file path below.
+	landings, err := planGroupLandings(exp, decoded.Archive, landing, targetCwd)
+	if err != nil {
+		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
+	}
+	defer closeGroupLandings(landings)
+	installed := map[string]bool{}
+	var uninstall []func()
+	defer func() {
+		if err != nil {
+			for _, undo := range uninstall {
+				undo()
+			}
+		}
+	}()
+	harnessLanded := map[string]bool{}
+	for i, l := range landings {
+		c := &exp.Convs[i]
+		if l.fileLanding {
+			continue
+		}
+		harnessLanded[c.ConvID] = true
+		if prev := convRemap[c.ConvID]; prev != c.ConvID {
+			delete(retitled, prev)
+		}
+		if l.history == nil {
+			// Configuration only: the member's rows import without history,
+			// and its conv_index row records the landing harness so it
+			// resumes there.
+			c.Missing, c.Content = true, nil
+			finalID, title := c.ConvID, c.Title
+			if convExistsLocally(c.ConvID) {
+				finalID = uuid.NewString()
+				title = uniqueImportTitle(c.Title, usedTitles)
+				usedTitles[title] = true
+				retitled[finalID] = title
+			}
+			convRemap[c.ConvID] = finalID
+			if err := db.SetConvIndexCustomTitle(finalID, title, l.Harness); err != nil {
+				return nil, http.StatusInternalServerError, fmt.Errorf("import: index %s: %w", c.Title, err)
+			}
+			uninstall = append(uninstall, func() { _ = db.DeleteConvIndex(finalID) })
+			installed[finalID] = true
+			continue
+		}
+		newID, undo, installErr := installGroupLanding(l, targetCwd)
+		if installErr != nil {
+			return nil, http.StatusInternalServerError, fmt.Errorf("import: land %s on %s: %w", c.Title, l.Harness, installErr)
+		}
+		uninstall = append(uninstall, undo)
+		installed[newID] = true
+		convRemap[c.ConvID] = newID
+		title := c.Title
+		if convExistsLocally(c.ConvID) {
+			title = uniqueImportTitle(c.Title, usedTitles)
+			usedTitles[title] = true
+			retitled[newID] = title
+		}
+		if title != "" {
+			if err := db.SetConvIndexCustomTitle(newID, title, l.Harness); err != nil {
+				return nil, http.StatusInternalServerError, fmt.Errorf("import: title %s: %w", c.Title, err)
+			}
+		}
+	}
 	if groupImportAfterCollisionCheckForTest != nil {
 		groupImportAfterCollisionCheckForTest()
 	}
 	targetProjectDir := convops.GetClaudeProjectPath(targetCwd)
 	destinationPaths := make(map[string]string, len(exp.Convs))
 	for i := range exp.Convs {
+		if harnessLanded[exp.Convs[i].ConvID] && !exp.Convs[i].Missing {
+			continue
+		}
 		finalID := convRemap[exp.Convs[i].ConvID]
 		dst, err := importConversationPath(targetProjectDir, finalID)
 		if err != nil {
@@ -749,6 +870,9 @@ func runGroupImport(archive []byte, into, asName, caller string) (*importRespons
 		if c.Missing {
 			fileWarnings = append(fileWarnings,
 				fmt.Sprintf("%s: no conversation .jsonl in archive", finalID))
+			continue
+		}
+		if harnessLanded[c.ConvID] {
 			continue
 		}
 		content := transformConvJSONL(c.Content, exp.SourceHome, targetHome,
@@ -820,6 +944,7 @@ func runGroupImport(archive []byte, into, asName, caller string) (*importRespons
 		TargetCwd:                   targetCwd,
 		ConvRemap:                   convRemap,
 		ClaimedConversationPaths:    claimedConversationPaths,
+		InstalledConversations:      installed,
 		ByConv:                      caller,
 		CanonicalizePermissionScope: canonicalImportedPermissionScopeForSlug,
 	})
@@ -867,7 +992,8 @@ func runGroupImport(archive []byte, into, asName, caller string) (*importRespons
 		ConvRemaps:     collidedOnly,
 		Retitled:       retitled,
 		SkippedAliases: result.HeadAliasesSkipped,
-		FileWarnings:   fileWarnings,
+		FileWarnings:   append(fileWarnings, landingWarnings(landings)...),
+		Landings:       landings,
 	}, http.StatusOK, nil
 }
 
@@ -981,7 +1107,13 @@ func handleGroupTransfers(w http.ResponseWriter, r *http.Request) {
 // path recorded in conv_index, falling back to a glob over every project
 // directory (the conv-id is a unique UUID, so a glob match is exact).
 func findConvJSONL(convID string) (string, bool) {
-	if row, err := db.GetConvIndex(convID); err == nil && row != nil && row.FullPath != "" {
+	row, err := db.GetConvIndex(convID)
+	if err == nil && row != nil && row.Harness != "" && row.Harness != harness.DefaultName {
+		// Another harness's transcript (a Codex rollout is .jsonl too) is
+		// not a Claude Code conversation.
+		return "", false
+	}
+	if err == nil && row != nil && row.FullPath != "" {
 		if fi, statErr := os.Stat(row.FullPath); statErr == nil && !fi.IsDir() {
 			return row.FullPath, true
 		}
