@@ -60,10 +60,9 @@ same terminal.
 
 Go back to **Groups**. `alice` has a row in `hello`:
 
-![The Groups view. The hello group lists alice, working, and bob, idle, with their model, state, age, working directory and branch. Below it, the Ungrouped block holds one plain session.](../assets/learn-dashboard-groups.png)
+![The Groups view. The hello group lists alice, working, with her model, state, age, working directory and branch. Below it, the Ungrouped block holds one plain session.](../assets/learn-dashboard-groups.png)
 
-Your group shows only `alice` for now; `bob` joins in a later tutorial. Read the
-row from left to right:
+Read the row from left to right:
 
 - the **status dot**: `●` online, `○` offline;
 - the **harness line**: which harness and model the agent runs, and what it

@@ -45,11 +45,11 @@ way you want your everyday agents to run. Then click **Save as profile…**,
 next to **Profile** at the top of the dialog. The profile editor opens,
 filled in from the dialog. Name it `worker` and click **Save profile**.
 
-![The profile editor, scrolled to its last fields: Initial msg and Profile context are empty, Auto focus and Group context are on, and Group owner is off.](../assets/learn-dashboard-profile.png)
+![The profile editor, scrolled to the spawn defaults: Initial msg and Profile context are empty, Auto focus and Group context are on, and Group owner is off.](../assets/learn-dashboard-profile.png)
 
 A profile stores the launch settings and the agent's identity fields. It
 does not store the directory or the worktree, which come from the group.
-The editor's last fields are worth a look:
+Further down, the editor's spawn defaults are worth a look:
 
 - **Initial msg**: a task brief that pre-fills the spawn dialog. Leave it
   empty for a general-purpose profile, and write the task when you spawn.

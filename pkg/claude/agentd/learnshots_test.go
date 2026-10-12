@@ -101,10 +101,14 @@ hideDragHint();`
 		Key:     "learn-dashboard-groups",
 		Title:   "Learn — the hello team in Groups",
 		Caption: "first-agent step 3.",
-		// first-agent has not met carol, group ownership or notifications yet.
+		// first-agent has one agent so far: show alice alone, without the
+		// ownership, mail and notification marks later tutorials add.
 		JS: showGroups + `return (async function(){
-  (await waitFor('tr', 'carol')).style.display = 'none';
-  document.querySelectorAll('.owner-badge, .human-notification-attention').forEach(function(b){ b.style.display = 'none'; });
+  for (const name of ['bob', 'carol']) (await waitFor('tr', name)).style.display = 'none';
+  document.querySelectorAll('.owner-badge, .human-notification-attention, .human-notification-attention-glyph, .human-notification-hint, #messages-badge').forEach(function(b){ b.style.display = 'none'; });
+  Array.from(document.querySelectorAll('button, span')).forEach(function(e){
+    if (e.children.length === 0 && /^👥/.test(e.textContent.trim())) e.style.visibility = 'hidden';
+  });
 })();`,
 		Width: 1400, Height: 590,
 		SettleMS: 400,
@@ -218,7 +222,7 @@ hideDragHint();`
   name.value = 'worker';
   name.dispatchEvent(new Event('input', {bubbles: true}));
   // Scroll to the spawn-dialog defaults the tutorial explains.
-  (await waitFor('#profile-editor-owner')).scrollIntoView({block: 'end'});
+  (await waitFor('#profile-editor-owner')).scrollIntoView({block: 'center'});
 })();`,
 		Width: 1400, Height: 820,
 		SettleMS: 500,
