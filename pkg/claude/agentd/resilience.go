@@ -539,7 +539,8 @@ func captureResilienceSnapshot(conv string, now time.Time) (*resilienceCapture, 
 		Snapshot:        &paf.Snapshot{Name: "resilience", TakenAt: at, State: snapshotStateIdle},
 		Lineage:         []paf.LineageStep{{Op: paf.OpSnapshot, At: at, From: &paf.Ref{Conversation: conv}, Detail: "resilience snapshot"}},
 	}
-	archive, err := archiveAgentPAFWith(b, false, parts)
+	// Signed by this instance, so a custodian can check where it came from.
+	archive, err := archiveAgentPAFWith(b, true, parts)
 	if err != nil {
 		return nil, err
 	}

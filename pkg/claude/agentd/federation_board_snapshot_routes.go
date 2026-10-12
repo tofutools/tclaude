@@ -704,34 +704,58 @@ func (a *boardItemAccess) snapshotImport(w http.ResponseWriter, r *http.Request,
 	if err != nil {
 		return err
 	}
+	arrival := &arrivalContext{Operation: "board snapshot import", Reason: "--cwd or recorded path", UntrustedHistory: true,
+		Note: fmt.Sprintf("Shared on a board as %q by %s. You are a new agent forked from that snapshot.", m.Name, m.Publisher)}
+	key := struct {
+		Ref     boardItemRef
+		Payload string
+	}{ref, v.PayloadSHA256}
+	landed, err := landSnapshotAsAgent(w, r, op, f, st.Size(), in, key, nil, summary, arrival, map[string]any{"name": m.Name, "publisher": m.Publisher, "expires_at": m.ExpiresAt, "summary": summary})
+	if err == nil && landed {
+		removeBoardSnapshotSpool(ref)
+		recordFederationAudit("boards.snapshot.import", m.Publisher, "", ref.Board, "item="+ref.Item+" version="+ref.Version, 200)
+	}
+	return err
+}
+
+// landSnapshotAsAgent previews (op "preview") or imports (op "import") a
+// received one-agent PAF through the agent bundle import: as a new agent,
+// or, with keep, under the agent id it was taken of. Import needs the
+// single-use token of a preview of the same content, identity and options;
+// key names the source, so a token never carries over to another snapshot.
+// snapshot is added to the response; landed reports an import.
+func landSnapshotAsAgent(w http.ResponseWriter, r *http.Request, op string, f *os.File, size int64, in boardSnapshotImportInput, key any, keep *recoveryIdentity, summary *privacy.ConsentSummary, arrival *arrivalContext, snapshot map[string]any) (bool, error) {
 	token := in.PreviewToken
 	in.PreviewToken = ""
 	options := boardPreviewHash(struct {
-		Ref     boardItemRef
-		Payload string
+		Key     any
+		Keep    *recoveryIdentity `json:",omitempty"`
 		Content string
 		Input   boardSnapshotImportInput
-	}{ref, v.PayloadSHA256, summary.Digest, in})
+	}{key, keep, summary.Digest, in})
 	if op == "import" {
 		boardPreviewPermits.Lock()
 		permit, ok := boardPreviewPermits.permits[token]
 		delete(boardPreviewPermits.permits, token)
 		boardPreviewPermits.Unlock()
 		if !ok || !permit.Expires.After(time.Now()) || permit.Root != config.DataDir() || permit.Options != options {
-			return &boardHTTPError{409, "preview_required", "matching unexpired preview token required"}
+			return false, &boardHTTPError{409, "preview_required", "matching unexpired preview token required"}
 		}
 	}
-	if _, err = f.Seek(0, io.SeekStart); err != nil {
-		return err
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return false, err
 	}
 	b, err := decodeAgentArchive(f)
 	if err != nil {
-		return &boardHTTPError{422, "archive", err.Error()}
+		return false, &boardHTTPError{422, "archive", err.Error()}
 	}
-	source := b.Manifest.Agent
+	arrival.Source = b.Manifest.Agent
+	if keep != nil {
+		arrival.Source.Identity = &db.FederationIdentity{Agent: keep.Agent, Home: arrivalNode()}
+	}
 	_ = b.Close()
 	if _, err = f.Seek(0, io.SeekStart); err != nil {
-		return err
+		return false, err
 	}
 	q := url.Values{"group": {in.Group}}
 	if op == "import" {
@@ -749,30 +773,46 @@ func (a *boardItemAccess) snapshotImport(w http.ResponseWriter, r *http.Request,
 		q.Set("skip_history", "true")
 	}
 	q["set"] = in.Set
-	arrival := &arrivalContext{Operation: "board snapshot import", Source: source, Reason: "--cwd or recorded path", UntrustedHistory: true,
-		Note: fmt.Sprintf("Shared on a board as %q by %s. You are a new agent forked from that snapshot.", m.Name, m.Publisher)}
 	inner := r.Clone(context.WithValue(r.Context(), arrivalContextKey{}, arrival))
 	inner.Method = http.MethodPost
 	inner.URL = &url.URL{Path: "/v1/agent-bundle/import", RawQuery: q.Encode()}
 	inner.Body = f
-	inner.ContentLength = st.Size()
+	inner.ContentLength = size
+	var reservation string
+	if keep != nil && op == "import" {
+		// The kept id is reserved for exactly this launch; a launch that
+		// does not start releases it.
+		reservation = "recover-" + proto.NewEnvelopeID()
+		if err := db.ReserveRecoveredIdentity(keep.Agent, arrivalNode(), reservation, keep.Force); err != nil {
+			return false, &boardHTTPError{409, "identity_conflict", err.Error()}
+		}
+		ctx := context.WithValue(inner.Context(), reservedAgentIDContextKey{}, keep.Agent)
+		inner = inner.WithContext(context.WithValue(ctx, federationIdentityLaunchKey{}, federationIdentityLaunch{keep.Agent, reservation}))
+	}
 	rec := httptest.NewRecorder()
 	handleAgentBundleImport(rec, inner)
+	if rec.Code != 200 && reservation != "" {
+		// Release only a reservation no launch can still claim; one that
+		// may have started keeps it, as a teleport arrival does.
+		if pending, err := db.GetPendingSpawnByAgentID(keep.Agent); err == nil && pending == nil {
+			_ = db.ReleaseFederationIdentity(keep.Agent, reservation)
+		}
+	}
 	if rec.Code != 200 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(rec.Code)
 		_, _ = w.Write(rec.Body.Bytes())
-		return nil
+		return false, nil
 	}
 	var response map[string]any
 	if err = json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		return err
+		return false, err
 	}
-	response["snapshot"] = map[string]any{"name": m.Name, "publisher": m.Publisher, "expires_at": m.ExpiresAt, "summary": summary}
+	response["snapshot"] = snapshot
 	if op == "preview" {
 		nonce := make([]byte, 24)
 		if _, err = rand.Read(nonce); err != nil {
-			return err
+			return false, err
 		}
 		token := hex.EncodeToString(nonce)
 		boardPreviewPermits.Lock()
@@ -783,15 +823,12 @@ func (a *boardItemAccess) snapshotImport(w http.ResponseWriter, r *http.Request,
 		}
 		if len(boardPreviewPermits.permits) >= 128 {
 			boardPreviewPermits.Unlock()
-			return &boardHTTPError{429, "preview_limit", "too many active previews"}
+			return false, &boardHTTPError{429, "preview_limit", "too many active previews"}
 		}
 		boardPreviewPermits.permits[token] = boardPreviewPermit{options, "", time.Now().Add(10 * time.Minute), config.DataDir()}
 		boardPreviewPermits.Unlock()
 		response["preview_token"] = token
-	} else {
-		removeBoardSnapshotSpool(ref)
-		recordFederationAudit("boards.snapshot.import", m.Publisher, "", ref.Board, "item="+ref.Item+" version="+ref.Version, 200)
 	}
 	writeJSON(w, 200, response)
-	return nil
+	return op == "import", nil
 }
