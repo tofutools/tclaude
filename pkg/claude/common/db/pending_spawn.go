@@ -354,17 +354,30 @@ func ClaimPendingSpawnAndBindAgent(label, convID, reservedAgentID, via string) (
 			err = tx.QueryRow(`SELECT current_conv_id FROM agents WHERE agent_id = ?`, reservedAgentID).Scan(&occupiedConv)
 			switch {
 			case err == nil:
-				return false, fmt.Errorf("ClaimPendingSpawnAndBindAgent: agent %s already heads conv %s",
-					reservedAgentID, occupiedConv)
+				// A reserved federation identity (an arrival or a recovery)
+				// takes the launch as its new head generation, as in
+				// EnsureAgentForConvWithID.
+				bound, bindErr := bindFederationArrivalTx(tx, reservedAgentID, convID, via)
+				if bindErr != nil {
+					return false, bindErr
+				}
+				if !bound {
+					return false, fmt.Errorf("ClaimPendingSpawnAndBindAgent: agent %s already heads conv %s",
+						reservedAgentID, occupiedConv)
+				}
 			case !errors.Is(err, sql.ErrNoRows):
 				return false, err
-			}
-			now := time.Now()
-			if err := insertAgentTx(tx, reservedAgentID, convID, via, now); err != nil {
-				return false, err
-			}
-			if err := linkConvTx(tx, convID, reservedAgentID, ConvRoleHead, via, now); err != nil {
-				return false, err
+			default:
+				now := time.Now()
+				if err := insertAgentTx(tx, reservedAgentID, convID, via, now); err != nil {
+					return false, err
+				}
+				if err := linkConvTx(tx, convID, reservedAgentID, ConvRoleHead, via, now); err != nil {
+					return false, err
+				}
+				if _, err := bindFederationArrivalTx(tx, reservedAgentID, convID, via); err != nil {
+					return false, err
+				}
 			}
 		}
 	}

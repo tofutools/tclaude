@@ -107,7 +107,7 @@ receiving side.
 | **Move, teleport, recall home** | The agent's state in transit to another node, with provenance hops. Peers that do not advertise PAF receive the legacy agent bundle. | PAF to peers that advertise it, otherwise agent bundle v1 |
 | **Sharing** with a peer or on a [Board](federation.md#content-board-membership) | An encrypted PAF addressed to named recipients, published only by a human. | Unencrypted PAF to peers that advertise it, otherwise agent bundle v1; [snapshots on Boards](#sharing-a-snapshot-on-a-board) as an encrypted PAF |
 | **Publishing** | A redacted, pseudonymous, signed PAF file for public sharing. tclaude provides no hosting; you choose where the file goes. | PAF with [`tclaude paf publish` / `agent snapshot publish`](#publishing) |
-| **Resilience** | Opt-in periodic encrypted snapshots to another node or Board, from which an agent can be recovered if its host is lost. | Encrypted PAF to a [federation peer](#resilience-snapshots); Board destinations and recovery are not available yet |
+| **Resilience** | Opt-in periodic encrypted snapshots to another node or Board, from which an agent can be recovered if its host is lost. | Encrypted PAF to a [federation peer or a Board](#resilience-snapshots), [recovered](#recovering-an-agent) under its agent id |
 | **Archival** | Any PAF can be inspected, verified and rendered to readable text without the original harness or model. | [`tclaude paf`](#reading-a-paf) |
 
 The last column says what each operation uses in this release. tclaude keeps
@@ -344,6 +344,7 @@ Receiving:
 ```bash
 tclaude agent snapshot policy set reviewer --every 1h --to peer:bob --keep 5
 tclaude agent snapshot policy set group:team --every 6h --to peer:bob --keep 3 --max-age-days 14
+tclaude agent snapshot policy set reviewer --every 6h --to board:BOARD --recipient bob --keep 2
 tclaude agent snapshot policy ls
 tclaude agent snapshot policy run POLICY
 tclaude agent snapshot policy rm POLICY
@@ -353,7 +354,8 @@ tclaude agent snapshot held --rm-peer alice
 
 A resilience policy sends snapshots of an agent, or of every agent in a
 group, to a trusted [federation peer](federation.md) that keeps them for
-you, so a copy survives if this node is lost.
+you, or puts them on a [Board](#sharing-a-snapshot-on-a-board), so a copy
+survives if this node is lost.
 
 - **Consent.** Only the human operator sets, runs or removes a policy.
   Setting one is your consent to send those agents' conversations to that
@@ -387,7 +389,56 @@ you, so a copy survives if this node is lost.
   is already kept. Removing a policy stops the schedule; the peer's copies
   stay until its retention removes them.
 
-Recovering an agent from a held snapshot is not available yet.
+- **A Board.** `--to board:BOARD` puts each snapshot on the board as a
+  [shared snapshot](#sharing-a-snapshot-on-a-board), sealed to the members
+  named with `--recipient` (at least one besides this node, which is always
+  added) and published under the policy's consent. The board's rules hold:
+  a snapshot with suspected credentials is not put on it (the policy reports
+  a failure until they are gone from the conversation), it is at most 64 MiB
+  once encrypted, and it expires after `--max-age-days`, at most 30 (the
+  default for a board). After each snapshot, this agent's older snapshots
+  beyond `--keep` are deleted from the board. Recipients fetch and import
+  them like any shared snapshot.
+
+#### Recovering an agent
+
+```bash
+tclaude agent snapshot held
+tclaude agent recover --held OFFER --from peer:alice --group team [--cwd DIR]
+tclaude agent recover --held OFFER --from peer:alice --group team [--cwd DIR] --preview-token TOKEN
+tclaude agent recover --held OFFER --from peer:alice --group team --new-id
+```
+
+When a node that sent you resilience snapshots is lost, recover one of its
+agents from a snapshot you hold. A board recipient recovers with
+[`snapshot board fetch`, `preview` and `import`](#sharing-a-snapshot-on-a-board).
+
+- **Human-only.** Only the operator previews or recovers.
+- **Checks.** The held copy is decrypted with this node's key, must be a
+  valid one-agent PAF signed by the instance that sent it, and is
+  summarized again; suspected credentials are shown in the preview.
+- **Preview first.** Without `--preview-token`, `recover` shows the agent
+  that would land and prints a single-use token, valid for ten minutes and
+  only for the same snapshot and options.
+- **The agent keeps its id.** As with a teleport, the recovered agent keeps
+  its agent id and this node becomes its home. It gets the group's policy and
+  profile, no permissions from the source, and an arrival briefing that marks
+  the conversation as received context, not instructions. `--new-id`
+  recovers it as a new agent with a fresh id instead.
+- **Conflicts are your call.** When keeping the id conflicts with this
+  node's records, the preview lists why and recovers nothing until you
+  choose `--new-id` or `--force-keep-id`. Conflicts are:
+  - the agent exists here, or was retired here;
+  - this node's records place it elsewhere (away, or with another home);
+  - a newer snapshot of it is held.
+
+  With `--force-keep-id` an existing agent's id heads the recovered
+  conversation, and its earlier conversations become past generations. A
+  running agent is never taken over: stop it first, or use `--new-id`.
+  tclaude cannot tell whether the original still runs on a node it cannot
+  reach. If that node comes back, two agents share the id until you retire
+  one.
+- The held copy stays until its retention removes it.
 
 ## Exporting and importing a group
 

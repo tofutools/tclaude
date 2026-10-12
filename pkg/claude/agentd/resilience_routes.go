@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -20,6 +22,8 @@ func registerResilienceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/resilience/policies/{id}/run", handleResiliencePolicyRun)
 	mux.HandleFunc("GET /v1/resilience/held", handleResilienceHeld)
 	mux.HandleFunc("DELETE /v1/resilience/held/{peer}", handleResilienceHeldRemove)
+	mux.HandleFunc("POST /v1/resilience/held/{peer}/{offer}/preview", handleResilienceRecover("preview"))
+	mux.HandleFunc("POST /v1/resilience/held/{peer}/{offer}/import", handleResilienceRecover("import"))
 }
 
 type resiliencePolicySetRequest struct {
@@ -27,10 +31,12 @@ type resiliencePolicySetRequest struct {
 	Target string `json:"target"`
 	// Every is a duration such as 30m or 6h; at least 10m.
 	Every string `json:"every"`
-	// To is peer:<instance id|label>.
-	To         string `json:"to"`
-	Keep       int    `json:"keep"`
-	MaxAgeDays int    `json:"max_age_days,omitempty"`
+	// To is peer:<instance id|label> or board:<board id>.
+	To string `json:"to"`
+	// Recipients are the board members a board snapshot is sealed to.
+	Recipients []string `json:"recipients,omitempty"`
+	Keep       int      `json:"keep"`
+	MaxAgeDays int      `json:"max_age_days,omitempty"`
 }
 
 type resiliencePolicyView struct {
@@ -67,13 +73,54 @@ func handleResiliencePolicySet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kind, ref, ok := cutDestination(req.To)
-	if !ok || kind != "peer" {
-		writeError(w, 400, "to", "to must be peer:<instance id or label>; Board destinations are not available yet")
-		return
-	}
-	peer, err := resolveFederationPeerOpt(ref, false)
-	if err != nil {
-		writeFedErr(w, err)
+	var dest resilienceDest
+	audit := ""
+	switch {
+	case ok && kind == "peer":
+		if len(req.Recipients) > 0 {
+			writeError(w, 400, "recipients", "recipients are for a board destination; a peer snapshot is sealed to that peer")
+			return
+		}
+		peer, err := resolveFederationPeerOpt(ref, false)
+		if err != nil {
+			writeFedErr(w, err)
+			return
+		}
+		dest, audit = resilienceDest{Kind: "peer", Peer: peer.InstanceID}, peerDisplay(peer)
+	case ok && kind == "board":
+		if !proto.ValidStreamID(ref) {
+			writeError(w, 400, "to", "invalid board id")
+			return
+		}
+		if len(req.Recipients) == 0 || len(req.Recipients) > 32 {
+			writeError(w, 400, "recipients", "name 1 to 32 board members to seal snapshots to, by instance id or peer label; this node is always added")
+			return
+		}
+		if time.Duration(req.MaxAgeDays)*24*time.Hour > proto.MaxBoardSnapshotTTL {
+			writeError(w, 400, "max_age_days", fmt.Sprintf("a board snapshot expires within %d days", int(proto.MaxBoardSnapshotTTL/(24*time.Hour))))
+			return
+		}
+		// Recipients are fixed now, as instance ids: a peer label changing
+		// later must never redirect snapshots to an instance the operator
+		// did not name.
+		var recipients []string
+		for _, name := range req.Recipients {
+			id := strings.TrimSpace(name)
+			if !proto.ValidInstanceID(id) {
+				peer, err := resolveFederationPeerOpt(id, false)
+				if err != nil || peer == nil {
+					writeError(w, 400, "recipients", fmt.Sprintf("recipient %q is neither an instance id nor a trusted peer's label", name))
+					return
+				}
+				id = peer.InstanceID
+			}
+			if !slices.Contains(recipients, id) {
+				recipients = append(recipients, id)
+			}
+		}
+		dest, audit = resilienceDest{Kind: "board", Board: ref, Recipients: recipients}, ""
+	default:
+		writeError(w, 400, "to", "to must be peer:<instance id or label> or board:<board id>")
 		return
 	}
 	target := req.Target
@@ -89,7 +136,7 @@ func handleResiliencePolicySet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "target", err.Error())
 		return
 	}
-	p := resiliencePolicy{ID: newResiliencePolicyID(), Target: target, EverySeconds: int64(every / time.Second), Dest: resilienceDest{Kind: "peer", Peer: peer.InstanceID}, Keep: req.Keep, MaxAgeDays: req.MaxAgeDays, CreatedAt: time.Now().UTC().Truncate(time.Second)}
+	p := resiliencePolicy{ID: newResiliencePolicyID(), Target: target, EverySeconds: int64(every / time.Second), Dest: dest, Keep: req.Keep, MaxAgeDays: req.MaxAgeDays, CreatedAt: time.Now().UTC().Truncate(time.Second)}
 	resilienceMu.Lock()
 	f, err := loadResilience()
 	if err == nil {
@@ -101,7 +148,7 @@ func handleResiliencePolicySet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "policy", err.Error())
 		return
 	}
-	recordFederationAudit("resilience.policy.set", peerDisplay(peer), "", "", fmt.Sprintf("policy=%s target=%s every=%s keep=%d", p.ID, p.Target, every, p.Keep), 200)
+	recordFederationAudit("resilience.policy.set", audit, "", dest.Board, fmt.Sprintf("policy=%s target=%s to=%s every=%s keep=%d", p.ID, p.Target, dest, every, p.Keep), 200)
 	writeJSON(w, 200, p)
 }
 
@@ -150,7 +197,9 @@ func handleResiliencePolicies(w http.ResponseWriter, r *http.Request) {
 	views := []resiliencePolicyView{}
 	for _, p := range f.Policies {
 		v := resiliencePolicyView{resiliencePolicy: p, Agents: []*resilienceState{}}
-		if peer, err := db.GetFederationPeer(p.Dest.Peer); err == nil && peer != nil {
+		if p.Dest.Kind != "peer" {
+			v.PeerLabel = p.Dest.String()
+		} else if peer, err := db.GetFederationPeer(p.Dest.Peer); err == nil && peer != nil {
 			v.PeerLabel = peerDisplay(peer)
 		}
 		for _, s := range f.State[p.ID] {
@@ -247,14 +296,10 @@ func handleResilienceHeldRemove(w http.ResponseWriter, r *http.Request) {
 	if !requireHuman(w, r, "remove held resilience snapshots") {
 		return
 	}
-	peer := r.PathValue("peer")
-	if !proto.ValidInstanceID(peer) {
-		if p, err := resolveFederationPeerOpt(peer, false); err == nil && p != nil {
-			peer = p.InstanceID
-		} else {
-			writeError(w, 400, "peer", "peer must be an instance id or a trusted peer's label")
-			return
-		}
+	peer, ok := resolveHeldPeer(r.PathValue("peer"))
+	if !ok {
+		writeError(w, 400, "peer", "peer must be an instance id or a trusted peer's label")
+		return
 	}
 	n := removeHeldPeer(peer)
 	recordFederationAudit("resilience.held.remove", peer, "", "", fmt.Sprintf("removed=%d", n), 200)

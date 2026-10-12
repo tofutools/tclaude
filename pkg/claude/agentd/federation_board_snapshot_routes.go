@@ -256,59 +256,72 @@ func (a *boardItemAccess) snapshotShare(w http.ResponseWriter, r *http.Request, 
 		return &boardHTTPError{409, "consent", "the snapshot changed after it was reviewed (content digest " + summary.Digest + ", reviewed " + want + ")"}
 	}
 
-	// Record the human's consent for exactly these recipients, then seal.
+	v, err := a.publishBoardSnapshot(board, arch, name, instances, recipients, expires)
+	if err != nil {
+		return err
+	}
+	preview.Published, preview.Item, preview.Version, preview.Bytes = true, v.Item, v.Version, v.PayloadBytes
+	writeJSON(w, 200, preview)
+	return nil
+}
+
+// publishBoardSnapshot records the consent for exactly these recipients,
+// seals the PAF to them and publishes it on the board. The caller has the
+// human's confirmation: a reviewed digest, or a resilience policy.
+func (a *boardItemAccess) publishBoardSnapshot(board string, arch *paf.Archive, name string, instances, recipients []string, expires time.Time) (v proto.BoardSnapshotVersion, err error) {
+	limits := paf.DefaultLimits()
 	id := a.opts.Identity
 	consented, err := os.CreateTemp("", ".board-snapshot-consent-")
 	if err != nil {
-		return err
+		return v, err
 	}
 	defer func() { _ = consented.Close(); _ = os.Remove(consented.Name()) }()
 	keys := []paf.SigningKey{{Key: id.Priv, KeyID: id.ID(), Signer: &paf.Signer{Kind: "instance"}}}
 	req := privacy.ConsentRequest{By: pafConsentBy, Audience: privacy.AudienceRecipients, Recipients: instances, KeepExisting: paf.SignedBy(arch.Signatures, id.Pub)}
 	if _, err = privacy.AddConsent(arch, consented, req, limits, paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}, keys...); err != nil {
-		return &boardHTTPError{400, "consent", err.Error()}
+		return v, &boardHTTPError{400, "consent", err.Error()}
 	}
 	if _, err = consented.Seek(0, io.SeekStart); err != nil {
-		return err
+		return v, err
 	}
 	var sealed bytes.Buffer
 	if err = seal.Encrypt(&sealed, consented, recipients...); err != nil {
-		return err
+		return v, err
 	}
 	chunks, err := splitBoardSnapshot(sealed.Bytes())
 	if err != nil {
-		return &boardHTTPError{413, "too_large", err.Error()}
+		return v, &boardHTTPError{413, "too_large", err.Error()}
 	}
 	state, err := a.call("boards.get", map[string]any{"board": board})
 	if err != nil {
-		return err
+		return v, err
 	}
 	var b struct {
 		Epoch int64 `json:"epoch"`
 	}
 	if err = json.Unmarshal(state, &b); err != nil {
-		return err
+		return v, err
 	}
 	key, err := a.key(board, b.Epoch)
 	if err != nil {
-		return err
+		return v, err
 	}
 	sum := sha256.Sum256(sealed.Bytes())
-	v := proto.BoardSnapshotVersion{Board: board, Item: proto.NewEnvelopeID(), Version: proto.NewEnvelopeID(), Epoch: b.Epoch, PayloadSHA256: hex.EncodeToString(sum[:]), PayloadBytes: int64(sealed.Len()), Recipients: instances, ExpiresAt: expires}
+	v = proto.BoardSnapshotVersion{Board: board, Item: proto.NewEnvelopeID(), Version: proto.NewEnvelopeID(), Epoch: b.Epoch, PayloadSHA256: hex.EncodeToString(sum[:]), PayloadBytes: int64(sealed.Len()), Recipients: instances, ExpiresAt: expires}
 	m := proto.BoardSnapshotManifest{Item: v.Item, Version: v.Version, Name: name, Kind: boardSnapshotKind, PayloadSHA256: v.PayloadSHA256, PayloadBytes: v.PayloadBytes, Recipients: instances, ExpiresAt: expires}
 	m.Sign(id)
 	metadata, err := json.Marshal(m)
 	if err != nil {
-		return err
+		return v, err
 	}
 	if v.Metadata, err = proto.SealBoardContent(key, board, b.Epoch, v.Version, metadata); err != nil {
-		return err
+		return v, err
 	}
 	ciphers := make([][]byte, len(chunks))
 	for i, c := range chunks {
 		blob := proto.NewEnvelopeID()
 		if ciphers[i], err = proto.SealBoardContent(key, board, b.Epoch, blob, c); err != nil {
-			return err
+			return v, err
 		}
 		cs := sha256.Sum256(ciphers[i])
 		v.Chunks = append(v.Chunks, proto.BoardSnapshotChunk{Blob: blob, SHA256: hex.EncodeToString(cs[:]), Bytes: int64(len(ciphers[i]))})
@@ -316,16 +329,14 @@ func (a *boardItemAccess) snapshotShare(w http.ResponseWriter, r *http.Request, 
 	v.Sign(id)
 	for i := range ciphers {
 		if _, err = client.BoardSnapshotBlob(a.ctx, a.opts, v, i, ciphers[i]); err != nil {
-			return fmt.Errorf("upload chunk %d of %d: %w", i+1, len(ciphers), err)
+			return v, fmt.Errorf("upload chunk %d of %d: %w", i+1, len(ciphers), err)
 		}
 	}
 	if _, err = a.call("snapshots.publish", map[string]any{"board": board, "snapshot": v}); err != nil {
-		return err
+		return v, err
 	}
 	recordFederationAudit("boards.snapshot.publish", "", "", board, fmt.Sprintf("item=%s version=%s recipients=%s expires=%s", v.Item, v.Version, strings.Join(instances, ","), expires.Format(time.RFC3339)), 200)
-	preview.Published, preview.Item, preview.Version, preview.Bytes = true, v.Item, v.Version, v.PayloadBytes
-	writeJSON(w, 200, preview)
-	return nil
+	return v, nil
 }
 
 // boardSnapshotSource copies the snapshot to share into a private temp
@@ -693,34 +704,58 @@ func (a *boardItemAccess) snapshotImport(w http.ResponseWriter, r *http.Request,
 	if err != nil {
 		return err
 	}
+	arrival := &arrivalContext{Operation: "board snapshot import", Reason: "--cwd or recorded path", UntrustedHistory: true,
+		Note: fmt.Sprintf("Shared on a board as %q by %s. You are a new agent forked from that snapshot.", m.Name, m.Publisher)}
+	key := struct {
+		Ref     boardItemRef
+		Payload string
+	}{ref, v.PayloadSHA256}
+	landed, err := landSnapshotAsAgent(w, r, op, f, st.Size(), in, key, nil, summary, arrival, map[string]any{"name": m.Name, "publisher": m.Publisher, "expires_at": m.ExpiresAt, "summary": summary})
+	if err == nil && landed {
+		removeBoardSnapshotSpool(ref)
+		recordFederationAudit("boards.snapshot.import", m.Publisher, "", ref.Board, "item="+ref.Item+" version="+ref.Version, 200)
+	}
+	return err
+}
+
+// landSnapshotAsAgent previews (op "preview") or imports (op "import") a
+// received one-agent PAF through the agent bundle import: as a new agent,
+// or, with keep, under the agent id it was taken of. Import needs the
+// single-use token of a preview of the same content, identity and options;
+// key names the source, so a token never carries over to another snapshot.
+// snapshot is added to the response; landed reports an import.
+func landSnapshotAsAgent(w http.ResponseWriter, r *http.Request, op string, f *os.File, size int64, in boardSnapshotImportInput, key any, keep *recoveryIdentity, summary *privacy.ConsentSummary, arrival *arrivalContext, snapshot map[string]any) (bool, error) {
 	token := in.PreviewToken
 	in.PreviewToken = ""
 	options := boardPreviewHash(struct {
-		Ref     boardItemRef
-		Payload string
+		Key     any
+		Keep    *recoveryIdentity `json:",omitempty"`
 		Content string
 		Input   boardSnapshotImportInput
-	}{ref, v.PayloadSHA256, summary.Digest, in})
+	}{key, keep, summary.Digest, in})
 	if op == "import" {
 		boardPreviewPermits.Lock()
 		permit, ok := boardPreviewPermits.permits[token]
 		delete(boardPreviewPermits.permits, token)
 		boardPreviewPermits.Unlock()
 		if !ok || !permit.Expires.After(time.Now()) || permit.Root != config.DataDir() || permit.Options != options {
-			return &boardHTTPError{409, "preview_required", "matching unexpired preview token required"}
+			return false, &boardHTTPError{409, "preview_required", "matching unexpired preview token required"}
 		}
 	}
-	if _, err = f.Seek(0, io.SeekStart); err != nil {
-		return err
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return false, err
 	}
 	b, err := decodeAgentArchive(f)
 	if err != nil {
-		return &boardHTTPError{422, "archive", err.Error()}
+		return false, &boardHTTPError{422, "archive", err.Error()}
 	}
-	source := b.Manifest.Agent
+	arrival.Source = b.Manifest.Agent
+	if keep != nil {
+		arrival.Source.Identity = &db.FederationIdentity{Agent: keep.Agent, Home: arrivalNode()}
+	}
 	_ = b.Close()
 	if _, err = f.Seek(0, io.SeekStart); err != nil {
-		return err
+		return false, err
 	}
 	q := url.Values{"group": {in.Group}}
 	if op == "import" {
@@ -738,30 +773,46 @@ func (a *boardItemAccess) snapshotImport(w http.ResponseWriter, r *http.Request,
 		q.Set("skip_history", "true")
 	}
 	q["set"] = in.Set
-	arrival := &arrivalContext{Operation: "board snapshot import", Source: source, Reason: "--cwd or recorded path", UntrustedHistory: true,
-		Note: fmt.Sprintf("Shared on a board as %q by %s. You are a new agent forked from that snapshot.", m.Name, m.Publisher)}
 	inner := r.Clone(context.WithValue(r.Context(), arrivalContextKey{}, arrival))
 	inner.Method = http.MethodPost
 	inner.URL = &url.URL{Path: "/v1/agent-bundle/import", RawQuery: q.Encode()}
 	inner.Body = f
-	inner.ContentLength = st.Size()
+	inner.ContentLength = size
+	var reservation string
+	if keep != nil && op == "import" {
+		// The kept id is reserved for exactly this launch; a launch that
+		// does not start releases it.
+		reservation = "recover-" + proto.NewEnvelopeID()
+		if err := db.ReserveRecoveredIdentity(keep.Agent, arrivalNode(), reservation, keep.Force); err != nil {
+			return false, &boardHTTPError{409, "identity_conflict", err.Error()}
+		}
+		ctx := context.WithValue(inner.Context(), reservedAgentIDContextKey{}, keep.Agent)
+		inner = inner.WithContext(context.WithValue(ctx, federationIdentityLaunchKey{}, federationIdentityLaunch{keep.Agent, reservation}))
+	}
 	rec := httptest.NewRecorder()
 	handleAgentBundleImport(rec, inner)
+	if rec.Code != 200 && reservation != "" {
+		// Release only a reservation no launch can still claim; one that
+		// may have started keeps it, as a teleport arrival does.
+		if pending, err := db.GetPendingSpawnByAgentID(keep.Agent); err == nil && pending == nil {
+			_ = db.ReleaseFederationIdentity(keep.Agent, reservation)
+		}
+	}
 	if rec.Code != 200 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(rec.Code)
 		_, _ = w.Write(rec.Body.Bytes())
-		return nil
+		return false, nil
 	}
 	var response map[string]any
 	if err = json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		return err
+		return false, err
 	}
-	response["snapshot"] = map[string]any{"name": m.Name, "publisher": m.Publisher, "expires_at": m.ExpiresAt, "summary": summary}
+	response["snapshot"] = snapshot
 	if op == "preview" {
 		nonce := make([]byte, 24)
 		if _, err = rand.Read(nonce); err != nil {
-			return err
+			return false, err
 		}
 		token := hex.EncodeToString(nonce)
 		boardPreviewPermits.Lock()
@@ -772,15 +823,12 @@ func (a *boardItemAccess) snapshotImport(w http.ResponseWriter, r *http.Request,
 		}
 		if len(boardPreviewPermits.permits) >= 128 {
 			boardPreviewPermits.Unlock()
-			return &boardHTTPError{429, "preview_limit", "too many active previews"}
+			return false, &boardHTTPError{429, "preview_limit", "too many active previews"}
 		}
 		boardPreviewPermits.permits[token] = boardPreviewPermit{options, "", time.Now().Add(10 * time.Minute), config.DataDir()}
 		boardPreviewPermits.Unlock()
 		response["preview_token"] = token
-	} else {
-		removeBoardSnapshotSpool(ref)
-		recordFederationAudit("boards.snapshot.import", m.Publisher, "", ref.Board, "item="+ref.Item+" version="+ref.Version, 200)
 	}
 	writeJSON(w, 200, response)
-	return nil
+	return op == "import", nil
 }
