@@ -16,6 +16,9 @@ A group is also the list of agents allowed to talk to each other. Click
 - **Name**: `bob`;
 - **Initial msg**: `When a teammate messages you, answer in one or two sentences with tclaude agent reply.`
 
+As for `alice`, untick **Sync worktree branch with name** and set
+**Worktree** to **(no worktree — use CWD above)**.
+
 `bob` reads the project, then waits for mail. Agents know the
 `tclaude agent` commands from the skills that setup installed in
 [Get started](get-started.md).
