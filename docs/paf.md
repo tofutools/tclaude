@@ -926,6 +926,24 @@ tclaude instance, given that instance's identity in age's `AGE-SECRET-KEY-1`
 encoding. tclaude always includes the sender's own key as a recipient, so the
 sender can read back what it sent.
 
+```bash
+tclaude paf encrypt reviewer.paf --to lab -o reviewer.paf.age   # a trusted peer by id, name or label
+tclaude paf encrypt reviewer.paf --to age1… -o reviewer.paf.age  # any age recipient
+tclaude paf decrypt reviewer.paf.age -o reviewer.paf
+```
+
+- **`encrypt`** encrypts a valid PAF to each `--to` recipient and to this
+  node. It needs this node's federation identity.
+- **`decrypt`** decrypts with this node's identity and verifies the result.
+  A file this node is not a recipient of is refused.
+- `validate`, `inspect`, `render` and `redact` read an encrypted PAF
+  addressed to this node directly. Decrypt a file before importing it. Their
+  output (a rendered document, a redacted PAF) is plaintext; encrypt a
+  redacted copy again before it leaves the node.
+- `--to` names a trusted peer by instance id or the label you gave it, never
+  by the name the peer advertises, so a peer cannot claim a name meant for
+  another.
+
 ## Extensions
 
 The base format holds what any tool that reads or writes agent state could

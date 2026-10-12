@@ -43,7 +43,7 @@ func Cmd() *cobra.Command {
 			"bundles; they run locally, need no daemon, harness, model or network, and\n" +
 			"never change the file. See docs/paf.md.",
 		ParamEnrich: common.DefaultParamEnricher(),
-		SubCmds:     []*cobra.Command{agent.PAFExportCmd(), agent.PAFImportCmd(), agent.PAFConsentCmd(), validateCmd(), inspectCmd(), renderCmd(), redactCmd()},
+		SubCmds:     []*cobra.Command{agent.PAFExportCmd(), agent.PAFImportCmd(), agent.PAFConsentCmd(), validateCmd(), inspectCmd(), renderCmd(), redactCmd(), encryptCmd(), decryptCmd()},
 		RunFunc: func(_ *Params, cmd *cobra.Command, _ []string) {
 			_ = cmd.Help()
 		},
@@ -262,13 +262,13 @@ func runRender(stdout io.Writer, p *renderParams) error {
 	return errors.Join(err, finish())
 }
 
-// open verifies a PAF, or converts and verifies a legacy agent bundle, for
-// reading. Unknown required features degrade instead of refusing.
+// open verifies a PAF, an encrypted PAF addressed to this node, or a
+// converted legacy agent bundle, for reading. Unknown required features degrade instead of refusing.
 func open(path string) (*legacy.Opened, error) {
 	if path == "" {
 		return nil, errors.New("a file is required")
 	}
-	return legacy.OpenFile(path, "", producer(), paf.Options{Purpose: paf.PurposeInspect})
+	return openMaybeEncrypted(path, paf.Options{Purpose: paf.PurposeInspect})
 }
 
 // summarize describes the archive and says who holds each validly signing
