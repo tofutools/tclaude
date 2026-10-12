@@ -171,9 +171,22 @@ func TestPiExtraArgs(t *testing.T) {
 	}
 }
 
-func TestPiExperimentalGate(t *testing.T) {
+func TestPiSpawnableWithoutOptIn(t *testing.T) {
 	t.Setenv(ExperimentalHarnessesEnvVar, "")
 	t.Setenv("HOME", t.TempDir())
+	if _, err := ResolveSpawnable(PiName); err != nil {
+		t.Fatalf("pi needs no opt-in: %v", err)
+	}
+}
+
+// The experimental gate, exercised on a stand-in: pi re-registered as
+// experimental.
+func TestExperimentalGate(t *testing.T) {
+	t.Setenv(ExperimentalHarnessesEnvVar, "")
+	t.Setenv("HOME", t.TempDir())
+	experimental := *MustGet(PiName)
+	experimental.Experimental = true
+	t.Cleanup(RegisterForTest(&experimental))
 	restore := SetExperimentalHarnessEnabledForTest(PiName, false)
 	defer restore()
 	if _, err := ResolveSpawnable(PiName); err == nil || !strings.Contains(err.Error(), "experimental") {

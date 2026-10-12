@@ -95,37 +95,37 @@ warning. Model and effort are remembered by the harness itself.
 
 ✅ yes · ⚠️ partial / with caveats · ❌ no
 
-| Capability | Claude Code | Codex CLI | OpenCode | Copilot CLI | Gemini CLI | Shell |
-| --- | --- | --- | --- | --- | --- | --- |
-| Federated model gateway (`--model-proxy`) | Yes, ordinary workers | Yes, TUI and app-server | No: provider isolation | Yes, HTTP Responses BYOK | No: native Gemini dialect | No |
-| Sessions: spawn / resume | ✅ | ✅ | ✅ managed server + attach | ✅ | ✅ | ✅ spawn only |
-| One-shot [`ask`](ask.md) | ✅ live-streamed | ✅ buffered | ✅ buffered | ✅ buffered | ✅ buffered | ❌ |
-| Portable agent-bundle history | ✅ JSONL | ✅ rollout JSONL | ✅ native export/import | ✅ native event log | ✅ native chat JSONL | ❌ |
-| Clone with conversation copy | ✅ native copy | ✅ rollout JSONL; app-server forks the thread | ✅ native export/import | ✅ native event log | ✅ native chat JSONL | ❌ |
-| [Cross-harness history translation](#cross-harness-history-translation) | ✅ | ✅ | ✅ | ✅ images by path | ✅ | ❌ |
-| [Conversation](conversations.md) list & search | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only | ⚠️ send-keys only, not yet exercised against a live pane | ⚠️ durable inbox only; never injected into the shell |
-| Automatic prompt-based name refinement | ✅ contained one-shot | ✅ read-only one-shot | ❌ generated name retained; no tested unattended sandbox posture | ❌ generated name retained; no tested unattended sandbox posture | ❌ generated name retained; no tested unattended sandbox posture | ❌ no model |
-| Standing-order native hook selectors | ✅ inline or next-turn | ✅ inline or next-turn | ✅ observed events, next-turn | ⚠️ installed baseline only, next-turn | ⚠️ installed baseline only, next-turn | ❌ no hook source |
-| Account quota spawn gate | ✅ cached quota windows | ✅ cached quota windows | ❌ no single account quota | ✅ cached quota windows | ❌ account quota is not captured in session logs | ❌ no model |
-| Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` | ✅ tclaude title overlay | ❌ |
-| Compact / reincarnate | ✅ | ✅ | ✅ (server API, no keystrokes) | ✅ | ✅ in-pane `/compress` | ❌ |
-| Séance (ask posture) replay | ✅ | ✅ | ❌ | ❌ | ✅ fork of a copy | ❌ |
-| [Remote control](remote.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| [Status line](utilities.md#status-line) | ✅ command-backed | ⚠️ curated built-in items | ⚠️ OpenCode's own TUI status | ❌ | ❌ | ❌ |
-| [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Native sandbox-profile path rules / reopen beneath deny | ✅ sandbox on; caveats | ✅ managed Linux profile + probe | ⚠️ soft tool permissions only | ❌ native command sandbox does not cover file tools; use tclaude-layer | ❌ fixed native sandbox profile; use tclaude-layer | ❌ use tclaude-layer |
-| Global OS filesystem rules in profile editor | ✅ settings + managed baseline | ✅ managed baseline | ❌ native config is soft tool control | ❌ native policy only confines commands | ❌ tools.sandbox selects posture, not path rules | ❌ no native policy |
-| Activated proxy destination filtering | ✅ Linux/macOS | ✅ Linux/macOS | ✅ Linux/macOS | ❌ private routed posture does not enforce destination rules | ⚠️ Linux only; no Darwin carriage smoke | ❌ no shell carriage smoke |
-| Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off | ⚠️ macOS only (`seatbelt`) | ❌ |
-| [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ | ✅ | ✅ |
-| Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD | ✅ what-if cost | ❌ |
-| Bundled skills via `setup --install-agent-skills` | ✅ `~/.claude/skills` | ✅ shared `~/.agents/skills` + `$CODEX_HOME/skills` | ✅ shared roots; external skills must be enabled | ✅ shared `~/.agents/skills` | ✅ shared `~/.agents/skills` | ❌ |
-| Hooks via `tclaude setup` | ✅ | ✅ | ❌ (server liveness instead) | ✅ | ✅ settings.json hooks | ❌ |
-| Directory pre-trust (`--trust-dir`) | ✅ | ✅ | — no trust dialog | ✅ | ✅ | — |
-| Tool governance (`--tools`) | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
-| Fast mode | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
-| API/RPC drive | — n/a | ⚠️ experimental `--codex-app-server` | ✅ inherent | ⚠️ experimental `--copilot-api` | — | — n/a |
+| Capability | Claude Code | Codex CLI | OpenCode | Copilot CLI | Gemini CLI | pi | Shell |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Federated model gateway (`--model-proxy`) | Yes, ordinary workers | Yes, TUI and app-server | No: provider isolation | Yes, HTTP Responses BYOK | No: native Gemini dialect | No: not yet bound | No |
+| Sessions: spawn / resume | ✅ | ✅ | ✅ managed server + attach | ✅ | ✅ | ✅ | ✅ spawn only |
+| One-shot [`ask`](ask.md) | ✅ live-streamed | ✅ buffered | ✅ buffered | ✅ buffered | ✅ buffered | ❌ not yet | ❌ |
+| Portable agent-bundle history | ✅ JSONL | ✅ rollout JSONL | ✅ native export/import | ✅ native event log | ✅ native chat JSONL | ✅ native session JSONL | ❌ |
+| Clone with conversation copy | ✅ native copy | ✅ rollout JSONL; app-server forks the thread | ✅ native export/import | ✅ native event log | ✅ native chat JSONL | ✅ native session JSONL | ❌ |
+| [Cross-harness history translation](#cross-harness-history-translation) | ✅ | ✅ | ✅ | ✅ images by path | ✅ | ✅ | ❌ |
+| [Conversation](conversations.md) list & search | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only | ⚠️ send-keys only, not yet exercised against a live pane | ⚠️ send-keys only | ⚠️ durable inbox only; never injected into the shell |
+| Automatic prompt-based name refinement | ✅ contained one-shot | ✅ read-only one-shot | ❌ generated name retained; no tested unattended sandbox posture | ❌ generated name retained; no tested unattended sandbox posture | ❌ generated name retained; no tested unattended sandbox posture | ❌ not yet | ❌ no model |
+| Standing-order native hook selectors | ✅ inline or next-turn | ✅ inline or next-turn | ✅ observed events, next-turn | ⚠️ installed baseline only, next-turn | ⚠️ installed baseline only, next-turn | ❌ not yet exercised | ❌ no hook source |
+| Account quota spawn gate | ✅ cached quota windows | ✅ cached quota windows | ❌ no single account quota | ✅ cached quota windows | ❌ account quota is not captured in session logs | ❌ no single account quota | ❌ no model |
+| Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` | ✅ tclaude title overlay | ✅ in-pane `/name` | ❌ |
+| Compact / reincarnate | ✅ | ✅ | ✅ (server API, no keystrokes) | ✅ | ✅ in-pane `/compress` | ✅ in-pane `/compact`; pinned auto-compact window | ❌ |
+| Séance (ask posture) replay | ✅ | ✅ | ❌ | ❌ | ✅ fork of a copy | ❌ | ❌ |
+| [Remote control](remote.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| [Status line](utilities.md#status-line) | ✅ command-backed | ⚠️ curated built-in items | ⚠️ OpenCode's own TUI status | ❌ | ❌ | ❌ (extension feeds the context meter) | ❌ |
+| [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Native sandbox-profile path rules / reopen beneath deny | ✅ sandbox on; caveats | ✅ managed Linux profile + probe | ⚠️ soft tool permissions only | ❌ native command sandbox does not cover file tools; use tclaude-layer | ❌ fixed native sandbox profile; use tclaude-layer | ❌ no native sandbox | ❌ use tclaude-layer |
+| Global OS filesystem rules in profile editor | ✅ settings + managed baseline | ✅ managed baseline | ❌ native config is soft tool control | ❌ native policy only confines commands | ❌ tools.sandbox selects posture, not path rules | ❌ no native policy | ❌ no native policy |
+| Activated proxy destination filtering | ✅ Linux/macOS | ✅ Linux/macOS | ✅ Linux/macOS | ❌ private routed posture does not enforce destination rules | ⚠️ Linux only; no Darwin carriage smoke | ❌ | ❌ no shell carriage smoke |
+| Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off | ⚠️ macOS only (`seatbelt`) | ❌ | ❌ |
+| [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ | ✅ | ❌ not yet | ✅ |
+| Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD | ✅ what-if cost | ✅ pi's catalog price; what-if under a subscription login | ❌ |
+| Bundled skills via `setup --install-agent-skills` | ✅ `~/.claude/skills` | ✅ shared `~/.agents/skills` + `$CODEX_HOME/skills` | ✅ shared roots; external skills must be enabled | ✅ shared `~/.agents/skills` | ✅ shared `~/.agents/skills` | ❌ | ❌ |
+| Hooks via `tclaude setup` | ✅ | ✅ | ❌ (server liveness instead) | ✅ | ✅ settings.json hooks | — per-launch extension, no setup | ❌ |
+| Directory pre-trust (`--trust-dir`) | ✅ | ✅ | — no trust dialog | ✅ | ✅ | ✅ | — |
+| Tool governance (`--tools`) | ❌ | ❌ | ✅ | ❌ | ❌ | ⚠️ approval posture picks the tool set | ❌ |
+| Fast mode | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| API/RPC drive | — n/a | ⚠️ experimental `--codex-app-server` | ✅ inherent | ⚠️ experimental `--copilot-api` | — | — | — n/a |
 
 ### Cross-harness history translation
 
@@ -772,15 +772,10 @@ sandbox there.
 Gemini has no counterpart for remote control, fast mode, a command-backed
 status line, or tclaude's task runner.
 
-## pi (experimental)
+## pi
 
 [pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-coding-agent`,
-1.1.0 or newer) is registered but **experimental**: tclaude launches it only
-after you opt in, and it is left out of the capability matrix above until it
-graduates. Opt in with `"experimental_harnesses": ["pi"]` in
-`~/.tclaude/data/config.json` (or `TCLAUDE_EXPERIMENTAL_HARNESSES=pi` in the
-daemon's environment). Until then pi is hidden from the spawn dialog and every
-launch path refuses it.
+1.1.0 or newer) is selected with `--harness pi`.
 
 **What works.** Spawn and resume (`--session-id`, and resume by session file
 so a pane never stops on pi's fork prompt), model and thinking level
@@ -805,8 +800,24 @@ is refused unless tclaude's own sandbox wraps it or the human ticks **Allow
 launch with unenforced rules** in the dashboard spawn dialog. tclaude's sandbox
 does not support pi yet, so that allowance is currently required.
 
-**Not yet.** Conversation listing and search, history copy for clone and
-morph, usage and cost, the context meter, `ask`, and tclaude's sandbox are
+**Conversations.** tclaude lists and searches pi's session files wherever pi
+keeps them (`~/.pi/agent/sessions`, or the `sessionDir` your settings name),
+titles them by pi's session name, and follows the session tree the way pi does:
+the current branch, from the newest compaction on. Clone, agent bundles and
+federation carry the session file as is under a new id; a cross-harness morph
+translates it, and a morph to pi needs a `provider/model`, since pi resumes
+with the model its history names.
+
+**Context meter and cost.** The extension reports pi's own context usage and
+what the session has spent, priced from pi's model catalog, on every event.
+Under a subscription login (ChatGPT, GitHub Copilot) that price is only what
+the tokens would have cost, so it is recorded as what-if cost. A pinned
+auto-compaction window (`--auto-compact-window`) makes the extension compact
+between runs once the context reaches it; pi's own threshold near the model's
+full window stays the backstop. A cost factor for pi can be set under
+`cost.harness_factors`.
+
+**Not yet.** `ask`, prompt-based name refinement, and tclaude's sandbox are
 still to come.
 
 ## Related pages

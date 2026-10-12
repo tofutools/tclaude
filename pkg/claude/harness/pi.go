@@ -15,12 +15,6 @@ func init() {
 		Name:        PiName,
 		DisplayName: "pi",
 
-		// pi is registered but EXPERIMENTAL: it cannot be spawned until the
-		// operator opts in (see ExperimentalHarnessEnabled), and spawn
-		// surfaces leave it out of their default lists. It stays that way
-		// until live status and the context meter land for it.
-		Experimental: true,
-
 		Spawn:  piSpawner{},
 		Models: piModels{},
 		// Conversations are pi's session files; a transfer carries one as

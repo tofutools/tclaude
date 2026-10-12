@@ -75,6 +75,12 @@ func TestPiExtensionPayloadFidelity(t *testing.T) {
 		require.Truef(t, ok, "%s carries no tclaude_context: %v", step.event, recorded)
 		assert.EqualValues(t, 64000, ctxUsage["context_window"], step.event)
 		delete(recorded, "tclaude_context")
+		// Spend is reported once the session has some: from the first
+		// response, the tool call, on. Its figures are checked in
+		// TestPiExtensionReportsSpendAndCompactsAtPinnedWindow.
+		_, spent := recorded["tclaude_usage"]
+		assert.Equal(t, i >= 2, spent, "%s: tclaude_usage", step.event)
+		delete(recorded, "tclaude_usage")
 		expected := normalize(t, testharness.PiHookPayload(id, transcript, w.Project, MockModel, step.event, step.fields))
 		assert.Equalf(t, expected, recorded, "payload %d (%s)", i, step.event)
 	}
@@ -171,6 +177,7 @@ func TestPiExtensionLifecycleFidelity(t *testing.T) {
 	for i, step := range want {
 		recorded := got[i]
 		delete(recorded, "tclaude_context")
+		delete(recorded, "tclaude_usage")
 		convID, _ := recorded["session_id"].(string)
 		transcript, _ := recorded["transcript_path"].(string)
 		ids[convID] = true
@@ -220,4 +227,44 @@ func TestPiLandedTranscriptResumes(t *testing.T) {
 	assert.Contains(t, sent, "What was the secret word?")
 	matches, _ := filepath.Glob(filepath.Join(w.AgentDir, "sessions", "*", "*_"+id+".jsonl"))
 	require.Len(t, matches, 1, "pi resumed the landed session rather than starting another")
+}
+
+// The extension reports what the session itself spent, priced from pi's
+// catalog, and compacts between runs once the context reaches a pinned
+// auto-compaction window, which tclaude hears as an automatic compaction.
+func TestPiExtensionReportsSpendAndCompactsAtPinnedWindow(t *testing.T) {
+	w := NewWorld(t)
+	ext := materializedExtension(t)
+	// One response puts ~1230 tokens in context (the mock's usage).
+	w.ExtraEnv = []string{harness.AutoCompactWindowEnvVar + "=1000"}
+	id := uuid.NewString()
+	rpc := w.StartRPC(w.Project, "--session-id", id, "--extension", ext, "--model", MockModel)
+	require.Equal(t, true, rpc.Send(map[string]any{"type": "prompt", "message": "please run TOOL now"})["success"])
+	rpc.AwaitEvent("agent_settled")
+	rpc.AwaitEvent("compaction_end")
+	rpc.Close()
+
+	got := w.RecordedPayloads()
+	byEvent := map[string]map[string]any{}
+	var events []string
+	for _, p := range got {
+		event := p["hook_event_name"].(string)
+		events = append(events, event)
+		if _, seen := byEvent[event]; !seen {
+			byEvent[event] = p
+		}
+	}
+	require.Contains(t, byEvent, "PreCompact", "events: %v", events)
+	assert.Equal(t, "auto", byEvent["PreCompact"]["trigger"])
+	require.Contains(t, byEvent, "PostCompact", "events: %v", events)
+	assert.Equal(t, "auto", byEvent["PostCompact"]["trigger"])
+
+	// Two responses (the tool call, then the answer) at $1/$2 per million.
+	spend, ok := byEvent["Stop"]["tclaude_usage"].(map[string]any)
+	require.True(t, ok, "Stop carries no tclaude_usage: %v", byEvent["Stop"])
+	assert.EqualValues(t, 2, spend["calls"])
+	assert.EqualValues(t, 2400, spend["input_tokens"])
+	assert.EqualValues(t, 60, spend["output_tokens"])
+	assert.InDelta(t, 0.00252, spend["cost_usd"], 1e-9)
+	assert.Equal(t, false, spend["subscription"], "an API key is billed per token")
 }

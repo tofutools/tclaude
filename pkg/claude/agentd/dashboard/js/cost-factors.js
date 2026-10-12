@@ -6,4 +6,5 @@ export const COST_FACTOR_HARNESSES = [
   { key: 'opencode', label: 'OpenCode' },
   { key: 'copilot', label: 'Copilot' },
   { key: 'gemini', label: 'Gemini CLI' },
+  { key: 'pi', label: 'pi' },
 ];

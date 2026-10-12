@@ -39,6 +39,8 @@ type World struct {
 	Recorder string
 	Payloads string
 	Mock     *Mock
+	// ExtraEnv is added to the environment of every later pi launch.
+	ExtraEnv []string
 }
 
 // NewWorld skips unless the smoke is enabled and pi is installed.
@@ -105,6 +107,7 @@ func (w *World) Env(extra ...string) []string {
 		"PI_TELEMETRY=0",
 		harness.PiHookBinEnvVar + "=" + w.Recorder,
 	}
+	env = append(env, w.ExtraEnv...)
 	return append(env, extra...)
 }
 

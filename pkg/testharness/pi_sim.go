@@ -62,6 +62,9 @@ type PiSim struct {
 	// line submitted meanwhile is deferred until the delivery returns.
 	dispatching int
 	deferred    []string
+	// measured is what the extension attaches to every event once set:
+	// tclaude_context, and tclaude_usage when the session has spent.
+	measured map[string]any
 }
 
 // PiLaunch is one parsed `pi` invocation.
@@ -353,7 +356,13 @@ func (p *PiSim) hookOutput(event string, fields map[string]any) (string, error) 
 		return "", nil
 	}
 	payload := PiHookPayload(p.ConvID, p.path, p.Cwd, p.launch.Model, event, fields)
+	for k, v := range p.measured {
+		payload[k] = v
+	}
 	sessionID := p.sessionID
+	// The callback runs in the pane, so it sees the pane's environment.
+	amb := session.LocalHookAmbient()
+	amb.AutoCompactWindow = p.launch.Env[harness.AutoCompactWindowEnvVar]
 	p.mu.Unlock()
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -367,7 +376,7 @@ func (p *PiSim) hookOutput(event string, fields map[string]any) (string, error) 
 	p.dispatching++
 	p.mu.Unlock()
 	var out bytes.Buffer
-	err = session.DispatchHookEvent(context.Background(), in, sessionID, session.LocalHookAmbient(), &out)
+	err = session.DispatchHookEvent(context.Background(), in, sessionID, amb, &out)
 	p.mu.Lock()
 	p.dispatching--
 	var lines []string
@@ -420,6 +429,23 @@ func (p *PiSim) Reply(text string) error {
 	p.working = false
 	p.mu.Unlock()
 	return p.hook("Stop", nil)
+}
+
+// Measure sets what the extension reports from now on: pi's context usage
+// (tokens in context of the model's window) and the session's spend. pi's
+// percent is of the model's window; costUSD under a subscription login is
+// what-if.
+func (p *PiSim) Measure(tokens, window int64, costUSD float64, subscription bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.measured = map[string]any{
+		"tclaude_context": map[string]any{
+			"tokens": tokens, "context_window": window, "percent": float64(tokens) / float64(window) * 100,
+		},
+		"tclaude_usage": map[string]any{
+			"input_tokens": tokens, "output_tokens": 0, "cost_usd": costUSD, "calls": 1, "subscription": subscription,
+		},
+	}
 }
 
 // OpenDialog parks the pane on a blocking extension dialog of the given kind
@@ -714,6 +740,8 @@ func (s *simSpawner) startPi(args clcommon.SpawnArgs, label, cwd, cmd string, ex
 	if existing != nil {
 		existing.Shutdown()
 	}
+	// The pane environment session new exports around the command.
+	session.ApplyAutoCompactWindowEnv(harness.MustGet(piHarnessName), args.AutoCompactWindow, sim.launch.Env)
 	sim.sessionID = label
 	sim.onRotate = func(_ string, p *PiSim) { s.w.Pis.Set(label, p) }
 	s.w.RecordPiLaunchCommand(sim.ConvID, cmd)
@@ -737,6 +765,9 @@ func (s *simSpawner) startPi(args clcommon.SpawnArgs, label, cwd, cmd string, ex
 		EffectiveSandbox:      args.EffectiveSandbox,
 		ApprovalPolicy:        args.Approval,
 	}); err != nil {
+		return err
+	}
+	if err := recordLaunchPosture(label, args); err != nil {
 		return err
 	}
 	if s.w.SpawnPaneDiesAtLaunch {

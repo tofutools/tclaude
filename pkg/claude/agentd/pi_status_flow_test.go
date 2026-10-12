@@ -12,12 +12,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
-// optInPi enables the experimental pi harness for one test.
-func optInPi(t *testing.T) {
-	t.Helper()
-	t.Cleanup(harness.SetExperimentalHarnessEnabledForTest(harness.PiName, true))
-}
-
 func spawnPi(t *testing.T, f *testharness.Flow, group string, body map[string]any) (
 	testharness.SpawnResp, *testharness.PiSim,
 ) {
@@ -58,7 +52,6 @@ func typeInto(sim *testharness.PiSim, text string) {
 // a whole turn: prompt, tool, a confirmation dialog, and the settled reply.
 func TestPiStatus_TurnLifecycle(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	optInPi(t)
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	resp, sim := spawnPi(t, f, "crew", map[string]any{
@@ -90,7 +83,6 @@ func TestPiStatus_TurnLifecycle(t *testing.T) {
 // idle pane leaves it idle.
 func TestPiStatus_AbortAndCompact(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	optInPi(t)
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	resp, sim := spawnPi(t, f, "crew", map[string]any{"name": "pi-worker"})
@@ -113,7 +105,6 @@ func TestPiStatus_AbortAndCompact(t *testing.T) {
 // the new conversation, as it does for Claude Code's /clear.
 func TestPiStatus_CloneRotatesConversation(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	optInPi(t)
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	resp, sim := spawnPi(t, f, "crew", map[string]any{"name": "pi-worker"})
@@ -145,7 +136,6 @@ func TestPiStatus_CloneRotatesConversation(t *testing.T) {
 // session ending.
 func TestPiStatus_SoftStopQuits(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	optInPi(t)
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	resp, sim := spawnPi(t, f, "crew", map[string]any{"name": "pi-worker"})
@@ -154,10 +144,14 @@ func TestPiStatus_SoftStopQuits(t *testing.T) {
 	assert.False(t, sim.IsAlive(), "the soft stop must quit the pane")
 }
 
-// pi is experimental: without the operator's opt-in the daemon refuses the
-// spawn, and says how to opt in.
-func TestPiSpawn_RequiresExperimentalOptIn(t *testing.T) {
+// An experimental harness needs the operator's opt-in: without it the daemon
+// refuses the spawn, and says how to opt in. pi re-registered as experimental
+// stands in for one.
+func TestExperimentalHarnessSpawn_RequiresOptIn(t *testing.T) {
 	t.Setenv(harness.ExperimentalHarnessesEnvVar, "")
+	experimental := *harness.MustGet(harness.PiName)
+	experimental.Experimental = true
+	t.Cleanup(harness.RegisterForTest(&experimental))
 	t.Cleanup(harness.SetExperimentalHarnessEnabledForTest(harness.PiName, false))
 	f := newFlow(t)
 	f.HaveGroup("crew")
@@ -171,7 +165,6 @@ func TestPiSpawn_RequiresExperimentalOptIn(t *testing.T) {
 // inside tclaude's sandbox or with the human's explicit allowance; read-only
 // acts on nothing and needs neither.
 func TestPiSpawn_AutoNeedsConfinementOrHumanAllowance(t *testing.T) {
-	optInPi(t)
 	f := newFlow(t)
 	f.HaveGroup("crew")
 
